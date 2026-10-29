@@ -42,12 +42,7 @@ info=$(qemu-img info --output=json "$image" 2>&1) ||
     die "can't open $image (is the VM running?): $(head -n 1 <<<"$info")"
 format=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["format"])' <<<"$info")
 nbd_opts=(--format="$format")
-mount_opts=()
-if [[ $ro == yes ]]; then
-    nbd_opts+=(--read-only)
-    # noload: don't replay an ext4 journal, which would mean writing.
-    mount_opts=(-o ro,noload)
-fi
+[[ $ro == yes ]] && nbd_opts+=(--read-only)
 qemu-nbd --connect="$dev" "${nbd_opts[@]}" "$image" ||
     die "qemu-nbd could not attach $image (is the VM running?)"
 mkdir -p "$STATE_DIR"
@@ -74,12 +69,48 @@ resolve() {
     return 1
 }
 
+# mount_fs DEVICE TARGET [OPTIONS]; read-only mounts must not replay a
+# journal or log, since that would mean writing.
+mount_fs() {
+    local opts=$3
+    if [[ $ro == yes ]]; then
+        case $(blkid -s TYPE -o value "$1") in
+            ext2|ext3|ext4) opts=ro,noload${opts:+,$opts} ;;
+            btrfs) opts=ro,rescue=nologreplay${opts:+,$opts} ;;
+            xfs) opts=ro,norecovery${opts:+,$opts} ;;
+            *) opts=ro${opts:+,$opts} ;;
+        esac
+    fi
+    mount ${opts:+-o "$opts"} "$1" "$2"
+}
+# The btrfs subvolume options (subvol=, subvolid=) from fstab options on stdin.
+subvol_opts() { tr ',' '\n' | grep -E '^subvol(id)?=' | paste -sd, - || true; }
+
+# Find /: the filesystem whose /etc/fstab this is.  On btrfs it is usually
+# in a subvolume (Debian's installer uses @rootfs), so look one level down
+# from the top level too, then mount the subvolume fstab names for /.
 root=""
 for p in "${parts[@]}"; do
-    [[ $(blkid -s TYPE -o value "$p") == swap ]] && continue
-    mount "${mount_opts[@]}" "$p" "$mp" 2>/dev/null || continue
-    if [[ -f $mp/etc/fstab ]]; then root=$p; break; fi
-    umount "$mp"
+    type=$(blkid -s TYPE -o value "$p" || true)
+    [[ -z $type || $type == swap ]] && continue
+    top=""
+    [[ $type == btrfs ]] && top=subvolid=5   # the top level, whatever the default
+    mount_fs "$p" "$mp" "$top" 2>/dev/null || continue
+    fstab=""
+    if [[ -f $mp/etc/fstab ]]; then
+        fstab=$mp/etc/fstab
+    elif [[ $type == btrfs ]]; then
+        fstab=$(compgen -G "$mp/*/etc/fstab" | head -n 1 || true)
+    fi
+    if [[ -z $fstab ]]; then umount "$mp"; continue; fi
+    root=$p
+    if [[ $fstab != "$mp/etc/fstab" ]]; then
+        sub=$(awk '!/^[[:space:]]*#/ && $2 == "/" { print $4 }' "$fstab" | subvol_opts)
+        [[ -n $sub ]] || sub=subvol=$(basename "$(dirname "$(dirname "$fstab")")")
+        umount "$mp"
+        mount_fs "$p" "$mp" "$sub"
+    fi
+    break
 done
 [[ -n $root ]] || { undo; die "no partition holds /etc/fstab"; }
 
@@ -87,7 +118,7 @@ done
 while read -r spec target type options; do
     [[ $target == / || $type == swap || $target != /* || ,$options, == *,noauto,* ]] && continue
     p=$(resolve "$spec") || { echo "vm-mount: skipping $target: $spec is not on this image" >&2; continue; }
-    mount "${mount_opts[@]}" "$p" "$mp$target"
+    mount_fs "$p" "$mp$target" "$(subvol_opts <<<"$options")"
 done < <(awk '!/^[[:space:]]*(#|$)/ { print $1, $2, $3, $4 }' "$mp/etc/fstab" |
     awk '{ print gsub("/", "/", $2), $0 }' | sort -n | cut -d' ' -f2-)
 

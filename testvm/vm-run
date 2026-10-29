@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Boot a BackOtter test VM from its disk image.
 #
-# Usage: vm-run [--uefi] [--cdrom ISO] [--snapshot] IMAGE [-- QEMU_ARGS...]
+# Usage: vm-run [--uefi] [--cdrom ISO] [--snapshot | --ram [--keep]]
+#               [--serial-log FILE] IMAGE [-- QEMU_ARGS...]
 #
 # The VM gets 2 GB RAM (MEMORY=MB overrides), KVM, and QEMU's user-mode
 # network with the guest's SSH port on 127.0.0.1:2222 (SSH_PORT overrides).
@@ -11,7 +12,16 @@
 #
 #   --cdrom ISO   attach ISO and boot from it first, e.g. BackOtter's rescue ISO
 #   --uefi        boot with OVMF (UEFI) instead of SeaBIOS (BIOS)
-#   --snapshot    throw away every disk write when QEMU exits
+#   --snapshot    throw away every disk write when QEMU exits (QEMU keeps them
+#                 in a temporary file in $TMPDIR, by default /var/tmp)
+#   --ram         keep every disk write in RAM instead: a qcow2 overlay in
+#                 /dev/shm on top of IMAGE, with cache=unsafe; deleted when
+#                 QEMU exits.  IMAGE itself is only read, so several --ram
+#                 VMs can share it (give each its own SSH_PORT).
+#   --keep        with --ram, keep the overlay when QEMU exits and print how to
+#                 merge it into IMAGE (qemu-img commit) or delete it.  Don't
+#                 change IMAGE while a kept overlay exists: it would no longer
+#                 match.  A kept overlay is gone when the host reboots.
 #   --serial-log FILE
 #                 run headless, writing the serial console to FILE (for scripts)
 #
@@ -19,32 +29,55 @@
 
 set -euo pipefail
 
+RAM_DIR=/dev/shm
 die() { echo "vm-run: $*" >&2; exit 1; }
 
-cdrom="" uefi=no snapshot=() console=(-nographic)
+cdrom="" uefi=no snapshot=() ram=no keep=no console=(-nographic)
 while [[ $# -gt 0 ]]; do
     case $1 in
         --cdrom) cdrom=$(realpath "$2"); shift 2 ;;
         --uefi) uefi=yes; shift ;;
         --snapshot) snapshot=(-snapshot); shift ;;
+        --ram) ram=yes; shift ;;
+        --keep) keep=yes; shift ;;
         --serial-log) console=(-display none -serial "file:$2" -monitor none); shift 2 ;;
         -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) die "unknown option $1" ;;
         *) break ;;
     esac
 done
-[[ $# -ge 1 ]] || die "usage: $0 [--uefi] [--cdrom ISO] [--snapshot] IMAGE [-- QEMU_ARGS...]"
-image=$1
+[[ $# -ge 1 ]] || die "usage: $0 [--uefi] [--cdrom ISO] [--snapshot | --ram [--keep]] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]"
+image=$(realpath "$1")
 shift
 [[ ${1:-} == -- ]] && shift
 [[ -f $image ]] || die "no such image: $image"
+[[ $ram == yes && ${#snapshot[@]} -gt 0 ]] && die "--ram and --snapshot don't combine"
+[[ $keep == yes && $ram == no ]] && die "--keep needs --ram"
 
 info=$(qemu-img info --output=json "$image" 2>&1) ||
     die "can't open $image (already running, or mounted by vm-mount?): $(head -n 1 <<<"$info")"
 format=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["format"])' <<<"$info")
+
+tmp=$(mktemp -d)
+overlay=""
+cleanup() {
+    rm -rf "$tmp"
+    if [[ -n $overlay && $keep == no ]]; then rm -f "$overlay"; fi
+}
+trap cleanup EXIT
+
+disk="file=$image,if=virtio,format=$format"
+if [[ $ram == yes ]]; then
+    overlay=$(mktemp --suffix=.qcow2 "$RAM_DIR/vm-run.$(basename "$image" ."$format").XXXXXX")
+    qemu-img create -q -f qcow2 -b "$image" -F "$format" "$overlay"
+    # cache=unsafe: ignore the guest's flushes.  Harmless here, since the
+    # writes live in RAM and are thrown away (or kept by choice) anyway.
+    disk="file=$overlay,if=virtio,format=qcow2,cache=unsafe"
+fi
+
 args=(
     -enable-kvm -cpu host -smp 2 -m "${MEMORY:-2048}"
-    -drive "file=$image,if=virtio,format=$format"
+    -drive "$disk"
     -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22"
     "${console[@]}"
     "${snapshot[@]}"
@@ -53,8 +86,6 @@ if [[ -n $cdrom ]]; then
     args+=(-drive "file=$cdrom,media=cdrom,readonly=on" -boot order=dc)
 fi
 if [[ $uefi == yes ]]; then
-    tmp=$(mktemp -d)
-    trap 'rm -rf "$tmp"' EXIT
     # A fresh copy of OVMF's variable store per run: no leftover boot entries.
     cp /usr/share/OVMF/OVMF_VARS_4M.ms.fd "$tmp/vars.fd"
     args+=(-machine q35,smm=on -global driver=cfi.pflash01,property=secure,value=on
@@ -63,4 +94,13 @@ if [[ $uefi == yes ]]; then
 else
     args+=(-machine pc)
 fi
-exec qemu-system-x86_64 "${args[@]}" "$@"
+
+# Not exec: the cleanup above has to run after QEMU exits.
+status=0
+qemu-system-x86_64 "${args[@]}" "$@" || status=$?
+if [[ $keep == yes ]]; then
+    echo "vm-run: kept this run's writes in $overlay ($(du -h "$overlay" | cut -f1))." >&2
+    echo "  merge them into $image:  qemu-img commit $overlay && rm $overlay" >&2
+    echo "  or throw them away:      rm $overlay" >&2
+fi
+exit "$status"

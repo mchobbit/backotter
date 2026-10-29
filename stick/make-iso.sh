@@ -14,6 +14,9 @@
 #     base's manifest.full (slim-base-layer.sh writes a new .manifest)
 #   - gets a GRUB menu with BackOtter entries only: normal, safe graphics,
 #     and serial console (console=ttyS0, for IPMI serial-over-LAN and tests)
+#   - adds /.disk/backotter.json, the image marker, and a third partition:
+#     32 MiB of FAT16 labelled BACKOTTER, the stick's writable config
+#     partition (see docs/design/stick-config.md)
 # The boot setup (BIOS and UEFI El Torito images, hybrid MBR/GPT, the appended
 # EFI partition) is replayed from SOURCE_ISO unchanged, so the signed shim and
 # GRUB still boot with Secure Boot on.
@@ -21,7 +24,8 @@
 # --test makes the serial-console entry the default with a 3-second timeout,
 # for boot-test.py.
 #
-# Needs: xorriso 1.5 or later.
+# Needs: xorriso 1.5 or later, dosfstools, mtools, squashfs-tools 4.6 or
+# later, python3.
 
 set -euo pipefail
 
@@ -29,6 +33,12 @@ BASE=ubuntu-server-minimal
 LAYER=$BASE.backotter
 TIMEOUT=10
 DEFAULT=0
+CONFIG_PART=3
+CONFIG_SECTORS=65536            # 32 MiB; FAT32 would need more than that
+CONFIG_LABEL=BACKOTTER
+BASIC_DATA_GUID=ebd0a0a2-b9e5-4433-87c0-68b6b72699c7   # GPT "Microsoft basic data"
+SYSTEM_SCHEMAS=1                # system.json schemas the stick can read
+PATH=$PATH:/usr/sbin:/sbin      # mkfs.vfat, for users whose PATH lacks sbin
 
 die() { echo "make-iso: $*" >&2; exit 1; }
 
@@ -43,13 +53,78 @@ for f in "$SOURCE_ISO" "$SLIM/$BASE".{squashfs,manifest,size} "$LAYER_DIR/$LAYER
     [[ -f $f ]] || die "missing $f"
 done
 [[ -e $OUT_ISO ]] && die "$OUT_ISO already exists"
+for c in xorriso mkfs.vfat mmd mcopy unsquashfs python3; do
+    command -v "$c" >/dev/null || die "missing $c"
+done
 
 work=$(mktemp -d)
 trap 'rm -rf "$work"' EXIT
 xorriso -osirrox on -indev "$SOURCE_ISO" \
     -extract /boot/grub/grub.cfg "$work/grub.cfg.stock" \
-    -extract /md5sum.txt "$work/md5sum.txt.stock" 2>/dev/null
+    -extract /md5sum.txt "$work/md5sum.txt.stock" \
+    -extract /.disk/info "$work/disk-info.stock" 2>/dev/null
 chmod u+w "$work"/*
+
+# --- The image marker and the config partition -------------------------------------
+ubuntu=$(grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' "$work/disk-info.stock" | head -n 1)
+kernel=$(awk '$1 ~ /^linux-image-[0-9]/ { sub(/^linux-image-/, "", $1); print $1 }' \
+    "$LAYER_DIR/$LAYER.manifest")
+zfs=$(awk '$1 == "zfsutils-linux" { sub(/-.*/, "", $2); print $2 }' "$LAYER_DIR/$LAYER.manifest")
+[[ -n $ubuntu && -n $kernel && -n $zfs ]] || die "can't tell the Ubuntu, kernel or ZFS version"
+# OpenZFS's own list of the features its release supports.
+unsquashfs -cat "$LAYER_DIR/$LAYER.squashfs" \
+    "usr/share/zfs/compatibility.d/openzfs-${zfs%.*}" >"$work/zfs-features" 2>/dev/null ||
+    die "the layer has no ZFS feature list for $zfs"
+image_id=$(cat /proc/sys/kernel/random/uuid)
+fat_serial=$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n' | tr a-f A-F)
+
+python3 - "$work" "$image_id" "$ubuntu" "$kernel" "$zfs" "$SYSTEM_SCHEMAS" \
+    "$CONFIG_PART" "$CONFIG_SECTORS" "$CONFIG_LABEL" "${fat_serial:0:4}-${fat_serial:4}" <<'EOF'
+import datetime, json, sys
+work, image_id, ubuntu, kernel, zfs, schemas, part, sectors, label, serial = sys.argv[1:]
+with open(f"{work}/zfs-features") as f:
+    features = sorted(l.strip() for l in f if l.strip() and not l.startswith("#"))
+built = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+docs = {
+    "backotter.json": {
+        "format": "backotter-image", "schema": 1, "image_id": image_id,
+        "built": built, "ubuntu": ubuntu, "kernel": kernel,
+        "zfs": {"version": zfs, "features": features},
+        "system_schemas": [int(s) for s in schemas.split()],
+        "config_partition": {"number": int(part), "sectors": int(sectors),
+                             "label": label, "fat_serial": serial},
+    },
+    "stick.json": {"format": "backotter-stick", "schema": 1,
+                   "image_id": image_id, "stick_id": None},
+    "settings.json": {"format": "backotter-settings", "schema": 1,
+                      "name": None, "machines": {}},
+}
+for name, doc in docs.items():
+    with open(f"{work}/{name}", "w") as f:
+        json.dump(doc, f, indent=2)
+        f.write("\n")
+EOF
+cat >"$work/README.txt" <<'EOF'
+BackOtter rescue stick: configuration partition
+
+The rest of this stick is the rescue system, which is read-only.  This
+partition holds what the stick needs to know about the machines it can
+restore.  BackOtter's backup tool updates it whenever the stick is plugged in.
+
+  backotter/settings.json   yours to edit: a name for this stick, and
+                            per-machine overrides (repository_url)
+  backotter/stick.json      written by BackOtter; don't edit
+  backotter/machines/       written by BackOtter; don't edit
+
+No passwords or keys are ever stored here.
+EOF
+
+truncate -s $((CONFIG_SECTORS * 512)) "$work/config.img"
+mkfs.vfat -F 16 -n "$CONFIG_LABEL" -i "$fat_serial" "$work/config.img" >/dev/null
+export MTOOLS_SKIP_CHECK=1
+mmd -i "$work/config.img" ::/backotter ::/backotter/machines
+mcopy -i "$work/config.img" "$work/stick.json" "$work/settings.json" ::/backotter/
+mcopy -i "$work/config.img" "$work/README.txt" ::/
 
 entry() {   # entry TITLE EXTRA_KERNEL_ARGS
     cat <<EOF
@@ -83,6 +158,7 @@ EOF
 grep -vE '^[0-9a-f]{32}  \./(pool/|dists/|casper/install-sources\.yaml$|casper/'"$BASE"'\.manifest\.full$|casper/'"$BASE"'\.ubuntu-server)' \
     "$work/md5sum.txt.stock" >"$work/md5sum.txt"
 declare -A files=(
+    [./.disk/backotter.json]=$work/backotter.json
     [./boot/grub/grub.cfg]=$work/grub.cfg
     [./casper/$BASE.squashfs]=$SLIM/$BASE.squashfs
     [./casper/$BASE.manifest]=$SLIM/$BASE.manifest
@@ -106,7 +182,8 @@ xorriso -indev "$SOURCE_ISO" -outdev "$OUT_ISO" \
     -find /casper -name "$BASE.ubuntu-server*" -exec rm -- \
     "${maps[@]}" \
     -map "$work/md5sum.txt" /md5sum.txt \
-    -boot_image any replay 2>"$work/xorriso.log" ||
+    -boot_image any replay \
+    -append_partition "$CONFIG_PART" "$BASIC_DATA_GUID" "$work/config.img" 2>"$work/xorriso.log" ||
     { cat "$work/xorriso.log" >&2; die "xorriso failed"; }
 
-echo "Wrote $OUT_ISO ($(du -h "$OUT_ISO" | cut -f1))"
+echo "Wrote $OUT_ISO ($(du -h "$OUT_ISO" | cut -f1)), image $image_id"

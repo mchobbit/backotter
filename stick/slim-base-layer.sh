@@ -169,6 +169,8 @@ done
 printf '#!/bin/sh\nexit 101\n' >"$ROOT/usr/sbin/policy-rc.d"
 chmod 755 "$ROOT/usr/sbin/policy-rc.d"
 export DEBIAN_FRONTEND=noninteractive
+# needrestart's apt hook would inspect the build host's processes through /proc.
+export NEEDRESTART_SUSPEND=1
 
 # --- TIER 1 ------------------------------------------------------------------------
 if has_tier 1; then

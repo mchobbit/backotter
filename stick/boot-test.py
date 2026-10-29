@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
-"""Boot a BackOtter test ISO in QEMU and check the live system from inside.
+"""Boot a BackOtter ISO in QEMU and check the live system from inside.
 
 Usage: boot-test.py ISO {uefi-secureboot,uefi,bios} [--log FILE] [--timeout S]
 
-Watches the first serial port (make-test-iso.sh puts a kernel console there),
-logs in as casper's live user, runs a few checks, and powers off.  Exits 0 if
-the system came up and every check passed.
+Watches the first serial port (an ISO from "make-iso.sh --test" boots with a
+console there), picks "Shell" in BackOtter's console menu, runs the checks,
+and powers off.  Exits 0 if the system came up and every check passed.  It
+can also log in at a plain login prompt, for ISOs without BackOtter's layer.
 
 Needs: qemu-system-x86_64 with KVM; for the UEFI modes, OVMF (Debian/Ubuntu
 package "ovmf").  uefi-secureboot uses OVMF's Secure Boot build with
@@ -34,6 +35,7 @@ FIRMWARE = {
 # /etc/casper.conf says "ubuntu", but that copy isn't the one casper reads).
 LIVE_USER = "ubuntu-server"
 PROMPT = re.compile(rb"[$#] $")
+MENU = re.compile(rb"Choose \[1-4\]: ")
 LOGIN = re.compile(rb"login: ")
 FAILURE = re.compile(rb"Kernel panic|\(initramfs\) |BusyBox v[0-9]")
 # Computed by the guest, so the command's own echo can't match it.
@@ -45,6 +47,7 @@ check() { n=$1; shift; if out=$(sh -c "$*" 2>&1); then r=ok; else r=FAIL; fi
           echo "BO-CHECK $n $r $(echo "$out" | tr '\n' ' ' | cut -c1-200)"; }
 check kernel 'uname -r'
 check layers 'grep -o "layerfs-path=[^ ]*" /proc/cmdline'
+check hostname 'test "$(hostname)" = backotter && hostname'
 check rootfs 'findmnt -n -o FSTYPE /'
 check secureboot 'od -An -t u1 /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c 2>/dev/null | awk "{print (\$5==1 ? \"enabled\" : \"disabled\")}" | grep . || echo "no EFI (BIOS boot)"'
 check snapd-gone '! dpkg-query -W -f="\${db:Status-Status}" snapd 2>/dev/null | grep -q "^installed"'
@@ -54,7 +57,18 @@ check modem-firmware-kept 'ls -d /usr/lib/firmware/qcom/sdx61'
 check switch-firmware 'ls /usr/lib/firmware/mellanox 2>/dev/null | wc -l | sed "s/$/ mellanox files/"'
 check tools 'for c in python3 lvm mdadm cryptsetup sgdisk mkfs.ext4 mkfs.xfs mkfs.btrfs ssh; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; echo all present'
 check python 'python3 -c "import sys; print(sys.version.split()[0])"'
+check layer-tools 'for c in wpa_supplicant efibootmgr zpool zfs sshd; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; echo all present'
 check dpkg-audit 'test -z "$(dpkg --audit)"'
+check zfs-no-autoimport 'for u in zfs-import-cache zfs-import-scan zfs-mount; do s=$(systemctl is-enabled $u.service 2>/dev/null); test "$s" = masked || { echo "$u: $s"; exit 1; }; done; echo masked'
+check wait-online-masked 'test "$(systemctl is-enabled systemd-networkd-wait-online.service 2>/dev/null)" = masked'
+check cloud-init-off 'test -e /etc/cloud/cloud-init.disabled'
+check cdrom-source-gone 'test ! -e /etc/apt/sources.list.d/cdrom.sources'
+check network 'ip -brief -4 address show scope global | grep .'
+check tty1-console 'systemctl cat getty@tty1.service | grep -q "login-program /usr/lib/backotter/console"'
+check tty2-root-shell 'systemctl cat autovt@tty2.service | grep -q "autologin root"'
+check sshd-off-at-boot '! systemctl is-active -q ssh.service && ! systemctl is-active -q ssh.socket && ! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1'
+check remote-access '/usr/lib/backotter/remote-access >/run/ra.out 2>&1 || { tail -n 3 /run/ra.out; exit 1; }; pw=$(sed -n "s/^Password: //p" /run/backotter/remote-access); printf "#!/bin/sh\necho %s\n" "$pw" >/root/.askpass; chmod 700 /root/.askpass; who=$(SSH_ASKPASS=/root/.askpass SSH_ASKPASS_REQUIRE=force setsid -w ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null backotter@127.0.0.1 whoami </dev/null 2>/run/ssh.err); rm -f /root/.askpass; if test "$who" = backotter; then echo "password login over SSH works"; else tail -n 3 /run/ssh.err; journalctl -u ssh -n 4 --no-pager -o cat; exit 1; fi'
+check root-ssh-refused '! SSH_ASKPASS=/bin/false SSH_ASKPASS_REQUIRE=force setsid -w ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o NumberOfPasswordPrompts=1 root@127.0.0.1 true </dev/null 2>/dev/null'
 check failed-units 'n=$(systemctl --failed --no-legend | wc -l); systemctl --failed --no-legend | cut -c1-60; test $n -eq 0'
 check memory 'free -m | awk "/Mem:/{print \$3 \" MB used of \" \$2}"'
 echo BO-$((6 * 7))-DONE
@@ -124,16 +138,23 @@ def run(iso: str, mode: str, log_path: str, timeout: float, user: str) -> bool:
         con = Console(proc, log)
         start = time.monotonic()
         try:
-            got = con.expect(LOGIN, FAILURE, timeout=timeout)
-            if got == 1:
+            got = con.expect(MENU, LOGIN, FAILURE, timeout=timeout)
+            if got == 2:
                 print(f"{mode}: boot FAILED (see {log_path})")
                 return False
             boot_s = time.monotonic() - start
-            try:
-                # make-test-iso.sh's test layer logs root in by itself.
-                con.expect(PROMPT, timeout=20)
-                as_root = True
-            except TimeoutError:
+            if got == 1:
+                # Either agetty's "login: root (automatic login)" on the way
+                # to BackOtter's menu or a root shell, or a real login prompt.
+                try:
+                    got = con.expect(MENU, PROMPT, timeout=20)
+                except TimeoutError:
+                    got = None
+            as_root = True
+            if got == 0:
+                con.send("1\n")   # BackOtter's console: "Shell"
+                con.expect(PROMPT, timeout=30)
+            elif got is None:
                 con.send(user + "\n")
                 if con.expect(re.compile(rb"Password: $"), PROMPT, timeout=30) == 0:
                     con.send("\n")   # casper's live user has an empty password

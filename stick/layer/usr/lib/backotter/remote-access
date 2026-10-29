@@ -1,0 +1,42 @@
+#!/bin/bash
+# BackOtter rescue stick: turn on remote access over SSH.
+#
+# Creates the "backotter" user if needed, gives it a fresh random one-time
+# password, starts sshd (which generates this boot's host keys first), and
+# prints how to connect.  The details are also kept in
+# /run/backotter/remote-access (root only), which the console shows.  Nothing
+# survives a reboot: the stick's root filesystem lives in RAM.
+
+set -euo pipefail
+
+user=backotter
+
+[[ $EUID -eq 0 ]] || { echo "remote-access: must run as root" >&2; exit 1; }
+
+if ! id "$user" >/dev/null 2>&1; then
+    useradd --create-home --shell /bin/bash --comment "BackOtter remote access" "$user"
+fi
+# Four groups of four from 31 characters without look-alikes (no i, l, o, 0,
+# 1): about 79 bits.
+password=$(python3 -c '
+import secrets
+alphabet = "abcdefghjkmnpqrstuvwxyz23456789"
+s = "".join(secrets.choice(alphabet) for _ in range(16))
+print("-".join(s[i:i + 4] for i in range(0, 16, 4)))')
+echo "$user:$password" | chpasswd
+
+systemctl start ssh.service
+
+mkdir -p -m 700 /run/backotter
+{
+    echo "Remote access is ON.  Connect with:"
+    ip -brief -4 address show scope global |
+        awk -v u="$user" '{ sub("/.*", "", $3); print "  ssh " u "@" $3 }'
+    echo "Password: $password"
+    echo "Host key fingerprints (check them on first connection):"
+    for key in /etc/ssh/ssh_host_*_key.pub; do
+        echo "  $(ssh-keygen -l -f "$key")"
+    done
+} >/run/backotter/remote-access
+chmod 600 /run/backotter/remote-access
+cat /run/backotter/remote-access

@@ -1,0 +1,3 @@
+# BackOtter rescue stick: the remote-access user may use sudo with its
+# one-time password.
+backotter ALL=(ALL:ALL) ALL

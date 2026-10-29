@@ -109,10 +109,27 @@ rw)
   mount -o ro "$part" $mnt || exit 1
   test "$(cat $mnt/backotter/boot-test.txt)" = "$stamp"; r=$?
   ls $mnt/backotter | tr "\n" " "; umount $mnt; exit $r ;;
+settings)
+  mnt=/run/bo-cfg; mkdir -p $mnt
+  mount -o ro "$part" $mnt || exit 1
+  python3 - $mnt/backotter/settings.toml <<'PY'; r=$?
+import sys, tomllib
+raw = open(sys.argv[1], "rb").read().decode()
+s = tomllib.loads(raw)
+assert (s["format"], s["schema"]) == ("backotter-settings", 1), s
+# What the comments tell a user to do, in an editor that adds a byte-order mark.
+edited = "\n".join(l[2:] if l.startswith(("# name", "# [machines", "# repository_url")) else l
+                   for l in raw.splitlines())
+e = tomllib.loads(("﻿" + edited).encode().decode("utf-8-sig"))
+assert e["name"] == "drawer stick" and len(e["machines"]) == 1, e
+print("parses as shipped and as edited per its comments")
+PY
+  umount $mnt; exit $r ;;
 esac
 EOF
 check config-partition 'sh /run/bo-config.sh find'
 check config-rw 'sh /run/bo-config.sh rw'
+check config-settings 'sh /run/bo-config.sh settings'
 """
 DONE_LINE = "echo BO-$((6 * 7))-DONE"
 

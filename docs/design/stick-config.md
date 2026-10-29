@@ -42,7 +42,7 @@ backup location by hand.
 
 ```
 /backotter/stick.json
-/backotter/settings.json
+/backotter/settings.toml
 /backotter/machines/<install-id>/system.json
 /backotter/machines/<install-id>/system.json.sha256
 /backotter/machines/<install-id>/system.prev.json
@@ -111,33 +111,58 @@ Every stick written from one image is identical, so the backup tool sets
 sticks from the same image can be told apart, and the backup tool can remember
 which stick it last updated for each machine.
 
-## settings.json, and editing by hand
+## settings.toml, and editing by hand
 
 The stick is meant to be written once and reused for years: the backup tool
 replaces files on partition 3 in place, and a person can open the partition
-from Linux, macOS or Windows.  The files are split by who writes them:
+from Linux, macOS or Windows and edit it with any text editor.  The files are
+split by who writes them:
 
-- `stick.json` and everything under `machines/` are written by BackOtter only.
-  `system.json` has a checksum, so a damaged or hand-edited copy is reported
-  instead of used.
-- `settings.json` is for people, and has no checksum.  Shipped in the image as:
+- `stick.json` and everything under `machines/` are written by BackOtter only,
+  as JSON.  `system.json` has a checksum, so a damaged or hand-edited copy is
+  reported instead of used.
+- `settings.toml` is for people, and has no checksum.  It's TOML rather than
+  JSON because TOML has comments, so the file can explain each setting where
+  it's edited, and it forgives more (no quotes around keys, no commas between
+  lines).  Shipped in the image as:
 
-```json
-{
-  "format": "backotter-settings",
-  "schema": 1,
-  "name": null,
-  "machines": {}
-}
+```toml
+# BackOtter rescue stick: settings you may edit.
+#
+# Lines starting with # are comments.  Save as plain text.  BackOtter only
+# reads this file and never rewrites it, so your comments stay as you leave
+# them.  Eject the stick before unplugging it.
+
+format = "backotter-settings"
+schema = 1
+
+# A name for this stick, to tell it apart from others.  Remove the # to use it.
+# name = "drawer stick"
+
+# Overrides for one machine.  Copy the two lines below once per machine,
+# remove the #s, and put in the machine's install ID: the name of its
+# directory under backotter/machines/.
+#
+# [machines."0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90"]
+# repository_url = "sftp://nas.local/backotter/lovelace"
 ```
 
-`name` is a label for the stick ("drawer stick", "offsite").  `machines` maps
-an install ID to overrides for that machine; schema 1 has one,
-`repository_url`, for when the NAS has moved since the last backup.  The
-stick checks that the file is valid JSON and follows the schema, and reports
-what it can't read instead of guessing.  The backup tool may rewrite
-`settings.json` (to set `name` from the command line, say), keeping whatever
-else is in it.
+`name` is a label for the stick ("drawer stick", "offsite"); unset means no
+name, since TOML has no null.  `machines` maps an install ID to overrides for
+that machine; schema 1 has one, `repository_url`, for when the NAS has moved
+since the last backup.
+
+Readers use Python's `tomllib` (3.11 and later).  They strip a UTF-8
+byte-order mark first, since some Windows editors write one and TOML doesn't
+allow it.  The stick checks the file against the schema and reports what it
+can't read, with the line number `tomllib` gives, instead of guessing; an
+unknown key is a warning, not an error, so a newer stick's settings don't
+stop an older one.
+
+BackOtter never rewrites `settings.toml`: Python can't write TOML without an
+extra library, and rewriting would lose the user's comments.  A future
+`backotter stick write --name` may fill in `name` when it writes a fresh
+stick, from the shipped template.
 
 Anything else on the partition is ignored; macOS leaves `._*` files and
 `.fseventsd/` behind.

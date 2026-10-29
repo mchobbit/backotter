@@ -25,7 +25,7 @@
 # for boot-test.py.
 #
 # Needs: xorriso 1.5 or later, dosfstools, mtools, squashfs-tools 4.6 or
-# later, python3.
+# later, python3 3.11 or later.
 
 set -euo pipefail
 
@@ -96,8 +96,6 @@ docs = {
     },
     "stick.json": {"format": "backotter-stick", "schema": 1,
                    "image_id": image_id, "stick_id": None},
-    "settings.json": {"format": "backotter-settings", "schema": 1,
-                      "name": None, "machines": {}},
 }
 for name, doc in docs.items():
     with open(f"{work}/{name}", "w") as f:
@@ -111,19 +109,42 @@ The rest of this stick is the rescue system, which is read-only.  This
 partition holds what the stick needs to know about the machines it can
 restore.  BackOtter's backup tool updates it whenever the stick is plugged in.
 
-  backotter/settings.json   yours to edit: a name for this stick, and
-                            per-machine overrides (repository_url)
+  backotter/settings.toml   yours to edit with any text editor: a name for
+                            this stick, and per-machine overrides
   backotter/stick.json      written by BackOtter; don't edit
   backotter/machines/       written by BackOtter; don't edit
 
 No passwords or keys are ever stored here.
 EOF
+# The settings file people edit.  docs/design/stick-config.md shows the same text.
+cat >"$work/settings.toml" <<'EOF'
+# BackOtter rescue stick: settings you may edit.
+#
+# Lines starting with # are comments.  Save as plain text.  BackOtter only
+# reads this file and never rewrites it, so your comments stay as you leave
+# them.  Eject the stick before unplugging it.
+
+format = "backotter-settings"
+schema = 1
+
+# A name for this stick, to tell it apart from others.  Remove the # to use it.
+# name = "drawer stick"
+
+# Overrides for one machine.  Copy the two lines below once per machine,
+# remove the #s, and put in the machine's install ID: the name of its
+# directory under backotter/machines/.
+#
+# [machines."0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90"]
+# repository_url = "sftp://nas.local/backotter/lovelace"
+EOF
+python3 -c 'import sys, tomllib; tomllib.load(open(sys.argv[1], "rb"))' "$work/settings.toml" ||
+    die "settings.toml is not valid TOML"
 
 truncate -s $((CONFIG_SECTORS * 512)) "$work/config.img"
 mkfs.vfat -F 16 -n "$CONFIG_LABEL" -i "$fat_serial" "$work/config.img" >/dev/null
 export MTOOLS_SKIP_CHECK=1
 mmd -i "$work/config.img" ::/backotter ::/backotter/machines
-mcopy -i "$work/config.img" "$work/stick.json" "$work/settings.json" ::/backotter/
+mcopy -i "$work/config.img" "$work/stick.json" "$work/settings.toml" ::/backotter/
 mcopy -i "$work/config.img" "$work/README.txt" ::/
 
 entry() {   # entry TITLE EXTRA_KERNEL_ARGS

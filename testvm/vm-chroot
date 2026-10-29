@@ -1,0 +1,45 @@
+#!/usr/bin/env bash
+# Run a shell (or a command) inside a test VM's filesystem mounted by vm-mount.
+#
+# Usage: sudo vm-chroot MOUNTPOINT [COMMAND [ARG...]]
+#
+# The guest is amd64 like the host, so its programs run directly.  This binds
+# the host's /proc, /sys and /dev in, stops package scripts from starting
+# services (policy-rc.d) and needrestart from inspecting the host's processes,
+# and undoes all of that on exit.  It is still the host's kernel and devices:
+# a command such as grub-install must be pointed at the image's /dev/nbdN,
+# never at a host disk.
+#
+# For more isolation (its own /proc, hostname and process tree), use instead:
+#   sudo systemd-nspawn -D MOUNTPOINT
+
+set -euo pipefail
+
+die() { echo "vm-chroot: $*" >&2; exit 1; }
+
+[[ $# -ge 1 ]] || die "usage: $0 MOUNTPOINT [COMMAND [ARG...]]"
+[[ $EUID -eq 0 ]] || die "must run as root"
+mp=$(realpath "$1")
+shift
+[[ -f $mp/etc/fstab ]] || die "$mp does not look like a mounted guest (run vm-mount first)"
+[[ $# -gt 0 ]] || set -- /bin/bash --login
+
+mounted=()
+added_policy=no
+cleanup() {
+    local i
+    for ((i = ${#mounted[@]} - 1; i >= 0; i--)); do umount "${mounted[i]}" || true; done
+    [[ $added_policy == yes ]] && rm -f "$mp/usr/sbin/policy-rc.d"
+}
+trap cleanup EXIT
+for m in proc sys dev dev/pts; do
+    mount --bind "/$m" "$mp/$m"
+    mounted+=("$mp/$m")
+done
+# (On a read-only mount, nothing can be installed anyway.)
+if [[ ! -e $mp/usr/sbin/policy-rc.d && -w $mp/usr/sbin ]]; then
+    printf '#!/bin/sh\nexit 101\n' >"$mp/usr/sbin/policy-rc.d"
+    chmod 755 "$mp/usr/sbin/policy-rc.d"
+    added_policy=yes
+fi
+NEEDRESTART_SUSPEND=1 chroot "$mp" "$@"

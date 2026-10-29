@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# Undo vm-mount: unmount everything under MOUNTPOINT and detach the image.
+#
+# Usage: sudo vm-umount MOUNTPOINT
+
+set -euo pipefail
+
+STATE_DIR=/run/vm-mount
+die() { echo "vm-umount: $*" >&2; exit 1; }
+
+[[ $# -eq 1 ]] || die "usage: $0 MOUNTPOINT"
+[[ $EUID -eq 0 ]] || die "must run as root"
+mp=$(realpath "$1")
+state=$STATE_DIR/$(systemd-escape --path "$mp")
+[[ -f $state ]] || die "$mp was not mounted by vm-mount"
+
+if mountpoint -q "$mp"; then
+    umount -R "$mp" || die "could not unmount $mp (something still using it? try: fuser -vm $mp)"
+fi
+qemu-nbd --disconnect "$(cat "$state")" >/dev/null
+rm "$state"
+echo "Unmounted $mp"

@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+# Boot a BackOtter test VM from its disk image.
+#
+# Usage: vm-run [--uefi] [--cdrom ISO] [--snapshot] IMAGE [-- QEMU_ARGS...]
+#
+# The VM gets 2 GB RAM (MEMORY=MB overrides), KVM, and QEMU's user-mode
+# network with the guest's SSH port on 127.0.0.1:2222 (SSH_PORT overrides).
+# Its serial console is this terminal: log in there, or from another terminal:
+#   ssh -i WORK_DIR/id_ed25519 -p 2222 root@127.0.0.1
+# Ctrl-A X quits QEMU (Ctrl-A H lists the other keys).
+#
+#   --cdrom ISO   attach ISO and boot from it first, e.g. BackOtter's rescue ISO
+#   --uefi        boot with OVMF (UEFI) instead of SeaBIOS (BIOS)
+#   --snapshot    throw away every disk write when QEMU exits
+#   --serial-log FILE
+#                 run headless, writing the serial console to FILE (for scripts)
+#
+# QEMU locks IMAGE while it runs, so vm-mount can't attach it meanwhile.
+
+set -euo pipefail
+
+die() { echo "vm-run: $*" >&2; exit 1; }
+
+cdrom="" uefi=no snapshot=() console=(-nographic)
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --cdrom) cdrom=$(realpath "$2"); shift 2 ;;
+        --uefi) uefi=yes; shift ;;
+        --snapshot) snapshot=(-snapshot); shift ;;
+        --serial-log) console=(-display none -serial "file:$2" -monitor none); shift 2 ;;
+        -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+        -*) die "unknown option $1" ;;
+        *) break ;;
+    esac
+done
+[[ $# -ge 1 ]] || die "usage: $0 [--uefi] [--cdrom ISO] [--snapshot] IMAGE [-- QEMU_ARGS...]"
+image=$1
+shift
+[[ ${1:-} == -- ]] && shift
+[[ -f $image ]] || die "no such image: $image"
+
+info=$(qemu-img info --output=json "$image" 2>&1) ||
+    die "can't open $image (already running, or mounted by vm-mount?): $(head -n 1 <<<"$info")"
+format=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["format"])' <<<"$info")
+args=(
+    -enable-kvm -cpu host -smp 2 -m "${MEMORY:-2048}"
+    -drive "file=$image,if=virtio,format=$format"
+    -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22"
+    "${console[@]}"
+    "${snapshot[@]}"
+)
+if [[ -n $cdrom ]]; then
+    args+=(-drive "file=$cdrom,media=cdrom,readonly=on" -boot order=dc)
+fi
+if [[ $uefi == yes ]]; then
+    tmp=$(mktemp -d)
+    trap 'rm -rf "$tmp"' EXIT
+    # A fresh copy of OVMF's variable store per run: no leftover boot entries.
+    cp /usr/share/OVMF/OVMF_VARS_4M.ms.fd "$tmp/vars.fd"
+    args+=(-machine q35,smm=on -global driver=cfi.pflash01,property=secure,value=on
+        -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+        -drive "if=pflash,format=raw,unit=1,file=$tmp/vars.fd")
+else
+    args+=(-machine pc)
+fi
+exec qemu-system-x86_64 "${args[@]}" "$@"

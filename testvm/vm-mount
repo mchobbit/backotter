@@ -1,0 +1,98 @@
+#!/usr/bin/env bash
+# Mount a test VM's disk image on the host, while the VM is off.
+#
+# Usage: sudo vm-mount [--ro] IMAGE MOUNTPOINT
+#
+# Attaches IMAGE (qcow2 or raw) to a free /dev/nbdN, mounts the partition that
+# holds /etc/fstab at MOUNTPOINT, then the guest's other filesystems from that
+# fstab beneath it (swap and noauto entries are skipped).  Look around, or
+# use vm-chroot, then undo it all with vm-umount MOUNTPOINT.
+#
+#   --ro   attach and mount read-only; nothing in the image can change
+#
+# QEMU locks an image while the VM runs, so this refuses a running VM's disk.
+# Never write to a guest's filesystems while it runs.
+
+set -euo pipefail
+
+STATE_DIR=/run/vm-mount
+die() { echo "vm-mount: $*" >&2; exit 1; }
+
+ro=no
+[[ ${1:-} == --ro ]] && { ro=yes; shift; }
+[[ $# -eq 2 ]] || die "usage: $0 [--ro] IMAGE MOUNTPOINT"
+[[ $EUID -eq 0 ]] || die "must run as root"
+image=$(realpath "$1")
+mkdir -p "$2"
+mp=$(realpath "$2")
+[[ -f $image ]] || die "no such image: $image"
+mountpoint -q "$mp" && die "$mp is already a mount point"
+state=$STATE_DIR/$(systemd-escape --path "$mp")
+[[ -e $state ]] && die "$mp is already in use by vm-mount (see $state)"
+
+[[ -d /sys/module/nbd ]] || modprobe nbd max_part=16
+dev=""
+for b in /sys/block/nbd*; do
+    # An nbd device is free while no qemu-nbd process serves it.
+    if [[ ! -e $b/pid ]]; then dev=/dev/${b##*/}; break; fi
+done
+[[ -n $dev ]] || die "no free /dev/nbd device"
+
+info=$(qemu-img info --output=json "$image" 2>&1) ||
+    die "can't open $image (is the VM running?): $(head -n 1 <<<"$info")"
+format=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["format"])' <<<"$info")
+nbd_opts=(--format="$format")
+mount_opts=()
+if [[ $ro == yes ]]; then
+    nbd_opts+=(--read-only)
+    # noload: don't replay an ext4 journal, which would mean writing.
+    mount_opts=(-o ro,noload)
+fi
+qemu-nbd --connect="$dev" "${nbd_opts[@]}" "$image" ||
+    die "qemu-nbd could not attach $image (is the VM running?)"
+mkdir -p "$STATE_DIR"
+echo "$dev" >"$state"
+
+undo() { umount -R "$mp" 2>/dev/null || true; qemu-nbd --disconnect "$dev" >/dev/null; rm -f "$state"; }
+trap 'undo; die "failed"' ERR
+udevadm settle
+for _ in 1 2 3 4 5; do compgen -G "${dev}p*" >/dev/null && break; sleep 1; done
+mapfile -t parts < <(compgen -G "${dev}p*" || true)
+[[ ${#parts[@]} -gt 0 ]] || { undo; die "no partitions on $image"; }
+
+# Resolve fstab's device names against this image's partitions only, never
+# the host's disks (a cloned image may share UUIDs with something else).
+resolve() {
+    local spec=$1 p
+    for p in "${parts[@]}"; do
+        case $spec in
+            UUID=*) [[ $(blkid -s UUID -o value "$p") == "${spec#UUID=}" ]] && { echo "$p"; return; } ;;
+            PARTUUID=*) [[ $(blkid -s PARTUUID -o value "$p") == "${spec#PARTUUID=}" ]] && { echo "$p"; return; } ;;
+            LABEL=*) [[ $(blkid -s LABEL -o value "$p") == "${spec#LABEL=}" ]] && { echo "$p"; return; } ;;
+        esac
+    done
+    return 1
+}
+
+root=""
+for p in "${parts[@]}"; do
+    [[ $(blkid -s TYPE -o value "$p") == swap ]] && continue
+    mount "${mount_opts[@]}" "$p" "$mp" 2>/dev/null || continue
+    if [[ -f $mp/etc/fstab ]]; then root=$p; break; fi
+    umount "$mp"
+done
+[[ -n $root ]] || { undo; die "no partition holds /etc/fstab"; }
+
+# The guest's other filesystems, parents before children.
+while read -r spec target type options; do
+    [[ $target == / || $type == swap || $target != /* || ,$options, == *,noauto,* ]] && continue
+    p=$(resolve "$spec") || { echo "vm-mount: skipping $target: $spec is not on this image" >&2; continue; }
+    mount "${mount_opts[@]}" "$p" "$mp$target"
+done < <(awk '!/^[[:space:]]*(#|$)/ { print $1, $2, $3, $4 }' "$mp/etc/fstab" |
+    awk '{ print gsub("/", "/", $2), $0 }' | sort -n | cut -d' ' -f2-)
+
+trap - ERR
+how=read-write
+[[ $ro == yes ]] && how=read-only
+echo "Mounted $image ($dev, $how) at $mp:"
+findmnt -R -n -o TARGET,SOURCE,FSTYPE "$mp" | sed 's/^/  /'

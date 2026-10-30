@@ -90,7 +90,8 @@ ssh_cmd=(ssh -q -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFi
 ssh_vm() { local sq="'"; local q=${1//$sq/$sq\\$sq$sq}; "${ssh_cmd[@]}" "/bin/sh -c '$q'"; }
 cleanup() {
     if [[ $started == yes ]]; then
-        ssh_vm 'shutdown -p now' >/dev/null 2>&1 || true
+        # By path: NetBSD's sshd gives commands no /sbin in PATH.
+        ssh_vm '/sbin/shutdown -p now' >/dev/null 2>&1 || true
         for _ in $(seq 60); do pgrep -f "^qemu-system.*:$BUILD_VM_PORT-:22" >/dev/null || break; sleep 2; done
         pkill -f "^qemu-system.*:$BUILD_VM_PORT-:22" 2>/dev/null || true
     fi

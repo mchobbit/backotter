@@ -46,8 +46,10 @@ LIVE_USER = "ubuntu-server"
 PROMPT = re.compile(rb"[$#] $")
 MENU = re.compile(rb"Choose \[1-4\]: ")
 LOGIN = re.compile(rb"login: ")
-# Linux, then the BSDs' panics, debugger and root-device prompts.
-FAILURE = re.compile(rb"Kernel panic|\(initramfs\) |BusyBox v[0-9]|panic: |^db> |mountroot> |root device: ", re.M)
+# Linux, then the BSDs' panics (at a line's start, or after NetBSD's
+# timestamp: not NetBSD's "ddb.onpanic: 1 -> 0"), debugger and root-device
+# prompts.
+FAILURE = re.compile(rb"Kernel panic|\(initramfs\) |BusyBox v[0-9]|(?:^|\] )panic: |^db> |mountroot> |root device: ", re.M)
 # Computed by the guest, so the command's own echo can't match it.
 DONE = re.compile(rb"BKO-42-DONE\r?\n")
 
@@ -161,11 +163,19 @@ def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: 
                 as_root = False
             con.send("export TERM=dumb; stty -echo" + ("" if as_root else "; sudo -i") + "\n")
             con.expect(PROMPT, timeout=30)
-            # A line at a time: the guest's tty buffers only 4 KB of input.
+            # A line at a time, and after a check only once it has printed its
+            # result: the guest's tty buffers little input (4 KB on Linux, 1 KB
+            # on NetBSD), and drops what's typed beyond that while a slow
+            # check runs.
             script = CHECK_FUNCTION + check_script(platform, media) + DONE_LINE
             for line in script.strip().splitlines():
                 con.send(line + "\n")
-                time.sleep(0.1)
+                m = re.match(r"check (\S+) ", line)
+                if m:
+                    con.expect(re.compile(rb"BKO-CHECK " + re.escape(m[1].encode()) + rb" .*\n"),
+                               timeout=120)
+                else:
+                    time.sleep(0.1)
             con.expect(DONE, timeout=120)
             results = re.findall(rb"BKO-CHECK (\S+) (ok|FAIL) ?(.*?)\r?\n",
                                  log_contents(log_path))

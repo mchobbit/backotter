@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Add hard-to-preserve files to a mounted guest, under ROOT/root/bo-torture,
+# Add hard-to-preserve files to a mounted guest, under ROOT/root/bko-torture,
 # so a backup-and-restore round trip is tested on more than a fresh install
 # happens to contain.
 #
@@ -11,7 +11,7 @@
 set -uo pipefail
 
 [[ $# -eq 1 && -d $1 ]] || { echo "usage: $0 ROOT" >&2; exit 1; }
-T=$1/root/bo-torture
+T=$1/root/bko-torture
 mkdir -p "$T"
 try() { "$@" 2>/dev/null || echo "torture: skipped (unsupported here): $*" >&2; }
 

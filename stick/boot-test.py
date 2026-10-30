@@ -44,12 +44,12 @@ MENU = re.compile(rb"Choose \[1-4\]: ")
 LOGIN = re.compile(rb"login: ")
 FAILURE = re.compile(rb"Kernel panic|\(initramfs\) |BusyBox v[0-9]")
 # Computed by the guest, so the command's own echo can't match it.
-DONE = re.compile(rb"BO-42-DONE\r?\n")
+DONE = re.compile(rb"BKO-42-DONE\r?\n")
 
-# Each check prints one line: "BO-CHECK <name> <ok|FAIL> <detail>".
+# Each check prints one line: "BKO-CHECK <name> <ok|FAIL> <detail>".
 CHECKS = r"""
 check() { n=$1; shift; if out=$(sh -c "$*" 2>&1); then r=ok; else r=FAIL; fi
-          echo "BO-CHECK $n $r $(echo "$out" | tr '\n' ' ' | cut -c1-200)"; }
+          echo "BKO-CHECK $n $r $(echo "$out" | tr '\n' ' ' | cut -c1-200)"; }
 check kernel 'uname -r'
 check layers 'grep -o "layerfs-path=[^ ]*" /proc/cmdline'
 check hostname 'test "$(hostname)" = backotter && hostname'
@@ -83,7 +83,7 @@ check memory 'free -m | awk "/Mem:/{print \$3 \" MB used of \" \$2}"'
 # disk casper mounted at /cdrom only, as the marker describes it.  "rw" also
 # checks stick.json, writes a file and reads it back after remounting.
 CONFIG_CHECKS = r"""
-cat >/run/bo-config.sh <<'EOF'
+cat >/run/bko-config.sh <<'EOF'
 src=$(findmnt -n -o SOURCE /cdrom) || { echo "nothing mounted on /cdrom"; exit 1; }
 parent=$(lsblk -no PKNAME "$src" | head -n 1)
 disk=/dev/${parent:-${src#/dev/}}
@@ -100,7 +100,7 @@ test "$(blkid -o value -s UUID "$part")" = "$serial" || { echo "$part: serial is
 case ${1:-find} in
 find) echo "/cdrom is $src; config is $part, $label $serial" ;;
 rw)
-  mnt=/run/bo-cfg; mkdir -p $mnt
+  mnt=/run/bko-cfg; mkdir -p $mnt
   mount -o flush,nosuid,nodev,noexec "$part" $mnt || exit 1
   got=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["image_id"])' $mnt/backotter/stick.json)
   test "$got" = "$image_id" || { umount $mnt; echo "stick.json is for image $got"; exit 1; }
@@ -110,7 +110,7 @@ rw)
   test "$(cat $mnt/backotter/boot-test.txt)" = "$stamp"; r=$?
   ls $mnt/backotter | tr "\n" " "; umount $mnt; exit $r ;;
 settings)
-  mnt=/run/bo-cfg; mkdir -p $mnt
+  mnt=/run/bko-cfg; mkdir -p $mnt
   mount -o ro "$part" $mnt || exit 1
   python3 - $mnt/backotter/settings.toml <<'PY'; r=$?
 import sys, tomllib
@@ -127,11 +127,11 @@ PY
   umount $mnt; exit $r ;;
 esac
 EOF
-check config-partition 'sh /run/bo-config.sh find'
-check config-rw 'sh /run/bo-config.sh rw'
-check config-settings 'sh /run/bo-config.sh settings'
+check config-partition 'sh /run/bko-config.sh find'
+check config-rw 'sh /run/bko-config.sh rw'
+check config-settings 'sh /run/bko-config.sh settings'
 """
-DONE_LINE = "echo BO-$((6 * 7))-DONE"
+DONE_LINE = "echo BKO-$((6 * 7))-DONE"
 
 
 class Console:
@@ -239,7 +239,7 @@ def run(iso: str, mode: str, media: str, log_path: str, timeout: float, user: st
                 con.send(line + "\n")
                 time.sleep(0.1)
             con.expect(DONE, timeout=120)
-            results = re.findall(rb"BO-CHECK (\S+) (ok|FAIL) ?(.*?)\r?\n",
+            results = re.findall(rb"BKO-CHECK (\S+) (ok|FAIL) ?(.*?)\r?\n",
                                  log_contents(log_path))
             print(f"{mode} ({media}): reached login in {boot_s:.0f} s")
             all_ok = bool(results)

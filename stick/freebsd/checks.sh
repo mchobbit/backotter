@@ -13,7 +13,7 @@
 # the stty -echo boot-test.py typed before then didn't last).
 set +o emacs +o vi; stty -echo
 cat >/tmp/bko-json.lua <<'EOF'
--- flua bko-json.lua FILE KEY...: print each KEY (a.b.c, or #a.b for a list's length)
+-- flua bko-json.lua FILE KEY...: print each KEY (a.b.c, or #a.b for a list's length); fails if one is missing
 local ucl = require("ucl")
 local p = ucl.parser()
 assert(p:parse_file(arg[1]))
@@ -22,7 +22,8 @@ for i = 2, #arg do
   local key, count, v = arg[i], false, nil
   if key:sub(1, 1) == "#" then key, count = key:sub(2), true end
   v = doc
-  for k in key:gmatch("[^.]+") do v = v[k] end
+  for k in key:gmatch("[^.]+") do v = type(v) == "table" and v[k] or nil end
+  assert(v ~= nil, "no " .. arg[i] .. " in " .. arg[1])
   out[#out + 1] = tostring(count and #v or v)
 end
 print(table.concat(out, " "))
@@ -52,5 +53,5 @@ check ttyv1-root-shell 'ps -ax -o tt= -o user= -o comm= | awk "\$1 == \"v1\" && 
 check sshd-off-at-boot 'test "$(sysrc -n sshd_enable)" = NO && ! service sshd onestatus >/dev/null 2>&1 && ! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1'
 check remote-access '/usr/local/lib/backotter/remote-access >/tmp/ra.out 2>&1 || { tail -n 3 /tmp/ra.out; exit 1; }; out=$(sh /tmp/bko-ssh.sh backotter whoami); test "$out" = backotter || { echo "$out" | tail -n 3; exit 1; }; echo "password login over SSH works"'
 check root-ssh-refused 'out=$(sh /tmp/bko-ssh.sh root "echo logged-in"); case $out in *logged-in*) echo "root logged in"; exit 1 ;; *"Permission denied"*) echo "refused, even with the right password" ;; *) echo "$out"; exit 1 ;; esac'
-check marker '/usr/libexec/flua /tmp/bko-json.lua /.disk/backotter.json image_id platform base.os base.release zfs.version "#zfs.features" | awk "{ print \$1, \$2, \$3, \$4, \"zfs\", \$5, \$6, \"features\" }"'
+check marker 'm=$(/usr/libexec/flua /tmp/bko-json.lua /.disk/backotter.json image_id platform base.os base.release zfs.version "#zfs.features") || exit 1; set -- $m; test "$2" = freebsd && test "$6" -gt 0 && echo "$1 $2 $3 $4 zfs $5 $6 features"'
 check memory 'echo "$(top -b | sed -n "s/^Mem: //p") of $(( $(sysctl -n hw.physmem) / 1048576 )) MB"'

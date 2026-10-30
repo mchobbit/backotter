@@ -35,8 +35,11 @@ loader isn't signed.
 | 3 | The config partition: FAT16 (type 0x06) `BACKOTTER`, 32 MiB |
 
 The root UFS label ends in the first 8 hex digits of the image ID, so neither
-another BackOtter stick nor a FreeBSD installer stick in the same machine can
-stand in for the root (the memstick's label is `FreeBSD_Install`).  `/etc/fstab`
+a stick written from another BackOtter image nor a FreeBSD installer stick
+(labelled `FreeBSD_Install`) in the same machine can stand in for the root.
+Sticks written from the same image share the label, though: with two of them
+plugged in, `/` (and so the config partition found through it) may come
+from the other one.  `/etc/fstab`
 names it, and the loader takes the root from there.  BIOS boot goes through
 the MBR boot code, then `boot1`/`boot2` in the BSD label, as on the memstick.
 
@@ -58,9 +61,17 @@ What changes from the memstick:
   (`ifconfig_DEFAULT`, in the background, as on Linux), sshd off,
   sendmail off, no dump device.  ZFS stays off (`zfs_enable` is unset), so no
   pool is imported.
-- `loader.conf`: the console on the screen and the first serial port both
-  (`boot_multicons`, `comconsole` at 115200), for IPMI serial-over-LAN; a
-  10-second menu (3 for `--test`).  The memstick's "Installer" branding is
+- `loader.conf`: the kernel's console on the screen and the first serial
+  port both (`boot_multicons`; uart0 at 115200 is a console through
+  `device.hints`' flags), for IPMI serial-over-LAN.  The screen is the
+  primary console, which gets rc's output and prompts (single-user mode,
+  fsck), and the loader menu shows there only (and on serial only through
+  the firmware's console redirection), as with the Linux image's default
+  entry.  `--test` images name `comconsole` in `console=`, which makes serial
+  primary and puts the loader menu there too, as the Linux image's `--test`
+  makes its serial entry the default; `console=` lists the screen as both
+  `vidconsole` (the BIOS loader's name) and `efi` (the UEFI loader's).  A
+  10-second menu, 3 for `--test`.  The memstick's "Installer" branding is
   gone.
 - getty runs BackOtter's console (`/usr/local/lib/backotter/console`, from
   `../bsd/`) as root on `ttyv0` and the serial console (`ttyu0`-`ttyu3`, on
@@ -71,7 +82,9 @@ What changes from the memstick:
 - sshd: `../bsd/sshd_config.backotter`'s lines first in `sshd_config`; no
   host keys (`remote-access` makes them).
 - `/usr/local/bin/restic-bko` and `rustic-bko`, and the marker
-  `/.disk/backotter.json`.
+  `/.disk/backotter.json`.  make-img-bsd.sh builds without a rustic-bko (with
+  a warning) if there is none for freebsd; the boot test's rustic-bko check
+  then fails, since the FreeBSD image is meant to have both.
 
 ## Notes
 

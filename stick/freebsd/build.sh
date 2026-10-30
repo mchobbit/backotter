@@ -27,7 +27,7 @@
 # makes tmpfs in 15.x).  /conf/base/etc is the image's
 # /etc hard-linked, so it takes no space.
 
-set -eu
+set -eu -o pipefail
 umask 022
 die() { echo "build.sh: $*" >&2; exit 1; }
 
@@ -44,12 +44,16 @@ set -- "${1:-}" in/FreeBSD-*-amd64-memstick.img
 [ $# -eq 2 ] && [ -f "$2" ] || die "need exactly one memstick in in/"
 cmd=$1 memstick=$2
 
-md=
+md= md2=
 cleanup() {
     umount mnt 2>/dev/null || true
     [ -z "$md" ] || mdconfig -d -u "$md"
+    [ -z "$md2" ] || mdconfig -d -u "$md2"
 }
+# sh skips the EXIT trap when a signal kills it (SIGPIPE, say, once
+# make-img-bsd.sh's ssh is gone), and the builder lives on.
 trap cleanup EXIT
+trap 'exit 1' HUP INT TERM PIPE
 mkdir -p mnt
 md=$(mdconfig -a -t vnode -o readonly -f "$memstick")
 mount -o ro "/dev/${md}s2a" mnt
@@ -57,7 +61,10 @@ mount -o ro "/dev/${md}s2a" mnt
 case $cmd in
 info)
     kernel=$(ROOT=mnt sh mnt/bin/freebsd-version -k)
-    zfs=$(strings mnt/boot/kernel/zfs.ko | sed -n 's/^\([0-9]*\.[0-9]*\.[0-9]*\)-[0-9]*-FreeBSD_g[0-9a-f]*$/\1/p' | head -n 1)
+    # The first of zfs.ko's version strings (no head: SIGPIPE and pipefail).
+    zfs=$(strings mnt/boot/kernel/zfs.ko | sed -n 's/^\([0-9]*\.[0-9]*\.[0-9]*\)-[0-9]*-FreeBSD_g[0-9a-f]*$/\1/p')
+    set -- $zfs
+    zfs=${1:-}
     [ -n "$kernel" ] && [ -n "$zfs" ] || die "can't tell the kernel or ZFS version"
     cp "mnt/usr/share/zfs/compatibility.d/openzfs-${zfs%.*}" in/zfs-features ||
         die "the memstick has no ZFS feature list for $zfs"
@@ -98,24 +105,34 @@ tmpsize="$TMPSIZE"
 varsize="$VARSIZE"
 EOF
 
-# The loader: the memstick's settings less its installer branding, and the
-# console on the screen and the first serial port both (IPMI serial-over-LAN,
-# boot-test.py), as the Linux image's serial entry does.
-cat >root/boot/loader.conf <<EOF
-# BackOtter rescue stick.
-vfs.mountroot.timeout="10"
-kernels_autodetect="NO"
-boot_multicons="YES"
-boot_serial="YES"
-comconsole_speed="115200"
-console="comconsole,vidconsole"
-autoboot_delay="$([ "${TEST:-0}" = 1 ] && echo 3 || echo 10)"
-EOF
-# QEMU's emulated USB stick on xHCI (boot-test.py's) garbles large bulk
-# reads (umass: "bad CSW signature"), and the root never mounts; the stock
-# memstick hangs the same way, and 128 KiB is still too much.  Real sticks
-# boot without this, and the shipped image keeps FreeBSD's 1 MiB.
-[ "${TEST:-0}" != 1 ] || echo 'kern.maxphys="65536"' >>root/boot/loader.conf
+# The loader: the memstick's settings less its installer branding.  The
+# kernel and getty use the screen and the first serial port both
+# (boot_multicons, with uart0 a console through device.hints' flags 0x10), for
+# IPMI serial-over-LAN.  The screen stays the primary console, the one that
+# gets rc's output and prompts, as with the Linux image's default entry.
+# --test images make serial primary and show the loader menu there too, as
+# the Linux image's --test makes its serial entry the default: naming
+# comconsole in console= does that.  The UEFI loader calls the screen "efi",
+# the BIOS one "vidconsole"; each skips the name it doesn't have.
+{
+    echo '# BackOtter rescue stick.'
+    echo 'vfs.mountroot.timeout="10"'
+    echo 'kernels_autodetect="NO"'
+    echo 'boot_multicons="YES"'
+    echo 'hint.uart.0.baud="115200"'
+    if [ "${TEST:-0}" = 1 ]; then
+        echo 'autoboot_delay="3"'
+        echo 'comconsole_speed="115200"'
+        echo 'console="comconsole,vidconsole,efi"'
+        # QEMU's emulated USB stick on xHCI (boot-test.py's) garbles large
+        # bulk reads (umass: "bad CSW signature"), and the root never
+        # mounts; the stock memstick hangs the same way, and 128 KiB is
+        # still too much.  Real sticks boot with FreeBSD's 1 MiB.
+        echo 'kern.maxphys="65536"'
+    else
+        echo 'autoboot_delay="10"'
+    fi
+} >root/boot/loader.conf
 
 # BackOtter's console on ttyv0 and the serial console, logged in as root
 # by getty itself, as agetty --autologin --login-program does on Linux; ttyv1
@@ -169,5 +186,4 @@ mkimg -s mbr -b root/boot/mbr -p efi:=efi.img \
     -p freebsd:-"mkimg -s bsd -b root/boot/boot -p freebsd-ufs:=root.ufs" \
     -p fat16b:=in/config.img -a 2 -o out/image.img
 md2=$(mdconfig -a -t vnode -o readonly -f out/image.img)
-gpart show "$md2" "${md2}s2" || true
-mdconfig -d -u "$md2"
+gpart show "$md2" "${md2}s2"

@@ -1,28 +1,42 @@
 #!/usr/bin/env bash
-# Build an Ubuntu Server test guest for BackOtter, with / on ZFS: an unattended,
-# offline "autoinstall" from an official live-server ISO into a qcow2 disk
-# image, under QEMU with KVM.  (Linux Mint 22 is built on Ubuntu 24.04, so a
-# 24.04 guest covers what a Mint restore depends on, minus the desktop.)
+# Build an Ubuntu Server test guest for BackOtter, with / on ZFS, or for UEFI
+# laid out as Ubuntu's installer does by default: an unattended, offline
+# "autoinstall" from an official live-server ISO into a qcow2 disk image,
+# under QEMU with KVM.  (Linux Mint 22 is built on Ubuntu 24.04, so a 24.04
+# guest covers what a Mint restore depends on, minus the desktop.)
 #
-# Usage: ./make-ubuntu.sh VERSION WORK_DIR
+# Usage: ./make-ubuntu.sh [--uefi] [--name NAME] VERSION WORK_DIR
 #   e.g. ./make-ubuntu.sh 24.04 vms/ubuntu24
+#        ./make-ubuntu.sh --uefi --name ubuntu26-uefi 26.04.1 vms/ubuntu26-uefi
 #
 # VERSION is an Ubuntu release or point release (24.04, 24.04.1, ...).
 # ubuntu-VERSION-live-server-amd64.iso with its SHA256SUMS and SHA256SUMS.gpg
 # is downloaded into WORK_DIR unless already there (from old-releases.ubuntu.com,
 # or releases.ubuntu.com for current ones), and checked against Ubuntu's
-# signature before use.  Results, in WORK_DIR (N is the major version):
-#   ubuntuN.qcow2         the guest's 16 GiB disk (sparse), with a qcow2
+# signature before use.  Results, in WORK_DIR (NAME is ubuntuN by default,
+# N the major version):
+#   NAME.qcow2            the guest's 16 GiB disk (sparse), with a qcow2
 #                         snapshot "fresh-install" of the finished install
 #   root-password         the password of root and of the user "tester" (mode 600)
 #   id_ed25519, .pub      SSH key that logs in as root and as tester
 #   install-serial.log    the installer's serial console
+#   vm-run-options        with --uefi: "--uefi", how vm-run must boot it
 #
-# The guest, host name ubuntuN: BIOS + MBR, /boot (1 GiB ext4), swap (2 GiB),
+# The guest, host name NAME: BIOS + MBR, /boot (1 GiB ext4), swap (2 GiB),
 # and / on ZFS (pool rpool, dataset rpool/ROOT/ubuntu), 2 GB RAM, no desktop,
 # apt pointed at snapshot.ubuntu.com as of the ISO's build date; see
-# ubuntu/user-data.  Run it with vm-run, and look inside it while it's off with
-# vm-mount.
+# ubuntu/user-data and ubuntu/storage-zfs.yaml.
+#
+# --uefi installs for UEFI instead, with the layout Ubuntu's installer picks
+# by default (Subiquity's guided "direct" layout, ubuntu/storage-direct.yaml):
+# GPT, an EFI system partition, ext4 for /, and a swap file.  It boots through
+# shim and GRUB with Secure Boot on: vm-run --uefi.  The installer itself runs
+# with Secure Boot off, as QEMU's -kernel boot has no shim to vouch for the
+# kernel; the guest's NVRAM boot entries aren't kept, so each boot starts from
+# EFI/BOOT/BOOTX64.EFI, as on a new machine.
+#
+# Run it with vm-run (and vm-run-options), and look inside it while it's off
+# with vm-mount.
 #
 # Needs: qemu-system-x86_64 with KVM, qemu-img, xorriso, gpg, gpgv, openssl,
 # python3 with yaml, wget.  Runs as an ordinary user in the kvm group.
@@ -38,14 +52,25 @@ INSTALL_TIMEOUT=2400
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-ubuntu: $*" >&2; exit 1; }
 
-[[ $# -eq 2 ]] || die "usage: $0 VERSION WORK_DIR"
+firmware=bios name=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --uefi) firmware=uefi; shift ;;
+        --name) name=$2; shift 2 ;;
+        -*) die "unknown option $1" ;;
+        *) break ;;
+    esac
+done
+[[ $# -eq 2 ]] || die "usage: $0 [--uefi] [--name NAME] VERSION WORK_DIR"
 version=$1
 [[ $version =~ ^[0-9]{2}\.[0-9]{2}(\.[0-9]+)?$ ]] || die "VERSION looks like 24.04 or 24.04.1, not '$version'"
 release=$(cut -d. -f1-2 <<<"$version")
 major=${version%%.*}
 ISO=ubuntu-$version-live-server-amd64.iso
-DISK=ubuntu$major.qcow2
-guest_name=ubuntu$major
+guest_name=${name:-ubuntu$major}
+DISK=$guest_name.qcow2
+storage=zfs
+[[ $firmware == uefi ]] && storage=direct
 mkdir -p "$2"
 cd "$2"
 [[ -e $DISK ]] && die "$2/$DISK already exists; move it away to rebuild"
@@ -99,6 +124,7 @@ umask 022
 mkdir "$work/cidata"
 sed -e "s|@HOSTNAME@|$guest_name|" -e "s|@PASSWORD_HASH@|$hash|g" \
     -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|g" -e "s|@SNAPSHOT@|$snapshot|g" \
+    -e "/^@STORAGE@\$/{r $here/ubuntu/storage-$storage.yaml" -e "d}" \
     "$here/ubuntu/user-data" >"$work/cidata/user-data"
 if grep -n '@[A-Z_]\+@' "$work/cidata/user-data"; then die "user-data placeholders left unfilled"; fi
 # cloud-init quietly ignores user-data it can't parse, and the installer then
@@ -113,10 +139,18 @@ xorriso -as mkisofs -quiet -o "$work/cidata.iso" -V CIDATA -J -r "$work/cidata" 
     { cat "$work/xorriso.log" >&2; die "could not make the CIDATA ISO"; }
 
 # --- Install, with no network: everything comes from the ISO -----------------------
+machine=(-machine pc)
+if [[ $firmware == uefi ]]; then
+    # OVMF without Secure Boot, and a variable store thrown away afterwards.
+    cp /usr/share/OVMF/OVMF_VARS_4M.fd "$work/vars.fd"
+    machine=(-machine q35
+        -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd
+        -drive "if=pflash,format=raw,unit=1,file=$work/vars.fd")
+fi
 qemu-img create -q -f qcow2 "$DISK" "$DISK_SIZE"
 echo "Installing; the installer's console goes to $2/install-serial.log"
 timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
-    -enable-kvm -cpu host -smp 2 -m "$MEMORY" -machine pc \
+    -enable-kvm -cpu host -smp 2 -m "$MEMORY" "${machine[@]}" \
     -drive "file=$DISK,if=virtio,format=qcow2" \
     -drive "file=$ISO,media=cdrom,readonly=on" \
     -drive "file=$work/cidata.iso,media=cdrom,readonly=on" \
@@ -130,5 +164,6 @@ timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
 [[ $(qemu-img info --output=json "$DISK" | python3 -c 'import json, sys; print(json.load(sys.stdin)["actual-size"])') -gt 500000000 ]] ||
     die "the disk is nearly empty; see install-serial.log"
 
+[[ $firmware == uefi ]] && echo "--uefi" >vm-run-options
 qemu-img snapshot -c fresh-install "$DISK"
 echo "Done: $2/$DISK ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""

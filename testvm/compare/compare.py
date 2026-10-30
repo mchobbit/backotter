@@ -2,9 +2,10 @@
 """Back up a test guest with several archivers, restore each backup onto a
 blank disk, and check what survived.
 
-Usage: sudo compare.py GUEST [TOOL ...]      tools: restic borg dar bsdtar (default),
-                                               and restic-bko
-       sudo compare.py --boot-only GUEST [TOOL ...]   boot an earlier run's restores again
+Usage: sudo compare.py [--mkfs-from STICK_ISO] GUEST [TOOL ...]
+                                    tools: restic borg dar bsdtar (default), and restic-bko
+       sudo compare.py --boot-only [--mkfs-from STICK_ISO] GUEST [TOOL ...]
+                                    boot an earlier run's restores again
 
 restic-bko is BackOtter's patched restic (branch "backotter" of
 github.com/mchobbit/restic): $RESTIC_BKO, or else the newest Linux build in
@@ -27,6 +28,18 @@ fresh-install state), in ~/backotter-work/compare/GUEST/:
 That is the archiver's part of a bare-metal restore; recreating a layout
 from a recorded description, as BackOtter must, is not tested here.
 
+--mkfs-from STICK_ISO makes the filesystems with the mkfs tools of BackOtter's
+rescue stick (STICK_ISO, from stick/make-iso.sh) instead of the guest's own,
+as a restore from the stick would: newer tools turn on features an older
+guest's kernel or GRUB may not read.  ZFS pools are still made by the host's
+zpool, with the original's feature flags, as BackOtter must make them.  The
+results go to ~/backotter-work/compare/GUEST.stick-mkfs/.
+
+The restores boot with the vm-run options the guest's builder left in
+vms/GUEST/vm-run-options (e.g. --uefi, with Secure Boot); without that file,
+by BIOS, or by UEFI without Secure Boot if the guest has an EFI system
+partition.  Each boot gets a fresh UEFI variable store, as a new machine's.
+
 Results: results.json and a table on stdout.
 """
 
@@ -48,6 +61,7 @@ TESTVM = HERE.parent
 VMS = WORK_BASE / "vms"
 SRC_MP = Path("/mnt/cmp-src")
 DST_MP = Path("/mnt/cmp-dst")
+STICK_MP = Path("/mnt/cmp-stick")                 # --mkfs-from: the stick's root
 SSH_PORT = "2230"
 PASSWORD = "backotter-compare"                    # for restic's and borg's encryption
 DST_POOL_TEMP = "cmp-dst"
@@ -180,52 +194,104 @@ class Layout:
         return [line.split(" path ")[-1].replace("<FS_TREE>/", "") for line in listing.splitlines()]
 
 
-def in_src(cmd: list[str]) -> None:
-    """Run a tool from the original system (its mkfs etc.); see src_api()."""
-    run(["chroot", str(SRC_MP)] + cmd)
+def in_src(cmd: list[str], root: Path = SRC_MP) -> None:
+    """Run a tool from the original system (its mkfs etc.), or from the
+    system at root; see src_api()."""
+    run(["chroot", str(root)] + cmd)
 
 
 class src_api:
     """The host's /dev, /proc and /sys bound into the (read-only) src tree,
-    so that tools run there with in_src() see the disks."""
+    or the tree at root, so that tools run there with in_src() see the disks."""
+
+    def __init__(self, root: Path = SRC_MP):
+        self.root = root
 
     def __enter__(self):
         for d in ("dev", "proc", "sys"):
-            run(["mount", "--bind", f"/{d}", str(SRC_MP / d)], quiet=True)
+            run(["mount", "--bind", f"/{d}", str(self.root / d)], quiet=True)
 
     def __exit__(self, *exc):
         for d in ("sys", "proc", "dev"):
-            run(["umount", str(SRC_MP / d)], check=False, quiet=True)
+            run(["umount", str(self.root / d)], check=False, quiet=True)
 
 
-def recreate(layout: Layout, dst_dev: str) -> None:
-    """Lay out dst_dev like src and mount it at DST_MP."""
+class stick_root:
+    """The rescue stick's root filesystem at STICK_MP, read-only: the stick
+    ISO's two squashfs layers (the slimmed Ubuntu base and BackOtter's layer
+    on top) under an overlay, as its live system mounts them."""
+
+    PARTS = Path("/mnt/cmp-stick-parts")
+
+    def __init__(self, iso: Path):
+        self.iso = iso
+        self.mounted: list[Path] = []
+
+    def mount(self, args: list[str], mp: Path) -> None:
+        mp.mkdir(parents=True, exist_ok=True)
+        run(["mount"] + args + [str(mp)])
+        self.mounted.append(mp)
+
+    def __enter__(self) -> Path:
+        iso, base, layer = self.PARTS / "iso", self.PARTS / "base", self.PARTS / "layer"
+        try:
+            self.mount(["-o", "loop,ro", str(self.iso)], iso)
+            casper = iso / "casper"
+            layers = sorted(casper.glob("*.backotter.squashfs"))
+            if not layers:
+                raise SystemExit(f"{self.iso} is not a BackOtter stick: no casper/*.backotter.squashfs")
+            self.mount(["-o", "loop,ro", str(casper / layers[0].name.replace(".backotter", ""))], base)
+            self.mount(["-o", "loop,ro", str(layers[0])], layer)
+            # No upperdir: a read-only overlay.
+            self.mount(["-t", "overlay", "-o", f"lowerdir={layer}:{base}", "overlay"], STICK_MP)
+        except BaseException:
+            self.__exit__()           # with doesn't, when __enter__ fails
+            raise
+        return STICK_MP
+
+    def __exit__(self, *exc):
+        for mp in reversed(self.mounted):
+            run(["umount", str(mp)], check=False, quiet=True)
+        self.mounted = []
+
+
+def recreate(layout: Layout, dst_dev: str, tools: Path = SRC_MP) -> None:
+    """Lay out dst_dev like src and mount it at DST_MP.  The filesystems are
+    made by the mkfs tools of the system at tools: src's own, or the stick's."""
     run(f"dd if={layout.src_dev} of={dst_dev} bs=1M count=1 status=none conv=fsync")
+    if out(["blkid", "-p", "-o", "value", "-s", "PTTYPE", layout.src_dev], check=False) == "gpt":
+        # The first MiB has GPT's primary header and table; its backup copy
+        # belongs in the disk's last sectors, which firmware may check.
+        run(["sfdisk", "-q", "--relocate", "gpt-bak-std", dst_dev])
     run(["partprobe", dst_dev], check=False)
     run(["udevadm", "settle"], quiet=True)
-    with src_api():
+    with src_api(tools):
+        def mkfs(cmd: list[str]) -> None:
+            if run(["chroot", str(tools), "sh", "-c", f"command -v {cmd[0]}"], check=False, quiet=True).returncode:
+                raise SystemExit(f"no {cmd[0]} in {tools}" + (" (the stick)" if tools != SRC_MP else ""))
+            in_src(cmd, tools)
         for n, f in layout.parts.items():
             dev, fs, uuid, label = f"{dst_dev}p{n}", f.get("TYPE"), f.get("UUID"), f.get("LABEL")
             lab = ["-L", label] if label else []
             if fs in ("ext4", "ext3", "ext2"):
-                in_src([f"mkfs.{fs}", "-q", "-F", "-U", uuid] + lab + [dev])
+                mkfs([f"mkfs.{fs}", "-q", "-F", "-U", uuid] + lab + [dev])
             elif fs == "vfat":
                 # An EFI system partition; FAT's "UUID" is its volume id.
-                in_src(["mkfs.vfat", "-i", uuid.replace("-", "")] + (["-n", label] if label else []) + [dev])
+                mkfs(["mkfs.vfat", "-i", uuid.replace("-", "")] + (["-n", label] if label else []) + [dev])
             elif fs == "f2fs":
-                in_src(["mkfs.f2fs", "-q", "-f", "-U", uuid] + (["-l", label] if label else []) + [dev])
+                mkfs(["mkfs.f2fs", "-q", "-f", "-U", uuid] + (["-l", label] if label else []) + [dev])
             elif fs == "nilfs2":
-                in_src(["mkfs.nilfs2", "-q", "-f"] + lab + [dev])
-                in_src(["nilfs-tune", "-U", uuid, dev])
+                mkfs(["mkfs.nilfs2", "-q", "-f"] + lab + [dev])
+                mkfs(["nilfs-tune", "-U", uuid, dev])
             elif fs == "xfs":
-                in_src(["mkfs.xfs", "-q", "-f", "-m", f"uuid={uuid}"] + lab + [dev])
+                mkfs(["mkfs.xfs", "-q", "-f", "-m", f"uuid={uuid}"] + lab + [dev])
             elif fs == "btrfs":
-                in_src(["mkfs.btrfs", "-q", "-f", "-U", uuid] + lab + [dev])
+                mkfs(["mkfs.btrfs", "-q", "-f", "-U", uuid] + lab + [dev])
             elif fs == "jfs":
-                in_src(["mkfs.jfs", "-q"] + lab + [dev])
-                in_src(["jfs_tune", "-U", uuid, dev])
+                mkfs(["mkfs.jfs", "-q"] + lab + [dev])
+                mkfs(["jfs_tune", "-U", uuid, dev])
             elif fs == "swap":
-                in_src(["mkswap", "-U", uuid] + lab + [dev])
+                mkfs(["mkswap", "-U", uuid] + lab + [dev])
             elif fs == "zfs_member":
                 z = layout.zfs
                 cmd = ["zpool", "create", "-f", "-d", "-R", str(DST_MP), "-t", DST_POOL_TEMP]
@@ -235,6 +301,7 @@ def recreate(layout: Layout, dst_dev: str) -> None:
                 run(cmd + [z["name"], dev])
             elif fs:
                 raise SystemExit(f"don't know how to recreate {fs}")
+    with src_api():
         subvols = layout.btrfs_subvolumes()
 
     # Mount like src: each mount's partition number carries over.
@@ -351,12 +418,25 @@ def port_free(port: str) -> bool:
             return False
 
 
-def is_uefi(layout: dict) -> bool:
-    """Whether a guest boots by UEFI: it has an EFI system partition (FAT)."""
-    return "vfat" in layout.values()
+def firmware_options(guest_dir: Path, layout: dict) -> list[str]:
+    """vm-run's options for booting the guest: those its builder left in
+    vm-run-options, or else UEFI without Secure Boot (which Pop!_OS doesn't
+    support) if it has an EFI system partition (FAT), BIOS if not."""
+    f = guest_dir / "vm-run-options"
+    if f.exists():
+        return shlex.split(f.read_text())
+    return ["--uefi", "--no-secure-boot"] if "vfat" in layout.values() else []
 
 
-def boot(image: Path, guest_dir: Path, log: Path, uefi: bool = False) -> dict:
+# What the guest booted with: bios, uefi, or uefi+secure-boot.
+FIRMWARE_PROBE = ("if [ -d /sys/firmware/efi ]; then "
+                  "sb=$(od -An -tu1 /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"
+                  " 2>/dev/null | awk '{print $NF}'); "
+                  "if [ \"$sb\" = 1 ]; then echo uefi+secure-boot; else echo uefi; fi; "
+                  "else echo bios; fi")
+
+
+def boot(image: Path, guest_dir: Path, log: Path, firmware: list[str]) -> dict:
     if not port_free(SSH_PORT):
         raise SystemExit(f"port {SSH_PORT} is taken (a test VM left running?)")
     # The restored disk's qemu-nbd may still be letting go of it (after JFS,
@@ -367,9 +447,6 @@ def boot(image: Path, guest_dir: Path, log: Path, uefi: bool = False) -> dict:
         time.sleep(1)
     # Its own process group, so that stopping it stops QEMU too, and a VM
     # left running can't hold SSH_PORT against the next boot test.
-    # A guest with an EFI system partition boots by UEFI; without Secure Boot,
-    # which Pop!_OS doesn't support and the others don't need.
-    firmware = ["--uefi", "--no-secure-boot"] if uefi else []
     vm = subprocess.Popen([str(TESTVM / "vm-run"), "--ram", *firmware, "--serial-log", str(log), str(image)],
                           env=dict(os.environ, SSH_PORT=SSH_PORT), start_new_session=True,
                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -391,6 +468,7 @@ def boot(image: Path, guest_dir: Path, log: Path, uefi: bool = False) -> dict:
             lines = r.stdout.split()
             result["state"] = lines[0] if lines else "?"
             result["failed_units"] = lines[1:]
+            result["firmware"] = out(ssh + [FIRMWARE_PROBE], check=False)
             run(ssh + ["poweroff"], check=False, quiet=True)
             vm.wait(timeout=90)
     except subprocess.TimeoutExpired:
@@ -408,13 +486,17 @@ def boot(image: Path, guest_dir: Path, log: Path, uefi: bool = False) -> dict:
 
 # --- One guest ----------------------------------------------------------------------
 
-def compare_guest(guest: str, tools: list[str]) -> dict:
+def work_dir(guest: str, stick_iso: Path | None) -> Path:
+    return WORK_BASE / "compare" / (guest + (".stick-mkfs" if stick_iso else ""))
+
+
+def compare_guest(guest: str, tools: list[str], stick_iso: Path | None = None) -> dict:
     guest_dir = VMS / guest
     base = guest_dir / f"{guest}.qcow2"
-    work = WORK_BASE / "compare" / guest
+    work = work_dir(guest, stick_iso)
     work.mkdir(parents=True, exist_ok=True)
     fsmeta = [sys.executable, "-I", str(HERE / "fsmeta.py")]
-    results = {"guest": guest, "tools": {}}
+    results = {"guest": guest, "mkfs": str(stick_iso) if stick_iso else "guest", "tools": {}}
 
     print(f"== {guest}: test files", flush=True)
     src = work / "src.qcow2"
@@ -451,7 +533,11 @@ def compare_guest(guest: str, tools: list[str]) -> dict:
             run(["qemu-img", "create", "-q", "-f", "qcow2", str(dst), "16G"])
             dst_dev = attach(dst)
             try:
-                recreate(layout, dst_dev)
+                if stick_iso:
+                    with stick_root(stick_iso) as stick:
+                        recreate(layout, dst_dev, stick)
+                else:
+                    recreate(layout, dst_dev)
                 # Restoring into a DST_MP that isn't the new disk would write
                 # onto the host's own filesystem.
                 if run(["mountpoint", "-q", str(DST_MP)], check=False, quiet=True).returncode != 0:
@@ -472,7 +558,8 @@ def compare_guest(guest: str, tools: list[str]) -> dict:
             finally:
                 unmount_dst(dst_dev, layout)
             print(f"== {guest}: booting the {tool} restore", flush=True)
-            res["boot"] = boot(dst, guest_dir, work / f"boot-{tool}.log", uefi=is_uefi(results["layout"]))
+            res["boot"] = boot(dst, guest_dir, work / f"boot-{tool}.log",
+                               firmware_options(guest_dir, results["layout"]))
             print(f"   {res['boot']}", flush=True)
         results["coverage"] = json.loads((work / f"diff-{tools[0]}.json").read_text())["coverage"]
     finally:
@@ -491,26 +578,33 @@ def main() -> int:
     if os.geteuid() != 0:
         raise SystemExit("must run as root")
     args = sys.argv[1:]
-    boot_only = bool(args) and args[0] == "--boot-only"
-    if boot_only:
-        args = args[1:]
+    boot_only, stick_iso = False, None
+    while args and args[0].startswith("--"):
+        if args[0] == "--boot-only":
+            boot_only, args = True, args[1:]
+        elif args[0] == "--mkfs-from" and len(args) > 1:
+            stick_iso, args = Path(args[1]).resolve(), args[2:]
+            if not stick_iso.is_file():
+                raise SystemExit(f"no such ISO: {stick_iso}")
+        else:
+            raise SystemExit(__doc__)
     if not args:
         raise SystemExit(__doc__)
     guest, tools = args[0], args[1:] or ["restic", "borg", "dar", "bsdtar"]
-    for m in (SRC_MP, DST_MP):
+    for m in (SRC_MP, DST_MP, STICK_MP):
         m.mkdir(parents=True, exist_ok=True)
     if boot_only:
         # Boot the disks a previous run restored, and update its results.
-        work = WORK_BASE / "compare" / guest
+        work = work_dir(guest, stick_iso)
         r = json.loads((work / "results.json").read_text())
         for tool in tools:
             print(f"== {guest}: booting the {tool} restore", flush=True)
             r["tools"][tool]["boot"] = boot(work / f"restored-{tool}.qcow2", VMS / guest,
-                                            work / f"boot-{tool}.log", uefi=is_uefi(r["layout"]))
+                                            work / f"boot-{tool}.log", firmware_options(VMS / guest, r["layout"]))
             print(f"   {r['tools'][tool]['boot']}", flush=True)
         (work / "results.json").write_text(json.dumps(r, indent=1))
     else:
-        r = compare_guest(guest, tools)
+        r = compare_guest(guest, tools, stick_iso)
     print(f"\n{'tool':10} {'backup':>8} {'size':>9} {'restore':>8}  boot      differences")
     for tool, t in r["tools"].items():
         diffs = ", ".join(f"{k} {v['count']}" for k, v in t.get("diff", {}).items()) or "none"

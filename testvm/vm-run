@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # Boot a BackOtter test VM from its disk image.
 #
-# Usage: vm-run [--uefi] [--cdrom ISO] [--snapshot | --ram [--keep]]
+# Usage: vm-run [--uefi [--no-secure-boot]] [--cdrom ISO] [--snapshot | --ram [--keep]]
+#               [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--mac ADDR] [--tpm DIR]
 #               [--serial-log FILE] IMAGE [-- QEMU_ARGS...]
 #
 # The VM gets 2 GB RAM (MEMORY=MB overrides), KVM, and QEMU's user-mode
@@ -28,6 +29,27 @@
 #   --serial-log FILE
 #                 run headless, writing the serial console to FILE (for scripts)
 #
+# Other hardware, e.g. to restore onto a machine unlike the original:
+#   --disk-bus BUS
+#                 attach the disks as virtio (the default: virtio-blk), scsi
+#                 (virtio-scsi), nvme or sata (AHCI).  The guest sees other
+#                 device names (vda, sda, nvme0n1) and needs the driver in its
+#                 initramfs.
+#   --disk IMAGE  another disk on the same bus, after IMAGE (repeatable), e.g.
+#                 for RAID; --snapshot and --ram cover it too
+#   --nic MODEL   the network card's QEMU model instead of virtio-net-pci, e.g.
+#                 e1000e, e1000 or rtl8139: another driver.  It keeps the PCI
+#                 slot, so names by slot (ens3) stay the same.
+#   --mac ADDR    the network card's MAC address instead of QEMU's default
+#                 52:54:00:12:34:56 (the same for every model), e.g.
+#                 52:54:00:00:00:02, as a new machine's card would have
+#   --tpm DIR     a TPM 2.0 (swtpm), its state kept in DIR (created if
+#                 missing), so that what a guest seals to it survives reboots
+#                 and --ram.  A new DIR is a new machine's TPM.
+#
+# The defaults (virtio disk, virtio-net-pci) are what every builder installs
+# on; changing them changes the guest's PCI layout too.
+#
 # QEMU locks IMAGE while it runs, so vm-mount can't attach it meanwhile.
 
 set -euo pipefail
@@ -36,6 +58,7 @@ RAM_DIR=/dev/shm
 die() { echo "vm-run: $*" >&2; exit 1; }
 
 cdrom="" uefi=no secure_boot=yes snapshot=() ram=no keep=no console=(-nographic)
+bus=virtio extra=() nic=virtio-net-pci mac="" tpm=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --cdrom) cdrom=$(realpath "$2"); shift 2 ;;
@@ -45,47 +68,94 @@ while [[ $# -gt 0 ]]; do
         --ram) ram=yes; shift ;;
         --keep) keep=yes; shift ;;
         --serial-log) console=(-display none -serial "file:$2" -monitor none); shift 2 ;;
+        --disk-bus) bus=$2; shift 2 ;;
+        --disk) extra+=("$(realpath "$2")"); shift 2 ;;
+        --nic) nic=$2; shift 2 ;;
+        --mac) mac=,mac=$2; shift 2 ;;
+        --tpm) tpm=$(realpath -m "$2"); shift 2 ;;
         -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) die "unknown option $1" ;;
         *) break ;;
     esac
 done
-[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot]] [--cdrom ISO] [--snapshot | --ram [--keep]] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]"
+[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot]] [--cdrom ISO] [--snapshot | --ram [--keep]] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--mac ADDR] [--tpm DIR] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]"
 image=$(realpath "$1")
 shift
 [[ ${1:-} == -- ]] && shift
-[[ -f $image ]] || die "no such image: $image"
 [[ $ram == yes && ${#snapshot[@]} -gt 0 ]] && die "--ram and --snapshot don't combine"
 [[ $keep == yes && $ram == no ]] && die "--keep needs --ram"
-
-info=$(qemu-img info --output=json "$image" 2>&1) ||
-    die "can't open $image (already running, or mounted by vm-mount?): $(head -n 1 <<<"$info")"
-format=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["format"])' <<<"$info")
+case $bus in virtio|scsi|nvme|sata) ;; *) die "--disk-bus must be virtio, scsi, nvme or sata" ;; esac
 
 tmp=$(mktemp -d)
-overlay=""
+overlays=() swtpm_pid=""
 cleanup() {
+    [[ -n $swtpm_pid ]] && kill "$swtpm_pid" 2>/dev/null
     rm -rf "$tmp"
-    if [[ -n $overlay && $keep == no ]]; then rm -f "$overlay"; fi
+    if [[ $keep == no && ${#overlays[@]} -gt 0 ]]; then rm -f "${overlays[@]}"; fi
 }
 trap cleanup EXIT
 
-disk="file=$image,if=virtio,format=$format"
-if [[ $ram == yes ]]; then
-    overlay=$(mktemp --suffix=.qcow2 "$RAM_DIR/vm-run.$(basename "$image" ."$format").XXXXXX")
-    qemu-img create -q -f qcow2 -b "$image" -F "$format" "$overlay"
-    # cache=unsafe: ignore the guest's flushes.  Harmless here, since the
-    # writes live in RAM and are thrown away (or kept by choice) anyway.
-    disk="file=$overlay,if=virtio,format=qcow2,cache=unsafe"
-fi
+# One disk's -drive options: the image itself, or with --ram an overlay on it.
+drive_opts() {
+    local image=$1 info format overlay
+    [[ -f $image ]] || die "no such image: $image"
+    info=$(qemu-img info --output=json "$image" 2>&1) ||
+        die "can't open $image (already running, or mounted by vm-mount?): $(head -n 1 <<<"$info")"
+    format=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["format"])' <<<"$info")
+    if [[ $ram == yes ]]; then
+        overlay=$(mktemp --suffix=.qcow2 "$RAM_DIR/vm-run.$(basename "$image" ."$format").XXXXXX")
+        overlays+=("$overlay")
+        qemu-img create -q -f qcow2 -b "$image" -F "$format" "$overlay"
+        # cache=unsafe: ignore the guest's flushes.  Harmless here, since the
+        # writes live in RAM and are thrown away (or kept by choice) anyway.
+        echo "file=$overlay,format=qcow2,cache=unsafe"
+    else
+        echo "file=$image,format=$format"
+    fi
+}
+
+disk_args=()
+images=("$image" "${extra[@]}")
+case $bus in
+    scsi) disk_args+=(-device virtio-scsi-pci,id=scsi0) ;;
+    # q35 has an AHCI controller of its own; the PC machine needs one added.
+    sata) [[ $uefi == yes ]] || disk_args+=(-device ich9-ahci,id=ahci0) ;;
+esac
+for i in "${!images[@]}"; do
+    # Not $(drive_opts): a subshell would lose the overlays it records.
+    drive_opts "${images[$i]}" >"$tmp/drive"
+    opts=$(<"$tmp/drive")
+    if [[ $bus == virtio ]]; then
+        # Exactly as every guest was installed: if=virtio keeps its PCI layout.
+        disk_args+=(-drive "$opts,if=virtio")
+        continue
+    fi
+    disk_args+=(-drive "$opts,if=none,id=disk$i")
+    case $bus in
+        scsi) disk_args+=(-device "scsi-hd,drive=disk$i,bus=scsi0.0") ;;
+        nvme) disk_args+=(-device "nvme,drive=disk$i,serial=backotter$i") ;;
+        # On q35, from port 2: --cdrom (a legacy IDE drive) takes port 0.
+        sata) if [[ $uefi == yes ]]; then disk_args+=(-device "ide-hd,drive=disk$i,bus=ide.$((i + 2))")
+              else disk_args+=(-device "ide-hd,drive=disk$i,bus=ahci0.$i"); fi ;;
+    esac
+done
 
 args=(
     -enable-kvm -cpu host -smp 2 -m "${MEMORY:-2048}"
-    -drive "$disk"
-    -nic "user,model=virtio-net-pci,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22"
+    "${disk_args[@]}"
+    -nic "user,model=$nic$mac,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22"
     "${console[@]}"
     "${snapshot[@]}"
 )
+if [[ -n $tpm ]]; then
+    mkdir -p "$tpm"
+    # --terminate: swtpm exits when QEMU disconnects.
+    swtpm socket --tpm2 --tpmstate "dir=$tpm" --ctrl "type=unixio,path=$tmp/swtpm.sock" \
+        --terminate --daemon --pid "file=$tmp/swtpm.pid" || die "swtpm didn't start"
+    swtpm_pid=$(<"$tmp/swtpm.pid")
+    args+=(-chardev "socket,id=chrtpm,path=$tmp/swtpm.sock" -tpmdev emulator,id=tpm0,chardev=chrtpm
+        -device tpm-tis,tpmdev=tpm0)
+fi
 if [[ -n $cdrom ]]; then
     args+=(-drive "file=$cdrom,media=cdrom,readonly=on" -boot order=dc)
 fi
@@ -116,8 +186,11 @@ wait "$qemu" || status=$?
 # A trapped signal ends wait early; wait for QEMU itself to finish.
 while kill -0 "$qemu" 2>/dev/null; do wait "$qemu" || status=$?; done
 if [[ $keep == yes ]]; then
-    echo "vm-run: kept this run's writes in $overlay ($(du -h "$overlay" | cut -f1))." >&2
-    echo "  merge them into $image:  qemu-img commit $overlay && rm $overlay" >&2
-    echo "  or throw them away:      rm $overlay" >&2
+    for i in "${!overlays[@]}"; do
+        overlay=${overlays[$i]}
+        echo "vm-run: kept this run's writes to ${images[$i]} in $overlay ($(du -h "$overlay" | cut -f1))." >&2
+        echo "  merge them into it:  qemu-img commit $overlay && rm $overlay" >&2
+        echo "  or throw them away:  rm $overlay" >&2
+    done
 fi
 exit "$status"

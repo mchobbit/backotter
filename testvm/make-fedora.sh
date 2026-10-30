@@ -3,25 +3,39 @@
 # install from an official Server DVD into a qcow2 disk image, under QEMU with
 # KVM.  / is btrfs, laid out the way Fedora's installer does it.
 #
-# Usage: ./make-fedora.sh RELEASE WORK_DIR
+# Usage: ./make-fedora.sh [--uefi] [--name NAME] RELEASE WORK_DIR
 #   e.g. ./make-fedora.sh 44-1.7 vms/fedora44
+#        ./make-fedora.sh --uefi --name fedora44-uefi 44-1.7 vms/fedora44-uefi
 #
 # RELEASE is a Fedora release and compose number, as in the ISO's name
 # (Fedora-Server-dvd-x86_64-RELEASE.iso).  The ISO and its CHECKSUM file are
 # downloaded into WORK_DIR unless already there (from dl.fedoraproject.org,
 # or the archive for older releases), and checked against the release key's
-# signature before use.  Results, in WORK_DIR (N is the release number):
-#   fedoraN.qcow2         the guest's 16 GiB disk (sparse), with a qcow2
+# signature before use.  Results, in WORK_DIR (NAME is fedoraN by default,
+# N the release number):
+#   NAME.qcow2            the guest's 16 GiB disk (sparse), with a qcow2
 #                         snapshot "fresh-install" of the finished install
 #   root-password         root's password (mode 600)
 #   id_ed25519, .pub      SSH key that logs in as root
 #   install-serial.log    the installer's serial console
+#   vm-run-options        with --uefi: "--uefi", how vm-run must boot it
 #
-# The guest, host name fedoraN: BIOS + MBR, /boot (1 GiB ext4), swap (2 GiB),
+# The guest, host name NAME: BIOS + MBR, /boot (1 GiB ext4), swap (2 GiB),
 # and btrfs for the rest (subvolumes root and home), 2 GB RAM, the Fedora
 # Server package set, no desktop, update repositories turned off; see
-# fedora/ks.cfg.  Run it with vm-run, and look inside it while it's off with
-# vm-mount.
+# fedora/ks.cfg and fedora/storage-bios.ks.
+#
+# --uefi installs for UEFI instead, the disk laid out by Anaconda's own
+# automatic partitioning with btrfs chosen: GPT with an EFI system partition,
+# /boot (XFS) and a btrfs volume compressed with zstd, swap on zram only
+# (fedora/storage-uefi.ks).  It boots through shim and GRUB with Secure Boot
+# on: vm-run --uefi.  The installer itself runs with Secure Boot off, as
+# QEMU's -kernel boot has no shim to vouch for the kernel; the guest's NVRAM
+# boot entries aren't kept, so each boot starts from EFI/BOOT/BOOTX64.EFI, as
+# on a new machine.
+#
+# Run it with vm-run (and vm-run-options), and look inside it while it's off
+# with vm-mount.
 #
 # Needs: qemu-system-x86_64 with KVM, qemu-img, xorriso, gpg, gpgv, openssl,
 # python3, wget.  Runs as an ordinary user in the kvm group.
@@ -39,7 +53,16 @@ INSTALL_TIMEOUT=2400
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-fedora: $*" >&2; exit 1; }
 
-[[ $# -eq 2 ]] || die "usage: $0 RELEASE WORK_DIR"
+firmware=bios name=""
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --uefi) firmware=uefi; shift ;;
+        --name) name=$2; shift 2 ;;
+        -*) die "unknown option $1" ;;
+        *) break ;;
+    esac
+done
+[[ $# -eq 2 ]] || die "usage: $0 [--uefi] [--name NAME] RELEASE WORK_DIR"
 release=$1
 [[ $release =~ ^([0-9]+)-[0-9]+\.[0-9]+$ ]] || die "RELEASE looks like 44-1.7, not '$release'"
 major=${BASH_REMATCH[1]}
@@ -47,8 +70,8 @@ key_fpr=${RELEASE_KEYS[$major]:-}
 [[ -n $key_fpr ]] || die "no release key known for Fedora $major; add it to RELEASE_KEYS"
 ISO=Fedora-Server-dvd-x86_64-$release.iso
 SUMS=Fedora-Server-$major-${release#*-}-x86_64-CHECKSUM
-DISK=fedora$major.qcow2
-guest_name=fedora$major
+guest_name=${name:-fedora$major}
+DISK=$guest_name.qcow2
 mkdir -p "$2"
 cd "$2"
 [[ -e $DISK ]] && die "$2/$DISK already exists; move it away to rebuild"
@@ -104,7 +127,8 @@ umask 022
 
 mkdir "$work/www"
 sed -e "s|@HOSTNAME@|$guest_name|" -e "s|@ROOT_PASSWORD_HASH@|$hash|" \
-    -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" "$here/fedora/ks.cfg" >"$work/www/ks.cfg"
+    -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" \
+    -e "/^@STORAGE@\$/{r $here/fedora/storage-$firmware.ks" -e "d}" "$here/fedora/ks.cfg" >"$work/www/ks.cfg"
 if grep -n '@[A-Z_]\+@' "$work/www/ks.cfg"; then die "ks.cfg placeholders left unfilled"; fi
 
 # Serve ks.cfg to the guest only: QEMU's user-mode network maps 10.0.2.2 in
@@ -114,10 +138,18 @@ python3 -m http.server --bind 127.0.0.1 --directory "$work/www" "$port" >"$work/
 server=$!
 
 # --- Install --------------------------------------------------------------------------
+machine=(-machine pc)
+if [[ $firmware == uefi ]]; then
+    # OVMF without Secure Boot, and a variable store thrown away afterwards.
+    cp /usr/share/OVMF/OVMF_VARS_4M.fd "$work/vars.fd"
+    machine=(-machine q35
+        -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.fd
+        -drive "if=pflash,format=raw,unit=1,file=$work/vars.fd")
+fi
 qemu-img create -q -f qcow2 "$DISK" "$DISK_SIZE"
 echo "Installing; the installer's console goes to $2/install-serial.log"
 timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
-    -enable-kvm -cpu host -smp 2 -m "$MEMORY" -machine pc \
+    -enable-kvm -cpu host -smp 2 -m "$MEMORY" "${machine[@]}" \
     -drive "file=$DISK,if=virtio,format=qcow2" \
     -drive "file=$ISO,media=cdrom,readonly=on" \
     -nic user,model=virtio-net-pci \
@@ -128,5 +160,6 @@ timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
 [[ $(qemu-img info --output=json "$DISK" | python3 -c 'import json, sys; print(json.load(sys.stdin)["actual-size"])') -gt 500000000 ]] ||
     die "the disk is nearly empty; see install-serial.log"
 
+[[ $firmware == uefi ]] && echo "--uefi" >vm-run-options
 qemu-img snapshot -c fresh-install "$DISK"
 echo "Done: $2/$DISK ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""

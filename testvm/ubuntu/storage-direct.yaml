@@ -1,0 +1,6 @@
+  # The layout Ubuntu's installer picks by default (Subiquity's guided
+  # "direct" layout): on UEFI, GPT with an EFI system partition at /boot/efi
+  # and ext4 for the rest (/), and a swap file, /swap.img.
+  storage:
+    layout:
+      name: direct

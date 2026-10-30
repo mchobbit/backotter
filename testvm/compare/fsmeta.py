@@ -26,10 +26,13 @@ import stat
 import sys
 
 FS_IOC_GETFLAGS = 0x80086601
-FS_FL_USER_VISIBLE = 0x0003DFFF
+# FS_FL_USER_VISIBLE, plus two that chattr(1) sets but the kernel leaves out
+# of it: FS_NOCOW_FL (btrfs's C) and FS_PROJINHERIT_FL (P).
+FS_FL_USER_VISIBLE = 0x0003DFFF | 0x00800000 | 0x20000000
 # Set by the filesystem itself, not restorable: ext4's hashed-directory index.
 FLAGS_FS_INTERNAL = 0x00001000
-FLAG_NAMES = {0x10: "immutable", 0x20: "append", 0x40: "nodump", 0x80: "noatime"}
+FLAG_NAMES = {0x10: "immutable", 0x20: "append", 0x40: "nodump", 0x80: "noatime",
+              0x00800000: "nocow"}
 SEEK_HOLE = 4
 TYPES = {stat.S_IFREG: "file", stat.S_IFDIR: "dir", stat.S_IFLNK: "symlink",
          stat.S_IFCHR: "chardev", stat.S_IFBLK: "blockdev", stat.S_IFIFO: "fifo",

@@ -207,8 +207,16 @@ def recreate(layout: Layout, dst_dev: str) -> None:
         for n, f in layout.parts.items():
             dev, fs, uuid, label = f"{dst_dev}p{n}", f.get("TYPE"), f.get("UUID"), f.get("LABEL")
             lab = ["-L", label] if label else []
-            if fs == "ext4":
-                in_src(["mkfs.ext4", "-q", "-F", "-U", uuid] + lab + [dev])
+            if fs in ("ext4", "ext3", "ext2"):
+                in_src([f"mkfs.{fs}", "-q", "-F", "-U", uuid] + lab + [dev])
+            elif fs == "vfat":
+                # An EFI system partition; FAT's "UUID" is its volume id.
+                in_src(["mkfs.vfat", "-i", uuid.replace("-", "")] + (["-n", label] if label else []) + [dev])
+            elif fs == "f2fs":
+                in_src(["mkfs.f2fs", "-q", "-f", "-U", uuid] + (["-l", label] if label else []) + [dev])
+            elif fs == "nilfs2":
+                in_src(["mkfs.nilfs2", "-q", "-f"] + lab + [dev])
+                in_src(["nilfs-tune", "-U", uuid, dev])
             elif fs == "xfs":
                 in_src(["mkfs.xfs", "-q", "-f", "-m", f"uuid={uuid}"] + lab + [dev])
             elif fs == "btrfs":
@@ -250,6 +258,10 @@ def recreate(layout: Layout, dst_dev: str) -> None:
             run(["mount", "--bind", str(top), str(SRC_MP / "mnt")])
             with src_api():
                 for sv in subvols:
+                    # A subvolume inside another (Fedora's root/var/lib/
+                    # portables) needs the directories above it; the
+                    # restore gives them their metadata.
+                    (top / sv).parent.mkdir(parents=True, exist_ok=True)
                     in_src(["btrfs", "subvolume", "create", f"/mnt/{sv}"])
             run(["umount", str(SRC_MP / "mnt")])
             run(["umount", str(top)])
@@ -339,12 +351,26 @@ def port_free(port: str) -> bool:
             return False
 
 
-def boot(image: Path, guest_dir: Path, log: Path) -> dict:
+def is_uefi(layout: dict) -> bool:
+    """Whether a guest boots by UEFI: it has an EFI system partition (FAT)."""
+    return "vfat" in layout.values()
+
+
+def boot(image: Path, guest_dir: Path, log: Path, uefi: bool = False) -> dict:
     if not port_free(SSH_PORT):
         raise SystemExit(f"port {SSH_PORT} is taken (a test VM left running?)")
+    # The restored disk's qemu-nbd may still be letting go of it (after JFS,
+    # for one); vm-run can't open a locked image, and would quietly give up.
+    for _ in range(30):
+        if run(["qemu-img", "info", str(image)], check=False, quiet=True).returncode == 0:
+            break
+        time.sleep(1)
     # Its own process group, so that stopping it stops QEMU too, and a VM
     # left running can't hold SSH_PORT against the next boot test.
-    vm = subprocess.Popen([str(TESTVM / "vm-run"), "--ram", "--serial-log", str(log), str(image)],
+    # A guest with an EFI system partition boots by UEFI; without Secure Boot,
+    # which Pop!_OS doesn't support and the others don't need.
+    firmware = ["--uefi", "--no-secure-boot"] if uefi else []
+    vm = subprocess.Popen([str(TESTVM / "vm-run"), "--ram", *firmware, "--serial-log", str(log), str(image)],
                           env=dict(os.environ, SSH_PORT=SSH_PORT), start_new_session=True,
                           stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     ssh = ["ssh", "-q", "-i", str(guest_dir / "id_ed25519"), "-p", SSH_PORT, "-o", "BatchMode=yes",
@@ -446,7 +472,7 @@ def compare_guest(guest: str, tools: list[str]) -> dict:
             finally:
                 unmount_dst(dst_dev, layout)
             print(f"== {guest}: booting the {tool} restore", flush=True)
-            res["boot"] = boot(dst, guest_dir, work / f"boot-{tool}.log")
+            res["boot"] = boot(dst, guest_dir, work / f"boot-{tool}.log", uefi=is_uefi(results["layout"]))
             print(f"   {res['boot']}", flush=True)
         results["coverage"] = json.loads((work / f"diff-{tools[0]}.json").read_text())["coverage"]
     finally:
@@ -480,7 +506,7 @@ def main() -> int:
         for tool in tools:
             print(f"== {guest}: booting the {tool} restore", flush=True)
             r["tools"][tool]["boot"] = boot(work / f"restored-{tool}.qcow2", VMS / guest,
-                                            work / f"boot-{tool}.log")
+                                            work / f"boot-{tool}.log", uefi=is_uefi(r["layout"]))
             print(f"   {r['tools'][tool]['boot']}", flush=True)
         (work / "results.json").write_text(json.dumps(r, indent=1))
     else:

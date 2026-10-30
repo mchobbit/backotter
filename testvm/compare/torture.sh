@@ -80,6 +80,12 @@ mkdir -p "$T/empty-dir"
 touch -d '1970-01-02 00:00:00.123456789' "$T/old"
 touch -d '2100-01-01 12:00:00.987654321' "$T/future"
 
+# btrfs's no-copy-on-write flag (systemd sets it on its journals), which only
+# takes on an empty file: set before the data goes in, and inherited from a
+# directory.
+touch "$T/nocow"; try chattr +C "$T/nocow"; head -c 65536 /dev/urandom >>"$T/nocow"
+mkdir -p "$T/nocow-dir"; try chattr +C "$T/nocow-dir"; echo "inherited" >"$T/nocow-dir/file"
+
 # Inode flags, last of all: an immutable file can't be changed afterwards.
 touch "$T/nodump"; try chattr +d "$T/nodump"
 echo "append" >"$T/append-only"; try chattr +a "$T/append-only"

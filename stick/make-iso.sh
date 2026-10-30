@@ -1,7 +1,12 @@
 #!/usr/bin/env bash
 # Make BackOtter's rescue ISO from the stock Ubuntu Server live ISO.
 #
-# Usage: ./make-iso.sh [--test] SOURCE_ISO SLIM_DIR LAYER_DIR OUT_ISO
+# Usage: ./make-iso.sh [--test] SOURCE_ISO SLIM_DIR LAYER_DIR [OUT_ISO]
+#
+# OUT_ISO defaults to backotter-live-linux-VERSION-ARCH.iso in the current
+# directory, or in OUT_ISO if that's a directory.  BackOtter has no releases
+# yet, so VERSION is dev.DATE.COMMIT: the UTC build date and the commit stick/
+# is at, plus .dirty if stick/ has uncommitted changes.  ARCH is SOURCE_ISO's.
 #
 # SLIM_DIR is slim-base-layer.sh's output and LAYER_DIR build-backotter-layer.sh's,
 # both built from SOURCE_ISO.  Compared with the stock ISO, the result:
@@ -29,6 +34,7 @@
 
 set -euo pipefail
 
+PLATFORM=linux                  # the backotter-live-PLATFORM-... in the name
 BASE=ubuntu-server-minimal
 LAYER=$BASE.backotter
 TIMEOUT=10
@@ -47,12 +53,11 @@ if [[ ${1:-} == --test ]]; then
     DEFAULT=2   # the serial-console entry
     shift
 fi
-[[ $# -eq 4 ]] || die "usage: $0 [--test] SOURCE_ISO SLIM_DIR LAYER_DIR OUT_ISO"
-SOURCE_ISO=$1 SLIM=$2 LAYER_DIR=$3 OUT_ISO=$4
+[[ $# -eq 3 || $# -eq 4 ]] || die "usage: $0 [--test] SOURCE_ISO SLIM_DIR LAYER_DIR [OUT_ISO]"
+SOURCE_ISO=$1 SLIM=$2 LAYER_DIR=$3 OUT_ISO=${4:-.}
 for f in "$SOURCE_ISO" "$SLIM/$BASE".{squashfs,manifest,size} "$LAYER_DIR/$LAYER".{squashfs,manifest,size}; do
     [[ -f $f ]] || die "missing $f"
 done
-[[ -e $OUT_ISO ]] && die "$OUT_ISO already exists"
 for c in xorriso mkfs.vfat mmd mcopy unsquashfs python3; do
     command -v "$c" >/dev/null || die "missing $c"
 done
@@ -64,6 +69,20 @@ xorriso -osirrox on -indev "$SOURCE_ISO" \
     -extract /md5sum.txt "$work/md5sum.txt.stock" \
     -extract /.disk/info "$work/disk-info.stock" 2>/dev/null
 chmod u+w "$work"/*
+
+# --- The output name ---------------------------------------------------------------
+if [[ -d $OUT_ISO ]]; then
+    arch=$(grep -owE 'amd64|arm64' "$work/disk-info.stock" | head -n 1)
+    [[ -n $arch ]] || die "can't tell the architecture of $SOURCE_ISO"
+    version=dev.$(date -u +%Y%m%d)
+    here=$(dirname "$0")
+    if commit=$(git -C "$here" rev-parse --short=7 HEAD 2>/dev/null); then
+        version+=.$commit
+        [[ -z $(git -C "$here" status --porcelain -- . 2>/dev/null) ]] || version+=.dirty
+    fi
+    OUT_ISO=$OUT_ISO/backotter-live-$PLATFORM-$version-$arch.iso
+fi
+[[ -e $OUT_ISO ]] && die "$OUT_ISO already exists"
 
 # --- The image marker and the config partition -------------------------------------
 ubuntu=$(grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' "$work/disk-info.stock" | head -n 1)
@@ -78,17 +97,17 @@ unsquashfs -cat "$LAYER_DIR/$LAYER.squashfs" \
 image_id=$(cat /proc/sys/kernel/random/uuid)
 fat_serial=$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n' | tr a-f A-F)
 
-python3 - "$work" "$image_id" "$ubuntu" "$kernel" "$zfs" "$SYSTEM_SCHEMAS" \
+python3 - "$work" "$image_id" "$PLATFORM" "$ubuntu" "$kernel" "$zfs" "$SYSTEM_SCHEMAS" \
     "$CONFIG_PART" "$CONFIG_SECTORS" "$CONFIG_LABEL" "${fat_serial:0:4}-${fat_serial:4}" <<'EOF'
 import datetime, json, sys
-work, image_id, ubuntu, kernel, zfs, schemas, part, sectors, label, serial = sys.argv[1:]
+work, image_id, platform, ubuntu, kernel, zfs, schemas, part, sectors, label, serial = sys.argv[1:]
 with open(f"{work}/zfs-features") as f:
     features = sorted(l.strip() for l in f if l.strip() and not l.startswith("#"))
 built = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 docs = {
     "backotter.json": {
         "format": "backotter-image", "schema": 1, "image_id": image_id,
-        "built": built, "ubuntu": ubuntu, "kernel": kernel,
+        "built": built, "platform": platform, "ubuntu": ubuntu, "kernel": kernel,
         "zfs": {"version": zfs, "features": features},
         "system_schemas": [int(s) for s in schemas.split()],
         "config_partition": {"number": int(part), "sectors": int(sectors),

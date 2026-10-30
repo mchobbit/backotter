@@ -75,7 +75,7 @@ check sshd-off-at-boot '! systemctl is-active -q ssh.service && ! systemctl is-a
 check remote-access '/usr/lib/backotter/remote-access >/run/ra.out 2>&1 || { tail -n 3 /run/ra.out; exit 1; }; pw=$(sed -n "s/^Password: //p" /run/backotter/remote-access); printf "#!/bin/sh\necho %s\n" "$pw" >/root/.askpass; chmod 700 /root/.askpass; who=$(SSH_ASKPASS=/root/.askpass SSH_ASKPASS_REQUIRE=force setsid -w ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null backotter@127.0.0.1 whoami </dev/null 2>/run/ssh.err); rm -f /root/.askpass; if test "$who" = backotter; then echo "password login over SSH works"; else tail -n 3 /run/ssh.err; journalctl -u ssh -n 4 --no-pager -o cat; exit 1; fi'
 check root-ssh-refused '! SSH_ASKPASS=/bin/false SSH_ASKPASS_REQUIRE=force setsid -w ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o NumberOfPasswordPrompts=1 root@127.0.0.1 true </dev/null 2>/dev/null'
 check failed-units 'n=$(systemctl --failed --no-legend | wc -l); systemctl --failed --no-legend | cut -c1-60; test $n -eq 0'
-check marker 'cd /cdrom && grep "  ./.disk/backotter.json$" md5sum.txt | md5sum -c --quiet && python3 -c "import json; m = json.load(open(\".disk/backotter.json\")); print(m[\"image_id\"], \"zfs\", m[\"zfs\"][\"version\"], len(m[\"zfs\"][\"features\"]), \"features\")"'
+check marker 'cd /cdrom && grep "  ./.disk/backotter.json$" md5sum.txt | md5sum -c --quiet && python3 -c "import json; m = json.load(open(\".disk/backotter.json\")); print(m[\"image_id\"], m[\"platform\"], \"zfs\", m[\"zfs\"][\"version\"], len(m[\"zfs\"][\"features\"]), \"features\")"'
 check memory 'free -m | awk "/Mem:/{print \$3 \" MB used of \" \$2}"'
 """
 

@@ -65,6 +65,7 @@ can disagree with it.
   "schema": 1,
   "image_id": "6f1c2c1e-5b0e-4a51-9d8e-2a3c8f4e7b10",
   "built": "2026-10-29T17:12:39Z",
+  "platform": "linux",
   "ubuntu": "26.04.1",
   "kernel": "7.0.0-30-generic",
   "zfs": {"version": "2.4.1", "features": ["allocation_classes", "..."]},
@@ -76,6 +77,10 @@ can disagree with it.
 
 - `image_id` is a fresh UUID per build.  It ties partition 3 to the ISO it was
   built with (see `stick.json`).
+- `platform` is the family of systems the image restores: `linux` here,
+  later `freebsd` and `illumos`.  It's the same word as in the file name (see
+  "Image file names"), but the backup tool reads it from here, since a file
+  can be renamed.  `ubuntu` is what the Linux image happens to be built from.
 - `zfs.features` is OpenZFS's own list for that release
   (`/usr/share/zfs/compatibility.d/openzfs-2.4`).  It and `kernel` let the
   backup tool warn when the stick is too old for the machine (see "Is this
@@ -92,6 +97,29 @@ can disagree with it.
 
 The ISO volume ID stays Ubuntu's.  GRUB and casper may look for it, and a
 marker file is enough to recognise the stick.
+
+## Image file names
+
+```
+backotter-live-<platform>-<version>-<arch>.iso
+backotter-live-linux-0.1.0-amd64.iso
+backotter-live-freebsd-0.1.0-amd64.iso
+backotter-live-illumos-0.1.0-amd64.iso
+```
+
+- `platform` is `linux`, `freebsd` or `illumos`, as in the marker.  One Linux
+  image covers every Linux distribution, so the name doesn't say which distro
+  or Ubuntu release it's built from; the marker does.
+- `version` is BackOtter's, one number for all platforms: the backup tool and
+  the stick are matched by schema, and the schemas are shared.  Until the first
+  release it's `dev.DATE.COMMIT`, for example `dev.20261030.7230d49`, with
+  `.dirty` added when `stick/` has uncommitted changes.
+- `arch` is `amd64` or `arm64`, the names Debian and FreeBSD both use.
+- All lowercase, and no `-` inside a field, so a name splits on `-` into a
+  fixed prefix and three fields.  `live` leaves room for other kinds of image
+  (`backotter-netboot-...`).
+
+`make-iso.sh` picks this name when it isn't given a file to write.
 
 ## stick.json
 

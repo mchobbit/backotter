@@ -268,6 +268,12 @@ backup engine, still to be chosen (restic or borg).
   restores, and a stick that doesn't know the value refuses it.  Nothing like
   that is planned; network boot suits unattended restores better than a stick.
 - `requirements` is what the stick must support to restore this machine.
+  `zfs_features` lists every feature enabled or active on any of the machine's
+  pools, not only the ones in use, so the stick can recreate each pool exactly
+  (see "A stick newer than the machine").
+- The `storage` section records, per pool, its feature list and its
+  `compatibility` property (`grub2` on Ubuntu's `bpool`, for example), whatever
+  else its own design doc puts there.
 - `system.json.sha256` is in `sha256sum` format.  Cheap sticks get corrupted
   when yanked, and a damaged config should be reported, not half-used.
 
@@ -374,6 +380,30 @@ compares `system.json`'s `requirements` with the marker:
 
 A failure is a loud warning, not an error: the config is still written, since
 an old stick that can fetch the repository location is better than nothing.
+
+### A stick newer than the machine
+
+The check above only catches a stick that is too old.  A stick whose OpenZFS is
+newer than the machine's (2.4 against Debian 12's 2.1, say) passes it, and is
+the more dangerous case: a plain `zpool create` enables every feature the
+stick knows, some of which go active at once (`spacemap_v2`, `log_spacemap`).
+The restored machine's own, older OpenZFS then refuses to import its root pool,
+and a restore that looked fine leaves a machine that won't boot.  The same
+happens to a `bpool` created without `compatibility=grub2`: GRUB can't read it.
+
+So the restore never creates a pool with the stick's defaults.  It creates each
+one with exactly the features `storage` recorded, starting from none:
+`zpool create -d -o feature@X=enabled …` for each, plus `-o compatibility=…`
+when the pool had one.  A recorded feature the stick doesn't know is left off
+(the write-time check already warned about it), and the restore says so; it
+fails only when the pool's layout or properties can't do without it (`draid`,
+`zstd_compress` for `compression=zstd`, `longname` for names over 255 bytes).
+The stick never runs `zpool upgrade` on a pool, new or imported.
+
+Importing a pool that already exists follows OpenZFS's own rules: an unknown
+feature that is only enabled doesn't matter, an unknown active feature that is
+only needed for writing allows a read-only import, and any other unknown active
+feature means the stick can't import the pool at all.
 
 ## What's built
 

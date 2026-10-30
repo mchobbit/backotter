@@ -55,7 +55,8 @@ The root FFS is never written: the kernel mounts it read-only, and `/etc/rc`
 is patched (`build.sh` fails if the stock lines it replaces aren't there):
 
 - `mount -uw /` becomes `/usr/local/lib/backotter/boot-setup`, which mounts
-  memory file systems (mfs: GENERIC has no tmpfs) on `/tmp`, then `/etc`,
+  memory file systems (mfs: GENERIC has no tmpfs) on `/tmp` (up to a
+  quarter of the memory), then `/etc`,
   `/var`, `/dev` (ptys need a writable `/dev`) and `/root`, each filled from
   the root's own copy with `mount_mfs -P`, and an empty `/home` (for remote
   access's user).  It also writes `/etc/hostname.IF` with `inet autoconf` and
@@ -119,5 +120,7 @@ root can't log in over SSH.
 - No Secure Boot.
 - Network cards plugged in after boot (USB Ethernet) aren't configured:
   `ifconfig IF inet autoconf` by hand.
-- The memory file systems live in RAM without swap: a machine with little
-  memory fills up if much is written to `/tmp`.
+- The memory file systems live in RAM without swap.  `/tmp` is capped at a
+  quarter of the memory, the others at fixed sizes (`/var` and `/home` 256
+  MiB); writing a lot to them on a machine with little memory can still run
+  it out.

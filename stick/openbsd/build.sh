@@ -81,7 +81,9 @@ tar -xzpf "$root/var/sysmerge/etc.tgz" -C "$root"
 rm -rf "$root/usr/share/relink" "$root/var/sysmerge"/*
 install -o root -g wheel -m 600 in/bsd.mp "$root/bsd"
 (cd "$root/dev" && sh ./MAKEDEV all)
-# rc reads this into the kernel's pool at boot, and writes a new one.
+# rc feeds this to /dev/random at boot and writes a new one.  It's the same
+# on every stick, so it adds no entropy (that comes from the boot loader and
+# CPU); it's here so rc's first read doesn't fail.
 dd if=/dev/random of="$root/var/db/host.random" bs=65536 count=1 status=none
 chmod 600 "$root/var/db/host.random"
 
@@ -136,17 +138,24 @@ cat >"$root$LIB/boot-setup" <<'EOF'
 # root read-write.  The root stays read-only; what must be writable becomes a
 # memory file system (mfs: GENERIC has no tmpfs), filled from the root's copy,
 # so each boot starts the same and nothing is kept.  The sizes are limits: an
-# mfs takes memory as files fill it.
-set -eu
+# mfs takes memory as files fill it, and there's no swap, so /tmp gets a
+# quarter of the memory.  A mount that fails says so and the others go on.
+set -u
 PATH=/sbin:/bin:/usr/sbin:/usr/bin
+# mfs DIR OPTION...: an mfs on DIR.
+mfs() {
+    dir=$1
+    shift
+    mount_mfs "$@" swap "$dir" || echo "BackOtter: no memory file system on $dir: it stays read-only" >&2
+}
 # mount_mfs -P copies through a directory in /tmp: /tmp comes first.
-mount_mfs -s 1g -o nodev,nosuid swap /tmp
+mfs /tmp -s $(($(sysctl -n hw.physmem) / 4 / 512)) -o nodev,nosuid
 chmod 1777 /tmp
-mount_mfs -s 64m -o nodev,nosuid -P /etc swap /etc
-mount_mfs -s 256m -o nodev,nosuid -P /var swap /var
-mount_mfs -s 16m -o nosuid -P /dev swap /dev      # ptys need a writable /dev
-mount_mfs -s 64m -o nodev,nosuid -P /root swap /root
-mount_mfs -s 256m -o nodev,nosuid swap /home      # for remote access's user
+mfs /etc -s 64m -o nodev,nosuid -P /etc
+mfs /var -s 256m -o nodev,nosuid -P /var
+mfs /dev -s 16m -o nosuid -P /dev           # ptys need a writable /dev
+mfs /root -s 64m -o nodev,nosuid -P /root
+mfs /home -s 256m -o nodev,nosuid           # for remote access's user
 
 # DHCP and SLAAC on every network card; netstart, later in rc, starts them.
 for i in $(ifconfig -a | sed -n 's/^\([a-z][a-z0-9]*\): flags=.*/\1/p'); do

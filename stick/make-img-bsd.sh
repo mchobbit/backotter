@@ -109,6 +109,11 @@ if [[ $BUILD_VM_MODE == snapshot ]]; then
         "${BUILD_VM_OPTIONS[@]}" --serial-log "$work/serial.log" "$vm/$BUILD_VM_IMAGE" \
         </dev/null >"$work/vm-run.log" 2>&1
     started=yes
+    # vm-run is still setting up when setsid returns: wait for its QEMU.
+    for _ in $(seq 30); do
+        pgrep -f "^qemu-system.*:$BUILD_VM_PORT-:22" >/dev/null && break
+        sleep 1
+    done
 fi
 # QEMU's user network accepts the connection before the guest is up, so
 # ConnectTimeout never fires; timeout does.

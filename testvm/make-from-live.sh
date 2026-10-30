@@ -24,7 +24,8 @@
 # The guest keeps its desktop but boots to text mode, to stay light in 2 GB of
 # RAM; root and a user "tester" share a generated password, and root accepts
 # an SSH key.  Results, in WORK_DIR: NAME.qcow2 (16 GiB, snapshot
-# "fresh-install"), root-password, id_ed25519, build.log.
+# "fresh-install"), root-password, id_ed25519, build.log, and for Pop!_OS
+# vm-run-options ("--uefi --no-secure-boot": its bootloader isn't signed).
 #
 # Needs: root; qemu-img, losetup, unsquashfs, sfdisk, mkfs for ROOT_FS
 # (f2fs-tools, nilfs-tools), dosfstools for Pop!_OS, xorriso, openssl.
@@ -299,4 +300,8 @@ trap - EXIT
 
 qemu-img snapshot -c fresh-install "$disk"
 chown "$owner": "$disk" root-password id_ed25519 id_ed25519.pub
+if [[ $firmware == uefi ]]; then
+    echo "--uefi --no-secure-boot" >vm-run-options
+    chown "$owner": vm-run-options
+fi
 echo "Done: $disk ($(du -h "$disk" | cut -f1) on disk), snapshot \"fresh-install\""

@@ -28,8 +28,8 @@
 # The guest: BIOS, console on the serial port, 2 GB RAM, DHCP and SSH.
 # NetBSD: MBR and a disklabel with / (FFSv2 with a WAPBL log) and swap, as
 # NetBSD lays a disk out (no /boot of its own).  AlpineBSD: GPT with an EFI
-# system partition, swap and / (FFSv2 with extended attributes).  Run it with
-# vm-run.  vm-mount can't open it: Linux's ufs driver reads FFSv2 at most,
+# system partition, swap and / (FFSv2 with extended attributes), booting by
+# BIOS (vm-run's default) or UEFI.  Run it with vm-run.  vm-mount can't open it: Linux's ufs driver reads FFSv2 at most,
 # and not through a disklabel or NetBSD's wedges.
 #
 # Needs: qemu-system-x86_64 with KVM, qemu-img, xorriso, gpg, gpgv, openssl,

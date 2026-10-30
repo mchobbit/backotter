@@ -15,6 +15,11 @@ runcmd:
   # the boot.  The later stages require this one, so they don't run either;
   # multi-user and console-login only want cloud-init:final optionally.
   - svcadm disable cloud-init:initlocal
+  # Swap, which the image has none of: a volume in the pool, as illumos'
+  # own installer makes it.
+  - zfs create -V 2G rpool/swap
+  - 'printf "/dev/zvol/dsk/rpool/swap\t-\t\t-\t\tswap\t-\tno\t-\n" >>/etc/vfstab'
+  - /usr/sbin/swap -a /dev/zvol/dsk/rpool/swap
   - 'echo "BACKOTTER-FIRSTBOOT: OK" >/dev/console'
 power_state:
   mode: poweroff

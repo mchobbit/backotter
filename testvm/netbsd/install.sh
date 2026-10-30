@@ -12,7 +12,8 @@
 # AlpineBSD (NetBSD's kernel, an Alpine-like userspace built from aports:
 # apk, busybox, s6): GPT, as its installation guide has it, with a 1 GiB EFI
 # system partition, swap, and / (FFSv2 with extended attributes), installed
-# with apk from AlpineBSD's mirror, booting from BIOS through gpt biosboot.
+# with apk from AlpineBSD's mirror, booting from BIOS through gpt biosboot
+# or from UEFI through NetBSD's loader on the EFI system partition.
 
 FLAVOR='@FLAVOR@'                      # netbsd or alpinebsd
 GUEST_NAME='@HOSTNAME@'
@@ -116,7 +117,7 @@ else
     # The packages' signatures are checked against that key; only the TLS
     # certificates go unchecked, as the guide does it (no CA bundle here).
     run $T/sbin/apk -p $T --initdb --check-certificate=no add absd-base netbsd-kernel-generic-bin \
-        netbsd-firmware netbsd-bootloader-mbr ifupdown ifupdown-s6 dhcpcd dhcpcd-s6 \
+        netbsd-firmware netbsd-bootloader-mbr netbsd-bootloader-efi ifupdown ifupdown-s6 dhcpcd dhcpcd-s6 \
         dropbear dropbear-s6
     (cd $T/dev && sh ./MAKEDEV all) || fail MAKEDEV
     # The stock /etc/rc.conf sources /etc/defaults/rc.conf the shell's way,
@@ -148,6 +149,13 @@ EOF
     run cp $T/usr/mdec/boot $T/boot
     run installboot -v -o console=com0,speed=115200,timeout=3 /dev/r$root $T/usr/mdec/bootxx_ffsv2
     run gpt biosboot -c $T/usr/mdec/gptmbr.bin -L AlpineBSD $DISK
+    # UEFI boot too, from the EFI system partition: NetBSD's loader, which
+    # finds / by itself.  Not mounted in the guest.
+    mkdir -p /tmp/efi
+    run mount -t msdos /dev/$efi /tmp/efi
+    mkdir -p /tmp/efi/EFI/BOOT
+    run cp $T/usr/mdec/bootx64.efi /tmp/efi/EFI/BOOT/BOOTX64.EFI
+    run umount /tmp/efi
     # Root's password, in whichever password file this userspace keeps.
     hash=$(pwhash "$ROOT_PASSWORD")
     if [ -f $T/etc/master.passwd ]; then

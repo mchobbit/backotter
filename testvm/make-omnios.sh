@@ -17,13 +17,15 @@
 #   root-password         root's password (mode 600)
 #   id_ed25519, .pub      SSH key that logs in as root
 #   install-serial.log    the serial console of the first boot
+#   vm-run-options        "--legacy-virtio-net", how vm-run must boot it
 #
 # The guest, host name omniosN: GPT with the image's own layout, ZFS pool
-# "rpool" grown to fill the disk, console on the serial port, 2 GB RAM,
+# "rpool" grown to fill the disk, swap on a 2 GiB volume in it (rpool/swap,
+# illumos' usual place for swap), console on the serial port, 2 GB RAM,
 # cloud-init turned off after its first run; see omnios/user-data.  Run it
-# with vm-run, giving it a legacy virtio NIC (illumos' vioif can't map the
-# modern one's registers, and the guest then has no network):
-#   vm-run omniosN.qcow2 -- -global virtio-net-pci.disable-modern=on
+# with vm-run and vm-run-options, which give it a legacy virtio NIC (illumos'
+# vioif can't map the modern one's registers, and the guest then has no
+# network).
 # vm-mount can't open it: Linux's OpenZFS may refuse an illumos pool, and
 # importing it would mark it as this host's.
 #
@@ -107,5 +109,6 @@ timeout "$BOOT_TIMEOUT" qemu-system-x86_64 \
 grep -q 'BACKOTTER-FIRSTBOOT: OK' install-serial.log ||
     die "cloud-init didn't finish; see install-serial.log"
 
+echo "--legacy-virtio-net" >vm-run-options
 qemu-img snapshot -c fresh-install "$DISK"
 echo "Done: $2/$DISK ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""

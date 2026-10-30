@@ -2,8 +2,9 @@
 # Boot a BackOtter test VM from its disk image.
 #
 # Usage: vm-run [--uefi [--no-secure-boot]] [--cdrom ISO] [--snapshot | --ram [--keep]]
-#               [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--mac ADDR] [--tpm DIR]
-#               [--cpus N] [--memory MB] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]
+#               [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--legacy-virtio-net]
+#               [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE]
+#               IMAGE [-- QEMU_ARGS...]
 #
 # The VM gets 2 CPUs, 2 GB RAM (MEMORY=MB overrides), KVM, and QEMU's
 # user-mode network with the guest's SSH port on 127.0.0.1:2222 (SSH_PORT
@@ -44,6 +45,10 @@
 #   --nic MODEL   the network card's QEMU model instead of virtio-net-pci, e.g.
 #                 e1000e, e1000 or rtl8139: another driver.  It keeps the PCI
 #                 slot, so names by slot (ens3) stay the same.
+#   --legacy-virtio-net
+#                 the virtio network card without its modern (virtio 1.0)
+#                 interface: illumos' vioif can't map the modern one's
+#                 registers, and the guest then has no network (OmniOS)
 #   --mac ADDR    the network card's MAC address instead of QEMU's default
 #                 52:54:00:12:34:56 (the same for every model), e.g.
 #                 52:54:00:00:00:02, as a new machine's card would have
@@ -62,7 +67,7 @@ RAM_DIR=/dev/shm
 die() { echo "vm-run: $*" >&2; exit 1; }
 
 cdrom="" uefi=no secure_boot=yes snapshot=() ram=no keep=no console=(-nographic)
-bus=virtio extra=() nic=virtio-net-pci mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
+bus=virtio extra=() nic=virtio-net-pci nic_global=() mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
 while [[ $# -gt 0 ]]; do
     case $1 in
         --cdrom) cdrom=$(realpath "$2"); shift 2 ;;
@@ -75,6 +80,7 @@ while [[ $# -gt 0 ]]; do
         --disk-bus) bus=$2; shift 2 ;;
         --disk) extra+=("$(realpath "$2")"); shift 2 ;;
         --nic) nic=$2; shift 2 ;;
+        --legacy-virtio-net) nic_global=(-global virtio-net-pci.disable-modern=on); shift ;;
         --mac) mac=,mac=$2; shift 2 ;;
         --tpm) tpm=$(realpath -m "$2"); shift 2 ;;
         --cpus) cpus=$2; shift 2 ;;
@@ -84,7 +90,7 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
-[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot]] [--cdrom ISO] [--snapshot | --ram [--keep]] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]"
+[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot]] [--cdrom ISO] [--snapshot | --ram [--keep]] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]"
 image=$(realpath "$1")
 shift
 [[ ${1:-} == -- ]] && shift
@@ -151,6 +157,7 @@ args=(
     -enable-kvm -cpu host -smp "$cpus" -m "$memory"
     "${disk_args[@]}"
     -nic "user,model=$nic$mac,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22"
+    "${nic_global[@]}"
     "${console[@]}"
     "${snapshot[@]}"
 )

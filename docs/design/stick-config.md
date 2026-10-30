@@ -9,7 +9,7 @@ backup.  Everything machine-specific lives in a small writable partition on the
 stick, which the backup tool updates in place whenever the stick is plugged in.
 
 Non-goals: the backup tool never partitions or rewrites the stick, formats
-only partition 3 and only to repair it, and never stores secrets on it.
+only the config partition and only to repair it, and never stores secrets on it.
 
 ## Where the config lives
 
@@ -39,21 +39,22 @@ the same `marker.py`, wherever their own layout leaves a slot:
 | linux     | GPT   | 3                | ISO9660 (casper, overlay in RAM) |
 | freebsd   | MBR   | slice 3          | UFS2 in a BSD label (slice 2)    |
 | netbsd    | GPT   | 3                | FFSv2                            |
-| openbsd   | MBR   | 2 (slot 3 is OpenBSD's own) | FFS in OpenBSD's disklabel |
+| openbsd   | MBR   | 2 (entry 4 is OpenBSD's own) | FFS in OpenBSD's disklabel |
 | dragonfly | MBR   | slice 3          | UFS in a disklabel64 (slice 2)   |
 
 None of the BSD images boot with Secure Boot on: their EFI loaders aren't
-signed.  Because the partition is part of
-the image, every raw write of the image creates it; nothing has to edit a
-partition table afterwards (the image's GPT is already awkward: its backup
+signed.  Below, "the config partition" is that partition whatever its number;
+the marker's `config_partition.number` says which.  Because the partition is
+part of the image, every raw write of the image creates it; nothing has to edit
+a partition table afterwards (the image's GPT is already awkward: its backup
 header sits at the end of the image, not the end of the stick).
 
 Writers that copy files instead of the raw image (Rufus in ISO mode, Ventoy)
-won't create partition 3.  Both the backup tool and the stick detect this and
-say so; such a stick still boots and can restore if the user types in the
-backup location by hand.
+won't create the config partition.  Both the backup tool and the stick detect
+this and say so; such a stick still boots and can restore if the user types in
+the backup location by hand.
 
-### Layout of partition 3
+### Layout of the config partition
 
 ```
 /backotter/stick.json
@@ -91,8 +92,8 @@ system.  It's read-only, so it describes the image, not the stick:
 }
 ```
 
-- `image_id` is a fresh UUID per build.  It ties partition 3 to the image it was
-  built with (see `stick.json`).
+- `image_id` is a fresh UUID per build.  It ties the config partition to the
+  image it was built with (see `stick.json`).
 - `platform` is the family of systems the image restores: `linux`,
   `freebsd`, `netbsd`, `openbsd`, `dragonfly`, and later `illumos`.  It's the
   same word as in the file name (see "Image file names"), but the backup tool
@@ -104,11 +105,11 @@ system.  It's read-only, so it describes the image, not the stick:
   stick good enough?").  `zfs` is null on an image without OpenZFS.
 - `system_schemas` lists the `system.json` schema versions the stick's restore
   code can read.
-- `config_partition` describes the config partition as built: its number, size, FAT
-  label, and FAT volume serial (random per build, in the form `blkid` shows).
-  A stick that was repartitioned or reformatted afterwards no longer matches
-  and is refused.  The start sector isn't recorded: the marker is inside the
-  image, and adding it moves the partitions that follow.
+- `config_partition` describes the config partition as built: its number, size,
+  FAT label, and FAT volume serial (random per build, in the form `blkid`
+  shows). A stick that was repartitioned or reformatted afterwards no longer
+  matches and is refused.  The start sector isn't recorded: the marker is inside
+  the image, and adding it moves the partitions that follow.
 - There's no BackOtter version field yet, because BackOtter has no releases.
   It comes with the first one.
 
@@ -164,9 +165,9 @@ which stick it last updated for each machine.
 ## settings.toml, and editing by hand
 
 The stick is meant to be written once and reused for years: the backup tool
-replaces files on partition 3 in place, and a person can open the partition
-from Linux, macOS or Windows and edit it with any text editor.  The files are
-split by who writes them:
+replaces files on the config partition in place, and a person can open the
+partition from Linux, macOS or Windows and edit it with any text editor.  The
+files are split by who writes them:
 
 - `stick.json` and everything under `machines/` are written by BackOtter only,
   as JSON.  `system.json` has a checksum, so a damaged or hand-edited copy is
@@ -303,13 +304,14 @@ The backup tool writes to a stick only if all of these hold:
 5. Exactly one disk passes.  If several do, the tool lists them (`stick_id`,
    `name`, size, serial) and needs `--stick`.  It never picks one itself.
 
-If 1 passes but 2 doesn't, the message depends on why: no partition 3 at all
+If 1 passes but 2 doesn't, the message depends on why: no partition with the marker's number at all
 means "written with a file-copying tool, write the image raw"; a partition
 that's there but different means "repartitioned or reformatted since writing".
 
 ### How it writes
 
-1. Mount partition 3 with `-o flush` (and the same `nosuid,nodev,noexec`).
+1. Mount the config partition with `-o flush` (and the same
+   `nosuid,nodev,noexec`).
 2. Write `system.json.new`, fsync it, rename the current file to
    `system.prev.json` (with its `.sha256`), rename `.new` into place, write the
    new `.sha256`, fsync the directory.
@@ -322,39 +324,40 @@ On the stick, the restore code looks only at the disk it booted from:
 1. The medium casper mounted at `/cdrom` gives the boot disk: `findmnt`'s
    SOURCE, then `lsblk`'s PKNAME, or SOURCE itself if casper mounted the whole
    disk (the hybrid image is valid ISO9660 from sector 0 too).  Its
-   `/.disk/backotter.json` gives partition 3.
+   `/.disk/backotter.json` gives the config partition's number.
 2. It never scans other disks for a `BACKOTTER` label: a second stick, or a
    disk of the machine being rescued, could carry one.
-3. Partition 3 is mounted read-only, and read-write only to save a restore log.
+3. The config partition is mounted read-only, and read-write only to save a
+   restore log.
 4. If there's one machine directory, it's proposed.  If there are several, the
    one whose `dmi.system_uuid` matches this machine is preselected, otherwise
    the user chooses.  Before anything is written, a confirmation screen shows
    the hostname, the date of the backup being restored, and every disk that
    will be overwritten (model, serial, size).  Restoring is destructive, and
    with several machines on one stick, picking the wrong one is the real risk.
-5. If the checksum fails, the schema isn't in `system_schemas`, or partition 3
-   is missing, the stick says so and offers to continue by typing the backup
-   location by hand.
+5. If the checksum fails, the schema isn't in `system_schemas`, or the config
+   partition is missing, the stick says so and offers to continue by typing the
+   backup location by hand.
 
 ### Restore logs
 
 When a restore fails, the repository may be unreachable, the machine's disks
-half-written, and the stick's root filesystem is in RAM: partition 3 is the
-only storage left that survives a reboot.  So every restore, successful or
+half-written, and the stick's root filesystem is in RAM: the config partition is
+the only storage left that survives a reboot.  So every restore, successful or
 not, writes `restore-logs/<UTC timestamp>.log.gz` under its machine directory,
 capped at 2 MiB compressed, keeping the 10 newest.  It's also copied to the
 repository when that's reachable.  Logs name hosts, devices and paths, never
 passwords.
 
-## Repairing partition 3
+## Repairing the config partition
 
 Cheap sticks yanked mid-write are how FAT gets corrupted.  `backotter stick
-repair` makes the same checks as a write (marker present, partition 3's number
-and size as recorded) and runs `fsck.vfat -a` on partition 3.  Only if that
-fails, and only after the user confirms, it reformats partition 3 with the
-recorded label and serial and writes `stick.json` again, keeping `stick_id` if
-it could still be read.  It is the one command that formats anything, and it
-never touches the rest of the stick.
+repair` makes the same checks as a write (marker present, the config partition's
+number and size as recorded) and runs `fsck.vfat -a` on the config partition.
+Only if that fails, and only after the user confirms, it reformats the config
+partition with the recorded label and serial and writes `stick.json` again,
+keeping `stick_id` if it could still be read.  It is the one command that
+formats anything, and it never touches the rest of the stick.
 
 ## Is this stick good enough?
 
@@ -377,20 +380,21 @@ an old stick that can fetch the repository location is better than nothing.
 
 ## What's built
 
-- `marker.py` makes the marker and partition 3's image (`mkfs.vfat` and
+- `marker.py` makes the marker and the config partition's image (`mkfs.vfat` and
   mtools, so no root or loop mount) for every platform; `make-img.sh` appends
   it to the Linux image and adds `/.disk/backotter.json`, and
   `make-img-bsd.sh` hands both to a BSD's own `build.sh`.
-- `boot-test.py` boots the image as a USB stick by default (`--media cdrom`
-  for the old way), runs `stick/PLATFORM/checks.sh`, and checks from inside that the live system finds
-  partition 3 the way "Finding the config at boot" says, and can write to it.
+- `boot-test.py` boots the image as a USB stick by default (`--media cdrom` for
+  the old way), runs `stick/PLATFORM/checks.sh`, and checks from inside that the
+  live system finds the config partition the way "Finding the config at boot"
+  says, and can write to it.
 - Not built: the backup tool's stick module, the restore side's config reader,
   restore logs, and `backotter stick repair`.  They come with the backup tool.
 
 ## Decisions (2026-10-29)
 
-1. Partition 3 is 32 MiB, FAT16 (FAT32 needs about 33 MiB or more).  The
-   marker records the size, so a later image can change it.
+1. The config partition is 32 MiB, FAT16 (FAT32 needs about 33 MiB or more).
+   The marker records the size, so a later image can change it.
 2. Restore logs go on the stick, capped as above, and to the repository.
 3. Several machines per stick are supported from schema 1.
 4. No key file on the stick; `credential.kind` leaves room for one.

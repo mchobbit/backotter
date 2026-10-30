@@ -27,7 +27,8 @@ fresh-install state), in ~/backotter-work/compare/GUEST/:
      holds GRUB's core image on these BIOS + MBR guests), and filesystems
      recreated with the same UUIDs and labels, by the guest's own mkfs tools
      (so the guest's GRUB and kernel can read them), btrfs subvolumes and ZFS
-     pools (with exactly the original's feature flags) included.
+     pools (with exactly the original's feature flags) and bcachefs's on-disk
+     version included.
   4. fsmeta.py compares every file's metadata before and after, and the
      restored disk is booted to see whether it comes up.
 That is the archiver's part of a bare-metal restore; recreating a layout
@@ -38,7 +39,10 @@ rescue stick (STICK_IMG, from stick/make-img.sh) instead of the guest's own,
 as a restore from the stick would: newer tools turn on features an older
 guest's kernel or GRUB may not read.  ZFS pools are still made by the host's
 zpool, with the original's feature flags, as BackOtter must make them.  The
-results go to ~/backotter-work/compare/GUEST.stick-mkfs/.
+results go to ~/backotter-work/compare/GUEST.stick-mkfs/.  A guest with
+bcachefs needs it: the kernel mounts no two bcachefs file systems with one
+UUID, so src is unmounted (after the backups) before the restores, and the
+guest's own mkfs can't be run from it.
 
 The restores boot with the vm-run options the guest's builder left in
 vms/GUEST/vm-run-options (e.g. --uefi, with Secure Boot); without that file,
@@ -140,6 +144,14 @@ def blkid(dev: str) -> dict[str, str]:
     return dict(line.split("=", 1) for line in r.stdout.splitlines() if "=" in line)
 
 
+def bcachefs_version(dev: str) -> str:
+    """The on-disk format version in dev's bcachefs superblock, as "MAJOR.MINOR"."""
+    with open(dev, "rb") as f:
+        f.seek(8 * 512 + 16)        # struct bch_sb, at sector 8: le16 version after the checksum
+        v = int.from_bytes(f.read(2), "little")
+    return f"{v >> 10}.{v & 0x3ff}"
+
+
 def mounts_below(mp: Path) -> list[dict[str, str]]:
     """findmnt's view of mp and everything mounted below it, parents first."""
     rows = json.loads(out(["findmnt", "-J", "-R", "-o", "TARGET,SOURCE,FSTYPE,OPTIONS", str(mp)]))
@@ -163,7 +175,9 @@ class Layout:
         self.src_dev = src_dev
         self.parts = {}                            # partition number -> blkid fields
         for p in sorted(Path("/dev").glob(Path(src_dev).name + "p*")):
-            self.parts[int(p.name.split("p")[-1])] = blkid(str(p))
+            fields = self.parts[int(p.name.split("p")[-1])] = blkid(str(p))
+            if fields.get("TYPE") == "bcachefs":
+                fields["BCACHEFS_VERSION"] = bcachefs_version(str(p))
         self.mounts = mounts_below(SRC_MP)
         self.zfs = None
         for n, fields in self.parts.items():
@@ -195,7 +209,8 @@ class Layout:
     def btrfs_subvolumes(self) -> list[str]:
         if not any(f.get("TYPE") == "btrfs" for f in self.parts.values()):
             return []
-        listing = out(["chroot", str(SRC_MP), "btrfs", "subvolume", "list", "-a", "/"])
+        with src_api():
+            listing = out(["chroot", str(SRC_MP), "btrfs", "subvolume", "list", "-a", "/"])
         return [line.split(" path ")[-1].replace("<FS_TREE>/", "") for line in listing.splitlines()]
 
 
@@ -295,6 +310,11 @@ def recreate(layout: Layout, dst_dev: str, tools: Path = SRC_MP) -> None:
             elif fs == "jfs":
                 mkfs(["mkfs.jfs", "-q"] + lab + [dev])
                 mkfs(["jfs_tune", "-U", uuid, dev])
+            elif fs == "bcachefs":
+                # In the original's on-disk version, which the guest keeps
+                # (version_upgrade=none), not the tools' newest or the running
+                # kernel's.
+                mkfs(["mkfs.bcachefs", "-f", "-U", uuid, f"--version={f['BCACHEFS_VERSION']}"] + lab + [dev])
             elif fs == "swap":
                 mkfs(["mkswap", "-U", uuid] + lab + [dev])
             elif fs == "zfs_member":
@@ -306,8 +326,7 @@ def recreate(layout: Layout, dst_dev: str, tools: Path = SRC_MP) -> None:
                 run(cmd + [z["name"], dev])
             elif fs:
                 raise SystemExit(f"don't know how to recreate {fs}")
-    with src_api():
-        subvols = layout.btrfs_subvolumes()
+    subvols = layout.btrfs_subvolumes()
 
     # Mount like src: each mount's partition number carries over.
     if layout.zfs:
@@ -547,6 +566,9 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
     src_dev = vm_mount(src, SRC_MP, ro=True)
     try:
         layout = Layout(src_dev)
+        bcachefs = any(f.get("TYPE") == "bcachefs" for f in layout.parts.values())
+        if bcachefs and not stick_img:
+            raise SystemExit("a guest with bcachefs needs --mkfs-from: src can't stay mounted for its own mkfs")
         results["layout"] = {n: f.get("TYPE") for n, f in layout.parts.items()}
         run(fsmeta + ["record", str(SRC_MP), str(work / "before.json")])
         results["source_bytes"] = int(out(["du", "-sbx", str(SRC_MP)]).split()[0]) + sum(
@@ -557,6 +579,11 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
             backup(tool, work)
             results["tools"][tool] = {"backup_s": round(time.monotonic() - t, 1),
                                       "backup_bytes": size(work / tool)}
+        if bcachefs:
+            # The kernel mounts no two bcachefs file systems with the same
+            # UUID, so src goes before dst is mounted; its disk stays
+            # attached for recreate(), which then needs only its first MiB.
+            run(["umount", "-R", str(SRC_MP)])
         for tool in tools:
             print(f"== {guest}: {tool} restore", flush=True)
             res = results["tools"][tool]

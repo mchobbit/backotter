@@ -19,7 +19,7 @@ disks() {
         FreeBSD|DragonFly) sysctl -n kern.disks ;;
         *) sysctl -n hw.disknames ;;   # NetBSD, OpenBSD
     esac 2>/dev/null | tr ' ,' '\n\n' | sed -e 's/:.*//' -e '/^$/d' |
-        grep -Ev '^(cd|md|rd|vnd|fd)[0-9]' | sort    # CDs, RAM and file-backed disks
+        grep -Ev '^(cd|md|rd|vnd|fd|dk)[0-9]' | sort    # CDs, RAM and file-backed disks, NetBSD's wedges
 }
 
 show_status() {

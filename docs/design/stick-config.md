@@ -28,7 +28,22 @@ has two GPT partitions:
 | 3 | FAT16, volume label `BACKOTTER`, writable  | 32 MiB |
 
 GPT type "Microsoft basic data", so Linux, macOS and Windows all mount it and a
-user can look at the config from any machine.  Because the partition is part of
+user can look at the config from any machine.
+
+That's the Linux image.  The BSD images (`make-img-bsd.sh`, built inside a VM
+of each BSD from its official media) carry the same FAT16 partition, made by
+the same `marker.py`, wherever their own layout leaves a slot:
+
+| Platform  | Table | Config partition | Root, read-only                 |
+|-----------|-------|------------------|---------------------------------|
+| linux     | GPT   | 3                | ISO9660 (casper, overlay in RAM) |
+| freebsd   | MBR   | slice 3          | UFS2 in a BSD label (slice 2)    |
+| netbsd    | GPT   | 3                | FFSv2                            |
+| openbsd   | MBR   | 2 (slot 3 is OpenBSD's own) | FFS in OpenBSD's disklabel |
+| dragonfly | MBR   | slice 3          | UFS in a disklabel64 (slice 2)   |
+
+None of the BSD images boot with Secure Boot on: their EFI loaders aren't
+signed.  Because the partition is part of
 the image, every raw write of the image creates it; nothing has to edit a
 partition table afterwards (the image's GPT is already awkward: its backup
 header sits at the end of the image, not the end of the stick).
@@ -57,7 +72,8 @@ can disagree with it.
 ## The image marker, inside the image
 
 `make-img.sh` adds `/.disk/backotter.json` to the ISO9660 filesystem (and to
-`md5sum.txt`).  It's read-only, so it describes the image, not the stick:
+`md5sum.txt`); the BSD images have it at the same path in their root file
+system.  It's read-only, so it describes the image, not the stick:
 
 ```json
 {
@@ -66,7 +82,7 @@ can disagree with it.
   "image_id": "6f1c2c1e-5b0e-4a51-9d8e-2a3c8f4e7b10",
   "built": "2026-10-29T17:12:39Z",
   "platform": "linux",
-  "ubuntu": "26.04.1",
+  "base": {"os": "ubuntu", "release": "26.04.1"},
   "kernel": "7.0.0-30-generic",
   "zfs": {"version": "2.4.1", "features": ["allocation_classes", "..."]},
   "system_schemas": [1],
@@ -77,17 +93,18 @@ can disagree with it.
 
 - `image_id` is a fresh UUID per build.  It ties partition 3 to the image it was
   built with (see `stick.json`).
-- `platform` is the family of systems the image restores: `linux` here,
-  later `freebsd` and `illumos`.  It's the same word as in the file name (see
-  "Image file names"), but the backup tool reads it from here, since a file
-  can be renamed.  `ubuntu` is what the Linux image happens to be built from.
+- `platform` is the family of systems the image restores: `linux`,
+  `freebsd`, `netbsd`, `openbsd`, `dragonfly`, and later `illumos`.  It's the
+  same word as in the file name (see "Image file names"), but the backup tool
+  reads it from here, since a file can be renamed.  `base` is what the image
+  happens to be built from (`ubuntu` 26.04.1, `freebsd` 15.1-RELEASE, ...).
 - `zfs.features` is OpenZFS's own list for that release
   (`/usr/share/zfs/compatibility.d/openzfs-2.4`).  It and `kernel` let the
   backup tool warn when the stick is too old for the machine (see "Is this
-  stick good enough?").
+  stick good enough?").  `zfs` is null on an image without OpenZFS.
 - `system_schemas` lists the `system.json` schema versions the stick's restore
   code can read.
-- `config_partition` describes partition 3 as built: its number, size, FAT
+- `config_partition` describes the config partition as built: its number, size, FAT
   label, and FAT volume serial (random per build, in the form `blkid` shows).
   A stick that was repartitioned or reformatted afterwards no longer matches
   and is refused.  The start sector isn't recorded: the marker is inside the
@@ -107,7 +124,8 @@ backotter-live-freebsd-0.1.0-amd64.img
 backotter-live-illumos-0.1.0-amd64.img
 ```
 
-- `platform` is `linux`, `freebsd` or `illumos`, as in the marker.  One Linux
+- `platform` is `linux`, `freebsd`, `netbsd`, `openbsd` or `dragonfly` (later
+  `illumos`), as in the marker.  One Linux
   image covers every Linux distribution, so the name doesn't say which distro
   or Ubuntu release it's built from; the marker does.
 - `version` is BackOtter's, one number for all platforms: the backup tool and
@@ -270,8 +288,9 @@ At restore time:
 
 The backup tool writes to a stick only if all of these hold:
 
-1. It's a whole disk whose partition 1 is ISO9660 and contains a readable
-   `/.disk/backotter.json` (mounted read-only, `nosuid,nodev,noexec`).
+1. It's a whole disk whose image file system (partition 1's ISO9660 on the
+   Linux image; the root UFS/FFS on a BSD image, see the table above) contains a
+   readable `/.disk/backotter.json` (mounted read-only, `nosuid,nodev,noexec`).
 2. Partition `config_partition.number` exists with exactly the recorded size,
    is FAT with the recorded label and serial, and holds `/backotter/stick.json`
    whose `image_id` matches the marker's.
@@ -347,17 +366,23 @@ compares `system.json`'s `requirements` with the marker:
 - the schema must be in `system_schemas`;
 - for kernel modules, the backup tool can't check the stick's module list from
   the marker alone; schema 1 only warns when the machine runs a newer kernel
-  series than the stick (say 7.2 against 7.0).
+  series than the stick (say 7.2 against 7.0);
+- a machine with a bcachefs file system can be restored from the Linux image
+  only with Secure Boot off: the image's bcachefs module is built by DKMS and
+  isn't signed.  The tool warns when the machine has bcachefs and booted with
+  Secure Boot on.
 
 A failure is a loud warning, not an error: the config is still written, since
 an old stick that can fetch the repository location is better than nothing.
 
 ## What's built
 
-- `make-img.sh` builds partition 3 (`mkfs.vfat` and mtools, so no root or loop
-  mount), appends it, and adds `/.disk/backotter.json`.
+- `marker.py` makes the marker and partition 3's image (`mkfs.vfat` and
+  mtools, so no root or loop mount) for every platform; `make-img.sh` appends
+  it to the Linux image and adds `/.disk/backotter.json`, and
+  `make-img-bsd.sh` hands both to a BSD's own `build.sh`.
 - `boot-test.py` boots the image as a USB stick by default (`--media cdrom`
-  for the old way), and checks from inside that the live system finds
+  for the old way), runs `stick/PLATFORM/checks.sh`, and checks from inside that the live system finds
   partition 3 the way "Finding the config at boot" says, and can write to it.
 - Not built: the backup tool's stick module, the restore side's config reader,
   restore logs, and `backotter stick repair`.  They come with the backup tool.

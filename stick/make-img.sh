@@ -43,10 +43,7 @@ LAYER=$BASE.backotter
 TIMEOUT=10
 DEFAULT=0
 CONFIG_PART=3
-CONFIG_SECTORS=65536            # 32 MiB; FAT32 would need more than that
-CONFIG_LABEL=BACKOTTER
 BASIC_DATA_GUID=ebd0a0a2-b9e5-4433-87c0-68b6b72699c7   # GPT "Microsoft basic data"
-SYSTEM_SCHEMAS=1                # system.json schemas the stick can read
 PATH=$PATH:/usr/sbin:/sbin      # mkfs.vfat, for users whose PATH lacks sbin
 
 die() { echo "make-img: $*" >&2; exit 1; }
@@ -61,7 +58,7 @@ SOURCE_ISO=$1 SLIM=$2 LAYER_DIR=$3 OUT_IMG=${4:-.}
 for f in "$SOURCE_ISO" "$SLIM/$BASE".{squashfs,manifest,size} "$LAYER_DIR/$LAYER".{squashfs,manifest,size}; do
     [[ -f $f ]] || die "missing $f"
 done
-for c in xorriso mkfs.vfat mmd mcopy unsquashfs python3; do
+for c in xorriso unsquashfs python3; do
     command -v "$c" >/dev/null || die "missing $c"
 done
 
@@ -97,77 +94,10 @@ zfs=$(awk '$1 == "zfsutils-linux" { sub(/-.*/, "", $2); print $2 }' "$LAYER_DIR/
 unsquashfs -cat "$LAYER_DIR/$LAYER.squashfs" \
     "usr/share/zfs/compatibility.d/openzfs-${zfs%.*}" >"$work/zfs-features" 2>/dev/null ||
     die "the layer has no ZFS feature list for $zfs"
-image_id=$(cat /proc/sys/kernel/random/uuid)
-fat_serial=$(od -An -N4 -tx4 /dev/urandom | tr -d ' \n' | tr a-f A-F)
-
-python3 - "$work" "$image_id" "$PLATFORM" "$ubuntu" "$kernel" "$zfs" "$SYSTEM_SCHEMAS" \
-    "$CONFIG_PART" "$CONFIG_SECTORS" "$CONFIG_LABEL" "${fat_serial:0:4}-${fat_serial:4}" <<'EOF'
-import datetime, json, sys
-work, image_id, platform, ubuntu, kernel, zfs, schemas, part, sectors, label, serial = sys.argv[1:]
-with open(f"{work}/zfs-features") as f:
-    features = sorted(l.strip() for l in f if l.strip() and not l.startswith("#"))
-built = datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-docs = {
-    "backotter.json": {
-        "format": "backotter-image", "schema": 1, "image_id": image_id,
-        "built": built, "platform": platform, "ubuntu": ubuntu, "kernel": kernel,
-        "zfs": {"version": zfs, "features": features},
-        "system_schemas": [int(s) for s in schemas.split()],
-        "config_partition": {"number": int(part), "sectors": int(sectors),
-                             "label": label, "fat_serial": serial},
-    },
-    "stick.json": {"format": "backotter-stick", "schema": 1,
-                   "image_id": image_id, "stick_id": None},
-}
-for name, doc in docs.items():
-    with open(f"{work}/{name}", "w") as f:
-        json.dump(doc, f, indent=2)
-        f.write("\n")
-EOF
-cat >"$work/README.txt" <<'EOF'
-BackOtter rescue stick: configuration partition
-
-The rest of this stick is the rescue system, which is read-only.  This
-partition holds what the stick needs to know about the machines it can
-restore.  BackOtter's backup tool updates it whenever the stick is plugged in.
-
-  backotter/settings.toml   yours to edit with any text editor: a name for
-                            this stick, and per-machine overrides
-  backotter/stick.json      written by BackOtter; don't edit
-  backotter/machines/       written by BackOtter; don't edit
-
-No passwords or keys are ever stored here.
-EOF
-# The settings file people edit.  docs/design/stick-config.md shows the same text.
-cat >"$work/settings.toml" <<'EOF'
-# BackOtter rescue stick: settings you may edit.
-#
-# Lines starting with # are comments.  Save as plain text.  BackOtter only
-# reads this file and never rewrites it, so your comments stay as you leave
-# them.  Eject the stick before unplugging it.
-
-format = "backotter-settings"
-schema = 1
-
-# A name for this stick, to tell it apart from others.  Remove the # to use it.
-# name = "drawer stick"
-
-# Overrides for one machine.  Copy the two lines below once per machine,
-# remove the #s, and put in the machine's install ID: the name of its
-# directory under backotter/machines/.
-#
-# [machines."0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90"]
-# repository_url = "sftp://nas.local/backotter/lovelace"
-EOF
-python3 -c 'import sys, tomllib; tomllib.load(open(sys.argv[1], "rb"))' "$work/settings.toml" ||
-    die "settings.toml is not valid TOML"
-
-truncate -s $((CONFIG_SECTORS * 512)) "$work/config.img"
-mkfs.vfat -F 16 -n "$CONFIG_LABEL" -i "$fat_serial" "$work/config.img" >/dev/null
-export MTOOLS_SKIP_CHECK=1
-mmd -i "$work/config.img" ::/backotter ::/backotter/machines
-mcopy -i "$work/config.img" "$work/stick.json" "$work/settings.toml" ::/backotter/
-mcopy -i "$work/config.img" "$work/README.txt" ::/
+# The marker, stick.json and config.img; see marker.py.
+image_id=$(python3 "$(dirname "$0")/marker.py" --platform "$PLATFORM" --base-os ubuntu \
+    --base-release "$ubuntu" --kernel "$kernel" --config-part "$CONFIG_PART" \
+    --zfs-version "$zfs" --zfs-features "$work/zfs-features" "$work") || die "marker.py failed"
 
 entry() {   # entry TITLE EXTRA_KERNEL_ARGS
     cat <<EOF

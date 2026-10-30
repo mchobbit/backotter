@@ -1,0 +1,60 @@
+#!/bin/sh
+# BackOtter rescue stick, BSD flavours: the console on the screen and the
+# serial port.  The same placeholder as the Linux image's console, in POSIX sh
+# for FreeBSD, NetBSD, OpenBSD and DragonFly.
+#
+# Each image's getty runs it as its login program (gettytab's lo=, with
+# al=root where getty can log in by itself), as agetty --login-program does on
+# Linux: init leaves the terminal to getty, which opens it and makes it the
+# controlling terminal.  It ignores the arguments getty passes, and getty
+# starts it again whenever it exits.
+
+PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+HOME=/root
+export PATH HOME
+here=/usr/local/lib/backotter
+
+disks() {
+    case $(uname -s) in
+        FreeBSD|DragonFly) sysctl -n kern.disks ;;
+        *) sysctl -n hw.disknames ;;   # NetBSD, OpenBSD
+    esac 2>/dev/null | tr ' ,' '\n\n' | sed -e 's/:.*//' -e '/^$/d' |
+        grep -Ev '^(cd|md|rd|vnd|fd)[0-9]' | sort    # CDs, RAM and file-backed disks
+}
+
+show_status() {
+    echo "BackOtter rescue stick (placeholder console) on $(hostname)"
+    echo
+    echo "Network:"
+    # NetBSD prints inet ADDR/PREFIX; the others inet ADDR netmask ...
+    ifconfig -a 2>/dev/null | awk '/^[a-z]/ { i = $1 } $1 == "inet" && $2 !~ /^127\./ { sub("/.*", "", $2); print "  " i " " $2 }' |
+        grep . || echo "  no IPv4 address yet"
+    echo
+    echo "Disks:"
+    disks | sed 's/^/  /' | grep . || echo "  none found"
+    if [ -s /var/run/backotter/remote-access ]; then
+        echo
+        cat /var/run/backotter/remote-access
+    fi
+    echo
+}
+
+while :; do
+    clear 2>/dev/null
+    show_status
+    echo "  1) Shell"
+    echo "  2) Allow remote access (SSH)"
+    echo "  3) Reboot"
+    echo "  4) Power off"
+    echo
+    # printf, not read -p: OpenBSD's ksh takes -p as a coprocess.
+    printf 'Choose [1-4]: '
+    # No terminal to read from: let init start a fresh one.
+    read -r choice || exit 0
+    case $choice in
+        1) /bin/sh -l ;;
+        2) "$here/remote-access"; printf 'Press Enter to continue. '; read -r _ ;;
+        3) shutdown -r now ;;
+        4) shutdown -p now ;;
+    esac
+done

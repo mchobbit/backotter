@@ -33,6 +33,8 @@ import sys
 import tempfile
 import time
 
+HERE = os.path.dirname(os.path.abspath(__file__))
+PLATFORMS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly")
 OVMF = "/usr/share/OVMF"
 FIRMWARE = {
     "uefi-secureboot": ("OVMF_CODE_4M.secboot.fd", "OVMF_VARS_4M.ms.fd"),
@@ -44,94 +46,17 @@ LIVE_USER = "ubuntu-server"
 PROMPT = re.compile(rb"[$#] $")
 MENU = re.compile(rb"Choose \[1-4\]: ")
 LOGIN = re.compile(rb"login: ")
-FAILURE = re.compile(rb"Kernel panic|\(initramfs\) |BusyBox v[0-9]")
+# Linux, then the BSDs' panics, debugger and root-device prompts.
+FAILURE = re.compile(rb"Kernel panic|\(initramfs\) |BusyBox v[0-9]|panic: |^db> |mountroot> |root device: ", re.M)
 # Computed by the guest, so the command's own echo can't match it.
 DONE = re.compile(rb"BKO-42-DONE\r?\n")
 
-# Each check prints one line: "BKO-CHECK <name> <ok|FAIL> <detail>".
-CHECKS = r"""
+# Each check prints one line: "BKO-CHECK <name> <ok|FAIL> <detail>".  The
+# checks themselves are per platform: PLATFORM/checks.sh, then, on a USB
+# stick, PLATFORM/config-checks.sh (the config partition).
+CHECK_FUNCTION = r"""
 check() { n=$1; shift; if out=$(sh -c "$*" 2>&1); then r=ok; else r=FAIL; fi
           echo "BKO-CHECK $n $r $(echo "$out" | tr '\n' ' ' | cut -c1-200)"; }
-check kernel 'uname -r'
-check layers 'grep -o "layerfs-path=[^ ]*" /proc/cmdline'
-check hostname 'test "$(hostname)" = backotter && hostname'
-check rootfs 'findmnt -n -o FSTYPE /'
-check secureboot 'od -An -t u1 /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c 2>/dev/null | awk "{print (\$5==1 ? \"enabled\" : \"disabled\")}" | grep . || echo "no EFI (BIOS boot)"'
-check snapd-gone '! dpkg-query -W -f="\${db:Status-Status}" snapd 2>/dev/null | grep -q "^installed"'
-check llvm-gone '! ls /usr/lib/x86_64-linux-gnu/libLLVM* >/dev/null 2>&1'
-check arm-firmware-gone 'test ! -e /usr/lib/firmware/qcom/x1e80100 && test ! -e /usr/lib/firmware/nvidia/tegra194'
-check modem-firmware-kept 'ls -d /usr/lib/firmware/qcom/sdx61'
-check switch-firmware 'ls /usr/lib/firmware/mellanox 2>/dev/null | wc -l | sed "s/$/ mellanox files/"'
-check tools 'for c in python3 lvm mdadm cryptsetup sgdisk mkfs.ext4 mkfs.xfs mkfs.btrfs ssh; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; echo all present'
-check python 'python3 -c "import sys; print(sys.version.split()[0])"'
-check layer-tools 'for c in wpa_supplicant efibootmgr zpool zfs sshd; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; echo all present'
-check dpkg-audit 'test -z "$(dpkg --audit)"'
-check zfs-no-autoimport 'for u in zfs-import-cache zfs-import-scan zfs-mount; do s=$(systemctl is-enabled $u.service 2>/dev/null); test "$s" = masked || { echo "$u: $s"; exit 1; }; done; echo masked'
-check wait-online-masked 'test "$(systemctl is-enabled systemd-networkd-wait-online.service 2>/dev/null)" = masked'
-check cloud-init-off 'test -e /etc/cloud/cloud-init.disabled'
-check cdrom-source-gone 'test ! -e /etc/apt/sources.list.d/cdrom.sources'
-check network 'ip -brief -4 address show scope global | grep .'
-check tty1-console 'systemctl cat getty@tty1.service | grep -q "login-program /usr/lib/backotter/console"'
-check tty2-root-shell 'systemctl cat autovt@tty2.service | grep -q "autologin root"'
-check sshd-off-at-boot '! systemctl is-active -q ssh.service && ! systemctl is-active -q ssh.socket && ! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1'
-check remote-access '/usr/lib/backotter/remote-access >/run/ra.out 2>&1 || { tail -n 3 /run/ra.out; exit 1; }; pw=$(sed -n "s/^Password: //p" /run/backotter/remote-access); printf "#!/bin/sh\necho %s\n" "$pw" >/root/.askpass; chmod 700 /root/.askpass; who=$(SSH_ASKPASS=/root/.askpass SSH_ASKPASS_REQUIRE=force setsid -w ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null backotter@127.0.0.1 whoami </dev/null 2>/run/ssh.err); rm -f /root/.askpass; if test "$who" = backotter; then echo "password login over SSH works"; else tail -n 3 /run/ssh.err; journalctl -u ssh -n 4 --no-pager -o cat; exit 1; fi'
-check root-ssh-refused '! SSH_ASKPASS=/bin/false SSH_ASKPASS_REQUIRE=force setsid -w ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o NumberOfPasswordPrompts=1 root@127.0.0.1 true </dev/null 2>/dev/null'
-check failed-units 'n=$(systemctl --failed --no-legend | wc -l); systemctl --failed --no-legend | cut -c1-60; test $n -eq 0'
-check marker 'cd /cdrom && grep "  ./.disk/backotter.json$" md5sum.txt | md5sum -c --quiet && python3 -c "import json; m = json.load(open(\".disk/backotter.json\")); print(m[\"image_id\"], m[\"platform\"], \"zfs\", m[\"zfs\"][\"version\"], len(m[\"zfs\"][\"features\"]), \"features\")"'
-check memory 'free -m | awk "/Mem:/{print \$3 \" MB used of \" \$2}"'
-"""
-
-# Finds the config partition the way docs/design/stick-config.md says: on the
-# disk casper mounted at /cdrom only, as the marker describes it.  "rw" also
-# checks stick.json, writes a file and reads it back after remounting.
-CONFIG_CHECKS = r"""
-cat >/run/bko-config.sh <<'EOF'
-src=$(findmnt -n -o SOURCE /cdrom) || { echo "nothing mounted on /cdrom"; exit 1; }
-parent=$(lsblk -no PKNAME "$src" | head -n 1)
-disk=/dev/${parent:-${src#/dev/}}
-eval "$(python3 -c 'import json; m = json.load(open("/cdrom/.disk/backotter.json")); p = m["config_partition"]; print("num=%s sectors=%s label=%s serial=%s image_id=%s" % (p["number"], p["sectors"], p["label"], p["fat_serial"], m["image_id"]))')"
-part=
-for f in /sys/class/block/${disk#/dev/}/*/partition; do
-  test "$(cat "$f")" = "$num" && part=/dev/$(basename "$(dirname "$f")")
-done
-test -n "$part" || { echo "no partition $num on $disk (/cdrom is $src)"; exit 1; }
-test "$(cat /sys/class/block/${part#/dev/}/size)" = "$sectors" || { echo "$part: not $sectors sectors"; exit 1; }
-test "$(blkid -o value -s TYPE "$part")" = vfat || { echo "$part: not FAT"; exit 1; }
-test "$(blkid -o value -s LABEL "$part")" = "$label" || { echo "$part: label is not $label"; exit 1; }
-test "$(blkid -o value -s UUID "$part")" = "$serial" || { echo "$part: serial is not $serial"; exit 1; }
-case ${1:-find} in
-find) echo "/cdrom is $src; config is $part, $label $serial" ;;
-rw)
-  mnt=/run/bko-cfg; mkdir -p $mnt
-  mount -o flush,nosuid,nodev,noexec "$part" $mnt || exit 1
-  got=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["image_id"])' $mnt/backotter/stick.json)
-  test "$got" = "$image_id" || { umount $mnt; echo "stick.json is for image $got"; exit 1; }
-  stamp=$(date -u +%FT%TZ)
-  echo "$stamp" >$mnt/backotter/boot-test.txt && sync && umount $mnt || exit 1
-  mount -o ro "$part" $mnt || exit 1
-  test "$(cat $mnt/backotter/boot-test.txt)" = "$stamp"; r=$?
-  ls $mnt/backotter | tr "\n" " "; umount $mnt; exit $r ;;
-settings)
-  mnt=/run/bko-cfg; mkdir -p $mnt
-  mount -o ro "$part" $mnt || exit 1
-  python3 - $mnt/backotter/settings.toml <<'PY'; r=$?
-import sys, tomllib
-raw = open(sys.argv[1], "rb").read().decode()
-s = tomllib.loads(raw)
-assert (s["format"], s["schema"]) == ("backotter-settings", 1), s
-# What the comments tell a user to do, in an editor that adds a byte-order mark.
-edited = "\n".join(l[2:] if l.startswith(("# name", "# [machines", "# repository_url")) else l
-                   for l in raw.splitlines())
-e = tomllib.loads(("﻿" + edited).encode().decode("utf-8-sig"))
-assert e["name"] == "drawer stick" and len(e["machines"]) == 1, e
-print("parses as shipped and as edited per its comments")
-PY
-  umount $mnt; exit $r ;;
-esac
-EOF
-check config-partition 'sh /run/bko-config.sh find'
-check config-rw 'sh /run/bko-config.sh rw'
-check config-settings 'sh /run/bko-config.sh settings'
 """
 DONE_LINE = "echo BKO-$((6 * 7))-DONE"
 
@@ -204,7 +129,8 @@ def qemu_command(img: str, mode: str, media: str, tmp: str) -> list[str]:
     return cmd
 
 
-def run(img: str, mode: str, media: str, log_path: str, timeout: float, user: str) -> bool:
+def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: float,
+        user: str) -> bool:
     with tempfile.TemporaryDirectory() as tmp, open(log_path, "wb") as log:
         proc = subprocess.Popen(qemu_command(img, mode, media, tmp),
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -236,7 +162,7 @@ def run(img: str, mode: str, media: str, log_path: str, timeout: float, user: st
             con.send("export TERM=dumb; stty -echo" + ("" if as_root else "; sudo -i") + "\n")
             con.expect(PROMPT, timeout=30)
             # A line at a time: the guest's tty buffers only 4 KB of input.
-            script = CHECKS + (CONFIG_CHECKS if media == "usb" else "") + DONE_LINE
+            script = CHECK_FUNCTION + check_script(platform, media) + DONE_LINE
             for line in script.strip().splitlines():
                 con.send(line + "\n")
                 time.sleep(0.1)
@@ -248,7 +174,8 @@ def run(img: str, mode: str, media: str, log_path: str, timeout: float, user: st
             for name, status, detail in results:
                 all_ok &= status == b"ok"
                 print(f"  {status.decode():4} {name.decode():20} {detail.decode(errors='replace').strip()}")
-            con.send("poweroff\n")
+            # OpenBSD has no poweroff; Linux's shutdown has no -p.
+            con.send(("poweroff" if platform == "linux" else "shutdown -p now") + "\n")
             try:
                 proc.wait(timeout=60)
             except subprocess.TimeoutExpired:
@@ -263,6 +190,20 @@ def run(img: str, mode: str, media: str, log_path: str, timeout: float, user: st
                 proc.wait()
 
 
+def check_script(platform: str, media: str) -> str:
+    """PLATFORM/checks.sh, and PLATFORM/config-checks.sh on a USB stick,
+    without their leading comments (not every shell takes typed comments)."""
+    names = ["checks.sh"] + (["config-checks.sh"] if media == "usb" else [])
+    parts = []
+    for name in names:
+        with open(os.path.join(HERE, platform, name), encoding="utf-8") as f:
+            lines = f.read().splitlines()
+        while lines and (lines[0].startswith("#") or not lines[0].strip()):
+            lines.pop(0)
+        parts.append("\n".join(lines))
+    return "\n".join(parts) + "\n"
+
+
 def log_contents(path: str) -> bytes:
     with open(path, "rb") as f:
         return f.read()
@@ -272,13 +213,15 @@ def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("img", metavar="IMG")
     ap.add_argument("mode", choices=["uefi-secureboot", "uefi", "bios"])
+    ap.add_argument("--platform", choices=PLATFORMS, default="linux",
+                    help="which checks to run: PLATFORM/checks.sh (default: linux)")
     ap.add_argument("--media", choices=["usb", "cdrom"], default="usb",
                     help="attach the image as a USB stick (default) or a CD")
     ap.add_argument("--log", help="serial log file (default: boot-test-MODE-MEDIA.log)")
     ap.add_argument("--timeout", type=float, default=300, help="seconds to reach login")
     ap.add_argument("--user", default=LIVE_USER, help=f"live user (default: {LIVE_USER})")
     args = ap.parse_args()
-    ok = run(args.img, args.mode, args.media,
+    ok = run(args.img, args.platform, args.mode, args.media,
              args.log or f"boot-test-{args.mode}-{args.media}.log", args.timeout, args.user)
     return 0 if ok else 1
 

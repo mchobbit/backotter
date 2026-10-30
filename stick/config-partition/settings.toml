@@ -1,0 +1,18 @@
+# BackOtter rescue stick: settings you may edit.
+#
+# Lines starting with # are comments.  Save as plain text.  BackOtter only
+# reads this file and never rewrites it, so your comments stay as you leave
+# them.  Eject the stick before unplugging it.
+
+format = "backotter-settings"
+schema = 1
+
+# A name for this stick, to tell it apart from others.  Remove the # to use it.
+# name = "drawer stick"
+
+# Overrides for one machine.  Copy the two lines below once per machine,
+# remove the #s, and put in the machine's install ID: the name of its
+# directory under backotter/machines/.
+#
+# [machines."0b7e3c52-8d1f-4a6e-9c3b-2f5d7a1e4b90"]
+# repository_url = "sftp://nas.local/backotter/lovelace"

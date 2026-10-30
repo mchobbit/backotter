@@ -1,0 +1,8 @@
+# BackOtter rescue stick.  sshd is off until someone turns on remote access,
+# which sets a one-time password for the "backotter" user and shows it on
+# screen.  Each image's build.sh puts these lines first in /etc/ssh/sshd_config
+# (sshd uses the first value it reads for each setting).
+PasswordAuthentication yes
+KbdInteractiveAuthentication yes
+PermitRootLogin no
+AllowUsers backotter

@@ -3,12 +3,18 @@
 #
 # Usage: sudo vm-mount [--ro] IMAGE MOUNTPOINT
 #
-# Attaches IMAGE (qcow2 or raw) to a free /dev/nbdN, mounts the partition that
+# Attaches IMAGE (qcow2 or raw) to a free /dev/nbdN, mounts the filesystem that
 # holds /etc/fstab at MOUNTPOINT, then the guest's other filesystems from that
 # fstab beneath it (swap and noauto entries are skipped).  Look around, or
 # use vm-chroot, then undo it all with vm-umount MOUNTPOINT.
 #
 #   --ro   attach and mount read-only; nothing in the image can change
+#
+# / may be a partition, a btrfs subvolume, or a ZFS dataset.  A ZFS pool is
+# imported from the image's partition only, under a temporary name (so it
+# can't clash with a pool of the host's, and the guest's own name is kept),
+# with MOUNTPOINT as its altroot; vm-umount exports it again, so the guest
+# imports it normally at its next boot.  That needs OpenZFS on the host.
 #
 # QEMU locks an image while the VM runs, so this refuses a running VM's disk.
 # Never write to a guest's filesystems while it runs.
@@ -46,9 +52,15 @@ nbd_opts=(--format="$format")
 qemu-nbd --connect="$dev" "${nbd_opts[@]}" "$image" ||
     die "qemu-nbd could not attach $image (is the VM running?)"
 mkdir -p "$STATE_DIR"
+# Line 1: the nbd device; any further lines: ZFS pools imported from it.
 echo "$dev" >"$state"
 
-undo() { umount -R "$mp" 2>/dev/null || true; qemu-nbd --disconnect "$dev" >/dev/null; rm -f "$state"; }
+undo() {
+    umount -R "$mp" 2>/dev/null || true
+    tail -n +2 "$state" | while read -r pool; do zpool export "$pool" || true; done
+    qemu-nbd --disconnect "$dev" >/dev/null
+    rm -f "$state"
+}
 trap 'undo; die "failed"' ERR
 udevadm settle
 for _ in 1 2 3 4 5; do compgen -G "${dev}p*" >/dev/null && break; sleep 1; done
@@ -60,10 +72,14 @@ mapfile -t parts < <(compgen -G "${dev}p*" || true)
 resolve() {
     local spec=$1 p
     for p in "${parts[@]}"; do
+        # Both spellings: UUID=... and /dev/disk/by-uuid/... (Ubuntu's installer).
         case $spec in
-            UUID=*) [[ $(blkid -s UUID -o value "$p") == "${spec#UUID=}" ]] && { echo "$p"; return; } ;;
-            PARTUUID=*) [[ $(blkid -s PARTUUID -o value "$p") == "${spec#PARTUUID=}" ]] && { echo "$p"; return; } ;;
-            LABEL=*) [[ $(blkid -s LABEL -o value "$p") == "${spec#LABEL=}" ]] && { echo "$p"; return; } ;;
+            UUID=*|/dev/disk/by-uuid/*)
+                [[ $(blkid -s UUID -o value "$p") == "${spec##*[=/]}" ]] && { echo "$p"; return; } ;;
+            PARTUUID=*|/dev/disk/by-partuuid/*)
+                [[ $(blkid -s PARTUUID -o value "$p") == "${spec##*[=/]}" ]] && { echo "$p"; return; } ;;
+            LABEL=*|/dev/disk/by-label/*)
+                [[ $(blkid -s LABEL -o value "$p") == "${spec##*[=/]}" ]] && { echo "$p"; return; } ;;
         esac
     done
     return 1
@@ -89,10 +105,48 @@ subvol_opts() { tr ',' '\n' | grep -E '^subvol(id)?=' | paste -sd, - || true; }
 # Find /: the filesystem whose /etc/fstab this is.  On btrfs it is usually
 # in a subvolume (Debian's installer uses @rootfs), so look one level down
 # from the top level too, then mount the subvolume fstab names for /.
+# mount_zfs_root PARTITION: import the pool on it and mount its / dataset at
+# $mp; fails (leaving nothing imported) if there is no such dataset.
+mount_zfs_root() {
+    local p=$1 id name rootds
+    command -v zpool >/dev/null || { echo "vm-mount: $p is ZFS, but this host has no OpenZFS" >&2; return 1; }
+    id=$(zpool import -d "$p" 2>/dev/null | awk '$1 == "id:" { print $2; exit }')
+    [[ -n $id ]] || return 1
+    name=vm-mount-$$
+    local opts=(-N -f -d "$p" -R "$mp")
+    [[ $ro == yes ]] && opts+=(-o readonly=on)
+    # -f: a root pool is never exported by the guest itself.
+    zpool import "${opts[@]}" -t "$id" "$name" || return 1
+    echo "$name" >>"$state"
+    # With an altroot, zfs list shows mountpoints under it: / appears as $mp.
+    # The pool's own top dataset often says / too, but with canmount=off.
+    rootds=$(zfs list -H -o name,canmount,mountpoint -r "$name" |
+        awk -v root="$mp" '$2 != "off" && $3 == root { print $1; exit }')
+    if [[ -z $rootds ]]; then
+        zpool export "$name"
+        sed -i '$d' "$state"
+        return 1
+    fi
+    # Ubuntu's root dataset is canmount=noauto, so mount it by name; then the
+    # pool's datasets that mount by themselves.
+    zfs mount "$rootds"
+    zfs list -H -o name,canmount,mountpoint -r "$name" |
+        awk '$2 == "on" && $3 != "none" && $3 != "legacy" { print $1 }' |
+        while read -r ds; do zfs mount "$ds" 2>/dev/null || true; done
+}
+
 root=""
 for p in "${parts[@]}"; do
     type=$(blkid -s TYPE -o value "$p" || true)
     [[ -z $type || $type == swap ]] && continue
+    if [[ $type == zfs_member ]]; then
+        mount_zfs_root "$p" || continue
+        if [[ -f $mp/etc/fstab ]]; then root=$p; break; fi
+        umount -R "$mp"
+        zpool export "$(tail -n 1 "$state")"
+        sed -i '$d' "$state"
+        continue
+    fi
     top=""
     [[ $type == btrfs ]] && top=subvolid=5   # the top level, whatever the default
     mount_fs "$p" "$mp" "$top" 2>/dev/null || continue

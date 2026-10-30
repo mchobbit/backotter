@@ -1,0 +1,85 @@
+#cloud-config
+# Ubuntu Server test guest for BackOtter, with / on ZFS: an unattended
+# "autoinstall" from an official live-server ISO, offline (the VM has no
+# network during the install, so everything comes from the ISO).  BIOS + MBR
+# with /boot (ext4, which GRUB reads), swap, and a ZFS pool "rpool" holding /
+# as rpool/ROOT/ubuntu, laid out as in curtin's own ZFS-root example.
+#
+# make-ubuntu.sh fills in the @...@ settings and puts this file, with an
+# empty meta-data, on a small ISO labelled CIDATA that cloud-init finds.
+autoinstall:
+  version: 1
+  interactive-sections: []
+  refresh-installer:
+    update: no
+  locale: en_US.UTF-8
+  keyboard:
+    layout: us
+  timezone: UTC
+  source:
+    id: ubuntu-server
+  apt:
+    fallback: offline-install
+  network:
+    version: 2
+    ethernets:
+      wired:
+        match:
+          name: "en*"
+        dhcp4: true
+  # Ubuntu wants an ordinary user; it gets root's password too.
+  identity:
+    hostname: @HOSTNAME@
+    username: tester
+    realname: Test user
+    password: '@PASSWORD_HASH@'
+  ssh:
+    install-server: true
+    allow-pw: false
+    authorized-keys:
+      - '@AUTHORIZED_KEY@'
+  storage:
+    config:
+      - {type: disk, id: disk0, path: /dev/vda, ptable: msdos, wipe: superblock-recursive,
+         preserve: false, grub_device: true}
+      - {type: partition, id: part-boot, device: disk0, number: 1, size: 1G, flag: boot,
+         preserve: false}
+      - {type: format, id: fmt-boot, volume: part-boot, fstype: ext4, preserve: false}
+      - {type: partition, id: part-swap, device: disk0, number: 2, size: 2G, flag: swap,
+         preserve: false}
+      - {type: format, id: fmt-swap, volume: part-swap, fstype: swap, preserve: false}
+      - {type: partition, id: part-zfs, device: disk0, number: 3, size: -1, preserve: false}
+      # The pool and dataset properties are those Subiquity 24.04's guided ZFS
+      # layout gives its root pool (subiquity/common/filesystem/manipulator.py).
+      # version: null matters most: curtin otherwise passes version=28 and
+      # makes a legacy pool with no feature flags at all.
+      - {type: zpool, id: rpool, pool: rpool, vdevs: [part-zfs], mountpoint: /,
+         default_features: true,
+         pool_properties: {ashift: 12, autotrim: 'on', version: null},
+         fs_properties: {atime: null, acltype: posixacl, canmount: 'off', compression: lz4,
+                         devices: 'off', normalization: formD, relatime: 'on',
+                         sync: standard, xattr: sa, dnodesize: auto}}
+      - {type: zfs, id: zfs-root-container, pool: rpool, volume: /ROOT,
+         properties: {canmount: 'off', mountpoint: none}}
+      # canmount=on, as Subiquity's own ZFS layout has it: Subiquity only
+      # counts a dataset as mounting / if it can mount.
+      - {type: zfs, id: zfs-root, pool: rpool, volume: /ROOT/ubuntu,
+         properties: {canmount: 'on', mountpoint: /}}
+      - {type: mount, id: mnt-boot, device: fmt-boot, path: /boot}
+      - {type: mount, id: mnt-swap, device: fmt-swap, path: none}
+  late-commands:
+    # Root: the same password, and the SSH key, as on the other test guests.
+    - curtin in-target -- sh -c 'echo "root:@PASSWORD_HASH@" | chpasswd -e'
+    - mkdir -p -m 700 /target/root/.ssh
+    - echo '@AUTHORIZED_KEY@' >/target/root/.ssh/authorized_keys
+    - chmod 600 /target/root/.ssh/authorized_keys
+    # A serial console too.
+    - sed -i 's/^GRUB_CMDLINE_LINUX_DEFAULT=.*/GRUB_CMDLINE_LINUX_DEFAULT="console=tty0 console=ttyS0,115200n8"/' /target/etc/default/grub
+    - curtin in-target -- update-grub
+    # Freeze the guest at this release, like the others: Ubuntu's snapshot
+    # service serves the archive as it was at @SNAPSHOT@.
+    # (Folded, because YAML doesn't allow ": " in an unquoted string.)
+    - >-
+      sed -i -E 's#^URIs: http://(archive|security)\.ubuntu\.com/ubuntu/?$#URIs: https://snapshot.ubuntu.com/ubuntu/@SNAPSHOT@/#'
+      /target/etc/apt/sources.list.d/ubuntu.sources
+  shutdown: poweroff

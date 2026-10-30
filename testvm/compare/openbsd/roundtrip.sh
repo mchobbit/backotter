@@ -1,17 +1,36 @@
 #!/bin/sh
-# Round trip of OpenBSD's file metadata through restic: make a tree of
-# hard-to-preserve files, back it up, restore it as "latest:SRC" into another
-# directory, and compare the two with mtree(8).  OpenBSD has no ACLs or
+# Round trip of OpenBSD's file metadata through restic, or BackOtter's
+# rustic: make a tree of hard-to-preserve files, back it up, restore it as
+# "latest:SRC" into another directory, and compare the two with mtree(8).  OpenBSD has no ACLs or
 # extended attributes; what it has is file flags.
 #
-# Usage: roundtrip.sh RESTIC        (as root, in a throwaway guest: at
-#                                    securelevel 1, schg and sappnd can't be
-#                                    cleared again)
+# Usage: roundtrip.sh BACKUP [RESTORE]   (as root, in a throwaway guest: at
+#                                         securelevel 1, schg and sappnd
+#                                         can't be cleared again)
+# BACKUP and RESTORE are restic or BackOtter's rustic; RESTORE defaults to
+# BACKUP.
 
-R=$1
+R=$1 RR=${2:-$1}
 SRC=/root/bko-rt DST=/root/bko-rt-restored
 export RESTIC_PASSWORD=backotter-compare RESTIC_REPOSITORY=/root/bko-rt-repo
 try() { "$@" 2>/dev/null || echo "roundtrip: skipped (unsupported here): $*" >&2; }
+# Back up with $R, restore with $RR.  BackOtter's rustic (a binary named
+# *rustic*) takes the same repository as restic, with its own options: the
+# real atime, as restic keeps it, and numeric ids, as restic restores them.
+export RUSTIC_PASSWORD=$RESTIC_PASSWORD RUSTIC_REPOSITORY=$RESTIC_REPOSITORY
+is_rustic() { case $(basename "$1") in *rustic*) true ;; *) false ;; esac; }
+bko_init() {
+    if is_rustic $R; then $R --no-progress --no-cache init >/dev/null; else $R init -q; fi
+}
+bko_backup() {
+    if is_rustic $R; then $R --no-progress --no-cache backup --set-atime yes "$@" >/dev/null
+    else $R backup -q "$@"; fi
+}
+bko_restore() {
+    if is_rustic $RR; then $RR --no-progress --no-cache restore --numeric-id --sparse by-content "$1" "$2"
+    else $RR restore -q --sparse "$1" --target "$2"; fi
+}
+bko_exclude() { if is_rustic $R; then echo "--glob !$(basename "$1")"; else echo "--exclude $1"; fi; }
 
 mkdir -p $SRC && cd $SRC || exit 1
 touch no-such-user; chown 1234:5678 no-such-user
@@ -35,9 +54,9 @@ try chflags -h uchg symlink
 touch -d 2001-02-03T04:05:06 $SRC
 
 mtree -c -p $SRC -k type,uid,gid,mode,flags,nlink,size,time,link,sha256digest >/tmp/bko-rt.spec
-$R init -q && $R backup -q $SRC || { echo "BACKUP FAILED"; exit 1; }
+bko_init && bko_backup $SRC || { echo "BACKUP FAILED"; exit 1; }
 echo "== restore"
-$R restore -q --sparse "latest:$SRC" --target $DST; echo "exit $?"
+bko_restore "latest:$SRC" $DST; echo "exit $?"
 echo "== mtree: type, owner, group, mode, flags, links, size, mtime, symlink target, SHA-256"
 mtree -f /tmp/bko-rt.spec -p $DST && echo identical
 echo "== hard links (one inode for all three)"

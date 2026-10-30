@@ -15,7 +15,10 @@
 # dst.qcow2, rescue.log, results/ (rescue.sh's), boot.log, boot-check.txt.
 #
 # restic is $RESTIC_BKO_FREEBSD, or else the newest FreeBSD build in
-# ~/backotter-work/restic/dist/.  Runs as an ordinary user in the kvm group.
+# ~/backotter-work/restic/dist/; it can be BackOtter's rustic instead.  With
+# $RESTORE_BKO_FREEBSD, that one restores what $RESTIC_BKO_FREEBSD backed up
+# (restic-bko and rustic-bko, the other way round too, read each other's).
+# Runs as an ordinary user in the kvm group.
 
 set -euo pipefail
 
@@ -35,6 +38,7 @@ image=$(ls "$work_base/vms/$guest"/*.qcow2 2>/dev/null | head -n 1)
 rescue_image=$(ls "$work_base/vms/$RESCUE"/*.qcow2 | head -n 1)
 restic=${RESTIC_BKO_FREEBSD:-$(ls -t "$work_base"/restic/dist/restic-backotter-*-freebsd-amd64 2>/dev/null | head -n 1)}
 [[ -x $restic ]] || die "no FreeBSD build of restic: set RESTIC_BKO_FREEBSD, or run build-backotter.sh"
+restore_with=${RESTORE_BKO_FREEBSD:-$restic}
 work=$work_base/compare-freebsd/$guest
 mkdir -p "$work"
 cd "$work"
@@ -67,8 +71,9 @@ vm=$!
 rkey=$work_base/vms/$RESCUE/id_ed25519
 wait_ssh "$rkey" $RESCUE_PORT $vm || die "the rescue system didn't come up; see rescue-serial.log"
 scp -q -i "$rkey" -P $RESCUE_PORT -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
-    "$restic" "$here"/freebsd/{rescue,torture,fsmeta}.sh root@127.0.0.1:/root/
-ssh_to "$rkey" $RESCUE_PORT "sh /root/rescue.sh /root/$(basename "$restic")" 2>&1 | tee rescue.log
+    "$restic" "$restore_with" "$here"/freebsd/{rescue,torture,fsmeta}.sh root@127.0.0.1:/root/
+ssh_to "$rkey" $RESCUE_PORT "sh /root/rescue.sh /root/$(basename "$restic") /root/$(basename "$restore_with")" 2>&1 |
+    tee rescue.log
 rm -rf results
 scp -q -r -i "$rkey" -P $RESCUE_PORT -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
     root@127.0.0.1:/root/results .

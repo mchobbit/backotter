@@ -7,17 +7,35 @@
 # settings, or a ZFS pool with the same datasets and properties), restores
 # onto it, and compares the two with fsmeta.sh.
 #
-# Usage: rescue.sh RESTIC
-# Results in /root/results: before/ and after/ (fsmeta.sh), diff.txt,
-# restore.txt (restic's messages).
+# Usage: rescue.sh BACKUP [RESTORE]
+# BACKUP and RESTORE are restic or BackOtter's rustic; RESTORE defaults to
+# BACKUP.  Results in /root/results: before/ and after/ (fsmeta.sh),
+# diff.txt, restore.txt (the restore's messages).
 
 set -eu
-[ $# -eq 1 ] || { echo "usage: $0 RESTIC" >&2; exit 1; }
-R=$1
+[ $# -eq 1 ] || [ $# -eq 2 ] || { echo "usage: $0 BACKUP [RESTORE]" >&2; exit 1; }
+R=$1 RR=${2:-$1}
 here=$(cd "$(dirname "$0")" && pwd)
 SRC=vtbd1 DST=vtbd2
 OUT=/root/results
 export RESTIC_PASSWORD=backotter-compare RESTIC_REPOSITORY=/root/repo
+# Back up with $R, restore with $RR.  BackOtter's rustic (a binary named
+# *rustic*) takes the same repository as restic, with its own options: the
+# real atime, as restic keeps it, and numeric ids, as restic restores them.
+export RUSTIC_PASSWORD=$RESTIC_PASSWORD RUSTIC_REPOSITORY=$RESTIC_REPOSITORY
+is_rustic() { case $(basename "$1") in *rustic*) true ;; *) false ;; esac; }
+bko_init() {
+    if is_rustic $R; then $R --no-progress --no-cache init >/dev/null; else $R init -q; fi
+}
+bko_backup() {
+    if is_rustic $R; then $R --no-progress --no-cache backup --set-atime yes "$@" >/dev/null
+    else $R backup -q "$@"; fi
+}
+bko_restore() {
+    if is_rustic $RR; then $RR --no-progress --no-cache restore --numeric-id --sparse by-content "$1" "$2"
+    else $RR restore -q --sparse "$1" --target "$2"; fi
+}
+bko_exclude() { if is_rustic $R; then echo "--glob !$(basename "$1")"; else echo "--exclude $1"; fi; }
 rm -rf $OUT $RESTIC_REPOSITORY
 mkdir -p $OUT /mnt/src /mnt/dst
 say() { echo "== $*"; }
@@ -83,8 +101,8 @@ sh "$here/fsmeta.sh" /mnt/src $OUT/before
 say "backup"
 # The UFS journal belongs to the file system, which newfs -j makes anew.
 start=$(date +%s)
-$R init -q
-$R backup -q --exclude /mnt/src/.sujournal /mnt/src
+bko_init
+bko_backup $(bko_exclude /mnt/src/.sujournal) /mnt/src
 echo "backup took $(( $(date +%s) - start )) s, repository $(du -sh $RESTIC_REPOSITORY | cut -f1)"
 
 # --- The target, laid out like the source -----------------------------------------
@@ -137,7 +155,7 @@ fi
 
 say "restore"
 start=$(date +%s)
-if $R restore -q --sparse "latest:/mnt/src" --target /mnt/dst >$OUT/restore.txt 2>&1; then
+if bko_restore "latest:/mnt/src" /mnt/dst >$OUT/restore.txt 2>&1; then
     echo "restore OK"
 else
     echo "restore reported errors:"

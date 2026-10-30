@@ -3,13 +3,18 @@
 blank disk, and check what survived.
 
 Usage: sudo compare.py [--mkfs-from STICK_ISO] GUEST [TOOL ...]
-                                    tools: restic borg dar bsdtar (default), and restic-bko
+                                    tools: restic borg dar bsdtar (default), restic-bko,
+                                    rustic-bko, restic-to-rustic and rustic-to-restic
        sudo compare.py --boot-only [--mkfs-from STICK_ISO] GUEST [TOOL ...]
                                     boot an earlier run's restores again
 
 restic-bko is BackOtter's patched restic (branch "backotter" of
 github.com/mchobbit/restic): $RESTIC_BKO, or else the newest Linux build in
-~/backotter-work/restic/dist/.
+~/backotter-work/restic/dist/.  rustic-bko is BackOtter's rustic (branch
+"backotter" of github.com/mchobbit/rustic and rustic_core): $RUSTIC_BKO, or else
+the newest Linux build in ~/backotter-work/rustic/dist/.  restic-to-rustic
+backs up with restic-bko and restores with rustic-bko, rustic-to-restic the
+other way round: the two read and write the same metadata.
 
 For GUEST (a folder in ~/backotter-work/vms holding GUEST.qcow2 at its
 fresh-install state), in ~/backotter-work/compare/GUEST/:
@@ -362,13 +367,34 @@ def restic_exe(tool: str) -> str:
     return str(builds[-1])
 
 
+def rustic_exe() -> str:
+    if "RUSTIC_BKO" in os.environ:
+        return os.environ["RUSTIC_BKO"]
+    builds = sorted((WORK_BASE / "rustic" / "dist").glob("rustic-backotter-*-x86_64-unknown-linux-gnu"),
+                    key=lambda p: p.stat().st_mtime)
+    if not builds:
+        raise SystemExit("no rustic-bko build: set RUSTIC_BKO, or run build-backotter.sh")
+    return str(builds[-1])
+
+
+# Back up with one of BackOtter's two programs, restore with the other.
+CROSS = {"restic-to-rustic": ("restic-bko", "rustic-bko"),
+         "rustic-to-restic": ("rustic-bko", "restic-bko")}
+
+
 def backup(tool: str, work: Path) -> None:
     repo = work / tool
+    tool = CROSS.get(tool, (tool, tool))[0]
     shutil.rmtree(repo, ignore_errors=True)
-    env = dict(os.environ, RESTIC_PASSWORD=PASSWORD, BORG_PASSPHRASE=PASSWORD)
+    env = dict(os.environ, RESTIC_PASSWORD=PASSWORD, RUSTIC_PASSWORD=PASSWORD, BORG_PASSPHRASE=PASSWORD)
     if tool in ("restic", "restic-bko"):
         run([restic_exe(tool), "-r", str(repo), "init", "-q"], env=env)
         run([restic_exe(tool), "-r", str(repo), "backup", "-q", str(SRC_MP)], env=env)
+    elif tool == "rustic-bko":
+        # The real atime, as restic keeps it (rustic's default is the mtime).
+        rustic = [rustic_exe(), "-r", str(repo), "--no-progress", "--no-cache"]
+        run(rustic + ["init"], env=env)
+        run(rustic + ["backup", "--set-atime", "yes", str(SRC_MP)], env=env)
     elif tool == "borg":
         run(["borg", "init", "-e", "repokey-blake2", str(repo)], env=env)
         run(["borg", "create", "--numeric-ids", "-C", "zstd,3", f"{repo}::backup", "."], env=env, cwd=SRC_MP)
@@ -385,10 +411,16 @@ def backup(tool: str, work: Path) -> None:
 
 def restore(tool: str, work: Path) -> None:
     repo = work / tool
-    env = dict(os.environ, RESTIC_PASSWORD=PASSWORD, BORG_PASSPHRASE=PASSWORD)
+    tool = CROSS.get(tool, (tool, tool))[1]
+    env = dict(os.environ, RESTIC_PASSWORD=PASSWORD, RUSTIC_PASSWORD=PASSWORD, BORG_PASSPHRASE=PASSWORD)
     if tool in ("restic", "restic-bko"):
         run([restic_exe(tool), "-r", str(repo), "restore", "-q", "--sparse",
              f"latest:{SRC_MP}", "--target", str(DST_MP)], env=env)
+    elif tool == "rustic-bko":
+        # Numeric ids, as restic restores them: names would be looked up in
+        # this system's users, not the guest's.
+        run([rustic_exe(), "-r", str(repo), "--no-progress", "--no-cache", "restore", "--numeric-id",
+             "--sparse", "by-content", f"latest:{SRC_MP}", str(DST_MP)], env=env)
     elif tool == "borg":
         run(["borg", "extract", "--numeric-ids", "--sparse", f"{repo}::backup"], env=env, cwd=DST_MP)
     elif tool == "dar":
@@ -605,11 +637,11 @@ def main() -> int:
         (work / "results.json").write_text(json.dumps(r, indent=1))
     else:
         r = compare_guest(guest, tools, stick_iso)
-    print(f"\n{'tool':10} {'backup':>8} {'size':>9} {'restore':>8}  boot      differences")
+    print(f"\n{'tool':16} {'backup':>8} {'size':>9} {'restore':>8}  boot      differences")
     for tool, t in r["tools"].items():
         diffs = ", ".join(f"{k} {v['count']}" for k, v in t.get("diff", {}).items()) or "none"
         b = t.get("boot", {})
-        print(f"{tool:10} {t['backup_s']:7}s {t['backup_bytes'] / 2**20:7.0f}MB {t.get('restore_s', 0):7}s  "
+        print(f"{tool:16} {t['backup_s']:7}s {t['backup_bytes'] / 2**20:7.0f}MB {t.get('restore_s', 0):7}s  "
               f"{b.get('state', 'no ssh'):9} {diffs}")
     return 0
 

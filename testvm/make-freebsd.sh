@@ -17,20 +17,28 @@
 #   root-password         root's password (mode 600)
 #   id_ed25519, .pub      SSH key that logs in as root
 #   install-serial.log    the installer's serial console
+#   vm-run-options        with CPUS or MEMORY set: "--cpus N --memory MB",
+#                         how vm-run must boot it
 #
 # The guest, host name fbsdN: BIOS + GPT, swap (2 GB), / (ROOT_FS, the rest;
-# for zfs, pool "zroot" with boot environments), 2 GB RAM, the base system
-# and nothing else; see freebsd/installerconfig.  Its console is serial and
-# screen both.  Run it with vm-run.  vm-mount can't open it: Linux can't
-# write UFS, and the ZFS pool would have to be imported on this host.
+# for zfs, pool "zroot" with boot environments), 2 CPUs, 2 GB RAM, the base
+# system and nothing else; see freebsd/installerconfig.  Its console is
+# serial and screen both.  Run it with vm-run (and vm-run-options).  vm-mount
+# can't open it: Linux can't write UFS, and the ZFS pool would have to be
+# imported on this host.
+#
+# A bigger guest, e.g. for building (see freebsd/builder-setup.sh), from the
+# environment: DISK_SIZE (16G), CPUS (2), MEMORY (MB, 2048), and GUEST_NAME
+# for the host name (fbsdN).
 #
 # Needs: qemu-system-x86_64 with KVM, qemu-img, xorriso, gpg, gpgv, openssl,
 # wget.  Runs as an ordinary user in the kvm group.
 
 set -euo pipefail
 
-DISK_SIZE=16G
-MEMORY=2048
+DISK_SIZE=${DISK_SIZE:-16G}
+CPUS=${CPUS:-2}
+MEMORY=${MEMORY:-2048}
 # Colin Percival, FreeBSD release engineering lead, who signs the release
 # announcements; listed in https://docs.freebsd.org/pgpkeys/pgpkeys.txt.
 RE_KEY=82563B84D0620EDC0DFB86413897F2E22E65AD3F
@@ -50,7 +58,8 @@ ISO=FreeBSD-$version-RELEASE-amd64-disc1.iso
 ANNOUNCE=announce-$version.asc
 iso_url=https://download.freebsd.org/releases/ISO-IMAGES/$version/$ISO
 announce_url=https://www.freebsd.org/releases/${version}R/announce.asc
-guest_name=fbsd$major
+guest_name=${GUEST_NAME:-fbsd$major}
+[[ $guest_name =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "GUEST_NAME '$guest_name' isn't a host name"
 DISK=freebsd$major.qcow2
 mkdir -p "$3"
 cd "$3"
@@ -125,7 +134,7 @@ echo "Installing; the installer's console goes to $3/install-serial.log"
 # The install script reboots when it's done, which -no-reboot turns into
 # QEMU exiting; it powers off if the install failed.
 timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
-    -enable-kvm -cpu host -smp 2 -m "$MEMORY" -machine pc \
+    -enable-kvm -cpu host -smp "$CPUS" -m "$MEMORY" -machine pc \
     -drive "file=$DISK,if=virtio,format=qcow2" \
     -drive "file=$media,media=cdrom,readonly=on" -boot order=d \
     -nic user,model=virtio-net-pci \
@@ -135,4 +144,5 @@ grep -q '^BACKOTTER-INSTALL: OK' install-serial.log ||
     die "the install failed; see install-serial.log"
 
 qemu-img snapshot -c fresh-install "$DISK"
+[[ $CPUS == 2 && $MEMORY == 2048 ]] || echo "--cpus $CPUS --memory $MEMORY" >vm-run-options
 echo "Done: $3/$DISK ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""

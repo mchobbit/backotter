@@ -3,10 +3,11 @@
 #
 # Usage: vm-run [--uefi [--no-secure-boot]] [--cdrom ISO] [--snapshot | --ram [--keep]]
 #               [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--mac ADDR] [--tpm DIR]
-#               [--serial-log FILE] IMAGE [-- QEMU_ARGS...]
+#               [--cpus N] [--memory MB] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]
 #
-# The VM gets 2 GB RAM (MEMORY=MB overrides), KVM, and QEMU's user-mode
-# network with the guest's SSH port on 127.0.0.1:2222 (SSH_PORT overrides).
+# The VM gets 2 CPUs, 2 GB RAM (MEMORY=MB overrides), KVM, and QEMU's
+# user-mode network with the guest's SSH port on 127.0.0.1:2222 (SSH_PORT
+# overrides).
 # Its serial console is this terminal: log in there, or from another terminal:
 #   ssh -i WORK_DIR/id_ed25519 -p 2222 root@127.0.0.1
 # Ctrl-A X quits QEMU (Ctrl-A H lists the other keys).
@@ -28,6 +29,8 @@
 #                 match.  A kept overlay is gone when the host reboots.
 #   --serial-log FILE
 #                 run headless, writing the serial console to FILE (for scripts)
+#   --cpus N      N CPUs instead of 2
+#   --memory MB   MB of RAM instead of 2048 (or MEMORY), e.g. for a builder
 #
 # Other hardware, e.g. to restore onto a machine unlike the original:
 #   --disk-bus BUS
@@ -58,7 +61,7 @@ RAM_DIR=/dev/shm
 die() { echo "vm-run: $*" >&2; exit 1; }
 
 cdrom="" uefi=no secure_boot=yes snapshot=() ram=no keep=no console=(-nographic)
-bus=virtio extra=() nic=virtio-net-pci mac="" tpm=""
+bus=virtio extra=() nic=virtio-net-pci mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
 while [[ $# -gt 0 ]]; do
     case $1 in
         --cdrom) cdrom=$(realpath "$2"); shift 2 ;;
@@ -73,18 +76,21 @@ while [[ $# -gt 0 ]]; do
         --nic) nic=$2; shift 2 ;;
         --mac) mac=,mac=$2; shift 2 ;;
         --tpm) tpm=$(realpath -m "$2"); shift 2 ;;
+        --cpus) cpus=$2; shift 2 ;;
+        --memory) memory=$2; shift 2 ;;
         -h|--help) sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
         -*) die "unknown option $1" ;;
         *) break ;;
     esac
 done
-[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot]] [--cdrom ISO] [--snapshot | --ram [--keep]] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--mac ADDR] [--tpm DIR] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]"
+[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot]] [--cdrom ISO] [--snapshot | --ram [--keep]] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]"
 image=$(realpath "$1")
 shift
 [[ ${1:-} == -- ]] && shift
 [[ $ram == yes && ${#snapshot[@]} -gt 0 ]] && die "--ram and --snapshot don't combine"
 [[ $keep == yes && $ram == no ]] && die "--keep needs --ram"
 case $bus in virtio|scsi|nvme|sata) ;; *) die "--disk-bus must be virtio, scsi, nvme or sata" ;; esac
+[[ $cpus =~ ^[1-9][0-9]*$ && $memory =~ ^[1-9][0-9]*$ ]] || die "--cpus and --memory take whole numbers"
 
 tmp=$(mktemp -d)
 overlays=() swtpm_pid=""
@@ -141,7 +147,7 @@ for i in "${!images[@]}"; do
 done
 
 args=(
-    -enable-kvm -cpu host -smp 2 -m "${MEMORY:-2048}"
+    -enable-kvm -cpu host -smp "$cpus" -m "$memory"
     "${disk_args[@]}"
     -nic "user,model=$nic$mac,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22"
     "${console[@]}"

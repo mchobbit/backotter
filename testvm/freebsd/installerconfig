@@ -1,0 +1,66 @@
+# bsdinstall script for a BackOtter FreeBSD test guest; see bsdinstall(8),
+# SCRIPTING.  make-freebsd.sh fills in the placeholders and puts this on the
+# install media as /etc/installerconfig.
+#
+# Everything up to the "#!" line is the preamble, sourced by the installer
+# itself (on the install media), so it can test what the media holds.
+
+if [ @ROOT_FS@ = zfs ]; then
+	# GPT with a BIOS boot partition, 2 GB swap, pool "zroot" on the rest.
+	export ZFSBOOT_DISKS=vtbd0
+	export ZFSBOOT_VDEV_TYPE=stripe
+	export ZFSBOOT_PARTITION_SCHEME=GPT
+	export ZFSBOOT_BOOT_TYPE=BIOS
+	export ZFSBOOT_SWAP_SIZE=2g
+	export ZFSBOOT_CONFIRM_LAYOUT=0
+	# 15.1's "umount" step ends with "umount -F FSTAB -a" over the
+	# installer's fstab entries with a mount point.  On a ZFS root there are
+	# none, umount fails with "fstab reading failure", and that fails the
+	# whole install.  The pool is exported cleanly afterwards anyway, so
+	# ignore that one step's result.  The installer runs its steps as
+	# "bsdinstall STEP" in the shell that sources this preamble, so this
+	# function stands in for the command.
+	bsdinstall() {
+		if [ "$1" = umount ]; then
+			command bsdinstall "$@" || f_dprintf "BackOtter: ignoring the umount step's failure"
+		else
+			command bsdinstall "$@"
+		fi
+	}
+else
+	# The installer adds the BIOS boot partition itself.
+	PARTITIONS="vtbd0 GPT { 2G freebsd-swap, auto freebsd-ufs / }"
+fi
+export nonInteractive=YES
+
+# 14.x media carry the base system as tarballs; 15.x media as pkgbase
+# packages, which the installer uses when DISTRIBUTIONS is empty.  Those it
+# takes from the media's own repository, as the interactive installer's
+# "Offline" choice does; the network isn't up during a scripted install.
+if [ -f /usr/freebsd-dist/base.txz ]; then
+	DISTRIBUTIONS="kernel.txz base.txz"
+else
+	export COMPONENTS=base
+	export BSDINSTALL_PKG_REPOS_DIR=/usr/freebsd-packages/repos/
+fi
+
+#!/bin/sh
+# Post-install: runs inside the new system, chrooted.
+set -e
+
+sysrc hostname=@HOSTNAME@ ifconfig_vtnet0=DHCP sshd_enable=YES
+
+echo '@ROOT_PASSWORD_HASH@' | pw usermod root -H 0
+mkdir -p -m 700 /root/.ssh
+echo '@AUTHORIZED_KEY@' >/root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
+# FreeBSD's sshd refuses root by default; the first setting in the file wins.
+printf '%s\n' '' '# BackOtter test guest' 'PermitRootLogin prohibit-password' >>/etc/ssh/sshd_config
+
+# Loader and kernel on the serial console as well as the screen, so vm-run's
+# terminal (and --serial-log) shows the boot and a login prompt.
+cat >>/boot/loader.conf <<'EOF'
+boot_multicons="YES"
+console="comconsole,vidconsole"
+autoboot_delay="3"
+EOF

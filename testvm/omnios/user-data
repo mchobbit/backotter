@@ -1,0 +1,21 @@
+#cloud-config
+# OmniOS test guest for BackOtter: what cloud-init does on the first boot of
+# OmniOS's own cloud image.  make-omnios.sh fills in the @...@ settings and
+# puts this file, with a meta-data, on a small ISO labelled CIDATA that
+# cloud-init finds.  The image's sshd already lets root in with a key only,
+# and the image grows its ZFS pool to fill the disk by itself.
+hostname: @HOSTNAME@
+disable_root: false
+ssh_authorized_keys:
+  - '@AUTHORIZED_KEY@'
+runcmd:
+  # root's password, for the serial console.  illumos' own sed has no -i.
+  - "/usr/gnu/bin/sed -i 's|^root:[^:]*:|root:@PASSWORD_HASH@:|' /etc/shadow"
+  # Done with: later boots have no CIDATA disk, and searching for one stalls
+  # the boot.  The later stages require this one, so they don't run either;
+  # multi-user and console-login only want cloud-init:final optionally.
+  - svcadm disable cloud-init:initlocal
+  - 'echo "BACKOTTER-FIRSTBOOT: OK" >/dev/console'
+power_state:
+  mode: poweroff
+  condition: true

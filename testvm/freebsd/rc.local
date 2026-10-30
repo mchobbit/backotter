@@ -1,0 +1,23 @@
+#!/bin/sh
+# Replaces the install media's /etc/rc.local for a BackOtter test guest.
+# The stock one asks for a terminal type on a serial console before it
+# looks for /etc/installerconfig; this runs that script straight away and
+# says how it went on the console, which make-freebsd.sh reads.
+
+mkdir -p /tmp/bsdinstall_etc
+export TERM=vt100
+# Without this, "bsdinstall script" sends each step's errors to /dev/null.
+# The log goes to the console as it's written.  (When the install fails, the
+# installer shows its log and waits for a key, until make-freebsd.sh times
+# out.)
+export BSDINSTALL_LOG=/tmp/bsdinstall_log
+: >"$BSDINSTALL_LOG"
+tail -f "$BSDINSTALL_LOG" &
+if bsdinstall script /etc/installerconfig; then
+	echo "BACKOTTER-INSTALL: OK"
+	reboot
+else
+	cat /tmp/bsdinstall_log
+	echo "BACKOTTER-INSTALL: FAILED"
+	poweroff
+fi

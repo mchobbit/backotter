@@ -37,6 +37,10 @@ state=$STATE_DIR/$(systemd-escape --path "$mp")
 [[ -e $state ]] && die "$mp is already in use by vm-mount (see $state)"
 
 [[ -d /sys/module/nbd ]] || modprobe nbd max_part=16
+# Shared with make-from-live.sh: finding a free device and attaching it must
+# be one step, or two at once pick the same device.
+exec 9>/run/lock/backotter-nbd.lock
+flock 9
 dev=""
 for b in /sys/block/nbd*; do
     # An nbd device is free while no qemu-nbd process serves it.
@@ -51,6 +55,7 @@ nbd_opts=(--format="$format")
 [[ $ro == yes ]] && nbd_opts+=(--read-only)
 qemu-nbd --connect="$dev" "${nbd_opts[@]}" "$image" ||
     die "qemu-nbd could not attach $image (is the VM running?)"
+flock -u 9
 mkdir -p "$STATE_DIR"
 # Line 1: the nbd device; any further lines: ZFS pools imported from it.
 echo "$dev" >"$state"
@@ -58,7 +63,11 @@ echo "$dev" >"$state"
 undo() {
     umount -R "$mp" 2>/dev/null || true
     tail -n +2 "$state" | while read -r pool; do zpool export "$pool" || true; done
+    # Wait for the qemu-nbd server to exit, as vm-umount does.
+    local pid
+    pid=$(cat "/sys/block/${dev#/dev/}/pid" 2>/dev/null || true)
     qemu-nbd --disconnect "$dev" >/dev/null
+    [[ -n $pid ]] && while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
     rm -f "$state"
 }
 trap 'undo; die "failed"' ERR
@@ -91,9 +100,9 @@ mount_fs() {
     local opts=$3
     if [[ $ro == yes ]]; then
         case $(blkid -s TYPE -o value "$1") in
-            ext2|ext3|ext4) opts=ro,noload${opts:+,$opts} ;;
+            ext3|ext4) opts=ro,noload${opts:+,$opts} ;;   # ext2 has no journal, and rejects noload
             btrfs) opts=ro,rescue=nologreplay${opts:+,$opts} ;;
-            xfs) opts=ro,norecovery${opts:+,$opts} ;;
+            xfs|f2fs|nilfs2) opts=ro,norecovery${opts:+,$opts} ;;
             *) opts=ro${opts:+,$opts} ;;
         esac
     fi

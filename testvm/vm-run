@@ -11,7 +11,10 @@
 # Ctrl-A X quits QEMU (Ctrl-A H lists the other keys).
 #
 #   --cdrom ISO   attach ISO and boot from it first, e.g. BackOtter's rescue ISO
-#   --uefi        boot with OVMF (UEFI) instead of SeaBIOS (BIOS)
+#   --uefi        boot with OVMF (UEFI) instead of SeaBIOS (BIOS), with Secure
+#                 Boot on and Microsoft's keys enrolled, like a stock PC
+#   --no-secure-boot
+#                 with --uefi: Secure Boot off (Pop!_OS, for one, needs that)
 #   --snapshot    throw away every disk write when QEMU exits (QEMU keeps them
 #                 in a temporary file in $TMPDIR, by default /var/tmp)
 #   --ram         keep every disk write in RAM instead: a qcow2 overlay in
@@ -32,11 +35,12 @@ set -euo pipefail
 RAM_DIR=/dev/shm
 die() { echo "vm-run: $*" >&2; exit 1; }
 
-cdrom="" uefi=no snapshot=() ram=no keep=no console=(-nographic)
+cdrom="" uefi=no secure_boot=yes snapshot=() ram=no keep=no console=(-nographic)
 while [[ $# -gt 0 ]]; do
     case $1 in
         --cdrom) cdrom=$(realpath "$2"); shift 2 ;;
         --uefi) uefi=yes; shift ;;
+        --no-secure-boot) secure_boot=no; shift ;;
         --snapshot) snapshot=(-snapshot); shift ;;
         --ram) ram=yes; shift ;;
         --keep) keep=yes; shift ;;
@@ -46,7 +50,7 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
-[[ $# -ge 1 ]] || die "usage: $0 [--uefi] [--cdrom ISO] [--snapshot | --ram [--keep]] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]"
+[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot]] [--cdrom ISO] [--snapshot | --ram [--keep]] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]"
 image=$(realpath "$1")
 shift
 [[ ${1:-} == -- ]] && shift
@@ -87,17 +91,30 @@ if [[ -n $cdrom ]]; then
 fi
 if [[ $uefi == yes ]]; then
     # A fresh copy of OVMF's variable store per run: no leftover boot entries.
-    cp /usr/share/OVMF/OVMF_VARS_4M.ms.fd "$tmp/vars.fd"
+    if [[ $secure_boot == yes ]]; then
+        code=OVMF_CODE_4M.secboot.fd vars=OVMF_VARS_4M.ms.fd
+    else
+        code=OVMF_CODE_4M.fd vars=OVMF_VARS_4M.fd
+    fi
+    cp "/usr/share/OVMF/$vars" "$tmp/vars.fd"
     args+=(-machine q35,smm=on -global driver=cfi.pflash01,property=secure,value=on
-        -drive if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/OVMF_CODE_4M.secboot.fd
+        -drive "if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/$code"
         -drive "if=pflash,format=raw,unit=1,file=$tmp/vars.fd")
 else
     args+=(-machine pc)
 fi
 
-# Not exec: the cleanup above has to run after QEMU exits.
+# Not exec: the cleanup above has to run after QEMU exits.  QEMU runs in the
+# background so that stopping vm-run (TERM, INT, HUP) stops QEMU too instead
+# of orphaning it; <&0 keeps the terminal as its input, which a background
+# command would otherwise lose.
+qemu-system-x86_64 "${args[@]}" "$@" <&0 &
+qemu=$!
+trap 'kill -TERM "$qemu" 2>/dev/null' TERM INT HUP
 status=0
-qemu-system-x86_64 "${args[@]}" "$@" || status=$?
+wait "$qemu" || status=$?
+# A trapped signal ends wait early; wait for QEMU itself to finish.
+while kill -0 "$qemu" 2>/dev/null; do wait "$qemu" || status=$?; done
 if [[ $keep == yes ]]; then
     echo "vm-run: kept this run's writes in $overlay ($(du -h "$overlay" | cut -f1))." >&2
     echo "  merge them into $image:  qemu-img commit $overlay && rm $overlay" >&2

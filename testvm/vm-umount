@@ -22,6 +22,11 @@ fi
 while read -r pool; do
     zpool export "$pool" || die "could not export ZFS pool $pool"
 done < <(tail -n +2 "$state")
-qemu-nbd --disconnect "$(head -n 1 "$state")" >/dev/null
+dev=$(head -n 1 "$state")
+# Disconnecting returns before the qemu-nbd server has exited; wait for it,
+# or the next user of the device gets its late replies and fails.
+pid=$(cat "/sys/block/${dev#/dev/}/pid" 2>/dev/null || true)
+qemu-nbd --disconnect "$dev" >/dev/null
+[[ -n $pid ]] && while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
 rm "$state"
 echo "Unmounted $mp"

@@ -1,0 +1,159 @@
+<?xml version="1.0"?>
+<!DOCTYPE profile>
+<!--
+  openSUSE Tumbleweed test guest for BackOtter: an unattended AutoYaST
+  install from the NET ISO, packages from the openSUSE history snapshot of
+  the ISO's own day.  BIOS + MBR with /boot (ext4), swap and / (btrfs) as
+  three primary partitions; / gets openSUSE's own btrfs layout: its default
+  subvolumes under @, and snapper, which makes the default subvolume a
+  snapshot (@/.snapshots/1/snapshot) rather than the top level.  No desktop.
+
+  make-opensuse.sh fills in the @...@ settings and serves this file over HTTP
+  to the installer (autoyast= boot parameter).
+-->
+<profile xmlns="http://www.suse.com/1.0/yast2ns" xmlns:config="http://www.suse.com/1.0/configns">
+  <general>
+    <mode>
+      <confirm config:type="boolean">false</confirm>
+      <!-- Everything in the first stage: no AutoYaST run at the guest's first boot. -->
+      <second_stage config:type="boolean">false</second_stage>
+      <!-- Power off, not reboot, when done: make-opensuse.sh runs QEMU with -no-reboot. -->
+      <final_halt config:type="boolean">true</final_halt>
+    </mode>
+  </general>
+  <!-- A pop-up would wait forever with nobody to answer it: show each for
+       10 s, then go on (it is in install-serial.log either way). -->
+  <report>
+    <errors><show config:type="boolean">true</show><timeout config:type="integer">10</timeout></errors>
+    <warnings><show config:type="boolean">true</show><timeout config:type="integer">10</timeout></warnings>
+    <messages><show config:type="boolean">true</show><timeout config:type="integer">10</timeout></messages>
+  </report>
+  <software>
+    <products config:type="list">
+      <product>openSUSE</product>
+    </products>
+    <install_recommended config:type="boolean">false</install_recommended>
+    <patterns config:type="list">
+      <pattern>base</pattern>
+      <pattern>minimal_base</pattern>
+    </patterns>
+    <packages config:type="list">
+      <package>openssh</package>
+      <package>snapper</package>
+      <package>grub2-snapper-plugin</package>
+      <package>btrfsprogs</package>
+      <package>e2fsprogs</package>
+      <package>NetworkManager</package>
+      <package>firewalld</package>
+      <package>kernel-default</package>
+    </packages>
+  </software>
+  <partitioning config:type="list">
+    <drive>
+      <device>/dev/vda</device>
+      <disklabel>msdos</disklabel>
+      <initialize config:type="boolean">true</initialize>
+      <use>all</use>
+      <enable_snapshots config:type="boolean">true</enable_snapshots>
+      <partitions config:type="list">
+        <partition>
+          <partition_nr config:type="integer">1</partition_nr>
+          <partition_type>primary</partition_type>
+          <mount>/boot</mount>
+          <filesystem config:type="symbol">ext4</filesystem>
+          <size>1GiB</size>
+        </partition>
+        <partition>
+          <partition_nr config:type="integer">2</partition_nr>
+          <partition_type>primary</partition_type>
+          <mount>swap</mount>
+          <filesystem config:type="symbol">swap</filesystem>
+          <size>2GiB</size>
+        </partition>
+        <!-- No subvolumes list: the product's own defaults (@/home, @/var, ...). -->
+        <partition>
+          <partition_nr config:type="integer">3</partition_nr>
+          <partition_type>primary</partition_type>
+          <mount>/</mount>
+          <filesystem config:type="symbol">btrfs</filesystem>
+          <size>max</size>
+        </partition>
+      </partitions>
+    </drive>
+  </partitioning>
+  <bootloader>
+    <loader_type>grub2</loader_type>
+    <global>
+      <append>console=tty0 console=ttyS0,115200n8</append>
+      <terminal>console serial</terminal>
+      <serial>serial --unit=0 --speed=115200</serial>
+      <timeout config:type="integer">2</timeout>
+    </global>
+  </bootloader>
+  <!-- NetworkManager, unconfigured: it brings up any wired card with DHCP, as
+       on a fresh desktop install.  (Keeping the installer's network fails
+       here with "No network running".) -->
+  <networking>
+    <keep_install_network config:type="boolean">false</keep_install_network>
+    <backend>network_manager</backend>
+    <dns>
+      <hostname>@HOSTNAME@</hostname>
+    </dns>
+  </networking>
+  <host>
+    <hosts config:type="list">
+      <hosts_entry>
+        <host_address>127.0.1.1</host_address>
+        <names config:type="list"><name>@HOSTNAME@</name></names>
+      </hosts_entry>
+    </hosts>
+  </host>
+  <!-- firewalld's default zone, public, lets SSH in. -->
+  <firewall>
+    <enable_firewall config:type="boolean">true</enable_firewall>
+    <start_firewall config:type="boolean">true</start_firewall>
+  </firewall>
+  <services-manager>
+    <default_target>multi-user</default_target>
+    <services>
+      <enable config:type="list">
+        <service>sshd</service>
+      </enable>
+    </services>
+  </services-manager>
+  <timezone>
+    <timezone>UTC</timezone>
+    <hwclock>UTC</hwclock>
+  </timezone>
+  <language>
+    <language>en_US</language>
+  </language>
+  <keyboard>
+    <keymap>english-us</keymap>
+  </keyboard>
+  <users config:type="list">
+    <user>
+      <username>root</username>
+      <encrypted config:type="boolean">true</encrypted>
+      <user_password>@ROOT_PASSWORD_HASH@</user_password>
+      <authorized_keys config:type="list">
+        <listentry>@AUTHORIZED_KEY@</listentry>
+      </authorized_keys>
+    </user>
+  </users>
+  <scripts>
+    <chroot-scripts config:type="list">
+      <script>
+        <filename>backotter-freeze.sh</filename>
+        <chrooted config:type="boolean">true</chrooted>
+        <source><![CDATA[
+# Freeze the guest at this snapshot, like the others: point its repositories
+# at openSUSE's history of the day (kept only for some months).
+sed -i -E 's#^baseurl=https?://download\.opensuse\.org/(tumbleweed|update/tumbleweed)/#baseurl=@HISTORY@/\1/#' \
+    /etc/zypp/repos.d/*.repo
+echo "BACKOTTER-INSTALL-OK" >/dev/ttyS0
+]]></source>
+      </script>
+    </chroot-scripts>
+  </scripts>
+</profile>

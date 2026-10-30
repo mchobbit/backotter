@@ -1,0 +1,83 @@
+#!/bin/sh
+# DragonFly BSD test guest for BackOtter: the install, done the way
+# DragonFly's own example scripts (/usr/share/examples/rconfig) do it, with
+# HAMMER2 for / instead of their HAMMER.  make-dragonfly.sh fills in the
+# @...@ settings and puts this file on the live CD as /etc/rc.local, which
+# its boot runs as root.  Output goes to the console, which is the serial
+# port; it powers the VM off when done, printing BACKOTTER-INSTALL-OK or
+# BACKOTTER-INSTALL-FAILED first.
+#
+# The disk: MBR with one DragonFly slice, its disklabel64 holding /boot (a,
+# 1 GiB UFS), swap (b, 2 GiB) and / (d, HAMMER2, the rest, in the PFS ROOT).
+
+GUEST_NAME='@HOSTNAME@'
+ROOT_PASSWORD='@ROOT_PASSWORD@'
+AUTHORIZED_KEY='@AUTHORIZED_KEY@'
+DISK=vbd0                              # virtio-blk
+NIC=vtnet0                             # virtio-net
+
+fail() { echo "BACKOTTER-INSTALL-FAILED: $*"; sync; sleep 2; halt -p; exit 1; }
+run() { "$@" || fail "$*"; }
+echo "BACKOTTER-INSTALL-START (dragonfly)"
+
+run dd if=/dev/zero of=/dev/$DISK bs=32k count=16
+run fdisk -IB $DISK
+run disklabel64 -r -w ${DISK}s1 auto
+run disklabel64 -B ${DISK}s1
+disklabel64 ${DISK}s1 >/tmp/label || fail "disklabel64"
+cat >>/tmp/label <<'EOF'
+  a: 1g 0 4.2BSD
+  b: 2g * swap
+  d: * * HAMMER2
+EOF
+run disklabel64 -R ${DISK}s1 /tmp/label
+run newfs /dev/${DISK}s1a
+run newfs_hammer2 -L ROOT /dev/${DISK}s1d
+run mount -t hammer2 /dev/${DISK}s1d@ROOT /mnt
+mkdir /mnt/boot
+run mount /dev/${DISK}s1a /mnt/boot
+
+# The live system's file systems, as the example scripts copy them: / and
+# the separately mounted /boot, /usr and /var, then a fresh /etc.
+for d in / /boot /usr /var; do
+    echo "Copying $d"
+    cpdup -o $d /mnt$d || fail "cpdup $d"
+done
+run cpdup -i0 /etc.hdd /mnt/etc
+for d in /proc /tmp /var/tmp /var/crash; do mkdir -p /mnt$d; done
+chmod 1777 /mnt/tmp /mnt/var/tmp
+rm -rf /mnt/README* /mnt/autorun* /mnt/index.html /mnt/dflybsd.ico /mnt/boot.catalog /mnt/etc.hdd
+
+cat >/mnt/etc/fstab <<EOF
+/dev/${DISK}s1d@ROOT	/		hammer2	rw	1	1
+/dev/${DISK}s1a		/boot		ufs	rw	1	1
+/dev/${DISK}s1b		none		swap	sw	0	0
+proc			/proc		procfs	rw	0	0
+EOF
+cat >/mnt/boot/loader.conf <<EOF
+vfs.root.mountfrom="hammer2:${DISK}s1d@ROOT"
+console="comconsole"
+boot_serial="YES"
+autoboot_delay="3"
+EOF
+cat >>/mnt/etc/rc.conf <<EOF
+hostname="$GUEST_NAME"
+ifconfig_$NIC="DHCP"
+sshd_enable="YES"
+dntpd_enable="YES"
+dumpdev="/dev/${DISK}s1b"
+EOF
+echo "PermitRootLogin prohibit-password" >>/mnt/etc/ssh/sshd_config
+echo "$ROOT_PASSWORD" | pw -V /mnt/etc usermod root -h 0 || fail "root's password"
+mkdir -p /mnt/root/.ssh
+echo "$AUTHORIZED_KEY" >/mnt/root/.ssh/authorized_keys
+chmod 700 /mnt/root/.ssh
+chmod 600 /mnt/root/.ssh/authorized_keys
+
+cd /
+run umount /mnt/boot
+run umount /mnt
+sync
+echo "BACKOTTER-INSTALL-OK"
+# halt, not poweroff: init only acts on poweroff once the boot is over.
+halt -p

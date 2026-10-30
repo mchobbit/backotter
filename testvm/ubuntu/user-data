@@ -1,11 +1,12 @@
 #cloud-config
 # Ubuntu Server test guest for BackOtter: an unattended "autoinstall" from an
 # official live-server ISO, offline (the VM has no network during the install,
-# so everything comes from the ISO).  The disk layout is storage-zfs.yaml's
-# or, for UEFI, storage-direct.yaml's.
+# so everything comes from the ISO).  The disk layout is storage-zfs.yaml's,
+# storage-zfs-mirror.yaml's or, for UEFI, storage-direct.yaml's; a layout's
+# storage-*-late.yaml, if any, adds late commands.
 #
-# make-ubuntu.sh fills in the @...@ settings (the storage line with one of
-# those files) and puts this file, with an empty meta-data, on a small ISO
+# make-ubuntu.sh fills in the @...@ settings (the storage lines with those
+# files) and puts this file, with an empty meta-data, on a small ISO
 # labelled CIDATA that cloud-init finds.
 autoinstall:
   version: 1
@@ -54,4 +55,5 @@ autoinstall:
     - >-
       sed -i -E 's#^URIs: http://(archive|security)\.ubuntu\.com/ubuntu/?$#URIs: https://snapshot.ubuntu.com/ubuntu/@SNAPSHOT@/#'
       /target/etc/apt/sources.list.d/ubuntu.sources
+@STORAGE_LATE@
   shutdown: poweroff

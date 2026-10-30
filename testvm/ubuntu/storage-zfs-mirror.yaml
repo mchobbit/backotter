@@ -1,0 +1,47 @@
+  # Two disks, BIOS + MBR, each with a /boot member, swap, and a ZFS
+  # partition: /boot (ext4) on an mdadm RAID 1 across both, which GRUB reads
+  # and is installed on both disks; swap on both; and the pool "rpool",
+  # encrypted the way Subiquity's guided "ZFS with encryption" does it (a LUKS
+  # keystore volume in the pool holding the key, unlocked with a passphrase
+  # at boot).  curtin can only make a pool from a list of devices, not a
+  # mirror, so the late commands attach the second disk's partition
+  # (storage-zfs-mirror-late.yaml).
+  early-commands:
+    # curtin reads the keystore's passphrase from this file: no newline.
+    - printf '%s' '@ZFS_PASSPHRASE@' >/tmp/zfs-passphrase
+  storage:
+    config:
+      - {type: disk, id: disk0, path: /dev/vda, ptable: msdos, wipe: superblock-recursive,
+         preserve: false, grub_device: true}
+      - {type: disk, id: disk1, path: /dev/vdb, ptable: msdos, wipe: superblock-recursive,
+         preserve: false, grub_device: true}
+      - {type: partition, id: part-boot0, device: disk0, number: 1, size: 1G, flag: boot,
+         preserve: false}
+      - {type: partition, id: part-boot1, device: disk1, number: 1, size: 1G, flag: boot,
+         preserve: false}
+      - {type: raid, id: md-boot, name: md0, raidlevel: 1, devices: [part-boot0, part-boot1],
+         preserve: false}
+      - {type: format, id: fmt-boot, volume: md-boot, fstype: ext4, preserve: false}
+      - {type: partition, id: part-swap0, device: disk0, number: 2, size: 2G, flag: swap,
+         preserve: false}
+      - {type: partition, id: part-swap1, device: disk1, number: 2, size: 2G, flag: swap,
+         preserve: false}
+      - {type: format, id: fmt-swap0, volume: part-swap0, fstype: swap, preserve: false}
+      - {type: format, id: fmt-swap1, volume: part-swap1, fstype: swap, preserve: false}
+      - {type: partition, id: part-zfs0, device: disk0, number: 3, size: -1, preserve: false}
+      - {type: partition, id: part-zfs1, device: disk1, number: 3, size: -1, preserve: false}
+      # As in storage-zfs.yaml, Subiquity's own pool and dataset properties.
+      - {type: zpool, id: rpool, pool: rpool, vdevs: [part-zfs0], mountpoint: /,
+         default_features: true,
+         encryption_style: luks_keystore, keyfile: /tmp/zfs-passphrase,
+         pool_properties: {ashift: 12, autotrim: 'on', version: null},
+         fs_properties: {atime: null, acltype: posixacl, canmount: 'off', compression: lz4,
+                         devices: 'off', normalization: formD, relatime: 'on',
+                         sync: standard, xattr: sa, dnodesize: auto}}
+      - {type: zfs, id: zfs-root-container, pool: rpool, volume: /ROOT,
+         properties: {canmount: 'off', mountpoint: none}}
+      - {type: zfs, id: zfs-root, pool: rpool, volume: /ROOT/ubuntu,
+         properties: {canmount: 'on', mountpoint: /}}
+      - {type: mount, id: mnt-boot, device: fmt-boot, path: /boot}
+      - {type: mount, id: mnt-swap0, device: fmt-swap0, path: none}
+      - {type: mount, id: mnt-swap1, device: fmt-swap1, path: none}

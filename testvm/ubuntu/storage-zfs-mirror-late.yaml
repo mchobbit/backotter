@@ -1,0 +1,6 @@
+    # Make rpool a mirror: attach the second disk's partition to the first's,
+    # and wait for the resilver.
+    - >-
+      zpool attach -w rpool
+      "$(zpool list -vHP rpool | awk '$1 ~ /^\// { print $1; exit }')" /dev/vdb3
+    - zpool status rpool

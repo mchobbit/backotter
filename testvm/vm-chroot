@@ -21,7 +21,9 @@ die() { echo "vm-chroot: $*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || die "must run as root"
 mp=$(realpath "$1")
 shift
-[[ -f $mp/etc/fstab ]] || die "$mp does not look like a mounted guest (run vm-mount first)"
+# -e, not -f: NixOS's /etc/fstab is a link into /nix/store, which only
+# resolves inside the guest (-L for that).
+[[ -e $mp/etc/fstab || -L $mp/etc/fstab ]] || die "$mp does not look like a mounted guest (run vm-mount first)"
 [[ $# -gt 0 ]] || set -- /bin/bash --login
 
 mounted=()

@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Undo vm-mount: unmount everything under MOUNTPOINT, export any ZFS pool it
-# imported, and detach the image.
+# imported, close any LUKS device it opened, and detach the images.
 #
 # Usage: sudo vm-umount MOUNTPOINT
 
@@ -18,15 +18,30 @@ state=$STATE_DIR/$(systemd-escape --path "$mp")
 if mountpoint -q "$mp"; then
     umount -R "$mp" || die "could not unmount $mp (something still using it? try: fuser -vm $mp)"
 fi
-# Line 1 of the state file is the nbd device, any further lines ZFS pools.
-while read -r pool; do
-    zpool export "$pool" || die "could not export ZFS pool $pool"
-done < <(tail -n +2 "$state")
+# wait_detach DEVICE: disconnect an nbd device.  Disconnecting returns
+# before the qemu-nbd server has exited; wait for it, or the next user of the
+# device gets its late replies and fails.
+wait_detach() {
+    local pid
+    pid=$(cat "/sys/block/${1#/dev/}/pid" 2>/dev/null || true)
+    qemu-nbd --disconnect "$1" >/dev/null
+    [[ -n $pid ]] && while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
+}
+# Line 1 of the state file is the first image's nbd device; the further
+# lines, undone last first, "pool NAME", "luks NAME", "md DEVICE", "loop
+# DEVICE" or "nbd DEVICE" (a bare
+# name is a pool, as vm-mount once wrote them).
+while read -r kind name; do
+    [[ -z $name ]] && { name=$kind; kind=pool; }
+    case $kind in
+        pool) zpool export "$name" || die "could not export ZFS pool $name" ;;
+        luks) cryptsetup close "$name" || die "could not close LUKS device $name" ;;
+        md) mdadm --stop "$name" >/dev/null || die "could not stop RAID $name" ;;
+        loop) losetup -d "$name" || die "could not detach $name" ;;
+        nbd) wait_detach "$name" ;;
+    esac
+done < <(tail -n +2 "$state" | tac)
 dev=$(head -n 1 "$state")
-# Disconnecting returns before the qemu-nbd server has exited; wait for it,
-# or the next user of the device gets its late replies and fails.
-pid=$(cat "/sys/block/${dev#/dev/}/pid" 2>/dev/null || true)
-qemu-nbd --disconnect "$dev" >/dev/null
-[[ -n $pid ]] && while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
+[[ -n $dev ]] && wait_detach "$dev"
 rm "$state"
 echo "Unmounted $mp"

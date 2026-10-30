@@ -1,14 +1,20 @@
 #!/usr/bin/env bash
 # Mount a test VM's disk image on the host, while the VM is off.
 #
-# Usage: sudo vm-mount [--ro] IMAGE MOUNTPOINT
+# Usage: sudo vm-mount [--ro] [--disk IMAGE2]... [--key FILE] IMAGE MOUNTPOINT
 #
 # Attaches IMAGE (qcow2 or raw) to a free /dev/nbdN, mounts the filesystem that
 # holds /etc/fstab at MOUNTPOINT, then the guest's other filesystems from that
 # fstab beneath it (swap and noauto entries are skipped).  Look around, or
 # use vm-chroot, then undo it all with vm-umount MOUNTPOINT.
 #
-#   --ro   attach and mount read-only; nothing in the image can change
+#   --ro          attach and mount read-only; nothing in the image can change
+#   --disk IMAGE2 the guest's other disks (repeatable), e.g. a ZFS mirror's
+#                 second half: attached too, their partitions searched as well
+#   --key FILE    the passphrase (as a file) that unlocks the guest's LUKS
+#                 partitions and its ZFS pool's encryption: a passphrase key,
+#                 or the LUKS keystore volume that Ubuntu's installer puts in
+#                 the pool to hold the real key
 #
 # / may be a partition, a btrfs subvolume, or a ZFS dataset.  A ZFS pool is
 # imported from the image's partition only, under a temporary name (so it
@@ -24,57 +30,122 @@ set -euo pipefail
 STATE_DIR=/run/vm-mount
 die() { echo "vm-mount: $*" >&2; exit 1; }
 
-ro=no
-[[ ${1:-} == --ro ]] && { ro=yes; shift; }
-[[ $# -eq 2 ]] || die "usage: $0 [--ro] IMAGE MOUNTPOINT"
+ro=no key="" images=()
+while [[ $# -gt 0 ]]; do
+    case $1 in
+        --ro) ro=yes; shift ;;
+        --disk) images+=("$(realpath "$2")"); shift 2 ;;
+        --key) key=$(realpath "$2"); shift 2 ;;
+        -*) die "unknown option $1" ;;
+        *) break ;;
+    esac
+done
+[[ $# -eq 2 ]] || die "usage: $0 [--ro] [--disk IMAGE2]... [--key FILE] IMAGE MOUNTPOINT"
 [[ $EUID -eq 0 ]] || die "must run as root"
 image=$(realpath "$1")
+images=("$image" "${images[@]}")
 mkdir -p "$2"
 mp=$(realpath "$2")
-[[ -f $image ]] || die "no such image: $image"
+for i in "${images[@]}"; do [[ -f $i ]] || die "no such image: $i"; done
+[[ -z $key || -f $key ]] || die "no such key file: $key"
 mountpoint -q "$mp" && die "$mp is already a mount point"
 state=$STATE_DIR/$(systemd-escape --path "$mp")
 [[ -e $state ]] && die "$mp is already in use by vm-mount (see $state)"
 
 [[ -d /sys/module/nbd ]] || modprobe nbd max_part=16
-# Shared with make-from-live.sh: finding a free device and attaching it must
-# be one step, or two at once pick the same device.
-exec 9>/run/lock/backotter-nbd.lock
-flock 9
-dev=""
-for b in /sys/block/nbd*; do
-    # An nbd device is free while no qemu-nbd process serves it.
-    if [[ ! -e $b/pid ]]; then dev=/dev/${b##*/}; break; fi
-done
-[[ -n $dev ]] || die "no free /dev/nbd device"
-
-info=$(qemu-img info --output=json "$image" 2>&1) ||
-    die "can't open $image (is the VM running?): $(head -n 1 <<<"$info")"
-format=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["format"])' <<<"$info")
-nbd_opts=(--format="$format")
-[[ $ro == yes ]] && nbd_opts+=(--read-only)
-qemu-nbd --connect="$dev" "${nbd_opts[@]}" "$image" ||
-    die "qemu-nbd could not attach $image (is the VM running?)"
-flock -u 9
 mkdir -p "$STATE_DIR"
-# Line 1: the nbd device; any further lines: ZFS pools imported from it.
-echo "$dev" >"$state"
-
-undo() {
-    umount -R "$mp" 2>/dev/null || true
-    tail -n +2 "$state" | while read -r pool; do zpool export "$pool" || true; done
-    # Wait for the qemu-nbd server to exit, as vm-umount does.
-    local pid
-    pid=$(cat "/sys/block/${dev#/dev/}/pid" 2>/dev/null || true)
-    qemu-nbd --disconnect "$dev" >/dev/null
-    [[ -n $pid ]] && while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
-    rm -f "$state"
-}
+# The state file: line 1, the first image's nbd device; further lines, what
+# else was set up, as "nbd DEVICE", "md DEVICE", "loop DEVICE", "luks NAME"
+# or "pool NAME", which
+# vm-umount undoes in reverse order.
+: >"$state"
+undo() { "$(dirname "$(realpath "$0")")/vm-umount" "$mp" >/dev/null 2>&1 || rm -f "$state"; }
+devs=()
+for i in "${images[@]}"; do
+    # Shared with make-from-live.sh: finding a free device and attaching it
+    # must be one step, or two at once pick the same device.
+    exec 9>/run/lock/backotter-nbd.lock
+    flock 9
+    dev=""
+    for b in /sys/block/nbd*; do
+        # An nbd device is free while no qemu-nbd process serves it.
+        if [[ ! -e $b/pid ]]; then dev=/dev/${b##*/}; break; fi
+    done
+    [[ -n $dev ]] || { flock -u 9; undo; die "no free /dev/nbd device"; }
+    info=$(qemu-img info --output=json "$i" 2>&1) ||
+        { flock -u 9; undo; die "can't open $i (is the VM running?): $(head -n 1 <<<"$info")"; }
+    format=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["format"])' <<<"$info")
+    nbd_opts=(--format="$format")
+    [[ $ro == yes ]] && nbd_opts+=(--read-only)
+    qemu-nbd --connect="$dev" "${nbd_opts[@]}" "$i" ||
+        { flock -u 9; undo; die "qemu-nbd could not attach $i (is the VM running?)"; }
+    flock -u 9
+    if [[ ${#devs[@]} -eq 0 ]]; then echo "$dev" >>"$state"; else echo "nbd $dev" >>"$state"; fi
+    devs+=("$dev")
+done
 trap 'undo; die "failed"' ERR
 udevadm settle
-for _ in 1 2 3 4 5; do compgen -G "${dev}p*" >/dev/null && break; sleep 1; done
-mapfile -t parts < <(compgen -G "${dev}p*" || true)
+parts=()
+for dev in "${devs[@]}"; do
+    for _ in 1 2 3 4 5; do compgen -G "${dev}p*" >/dev/null && break; sleep 1; done
+    mapfile -t -O "${#parts[@]}" parts < <(compgen -G "${dev}p*" || true)
+done
 [[ ${#parts[@]} -gt 0 ]] || { undo; die "no partitions on $image"; }
+
+# mdadm RAID members, assembled into arrays that count as partitions, e.g. a
+# /boot mirrored across two disks.  md won't take read-only devices, so with
+# --ro a RAID 1 is read through one member instead: its data area, on a
+# read-only loop device.
+declare -A raids=() raid_uuid=()
+for p in "${parts[@]}"; do
+    [[ $(blkid -s TYPE -o value "$p" || true) == linux_raid_member ]] || continue
+    u=$(blkid -s UUID -o value "$p")
+    raids[$u]="${raids[$u]:-} $p"
+done
+n=0
+for u in "${!raids[@]}"; do
+    # shellcheck disable=SC2206  # the members, one word each
+    members=(${raids[$u]})
+    if [[ $ro == yes ]]; then
+        info=$(mdadm --examine "${members[0]}")
+        [[ $(awk -F' : ' '/Raid Level/ { print $2 }' <<<"$info") == raid1 ]] ||
+            { echo "vm-mount: skipping the RAID of ${members[*]}: only RAID 1 can be read with --ro" >&2; continue; }
+        offset=$(awk -F' : ' '/Data Offset/ { print $2 + 0 }' <<<"$info")
+        size=$(awk -F' : ' '/Array Size/ { print $2 + 0 }' <<<"$info")
+        loop=$(losetup --read-only --find --show --offset $((offset * 512)) \
+            --sizelimit $((size * 1024)) "${members[0]}")
+        echo "loop $loop" >>"$state"
+        parts+=("$loop")
+        raid_uuid[$loop]=$(mdadm --examine --export "${members[0]}" | sed -n 's/^MD_UUID=//p')
+    else
+        modprobe -q raid1 raid456 raid10 || true
+        md=/dev/md/vm-mount-$$-$((n++))
+        # Writing to one member alone would leave the mirror's halves
+        # different, unknown to md, so there is no fallback here.  (A newer
+        # guest's superblock may be one this host's md can't read.)
+        if ! mdadm --assemble --run "$md" "${members[@]}" >/dev/null 2>&1; then
+            echo "vm-mount: skipping the RAID of ${members[*]}: this host's md can't assemble it (try --ro)" >&2
+            continue
+        fi
+        echo "md $md" >>"$state"
+        parts+=("$(realpath "$md")")
+        raid_uuid[$(realpath "$md")]=$(mdadm --examine --export "${members[0]}" | sed -n 's/^MD_UUID=//p')
+    fi
+    udevadm settle
+done
+
+# LUKS partitions, opened with --key; the opened devices count as partitions.
+for p in "${parts[@]}"; do
+    [[ $(blkid -s TYPE -o value "$p" || true) == crypto_LUKS ]] || continue
+    [[ -n $key ]] || { echo "vm-mount: $p is LUKS-encrypted; skipped (no --key)" >&2; continue; }
+    name=vm-mount-$$-${p##*/}
+    # The passphrase without the file's final newline, as typed at boot.
+    tr -d '\n' <"$key" | cryptsetup open $([[ $ro == yes ]] && echo --readonly) --key-file - "$p" "$name" ||
+        { undo; die "could not unlock $p with $key"; }
+    echo "luks $name" >>"$state"
+    udevadm settle
+    parts+=("/dev/mapper/$name")
+done
 
 # Resolve fstab's device names against this image's partitions only, never
 # the host's disks (a cloned image may share UUIDs with something else).
@@ -87,6 +158,8 @@ resolve() {
                 [[ $(blkid -s UUID -o value "$p") == "${spec##*[=/]}" ]] && { echo "$p"; return; } ;;
             PARTUUID=*|/dev/disk/by-partuuid/*)
                 [[ $(blkid -s PARTUUID -o value "$p") == "${spec##*[=/]}" ]] && { echo "$p"; return; } ;;
+            /dev/disk/by-id/md-uuid-*)
+                [[ ${raid_uuid[$p]:-} == "${spec#*md-uuid-}" ]] && { echo "$p"; return; } ;;
             LABEL=*|/dev/disk/by-label/*)
                 [[ $(blkid -s LABEL -o value "$p") == "${spec##*[=/]}" ]] && { echo "$p"; return; } ;;
         esac
@@ -103,35 +176,107 @@ mount_fs() {
             ext3|ext4) opts=ro,noload${opts:+,$opts} ;;   # ext2 has no journal, and rejects noload
             btrfs) opts=ro,rescue=nologreplay${opts:+,$opts} ;;
             xfs|f2fs|nilfs2) opts=ro,norecovery${opts:+,$opts} ;;
+            bcachefs) opts=ro,nochanges${opts:+,$opts} ;;
             *) opts=ro${opts:+,$opts} ;;
         esac
     fi
     mount ${opts:+-o "$opts"} "$1" "$2"
 }
+# guest_file ROOT PATH: PATH inside the guest mounted at ROOT, its symlinks
+# followed as the guest would follow them (an absolute link means ROOT/...,
+# never the host's file), as a host path; fails if there is no such file.
+# NixOS's /etc/fstab, for one, is a link into /nix/store.
+guest_file() {
+    python3 - "$1" "$2" <<'PY'
+import os, sys
+root, path = sys.argv[1], sys.argv[2]
+parts, done, hops = path.strip("/").split("/"), [], 0
+while parts:
+    name = parts.pop(0)
+    if name in ("", "."):
+        continue
+    if name == "..":
+        done = done[:-1]
+        continue
+    host = os.path.join(root, *done, name)
+    if os.path.islink(host):
+        hops += 1
+        if hops > 40:
+            sys.exit(1)
+        target = os.readlink(host)
+        if target.startswith("/"):
+            done = []
+        parts = target.strip("/").split("/") + parts
+        continue
+    done.append(name)
+host = os.path.join(root, *done)
+if not os.path.isfile(host):
+    sys.exit(1)
+print(host)
+PY
+}
 # The btrfs subvolume options (subvol=, subvolid=) from fstab options on stdin.
 subvol_opts() { tr ',' '\n' | grep -E '^subvol(id)?=' | paste -sd, - || true; }
 
 # Find /: the filesystem whose /etc/fstab this is.  On btrfs it is usually
-# in a subvolume (Debian's installer uses @rootfs), so look one level down
-# from the top level too, then mount the subvolume fstab names for /.
+# in a subvolume: one level down from the top level (Debian's installer uses
+# @rootfs, Fedora's root), in which case mount the subvolume fstab names for
+# /, or the default subvolume (openSUSE's snapper makes that a snapshot,
+# @/.snapshots/1/snapshot), which fstab doesn't name.
+# load_zfs_keys POOL: with --key, load the keys of POOL's locked encryption
+# roots: from the LUKS keystore volume POOL/keystore if there is one (the key
+# file inside it), else the passphrase itself.
+load_zfs_keys() {
+    local pool=$1 roots ks tmp keyfile r
+    roots=$(zfs get -H -r -o name,value keystatus "$pool" | awk '$2 == "unavailable" { print $1 }')
+    [[ -n $roots && -n $key ]] || return 0
+    ks=/dev/zvol/$pool/keystore
+    keyfile=$key
+    if zfs list "$pool/keystore" >/dev/null 2>&1; then
+        udevadm settle
+        for _ in 1 2 3 4 5; do [[ -e $ks ]] && break; sleep 1; done
+        tr -d '\n' <"$key" | cryptsetup open --readonly --key-file - "$ks" "vm-mount-$$-keystore" || return 1
+        tmp=$(mktemp -d)
+        mount -o ro "/dev/mapper/vm-mount-$$-keystore" "$tmp"
+        keyfile=$(find "$tmp" -maxdepth 1 -name '*.key' | head -n 1)
+    fi
+    for r in $(zfs get -H -r -o name,value encryptionroot "$pool" | awk '$1 == $2 { print $1 }'); do
+        grep -qx "$r" <<<"$roots" && zfs load-key -L "file://$keyfile" "$r"
+    done
+    if [[ -n ${tmp:-} ]]; then
+        umount "$tmp"; rmdir "$tmp"
+        cryptsetup close "vm-mount-$$-keystore"
+    fi
+}
 # mount_zfs_root PARTITION: import the pool on it and mount its / dataset at
 # $mp; fails (leaving nothing imported) if there is no such dataset.
 mount_zfs_root() {
-    local p=$1 id name rootds
+    local p=$1 id name rootds q search=()
     command -v zpool >/dev/null || { echo "vm-mount: $p is ZFS, but this host has no OpenZFS" >&2; return 1; }
+    # Every ZFS partition of the guest's disks, so a mirror's halves are found.
+    for q in "${parts[@]}"; do
+        [[ $(blkid -s TYPE -o value "$q" || true) == zfs_member ]] && search+=(-d "$q")
+    done
     id=$(zpool import -d "$p" 2>/dev/null | awk '$1 == "id:" { print $2; exit }')
     [[ -n $id ]] || return 1
     name=vm-mount-$$
-    local opts=(-N -f -d "$p" -R "$mp")
+    local opts=(-N -f "${search[@]}" -R "$mp")
     [[ $ro == yes ]] && opts+=(-o readonly=on)
     # -f: a root pool is never exported by the guest itself.
     zpool import "${opts[@]}" -t "$id" "$name" || return 1
-    echo "$name" >>"$state"
+    echo "pool $name" >>"$state"
+    load_zfs_keys "$name"
     # With an altroot, zfs list shows mountpoints under it: / appears as $mp.
     # The pool's own top dataset often says / too, but with canmount=off.
     rootds=$(zfs list -H -o name,canmount,mountpoint -r "$name" |
         awk -v root="$mp" '$2 != "off" && $3 == root { print $1; exit }')
     if [[ -z $rootds ]]; then
+        zpool export "$name"
+        sed -i '$d' "$state"
+        return 1
+    fi
+    if [[ $(zfs get -H -o value keystatus "$rootds") == unavailable ]]; then
+        echo "vm-mount: $rootds is encrypted and locked (give --key)" >&2
         zpool export "$name"
         sed -i '$d' "$state"
         return 1
@@ -152,22 +297,26 @@ for p in "${parts[@]}"; do
         mount_zfs_root "$p" || continue
         if [[ -f $mp/etc/fstab ]]; then root=$p; break; fi
         umount -R "$mp"
-        zpool export "$(tail -n 1 "$state")"
+        zpool export "$(tail -n 1 "$state" | cut -d' ' -f2)"
         sed -i '$d' "$state"
         continue
     fi
     top=""
     [[ $type == btrfs ]] && top=subvolid=5   # the top level, whatever the default
     mount_fs "$p" "$mp" "$top" 2>/dev/null || continue
-    fstab=""
-    if [[ -f $mp/etc/fstab ]]; then
-        fstab=$mp/etc/fstab
-    elif [[ $type == btrfs ]]; then
+    fstab=$(guest_file "$mp" /etc/fstab || true)
+    if [[ -z $fstab && $type == btrfs ]]; then
+        # One level down: the subvolume's fstab.
         fstab=$(compgen -G "$mp/*/etc/fstab" | head -n 1 || true)
+        if [[ -z $fstab ]]; then
+            umount "$mp"
+            mount_fs "$p" "$mp" "" 2>/dev/null || continue
+            if guest_file "$mp" /etc/fstab >/dev/null; then root=$p; break; fi
+        fi
     fi
     if [[ -z $fstab ]]; then umount "$mp"; continue; fi
     root=$p
-    if [[ $fstab != "$mp/etc/fstab" ]]; then
+    if [[ $fstab == "$mp"/*/etc/fstab && ! -e $mp/etc ]]; then
         sub=$(awk '!/^[[:space:]]*#/ && $2 == "/" { print $4 }' "$fstab" | subvol_opts)
         [[ -n $sub ]] || sub=subvol=$(basename "$(dirname "$(dirname "$fstab")")")
         umount "$mp"
@@ -182,7 +331,7 @@ while read -r spec target type options; do
     [[ $target == / || $type == swap || $target != /* || ,$options, == *,noauto,* ]] && continue
     p=$(resolve "$spec") || { echo "vm-mount: skipping $target: $spec is not on this image" >&2; continue; }
     mount_fs "$p" "$mp$target" "$(subvol_opts <<<"$options")"
-done < <(awk '!/^[[:space:]]*(#|$)/ { print $1, $2, $3, $4 }' "$mp/etc/fstab" |
+done < <(awk '!/^[[:space:]]*(#|$)/ { print $1, $2, $3, $4 }' "$(guest_file "$mp" /etc/fstab)" |
     awk '{ print gsub("/", "/", $2), $0 }' | sort -n | cut -d' ' -f2-)
 
 trap - ERR

@@ -1,0 +1,837 @@
+#!/usr/bin/env python3
+"""Bring BackOtter test guests up to date, on every test host at once.
+
+Usage: vm-update [--try] [--hosts HOST,...] [--jobs N] [--memory MB] GUEST...
+       vm-update --status|--finish [--hosts HOST,...] GUEST...
+
+Run on the host that has the guests (Chopin), from anywhere: GUEST is a
+folder in vms/ next to this script's testvm/.  For each GUEST, vm-update
+
+  1. checks that nothing uses the guest's images, here or on the other hosts
+     (a QEMU program with them open, or a qcow2 overlay on top of them), and
+     that each host's images are still the ones the last update (or the
+     copy) left there: the SHA-256s recorded in vms/GUEST/image-state, and
+     the same generation as here;
+  2. boots the guest with vm-run --ram --keep (its vm-run-options, the
+     passphrase typed when it has one), so that every write goes to an
+     overlay in RAM and the image itself is only read;
+  3. runs update/in-guest.sh in it over SSH: the guest's own package manager
+     (apt, dnf, pacman, zypper, xbps, apk, nixos-rebuild, pkg, syspatch and
+     pkg_add, pkg on OmniOS), unattended, after pointing a guest that its
+     builder froze at its distribution's live repositories;
+  4. reboots it and waits for SSH again, so a broken kernel or boot loader
+     stops here, then powers it off;
+  5. copies the overlay (only the blocks the update wrote) to every other
+     host, checks step 1 again on every host, and then on every host merges
+     the overlay into the image (qemu-img commit), retakes the
+     "fresh-install" snapshot and records the new SHA-256s and generation in
+     image-state.
+
+So the hosts' images stay identical in what the guest sees, while only the
+update crosses the network.  (Not byte-identical: the snapshot tables carry
+each host's own timestamps, hence image-state.)  A guest that nothing can
+update (NetBSD: a release's base sets) is reported and left alone.
+
+  --try         stop after step 4 and throw the overlay away: test that the
+                guest updates and still boots, changing nothing
+  --hosts HOST,...
+                the other hosts (default: chopin and cinqcent, but this
+                one); --hosts '' updates only this host's copy, after
+                which the others no longer match it
+  --jobs N      update N guests at once (default 3); each takes a 2 GB VM,
+                its overlay in RAM and a free SSH port
+  --memory MB   the VM's RAM instead of vm-run's 2048
+  --status      only step 1's checks: whether the hosts agree, and what uses
+                the images
+  --finish      complete merges that step 5 left undone on some host (it
+                says so, and keeps the overlay there for this)
+
+Logs: vms/GUEST/update.log (what ran, with the guest's output) and
+vms/GUEST/update-serial.log (the serial console).  Stopping vm-update
+(Ctrl-C, or a hangup or TERM) stops its VMs and deletes their overlays,
+changing nothing; merges already under way finish first.
+"""
+
+from __future__ import annotations
+
+import argparse
+import concurrent.futures
+import fcntl
+import hashlib
+import json
+import os
+import re
+import shlex
+import shutil
+import signal
+import socket
+import subprocess
+import sys
+import tempfile
+import threading
+import time
+import traceback
+from pathlib import Path
+
+TESTVM = Path(__file__).resolve().parent
+WORK = TESTVM.parent
+VMS = WORK / "vms"
+ALL_HOSTS = ["chopin.local", "cinqcent.local"]
+SNAPSHOT = "fresh-install"
+STATE_FILE = "image-state"
+PENDING_FILE = ".vm-update.pending"     # a merge step 5 left undone, for --finish
+SSH_UP_TIMEOUT = 900
+UPDATE_TIMEOUT = 3 * 3600
+POWEROFF_TIMEOUT = 300
+
+print_lock = threading.Lock()
+running: set["VM"] = set()                     # VMs to stop when stopping
+stopping = threading.Event()
+
+
+class Failed(Exception):
+    pass
+
+
+def say(guest: str, msg: str) -> None:
+    with print_lock:
+        try:
+            print(f"vm-update: {guest}: {msg}", flush=True)
+        except OSError:                        # the terminal is gone (a hangup)
+            pass
+
+
+def run(cmd: list[str], **kw) -> subprocess.CompletedProcess:
+    return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", **kw)
+
+
+# --- Hosts -------------------------------------------------------------------------
+# Every check and change runs as a bash script, here or over SSH, so that
+# this host and the others are handled alike.  A host is None for this one,
+# else its SSH name.
+
+def where(host: str | None) -> str:
+    return host or "this host"
+
+
+def on_host(host: str | None, script: str, *args: str, input: str | None = None) -> str:
+    """Run bash SCRIPT with ARGS on HOST; its stdout, or Failed."""
+    if host is None:
+        cmd = ["bash", "-c", script, "bash", *args]
+    else:
+        remote = " ".join(shlex.quote(a) for a in ["bash", "-c", script, "bash", *args])
+        cmd = ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15", host, remote]
+    # In a session of its own: Ctrl-C stops vm-update, which then lets a
+    # merge under way finish rather than leave it half done.
+    r = run(cmd, input=input, start_new_session=True)
+    if r.returncode != 0:
+        raise Failed(f"on {where(host)}: {(r.stderr or r.stdout).strip() or f'exit status {r.returncode}'}")
+    return r.stdout
+
+
+# Paths on another host are relative to its home: ~/backotter-work/vms/GUEST.
+def guest_dir_on(host: str | None, guest: str) -> str:
+    return str(VMS / guest) if host is None else f"backotter-work/vms/{guest}"
+
+
+# Prints a line for each thing that uses IMAGE (in GUEST_DIR), but the
+# overlays named after them.  Two ways to tell:
+#  - QEMU's own locks.  Every QEMU program that has the image open, whether as
+#    a disk or as the base of an overlay anywhere (vm-run, vm-mount's
+#    qemu-nbd, compare.py), holds fcntl locks on bytes 100-299 of it.  Testing
+#    for them needs only read access, whoever the program runs as.
+#  - Overlays on top of it that no program has open: a kept vm-run --ram
+#    overlay.  Those in RAM and in the guest's folder are looked at; one
+#    that can't be read but is named after the guest or image counts too.
+#  - A comparison of the guest under way (compare.py, compare-freebsd.sh):
+#    between its mounts it holds no lock.  The src.qcow2 a comparison leaves
+#    behind doesn't count: the next one makes it anew.
+BUSY_SCRIPT = r"""
+shopt -s nullglob dotglob
+img=$(realpath "$1") dir=$(realpath "$2"); shift 2
+exclude=" $* "
+guest=$(basename "$dir") base=$(basename "$img" .qcow2)
+python3 -I - "$img" <<'EOF'
+import fcntl, os, struct, sys
+fd = os.open(sys.argv[1], os.O_RDONLY)
+probe = struct.pack("hhqqi4x", fcntl.F_WRLCK, os.SEEK_SET, 100, 200, 0)
+held = struct.unpack("hhqqi4x", fcntl.fcntl(fd, fcntl.F_OFD_GETLK, probe))
+if held[0] != fcntl.F_UNLCK:
+    print("a QEMU program has it open" + (f" (pid {held[4]})" if held[4] > 0 else ""))
+EOF
+for p in $(pgrep -f 'compare(\.py|-freebsd\.sh)' || true); do
+    [[ $p != $$ ]] && tr '\0' '\n' <"/proc/$p/cmdline" 2>/dev/null | grep -qx -- "$guest" &&
+        echo "a comparison of $guest runs (pid $p)"
+done
+for o in /dev/shm/*.qcow2 /dev/shm/*/*.qcow2 "$dir"/*.qcow2; do
+    o=$(realpath "$o")
+    [[ $o != "$img" && $exclude != *" $o "* ]] || continue
+    if info=$(qemu-img info -U --output=json "$o" 2>/dev/null); then
+        b=$(python3 -c 'import json, sys; print(json.load(sys.stdin).get("full-backing-filename", ""))' <<<"$info")
+        [[ -n $b && $(realpath -m "$b") == "$img" ]] && echo "overlay $o is on top of it"
+    elif [[ $o == *"$base"* || $o == *"/$guest/"* ]]; then
+        echo "overlay $o may be on top of it (it can't be read)"
+    fi
+done
+true
+"""
+
+
+def busy(host: str | None, guest: str, img: str, exclude: list[str] = ()) -> list[str]:
+    d = guest_dir_on(host, guest)
+    return [f"{where(host)}: {img}: {u}" for u in on_host(host, BUSY_SCRIPT, f"{d}/{img}", d, *exclude).splitlines()]
+
+
+def sha256_on(host: str | None, path: str) -> str:
+    return on_host(host, 'sha256sum -- "$1" | cut -d" " -f1', path).strip()
+
+
+def read_json(host: str | None, guest: str, name: str) -> dict | None:
+    path = f"{guest_dir_on(host, guest)}/{name}"
+    out = on_host(host, '[[ -f $1 ]] && cat -- "$1" || true', path)
+    try:
+        return json.loads(out) if out.strip() else None
+    except ValueError:
+        raise Failed(f"{where(host)}: {path} isn't valid JSON")
+
+
+def write_json(host: str | None, guest: str, name: str, data: dict | None) -> None:
+    """Write NAME in the guest's folder on HOST (None data: delete it)."""
+    path = f"{guest_dir_on(host, guest)}/{name}"
+    if data is None:
+        on_host(host, 'rm -f -- "$1"', path)
+    else:
+        on_host(host, 'cat >"$1.tmp" && mv "$1.tmp" "$1"', path, input=json.dumps(data, indent=1) + "\n")
+
+
+def machine_id(host: str | None, guest: str) -> str:
+    """Which machine and folder HOST's copy of the guest is, to catch one host named twice."""
+    return on_host(host, 'echo "$(cat /etc/machine-id) $(stat -c %d:%i -- "$1")"', guest_dir_on(host, guest)).strip()
+
+
+# --- The guest's images and how it boots -------------------------------------------
+
+class Guest:
+    def __init__(self, name: str):
+        self.name = name
+        self.dir = VMS / name
+        if not self.dir.is_dir():
+            raise Failed(f"no such guest: {self.dir}")
+        opts_file = self.dir / "vm-run-options"
+        self.options = shlex.split(opts_file.read_text()) if opts_file.exists() else []
+        extra = [self.options[i + 1] for i, o in enumerate(self.options[:-1]) if o == "--disk"]
+        main = sorted(p.name for p in self.dir.glob("*.qcow2") if p.name not in extra and p.name[0] != ".")
+        if len(main) != 1:
+            raise Failed(f"{self.dir} should have one boot image besides vm-run-options' --disk ones, has {main}")
+        # Image file names, the boot disk first, as vm-run attaches them.
+        self.images = main + extra
+        self.log = open(self.dir / "update.log", "a", encoding="utf-8")
+        # One vm-update at a time per guest; held until this process exits.
+        self.lock = open(self.dir / ".vm-update.lock", "a")
+        try:
+            fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            raise Failed("another vm-update is working on it")
+
+    def note(self, msg: str) -> None:
+        self.log.write(f"{time.strftime('%F %T')} {msg}\n")
+        self.log.flush()
+
+    def path(self, img: str) -> str:
+        return os.path.realpath(self.dir / img)
+
+    def ssh_cmd(self, port: int, *remote: str) -> list[str]:
+        return ["ssh", "-q", "-i", str(self.dir / "id_ed25519"), "-p", str(port),
+                "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+                "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=15",
+                "root@127.0.0.1", *remote]
+
+
+def free_port() -> int:
+    with socket.socket() as s:
+        s.bind(("127.0.0.1", 0))
+        return s.getsockname()[1]
+
+
+ANSI = re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]")
+# A passphrase prompt on the serial console (Ubuntu's ZFS keystore).
+PROMPT = re.compile(rb"(?i)enter passphrase[^\n]*$")
+KEPT = re.compile(r"vm-run: kept this run's writes to (\S+) in (\S+) \(")
+# Root's PATH over SSH lacks /sbin on some guests (NetBSD).
+SBIN = "PATH=/sbin:/usr/sbin:/bin:/usr/bin:$PATH; export PATH\n"
+REBOOT = SBIN + "(sleep 1; reboot) >/dev/null 2>&1 </dev/null &"
+# How long init has run, as ps prints it: [[DD-]HH:]MM:SS.
+UPTIME = SBIN + "ps -o etime= -p 1"
+POWEROFF = SBIN + """case $(uname) in
+    Linux|SunOS) poweroff ;;
+    # DragonFly's init ignores shutdown -p's request here; halt -p works.
+    OpenBSD|DragonFly) halt -p ;;
+    *) if command -v apk >/dev/null; then /sbin/poweroff; else shutdown -p now; fi ;;
+esac"""
+
+
+class VM:
+    """The guest under vm-run --ram --keep, its serial console on a pipe and
+    its overlays in a folder of its own in /dev/shm."""
+
+    def __init__(self, g: Guest, memory: int | None):
+        self.g, self.port = g, free_port()
+        self.ram_dir = tempfile.mkdtemp(prefix=f"vm-update.{g.name}.", dir="/dev/shm")
+        cmd = [str(TESTVM / "vm-run"), "--ram", "--keep", *g.options]
+        if memory:
+            cmd += ["--memory", str(memory)]
+        cmd.append(g.images[0])
+        self.monitor = self.typer = None
+        if (g.dir / "luks-passphrase").exists():
+            # Typed on the keyboard through a second monitor (Omarchy: Plymouth).
+            self.monitor = f"{self.ram_dir}/monitor"
+            cmd += ["--", "-monitor", f"unix:{self.monitor},server,nowait"]
+        pw_file = g.dir / "zfs-passphrase"
+        self.passphrase = pw_file.read_text().strip().encode() if pw_file.exists() else None
+        g.note(f"boot: SSH_PORT={self.port} RAM_DIR={self.ram_dir} {shlex.join(cmd)}")
+        self.stderr: list[str] = []
+        self.proc = self.stderr_thread = None
+        try:
+            self.serial = open(g.dir / "update-serial.log", "wb")
+            self.proc = subprocess.Popen(cmd, cwd=g.dir,
+                                         env=dict(os.environ, SSH_PORT=str(self.port), RAM_DIR=self.ram_dir),
+                                         stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                         start_new_session=True)
+            running.add(self)
+            threading.Thread(target=self._console, daemon=True).start()
+            self.stderr_thread = threading.Thread(target=self._stderr, daemon=True)
+            self.stderr_thread.start()
+            self.type_passphrase()
+        except BaseException:
+            self.discard()
+            raise
+
+    def _console(self) -> None:
+        buf, last = b"", 0.0
+        while chunk := self.proc.stdout.read1(4096):
+            try:
+                self.serial.write(chunk)
+                self.serial.flush()
+            except ValueError:                 # closed: the run is over
+                pass
+            buf = (buf + ANSI.sub(b"", chunk))[-4096:]
+            if self.passphrase and PROMPT.search(buf) and time.monotonic() - last > 5:
+                time.sleep(1)
+                try:
+                    self.proc.stdin.write(self.passphrase + b"\r")
+                    self.proc.stdin.flush()
+                except OSError:
+                    return
+                buf, last = b"", time.monotonic()
+
+    def _stderr(self) -> None:
+        for line in self.proc.stderr:
+            self.stderr.append(line.decode(errors="replace"))
+
+    def type_passphrase(self) -> None:
+        """Type the LUKS passphrase on the keyboard, if the guest has one, every
+        30 s from 25 s on until SSH answers: nothing tells when its prompt is
+        up, and typed at a login prompt instead it does no harm."""
+        if self.monitor:
+            self.stop_typing()
+            delays = [str(d) for d in range(25, SSH_UP_TIMEOUT, 30)]
+            self.typer = subprocess.Popen(["python3", str(TESTVM / "omarchy/type-luks-passphrase.py"),
+                                           self.monitor, str(self.g.dir / "luks-passphrase"), *delays],
+                                          stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+
+    def stop_typing(self) -> None:
+        if self.typer and self.typer.poll() is None:
+            self.typer.terminate()
+            self.typer.wait()
+
+    def ssh(self, script: str, timeout: float, log: bool = True) -> subprocess.CompletedProcess:
+        """Run sh SCRIPT in the guest as root."""
+        try:
+            r = run(self.g.ssh_cmd(self.port, "sh", "-s"), input=script, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            r = subprocess.CompletedProcess([], 124, "", f"timed out after {timeout:.0f} s")
+        if log:
+            self.g.log.write(r.stdout + r.stderr)
+            self.g.note(f"exit status {r.returncode}")
+        return r
+
+    def stderr_tail(self, n: int = 6) -> str:
+        """vm-run's (and QEMU's) last lines of error output, for a message."""
+        if self.stderr_thread:
+            self.stderr_thread.join(timeout=5)
+        lines = [l for l in "".join(self.stderr).strip().splitlines() if not KEPT.search(l)][-n:]
+        return ("; vm-run said:\n  " + "\n  ".join(lines)) if lines else ""
+
+    def uptime(self) -> int | None:
+        """Seconds since the guest's init started, or None if ps can't tell."""
+        r = self.ssh(UPTIME, timeout=30, log=False)
+        m = re.fullmatch(r"(?:(?:(\d+)-)?(\d+):)?(\d+):(\d+)", r.stdout.strip())
+        if r.returncode != 0 or not m:
+            return None
+        d, h, mi, sec = (int(x or 0) for x in m.groups())
+        return ((d * 24 + h) * 60 + mi) * 60 + sec
+
+    def wait_ssh(self, rebooting: bool = False) -> None:
+        """Wait until the guest answers on SSH, twice in a row (an sshd that
+        starts before the network is done can lose its connections);
+        REBOOTING, until it has stopped answering first.  (Not by a boot id:
+        the BSDs' kern.boottime moves when ntpd steps the clock.)"""
+        deadline = time.monotonic() + SSH_UP_TIMEOUT
+        down, answers = not rebooting, 0
+        while time.monotonic() < deadline:
+            if stopping.is_set():
+                raise Failed("stopped")
+            if self.proc.poll() is not None:
+                raise Failed(f"the VM stopped while booting (vm-run exit status {self.proc.returncode});"
+                             f" see {self.g.dir}/update-serial.log{self.stderr_tail()}")
+            # Within a timeout: QEMU's user network accepts the connection
+            # before the guest is up, so ConnectTimeout alone never fires.
+            r = self.ssh("echo up", timeout=20, log=False)
+            if r.returncode == 0 and r.stdout.strip() == "up":
+                if down:
+                    answers += 1
+                    if answers == 2:
+                        self.stop_typing()
+                        return
+            else:
+                down, answers = True, 0
+            time.sleep(2 if not down else 5)
+        raise Failed(f"no SSH within {SSH_UP_TIMEOUT} s; see {self.g.dir}/update-serial.log")
+
+    def poweroff(self) -> dict[str, str]:
+        """Power the guest off; {image path: overlay holding its writes}."""
+        deadline = time.monotonic() + POWEROFF_TIMEOUT
+        while True:
+            # Again if SSH lost the command (255) and the guest is still up.
+            r = self.ssh(POWEROFF, timeout=60)
+            try:
+                self.proc.wait(timeout=30 if r.returncode == 255 else max(1, deadline - time.monotonic()))
+                break
+            except subprocess.TimeoutExpired:
+                if time.monotonic() >= deadline:
+                    raise Failed(f"the guest didn't power off within {POWEROFF_TIMEOUT} s")
+        running.discard(self)              # off: from here on, stopping waits for the merge
+        if stopping.is_set():
+            raise Failed("stopped")
+        overlays = self.overlays()
+        # Only the guest's own power-off counts: a QEMU that crashed, or was
+        # killed, left its file systems in the middle of shutting down.
+        if self.proc.returncode != 0 or any("terminating on signal" in l for l in self.stderr):
+            raise Failed(f"QEMU didn't end by the guest powering off (vm-run exit status"
+                         f" {self.proc.returncode}){self.stderr_tail()}")
+        return overlays
+
+    def overlays(self) -> dict[str, str]:
+        """{image path: overlay} as vm-run reported them when it exited."""
+        if self.stderr_thread:
+            self.stderr_thread.join(timeout=30)    # vm-run's last lines
+        return {os.path.realpath(m[1]): m[2] for line in self.stderr if (m := KEPT.search(line))}
+
+    def signal(self) -> None:
+        if self.proc is None:
+            return
+        try:
+            os.killpg(self.proc.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
+
+    def kill(self) -> None:
+        self.stop_typing()
+        if self.proc is not None and self.proc.poll() is None:
+            self.signal()
+            try:
+                self.proc.wait(timeout=60)
+            except subprocess.TimeoutExpired:
+                try:
+                    os.killpg(self.proc.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                self.proc.wait()
+
+    def discard(self) -> None:
+        """Stop the VM if it still runs, and delete its overlays."""
+        running.discard(self)
+        self.kill()
+        shutil.rmtree(self.ram_dir, ignore_errors=True)
+        try:
+            self.serial.close()
+        except (OSError, AttributeError):
+            pass
+
+
+# --- Step 1: the hosts agree -------------------------------------------------------
+
+def check_hosts(g: Guest, hosts: list[str | None], start: bool, exclude: dict | None = None) -> dict:
+    """Check that nothing uses the images and every host holds the same
+    generation of them (EXCLUDE: {host: overlays of ours not to count}); each
+    host's image-state.  Before the first update there is none: with START,
+    make it (on every host) once the hosts' images are found identical;
+    without, return {host: None}."""
+    def one(host):
+        if not on_host(host, '[[ -d $1 ]] && echo yes || true', guest_dir_on(host, g.name)).strip():
+            raise Failed(f"{where(host)} has no {g.name}; copy it there first")
+        users = [u for img in g.images for u in busy(host, g.name, img, (exclude or {}).get(host, []))]
+        sums = {img: sha256_on(host, f"{guest_dir_on(host, g.name)}/{img}") for img in g.images}
+        pending = read_json(host, g.name, PENDING_FILE)
+        return users, sums, read_json(host, g.name, STATE_FILE), pending, machine_id(host, g.name)
+
+    with concurrent.futures.ThreadPoolExecutor(len(hosts)) as pool:
+        results = dict(zip(hosts, pool.map(one, hosts)))
+    ids = {}
+    for host, r in results.items():
+        if r[4] in ids:
+            raise Failed(f"{where(ids[r[4]])} and {where(host)} are the same folder; leave one out of --hosts")
+        ids[r[4]] = host
+    problems = [u for r in results.values() for u in r[0]]
+    problems += [f"{where(h)}: a merge left undone (vm-update --finish)" for h, r in results.items() if r[3]]
+    if problems:
+        raise Failed("in use: " + "; ".join(problems))
+
+    here_sums, here_state = results[None][1], results[None][2]
+    if here_state is None:
+        for host, (_, sums, state, _, _) in results.items():
+            if state is not None:
+                raise Failed(f"{where(host)} has an {STATE_FILE} but this host has none")
+            if sums != here_sums:
+                raise Failed(f"{where(host)}'s images differ from this host's; copy them there again")
+        if not start:
+            return {host: None for host in hosts}
+        generation = hashlib.sha256(json.dumps(here_sums, sort_keys=True).encode()).hexdigest()
+        states = {host: {"generation": generation, "updates": 0, "sha256": results[host][1]} for host in hosts}
+        for host in hosts:
+            write_json(host, g.name, STATE_FILE, states[host])
+        g.note(f"{STATE_FILE} started on {len(hosts)} host(s), generation {generation[:12]}")
+        return states
+    for host, (_, sums, state, _, _) in results.items():
+        if state is None:
+            raise Failed(f"{where(host)} has no {STATE_FILE}; copy {g.name} there again")
+        if state["sha256"] != sums:
+            raise Failed(f"{where(host)}'s images changed since vm-update last recorded them; copy them there again")
+        if state["generation"] != here_state["generation"]:
+            raise Failed(f"{where(host)} is at update {state['updates']} ({state['generation'][:12]}), "
+                         f"this host at {here_state['updates']} ({here_state['generation'][:12]})")
+    return {host: results[host][2] for host in hosts}
+
+
+# --- Step 5: every host merges the update ------------------------------------------
+
+# Merge OVERLAY into IMAGE if IMAGE is still what vm-update checked (SHA-256
+# WANT), retake the snapshot if IMAGE had it, delete OVERLAY; prints IMAGE's
+# new SHA-256.  Safe to repeat after it failed or was cut short anywhere
+# (--finish): once the check has passed, a mark beside the image says so and
+# holds the old snapshots' IDs, and commit -d leaves the overlay's data in
+# place, so committing it again writes the same.  The mark stays for the
+# caller to remove once it has recorded the result.  The new snapshot is
+# made before the old ones go (they share a name; their IDs tell them
+# apart, and qemu-img deletes the oldest of a name), so the image always
+# has one.
+COMMIT_SCRIPT = r"""
+set -euo pipefail
+overlay=$1 img=$(realpath "$2") snapshot=$3 want=$4
+mark=$(dirname "$img")/.vm-update.$(basename "$img").merging
+snaps() { qemu-img snapshot -l "$img" | awk -v s="$snapshot" 'NR > 2 && $2 == s { print $1 }'; }
+if [[ ! -e $mark ]]; then
+    [[ -e $overlay ]] || { echo "$overlay is missing" >&2; exit 1; }
+    [[ $(sha256sum -- "$img" | cut -d' ' -f1) == "$want" ]] ||
+        { echo "$img changed since vm-update checked it" >&2; exit 1; }
+    echo $(snaps) >"$mark.tmp"
+    mv "$mark.tmp" "$mark"
+fi
+old=" $(<"$mark") "
+if [[ -e $overlay ]]; then
+    fmt=$(qemu-img info -U --output=json "$img" | python3 -c 'import json, sys; print(json.load(sys.stdin)["format"])')
+    # The overlay names its base by the path it had where it was made.
+    qemu-img rebase -u -b "$img" -F "$fmt" "$overlay"
+    qemu-img commit -q -d "$overlay"
+fi
+if [[ -n ${old// } ]]; then
+    now=" $(snaps | tr '\n' ' ') " made=no
+    for id in $now; do
+        if [[ $old != *" $id "* ]]; then made=yes; fi
+    done
+    if [[ $made == no ]]; then qemu-img snapshot -c "$snapshot" "$img"; fi
+    # qemu-img deletes by name only: the oldest of that name, an old one.
+    for id in $old; do
+        if [[ $now == *" $id "* ]]; then
+            qemu-img snapshot -d "$snapshot" "$img"
+            after=" $(snaps | tr '\n' ' ') "
+            if [[ $after == *" $id "* ]]; then
+                echo "$img: deleting snapshot $id deleted another; its snapshots are now:$after" >&2; exit 1
+            fi
+            now=$after
+        fi
+    done
+fi
+rm -f -- "$overlay"
+sha256sum -- "$img" | cut -d' ' -f1
+"""
+
+
+def shipped_name(img: str) -> str:
+    """The overlay's name in the guest's folder on each host, from when it
+    is copied there until its merge is done."""
+    return f".vm-update.{img}"
+
+
+def merge_on(g: Guest, host: str | None, pending: dict) -> None:
+    """Merge the overlays named in PENDING on HOST and record the new state,
+    noting each image's progress in PENDING as it goes."""
+    d = guest_dir_on(host, g.name)
+    done = pending.setdefault("done", {})
+    for img, overlay in pending["overlays"].items():
+        if img in done:
+            continue
+        done[img] = on_host(host, COMMIT_SCRIPT, overlay, f"{d}/{img}", SNAPSHOT, pending["before"][img]).strip()
+        write_json(host, g.name, PENDING_FILE, pending)
+        on_host(host, 'rm -f -- "$1"', f"{d}/.vm-update.{img}.merging")
+    sums = {img: done.get(img, pending["before"][img]) for img in g.images}
+    write_json(host, g.name, STATE_FILE, dict(pending["state"], sha256=sums))
+    write_json(host, g.name, PENDING_FILE, None)
+    g.note(f"merged on {where(host)}: update {pending['state']['updates']}, "
+           f"generation {pending['state']['generation'][:12]}")
+
+
+def ship_and_commit(g: Guest, hosts: list[str | None], overlays: dict[str, str], states: dict) -> None:
+    others = [h for h in hosts if h is not None]
+    changed = [img for img in g.images if g.path(img) in overlays]   # an image nothing wrote has none
+    # Out of RAM first, into the guest's folder: what step 5 leaves undone
+    # must survive vm-update and a reboot.
+    local = {}
+    try:
+        for img in changed:
+            dest = str(g.dir / shipped_name(img))
+            shutil.move(overlays[g.path(img)], dest)
+            local[img] = dest
+    except OSError as e:
+        for path in local.values():
+            Path(path).unlink(missing_ok=True)
+        raise Failed(f"moving the overlay into {g.dir}: {e}")
+    sums = {img: sha256_on(None, local[img]) for img in changed}
+    # Where it goes on the other hosts (relative to their home, as guest_dir_on).
+    remote = {img: f"backotter-work/vms/{g.name}/{shipped_name(img)}" for img in changed}
+
+    def copy(host):
+        for img in changed:
+            r = run(["scp", "-q", "-o", "BatchMode=yes", local[img], f"{host}:{remote[img]}"])
+            if r.returncode != 0:
+                raise Failed(f"copying the overlay to {host}: {r.stderr.strip()}")
+            if sha256_on(host, remote[img]) != sums[img]:
+                raise Failed(f"the overlay copied to {host} doesn't match")
+
+    def remove_overlays():
+        for path in local.values():
+            Path(path).unlink(missing_ok=True)
+        for host in others:
+            for img in changed:
+                try:
+                    on_host(host, 'rm -f -- "$1"', remote[img])
+                except Failed:
+                    say(g.name, f"couldn't delete {remote[img]} on {host}; delete it by hand")
+
+    say(g.name, f"copying the update ({', '.join(f'{os.path.getsize(o) >> 20} MiB' for o in local.values())})"
+                f" to {', '.join(others) or 'no other host'}")
+    generation = hashlib.sha256((states[None]["generation"] + json.dumps(sums, sort_keys=True)).encode()).hexdigest()
+    new_state = {"generation": generation, "updates": states[None]["updates"] + 1}
+    pend = {h: {"overlays": local if h is None else remote, "before": states[h]["sha256"], "state": new_state}
+            for h in hosts}
+    written = []
+    try:
+        with concurrent.futures.ThreadPoolExecutor(max(1, len(others))) as pool:
+            list(pool.map(copy, others))
+        # Step 1 again: the images may have changed, or come into use, since.
+        exclude = {None: list(local.values())}
+        exclude.update({h: [on_host(h, 'realpath -- "$1"', remote[img]).strip() for img in changed] for h in others})
+        now = check_hosts(g, hosts, start=False, exclude=exclude)
+        if now != states:
+            raise Failed("the hosts' image-state changed during the update")
+        if stopping.is_set():
+            raise Failed("stopped before merging")
+        # Recorded on every host before any merges, so that a merge that
+        # fails or is cut short can be finished later (--finish).
+        for host in hosts:
+            write_json(host, g.name, PENDING_FILE, pend[host])
+            written.append(host)
+    except BaseException:
+        for host in written:
+            try:
+                write_json(host, g.name, PENDING_FILE, None)
+            except Failed:
+                say(g.name, f"couldn't delete {PENDING_FILE} on {where(host)}; delete it by hand")
+        remove_overlays()
+        raise
+
+    failed = []
+    with concurrent.futures.ThreadPoolExecutor(len(hosts)) as pool:
+        for host, fut in [(h, pool.submit(merge_on, g, h, pend[h])) for h in hosts]:
+            try:
+                fut.result()
+            except Exception as e:
+                failed.append((host, str(e) if isinstance(e, Failed) else f"{type(e).__name__}: {e}"))
+    if failed:
+        raise Failed("the merge failed on " + "; ".join(f"{where(h)} ({e})" for h, e in failed)
+                     + ", so the hosts now differ.  The overlays are kept there: once the cause is gone,"
+                       f" vm-update --finish {g.name} completes it")
+
+
+def finish(g: Guest, hosts: list[str | None]) -> str:
+    done = []
+    for host in hosts:
+        pending = read_json(host, g.name, PENDING_FILE)
+        if not pending:
+            continue
+        users = [u for img in g.images for u in busy(host, g.name, img, [
+            on_host(host, 'realpath -m -- "$1"', p).strip() for p in pending["overlays"].values()])]
+        if users:
+            raise Failed("in use: " + "; ".join(users))
+        merge_on(g, host, pending)
+        done.append(where(host))
+    if not done:
+        return "no merge left undone"
+    state = check_hosts(g, hosts, start=False)[None]
+    return f"merged on {', '.join(done)}; update {state['updates']} on {len(hosts)} host(s)"
+
+
+# --- One guest, start to end -------------------------------------------------------
+
+def update(name: str, args, hosts: list[str | None]) -> str:
+    g = Guest(name)
+    mode = "--status" if args.status else "--finish" if args.finish else "--try" if args.try_ else ""
+    g.note(f"vm-update {mode} on {socket.gethostname()}, hosts {[where(h) for h in hosts]}")
+    if args.finish:
+        return finish(g, hosts)
+    if args.status:
+        state = check_hosts(g, hosts, start=False)[None]
+        if state is None:
+            return f"not updated by vm-update yet; the images are identical on {len(hosts)} host(s)"
+        return f"update {state['updates']}, generation {state['generation'][:12]}, the same on {len(hosts)} host(s)"
+    if args.try_:
+        # Nothing to check: the images are only read, and a VM writing to
+        # them would keep vm-run from opening them.
+        states = None
+    else:
+        states = check_hosts(g, hosts, start=True)
+    if stopping.is_set():
+        raise Failed("stopped")
+    vm = VM(g, args.memory)
+    try:
+        say(name, f"booting (SSH port {vm.port})")
+        vm.wait_ssh()
+        say(name, "updating")
+        r = vm.ssh((TESTVM / "update/in-guest.sh").read_text(), timeout=UPDATE_TIMEOUT)
+        if r.returncode == 3:
+            vm.poweroff()
+            return "nothing updates this guest: " + (r.stdout.strip().splitlines() or ["?"])[-1]
+        if r.returncode != 0:
+            raise Failed(f"the update failed (exit status {r.returncode}); see {g.dir}/update.log:\n  "
+                         + "\n  ".join((r.stdout + r.stderr).strip().splitlines()[-8:]))
+        if stopping.is_set():
+            raise Failed("stopped")
+        say(name, "rebooting")
+        up_before, t_before = vm.uptime(), time.monotonic()
+        for attempt in range(5):
+            if vm.ssh(REBOOT, timeout=30).returncode == 0:
+                break
+            time.sleep(10)
+        else:
+            raise Failed(f"the reboot command failed; see {g.dir}/update.log")
+        vm.type_passphrase()
+        vm.wait_ssh(rebooting=True)
+        # Proof that it did reboot: init is younger than before.
+        up_after = vm.uptime()
+        if up_before is None or up_after is None:
+            g.note("no ps -o etime here: the reboot is taken from SSH going down and up")
+        elif up_after >= up_before + (time.monotonic() - t_before) - 30:
+            raise Failed(f"the guest didn't reboot (init has run {up_after} s)")
+        uname = vm.ssh("uname -sr", timeout=30, log=False).stdout.strip()
+        say(name, f"booted again ({uname}); powering off")
+        overlays = vm.poweroff()
+        if not overlays or not set(overlays) <= {g.path(img) for img in g.images}:
+            raise Failed(f"vm-run didn't report the overlays: {overlays}")
+        if args.try_:
+            sizes = ", ".join(f"{os.path.getsize(o) >> 20} MiB" for o in overlays.values())
+            return f"updated and rebooted ({uname}); overlay {sizes} thrown away (--try)"
+        ship_and_commit(g, hosts, overlays, states)
+        return f"updated ({uname}), merged on {len(hosts)} host(s)"
+    except BaseException:
+        g.log.write(traceback.format_exc())
+        raise
+    finally:
+        vm.discard()
+
+
+def main() -> int:
+    p = argparse.ArgumentParser(prog="vm-update", usage=__doc__.split("\n\n")[1].removeprefix("Usage: "))
+    p.add_argument("--try", dest="try_", action="store_true")
+    p.add_argument("--status", action="store_true")
+    p.add_argument("--finish", action="store_true")
+    p.add_argument("--hosts")
+    p.add_argument("--jobs", type=int, default=3)
+    p.add_argument("--memory", type=int)
+    p.add_argument("guests", nargs="+")
+    args = p.parse_args()
+    if sum([args.try_, args.status, args.finish]) > 1:
+        p.error("--try, --status and --finish don't combine")
+    me = socket.gethostname().split(".")[0].casefold()
+    names = ALL_HOSTS if args.hosts is None else [h for h in args.hosts.split(",") if h]
+    others = list(dict.fromkeys(h for h in names if h.split(".")[0].casefold() != me))
+    hosts: list[str | None] = [None, *others]
+    guests = list(dict.fromkeys(name.rstrip("/") for name in args.guests))
+
+    # A hangup (the SSH session to this host dropped) or TERM stops it as
+    # Ctrl-C does.
+    def hangup(signum, frame):
+        if signum == signal.SIGHUP:
+            devnull = open(os.devnull, "w")
+            sys.stdout = sys.stderr = devnull
+        if stopping.is_set():                  # only a second Ctrl-C stops at once
+            return
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGHUP, hangup)
+    signal.signal(signal.SIGTERM, hangup)
+
+    results = {}
+    with concurrent.futures.ThreadPoolExecutor(max(1, args.jobs)) as pool:
+        futures = {pool.submit(update, name, args, hosts): name for name in guests}
+        pending = set(futures)
+        while pending:
+            try:
+                for fut in concurrent.futures.as_completed(pending):
+                    pending.discard(fut)
+                    name = futures[fut]
+                    if fut.cancelled():
+                        continue
+                    try:
+                        results[name] = (True, fut.result())
+                    except Failed as e:
+                        results[name] = (False, str(e))
+                    except Exception as e:
+                        results[name] = (False, f"{type(e).__name__}: {e}")
+                    say(name, ("" if results[name][0] else "FAILED: ") + results[name][1])
+            except KeyboardInterrupt:
+                try:
+                    if not stopping.is_set():
+                        stopping.set()
+                        print("vm-update: stopping: the running VMs are stopped and their overlays deleted;"
+                              " merges under way finish (Ctrl-C again to stop at once)", file=sys.stderr)
+                        for fut in futures:
+                            fut.cancel()
+                        vms = list(running)
+                        for vm in vms:             # all at once, then wait
+                            vm.signal()
+                        for vm in vms:
+                            vm.kill()
+                    else:
+                        raise KeyboardInterrupt
+                except (KeyboardInterrupt, OSError):
+                    print("vm-update: stopped at once; VMs may be left running, merges half done",
+                          file=sys.stderr)
+                    os._exit(130)
+    print()
+    for name in guests:
+        ok, msg = results.get(name, (False, "not run"))
+        print(f"{'ok    ' if ok else 'FAILED'} {name}: {msg.splitlines()[0]}")
+    return 0 if all(results.get(name, (False,))[0] for name in guests) else 1
+
+
+if __name__ == "__main__":
+    sys.exit(main())

@@ -2,8 +2,13 @@
 """Back up a test guest with several archivers, restore each backup onto a
 blank disk, and check what survived.
 
-Usage: sudo compare.py GUEST [TOOL ...]      tools: restic borg dar (default: all)
+Usage: sudo compare.py GUEST [TOOL ...]      tools: restic borg dar bsdtar (default),
+                                               and restic-bko
        sudo compare.py --boot-only GUEST [TOOL ...]   boot an earlier run's restores again
+
+restic-bko is BackOtter's patched restic (branch "backotter" of
+github.com/mchobbit/restic): $RESTIC_BKO, or else the newest Linux build in
+~/backotter-work/restic/dist/.
 
 For GUEST (a folder in ~/backotter-work/vms holding GUEST.qcow2 at its
 fresh-install state), in ~/backotter-work/compare/GUEST/:
@@ -53,7 +58,9 @@ def run(cmd: list[str] | str, check: bool = True, quiet: bool = False, **kw) -> 
         cmd = ["bash", "-c", cmd]
     if not quiet:
         print("  $", " ".join(shlex.quote(c) for c in cmd), flush=True)
-    r = subprocess.run(cmd, text=True, capture_output=True, **kw)
+    # errors="replace": torture.sh's file names aren't all UTF-8, and bsdtar
+    # quotes them as they are in its warnings.
+    r = subprocess.run(cmd, text=True, errors="replace", capture_output=True, **kw)
     if check and r.returncode != 0:
         print(f"  failed ({r.returncode}): {(r.stderr or r.stdout).strip()[-2000:]}", flush=True)
         r.check_returncode()
@@ -264,31 +271,53 @@ def unmount_dst(dst_dev: str, layout: Layout) -> None:
 
 # --- The archivers ------------------------------------------------------------------
 
+def restic_exe(tool: str) -> str:
+    if tool == "restic":
+        return "restic"
+    if "RESTIC_BKO" in os.environ:
+        return os.environ["RESTIC_BKO"]
+    builds = sorted((WORK_BASE / "restic" / "dist").glob("restic-backotter-*-linux-amd64"),
+                    key=lambda p: p.stat().st_mtime)
+    if not builds:
+        raise SystemExit("no restic-bko build: set RESTIC_BKO, or run build-backotter.sh")
+    return str(builds[-1])
+
+
 def backup(tool: str, work: Path) -> None:
     repo = work / tool
     shutil.rmtree(repo, ignore_errors=True)
     env = dict(os.environ, RESTIC_PASSWORD=PASSWORD, BORG_PASSPHRASE=PASSWORD)
-    if tool == "restic":
-        run(["restic", "-r", str(repo), "init", "-q"], env=env)
-        run(["restic", "-r", str(repo), "backup", "-q", str(SRC_MP)], env=env)
+    if tool in ("restic", "restic-bko"):
+        run([restic_exe(tool), "-r", str(repo), "init", "-q"], env=env)
+        run([restic_exe(tool), "-r", str(repo), "backup", "-q", str(SRC_MP)], env=env)
     elif tool == "borg":
         run(["borg", "init", "-e", "repokey-blake2", str(repo)], env=env)
         run(["borg", "create", "--numeric-ids", "-C", "zstd,3", f"{repo}::backup", "."], env=env, cwd=SRC_MP)
     elif tool == "dar":
         repo.mkdir()
         run(["dar", "-c", str(repo / "backup"), "-R", str(SRC_MP), "-zgzip:6", "-Q", "-q", "-w"])
+    elif tool == "bsdtar":
+        # pax format, with ACLs, every xattr and the inode flags (bsdtar's
+        # "fflags"); it crosses into /boot and the other mounts, as borg does.
+        repo.mkdir()
+        run(["bsdtar", "-c", "-f", str(repo / "backup.tar.zst"), "--zstd", "--format", "pax",
+             "--numeric-owner", "--acls", "--xattrs", "--fflags", "-C", str(SRC_MP), "."])
 
 
 def restore(tool: str, work: Path) -> None:
     repo = work / tool
     env = dict(os.environ, RESTIC_PASSWORD=PASSWORD, BORG_PASSPHRASE=PASSWORD)
-    if tool == "restic":
-        run(["restic", "-r", str(repo), "restore", "-q", "--sparse",
+    if tool in ("restic", "restic-bko"):
+        run([restic_exe(tool), "-r", str(repo), "restore", "-q", "--sparse",
              f"latest:{SRC_MP}", "--target", str(DST_MP)], env=env)
     elif tool == "borg":
         run(["borg", "extract", "--numeric-ids", "--sparse", f"{repo}::backup"], env=env, cwd=DST_MP)
     elif tool == "dar":
         run(["dar", "-x", str(repo / "backup"), "-R", str(DST_MP), "-Q", "-q", "-w"])
+    elif tool == "bsdtar":
+        # -S makes holes of runs of zeros, as restic's and borg's --sparse do.
+        run(["bsdtar", "-x", "-f", str(repo / "backup.tar.zst"), "-p", "--same-owner",
+             "--numeric-owner", "--acls", "--xattrs", "--fflags", "-S", "-C", str(DST_MP)])
 
 
 def size(path: Path) -> int:
@@ -300,6 +329,9 @@ def size(path: Path) -> int:
 def port_free(port: str) -> bool:
     import socket
     with socket.socket() as s:
+        # As QEMU binds its forwarded port: the last boot test's closed SSH
+        # connections linger in TIME_WAIT for a minute, but don't stop QEMU.
+        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             s.bind(("127.0.0.1", int(port)))
             return True
@@ -419,7 +451,13 @@ def compare_guest(guest: str, tools: list[str]) -> dict:
         results["coverage"] = json.loads((work / f"diff-{tools[0]}.json").read_text())["coverage"]
     finally:
         vm_umount(SRC_MP)
-    (work / "results.json").write_text(json.dumps(results, indent=1))
+    # Keep an earlier run's results for the tools this run left out, so one
+    # tool can be rerun alone.  (torture.sh makes the same files each time.)
+    old = work / "results.json"
+    if old.exists():
+        earlier = json.loads(old.read_text()).get("tools", {})
+        results["tools"] = {t: v for t, v in earlier.items() if t not in tools} | results["tools"]
+    old.write_text(json.dumps(results, indent=1))
     return results
 
 
@@ -432,7 +470,7 @@ def main() -> int:
         args = args[1:]
     if not args:
         raise SystemExit(__doc__)
-    guest, tools = args[0], args[1:] or ["restic", "borg", "dar"]
+    guest, tools = args[0], args[1:] or ["restic", "borg", "dar", "bsdtar"]
     for m in (SRC_MP, DST_MP):
         m.mkdir(parents=True, exist_ok=True)
     if boot_only:
@@ -447,11 +485,11 @@ def main() -> int:
         (work / "results.json").write_text(json.dumps(r, indent=1))
     else:
         r = compare_guest(guest, tools)
-    print(f"\n{'tool':7} {'backup':>8} {'size':>9} {'restore':>8}  boot      differences")
+    print(f"\n{'tool':10} {'backup':>8} {'size':>9} {'restore':>8}  boot      differences")
     for tool, t in r["tools"].items():
         diffs = ", ".join(f"{k} {v['count']}" for k, v in t.get("diff", {}).items()) or "none"
         b = t.get("boot", {})
-        print(f"{tool:7} {t['backup_s']:7}s {t['backup_bytes'] / 2**20:7.0f}MB {t.get('restore_s', 0):7}s  "
+        print(f"{tool:10} {t['backup_s']:7}s {t['backup_bytes'] / 2**20:7.0f}MB {t.get('restore_s', 0):7}s  "
               f"{b.get('state', 'no ssh'):9} {diffs}")
     return 0
 

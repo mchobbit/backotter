@@ -1,0 +1,20 @@
+# Checks boot-test.py runs in the OpenBSD image's root shell (ksh as sh), one
+# line at a time (keep each check on one line).  Each check prints one line:
+# "BKO-CHECK <name> <ok|FAIL> <detail>".
+check kernel 'sysctl -n kern.version | head -n 1'
+check root-device 'dmesg | grep "^root on"'
+check hostname 'test "$(hostname)" = backotter && hostname'
+check rootfs-ro 'mount | awk "\$3 == \"/\"" | grep "read-only"'
+check mfs 'mount -t mfs | awk "{ printf \"%s \", \$3 }"; test "$(mount -t mfs | awk "{ print \$3 }" | sort | tr "\n" " ")" = "/dev /etc /home /root /tmp /var "'
+check no-relink 'test ! -e /usr/share/relink && ! grep -q reorder_kernel /etc/rc && grep -x library_aslr=NO /etc/rc.conf.local'
+check network 'i=0; until a=$(ifconfig -a | awk "\$1 == \"inet\" && \$2 != \"127.0.0.1\" { print \$2 }") && test -n "$a"; do i=$((i + 1)); test $i -lt 30 || exit 1; sleep 1; done; echo $a'
+check console-screen 'grep "^ttyC0" /etc/ttys | grep -q backotter/autologin && ps -t C0 -o command= | grep -x "/bin/sh /usr/local/lib/backotter/console"'
+check console-serial 'grep "^tty00" /etc/ttys | grep -q backotter/autologin && ps -t 00 -o command= | grep -x "/bin/sh /usr/local/lib/backotter/console"'
+check tools 'for c in fdisk disklabel newfs newfs_msdos fsck_ffs fsck_msdos mount_msdos bioctl vnconfig installboot growfs dump restore ssh sshd; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; echo all present'
+check sshd-off-at-boot '! pgrep -x sshd >/dev/null && ! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1 && echo off, no host keys'
+check remote-access '/usr/local/lib/backotter/remote-access >/tmp/ra.out 2>&1 || { tail -n 3 /tmp/ra.out; exit 1; }; pw=$(sed -n "s/^Password: \([^ ]*\).*/\1/p" /var/run/backotter/remote-access); printf "#!/bin/sh\necho %s\n" "$pw" >/tmp/askpass; chmod 700 /tmp/askpass; who=$(SSH_ASKPASS=/tmp/askpass SSH_ASKPASS_REQUIRE=force ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null backotter@127.0.0.1 whoami </dev/null 2>/tmp/ssh.err); if test "$who" = backotter; then echo "password login over SSH works"; else tail -n 3 /tmp/ssh.err; exit 1; fi'
+check root-ssh-refused '! SSH_ASKPASS=/tmp/askpass SSH_ASKPASS_REQUIRE=force ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o NumberOfPasswordPrompts=1 root@127.0.0.1 true </dev/null 2>/dev/null && echo "refused with the right password"; r=$?; rm -f /tmp/askpass; exit $r'
+check restic-bko 'restic-bko version'
+check rustic-bko 'rustic-bko --version'
+check marker 'grep -q "\"platform\": \"openbsd\"" /.disk/backotter.json && sed -E -n "s/.*\"(image_id|release|kernel)\": \"([^\"]*)\".*/\2/p" /.disk/backotter.json | tr "\n" " "'
+check memory 'top -b -d 1 | sed -n "s/^Memory: //p"'

@@ -40,14 +40,27 @@ FIRMWARE = {
     "uefi-secureboot": ("OVMF_CODE_4M.secboot.fd", "OVMF_VARS_4M.ms.fd"),
     "uefi": ("OVMF_CODE_4M.fd", "OVMF_VARS_4M.fd"),
 }
+# QEMU hardware for platforms that can't use the default, q35 with qemu-xhci:
+# DragonFly 6.4's xhci enumerates no QEMU USB device (plain, behind a hub, or
+# UAS), and on q35 its interrupts go astray (AHCI timeouts, then a hang just
+# before it mounts root).  It boots on the older PC machine with EHCI.
+MACHINE = {"dragonfly": "pc"}
+USB_CONTROLLER = {"dragonfly": "usb-ehci"}
+# Bytes a second to type at the serial console, for platforms that drop input
+# coming faster than a real line would bring it: QEMU's serial port has no
+# speed of its own, and DragonFly's sio buffers only a few dozen characters
+# between interrupts at the 9600 baud it runs at.
+TYPING_RATE = {"dragonfly": 960}
 # Set by the casper.conf inside the server ISO's initrd (the installer layer's
 # /etc/casper.conf says "ubuntu", but that copy isn't the one casper reads).
 LIVE_USER = "ubuntu-server"
 PROMPT = re.compile(rb"[$#] $")
 MENU = re.compile(rb"Choose \[1-4\]: ")
 LOGIN = re.compile(rb"login: ")
-# Linux, then the BSDs' panics, debugger and root-device prompts.
-FAILURE = re.compile(rb"Kernel panic|\(initramfs\) |BusyBox v[0-9]|panic: |^db> |mountroot> |root device: ", re.M)
+# Linux, then the BSDs' panics (at a line's start, or after NetBSD's
+# timestamp: not NetBSD's "ddb.onpanic: 1 -> 0"), debugger and root-device
+# prompts.
+FAILURE = re.compile(rb"Kernel panic|\(initramfs\) |BusyBox v[0-9]|(?:^|\] )panic: |^db> |mountroot> |root device: ", re.M)
 # Computed by the guest, so the command's own echo can't match it.
 DONE = re.compile(rb"BKO-42-DONE\r?\n")
 
@@ -64,10 +77,11 @@ DONE_LINE = "echo BKO-$((6 * 7))-DONE"
 class Console:
     """The guest's serial port, read through QEMU's stdout."""
 
-    def __init__(self, proc: subprocess.Popen[bytes], log) -> None:
+    def __init__(self, proc: subprocess.Popen[bytes], log, rate: int | None = None) -> None:
         self.proc = proc
         self.log = log
         self.buf = b""
+        self.rate = rate
 
     def expect(self, *patterns: re.Pattern[bytes], timeout: float) -> int:
         """Wait until one of the patterns matches; return its index."""
@@ -93,11 +107,16 @@ class Console:
 
     def send(self, text: str) -> None:
         assert self.proc.stdin is not None
-        self.proc.stdin.write(text.encode())
-        self.proc.stdin.flush()
+        data = text.encode()
+        step = 16 if self.rate else len(data)
+        for i in range(0, len(data), step):
+            self.proc.stdin.write(data[i:i + step])
+            self.proc.stdin.flush()
+            if self.rate:
+                time.sleep(step / self.rate)
 
 
-def qemu_command(img: str, mode: str, media: str, tmp: str) -> list[str]:
+def qemu_command(img: str, platform: str, mode: str, media: str, tmp: str) -> list[str]:
     cmd = [
         "qemu-system-x86_64", "-enable-kvm", "-cpu", "host", "-smp", "2", "-m", "4096",
         "-display", "none", "-serial", "stdio", "-monitor", "none",
@@ -111,17 +130,18 @@ def qemu_command(img: str, mode: str, media: str, tmp: str) -> list[str]:
         subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", "-F", "raw",
                         "-b", os.path.abspath(img), overlay, "16G"], check=True)
         cmd += [
-            "-device", "qemu-xhci,id=xhci",
+            "-device", USB_CONTROLLER.get(platform, "qemu-xhci") + ",id=usb",
             "-drive", f"if=none,id=stick,format=qcow2,file={overlay}",
-            "-device", "usb-storage,bus=xhci.0,drive=stick,bootindex=1",
+            "-device", "usb-storage,bus=usb.0,drive=stick,bootindex=1",
         ]
+    machine = MACHINE.get(platform, "q35")
     if mode == "bios":
-        return cmd + ["-machine", "q35"]
+        return cmd + ["-machine", machine]
     code, vars_template = FIRMWARE[mode]
     vars_copy = os.path.join(tmp, "OVMF_VARS.fd")
     shutil.copy(os.path.join(OVMF, vars_template), vars_copy)
     cmd += [
-        "-machine", "q35,smm=on",
+        "-machine", f"{machine},smm=on",
         "-global", "driver=cfi.pflash01,property=secure,value=on",
         "-drive", f"if=pflash,format=raw,unit=0,readonly=on,file={os.path.join(OVMF, code)}",
         "-drive", f"if=pflash,format=raw,unit=1,file={vars_copy}",
@@ -132,9 +152,9 @@ def qemu_command(img: str, mode: str, media: str, tmp: str) -> list[str]:
 def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: float,
         user: str) -> bool:
     with tempfile.TemporaryDirectory() as tmp, open(log_path, "wb") as log:
-        proc = subprocess.Popen(qemu_command(img, mode, media, tmp),
+        proc = subprocess.Popen(qemu_command(img, platform, mode, media, tmp),
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE)
-        con = Console(proc, log)
+        con = Console(proc, log, TYPING_RATE.get(platform))
         start = time.monotonic()
         try:
             got = con.expect(MENU, LOGIN, FAILURE, timeout=timeout)
@@ -161,11 +181,19 @@ def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: 
                 as_root = False
             con.send("export TERM=dumb; stty -echo" + ("" if as_root else "; sudo -i") + "\n")
             con.expect(PROMPT, timeout=30)
-            # A line at a time: the guest's tty buffers only 4 KB of input.
+            # A line at a time, and after a check only once it has printed its
+            # result: the guest's tty buffers little input (4 KB on Linux, 1 KB
+            # on NetBSD), and drops what's typed beyond that while a slow
+            # check runs.
             script = CHECK_FUNCTION + check_script(platform, media) + DONE_LINE
             for line in script.strip().splitlines():
                 con.send(line + "\n")
-                time.sleep(0.1)
+                m = re.match(r"check (\S+) ", line)
+                if m:
+                    con.expect(re.compile(rb"BKO-CHECK " + re.escape(m[1].encode()) + rb" .*\n"),
+                               timeout=120)
+                else:
+                    time.sleep(0.1)
             con.expect(DONE, timeout=120)
             results = re.findall(rb"BKO-CHECK (\S+) (ok|FAIL) ?(.*?)\r?\n",
                                  log_contents(log_path))

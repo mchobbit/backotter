@@ -19,7 +19,7 @@ disks() {
         FreeBSD|DragonFly) sysctl -n kern.disks ;;
         *) sysctl -n hw.disknames ;;   # NetBSD, OpenBSD
     esac 2>/dev/null | tr ' ,' '\n\n' | sed -e 's/:.*//' -e '/^$/d' |
-        grep -Ev '^(cd|md|rd|vnd|fd)[0-9]' | sort    # CDs, RAM and file-backed disks
+        grep -Ev '^(a?cd|md|rd|vnd?|fd|dk)[0-9]' | sort    # CDs (acd: DragonFly's ATAPI), RAM and file-backed disks, NetBSD's wedges
 }
 
 show_status() {
@@ -52,7 +52,8 @@ while :; do
     # No terminal to read from: let init start a fresh one.
     read -r choice || exit 0
     case $choice in
-        1) /bin/sh -l ;;
+        # DragonFly's sh has no -l (a login shell).
+        1) if [ "$(uname -s)" = DragonFly ]; then /bin/sh -i; else /bin/sh -l; fi ;;
         2) "$here/remote-access"; printf 'Press Enter to continue. '; read -r _ ;;
         3) shutdown -r now ;;
         4) shutdown -p now ;;

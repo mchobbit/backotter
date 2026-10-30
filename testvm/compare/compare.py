@@ -2,10 +2,10 @@
 """Back up a test guest with several archivers, restore each backup onto a
 blank disk, and check what survived.
 
-Usage: sudo compare.py [--mkfs-from STICK_ISO] GUEST [TOOL ...]
+Usage: sudo compare.py [--mkfs-from STICK_IMG] GUEST [TOOL ...]
                                     tools: restic borg dar bsdtar (default), restic-bko,
                                     rustic-bko, restic-to-rustic and rustic-to-restic
-       sudo compare.py --boot-only [--mkfs-from STICK_ISO] GUEST [TOOL ...]
+       sudo compare.py --boot-only [--mkfs-from STICK_IMG] GUEST [TOOL ...]
                                     boot an earlier run's restores again
 
 restic-bko is BackOtter's patched restic (branch "backotter" of
@@ -33,8 +33,8 @@ fresh-install state), in ~/backotter-work/compare/GUEST/:
 That is the archiver's part of a bare-metal restore; recreating a layout
 from a recorded description, as BackOtter must, is not tested here.
 
---mkfs-from STICK_ISO makes the filesystems with the mkfs tools of BackOtter's
-rescue stick (STICK_ISO, from stick/make-iso.sh) instead of the guest's own,
+--mkfs-from STICK_IMG makes the filesystems with the mkfs tools of BackOtter's
+rescue stick (STICK_IMG, from stick/make-img.sh) instead of the guest's own,
 as a restore from the stick would: newer tools turn on features an older
 guest's kernel or GRUB may not read.  ZFS pools are still made by the host's
 zpool, with the original's feature flags, as BackOtter must make them.  The
@@ -223,13 +223,13 @@ class src_api:
 
 class stick_root:
     """The rescue stick's root filesystem at STICK_MP, read-only: the stick
-    ISO's two squashfs layers (the slimmed Ubuntu base and BackOtter's layer
+    image's two squashfs layers (the slimmed Ubuntu base and BackOtter's layer
     on top) under an overlay, as its live system mounts them."""
 
     PARTS = Path("/mnt/cmp-stick-parts")
 
-    def __init__(self, iso: Path):
-        self.iso = iso
+    def __init__(self, img: Path):
+        self.img = img
         self.mounted: list[Path] = []
 
     def mount(self, args: list[str], mp: Path) -> None:
@@ -240,11 +240,11 @@ class stick_root:
     def __enter__(self) -> Path:
         iso, base, layer = self.PARTS / "iso", self.PARTS / "base", self.PARTS / "layer"
         try:
-            self.mount(["-o", "loop,ro", str(self.iso)], iso)
+            self.mount(["-o", "loop,ro", str(self.img)], iso)
             casper = iso / "casper"
             layers = sorted(casper.glob("*.backotter.squashfs"))
             if not layers:
-                raise SystemExit(f"{self.iso} is not a BackOtter stick: no casper/*.backotter.squashfs")
+                raise SystemExit(f"{self.img} is not a BackOtter stick: no casper/*.backotter.squashfs")
             self.mount(["-o", "loop,ro", str(casper / layers[0].name.replace(".backotter", ""))], base)
             self.mount(["-o", "loop,ro", str(layers[0])], layer)
             # No upperdir: a read-only overlay.
@@ -518,17 +518,17 @@ def boot(image: Path, guest_dir: Path, log: Path, firmware: list[str]) -> dict:
 
 # --- One guest ----------------------------------------------------------------------
 
-def work_dir(guest: str, stick_iso: Path | None) -> Path:
-    return WORK_BASE / "compare" / (guest + (".stick-mkfs" if stick_iso else ""))
+def work_dir(guest: str, stick_img: Path | None) -> Path:
+    return WORK_BASE / "compare" / (guest + (".stick-mkfs" if stick_img else ""))
 
 
-def compare_guest(guest: str, tools: list[str], stick_iso: Path | None = None) -> dict:
+def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -> dict:
     guest_dir = VMS / guest
     base = guest_dir / f"{guest}.qcow2"
-    work = work_dir(guest, stick_iso)
+    work = work_dir(guest, stick_img)
     work.mkdir(parents=True, exist_ok=True)
     fsmeta = [sys.executable, "-I", str(HERE / "fsmeta.py")]
-    results = {"guest": guest, "mkfs": str(stick_iso) if stick_iso else "guest", "tools": {}}
+    results = {"guest": guest, "mkfs": str(stick_img) if stick_img else "guest", "tools": {}}
 
     print(f"== {guest}: test files", flush=True)
     src = work / "src.qcow2"
@@ -565,8 +565,8 @@ def compare_guest(guest: str, tools: list[str], stick_iso: Path | None = None) -
             run(["qemu-img", "create", "-q", "-f", "qcow2", str(dst), "16G"])
             dst_dev = attach(dst)
             try:
-                if stick_iso:
-                    with stick_root(stick_iso) as stick:
+                if stick_img:
+                    with stick_root(stick_img) as stick:
                         recreate(layout, dst_dev, stick)
                 else:
                     recreate(layout, dst_dev)
@@ -610,14 +610,14 @@ def main() -> int:
     if os.geteuid() != 0:
         raise SystemExit("must run as root")
     args = sys.argv[1:]
-    boot_only, stick_iso = False, None
+    boot_only, stick_img = False, None
     while args and args[0].startswith("--"):
         if args[0] == "--boot-only":
             boot_only, args = True, args[1:]
         elif args[0] == "--mkfs-from" and len(args) > 1:
-            stick_iso, args = Path(args[1]).resolve(), args[2:]
-            if not stick_iso.is_file():
-                raise SystemExit(f"no such ISO: {stick_iso}")
+            stick_img, args = Path(args[1]).resolve(), args[2:]
+            if not stick_img.is_file():
+                raise SystemExit(f"no such image: {stick_img}")
         else:
             raise SystemExit(__doc__)
     if not args:
@@ -627,7 +627,7 @@ def main() -> int:
         m.mkdir(parents=True, exist_ok=True)
     if boot_only:
         # Boot the disks a previous run restored, and update its results.
-        work = work_dir(guest, stick_iso)
+        work = work_dir(guest, stick_img)
         r = json.loads((work / "results.json").read_text())
         for tool in tools:
             print(f"== {guest}: booting the {tool} restore", flush=True)
@@ -636,7 +636,7 @@ def main() -> int:
             print(f"   {r['tools'][tool]['boot']}", flush=True)
         (work / "results.json").write_text(json.dumps(r, indent=1))
     else:
-        r = compare_guest(guest, tools, stick_iso)
+        r = compare_guest(guest, tools, stick_img)
     print(f"\n{'tool':16} {'backup':>8} {'size':>9} {'restore':>8}  boot      differences")
     for tool, t in r["tools"].items():
         diffs = ", ".join(f"{k} {v['count']}" for k, v in t.get("diff", {}).items()) or "none"

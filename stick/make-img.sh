@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
-# Make BackOtter's rescue ISO from the stock Ubuntu Server live ISO.
+# Make BackOtter's rescue image from the stock Ubuntu Server live ISO.
 #
-# Usage: ./make-iso.sh [--test] SOURCE_ISO SLIM_DIR LAYER_DIR [OUT_ISO]
+# Usage: ./make-img.sh [--test] SOURCE_ISO SLIM_DIR LAYER_DIR [OUT_IMG]
 #
-# OUT_ISO defaults to backotter-live-linux-VERSION-ARCH.iso in the current
-# directory, or in OUT_ISO if that's a directory.  BackOtter has no releases
+# OUT_IMG defaults to backotter-live-linux-VERSION-ARCH.img in the current
+# directory, or in OUT_IMG if that's a directory.  BackOtter has no releases
 # yet, so VERSION is dev.DATE.COMMIT: the UTC build date and the commit stick/
 # is at, plus .dirty if stick/ has uncommitted changes.  ARCH is SOURCE_ISO's.
 #
 # SLIM_DIR is slim-base-layer.sh's output and LAYER_DIR build-backotter-layer.sh's,
-# both built from SOURCE_ISO.  Compared with the stock ISO, the result:
+# both built from SOURCE_ISO.  The result is meant to be written raw to a USB
+# stick, hence .img, but inside it is still a hybrid ISO9660 image like the
+# stock one, so it also boots as a CD (a BMC's virtual media, say).  Compared
+# with the stock ISO, the result:
 #   - replaces casper/ubuntu-server-minimal.squashfs with the slimmed base
 #   - adds casper/ubuntu-server-minimal.backotter.squashfs on top of it
 #   - drops the stock ubuntu-server and installer layers (their copies of
@@ -46,15 +49,15 @@ BASIC_DATA_GUID=ebd0a0a2-b9e5-4433-87c0-68b6b72699c7   # GPT "Microsoft basic da
 SYSTEM_SCHEMAS=1                # system.json schemas the stick can read
 PATH=$PATH:/usr/sbin:/sbin      # mkfs.vfat, for users whose PATH lacks sbin
 
-die() { echo "make-iso: $*" >&2; exit 1; }
+die() { echo "make-img: $*" >&2; exit 1; }
 
 if [[ ${1:-} == --test ]]; then
     TIMEOUT=3
     DEFAULT=2   # the serial-console entry
     shift
 fi
-[[ $# -eq 3 || $# -eq 4 ]] || die "usage: $0 [--test] SOURCE_ISO SLIM_DIR LAYER_DIR [OUT_ISO]"
-SOURCE_ISO=$1 SLIM=$2 LAYER_DIR=$3 OUT_ISO=${4:-.}
+[[ $# -eq 3 || $# -eq 4 ]] || die "usage: $0 [--test] SOURCE_ISO SLIM_DIR LAYER_DIR [OUT_IMG]"
+SOURCE_ISO=$1 SLIM=$2 LAYER_DIR=$3 OUT_IMG=${4:-.}
 for f in "$SOURCE_ISO" "$SLIM/$BASE".{squashfs,manifest,size} "$LAYER_DIR/$LAYER".{squashfs,manifest,size}; do
     [[ -f $f ]] || die "missing $f"
 done
@@ -71,7 +74,7 @@ xorriso -osirrox on -indev "$SOURCE_ISO" \
 chmod u+w "$work"/*
 
 # --- The output name ---------------------------------------------------------------
-if [[ -d $OUT_ISO ]]; then
+if [[ -d $OUT_IMG ]]; then
     arch=$(grep -owE 'amd64|arm64' "$work/disk-info.stock" | head -n 1)
     [[ -n $arch ]] || die "can't tell the architecture of $SOURCE_ISO"
     version=dev.$(date -u +%Y%m%d)
@@ -80,9 +83,9 @@ if [[ -d $OUT_ISO ]]; then
         version+=.$commit
         [[ -z $(git -C "$here" status --porcelain -- . 2>/dev/null) ]] || version+=.dirty
     fi
-    OUT_ISO=$OUT_ISO/backotter-live-$PLATFORM-$version-$arch.iso
+    OUT_IMG=$OUT_IMG/backotter-live-$PLATFORM-$version-$arch.img
 fi
-[[ -e $OUT_ISO ]] && die "$OUT_ISO already exists"
+[[ -e $OUT_IMG ]] && die "$OUT_IMG already exists"
 
 # --- The image marker and the config partition -------------------------------------
 ubuntu=$(grep -oE '[0-9]+\.[0-9]+(\.[0-9]+)?' "$work/disk-info.stock" | head -n 1)
@@ -193,8 +196,8 @@ EOF
     sed -n '/^grub_platform/,$p' "$work/grub.cfg.stock"
 } >"$work/grub.cfg"
 
-# md5sum.txt lists every file on the ISO: drop the removed ones, then set the
-# lines for the replaced and added ones.
+# md5sum.txt lists every file in the ISO9660 file system: drop the removed
+# ones, then set the lines for the replaced and added ones.
 grep -vE '^[0-9a-f]{32}  \./(pool/|dists/|casper/install-sources\.yaml$|casper/'"$BASE"'\.manifest\.full$|casper/'"$BASE"'\.ubuntu-server)' \
     "$work/md5sum.txt.stock" >"$work/md5sum.txt"
 declare -A files=(
@@ -216,7 +219,7 @@ sort -k2 -o "$work/md5sum.txt" "$work/md5sum.txt"
 
 maps=()
 for path in "${!files[@]}"; do maps+=(-map "${files[$path]}" "${path#.}"); done
-xorriso -indev "$SOURCE_ISO" -outdev "$OUT_ISO" \
+xorriso -indev "$SOURCE_ISO" -outdev "$OUT_IMG" \
     -rm_r /pool /dists -- \
     -rm /casper/install-sources.yaml "/casper/$BASE.manifest.full" -- \
     -find /casper -name "$BASE.ubuntu-server*" -exec rm -- \
@@ -226,4 +229,4 @@ xorriso -indev "$SOURCE_ISO" -outdev "$OUT_ISO" \
     -append_partition "$CONFIG_PART" "$BASIC_DATA_GUID" "$work/config.img" 2>"$work/xorriso.log" ||
     { cat "$work/xorriso.log" >&2; die "xorriso failed"; }
 
-echo "Wrote $OUT_ISO ($(du -h "$OUT_ISO" | cut -f1)), image $image_id"
+echo "Wrote $OUT_IMG ($(du -h "$OUT_IMG" | cut -f1)), image $image_id"

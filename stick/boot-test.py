@@ -1,21 +1,23 @@
 #!/usr/bin/env python3
-"""Boot a BackOtter ISO in QEMU and check the live system from inside.
+"""Boot a BackOtter image in QEMU and check the live system from inside.
 
-Usage: boot-test.py ISO {uefi-secureboot,uefi,bios} [--media {usb,cdrom}]
+Usage: boot-test.py IMG {uefi-secureboot,uefi,bios} [--media {usb,cdrom}]
                      [--log FILE] [--timeout S]
 
-Watches the first serial port (an ISO from "make-iso.sh --test" boots with a
+Watches the first serial port (an image from "make-img.sh --test" boots with a
 console there), picks "Shell" in BackOtter's console menu, runs the checks,
 and powers off.  Exits 0 if the system came up and every check passed.  It
-can also log in at a plain login prompt, for ISOs without BackOtter's layer.
+can also log in at a plain login prompt, for images without BackOtter's
+layer, such as the stock Ubuntu ISO.
 
-By default the ISO is a 16 GB USB stick, as if written to one raw: writes go
+By default the image is a 16 GB USB stick, as if written to one raw: writes go
 to a throwaway copy-on-write overlay, and the config partition checks run.
---media cdrom attaches it as a CD instead, which has no partitions.
+--media cdrom attaches it as a CD instead (as a BMC's virtual media may),
+which has no partitions.
 
 Needs: qemu-system-x86_64 and qemu-img, with KVM; for the UEFI modes, OVMF (Debian/Ubuntu
 package "ovmf").  uefi-secureboot uses OVMF's Secure Boot build with
-Microsoft's keys enrolled, so it boots the ISO's signed shim and kernel the
+Microsoft's keys enrolled, so it boots the image's signed shim and kernel the
 way a stock PC with Secure Boot on would.
 """
 
@@ -170,19 +172,19 @@ class Console:
         self.proc.stdin.flush()
 
 
-def qemu_command(iso: str, mode: str, media: str, tmp: str) -> list[str]:
+def qemu_command(img: str, mode: str, media: str, tmp: str) -> list[str]:
     cmd = [
         "qemu-system-x86_64", "-enable-kvm", "-cpu", "host", "-smp", "2", "-m", "4096",
         "-display", "none", "-serial", "stdio", "-monitor", "none",
     ]
     if media == "cdrom":
-        cmd += ["-drive", f"file={iso},media=cdrom,readonly=on"]
+        cmd += ["-drive", f"file={img},media=cdrom,readonly=on"]
     else:
         # A stick bigger than the image, like a real one: the image's backup
         # GPT header then isn't at the end of the disk.
         overlay = os.path.join(tmp, "stick.qcow2")
         subprocess.run(["qemu-img", "create", "-q", "-f", "qcow2", "-F", "raw",
-                        "-b", os.path.abspath(iso), overlay, "16G"], check=True)
+                        "-b", os.path.abspath(img), overlay, "16G"], check=True)
         cmd += [
             "-device", "qemu-xhci,id=xhci",
             "-drive", f"if=none,id=stick,format=qcow2,file={overlay}",
@@ -202,9 +204,9 @@ def qemu_command(iso: str, mode: str, media: str, tmp: str) -> list[str]:
     return cmd
 
 
-def run(iso: str, mode: str, media: str, log_path: str, timeout: float, user: str) -> bool:
+def run(img: str, mode: str, media: str, log_path: str, timeout: float, user: str) -> bool:
     with tempfile.TemporaryDirectory() as tmp, open(log_path, "wb") as log:
-        proc = subprocess.Popen(qemu_command(iso, mode, media, tmp),
+        proc = subprocess.Popen(qemu_command(img, mode, media, tmp),
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         con = Console(proc, log)
         start = time.monotonic()
@@ -268,15 +270,15 @@ def log_contents(path: str) -> bytes:
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
-    ap.add_argument("iso")
+    ap.add_argument("img", metavar="IMG")
     ap.add_argument("mode", choices=["uefi-secureboot", "uefi", "bios"])
     ap.add_argument("--media", choices=["usb", "cdrom"], default="usb",
-                    help="attach the ISO as a USB stick (default) or a CD")
+                    help="attach the image as a USB stick (default) or a CD")
     ap.add_argument("--log", help="serial log file (default: boot-test-MODE-MEDIA.log)")
     ap.add_argument("--timeout", type=float, default=300, help="seconds to reach login")
     ap.add_argument("--user", default=LIVE_USER, help=f"live user (default: {LIVE_USER})")
     args = ap.parse_args()
-    ok = run(args.iso, args.mode, args.media,
+    ok = run(args.img, args.mode, args.media,
              args.log or f"boot-test-{args.mode}-{args.media}.log", args.timeout, args.user)
     return 0 if ok else 1
 

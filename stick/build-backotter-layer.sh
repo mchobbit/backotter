@@ -29,7 +29,7 @@
 #     is turned on from the console with a one-time password
 #   - ZFS pools are never imported or mounted automatically
 #   - cloud-init disabled; the ISO's package repository source removed
-#     (make-iso.sh drops pool/ and dists/)
+#     (make-img.sh drops pool/ and dists/)
 #
 # Needs: Linux, root, squashfs-tools 4.6 or later.
 
@@ -119,7 +119,7 @@ log "== Packages added (KB, name)"
 in_root dpkg-query -W -f '${Installed-Size}\t${Package}\n' $added | sort -rn |
     sed 's/^/  /' | tee -a "$REPORT"
 rm -rf "$root$apt_dir"
-# pool/ and dists/ are not on BackOtter's ISO, so the base's entry must go:
+# pool/ and dists/ are not on BackOtter's image, so the base's entry must go:
 # this one deletion becomes a whiteout in the layer.
 rm "$root/etc/apt/sources.list.d/cdrom.sources"
 

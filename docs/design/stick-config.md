@@ -4,7 +4,7 @@ Status: draft for discussion. Nothing here is built yet.
 
 ## Goal
 
-Build the rescue ISO once per Ubuntu point release, not once per machine or per
+Build the rescue image once per Ubuntu point release, not once per machine or per
 backup.  Everything machine-specific lives in a small writable partition on the
 stick, which the backup tool updates in place whenever the stick is plugged in.
 
@@ -13,7 +13,7 @@ only partition 3 and only to repair it, and never stores secrets on it.
 
 ## Where the config lives
 
-The stick is the ISO written raw (`dd`, Etcher, GNOME Disks).  Today the image
+The stick is the image written raw (`dd`, Etcher, GNOME Disks).  Today the image
 has two GPT partitions:
 
 | # | Contents                 | Size   |
@@ -21,7 +21,7 @@ has two GPT partitions:
 | 1 | ISO9660 (read-only)      | 847 MB |
 | 2 | EFI system, FAT          | 5 MB   |
 
-`make-iso.sh` will append a third:
+`make-img.sh` will append a third:
 
 | # | Contents                                   | Size   |
 |---|--------------------------------------------|--------|
@@ -29,7 +29,7 @@ has two GPT partitions:
 
 GPT type "Microsoft basic data", so Linux, macOS and Windows all mount it and a
 user can look at the config from any machine.  Because the partition is part of
-the image, every raw write of the ISO creates it; nothing has to edit a
+the image, every raw write of the image creates it; nothing has to edit a
 partition table afterwards (the image's GPT is already awkward: its backup
 header sits at the end of the image, not the end of the stick).
 
@@ -54,9 +54,9 @@ backup location by hand.
 There is no index of machines; the directory listing is the index, so nothing
 can disagree with it.
 
-## The image marker, inside the ISO
+## The image marker, inside the image
 
-`make-iso.sh` adds `/.disk/backotter.json` to the ISO9660 filesystem (and to
+`make-img.sh` adds `/.disk/backotter.json` to the ISO9660 filesystem (and to
 `md5sum.txt`).  It's read-only, so it describes the image, not the stick:
 
 ```json
@@ -75,7 +75,7 @@ can disagree with it.
 }
 ```
 
-- `image_id` is a fresh UUID per build.  It ties partition 3 to the ISO it was
+- `image_id` is a fresh UUID per build.  It ties partition 3 to the image it was
   built with (see `stick.json`).
 - `platform` is the family of systems the image restores: `linux` here,
   later `freebsd` and `illumos`.  It's the same word as in the file name (see
@@ -95,16 +95,16 @@ can disagree with it.
 - There's no BackOtter version field yet, because BackOtter has no releases.
   It comes with the first one.
 
-The ISO volume ID stays Ubuntu's.  GRUB and casper may look for it, and a
+The ISO9660 volume ID stays Ubuntu's.  GRUB and casper may look for it, and a
 marker file is enough to recognise the stick.
 
 ## Image file names
 
 ```
-backotter-live-<platform>-<version>-<arch>.iso
-backotter-live-linux-0.1.0-amd64.iso
-backotter-live-freebsd-0.1.0-amd64.iso
-backotter-live-illumos-0.1.0-amd64.iso
+backotter-live-<platform>-<version>-<arch>.img
+backotter-live-linux-0.1.0-amd64.img
+backotter-live-freebsd-0.1.0-amd64.img
+backotter-live-illumos-0.1.0-amd64.img
 ```
 
 - `platform` is `linux`, `freebsd` or `illumos`, as in the marker.  One Linux
@@ -119,7 +119,11 @@ backotter-live-illumos-0.1.0-amd64.iso
   fixed prefix and three fields.  `live` leaves room for other kinds of image
   (`backotter-netboot-...`).
 
-`make-iso.sh` picks this name when it isn't given a file to write.
+- `.img` on every platform: the image is for writing raw to a USB stick, not
+  for burning to a disc.  The Linux one is still a hybrid ISO9660 image inside,
+  so it also boots as a CD, as a BMC's virtual media may present it.
+
+`make-img.sh` picks this name when it isn't given a file to write.
 
 ## stick.json
 
@@ -350,7 +354,7 @@ an old stick that can fetch the repository location is better than nothing.
 
 ## What's built
 
-- `make-iso.sh` builds partition 3 (`mkfs.vfat` and mtools, so no root or loop
+- `make-img.sh` builds partition 3 (`mkfs.vfat` and mtools, so no root or loop
   mount), appends it, and adds `/.disk/backotter.json`.
 - `boot-test.py` boots the image as a USB stick by default (`--media cdrom`
   for the old way), and checks from inside that the live system finds

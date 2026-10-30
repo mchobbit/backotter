@@ -12,7 +12,8 @@
 #   ssh -i WORK_DIR/id_ed25519 -p 2222 root@127.0.0.1
 # Ctrl-A X quits QEMU (Ctrl-A H lists the other keys).
 #
-#   --cdrom ISO   attach ISO and boot from it first, e.g. BackOtter's rescue ISO
+#   --cdrom ISO   attach ISO and boot from it first, e.g. an installer, or
+#                 BackOtter's rescue image as a CD (it's ISO9660 inside)
 #   --uefi        boot with OVMF (UEFI) instead of SeaBIOS (BIOS), with Secure
 #                 Boot on and Microsoft's keys enrolled, like a stock PC
 #   --no-secure-boot

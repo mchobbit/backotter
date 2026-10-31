@@ -89,6 +89,42 @@ EOF
     fi
 fi
 
+# --- Room ---------------------------------------------------------------------------
+# NILFS2 (zorin18's root) keeps what is deleted or overwritten, in its
+# checkpoints, until its cleaner reclaims it, an hour later by default: an
+# update would fill the disk with the files it replaced.  So reclaim runs the
+# cleaner at once (no protection period) and waits for it.  But only while
+# nothing else writes: the cleaner running beside a big apt run broke the
+# file system (a bad DAT b-tree node, then read-only).  In between, it's
+# suspended.
+nilfs=
+reclaim() { :; }
+if [ "$(uname)" = Linux ] && [ "$(findmnt -no FSTYPE / 2>/dev/null)" = nilfs2 ] && has nilfs-clean; then
+    nilfs=$(findmnt -no SOURCE /)
+    reclaim() {
+        sync
+        nilfs-clean -r "$nilfs" && nilfs-clean -p 0 "$nilfs" || { say "nilfs-clean failed"; exit 1; }
+        # Until 10 s free up less than 64 MiB, after 30 s at least (the
+        # oldest segments, cleaned first, may hold little to free), and for
+        # 5 minutes at most.
+        now=$(df -Pk / | awk 'NR == 2 { print $4 }') i=0
+        while [ $i -lt 30 ]; do
+            sleep 10; i=$((i + 1))
+            prev=$now now=$(df -Pk / | awk 'NR == 2 { print $4 }')
+            [ $i -lt 3 ] || [ $((now - prev)) -ge 65536 ] || break
+        done
+        nilfs-clean -s "$nilfs" || { say "could not suspend NILFS's cleaner"; exit 1; }
+        nilfs_ok
+        say "NILFS: $((now / 1024)) MiB free"
+    }
+    nilfs_ok() {
+        if dmesg | grep -q 'NILFS error'; then
+            say "NILFS reported errors:"; dmesg | grep 'NILFS' | tail -5; exit 1
+        fi
+    }
+    reclaim
+fi
+
 case $(uname) in
 Linux)
     if has apt-get; then
@@ -114,11 +150,19 @@ Linux)
         # 16 GB disk hasn't room for all of a big update's packages at once
         # beside their unpacked files.  dist-upgrade does the rest (packages
         # that replace others).
-        set -- $(apt list --upgradable 2>/dev/null | sed -n 's|/.*||p')
+        # snapd's postinst sets file capabilities, which NILFS2 can't store
+        # (make-from-live.sh unpacked the system without them): there it
+        # stays as built.
+        if [ -n "$nilfs" ] && dpkg -s snapd >/dev/null 2>&1; then
+            apt-mark hold snapd >/dev/null || exit 1
+        fi
+        apt-mark showhold >/run/bko-held || exit 1
+        set -- $(apt list --upgradable 2>/dev/null | sed -n 's|/.*||p' | grep -vxF -f /run/bko-held)
         while [ $# -gt 0 ]; do
             batch=
             while [ $# -gt 0 ] && [ $(echo $batch | wc -w) -lt 40 ]; do batch="$batch $1"; shift; done
             $apt install --only-upgrade $batch && $apt clean || exit 1
+            reclaim
         done
         $apt dist-upgrade && $apt autoremove --purge && $apt clean || exit 1
     elif has dnf; then
@@ -218,4 +262,8 @@ SunOS)
 *)
     say "no updater for $(uname)"; exit 3 ;;
 esac
+if [ -n "$nilfs" ]; then
+    nilfs_ok
+    nilfs-clean -r "$nilfs" || exit 1
+fi
 say "updated"

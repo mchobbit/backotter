@@ -14,7 +14,8 @@ folder in vms/ next to this script's testvm/.  For each GUEST, vm-update
      the same generation as here;
   2. boots the guest with vm-run --ram --keep (its vm-run-options, the
      passphrase typed when it has one), so that every write goes to an
-     overlay in RAM and the image itself is only read;
+     overlay beside the image, which itself is only read, once this host
+     has memory to spare for the VM;
   3. runs update/in-guest.sh in it over SSH: the guest's own package manager
      (apt, dnf, pacman, zypper, xbps, apk, nixos-rebuild, pkg, syspatch and
      pkg_add, pkg on OmniOS), unattended, after pointing a guest that its
@@ -39,7 +40,8 @@ update (NetBSD: a release's base sets) is reported and left alone.
                 one); --hosts '' updates only this host's copy, after
                 which the others no longer match it
   --jobs N      update N guests at once (default 3); each takes a 2 GB VM,
-                its overlay in RAM and a free SSH port
+                its overlay on disk and a free SSH port, and waits for the
+                memory it needs
   --memory MB   the VM's RAM instead of vm-run's 2048
   --status      only step 1's checks: whether the hosts agree, and what uses
                 the images
@@ -65,6 +67,7 @@ import shlex
 import shutil
 import signal
 import socket
+import struct
 import subprocess
 import sys
 import tempfile
@@ -141,7 +144,8 @@ def guest_dir_on(host: str | None, guest: str) -> str:
 #    qemu-nbd, compare.py), holds fcntl locks on bytes 100-299 of it.  Testing
 #    for them needs only read access, whoever the program runs as.
 #  - Overlays on top of it that no program has open: a kept vm-run --ram
-#    overlay.  Those in RAM and in the guest's folder are looked at; one
+#    overlay, or one a vm-update left.  Those in RAM and in the guest's
+#    folder (and its vm-update run folders) are looked at; one
 #    that can't be read but is named after the guest or image counts too.
 #  - A comparison of the guest under way (compare.py, compare-freebsd.sh):
 #    between its mounts it holds no lock.  The src.qcow2 a comparison leaves
@@ -163,7 +167,7 @@ for p in $(pgrep -f 'compare(\.py|-freebsd\.sh)' || true); do
     [[ $p != $$ ]] && tr '\0' '\n' <"/proc/$p/cmdline" 2>/dev/null | grep -qx -- "$guest" &&
         echo "a comparison of $guest runs (pid $p)"
 done
-for o in /dev/shm/*.qcow2 /dev/shm/*/*.qcow2 "$dir"/*.qcow2; do
+for o in /dev/shm/*.qcow2 /dev/shm/*/*.qcow2 "$dir"/*.qcow2 "$dir"/.vm-update-run.*/*.qcow2; do
     o=$(realpath "$o")
     [[ $o != "$img" && $exclude != *" $o "* ]] || continue
     if info=$(qemu-img info -U --output=json "$o" 2>/dev/null); then
@@ -175,6 +179,19 @@ for o in /dev/shm/*.qcow2 /dev/shm/*/*.qcow2 "$dir"/*.qcow2; do
 done
 true
 """
+
+
+def qemu_holds(path: Path) -> bool:
+    """Whether a QEMU program here has PATH open (its locks, as in BUSY_SCRIPT)."""
+    try:
+        fd = os.open(path, os.O_RDONLY)
+    except OSError:
+        return True                            # can't tell: as if it had
+    try:
+        probe = struct.pack("hhqqi4x", fcntl.F_WRLCK, os.SEEK_SET, 100, 200, 0)
+        return struct.unpack("hhqqi4x", fcntl.fcntl(fd, fcntl.F_OFD_GETLK, probe))[0] != fcntl.F_UNLCK
+    finally:
+        os.close(fd)
 
 
 def busy(host: str | None, guest: str, img: str, exclude: list[str] = ()) -> list[str]:
@@ -232,6 +249,14 @@ class Guest:
             fcntl.flock(self.lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except BlockingIOError:
             raise Failed("another vm-update is working on it")
+        # A run folder left by a vm-update that died at once (a second
+        # Ctrl-C, SIGKILL, a crash): with the lock ours, no vm-update uses it,
+        # and if no QEMU has its overlays open either, it's dead.  (One whose
+        # VM still runs stays, and busy() names it.)
+        for run_dir in self.dir.glob(".vm-update-run.*"):
+            if not any(qemu_holds(o) for o in run_dir.glob("*.qcow2")):
+                shutil.rmtree(run_dir, ignore_errors=True)
+                self.note(f"removed {run_dir}, a dead run's folder")
 
     def note(self, msg: str) -> None:
         self.log.write(f"{time.strftime('%F %T')} {msg}\n")
@@ -270,13 +295,58 @@ POWEROFF = SBIN + """case $(uname) in
 esac"""
 
 
+memory_lock = threading.Lock()
+promised = 0                                   # MiB of guest RAM our running VMs may yet take
+
+
+def wait_for_memory(g: Guest, mb: int) -> None:
+    """Wait until this host has MB of memory to spare, and 2 GiB besides,
+    and promise it to the VM about to start: starting one short of it would
+    have the kernel kill some other VM.  QEMU takes a guest's RAM only as the
+    guest uses it, so what our running VMs were promised counts as taken.
+    While they run, their memory will come back; with none running and none
+    coming back for an hour, the host is too busy."""
+    global promised
+    deadline = time.monotonic() + 3600
+    while True:
+        meminfo = Path("/proc/meminfo").read_text()
+        available = int(re.search(r"^MemAvailable:\s+(\d+) kB", meminfo, re.M)[1]) // 1024
+        with memory_lock:
+            if available - promised >= mb + 2048:
+                promised += mb
+                return
+            ours = promised
+        if ours:
+            deadline = time.monotonic() + 3600
+        elif time.monotonic() > deadline:
+            raise Failed(f"this host never had {mb + 2048} MiB of memory free (it has {available})")
+        g.note(f"waiting for memory: {available} MiB available, {ours} of it promised to our VMs,"
+               f" {mb + 2048} needed")
+        if stopping.wait(30):
+            raise Failed("stopped")
+
+
 class VM:
     """The guest under vm-run --ram --keep, its serial console on a pipe and
-    its overlays in a folder of its own in /dev/shm."""
+    its overlays in a folder of its own beside the image.  (On disk, not in
+    /dev/shm: a big update's overlay holds gigabytes, which in RAM would
+    starve this host's other VMs.)"""
 
     def __init__(self, g: Guest, memory: int | None):
+        if memory:
+            mb = memory
+        elif "--memory" in g.options:
+            mb = int(g.options[g.options.index("--memory") + 1])
+        else:
+            mb = int(os.environ.get("MEMORY", 2048))      # vm-run's default
+        wait_for_memory(g, mb)
+        self.mb = mb
         self.g, self.port = g, free_port()
-        self.ram_dir = tempfile.mkdtemp(prefix=f"vm-update.{g.name}.", dir="/dev/shm")
+        try:
+            self.ram_dir = tempfile.mkdtemp(prefix=".vm-update-run.", dir=g.dir)
+        except BaseException:
+            self.release_memory()
+            raise
         cmd = [str(TESTVM / "vm-run"), "--ram", "--keep", *g.options]
         if memory:
             cmd += ["--memory", str(memory)]
@@ -411,6 +481,7 @@ class VM:
                 if time.monotonic() >= deadline:
                     raise Failed(f"the guest didn't power off within {POWEROFF_TIMEOUT} s")
         running.discard(self)              # off: from here on, stopping waits for the merge
+        self.release_memory()
         if stopping.is_set():
             raise Failed("stopped")
         overlays = self.overlays()
@@ -448,10 +519,17 @@ class VM:
                     pass
                 self.proc.wait()
 
+    def release_memory(self) -> None:
+        global promised
+        with memory_lock:
+            promised -= self.mb
+            self.mb = 0
+
     def discard(self) -> None:
         """Stop the VM if it still runs, and delete its overlays."""
         running.discard(self)
         self.kill()
+        self.release_memory()
         shutil.rmtree(self.ram_dir, ignore_errors=True)
         try:
             self.serial.close()
@@ -594,8 +672,8 @@ def merge_on(g: Guest, host: str | None, pending: dict) -> None:
 def ship_and_commit(g: Guest, hosts: list[str | None], overlays: dict[str, str], states: dict) -> None:
     others = [h for h in hosts if h is not None]
     changed = [img for img in g.images if g.path(img) in overlays]   # an image nothing wrote has none
-    # Out of RAM first, into the guest's folder: what step 5 leaves undone
-    # must survive vm-update and a reboot.
+    # Out of the run's folder, which vm-update deletes, into the guest's:
+    # what step 5 leaves undone must survive it.
     local = {}
     try:
         for img in changed:

@@ -16,13 +16,21 @@
 # and that rustic's output has no flood of time-zone warnings (at most one
 # per run, none without /etc/localtime).
 #
+# Then, as on Linux (fs_roundtrip.py): a restore over each restored tree
+# after changing it (rt-common.sh's rt_over), compared again; and when
+# BACKUP and RESTORE are the two tools, the snapshot each of them makes of
+# the trees, node by node (rt_snapshots).
+#
 # Usage: roundtrip.sh BACKUP [RESTORE]   (as root, in a throwaway guest: at
 #                                         securelevel 1, schg and sappnd
 #                                         can't be cleared again)
 # BACKUP and RESTORE are restic or BackOtter's rustic; RESTORE defaults to
-# BACKUP.  Run it with sh: root's login shell is csh.
+# BACKUP.  Run it with sh: root's login shell is csh.  rt-common.sh is next
+# to this script.
 
 R=$1 RR=${2:-$1}
+here=$(cd "$(dirname "$0")" && pwd)
+. "$here/rt-common.sh"
 TREES="/root/bko-rt /boot/bko-rt"
 export RESTIC_PASSWORD=backotter-compare RESTIC_REPOSITORY=/root/bko-rt-repo
 export LC_ALL=C           # file names that aren't UTF-8 sort too
@@ -201,9 +209,10 @@ listings() {  # DIR OUT-PREFIX: the listings compared, one file each
     find . \( -type b -o -type c \) -exec stat -f '%N %HT %Hr,%Lr' {} + | sort >$2.devices
 }
 failed=""
-check() {  # TITLE KIND: compare before.KIND with after.KIND
+after=/tmp/bko-rt.after
+check() {  # TITLE KIND: compare before.KIND with $after.KIND
     echo "== $1"
-    if diff /tmp/bko-rt.before.$2 /tmp/bko-rt.after.$2; then
+    if diff /tmp/bko-rt.before.$2 $after.$2; then
         echo "identical ($(wc -l </tmp/bko-rt.before.$2 | tr -d ' ') lines)"
     else
         failed="$failed; $1"
@@ -233,27 +242,50 @@ echo "== backup"
 bko_backup $TREES; status=$?
 echo "exit $status"
 [ $status -eq 0 ] || failed="$failed; backup"
+rt_snapshots $R $RR $RESTIC_REPOSITORY $TREES
+# TREE's restored copy against it, the listings into $after.*; X goes after
+# each check's title.
+compare_tree() {  # TREE X
+    t=$1 x=$2 n=$(basename $(dirname $1))
+    listings $t-restored $after.$n
+    s="mtree of $t: type, owner, group, links, size, mtime, symlink target, SHA-256$x"
+    echo "== $s"
+    mtree -f /tmp/bko-rt.$n.spec -p $t-restored && echo identical || failed="$failed; $s"
+    check "modes of $t (not symlinks)$x" $n.modes
+    check "symlink modes of $t$x" $n.symlink-modes
+    check "file flags of $t (dragonfly.file_flags)$x" $n.flags
+    check "devices of $t (type; the number shows as NOUDEV)$x" $n.devices
+    sed 's/^/  /' /tmp/bko-rt.before.$n.devices
+    check "atime and mtime of $t to the nanosecond$x" $n.times
+    s="hard links of $t (one inode for all three)$x"
+    echo "== $s"
+    i=$(ls -i $t-restored/hardlink-a $t-restored/hardlink-b $t-restored/sub/hardlink-c | awk '{print $1}' | sort -u | wc -l | tr -d ' ')
+    echo "inodes: $i"; [ "$i" = 1 ] || failed="$failed; $s"
+}
 for t in $TREES; do
-    n=$(basename $(dirname $t))
     echo "== restore of $t"
     bko_restore "latest:$t" $t-restored; status=$?
     echo "exit $status"
     [ $status -eq 0 ] || failed="$failed; restore of $t"
-    listings $t-restored /tmp/bko-rt.after.$n
-    s="mtree of $t: type, owner, group, links, size, mtime, symlink target, SHA-256"
-    echo "== $s"
-    mtree -f /tmp/bko-rt.$n.spec -p $t-restored && echo identical || failed="$failed; $s"
-    check "modes of $t (not symlinks)" $n.modes
-    check "symlink modes of $t" $n.symlink-modes
-    check "file flags of $t (dragonfly.file_flags)" $n.flags
-    check "devices of $t (type; the number shows as NOUDEV)" $n.devices
-    sed 's/^/  /' /tmp/bko-rt.before.$n.devices
-    check "atime and mtime of $t to the nanosecond" $n.times
-    s="hard links of $t (one inode for all three)"
-    echo "== $s"
-    i=$(ls -i $t-restored/hardlink-a $t-restored/hardlink-b $t-restored/sub/hardlink-c | awk '{print $1}' | sort -u | wc -l | tr -d ' ')
-    echo "inodes: $i"; [ "$i" = 1 ] || failed="$failed; $s"
+    compare_tree $t ""
 done
+# Again over each restored tree, changed: the file flags off (or nothing
+# could change), a directory replaced by a symlink to one elsewhere, files
+# with other bytes, mode and mtime.
+after=/tmp/bko-rt.over
+for t in $TREES; do
+    echo "== restore over $t-restored, changed"
+    chflags -R 0 $t-restored && find $t-restored -type l -exec chflags -h 0 {} +
+    rt_over $t-restored sub atime-ns old || failed="$failed; preparing the restore over $t-restored"
+    bko_restore "latest:$t" $t-restored; status=$?
+    echo "exit $status"
+    [ $status -eq 0 ] || failed="$failed; restore over $t-restored"
+    s="what the replaced directory's symlink pointed to, untouched ($t)"
+    echo "== $s"
+    rt_over_check && echo "untouched ($(wc -l </tmp/bko-rt.elsewhere.before | tr -d ' ') names)" || failed="$failed; $s"
+    compare_tree $t " (over an existing tree)"
+done
+after=/tmp/bko-rt.after
 echo "== sparse (KB allocated, source then restored)"
 du -k /root/bko-rt/sparse /root/bko-rt-restored/sparse
 # The snapshot decoded by the tool that wrote it and the one that restored

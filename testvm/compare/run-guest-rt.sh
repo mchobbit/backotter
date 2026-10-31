@@ -58,7 +58,7 @@ case $guest in
     omnios*) os=illumos ;;
     *) die "no round trip for $guest" ;;
 esac
-files=("$here/$os/roundtrip.sh")
+files=("$here/$os/roundtrip.sh" "$here/rt-common.sh")
 [[ $os == freebsd ]] && files+=("$here/freebsd/torture.sh" "$here/freebsd/fsmeta.sh")
 boot() {  # GUEST: a throwaway copy of it, up and answering ssh
     vm_boot "$1" "$port" "$logs/vm" --ram --memory "${MEMORY:-4096}"

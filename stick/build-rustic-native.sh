@@ -120,9 +120,13 @@ else
     tree_commit() {  # DIR VAR: the tree's commit, and whether it has changes
         local c=${!2:-}
         # A copy without .git (the README's rsync makes those) still builds.
-        [[ -n $c ]] || c=$(git -C "$1" rev-parse HEAD 2>/dev/null) || c="unknown (no .git, no $2)"
-        [[ -z $(git -C "$1" status --porcelain 2>/dev/null) ]] || c+=", with uncommitted changes"
-        echo "$c"
+        # Only the tree's own .git counts: git would take a copy inside some
+        # other checkout for part of it, and give that checkout's commit.
+        if [[ -e $1/.git ]]; then
+            [[ -n $c ]] || c=$(git -C "$1" rev-parse HEAD 2>/dev/null) || c=""
+            [[ -z $(git -C "$1" status --porcelain 2>/dev/null) ]] || c="${c:-unknown}, with uncommitted changes"
+        fi
+        echo "${c:-unknown (no .git, no $2)}"
     }
     commit="$(tree_commit "$SRC/rustic" RUSTIC_COMMIT) (local, unpushed, from $SRC/rustic)"
     core="$(tree_commit "$SRC/rustic_core" RUSTIC_CORE_COMMIT) (local, unpushed, from $SRC/rustic_core)"

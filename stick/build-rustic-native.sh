@@ -28,7 +28,7 @@
 #             for the two before the --locked build, as
 #             dragonfly/build-rustic.sh does.  rustic-commit says "local,
 #             unpushed"; RUSTIC_COMMIT and RUSTIC_CORE_COMMIT give the commits
-#             when the trees have no .git.
+#             when the trees have no .git (else they're "unknown").
 #   FAST=1    no LTO and 16 codegen units (CARGO_PROFILE_RELEASE_*): several
 #             times quicker, for test rounds, and rustic-commit says so.
 #             Without it, the fork's release profile (fat LTO, one codegen
@@ -118,9 +118,9 @@ if [[ -z ${SRC:-} ]]; then
     rm -rf "$work/src/rustic/.git"
 else
     tree_commit() {  # DIR VAR: the tree's commit, and whether it has changes
-        local c
-        c=${!2:-$(git -C "$1" rev-parse HEAD 2>/dev/null)} ||
-            die "$1 has no .git: give its commit in $2"
+        local c=${!2:-}
+        # A copy without .git (the README's rsync makes those) still builds.
+        [[ -n $c ]] || c=$(git -C "$1" rev-parse HEAD 2>/dev/null) || c="unknown (no .git, no $2)"
         [[ -z $(git -C "$1" status --porcelain 2>/dev/null) ]] || c+=", with uncommitted changes"
         echo "$c"
     }

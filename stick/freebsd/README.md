@@ -92,9 +92,10 @@ What changes from the memstick:
   USB stick (`usb-storage` on `qemu-xhci` or `nec-usb-xhci`) with its default
   1 MiB maximum I/O: reads bigger than one USB transfer come back garbled
   (umass: "bad CSW signature"), and the root never mounts.  The stock memstick
-  hangs the same way, and 128 KiB isn't small enough.  `--test` images
-  set `kern.maxphys="65536"` for `boot-test.py`; the image for real sticks
-  keeps the default.  EHCI works without it.
+  hangs the same way, and 128 KiB isn't small enough; 64 KiB
+  (`kern.maxphys="65536"`) would do.  On EHCI it reads the stick fine, so
+  `boot-test.py` gives FreeBSD an EHCI controller (`USB_CONTROLLER`) and
+  `--test` images keep FreeBSD's default, as real sticks do.
 - **Typing into the serial console.**  FreeBSD's `sh` edits lines (libedit)
   on a terminal and mangles long lines typed fast, and the serial driver
   holds only 384 bytes while the system is busy, dropping the rest.

@@ -44,8 +44,11 @@ FIRMWARE = {
 # DragonFly 6.4's xhci enumerates no QEMU USB device (plain, behind a hub, or
 # UAS), and on q35 its interrupts go astray (AHCI timeouts, then a hang just
 # before it mounts root).  It boots on the older PC machine with EHCI.
+# FreeBSD 15.1 reads QEMU's USB stick on xHCI garbled (umass: "bad CSW
+# signature") unless kern.maxphys is cut to 64 KiB, and the root never
+# mounts; on EHCI it boots as it would from a real stick.
 MACHINE = {"dragonfly": "pc"}
-USB_CONTROLLER = {"dragonfly": "usb-ehci"}
+USB_CONTROLLER = {"dragonfly": "usb-ehci", "freebsd": "usb-ehci"}
 # Bytes a second to type at the serial console, for platforms that drop input
 # coming faster than a real line would bring it: QEMU's serial port has no
 # speed of its own, and DragonFly's sio buffers only a few dozen characters

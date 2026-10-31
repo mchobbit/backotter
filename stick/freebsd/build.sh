@@ -124,11 +124,6 @@ EOF
         echo 'autoboot_delay="3"'
         echo 'comconsole_speed="115200"'
         echo 'console="comconsole,vidconsole,efi"'
-        # QEMU's emulated USB stick on xHCI (boot-test.py's) garbles large
-        # bulk reads (umass: "bad CSW signature"), and the root never
-        # mounts; the stock memstick hangs the same way, and 128 KiB is
-        # still too much.  Real sticks boot with FreeBSD's 1 MiB.
-        echo 'kern.maxphys="65536"'
     else
         echo 'autoboot_delay="10"'
     fi

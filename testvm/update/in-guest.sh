@@ -1,5 +1,6 @@
 #!/bin/sh
-# Run as root inside a BackOtter test guest by vm-update (ssh ... sh -s):
+# Run as root (Haiku: its only user, uid 0) inside a BackOtter test guest
+# by vm-update (ssh ... sh -s):
 # bring the guest up to date with its own package manager, unattended, then
 # empty the package caches.  Exits 0 when the update ran, 3 when nothing on
 # this guest can update it, anything else when the update failed.
@@ -259,6 +260,26 @@ SunOS)
     # this activates it.  4: nothing to update.
     pkg update -v; rc=$?
     [ $rc -eq 0 ] || [ $rc -eq 4 ] || exit 1 ;;
+Haiku)
+    # Each update keeps the packages it replaced in a state folder, to boot
+    # back into from the boot menu: the last update's go first, as the
+    # running system doesn't use them.  Updates to packages in use (haiku,
+    # the kernel's) take effect at the reboot after this.
+    rm -rf /boot/system/packages/administrative/state_* || exit 1
+    # A repository pkgman can't refresh is only a warning, and the sync
+    # then goes by the old index ("Nothing to do", exit 0): an error here,
+    # retried while the network may still be coming up.
+    unrefreshed() { grep -Eq 'Refreshing repository .* failed|Skipping\.' /tmp/bko-pkgman.log; }
+    tries=0
+    until pkgman refresh >/tmp/bko-pkgman.log 2>&1 && ! unrefreshed; do
+        tries=$((tries + 1))
+        [ $tries -lt 20 ] || { cat /tmp/bko-pkgman.log; say "the repositories can't be refreshed"; exit 1; }
+        sleep 15
+    done
+    pkgman full-sync -y >/tmp/bko-pkgman.log 2>&1; rc=$?
+    cat /tmp/bko-pkgman.log
+    [ $rc -eq 0 ] || exit 1
+    ! unrefreshed || { say "a repository couldn't be refreshed"; exit 1; } ;;
 *)
     say "no updater for $(uname)"; exit 3 ;;
 esac

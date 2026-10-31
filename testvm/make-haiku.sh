@@ -26,6 +26,7 @@
 #   first-boot-serial.log the guest's first boot: the kernel's log
 #   first-boot-screen.png the screen, if the first boot never answered on SSH
 #   vm-run-options        "--disk-bus sata", how vm-run must boot it
+#   ssh-user              "user", whom vm-update logs in as (not root)
 #
 # The guest, host name haikuN: MBR with one BFS partition, BIOS boot (Haiku's
 # MBR and boot loader), Haiku's own swap file, 2 GB RAM, DHCP, sshd started
@@ -148,6 +149,7 @@ qemu_pid=""
 qemu-img convert -f raw -O qcow2 "$raw" "$DISK"
 rm -f "$raw"
 echo "--disk-bus sata" >vm-run-options
+echo user >ssh-user
 
 # --- First boot ----------------------------------------------------------------------
 # Haiku's first boot runs the packages' first-boot scripts (sshd's host keys

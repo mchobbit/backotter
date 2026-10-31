@@ -18,8 +18,10 @@ folder in vms/ next to this script's testvm/.  For each GUEST, vm-update
      has memory to spare for the VM;
   3. runs update/in-guest.sh in it over SSH: the guest's own package manager
      (apt, dnf, pacman, zypper, xbps, apk, nixos-rebuild, pkg, syspatch and
-     pkg_add, pkg on OmniOS), unattended, after pointing a guest that its
-     builder froze at its distribution's live repositories;
+     pkg_add, pkg on OmniOS, pkgman on Haiku), unattended, after pointing a
+     guest that its builder froze at its distribution's live repositories;
+     as root, or as the user named in vms/GUEST/ssh-user (Haiku's "user",
+     which is uid 0: Haiku has no root);
   4. reboots it and waits for SSH again, so a broken kernel or boot loader
      stops here, then powers it off;
   5. copies the overlay (only the blocks the update wrote) to every other
@@ -242,6 +244,8 @@ class Guest:
             raise Failed(f"{self.dir} should have one boot image besides vm-run-options' --disk ones, has {main}")
         # Image file names, the boot disk first, as vm-run attaches them.
         self.images = main + extra
+        user_file = self.dir / "ssh-user"
+        self.user = user_file.read_text().strip() if user_file.exists() else "root"
         self.log = open(self.dir / "update.log", "a", encoding="utf-8")
         # One vm-update at a time per guest; held until this process exits.
         self.lock = open(self.dir / ".vm-update.lock", "a")
@@ -269,7 +273,7 @@ class Guest:
         return ["ssh", "-q", "-i", str(self.dir / "id_ed25519"), "-p", str(port),
                 "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
                 "-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=15",
-                "root@127.0.0.1", *remote]
+                f"{self.user}@127.0.0.1", *remote]
 
 
 def free_port() -> int:
@@ -284,11 +288,15 @@ PROMPT = re.compile(rb"(?i)enter passphrase[^\n]*$")
 KEPT = re.compile(r"vm-run: kept this run's writes to (\S+) in (\S+) \(")
 # Root's PATH over SSH lacks /sbin on some guests (NetBSD).
 SBIN = "PATH=/sbin:/usr/sbin:/bin:/usr/bin:$PATH; export PATH\n"
-REBOOT = SBIN + "(sleep 1; reboot) >/dev/null 2>&1 </dev/null &"
-# How long init has run, as ps prints it: [[DD-]HH:]MM:SS.
+# Haiku has only shutdown: -q, at once, without asking its applications.
+REBOOT = SBIN + ("(sleep 1; if [ $(uname) = Haiku ]; then shutdown -r -q; else reboot; fi)"
+                 " >/dev/null 2>&1 </dev/null &")
+# How long init has run, as ps prints it: [[DD-]HH:]MM:SS.  (Haiku's ps
+# has no -o: no answer, and the reboot is taken from SSH going down and up.)
 UPTIME = SBIN + "ps -o etime= -p 1"
 POWEROFF = SBIN + """case $(uname) in
     Linux|SunOS) poweroff ;;
+    Haiku) shutdown -q ;;
     # DragonFly's init ignores shutdown -p's request here; halt -p works.
     OpenBSD|DragonFly) halt -p ;;
     *) if command -v apk >/dev/null; then /sbin/poweroff; else shutdown -p now; fi ;;
@@ -466,7 +474,7 @@ class VM:
             else:
                 down, answers = True, 0
             time.sleep(2 if not down else 5)
-        raise Failed(f"no SSH within {SSH_UP_TIMEOUT} s; see {self.g.dir}/update-serial.log")
+        raise Failed(f"no SSH as {self.g.user} within {SSH_UP_TIMEOUT} s; see {self.g.dir}/update-serial.log")
 
     def poweroff(self) -> dict[str, str]:
         """Power the guest off; {image path: overlay holding its writes}."""

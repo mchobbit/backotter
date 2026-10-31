@@ -41,13 +41,14 @@ accepts before the guest is up), and the legacy virtio-net OmniOS needs.
 The hosts run these scripts from `~/backotter-work` (`BKO_WORK`), with the
 guests in `~/backotter-work/vms`.  `testvm/sync-hosts.sh`, run from the
 checkout, copies `testvm/` and `stick/` there on every host, so that both run
-the same scripts; the local rustic and rustic_core trees go across the same
-way, for `SRC=`:
+the same scripts; the local restic, rustic and rustic_core trees go across
+the same way, for `SRC=` (without .git, `rustic-commit` names the commits
+"unknown" unless `RUSTIC_COMMIT` and `RUSTIC_CORE_COMMIT` give them):
 
     testvm/sync-hosts.sh                  # chopin.local and cinqcent.local
     for h in chopin.local cinqcent.local; do
         rsync -rlp --checksum --exclude target --exclude .git \
-            ~/git/rustic ~/git/rustic_core m@$h:backotter-work/src/
+            ~/git/restic ~/git/rustic ~/git/rustic_core m@$h:backotter-work/src/
     done
 
 Then, on a host, for example:
@@ -56,6 +57,16 @@ Then, on a host, for example:
     SRC=src BKO_BIN=$PWD/round4/bin FAST=1 stick/freebsd/build-rustic.sh 2901
     testvm/compare/run-guest-rt.sh freebsd15 2910 bko-bin/freebsd/restic-bko \
         round4/bin/freebsd/rustic-bko
+
+restic-bko (all platforms) and rustic-bko for Linux are the forks' own
+`build-backotter.sh`, into their `dist/`; for rustic, on a copy of the two
+trees that `stick/prep-rustic-src.sh` has pointed at the local rustic_core
+(on Chopin, Go is in `~/sdk/goVERSION/bin`, cargo in `~/.cargo/bin`):
+
+    (cd src/restic && ./build-backotter.sh linux/amd64 freebsd/amd64 \
+        openbsd/amd64 netbsd/amd64 dragonfly/amd64 illumos/amd64)
+    mkdir -p round4/linux && cp -a src/rustic src/rustic_core round4/linux/
+    stick/prep-rustic-src.sh round4/linux && (cd round4/linux/rustic && ./build-backotter.sh)
 
 Build and test work is split between the two hosts (each takes a share of
 the slow steps, native guest builds and round trips):

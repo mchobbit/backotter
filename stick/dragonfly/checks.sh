@@ -45,7 +45,7 @@ check tmpfs 'for d in /etc /var /root /tmp; do mount | grep -q " on $d (tmpfs" |
 check installer-gone '! grep -q "^installer:" /etc/master.passwd && grep -q "^root:\*:" /etc/master.passwd && echo "no installer, root locked"'
 check pfi-gone 'test ! -e /etc/rc.d/pfi'
 check tools 'for c in fdisk disklabel64 gpt newfs newfs_hammer2 hammer2 newfs_msdos mount_msdos cryptsetup lvm dmsetup camcontrol cpdup ssh; do command -v $c >/dev/null || { echo no $c; exit 1; }; done; echo all present'
-check binaries 'restic-bko version | head -n 1 | grep backotter || exit 1; rustic-bko --version 2>/dev/null || echo "(no rustic-bko)"'
+check binaries 'restic-bko version | head -n 1 | grep backotter && rustic-bko --version | grep backotter'
 check network 'i=0; until a=$(ifconfig -a | awk "\$1 == \"inet\" && \$2 !~ /^127\./ { print \$2 }"); test -n "$a"; do i=$((i + 1)); test $i -lt 30 || exit 1; sleep 1; done; echo $a'
 check console-screen 'ps -axo tt,command | awk "\$1 == \"v0\" && /backotter\/console/" | grep . && grep -q "^ttyv0.*getty bko.Pc" /etc/ttys'
 check console-serial 'ps -axo tt,command | awk "\$1 == \"d0\" && /backotter\/console/" | grep . && grep -q "^ttyd0.*getty bko.9600" /etc/ttys'

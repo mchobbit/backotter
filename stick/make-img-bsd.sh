@@ -17,7 +17,8 @@
 #                   BUILD_VM_PORT (its SSH port here), BUILD_VM_MODE ("running":
 #                   a builder that is already up on that port; "snapshot":
 #                   boot a throwaway copy, thrown away when done) and
-#                   BUILD_VM_OPTIONS (more vm-run options, an array); and
+#                   BUILD_VM_OPTIONS (more vm-run options, an array);
+#                   RUSTIC_REQUIRED=yes if the image must have rustic-bko; and
 #                   defines fetch MEDIA_DIR, which downloads and verifies the
 #                   official media into MEDIA_DIR and sets MEDIA to their names.
 #   build.sh        sh, run as root in the VM, in a fresh directory of its own:
@@ -27,14 +28,16 @@
 #                     build.sh assemble  writes out/image.img from in/
 #                   in/ holds the media, console, remote-access and
 #                   sshd_config.backotter (from stick/bsd/), restic-bko and
-#                   rustic-bko (if there is one for this platform), and for
+#                   rustic-bko (if there is one for this platform, and always
+#                   with RUSTIC_REQUIRED=yes), and for
 #                   assemble also backotter.json and config.img (marker.py's).
 #                   TEST=1 in its environment for --test (shorter boot menus).
 #   checks.sh, config-checks.sh
 #                   boot-test.py --platform PLATFORM's checks.
 #
 # The binaries come from $BKO_BIN/PLATFORM/ (default ~/backotter-work/bko-bin):
-# restic-bko is required, rustic-bko optional.
+# restic-bko is required, rustic-bko optional unless platform.conf sets
+# RUSTIC_REQUIRED=yes.
 #
 # Needs: qemu with KVM (vm-run), ssh, python3 3.11 or later, dosfstools,
 # mtools, and what PLATFORM's fetch needs.
@@ -53,7 +56,7 @@ if [[ ${1:-} == --test ]]; then test=1; shift; fi
 PLATFORM=$1 OUT_IMG=${2:-.}
 pdir=$here/$PLATFORM
 [[ -f $pdir/platform.conf && -f $pdir/build.sh ]] || die "no stick/$PLATFORM/{platform.conf,build.sh}"
-BUILD_VM_OPTIONS=()
+BUILD_VM_OPTIONS=() RUSTIC_REQUIRED=no
 # shellcheck source=/dev/null
 . "$pdir/platform.conf"
 for v in BASE_OS BASE_RELEASE CONFIG_PART BUILD_VM BUILD_VM_IMAGE BUILD_VM_PORT BUILD_VM_MODE; do
@@ -63,6 +66,8 @@ case $BUILD_VM_MODE in running|snapshot) ;; *) die "BUILD_VM_MODE must be runnin
 vm=$WORK/vms/$BUILD_VM
 [[ -f $vm/$BUILD_VM_IMAGE && -f $vm/id_ed25519 ]] || die "no VM in $vm"
 [[ -x $BKO_BIN/$PLATFORM/restic-bko ]] || die "no $BKO_BIN/$PLATFORM/restic-bko"
+[[ $RUSTIC_REQUIRED != yes || -x $BKO_BIN/$PLATFORM/rustic-bko ]] ||
+    die "no $BKO_BIN/$PLATFORM/rustic-bko, and $PLATFORM's image needs it"
 
 if [[ -d $OUT_IMG ]]; then
     version=dev.$(date -u +%Y%m%d)

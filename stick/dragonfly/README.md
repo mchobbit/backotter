@@ -25,6 +25,7 @@ signed.
   official image's kernel; `assemble` makes the image.
 - `checks.sh`, `config-checks.sh`: `boot-test.py --platform dragonfly`'s
   checks.  The image has no Python, so they read the marker with `sed`.
+- `build-rustic.sh`: cross-builds `rustic-bko` on the host (below).
 
 ## The image
 
@@ -66,18 +67,46 @@ What changes from the official image:
 - Host name `backotter`, DHCP (dhcpcd) on every interface, sshd off with
   `stick/bsd/sshd_config.backotter`'s lines first and no host keys
   (`remote-access` makes them).
-- `restic-bko` in `/usr/local/bin`, the marker in `/.disk/backotter.json`
-  (mode 444).  `zfs` is null: DragonFly has no OpenZFS.
+- `restic-bko` and `rustic-bko` in `/usr/local/bin`, from
+  `~/backotter-work/bko-bin/dragonfly/` (both required), the marker in
+  `/.disk/backotter.json` (mode 444).  `zfs` is null: DragonFly has no
+  OpenZFS.
 
-## rustic-bko: not on this image
+## rustic-bko: cross-built
 
 DragonFly's packaged Rust is 1.85.1 (6.4 and the development repository
-alike), and Rust on DragonFly is Tier 3, with no rustup toolchain.  rustic
-and rustic_core use `let` chains, stable only from Rust 1.88, so lowering
-their `rust-version` isn't enough: it would take code changes in the forks
-or a hand-built newer Rust.  The image ships `restic-bko` only;
-`make-img-bsd.sh` allows a missing `rustic-bko`, and the `binaries` check
-says so.
+alike), and rustic needs 1.91 (it and rustic_core use `let` chains, among
+other things), so it can't be built natively in a guest as on NetBSD or
+OpenBSD.  `build-rustic.sh [PORT]` cross-compiles it on the KVM host instead:
+`x86_64-unknown-dragonfly` is a tier-3 target, with no std from rustup, so it
+builds with a pinned nightly and `-Zbuild-std`, and the C code in the
+dependencies and the link go through clang and lld against a sysroot copied
+from a throwaway `--snapshot` copy of `dragonfly6`.  That guest also runs the
+new binary's `--version` and `ldd` before it is kept.  It needs rustup for
+the user (the nightly is installed if missing) and uses the host's clang and
+lld, or unpacks Debian's clang-N/lld-N packages into its cache without
+installing them.  Everything is cached in `~/backotter-work/dragonfly-cross`:
+about 6 minutes the first time, under a minute after.  It writes
+`bko-bin/dragonfly/rustic-bko` and `rustic-commit`, which says what was
+built (rustic's and rustic_core's commits, and rustc).
+
+Which sources:
+
+- By default, branch `backotter` of github.com/mchobbit/rustic, built
+  `--locked` (its Cargo.lock pins rustic_core's commit), as
+  `netbsd/build-rustic.sh` does.  This needs the forks' DragonFly fixes
+  (rustix 1.1.6 in rustic, the `dev_t` fix in rustic_core) to be pushed:
+  until they are, the pushed branch fails to build (rustix 1.1.4 has no
+  `ip_mreq_source` on DragonFly).
+- `SRC=DIR build-rustic.sh` builds local trees, `DIR/rustic` and
+  `DIR/rustic_core` (with or without `.git`; `RUSTIC_COMMIT` and
+  `RUSTIC_CORE_COMMIT` name the commits otherwise): rustic's
+  `[patch.crates-io]` points rustic_core and its vendored walkdir at them, and
+  `rustic-commit` says "local, unpushed".
+
+The binary links libc, libm, libpthread and libexecinfo dynamically, all in
+the image's base.  It passed `testvm/compare/dragonfly/roundtrip.sh` with
+restic-bko in all four directions on HAMMER2 and UFS.
 
 ## Testing in QEMU
 

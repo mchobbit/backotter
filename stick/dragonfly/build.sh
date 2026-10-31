@@ -100,7 +100,7 @@ assemble() {
     [ $((ESP_START + esp_sectors)) -eq "$root_start" ] && [ $((root_start % cyl)) -eq 0 ] ||
         die "the official image's slice 2 isn't where expected"
     used_kb=$(du -skx src | cut -f1)
-    ours_kb=$(du -skL in/restic-bko in/rustic-bko 2>/dev/null | awk '{ n += $1 } END { print n }')
+    ours_kb=$(du -skL in/restic-bko in/rustic-bko | awk '{ n += $1 } END { print n }')
     root_sectors=$(( ((used_kb + ours_kb) * 11 / 10 + (ROOM_MB + 2) * 1024) * 2 ))
     root_sectors=$(( (root_sectors + cyl - 1) / cyl * cyl ))
     config_start=$((root_start + root_sectors))
@@ -232,7 +232,7 @@ EOF
     mkdir -p "$console_dir" .disk
     install -m 755 ../in/console ../in/remote-access "$console_dir/"
     install -m 755 ../in/restic-bko usr/local/bin/
-    if [ -f ../in/rustic-bko ]; then install -m 755 ../in/rustic-bko usr/local/bin/; fi
+    install -m 755 ../in/rustic-bko usr/local/bin/
     install -m 444 ../in/backotter.json .disk/
 }
 

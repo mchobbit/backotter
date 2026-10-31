@@ -814,11 +814,13 @@ def update(name: str, args, hosts: list[str | None]) -> str:
             raise Failed(f"the reboot command failed; see {g.dir}/update.log")
         vm.type_passphrase()
         vm.wait_ssh(rebooting=True)
-        # Proof that it did reboot: init is younger than before.
+        # Proof that it did reboot: init is younger than it would be had it
+        # run on.  The slack, for a clock the guest steps as it boots, is
+        # 30 s, but less when that's all the time there was (a quick update).
         up_after = vm.uptime()
         if up_before is None or up_after is None:
             g.note("no ps -o etime here: the reboot is taken from SSH going down and up")
-        elif up_after >= up_before + (time.monotonic() - t_before) - 30:
+        elif up_after >= (ran_on := up_before + (time.monotonic() - t_before)) - min(30, ran_on / 2):
             raise Failed(f"the guest didn't reboot (init has run {up_after} s)")
         uname = vm.ssh("uname -sr", timeout=30, log=False).stdout.strip()
         say(name, f"booted again ({uname}); powering off")

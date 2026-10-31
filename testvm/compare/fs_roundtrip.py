@@ -146,6 +146,9 @@ OVER_EXPECTED = {
     ("extra", f"{TORTURE}/elsewhere"), ("extra", f"{TORTURE}/elsewhere/holes"),
     # S4(b): a marked file is restored with holes only into a new file.
     ("holes lost", f"{TORTURE}/sparse-over"),
+    # The same for the swap file, whose header OVER punched out, where the
+    # source had holes (ZFS makes holes of runs of zeros) and it is marked.
+    ("holes lost", f"{TORTURE}/swapfile"),
 }
 
 
@@ -273,17 +276,22 @@ def norm_time(v):
 NODE_IGNORE = {"device_id"}
 
 
-def node_differences(a: dict[str, dict], b: dict[str, dict]) -> dict[str, list[str]]:
+def node_differences(a: dict[str, dict], b: dict[str, dict], reset: set[str] = frozenset()) -> dict[str, list[str]]:
+    """What differs between two snapshots' nodes.  reset: the paths (relative
+    to SRC) whose atimes this script put back between the backups, which
+    changed their ctimes: those aren't compared."""
     out: dict[str, list[str]] = {}
     for p in sorted(a.keys() - b.keys()):
         out.setdefault("only in first", []).append(p)
     for p in sorted(b.keys() - a.keys()):
         out.setdefault("only in second", []).append(p)
+    src = str(SRC).lstrip("/") + "/"
     for p in sorted(a.keys() & b.keys()):
         if "/" not in p:
             continue
         na, nb = a[p], b[p]
-        for k in sorted((na.keys() | nb.keys()) - NODE_IGNORE):
+        ignore = NODE_IGNORE | ({"ctime"} if p.startswith(src) and p[len(src):] in reset else set())
+        for k in sorted((na.keys() | nb.keys()) - ignore):
             va, vb = na.get(k), nb.get(k)
             if k in ("atime", "mtime", "ctime"):
                 va, vb = norm_time(va), norm_time(vb)
@@ -293,16 +301,26 @@ def node_differences(a: dict[str, dict], b: dict[str, dict]) -> dict[str, list[s
 
 
 def blocks_mismatch(work: Path, tools: list[str]) -> dict[str, list[str]]:
+    """Files restored with holes by one tool and fully allocated by another.
+    Not other differences in st_blocks: ZFS counts its compressed indirect
+    blocks in it too, which vary from one write of a dense file to the next,
+    and what a file restored sparse has allocated follows its blobs (S4:
+    each one's zeros at the start are left out), whose boundaries depend on
+    the chunker polynomial of each repository."""
     rec = {t: json.loads((work / f"after-{t}.json").read_text()) for t in tools
            if (work / f"after-{t}.json").exists()}
     out: dict[str, list[str]] = {}
     names = list(rec)
+
+    def dense(e: dict) -> bool:
+        return e["blocks"] * 512 >= e.get("size", 0)
+
     for t in names[1:]:
         a, b = rec[names[0]], rec[t]
         out[f"{names[0]} vs {t}"] = [
             f"{p}: {a[p]['blocks']} != {b[p]['blocks']}" for p in sorted(a.keys() & b.keys())
             if a[p]["type"] == "file" and "blocks" in a[p] and "blocks" in b[p]
-            and a[p]["blocks"] != b[p]["blocks"]]
+            and dense(a[p]) != dense(b[p])]
     return out
 
 
@@ -337,6 +355,7 @@ def main() -> int:
     run(fsmeta + ["record", str(SRC), "before.json"])
     before = json.loads(Path("before.json").read_text())
     results = {"fs": fs, "onto": onto, "torture_skipped": skipped, "tools": {}}
+    reset: set[str] = set()  # the paths whose atimes were put back
     try:
         for tool in tools:
             print(f"== {fs}: {tool}", flush=True)
@@ -352,7 +371,9 @@ def main() -> int:
             res["source_changed_by_backup"] = {k: v[:8] for k, v in changed.items()}
             if changed:
                 remount(SRC, "rw")
-                reset_atimes(before, sorted({p for v in changed.values() for p in v if p in before}))
+                paths = {p for v in changed.values() for p in v if p in before}
+                reset_atimes(before, sorted(paths))
+                reset |= paths
                 remount(SRC, "ro")
 
             make_fs(onto, Path("/var/tmp/bko-fsrt-dst.img"), DST)
@@ -395,8 +416,9 @@ def main() -> int:
             t: sorted(p for p, n in nodes.items() if "unix.sparse" in (n.get("generic_attributes") or {}))
             for t, nodes in (("restic-bko", a), ("rustic-bko", b))}
         # Inode numbers, ctimes, device ids and the like are the same source's:
-        # every field should be equal.
-        results["snapshot_node_diff (restic-bko vs rustic-bko)"] = node_differences(a, b)
+        # every field should be equal, but the ctimes reset_atimes() changed.
+        results["atimes_reset"] = sorted(reset)
+        results["snapshot_node_diff (restic-bko vs rustic-bko)"] = node_differences(a, b, reset)
     results["blocks_mismatch"] = blocks_mismatch(work, tools)
 
     Path("results.json").write_text(json.dumps(results, indent=1))

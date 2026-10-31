@@ -33,8 +33,11 @@ bko_restore() {
 }
 
 mkdir -p $SRC
-sh "$here/torture.sh" $SRC
 kind=$(df -T $SRC | awk 'NR == 2 { print $2 }')
+# UFS keeps POSIX.1e ACLs only when mounted with acls, which freebsd15-ufs's
+# root isn't: on, before torture.sh sets them.
+[ $kind = ufs ] && mount -u -o acls "$(df $SRC | awk 'NR == 2 { print $6 }')"
+sh "$here/torture.sh" $SRC
 # Reading a file or directory must not move its atime, here or in the
 # backup: atimes are compared to the nanosecond.  freebsd15's ZFS has atime
 # off already; UFS has it on.
@@ -66,6 +69,9 @@ for d in before after; do
     grep -v '/dos-noarchive ' $OUT/$d/flags.txt >$OUT/$d/flags-but-noarchive.txt
     grep '/dos-noarchive ' $OUT/$d/flags.txt >$OUT/$d/noarchive.txt
 done
+# What the flags compared are (not a check): which ones the file system took.
+echo "== torture.sh's flag-* and dos-* files' flags before, stat %Xf (not a check)"
+grep -E '/(flag|dos)-[^/]* ' $OUT/before/flags.txt | sed 's|^\./root/bko-torture/|    |'
 # On ZFS, compression rather than holes decides what a file allocates.
 checks="flags-but-noarchive noarchive times acls extattrs hardlinks births"
 [ $kind = ufs ] && checks="$checks sparse"

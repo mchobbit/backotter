@@ -59,9 +59,32 @@ touch -d 2100-01-01T12:00:00 future
 # a symlink.
 echo atime >atime-ns; mkdir atime-ns-dir; ln -s atime-ns atime-ns-symlink
 touch -d 2004-04-04T04:04:04.444444444 atime-ns atime-ns-dir
-touch -h -d 2004-04-04T04:04:04.444444444 atime-ns-symlink
 touch -a -d 2003-03-03T03:03:03.333333333 atime-ns atime-ns-dir
-touch -h -a -d 2003-03-03T03:03:03.333333333 atime-ns-symlink
+# OpenBSD's touch has no -h: a symlink's own times go through
+# utimensat(2) with AT_SYMLINK_NOFOLLOW (cc is in the comp set).
+cat >/tmp/bko-lutimens.c <<'C'
+#include <fcntl.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <sys/stat.h>
+
+int main(int argc, char **argv) {  /* PATH ASEC ANSEC MSEC MNSEC */
+    struct timespec ts[2];
+
+    if (argc != 6)
+        return 2;
+    ts[0].tv_sec = atoll(argv[2]); ts[0].tv_nsec = atol(argv[3]);
+    ts[1].tv_sec = atoll(argv[4]); ts[1].tv_nsec = atol(argv[5]);
+    if (utimensat(AT_FDCWD, argv[1], ts, AT_SYMLINK_NOFOLLOW) != 0) {
+        perror(argv[1]);
+        return 1;
+    }
+    return 0;
+}
+C
+cc -o /tmp/bko-lutimens /tmp/bko-lutimens.c || { echo "can't build bko-lutimens"; exit 1; }
+# 2003-03-03T03:03:03.333333333 and 2004-04-04T04:04:04.444444444 UTC
+/tmp/bko-lutimens atime-ns-symlink 1046660583 333333333 1081051444 444444444 || exit 1
 # File flags last: most of them stop any change afterwards.
 for f in uchg uappnd nodump arch schg sappnd; do echo $f >flag-$f; try chflags $f flag-$f; done
 mkdir uchg-dir; echo inside >uchg-dir/inside; chflags uchg uchg-dir

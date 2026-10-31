@@ -244,7 +244,10 @@ def differences(before: dict[str, dict], after: dict[str, dict]) -> dict[str, li
             note("inode flags", path)
         if b.get("projid") and b.get("projid") != a.get("projid"):
             note("project ID", path)
-        if b.get("dosflags") is not None and b["dosflags"] != a.get("dosflags"):
+        # Like the inode flags: only where both sides have them (a restore
+        # onto another file system than ZFS warns that it can't set them).
+        bd, ad = b.get("dosflags"), a.get("dosflags")
+        if bd is not None and ad is not None and bd != ad:
             note("ZFS DOS flags", path)
     return diff
 

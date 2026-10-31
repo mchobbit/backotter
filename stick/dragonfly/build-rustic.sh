@@ -167,12 +167,17 @@ fi
 ar=$(newest llvm-ar); [[ -n $ar ]] || ar=$(command -v ar) || die "no llvm-ar or ar"
 sysroot=$CACHE/sysroot
 mkdir -p "$CACHE/bin"
+# The wrapper's LD_LIBRARY_PATH line, when clang's libraries came from the
+# .debs (built apart: in one ${..:+..} the inner } would end the outer one).
+libs_line=
+[[ -z ${llvm_libs:-} ]] ||
+    libs_line="LD_LIBRARY_PATH=$llvm_libs\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}; export LD_LIBRARY_PATH"
 for cc in cc c++; do
     drv=$clang; [[ $cc == c++ ]] && drv=${clang%clang}clang++
     cat >"$CACHE/bin/dfly-$cc.part" <<EOF
 #!/bin/sh
 # Written by stick/dragonfly/build-rustic.sh: $(basename "$drv") for $TARGET.
-${llvm_libs:+LD_LIBRARY_PATH=$llvm_libs\${LD_LIBRARY_PATH:+:\$LD_LIBRARY_PATH}; export LD_LIBRARY_PATH}
+$libs_line
 exec $drv --target=$TARGET --sysroot=$sysroot -fuse-ld=$lld "\$@"
 EOF
     chmod 755 "$CACHE/bin/dfly-$cc.part"

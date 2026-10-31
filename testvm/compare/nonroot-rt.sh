@@ -88,9 +88,9 @@ trap vm_halt EXIT
 vm_boot "$guest" "$port" "$logs/vm-$guest" --ram --memory "${MEMORY:-4096}" || exit 1
 # /root is 0700: the tree, repositories and binaries go into /bkonr, a ZFS
 # file system of its own on freebsd15, on the root's UFS on freebsd15-ufs;
-# atimes off, as the listings read every file.
+# atimes off, as the listings read every file; UFS with POSIX.1e ACLs.
 vm_sh 'if zfs list zroot >/dev/null 2>&1; then zfs create -o mountpoint=/bkonr -o atime=off zroot/bkonr
-    else mkdir /bkonr && mount -u -o noatime /; fi && chmod 755 /bkonr &&
+    else mkdir /bkonr && mount -u -o noatime,acls /; fi && chmod 755 /bkonr &&
     pw groupadd bkonr -g 4321 && pw useradd bkonr -u 4321 -g 4321 -s /bin/sh -d /nonexistent' || exit 1
 vm_put "$restic" /bkonr/restic-bko && vm_put "$rustic" /bkonr/rustic-bko &&
     vm_put "$inner" /root/nonroot-inner.sh || exit 1

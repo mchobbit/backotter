@@ -9,6 +9,13 @@
 # both file systems.  HAMMER2 keeps times to the microsecond and no atime of
 # its own (it shows the mtime); UFS keeps both, to the nanosecond.
 #
+# It also decodes the snapshot (with BACKUP and with RESTORE: "cat tree")
+# and checks which files it marks unix.sparse against the rule both tools
+# follow on DragonFly (BACKOTTER.md, S3): by the blocks alone, size > 0 and
+# blocks * 512 < size, which marks HAMMER2's small files kept in the inode;
+# and that rustic's output has no flood of time-zone warnings (at most one
+# per run, none without /etc/localtime).
+#
 # Usage: roundtrip.sh BACKUP [RESTORE]   (as root, in a throwaway guest: at
 #                                         securelevel 1, schg and sappnd
 #                                         can't be cleared again)
@@ -25,16 +32,56 @@ try() { "$@" 2>/dev/null || echo "roundtrip: skipped (unsupported here): $*" >&2
 # real atime, as restic keeps it, and numeric ids, as restic restores them.
 export RUSTIC_PASSWORD=$RESTIC_PASSWORD RUSTIC_REPOSITORY=$RESTIC_REPOSITORY
 is_rustic() { case $(basename "$1") in *rustic*) true ;; *) false ;; esac; }
+# rustic's stderr is kept too (in /tmp/bko-rt.rustic-stderr, one run after
+# another, and counted in $rustic_runs), for the time-zone check.
+rustic_runs=0
+: >/tmp/bko-rt.rustic-stderr
+run_rustic() {  # BIN ARGS...: run BackOtter's rustic, its stderr kept and shown
+    rb=$1; shift
+    rustic_runs=$((rustic_runs + 1))
+    $rb --no-progress --no-cache "$@" 2>/tmp/bko-rt.rustic-run; rs=$?
+    cat /tmp/bko-rt.rustic-run >&2; cat /tmp/bko-rt.rustic-run >>/tmp/bko-rt.rustic-stderr
+    return $rs
+}
 bko_init() {
-    if is_rustic $R; then $R --no-progress --no-cache init >/dev/null; else $R init -q; fi
+    if is_rustic $R; then run_rustic $R init >/dev/null; else $R init -q; fi
 }
 bko_backup() {
-    if is_rustic $R; then $R --no-progress --no-cache backup --set-atime yes "$@" >/dev/null
+    if is_rustic $R; then run_rustic $R backup --set-atime yes "$@" >/dev/null
     else $R backup -q "$@"; fi
 }
 bko_restore() {
-    if is_rustic $RR; then $RR --no-progress --no-cache restore --numeric-id --sparse by-content "$1" "$2"
+    if is_rustic $RR; then run_rustic $RR restore --numeric-id --sparse by-content "$1" "$2"
     else $RR restore -q --sparse "$1" --target "$2"; fi
+}
+cat_tree() {  # BIN SNAPSHOT:PATH: the raw JSON of that tree
+    if is_rustic $1; then run_rustic $1 cat tree "$2"; return; fi
+    # restic's "cat tree" takes no "latest": the newest snapshot's ID.
+    sn=${2%%:*}
+    [ "$sn" = latest ] && sn=$($1 snapshots --json --latest 1 |
+        sed -n 's/.*"short_id":"\([0-9a-f]*\)".*/\1/p' | tail -n 1)
+    $1 cat tree "$sn:${2#*:}"
+}
+# BIN SNAPSHOT:PATH PREFIX: one line per node below that tree, recursively:
+# "PATH TYPE sparse|- GENERIC_ATTRIBUTES", tab-separated.  Names are as the
+# JSON has them.  Fails if a tree can't be read.
+decode() {
+    cat_tree $1 "$2" >/tmp/bko-rt.tree.$$ && grep -q '"nodes"' /tmp/bko-rt.tree.$$ || return 1
+    awk -v pre="$3" 'BEGIN { OFS = "\t" } {
+        n = split($0, part, /[{,]"name":"/)
+        for (i = 2; i <= n; i++) {
+            c = part[i]; name = c; sub(/".*/, "", name)
+            type = "?"; if (match(c, /"type":"[a-z]*"/)) type = substr(c, RSTART + 8, RLENGTH - 9)
+            ga = "-"; if (match(c, /"generic_attributes":\{[^}]*\}/)) ga = substr(c, RSTART + 21, RLENGTH - 21)
+            sp = (c ~ /"unix\.sparse":true/) ? "sparse" : "-"
+            print pre name, type, sp, ga
+        } }' /tmp/bko-rt.tree.$$ >/tmp/bko-rt.decode.$$
+    cat /tmp/bko-rt.decode.$$
+    # (The list is read before the calls below write that file again.)
+    for d in $(awk -F '\t' '$2 == "dir" { print $1 }' /tmp/bko-rt.decode.$$); do
+        decode $1 "${2%%:*}:${2#*:}/${d#$3}" "$d/" || return 1
+    done
+    rm -f /tmp/bko-rt.decode.$$ /tmp/bko-rt.tree.$$
 }
 
 # touch(1) here sets times to the microsecond (utimes(2)), and there's no
@@ -169,6 +216,15 @@ for t in $TREES; do
     mtree -c -p $t -k type,uid,gid,nlink,size,time,link,sha256digest >/tmp/bko-rt.$n.spec
     listings $t /tmp/bko-rt.before.$n
 done
+# unix.sparse as both tools must decide it here (S3: DragonFly goes by the
+# blocks alone), just before the backup: regular files, size > 0 and
+# blocks * 512 < size.
+for t in $TREES; do
+    n=$(basename $(dirname $t))
+    (cd $t && find . -type f -exec stat -f '%N %z %b' {} + |
+        awk '$(NF-1) > 0 && $NF * 512 < $(NF-1) { sub(/^\.\//, ""); NF -= 2; print }' |
+        sort) >/tmp/bko-rt.before.$n.sparse
+done
 cd /root
 bko_init || { echo "INIT FAILED"; exit 1; }
 # A backup that fails may still have saved a snapshot (restic's exit 3: a
@@ -200,4 +256,30 @@ for t in $TREES; do
 done
 echo "== sparse (KB allocated, source then restored)"
 du -k /root/bko-rt/sparse /root/bko-rt-restored/sparse
+# The snapshot decoded by the tool that wrote it and the one that restored
+# it: the files it marks unix.sparse, against the rule.
+for t in $TREES; do
+    n=$(basename $(dirname $t))
+    for b in $R $RR; do
+        s="snapshot of $t decoded by $(basename $b): unix.sparse marks (S3: blocks)"
+        echo "== $s"
+        if ! decode $b "latest:$t" "" >/tmp/bko-rt.decoded.$n; then
+            echo "can't decode it"; failed="$failed; $s"; continue
+        fi
+        sed 's/^/  /' /tmp/bko-rt.decoded.$n
+        awk -F '\t' '$3 == "sparse" { print $1 }' /tmp/bko-rt.decoded.$n | sort >/tmp/bko-rt.after.$n.sparse
+        echo "-- expected (size, blocks):"
+        (cd $t && while read -r f; do stat -f '  %N %z %b' "$f"; done </tmp/bko-rt.before.$n.sparse)
+        check "$s" $n.sparse
+        [ $b = $RR ] && break
+    done
+done
+s="rustic's time-zone warnings (at most one a run, none without /etc/localtime)"
+echo "== $s"
+if [ -e /etc/localtime ]; then echo "/etc/localtime: $(ls -l /etc/localtime)"; most=$rustic_runs
+else echo "no /etc/localtime"; most=0; fi
+tz=$(grep -ciE 'time zone|times are in UTC' /tmp/bko-rt.rustic-stderr)
+echo "$tz in $rustic_runs runs of rustic ($(wc -l </tmp/bko-rt.rustic-stderr | tr -d ' ') lines on stderr in all)"
+grep -iE 'time zone|times are in UTC' /tmp/bko-rt.rustic-stderr | sort | uniq -c | sort -rn | head -n 5
+[ "$tz" -le "$most" ] || failed="$failed; $s"
 echo "roundtrip: $([ -z "$failed" ] && echo PASS || echo "FAIL: ${failed#; }")"

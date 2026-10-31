@@ -23,7 +23,7 @@ In `stick/`, the builds of rustic-bko, which tests and images share:
 
 | Script | What it does |
 |---|---|
-| `freebsd/build-rustic.sh`, `openbsd/build-rustic.sh`, `netbsd/build-rustic.sh`, `illumos/build-rustic.sh` | Native builds in a throwaway copy of freebsd15, openbsd8, netbsd11, omnios58 (the work is in `build-rustic-native.sh`); `--setup` keeps a build image with the tools installed |
+| `freebsd/build-rustic.sh`, `openbsd/build-rustic.sh`, `netbsd/build-rustic.sh`, `omnios/build-rustic.sh` | Native builds in a throwaway copy of freebsd15, openbsd8, netbsd11, omnios58 (the work is in `build-rustic-native.sh`); `--setup` keeps a build image with the tools installed |
 | `dragonfly/build-rustic.sh` | Cross-build for DragonFly on the host (its packaged Rust is too old) |
 | `prep-rustic-src.sh` | In `SRC=` mode, every one of them points rustic at the local rustic_core (and its vendored walkdir) with it |
 

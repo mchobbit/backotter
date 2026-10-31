@@ -1,7 +1,8 @@
 #!/bin/sh
 # Round trip of OpenBSD's file metadata through restic, or BackOtter's
 # rustic: make a tree of hard-to-preserve files, back it up, restore it as
-# "latest:SRC" into another directory, and compare the two with mtree(8).  OpenBSD has no ACLs or
+# "latest:SRC" into another directory, and compare the two with mtree(8),
+# with the modes (of symlinks apart) on their own.  OpenBSD has no ACLs or
 # extended attributes; what it has is file flags.
 #
 # Usage: roundtrip.sh BACKUP [RESTORE]   (as root, in a throwaway guest: at
@@ -39,6 +40,10 @@ touch setgid; chmod 2755 setgid
 mkdir sticky-dir; chmod 1777 sticky-dir
 echo linked >hardlink-a; ln hardlink-a hardlink-b; mkdir sub; ln hardlink-a sub/hardlink-c
 ln -s hardlink-a symlink; ln -s /nonexistent/target symlink-dangling
+# Symlink modes: OpenBSD has no lchmod(2), but chmod -h (fchmodat(2) with
+# AT_SYMLINK_NOFOLLOW) sets them.
+ln -s hardlink-a symlink-0700; chmod -h 0700 symlink-0700
+ln -s hardlink-a symlink-0777; chmod -h 0777 symlink-0777
 mkfifo fifo
 dd if=/dev/zero of=sparse bs=1m count=0 seek=1024 2>/dev/null
 echo start | dd of=sparse conv=notrunc 2>/dev/null
@@ -53,13 +58,45 @@ try chflags schg hardlink-a
 try chflags -h uchg symlink
 touch -d 2001-02-03T04:05:06 $SRC
 
-mtree -c -p $SRC -k type,uid,gid,mode,flags,nlink,size,time,link,sha256digest >/tmp/bko-rt.spec
-bko_init && bko_backup $SRC || { echo "BACKUP FAILED"; exit 1; }
+listings() {  # DIR OUT-PREFIX: the listings compared, one file each
+    cd "$1" || exit 1
+    find . ! -type l -exec stat -f '%N %Mp%Lp' {} + | sort >$2.modes
+    find . -type l -exec stat -f '%N %Lp' {} + | sort >$2.symlink-modes
+}
+failed=""
+check() {  # TITLE KIND: compare before.KIND with after.KIND
+    echo "== $1"
+    if diff /tmp/bko-rt.before.$2 /tmp/bko-rt.after.$2; then
+        echo "identical ($(wc -l </tmp/bko-rt.before.$2 | tr -d ' ') lines)"
+    else
+        failed="$failed; $1"
+    fi
+}
+
+# mtree compares symlink modes too: those are a check of their own.
+mtree -c -p $SRC -k type,uid,gid,flags,nlink,size,time,link,sha256digest >/tmp/bko-rt.spec
+listings $SRC /tmp/bko-rt.before
+bko_init || { echo "INIT FAILED"; exit 1; }
+# A backup that fails may still have saved a snapshot (restic's exit 3: a
+# file it couldn't read): what it holds is restored all the same.
+echo "== backup"
+bko_backup $SRC; status=$?
+echo "exit $status"
+[ $status -eq 0 ] || failed="$failed; backup"
 echo "== restore"
-bko_restore "latest:$SRC" $DST; echo "exit $?"
-echo "== mtree: type, owner, group, mode, flags, links, size, mtime, symlink target, SHA-256"
-mtree -f /tmp/bko-rt.spec -p $DST && echo identical
-echo "== hard links (one inode for all three)"
-ls -i $DST/hardlink-a $DST/hardlink-b $DST/sub/hardlink-c | awk '{print $1}' | sort -u | wc -l | sed 's/^ */inodes: /'
+bko_restore "latest:$SRC" $DST; status=$?
+echo "exit $status"
+[ $status -eq 0 ] || failed="$failed; restore"
+listings $DST /tmp/bko-rt.after
+t="mtree: type, owner, group, flags, links, size, mtime, symlink target, SHA-256"
+echo "== $t"
+mtree -f /tmp/bko-rt.spec -p $DST && echo identical || failed="$failed; $t"
+check "modes (not symlinks)" modes
+check "symlink modes" symlink-modes
+t="hard links (one inode for all three)"
+echo "== $t"
+n=$(ls -i $DST/hardlink-a $DST/hardlink-b $DST/sub/hardlink-c | awk '{print $1}' | sort -u | wc -l | tr -d ' ')
+echo "inodes: $n"; [ "$n" = 1 ] || failed="$failed; $t"
 echo "== sparse (KB allocated, source then restored)"
 du -k $SRC/sparse $DST/sparse
+echo "roundtrip: $([ -z "$failed" ] && echo PASS || echo "FAIL: ${failed#; }")"

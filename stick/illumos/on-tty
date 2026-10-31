@@ -1,0 +1,64 @@
+#!/bin/sh
+# BackOtter rescue stick, illumos: the start method of the consoles, in place
+# of ttymon and login:
+#
+#   svc:/system/console-login:default        the screen (/dev/console),
+#                                            BackOtter's console
+#   svc:/system/console-login:vt2 ... vt6    /dev/vt/N, a root shell
+#   svc:/application/backotter/console:serial  COM1 (/dev/term/a) at 115200
+#                                            baud, BackOtter's console
+#
+# and of svc:/application/backotter/console-release (below).
+#
+# The terminal is the instance's ttymon/device.  setpgrp makes the shell a
+# session leader without a controlling terminal, and its first open of the
+# terminal then makes that its controlling terminal (as kayak's
+# takeover-console does for OmniOS's installer).  svc.startd starts it again
+# when it exits.
+
+PATH=/usr/xpg4/bin:/usr/bin:/usr/sbin:/sbin
+# svc:/application/backotter/console-release (console.xml): end the boot's
+# maintenance login, if any.
+if [ "$SMF_FMRI" = svc:/application/backotter/console-release:default ]; then
+    i=0
+    while [ $i -lt 30 ]; do
+        if pkill -x sulogin; then echo "on-tty: ended the maintenance login"; exit 0; fi
+        sleep 1; i=$((i + 1))
+    done
+    exit 0
+fi
+dev=$(svcprop -p ttymon/device "$SMF_FMRI") || exit 96      # SMF_EXIT_ERR_CONFIG
+case ${SMF_FMRI##*:} in
+    vt*) run='/usr/bin/bash -l' ;;
+    *) run=/usr/local/lib/backotter/console ;;
+esac
+# The kernel's console: the loader's os_console, or else the first of its
+# console list ("text,ttya" by default: the screen).
+kcons=$(prtconf -v 2>/dev/null | awk -F"'" '
+    /name=.os_console./ { getline; os = $2 }
+    /name=.console./ { getline; c = $2 }
+    END { sub(",.*", "", c); print (os != "" ? os : c) }')
+# When it's COM1, /dev/console is COM1 itself: console-login:default runs
+# BackOtter's console there, and the serial instance stays off, or two
+# consoles would read the same line.
+if [ "$kcons" = ttya ] && [ "${SMF_FMRI##*:}" = serial ]; then
+    echo "on-tty: the console is COM1 already; turning $SMF_FMRI off for this boot"
+    svcadm disable -t "$SMF_FMRI"
+    exit 0
+fi
+case $dev in
+    /dev/term/*) speed=115200 term=vt100 ;;
+    /dev/console) if [ "$kcons" = ttya ]; then speed=115200 term=vt100; else speed= term=sun-color; fi ;;
+    *) speed= term=sun-color ;;
+esac
+# A machine without it (no COM1, or no screen and so no virtual consoles):
+# off until the next boot.
+if [ ! -c "$dev" ]; then
+    echo "on-tty: no $dev; turning $SMF_FMRI off for this boot"
+    svcadm disable -t "$SMF_FMRI"
+    exit 0
+fi
+exec setpgrp /bin/sh -c "exec 0<>$dev 1>&0 2>&0
+stty sane ${speed} 2>/dev/null
+TERM=$term HOME=/root; export TERM HOME; cd /root
+exec $run"

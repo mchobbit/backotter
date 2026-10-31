@@ -1,21 +1,25 @@
 #!/bin/sh
-# BackOtter rescue stick, BSD flavours: the console on the screen and the
-# serial port.  The same placeholder as the Linux image's console, in POSIX sh
-# for FreeBSD, NetBSD, OpenBSD and DragonFly.
+# BackOtter rescue stick, BSD flavours and illumos: the console on the screen
+# and the serial port.  The same placeholder as the Linux image's console, in
+# POSIX sh for FreeBSD, NetBSD, OpenBSD, DragonFly and illumos.
 #
-# Each image's getty runs it as its login program (gettytab's lo=, with
+# Each BSD image's getty runs it as its login program (gettytab's lo=, with
 # al=root where getty can log in by itself), as agetty --login-program does on
 # Linux: init leaves the terminal to getty, which opens it and makes it the
 # controlling terminal.  It ignores the arguments getty passes, and getty
-# starts it again whenever it exits.
+# starts it again whenever it exits.  On illumos, an SMF service does the
+# same (illumos/on-tty).
 
 PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
+# illumos: POSIX grep (-E) first.
+[ "$(uname -s)" = SunOS ] && PATH=/usr/xpg4/bin:$PATH
 HOME=/root
 export PATH HOME
 here=/usr/local/lib/backotter
 
 disks() {
     case $(uname -s) in
+        SunOS) diskinfo -H | awk '{ print $2 }'; return ;;
         FreeBSD|DragonFly) sysctl -n kern.disks ;;
         *) sysctl -n hw.disknames ;;   # NetBSD, OpenBSD
     esac 2>/dev/null | tr ' ,' '\n\n' | sed -e 's/:.*//' -e '/^$/d' |
@@ -55,7 +59,8 @@ while :; do
         # DragonFly's sh has no -l (a login shell).
         1) if [ "$(uname -s)" = DragonFly ]; then /bin/sh -i; else /bin/sh -l; fi ;;
         2) "$here/remote-access"; printf 'Press Enter to continue. '; read -r _ ;;
-        3) shutdown -r now ;;
-        4) shutdown -p now ;;
+        # illumos' shutdown has neither: its reboot and poweroff do the same.
+        3) if [ "$(uname -s)" = SunOS ]; then reboot; else shutdown -r now; fi ;;
+        4) if [ "$(uname -s)" = SunOS ]; then poweroff; else shutdown -p now; fi ;;
     esac
 done

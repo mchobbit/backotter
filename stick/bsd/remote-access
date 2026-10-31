@@ -1,25 +1,29 @@
 #!/bin/sh
-# BackOtter rescue stick, BSD flavours: turn on remote access over SSH.
+# BackOtter rescue stick, BSD flavours and illumos: turn on remote access over
+# SSH.
 #
 # As on the Linux image: creates the "backotter" user if needed, gives it a
 # fresh random one-time password, starts sshd (making this boot's host keys
 # first), and prints how to connect, also keeping that in
 # /var/run/backotter/remote-access (root only), which the console shows.
 # The base systems have no sudo, so root gets the same one-time password and
-# "backotter" joins wheel: "su" then works.  sshd itself refuses root (the
-# image's sshd_config).  Nothing survives a reboot: /etc and /var are in
-# memory.
+# "backotter" joins wheel (illumos has none: anyone may su there): "su" then
+# works.  sshd itself refuses root (the image's sshd_config).  Nothing
+# survives a reboot: /etc and /var are in memory.
 
 set -eu
 PATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin
 user=backotter
 os=$(uname -s)
+# illumos: POSIX id (-u) first.
+[ "$os" = SunOS ] && PATH=/usr/xpg4/bin:$PATH
 
 [ "$(id -u)" -eq 0 ] || { echo "remote-access: must run as root" >&2; exit 1; }
 
 if ! id "$user" >/dev/null 2>&1; then
     case $os in
         FreeBSD|DragonFly) pw useradd "$user" -m -s /bin/sh -G wheel -c "BackOtter remote access" ;;
+        SunOS) mkdir -p /home; useradd -m -d "/home/$user" -s /bin/sh -c "BackOtter remote access" "$user" ;;
         *) useradd -m -s /bin/sh -G wheel -c "BackOtter remote access" "$user" ;;
     esac
 fi
@@ -34,6 +38,14 @@ for u in "$user" root; do
         FreeBSD|DragonFly) echo "$password" | pw usermod "$u" -h 0 ;;
         NetBSD) usermod -p "$(pwhash "$password")" "$u" ;;
         OpenBSD) usermod -p "$(echo "$password" | encrypt)" "$u" ;;
+        # No password option: the hash (SHA-512, crypt.conf's "6") goes into
+        # /etc/shadow, and a last change of 0 there would force a new one.
+        SunOS)
+            hash=$(echo "$password" | openssl passwd -6 -stdin)
+            (umask 077; awk -F: -v OFS=: -v u="$u" -v h="$hash" '$1 == u { $2 = h; if ($3 == "0") $3 = "" } { print }' \
+                /etc/shadow >/etc/shadow.new)
+            cat /etc/shadow.new >/etc/shadow
+            rm /etc/shadow.new ;;
     esac
 done
 
@@ -42,6 +54,7 @@ ssh-keygen -A >/dev/null
 case $os in
     OpenBSD) rcctl check sshd >/dev/null || rcctl -f start sshd >/dev/null ;;
     NetBSD) /etc/rc.d/sshd onestatus >/dev/null 2>&1 || /etc/rc.d/sshd onestart >/dev/null ;;
+    SunOS) svcadm enable -st network/ssh ;;
     *) service sshd onestatus >/dev/null 2>&1 || service sshd onestart >/dev/null ;;
 esac
 

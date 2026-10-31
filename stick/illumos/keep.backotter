@@ -1,0 +1,140 @@
+# Files the illumos rescue image keeps beyond kayak's data/keep.* lists (its
+# cull removes every file no list names).  A line with a * is a pattern, which
+# also matches across /; any other line must name a file the packages have,
+# or kayak stops.  The libraries these need are kept by pattern too; kayak's
+# sanity step (as build.sh changes it) stops the build if one is missing.
+
+# BackOtter's own: the console, its services, the binaries.
+/usr/local/*
+/lib/svc/manifest/application/backotter/*
+
+# The UEFI loaders, which installboot puts into the ESP (kayak's ISO takes
+# them from the build system's /boot).
+/boot/loader64.efi
+/boot/loader32.efi
+
+# Disks, partitions and file systems.
+/usr/lib/fs/*
+/usr/sbin/labelit
+/usr/sbin/eeprom
+/usr/sbin/cfgadm
+/usr/lib/cfgadm/*
+/usr/sbin/hotplug
+/usr/sbin/ramdiskadm
+/usr/sbin/raidctl
+/usr/sbin/stmsboot
+/usr/lib/mpxio/*
+/usr/sbin/fcinfo
+/usr/sbin/luxadm
+/usr/sbin/fwflash
+/usr/lib/fwflash/*
+/usr/bin/iostat
+/usr/bin/vmstat
+/usr/bin/kstat
+/usr/sbin/swap
+/usr/bin/runat
+
+# Users and logins: useradd, PAM (sshd's passwords and su), crypt modules.
+/usr/sbin/useradd
+/usr/sbin/usermod
+/usr/sbin/userdel
+/usr/lib/passmgmt
+/usr/bin/su
+/usr/lib/security/*
+# Loaded lazily, so kayak's sanity step doesn't stop for them: the unix PAM
+# modules' passwdutil (sshd's password logins and su need it), and the
+# crypto framework's software token's libsoftcrypto.
+/usr/lib/*passwdutil.so*
+/lib/*libsoftcrypto.so*
+/usr/lib/*libsoftcrypto.so*
+/lib/libpam.so*
+/lib/amd64/libpam.so*
+/usr/lib/libpam.so*
+/usr/lib/amd64/libpam.so*
+/usr/lib/libwrap.so*
+/usr/lib/amd64/libwrap.so*
+/usr/bin/setpgrp
+/usr/sbin/idmap
+/usr/lib/idmapd
+
+# Remote access: OpenSSH and OpenSSL, and the kernel crypto framework's
+# daemon (cryptosvc, which sshd needs).
+/usr/lib/crypto/*
+/usr/sbin/sshd
+/usr/bin/ssh
+/usr/bin/ssh-keygen
+/usr/bin/scp
+/usr/libexec/*ssh*
+/etc/ssh/*
+/lib/svc/method/sshd
+/lib/svc/share/*
+/usr/bin/openssl
+/usr/bin/openssl-3
+/usr/lib/amd64/libssl.so*
+/lib/amd64/libssl.so*
+
+# Consoles: the virtual consoles' daemon, keymaps, terminal types.
+/usr/lib/vtdaemon
+/usr/share/lib/keytables/*
+/usr/share/lib/terminfo/*
+/usr/gnu/share/terminfo/*
+/usr/share/lib/zoneinfo/*
+
+# Shell tools the console, remote-access and restores use.
+/usr/xpg4/bin/*
+/usr/gnu/bin/*
+/usr/bin/gzip
+/usr/bin/gunzip
+/usr/bin/tar
+/usr/sbin/tar
+/usr/bin/od
+/usr/bin/stat
+/usr/sbin/ping
+/usr/bin/netstat
+/usr/sbin/poweroff
+/usr/sbin/halt
+
+# Commands the kept services' methods run: hostid's, and identity's and
+# network/physical's, if not on every path.
+/usr/bin/hostid
+/usr/bin/domainname
+/usr/bin/dirname
+/usr/bin/cmp
+# gcc's runtime: /usr/lib's libgcc_s links to gcc 15's, and rustic-bko
+# looks in gcc 14's (its RUNPATH, from the build guest's compiler).
+/usr/lib/amd64/libgcc_s.so*
+/usr/lib/libgcc_s.so*
+/usr/gcc/14/lib/amd64/libgcc_s.so*
+/usr/gcc/15/lib/amd64/libgcc_s.so*
+/usr/gcc/15/lib/libgcc_s.so*
+# restic-bko (Go) links these by their unversioned names.
+/lib/*libsendfile.so*
+/usr/lib/*libsendfile.so*
+/lib/amd64/libc.so
+/lib/amd64/libsocket.so
+/lib/amd64/libnsl.so
+
+# Libraries the files above need that kayak's lists don't keep (from its
+# sanity step).
+/lib/*libbsm.so*
+/usr/lib/*libbsm.so*
+/lib/*libcontract.so*
+/usr/lib/*libcontract.so*
+/lib/*libcrypt.so*
+/usr/lib/*libcrypt.so*
+/lib/*libgmp.so*
+/usr/lib/*libgmp.so*
+/lib/*libgss.so*
+/usr/lib/*libgss.so*
+/lib/*libkrb5.so*
+/usr/lib/*libkrb5.so*
+/lib/*libmalloc.so*
+/usr/lib/*libmalloc.so*
+/lib/*libmapmalloc.so*
+/usr/lib/*libmapmalloc.so*
+/lib/*libmtmalloc.so*
+/usr/lib/*libmtmalloc.so*
+/lib/*libresolv.so*
+/usr/lib/*libresolv.so*
+/usr/lib/gss/*
+/usr/lib/amd64/gss/*

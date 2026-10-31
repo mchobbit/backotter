@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Make BackOtter's rescue image for a BSD: FreeBSD, NetBSD, OpenBSD or
-# DragonFly.  The image is built inside a VM of that BSD, since only it has the
-# tools for its own file systems, partition tables and boot code.
+# Make BackOtter's rescue image for a BSD (FreeBSD, NetBSD, OpenBSD or
+# DragonFly) or illumos.  The image is built inside a VM of that system, since
+# only it has the tools for its own file systems, partition tables and boot
+# code.
 #
 # Usage: ./make-img-bsd.sh [--test] PLATFORM [OUT_IMG]
 #
@@ -18,16 +19,20 @@
 #                   a builder that is already up on that port; "snapshot":
 #                   boot a throwaway copy, thrown away when done) and
 #                   BUILD_VM_OPTIONS (more vm-run options, an array);
+#                   maybe BUILD_VM_POWEROFF (the command that powers it off,
+#                   by default /sbin/shutdown -p now) and BUILD_FILES (more
+#                   files from stick/PLATFORM/ for in/, an array);
 #                   RUSTIC_REQUIRED=yes if the image must have rustic-bko; and
 #                   defines fetch MEDIA_DIR, which downloads and verifies the
 #                   official media into MEDIA_DIR and sets MEDIA to their names.
 #   build.sh        sh, run as root in the VM, in a fresh directory of its own:
 #                     build.sh info      prints KERNEL=..., and ZFS_VERSION=...
 #                                        with in/zfs-features if the image has
-#                                        OpenZFS
+#                                        ZFS (OpenZFS, or illumos' own)
 #                     build.sh assemble  writes out/image.img from in/
 #                   in/ holds the media, console, remote-access and
-#                   sshd_config.backotter (from stick/bsd/), restic-bko and
+#                   sshd_config.backotter (from stick/bsd/), BUILD_FILES,
+#                   restic-bko and
 #                   rustic-bko (if there is one for this platform, and always
 #                   with RUSTIC_REQUIRED=yes), and for
 #                   assemble also backotter.json and config.img (marker.py's).
@@ -56,7 +61,8 @@ if [[ ${1:-} == --test ]]; then test=1; shift; fi
 PLATFORM=$1 OUT_IMG=${2:-.}
 pdir=$here/$PLATFORM
 [[ -f $pdir/platform.conf && -f $pdir/build.sh ]] || die "no stick/$PLATFORM/{platform.conf,build.sh}"
-BUILD_VM_OPTIONS=() RUSTIC_REQUIRED=no
+BUILD_VM_OPTIONS=() BUILD_FILES=() RUSTIC_REQUIRED=no
+BUILD_VM_POWEROFF='/sbin/shutdown -p now'
 # shellcheck source=/dev/null
 . "$pdir/platform.conf"
 for v in BASE_OS BASE_RELEASE CONFIG_PART BUILD_VM BUILD_VM_IMAGE BUILD_VM_PORT BUILD_VM_MODE; do
@@ -91,12 +97,13 @@ work=$(mktemp -d)
 started=no
 ssh_cmd=(ssh -q -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
     -o ServerAliveInterval=30 -i "$vm/id_ed25519" -p "$BUILD_VM_PORT" root@127.0.0.1)
-# Through sh: root's shell may be csh (DragonFly's is).
+# Through sh: root's shell may be csh (DragonFly's is).  Archives are unpacked
+# with cd first: illumos tar's -C names a directory to archive from only.
 ssh_vm() { local sq="'"; local q=${1//$sq/$sq\\$sq$sq}; "${ssh_cmd[@]}" "/bin/sh -c '$q'"; }
 cleanup() {
     if [[ $started == yes ]]; then
         # By path: NetBSD's sshd gives commands no /sbin in PATH.
-        ssh_vm '/sbin/shutdown -p now' >/dev/null 2>&1 || true
+        ssh_vm "$BUILD_VM_POWEROFF" >/dev/null 2>&1 || true
         for _ in $(seq 60); do pgrep -f "^qemu-system.*:$BUILD_VM_PORT-:22" >/dev/null || break; sleep 2; done
         pkill -f "^qemu-system.*:$BUILD_VM_PORT-:22" 2>/dev/null || true
     fi
@@ -136,6 +143,7 @@ done
 mkdir "$work/in"
 cp "$here/bsd/console" "$here/bsd/remote-access" "$here/bsd/sshd_config.backotter" \
     "$pdir/build.sh" "$work/in/"
+for f in "${BUILD_FILES[@]}"; do cp "$pdir/$f" "$work/in/"; done
 cp "$BKO_BIN/$PLATFORM/restic-bko" "$work/in/"
 if [[ -x $BKO_BIN/$PLATFORM/rustic-bko ]]; then
     cp "$BKO_BIN/$PLATFORM/rustic-bko" "$work/in/"
@@ -146,7 +154,7 @@ for m in "${MEDIA[@]}"; do ln -s "$media_dir/$m" "$work/in/$m"; done
 echo "Copying $(du -shL "$work/in" | cut -f1) into $BUILD_VM"
 rdir=/var/tmp/bko-build.$(hostname -s).$$     # this run's, in the VM
 ssh_vm "rm -rf $rdir && mkdir -p $rdir/out"
-tar -C "$work" -chf - in | ssh_vm "tar -C $rdir -xf -"
+tar -C "$work" -chf - in | ssh_vm "cd $rdir && tar -xf -"
 
 ssh_vm "cd $rdir && sh in/build.sh info" >"$work/info" || die "build.sh info failed"
 kernel=$(sed -n 's/^KERNEL=//p' "$work/info")
@@ -160,11 +168,12 @@ fi
 image_id=$(python3 "$here/marker.py" --platform "$PLATFORM" --base-os "$BASE_OS" \
     --base-release "$BASE_RELEASE" --kernel "$kernel" --config-part "$CONFIG_PART" \
     "${zfs_args[@]}" "$work/marker") || die "marker.py failed"
-tar -C "$work/marker" -cf - backotter.json config.img | ssh_vm "tar -C $rdir/in -xf -"
+tar -C "$work/marker" -cf - backotter.json config.img | ssh_vm "cd $rdir/in && tar -xf -"
 
 echo "Assembling the image in $BUILD_VM"
 ssh_vm "cd $rdir && TEST=$test sh in/build.sh assemble" || die "build.sh assemble failed"
 ssh_vm "cat $rdir/out/image.img" >"$OUT_IMG.part" || die "couldn't copy the image out"
 ssh_vm "rm -rf $rdir"
 mv "$OUT_IMG.part" "$OUT_IMG"
-echo "Wrote $OUT_IMG ($(du -h "$OUT_IMG" | cut -f1)), image $image_id"
+# Its size, not du's: a host's ZFS may not have written it all out yet.
+echo "Wrote $OUT_IMG ($(( $(stat -c %s "$OUT_IMG") >> 20 )) MiB), image $image_id"

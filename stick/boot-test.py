@@ -34,7 +34,7 @@ import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PLATFORMS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly")
+PLATFORMS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos")
 OVMF = "/usr/share/OVMF"
 FIRMWARE = {
     "uefi-secureboot": ("OVMF_CODE_4M.secboot.fd", "OVMF_VARS_4M.ms.fd"),
@@ -46,8 +46,9 @@ FIRMWARE = {
 # before it mounts root).  It boots on the older PC machine with EHCI.
 # FreeBSD 15.1 reads QEMU's USB stick on xHCI garbled (umass: "bad CSW
 # signature") unless kern.maxphys is cut to 64 KiB, and the root never
-# mounts; on EHCI it boots as it would from a real stick.
-MACHINE = {"dragonfly": "pc"}
+# mounts; on EHCI it boots as it would from a real stick.  illumos runs on
+# the PC machine, as the omnios58 test guest does.
+MACHINE = {"dragonfly": "pc", "illumos": "pc"}
 USB_CONTROLLER = {"dragonfly": "usb-ehci", "freebsd": "usb-ehci"}
 # Bytes a second to type at the serial console, for platforms that drop input
 # coming faster than a real line would bring it: QEMU's serial port has no
@@ -205,8 +206,8 @@ def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: 
             for name, status, detail in results:
                 all_ok &= status == b"ok"
                 print(f"  {status.decode():4} {name.decode():20} {detail.decode(errors='replace').strip()}")
-            # OpenBSD has no poweroff; Linux's shutdown has no -p.
-            con.send(("poweroff" if platform == "linux" else "shutdown -p now") + "\n")
+            # OpenBSD has no poweroff; Linux's and illumos' shutdown have no -p.
+            con.send(("poweroff" if platform in ("linux", "illumos") else "shutdown -p now") + "\n")
             try:
                 proc.wait(timeout=60)
             except subprocess.TimeoutExpired:

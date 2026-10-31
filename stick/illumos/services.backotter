@@ -1,0 +1,18 @@
+# SMF manifests the illumos rescue image keeps beyond kayak's
+# data/miniroot.services (paths under /lib/svc/manifest).  build.sh adds
+# these to kayak's list and takes autofs out of it: /home is a plain
+# directory here, for remote-access's user.  Not network/netmask (NIS) nor
+# network/service (DNS from DHCP: net-up does that): their methods need
+# commands the image doesn't have, and a failed one keeps the system from
+# reaching multi-user (svc.startd then asks for a maintenance login).
+application/backotter/console.xml
+application/backotter/network.xml
+network/dlmgmt.xml
+network/network-initial.xml
+network/network-ipmgmt.xml
+network/network-loopback.xml
+network/network-netcfg.xml
+network/network-physical.xml
+system/hostid.xml
+system/idmap.xml
+system/utmp.xml

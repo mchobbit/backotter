@@ -30,9 +30,10 @@ has two GPT partitions:
 GPT type "Microsoft basic data", so Linux, macOS and Windows all mount it and a
 user can look at the config from any machine.
 
-That's the Linux image.  The BSD images (`make-img-bsd.sh`, built inside a VM
-of each BSD from its official media) carry the same FAT16 partition, made by
-the same `marker.py`, wherever their own layout leaves a slot:
+That's the Linux image.  The BSD and illumos images (`make-img-bsd.sh`, built
+inside a VM of each system, the BSDs' from their official media) carry the
+same FAT16 partition, made by the same `marker.py`, wherever their own layout
+leaves a slot:
 
 | Platform  | Table | Config partition | Root, read-only                 |
 |-----------|-------|------------------|---------------------------------|
@@ -41,9 +42,12 @@ the same `marker.py`, wherever their own layout leaves a slot:
 | netbsd    | GPT   | 3                | FFSv2                            |
 | openbsd   | MBR   | 2 (entry 4 is OpenBSD's own) | FFS in OpenBSD's disklabel |
 | dragonfly | MBR   | slice 3          | UFS in a disklabel64 (slice 2)   |
+| illumos   | GPT   | 4 (illumos slice s3) | UFS RAM disk, loaded from UFS partition 3 |
 
-None of the BSD images boot with Secure Boot on: their EFI loaders aren't
-signed.  Below, "the config partition" is that partition whatever its number;
+None of the BSD or illumos images boot with Secure Boot on: their EFI loaders
+aren't signed.  The illumos image is OmniOS's own USB layout (ESP, boot,
+root) with the config partition after it; its root is a copy in RAM, so
+nothing on the stick but the config partition is ever mounted.  Below, "the config partition" is that partition whatever its number;
 the marker's `config_partition.number` says which.  Because the partition is
 part of the image, every raw write of the image creates it; nothing has to edit
 a partition table afterwards (the image's GPT is already awkward: its backup
@@ -95,14 +99,17 @@ system.  It's read-only, so it describes the image, not the stick:
 - `image_id` is a fresh UUID per build.  It ties the config partition to the
   image it was built with (see `stick.json`).
 - `platform` is the family of systems the image restores: `linux`,
-  `freebsd`, `netbsd`, `openbsd`, `dragonfly`, and later `illumos`.  It's the
+  `freebsd`, `netbsd`, `openbsd`, `dragonfly` and `illumos`.  It's the
   same word as in the file name (see "Image file names"), but the backup tool
   reads it from here, since a file can be renamed.  `base` is what the image
   happens to be built from (`ubuntu` 26.04.1, `freebsd` 15.1-RELEASE, ...).
 - `zfs.features` is OpenZFS's own list for that release
   (`/usr/share/zfs/compatibility.d/openzfs-2.4`).  It and `kernel` let the
   backup tool warn when the stick is too old for the machine (see "Is this
-  stick good enough?").  `zfs` is null on an image without OpenZFS.
+  stick good enough?").  `zfs` is null on an image without ZFS.  illumos' ZFS
+  isn't OpenZFS and has no version of its own: its `version` is
+  `illumos-<OmniOS release>` (`illumos-r151058`), and its features are what
+  that system's `zpool upgrade -v` lists.
 - `system_schemas` lists the `system.json` schema versions the stick's restore
   code can read.
 - `config_partition` describes the config partition as built: its number, size,
@@ -125,8 +132,8 @@ backotter-live-freebsd-0.1.0-amd64.img
 backotter-live-illumos-0.1.0-amd64.img
 ```
 
-- `platform` is `linux`, `freebsd`, `netbsd`, `openbsd` or `dragonfly` (later
-  `illumos`), as in the marker.  One Linux
+- `platform` is `linux`, `freebsd`, `netbsd`, `openbsd`, `dragonfly` or
+  `illumos`, as in the marker.  One Linux
   image covers every Linux distribution, so the name doesn't say which distro
   or Ubuntu release it's built from; the marker does.
 - `version` is BackOtter's, one number for all platforms: the backup tool and
@@ -330,7 +337,16 @@ On the stick, the restore code looks only at the disk it booted from:
 1. The medium casper mounted at `/cdrom` gives the boot disk: `findmnt`'s
    SOURCE, then `lsblk`'s PKNAME, or SOURCE itself if casper mounted the whole
    disk (the hybrid image is valid ISO9660 from sector 0 too).  Its
-   `/.disk/backotter.json` gives the config partition's number.
+   `/.disk/backotter.json` gives the config partition's number.  The BSD
+   images find the boot disk from the device their root is mounted from.
+   illumos' root is a RAM disk, on no disk: there the boot disk is the one
+   whose partition of the marker's number has the marker's size, and whose
+   first sector has its FAT label and volume serial (random per build, so a
+   disk of the machine being rescued doesn't carry it by chance).  Only that
+   sector of each disk is read; nothing is mounted to find it.  Every stick
+   written from one image matches, so if two do, it can't tell which one it
+   booted from: it says so and asks for the other to be removed, rather than
+   pick one.
 2. It never scans other disks for a `BACKOTTER` label: a second stick, or a
    disk of the machine being rescued, could carry one.
 3. The config partition is mounted read-only, and read-write only to save a

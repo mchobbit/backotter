@@ -1,0 +1,73 @@
+<?xml version="1.0"?>
+<!DOCTYPE service_bundle SYSTEM "/usr/share/lib/xml/dtd/service_bundle.dtd.1">
+<!--
+ BackOtter rescue stick, illumos: BackOtter's console on the first serial port
+ (COM1, /dev/term/a), as root.  The screen and the virtual consoles are
+ system/console-login's (default, vt2-vt6), which build.sh gives the same
+ start method, on-tty.  It takes the terminal in ttymon/device over as its
+ controlling terminal; svc.startd starts it again when it exits.  Without
+ the device (a machine with no COM1) it turns itself off for the boot.
+-->
+<service_bundle type='manifest' name='backotter:console'>
+
+<service name='application/backotter/console' type='service' version='1'>
+
+	<dependency name='fs-minimal' grouping='require_all' restart_on='none' type='service'>
+		<service_fmri value='svc:/system/filesystem/minimal'/>
+	</dependency>
+	<dependency name='identity' grouping='require_all' restart_on='none' type='service'>
+		<service_fmri value='svc:/system/identity:node'/>
+	</dependency>
+
+	<exec_method type='method' name='start' exec='/usr/local/lib/backotter/on-tty'
+		timeout_seconds='60'/>
+	<exec_method type='method' name='stop' exec=':kill' timeout_seconds='60'/>
+
+	<property_group name='startd' type='framework'>
+		<propval name='duration' type='astring' value='child'/>
+		<propval name='ignore_error' type='astring' value='core,signal'/>
+	</property_group>
+
+	<instance name='serial' enabled='true'>
+		<property_group name='ttymon' type='application'>
+			<propval name='device' type='astring' value='/dev/term/a'/>
+		</property_group>
+	</instance>
+
+	<stability value='Unstable'/>
+	<template>
+		<common_name><loctext xml:lang='C'>BackOtter console on COM1</loctext></common_name>
+	</template>
+</service>
+
+<!--
+ With the console on the screen, svc.startd asks for a maintenance login
+ early in the boot ("Console login service(s) cannot run"), as on OmniOS's
+ installer, and holds console-login back until it ends.  This ends it, as
+ Ctrl-D at its prompt would; svc.startd then starts console-login, which is
+ BackOtter's console there.  With the console on COM1 there's none, and this
+ gives up after 30 seconds.
+-->
+<service name='application/backotter/console-release' type='service' version='1'>
+
+	<dependency name='fs-minimal' grouping='require_all' restart_on='none' type='service'>
+		<service_fmri value='svc:/system/filesystem/minimal'/>
+	</dependency>
+
+	<exec_method type='method' name='start' exec='/usr/local/lib/backotter/on-tty'
+		timeout_seconds='60'/>
+	<exec_method type='method' name='stop' exec=':true' timeout_seconds='60'/>
+
+	<property_group name='startd' type='framework'>
+		<propval name='duration' type='astring' value='transient'/>
+	</property_group>
+
+	<instance name='default' enabled='true'/>
+
+	<stability value='Unstable'/>
+	<template>
+		<common_name><loctext xml:lang='C'>End the boot's maintenance login</loctext></common_name>
+	</template>
+</service>
+
+</service_bundle>

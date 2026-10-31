@@ -1,0 +1,34 @@
+#!/bin/sh
+# BackOtter rescue stick, illumos: the start method of
+# svc:/application/backotter/network (network.xml).  DHCP for IPv4 on every
+# physical link, all at once, each waiting up to 30 seconds for a lease; then
+# DNS from the first lease that has it (as OmniOS's installer does, kayak's
+# net_help.sh).  A link without a lease keeps trying in the background
+# (dhcpagent's own retries); if no lease with DNS came in the first 30
+# seconds, a background loop takes DNS from the first that comes in the next
+# ten minutes (a switch port's spanning tree alone can take 30 seconds).
+
+PATH=/usr/bin:/usr/sbin:/sbin
+for l in $(dladm show-phys -po link); do
+    (ipadm create-ip "$l" 2>/dev/null; ipadm create-addr -T dhcp -w 30 "$l/v4" 2>/dev/null) &
+done
+wait
+# set_dns: DNS from the first link whose lease has it; fails if none has.
+set_dns() {
+    for l in $(dladm show-phys -po link); do
+        dns=$(dhcpinfo -i "$l" DNSserv 2>/dev/null)
+        [ -n "$dns" ] || continue
+        domain=$(dhcpinfo -i "$l" DNSdmain 2>/dev/null)
+        {
+            [ -n "$domain" ] && echo "search $domain"
+            for s in $dns; do echo "nameserver $s"; done
+        } >/etc/resolv.conf
+        cp /etc/nsswitch.dns /etc/nsswitch.conf
+        return 0
+    done
+    return 1
+}
+if ! set_dns; then
+    (i=0; while [ $i -lt 60 ] && ! set_dns; do sleep 10; i=$((i + 1)); done) </dev/null >/dev/null 2>&1 &
+fi
+exit 0

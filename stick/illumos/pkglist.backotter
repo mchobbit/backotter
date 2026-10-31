@@ -1,0 +1,6 @@
+# Packages the illumos rescue image has beyond kayak's
+# data/miniroot.pkglist.  build.sh adds these, and pins the system's
+# version (osnet-incorporation and release/name) to the build VM's own.
+compress/gzip
+library/security/openssl-3
+system/library/gcc-runtime

@@ -1,8 +1,8 @@
 # The native build of BackOtter's rustic in a throwaway copy of a test guest,
-# shared by stick/{freebsd,openbsd,netbsd,omnios}/build-rustic.sh, which
+# shared by stick/{freebsd,openbsd,netbsd,illumos}/build-rustic.sh, which
 # source it (bash) after setting:
 #
-#   PLATFORM      its directory in bko-bin: freebsd, openbsd, netbsd, omnios
+#   PLATFORM      its directory in bko-bin: freebsd, openbsd, netbsd, illumos
 #   VM            the test guest (testvm/make-*.sh) in ~/backotter-work/vms
 #   DEFAULT_PORT  the guest's SSH port here when none is given
 #   GUEST_PATH    PATH in the guest, with its Rust and C compiler in it

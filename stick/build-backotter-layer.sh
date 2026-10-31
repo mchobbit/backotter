@@ -26,7 +26,8 @@
 # What the layer does:
 #   - adds wpasupplicant (Wi-Fi), efibootmgr, zfsutils-linux, openssh-server
 #   - adds the mkfs tools a restore needs beyond the base's: dosfstools (EFI
-#     system partitions), jfsutils, bcachefs-tools, and a bcachefs kernel
+#     system partitions), jfsutils, nilfs-tools, f2fs-tools, bcachefs-tools,
+#     and a bcachefs kernel
 #     module built by DKMS for the image's kernel.  The module isn't signed,
 #     so it loads only with Secure Boot off.  Its build (compiler, kernel
 #     headers, DKMS) happens in a throwaway overlay; only the module lands
@@ -49,10 +50,10 @@ set -euo pipefail
 LAYER=ubuntu-server-minimal.backotter
 # From the ISO's pool.
 PACKAGES=(wpasupplicant efibootmgr zfsutils-linux openssh-server jfsutils)
-# From Ubuntu's archive, release pocket, main: only these may come from
-# there (apt preferences pin everything else away).
+# From Ubuntu's archive, release pocket, main and universe: only these may
+# come from there (apt preferences pin everything else away).
 ARCHIVE=http://archive.ubuntu.com/ubuntu/
-ARCHIVE_PACKAGES=(dosfstools)
+ARCHIVE_PACKAGES=(dosfstools nilfs-tools f2fs-tools)
 ARCHIVE_DEPENDENCIES=(libsodium23)          # bcachefs-tools needs it
 # bcachefs, from its own repository: the tools into the layer, and the DKMS
 # source of the same version to build the module from.  Pinned to the version
@@ -150,10 +151,11 @@ chroot_api() {
     mkdir -p "$1/run/systemd/resolve"
     cp -L /etc/resolv.conf "$1/run/systemd/resolve/stub-resolv.conf"
 }
-# write_source DIR NAME URI SUITES KEY: a deb822 apt source for component main.
+# write_source DIR NAME URI SUITES KEY [COMPONENTS]: a deb822 apt source, for
+# component main unless COMPONENTS says otherwise.
 write_source() {
-    printf 'Types: deb\nURIs: %s\nSuites: %s\nComponents: main\nSigned-By: %s\n' \
-        "$3" "$4" "$5" >"$1/$2.sources"
+    printf 'Types: deb\nURIs: %s\nSuites: %s\nComponents: %s\nSigned-By: %s\n' \
+        "$3" "$4" "${6:-main}" "$5" >"$1/$2.sources"
 }
 # The host part of a URI: what an apt preference's "Pin: origin" matches.
 uri_host() { local h=${1#*://}; echo "${h%%/*}"; }
@@ -191,7 +193,8 @@ cp "$here/$BCACHEFS_KEY" "$root$apt_dir/bcachefs.asc"
 fpr=$(in_root env GNUPGHOME="$apt_dir/gnupg" gpg --batch --quiet --show-keys --with-colons \
     "$apt_dir/bcachefs.asc" | awk -F: '$1 == "fpr" { print $10; exit }')
 [[ $fpr == "$BCACHEFS_KEY_FPR" ]] || die "$BCACHEFS_KEY is key $fpr, not $BCACHEFS_KEY_FPR"
-write_source "$root$apt_dir/sources" ubuntu "$ARCHIVE" "$suite" /usr/share/keyrings/ubuntu-archive-keyring.gpg
+write_source "$root$apt_dir/sources" ubuntu "$ARCHIVE" "$suite" /usr/share/keyrings/ubuntu-archive-keyring.gpg \
+    "main universe"
 write_source "$root$apt_dir/sources" bcachefs "$BCACHEFS_REPO" "$BCACHEFS_SUITE" "$apt_dir/bcachefs.asc"
 cat >"$root$apt_dir/preferences/backotter" <<EOF
 Package: *
@@ -310,7 +313,7 @@ rm -f "$root"/etc/ssh/ssh_host_*
 
 # --- Checks --------------------------------------------------------------------------
 in_root dpkg --audit | grep . && die "dpkg --audit reports problems"
-for c in wpa_supplicant efibootmgr zpool zfs sshd mkfs.vfat mkfs.jfs mkfs.bcachefs; do
+for c in wpa_supplicant efibootmgr zpool zfs sshd mkfs.vfat mkfs.jfs mkfs.nilfs2 mkfs.f2fs mkfs.bcachefs; do
     in_root sh -c "command -v $c" >/dev/null || die "missing $c after install"
 done
 vermagic=$(in_root modinfo -k "$KVER" -F vermagic bcachefs) || die "no bcachefs module for $KVER"

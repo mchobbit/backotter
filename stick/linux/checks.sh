@@ -14,7 +14,7 @@ check switch-firmware 'ls /usr/lib/firmware/mellanox 2>/dev/null | wc -l | sed "
 check tools 'for c in python3 lvm mdadm cryptsetup sgdisk mkfs.ext4 mkfs.xfs mkfs.btrfs ssh; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; echo all present'
 check python 'python3 -c "import sys; print(sys.version.split()[0])"'
 check layer-tools 'for c in wpa_supplicant efibootmgr zpool zfs sshd; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; echo all present'
-check fs-tools 'for c in mkfs.vfat mkfs.jfs mkfs.bcachefs; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; bcachefs version'
+check fs-tools 'for c in mkfs.vfat mkfs.jfs mkfs.nilfs2 mkfs.f2fs mkfs.bcachefs; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; bcachefs version'
 check bcachefs-module 'v=$(modinfo -F vermagic bcachefs) && test "${v%% *}" = "$(uname -r)" && modinfo -F filename bcachefs && modinfo -F version bcachefs'
 # The module is unsigned: it must load with Secure Boot off (or no EFI), and
 # the kernel must refuse it with Secure Boot on, for its signature.

@@ -85,6 +85,9 @@ What changes from the memstick:
   `/.disk/backotter.json`.  make-img-bsd.sh builds without a rustic-bko (with
   a warning) if there is none for freebsd; the boot test's rustic-bko check
   then fails, since the FreeBSD image is meant to have both.
+  `build-rustic.sh [--setup] [PORT]` builds it natively in a throwaway copy of
+  the `freebsd15` test guest (not the builder) into `bko-bin/freebsd/`; see
+  `../build-rustic-native.sh` for `SRC=` (local trees) and the rest.
 
 ## Notes
 

@@ -100,8 +100,9 @@ Which sources:
   `ip_mreq_source` on DragonFly).
 - `SRC=DIR build-rustic.sh` builds local trees, `DIR/rustic` and
   `DIR/rustic_core` (with or without `.git`; `RUSTIC_COMMIT` and
-  `RUSTIC_CORE_COMMIT` name the commits otherwise): rustic's
-  `[patch.crates-io]` points rustic_core and its vendored walkdir at them, and
+  `RUSTIC_CORE_COMMIT` name the commits otherwise): `../prep-rustic-src.sh`,
+  which the native builds use too, points rustic's `[patch.crates-io]` at
+  rustic_core and its vendored walkdir and refreshes Cargo.lock for them, and
   `rustic-commit` says "local, unpushed".
 
 The binary links libc, libm, libpthread and libexecinfo dynamically, all in

@@ -20,10 +20,11 @@
 # gives the sysroot (on the first run) and runs the new binary's --version.
 #
 #   SRC=DIR   build DIR/rustic and DIR/rustic_core (checkouts of the forks, or
-#             copies without .git) instead of the pushed branch: rustic's
-#             [patch.crates-io] then points rustic_core, and walkdir (vendored
-#             in rustic_core), at them, and Cargo.lock is refreshed for those
-#             two before the --locked build.  rustic-commit says "local,
+#             copies without .git) instead of the pushed branch:
+#             ../prep-rustic-src.sh points rustic's [patch.crates-io] at that
+#             rustic_core, and at walkdir (vendored in rustic_core), and
+#             refreshes Cargo.lock for those two before the --locked build,
+#             as the native builds do.  rustic-commit says "local,
 #             unpushed"; RUSTIC_COMMIT and RUSTIC_CORE_COMMIT give the commits
 #             when the trees have no .git.
 #   RUST_TOOLCHAIN
@@ -122,7 +123,6 @@ elif ! "$rustup" component list --toolchain "$TOOLCHAIN" --installed | grep -q '
     echo "Adding rust-src to Rust $TOOLCHAIN, for this user (rustup, in ~/.rustup)"
     "$rustup" component add --toolchain "$TOOLCHAIN" rust-src
 fi
-cargo() { "$rustup" run "$TOOLCHAIN" cargo "$@"; }
 rustc_version=$("$rustup" run "$TOOLCHAIN" rustc --version)
 echo "$rustc_version"
 
@@ -221,15 +221,10 @@ else
     for d in rustic rustic_core; do
         rsync -rlp --exclude .git --exclude target "$SRC/$d/" "$work/$d/"
     done
-    toml=$work/rustic/Cargo.toml
-    git_line='rustic_core = { git = "https://github.com/mchobbit/rustic_core.git", branch = "backotter" }'
-    path_lines='rustic_core = { path = "../rustic_core/crates/core" }\nwalkdir = { path = "../rustic_core/vendor/walkdir" }'
-    grep -qxF "$git_line" "$toml" || die "rustic's [patch.crates-io] isn't as expected: no $git_line"
-    sed -i '/^\[patch.crates-io\]/,/^\[/{/^walkdir = /d}' "$toml"
-    sed -i "s|^${git_line}\$|${path_lines}|" "$toml"
-    (cd "$work/rustic" && cargo update -p rustic_core -p walkdir) || die "cargo update failed"
-    grep -A2 '^name = "walkdir"' "$work/rustic/Cargo.lock" | grep -q '^source = "registry' &&
-        die "Cargo.lock still has crates.io's walkdir"
+    # The helper runs cargo by a path: one that runs this toolchain's.
+    printf '#!/bin/sh\nexec "%s" run "%s" cargo "$@"\n' "$rustup" "$TOOLCHAIN" >"$work/cargo"
+    chmod 755 "$work/cargo"
+    CARGO=$work/cargo "$here/../prep-rustic-src.sh" "$work" || die "prep-rustic-src.sh failed"
 fi
 echo "rustic $commit"
 echo "rustic_core $core"

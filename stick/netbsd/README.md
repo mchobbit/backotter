@@ -25,9 +25,14 @@ fetches more, e.g. for a build VM.  Not included: comp, games, man, tests, text,
 the comp set, then `rust` (1.96), `cmake`, `gmake`, `perl` and `pkgconf` from
 pkgsrc's binary packages (`pkgsrc/packages/NetBSD/x86_64/11.0_2026Q3`), then
 `cargo build --release --locked` of branch `backotter` of
-github.com/mchobbit/rustic (its Cargo.lock pins rustic_core's commit).  In the
+github.com/mchobbit/rustic (its Cargo.lock pins rustic_core's commit), or with
+`SRC=DIR` the local trees `DIR/rustic` and `DIR/rustic_core`.  In the
 guest, libfetch needs `ip6addrctl_policy=ipv4_prefer` (QEMU's user network has no
 IPv6 route out) and `certctl rehash` (no TLS trust anchors until then).
+`build-rustic.sh --setup` makes a build image with all that installed
+(`~/backotter-work/vms-bko-build/netbsd11-rust.qcow2`), which later builds
+start from; the work is in `../build-rustic-native.sh`, shared with FreeBSD,
+OpenBSD and OmniOS.  AlpineBSD runs the same binary: its libc is NetBSD's.
 
 ## Layout
 

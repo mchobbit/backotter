@@ -26,7 +26,9 @@ signify, on the host with the key in `platform.conf` and again in the VM with
 its own copy.  `restic-bko` (required) and `rustic-bko` come from
 `~/backotter-work/bko-bin/openbsd/`, built natively on OpenBSD: Go and Rust
 binaries there link libc dynamically, and the image's base has `ld.so` and
-`libc`.  The build takes about 2 minutes on choubox; the image is about
+`libc`.  `build-rustic.sh [--setup] [PORT]` builds rustic-bko so, in a
+throwaway copy of `openbsd8`, with Rust from OpenBSD's packages; see
+`../build-rustic-native.sh` for `SRC=` (local trees) and the rest.  The build takes about 2 minutes on choubox; the image is about
 770 MB (the root about 610 MB, of which the two binaries 74 MB).
 
 ## How it's made

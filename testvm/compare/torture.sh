@@ -73,18 +73,73 @@ touch "$T/$(printf 'n%.0s' {1..250})"
 mkdir -p "$T/deep$(printf '/level%s' {1..40})"
 touch "$T/deep$(printf '/level%s' {1..40})/bottom"
 
-# Timestamps: far past, far future, odd nanoseconds.  Last, since writing
-# into a directory changes its mtime.
+# Allocation: a preallocated file (unwritten extents), a file of written
+# zeros and a swap file, none of them with holes.  A restore that punches
+# holes into them breaks the swap file (swapon refuses one with holes).
+rm -f "$T/preallocated" "$T/zeros" "$T/swapfile"
+fallocate -l 16M "$T/preallocated" 2>/dev/null || echo "torture: skipped (unsupported here): fallocate" >&2
+head -c 8M /dev/zero >"$T/zeros"
+if fallocate -l 32M "$T/swapfile" 2>/dev/null; then
+    chmod 600 "$T/swapfile"
+    try mkswap -q "$T/swapfile"
+fi
+
+# Project IDs (project quotas), where the file system has them: XFS, ZFS,
+# ext4 made with -O project.
+echo "project" >"$T/projid-file"; try chattr -p 42 "$T/projid-file"
+mkdir -p "$T/projid-dir"; try chattr +P -p 43 "$T/projid-dir"
+
+# A case-insensitive directory (ext4 or f2fs made with -O casefold), which
+# only takes the flag while empty.
+mkdir -p "$T/casefold-dir"; try chattr +F "$T/casefold-dir"; touch "$T/casefold-dir/MixedCase"
+
+# btrfs's compression property, which btrfs keeps as the btrfs.compression
+# extended attribute.
+touch "$T/compress-zstd"; try setfattr -n btrfs.compression -v zstd "$T/compress-zstd"
+mkdir -p "$T/compress-dir"; try setfattr -n btrfs.compression -v zstd "$T/compress-dir"
+
+# Timestamps: far past, far future, odd nanoseconds, an atime apart from the
+# mtime.  Last, since writing into a directory changes its mtime.
 touch "$T/empty"
 mkdir -p "$T/empty-dir"
 touch -d '1970-01-02 00:00:00.123456789' "$T/old"
 touch -d '2100-01-01 12:00:00.987654321' "$T/future"
+echo "atime" >"$T/atime"; mkdir -p "$T/atime-dir"; ln -sfn atime "$T/atime-symlink"
+for p in "$T/atime" "$T/atime-dir" "$T/atime-symlink"; do
+    touch -h -m -d '2002-03-04 05:06:07.111111111' "$p"
+    touch -h -a -d '2003-04-05 06:07:08.222222222' "$p"
+done
 
 # btrfs's no-copy-on-write flag (systemd sets it on its journals), which only
 # takes on an empty file: set before the data goes in, and inherited from a
 # directory.
 touch "$T/nocow"; try chattr +C "$T/nocow"; head -c 65536 /dev/urandom >>"$T/nocow"
 mkdir -p "$T/nocow-dir"; try chattr +C "$T/nocow-dir"; echo "inherited" >"$T/nocow-dir/file"
+
+# ZFS's DOS attributes (what Windows sees over SMB: readonly, hidden,
+# system, archive, ...), which only ZFS has, through its own ioctl; never
+# issued on another file system.  ZFS_IOC_SETDOSFLAGS replaces the whole
+# set, and a write sets archive again: so after the contents, and archive
+# given along where it should stay.  Readonly refuses writes, nounlink
+# unlinks.
+dosflags() {  # PATH VALUE
+    python3 -c 'import fcntl, os, struct, sys
+fd = os.open(sys.argv[1], os.O_RDONLY | os.O_NONBLOCK | os.O_NOFOLLOW)
+fcntl.ioctl(fd, 0x40088302, struct.pack("Q", int(sys.argv[2], 0)))' "$@"
+}
+if [[ $(stat -f -c %t "$T") == 2fc12fc1 ]]; then
+    archive=0x800000000
+    echo "hidden" >"$T/dos-hidden-system"; dosflags "$T/dos-hidden-system" $((0x600000000 | archive))
+    echo "readonly" >"$T/dos-readonly"; dosflags "$T/dos-readonly" $((0x100000000 | archive))
+    echo "written" >"$T/dos-noarchive"; dosflags "$T/dos-noarchive" 0
+    echo "nounlink" >"$T/dos-nounlink"; dosflags "$T/dos-nounlink" $((0x2000000000 | archive))
+    echo "offline" >"$T/dos-offline-sparse"; dosflags "$T/dos-offline-sparse" $((0x300000000000 | archive))
+    mkdir -p "$T/dos-hidden-dir"; dosflags "$T/dos-hidden-dir" $((0x200000000 | archive))
+    echo "fixed" >"$T/dos-hidden-immutable"; dosflags "$T/dos-hidden-immutable" $((0x200000000 | archive))
+    try chattr +i "$T/dos-hidden-immutable"
+else
+    echo "torture: skipped (unsupported here): ZFS DOS attributes" >&2
+fi
 
 # Inode flags, last of all: an immutable file can't be changed afterwards.
 touch "$T/nodump"; try chattr +d "$T/nodump"

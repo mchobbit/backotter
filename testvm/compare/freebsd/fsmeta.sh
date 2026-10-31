@@ -4,11 +4,16 @@
 # ../fsmeta.py).  Into OUTDIR:
 #   spec           mtree(8) spec: type, owner, group, mode, file flags, link
 #                  count, size, mtime, symlink target, SHA-256
-#   acls.txt       getfacl(1) of every file but symlinks
+#   acls.txt       getfacl(1) of every file but symlinks, then the default
+#                  ACL (getfacl -d) of every directory where there are
+#                  POSIX.1e ACLs
 #   extattrs.txt   every extended attribute, both namespaces, as an MD5 of its
 #                  value
 #   hardlinks.txt  the names of each file with more than one, grouped
 #   sparse.txt     files whose allocated blocks are under half their size
+#   births.txt     every name's birth time, or its mtime where that is
+#                  earlier: what a restore can give at best (no system call
+#                  sets a birth time; setting an earlier mtime lowers it)
 #
 # Usage: fsmeta.sh ROOT OUTDIR
 # Then:  cd ROOT2 && mtree -f OUTDIR/spec -X OUTDIR/mtree-exclude
@@ -25,6 +30,8 @@ mtree -c -n -p . -X "$out/mtree-exclude" \
     -k type,uid,gid,mode,flags,nlink,size,time,link,sha256digest >"$out/spec"
 
 find . ! -type l -print0 | sort -z | xargs -0 getfacl >"$out/acls.txt" 2>&1 || true
+# NFSv4 ACLs have no default ACL: their inheritance flags are in the above.
+find . -type d -print0 | sort -z | xargs -0 getfacl -d >>"$out/acls.txt" 2>/dev/null || true
 
 : >"$out/extattrs.txt"
 tab=$(printf '\t')
@@ -44,3 +51,8 @@ find . -type f -links +1 -print0 | xargs -0 stat -f '%i %N' | sort -n |
 
 find . -type f -size +1M -print0 | xargs -0 stat -f '%b %z %N' |
     awk '$1 * 512 < $2 / 2 { print substr($0, length($1) + length($2) + 3) }' | sort >"$out/sparse.txt"
+
+find . ! -name .sujournal -print0 | xargs -0 stat -f '%FB %Fm %N' | awk '{
+    split($1, b, "."); split($2, m, ".")
+    early = (b[1] + 0 < m[1] + 0 || (b[1] + 0 == m[1] + 0 && b[2] + 0 <= m[2] + 0)) ? $1 : $2
+    print substr($0, length($1) + length($2) + 3), early }' | sort >"$out/births.txt"

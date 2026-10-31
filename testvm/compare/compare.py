@@ -166,6 +166,13 @@ def mounts_below(mp: Path) -> list[dict[str, str]]:
     return flat
 
 
+def remount_noatime(mp: Path) -> None:
+    """Remount mp and everything below it noatime: fsmeta.py reads the
+    restored tree, which would change the atimes it records."""
+    for m in mounts_below(mp):
+        run(["mount", "-o", "remount,noatime", m["TARGET"]], check=False)
+
+
 # --- Recreating the layout ----------------------------------------------------------
 
 class Layout:
@@ -410,10 +417,10 @@ def backup(tool: str, work: Path) -> None:
         run([restic_exe(tool), "-r", str(repo), "init", "-q"], env=env)
         run([restic_exe(tool), "-r", str(repo), "backup", "-q", str(SRC_MP)], env=env)
     elif tool == "rustic-bko":
-        # The real atime, as restic keeps it (rustic's default is the mtime).
+        # BackOtter's defaults: the real atime (stock rustic keeps the mtime).
         rustic = [rustic_exe(), "-r", str(repo), "--no-progress", "--no-cache"]
         run(rustic + ["init"], env=env)
-        run(rustic + ["backup", "--set-atime", "yes", str(SRC_MP)], env=env)
+        run(rustic + ["backup", str(SRC_MP)], env=env)
     elif tool == "borg":
         run(["borg", "init", "-e", "repokey-blake2", str(repo)], env=env)
         run(["borg", "create", "--numeric-ids", "-C", "zstd,3", f"{repo}::backup", "."], env=env, cwd=SRC_MP)
@@ -432,14 +439,18 @@ def restore(tool: str, work: Path) -> None:
     repo = work / tool
     tool = CROSS.get(tool, (tool, tool))[1]
     env = dict(os.environ, RESTIC_PASSWORD=PASSWORD, RUSTIC_PASSWORD=PASSWORD, BORG_PASSPHRASE=PASSWORD)
-    if tool in ("restic", "restic-bko"):
+    if tool == "restic":
         run([restic_exe(tool), "-r", str(repo), "restore", "-q", "--sparse",
              f"latest:{SRC_MP}", "--target", str(DST_MP)], env=env)
+    elif tool == "restic-bko":
+        # No --sparse: BackOtter's restic makes holes in the files that had
+        # them, and allocates the rest (swap files, preallocated files).
+        run([restic_exe(tool), "-r", str(repo), "restore", "-q",
+             f"latest:{SRC_MP}", "--target", str(DST_MP)], env=env)
     elif tool == "rustic-bko":
-        # Numeric ids, as restic restores them: names would be looked up in
-        # this system's users, not the guest's.
-        run([rustic_exe(), "-r", str(repo), "--no-progress", "--no-cache", "restore", "--numeric-id",
-             "--sparse", "by-content", f"latest:{SRC_MP}", str(DST_MP)], env=env)
+        # BackOtter's defaults: holes where there were holes, numeric ids.
+        run([rustic_exe(), "-r", str(repo), "--no-progress", "--no-cache", "restore",
+             f"latest:{SRC_MP}", str(DST_MP)], env=env)
     elif tool == "borg":
         run(["borg", "extract", "--numeric-ids", "--sparse", f"{repo}::backup"], env=env, cwd=DST_MP)
     elif tool == "dar":
@@ -609,6 +620,7 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
                     res["restore_ok"] = False
                     res["restore_error"] = (e.stderr or e.stdout or "")[-1500:]
                 res["restore_s"] = round(time.monotonic() - t, 1)
+                remount_noatime(DST_MP)
                 run(fsmeta + ["record", str(DST_MP), str(work / f"after-{tool}.json")])
                 r = run(fsmeta + ["compare", str(work / "before.json"), str(work / f"after-{tool}.json"),
                                   "--json", str(work / f"diff-{tool}.json")], check=False)

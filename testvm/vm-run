@@ -22,9 +22,10 @@
 #   --snapshot    throw away every disk write when QEMU exits (QEMU keeps them
 #                 in a temporary file in $TMPDIR, by default /var/tmp)
 #   --ram         keep every disk write in RAM instead: a qcow2 overlay in
-#                 /dev/shm on top of IMAGE, with cache=unsafe; deleted when
-#                 QEMU exits.  IMAGE itself is only read, so several --ram
-#                 VMs can share it (give each its own SSH_PORT).
+#                 /dev/shm (RAM_DIR overrides) on top of IMAGE, with
+#                 cache=unsafe; deleted when QEMU exits.  IMAGE itself is only
+#                 read, so several --ram VMs can share it (give each its own
+#                 SSH_PORT).
 #   --keep        with --ram, keep the overlay when QEMU exits and print how to
 #                 merge it into IMAGE (qemu-img commit) or delete it.  Don't
 #                 change IMAGE while a kept overlay exists: it would no longer
@@ -63,7 +64,7 @@
 
 set -euo pipefail
 
-RAM_DIR=/dev/shm
+RAM_DIR=${RAM_DIR:-/dev/shm}
 die() { echo "vm-run: $*" >&2; exit 1; }
 
 cdrom="" uefi=no secure_boot=yes snapshot=() ram=no keep=no console=(-nographic)
@@ -100,11 +101,13 @@ case $bus in virtio|scsi|nvme|sata) ;; *) die "--disk-bus must be virtio, scsi, 
 [[ $cpus =~ ^[1-9][0-9]*$ && $memory =~ ^[1-9][0-9]*$ ]] || die "--cpus and --memory take whole numbers"
 
 tmp=$(mktemp -d)
-overlays=() swtpm_pid=""
+overlays=() swtpm_pid="" started=no
 cleanup() {
     [[ -n $swtpm_pid ]] && kill "$swtpm_pid" 2>/dev/null
     rm -rf "$tmp"
-    if [[ $keep == no && ${#overlays[@]} -gt 0 ]]; then rm -f "${overlays[@]}"; fi
+    # --keep keeps only what a QEMU run wrote: not the overlays of a run that
+    # failed before QEMU started.
+    if [[ ($keep == no || $started == no) && ${#overlays[@]} -gt 0 ]]; then rm -f "${overlays[@]}"; fi
 }
 trap cleanup EXIT
 
@@ -193,7 +196,7 @@ fi
 # of orphaning it; <&0 keeps the terminal as its input, which a background
 # command would otherwise lose.
 qemu-system-x86_64 "${args[@]}" "$@" <&0 &
-qemu=$!
+qemu=$! started=yes
 trap 'kill -TERM "$qemu" 2>/dev/null' TERM INT HUP
 status=0
 wait "$qemu" || status=$?
@@ -202,6 +205,14 @@ while kill -0 "$qemu" 2>/dev/null; do wait "$qemu" || status=$?; done
 if [[ $keep == yes ]]; then
     for i in "${!overlays[@]}"; do
         overlay=${overlays[$i]}
+        # An overlay nothing was written to (QEMU failed at once, or never
+        # touched that disk) isn't worth keeping.
+        if ! qemu-img map --output=json "$overlay" 2>/dev/null |
+            python3 -c 'import json, sys; sys.exit(not any(e["depth"] == 0 for e in json.load(sys.stdin)))'; then
+            rm -f "$overlay"
+            echo "vm-run: nothing was written to ${images[$i]}; no overlay kept." >&2
+            continue
+        fi
         echo "vm-run: kept this run's writes to ${images[$i]} in $overlay ($(du -h "$overlay" | cut -f1))." >&2
         echo "  merge them into it:  qemu-img commit $overlay && rm $overlay" >&2
         echo "  or throw them away:  rm $overlay" >&2

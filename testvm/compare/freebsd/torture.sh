@@ -62,6 +62,16 @@ touch -d 2001-02-03T04:05:06.123456789 "$T/nanoseconds"
 touch -d 2100-01-01T12:00:00.987654321 "$T/future"
 touch -h -d 2002-02-02T02:02:02 "$T/symlink"
 
+# Birth times.  No system call sets one, but the kernel lowers it to an
+# mtime set earlier than it: these were born in 2001 and last changed in
+# 2010, and "unborn", born now and changed in 1990, came down to 1990 with
+# its mtime.  A restore can give min(birth, mtime) at best.
+echo born >"$T/born"; mkdir -p "$T/born-dir"; ln -sfh born "$T/born-symlink"
+for p in born born-dir; do touch -t 200101010101 "$T/$p"; touch -t 201001010101 "$T/$p"; done
+touch -h -t 200101010101 "$T/born-symlink"; touch -h -t 201001010101 "$T/born-symlink"
+touch -d 2001-01-01T01:01:01.123456789 "$T/born-ns"; touch -d 2010-01-01T01:01:01.987654321 "$T/born-ns"
+echo unborn >"$T/unborn"; touch -t 199001010101 "$T/unborn"
+
 # File flags, last of all: most of them stop any change afterwards.
 for f in uchg uappnd uunlnk nodump hidden schg sappnd sunlnk; do
     echo $f >"$T/flag-$f"; try chflags $f "$T/flag-$f"

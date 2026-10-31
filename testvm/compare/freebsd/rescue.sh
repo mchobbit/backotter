@@ -169,7 +169,7 @@ sh "$here/fsmeta.sh" /mnt/dst $OUT/after
     echo "== mtree: type, owner, group, mode, flags, links, size, mtime, symlink target, SHA-256"
     (cd /mnt/dst && mtree -f $OUT/before/spec -X $OUT/before/mtree-exclude) && echo "identical"
     # On ZFS, compression rather than holes decides what a file allocates.
-    checks="acls extattrs hardlinks"
+    checks="acls extattrs hardlinks births"
     [ $kind = ufs ] && checks="$checks sparse"
     for f in $checks; do
         echo "== $f"

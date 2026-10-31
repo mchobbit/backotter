@@ -6,8 +6,8 @@ the guests' own file systems, which mostly lack them.
 
 Usage: sudo fs_roundtrip.py FSTYPE [--onto FSTYPE2] [TOOL ...]
          FSTYPE: ext4 xfs btrfs f2fs jfs ext2 vfat ext4-plain (loop images in /var/tmp),
-                 zfs (pools bkotest-src and bkotest-dst on files in /var/tmp,
-                 destroyed afterwards)
+                 zfs (pools bkotest-RUN-src and bkotest-RUN-dst on files in
+                 /var/tmp, destroyed afterwards)
          --onto: restore onto FSTYPE2 instead (e.g. ext4-plain: no project IDs,
                  no casefolding), to see warnings, not errors, for what it lacks
          TOOL:   restic-bko rustic-bko restic-to-rustic rustic-to-restic (default: all)
@@ -24,11 +24,17 @@ and across tools: the snapshots' nodes (generic attributes such as
 unix.sparse included), and st_blocks of each restored file.
 
 restic-bko and rustic-bko are found as compare.py finds them ($RESTIC_BKO,
-$RUSTIC_BKO).  Results go to ~/backotter-work/fs-roundtrip/FSTYPE[-onto-FSTYPE2]/.
+$RUSTIC_BKO).  Results go to ~/backotter-work/fs-roundtrip/RUN/, where RUN is
+FSTYPE[-onto-FSTYPE2].
+
+Each RUN has mount points (/mnt/bko-fsrt/RUN/{src,dst}), images and pools of
+its own, so different RUNs can go at the same time (e.g. xargs -P); the same
+RUN twice can't, and the second one stops.
 """
 
 from __future__ import annotations
 
+import fcntl
 import json
 import os
 import re
@@ -54,10 +60,11 @@ MKFS = {
 }
 TOOLS = ["restic-bko", "rustic-bko", "restic-to-rustic", "rustic-to-restic"]
 WORK = compare.WORK_BASE / "fs-roundtrip"
-SRC = Path("/mnt/bko-fsrt-src")
-DST = Path("/mnt/bko-fsrt-dst")
+# The source and destination mount points, per RUN (set_run()).
+SRC = Path("/mnt/bko-fsrt/RUN/src")
+DST = Path("/mnt/bko-fsrt/RUN/dst")
 # ZFS pools, mounted at SRC and DST, when FSTYPE is zfs.
-POOLS = {SRC: "bkotest-src", DST: "bkotest-dst"}
+POOLS: dict[Path, str] = {}
 # What remount options are on ZFS: dataset properties.
 ZFS_PROPS = {"ro": ["readonly=on"], "rw": ["readonly=off"],
              "strictatime": ["atime=on", "relatime=off"], "noatime": ["atime=off"]}
@@ -159,6 +166,13 @@ def run(cmd: list[str], check: bool = True, quiet: bool = False, **kw) -> subpro
     if check and r.returncode:
         raise SystemExit(f"failed ({r.returncode}): {r.stderr.strip() or r.stdout.strip()}")
     return r
+
+
+def set_run(run_name: str) -> None:
+    """Mount points and pools of this RUN's own."""
+    global SRC, DST, POOLS
+    SRC, DST = Path("/mnt/bko-fsrt") / run_name / "src", Path("/mnt/bko-fsrt") / run_name / "dst"
+    POOLS = {SRC: f"bkotest-{run_name}-src", DST: f"bkotest-{run_name}-dst"}
 
 
 def make_fs(fs: str, image: Path, mp: Path) -> None:
@@ -287,7 +301,7 @@ def node_differences(a: dict[str, dict], b: dict[str, dict], reset: set[str] = f
         out.setdefault("only in second", []).append(p)
     src = str(SRC).lstrip("/") + "/"
     for p in sorted(a.keys() & b.keys()):
-        if "/" not in p:
+        if src[:-1].startswith(p + "/"):  # SRC's parents
             continue
         na, nb = a[p], b[p]
         ignore = NODE_IGNORE | ({"ctime"} if p.startswith(src) and p[len(src):] in reset else set())
@@ -340,13 +354,20 @@ def main() -> int:
     work = WORK / (fs if onto == fs else f"{fs}-onto-{onto}")
     work.mkdir(parents=True, exist_ok=True)
     os.chdir(work)
+    lock = open(".lock", "w")  # held until exit
+    try:
+        fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        raise SystemExit(f"fs_roundtrip: {work.name} is running already")
+    set_run(work.name)
     # compare.py's backup() backs up SRC_MP.
     compare.SRC_MP, compare.DST_MP = SRC, DST
     fsmeta = [sys.executable, "-I", str(compare.HERE / "fsmeta.py")]
     for mp in (SRC, DST):
         unmount(mp)
 
-    make_fs(fs, Path("/var/tmp/bko-fsrt-src.img"), SRC)
+    src_img, dst_img = (Path(f"/var/tmp/bko-fsrt-{work.name}-{s}.img") for s in ("src", "dst"))
+    make_fs(fs, src_img, SRC)
     r = run([str(compare.HERE / "torture.sh"), str(SRC)])
     skipped = [l for l in r.stderr.splitlines() if "skipped" in l]
     r = run(["bash", "-c", EXTRAS, "extras", str(SRC / TORTURE)])
@@ -376,7 +397,7 @@ def main() -> int:
                 reset |= paths
                 remount(SRC, "ro")
 
-            make_fs(onto, Path("/var/tmp/bko-fsrt-dst.img"), DST)
+            make_fs(onto, dst_img, DST)
             try:
                 res["restore"] = restore(tool, work)
                 remount(DST, "noatime")
@@ -406,8 +427,10 @@ def main() -> int:
                                           for k, v in d.items()) if v}
             finally:
                 unmount(DST)
+                dst_img.unlink(missing_ok=True)
     finally:
         unmount(SRC)
+        src_img.unlink(missing_ok=True)
 
     if "restic-bko" in tools and "rustic-bko" in tools:
         a, b = snapshot_nodes(work / "restic-bko"), snapshot_nodes(work / "rustic-bko")

@@ -89,3 +89,10 @@ the round trips (Chopin's share) and 2901-2903 for the native builds
 (Cinqcent's); `netbsd/build-rustic.sh` keeps 2412 and
 `dragonfly/build-rustic.sh` 2421, the image builds' own.  Cinqcent takes at
 most three guests of ours at a time.
+
+Run the `fs_roundtrip.py` file systems at the same time, not one after
+another: they were the longest step of a round (~48 min one by one in round
+6).  Each run has its own mount points, images and pools, so e.g.
+
+    printf '%s\n' zfs ext4 xfs btrfs f2fs tmpfs bcachefs 'zfs --onto ext4' |
+        xargs -P 8 -I{} sh -c 'python3 testvm/compare/fs_roundtrip.py {} >logs/$(echo {} | tr " " _).log 2>&1'

@@ -179,17 +179,20 @@ check() {  # TITLE KIND: compare before.KIND with after.KIND
 # through the backup; but NetBSD drops the atimes utimensat(2) sets on one
 # mounted noatime too, so the restore has atimes on, and the restored
 # times are taken before anything reads the tree.
-times() {  # DIR OUT-PREFIX
+times_of() {  # DIR OUT-PREFIX
     (cd "$1" && tr '\n' '\0' </tmp/bko-rt.before.names | xargs -0 stat -f '%N %Fa %Fm' | sort >$2.times)
 }
+# mount -u replaces the options: the ACL kind and the root's journal go
+# along again.
 atimes() {  # noatime|atime: remount the source's file systems so
-    for m in / $SRC/posix1e $SRC/nfs4; do
-        mount -u -o $1 $m || { echo "can't remount $m $1"; exit 1; }
-    done
+    log=""; mount | grep -q ' on / type ffs (log' && log=,log
+    mount -u -o $1$log / &&
+        mount -u -o $1,posix1eacls $SRC/posix1e && mount -u -o $1,nfs4acls $SRC/nfs4 ||
+        { echo "can't remount the source's file systems $1"; exit 1; }
 }
 atimes noatime
 listings $SRC /tmp/bko-rt.before
-times $SRC /tmp/bko-rt.before
+times_of $SRC /tmp/bko-rt.before
 bko_init || { echo "INIT FAILED"; exit 1; }
 # A backup that fails may still have saved a snapshot (restic's exit 3: a
 # file it couldn't read): what it holds is restored all the same.
@@ -205,7 +208,7 @@ echo "== restore"
 bko_restore "latest:$SRC" $DST; status=$?
 echo "exit $status"
 [ $status -eq 0 ] || failed="$failed; restore"
-times $DST /tmp/bko-rt.after
+times_of $DST /tmp/bko-rt.after
 listings $DST /tmp/bko-rt.after
 t="mtree: type, owner, group, links, size, mtime, symlink target, SHA-256"
 echo "== $t"

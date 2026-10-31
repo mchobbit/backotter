@@ -6,9 +6,10 @@
 # and two FFSv2ea images mounted inside it, one with POSIX.1e ACLs and one
 # with NFSv4 ACLs (extended attributes in both namespaces); the restore
 # target gets the same two mounts.  Compared: mtree (type, owner, links,
-# size, mtime, symlink target, SHA-256), modes, file flags, symlink modes,
-# birth times, ACLs, and extended attributes of each namespace, each on its
-# own, so that what a tool doesn't keep shows up as just that.
+# size, mtime to the microsecond, symlink target, SHA-256), modes, file
+# flags, symlink modes, atimes and mtimes to the nanosecond, birth times,
+# ACLs, and extended attributes of each namespace, each on its own, so that
+# what a tool doesn't keep shows up as just that.
 #
 # Usage: roundtrip.sh BACKUP [RESTORE]   (as root, in a throwaway guest:
 #                                         kern.securelevel <= 0, or schg and
@@ -66,6 +67,13 @@ common() {
     for p in born born-dir; do touch -t 200101010101 $p; touch -t 201001010101 $p; done
     touch -h -t 200101010101 born-symlink; touch -h -t 201001010101 born-symlink
     touch -t 199001010101 unborn
+    # An atime apart from the mtime, to the nanosecond: a file, a directory
+    # and a symlink.
+    echo atime >atime-ns; mkdir atime-ns-dir; ln -s atime-ns atime-ns-symlink
+    touch -d 2004-04-04T04:04:04.444444444 atime-ns atime-ns-dir
+    touch -h -d 2004-04-04T04:04:04.444444444 atime-ns-symlink
+    touch -a -d 2003-03-03T03:03:03.333333333 atime-ns atime-ns-dir
+    touch -h -a -d 2003-03-03T03:03:03.333333333 atime-ns-symlink
 }
 # File flags, last: most of them stop any change afterwards.
 flags() {
@@ -119,11 +127,12 @@ echo acl >acl-file; setfacl -m u:1001:rwx::allow,g:5678:w::deny acl-file
 mkdir acl-dir; setfacl -m u:1001:rx:fd:allow acl-dir
 echo inherited >acl-dir/inherited
 for d in $SRC $SRC/posix1e $SRC/nfs4; do flags $d; done
-touch -d 2001-02-03T04:05:06 $SRC/posix1e $SRC/nfs4 $SRC
+touch -d 2001-02-03T04:05:06.000000006 $SRC/posix1e $SRC/nfs4 $SRC
 
 # The listings compared, one file each, for the tree below $1.
 listings() {  # DIR OUT-PREFIX
     cd "$1" || exit 1
+    find . | sort >$2.names
     # mtree compares symlink modes too: those are a check of their own.
     mtree -c -p . -k type,uid,gid,nlink,size,time,link,sha256 >$2.mtree
     find . ! -type l -exec stat -f '%N %Mp%Lp' {} + | sort >$2.modes
@@ -163,7 +172,24 @@ check() {  # TITLE KIND: compare before.KIND with after.KIND
     fi
 }
 
+# Atimes and mtimes to the nanosecond (mtree compares mtimes to the
+# microsecond), name by name from the source's list: looking a name up
+# moves no atime, reading a file or listing a directory does.  The source's
+# are taken with its file systems mounted noatime, from the listings
+# through the backup; but NetBSD drops the atimes utimensat(2) sets on one
+# mounted noatime too, so the restore has atimes on, and the restored
+# times are taken before anything reads the tree.
+times() {  # DIR OUT-PREFIX
+    (cd "$1" && tr '\n' '\0' </tmp/bko-rt.before.names | xargs -0 stat -f '%N %Fa %Fm' | sort >$2.times)
+}
+atimes() {  # noatime|atime: remount the source's file systems so
+    for m in / $SRC/posix1e $SRC/nfs4; do
+        mount -u -o $1 $m || { echo "can't remount $m $1"; exit 1; }
+    done
+}
+atimes noatime
 listings $SRC /tmp/bko-rt.before
+times $SRC /tmp/bko-rt.before
 bko_init || { echo "INIT FAILED"; exit 1; }
 # A backup that fails may still have saved a snapshot (restic's exit 3: a
 # file it couldn't read): what it holds is restored all the same.
@@ -171,6 +197,7 @@ echo "== backup"
 bko_backup $SRC; status=$?
 echo "exit $status"
 [ $status -eq 0 ] || failed="$failed; backup"
+atimes atime
 mkdir -p $DST
 ea_mount $DST/posix1e posix1eacls
 ea_mount $DST/nfs4 nfs4acls
@@ -178,6 +205,7 @@ echo "== restore"
 bko_restore "latest:$SRC" $DST; status=$?
 echo "exit $status"
 [ $status -eq 0 ] || failed="$failed; restore"
+times $DST /tmp/bko-rt.after
 listings $DST /tmp/bko-rt.after
 t="mtree: type, owner, group, links, size, mtime, symlink target, SHA-256"
 echo "== $t"
@@ -195,6 +223,7 @@ else
     failed="$failed; $t"
 fi
 check "symlink modes" symlink-modes
+check "atime and mtime to the nanosecond" times
 check "birth times, min(birth, mtime) (unix.birthtime)" birth
 check "ACLs (netbsd.acl_*)" acls
 check "user extended attributes" extattrs-user

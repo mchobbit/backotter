@@ -35,6 +35,14 @@ bko_restore() {
 mkdir -p $SRC
 sh "$here/torture.sh" $SRC
 kind=$(df -T $SRC | awk 'NR == 2 { print $2 }')
+# Reading a file or directory must not move its atime, here or in the
+# backup: atimes are compared to the nanosecond.  freebsd15's ZFS has atime
+# off already; UFS has it on.
+if [ $kind = zfs ]; then
+    zfs set atime=off "$(df $SRC | awk 'NR == 2 { print $1 }')"
+else
+    mount -u -o noatime "$(df $SRC | awk 'NR == 2 { print $6 }')"
+fi
 sh "$here/fsmeta.sh" $SRC $OUT/before
 failed=""
 bko_init || { echo "INIT FAILED"; exit 1; }
@@ -52,11 +60,23 @@ sh "$here/fsmeta.sh" $DST $OUT/after
 t="mtree: type, owner, group, mode, flags, links, size, mtime, symlink target, SHA-256"
 echo "== $t"
 (cd $DST && mtree -f $OUT/before/spec -X $OUT/before/mtree-exclude) && echo identical || failed="$failed; $t"
+# dos-noarchive (torture.sh) on its own: on ZFS, uarch cleared and nothing
+# else set.
+for d in before after; do
+    grep -v '/dos-noarchive ' $OUT/$d/flags.txt >$OUT/$d/flags-but-noarchive.txt
+    grep '/dos-noarchive ' $OUT/$d/flags.txt >$OUT/$d/noarchive.txt
+done
 # On ZFS, compression rather than holes decides what a file allocates.
-checks="acls extattrs hardlinks births"
+checks="flags-but-noarchive noarchive times acls extattrs hardlinks births"
 [ $kind = ufs ] && checks="$checks sparse"
 for f in $checks; do
-    t=$f; [ $f = births ] && t="births, min(birth, mtime) (unix.birthtime)"
+    case $f in
+        births) t="births, min(birth, mtime) (unix.birthtime)" ;;
+        flags-but-noarchive) t="file flags, stat %Xf (freebsd.file_flags)" ;;
+        noarchive) t="uarch cleared and nothing else (dos-noarchive, SPEC2 3)" ;;
+        times) t="atime and mtime to the nanosecond" ;;
+        *) t=$f ;;
+    esac
     echo "== $t"
     if diff $OUT/before/$f.txt $OUT/after/$f.txt; then
         echo "identical ($(wc -l <$OUT/before/$f.txt | tr -d ' ') lines)"

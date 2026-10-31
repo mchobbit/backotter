@@ -56,11 +56,17 @@ touch "$T/name with spaces" "$T/$(printf '\377\376')-not-utf8" "$T/$(printf '%02
 deep=$T/deep; i=1; while [ $i -le 40 ]; do deep=$deep/level$i; i=$((i + 1)); done
 mkdir -p "$deep"; touch "$deep/bottom"
 
-# Timestamps: odd nanoseconds, far future, a symlink's own.
+# Timestamps: odd nanoseconds, far future, a symlink's own, and atimes apart
+# from the mtimes (on a file, a directory and a symlink), to the nanosecond.
 touch "$T/empty"; mkdir -p "$T/empty-dir"
 touch -d 2001-02-03T04:05:06.123456789 "$T/nanoseconds"
 touch -d 2100-01-01T12:00:00.987654321 "$T/future"
-touch -h -d 2002-02-02T02:02:02 "$T/symlink"
+touch -h -d 2002-02-02T02:02:02.000000007 "$T/symlink"
+echo atime >"$T/atime-ns"; mkdir -p "$T/atime-ns-dir"; ln -sfh atime-ns "$T/atime-ns-symlink"
+touch -d 2004-04-04T04:04:04.444444444 "$T/atime-ns" "$T/atime-ns-dir"
+touch -h -d 2004-04-04T04:04:04.444444444 "$T/atime-ns-symlink"
+touch -a -d 2003-03-03T03:03:03.333333333 "$T/atime-ns" "$T/atime-ns-dir"
+touch -h -a -d 2003-03-03T03:03:03.333333333 "$T/atime-ns-symlink"
 
 # Birth times.  No system call sets one, but the kernel lowers it to an
 # mtime set earlier than it: these were born in 2001 and last changed in
@@ -72,10 +78,23 @@ touch -h -t 200101010101 "$T/born-symlink"; touch -h -t 201001010101 "$T/born-sy
 touch -d 2001-01-01T01:01:01.123456789 "$T/born-ns"; touch -d 2010-01-01T01:01:01.987654321 "$T/born-ns"
 echo unborn >"$T/unborn"; touch -t 199001010101 "$T/unborn"
 
-# File flags, last of all: most of them stop any change afterwards.
-for f in uchg uappnd uunlnk nodump hidden schg sappnd sunlnk; do
+# File flags, last of all: most of them stop any change afterwards.  ZFS
+# refuses uchg, uappnd, uunlnk, arch (EOPNOTSUPP) and reparse (EPERM); it
+# keeps the DOS-style ones (hidden, system, rdonly, offline, sparse, uarch),
+# and gives every new file and directory uarch.  UFS takes them all.
+for f in uchg uappnd uunlnk nodump hidden system rdonly offline sparse uarch arch schg sappnd sunlnk; do
     echo $f >"$T/flag-$f"; try chflags $f "$T/flag-$f"
 done
+echo hidden,system >"$T/dos-hidden-system"; try chflags hidden,system "$T/dos-hidden-system"
+echo offline,sparse >"$T/dos-offline-sparse"; try chflags offline,sparse "$T/dos-offline-sparse"
+mkdir -p "$T/dos-hidden-dir"; try chflags hidden "$T/dos-hidden-dir"
+echo hidden,schg >"$T/dos-hidden-schg"; try chflags hidden,schg "$T/dos-hidden-schg"
+# On ZFS a file with nothing but uarch cleared, as a Windows backup over SMB
+# leaves one: a restore that writes it gets uarch back, unless it clears it
+# again.  Nothing may touch it afterwards: on ZFS, setting its times sets
+# uarch again.  (fsmeta.sh leaves it out of mtree's spec; roundtrip.sh
+# compares its flags on their own.)
+echo noarchive >"$T/dos-noarchive"; try chflags nouarch "$T/dos-noarchive"
 mkdir -p "$T/schg-dir"; echo inside >"$T/schg-dir/inside"
 try chflags schg "$T/hardlink-a"
 try chflags -h schg "$T/symlink"

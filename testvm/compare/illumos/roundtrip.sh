@@ -2,9 +2,10 @@
 # Round trip of illumos file metadata through restic, or BackOtter's rustic:
 # make a tree of hard-to-preserve files, back it up, restore it as
 # "latest:SRC" into another directory on the same ZFS pool, and compare the
-# two name by name: type, owner, mode, links, size, mtime, symlink target,
-# content, NFSv4 ACL, system attributes (chmod S+v...) and extended
-# attributes (named attribute files, runat(1)).  Then, each on its own:
+# two name by name: type, owner, mode, links, size, atime and mtime (to the
+# nanosecond), symlink target, content, NFSv4 ACL, system attributes
+# (chmod S+v...) and extended attributes (named attribute files, runat(1)).
+# Then, each on its own:
 # creation times (crtime), the attribute files' own owner, mode, times and
 # ACL, owners and ACL entries that are Windows SIDs (idmap's ephemeral ids),
 # system attributes cleared from a new file's default (noarchive,
@@ -46,6 +47,10 @@ bko_restore() {
 # SID owners need idmap: it maps a SID to an ephemeral id (> 2147483647)
 # and back.
 svcadm enable -s idmap || exit 1
+# Reading a file or a directory must not move its atime, here or in the
+# backup: atimes are compared to the nanosecond.  (In the fresh boot of
+# --again too: the guest is a throwaway copy, and the property goes with it.)
+zfs set atime=off "$(zfs list -H -o name /root)" || exit 1
 sid_uid() { idmap show -c sid:$1 uid | sed -n 's/.* -> uid:\([0-9]*\)$/\1/p'; }
 sid_gid() { idmap show -c sid:$1 gid | sed -n 's/.* -> gid:\([0-9]*\)$/\1/p'; }
 
@@ -163,7 +168,14 @@ echo own >project-file; zfs project -p 78 project-file
 # Timestamps: nanoseconds, far future, a symlink's own.
 touch -d '2001-02-03 04:05:06.123456789' nanoseconds
 touch -d '2037-12-31 12:00:00' future     # GNU touch here stops short of 2038
-touch -h -d '2002-02-02 02:02:02' symlink
+touch -h -d '2002-02-02 02:02:02.000000007' symlink
+# An atime apart from the mtime, to the nanosecond: a file, a directory and
+# a symlink.
+echo atime >atime-ns; mkdir atime-ns-dir; ln -s atime-ns atime-ns-symlink
+touch -d '2004-04-04 04:04:04.444444444' atime-ns atime-ns-dir
+touch -h -d '2004-04-04 04:04:04.444444444' atime-ns-symlink
+touch -a -d '2003-03-03 03:03:03.333333333' atime-ns atime-ns-dir
+touch -h -a -d '2003-03-03 03:03:03.333333333' atime-ns-symlink
 
 # Creation times: 2001 on a file and a directory, 2030 (later than the
 # mtime: ZFS takes any), and an old one on a file made immutable below.
@@ -187,7 +199,7 @@ fi
 listing() {  # every name below $1, one block each, but sid/ and defaults/
     (cd "$1" && find . | sort | while IFS= read -r p; do
         case $p in ./sid/*|./defaults/*) continue ;; esac
-        stat -c '%n %F uid=%u gid=%g mode=%a links=%h size=%s mtime=%.9Y' "$p"
+        stat -c '%n %F uid=%u gid=%g mode=%a links=%h size=%s atime=%.9X mtime=%.9Y' "$p"
         [ -L "$p" ] && echo "  -> $(readlink "$p")" && continue
         [ -f "$p" ] && echo "  sha256 $(digest -a sha256 "$p")"
         /usr/bin/ls -dV "$p" | tail -n +2 | sed 's/^ */  acl /'

@@ -1,9 +1,10 @@
 #!/bin/sh
 # Round trip of OpenBSD's file metadata through restic, or BackOtter's
 # rustic: make a tree of hard-to-preserve files, back it up, restore it as
-# "latest:SRC" into another directory, and compare the two with mtree(8),
-# with the modes (of symlinks apart) on their own.  OpenBSD has no ACLs or
-# extended attributes; what it has is file flags.
+# "latest:SRC" into another directory, and compare the two with mtree(8)
+# (OpenBSD's compares mtimes to the nanosecond), with the modes (of symlinks
+# apart) and the atimes on their own.  OpenBSD has no ACLs or extended
+# attributes; what it has is file flags.
 #
 # Usage: roundtrip.sh BACKUP [RESTORE]   (as root, in a throwaway guest: at
 #                                         securelevel 1, schg and sappnd
@@ -33,6 +34,9 @@ bko_restore() {
 }
 bko_exclude() { if is_rustic $R; then echo "--glob !$(basename "$1")"; else echo "--exclude $1"; fi; }
 
+# Reading a file or a directory must not move its atime, here or in the
+# backup: atimes are compared to the nanosecond.
+mount -u -o noatime / || { echo "can't remount / noatime"; exit 1; }
 mkdir -p $SRC && cd $SRC || exit 1
 touch no-such-user; chown 1234:5678 no-such-user
 touch setuid; chown 1234:5678 setuid; chmod 4755 setuid
@@ -51,15 +55,23 @@ echo middle | dd of=sparse bs=1m seek=512 conv=notrunc 2>/dev/null
 touch "name with spaces" "$(printf '\377\376')-not-utf8"
 touch -d 2001-02-03T04:05:06.123456789 nanoseconds
 touch -d 2100-01-01T12:00:00 future
+# An atime apart from the mtime, to the nanosecond: a file, a directory and
+# a symlink.
+echo atime >atime-ns; mkdir atime-ns-dir; ln -s atime-ns atime-ns-symlink
+touch -d 2004-04-04T04:04:04.444444444 atime-ns atime-ns-dir
+touch -h -d 2004-04-04T04:04:04.444444444 atime-ns-symlink
+touch -a -d 2003-03-03T03:03:03.333333333 atime-ns atime-ns-dir
+touch -h -a -d 2003-03-03T03:03:03.333333333 atime-ns-symlink
 # File flags last: most of them stop any change afterwards.
 for f in uchg uappnd nodump arch schg sappnd; do echo $f >flag-$f; try chflags $f flag-$f; done
 mkdir uchg-dir; echo inside >uchg-dir/inside; chflags uchg uchg-dir
 try chflags schg hardlink-a
 try chflags -h uchg symlink
-touch -d 2001-02-03T04:05:06 $SRC
+touch -d 2001-02-03T04:05:06.000000006 $SRC
 
 listings() {  # DIR OUT-PREFIX: the listings compared, one file each
     cd "$1" || exit 1
+    find . -exec stat -f '%N %Fa %Fm' {} + | sort >$2.times
     find . ! -type l -exec stat -f '%N %Mp%Lp' {} + | sort >$2.modes
     find . -type l -exec stat -f '%N %Lp' {} + | sort >$2.symlink-modes
 }
@@ -93,6 +105,7 @@ echo "== $t"
 mtree -f /tmp/bko-rt.spec -p $DST && echo identical || failed="$failed; $t"
 check "modes (not symlinks)" modes
 check "symlink modes" symlink-modes
+check "atime and mtime to the nanosecond" times
 t="hard links (one inode for all three)"
 echo "== $t"
 n=$(ls -i $DST/hardlink-a $DST/hardlink-b $DST/sub/hardlink-c | awk '{print $1}' | sort -u | wc -l | tr -d ' ')

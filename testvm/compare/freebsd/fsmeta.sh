@@ -2,8 +2,15 @@
 # Record the metadata of everything below ROOT, for comparing a FreeBSD
 # system before and after a restore (FreeBSD's base system has no Python for
 # ../fsmeta.py).  Into OUTDIR:
+#   times.txt      every name's atime and mtime, to the nanosecond (mtree
+#                  compares mtimes to the microsecond only); first, before
+#                  anything below reads the files, though on a file system
+#                  mounted with atimes on, finding the names moves the
+#                  directories' atimes: record on one mounted noatime
 #   spec           mtree(8) spec: type, owner, group, mode, file flags, link
-#                  count, size, mtime, symlink target, SHA-256
+#                  count, size, mtime, symlink target, SHA-256; but for
+#                  dos-noarchive (torture.sh), which is compared on its own
+#   flags.txt      every name's file flags, as stat -f %Xf shows them (hex)
 #   acls.txt       getfacl(1) of every file but symlinks, then the default
 #                  ACL (getfacl -d) of every directory where there are
 #                  POSIX.1e ACLs
@@ -25,9 +32,13 @@ set -eu
 out=$(mkdir -p "$2" && cd "$2" && pwd)
 cd "$1"
 
-echo .sujournal >"$out/mtree-exclude"
+find . ! -name .sujournal -print0 | xargs -0 stat -f '%N %Fa %Fm' | sort >"$out/times.txt"
+
+printf '%s\n' .sujournal dos-noarchive >"$out/mtree-exclude"
 mtree -c -n -p . -X "$out/mtree-exclude" \
     -k type,uid,gid,mode,flags,nlink,size,time,link,sha256digest >"$out/spec"
+
+find . ! -name .sujournal -print0 | xargs -0 stat -f '%N %Xf' | sort >"$out/flags.txt"
 
 find . ! -type l -print0 | sort -z | xargs -0 getfacl >"$out/acls.txt" 2>&1 || true
 # NFSv4 ACLs have no default ACL: their inheritance flags are in the above.

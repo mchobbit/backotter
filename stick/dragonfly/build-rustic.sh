@@ -32,7 +32,8 @@
 #
 # Everything it sets up is cached in $BKO_WORK/dragonfly-cross (default
 # ~/backotter-work/dragonfly-cross; DFLY_CACHE names another, e.g. for a
-# session of its own), so later runs only rebuild what changed:
+# session of its own; one build at a time in each, the next waits for its
+# lock), so later runs only rebuild what changed:
 # the toolchain's clang and lld if the host has none, the sysroot, the
 # sources, and cargo's target directory (std included).  rm -rf it to start
 # over, e.g. after the dragonfly6 guest is updated (the sysroot is refreshed
@@ -76,6 +77,10 @@ if [[ -n ${SRC:-} ]]; then
         die "SRC=$SRC has no rustic/ and rustic_core/ (with vendor/walkdir)"
 fi
 mkdir -p "$CACHE"
+# One build at a time per cache: two would share its src/ and target/, and
+# each could ship the other's binary.
+exec {cache_lock}>"$CACHE/.lock"
+flock -n "$cache_lock" || { echo "build-rustic: waiting for the other build in $CACHE" >&2; flock "$cache_lock"; }
 # Not in /tmp: cargo looks for rustic's workspace in its parent directories,
 # and takes any Cargo.toml it finds there.
 work=$(mktemp -d "$CACHE/work.XXXXXX")

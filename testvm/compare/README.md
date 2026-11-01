@@ -22,7 +22,8 @@ Here, in `testvm/compare/`:
 | `guest-run.sh GUEST [PORT] COMMAND [FILE...]` | A one-off command in a throwaway copy of a guest |
 | `rt-common.sh` | What the guests' round trips, `nonroot-inner.sh` and `sparse-rt.sh` share: a snapshot's nodes decoded (with restic's `cat blob`; `RT_CONTENT` keeps the content blob IDs; scratch files in `RT_TMP`), two snapshots compared, a restored tree changed for a restore over it, a socket made (`rt_mksock`: python3, perl, cc or `nc -lU`) |
 | `run-all.sh [--host H] [--platforms LIST] [--only RE] [--dry-run] BIN_DIR LOG_DIR` | A whole test round on one host, unattended (below): checks the binaries, runs every platform's scripts at once within the host's guest and job limits, and writes the verdict table, `LOG_DIR/summary.txt` and `summary.json`; exit 0 only if every step passes |
-| `verdict.py` | `run-all.sh`'s verdicts: each script's PASS/FAIL lines, `fs_roundtrip.py`'s `results.json` and `nonroot-rt.sh`'s summary judged into table rows (the accepted differences are in its header); `verdict.py judge KIND LOG` judges one log by hand |
+| `verdict.py` | `run-all.sh`'s verdicts: each script's PASS/FAIL lines, `fs_roundtrip.py`'s `results.json` (against `expected-coverage.json`: what `torture.sh` covered and skipped per file system in round 9; `verdict.py expect` remakes it) and `nonroot-rt.sh`'s full log judged into table rows (the accepted differences are in its header); `verdict.py judge KIND LOG` judges one log by hand |
+| `guest-slot.sh` | Host-wide guest slots, which `run-all.sh` (Cinqcent) and `stick/build-round.sh`'s guest builds both take, so that together they stay within the host's limit |
 | `affected.sh [--explain] [--restic A..B] [--rustic-core A..B] [--rustic A..B] [--harness A..B]` | The platforms a fix round must test again, from what changed in the forks and the harness: OS-specific files (Go build constraints and file names, `osattrs/OS.rs`, `OS/` scripts) for their OS, anything else for all, tests and docs for none |
 
 In `stick/`, the builds of rustic-bko, which tests and images share:
@@ -49,18 +50,25 @@ commit files), one command runs that host's share of the round and prints a
 table; an agent reads only the rows that failed, and their logs:
 
     cd ~/backotter-work
-    OLD_BIN=$PWD/round9/bin EXPECT_RESTIC_COMMIT=... EXPECT_RUSTIC_COMMIT=... \
-        EXPECT_RUSTIC_CORE_COMMIT=... testvm/compare/run-all.sh round10/bin round10/logs
+    OLD_BIN=$PWD/round9/bin EXPECT_RESTIC_COMMIT=... EXPECT_RESTIC_DIGEST=... \
+        EXPECT_RUSTIC_COMMIT=... EXPECT_RUSTIC_CORE_COMMIT=... \
+        testvm/compare/run-all.sh round10/bin round10/logs
 
-It refuses to run binaries that aren't the expected commits or don't agree
-with each other.  The platforms, their steps and ports (`PORT_BASE` + 10-19)
-are round 9's: Chopin linux, sparse, zfsguests, dragonfly, openbsd_illumos;
-Cinqcent freebsd, netbsd, at most three guests there (`MAX_GUESTS`), counting
-every QEMU of ours on 2900-2999.  A fix round runs only what its fixes touch,
-on both hosts (each skips the other's platforms):
+The `EXPECT_*` line is the last line `stick/build-round.sh` prints (the
+Mac's HEADs); without it run-all.sh refuses, as it does for binaries that
+aren't those commits or don't agree with each other, and without `OLD_BIN`
+(`OLD_BIN=none`: no SPEC3 2 identity, a note).  The platforms, their steps
+and ports (`PORT_BASE` + 10-19) are round 9's: Chopin linux, sparse,
+zfsguests, dragonfly, openbsd_illumos; Cinqcent freebsd, netbsd, at most
+three guests there (`MAX_GUESTS`), in slots its builds take too, counting
+every other QEMU of ours on 2900-2999.  A file system or step that can't run
+is a FAIL unless `ALLOW_SKIP` names it.  A fix round runs only what its
+fixes touch, on both hosts (each skips the other's platforms); affected.sh
+runs on the Mac, where the forks' histories are:
 
     P=$(testvm/compare/affected.sh --restic OLD..NEW --rustic-core OLD..NEW --rustic OLD..NEW)
-    testvm/compare/run-all.sh --platforms "$P" round11/bin round11/logs
+    ssh m@chopin.local "cd backotter-work && OLD_BIN=\$PWD/round10/bin EXPECT_...=... \
+        testvm/compare/run-all.sh --platforms '$P' round11/bin round11/logs"
 
 `--dry-run` prints every step's command and runs none.
 

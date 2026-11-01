@@ -1,0 +1,392 @@
+{
+ "bcachefs": {
+  "coverage": [
+   "acl",
+   "append",
+   "atime != mtime",
+   "blockdev",
+   "capability",
+   "chardev",
+   "dir",
+   "fifo",
+   "file",
+   "hard-linked",
+   "immutable",
+   "nodump",
+   "other-xattr",
+   "setuid/setgid/sticky",
+   "socket",
+   "symlink",
+   "trusted-xattr",
+   "user-xattr",
+   "with holes"
+  ],
+  "skipped": [
+   "extras: skipped (unsupported here): casefold subdirectories",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-immutable",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-nodump",
+   "torture: skipped (unsupported here): ZFS DOS attributes",
+   "torture: skipped (unsupported here): chattr +C TORTURE/nocow",
+   "torture: skipped (unsupported here): chattr +C TORTURE/nocow-dir",
+   "torture: skipped (unsupported here): chattr +F TORTURE/casefold-dir",
+   "torture: skipped (unsupported here): chattr +P -p 43 TORTURE/projid-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-zstd",
+   "torture: skipped (unsupported here): setfattr -n user.large -v x... TORTURE/xattr-file"
+  ],
+  "over_skipped": [
+   "over: skipped (unsupported here): chattr +F TORTURE/empty-dir"
+  ]
+ },
+ "btrfs": {
+  "coverage": [
+   "acl",
+   "append",
+   "atime != mtime",
+   "blockdev",
+   "capability",
+   "chardev",
+   "dir",
+   "fifo",
+   "file",
+   "hard-linked",
+   "immutable",
+   "nocow",
+   "nodump",
+   "other-xattr",
+   "setuid/setgid/sticky",
+   "socket",
+   "symlink",
+   "trusted-xattr",
+   "user-xattr",
+   "with holes"
+  ],
+  "skipped": [
+   "extras: skipped (unsupported here): casefold subdirectories",
+   "extras: skipped (unsupported here): chattr -p 44 TORTURE/projid-immutable",
+   "torture: skipped (unsupported here): ZFS DOS attributes",
+   "torture: skipped (unsupported here): chattr +F TORTURE/casefold-dir",
+   "torture: skipped (unsupported here): chattr +P -p 43 TORTURE/projid-dir",
+   "torture: skipped (unsupported here): chattr -p 42 TORTURE/projid-file"
+  ],
+  "over_skipped": [
+   "over: skipped (unsupported here): chattr +F TORTURE/empty-dir",
+   "over: skipped (unsupported here): chattr -p 99 TORTURE/projid-file"
+  ]
+ },
+ "ext4": {
+  "coverage": [
+   "acl",
+   "append",
+   "atime != mtime",
+   "blockdev",
+   "capability",
+   "casefold",
+   "chardev",
+   "dir",
+   "fifo",
+   "file",
+   "hard-linked",
+   "immutable",
+   "nodump",
+   "project ID",
+   "setuid/setgid/sticky",
+   "socket",
+   "symlink",
+   "trusted-xattr",
+   "user-xattr",
+   "with holes"
+  ],
+  "skipped": [
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-immutable",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-nodump",
+   "torture: skipped (unsupported here): ZFS DOS attributes",
+   "torture: skipped (unsupported here): chattr +C TORTURE/nocow",
+   "torture: skipped (unsupported here): chattr +C TORTURE/nocow-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-zstd"
+  ],
+  "over_skipped": []
+ },
+ "f2fs": {
+  "coverage": [
+   "acl",
+   "append",
+   "atime != mtime",
+   "blockdev",
+   "capability",
+   "casefold",
+   "chardev",
+   "dir",
+   "fifo",
+   "file",
+   "hard-linked",
+   "immutable",
+   "nodump",
+   "project ID",
+   "setuid/setgid/sticky",
+   "socket",
+   "symlink",
+   "trusted-xattr",
+   "user-xattr",
+   "with holes"
+  ],
+  "skipped": [
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-immutable",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-nodump",
+   "torture: skipped (not kept here): chattr +C TORTURE/nocow",
+   "torture: skipped (not kept here): chattr +C TORTURE/nocow-dir",
+   "torture: skipped (unsupported here): ZFS DOS attributes",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-zstd"
+  ],
+  "over_skipped": []
+ },
+ "jfs": {
+  "coverage": [
+   "acl",
+   "append",
+   "atime != mtime",
+   "blockdev",
+   "capability",
+   "chardev",
+   "dir",
+   "fifo",
+   "file",
+   "hard-linked",
+   "immutable",
+   "setuid/setgid/sticky",
+   "socket",
+   "symlink",
+   "trusted-xattr",
+   "user-xattr",
+   "with holes"
+  ],
+  "skipped": [
+   "extras: skipped (unsupported here): casefold subdirectories",
+   "extras: skipped (unsupported here): chattr -p 44 TORTURE/projid-immutable",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-immutable",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-nodump",
+   "torture: skipped (not kept here): chattr +C TORTURE/nocow",
+   "torture: skipped (not kept here): chattr +C TORTURE/nocow-dir",
+   "torture: skipped (not kept here): chattr +F TORTURE/casefold-dir",
+   "torture: skipped (not kept here): chattr +d TORTURE/nodump",
+   "torture: skipped (unsupported here): ZFS DOS attributes",
+   "torture: skipped (unsupported here): chattr +P -p 43 TORTURE/projid-dir",
+   "torture: skipped (unsupported here): chattr -p 42 TORTURE/projid-file",
+   "torture: skipped (unsupported here): fallocate",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-zstd"
+  ],
+  "over_skipped": [
+   "over: skipped (unsupported here): chattr -p 99 TORTURE/projid-file",
+   "over: skipped (unsupported here): fallocate -p -o 0 -l 16M TORTURE/preallocated",
+   "over: skipped (unsupported here): fallocate -p -o 0 -l 32M TORTURE/swapfile",
+   "over: skipped (unsupported here): fallocate -p -o 0 -l 4M TORTURE/zeros"
+  ]
+ },
+ "tmpfs": {
+  "coverage": [
+   "acl",
+   "append",
+   "atime != mtime",
+   "blockdev",
+   "capability",
+   "chardev",
+   "dir",
+   "fifo",
+   "file",
+   "hard-linked",
+   "immutable",
+   "nodump",
+   "setuid/setgid/sticky",
+   "socket",
+   "symlink",
+   "trusted-xattr",
+   "user-xattr",
+   "with holes"
+  ],
+  "skipped": [
+   "extras: skipped (unsupported here): casefold subdirectories",
+   "extras: skipped (unsupported here): chattr -p 44 TORTURE/projid-immutable",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-immutable",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-nodump",
+   "torture: skipped (unsupported here): ZFS DOS attributes",
+   "torture: skipped (unsupported here): chattr +C TORTURE/nocow",
+   "torture: skipped (unsupported here): chattr +C TORTURE/nocow-dir",
+   "torture: skipped (unsupported here): chattr +F TORTURE/casefold-dir",
+   "torture: skipped (unsupported here): chattr +P -p 43 TORTURE/projid-dir",
+   "torture: skipped (unsupported here): chattr -p 42 TORTURE/projid-file",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-zstd"
+  ],
+  "over_skipped": [
+   "over: skipped (unsupported here): chattr +F TORTURE/empty-dir",
+   "over: skipped (unsupported here): chattr -p 99 TORTURE/projid-file"
+  ]
+ },
+ "xfs": {
+  "coverage": [
+   "acl",
+   "append",
+   "atime != mtime",
+   "blockdev",
+   "capability",
+   "chardev",
+   "dir",
+   "fifo",
+   "file",
+   "hard-linked",
+   "immutable",
+   "nodump",
+   "project ID",
+   "setuid/setgid/sticky",
+   "socket",
+   "symlink",
+   "trusted-xattr",
+   "user-xattr",
+   "with holes"
+  ],
+  "skipped": [
+   "extras: skipped (unsupported here): casefold subdirectories",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-immutable",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-nodump",
+   "torture: skipped (unsupported here): ZFS DOS attributes",
+   "torture: skipped (unsupported here): chattr +C TORTURE/nocow",
+   "torture: skipped (unsupported here): chattr +C TORTURE/nocow-dir",
+   "torture: skipped (unsupported here): chattr +F TORTURE/casefold-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-zstd"
+  ],
+  "over_skipped": [
+   "over: skipped (unsupported here): chattr +F TORTURE/empty-dir"
+  ]
+ },
+ "zfs": {
+  "coverage": [
+   "acl",
+   "append",
+   "atime != mtime",
+   "blockdev",
+   "capability",
+   "chardev",
+   "dir",
+   "dos hidden",
+   "dos noarchive",
+   "dos nounlink",
+   "dos offline",
+   "dos readonly",
+   "dos sparse",
+   "dos system",
+   "fifo",
+   "file",
+   "hard-linked",
+   "immutable",
+   "nodump",
+   "project ID",
+   "setuid/setgid/sticky",
+   "socket",
+   "symlink",
+   "trusted-xattr",
+   "user-xattr",
+   "with holes"
+  ],
+  "skipped": [
+   "extras: skipped (unsupported here): casefold subdirectories",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-immutable",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-nodump",
+   "torture: skipped (unsupported here): chattr +C TORTURE/nocow",
+   "torture: skipped (unsupported here): chattr +C TORTURE/nocow-dir",
+   "torture: skipped (unsupported here): chattr +F TORTURE/casefold-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-zstd"
+  ],
+  "over_skipped": [
+   "over: skipped (unsupported here): chattr +F TORTURE/empty-dir"
+  ]
+ },
+ "zfs onto ext4": {
+  "coverage": [
+   "acl",
+   "append",
+   "atime != mtime",
+   "blockdev",
+   "capability",
+   "chardev",
+   "dir",
+   "dos hidden",
+   "dos noarchive",
+   "dos nounlink",
+   "dos offline",
+   "dos readonly",
+   "dos sparse",
+   "dos system",
+   "fifo",
+   "file",
+   "hard-linked",
+   "immutable",
+   "nodump",
+   "project ID",
+   "setuid/setgid/sticky",
+   "socket",
+   "symlink",
+   "trusted-xattr",
+   "user-xattr",
+   "with holes"
+  ],
+  "skipped": [
+   "extras: skipped (unsupported here): casefold subdirectories",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-immutable",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-nodump",
+   "torture: skipped (unsupported here): chattr +C TORTURE/nocow",
+   "torture: skipped (unsupported here): chattr +C TORTURE/nocow-dir",
+   "torture: skipped (unsupported here): chattr +F TORTURE/casefold-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-zstd"
+  ],
+  "over_skipped": []
+ },
+ "zfs-ds": {
+  "coverage": [
+   "acl",
+   "append",
+   "atime != mtime",
+   "blockdev",
+   "capability",
+   "chardev",
+   "dir",
+   "dos hidden",
+   "dos noarchive",
+   "dos nounlink",
+   "dos offline",
+   "dos readonly",
+   "dos sparse",
+   "dos system",
+   "fifo",
+   "file",
+   "hard-linked",
+   "immutable",
+   "nodump",
+   "project ID",
+   "setuid/setgid/sticky",
+   "socket",
+   "symlink",
+   "trusted-xattr",
+   "user-xattr",
+   "with holes"
+  ],
+  "skipped": [
+   "extras: skipped (unsupported here): casefold subdirectories",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-immutable",
+   "extras: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-nodump",
+   "torture: skipped (unsupported here): chattr +C TORTURE/nocow",
+   "torture: skipped (unsupported here): chattr +C TORTURE/nocow-dir",
+   "torture: skipped (unsupported here): chattr +F TORTURE/casefold-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-dir",
+   "torture: skipped (unsupported here): setfattr -n btrfs.compression -v zstd TORTURE/compress-zstd"
+  ],
+  "over_skipped": [
+   "over: skipped (unsupported here): chattr +F TORTURE/empty-dir"
+  ]
+ }
+}

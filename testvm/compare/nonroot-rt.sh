@@ -18,7 +18,9 @@
 # Usage: nonroot-rt.sh linux          as root on the host: a ZFS pool on a
 #                                     file (bkotest-nr, or $NONROOT_POOL)
 #                                     and an ext4 loop image, both made and
-#                                     destroyed here
+#                                     destroyed here, mounted on
+#                                     /mnt/bkonr-zfs and -ext4 (NONROOT_MNT
+#                                     replaces /mnt/bkonr)
 #        nonroot-rt.sh GUEST [PORT]   in a throwaway (--ram) copy of GUEST,
 #                                     with its SSH on PORT (default 2711):
 #           freebsd15       /bkonr a ZFS file system of its own
@@ -40,9 +42,9 @@
 # testvm/, as for compare.py, and so the same when run as root.  Writes
 # ~/backotter-work/nonroot/TARGET.log (and linux-FS.log; NONROOT_LOGS
 # replaces ~/backotter-work/nonroot); the linux images live in
-# ~/backotter-work/nonroot/work while it runs.  One linux run at a time:
-# the pool's name and the mount points (/mnt/bkonr-ext4, /mnt/bkonr-zfs)
-# are the host's.
+# ~/backotter-work/nonroot/work while it runs.  One linux run at a time
+# per NONROOT_POOL and NONROOT_MNT: it starts by removing what a run with
+# the same names left.
 #
 # Needs: linux: root, ZFS (zpool), mkfs.ext4, python3.  GUEST:
 # qemu-system-x86_64 with KVM, testvm/vm-run, the guest in
@@ -69,23 +71,23 @@ mkdir -p "$logs"
 if [[ $target == linux ]]; then
     [[ $(id -u) == 0 ]] || die "linux needs root"
     binaries linux
-    work=$logs/work pool=${NONROOT_POOL:-bkotest-nr}
+    work=$logs/work pool=${NONROOT_POOL:-bkotest-nr} mnt=${NONROOT_MNT:-/mnt/bkonr}
     cleanup() {
-        umount /mnt/bkonr-ext4 2>/dev/null
-        zpool destroy -f $pool 2>/dev/null
-        rm -rf "$work" /mnt/bkonr-ext4 /mnt/bkonr-zfs
+        umount "$mnt-ext4" 2>/dev/null
+        zpool destroy -f "$pool" 2>/dev/null
+        rm -rf "$work" "$mnt-ext4" "$mnt-zfs"
         # The logs are the work directory owner's, as the rest of it.
         chown -R --reference="$WORK" "$logs"
     }
     cleanup; trap cleanup EXIT
-    mkdir -p "$work" /mnt/bkonr-ext4
+    mkdir -p "$work" "$mnt-ext4"
     truncate -s 1G "$work/zfs.img"
-    zpool create -f -O mountpoint=/mnt/bkonr-zfs -O atime=off -O acltype=posix -O xattr=sa \
-        $pool "$work/zfs.img" || exit 1
+    zpool create -f -O mountpoint="$mnt-zfs" -O atime=off -O acltype=posix -O xattr=sa \
+        "$pool" "$work/zfs.img" || exit 1
     truncate -s 512M "$work/ext4.img"
-    mkfs.ext4 -q "$work/ext4.img" && mount -o loop,noatime "$work/ext4.img" /mnt/bkonr-ext4 || exit 1
+    mkfs.ext4 -q "$work/ext4.img" && mount -o loop,noatime "$work/ext4.img" "$mnt-ext4" || exit 1
     for fs in zfs ext4; do
-        d=/mnt/bkonr-$fs/t
+        d=$mnt-$fs/t
         mkdir -p $d/bin
         install -m 755 "$restic" $d/bin/restic-bko; install -m 755 "$rustic" $d/bin/rustic-bko
         echo "######## linux $fs: $($d/bin/restic-bko version | head -n 1), $($d/bin/rustic-bko --version)"

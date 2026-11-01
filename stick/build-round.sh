@@ -13,19 +13,24 @@
 #
 # The Mac part checks that ~/git/restic, rustic_core and rustic (BKO_GIT) are
 # clean, takes their HEADs and source digests (restic's own
-# build-backotter.sh --source-digest; every file but .git, target and dist
-# for the other two), syncs the trees to each host's SRC, and runs the host
-# parts there in parallel with the commits and digests: a host builds nothing
-# from a copy whose digests differ (round 7 shipped a build from a stale
-# copy).  Binaries go to $BKO_ROUNDS/roundROUND/bin/OS/ on the host
+# build-backotter.sh --source-digest, which its commit file records, and,
+# as for the other two, every file but .git, target and dist: the
+# --source-digest leaves out the assembly files OpenBSD's and illumos'
+# builds take), syncs the trees to each host's SRC, and runs the host parts
+# there in parallel with the commits and digests: a host builds nothing from
+# a copy whose digests differ (round 7 shipped a build from a stale copy).
+# It ends with the table and the EXPECT_* line for run-all.sh.  Binaries go to $BKO_ROUNDS/roundROUND/bin/OS/ on the host
 # (BKO_ROUNDS: ~/backotter-work), logs to roundROUND/logs/.  Chopin then
 # pushes what it built to Cinqcent, and --pull brings Cinqcent's back, so
 # both hosts end with the whole set and the same SHA256SUMS.
 #
 # LIST (comma-separated): restic linux dragonfly (Chopin's), freebsd netbsd
 # openbsd illumos (Cinqcent's).  Cinqcent builds in two lanes, freebsd then
-# netbsd and openbsd then illumos: two guests at once, of the three it allows
-# us (BKO_GUEST_LANES=1: one, when the round's tests hold the others).
+# netbsd and openbsd then illumos (BKO_GUEST_LANES=1: one); each guest first
+# takes one of the host-wide slots run-all.sh's guests take too
+# (testvm/compare/guest-slot.sh: BKO_GUEST_MAX, 3, on BKO_GUEST_RANGE,
+# 2900-2999, counting QEMU of ours there started without one), so builds
+# and tests together never run more than three.
 # illumos' binaries also go to bin/omnios (the harness takes either).
 # --dry-run syncs and checks the sources and prints what would be built or
 # reused, but builds and boots nothing.
@@ -39,13 +44,15 @@
 # later round with the same digest copies it from there instead of building,
 # says so in the table and log, and adds a "reused" line to its commit file
 # (whose first lines name this round's commits); OS/NAME.digest beside each
-# binary lists the inputs.  BKO_REUSE=0 builds everything anyway.  Linux
+# binary lists the inputs (restic's: every file of its tree, not only what
+# --source-digest hashes).  BKO_REUSE=0 builds everything anyway.  Linux
 # rustic builds in a fixed tree per target, $BKO_BUILD_CACHE/cargo/TARGET,
 # whose target/ stays warm: changed files arrive with new mtimes (rsync
 # --checksum, no -t), so cargo rebuilds what changed, rustic_core included;
 # the fixed path also keeps the binary's bytes the same from round to round.
 # Go's own build cache keeps restic warm; DragonFly's cross build keeps its
-# cache in $DFLY_CACHE (default ~/backotter-work/dragonfly-cross).
+# cache in $DFLY_CACHE (default ~/backotter-work/dragonfly-cross), one build
+# at a time (dragonfly/build-rustic.sh waits for its lock).
 #
 #   BKO_PROFILE=fast   Linux and DragonFly rustic without fat LTO, 16 codegen
 #                      units: a quicker link for fix rounds.  The last round
@@ -61,9 +68,10 @@
 # testvm/, relative to home: backotter-work).  Passed to the hosts: BKO_ROUNDS,
 # SRC (default ROUNDDIR/src), BKO_BUILD_CACHE, BKO_PROFILE, BKO_GUEST_PROFILE,
 # BKO_REUSE, BKO_GUEST_LANES, BKO_DFLY_PORT (2701), BKO_GUEST_PORTS ("2901
-# 2902 2903 2904": freebsd netbsd openbsd illumos), DFLY_CACHE, BKO_WORK
-# (~/backotter-work: vms/, as for the build scripts).  On a host by hand: RESTIC_COMMIT,
-# RUSTIC_COMMIT, RUSTIC_CORE_COMMIT and RESTIC_DIGEST, RUSTIC_DIGEST,
+# 2902 2903 2904": freebsd netbsd openbsd illumos), BKO_GUEST_MAX,
+# BKO_GUEST_RANGE, DFLY_CACHE, BKO_WORK (~/backotter-work: vms/, as for the
+# build scripts).  On a host by hand: RESTIC_COMMIT, RUSTIC_COMMIT,
+# RUSTIC_CORE_COMMIT and RESTIC_DIGEST, RESTIC_TREE_DIGEST, RUSTIC_DIGEST,
 # RUSTIC_CORE_DIGEST as the Mac part gives them (BKO_UNVERIFIED=1 builds
 # without the digests, and the table says so); BKO_GO (go on PATH, else the
 # newest ~/sdk/go*/bin/go).
@@ -131,17 +139,19 @@ if [[ $mode == mac ]]; then
     RUSTIC_CORE_COMMIT=$(git -C "$git_dir/rustic_core" rev-parse HEAD)
     RUSTIC_COMMIT=$(git -C "$git_dir/rustic" rev-parse HEAD)
     RESTIC_DIGEST=$("$git_dir/restic/build-backotter.sh" --source-digest) || die "restic --source-digest failed"
+    RESTIC_TREE_DIGEST=$(tree_digest "$git_dir/restic")
     RUSTIC_CORE_DIGEST=$(tree_digest "$git_dir/rustic_core")
     RUSTIC_DIGEST=$(tree_digest "$git_dir/rustic")
-    log "restic $RESTIC_COMMIT digest $RESTIC_DIGEST"
+    log "restic $RESTIC_COMMIT digest $RESTIC_DIGEST, tree $RESTIC_TREE_DIGEST"
     log "rustic_core $RUSTIC_CORE_COMMIT digest $RUSTIC_CORE_DIGEST"
     log "rustic $RUSTIC_COMMIT digest $RUSTIC_DIGEST"
     hostof() { if [[ $1 == chopin ]]; then echo "$chopin"; else echo "$cinq"; fi; }
     vars() {  # the host part's environment, as a command line
         local v out="RESTIC_COMMIT=$RESTIC_COMMIT RUSTIC_COMMIT=$RUSTIC_COMMIT RUSTIC_CORE_COMMIT=$RUSTIC_CORE_COMMIT"
-        out+=" RESTIC_DIGEST=$RESTIC_DIGEST RUSTIC_DIGEST=$RUSTIC_DIGEST RUSTIC_CORE_DIGEST=$RUSTIC_CORE_DIGEST"
+        out+=" RESTIC_DIGEST=$RESTIC_DIGEST RESTIC_TREE_DIGEST=$RESTIC_TREE_DIGEST RUSTIC_DIGEST=$RUSTIC_DIGEST RUSTIC_CORE_DIGEST=$RUSTIC_CORE_DIGEST"
         out+=" BKO_ROUNDS=$rrounds SRC=$rsrc"
-        for v in BKO_BUILD_CACHE BKO_PROFILE BKO_GUEST_PROFILE BKO_REUSE BKO_DFLY_PORT BKO_GUEST_PORTS BKO_GUEST_LANES DFLY_CACHE BKO_WORK; do
+        for v in BKO_BUILD_CACHE BKO_PROFILE BKO_GUEST_PROFILE BKO_REUSE BKO_DFLY_PORT BKO_GUEST_PORTS BKO_GUEST_LANES \
+            BKO_GUEST_MAX BKO_GUEST_RANGE DFLY_CACHE BKO_WORK; do
             [[ -n ${!v:-} ]] && out+=" $v='${!v}'"
         done
         echo "$out"
@@ -180,6 +190,10 @@ if [[ $mode == mac ]]; then
     printf 'HOST\tBINARY\tOS\tRESULT\tSECONDS\tSHA256\tDIGEST\n%s\n' "$table"
     case $table in *FAILED*) rc=1 ;; esac
     [[ $dry == yes || -n $table ]] || rc=1
+    echo
+    echo "For run-all.sh on both hosts (OLD_BIN: the round before's bin):"
+    echo "EXPECT_RESTIC_COMMIT=$RESTIC_COMMIT EXPECT_RESTIC_DIGEST=$RESTIC_DIGEST" \
+        "EXPECT_RUSTIC_COMMIT=$RUSTIC_COMMIT EXPECT_RUSTIC_CORE_COMMIT=$RUSTIC_CORE_COMMIT"
     exit $rc
 fi
 
@@ -236,9 +250,12 @@ log "build-round $round on $host ($mode): SRC=$SRC BIN=$BIN profile=$profile gue
 
 # The copy must be the commits the Mac part named.
 verified=yes
-if [[ -n ${RESTIC_DIGEST:-} && -n ${RUSTIC_DIGEST:-} && -n ${RUSTIC_CORE_DIGEST:-} ]]; then
+RESTIC_TREE=$(tree_digest "$SRC/restic")
+if [[ -n ${RESTIC_DIGEST:-} && -n ${RESTIC_TREE_DIGEST:-} && -n ${RUSTIC_DIGEST:-} && -n ${RUSTIC_CORE_DIGEST:-} ]]; then
     d=$("$SRC/restic/build-backotter.sh" --source-digest)
     [[ $d == "$RESTIC_DIGEST" ]] || die "$SRC/restic's source digest is $d, not $RESTIC_DIGEST: a stale copy"
+    [[ $RESTIC_TREE == "$RESTIC_TREE_DIGEST" ]] ||
+        die "$SRC/restic's tree digest is $RESTIC_TREE, not $RESTIC_TREE_DIGEST: a stale copy"
     d=$(tree_digest "$SRC/rustic")
     [[ $d == "$RUSTIC_DIGEST" ]] || die "$SRC/rustic's digest is $d, not $RUSTIC_DIGEST: a stale copy"
     d=$(tree_digest "$SRC/rustic_core")
@@ -248,7 +265,7 @@ elif [[ ${BKO_UNVERIFIED:-} == 1 ]]; then
     verified=no
     log "UNVERIFIED: no digests to check $SRC against"
 else
-    die "RESTIC_DIGEST, RUSTIC_DIGEST and RUSTIC_CORE_DIGEST are needed (or BKO_UNVERIFIED=1)"
+    die "RESTIC_DIGEST, RESTIC_TREE_DIGEST, RUSTIC_DIGEST and RUSTIC_CORE_DIGEST are needed (or BKO_UNVERIFIED=1)"
 fi
 export RESTIC_COMMIT=${RESTIC_COMMIT:-} RUSTIC_COMMIT=${RUSTIC_COMMIT:-} RUSTIC_CORE_COMMIT=${RUSTIC_CORE_COMMIT:-}
 
@@ -358,7 +375,7 @@ build_restic() {
     sd=$("$SRC/restic/build-backotter.sh" --source-digest)
     for os in $oses; do
         inputs=$LOGS/restic-$os.inputs
-        { echo "restic-bko $os/amd64"; echo "sources $sd"
+        { echo "restic-bko $os/amd64"; echo "sources $sd"; echo "tree $RESTIC_TREE"
           echo "$gov"; hash_files "$SRC/restic/build-backotter.sh"
           env | grep -E '^(GO[A-Z0-9_]*|CGO_[A-Z_]*)=' | grep -vE '^(GOCACHE|GOMODCACHE|GOPATH|GOROOT)=' | LC_ALL=C sort; } >"$inputs"
         d=$(digest_of "$inputs")
@@ -473,7 +490,7 @@ build_dragonfly() {
 # --- Cinqcent's builds ---------------------------------------------------------------------
 vm_of() { case $1 in freebsd) echo freebsd15 ;; openbsd) echo openbsd8 ;; netbsd) echo netbsd11 ;; illumos) echo omnios58 ;; esac; }
 build_native() {  # OS PORT
-    local os=$1 port=$2 t0=$SECONDS d inputs=$LOGS/rustic-$1.inputs vm img f fast=""
+    local os=$1 port=$2 t0=$SECONDS d inputs=$LOGS/rustic-$1.inputs vm img f fast="" s
     vm=$(vm_of "$os")
     img=$WORK/vms-bko-build/$vm-rust.qcow2
     [[ -f $img ]] || img=$WORK/vms/$vm/$vm.qcow2
@@ -492,9 +509,13 @@ build_native() {  # OS PORT
         return 0
     fi
     if [[ $dry == yes ]]; then log "rustic-bko $os: would build ($os/build-rustic.sh $port, $vm, $gprofile)"; return 0; fi
-    log "rustic-bko $os: building ($os/build-rustic.sh $port, $vm, $gprofile)"
-    if ! env SRC="$PREPPED" BKO_BIN="$BIN" BKO_WORK="$WORK" FAST=$fast "$here/$os/build-rustic.sh" "$port" \
-        >"$LOGS/build-rustic-$os.log" 2>&1; then
+    slot_take "${BKO_GUEST_MAX:-3}" "${BKO_GUEST_RANGE:-2900-2999}"
+    log "rustic-bko $os: building ($os/build-rustic.sh $port, $vm, $gprofile; guest slot $BKO_GUEST_SLOT)"
+    env SRC="$PREPPED" BKO_BIN="$BIN" BKO_WORK="$WORK" FAST=$fast "$here/$os/build-rustic.sh" "$port" \
+        >"$LOGS/build-rustic-$os.log" 2>&1
+    s=$?
+    slot_give
+    if [[ $s != 0 ]]; then
         tail -n 30 "$LOGS/build-rustic-$os.log"
         row rustic-bko "$os" FAILED $((SECONDS - t0))
         return 1
@@ -519,10 +540,12 @@ if [[ $mode == chopin ]]; then
     [[ $dry == no && -f $BIN/linux/restic-commit ]] && cp "$BIN/linux/restic-commit" "$BIN/restic-commit"
 else
     ports=(${BKO_GUEST_PORTS:-2901 2902 2903 2904})
+    # shellcheck source=../testvm/compare/guest-slot.sh
+    . "$here/../testvm/compare/guest-slot.sh" || die "no $here/../testvm/compare/guest-slot.sh"
     [[ ${#ports[@]} -eq 4 ]] || die "BKO_GUEST_PORTS: four ports (freebsd netbsd openbsd illumos)"
     if want freebsd || want netbsd || want openbsd || want illumos; then
         prepare
-        # Two lanes, one guest each (BKO_GUEST_LANES=1: one guest in all).
+        # Two lanes, one guest each when a slot is free (BKO_GUEST_LANES=1: one lane).
         ( want freebsd && build_native freebsd "${ports[0]}"; want netbsd && build_native netbsd "${ports[1]}"; true ) &
         a=$!
         [[ ${BKO_GUEST_LANES:-2} == 1 ]] && wait $a

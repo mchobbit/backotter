@@ -31,26 +31,33 @@
 #                summary.txt and summary.json (the table), rows.jsonl
 #
 # Environment:
-#   OLD_BIN      the round before's bin directory: sparse-rt.sh's and
-#                fs_roundtrip.py's snapshot identity (SPEC3 2); none: not checked
-#   EXPECT_RESTIC_COMMIT, EXPECT_RESTIC_DIGEST, EXPECT_RUSTIC_COMMIT,
-#   EXPECT_RUSTIC_CORE_COMMIT, EXPECT_RESTIC_VERSION, EXPECT_RUSTIC_VERSION
-#                what the binaries must be (commit prefixes, restic's source
-#                digest, e.g. 0.19.1+backotter.3); unset: only that every OS's
-#                commit files agree.  Refuses to run on a mismatch, a missing
-#                binary or commit file, or a SHA256SUMS line that fails.
+#   OLD_BIN      the round before's bin directory, every OS in it:
+#                sparse-rt.sh's and fs_roundtrip.py's snapshot identity
+#                (SPEC3 2); OLD_BIN=none: not checked (a note); unset: refused
+#   EXPECT_RESTIC_COMMIT, EXPECT_RUSTIC_COMMIT, EXPECT_RUSTIC_CORE_COMMIT
+#                the Mac's HEADs, which the commit files must name (prefixes
+#                of 7 or more; build-round.sh prints the line to set them);
+#                unset: refused, unless UNCHECKED_BINARIES=1 (a note: only
+#                that every OS's commit files agree).  EXPECT_RESTIC_DIGEST,
+#                EXPECT_RESTIC_VERSION, EXPECT_RUSTIC_VERSION (e.g.
+#                0.19.1+backotter.3): checked if set.  Refuses to run on a
+#                mismatch, a missing binary, commit file or rustic_core line,
+#                or a SHA256SUMS line that fails.
 #   PORT_BASE    ports are PORT_BASE + 10..19 (default 2700 on chopin, 2900
 #                on cinqcent; e.g. 2750 for 2760-2769)
 #   MAX_GUESTS   guests at once (default chopin 6, cinqcent 3); COUNT_OTHERS=1
-#                (cinqcent's default) counts every other QEMU on a port in
-#                GUEST_PORTS (ours: 2700-2799 chopin, 2900-2999 cinqcent) too
+#                (cinqcent's default): host-wide, with guest-slot.sh's slots
+#                on GUEST_PORTS (ours: 2700-2799 chopin, 2900-2999
+#                cinqcent), which stick/build-round.sh's guests take too, and
+#                every QEMU of ours there without one
 #   HOST_JOBS    fs_roundtrip.py and nonroot-rt.sh linux runs at once (4);
 #                SPARSE_JOBS sparse-rt.sh runs on the host at once (2)
 #   STEP_TIMEOUT seconds, every step (default by kind, 1.5-6 h: round 9's
 #                times several over, as a host as loaded as Chopin was in its
 #                round 10 (load 100) takes)
 #   RUN_PREFIX   names of pools, mount points, images (default bkora: pools
-#                bkora-fs-*, bkora-sp-*, bkora-nr); one run per prefix
+#                bkora-fs-*, bkora-sp-*, bkora-nr; /mnt/bkora-nr-ext4 and
+#                -zfs); one run per prefix
 #   BKO_WORK     where vms/ is (default ~/backotter-work); the scripts work
 #                in LOG_DIR/work, which links to its vms/
 #   RAM_DIR      the guests' --ram overlays (default LOG_DIR/work/ram, on
@@ -59,6 +66,9 @@
 #                guests (2)
 #   BASELINE     an earlier LOG_DIR/summary.json: nonroot's per-direction
 #                counts must be the same as there
+#   ALLOW_SKIP   comma-separated targets that may be skipped: a file system
+#                fs_roundtrip.py can't make here (e.g. bcachefs), or a step
+#                run-all.sh can't run (sparse-netbsd11); else a FAIL row
 #   KEEP_WORK=1  keep fs_roundtrip.py's repositories
 #   ANY_HOST=1   run another host's platforms here too
 #
@@ -122,10 +132,16 @@ PFX=${RUN_PREFIX:-bkora}
 SRCWORK=${BKO_WORK:-$HOME/backotter-work}
 [[ -d $SRCWORK/vms ]] || die "no $SRCWORK/vms (set BKO_WORK)"
 OLD=${OLD_BIN:-}
+[[ -n $OLD ]] || die "OLD_BIN unset: the round before's bin directory (SPEC3 2's identity), or OLD_BIN=none"
+[[ $OLD == none ]] && OLD=""
 [[ -z $OLD || -d $OLD ]] || die "no OLD_BIN directory $OLD"
 [[ -n $OLD ]] && OLD=$(cd "$OLD" && pwd)
 C=$here W=$LOG/work
-notes=()
+notes=() lost=()
+allowed() { [[ ",${ALLOW_SKIP:-}," == *",$1,"* ]]; }
+lose() {  # PLATFORM STEP WHY: a check that won't run, a FAIL row unless allowed
+    if allowed "$2"; then notes+=("$1/$2 not run (ALLOW_SKIP): $3"); else lost+=("$1"$'\t'"$2"$'\t'"$3"); fi
+}
 P() { echo $((PORT_BASE + $1)); }
 
 # --- the binaries -------------------------------------------------------------
@@ -140,12 +156,12 @@ for p in $plats; do
     esac
 done
 need_os=$(printf '%s\n' $need_os | sort -u | tr '\n' ' ')
-bad=() seen_restic="" seen_rustic="" seen_core="" seen_digest=""
+bad=() seen_restic="" seen_rustic="" seen_core="" seen_digest="" first=""
 prefix_ok() { [[ -z $2 || ( ${#2} -ge 7 && $1 == "$2"* ) ]]; }  # ACTUAL EXPECTED
-agree() {  # NAME VAR VALUE: VAR holds the first value seen
+agree() {  # NAME VAR VALUE: VAR holds the first OS's value, empty or not
     local n=$1 v=$3
-    if [[ -z ${!2} ]]; then printf -v "$2" %s "$v"
-    elif [[ ${!2} != "$v" ]]; then bad+=("$n differs between OSes: ${!2} and $v"); fi
+    if [[ " $first " != *" $2 "* ]]; then printf -v "$2" %s "$v"; first+=" $2"
+    elif [[ ${!2} != "$v" ]]; then bad+=("$n differs between OSes: '${!2}' and '$v'"); fi
 }
 echo "== binaries in $BIN ($host: $need_os)"
 for os in $need_os; do
@@ -165,6 +181,7 @@ for os in $need_os; do
         c=$(head -n 1 "$cf" | cut -d' ' -f1)
         if [[ $t == restic ]]; then
             d=$(sed -n 's/^source digest //p' "$cf")
+            [[ -n $d ]] || bad+=("$cf: no source digest line")
             agree "restic commit" seen_restic "$c"; agree "restic source digest" seen_digest "$d"
             prefix_ok "$c" "${EXPECT_RESTIC_COMMIT:-}" || bad+=("$cf: restic $c, not ${EXPECT_RESTIC_COMMIT}")
             [[ -z ${EXPECT_RESTIC_DIGEST:-} || $d == "$EXPECT_RESTIC_DIGEST" ]] ||
@@ -172,6 +189,7 @@ for os in $need_os; do
             echo "      restic $c, source digest ${d:-none}"
         else
             k=$(sed -n 's/^rustic_core \([0-9a-f]*\).*/\1/p' "$cf")
+            [[ -n $k ]] || bad+=("$cf: no rustic_core commit line")
             agree "rustic commit" seen_rustic "$c"; agree "rustic_core commit" seen_core "$k"
             prefix_ok "$c" "${EXPECT_RUSTIC_COMMIT:-}" || bad+=("$cf: rustic $c, not ${EXPECT_RUSTIC_COMMIT}")
             prefix_ok "$k" "${EXPECT_RUSTIC_CORE_COMMIT:-}" ||
@@ -184,19 +202,28 @@ for os in $need_os; do
         fi
     done
 done
-if [[ -z ${EXPECT_RESTIC_COMMIT:-}${EXPECT_RUSTIC_COMMIT:-}${EXPECT_RUSTIC_CORE_COMMIT:-}${EXPECT_RESTIC_DIGEST:-} ]]; then
-    notes+=("binaries not checked against expected commits (EXPECT_* unset); they agree with each other")
+if [[ -z ${EXPECT_RESTIC_COMMIT:-} || -z ${EXPECT_RUSTIC_COMMIT:-} || -z ${EXPECT_RUSTIC_CORE_COMMIT:-} ]]; then
+    if [[ ${UNCHECKED_BINARIES:-} == 1 ]]; then
+        notes+=("binaries not checked against the Mac's commits (UNCHECKED_BINARIES=1); they agree with each other")
+    else
+        bad+=("EXPECT_RESTIC_COMMIT, EXPECT_RUSTIC_COMMIT and EXPECT_RUSTIC_CORE_COMMIT unset (UNCHECKED_BINARIES=1 runs anyway)")
+    fi
+fi
+# The harness this needs (round 9's): a copy without it fails every row.
+for x in nonroot-rt.sh:NONROOT_MNT fs_roundtrip.py:BKO_OLD_RESTIC fs_roundtrip.py:sparse_blocks \
+    zfs-guest-rt.sh:OLD_RUSTIC sparse-rt.sh:SPARSE_ZFS_OPTS guest-slot.sh:slot_take; do
+    grep -q "${x#*:}" "$C/${x%%:*}" 2>/dev/null || bad+=("$C/${x%%:*} has no ${x#*:}: not this run-all.sh's harness")
+done
+oldpair() {  # OS: OLD_BIN/OS's two binaries, if both are there
+    [[ -n $OLD && -s $OLD/$1/restic-bko && -s $OLD/$1/rustic-bko ]]
+}
+if [[ -z $OLD ]]; then notes+=("OLD_BIN=none: snapshot identity (SPEC3 2) not checked")
+else
+    for os in $need_os; do oldpair "$os" || bad+=("no $OLD/$os/restic-bko or rustic-bko: SPEC3 2's identity (OLD_BIN=none: none)"); done
 fi
 if [[ ${#bad[@]} -gt 0 ]]; then
     printf 'run-all: refused: %s\n' "${bad[@]}" >&2
     [[ -n $dry ]] || exit 2
-fi
-oldpair() {  # OS: OLD_BIN/OS's two binaries, if both are there
-    [[ -n $OLD && -s $OLD/$1/restic-bko && -s $OLD/$1/rustic-bko ]]
-}
-if [[ -z $OLD ]]; then notes+=("OLD_BIN unset: snapshot identity (SPEC3 2) not checked")
-else
-    for os in $need_os; do oldpair "$os" || notes+=("no OLD_BIN/$os/{restic,rustic}-bko: identity not checked on $os"); done
 fi
 
 # --- the steps ----------------------------------------------------------------
@@ -210,6 +237,7 @@ step() {
     S_TO+=("${STEP_TIMEOUT:-$7}") S_ROOT+=("$8") S_JARGS+=("$9") S_CMD+=("${10}")
 }
 q() { printf '%q ' "$@"; }
+js() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\t'/\\t}; printf '"%s"' "$s"; }
 if [[ $(id -u) == 0 ]]; then SUDO=""; else SUDO="sudo -n"; fi
 ID=${BKO_RUNALL_ID:-$PFX-$$-$(date +%s)}
 export BKO_RUNALL_ID=$ID BKO_WORK=$W RAM_DIR=${RAM_DIR:-$W/ram}
@@ -222,8 +250,9 @@ guest_rt() {  # PLATFORM CHAIN GUEST PORT OS
         "RT_LOGS=$(q "$LOG/$1/rt") $(q "$C/run-guest-rt.sh" "$3" "$4" "$BIN/$5/restic-bko" "$BIN/$5/rustic-bko")"
 }
 nonroot() {  # PLATFORM CHAIN GUEST PORT OS
-    step "$1" "$2" "nonroot-$3" nonroot 1 - 5400 "" "${BASELINE:+--baseline $BASELINE}" \
-        "NONROOT_LOGS=$(q "$LOG/$1/nonroot") RESTIC=$(q "$BIN/$5/restic-bko") RUSTIC=$(q "$BIN/$5/rustic-bko") $(q "$C/nonroot-rt.sh" "$3" "$4")"
+    step "$1" "$2" "nonroot-$3" nonroot 1 - 5400 "" "$(q --targets "$3" --full "$LOG/$1/nonroot/$3.log")$base" \
+        "rm -f $(q "$LOG/$1/nonroot/$3.log")
+        NONROOT_LOGS=$(q "$LOG/$1/nonroot") RESTIC=$(q "$BIN/$5/restic-bko") RUSTIC=$(q "$BIN/$5/rustic-bko") $(q "$C/nonroot-rt.sh" "$3" "$4")"
 }
 guest_sparse() {  # PLATFORM CHAIN GUEST PORT OS [ENV...]
     local p=$1 ch=$2 g=$3 port=$4 os=$5 files args="/root/restic-bko /root/rustic-bko"
@@ -233,17 +262,19 @@ guest_sparse() {  # PLATFORM CHAIN GUEST PORT OS [ENV...]
         files+=("$W/old/$os/restic-bko-old" "$W/old/$os/rustic-bko-old")
         args+=" /root/restic-bko-old /root/rustic-bko-old"
     fi
-    step "$p" "$ch" "sparse-$g" sparse 1 - 11400 "" "" \
+    step "$p" "$ch" "sparse-$g" sparse 1 - 11400 "" "$(oldpair "$os" && echo --identity)" \
         "$* T=10800 $(q "$C/guest-run.sh" "$g" "$port" "cd /root && BIG=${GUEST_BIG:-2} sh sparse-rt.sh $args" "${files[@]}")"
 }
 
+base=${BASELINE:+ $(q --baseline "$BASELINE")}
 for p in $plats; do
     case $p in
     linux)
         for fs in zfs 'zfs --onto ext4' bcachefs f2fs ext4 xfs btrfs tmpfs jfs; do
             n=${fs/ --onto /-onto-}
             # bcachefs format sometimes aborts in malloc (round 8): again.
-            step linux "$n" "$n" fsrt 0 host 14400 1 "--results $(q "$LOG/linux/$n")${OLD:+ --identity}" "
+            step linux "$n" "$n" fsrt 0 host 14400 1 \
+                "$(q --results "$LOG/linux/$n" --target "$n" --allow-skip "${ALLOW_SKIP:-}")${OLD:+ --identity}" "
                 t=\$(mktemp); for i in 1 2 3 4 5; do
                     $(rootenv) RESTIC_BKO=$(q "$BIN/linux/restic-bko") RUSTIC_BKO=$(q "$BIN/linux/rustic-bko") \
                         ${OLD:+BKO_OLD_RESTIC=$(q "$OLD/linux/restic-bko")} BKO_FSRT_PREFIX=$PFX-fs \
@@ -255,26 +286,25 @@ for p in $plats; do
                 [ -n \"\${KEEP_WORK:-}\" ] || $SUDO rm -rf \"\$r\"
                 exit \$rc"
         done
-        # nonroot-rt.sh linux's mount points are the host's: wait for any
-        # other run of it to end.
-        step linux nonroot nonroot-linux nonroot 0 host 5400 1 "${BASELINE:+--baseline $BASELINE}" "
-            while findmnt /mnt/bkonr-ext4 >/dev/null || findmnt /mnt/bkonr-zfs >/dev/null; do
-                echo 'waiting for another nonroot-rt.sh linux'; sleep 30; done
-            $(rootenv) NONROOT_POOL=$PFX-nr NONROOT_LOGS=$(q "$LOG/linux/nonroot") RESTIC=$(q "$BIN/linux/restic-bko") \
-                RUSTIC=$(q "$BIN/linux/rustic-bko") $(q "$C/nonroot-rt.sh") linux"
+        # The pool and mount points are this run's (RUN_PREFIX).
+        step linux nonroot nonroot-linux nonroot 0 host 5400 1 \
+            "$(q --targets "linux zfs,linux ext4" --full "$LOG/linux/nonroot/linux.log")$base" "
+            $SUDO rm -f $(q "$LOG/linux/nonroot/linux.log")
+            $(rootenv) NONROOT_POOL=$PFX-nr NONROOT_MNT=/mnt/$PFX-nr NONROOT_LOGS=$(q "$LOG/linux/nonroot") \
+                RESTIC=$(q "$BIN/linux/restic-bko") RUSTIC=$(q "$BIN/linux/rustic-bko") $(q "$C/nonroot-rt.sh") linux"
         ;;
     sparse)
         for run in ext4 xfs btrfs zfs zfs-nocomp; do
             fs=${run%-nocomp} opts=""; [[ $run == zfs-nocomp ]] && opts="-O compression=off"
-            step sparse "$run" "sparse-$run" sparse 0 sparse 10800 1 "" \
+            step sparse "$run" "sparse-$run" sparse 0 sparse 10800 1 "${OLD:+--identity}" \
                 "$(rootenv) SPARSE_PREFIX=$PFX-sp SPARSE_FS=$fs SPARSE_RUN=$run SPARSE_ZFS_OPTS=$(q "$opts") BIG=${BIG:-20} \
                     $(q "$C/sparse-rt.sh" "$BIN/linux/restic-bko" "$BIN/linux/rustic-bko") \
                     ${OLD:+$(q "$OLD/linux/restic-bko" "$OLD/linux/rustic-bko")}"
         done ;;
     zfsguests)
-        i=7
+        i=17
         for g in ubuntu24 ubuntu26-zfsmirror; do
-            step zfsguests "$g" "zfs-$g" zfsguest 1 - 21600 "" "--results $(q "$LOG/zfsguests/zfs-$g")${OLD:+ --identity}" \
+            step zfsguests "$g" "zfs-$g" zfsguest 1 - 21600 "" "$(q --results "$LOG/zfsguests/zfs-$g")${OLD:+ --identity}" \
                 "BKO_BIN=$(q "$BIN") ${OLD:+OLD_RESTIC=$(q "$OLD/linux/restic-bko") OLD_RUSTIC=$(q "$OLD/linux/rustic-bko")} \
                     ZFS_GUEST_LOGS=$(q "$LOG/zfsguests/zfs-$g") $(q "$C/zfs-guest-rt.sh" "$g" "$(P $i)")"
             i=$((i + 1))
@@ -303,7 +333,7 @@ for p in $plats; do
         # netbsd11 has no cc or python3: its build image has cc.
         img=$SRCWORK/vms-bko-build/netbsd11-rust.qcow2
         if [[ -f $img ]]; then guest_sparse netbsd a netbsd11 "$(P 15)" netbsd "VM_IMAGE=$(q "$img")"
-        else notes+=("no $img: sparse-rt.sh not run on NetBSD"); fi
+        else lose netbsd sparse-netbsd11 "no $img: sparse-rt.sh not run on NetBSD"; fi
         guest_rt netbsd b alpinebsd "$(P 16)" netbsd
         nonroot netbsd b alpinebsd "$(P 16)" netbsd ;;
     esac
@@ -324,13 +354,15 @@ export BKO_MKFS_BCACHEFS
 
 if [[ -n $dry ]]; then
     echo "== $host: ports $PORT_BASE+, at most $MAX_GUESTS guests (others counted: $COUNT_OTHERS, $GUEST_PORTS)," \
-        "$HOST_JOBS host jobs, $SPARSE_JOBS sparse jobs; prefix $PFX; OLD_BIN ${OLD:-unset}"
+        "$HOST_JOBS host jobs, $SPARSE_JOBS sparse jobs; prefix $PFX; OLD_BIN ${OLD:-none}"
     for i in "${!S_NAME[@]}"; do
         echo "-- ${S_CHAIN[$i]}: ${S_NAME[$i]} (${S_KIND[$i]}, guests ${S_GUESTS[$i]}, slot ${S_SEM[$i]}," \
             "timeout ${S_TO[$i]} s${S_ROOT[$i]:+, root}) -> $LOG/${S_PLAT[$i]}/${S_NAME[$i]}.log"
         sed 's/^ */    /' <<<"${S_CMD[$i]}" | grep -v '^ *$'
+        echo "    judged: verdict.py judge ${S_KIND[$i]} LOG ${S_JARGS[$i]}"
     done
     [[ ${#notes[@]} -eq 0 ]] || printf 'note: %s\n' "${notes[@]}"
+    [[ ${#lost[@]} -eq 0 ]] || printf 'not run (a FAIL row): %s\n' "${lost[@]}"
     [[ ${#bad[@]} -eq 0 ]] || { echo "run-all: would refuse (above)"; exit 2; }
     exit 0
 fi
@@ -374,9 +406,10 @@ cleanup() {
         $SUDO sh -c '
             P=$1
             zpool list -H -o name 2>/dev/null | grep "^$P-" | while read -r z; do zpool destroy -f "$z"; done
-            findmnt -rn -o TARGET | grep -E "^/mnt/$P-(fs|sp)(/|\$)" | sort -r | while read -r m; do umount -l "$m"; done
-            losetup -a 2>/dev/null | grep -E "\(/var/tmp/$P-(fs|sp)" | cut -d: -f1 | while read -r l; do losetup -d "$l"; done
-            rm -rf /var/tmp/$P-fs-*.img /var/tmp/$P-sp /mnt/$P-fs /mnt/$P-sp' - "$PFX" 2>/dev/null
+            findmnt -rn -o TARGET | grep -E "^/mnt/$P-(fs|sp|nr-ext4|nr-zfs)(/|\$)" | sort -r | while read -r m; do umount -l "$m"; done
+            losetup -a 2>/dev/null | grep -E "\((/var/tmp/$P-(fs|sp)|$2)" | cut -d: -f1 | while read -r l; do losetup -d "$l"; done
+            rm -rf /var/tmp/$P-fs-*.img /var/tmp/$P-sp /mnt/$P-fs /mnt/$P-sp /mnt/$P-nr-ext4 /mnt/$P-nr-zfs "$2"' \
+            - "$PFX" "$LOG/linux/nonroot/work" 2>/dev/null
         # fs_roundtrip.py's repositories, of a step stopped before it removed them.
         [[ -n ${KEEP_WORK:-} ]] || $SUDO rm -rf "$here/../../fs-roundtrip/$PFX-fs"
     fi
@@ -385,29 +418,22 @@ cleanup() {
 trap cleanup EXIT
 trap 'echo "run-all: interrupted" >&2; exit 130' INT TERM HUP
 
-# A semaphore: NAME N MAX; guests also count others' QEMU on GUEST_PORTS.
-others() {
-    [[ $COUNT_OTHERS == 1 ]] || { echo 0; return; }
-    local lo=${GUEST_PORTS%-*} hi=${GUEST_PORTS#*-} n=0 pid port
-    for pid in $(pgrep qemu-system); do
-        port=$(tr '\0' ' ' <"/proc/$pid/cmdline" 2>/dev/null | grep -oE 'hostfwd=tcp:127\.0\.0\.1:[0-9]+' | head -n 1)
-        port=${port##*:}
-        [[ -n $port && $port -ge $lo && $port -le $hi ]] || continue
-        grep -qzx "BKO_RUNALL_ID=$ID" "/proc/$pid/environ" 2>/dev/null || n=$((n + 1))
-    done
-    echo $n
-}
+# A semaphore of this run: NAME N MAX.  Guests with COUNT_OTHERS=1: a
+# host-wide slot (guest-slot.sh) instead, one a step.
+# shellcheck source=guest-slot.sh
+. "$C/guest-slot.sh"
 acquire() {
     local f=$LOG/.sem/$1
-    until (flock 9; c=$(cat "$f" 2>/dev/null || echo 0); o=0
-           [[ $1 == guests ]] && o=$(others)
-           [[ $((c + o + $2)) -le $3 ]] || exit 1
+    if [[ $1 == guests && $COUNT_OTHERS == 1 ]]; then slot_take "$3" "$GUEST_PORTS"; return; fi
+    until (flock 9; c=$(cat "$f" 2>/dev/null || echo 0)
+           [[ $((c + $2)) -le $3 ]] || exit 1
            echo $((c + $2)) >"$f") 9>"$f.lock"; do
         sleep 10
     done
 }
 release() {
     local f=$LOG/.sem/$1
+    if [[ $1 == guests && $COUNT_OTHERS == 1 ]]; then slot_give; return; fi
     (flock 9; c=$(cat "$f" 2>/dev/null || echo 0); echo $((c - $2)) >"$f") 9>"$f.lock"
 }
 max_of() { case $1 in guests) echo "$MAX_GUESTS" ;; host) echo "$HOST_JOBS" ;; sparse) echo "$SPARSE_JOBS" ;; esac; }
@@ -433,10 +459,18 @@ run_step() {  # INDEX
     wall=$((SECONDS - t0))
     [[ ${S_SEM[$i]} != - ]] && release "${S_SEM[$i]}" 1
     [[ ${S_GUESTS[$i]} -gt 0 ]] && release guests "${S_GUESTS[$i]}"
-    # shellcheck disable=SC2086
+    local rows=$LOG/rows/$(printf %03d "$i").jsonl jargs jrc
+    eval "jargs=(${S_JARGS[$i]})"
     python3 "$C/verdict.py" judge "${S_KIND[$i]}" "$log" --platform "$p" --step "$n" --rc "$rc" --wall "$wall" \
-        ${S_JARGS[$i]} >"$LOG/rows/$(printf %03d "$i").jsonl"
-    echo "$(date +%T) done  ${S_CHAIN[$i]}: $n: exit $rc, $wall s, $(grep -c '"verdict": "FAIL"' "$LOG/rows/$(printf %03d "$i").jsonl") failed"
+        "${jargs[@]}" >"$rows" 2>"$rows.err"
+    jrc=$?
+    if [[ $jrc != 0 || ! -s $rows ]]; then  # no verdict is a FAIL, never a missing row
+        printf '{"platform": %s, "step": %s, "target": "", "direction": "", "verdict": "FAIL", "wall": "%s", "checks": [%s, %s], "log": %s}\n' \
+            "$(js "$p")" "$(js "$n")" "$wall" "$(js "verdict.py judge exit $jrc, no rows (step exit $rc)")" \
+            "$(js "$(tail -n 3 "$rows.err" | tr '\n' ' ')")" "$(js "$log")" >>"$rows"
+    fi
+    rm -f "$rows.err"
+    echo "$(date +%T) done  ${S_CHAIN[$i]}: $n: exit $rc, $wall s, $(grep -vc '"verdict": "PASS"' "$rows") not passed"
 }
 run_chain() {  # CHAIN
     local i
@@ -450,13 +484,20 @@ for ch in $chains; do run_chain "$ch" & chain_pids+=($!); sleep 1; done
 wait
 chain_pids=()
 cat "$LOG"/rows/*.jsonl >"$LOG/rows.jsonl" 2>/dev/null
-js() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; printf '"%s"' "$s"; }
 {
     printf '{"host": %s, "platforms": %s, "bin": %s, "old_bin": %s, "wall": %s, "id": %s,\n' \
         "$(js $host)" "$(js "$plats")" "$(js "$BIN")" "$(js "$OLD")" $((SECONDS - t_start)) "$(js "$ID")"
     printf ' "restic": %s, "restic_digest": %s, "rustic": %s, "rustic_core": %s, "notes": [' \
         "$(js "$seen_restic")" "$(js "$seen_digest")" "$(js "$seen_rustic")" "$(js "$seen_core")"
     sep=""; for n in "${notes[@]}"; do printf '%s%s' "$sep" "$(js "$n")"; sep=", "; done
+    printf '],\n "steps": ['
+    sep=""; for i in "${!S_NAME[@]}"; do printf '%s%s' "$sep" "$(js "${S_PLAT[$i]}/${S_NAME[$i]}")"; sep=", "; done
+    printf '],\n "lost": ['
+    sep=""
+    for x in "${lost[@]}"; do
+        IFS=$'\t' read -r a b c <<<"$x"
+        printf '%s{"platform": %s, "step": %s, "why": %s}' "$sep" "$(js "$a")" "$(js "$b")" "$(js "$c")"; sep=", "
+    done
     printf ']}\n'
 } >"$LOG/meta.json"
 python3 "$C/verdict.py" summary "$LOG"

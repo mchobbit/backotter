@@ -72,6 +72,18 @@ EOF
         say "unfreezing: $f from Arch's archive to its mirrors"
         echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' >$f
     fi
+    if grep -qs '^ID=artix' /etc/os-release && [ -f $f ] && ! grep -q '^Server = .*artix' $f; then
+        # Artix's builder once let pacstrap copy the Arch live system's
+        # mirror list in (no -M), whose mirrors serve no Artix repository.
+        # Artix's own, the file as its artix-mirrorlist package has it,
+        # fetched through the mirror the guest was built from.
+        say "unfreezing: $f, Artix's mirrors instead of Arch's"
+        echo 'Server = https://mirrors.dotsrc.org/artix-linux/repos/$repo/os/$arch' >$f
+        pkg=/var/cache/pacman/pkg/$(pacman -Sy >/dev/null && pacman -Sp artix-mirrorlist | sed 's|.*/||')
+        pacman -Sw --noconfirm artix-mirrorlist && bsdtar -xOf "$pkg" etc/pacman.d/mirrorlist >$f.new &&
+            mv $f.new $f || exit 1
+        grep -q '^Server = .*artix' $f || { say "artix-mirrorlist gave no Artix mirrors"; exit 1; }
+    fi
     f=/etc/yum.repos.d/fedora-updates.repo
     if [ -f $f ] && sed -n '/^\[updates\]/,/^\[/p' $f | grep -q '^enabled=0'; then
         say "unfreezing: $f, the updates repository on again"
@@ -250,10 +262,52 @@ NetBSD)
         # AlpineBSD.  Its install has no CA certificates to check TLS with;
         # the packages' signatures are still checked against its key.
         apk upgrade -U --check-certificate=no || exit 1
-    elif has pkgin; then
-        pkgin -y upgrade && pkgin -y clean || exit 1
     else
-        say "only a release's base sets, which nothing updates"; exit 3
+        # NetBSD, installed from a release's base sets alone.  The first
+        # update gives it what updates it: the CA certificates its base set
+        # ships (certctl), which our install never put in place; IPv4
+        # first (QEMU's user network hands out an IPv6 address that leads
+        # nowhere, where a download stalls); pkgin, from pkgsrc's binary
+        # packages for this release; and sysupgrade.  Then the base system
+        # from the release branch's newest build (security fixes within
+        # days, though with SHA512 sums only, unsigned: fetched over TLS
+        # from NetBSD's CDN), and the packages.  etcupdate, which asks
+        # about every changed file, stays out: postinstall fixes what a
+        # newer base needs of /etc (obsolete files, mtree's lists, the
+        # certificates' hashes).
+        arch=$(uname -m) rel=$(uname -r | sed 's/_.*//')
+        # The running kernel's configuration, "(GENERIC)" in uname -v:
+        # KERNEL=AUTO would need config(1), from the comp set, not here.
+        kernel=$(uname -v | sed -n 's/.*(\([A-Za-z0-9_]*\)).*/\1/p')
+        [ -n "$(ls /etc/openssl/certs)" ] || certctl rehash || exit 1
+        if ! grep -q '^ip6addrctl_policy=ipv4_prefer' /etc/rc.conf; then
+            printf 'ip6addrctl=YES\nip6addrctl_policy=ipv4_prefer\n' >>/etc/rc.conf
+        fi
+        /etc/rc.d/ip6addrctl start >/dev/null || exit 1
+        pkgs=https://cdn.netbsd.org/pub/pkgsrc/packages/NetBSD/$arch/$rel/All
+        if ! has pkgin; then
+            say "installing pkgin and sysupgrade from $pkgs"
+            PKG_PATH=$pkgs pkg_add pkgin || exit 1
+            echo "$pkgs" >/usr/pkg/etc/pkgin/repositories.conf
+        fi
+        has sysupgrade || pkgin -y install sysupgrade || exit 1
+        cat >/usr/pkg/etc/sysupgrade.conf <<EOF
+RELEASEDIR="https://nycdn.netbsd.org/pub/NetBSD-daily/netbsd-${rel%%.*}/latest/$arch"
+KERNEL=${kernel:-GENERIC}
+SETS=AUTO
+POSTINSTALL_AUTOFIX="obsolete mtree opensslcertsrehash"
+ETCUPDATE=no
+AUTOCLEAN=yes
+EOF
+        sysupgrade auto || exit 1
+        # The sshd still running hands each new connection to the binaries
+        # just replaced, which needn't match it: the new one takes over.
+        # (Its pid file comes a moment after start returns.)
+        /etc/rc.d/sshd restart >/dev/null || exit 1
+        n=0; until /etc/rc.d/sshd status >/dev/null 2>&1; do
+            n=$((n + 1)); [ $n -lt 15 ] || { say "sshd didn't come back"; exit 1; }; sleep 1
+        done
+        pkgin -y update && pkgin -y upgrade && pkgin -y clean || exit 1
     fi ;;
 SunOS)
     # A new boot environment when the update needs one; the reboot after

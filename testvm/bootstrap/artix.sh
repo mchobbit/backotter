@@ -42,8 +42,9 @@ mkfs_root "$ROOT_PART"
 mount -t "$ROOT_FS" "$ROOT_PART" /mnt
 mount_boot
 # Without -K, pacstrap copies the live system's keyring, which now has
-# Artix's keys; the installed artix-keyring then takes over.
-pacstrap -C /tmp/artix-pacman.conf /mnt base "${INIT_PACKAGES[@]}" linux mkinitcpio \
+# Artix's keys; the installed artix-keyring then takes over.  -M: not the
+# live system's mirror list (Arch's), but artix-mirrorlist's.
+pacstrap -M -C /tmp/artix-pacman.conf /mnt base "${INIT_PACKAGES[@]}" linux mkinitcpio \
     grub nano artix-keyring "${FS_PACKAGES[@]}"
 check_root_module "$(echo /mnt/usr/lib/modules/*)"
 grep -q '^ID=artix' /mnt/etc/os-release || { echo "/etc/os-release doesn't say Artix"; false; }

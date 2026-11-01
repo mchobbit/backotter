@@ -21,6 +21,9 @@ Here, in `testvm/compare/`:
 | `nonroot-rt.sh linux` or `GUEST [PORT]` | Restores as an unprivileged user, on the host (ext4 and ZFS) or in freebsd15, freebsd15-ufs, netbsd11, alpinebsd, dragonfly6, openbsd8 or omnios58 (`nonroot-inner.sh` is the part that runs there) |
 | `guest-run.sh GUEST [PORT] COMMAND [FILE...]` | A one-off command in a throwaway copy of a guest |
 | `rt-common.sh` | What the guests' round trips, `nonroot-inner.sh` and `sparse-rt.sh` share: a snapshot's nodes decoded (with restic's `cat blob`; `RT_CONTENT` keeps the content blob IDs; scratch files in `RT_TMP`), two snapshots compared, a restored tree changed for a restore over it, a socket made (`rt_mksock`: python3, perl, cc or `nc -lU`) |
+| `run-all.sh [--host H] [--platforms LIST] [--only RE] [--dry-run] BIN_DIR LOG_DIR` | A whole test round on one host, unattended (below): checks the binaries, runs every platform's scripts at once within the host's guest and job limits, and writes the verdict table, `LOG_DIR/summary.txt` and `summary.json`; exit 0 only if every step passes |
+| `verdict.py` | `run-all.sh`'s verdicts: each script's PASS/FAIL lines, `fs_roundtrip.py`'s `results.json` and `nonroot-rt.sh`'s summary judged into table rows (the accepted differences are in its header); `verdict.py judge KIND LOG` judges one log by hand |
+| `affected.sh [--explain] [--restic A..B] [--rustic-core A..B] [--rustic A..B] [--harness A..B]` | The platforms a fix round must test again, from what changed in the forks and the harness: OS-specific files (Go build constraints and file names, `osattrs/OS.rs`, `OS/` scripts) for their OS, anything else for all, tests and docs for none |
 
 In `stick/`, the builds of rustic-bko, which tests and images share:
 
@@ -38,6 +41,28 @@ round gives it its own directory.  AlpineBSD runs the NetBSD binary.
 `ssh cat` (AlpineBSD has no scp), poweroff by full path (NetBSD root's PATH
 has no /sbin), QEMU stopped by PID, `timeout` around ssh (QEMU's user network
 accepts before the guest is up), and the legacy virtio-net OmniOS needs.
+
+### A round, scripted
+
+On each host, with the round's binaries in place (`BIN_DIR/OS/`, with their
+commit files), one command runs that host's share of the round and prints a
+table; an agent reads only the rows that failed, and their logs:
+
+    cd ~/backotter-work
+    OLD_BIN=$PWD/round9/bin EXPECT_RESTIC_COMMIT=... EXPECT_RUSTIC_COMMIT=... \
+        EXPECT_RUSTIC_CORE_COMMIT=... testvm/compare/run-all.sh round10/bin round10/logs
+
+It refuses to run binaries that aren't the expected commits or don't agree
+with each other.  The platforms, their steps and ports (`PORT_BASE` + 10-19)
+are round 9's: Chopin linux, sparse, zfsguests, dragonfly, openbsd_illumos;
+Cinqcent freebsd, netbsd, at most three guests there (`MAX_GUESTS`), counting
+every QEMU of ours on 2900-2999.  A fix round runs only what its fixes touch,
+on both hosts (each skips the other's platforms):
+
+    P=$(testvm/compare/affected.sh --restic OLD..NEW --rustic-core OLD..NEW --rustic OLD..NEW)
+    testvm/compare/run-all.sh --platforms "$P" round11/bin round11/logs
+
+`--dry-run` prints every step's command and runs none.
 
 ## On the hosts
 

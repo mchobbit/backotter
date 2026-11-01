@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Boot a BackOtter test VM from its disk image.
 #
-# Usage: vm-run [--uefi [--no-secure-boot]] [--cdrom ISO] [--snapshot | --ram [--keep]]
+# Usage: vm-run [--uefi [--no-secure-boot] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]]
 #               [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--legacy-virtio-net]
 #               [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE]
 #               IMAGE [-- QEMU_ARGS...]
@@ -19,6 +19,10 @@
 #                 Boot on and Microsoft's keys enrolled, like a stock PC
 #   --no-secure-boot
 #                 with --uefi: Secure Boot off (Pop!_OS, for one, needs that)
+#   --q35         SeaBIOS on QEMU's q35 machine (ICH9, PCIe; --uefi has it
+#                 too) instead of its PC machine (i440FX, from 1996), for a
+#                 guest that needs newer hardware but can't boot with OVMF
+#                 (Sculpt OS)
 #   --snapshot    throw away every disk write when QEMU exits (QEMU keeps them
 #                 in a temporary file in $TMPDIR, by default /var/tmp)
 #   --ram         keep every disk write in RAM instead: a qcow2 overlay in
@@ -67,13 +71,14 @@ set -euo pipefail
 RAM_DIR=${RAM_DIR:-/dev/shm}
 die() { echo "vm-run: $*" >&2; exit 1; }
 
-cdrom="" uefi=no secure_boot=yes snapshot=() ram=no keep=no console=(-nographic)
+cdrom="" uefi=no q35=no secure_boot=yes snapshot=() ram=no keep=no console=(-nographic)
 bus=virtio extra=() nic=virtio-net-pci nic_global=() mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
 while [[ $# -gt 0 ]]; do
     case $1 in
         --cdrom) cdrom=$(realpath "$2"); shift 2 ;;
         --uefi) uefi=yes; shift ;;
         --no-secure-boot) secure_boot=no; shift ;;
+        --q35) q35=yes; shift ;;
         --snapshot) snapshot=(-snapshot); shift ;;
         --ram) ram=yes; shift ;;
         --keep) keep=yes; shift ;;
@@ -91,12 +96,14 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
-[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot]] [--cdrom ISO] [--snapshot | --ram [--keep]] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]"
+[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]"
 image=$(realpath "$1")
 shift
 [[ ${1:-} == -- ]] && shift
 [[ $ram == yes && ${#snapshot[@]} -gt 0 ]] && die "--ram and --snapshot don't combine"
 [[ $keep == yes && $ram == no ]] && die "--keep needs --ram"
+[[ $uefi == yes && $q35 == yes ]] && die "--uefi is on q35 already; --q35 is for SeaBIOS"
+[[ $uefi == yes ]] && q35=yes
 case $bus in virtio|scsi|nvme|sata) ;; *) die "--disk-bus must be virtio, scsi, nvme or sata" ;; esac
 [[ $cpus =~ ^[1-9][0-9]*$ && $memory =~ ^[1-9][0-9]*$ ]] || die "--cpus and --memory take whole numbers"
 
@@ -135,7 +142,7 @@ images=("$image" "${extra[@]}")
 case $bus in
     scsi) disk_args+=(-device virtio-scsi-pci,id=scsi0) ;;
     # q35 has an AHCI controller of its own; the PC machine needs one added.
-    sata) [[ $uefi == yes ]] || disk_args+=(-device ich9-ahci,id=ahci0) ;;
+    sata) [[ $q35 == yes ]] || disk_args+=(-device ich9-ahci,id=ahci0) ;;
 esac
 for i in "${!images[@]}"; do
     # Not $(drive_opts): a subshell would lose the overlays it records.
@@ -151,7 +158,7 @@ for i in "${!images[@]}"; do
         scsi) disk_args+=(-device "scsi-hd,drive=disk$i,bus=scsi0.0") ;;
         nvme) disk_args+=(-device "nvme,drive=disk$i,serial=backotter$i") ;;
         # On q35, from port 2: --cdrom (a legacy IDE drive) takes port 0.
-        sata) if [[ $uefi == yes ]]; then disk_args+=(-device "ide-hd,drive=disk$i,bus=ide.$((i + 2))")
+        sata) if [[ $q35 == yes ]]; then disk_args+=(-device "ide-hd,drive=disk$i,bus=ide.$((i + 2))")
               else disk_args+=(-device "ide-hd,drive=disk$i,bus=ahci0.$i"); fi ;;
     esac
 done
@@ -187,6 +194,8 @@ if [[ $uefi == yes ]]; then
     args+=(-machine q35,smm=on -global driver=cfi.pflash01,property=secure,value=on
         -drive "if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/$code"
         -drive "if=pflash,format=raw,unit=1,file=$tmp/vars.fd")
+elif [[ $q35 == yes ]]; then
+    args+=(-machine q35)
 else
     args+=(-machine pc)
 fi

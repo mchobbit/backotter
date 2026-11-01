@@ -20,10 +20,13 @@ if mountpoint -q "$mp"; then
 fi
 # wait_detach DEVICE: disconnect an nbd device.  Disconnecting returns
 # before the qemu-nbd server has exited; wait for it, or the next user of the
-# device gets its late replies and fails.
+# device gets its late replies and fails, or finds the image still locked.
+# The device's pid is the qemu-nbd thread serving it, which ends before the
+# process does: wait for the process (its thread group).
 wait_detach() {
     local pid
     pid=$(cat "/sys/block/${1#/dev/}/pid" 2>/dev/null || true)
+    [[ -n $pid ]] && pid=$(awk '/^Tgid:/ { print $2 }' "/proc/$pid/status" 2>/dev/null || true)
     qemu-nbd --disconnect "$1" >/dev/null
     [[ -n $pid ]] && while kill -0 "$pid" 2>/dev/null; do sleep 0.2; done
 }
@@ -34,7 +37,10 @@ wait_detach() {
 while read -r kind name; do
     [[ -z $name ]] && { name=$kind; kind=pool; }
     case $kind in
-        pool) zpool export "$name" || die "could not export ZFS pool $name" ;;
+        # Busy for a moment after a volume of it (Ubuntu's keystore) was
+        # last closed.
+        pool) for i in 1 2 3 4 5 6 7 8 9 10; do zpool export "$name" 2>/dev/null && break; sleep 1; done
+              zpool list "$name" >/dev/null 2>&1 && { zpool export "$name" || die "could not export ZFS pool $name"; } ;;
         luks) cryptsetup close "$name" || die "could not close LUKS device $name" ;;
         md) mdadm --stop "$name" >/dev/null || die "could not stop RAID $name" ;;
         loop) losetup -d "$name" || die "could not detach $name" ;;

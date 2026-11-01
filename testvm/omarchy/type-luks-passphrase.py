@@ -27,7 +27,9 @@ def main() -> int:
     if not passphrase.isalnum() or passphrase.lower() != passphrase:
         sys.exit("type-luks-passphrase: the passphrase must be lower-case letters and digits")
     start = time.monotonic()
-    for _ in range(50):
+    # vm-run makes its overlays before it starts QEMU, which on a busy host
+    # takes a while.
+    for _ in range(600):
         try:
             mon = socket.socket(socket.AF_UNIX)
             mon.connect(sock_path)

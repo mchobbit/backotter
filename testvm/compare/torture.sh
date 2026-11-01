@@ -14,6 +14,15 @@ set -uo pipefail
 T=$1/root/bko-torture
 mkdir -p "$T"
 try() { "$@" 2>/dev/null || echo "torture: skipped (unsupported here): $*" >&2; }
+# chattr +FLAG PATH, and the flag there afterwards: some file systems take
+# a flag they don't keep (JFS's nodump: chattr succeeds, lsattr shows none).
+flag() {  # FLAG PATH
+    if ! chattr "+$1" "$2" 2>/dev/null; then
+        echo "torture: skipped (unsupported here): chattr +$1 $2" >&2
+    elif [[ $(lsattr -d "$2" 2>/dev/null | cut -d' ' -f1) != *"$1"* ]]; then
+        echo "torture: skipped (not kept here): chattr +$1 $2" >&2
+    fi
+}
 
 # Ownership by ids that have no user name, and the special permission bits.
 touch "$T/no-such-user"
@@ -91,7 +100,7 @@ mkdir -p "$T/projid-dir"; try chattr +P -p 43 "$T/projid-dir"
 
 # A case-insensitive directory (ext4 or f2fs made with -O casefold), which
 # only takes the flag while empty.
-mkdir -p "$T/casefold-dir"; try chattr +F "$T/casefold-dir"; touch "$T/casefold-dir/MixedCase"
+mkdir -p "$T/casefold-dir"; flag F "$T/casefold-dir"; touch "$T/casefold-dir/MixedCase"
 
 # btrfs's compression property, which btrfs keeps as the btrfs.compression
 # extended attribute.
@@ -113,8 +122,8 @@ done
 # btrfs's no-copy-on-write flag (systemd sets it on its journals), which only
 # takes on an empty file: set before the data goes in, and inherited from a
 # directory.
-touch "$T/nocow"; try chattr +C "$T/nocow"; head -c 65536 /dev/urandom >>"$T/nocow"
-mkdir -p "$T/nocow-dir"; try chattr +C "$T/nocow-dir"; echo "inherited" >"$T/nocow-dir/file"
+touch "$T/nocow"; flag C "$T/nocow"; head -c 65536 /dev/urandom >>"$T/nocow"
+mkdir -p "$T/nocow-dir"; flag C "$T/nocow-dir"; echo "inherited" >"$T/nocow-dir/file"
 
 # ZFS's DOS attributes (what Windows sees over SMB: readonly, hidden,
 # system, archive, ...), which only ZFS has, through its own ioctl; never
@@ -136,14 +145,14 @@ if [[ $(stat -f -c %t "$T") == 2fc12fc1 ]]; then
     echo "offline" >"$T/dos-offline-sparse"; dosflags "$T/dos-offline-sparse" $((0x300000000000 | archive))
     mkdir -p "$T/dos-hidden-dir"; dosflags "$T/dos-hidden-dir" $((0x200000000 | archive))
     echo "fixed" >"$T/dos-hidden-immutable"; dosflags "$T/dos-hidden-immutable" $((0x200000000 | archive))
-    try chattr +i "$T/dos-hidden-immutable"
+    flag i "$T/dos-hidden-immutable"
 else
     echo "torture: skipped (unsupported here): ZFS DOS attributes" >&2
 fi
 
 # Inode flags, last of all: an immutable file can't be changed afterwards.
-touch "$T/nodump"; try chattr +d "$T/nodump"
-echo "append" >"$T/append-only"; try chattr +a "$T/append-only"
-echo "fixed" >"$T/immutable"; try chattr +i "$T/immutable"
+touch "$T/nodump"; flag d "$T/nodump"
+echo "append" >"$T/append-only"; flag a "$T/append-only"
+echo "fixed" >"$T/immutable"; flag i "$T/immutable"
 touch -d '2001-02-03 04:05:06' "$T"
 exit 0

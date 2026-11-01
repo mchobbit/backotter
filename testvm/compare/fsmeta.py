@@ -100,19 +100,30 @@ def project_id(path: str, is_dir: bool) -> int | None:
         os.close(fd)
 
 
-def zfs_devices() -> set[int]:
-    """The st_dev of every mounted ZFS file system: ZFS's own ioctl numbers may
-    mean something else to another file system's driver."""
+# File systems whose SEEK_HOLE is the kernel's generic one, which finds no
+# holes, and which don't compress: there, fewer blocks than the size are
+# holes.
+NO_SEEK_HOLE = ("jfs", "nilfs2")
+
+
+def devices(*fstypes: str) -> set[int]:
+    """The st_dev of every mounted file system of these types: ZFS's own
+    ioctl numbers, for one, may mean something else to another file
+    system's driver."""
     devs = set()
     with open("/proc/self/mounts") as f:
         for line in f:
             _, mp, fstype = line.split()[:3]
-            if fstype == "zfs":
+            if fstype in fstypes:
                 try:
                     devs.add(os.stat(re.sub(r"\\([0-7]{3})", lambda m: chr(int(m[1], 8)), mp)).st_dev)
                 except OSError:
                     pass
     return devs
+
+
+def zfs_devices() -> set[int]:
+    return devices("zfs")
 
 
 def dos_flags(path: str, is_dir: bool) -> int | None:
@@ -132,15 +143,17 @@ def dos_flags(path: str, is_dir: bool) -> int | None:
         os.close(fd)
 
 
-def content(path: str, st: os.stat_result) -> tuple[str, bool]:
+def content(path: str, st: os.stat_result, seek_hole: bool = True) -> tuple[str, bool]:
     """SHA-256 of the file, and whether it has holes.  A preallocated file's
-    unwritten extents look like holes to SEEK_HOLE, but count in st_blocks."""
+    unwritten extents look like holes to SEEK_HOLE, but count in st_blocks;
+    without seek_hole (a file system whose SEEK_HOLE finds none), st_blocks
+    alone tells."""
     h = hashlib.sha256()
     size = st.st_size
     with open(path, "rb", buffering=0) as f:
         try:
             holes = (size > 0 and st.st_blocks * 512 < size
-                     and os.lseek(f.fileno(), 0, SEEK_HOLE) < size)
+                     and (not seek_hole or os.lseek(f.fileno(), 0, SEEK_HOLE) < size))
         except OSError:
             holes = False
         os.lseek(f.fileno(), 0, os.SEEK_SET)
@@ -152,7 +165,8 @@ def content(path: str, st: os.stat_result) -> tuple[str, bool]:
 def record(root: str) -> dict[str, dict]:
     entries: dict[str, dict] = {}
     inodes: dict[tuple[int, int], list[str]] = {}
-    zfs = zfs_devices()
+    zfs = devices("zfs")
+    no_seek_hole = devices(*NO_SEEK_HOLE)
     # "." is ROOT itself: its owner, mode and labels matter as much as any
     # file's (an unlabeled / stops an SELinux system from booting), and a
     # restore into an existing mount point easily misses them.
@@ -169,7 +183,7 @@ def record(root: str) -> dict[str, dict]:
             if kind == "file":
                 e["size"] = st.st_size
                 e["blocks"] = st.st_blocks
-                e["sha256"], e["holes"] = content(path, st)
+                e["sha256"], e["holes"] = content(path, st, st.st_dev not in no_seek_hole)
             elif kind == "symlink":
                 e["target"] = os.readlink(path)
             elif kind in ("chardev", "blockdev"):

@@ -2,7 +2,9 @@
 """Record and compare file metadata, to check backup-and-restore round trips.
 
 Usage:
-  fsmeta.py record ROOT OUT.json       record every file under ROOT (as root)
+  fsmeta.py record ROOT OUT.json [--skip PATH]...
+                                       record every file under ROOT (as root),
+                                       but PATH (relative to ROOT) and below
   fsmeta.py compare BEFORE.json AFTER.json [--json OUT.json]
 
 A record holds, per path: type, permission bits, owner, mtime and atime,
@@ -23,6 +25,7 @@ from __future__ import annotations
 import argparse
 import fcntl
 import hashlib
+import itertools
 import json
 import os
 import re
@@ -162,7 +165,7 @@ def content(path: str, st: os.stat_result, seek_hole: bool = True) -> tuple[str,
     return h.hexdigest(), holes
 
 
-def record(root: str) -> dict[str, dict]:
+def record(root: str, skip: list[str] = ()) -> dict[str, dict]:
     entries: dict[str, dict] = {}
     inodes: dict[tuple[int, int], list[str]] = {}
     zfs = devices("zfs")
@@ -170,8 +173,11 @@ def record(root: str) -> dict[str, dict]:
     # "." is ROOT itself: its owner, mode and labels matter as much as any
     # file's (an unlabeled / stops an SELinux system from booting), and a
     # restore into an existing mount point easily misses them.
-    walk = [(root, [], ["."])] + [(d, dn, fn) for d, dn, fn in os.walk(root)]
+    walk = itertools.chain([(root, [], ["."])], os.walk(root))
+    skip = {os.path.normpath(s) for s in skip}
     for dirpath, dirnames, filenames in walk:
+        # In place: os.walk doesn't descend into what it leaves out.
+        dirnames[:] = [n for n in dirnames if os.path.relpath(os.path.join(dirpath, n), root) not in skip]
         for name in dirnames + filenames:
             path = os.path.normpath(os.path.join(dirpath, name))
             rel = os.path.relpath(path, root)
@@ -308,6 +314,7 @@ def main() -> int:
     r = sub.add_parser("record")
     r.add_argument("root")
     r.add_argument("out")
+    r.add_argument("--skip", action="append", default=[])
     c = sub.add_parser("compare")
     c.add_argument("before")
     c.add_argument("after")
@@ -316,7 +323,7 @@ def main() -> int:
 
     if args.cmd == "record":
         with open(args.out, "w") as f:
-            json.dump(record(args.root), f)
+            json.dump(record(args.root, args.skip), f)
         return 0
 
     with open(args.before) as f:

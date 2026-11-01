@@ -30,6 +30,9 @@ fresh-install state, and any other disks its vm-run-options name with
      of its services is what a restore's boot is held against.
   3. Each tool backs up / and everything mounted below it (e.g. /boot), from
      src mounted read-only, as a backup taken from a rescue system would.
+     A mounted btrfs subvolume that shows up again nested in another one
+     mounted (openSUSE's /, again at /.snapshots/1/snapshot) is backed up
+     once, where it is mounted.
   4. Each backup is restored onto blank disks laid out like the original's:
      the same partition tables and boot code (the first MiB, which holds
      GRUB's core image on the BIOS + MBR guests), mdadm arrays, LUKS2
@@ -429,6 +432,7 @@ class Layout:
             if f.get("TYPE") == "bcachefs":
                 f["BCACHEFS_VERSION"] = bcachefs_version(dev)
         self.mounts = mounts_below(SRC_MP)
+        self.aliases = self.btrfs_aliases()
         self.fstab = fstab_options(SRC_MP)
         self.zfs = None
         pool = next((line.split()[1] for line in state[1:] if line.startswith("pool ")), None)
@@ -534,6 +538,37 @@ class Layout:
         finally:
             run(["cryptsetup", "close", name], check=False)
         return dst
+
+    def btrfs_aliases(self) -> list[str]:
+        """Where a mounted btrfs subvolume shows up a second time, as a
+        subvolume nested in another one mounted: openSUSE's / is
+        @/.snapshots/1/snapshot, which /.snapshots (@/.snapshots) shows
+        again at /.snapshots/1/snapshot.  The backups leave those out:
+        backed up twice, the two copies would be restored onto the same
+        files (in the archivers' eyes hard links, inode for inode), which
+        breaks the restores.  The restored layout shows the subvolume there
+        again; fsmeta.py leaves it out too (see skip_aliases()).  Absolute
+        paths below SRC_MP."""
+        btrfs = []
+        for m in self.mounts:
+            if m["FSTYPE"] == "btrfs":
+                sub = next((o[len("subvol="):] for o in m["OPTIONS"].split(",") if o.startswith("subvol=")), None)
+                if sub is None:
+                    raise SystemExit(f"findmnt names no subvol= for the btrfs at {m['TARGET']}")
+                btrfs.append((os.path.realpath(m["SOURCE"].split("[")[0]), sub.strip("/"), m["TARGET"]))
+        targets = [m["TARGET"] for m in self.mounts]
+        aliases = []
+        for dev, outer, at in btrfs:
+            for dev2, inner, _ in btrfs:
+                if dev2 != dev or inner == outer or not (outer == "" or inner.startswith(outer + "/")):
+                    continue
+                alias = os.path.join(at, inner[len(outer):].strip("/"))
+                # Not where a mount below at's covers it (or a directory above it).
+                if any(t != at and t.startswith(at.rstrip("/") + "/") and (alias == t or alias.startswith(t + "/"))
+                       for t in targets):
+                    continue
+                aliases.append(alias)
+        return sorted(set(aliases))
 
     def btrfs_subvolumes(self) -> tuple[list[str], str | None]:
         """The subvolumes of the btrfs at / and its default one (openSUSE's
@@ -890,31 +925,45 @@ CROSS = {"restic-to-rustic": ("restic-bko", "rustic-bko"),
          "rustic-to-restic": ("rustic-bko", "restic-bko")}
 
 
-def backup(tool: str, work: Path) -> None:
+def glob_escape(path: str) -> str:
+    """path as a glob pattern matching itself (restic's, rustic's)."""
+    return re.sub(r"([][*?\\])", r"\\\1", path)
+
+
+def backup(tool: str, work: Path, excludes: list[str]) -> None:
+    """tool's backup of SRC_MP into work/tool, without excludes (absolute
+    paths below SRC_MP, and what is below them)."""
     repo = work / tool
     tool = CROSS.get(tool, (tool, tool))[0]
+    rel = [os.path.relpath(e, SRC_MP) for e in excludes]
     shutil.rmtree(repo, ignore_errors=True)
     env = dict(os.environ, RESTIC_PASSWORD=PASSWORD, RUSTIC_PASSWORD=PASSWORD, BORG_PASSPHRASE=PASSWORD)
     if tool in ("restic", "restic-bko"):
         run([restic_exe(tool), "-r", str(repo), "init", "-q"], env=env)
-        run([restic_exe(tool), "-r", str(repo), "backup", "-q", str(SRC_MP)], env=env)
+        run([restic_exe(tool), "-r", str(repo), "backup", "-q"]
+            + [a for e in excludes for a in ("--exclude", glob_escape(e))] + [str(SRC_MP)], env=env)
     elif tool == "rustic-bko":
         # BackOtter's defaults: the real atime (stock rustic keeps the mtime).
         rustic = [rustic_exe(), "-r", str(repo), "--no-progress", "--no-cache"]
         run(rustic + ["init"], env=env)
-        run(rustic + ["backup", str(SRC_MP)], env=env)
+        run(rustic + ["backup"] + [a for e in excludes for a in ("--glob", "!" + glob_escape(e))]
+            + [str(SRC_MP)], env=env)
     elif tool == "borg":
         run(["borg", "init", "-e", "repokey-blake2", str(repo)], env=env)
-        run(["borg", "create", "--numeric-ids", "-C", "zstd,3", f"{repo}::backup", "."], env=env, cwd=SRC_MP)
+        run(["borg", "create", "--numeric-ids", "-C", "zstd,3"]
+            + [a for r in rel for a in ("--exclude", f"pp:{r}")] + [f"{repo}::backup", "."], env=env, cwd=SRC_MP)
     elif tool == "dar":
         repo.mkdir()
-        run(["dar", "-c", str(repo / "backup"), "-R", str(SRC_MP), "-zgzip:6", "-Q", "-q", "-w"])
+        run(["dar", "-c", str(repo / "backup"), "-R", str(SRC_MP), "-zgzip:6", "-Q", "-q", "-w"]
+            + [a for r in rel for a in ("-P", r)])
     elif tool == "bsdtar":
         # pax format, with ACLs, every xattr and the inode flags (bsdtar's
         # "fflags"); it crosses into /boot and the other mounts, as borg does.
         repo.mkdir()
         run(["bsdtar", "-c", "-f", str(repo / "backup.tar.zst"), "--zstd", "--format", "pax",
-             "--numeric-owner", "--acls", "--xattrs", "--fflags", "-C", str(SRC_MP), "."])
+             "--numeric-owner", "--acls", "--xattrs", "--fflags"]
+            # ^: anchored, or it would leave out each path ending so.
+            + [a for r in rel for a in ("--exclude", glob_escape(f"^./{r}"))] + ["-C", str(SRC_MP), "."])
 
 
 def restore(tool: str, work: Path) -> None:
@@ -1159,6 +1208,14 @@ def torture_in_guest(images: list[Path], cfg: GuestConfig, hardware: list[str], 
 
 # --- One guest ----------------------------------------------------------------------
 
+def skip_aliases(layout: Layout) -> list[str]:
+    """fsmeta.py's options leaving out what the backups leave out (the
+    second view of a btrfs subvolume, see btrfs_aliases()): below its
+    mounts' directories, which the mounts hide where they are mounted, it
+    shows the ones only mkdir made in a restore."""
+    return [a for p in layout.aliases for a in ("--skip", os.path.relpath(p, SRC_MP))]
+
+
 def work_dir(guest: str, stick_img: Path | None) -> Path:
     return COMPARE_DIR / (guest + (".stick-mkfs" if stick_img else ""))
 
@@ -1210,10 +1267,12 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
         if bcachefs and not stick_img:
             raise SystemExit("a guest with bcachefs needs --mkfs-from: src can't stay mounted for its own mkfs")
         results["layout"] = {p: f.get("TYPE") for p, f in layout.fields.items()}
+        if layout.aliases:
+            results["not_backed_up"] = [os.path.relpath(a, SRC_MP) for a in layout.aliases]
         if layout.zfs and guest_features:
             results["zfs_features_not_recreated"] = sorted(set(guest_features) - set(layout.zfs["features"]))
         hardware = cfg.hardware(results["layout"])
-        run(fsmeta + ["record", str(SRC_MP), str(work / "before.json")])
+        run(fsmeta + ["record", str(SRC_MP), str(work / "before.json")] + skip_aliases(layout))
         results["source_bytes"] = int(out(["du", "-sbx", str(SRC_MP)]).split()[0]) + sum(
             int(out(["du", "-sbx", m["TARGET"]]).split()[0]) for m in layout.mounts[1:])
     finally:
@@ -1230,7 +1289,7 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
         for tool in tools:
             print(f"== {guest}: {tool} backup", flush=True)
             t = time.monotonic()
-            backup(tool, work)
+            backup(tool, work, layout.aliases)
             results["tools"][tool] = {"backup_s": round(time.monotonic() - t, 1),
                                       "backup_bytes": size(work / tool)}
         if bcachefs:
@@ -1266,7 +1325,7 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
                     res["restore_error"] = (e.stderr or e.stdout or "")[-1500:]
                 res["restore_s"] = round(time.monotonic() - t, 1)
                 remount_noatime(DST_MP)
-                run(fsmeta + ["record", str(DST_MP), str(work / f"after-{tool}.json")])
+                run(fsmeta + ["record", str(DST_MP), str(work / f"after-{tool}.json")] + skip_aliases(layout))
                 r = run(fsmeta + ["compare", str(work / "before.json"), str(work / f"after-{tool}.json"),
                                   "--json", str(work / f"diff-{tool}.json")], check=False)
                 print(r.stdout, flush=True)

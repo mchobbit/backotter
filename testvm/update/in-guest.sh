@@ -171,8 +171,8 @@ Linux)
         # beside their unpacked files.  dist-upgrade does the rest (packages
         # that replace others).
         # snapd's postinst sets file capabilities, which NILFS2 can't store
-        # (make-from-live.sh unpacked the system without them): there it
-        # stays as built.
+        # (make-from-live.sh unpacked the system without them), and fails
+        # (2.77.1's still does, unconditionally): there it stays as built.
         if [ -n "$nilfs" ] && dpkg -s snapd >/dev/null 2>&1; then
             apt-mark hold snapd >/dev/null || exit 1
         fi
@@ -349,7 +349,9 @@ Haiku)
     say "no updater for $(uname)"; exit 3 ;;
 esac
 if [ -n "$nilfs" ]; then
-    nilfs_ok
+    # Once more for what dist-upgrade and autoremove replaced, so that the
+    # image leaves with that room free, then the cleaner as it was.
+    reclaim
     nilfs-clean -r "$nilfs" || exit 1
 fi
 say "updated"

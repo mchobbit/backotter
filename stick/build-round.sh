@@ -25,7 +25,8 @@
 # LIST (comma-separated): restic linux dragonfly (Chopin's), freebsd netbsd
 # openbsd illumos (Cinqcent's).  Cinqcent builds in two lanes, freebsd then
 # netbsd and openbsd then illumos: two guests at once, of the three it allows
-# us.  illumos' binaries also go to bin/omnios (the harness takes either).
+# us (BKO_GUEST_LANES=1: one, when the round's tests hold the others).
+# illumos' binaries also go to bin/omnios (the harness takes either).
 # --dry-run syncs and checks the sources and prints what would be built or
 # reused, but builds and boots nothing.
 #
@@ -59,8 +60,9 @@
 # (m@cinqcent.local), BKO_REMOTE_DIR (the hosts' directory with stick/ and
 # testvm/, relative to home: backotter-work).  Passed to the hosts: BKO_ROUNDS,
 # SRC (default ROUNDDIR/src), BKO_BUILD_CACHE, BKO_PROFILE, BKO_GUEST_PROFILE,
-# BKO_REUSE, BKO_DFLY_PORT (2701), BKO_GUEST_PORTS ("2901 2902 2903 2904": freebsd
-# netbsd openbsd illumos), DFLY_CACHE.  On a host by hand: RESTIC_COMMIT,
+# BKO_REUSE, BKO_GUEST_LANES, BKO_DFLY_PORT (2701), BKO_GUEST_PORTS ("2901
+# 2902 2903 2904": freebsd netbsd openbsd illumos), DFLY_CACHE, BKO_WORK
+# (~/backotter-work: vms/, as for the build scripts).  On a host by hand: RESTIC_COMMIT,
 # RUSTIC_COMMIT, RUSTIC_CORE_COMMIT and RESTIC_DIGEST, RUSTIC_DIGEST,
 # RUSTIC_CORE_DIGEST as the Mac part gives them (BKO_UNVERIFIED=1 builds
 # without the digests, and the table says so); BKO_GO (go on PATH, else the
@@ -139,7 +141,7 @@ if [[ $mode == mac ]]; then
         local v out="RESTIC_COMMIT=$RESTIC_COMMIT RUSTIC_COMMIT=$RUSTIC_COMMIT RUSTIC_CORE_COMMIT=$RUSTIC_CORE_COMMIT"
         out+=" RESTIC_DIGEST=$RESTIC_DIGEST RUSTIC_DIGEST=$RUSTIC_DIGEST RUSTIC_CORE_DIGEST=$RUSTIC_CORE_DIGEST"
         out+=" BKO_ROUNDS=$rrounds SRC=$rsrc"
-        for v in BKO_BUILD_CACHE BKO_PROFILE BKO_GUEST_PROFILE BKO_REUSE BKO_DFLY_PORT BKO_GUEST_PORTS DFLY_CACHE BKO_WORK; do
+        for v in BKO_BUILD_CACHE BKO_PROFILE BKO_GUEST_PROFILE BKO_REUSE BKO_DFLY_PORT BKO_GUEST_PORTS BKO_GUEST_LANES DFLY_CACHE BKO_WORK; do
             [[ -n ${!v:-} ]] && out+=" $v='${!v}'"
         done
         echo "$out"
@@ -196,7 +198,7 @@ fi
 host=$(uname -n)
 
 shasums() {  # SHA256SUMS of BIN: binaries, commit and digest files
-    (cd "$BIN" && find . -type f ! -name SHA256SUMS ! -name 'build-*' | LC_ALL=C sort |
+    (cd "$BIN" && find . -type f ! -name 'SHA256SUMS*' ! -name 'build-*' | LC_ALL=C sort |
         xargs -r sha256sum >SHA256SUMS.part && mv SHA256SUMS.part SHA256SUMS)
 }
 
@@ -520,9 +522,10 @@ else
     [[ ${#ports[@]} -eq 4 ]] || die "BKO_GUEST_PORTS: four ports (freebsd netbsd openbsd illumos)"
     if want freebsd || want netbsd || want openbsd || want illumos; then
         prepare
-        # Two lanes, one guest each.
+        # Two lanes, one guest each (BKO_GUEST_LANES=1: one guest in all).
         ( want freebsd && build_native freebsd "${ports[0]}"; want netbsd && build_native netbsd "${ports[1]}"; true ) &
         a=$!
+        [[ ${BKO_GUEST_LANES:-2} == 1 ]] && wait $a
         ( want openbsd && build_native openbsd "${ports[2]}"; want illumos && build_native illumos "${ports[3]}"; true ) &
         b=$!
         wait $a; wait $b

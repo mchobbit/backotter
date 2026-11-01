@@ -80,7 +80,13 @@
 #   SPARSE_WORK work directory: repositories, image, results (default
 #               /var/tmp/PREFIX/RUN on Linux, /root/bko-sparse-work
 #               elsewhere); maps, digests, decoded snapshots and the
-#               measurements in its out/
+#               measurements in its out/.  On Linux without SPARSE_WORK,
+#               where /mnt/bko-ram (a tmpfs of its own) is mounted, the
+#               work goes there instead, in /mnt/bko-ram/PREFIX-RUN, out/
+#               copied to /var/tmp/PREFIX/RUN/out at the end, however the
+#               run ends, and the rest dropped (the image only takes what
+#               is written in it; IMG_GB is lowered to what is free there
+#               less 4 GiB, with a note); RT_RAM=0 keeps it on disk
 #   IMG_GB      size of the image or tmpfs (default 16; files hold ~1.5 GiB)
 #   BIG         size of the big file in GiB (default 20; 0: none): 100
 #               extents of 2 MiB random data spread over it, the last one
@@ -109,14 +115,24 @@ os=$(uname -s)
 if [ "$os" = Linux ]; then FS=${SPARSE_FS:-ext4}; else FS=${SPARSE_FS:-dir}; fi
 RUN=${SPARSE_RUN:-$FS} PFX=${SPARSE_PREFIX:-bko-sparse}
 if [ "$os" = Linux ]; then W=${SPARSE_WORK:-/var/tmp/$PFX/$RUN}; else W=${SPARSE_WORK:-/root/bko-sparse-work}; fi
+# In RAM (SPARSE_WORK above): DISK_W keeps the lock and gets out/.
+DISK_W=$W
+if [ "$os" = Linux ] && [ -z "${SPARSE_WORK:-}" ] && [ "${RT_RAM:-1}" != 0 ] && mountpoint -q /mnt/bko-ram 2>/dev/null; then
+    W=/mnt/bko-ram/$PFX-$RUN
+fi
 if [ "$FS" = dir ]; then MP=${SPARSE_DIR:-/root/bko-sparse}; else MP=/mnt/$PFX/$RUN; fi
 POOL=${SPARSE_POOL:-$PFX-$RUN}
 BIG=${BIG:-20} IMG_GB=${IMG_GB:-16}
+if [ "$W" != "$DISK_W" ]; then
+    free_gb=$(( $(df -Pk /mnt/bko-ram | awk 'NR == 2 { print $4 }') / 1048576 - 4 ))
+    [ "$free_gb" -ge 4 ] || die "/mnt/bko-ram has too little room; RT_RAM=0 for the disk"
+    [ "$IMG_GB" -le "$free_gb" ] || { echo "sparse-rt: IMG_GB $IMG_GB lowered to $free_gb, the room in /mnt/bko-ram" >&2; IMG_GB=$free_gb; }
+fi
 OUT=$W/out SRC=$MP/src
 case $FS in ext4|xfs|btrfs|zfs|tmpfs) [ "$os" = Linux ] || die "SPARSE_FS=$FS is for Linux" ;;
     dir) ;; *) die "no such SPARSE_FS: $FS" ;; esac
-mkdir -p "$W" || die "can't make $W"
-exec 9>"$W/lock"
+mkdir -p "$W" "$DISK_W" || die "can't make $W"
+exec 9>"$DISK_W/lock"
 # On Linux (a host, shared): a guest is a throwaway copy, and NetBSD's
 # flock(1) fails "-n 9" there as well.
 if [ "$os" = Linux ] && command -v flock >/dev/null 2>&1; then
@@ -556,6 +572,11 @@ cleanup() {
         [ "$FS" = dir ] || rmdir "$MP" 2>/dev/null
         rm -f "$W/fs.img"; rm -rf "$W"/repo-*
     fi
+    # In RAM: the results to the disk, and the rest gone unless KEEP.
+    if [ "$W" != "$DISK_W" ]; then
+        rm -rf "$DISK_W/out" && cp -a "$OUT" "$DISK_W/out" 2>/dev/null
+        [ -n "${KEEP:-}" ] || rm -rf "$W"
+    fi
 }
 trap cleanup EXIT
 trap 'exit 1' INT TERM
@@ -940,5 +961,5 @@ echo "== time of each restore and of the sync after it (not a check)"
 for d in restic-restic rustic-rustic restic-rustic rustic-restic restic-old rustic-old; do
     for l in restore.$d sync.$d; do [ -f "$OUT/io.$l" ] && showio $l; done
 done
-echo "== maps, digests, decoded snapshots, measurements: $OUT"
+echo "== maps, digests, decoded snapshots, measurements: $( [ "$W" != "$DISK_W" ] && echo "$DISK_W/out" || echo "$OUT")"
 echo "sparse-rt: $([ -z "$failed" ] && echo PASS || echo "FAIL: ${failed#; }")"

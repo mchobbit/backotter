@@ -24,7 +24,9 @@
 #                 guest that needs newer hardware but can't boot with OVMF
 #                 (Sculpt OS)
 #   --snapshot    throw away every disk write when QEMU exits (QEMU keeps them
-#                 in a temporary file in $TMPDIR, by default /var/tmp)
+#                 in a temporary file in $TMPDIR: by default /var/tmp, or
+#                 /mnt/bko-ram where that tmpfs of its own is mounted with
+#                 8 GiB free, sparing the host's disk; RT_RAM=0: /var/tmp)
 #   --ram         keep every disk write in RAM instead: a qcow2 overlay in
 #                 /dev/shm (RAM_DIR overrides) on top of IMAGE, with
 #                 cache=unsafe; deleted when QEMU exits.  IMAGE itself is only
@@ -69,6 +71,10 @@
 set -euo pipefail
 
 RAM_DIR=${RAM_DIR:-/dev/shm}
+if [[ -z ${TMPDIR:-} && ${RT_RAM:-1} != 0 ]] && mountpoint -q /mnt/bko-ram 2>/dev/null &&
+       (( $(df -Pk /mnt/bko-ram | awk 'NR == 2 { print $4 }') >= 8 << 20 )); then
+    export TMPDIR=/mnt/bko-ram
+fi
 die() { echo "vm-run: $*" >&2; exit 1; }
 
 cdrom="" uefi=no q35=no secure_boot=yes snapshot=() ram=no keep=no console=(-nographic)

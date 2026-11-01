@@ -6,9 +6,9 @@ the guests' own file systems, which mostly lack them.
 
 Usage: sudo fs_roundtrip.py FSTYPE [--onto FSTYPE2] [TOOL ...]
          FSTYPE: ext4 xfs btrfs f2fs jfs ext2 vfat ext4-plain bcachefs (loop images
-                 in /var/tmp), tmpfs (4 GiB each, in RAM),
+                 in IMAGES), tmpfs (4 GiB each, in RAM),
                  zfs (pools bkotest-RUN-src and bkotest-RUN-dst on files in
-                 /var/tmp, destroyed afterwards),
+                 IMAGES, destroyed afterwards),
                  zfs-ds (file systems bko-fsrt-RUN-src and bko-fsrt-RUN-dst in an
                  existing pool, $BKO_ZFS_POOL or the root's, destroyed afterwards:
                  e.g. a guest's encrypted or mirrored root pool)
@@ -51,8 +51,14 @@ its own, so different RUNs can go at the same time (e.g. xargs -P); the same
 RUN twice can't, and the second one stops.  With $BKO_FSRT_PREFIX set to P
 (e.g. bkor9-fsrt), every name is P's instead: pools and file systems
 P-RUN-src and P-RUN-dst, mount points /mnt/P/RUN/{src,dst}, images
-/var/tmp/P-RUN-{src,dst}.img, results in ~/backotter-work/fs-roundtrip/P/RUN/;
+IMAGES/P-RUN-{src,dst}.img, results in ~/backotter-work/fs-roundtrip/P/RUN/;
 so that runs from different checkouts or sessions keep apart.
+
+IMAGES is /var/tmp, or, where /mnt/bko-ram (a tmpfs of its own) is mounted,
+/mnt/bko-ram/P-RUN/ (P bko-fsrt without $BKO_FSRT_PREFIX), which also holds
+the run's repositories and records: the host's disk takes only the results,
+copied to ~/backotter-work/fs-roundtrip/P/RUN/ when the run ends, however it
+ends, and the folder goes.  RT_RAM=0 keeps it all on disk.
 
 A file system this host can't make (no kernel support, no mkfs: bcachefs
 needs mkfs.bcachefs, or $BKO_MKFS_BCACHEFS naming one, e.g. "chroot
@@ -68,6 +74,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -95,6 +102,12 @@ TOOLS = ["restic-bko", "rustic-bko", "restic-to-rustic", "rustic-to-restic"]
 WORK = compare.WORK_BASE / "fs-roundtrip"
 # Names' prefix (set_run(); the module doc).
 PREFIX = os.environ.get("BKO_FSRT_PREFIX", "")
+# In RAM (the module doc): RAM_DIR, the run's own folder there (set_run()),
+# holds its images and its work directory; DISK_WORK is where the results go.
+IN_RAM = os.environ.get("RT_RAM", "1") != "0" and os.path.ismount(compare.RAM_BASE)
+IMAGES = Path("/var/tmp")
+RAM_DIR: Path | None = None
+DISK_WORK: Path | None = None
 # The source and destination mount points, per RUN (set_run()).
 SRC = Path("/mnt/bko-fsrt/RUN/src")
 DST = Path("/mnt/bko-fsrt/RUN/dst")
@@ -222,8 +235,10 @@ def run(cmd: list[str], check: bool = True, quiet: bool = False, **kw) -> subpro
 
 def set_run(run_name: str) -> None:
     """Mount points, pools and file systems of this RUN's own."""
-    global SRC, DST, POOLS, DATASETS
+    global SRC, DST, POOLS, DATASETS, IMAGES, RAM_DIR
     mnt = Path("/mnt") / (PREFIX or "bko-fsrt") / run_name
+    if IN_RAM:
+        IMAGES = RAM_DIR = compare.RAM_BASE / f"{PREFIX or 'bko-fsrt'}-{run_name}"
     SRC, DST = mnt / "src", mnt / "dst"
     POOLS = {SRC: f"{PREFIX or 'bkotest'}-{run_name}-src", DST: f"{PREFIX or 'bkotest'}-{run_name}-dst"}
     DATASETS = {SRC: f"{PREFIX or 'bko-fsrt'}-{run_name}-src", DST: f"{PREFIX or 'bko-fsrt'}-{run_name}-dst"}
@@ -269,7 +284,7 @@ def make_fs(fs: str, image: Path, mp: Path) -> None:
         run(MKFS[fs] + ["-o", f"mountpoint={mp}", f"{zfs_pool()}/{DATASETS[mp]}"])
         return
     if fs == "zfs":
-        image = Path("/var/tmp") / f"{POOLS[mp]}.img"
+        image = IMAGES / f"{POOLS[mp]}.img"
     image.unlink(missing_ok=True)
     run(["truncate", "-s", "4G", str(image)])
     if fs == "zfs":
@@ -312,7 +327,7 @@ def unmount(mp: Path) -> None:
     z = zfs_at(mp)
     if z and z[0] == "pool":
         run(["zpool", "destroy", "-f", z[1]])
-        Path(f"/var/tmp/{z[1]}.img").unlink(missing_ok=True)
+        (IMAGES / f"{z[1]}.img").unlink(missing_ok=True)
     elif z:
         run(["zfs", "destroy", "-r", "-f", z[1]])
     else:
@@ -581,15 +596,21 @@ def main() -> int:
             raise SystemExit(__doc__)
         onto, args = args[1], args[2:]
     tools = args or TOOLS
+    global DISK_WORK
     work = WORK / PREFIX / (fs if onto == fs else f"{fs}-onto-{onto}")
     work.mkdir(parents=True, exist_ok=True)
-    os.chdir(work)
-    lock = open(".lock", "w")  # held until exit
+    lock = open(work / ".lock", "w")  # held until exit
     try:
         fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
         raise SystemExit(f"fs_roundtrip: {work.name} is running already")
     set_run(work.name)
+    if RAM_DIR:
+        # A dead run's leftovers first; then the work directory in RAM.
+        drop_ram()
+        DISK_WORK, work = work, RAM_DIR / "work"
+        work.mkdir(parents=True)
+    os.chdir(work)
     why = next((f"{f}: {w}" for f in dict.fromkeys((fs, onto)) if (w := unsupported(f))), None)
     if why:
         Path("results.json").write_text(json.dumps({"fs": fs, "onto": onto, "skipped": why}, indent=1))
@@ -601,7 +622,7 @@ def main() -> int:
     for mp in (SRC, DST):
         unmount(mp)
 
-    src_img, dst_img = (Path(f"/var/tmp/{PREFIX or 'bko-fsrt'}-{work.name}-{s}.img") for s in ("src", "dst"))
+    src_img, dst_img = (IMAGES / f"{PREFIX or 'bko-fsrt'}-{(DISK_WORK or work).name}-{s}.img" for s in ("src", "dst"))
     make_fs(fs, src_img, SRC)
     r = run([str(compare.HERE / "torture.sh"), str(SRC)])
     skipped = [l for l in r.stderr.splitlines() if "skipped" in l]
@@ -806,5 +827,28 @@ def main() -> int:
     return 0
 
 
+def drop_ram() -> None:
+    """RAM_DIR emptied and gone: anything still mounted from it unmounted
+    (the pools destroyed), its records copied to DISK_WORK first if a run
+    made them there."""
+    if not RAM_DIR or not RAM_DIR.exists():
+        return
+    for mp in (SRC, DST):
+        unmount(mp)
+    work = RAM_DIR / "work"
+    if DISK_WORK and work.is_dir():
+        for f in work.iterdir():
+            if f.is_file() and f.name != ".lock":
+                shutil.copy2(f, DISK_WORK / f.name)
+    os.chdir("/")
+    shutil.rmtree(RAM_DIR, ignore_errors=True)
+
+
 if __name__ == "__main__":
-    sys.exit(main())
+    # SIGTERM as an exception, so that the finally clauses unmount, and
+    # RAM_DIR goes, on every way out.
+    signal.signal(signal.SIGTERM, lambda *_: sys.exit(143))
+    try:
+        sys.exit(main())
+    finally:
+        drop_ram()

@@ -42,7 +42,9 @@
 # testvm/, as for compare.py, and so the same when run as root.  Writes
 # ~/backotter-work/nonroot/TARGET.log (and linux-FS.log; NONROOT_LOGS
 # replaces ~/backotter-work/nonroot); the linux images live in
-# ~/backotter-work/nonroot/work while it runs.  One linux run at a time
+# ~/backotter-work/nonroot/work while it runs, or, where /mnt/bko-ram (a
+# tmpfs of its own) is mounted, in /mnt/bko-ram/nonroot-POOL, sparing the
+# host's disk (RT_RAM=0: on disk), and go on every way out.  One linux run at a time
 # per NONROOT_POOL and NONROOT_MNT: it starts by removing what a run with
 # the same names left.
 #
@@ -72,6 +74,7 @@ if [[ $target == linux ]]; then
     [[ $(id -u) == 0 ]] || die "linux needs root"
     binaries linux
     work=$logs/work pool=${NONROOT_POOL:-bkotest-nr} mnt=${NONROOT_MNT:-/mnt/bkonr}
+    if [[ ${RT_RAM:-1} != 0 ]] && mountpoint -q /mnt/bko-ram; then work=/mnt/bko-ram/nonroot-$pool; fi
     cleanup() {
         umount "$mnt-ext4" 2>/dev/null
         zpool destroy -f "$pool" 2>/dev/null
@@ -79,7 +82,7 @@ if [[ $target == linux ]]; then
         # The logs are the work directory owner's, as the rest of it.
         chown -R --reference="$WORK" "$logs"
     }
-    cleanup; trap cleanup EXIT
+    cleanup; trap cleanup EXIT; trap 'exit 1' INT TERM
     mkdir -p "$work" "$mnt-ext4"
     truncate -s 1G "$work/zfs.img"
     zpool create -f -O mountpoint="$mnt-zfs" -O atime=off -O acltype=posix -O xattr=sa \

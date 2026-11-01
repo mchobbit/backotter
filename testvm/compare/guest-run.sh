@@ -8,8 +8,8 @@
 #
 # PORT is the guest's SSH port here (default 2712).  COMMAND runs with the
 # guest's /bin/sh, whatever root's login shell (DragonFly's is csh), and may
-# span lines.  FILEs go over ssh with cat (AlpineBSD has no scp or sftp
-# server), executable.  Exits with COMMAND's status.  MEMORY (MB, default
+# span lines.  FILEs go over ssh with cat (needing no scp or sftp server,
+# which AlpineBSD lacked), executable.  Exits with COMMAND's status.  MEMORY (MB, default
 # 4096) is the guest's; T (seconds, default 3600) bounds COMMAND.  Serial
 # console and vm-run's output: ~/backotter-work/logs/guest-run-GUEST-PORT/
 # (~/backotter-work is BKO_WORK, by default the directory that holds this

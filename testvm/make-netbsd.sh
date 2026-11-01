@@ -143,7 +143,7 @@ timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -enable-kvm -cpu host -smp 2 -m "$MEMORY" -machine pc \
     -drive "file=$DISK,if=virtio,format=qcow2" \
     -drive "file=$media,media=cdrom,readonly=on" -boot order=d \
-    -nic user,model=virtio-net-pci \
+    -nic user,ipv6=off,model=virtio-net-pci \
     -display none -serial file:install-serial.log -monitor none -no-reboot ||
     die "the install failed or timed out; see install-serial.log"
 grep -aq BACKOTTER-INSTALL-OK install-serial.log || {

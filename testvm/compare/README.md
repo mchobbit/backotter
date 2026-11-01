@@ -39,7 +39,7 @@ defaults to `~/backotter-work/bko-bin`, the binaries the images ship: a test
 round gives it its own directory.  AlpineBSD runs the NetBSD binary.
 `testvm/vm-lib.sh` holds what these scripts share for driving a guest: boot,
 `/bin/sh -c` around every command (DragonFly root's shell is csh), files over
-`ssh cat` (AlpineBSD has no scp), poweroff by full path (NetBSD root's PATH
+`ssh cat` (no scp or sftp server needed), poweroff by full path (NetBSD root's PATH
 has no /sbin), QEMU stopped by PID, `timeout` around ssh (QEMU's user network
 accepts before the guest is up), and the legacy virtio-net OmniOS needs.
 

@@ -25,7 +25,8 @@
 #             on stdin, so not for commands that read stdin themselves).
 #   vm_put FILE DEST [MODE]
 #             Copy FILE to DEST in the guest (mode MODE, default 755) over
-#             ssh with cat: AlpineBSD has no scp or sftp server.
+#             ssh with cat, which needs nothing of the guest but a shell
+#             (no scp or sftp server, which AlpineBSD lacked).
 #   vm_halt   Power the guest off and make sure its QEMU is gone, by PID.
 #             The poweroff goes over ssh only while this script's QEMU is
 #             the one listening on PORT (vm_owns_port): copies of one guest

@@ -1,19 +1,20 @@
 #!/usr/bin/env bash
 # Build an openSUSE Tumbleweed test guest for BackOtter: an unattended
-# AutoYaST install from the official NET ISO into a qcow2 disk image, under
+# AutoYaST install from the official DVD ISO into a qcow2 disk image, under
 # QEMU with KVM.
 #
 # Usage: ./make-opensuse.sh SNAPSHOT WORK_DIR
-#   e.g. ./make-opensuse.sh 20261028 vms/tumbleweed
+#   e.g. ./make-opensuse.sh 20261030 vms/tumbleweed
 #
 # SNAPSHOT is a Tumbleweed snapshot (YYYYMMDD).  openSUSE serves only the
-# current snapshot's ISO, as openSUSE-Tumbleweed-NET-x86_64-Current.iso: it is
+# current snapshot's ISO, as openSUSE-Tumbleweed-DVD-x86_64-Current.iso: it is
 # downloaded into WORK_DIR (with its .sha256 and .sha256.asc) unless already
 # there, and must be SNAPSHOT's and signed by the openSUSE Project Signing
-# Key.  Packages come from openSUSE's history of that snapshot
-# (download.opensuse.org/history/SNAPSHOT/), so the install doesn't drift
-# with later snapshots, and the guest's repositories point there too.  The
-# history is kept for some months only.
+# Key.  Keep it there: the DVD holds every package the install takes, so a
+# rebuild from it needs nothing of openSUSE's that expires (the history of
+# old snapshots is kept for some months only), and installs the same
+# snapshot.  The guest's repositories are the live ones, which vm-update
+# updates it from.
 #
 # Results, in WORK_DIR:
 #   tumbleweed.qcow2      the guest's 16 GiB disk (sparse), with a qcow2
@@ -46,9 +47,8 @@ die() { echo "make-opensuse: $*" >&2; exit 1; }
 
 [[ $# -eq 2 ]] || die "usage: $0 SNAPSHOT WORK_DIR"
 snapshot=$1
-[[ $snapshot =~ ^[0-9]{8}$ ]] || die "SNAPSHOT looks like 20261028, not '$snapshot'"
-ISO=openSUSE-Tumbleweed-NET-x86_64-Current.iso
-history=https://download.opensuse.org/history/$snapshot
+[[ $snapshot =~ ^[0-9]{8}$ ]] || die "SNAPSHOT looks like 20261030, not '$snapshot'"
+ISO=openSUSE-Tumbleweed-DVD-x86_64-Current.iso
 mkdir -p "$2"
 cd "$2"
 [[ -e $DISK ]] && die "$2/$DISK already exists; move it away to rebuild"
@@ -62,7 +62,7 @@ for f in "$ISO.sha256" "$ISO.sha256.asc" "$ISO"; do
     wget -c -q -O "$f" "$url/$f" || die "could not download $url/$f"
     rm "$f.part"
 done
-# The checksum file names the snapshot: ...-Snapshot20261028-Media.iso.
+# The checksum file names the snapshot: ...-Snapshot20261030-Media.iso.
 grep -q "Snapshot$snapshot-Media.iso\$" "$ISO.sha256" ||
     die "$ISO is not snapshot $snapshot (see $ISO.sha256); move it away to fetch the current one"
 work=$(mktemp -d)
@@ -102,7 +102,7 @@ umask 022
 
 mkdir "$work/www"
 sed -e "s|@HOSTNAME@|$GUEST_NAME|g" -e "s|@ROOT_PASSWORD_HASH@|$hash|" \
-    -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" -e "s|@HISTORY@|$history|g" \
+    -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" \
     "$here/opensuse/autoinst.xml" >"$work/www/autoinst.xml"
 if grep -n '@[A-Z_]\+@' "$work/www/autoinst.xml"; then die "autoinst.xml placeholders left unfilled"; fi
 python3 -c 'import sys, xml.dom.minidom; xml.dom.minidom.parse(sys.argv[1])' "$work/www/autoinst.xml" ||
@@ -115,18 +115,19 @@ server=$!
 # --- Install --------------------------------------------------------------------------
 qemu-img create -q -f qcow2 "$DISK" "$DISK_SIZE"
 echo "Installing; the installer's console goes to $2/install-serial.log"
-# install=: the packages from the snapshot's history, not today's repository;
-# self_update=0 likewise keeps the installer as the ISO has it.  YaST stops at
-# a "No network running" pop-up that no profile setting suppresses;
-# answer-popups.py presses Enter on it.
+# The packages from the DVD (the default install source), not today's
+# repository; self_update=0 likewise keeps the installer as the ISO has it.
+# YaST's "No network running" pop-up, which autoinst.xml's <networking>
+# now avoids: answer-popups.py presses Enter on it should it come all the
+# same (and says so on stderr).
 python3 "$here/opensuse/answer-popups.py" install-serial.log "$work/serial" "No network running" &
 timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -enable-kvm -cpu host -smp 4 -m "$INSTALL_MEMORY" -machine pc \
     -drive "file=$DISK,if=virtio,format=qcow2" \
     -drive "file=$ISO,media=cdrom,readonly=on" \
-    -nic user,model=virtio-net-pci \
+    -nic user,ipv6=off,model=virtio-net-pci \
     -kernel "$work/linux" -initrd "$work/initrd" \
-    -append "console=ttyS0,115200n8 textmode=1 self_update=0 install=$history/tumbleweed/repo/oss/ autoyast=http://10.0.2.2:$port/autoinst.xml" \
+    -append "console=ttyS0,115200n8 textmode=1 self_update=0 autoyast=http://10.0.2.2:$port/autoinst.xml" \
     -chardev "socket,id=serial0,path=$work/serial,server=on,wait=off,logfile=install-serial.log" \
     -display none -serial chardev:serial0 -monitor none -no-reboot ||
     die "the install failed or timed out; see install-serial.log"

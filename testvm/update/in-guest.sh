@@ -100,6 +100,13 @@ EOF
         sed -i -E 's#^baseurl=https?://download\.opensuse\.org/history/[^/]+/#baseurl=http://download.opensuse.org/#' \
             /etc/zypp/repos.d/*.repo
     fi
+    # The DVD it was installed from, which YaST adds as a repository after
+    # the profile's own scripts have run: no DVD here, and zypper fails on
+    # a repository it can't reach.
+    for f in $(grep -lsE '^baseurl=(cd|dvd):' /etc/zypp/repos.d/*.repo); do
+        say "dropping the install DVD's repository ($(basename "$f"))"
+        rm -f "$f"
+    done
 fi
 
 # --- Room ---------------------------------------------------------------------------
@@ -261,13 +268,17 @@ NetBSD)
     if has apk; then
         # AlpineBSD.  Its install has no CA certificates to check TLS with;
         # the packages' signatures are still checked against its key.
-        apk upgrade -U --check-certificate=no || exit 1
+        # openssh-sftp-server: the sftp-server dropbear runs for scp and
+        # sftp, which a guest built before netbsd/install.sh added it lacks.
+        apk add -U --check-certificate=no openssh-sftp-server || exit 1
+        apk upgrade --check-certificate=no || exit 1
     else
-        # NetBSD, installed from a release's base sets alone.  The first
-        # update gives it what updates it: the CA certificates its base set
-        # ships (certctl), which our install never put in place; IPv4
-        # first (QEMU's user network hands out an IPv6 address that leads
-        # nowhere, where a download stalls); pkgin, from pkgsrc's binary
+        # NetBSD, installed from a release's base sets.  netbsd/install.sh
+        # now adds what updates it; for a guest built before that, the
+        # first update does: the CA certificates its base set ships
+        # (certctl); IPv4 first (a network that hands out an IPv6 address
+        # leading nowhere, as QEMU's user network did before vm-run turned
+        # its IPv6 off, stalls a download); pkgin, from pkgsrc's binary
         # packages for this release; and sysupgrade.  Then the base system
         # from the release branch's newest build (security fixes within
         # days, though with SHA512 sums only, unsigned: fetched over TLS

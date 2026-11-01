@@ -2,8 +2,8 @@
 <!DOCTYPE profile>
 <!--
   openSUSE Tumbleweed test guest for BackOtter: an unattended AutoYaST
-  install from the NET ISO, packages from the openSUSE history snapshot of
-  the ISO's own day.  BIOS + MBR with /boot (ext4), swap and / (btrfs) as
+  install from the DVD ISO, packages from the DVD (its snapshot), then the
+  live repositories for updates.  BIOS + MBR with /boot (ext4), swap and / (btrfs) as
   three primary partitions; / gets openSUSE's own btrfs layout: its default
   subvolumes under @, and snapper, which makes the default subvolume a
   snapshot (@/.snapshots/1/snapshot) rather than the top level.  No desktop.
@@ -91,11 +91,14 @@
     </global>
   </bootloader>
   <!-- NetworkManager, unconfigured: it brings up any wired card with DHCP, as
-       on a fresh desktop install.  (Keeping the installer's network fails
-       here with "No network running".) -->
+       on a fresh desktop install.  Enabled by backotter-repos.sh below, not
+       as YaST's backend: with backend network_manager, YaST's Lan.rb
+       (ensure_network_running) waits for a network NetworkManager runs,
+       which the installer doesn't, and stops at a "No network running"
+       pop-up. -->
   <networking>
     <keep_install_network config:type="boolean">false</keep_install_network>
-    <backend>network_manager</backend>
+    <backend>none</backend>
     <dns>
       <hostname>@HOSTNAME@</hostname>
     </dns>
@@ -144,13 +147,30 @@
   <scripts>
     <chroot-scripts config:type="list">
       <script>
-        <filename>backotter-freeze.sh</filename>
+        <filename>backotter-repos.sh</filename>
         <chrooted config:type="boolean">true</chrooted>
         <source><![CDATA[
-# Freeze the guest at this snapshot, like the others: point its repositories
-# at openSUSE's history of the day (kept only for some months).
-sed -i -E 's#^baseurl=https?://download\.opensuse\.org/(tumbleweed|update/tumbleweed)/#baseurl=@HISTORY@/\1/#' \
-    /etc/zypp/repos.d/*.repo
+# The live repositories, for vm-update.  Written as files: YaST holds
+# zypper's lock here.  The guest stays at the DVD's snapshot, frozen by its
+# qcow2 snapshot, until updated.  YaST adds the DVD as a repository after
+# this, which the guest won't have: vm-update's in-guest.sh drops it.
+for f in /etc/zypp/repos.d/*.repo; do
+    grep -qE '^baseurl=(cd|dvd|hd|iso):' "$f" && rm -f "$f"
+done
+repo() {  # ALIAS NAME URL
+    grep -qsF "baseurl=$3" /etc/zypp/repos.d/*.repo && return
+    printf '[%s]\nname=%s\nenabled=1\nautorefresh=1\nbaseurl=%s\ntype=rpm-md\nkeeppackages=0\n' \
+        "$1" "$2" "$3" >"/etc/zypp/repos.d/$1.repo"
+}
+repo repo-oss openSUSE-Tumbleweed-Oss http://download.opensuse.org/tumbleweed/repo/oss/
+repo repo-non-oss openSUSE-Tumbleweed-Non-Oss http://download.opensuse.org/tumbleweed/repo/non-oss/
+repo repo-update openSUSE-Tumbleweed-Update http://download.opensuse.org/update/tumbleweed/
+grep -h '^baseurl=' /etc/zypp/repos.d/*.repo >/dev/ttyS0
+# The network service (see <networking>), and the host name, which YaST
+# writes with the network settings.
+systemctl enable NetworkManager.service
+[ "$(cat /etc/hostname 2>/dev/null)" = @HOSTNAME@ ] || echo @HOSTNAME@ >/etc/hostname
+echo "NetworkManager $(systemctl is-enabled NetworkManager.service), hostname $(cat /etc/hostname)" >/dev/ttyS0
 echo "BACKOTTER-INSTALL-OK" >/dev/ttyS0
 ]]></source>
       </script>

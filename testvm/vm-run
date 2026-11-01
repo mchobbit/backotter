@@ -166,7 +166,10 @@ done
 args=(
     -enable-kvm -cpu host -smp "$cpus" -m "$memory"
     "${disk_args[@]}"
-    -nic "user,model=$nic$mac,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22"
+    # IPv4 only: the hosts have no IPv6 route out (a ULA prefix alone), so
+    # the IPv6 address QEMU's user network would hand out leads nowhere, and
+    # a guest that tries IPv6 first (NetBSD's libfetch, pkgin) stalls on it.
+    -nic "user,ipv6=off,model=$nic$mac,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22"
     "${nic_global[@]}"
     "${console[@]}"
     "${snapshot[@]}"

@@ -90,9 +90,24 @@ hostname=$GUEST_NAME
 dhcpcd=YES
 sshd=YES
 ntpd=YES
+ip6addrctl=YES
+ip6addrctl_policy=ipv4_prefer
 EOF
     sed -i 's/^#\{0,1\}PermitRootLogin .*/PermitRootLogin prohibit-password/' $T/etc/ssh/sshd_config
     run chroot $T sh -c "usermod -p '$(chroot $T pwhash "$ROOT_PASSWORD")' root"
+    # What updates it, which the base sets lack: the CA certificates the
+    # base set ships, put in place (certctl), for TLS; pkgin, from pkgsrc's
+    # binary packages for this release; and sysupgrade, for the base.
+    # IPv4 first, above, where a network hands out IPv6 that leads nowhere.
+    # vm-update's in-guest.sh does the same for a guest built without them,
+    # and writes sysupgrade.conf at every update.
+    run chroot $T certctl rehash
+    cp /etc/resolv.conf $T/etc/resolv.conf
+    pkgs=https://cdn.netbsd.org/pub/pkgsrc/packages/NetBSD/$(uname -m)/$(uname -r | sed 's/_.*//')/All
+    echo "Installing pkgin and sysupgrade from $pkgs"
+    run chroot $T env PKG_PATH=$pkgs pkg_add pkgin
+    echo "$pkgs" >$T/usr/pkg/etc/pkgin/repositories.conf
+    run chroot $T /usr/pkg/bin/pkgin -y install sysupgrade
 else
     # GPT, as AlpineBSD's installation guide lays it out.
     run gpt create -f $DISK
@@ -118,7 +133,7 @@ else
     # certificates go unchecked, as the guide does it (no CA bundle here).
     run $T/sbin/apk -p $T --initdb --check-certificate=no add absd-base netbsd-kernel-generic-bin \
         netbsd-firmware netbsd-bootloader-mbr netbsd-bootloader-efi ifupdown ifupdown-s6 dhcpcd dhcpcd-s6 \
-        dropbear dropbear-s6
+        dropbear dropbear-s6 openssh-sftp-server
     (cd $T/dev && sh ./MAKEDEV all) || fail MAKEDEV
     # The stock /etc/rc.conf sources /etc/defaults/rc.conf the shell's way,
     # but s6 reads it with envfile, which takes only name=value lines: as

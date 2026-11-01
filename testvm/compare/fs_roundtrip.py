@@ -25,7 +25,17 @@ rules (extras(), below).  Per tool it checks:
     an existing tree: changed bytes, punched holes, a symlinked directory, a
     casefold directory emptied and unflagged, a changed project ID);
 and across tools: the snapshots' nodes (generic attributes such as
-unix.sparse included), and st_blocks of each restored file.  Sockets: both
+unix.sparse included), and st_blocks of each restored file.  Extended
+attributes: every snapshot's are sorted by name, those of a file that has
+them set out of order (user.zz-first first) too (results.json
+"xattr_order", AUDIT-R6 N4).  Files marked unix.sparse, after the first
+restore: st_blocks against the source's (results.json "sparse_blocks",
+SPEC3 3 as revised: no more where the source's holes are aligned to the
+destination's block size B, "over" if more; a failure if more than the
+source's plus a block per blob).  With $BKO_OLD_RESTIC (an earlier
+restic-bko), SPEC3 2's snapshot identity: in a copy of restic-bko's
+repository, the source backed up again with it and with rustic-bko gives
+every file restic-bko's content blob IDs ("identity").  Sockets: both
 tools skip them (restic always has, rustic since rustic_core 1a2a4a4), so
 torture.sh's socket must be "missing" after every restore, with no socket
 node in any snapshot, nothing said about it at backup or restore, and the
@@ -135,6 +145,11 @@ for f in compress-immutable compress-nodump; do
     yes backotter | head -c 1M >"$T/$f"
 done
 try chattr +d "$T/compress-nodump"
+
+# Extended attributes set out of order, zz-first first: both tools store
+# them sorted by name (AUDIT-R6 N4; results.json "xattr_order").
+touch "$T/xattr-order"
+for a in zz-first aa mm; do try setfattr -n user.$a -v $a "$T/xattr-order"; done
 
 # A directory that was moved.
 mkdir -p "$T/mv-src/inner"; echo moved >"$T/mv-src/inner/file"; mv "$T/mv-src" "$T/moved"
@@ -373,12 +388,16 @@ def reset_atimes(before: dict, paths: list[str]) -> None:
             print(f"  can't reset atime of {rel}: {ex}")
 
 
-def snapshot_nodes(repo: Path) -> dict[str, dict]:
-    """Every node of the latest snapshot (read with restic-bko, whichever
-    tool wrote it), without content and subtree ids, which differ per repo."""
+def snapshot_nodes(repo: Path, contents: dict[str, list[str]] | None = None,
+                   tree: str = "") -> dict[str, dict]:
+    """Every node of the latest snapshot (or of the snapshot whose tree is
+    tree; read with restic-bko, whichever tool wrote it), without content and
+    subtree ids, which differ per repo; contents, if given, gets each file's
+    content blob IDs."""
     restic = compare.restic_exe("restic-bko")
-    snaps = json.loads(run([restic, "-r", str(repo), "snapshots", "--json", "latest"], quiet=True,
-                           env=env()).stdout)
+    if not tree:
+        tree = json.loads(run([restic, "-r", str(repo), "snapshots", "--json", "latest"], quiet=True,
+                              env=env()).stdout)[0]["tree"]
     nodes: dict[str, dict] = {}
 
     def walk(tree: str, prefix: str) -> None:
@@ -386,13 +405,103 @@ def snapshot_nodes(repo: Path) -> dict[str, dict]:
         for n in t.get("nodes") or []:
             path = f"{prefix}/{n['name']}" if prefix else n["name"]
             sub = n.pop("subtree", None)
-            n.pop("content", None)
+            content = n.pop("content", None)
+            if contents is not None and n.get("type") == "file":
+                contents[path] = content or []
             nodes[path] = n
             if sub:
                 walk(sub, path)
 
-    walk(snaps[0]["tree"], "")
+    walk(tree, "")
     return nodes
+
+
+def data_map(path: Path) -> list[tuple[int, int]]:
+    """A file's data ranges, by SEEK_DATA and SEEK_HOLE."""
+    out: list[tuple[int, int]] = []
+    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW)
+    try:
+        size, off = os.fstat(fd).st_size, 0
+        while off < size:
+            try:
+                start = os.lseek(fd, off, os.SEEK_DATA)
+            except OSError:  # ENXIO: only a hole to the end
+                break
+            end = os.lseek(fd, start, os.SEEK_HOLE)
+            out.append((start, end))
+            off = end
+    finally:
+        os.close(fd)
+    return out
+
+
+def sparse_blocks(before: dict, after: dict, marked: dict[str, list[str]], maps: dict,
+                  bsize: int) -> dict:
+    """SPEC3 3 as revised: each file marked unix.sparse, restored into a new
+    file, against its source: st_blocks no more than the source's where its
+    holes are B-aligned (B the destination's block size, at least 4096),
+    plus file system metadata, reported ("over"); never more than the
+    source's plus one block per blob (a failure).  marked: the marked
+    files' content blob IDs, by path relative to SRC."""
+    res: dict = {"B": bsize, "files": {}, "over": [], "failures": []}
+    for p, blobs in sorted(marked.items()):
+        a, b = before.get(p), after.get(p)
+        if not a or not b or "blocks" not in a or "blocks" not in b:
+            res["failures"].append(f"{p}: not in the source or not restored")
+            continue
+        m = maps.get(p)
+        aligned = m is not None and all(x % bsize == 0 or x == a["size"] for r in m for x in r)
+        limit = a["blocks"] + len(blobs) * bsize // 512
+        res["files"][p] = {"source": a["blocks"], "restored": b["blocks"], "blobs": len(blobs),
+                           "holes_aligned": aligned}
+        if b["blocks"] > limit:
+            res["failures"].append(f"{p}: {b['blocks']} blocks restored, more than the source's "
+                                   f"{a['blocks']} + {len(blobs)} blobs x {bsize}")
+        elif aligned and b["blocks"] > a["blocks"]:
+            res["over"].append(f"{p}: {b['blocks']} > {a['blocks']} (holes {bsize}-aligned)")
+    return res
+
+
+def identity(work: Path, old_restic: str) -> dict:
+    """SPEC3 2: a file with holes read by its data extents gives the chunker
+    the bytes plain reading gives.  In a copy of restic-bko's repository
+    (one chunker polynomial), SRC backed up again with old_restic (a
+    restic-bko from before, reading every byte) and with rustic-bko (whose
+    chunker cuts where restic's does, rustic_core 9f88530): every file's
+    content blob IDs must be those of restic-bko's own backup.  An old
+    rustic-bko isn't a reference: its chunker cut elsewhere."""
+    repo = work / "identity"
+    shutil.rmtree(repo, ignore_errors=True)
+    shutil.copytree(work / "restic-bko", repo)
+    restic = compare.restic_exe("restic-bko")
+    res: dict = {"old_restic": old_restic, "failures": []}
+    for tag, cmd in (("bko-old", [old_restic, "-r", str(repo), "backup", "-q", "--force"]),
+                     ("bko-rustic", [compare.rustic_exe(), "-r", str(repo), "--no-progress", "--no-cache",
+                                     "backup", "--force"])):
+        r = run(cmd + ["--tag", tag, str(SRC)], check=False, env=env())
+        res[f"{tag} exit"] = r.returncode
+        if r.returncode:
+            res["failures"].append(f"{tag} backup exit {r.returncode}: {r.stderr.strip()[-300:]}")
+    snaps = json.loads(run([restic, "-r", str(repo), "snapshots", "--json"], quiet=True, env=env()).stdout)
+    trees = {(s.get("tags") or ["new"])[0]: s["tree"] for s in snaps}
+    contents: dict[str, dict[str, list[str]]] = {}
+    for tag in ("new", "bko-old", "bko-rustic"):
+        if tag in trees:
+            contents[tag] = {}
+            snapshot_nodes(repo, contents[tag], trees[tag])
+        else:
+            res["failures"].append(f"no {tag} snapshot")
+    new = contents.get("new", {})
+    res["files"] = len(new)
+    res["blobs"] = sum(map(len, new.values()))
+    for tag in ("bko-old", "bko-rustic"):
+        other = contents.get(tag, {})
+        for p in sorted(new.keys() | other.keys()):
+            if new.get(p) != other.get(p):
+                res["failures"].append(f"{tag}: {p}: {len(other.get(p) or [])} blobs, not restic-bko's "
+                                       f"{len(new.get(p) or [])}" + ("" if p in new and p in other else " (missing)"))
+    shutil.rmtree(repo, ignore_errors=True)
+    return res
 
 
 def norm_time(v):
@@ -498,10 +607,22 @@ def main() -> int:
     skipped = [l for l in r.stderr.splitlines() if "skipped" in l]
     r = run(["bash", "-c", EXTRAS, "extras", str(SRC / TORTURE)])
     skipped += [l for l in r.stderr.splitlines() if "skipped" in l]
+    try:
+        xattr_listed = os.listxattr(SRC / TORTURE / "xattr-order")
+    except OSError:
+        xattr_listed = []
     remount(SRC, "ro")
     run(fsmeta + ["record", str(SRC), "before.json"])
     before = json.loads(Path("before.json").read_text())
     src_sockets = set(sockets("before.json"))
+    # The data ranges of the files with holes, for SPEC3 3's B-alignment.
+    maps: dict[str, list[tuple[int, int]]] = {}
+    for p, e in before.items():
+        if e.get("holes"):
+            try:
+                maps[p] = data_map(SRC / p)
+            except OSError as ex:
+                print(f"  no data map of {p}: {ex}")
     results = {"fs": fs, "onto": onto, "torture_skipped": skipped, "tools": {}}
     reset: set[str] = set()  # the paths whose atimes were put back
     try:
@@ -531,6 +652,7 @@ def main() -> int:
             make_fs(onto, dst_img, DST)
             try:
                 res["restore"] = restore(tool, work)
+                res["dst_bsize"] = max(os.statvfs(DST).f_bsize, 4096)
                 remount(DST, "noatime")
                 run(fsmeta + ["record", str(DST), f"after-{tool}.json"])
                 res["diff"] = fsmeta_compare(fsmeta, "before.json", f"after-{tool}.json",
@@ -562,6 +684,10 @@ def main() -> int:
             finally:
                 unmount(DST)
                 dst_img.unlink(missing_ok=True)
+        # SPEC3 2, with $BKO_OLD_RESTIC (an earlier restic-bko).
+        if os.environ.get("BKO_OLD_RESTIC") and (work / "restic-bko").is_dir() and "restic-bko" in tools:
+            print(f"== {fs}: snapshot identity (SPEC3 2)", flush=True)
+            results["identity"] = identity(work, os.environ["BKO_OLD_RESTIC"])
     finally:
         unmount(SRC)
         src_img.unlink(missing_ok=True)
@@ -569,7 +695,8 @@ def main() -> int:
     # Sockets are skipped: none in any snapshot, none restored, nothing said,
     # the first restore's exit 0 (those over a tree may fail for reasons of
     # their own: an immutable file in the way).  Each snapshot read once.
-    snaps = {t: snapshot_nodes(work / t) for t in tools if (work / t).is_dir()}
+    contents: dict[str, dict[str, list[str]]] = {t: {} for t in tools}
+    snaps = {t: snapshot_nodes(work / t, contents[t]) for t in tools if (work / t).is_dir()}
     socks = {"source": sockets("before.json"), "failures": []}
     if not socks["source"]:
         socks["failures"].append("no socket in the source (torture.sh made none)")
@@ -588,6 +715,23 @@ def main() -> int:
             socks["failures"].append(f"{tool}: first restore exit {res['restore'].get('exit')}")
     socks["ok"] = not socks["failures"]
     results["sockets"] = socks
+    # Extended attributes sorted by name in every node of every snapshot;
+    # xattr-order's all there, though set zz-first first.
+    xo_path = f"{str(SRC).lstrip('/')}/{TORTURE}/xattr-order"
+    xo = {"listed in the source": xattr_listed, "failures": []}
+    if not xattr_listed and any(e.get("xattrs") for e in before.values()):
+        xo["failures"].append("xattr-order has no extended attributes (setfattr failed): not exercised")
+    for tool, nodes in snaps.items():
+        for p, n in nodes.items():
+            names = [x.get("name") for x in n.get("extended_attributes") or []]
+            if names != sorted(names):
+                xo["failures"].append(f"{tool}: {p}: stored {names}, not sorted")
+            if p == xo_path:
+                xo[tool] = names
+                if sorted(names) != sorted(xattr_listed):
+                    xo["failures"].append(f"{tool}: {p}: stored {names}, source has {xattr_listed}")
+    xo["ok"] = not xo["failures"]
+    results["xattr_order"] = xo
     if "restic-bko" in tools and "rustic-bko" in tools:
         a, b = snaps["restic-bko"], snaps["rustic-bko"]
         Path("snapshot-nodes.json").write_text(json.dumps({"restic-bko": a, "rustic-bko": b}, indent=1))
@@ -599,6 +743,17 @@ def main() -> int:
         results["atimes_reset"] = sorted(reset)
         results["snapshot_node_diff (restic-bko vs rustic-bko)"] = node_differences(a, b, reset)
     results["blocks_mismatch"] = blocks_mismatch(work, tools)
+    # SPEC3 3: the marked files' st_blocks after the first restore (into a
+    # new file system), against the source's.
+    src_prefix = str(SRC).lstrip("/") + "/"
+    results["sparse_blocks"] = {}
+    for tool in tools:
+        res = results["tools"].get(tool, {})
+        if tool in snaps and "dst_bsize" in res and (work / f"after-{tool}.json").exists():
+            marked = {p[len(src_prefix):]: contents[tool].get(p, []) for p, n in snaps[tool].items()
+                      if p.startswith(src_prefix) and "unix.sparse" in (n.get("generic_attributes") or {})}
+            results["sparse_blocks"][tool] = sparse_blocks(
+                before, json.loads((work / f"after-{tool}.json").read_text()), marked, maps, res["dst_bsize"])
 
     Path("results.json").write_text(json.dumps(results, indent=1))
     print(f"\n{fs} onto {onto}: skipped {len(skipped)}: " + "; ".join(s.split(': ', 2)[-1] for s in skipped))
@@ -622,9 +777,27 @@ def main() -> int:
     print(f"sockets (SPEC3 1: skipped by both): {'as expected' if results['sockets']['ok'] else 'NOT AS EXPECTED'}; "
           f"source {results['sockets']['source']}, "
           + ("; ".join(results["sockets"]["failures"]) or "skipped by every tool (none in a snapshot, none restored, nothing said)"))
+    xo = results["xattr_order"]
+    print(f"xattr order (AUDIT-R6 N4: stored sorted by name): {'as expected' if xo['ok'] else 'NOT AS EXPECTED'}; "
+          f"xattr-order listed in the source as {xo['listed in the source']}, stored as "
+          + ", ".join(f"{t} {xo[t]}" for t in tools if t in xo)
+          + ("; " + "; ".join(xo["failures"][:8]) if xo["failures"] else ""))
     for k in ("sparse_marked", "blocks_mismatch"):
         if k in results:
             print(f"{k}: {json.dumps(results[k])}")
+    for tool, sb in results["sparse_blocks"].items():
+        print(f"sparse blocks (SPEC3 3), {tool}, B {sb['B']}: "
+              f"{'as expected' if not sb['failures'] else 'NOT AS EXPECTED'}; "
+              + ", ".join(f"{p.rsplit('/', 1)[-1]} {f['restored']}/{f['source']} ({f['blobs']} blobs"
+                          f"{'' if f['holes_aligned'] else ', holes not aligned'})" for p, f in sb["files"].items())
+              + "".join(f"; over the source's: {o}" for o in sb["over"])
+              + "".join(f"; {m}" for m in sb["failures"]))
+    idn = results.get("identity")
+    print("snapshot identity (SPEC3 2): " + (
+        "not run (BKO_OLD_RESTIC unset)" if idn is None else
+        f"{'as expected' if not idn['failures'] else 'NOT AS EXPECTED'}; {idn.get('files')} files, "
+        f"{idn.get('blobs')} blobs: old restic-bko ({idn['old_restic']}) and rustic-bko give restic-bko's"
+        + "".join(f"; {m}" for m in idn["failures"][:12])))
     nd = results.get("snapshot_node_diff (restic-bko vs rustic-bko)")
     if nd is not None:
         print(f"snapshot node differences restic-bko vs rustic-bko: {sum(map(len, nd.values()))}")

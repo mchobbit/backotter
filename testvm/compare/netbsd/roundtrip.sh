@@ -26,7 +26,9 @@
 # The tree has a Unix socket too, which neither tool keeps (restic never
 # has; rustic since rustic_core 1a2a4a4): no node of it in either tool's
 # snapshot, none restored, and no message about it from any backup or
-# restore.  It is left out of the listings compared.
+# restore.  It is left out of the listings compared.  Each snapshot decoded
+# must store a node's extended attributes sorted by name, though zz-first
+# was set before the others.
 #
 # Usage: roundtrip.sh BACKUP [RESTORE]   (as root, in a throwaway guest:
 #                                         kern.securelevel <= 0, or schg and
@@ -262,6 +264,24 @@ if [ -s /tmp/bko-rt.nodes.1 ] || rt_nodes $(rt_restic $R $RR) $RESTIC_REPOSITORY
 else
     echo "can't decode the snapshot"; failed="$failed; $t"
 fi
+# Extended attributes stored sorted by name, in each tool's snapshot that
+# was decoded, whatever order they were set in (zz-first first) or are
+# listed in (AUDIT-R6 N4).
+t="extended attributes stored sorted by name (xattr_names), zz-first among them"
+echo "== $t"
+for p in posix1e/xattrs nfs4/xattrs; do echo "  $p as the source lists its user ones: $(lsextattr -q user $SRC/$p) (not a check)"; done
+ok=1
+for n in /tmp/bko-rt.nodes.1 /tmp/bko-rt.nodes.2; do
+    [ -s $n ] || continue
+    for p in posix1e/xattrs nfs4/xattrs ${root_ea:+root-xattrs}; do
+        o=$(awk -F '\t' -v n="$p" '$1 == n' $n | tr '\t' '\n' | sed -n 's/^xattr_names=//p')
+        s=$(printf '%s\n' "$o" | tr ',' '\n' | sort | tr '\n' ','); s=${s%,}
+        echo "  $(basename $n): $p: ${o:-none}"
+        [ -n "$o" ] && [ "$o" = "$s" ] || ok=""
+        case $p in root-xattrs) ;; *) case ,$o, in *zz-first,*) ;; *) ok="" ;; esac ;; esac
+    done
+done
+[ -n "$ok" ] && echo "sorted" || failed="$failed; $t"
 atimes atime
 mkdir -p $DST
 ea_mount $DST/posix1e posix1eacls
@@ -316,6 +336,17 @@ compare_all() {  # X
 compare_all ""
 echo "== sparse (KB allocated, source then restored)"
 du -k $SRC/sparse $DST/sparse
+# S3 marks it by its blocks (NetBSD has no SEEK_HOLE probe), and a marked
+# file is restored by block (SPEC3 3 as revised): only the blocks a blob
+# puts a byte other than zero in.  Its holes are 1 MiB apart, aligned to
+# any block size, so it takes no more than the source's.
+t="sparse: marked unix.sparse, restored with no more blocks than the source (SPEC3 3)"
+echo "== $t"
+sync
+sk=$(du -k $SRC/sparse | awk '{ print $1 }') dk=$(du -k $DST/sparse | awk '{ print $1 }')
+echo "source $sk KB, restored $dk KB"
+grep '^sparse	' /tmp/bko-rt.nodes.1 | grep -q '"unix.sparse":true' || { echo "not marked"; failed="$failed; $t"; }
+[ "$dk" -le "$sk" ] || failed="$failed; $t"
 
 # Again over the restored tree, changed: the file flags off (or nothing
 # could change), a directory replaced by a symlink to one elsewhere, files

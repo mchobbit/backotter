@@ -348,6 +348,17 @@ compare_all ""
 if [ -z "$again" ]; then
     echo "== sparse (KB allocated, source then restored)"
     du -k $SRC/sparse $DST/sparse
+    # S3 marks it (SEEK_HOLE finds a hole), and a marked file is restored
+    # by block (SPEC3 3 as revised): only the blocks (the record size here)
+    # a blob puts a byte other than zero in.  Its holes are 1 MiB apart,
+    # aligned to any record size, so it takes no more than the source's.
+    t="sparse: marked unix.sparse, restored with no more blocks than the source (SPEC3 3)"
+    echo "== $t"
+    sync; sleep 6   # ZFS counts a file's blocks once its transaction group is written
+    sk=$(du -k $SRC/sparse | awk '{ print $1 }') dk=$(du -k $DST/sparse | awk '{ print $1 }')
+    echo "source $sk KB, restored $dk KB"
+    grep '^sparse	' /tmp/bko-rt.nodes.0 | grep -q '"unix.sparse":true' || { echo "not marked"; failed="$failed; $t"; }
+    [ "$dk" -le "$sk" ] || failed="$failed; $t"
 
     # Again over the restored tree, changed: the system attributes that stop
     # changes off, a directory replaced by a symlink to one elsewhere, files

@@ -12,7 +12,10 @@
 # (rt_snapshots).  Unix sockets (torture.sh makes one in each tree) must be
 # in no snapshot and come back from no restore, with no message about them:
 # neither tool backs one up (restic never did, rustic since rustic_core
-# 1a2a4a4).  rescue.sh does the same for a whole disk.
+# 1a2a4a4).  Each snapshot must store a node's extended attributes sorted
+# by name, though zz-first was set before the others.  Last, a restore onto
+# a UFS md disk without ACLs: a warning per file whose ACL it can't hold,
+# exit 0 (AUDIT-R6 N1).  rescue.sh does the same for a whole disk.
 #
 # Usage: roundtrip.sh BACKUP [RESTORE]   (as root, in a throwaway guest: at
 #                                         securelevel 1, schg and sappnd
@@ -91,6 +94,25 @@ else
     echo "can't decode the snapshot"; failed="$failed; $t"
 fi
 rt_snapshots $R $RR $RESTIC_REPOSITORY $SRC
+# Extended attributes stored sorted by name, in each tool's snapshot that
+# was decoded (rt_snapshots' second when both tools run), though
+# torture.sh set zz-first first (AUDIT-R6 N4).
+t="extended attributes stored sorted by name (xattr_names), zz-first among them"
+echo "== $t"
+X=root/bko-torture/xattrs
+for p in $X ufs-nfs4/$X; do echo "  $p as the source lists its user ones: $(lsextattr -q user $SRC/$p) (not a check)"; done
+ok=1
+for n in $OUT/nodes.txt /tmp/bko-rt.nodes.2; do
+    [ -s $n ] || continue
+    for p in $X ufs-nfs4/$X; do
+        o=$(awk -F '\t' -v n="$p" '$1 == n' $n | tr '\t' '\n' | sed -n 's/^xattr_names=//p')
+        s=$(printf '%s\n' "$o" | tr ',' '\n' | LC_ALL=C sort | tr '\n' ','); s=${s%,}
+        echo "  $(basename $n): $p: ${o:-none}"
+        [ -n "$o" ] && [ "$o" = "$s" ] || ok=""
+        case ,$o, in *zz-first,*) ;; *) ok="" ;; esac
+    done
+done
+[ -n "$ok" ] && echo "sorted" || failed="$failed; $t"
 mkdir -p $DST
 md_mount $DST/ufs-nfs4
 echo "== restore"
@@ -162,4 +184,38 @@ t="what the replaced directory's symlink pointed to, untouched"
 echo "== $t"
 rt_over_check && echo "untouched ($(wc -l </tmp/bko-rt.elsewhere.before | tr -d ' ') names)" || failed="$failed; $t"
 compare_all over " (over an existing tree)"
+# Onto a UFS md disk mounted without acls or nfsv4acls (AUDIT-R6 N1, SPEC2
+# 7.1): the ACLs it can't hold, POSIX.1e or NFSv4, one warning per file
+# naming it (acl-file and acl-dir in each torture tree, at least), the rest
+# restored, exit 0.
+N=/root/bko-rt-noacl
+t="restore onto a UFS without ACLs: exit 0, a warning naming each ACL file, contents identical"
+echo "== $t"
+if ! { md=$(mdconfig -a -t swap -s 2g) && newfs -U /dev/$md >/dev/null && mkdir -p $N &&
+        mount -o noatime /dev/$md $N; }; then
+    echo "can't mount a UFS md disk at $N"; failed="$failed; $t"
+elif ! mount -p | awk -v n=$N '$2 == n && $4 ~ /acls/ { exit 1 }'; then
+    echo "$N is mounted with ACLs"; failed="$failed; $t"
+else
+    bko_restore "latest:$SRC" $N >$OUT/noacl.msgs 2>&1; status=$?
+    cat $OUT/noacl.msgs
+    echo "exit $status"
+    ok=1
+    [ $status -eq 0 ] || ok=""
+    # Each path on its own: the root tree's not inside ufs-nfs4/'s, acl-dir
+    # not as acl-dir/inside's parent.
+    for p in $T/acl-file $T/acl-dir ufs-nfs4/$T/acl-file ufs-nfs4/$T/acl-dir; do
+        if grep -i acl $OUT/noacl.msgs | grep -q -E "((^|[^4])/|^|[ \"'])$p(\$|[^/a-z-])"; then
+            echo "  warned: $p"
+        else
+            echo "  NO WARNING NAMING IT: $p"; ok=""
+        fi
+    done
+    for p in $T/acl-file ufs-nfs4/$T/acl-file; do
+        echo "  $p: $(stat -f %Sp $SRC/$p) in the source, $(stat -f %Sp $N/$p) restored (not a check)"
+    done
+    mtree -c -n -p $SRC -X $OUT/before/mtree-exclude -k type,size,link,sha256digest >$OUT/content.spec
+    (cd $N && mtree -f $OUT/content.spec -X $OUT/before/mtree-exclude) && echo "contents identical" || ok=""
+    [ -n "$ok" ] || failed="$failed; $t"
+fi
 echo "roundtrip: $([ -z "$failed" ] && echo PASS || echo "FAIL: ${failed#; }")"

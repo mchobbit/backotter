@@ -38,12 +38,19 @@
 # either tool's snapshot, nothing in its place after any restore, no word
 # about it from a backup or a restore, exit 0.
 #
+# SPEC3 2 across the tools: the tree backed up with restic into rustic's
+# repository too, and every file's content blob IDs the same as rustic's
+# (rustic_core 9f88530 made rustic's chunker cut where restic's does).
+#
 # With OLD_RESTIC and OLD_RUSTIC (an earlier build of each tool), also the
 # snapshot identity of SPEC3 2: the same tree backed up with the old binary
 # into the repository the new one made (--force: every file read again),
 # and for every file the content blob IDs of the two snapshots must be the
-# same; and the old binaries' backups of the big file are measured too, for
-# before vs after.
+# same (but a rustic older than 9f88530 may cut a file differently, where
+# the new rustic's are restic's); and the old binaries' backups of the big file are measured too, for
+# before vs after, as are their restores of the new binaries' snapshots
+# (each tool's own): every file's st_blocks beside the new restore's, and
+# the times (not a check).
 #
 # Usage: sparse-rt.sh RESTIC RUSTIC [OLD_RESTIC OLD_RUSTIC]
 #   as root.  On Linux it makes the file system to test itself (SPARSE_FS);
@@ -51,7 +58,9 @@
 #   rt-common.sh and the binaries) it works in a directory (SPARSE_DIR) of
 #   the file system that is there.  Needs cc (or gcc, clang) for a small
 #   helper, which it builds, or else python3 (the same in Python); dd,
-#   truncate, awk.
+#   truncate (else dd does its work), awk.  netbsd11 and alpinebsd have
+#   no compiler or python3: NetBSD's build image (VM_IMAGE=
+#   ~/backotter-work/vms-bko-build/netbsd11-rust.qcow2) has cc.
 #
 # Environment:
 #   SPARSE_FS   Linux: ext4 (default), xfs, btrfs, zfs (a pool on a file;
@@ -85,7 +94,7 @@
 
 set -u
 die() { echo "sparse-rt: $*" >&2; exit 2; }
-[ $# -eq 2 ] || [ $# -eq 4 ] || { sed -n '2,84p' "$0" >&2; exit 2; }
+[ $# -eq 2 ] || [ $# -eq 4 ] || { sed -n '2,86p' "$0" >&2; exit 2; }
 uid=$(id -u 2>/dev/null) || uid=$(/usr/xpg4/bin/id -u)   # illumos' id has no -u
 [ "$uid" = 0 ] || die "run it as root"
 abspath() { case $1 in /*) echo "$1" ;; *) echo "$(pwd)/$1" ;; esac; }
@@ -95,6 +104,8 @@ OLD_RESTIC="" OLD_RUSTIC=""
 [ $# -eq 4 ] && OLD_RESTIC=$(abspath "$3") OLD_RUSTIC=$(abspath "$4")
 here=$(cd "$(dirname "$0")" && pwd)
 os=$(uname -s)
+# illumos: GNU truncate, grep and awk before the system's (as nonroot-inner.sh).
+[ "$os" = SunOS ] && PATH=/usr/gnu/bin:/usr/bin:/usr/sbin:$PATH
 if [ "$os" = Linux ]; then FS=${SPARSE_FS:-ext4}; else FS=${SPARSE_FS:-dir}; fi
 RUN=${SPARSE_RUN:-$FS} PFX=${SPARSE_PREFIX:-bko-sparse}
 if [ "$os" = Linux ]; then W=${SPARSE_WORK:-/var/tmp/$PFX/$RUN}; else W=${SPARSE_WORK:-/root/bko-sparse-work}; fi
@@ -106,7 +117,15 @@ case $FS in ext4|xfs|btrfs|zfs|tmpfs) [ "$os" = Linux ] || die "SPARSE_FS=$FS is
     dir) ;; *) die "no such SPARSE_FS: $FS" ;; esac
 mkdir -p "$W" || die "can't make $W"
 exec 9>"$W/lock"
-if command -v flock >/dev/null 2>&1; then flock -n 9 || die "another run of $RUN is going ($W/lock)"; fi
+# On Linux (a host, shared): a guest is a throwaway copy, and NetBSD's
+# flock(1) fails "-n 9" there as well.
+if [ "$os" = Linux ] && command -v flock >/dev/null 2>&1; then
+    flock -n 9 || die "another run of $RUN is going ($W/lock)"
+fi
+# NetBSD has no truncate(1): dd sizes a file to its seek offset all the same.
+command -v truncate >/dev/null 2>&1 || truncate() {  # -s SIZE FILE
+    dd if=/dev/null of="$3" bs=1 seek="$2" count=0 2>/dev/null
+}
 rm -rf "$OUT" "$W/tmp" "$W"/repo-* && mkdir -p "$OUT" "$W/tmp" || die "can't clean $W"
 export RT_TMP=$W/tmp
 # shellcheck source=rt-common.sh
@@ -547,8 +566,11 @@ if [ "$FS" != dir ]; then
     rm -f "$W/fs.img"
     case $FS in
         tmpfs) mount -t tmpfs -o size=${IMG_GB}g tmpfs "$MP" ;;
+        # cachefile=none: no fsync of /etc/zfs/zpool.cache at every create
+        # and import, which waits for the root file system's journal (round
+        # 10: minutes, on a host others kept busy).
         zfs) truncate -s ${IMG_GB}G "$W/fs.img" &&
-                 zpool create -f -o ashift=12 -O mountpoint="$MP" -O atime=off ${SPARSE_ZFS_OPTS:-} "$POOL" "$W/fs.img" ;;
+                 zpool create -f -o ashift=12 -o cachefile=none -O mountpoint="$MP" -O atime=off ${SPARSE_ZFS_OPTS:-} "$POOL" "$W/fs.img" ;;
         *) truncate -s ${IMG_GB}G "$W/fs.img" && case $FS in
                # Inode tables and journal now, not by a kernel thread
                # during the measured backups.
@@ -560,6 +582,20 @@ if [ "$FS" != dir ]; then
 fi
 rm -rf "$MP/src" "$MP"/dst-*
 mkdir -p "$SRC" || { echo "sparse-rt: FAIL: can't make $SRC"; exit 1; }
+# ZFS counts a file's blocks in st_blocks only once the transaction group
+# that wrote them is on disk, which sync(2) doesn't wait for on FreeBSD
+# (round 9: the big file's source showed 137392 KiB of its 204800 KiB of
+# data): settle waits for it too (zpool sync of the pool that holds MP),
+# before any st_blocks below is read.
+settle_pool=""
+if [ "$FS" = zfs ]; then settle_pool=$POOL
+elif command -v zfs >/dev/null 2>&1; then settle_pool=$(zfs list -H -o name "$MP" 2>/dev/null | sed 's|/.*||'); fi
+# On a shared host sync(2) waits for every other file system's writes too
+# (round 10: over 20 minutes behind other sessions' runs): on Linux
+# syncfs(2) of this file system alone (GNU sync -f), here and in the
+# measured sync after each restore.
+if [ "$os" = Linux ] && sync -f "$MP" 2>/dev/null; then syncmd="sync -f $MP"; else syncmd=sync; fi
+settle() { $syncmd; [ -z "$settle_pool" ] || zpool sync "$settle_pool"; }
 echo "== $os $(uname -r), $FS at $MP$( [ "$FS" = zfs ] && echo " (pool $POOL, compression $(zfs get -H -o value compression "$POOL"))")"
 echo "   restic: $RESTIC ($($RESTIC version 2>&1 | head -n 1))"
 echo "   rustic: $RUSTIC ($($RUSTIC --version 2>&1 | head -n 1))"
@@ -605,7 +641,7 @@ if [ "$BIG" -gt 0 ]; then
     done
 fi
 cd /
-sync
+settle
 files=$(cd "$SRC" && ls)
 # The socket, after the list of files: it has no map or digest.
 if rt_mksock "$SRC/socket"; then sock=1; else sock=""; echo "   (no socket: nothing here could make one)"; fi
@@ -644,9 +680,9 @@ done
 failed=""
 fail() { failed="$failed; $1"; }
 evict_src() {
-    sync; for f in $files; do $H evict "$SRC/$f"; done
+    $syncmd; for f in $files; do $H evict "$SRC/$f"; done
     if [ "$FS" = zfs ]; then
-        zpool export "$POOL" && zpool import -d "$W" "$POOL" || { echo "can't export and import $POOL"; fail "ZFS eviction"; }
+        zpool export "$POOL" && zpool import -o cachefile=none -d "$W" "$POOL" || { echo "can't export and import $POOL"; fail "ZFS eviction"; }
     fi
 }
 # BIN REPO: init REPO.
@@ -698,21 +734,21 @@ for t in restic rustic; do
     RT_CONTENT=1 rt_nodes "$RESTIC" $W/repo-$t "$SRC" >"$OUT/nodes.$t" ||
         { echo "can't decode the snapshot"; fail "decoding $t's snapshot"; }
     if [ -n "$sock" ] && [ -f "$OUT/nodes.$t" ]; then
-        if awk -F '\t' '$1 == "socket" || /\ttype="socket"/' "$OUT/nodes.$t" | grep -q .; then
+        if $rt_awk -F '\t' '$1 == "socket" || /\ttype="socket"/' "$OUT/nodes.$t" | grep -q .; then
             echo "socket: IN THE SNAPSHOT (SPEC3 1: skipped)"; fail "$t's snapshot has the socket"
         else
             echo "socket: not in the snapshot"
         fi
     fi
 done
-node() { awk -F '\t' -v n="$2" '$1 == n' "$OUT/nodes.$1"; }  # TOOL FILE
+node() { $rt_awk -F '\t' -v n="$2" '$1 == n' "$OUT/nodes.$1"; }  # TOOL FILE
 blobs() { printf '%s\n' "$1" | tr '\t' '\n' | sed -n 's/^content=//p' | tr ',' '\n' | grep -c '[0-9a-f]'; }
 # MAP-LINE B: the bytes of its data extents, each rounded out to B, and
 # whether every one starts and ends (but at EOF) on a B boundary: "yes" or
 # "no"; nothing without a map (no SEEK_DATA, or it failed).
 extalloc() {
     case $(field nextents "$1") in ''|*[!0-9]*) return ;; esac
-    field extents "$1" | tr ',' '\n' | awk -F- -v b=$2 -v size="$(field size "$1")" '
+    field extents "$1" | tr ',' '\n' | $rt_awk -F- -v b=$2 -v size="$(field size "$1")" '
         NF == 2 { d = $1 + 0; e = $2 + 0; z = e; if (z % b) z += b - z % b
                   tot += z - (d - d % b); if (d % b || (e % b && e != size + 0)) mis++ }
         END { printf "%.0f %s\n", tot, (mis ? "no" : "yes") }'
@@ -726,7 +762,8 @@ for d in restic-restic rustic-rustic restic-rustic rustic-restic; do
     echo "== restore $bt->$rt${BY_CONTENT:+ (by content)}"
     [ -f "$OUT/nodes.$bt" ] || { echo "no snapshot"; fail "$bt->$rt: no snapshot"; continue; }
     restore restore.$d $rb $W/repo-$bt $dst; s=$?
-    $H run "$OUT/io.sync.$d" sync
+    $H run "$OUT/io.sync.$d" $syncmd
+    settle
     echo "exit $s (wall $(field wall "$(cat "$OUT/io.restore.$d" 2>/dev/null)") s, the sync after it $(field wall "$(cat "$OUT/io.sync.$d" 2>/dev/null)") s)"
     [ $s -eq 0 ] || fail "restore $bt->$rt"
     sockwarn "restore $bt->$rt"
@@ -795,6 +832,30 @@ for d in restic-restic rustic-rustic restic-rustic rustic-restic; do
     done
 done
 
+# The old binaries' restores of the same snapshots (the latest is still the
+# new binary's), for before vs after: st_blocks and times, not a check.
+for t in restic rustic; do
+    if [ $t = restic ]; then ob=$OLD_RESTIC; else ob=$OLD_RUSTIC; fi
+    [ -n "$ob" ] && [ -f "$OUT/nodes.$t" ] || continue
+    dst=$MP/dst-$t-old
+    echo "== restore $t->$t with the old $t (not a check)"
+    restore restore.$t-old $ob $W/repo-$t $dst; s=$?
+    $H run "$OUT/io.sync.$t-old" $syncmd
+    settle
+    echo "exit $s (wall $(field wall "$(cat "$OUT/io.restore.$t-old" 2>/dev/null)") s, the sync after it $(field wall "$(cat "$OUT/io.sync.$t-old" 2>/dev/null)") s)"
+    echo "   KiB allocated: source / new $t->$t / old $t->$t; contents of the old restore"
+    for f in $files; do
+        [ -f "$dst/$f" ] || { printf '  %-14s MISSING\n' "$f"; continue; }
+        $H map "$dst/$f" >"$OUT/map.$t-old.$f"
+        $H digest "$dst/$f" >"$OUT/digest.$t-old.$f"
+        cmp -s "$OUT/digest.src.$f" "$OUT/digest.$t-old.$f" && c=same || c=DIFFERS
+        nw=-; [ -f "$OUT/map.$t-$t.$f" ] && nw=$(($(field blocks "$(cat "$OUT/map.$t-$t.$f")") / 2))
+        printf '  %-14s %9s %9s %9s  %s\n' "$f" $(($(field blocks "$(cat "$OUT/map.src.$f")") / 2)) "$nw" \
+            $(($(field blocks "$(cat "$OUT/map.$t-old.$f")") / 2)) $c
+    done
+    rm -rf "$dst"
+done
+
 # The big file alone, read again (--force), measured; and the old
 # binaries: the snapshot identity, and their own measurements.
 for t in restic rustic; do
@@ -804,6 +865,33 @@ for t in restic rustic; do
         echo "== backup of the big file alone with $t (read again: --force)"
         evict_src
         backup big.$t $b $W/repo-$t --force "$SRC/big"; echo "exit $?"
+    fi
+    # The new rustic against the new restic, in one repository (one chunker
+    # polynomial): rustic_core 9f88530 made rustic's chunker cut where
+    # restic's does, so their content blob IDs are the same; restic's own
+    # are checked against its old build below.
+    if [ $t = rustic ] && [ -f "$OUT/nodes.rustic" ]; then
+        t3="snapshot identity, rustic vs restic in one repository"
+        echo "== backup of the tree with restic into rustic's repository (--force)"
+        evict_src
+        backup tree.restic-in-rustic $RESTIC $W/repo-rustic --force "$SRC"; s=$?
+        echo "exit $s"; [ $s -eq 0 ] || fail "backup with restic into rustic's repository"
+        echo "== $t3: every file's content blob IDs (SPEC3 2)"
+        if ! RT_CONTENT=1 rt_nodes "$RESTIC" $W/repo-rustic "$SRC" >"$OUT/nodes.restic-in-rustic"; then
+            echo "can't decode the snapshot"; fail "$t3"
+        else
+            bad=""
+            for f in $files; do
+                cn=$(node rustic "$f" | tr '\t' '\n' | grep '^content=')
+                cr=$(node restic-in-rustic "$f" | tr '\t' '\n' | grep '^content=')
+                if [ "$cn" = "$cr" ]; then
+                    printf '  %-14s same (%s blobs)\n' "$f" "$(blobs "$cn")"
+                else
+                    printf '  %-14s DIFFERS: rustic %s blobs, restic %s\n' "$f" "$(blobs "$cn")" "$(blobs "$cr")"; bad="$bad $f"
+                fi
+            done
+            [ -z "$bad" ] || fail "$t3:$bad"
+        fi
     fi
     [ -n "$ob" ] || continue
     echo "== backup of the tree with the old $t into the same repository (--force)"
@@ -822,6 +910,14 @@ for t in restic rustic; do
             co=$(node $t-old "$f" | tr '\t' '\n' | grep '^content=')
             if [ "$cn" = "$co" ]; then
                 printf '  %-14s same (%s blobs)\n' "$f" "$(blobs "$cn")"
+            elif [ $t = rustic ] && [ -f "$OUT/nodes.restic-in-rustic" ] &&
+                [ "$cn" = "$(node restic-in-rustic "$f" | tr '\t' '\n' | grep '^content=')" ]; then
+                # An older rustic cut a chunk whose 64 bytes before its
+                # minimum size end in a byte other than zero earlier than
+                # restic (rustic_core BACKOTTER.md, 9f88530): the new one's
+                # are restic's, as above.
+                printf '  %-14s differs: new %s blobs, old %s; the new are restic'"'"'s (rustic_core 9f88530'"'"'s chunker fix), not a failure\n' \
+                    "$f" "$(blobs "$cn")" "$(blobs "$co")"
             else
                 printf '  %-14s DIFFERS: new %s blobs, old %s\n' "$f" "$(blobs "$cn")" "$(blobs "$co")"; bad="$bad $f"
             fi
@@ -837,11 +933,11 @@ done
 
 echo "== bytes read and time of each backup (not a check; rchar: through read(), read_bytes: from the disk)"
 [ "$FS" = dir ] && echo "   (in a directory: what was read before may still be cached, the ARC on ZFS; rchar is the figure)"
-for l in tree.restic tree.rustic big.restic big.rustic tree.restic-old tree.rustic-old big.restic-old big.rustic-old; do
+for l in tree.restic tree.rustic big.restic big.rustic tree.restic-in-rustic tree.restic-old tree.rustic-old big.restic-old big.rustic-old; do
     [ -f "$OUT/io.$l" ] && showio $l
 done
 echo "== time of each restore and of the sync after it (not a check)"
-for d in restic-restic rustic-rustic restic-rustic rustic-restic; do
+for d in restic-restic rustic-rustic restic-rustic rustic-restic restic-old rustic-old; do
     for l in restore.$d sync.$d; do [ -f "$OUT/io.$l" ] && showio $l; done
 done
 echo "== maps, digests, decoded snapshots, measurements: $OUT"

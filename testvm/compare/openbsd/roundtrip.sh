@@ -222,6 +222,17 @@ compare_all() {  # X
 compare_all ""
 echo "== sparse (KB allocated, source then restored)"
 du -k $SRC/sparse $DST/sparse
+# S3 marks it by its blocks (OpenBSD has no SEEK_HOLE probe), and a marked
+# file is restored by block (SPEC3 3 as revised): only the blocks a blob
+# puts a byte other than zero in.  Its holes are 1 MiB apart, aligned to
+# any block size, so it takes no more than the source's.
+t="sparse: marked unix.sparse, restored with no more blocks than the source (SPEC3 3)"
+echo "== $t"
+sync
+sk=$(du -k $SRC/sparse | awk '{ print $1 }') dk=$(du -k $DST/sparse | awk '{ print $1 }')
+echo "source $sk KB, restored $dk KB"
+grep '^sparse	' /tmp/bko-rt.nodes.0 | grep -q '"unix.sparse":true' || { echo "not marked"; failed="$failed; $t"; }
+[ "$dk" -le "$sk" ] || failed="$failed; $t"
 # Again over the restored tree, changed: the file flags off (or nothing
 # could change), a directory replaced by a symlink to one elsewhere, files
 # with other bytes, mode and mtime.  At securelevel 1 that is the tree

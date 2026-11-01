@@ -9,7 +9,9 @@
 # ZFS DOS flags, extended attributes, POSIX ACLs and project IDs, backed up
 # and restored by both tools in all four directions, compared with
 # fsmeta.py, restored again over a changed copy, and the two tools'
-# snapshots compared node by node.
+# snapshots compared node by node; and sparse-rt.sh (with rt-common.sh) in
+# a directory of the root pool: SPEC3's hole-skipping backup and sparse
+# restore by block.
 #
 # Usage: zfs-guest-rt.sh GUEST [PORT] [FSTYPE ...]
 #   GUEST    ubuntu24, ubuntu26-zfsmirror (any guest with python3 and ZFS)
@@ -17,7 +19,16 @@
 #   FSTYPE   zfs     pools on files in the guest's /var/tmp
 #            zfs-ds  file systems in the guest's root pool (rpool: on
 #                    ubuntu26-zfsmirror encrypted and mirrored)
-#            (default: both)
+#            sparse  sparse-rt.sh in /root/bko-sparse, on the root pool
+#                    (SPARSE_FS=dir): contents, unix.sparse marks and
+#                    st_blocks (SPEC3 3 as revised) in all four
+#                    directions, the socket skipped, bytes read; with
+#                    OLD_RESTIC and OLD_RUSTIC (environment: the round
+#                    before's Linux binaries) SPEC3 2's snapshot identity
+#                    too; BIG (GiB, default 4) is its big file's size
+#            (default: all three)
+#   OLD_RESTIC also gives fs_roundtrip.py its BKO_OLD_RESTIC (SPEC3 2's
+#   snapshot identity of torture.sh's tree).
 #
 # RESTIC and RUSTIC (environment) name the Linux binaries; by default
 # ~/backotter-work/bko-bin/linux/restic-bko and rustic-bko (BKO_BIN
@@ -43,15 +54,21 @@ die() { echo "zfs-guest-rt: $*" >&2; exit 2; }
 # shellcheck source=../vm-lib.sh
 . "$here/../vm-lib.sh"
 
-[[ $# -ge 1 ]] || { sed -n '2,13p' "$0" >&2; exit 2; }
+[[ $# -ge 1 ]] || { sed -n '2,16p' "$0" >&2; exit 2; }
 guest=$1; shift
 port=2713
 if [[ ${1:-} =~ ^[0-9]+$ ]]; then port=$1; shift; fi
 fstypes=("$@")
-[[ $# -gt 0 ]] || fstypes=(zfs zfs-ds)
-for f in "${fstypes[@]}"; do [[ $f == zfs || $f == zfs-ds ]] || die "no such FSTYPE: $f"; done
+[[ $# -gt 0 ]] || fstypes=(zfs zfs-ds sparse)
+for f in "${fstypes[@]}"; do [[ $f == zfs || $f == zfs-ds || $f == sparse ]] || die "no such FSTYPE: $f"; done
 restic=${RESTIC:-$BKO_BIN/linux/restic-bko} rustic=${RUSTIC:-$BKO_BIN/linux/rustic-bko}
 [[ -f $restic && -f $rustic ]] || die "no $restic or no $rustic (set RESTIC and RUSTIC)"
+old=() oldenv=""
+if [[ -n ${OLD_RESTIC:-}${OLD_RUSTIC:-} ]]; then
+    [[ -f ${OLD_RESTIC:-} && -f ${OLD_RUSTIC:-} ]] || die "set both OLD_RESTIC and OLD_RUSTIC, to files"
+    old=(/root/bko/bin/restic-bko-old /root/bko/bin/rustic-bko-old)
+    oldenv="BKO_OLD_RESTIC=${old[0]} "
+fi
 dir=$WORK/vms/$guest
 [[ -d $dir ]] || die "no guest $guest in $WORK/vms"
 logs=${ZFS_GUEST_LOGS:-$WORK/zfs-guest}/$guest
@@ -99,10 +116,11 @@ else
     vm_boot "$guest" "$port" "$logs/vm" --ram --memory "${MEMORY:-6144}" || exit 1
 fi
 vm_ssh 'mkdir -p /root/bko/testvm/compare /root/bko/bin' || exit 1
-for f in fs_roundtrip.py compare.py fsmeta.py torture.sh; do
+for f in fs_roundtrip.py compare.py fsmeta.py torture.sh sparse-rt.sh rt-common.sh; do
     vm_put "$here/$f" "/root/bko/testvm/compare/$f" || exit 1
 done
 vm_put "$restic" /root/bko/bin/restic-bko && vm_put "$rustic" /root/bko/bin/rustic-bko || exit 1
+if [[ ${#old[@]} -gt 0 ]]; then vm_put "$OLD_RESTIC" "${old[0]}" && vm_put "$OLD_RUSTIC" "${old[1]}" || exit 1; fi
 {
     echo "######## $guest: $(vm_ssh '/root/bko/bin/restic-bko version' | head -n 1), $(vm_ssh '/root/bko/bin/rustic-bko --version')"
     vm_sh 'uname -r; zfs version 2>&1 | tr "\n" " "; echo
@@ -114,11 +132,33 @@ vm_put "$restic" /root/bko/bin/restic-bko && vm_put "$rustic" /root/bko/bin/rust
                 echo "zfs-guest-rt: could not install attr and acl: torture.sh will skip xattrs and ACLs"
         fi' 2>&1
 } | tee "$logs/guest.log"
+# vm_ssh COMMAND >LOG, again while the guest's sshd closes the connection
+# before COMMAND says anything (round 9: ubuntu24, the first command after
+# apt, an empty log).
+run_logged() {  # LOG COMMAND
+    local try rc
+    for try in 1 2 3; do
+        T=${RT_TIMEOUT:-7200} vm_ssh "$2" >"$1" 2>&1; rc=$?
+        if [[ $rc == 0 || -s $1 ]]; then return $rc; fi
+        echo "zfs-guest-rt: ssh closed at once, nothing said (try $try)" >&2; sleep 15
+    done
+    return $rc
+}
 status=0
 for fs in "${fstypes[@]}"; do
+    if [[ $fs == sparse ]]; then
+        echo "== $guest: sparse-rt.sh in /root/bko-sparse" >&2
+        run_logged "$logs/sparse.log" "cd /root/bko && SPARSE_FS=dir SPARSE_DIR=/root/bko-sparse SPARSE_WORK=/root/bko/sparse-work BIG=${BIG:-4} sh testvm/compare/sparse-rt.sh bin/restic-bko bin/rustic-bko ${old[*]} 2>&1"
+        tail -n 1 "$logs/sparse.log" | grep -q '^sparse-rt: PASS$' || status=1
+        rm -rf "${logs:?}/sparse" && mkdir -p "$logs/sparse"
+        T=600 vm_ssh "cd /root/bko/sparse-work/out && tar -cf - ." | tar -C "$logs/sparse" -xf - || status=1
+        vm_ssh "rm -rf /root/bko-sparse /root/bko/sparse-work"
+        tail -n 1 "$logs/sparse.log"
+        continue
+    fi
     echo "== $guest: fs_roundtrip.py $fs" >&2
-    T=${RT_TIMEOUT:-7200} vm_ssh "RESTIC_BKO=/root/bko/bin/restic-bko RUSTIC_BKO=/root/bko/bin/rustic-bko python3 -I /root/bko/testvm/compare/fs_roundtrip.py $fs 2>&1" \
-        >"$logs/$fs.log" 2>&1 || status=1
+    run_logged "$logs/$fs.log" "${oldenv}RESTIC_BKO=/root/bko/bin/restic-bko RUSTIC_BKO=/root/bko/bin/rustic-bko python3 -I /root/bko/testvm/compare/fs_roundtrip.py $fs 2>&1" ||
+        status=1
     # A few tries: right after a run, ubuntu26-zfsmirror's sshd once closed
     # the connection at once (round 7: no tar stream, the next ssh fine).
     copied=0

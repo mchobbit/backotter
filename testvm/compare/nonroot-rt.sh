@@ -16,8 +16,9 @@
 # The work is nonroot-inner.sh, next to this (with rt-common.sh).
 #
 # Usage: nonroot-rt.sh linux          as root on the host: a ZFS pool on a
-#                                     file (bkotest-nr) and an ext4 loop
-#                                     image, both made and destroyed here
+#                                     file (bkotest-nr, or $NONROOT_POOL)
+#                                     and an ext4 loop image, both made and
+#                                     destroyed here
 #        nonroot-rt.sh GUEST [PORT]   in a throwaway (--ram) copy of GUEST,
 #                                     with its SSH on PORT (default 2711):
 #           freebsd15       /bkonr a ZFS file system of its own
@@ -68,7 +69,7 @@ mkdir -p "$logs"
 if [[ $target == linux ]]; then
     [[ $(id -u) == 0 ]] || die "linux needs root"
     binaries linux
-    work=$logs/work pool=bkotest-nr
+    work=$logs/work pool=${NONROOT_POOL:-bkotest-nr}
     cleanup() {
         umount /mnt/bkonr-ext4 2>/dev/null
         zpool destroy -f $pool 2>/dev/null

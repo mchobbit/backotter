@@ -355,7 +355,7 @@ def backup(tool: str, work: Path) -> list[str]:
 
     compare.run = keep
     try:
-        compare.backup(tool, work)
+        compare.backup(tool, work, [])
     finally:
         compare.run = orig
     return said

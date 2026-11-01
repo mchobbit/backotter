@@ -55,13 +55,16 @@ bootpart=$(part freebsd-boot) ufspart=$(part freebsd-ufs) zfspart=$(part freebsd
 [ -n "$bootpart" ] || { echo "rescue: no freebsd-boot partition on $SRC" >&2; exit 1; }
 dstpart() { echo "$1" | sed "s/^$SRC/$DST/"; }
 
-mount_zfs() {  # POOL ALTROOT [readonly]: import and mount every dataset
+mount_zfs() {  # POOL-OR-GUID ALTROOT [readonly]: import and mount every dataset
+    # The target pool has the source's name, and once both are exported an
+    # import by name finds two ("more than one matching pool"): the target
+    # is imported by its GUID, and its boot file system is $bootfs.
     if [ "${3:-}" = readonly ]; then
         zpool import -f -N -o readonly=on -R "$2" "$1"
     else
         zpool import -f -N -R "$2" "$1"
     fi
-    zfs mount "$(zpool get -H -o value bootfs "$1")"
+    zfs mount "${bootfs:-$(zpool get -H -o value bootfs "$pool")}"
     zfs mount -a
 }
 
@@ -148,6 +151,7 @@ else
     # shellcheck disable=SC2046
     zpool create -f -o altroot=/mnt/dst -o cachefile=none -o ashift="$ashift" \
         $(opts "$pool" -O) "$pool" /dev/$dst
+    dstguid=$(zpool get -H -o value guid "$pool")   # see mount_zfs
     for ds in $datasets; do
         [ "$ds" = "$pool" ] && continue
         # shellcheck disable=SC2046
@@ -177,7 +181,7 @@ if [ $kind = ufs ]; then
     mount -r /dev/$dst /mnt/dst
 else
     export_pool "$pool"
-    mount_zfs "$pool" /mnt/dst readonly
+    mount_zfs "$dstguid" /mnt/dst readonly
 fi
 sh "$here/fsmeta.sh" /mnt/dst $OUT/after
 {
@@ -197,7 +201,7 @@ if [ $kind = ufs ]; then
     umount /mnt/dst
 else
     export_pool "$pool" force   # read-only, so forcing loses nothing
-    mount_zfs "$pool" /mnt/dst
+    mount_zfs "$dstguid" /mnt/dst
     zpool set bootfs="$bootfs" "$pool"
     # The restored zpool.cache is the source pool's, by its GUID; the new
     # pool has another.  The pool's own, written where the restored one is,

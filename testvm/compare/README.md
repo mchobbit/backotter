@@ -64,6 +64,32 @@ on both hosts (each skips the other's platforms):
 
 `--dry-run` prints every step's command and runs none.
 
+## Builds
+
+`stick/build-round.sh ROUND`, run on the Mac, builds a whole round with no
+agent: it checks that `~/git/restic`, `rustic_core` and `rustic` are clean,
+takes their HEADs and source digests, syncs them to `roundROUND/src` on both
+hosts and runs both shares below at once (Chopin: restic-bko for the six
+OSes, rustic-bko for Linux and DragonFly; Cinqcent: the four native builds,
+two guests at a time).  A host builds nothing from a copy whose digests
+aren't the Mac's.  Both hosts end with the whole `roundROUND/bin` (illumos'
+also as `omnios`) and the same `SHA256SUMS`; it ends with a table, per
+binary: built, reused or FAILED, seconds, SHA-256 (logs in
+`roundROUND/logs/`).  It lives in `stick/` with the build scripts it drives;
+`--only`, `--hosts`, `--dry-run` and the variables are in its header.
+
+    stick/build-round.sh 10                    # host builds release, guest builds FAST
+    BKO_PROFILE=fast stick/build-round.sh 10b  # a fix round: no fat LTO on the host either
+
+What makes a round quicker: a binary whose inputs (sources, toolchain,
+profile, flags, build scripts, guest image) have the digest of an earlier
+build is copied from `~/backotter-work/build-cache/store` instead of built,
+and says so (table, log, a line in its commit file, `OS/NAME.digest`);
+`BKO_REUSE=0` builds everything.  Linux rustic builds in a fixed tree per
+target, `build-cache/cargo/TARGET`, whose `target/` stays warm, and
+prep-rustic-src.sh's lock is kept per manifest digest.  `BKO_PROFILE=fast`
+is for fix rounds: the last round of a batch is built release.
+
 ## On the hosts
 
 The hosts run these scripts from `~/backotter-work` (`BKO_WORK`), with the

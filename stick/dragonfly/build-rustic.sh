@@ -31,7 +31,8 @@
 #             the nightly to build with (default below, the one tested).
 #
 # Everything it sets up is cached in $BKO_WORK/dragonfly-cross (default
-# ~/backotter-work/dragonfly-cross), so later runs only rebuild what changed:
+# ~/backotter-work/dragonfly-cross; DFLY_CACHE names another, e.g. for a
+# session of its own), so later runs only rebuild what changed:
 # the toolchain's clang and lld if the host has none, the sysroot, the
 # sources, and cargo's target directory (std included).  rm -rf it to start
 # over, e.g. after the dragonfly6 guest is updated (the sysroot is refreshed
@@ -53,7 +54,7 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 WORK=${BKO_WORK:-$HOME/backotter-work}
 BKO_BIN=${BKO_BIN:-$WORK/bko-bin}
-CACHE=$WORK/dragonfly-cross
+CACHE=${DFLY_CACHE:-$WORK/dragonfly-cross}
 port=${1:-2421}
 REPO=https://github.com/mchobbit/rustic
 # rustc 1.101.0-nightly (92b5b8c87 2026-10-29)

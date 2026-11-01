@@ -52,7 +52,10 @@
 # the fixed path also keeps the binary's bytes the same from round to round.
 # Go's own build cache keeps restic warm; DragonFly's cross build keeps its
 # cache in $DFLY_CACHE (default ~/backotter-work/dragonfly-cross), one build
-# at a time (dragonfly/build-rustic.sh waits for its lock).
+# at a time (dragonfly/build-rustic.sh waits for its lock).  On Chopin,
+# ~/backotter-work/{build-cache,dragonfly-cross,vms-bko-build} and Go's
+# ~/.cache/go-build are symlinks into /bkoscratch, its spare NVMe, to spare
+# the root disk.
 #
 #   BKO_PROFILE=fast   Linux and DragonFly rustic without fat LTO, 16 codegen
 #                      units: a quicker link for fix rounds.  The last round

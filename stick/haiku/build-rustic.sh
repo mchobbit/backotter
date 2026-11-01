@@ -16,6 +16,10 @@
 # HaikuPorts has one rolling repository, so the Rust and gcc it installs are
 # whatever is current, unlike the other platforms' pinned package sets.
 #
+# The build grows the guest's throwaway overlay by gigabytes.  It goes in
+# $TMPDIR if set, else in BKO_SCRATCH/tmp (default /bkoscratch, Chopin's
+# spare NVMe, where it exists), else where vm-run puts it.
+#
 # Needs: qemu-system-x86_64 with KVM, git, ssh, and testvm/vm-run.
 
 set -euo pipefail
@@ -36,6 +40,10 @@ if [[ -n ${RUSTIC_CORE:-} ]]; then
     [[ -f $RUSTIC_CORE/crates/core/Cargo.toml ]] || die "RUSTIC_CORE=$RUSTIC_CORE isn't a rustic_core tree"
 fi
 
+scratch=${BKO_SCRATCH:-/bkoscratch}
+if [[ -z ${TMPDIR:-} && -d $scratch && -w $scratch ]]; then
+    mkdir -p "$scratch/tmp" && export TMPDIR=$scratch/tmp
+fi
 work=$(mktemp -d)
 # Haiku's only user is "user" (uid 0); its shell is bash.
 ssh_g() {

@@ -16,9 +16,10 @@
 # omnios58: after each direction, its repository goes into a second fresh
 # boot and is restored there again ("again" in the summary): the ephemeral
 # ids of SID owners are handed out anew in every boot.
-# alpinebsd has no mtree, chflags, stat, getfacl or *extattr: NetBSD's go in
-# with it (/root/nbtools), from ~/backotter-work/netbsd-tools, which is
-# fetched from a throwaway netbsd11 (on the same PORT) the first time.
+# alpinebsd has no mtree, chflags, stat, getfacl, *extattr or nc (for a
+# socket): NetBSD's go in with it (/root/nbtools), from
+# ~/backotter-work/netbsd-tools, which is fetched from a throwaway netbsd11
+# (on the same PORT) the first time, or again when a tool is missing.
 #
 # Writes logs to ~/backotter-work/rt/GUEST/DIRECTION.log (RT_LOGS replaces
 # ~/backotter-work/rt), and DIRECTION-again.log; omnios58's repositories go
@@ -65,11 +66,11 @@ boot() {  # GUEST: a throwaway copy of it, up and answering ssh
 }
 trap vm_halt EXIT
 
-if [[ $guest == alpinebsd && ! -x $tools/mtree ]]; then
+if [[ $guest == alpinebsd && ! ( -x $tools/mtree && -x $tools/nc ) ]]; then
     echo "== fetching NetBSD's tools from netbsd11" >&2
     boot netbsd11 || exit 1
     rm -rf "$tools.part" && mkdir -p "$tools.part"
-    vm_ssh 'cd /root && rm -rf nbtools && mkdir nbtools && cp /usr/sbin/mtree /usr/bin/stat /usr/bin/chflags /bin/chmod /bin/setfacl /bin/getfacl /usr/bin/setextattr /usr/bin/getextattr /usr/bin/lsextattr /usr/bin/rmextattr /usr/bin/md5 /usr/bin/sha256 /bin/ls /usr/bin/touch nbtools/ && tar -cf - nbtools' |
+    vm_ssh 'cd /root && rm -rf nbtools && mkdir nbtools && cp /usr/sbin/mtree /usr/bin/stat /usr/bin/chflags /bin/chmod /bin/setfacl /bin/getfacl /usr/bin/setextattr /usr/bin/getextattr /usr/bin/lsextattr /usr/bin/rmextattr /usr/bin/md5 /usr/bin/sha256 /bin/ls /usr/bin/touch /usr/bin/nc nbtools/ && tar -cf - nbtools' |
         tar -C "$tools.part" --strip-components=1 -xf - || die "couldn't fetch NetBSD's tools"
     vm_halt
     rm -rf "$tools" && mv "$tools.part" "$tools"

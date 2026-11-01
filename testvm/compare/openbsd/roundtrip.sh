@@ -11,6 +11,11 @@
 # BACKUP and RESTORE are the two tools, the snapshot each of them makes of
 # the tree, node by node (rt_snapshots).
 #
+# The tree has a Unix socket too, made after the listings, which neither
+# tool keeps (restic never has; rustic since rustic_core 1a2a4a4): no node
+# of it in either tool's snapshot, none restored, and no message about it
+# from any backup or restore.
+#
 # Usage: roundtrip.sh BACKUP [RESTORE]   (as root, in a throwaway guest: at
 #                                         securelevel 1, schg and sappnd
 #                                         can't be cleared again)
@@ -31,13 +36,21 @@ is_rustic() { case $(basename "$1") in *rustic*) true ;; *) false ;; esac; }
 bko_init() {
     if is_rustic $R; then $R --no-progress --no-cache init >/dev/null; else $R init -q; fi
 }
+# Every backup's and restore's stderr, shown and kept in /tmp/bko-rt.msgs
+# (for the socket check).
+: >/tmp/bko-rt.msgs
+keep_msgs() {  # COMMAND...
+    "$@" 2>/tmp/bko-rt.run; ks=$?
+    cat /tmp/bko-rt.run >&2; cat /tmp/bko-rt.run >>/tmp/bko-rt.msgs
+    return $ks
+}
 bko_backup() {
-    if is_rustic $R; then $R --no-progress --no-cache backup --set-atime yes "$@" >/dev/null
-    else $R backup -q "$@"; fi
+    if is_rustic $R; then keep_msgs $R --no-progress --no-cache backup --set-atime yes "$@" >/dev/null
+    else keep_msgs $R backup -q "$@"; fi
 }
 bko_restore() {
-    if is_rustic $RR; then $RR --no-progress --no-cache restore --numeric-id --sparse by-content "$1" "$2"
-    else $RR restore -q --sparse "$1" --target "$2"; fi
+    if is_rustic $RR; then keep_msgs $RR --no-progress --no-cache restore --numeric-id --sparse by-content "$1" "$2"
+    else keep_msgs $RR restore -q --sparse "$1" --target "$2"; fi
 }
 bko_exclude() { if is_rustic $R; then echo "--glob !$(basename "$1")"; else echo "--exclude $1"; fi; }
 
@@ -67,6 +80,32 @@ int main(int argc, char **argv) {  /* PATH ASEC ANSEC MSEC MNSEC */
 }
 C
 cc -o /tmp/bko-lutimens /tmp/bko-lutimens.c || { echo "can't build bko-lutimens"; exit 1; }
+# A Unix socket, left bound: bko-socket PATH.
+cat >/tmp/bko-socket.c <<'C'
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <stdio.h>
+#include <string.h>
+
+int main(int argc, char **argv) {  /* PATH */
+    struct sockaddr_un addr;
+    int s;
+
+    if (argc != 2)
+        return 2;
+    memset(&addr, 0, sizeof(addr));
+    addr.sun_family = AF_UNIX;
+    strlcpy(addr.sun_path, argv[1], sizeof(addr.sun_path));
+    if ((s = socket(AF_UNIX, SOCK_STREAM, 0)) < 0 ||
+        bind(s, (struct sockaddr *)&addr, sizeof(addr)) != 0) {
+        perror(argv[1]);
+        return 1;
+    }
+    return 0;
+}
+C
+cc -o /tmp/bko-socket /tmp/bko-socket.c || { echo "can't build bko-socket"; exit 1; }
 # The tree, in DIR, with the system flags SF (schg sappnd) or none.
 make_tree() {  # DIR [SF]
     mkdir -p "$1" && cd "$1" || exit 1
@@ -128,6 +167,11 @@ check() {  # TITLE KIND: compare $before.KIND with $after.KIND
 # mtree compares symlink modes too: those are a check of their own.
 mtree -c -p $SRC -k type,uid,gid,flags,nlink,size,time,link,sha256digest >/tmp/bko-rt.spec
 listings $SRC /tmp/bko-rt.before
+# The socket, after the spec and the listings (no restore may have it), the
+# tree's times set again after.
+/tmp/bko-socket $SRC/bko-socket && [ -S $SRC/bko-socket ] || { echo "can't make $SRC/bko-socket"; exit 1; }
+touch -d 2001-02-03T04:05:06.000000006 $SRC
+ls -l $SRC/bko-socket
 bko_init || { echo "INIT FAILED"; exit 1; }
 # A backup that fails may still have saved a snapshot (restic's exit 3: a
 # file it couldn't read): what it holds is restored all the same.
@@ -135,7 +179,21 @@ echo "== backup"
 bko_backup $SRC; status=$?
 echo "exit $status"
 [ $status -eq 0 ] || failed="$failed; backup"
+rm -f /tmp/bko-rt.nodes.2
 rt_snapshots $R $RR $RESTIC_REPOSITORY $SRC
+# The socket: in neither tool's snapshot (rt_snapshots' second is the
+# other tool's, when there are two).
+t="socket: no node in the snapshot"
+echo "== $t"
+if rt_nodes $(rt_restic $R $RR) $RESTIC_REPOSITORY $SRC >/tmp/bko-rt.nodes.0; then
+    if cat /tmp/bko-rt.nodes.0 /tmp/bko-rt.nodes.2 2>/dev/null | grep socket; then
+        failed="$failed; $t"
+    else
+        echo "none ($(wc -l </tmp/bko-rt.nodes.0 | tr -d ' ') nodes$([ -f /tmp/bko-rt.nodes.2 ] && echo ", and none in the other tool's snapshot"))"
+    fi
+else
+    echo "can't decode the snapshot"; failed="$failed; $t"
+fi
 echo "== restore"
 bko_restore "latest:$SRC" $DST; status=$?
 echo "exit $status"
@@ -155,6 +213,11 @@ compare_all() {  # X
     echo "== $t"
     n=$(ls -i $DST/hardlink-a $DST/hardlink-b $DST/sub/hardlink-c | awk '{print $1}' | sort -u | wc -l | tr -d ' ')
     echo "inodes: $n"; [ "$n" = 1 ] || failed="$failed; $t"
+    t="socket not restored$x"
+    echo "== $t"
+    n=$(find $DST -type s | wc -l | tr -d ' ')
+    echo "sockets: $n"; find $DST -type s
+    [ "$n" = 0 ] && [ ! -e $DST/bko-socket ] || failed="$failed; $t"
 }
 compare_all ""
 echo "== sparse (KB allocated, source then restored)"
@@ -184,4 +247,9 @@ echo "== $t"
 rt_over_check && echo "untouched ($(wc -l </tmp/bko-rt.elsewhere.before | tr -d ' ') names)" || failed="$failed; $t"
 after=/tmp/bko-rt.over
 compare_all " (over an existing tree)"
+t="no message about the socket from either tool (backup, restores)"
+echo "== $t"
+n=$(grep -ci socket /tmp/bko-rt.msgs)
+echo "$n lines ($(wc -l </tmp/bko-rt.msgs | tr -d ' ') lines on stderr in all)"; grep -i socket /tmp/bko-rt.msgs | head -n 5
+[ "$n" = 0 ] || failed="$failed; $t"
 echo "roundtrip: $([ -z "$failed" ] && echo PASS || echo "FAIL: ${failed#; }")"

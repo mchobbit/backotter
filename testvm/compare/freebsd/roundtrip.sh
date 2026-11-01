@@ -9,7 +9,10 @@
 # restore over the restored tree after changing it (rt-common.sh's
 # rt_over), compared again; and when BACKUP and RESTORE are the two tools,
 # the snapshot each of them makes of the tree, node by node
-# (rt_snapshots).  rescue.sh does the same for a whole disk.
+# (rt_snapshots).  Unix sockets (torture.sh makes one in each tree) must be
+# in no snapshot and come back from no restore, with no message about them:
+# neither tool backs one up (restic never did, rustic since rustic_core
+# 1a2a4a4).  rescue.sh does the same for a whole disk.
 #
 # Usage: roundtrip.sh BACKUP [RESTORE]   (as root, in a throwaway guest: at
 #                                         securelevel 1, schg and sappnd
@@ -69,14 +72,30 @@ bko_init || { echo "INIT FAILED"; exit 1; }
 # A backup that fails may still have saved a snapshot (restic's exit 3: a
 # file it couldn't read): what it holds is restored all the same.
 echo "== backup"
-bko_backup $SRC; status=$?
+bko_backup $SRC 2>$OUT/backup.msgs; status=$?
+cat $OUT/backup.msgs
 echo "exit $status"
 [ $status -eq 0 ] || failed="$failed; backup"
+t="sockets in the source, for the checks below (fsmeta.sh's sockets.txt)"
+echo "== $t"
+sed 's|^\./||' $OUT/before/sockets.txt
+[ -s $OUT/before/sockets.txt ] || { echo "none: torture.sh couldn't make one"; failed="$failed; $t"; }
+t="sockets: no node of one in the snapshot, no message about one at backup"
+echo "== $t"
+if rt_nodes $(rt_restic $R $RR) $RESTIC_REPOSITORY $SRC >$OUT/nodes.txt; then
+    { grep 'type="socket"' $OUT/nodes.txt; awk -F '\t' '$1 ~ /(^|\/)socket$/' $OUT/nodes.txt
+      grep -i socket $OUT/backup.msgs; } | sort -u >$OUT/sockets-backup.txt
+    if [ -s $OUT/sockets-backup.txt ]; then cat $OUT/sockets-backup.txt; failed="$failed; $t"
+    else echo "none ($(wc -l <$OUT/nodes.txt | tr -d ' ') nodes)"; fi
+else
+    echo "can't decode the snapshot"; failed="$failed; $t"
+fi
 rt_snapshots $R $RR $RESTIC_REPOSITORY $SRC
 mkdir -p $DST
 md_mount $DST/ufs-nfs4
 echo "== restore"
-bko_restore "latest:$SRC" $DST; status=$?
+bko_restore "latest:$SRC" $DST >$OUT/after.msgs 2>&1; status=$?
+cat $OUT/after.msgs
 echo "exit $status"
 [ $status -eq 0 ] || failed="$failed; restore"
 # What the flags compared are (not a check): which ones the file system took.
@@ -99,6 +118,13 @@ compare_all() {  # AFTER SUFFIX
         grep '/dos-noarchive ' $OUT/$d/flags.txt >$OUT/$d/noarchive.txt
         grep '^\./ufs-nfs4/' $OUT/$d/sparse.txt >$OUT/$d/sparse-md.txt
     done
+    t="no socket restored, and no message about one$x"
+    echo "== $t"
+    if [ -s $OUT/$a/sockets.txt ] || grep -i socket $OUT/$a.msgs; then
+        sed 's|^\./||' $OUT/$a/sockets.txt; failed="$failed; $t"
+    else
+        echo "none"
+    fi
     checks="flags-but-noarchive noarchive times acls extattrs hardlinks births"
     if [ $kind = ufs ]; then checks="$checks sparse"; else checks="$checks sparse-md"; fi
     for f in $checks; do
@@ -128,7 +154,8 @@ echo "== restore over an existing, changed tree"
 chflags -R 0 $DST && find $DST -type l -exec chflags -h 0 {} +
 T=root/bko-torture
 rt_over $DST $T/sub $T/atime-ns $T/xattrs ufs-nfs4/$T/acl-file || failed="$failed; preparing the restore over an existing tree"
-bko_restore "latest:$SRC" $DST; status=$?
+bko_restore "latest:$SRC" $DST >$OUT/over.msgs 2>&1; status=$?
+cat $OUT/over.msgs
 echo "exit $status"
 [ $status -eq 0 ] || failed="$failed; restore over an existing tree"
 t="what the replaced directory's symlink pointed to, untouched"

@@ -22,6 +22,9 @@ mkdir -p "$T/sticky-dir"; chmod 1777 "$T/sticky-dir"
 
 # Extended attributes, both namespaces, one value binary.
 echo data >"$T/xattrs"
+# zz-first set first, so the order listed differs from the sorted order both
+# tools store (AUDIT-R6 N4).
+setextattr user zz-first first "$T/xattrs"
 setextattr user backotter hello "$T/xattrs"
 setextattr system backotter root-only "$T/xattrs"
 printf '\000\377\020\376' | setextattr -i user binary "$T/xattrs"
@@ -45,6 +48,11 @@ mkdir -p "$T/sub"; ln -f "$T/hardlink-a" "$T/sub/hardlink-c"
 ln -sfh hardlink-a "$T/symlink"
 ln -sfh /nonexistent/target "$T/symlink-dangling"
 mkfifo "$T/fifo"
+# A Unix socket, which neither tool backs up (restic never did, rustic since
+# rustic_core 1a2a4a4): no restore may make one.  nc(1) leaves it behind.
+nc -lU "$T/socket" >/dev/null 2>&1 & pid=$!
+sleep 1; kill $pid 2>/dev/null; wait $pid 2>/dev/null
+[ -S "$T/socket" ] || echo "torture: skipped (unsupported here): a socket" >&2
 
 # A 1 GiB sparse file with data at two places.
 truncate -s 1G "$T/sparse"

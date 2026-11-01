@@ -16,6 +16,11 @@
 # and that rustic's output has no flood of time-zone warnings (at most one
 # per run, none without /etc/localtime).
 #
+# Each tree also holds a Unix socket, made after the listings: both tools
+# skip sockets (restic always has, rustic since rustic_core 1a2a4a4), so
+# neither snapshot may have a node for it, no restore may make it, and
+# neither tool may say anything about it.
+#
 # Then, as on Linux (fs_roundtrip.py): a restore over each restored tree
 # after changing it (rt-common.sh's rt_over), compared again; and when
 # BACKUP and RESTORE are the two tools, the snapshot each of them makes of
@@ -51,16 +56,25 @@ run_rustic() {  # BIN ARGS...: run BackOtter's rustic, its stderr kept and shown
     cat /tmp/bko-rt.rustic-run >&2; cat /tmp/bko-rt.rustic-run >>/tmp/bko-rt.rustic-stderr
     return $rs
 }
+# restic's stderr in the backup and the restores, kept the same way (in
+# /tmp/bko-rt.restic-stderr), for the socket check.
+: >/tmp/bko-rt.restic-stderr
+run_restic() {  # BIN ARGS...: run restic, its stderr kept and shown
+    rb=$1; shift
+    $rb "$@" 2>/tmp/bko-rt.restic-run; rs=$?
+    cat /tmp/bko-rt.restic-run >&2; cat /tmp/bko-rt.restic-run >>/tmp/bko-rt.restic-stderr
+    return $rs
+}
 bko_init() {
     if is_rustic $R; then run_rustic $R init >/dev/null; else $R init -q; fi
 }
 bko_backup() {
     if is_rustic $R; then run_rustic $R backup --set-atime yes "$@" >/dev/null
-    else $R backup -q "$@"; fi
+    else run_restic $R backup -q "$@"; fi
 }
 bko_restore() {
     if is_rustic $RR; then run_rustic $RR restore --numeric-id --sparse by-content "$1" "$2"
-    else $RR restore -q --sparse "$1" --target "$2"; fi
+    else run_restic $RR restore -q --sparse "$1" --target "$2"; fi
 }
 cat_tree() {  # BIN SNAPSHOT:PATH: the raw JSON of that tree
     if is_rustic $1; then run_rustic $1 cat tree "$2"; return; fi
@@ -96,9 +110,12 @@ decode() {
 # mknod(8): a helper does both.
 #   helper times [-h] PATH ASEC ANSEC MSEC MNSEC   atime, mtime to the ns
 #   helper mknod PATH b|c MAJOR MINOR              a device node, mode 0644
+#   helper socket PATH                             a Unix socket, left bound
 cat >/tmp/bko-rt-helper.c <<'C'
 #include <sys/types.h>
+#include <sys/socket.h>
 #include <sys/stat.h>
+#include <sys/un.h>
 #include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
@@ -113,6 +130,19 @@ int main(int argc, char **argv)
 		mode_t type = strcmp(argv[3], "b") == 0 ? S_IFBLK : S_IFCHR;
 
 		if (mknod(argv[2], type | 0644, makedev(atoi(argv[4]), atoi(argv[5]))) != 0) {
+			perror(argv[2]);
+			return 1;
+		}
+		return 0;
+	}
+	if (argc == 3 && strcmp(argv[1], "socket") == 0) {
+		struct sockaddr_un addr;
+		int s = socket(AF_UNIX, SOCK_STREAM, 0);
+
+		memset(&addr, 0, sizeof(addr));
+		addr.sun_family = AF_UNIX;
+		strlcpy(addr.sun_path, argv[2], sizeof(addr.sun_path));
+		if (s < 0 || bind(s, (struct sockaddr *)&addr, SUN_LEN(&addr)) != 0) {
 			perror(argv[2]);
 			return 1;
 		}
@@ -135,7 +165,8 @@ int main(int argc, char **argv)
 		}
 	}
 	fprintf(stderr, "usage: helper times [-h] path asec ansec msec mnsec\n"
-	    "       helper mknod path b|c major minor\n");
+	    "       helper mknod path b|c major minor\n"
+	    "       helper socket path\n");
 	return 2;
 }
 C
@@ -234,6 +265,13 @@ for t in $TREES; do
         awk '$(NF-1) > 0 && $NF * 512 < $(NF-1) { sub(/^\.\//, ""); NF -= 2; print }' |
         sort) >/tmp/bko-rt.before.$n.sparse
 done
+# The sockets, after the listings and spec (no restore may have them), the
+# trees' times set again after.
+for t in $TREES; do
+    /tmp/bko-rt-helper socket $t/socket || failed="$failed; making $t/socket"
+    nstouch $t 1046660583 333333333 981173106 6
+done
+ls -l /root/bko-rt/socket /boot/bko-rt/socket
 cd /root
 bko_init || { echo "INIT FAILED"; exit 1; }
 # A backup that fails may still have saved a snapshot (restic's exit 3: a
@@ -261,6 +299,11 @@ compare_tree() {  # TREE X
     echo "== $s"
     i=$(ls -i $t-restored/hardlink-a $t-restored/hardlink-b $t-restored/sub/hardlink-c | awk '{print $1}' | sort -u | wc -l | tr -d ' ')
     echo "inodes: $i"; [ "$i" = 1 ] || failed="$failed; $s"
+    s="no socket in $t-restored (both tools skip sockets)$x"
+    echo "== $s"
+    k=$(find $t-restored -type s | wc -l | tr -d ' ')
+    echo "sockets: $k"; find $t-restored -type s
+    [ "$k" = 0 ] && [ ! -e $t-restored/socket ] || failed="$failed; $s"
 }
 for t in $TREES; do
     echo "== restore of $t"
@@ -303,6 +346,10 @@ for t in $TREES; do
         echo "-- expected (size, blocks):"
         (cd $t && while read -r f; do stat -f '  %N %z %b' "$f"; done </tmp/bko-rt.before.$n.sparse)
         check "$s" $n.sparse
+        s="snapshot of $t decoded by $(basename $b): no node for the socket"
+        echo "== $s"
+        k=$(awk -F '\t' '$1 == "socket" || $2 == "socket"' /tmp/bko-rt.decoded.$n | wc -l | tr -d ' ')
+        echo "socket nodes: $k"; [ "$k" = 0 ] || failed="$failed; $s"
         [ $b = $RR ] && break
     done
 done
@@ -314,4 +361,9 @@ tz=$(grep -ciE 'time zone|times are in UTC' /tmp/bko-rt.rustic-stderr)
 echo "$tz in $rustic_runs runs of rustic ($(wc -l </tmp/bko-rt.rustic-stderr | tr -d ' ') lines on stderr in all)"
 grep -iE 'time zone|times are in UTC' /tmp/bko-rt.rustic-stderr | sort | uniq -c | sort -rn | head -n 5
 [ "$tz" -le "$most" ] || failed="$failed; $s"
+s="no message about the sockets from either tool (backup, restores)"
+echo "== $s"
+k=$(cat /tmp/bko-rt.rustic-stderr /tmp/bko-rt.restic-stderr | grep -ci socket)
+echo "$k lines"; cat /tmp/bko-rt.rustic-stderr /tmp/bko-rt.restic-stderr | grep -i socket | head -n 5
+[ "$k" = 0 ] || failed="$failed; $s"
 echo "roundtrip: $([ -z "$failed" ] && echo PASS || echo "FAIL: ${failed#; }")"

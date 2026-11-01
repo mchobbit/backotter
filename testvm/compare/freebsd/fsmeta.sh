@@ -21,6 +21,8 @@
 #   births.txt     every name's birth time, or its mtime where that is
 #                  earlier: what a restore can give at best (no system call
 #                  sets a birth time; setting an earlier mtime lowers it)
+#   sockets.txt    the names of Unix sockets, which neither tool backs up:
+#                  they are left out of everything above
 #
 # Usage: fsmeta.sh ROOT OUTDIR
 # Then:  cd ROOT2 && mtree -f OUTDIR/spec -X OUTDIR/mtree-exclude
@@ -32,22 +34,24 @@ set -eu
 out=$(mkdir -p "$2" && cd "$2" && pwd)
 cd "$1"
 
-find . ! -name .sujournal -print0 | xargs -0 stat -f '%N %Fa %Fm' | sort >"$out/times.txt"
+find . ! -name .sujournal ! -type s -print0 | xargs -0 stat -f '%N %Fa %Fm' | sort >"$out/times.txt"
+find . -type s | sort >"$out/sockets.txt"
 
-printf '%s\n' .sujournal dos-noarchive >"$out/mtree-exclude"
+# (A pattern with a / matches the whole path, from ".".)
+{ printf '%s\n' .sujournal dos-noarchive; sed 's/[][*?\\]/\\&/g' "$out/sockets.txt"; } >"$out/mtree-exclude"
 mtree -c -n -p . -X "$out/mtree-exclude" \
     -k type,uid,gid,mode,flags,nlink,size,time,link,sha256digest >"$out/spec"
 
-find . ! -name .sujournal -print0 | xargs -0 stat -f '%N %Xf' | sort >"$out/flags.txt"
+find . ! -name .sujournal ! -type s -print0 | xargs -0 stat -f '%N %Xf' | sort >"$out/flags.txt"
 
-find . ! -type l -print0 | sort -z | xargs -0 getfacl >"$out/acls.txt" 2>&1 || true
+find . ! -type l ! -type s -print0 | sort -z | xargs -0 getfacl >"$out/acls.txt" 2>&1 || true
 # NFSv4 ACLs have no default ACL: their inheritance flags are in the above.
 find . -type d -print0 | sort -z | xargs -0 getfacl -d >>"$out/acls.txt" 2>/dev/null || true
 
 : >"$out/extattrs.txt"
 tab=$(printf '\t')
 for ns in user system; do
-    find . -print0 | sort -z | xargs -0 lsextattr -f -h $ns 2>/dev/null |
+    find . ! -type s -print0 | sort -z | xargs -0 lsextattr -f -h $ns 2>/dev/null |
     while IFS=$tab read -r path names; do
         [ -n "$names" ] || continue
         for name in $(printf '%s\n' $names | sort); do
@@ -63,7 +67,7 @@ find . -type f -links +1 -print0 | xargs -0 stat -f '%i %N' | sort -n |
 find . -type f -size +1M -print0 | xargs -0 stat -f '%b %z %N' |
     awk '$1 * 512 < $2 / 2 { print substr($0, length($1) + length($2) + 3) }' | sort >"$out/sparse.txt"
 
-find . ! -name .sujournal -print0 | xargs -0 stat -f '%FB %Fm %N' | awk '{
+find . ! -name .sujournal ! -type s -print0 | xargs -0 stat -f '%FB %Fm %N' | awk '{
     split($1, b, "."); split($2, m, ".")
     early = (b[1] + 0 < m[1] + 0 || (b[1] + 0 == m[1] + 0 && b[2] + 0 <= m[2] + 0)) ? $1 : $2
     print substr($0, length($1) + length($2) + 3), early }' | sort >"$out/births.txt"

@@ -5,9 +5,13 @@ case-insensitive directories on ext4 and f2fs, and so on.  compare.py tests
 the guests' own file systems, which mostly lack them.
 
 Usage: sudo fs_roundtrip.py FSTYPE [--onto FSTYPE2] [TOOL ...]
-         FSTYPE: ext4 xfs btrfs f2fs jfs ext2 vfat ext4-plain (loop images in /var/tmp),
+         FSTYPE: ext4 xfs btrfs f2fs jfs ext2 vfat ext4-plain bcachefs (loop images
+                 in /var/tmp), tmpfs (4 GiB each, in RAM),
                  zfs (pools bkotest-RUN-src and bkotest-RUN-dst on files in
-                 /var/tmp, destroyed afterwards)
+                 /var/tmp, destroyed afterwards),
+                 zfs-ds (file systems bko-fsrt-RUN-src and bko-fsrt-RUN-dst in an
+                 existing pool, $BKO_ZFS_POOL or the root's, destroyed afterwards:
+                 e.g. a guest's encrypted or mirrored root pool)
          --onto: restore onto FSTYPE2 instead (e.g. ext4-plain: no project IDs,
                  no casefolding), to see warnings, not errors, for what it lacks
          TOOL:   restic-bko rustic-bko restic-to-rustic rustic-to-restic (default: all)
@@ -21,7 +25,12 @@ rules (extras(), below).  Per tool it checks:
     an existing tree: changed bytes, punched holes, a symlinked directory, a
     casefold directory emptied and unflagged, a changed project ID);
 and across tools: the snapshots' nodes (generic attributes such as
-unix.sparse included), and st_blocks of each restored file.
+unix.sparse included), and st_blocks of each restored file.  Sockets: both
+tools skip them (restic always has, rustic since rustic_core 1a2a4a4), so
+torture.sh's socket must be "missing" after every restore, with no socket
+node in any snapshot, nothing said about it at backup or restore, and the
+first restore's exit 0 (results.json "sockets", SPEC3 1); a source without
+one (torture.sh made none) fails that check too.
 
 restic-bko and rustic-bko are found as compare.py finds them ($RESTIC_BKO,
 $RUSTIC_BKO).  Results go to ~/backotter-work/fs-roundtrip/RUN/, where RUN is
@@ -29,7 +38,16 @@ FSTYPE[-onto-FSTYPE2].
 
 Each RUN has mount points (/mnt/bko-fsrt/RUN/{src,dst}), images and pools of
 its own, so different RUNs can go at the same time (e.g. xargs -P); the same
-RUN twice can't, and the second one stops.
+RUN twice can't, and the second one stops.  With $BKO_FSRT_PREFIX set to P
+(e.g. bkor9-fsrt), every name is P's instead: pools and file systems
+P-RUN-src and P-RUN-dst, mount points /mnt/P/RUN/{src,dst}, images
+/var/tmp/P-RUN-{src,dst}.img, results in ~/backotter-work/fs-roundtrip/P/RUN/;
+so that runs from different checkouts or sessions keep apart.
+
+A file system this host can't make (no kernel support, no mkfs: bcachefs
+needs mkfs.bcachefs, or $BKO_MKFS_BCACHEFS naming one, e.g. "chroot
+/mnt/nixos mkfs.bcachefs") is skipped, with a line saying why, in
+results.json too, and exit status 0.
 """
 
 from __future__ import annotations
@@ -38,6 +56,7 @@ import fcntl
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -55,16 +74,24 @@ MKFS = {
     "ext2": ["mkfs.ext2", "-q", "-F"],
     "vfat": ["mkfs.vfat"],
     "ext4-plain": ["mkfs.ext4", "-q", "-F"],
+    "bcachefs": ["mkfs.bcachefs", "-f"],
+    "tmpfs": [],
     # POSIX ACLs and system-attribute xattrs, as a Linux root pool has them.
     "zfs": ["zpool", "create", "-f", "-O", "acltype=posix", "-O", "xattr=sa"],
+    "zfs-ds": ["zfs", "create", "-o", "acltype=posix", "-o", "xattr=sa"],
 }
+MOUNT_TYPE = {"bcachefs": ["-t", "bcachefs"]}
 TOOLS = ["restic-bko", "rustic-bko", "restic-to-rustic", "rustic-to-restic"]
 WORK = compare.WORK_BASE / "fs-roundtrip"
+# Names' prefix (set_run(); the module doc).
+PREFIX = os.environ.get("BKO_FSRT_PREFIX", "")
 # The source and destination mount points, per RUN (set_run()).
 SRC = Path("/mnt/bko-fsrt/RUN/src")
 DST = Path("/mnt/bko-fsrt/RUN/dst")
-# ZFS pools, mounted at SRC and DST, when FSTYPE is zfs.
+# ZFS pools, mounted at SRC and DST, when FSTYPE is zfs; file systems in an
+# existing pool when it is zfs-ds.
 POOLS: dict[Path, str] = {}
+DATASETS: dict[Path, str] = {}
 # What remount options are on ZFS: dataset properties.
 ZFS_PROPS = {"ro": ["readonly=on"], "rw": ["readonly=off"],
              "strictatime": ["atime=on", "relatime=off"], "noatime": ["atime=off"]}
@@ -159,6 +186,16 @@ OVER_EXPECTED = {
 }
 
 
+# Sockets are skipped by both tools (results.json "sockets"): each one in
+# the source is "missing" after every restore, expected, so not a difference.
+
+
+def without_sockets(d: dict[str, list[str]], sockets: set[str]) -> dict[str, list[str]]:
+    """d without the sockets' "missing" entries."""
+    return {k: v for k, v in ((k, [p for p in v if not (k == "missing" and p in sockets)])
+                              for k, v in d.items()) if v}
+
+
 def run(cmd: list[str], check: bool = True, quiet: bool = False, **kw) -> subprocess.CompletedProcess:
     if not quiet:
         print("  $ " + " ".join(cmd), flush=True)
@@ -169,44 +206,100 @@ def run(cmd: list[str], check: bool = True, quiet: bool = False, **kw) -> subpro
 
 
 def set_run(run_name: str) -> None:
-    """Mount points and pools of this RUN's own."""
-    global SRC, DST, POOLS
-    SRC, DST = Path("/mnt/bko-fsrt") / run_name / "src", Path("/mnt/bko-fsrt") / run_name / "dst"
-    POOLS = {SRC: f"bkotest-{run_name}-src", DST: f"bkotest-{run_name}-dst"}
+    """Mount points, pools and file systems of this RUN's own."""
+    global SRC, DST, POOLS, DATASETS
+    mnt = Path("/mnt") / (PREFIX or "bko-fsrt") / run_name
+    SRC, DST = mnt / "src", mnt / "dst"
+    POOLS = {SRC: f"{PREFIX or 'bkotest'}-{run_name}-src", DST: f"{PREFIX or 'bkotest'}-{run_name}-dst"}
+    DATASETS = {SRC: f"{PREFIX or 'bko-fsrt'}-{run_name}-src", DST: f"{PREFIX or 'bko-fsrt'}-{run_name}-dst"}
+
+
+def mkfs_cmd(fs: str) -> list[str]:
+    if fs == "bcachefs" and os.environ.get("BKO_MKFS_BCACHEFS"):
+        return shlex.split(os.environ["BKO_MKFS_BCACHEFS"]) + MKFS[fs][1:]
+    return MKFS[fs]
+
+
+def unsupported(fs: str) -> str | None:
+    """Why this host can't make fs, or None."""
+    kernel = {"zfs": "zfs", "zfs-ds": "zfs", "ext4-plain": "ext4", "ext2": "ext4"}.get(fs, fs)
+    if kernel not in Path("/proc/filesystems").read_text().split():
+        if shutil.which("modprobe"):
+            run(["modprobe", kernel], check=False, quiet=True)
+        if kernel not in Path("/proc/filesystems").read_text().split():
+            return f"the kernel ({os.uname().release}) has no {kernel} file system"
+    cmd = mkfs_cmd(fs)
+    if cmd and shutil.which(cmd[0]) is None:
+        return f"no {cmd[0]} here" + (" (BKO_MKFS_BCACHEFS can name one)" if fs == "bcachefs" else "")
+    if fs == "zfs-ds" and not zfs_pool():
+        return "no ZFS pool to make file systems in (BKO_ZFS_POOL, or a root on ZFS)"
+    return None
+
+
+def zfs_pool() -> str:
+    """zfs-ds's pool: $BKO_ZFS_POOL, else the root's."""
+    if os.environ.get("BKO_ZFS_POOL"):
+        return os.environ["BKO_ZFS_POOL"]
+    r = run(["zfs", "list", "-H", "-o", "name", "/"], check=False, quiet=True) if shutil.which("zfs") else None
+    return r.stdout.strip().split("/")[0] if r and r.returncode == 0 else ""
 
 
 def make_fs(fs: str, image: Path, mp: Path) -> None:
     unmount(mp)
+    mp.mkdir(parents=True, exist_ok=True)
+    if fs == "tmpfs":
+        run(["mount", "-t", "tmpfs", "-o", "size=4g,mode=0755", "tmpfs", str(mp)])
+        return
+    if fs == "zfs-ds":
+        run(MKFS[fs] + ["-o", f"mountpoint={mp}", f"{zfs_pool()}/{DATASETS[mp]}"])
+        return
     if fs == "zfs":
         image = Path("/var/tmp") / f"{POOLS[mp]}.img"
     image.unlink(missing_ok=True)
     run(["truncate", "-s", "4G", str(image)])
-    mp.mkdir(parents=True, exist_ok=True)
     if fs == "zfs":
         run(MKFS[fs] + ["-m", str(mp), POOLS[mp], str(image)])
         return
-    run(MKFS[fs] + [str(image)])
-    run(["mount", "-o", "loop", str(image), str(mp)])
+    run(mkfs_cmd(fs) + [str(image)])
+    run(["mount", "-o", "loop"] + MOUNT_TYPE.get(fs, []) + [str(image), str(mp)])
 
 
-def is_pool(mp: Path) -> bool:
-    return (shutil.which("zpool") is not None
-            and run(["zpool", "list", "-H", POOLS[mp]], check=False, quiet=True).returncode == 0)
+def zfs_at(mp: Path) -> tuple[str, str] | None:
+    """("pool", name) or ("ds", name) for the ZFS this script made at mp."""
+    if shutil.which("zfs") is None:
+        return None
+    if run(["zpool", "list", "-H", POOLS[mp]], check=False, quiet=True).returncode == 0:
+        return "pool", POOLS[mp]
+    pool = zfs_pool()
+    if pool and run(["zfs", "list", "-H", f"{pool}/{DATASETS[mp]}"], check=False, quiet=True).returncode == 0:
+        return "ds", f"{pool}/{DATASETS[mp]}"
+    return None
 
 
 def remount(mp: Path, *opts: str) -> None:
-    """mount -o remount,OPTS; on ZFS, the dataset properties that do the same."""
-    if is_pool(mp):
-        run(["zfs", "set"] + [p for o in opts for p in ZFS_PROPS[o]] + [POOLS[mp]])
+    """mount -o remount,OPTS; on ZFS, the dataset properties that do the same.
+    Written data goes to disk first: bcachefs (Linux 6.12) remounted read only
+    with dirty pages never writes them, and once they leave the page cache
+    the file reads back as a hole of zeros with no blocks (round 7, eight
+    file systems at once: the source changed under the backups;
+    round7/logs/linux/bcprobe.sh on Chopin shows it without the sync)."""
+    z = zfs_at(mp)
+    if z:
+        run(["zfs", "set"] + [p for o in opts for p in ZFS_PROPS[o]] + [z[1]])
     else:
+        run(["sync", "-f", str(mp)])
         run(["mount", "-o", ",".join(("remount",) + opts), str(mp)])
 
 
 def unmount(mp: Path) -> None:
-    """Unmount mp; a ZFS pool there is destroyed, with its file."""
-    if is_pool(mp):
-        run(["zpool", "destroy", "-f", POOLS[mp]])
-        Path(f"/var/tmp/{POOLS[mp]}.img").unlink(missing_ok=True)
+    """Unmount mp; a ZFS pool there is destroyed, with its file, as is a
+    file system zfs-ds made."""
+    z = zfs_at(mp)
+    if z and z[0] == "pool":
+        run(["zpool", "destroy", "-f", z[1]])
+        Path(f"/var/tmp/{z[1]}.img").unlink(missing_ok=True)
+    elif z:
+        run(["zfs", "destroy", "-r", "-f", z[1]])
     else:
         run(["umount", str(mp)], check=False)
 
@@ -225,9 +318,37 @@ def restore(tool: str, work: Path) -> dict:
         cmd = [compare.rustic_exe(), "-r", repo, "--no-progress", "--no-cache", "restore",
                f"latest:{SRC}", str(DST)]
     r = run(cmd, check=False, env=env())
-    lines = [l for l in (r.stderr + "\n" + r.stdout).splitlines()
-             if any(w in l.lower() for w in ("warn", "error", "ignor", "fail", "not restored", "unsupported"))]
-    return {"exit": r.returncode, "messages": lines[:40], "stderr_tail": r.stderr[-1500:]}
+    return {"exit": r.returncode, "messages": messages(r)[:40], "stderr_tail": r.stderr[-1500:]}
+
+
+def messages(r: subprocess.CompletedProcess) -> list[str]:
+    """What a tool's output says that may be a warning."""
+    return [l for l in (r.stderr + "\n" + r.stdout).splitlines()
+            if any(w in l.lower() for w in ("warn", "error", "ignor", "fail", "not restored", "unsupported",
+                                            "sock", "skip"))]
+
+
+def backup(tool: str, work: Path) -> list[str]:
+    """compare.backup(), keeping what the tools say (it drops their output)."""
+    said: list[str] = []
+    orig = compare.run
+
+    def keep(*a, **kw):
+        r = orig(*a, **kw)
+        said.extend(messages(r))
+        return r
+
+    compare.run = keep
+    try:
+        compare.backup(tool, work)
+    finally:
+        compare.run = orig
+    return said
+
+
+def sockets(record: str) -> list[str]:
+    """The sockets in a fsmeta.py record."""
+    return sorted(p for p, e in json.loads(Path(record).read_text()).items() if e["type"] == "socket")
 
 
 def fsmeta_compare(fsmeta: list[str], before: str, after: str, out: str) -> dict:
@@ -351,7 +472,7 @@ def main() -> int:
             raise SystemExit(__doc__)
         onto, args = args[1], args[2:]
     tools = args or TOOLS
-    work = WORK / (fs if onto == fs else f"{fs}-onto-{onto}")
+    work = WORK / PREFIX / (fs if onto == fs else f"{fs}-onto-{onto}")
     work.mkdir(parents=True, exist_ok=True)
     os.chdir(work)
     lock = open(".lock", "w")  # held until exit
@@ -360,13 +481,18 @@ def main() -> int:
     except BlockingIOError:
         raise SystemExit(f"fs_roundtrip: {work.name} is running already")
     set_run(work.name)
+    why = next((f"{f}: {w}" for f in dict.fromkeys((fs, onto)) if (w := unsupported(f))), None)
+    if why:
+        Path("results.json").write_text(json.dumps({"fs": fs, "onto": onto, "skipped": why}, indent=1))
+        print(f"fs_roundtrip: skipped {fs} onto {onto}: {why}")
+        return 0
     # compare.py's backup() backs up SRC_MP.
     compare.SRC_MP, compare.DST_MP = SRC, DST
     fsmeta = [sys.executable, "-I", str(compare.HERE / "fsmeta.py")]
     for mp in (SRC, DST):
         unmount(mp)
 
-    src_img, dst_img = (Path(f"/var/tmp/bko-fsrt-{work.name}-{s}.img") for s in ("src", "dst"))
+    src_img, dst_img = (Path(f"/var/tmp/{PREFIX or 'bko-fsrt'}-{work.name}-{s}.img") for s in ("src", "dst"))
     make_fs(fs, src_img, SRC)
     r = run([str(compare.HERE / "torture.sh"), str(SRC)])
     skipped = [l for l in r.stderr.splitlines() if "skipped" in l]
@@ -375,6 +501,7 @@ def main() -> int:
     remount(SRC, "ro")
     run(fsmeta + ["record", str(SRC), "before.json"])
     before = json.loads(Path("before.json").read_text())
+    src_sockets = set(sockets("before.json"))
     results = {"fs": fs, "onto": onto, "torture_skipped": skipped, "tools": {}}
     reset: set[str] = set()  # the paths whose atimes were put back
     try:
@@ -384,7 +511,7 @@ def main() -> int:
             # The backup, on a source that records every read in its atimes.
             remount(SRC, "rw", "strictatime")
             try:
-                compare.backup(tool, work)
+                res["backup_messages"] = backup(tool, work)
             finally:
                 remount(SRC, "ro")
             run(fsmeta + ["record", str(SRC), f"src-after-{tool}.json"])
@@ -393,6 +520,10 @@ def main() -> int:
             if changed:
                 remount(SRC, "rw")
                 paths = {p for v in changed.values() for p in v if p in before}
+                # Every name of a hard-linked file: putting its atime back
+                # changes the inode's ctime, which the snapshot comparison
+                # must then skip under each of its names.
+                paths |= {q for p in list(paths) for q in before[p].get("links", [])}
                 reset_atimes(before, sorted(paths))
                 reset |= paths
                 remount(SRC, "ro")
@@ -404,7 +535,7 @@ def main() -> int:
                 run(fsmeta + ["record", str(DST), f"after-{tool}.json"])
                 res["diff"] = fsmeta_compare(fsmeta, "before.json", f"after-{tool}.json",
                                              f"diff-{tool}.json")["differences"]
-                res["diff_all"] = full_diff("before.json", f"after-{tool}.json")
+                res["diff_all"] = without_sockets(full_diff("before.json", f"after-{tool}.json"), src_sockets)
                 results["coverage"] = json.loads(Path(f"diff-{tool}.json").read_text())["coverage"]
 
                 # Restore again, over a changed copy of what was restored.
@@ -414,17 +545,20 @@ def main() -> int:
                 run(fsmeta + ["record", str(DST), f"after-over-{tool}.json"])
                 fsmeta_compare(fsmeta, "before.json", f"after-over-{tool}.json", f"diff-over-{tool}.json")
                 d = full_diff("before.json", f"after-over-{tool}.json")
-                res["over_diff_all"] = {k: v for k, v in
-                                        ((k, [p for p in v if (k, p) not in OVER_EXPECTED])
-                                         for k, v in d.items()) if v}
+                res["over_diff_all"] = without_sockets({k: v for k, v in
+                                                        ((k, [p for p in v if (k, p) not in OVER_EXPECTED])
+                                                         for k, v in d.items()) if v}, src_sockets)
 
                 # And once more, over the result unchanged (a restore run twice).
                 res["rerun_restore"] = restore(tool, work)
                 run(fsmeta + ["record", str(DST), f"after-rerun-{tool}.json"])
                 d = full_diff("before.json", f"after-rerun-{tool}.json")
-                res["rerun_diff_all"] = {k: v for k, v in
-                                         ((k, [p for p in v if (k, p) not in OVER_EXPECTED])
-                                          for k, v in d.items()) if v}
+                res["rerun_diff_all"] = without_sockets({k: v for k, v in
+                                                         ((k, [p for p in v if (k, p) not in OVER_EXPECTED])
+                                                          for k, v in d.items()) if v}, src_sockets)
+                # Skipped: none restored, by any of the three restores.
+                res["sockets_restored"] = {s: socks for s in ("", "over-", "rerun-")
+                                           if (socks := sockets(f"after-{s}{tool}.json"))}
             finally:
                 unmount(DST)
                 dst_img.unlink(missing_ok=True)
@@ -432,8 +566,30 @@ def main() -> int:
         unmount(SRC)
         src_img.unlink(missing_ok=True)
 
+    # Sockets are skipped: none in any snapshot, none restored, nothing said,
+    # the first restore's exit 0 (those over a tree may fail for reasons of
+    # their own: an immutable file in the way).  Each snapshot read once.
+    snaps = {t: snapshot_nodes(work / t) for t in tools if (work / t).is_dir()}
+    socks = {"source": sockets("before.json"), "failures": []}
+    if not socks["source"]:
+        socks["failures"].append("no socket in the source (torture.sh made none)")
+    for tool in tools:
+        res = results["tools"].get(tool, {})
+        socks["failures"] += [f"{tool}: socket node in snapshot: {p}" for p, n in snaps.get(tool, {}).items()
+                              if n.get("type") == "socket"]
+        socks["failures"] += [f"{tool}: socket restored ({s or 'first '}restore): {p}"
+                              for s, v in res.get("sockets_restored", {}).items() for p in v]
+        socks["failures"] += [f"{tool}: says at {k}: {m}" for k in ("backup", "restore", "over_restore", "rerun_restore")
+                              for m in sorted(set((res.get(f"{k}_messages") if k == "backup" else
+                                                   res.get(k, {}).get("messages", []) +
+                                                   res.get(k, {}).get("stderr_tail", "").splitlines()) or []))
+                              if "sock" in m.lower()]
+        if "restore" in res and res["restore"].get("exit") != 0:
+            socks["failures"].append(f"{tool}: first restore exit {res['restore'].get('exit')}")
+    socks["ok"] = not socks["failures"]
+    results["sockets"] = socks
     if "restic-bko" in tools and "rustic-bko" in tools:
-        a, b = snapshot_nodes(work / "restic-bko"), snapshot_nodes(work / "rustic-bko")
+        a, b = snaps["restic-bko"], snaps["rustic-bko"]
         Path("snapshot-nodes.json").write_text(json.dumps({"restic-bko": a, "rustic-bko": b}, indent=1))
         results["sparse_marked"] = {
             t: sorted(p for p, n in nodes.items() if "unix.sparse" in (n.get("generic_attributes") or {}))
@@ -459,8 +615,13 @@ def main() -> int:
         for m in t.get("over_restore", {}).get("messages", [])[:6] + t.get("rerun_restore", {}).get("messages", [])[:6]:
             print(f"{'':16} over/rerun says: {m}")
         print(f"{'':16} source changed by backup: {src}")
+        for m in t.get("backup_messages", [])[:6]:
+            print(f"{'':16} backup says: {m}")
         for m in rs.get("messages", [])[:10]:
             print(f"{'':16} restore says: {m}")
+    print(f"sockets (SPEC3 1: skipped by both): {'as expected' if results['sockets']['ok'] else 'NOT AS EXPECTED'}; "
+          f"source {results['sockets']['source']}, "
+          + ("; ".join(results["sockets"]["failures"]) or "skipped by every tool (none in a snapshot, none restored, nothing said)"))
     for k in ("sparse_marked", "blocks_mismatch"):
         if k in results:
             print(f"{k}: {json.dumps(results[k])}")

@@ -20,7 +20,13 @@
 # target freed: a tree on FFSv1, which has no birth times (stat gives 0: no
 # unix.birthtime may be stored), restored onto FFSv1; and the FFSv2ea
 # part's snapshot restored onto FFSv1 and onto plain FFSv2 (no extended
-# attributes): the restore must warn, naming each attribute it can't set.
+# attributes): the restore must warn, naming each attribute it can't set,
+# and narrow the group bits of each name whose POSIX.1e ACL it can't set.
+#
+# The tree has a Unix socket too, which neither tool keeps (restic never
+# has; rustic since rustic_core 1a2a4a4): no node of it in either tool's
+# snapshot, none restored, and no message about it from any backup or
+# restore.  It is left out of the listings compared.
 #
 # Usage: roundtrip.sh BACKUP [RESTORE]   (as root, in a throwaway guest:
 #                                         kern.securelevel <= 0, or schg and
@@ -111,6 +117,12 @@ touch setgid; chmod 2755 setgid
 mkdir sticky-dir; chmod 1777 sticky-dir
 ln -s /nonexistent/target symlink-dangling
 mkfifo fifo
+# The socket: nc listening on it, stopped; the name stays.
+nc -lU bko-socket </dev/null >/dev/null 2>&1 &
+sock_pid=$!
+for i in 1 2 3 4 5 6 7 8 9 10; do [ -S bko-socket ] && break; sleep 1; done
+kill $sock_pid 2>/dev/null; wait $sock_pid 2>/dev/null
+[ -S bko-socket ] || { echo "can't make a socket with nc -lU"; exit 1; }
 dd if=/dev/zero of=sparse bs=1048576 count=0 seek=1024 2>/dev/null
 echo start | dd of=sparse conv=notrunc 2>/dev/null
 echo middle | dd of=sparse bs=1048576 seek=512 conv=notrunc 2>/dev/null
@@ -136,6 +148,8 @@ for fs in posix1e nfs4; do
     # Extended attributes: user and system namespace, one value binary (no
     # NUL: setextattr takes it as an argument); one on a symlink.
     echo data >xattrs
+    # zz-first set first: listed before the others, stored sorted (AUDIT-R6 N4).
+    setextattr user zz-first first xattrs
     setextattr user backotter hello xattrs
     setextattr user binary "$(printf '\377\020\376')" xattrs
     setextattr system backotter root-only xattrs
@@ -156,21 +170,23 @@ echo inherited >acl-dir/inherited
 for d in $SRC $SRC/posix1e $SRC/nfs4; do flags $d; done
 touch -d 2001-02-03T04:05:06.000000006 $SRC/posix1e $SRC/nfs4 $SRC
 
-# The listings compared, one file each, for the tree below $1.
+# The listings compared, one file each, for the tree below $1; without
+# the socket, which has a check of its own.
+echo bko-socket >/tmp/bko-rt.mtree-exclude
 listings() {  # DIR OUT-PREFIX
     cd "$1" || exit 1
-    find . | sort >$2.names
+    find . ! -name bko-socket | sort >$2.names
     # mtree compares symlink modes too: those are a check of their own.
-    mtree -c -p . -k type,uid,gid,nlink,size,time,link,sha256 >$2.mtree
-    find . ! -type l -exec stat -f '%N %Mp%Lp' {} + | sort >$2.modes
+    mtree -c -p . -X /tmp/bko-rt.mtree-exclude -k type,uid,gid,nlink,size,time,link,sha256 >$2.mtree
+    find . ! -type l ! -name bko-socket -exec stat -f '%N %Mp%Lp' {} + | sort >$2.modes
     # flag-log (SF_LOG|nodump) comes back as nodump only: a check of its own.
-    find . -exec stat -f '%N %Xf' {} + | sort >$2.flags-all
+    find . ! -name bko-socket -exec stat -f '%N %Xf' {} + | sort >$2.flags-all
     grep -v '/flag-log ' $2.flags-all >$2.flags
     grep '/flag-log ' $2.flags-all >$2.flags-log
     find . -type l -exec stat -f '%N %Lp' {} + | sort >$2.symlink-modes
     # What a perfect restore gives: the birth time, or the mtime when that is
     # earlier (the kernel has no way to set a birth time later than it).
-    find . -exec stat -f '%FB %Fm %N' {} + | awk '{
+    find . ! -name bko-socket -exec stat -f '%FB %Fm %N' {} + | awk '{
         split($1, b, "."); split($2, m, ".")
         early = (b[1] + 0 < m[1] + 0 || (b[1] + 0 == m[1] + 0 && b[2] + 0 <= m[2] + 0)) ? $1 : $2
         print substr($0, length($1) + length($2) + 3), early }' | sort >$2.birth
@@ -225,16 +241,34 @@ bko_init || { echo "INIT FAILED"; exit 1; }
 # A backup that fails may still have saved a snapshot (restic's exit 3: a
 # file it couldn't read): what it holds is restored all the same.
 echo "== backup"
-bko_backup $SRC; status=$?
+bko_backup $SRC 2>/tmp/bko-rt.backup.msgs; status=$?
+cat /tmp/bko-rt.backup.msgs
 echo "exit $status"
 [ $status -eq 0 ] || failed="$failed; backup"
+rm -f /tmp/bko-rt.nodes.1 /tmp/bko-rt.nodes.2
 rt_snapshots $R $RR $RESTIC_REPOSITORY $SRC
+# The socket: in neither tool's snapshot (rt_snapshots decoded both, the
+# second the other tool's; else this one's is decoded here), and nothing
+# said about it.
+t="socket: no node in the snapshot, no message about it at backup"
+echo "== $t"
+if [ -s /tmp/bko-rt.nodes.1 ] || rt_nodes $(rt_restic $R $RR) $RESTIC_REPOSITORY $SRC >/tmp/bko-rt.nodes.1; then
+    if cat /tmp/bko-rt.nodes.1 /tmp/bko-rt.nodes.2 2>/dev/null | grep -e '^bko-socket	' -e 'socket' ||
+        grep -i socket /tmp/bko-rt.backup.msgs; then
+        failed="$failed; $t"
+    else
+        echo "none ($(wc -l </tmp/bko-rt.nodes.1 | tr -d ' ') nodes$([ -s /tmp/bko-rt.nodes.2 ] && echo ", in both tools' snapshots"))"
+    fi
+else
+    echo "can't decode the snapshot"; failed="$failed; $t"
+fi
 atimes atime
 mkdir -p $DST
 ea_mount $DST/posix1e posix1eacls
 ea_mount $DST/nfs4 nfs4acls
 echo "== restore"
-bko_restore "latest:$SRC" $DST; status=$?
+bko_restore "latest:$SRC" $DST >/tmp/bko-rt.restore.msgs 2>&1; status=$?
+cat /tmp/bko-rt.restore.msgs
 echo "exit $status"
 [ $status -eq 0 ] || failed="$failed; restore"
 # The restored tree against the source, its listings into $after.*; X goes
@@ -247,6 +281,15 @@ compare_all() {  # X
     echo "== $t"
     (cd $DST && mtree -f /tmp/bko-rt.before.mtree -p .) && echo identical || failed="$failed; $t"
     check "modes (not symlinks)$x" modes
+    t="socket: not restored, no message about it$x"
+    echo "== $t"
+    if [ -e $DST/bko-socket ] || [ -L $DST/bko-socket ]; then
+        ls -l $DST/bko-socket; failed="$failed; $t"
+    elif grep -i socket /tmp/bko-rt.restore.msgs; then
+        failed="$failed; $t"
+    else
+        echo "none"
+    fi
     check "file flags (netbsd.file_flags)$x" flags
     t="SF_LOG dropped, nodump kept (netbsd.file_flags mask 0xff1fffff)$x"
     echo "== $t"
@@ -282,7 +325,8 @@ chflags -R 0 $DST && find $DST -type l -exec chflags -h 0 {} +
 rmextattr user backotter $DST/posix1e/xattrs
 rt_over $DST uchg-dir atime-ns posix1e/xattrs nfs4/acl-file ||
     failed="$failed; preparing the restore over an existing tree"
-bko_restore "latest:$SRC" $DST; status=$?
+bko_restore "latest:$SRC" $DST >/tmp/bko-rt.restore.msgs 2>&1; status=$?
+cat /tmp/bko-rt.restore.msgs
 echo "exit $status"
 [ $status -eq 0 ] || failed="$failed; restore over an existing tree"
 t="what the replaced directory's symlink pointed to, untouched"
@@ -349,7 +393,8 @@ names=${names% }
 noea() {  # TARGET KIND
     t="the FFSv2ea part restored onto $2: warns, naming each extended attribute ($names)"
     echo "== $t"
-    bko_restore_repo /root/bko-rt-repo "latest:$SRC/posix1e" $1; echo "exit $?"
+    bko_restore_repo /root/bko-rt-repo "latest:$SRC/posix1e" $1; status=$?
+    echo "exit $status"
     missing=""
     for a in $names; do
         case $a in
@@ -358,6 +403,29 @@ noea() {  # TARGET KIND
         esac || missing="$missing $a"
     done
     if [ -z "$missing" ]; then echo "every one named"; else echo "not named:$missing"; failed="$failed; $t"; fi
+    # ACLs it can't hold are a warning too, not an error (SPEC2 2, 7.1).
+    t="the FFSv2ea part restored onto $2: exit 0, the ACLs not set a warning"
+    echo "== $t"
+    if [ $status -eq 0 ] && grep -qi 'acl' /tmp/bko-rt.msgs.f; then echo "ok"; else failed="$failed; $t"; fi
+    # Where a POSIX.1e ACL can't be set, the group bits (the ACL's mask)
+    # come back narrowed to the owning group's own entry (group::), so that
+    # nothing is more open than it was (SPEC2 1.2; both BACKOTTER.md files).
+    t="the FFSv2ea part restored onto $2: the group bits of each name with a POSIX.1e ACL narrowed to group::"
+    echo "== $t"
+    ok=1 n=0
+    for p in $(cd $SRC/posix1e && find . | sort); do
+        h=""; [ -L "$SRC/posix1e/$p" ] && h=-h
+        acl=$(getfacl -n $h "$SRC/posix1e/$p" 2>/dev/null)
+        printf '%s\n' "$acl" | grep -q '^mask::' || continue
+        g=$(printf '%s\n' "$acl" | sed -n 's/^group::\(...\).*/\1/p')
+        m=$(stat -f %Sp "$SRC/posix1e/$p" | cut -c5-7)
+        want=$(echo "$m $g" | awk '{ for (i = 1; i <= 3; i++) { c = substr($2, i, 1); printf "%s", (c != "-" && substr($1, i, 1) != "-") ? c : "-" } }')
+        got=$(stat -f %Sp "$1/$p" | cut -c5-7)
+        echo "  $p: group bits $m, group:: $g; restored $got (want $want)"
+        n=$((n + 1)); [ "$got" = "$want" ] || ok=""
+    done
+    [ $n -gt 0 ] || { echo "  no name with a POSIX.1e ACL in the source"; ok=""; }
+    [ -n "$ok" ] && echo "every one narrowed" || failed="$failed; $t"
 }
 noea $F1R/posix1e FFSv1
 umount $F1R && vndconfig -u vnd3 || { echo "can't free vnd3"; exit 1; }

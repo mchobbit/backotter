@@ -15,12 +15,18 @@
 # restored tree after changing it (rt-common.sh's rt_over), compared again;
 # when BACKUP and RESTORE are the two tools, the snapshot each of them makes
 # of the tree, node by node (rt_snapshots); a file with av_quarantined, in
-# a tree of its own (no one may read it: both tools leave it out); and a
+# a tree of its own (no one may read it: both tools keep its node without
+# contents, and restore it empty and quarantined again); and a
 # restore of sid/ with idmap's door moved away (idmapd still running, so
 # the kernel's own ids stay; libidmap gets an RPC error): BACKOTTER.md has
 # every SID owner and ACL entry come back as nobody (60001), with a warning
 # per attribute, not per file, and exit 0; and a backup of sid/ with the
 # door moved away: one warning, exit 0, the numbers alone kept.
+#
+# The tree has a Unix socket too, made after the listings, which neither
+# tool keeps (restic never has; rustic since rustic_core 1a2a4a4): no node
+# of it in either tool's snapshot, none restored (in --again too), and no
+# message about it from any backup or restore.
 #
 # Usage: roundtrip.sh BACKUP [RESTORE]   (as root, in a throwaway guest)
 #        roundtrip.sh --again RESTORE    (in a fresh boot of it, with the
@@ -50,13 +56,21 @@ is_rustic() { case $(basename "$1") in *rustic*) true ;; *) false ;; esac; }
 bko_init() {
     if is_rustic $R; then $R --no-progress --no-cache init >/dev/null; else $R init -q; fi
 }
+# Every backup's and restore's stderr, shown and kept in /tmp/bko-rt.msgs
+# (for the socket check).
+: >/tmp/bko-rt.msgs
+keep_msgs() {  # COMMAND...
+    "$@" 2>/tmp/bko-rt.run; ks=$?
+    cat /tmp/bko-rt.run >&2; cat /tmp/bko-rt.run >>/tmp/bko-rt.msgs
+    return $ks
+}
 bko_backup() {
-    if is_rustic $R; then $R --no-progress --no-cache backup --set-atime yes "$@" >/dev/null
-    else $R backup -q "$@"; fi
+    if is_rustic $R; then keep_msgs $R --no-progress --no-cache backup --set-atime yes "$@" >/dev/null
+    else keep_msgs $R backup -q "$@"; fi
 }
 bko_restore() {
-    if is_rustic $RR; then $RR --no-progress --no-cache restore --numeric-id --sparse by-content "$1" "$2"
-    else $RR restore -q --sparse "$1" --target "$2"; fi
+    if is_rustic $RR; then keep_msgs $RR --no-progress --no-cache restore --numeric-id --sparse by-content "$1" "$2"
+    else keep_msgs $RR restore -q --sparse "$1" --target "$2"; fi
 }
 # SID owners need idmap: it maps a SID to an ephemeral id (> 2147483647)
 # and back.
@@ -152,7 +166,7 @@ mkdir acl-dir
 
 # Extended attributes: named attribute files, one binary.
 echo data >xattrs
-runat xattrs 'echo hello >note; printf "\000\377\020" >binary'
+runat xattrs 'echo first >zz-first; echo hello >note; printf "\000\377\020" >binary'
 mkdir xattr-dir; runat xattr-dir 'echo inside >dir-note'
 
 # The attribute files' own owner, mode, times and ACL, one entry a SID.
@@ -269,6 +283,12 @@ check() {  # TITLE KIND: compare before.KIND with $after.KIND
 if [ -z "$again" ]; then
     listings $SRC /tmp/bko-rt.before
     echo "listing: $(wc -l </tmp/bko-rt.before.main) lines"
+    # The socket, after the listings (no restore may have it), the tree's
+    # times set again after.
+    /usr/bin/python3 -I -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' $SRC/bko-socket &&
+        [ -S $SRC/bko-socket ] || { echo "can't make $SRC/bko-socket"; exit 1; }
+    touch -d '2001-02-03 04:05:06' $SRC
+    /usr/bin/ls -l $SRC/bko-socket
     bko_init || { echo "INIT FAILED"; exit 1; }
     # A backup that fails may still have saved a snapshot (restic's exit 3: a
     # file it couldn't read): what it holds is restored all the same.
@@ -276,7 +296,21 @@ if [ -z "$again" ]; then
     bko_backup $SRC; status=$?
     echo "exit $status"
     [ $status -eq 0 ] || failed="$failed; backup"
+    rm -f /tmp/bko-rt.nodes.2
     rt_snapshots $R $RR $RESTIC_REPOSITORY $SRC
+    # The socket: in neither tool's snapshot (rt_snapshots' second is the
+    # other tool's, when there are two).
+    t="socket: no node in the snapshot"
+    echo "== $t"
+    if rt_nodes $(rt_restic $R $RR) $RESTIC_REPOSITORY $SRC >/tmp/bko-rt.nodes.0; then
+        if cat /tmp/bko-rt.nodes.0 /tmp/bko-rt.nodes.2 2>/dev/null | grep socket; then
+            failed="$failed; $t"
+        else
+            echo "none ($(wc -l </tmp/bko-rt.nodes.0 | tr -d ' ') nodes$([ -f /tmp/bko-rt.nodes.2 ] && echo ", and none in the other tool's snapshot"))"
+        fi
+    else
+        echo "can't decode the snapshot"; failed="$failed; $t"
+    fi
 fi
 echo "== restore"
 bko_restore "latest:$SRC" $DST; status=$?
@@ -304,6 +338,11 @@ compare_all() {  # X
     echo "== $t"
     n=$(ls -i $DST/hardlink-a $DST/hardlink-b $DST/sub/hardlink-c | awk '{print $1}' | sort -u | wc -l | tr -d ' ')
     echo "inodes: $n"; [ "$n" = 1 ] || failed="$failed; $t"
+    t="socket not restored$x"
+    echo "== $t"
+    n=$(find $DST -type s | wc -l | tr -d ' ')
+    echo "sockets: $n"; find $DST -type s
+    [ "$n" = 0 ] && [ ! -e $DST/bko-socket ] || failed="$failed; $t"
 }
 compare_all ""
 if [ -z "$again" ]; then
@@ -327,32 +366,123 @@ if [ -z "$again" ]; then
     compare_all " (over an existing tree)"
 
     # av_quarantined: no one may open such a file, root included (EACCES),
-    # so it gets a tree and a repository of its own, beside the round trip
-    # above.  Both BACKOTTER.md files: a backup leaves it out, node and
-    # all, with a message naming it (restic an error and exit 3, rustic a
-    # warning and exit 0), and the source keeps the attribute; the rest of
-    # the tree comes back.
-    t="av_quarantined (its own tree: no one may read such a file): left out of the backup with a message naming it (restic exit 3, rustic 0), the source's attribute kept, the rest restored"
+    # nor its attribute directory, nor rename it; stat, ls -/ v, utimes,
+    # chown, chmod and the other system attributes still work.  It gets a
+    # tree and repositories of its own, beside the round trip above.
+    # SPEC-QUAR and both BACKOTTER.md files: a backup keeps the file's node
+    # with no contents (size 0, illumos.unread_size its real size), with
+    # one warning naming it, exit 0; a restore makes it empty, everything
+    # else as for any file, the system attributes last (so it ends
+    # quarantined again), with one warning naming it, exit 0.  Both tools
+    # back the tree up here, whichever direction runs ($R into
+    # bko-rt-repo-quar, the other into bko-rt-repo-quar-2), for each one's
+    # warning and the comparison of their nodes; $RR restores $R's.
+    t="av_quarantined (its own tree): the node kept without contents (illumos.unread_size), one warning per tool on backup and on restore, exit 0, restored empty and quarantined again with its mode, owner, times, ACL and system attributes, both tools' nodes identical"
     echo "== $t"
-    Q=/root/bko-rt-quar
-    mkdir $Q && echo quarantined >$Q/quarantined && echo plain >$Q/plain &&
-        /usr/bin/chmod S+vav_quarantined $Q/quarantined && touch -d '2001-02-03 04:05:06' $Q/quarantined $Q
+    ok=1
+    Q=/root/bko-rt-quar qsize=12   # "quarantined\n"
+    qrestic=$(rt_restic $R $RR) qrustic=""
+    for b in $R $RR; do is_rustic $b && { qrustic=$b; break; }; done
+    [ -n "$qrustic" ] || qrustic=$(dirname $R)/rustic-bko
+    if is_rustic $R; then qother=$qrestic; else qother=$qrustic; fi
+    # crtime is set while the file can still be opened; times last.
+    { mkdir $Q && echo quarantined >$Q/quarantined && echo plain >$Q/plain &&
+        /usr/bin/chown 1234:5678 $Q/quarantined && /usr/bin/chmod 640 $Q/quarantined &&
+        /usr/bin/chmod A+user:nobody:read_data:allow $Q/quarantined &&
+        crtime set $Q/quarantined 978310861 123456789 &&
+        /usr/bin/chmod S+v'{hidden,nodump,av_quarantined}' $Q/quarantined &&
+        touch -d '2001-02-03 04:05:06.123456789' $Q/quarantined &&
+        touch -a -d '2003-03-03 03:03:03.333333333' $Q/quarantined &&
+        touch -d '2001-02-03 04:05:06' $Q; } || { echo "can't make $Q"; ok=""; }
+    # What a restore must keep of it but its contents, by a relative name
+    # (ls' messages name it the same in both trees); stat's %F says
+    # "regular empty file" for the restored one.
+    qlist() {  # DIR
+        (cd "$1" && stat -c 'type=%F uid=%u gid=%g mode=%a links=%h atime=%.9X mtime=%.9Y' quarantined |
+                sed 's/^type=regular empty file /type=regular file /' &&
+            /usr/bin/ls -/v quarantined 2>&1 | tail -n +2 | tr -d '\t' | sed 's/^ */attrs /' &&
+            /usr/bin/ls -dV quarantined 2>&1 | tail -n +2 | sed 's/^ */acl /')
+    }
+    qlist $Q >/tmp/bko-rt.quar.before
+    # One warning naming the file: of all the lines that name it, one, and
+    # that one SPEC-QUAR's.
+    qwarn() {  # MSGS EXPECTED-TEXT WHAT
+        n=$(grep -c quarantined "$1") m=$(grep -c -F "$2" "$1")
+        echo "$3: $n message lines name quarantined, $m of them \"...$2\""
+        [ "$n" = 1 ] && [ "$m" = 1 ] || ok=""
+    }
+    qb=": av_quarantined: contents not backed up ($qsize bytes)"
     rt_backup $R /root/bko-rt-repo-quar $Q >/tmp/bko-rt.quar.backup 2>&1; bstatus=$?
-    sed 's/^/  backup says: /' /tmp/bko-rt.quar.backup
-    want=3; is_rustic $R && want=0
-    echo "backup exit $bstatus (expected $want)"
+    sed "s/^/  $(basename $R) backup says: /" /tmp/bko-rt.quar.backup
+    echo "$(basename $R) backup exit $bstatus"
+    [ $bstatus -eq 0 ] || ok=""
+    qwarn /tmp/bko-rt.quar.backup "$Q/quarantined$qb" "$(basename $R) backup"
+    rt_backup $qother /root/bko-rt-repo-quar-2 $Q >/tmp/bko-rt.quar.backup-2 2>&1; bstatus=$?
+    sed "s/^/  $(basename $qother) backup says: /" /tmp/bko-rt.quar.backup-2
+    echo "$(basename $qother) backup exit $bstatus"
+    [ $bstatus -eq 0 ] || ok=""
+    qwarn /tmp/bko-rt.quar.backup-2 "$Q/quarantined$qb" "$(basename $qother) backup"
+    /usr/bin/ls -/v $Q/quarantined 2>/dev/null | grep -q '[{,]av_quarantined[,}]' || { echo "the source lost av_quarantined"; ok=""; }
+    # The nodes: the file's with illumos.unread_size and no size, and
+    # $R's the same as the other's.
+    if rt_nodes $qrestic /root/bko-rt-repo-quar $Q >/tmp/bko-rt.quar.nodes.1 &&
+        rt_nodes $qrestic /root/bko-rt-repo-quar-2 $Q >/tmp/bko-rt.quar.nodes.2; then
+        sed 's/^/  node: /' /tmp/bko-rt.quar.nodes.1
+        qnode=$(grep '^quarantined	' /tmp/bko-rt.quar.nodes.1)
+        case $qnode in *'"illumos.unread_size":'${qsize}[,}]*) ;;
+            *) echo "no illumos.unread_size $qsize in its node"; ok="" ;; esac
+        case $qnode in *'	size='[1-9]*) echo "its node has a size"; ok="" ;; esac
+        grep '^plain	' /tmp/bko-rt.quar.nodes.1 | grep -q unread_size && { echo "plain has illumos.unread_size"; ok=""; }
+        echo "$(basename $R)'s nodes vs $(basename $qother)'s:"
+        rt_node_diff /tmp/bko-rt.quar.nodes.1 /tmp/bko-rt.quar.nodes.2 &&
+            echo "  identical ($(wc -l </tmp/bko-rt.quar.nodes.1 | tr -d ' ') nodes)" || ok=""
+    else
+        echo "can't decode the snapshots"; ok=""
+    fi
     (export RESTIC_REPOSITORY=/root/bko-rt-repo-quar RUSTIC_REPOSITORY=/root/bko-rt-repo-quar
         bko_restore "latest:$Q" $Q-restored) >/tmp/bko-rt.quar.msgs 2>&1; status=$?
-    grep -v -e 'failed to get system time zone' -e '^\[INFO\]' /tmp/bko-rt.quar.msgs | sed 's/^/  restore says: /'
-    echo "restore exit $status"
+    grep -v -e 'failed to get system time zone' -e '^\[INFO\]' /tmp/bko-rt.quar.msgs |
+        tee /tmp/bko-rt.quar.msgs.f | sed "s/^/  $(basename $RR) restore says: /"
+    echo "$(basename $RR) restore exit $status"
+    [ $status -eq 0 ] || ok=""
+    qwarn /tmp/bko-rt.quar.msgs.f "quarantined: contents were not backed up (av_quarantined at backup, $qsize bytes)" "$(basename $RR) restore"
     for d in $Q $Q-restored; do
         /usr/bin/ls -/v $d/quarantined 2>&1 | tr -d '\t' | sed "s|^|  $d: |"
     done
-    ok=1
-    [ $bstatus -eq $want ] && [ $status -eq 0 ] || ok=""
-    grep -q "$Q/quarantined" /tmp/bko-rt.quar.backup || { echo "no message names $Q/quarantined"; ok=""; }
-    /usr/bin/ls -/v $Q/quarantined 2>/dev/null | grep -q '[{,]av_quarantined[,}]' || { echo "the source lost av_quarantined"; ok=""; }
-    [ -e $Q-restored/quarantined ] && { echo "quarantined was restored"; ok=""; }
+    if [ -f $Q-restored/quarantined ] && [ ! -L $Q-restored/quarantined ]; then
+        [ "$(stat -c %s $Q-restored/quarantined)" = 0 ] || { echo "restored quarantined isn't empty"; ok=""; }
+        /usr/bin/ls -/v $Q-restored/quarantined | grep -q '[{,]av_quarantined[,}]' ||
+            { echo "restored quarantined isn't quarantined"; ok=""; }
+        qlist $Q-restored >/tmp/bko-rt.quar.after
+        echo "mode, owner, times, system attributes, ACL (< source, > restored):"
+        diff /tmp/bko-rt.quar.before /tmp/bko-rt.quar.after &&
+            echo "  identical ($(wc -l </tmp/bko-rt.quar.before | tr -d ' ') lines)" || ok=""
+        # Its crtime: readable once the attribute is off (the source's is
+        # known).
+        /usr/bin/chmod S-vav_quarantined $Q-restored/quarantined
+        c=$(crtime list $Q-restored | sed -n 's|^\./quarantined ||p')
+        echo "restored crtime $c (expected 978310861.123456789)"
+        [ "$c" = 978310861.123456789 ] || ok=""
+        # Restored again over that copy, given other contents and
+        # quarantined anew (no one may open it or its attribute directory):
+        # a new empty file in its place, the same single warning, exit 0.
+        { echo changed >>$Q-restored/quarantined &&
+            /usr/bin/chmod S+vav_quarantined $Q-restored/quarantined; } || { echo "can't change $Q-restored"; ok=""; }
+        (export RESTIC_REPOSITORY=/root/bko-rt-repo-quar RUSTIC_REPOSITORY=/root/bko-rt-repo-quar
+            bko_restore "latest:$Q" $Q-restored) >/tmp/bko-rt.quar.msgs-over 2>&1; status=$?
+        grep -v -e 'failed to get system time zone' -e '^\[INFO\]' /tmp/bko-rt.quar.msgs-over |
+            tee /tmp/bko-rt.quar.msgs-over.f | sed "s/^/  $(basename $RR) restore over it says: /"
+        echo "$(basename $RR) restore over it exit $status"
+        [ $status -eq 0 ] || ok=""
+        qwarn /tmp/bko-rt.quar.msgs-over.f "quarantined: contents were not backed up (av_quarantined at backup, $qsize bytes)" "$(basename $RR) restore over it"
+        [ "$(stat -c %s $Q-restored/quarantined)" = 0 ] || { echo "quarantined restored over isn't empty"; ok=""; }
+        qlist $Q-restored >/tmp/bko-rt.quar.after-over
+        echo "restored over it (< source, > restored):"
+        diff /tmp/bko-rt.quar.before /tmp/bko-rt.quar.after-over &&
+            echo "  identical ($(wc -l </tmp/bko-rt.quar.before | tr -d ' ') lines)" || ok=""
+    else
+        echo "quarantined wasn't restored as a file"; ok=""
+    fi
     cmp $Q/plain $Q-restored/plain || ok=""
     [ -n "$ok" ] && echo "yes" || failed="$failed; $t"
 
@@ -419,4 +549,9 @@ if [ -z "$again" ]; then
     diff /tmp/bko-rt.noidmapb.before /tmp/bko-rt.noidmapb.after || ok=""
     [ -n "$ok" ] && echo "yes" || failed="$failed; $t"
 fi
+t="no message about the socket from either tool (backups, restores)"
+echo "== $t"
+n=$(grep -ci socket /tmp/bko-rt.msgs)
+echo "$n lines ($(wc -l </tmp/bko-rt.msgs | tr -d ' ') lines on stderr in all)"; grep -i socket /tmp/bko-rt.msgs | head -n 5
+[ "$n" = 0 ] || failed="$failed; $t"
 echo "roundtrip: $([ -z "$failed" ] && echo PASS || echo "FAIL: ${failed#; }")"

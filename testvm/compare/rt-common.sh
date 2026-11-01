@@ -20,10 +20,11 @@
 #             UTC (restic writes "Z", rustic "+00:00", and either may drop a
 #             zero fraction), null taken as absent; extended attributes
 #             sorted by name, their stored order in the extra key
-#             ~xattr_names (not compared: illumos' rustic keeps directory
-#             order, restic sorts, AUDIT-R4 D4).  Leaves out content and
+#             xattr_names (compared: both tools store them sorted by name
+#             on every OS but Windows, AUDIT-R6 N4).  Leaves out content and
 #             subtree (each repository chunks on its own) and device_id
-#             (rustic stores it only with --set-devid).
+#             (rustic stores it only with --set-devid).  With RT_CONTENT
+#             set, content is kept too: content=["ID",...].
 #   rt_node_diff A B
 #             what differs between two rt_nodes listings, one line per name
 #             and key ("  NAME: key a != b"); keys starting with ~ apart,
@@ -53,8 +54,19 @@
 #   rt_over_check
 #             whether /root/bko-rt-elsewhere is as rt_over left it: status 1
 #             (and what changed) if a restore wrote through the symlink
+#   rt_mksock PATH
+#             a Unix socket at PATH, bound and closed, with whatever the
+#             system has: python3, perl, cc (a few lines of C), or nc -lU
+#             killed once the socket is there (it leaves it).  Status 1, and
+#             why, if none of them could.  Both tools skip sockets (SPEC3 1):
+#             it makes one for a tree's backup to leave out
+#
+# rt_nodes' scratch files and the decoder go in RT_TMP (default /tmp): a
+# script on a host that runs others at the same time (sparse-rt.sh) gives
+# it a directory of its own.
 
 rt_awk=awk
+rt_tmp=${RT_TMP:-/tmp}
 for a in gawk nawk; do command -v $a >/dev/null 2>&1 && { rt_awk=$a; break; }; done
 
 rt_is_rustic() { case $(basename "$1") in *rustic*) true ;; *) false ;; esac; }
@@ -82,7 +94,7 @@ rt_backup() {  # BIN REPO PATH...
 
 # The decoder: a tree's JSON on stdin; per node, one line:
 # NAME<TAB>SUBTREE-or-"-"<TAB>key=value<TAB>... (as described above).
-rt_decoder=/tmp/bko-rt-nodes.awk
+rt_decoder=$rt_tmp/bko-rt-nodes.awk
 cat >$rt_decoder <<'AWK'
 # Tokens are cut off the front of s: matching at the start of a string is
 # quick in every awk, indexing into the middle of a long one isn't (nawk).
@@ -183,20 +195,21 @@ END {
             v = val(k)
             if (k == "\"name\"") name = substr(v, 2, length(v) - 2)
             if (k == "\"subtree\"") subtree = substr(v, 2, length(v) - 2)
+            if (k == "\"content\"" && keepcontent != "" && v != "null") { nk[++cnt] = "content"; nv["content"] = v; continue }
             if (v == "null" || k == "\"name\"" || k == "\"subtree\"" || k == "\"content\"" || k == "\"device_id\"") continue
             nk[++cnt] = substr(k, 2, length(k) - 2); nv[nk[cnt]] = v
         }
         sortarr(nk, cnt)
         line = name "\t" subtree
         for (j = 1; j <= cnt; j++) line = line "\t" nk[j] "=" nv[nk[j]]
-        if (xnames != "") line = line "\t~xattr_names=" xnames
+        if (xnames != "") line = line "\txattr_names=" xnames
         print line
     }
 }
 AWK
 
 rt_tree() {  # RESTIC REPO ID: the decoder's lines for one tree
-    RESTIC_PASSWORD=backotter-compare $1 -r $2 --no-cache --no-lock cat blob $3 | $rt_awk -f $rt_decoder
+    RESTIC_PASSWORD=backotter-compare $1 -r $2 --no-cache --no-lock cat blob $3 | $rt_awk -v keepcontent="${RT_CONTENT:-}" -f $rt_decoder
 }
 
 rt_nodes() {  # RESTIC REPO PATH
@@ -213,17 +226,17 @@ rt_nodes() {  # RESTIC REPO PATH
     done
     printf '%s\n' "$rt_self" | $rt_awk -F '\t' 'BEGIN { OFS = "\t" } { $1 = "."; $2 = ""; sub(/\t\t/, "\t"); print }'
     # Breadth first, the trees still to read in a queue: ID<TAB>PREFIX.
-    printf '%s\t\n' "$rt_id" >/tmp/bko-rt-nodes.queue
-    while [ -s /tmp/bko-rt-nodes.queue ]; do
-        IFS='	' read -r rt_id rt_pre </tmp/bko-rt-nodes.queue
-        sed 1d /tmp/bko-rt-nodes.queue >/tmp/bko-rt-nodes.queue2 && mv /tmp/bko-rt-nodes.queue2 /tmp/bko-rt-nodes.queue
-        rt_tree $1 $2 $rt_id >/tmp/bko-rt-nodes.tree || { echo "rt_nodes: can't read tree $rt_id" >&2; return 1; }
+    printf '%s\t\n' "$rt_id" >$rt_tmp/bko-rt-nodes.queue
+    while [ -s $rt_tmp/bko-rt-nodes.queue ]; do
+        IFS='	' read -r rt_id rt_pre <$rt_tmp/bko-rt-nodes.queue
+        sed 1d $rt_tmp/bko-rt-nodes.queue >$rt_tmp/bko-rt-nodes.queue2 && mv $rt_tmp/bko-rt-nodes.queue2 $rt_tmp/bko-rt-nodes.queue
+        rt_tree $1 $2 $rt_id >$rt_tmp/bko-rt-nodes.tree || { echo "rt_nodes: can't read tree $rt_id" >&2; return 1; }
         $rt_awk -F '\t' -v pre="$rt_pre" '$2 != "-" { print $2 "\t" pre $1 "/" }' \
-            /tmp/bko-rt-nodes.tree >>/tmp/bko-rt-nodes.queue
+            $rt_tmp/bko-rt-nodes.tree >>$rt_tmp/bko-rt-nodes.queue
         $rt_awk -F '\t' -v pre="$rt_pre" 'BEGIN { OFS = "\t" } { $1 = pre $1; $2 = ""; sub(/\t\t/, "\t"); print }' \
-            /tmp/bko-rt-nodes.tree
+            $rt_tmp/bko-rt-nodes.tree
     done
-    rm -f /tmp/bko-rt-nodes.queue /tmp/bko-rt-nodes.tree
+    rm -f $rt_tmp/bko-rt-nodes.queue $rt_tmp/bko-rt-nodes.tree
 }
 
 rt_node_diff() {  # A B
@@ -312,3 +325,54 @@ rt_over_check() {
     rt_list_elsewhere >/tmp/bko-rt.elsewhere.after
     diff /tmp/bko-rt.elsewhere.before /tmp/bko-rt.elsewhere.after
 }
+
+rt_mksock() {  # PATH
+    rm -f "$1"
+    if command -v python3 >/dev/null 2>&1; then
+        python3 -c 'import socket, sys; socket.socket(socket.AF_UNIX).bind(sys.argv[1])' "$1" && return
+    fi
+    if command -v perl >/dev/null 2>&1; then
+        perl -MSocket -e 'my $s; socket($s, PF_UNIX, SOCK_STREAM, 0) && bind($s, sockaddr_un($ARGV[0])) or die "$ARGV[0]: $!\n"' "$1" &&
+            return
+    fi
+    if [ ! -x $rt_tmp/bko-rt-mksock ] && command -v cc >/dev/null 2>&1; then
+        cat >$rt_tmp/bko-rt-mksock.c <<'C'
+#include <sys/types.h>
+#include <sys/socket.h>
+#include <sys/un.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+int main(int argc, char **argv) {  /* PATH */
+    struct sockaddr_un a;
+    int s;
+
+    if (argc != 2 || strlen(argv[1]) >= sizeof(a.sun_path))
+        return 2;
+    memset(&a, 0, sizeof(a));
+    a.sun_family = AF_UNIX;
+    strcpy(a.sun_path, argv[1]);
+    if ((s = socket(AF_UNIX, SOCK_STREAM, 0)) < 0 || bind(s, (struct sockaddr *)&a, sizeof(a)) != 0) {
+        perror(argv[1]);
+        return 1;
+    }
+    close(s);
+    return 0;
+}
+C
+        rt_l=""; [ "$(uname -s)" = SunOS ] && rt_l=-lsocket
+        cc -o $rt_tmp/bko-rt-mksock $rt_tmp/bko-rt-mksock.c $rt_l 2>/dev/null
+    fi
+    [ -x $rt_tmp/bko-rt-mksock ] && { $rt_tmp/bko-rt-mksock "$1" && return; }
+    if command -v nc >/dev/null 2>&1; then
+        nc -lU "$1" </dev/null >/dev/null 2>&1 &
+        rt_n=$!
+        for rt_i in 1 2 3 4 5 6 7 8 9 10; do [ -S "$1" ] && break; sleep 1; done
+        kill $rt_n 2>/dev/null; wait $rt_n 2>/dev/null
+        [ -S "$1" ] && return
+    fi
+    echo "rt_mksock: no python3, perl, cc or nc -lU made a socket at $1" >&2
+    return 1
+}
+

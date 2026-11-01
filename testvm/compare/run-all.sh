@@ -377,6 +377,8 @@ cleanup() {
             findmnt -rn -o TARGET | grep -E "^/mnt/$P-(fs|sp)(/|\$)" | sort -r | while read -r m; do umount -l "$m"; done
             losetup -a 2>/dev/null | grep -E "\(/var/tmp/$P-(fs|sp)" | cut -d: -f1 | while read -r l; do losetup -d "$l"; done
             rm -rf /var/tmp/$P-fs-*.img /var/tmp/$P-sp /mnt/$P-fs /mnt/$P-sp' - "$PFX" 2>/dev/null
+        # fs_roundtrip.py's repositories, of a step stopped before it removed them.
+        [[ -n ${KEEP_WORK:-} ]] || $SUDO rm -rf "$here/../../fs-roundtrip/$PFX-fs"
     fi
     rm -rf "$W/ram"
 }

@@ -27,6 +27,12 @@
 #             Copy FILE to DEST in the guest (mode MODE, default 755) over
 #             ssh with cat: AlpineBSD has no scp or sftp server.
 #   vm_halt   Power the guest off and make sure its QEMU is gone, by PID.
+#             The poweroff goes over ssh only while this script's QEMU is
+#             the one listening on PORT (vm_owns_port): copies of one guest
+#             share its key, so a poweroff sent after ours had exited would
+#             stop whichever copy another script (another session's run on
+#             the same port) has booted there since.  vm_boot likewise only
+#             takes an answer from its own QEMU.
 #
 # Needs: qemu-system-x86_64 with KVM, testvm/vm-run, ssh, timeout, ss.
 # shellcheck shell=bash
@@ -61,7 +67,7 @@ vm_boot() {
         "$image" </dev/null >"$logdir/vm-run.log" 2>&1 &
     VM_PID=$!
     deadline=$((SECONDS + ${VM_BOOT_TIMEOUT:-600}))
-    until T=15 vm_ssh true 2>/dev/null; do
+    until vm_owns_port && T=15 vm_ssh true 2>/dev/null && vm_owns_port; do
         if ! kill -0 "$VM_PID" 2>/dev/null; then
             echo "vm_boot: QEMU exited; $logdir/vm-run.log says:" >&2
             tail -n 5 "$logdir/vm-run.log" >&2
@@ -76,6 +82,24 @@ vm_boot() {
         fi
         sleep 3
     done
+}
+
+# Whether this script's QEMU (vm-run's child, or VM_PID itself) is what
+# listens on VM_PORT, by ss's process column.  Where ss shows no process for
+# the port's listener (not ours to see), as long as our QEMU runs: it can't be
+# told.
+vm_owns_port() {
+    [[ -n $VM_PID ]] && kill -0 "$VM_PID" 2>/dev/null || return 1
+    local line pids p
+    line=$(ss -Hltnp "sport = :$VM_PORT" 2>/dev/null)
+    [[ -n $line ]] || return 1
+    pids=$(grep -o 'pid=[0-9]*' <<<"$line" | cut -d= -f2)
+    [[ -n $pids ]] || return 0
+    for p in $pids; do
+        [[ $p == "$VM_PID" ]] && return 0
+        [[ $(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ') == "$VM_PID" ]] && return 0
+    done
+    return 1
 }
 
 vm_ssh() {
@@ -102,8 +126,10 @@ vm_halt() {
     VM_PID=""
     # Full paths: NetBSD root's PATH has no /sbin.  OpenBSD has no poweroff,
     # illumos has its shutdown in /usr/sbin.
-    T=30 vm_ssh '/sbin/poweroff || /sbin/shutdown -p now || /usr/sbin/shutdown -y -i5 -g0' \
-        >/dev/null 2>&1 || true
+    if VM_PID=$pid vm_owns_port; then
+        T=30 vm_ssh '/sbin/poweroff || /sbin/shutdown -p now || /usr/sbin/shutdown -y -i5 -g0' \
+            >/dev/null 2>&1 || true
+    fi
     for _ in $(seq 30); do kill -0 "$pid" 2>/dev/null || break; sleep 2; done
     if kill -0 "$pid" 2>/dev/null; then
         # vm-run passes TERM on to its QEMU, then deletes its --ram overlay.

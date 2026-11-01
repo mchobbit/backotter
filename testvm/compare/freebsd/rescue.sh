@@ -5,7 +5,12 @@
 # with restic as a rescue system would (mounted read-only), lays vtbd2 out
 # like vtbd1 (partitions, boot code, UFS with the same newfs and tunefs
 # settings, or a ZFS pool with the same datasets and properties), restores
-# onto it, and compares the two with fsmeta.sh.
+# onto it, and compares the two with fsmeta.sh, both mounted read-only (the
+# listing moves directories' atimes on a file system that keeps them, as
+# ZFS's atime=on datasets do).  A ZFS target then gets a zpool.cache for its
+# own pool, as an installer gives one, in place of the source's restored
+# one, which names the old pool's GUID: the restored system would log
+# "cannot import" for it at every boot.
 #
 # Usage: rescue.sh BACKUP [RESTORE]
 # BACKUP and RESTORE are restic or BackOtter's rustic; RESTORE defaults to
@@ -163,7 +168,17 @@ fi
 cat $OUT/restore.txt
 echo "restore took $(( $(date +%s) - start )) s"
 
-say "recording the target's metadata, and comparing"
+say "recording the target's metadata (mounted read-only), and comparing"
+# Read-only, as the source was recorded: listing a directory on a file
+# system with atimes on (ZFS's atime=on, as freebsd15's zroot/var/mail has)
+# moves its atime, which would show as a difference the restore didn't make.
+if [ $kind = ufs ]; then
+    umount /mnt/dst
+    mount -r /dev/$dst /mnt/dst
+else
+    export_pool "$pool"
+    mount_zfs "$pool" /mnt/dst readonly
+fi
 sh "$here/fsmeta.sh" /mnt/dst $OUT/after
 {
     echo "== mtree: type, owner, group, mode, flags, links, size, mtime, symlink target, SHA-256"
@@ -181,7 +196,30 @@ cat $OUT/diff.txt
 if [ $kind = ufs ]; then
     umount /mnt/dst
 else
+    export_pool "$pool" force   # read-only, so forcing loses nothing
+    mount_zfs "$pool" /mnt/dst
     zpool set bootfs="$bootfs" "$pool"
+    # The restored zpool.cache is the source pool's, by its GUID; the new
+    # pool has another.  The pool's own, written where the restored one is,
+    # as bsdinstall does (it keeps a copy elsewhere: the export below takes
+    # the pool out of the cache file it was set to).
+    cache=/tmp/bko-rescue-zpool.cache
+    if [ -f /mnt/dst/boot/zfs/zpool.cache ]; then
+        rm -f $cache
+        zpool set cachefile=$cache "$pool"
+        # ZFS writes it a moment later (an async config update).
+        for _ in 1 2 3 4 5 6 7 8 9 10; do
+            [ -s $cache ] && break
+            sleep 1
+        done
+        if [ -s $cache ]; then
+            cp $cache /mnt/dst/boot/zfs/zpool.cache
+            say "target: /boot/zfs/zpool.cache written for the new pool (guid $(zpool get -H -o value guid "$pool"))"
+        else
+            echo "rescue: ZFS wrote no $cache; the restored zpool.cache is the old pool's" >&2
+        fi
+    fi
     export_pool "$pool"
+    rm -f $cache
 fi
 say "done"

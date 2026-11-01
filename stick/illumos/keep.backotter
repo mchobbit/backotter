@@ -56,6 +56,23 @@
 /usr/bin/setpgrp
 /usr/sbin/idmap
 /usr/lib/idmapd
+# The libraries idmapd links (32-bit) and the archivers' libidmap (amd64)
+# needs beyond the installer's: AD and LDAP lookups, which idmapd links
+# even with no domain set.
+/usr/lib/*libidmap.so*
+/usr/lib/*libads.so*
+/usr/lib/*libadutils.so*
+/usr/lib/*libldap.so*
+/usr/lib/*libsldap.so*
+/usr/lib/*libsasl.so*
+/usr/lib/*libreparse.so*
+/usr/lib/smbsrv/*libsmb.so*
+/usr/lib/mps/*libnspr4.so
+/usr/lib/mps/*libnss3.so
+/usr/lib/mps/*libnssutil3.so
+/usr/lib/mps/*libplc4.so
+/usr/lib/mps/*libplds4.so
+/usr/lib/mps/*libssl3.so
 
 # Remote access: OpenSSH and OpenSSL, and the kernel crypto framework's
 # daemon (cryptosvc, which sshd needs).

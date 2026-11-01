@@ -251,7 +251,8 @@ configure() {
     # console login that can run, svc.startd would take the console for a
     # maintenance login (kayak's installer then takes it back with its
     # takeover-console).  The virtual consoles' daemon is on, with its
-    # hotkeys (Alt-Ctrl-Fn); cryptosvc is on, for sshd, which stays off.
+    # hotkeys (Alt-Ctrl-Fn); cryptosvc is on, for sshd, which stays off;
+    # idmap is on, for the archivers' SID owners and ACL entries (libidmap).
     # Checked, since svccfg on an image's repository fails quietly at times.
     SVCCFG_REPOSITORY=$(pwd)/etc/svc/repository.db
     SVCCFG_DTD=$(pwd)/usr/share/lib/xml/dtd/service_bundle.dtd.1
@@ -261,12 +262,13 @@ configure() {
         svccfg -s system/console-login:$i setprop general/enabled = boolean: true
     done
     svccfg -s system/vtdaemon setprop options/hotkeys = boolean: true
-    for s in system/vtdaemon:default system/cryptosvc:default; do
+    for s in system/vtdaemon:default system/cryptosvc:default system/idmap:default; do
         svccfg -s $s setprop general/enabled = boolean: true
     done
     got=$(svccfg -s system/console-login listprop start/exec | awk '{ print $3 }')
     [ "$got" = /usr/local/lib/backotter/on-tty ] || die "console-login's start method is $got"
-    for want in system/vtdaemon:default:true system/cryptosvc:default:true network/ssh:default:false \
+    for want in system/vtdaemon:default:true system/cryptosvc:default:true system/idmap:default:true \
+        network/ssh:default:false \
         system/console-login:default:true system/console-login:vt2:true \
         application/backotter/console:serial:true application/backotter/network:default:true; do
         got=$(svccfg -s "${want%:*}" listprop general/enabled 2>/dev/null | awk '{ print $3 }')

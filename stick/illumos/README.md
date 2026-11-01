@@ -115,6 +115,11 @@ What changes from OmniOS's installer:
   and no host keys (`remote-access` makes them).
 - autofs is left out, so `/home` is a plain directory for `remote-access`'s
   user.
+- `system/idmap` is on: restic-bko and rustic-bko map Windows SIDs (file
+  owners, ACL entries) to and from IDs through libidmap, and without
+  `idmapd` every SID restores as `nobody`.  With no domain configured, a SID
+  gets an ephemeral ID (2147483648 and up) for the boot.  idmapd links the
+  AD, LDAP and Mozilla NSS libraries even then, so the image keeps them.
 - More tools than the installer keeps (`keep.backotter`): fsck for UFS and
   FAT, `iostat`, `cfgadm`, `hotplug`, `eeprom`, `raidctl`, `stmsboot`,
   `fcinfo`, `luxadm`, `fwflash`, `runat`, `idmap`, `useradd`, PAM, OpenSSH

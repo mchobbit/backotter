@@ -66,6 +66,13 @@ marker)
 smf)
   x=$(svcs -x 2>&1 | grep '^svc:/' | sed 's/ .*//')
   test -z "$x" || { echo "in trouble: $x" | tr '\n' ' '; exit 1; }; echo "$(svcs -H | wc -l | tr -d ' ') services online, none in trouble" ;;
+idmap)
+  online system/idmap:default
+  m=$(idmap show -c sid:S-1-5-21-1000-2000-3000-1001 uid 2>&1) || { echo "idmap show: $m"; exit 1; }
+  echo "$m" | awk -F 'uid:' 'NF == 2 && $2 + 0 >= 2147483648 { ok = 1 } END { exit !ok }' ||
+    { echo "no ephemeral ID: $m"; exit 1; }
+  x=$(ldd /usr/lib/amd64/libidmap.so.1 2>&1 | grep -i -e 'not found' -e fatal)
+  test -z "$x" || { echo "amd64 libidmap: $x"; exit 1; }; echo "online, $m" ;;
 esac
 EOF
 check kernel 'sh /tmp/bko-checks.sh kernel'
@@ -85,6 +92,6 @@ check remote-access 'sh /tmp/bko-checks.sh remote-access'
 check root-ssh-refused 'sh /tmp/bko-checks.sh root-ssh-refused'
 check marker 'sh /tmp/bko-checks.sh marker'
 check zfs-no-import 'test ! -e /etc/zfs/zpool.cache && test -z "$(zpool list -H 2>/dev/null)" && echo "no pools imported"'
-check idmap 'svcs -H idmap'
+check idmap 'sh /tmp/bko-checks.sh idmap'
 check smf 'sh /tmp/bko-checks.sh smf'
 check memory 'echo "$(( $(vmstat 1 2 | tail -n 1 | awk "{ print \$5 }") / 1024 )) MB free of $(prtconf | awk "/^Memory size/ { print \$3 }")"'

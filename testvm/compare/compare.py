@@ -49,6 +49,10 @@ fresh-install state, and any other disks its vm-run-options name with
      did: boot-state.sh reports what the guest's init (systemd, OpenRC,
      runit, dinit, s6-rc or sysv-rc) says of its services, and what failed
      in a restore's boot but not in the original's is that restore's.
+     Between the two, a ZFS root's restore gets what any restore of one
+     must do, after the comparison so that this stays the archiver's
+     alone: the new pool's cache file in /etc/zfs/zpool.cache, and the
+     initramfs rebuilt with it (retarget_zfs_boot()).
 That is the archiver's part of a bare-metal restore; recreating a layout
 from a recorded description, as BackOtter must, is not tested here.
 
@@ -95,6 +99,15 @@ COMPARE_GROW_GIB=N makes each restored disk N GiB
 bigger than the original, its last partition grown to the end, for a
 guest whose files take more room restored one by one than they did
 (Omarchy's: btrfs snapshots sharing their data, compressed).
+Where /mnt/bko-ram (a tmpfs of its own) is mounted, a run works in RAM,
+in /mnt/bko-ram/compare-NAME/GUEST/, sparing the host's disk, and copies
+its results, diffs and logs to the work directory above when it ends,
+however it ends; COMPARE_WORK, or COMPARE_RAM=0, keeps it on disk.
+COMPARE_DISCARD=1 (the default in RAM) deletes each repository once
+restored from and each restored disk once booted: one direction at a
+time, at most one repository and one restored disk, where otherwise every
+restored disk stays (to look at, or boot again with --boot-only, which
+needs a run on disk).
 
 Results: results.json and a table on stdout.
 """
@@ -141,6 +154,15 @@ DST_NAME = f"{PREFIX}-dst{SUFFIX}"                # the restored disks' LUKS and
 # with COMPARE_NAME).
 COMPARE_DIR = (Path(os.environ["COMPARE_WORK"]).resolve() if os.environ.get("COMPARE_WORK")
                else WORK_BASE / "compare" / NAME if NAME else WORK_BASE / "compare")
+# A run writes gigabytes (repositories, restored disks, overlays), which the
+# hosts' disks shouldn't take (Chopin's overheated): where /mnt/bko-ram, a
+# tmpfs of its own, is mounted, a run works there, and its results, diffs
+# and logs go to COMPARE_DIR at the end.  Not with COMPARE_WORK, nor with
+# COMPARE_RAM=0.
+RAM_BASE = Path("/mnt/bko-ram")
+IN_RAM = (not os.environ.get("COMPARE_WORK") and os.environ.get("COMPARE_RAM", "1") != "0"
+          and os.path.ismount(RAM_BASE))
+RUN_DIR = RAM_BASE / f"compare-{PREFIX}{SUFFIX}" if IN_RAM else COMPARE_DIR
 
 
 def nbd_allowed(spec: str) -> list[str] | None:
@@ -163,6 +185,7 @@ if NBD_ALLOWED is not None:
     os.environ["VM_MOUNT_NBD"] = " ".join(NBD_ALLOWED)
 BOOT_STATE = HERE / "boot-state.sh"
 GROW_GIB = int(os.environ.get("COMPARE_GROW_GIB", "0"))
+DISCARD = os.environ.get("COMPARE_DISCARD", "1" if IN_RAM else "") == "1"
 
 
 def run(cmd: list[str] | str, check: bool = True, quiet: bool = False, **kw) -> subprocess.CompletedProcess:
@@ -884,6 +907,39 @@ def recreate_pool(z: dict, dst: Dst) -> None:
             run(["zfs", "set", f"keylocation={info[ds]['keylocation']}", name(ds)])
 
 
+def retarget_zfs_boot(layout: Layout) -> None:
+    """What a ZFS root's restore must do once its files are back: the
+    restored /etc/zfs/zpool.cache, and the initramfs's copy of it, name the
+    original pool's GUID, which the new pool hasn't, so dracut's
+    zfs-import-cache.service imports nothing ("Cannot get properties of
+    rpool: no such pool available"), and zfs-import-scan.service runs only
+    without a cache file.  So: the new pool's cache file, and the initramfs
+    rebuilt with it, by the restored system's own tool."""
+    cache = DST_MP / "etc/zfs/zpool.cache"
+    if not layout.zfs or not cache.is_file():
+        return
+    tmp = Path(f"/run/{DST_NAME}-zpool.cache")
+    tmp.unlink(missing_ok=True)
+    run(["zpool", "set", f"cachefile={tmp}", DST_POOL_TEMP])
+    for _ in range(10):                        # ZFS writes it a moment later
+        if tmp.exists() and tmp.stat().st_size:
+            break
+        time.sleep(1)
+    else:
+        raise SystemExit(f"ZFS wrote no {tmp} for {DST_POOL_TEMP}")
+    shutil.copyfile(tmp, cache)
+    run(["zpool", "set", "cachefile=none", DST_POOL_TEMP])
+    tmp.unlink()
+    with src_api(DST_MP):
+        for cmd in (["update-initramfs", "-u", "-k", "all"], ["dracut", "--force", "--regenerate-all"],
+                    ["mkinitcpio", "-P"]):
+            if run(["chroot", str(DST_MP), "sh", "-c", f"command -v {cmd[0]}"], check=False, quiet=True).returncode == 0:
+                in_src(cmd, DST_MP)
+                break
+        else:
+            raise SystemExit("no initramfs tool in the restored system")
+
+
 def unmount_dst(dst: Dst) -> None:
     run(["umount", "-R", str(DST_MP)], check=False)
     if dst.pool:
@@ -1216,14 +1272,33 @@ def skip_aliases(layout: Layout) -> list[str]:
     return [a for p in layout.aliases for a in ("--skip", os.path.relpath(p, SRC_MP))]
 
 
-def work_dir(guest: str, stick_img: Path | None) -> Path:
-    return COMPARE_DIR / (guest + (".stick-mkfs" if stick_img else ""))
+def work_dir(guest: str, stick_img: Path | None, parent: Path = COMPARE_DIR) -> Path:
+    return parent / (guest + (".stick-mkfs" if stick_img else ""))
+
+
+def save_from_ram(guest: str, stick_img: Path | None) -> None:
+    """A run in RAM_DIR: its results, diffs and logs to COMPARE_DIR, whatever
+    the run's outcome, and the rest (disks, repositories) dropped."""
+    ram, disk = work_dir(guest, stick_img, RUN_DIR), work_dir(guest, stick_img)
+    if not IN_RAM or not ram.is_dir():
+        return
+    disk.mkdir(parents=True, exist_ok=True)
+    for f in ram.iterdir():
+        if f.is_file() and f.suffix != ".qcow2":
+            shutil.copy2(f, disk / f.name)
+    shutil.rmtree(ram)
+    try:
+        ram.parent.rmdir()                      # the run's own, once empty
+    except OSError:
+        pass
 
 
 def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -> dict:
     cfg = GuestConfig(VMS / guest)
     bases = [cfg.base] + cfg.disks
-    work = work_dir(guest, stick_img)
+    work = work_dir(guest, stick_img, RUN_DIR)
+    if IN_RAM:
+        shutil.rmtree(work, ignore_errors=True)    # a dead run's
     work.mkdir(parents=True, exist_ok=True)
     fsmeta = [sys.executable, "-I", str(HERE / "fsmeta.py")]
     results = {"guest": guest, "mkfs": str(stick_img) if stick_img else "guest", "tools": {}}
@@ -1286,18 +1361,13 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
     state = vm_mount(srcs, SRC_MP, ro=True, key=cfg.key)
     try:
         layout = Layout(state, cfg.key, work)
-        for tool in tools:
+        def backup_one(tool: str) -> None:
             print(f"== {guest}: {tool} backup", flush=True)
             t = time.monotonic()
             backup(tool, work, layout.aliases)
             results["tools"][tool] = {"backup_s": round(time.monotonic() - t, 1),
                                       "backup_bytes": size(work / tool)}
-        if bcachefs:
-            # The kernel mounts no two bcachefs file systems with the same
-            # UUID, so src goes before dst is mounted; its disk stays
-            # attached for recreate(), which then needs only its first MiB.
-            run(["umount", "-R", str(SRC_MP)])
-        for tool in tools:
+        def restore_and_boot(tool: str) -> None:
             print(f"== {guest}: {tool} restore", flush=True)
             res = results["tools"][tool]
             dsts = disk_images(work / f"restored-{tool}", len(srcs))
@@ -1330,22 +1400,49 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
                                   "--json", str(work / f"diff-{tool}.json")], check=False)
                 print(r.stdout, flush=True)
                 res["diff"] = json.loads((work / f"diff-{tool}.json").read_text())["differences"]
+                # Its failure is this restore's boot's, not the run's.
+                try:
+                    retarget_zfs_boot(layout)
+                except (subprocess.CalledProcessError, SystemExit) as e:
+                    res["retarget_error"] = str(e)[-1500:]
+                    print(f"   retarget_zfs_boot failed: {res['retarget_error']}", flush=True)
             finally:
                 unmount_dst(dst)
+            if DISCARD:
+                shutil.rmtree(work / tool, ignore_errors=True)
             print(f"== {guest}: booting the {tool} restore", flush=True)
             res["boot"] = boot(dsts, cfg, hardware, work / f"boot-{tool}.log")
             res["boot"]["new_failures"] = new_failures(res["boot"], results["original_boot"])
             print(f"   {res['boot']}", flush=True)
+            if DISCARD:
+                for d in dsts:
+                    d.unlink(missing_ok=True)
+        if bcachefs:
+            for tool in tools:
+                backup_one(tool)
+            # The kernel mounts no two bcachefs file systems with the same
+            # UUID, so src goes before dst is mounted; its disk stays
+            # attached for recreate(), which then needs only its first MiB.
+            run(["umount", "-R", str(SRC_MP)])
+            for tool in tools:
+                restore_and_boot(tool)
+        else:
+            # One direction at a time, backed up, restored and booted: one
+            # repository at once (and, with COMPARE_DISCARD, one restored
+            # disk), where all four backups first would hold four.
+            for tool in tools:
+                backup_one(tool)
+                restore_and_boot(tool)
         results["coverage"] = json.loads((work / f"diff-{tools[0]}.json").read_text())["coverage"]
     finally:
         vm_umount(SRC_MP)
     # Keep an earlier run's results for the tools this run left out, so one
     # tool can be rerun alone.  (torture.sh makes the same files each time.)
-    old = work / "results.json"
+    old = work_dir(guest, stick_img) / "results.json"
     if old.exists():
         earlier = json.loads(old.read_text()).get("tools", {})
         results["tools"] = {t: v for t, v in earlier.items() if t not in tools} | results["tools"]
-    old.write_text(json.dumps(results, indent=1))
+    (work / "results.json").write_text(json.dumps(results, indent=1))
     return results
 
 
@@ -1411,6 +1508,8 @@ def main() -> int:
     try:
         r = boot_only(guest, tools, stick_img) if only_boot else compare_guest(guest, tools, stick_img)
     finally:
+        if not only_boot:
+            save_from_ram(guest, stick_img)
         if NAME:
             remove_mount_points()
     o = r.get("original_boot", {})

@@ -169,7 +169,8 @@ for p in $(pgrep -f 'compare(\.py|-freebsd\.sh)' || true); do
     [[ $p != $$ ]] && tr '\0' '\n' <"/proc/$p/cmdline" 2>/dev/null | grep -qx -- "$guest" &&
         echo "a comparison of $guest runs (pid $p)"
 done
-for o in /dev/shm/*.qcow2 /dev/shm/*/*.qcow2 "$dir"/*.qcow2 "$dir"/.vm-update-run.*/*.qcow2; do
+for o in /dev/shm/*.qcow2 /dev/shm/*/*.qcow2 "$dir"/*.qcow2 "$dir"/.vm-update-run.*/*.qcow2 \
+         /mnt/bko-ram/vm-update."$guest"/.vm-update-run.*/*.qcow2; do
     o=$(realpath "$o")
     [[ $o != "$img" && $exclude != *" $o "* ]] || continue
     if info=$(qemu-img info -U --output=json "$o" 2>/dev/null); then
@@ -257,7 +258,7 @@ class Guest:
         # Ctrl-C, SIGKILL, a crash): with the lock ours, no vm-update uses it,
         # and if no QEMU has its overlays open either, it's dead.  (One whose
         # VM still runs stays, and busy() names it.)
-        for run_dir in self.dir.glob(".vm-update-run.*"):
+        for run_dir in [*self.dir.glob(".vm-update-run.*"), *ram_dir_of(self.name).glob(".vm-update-run.*")]:
             if not any(qemu_holds(o) for o in run_dir.glob("*.qcow2")):
                 shutil.rmtree(run_dir, ignore_errors=True)
                 self.note(f"removed {run_dir}, a dead run's folder")
@@ -334,11 +335,34 @@ def wait_for_memory(g: Guest, mb: int) -> None:
             raise Failed("stopped")
 
 
+# A tmpfs of its own size (not /dev/shm, which the VMs' RAM shares) for the
+# overlays, sparing the host's disk; and the room an update's overlay may
+# need there (a desktop's upgrade writes gigabytes).
+RAM_BASE = Path("/mnt/bko-ram")
+RAM_ROOM = 16 << 30
+
+
+def ram_dir_of(guest: str) -> Path:
+    return RAM_BASE / f"vm-update.{guest}"
+
+
+def overlay_dir(g: "Guest") -> Path:
+    """Where g's run folder goes: RAM_BASE when it is mounted with RAM_ROOM
+    free, else beside the image."""
+    if os.path.ismount(RAM_BASE):
+        st = os.statvfs(RAM_BASE)
+        if st.f_bavail * st.f_frsize >= RAM_ROOM:
+            d = ram_dir_of(g.name)
+            d.mkdir(exist_ok=True)
+            return d
+    return g.dir
+
+
 class VM:
     """The guest under vm-run --ram --keep, its serial console on a pipe and
-    its overlays in a folder of its own beside the image.  (On disk, not in
-    /dev/shm: a big update's overlay holds gigabytes, which in RAM would
-    starve this host's other VMs.)"""
+    its overlays in a folder of its own: in RAM_BASE's tmpfs when it has the
+    room, else beside the image.  (Not in /dev/shm: a big update's overlay
+    holds gigabytes, which there would starve this host's other VMs.)"""
 
     def __init__(self, g: Guest, memory: int | None):
         if memory:
@@ -351,7 +375,7 @@ class VM:
         self.mb = mb
         self.g, self.port = g, free_port()
         try:
-            self.ram_dir = tempfile.mkdtemp(prefix=".vm-update-run.", dir=g.dir)
+            self.ram_dir = tempfile.mkdtemp(prefix=".vm-update-run.", dir=overlay_dir(g))
         except BaseException:
             self.release_memory()
             raise

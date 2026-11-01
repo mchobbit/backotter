@@ -8,8 +8,10 @@
 #   --host       whose platforms, ports and limits (default: this hostname)
 #   --platforms  comma- or space-separated, the other host's skipped (an
 #                empty list: nothing; default: all of the host's):
-#                  chopin:   linux sparse zfsguests dragonfly openbsd_illumos
-#                  cinqcent: freebsd netbsd
+#                  chopin:   linux sparse zfsguests dragonfly
+#                  cinqcent: linux sparse freebsd netbsd openbsd_illumos
+#                linux and sparse are both hosts', each with its share of
+#                the file systems (LINUX_FS, SPARSE_FS)
 #                linux      fs_roundtrip.py on zfs ext4 xfs btrfs f2fs bcachefs
 #                           tmpfs jfs, zfs --onto ext4; nonroot-rt.sh linux
 #                sparse     sparse-rt.sh on ext4 xfs btrfs zfs zfs-nocomp
@@ -50,6 +52,13 @@
 #                on GUEST_PORTS (ours: 2700-2799 chopin, 2900-2999
 #                cinqcent), which stick/build-round.sh's guests take too, and
 #                every QEMU of ours there without one
+#   LINUX_FS     the linux steps run here, of zfs zfs-onto-ext4 bcachefs f2fs
+#                ext4 xfs btrfs tmpfs jfs nonroot (default chopin: zfs
+#                zfs-onto-ext4 bcachefs xfs btrfs nonroot, the only bcachefs
+#                tools are Chopin's; cinqcent: ext4 f2fs tmpfs jfs); all: every one
+#   SPARSE_FS    the sparse steps run here, of ext4 xfs btrfs zfs zfs-nocomp
+#                (default chopin: xfs btrfs; cinqcent: zfs zfs-nocomp ext4);
+#                all: every one.  ANY_HOST=1 makes both default to all
 #   HOST_JOBS    fs_roundtrip.py and nonroot-rt.sh linux runs at once (4);
 #                SPARSE_JOBS sparse-rt.sh runs on the host at once (2)
 #   STEP_TIMEOUT seconds, every step (default by kind, 1.5-6 h: round 9's
@@ -89,7 +98,7 @@ set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 die() { echo "run-all: $*" >&2; exit 2; }
-usage() { sed -n '6,31p' "$0" >&2; exit 2; }
+usage() { sed -n '6,33p' "$0" >&2; exit 2; }
 
 host="" plats="" pset="" only="" dry=""
 while [[ $# -gt 0 ]]; do
@@ -109,12 +118,21 @@ BIN=$(cd "$1" && pwd) LOG=$2
 [[ $LOG == /* ]] || LOG=$PWD/$LOG
 [[ -n $host ]] || host=$(hostname -s 2>/dev/null || hostname)
 case $host in
-    chopin*) host=chopin; all="linux sparse zfsguests dragonfly openbsd_illumos"
+    chopin*) host=chopin; all="linux sparse zfsguests dragonfly"
+        lfs="zfs zfs-onto-ext4 bcachefs xfs btrfs nonroot" sfs="xfs btrfs"
         : "${PORT_BASE:=2700}" "${MAX_GUESTS:=6}" "${COUNT_OTHERS:=0}" "${GUEST_PORTS:=2700-2799}" ;;
-    cinqcent*) host=cinqcent; all="freebsd netbsd"
+    cinqcent*) host=cinqcent; all="linux sparse freebsd netbsd openbsd_illumos"
+        lfs="ext4 f2fs tmpfs jfs" sfs="zfs zfs-nocomp ext4"
         : "${PORT_BASE:=2900}" "${MAX_GUESTS:=3}" "${COUNT_OTHERS:=1}" "${GUEST_PORTS:=2900-2999}" ;;
     *) die "no such host: $host (--host chopin or cinqcent)" ;;
 esac
+ALL_LFS="zfs zfs-onto-ext4 bcachefs f2fs ext4 xfs btrfs tmpfs jfs nonroot" ALL_SFS="ext4 xfs btrfs zfs zfs-nocomp"
+[[ -n ${ANY_HOST:-} ]] && lfs=all sfs=all
+LINUX_FS=${LINUX_FS:-$lfs} SPARSE_FS=${SPARSE_FS:-$sfs}
+[[ $LINUX_FS == all ]] && LINUX_FS=$ALL_LFS
+[[ $SPARSE_FS == all ]] && SPARSE_FS=$ALL_SFS
+for f in $LINUX_FS; do [[ " $ALL_LFS " == *" $f "* ]] || die "LINUX_FS: no such step: $f"; done
+for f in $SPARSE_FS; do [[ " $ALL_SFS " == *" $f "* ]] || die "SPARSE_FS: no such step: $f"; done
 plats=${plats//,/ }
 [[ -z $pset || $plats == all ]] && plats=$all
 mine=""
@@ -270,8 +288,9 @@ base=${BASELINE:+ $(q --baseline "$BASELINE")}
 for p in $plats; do
     case $p in
     linux)
-        for fs in zfs 'zfs --onto ext4' bcachefs f2fs ext4 xfs btrfs tmpfs jfs; do
-            n=${fs/ --onto /-onto-}
+        for n in $LINUX_FS; do
+            [[ $n == nonroot ]] && continue
+            fs=${n/-onto-/ --onto }
             # bcachefs format sometimes aborts in malloc (round 8): again.
             step linux "$n" "$n" fsrt 0 host 14400 1 \
                 "$(q --results "$LOG/linux/$n" --target "$n" --allow-skip "${ALLOW_SKIP:-}")${OLD:+ --identity}" "
@@ -287,6 +306,7 @@ for p in $plats; do
                 exit \$rc"
         done
         # The pool and mount points are this run's (RUN_PREFIX).
+        [[ " $LINUX_FS " == *" nonroot "* ]] &&
         step linux nonroot nonroot-linux nonroot 0 host 5400 1 \
             "$(q --targets "linux zfs,linux ext4" --full "$LOG/linux/nonroot/linux.log")$base" "
             $SUDO rm -f $(q "$LOG/linux/nonroot/linux.log")
@@ -294,7 +314,7 @@ for p in $plats; do
                 RESTIC=$(q "$BIN/linux/restic-bko") RUSTIC=$(q "$BIN/linux/rustic-bko") $(q "$C/nonroot-rt.sh") linux"
         ;;
     sparse)
-        for run in ext4 xfs btrfs zfs zfs-nocomp; do
+        for run in $SPARSE_FS; do
             fs=${run%-nocomp} opts=""; [[ $run == zfs-nocomp ]] && opts="-O compression=off"
             step sparse "$run" "sparse-$run" sparse 0 sparse 10800 1 "${OLD:+--identity}" \
                 "$(rootenv) SPARSE_PREFIX=$PFX-sp SPARSE_FS=$fs SPARSE_RUN=$run SPARSE_ZFS_OPTS=$(q "$opts") BIG=${BIG:-20} \
@@ -354,7 +374,7 @@ export BKO_MKFS_BCACHEFS
 
 if [[ -n $dry ]]; then
     echo "== $host: ports $PORT_BASE+, at most $MAX_GUESTS guests (others counted: $COUNT_OTHERS, $GUEST_PORTS)," \
-        "$HOST_JOBS host jobs, $SPARSE_JOBS sparse jobs; prefix $PFX; OLD_BIN ${OLD:-none}"
+        "$HOST_JOBS host jobs, $SPARSE_JOBS sparse jobs; prefix $PFX; OLD_BIN ${OLD:-none}; linux: $LINUX_FS; sparse: $SPARSE_FS"
     for i in "${!S_NAME[@]}"; do
         echo "-- ${S_CHAIN[$i]}: ${S_NAME[$i]} (${S_KIND[$i]}, guests ${S_GUESTS[$i]}, slot ${S_SEM[$i]}," \
             "timeout ${S_TO[$i]} s${S_ROOT[$i]:+, root}) -> $LOG/${S_PLAT[$i]}/${S_NAME[$i]}.log"

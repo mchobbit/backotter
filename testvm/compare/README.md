@@ -58,10 +58,16 @@ The `EXPECT_*` line is the last line `stick/build-round.sh` prints (the
 Mac's HEADs); without it run-all.sh refuses, as it does for binaries that
 aren't those commits or don't agree with each other, and without `OLD_BIN`
 (`OLD_BIN=none`: no SPEC3 2 identity, a note).  The platforms, their steps
-and ports (`PORT_BASE` + 10-19) are round 9's: Chopin linux, sparse,
-zfsguests, dragonfly, openbsd_illumos; Cinqcent freebsd, netbsd, at most
+and ports (`PORT_BASE` + 10-19): Chopin zfsguests, dragonfly; Cinqcent
+freebsd, netbsd, openbsd_illumos (where their rustic-bko is built), at most
 three guests there (`MAX_GUESTS`), in slots its builds take too, counting
-every other QEMU of ours on 2900-2999.  A file system or step that can't run
+every other QEMU of ours on 2900-2999.  linux and sparse are both hosts',
+each with its share of the file systems: Chopin fs_roundtrip.py on zfs,
+zfs onto ext4, bcachefs (only Chopin has its tools), xfs, btrfs and
+nonroot-rt.sh linux, sparse-rt.sh on xfs and btrfs; Cinqcent
+fs_roundtrip.py on ext4, f2fs, tmpfs, jfs, sparse-rt.sh on zfs, zfs-nocomp
+and ext4 (`LINUX_FS`, `SPARSE_FS` change them; `all`, or `ANY_HOST=1`,
+runs every one).  A file system or step that can't run
 is a FAIL unless `ALLOW_SKIP` names it.  A fix round runs only what its
 fixes touch, on both hosts (each skips the other's platforms); affected.sh
 runs on the Mac, where the forks' histories are:
@@ -143,14 +149,12 @@ the slow steps, native guest builds and round trips):
 | Chopin | Cinqcent |
 |---|---|
 | restic-bko cross-builds (the restic fork's build) | native rustic-bko builds: freebsd15, openbsd8, omnios58, netbsd11 |
-| rustic-bko for Linux, and `dragonfly/build-rustic.sh` | round trips on freebsd15, freebsd15-ufs, netbsd11, alpinebsd |
-| `compare.py`, `fs_roundtrip.py`, `nonroot-rt.sh linux`, `sparse-rt.sh` (as root) | `nonroot-rt.sh freebsd15`, `freebsd15-ufs`, `netbsd11`, `alpinebsd` |
-| round trips and `nonroot-rt.sh` on dragonfly6, openbsd8, omnios58; `zfs-guest-rt.sh` | |
+| rustic-bko for Linux, and `dragonfly/build-rustic.sh` | round trips and `nonroot-rt.sh` on freebsd15, freebsd15-ufs, netbsd11, alpinebsd, openbsd8, omnios58 |
+| `fs_roundtrip.py` on zfs, zfs onto ext4, bcachefs, xfs, btrfs; `nonroot-rt.sh linux`; `sparse-rt.sh` on xfs, btrfs (as root) | `fs_roundtrip.py` on ext4, f2fs, tmpfs, jfs; `sparse-rt.sh` on zfs, zfs-nocomp, ext4 (as root) |
+| round trips and `nonroot-rt.sh` on dragonfly6; `zfs-guest-rt.sh`; `compare.py` | `sparse-rt.sh` in freebsd15, freebsd15-ufs, netbsd11's build image, omnios58 |
 
-The openbsd8 and omnios58 binaries are built on Cinqcent and tested on
-Chopin, which can ssh to Cinqcent: copy them across from there, e.g.
-`rsync -rlp m@cinqcent.local:backotter-work/round4/bin/ round4/bin/`, and
-bring the logs (`~/backotter-work/rt/`, `nonroot/`, `zfs-guest/`) back to one place.  Both
+`stick/build-round.sh` leaves the whole set of binaries on both hosts.
+Bring the logs back to one place for the audit.  Both
 hosts are shared with other work: give every guest a port of its own, and
 keep off the ports others use (2400 is the long-lived freebsd15-builder's;
 the image builds use 24xx).  The scripts' default ports are 2710-2713 for

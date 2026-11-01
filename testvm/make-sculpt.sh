@@ -41,6 +41,7 @@
 #   vm-run $(<WORK_DIR/vm-run-options) --serial-log /dev/null WORK_DIR/sculpt2610.qcow2 -- -vnc 127.0.0.1:1
 # vm-mount can't open it (it looks for /etc/fstab); e2fsprogs and debugfs
 # read partition 3 of a raw copy as FILE?offset=BYTES.
+# sculpt-check.sh WORK_DIR checks that it still boots and uses its disk.
 #
 # Needs: qemu-system-x86_64 with KVM, qemu-img, sgdisk, e2fsprogs, gpg,
 # curl, python3.  Runs as an ordinary user in the kvm group.

@@ -71,7 +71,24 @@ gets a fresh UEFI variable store, as a new machine's.
 
 COMPARE_SLOT=N (0-9, default 0) gives a run its own mount points, pool
 name and SSH port (2230 + N), so that runs on different guests can go at
-once on one host.  COMPARE_GROW_GIB=N makes each restored disk N GiB
+once on one host.  Runs of several sessions on one host, even of the same
+guest, keep apart with:
+  COMPARE_NAME=NAME  (a letter, then up to 15 letters, digits or _) the
+                     prefix of everything the run names: mount points
+                     /mnt/NAME-src, -dst, -stick, -stick-parts, -btrfs-top
+                     and -dst-keystore, the restored pool's temporary name
+                     and its md arrays and LUKS volumes (NAME-dst...), and
+                     the work directory, ~/backotter-work/compare/NAME/GUEST/
+                     (instead of COMPARE_SLOT's names; its mount points are
+                     removed again at the end)
+  COMPARE_WORK=DIR   the work directories in DIR/GUEST/ instead
+  COMPARE_PORT=PORT  the boots' SSH port instead of 2230 + COMPARE_SLOT
+  COMPARE_NBD=LIST   the nbd devices it (and vm-mount for it) may take, e.g.
+                     "40-47" or "nbd40 nbd41,nbd50" (default: any free one,
+                     chosen when attaching, under the host's nbd lock)
+Two runs of the same guest at once still give the host two file systems
+with one UUID: btrfs and bcachefs may refuse to mount the second.
+COMPARE_GROW_GIB=N makes each restored disk N GiB
 bigger than the original, its last partition grown to the end, for a
 guest whose files take more room restored one by one than they did
 (Omarchy's: btrfs snapshots sharing their data, compressed).
@@ -100,14 +117,47 @@ VMS = WORK_BASE / "vms"
 SLOT = os.environ.get("COMPARE_SLOT", "0")
 if not re.fullmatch(r"[0-9]", SLOT):
     raise SystemExit("COMPARE_SLOT must be a digit")
-SUFFIX = "" if SLOT == "0" else f"-{SLOT}"
-SRC_MP = Path(f"/mnt/cmp-src{SUFFIX}")
-DST_MP = Path(f"/mnt/cmp-dst{SUFFIX}")
-STICK_MP = Path(f"/mnt/cmp-stick{SUFFIX}")        # --mkfs-from: the stick's root
-SSH_PORT = str(2230 + int(SLOT))
+NAME = os.environ.get("COMPARE_NAME", "")
+if NAME and (not re.fullmatch(r"[a-z][a-z0-9_]{0,15}", NAME)
+             or re.match(r"(mirror|raidz|draid|spare|c[0-9])", NAME)):
+    # The restored pool is named NAME-dst: no vdev keyword, no Solaris disk name.
+    raise SystemExit("COMPARE_NAME: a letter, then up to 15 letters, digits or _, "
+                     "not starting with a ZFS vdev keyword or c+digit")
+PREFIX = NAME or "cmp"
+SUFFIX = "" if NAME or SLOT == "0" else f"-{SLOT}"
+SRC_MP = Path(f"/mnt/{PREFIX}-src{SUFFIX}")
+DST_MP = Path(f"/mnt/{PREFIX}-dst{SUFFIX}")
+STICK_MP = Path(f"/mnt/{PREFIX}-stick{SUFFIX}")   # --mkfs-from: the stick's root
+SSH_PORT = os.environ.get("COMPARE_PORT") or str(2230 + int(SLOT))
+if not re.fullmatch(r"[0-9]{4,5}", SSH_PORT) or not 1024 <= int(SSH_PORT) <= 65535:
+    raise SystemExit("COMPARE_PORT must be a port number from 1024 to 65535")
 PASSWORD = "backotter-compare"                    # for restic's and borg's encryption
-DST_POOL_TEMP = f"cmp-dst{SUFFIX}"
-DST_NAME = f"cmp-dst{SUFFIX}"                     # the restored disks' LUKS and md names start so
+DST_POOL_TEMP = f"{PREFIX}-dst{SUFFIX}"
+DST_NAME = f"{PREFIX}-dst{SUFFIX}"                # the restored disks' LUKS and md names start so
+# The work directories' parent: COMPARE_WORK, else compare/ (compare/NAME/
+# with COMPARE_NAME).
+COMPARE_DIR = (Path(os.environ["COMPARE_WORK"]).resolve() if os.environ.get("COMPARE_WORK")
+               else WORK_BASE / "compare" / NAME if NAME else WORK_BASE / "compare")
+
+
+def nbd_allowed(spec: str) -> list[str] | None:
+    """COMPARE_NBD's devices, as names (nbd40...), or None for any."""
+    if not spec.strip():
+        return None
+    names: list[str] = []
+    for item in re.split(r"[\s,]+", spec.strip()):
+        m = re.fullmatch(r"(?:/dev/)?(?:nbd)?(\d+)(?:-(?:/dev/)?(?:nbd)?(\d+))?", item)
+        if not m:
+            raise SystemExit(f"COMPARE_NBD: can't read {item!r} (e.g. \"40-47\" or \"nbd40 nbd41\")")
+        lo, hi = int(m[1]), int(m[2] if m[2] is not None else m[1])
+        names += [f"nbd{i}" for i in range(lo, hi + 1)]
+    return names
+
+
+NBD_ALLOWED = nbd_allowed(os.environ.get("COMPARE_NBD", ""))
+if NBD_ALLOWED is not None:
+    # vm-mount, run from here, takes only these too.
+    os.environ["VM_MOUNT_NBD"] = " ".join(NBD_ALLOWED)
 BOOT_STATE = HERE / "boot-state.sh"
 GROW_GIB = int(os.environ.get("COMPARE_GROW_GIB", "0"))
 
@@ -180,9 +230,11 @@ def disk_images(stem: Path, n: int) -> list[Path]:
 
 def free_nbd() -> str:
     for b in sorted(Path("/sys/block").glob("nbd*"), key=lambda p: int(p.name[3:])):
+        if NBD_ALLOWED is not None and b.name not in NBD_ALLOWED:
+            continue
         if not (b / "pid").exists():
             return f"/dev/{b.name}"
-    raise SystemExit("no free nbd device")
+    raise SystemExit("no free nbd device" + (" in COMPARE_NBD" if NBD_ALLOWED is not None else ""))
 
 
 def attach(image: Path) -> str:
@@ -526,7 +578,7 @@ class stick_root:
     image's two squashfs layers (the slimmed Ubuntu base and BackOtter's layer
     on top) under an overlay, as its live system mounts them."""
 
-    PARTS = Path(f"/mnt/cmp-stick-parts{SUFFIX}")
+    PARTS = Path(f"/mnt/{PREFIX}-stick-parts{SUFFIX}")
 
     def __init__(self, img: Path):
         self.img = img
@@ -708,7 +760,7 @@ def recreate(layout: Layout, dst: Dst, cfg: GuestConfig, tools: Path = SRC_MP) -
             continue
         dev = dst.dev[os.path.realpath(m["SOURCE"].split("[")[0])]
         if m["FSTYPE"] == "btrfs" and subvols:
-            top = Path(f"/mnt/cmp-btrfs-top{SUFFIX}")
+            top = Path(f"/mnt/{PREFIX}-btrfs-top{SUFFIX}")
             top.mkdir(exist_ok=True)
             run(["mount", "-t", "btrfs", "-o", "subvolid=5", dev, str(top)])
             try:
@@ -1108,7 +1160,7 @@ def torture_in_guest(images: list[Path], cfg: GuestConfig, hardware: list[str], 
 # --- One guest ----------------------------------------------------------------------
 
 def work_dir(guest: str, stick_img: Path | None) -> Path:
-    return WORK_BASE / "compare" / (guest + (".stick-mkfs" if stick_img else ""))
+    return COMPARE_DIR / (guest + (".stick-mkfs" if stick_img else ""))
 
 
 def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -> dict:
@@ -1265,6 +1317,19 @@ def boot_only(guest: str, tools: list[str], stick_img: Path | None) -> dict:
     return r
 
 
+def remove_mount_points() -> None:
+    """COMPARE_NAME's mount points, where nothing is mounted on them any
+    more (rmdir removes only empty directories)."""
+    parts = stick_root.PARTS
+    for d in (parts / "iso", parts / "base", parts / "layer", parts, SRC_MP, DST_MP, STICK_MP,
+              Path(f"/mnt/{PREFIX}-btrfs-top{SUFFIX}"), Path(f"/mnt/{DST_NAME}-keystore")):
+        if d.is_dir() and not os.path.ismount(d):
+            try:
+                d.rmdir()
+            except OSError:
+                pass
+
+
 def main() -> int:
     if os.geteuid() != 0:
         raise SystemExit("must run as root")
@@ -1284,7 +1349,11 @@ def main() -> int:
     guest, tools = args[0], args[1:] or ([] if only_boot else ["restic", "borg", "dar", "bsdtar"])
     for m in (SRC_MP, DST_MP, STICK_MP):
         m.mkdir(parents=True, exist_ok=True)
-    r = boot_only(guest, tools, stick_img) if only_boot else compare_guest(guest, tools, stick_img)
+    try:
+        r = boot_only(guest, tools, stick_img) if only_boot else compare_guest(guest, tools, stick_img)
+    finally:
+        if NAME:
+            remove_mount_points()
     o = r.get("original_boot", {})
     print(f"\noriginal boot: {o.get('state', 'no ssh') if o.get('ssh') else 'no ssh'} ({o.get('init', '?')})"
           + (f", failed: {', '.join(o['failed_units'])}" if o.get("failed_units") else ""))

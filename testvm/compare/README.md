@@ -10,7 +10,7 @@ Here, in `testvm/compare/`:
 
 | Script | What it does |
 |---|---|
-| `compare.py` | Back up and restore a Linux guest's whole disk with each tool, and compare (see its header) |
+| `compare.py` | Back up and restore a Linux guest's whole disk with each tool, and compare (see its header); beside other sessions' runs on one host, even of the same guest, give it `COMPARE_NAME` (the prefix of its mount points, pool, md and LUKS names, and work directory `compare/NAME/GUEST`), `COMPARE_PORT` (its boots' SSH port) and, if you like, `COMPARE_NBD` (the nbd devices it may take) |
 | `fs_roundtrip.py` | Round trip of `torture.sh`'s files on one kind of Linux file system, made on the host with every feature they need (bcachefs only where there is a `mkfs.bcachefs`; `zfs-ds`: file systems in an existing pool); `torture.sh`'s socket must be in neither tool's snapshot and absent after every restore, unmentioned, exit 0 (both tools skip sockets, SPEC3 1) |
 | `zfs-guest-rt.sh GUEST [PORT] [FSTYPE...]` | `fs_roundtrip.py`'s ZFS round trips (`zfs`, `zfs-ds`) inside a throwaway copy of ubuntu24 or ubuntu26-zfsmirror (encrypted, mirrored root pool; it types the passphrase), with the guest's own ZFS: DOS flags, xattrs, ACLs, project IDs; and `sparse-rt.sh` in a directory of the root pool (`sparse`; with `OLD_RESTIC` and `OLD_RUSTIC`, the round before's binaries, SPEC3 2's snapshot identity too) |
 | `torture.sh`, `fsmeta.py` | Hard-to-preserve files, and recording and comparing metadata, for the Linux checks |

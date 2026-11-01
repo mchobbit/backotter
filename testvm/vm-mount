@@ -22,6 +22,9 @@
 # with MOUNTPOINT as its altroot; vm-umount exports it again, so the guest
 # imports it normally at its next boot.  That needs OpenZFS on the host.
 #
+# VM_MOUNT_NBD="nbd40 nbd41 ..." limits the nbd devices it may take to those
+# (compare.py's COMPARE_NBD sets it).
+#
 # QEMU locks an image while the VM runs, so this refuses a running VM's disk.
 # Never write to a guest's filesystems while it runs.
 
@@ -68,10 +71,11 @@ for i in "${images[@]}"; do
     flock 9
     dev=""
     for b in /sys/block/nbd*; do
+        [[ -n ${VM_MOUNT_NBD:-} && " $VM_MOUNT_NBD " != *" ${b##*/} "* ]] && continue
         # An nbd device is free while no qemu-nbd process serves it.
         if [[ ! -e $b/pid ]]; then dev=/dev/${b##*/}; break; fi
     done
-    [[ -n $dev ]] || { flock -u 9; undo; die "no free /dev/nbd device"; }
+    [[ -n $dev ]] || { flock -u 9; undo; die "no free /dev/nbd device${VM_MOUNT_NBD:+ in VM_MOUNT_NBD}"; }
     info=$(qemu-img info --output=json "$i" 2>&1) ||
         { flock -u 9; undo; die "can't open $i (is the VM running?): $(head -n 1 <<<"$info")"; }
     format=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["format"])' <<<"$info")

@@ -866,6 +866,13 @@ def recreate(layout: Layout, dst: Dst, cfg: GuestConfig, tools: Path = SRC_MP) -
         target.mkdir(parents=True, exist_ok=True)
         # The type explicitly: right after mkfs, mount can't always probe it.
         run(["mount", "-t", m["FSTYPE"]] + (["-o", ",".join(opts)] if opts else []) + [dev, str(target)])
+        # Some guests' mkfs.nilfs2 (Zorin's) leaves an empty /.nilfs in the
+        # new file system, which the original, made by another one, hasn't:
+        # not the restore's, so not in the comparison.
+        stray = target / ".nilfs"
+        if m["FSTYPE"] == "nilfs2" and not os.path.lexists(Path(m["TARGET"]) / ".nilfs") \
+                and stray.is_file() and not stray.is_symlink() and stray.stat().st_size == 0:
+            stray.unlink()
 
 
 def recreate_pool(z: dict, dst: Dst) -> None:
@@ -960,7 +967,21 @@ def retarget_zfs_boot(layout: Layout) -> None:
 def unmount_dst(dst: Dst) -> None:
     run(["umount", "-R", str(DST_MP)], check=False)
     if dst.pool:
-        run(["zpool", "export", DST_POOL_TEMP], check=False)
+        # Never detach the disks under a pool still imported: its next I/O
+        # fails, the pool suspends, and everything touching ZFS on the host
+        # hangs with it.  A busy export gets a few more tries, then -f; if
+        # the pool is still there, the disks stay attached and the run ends.
+        for attempt in range(4):
+            if run(["zpool", "list", "-H", "-o", "name", DST_POOL_TEMP], check=False, quiet=True).returncode:
+                break                       # exported (or never imported)
+            if attempt:
+                time.sleep(5)
+                run(["umount", "-R", str(DST_MP)], check=False, quiet=True)
+            run(["zpool", "export"] + (["-f"] if attempt == 3 else []) + [DST_POOL_TEMP], check=False)
+        else:
+            if run(["zpool", "list", "-H", "-o", "name", DST_POOL_TEMP], check=False, quiet=True).returncode == 0:
+                raise SystemExit(f"zpool export {DST_POOL_TEMP} failed: its disks ({', '.join(dst.disks)}) "
+                                 "are left attached; export the pool, then qemu-nbd -d them")
     for name in reversed(dst.luks):
         run(["cryptsetup", "close", name], check=False)
     for md in reversed(dst.md):

@@ -198,6 +198,7 @@ def record(root: str, skip: list[str] = ()) -> dict[str, dict]:
     inodes: dict[tuple[int, int], list[str]] = {}
     zfs = devices("zfs")
     no_seek_hole = devices(*NO_SEEK_HOLE)
+    bcachefs = devices("bcachefs")
     # "." is ROOT itself: its owner, mode and labels matter as much as any
     # file's (an unlabeled / stops an SELinux system from booting), and a
     # restore into an existing mount point easily misses them.
@@ -230,6 +231,16 @@ def record(root: str, skip: list[str] = ()) -> dict[str, dict]:
             if kind in ("file", "dir"):
                 e["flags"] = inode_flags(path, kind == "dir")
                 e["projid"] = project_id(path, kind == "dir")
+                if st.st_dev in bcachefs:
+                    # bcachefs (Linux 6.12) answers FS_IOC_FSGETXATTR with
+                    # the ID the inode had when it was read in, so 0 for one
+                    # set since (a restore's), until it's read in again; its
+                    # bcachefs_effective.project xattr is the ID it has now.
+                    v = e["xattrs"].get("bcachefs_effective.project")
+                    try:
+                        e["projid"] = int(bytes.fromhex(v).decode()) if v else 0
+                    except ValueError:
+                        pass                    # not a number: the ioctl's, then
                 e["dosflags"] = dos_flags(path, kind == "dir") if st.st_dev in zfs else None
             if kind != "dir" and st.st_nlink > 1:
                 inodes.setdefault((st.st_dev, st.st_ino), []).append(rel)

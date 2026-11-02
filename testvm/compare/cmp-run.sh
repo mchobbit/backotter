@@ -85,7 +85,8 @@ budget() {  # -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked)
 prune() {  # [PID]: drop rows whose holder is gone, or PID's (ledger locked)
     local pid rest keep=""
     while read -r pid rest; do
-        [ -n "$pid" ] && [ -d /proc/$pid ] && [ "$pid" != "${1:-}" ] && keep+="$pid $rest"$'\n'
+        # (A row that isn't PID first is junk: "." would pass as /proc/.)
+        [[ $pid =~ ^[0-9]+$ ]] && [ -d /proc/$pid ] && [ "$pid" != "${1:-}" ] && keep+="$pid $rest"$'\n'
     done <$LEDGER
     printf '%s' "$keep" >$LEDGER
 }

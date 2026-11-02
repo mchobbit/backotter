@@ -425,7 +425,7 @@ omnios_copies() {  # NAME: bin/omnios/NAME (and commit, digest) = bin/illumos's
     true
 }
 build_linux() {
-    local t=x86_64-unknown-linux-gnu t0=$SECONDS d out inputs=$LOGS/rustic-linux.inputs pe
+    local t=x86_64-unknown-linux-musl t0=$SECONDS d out inputs=$LOGS/rustic-linux.inputs pe
     local tree=$CACHE/cargo/$t
     pe=$(profile_env "$profile")
     { echo "rustic-bko $t, build-backotter.sh in a fixed tree"; echo "sources $PREP_DIGEST"; echo "profile $profile $pe"

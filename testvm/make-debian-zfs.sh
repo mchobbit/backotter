@@ -258,8 +258,11 @@ sed -i -e 's|^GRUB_CMDLINE_LINUX_DEFAULT=.*|GRUB_CMDLINE_LINUX_DEFAULT="console=
     -e "s|^GRUB_CMDLINE_LINUX=.*|GRUB_CMDLINE_LINUX=\"root=ZFS=$POOL/ROOT/debian\"|" "$root/etc/default/grub"
 printf '%s\n' 'GRUB_TERMINAL="console serial"' 'GRUB_SERIAL_COMMAND="serial --unit=0 --speed=115200"' \
     >>"$root/etc/default/grub"
-in_root update-initramfs -u -k all >/dev/null 2>&1 || in_root update-initramfs -c -k all >/dev/null
-in_root lsinitramfs "/boot/initrd.img-$kver" | grep -q '/zfs\.ko' || die "the initramfs has no zfs module"
+{ in_root update-initramfs -u -k all || in_root update-initramfs -c -k all; } >"$work_dir/initramfs.log" 2>&1 ||
+    die "update-initramfs failed; see $work_dir/initramfs.log"
+# grep reads it all: grep -q stops at the first match, and the SIGPIPE that
+# kills lsinitramfs's zstd fails the pipe under pipefail.
+in_root lsinitramfs "/boot/initrd.img-$kver" | grep '/zfs\.ko' >/dev/null || die "the initramfs has no zfs module"
 in_root grub-install --target=i386-pc "$dev"
 in_root update-grub
 grep -q "root=ZFS=$POOL/ROOT/debian" "$root/boot/grub/grub.cfg" || die "grub.cfg doesn't boot root=ZFS=$POOL/ROOT/debian"

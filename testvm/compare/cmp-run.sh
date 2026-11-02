@@ -1,0 +1,245 @@
+#!/usr/bin/env bash
+# compare.py over a queue of guests, up to SLOTS at once, BackOtter's four
+# directions each, in RAM: compare.py works in /mnt/bko-ram by itself and
+# leaves its results, diffs and logs in ~/backotter-work/compare/GUEST
+# (GUEST.stick-mkfs with :STICK). Every job gets the archivers in
+# ~/backotter-work/cmp-bin (RESTIC_BKO, RUSTIC_BKO), not compare.py's newest
+# build.
+#
+# Usage (on a KVM test host; it works in ~/backotter-work, where
+# sync-hosts.sh puts testvm/, and ~/backotter-work/cmp-run.sh links here):
+#   cmp-run.sh TAG SLOTS GUEST[:STICK][@GROW_GIB][!][=DISK_GIB][%MEM_GIB] ...
+#       writes the queue cmp-logs/TAG/queue on this host and works on it;
+#   QUEUE_HOST=chopin.local cmp-run.sh TAG SLOTS
+#       works on that host's queue (over ssh), so both hosts share one;
+#   cmp-run.sh --reserve DISK_GIB MEM_GIB CMD ...
+#       runs CMD once its room is free, holding the room meanwhile.
+# A "!" puts the guest's restored disks on DISKS_DIR (default
+# /bkoscratch/compare-disks, a cool disk) instead of the RAM disk; its
+# DISK_GIB then counts only what stays in RAM (repositories, overlays).
+# touch cmp-logs/TAG/stop on a host: its workers start nothing more (with
+# QUEUE_HOST, on each host that runs workers). Lines taken from the queue
+# are in cmp-logs/TAG/queue.taken on the queue's host; cmp-pop.sh says how to
+# add one back. Slots are SLOT_BASE+1 .. SLOT_BASE+SLOTS (SLOT_BASE default
+# 4, so another run on the host can take 1-4); compare.py takes 0-9 only.
+#
+# Nothing starts unless it fits, so neither the RAM disk nor memory runs out:
+#   RAM disk: the DISK_GIB (default 8) of everything running stays within
+#     the tmpfs, less 1 GiB;
+#   memory, static: the MEM_GIB (default 5) of everything running fits in
+#     MemTotal after the whole tmpfs, the ARC's cap and BASE_GIB (default 6)
+#     for the system, as if each were full;
+#   memory, live (other sessions): MemAvailable, less the tmpfs's and the ARC's
+#     room to grow, swap in use, 2 GiB, and what running jobs have reserved
+#     but not touched yet (MEM_GIB less their cgroup's anon), covers it.
+# Each job runs in a systemd scope with MemoryHigh = DISK + MEM GiB (its
+# tmpfs pages count there too): past that it is slowed and reclaimed into
+# zram, never killed. zram (16 GiB) is the cushion under all of it.
+# Reservations live in /mnt/bko-ram/.reserve, shared by every cmp-run.sh on
+# the host. Nothing new starts while the CPU is over HOT_C (default 95) or an
+# NVMe over NVME_C (default 75).
+set -u
+cd ~/backotter-work
+RAM=/mnt/bko-ram LEDGER=/mnt/bko-ram/.reserve
+mountpoint -q $RAM || { echo "no tmpfs at $RAM" >&2; exit 1; }
+touch $LEDGER $LEDGER.lock 2>/dev/null; chmod 666 $LEDGER $LEDGER.lock 2>/dev/null
+H=$(hostname -s)
+DISKS_DIR=${DISKS_DIR:-/bkoscratch/compare-disks}
+
+# Ledger rows: PID DISK MEM SCOPE WHAT...   (SCOPE "-" when there is none)
+budget() {  # -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked)
+    local arc_max arc_size unused=0 pid d m scope rest anon
+    arc_max=$(awk '$1 == "c_max" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
+    arc_size=$(awk '$1 == "size" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
+    while read -r pid d m scope rest; do
+        [ -n "$pid" ] || continue
+        anon=0
+        [ "$scope" != - ] && anon=$(awk '$1 == "anon" { print $2 }' \
+            /sys/fs/cgroup/system.slice/$scope/memory.stat 2>/dev/null)
+        unused=$(awk -v u="$unused" -v m="$m" -v a="${anon:-0}" \
+            'BEGIN { x = m - a / 1073741824; if (x < 0) x = 0; print u + x }')
+    done <$LEDGER
+    df -Pk $RAM | awk -v arc_max="${arc_max:-0}" -v arc_size="${arc_size:-0}" -v base="${BASE_GIB:-6}" \
+                      -v unused="$unused" -v ledger=$LEDGER '
+        function fl(x) { return int(x * 10 + (x < 0 ? -1 : 0)) / 10 }   # round down
+        NR == 2 { size = $2 / 1048576; avail = $4 / 1048576 }
+        END {
+            G = 1073741824
+            while ((getline l < "/proc/meminfo") > 0) {
+                split(l, f, /[: ]+/)
+                if (f[1] == "MemTotal") total = f[2] / 1048576
+                if (f[1] == "MemAvailable") memavail = f[2] / 1048576
+                if (f[1] == "SwapTotal") swt = f[2] / 1048576
+                if (f[1] == "SwapFree") swf = f[2] / 1048576
+            }
+            if (total == 0 || size == 0) exit 1
+            while ((getline l < ledger) > 0) { split(l, f, " "); rd += f[2]; rm += f[3] }
+            arcmax = arc_max / G; arcroom = (arc_max - arc_size) / G; if (arcroom < 0) arcroom = 0
+            disk = size - 1 - rd; if (avail - 1 < disk) disk = avail - 1
+            mem = total - size - arcmax - base - rm
+            live = memavail - avail - arcroom - (swt - swf) - 2 - unused
+            if (live < mem) mem = live
+            printf "%.1f %.1f\n", fl(disk), fl(mem)
+        }'
+}
+prune() {  # [PID]: drop rows whose holder is gone, or PID's (ledger locked)
+    local pid rest keep=""
+    while read -r pid rest; do
+        [ -n "$pid" ] && [ -d /proc/$pid ] && [ "$pid" != "${1:-}" ] && keep+="$pid $rest"$'\n'
+    done <$LEDGER
+    printf '%s' "$keep" >$LEDGER
+}
+lock() { exec {lk}>>$LEDGER.lock && flock -w 600 $lk; }
+unlock() { exec {lk}>&-; }
+hot() {  # true while the CPU or an NVMe is too hot to start more
+    local h n t
+    for h in /sys/class/hwmon/hwmon*; do
+        n=$(cat $h/name 2>/dev/null) t=$(cat $h/temp1_input 2>/dev/null) || continue
+        case $n in
+        k10temp|coretemp) [ "$t" -ge $(( ${HOT_C:-95} * 1000 )) ] && return 0 ;;
+        nvme) [ "$t" -ge $(( ${NVME_C:-75} * 1000 )) ] && return 0 ;;
+        esac
+    done
+    return 1
+}
+fits() { awk -v a="$1" -v b="$2" -v c="$3" -v e="$4" 'BEGIN { exit !(b + 0 <= a + 0 && e + 0 <= c + 0) }'; }
+parse() {  # LINE -> globals g stick grow ondisk d m (suffixes only at the end, in order)
+    local s=$1
+    m=5 d=8 grow=0 ondisk=""
+    [[ $s =~ %([0-9.]+)$ ]] && { m=${BASH_REMATCH[1]}; s=${s%"%$m"}; }
+    [[ $s =~ =([0-9.]+)$ ]] && { d=${BASH_REMATCH[1]}; s=${s%"=$d"}; }
+    [[ $s == *! ]] && { ondisk=1; s=${s%!}; }
+    [[ $s =~ @([0-9]+)$ ]] && { grow=${BASH_REMATCH[1]}; s=${s%"@$grow"}; }
+    g=${s%%:*} stick=""; [ "$g" != "$s" ] && stick=${s#*:}
+}
+ceiling() {  # -> "DISK MEM": the most one job could ever get on this host
+    local arc_max
+    arc_max=$(awk '$1 == "c_max" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
+    df -Pk $RAM | awk -v arc="${arc_max:-0}" -v base="${BASE_GIB:-6}" '
+        NR == 2 { size = $2 / 1048576 }
+        END { while ((getline l < "/proc/meminfo") > 0) { split(l, f, /[: ]+/); if (f[1] == "MemTotal") t = f[2] / 1048576 }
+              printf "%.1f %.1f\n", size - 1, t - size - arc / 1073741824 - base - 2 }'
+}
+
+if [ "${1:-}" = --reserve ]; then
+    d=$2 m=$3; shift 3
+    read -r cd cm < <(ceiling)
+    fits "$cd" "$d" "$cm" "$m" || { echo "--reserve $d $m can never fit here (at most $cd $cm)" >&2; exit 1; }
+    while :; do
+        lock || { sleep 30; continue; }
+        prune
+        if read -r maxd maxm < <(budget) && fits "$maxd" "$d" "$maxm" "$m"; then
+            echo "$$ $d $m - reserve $*" >>$LEDGER; unlock; break
+        fi
+        unlock; sleep 30
+    done
+    exec "$@"   # keeps $$, so the reservation lasts as long as CMD
+fi
+
+tag=$1 slots=$2; shift 2
+sb=${SLOT_BASE:-4}
+[[ $slots =~ ^[1-9][0-9]*$ && $sb =~ ^[0-9]$ ]] && (( sb + slots <= 9 )) ||
+    { echo "slots $((sb + 1))..$((sb + slots)): compare.py takes COMPARE_SLOT 0-9 only" >&2; exit 1; }
+mkdir -p cmp-logs/$tag
+Q=cmp-logs/$tag/queue
+if [ $# -gt 0 ]; then
+    [ -z "${QUEUE_HOST:-}" ] || { echo "guests go in the queue on $QUEUE_HOST" >&2; exit 1; }
+    read -r cd cm < <(ceiling)
+    seen=" "
+    for line; do
+        parse "$line"
+        fits "$cd" "$d" "$cm" "$m" || { echo "$line can never fit (at most =$cd %$cm)" >&2; exit 1; }
+        [ -z "$ondisk" ] || [ -d "$DISKS_DIR" ] || { echo "$line: no $DISKS_DIR" >&2; exit 1; }
+        case $seen in *" $g "*) echo "$g is queued twice" >&2; exit 1 ;; esac
+        seen+="$g "
+    done
+    printf '%s\n' "$@" >$Q
+fi
+[ -n "${QUEUE_HOST:-}" ] || [ -e $Q ] || { echo "no $Q" >&2; exit 1; }
+touch cmp-logs/$tag/done
+# No TMPDIR: it would reach the commands compare.py runs in a restored guest's
+# chroot (update-initramfs), where /mnt/bko-ram doesn't exist. vm-run picks
+# /mnt/bko-ram by itself.
+E="RESTIC_BKO=$PWD/cmp-bin/restic-bko RUSTIC_BKO=$PWD/cmp-bin/rustic-bko"
+
+pop() {  # MAXDISK MAXMEM -> a queue line that fits; rc 0 got, 1 none fits (or failed), 3 empty
+    local rc
+    if [ -n "${QUEUE_HOST:-}" ]; then
+        timeout 90 ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 \
+            -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPath=none "$QUEUE_HOST" \
+            "cd ~/backotter-work && sh testvm/compare/cmp-pop.sh $Q $1 $2 $H" {lk}>&-
+        rc=$?
+        case $rc in 0|1|3) return $rc ;; esac
+        log "ssh pop failed ($rc): see $Q.taken on $QUEUE_HOST for a line taken but not run"
+        return 1
+    fi
+    sh testvm/compare/cmp-pop.sh $Q "$1" "$2" $H {lk}>&-
+    rc=$?
+    case $rc in 0|1|3) return $rc ;; esac
+    log "cmp-pop.sh failed ($rc)"
+    return 1
+}
+log() { echo "$(date -u +%T) $H slot $slot: $*" >>cmp-logs/$tag/progress; }
+
+worker() {  # SLOT
+    local slot=$1 line rc g stick grow ondisk d m lk maxd maxm jp scope args why hi dd waiting="" me=$BASHPID
+    while :; do
+        [ -e cmp-logs/$tag/stop ] && { log "stopped"; return 0; }
+        lock || { log "cannot lock $LEDGER.lock"; sleep 30; continue; }
+        prune
+        line="" rc=1 why=""
+        if hot; then why="too hot"
+        elif ! read -r maxd maxm < <(budget) || [ -z "$maxm" ]; then why="budget failed"
+        else
+            line=$(pop "$maxd" "$maxm"); rc=$?
+            [ $rc = 1 ] && why="nothing fits ${maxd}G RAM disk, ${maxm}G memory"
+        fi
+        if [ $rc = 0 ] && [ -n "$line" ]; then
+            parse "$line"
+            scope=bko-$tag-$slot-$(date +%s).scope
+            echo "$me $d $m $scope $tag $line" >>$LEDGER
+        fi
+        unlock
+        [ $rc = 3 ] && return 0
+        if [ $rc != 0 ] || [ -z "$line" ]; then
+            # Once per reason, not per changing figure.
+            [ "${why%% [0-9-]*}" != "$waiting" ] && log "waiting: $why"; waiting=${why%% [0-9-]*}
+            sleep 30; continue
+        fi
+        waiting=""
+
+        args=(); [ -n "$stick" ] && args=(--mkfs-from "$stick")
+        dd=""
+        if [ -n "$ondisk" ]; then
+            if [ ! -d "$DISKS_DIR" ]; then   # never fall back to RAM: it wasn't reserved
+                log "$g: no $DISKS_DIR"; echo "$g 99 $H" >>cmp-logs/$tag/done
+                if lock; then prune $me; unlock; fi; continue
+            fi
+            dd="COMPARE_DISKS_DIR=$DISKS_DIR"
+        fi
+        log "$g (reserved ${d}G RAM disk, ${m}G memory${dd:+, restored disks in $DISKS_DIR}; budget was ${maxd}G/${maxm}G)"
+        hi=$(awk -v d="$d" -v m="$m" 'BEGIN { printf "%d", (d + m) * 1024 }')
+        # CMP_CMD: a command run in compare.py's place, the same way, with
+        # GUEST DISK MEM SLOT [ARGS] (rebuild-one.sh, or a stand-in for tests).
+        if [ -n "${CMP_CMD:-}" ]; then
+            sudo systemd-run --quiet --scope --unit=${scope%.scope} -p MemoryHigh=${hi}M \
+                env COMPARE_SLOT=$slot COMPARE_GROW_GIB=$grow $dd $E $CMP_CMD "$g" "$d" "$m" "$slot" "${args[@]}" \
+                >cmp-logs/$tag/$g.log 2>&1 &
+        else
+            sudo systemd-run --quiet --scope --unit=${scope%.scope} -p MemoryHigh=${hi}M \
+                env COMPARE_SLOT=$slot COMPARE_GROW_GIB=$grow $dd $E python3 testvm/compare/compare.py "${args[@]}" "$g" \
+                restic-bko rustic-bko restic-to-rustic rustic-to-restic >cmp-logs/$tag/$g.log 2>&1 &
+        fi
+        jp=$!
+        # The row belongs to the job (sudo lives as long as it), not to this
+        # shell, so killing the worker doesn't free room the job still holds.
+        if lock; then sed -i "s/^$me /$jp /" $LEDGER; unlock; fi
+        wait $jp; rc=$?
+        log "$g exit $rc"
+        echo "$g $rc $H" >>cmp-logs/$tag/done
+        if lock; then prune $jp; unlock; fi
+    done
+}
+for s in $(seq 1 "$slots"); do worker "$((s + sb))" & sleep 5; done
+wait
+echo "$(date -u +%T) $H finished" >>cmp-logs/$tag/progress

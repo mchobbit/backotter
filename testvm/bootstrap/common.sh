@@ -9,7 +9,9 @@
 # it powers the VM off when done, printing BACKOTTER-INSTALL-OK or
 # BACKOTTER-INSTALL-FAILED first.
 
-set -euo pipefail
+# -E: the ERR trap in functions too, or a failure in one (mkfs_root's) ends
+# the script without powering off, and the build waits out INSTALL_TIMEOUT.
+set -eEuo pipefail
 exec > >(tee /dev/ttyS0) 2>&1
 trap 'echo "BACKOTTER-INSTALL-FAILED at line $LINENO"; sync; sleep 2; poweroff' ERR
 
@@ -59,7 +61,9 @@ mkfs_root() {
         xfs) mkfs.xfs -q -f "$1" ;;
         jfs) mkfs.jfs -q "$1" ;;
         btrfs) mkfs.btrfs -q -f "$1" ;;
-        bcachefs) bcachefs format -f "$1" >/dev/null ;;   # its -q crashes (1.13.0)
+        # Its -q crashes (1.13.0), and so, now and then, does it without:
+        # glibc's "unaligned tcache chunk" abort. A few tries.
+        bcachefs) local i; for i in 1 2 3; do bcachefs format -f "$1" >/dev/null && return; sleep 1; done; false ;;
         *) echo "mkfs_root: can't make $ROOT_FS"; false ;;
     esac
 }

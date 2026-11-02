@@ -42,8 +42,10 @@
 #             guest can't break it), with install_tools' tools in it and
 #             cargo's registry filled for the sources.  Builds then boot a
 #             throwaway copy of it instead of the guest, and skip the
-#             installs.  To go back, e.g. after the guest was updated, delete
-#             both files.
+#             installs.  The guest's ssh key goes beside them
+#             (VM.id_ed25519): a guest rebuilt with a new key no longer opens
+#             a build image made from its old one.  To go back, e.g. after
+#             the guest was updated, delete the three files.
 #
 # Logs: ~/backotter-work/logs/build-rustic-PLATFORM-PORT/ (build.log,
 # serial.log, vm-run.log), kept.  Sources are staged in
@@ -83,6 +85,7 @@ fi
 build_dir=$WORK/vms-bko-build
 base=$build_dir/$VM-base.qcow2
 image=$build_dir/$VM-rust.qcow2
+image_key=$build_dir/$VM.id_ed25519
 logs=$WORK/logs/build-rustic-$PLATFORM-$port
 mkdir -p "$logs" "$WORK/tmp"
 work=$(mktemp -d "$WORK/tmp/build-rustic-$PLATFORM.XXXXXX")
@@ -95,14 +98,17 @@ if [[ $setup == yes ]]; then
     if [[ ! -f $base ]]; then
         echo "Copying $guest_image to $base"
         cp --sparse=always "$guest_image" "$base.part"
+        cp "$guest_dir/id_ed25519" "$image_key"
         mv "$base.part" "$base"
     fi
+    [[ -f $image_key ]] || die "no $image_key: the key of the guest $base was copied from"
     [[ -f $image ]] || qemu-img create -q -f qcow2 -b "$base" -F qcow2 "$image"
     echo "Booting $image on port $port (kept, not a throwaway copy)"
-    VM_IMAGE=$image vm_boot "$VM" "$port" "$logs" "${opts[@]}" || die "$VM didn't come up"
+    VM_IMAGE=$image VM_IMAGE_KEY=$image_key vm_boot "$VM" "$port" "$logs" "${opts[@]}" || die "$VM didn't come up"
 elif [[ -f $image ]]; then
+    [[ -f $image_key ]] || die "no $image_key: the key of the guest $base was copied from"
     echo "Booting a throwaway copy of $image on port $port"
-    VM_IMAGE=$image vm_boot "$VM" "$port" "$logs" --snapshot "${opts[@]}" || die "$VM didn't come up"
+    VM_IMAGE=$image VM_IMAGE_KEY=$image_key vm_boot "$VM" "$port" "$logs" --snapshot "${opts[@]}" || die "$VM didn't come up"
 else
     echo "Booting a throwaway copy of $VM on port $port"
     vm_boot "$VM" "$port" "$logs" --snapshot "${opts[@]}" || die "$VM didn't come up"

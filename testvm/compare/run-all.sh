@@ -352,7 +352,12 @@ for p in $plats; do
         nonroot netbsd a netbsd11 "$(P 15)" netbsd
         # netbsd11 has no cc or python3: its build image has cc.
         img=$SRCWORK/vms-bko-build/netbsd11-rust.qcow2
-        if [[ -f $img ]]; then guest_sparse netbsd a netbsd11 "$(P 15)" netbsd "VM_IMAGE=$(q "$img")"
+        # Its key beside it, when build-rustic-native.sh kept one (the
+        # guest's own may be newer than the image).
+        key=$SRCWORK/vms-bko-build/netbsd11.id_ed25519
+        if [[ -f $img && -f $key ]]; then
+            guest_sparse netbsd a netbsd11 "$(P 15)" netbsd "VM_IMAGE=$(q "$img") VM_IMAGE_KEY=$(q "$key")"
+        elif [[ -f $img ]]; then guest_sparse netbsd a netbsd11 "$(P 15)" netbsd "VM_IMAGE=$(q "$img")"
         else lose netbsd sparse-netbsd11 "no $img: sparse-rt.sh not run on NetBSD"; fi
         guest_rt netbsd b alpinebsd "$(P 16)" netbsd
         nonroot netbsd b alpinebsd "$(P 16)" netbsd ;;

@@ -6,8 +6,9 @@
 #
 #   vm_boot GUEST PORT LOGDIR [VM-RUN OPTION...]
 #             Boot a copy of WORK/vms/GUEST/GUEST.qcow2 (else its only
-#             *.qcow2; VM_IMAGE names another image, e.g. a build image)
-#             with SSH on 127.0.0.1:PORT, the options in its vm-run-options,
+#             *.qcow2; VM_IMAGE names another image, e.g. a build image,
+#             and VM_IMAGE_KEY the ssh key that image takes when it isn't
+#             the guest's own id_ed25519) with SSH on 127.0.0.1:PORT, the options in its vm-run-options,
 #             then the ones given (--ram or --snapshot among them, for a
 #             throwaway copy), and wait for its sshd (VM_BOOT_TIMEOUT seconds,
 #             default 600).  The serial console goes to LOGDIR/serial.log,
@@ -43,13 +44,13 @@ VM_LIB_DIR=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 
 vm_boot() {
     local guest=$1 port=$2 logdir=$3; shift 3
-    local dir=$WORK/vms/$guest image opts=() deadline
-    image=${VM_IMAGE:-}
+    local dir=$WORK/vms/$guest image key opts=() deadline
+    image=${VM_IMAGE:-} key=${VM_IMAGE_KEY:-$dir/id_ed25519}
     if [[ -z $image ]]; then
         image=$dir/$guest.qcow2
         [[ -f $image ]] || image=$(ls "$dir"/*.qcow2 2>/dev/null | head -n 1 || true)
     fi
-    [[ -f $image && -f $dir/id_ed25519 ]] || { echo "vm_boot: no guest $guest in $dir" >&2; return 1; }
+    [[ -f $image && -f $key ]] || { echo "vm_boot: no guest $guest in $dir" >&2; return 1; }
     if [[ -n $(ss -Hltn "sport = :$port" 2>/dev/null) ]]; then
         echo "vm_boot: port $port is in use" >&2
         return 1
@@ -61,7 +62,7 @@ vm_boot() {
         opts+=(--legacy-virtio-net)
     fi
     mkdir -p "$logdir"
-    VM_GUEST=$guest VM_PORT=$port VM_KEY=$dir/id_ed25519
+    VM_GUEST=$guest VM_PORT=$port VM_KEY=$key
     # setsid: Ctrl-C here doesn't reach QEMU, and vm_halt does the stopping.
     # Not setsid -f: $! has to be vm-run itself.
     SSH_PORT=$port setsid "$VM_LIB_DIR/vm-run" "${opts[@]}" "$@" --serial-log "$logdir/serial.log" \

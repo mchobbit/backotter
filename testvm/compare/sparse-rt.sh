@@ -61,7 +61,8 @@
 #   helper, which it builds, or else python3 (the same in Python); dd,
 #   truncate (else dd does its work), awk.  netbsd11 and alpinebsd have
 #   no compiler or python3: NetBSD's build image (VM_IMAGE=
-#   ~/backotter-work/vms-bko-build/netbsd11-rust.qcow2) has cc.
+#   ~/backotter-work/vms-bko-build/netbsd11-rust.qcow2, VM_IMAGE_KEY=
+#   its netbsd11.id_ed25519) has cc.
 #
 # Environment:
 #   SPARSE_FS   Linux: ext4 (default), xfs, btrfs, zfs (a pool on a file;

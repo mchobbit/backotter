@@ -71,6 +71,19 @@ T=300 vm_sh 'uname -r; ldd --version | head -1; grep -E "^(passwd|group)" /etc/n
   fi; tail -n 25 /root/bko/apt.log 2>/dev/null; for c in setfattr setfacl getcap; do command -v $c; done' >"$LOGS/guest.txt" 2>&1
 grep -q "/setfacl$" "$LOGS/guest.txt" || v FAIL harness "no setfacl in the guest (see guest.txt)"
 
+# Can this guest's ZFS keep an atime it is given?  The 24.04 release's
+# (zfs-2.2.2-0ubuntu9 on 6.8.0-31) stores every atime set on it as 0: touch -a
+# reads back 0, so no restore can bring one back there (later 0ubuntu9.x keep
+# them).  Then an atime difference on ZFS whose restored atime is 0 isn't
+# counted (a LIMIT); every other one is, and ext4 here checks atimes in full.
+ZAT=$(T=120 vm_sh "P=\$(zfs list -H -o name / | cut -d/ -f1)
+  zfs create -o mountpoint=/mnt/$PREFIX-atime \$P/$PREFIX-atime >/dev/null 2>&1 && : >/mnt/$PREFIX-atime/f &&
+    touch -a -d @1000000000 /mnt/$PREFIX-atime/f && stat -c %X /mnt/$PREFIX-atime/f
+  zfs destroy \$P/$PREFIX-atime >/dev/null 2>&1; rmdir /mnt/$PREFIX-atime 2>/dev/null; true")
+echo "ZFS atime probe (touch -a -d @1000000000 reads back): ${ZAT:-nothing}" >>"$LOGS/guest.txt"
+ZFS_ATIME0=""
+[[ $ZAT == 0 ]] && ZFS_ATIME0=1
+
 # 1. fs_roundtrip.py
 for fs in zfs-ds zfs ext4; do
     s=$SECONDS
@@ -79,6 +92,39 @@ for fs in zfs-ds zfs ext4; do
     rm -rf "${LOGS:?}/fsrt-$fs" && mkdir -p "$LOGS/fsrt-$fs"
     T=300 vm_ssh "d=\$(dirname \$(find /root -path '*fs-roundtrip*/$PREFIX/$fs/results.json' | head -n 1)) && cd \$d && tar -cf - --exclude=./restic-bko --exclude=./rustic-bko --exclude=./restic-to-rustic --exclude=./rustic-to-restic . && rm -rf \$d" |
         tar -C "$LOGS/fsrt-$fs" -xf - 2>/dev/null
+    if [[ -n $ZFS_ATIME0 && $fs == zfs* && -f $LOGS/fsrt-$fs/results.json ]]; then
+        # results.orig.json keeps what fs_roundtrip.py found
+        python3 - "$LOGS/fsrt-$fs" >"$LOGS/fsrt-$fs.atime0" 2>&1 <<'EOF'
+import json, os, sys
+d = sys.argv[1]
+r = json.load(open(os.path.join(d, "results.json")))
+json.dump(r, open(os.path.join(d, "results.orig.json"), "w"), indent=1)
+def load(n):
+    try: return json.load(open(os.path.join(d, n)))
+    except (OSError, ValueError): return {}
+n = 0
+for tool, t in r.get("tools", {}).items():
+    for key, man in (("diff_all", f"after-{tool}.json"), ("over_diff_all", f"after-over-{tool}.json"),
+                     ("rerun_diff_all", f"after-rerun-{tool}.json")):
+        dd, m = t.get(key) or {}, load(man)
+        for k in ("atime", "atime (dirs)", "atime (symlinks)"):
+            if k in dd:
+                keep = [p for p in dd[k] if (m.get(p) or {}).get("atime") != 0]
+                n += len(dd[k]) - len(keep)
+                if keep: dd[k] = keep
+                else: del dd[k]
+# fs_roundtrip.py puts the atimes the first backup moved back before the
+# second: here that sets them to 0, which the second tool then stores
+nd = r.get("snapshot_node_diff (restic-bko vs rustic-bko)") or {}
+if "atime" in nd:
+    keep = [x for x in nd["atime"] if '"1970-01-01T00:00:00Z"' not in x]
+    n += len(nd["atime"]) - len(keep)
+    if keep: nd["atime"] = keep
+    else: del nd["atime"]
+json.dump(r, open(os.path.join(d, "results.json"), "w"), indent=1)
+print(f"{n} atime differences with a 0 atime not counted")
+EOF
+    fi
     python3 $WORK/testvm/compare/verdict.py judge fsrt "$LOGS/fsrt-$fs.log" --results "$LOGS/fsrt-$fs" --platform linux \
         --step ubuntu24 --target "$fs" --rc $rc --wall $((SECONDS - s)) >"$LOGS/fsrt-$fs.rows" 2>&1
     python3 - "$LOGS/fsrt-$fs.rows" "$fs" >>"$LOGS/verdicts.txt" <<'EOF'
@@ -99,19 +145,30 @@ done
 T=600 vm_ssh "bash $C/real.sh $PREFIX $RB $UB /root/bko/real" >"$LOGS/real.log" 2>&1
 mkdir -p "$LOGS/real"
 T=120 vm_ssh "cd /root/bko/real && tar -cf - . && rm -rf /root/bko/real" | tar -C "$LOGS/real" -xf - 2>/dev/null
-python3 - "$LOGS/real.log" "$LOGS/real" >>"$LOGS/verdicts.txt" <<'EOF'
+python3 - "$LOGS/real.log" "$LOGS/real" "$ZFS_ATIME0" >>"$LOGS/verdicts.txt" <<'EOF'
 import json, sys, re, os
 res = {}
 for l in open(sys.argv[1], errors="replace"):
     if l.startswith("NEED-RESULT "):
         p = l.split(None, 2); res.setdefault(p[1], []).append(p[2].strip() if len(p) > 2 else "")
 d = sys.argv[2]
+def manifest(name):
+    try: return json.load(open(os.path.join(d, name)))
+    except Exception: return {}
+def atime0(name):
+    """This ZFS stores every atime set on it as 0 (ZFS_ATIME0): are all the
+    restored tree's atime differences 0s?"""
+    if not sys.argv[3] or name == "diff-src-after.json": return False
+    m = manifest(("over-" + name[10:]) if name.startswith("diff-over-") else ("dst-" + name[5:]))
+    s = manifest("src.json")
+    return bool(m) and all(m[p].get("atime") == 0 for p in s.keys() & m.keys() if s[p].get("atime") != m[p].get("atime"))
 def diffpaths(name):
     try: j = json.load(open(os.path.join(d, name)))
     except Exception: return None
     df = {k: [e for e in v.get("examples", []) if not (k == "missing" and e.endswith("/sock"))] for k, v in (j.get("differences") or {}).items()}
     # S1 (BACKOTTER.md): reading a symlink moves its atime; fsmeta reads restored trees
     df.pop("atime (symlinks)", None)
+    if atime0(name): df.pop("atime", None); df.pop("atime (dirs)", None)
     return json.dumps({k: v for k, v in df.items() if v})
 def txt(name):
     try: return open(os.path.join(d, name), errors="replace").read().strip().replace("\n", " | ")[:500]
@@ -192,6 +249,7 @@ for l in t.splitlines():
 print(f"{'FAIL' if bad else 'PASS'} non-root restore (uid 4321, ZFS): " + ("; ".join(bad) if bad else " ".join(x.strip() for x in s.splitlines()[1:])[:500]))
 EOF
 
+[[ -n $ZFS_ATIME0 ]] && v LIMIT "atimes restored on ZFS" "this image's ZFS ($(sed -n 5p "$LOGS/guest.txt") on $(sed -n 1p "$LOGS/guest.txt")) stores every atime set on it as 0 (touch -a -d reads back 0): differences whose restored atime is 0 not counted ($(cat "$LOGS"/fsrt-zfs*.atime0 2>/dev/null | tr '\n' ' ')and the guest's examples); ext4 here checks atimes in full"
 v LIMIT "birth times" "ZFS crtime and ext4 btime can't be set on Linux (BACKOTTER.md)"
 v LIMIT "SELinux labels, NFSv4 ACLs, BSD file flags, system.* other than ACLs" "not on Ubuntu 24.04 with ZFS acltype=posix (AppArmor has no on-disk labels)"
 v LIMIT "whole-disk needs (boot, zpool.cache, bootloader)" "out of scope: whole-disk"

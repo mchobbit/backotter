@@ -25,6 +25,11 @@
 #             subtree (each repository chunks on its own) and device_id
 #             (rustic stores it only with --set-devid).  With RT_CONTENT
 #             set, content is kept too: content=["ID",...].
+#   rt_path_nodes RESTIC REPO PATH
+#             the own node of each directory on the way to PATH and of PATH
+#             itself (not the snapshot's root), as rt_nodes prints them but
+#             each named by its absolute path ("/mnt", "/mnt/src", ...):
+#             one tree read per level, not a walk of what is below
 #   rt_node_diff A B
 #             what differs between two rt_nodes listings, one line per name
 #             and key ("  NAME: key a != b"); keys starting with ~ apart,
@@ -237,6 +242,22 @@ rt_nodes() {  # RESTIC REPO PATH
             $rt_tmp/bko-rt-nodes.tree
     done
     rm -f $rt_tmp/bko-rt-nodes.queue $rt_tmp/bko-rt-nodes.tree
+}
+
+rt_path_nodes() {  # RESTIC REPO PATH
+    rt_id=$(RESTIC_PASSWORD=backotter-compare $1 -r $2 --no-cache --no-lock snapshots --json latest |
+        sed -n 's/.*"tree":"\([0-9a-f]*\)".*/\1/p' | head -n 1)
+    [ -n "$rt_id" ] || { echo "rt_path_nodes: no snapshot in $2" >&2; return 1; }
+    rt_rest=${3#/} rt_at=""
+    while [ -n "$rt_rest" ]; do
+        rt_comp=${rt_rest%%/*}
+        case $rt_rest in */*) rt_rest=${rt_rest#*/} ;; *) rt_rest="" ;; esac
+        rt_at=$rt_at/$rt_comp
+        rt_self=$(rt_tree $1 $2 $rt_id | $rt_awk -F '\t' -v n="$rt_comp" '$1 == n')
+        [ -n "$rt_self" ] || { echo "rt_path_nodes: no $rt_comp in $2's tree" >&2; return 1; }
+        rt_id=$(printf '%s\n' "$rt_self" | cut -f 2)
+        printf '%s\n' "$rt_self" | $rt_awk -F '\t' -v p="$rt_at" 'BEGIN { OFS = "\t" } { $1 = p; $2 = ""; sub(/\t\t/, "\t"); print }'
+    done
 }
 
 rt_node_diff() {  # A B

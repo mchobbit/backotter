@@ -108,6 +108,10 @@ restored from and each restored disk once booted: one direction at a
 time, at most one repository and one restored disk, where otherwise every
 restored disk stays (to look at, or boot again with --boot-only, which
 needs a run on disk).
+COMPARE_DISKS_DIR=DIR puts the restored disks in DIR/compare-NAME/GUEST/
+instead, for a guest too big to restore in RAM: its repositories stay in
+RAM, its restored disks go to a disk that runs cool (/bkoscratch), and a
+run in RAM deletes them with its RAM directory.
 
 Results: results.json and a table on stdout.
 """
@@ -186,6 +190,8 @@ if NBD_ALLOWED is not None:
 BOOT_STATE = HERE / "boot-state.sh"
 GROW_GIB = int(os.environ.get("COMPARE_GROW_GIB", "0"))
 DISCARD = os.environ.get("COMPARE_DISCARD", "1" if IN_RAM else "") == "1"
+DISKS_DIR = (Path(os.environ["COMPARE_DISKS_DIR"]).resolve() / f"compare-{PREFIX}{SUFFIX}"
+             if os.environ.get("COMPARE_DISKS_DIR") else None)
 
 
 def run(cmd: list[str] | str, check: bool = True, quiet: bool = False, **kw) -> subprocess.CompletedProcess:
@@ -326,6 +332,13 @@ def bcachefs_version(dev: str) -> str:
     return f"{v >> 10}.{v & 0x3ff}"
 
 
+def bcachefs_block_size(dev: str) -> int:
+    """The block size in dev's bcachefs superblock, in bytes."""
+    with open(dev, "rb") as f:
+        f.seek(8 * 512 + 120)       # struct bch_sb: le16 block_size, in sectors, after offset and seq
+        return int.from_bytes(f.read(2), "little") * 512
+
+
 def mounts_below(mp: Path) -> list[dict[str, str]]:
     """findmnt's view of mp and everything mounted below it, parents first."""
     rows = json.loads(out(["findmnt", "-J", "-R", "-o", "TARGET,SOURCE,FSTYPE,OPTIONS", str(mp)]))
@@ -454,6 +467,7 @@ class Layout:
         for dev, f in self.fields.items():
             if f.get("TYPE") == "bcachefs":
                 f["BCACHEFS_VERSION"] = bcachefs_version(dev)
+                f["BCACHEFS_BLOCK_SIZE"] = str(bcachefs_block_size(dev))
         self.mounts = mounts_below(SRC_MP)
         self.aliases = self.btrfs_aliases()
         self.fstab = fstab_options(SRC_MP)
@@ -709,8 +723,11 @@ def mkfs_cmd(f: dict[str, str], dev: str) -> list[str] | None:
     if fs == "bcachefs":
         # In the original's on-disk version, which the guest keeps
         # (version_upgrade=none), not the tools' newest or the running
-        # kernel's.
-        return ["mkfs.bcachefs", "-f", "-U", uuid, f"--version={f['BCACHEFS_VERSION']}"] + lab + [dev]
+        # kernel's; and with its block size (mkfs.bcachefs picks 4096 on an
+        # nbd device, where the original may have 512: its holes then
+        # can't come back).
+        return ["mkfs.bcachefs", "-f", "-U", uuid, f"--version={f['BCACHEFS_VERSION']}",
+                f"--block_size={f['BCACHEFS_BLOCK_SIZE']}"] + lab + [dev]
     return None
 
 
@@ -969,7 +986,11 @@ def restic_exe(tool: str) -> str:
 def rustic_exe() -> str:
     if "RUSTIC_BKO" in os.environ:
         return os.environ["RUSTIC_BKO"]
-    builds = sorted((WORK_BASE / "rustic" / "dist").glob("rustic-backotter-*-x86_64-unknown-linux-gnu"),
+    # musl since 2026-11-02 (a static glibc build dies dlopening NSS for an
+    # owner with no name); the newest of either.
+    dist = WORK_BASE / "rustic" / "dist"
+    builds = sorted([*dist.glob("rustic-backotter-*-x86_64-unknown-linux-musl"),
+                     *dist.glob("rustic-backotter-*-x86_64-unknown-linux-gnu")],
                     key=lambda p: p.stat().st_mtime)
     if not builds:
         raise SystemExit("no rustic-bko build: set RUSTIC_BKO, or run build-backotter.sh")
@@ -1067,6 +1088,18 @@ def port_free(port: str) -> bool:
             return False
 
 
+def io_stall_s() -> float:
+    """How long, in all, the host's tasks have all been stalled on I/O at
+    once (PSI's io "full" total), in seconds; 0 without PSI."""
+    try:
+        for line in Path("/proc/pressure/io").read_text().splitlines():
+            if line.startswith("full "):
+                return int(line.rpartition("total=")[2]) / 1e6
+    except (OSError, ValueError):
+        pass
+    return 0.0
+
+
 # What the guest booted with: bios, uefi, or uefi+secure-boot.
 FIRMWARE_PROBE = ("if [ -d /sys/firmware/efi ]; then "
                   "sb=$(od -An -tu1 /sys/firmware/efi/efivars/SecureBoot-8be4df61-93ca-11d2-aa0d-00e098032b8c"
@@ -1117,6 +1150,8 @@ class VM:
         # overlays (--ram) beside the log, on disk: in /dev/shm, the host's
         # other VMs' overlays can leave no room.
         ram_dir = self.log.parent
+        self.overlays = lambda: set(ram_dir.glob("vm-run.*.qcow2"))
+        self.overlays_before = self.overlays()
         self.proc = subprocess.Popen(cmd, env=dict(os.environ, SSH_PORT=SSH_PORT, RAM_DIR=str(ram_dir)),
                                      start_new_session=True,
                                      stdin=subprocess.PIPE if console else subprocess.DEVNULL,
@@ -1152,8 +1187,15 @@ class VM:
                     buf, last = b"", time.monotonic()
 
     def wait_ssh(self, timeout: float) -> bool:
-        deadline = time.monotonic() + timeout
-        while time.monotonic() < deadline and self.proc.poll() is None:
+        """Whether SSH answers within timeout seconds, plus the time the
+        host spent stalled on I/O meanwhile (a loaded host's guest gets
+        nowhere then), up to 3 x timeout in all."""
+        start, stall0 = time.monotonic(), io_stall_s()
+        self.io_stall = 0.0
+        while self.proc.poll() is None:
+            self.io_stall = io_stall_s() - stall0
+            if time.monotonic() >= start + min(timeout + self.io_stall, 3 * timeout):
+                break
             if run(self.ssh_cmd + ["true"], check=False, quiet=True).returncode == 0:
                 self.up = True
                 break
@@ -1189,6 +1231,10 @@ class VM:
                 except subprocess.TimeoutExpired:
                     os.killpg(self.proc.pid, signal.SIGKILL)
                     self.proc.wait()
+            # Killed, vm-run can't remove its overlays (QEMU blocked on a
+            # stalled disk outlasts the 20 s); this run's only.
+            for o in self.overlays() - self.overlays_before:
+                o.unlink(missing_ok=True)
 
 
 def boot_state(text: str) -> dict:
@@ -1208,17 +1254,29 @@ def boot_state(text: str) -> dict:
 
 def boot(images: list[Path], cfg: GuestConfig, hardware: list[str], log: Path) -> dict:
     """Boot images (writes in RAM) and say how they came up: whether SSH
-    answered, boot-state.sh's report, and the firmware."""
-    result = {"ssh": False}
-    try:
-        with VM(images, cfg, hardware, log) as vm:
-            if vm.wait_ssh(420 if cfg.key else 240):
-                result["ssh"] = True
-                r = vm.ssh("sh -s", input=BOOT_STATE.read_text(), timeout=400)
-                result.update(boot_state(r.stdout))
-                result["firmware"] = vm.ssh(FIRMWARE_PROBE, timeout=30).stdout.strip()
-    except subprocess.TimeoutExpired:
-        pass
+    answered, boot-state.sh's report, and the firmware.  Without SSH, a
+    second boot, from the same disks (their writes were in RAM): a host
+    stalled on its disk can hold a guest up for minutes.  "attempts" says
+    how many it took, "io_stall_s" how long the host was stalled meanwhile;
+    the first attempt's console is kept in LOG.try1."""
+    for attempt in (1, 2):
+        result = {"ssh": False, "attempts": attempt}
+        try:
+            with VM(images, cfg, hardware, log) as vm:
+                if vm.wait_ssh(420 if cfg.key else 240):
+                    result["ssh"] = True
+                    r = vm.ssh("sh -s", input=BOOT_STATE.read_text(), timeout=400)
+                    result.update(boot_state(r.stdout))
+                    result["firmware"] = vm.ssh(FIRMWARE_PROBE, timeout=30).stdout.strip()
+                result["io_stall_s"] = round(vm.io_stall)
+        except subprocess.TimeoutExpired:
+            pass
+        if result["ssh"] or attempt == 2:
+            return result
+        print(f"   no ssh (host stalled on I/O {result.get('io_stall_s', '?')} s); booting again", flush=True)
+        for f in (log, log.with_name(log.stem + ".vm-run.log")):
+            if f.exists():
+                f.replace(f.with_name(f.name + ".try1"))
     return result
 
 
@@ -1276,6 +1334,11 @@ def work_dir(guest: str, stick_img: Path | None, parent: Path = COMPARE_DIR) -> 
     return parent / (guest + (".stick-mkfs" if stick_img else ""))
 
 
+def restored_stem(work: Path, tool: str) -> Path:
+    """Where TOOL's restored disks go: the work directory, or COMPARE_DISKS_DIR's."""
+    return (DISKS_DIR / work.name if DISKS_DIR else work) / f"restored-{tool}"
+
+
 def save_from_ram(guest: str, stick_img: Path | None) -> None:
     """A run in RAM_DIR: its results, diffs and logs to COMPARE_DIR, whatever
     the run's outcome, and the rest (disks, repositories) dropped."""
@@ -1286,11 +1349,12 @@ def save_from_ram(guest: str, stick_img: Path | None) -> None:
     for f in ram.iterdir():
         if f.is_file() and f.suffix != ".qcow2":
             shutil.copy2(f, disk / f.name)
-    shutil.rmtree(ram)
-    try:
-        ram.parent.rmdir()                      # the run's own, once empty
-    except OSError:
-        pass
+    for d in (ram, DISKS_DIR / ram.name) if DISKS_DIR else (ram,):
+        shutil.rmtree(d, ignore_errors=True)
+        try:
+            d.parent.rmdir()                    # the run's own, once empty
+        except OSError:
+            pass
 
 
 def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -> dict:
@@ -1299,9 +1363,18 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
     work = work_dir(guest, stick_img, RUN_DIR)
     if IN_RAM:
         shutil.rmtree(work, ignore_errors=True)    # a dead run's
+        if DISKS_DIR:
+            shutil.rmtree(DISKS_DIR / work.name, ignore_errors=True)
     work.mkdir(parents=True, exist_ok=True)
+    if DISKS_DIR:
+        (DISKS_DIR / work.name).mkdir(parents=True, exist_ok=True)
     fsmeta = [sys.executable, "-I", str(HERE / "fsmeta.py")]
-    results = {"guest": guest, "mkfs": str(stick_img) if stick_img else "guest", "tools": {}}
+    results = {"guest": guest, "mkfs": str(stick_img) if stick_img else "guest", "tools": {},
+               "started": time.strftime("%Y-%m-%d %H:%M:%S"),
+               # Which disks this run tested: an earlier run's results are
+               # kept below only if it tested the same ones.
+               "base": [{"path": str(b), "size": b.stat().st_size, "mtime": int(b.stat().st_mtime)}
+                        for b in bases]}
     if GROW_GIB:
         results["grown_gib"] = GROW_GIB
 
@@ -1366,11 +1439,11 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
             t = time.monotonic()
             backup(tool, work, layout.aliases)
             results["tools"][tool] = {"backup_s": round(time.monotonic() - t, 1),
-                                      "backup_bytes": size(work / tool)}
+                                      "backup_bytes": size(work / tool), "run": results["started"]}
         def restore_and_boot(tool: str) -> None:
             print(f"== {guest}: {tool} restore", flush=True)
             res = results["tools"][tool]
-            dsts = disk_images(work / f"restored-{tool}", len(srcs))
+            dsts = disk_images(restored_stem(work, tool), len(srcs))
             for d, src in zip(dsts, srcs):
                 d.unlink(missing_ok=True)
                 vsize = json.loads(out(["qemu-img", "info", "--output=json", str(src)]))["virtual-size"] + (GROW_GIB << 30)
@@ -1437,11 +1510,19 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
     finally:
         vm_umount(SRC_MP)
     # Keep an earlier run's results for the tools this run left out, so one
-    # tool can be rerun alone.  (torture.sh makes the same files each time.)
+    # tool can be rerun alone (torture.sh makes the same files each time) --
+    # if that run tested the same disks: a rebuilt guest's are another test.
     old = work_dir(guest, stick_img) / "results.json"
     if old.exists():
-        earlier = json.loads(old.read_text()).get("tools", {})
-        results["tools"] = {t: v for t, v in earlier.items() if t not in tools} | results["tools"]
+        prev = json.loads(old.read_text())
+        earlier = {t: v for t, v in prev.get("tools", {}).items() if t not in tools}
+        if earlier and prev.get("base") == results["base"]:
+            for v in earlier.values():
+                v.setdefault("run", prev.get("started", "?"))
+            results["tools"] = earlier | results["tools"]
+        elif earlier:
+            print(f"== {guest}: dropping an earlier run's results for {', '.join(earlier)}: "
+                  "it tested other disks (or didn't say which)", flush=True)
     (work / "results.json").write_text(json.dumps(results, indent=1))
     return results
 
@@ -1465,7 +1546,7 @@ def boot_only(guest: str, tools: list[str], stick_img: Path | None) -> dict:
         if tool not in r["tools"]:
             raise SystemExit(f"the earlier run of {guest} restored no {tool}")
         print(f"== {guest}: booting the {tool} restore", flush=True)
-        b = r["tools"][tool]["boot"] = boot(disk_images(work / f"restored-{tool}", n), cfg, hardware,
+        b = r["tools"][tool]["boot"] = boot(disk_images(restored_stem(work, tool), n), cfg, hardware,
                                              work / f"boot-{tool}.log")
         b["new_failures"] = new_failures(b, r["original_boot"])
         print(f"   {b}", flush=True)
@@ -1518,13 +1599,24 @@ def main() -> int:
     if r.get("zfs_features_not_recreated"):
         print(f"ZFS features this host couldn't give the restored pool: {', '.join(r['zfs_features_not_recreated'])}")
     print(f"\n{'tool':16} {'backup':>8} {'size':>9} {'restore':>8}  {'boot':9} {'new in boot':24} differences")
+    notes = []
     for tool, t in r["tools"].items():
         diffs = ", ".join(f"{k} {v['count']}" for k, v in t.get("diff", {}).items()) or "none"
         b = t.get("boot", {})
         new = b.get("new_failures")
         new = "-" if new is None else ", ".join(new) or "none"
-        print(f"{tool:16} {t['backup_s']:7}s {t['backup_bytes'] / 2**20:7.0f}MB {t.get('restore_s', 0):7}s  "
+        name = tool
+        if t.get("run") != r.get("started"):
+            name += "*"
+            notes.append(f"{tool}: from an earlier run ({t.get('run', '?')})")
+        if b.get("attempts", 1) > 1:
+            notes.append(f"{tool}: booted again after no ssh (host stalled on I/O {b.get('io_stall_s', '?')} s)")
+        print(f"{name:16} {t['backup_s']:7}s {t['backup_bytes'] / 2**20:7.0f}MB {t.get('restore_s', 0):7}s  "
               f"{b.get('state', '?') if b.get('ssh') else 'no ssh':9} {new:24} {diffs}")
+    if o.get("attempts", 1) > 1:
+        notes.append(f"original: booted again after no ssh (host stalled on I/O {o.get('io_stall_s', '?')} s)")
+    for n in notes:
+        print(f"  {n}")
     return 0
 
 

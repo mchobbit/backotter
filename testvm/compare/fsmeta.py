@@ -50,7 +50,12 @@ ZFS_DOS_KEPT = 0x0000302F00000000
 ZFS_ARCHIVE = 0x0000000800000000
 DOS_NAMES = {0x100000000: "dos readonly", 0x200000000: "dos hidden", 0x400000000: "dos system",
              0x2000000000: "dos nounlink", 0x100000000000: "dos offline", 0x200000000000: "dos sparse"}
+SEEK_DATA = 3
 SEEK_HOLE = 4
+# The smallest hole either BackOtter archiver restores (restic-bko's
+# minHoleBlockSize, rustic-bko's alike): a source whose holes are smaller
+# (bcachefs with 512-byte blocks) can't get them back, whatever the tool.
+HOLE_BLOCK = 4096
 TYPES = {stat.S_IFREG: "file", stat.S_IFDIR: "dir", stat.S_IFLNK: "symlink",
          stat.S_IFCHR: "chardev", stat.S_IFBLK: "blockdev", stat.S_IFIFO: "fifo",
          stat.S_IFSOCK: "socket"}
@@ -146,8 +151,30 @@ def dos_flags(path: str, is_dir: bool) -> int | None:
         os.close(fd)
 
 
-def content(path: str, st: os.stat_result, seek_hole: bool = True) -> tuple[str, bool]:
-    """SHA-256 of the file, and whether it has holes.  A preallocated file's
+def hole_blocks(fd: int, size: int, seek_hole: bool, blocks: int) -> int:
+    """How many HOLE_BLOCK-sized, aligned blocks of the file open as fd lie
+    wholly in its holes (the last one may reach past the size, as a restore
+    leaves it).  Without seek_hole, what st_blocks leaves unallocated."""
+    end = -(-size // HOLE_BLOCK) * HOLE_BLOCK
+    if not seek_hole:
+        return max(0, end - blocks * 512) // HOLE_BLOCK
+    n, off = 0, 0
+    while off < size:
+        hole = os.lseek(fd, off, SEEK_HOLE)
+        if hole >= size:
+            break
+        try:
+            data = os.lseek(fd, hole, SEEK_DATA)
+        except OSError:         # ENXIO: a hole to the end
+            data = end
+        n += max(0, data // HOLE_BLOCK - -(-hole // HOLE_BLOCK))
+        off = data
+    return n
+
+
+def content(path: str, st: os.stat_result, seek_hole: bool = True) -> tuple[str, bool, int]:
+    """SHA-256 of the file, whether it has holes, and how many aligned
+    HOLE_BLOCKs its holes cover (hole_blocks).  A preallocated file's
     unwritten extents look like holes to SEEK_HOLE, but count in st_blocks;
     without seek_hole (a file system whose SEEK_HOLE finds none), st_blocks
     alone tells."""
@@ -157,12 +184,13 @@ def content(path: str, st: os.stat_result, seek_hole: bool = True) -> tuple[str,
         try:
             holes = (size > 0 and st.st_blocks * 512 < size
                      and (not seek_hole or os.lseek(f.fileno(), 0, SEEK_HOLE) < size))
+            nblocks = hole_blocks(f.fileno(), size, seek_hole, st.st_blocks) if holes else 0
         except OSError:
-            holes = False
+            holes, nblocks = False, 0
         os.lseek(f.fileno(), 0, os.SEEK_SET)
         while chunk := f.read(1 << 20):
             h.update(chunk)
-    return h.hexdigest(), holes
+    return h.hexdigest(), holes, nblocks
 
 
 def record(root: str, skip: list[str] = ()) -> dict[str, dict]:
@@ -189,7 +217,7 @@ def record(root: str, skip: list[str] = ()) -> dict[str, dict]:
             if kind == "file":
                 e["size"] = st.st_size
                 e["blocks"] = st.st_blocks
-                e["sha256"], e["holes"] = content(path, st, st.st_dev not in no_seek_hole)
+                e["sha256"], e["holes"], e["hole_blocks"] = content(path, st, st.st_dev not in no_seek_hole)
             elif kind == "symlink":
                 e["target"] = os.readlink(path)
             elif kind in ("chardev", "blockdev"):
@@ -240,7 +268,10 @@ def differences(before: dict[str, dict], after: dict[str, dict]) -> dict[str, li
             if (b["size"], b["sha256"]) != (a["size"], a["sha256"]):
                 note("content", path)
             if b["holes"] and not a["holes"]:
-                note("holes lost", path)
+                # Holes all smaller than HOLE_BLOCK (or not aligned to it)
+                # no restore can keep: the source's file system has smaller
+                # blocks than any hole an archiver makes.
+                note("holes lost" if b.get("hole_blocks", 1) else "holes lost (sub-4K)", path)
             if a["holes"] and not b["holes"]:
                 note("holes gained", path)
             # Fully allocated before (a swap file, a preallocated file), not
@@ -277,7 +308,7 @@ ORDER = ["missing", "extra", "type", "content", "mode", "owner", "mtime", "mtime
          "mtime (symlinks)", "atime", "atime (dirs)", "atime (symlinks)", "symlink target",
          "device number", "hard links", "selinux", "capability", "acl", "user-xattr",
          "trusted-xattr", "other-xattr", "inode flags", "project ID", "ZFS DOS flags",
-         "holes lost", "holes gained", "allocation lost"]
+         "holes lost", "holes lost (sub-4K)", "holes gained", "allocation lost"]
 
 
 def coverage(before: dict[str, dict]) -> dict[str, int]:

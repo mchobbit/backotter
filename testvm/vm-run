@@ -26,7 +26,8 @@
 #   --snapshot    throw away every disk write when QEMU exits (QEMU keeps them
 #                 in a temporary file in $TMPDIR: by default /var/tmp, or
 #                 /mnt/bko-ram where that tmpfs of its own is mounted with
-#                 8 GiB free, sparing the host's disk; RT_RAM=0: /var/tmp)
+#                 8 GiB free, sparing the host's disk, else /bkoscratch/tmp
+#                 where that pool is mounted; RT_RAM=0: not in RAM)
 #   --ram         keep every disk write in RAM instead: a qcow2 overlay in
 #                 /dev/shm (RAM_DIR overrides) on top of IMAGE, with
 #                 cache=unsafe; deleted when QEMU exits.  IMAGE itself is only
@@ -74,6 +75,8 @@ RAM_DIR=${RAM_DIR:-/dev/shm}
 if [[ -z ${TMPDIR:-} && ${RT_RAM:-1} != 0 ]] && mountpoint -q /mnt/bko-ram 2>/dev/null &&
        (( $(df -Pk /mnt/bko-ram | awk 'NR == 2 { print $4 }') >= 8 << 20 )); then
     export TMPDIR=/mnt/bko-ram
+elif [[ -z ${TMPDIR:-} ]] && mountpoint -q /bkoscratch 2>/dev/null && mkdir -p /bkoscratch/tmp 2>/dev/null; then
+    export TMPDIR=/bkoscratch/tmp        # Chopin's cool scratch disk, not its root's /var/tmp
 fi
 die() { echo "vm-run: $*" >&2; exit 1; }
 

@@ -72,6 +72,16 @@ truncate -s 1G "$T/sparse"
 echo "start" | dd of="$T/sparse" conv=notrunc status=none
 echo "middle" | dd of="$T/sparse" bs=1M seek=512 conv=notrunc status=none
 head -c 1G /dev/urandom >"$T/big-random"
+# Holes smaller than a chunk: one 8 KiB hole between two 256 KiB runs of
+# data (inside one blob), and a hole in the last, partial block (as in a
+# sparse-copied ELF file or locale-archive).  A restore that only skips
+# all-zero blobs fills both.
+rm -f "$T/sparse-small" "$T/sparse-tail"
+head -c 256K /dev/urandom >"$T/sparse-small"
+truncate -s +8K "$T/sparse-small"
+head -c 256K /dev/urandom >>"$T/sparse-small"
+head -c 4096 /dev/urandom >"$T/sparse-tail"
+truncate -s 4099 "$T/sparse-tail"
 
 # Awkward names: spaces, a newline, bytes that aren't UTF-8, 250 characters,
 # and a deep path.

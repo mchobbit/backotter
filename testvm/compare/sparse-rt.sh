@@ -9,7 +9,8 @@
 #     st_blocks and the SEEK_HOLE probe of the source);
 #   - st_blocks of the source and the restored file, against SPEC3 3 (as
 #     revised for round 9) for a file S3 marks: where the source's holes are
-#     B-aligned (B: the destination's f_bsize, at least 4096), no more than
+#     B-aligned (B: the destination's f_bsize, at least 512, 4096 if not
+#     known: the tools' rule since round 23), no more than
 #     the source's; never more than the source's + one block per blob.
 #     Both plus the metadata the restored file has beyond the source's
 #     (st_blocks less its data extents rounded out to B: XFS and ext4 count
@@ -809,7 +810,7 @@ for d in restic-restic rustic-rustic restic-rustic rustic-restic; do
         ex=$(expect_mark $f)
         [ $mk = $ex ] && mkn="$mk" || { mkn="$mk (S3: $ex) WRONG"; ok=""; }
         nb=$(blobs "$n")
-        B=$(field fsbsize "$md"); [ "${B:-0}" -ge 4096 ] 2>/dev/null || B=4096
+        B=$(field fsbsize "$md"); [ "${B:-0}" -gt 0 ] 2>/dev/null || B=4096; [ "$B" -ge 512 ] || B=512
         as=$(($(field blocks "$ms") * 512)) ad=$(($(field blocks "$md") * 512))
         # Metadata in st_blocks: what is beyond the data extents (rounded
         # out to B); the restored file's beyond the source's is allowed.

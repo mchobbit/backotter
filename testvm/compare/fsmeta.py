@@ -53,9 +53,10 @@ DOS_NAMES = {0x100000000: "dos readonly", 0x200000000: "dos hidden", 0x400000000
 SEEK_DATA = 3
 SEEK_HOLE = 4
 # The smallest hole either BackOtter archiver restores (restic-bko's
-# minHoleBlockSize, rustic-bko's alike): a source whose holes are smaller
-# (bcachefs with 512-byte blocks) can't get them back, whatever the tool.
-HOLE_BLOCK = 4096
+# minHoleBlockSize, rustic-bko's MIN_HOLE_BLOCK: 512 since round 23, 4096
+# before): a source whose holes are smaller can't get them back, whatever
+# the tool.  A sector, so no file's holes are smaller now.
+HOLE_BLOCK = 512
 TYPES = {stat.S_IFREG: "file", stat.S_IFDIR: "dir", stat.S_IFLNK: "symlink",
          stat.S_IFCHR: "chardev", stat.S_IFBLK: "blockdev", stat.S_IFIFO: "fifo",
          stat.S_IFSOCK: "socket"}
@@ -282,7 +283,7 @@ def differences(before: dict[str, dict], after: dict[str, dict]) -> dict[str, li
                 # Holes all smaller than HOLE_BLOCK (or not aligned to it)
                 # no restore can keep: the source's file system has smaller
                 # blocks than any hole an archiver makes.
-                note("holes lost" if b.get("hole_blocks", 1) else "holes lost (sub-4K)", path)
+                note("holes lost" if b.get("hole_blocks", 1) else "holes lost (sub-block)", path)
             if a["holes"] and not b["holes"]:
                 note("holes gained", path)
             # Fully allocated before (a swap file, a preallocated file), not
@@ -319,7 +320,7 @@ ORDER = ["missing", "extra", "type", "content", "mode", "owner", "mtime", "mtime
          "mtime (symlinks)", "atime", "atime (dirs)", "atime (symlinks)", "symlink target",
          "device number", "hard links", "selinux", "capability", "acl", "user-xattr",
          "trusted-xattr", "other-xattr", "inode flags", "project ID", "ZFS DOS flags",
-         "holes lost", "holes lost (sub-4K)", "holes gained", "allocation lost"]
+         "holes lost", "holes lost (sub-block)", "holes gained", "allocation lost"]
 
 
 def coverage(before: dict[str, dict]) -> dict[str, int]:

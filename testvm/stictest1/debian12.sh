@@ -33,7 +33,7 @@ OUT=$HERE/logs/run-$(date +%Y%m%d-%H%M%S)
 mkdir -p "$OUT"
 . "$C/guest-slot.sh"
 case $(hostname -s) in chopin) slot_take 2 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
-HOT_C=90 timeout 1500 "$WORK/cmp-run.sh" --reserve 4 6 "$HERE/$(basename "$0")" --inner "$BIN" "$PORT" "$PFX" "$OUT" >"$OUT/run.log" 2>&1
+HOT_C=90 "$WORK/cmp-run.sh" --reserve 4 6 timeout 1500 "$HERE/$(basename "$0")" --inner "$BIN" "$PORT" "$PFX" "$OUT" >"$OUT/run.log" 2>&1
 slot_give
 lines=$(grep -E '^(PASS|FAIL|LIMIT) ' "$OUT/guest.out" 2>/dev/null)
 [[ -n $lines ]] || lines="FAIL check ran: no results (see $OUT/run.log, guest.err)"

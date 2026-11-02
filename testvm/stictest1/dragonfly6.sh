@@ -55,7 +55,7 @@ mkdir -p "$LOGS"
 # shellcheck source=/dev/null
 source "$CMP/guest-slot.sh"
 case $(hostname) in chopin*) slot_take 2 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
-HOT_C=90 timeout 1500 "$WORK/cmp-run.sh" --reserve 3 6 "$self" --inner "$BIN" "$PORT" "$PREFIX" "$LOGS" >"$LOGS/run.log" 2>&1
+HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 6 timeout 1500 "$self" --inner "$BIN" "$PORT" "$PREFIX" "$LOGS" >"$LOGS/run.log" 2>&1
 rc=$?
 slot_give
 rm -rf "/mnt/bko-ram/$PREFIX"

@@ -44,8 +44,8 @@ if [[ -z ${CHECK_INNER:-} ]]; then
     # shellcheck source=/dev/null
     source "$CMP/guest-slot.sh"
     slot_take 3 2900-2999
-    CHECK_INNER=1 CHECK_LOGS=$LOGS RUSTIC_BIN=$rustic HOT_C=90 timeout 900 \
-        "$WORK/cmp-run.sh" --reserve 3 6 "$self" "$@" >"$LOGS/run.log" 2>&1
+    CHECK_INNER=1 CHECK_LOGS=$LOGS RUSTIC_BIN=$rustic HOT_C=90 \
+        "$WORK/cmp-run.sh" --reserve 3 6 timeout 900 "$self" "$@" >"$LOGS/run.log" 2>&1
     rc=$?
     slot_give
     rm -rf "$SCR"

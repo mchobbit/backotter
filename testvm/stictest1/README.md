@@ -50,7 +50,7 @@ as `check.sh`.
 | Host | Guests |
 |---|---|
 | Chopin | nixos2605, dragonfly6, ubuntu26-uefi, ubuntu26-zfsmirror, ubuntu24, debian12, devuan6, zorin18, mint22, debian13, pop24, mx25, sculpt2610 |
-| Cinqcent | alpine324, alpinebsd, arch, artix-dinit, artix-s6, cachyos, fedora44, fedora44-uefi, freebsd15, freebsd15-ufs, haiku6, netbsd11, omarchy, omnios58, openbsd8, rocky10, tumbleweed, void-musl |
+| Cinqcent | alpine324, alpinebsd, arch, artix-dinit, artix-s6, cachyos, debian13-zfs, fedora44, fedora44-uefi, freebsd15, freebsd15-ufs, haiku6, netbsd11, omarchy, omnios58, openbsd8, rocky10, tumbleweed, void-musl |
 
 ## Running one
 

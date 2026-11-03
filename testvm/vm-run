@@ -2,7 +2,7 @@
 # Boot a BackOtter test VM from its disk image.
 #
 # Usage: vm-run [--uefi [--no-secure-boot] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]]
-#               [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--legacy-virtio-net]
+#               [--discard] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--legacy-virtio-net]
 #               [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE]
 #               IMAGE [-- QEMU_ARGS...]
 #
@@ -37,6 +37,10 @@
 #                 merge it into IMAGE (qemu-img commit) or delete it.  Don't
 #                 change IMAGE while a kept overlay exists: it would no longer
 #                 match.  A kept overlay is gone when the host reboots.
+#   --discard     pass the guest's TRIM (fstrim, zpool trim) and its writes of
+#                 zeros on to the image or overlay (discard=unmap,
+#                 detect-zeroes=unmap): clusters that hold no data then, so
+#                 room the guest frees doesn't stay allocated in the image
 #   --serial-log FILE
 #                 run headless, writing the serial console to FILE (for scripts)
 #   --cpus N      N CPUs instead of 2
@@ -80,7 +84,7 @@ elif [[ -z ${TMPDIR:-} ]] && mountpoint -q /bkoscratch 2>/dev/null && mkdir -p /
 fi
 die() { echo "vm-run: $*" >&2; exit 1; }
 
-cdrom="" uefi=no q35=no secure_boot=yes snapshot=() ram=no keep=no console=(-nographic)
+cdrom="" uefi=no q35=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic)
 bus=virtio extra=() nic=virtio-net-pci nic_global=() mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -91,6 +95,7 @@ while [[ $# -gt 0 ]]; do
         --snapshot) snapshot=(-snapshot); shift ;;
         --ram) ram=yes; shift ;;
         --keep) keep=yes; shift ;;
+        --discard) discard=,discard=unmap,detect-zeroes=unmap; shift ;;
         --serial-log) console=(-display none -serial "file:$2" -monitor none); shift 2 ;;
         --disk-bus) bus=$2; shift 2 ;;
         --disk) extra+=("$(realpath "$2")"); shift 2 ;;
@@ -105,7 +110,7 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
-[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]"
+[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--discard] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]"
 image=$(realpath "$1")
 shift
 [[ ${1:-} == -- ]] && shift
@@ -140,9 +145,9 @@ drive_opts() {
         qemu-img create -q -f qcow2 -b "$image" -F "$format" "$overlay"
         # cache=unsafe: ignore the guest's flushes.  Harmless here, since the
         # writes live in RAM and are thrown away (or kept by choice) anyway.
-        echo "file=$overlay,format=qcow2,cache=unsafe"
+        echo "file=$overlay,format=qcow2,cache=unsafe$discard"
     else
-        echo "file=$image,format=$format"
+        echo "file=$image,format=$format$discard"
     fi
 }
 

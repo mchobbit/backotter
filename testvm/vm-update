@@ -23,7 +23,11 @@ folder in vms/ next to this script's testvm/.  For each GUEST, vm-update
      as root, or as the user named in vms/GUEST/ssh-user (Haiku's "user",
      which is uid 0: Haiku has no root);
   4. reboots it and waits for SSH again, so a broken kernel or boot loader
-     stops here, then powers it off;
+     stops here, runs update/trim.sh in it (fstrim, zpool trim: vm-run
+     --discard makes the room the guest frees, its old packages and
+     downloads, zero clusters that hold no data in the overlay; the merge
+     carries them into the image, where retaking the snapshot frees them),
+     then powers it off;
   5. copies the overlay (only the blocks the update wrote) to every other
      host, checks step 1 again on every host, and then on every host merges
      the overlay into the image (qemu-img commit), retakes the
@@ -87,6 +91,7 @@ STATE_FILE = "image-state"
 PENDING_FILE = ".vm-update.pending"     # a merge step 5 left undone, for --finish
 SSH_UP_TIMEOUT = 900
 UPDATE_TIMEOUT = 3 * 3600
+TRIM_TIMEOUT = 1800
 POWEROFF_TIMEOUT = 300
 
 print_lock = threading.Lock()
@@ -379,7 +384,7 @@ class VM:
         except BaseException:
             self.release_memory()
             raise
-        cmd = [str(TESTVM / "vm-run"), "--ram", "--keep", *g.options]
+        cmd = [str(TESTVM / "vm-run"), "--ram", "--keep", "--discard", *g.options]
         if memory:
             cmd += ["--memory", str(memory)]
         cmd.append(g.images[0])
@@ -855,7 +860,14 @@ def update(name: str, args, hosts: list[str | None]) -> str:
         elif up_after >= (ran_on := up_before + (time.monotonic() - t_before)) - min(30, ran_on / 2):
             raise Failed(f"the guest didn't reboot (init has run {up_after} s)")
         uname = vm.ssh("uname -sr", timeout=30, log=False).stdout.strip()
-        say(name, f"booted again ({uname}); powering off")
+        say(name, f"booted again ({uname}); trimming")
+        # Room it can't hand back only stays allocated, as before: not a failure.
+        r = vm.ssh((TESTVM / "update/trim.sh").read_text(), timeout=TRIM_TIMEOUT)
+        if stopping.is_set():
+            raise Failed("stopped")
+        if r.returncode != 0:
+            say(name, f"trimming failed (exit status {r.returncode}), see {g.dir}/update.log; going on")
+        say(name, "powering off")
         overlays = vm.poweroff()
         if not overlays or not set(overlays) <= {g.path(img) for img in g.images}:
             raise Failed(f"vm-run didn't report the overlays: {overlays}")

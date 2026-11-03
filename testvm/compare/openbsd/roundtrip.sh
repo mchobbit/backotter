@@ -7,9 +7,11 @@
 # attributes; what it has is file flags.
 #
 # Then, as on Linux (fs_roundtrip.py): a restore over the restored tree
-# after changing it (rt-common.sh's rt_over), compared again; and when
-# BACKUP and RESTORE are the two tools, the snapshot each of them makes of
-# the tree, node by node (rt_snapshots).
+# after changing it (rt-common.sh's rt_over), compared again but for its
+# own ".", which must stay as it was (rt_dot: the target isn't fresh, so it
+# keeps its metadata, as stock); and when BACKUP and RESTORE are the two
+# tools, the snapshot each of them makes of the tree, node by node
+# (rt_snapshots).
 #
 # The tree has a Unix socket too, made after the listings, which neither
 # tool keeps (restic never has; rustic since rustic_core 1a2a4a4): no node
@@ -156,9 +158,13 @@ listings() {  # DIR OUT-PREFIX: the listings compared, one file each
 }
 failed=""
 before=/tmp/bko-rt.before after=/tmp/bko-rt.after spec=/tmp/bko-rt.spec
+# With $cmp_listing: diff, or for the restore over an existing tree
+# rt_nodot_diff, which leaves out the target's own "." (as $cmp_mtree,
+# rt_nodot_run, does from mtree's report).
+cmp_listing=diff cmp_mtree=""
 check() {  # TITLE KIND: compare $before.KIND with $after.KIND
     echo "== $1"
-    if diff $before.$2 $after.$2; then
+    if $cmp_listing $before.$2 $after.$2; then
         echo "identical ($(wc -l <$before.$2 | tr -d ' ') lines)"
     else
         failed="$failed; $1"
@@ -206,7 +212,7 @@ compare_all() {  # X
     listings $DST $after
     t="mtree: type, owner, group, flags, links, size, mtime, symlink target, SHA-256$x"
     echo "== $t"
-    mtree -f $spec -p $DST && echo identical || failed="$failed; $t"
+    $cmp_mtree mtree -f $spec -p $DST && echo identical || failed="$failed; $t"
     check "modes (not symlinks)$x" modes
     check "symlink modes$x" symlink-modes
     check "atime and mtime to the nanosecond$x" times
@@ -236,9 +242,12 @@ grep '^sparse	' /tmp/bko-rt.nodes.0 | grep -q '"unix.sparse":true' || { echo "no
 [ "$dk" -le "$sk" ] || failed="$failed; $t"
 # Again over the restored tree, changed: the file flags off (or nothing
 # could change), a directory replaced by a symlink to one elsewhere, files
-# with other bytes, mode and mtime.  At securelevel 1 that is the tree
-# without schg and sappnd, backed up into a repository of its own and
-# restored first.
+# with other bytes, mode and mtime, the target's own mode and times.
+# Holding a tree, the target isn't fresh: its "." must stay as it is now
+# (flags, mode, owner), as stock restic and rustic leave it; its times may
+# only move forward (the restore replaces sub's symlink in it).  At
+# securelevel 1 that is the tree without schg and sappnd, backed up into a
+# repository of its own and restored first.
 if [ "$securelevel" -gt 0 ]; then
     echo "== securelevel $securelevel: the restore over an existing tree is of /root/bko-ov (no schg, sappnd)"
     mtree -c -p /root/bko-ov -k type,uid,gid,flags,nlink,size,time,link,sha256digest >/tmp/bko-ov.spec
@@ -251,14 +260,23 @@ fi
 echo "== restore over an existing, changed tree"
 chflags -R 0 $DST && find $DST -type l -exec chflags -h 0 {} +
 rt_over $DST sub atime-ns nanoseconds || failed="$failed; preparing the restore over an existing tree"
+rt_dot $DST >/tmp/bko-rt.dot.before
 bko_restore "latest:$SRC" $DST; status=$?
+rt_dot $DST >/tmp/bko-rt.dot.after
 echo "exit $status"
 [ $status -eq 0 ] || failed="$failed; restore over an existing tree"
+t=". kept as it was by the restore over an existing tree (not a fresh target, as stock)"
+echo "== $t"
+rt_dot_check /tmp/bko-rt.dot.before /tmp/bko-rt.dot.after forward &&
+    echo "kept ($(wc -l </tmp/bko-rt.dot.before | tr -d ' ') lines)" || failed="$failed; $t"
 t="what the replaced directory's symlink pointed to, untouched"
 echo "== $t"
 rt_over_check && echo "untouched ($(wc -l </tmp/bko-rt.elsewhere.before | tr -d ' ') names)" || failed="$failed; $t"
 after=/tmp/bko-rt.over
+echo "(the target's own \".\" is left out of the comparisons below: checked above)"
+cmp_listing=rt_nodot_diff cmp_mtree=rt_nodot_run
 compare_all " (over an existing tree)"
+cmp_listing=diff cmp_mtree=""
 t="no message about the socket from either tool (backup, restores)"
 echo "== $t"
 n=$(grep -ci socket /tmp/bko-rt.msgs)

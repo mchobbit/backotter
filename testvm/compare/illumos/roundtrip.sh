@@ -12,9 +12,11 @@
 # noav_modified), and ZFS project IDs.
 #
 # Then (not --again), as on Linux (fs_roundtrip.py): a restore over the
-# restored tree after changing it (rt-common.sh's rt_over), compared again;
-# when BACKUP and RESTORE are the two tools, the snapshot each of them makes
-# of the tree, node by node (rt_snapshots); a file with av_quarantined, in
+# restored tree after changing it (rt-common.sh's rt_over), compared again
+# but for its own ".", which must stay as it was (rt_dot: the target isn't
+# fresh, so it keeps its metadata, as stock); when BACKUP and RESTORE are
+# the two tools, the snapshot each of them makes of the tree, node by node
+# (rt_snapshots); a file with av_quarantined, in
 # a tree of its own (no one may read it: both tools keep its node without
 # contents, and restore it empty and quarantined again); and a
 # restore of sid/ with idmap's door moved away (idmapd still running, so
@@ -272,9 +274,12 @@ listings() {  # DIR OUT-PREFIX
 }
 failed=""
 after=/tmp/bko-rt.after
+# With $cmp_listing: diff, or for the restore over an existing tree
+# rt_nodot_diff, which leaves out the target's own ".".
+cmp_listing=diff
 check() {  # TITLE KIND: compare before.KIND with $after.KIND
     echo "== $1"
-    if diff /tmp/bko-rt.before.$2 $after.$2; then
+    if $cmp_listing /tmp/bko-rt.before.$2 $after.$2; then
         echo "identical ($(wc -l </tmp/bko-rt.before.$2 | tr -d ' ') lines)"
     else
         failed="$failed; $1"
@@ -363,19 +368,32 @@ if [ -z "$again" ]; then
 
     # Again over the restored tree, changed: the system attributes that stop
     # changes off, a directory replaced by a symlink to one elsewhere, files
-    # with other bytes, mode and mtime, an attribute file removed.
+    # with other bytes, mode and mtime, an attribute file removed, the
+    # target's own mode and times.  Holding a tree, the target isn't fresh:
+    # its "." must stay as it is now (mode, owner, ACL, system attributes,
+    # attribute files), as stock restic and rustic leave it; its times may
+    # only move forward (the restore replaces sub's symlink in it).
     echo "== restore over an existing, changed tree"
     find $DST ! -type l -exec /usr/bin/chmod S-v'{immutable,appendonly,nounlink,readonly,av_quarantined}' {} \; 2>/dev/null
     runat $DST/xattrs rm note
     rt_over $DST sub atime-ns xattrs || failed="$failed; preparing the restore over an existing tree"
+    rt_dot $DST >/tmp/bko-rt.dot.before
     bko_restore "latest:$SRC" $DST; status=$?
+    rt_dot $DST >/tmp/bko-rt.dot.after
     echo "exit $status"
     [ $status -eq 0 ] || failed="$failed; restore over an existing tree"
+    t=". kept as it was by the restore over an existing tree (not a fresh target, as stock)"
+    echo "== $t"
+    rt_dot_check /tmp/bko-rt.dot.before /tmp/bko-rt.dot.after forward &&
+        echo "kept ($(wc -l </tmp/bko-rt.dot.before | tr -d ' ') lines)" || failed="$failed; $t"
     t="what the replaced directory's symlink pointed to, untouched"
     echo "== $t"
     rt_over_check && echo "untouched ($(wc -l </tmp/bko-rt.elsewhere.before | tr -d ' ') names)" || failed="$failed; $t"
     after=/tmp/bko-rt.over
+    echo "(the target's own \".\" is left out of the comparisons below: checked above)"
+    cmp_listing=rt_nodot_diff
     compare_all " (over an existing tree)"
+    cmp_listing=diff
 
     # av_quarantined: no one may open such a file, root included (EACCES),
     # nor its attribute directory, nor rename it; stat, ls -/ v, utimes,

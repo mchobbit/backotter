@@ -14,14 +14,16 @@
 # compared on their own.
 #
 # Then, as on Linux (fs_roundtrip.py): a restore over the restored tree
-# after changing it (rt-common.sh's rt_over), compared again; when BACKUP
-# and RESTORE are the two tools, the snapshot each of them makes of the
-# tree, node by node (rt_snapshots); and with the vnd images of the restore
-# target freed: a tree on FFSv1, which has no birth times (stat gives 0: no
-# unix.birthtime may be stored), restored onto FFSv1; and the FFSv2ea
-# part's snapshot restored onto FFSv1 and onto plain FFSv2 (no extended
-# attributes): the restore must warn, naming each attribute it can't set,
-# and narrow the group bits of each name whose POSIX.1e ACL it can't set.
+# after changing it (rt-common.sh's rt_over), compared again but for its
+# own ".", which must stay as it was (rt_dot: the target isn't fresh, so it
+# keeps its metadata, as stock); when BACKUP and RESTORE are the two
+# tools, the snapshot each of them makes of the tree, node by node
+# (rt_snapshots); and with the vnd images of the restore target freed: a
+# tree on FFSv1, which has no birth times (stat gives 0: no unix.birthtime
+# may be stored), restored onto FFSv1; and the FFSv2ea part's snapshot
+# restored onto FFSv1 and onto plain FFSv2 (no extended attributes): the
+# restore must warn, naming each attribute it can't set, and narrow the
+# group bits of each name whose POSIX.1e ACL it can't set.
 #
 # The tree has a Unix socket too, which neither tool keeps (restic never
 # has; rustic since rustic_core 1a2a4a4): no node of it in either tool's
@@ -210,9 +212,13 @@ listings() {  # DIR OUT-PREFIX
 }
 failed=""
 after=/tmp/bko-rt.after
+# With $cmp_listing: diff, or for the restore over an existing tree
+# rt_nodot_diff, which leaves out the target's own "." (as $cmp_mtree,
+# rt_nodot_run, does from mtree's report).
+cmp_listing=diff cmp_mtree=""
 check() {  # TITLE KIND: compare before.KIND with $after.KIND
     echo "== $1"
-    if diff /tmp/bko-rt.before.$2 $after.$2; then
+    if $cmp_listing /tmp/bko-rt.before.$2 $after.$2; then
         echo "identical ($(wc -l </tmp/bko-rt.before.$2 | tr -d ' ') lines)"
     else
         failed="$failed; $1"
@@ -300,7 +306,7 @@ compare_all() {  # X
     listings $DST $after
     t="mtree: type, owner, group, links, size, mtime, symlink target, SHA-256$x"
     echo "== $t"
-    (cd $DST && mtree -f /tmp/bko-rt.before.mtree -p .) && echo identical || failed="$failed; $t"
+    (cd $DST && $cmp_mtree mtree -f /tmp/bko-rt.before.mtree -p .) && echo identical || failed="$failed; $t"
     check "modes (not symlinks)$x" modes
     t="socket: not restored, no message about it$x"
     echo "== $t"
@@ -351,21 +357,35 @@ grep '^sparse	' /tmp/bko-rt.nodes.1 | grep -q '"unix.sparse":true' || { echo "no
 
 # Again over the restored tree, changed: the file flags off (or nothing
 # could change), a directory replaced by a symlink to one elsewhere, files
-# with other bytes, mode and mtime, an extended attribute removed.
+# with other bytes, mode and mtime, an extended attribute removed, the
+# target's own mode and times.  Holding a tree, the target isn't fresh: its
+# "." must stay as it is now (flags, mode, owner, ACLs, extended
+# attributes), as stock restic and rustic leave it.  Its times may only move
+# forward: the restore replaces uchg-dir's symlink in it, and atimes are on
+# here.
 echo "== restore over an existing, changed tree"
 chflags -R 0 $DST && find $DST -type l -exec chflags -h 0 {} +
 rmextattr user backotter $DST/posix1e/xattrs
 rt_over $DST uchg-dir atime-ns posix1e/xattrs nfs4/acl-file ||
     failed="$failed; preparing the restore over an existing tree"
+rt_dot $DST >/tmp/bko-rt.dot.before
 bko_restore "latest:$SRC" $DST >/tmp/bko-rt.restore.msgs 2>&1; status=$?
+rt_dot $DST >/tmp/bko-rt.dot.after
 cat /tmp/bko-rt.restore.msgs
 echo "exit $status"
 [ $status -eq 0 ] || failed="$failed; restore over an existing tree"
+t=". kept as it was by the restore over an existing tree (not a fresh target, as stock)"
+echo "== $t"
+rt_dot_check /tmp/bko-rt.dot.before /tmp/bko-rt.dot.after forward &&
+    echo "kept ($(wc -l </tmp/bko-rt.dot.before | tr -d ' ') lines)" || failed="$failed; $t"
 t="what the replaced directory's symlink pointed to, untouched"
 echo "== $t"
 rt_over_check && echo "untouched ($(wc -l </tmp/bko-rt.elsewhere.before | tr -d ' ') names)" || failed="$failed; $t"
 after=/tmp/bko-rt.over
+echo "(the target's own \".\" is left out of the comparisons below: checked above)"
+cmp_listing=rt_nodot_diff cmp_mtree=rt_nodot_run
 compare_all " (over an existing tree)"
+cmp_listing=diff cmp_mtree=""
 
 # The restore target's two images free vnd2 and vnd3 for the rest.
 umount $DST/posix1e && umount $DST/nfs4 && vndconfig -u vnd2 && vndconfig -u vnd3 ||

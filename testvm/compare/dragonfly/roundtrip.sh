@@ -22,9 +22,11 @@
 # neither tool may say anything about it.
 #
 # Then, as on Linux (fs_roundtrip.py): a restore over each restored tree
-# after changing it (rt-common.sh's rt_over), compared again; and when
-# BACKUP and RESTORE are the two tools, the snapshot each of them makes of
-# the trees, node by node (rt_snapshots).
+# after changing it (rt-common.sh's rt_over), compared again but for its
+# own ".", which must stay as it was (rt_dot: the target isn't fresh, so it
+# keeps its metadata, as stock); and when BACKUP and RESTORE are the two
+# tools, the snapshot each of them makes of the trees, node by node
+# (rt_snapshots).
 #
 # Usage: roundtrip.sh BACKUP [RESTORE]   (as root, in a throwaway guest: at
 #                                         securelevel 1, schg and sappnd
@@ -242,9 +244,13 @@ listings() {  # DIR OUT-PREFIX: the listings compared, one file each
 }
 failed=""
 after=/tmp/bko-rt.after
+# With $cmp_listing: diff, or for the restores over existing trees
+# rt_nodot_diff, which leaves out the target's own "." (as $cmp_mtree,
+# rt_nodot_run, does from mtree's report).
+cmp_listing=diff cmp_mtree=""
 check() {  # TITLE KIND: compare before.KIND with $after.KIND
     echo "== $1"
-    if diff /tmp/bko-rt.before.$2 $after.$2; then
+    if $cmp_listing /tmp/bko-rt.before.$2 $after.$2; then
         echo "identical ($(wc -l </tmp/bko-rt.before.$2 | tr -d ' ') lines)"
     else
         failed="$failed; $1"
@@ -289,7 +295,7 @@ compare_tree() {  # TREE X
     listings $t-restored $after.$n
     s="mtree of $t: type, owner, group, links, size, mtime, symlink target, SHA-256$x"
     echo "== $s"
-    mtree -f /tmp/bko-rt.$n.spec -p $t-restored && echo identical || failed="$failed; $s"
+    $cmp_mtree mtree -f /tmp/bko-rt.$n.spec -p $t-restored && echo identical || failed="$failed; $s"
     check "modes of $t (not symlinks)$x" $n.modes
     check "symlink modes of $t$x" $n.symlink-modes
     check "file flags of $t (dragonfly.file_flags)$x" $n.flags
@@ -315,20 +321,33 @@ for t in $TREES; do
 done
 # Again over each restored tree, changed: the file flags off (or nothing
 # could change), a directory replaced by a symlink to one elsewhere, files
-# with other bytes, mode and mtime.
+# with other bytes, mode and mtime, the target's own mode and times.
+# Holding a tree, the target isn't fresh: its "." must stay as it is now
+# (flags, mode, owner), as stock restic and rustic leave it; its times may
+# only move forward (the restore replaces sub's symlink in it; HAMMER2's
+# atime is the mtime).
 after=/tmp/bko-rt.over
+cmp_listing=rt_nodot_diff cmp_mtree=rt_nodot_run
 for t in $TREES; do
     echo "== restore over $t-restored, changed"
     chflags -R 0 $t-restored && find $t-restored -type l -exec chflags -h 0 {} +
     rt_over $t-restored sub atime-ns old || failed="$failed; preparing the restore over $t-restored"
+    rt_dot $t-restored >/tmp/bko-rt.dot.before
     bko_restore "latest:$t" $t-restored; status=$?
+    rt_dot $t-restored >/tmp/bko-rt.dot.after
     echo "exit $status"
     [ $status -eq 0 ] || failed="$failed; restore over $t-restored"
+    s=". of $t-restored kept as it was by the restore over an existing tree (not a fresh target, as stock)"
+    echo "== $s"
+    rt_dot_check /tmp/bko-rt.dot.before /tmp/bko-rt.dot.after forward &&
+        echo "kept ($(wc -l </tmp/bko-rt.dot.before | tr -d ' ') lines)" || failed="$failed; $s"
     s="what the replaced directory's symlink pointed to, untouched ($t)"
     echo "== $s"
     rt_over_check && echo "untouched ($(wc -l </tmp/bko-rt.elsewhere.before | tr -d ' ') names)" || failed="$failed; $s"
+    echo "(the target's own \".\" is left out of the comparisons below: checked above)"
     compare_tree $t " (over an existing tree)"
 done
+cmp_listing=diff cmp_mtree=""
 after=/tmp/bko-rt.after
 echo "== sparse (KB allocated, source then restored)"
 du -k /root/bko-rt/sparse /root/bko-rt-restored/sparse

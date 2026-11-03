@@ -56,13 +56,47 @@
 #             and hard links of DST's files become copies) and a symlink to
 #             there takes its place; each FILE
 #             gets other bytes at its start, a line more, mode 0600 and the
-#             time now.  DST's file flags must be cleared first (the
+#             time now.  DST itself gets mode 0750 and the time now: holding
+#             a tree, it isn't a fresh target, so a restore over it must
+#             leave its own "." as it is then (rt_dot), not give it the
+#             subfolder's.  DST's file flags must be cleared first (the
 #             caller's job: chflags, chmod S-v).  Writes
 #             /tmp/bko-rt.elsewhere.before, a listing of what is in
 #             /root/bko-rt-elsewhere, for rt_over_check
 #   rt_over_check
 #             whether /root/bko-rt-elsewhere is as rt_over left it: status 1
 #             (and what changed) if a restore wrote through the symlink
+#   rt_dot DIR
+#             DIR's own metadata, one line each: its flags (but on
+#             illumos), mode and owner; its atime; its mtime (to the
+#             nanosecond); its ACL and default ACL (getfacl -n, where there
+#             is one; ls -dV on illumos), its system attributes (illumos:
+#             ls -d/v) and its extended attributes (name and MD5 of the
+#             value: lsextattr in both namespaces, runat on illumos).  Reads
+#             no directory, so moves no atime.  BSD stat(1) but on illumos
+#             (/usr/gnu/bin/stat there)
+#   rt_dot_check BEFORE AFTER [forward]
+#             whether two rt_dot records of a restore target are the same,
+#             for a restore over a target that isn't fresh (A3: its "." is
+#             left as it was, as stock restic and rustic leave it).  With
+#             "forward", an atime or mtime may also have moved forward
+#             (shown, not a check): the restore made or replaced an entry
+#             in DIR itself, or DIR's file system keeps atimes.  Never back:
+#             the subfolder's metadata copied onto DIR would set them to the
+#             source's.  Status 1, and what differs, otherwise
+#   rt_nodot
+#             a listing on stdin without the restore target's own entries
+#             ("."), the rest as it was: lines whose first word is "." or
+#             ".:" (stat -f '%N ...', mtree -f's report, illumos' listing,
+#             fsmeta.sh's) and the lines indented below one; fsmeta.sh's
+#             extended attribute lines "NAMESPACE . NAME"; getfacl's
+#             "# file: ." block
+#   rt_nodot_diff A B
+#             diff A B, both without "."'s entries (rt_nodot)
+#   rt_nodot_run COMMAND...
+#             COMMAND... (mtree -f: a tree against a spec), its output and
+#             errors shown without "."'s report (rt_nodot); status 0 if
+#             COMMAND's is, or if nothing it said is left
 #   rt_mksock PATH
 #             a Unix socket at PATH, bound and closed, with whatever the
 #             system has: python3, perl, cc (a few lines of C), or nc -lU
@@ -344,12 +378,84 @@ rt_over() {  # DST DIR FILE...
         echo changed >>"$rt_dst/$rt_f"
         chmod 600 "$rt_dst/$rt_f"; touch "$rt_dst/$rt_f"
     done
+    chmod 750 "$rt_dst" && touch "$rt_dst" || return 1
     rt_list_elsewhere >/tmp/bko-rt.elsewhere.before
 }
 
 rt_over_check() {
     rt_list_elsewhere >/tmp/bko-rt.elsewhere.after
     diff /tmp/bko-rt.elsewhere.before /tmp/bko-rt.elsewhere.after
+}
+
+rt_dot() {  # DIR
+    if [ "$(uname -s)" = SunOS ]; then
+        /usr/gnu/bin/stat -c 'mode %a owner %u:%g' "$1"
+        /usr/gnu/bin/stat -c 'atime %.9X' "$1"
+        /usr/gnu/bin/stat -c 'mtime %.9Y' "$1"
+        /usr/bin/ls -dV "$1" | tail -n +2 | sed 's/^ */acl /'
+        /usr/bin/ls -d/v "$1" | tail -n +2 | sed 's/^ */attrs /'
+        # runat(1) runs its arguments as one shell command line.
+        runat "$1" 'for a in *; do case $a in SUNWattr_r[ow]) ;; *) [ -f "$a" ] && echo "xattr $a $(digest -a md5 "$a")" ;; esac; done' 2>/dev/null
+        return 0
+    fi
+    stat -f 'flags %Xf mode %Mp%Lp owner %u:%g' "$1"
+    stat -f 'atime %Fa' "$1"
+    stat -f 'mtime %Fm' "$1"
+    # Where there are none, the same message both times.
+    if command -v getfacl >/dev/null 2>&1; then
+        getfacl -n "$1" 2>&1 | sed 's/^/acl /'
+        getfacl -n -d "$1" 2>&1 | sed 's/^/default acl /'
+    fi
+    if command -v lsextattr >/dev/null 2>&1; then
+        for rt_ns in user system; do
+            for rt_x in $(lsextattr -q $rt_ns "$1" 2>/dev/null | tr ' \t' '\n\n' | sort); do
+                echo "xattr $rt_ns $rt_x $(getextattr -q -x $rt_ns "$rt_x" "$1" | md5)"
+            done
+        done
+    fi
+    return 0
+}
+
+rt_dot_check() {  # BEFORE AFTER [forward]
+    [ -s "$1" ] && [ -s "$2" ] || { echo "  no record of the target's own metadata"; return 1; }
+    rt_s=0
+    grep -v -e '^atime ' -e '^mtime ' "$1" >$rt_tmp/bko-rt.dot.1
+    grep -v -e '^atime ' -e '^mtime ' "$2" >$rt_tmp/bko-rt.dot.2
+    diff $rt_tmp/bko-rt.dot.1 $rt_tmp/bko-rt.dot.2 || rt_s=1
+    for rt_k in atime mtime; do
+        rt_a=$(sed -n "s/^$rt_k //p" "$1") rt_b=$(sed -n "s/^$rt_k //p" "$2")
+        [ -n "$rt_a" ] || { echo "  no $rt_k recorded"; rt_s=1; continue; }
+        [ "$rt_a" = "$rt_b" ] && continue
+        if [ "${3:-}" = forward ] && $rt_awk -v a="$rt_a" -v b="$rt_b" 'BEGIN {
+                split(a, x, "."); split(b, y, ".")
+                exit !(y[1] + 0 > x[1] + 0 || (y[1] + 0 == x[1] + 0 && y[2] + 0 >= x[2] + 0)) }'; then
+            echo "  (not a check) $rt_k $rt_a, now $rt_b: moved forward"
+        else
+            echo "  $rt_k $rt_a, now $rt_b"; rt_s=1
+        fi
+    done
+    return $rt_s
+}
+
+rt_nodot() {
+    $rt_awk '
+        /^# file: / { facl = ($0 == "# file: .") }
+        dot && /^[ \t]/ { next }
+        { dot = ($1 == "." || $1 == ".:" || (($1 == "user" || $1 == "system") && $2 == ".")) }
+        !dot && !facl'
+}
+
+rt_nodot_diff() {  # A B
+    rt_nodot <"$1" >$rt_tmp/bko-rt.nodot.1
+    rt_nodot <"$2" >$rt_tmp/bko-rt.nodot.2
+    diff $rt_tmp/bko-rt.nodot.1 $rt_tmp/bko-rt.nodot.2
+}
+
+rt_nodot_run() {  # COMMAND...
+    "$@" >$rt_tmp/bko-rt.nodot.out 2>&1; rt_s=$?
+    rt_nodot <$rt_tmp/bko-rt.nodot.out >$rt_tmp/bko-rt.nodot.rest
+    cat $rt_tmp/bko-rt.nodot.rest
+    [ $rt_s -eq 0 ] || [ ! -s $rt_tmp/bko-rt.nodot.rest ]
 }
 
 rt_mksock() {  # PATH

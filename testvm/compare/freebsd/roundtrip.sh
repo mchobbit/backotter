@@ -7,15 +7,17 @@
 # disk mounted with nfsv4acls inside the tree (NFSv4 ACLs on UFS; the
 # restore target gets one too).  Then, as on Linux (fs_roundtrip.py): a
 # restore over the restored tree after changing it (rt-common.sh's
-# rt_over), compared again; and when BACKUP and RESTORE are the two tools,
-# the snapshot each of them makes of the tree, node by node
-# (rt_snapshots).  Unix sockets (torture.sh makes one in each tree) must be
-# in no snapshot and come back from no restore, with no message about them:
-# neither tool backs one up (restic never did, rustic since rustic_core
-# 1a2a4a4).  Each snapshot must store a node's extended attributes sorted
-# by name, though zz-first was set before the others.  Last, a restore onto
-# a UFS md disk without ACLs: a warning per file whose ACL it can't hold,
-# exit 0 (AUDIT-R6 N1).  rescue.sh does the same for a whole disk.
+# rt_over), compared again but for its own ".", which must stay as it was
+# (rt_dot: the target isn't fresh, so it keeps its metadata, as stock); and
+# when BACKUP and RESTORE are the two tools, the snapshot each of them makes
+# of the tree, node by node (rt_snapshots).  Unix sockets (torture.sh
+# makes one in each tree) must be in no snapshot and come back from no
+# restore, with no message about them: neither tool backs one up (restic
+# never did, rustic since rustic_core 1a2a4a4).  Each snapshot must store
+# a node's extended attributes sorted by name, though zz-first was set
+# before the others.  Last, a restore onto a UFS md disk without ACLs: a
+# warning per file whose ACL it can't hold, exit 0 (AUDIT-R6 N1).
+# rescue.sh does the same for a whole disk.
 #
 # Usage: roundtrip.sh BACKUP [RESTORE]   (as root, in a throwaway guest: at
 #                                         securelevel 1, schg and sappnd
@@ -126,13 +128,16 @@ echo "== torture.sh's flag-* and dos-* files' flags before, stat %Xf (not a chec
 grep -E '/(flag|dos)-[^/]* ' $OUT/before/flags.txt | sed 's|^\./||'
 # The restored tree against the source: fsmeta.sh's listings of it into
 # $OUT/AFTER, each compared with the source's.  SUFFIX goes after each
-# check's title.
+# check's title.  The listings are compared with $cmp_listing, mtree's
+# report run through $cmp_mtree: for the restore over an existing tree,
+# rt_nodot_diff and rt_nodot_run, which leave out the target's own ".".
+cmp_listing=diff cmp_mtree=""
 compare_all() {  # AFTER SUFFIX
     a=$1 x=$2
     sh "$here/fsmeta.sh" $DST $OUT/$a
     t="mtree: type, owner, group, mode, flags, links, size, mtime, symlink target, SHA-256$x"
     echo "== $t"
-    (cd $DST && mtree -f $OUT/before/spec -X $OUT/before/mtree-exclude) && echo identical || failed="$failed; $t"
+    (cd $DST && $cmp_mtree mtree -f $OUT/before/spec -X $OUT/before/mtree-exclude) && echo identical || failed="$failed; $t"
     # dos-noarchive (torture.sh) on its own: on ZFS, uarch cleared and
     # nothing else set.  On ZFS, compression rather than holes decides what
     # a file allocates: the md disk's files alone are compared there.
@@ -162,7 +167,7 @@ compare_all() {  # AFTER SUFFIX
         esac
         t="$t$x"
         echo "== $t"
-        if diff $OUT/before/$f.txt $OUT/$a/$f.txt; then
+        if $cmp_listing $OUT/before/$f.txt $OUT/$a/$f.txt; then
             echo "identical ($(wc -l <$OUT/before/$f.txt | tr -d ' ') lines)"
         else
             failed="$failed; $t"
@@ -172,19 +177,31 @@ compare_all() {  # AFTER SUFFIX
 compare_all after ""
 # Again over the restored tree, changed: the file flags off (or nothing
 # could change), a directory replaced by a symlink to one elsewhere, files
-# with other bytes, mode and mtime.
+# with other bytes, mode and mtime, the target's own mode and times.  Holding
+# a tree, the target isn't fresh: its "." must stay as it is now (flags,
+# mode, owner, times, ACLs, extended attributes), as stock restic and
+# rustic leave it.  The restore changes no entry of the target itself, and
+# atimes are off: the times too, exactly.
 echo "== restore over an existing, changed tree"
 chflags -R 0 $DST && find $DST -type l -exec chflags -h 0 {} +
 T=root/bko-torture
 rt_over $DST $T/sub $T/atime-ns $T/xattrs ufs-nfs4/$T/acl-file || failed="$failed; preparing the restore over an existing tree"
+rt_dot $DST >$OUT/dot.before
 bko_restore "latest:$SRC" $DST >$OUT/over.msgs 2>&1; status=$?
+rt_dot $DST >$OUT/dot.after
 cat $OUT/over.msgs
 echo "exit $status"
 [ $status -eq 0 ] || failed="$failed; restore over an existing tree"
+t=". kept as it was by the restore over an existing tree (not a fresh target, as stock)"
+echo "== $t"
+rt_dot_check $OUT/dot.before $OUT/dot.after && echo "kept ($(wc -l <$OUT/dot.before | tr -d ' ') lines)" || failed="$failed; $t"
 t="what the replaced directory's symlink pointed to, untouched"
 echo "== $t"
 rt_over_check && echo "untouched ($(wc -l </tmp/bko-rt.elsewhere.before | tr -d ' ') names)" || failed="$failed; $t"
+echo "(the target's own \".\" is left out of the comparisons below: checked above)"
+cmp_listing=rt_nodot_diff cmp_mtree=rt_nodot_run
 compare_all over " (over an existing tree)"
+cmp_listing=diff cmp_mtree=""
 # Onto a UFS md disk mounted without acls or nfsv4acls (AUDIT-R6 N1, SPEC2
 # 7.1): the ACLs it can't hold, POSIX.1e or NFSv4, one warning per file
 # naming it (acl-file and acl-dir in each torture tree, at least), the rest

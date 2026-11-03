@@ -72,25 +72,31 @@
 #             nanosecond); its ACL and default ACL (getfacl -n, where there
 #             is one; ls -dV on illumos), its system attributes (illumos:
 #             ls -d/v) and its extended attributes (name and MD5 of the
-#             value: lsextattr in both namespaces, runat on illumos).  Reads
-#             no directory, so moves no atime.  BSD stat(1) but on illumos
-#             (/usr/gnu/bin/stat there)
-#   rt_dot_check BEFORE AFTER [forward]
+#             value: lsextattr in both namespaces, runat on illumos).  The
+#             stat(1) lines come first, and stat reads nothing; reading the
+#             ACLs and extended attributes may move the atime where atimes
+#             are on, so an exact check needs DIR's file system noatime.  BSD
+#             stat(1) but on illumos (/usr/gnu/bin/stat there)
+#   rt_dot_check BEFORE AFTER [forward|forward-mtime]
 #             whether two rt_dot records of a restore target are the same,
 #             for a restore over a target that isn't fresh (A3: its "." is
-#             left as it was, as stock restic and rustic leave it).  With
-#             "forward", an atime or mtime may also have moved forward
-#             (shown, not a check): the restore made or replaced an entry
-#             in DIR itself, or DIR's file system keeps atimes.  Never back:
-#             the subfolder's metadata copied onto DIR would set them to the
-#             source's.  Status 1, and what differs, otherwise
+#             left as it was, as stock restic and rustic leave it).  Both
+#             must hold the flags, mode and owner line, the atime and the
+#             mtime.  With "forward", the atime and the mtime may also have
+#             moved forward (shown, not a check): the restore made or
+#             replaced an entry in DIR itself, and DIR's file system keeps
+#             atimes (or updates one with the mtime, as OpenBSD's noatime
+#             does); with "forward-mtime", the mtime alone (atimes off).
+#             Never back: the subfolder's metadata copied onto DIR would set
+#             them to the source's.  Status 1, and what differs, otherwise
 #   rt_nodot
 #             a listing on stdin without the restore target's own entries
 #             ("."), the rest as it was: lines whose first word is "." or
 #             ".:" (stat -f '%N ...', mtree -f's report, illumos' listing,
 #             fsmeta.sh's) and the lines indented below one; fsmeta.sh's
 #             extended attribute lines "NAMESPACE . NAME"; getfacl's
-#             "# file: ." block
+#             "# file: ." block, up to a blank line, a "getfacl:" message
+#             or the next "# file:"
 #   rt_nodot_diff A B
 #             diff A B, both without "."'s entries (rt_nodot)
 #   rt_nodot_run COMMAND...
@@ -416,9 +422,16 @@ rt_dot() {  # DIR
     return 0
 }
 
-rt_dot_check() {  # BEFORE AFTER [forward]
+rt_dot_check() {  # BEFORE AFTER [forward|forward-mtime]
     [ -s "$1" ] && [ -s "$2" ] || { echo "  no record of the target's own metadata"; return 1; }
     rt_s=0
+    # Without it (a stat format refused), the diff below would compare the
+    # rest alone.  BSD: "flags HEX mode OCTAL owner UID:GID"; illumos: no
+    # flags.
+    for rt_f in "$1" "$2"; do
+        grep -E -q '^(flags [0-9a-fA-F]+ )?mode [0-7]+ owner [0-9]+:[0-9]+$' "$rt_f" ||
+            { echo "  no flags, mode and owner recorded in $rt_f"; rt_s=1; }
+    done
     grep -v -e '^atime ' -e '^mtime ' "$1" >$rt_tmp/bko-rt.dot.1
     grep -v -e '^atime ' -e '^mtime ' "$2" >$rt_tmp/bko-rt.dot.2
     diff $rt_tmp/bko-rt.dot.1 $rt_tmp/bko-rt.dot.2 || rt_s=1
@@ -426,7 +439,8 @@ rt_dot_check() {  # BEFORE AFTER [forward]
         rt_a=$(sed -n "s/^$rt_k //p" "$1") rt_b=$(sed -n "s/^$rt_k //p" "$2")
         [ -n "$rt_a" ] || { echo "  no $rt_k recorded"; rt_s=1; continue; }
         [ "$rt_a" = "$rt_b" ] && continue
-        if [ "${3:-}" = forward ] && $rt_awk -v a="$rt_a" -v b="$rt_b" 'BEGIN {
+        case ${3:-},$rt_k in forward,*|forward-mtime,mtime) rt_fw=1 ;; *) rt_fw="" ;; esac
+        if [ -n "$rt_fw" ] && $rt_awk -v a="$rt_a" -v b="$rt_b" 'BEGIN {
                 split(a, x, "."); split(b, y, ".")
                 exit !(y[1] + 0 > x[1] + 0 || (y[1] + 0 == x[1] + 0 && y[2] + 0 >= x[2] + 0)) }'; then
             echo "  (not a check) $rt_k $rt_a, now $rt_b: moved forward"
@@ -440,6 +454,7 @@ rt_dot_check() {  # BEFORE AFTER [forward]
 rt_nodot() {
     $rt_awk '
         /^# file: / { facl = ($0 == "# file: .") }
+        /^$/ || /^getfacl:/ { facl = 0 }
         dot && /^[ \t]/ { next }
         { dot = ($1 == "." || $1 == ".:" || (($1 == "user" || $1 == "system") && $2 == ".")) }
         !dot && !facl'

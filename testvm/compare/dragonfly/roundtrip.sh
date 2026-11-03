@@ -323,9 +323,10 @@ done
 # could change), a directory replaced by a symlink to one elsewhere, files
 # with other bytes, mode and mtime, the target's own mode and times.
 # Holding a tree, the target isn't fresh: its "." must stay as it is now
-# (flags, mode, owner), as stock restic and rustic leave it; its times may
-# only move forward (the restore replaces sub's symlink in it; HAMMER2's
-# atime is the mtime).
+# (flags, mode, owner), as stock restic and rustic leave it; its mtime may
+# only move forward (the restore replaces sub's symlink in it), and so may
+# its atime on HAMMER2, where the atime is the mtime; on UFS, mounted
+# noatime, the atime must not move at all.
 after=/tmp/bko-rt.over
 cmp_listing=rt_nodot_diff cmp_mtree=rt_nodot_run
 for t in $TREES; do
@@ -339,7 +340,8 @@ for t in $TREES; do
     [ $status -eq 0 ] || failed="$failed; restore over $t-restored"
     s=". of $t-restored kept as it was by the restore over an existing tree (not a fresh target, as stock)"
     echo "== $s"
-    rt_dot_check /tmp/bko-rt.dot.before /tmp/bko-rt.dot.after forward &&
+    case $t in /boot/*) fw=forward-mtime ;; *) fw=forward ;; esac
+    rt_dot_check /tmp/bko-rt.dot.before /tmp/bko-rt.dot.after $fw &&
         echo "kept ($(wc -l </tmp/bko-rt.dot.before | tr -d ' ') lines)" || failed="$failed; $s"
     s="what the replaced directory's symlink pointed to, untouched ($t)"
     echo "== $s"

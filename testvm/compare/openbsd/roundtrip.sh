@@ -245,7 +245,8 @@ grep '^sparse	' /tmp/bko-rt.nodes.0 | grep -q '"unix.sparse":true' || { echo "no
 # with other bytes, mode and mtime, the target's own mode and times.
 # Holding a tree, the target isn't fresh: its "." must stay as it is now
 # (flags, mode, owner), as stock restic and rustic leave it; its times may
-# only move forward (the restore replaces sub's symlink in it).  At
+# only move forward (the restore replaces sub's symlink in it, and
+# OpenBSD's noatime still updates the atime of what it changes).  At
 # securelevel 1 that is the tree without schg and sappnd, backed up into a
 # repository of its own and restored first.
 if [ "$securelevel" -gt 0 ]; then

@@ -371,8 +371,9 @@ if [ -z "$again" ]; then
     # with other bytes, mode and mtime, an attribute file removed, the
     # target's own mode and times.  Holding a tree, the target isn't fresh:
     # its "." must stay as it is now (mode, owner, ACL, system attributes,
-    # attribute files), as stock restic and rustic leave it; its times may
-    # only move forward (the restore replaces sub's symlink in it).
+    # attribute files), as stock restic and rustic leave it; its mtime may
+    # only move forward (the restore replaces sub's symlink in it), and
+    # with atime off, its atime must not move at all.
     echo "== restore over an existing, changed tree"
     find $DST ! -type l -exec /usr/bin/chmod S-v'{immutable,appendonly,nounlink,readonly,av_quarantined}' {} \; 2>/dev/null
     runat $DST/xattrs rm note
@@ -384,7 +385,7 @@ if [ -z "$again" ]; then
     [ $status -eq 0 ] || failed="$failed; restore over an existing tree"
     t=". kept as it was by the restore over an existing tree (not a fresh target, as stock)"
     echo "== $t"
-    rt_dot_check /tmp/bko-rt.dot.before /tmp/bko-rt.dot.after forward &&
+    rt_dot_check /tmp/bko-rt.dot.before /tmp/bko-rt.dot.after forward-mtime &&
         echo "kept ($(wc -l </tmp/bko-rt.dot.before | tr -d ' ') lines)" || failed="$failed; $t"
     t="what the replaced directory's symlink pointed to, untouched"
     echo "== $t"

@@ -38,11 +38,25 @@
 # Reservations live in /mnt/bko-ram/.reserve, shared by every cmp-run.sh on
 # the host. Nothing new starts while the CPU is over HOT_C (default 95) or an
 # NVMe over NVME_C (default 75).
+#
+# First come, first served: a --reserve, or a worker whose queue's first line
+# doesn't fit, that has to wait takes a place in line (/mnt/bko-ram/.reserve.wait,
+# PID DISK MEM HOT_C WHAT...), and room is offered to it only after what everyone
+# before it in line asks for. So a big job isn't starved by small ones that
+# keep taking the room it waits for; it costs the small ones a wait. A worker
+# waits with its queue's first line's needs, updated as the queue changes (it
+# leaves the line when it can't get them: no queue host, needs this host never
+# meets), and takes any line that fits beside the ones before it. Only needs
+# that the room could meet once every job in the ledger has ended are held
+# back for: room taken outside the ledger (vm-update, another session's RAM
+# work, leftovers) can't make one waiter hold up the host. The heat limit is
+# the lowest HOT_C of anyone before in line, so jobs behind a waiter that is
+# held back by heat don't keep the CPU hot.
 set -u
 cd ~/backotter-work
-RAM=/mnt/bko-ram LEDGER=/mnt/bko-ram/.reserve
+RAM=/mnt/bko-ram LEDGER=/mnt/bko-ram/.reserve WAITS=/mnt/bko-ram/.reserve.wait
 mountpoint -q $RAM || { echo "no tmpfs at $RAM" >&2; exit 1; }
-touch $LEDGER $LEDGER.lock 2>/dev/null; chmod 666 $LEDGER $LEDGER.lock 2>/dev/null
+touch $LEDGER $LEDGER.lock $WAITS 2>/dev/null; chmod 666 $LEDGER $LEDGER.lock $WAITS 2>/dev/null
 H=$(hostname -s)
 DISKS_DIR=${DISKS_DIR:-/bkoscratch/compare-disks}
 
@@ -82,22 +96,49 @@ budget() {  # -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked)
             printf "%.1f %.1f\n", fl(disk), fl(mem)
         }'
 }
-prune() {  # [PID]: drop rows whose holder is gone, or PID's (ledger locked)
-    local pid rest keep=""
-    while read -r pid rest; do
-        # (A row that isn't PID first is junk: "." would pass as /proc/.)
-        [[ $pid =~ ^[0-9]+$ ]] && [ -d /proc/$pid ] && [ "$pid" != "${1:-}" ] && keep+="$pid $rest"$'\n'
-    done <$LEDGER
-    printf '%s' "$keep" >$LEDGER
+prune() {  # [PID]: drop rows (ledger and line) whose holder is gone, or PID's (ledger locked)
+    local f pid rest keep
+    for f in $LEDGER $WAITS; do
+        keep=""
+        while read -r pid rest; do
+            # (A row that isn't PID first is junk: "." would pass as /proc/.)
+            [[ $pid =~ ^[0-9]+$ ]] && [ -d /proc/$pid ] && [ "$pid" != "${1:-}" ] && keep+="$pid $rest"$'\n'
+        done <$f
+        printf '%s' "$keep" >$f
+    done
 }
+after_line() {  # PID MAXDISK MAXMEM -> "DISK MEM AHEAD HOT_C": the room left once
+    # everyone before PID in line (everyone, if PID isn't in it) has had theirs,
+    # how many they are, and the heat limit (ledger locked). A need held back
+    # for must fit in MAXDISK/MAXMEM plus what the ledger's jobs hold.
+    # (In tenths of a GiB: the figures come rounded to them.)
+    awk -v me="$1" -v d="$2" -v m="$3" -v hot="${HOT_C:-95}" -v ledger=$LEDGER '
+        function t(x) { return int(x * 10 + (x < 0 ? -0.5 : 0.5)) }
+        BEGIN { d = t(d); m = t(m); pd = d; pm = m
+                while ((getline l < ledger) > 0) { split(l, f, " "); pd += t(f[2]); pm += t(f[3]) } }
+        $1 == me { exit }
+        { n++; if ($4 + 0 > 0 && $4 + 0 < hot + 0) hot = $4 + 0
+          if (t($2) <= pd && t($3) <= pm) { d -= t($2); m -= t($3) } }
+        END { printf "%.1f %.1f %d %d\n", d / 10, m / 10, n, hot }' $WAITS
+}
+queue_up() {  # PID DISK MEM WHAT...: take a place in line, or change the needs at it (ledger locked)
+    local pid=$1 d=$2 m=$3; shift 3
+    if grep -q "^$pid " $WAITS; then
+        awk -v p="$pid" -v d="$d" -v m="$m" '$1 == p { $2 = d; $3 = m } { print }' $WAITS >$WAITS.new &&
+            cat $WAITS.new >$WAITS; rm -f $WAITS.new
+    else
+        echo "$pid $d $m ${HOT_C:-95} $*" >>$WAITS
+    fi
+}
+leave_line() { sed -i "/^$1 /d" $WAITS; }   # PID (ledger locked)
 lock() { exec {lk}>>$LEDGER.lock && flock -w 600 $lk; }
 unlock() { exec {lk}>&-; }
-hot() {  # true while the CPU or an NVMe is too hot to start more
+hot() {  # [HOT_C]: true while the CPU or an NVMe is too hot to start more
     local h n t
     for h in /sys/class/hwmon/hwmon*; do
         n=$(cat $h/name 2>/dev/null) t=$(cat $h/temp1_input 2>/dev/null) || continue
         case $n in
-        k10temp|coretemp) [ "$t" -ge $(( ${HOT_C:-95} * 1000 )) ] && return 0 ;;
+        k10temp|coretemp) [ "$t" -ge $(( ${1:-${HOT_C:-95}} * 1000 )) ] && return 0 ;;
         nvme) [ "$t" -ge $(( ${NVME_C:-75} * 1000 )) ] && return 0 ;;
         esac
     done
@@ -129,9 +170,11 @@ if [ "${1:-}" = --reserve ]; then
     while :; do
         lock || { sleep 30; continue; }
         prune
-        if read -r maxd maxm < <(budget) && fits "$maxd" "$d" "$maxm" "$m"; then
-            echo "$$ $d $m - reserve $*" >>$LEDGER; unlock; break
+        if read -r maxd maxm < <(budget) && read -r maxd maxm _ hotc < <(after_line $$ "$maxd" "$maxm") &&
+                ! hot "$hotc" && fits "$maxd" "$d" "$maxm" "$m"; then
+            echo "$$ $d $m - reserve $*" >>$LEDGER; leave_line $$; unlock; break
         fi
+        queue_up $$ "$d" "$m" reserve "$@"
         unlock; sleep 30
     done
     exec "$@"   # keeps $$, so the reservation lasts as long as CMD
@@ -158,12 +201,14 @@ if [ $# -gt 0 ]; then
 fi
 [ -n "${QUEUE_HOST:-}" ] || [ -e $Q ] || { echo "no $Q" >&2; exit 1; }
 touch cmp-logs/$tag/done
+read -r cd cm < <(ceiling)
 # No TMPDIR: it would reach the commands compare.py runs in a restored guest's
 # chroot (update-initramfs), where /mnt/bko-ram doesn't exist. vm-run picks
 # /mnt/bko-ram by itself.
 E="RESTIC_BKO=$PWD/cmp-bin/restic-bko RUSTIC_BKO=$PWD/cmp-bin/rustic-bko"
 
 pop() {  # MAXDISK MAXMEM -> a queue line that fits; rc 0 got, 1 none fits (or failed), 3 empty
+    # (with 1, cmp-pop.sh prints the first line's "DISK MEM" when it got that far)
     local rc
     if [ -n "${QUEUE_HOST:-}" ]; then
         timeout 90 ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 \
@@ -183,23 +228,39 @@ pop() {  # MAXDISK MAXMEM -> a queue line that fits; rc 0 got, 1 none fits (or f
 log() { echo "$(date -u +%T) $H slot $slot: $*" >>cmp-logs/$tag/progress; }
 
 worker() {  # SLOT
-    local slot=$1 line rc g stick grow ondisk d m lk maxd maxm jp scope args why hi dd waiting="" me=$BASHPID
+    local slot=$1 line rc g stick grow ondisk d m lk maxd maxm ahead hotc jp scope args why hi dd waiting="" me=$BASHPID
     while :; do
-        [ -e cmp-logs/$tag/stop ] && { log "stopped"; return 0; }
+        if [ -e cmp-logs/$tag/stop ]; then
+            if lock; then leave_line $me; unlock; fi
+            log "stopped"; return 0
+        fi
         lock || { log "cannot lock $LEDGER.lock"; sleep 30; continue; }
         prune
         line="" rc=1 why=""
-        if hot; then why="too hot"
-        elif ! read -r maxd maxm < <(budget) || [ -z "$maxm" ]; then why="budget failed"
+        if ! read -r maxd maxm < <(budget) || [ -z "$maxm" ] ||
+                ! read -r maxd maxm ahead hotc < <(after_line $me "$maxd" "$maxm"); then why="budget failed"
+        elif hot "$hotc"; then why="too hot"
         else
             line=$(pop "$maxd" "$maxm"); rc=$?
-            [ $rc = 1 ] && why="nothing fits ${maxd}G RAM disk, ${maxm}G memory"
+            if [ $rc = 1 ]; then
+                why="nothing fits ${maxd}G RAM disk, ${maxm}G memory"
+                [ "$ahead" -gt 0 ] && why+=" after $ahead before it in line"
+                # In line with the first line's needs, if this host can ever meet
+                # them; out of it when it can't, or got no needs (ssh, lock).
+                if [[ $line =~ ^[0-9.]+\ [0-9.]+$ ]] && fits "$cd" "${line% *}" "$cm" "${line#* }"; then
+                    queue_up $me ${line% *} ${line#* } "$tag slot $slot"
+                else
+                    leave_line $me
+                fi
+            fi
         fi
         if [ $rc = 0 ] && [ -n "$line" ]; then
             parse "$line"
             scope=bko-$tag-$slot-$(date +%s).scope
             echo "$me $d $m $scope $tag $line" >>$LEDGER
+            leave_line $me
         fi
+        [ $rc = 3 ] && leave_line $me
         unlock
         [ $rc = 3 ] && return 0
         if [ $rc != 0 ] || [ -z "$line" ]; then

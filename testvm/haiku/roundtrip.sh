@@ -12,9 +12,10 @@
 # Usage: roundtrip.sh RUSTIC_BKO [PORT]
 #   e.g. roundtrip.sh ~/backotter-work/bko-bin/haiku/rustic-bko
 #
-# RUSTIC_BKO is rustic built for Haiku (stick/haiku/build-rustic.sh).  PORT
-# (default 2431) is the guest's SSH port here.  Exits 1 if anything differs,
-# with the differences.
+# RUSTIC_BKO is rustic built for Haiku (stick/haiku/build-rustic.sh), run
+# with BackOtter's flags: --set-atime yes (real atimes) and --numeric-id
+# (rustic-bko keeps stock rustic's defaults).  PORT (default 2431) is the
+# guest's SSH port here.  Exits 1 if anything differs, with the differences.
 
 set -euo pipefail
 
@@ -72,13 +73,13 @@ export TZ=UTC0
 python3 attrs.py make src
 python3 attrs.py dump src >src.json
 ./rustic init >init.log 2>&1 || { cat init.log; exit 1; }
-./rustic backup "$HOME/rt/src" >backup.log 2>&1 || { cat backup.log; exit 1; }
+./rustic backup --set-atime yes "$HOME/rt/src" >backup.log 2>&1 || { cat backup.log; exit 1; }
 grep -i warn backup.log || true
-./rustic restore "latest:$HOME/rt/src" dst >restore1.log 2>&1 || { cat restore1.log; exit 1; }
+./rustic restore --numeric-id "latest:$HOME/rt/src" dst >restore1.log 2>&1 || { cat restore1.log; exit 1; }
 grep -i warn restore1.log || true
 python3 attrs.py dump dst >dst1.json
 python3 attrs.py mutate dst
-./rustic restore "latest:$HOME/rt/src" dst >restore2.log 2>&1 || { cat restore2.log; exit 1; }
+./rustic restore --numeric-id "latest:$HOME/rt/src" dst >restore2.log 2>&1 || { cat restore2.log; exit 1; }
 grep -i warn restore2.log || true
 python3 attrs.py dump dst >dst2.json
 EOF

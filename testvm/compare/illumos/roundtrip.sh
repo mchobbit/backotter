@@ -49,8 +49,9 @@ PATH=/usr/gnu/bin:$PATH   # GNU stat and touch, for nanoseconds and symlinks
 export LC_ALL=C           # file names that aren't UTF-8 sort too
 try() { "$@" 2>/dev/null || echo "roundtrip: skipped (unsupported here): $*" >&2; }
 # Back up with $R, restore with $RR.  BackOtter's rustic (a binary named
-# *rustic*) takes the same repository as restic, with its own options: the
-# real atime, as restic keeps it, and numeric ids, as restic restores them.
+# *rustic*) takes the same repository as restic.  BackOtter's flags (both
+# forks keep stock's defaults): the real atime (restic --with-atime, rustic
+# --set-atime yes) and numeric ids (rustic --numeric-id; restic's default).
 export RUSTIC_PASSWORD=$RESTIC_PASSWORD RUSTIC_REPOSITORY=$RESTIC_REPOSITORY
 is_rustic() { case $(basename "$1") in *rustic*) true ;; *) false ;; esac; }
 bko_init() {
@@ -66,7 +67,7 @@ keep_msgs() {  # COMMAND...
 }
 bko_backup() {
     if is_rustic $R; then keep_msgs $R --no-progress --no-cache backup --set-atime yes "$@" >/dev/null
-    else keep_msgs $R backup -q "$@"; fi
+    else keep_msgs $R backup -q --with-atime "$@"; fi
 }
 bko_restore() {
     if is_rustic $RR; then keep_msgs $RR --no-progress --no-cache restore --numeric-id --sparse by-content "$1" "$2"

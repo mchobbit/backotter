@@ -353,7 +353,7 @@ for b in restic rustic; do
         $RUSTIC --no-progress --no-cache -r $repo init >/dev/null 2>&1 &&
             $RUSTIC --no-progress --no-cache -r $repo backup --set-atime yes $SRC >/dev/null 2>$OUT/backup-$b.msgs
     else
-        $RESTIC -r $repo init -q && $RESTIC -r $repo backup -q $SRC 2>$OUT/backup-$b.msgs
+        $RESTIC -r $repo init -q && $RESTIC -r $repo backup -q --with-atime $SRC 2>$OUT/backup-$b.msgs
     fi
     echo "== backup with $b as root: exit $?"
     grep -v -e 'failed to get system time zone' -e '^\[INFO\]' $OUT/backup-$b.msgs | sed 's/^/  /'

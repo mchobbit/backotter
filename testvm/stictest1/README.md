@@ -29,6 +29,9 @@ Real examples are copied from the guest's own files. Each check then:
 
 The user's decisions:
 
+- Every backup and restore passes BackOtter's flags, as BackOtter does (the
+  forks keep their upstream's defaults): `restic-bko backup --with-atime`,
+  `rustic-bko backup --set-atime yes`, `rustic-bko restore --numeric-id`.
 - The tools behave identically. Accepted differences are listed in each fork's
   BACKOTTER.md.
 - Both tools skip sockets.

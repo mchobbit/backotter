@@ -60,12 +60,12 @@ for t in restic rustic; do
     b=$BIN/$t-bko
     if [[ $t == rustic ]]; then
         sudo env RUSTIC_PASSWORD=x "$b" --no-progress --no-cache -r "$H/repo-$t" init >/dev/null 2>"$LOGS/host-$t.err" &&
-            sudo env RUSTIC_PASSWORD=x "$b" --no-progress --no-cache -r "$H/repo-$t" backup "$H/src" >/dev/null 2>>"$LOGS/host-$t.err"
+            sudo env RUSTIC_PASSWORD=x "$b" --no-progress --no-cache -r "$H/repo-$t" backup --set-atime yes "$H/src" >/dev/null 2>>"$LOGS/host-$t.err"
         st=$?
         [[ $st -eq 0 ]] && { sudo env RUSTIC_PASSWORD=x "$b" --no-progress --no-cache -r "$H/repo-$t" restore --numeric-id latest:"$H/src" "$H/dst-$t" 2>>"$LOGS/host-$t.err"; st=$?; }
     else
         sudo env RESTIC_PASSWORD=x "$b" -r "$H/repo-$t" init -q 2>"$LOGS/host-$t.err" &&
-            sudo env RESTIC_PASSWORD=x "$b" -r "$H/repo-$t" --no-cache backup -q "$H/src" 2>>"$LOGS/host-$t.err"
+            sudo env RESTIC_PASSWORD=x "$b" -r "$H/repo-$t" --no-cache backup -q --with-atime "$H/src" 2>>"$LOGS/host-$t.err"
         st=$?
         [[ $st -eq 0 ]] && { sudo env RESTIC_PASSWORD=x "$b" -r "$H/repo-$t" --no-cache restore -q latest:"$H/src" --target "$H/dst-$t" 2>>"$LOGS/host-$t.err"; st=$?; }
     fi

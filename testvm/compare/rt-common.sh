@@ -6,7 +6,10 @@
 #
 #   rt_backup BIN REPO PATH...
 #             init REPO and back PATH... up with BIN (restic or BackOtter's
-#             rustic, by its name), as the round trips do; stderr shown
+#             rustic, by its name), as the round trips do, with BackOtter's
+#             flags (real atimes: restic --with-atime, rustic --set-atime
+#             yes; both forks keep stock's mtime-as-atime default); stderr
+#             shown
 #   rt_restic BIN...
 #             the restic among BIN... (by its name), else restic-bko in the
 #             directory of the first: run-guest-rt.sh puts both tools in
@@ -18,8 +21,9 @@
 #             "." for PATH itself, then relative paths), keys sorted, the
 #             values canonical: object keys sorted, times as @SEC.NSEC in
 #             UTC (restic writes "Z", rustic "+00:00", and either may drop a
-#             zero fraction), null taken as absent; extended attributes
-#             sorted by name, their stored order in the extra key
+#             zero fraction), null taken as absent, as is a mode of 0
+#             (rustic-bko writes "mode":0, restic leaves it out); extended
+#             attributes sorted by name, their stored order in the extra key
 #             xattr_names (compared: both tools store them sorted by name
 #             on every OS but Windows, AUDIT-R6 N4).  Leaves out content and
 #             subtree (each repository chunks on its own) and device_id
@@ -93,7 +97,7 @@ rt_backup() {  # BIN REPO PATH...
         return $rt_s
     else
         RESTIC_PASSWORD=backotter-compare $rt_b -r $rt_r init -q &&
-            RESTIC_PASSWORD=backotter-compare $rt_b -r $rt_r backup -q "$@"
+            RESTIC_PASSWORD=backotter-compare $rt_b -r $rt_r backup -q --with-atime "$@"
     fi
 }
 
@@ -202,6 +206,7 @@ END {
             if (k == "\"subtree\"") subtree = substr(v, 2, length(v) - 2)
             if (k == "\"content\"" && keepcontent != "" && v != "null") { nk[++cnt] = "content"; nv["content"] = v; continue }
             if (v == "null" || k == "\"name\"" || k == "\"subtree\"" || k == "\"content\"" || k == "\"device_id\"") continue
+            if (k == "\"mode\"" && v == "0") continue    # rustic writes 0, restic leaves it out
             nk[++cnt] = substr(k, 2, length(k) - 2); nv[nk[cnt]] = v
         }
         sortarr(nk, cnt)

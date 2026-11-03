@@ -25,8 +25,9 @@ SRC=vtbd1 DST=vtbd2
 OUT=/root/results
 export RESTIC_PASSWORD=backotter-compare RESTIC_REPOSITORY=/root/repo
 # Back up with $R, restore with $RR.  BackOtter's rustic (a binary named
-# *rustic*) takes the same repository as restic, with its own options: the
-# real atime, as restic keeps it, and numeric ids, as restic restores them.
+# *rustic*) takes the same repository as restic.  BackOtter's flags (both
+# forks keep stock's defaults): the real atime (restic --with-atime, rustic
+# --set-atime yes) and numeric ids (rustic --numeric-id; restic's default).
 export RUSTIC_PASSWORD=$RESTIC_PASSWORD RUSTIC_REPOSITORY=$RESTIC_REPOSITORY
 is_rustic() { case $(basename "$1") in *rustic*) true ;; *) false ;; esac; }
 bko_init() {
@@ -34,7 +35,7 @@ bko_init() {
 }
 bko_backup() {
     if is_rustic $R; then $R --no-progress --no-cache backup --set-atime yes "$@" >/dev/null
-    else $R backup -q "$@"; fi
+    else $R backup -q --with-atime "$@"; fi
 }
 bko_restore() {
     if is_rustic $RR; then $RR --no-progress --no-cache restore --numeric-id --sparse by-content "$1" "$2"

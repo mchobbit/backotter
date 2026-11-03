@@ -1038,13 +1038,18 @@ def backup(tool: str, work: Path, excludes: list[str]) -> None:
     env = dict(os.environ, RESTIC_PASSWORD=PASSWORD, RUSTIC_PASSWORD=PASSWORD, BORG_PASSPHRASE=PASSWORD)
     if tool in ("restic", "restic-bko"):
         run([restic_exe(tool), "-r", str(repo), "init", "-q"], env=env)
+        # BackOtter's flags: the real atime (--with-atime; the forks keep
+        # stock's default, the mtime as the atime).  Stock restic as stock.
         run([restic_exe(tool), "-r", str(repo), "backup", "-q"]
+            + (["--with-atime"] if tool == "restic-bko" else [])
             + [a for e in excludes for a in ("--exclude", glob_escape(e))] + [str(SRC_MP)], env=env)
     elif tool == "rustic-bko":
-        # BackOtter's defaults: the real atime (stock rustic keeps the mtime).
+        # BackOtter's flags: the real atime (rustic-bko keeps stock rustic's
+        # default, the mtime as the atime).
         rustic = [rustic_exe(), "-r", str(repo), "--no-progress", "--no-cache"]
         run(rustic + ["init"], env=env)
-        run(rustic + ["backup"] + [a for e in excludes for a in ("--glob", "!" + glob_escape(e))]
+        run(rustic + ["backup", "--set-atime", "yes"]
+            + [a for e in excludes for a in ("--glob", "!" + glob_escape(e))]
             + [str(SRC_MP)], env=env)
     elif tool == "borg":
         run(["borg", "init", "-e", "repokey-blake2", str(repo)], env=env)
@@ -1077,8 +1082,10 @@ def restore(tool: str, work: Path) -> None:
         run([restic_exe(tool), "-r", str(repo), "restore", "-q",
              f"latest:{SRC_MP}", "--target", str(DST_MP)], env=env)
     elif tool == "rustic-bko":
-        # BackOtter's defaults: holes where there were holes, numeric ids.
-        run([rustic_exe(), "-r", str(repo), "--no-progress", "--no-cache", "restore",
+        # BackOtter's defaults: holes where there were holes.  Its flags:
+        # numeric ids (--numeric-id; rustic-bko maps names by default, as
+        # stock rustic does).
+        run([rustic_exe(), "-r", str(repo), "--no-progress", "--no-cache", "restore", "--numeric-id",
              f"latest:{SRC_MP}", str(DST_MP)], env=env)
     elif tool == "borg":
         run(["borg", "extract", "--numeric-ids", "--sparse", f"{repo}::backup"], env=env, cwd=DST_MP)

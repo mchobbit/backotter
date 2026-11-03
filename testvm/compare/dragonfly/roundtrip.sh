@@ -41,8 +41,9 @@ export RESTIC_PASSWORD=backotter-compare RESTIC_REPOSITORY=/root/bko-rt-repo
 export LC_ALL=C           # file names that aren't UTF-8 sort too
 try() { "$@" 2>/dev/null || echo "roundtrip: skipped (unsupported here): $*" >&2; }
 # Back up with $R, restore with $RR.  BackOtter's rustic (a binary named
-# *rustic*) takes the same repository as restic, with its own options: the
-# real atime, as restic keeps it, and numeric ids, as restic restores them.
+# *rustic*) takes the same repository as restic.  BackOtter's flags (both
+# forks keep stock's defaults): the real atime (restic --with-atime, rustic
+# --set-atime yes) and numeric ids (rustic --numeric-id; restic's default).
 export RUSTIC_PASSWORD=$RESTIC_PASSWORD RUSTIC_REPOSITORY=$RESTIC_REPOSITORY
 is_rustic() { case $(basename "$1") in *rustic*) true ;; *) false ;; esac; }
 # rustic's stderr is kept too (in /tmp/bko-rt.rustic-stderr, one run after
@@ -70,7 +71,7 @@ bko_init() {
 }
 bko_backup() {
     if is_rustic $R; then run_rustic $R backup --set-atime yes "$@" >/dev/null
-    else run_restic $R backup -q "$@"; fi
+    else run_restic $R backup -q --with-atime "$@"; fi
 }
 bko_restore() {
     if is_rustic $RR; then run_rustic $RR restore --numeric-id --sparse by-content "$1" "$2"

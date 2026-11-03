@@ -195,8 +195,8 @@ echo hello >\$S/src/a && ln -s a \$S/src/l && mkfifo \$S/src/f && echo x >\$S/sr
     chmod 640 \$S/src/a || exit 1
 \$R --version && ldd \$R || exit 1
 \$R -r \$S/repo init >/dev/null 2>&1 &&
-    \$R -r \$S/repo backup \$S/src >\$S/backup.log 2>&1 &&
-    \$R -r \$S/repo restore latest:\$S/src \$S/dst >\$S/restore.log 2>&1 || { cat \$S/*.log; exit 1; }
+    \$R -r \$S/repo backup --set-atime yes \$S/src >\$S/backup.log 2>&1 &&
+    \$R -r \$S/repo restore --numeric-id latest:\$S/src \$S/dst >\$S/restore.log 2>&1 || { cat \$S/*.log; exit 1; }
 diff -r \$S/src/d \$S/dst/d && test -p \$S/dst/f && test -L \$S/dst/l && echo SMOKE-OK") || true
 echo "$smoke"
 [[ $smoke == *SMOKE-OK* ]] || die "the smoke test failed in $VM"

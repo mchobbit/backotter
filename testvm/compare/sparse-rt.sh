@@ -720,7 +720,7 @@ backup() {
     if rt_is_rustic $b; then
         $H run "$OUT/io.$l" $b --no-progress --no-cache -r $r backup --set-atime yes "$@" >/dev/null 2>$W/tmp/err
     else
-        $H run "$OUT/io.$l" $b -r $r --no-cache backup -q "$@" >/dev/null 2>$W/tmp/err
+        $H run "$OUT/io.$l" $b -r $r --no-cache backup -q --with-atime "$@" >/dev/null 2>$W/tmp/err
     fi
     s=$?; grep -v -e '^\[INFO\]' -e 'failed to get system time zone' $W/tmp/err; return $s
 }

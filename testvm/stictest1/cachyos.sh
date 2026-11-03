@@ -210,7 +210,7 @@ report_diff() {  # CONTEXT DIFFFILE
 nosock() { awk -F '\t' '$2 != "s"' "$1"; }
 restore_() {  # TOOL REPO TARGET LOG
     if rt_is_rustic $1; then
-        RUSTIC_PASSWORD=backotter-compare $1 --no-progress --no-cache -r $2 restore latest $3 >$4 2>&1
+        RUSTIC_PASSWORD=backotter-compare $1 --no-progress --no-cache -r $2 restore --numeric-id latest $3 >$4 2>&1
     else
         RESTIC_PASSWORD=backotter-compare $1 -r $2 --no-cache restore -q latest --target $3 >$4 2>&1
     fi

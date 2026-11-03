@@ -345,7 +345,8 @@ def restore(tool: str, work: Path) -> dict:
     if restorer == "restic-bko":
         cmd = [compare.restic_exe(restorer), "-r", repo, "restore", f"latest:{SRC}", "--target", str(DST)]
     else:
-        cmd = [compare.rustic_exe(), "-r", repo, "--no-progress", "--no-cache", "restore",
+        # --numeric-id: BackOtter's (rustic-bko maps names by default).
+        cmd = [compare.rustic_exe(), "-r", repo, "--no-progress", "--no-cache", "restore", "--numeric-id",
                f"latest:{SRC}", str(DST)]
     r = run(cmd, check=False, env=env())
     return {"exit": r.returncode, "messages": messages(r)[:40], "stderr_tail": r.stderr[-1500:]}
@@ -490,9 +491,11 @@ def identity(work: Path, old_restic: str) -> dict:
     shutil.copytree(work / "restic-bko", repo)
     restic = compare.restic_exe("restic-bko")
     res: dict = {"old_restic": old_restic, "failures": []}
+    # old_restic as it is (its own defaults: it may predate --with-atime);
+    # rustic-bko with BackOtter's --set-atime yes, as compare.backup().
     for tag, cmd in (("bko-old", [old_restic, "-r", str(repo), "backup", "-q", "--force"]),
                      ("bko-rustic", [compare.rustic_exe(), "-r", str(repo), "--no-progress", "--no-cache",
-                                     "backup", "--force"])):
+                                     "backup", "--set-atime", "yes", "--force"])):
         r = run(cmd + ["--tag", tag, str(SRC)], check=False, env=env())
         res[f"{tag} exit"] = r.returncode
         if r.returncode:
@@ -554,6 +557,10 @@ def node_differences(a: dict[str, dict], b: dict[str, dict], reset: set[str] = f
             va, vb = na.get(k), nb.get(k)
             if k in ("atime", "mtime", "ctime"):
                 va, vb = norm_time(va), norm_time(vb)
+            elif k == "mode":
+                # rustic-bko writes a mode of 0 ("mode": 0), restic leaves
+                # it out (omitempty): the same mode.
+                va, vb = va or 0, vb or 0
             if va != vb:
                 out.setdefault(k, []).append(f"{p}: {json.dumps(na.get(k))[:160]} != {json.dumps(nb.get(k))[:160]}")
     return out

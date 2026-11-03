@@ -86,7 +86,7 @@ mkfs_dst() {  # NAME -> mounts a fresh ext2 like GENODE at $SCR/NAME
 python3 "$C/fsmeta.py" record $S $SCR/before.json
 echo "source: $(find $S | wc -l) entries; $(getfattr -R -d -m - --absolute-names $S 2>/dev/null | grep -c '^[a-z]') xattrs; flags: $(lsattr -Ra $S 2>/dev/null | awk '{print $1}' | sort | uniq -c | tr '\n' ' ')"
 mkdir -p $SCR/repos
-"$RESTIC" -r $SCR/repos/restic init -q && "$RESTIC" -r $SCR/repos/restic backup -q $S; rc1=$?
+"$RESTIC" -r $SCR/repos/restic init -q && "$RESTIC" -r $SCR/repos/restic backup -q --with-atime $S; rc1=$?
 "$RUSTIC" --no-progress --no-cache -r $SCR/repos/rustic init >/dev/null && "$RUSTIC" --no-progress --no-cache -r $SCR/repos/rustic backup --set-atime yes $S >/dev/null; rc2=$?
 [[ $rc1 == 0 ]] && ck "backup exits 0 (offline, GENODE ext2)" PASS "restic" || ck "backup exits 0 (offline, GENODE ext2)" FAIL "restic exit $rc1"
 [[ $rc2 == 0 ]] && ck "backup exits 0 (offline, GENODE ext2)" PASS "rustic" || ck "backup exits 0 (offline, GENODE ext2)" FAIL "rustic exit $rc2"
@@ -99,7 +99,7 @@ else ck "same repository format (node-identical snapshots)" FAIL "can't decode t
 
 restore() {  # TOOL REPO DST
     if [[ $1 == restic ]]; then "$RESTIC" -r $2 restore latest --target $3 -q
-    else "$RUSTIC" --no-progress --no-cache -r $2 restore latest $3 >/dev/null; fi
+    else "$RUSTIC" --no-progress --no-cache -r $2 restore --numeric-id latest $3 >/dev/null; fi
 }
 cmp_tree() {  # LABEL DIR
     python3 "$C/fsmeta.py" record $2$S $SCR/after.json

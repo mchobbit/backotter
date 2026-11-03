@@ -4,6 +4,16 @@ What restic, BackOtter's restic (restic-bko) and BackOtter's rustic
 (rustic-bko) keep of a file's metadata, checked on the test guests that
 `testvm/make-*.sh` make, on the KVM test hosts.
 
+Both forks keep their upstream's defaults (atime stored as the mtime;
+rustic-bko maps owners by name), so every script here, like BackOtter
+itself, runs them with BackOtter's flags: `restic-bko backup --with-atime`,
+`rustic-bko backup --set-atime yes`, `rustic-bko restore --numeric-id`
+(`docs/design/archiver-flags.md`).  Stock restic and the older builds that
+`fs_roundtrip.py`, `compare.py` and `sparse-rt.sh` run beside them get only
+flags they accept.  A node's mode of 0 is the same whether written
+(`"mode": 0`, rustic-bko) or left out (restic): `rt_nodes` and
+`fs_roundtrip.py` compare them so.
+
 ## Scripts
 
 Here, in `testvm/compare/`:

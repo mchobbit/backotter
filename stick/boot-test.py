@@ -34,7 +34,7 @@ import tempfile
 import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-PLATFORMS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos")
+PLATFORMS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "haiku")
 OVMF = "/usr/share/OVMF"
 FIRMWARE = {
     "uefi-secureboot": ("OVMF_CODE_4M.secboot.fd", "OVMF_VARS_4M.ms.fd"),
@@ -55,6 +55,8 @@ USB_CONTROLLER = {"dragonfly": "usb-ehci", "freebsd": "usb-ehci"}
 # speed of its own, and DragonFly's sio buffers only a few dozen characters
 # between interrupts at the 9600 baud it runs at.
 TYPING_RATE = {"dragonfly": 960}
+# How the checks end, where "shutdown -p now" doesn't power off.
+POWEROFF = {"linux": "poweroff", "illumos": "poweroff", "haiku": "shutdown -q"}
 # Set by the casper.conf inside the server ISO's initrd (the installer layer's
 # /etc/casper.conf says "ubuntu", but that copy isn't the one casper reads).
 LIVE_USER = "ubuntu-server"
@@ -206,8 +208,9 @@ def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: 
             for name, status, detail in results:
                 all_ok &= status == b"ok"
                 print(f"  {status.decode():4} {name.decode():20} {detail.decode(errors='replace').strip()}")
-            # OpenBSD has no poweroff; Linux's and illumos' shutdown have no -p.
-            con.send(("poweroff" if platform in ("linux", "illumos") else "shutdown -p now") + "\n")
+            # OpenBSD has no poweroff; Linux's, illumos' and Haiku's shutdown
+            # have no -p (Haiku's -q: without asking the desktop's applications).
+            con.send(POWEROFF.get(platform, "shutdown -p now") + "\n")
             try:
                 proc.wait(timeout=60)
             except subprocess.TimeoutExpired:

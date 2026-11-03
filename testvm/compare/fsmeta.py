@@ -219,6 +219,8 @@ def record(root: str, skip: list[str] = ()) -> dict[str, dict]:
             if kind == "file":
                 e["size"] = st.st_size
                 e["blocks"] = st.st_blocks
+                if st.st_dev in zfs:
+                    e["zfs"] = True             # its st_blocks isn't its allocation
                 e["sha256"], e["holes"], e["hole_blocks"] = content(path, st, st.st_dev not in no_seek_hole)
             elif kind == "symlink":
                 e["target"] = os.readlink(path)
@@ -288,8 +290,11 @@ def differences(before: dict[str, dict], after: dict[str, dict]) -> dict[str, li
                 note("holes gained", path)
             # Fully allocated before (a swap file, a preallocated file), not
             # after: swapon refuses such a file even where SEEK_HOLE finds no
-            # hole.
-            if ("blocks" in b and "blocks" in a and b["size"] > 0
+            # hole. Not on ZFS, where st_blocks counts what compression left
+            # and is a guess until the write is committed (debian13-zfs's
+            # restores gave one 1274-byte file 10 blocks, or 2); Linux takes
+            # no swap file there anyway.
+            if ("blocks" in b and "blocks" in a and b["size"] > 0 and not a.get("zfs")
                     and b["blocks"] * 512 >= b["size"] and a["blocks"] * 512 < a["size"]):
                 note("allocation lost", path)
         if b.get("target") != a.get("target"):

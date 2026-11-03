@@ -35,7 +35,7 @@ import uuid
 CONFIG_SECTORS = 65536          # 32 MiB; FAT32 would need more than that
 CONFIG_LABEL = "BACKOTTER"
 SYSTEM_SCHEMAS = [1]            # system.json schemas the stick can read
-PLATFORMS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos")
+PLATFORMS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "haiku")
 HERE = os.path.dirname(os.path.abspath(__file__))
 
 

@@ -1,0 +1,41 @@
+#!/bin/bash
+# BackOtter rescue stick, Haiku: launch_daemon runs this at every boot
+# (system/settings/launch/backotter), as uid 0, once the registrar is up.
+#
+#   boot         forget the last boot's remote access, then run BackOtter's
+#                console on the first serial port, again whenever it exits,
+#                as getty does on the BSD images (through on-serial.py)
+#   boot reset   only forget
+#
+# Haiku mounts the stick's BFS read-write (its kernel uses a write overlay
+# only on read-only media), so what remote-access did is still there after a
+# reboot: the "backotter" user and its password, user's password, sshd's
+# host keys and the console's note.  On the other images a reboot loses them
+# with the RAM they were in.  The stick's first boot makes host keys too:
+# package_daemon runs every package's first-boot script once, openssh's
+# sshd_keymaker.sh among them.  Those are that boot's own, unique to the
+# stick, and gone at the next boot.  /tmp/backotter-booted (/tmp is emptied
+# at every boot) says when this ran.
+#
+# The serial port is /dev/ports/pc_serial0 because the kernel's log isn't on
+# it (serial_debug_output false, Haiku's default): pc_serial leaves out the
+# kernel's port.  A machine without COM1 has no such device.
+
+PATH=/bin:/boot/system/bin:/boot/system/non-packaged/bin
+here=/boot/system/non-packaged/lib/backotter
+tty=/dev/ports/pc_serial0
+
+[ "${1:-}" = reset ] || touch /tmp/backotter-booted
+
+if id backotter >/dev/null 2>&1; then userdel backotter; fi
+rm -rf /boot/system/var/backotter-home
+passwd -d user >/dev/null 2>&1
+rm -f /boot/system/settings/ssh/ssh_host_*
+rm -rf /boot/system/var/run/backotter
+[ "${1:-}" = reset ] && exit 0
+
+[ -c $tty ] || exit 0
+# Haiku's serial ports stay raw whatever stty says: on-serial.py runs the
+# console on a pseudo-terminal and copies between it and the port.
+stty 115200 <$tty
+exec /bin/python3 $here/on-serial.py $tty /bin/bash $here/console

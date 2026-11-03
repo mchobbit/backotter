@@ -1,0 +1,54 @@
+#!/bin/bash
+# BackOtter rescue stick, Haiku: the console.  The same placeholder as the
+# other images' console, for Haiku: in a Terminal window on the desktop (the
+# UserBootscript opens it) and on the first serial port (haiku/boot runs it
+# there, again whenever it exits).  Every process on Haiku is uid 0's.
+
+PATH=/bin:/boot/system/bin:/boot/system/non-packaged/bin:/boot/system/apps
+HOME=/boot/home
+: "${TERM:=vt100}"
+export PATH HOME TERM
+here=/boot/system/non-packaged/lib/backotter
+note=/boot/system/var/run/backotter/remote-access
+
+# Each disk's raw device (/dev/disk/usb/0/0/raw, /dev/disk/nvme/0/raw, ...),
+# not file-backed ones.
+disks() { find /dev/disk -name raw 2>/dev/null | grep -v '^/dev/disk/virtual/' | sort; }
+
+show_status() {
+    echo "BackOtter rescue stick (placeholder console) on $(hostname)"
+    echo
+    echo "Network:"
+    # Haiku's ifconfig: the interface at a line's start, then
+    # "inet addr: ADDR, Bcast: ..." indented.
+    ifconfig 2>/dev/null | awk '/^[^ \t]/ { i = $1 } $1 == "inet" && $2 == "addr:" { a = $3; sub(",", "", a); if (a !~ /^127\./) print "  " i " " a }' |
+        grep . || echo "  no IPv4 address yet"
+    echo
+    echo "Disks:"
+    disks | sed 's/^/  /' | grep . || echo "  none found"
+    if [ -s $note ]; then
+        echo
+        cat $note
+    fi
+    echo
+}
+
+while :; do
+    clear 2>/dev/null
+    show_status
+    echo "  1) Shell"
+    echo "  2) Allow remote access (SSH)"
+    echo "  3) Reboot"
+    echo "  4) Power off"
+    echo
+    printf 'Choose [1-4]: '
+    # No terminal to read from: let the boot job start a fresh one.
+    read -r choice || exit 0
+    case $choice in
+        1) /bin/bash -l ;;
+        2) "$here/remote-access"; printf 'Press Enter to continue. '; read -r _ ;;
+        # -q: at once, without asking the desktop's applications.
+        3) shutdown -r -q ;;
+        4) shutdown -q ;;
+    esac
+done

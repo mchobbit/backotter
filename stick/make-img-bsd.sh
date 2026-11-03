@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # Make BackOtter's rescue image for a BSD (FreeBSD, NetBSD, OpenBSD or
-# DragonFly) or illumos.  The image is built inside a VM of that system, since
-# only it has the tools for its own file systems, partition tables and boot
-# code.
+# DragonFly), illumos or Haiku.  The image is built inside a VM of that
+# system, since only it has the tools for its own file systems, partition
+# tables and boot code.
 #
 # Usage: ./make-img-bsd.sh [--test] PLATFORM [OUT_IMG]
 #
@@ -20,29 +20,34 @@
 #                   boot a throwaway copy, thrown away when done) and
 #                   BUILD_VM_OPTIONS (more vm-run options, an array);
 #                   maybe BUILD_VM_POWEROFF (the command that powers it off,
-#                   by default /sbin/shutdown -p now) and BUILD_FILES (more
-#                   files from stick/PLATFORM/ for in/, an array);
-#                   RUSTIC_REQUIRED=yes if the image must have rustic-bko; and
+#                   by default /sbin/shutdown -p now), BUILD_VM_USER (whom
+#                   to log in as, by default root; Haiku's uid 0 is "user")
+#                   and BUILD_FILES (more files from stick/PLATFORM/ for in/,
+#                   an array; one named like a file from stick/bsd/ replaces
+#                   it); RESTIC_REQUIRED=no if the image may go without
+#                   restic-bko (Haiku has none); RUSTIC_REQUIRED=yes if the
+#                   image must have rustic-bko; and
 #                   defines fetch MEDIA_DIR, which downloads and verifies the
 #                   official media into MEDIA_DIR and sets MEDIA to their names.
-#   build.sh        sh, run as root in the VM, in a fresh directory of its own:
+#   build.sh        sh, run as root (BUILD_VM_USER) in the VM, in a fresh
+#                   directory of its own:
 #                     build.sh info      prints KERNEL=..., and ZFS_VERSION=...
 #                                        with in/zfs-features if the image has
 #                                        ZFS (OpenZFS, or illumos' own)
 #                     build.sh assemble  writes out/image.img from in/
 #                   in/ holds the media, console, remote-access and
 #                   sshd_config.backotter (from stick/bsd/), BUILD_FILES,
-#                   restic-bko and
-#                   rustic-bko (if there is one for this platform, and always
-#                   with RUSTIC_REQUIRED=yes), and for
+#                   restic-bko (unless RESTIC_REQUIRED=no and there is none)
+#                   and rustic-bko (if there is one for this platform, and
+#                   always with RUSTIC_REQUIRED=yes), and for
 #                   assemble also backotter.json and config.img (marker.py's).
 #                   TEST=1 in its environment for --test (shorter boot menus).
 #   checks.sh, config-checks.sh
 #                   boot-test.py --platform PLATFORM's checks.
 #
 # The binaries come from $BKO_BIN/PLATFORM/ (default ~/backotter-work/bko-bin):
-# restic-bko is required, rustic-bko optional unless platform.conf sets
-# RUSTIC_REQUIRED=yes.
+# restic-bko is required unless platform.conf sets RESTIC_REQUIRED=no,
+# rustic-bko optional unless it sets RUSTIC_REQUIRED=yes.
 #
 # Needs: qemu with KVM (vm-run), ssh, python3 3.11 or later, dosfstools,
 # mtools, and what PLATFORM's fetch needs.
@@ -61,8 +66,8 @@ if [[ ${1:-} == --test ]]; then test=1; shift; fi
 PLATFORM=$1 OUT_IMG=${2:-.}
 pdir=$here/$PLATFORM
 [[ -f $pdir/platform.conf && -f $pdir/build.sh ]] || die "no stick/$PLATFORM/{platform.conf,build.sh}"
-BUILD_VM_OPTIONS=() BUILD_FILES=() RUSTIC_REQUIRED=no
-BUILD_VM_POWEROFF='/sbin/shutdown -p now'
+BUILD_VM_OPTIONS=() BUILD_FILES=() RESTIC_REQUIRED=yes RUSTIC_REQUIRED=no
+BUILD_VM_POWEROFF='/sbin/shutdown -p now' BUILD_VM_USER=root
 # shellcheck source=/dev/null
 . "$pdir/platform.conf"
 for v in BASE_OS BASE_RELEASE CONFIG_PART BUILD_VM BUILD_VM_IMAGE BUILD_VM_PORT BUILD_VM_MODE; do
@@ -71,9 +76,11 @@ done
 case $BUILD_VM_MODE in running|snapshot) ;; *) die "BUILD_VM_MODE must be running or snapshot" ;; esac
 vm=$WORK/vms/$BUILD_VM
 [[ -f $vm/$BUILD_VM_IMAGE && -f $vm/id_ed25519 ]] || die "no VM in $vm"
-[[ -x $BKO_BIN/$PLATFORM/restic-bko ]] || die "no $BKO_BIN/$PLATFORM/restic-bko"
+[[ $RESTIC_REQUIRED == no || -x $BKO_BIN/$PLATFORM/restic-bko ]] || die "no $BKO_BIN/$PLATFORM/restic-bko"
 [[ $RUSTIC_REQUIRED != yes || -x $BKO_BIN/$PLATFORM/rustic-bko ]] ||
     die "no $BKO_BIN/$PLATFORM/rustic-bko, and $PLATFORM's image needs it"
+[[ -x $BKO_BIN/$PLATFORM/restic-bko || -x $BKO_BIN/$PLATFORM/rustic-bko ]] ||
+    die "neither restic-bko nor rustic-bko in $BKO_BIN/$PLATFORM"
 
 if [[ -d $OUT_IMG ]]; then
     version=dev.$(date -u +%Y%m%d)
@@ -96,7 +103,7 @@ fetch "$media_dir"
 work=$(mktemp -d)
 started=no
 ssh_cmd=(ssh -q -o BatchMode=yes -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null
-    -o ServerAliveInterval=30 -i "$vm/id_ed25519" -p "$BUILD_VM_PORT" root@127.0.0.1)
+    -o ServerAliveInterval=30 -i "$vm/id_ed25519" -p "$BUILD_VM_PORT" "$BUILD_VM_USER@127.0.0.1")
 # Through sh: root's shell may be csh (DragonFly's is).  Archives are unpacked
 # with cd first: illumos tar's -C names a directory to archive from only.
 ssh_vm() { local sq="'"; local q=${1//$sq/$sq\\$sq$sq}; "${ssh_cmd[@]}" "/bin/sh -c '$q'"; }
@@ -144,7 +151,11 @@ mkdir "$work/in"
 cp "$here/bsd/console" "$here/bsd/remote-access" "$here/bsd/sshd_config.backotter" \
     "$pdir/build.sh" "$work/in/"
 for f in "${BUILD_FILES[@]}"; do cp "$pdir/$f" "$work/in/"; done
-cp "$BKO_BIN/$PLATFORM/restic-bko" "$work/in/"
+if [[ -x $BKO_BIN/$PLATFORM/restic-bko ]]; then
+    cp "$BKO_BIN/$PLATFORM/restic-bko" "$work/in/"
+else
+    echo "make-img-bsd: no restic-bko for $PLATFORM; the image will have rustic-bko only" >&2
+fi
 if [[ -x $BKO_BIN/$PLATFORM/rustic-bko ]]; then
     cp "$BKO_BIN/$PLATFORM/rustic-bko" "$work/in/"
 else

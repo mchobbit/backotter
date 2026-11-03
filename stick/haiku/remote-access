@@ -1,0 +1,75 @@
+#!/bin/bash
+# BackOtter rescue stick, Haiku: turn on remote access over SSH.
+#
+# As on the other images: creates the "backotter" user if needed, gives it a
+# fresh random one-time password, starts sshd (making this boot's host keys
+# first), and prints how to connect, also keeping that in
+# /boot/system/var/run/backotter/remote-access, which the console shows.
+# Haiku has no root: its only user, "user", is uid 0, and gets the same
+# one-time password, for su.  sshd refuses it all the same (the image's
+# sshd_config).  Haiku's registrar keeps the users, so the passwords go
+# through passwd, which reads them from a terminal only: a pseudo-terminal
+# here.  The stick's file system is read-write on Haiku: the boot job
+# (haiku/boot) undoes all this at the next boot.
+
+set -eu
+PATH=/bin:/boot/system/bin
+user=backotter
+home=/boot/system/var/backotter-home
+note=/boot/system/var/run/backotter/remote-access
+
+[ "$(id -u)" -eq 0 ] || { echo "remote-access: must run as uid 0" >&2; exit 1; }
+
+if ! id "$user" >/dev/null 2>&1; then
+    useradd -d "$home" -s /bin/bash -n "BackOtter remote access" "$user"
+fi
+mkdir -p "$home"
+chown "$user" "$home"
+# Four groups of four from 31 characters without look-alikes (no i, l, o, 0,
+# 1): about 79 bits.  tr -dc keeps the bytes that are in the alphabet, so each
+# character is uniform over it.
+s=$(LC_ALL=C tr -dc abcdefghjkmnpqrstuvwxyz23456789 </dev/urandom | dd bs=16 count=1 2>/dev/null)
+[ ${#s} -eq 16 ] || { echo "remote-access: no random password" >&2; exit 1; }
+password=$(echo "$s" | sed 's/\(....\)\(....\)\(....\)\(....\)/\1-\2-\3-\4/')
+for u in "$user" user; do
+    # passwd asks twice ("new password: ", "repeat new password: ").
+    python3 - "$u" "$password" <<'EOF' || { echo "remote-access: passwd $u failed" >&2; exit 1; }
+import os, pty, select, sys
+user, password = sys.argv[1], sys.argv[2]
+pid, fd = pty.fork()
+if pid == 0:
+    os.execv("/bin/passwd", ["passwd", user])
+seen, sent = b"", 0
+while select.select([fd], [], [], 30)[0]:
+    try:
+        chunk = os.read(fd, 1024)
+    except OSError:
+        break
+    if not chunk:
+        break
+    seen += chunk
+    if seen.lower().count(b"password:") > sent:
+        os.write(fd, password.encode() + b"\n")
+        sent += 1
+_, status = os.waitpid(pid, 0)
+sys.exit(0 if status == 0 and sent == 2 else 1)
+EOF
+done
+
+ssh-keygen -A >/dev/null
+# Chosen a second time, sshd is already up: only the passwords change.
+ps | grep -q '/bin/sshd\( \|$\)' || /boot/system/bin/sshd
+
+mkdir -p /boot/system/var/run/backotter
+chmod 700 /boot/system/var/run/backotter
+{
+    echo "Remote access is ON.  Connect with:"
+    ifconfig | awk -v u="$user" '$1 == "inet" && $2 == "addr:" { a = $3; sub(",", "", a); if (a !~ /^127\./) print "  ssh " u "@" a }'
+    echo "Password: $password  (also user's, Haiku's uid 0, for su)"
+    echo "Host key fingerprints (check them on first connection):"
+    for key in /boot/system/settings/ssh/ssh_host_*_key.pub; do
+        echo "  $(ssh-keygen -l -f "$key")"
+    done
+} >$note
+chmod 600 $note
+cat $note

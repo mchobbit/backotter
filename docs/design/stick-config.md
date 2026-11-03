@@ -30,8 +30,9 @@ has two GPT partitions:
 GPT type "Microsoft basic data", so Linux, macOS and Windows all mount it and a
 user can look at the config from any machine.
 
-That's the Linux image.  The BSD and illumos images (`make-img-bsd.sh`, built
-inside a VM of each system, the BSDs' from their official media) carry the
+That's the Linux image.  The BSD, illumos and Haiku images (`make-img-bsd.sh`,
+built inside a VM of each system, the BSDs' and Haiku's from their official
+media) carry the
 same FAT16 partition, made by the same `marker.py`, wherever their own layout
 leaves a slot:
 
@@ -43,9 +44,13 @@ leaves a slot:
 | openbsd   | MBR   | 2 (entry 4 is OpenBSD's own) | FFS in OpenBSD's disklabel |
 | dragonfly | MBR   | slice 3          | UFS in a disklabel64 (slice 2)   |
 | illumos   | GPT   | 4 (illumos slice s3) | UFS RAM disk, loaded from UFS partition 3 |
+| haiku     | MBR   | 3                | BFS (partition 1), **read-write** |
 
-None of the BSD or illumos images boot with Secure Boot on: their EFI loaders
-aren't signed.  The illumos image is OmniOS's own USB layout (ESP, boot,
+None of the BSD, illumos or Haiku images boot with Secure Boot on: their EFI
+loaders aren't signed.  Haiku's root is the one that isn't read-only: Haiku
+puts a write overlay over its boot volume only on read-only media, so its
+image's BFS is mounted read-write, as Haiku's own live USB sticks are (the
+system itself is packagefs, read-only; see stick/haiku/README.md).  The illumos image is OmniOS's own USB layout (ESP, boot,
 root) with the config partition after it; its root is a copy in RAM, so
 nothing on the stick but the config partition is ever mounted.  Below, "the config partition" is that partition whatever its number;
 the marker's `config_partition.number` says which.  Because the partition is
@@ -99,7 +104,7 @@ system.  It's read-only, so it describes the image, not the stick:
 - `image_id` is a fresh UUID per build.  It ties the config partition to the
   image it was built with (see `stick.json`).
 - `platform` is the family of systems the image restores: `linux`,
-  `freebsd`, `netbsd`, `openbsd`, `dragonfly` and `illumos`.  It's the
+  `freebsd`, `netbsd`, `openbsd`, `dragonfly`, `illumos` and `haiku`.  It's the
   same word as in the file name (see "Image file names"), but the backup tool
   reads it from here, since a file can be renamed.  `base` is what the image
   happens to be built from (`ubuntu` 26.04.1, `freebsd` 15.1-RELEASE, ...).
@@ -132,8 +137,8 @@ backotter-live-freebsd-0.1.0-amd64.img
 backotter-live-illumos-0.1.0-amd64.img
 ```
 
-- `platform` is `linux`, `freebsd`, `netbsd`, `openbsd`, `dragonfly` or
-  `illumos`, as in the marker.  One Linux
+- `platform` is `linux`, `freebsd`, `netbsd`, `openbsd`, `dragonfly`,
+  `illumos` or `haiku`, as in the marker.  One Linux
   image covers every Linux distribution, so the name doesn't say which distro
   or Ubuntu release it's built from; the marker does.
 - `version` is BackOtter's, one number for all platforms: the backup tool and
@@ -338,7 +343,9 @@ On the stick, the restore code looks only at the disk it booted from:
    SOURCE, then `lsblk`'s PKNAME, or SOURCE itself if casper mounted the whole
    disk (the hybrid image is valid ISO9660 from sector 0 too).  Its
    `/.disk/backotter.json` gives the config partition's number.  The BSD
-   images find the boot disk from the device their root is mounted from.
+   images find the boot disk from the device their root is mounted from, the
+   Haiku image from the device of `/boot` (its marker is
+   `/boot/.disk/backotter.json`).
    illumos' root is a RAM disk, on no disk: there the boot disk is the one
    whose partition of the marker's number has the marker's size, and whose
    first sector has its FAT label and volume serial (random per build, so a

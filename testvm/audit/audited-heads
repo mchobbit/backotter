@@ -1,0 +1,6 @@
+# The last commit of each BackOtter fork that an audit covered; to-audit.sh
+# prints what came after it, and to-audit.sh --mark moves a line on.
+# NAME BRANCH COMMIT DATE WHAT
+restic backotter d2112d61996d85194c8fe994983ff6cbf4e76218 2026-11-04 fork-harm audit (code and tests vs stock 0.19.1)
+rustic_core backotter 6e8b00983d33f9554f7ac75f5cad3f81608f7f7d 2026-11-04 fork-harm audit (code and tests vs stock 0.13.0)
+rustic backotter f989942b18431a5b9dee65adc078dcd21e19fa2f 2026-11-04 fork-harm audit (code and tests vs stock 0.11.4)

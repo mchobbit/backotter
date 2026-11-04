@@ -2,12 +2,16 @@
 # Build BackOtter's own squashfs layer, stacked on the slimmed base layer from
 # slim-base-layer.sh: casper/ubuntu-server-minimal.backotter.squashfs.
 #
-# Usage: sudo ./build-backotter-layer.sh SOURCE_ISO SLIM_DIR OUT_DIR
+# Usage: sudo [BKO_BIN=DIR] ./build-backotter-layer.sh SOURCE_ISO SLIM_DIR OUT_DIR
 #
 # SOURCE_ISO must be the ISO SLIM_DIR was built from: the packages come from
 # its pool/, which pins them to exactly the base layer's release.  The few the
 # ISO lacks come from the network, each named below: from Ubuntu's archive (its
 # release pocket, whose packages never change) and from apt.bcachefs.org.
+# BackOtter's archivers, restic-bko and rustic-bko (both required, statically
+# linked), come from BKO_BIN/linux/, as the other platforms' come from
+# BKO_BIN/PLATFORM/ for make-img-bsd.sh; BKO_BIN defaults to
+# ~/backotter-work/bko-bin in the home of the user who ran sudo.
 # OUT_DIR receives:
 #   ubuntu-server-minimal.backotter.squashfs   the layer
 #   ubuntu-server-minimal.backotter.manifest   package list of base + layer
@@ -32,6 +36,7 @@
 #     so it loads only with Secure Boot off.  Its build (compiler, kernel
 #     headers, DKMS) happens in a throwaway overlay; only the module lands
 #     in the layer.
+#   - adds restic-bko and rustic-bko in /usr/local/bin
 #   - tty1 and serial consoles run /usr/lib/backotter/console as root;
 #     tty2-tty6 are root shells
 #   - DHCP on wired interfaces; nothing waits for the network at boot
@@ -78,8 +83,12 @@ ALLOWED_WHITEOUTS=(/etc/apt/sources.list.d/cdrom.sources)
 # Same settings as slim-base-layer.sh; see the comment there.
 MKSQUASHFS_OPTS=(-comp xz -Xbcj x86 -b 1M -Xdict-size 1M -noappend -no-progress)
 
+ARCHIVERS=(restic-bko rustic-bko)
+
 here=$(dirname "$(realpath "$0")")
 die() { echo "build-backotter-layer: $*" >&2; exit 1; }
+# Under sudo, $HOME is root's: the default is the invoking user's.
+BKO_BIN=${BKO_BIN:-$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/backotter-work/bko-bin}
 
 [[ $# -eq 3 ]] || die "usage: $0 SOURCE_ISO SLIM_DIR OUT_DIR"
 SOURCE_ISO=$(realpath "$1")
@@ -91,6 +100,9 @@ OUT=$3
 [[ -d $here/layer ]] || die "missing $here/layer"
 [[ -f $here/$BCACHEFS_KEY ]] || die "missing $here/$BCACHEFS_KEY"
 command -v mksquashfs >/dev/null || die "missing mksquashfs"
+for a in "${ARCHIVERS[@]}"; do
+    [[ -x $BKO_BIN/linux/$a ]] || die "no $BKO_BIN/linux/$a"
+done
 # The image's one kernel, which the bcachefs module is built for (in a chroot
 # uname -r is the build host's).
 kernels=("$SLIM"/rootfs/lib/modules/*/)
@@ -302,6 +314,9 @@ while IFS= read -r -d '' f; do
     [[ -x $f ]] && mode=755
     install -D -o root -g root -m "$mode" "$f" "$root/$rel"
 done < <(find "$here/layer" -type f -print0)
+for a in "${ARCHIVERS[@]}"; do
+    install -D -o root -g root -m 755 "$BKO_BIN/linux/$a" "$root/usr/local/bin/$a"
+done
 chmod 600 "$root/etc/netplan/50-backotter-wired.yaml"   # netplan warns otherwise
 chmod 440 "$root/etc/sudoers.d/backotter"
 in_root visudo -cq -f /etc/sudoers.d/backotter || die "sudoers file rejected"
@@ -328,6 +343,16 @@ for u in "${DISABLE_UNITS[@]}"; do
 done
 in_root bash -n /usr/lib/backotter/console
 in_root bash -n /usr/lib/backotter/remote-access
+# Run in the image's root: a binary that needs the build host's libraries
+# (not static after all) fails here, not on a stick.
+restic_v=$(in_root restic-bko version | head -n 1) && [[ $restic_v == *backotter* ]] ||
+    die "restic-bko isn't BackOtter's restic: $restic_v"
+rustic_v=$(in_root rustic-bko --version) && [[ $rustic_v == *backotter* ]] ||
+    die "rustic-bko isn't BackOtter's rustic: $rustic_v"
+log ""
+log "== Archivers"
+log "  $restic_v"
+log "  $rustic_v"
 
 in_root dpkg-query -W -f '${binary:Package}\t${Version}\n' >"$OUT/$LAYER.manifest"
 rm -f "$root/usr/sbin/policy-rc.d"

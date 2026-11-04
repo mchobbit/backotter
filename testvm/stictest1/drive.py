@@ -23,8 +23,8 @@ fits there now:
     after_line() of the host's ~/backotter-work/cmp-run.sh) holds the
     guest's check.sh --reserve figures, less what our started checks have
     not reserved yet;
-  - Tctl (k10temp) is at most --hot-c and no NVMe is at 75 C (cmp-run.sh's
-    NVME_C) or more;
+  - Tctl (k10temp) is at most --hot-c (or the lower HOT_C of someone in
+    cmp-run.sh's line) and no NVMe is at 75 C (cmp-run.sh's NVME_C) or more;
   - the host has the guest's binaries and free ports of ours (Chopin
     2780-2799, Cinqcent 2980-2999; freebsd15-ufs takes three in a row).
 A guest that doesn't fit now is passed over for one that does.  Each check.sh
@@ -34,12 +34,15 @@ starting one that would wait there.
 Each start is detached on its host (ssh -n, setsid -f), so the checks run on
 if the driver or the Mac goes away.  On the host, MARK being --logs-mark:
     ~/backotter-work/stictest1/GUEST/logs/MARK/run.out   the check's output
-    .../run.out.start, .end, .exit                        epoch seconds, status
+    .../run.out.start, .end, .exit, .port                 epoch seconds, status, ports
 STC_LOGS is that directory and the check's PREFIX is MARK-GUEST.  A guest
 with a run.out.start under MARK is never started again: run the same command
 again to pick a round back up (after a Ctrl-C, say), and give each recheck a
-mark of its own.  Every --poll seconds one ssh per host reads the exit files
-(and, where a place is free or one just freed, the room).  At the end, in
+mark of its own (and its own --out: a state.json there belongs to one mark).
+Every --poll seconds one ssh per host reads the exit files (and, where a
+place is free or one just freed, the room).  A started guest with no exit
+file and no process of it two reads running is LOST (the host rebooted, or
+it was killed), so the round still ends.  At the end, in
 OUT: results.tsv (guest host exit pass fail limit seconds logdir), fails.txt
 (the FAIL lines), and a summary; then it cleans up what is its own only: dead
 rows naming MARK in cmp-run.sh's ledger and waiting line (under their lock),
@@ -392,10 +395,15 @@ for h in /sys/class/hwmon/hwmon*; do
     esac
 done
 
-for g; do   # GUEST START EXIT END
+for g; do   # GUEST START EXIT END PORTS ALIVE (1: a process of it runs; read only while no exit)
     b=$W/stictest1/$g/logs/$MARK/run.out
     [[ -e $b.start ]] || continue
-    echo "JOB $g $(cat "$b.start") $(cat "$b.exit" 2>/dev/null || echo -) $(cat "$b.end" 2>/dev/null || echo -)"
+    s=$(cat "$b.start" 2>/dev/null) x=$(cat "$b.exit" 2>/dev/null) e=$(cat "$b.end" 2>/dev/null)
+    p=$(cat "$b.port" 2>/dev/null) a=-
+    [[ $s =~ ^[0-9]+$ ]] || s=-; [[ $x =~ ^[0-9]+$ ]] || x=-; [[ $e =~ ^[0-9]+$ ]] || e=-
+    [[ $p =~ ^[0-9,]+$ ]] || p=-
+    if [[ $x == - ]]; then a=0; pgrep -f -- "$MARK-$g( |\$)" >/dev/null && a=1; fi
+    echo "JOB $g $s $x $e $p $a"
 done
 
 if [[ -f $R/.reserve.wait ]]; then   # waiting in cmp-run.sh's line: PID OURGUEST(or -) WHAT
@@ -637,11 +645,19 @@ def status(host, full, mark, guests):
             elif k == "LISTEN":
                 s["listen"].add(int(f[1]))
             elif k == "JOB":
-                s["jobs"][f[1]] = dict(start=int(f[2]), exit=None if f[3] == "-" else int(f[3]),
-                                       end=None if f[4] == "-" else int(f[4]))
+                num = lambda x: int(x) if x.isdigit() else None
+                s["jobs"][f[1]] = dict(start=num(f[2]), exit=num(f[3]), end=num(f[4]),
+                                       ports=[int(p) for p in f[5].split(",") if p.isdigit()],
+                                       alive=f[6] != "0")
         except (IndexError, ValueError):
             continue
     return s
+
+
+def hot_limit(a, snap):
+    """--hot-c, or the lower heat limit of cmp-run.sh's waiting line (after_line's)."""
+    r = snap["room"]
+    return min(a.hot_c, r[3]) if r and r[3] > 0 else a.hot_c
 
 
 def other_qemu(snap, host):
@@ -662,8 +678,12 @@ class Driver:
         if os.path.exists(self.statef):
             with open(self.statef) as f:
                 self.state = json.load(f)
+            if self.state.get("mark", a.logs_mark) != a.logs_mark:   # its jobs aren't this mark's
+                raise SystemExit(f"drive.py: {self.statef} is mark {self.state['mark']}'s, not {a.logs_mark}'s:"
+                                 " give this mark an --out of its own")
         else:
             self.state = dict(jobs={}, checks=0, temp_max={}, temp_pauses=0, started=time.time())
+        self.state["mark"] = a.logs_mark
         for g in [g for g in self.state["jobs"] if g not in guests]:   # an earlier run's, with other guests
             del self.state["jobs"][g]
         self.seen = set()   # hosts read at least once: nothing starts before all are (no run twice)
@@ -704,9 +724,12 @@ class Driver:
         L = f'"$HOME"/backotter-work/stictest1/{g}/logs/{a.logs_mark}'
         check = rq(f"{self.wt}/{g}/check.sh")
         binos = rq(f"{a.bin}/{s.os}")
-        # The start file is written before the job is: a second launch refuses (exit 3).
-        cmd = (f'L={L}; mkdir -p "$L" && {{ [ ! -e "$L/run.out.start" ] || exit 3; }} && '
-               f'date +%s >"$L/run.out.start" && '
+        # The start file is made (noclobber: only once) before the job starts: a
+        # second launch refuses (exit 3).  The port file lets a later driver
+        # that adopts the job keep its ports out of others' way.
+        cmd = (f'L={L}; mkdir -p "$L" && '
+               f'{{ ( set -C; date +%s >"$L/run.out.start" ) 2>/dev/null || {{ [ -e "$L/run.out.start" ] && exit 3; exit 1; }}; }} && '
+               f'echo {",".join(str(p) for p in ports)} >"$L/run.out.port" && '
                f'STC_LOGS="$L" setsid -f bash -c \'"$0" "$@" >"$STC_LOGS/run.out" 2>&1; rc=$?; '
                f'date +%s >"$STC_LOGS/run.out.end"; echo $rc >"$STC_LOGS/run.out.exit"\' '
                f'{check} {binos} {ports[0]} {a.logs_mark}-{g} </dev/null >/dev/null 2>&1')
@@ -756,11 +779,15 @@ class Driver:
         for g, jj in snap["jobs"].items():
             j = self.jobs().get(g)
             if j is None:   # started by an earlier driver that died before saving it
-                self.jobs()[g] = self.new_job(host, [], jj["start"], adopted=True)
-                self.log("ADOPT", g, "on", host, "(start file from", time.strftime("%H:%M:%S", time.localtime(jj["start"])) + ")")
-            elif j["host"] != host and not j.get("dup_warned"):
-                j["dup_warned"] = True
-                self.log("WARNING", g, "has a start file on", host, "too; following its run on", j["host"])
+                self.jobs()[g] = self.new_job(host, jj["ports"], jj["start"] or now, adopted=True)
+                self.log("ADOPT", g, "on", host, "(start file from",
+                         time.strftime("%H:%M:%S", time.localtime(jj["start"] or now)) + ", ports", jj["ports"], ")")
+            elif j["host"] != host:
+                if not j.get("dup_warned"):
+                    j["dup_warned"] = True
+                    self.log("WARNING", g, "has a start file on", host, "too; following its run on", j["host"])
+            elif jj["ports"] and j["ports"] != jj["ports"]:   # the run's own ports (an adopted one's)
+                j["ports"] = jj["ports"]
         for g in list(self.jobs()):
             j = self.jobs()[g]
             if j["host"] != host or j.get("exit") is not None:
@@ -774,10 +801,21 @@ class Driver:
                 j.pop("unconfirmed")
                 self.log("START", g, "on", host, "confirmed")
             if jj and jj["exit"] is not None:
-                j.update(exit=jj["exit"], start=jj["start"], end=jj["end"])
-                self.log("DONE", g, "on", host, "exit", jj["exit"], "secs", (jj["end"] or 0) - jj["start"],
+                start = jj["start"] or j["launched"]
+                j.update(exit=jj["exit"], start=start, end=jj["end"])
+                self.log("DONE", g, "on", host, "exit", jj["exit"], "secs", (jj["end"] or start) - start,
                          "est", self.est[g])
                 continue
+            # No exit file and no process of it (or no start file) twice running:
+            # the host rebooted or it was killed.  Lost, so the round can end.
+            if jj is None or not jj["alive"]:
+                j["gone"] = j.get("gone", 0) + 1
+                if j["gone"] >= 2:
+                    j.update(exit="lost", start=(jj and jj["start"]) or j["launched"], end=None)
+                    self.log("LOST", g, "on", host, "- no exit file and nothing of it runs" if jj else "- no start file")
+                    continue
+            else:
+                j["gone"] = 0
             if any(w["g"] == g for w in snap["waits"]):
                 j["ledger_wait"] += dt
             if g in snap["slotwait"]:
@@ -809,9 +847,9 @@ class Driver:
                 snap = snaps[host]
                 if host in tried or not snap["full"]:
                     continue
-                hold = None
-                if snap["temp"] is not None and snap["temp"] > a.hot_c:
-                    hold = f"TEMP PAUSE: Tctl {snap['temp']} C"
+                hold, lim = None, hot_limit(a, snap)
+                if snap["temp"] is not None and snap["temp"] > lim:
+                    hold = f"TEMP PAUSE: Tctl {snap['temp']} C over {lim:g}"
                 elif any(t >= NVME_C for t in snap["nvme"]):
                     hold = f"NVME PAUSE: {snap['nvme']} C"
                 elif snap["room"] is None:
@@ -1003,7 +1041,8 @@ def dry_run(a, guests, spec, est, src, probes, wt, unrunnable):
         oq = other_qemu(snap, h)
         ours_ledger = [r for r in snap["ledger"] if r["g"] != "-"]
         oses = sorted({k.split("/")[0] for k in p["have"]})
-        print(f"{h}: Tctl {snap['temp']} C (limit {a.hot_c}{', OVER: it would wait' if (snap['temp'] or 0) > a.hot_c else ''}), "
+        lim = hot_limit(a, snap)
+        print(f"{h}: Tctl {snap['temp']} C (limit {lim:g}{', OVER: it would wait' if (snap['temp'] or 0) > lim else ''}), "
               f"NVMe {'/'.join(str(x) for x in snap['nvme'])} C")
         if snap["noram"]:
             print(f"  no /mnt/bko-ram or ~/backotter-work/cmp-run.sh: no room figures, it would start nothing")
@@ -1025,7 +1064,7 @@ def dry_run(a, guests, spec, est, src, probes, wt, unrunnable):
         hosts_v[h] = dict(have=p["have"], slots_free=GUEST_SLOTS, room=snap["ceil"], ceil=snap["ceil"])
         hosts_now[h] = dict(have=p["have"], slots_free=GUEST_SLOTS - snap["slots_other"] - oq,
                             room=snap["room"][:2] if snap["room"] else (0, 0), ceil=snap["ceil"],
-                            hot=(snap["temp"] or 0) > a.hot_c or any(t >= NVME_C for t in snap["nvme"]))
+                            hot=(snap["temp"] or 0) > lim or any(t >= NVME_C for t in snap["nvme"]))
     if a.private_copy:
         private_copy(a.hosts, probes, True)
     counts = {}

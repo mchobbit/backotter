@@ -110,10 +110,12 @@ watched through their exit files every 15 s; the results land in
 
 - `--private-copy` runs the checks from a copy of the committed tree in
   `~/backotter-work/st1-wt/testvm/stictest1`, so a sync-hosts.sh during the
-  round can't hand them newer helpers.
+  round can't hand them newer GUEST/ scripts (testvm/compare, vm-run and
+  cmp-run.sh still come from the synced `~/backotter-work`).
 - Each recheck takes its own `--logs-mark`: a guest already started under a
   mark is never started again, which is also how the same command picks an
-  interrupted round back up.
+  interrupted round back up. A guest whose run left no exit file and no
+  process (a host reboot) counts as LOST, so the round still ends.
 - haiku6 runs only where a round has `bin/haiku`; leave it out with
   `--exclude haiku6` otherwise.
 - `--self-test` checks the queue logic and how it reads the check scripts.

@@ -42,13 +42,20 @@ The user's decisions:
 
 ## The scripts
 
-`GUEST.sh` here is a copy of `~/backotter-work/stictest1/GUEST/check.sh` from
-Chopin and Cinqcent. The copies on the two hosts are identical. Most scripts call
-helpers that sit beside them on the hosts and are not in this directory:
-inner.sh, judge.py, fixture.sh, real.sh, extra(s).sh, guest.sh, nracl.py and
-others. Shared helpers come from testvm/compare (fsmeta.py, rt-common.sh,
-guest-slot.sh). To run a script, it has to be in its guest's directory on a host
-as `check.sh`.
+Each guest has a directory here, `GUEST/`, with its check script `check.sh`
+and the helpers it needs beside it: inner.sh, judge.py, fixture.sh, real.sh,
+extra(s).sh, guest.sh, nracl.py and others. Shared helpers come from
+testvm/compare (fsmeta.py, rt-common.sh, guest-slot.sh, cmp-run.sh). arch keeps
+its own older fsmeta.py, so its verdicts stay as they were.
+
+`testvm/sync-hosts.sh` copies testvm/ to the hosts, so the scripts run there
+from `~/backotter-work/testvm/stictest1/GUEST/check.sh`. They replace the old
+copies in `~/backotter-work/stictest1/GUEST/`, which hold the earlier rounds'
+logs, results and drivers. A run reads its inner phase and helpers from
+`~/backotter-work/testvm/stictest1/GUEST/` after it waits for a slot, so a
+sync during a run can hand it newer ones: don't sync while SticTest1 runs.
+A copy run from a worktree takes its own GUEST/ helpers, but testvm/compare,
+vm-run and cmp-run.sh still come from main's synced `~/backotter-work`.
 
 | Host | Guests |
 |---|---|
@@ -57,7 +64,7 @@ as `check.sh`.
 
 ## Running one
 
-    ~/backotter-work/stictest1/GUEST/check.sh BIN_DIR PORT PREFIX [NEED_FILTER]
+    ~/backotter-work/testvm/stictest1/GUEST/check.sh BIN_DIR PORT PREFIX [NEED_FILTER]
 
 - `BIN_DIR` holds restic-bko and rustic-bko for the guest's OS, for example
   `~/backotter-work/round22/bin/linux` (or freebsd, netbsd, openbsd, omnios,
@@ -73,10 +80,14 @@ What the script does:
   guest's own disk image.
 - It prints one line per checklist item: `PASS need: detail`, `FAIL need: detail`,
   or `LIMIT need: reason` (an OS or file system limit documented in BACKOTTER.md).
-- It writes results.json and logs under the guest's `logs/`.
+- It writes results.json and logs to `~/backotter-work/stictest1/GUEST/logs/`,
+  outside the synced tree, or to `$STC_LOGS` if it is set. `$STC_LOGS`
+  replaces that one guest's logs directory, so set it per guest. Most also
+  copy the latest results.json to the top of that directory.
 - It exits 0 if nothing FAILs, and cleans up after itself.
 - Most guests finish in 2 to 15 minutes.
 
 A recheck or a regression run is the same command with a newer round's
 BIN_DIR. The round 22 driver used for the final regression is
-`~/backotter-work/stictest1/final-r22/drive.sh` on each host.
+`~/backotter-work/stictest1/final-r22/drive.sh` on each host; it runs the old
+copies.

@@ -201,6 +201,13 @@ Linux)
         done
         $apt dist-upgrade && $apt autoremove --purge && $apt clean || exit 1
     elif has dnf; then
+        # Fedora's server install has mcelog, which decodes Intel machine
+        # checks only: on the hosts' AMD CPUs it fails at every boot, and the
+        # guest comes up "degraded".  make-fedora.sh's kickstart now leaves
+        # it out.
+        if [ -e /etc/fedora-release ] && rpm -q mcelog >/dev/null 2>&1; then
+            dnf -y remove mcelog || exit 1
+        fi
         dnf -y upgrade --refresh && dnf clean all || exit 1
     elif has pacman; then
         # The keyrings first: packages signed by keys newer than the guest's
@@ -281,12 +288,23 @@ OpenBSD)
     pkg_add -u -I || exit 1 ;;
 NetBSD)
     if has apk; then
-        # AlpineBSD.  Its install has no CA certificates to check TLS with;
-        # the packages' signatures are still checked against its key.
-        # openssh-sftp-server: the sftp-server dropbear runs for scp and
-        # sftp, which a guest built before netbsd/install.sh added it lacks.
-        apk add -U --check-certificate=no openssh-sftp-server || exit 1
-        apk upgrade --check-certificate=no || exit 1
+        # AlpineBSD.  Its kernel (netbsd-kernel-generic-bin: NetBSD's own
+        # build of the release) and its base (netbsd-base, built from the
+        # release's sources) are apk packages, upgraded with the rest.
+        # apk checks TLS against ca-certificates-bundle, which apk-tools
+        # depends on: a guest without its file gets it first with the check
+        # off, the package's signature still checked against the repository
+        # key.  ca-certificates: the same roots, one file each and hashed in
+        # /etc/ssl/certs, for other TLS clients.  openssh-sftp-server: the
+        # sftp-server dropbear runs for scp and sftp, which a guest built
+        # before netbsd/install.sh added it lacks.  apk update, not add -U:
+        # add goes on with the old index when a repository can't be fetched.
+        if [ ! -s /etc/ssl/certs/ca-certificates.crt ]; then
+            say "fetching the CA certificates unchecked"
+            apk add -U --check-certificate=no ca-certificates-bundle &&
+                apk fix --check-certificate=no ca-certificates-bundle || exit 1
+        fi
+        apk update && apk add ca-certificates openssh-sftp-server && apk upgrade || exit 1
     else
         # NetBSD, installed from a release's base sets.  netbsd/install.sh
         # now adds what updates it; for a guest built before that, the

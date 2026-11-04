@@ -129,11 +129,17 @@ else
     run ftp -o "$T/etc/apk/keys/@ABSD_KEY_NAME@" "$SERVER/absd-key.rsa.pub"
     chmod +x $T/sbin/apk
     cp /etc/resolv.conf $T/etc/resolv.conf
-    # The packages' signatures are checked against that key; only the TLS
-    # certificates go unchecked, as the guide does it (no CA bundle here).
-    run $T/sbin/apk -p $T --initdb --check-certificate=no add absd-base netbsd-kernel-generic-bin \
+    # The packages' signatures are checked against that key, and TLS (the
+    # guide turns that off) against the Mozilla roots on this ISO, whose
+    # hash make-netbsd.sh checked: apk.static reads /etc/ssl, not there
+    # (nor in $T yet), but takes SSL_CERT_FILE.  ca-certificates: the same
+    # roots hashed in the guest's /etc/ssl/certs, for TLS clients besides
+    # apk (whose ca-certificates-bundle has them in one file).  env: run is
+    # a function, which a VAR=value prefix doesn't reliably reach through.
+    cat /usr/share/certs/mozilla/server/*.pem >/tmp/ca.pem || fail "the ISO's CA certificates"
+    run env SSL_CERT_FILE=/tmp/ca.pem $T/sbin/apk -p $T --initdb add absd-base netbsd-kernel-generic-bin \
         netbsd-firmware netbsd-bootloader-mbr netbsd-bootloader-efi ifupdown ifupdown-s6 dhcpcd dhcpcd-s6 \
-        dropbear dropbear-s6 openssh-sftp-server
+        dropbear dropbear-s6 openssh-sftp-server ca-certificates
     (cd $T/dev && sh ./MAKEDEV all) || fail MAKEDEV
     # The stock /etc/rc.conf sources /etc/defaults/rc.conf the shell's way,
     # but s6 reads it with envfile, which takes only name=value lines: as

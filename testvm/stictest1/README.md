@@ -91,3 +91,40 @@ A recheck or a regression run is the same command with a newer round's
 BIN_DIR. The round 22 driver used for the final regression is
 `~/backotter-work/stictest1/final-r22/drive.sh` on each host; it runs the old
 copies.
+
+## Running a round
+
+`drive.py` (here, run on the Mac) runs every guest's check.sh as one round,
+from one queue for Chopin and Cinqcent: longest guest first, each started the
+moment a host has a place, a guest slot, the guest's --reserve room after
+cmp-run.sh's waiting line, our free ports (Chopin 2780-2799, Cinqcent
+2980-2999) and Tctl at most 90 C. Starts are detached on the host and
+watched through their exit files every 15 s; the results land in
+`~/backotter-work/stictest1/MARK/results.tsv` on the Mac. See `drive.py
+--help`.
+
+    stick/build-round.sh ROUND                          # roundROUND/bin on both hosts
+    testvm/stictest1/drive.py --dry-run --exclude haiku6 ROUND
+    testvm/stictest1/drive.py --private-copy --exclude haiku6 ROUND
+    testvm/stictest1/drive.py --logs-mark st1-ROUNDb --first GUEST ROUND GUEST ...   # a recheck
+
+- `--private-copy` runs the checks from a copy of the committed tree in
+  `~/backotter-work/st1-wt/testvm/stictest1`, so a sync-hosts.sh during the
+  round can't hand them newer helpers.
+- Each recheck takes its own `--logs-mark`: a guest already started under a
+  mark is never started again, which is also how the same command picks an
+  interrupted round back up.
+- haiku6 runs only where a round has `bin/haiku`; leave it out with
+  `--exclude haiku6` otherwise.
+- `--self-test` checks the queue logic and how it reads the check scripts.
+
+The queue times guests by their newest passing run on the hosts, else by these.
+
+Estimates (seconds; round st2a's runs) for guests with no earlier run:
+alpine324 153, alpinebsd 401, arch 137, artix-dinit 170, artix-s6 367,
+cachyos 300, debian12 117, debian13 477, debian13-zfs 856, devuan6 310,
+dragonfly6 435, fedora44 208, fedora44-uefi 268, freebsd15 751,
+freebsd15-ufs 391, mint22 814, mx25 685, netbsd11 324, nixos2605 236,
+omarchy 302, omnios58 370, openbsd8 338, pop24 622, rocky10 113,
+sculpt2610 49, tumbleweed 186, ubuntu24 957, ubuntu26-uefi 374,
+ubuntu26-zfsmirror 623, void-musl 115, zorin18 586.

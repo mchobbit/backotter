@@ -12,7 +12,7 @@
 # (about 1.1 GiB each, torture.sh's 1 GiB of random data) and the ext4 images
 # are on a spare disk (vdc, /var/tmp in the guest, /bkoscratch/PREFIX on the
 # host), so the overlays of rpool's two disks (every write twice) stay within
-# the --reserve's 9 GiB of RAM disk (both disks: 7.6 GiB at most, measured
+# the --reserve's 9 GiB of RAM disk (both disks: 7.7 GiB at most, measured
 # 2026-11-04). The guest's ARC is capped at 1 GiB.
 # fs_roundtrip.py does all four directions (restic->restic, rustic->rustic,
 # restic->rustic, rustic->restic) into fresh file systems, a restore over a

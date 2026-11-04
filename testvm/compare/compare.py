@@ -270,13 +270,31 @@ def free_nbd() -> str:
 
 
 def attach(image: Path) -> str:
+    # A disk off tmpfs (a "!" guest's, in COMPARE_DISKS_DIR) is served through
+    # that filesystem's page cache, so its qemu-nbd gets a scope of its own.
+    # In cmp-run.sh's MemoryHigh scope, with the guest filesystem whose
+    # writeback it serves, it is throttled at the cap (memory.high reclaim,
+    # the scope's dirty limit) on pages only it can clean, and the restore
+    # stops: nbd stuck, dm-crypt in wbt_wait (omarchy, 2026-11-04). PartOf:
+    # it still goes when this run's scope is stopped, but not when the scope
+    # just empties (BindsTo would): a pool left imported when its export
+    # failed must keep its disks. Only a system scope: PID 1 has no user
+    # manager's (tmux panes). On tmpfs it stays: its pages are RAM-disk room,
+    # and the cap must see them.
+    wrap = []
+    if out(["stat", "-f", "-c", "%T", str(image)]) != "tmpfs":
+        cg = Path("/proc/self/cgroup").read_text().strip().split("::", 1)[-1]
+        wrap = ["systemd-run", "--quiet", "--scope", "--collect",
+                f"--unit=bko-nbd-{os.getpid()}-{time.monotonic_ns()}"]
+        if re.fullmatch(r"/system\.slice/[^/]+\.scope", cg):
+            wrap.append(f"--property=PartOf={cg.rsplit('/', 1)[-1]}")
     # The same lock vm-mount and make-from-live.sh take: finding a free device
     # and attaching it must be one step.
     import fcntl
     with open("/run/lock/backotter-nbd.lock", "w") as lock:
         fcntl.flock(lock, fcntl.LOCK_EX)
         dev = free_nbd()
-        run(["qemu-nbd", "--connect", dev, "--format", "qcow2", str(image)])
+        run(wrap + ["qemu-nbd", "--connect", dev, "--format", "qcow2", str(image)])
     run(["udevadm", "settle"], quiet=True)
     for _ in range(10):
         if Path(f"{dev}p1").exists():

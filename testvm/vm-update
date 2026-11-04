@@ -340,9 +340,12 @@ def wait_for_memory(g: Guest, mb: int) -> None:
             raise Failed("stopped")
 
 
-# A tmpfs of its own size (not /dev/shm, which the VMs' RAM shares) for the
-# overlays, sparing the host's disk; and the room an update's overlay may
-# need there (a desktop's upgrade writes gigabytes).
+# The tmpfs (not /dev/shm, which the VMs' RAM shares) that VM_UPDATE_RAM=1
+# puts the overlays in, and the room an update's overlay may need there (a
+# desktop's upgrade writes gigabytes).  Not by default: cmp-run.sh's ledger
+# doesn't know of them, and two Fedora updates' overlays there filled the
+# tmpfs under a compare.py run (2026-11-04).  Beside the image they cost
+# only disk writes, which the user prefers to RAM.
 RAM_BASE = Path("/mnt/bko-ram")
 RAM_ROOM = 16 << 30
 
@@ -352,9 +355,9 @@ def ram_dir_of(guest: str) -> Path:
 
 
 def overlay_dir(g: "Guest") -> Path:
-    """Where g's run folder goes: RAM_BASE when it is mounted with RAM_ROOM
-    free, else beside the image."""
-    if os.path.ismount(RAM_BASE):
+    """Where g's run folder goes: beside the image; with VM_UPDATE_RAM=1,
+    RAM_BASE when it is mounted with RAM_ROOM free."""
+    if os.environ.get("VM_UPDATE_RAM") == "1" and os.path.ismount(RAM_BASE):
         st = os.statvfs(RAM_BASE)
         if st.f_bavail * st.f_frsize >= RAM_ROOM:
             d = ram_dir_of(g.name)
@@ -365,8 +368,7 @@ def overlay_dir(g: "Guest") -> Path:
 
 class VM:
     """The guest under vm-run --ram --keep, its serial console on a pipe and
-    its overlays in a folder of its own: in RAM_BASE's tmpfs when it has the
-    room, else beside the image.  (Not in /dev/shm: a big update's overlay
+    its overlays in a folder of its own, where overlay_dir() says.  (Not in /dev/shm: a big update's overlay
     holds gigabytes, which there would starve this host's other VMs.)"""
 
     def __init__(self, g: Guest, memory: int | None):

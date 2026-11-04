@@ -31,7 +31,7 @@ bin=$(realpath "$1") port=$2 prefix=$3 filter=${4:-}
 logs=${STC_LOGS:-$WORK/stictest1/$guest/logs}; mkdir -p "$logs"
 log=$logs/check-$(date +%Y%m%d-%H%M%S).log
 . "$WORK/testvm/compare/guest-slot.sh"
-case $(hostname) in chopin*) slot_take 2 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
+case $(hostname) in chopin*) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
 HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 6 "$here/$(basename "$0")" --inner "$bin" "$port" "$prefix" "$logs" >"$log" 2>&1
 slot_give
 rm -rf "/mnt/bko-ram/$prefix"

@@ -37,8 +37,8 @@ if [[ ${STC_INNER:-} != "$PREFIX" ]]; then
     # shellcheck source=/dev/null
     . "$C/guest-slot.sh"
     case $(hostname -s) in
-        cinqcent) slot_take 3 2900-2999 ;;
-        *) slot_take 2 2700-2799 ;;
+        chopin) slot_take 3 2700-2799 ;;
+        *) slot_take 3 2900-2999 ;;
     esac
     STC_INNER=$PREFIX HOT_C=90 "$WORK/cmp-run.sh" --reserve 2 4 env STC_INNER="$PREFIX" "$HERE/$(basename "$0")" "$BIN" "$PORT" "$PREFIX" "$FILTER"
     rc=$?

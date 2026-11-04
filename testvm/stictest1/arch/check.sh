@@ -46,7 +46,7 @@ W=/mnt/bko-ram/$PREFIX/arch-check
 LOGS=${STC_LOGS:-$WORK/stictest1/$GUEST/logs}/$(date +%Y%m%d-%H%M%S)
 mkdir -p "$LOGS"; sudo rm -rf "$W"; mkdir -p "$W/m"
 case $(hostname -s) in
-    chopin) SLOTMAX=2 SLOTRANGE=2700-2799 ;;
+    chopin) SLOTMAX=3 SLOTRANGE=2700-2799 ;;
     *) SLOTMAX=3 SLOTRANGE=2900-2999 ;;
 esac
 cleanup() {

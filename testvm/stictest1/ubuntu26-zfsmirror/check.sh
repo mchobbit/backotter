@@ -30,7 +30,7 @@
 #   BIN_DIR  holds restic-bko and rustic-bko for Linux (roundN/bin/linux)
 # Prints PASS/FAIL/LIMIT lines, writes results.json into the log dir
 # (~/backotter-work/stictest1/ubuntu26-zfsmirror/logs/PREFIX-TIME/), exit 0 if
-# nothing FAILs.  Takes a guest slot (Chopin 2 on 2700-2799, Cinqcent 3 on
+# nothing FAILs.  Takes a guest slot (Chopin 3 on 2700-2799, Cinqcent 3 on
 # 2900-2999) and cmp-run.sh --reserve 9 MEM itself (MEM: the guest's MEMORY,
 # MB, default 4096, in GiB + 0.5): 9 GiB for the overlays of rpool's two disks.
 set -uo pipefail
@@ -44,8 +44,8 @@ if [[ -z ${STICK_INNER:-} ]]; then
     # shellcheck source=/dev/null
     source "$WORK/testvm/compare/guest-slot.sh"
     case $(hostname -s) in
-        cinqcent) slot_take 3 2900-2999 ;;
-        *) slot_take 2 2700-2799 ;;
+        chopin) slot_take 3 2700-2799 ;;
+        *) slot_take 3 2900-2999 ;;
     esac
     STICK_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 9 "$(awk -v m="${MEMORY:-4096}" 'BEGIN { print m / 1024 + 0.5 }')" "$self" "$@"; rc=$?
     slot_give

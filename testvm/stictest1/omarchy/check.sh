@@ -31,7 +31,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 [[ -x $BIN/restic-bko && -x $BIN/rustic-bko ]] || { echo "check.sh: no restic-bko/rustic-bko in $BIN" >&2; exit 2; }
 if [[ -z ${BKO_CHECK_ADMITTED:-} ]]; then
     source $WORK/testvm/compare/guest-slot.sh
-    case $(hostname -s) in chopin) slot_take 2 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
+    case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
     BKO_CHECK_ADMITTED=1 HOT_C=90 $WORK/cmp-run.sh --reserve 3 6 "$HERE/$(basename "$0")" "$@"
     rc=$?; slot_give; exit $rc
 fi

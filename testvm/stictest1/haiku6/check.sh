@@ -28,7 +28,7 @@ RESTIC=$(realpath "$BIN/../linux/restic-bko" 2>/dev/null || true)
 
 if [[ -z ${BKO_ADMITTED:-} ]]; then
     source ~/backotter-work/testvm/compare/guest-slot.sh
-    case $(hostname -s) in chopin) slot_take 2 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
+    case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
     BKO_ADMITTED=1 HOT_C=90 ~/backotter-work/cmp-run.sh --reserve 3 6 "$H/${0##*/}" "$@"; rc=$?
     slot_give; exit $rc
 fi

@@ -7,7 +7,7 @@
 #            else the newest ~/backotter-work/build-cache/store/rustic-netbsd/*/bin
 #            (named in binaries.txt and the output).
 # One throwaway overlay (vm-run --snapshot, TMPDIR=/mnt/bko-ram/PREFIX), taken
-# through guest-slot.sh (slot_take 2 2700-2799 on Chopin, 3 2900-2999 on
+# through guest-slot.sh (slot_take 3 2700-2799 on Chopin, 3 2900-2999 on
 # Cinqcent) and cmp-run.sh --reserve 3 6.
 # NetBSD's mtree, stat, chflags, *facl, *extattr, touch, nc go in /root/nbtools
 # (AlpineBSD has none: busybox), from ~/backotter-work/netbsd-tools; a host
@@ -46,7 +46,7 @@ if [[ -z ${CHECK_INNER:-} ]]; then
     echo "rustic-bko used: $rustic ($(head -n 1 "$(dirname "$rustic")/commit" 2>/dev/null || cat "$BIN/rustic-commit" 2>/dev/null | head -n 1))"
     # shellcheck source=/dev/null
     source "$CMP/guest-slot.sh"
-    case $(hostname -s) in chopin) slot_take 2 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
+    case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
     CHECK_INNER=1 CHECK_LOGS=$LOGS RUSTIC_BIN=$rustic HOT_C=90 \
         "$WORK/cmp-run.sh" --reserve 3 6 timeout 900 "$self" "$@" >"$LOGS/run.log" 2>&1
     rc=$?

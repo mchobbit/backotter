@@ -1295,7 +1295,8 @@ def boot(images: list[Path], cfg: GuestConfig, hardware: list[str], log: Path) -
                     result["ssh"] = True
                     r = vm.ssh("sh -s", input=BOOT_STATE.read_text(), timeout=400)
                     result.update(boot_state(r.stdout))
-                    result["firmware"] = vm.ssh(FIRMWARE_PROBE, timeout=30).stdout.strip()
+                    # On sh's stdin too: DragonFly root's login shell, csh, can't parse it.
+                    result["firmware"] = vm.ssh("sh -s", input=FIRMWARE_PROBE, timeout=30).stdout.strip()
                 result["io_stall_s"] = round(vm.io_stall)
         except subprocess.TimeoutExpired:
             pass

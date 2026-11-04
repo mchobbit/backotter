@@ -144,6 +144,21 @@ if [ "$(uname)" = Linux ] && [ "$(findmnt -no FSTYPE / 2>/dev/null)" = nilfs2 ] 
     }
     reclaim
 fi
+# Omarchy's installer keeps a read-only snapshot of the fresh install,
+# @factory (for its factory reset), beside @ at the btrfs top level, outside
+# the mounted tree.  It holds on to every file an update replaces: on
+# omarchy's 14 GiB btrfs, update 1 ran out of room in the middle of a kernel.
+if [ "$(uname)" = Linux ] && [ "$(findmnt -no FSTYPE / 2>/dev/null)" = btrfs ] && has btrfs; then
+    top=$(mktemp -d)
+    if mount -o subvolid=5 "$(findmnt -nvo SOURCE /)" "$top"; then
+        if [ -d "$top/@factory" ]; then
+            say "deleting the installer's read-only @factory snapshot"
+            btrfs subvolume delete "$top/@factory" || { umount "$top"; exit 1; }
+        fi
+        umount "$top"
+    fi
+    rmdir "$top"
+fi
 
 case $(uname) in
 Linux)

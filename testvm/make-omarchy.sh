@@ -23,7 +23,11 @@
 # The guest, host name omarchy: Omarchy's own layout, which its installer
 # fixes: UEFI + GPT, a 2 GiB EFI system partition as /boot (Limine), and the
 # rest LUKS2-encrypted btrfs with subvolumes @, @home, @log and @pkg; swap is
-# zram, so there is no swap partition.  Desktop installed but booting to text
+# zram and, for hibernation, a 4 GiB nocow swapfile in the subvolume @/swap
+# (kept: a restore has to bring it back usable).  The read-only snapshot of
+# the install the installer also makes, @factory (for Omarchy's factory
+# reset), is deleted at the first boot: on the 14 GiB btrfs it kept every file
+# an update replaced, until an update ran out of room.  Desktop installed but booting to text
 # mode (multi-user.target), sshd on, 2 GB RAM.  At every boot the passphrase
 # must be typed on its screen: vm-run shows the screen only with a display,
 # so for a headless run use type-luks-passphrase.py (as this script does).
@@ -149,6 +153,9 @@ for _ in $(seq 60); do "${ssh_t[@]}" true 2>/dev/null && break; sleep 5; done
     cp /home/tester/.ssh/authorized_keys /root/.ssh/authorized_keys
     chmod 600 /root/.ssh/authorized_keys
     systemctl set-default multi-user.target
+    top=\$(mktemp -d); mount -o subvolid=5 \$(findmnt -nvo SOURCE /) \$top || exit 1
+    if [ -d \$top/@factory ]; then btrfs subvolume delete \$top/@factory || exit 1; fi
+    umount \$top; rmdir \$top
     sync; systemctl poweroff'" || die "could not finish the guest over SSH"
 wait "$server" || true
 server=""

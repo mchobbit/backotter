@@ -7,9 +7,13 @@
 #            else the newest ~/backotter-work/build-cache/store/rustic-netbsd/*/bin
 #            (named in binaries.txt and the output).
 # One throwaway overlay (vm-run --snapshot, TMPDIR=/mnt/bko-ram/PREFIX), taken
-# through guest-slot.sh (slot_take 3 2900-2999) and cmp-run.sh --reserve 3 6.
+# through guest-slot.sh (slot_take 2 2700-2799 on Chopin, 3 2900-2999 on
+# Cinqcent) and cmp-run.sh --reserve 3 6.
 # NetBSD's mtree, stat, chflags, *facl, *extattr, touch, nc go in /root/nbtools
-# (AlpineBSD has none: busybox), from ~/backotter-work/netbsd-tools.  In it:
+# (AlpineBSD has none: busybox), from ~/backotter-work/netbsd-tools; a host
+# without them fetches them first from a throwaway netbsd11 on PORT (as
+# testvm/compare/run-guest-rt.sh alpinebsd does), under the same slot and
+# reservation.  In it:
 #   testvm/compare/netbsd/roundtrip.sh in all four directions (root FFSv2ea +
 #   FFSv2ea posix1e/nfs4 images: file flags, POSIX.1e and NFSv4 ACLs, user/
 #   system extattrs incl. on symlinks and on the root's own FFSv2ea, birth
@@ -27,7 +31,7 @@ self=$(realpath "$0")
 here=$(dirname "$self")
 WORK=$HOME/backotter-work
 CMP=$WORK/testvm/compare
-[[ $# -ge 3 ]] || { sed -n 2,25p "$0" >&2; exit 2; }
+[[ $# -ge 3 ]] || { sed -n 2,28p "$0" >&2; exit 2; }
 BIN=$(realpath "$1") PORT=$2 PREFIX=$3 FILTER=${4:-}
 LOGS=${CHECK_LOGS:-${STC_LOGS:-$WORK/stictest1/alpinebsd/logs}/$PREFIX-$(date +%Y%m%d-%H%M%S)}
 SCR=/mnt/bko-ram/$PREFIX
@@ -37,13 +41,12 @@ if [[ -z ${CHECK_INNER:-} ]]; then
     rustic=$BIN/rustic-bko
     [[ -f $rustic ]] || rustic=${RUSTIC_BKO:-$(ls -t "$WORK"/build-cache/store/rustic-netbsd/*/bin 2>/dev/null | head -n 1)}
     [[ -f $BIN/restic-bko && -f $rustic ]] || { echo "check: no restic-bko or rustic-bko for netbsd" >&2; exit 2; }
-    [[ -x $WORK/netbsd-tools/mtree && -x $WORK/netbsd-tools/stat ]] || { echo "check: no $WORK/netbsd-tools (testvm/compare/run-guest-rt.sh alpinebsd fetches them)" >&2; exit 2; }
     { echo "restic-bko: $BIN/restic-bko"; cat "$BIN/restic-commit" 2>/dev/null
       echo "rustic-bko: $rustic"; cat "$(dirname "$rustic")/commit" "$BIN/rustic-commit" 2>/dev/null; } >"$LOGS/binaries.txt"
     echo "rustic-bko used: $rustic ($(head -n 1 "$(dirname "$rustic")/commit" 2>/dev/null || cat "$BIN/rustic-commit" 2>/dev/null | head -n 1))"
     # shellcheck source=/dev/null
     source "$CMP/guest-slot.sh"
-    slot_take 3 2900-2999
+    case $(hostname -s) in chopin) slot_take 2 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
     CHECK_INNER=1 CHECK_LOGS=$LOGS RUSTIC_BIN=$rustic HOT_C=90 \
         "$WORK/cmp-run.sh" --reserve 3 6 timeout 900 "$self" "$@" >"$LOGS/run.log" 2>&1
     rc=$?
@@ -86,6 +89,26 @@ fi
 . "$WORK/testvm/vm-lib.sh"
 mkdir -p "$SCR" && export TMPDIR=$SCR
 trap 'vm_halt; rm -rf "$SCR"' EXIT
+tools=$WORK/netbsd-tools
+have_tools() { [[ -x $1/mtree && -x $1/stat && -x $1/nc ]]; }
+if ! have_tools "$tools"; then
+    # Once per host, the first time: the list and the way are
+    # run-guest-rt.sh's.  The lock keeps a second run from fetching too.
+    exec 9>"$tools.lock" && flock 9
+    if ! have_tools "$tools"; then
+        echo "== fetching NetBSD's tools from netbsd11 on $PORT ($(date))"
+        part=$tools.part.$$
+        rm -rf "$part" && mkdir -p "$part"
+        vm_boot netbsd11 "$PORT" "$LOGS/vm-netbsd11" --snapshot --memory 4096 || { echo "netbsd11 boot failed (fetching NetBSD's tools)"; rm -rf "$part"; exit 1; }
+        T=120 vm_ssh 'cd /root && rm -rf nbtools && mkdir nbtools && cp /usr/sbin/mtree /usr/bin/stat /usr/bin/chflags /bin/chmod /bin/setfacl /bin/getfacl /usr/bin/setextattr /usr/bin/getextattr /usr/bin/lsextattr /usr/bin/rmextattr /usr/bin/md5 /usr/bin/sha256 /bin/ls /usr/bin/touch /usr/bin/nc nbtools/ && tar -cf - nbtools' |
+            tar -C "$part" --strip-components=1 -xf -
+        vm_halt
+        have_tools "$part" || { echo "couldn't fetch NetBSD's tools from netbsd11"; rm -rf "$part"; exit 1; }
+        rm -rf "$tools" && mv "$part" "$tools"
+        echo "fetched NetBSD's tools into $tools: $(ls "$tools" | tr '\n' ' ')"
+    fi
+    flock -u 9; exec 9>&-
+fi
 echo "== boot alpinebsd on $PORT ($(date))"
 vm_boot alpinebsd "$PORT" "$LOGS/vm" --snapshot --memory 4096 || { echo "boot failed"; exit 1; }
 tar -C "$WORK/netbsd-tools" -cf - . | T=300 vm_ssh 'mkdir -p /root/nbtools && cd /root/nbtools && tar -xf -' || { echo "nbtools copy failed"; exit 1; }

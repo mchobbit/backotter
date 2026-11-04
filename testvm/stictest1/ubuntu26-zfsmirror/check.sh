@@ -11,9 +11,9 @@
 # Only the source and target file systems are on rpool: the repositories
 # (about 1.1 GiB each, torture.sh's 1 GiB of random data) and the ext4 images
 # are on a spare disk (vdc, /var/tmp in the guest, /bkoscratch/PREFIX on the
-# host), so the mirrored rpool's overlay (every write twice) stays within the
-# --reserve, whose memory limit slows QEMU to a halt past it (hung tasks in
-# the guest). The guest's ARC is capped at 1 GiB.
+# host), so the overlays of rpool's two disks (every write twice) stay within
+# the --reserve's 9 GiB of RAM disk (both disks: 7.6 GiB at most, measured
+# 2026-11-04). The guest's ARC is capped at 1 GiB.
 # fs_roundtrip.py does all four directions (restic->restic, rustic->rustic,
 # restic->rustic, rustic->restic) into fresh file systems, a restore over a
 # changed copy (immutable/append-only files in the way) and a rerun over the
@@ -31,8 +31,8 @@
 # Prints PASS/FAIL/LIMIT lines, writes results.json into the log dir
 # (~/backotter-work/stictest1/ubuntu26-zfsmirror/logs/PREFIX-TIME/), exit 0 if
 # nothing FAILs.  Takes a guest slot (Chopin 2 on 2700-2799, Cinqcent 3 on
-# 2900-2999) and cmp-run.sh --reserve 6 MEM itself (MEM: the guest's MEMORY,
-# MB, default 4096, in GiB + 0.5): 6 GiB for the overlay of rpool's two disks.
+# 2900-2999) and cmp-run.sh --reserve 9 MEM itself (MEM: the guest's MEMORY,
+# MB, default 4096, in GiB + 0.5): 9 GiB for the overlays of rpool's two disks.
 set -uo pipefail
 G=ubuntu26-zfsmirror self=$(realpath "$0")
 WORK=${BKO_WORK:-$HOME/backotter-work}
@@ -47,7 +47,7 @@ if [[ -z ${STICK_INNER:-} ]]; then
         cinqcent) slot_take 3 2900-2999 ;;
         *) slot_take 2 2700-2799 ;;
     esac
-    STICK_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 6 "$(awk -v m="${MEMORY:-4096}" 'BEGIN { print m / 1024 + 0.5 }')" "$self" "$@"; rc=$?
+    STICK_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 9 "$(awk -v m="${MEMORY:-4096}" 'BEGIN { print m / 1024 + 0.5 }')" "$self" "$@"; rc=$?
     slot_give
     exit $rc
 fi
@@ -59,7 +59,7 @@ LOGS=${STC_LOGS:-$WORK/stictest1/$G/logs}/$PREFIX-$(date +%Y%m%d-%H%M%S)
 mkdir -p "$LOGS"
 SCR=/mnt/bko-ram/$PREFIX
 mkdir -p "$SCR"
-export TMPDIR=$SCR          # vm-run --ram's overlay; nothing here chroots
+export TMPDIR=$SCR RAM_DIR=$SCR   # vm-run --ram's overlays (not /dev/shm); nothing here chroots
 SPARE=/bkoscratch/$PREFIX/spare.img   # vdc: /var/tmp in the guest (ext4 run, images), off the root pool
 mkdir -p "${SPARE%/*}" && truncate -s 24G "$SPARE"
 cleanup() { vm_halt 2>/dev/null; exec 9>&- 2>/dev/null; rm -rf "$SCR" "$LOGS/console.in" "${SPARE%/*}"; }

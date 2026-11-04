@@ -27,11 +27,15 @@
 #   RAM disk: the DISK_GIB (default 8) of everything running stays within
 #     the tmpfs, less 1 GiB;
 #   memory, static: the MEM_GIB (default 5) of everything running fits in
-#     MemTotal after the whole tmpfs, the ARC's cap and BASE_GIB (default 6)
-#     for the system, as if each were full;
-#   memory, live (other sessions): MemAvailable, less the tmpfs's and the ARC's
-#     room to grow, swap in use, 2 GiB, and what running jobs have reserved
+#     MemTotal after the whole tmpfs, the ARC and BASE_GIB (default 6) for the
+#     system, as if the tmpfs were full;
+#   memory, live (other sessions): MemAvailable, less the tmpfs's room to
+#     grow, the ARC's, swap in use, 2 GiB, and what running jobs have reserved
 #     but not touched yet (MEM_GIB less their cgroup's anon), covers it.
+#   The ARC counts as its size now plus ARC_ROOM_GIB (default 1), within its
+#     cap: not the whole cap (zfs_arc_max, 8 GiB on the hosts), which only the
+#     host's small throwaway test pools ever use, and the ARC gives memory back
+#     under pressure.
 # Each job runs in a systemd scope with MemoryHigh = DISK + MEM GiB (its
 # tmpfs pages count there too): past that it is slowed and reclaimed into
 # zram, never killed. zram (16 GiB) is the cushion under all of it.
@@ -74,7 +78,7 @@ budget() {  # -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked)
             'BEGIN { x = m - a / 1073741824; if (x < 0) x = 0; print u + x }')
     done <$LEDGER
     df -Pk $RAM | awk -v arc_max="${arc_max:-0}" -v arc_size="${arc_size:-0}" -v base="${BASE_GIB:-6}" \
-                      -v unused="$unused" -v ledger=$LEDGER '
+                      -v arc_room="${ARC_ROOM_GIB:-1}" -v unused="$unused" -v ledger=$LEDGER '
         function fl(x) { return int(x * 10 + (x < 0 ? -1 : 0)) / 10 }   # round down
         NR == 2 { size = $2 / 1048576; avail = $4 / 1048576 }
         END {
@@ -88,9 +92,12 @@ budget() {  # -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked)
             }
             if (total == 0 || size == 0) exit 1
             while ((getline l < ledger) > 0) { split(l, f, " "); rd += f[2]; rm += f[3] }
-            arcmax = arc_max / G; arcroom = (arc_max - arc_size) / G; if (arcroom < 0) arcroom = 0
+            # The ARC: its size plus arc_room, within its cap; arcroom is its room to grow.
+            arcroom = (arc_max - arc_size) / G; if (arcroom < 0) arcroom = 0
+            if (arcroom > arc_room) arcroom = arc_room
+            arc = arc_size / G + arcroom
             disk = size - 1 - rd; if (avail - 1 < disk) disk = avail - 1
-            mem = total - size - arcmax - base - rm
+            mem = total - size - arc - base - rm
             live = memavail - avail - arcroom - (swt - swf) - 2 - unused
             if (live < mem) mem = live
             printf "%.1f %.1f\n", fl(disk), fl(mem)
@@ -155,12 +162,16 @@ parse() {  # LINE -> globals g stick grow ondisk d m (suffixes only at the end, 
     g=${s%%:*} stick=""; [ "$g" != "$s" ] && stick=${s#*:}
 }
 ceiling() {  # -> "DISK MEM": the most one job could ever get on this host
-    local arc_max
+    local arc_max arc_size
     arc_max=$(awk '$1 == "c_max" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
-    df -Pk $RAM | awk -v arc="${arc_max:-0}" -v base="${BASE_GIB:-6}" '
+    arc_size=$(awk '$1 == "size" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
+    df -Pk $RAM | awk -v arc_max="${arc_max:-0}" -v arc_size="${arc_size:-0}" -v arc_room="${ARC_ROOM_GIB:-1}" \
+                      -v base="${BASE_GIB:-6}" '
         NR == 2 { size = $2 / 1048576 }
-        END { while ((getline l < "/proc/meminfo") > 0) { split(l, f, /[: ]+/); if (f[1] == "MemTotal") t = f[2] / 1048576 }
-              printf "%.1f %.1f\n", size - 1, t - size - arc / 1073741824 - base - 2 }'
+        END { G = 1073741824
+              arc = arc_size / G + arc_room; if (arc > arc_max / G) arc = arc_max / G   # as budget() counts it
+              while ((getline l < "/proc/meminfo") > 0) { split(l, f, /[: ]+/); if (f[1] == "MemTotal") t = f[2] / 1048576 }
+              printf "%.1f %.1f\n", size - 1, t - size - arc - base - 2 }'
 }
 
 if [ "${1:-}" = --reserve ]; then

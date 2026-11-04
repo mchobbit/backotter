@@ -87,7 +87,7 @@ vm_put "$BIN/restic-bko" /root/restic-bko && vm_put "$RUSTIC_BIN" /root/rustic-b
     vm_put "$CMP/netbsd/roundtrip.sh" /root/roundtrip.sh && vm_put "$CMP/rt-common.sh" /root/rt-common.sh &&
     vm_put "$here/probe.sh" /root/probe.sh || { echo "copy failed"; exit 1; }
 T=60 vm_ssh '/root/restic-bko version; /root/rustic-bko --version; sysctl kern.securelevel; uname -a' 2>&1
-reset='PATH=/sbin:/usr/sbin:/bin:/usr/bin; cd /; for m in $(mount | awk "\$3 ~ /^\\/root\\/bko/ {print \$3}" | sort -r); do umount -f $m; done; for v in 0 1 2 3; do vndconfig -u vnd$v 2>/dev/null; done; chflags -R 0 /root/bko-* /tmp/bko-* 2>/dev/null; rm -rf /root/bko-* /tmp/bko-*; true'
+reset='PATH=/sbin:/usr/sbin:/bin:/usr/bin; cd /; for m in $(mount | awk "\$3 ~ /^\\/root\\/bko/ {print \$3}" | sort -r); do umount -f $m; done; for v in 0 1 2 3; do vndconfig -u vnd$v 2>/dev/null; done; chflags -R 0 /root/bko-* /tmp/bko-* 2>/dev/null; find /root/bko-* /tmp/bko-* -type l -exec chflags -h 0 {} + 2>/dev/null; rm -rf /root/bko-* /tmp/bko-*; true'
 for dir in restic-restic rustic-rustic restic-rustic rustic-restic; do
     b=${dir%-*} r=${dir#*-}
     echo "== roundtrip $dir ($(date))"

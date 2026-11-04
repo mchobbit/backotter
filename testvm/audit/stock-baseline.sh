@@ -74,7 +74,7 @@ for n in "${names[@]}"; do
     if [[ $n == restic ]]; then h=$rhost; else h=$chost; fi
     if [[ $force == 0 ]]; then
         have=
-        for x in "$h" "$rhost" "$chost"; do done_on "$x" "$out" && { have=$x; break; }; done
+        for x in "$h" "$rhost" "$chost"; do done_on "$x" "$out" "$c" && { have=$x; break; }; done
         if [[ -n $have ]]; then
             log "$n $v: baseline on $have already (--force runs it again)"
             fetch "$have" "$out" "$LOCAL/stock-baseline/$n-$v"
@@ -105,8 +105,8 @@ for i in "${!hosts[@]}"; do
     for s in ${specs[$i]}; do
         IFS=: read -r n _ out _ <<<"$s"
         out=${out#\$HOME/}
-        v=$(stock_field "$n" 2)
-        if done_on "${hosts[$i]}" "$out"; then
+        v=$(stock_field "$n" 2) c=$(stock_field "$n" 3)
+        if done_on "${hosts[$i]}" "$out" "$c"; then
             fetch "${hosts[$i]}" "$out" "$LOCAL/stock-baseline/$n-$v"
         else
             echo "$n $v: no complete results on ${hosts[$i]}:$out" >&2; fail=1
@@ -122,7 +122,7 @@ sum=$here/stock-baseline.txt
     echo "# results themselves are on the hosts, ~/$RWORK/stock/NAME-VERSION)."
     while read -r n v c; do
         d=$LOCAL/stock-baseline/$n-$v
-        [[ -f $d/results.tsv ]] || { echo; echo "$n $v $c: no baseline"; continue; }
+        local_ok "$d" "$c" || { echo; echo "$n $v $c: no baseline"; continue; }
         echo
         echo "$n $v  commit $c"
         sed -nE 's/^(host|date|go|rustc|cargo|rustic_core_used|walkdir_used|seconds)=/  \1: /p' "$d/info.txt"

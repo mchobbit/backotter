@@ -22,7 +22,9 @@ name (a duplicate gets " #2"), and a go vet finding's line and column, so
 that lines moved by the fork's changes still match.  Comparing, a test that
 is only on one side but whose name with its digits replaced (and Go's "#01"
 of a repeated name left out) matches one on the other (Go subtests named
-after random sizes, TestList/max-1148) counts as the same test.
+after random sizes, TestList/max-1148) counts as the same test, when
+both sides have as many of that pattern without an exact match; the
+report lists those pairs.
 
 Python 3.6 or later; nothing outside the standard library.
 """
@@ -136,6 +138,14 @@ def parse_go(out):
                 k = ("#vet", "%s: %s" % (m.group(1), m.group(2)))
                 rows[k] = "fail"
                 details[k[0] + "\t" + k[1]] = line
+    # go test failing without a failing row (go.mod trouble, a crash before
+    # any JSON): its step is a failed build, never a silent pass.
+    if st.get("go test", 0) != 0 and not any(v == "fail" for v in rows.values()):
+        rows[("#build", "go test ./...")] = "fail"
+        try:
+            details["#build\tgo test ./..."] = tail(open(os.path.join(out, "test.stderr"), errors="replace").read())
+        except OSError:
+            details["#build\tgo test ./..."] = "(go test failed; no test.stderr)"
     for label, rc, _ in steps(out):
         if label.startswith("cross "):
             k = ("#cross", label[6:])
@@ -153,12 +163,14 @@ def parse_go(out):
 RUNNING = re.compile(r"^\s+Running (?:unittests )?(\S+) \((.+)\)\s*$")
 DOCTESTS = re.compile(r"^\s+Doc-tests (\S+)\s*$")
 TESTLINE = re.compile(r"^test (.+?) \.\.\. (ok|FAILED|ignored(?:, .*)?)\s*$")
-RESULT = re.compile(r"^test result: ")
+RESULT = re.compile(r"^test result: \S+\. (\d+) passed; (\d+) failed;")
+FAILLIST = re.compile(r"^    (\S.*?)\s*$")
 NOCOMPILE = re.compile(r"^error: could not compile `([^`]+)`(?: \(([^)]*)\))?")
 
 
 def parse_cargo(out):
     rows, details = {}, {}
+    rcs = dict((label, rc) for label, rc, _ in steps(out))
     for logname in ("test.log", "doctest.log"):
         p = os.path.join(out, logname)
         if not os.path.exists(p):
@@ -169,6 +181,10 @@ def parse_cargo(out):
         nocompile = False
         dup = collections.Counter()
         failout = {}
+        nfail = 0        # failing rows of the current suite
+        suitefailed = set()  # their names as cargo printed them
+        faillist = None  # in cargo's closing "failures:" list of names
+        before = sum(1 for v in rows.values() if v == "fail")
 
         def close():
             if suite is not None and not seen_result:
@@ -177,20 +193,47 @@ def parse_cargo(out):
                 details["#bin\t" + suite] = "(the test binary ended without its \"test result\" line)"
 
         for i, line in enumerate(lines):
+            # The names in "failures:" count as failed even when their
+            # "test NAME ... FAILED" line was lost (output of the tests'
+            # child processes written into it).
+            if faillist is not None and suite is not None:
+                m = FAILLIST.match(line)
+                if m:
+                    faillist = True
+                    if m.group(1) not in suitefailed:
+                        name = re.sub(r" \(line \d+\)", "", m.group(1)) if doc else m.group(1)
+                        rows[(suite, name)] = "fail"
+                        failout[m.group(1)] = (suite, name)
+                        suitefailed.add(m.group(1))
+                        nfail += 1
+                    continue
+                if not (faillist is False and not line.strip()):
+                    faillist = None
+            if line == "failures:":
+                faillist = False
+                continue
             m = RUNNING.match(line)
             if m:
                 close()
                 binname = re.sub(r"-[0-9a-f]{16}$", "", os.path.basename(m.group(2)))
                 suite, seen_result, doc = "%s [%s]" % (m.group(1), binname), False, False
+                nfail, suitefailed = 0, set()
                 continue
             m = DOCTESTS.match(line)
             if m:
                 close()
                 suite, seen_result, doc = "doc-tests " + m.group(1), False, True
                 dup = collections.Counter()
+                nfail, suitefailed = 0, set()
                 continue
-            if RESULT.match(line):
+            m = RESULT.match(line)
+            if m:
                 seen_result = True
+                # More failed than the rows say: the binary as a whole fails.
+                if suite is not None and int(m.group(2)) > nfail:
+                    rows[("#bin", suite)] = "fail"
+                    details["#bin\t" + suite] = "(%s: %s failed, %d of them found by name)" % (
+                        line.strip(), m.group(2), nfail)
                 continue
             m = NOCOMPILE.match(line)
             if m:
@@ -212,10 +255,20 @@ def parse_cargo(out):
                 rows[(suite, name)] = st
                 if st == "fail":
                     failout[m.group(1)] = (suite, name)
+                    suitefailed.add(m.group(1))
+                    nfail += 1
         close()
-        # The step as a build: every crate it needed compiled, or not.
-        k = ("#build", "cargo test" + (" --doc" if logname == "doctest.log" else ""))
-        rows[k] = "fail" if nocompile else "pass"
+        # The step as a build: every crate it needed compiled, or not; and a
+        # step that failed with no failing row from its log (a --locked or
+        # resolver error, a crash) fails as a build too.
+        label = "cargo test" + (" --doc" if logname == "doctest.log" else "")
+        k = ("#build", label)
+        failed_rows = sum(1 for v in rows.values() if v == "fail") > before
+        if nocompile or (rcs.get(label, 0) != 0 and not failed_rows):
+            rows[k] = "fail"
+            details.setdefault("#build\t" + label, tail(text, 40))
+        else:
+            rows[k] = "pass"
         # "---- NAME stdout ----" blocks hold what the failed tests printed.
         blocks = re.split(r"^---- (.+?) stdout ----$", text, flags=re.M)
         for j in range(1, len(blocks) - 1, 2):
@@ -271,18 +324,28 @@ def compare(sd, fd):
     for k in ("go", "rustc", "rustic_core_used", "walkdir_used"):
         if k in si or k in fi:
             print("  %s: stock %s; fork %s" % (k, si.get(k, "-"), fi.get(k, "-")))
+    # Fuzzy names pair only tests without an exact match on the other side,
+    # and only as many as each side has: a stock test whose fuzzy name a
+    # different, surviving fork test shares is still missing.
     sfz = collections.defaultdict(list)
     ffz = collections.defaultdict(list)
     for k in s:
-        sfz[fuzzy(k)].append(k)
+        if k not in f:
+            sfz[fuzzy(k)].append(k)
     for k in f:
-        ffz[fuzzy(k)].append(k)
+        if k not in s:
+            ffz[fuzzy(k)].append(k)
+
+    def paired(g):
+        return 0 < len(sfz.get(g, ())) == len(ffz.get(g, ()))
 
     def stock_of(k):
         if k in s:
             return s[k]
+        if not paired(fuzzy(k)):
+            return None
         st = None
-        for o in sfz.get(fuzzy(k), []):
+        for o in sfz[fuzzy(k)]:
             st = worst(st, s[o])
         return st
 
@@ -313,15 +376,20 @@ def compare(sd, fd):
     print("\nSkipped on the fork, passing on stock: %d" % len(skips))
     for k in skips:
         print("  %s :: %s" % k)
-    missing = [k for k in sorted(s) if k not in f and fuzzy(k) not in ffz and tests(k)]
+    missing = [k for k in sorted(s) if k not in f and not paired(fuzzy(k)) and tests(k)]
     print("\nOn stock, missing on the fork: %d" % len(missing))
     for k in missing:
         print("  %s :: %s  (stock: %s)" % (k[0], k[1], s[k]))
-    added = [k for k in sorted(f) if k not in s and fuzzy(k) not in sfz and tests(k)]
+    added = [k for k in sorted(f) if k not in s and not paired(fuzzy(k)) and tests(k)]
     c = collections.Counter(f[k] for k in added)
     print("\nAdded by the fork: %d (%d pass, %d fail, %d skip)" % (len(added), c["pass"], c["fail"], c["skip"]))
     for k in added:
         print("  %s :: %s  %s" % (k[0], k[1], f[k]))
+    fz = sorted(g for g in sfz if paired(g) and tests(g))
+    print("\nPaired by name with their digits ignored (random or renumbered names): %d" %
+          sum(len(sfz[g]) for g in fz))
+    for g in fz:
+        print("  %s :: stock %s; fork %s" % (g[0], ", ".join(k[1] for k in sfz[g]), ", ".join(k[1] for k in ffz[g])))
     known = [k for k in sorted(s) if s[k] == "fail"]
     print("\nKnown stock failures: %d" % len(known))
     for k in known:

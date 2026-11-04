@@ -69,12 +69,12 @@ commit_rustic=$(git -C "$BKO_GIT/rustic" rev-parse --verify "$rev_rustic^{commit
 for n in "${names[@]}"; do
     v=$(stock_field "$n" 2) sc=$(stock_field "$n" 3)
     d=$LOCAL/stock-baseline/$n-$v
-    if [[ ! -s $d/results.tsv ]]; then
+    if ! local_ok "$d" "$sc"; then
         for x in "$rhost" "$chost"; do
-            done_on "$x" "$RWORK/stock/$n-$v" && { fetch "$x" "$RWORK/stock/$n-$v" "$d"; break; }
+            done_on "$x" "$RWORK/stock/$n-$v" "$sc" && { fetch "$x" "$RWORK/stock/$n-$v" "$d"; break; }
         done
     fi
-    [[ -s $d/results.tsv ]] || { echo "no stock baseline for $n $v: run stock-baseline.sh first" >&2; exit 2; }
+    local_ok "$d" "$sc" || { echo "no stock baseline of $n $v ($sc): run stock-baseline.sh first" >&2; exit 2; }
     c=commit_$n
     git -C "$BKO_GIT/$n" merge-base --is-ancestor "$sc" "${!c}" ||
         echo "warning: $n ${!c:0:12} isn't based on stock $v ($sc): the baseline may be stale (update STOCK in audit-lib.sh and run stock-baseline.sh)" >&2
@@ -107,7 +107,7 @@ for n in "${names[@]}"; do
         [[ $pin == *"#$commit_rustic_core\"" ]] ||
             echo "note: rustic ${commit_rustic:0:12}'s Cargo.lock takes rustic_core from $pin; built here with rustic_core ${commit_rustic_core:0:12}"
     fi
-    if [[ $force == 0 ]] && done_on "$h" "$out"; then
+    if [[ $force == 0 ]] && done_on "$h" "$out" "${!c}"; then
         log "$n ${!c:0:12}: results on $h already (--force runs it again)"
         continue
     fi
@@ -138,9 +138,9 @@ log "built and tested in $(( $(date +%s) - t_start ))s"
 
 worse=0
 for n in "${names[@]}"; do
-    h=$(hostfor "$n") out=$(out_of "$n") v=$(stock_field "$n" 2)
+    h=$(hostfor "$n") out=$(out_of "$n") v=$(stock_field "$n" 2) c=commit_$n
     d=$LOCAL/fork-tests/$(basename "$out")
-    if ! done_on "$h" "$out"; then
+    if ! done_on "$h" "$out" "${!c}"; then
         echo "$n: no complete results on $h:$out" >&2; incomplete=1; continue
     fi
     fetch "$h" "$out" "$d"

@@ -67,9 +67,15 @@ ship_src() {
         die "can't copy $n $c to $h:$d"
 }
 
-# done_on HOST OUT: OUT (relative to the home) holds a finished run.
+# done_on HOST OUT COMMIT: OUT (relative to the home) holds a finished run
+# of COMMIT.
 done_on() {
-    "${SSH[@]}" "$1" "test \"\$(cat $2/exit 2>/dev/null)\" = 0 -a -s $2/results.tsv"
+    "${SSH[@]}" "$1" "test \"\$(cat $2/exit 2>/dev/null)\" = 0 -a -s $2/results.tsv && grep -qx commit=$3 $2/info.txt"
+}
+
+# local_ok DIR COMMIT: the Mac's copy DIR holds results of COMMIT.
+local_ok() {
+    [[ -s $1/results.tsv ]] && grep -qx "commit=$2" "$1/info.txt" 2>/dev/null
 }
 
 # launch HOST TAG SPEC...: audit-host.sh SPEC... on HOST, detached, under
@@ -112,8 +118,9 @@ wait_tag() {
     return "$rc"
 }
 
-# fetch HOST OUT LOCALDIR: the results (not bin/, not the caches) to the Mac.
+# fetch HOST OUT LOCALDIR: the results (not bin/, not the caches) to the
+# Mac, in place of what LOCALDIR held.
 fetch() {
-    mkdir -p "$3" && rsync -r --checksum --exclude bin/ --exclude .lock "$1:$2/" "$3/" ||
+    mkdir -p "$3" && rsync -r --checksum --delete --exclude bin/ --exclude .lock "$1:$2/" "$3/" ||
         die "can't copy $1:$2 here"
 }

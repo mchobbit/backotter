@@ -23,7 +23,7 @@
 #                with CGO_ENABLED=0 for each of CROSS (below)
 #   rustic_core  cargo test --all-targets --all-features --workspace
 #                --examples --no-fail-fast; the same with --doc
-#   rustic       cargo test [--locked] --all-targets --features release
+#   rustic       cargo test --locked --all-targets --features release
 #                --workspace --no-fail-fast; the same with --doc;
 #                target/debug/rustic to OUT/bin/rustic
 # OUT then holds:
@@ -47,7 +47,9 @@
 #   /bkoscratch/bko-audit/cache/target/NAME        CARGO_TARGET_DIR, one per
 #       project, shared by stock and fork trees: the fork's build reuses the
 #       dependencies the stock one built; a target over TARGET_MAX_GIB
-#       (default 60) is emptied first
+#       (default 60) is emptied first.  A job takes its target's lock for
+#       its whole run, and the trees it builds get their files' times set
+#       to now when the target's last job built other trees (own_target)
 # Tests write their temporary files in /mnt/bko-ram/bko-audit/JOB (removed
 # after the job): the reservation's DISK_GIB covers them.
 #
@@ -105,18 +107,37 @@ rust_env() {
     # "<disabled>" backtraces, and fail with one set.
     unset RUSTFLAGS CARGO_ENCODED_RUSTFLAGS RUSTC_WRAPPER RUST_BACKTRACE RUST_LIB_BACKTRACE
     mkdir -p "$CARGO_HOME" "$CARGO_TARGET_DIR"
-    local g
-    g=$(du -s --block-size=1G "$CARGO_TARGET_DIR" 2>/dev/null | cut -f1)
-    if [[ ${g:-0} -gt $TARGET_MAX_GIB ]]; then
-        log "$CARGO_TARGET_DIR is ${g} GiB, over $TARGET_MAX_GIB: emptied"
-        rm -rf "$CARGO_TARGET_DIR" && mkdir -p "$CARGO_TARGET_DIR"
-    fi
     {
         echo "rustc=$(rustc -V)"
         echo "cargo=$(cargo -V)"
         echo "rust_toolchain=${RUSTUP_TOOLCHAIN:-default}"
     } >>"$OUT/info.txt"
 }
+# own_target TREE...: hold CARGO_TARGET_DIR for this job and make cargo
+# rebuild TREE's crates when another tree was built there last.  Cargo
+# finds a workspace crate fresh when its files are no newer than its last
+# build, wherever its tree is (the same name and version, the same
+# relative paths), and git archive gives the files their commit's time: a
+# tree of an older commit, or stock's after a fork's, would otherwise be
+# tested with the binaries the other tree built.  The lock (held until the
+# job's subshell ends) keeps a stock and a fork job on one host apart.
+own_target() {
+    exec 8>"$CARGO_TARGET_DIR/.bko-audit.lock"
+    flock 8 || die "can't lock $CARGO_TARGET_DIR"
+    local mark=$CARGO_TARGET_DIR/.bko-audit.trees g
+    g=$(du -s --block-size=1G "$CARGO_TARGET_DIR" 2>/dev/null | cut -f1)
+    if [[ ${g:-0} -gt $TARGET_MAX_GIB ]]; then
+        log "$CARGO_TARGET_DIR is ${g} GiB, over $TARGET_MAX_GIB: emptied"
+        find "$CARGO_TARGET_DIR" -mindepth 1 -maxdepth 1 ! -name .bko-audit.lock -exec rm -rf {} +
+    fi
+    if [[ "$(cat "$mark" 2>/dev/null)" != "$*" ]]; then
+        log "$CARGO_TARGET_DIR last built other trees: $* get the time now"
+        rm -f "$mark"
+        find "$@" -type f -exec touch -c {} + || die "can't touch $*"
+        echo "$*" >"$mark"
+    fi
+}
+
 # No debug info: a far smaller target directory; the tests are the same.
 CARGO_CFG=(--config 'profile.dev.debug=false' --config 'profile.test.debug=false'
     --config 'profile.dev.package."*".debug=false' --config 'profile.test.package."*".debug=false')
@@ -159,6 +180,7 @@ run_restic() {
 
 run_rustic_core() {
     rust_env
+    own_target "$SRC"
     step "cargo test" "$OUT/test.log" cargo "${CARGO_CFG[@]}" test --all-targets --all-features \
         --workspace --examples --no-fail-fast
     step "cargo test --doc" "$OUT/doctest.log" cargo "${CARGO_CFG[@]}" test --doc --all-features \
@@ -182,6 +204,9 @@ run_rustic() {
         fi
         cd "$work/rustic" || die "no $work/rustic"
         echo "rustic_core_tree=$CORE" >>"$OUT/info.txt"
+        own_target "$work/rustic" "$CORE"
+    else
+        own_target "$SRC"
     fi
     # Which rustic_core (and walkdir) the build takes, from Cargo.lock.
     awk '$0 == "name = \"rustic_core\"" || $0 == "name = \"walkdir\"" { n = $3; gsub(/"/, "", n); next }

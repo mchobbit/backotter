@@ -67,7 +67,7 @@ On each host:
 | `/bkoscratch/bko-audit/src/NAME-COMMIT/` | source trees, `git archive` of the Mac's `~/git/NAME`, reused for the same commit; `rustic-COMMIT+core-COMMIT/` the fork rustic pointed at that rustic_core |
 | `/bkoscratch/bko-audit/cache/gocache`, `gomod` | `GOCACHE`, `GOMODCACHE` |
 | `/bkoscratch/bko-audit/cache/cargo-home` | `CARGO_HOME`: crates.io registry and git checkouts |
-| `/bkoscratch/bko-audit/cache/target/NAME` | `CARGO_TARGET_DIR` per project, shared by stock and fork, so the fork reuses stock's compiled dependencies; emptied first when over 60 GiB |
+| `/bkoscratch/bko-audit/cache/target/NAME` | `CARGO_TARGET_DIR` per project, shared by stock and fork, so the fork reuses stock's compiled dependencies; emptied first when over 60 GiB.  A job holds the target's lock while it runs, and when the target's last job built other trees, this job's trees get their files' times set to now first: cargo finds a crate fresh by its files' times, wherever its tree is, and `git archive` dates them to the commit, so an older tree would otherwise be tested with the binaries a newer one built |
 | `/mnt/bko-ram/bko-audit/JOB` | the tests' `TMPDIR`, removed after the job |
 
 The caches are on `/bkoscratch`, not the RAM disk, and nothing cleans them.
@@ -75,7 +75,8 @@ The caches are on `/bkoscratch`, not the RAM disk, and nothing cleans them.
 On the Mac, `BKO_AUDIT_LOCAL` (default `${TMPDIR:-/tmp}/bko-audit`) holds the
 copies: `stock-baseline/NAME-VERSION/` and `fork-tests/` (results without
 `bin/`; `NAME.report` the comparison).  `fork-tests.sh` fetches a missing
-baseline from the hosts.
+baseline from the hosts.  Results here or on a host count only when their
+`info.txt` names the commit asked for.
 
 ## How long
 
@@ -89,7 +90,9 @@ Measured 2026-11-04:
 | `fork-tests.sh --force`, same commits, warm | 97 s | 92 s (63 s of steps) | 62 s: rustic_core 45, rustic 8 |
 
 A fork commit later on changes only its own crates (and restic's packages):
-expect about the third row without the wait.  The ledger wait is
+expect about the third row without the wait.  A Rust run after one of
+other trees in the same target (stock after fork, or another fork commit)
+recompiles the project's own crates, as the third row does.  The ledger wait is
 whatever the host is doing; `cmp-run.sh` holds a job back while the CPU is
 over 95 °C.
 

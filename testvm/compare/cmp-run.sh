@@ -31,7 +31,9 @@
 #     system, as if the tmpfs were full;
 #   memory, live (other sessions): MemAvailable, less the tmpfs's room to
 #     grow, the ARC's, swap in use, 2 GiB, and what running jobs have reserved
-#     but not touched yet (MEM_GIB less their cgroup's anon), covers it.
+#     but not touched yet (MEM_GIB less their cgroup's anon; for a --reserve,
+#     which has no cgroup of its own, less the anon of CMD's process tree, the
+#     guest's QEMU included), covers it.
 #   The ARC counts as its size now plus ARC_ROOM_GIB (default 1), within its
 #     cap: not the whole cap (zfs_arc_max, 8 GiB on the hosts), which only the
 #     host's small throwaway test pools ever use, and the ARC gives memory back
@@ -65,15 +67,34 @@ H=$(hostname -s)
 DISKS_DIR=${DISKS_DIR:-/bkoscratch/compare-disks}
 
 # Ledger rows: PID DISK MEM SCOPE WHAT...   (SCOPE "-" when there is none)
+tree_anon() {  # PID ... -> "PID BYTES" lines: the anon memory (RssAnon) of each
+    # PID's process tree. A process counts for its nearest ancestor among the
+    # PIDs, so a --reserve inside another's tree isn't counted twice. A process
+    # that left the tree (reparented to init) isn't counted: its row then
+    # reserves more, as before, never less.
+    [ $# -gt 0 ] || return 0
+    cat /proc/[0-9]*/status 2>/dev/null | awk -v roots="$*" '
+        $1 == "Pid:" { p = $2 } $1 == "PPid:" { pp[p] = $2 } $1 == "RssAnon:" { ra[p] = $2 * 1024 }
+        END {
+            n = split(roots, r, " "); for (i = 1; i <= n; i++) { root[r[i]] = 1; sum[r[i]] = 0 }
+            for (p in ra) { k = 0; for (x = p; x > 1 && k++ < 256; x = pp[x]) if (x in root) { sum[x] += ra[p]; break } }
+            for (x in sum) print x, sum[x]
+        }'
+}
 budget() {  # -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked)
-    local arc_max arc_size unused=0 pid d m scope rest anon
+    local arc_max arc_size unused=0 pid d m scope rest anon trees
     arc_max=$(awk '$1 == "c_max" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
     arc_size=$(awk '$1 == "size" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
+    # shellcheck disable=SC2046  # the PIDs are meant to split
+    trees=$(tree_anon $(awk '$4 == "-" && $1 ~ /^[0-9]+$/ { print $1 }' $LEDGER))
     while read -r pid d m scope rest; do
         [ -n "$pid" ] || continue
         anon=0
-        [ "$scope" != - ] && anon=$(awk '$1 == "anon" { print $2 }' \
-            /sys/fs/cgroup/system.slice/$scope/memory.stat 2>/dev/null)
+        if [ "$scope" != - ]; then
+            anon=$(awk '$1 == "anon" { print $2 }' /sys/fs/cgroup/system.slice/$scope/memory.stat 2>/dev/null)
+        else   # a --reserve: what its CMD's tree uses
+            anon=$(awk -v p="$pid" '$1 == p { print $2 }' <<<"$trees")
+        fi
         unused=$(awk -v u="$unused" -v m="$m" -v a="${anon:-0}" \
             'BEGIN { x = m - a / 1073741824; if (x < 0) x = 0; print u + x }')
     done <$LEDGER

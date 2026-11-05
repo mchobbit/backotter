@@ -67,6 +67,16 @@ Components: main non-free-firmware
 Signed-By: /usr/share/keyrings/debian-archive-keyring.gpg
 EOF
     fi
+    if [ "$ID" = devuan ] && [ -n "$VERSION_CODENAME" ] && has apt-get &&
+        ! grep -hqsE "^[[:space:]]*(deb|Suites:)[[:space:]].*$VERSION_CODENAME-security" \
+            /etc/apt/sources.list /etc/apt/sources.list.d/*; then
+        # make-debian.sh's Devuan installs have the release's own suite
+        # only: no security fixes, no point-release updates.
+        f=/etc/apt/sources.list.d/devuan-updates.list
+        say "unfreezing: $f, Devuan's $VERSION_CODENAME-security and -updates"
+        printf 'deb http://deb.devuan.org/merged %s main\n' \
+            $VERSION_CODENAME-security $VERSION_CODENAME-updates >$f || exit 1
+    fi
     f=/etc/pacman.d/mirrorlist
     if [ -f $f ] && grep -q 'archive\.archlinux\.org/repos/' $f; then
         say "unfreezing: $f from Arch's archive to its mirrors"
@@ -179,6 +189,18 @@ Linux)
             systemctl mask --runtime --now packagekit.service >/dev/null 2>&1
             systemctl stop apt-daily.timer apt-daily-upgrade.timer apt-daily.service apt-daily-upgrade.service \
                 >/dev/null 2>&1
+        fi
+        # Pop!_OS: systemd-boot's menu has kernelstub's two entries, the
+        # newest kernel (Pop_OS-current) and the one before (Pop_OS-oldkern),
+        # but make-from-live.sh once left loader.conf without a default, and
+        # systemd-boot then takes the last by name: oldkern.  Its kernel is
+        # the one an update's autoremove purges the modules of, so the reboot
+        # after one stopped in emergency mode (no FAT charset for /boot/efi).
+        l=/boot/efi/loader/loader.conf
+        if [ -f /etc/kernelstub/configuration ] && [ -f $l ] &&
+            ! grep -qE '^[[:space:]]*default[[:space:]]' $l; then
+            say "boot menu: Pop_OS-current by default"
+            echo "default Pop_OS-current" >>$l || exit 1
         fi
         # Error-Mode=any: a repository that failed to download is an error
         # (to retry), not a warning that leaves the old lists in place.
@@ -397,6 +419,14 @@ NetBSD)
                 apk fix --check-certificate=no ca-certificates-bundle || exit 1
         fi
         apk update && apk add ca-certificates openssh-sftp-server && apk upgrade || exit 1
+        # The kernel package's version needn't be its kernel's: 11.1-r0
+        # (2026-11) holds 11.0's, the Jul 30 build, beside an 11.1 base.
+        # Nothing here can mend that; say so, rather than leave it to be
+        # found in uname after the reboot.
+        k=$(strings /netbsd | sed -n 's/^NetBSD \([0-9][0-9.]*\) (.*/\1/p' | head -n 1)
+        p=$(apk info -v 2>/dev/null | sed -n 's/^netbsd-kernel-generic-bin-\([0-9.]*\)-r[0-9]*$/\1/p')
+        [ "$k" = "$p" ] ||
+            say "AlpineBSD's netbsd-kernel-generic-bin $p holds NetBSD ${k:-?}'s kernel; the reboot runs that"
     else
         # NetBSD, installed from a release's base sets.  netbsd/install.sh
         # now adds what updates it; for a guest built before that, the

@@ -284,6 +284,11 @@ else
 }
 EOF
     in_root kernelstub -v -e /boot/efi -k /boot/vmlinuz -i /boot/initrd.img -l -m >/dev/null
+    # kernelstub leaves bootctl's loader.conf without a default, and
+    # systemd-boot then boots the last entry by name, Pop_OS-oldkern: the
+    # kernel whose modules an update purges.
+    l=$root/boot/efi/loader/loader.conf
+    grep -qE '^[[:space:]]*default[[:space:]]' "$l" || echo "default Pop_OS-current" >>"$l"
 fi
 
 rm -f "$root/usr/sbin/policy-rc.d" "$root/etc/resolv.conf"

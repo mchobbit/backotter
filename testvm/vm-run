@@ -3,7 +3,7 @@
 #
 # Usage: vm-run [--uefi [--no-secure-boot] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]]
 #               [--discard] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--legacy-virtio-net]
-#               [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE]
+#               [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga]
 #               IMAGE [-- QEMU_ARGS...]
 #
 # The VM gets 2 CPUs, 2 GB RAM (MEMORY=MB overrides), KVM, and QEMU's
@@ -45,6 +45,9 @@
 #                 run headless, writing the serial console to FILE (for scripts)
 #   --cpus N      N CPUs instead of 2
 #   --memory MB   MB of RAM instead of 2048 (or MEMORY), e.g. for a builder
+#   --no-vga      no graphics card, for a guest whose boot loader waits at a
+#                 video-mode menu for a key on the PS/2 keyboard, which the
+#                 serial console never sends (Redox)
 #
 # Other hardware, e.g. to restore onto a machine unlike the original:
 #   --disk-bus BUS
@@ -84,7 +87,7 @@ elif [[ -z ${TMPDIR:-} ]] && mountpoint -q /bkoscratch 2>/dev/null && mkdir -p /
 fi
 die() { echo "vm-run: $*" >&2; exit 1; }
 
-cdrom="" uefi=no q35=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic)
+cdrom="" uefi=no q35=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic) vga=()
 bus=virtio extra=() nic=virtio-net-pci nic_global=() mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -97,6 +100,7 @@ while [[ $# -gt 0 ]]; do
         --keep) keep=yes; shift ;;
         --discard) discard=,discard=unmap,detect-zeroes=unmap; shift ;;
         --serial-log) console=(-display none -serial "file:$2" -monitor none); shift 2 ;;
+        --no-vga) vga=(-vga none); shift ;;
         --disk-bus) bus=$2; shift 2 ;;
         --disk) extra+=("$(realpath "$2")"); shift 2 ;;
         --nic) nic=$2; shift 2 ;;
@@ -110,7 +114,7 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
-[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--discard] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] IMAGE [-- QEMU_ARGS...]"
+[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--discard] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga] IMAGE [-- QEMU_ARGS...]"
 image=$(realpath "$1")
 shift
 [[ ${1:-} == -- ]] && shift
@@ -186,6 +190,7 @@ args=(
     -nic "user,ipv6=off,model=$nic$mac,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22"
     "${nic_global[@]}"
     "${console[@]}"
+    "${vga[@]}"
     "${snapshot[@]}"
 )
 if [[ -n $tpm ]]; then

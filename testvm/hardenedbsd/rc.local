@@ -1,0 +1,23 @@
+#!/bin/sh
+# Replaces the install media's /etc/rc.local for a BackOtter test guest.
+# The stock one starts the interactive installer on every console; this
+# runs /etc/installerconfig straight away and says how it went on the
+# console, which make-hardenedbsd.sh reads.
+
+mkdir -p /tmp/bsdinstall_etc
+export TERM=vt100
+# Without this, "bsdinstall script" sends each step's errors to /dev/null.
+# The log goes to the console as it's written.  (When the install fails, the
+# installer shows its log and waits for a key, until make-hardenedbsd.sh
+# times out.)
+export BSDINSTALL_LOG=/tmp/bsdinstall_log
+: >"$BSDINSTALL_LOG"
+tail -f "$BSDINSTALL_LOG" &
+if bsdinstall script /etc/installerconfig; then
+	echo "BACKOTTER-INSTALL: OK"
+	reboot
+else
+	cat /tmp/bsdinstall_log
+	echo "BACKOTTER-INSTALL: FAILED"
+	poweroff
+fi

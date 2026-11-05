@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Bring BackOtter test guests up to date, on every test host at once.
 
-Usage: vm-update [--try] [--hosts HOST,...] [--jobs N] [--memory MB] GUEST...
+Usage: vm-update [--try] [--hosts HOST,...] [--jobs N] [--cpus N] [--memory MB] GUEST...
        vm-update --status|--finish [--hosts HOST,...] GUEST...
 
 Run on the host that has the guests (Chopin), from anywhere: GUEST is a
@@ -17,8 +17,9 @@ folder in vms/ next to this script's testvm/.  For each GUEST, vm-update
      overlay beside the image, which itself is only read, once this host
      has memory to spare for the VM;
   3. runs update/in-guest.sh in it over SSH: the guest's own package manager
-     (apt, dnf, pacman, zypper, xbps, apk, nixos-rebuild, pkg, syspatch and
-     pkg_add, pkg on OmniOS, pkgman on Haiku), unattended, after pointing a
+     (apt, dnf, pacman, zypper, xbps, apk, moss, nixos-rebuild, pkg,
+     syspatch and pkg_add, pkg on OmniOS, pkgman on Haiku, hbsd-update on
+     HardenedBSD), unattended, after pointing a
      guest that its builder froze at its distribution's live repositories;
      as root, or as the user named in vms/GUEST/ssh-user (Haiku's "user",
      which is uid 0: Haiku has no root);
@@ -48,6 +49,9 @@ update (NetBSD: a release's base sets) is reported and left alone.
   --jobs N      update N guests at once (default 3); each takes a 2 GB VM,
                 its overlay on disk and a free SSH port, and waits for the
                 memory it needs
+  --cpus N      the VM's CPUs instead of vm-run's 2 (DragonFly rebuilds its
+                base system from source: about 25 min with 8 and --memory
+                6144, the whole update)
   --memory MB   the VM's RAM instead of vm-run's 2048
   --status      only step 1's checks: whether the hosts agree, and what uses
                 the images
@@ -301,7 +305,7 @@ REBOOT = SBIN + ("(sleep 1; if [ $(uname) = Haiku ]; then shutdown -r -q; else r
 # has no -o: no answer, and the reboot is taken from SSH going down and up.)
 UPTIME = SBIN + "ps -o etime= -p 1"
 POWEROFF = SBIN + """case $(uname) in
-    Linux|SunOS) poweroff ;;
+    Linux|SunOS|Redox) poweroff ;;
     Haiku) shutdown -q ;;
     # DragonFly's init ignores shutdown -p's request here; halt -p works.
     OpenBSD|DragonFly) halt -p ;;
@@ -371,7 +375,7 @@ class VM:
     its overlays in a folder of its own, where overlay_dir() says.  (Not in /dev/shm: a big update's overlay
     holds gigabytes, which there would starve this host's other VMs.)"""
 
-    def __init__(self, g: Guest, memory: int | None):
+    def __init__(self, g: Guest, memory: int | None, cpus: int | None = None):
         if memory:
             mb = memory
         elif "--memory" in g.options:
@@ -389,6 +393,8 @@ class VM:
         cmd = [str(TESTVM / "vm-run"), "--ram", "--keep", "--discard", *g.options]
         if memory:
             cmd += ["--memory", str(memory)]
+        if cpus:
+            cmd += ["--cpus", str(cpus)]
         cmd.append(g.images[0])
         self.monitor = self.typer = None
         if (g.dir / "luks-passphrase").exists():
@@ -821,6 +827,11 @@ def update(name: str, args, hosts: list[str | None]) -> str:
         if state is None:
             return f"not updated by vm-update yet; the images are identical on {len(hosts)} host(s)"
         return f"update {state['updates']}, generation {state['generation'][:12]}, the same on {len(hosts)} host(s)"
+    # A guest whose sshd serves no logins (Redox today) can't be updated
+    # over SSH: refused at once, rather than after a boot's timeout.
+    no_ssh = g.dir / "no-ssh"
+    if no_ssh.exists():
+        raise Failed(f"no SSH to update it over: {no_ssh.read_text().strip()}")
     if args.try_:
         # Nothing to check: the images are only read, and a VM writing to
         # them would keep vm-run from opening them.
@@ -829,7 +840,7 @@ def update(name: str, args, hosts: list[str | None]) -> str:
         states = check_hosts(g, hosts, start=True)
     if stopping.is_set():
         raise Failed("stopped")
-    vm = VM(g, args.memory)
+    vm = VM(g, args.memory, args.cpus)
     try:
         say(name, f"booting (SSH port {vm.port})")
         vm.wait_ssh()
@@ -892,6 +903,7 @@ def main() -> int:
     p.add_argument("--finish", action="store_true")
     p.add_argument("--hosts")
     p.add_argument("--jobs", type=int, default=3)
+    p.add_argument("--cpus", type=int)
     p.add_argument("--memory", type=int)
     p.add_argument("guests", nargs="+")
     args = p.parse_args()

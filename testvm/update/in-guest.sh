@@ -6,10 +6,10 @@
 # this guest can update it, anything else when the update failed.
 #
 # Several builders freeze their guest's repositories at the day or release
-# it was built (Ubuntu, Debian, Arch, Fedora, Rocky, Tumbleweed), so that the
-# install is reproducible; updating such a guest would change nothing.  So
-# the first update points it at its distribution's live repositories, where
-# it stays.
+# it was built (Ubuntu, Debian, Arch, Fedora, Rocky, Tumbleweed, AerynOS),
+# so that the install is reproducible; updating such a guest would change
+# nothing.  So the first update points it at its distribution's live
+# repositories, where it stays.
 
 PATH=/usr/local/sbin:/usr/local/bin:/usr/pkg/sbin:/usr/pkg/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 export PATH
@@ -100,6 +100,12 @@ EOF
         sed -i -E 's#^baseurl=https?://download\.opensuse\.org/history/[^/]+/#baseurl=http://download.opensuse.org/#' \
             /etc/zypp/repos.d/*.repo
     fi
+    # AerynOS's builder pins its repository at one day's tag (version
+    # "tag/2026-11-02-unstable-stream"); the live one is the unstable stream.
+    for f in $(grep -lsE '^[[:space:]]*version "tag/' /etc/moss/repo.d/*.kdl /etc/moss/system-model.kdl); do
+        say "unfreezing: $f from its tag to the unstable stream"
+        sed -i -E 's#^([[:space:]]*version )"tag/[^"]*"#\1"stream/unstable"#' "$f"
+    done
     # The DVD it was installed from, which YaST adds as a repository after
     # the profile's own scripts have run: no DVD here, and zypper fails on
     # a repository it can't reach.
@@ -238,24 +244,110 @@ Linux)
         xbps-remove -yO || exit 1
     elif has apk; then
         apk upgrade -U || exit 1
+    elif has moss; then
+        # AerynOS: each sync makes a new state and keeps the ones before it
+        # (each a /usr of hard links into /.moss's assets, with its boot
+        # entry on the ESP).  This one and the one before stay, as on NixOS;
+        # then the assets no state holds any more, and the downloads, which
+        # cache prune keeps while the repository has them (moss fetches
+        # again what it needs).
+        moss -y sync -u && moss -y state remove --keep 2 && moss -y cache prune || exit 1
+        rm -rf /.moss/cache/downloads
     else
         say "no package manager found"; exit 3
     fi ;;
 FreeBSD)
     export ASSUME_ALWAYS_YES=yes
-    if pkg info -e FreeBSD-runtime; then
+    if has hbsd-update; then
+        # HardenedBSD (uname says FreeBSD): its base system's binary updates
+        # come from hbsd-update, which exits 0 when the guest is current;
+        # it has neither freebsd-update nor pkgbase.  Packages only where
+        # pkg is installed (pkg -N), as the guest's install has none: any
+        # other pkg command would install pkg first (ASSUME_ALWAYS_YES), and
+        # then fail, as 15-STABLE's repository can't be read (2026-11: its
+        # meta.conf names data.tzst, it holds data.pkg).
+        hbsd-update || exit 1
+        if pkg -N >/dev/null 2>&1; then pkg upgrade -y || exit 1; fi
+    elif pkg info -e FreeBSD-runtime || pkg info -e GhostBSD-runtime; then
         # pkgbase: the base system is packages too, upgraded with the rest.
+        # GhostBSD (uname says FreeBSD) has it as GhostBSD-* (repository
+        # GhostBSD-base) and no freebsd-update; its Update Station runs pkg
+        # too, into a new boot environment where / is ZFS.
         pkg update -f && pkg upgrade -y || exit 1
     else
         PAGER=cat freebsd-update --not-running-from-cron fetch install; rc=$?
         [ $rc -eq 0 ] || [ $rc -eq 2 ] || exit 1      # 2: nothing to install
         pkg upgrade -y || exit 1
     fi
-    pkg clean -ay ;;
+    ! pkg -N >/dev/null 2>&1 || pkg clean -ay ;;
 DragonFly)
-    # Packages only: DragonFly's base system is updated from source.
     export ASSUME_ALWAYS_YES=yes
-    pkg upgrade -y && pkg clean -ay || exit 1 ;;
+    pkg upgrade -y || exit 1
+    # The base system: DragonFly publishes it in binary only as each point
+    # release's install image, and its fixes land on the release branch in
+    # between.  So it is rebuilt from that branch's head, as DragonFly's own
+    # upgrade steps do it (buildworld, buildkernel, installkernel,
+    # installworld, upgrade), unless that is what it runs: /var/db/bko-base
+    # holds the commit the last rebuild came from (before the first, the
+    # release's tag stands for it).  A rebuild that fails, installworld half
+    # done included, fails the update, whose overlay vm-update throws away.
+    # From DragonFly's mirror on GitHub, over HTTPS: its own git server
+    # (/usr/Makefile's) speaks only git://, which nothing authenticates.
+    # git only for this, then gone again: just what installing it added,
+    # since pkg autoremove would also take most of the guest's own
+    # packages, which its install marks automatic.
+    branch=DragonFly_RELEASE_$(uname -r | sed 's/-.*//; s/\./_/')
+    repo=https://github.com/DragonFlyBSD/DragonFlyBSD.git
+    gitpkgs=
+    if ! has git; then
+        pkg query %n | sort >/tmp/bko-pkgs && pkg install -y git-lite || exit 1
+        gitpkgs=$(pkg query %n | sort | comm -13 /tmp/bko-pkgs -)
+    fi
+    head=$(git ls-remote $repo refs/heads/$branch | cut -f1)
+    [ -n "$head" ] || { say "no $branch at $repo"; exit 1; }
+    if [ -f /var/db/bko-base ]; then
+        built=$(cat /var/db/bko-base)
+    else
+        tag=$(uname -v | sed -n 's/^DragonFly \(v[0-9.]*\)-RELEASE .*/\1/p')
+        built=$(git ls-remote $repo "refs/tags/$tag^{}" | cut -f1)
+    fi
+    if [ "$head" = "$built" ]; then
+        say "base system: current, $branch at $head"
+    else
+        say "base system: rebuilding from $branch at $head (built from ${built:-?})"
+        # What a rebuild cut short left (src-create-shallow won't clone
+        # over a /usr/src).
+        rm -rf /usr/src /usr/obj/* || exit 1
+        make -C /usr src-create-shallow BRANCH=$branch GITURL_SRC=$repo >/dev/null || exit 1
+        commit=$(git -C /usr/src rev-parse HEAD) || exit 1
+        # The running kernel's configuration: the release's is X86_64_GENERIC.
+        k=$(uname -i)
+        [ -f /usr/src/sys/config/$k ] || { say "no kernel configuration $k in /usr/src"; exit 1; }
+        # The log goes with the objects: the sources, objects and log take
+        # some 3 GB, which trim.sh's zeroing hands back after the reboot.
+        # The kernel and modules stripped, as kernel.old is: with their debug
+        # symbols the release's take twice the room, and /boot has 1 GiB,
+        # kernel.old in it too.  Each step's start goes to the output, for
+        # its time: buildworld prints none.
+        n=$(sysctl -n hw.ncpu) log=/usr/obj/bko-build.log
+        mk() {
+            say "base system: make $* ($(date +%T))"
+            (cd /usr/src && make "$@") >>$log 2>&1 || { tail -n 30 $log; say "base system: make $* failed"; exit 1; }
+        }
+        mk -j$n buildworld
+        mk -j$n buildkernel KERNCONF=$k
+        mk installkernel KERNCONF=$k INSTALLSTRIPPED=1
+        mk installworld
+        mk upgrade
+        echo "$commit" >/var/db/bko-base
+        # The sshd still running hands each new connection to the binaries
+        # just replaced, which needn't match it: the new one takes over.
+        /etc/rc.d/sshd restart >/dev/null || exit 1
+        rm -rf /usr/src /usr/obj/*
+        say "base system: rebuilt from $branch at $commit ($(date +%T)), running from the next boot"
+    fi
+    [ -z "$gitpkgs" ] || pkg delete -y $gitpkgs || exit 1
+    pkg clean -ay || exit 1 ;;
 OpenBSD)
     # Not while the kernel is relinked (KARL), as every boot does, starting
     # late: two relinks at once break each other.  So wait for 30 s with
@@ -378,6 +470,29 @@ Haiku)
     cat /tmp/bko-pkgman.log
     [ $rc -eq 0 ] || exit 1
     ! unrefreshed || { say "a repository couldn't be refreshed"; exit 1; } ;;
+Redox)
+    # Every installed package: kernel, initfs and relibc too (the boot
+    # loader's stages in the boot partitions only redox_installer writes).
+    # --yes, as nothing may ask.  pkg exits 0 whatever happens (2026-11),
+    # so its errors are read from what it says, with case: grep panics on
+    # Redox today.  Under --yes, pkg doesn't retry a download that times
+    # out ("Download error: ... timed out"), which is common: again, here.
+    tries=0
+    while :; do
+        pkg --yes update >/tmp/bko-pkg.log 2>&1; rc=$?
+        cat /tmp/bko-pkg.log
+        case $(cat /tmp/bko-pkg.log) in
+        *"Download error"*|*"timed out"*)
+            tries=$((tries + 1))
+            [ $tries -lt 5 ] || { say "pkg's downloads timed out $tries times"; exit 1; }
+            say "a download timed out; again in 20 s"
+            sleep 20; continue ;;
+        *error:*|*Error:*) say "pkg failed"; exit 1 ;;
+        esac
+        [ $rc -eq 0 ] || { say "pkg exited $rc"; exit 1; }
+        break
+    done
+    rm -rf /tmp/pkg_download /tmp/bko-pkg.log ;;
 *)
     say "no updater for $(uname)"; exit 3 ;;
 esac

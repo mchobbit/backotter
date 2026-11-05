@@ -224,6 +224,12 @@ class GuestConfig:
     def __init__(self, guest_dir: Path):
         self.dir = guest_dir
         self.base = guest_dir / f"{guest_dir.name}.qcow2"
+        # A guest whose sshd serves no logins (Redox today): compare runs
+        # everything in it over SSH.
+        no_ssh = guest_dir / "no-ssh"
+        if no_ssh.exists():
+            raise SystemExit(f"compare.py: {guest_dir.name} has no SSH, which compare needs: "
+                             f"{no_ssh.read_text().strip()}")
         f = guest_dir / "vm-run-options"
         opts = shlex.split(f.read_text()) if f.exists() else None
         self.options: list[str] | None = None if opts is None else []

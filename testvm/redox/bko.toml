@@ -1,0 +1,157 @@
+# redox_installer's configuration for make-redox.sh's guest: upstream's
+# server set (no GUI) plus openssh, set up for root's SSH key (sshd serves
+# no logins yet, 2026-11: the serial console's root login is the way in).
+# make-redox.sh fills in the @...@ placeholders.  Files without
+# postinstall are written before the packages, those with it after (over
+# what a package ships).  The installer makes each user's home last, mode
+# 0700, chowned to that user (recursively), so .ssh below ends up root's.
+
+include = ["@CONFIG_DIR@/server.toml"]
+
+[general]
+# No prompt setting: the installer takes base.toml's (prompt = false) and
+# merges no other, so make-redox.sh turns it on there, in its copy.  With
+# it on, the installer asks for root's and user's passwords (they have none
+# below), and make-redox.sh types them on a terminal (answer-passwords.py):
+# a password here would land in /filesystem.toml, see below.
+# Ignored for a disk file that already exists (it is partitioned whole), but
+# must be at least 32 (MiB).  efi_partition_size stays unset (1 MiB): Redox's
+# BIOS boot loader looks for RedoxFS at 2 MiB, fixed.
+filesystem_size = 512
+
+[packages]
+openssh = {}
+
+[[files]]
+path = "/etc/hostname"
+data = "@HOSTNAME@"
+
+# Root's home is /home/root (the installer's default for a user without one).
+[[files]]
+path = "/home/root/.ssh"
+data = ""
+directory = true
+mode = 0o700
+
+[[files]]
+path = "/home/root/.ssh/authorized_keys"
+data = """@AUTHORIZED_KEY@
+"""
+mode = 0o600
+
+# A host key made on the build host: no key generation at first boot.  The
+# private half isn't here (it would land in /filesystem.toml, see below):
+# make-redox.sh writes it into the image, through redoxfs, after the
+# install.
+[[files]]
+path = "/etc/ssh/ssh_host_ed25519_key.pub"
+data = """@HOST_KEY_PUB@
+"""
+mode = 0o644
+postinstall = true
+
+# IPv4 only: Redox's network stack has no working IPv6 (openssh's recipe
+# sets the same).  LoginGraceTime 0: sshd-session dies of setitimer
+# failing, which Redox lacks, and this spares the first of its two calls
+# ("login grace time setitimer failed" at every connection); the second,
+# clearing the timer after login, is unconditional, and still kills it
+# ("login grace time clear failed", 2026-11).
+[[files]]
+path = "/etc/ssh/sshd_config"
+postinstall = true
+data = """
+AddressFamily inet
+HostKey /etc/ssh/ssh_host_ed25519_key
+PermitRootLogin prohibit-password
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+Subsystem sftp /usr/libexec/sftp-server
+LoginGraceTime 0
+"""
+
+# sshd's privilege separation: its user, and an empty root-owned directory
+# to chroot to (once relibc's chroot works: 2026-11, it always fails).
+# (The user's home is beneath it, so that the installer's chown of the
+# home leaves /var/empty root's.)
+[[files]]
+path = "/var/empty"
+data = ""
+directory = true
+mode = 0o755
+
+[[files]]
+path = "/etc/init.d/40_sshd.service"
+data = """
+[unit]
+description = "OpenSSH server"
+requires_weak = ["10_net.target"]
+
+[service]
+cmd = "/usr/bin/sshd"
+args = ["-D", "-e"]
+type = "oneshot_async"
+"""
+
+# poweroff and reboot, as vm-update, vm-lib and compare call them (Redox has
+# only shutdown); /sbin for the callers that say /sbin/poweroff.
+[[files]]
+path = "/usr/bin/poweroff"
+data = """#!/usr/bin/sh
+exec shutdown
+"""
+mode = 0o755
+postinstall = true
+
+[[files]]
+path = "/usr/bin/reboot"
+data = """#!/usr/bin/sh
+exec shutdown -r
+"""
+mode = 0o755
+postinstall = true
+
+[[files]]
+path = "/sbin"
+data = "usr/bin"
+symlink = true
+
+# redox_installer writes its whole merged config (this file and the ones
+# it includes, placeholders filled in) to /filesystem.toml, mode 0644,
+# before the packages.  Only its TUI installer reads that, to install this
+# system onto another disk, which nothing here does.  It holds no secret
+# (no password, no private key: they come in otherwise, as an overwrite
+# leaves the old blocks in RedoxFS's free space), but the note below takes
+# its place anyway, after the packages.  (make-redox.sh checks.)
+[[files]]
+path = "/filesystem.toml"
+data = """# redox_installer's merged config was here; make-redox.sh replaced it
+# with this note.  BackOtter's testvm/redox/bko.toml says what this system
+# was installed with.
+"""
+mode = 0o600
+postinstall = true
+
+# The console's greeting, which otherwise offers root:password.
+[[files]]
+path = "/etc/issue"
+data = """Redox OS: BackOtter test guest @HOSTNAME@.  root's password is in its root-password.
+
+"""
+postinstall = true
+
+# Each [users.X] replaces base.toml's whole: uid, gid and shell restated.
+# root and user: no password, so the installer asks (see prompt above).
+[users.root]
+uid = 0
+gid = 0
+shell = "/usr/bin/bash"
+
+[users.user]
+shell = "/usr/bin/bash"
+
+[users.sshd]
+password = ""
+uid = 75
+gid = 75
+home = "/var/empty/sshd"
+shell = "/usr/bin/false"

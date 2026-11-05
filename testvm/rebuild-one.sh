@@ -60,6 +60,10 @@ zorin18)    cmd=($T/make-from-live.sh zorin nilfs2 "$SRC/Zorin-OS-18.1-Core-64-b
 omarchy)    cmd=(asm $T/make-omarchy.sh 4.0.6 "$W") ;;
 freebsd15)  cmd=(asm $T/make-freebsd.sh 15.1 zfs "$W") ;;
 freebsd15-ufs) cmd=(asm $T/make-freebsd.sh 15.1 ufs "$W") ;;
+hardenedbsd15) cmd=(asm $T/make-hardenedbsd.sh 15 23 ufs "$W") ;;
+# ghostbsd26: its install VM takes 8 GB (INSTALL_MEMORY): reserve ~9 GiB.
+ghostbsd26) cmd=(asm $T/make-ghostbsd.sh 26.2-R15.1p6 ufs "$W") ;;
+aerynos)    cmd=(asm $T/make-aerynos.sh 2026.11 2026-11-02-unstable-stream "$W") ;;
 openbsd8)   cmd=(asm $T/make-openbsd.sh 8.0 "$W") ;;
 netbsd11)   cmd=(asm $T/make-netbsd.sh 11.0 "$W") ;;
 alpinebsd)  cmd=(asm $T/make-netbsd.sh --alpinebsd 11.0 "$W") ;;

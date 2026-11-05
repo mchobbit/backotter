@@ -31,14 +31,14 @@ guests.  A guest passes only when every check passes.  Status is as of
 | 1M | Linux Mint | `mint22` | passes |
 | 1U | Ubuntu | `ubuntu24`, `ubuntu26-uefi`, `ubuntu26-zfsmirror` | passes |
 | 1Z | Zorin OS | `zorin18` | passes |
-| 1F | Fedora | `fedora44`, `fedora44-uefi` | passes |
+| 1F | Fedora, Rocky Linux | `fedora44`, `fedora44-uefi`, `rocky10`, `rocky10-lvm` | the Fedora guests pass; Rocky not run |
 | 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | `arch` passes; the rest not run |
 | 1C | CachyOS, MX Linux | `cachyos`, `mx25` | not run |
 | 1V | Void Linux (musl) | `void-musl` | not run |
-| 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, Fedora/Red Hat, openSUSE Tumbleweed, a two-disk encrypted Ubuntu ZFS mirror, Debian 12 and 13 | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `fedora44`, `fedora44-uefi`, `rocky10`, `rocky10-lvm`, `tumbleweed`, `ubuntu26-zfsmirror`, `debian12`, `debian13` | the Fedora, zfsmirror and `debian13` guests pass (under 1F, 1U, 1D); the rest not run |
+| 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12 | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12` | not run |
 | 1H | Haiku | `haiku6` | not run |
 | 1I | illumos | `omnios58` | not run |
-| 1BSD | FreeBSD, illumos, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD | `freebsd15`, `freebsd15-ufs`, `omnios58`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6` | not run |
+| 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6`, `alpinebsd` | not run |
 
 What the ones not run need, as far as is known before running them:
 

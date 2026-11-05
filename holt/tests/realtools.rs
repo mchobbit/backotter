@@ -1,17 +1,17 @@
 //! Cross-checks against Debian 13's own tools: filesystems, swap, LUKS and
 //! partition tables made by mkfs.*, mkswap, cryptsetup, sfdisk and sgdisk in
-//! image files, then read both by bko-laydump and by blkid, dumpe2fs,
+//! image files, then read both by bko-holt and by blkid, dumpe2fs,
 //! xfs_db, btrfs, cryptsetup and sfdisk.  None of it needs root.
 //!
 //! These tests are meant for Debian 13: `runs_on_debian13` fails anywhere
 //! else, and a missing tool fails its test (install the packages listed in
-//! laydump/README.md) unless BKO_LAYDUMP_ALLOW_MISSING_TOOLS=1.
+//! holt/README.md) unless BKO_HOLT_ALLOW_MISSING_TOOLS=1.
 
-use bko_laydump::bytes::FileSource;
-use bko_laydump::json::{self, Value};
-use bko_laydump::parttable::{self, Table};
-use bko_laydump::probe::{self, Content};
-use bko_laydump::testutil::TempDir;
+use bko_holt::bytes::FileSource;
+use bko_holt::json::{self, Value};
+use bko_holt::parttable::{self, Table};
+use bko_holt::probe::{self, Content};
+use bko_holt::testutil::TempDir;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -23,15 +23,15 @@ fn tool(name: &str) -> Option<PathBuf> {
 }
 
 /// The tool's path; when it's missing, fails the test, or (with
-/// BKO_LAYDUMP_ALLOW_MISSING_TOOLS=1) returns None so the test skips.
+/// BKO_HOLT_ALLOW_MISSING_TOOLS=1) returns None so the test skips.
 fn need(name: &str) -> Option<PathBuf> {
     match tool(name) {
         Some(p) => Some(p),
-        None if std::env::var("BKO_LAYDUMP_ALLOW_MISSING_TOOLS").as_deref() == Ok("1") => {
+        None if std::env::var("BKO_HOLT_ALLOW_MISSING_TOOLS").as_deref() == Ok("1") => {
             eprintln!("SKIP: {name} not installed");
             None
         }
-        None => panic!("{name} is not installed (BKO_LAYDUMP_ALLOW_MISSING_TOOLS=1 skips)"),
+        None => panic!("{name} is not installed (BKO_HOLT_ALLOW_MISSING_TOOLS=1 skips)"),
     }
 }
 
@@ -113,7 +113,7 @@ fn strs(v: &Value) -> Vec<String> {
 #[test]
 fn runs_on_debian13() {
     let os = std::fs::read_to_string("/etc/os-release").expect("/etc/os-release");
-    let o = bko_laydump::osrel::parse(&os);
+    let o = bko_holt::osrel::parse(&os);
     assert!(
         o.get("ID") == Some("debian") && o.get("VERSION_ID") == Some("13"),
         "these tests are for Debian 13; this is {:?}",

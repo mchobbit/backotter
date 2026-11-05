@@ -170,6 +170,15 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
     if is64 {
         d.put("descriptor_size", le16(&b, 254));
     }
+    // RAID hints for the allocator (mke2fs -E stride=,stripe_width=), in
+    // blocks; 0 when not set.
+    let (stride, stripe) = (le16(&b, 0x164), le32(&b, 0x170));
+    if stride != 0 {
+        d.put("raid_stride", stride);
+    }
+    if stripe != 0 {
+        d.put("raid_stripe_width", stripe);
+    }
     if ro & 0x0200 != 0 {
         d.put("cluster_size", 1024u64 << le32(&b, 28).min(30));
     }
@@ -268,6 +277,18 @@ mod tests {
         assert!(d.get("flex_bg_size").is_some());
         assert!(d.get("journal_inode").is_some());
         assert!(d.get("journal_uuid").is_none());
+        assert!(d.get("raid_stride").is_none());
+        assert!(d.get("raid_stripe_width").is_none());
+    }
+
+    #[test]
+    fn raid_hints() {
+        let mut img = image(0x0004, 0x0002, 0, "");
+        img[1024 + 0x164..1024 + 0x166].copy_from_slice(&16u16.to_le_bytes());
+        img[1024 + 0x170..1024 + 0x174].copy_from_slice(&32u32.to_le_bytes());
+        let d = probe(&MemSource(img)).unwrap().details.build();
+        assert_eq!(d.get("raid_stride").and_then(Value::as_u64), Some(16));
+        assert_eq!(d.get("raid_stripe_width").and_then(Value::as_u64), Some(32));
     }
 
     #[test]

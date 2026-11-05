@@ -1,10 +1,12 @@
-//! bko-laydump: describes a Debian 13 system's disk layout and boot setup
+//! bko-holt: records a Debian 13 system's disk layout and boot setup
 //! (disks, partition tables, RAID, LVM, LUKS, ZFS, btrfs, filesystems,
-//! mounts, firmware, boot loader, kernels) as JSON, for BackOtter to record
-//! with each backup and to rebuild the machine from.
+//! mounts, firmware, boot loader, kernels) as JSON (`dump`), and rebuilds the
+//! disks from that JSON in stages (`load`), for BackOtter to record with each
+//! backup and to rebuild the machine from.  Both sides share the on-disk
+//! parsers: `load` checks every stage by reading the disks back with them.
 
 #[cfg(not(target_os = "linux"))]
-compile_error!("bko-laydump reads Linux's /sys, /proc and /dev: it builds on Linux only");
+compile_error!("bko-holt reads Linux's /sys, /proc and /dev: it builds on Linux only");
 
 pub mod blockdev;
 pub mod boot;
@@ -12,6 +14,7 @@ pub mod bootcode;
 pub mod bytes;
 pub mod efi;
 pub mod json;
+pub mod load;
 pub mod mounts;
 pub mod osrel;
 pub mod parttable;
@@ -35,7 +38,7 @@ pub fn timestamp() -> String {
     report::rfc3339(secs)
 }
 
-/// Builds the report for `sys`, after checking it's Debian 13.
+/// `bko-holt dump`: the report for `sys`, after checking it's Debian 13.
 pub fn dump(sys: &sys::Sys) -> Result<json::Value, String> {
     let os = osrel::read(sys);
     osrel::check_debian13(os.as_ref())?;

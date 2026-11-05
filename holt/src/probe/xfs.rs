@@ -122,6 +122,30 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
     })
 }
 
+/// An XFS external log device: no superblock of its own, but log records
+/// whose headers name the filesystem they belong to (blkid's
+/// "xfs_external_log").  mkfs.xfs writes one at the log's start; we look at
+/// each sector of the first 256 KiB, as blkid does.
+pub fn external_log(src: &dyn ByteSource) -> Option<Content> {
+    const XLOG_MAGIC: u32 = 0xfeed_babe;
+    let head = src.read_at(0, 256 << 10);
+    let (off, rec) = (0..head.len() / 512).map(|i| (i * 512, sub(&head, i * 512, 512))).find(|(_, r)| {
+        // magic, version 1 or 2, a record length within the log buffer
+        // size limit, a known format, and a filesystem UUID.
+        be32(r, 0) == XLOG_MAGIC
+            && matches!(be32(r, 8), 1 | 2)
+            && be32(r, 12) <= 256 << 10
+            && matches!(be32(r, 300), 1..=3)
+            && sub(r, 304, 16).iter().any(|&b| b != 0)
+    })?;
+    let d = Obj::new()
+        .set("filesystem_uuid", uuid(sub(rec, 304, 16)))
+        .set("record_offset", off as u64)
+        .set("log_version", be32(rec, 8))
+        .set("cycle", be32(rec, 4));
+    Some(Content { kind: "xfs_external_log".into(), usage: "other", uuid: None, label: None, version: None, details: d, extra: None })
+}
+
 #[cfg(test)]
 pub mod sample {
     /// A v5 XFS superblock as mkfs.xfs 6.x makes it (crc, finobt, sparse,
@@ -147,6 +171,21 @@ pub mod sample {
         s[200..204].copy_from_slice(&0x18au32.to_be_bytes());
         s[212..216].copy_from_slice(&0xfu32.to_be_bytes());
         s[216..220].copy_from_slice(&0x2bu32.to_be_bytes());
+        s
+    }
+
+    /// A log record header as mkfs.xfs leaves at an external log's start.
+    pub fn log_record(fs_uuid: u8) -> Vec<u8> {
+        let mut s = vec![0u8; 65536];
+        let r = &mut s[1024..1536];
+        r[0..4].copy_from_slice(&0xfeedbabeu32.to_be_bytes());
+        r[4..8].copy_from_slice(&1u32.to_be_bytes());
+        r[8..12].copy_from_slice(&2u32.to_be_bytes());
+        r[12..16].copy_from_slice(&512u32.to_be_bytes());
+        r[300..304].copy_from_slice(&1u32.to_be_bytes());
+        for (i, b) in r[304..320].iter_mut().enumerate() {
+            *b = fs_uuid + i as u8;
+        }
         s
     }
 }
@@ -209,6 +248,26 @@ mod tests {
         let f: Vec<&str> = d.get("features").unwrap().as_array().unwrap().iter().filter_map(Value::as_str).collect();
         assert!(f.contains(&"incompat_bit15"));
         assert_eq!(d.get("quota_flags").and_then(Value::as_str), Some("0x0005"));
+    }
+
+    #[test]
+    fn external_log_device() {
+        let c = external_log(&MemSource(super::sample::log_record(0xa0))).unwrap();
+        assert_eq!(c.kind, "xfs_external_log");
+        assert_eq!(c.usage, "other");
+        assert_eq!(c.uuid, None);
+        let d = c.details.build();
+        assert_eq!(d.get("filesystem_uuid").and_then(Value::as_str), Some("a0a1a2a3-a4a5-a6a7-a8a9-aaabacadaeaf"));
+        assert_eq!(d.get("record_offset").and_then(Value::as_u64), Some(1024));
+        // Not on a filesystem, an empty device, or a header with no UUID.
+        assert!(external_log(&MemSource(image("x"))).is_none());
+        assert!(external_log(&MemSource(vec![0u8; 4096])).is_none());
+        let mut bad = super::sample::log_record(0);
+        bad[1024 + 304..1024 + 320].fill(0);
+        assert!(external_log(&MemSource(bad)).is_none());
+        let mut bad = super::sample::log_record(1);
+        bad[1024 + 8..1024 + 12].copy_from_slice(&7u32.to_be_bytes());
+        assert!(external_log(&MemSource(bad)).is_none());
     }
 
     #[test]

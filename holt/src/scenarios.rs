@@ -99,8 +99,11 @@ fn bios_btrfs() -> Tree {
 #[test]
 fn bios_mbr_btrfs_guest() {
     let t = bios_btrfs();
-    let v = run(&t, true, FakeRunner::default().with("btrfs subvolume list -a -p -u -q /", "ID 256 gen 99 parent 5 top level 5 parent_uuid - uuid 6c8a1b2c-0000-4000-8000-000000000001 path @rootfs\n").with("btrfs subvolume get-default /", "ID 5 (FS_TREE)\n"));
-    assert_eq!(s(&v, &["format"]), "bko-laydump");
+    let v = run(&t, true, FakeRunner::default().with("btrfs subvolume list -a -p -u -q /", "ID 256 gen 99 parent 5 top level 5 parent_uuid - uuid 6c8a1b2c-0000-4000-8000-000000000001 path @rootfs\n").with("btrfs subvolume get-default /", "ID 5 (FS_TREE)\n")
+            .with("btrfs subvolume list -a -r /", "")
+            .with("btrfs property get -t s /", "ro=false\n")
+            .with("btrfs property get -t i /", "compression=zstd\n"));
+    assert_eq!(s(&v, &["format"]), "bko-holt");
     assert_eq!(s(&v, &["firmware", "mode"]), "bios");
     assert_eq!(v.get("privileged"), Some(&Value::Bool(true)));
     let disk = &v.at(&["storage", "disks", "0"]).unwrap();
@@ -133,6 +136,9 @@ fn bios_mbr_btrfs_guest() {
     assert_eq!(s(b, &["mounted_subvolumes", "0", "subvol"]), "/@rootfs");
     assert_eq!(s(b, &["subvolumes", "0", "path"]), "@rootfs");
     assert_eq!(u(b, &["default_subvolume", "id"]), 5);
+    assert_eq!(b.at(&["subvolumes", "0", "readonly"]), Some(&Value::Bool(false)));
+    assert_eq!(s(b, &["subvolumes", "0", "properties", "compression"]), "zstd");
+    assert!(b.get("qgroups").unwrap().is_null());
     // fstab resolves to devices; the CD drive (absent) resolves to nothing.
     let f = arr(&v, &["storage", "fstab"]);
     assert_eq!(s(&f[0], &["resolves_to"]), "vda6");
@@ -441,8 +447,17 @@ fn zfs_root() {
         .with("zpool list -H -o name", "rpool\n")
         .with("zpool get -H -p -o property,value,source all rpool", "size\t62277025792\t-\nashift\t12\tlocal\ncachefile\t/etc/zfs/zpool.cache\tlocal\nfree\t1\t-\nfeature@encryption\tenabled\tlocal\nfeature@async_destroy\tenabled\tlocal\nshort\n")
         .with(
-            "zfs list -H -p -t filesystem,volume -o name,type,used,available,referenced,mountpoint,canmount,mounted,encryption,keyformat,keylocation,compression,recordsize,volsize,volblocksize,acltype,xattr,dnodesize,normalization,atime,relatime,copies,com.sun:auto-snapshot",
-            "rpool\tfilesystem\t1000\t2000\t96\t/\toff\tno\toff\tnone\tnone\tlz4\t131072\t-\t-\tposix\tsa\tauto\tformD\ton\ton\t1\t-\nrpool/ROOT/debian\tfilesystem\t900\t2000\t900\t/\tnoauto\tyes\toff\tnone\tnone\tlz4\t131072\t-\t-\tposix\tsa\tauto\tformD\ton\ton\t1\t-\n",
+            "zfs list -H -p -t filesystem,volume -o name,type,used,available,referenced,mountpoint,canmount,mounted,encryption,encryptionroot,keyformat,keylocation,keystatus,origin,compression,recordsize,volsize,volblocksize,acltype,xattr,dnodesize,normalization,utf8only,casesensitivity,atime,relatime,copies,com.sun:auto-snapshot",
+            "rpool\tfilesystem\t1000\t2000\t96\t/\toff\tno\toff\t-\tnone\tnone\t-\t-\tlz4\t131072\t-\t-\tposix\tsa\tauto\tformD\ton\tsensitive\ton\ton\t1\t-\nrpool/ROOT/debian\tfilesystem\t900\t2000\t900\t/\tnoauto\tyes\toff\t-\tnone\tnone\t-\t-\tlz4\t131072\t-\t-\tposix\tsa\tauto\tformD\ton\tsensitive\ton\ton\t1\t-\n",
+        )
+        .with(
+            "zfs get -H -p -t filesystem,volume -s local,received -o name,property,value,source all",
+            "rpool\tcompression\tlz4\tlocal\nrpool\tcom.example:tag\tx y\tlocal\nrpool/ROOT/debian\tmountpoint\t/\tlocal\nrpool/ROOT/debian\tcanmount\tnoauto\tlocal\n",
+        )
+        .with(
+            "zpool status -j --json-int -P rpool",
+            r#"{"output_version": {"command": "zpool status", "vers_major": 0, "vers_minor": 1}, "pools": {"rpool": {"name": "rpool", "state": "ONLINE",
+               "vdevs": {"rpool": {"name": "rpool", "vdev_type": "root", "vdevs": {"/dev/vda3": {"name": "/dev/vda3", "vdev_type": "disk", "path": "/dev/vda3"}}}}}}}"#,
         );
     let v = run(&t, true, runner);
     let p3 = v.at(&["storage", "disks", "0", "partitions", "2"]).unwrap();
@@ -464,6 +479,18 @@ fn zfs_root() {
     assert_eq!(s(tools, &["datasets", "1", "canmount"]), "noauto");
     assert_eq!(u(tools, &["datasets", "1", "recordsize"]), 131072);
     assert!(tools.at(&["datasets", "1", "volsize"]).unwrap().is_null());
+    assert_eq!(s(tools, &["datasets", "1", "casesensitivity"]), "sensitive");
+    // Every local property, user properties too, with its source.
+    assert_eq!(s(tools, &["datasets", "1", "properties", "canmount", "value"]), "noauto");
+    assert_eq!(s(tools, &["datasets", "0", "properties", "com.example:tag", "value"]), "x y");
+    assert_eq!(s(tools, &["datasets", "0", "properties", "compression", "source"]), "local");
+    assert!(tools.at(&["datasets", "0", "properties", "canmount"]).is_none());
+    // The pool's locally set properties, and its vdev tree from zpool status.
+    assert_eq!(s(tools, &["imported_pools", "0", "local_properties", "ashift"]), "12");
+    assert!(tools.at(&["imported_pools", "0", "local_properties", "size"]).is_none());
+    assert_eq!(s(tools, &["imported_pools", "0", "vdevs", "vdevs", "rpool", "vdev_type"]), "root");
+    assert_eq!(s(tools, &["imported_pools", "0", "vdevs", "vdevs", "rpool", "vdevs", "/dev/vda3", "path"]), "/dev/vda3");
+    assert!(tools.at(&["imported_pools", "0", "vdevs", "logs"]).unwrap().is_null());
     let mounts = arr(&v, &["storage", "mounts"]);
     assert_eq!(s(&mounts[0], &["fstype"]), "zfs");
     assert_eq!(s(&mounts[0], &["source"]), "rpool/ROOT/debian");

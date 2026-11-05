@@ -75,7 +75,7 @@ pub fn check_debian13(os: Option<&OsRelease>) -> Result<(), String> {
         return Ok(());
     }
     let name = os.get("PRETTY_NAME").map(str::to_string).unwrap_or_else(|| format!("{id} {ver}"));
-    Err(format!("this is {}, and bko-laydump supports only Debian 13 (ID=debian, VERSION_ID=13) for now", name.trim()))
+    Err(format!("this is {}, and bko-holt dump supports only Debian 13 (ID=debian, VERSION_ID=13) for now", name.trim()))
 }
 
 pub fn to_json(sys: &Sys, os: Option<&OsRelease>) -> Value {

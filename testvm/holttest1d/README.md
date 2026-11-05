@@ -1,0 +1,220 @@
+# HoltTest1D: a whole-machine round trip of bko-holt on Debian 13
+
+Status: draft plan, 2026-11-05.  Nothing here runs yet (see "Before it can run").
+
+HoltTest1D checks that bko-holt can describe a Debian 13 machine and build it
+again on blank disks, well enough that a rustic-bko restore onto them boots and
+is the same machine.  It covers the disk layout, partition tables, RAID,
+encryption, volume management, pools, filesystems with their features, and the
+boot loader.  It is the "whole machines" layer of `docs/design/layload.md`'s
+Testing section.
+
+`testvm/compare` already does a round trip like this, but its Python
+`recreate()` reads the layout off the source's disks directly.  HoltTest1D
+gets the layout only from `bko-holt dump`'s JSON, as a real bare-metal
+restore must.
+
+## The source guests
+
+The two Debian 13 guests there are today both use BIOS + MBR on one disk.
+That leaves GPT, UEFI, md, LUKS, LVM and XFS untested, so HoltTest1D adds a
+third guest:
+
+| Guest | Firmware, table | Layout | Exists |
+|---|---|---|---|
+| `debian13` | BIOS, MBR | /boot ext4, swap, / btrfs | yes |
+| `debian13-zfs` | BIOS, MBR | /boot ext4, swap, ZFS `rpool` with the OpenZFS guide's datasets | yes |
+| `debian13-stack` | UEFI (Secure Boot), GPT, two disks | ESP on each disk; md RAID1 /boot; LUKS2 on md RAID1, then LVM with / ext4, /srv XFS and swap | to build |
+
+`debian13-stack` also runs a second time onto disks 1 GiB bigger than its own,
+to check that the GPT backup header moves to the new end of the disk.
+
+## Where the temporary backup goes
+
+On the host's scratch disk, beside everything else the run makes:
+
+```
+/bkoscratch/holttest1d/RUN/GUEST/       RUN = UTC start time, e.g. 20261105T1830Z
+    share/                  shared read-only into the rescue VM (9p, tag bkoshare)
+        repo/               the rustic-bko repository: the temporary backup
+        repo-password       random, made for this run
+        layout.json         bko-holt dump's output from the source
+        bko-holt            the build under test
+        rustic-bko          the archiver under test
+        restore.sh          the steps the rescue VM runs
+        keys/               --key-file passphrases (debian13-stack)
+    src.qcow2               throwaway overlay on the guest's own image
+    dst-0.qcow2 ...         the blank target disks
+    efivars.fd              the rescue VM's UEFI variables, kept for the restored boot
+    logs/  dumps/  report.json
+```
+
+This location is chosen because:
+
+- **It's on the right disk.** `/bkoscratch` is the SK900 on both hosts, where
+  heavy writes belong.  It is not Chopin's hot P3 root, and not the
+  `/mnt/bko-ram` tmpfs, since disk comes before RAM as of 2026-11-04.  A
+  16 GiB guest needs roughly 10 GiB of scratch space at peak; there are
+  197 GiB free on Chopin.
+- **Neither guest sees it as a disk.** If the repository were on a virtual
+  disk attached to the source, it would show up in the source's dump and
+  become part of the layout to rebuild.  If it were on the target, `load`
+  would erase it.  In the rescue VM it is a read-only 9p share, so neither
+  the restore nor `load` can damage it.
+- **Cleanup is one directory.** On a pass, the run deletes `RUN/GUEST/`
+  except `logs/`, `dumps/` and `report.json`.  On a failure, it keeps all of
+  it.
+
+## One run, per guest
+
+**0. Before starting**
+- The host is healthy: temperatures, free RAM, and nothing of ours left over.
+- Scratch space and RAM are reserved through `cmp-run.sh --reserve`.
+- bko-holt is built with `--release` on the host, using Debian 13's cargo.
+- rustic-bko is the newest build in `~/backotter-work/rustic/dist`.
+- The rescue image is the newest `backotter-live-linux-*.img` built with
+  `make-img.sh --test`.
+
+**1. Source**
+- `src.qcow2`, a throwaway overlay, is created on the guest's image.  The
+  guest's own image is never written.
+- `torture.sh` puts its hard-to-preserve files into the overlay, as
+  `compare.py` does.
+- The source boots and `boot-state.sh` records its baseline.
+- `bko-holt dump` runs inside the guest over SSH and writes
+  `dumps/src.json`, which is also `share/layout.json`.  It runs on the live
+  system because it needs the live mounts, efivars and debconf.
+- The source shuts down cleanly.
+
+**2. Backup**
+- The host mounts `src` read-only, as `compare.py` does.
+- `rustic-bko backup --set-atime yes` backs up `/` and every filesystem
+  mounted below it into `share/repo`.
+- The backup is offline, so the tree can't change while it's being read, and
+  the layout dump has already captured what only the live system knows.
+
+**3. Rebuild, from the rescue image**
+- A VM boots the rescue `.img`. It has the same firmware as the source, blank
+  target disks (same count, same logical sector size, each the same size or
+  bigger), one small decoy disk that already holds a filesystem, and the
+  share.
+- The harness drives it on the serial console, as `boot-test.py` does, and
+  runs `share/restore.sh`.
+- **Safety checks first; each must refuse, and leave the disks untouched** (first and last MiB unchanged):
+  - `load` without `--map`: exit 4, listing source and target disks;
+  - `--through partition` without `--commit`: plan only, nothing written;
+  - `--map` onto the decoy without `--erase`: refused;
+  - `--map` onto the disk the rescue image booted from: refused even with
+    `--erase`.
+- **The rebuild**, one stage at a time, so a failure names its stage:
+  - `load --map SRC=DST... --erase DST... --commit --only STAGE` for
+    `partition`, `assemble`, `format`, `mount`, `restore`, `boot` and
+    `close`, in that order;
+  - `restore` gets `--repo share/repo --password-file share/repo-password
+    --archiver share/rustic-bko`, and runs rustic-bko itself;
+  - `close` exports the pools and closes the volumes;
+  - after each stage, `status` must report that stage as done and name the
+    next one.
+- Once per host, `debian13` also runs the whole rebuild as one command,
+  `--through close --commit` with the same flags, as an administrator would.
+- Any stage's exit code other than 0 stops the run there.  The stage's name
+  goes in the report.
+- The VM powers off.  `efivars.fd` keeps the boot entry that the `boot`
+  stage made.
+
+**4. The restored machine boots by itself**
+- It boots from the target disks alone, without the rescue image, with the
+  source's firmware and `efivars.fd`.
+- It is reached over SSH with the guest's own key.  Its host keys were
+  restored too, so the known_hosts entry must match.
+- `boot-state.sh` runs.  A service that failed here but not in the source's
+  baseline is a failure.
+- Health checks, each of which must pass:
+  - `findmnt --verify`;
+  - every fstab mount is mounted;
+  - swap is on;
+  - `zpool status -x` is healthy and `rpool` was imported at boot without
+    help;
+  - `mdadm --detail` shows clean arrays;
+  - `cryptsetup status` shows the volume open;
+  - `/var/log/bko-holt/` holds `load`'s logs.
+- `bko-holt dump` writes `dumps/dst.json`.
+- The machine shuts down cleanly.
+
+**5. Judge**
+- **The two dumps agree.** `judge.py` compares `src.json` and `dst.json`
+  field by field: every partition table and partition identifier, type,
+  start, size and attribute; every md, LUKS, LVM and ZFS identifier and
+  setting; every filesystem's UUID, label, features and geometry; fstab,
+  crypttab, the boot loader and its configuration.
+  - It ignores only a written list: things that change on every boot or are
+    QEMU's (timestamps, usage, serials and by-id links, the running kernel,
+    BootCurrent, EFI entry numbers), and what the design's Identity section
+    says can't be kept (ZFS vdev GUIDs, new LUKS key slots).
+  - Every ignored field is named in the report, so the list can't grow
+    silently.
+- **The files agree.** `fsmeta.py` compares every file's metadata between
+  `src` and the restored disks, both mounted read-only.
+- **Boot state agrees,** as in step 4.
+
+## Verdicts and the report
+
+Each guest's verdict is one of:
+
+- **pass**: every check above held;
+- **fail**: names the stage or check, and classes the cause like SticTest1:
+  - a bko-holt bug goes in the queue;
+  - a harness bug, the harness is fixed;
+  - a Debian, QEMU or OVMF limit is recorded;
+- **blocked**: something in "Before it can run" is missing.
+
+`report.json`, with a Markdown table built from it, has one row per guest and
+variant, with:
+
+- the verdict;
+- the layout in one line;
+- each stage's time;
+- the dump differences: counted, with each one listed;
+- the fsmeta differences;
+- services that failed only after the restore;
+- the scratch space used at peak.
+
+## Hosts
+
+The guests are split as SticTest1 splits them:
+
+- **Chopin:** `debian13-zfs`. It keeps the bcachefs-free ZFS work it already
+  does, and boost stays off.
+- **Cinqcent:** `debian13`, then both `debian13-stack` variants.
+
+Each run has its own names, prefixed `ht1d`: mount points, the temporary pool
+name, md and LUKS names.  SSH ports are 2260–2269 on Chopin and 2960–2969 on
+Cinqcent, clear of `compare.py`'s 2230+N.  Never touch another session's VMs,
+ports or pools.  Scripts are synced with `testvm/sync-hosts.sh` from main
+only, and nothing syncs while a run is going.
+
+## Before it can run
+
+1. bko-holt `load`'s writing stages, `partition` through `close` (with
+   `restore`).  `plan` and `status` exist, and `plan` already prints every
+   command the others will run.
+2. `vm-run --uefi-vars FILE`, so the rescue VM and the restored boot share one
+   UEFI variable store.  Today every run gets a fresh copy.
+3. 9p in the rescue image's kernel (`9pnet_virtio`, `9p`).  If it's missing,
+   the share becomes a small read-only virtio disk with serial `bko-share`.
+   `load` must then be given that disk as off-limits.
+4. A builder for `debian13-stack`: a `make-debian.sh` preseed variant,
+   with an entry in `rebuild-one.sh`.  Built on one host and copied
+   byte-identical to the other, as the other guests were.
+5. The driver, `testvm/holttest1d/check.sh GUEST [--bigger]`, with
+   `restore.sh` and `judge.py` beside it.  It reuses `testvm/compare`'s
+   `torture.sh`, `fsmeta.py`, `boot-state.sh` and its mount helpers.
+
+## Not in HoltTest1D
+
+- **HoltTest1A:** Arch Linux, which needs Arch support in `dump` and `boot`.
+- `--new-uuids`; disks smaller than the source, or in a different number,
+  which is version 2 of `load`.
+- Restoring onto the machine the stick runs on, or onto real hardware.
+- restic-bko: the test restores with rustic-bko only, as asked.  Adding
+  restic-bko later means one more pass of steps 2 and 3.

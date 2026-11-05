@@ -13,7 +13,10 @@ use crate::probe::{self, Content};
 use crate::sys::Sys;
 use std::collections::BTreeMap;
 
-pub const FORMAT: &str = "bko-laydump";
+pub const FORMAT: &str = "bko-holt";
+/// Earlier dumps, made before bko-laydump became bko-holt dump: the same
+/// schema under the old name.
+pub const FORMAT_OLD: &str = "bko-laydump";
 pub const SCHEMA: u32 = 1;
 
 /// One block device and what we learned about it.
@@ -464,6 +467,7 @@ fn zfs_tools_json(sys: &Sys) -> Value {
     let mut pools = Vec::new();
     for name in list.lines().map(str::trim).filter(|l| !l.is_empty()) {
         let mut props = Obj::new();
+        let mut local = Obj::new();
         let mut features = Obj::new();
         if let Some(out) = sys.run("zpool", &["get", "-H", "-p", "-o", "property,value,source", "all", name]) {
             for l in out.lines() {
@@ -475,12 +479,25 @@ fn zfs_tools_json(sys: &Sys) -> Value {
                     features.put(feat, f[1]);
                 } else if !matches!(f[0], "free" | "allocated" | "fragmentation" | "capacity" | "freeing" | "leaked" | "expandsize" | "checkpoint" | "dedupratio" | "load_guid" | "bcloneused" | "bclonesaved" | "bcloneratio" | "dedup_table_size" | "dedupcached" | "dedupsaved" | "dedupused") {
                     props.put(f[0], f[1]);
+                    // What `zpool create -o` must set again: the properties
+                    // set on this pool rather than defaulted.
+                    if f[2] == "local" {
+                        local.put(f[0], f[1]);
+                    }
                 }
             }
         }
-        pools.push(Obj::new().set("name", name).set("properties", props).set("features", features).build());
+        pools.push(
+            Obj::new()
+                .set("name", name)
+                .set("properties", props)
+                .set("local_properties", local)
+                .set("features", features)
+                .set("vdevs", zpool_vdevs(sys, name))
+                .build(),
+        );
     }
-    let cols = "name,type,used,available,referenced,mountpoint,canmount,mounted,encryption,keyformat,keylocation,compression,recordsize,volsize,volblocksize,acltype,xattr,dnodesize,normalization,atime,relatime,copies,com.sun:auto-snapshot";
+    let cols = "name,type,used,available,referenced,mountpoint,canmount,mounted,encryption,encryptionroot,keyformat,keylocation,keystatus,origin,compression,recordsize,volsize,volblocksize,acltype,xattr,dnodesize,normalization,utf8only,casesensitivity,atime,relatime,copies,com.sun:auto-snapshot";
     let datasets: Vec<Value> = sys
         .run("zfs", &["list", "-H", "-p", "-t", "filesystem,volume", "-o", cols])
         .map(|out| {
@@ -497,7 +514,64 @@ fn zfs_tools_json(sys: &Sys) -> Value {
                 .collect()
         })
         .unwrap_or_default();
+    // Every property set on a dataset or received with it, user properties
+    // included: the fixed columns above are for people to read, these are
+    // what `zfs create -o` needs to make the dataset again.
+    let mut props: BTreeMap<String, Obj> = BTreeMap::new();
+    if let Some(out) = sys.run("zfs", &["get", "-H", "-p", "-t", "filesystem,volume", "-s", "local,received", "-o", "name,property,value,source", "all"]) {
+        for (ds, prop, value, source) in parse_zfs_get(&out) {
+            props.entry(ds).or_default().put(&prop, Obj::new().set("value", value).set("source", source));
+        }
+    }
+    let datasets: Vec<Value> = datasets
+        .into_iter()
+        .map(|mut d| {
+            let name = d.get("name").and_then(Value::as_str).unwrap_or("").to_string();
+            if let Value::Obj(o) = &mut d {
+                o.push(("properties".into(), props.remove(&name).map(Obj::build).unwrap_or_else(|| Obj::new().build())));
+            }
+            d
+        })
+        .collect();
     Obj::new().set("imported_pools", pools).set("datasets", datasets).build()
+}
+
+/// `zfs get -H -o name,property,value,source` lines.
+pub fn parse_zfs_get(out: &str) -> Vec<(String, String, String, String)> {
+    out.lines()
+        .filter_map(|l| {
+            let f: Vec<&str> = l.splitn(4, '\t').collect();
+            (f.len() == 4).then(|| (f[0].to_string(), f[1].to_string(), f[2].to_string(), f[3].to_string()))
+        })
+        .collect()
+}
+
+/// An imported pool's whole vdev tree (data, log, special, dedup, cache and
+/// spare vdevs), from `zpool status -j` (OpenZFS 2.3 and later): the labels
+/// carry only the data and log vdevs, and each only its own top-level one.
+fn zpool_vdevs(sys: &Sys, name: &str) -> Value {
+    let Some(out) = sys.run("zpool", &["status", "-j", "--json-int", "-P", name]) else {
+        sys.warn(format!("zpool status -j {name} failed: the pool's vdev tree (log, cache, spare vdevs) isn't recorded"));
+        return Value::Null;
+    };
+    match crate::json::parse(&out) {
+        Ok(v) => {
+            let pool = v.at(&["pools", name]);
+            let pick = |k: &str| pool.and_then(|p| p.get(k)).cloned().unwrap_or(Value::Null);
+            Obj::new()
+                .set("vdevs", pick("vdevs"))
+                .set("logs", pick("logs"))
+                .set("l2cache", pick("l2cache"))
+                .set("spares", pick("spares"))
+                .set("special", pick("special"))
+                .set("dedup", pick("dedup"))
+                .build()
+        }
+        Err(e) => {
+            sys.warn(format!("zpool status -j {name}: unreadable JSON ({} at {})", e.message, e.offset));
+            Value::Null
+        }
+    }
 }
 
 fn zfs_json(sys: &Sys, ctx: &Ctx) -> Value {
@@ -568,12 +642,38 @@ fn btrfs_json(sys: &Sys, ctx: &Ctx) -> Value {
         let mounts: Vec<&Mount> = ctx.mounts.iter().filter(|m| m.fstype == "btrfs" && devs.iter().any(|d| ctx.resolve(sys, &m.source).as_deref() == Some(d.b.name.as_str()))).collect();
         let mut subvols = Value::Null;
         let mut default = Value::Null;
+        let mut qgroups = Value::Null;
         if let Some(m) = mounts.first() {
             if let Some(out) = sys.run("btrfs", &["subvolume", "list", "-a", "-p", "-u", "-q", &m.target]) {
-                subvols = Value::Arr(out.lines().filter_map(parse_btrfs_subvol_line).collect());
+                let ro: Vec<u64> = sys
+                    .run("btrfs", &["subvolume", "list", "-a", "-r", &m.target])
+                    .map(|o| o.lines().filter_map(parse_btrfs_subvol_line).filter_map(|v| v.get("id").and_then(Value::as_u64)).collect())
+                    .unwrap_or_default();
+                let list = out
+                    .lines()
+                    .filter_map(parse_btrfs_subvol_line)
+                    .map(|mut v| {
+                        let id = v.get("id").and_then(Value::as_u64).unwrap_or(0);
+                        let path = v.get("path").and_then(Value::as_str).map(str::to_string);
+                        let props = path.and_then(|p| btrfs_reachable_path(&mounts, &p)).map(|p| btrfs_properties(sys, &p));
+                        if let Value::Obj(o) = &mut v {
+                            o.push(("readonly".into(), Value::Bool(ro.contains(&id))));
+                            o.push(("properties".into(), props.map(Obj::build).unwrap_or(Value::Null)));
+                        }
+                        v
+                    })
+                    .collect();
+                subvols = Value::Arr(list);
             }
             if let Some(out) = sys.run("btrfs", &["subvolume", "get-default", &m.target]) {
                 default = parse_btrfs_subvol_line(out.trim()).unwrap_or(Value::from(out.trim()));
+            }
+            // Quotas: sysfs has a qgroups directory while they're enabled.
+            if sys.is_dir(&format!("{sysfs}/qgroups")) {
+                qgroups = match sys.run("btrfs", &["qgroup", "show", "-p", "-r", "-e", "--raw", &m.target]) {
+                    Some(out) => Value::Arr(parse_btrfs_qgroups(&out)),
+                    None => Obj::new().set("error", "btrfs qgroup show failed").build(),
+                };
             }
         }
         out.push(
@@ -590,6 +690,113 @@ fn btrfs_json(sys: &Sys, ctx: &Ctx) -> Value {
                 )
                 .set("subvolumes", subvols)
                 .set("default_subvolume", default)
+                .set("quota_enabled", sys.is_dir(&sysfs).then(|| sys.is_dir(&format!("{sysfs}/qgroups"))))
+                .set("qgroups", qgroups)
+                .build(),
+        );
+    }
+    Value::Arr(out)
+}
+
+/// Where a subvolume (its path from the top level, as `btrfs subvolume list
+/// -a` prints it) can be reached through one of the filesystem's mounts.
+pub fn btrfs_reachable_path(mounts: &[&Mount], path: &str) -> Option<String> {
+    let path = path.strip_prefix("<FS_TREE>/").unwrap_or(path).trim_matches('/');
+    for m in mounts {
+        let sub = m.btrfs_subvol().unwrap_or_default();
+        let sub = sub.trim_matches('/');
+        let rest = if sub.is_empty() {
+            Some(path)
+        } else if path == sub {
+            Some("")
+        } else {
+            path.strip_prefix(sub).and_then(|r| r.strip_prefix('/'))
+        };
+        if let Some(r) = rest {
+            let t = m.target.trim_end_matches('/');
+            return Some(if r.is_empty() { m.target.clone() } else { format!("{t}/{r}") });
+        }
+    }
+    None
+}
+
+/// A subvolume's properties: `btrfs property get` for the subvolume (ro)
+/// and for its root directory's inode (compression).
+fn btrfs_properties(sys: &Sys, path: &str) -> Obj {
+    let mut o = Obj::new();
+    for t in ["s", "i"] {
+        if let Some(out) = sys.run("btrfs", &["property", "get", "-t", t, path]) {
+            for (k, v) in out.lines().filter_map(|l| l.trim().split_once('=')) {
+                o.put(k, v);
+            }
+        }
+    }
+    o
+}
+
+/// `btrfs qgroup show -p -r -e --raw`: qgroupid, referenced, exclusive,
+/// max referenced, max exclusive, parents, and (btrfs-progs 6.x) the path.
+pub fn parse_btrfs_qgroups(out: &str) -> Vec<Value> {
+    let num = |s: &str| match s {
+        "none" | "-" => Value::Null,
+        _ => s.parse::<u64>().map(Value::UInt).unwrap_or_else(|_| Value::from(s)),
+    };
+    out.lines()
+        .skip_while(|l| !l.trim_start().starts_with("--"))
+        .skip(1)
+        .filter_map(|l| {
+            let w: Vec<&str> = l.split_whitespace().collect();
+            if w.len() < 6 || !w[0].contains('/') {
+                return None;
+            }
+            // "-" (btrfs-progs 6) or "---" (older) when there's no parent.
+            let parents: Vec<String> = if w[5].chars().all(|c| c == '-') { vec![] } else { w[5].split(',').map(str::to_string).collect() };
+            Some(
+                Obj::new()
+                    .set("qgroupid", w[0])
+                    .set("referenced", num(w[1]))
+                    .set("exclusive", num(w[2]))
+                    .set("max_referenced", num(w[3]))
+                    .set("max_exclusive", num(w[4]))
+                    .set("parents", parents)
+                    .set("path", (w.len() > 6).then(|| w[6..].join(" ")))
+                    .build(),
+            )
+        })
+        .collect()
+}
+
+/// Each XFS filesystem with an external log, and the device holding that
+/// log: by the filesystem UUID in the log's record headers, or the logdev=
+/// mount option when the log device couldn't be read.
+fn xfs_external_logs(sys: &Sys, ctx: &Ctx) -> Value {
+    let mut out = Vec::new();
+    for d in ctx.devs {
+        let Some(c) = d.contents.first().filter(|c| c.kind == "xfs") else { continue };
+        let internal = c.details.0.iter().find(|(k, _)| k == "log_internal").and_then(|(_, v)| v.as_bool());
+        if internal != Some(false) {
+            continue;
+        }
+        let uuid = c.uuid.clone().unwrap_or_default();
+        let by_uuid = ctx.devs.iter().find(|l| {
+            l.contents.iter().any(|lc| {
+                lc.kind == "xfs_external_log"
+                    && lc.details.0.iter().any(|(k, v)| k == "filesystem_uuid" && v.as_str().is_some_and(|u| u.eq_ignore_ascii_case(&uuid)))
+            })
+        });
+        let option = ctx
+            .mounts_of(sys, d)
+            .iter()
+            .flat_map(|m| m.options.split(',').chain(m.super_options.split(',')))
+            .find_map(|o| o.strip_prefix("logdev="))
+            .map(str::to_string);
+        let by_option = option.as_deref().and_then(|o| ctx.resolve(sys, o));
+        out.push(
+            Obj::new()
+                .set("filesystem_uuid", uuid.as_str())
+                .set("filesystem_device", d.b.name.as_str())
+                .set("log_device", by_uuid.map(|l| l.b.name.clone()).or(by_option))
+                .set("logdev_option", option)
                 .build(),
         );
     }
@@ -787,6 +994,7 @@ pub fn build(sys: &Sys, os: Option<&OsRelease>, generated: &str) -> Value {
         .set("lvm", lvm_json(&ctx))
         .set("zfs", zfs_json(sys, &ctx))
         .set("btrfs", btrfs_json(sys, &ctx))
+        .set("xfs_external_logs", xfs_external_logs(sys, &ctx))
         .set("mounts", mounts_json)
         .set("swaps", swaps)
         .set("fstab", fstab)
@@ -797,7 +1005,7 @@ pub fn build(sys: &Sys, os: Option<&OsRelease>, generated: &str) -> Value {
     let mut out = Obj::new()
         .set("format", FORMAT)
         .set("schema", SCHEMA)
-        .set("tool", Obj::new().set("name", "bko-laydump").set("version", env!("CARGO_PKG_VERSION")))
+        .set("tool", Obj::new().set("name", "bko-holt").set("version", env!("CARGO_PKG_VERSION")))
         .set("generated", generated)
         .set("privileged", sys.privileged)
         .set("host", host_json(sys))
@@ -854,6 +1062,62 @@ mod tests {
         let v = parse_btrfs_subvol_line("ID 300 gen 9 top level 256 path <FS_TREE>/@/with space").unwrap();
         assert_eq!(v.get("path").and_then(Value::as_str), Some("<FS_TREE>/@/with space"));
         assert!(parse_btrfs_subvol_line("garbage").is_none());
+    }
+
+    #[test]
+    fn zfs_get_lines() {
+        let v = parse_zfs_get("rpool\tcompression\tlz4\tlocal\nrpool/home\tcom.sun:auto-snapshot\ttrue\treceived\nshort\tline\nrpool\tdesc\ta\tb c\tlocal\n");
+        assert_eq!(v.len(), 3);
+        assert_eq!(v[0], ("rpool".into(), "compression".into(), "lz4".into(), "local".into()));
+        assert_eq!(v[1].1, "com.sun:auto-snapshot");
+        assert_eq!(v[1].3, "received");
+        // A tab in the value isn't possible; one in the source is kept whole.
+        assert_eq!(v[2].3, "b c\tlocal");
+    }
+
+    #[test]
+    fn btrfs_qgroup_table() {
+        // btrfs-progs 6.x, with the path column.
+        let out = "Qgroupid    Referenced    Exclusive Max referenced Max exclusive   Parent     Path \n--------    ----------    --------- -------------- -------------   ------     ---- \n0/5              16384        16384           none          none   -          <toplevel>\n0/256        1073741824     4096      2147483648          none   1/100      @home\n1/100        1073741824     4096            none          none   -          <0 member qgroups>\n";
+        let q = parse_btrfs_qgroups(out);
+        assert_eq!(q.len(), 3);
+        assert_eq!(q[0].get("qgroupid").and_then(Value::as_str), Some("0/5"));
+        assert!(q[0].get("max_referenced").unwrap().is_null());
+        assert_eq!(q[1].get("max_referenced").and_then(Value::as_u64), Some(2147483648));
+        assert_eq!(q[1].get("parents"), Some(&Value::from(vec!["1/100"])));
+        assert_eq!(q[1].get("path").and_then(Value::as_str), Some("@home"));
+        assert_eq!(q[2].get("path").and_then(Value::as_str), Some("<0 member qgroups>"));
+        // Older btrfs-progs: no path column.
+        let q = parse_btrfs_qgroups("qgroupid rfer excl max_rfer max_excl parent\n-------- ---- ---- -------- -------- ------\n0/5 16384 16384 none none ---\n");
+        assert_eq!(q.len(), 1);
+        assert!(q[0].get("path").unwrap().is_null());
+        assert_eq!(q[0].get("parents"), Some(&Value::Arr(vec![])));
+        assert!(parse_btrfs_qgroups("ERROR: can't list qgroups: quotas not enabled\n").is_empty());
+    }
+
+    #[test]
+    fn btrfs_paths_through_mounts() {
+        let m = |target: &str, subvol: &str| Mount {
+            id: 1,
+            parent: 0,
+            devno: "0:30".into(),
+            root: subvol.into(),
+            target: target.into(),
+            options: "rw".into(),
+            fstype: "btrfs".into(),
+            source: "/dev/vda2".into(),
+            super_options: format!("rw,subvolid=256,subvol={subvol}"),
+        };
+        let (root, home, top) = (m("/", "/@"), m("/home", "/@home"), m("/mnt/top", "/"));
+        let only_root = [&root, &home];
+        assert_eq!(btrfs_reachable_path(&only_root, "@").as_deref(), Some("/"));
+        assert_eq!(btrfs_reachable_path(&only_root, "<FS_TREE>/@home").as_deref(), Some("/home"));
+        assert_eq!(btrfs_reachable_path(&only_root, "@/var/lib/machines").as_deref(), Some("/var/lib/machines"));
+        assert_eq!(btrfs_reachable_path(&only_root, "@home/user/snap").as_deref(), Some("/home/user/snap"));
+        assert_eq!(btrfs_reachable_path(&only_root, "@snapshots"), None);
+        // "@home" isn't under "@" just because it starts with it.
+        assert_eq!(btrfs_reachable_path(&[&root], "@home"), None);
+        assert_eq!(btrfs_reachable_path(&[&top], "@snapshots/1").as_deref(), Some("/mnt/top/@snapshots/1"));
     }
 
     #[test]

@@ -1,8 +1,19 @@
-use bko_laydump::sys::{FakeRunner, Sys};
+use bko_holt::sys::{FakeRunner, Sys};
 use std::io::Write;
 use std::process::ExitCode;
 
-const USAGE: &str = "Usage: bko-laydump [--compact] [--sysroot DIR]
+const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
+       bko-holt load LAYOUT.json [--through STAGE | --only STAGE] [--commit] ...
+       bko-holt -h | --help | -V | --version
+
+  dump   writes a JSON description of this Debian 13 system's disk layout
+         and boot setup to standard output
+  load   rebuilds disks from such a description, in stages
+
+`bko-holt dump --help` and `bko-holt load --help` say more.
+";
+
+const DUMP_USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
 
 Writes a JSON description of this Debian 13 system's disk layout and boot
 setup to standard output: disks and partition tables, boot code, md RAID,
@@ -19,36 +30,55 @@ records and says so under \"warnings\".
                   etc/, run/ and boot/) instead of this system, running no
                   commands; for tests
   -h, --help      show this help
-  -V, --version   show the version
 
 Exit status: 0 on success, 2 for bad arguments, 3 when the system isn't
 Debian 13.  SOURCE_DATE_EPOCH, when set, fixes the report's timestamp.
 ";
 
 fn main() -> ExitCode {
+    let args: Vec<String> = std::env::args().skip(1).collect();
+    match args.first().map(String::as_str) {
+        Some("dump") => dump(&args[1..]),
+        Some("load") => ExitCode::from(bko_holt::load::main(&args[1..])),
+        Some("-h" | "--help") => {
+            print!("{USAGE}");
+            ExitCode::SUCCESS
+        }
+        Some("-V" | "--version") => {
+            println!("bko-holt {}", env!("CARGO_PKG_VERSION"));
+            ExitCode::SUCCESS
+        }
+        Some(other) => {
+            eprintln!("bko-holt: unknown argument {other:?}\n\n{USAGE}");
+            ExitCode::from(2)
+        }
+        None => {
+            eprintln!("bko-holt: say dump or load\n\n{USAGE}");
+            ExitCode::from(2)
+        }
+    }
+}
+
+fn dump(args: &[String]) -> ExitCode {
     let mut compact = false;
     let mut sysroot: Option<String> = None;
-    let mut args = std::env::args().skip(1);
+    let mut args = args.iter();
     while let Some(a) = args.next() {
         match a.as_str() {
             "--compact" => compact = true,
             "--sysroot" => match args.next() {
-                Some(d) => sysroot = Some(d),
+                Some(d) => sysroot = Some(d.clone()),
                 None => {
-                    eprintln!("bko-laydump: --sysroot needs a directory\n\n{USAGE}");
+                    eprintln!("bko-holt dump: --sysroot needs a directory\n\n{DUMP_USAGE}");
                     return ExitCode::from(2);
                 }
             },
             "-h" | "--help" => {
-                print!("{USAGE}");
-                return ExitCode::SUCCESS;
-            }
-            "-V" | "--version" => {
-                println!("bko-laydump {}", env!("CARGO_PKG_VERSION"));
+                print!("{DUMP_USAGE}");
                 return ExitCode::SUCCESS;
             }
             other => {
-                eprintln!("bko-laydump: unknown argument {other:?}\n\n{USAGE}");
+                eprintln!("bko-holt dump: unknown argument {other:?}\n\n{DUMP_USAGE}");
                 return ExitCode::from(2);
             }
         }
@@ -56,17 +86,17 @@ fn main() -> ExitCode {
     let sys = match sysroot {
         Some(d) => {
             if !std::path::Path::new(&d).is_dir() {
-                eprintln!("bko-laydump: --sysroot {d}: not a directory");
+                eprintln!("bko-holt dump: --sysroot {d}: not a directory");
                 return ExitCode::from(2);
             }
-            Sys::new(d, Box::new(FakeRunner::default()), bko_laydump::sys::euid() == 0)
+            Sys::new(d, Box::new(FakeRunner::default()), bko_holt::sys::euid() == 0)
         }
         None => Sys::host(),
     };
-    let report = match bko_laydump::dump(&sys) {
+    let report = match bko_holt::dump(&sys) {
         Ok(r) => r,
         Err(e) => {
-            eprintln!("bko-laydump: {e}");
+            eprintln!("bko-holt dump: {e}");
             return ExitCode::from(3);
         }
     };

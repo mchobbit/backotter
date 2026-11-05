@@ -1,17 +1,21 @@
 [package]
-name = "bko-laydump"
-version = "0.1.0"
+name = "bko-holt"
+version = "0.2.0"
 edition = "2021"
 rust-version = "1.85"
-description = "Dump a Debian 13 system's disk layout and boot setup as JSON"
+description = "Record a Debian 13 system's disk layout and boot setup as JSON, and rebuild disks from it"
 publish = false
 
 # No dependencies on purpose: it builds offline with Debian's own cargo, and
 # every on-disk format it reads is parsed (and unit-tested) here.
 [dependencies]
 
+[lib]
+name = "bko_holt"
+path = "src/lib.rs"
+
 [[bin]]
-name = "bko-laydump"
+name = "bko-holt"
 path = "src/main.rs"
 
 [profile.release]

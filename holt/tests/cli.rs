@@ -1,14 +1,15 @@
 //! The binary: arguments, exit codes, the Debian 13 gate, and a dump of the
-//! machine the tests run on checked against lsblk.
+//! machine the tests run on checked against lsblk.  `load` has its own tests
+//! (tests/load_cli.rs).
 
-use bko_laydump::json::{self, Value};
-use bko_laydump::testutil::Tree;
+use bko_holt::json::{self, Value};
+use bko_holt::testutil::Tree;
 use std::process::{Command, Output};
 
 fn bin(args: &[&str], env: &[(&str, &str)]) -> Output {
-    // BKO_LAYDUMP_BIN: the binary, when these tests run outside the build
+    // BKO_HOLT_BIN: the binary, when these tests run outside the build
     // tree (copied into a test guest).
-    let exe = std::env::var("BKO_LAYDUMP_BIN").unwrap_or_else(|_| env!("CARGO_BIN_EXE_bko-laydump").to_string());
+    let exe = std::env::var("BKO_HOLT_BIN").unwrap_or_else(|_| env!("CARGO_BIN_EXE_bko-holt").to_string());
     let mut c = Command::new(exe);
     c.args(args);
     for (k, v) in env {
@@ -30,24 +31,36 @@ fn help_and_version() {
     for a in ["-h", "--help"] {
         let o = bin(&[a], &[]);
         assert_eq!(o.status.code(), Some(0));
-        assert!(stdout(&o).starts_with("Usage: bko-laydump"));
+        assert!(stdout(&o).starts_with("Usage: bko-holt dump"));
+        let o = bin(&["dump", a], &[]);
+        assert_eq!(o.status.code(), Some(0));
+        assert!(stdout(&o).starts_with("Usage: bko-holt dump [--compact]"));
+        let o = bin(&["load", a], &[]);
+        assert_eq!(o.status.code(), Some(0));
+        assert!(stdout(&o).starts_with("Usage: bko-holt load LAYOUT.json"));
     }
     for a in ["-V", "--version"] {
         let o = bin(&[a], &[]);
         assert_eq!(o.status.code(), Some(0));
-        assert_eq!(stdout(&o), format!("bko-laydump {}\n", env!("CARGO_PKG_VERSION")));
+        assert_eq!(stdout(&o), format!("bko-holt {}\n", env!("CARGO_PKG_VERSION")));
     }
 }
 
 #[test]
 fn bad_arguments_exit_2() {
+    let o = bin(&[], &[]);
+    assert_eq!(o.status.code(), Some(2));
+    assert!(stderr(&o).contains("say dump or load"));
     let o = bin(&["--frobnicate"], &[]);
     assert_eq!(o.status.code(), Some(2));
     assert!(stderr(&o).contains("unknown argument \"--frobnicate\""));
     assert!(stdout(&o).is_empty());
-    let o = bin(&["--sysroot"], &[]);
+    let o = bin(&["dump", "--frobnicate"], &[]);
     assert_eq!(o.status.code(), Some(2));
-    let o = bin(&["--sysroot", "/no/such/dir"], &[]);
+    assert!(stderr(&o).contains("unknown argument \"--frobnicate\""));
+    let o = bin(&["dump", "--sysroot"], &[]);
+    assert_eq!(o.status.code(), Some(2));
+    let o = bin(&["dump", "--sysroot", "/no/such/dir"], &[]);
     assert_eq!(o.status.code(), Some(2));
     assert!(stderr(&o).contains("not a directory"));
 }
@@ -56,12 +69,12 @@ fn bad_arguments_exit_2() {
 fn refuses_other_systems_with_exit_3() {
     let t = Tree::new("cli-bookworm");
     t.file("/etc/os-release", "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nID=debian\nVERSION_ID=\"12\"\n");
-    let o = bin(&["--sysroot", t.root().to_str().unwrap()], &[]);
+    let o = bin(&["dump", "--sysroot", t.root().to_str().unwrap()], &[]);
     assert_eq!(o.status.code(), Some(3));
     assert!(stderr(&o).contains("Debian GNU/Linux 12 (bookworm)"), "{}", stderr(&o));
     assert!(stdout(&o).is_empty());
     let empty = Tree::new("cli-empty");
-    let o = bin(&["--sysroot", empty.root().to_str().unwrap()], &[]);
+    let o = bin(&["dump", "--sysroot", empty.root().to_str().unwrap()], &[]);
     assert_eq!(o.status.code(), Some(3));
 }
 
@@ -70,19 +83,20 @@ fn sysroot_dump_is_json() {
     let t = Tree::new("cli-sysroot");
     t.debian13().disk("vda", "254:0", &vec![0u8; 1 << 20], 512);
     let root = t.root().to_str().unwrap();
-    let o = bin(&["--sysroot", root], &[("SOURCE_DATE_EPOCH", "1793828645")]);
+    let o = bin(&["dump", "--sysroot", root], &[("SOURCE_DATE_EPOCH", "1793828645")]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     let text = stdout(&o);
-    assert!(text.starts_with("{\n  \"format\": \"bko-laydump\",\n  \"schema\": 1,\n"));
+    assert!(text.starts_with("{\n  \"format\": \"bko-holt\",\n  \"schema\": 1,\n"));
     let v = json::parse(&text).unwrap();
     assert_eq!(v.get("generated").and_then(Value::as_str), Some("2026-11-04T21:44:05Z"));
+    assert_eq!(v.at(&["tool", "name"]).and_then(Value::as_str), Some("bko-holt"));
     assert_eq!(v.at(&["storage", "disks", "0", "name"]).and_then(Value::as_str), Some("vda"));
-    let c = bin(&["--compact", "--sysroot", root], &[("SOURCE_DATE_EPOCH", "1793828645")]);
+    let c = bin(&["dump", "--compact", "--sysroot", root], &[("SOURCE_DATE_EPOCH", "1793828645")]);
     let ct = stdout(&c);
     assert_eq!(ct.lines().count(), 1);
     assert_eq!(json::parse(&ct).unwrap().compact(), v.compact());
     // The same input gives the same output.
-    let again = bin(&["--sysroot", root], &[("SOURCE_DATE_EPOCH", "1793828645")]);
+    let again = bin(&["dump", "--sysroot", root], &[("SOURCE_DATE_EPOCH", "1793828645")]);
     assert_eq!(stdout(&again), text);
 }
 
@@ -91,7 +105,7 @@ fn sysroot_dump_is_json() {
 /// udev/blkid's; as another user, the udev fallback.
 #[test]
 fn live_host_matches_lsblk() {
-    let o = bin(&[], &[]);
+    let o = bin(&["dump"], &[]);
     assert_eq!(o.status.code(), Some(0), "{}", stderr(&o));
     let v = json::parse(&stdout(&o)).unwrap();
     assert_eq!(v.at(&["os", "id"]).and_then(Value::as_str), Some("debian"));

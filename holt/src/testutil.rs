@@ -12,10 +12,10 @@ pub struct TempDir(PathBuf);
 impl TempDir {
     pub fn new(tag: &str) -> TempDir {
         let n = COUNTER.fetch_add(1, Ordering::SeqCst);
-        let base = std::env::var_os("BKO_LAYDUMP_TEST_TMP")
+        let base = std::env::var_os("BKO_HOLT_TEST_TMP")
             .map(PathBuf::from)
             .unwrap_or_else(std::env::temp_dir);
-        let p = base.join(format!("bko-laydump-{tag}-{}-{n}", std::process::id()));
+        let p = base.join(format!("bko-holt-{tag}-{}-{n}", std::process::id()));
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).expect("create temp dir");
         TempDir(p)

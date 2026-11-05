@@ -62,6 +62,7 @@ const PROBERS: &[Prober] = &[
     fat::probe,
     misc::iso9660,
     misc::swap,
+    xfs::external_log,
 ];
 
 /// Every signature on the device, most significant first.

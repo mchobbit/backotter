@@ -4,7 +4,7 @@
 //! Loader Interface, which Debian's GRUB and systemd-boot both set, and
 //! shim's MOK variables).
 
-use crate::bytes::{guid, le16, le32, le64, sub, u8_at, utf16le};
+use crate::bytes::{guid, hex, le16, le32, le64, sub, u8_at, utf16le};
 use crate::json::{Obj, Value};
 use crate::sys::Sys;
 
@@ -236,6 +236,10 @@ pub fn boot_json(sys: &Sys, partuuid_to_dev: &dyn Fn(&str) -> Option<String>) ->
         let name = format!("Boot{n:04X}");
         let Some(raw) = var(sys, &name, GLOBAL) else { continue };
         let mut o = Obj::new().set("number", format!("{n:04X}"));
+        // The whole load option as the firmware stores it (attributes,
+        // description, device path, optional data), so an entry whose
+        // path isn't a plain HD/File pair can be written back as it was.
+        o.put("load_option_hex", hex(&raw));
         match parse_load_option(&raw) {
             Some(lo) => {
                 o.put("description", lo.description.as_str());
@@ -448,6 +452,9 @@ mod tests {
         assert_eq!(e[1].get("file").and_then(Value::as_str), Some("\\EFI\\DEBIAN\\SHIMX64.EFI"));
         assert_eq!(e[1].at(&["partition", "device"]).and_then(Value::as_str), Some("nvme1n1p1"));
         assert_eq!(e[1].get("in_boot_order").and_then(Value::as_u64), Some(0));
+        // The raw load option, without efivarfs' 4 attribute bytes.
+        assert_eq!(e[1].get("load_option_hex").and_then(Value::as_str), Some(hex(&unhex(BOOT0001_SHIM)[4..]).as_str()));
+        assert_eq!(e[4].get("load_option_hex").and_then(Value::as_str), Some("01"));
         assert!(e[0].at(&["partition", "device"]).unwrap().is_null());
         assert_eq!(e[4].get("number").and_then(Value::as_str), Some("000A"));
         assert!(e[4].get("error").is_some());

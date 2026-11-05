@@ -4,12 +4,12 @@
 //! they're #[ignore]d: run them as root in a throwaway Debian 13 guest, e.g.
 //! a `vm-run --snapshot` of testvm's debian13 or debian13-zfs:
 //!
-//!     BKO_LAYDUMP_BIN=/root/bko-laydump ./root_stack-* --ignored --test-threads 1
+//!     BKO_HOLT_BIN=/root/bko-holt ./root_stack-* --ignored --test-threads 1
 //!
 //! Needs mdadm, cryptsetup, lvm2, xfsprogs (and zfsutils-linux for the ZFS
 //! test).  Everything they create is torn down again, also on failure.
 
-use bko_laydump::json::{self, Value};
+use bko_holt::json::{self, Value};
 use std::path::PathBuf;
 use std::process::Command;
 
@@ -26,14 +26,14 @@ fn sh_quiet(script: &str) {
 }
 
 fn dump() -> Value {
-    let exe = std::env::var("BKO_LAYDUMP_BIN").unwrap_or_else(|_| env!("CARGO_BIN_EXE_bko-laydump").to_string());
-    let out = Command::new(exe).output().unwrap();
+    let exe = std::env::var("BKO_HOLT_BIN").unwrap_or_else(|_| env!("CARGO_BIN_EXE_bko-holt").to_string());
+    let out = Command::new(exe).arg("dump").output().unwrap();
     assert!(out.status.success(), "{}", String::from_utf8_lossy(&out.stderr));
     json::parse(&String::from_utf8(out.stdout).unwrap()).unwrap()
 }
 
 fn as_root() -> bool {
-    if bko_laydump::sys::euid() != 0 {
+    if bko_holt::sys::euid() != 0 {
         eprintln!("SKIP: needs root");
         return false;
     }
@@ -78,7 +78,7 @@ fn md_luks_lvm_stack() {
     if !as_root() {
         return;
     }
-    let dir = PathBuf::from(format!("/var/tmp/bko-laydump-stack-{}", std::process::id()));
+    let dir = PathBuf::from(format!("/var/tmp/bko-holt-stack-{}", std::process::id()));
     let d = dir.display();
     let _cleanup = Cleanup(format!(
         "umount /mnt/bkold-ext4 /mnt/bkold-xfs; vgchange -an bkold-vg; cryptsetup close bkoldcrypt; \
@@ -172,7 +172,7 @@ fn zfs_mirror_pool() {
         eprintln!("SKIP: needs root and zfsutils-linux");
         return;
     }
-    let dir = PathBuf::from(format!("/var/tmp/bko-laydump-zfs-{}", std::process::id()));
+    let dir = PathBuf::from(format!("/var/tmp/bko-holt-zfs-{}", std::process::id()));
     let d = dir.display();
     let pool = format!("bkold{}", std::process::id());
     let _cleanup = Cleanup(format!(

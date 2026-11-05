@@ -551,7 +551,13 @@ pub fn parse_zfs_get(out: &str) -> Vec<(String, String, String, String)> {
 /// carry only the data and log vdevs, and each only its own top-level one.
 fn zpool_vdevs(sys: &Sys, name: &str) -> Value {
     let Some(out) = sys.run("zpool", &["status", "-j", "--json-int", "-P", name]) else {
-        sys.warn(format!("zpool status -j {name} failed: the pool's vdev tree (log, cache, spare vdevs) isn't recorded"));
+        // OpenZFS before 2.3 (Ubuntu 24.04's 2.2) has no -j: read the text.
+        if let Some(t) = sys.run("zpool", &["status", "-P", name]) {
+            if let Some(v) = parse_zpool_status_text(&t, name) {
+                return v;
+            }
+        }
+        sys.warn(format!("zpool status {name} failed: the pool's vdev tree (log, cache, spare vdevs) isn't recorded"));
         return Value::Null;
     };
     match crate::json::parse(&out) {
@@ -572,6 +578,99 @@ fn zpool_vdevs(sys: &Sys, name: &str) -> Value {
             Value::Null
         }
     }
+}
+
+/// `zpool status -P POOL`'s config section, shaped as `zpool status -j`'s
+/// vdev tree: {"vdevs": {POOL: {"vdev_type": "root", "vdevs": {...}}},
+/// "logs": {...}, "l2cache", "spares", "special", "dedup"}.  Each level of
+/// the tree is indented two spaces more than its parent.
+pub fn parse_zpool_status_text(text: &str, pool: &str) -> Option<Value> {
+    fn vtype(name: &str) -> &'static str {
+        let word = name.rsplit_once('-').map(|(w, _)| w).unwrap_or(name);
+        match word {
+            "mirror" => "mirror",
+            "replacing" => "replacing",
+            "spare" => "spare",
+            w if w.starts_with("raidz") => "raidz",
+            w if w.starts_with("draid") => "draid",
+            _ if name.starts_with('/') => "disk",
+            _ => "unknown",
+        }
+    }
+    fn vdev(name: &str, kids: Vec<(String, Value)>) -> Value {
+        let ty = vtype(name);
+        let mut o = Obj::new().set("name", name).set("vdev_type", ty);
+        if ty == "disk" {
+            o.put("path", name);
+        }
+        if !kids.is_empty() {
+            let mut k = Obj::new();
+            for (n, v) in kids {
+                k.put(&n, v);
+            }
+            o.put("vdevs", k.build());
+        }
+        o.build()
+    }
+    let mut lines = text.lines().skip_while(|l| l.trim() != "config:").skip(1);
+    // Sections: (key, top-level vdevs as (name, children)).
+    // (section, its top-level vdevs as (name, their children as (name, grandchildren))).
+    type Kids = Vec<(String, Vec<(String, Value)>)>;
+    let mut sections: Vec<(&str, Vec<(String, Kids)>)> = Vec::new();
+    let mut seen_header = false;
+    for l in lines.by_ref() {
+        let body = l.trim_start_matches('\t');
+        let name = body.split_whitespace().next().unwrap_or("");
+        if !seen_header {
+            seen_header = name == "NAME";
+            continue;
+        }
+        if name.is_empty() || l.starts_with("errors:") {
+            break;
+        }
+        let indent = body.len() - body.trim_start().len();
+        match indent {
+            0 => {
+                let key = match name {
+                    n if n == pool => "vdevs",
+                    "logs" => "logs",
+                    "cache" => "l2cache",
+                    "spares" => "spares",
+                    "special" => "special",
+                    "dedup" => "dedup",
+                    _ => return None,
+                };
+                sections.push((key, Vec::new()));
+            }
+            2 => sections.last_mut()?.1.push((name.to_string(), Vec::new())),
+            4 => sections.last_mut()?.1.last_mut()?.1.push((name.to_string(), Vec::new())),
+            // A replacing or spare vdev inside a mirror or raidz.
+            6 => sections.last_mut()?.1.last_mut()?.1.last_mut()?.1.push((name.to_string(), vdev(name, vec![]))),
+            _ => return None,
+        }
+    }
+    if !sections.iter().any(|(k, _)| *k == "vdevs") {
+        return None;
+    }
+    let mut out = Obj::new();
+    for key in ["vdevs", "logs", "l2cache", "spares", "special", "dedup"] {
+        let Some((_, tops)) = sections.iter().find(|(k, _)| *k == key) else {
+            out.put(key, Value::Null);
+            continue;
+        };
+        let mut t = Obj::new();
+        for (n, kids) in tops {
+            let kids: Vec<(String, Value)> = kids.iter().map(|(cn, gk)| (cn.clone(), vdev(cn, gk.clone()))).collect();
+            t.put(n, vdev(n, kids));
+        }
+        let t = t.build();
+        if key == "vdevs" {
+            out.put(key, Obj::new().set(pool, Obj::new().set("name", pool).set("vdev_type", "root").set("vdevs", t).build()).build());
+        } else {
+            out.put(key, t);
+        }
+    }
+    Some(out.build())
 }
 
 fn zfs_json(sys: &Sys, ctx: &Ctx) -> Value {
@@ -962,7 +1061,7 @@ pub fn build(sys: &Sys, os: Option<&OsRelease>, generated: &str) -> Value {
         .collect();
     let mdadm_conf = sys.read("/etc/mdadm/mdadm.conf").or_else(|| sys.read("/etc/mdadm.conf")).map(|t| mounts::parse_mdadm_conf(&t));
 
-    let packages = sys.read("/var/lib/dpkg/status").map(|t| crate::boot::parse_dpkg_status(&t)).unwrap_or_default();
+    let packages = crate::boot::installed_packages(sys);
     let partuuid_to_dev = |u: &str| ctx.resolve(sys, &format!("PARTUUID={u}"));
     let efi_boot = crate::efi::boot_json(sys, &partuuid_to_dev);
     let esps: Vec<(String, String)> = mountinfo
@@ -1019,6 +1118,22 @@ pub fn build(sys: &Sys, os: Option<&OsRelease>, generated: &str) -> Value {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn zpool_status_text() {
+        let t = "  pool: rpool\n state: ONLINE\nconfig:\n\n\tNAME                     STATE     READ WRITE CKSUM\n\trpool                    ONLINE       0     0     0\n\t  mirror-0               ONLINE       0     0     0\n\t    /dev/vda4            ONLINE       0     0     0\n\t    /dev/vdb4            ONLINE       0     0     0\n\tlogs\t\n\t  /dev/vdc1              ONLINE       0     0     0\n\ncache\n\nerrors: No known data errors\n";
+        let v = parse_zpool_status_text(t, "rpool").unwrap();
+        let m = v.at(&["vdevs", "rpool", "vdevs", "mirror-0"]).unwrap();
+        assert_eq!(m.get("vdev_type").and_then(Value::as_str), Some("mirror"));
+        assert_eq!(m.at(&["vdevs", "/dev/vdb4", "path"]).and_then(Value::as_str), Some("/dev/vdb4"));
+        assert_eq!(v.at(&["logs", "/dev/vdc1", "vdev_type"]).and_then(Value::as_str), Some("disk"));
+        assert!(v.get("l2cache").is_some_and(Value::is_null));
+        let single = "config:\n\n\tNAME        STATE     READ WRITE CKSUM\n\trpool       ONLINE       0     0     0\n\t  /dev/vda3  ONLINE       0     0     0\n";
+        let v = parse_zpool_status_text(single, "rpool").unwrap();
+        assert_eq!(v.at(&["vdevs", "rpool", "vdevs", "/dev/vda3", "path"]).and_then(Value::as_str), Some("/dev/vda3"));
+        assert!(parse_zpool_status_text("no config here", "rpool").is_none());
+    }
+
     use super::*;
 
     #[test]

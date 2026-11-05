@@ -66,9 +66,21 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
 
 /// The systems bko-holt supports, as os-release's ID and the major part of
 /// VERSION_ID, with how people name them.  Each has a whole-machine test:
-/// HoltTest1D (Debian 13) and HoltTest1M (Linux Mint 22, built on Ubuntu
-/// 24.04, with Debian's boot tools).
-pub const SUPPORTED: &[(&str, &str, &str)] = &[("debian", "13", "Debian 13"), ("linuxmint", "22", "Linux Mint 22")];
+/// HoltTest1D (Debian 13), HoltTest1M (Linux Mint 22), HoltTest1U (Ubuntu
+/// 24.04 and 26.04), HoltTest1Z (Zorin OS 18), HoltTest1A (Arch) and
+/// HoltTest1F (Fedora 44).  The Ubuntu-based ones use Debian's boot tools
+/// (update-initramfs, update-grub); Arch has mkinitcpio and grub-mkconfig,
+/// Fedora dracut and grub2-mkconfig.
+pub const SUPPORTED: &[(&str, &str, &str)] = &[
+    ("debian", "13", "Debian 13"),
+    ("linuxmint", "22", "Linux Mint 22"),
+    ("ubuntu", "24", "Ubuntu 24.04"),
+    ("ubuntu", "26", "Ubuntu 26.04"),
+    ("zorin", "18", "Zorin OS 18"),
+    // Rolling: Arch's os-release has no VERSION_ID.
+    ("arch", "", "Arch Linux"),
+    ("fedora", "44", "Fedora 44"),
+];
 
 /// Whether ID and VERSION_ID name a supported system: the same major version
 /// ("22.3" is Mint 22).  Derivatives don't count by their ID_LIKE.
@@ -77,7 +89,7 @@ pub fn supported(id: &str, version_id: &str) -> bool {
     SUPPORTED.iter().any(|(i, v, _)| *i == id && *v == major)
 }
 
-/// "Debian 13 or Linux Mint 22", for messages.
+/// "Debian 13, Linux Mint 22, ... or Zorin OS 18", for messages.
 pub fn supported_names() -> String {
     let n: Vec<&str> = SUPPORTED.iter().map(|s| s.2).collect();
     match n.split_last() {
@@ -151,14 +163,20 @@ mod tests {
         let e = check_supported(Some(&bookworm)).unwrap_err();
         assert!(e.contains("Debian GNU/Linux 12 (bookworm)"), "{e}");
         let ubuntu = parse("ID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"26.04\"\n");
-        assert!(check_supported(Some(&ubuntu)).unwrap_err().contains("ubuntu 26.04"));
-        assert!(e.contains("Debian 13 or Linux Mint 22"), "{e}");
+        assert!(check_supported(Some(&ubuntu)).is_ok());
+        let ubuntu22 = parse("ID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"22.04\"\n");
+        assert!(check_supported(Some(&ubuntu22)).unwrap_err().contains("ubuntu 22.04"));
+        assert!(check_supported(Some(&parse("ID=zorin\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"18\"\n"))).is_ok());
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, Arch Linux or Fedora 44"), "{e}");
         // Linux Mint 22.x; not 21, and not Mint's Debian edition (LMDE).
         let mint = parse("ID=linuxmint\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"22.3\"\n");
         assert!(check_supported(Some(&mint)).is_ok());
         assert!(check_supported(Some(&parse("ID=linuxmint\nVERSION_ID=\"21.3\"\n"))).is_err());
         assert!(check_supported(Some(&parse("ID=lmde\nID_LIKE=debian\nVERSION_ID=\"6\"\n"))).is_err());
         assert!(!supported("debian", "130"));
+        assert!(check_supported(Some(&parse("ID=arch\nBUILD_ID=rolling\n"))).is_ok());
+        assert!(check_supported(Some(&parse("ID=fedora\nVERSION_ID=44\n"))).is_ok());
+        assert!(check_supported(Some(&parse("ID=fedora\nVERSION_ID=43\n"))).is_err());
         // Debian testing/sid has no VERSION_ID.
         let sid = parse("ID=debian\nPRETTY_NAME=\"Debian GNU/Linux forky/sid\"\n");
         assert!(check_supported(Some(&sid)).is_err());

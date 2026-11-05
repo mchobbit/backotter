@@ -93,7 +93,10 @@ fn v1(b: &[u8], version: &str) -> Content {
         .set("update_time", le64(b, 192) & 0xff_ffff_ffff)
         .set("feature_map", format!("0x{feature_map:x}"))
         .set("write_intent_bitmap", feature_map & 1 != 0)
-        .set("ppl", feature_map & 0x400 != 0);
+        .set("ppl", feature_map & 0x400 != 0)
+        // Newer kernels (Linux 6.18 on) keep the array's logical block size
+        // here, where older ones have padding that must be zero.
+        .set("logical_block_size", le32(b, 224));
     if feature_map & 1 != 0 {
         d.put("bitmap_offset_sectors", le32(b, 96) as i32);
     }

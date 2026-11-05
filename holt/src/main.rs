@@ -32,7 +32,7 @@ records and says so under \"warnings\".
   -h, --help      show this help
 
 Exit status: 0 on success, 2 for bad arguments, 3 when the system isn't
-Debian 13 or Linux Mint 22.  SOURCE_DATE_EPOCH, when set, fixes the
+Debian 13, Linux Mint 22, Ubuntu 24.04 or 26.04, or Zorin OS 18.  SOURCE_DATE_EPOCH, when set, fixes the
 report's timestamp.
 ";
 
@@ -41,6 +41,8 @@ fn main() -> ExitCode {
     match args.first().map(String::as_str) {
         Some("dump") => dump(&args[1..]),
         Some("load") => ExitCode::from(bko_holt::load::main(&args[1..])),
+        // Not in the usage: run by load's close stage.
+        Some("md-lbs") => ExitCode::from(bko_holt::mdsb::main(&args[1..])),
         Some("-h" | "--help") => {
             print!("{USAGE}");
             ExitCode::SUCCESS

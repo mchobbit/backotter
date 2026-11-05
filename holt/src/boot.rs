@@ -31,6 +31,54 @@ pub fn parse_dpkg_status(text: &str) -> Vec<(String, String, String)> {
     out
 }
 
+/// Installed packages from pacman's local database (Arch): each
+/// /var/lib/pacman/local/NAME-VERSION/desc holds %NAME%, %VERSION%, %ARCH%.
+pub fn pacman_packages(sys: &Sys) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for d in sys.list("/var/lib/pacman/local") {
+        let Some(t) = sys.read(&format!("/var/lib/pacman/local/{d}/desc")) else { continue };
+        let field = |k: &str| {
+            let mut it = t.lines();
+            it.by_ref().find(|l| l.trim() == k)?;
+            it.next().map(|v| v.trim().to_string())
+        };
+        if let (Some(n), Some(v)) = (field("%NAME%"), field("%VERSION%")) {
+            out.push((n, v, field("%ARCH%").unwrap_or_default()));
+        }
+    }
+    out.sort();
+    out
+}
+
+/// Installed packages from rpm (Fedora): its database is SQLite, so rpm
+/// itself reads it.
+pub fn rpm_packages(sys: &Sys) -> Vec<(String, String, String)> {
+    let Some(t) = sys.run("rpm", &["-qa", "--qf", "%{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n"]) else { return Vec::new() };
+    let mut out: Vec<(String, String, String)> = t
+        .lines()
+        .filter_map(|l| {
+            let mut f = l.split('\t');
+            Some((f.next()?.to_string(), f.next()?.to_string(), f.next().unwrap_or("").to_string()))
+        })
+        .collect();
+    out.sort();
+    out
+}
+
+/// The installed packages, from whichever package manager the system has.
+pub fn installed_packages(sys: &Sys) -> Vec<(String, String, String)> {
+    if let Some(t) = sys.read("/var/lib/dpkg/status") {
+        return parse_dpkg_status(&t);
+    }
+    if sys.is_dir("/var/lib/pacman/local") {
+        return pacman_packages(sys);
+    }
+    if sys.is_dir("/var/lib/rpm") || sys.is_dir("/usr/lib/sysimage/rpm") {
+        return rpm_packages(sys);
+    }
+    Vec::new()
+}
+
 /// The packages that make up the storage and boot stack.
 pub const PACKAGES: &[&str] = &[
     "grub-pc", "grub-pc-bin", "grub-efi-amd64", "grub-efi-amd64-bin", "grub-efi-amd64-signed", "grub-efi-ia32",
@@ -40,7 +88,10 @@ pub const PACKAGES: &[&str] = &[
     "linux-image-cloud-amd64", "linux-image-rt-amd64", "initramfs-tools", "dracut", "tiny-initramfs", "mdadm",
     "lvm2", "thin-provisioning-tools", "cryptsetup", "cryptsetup-initramfs", "cryptsetup-bin", "clevis-luks",
     "systemd-cryptsetup", "tpm2-tools", "zfsutils-linux", "zfs-initramfs", "zfs-dracut", "zfs-dkms", "btrfs-progs",
-    "xfsprogs", "e2fsprogs", "dosfstools", "exfatprogs", "ntfs-3g", "jfsutils", "f2fs-tools", "bcachefs-tools",
+    "xfsprogs", "e2fsprogs", "dosfstools", "exfatprogs", "ntfs-3g", "jfsutils", "f2fs-tools", "nilfs-tools", "bcachefs-tools",
+    // Arch's and Fedora's names for the same.
+    "grub", "grub2-pc", "grub2-efi-x64", "grub2-tools", "shim-x64", "mkinitcpio", "linux", "linux-lts", "kernel-core",
+    "zfs-utils", "selinux-policy-targeted",
     "multipath-tools", "dmraid", "nvme-cli", "open-iscsi",
 ];
 
@@ -265,14 +316,17 @@ pub fn parse_grubenv(text: &str) -> Vec<(String, String)> {
 
 fn grub_json(sys: &Sys) -> Value {
     let mut o = Obj::new();
+    // Fedora's GRUB lives in /boot/grub2.
+    let dir = if !sys.is_dir("/boot/grub") && sys.is_dir("/boot/grub2") { "/boot/grub2" } else { "/boot/grub" };
+    o.put("dir", dir);
     let platforms: Vec<String> = sys
-        .list("/boot/grub")
+        .list(dir)
         .into_iter()
-        .filter(|d| sys.is_dir(&format!("/boot/grub/{d}")) && d.contains('-') && d != "x86_64-efi-signed")
-        .filter(|d| sys.is_file(&format!("/boot/grub/{d}/normal.mod")) || sys.is_file(&format!("/boot/grub/{d}/core.img")) || sys.is_file(&format!("/boot/grub/{d}/core.efi")))
+        .filter(|d| sys.is_dir(&format!("{dir}/{d}")) && d.contains('-') && d != "x86_64-efi-signed")
+        .filter(|d| sys.is_file(&format!("{dir}/{d}/normal.mod")) || sys.is_file(&format!("{dir}/{d}/core.img")) || sys.is_file(&format!("{dir}/{d}/core.efi")))
         .collect();
     o.put("installed_platforms", platforms);
-    match sys.read("/boot/grub/grub.cfg") {
+    match sys.read(&format!("{dir}/grub.cfg")) {
         Some(t) => {
             let g = parse_grub_cfg(&t);
             o.put(
@@ -287,15 +341,15 @@ fn grub_json(sys: &Sys) -> Value {
             );
         }
         None => {
-            if sys.exists("/boot/grub/grub.cfg") {
-                sys.warn("/boot/grub/grub.cfg: not readable (run as root)");
+            if sys.exists(&format!("{dir}/grub.cfg")) {
+                sys.warn(format!("{dir}/grub.cfg: not readable (run as root)"));
                 o.put("grub_cfg", "unreadable");
             } else {
                 o.put("grub_cfg", Value::Null);
             }
         }
     }
-    o.put("grubenv", sys.read("/boot/grub/grubenv").map(|t| pairs_obj(&parse_grubenv(&t))));
+    o.put("grubenv", sys.read(&format!("{dir}/grubenv")).map(|t| pairs_obj(&parse_grubenv(&t))));
     let mut defaults = sys.read("/etc/default/grub").map(|t| parse_shell_assignments(&t)).unwrap_or_default();
     for f in sys.list("/etc/default/grub.d") {
         if f.ends_with(".cfg") {
@@ -406,8 +460,11 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
     let mut versions: Vec<String> = Vec::new();
     let files = sys.list("/boot");
     for f in &files {
-        for p in ["vmlinuz-", "initrd.img-", "config-", "System.map-"] {
-            if let Some(v) = f.strip_prefix(p) {
+        // Debian's initrd.img-V, Arch's and Fedora's initramfs-V.img.
+        let initramfs = f.strip_prefix("initramfs-").and_then(|v| v.strip_suffix(".img")).filter(|v| !v.ends_with("-fallback") && !v.ends_with("kdump"));
+        for p in ["vmlinuz-", "initrd.img-", "config-", "System.map-", "initramfs-"] {
+            let v = if p == "initramfs-" { initramfs } else { f.strip_prefix(p) };
+            if let Some(v) = v {
                 if !versions.iter().any(|x| x == v) {
                     versions.push(v.to_string());
                 }
@@ -421,7 +478,7 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
             Obj::new()
                 .set("version", v.as_str())
                 .set("vmlinuz_bytes", sys.file_size(&format!("/boot/vmlinuz-{v}")))
-                .set("initrd_bytes", sys.file_size(&format!("/boot/initrd.img-{v}")))
+                .set("initrd_bytes", sys.file_size(&format!("/boot/initrd.img-{v}")).or_else(|| sys.file_size(&format!("/boot/initramfs-{v}.img"))))
                 .set("config", sys.is_file(&format!("/boot/config-{v}")))
                 .set("running", running == Some(v.as_str()))
                 .set("modules_installed", sys.is_dir(&format!("/lib/modules/{v}")) || sys.is_dir(&format!("/usr/lib/modules/{v}")))
@@ -457,7 +514,9 @@ pub fn cmdline_json(cmdline: &str) -> Value {
 
 fn initramfs_json(sys: &Sys, packages: &[(String, String, String)]) -> Value {
     let has = |p: &str| packages.iter().any(|(n, _, _)| n == p);
-    let generator = if has("dracut") {
+    let generator = if has("mkinitcpio") {
+        Some("mkinitcpio")
+    } else if has("dracut") {
         Some("dracut")
     } else if has("initramfs-tools") {
         Some("initramfs-tools")

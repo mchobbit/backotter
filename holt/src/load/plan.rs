@@ -150,7 +150,7 @@ mod tests {
         let t = Tree::new("load-plan");
         t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "33554432\n");
         t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
-        for p in TOOLS.iter().chain(["mkdir", "mount", "umount", "chroot", "cp", "rustic-bko"].iter()) {
+        for p in TOOLS.iter().chain(["mkdir", "mount", "umount", "chroot", "cp", "sh", "bash", "rustic-bko"].iter()) {
             t.file(&format!("/usr/sbin/{p}"), "");
         }
         t

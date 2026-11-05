@@ -1,4 +1,4 @@
-//! bko-holt: records a Debian 13 or Linux Mint 22 system's disk layout and boot setup
+//! bko-holt: records a Debian 13, Ubuntu, Linux Mint or Zorin system's disk layout and boot setup
 //! (disks, partition tables, RAID, LVM, LUKS, ZFS, btrfs, filesystems,
 //! mounts, firmware, boot loader, kernels) as JSON (`dump`), and rebuilds the
 //! disks from that JSON in stages (`load`), for BackOtter to record with each
@@ -15,6 +15,7 @@ pub mod bytes;
 pub mod efi;
 pub mod json;
 pub mod load;
+pub mod mdsb;
 pub mod mounts;
 pub mod osrel;
 pub mod parttable;

@@ -90,7 +90,7 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
                 continue;
             }
         }
-        if s == Stage::Boot && !sys.is_file(&format!("{}/etc/fstab", opts.target)) {
+        if s == Stage::Boot && !sys.exists(&format!("{}/etc/fstab", opts.target)) {
             return (EXIT_FAILED, out, format!("bko-holt load: boot: {}/etc/fstab isn't there; restore the system into {} first\n", opts.target, opts.target));
         }
         let cmds = p.built.stage(s);

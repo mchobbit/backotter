@@ -166,6 +166,10 @@ impl Layout {
             if d.get("kind").and_then(Value::as_str) == Some("ram") {
                 continue;
             }
+            // A ZFS volume (zdN) is made inside its pool, not mapped to a disk.
+            if d.get("links").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).any(|l| l.starts_with("/dev/zvol/")) {
+                continue;
+            }
             let sector = u(d, "logical_sector_size").unwrap_or(512).max(512);
             let tv = d.get("partition_table").cloned().unwrap_or(Value::Null);
             let table = table(&tv);
@@ -340,7 +344,7 @@ mod tests {
         assert!(parse(&good.replace("\"bko-holt\"", "\"bko-laydump\"")).is_ok());
         assert!(parse(&good.replace("\"bko-holt\"", "\"other\"")).unwrap_err().contains("not a bko-holt dump"));
         assert!(parse(&good.replace("\"schema\": 1", "\"schema\": 2")).unwrap_err().contains("schema"));
-        assert!(parse(&good.replace("\"version_id\": \"13\"", "\"version_id\": \"12\"")).unwrap_err().contains("supports only Debian 13 or Linux Mint 22"));
+        assert!(parse(&good.replace("\"version_id\": \"13\"", "\"version_id\": \"12\"")).unwrap_err().contains("supports only Debian 13, Linux Mint 22"));
         let mint = good.replace("\"id\": \"debian\", \"version_id\": \"13\"", "\"id\": \"linuxmint\", \"version_id\": \"22.3\"");
         assert!(parse(&mint).is_ok());
         assert!(parse(&good.replace("\"privileged\": true", "\"privileged\": false")).unwrap_err().contains("as root"));

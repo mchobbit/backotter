@@ -112,16 +112,39 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
 
     // restore and boot: what's in the mounted tree.
     let t = &opts.target;
-    let restored = tree_up && sys.is_file(&format!("{t}/etc/fstab")) && sys.is_file(&format!("{t}/etc/os-release"));
+    // (lstat only: following /etc/os-release, a symlink, would bump its atime.)
+    let restored = tree_up && sys.exists(&format!("{t}/etc/fstab")) && sys.exists(&format!("{t}/etc/os-release"));
     let booted = tree_up && !sys.list(&format!("{t}/var/log/bko-holt")).is_empty();
     let unseen = if tree_up { "" } else { "the tree isn't mounted, so this can't be seen" };
     out.push((Stage::Restore, if restored { State::Done } else if tree_up { State::NotDone } else { State::Unknown }, if restored { String::new() } else { unseen.into() }));
     out.push((Stage::Boot, if booted { State::Done } else if tree_up { State::NotDone } else { State::Unknown }, if booted { String::new() } else { unseen.into() }));
 
     // close: nothing of ours left open, after everything was made.
+    // Closed, pools and volumes can't be looked into: what was made shows as
+    // each partition's signature (filesystem, md, LUKS, LVM or ZFS label)
+    // carrying the source's UUID.
     let open = unmounted.len() < total || built.made.iter().any(|(_, n)| sys.exists(n)) || built.pools.iter().any(|p| imported.contains(p));
-    let made = out.iter().find(|r| r.0 == Stage::Format).is_some_and(|r| r.1 == State::Done);
-    out.push((Stage::Close, if made && !open { State::Done } else { State::NotDone }, String::new()));
+    let mut unsigned = vec![];
+    for (src, tgt) in &mapping.pairs {
+        let Some(d) = layout.disk(src) else { continue };
+        for p in &d.parts {
+            let Some(want) = layout.content(&p.name).and_then(|c| c.get("uuid")).and_then(|u| u.as_str().map(str::to_string).or_else(|| u.as_u64().map(|n| n.to_string()))) else { continue };
+            let node = commands::part_path(tgt, p.number);
+            if uuid_at(sys, &node) != Some(want.to_ascii_lowercase()) {
+                unsigned.push(node);
+            }
+        }
+    }
+    let partitioned = out.iter().find(|r| r.0 == Stage::Partition).is_some_and(|r| r.1 == State::Done);
+    let closed = partitioned && unsigned.is_empty() && !open;
+    let why = if closed || !partitioned {
+        String::new()
+    } else if open {
+        "still open".into()
+    } else {
+        format!("not made: {}", unsigned.join(", "))
+    };
+    out.push((Stage::Close, if closed { State::Done } else { State::NotDone }, why));
 
     let mut problems = mapping.problems;
     problems.retain(|p| !p.contains("isn't blank"));

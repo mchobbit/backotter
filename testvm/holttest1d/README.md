@@ -1,8 +1,10 @@
 # HoltTest1D: a whole-machine round trip of bko-holt on Debian 13
 
 Status: 2026-11-05.  The plan below is the goal.  What runs today is
-`ht1.sh`, an interim driver with a Debian 13 rescuer; see "Running it today".
-HoltTest1M (Linux Mint 22, the `mint22` guest) passed with it on both hosts.
+`ht1.sh`, an interim driver with its own rescuers; see "Running it today".
+It runs HoltTest1D and its siblings, the same test on other systems:
+1M (`mint22`), 1U (`ubuntu24`, `ubuntu26-uefi`, `ubuntu26-zfsmirror`),
+1Z (`zorin18`), 1A (`arch`) and 1F (`fedora44`, `fedora44-uefi`).
 
 HoltTest1D checks that bko-holt can describe a Debian 13 machine and build it
 again on blank disks, well enough that a rustic-bko restore onto them boots and
@@ -26,7 +28,7 @@ third guest:
 |---|---|---|---|
 | `debian13` | BIOS, MBR | /boot ext4, swap, / btrfs | yes |
 | `debian13-zfs` | BIOS, MBR | /boot ext4, swap, ZFS `rpool` with the OpenZFS guide's datasets | yes |
-| `debian13-stack` | UEFI (Secure Boot), GPT, two disks | ESP on each disk; md RAID1 /boot; LUKS2 on md RAID1, then LVM with / ext4, /srv XFS and swap | to build |
+| `debian13-stack` | UEFI (Secure Boot), GPT, two disks | ESP on each disk; md RAID1 /boot; LUKS2 on md RAID1, then LVM with / ext4, /srv XFS and swap | yes (`make-debian-stack.sh`) |
 
 `debian13-stack` also runs a second time onto disks 1 GiB bigger than its own,
 to check that the GPT backup header moves to the new end of the disk.
@@ -204,27 +206,41 @@ reservation queue (as `m`, which owns the queue's lock files):
         sudo -E testvm/holttest1d/ht1.sh mint22 ht1m >/bkoscratch/holttest1d/ht1m.log 2>&1 </dev/null
 
 It needs `/bkoscratch/holttest1d/bin/` with `bko-holt`, `rustic-bko` and
-`f2fs-tools_*.deb` (the f2fs tools are installed in the rescuer).  The
+`f2fs-tools_*.deb` (installed in a rescuer that lacks the f2fs tools), and
+the rescuers that `make-rescuer.sh` builds (see below).  The guest's other
+disks and firmware come from its `vm-run-options`; a guest with a
+`console-passphrase` or `zfs-passphrase` has it typed at each boot
+(`testvm/console-boot.py`), given to `vm-mount --key`, and given to
+`load --key-file` for each LUKS volume and passphrase-keyed ZFS root.  The
 phases are `source`, `backup`, `rebuild` and `verify`; each needs the one
 before it, and the run stops at the first that fails.  After a bko-holt fix,
 `rebuild verify` is enough, unless the fix changed what `dump` writes.
 
 It differs from the plan above in these ways:
 
-- **The rescuer** is a throwaway overlay of the `debian13` guest, driven
-  over SSH, not BackOtter's rescue `.img`.  A pass is reported as "passed
-  with a Debian 13 rescuer".  The `.img` needs bko-holt in the stick layer,
-  an SSH key (or the serial console) for `make-img.sh --test` images, and
-  f2fs-tools and 9p in the image.
+- **The rescuer** is a throwaway overlay of a rescuer image, driven over
+  SSH, not BackOtter's rescue `.img`.  `make-rescuer.sh` builds
+  `/bkoscratch/holttest1d/rescuer/rescuer.qcow2` from the `debian13` guest
+  (BIOS; OpenZFS 2.4 from trixie-backports, every mkfs, nothing of its own
+  imported), and with `--uefi`, `rescuer-uefi.qcow2` from `ubuntu26-uefi`
+  (UEFI; Ubuntu's OpenZFS 2.4).  A UEFI source is rebuilt from the UEFI
+  one, as the stick boots in the machine's firmware mode: grub-mkconfig
+  writes a UEFI grub.cfg only there.  Build them on one host, copy them
+  to the other.  The `.img` needs bko-holt in the stick layer, an SSH key
+  (or the serial console) for `make-img.sh --test` images, and f2fs-tools,
+  nilfs-tools and 9p in the image.
 - **The share** is 9p, read-only, mounted at `/mnt/share` in the rescuer.
 - **The file check** records fsmeta of the source (mounted read-only) and
   of the restored disk, and `judge.py fs` compares them.  Only what `load`'s
-  boot stage writes by design may differ: `/boot/grub`, the rebuilt
-  initramfs files, `/var/log/bko-holt`, os-prober's state, and the
-  temporary directories' mtimes.  `judge.py` lists each of these with its
+  boot stage writes by design may differ (`BOOT_STAGE`): `/boot/grub` (or
+  `grub2`), the ESPs' loaders, the rebuilt initramfs files and BLS
+  entries, `zpool.cache`, `/var/log/bko-holt`, dracut's and os-prober's
+  state, and the temporary directories.  `judge.py` lists each with its
   reason, and prints how many paths each one covered.
-- **The dump check** is `judge.py SRC.json DST.json`.  The initramfs sizes
-  are ignored, since the boot stage rebuilds them.
+- **The dump check** is `judge.py SRC.json DST.json`.  `IGNORED` names
+  what can't be kept or changes at every boot, each with its reason: ZFS
+  vdev GUIDs and object numbers, btrfs subvolume UUIDs, md members'
+  device UUIDs, LVM's last-writer fields, mount order, usage, zram.
 - `vm-run` takes its SSH port from `SSH_PORT`; `ht1.sh` sets it from
   `HT_PORT`.
 
@@ -238,9 +254,11 @@ It differs from the plan above in these ways:
 3. 9p in the rescue image's kernel (`9pnet_virtio`, `9p`).  If it's missing,
    the share becomes a small read-only virtio disk with serial `bko-share`.
    `load` must then be given that disk as off-limits.
-4. A builder for `debian13-stack`: a `make-debian.sh` preseed variant,
-   with an entry in `rebuild-one.sh`.  Built on one host and copied
-   byte-identical to the other, as the other guests were.
+4. ~~A builder for `debian13-stack`~~: done, `testvm/make-debian-stack.sh`
+   (built from the host, since Debian's installer can't preseed LUKS on md),
+   with an entry in `rebuild-one.sh`; built on Cinqcent and copied
+   byte-identical to Chopin.  Its initramfs asks for the LUKS passphrase on
+   the serial console; `vms/debian13-stack/console-passphrase` holds it.
 5. The driver, `testvm/holttest1d/check.sh GUEST [--bigger]`, with
    `restore.sh` and `judge.py` beside it.  It reuses `testvm/compare`'s
    `torture.sh`, `fsmeta.py`, `boot-state.sh` and its mount helpers.

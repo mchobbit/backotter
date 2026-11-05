@@ -5,6 +5,7 @@
 pub mod btrfs;
 pub mod ext;
 pub mod f2fs;
+pub mod nilfs2;
 pub mod fat;
 pub mod luks;
 pub mod lvm;
@@ -60,6 +61,7 @@ const PROBERS: &[Prober] = &[
     ext::probe,
     btrfs::probe,
     f2fs::probe,
+    nilfs2::probe,
     misc::jfs,
     fat::probe,
     misc::iso9660,
@@ -111,6 +113,7 @@ mod tests {
             ("xfs", xfs::sample::image("x")),
             ("btrfs", btrfs::sample::image("b", 0)),
             ("f2fs", f2fs::sample::image("f", 0)),
+            ("nilfs2", nilfs2::sample::image("n", 0)),
             ("vfat", fat::sample::fat32(1 << 20, 1, "EFI")),
             ("swap", misc::sample::swap(64, "")),
             ("crypto_LUKS", luks::sample::luks2("u", "")),

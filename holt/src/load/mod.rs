@@ -1,17 +1,19 @@
 //! `bko-holt load`: rebuilds a machine's disks from a `bko-holt dump`, in
 //! stages that each do only what they're told (docs/design/layload.md).
 //!
-//! Built so far: `plan`, which runs every check and prints every command the
-//! later stages will run, and `status`, which reports what's on the target
-//! disks and which stage comes next.  Neither writes anything.  The writing
-//! stages (partition, assemble, format, mount, restore, boot, close) are
-//! planned in full by `plan` but refuse to run until they're built.
+//! `plan` runs every check and prints every command the writing stages will
+//! run, and `status` reports what's on the target disks and which stage
+//! comes next; neither writes anything.  The writing stages (partition,
+//! assemble, format, mount, restore, boot, close) make the same checks, run
+//! those commands with --commit (else print them), and read the disks back
+//! after each stage (exec.rs).
 //!
 //! `restore` runs the archiver (rustic-bko) between `mount` and `boot`;
 //! bko-holt never copies file data itself.  Without --repo it's left to the
 //! administrator: `--through mount`, restore by hand, then `--only boot`.
 
 pub mod commands;
+pub mod exec;
 pub mod layout;
 pub mod plan;
 pub mod status;
@@ -160,8 +162,6 @@ Rebuilds the disks LAYOUT.json (from `bko-holt dump`) describes, in stages:
              without it, restore by hand and go on with --only boot)
   boot       after the restore: initramfs, boot loader, UEFI entries
   close      unmount, export pools, close containers, stop arrays
-
-Only plan and status are built so far.
 
   --through STAGE   run the writing stages up to and including STAGE
   --only STAGE      run just STAGE
@@ -324,20 +324,7 @@ pub fn run(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
     match stages.as_slice() {
         [Stage::Plan] => plan::run(&layout, opts, sys),
         [Stage::Status] => status::run(&layout, opts, sys),
-        _ => {
-            let names: Vec<&str> = stages.iter().map(|s| s.name()).collect();
-            (
-                EXIT_FAILED,
-                String::new(),
-                format!(
-                    "bko-holt load: {} {} built yet; only plan and status are.  `bko-holt load {}` shows every command {} will run.\n",
-                    names.join(", "),
-                    if names.len() == 1 { "isn't" } else { "aren't" },
-                    opts.layout,
-                    if names.len() == 1 { "it" } else { "they" },
-                ),
-            )
-        }
+        _ => exec::run(&layout, opts, sys, &stages),
     }
 }
 
@@ -435,19 +422,16 @@ mod tests {
     }
 
     #[test]
-    fn writing_stages_refuse_for_now() {
+    fn writing_stages_check_first() {
         let t = crate::testutil::Tree::new("load-run");
         let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
         let layout = r#"{"format": "bko-holt", "schema": 1, "os": {"id": "debian", "version_id": "13"}, "storage": {"disks": []}}"#;
-        let (code, out, err) = run(&opts(&["l.json", "--through", "mount"]), layout, &s);
-        assert_eq!(code, EXIT_FAILED);
+        // The same checks as plan's: this layout mounts no /.
+        let (code, out, err) = run(&opts(&["l.json", "--through", "mount", "--commit"]), layout, &s);
+        assert_eq!(code, EXIT_PLAN_PROBLEMS);
         assert!(out.is_empty());
-        assert!(err.contains("partition, assemble, format, mount aren't built yet"), "{err}");
-        let (_, _, err) = run(&opts(&["l.json", "--through", "close", "--repo", "/r"]), layout, &s);
-        assert!(err.contains("mount, restore, boot, close aren't built yet"), "{err}");
-        let (code, _, err) = run(&opts(&["l.json", "--only", "boot"]), layout, &s);
-        assert_eq!(code, EXIT_FAILED);
-        assert!(err.contains("boot isn't built yet"), "{err}");
+        assert!(err.contains("nothing in fstab or the ZFS datasets mounts /"), "{err}");
+        assert!(err.contains("nothing was written"), "{err}");
         let (code, _, err) = run(&opts(&["l.json"]), "{not json", &s);
         assert_eq!(code, EXIT_UNSUPPORTED);
         assert!(err.contains("not JSON"));

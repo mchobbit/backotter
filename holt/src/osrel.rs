@@ -1,4 +1,4 @@
-//! /etc/os-release, and the check that this is Debian 13.
+//! /etc/os-release, and the check that this is a system bko-holt supports.
 
 use crate::json::{Obj, Value};
 use crate::sys::Sys;
@@ -64,18 +64,40 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
     sys.read("/etc/os-release").or_else(|| sys.read("/usr/lib/os-release")).map(|t| parse(&t))
 }
 
-/// Ok on Debian 13, else why not.
-pub fn check_debian13(os: Option<&OsRelease>) -> Result<(), String> {
+/// The systems bko-holt supports, as os-release's ID and the major part of
+/// VERSION_ID, with how people name them.  Each has a whole-machine test:
+/// HoltTest1D (Debian 13) and HoltTest1M (Linux Mint 22, built on Ubuntu
+/// 24.04, with Debian's boot tools).
+pub const SUPPORTED: &[(&str, &str, &str)] = &[("debian", "13", "Debian 13"), ("linuxmint", "22", "Linux Mint 22")];
+
+/// Whether ID and VERSION_ID name a supported system: the same major version
+/// ("22.3" is Mint 22).  Derivatives don't count by their ID_LIKE.
+pub fn supported(id: &str, version_id: &str) -> bool {
+    let major = version_id.split('.').next().unwrap_or("");
+    SUPPORTED.iter().any(|(i, v, _)| *i == id && *v == major)
+}
+
+/// "Debian 13 or Linux Mint 22", for messages.
+pub fn supported_names() -> String {
+    let n: Vec<&str> = SUPPORTED.iter().map(|s| s.2).collect();
+    match n.split_last() {
+        Some((last, rest)) if !rest.is_empty() => format!("{} or {last}", rest.join(", ")),
+        _ => n.join(""),
+    }
+}
+
+/// Ok on a supported system, else why not.
+pub fn check_supported(os: Option<&OsRelease>) -> Result<(), String> {
     let Some(os) = os else {
         return Err("no /etc/os-release or /usr/lib/os-release: can't tell which system this is".into());
     };
     let id = os.get("ID").unwrap_or("");
     let ver = os.get("VERSION_ID").unwrap_or("");
-    if id == "debian" && ver == "13" {
+    if supported(id, ver) {
         return Ok(());
     }
     let name = os.get("PRETTY_NAME").map(str::to_string).unwrap_or_else(|| format!("{id} {ver}"));
-    Err(format!("this is {}, and bko-holt dump supports only Debian 13 (ID=debian, VERSION_ID=13) for now", name.trim()))
+    Err(format!("this is {}, and bko-holt dump supports only {} for now", name.trim(), supported_names()))
 }
 
 pub fn to_json(sys: &Sys, os: Option<&OsRelease>) -> Value {
@@ -108,7 +130,7 @@ mod tests {
         assert_eq!(o.get("VERSION_CODENAME"), Some("trixie"));
         assert_eq!(o.get("PRETTY_NAME"), Some("Debian GNU/Linux 13 (trixie)"));
         assert_eq!(o.get("NOPE"), None);
-        assert!(check_debian13(Some(&o)).is_ok());
+        assert!(check_supported(Some(&o)).is_ok());
     }
 
     #[test]
@@ -126,17 +148,24 @@ mod tests {
     #[test]
     fn refuses_other_systems() {
         let bookworm = parse("ID=debian\nVERSION_ID=\"12\"\nPRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\n");
-        let e = check_debian13(Some(&bookworm)).unwrap_err();
+        let e = check_supported(Some(&bookworm)).unwrap_err();
         assert!(e.contains("Debian GNU/Linux 12 (bookworm)"), "{e}");
         let ubuntu = parse("ID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"26.04\"\n");
-        assert!(check_debian13(Some(&ubuntu)).unwrap_err().contains("ubuntu 26.04"));
+        assert!(check_supported(Some(&ubuntu)).unwrap_err().contains("ubuntu 26.04"));
+        assert!(e.contains("Debian 13 or Linux Mint 22"), "{e}");
+        // Linux Mint 22.x; not 21, and not Mint's Debian edition (LMDE).
+        let mint = parse("ID=linuxmint\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"22.3\"\n");
+        assert!(check_supported(Some(&mint)).is_ok());
+        assert!(check_supported(Some(&parse("ID=linuxmint\nVERSION_ID=\"21.3\"\n"))).is_err());
+        assert!(check_supported(Some(&parse("ID=lmde\nID_LIKE=debian\nVERSION_ID=\"6\"\n"))).is_err());
+        assert!(!supported("debian", "130"));
         // Debian testing/sid has no VERSION_ID.
         let sid = parse("ID=debian\nPRETTY_NAME=\"Debian GNU/Linux forky/sid\"\n");
-        assert!(check_debian13(Some(&sid)).is_err());
+        assert!(check_supported(Some(&sid)).is_err());
         // A derivative that claims VERSION_ID 13 isn't Debian.
         let devuan = parse("ID=devuan\nID_LIKE=debian\nVERSION_ID=13\n");
-        assert!(check_debian13(Some(&devuan)).is_err());
-        assert!(check_debian13(None).unwrap_err().contains("os-release"));
+        assert!(check_supported(Some(&devuan)).is_err());
+        assert!(check_supported(None).unwrap_err().contains("os-release"));
     }
 
     #[test]

@@ -24,7 +24,7 @@ fn put(img: &mut [u8], at_sector: usize, data: &[u8]) {
 fn run(t: &Tree, privileged: bool, runner: FakeRunner) -> Value {
     let sys = Sys::new(t.root(), Box::new(runner), privileged);
     let os = crate::osrel::read(&sys);
-    crate::osrel::check_debian13(os.as_ref()).unwrap();
+    crate::osrel::check_supported(os.as_ref()).unwrap();
     let v = crate::report::build(&sys, os.as_ref(), "2026-11-04T00:00:00Z");
     // Whatever the scenario, the output is valid JSON that reads back the same.
     // (Compared as text: a positive Int reads back as a UInt.)

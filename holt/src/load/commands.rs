@@ -916,11 +916,6 @@ pub fn mke2fs(dev: &str, c: &Value) -> Vec<String> {
     if let Some(g) = num(c, "flex_bg_size") {
         a.extend(["-G".into(), g.to_string()]);
     }
-    if let (Some(r), Some(b)) = (num(c, "reserved_blocks"), num(c, "blocks")) {
-        if b > 0 {
-            a.extend(["-m".into(), format!("{:.4}", r as f64 * 100.0 / b as f64)]);
-        }
-    }
     let mut ext = vec![];
     if let Some(h) = s(c, "hash_seed") {
         ext.push(format!("hash_seed={h}"));
@@ -1086,6 +1081,38 @@ pub fn mkfs_fat(dev: &str, c: &Value) -> Vec<String> {
     a
 }
 
+/// F2FS features mkfs.f2fs -O can set; the rest of the superblock's bits
+/// (atomic_write, blkzoned) aren't chosen there.
+const F2FS_SETTABLE: [&str; 13] = [
+    "encrypt", "extra_attr", "project_quota", "inode_checksum", "flexible_inline_xattr", "quota", "inode_crtime", "lost_found", "verity", "sb_checksum",
+    "casefold", "compression", "ro",
+];
+
+pub fn mkfs_f2fs(dev: &str, c: &Value) -> Vec<String> {
+    let feats: Vec<String> = c.get("features").and_then(Value::as_array).into_iter().flatten().filter_map(|f| f.as_str()).filter(|f| F2FS_SETTABLE.contains(f)).map(str::to_string).collect();
+    let mut a = vec!["mkfs.f2fs".to_string(), "-f".into(), "-q".into()];
+    if let Some(u) = s(c, "uuid") {
+        a.extend(["-U".into(), u]);
+    }
+    if let Some(l) = s(c, "label") {
+        a.extend(["-l".into(), l]);
+    }
+    if !feats.is_empty() {
+        a.extend(["-O".into(), feats.join(",")]);
+    }
+    if s(c, "encoding").as_deref() == Some("utf8") {
+        a.extend(["-C".into(), "utf8".into()]);
+    }
+    if let Some(n) = num(c, "segments_per_section").filter(|&n| n > 1) {
+        a.extend(["-s".into(), n.to_string()]);
+    }
+    if let Some(n) = num(c, "sections_per_zone").filter(|&n| n > 1) {
+        a.extend(["-z".into(), n.to_string()]);
+    }
+    a.push(dev.to_string());
+    a
+}
+
 pub fn mkswap(dev: &str, c: &Value) -> Vec<String> {
     let mut a = vec!["mkswap".to_string()];
     if let Some(u) = s(c, "uuid") {
@@ -1146,11 +1173,18 @@ impl Builder<'_> {
                 continue;
             };
             let why = format!("{src}: {ty}{}", s(&c, "label").map(|l| format!(" \"{l}\"")).unwrap_or_default());
-            if matches!(ty.as_str(), "ext2" | "ext3" | "ext4" | "xfs" | "btrfs" | "vfat" | "msdos" | "swap") {
+            if matches!(ty.as_str(), "ext2" | "ext3" | "ext4" | "xfs" | "btrfs" | "f2fs" | "vfat" | "msdos" | "swap") {
                 self.filesystems.push((dev.clone(), ty.clone(), s(&c, "uuid")));
             }
             match ty.as_str() {
-                "ext2" | "ext3" | "ext4" => out.push(Cmd { argv: mke2fs(&dev, &c), why: Some(why), ..Cmd::default() }),
+                "ext2" | "ext3" | "ext4" => {
+                    out.push(Cmd { argv: mke2fs(&dev, &c), why: Some(why), ..Cmd::default() });
+                    // The exact count: mke2fs takes only a percentage, and
+                    // rounds it down.
+                    if let Some(r) = num(&c, "reserved_blocks") {
+                        out.push(Cmd::new(&["tune2fs", "-r", &r.to_string(), &dev]));
+                    }
+                }
                 "xfs" => {
                     let uuid = s(&c, "uuid").unwrap_or_default();
                     let logdev = self
@@ -1183,6 +1217,7 @@ impl Builder<'_> {
                     self.btrfs_inside(&uuid, &devs[0], &fs, &mut out);
                 }
                 "vfat" | "msdos" => out.push(Cmd { argv: mkfs_fat(&dev, &c), why: Some(why), ..Cmd::default() }),
+                "f2fs" => out.push(Cmd { argv: mkfs_f2fs(&dev, &c), why: Some(why), ..Cmd::default() }),
                 "swap" => {
                     if c.get("hibernation_image").is_some_and(|h| !h.is_null()) {
                         self.notes.push(format!("{src}: the source's swap held a hibernation image; the new swap doesn't"));
@@ -1285,6 +1320,16 @@ fn mount_options(o: &str) -> String {
     if keep.is_empty() { "defaults".to_string() } else { keep.join(",") }
 }
 
+/// The options the target is mounted with: fstab's, but noatime, so the
+/// boot stage's reads (update-initramfs, grub) leave the atimes the restore
+/// set alone.
+fn target_mount_options(o: &str) -> String {
+    let kept = mount_options(o);
+    let mut v: Vec<&str> = kept.split(',').filter(|x| !matches!(*x, "defaults" | "atime" | "relatime" | "strictatime" | "noatime" | "nodiratime" | "lazytime")).collect();
+    v.push("noatime");
+    v.join(",")
+}
+
 impl Builder<'_> {
     fn mount(&mut self) -> Vec<Cmd> {
         let target = self.opts.target.clone();
@@ -1304,7 +1349,7 @@ impl Builder<'_> {
                 self.notes.push(format!("fstab's {file} is on {src}, which isn't restored"));
                 continue;
             };
-            let opts = mount_options(&s(e, "options").unwrap_or_default());
+            let opts = target_mount_options(&s(e, "options").unwrap_or_default());
             ms.push((file.clone(), Cmd::new(&["mount", "-t", &ty, "-o", &opts, &dev, &format!("{target}{}", if file == "/" { "" } else { &file })])));
         }
         let bootfs: Vec<String> =
@@ -1319,7 +1364,7 @@ impl Builder<'_> {
             if !mp.starts_with('/') || canmount == "off" || (canmount == "noauto" && !bootfs.contains(&name) && !was_mounted) {
                 continue;
             }
-            ms.push((mp, Cmd::new(&["zfs", "mount", &name])));
+            ms.push((mp, Cmd::new(&["zfs", "mount", "-o", "noatime", &name])));
         }
         ms.sort_by(|a, b| {
             let depth = |p: &str| if p == "/" { 0 } else { p.matches('/').count() };
@@ -1351,6 +1396,7 @@ impl Builder<'_> {
         if let Some(p) = &self.opts.password_file {
             a.extend(["--password-file".into(), p.clone()]);
         }
+        a.push("--no-progress".into());
         a.extend(["restore".into(), "--numeric-id".into(), self.opts.snapshot.clone(), self.opts.target.clone()]);
         vec![Cmd { argv: a, why: Some(format!("snapshot {} of {repo}, with BackOtter's restore flags", self.opts.snapshot)), ..Cmd::default() }]
     }
@@ -1433,7 +1479,7 @@ impl Builder<'_> {
                     out.push(Cmd::new(&["chroot", &t, "grub-install", "--target=i386-pc", &d]));
                 }
                 self.notes.push("debconf's grub-pc/install_devices still names the source's disks; `dpkg-reconfigure grub-pc` on the restored system fixes it".into());
-                out.push(Cmd::new(&["chroot", &t, "update-grub"]));
+                out.push(self.update_grub(&t));
             }
             ("grub", true) => {
                 let esp = self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).unwrap_or("/boot/efi").to_string();
@@ -1443,7 +1489,7 @@ impl Builder<'_> {
                     a.push("--force-extra-removable".into());
                 }
                 out.push(Cmd { argv: a, ..Cmd::default() });
-                out.push(Cmd::new(&["chroot", &t, "update-grub"]));
+                out.push(self.update_grub(&t));
             }
             ("systemd-boot", true) => {
                 out.push(Cmd::new(&["chroot", &t, "bootctl", "install", "--no-variables"]));
@@ -1461,6 +1507,16 @@ impl Builder<'_> {
         out
     }
 
+    /// update-grub with the LANG the source's grub.cfg was made with: it
+    /// decides whether grub.cfg loads gettext and sets lang.
+    fn update_grub(&self, t: &str) -> Cmd {
+        let lang = match self.layout.str_at(&["boot", "grub", "grub_cfg", "lang"]) {
+            Some(l) if !l.is_empty() => format!("LANG={l}.UTF-8"),
+            _ => "LANG=C".to_string(),
+        };
+        Cmd::new(&["chroot", t, "env", &lang, "update-grub"])
+    }
+
     fn grub_bios_devices(&self) -> Vec<String> {
         let mut out = Vec::new();
         if let Some(list) = self.layout.str_at(&["boot", "grub", "debconf", "grub-pc/install_devices"]) {
@@ -1472,7 +1528,7 @@ impl Builder<'_> {
         }
         if out.is_empty() {
             for d in &self.layout.disks {
-                let grub = self.layout.device(&d.name).and_then(|v| v.at(&["boot_code", "kind"])).and_then(Value::as_str) == Some("grub");
+                let grub = self.layout.device(&d.name).and_then(|v| v.at(&["boot_code", "kind"])).and_then(Value::as_str) == Some("grub2");
                 if let (true, Some(t)) = (grub, self.names.mapping.target_of(&d.name)) {
                     out.push(format!("/dev/{t}"));
                 }
@@ -1533,7 +1589,11 @@ mod tests {
     use crate::load::layout::{sample, Layout};
 
     fn built(extra: &[&str]) -> Built {
-        let l = Layout::from_json(crate::json::parse(&sample::bios_mbr()).unwrap()).unwrap();
+        built_from(&sample::bios_mbr(), extra)
+    }
+
+    fn built_from(json: &str, extra: &[&str]) -> Built {
+        let l = Layout::from_json(crate::json::parse(json).unwrap()).unwrap();
         let mut a = vec!["l.json".to_string()];
         a.extend(extra.iter().map(|s| s.to_string()));
         let o = match crate::load::parse_args(&a).unwrap() {
@@ -1566,6 +1626,8 @@ mod tests {
         assert!(t.contains("mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,filetype,extent,64bit,flex_bg,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U 0b0e2c6e-1111-4222-8333-444455556666"), "{t}");
         assert!(!t.contains("needs_recovery"));
         assert!(t.contains("-E hash_seed=9a6c1c0e-aaaa-4bbb-8ccc-dddddddddddd /dev/vdb1"), "{t}");
+        assert!(t.contains("tune2fs -r 12211 /dev/vdb1\n"), "{t}");
+        assert!(!t.contains(" -m 5"), "{t}");
         assert!(t.contains("mkswap -U 5e5e5e5e-0000-4000-8000-000000000002 --pagesize 4096 /dev/vdb2"), "{t}");
         assert!(t.contains("mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U b7b7b7b7-0000-4000-8000-000000000003 --csum crc32c -n 16384 -s 4096 -d single -m dup /dev/vdb3"), "{t}");
         assert!(t.contains("btrfs subvolume create /run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003/@rootfs"), "{t}");
@@ -1577,18 +1639,47 @@ mod tests {
     fn mount_restore_boot_close() {
         let b = built(&["--repo", "/srv/repo", "--password-file", "/run/pw"]);
         let m = text(b.stage(Stage::Mount));
-        let root = m.find("mount -t btrfs -o subvol=@rootfs /dev/vdb3 /mnt/bko-target\n").expect(&m);
-        let boot = m.find("mount -t ext4 -o defaults /dev/vdb1 /mnt/bko-target/boot\n").expect(&m);
+        let root = m.find("mount -t btrfs -o subvol=@rootfs,noatime /dev/vdb3 /mnt/bko-target\n").expect(&m);
+        let boot = m.find("mount -t ext4 -o noatime /dev/vdb1 /mnt/bko-target/boot\n").expect(&m);
         assert!(root < boot);
         assert!(!m.contains("swap"));
         let r = text(b.stage(Stage::Restore));
-        assert!(r.contains("rustic-bko --repository /srv/repo --password-file /run/pw restore --numeric-id latest /mnt/bko-target\n"), "{r}");
+        assert!(r.contains("rustic-bko --repository /srv/repo --password-file /run/pw --no-progress restore --numeric-id latest /mnt/bko-target\n"), "{r}");
         let bt = text(b.stage(Stage::Boot));
         assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
         assert!(bt.contains("chroot /mnt/bko-target update-initramfs -u -k all\n"));
+        assert!(bt.contains("chroot /mnt/bko-target env LANG=C update-grub\n"), "{bt}");
         assert!(text(b.stage(Stage::Close)).starts_with("umount --recursive /mnt/bko-target\n"));
         let none = built(&[]);
         assert!(text(none.stage(Stage::Restore)).contains("no --repo"));
+    }
+
+    #[test]
+    fn bios_grub_device_from_the_mbr() {
+        // Mint leaves grub-pc/install_devices empty: the disk whose MBR holds
+        // GRUB's boot code is the one.
+        let j = sample::bios_mbr().replace(r#""grub-pc/install_devices": "/dev/disk/by-id/virtio-x""#, r#""grub-pc/install_devices": """#);
+        let b = built_from(&j, &[]);
+        let bt = text(b.stage(Stage::Boot));
+        assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+    }
+
+    #[test]
+    fn update_grub_lang() {
+        let j = sample::bios_mbr().replace(r#""grub": {"debconf""#, r#""grub": {"grub_cfg": {"lang": "en_US"}, "debconf""#);
+        let bt = text(built_from(&j, &[]).stage(Stage::Boot));
+        assert!(bt.contains("chroot /mnt/bko-target env LANG=en_US.UTF-8 update-grub\n"), "{bt}");
+    }
+
+    #[test]
+    fn f2fs() {
+        let c = crate::json::parse(r#"{"type": "f2fs", "uuid": "84cf3639-67d8-4237-9980-8dc6392e778c", "label": null,
+            "features": ["extra_attr", "inode_checksum", "atomic_write", "sb_checksum"], "segments_per_section": 1, "sections_per_zone": 1}"#).unwrap();
+        assert_eq!(
+            mkfs_f2fs("/dev/vdb3", &c).join(" "),
+            "mkfs.f2fs -f -q -U 84cf3639-67d8-4237-9980-8dc6392e778c -O extra_attr,inode_checksum,sb_checksum /dev/vdb3"
+        );
     }
 
     #[test]
@@ -1604,6 +1695,8 @@ mod tests {
         assert_eq!(md_layout_name("raid1", 0), None);
         assert_eq!(mount_options("defaults,noatime,x-systemd.device-timeout=5,nofail"), "noatime");
         assert_eq!(mount_options("defaults"), "defaults");
+        assert_eq!(target_mount_options("defaults"), "noatime");
+        assert_eq!(target_mount_options("errors=remount-ro,relatime,lazytime"), "errors=remount-ro,noatime");
         let c = Cmd::write_file("/run/x", "a\n".into());
         assert_eq!(c.shell(), "cat > /run/x <<'EOF'\na\nEOF\n");
     }

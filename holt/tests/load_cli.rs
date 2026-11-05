@@ -26,7 +26,7 @@ const LAYOUT: &str = r#"{
       "partition_table": {"type": "dos", "disk_signature": "0x00c0ffee"},
       "partitions": [{"name": "vda1", "number": 1, "start_lba": 2048, "sectors": 2095104, "type": "0x83", "bootable": true,
         "content": {"type": "ext4", "uuid": "11111111-2222-4333-8444-555555555555", "features": ["has_journal", "extent"]}}],
-      "content": null, "boot_code": {"kind": "grub"}}],
+      "content": null, "boot_code": {"kind": "grub2"}}],
     "fstab": [{"spec": "UUID=11111111-2222-4333-8444-555555555555", "file": "/", "type": "ext4", "options": "errors=remount-ro", "resolves_to": "vda1"}]
   },
   "boot": {"loader": {"name": "grub", "firmware": "bios"}}
@@ -80,9 +80,10 @@ fn plan_and_status() {
 }
 
 #[test]
-fn writing_stages_refuse_until_built() {
+fn writing_stages_check_first() {
+    // With plan's problems (no tools in the fake tree), nothing runs.
     let (t, layout) = setup();
     let o = bin(&[&layout, "--sysroot", t.root().to_str().unwrap(), "--map", "vda=vdb", "--through", "mount", "--commit"]);
-    assert_eq!(o.status.code(), Some(1));
-    assert!(err(&o).contains("aren't built yet"));
+    assert_eq!(o.status.code(), Some(4));
+    assert!(err(&o).contains("nothing was written"), "{}", err(&o));
 }

@@ -155,8 +155,8 @@ impl Layout {
         }
         let id = v.at(&["os", "id"]).and_then(Value::as_str).unwrap_or("");
         let ver = v.at(&["os", "version_id"]).and_then(Value::as_str).unwrap_or("");
-        if (id, ver) != ("debian", "13") {
-            return Err(format!("the source system is {id} {ver}; bko-holt load supports Debian 13 only"));
+        if !crate::osrel::supported(id, ver) {
+            return Err(format!("the source system is {id} {ver}; bko-holt load supports only {}", crate::osrel::supported_names()));
         }
         if v.get("privileged").and_then(Value::as_bool) == Some(false) {
             return Err("the dump wasn't made as root, so it has udev's view of the disks only; dump again as root".into());
@@ -281,7 +281,7 @@ pub mod sample {
                      "features": ["mixed_backref", "big_metadata", "extended_iref", "skinny_metadata", "no_holes"],
                      "compat_ro_features": ["free_space_tree", "free_space_tree_valid", "block_group_tree"]}}
       ],
-      "content": null, "boot_code": {"kind": "grub"}
+      "content": null, "boot_code": {"kind": "grub2"}
     }],
     "md_arrays": [], "dm_devices": [],
     "lvm": {"volume_groups": []},
@@ -340,7 +340,9 @@ mod tests {
         assert!(parse(&good.replace("\"bko-holt\"", "\"bko-laydump\"")).is_ok());
         assert!(parse(&good.replace("\"bko-holt\"", "\"other\"")).unwrap_err().contains("not a bko-holt dump"));
         assert!(parse(&good.replace("\"schema\": 1", "\"schema\": 2")).unwrap_err().contains("schema"));
-        assert!(parse(&good.replace("\"version_id\": \"13\"", "\"version_id\": \"12\"")).unwrap_err().contains("Debian 13 only"));
+        assert!(parse(&good.replace("\"version_id\": \"13\"", "\"version_id\": \"12\"")).unwrap_err().contains("supports only Debian 13 or Linux Mint 22"));
+        let mint = good.replace("\"id\": \"debian\", \"version_id\": \"13\"", "\"id\": \"linuxmint\", \"version_id\": \"22.3\"");
+        assert!(parse(&mint).is_ok());
         assert!(parse(&good.replace("\"privileged\": true", "\"privileged\": false")).unwrap_err().contains("as root"));
         assert!(parse(&good.replace("\"type\": \"dos\"", "\"type\": \"sun\"")).unwrap_err().contains("isn't one"));
     }

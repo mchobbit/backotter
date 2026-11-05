@@ -6,7 +6,7 @@ const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
        bko-holt load LAYOUT.json [--through STAGE | --only STAGE] [--commit] ...
        bko-holt -h | --help | -V | --version
 
-  dump   writes a JSON description of this Debian 13 system's disk layout
+  dump   writes a JSON description of this system's disk layout
          and boot setup to standard output
   load   rebuilds disks from such a description, in stages
 
@@ -15,7 +15,7 @@ const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
 
 const DUMP_USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
 
-Writes a JSON description of this Debian 13 system's disk layout and boot
+Writes a JSON description of this system's disk layout and boot
 setup to standard output: disks and partition tables, boot code, md RAID,
 device-mapper, LVM, LUKS, ZFS and btrfs, filesystems and their features,
 mounts, fstab and crypttab, UEFI or BIOS boot entries, the boot loader and
@@ -32,7 +32,8 @@ records and says so under \"warnings\".
   -h, --help      show this help
 
 Exit status: 0 on success, 2 for bad arguments, 3 when the system isn't
-Debian 13.  SOURCE_DATE_EPOCH, when set, fixes the report's timestamp.
+Debian 13 or Linux Mint 22.  SOURCE_DATE_EPOCH, when set, fixes the
+report's timestamp.
 ";
 
 fn main() -> ExitCode {

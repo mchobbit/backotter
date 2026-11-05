@@ -167,6 +167,9 @@ pub struct GrubCfg {
     pub default_initrd: Option<String>,
     pub prefix: Option<String>,
     pub configfile: Option<String>,
+    /// `set lang=...`: grub-mkconfig writes it (with `insmod gettext`) when
+    /// it ran with LANG set to something other than C.
+    pub lang: Option<String>,
 }
 
 pub fn parse_grub_cfg(text: &str) -> GrubCfg {
@@ -237,6 +240,9 @@ pub fn parse_grub_cfg(text: &str) -> GrubCfg {
                 if let Some(p) = w.get(1).and_then(|x| x.strip_prefix("prefix=")) {
                     g.prefix = Some(p.to_string());
                 }
+                if let (Some(l), true) = (w.get(1).and_then(|x| x.strip_prefix("lang=")), stack.is_empty()) {
+                    g.lang = Some(l.to_string());
+                }
             }
             "configfile" => g.configfile = w.get(1).cloned(),
             _ => {}
@@ -276,7 +282,8 @@ fn grub_json(sys: &Sys) -> Value {
                     .set("search_uuids", g.search_uuids)
                     .set("modules", g.modules)
                     .set("default_linux", g.default_linux)
-                    .set("default_initrd", g.default_initrd),
+                    .set("default_initrd", g.default_initrd)
+                    .set("lang", g.lang),
             );
         }
         None => {
@@ -785,6 +792,8 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             Some("/boot/vmlinuz-6.12.115+deb13.1-amd64 root=UUID=f2438bf3-6107-49a3-a57c-ba1bee4aebcb ro quiet")
         );
         assert_eq!(g.default_initrd.as_deref(), Some("/boot/initrd.img-6.12.115+deb13.1-amd64"));
+        assert_eq!(g.lang, None);
+        assert_eq!(parse_grub_cfg("set locale_dir=$prefix/locale\nset lang=en_US\ninsmod gettext\n").lang.as_deref(), Some("en_US"));
     }
 
     #[test]

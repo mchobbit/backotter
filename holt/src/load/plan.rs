@@ -134,7 +134,7 @@ mod tests {
     use crate::sys::FakeRunner;
     use crate::testutil::Tree;
 
-    const TOOLS: [&str; 7] = ["wipefs", "sfdisk", "udevadm", "mke2fs", "mkswap", "mkfs.btrfs", "btrfs"];
+    const TOOLS: [&str; 8] = ["wipefs", "sfdisk", "udevadm", "mke2fs", "tune2fs", "mkswap", "mkfs.btrfs", "btrfs"];
 
     fn opts(a: &[&str]) -> Options {
         let mut v = vec!["l.json".to_string()];

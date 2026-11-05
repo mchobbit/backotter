@@ -1,6 +1,8 @@
 # HoltTest1D: a whole-machine round trip of bko-holt on Debian 13
 
-Status: draft plan, 2026-11-05.  Nothing here runs yet (see "Before it can run").
+Status: 2026-11-05.  The plan below is the goal.  What runs today is
+`ht1.sh`, an interim driver with a Debian 13 rescuer; see "Running it today".
+HoltTest1M (Linux Mint 22, the `mint22` guest) passed with it on both hosts.
 
 HoltTest1D checks that bko-holt can describe a Debian 13 machine and build it
 again on blank disks, well enough that a rustic-bko restore onto them boots and
@@ -193,6 +195,39 @@ Cinqcent, clear of `compare.py`'s 2230+N.  Never touch another session's VMs,
 ports or pools.  Scripts are synced with `testvm/sync-hosts.sh` from main
 only, and nothing syncs while a run is going.
 
+## Running it today: ht1.sh
+
+`ht1.sh GUEST RUN [PHASE...]`, run as root on a test host through the
+reservation queue (as `m`, which owns the queue's lock files):
+
+    cd ~/backotter-work && HT_PORT=2970 setsid -f ./cmp-run.sh --reserve 0 4 \
+        sudo -E testvm/holttest1d/ht1.sh mint22 ht1m >/bkoscratch/holttest1d/ht1m.log 2>&1 </dev/null
+
+It needs `/bkoscratch/holttest1d/bin/` with `bko-holt`, `rustic-bko` and
+`f2fs-tools_*.deb` (the f2fs tools are installed in the rescuer).  The
+phases are `source`, `backup`, `rebuild` and `verify`; each needs the one
+before it, and the run stops at the first that fails.  After a bko-holt fix,
+`rebuild verify` is enough, unless the fix changed what `dump` writes.
+
+It differs from the plan above in these ways:
+
+- **The rescuer** is a throwaway overlay of the `debian13` guest, driven
+  over SSH, not BackOtter's rescue `.img`.  A pass is reported as "passed
+  with a Debian 13 rescuer".  The `.img` needs bko-holt in the stick layer,
+  an SSH key (or the serial console) for `make-img.sh --test` images, and
+  f2fs-tools and 9p in the image.
+- **The share** is 9p, read-only, mounted at `/mnt/share` in the rescuer.
+- **The file check** records fsmeta of the source (mounted read-only) and
+  of the restored disk, and `judge.py fs` compares them.  Only what `load`'s
+  boot stage writes by design may differ: `/boot/grub`, the rebuilt
+  initramfs files, `/var/log/bko-holt`, os-prober's state, and the
+  temporary directories' mtimes.  `judge.py` lists each of these with its
+  reason, and prints how many paths each one covered.
+- **The dump check** is `judge.py SRC.json DST.json`.  The initramfs sizes
+  are ignored, since the boot stage rebuilds them.
+- `vm-run` takes its SSH port from `SSH_PORT`; `ht1.sh` sets it from
+  `HT_PORT`.
+
 ## Before it can run
 
 1. bko-holt `load`'s writing stages, `partition` through `close` (with
@@ -213,6 +248,8 @@ only, and nothing syncs while a run is going.
 ## Not in HoltTest1D
 
 - **HoltTest1A:** Arch Linux, which needs Arch support in `dump` and `boot`.
+- **HoltTest1M, 1U, 1Z, 1F:** Linux Mint, Ubuntu, Zorin and Fedora: the same
+  test on other guests.  1M runs today; the others need more OS support.
 - `--new-uuids`; disks smaller than the source, or in a different number,
   which is version 2 of `load`.
 - Restoring onto the machine the stick runs on, or onto real hardware.

@@ -1,4 +1,4 @@
-//! bko-holt: records a Debian 13 system's disk layout and boot setup
+//! bko-holt: records a Debian 13 or Linux Mint 22 system's disk layout and boot setup
 //! (disks, partition tables, RAID, LVM, LUKS, ZFS, btrfs, filesystems,
 //! mounts, firmware, boot loader, kernels) as JSON (`dump`), and rebuilds the
 //! disks from that JSON in stages (`load`), for BackOtter to record with each
@@ -38,9 +38,9 @@ pub fn timestamp() -> String {
     report::rfc3339(secs)
 }
 
-/// `bko-holt dump`: the report for `sys`, after checking it's Debian 13.
+/// `bko-holt dump`: the report for `sys`, after checking it's a supported system.
 pub fn dump(sys: &sys::Sys) -> Result<json::Value, String> {
     let os = osrel::read(sys);
-    osrel::check_debian13(os.as_ref())?;
+    osrel::check_supported(os.as_ref())?;
     Ok(report::build(sys, os.as_ref(), &timestamp()))
 }

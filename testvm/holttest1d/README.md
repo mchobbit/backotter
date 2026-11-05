@@ -2,9 +2,8 @@
 
 Status: 2026-11-05.  The plan below is the goal.  What runs today is
 `ht1.sh`, an interim driver with its own rescuers; see "Running it today".
-It runs HoltTest1D and its siblings, the same test on other systems:
-1M (`mint22`), 1U (`ubuntu24`, `ubuntu26-uefi`, `ubuntu26-zfsmirror`),
-1Z (`zorin18`), 1A (`arch`) and 1F (`fedora44`, `fedora44-uefi`).
+It runs HoltTest1D and its siblings, the same test on other systems; see
+"The HoltTest1 family".
 
 HoltTest1D checks that bko-holt can describe a Debian 13 machine and build it
 again on blank disks, well enough that a rustic-bko restore onto them boots and
@@ -17,6 +16,50 @@ Testing section.
 `recreate()` reads the layout off the source's disks directly.  HoltTest1D
 gets the layout only from `bko-holt dump`'s JSON, as a real bare-metal
 restore must.
+
+## The HoltTest1 family
+
+Each test is HoltTest1D, the same steps and verdicts, with other guests as the
+source.  The user named them; a run of one runs `ht1.sh` on each of its
+guests.  A guest passes only when every check passes.  Status is as of
+2026-11-05, with the Debian (BIOS) and Ubuntu (UEFI) rescuers of
+`make-rescuer.sh`.
+
+| Test | Systems | Guests | Status |
+|---|---|---|---|
+| 1D | Debian 13 | `debian13`, `debian13-zfs`, `debian13-stack` | passes |
+| 1M | Linux Mint | `mint22` | passes |
+| 1U | Ubuntu | `ubuntu24`, `ubuntu26-uefi`, `ubuntu26-zfsmirror` | passes |
+| 1Z | Zorin OS | `zorin18` | passes |
+| 1F | Fedora | `fedora44`, `fedora44-uefi` | passes |
+| 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | `arch` passes; the rest not run |
+| 1C | CachyOS, MX Linux | `cachyos`, `mx25` | not run |
+| 1V | Void Linux (musl) | `void-musl` | not run |
+| 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, Fedora/Red Hat, openSUSE Tumbleweed, a two-disk encrypted Ubuntu ZFS mirror, Debian 12 and 13 | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `fedora44`, `fedora44-uefi`, `rocky10`, `rocky10-lvm`, `tumbleweed`, `ubuntu26-zfsmirror`, `debian12`, `debian13` | the Fedora, zfsmirror and `debian13` guests pass (under 1F, 1U, 1D); the rest not run |
+| 1H | Haiku | `haiku6` | not run |
+| 1I | illumos | `omnios58` | not run |
+| 1BSD | FreeBSD, illumos, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD | `freebsd15`, `freebsd15-ufs`, `omnios58`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6` | not run |
+
+What the ones not run need, as far as is known before running them:
+
+- **Supported systems:** bko-holt's list (`holt/src/osrel.rs`) lacks Alpine,
+  AerynOS, Artix, CachyOS, MX, Void, Pop!_OS, NixOS, Rocky, openSUSE and
+  Debian 12.
+- **Filesystems:** JFS (`cachyos`'s and `artix-dinit`'s roots) isn't probed
+  or made.
+- **Boot tools:** Alpine's mkinitfs, AerynOS's blsforme, Pop!_OS's
+  kernelstub, NixOS's nixos-rebuild, Void's and openSUSE's own; `load`
+  knows update-initramfs, mkinitcpio and dracut, GRUB and `bootctl install`.
+- **Init systems:** `ht1.sh`'s boot-state check uses systemctl; OpenRC,
+  runit, dinit, s6 and MX's sysvinit need their own.
+- **Keyboard passphrases:** Omarchy's LUKS prompt is Plymouth's, typed on the
+  keyboard (compare.py's `type-luks-passphrase.py`), not on the console.
+- **Not Linux (1H, 1I, 1BSD, Sculpt, Redox):** bko-holt reads Linux's /sys,
+  /proc and udev and is a Linux binary.  Each needs a `dump` and `load` of
+  its own, a rescuer of its own kind (`stick/make-img-bsd.sh` builds
+  BackOtter's BSD, illumos and Haiku images), and `ht1.sh`'s Linux-only
+  parts (`vm-mount`, `fsmeta.py`) replaced, as `testvm/compare/freebsd/`
+  does for compare.py.
 
 ## The source guests
 
@@ -265,9 +308,7 @@ It differs from the plan above in these ways:
 
 ## Not in HoltTest1D
 
-- **HoltTest1A:** Arch Linux, which needs Arch support in `dump` and `boot`.
-- **HoltTest1M, 1U, 1Z, 1F:** Linux Mint, Ubuntu, Zorin and Fedora: the same
-  test on other guests.  1M runs today; the others need more OS support.
+- The other systems: see "The HoltTest1 family".
 - `--new-uuids`; disks smaller than the source, or in a different number,
   which is version 2 of `load`.
 - Restoring onto the machine the stick runs on, or onto real hardware.

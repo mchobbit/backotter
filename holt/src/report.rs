@@ -274,7 +274,11 @@ fn partition_json(ctx: &Ctx, sys: &Sys, disk: &Dev, p: &Dev) -> Value {
     o.put("holders", p.b.holders.clone());
     o.put("content", content_json(p));
     o.put_some("boot_code", p.partition_boot_code);
-    o.put("mounted_at", ctx.mounts_of(sys, p).iter().map(|m| m.target.clone()).collect::<Vec<_>>());
+    o.put("mounted_at", {
+        let mut t: Vec<String> = ctx.mounts_of(sys, p).iter().map(|m| m.target.clone()).collect();
+        t.sort();
+        t
+    });
     o.build()
 }
 
@@ -333,7 +337,11 @@ fn whole_json(ctx: &Ctx, sys: &Sys, d: &Dev, src: Option<&dyn ByteSource>) -> Ob
         o.put("boot_code", bc.to_json(src, d.ss(), d.first_partition_lba));
     }
     o.put("content", content_json(d));
-    o.put("mounted_at", ctx.mounts_of(sys, d).iter().map(|m| m.target.clone()).collect::<Vec<_>>());
+    o.put("mounted_at", {
+        let mut t: Vec<String> = ctx.mounts_of(sys, d).iter().map(|m| m.target.clone()).collect();
+        t.sort();
+        t
+    });
     o
 }
 
@@ -462,7 +470,7 @@ fn lvm_json(ctx: &Ctx) -> Value {
 }
 
 /// Imported pools' properties and datasets, from the zfs tools.
-fn zfs_tools_json(sys: &Sys) -> Value {
+pub fn zfs_tools_json(sys: &Sys) -> Value {
     let Some(list) = sys.run("zpool", &["list", "-H", "-o", "name"]) else { return Value::Null };
     let mut pools = Vec::new();
     for name in list.lines().map(str::trim).filter(|l| !l.is_empty()) {
@@ -674,21 +682,27 @@ pub fn parse_zpool_status_text(text: &str, pool: &str) -> Option<Value> {
 }
 
 fn zfs_json(sys: &Sys, ctx: &Ctx) -> Value {
+    let members: Vec<(String, &Content)> = ctx.devs.iter().flat_map(|d| d.contents.iter().map(move |c| (d.b.name.clone(), c))).collect();
+    zfs_section(sys, &members, &["/etc/zfs/zpool.cache"])
+}
+
+/// The report's zfs section from the devices' signatures (name, content):
+/// pools from their vdev labels, the first zpool.cache of `caches` there
+/// is, and what zpool and zfs say of the imported pools.
+pub fn zfs_section(sys: &Sys, members: &[(String, &Content)], caches: &[&str]) -> Value {
     // Pools from the labels of their vdevs: each label has the pool's
     // config with its own top-level vdev; merge top-level vdevs by id.
     // pool GUID -> (first label's config, top-level vdevs by id, member devices)
     type Pool = (Value, BTreeMap<u64, Value>, Vec<String>);
     let mut pools: BTreeMap<String, Pool> = BTreeMap::new();
-    for d in ctx.devs {
-        for c in &d.contents {
-            let (Some(cfg), "zfs_member") = (&c.extra, c.kind.as_str()) else { continue };
-            let guid = cfg.get("pool_guid").and_then(Value::as_u64).map(|g| g.to_string()).unwrap_or_default();
-            let e = pools.entry(guid).or_insert_with(|| (cfg.clone(), BTreeMap::new(), Vec::new()));
-            e.2.push(d.b.name.clone());
-            if let Some(t) = cfg.get("vdev_tree") {
-                let id = t.get("id").and_then(Value::as_u64).unwrap_or(0);
-                e.1.entry(id).or_insert_with(|| t.clone());
-            }
+    for (name, c) in members {
+        let (Some(cfg), "zfs_member") = (&c.extra, c.kind.as_str()) else { continue };
+        let guid = cfg.get("pool_guid").and_then(Value::as_u64).map(|g| g.to_string()).unwrap_or_default();
+        let e = pools.entry(guid).or_insert_with(|| (cfg.clone(), BTreeMap::new(), Vec::new()));
+        e.2.push(name.clone());
+        if let Some(t) = cfg.get("vdev_tree") {
+            let id = t.get("id").and_then(Value::as_u64).unwrap_or(0);
+            e.1.entry(id).or_insert_with(|| t.clone());
         }
     }
     let label_pools: Vec<Value> = pools
@@ -710,7 +724,7 @@ fn zfs_json(sys: &Sys, ctx: &Ctx) -> Value {
                 .build()
         })
         .collect();
-    let cache = sys.read_bytes("/etc/zfs/zpool.cache").map(|b| match crate::probe::zfs::unpack(&b) {
+    let cache = caches.iter().find_map(|p| sys.read_bytes(p)).map(|b| match crate::probe::zfs::unpack(&b) {
         Ok(v) => v,
         Err(e) => Obj::new().set("error", e).build(),
     });
@@ -785,7 +799,12 @@ fn btrfs_json(sys: &Sys, ctx: &Ctx) -> Value {
                 .set("allocation_profiles", if sys.is_dir(&sysfs) { alloc.build() } else { Value::Null })
                 .set(
                     "mounted_subvolumes",
-                    mounts.iter().map(|m| Obj::new().set("target", m.target.as_str()).set("subvol", m.btrfs_subvol()).build()).collect::<Vec<_>>(),
+                    {
+                        // By mount point: the mount order isn't the layout's.
+                        let mut ms: Vec<_> = mounts.iter().map(|m| (m.target.clone(), m.btrfs_subvol())).collect();
+                        ms.sort();
+                        ms.into_iter().map(|(t, sv)| Obj::new().set("target", t).set("subvol", sv).build()).collect::<Vec<_>>()
+                    },
                 )
                 .set("subvolumes", subvols)
                 .set("default_subvolume", default)

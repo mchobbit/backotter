@@ -90,8 +90,9 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
                 continue;
             }
         }
-        if s == Stage::Boot && !sys.exists(&format!("{}/etc/fstab", opts.target)) {
-            return (EXIT_FAILED, out, format!("bko-holt load: boot: {}/etc/fstab isn't there; restore the system into {} first\n", opts.target, opts.target));
+        let marker = crate::other::restored_marker(&layout.v);
+        if s == Stage::Boot && !sys.exists(&format!("{}/{marker}", opts.target)) {
+            return (EXIT_FAILED, out, format!("bko-holt load: boot: {}/{marker} isn't there; restore the system into {} first\n", opts.target, opts.target));
         }
         let cmds = p.built.stage(s);
         out += &format!("# ---- {} ----\n", s.name());

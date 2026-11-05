@@ -2,11 +2,16 @@
 //! blkid knows, for the formats a Debian 13 system can be installed on or
 //! commonly carries.
 
+pub mod bcachefs;
+pub mod bfs;
 pub mod btrfs;
 pub mod ext;
 pub mod f2fs;
 pub mod nilfs2;
+pub mod redoxfs;
+pub mod ufs;
 pub mod fat;
+pub mod hammer2;
 pub mod luks;
 pub mod lvm;
 pub mod md;
@@ -60,9 +65,14 @@ const PROBERS: &[Prober] = &[
     xfs::probe,
     ext::probe,
     btrfs::probe,
+    bcachefs::probe,
     f2fs::probe,
     nilfs2::probe,
     misc::jfs,
+    ufs::probe,
+    hammer2::probe,
+    bfs::probe,
+    redoxfs::probe,
     fat::probe,
     misc::iso9660,
     misc::swap,
@@ -113,6 +123,11 @@ mod tests {
             ("xfs", xfs::sample::image("x")),
             ("btrfs", btrfs::sample::image("b", 0)),
             ("f2fs", f2fs::sample::image("f", 0)),
+            ("bcachefs", bcachefs::sample::image("c", 0)),
+            ("ufs", ufs::sample::image("u")),
+            ("hammer2", hammer2::sample::image()),
+            ("befs", bfs::sample::image("Haiku")),
+            ("redoxfs", redoxfs::sample::image()),
             ("nilfs2", nilfs2::sample::image("n", 0)),
             ("vfat", fat::sample::fat32(1 << 20, 1, "EFI")),
             ("swap", misc::sample::swap(64, "")),

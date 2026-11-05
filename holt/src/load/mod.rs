@@ -18,6 +18,7 @@ pub mod layout;
 pub mod plan;
 pub mod status;
 pub mod target;
+pub mod writetable;
 
 use crate::sys::{FakeRunner, Sys};
 
@@ -174,7 +175,9 @@ Rebuilds the disks LAYOUT.json (from `bko-holt dump`) describes, in stages:
   --new-uuids       new identifiers everywhere instead of the original ones
   --key-file NAME=FILE
                     a LUKS container's (crypttab name) or ZFS encryption
-                    root's (dataset) key or passphrase, instead of a prompt
+                    root's (dataset) key or passphrase, instead of a prompt;
+                    cryptsetup takes the file's bytes as they are, so a
+                    passphrase's file must not end in a newline
   --no-nvram        boot writes no UEFI variables
   --removable       boot also installs the loader to EFI/BOOT/BOOTX64.EFI
   --repo REPO       restore from this repository (rustic-bko's -r)

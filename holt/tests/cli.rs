@@ -67,11 +67,11 @@ fn bad_arguments_exit_2() {
 
 #[test]
 fn refuses_other_systems_with_exit_3() {
-    let t = Tree::new("cli-bookworm");
-    t.file("/etc/os-release", "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nID=debian\nVERSION_ID=\"12\"\n");
+    let t = Tree::new("cli-buster");
+    t.file("/etc/os-release", "PRETTY_NAME=\"Debian GNU/Linux 10 (buster)\"\nID=debian\nVERSION_ID=\"10\"\n");
     let o = bin(&["dump", "--sysroot", t.root().to_str().unwrap()], &[]);
     assert_eq!(o.status.code(), Some(3));
-    assert!(stderr(&o).contains("Debian GNU/Linux 12 (bookworm)"), "{}", stderr(&o));
+    assert!(stderr(&o).contains("Debian GNU/Linux 10 (buster)"), "{}", stderr(&o));
     assert!(stdout(&o).is_empty());
     let empty = Tree::new("cli-empty");
     let o = bin(&["dump", "--sysroot", empty.root().to_str().unwrap()], &[]);

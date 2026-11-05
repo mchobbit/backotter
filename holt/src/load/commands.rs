@@ -121,25 +121,45 @@ pub fn part_path(disk: &str, n: u32) -> String {
     }
 }
 
+/// The node of partition `n` of target disk `t`, for source disk `d`: the
+/// Linux kernel's name, or on another system its own (crate::other).
+pub fn part_node(layout: &Layout, d: &crate::load::layout::Disk, t: &str, n: u32) -> String {
+    match crate::other::Family::of_layout(&layout.v) {
+        Some(fam) => crate::other::load::part_node(fam, d, t, n),
+        None => part_path(t, n),
+    }
+}
+
 /// Source device names to the device nodes they'll have here.
-struct Names<'a> {
-    layout: &'a Layout,
-    mapping: &'a Mapping,
-    made: BTreeMap<String, String>,
+pub(crate) struct Names<'a> {
+    pub(crate) layout: &'a Layout,
+    pub(crate) mapping: &'a Mapping,
+    pub(crate) made: BTreeMap<String, String>,
 }
 
 impl Names<'_> {
-    fn dev(&self, src: &str) -> Option<String> {
+    pub(crate) fn dev(&self, src: &str) -> Option<String> {
         if let Some(p) = self.made.get(src) {
             return Some(p.clone());
         }
         for d in &self.layout.disks {
             let Some(t) = self.mapping.target_of(&d.name) else { continue };
             if d.name == src {
+                // illumos names a pool's whole-disk vdev by the disk; ZFS
+                // is on its slice, which the restored table has.
+                if crate::other::Family::of_layout(&self.layout.v) == Some(crate::other::Family::Illumos) {
+                    if let Some(p) = d.parts.iter().find(|p| p.content.get("type").and_then(Value::as_str) == Some("zfs_member")) {
+                        return Some(part_node(self.layout, d, t, p.number));
+                    }
+                    return Some(format!("/dev/dsk/{t}"));
+                }
                 return Some(format!("/dev/{t}"));
             }
+            if let Some(n) = crate::other::load::label_node(self.layout, d, t, src) {
+                return Some(n);
+            }
             if let Some(p) = d.parts.iter().find(|p| p.name == src) {
-                return Some(part_path(t, p.number));
+                return Some(part_node(self.layout, d, t, p.number));
             }
         }
         None
@@ -186,6 +206,7 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
         filesystems: vec![],
         datasets: vec![],
         mount_points: vec![],
+        fam: crate::other::Family::of_layout(&layout.v),
     };
     if opts.new_uuids {
         b.problems.push("--new-uuids isn't built yet: it also has to rewrite the restored fstab, crypttab and boot configuration".into());
@@ -217,18 +238,20 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
     }
 }
 
-struct Builder<'a> {
-    layout: &'a Layout,
-    opts: &'a Options,
-    names: Names<'a>,
-    problems: Vec<String>,
-    notes: Vec<String>,
+pub(crate) struct Builder<'a> {
+    pub(crate) layout: &'a Layout,
+    pub(crate) opts: &'a Options,
+    pub(crate) names: Names<'a>,
+    pub(crate) problems: Vec<String>,
+    pub(crate) notes: Vec<String>,
     /// What close undoes, in the order assemble made it.
-    closers: Vec<Cmd>,
-    pools: Vec<String>,
-    filesystems: Vec<(String, String, Option<String>)>,
-    datasets: Vec<String>,
-    mount_points: Vec<String>,
+    pub(crate) closers: Vec<Cmd>,
+    pub(crate) pools: Vec<String>,
+    pub(crate) filesystems: Vec<(String, String, Option<String>)>,
+    pub(crate) datasets: Vec<String>,
+    pub(crate) mount_points: Vec<String>,
+    /// The source's system, when it isn't Linux (crate::other).
+    pub(crate) fam: Option<crate::other::Family>,
 }
 
 // ---- partition ----------------------------------------------------------
@@ -323,6 +346,9 @@ pub fn sfdisk_script(d: &Disk, target: &str, same_size: bool) -> Result<String, 
 
 impl Builder<'_> {
     fn partition(&mut self) -> Vec<Cmd> {
+        if let Some(fam) = self.fam {
+            return self.other_partition(fam);
+        }
         let mut out = Vec::new();
         for (src, tgt) in self.names.mapping.pairs.clone() {
             let Some(d) = self.layout.disk(&src) else { continue };
@@ -336,6 +362,12 @@ impl Builder<'_> {
             match sfdisk_script(d, &tgt, same_size) {
                 Ok(script) => out.push(Cmd::new(&["sfdisk", "--wipe", "always", "--wipe-partitions", "always", &dev]).input(script)),
                 Err(e) => self.problems.push(format!("{src}: {e}")),
+            }
+            // A protective MBR marked active (Anaconda does so on BIOS, for
+            // firmware that boots only an active partition); sfdisk's isn't.
+            let pmbr_active = self.layout.device(&src).and_then(|v| v.at(&["partition_table", "protective_mbr", "entries", "0", "bootable"])).and_then(Value::as_bool) == Some(true);
+            if pmbr_active {
+                out.push(Cmd::new(&["sh", "-c", &format!("printf '\\200' | dd of={dev} bs=1 seek=446 count=1 conv=notrunc status=none")]).why("the protective MBR's entry active, as the source's"));
             }
             if d.parts.iter().any(|p| p.extended) {
                 self.notes.push(format!("{src}: the extended partition and its EBRs are made by sfdisk; logical partitions keep their starts"));
@@ -722,7 +754,10 @@ impl Builder<'_> {
             if let Some(t) = num(&ks, "kdf_time").or_else(|| num(&ks, "kdf_iterations")) {
                 a.push(format!("--pbkdf-force-iterations={t}"));
             }
-            if let Some(h) = s(&ks, "kdf_hash") {
+            // PBKDF2's hash, or else (argon2) the volume key digest's: one
+            // --hash sets both.
+            let digest = c.get("digest_hashes").and_then(Value::as_array).and_then(|d| d.first()).and_then(Value::as_str).map(str::to_string);
+            if let Some(h) = s(&ks, "kdf_hash").or(digest) {
                 a.push(format!("--hash={h}"));
             }
             if let Some(h) = num(&c, "header_size") {
@@ -819,6 +854,13 @@ impl Builder<'_> {
         }
         self.problems.extend(probs);
         let mut a = vec!["zpool".to_string(), "create".into(), "-f".into(), "-d".into(), "-o".into(), "cachefile=none".into()];
+        // The system load runs on has a pool of this name already (an
+        // illumos rescue system's rpool): this one goes by another name
+        // here, and keeps its own on the disks.
+        let here = self.zname(&name);
+        if here != name {
+            a.extend(["-t".into(), here.clone()]);
+        }
         for (k, v) in p.get("local_properties").and_then(Value::as_object).into_iter().flatten() {
             if POOL_PROPS_SKIP.contains(&k.as_str()) {
                 continue;
@@ -827,6 +869,19 @@ impl Builder<'_> {
                 a.push("-o".into());
                 a.push(format!("{k}={v}"));
             }
+        }
+        let mut min_ashift: Option<u64> = None;
+        // The vdevs' ashift, from their labels, where the pool's property is
+        // 0 (automatic): FreeBSD's installer raises the minimum to 12, and a
+        // pool made here would take the disk's 512-byte sectors (9).
+        let has_ashift = p.get("local_properties").and_then(|l| l.get("ashift")).is_some();
+        if !has_ashift && matches!(p.at(&["properties", "ashift"]).and_then(Value::as_str), Some("0") | None) {
+            let label_ashift = self.layout.arr(&["storage", "zfs", "pools_from_labels"]).iter().find(|l| s(l, "name").as_deref() == Some(name.as_str())).and_then(|l| {
+                l.get("top_level_vdevs").and_then(Value::as_array).into_iter().flatten().filter_map(|v| v.get("ashift").and_then(Value::as_u64)).max()
+            });
+            // As FreeBSD's installer does it: through the minimum the
+            // system picks, so that the pool's own property stays 0.
+            min_ashift = label_ashift;
         }
         for (f, state) in p.get("features").and_then(Value::as_object).into_iter().flatten() {
             if matches!(state.as_str(), Some("enabled" | "active")) {
@@ -845,16 +900,34 @@ impl Builder<'_> {
         a.push(self.opts.target.clone());
         a.push(name.clone());
         a.extend(words);
-        out.push(Cmd { argv: a, why: Some(format!("ZFS pool {name}, with the source's feature flags only")), ..Cmd::default() });
+        let why = format!("ZFS pool {name}, with the source's feature flags only");
+        match min_ashift {
+            Some(n) => {
+                let create = a.iter().map(|w| crate::load::shell_quote(w)).collect::<Vec<_>>().join(" ");
+                let p = "/sys/module/zfs/parameters/zfs_vdev_min_auto_ashift";
+                let script = if self.fam == Some(crate::other::Family::FreeBsd) {
+                    format!("old=$(sysctl -n vfs.zfs.min_auto_ashift); sysctl vfs.zfs.min_auto_ashift={n} >/dev/null; {create}; s=$?; sysctl vfs.zfs.min_auto_ashift=$old >/dev/null; exit $s")
+                } else {
+                    format!("old=$(cat {p}); echo {n} > {p}; {create}; s=$?; echo $old > {p}; exit $s")
+                };
+                out.push(Cmd::new(&["sh", "-c", &script]).why(format!("{why}; its vdevs' ashift {n}, as the source's")));
+            }
+            None => out.push(Cmd { argv: a, why: Some(why), ..Cmd::default() }),
+        }
         let guid = self.layout.arr(&["storage", "zfs", "pools_from_labels"]).iter().find(|l| s(l, "name").as_deref() == Some(name.as_str())).and_then(|l| {
             l.get("pool_guid").and_then(|g| g.as_str().map(str::to_string).or_else(|| g.as_u64().map(|n| n.to_string())))
         });
         match guid {
-            Some(g) => out.push(Cmd::new(&["zpool", "reguid", "-g", &g, &name]).why("the source pool's GUID (vdev GUIDs can't be kept)")),
+            // illumos' zpool reguid has no -g.
+            Some(_) if self.fam == Some(crate::other::Family::Illumos) => self.notes.push(format!("ZFS pool {name}: illumos can't set a pool's GUID; it gets a new one")),
+            Some(g) => out.push(Cmd::new(&["zpool", "reguid", "-g", &g, &here]).why("the source pool's GUID (vdev GUIDs can't be kept)")),
             None => self.notes.push(format!("ZFS pool {name}: no pool GUID in the dump, so it gets a new one")),
         }
-        self.closers.push(Cmd::new(&["zpool", "export", &name]));
-        self.pools.push(name.clone());
+        // zpool create mounts the pool's own dataset (FreeBSD's zroot, at
+        // /zroot) at once; mount mounts it again in its place, after /.
+        out.push(Cmd::new(&["sh", "-c", &format!("[ \"$(zfs get -H -o value mounted {here})\" != yes ] || zfs unmount {here}")]).why("mount mounts every dataset in order"));
+        self.closers.push(Cmd::new(&["zpool", "export", &here]));
+        self.pools.push(here.clone());
         // Its zvols, now: what sits on them (LUKS: Ubuntu's keystore) is
         // made next in this stage.  Their parents first.
         for (_, zv) in self.zvols_of(&name) {
@@ -1024,6 +1097,20 @@ pub fn mke2fs(dev: &str, c: &Value) -> Vec<String> {
     }
     if let Some(x) = num(c, "descriptor_size").filter(|&d| d > 32) {
         ext.push(format!("desc_size={x}"));
+    }
+    // The reserved GDT blocks (for online growing) as the source's: a
+    // filesystem grown since it was made has fewer than mke2fs gives a new
+    // one of its size.  mke2fs reserves enough for -E resize=BLOCKS.
+    let has = |f: &str| c.get("features").and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x.as_str() == Some(f)));
+    if let (true, Some(r), Some(bs), Some(n), Some(bpg)) = (has("resize_inode"), num(c, "reserved_gdt_blocks"), num(c, "block_size"), num(c, "blocks"), num(c, "blocks_per_group")) {
+        let desc = num(c, "descriptor_size").filter(|&d| d >= 32).unwrap_or(32);
+        let first = u64::from(bs == 1024);
+        let gdpb = bs / desc;
+        if gdpb > 0 && bpg > 0 {
+            let groups = (n - first).div_ceil(bpg);
+            let d = groups.div_ceil(gdpb);
+            ext.push(format!("resize={}", (d + r) * gdpb * bpg + first));
+        }
     }
     if !ext.is_empty() {
         a.extend(["-E".into(), ext.join(",")]);
@@ -1214,6 +1301,40 @@ pub fn mkfs_f2fs(dev: &str, c: &Value) -> Vec<String> {
     a
 }
 
+/// bcachefs format with the source's UUID, label and options.  The tools'
+/// release decides the on-disk version: the rescuer's must make one the
+/// source's kernel reads.
+pub fn mkfs_bcachefs(dev: &str, c: &Value) -> Vec<String> {
+    let mut a = vec!["bcachefs".to_string(), "format".into(), "--force".into()];
+    if let Some(u) = s(c, "uuid") {
+        a.push(format!("--uuid={u}"));
+    }
+    if let Some(l) = s(c, "label") {
+        a.push(format!("--fs_label={l}"));
+    }
+    for k in ["block_size", "btree_node_size"] {
+        if let Some(n) = num(c, k).filter(|&n| n > 0) {
+            a.push(format!("--{k}={n}"));
+        }
+    }
+    for k in ["metadata_checksum", "data_checksum", "compression", "str_hash"] {
+        // No compression is the default, and isn't a value --compression takes.
+        if let Some(v) = s(c, k).filter(|v| !(k == "compression" && v == "none")) {
+            a.push(format!("--{k}={v}"));
+        }
+    }
+    if c.get("acl").and_then(Value::as_bool) == Some(true) {
+        a.push("--acl".into());
+    }
+    for k in ["metadata_replicas", "data_replicas"] {
+        if let Some(n) = num(c, k).filter(|&n| n > 1) {
+            a.push(format!("--{k}={n}"));
+        }
+    }
+    a.push(dev.to_string());
+    a
+}
+
 /// mkfs.nilfs2 can't set a UUID: `nilfs-tune -U` sets it after (nilfs_tune).
 pub fn mkfs_nilfs2(dev: &str, c: &Value) -> Vec<String> {
     let have: Vec<&str> = c.get("features").and_then(Value::as_array).into_iter().flatten().filter_map(|f| f.as_str()).collect();
@@ -1296,6 +1417,11 @@ impl Builder<'_> {
                     out.push((p.name.clone(), p.content.clone()));
                 }
             }
+            for p in self.layout.device(&d.name).and_then(|v| v.get("label_partitions")).and_then(Value::as_array).into_iter().flatten() {
+                if let (Some(n), Some(c)) = (s(p, "name"), p.get("content").filter(|c| !c.is_null())) {
+                    out.push((n, c.clone()));
+                }
+            }
         }
         for sect in ["md_arrays", "dm_devices"] {
             for x in self.layout.arr(&["storage", sect]) {
@@ -1322,7 +1448,10 @@ impl Builder<'_> {
                 continue;
             };
             let why = format!("{src}: {ty}{}", s(&c, "label").map(|l| format!(" \"{l}\"")).unwrap_or_default());
-            if matches!(ty.as_str(), "ext2" | "ext3" | "ext4" | "xfs" | "btrfs" | "f2fs" | "nilfs2" | "jfs" | "vfat" | "msdos" | "swap") {
+            // An ESP written byte for byte by the partition stage (esp_image)
+            // isn't format's.
+            let imaged = self.layout.device(&src).is_some_and(|v| v.get("esp_image").is_some());
+            if !imaged && matches!(ty.as_str(), "ext2" | "ext3" | "ext4" | "xfs" | "btrfs" | "f2fs" | "nilfs2" | "jfs" | "vfat" | "msdos" | "swap") {
                 self.filesystems.push((dev.clone(), ty.clone(), s(&c, "uuid")));
             }
             match ty.as_str() {
@@ -1365,8 +1494,21 @@ impl Builder<'_> {
                     out.push(Cmd { argv: mkfs_btrfs(&devs, &c, &fs), why: Some(why), ..Cmd::default() });
                     self.btrfs_inside(&uuid, &devs[0], &fs, &mut out);
                 }
-                "vfat" | "msdos" => out.push(Cmd { argv: mkfs_fat(&dev, &c), why: Some(why), ..Cmd::default() }),
+                "vfat" | "msdos" if self.fam.is_none_or(|f| f.on_linux()) && self.layout.device(&src).is_none_or(|v| v.get("esp_image").is_none()) => {
+                    out.push(Cmd { argv: mkfs_fat(&dev, &c), why: Some(why), ..Cmd::default() })
+                }
                 "f2fs" => out.push(Cmd { argv: mkfs_f2fs(&dev, &c), why: Some(why), ..Cmd::default() }),
+                "bcachefs" => {
+                    if c.get("encrypted").and_then(Value::as_bool) == Some(true) {
+                        self.problems.push(format!("{src}: encrypted bcachefs isn't one bko-holt load can make"));
+                        continue;
+                    }
+                    if num(&c, "nr_devices").unwrap_or(1) > 1 {
+                        self.problems.push(format!("{src}: bcachefs on more than one device isn't one bko-holt load can make"));
+                        continue;
+                    }
+                    out.push(Cmd { argv: mkfs_bcachefs(&dev, &c), why: Some(why), ..Cmd::default() });
+                }
                 "nilfs2" => {
                     out.push(Cmd { argv: mkfs_nilfs2(&dev, &c), why: Some(why), ..Cmd::default() });
                     if let Some(t) = nilfs_tune(&dev, &c) {
@@ -1386,6 +1528,7 @@ impl Builder<'_> {
                         }
                     }
                 }
+                "swap" if self.fam.is_some_and(|f| !f.on_linux()) => self.notes.push(format!("{src}: swap needs no format here")),
                 "swap" => {
                     if c.get("hibernation_image").is_some_and(|h| !h.is_null()) {
                         self.notes.push(format!("{src}: the source's swap held a hibernation image; the new swap doesn't"));
@@ -1393,11 +1536,37 @@ impl Builder<'_> {
                     out.push(Cmd { argv: mkswap(&dev, &c), why: Some(why), ..Cmd::default() });
                 }
                 "ntfs" | "exfat" => self.notes.push(format!("{src}: {ty} isn't restored by BackOtter; the partition is left empty")),
+                "vfat" | "msdos" if self.layout.device(&src).is_some_and(|v| v.get("esp_image").is_some()) => {
+                    self.notes.push(format!("{src}: the ESP, written as the source's with the partition table"));
+                }
+                "vfat" | "msdos" => out.extend(self.other_newfs_msdos(&src, &dev, &c)),
+                "redoxfs" => {
+                    self.filesystems.push((dev.clone(), ty.clone(), None));
+                    out.push(Cmd::new(&["redoxfs-mkfs", &dev]).why(format!("{src}: RedoxFS")));
+                }
+                "befs" if self.fam.is_some() => {
+                    self.filesystems.push((dev.clone(), ty.clone(), None));
+                    let c2 = self.other_mkbfs(&src, &dev, &c);
+                    out.extend(c2);
+                }
+                "hammer2" if self.fam.is_some() => {
+                    self.filesystems.push((dev.clone(), ty.clone(), None));
+                    let c = self.other_newfs_hammer2(&src, &dev);
+                    out.extend(c);
+                }
+                "ufs" if self.fam.is_some() => {
+                    self.filesystems.push((dev.clone(), ty.clone(), None));
+                    let c = self.other_newfs(&src, &dev);
+                    out.extend(c);
+                }
                 other => self.problems.push(format!("{src}: {other} isn't a filesystem bko-holt load can make")),
             }
         }
         self.datasets(&mut out);
         self.keystores(&mut out);
+        if self.fam == Some(crate::other::Family::FreeBsd) {
+            out.extend(self.other_glabels());
+        }
         out
     }
 
@@ -1453,13 +1622,38 @@ impl Builder<'_> {
         out.push(Cmd::new(&["mkdir", "-p", &top]));
         out.push(Cmd::new(&["mount", "-t", "btrfs", "-o", "subvolid=5", dev, &top]).why(format!("btrfs {uuid}: its subvolumes")));
         let mut list: Vec<(String, Value)> = subs.iter().filter_map(|v| Some((s(v, "path")?.trim_start_matches("<FS_TREE>/").to_string(), v.clone()))).collect();
-        list.sort_by(|a, b| a.0.cmp(&b.0));
+        // In the source's ID order, so that each gets the source's ID: btrfs
+        // numbers subvolumes from 256 up, and a gap (a deleted subvolume)
+        // is burnt with a placeholder, deleted once all are made.  A
+        // subvolume inside another always has the larger ID.
+        list.sort_by_key(|(p, v)| (v.get("id").and_then(Value::as_u64).unwrap_or(u64::MAX), p.clone()));
+        let mut next = 256u64;
+        let mut placeholders = Vec::new();
+        let mut made: Vec<(String, String)> = Vec::new();
         for (path, v) in &list {
+            if let Some(id) = v.get("id").and_then(Value::as_u64) {
+                while next < id && id - next <= 4096 {
+                    let ph = format!("{top}/.bko-holt-placeholder-{next}");
+                    out.push(Cmd::new(&["btrfs", "subvolume", "create", &ph]).why(format!("burns ID {next}, unused on the source")));
+                    placeholders.push(ph);
+                    next += 1;
+                }
+                next = next.max(id + 1);
+            }
             let full = format!("{top}/{path}");
             if let Some((parent, _)) = path.rsplit_once('/') {
                 out.push(Cmd::new(&["mkdir", "-p", &format!("{top}/{parent}")]));
             }
-            out.push(Cmd::new(&["btrfs", "subvolume", "create", &full]));
+            // A snapshot is made as one of its origin (still empty: the
+            // restore fills both), so that it stays a snapshot.
+            let origin = v.get("parent_uuid").and_then(Value::as_str).and_then(|pu| made.iter().find(|(u, _)| u == pu)).map(|(_, p)| p.clone());
+            match &origin {
+                Some(o) => out.push(Cmd::new(&["btrfs", "subvolume", "snapshot", &format!("{top}/{o}"), &full]).why(format!("a snapshot of {o}, as on the source"))),
+                None => out.push(Cmd::new(&["btrfs", "subvolume", "create", &full])),
+            }
+            if let Some(u) = s(v, "uuid") {
+                made.push((u, path.clone()));
+            }
             for (k, pv) in v.get("properties").and_then(Value::as_object).into_iter().flatten() {
                 if k == "ro" {
                     continue; // read-only comes after the restore (boot)
@@ -1468,9 +1662,15 @@ impl Builder<'_> {
                     out.push(Cmd::new(&["btrfs", "property", "set", &full, k, val]));
                 }
             }
-            if v.get("parent_uuid").is_some_and(|p| !p.is_null()) {
-                self.notes.push(format!("btrfs {uuid}: {path} was a snapshot; it's made as a plain subvolume"));
+            if origin.is_none() && v.get("parent_uuid").is_some_and(|p| !p.is_null()) {
+                self.notes.push(format!("btrfs {uuid}: {path} was a snapshot of a subvolume that's gone; it's made as a plain subvolume"));
             }
+        }
+        if !placeholders.is_empty() {
+            let mut a = vec!["btrfs".to_string(), "subvolume".into(), "delete".into(), "--commit-after".into()];
+            a.extend(placeholders);
+            out.push(Cmd { argv: a, ..Cmd::default() });
+            out.push(Cmd::new(&["btrfs", "subvolume", "sync", &top]).why("the placeholders gone before quotas are on (no qgroups for them)"));
         }
         if default_id != 5 {
             match list.iter().find(|(_, v)| v.get("id").and_then(Value::as_u64) == Some(default_id)) {
@@ -1480,6 +1680,32 @@ impl Builder<'_> {
         }
         if quota {
             out.push(Cmd::new(&["btrfs", "quota", "enable", &top]));
+            out.push(Cmd::new(&["btrfs", "quota", "rescan", "-w", &top]));
+            let qgroups = fs.get("qgroups").and_then(Value::as_array).cloned().unwrap_or_default();
+            // Higher-level qgroups (snapper's 1/0), their members, and limits.
+            for q in &qgroups {
+                let Some(id) = s(q, "qgroupid") else { continue };
+                if !id.starts_with("0/") {
+                    out.push(Cmd::new(&["btrfs", "qgroup", "create", &id, &top]));
+                }
+            }
+            for q in &qgroups {
+                let Some(id) = s(q, "qgroupid") else { continue };
+                for p in q.get("parents").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+                    out.push(Cmd::new(&["btrfs", "qgroup", "assign", "--no-rescan", &id, p, &top]));
+                }
+                for (k, flag) in [("max_referenced", None), ("max_exclusive", Some("-e"))] {
+                    if let Some(n) = num(q, k) {
+                        let mut a = vec!["btrfs".to_string(), "qgroup".into(), "limit".into()];
+                        a.extend(flag.map(str::to_string));
+                        a.extend([n.to_string(), id.clone(), top.clone()]);
+                        out.push(Cmd { argv: a, ..Cmd::default() });
+                    }
+                }
+            }
+            if qgroups.iter().any(|q| q.get("parents").and_then(Value::as_array).is_some_and(|p| !p.is_empty())) {
+                out.push(Cmd::new(&["btrfs", "quota", "rescan", "-w", &top]));
+            }
         }
         out.push(Cmd::new(&["umount", &top]));
     }
@@ -1490,14 +1716,14 @@ impl Builder<'_> {
         list.sort_by_key(|d| s(d, "name").unwrap_or_default());
         for ds in list {
             let name = s(&ds, "name").unwrap_or_default();
-            if pools.contains(&name) || self.datasets.contains(&name) {
+            if pools.contains(&name) || self.datasets.contains(&self.zname(&name)) {
                 continue; // the root dataset came with zpool create; zvols with assemble
             }
             self.make_dataset(&ds, out);
         }
         for p in self.layout.v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(Value::as_array).into_iter().flatten() {
             if let (Some(n), Some(b)) = (s(p, "name"), p.at(&["properties", "bootfs"]).and_then(Value::as_str).filter(|b| *b != "-")) {
-                out.push(Cmd::new(&["zpool", "set", &format!("bootfs={b}"), &n]));
+                out.push(Cmd::new(&["zpool", "set", &format!("bootfs={}", self.zname(b)), &self.zname(&n)]));
             }
         }
     }
@@ -1522,9 +1748,24 @@ impl Builder<'_> {
                 a.push("-o".into());
                 a.push(format!("{k}={v}"));
             }
-            a.push(name.clone());
+            a.push(self.zname(&name));
             out.push(Cmd { argv: a, ..Cmd::default() });
-            self.datasets.push(name);
+            self.datasets.push(self.zname(&name));
+        }
+    }
+}
+
+impl Builder<'_> {
+    /// A dataset's name here: its pool's in-core name when that differs
+    /// (Mapping::pool_names).
+    pub(crate) fn zname(&self, ds: &str) -> String {
+        let (pool, rest) = match ds.split_once('/') {
+            Some((p, r)) => (p, Some(r)),
+            None => (ds, None),
+        };
+        match self.names.mapping.pool_names.iter().find(|(s, _)| s == pool) {
+            Some((_, h)) => rest.map_or_else(|| h.clone(), |r| format!("{h}/{r}")),
+            None => ds.to_string(),
         }
     }
 }
@@ -1562,7 +1803,24 @@ impl Builder<'_> {
                 continue;
             };
             let opts = mount_options(&s(e, "options").unwrap_or_default());
-            ms.push((file.clone(), Cmd::new(&["mount", "-t", &ty, "-o", &opts, &dev, &format!("{target}{}", if file == "/" { "" } else { &file })])));
+            // A HAMMER2 PFS (DragonFly's vbd0s1d@ROOT): the same PFS here.
+            let dev = match s(e, "spec").and_then(|sp| sp.split_once('@').map(|(_, l)| l.to_string())) {
+                Some(l) if ty == "hammer2" => format!("{dev}@{l}"),
+                _ => dev,
+            };
+            let dir = format!("{target}{}", if file == "/" { "" } else { &file });
+            // RedoxFS mounts through its FUSE driver (it goes to the
+            // background once the tree is up).
+            if ty == "redoxfs" {
+                ms.push((file.clone(), Cmd::new(&["redoxfs", &dev, &dir])));
+                continue;
+            }
+            // Haiku's mount takes no option list worth giving.
+            if self.fam == Some(crate::other::Family::Haiku) {
+                ms.push((file.clone(), Cmd::new(&["mount", "-t", &ty, &dev, &dir])));
+                continue;
+            }
+            ms.push((file.clone(), Cmd::new(&["mount", "-t", &ty, "-o", &opts, &dev, &dir])));
         }
         let bootfs: Vec<String> =
             self.layout.v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(Value::as_array).into_iter().flatten().filter_map(|p| p.at(&["properties", "bootfs"]).and_then(Value::as_str).map(str::to_string)).collect();
@@ -1576,7 +1834,7 @@ impl Builder<'_> {
             if !mp.starts_with('/') || canmount == "off" || (canmount == "noauto" && !bootfs.contains(&name) && !was_mounted) {
                 continue;
             }
-            ms.push((mp, Cmd::new(&["zfs", "mount", &name])));
+            ms.push((mp, Cmd::new(&["zfs", "mount", &self.zname(&name)])));
         }
         ms.sort_by(|a, b| {
             let depth = |p: &str| if p == "/" { 0 } else { p.matches('/').count() };
@@ -1589,7 +1847,7 @@ impl Builder<'_> {
         for (p, c) in ms {
             let dir = if p == "/" { target.clone() } else { format!("{target}{p}") };
             self.mount_points.push(dir.clone());
-            if c.argv[0] == "mount" {
+            if c.argv[0] == "mount" || c.argv[0] == "redoxfs" {
                 out.push(Cmd::new(&["mkdir", "-p", &dir]));
             }
             out.push(c);
@@ -1610,6 +1868,10 @@ impl Builder<'_> {
         }
         a.push("--no-progress".into());
         a.extend(["restore".into(), "--numeric-id".into(), self.opts.snapshot.clone(), self.opts.target.clone()]);
+        if self.fam.is_some() {
+            // The boot stage there reads nothing of the restored tree.
+            return vec![Cmd { argv: a, why: Some(format!("snapshot {} of {repo}, with BackOtter's restore flags", self.opts.snapshot)), ..Cmd::default() }];
+        }
         vec![
             Cmd { argv: a, why: Some(format!("snapshot {} of {repo}, with BackOtter's restore flags", self.opts.snapshot)), ..Cmd::default() },
             Cmd::new(&["sh", "-c", &atimes_cmd(&self.opts.target, "before")]).why("the atimes the restore set, for boot to put back after its reads"),
@@ -1638,38 +1900,20 @@ fn atimes_cmd(t: &str, what: &str) -> String {
     } else {
         format!(
             "{list} > {RUN_DIR}/atimes.after && LC_ALL=C comm -z -23 {b} {RUN_DIR}/atimes.after | \\
-             while IFS=$'\\t' read -r -d '' a p; do [ -L \"$p\" ] || [ -e \"$p\" ] || continue; touch -a -h -d \"@$a\" -- \"$p\"; done"
+             while IFS=$'\\t' read -r -d '' a p; do [ -L \"$p\" ] || [ -e \"$p\" ] || continue; touch -a -h -d \"@$a\" -- \"$p\" 2>/dev/null || \
+             {{ [ ! -L \"$p\" ] && lsattr -d -- \"$p\" 2>/dev/null | cut -d' ' -f1 | grep -q i && {{ chattr -i -- \"$p\"; touch -a -h -d \"@$a\" -- \"$p\"; chattr +i -- \"$p\"; }}; }}; done"
         )
     }
 }
 
 impl Builder<'_> {
     fn boot(&mut self) -> Vec<Cmd> {
+        if let Some(fam) = self.fam {
+            return self.other_boot(fam);
+        }
         let t = self.opts.target.clone();
         let mut out = Vec::new();
         out.push(Cmd::note(format!("refuses to start unless {t}/etc/fstab is the restored system's (its / matches the layout's)")));
-        // Read-only btrfs subvolumes: set now that the restore filled them.
-        for fs in self.layout.arr(&["storage", "btrfs"]).to_vec() {
-            let uuid = s(&fs, "uuid").unwrap_or_default();
-            let ro: Vec<String> = fs
-                .get("subvolumes")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter(|v| v.get("readonly").and_then(Value::as_bool) == Some(true))
-                .filter_map(|v| s(v, "path").map(|p| p.trim_start_matches("<FS_TREE>/").to_string()))
-                .collect();
-            if ro.is_empty() {
-                continue;
-            }
-            let dev = fs.at(&["devices", "0"]).and_then(Value::as_str).and_then(|d| self.names.dev(d)).unwrap_or_default();
-            let top = format!("{RUN_DIR}/btrfs/{uuid}");
-            out.push(Cmd::new(&["mount", "-t", "btrfs", "-o", "subvolid=5", &dev, &top]));
-            for p in ro {
-                out.push(Cmd::new(&["btrfs", "property", "set", "-ts", &format!("{top}/{p}"), "ro", "true"]));
-            }
-            out.push(Cmd::new(&["umount", &top]));
-        }
         // Keys: the restored key files replace the temporary ones.
         for dm in self.layout.arr(&["storage", "dm_devices"]).to_vec() {
             if dm.at(&["dm", "target"]).and_then(Value::as_str) != Some("crypt") {
@@ -1707,16 +1951,43 @@ impl Builder<'_> {
         // reads gets its atime bumped: each file's atime, as the restore
         // set it, is kept here and put back at the end.
         out.push(Cmd::new(&["sh", "-c", &atimes_cmd(&t, "if-missing")]).why("the restored atimes (the restore stage lists them), to put back after this stage's reads"));
+        // LVM's devices file (RHEL, Fedora): LVM run in the chroot (by dracut)
+        // would record the rescue system's names for the PVs in it; it's
+        // put back as restored when the chroot's work is done.
+        let devdir = format!("{t}/etc/lvm/devices");
+        out.push(Cmd::new(&["sh", "-c", &format!("rm -rf {RUN_DIR}/lvm-devices; [ ! -d {devdir} ] || {{ cp -a {devdir} {RUN_DIR}/lvm-devices && touch -r {t}/etc/lvm {RUN_DIR}/lvm-devices.parent; }}")]).why("the restored LVM devices file, kept"));
+        let lvm_devices_back =
+            Cmd::new(&["sh", "-c", &format!("[ ! -d {RUN_DIR}/lvm-devices ] || {{ rm -rf {devdir} && cp -a {RUN_DIR}/lvm-devices {devdir} && touch -r {RUN_DIR}/lvm-devices.parent {t}/etc/lvm; }}")]).why("the restored LVM devices file, put back");
         for d in ["dev", "proc", "sys", "run"] {
             out.push(Cmd::new(&["mount", "--rbind", "--make-rslave", &format!("/{d}"), &format!("{t}/{d}")]));
         }
+        let nixos = self.layout.str_at(&["os", "id"]) == Some("nixos");
         match self.initramfs(&t) {
+            _ if nixos => self.notes.push("NixOS: each generation's kernel and initrd are in /boot/kernels, restored with /boot; nothing to rebuild".into()),
             Some(c) => out.push(c),
             None => self.notes.push("the initramfs came prebuilt with the kernel and was restored with it; nothing to rebuild".into()),
         }
         let loader = self.layout.str_at(&["boot", "loader", "name"]).unwrap_or("unknown").to_string();
         let uefi = self.layout.uefi();
         match (loader.as_str(), uefi) {
+            // NixOS: GRUB is in the Nix store, and its grub.cfg is written
+            // by switch-to-configuration, which would install GRUB on the
+            // source's device names (here, the rescue system's disks).  The
+            // restored grub.cfg names the filesystems by UUID, which the
+            // new ones keep: only the boot code is installed, by the newest
+            // GRUB in the store.
+            ("grub", false) if nixos => {
+                let devs = self.grub_bios_devices();
+                if devs.is_empty() {
+                    self.problems.push("BIOS GRUB: no disk's MBR holds GRUB".into());
+                }
+                let pick = format!(
+                    "g=$(for d in {t}/nix/store/*-grub-2.*/lib/grub/i386-pc; do d=${{d%/lib/grub/i386-pc}}; echo \"${{d#*-}} ${{d#{t}}}\"; done | sort -V | tail -n 1 | cut -d' ' -f2); [ -n \"$g\" ] || {{ echo 'no BIOS GRUB in the Nix store' >&2; exit 1; }}"
+                );
+                for d in devs {
+                    out.push(Cmd::new(&["sh", "-c", &format!("{pick}; chroot {t} \"$g/bin/grub-install\" --target=i386-pc --boot-directory=/boot {d}")]).why("the Nix store's GRUB; the restored grub.cfg stays"));
+                }
+            }
             ("grub", false) => {
                 let devs = self.grub_bios_devices();
                 if devs.is_empty() {
@@ -1747,6 +2018,9 @@ impl Builder<'_> {
             ("systemd-boot", true) => {
                 out.push(Cmd::new(&["chroot", &t, "bootctl", "install", "--no-variables"]));
             }
+            // Limine on UEFI is files on the ESP (its EFI binary,
+            // limine.conf), restored with it; only the boot entries are made.
+            ("limine", true) => self.notes.push("Limine: its EFI binary and limine.conf came back with the ESP; nothing to install".into()),
             (other, _) => self.problems.push(format!("boot loader {other} ({}) isn't one bko-holt load can install", if uefi { "UEFI" } else { "BIOS" })),
         }
         if uefi && !self.opts.no_nvram {
@@ -1754,7 +2028,7 @@ impl Builder<'_> {
         }
         out.push(Cmd::new(&["mkdir", "-p", &format!("{t}/var/log/bko-holt")]));
         out.push(Cmd::new(&["cp", "-a", &format!("{RUN_DIR}/log/."), &format!("{t}/var/log/bko-holt/")]).why("this restore's log, on the restored system"));
-        if self.layout.str_at(&["os", "id"]) == Some("fedora") {
+        if self.layout.str_at(&["os", "id"]) != Some("nixos") {
             // The restore kept every file's SELinux label; what this stage
             // wrote (initramfs images, grub.cfg, the log) gets the policy's.
             out.push(
@@ -1763,7 +2037,7 @@ impl Builder<'_> {
                     &t,
                     "sh",
                     "-c",
-                    ". /etc/selinux/config; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ ! -f \"$f\" ] || setfiles \"$f\" /boot /var/log/bko-holt",
+                    "[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ \"${SELINUX:-disabled}\" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ ! -f \"$f\" ] || ! command -v setfiles >/dev/null || setfiles \"$f\" /boot /var/log/bko-holt",
                 ])
                 .why("SELinux labels for the files the boot stage wrote"),
             );
@@ -1771,8 +2045,32 @@ impl Builder<'_> {
         for d in ["run", "sys", "proc", "dev"] {
             out.push(Cmd::new(&["umount", "--recursive", &format!("{t}/{d}")]));
         }
-        // Last: nothing may read the tree after this.
+        out.push(lvm_devices_back);
+        // Last but for read-only flags: nothing may read the tree after this.
         out.push(Cmd::new(&["bash", "-c", &atimes_cmd(&t, "restore")]).why("the atimes this stage's reads changed, put back"));
+        // Read-only btrfs subvolumes: set now that the restore filled them,
+        // and after the atimes are put back (touch can't on a read-only one).
+        for fs in self.layout.arr(&["storage", "btrfs"]).to_vec() {
+            let uuid = s(&fs, "uuid").unwrap_or_default();
+            let ro: Vec<String> = fs
+                .get("subvolumes")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter(|v| v.get("readonly").and_then(Value::as_bool) == Some(true))
+                .filter_map(|v| s(v, "path").map(|p| p.trim_start_matches("<FS_TREE>/").to_string()))
+                .collect();
+            if ro.is_empty() {
+                continue;
+            }
+            let dev = fs.at(&["devices", "0"]).and_then(Value::as_str).and_then(|d| self.names.dev(d)).unwrap_or_default();
+            let top = format!("{RUN_DIR}/btrfs/{uuid}");
+            out.push(Cmd::new(&["mount", "-t", "btrfs", "-o", "subvolid=5", &dev, &top]));
+            for p in ro {
+                out.push(Cmd::new(&["btrfs", "property", "set", "-ts", &format!("{top}/{p}"), "ro", "true"]));
+            }
+            out.push(Cmd::new(&["umount", &top]));
+        }
         out
     }
 
@@ -1888,6 +2186,9 @@ impl Builder<'_> {
     }
 
     fn close(&mut self) -> Vec<Cmd> {
+        if let Some(fam) = self.fam {
+            return self.other_close(fam);
+        }
         let t = &self.opts.target;
         let mut out = vec![Cmd::new(&["umount", "--recursive", t])];
         // A service that started while the target was mounted (systemd's
@@ -2084,6 +2385,7 @@ mod tests {
             filesystems: vec![],
             datasets: vec![],
             mount_points: vec![],
+            fam: None,
         };
         let props = b.ds_props(&ds, false);
         assert!(props.contains(&("normalization".into(), "formD".into())), "{props:?}");
@@ -2113,6 +2415,11 @@ mod tests {
     fn jfs() {
         let c = crate::json::parse(r#"{"type": "jfs", "uuid": "d12ea338-ce14-4c47-90c8-7e72c24a87c6", "label": "root", "block_size": 4096}"#).unwrap();
         assert_eq!(mkfs_jfs("/dev/vdb3", &c).join(" "), "mkfs.jfs -q -L root /dev/vdb3");
+        let b = crate::json::parse(r#"{"type": "bcachefs", "uuid": "c9cbba71-4054-4849-a19c-e7d40fb5b1e4", "label": null, "block_size": 4096, "btree_node_size": 262144, "metadata_checksum": "crc32c", "data_checksum": "crc32c", "compression": "none", "str_hash": "siphash", "metadata_replicas": 1, "data_replicas": 1}"#).unwrap();
+        assert_eq!(
+            mkfs_bcachefs("/dev/vdb3", &b).join(" "),
+            "bcachefs format --force --uuid=c9cbba71-4054-4849-a19c-e7d40fb5b1e4 --block_size=4096 --btree_node_size=262144 --metadata_checksum=crc32c --data_checksum=crc32c --str_hash=siphash /dev/vdb3"
+        );
         assert_eq!(jfs_tune("/dev/vdb3", &c).unwrap().join(" "), "jfs_tune -U d12ea338-ce14-4c47-90c8-7e72c24a87c6 /dev/vdb3");
         assert_eq!(
             jfs_version1("/dev/vdb3")[2],

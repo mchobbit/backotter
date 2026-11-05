@@ -17,7 +17,8 @@
 #             gets it typed there (console-boot.py).  Returns 1 if the guest
 #             didn't come up (QEMU is stopped then).
 #   vm_ssh COMMAND
-#             Run COMMAND as root through /bin/sh -c, whatever root's login
+#             Run COMMAND as root (VM_USER: the user root's uid 0 has, Haiku's
+#             "user") through /bin/sh -c, whatever root's login
 #             shell is (DragonFly's is csh, which can't parse sh's syntax);
 #             stdin and stdout pass through.  Keep it to one line: csh ends a
 #             quoted string at a newline.  T bounds it (seconds, default
@@ -127,7 +128,7 @@ vm_ssh() {
     local q=${1//$sq/$sq\\$sq$sq}
     timeout "${T:-3600}" ssh -q -i "$VM_KEY" -p "$VM_PORT" -o BatchMode=yes \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 \
-        -o ServerAliveInterval=30 root@127.0.0.1 "/bin/sh -c '$q'"
+        -o ServerAliveInterval=30 "${VM_USER:-root}@127.0.0.1" "/bin/sh -c '$q'"
 }
 
 vm_sh() {

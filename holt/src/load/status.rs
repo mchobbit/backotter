@@ -40,9 +40,15 @@ fn tally(ok: usize, total: usize) -> State {
     }
 }
 
+/// What's on a device node (its blkid TYPE), read from the device.
+fn kind_at(sys: &Sys, node: &str) -> Option<String> {
+    let src = sys.open_dev(&crate::other::node_path(sys, node))?;
+    crate::probe::probe_all(&src).into_iter().next().map(|c| c.kind)
+}
+
 /// The UUID of what's on a device node, read from the device.
 fn uuid_at(sys: &Sys, node: &str) -> Option<String> {
-    let src = sys.open_dev(node)?;
+    let src = sys.open_dev(&crate::other::node_path(sys, node))?;
     crate::probe::probe_all(&src).into_iter().find_map(|c| c.uuid).map(|u| u.to_ascii_lowercase())
 }
 
@@ -93,6 +99,13 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
         .unwrap_or_default();
     let mut bad = vec![];
     for (node, ty, uuid) in &built.filesystems {
+        // UFS and HAMMER2 can't be given the source's UUID: the type shows it.
+        if matches!(ty.as_str(), "ufs" | "hammer2" | "befs" | "redoxfs") {
+            if kind_at(sys, node).as_deref() != Some(ty.as_str()) {
+                bad.push(format!("{node} ({ty})"));
+            }
+            continue;
+        }
         let want = uuid.as_ref().map(|u| u.to_ascii_lowercase());
         if uuid_at(sys, node) != want || want.is_none() {
             bad.push(format!("{node} ({ty})"));
@@ -113,11 +126,22 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     // restore and boot: what's in the mounted tree.
     let t = &opts.target;
     // (lstat only: following /etc/os-release, a symlink, would bump its atime.)
-    let restored = tree_up && sys.exists(&format!("{t}/etc/fstab")) && sys.exists(&format!("{t}/etc/os-release"));
-    let booted = tree_up && !sys.list(&format!("{t}/var/log/bko-holt")).is_empty();
+    let restored = tree_up
+        && match crate::other::Family::of_layout(&layout.v) {
+            Some(_) => sys.exists(&format!("{t}/{}", crate::other::restored_marker(&layout.v))),
+            None => sys.exists(&format!("{t}/etc/fstab")) && sys.exists(&format!("{t}/etc/os-release")),
+        };
+    let logdir = if crate::other::Family::of_layout(&layout.v) == Some(crate::other::Family::Haiku) { "system/var/log/bko-holt" } else { "var/log/bko-holt" };
+    let booted = tree_up && !sys.list(&format!("{t}/{logdir}")).is_empty();
     let unseen = if tree_up { "" } else { "the tree isn't mounted, so this can't be seen" };
     out.push((Stage::Restore, if restored { State::Done } else if tree_up { State::NotDone } else { State::Unknown }, if restored { String::new() } else { unseen.into() }));
-    out.push((Stage::Boot, if booted { State::Done } else if tree_up { State::NotDone } else { State::Unknown }, if booted { String::new() } else { unseen.into() }));
+    // Sculpt's boot stage has nothing to do: its boot areas came back with
+    // the partition table.
+    if crate::other::Family::of_layout(&layout.v) == Some(crate::other::Family::Genode) {
+        out.push((Stage::Boot, State::Nothing, String::new()));
+    } else {
+        out.push((Stage::Boot, if booted { State::Done } else if tree_up { State::NotDone } else { State::Unknown }, if booted { String::new() } else { unseen.into() }));
+    }
 
     // close: nothing of ours left open, after everything was made.
     // Closed, pools and volumes can't be looked into: what was made shows as
@@ -128,8 +152,11 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     for (src, tgt) in &mapping.pairs {
         let Some(d) = layout.disk(src) else { continue };
         for p in &d.parts {
+            if matches!(layout.content(&p.name).and_then(|c| c.get("type")).and_then(|t| t.as_str()), Some("ufs" | "hammer2" | "befs" | "redoxfs")) {
+                continue;
+            }
             let Some(want) = layout.content(&p.name).and_then(|c| c.get("uuid")).and_then(|u| u.as_str().map(str::to_string).or_else(|| u.as_u64().map(|n| n.to_string()))) else { continue };
-            let node = commands::part_path(tgt, p.number);
+            let node = commands::part_node(layout, d, tgt, p.number);
             if uuid_at(sys, &node) != Some(want.to_ascii_lowercase()) {
                 unsigned.push(node);
             }

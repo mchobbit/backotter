@@ -393,6 +393,39 @@ for p in "${parts[@]}"; do
 done
 [[ -n $root ]] || { undo; die "no partition holds /etc/fstab"; }
 
+# The guest's other ZFS pools (Ubuntu's bpool, /boot): those with a dataset
+# that mounts somewhere ZFS itself mounts it, not through fstab.  A
+# canmount=noauto dataset (Ubuntu's bpool/BOOT/ubuntu_X) is mounted when its
+# last name part is the root dataset's.
+if command -v zpool >/dev/null; then
+    rootsuffix=$(zfs list -H -o name,mountpoint 2>/dev/null | awk -v root="$mp" '$2 == root { n = $1; sub(/.*\//, "", n); print n; exit }')
+    n=0
+    while read -r id; do
+        [[ -n $id ]] || continue
+        n=$((n + 1))
+        name=vm-mount-$$-$n
+        search=()
+        for q in "${parts[@]}"; do
+            [[ $(blkid -s TYPE -o value "$q" || true) == zfs_member ]] && search+=(-d "$q")
+        done
+        opts=(-N -f "${search[@]}" -R "$mp")
+        [[ $ro == yes ]] && opts+=(-o readonly=on)
+        zpool import "${opts[@]}" -t "$id" "$name" || continue
+        echo "pool $name" >>"$state"
+        load_zfs_keys "$name"
+        zfs list -H -o name,canmount,mountpoint -r "$name" |
+            awk -v sfx="$rootsuffix" '$3 != "none" && $3 != "legacy" { n = $1; sub(/.*\//, "", n); if ($2 == "on" || ($2 == "noauto" && n == sfx)) print $1 }' |
+            while read -r ds; do zfs mount "$ds" 2>/dev/null || true; done
+    done < <(
+        # Pools on the guest's partitions that aren't imported yet.
+        imported=$(zpool list -H -o guid 2>/dev/null)
+        for q in "${parts[@]}"; do
+            [[ $(blkid -s TYPE -o value "$q" || true) == zfs_member ]] || continue
+            zpool import -d "$q" 2>/dev/null | awk '$1 == "id:" { print $2 }'
+        done | sort -u | grep -vxF "${imported:-none}" || true
+    )
+fi
+
 # The guest's other filesystems, parents before children.
 while read -r spec target type options; do
     [[ $target == / || $type == swap || $target != /* || ,$options, == *,noauto,* ]] && continue

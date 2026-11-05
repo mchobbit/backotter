@@ -1,6 +1,7 @@
 # bko-holt
 
-One binary with two halves, for a Linux system's disks:
+One binary with two halves, for a system's disks (Linux, the BSDs, illumos,
+Haiku; Redox and Sculpt OS from Linux):
 
 - `bko-holt dump` writes a JSON description of the disk layout and boot setup
   to standard output: the `storage` and `boot` sections that
@@ -21,14 +22,40 @@ bko-holt load layout.json --map vda=/dev/sdb --erase /dev/sdb \
 
 `dump` refuses to run (exit 3) on a system it doesn't support, and `load`
 refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
-`VERSION_ID`) is Debian 13, Linux Mint 22, Ubuntu 24.04 and 26.04, Zorin OS 18,
-Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux and AerynOS: each passes a
-whole-machine round trip (`testvm/holttest1d/README.md`).  Build it static
-(`RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target
-x86_64-unknown-linux-gnu`) to run it on musl systems such as Alpine too.  Run both as root: partition tables, superblocks, LUKS headers and
-LVM/ZFS labels are read from the devices themselves.  As another user `dump`
-falls back to udev's database and says so under `warnings`; `load` won't
-plan from such a dump.
+`VERSION_ID`, or uname's where there's no os-release) is:
+
+- Linux: Debian 12 and 13, Devuan 6, Ubuntu 24.04 and 26.04, Linux Mint 22,
+  Pop!_OS 24.04, Zorin OS 18, Arch Linux, CachyOS, Artix Linux, Omarchy,
+  Alpine Linux 3, AerynOS, Void Linux, Fedora 44, Rocky Linux 10, openSUSE
+  Tumbleweed and NixOS 26.05;
+- FreeBSD 14 and 15, HardenedBSD 15, GhostBSD 26 (`src/other/freebsd.rs`),
+  NetBSD 11, AlpineBSD 1 and OpenBSD 8 (`labelled.rs`), DragonFly 6
+  (`dfly.rs`), OmniOS (illumos, `illumos.rs`) and Haiku (`haiku.rs`): built
+  for and run on each system itself;
+- Redox and Sculpt OS (`offline.rs`), which can't run it: `dump --disk DEV`
+  reads them off their disks from Linux, and `load` rebuilds them from Linux.
+
+HoltTest1All round-trips each whole machine (`testvm/holttest1d/README.md`
+has which pass).  Build it static (`RUSTFLAGS="-C target-feature=+crt-static"
+cargo build --release --target x86_64-unknown-linux-gnu`) to run it on musl
+systems such as Alpine and Void too; on the other systems, build it there
+(`testvm/holttest1d/build-holt.sh PLATFORM`: it needs nothing but Rust 1.85).
+Run both as root: partition tables, superblocks and LVM/ZFS labels are read
+from the devices themselves.  As another user `dump` falls back to udev's
+database and says so under `warnings`; `load` won't plan from such a dump.
+
+On a system other than Linux, `dump` reads the disks through the system's
+own names for them (kern.disks, hw.disknames, diskinfo, /dev/disk) and its
+own tools for what only they know (dumpfs -m's newfs command, disklabel's and
+disklabel64's text, GEOM labels, HAMMER2's PFSs, wedge names), and keeps the
+boot areas that no file holds byte for byte (the MBR's code, FreeBSD's
+freebsd-boot, a BIOS boot partition, an ESP nothing mounts).  `load` writes
+the partition table itself (`bko-holt write-table`: GUIDs, names and
+attributes exactly, and those boot areas), then gives each system's tools
+what they printed (disklabel -R, disklabel64 -R -B, newfs, newfs_hammer2,
+mkfs -t bfs, zpool create), installs boot blocks from the rescue system's own
+(installboot, makebootable), and restores with rustic-bko built for that
+system.
 
 bko-holt never copies file data itself.  `load`'s `restore` stage runs
 rustic-bko; without `--repo`, run `--through mount`, restore by hand, then

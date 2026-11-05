@@ -223,9 +223,12 @@ impl Layout {
                 if d.get("name").and_then(Value::as_str) == Some(name) {
                     return Some(d);
                 }
-                for p in d.get("partitions").and_then(Value::as_array).into_iter().flatten() {
-                    if p.get("name").and_then(Value::as_str) == Some(name) {
-                        return Some(p);
+                // A BSD disklabel's partitions (other/) are the disk's too.
+                for k in ["partitions", "label_partitions"] {
+                    for p in d.get(k).and_then(Value::as_array).into_iter().flatten() {
+                        if p.get("name").and_then(Value::as_str) == Some(name) {
+                            return Some(p);
+                        }
                     }
                 }
             }
@@ -344,7 +347,7 @@ mod tests {
         assert!(parse(&good.replace("\"bko-holt\"", "\"bko-laydump\"")).is_ok());
         assert!(parse(&good.replace("\"bko-holt\"", "\"other\"")).unwrap_err().contains("not a bko-holt dump"));
         assert!(parse(&good.replace("\"schema\": 1", "\"schema\": 2")).unwrap_err().contains("schema"));
-        assert!(parse(&good.replace("\"version_id\": \"13\"", "\"version_id\": \"12\"")).unwrap_err().contains("supports only Debian 13, Linux Mint 22"));
+        assert!(parse(&good.replace("\"version_id\": \"13\"", "\"version_id\": \"11\"")).unwrap_err().contains("supports only Debian 13, Linux Mint 22"));
         let mint = good.replace("\"id\": \"debian\", \"version_id\": \"13\"", "\"id\": \"linuxmint\", \"version_id\": \"22.3\"");
         assert!(parse(&mint).is_ok());
         assert!(parse(&good.replace("\"privileged\": true", "\"privileged\": false")).unwrap_err().contains("as root"));

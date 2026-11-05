@@ -5,8 +5,9 @@
 
 use crate::sys::Sys;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum Kind {
+    #[default]
     Disk,
     Partition,
     Dm,
@@ -65,7 +66,7 @@ pub fn parse_udev(text: &str) -> Udev {
     u
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct BlockDev {
     pub name: String,
     pub kind: Kind,

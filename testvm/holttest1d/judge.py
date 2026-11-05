@@ -29,8 +29,13 @@ IGNORED = [
     (r"^tool\.version$", "the bko-holt build"),
     (r"(^|\.)(used_bytes|available_bytes|free_blocks|free_inodes|bytes_used)$", "usage changes as the machine runs"),
     (r"(^|\.)(mkfs_time|creation_time|update_time|generation|events)$", "when a filesystem or array was made or last written"),
-    (r"^storage\.btrfs\.\d+\.subvolumes\.\d+\.gen$", "a btrfs subvolume's last-written generation"),
+    (r"^storage\.btrfs\.\d+\.(subvolumes\.\d+|default_subvolume)\.gen$", "a btrfs subvolume's last-written generation"),
+    (r"^storage\.btrfs\.\d+\.qgroups\.\d+\.(referenced|exclusive)$", "usage changes as the machine runs (and a restored snapshot shares nothing with its origin)"),
+    (r"^storage\.disks\.\d+\.boot_code\.post_mbr_gap\.nonzero_sectors_in_first_mib$", "core.img's size: the modules grub-install embeds depend on the GRUB build and the devices it finds"),
     (r"^storage\.btrfs\.\d+\.subvolumes\.\d+\.uuid$", "btrfs subvolume UUIDs can't be set: `btrfs subvolume create` makes new ones"),
+    (r"^storage\.btrfs\.\d+\.subvolumes\.\d+\.parent_uuid:set$", "a snapshot's origin's UUID is new too (whether it is a snapshot is compared)"),
+    (r"^storage\.(disks\.\d+\.partitions\.\d+\.content|zfs\.pools_from_labels\.\d+)\.hostname$", "a ZFS label names the host that last wrote it (in an initramfs that hasn't set the hostname yet, localhost)"),
+    (r"^boot\.esps\.\d+\.contents\.files\.\d+\.size$", "the boot stage rebuilds the initramfs images, and Pop!_OS's kernelstub copies them and the kernels to the ESP"),
     (r"^storage\.disks\.\d+\.boot_code\.first_bytes$", "grub-install keeps the MBR's BPB area (bytes 3-89) from whatever was there before; the kind and core.img fields are compared"),
     (r"(^|\.)state$", "a mounted filesystem's clean flag"),
     (r"(^|\.)(last_mounted_on)$", "ext4 records where it was last mounted; the restore mounted it under /mnt/bko-target"),
@@ -39,6 +44,10 @@ IGNORED = [
     (r"^storage\.loop_devices\.", "loop devices are attached at run time (snaps), in no fixed order"),
     (r"^storage\.mounts\.\d+\.(devno|size_bytes)$", "a mount's device number and size are the running system's (ZFS's change at each boot)"),
     (r"^storage\.disks\.\d+\.partitions\.\d+\.content\.device_uuid$", "an md member's own Device UUID: mdadm --create can't set it"),
+    (r"\.content\.internal_uuid$", "bcachefs's internal UUID: bcachefs format sets only the user-visible one"),
+    (r"\.content\.u64s$", "the bcachefs superblock's size, which grows with what the kernel records in it"),
+    (r"\.uuid:ufs$", "UFS's UUID is its fs_id, which newfs sets at random (dumpfs -m has no flag for it)"),
+    (r"\.links\.\d+:member$", "a by-uuid link of a filesystem's member UUID (bcachefs's), which can't be set"),
     (r"^storage\.lvm\.volume_groups\.\d+\.(creation_host|seqno)$", "LVM records the last host to write the VG's metadata, and counts the writes"),
     (r"^storage\.lvm\.volume_groups\.\d+\.physical_volumes\.\d+\.device_hint$", "LVM's hint is the PV's path when the metadata was last written"),
     (r"(^|[.:])(top_guid|vdev_guid|metaslab_array|txg|alloc_space|vdev_zap_leaf|vdev_zap_top|vdev_zap_root)$", "ZFS vdev GUIDs and pool history can't be kept (the design's Identity section)"),
@@ -61,7 +70,7 @@ _WRITTEN = {"content", "mtime", "mtime (dirs)", "atime", "atime (dirs)", "extra"
 BOOT_STAGE = [
     (r"^boot/grub2?(/|$)", _WRITTEN | {"missing"}, "grub-install and update-grub rewrite /boot/grub (Fedora's /boot/grub2)"),
     (r"^boot/loader(/entries(/[^/]+)?)?$", _WRITTEN, "grub2-mkconfig rewrites Fedora's BLS entries' options lines"),
-    (r"^boot/(initrd\.img-[^/]+|initramfs-[^/]+)$", _WRITTEN, "the boot stage rebuilds every initramfs (Alpine's have no .img)"),
+    (r"^boot/(initrd\.img-[^/]+|initramfs-[^/]+|initrd-[^/]+)$", _WRITTEN, "the boot stage rebuilds every initramfs (Alpine's have no .img; openSUSE's are initrd-VERSION)"),
     (r"^boot$", {"mtime (dirs)", "atime (dirs)"}, "update-initramfs replaces the initrds"),
     (r"^var/log/bko-holt(/|$)", _WRITTEN, "load's own log, copied in by the boot stage"),
     (r"^etc/zfs/zpool\.cache$", _WRITTEN, "the boot stage writes the new pool's zpool.cache"),
@@ -73,16 +82,40 @@ BOOT_STAGE = [
     (r"^(boot/)?efi/loader(/(random-seed|keys))?$", _WRITTEN, "bootctl install writes a new random seed and makes loader/keys"),
     (r"^(tmp|var/tmp)$", {"mtime (dirs)", "atime (dirs)"}, "update-initramfs and update-grub work in temporary directories"),
     (r"^var/lib/os-prober(/|$)", _WRITTEN, "update-grub runs os-prober (GRUB_DISABLE_OS_PROBER=false)"),
+    (r"^(var/log/kernelstub\.log|etc/kernelstub/configuration)$", _WRITTEN, "Pop!_OS's kernelstub, run after update-initramfs, logs and rewrites its configuration"),
+    (r"^boot/efi/loader/entries/[^/]+$", _WRITTEN, "kernelstub rewrites systemd-boot's entries"),
+    (r"^usr/lib/modules/[^/]+(/modules\.[^/]+)?$", _WRITTEN, "depmod, run by the initramfs rebuild (Pop!_OS), rewrites modules.*"),
+    (r"^boot(/EFI/Linux(/[^/]+\.efi)?|/limine\.conf(\.old)?)$", _WRITTEN, "Omarchy's mkinitcpio hook rebuilds the unified kernel image and Limine's entries"),
 ]
 
 
 def flatten(v, path, out):
+    if isinstance(v, dict) and isinstance(v.get("links"), list) and isinstance(v.get("content"), dict):
+        # A by-uuid link that isn't the content's own UUID names a member
+        # (bcachefs's device UUID): compared as such, its value ignored.
+        own = v["content"].get("uuid")
+        links = []
+        for x in v["links"]:
+            if isinstance(x, str) and x.startswith("/dev/disk/by-uuid/") and x[len("/dev/disk/by-uuid/"):] != own:
+                out[f"{path}.links.{len(links)}:member"] = x
+                links.append("/dev/disk/by-uuid/<member>")
+            else:
+                links.append(x)
+        v = dict(v, links=links)
+    if isinstance(v, dict) and v.get("type") == "ufs" and "uuid" in v:
+        # UFS's UUID is its fs_id, which newfs picks at random.
+        out[f"{path}.uuid:ufs"] = v["uuid"]
+        v = {k: x for k, x in v.items() if k != "uuid"}
     if isinstance(v, dict):
         for k, x in v.items():
             flatten(x, f"{path}.{k}" if path else k, out)
     elif isinstance(v, list):
         for i, x in enumerate(v):
             flatten(x, f"{path}.{i}" if path else str(i), out)
+    elif re.search(r"\.subvolumes\.\d+\.parent_uuid$", path):
+        # Whether it's a snapshot; the origin's UUID itself is new.
+        out[path] = v is not None
+        out[path + ":set"] = v
     else:
         out[path] = v
 
@@ -93,13 +126,20 @@ def judge_fs(fsmeta_py, src_path, dst_path):
     fsmeta = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fsmeta)
     before = json.load(open(src_path))
-    diff = fsmeta.differences(before, json.load(open(dst_path)))
+    after = json.load(open(dst_path))
+    diff = fsmeta.differences(before, after)
     real, allowed = {}, {}
     for kind, paths in diff.items():
         for p in paths:
             why = next((w for r, kinds, w in BOOT_STAGE if kind in kinds and re.search(r, p)), None)
             if not why and kind == "missing" and before.get(p, {}).get("type") == "socket":
                 why = "a socket is made by whatever listens on it; no archiver restores one"
+            if not why and kind == "inode flags":
+                # btrfs sets FS_NOCOMP_FL itself on a file whose data didn't
+                # compress, as it was written: not the restore's to keep.
+                af, bf = before.get(p, {}).get("flags"), after.get(p, {}).get("flags")
+                if isinstance(af, int) and isinstance(bf, int) and (af ^ bf) & ~0x1400 == 0:
+                    why = "btrfs's own no-compress flag, which its compression heuristic sets as data is written"
             (allowed.setdefault(why, []) if why else real.setdefault(kind, [])).append(p)
     for kind, paths in sorted(real.items()):
         print(f"DIFF {kind}: {len(paths)}: {', '.join(paths[:5])}{' ...' if len(paths) > 5 else ''}")

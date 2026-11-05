@@ -43,7 +43,8 @@ impl TargetDisk {
     /// source's partition table identifier, or only the source's own
     /// filesystem and container UUIDs.
     pub fn is_ours(&self, src: &Disk, layout_uuids: &[String]) -> bool {
-        let table = match (&self.table, src.table.as_ref().and_then(|t| t.id.as_ref())) {
+        // An MBR's signature of 0 is no identity: a FAT boot sector has one.
+        let table = match (&self.table, src.table.as_ref().and_then(|t| t.id.as_ref()).filter(|id| id.as_str() != "0x00000000")) {
             (Some(t), Some(id)) => table_id(t).eq_ignore_ascii_case(id),
             _ => false,
         };
@@ -109,7 +110,7 @@ pub fn parse_zpool_status(text: &str) -> Vec<(String, Vec<String>)> {
     out
 }
 
-fn imported_pools(sys: &Sys) -> Vec<ImportedPool> {
+pub fn imported_pools(sys: &Sys) -> Vec<ImportedPool> {
     let roots: Vec<(String, String)> = sys
         .run("zpool", &["list", "-H", "-o", "name,altroot"])
         .map(|o| o.lines().filter_map(|l| l.split_once('\t')).map(|(a, b)| (a.to_string(), b.trim().to_string())).collect())
@@ -127,6 +128,11 @@ fn imported_pools(sys: &Sys) -> Vec<ImportedPool> {
 
 /// The names of the pools a layout makes.
 pub fn layout_pools(layout: &Layout) -> Vec<String> {
+    let names = layout_pool_names(layout);
+    names.iter().cloned().chain(names.iter().map(|n| temp_pool_name(n))).collect()
+}
+
+fn layout_pool_names(layout: &Layout) -> Vec<String> {
     layout
         .v
         .at(&["storage", "zfs", "tools", "imported_pools"])
@@ -173,6 +179,9 @@ pub fn resolve_name(sys: &Sys, spec: &str) -> String {
 /// pools the layout makes, which don't make their disks busy once imported
 /// under --target.
 pub fn scan(sys: &Sys, opts: &Options, ours: &[String]) -> System {
+    if let Some(fam) = crate::other::Family::current() {
+        return crate::other::load::scan(sys, fam, opts, ours);
+    }
     let all = blockdev::scan(sys);
     let mounts = sys.read("/proc/self/mountinfo").map(|t| mounts::parse_mountinfo(&t)).unwrap_or_default();
     let swaps: Vec<String> =
@@ -248,6 +257,14 @@ pub struct Mapping {
     pub bigger: Vec<String>,
     pub problems: Vec<String>,
     pub notes: Vec<String>,
+    /// (the layout's pool name, its in-core name here) where a pool of the
+    /// system load runs on has the layout's name.
+    pub pool_names: Vec<(String, String)>,
+}
+
+/// The in-core name a layout's pool takes when the name is taken here.
+pub fn temp_pool_name(name: &str) -> String {
+    format!("{name}_bko")
 }
 
 impl Mapping {
@@ -309,6 +326,17 @@ pub fn map(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Mappi
         }
         check_target(d, t, opts, &ours, &mut m);
         m.pairs.push((d.name.clone(), t.b.name.clone()));
+    }
+    // A pool of the layout's name imported here, but not from the targets
+    // (the rescue system's own): the layout's goes by another name here.
+    let targets: Vec<String> = m.pairs.iter().map(|(_, t)| t.clone()).collect();
+    for n in layout.v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(crate::json::Value::as_array).into_iter().flatten().filter_map(|p| p.get("name").and_then(crate::json::Value::as_str)) {
+        if let Some(ip) = system.pools.iter().find(|ip| ip.name == n) {
+            if !ip.devices.iter().all(|d| targets.iter().any(|t| d.starts_with(t.as_str()))) {
+                m.pool_names.push((n.to_string(), temp_pool_name(n)));
+                m.notes.push(format!("ZFS pool {n}: a pool of that name is imported here, so it's {} here until close exports it", temp_pool_name(n)));
+            }
+        }
     }
     for e in &opts.erase {
         let name = resolve_name(sys, e);

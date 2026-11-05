@@ -9,7 +9,8 @@
 # phases reuse what earlier ones left there, so after a bko-holt fix only
 # `rebuild verify` need running again.  Needs /bkoscratch/holttest1d/bin/
 # with bko-holt, rustic-bko, f2fs-tools_*.deb and jfsutils_*.deb (installed
-# in a rescuer that lacks them).
+# in a rescuer that lacks them), and bcachefs with bcachefs-deps-*.deb
+# (make-bcachefs-tools.sh: Debian 13 has no bcachefs-tools).
 #
 #   source   dump the live guest (a throwaway overlay; the guest's own
 #            image is never written), with its boot state as the baseline
@@ -29,6 +30,15 @@
 set -uo pipefail
 
 G=$1 RUN=$2; shift 2
+# Systems other than Linux have their own driver (their rescuer is of their
+# own system, and Linux can't read their filesystems).
+case $G in
+    freebsd*|hardenedbsd*|ghostbsd*|netbsd*|alpinebsd*|openbsd*|dragonfly*|omnios*|haiku*)
+        exec "$(dirname "$(realpath "$0")")/ht1-bsd.sh" "$G" "$RUN" "$@" ;;
+    # Systems that can't run bko-holt: read off their disks from Linux.
+    redox|sculpt*)
+        exec "$(dirname "$(realpath "$0")")/ht1-offline.sh" "$G" "$RUN" "$@" ;;
+esac
 PHASES=("$@"); [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source backup rebuild verify)
 W=/home/m/backotter-work
 T=$W/testvm
@@ -102,7 +112,15 @@ vm_up() { # IMAGE LOG [vm-run options...] [-- QEMU_ARGS...]
     local image=$1 log=$2 opts=() qargs=(); shift 2
     while [[ $# -gt 0 && $1 != -- ]]; do opts+=("$1"); shift; done
     [[ ${1:-} == -- ]] && { shift; qargs=(-- "$@"); }
-    if [[ -n ${CONSOLE_KEY:-} ]]; then
+    if [[ ${CONSOLE_KEY:-} == */luks-passphrase ]]; then
+        # Asked for on the screen (Plymouth, Omarchy): typed on the guest's
+        # keyboard through QEMU's monitor, every 30 s until SSH answers (at
+        # a login prompt it does no harm), as compare.py does.
+        rm -f "$log.monitor"
+        [[ ${#qargs[@]} -gt 0 ]] || qargs=(--)
+        setsid -f "$T/vm-run" --serial-log "$log" "${opts[@]}" "$image" "${qargs[@]}" -monitor "unix:$log.monitor,server,nowait" </dev/null >"$log.vm-run" 2>&1
+        setsid -f python3 "$T/omarchy/type-luks-passphrase.py" "$log.monitor" "$CONSOLE_KEY" $(seq 25 30 295) </dev/null >/dev/null 2>&1
+    elif [[ -n ${CONSOLE_KEY:-} ]]; then
         # The guest asks for its disk passphrase on the serial console:
         # console-boot.py logs the console and types it at each prompt.
         setsid -f python3 "$T/console-boot.py" "$log" "$CONSOLE_KEY" -- \
@@ -136,7 +154,7 @@ exit $f'
 # then one line per failed unit or service that isn't up, sorted.  A
 # restored machine may have no line its source lacked.
 BOOTSTATE='if [ -d /run/systemd/system ]; then
-    systemctl is-system-running; systemctl --failed --no-legend --plain | awk "{print \$1}" | sort
+    timeout 300 systemctl is-system-running --wait; systemctl --failed --no-legend --plain | awk "{print \$1}" | sort
 elif command -v rc-status >/dev/null; then
     echo openrc
     { rc-status -a | awk "/^Runlevel: / {lv=\$2; next} /^Dynamic Runlevel: / {lv=\$3; next} (lv == \"sysinit\" || lv == \"boot\" || lv == \"default\" || lv == \"needed/wanted\") && !/\\[ *started *\\]/ {print \"down \" \$1}"
@@ -188,7 +206,9 @@ phase_backup() {
     python3 "$T/compare/fsmeta.py" record "$SRC_MP" "$R/src-meta.json" > "$R/logs/fsmeta-src.log" 2>&1 || bad "fsmeta record of the source"
     "$T/vm-umount" "$SRC_MP" >> "$R/logs/backup-mount.log" 2>&1
     cp "$BIN/bko-holt" "$BIN/rustic-bko" "$BIN"/*.deb "$S/"
-    [[ -n $gpass ]] && cp "$gpass" "$S/passphrase"
+    [[ ! -f $BIN/bcachefs ]] || cp "$BIN/bcachefs" "$S/"   # make-bcachefs-tools.sh's
+    # As typed: without the file's newline (cryptsetup keeps it in a key).
+    [[ -n $gpass ]] && printf '%s' "$(cat "$gpass")" > "$S/passphrase"
     chmod -R a+rX "$S"
 }
 
@@ -204,6 +224,7 @@ load_step() { local want=$1 name=$2; shift 2
 phase_rebuild() {
     say "== rebuild"
     cp "$BIN/bko-holt" "$BIN"/*.deb "$S/"   # the latest build, when rerun after a fix
+    [[ ! -f $BIN/bcachefs ]] || cp "$BIN/bcachefs" "$S/"
     rm -f "$R/rescuer.qcow2" "${dst[@]}"
     qemu-img create -q -f qcow2 -b "$RESCUER_IMG" -F qcow2 "$R/rescuer.qcow2"
     local disks=() grow=0
@@ -224,7 +245,7 @@ phase_rebuild() {
     vm_up "$R/rescuer.qcow2" "$R/logs/rescuer-serial.log" "${rfw[@]}" --memory 3072 "${disks[@]}" -- \
         -virtfs "local,path=$S,mount_tag=bkoshare,security_model=none,readonly=on"
     vm_wait "$rkey" || { bad "rescuer boots"; vm_down "$rkey"; return; }
-    sshk "$rkey" 'mkdir -p /mnt/share && mount -t 9p -o trans=virtio,version=9p2000.L,ro bkoshare /mnt/share && inst() { apt-get install -y -q -o DPkg::Lock::Timeout=600 "$@" >/dev/null; } && { command -v mkfs.f2fs >/dev/null || inst /mnt/share/f2fs-tools_*.deb; } && { command -v mkfs.jfs >/dev/null || inst /mnt/share/jfsutils_*.deb; }' \
+    sshk "$rkey" 'mkdir -p /mnt/share && mount -t 9p -o trans=virtio,version=9p2000.L,ro bkoshare /mnt/share && inst() { apt-get install -y -q -o DPkg::Lock::Timeout=600 "$@" >/dev/null; } && { command -v mkfs.f2fs >/dev/null || inst /mnt/share/f2fs-tools_*.deb; } && { command -v mkfs.jfs >/dev/null || inst /mnt/share/jfsutils_*.deb; } && { [ ! -f /mnt/share/bcachefs ] || command -v bcachefs >/dev/null || { for d in /mnt/share/bcachefs-deps-*.deb; do [ ! -f "$d" ] || inst "$d"; done; install -m 755 /mnt/share/bcachefs /usr/local/sbin/bcachefs; }; }' \
         > "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup (share, f2fs-tools, jfsutils)"; vm_down "$rkey"; return; }
     sshk "$rkey" "mkfs.ext4 -q -F -L ht1decoy $decoy" >> "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup (the decoy's filesystem)"; vm_down "$rkey"; return; }
     ok "rescuer up, share mounted"

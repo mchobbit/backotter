@@ -59,7 +59,29 @@ impl FileSource {
         Ok(FileSource { file, size, head: OnceCell::new() })
     }
 
+    /// Opens a disk device whose size the caller knows: a BSD's or illumos'
+    /// character device may not seek to its end.
+    pub fn open_sized(path: &Path, size: u64) -> std::io::Result<FileSource> {
+        Ok(FileSource { file: File::open(path)?, size, head: OnceCell::new() })
+    }
+
+    /// Reads whole 4 KiB blocks: a BSD's or illumos' raw disk device takes
+    /// only reads that start and end on a sector boundary.
     fn raw_read(&self, offset: u64, len: usize) -> Vec<u8> {
+        const A: u64 = 4096;
+        let start = offset - offset % A;
+        let end = offset.saturating_add(len as u64).div_ceil(A).saturating_mul(A).min(self.size.max(offset + len as u64));
+        let skip = (offset - start) as usize;
+        let mut b = self.raw_read_exact(start, (end - start) as usize);
+        if skip >= b.len() {
+            return Vec::new();
+        }
+        b.drain(..skip);
+        b.truncate(len);
+        b
+    }
+
+    fn raw_read_exact(&self, offset: u64, len: usize) -> Vec<u8> {
         let mut buf = vec![0u8; len];
         let mut got = 0;
         while got < len {
@@ -85,6 +107,28 @@ impl ByteSource for FileSource {
             return MemSource::slice(head, offset as usize, len);
         }
         self.raw_read(offset, len)
+    }
+}
+
+/// A window onto part of another source: a partition of a disk read
+/// through the whole disk's device (BSDs name no device for an MBR slice's
+/// disklabel partitions on another system's disk, and need none here).
+pub struct OffsetSource<'a> {
+    pub inner: &'a dyn ByteSource,
+    pub start: u64,
+    pub len: u64,
+}
+
+impl ByteSource for OffsetSource<'_> {
+    fn size(&self) -> u64 {
+        self.len
+    }
+    fn read_at(&self, offset: u64, len: usize) -> Vec<u8> {
+        if offset >= self.len {
+            return Vec::new();
+        }
+        let len = (len as u64).min(self.len - offset) as usize;
+        self.inner.read_at(self.start + offset, len)
     }
 }
 
@@ -334,5 +378,56 @@ mod tests {
         assert_eq!(f.read_at(0, 512), b"hello".to_vec());
         assert_eq!(f.read_at(3, 2), b"lo".to_vec());
         assert_eq!(f.read_at(6, 2), Vec::<u8>::new());
+    }
+}
+
+const B64: &[u8; 64] = b"ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/";
+
+/// Standard base64, with padding.
+pub fn base64(b: &[u8]) -> String {
+    let mut out = String::with_capacity(b.len().div_ceil(3) * 4);
+    for c in b.chunks(3) {
+        let n = (u32::from(c[0]) << 16) | (u32::from(*c.get(1).unwrap_or(&0)) << 8) | u32::from(*c.get(2).unwrap_or(&0));
+        for i in 0..4 {
+            if i <= c.len() {
+                out.push(B64[((n >> (18 - 6 * i)) & 63) as usize] as char);
+            } else {
+                out.push('=');
+            }
+        }
+    }
+    out
+}
+
+/// Standard base64 back to bytes; None on anything else.
+pub fn unbase64(s: &str) -> Option<Vec<u8>> {
+    let mut out = Vec::with_capacity(s.len() / 4 * 3);
+    let (mut acc, mut bits) = (0u32, 0u32);
+    for ch in s.bytes().filter(|c| !c.is_ascii_whitespace()) {
+        if ch == b'=' {
+            break;
+        }
+        let v = B64.iter().position(|&x| x == ch)? as u32;
+        acc = (acc << 6) | v;
+        bits += 6;
+        if bits >= 8 {
+            bits -= 8;
+            out.push((acc >> bits) as u8);
+            acc &= (1 << bits) - 1;
+        }
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod base64_tests {
+    #[test]
+    fn round_trip() {
+        for t in [&b""[..], b"f", b"fo", b"foo", b"foob", b"fooba", b"foobar", &[0u8, 255, 1, 254, 7][..]] {
+            assert_eq!(super::unbase64(&super::base64(t)).unwrap(), t);
+        }
+        assert_eq!(super::base64(b"foobar"), "Zm9vYmFy");
+        assert_eq!(super::base64(b"fo"), "Zm8=");
+        assert!(super::unbase64("a!b").is_none());
     }
 }

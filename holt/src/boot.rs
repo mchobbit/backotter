@@ -79,6 +79,46 @@ pub fn rpm_packages(sys: &Sys) -> Vec<(String, String, String)> {
     out
 }
 
+/// Installed packages from xbps's database (Void): a property list whose
+/// top-level dict has a dict per package, with `pkgver` ("NAME-VERSION_REV")
+/// and `architecture`.
+pub fn parse_xbps_pkgdb(text: &str) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let (mut name, mut key) = (String::new(), String::new());
+    let (mut ver, mut arch) = (String::new(), String::new());
+    let mut rest = text;
+    while let Some(i) = rest.find('<') {
+        let Some(j) = rest[i..].find('>') else { break };
+        let tag = &rest[i + 1..i + j];
+        let after = &rest[i + j + 1..];
+        let body = || after.split('<').next().unwrap_or("").replace("&amp;", "&").replace("&lt;", "<").replace("&gt;", ">");
+        match tag {
+            "dict" => depth += 1,
+            "/dict" => {
+                if depth == 2 {
+                    if !ver.is_empty() {
+                        let v = ver.strip_prefix(&format!("{name}-")).unwrap_or(&ver).to_string();
+                        out.push((name.clone(), v, arch.clone()));
+                    }
+                    name.clear();
+                    ver.clear();
+                    arch.clear();
+                }
+                depth = depth.saturating_sub(1);
+            }
+            "key" if depth == 1 => name = body(),
+            "key" => key = body(),
+            "string" if depth == 2 && key == "pkgver" => ver = body(),
+            "string" if depth == 2 && key == "architecture" => arch = body(),
+            _ => {}
+        }
+        rest = after;
+    }
+    out.sort();
+    out
+}
+
 /// The installed packages, from whichever package manager the system has.
 pub fn installed_packages(sys: &Sys) -> Vec<(String, String, String)> {
     if let Some(t) = sys.read("/var/lib/dpkg/status") {
@@ -92,6 +132,11 @@ pub fn installed_packages(sys: &Sys) -> Vec<(String, String, String)> {
     }
     if let Some(t) = sys.read("/lib/apk/db/installed") {
         return parse_apk_installed(&t);
+    }
+    if let Some(f) = sys.list("/var/db/xbps").into_iter().filter(|f| f.starts_with("pkgdb-") && f.ends_with(".plist")).max() {
+        if let Some(t) = sys.read(&format!("/var/db/xbps/{f}")) {
+            return parse_xbps_pkgdb(&t);
+        }
     }
     Vec::new()
 }
@@ -111,6 +156,8 @@ pub const PACKAGES: &[&str] = &[
     "zfs-utils", "selinux-policy-targeted",
     // Alpine's.
     "grub-bios", "grub-efi", "mkinitfs", "linux-virt",
+    // Omarchy's, openSUSE's and Void's.
+    "limine", "limine-mkinitcpio-hook", "limine-snapper-sync", "grub2", "grub2-i386-pc", "grub2-x86_64-efi", "kernel-default", "snapper", "linux-base",
     "multipath-tools", "dmraid", "nvme-cli", "open-iscsi",
 ];
 
@@ -604,6 +651,8 @@ pub fn detect_loader(e: &Evidence) -> Value {
                 name = Some("systemd-boot");
             } else if u.contains("REFIND") {
                 name = Some("refind");
+            } else if u.contains("LIMINE") {
+                name = Some("limine");
             } else if u.ends_with("\\EFI\\BOOT\\BOOTX64.EFI") {
                 why.push("that is the removable-media fallback path".into());
             }
@@ -628,6 +677,9 @@ pub fn detect_loader(e: &Evidence) -> Value {
             } else if lc.iter().any(|f| f.ends_with("/systemd-bootx64.efi")) {
                 name = Some("systemd-boot");
                 why.push("an ESP holds systemd-bootx64.efi".into());
+            } else if lc.iter().any(|f| f.ends_with("/limine.conf") || f.contains("/efi/limine/")) {
+                name = Some("limine");
+                why.push("an ESP holds Limine's limine.conf".into());
             }
         }
     } else {
@@ -654,6 +706,7 @@ pub fn detect_loader(e: &Evidence) -> Value {
         (Some("grub"), false) => ["grub-pc"].into_iter().find(|p| has(p)),
         (Some("systemd-boot"), _) => ["systemd-boot"].into_iter().find(|p| has(p)),
         (Some("refind"), _) => ["refind"].into_iter().find(|p| has(p)),
+        (Some("limine"), _) => ["limine"].into_iter().find(|p| has(p)),
         (Some("syslinux"), _) => ["extlinux", "syslinux"].into_iter().find(|p| has(p)),
         _ => None,
     };
@@ -1041,6 +1094,15 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(i.get("resume").and_then(Value::as_str), Some("UUID=abc"));
         assert_eq!(initramfs_json(&s, &pk(&["dracut", "initramfs-tools"])).get("generator").and_then(Value::as_str), Some("dracut"));
         assert_eq!(initramfs_json(&s, &pk(&["mkinitfs"])).get("generator").and_then(Value::as_str), Some("mkinitfs"));
+    }
+
+    #[test]
+    fn xbps() {
+        let db = "<?xml version=\"1.0\"?>\n<plist version=\"1.0\">\n<dict>\n\t<key>dracut</key>\n\t<dict>\n\t\t<key>architecture</key>\n\t\t<string>x86_64-musl</string>\n\t\t<key>pkgver</key>\n\t\t<string>dracut-105_1</string>\n\t\t<key>run_depends</key>\n\t\t<array>\n\t\t\t<string>bash&gt;=0</string>\n\t\t</array>\n\t\t<key>alternatives</key>\n\t\t<dict>\n\t\t\t<key>x</key>\n\t\t\t<array><string>a:b</string></array>\n\t\t</dict>\n\t</dict>\n\t<key>grub</key>\n\t<dict>\n\t\t<key>pkgver</key>\n\t\t<string>grub-2.12_3</string>\n\t\t<key>architecture</key>\n\t\t<string>x86_64-musl</string>\n\t</dict>\n\t<key>_XBPS_ALTERNATIVES_</key>\n\t<dict>\n\t\t<key>x</key>\n\t\t<array><string>dracut</string></array>\n\t</dict>\n</dict>\n</plist>\n";
+        assert_eq!(
+            parse_xbps_pkgdb(db),
+            vec![("dracut".into(), "105_1".into(), "x86_64-musl".into()), ("grub".into(), "2.12_3".into(), "x86_64-musl".into())]
+        );
     }
 
     #[test]

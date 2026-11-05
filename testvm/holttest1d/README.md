@@ -31,212 +31,78 @@ guests.  A guest passes only when every check passes.  Status is as of
 | 1M | Linux Mint | `mint22` | passes |
 | 1U | Ubuntu | `ubuntu24`, `ubuntu26-uefi`, `ubuntu26-zfsmirror` | passes |
 | 1Z | Zorin OS | `zorin18` | passes |
-| 1F | Fedora, Rocky Linux | `fedora44`, `fedora44-uefi`, `rocky10`, `rocky10-lvm` | the Fedora guests pass; Rocky not run |
+| 1F | Fedora, Rocky Linux | `fedora44`, `fedora44-uefi`, `rocky10`, `rocky10-lvm` | passes |
 | 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | passes |
-| 1C | CachyOS, MX Linux | `cachyos`, `mx25` | not run |
-| 1V | Void Linux (musl) | `void-musl` | not run |
-| 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12 | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12` | not run |
-| 1H | Haiku | `haiku6` | not run |
-| 1I | illumos | `omnios58` | not run |
-| 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6`, `alpinebsd` | not run |
+| 1C | CachyOS, MX Linux | `cachyos`, `mx25` | passes |
+| 1V | Void Linux (musl) | `void-musl` | passes |
+| 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12 | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12` | all pass but `redox` (running) |
+| 1H | Haiku | `haiku6` | supported; not run yet |
+| 1I | illumos | `omnios58` | supported; fails (a ZFS vdev named by its slice) |
+| 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6`, `alpinebsd` | `freebsd14`, `ghostbsd26`, `hardenedbsd15` pass; the rest rerunning after fixes |
 
-What the ones not run need, as far as is known before running them:
+**HoltTest1All** (the user's definition, 2026-11-05): "like HoltTest1D
+except that HoltTest1All targets every single guest OS we have": every guest
+in `vms/` on the test hosts, 39 as of 2026-11-05 (the same set on Chopin and
+Cinqcent), each with `ht1.sh`.  It is the union of the tests above plus the
+guests no other test names yet: `devuan6`, `ubuntu26-zfs` and `freebsd14`.
+Run `r1all` (2026-11-05): 16 pass, the 15 above plus `mx25` (MX 25 reports
+`ID=debian`, `VERSION_ID=13`).  The rest fail where expected: dump's OS gate
+(cachyos, devuan6, void-musl, nixos2605, tumbleweed, rocky10, rocky10-lvm,
+pop24, debian12, ghostbsd26), a Linux binary on a BSD or illumos (freebsd14,
+freebsd15, hardenedbsd15, netbsd11, openbsd8, dragonfly6, alpinebsd,
+omnios58), no SSH (redox, sculpt2610, haiku6, and omarchy, whose LUKS
+passphrase is typed at Plymouth), and `ubuntu26-zfs`, whose /boot is a
+second pool (`bpool`) that `vm-mount` doesn't import, so the backup lacked
+/boot and load's boot stage failed in dracut.
 
-- **Supported systems:** bko-holt's list (`holt/src/osrel.rs`) lacks
-  CachyOS, MX, Void, Pop!_OS, NixOS, Rocky, openSUSE and Debian 12.
-- **Boot tools:** Pop!_OS's kernelstub, NixOS's nixos-rebuild, Void's and
-  openSUSE's own; `load` knows update-initramfs, mkinitcpio, dracut and
-  mkinitfs (or a prebuilt initramfs, as AerynOS's), GRUB and
-  `bootctl install`.
-- **Init systems:** `ht1.sh`'s boot-state check knows systemd, OpenRC, dinit
-  and s6; runit and MX's sysvinit need their own.
-- **Keyboard passphrases:** Omarchy's LUKS prompt is Plymouth's, typed on the
-  keyboard (compare.py's `type-luks-passphrase.py`), not on the console.
-- **Not Linux (1H, 1I, 1BSD, Sculpt, Redox):** bko-holt reads Linux's /sys,
-  /proc and udev and is a Linux binary.  Each needs a `dump` and `load` of
-  its own, a rescuer of its own kind (`stick/make-img-bsd.sh` builds
-  BackOtter's BSD, illumos and Haiku images), and `ht1.sh`'s Linux-only
-  parts (`vm-mount`, `fsmeta.py`) replaced, as `testvm/compare/freebsd/`
-  does for compare.py.
+## Systems other than Linux: ht1-bsd.sh and ht1-offline.sh
 
-## The source guests
+`ht1.sh` hands a guest that isn't Linux to a driver of its own; the steps and
+verdicts are HoltTest1D's.
 
-The two Debian 13 guests there are today both use BIOS + MBR on one disk.
-That leaves GPT, UEFI, md, LUKS, LVM and XFS untested, so HoltTest1D adds a
-third guest:
+**ht1-bsd.sh** (FreeBSD, HardenedBSD, GhostBSD, NetBSD, AlpineBSD, OpenBSD,
+DragonFly, illumos, Haiku) runs bko-holt built for the guest's own system
+(`build-holt.sh PLATFORM`: natively, in a throwaway copy of a guest of that
+system, into `bin/PLATFORM/bko-holt`) and its rustic-bko
+(`~/backotter-work/bko-bin/PLATFORM/`).  The rescuer is a throwaway copy of
+a guest of the same system, whose own disk comes first:
 
-| Guest | Firmware, table | Layout | Exists |
-|---|---|---|---|
-| `debian13` | BIOS, MBR | /boot ext4, swap, / btrfs | yes |
-| `debian13-zfs` | BIOS, MBR | /boot ext4, swap, ZFS `rpool` with the OpenZFS guide's datasets | yes |
-| `debian13-stack` | UEFI (Secure Boot), GPT, two disks | ESP on each disk; md RAID1 /boot; LUKS2 on md RAID1, then LVM with / ext4, /srv XFS and swap | yes (`make-debian-stack.sh`) |
+| Systems | Rescuer | Notes |
+|---|---|---|
+| FreeBSD, HardenedBSD, GhostBSD | `freebsd15-ufs` | UFS: nothing of its own clashes with a ZFS source's `zroot` |
+| NetBSD, AlpineBSD | `netbsd11` | |
+| OpenBSD | `openbsd8`, with a disklabel UID of its own | made once (`rescuer/openbsd8-newduid.qcow2`): two disks with one DUID and OpenBSD mounts neither |
+| DragonFly | `dragonfly6` | its fstab names its own disk (`vbd0s1d@ROOT`) |
+| illumos | `omnios58` | its pool is `rpool` too: `load` makes the target's under another name until close (`zpool create -t`), and the script imports the source's as `ht1src` |
+| Haiku | `haiku6` | logs in as `user` (Haiku's uid 0); its mount_server is stopped, or it mounts every BFS volume it sees |
 
-`debian13-stack` also runs a second time onto disks 1 GiB bigger than its own,
-to check that the GPT backup header moves to the new end of the disk.
+Linux can't read most of these filesystems, so the rescuer does the backup
+too: the source's disk attached, mounted read-only from the layout, backed up
+into the rescuer's own disk (`R/rescuer.qcow2`, kept from backup to verify).
+The file check is mtree(8)'s (a spec of the source, sockets left out, checked
+against the restored tree), or on Haiku and illumos GNU find's listing and
+every file's SHA-256.  The boot state is the enabled services that say they
+aren't running (FreeBSD's `service -e`, OpenBSD's `rcctl ls failed`,
+illumos' `svcs`).
 
-## Where the temporary backup goes
+**ht1-offline.sh** (Redox, Sculpt OS) is for a system that can't run
+bko-holt: Redox's sshd serves no logins, and Sculpt has no shell.  The
+dumps are `bko-holt dump --disk /dev/vdb`, in the Linux rescuer with the
+guest's disk attached; the backup and the file check mount the root
+filesystem on the host, from a raw throwaway copy (RedoxFS through its FUSE
+driver from `~/backotter-work/tools/redox`, so Redox runs on Cinqcent;
+Sculpt's GENODE ext2 read-only); a boot is checked by logging in as root on
+Redox's serial console (`redox/console.py`), and by `sculpt-check.sh` for
+Sculpt.  The rebuild is `ht1.sh`'s, in the Linux rescuer.
 
-On the host's scratch disk, beside everything else the run makes:
+Other tools these runs need:
 
-```
-/bkoscratch/holttest1d/RUN/GUEST/       RUN = UTC start time, e.g. 20261105T1830Z
-    share/                  shared read-only into the rescue VM (9p, tag bkoshare)
-        repo/               the rustic-bko repository: the temporary backup
-        repo-password       random, made for this run
-        layout.json         bko-holt dump's output from the source
-        bko-holt            the build under test
-        rustic-bko          the archiver under test
-        restore.sh          the steps the rescue VM runs
-        keys/               --key-file passphrases (debian13-stack)
-    src.qcow2               throwaway overlay on the guest's own image
-    dst-0.qcow2 ...         the blank target disks
-    efivars.fd              the rescue VM's UEFI variables, kept for the restored boot
-    logs/  dumps/  report.json
-```
-
-This location is chosen because:
-
-- **It's on the right disk.** `/bkoscratch` is the SK900 on both hosts, where
-  heavy writes belong.  It is not Chopin's hot P3 root, and not the
-  `/mnt/bko-ram` tmpfs, since disk comes before RAM as of 2026-11-04.  A
-  16 GiB guest needs roughly 10 GiB of scratch space at peak; there are
-  197 GiB free on Chopin.
-- **Neither guest sees it as a disk.** If the repository were on a virtual
-  disk attached to the source, it would show up in the source's dump and
-  become part of the layout to rebuild.  If it were on the target, `load`
-  would erase it.  In the rescue VM it is a read-only 9p share, so neither
-  the restore nor `load` can damage it.
-- **Cleanup is one directory.** On a pass, the run deletes `RUN/GUEST/`
-  except `logs/`, `dumps/` and `report.json`.  On a failure, it keeps all of
-  it.
-
-## One run, per guest
-
-**0. Before starting**
-- The host is healthy: temperatures, free RAM, and nothing of ours left over.
-- Scratch space and RAM are reserved through `cmp-run.sh --reserve`.
-- bko-holt is built with `--release` on the host, using Debian 13's cargo.
-- rustic-bko is the newest build in `~/backotter-work/rustic/dist`.
-- The rescue image is the newest `backotter-live-linux-*.img` built with
-  `make-img.sh --test`.
-
-**1. Source**
-- `src.qcow2`, a throwaway overlay, is created on the guest's image.  The
-  guest's own image is never written.
-- `torture.sh` puts its hard-to-preserve files into the overlay, as
-  `compare.py` does.
-- The source boots and `boot-state.sh` records its baseline.
-- `bko-holt dump` runs inside the guest over SSH and writes
-  `dumps/src.json`, which is also `share/layout.json`.  It runs on the live
-  system because it needs the live mounts, efivars and debconf.
-- The source shuts down cleanly.
-
-**2. Backup**
-- The host mounts `src` read-only, as `compare.py` does.
-- `rustic-bko backup --set-atime yes` backs up `/` and every filesystem
-  mounted below it into `share/repo`.
-- The backup is offline, so the tree can't change while it's being read, and
-  the layout dump has already captured what only the live system knows.
-
-**3. Rebuild, from the rescue image**
-- A VM boots the rescue `.img`. It has the same firmware as the source, blank
-  target disks (same count, same logical sector size, each the same size or
-  bigger), one small decoy disk that already holds a filesystem, and the
-  share.
-- The harness drives it on the serial console, as `boot-test.py` does, and
-  runs `share/restore.sh`.
-- **Safety checks first; each must refuse, and leave the disks untouched** (first and last MiB unchanged):
-  - `load` without `--map`: exit 4, listing source and target disks;
-  - `--through partition` without `--commit`: plan only, nothing written;
-  - `--map` onto the decoy without `--erase`: refused;
-  - `--map` onto the disk the rescue image booted from: refused even with
-    `--erase`.
-- **The rebuild**, one stage at a time, so a failure names its stage:
-  - `load --map SRC=DST... --erase DST... --commit --only STAGE` for
-    `partition`, `assemble`, `format`, `mount`, `restore`, `boot` and
-    `close`, in that order;
-  - `restore` gets `--repo share/repo --password-file share/repo-password
-    --archiver share/rustic-bko`, and runs rustic-bko itself;
-  - `close` exports the pools and closes the volumes;
-  - after each stage, `status` must report that stage as done and name the
-    next one.
-- Once per host, `debian13` also runs the whole rebuild as one command,
-  `--through close --commit` with the same flags, as an administrator would.
-- Any stage's exit code other than 0 stops the run there.  The stage's name
-  goes in the report.
-- The VM powers off.  `efivars.fd` keeps the boot entry that the `boot`
-  stage made.
-
-**4. The restored machine boots by itself**
-- It boots from the target disks alone, without the rescue image, with the
-  source's firmware and `efivars.fd`.
-- It is reached over SSH with the guest's own key.  Its host keys were
-  restored too, so the known_hosts entry must match.
-- `boot-state.sh` runs.  A service that failed here but not in the source's
-  baseline is a failure.
-- Health checks, each of which must pass:
-  - `findmnt --verify`;
-  - every fstab mount is mounted;
-  - swap is on;
-  - `zpool status -x` is healthy and `rpool` was imported at boot without
-    help;
-  - `mdadm --detail` shows clean arrays;
-  - `cryptsetup status` shows the volume open;
-  - `/var/log/bko-holt/` holds `load`'s logs.
-- `bko-holt dump` writes `dumps/dst.json`.
-- The machine shuts down cleanly.
-
-**5. Judge**
-- **The two dumps agree.** `judge.py` compares `src.json` and `dst.json`
-  field by field: every partition table and partition identifier, type,
-  start, size and attribute; every md, LUKS, LVM and ZFS identifier and
-  setting; every filesystem's UUID, label, features and geometry; fstab,
-  crypttab, the boot loader and its configuration.
-  - It ignores only a written list: things that change on every boot or are
-    QEMU's (timestamps, usage, serials and by-id links, the running kernel,
-    BootCurrent, EFI entry numbers), and what the design's Identity section
-    says can't be kept (ZFS vdev GUIDs, new LUKS key slots).
-  - Every ignored field is named in the report, so the list can't grow
-    silently.
-- **The files agree.** `fsmeta.py` compares every file's metadata between
-  `src` and the restored disks, both mounted read-only.
-- **Boot state agrees,** as in step 4.
-
-## Verdicts and the report
-
-Each guest's verdict is one of:
-
-- **pass**: every check above held;
-- **fail**: names the stage or check, and classes the cause like SticTest1:
-  - a bko-holt bug goes in the queue;
-  - a harness bug, the harness is fixed;
-  - a Debian, QEMU or OVMF limit is recorded;
-- **blocked**: something in "Before it can run" is missing.
-
-`report.json`, with a Markdown table built from it, has one row per guest and
-variant, with:
-
-- the verdict;
-- the layout in one line;
-- each stage's time;
-- the dump differences: counted, with each one listed;
-- the fsmeta differences;
-- services that failed only after the restore;
-- the scratch space used at peak.
-
-## Hosts
-
-The guests are split as SticTest1 splits them:
-
-- **Chopin:** `debian13-zfs`. It keeps the bcachefs-free ZFS work it already
-  does, and boost stays off.
-- **Cinqcent:** `debian13`, then both `debian13-stack` variants.
-
-Each run has its own names, prefixed `ht1d`: mount points, the temporary pool
-name, md and LUKS names.  SSH ports are 2260–2269 on Chopin and 2960–2969 on
-Cinqcent, clear of `compare.py`'s 2230+N.  Never touch another session's VMs,
-ports or pools.  Scripts are synced with `testvm/sync-hosts.sh` from main
-only, and nothing syncs while a run is going.
+- `make-bcachefs-tools.sh` builds bcachefs-tools 1.13 (NixOS's root) for
+  the Debian rescuer, which lacks them: the 6.12 kernel has bcachefs, Debian
+  13 dropped the tools, and newer tools format a version 6.12 can't mount.
+- A guest whose LUKS passphrase is typed at Plymouth (Omarchy's
+  `luks-passphrase`) gets it typed on its keyboard through QEMU's monitor
+  (`omarchy/type-luks-passphrase.py`), as compare.py does.
 
 ## Running it today: ht1.sh
 

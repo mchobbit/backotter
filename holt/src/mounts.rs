@@ -23,7 +23,7 @@ pub fn unescape(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, PartialEq, Default)]
 pub struct Mount {
     pub id: u32,
     pub parent: u32,

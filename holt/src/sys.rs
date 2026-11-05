@@ -3,7 +3,7 @@
 //! for real and a fake tree in tests; every command it runs goes through a
 //! `Runner`, so tests can answer for it.
 
-use crate::bytes::FileSource;
+use crate::bytes::{ByteSource, FileSource};
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::io::Read;
@@ -20,6 +20,13 @@ pub trait Runner {
     /// The dump never uses this: it runs the system's own tools only.
     fn run_file(&self, path: &str, args: &[&str]) -> Option<String> {
         self.run(path, args)
+    }
+
+    /// The command's standard output whatever its exit status, for a tool
+    /// that prints what's wanted and fails anyway (NetBSD's disklabel on a
+    /// disk without a label: it prints the made-up one).
+    fn run_any(&self, prog: &str, args: &[&str]) -> Option<String> {
+        self.run(prog, args)
     }
 }
 
@@ -47,10 +54,27 @@ impl Runner for RealRunner {
         }
         self.exec(p, args)
     }
+
+    fn run_any(&self, prog: &str, args: &[&str]) -> Option<String> {
+        if prog.contains('/') {
+            return None;
+        }
+        let exe = SYSTEM_PATH.split(':').map(|d| Path::new(d).join(prog)).find(|p| p.is_file())?;
+        self.exec_status(&exe, args).map(|(out, _)| out)
+    }
 }
 
 impl RealRunner {
     fn exec(&self, exe: &Path, args: &[&str]) -> Option<String> {
+        match self.exec_status(exe, args)? {
+            (out, true) => Some(out),
+            _ => None,
+        }
+    }
+
+    /// Standard output, and whether it exited 0 (None: it couldn't run, or
+    /// ran out of time).
+    fn exec_status(&self, exe: &Path, args: &[&str]) -> Option<(String, bool)> {
         let mut child = Command::new(exe)
             .args(args)
             .env("PATH", SYSTEM_PATH)
@@ -81,8 +105,8 @@ impl RealRunner {
             }
         };
         let out = reader.join().ok()?;
-        status.filter(|s| s.success())?;
-        Some(String::from_utf8_lossy(&out).into_owned())
+        let ok = status?.success();
+        Some((String::from_utf8_lossy(&out).into_owned(), ok))
     }
 }
 
@@ -191,6 +215,9 @@ impl Sys {
             return None;
         }
         match FileSource::open(&self.p(abs)) {
+            // A BSD's raw disk device seeks to 0 for its end: its size
+            // comes from the system's own tools.
+            Ok(f) if f.size() == 0 => crate::other::dev_size(self, abs).and_then(|n| FileSource::open_sized(&self.p(abs), n).ok()).or(Some(f)),
             Ok(f) => Some(f),
             Err(e) => {
                 self.warn(format!("{abs}: {e}"));
@@ -201,6 +228,12 @@ impl Sys {
 
     pub fn run(&self, prog: &str, args: &[&str]) -> Option<String> {
         self.runner.run(prog, args)
+    }
+
+    /// Runs a system tool and keeps its output even when it fails; see
+    /// `Runner::run_any`.
+    pub fn run_any(&self, prog: &str, args: &[&str]) -> Option<String> {
+        self.runner.run_any(prog, args)
     }
 
     /// Runs the program at an absolute path; see `Runner::run_file`.

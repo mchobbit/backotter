@@ -1,0 +1,172 @@
+//! /etc/os-release, and the check that this is Debian 13.
+
+use crate::json::{Obj, Value};
+use crate::sys::Sys;
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct OsRelease(pub Vec<(String, String)>);
+
+impl OsRelease {
+    pub fn get(&self, key: &str) -> Option<&str> {
+        self.0.iter().rev().find(|(k, _)| k == key).map(|(_, v)| v.as_str())
+    }
+}
+
+/// os-release(5): KEY=VALUE lines, values optionally quoted the shell way.
+pub fn parse(text: &str) -> OsRelease {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        let line = line.trim();
+        if line.is_empty() || line.starts_with('#') {
+            continue;
+        }
+        let Some((k, v)) = line.split_once('=') else { continue };
+        let k = k.trim();
+        if k.is_empty() || !k.bytes().all(|c| c.is_ascii_alphanumeric() || c == b'_') {
+            continue;
+        }
+        out.push((k.to_string(), unquote(v.trim())));
+    }
+    OsRelease(out)
+}
+
+/// A shell word: "double quoted" (with \\ \" \$ \` escapes), 'single
+/// quoted', or bare.
+pub fn unquote(v: &str) -> String {
+    let b = v.as_bytes();
+    if b.len() >= 2 && b[0] == b'"' && b[b.len() - 1] == b'"' {
+        let inner = &v[1..v.len() - 1];
+        let mut out = String::new();
+        let mut it = inner.chars().peekable();
+        while let Some(c) = it.next() {
+            if c == '\\' {
+                match it.peek() {
+                    Some(&n @ ('\\' | '"' | '$' | '`')) => {
+                        out.push(n);
+                        it.next();
+                    }
+                    _ => out.push('\\'),
+                }
+            } else {
+                out.push(c);
+            }
+        }
+        out
+    } else if b.len() >= 2 && b[0] == b'\'' && b[b.len() - 1] == b'\'' {
+        v[1..v.len() - 1].to_string()
+    } else {
+        v.to_string()
+    }
+}
+
+/// /etc/os-release, else /usr/lib/os-release.
+pub fn read(sys: &Sys) -> Option<OsRelease> {
+    sys.read("/etc/os-release").or_else(|| sys.read("/usr/lib/os-release")).map(|t| parse(&t))
+}
+
+/// Ok on Debian 13, else why not.
+pub fn check_debian13(os: Option<&OsRelease>) -> Result<(), String> {
+    let Some(os) = os else {
+        return Err("no /etc/os-release or /usr/lib/os-release: can't tell which system this is".into());
+    };
+    let id = os.get("ID").unwrap_or("");
+    let ver = os.get("VERSION_ID").unwrap_or("");
+    if id == "debian" && ver == "13" {
+        return Ok(());
+    }
+    let name = os.get("PRETTY_NAME").map(str::to_string).unwrap_or_else(|| format!("{id} {ver}"));
+    Err(format!("this is {}, and bko-laydump supports only Debian 13 (ID=debian, VERSION_ID=13) for now", name.trim()))
+}
+
+pub fn to_json(sys: &Sys, os: Option<&OsRelease>) -> Value {
+    let g = |k: &str| os.and_then(|o| o.get(k)).map(str::to_string);
+    Obj::new()
+        .set("id", g("ID"))
+        .set("version_id", g("VERSION_ID"))
+        .set("version_codename", g("VERSION_CODENAME"))
+        .set("pretty_name", g("PRETTY_NAME"))
+        .set("debian_version", sys.read_trim("/etc/debian_version"))
+        .set("kernel_release", sys.read_trim("/proc/sys/kernel/osrelease"))
+        .set("kernel_version", sys.read_trim("/proc/sys/kernel/version"))
+        .set("architecture", std::env::consts::ARCH)
+        .build()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::sys::FakeRunner;
+    use crate::testutil::Tree;
+
+    const TRIXIE: &str = "PRETTY_NAME=\"Debian GNU/Linux 13 (trixie)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"13\"\nVERSION=\"13 (trixie)\"\nVERSION_CODENAME=trixie\nDEBIAN_VERSION_FULL=13.1\nID=debian\nHOME_URL=\"https://www.debian.org/\"\nSUPPORT_URL=\"https://www.debian.org/support\"\nBUG_REPORT_URL=\"https://bugs.debian.org/\"\n";
+
+    #[test]
+    fn parses_trixie() {
+        let o = parse(TRIXIE);
+        assert_eq!(o.get("ID"), Some("debian"));
+        assert_eq!(o.get("VERSION_ID"), Some("13"));
+        assert_eq!(o.get("VERSION_CODENAME"), Some("trixie"));
+        assert_eq!(o.get("PRETTY_NAME"), Some("Debian GNU/Linux 13 (trixie)"));
+        assert_eq!(o.get("NOPE"), None);
+        assert!(check_debian13(Some(&o)).is_ok());
+    }
+
+    #[test]
+    fn quoting_and_junk() {
+        let o = parse("# comment\n\nA='single \"q\"'\nB=\"a\\\"b\\\\c\\$d\\`e\\x\"\n  C = bare \nnot a line\n=nokey\nBAD-KEY=1\nA=override\n");
+        assert_eq!(o.get("A"), Some("override"));
+        assert_eq!(o.get("B"), Some("a\"b\\c$d`e\\x"));
+        assert_eq!(o.get("C"), Some("bare"));
+        assert_eq!(o.get("BAD-KEY"), None);
+        assert_eq!(unquote("\""), "\"");
+        assert_eq!(unquote("''"), "");
+        assert_eq!(unquote("\"\""), "");
+    }
+
+    #[test]
+    fn refuses_other_systems() {
+        let bookworm = parse("ID=debian\nVERSION_ID=\"12\"\nPRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\n");
+        let e = check_debian13(Some(&bookworm)).unwrap_err();
+        assert!(e.contains("Debian GNU/Linux 12 (bookworm)"), "{e}");
+        let ubuntu = parse("ID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"26.04\"\n");
+        assert!(check_debian13(Some(&ubuntu)).unwrap_err().contains("ubuntu 26.04"));
+        // Debian testing/sid has no VERSION_ID.
+        let sid = parse("ID=debian\nPRETTY_NAME=\"Debian GNU/Linux forky/sid\"\n");
+        assert!(check_debian13(Some(&sid)).is_err());
+        // A derivative that claims VERSION_ID 13 isn't Debian.
+        let devuan = parse("ID=devuan\nID_LIKE=debian\nVERSION_ID=13\n");
+        assert!(check_debian13(Some(&devuan)).is_err());
+        assert!(check_debian13(None).unwrap_err().contains("os-release"));
+    }
+
+    #[test]
+    fn reads_usr_lib_fallback() {
+        let t = Tree::new("osrel");
+        t.file("/usr/lib/os-release", TRIXIE);
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        assert_eq!(read(&s).unwrap().get("ID"), Some("debian"));
+        t.file("/etc/os-release", "ID=other\n");
+        assert_eq!(read(&s).unwrap().get("ID"), Some("other"));
+        let empty = Tree::new("osrel-none");
+        let s = Sys::new(empty.root(), Box::new(FakeRunner::default()), false);
+        assert!(read(&s).is_none());
+    }
+
+    #[test]
+    fn json_fields() {
+        let t = Tree::new("osrel-json");
+        t.debian13().file("/proc/sys/kernel/osrelease", "6.12.48+deb13-amd64\n").file(
+            "/proc/sys/kernel/version",
+            "#1 SMP PREEMPT_DYNAMIC Debian 6.12.48-1 (2025-09-20)\n",
+        );
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        let o = read(&s);
+        let j = to_json(&s, o.as_ref());
+        assert_eq!(j.get("id").and_then(Value::as_str), Some("debian"));
+        assert_eq!(j.get("version_codename").and_then(Value::as_str), Some("trixie"));
+        assert_eq!(j.get("debian_version").and_then(Value::as_str), Some("13.1"));
+        assert_eq!(j.get("kernel_release").and_then(Value::as_str), Some("6.12.48+deb13-amd64"));
+        assert!(j.get("kernel_version").and_then(Value::as_str).unwrap().contains("Debian"));
+        assert_eq!(j.get("architecture").and_then(Value::as_str), Some(std::env::consts::ARCH));
+    }
+}

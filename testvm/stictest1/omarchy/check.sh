@@ -515,6 +515,14 @@ for my $p (sort keys %{{%a, %b}}) {
   if (!$b{$p}) { print "$p: missing from the restore\n"; $bad = 1; next }
   for my $i (0 .. $#f - 1) {
     next if $a{$p}[$i] eq $b{$p}[$i];
+    # Under plain compress= (not compress-force), btrfs marks an inode NOCOMPRESS
+    # (m) itself when a range written doesn't compress well, now and then on a
+    # restore.  A gained m on a source with neither m nor btrfs.compression is
+    # that, not a tool's doing: noted, not counted.
+    if ($f[$i] eq 'flags' && $a{$p}[$i] !~ /m/ && $a{$p}[12] !~ /btrfs\.compression/) {
+      (my $y = $b{$p}[$i]) =~ s/m/-/;
+      if ($y eq $a{$p}[$i]) { print STDERR "$p: btrfs set its own NOCOMPRESS (m) on the restore\n"; next }
+    }
     print "$p: $f[$i] " . substr($a{$p}[$i], 0, 160) . " != " . substr($b{$p}[$i], 0, 160) . "\n"; $bad = 1;
   }
 }

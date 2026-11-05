@@ -1,0 +1,486 @@
+# bko-layload: rebuilding a machine's disks from bko-laydump's JSON
+
+Status: draft for discussion.  Nothing here is built yet.
+
+## Goal
+
+`bko-laydump` (in `laydump/`) records a Debian 13 machine's disk layout and
+boot setup as JSON.  `bko-layload` takes that JSON and rebuilds the layout on
+blank disks: partition tables, md arrays, LUKS containers, LVM, ZFS pools,
+filesystems, mounts, and, after the files are back, the boot loader.  The
+restored machine should boot as before, with the same identifiers wherever
+the tools allow it, so its fstab, crypttab, GRUB configuration, initramfs and
+even its old UEFI boot entries keep working untouched.
+
+It works in stages and does nothing it isn't told to.  An experienced
+administrator can prepare the disks, stop, restore the files with the
+archiver by hand, and come back for the boot loader.
+
+Non-goals for version 1:
+
+- Restoring files.  The archiver does that, run by the administrator or by
+  BackOtter's restore, between layload's `mount` and `boot` stages.
+- Disks of another shape: fewer or more disks, or smaller ones.  Bigger disks
+  are accepted, with the extra space left unused (see "Mapping disks").
+  Version 2 takes on resizing, carefully.
+- Changing the layout: another filesystem, another RAID level, dropping
+  encryption.
+- Key material.  LUKS and ZFS keys are never in the JSON, and TPM2/FIDO2
+  enrollments can't be restored at all (see "Encryption").
+- Any source other than Debian 13, which is all `bko-laydump` describes today.
+
+## Where it runs
+
+- Mainly on the rescue stick: the Linux image, one kernel and one OpenZFS
+  (see the one-kernel decision), so its tools are newer than the machine's.
+- On QEMU guests, for test backups and restores (`testvm/compare`).
+- Never on the machine being backed up.
+
+It doesn't check the os-release of the system it runs on.  It checks the JSON
+instead: `"format": "bko-laydump"`, a schema it knows, and a source it
+supports (`os.id` `debian`, `os.version_id` `13`).
+
+### Newer tools than the machine
+
+The stick's mkfs, mdadm, cryptsetup, LVM and OpenZFS are newer than the
+machine's.  Their defaults turn on features an older target kernel may not
+know, and the restored machine then can't mount its own root.  So layload
+never relies on a default.  It passes every feature explicitly, turning off
+those the source didn't have, as "A stick newer than the machine" in
+`stick-config.md` already requires for ZFS pools.  The details per layer are
+under "Feature sets" below.
+
+It also checks every one of its writes by reading the result back with
+bko-laydump's own parsers and comparing it with the JSON.  If the stick's
+mkfs turned on something the source didn't have (a default added since this
+was written), that check catches it and the stage stops.
+
+## Stages
+
+| Stage | Does | Writes to |
+|---|---|---|
+| `plan` | Reads the JSON, maps source disks to target disks, runs every check, prints every command the later stages would run | nothing |
+| `status` | Reports what exists on the target disks, what's mounted where, and which stage comes next | nothing |
+| `partition` | Wipes old signatures; writes each disk's partition table | partition tables |
+| `assemble` | Creates md arrays, LUKS containers, LVM PVs/VGs/LVs and ZFS pools, and opens them | the new block layers |
+| `format` | Makes filesystems and swap; creates btrfs subvolumes and ZFS datasets | filesystems |
+| `mount` | Mounts the target tree under the target directory | mounts only |
+| *(restore)* | *The archiver restores the files.  Not layload.* | |
+| `boot` | Fixes up the restored system, rebuilds the initramfs, installs the boot loader, adds missing UEFI boot entries | the restored system, NVRAM |
+| `close` | Unmounts, exports pools, deactivates VGs, closes LUKS, stops md arrays | nothing on disk |
+
+`plan` and `status` never write.  Every other stage is a dry run that prints
+its commands unless `--commit` is given.
+
+### Stages check the disks, not just a state file
+
+layload keeps a state file of finished stages (under `/run/bko-layload/`,
+named after the layout's `generated` time and host), but it doesn't trust
+it.  Each stage first reads the target disks with bko-laydump's scanner and
+decides from what is actually there:
+
+- Its work is already done and matches the JSON: it says so and moves on, so
+  re-running after an interruption is safe.
+- Its prerequisites aren't there (`format` with no partitions, `boot` with an
+  empty root): it refuses.
+- Something else is there (a disk that isn't blank, a filesystem with another
+  UUID): it refuses unless that disk was named with `--erase`.
+
+So a lost state file (a reboot in the middle) costs nothing, and the state
+file mainly helps `status` explain what happened.
+
+### `plan`
+
+Checks, in this order, and reports all failures at once:
+
+1. The JSON's format, schema and source system are ones layload supports.
+2. Every source disk maps to exactly one target disk (see "Mapping disks"),
+   each at least as big, with the same logical sector size.
+3. No target disk is in use, and each is named with `--erase` unless it's
+   blank (see "Safety").
+4. The stick's tools can recreate every feature the source had: ext4, XFS
+   and btrfs feature names, LUKS ciphers and KDFs, md metadata versions,
+   ZFS pool features (the check `stick-config.md`'s "Is this stick good
+   enough?" makes at backup time, made again here).
+5. Everything in the layout is something version 1 can build (see "Out of
+   scope").
+6. Each mounted filesystem's recorded used space fits in its new size.  With
+   same-size or bigger disks it always does; the check is there for version 2.
+
+Then it prints the commands of every later stage, with the target devices
+filled in.
+
+### `partition`
+
+Per disk: `wipefs -a` on the disk and on every old partition, then the
+table:
+
+- GPT: written with `sfdisk` from a script built from the JSON, with the
+  disk GUID (`label-id`), each partition's start, size, type GUID, partition
+  GUID, name and attributes, and the same number of entries.  On a bigger
+  disk, the backup header goes to the disk's end (`sfdisk` does that for a
+  new table; laydump's `backup_at_end` says whether the source had it there).
+- MBR: the disk signature, primaries, the extended partition and its logical
+  partitions at their recorded sectors, types and boot flags.
+- Hybrid MBRs: recreated from `protective_mbr.entries`.
+
+Partitions keep their exact sectors, so alignment and every offset recorded
+inside them stay valid.  The BIOS boot partition and the gap after the MBR
+are left empty: `boot` writes GRUB there.
+
+Then `partprobe`/`udevadm settle`, and a check that the kernel shows every
+partition at its recorded start and size (laydump's `matches_kernel`).
+
+### `assemble`
+
+Bottom-up, in the order the topology needs: md first, then LUKS, then LVM.
+ZFS pools come in this stage too, since a pool is the layer its datasets
+live on.
+
+- md: `mdadm --create` with the level, member count, metadata version,
+  layout, chunk size, data offset, bitmap, name, homehost and UUID, and the
+  members in their recorded roles.  It runs with `--assume-clean` (the members
+  are blank, so there's nothing to resync); a resync would only slow the
+  restore down.
+- LUKS: see "Encryption".  Opened under the name crypttab gives it, so the
+  restored system's crypttab matches what's open.
+- LVM: from metadata, not from `lvcreate`.  layload writes a VG metadata file
+  from the JSON (`storage.lvm.volume_groups`, which carries every segment as
+  LVM recorded it), then runs `pvcreate --uuid ... --restorefile` per PV and
+  `vgcfgrestore`.  That keeps the VG, PV and LV UUIDs, the extent size and
+  every LV's exact extents.  Then `vgchange -ay`.
+- ZFS: `zpool create -d` with exactly the recorded features, the
+  `compatibility` property, `ashift`, the vdev tree (mirrors, raidz, log,
+  cache and spare vdevs) and the other locally set pool properties.  It's
+  created with `-R` (an altroot under the target directory) and
+  `cachefile=none`.  Then `zpool reguid -g` puts back the pool's GUID.
+
+### `format`
+
+- Filesystems and swap: see "Feature sets" and "Identity".  Each one is read
+  back with bko-laydump's parser right away, and its UUID, label, version and
+  feature list compared with the JSON.
+- btrfs: subvolumes created with their recorded paths and IDs where btrfs
+  allows it, read-only flags and properties set, and the default subvolume.
+- ZFS: datasets and volumes created top-down with every locally set
+  property, encryption roots with their key format and location, and
+  `canmount`/`mountpoint` exactly as recorded.
+
+### `mount`
+
+Mounts the target root at the target directory (`--target`, default
+`/mnt/bko-target`) the way the restored system will mount itself: from the
+JSON's fstab, with btrfs subvolumes and ZFS datasets, ordered by mount point.
+Swap isn't activated.  The ESP and `/boot` are mounted, because the archiver
+restores their files like any others.
+
+It ends by printing the mount tree and the archiver's target directory.  The
+restore's job is to fill exactly that tree.
+
+### `boot`
+
+Runs only after a restore, and checks that one happened first: the target
+root's `etc/os-release` matches the JSON's `os`, and `/boot` holds at least
+the kernel the source was running (`boot.kernels.installed[].running`).
+Then, chrooted into the target (with `/dev`, `/proc`, `/sys`, `/run` and
+efivarfs bound in):
+
+1. Identifier fix-ups (only with `--new-uuids`, or where a layer couldn't
+   keep its old identifier; see "Identity"): rewrite fstab, crypttab and
+   `mdadm.conf`, and regenerate `/etc/zfs/zpool.cache`.
+2. `update-initramfs -u -k all` when anything the initramfs embeds changed
+   (crypttab, mdadm.conf, the zpool cache, LVM or md identifiers), or when
+   asked to.
+3. The boot loader, as `boot.loader` recorded it:
+   - GRUB on BIOS: `grub-install` on the target disks that map to debconf's
+     `grub-pc/install_devices`, then `update-grub`.
+   - GRUB on UEFI: `grub-install --target=x86_64-efi` into the mounted ESP,
+     with the bootloader ID taken from the directory of the entry the firmware
+     booted (`\EFI\DEBIAN\SHIMX64.EFI` gives `debian`), with shim when
+     `boot.loader.via_shim` says the source booted through shim, then
+     `update-grub`.
+   - systemd-boot: `bootctl install`.
+4. UEFI boot entries (see "UEFI boot entries").
+
+### UEFI boot entries
+
+On the same machine with the original partition GUIDs, the firmware's old
+entries (`boot.efi.entries`) already point at the right partition and file,
+and keep working.  So `boot` changes NVRAM as little as it can:
+
+1. For each recorded entry whose partition GUID belongs to a restored
+   partition: if an entry with the same description, partition GUID and file
+   still exists, leave it; if not, create it (`efibootmgr --create` with the
+   recorded description, disk, partition and file).
+2. Restore the recorded `BootOrder` for these entries, keeping every other
+   entry where the firmware has it.
+3. Never delete or change entries that don't point at a restored partition:
+   another operating system's (the stale "Windows Boot Manager" on Chopin,
+   say), the firmware's own (USB, network), or the rescue stick's.
+
+`grub-install` and `bootctl install` would create entries of their own;
+`boot` runs them with `--no-nvram` / `--no-variables` and does the above
+instead, so the result doesn't depend on their habits.  With `--no-nvram`,
+step 1 to 3 are skipped (and `--removable` is the way such a machine finds
+its loader).
+
+### `close`
+
+Unmounts the target tree, exports the pools (setting `cachefile` back to its
+recorded value first), deactivates the VGs, closes the LUKS containers, and
+stops the md arrays.  The disks are then ready for a reboot into the
+restored system.
+
+## Command line
+
+```
+bko-layload LAYOUT.json [--through STAGE | --only STAGE] [--commit]
+            [--map SRC=DST]... [--erase DEV]...
+            [--target DIR] [--new-uuids] [--key-file NAME=FILE]...
+            [--no-nvram] [--removable]
+```
+
+- With neither `--through` nor `--only`, it runs `plan`.
+- `--through STAGE` runs every stage up to and including STAGE, skipping
+  those already done.  `--only STAGE` runs just that stage.
+- `--commit` lets the writing stages write.  Without it they print their
+  commands.
+- `--map SRC=DST` maps a source disk (its kernel name in the JSON, e.g. `vda`)
+  to a target disk (`/dev/nvme0n1`, or a `/dev/disk/by-id` link).
+- `--erase DEV` allows a target disk that isn't blank to be wiped.  It names
+  the whole disk, once per disk.  There's no "erase everything" flag.
+- `--target DIR`: where `mount` builds the tree, default `/mnt/bko-target`.
+- `--new-uuids`: give every layer new identifiers, and have `boot` rewrite
+  everything that names them.  Off by default.
+- `--key-file NAME=FILE`: a LUKS container's (by its crypttab name) or a ZFS
+  encryption root's (by dataset) key or passphrase from a file, instead of a
+  prompt.
+- `--no-nvram`: `boot` writes no UEFI variables (QEMU guests without
+  persistent variables).  `--removable` also installs to the removable-media
+  path `EFI/BOOT/BOOTX64.EFI`.
+
+Exit status: 0 done, 1 a stage failed, 2 bad arguments, 3 the layout isn't
+one layload supports, 4 `plan` found problems.
+
+## Safety
+
+The tool erases disks.  So:
+
+1. Dry run by default.  Nothing is written without `--commit`.
+2. A disk that isn't blank is only wiped when named with `--erase` (blank
+   means no partition table, no signature in its first and last MiB, and no
+   holders).  Naming it on the command line is the confirmation; layload
+   doesn't ask again.
+3. These are refused even with `--erase`:
+   - the disk the stick booted from (found the way `stick-config.md`'s
+     "Finding the config at boot" finds it);
+   - any disk with a mounted partition, active swap, holders in sysfs (md,
+     LVM, LUKS, device-mapper), or a vdev of an imported pool, unless
+     layload made those itself in an earlier stage of this layout;
+   - any disk holding the running system's `/`.
+4. A target disk smaller than its source, or with another logical sector
+   size, is refused in version 1.
+5. `boot` refuses to run on a target root that doesn't hold the restored
+   system (see `boot`).
+6. Each stage reads the disks back before doing anything (see "Stages check
+   the disks, not just a state file").
+
+In QEMU guests the same rules hold.  Test harnesses pass `--map` and
+`--erase` for the guest's blank disks like anyone else.
+
+## Mapping disks
+
+Version 1 needs the same number of disks as the source, each at least as
+big, with the same logical sector size.
+
+A source disk maps to a target disk:
+
+1. by `--map`, when given; otherwise
+2. by identity: the same WWID, or the same serial and model.  That's a
+   restore onto the same machine, or onto its disks moved to another.
+
+Anything left unmapped is an error that lists the source disks (name, size,
+model, serial) and the candidate target disks.  layload never guesses by size
+or order: two same-size disks swapped would put the wrong data on each.
+
+QEMU guests' disks have QEMU's serials, so test restores always use `--map`.
+
+A bigger target keeps the source's partitions where they were and leaves the
+rest unused.  For GPT that means a new backup header and last usable LBA at
+the new disk's end.  For MBR nothing changes.  Growing a partition, pool or
+filesystem into that space is version 2's job.
+
+## Identity
+
+Restoring the old identifiers is what keeps the restored system's own
+configuration valid.  Not every layer allows it:
+
+| Layer | Original kept by | Notes |
+|---|---|---|
+| GPT disk GUID, partition GUIDs | `sfdisk` script (`label-id`, `uuid=`) | |
+| MBR disk signature | `sfdisk` script (`label-id`) | Gives the PARTUUIDs `SIG-NN` back too |
+| ext2/3/4 | `mke2fs -U`, `-E hash_seed=` | The hash seed too, so directory indexes match |
+| XFS | `mkfs.xfs -m uuid=` | A `meta_uuid` source needs `xfs_admin -U` after mkfs |
+| btrfs | `mkfs.btrfs -U`, `--device-uuid` | `--device-uuid` only for single-device filesystems |
+| FAT (ESP) | `mkfs.fat -i` (volume ID) | |
+| swap | `mkswap -U -L` | |
+| LUKS | `cryptsetup luksFormat --uuid --label --subsystem` | |
+| md | `mdadm --create --uuid --name --homehost` | laydump's `mdadm_uuid` is already in mdadm's form |
+| LVM PV, VG, LV | `pvcreate --uuid --restorefile`, `vgcfgrestore` | Plain `vgcreate`/`lvcreate` can't set UUIDs |
+| ZFS pool | `zpool reguid -g GUID` after `zpool create` | In OpenZFS 2.3 and later |
+| ZFS vdevs | Can't be kept | They get new GUIDs; only the zpool cache names them, and `boot` regenerates it |
+
+With `--new-uuids`, every layer gets fresh identifiers, and `boot` rewrites
+everything that names the old ones:
+
+- `fstab`, `crypttab` and `mdadm.conf`;
+- the zpool cache;
+- `/etc/initramfs-tools/conf.d/resume`;
+- `/etc/kernel/cmdline`, and GRUB's configuration through `update-grub`;
+- the initramfs.
+
+The UEFI boot entries are created for the new partition GUIDs.  The old
+ones, which now point at no partition, are left alone (layload never deletes
+an entry) and listed by `status`, for the administrator to remove with
+`efibootmgr -b NNNN -B`.
+
+Names (md array names, VG and LV names, pool names, filesystem labels,
+partition names) are always kept.
+
+## Feature sets
+
+Never the stick's defaults: every feature on or off as the source had it.
+
+- **ext2/3/4**: `mke2fs -t TYPE -O none,F1,F2,...` from laydump's
+  `features`, minus the ones that record state rather than design
+  (`needs_recovery`, `orphan_present`).  Plus block size (`-b`), inode size
+  (`-I`), inode count (`-N`), cluster size (`-C`, with bigalloc), flex group
+  size (`-G`), reserved blocks (`-m`/`-r`), casefold encoding (`-E
+  encoding=`), and the hash seed and default hash (`-E hash_seed=`, through
+  `tune2fs` if mke2fs can't).
+- **XFS**: every feature named on the command line, on or off:
+  `-m crc=,finobt=,rmapbt=,reflink=,bigtime=,inobtcount=`, `-i sparse=,nrext64=`,
+  `-n ftype=` (and the same for any feature the stick's mkfs.xfs knows that
+  the JSON doesn't list: off).  Plus block, sector and inode size, AG count,
+  stripe unit and width, internal or external log and its size, directory
+  block size and `imax_pct`.  xfsprogs' `-c options=` profiles
+  (`lts_6.12.conf`, for example) are a fallback when a feature can't be named
+  on the command line.
+- **btrfs**: `mkfs.btrfs -O` with every incompat and compat-ro feature, on
+  (`F`) or off (`^F`); `--csum`; node and sector size; data and metadata
+  profiles from `allocation_profiles`.
+- **FAT**: FAT size, sector size, cluster size, reserved sectors, FAT count,
+  hidden sectors.
+- **swap**: page size (`--pagesize`).
+- **md, LUKS, LVM, ZFS**: as in `assemble` and "Encryption".
+
+The read-back after each write is the real guarantee: laydump's parser lists
+the new filesystem's features, and they must be exactly the recorded ones.
+
+## Encryption
+
+The JSON records how each container was made but never a key.
+
+- LUKS: `cryptsetup luksFormat` with the recorded type (1 or 2), cipher, key
+  size, sector size, data offset (`--offset`), header and keyslot area sizes,
+  label, subsystem and UUID, and the recorded KDF type (argon2id, argon2i or
+  pbkdf2).  The KDF's cost is benchmarked anew on this machine rather than
+  copied.  It asks for the new passphrase on the terminal, once per container
+  (or reads `--key-file`).  The passphrase may differ from the old one.
+- Tokens (systemd-tpm2, systemd-fido2, clevis) can't be restored: they're
+  bound to hardware or to keys the backup doesn't hold.  `plan` lists them,
+  and `status` reminds the administrator to enroll them again after the
+  first boot (`systemd-cryptenroll`).
+- ZFS native encryption: each encryption root is created with its recorded
+  `encryption`, `keyformat` and `keylocation`, and a new key from the prompt or
+  `--key-file`.
+
+## The JSON as a contract
+
+Once two tools read it, bko-laydump's output is an interface:
+
+- layload reads `"format": "bko-laydump"` and refuses any `schema` it doesn't
+  know.
+- New fields don't change the schema number.  Renaming or removing a field,
+  or changing what it means, does.
+- The fields layload reads are listed in a schema description kept next to
+  laydump's code and tested both ways: laydump's tests check its output has
+  them, and layload's tests read fixtures made by laydump.
+
+### What laydump must record first
+
+Gaps found while writing this, to close before layload's stages need them:
+
+1. **ZFS**: every locally set and received property of every pool and
+   dataset (`zpool get`/`zfs get -s local,received all`), with user
+   properties and encryption roots.  Today it asks for a fixed list of
+   columns, which loses everything else.  It also needs the full vdev tree of
+   each imported pool, including log, cache and spare vdevs.
+2. **btrfs**: subvolume flags (read-only), properties (compression), and
+   qgroups.
+3. **XFS**: the external log's device, when there is one.
+4. **ext4**: the RAID stride and stripe width hints (`-E stride=,stripe_width=`).
+5. **EFI**: the raw device path of each boot entry, so `boot` can recreate
+   entries whose device path isn't a plain HD/File pair (laydump keeps only
+   its text form today).
+
+Already there and enough: LUKS cipher, sector size, KDF and data offset; md
+level, layout, chunk, bitmap, data offset and member slots; LVM metadata
+with every segment; GPT and MBR tables with every identifier; ext4, XFS and
+btrfs geometry and features.
+
+## Out of scope for version 1
+
+`plan` refuses layouts that need any of these, and says which:
+
+- disks smaller than the source, a different number of disks, or a different
+  logical sector size;
+- LVM thin pools, cache volumes, RAID LVs and snapshots (version 1 builds
+  linear and striped LVs);
+- ZFS dRAID and special/dedup vdevs;
+- filesystems other than ext2/3/4, XFS, btrfs, FAT and swap (NTFS and exFAT
+  partitions, say a Windows install next to Debian, are recreated empty and
+  `plan` says so);
+- multipath, dm-integrity and dm-verity devices.
+
+## Testing
+
+The same layers as laydump's tests:
+
+1. `plan` and `status` read only: tested on the fake Debian 13 trees
+   laydump's scenarios already build.
+2. Each writing stage: root-only tests on loop devices in throwaway guests,
+   like `laydump/tests/root_stack.rs`.  Each one builds a layout, dumps it with
+   laydump, tears it down, rebuilds it with layload on fresh loop devices,
+   dumps again, and requires the two dumps to agree on every identifier and
+   feature (ZFS vdev GUIDs excepted: see "Identity").
+3. Whole machines: back up a `testvm` guest, give a fresh guest blank disks,
+   run layload through `mount`, restore with the archiver, run `boot`, boot
+   the result, and compare it with the original, as `testvm/compare` does now
+   with its own Python `recreate()`.  layload is meant to replace that code,
+   and so gets exercised in every compare round.
+
+## Code layout
+
+`laydump/` becomes a Cargo workspace:
+
+- a library crate with the JSON reader and writer, the layout types, the
+  on-disk parsers and the device scanner, shared by both tools;
+- `bko-laydump`, the dumper, unchanged in behavior;
+- `bko-layload`.
+
+Both keep laydump's rules: no dependencies, builds with Debian 13's cargo,
+and the system's own tools for every write.
+
+## Open questions
+
+1. The workspace's directory and library name: keep `laydump/`, or rename
+   to something covering both tools?
+2. The default target directory: `/mnt/bko-target`?
+3. Should `close` run by itself after `boot` with `--through boot`, or only
+   when asked?
+4. Where should `status` and the stage logs persist across a reboot: the
+   stick's config partition (beside its restore logs) or the restored system's
+   `/var/log`?
+5. Passphrases: one prompt per LUKS container and ZFS encryption root, or one
+   passphrase for all of them unless told otherwise?

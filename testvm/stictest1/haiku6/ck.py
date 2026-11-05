@@ -249,6 +249,11 @@ def cmp(a, b, label, skip=""):
             out.append(("contents", "%s: %s extra in %s" % (label, p, b)))
             continue
         x, y = A[p], B[p]
+        if p == "." and label == "restore2":
+            # restore2 restores SNAP:subfolder over the restored tree, which isn't
+            # fresh: both forks then leave the target's own metadata as it is
+            # (their BACKOTTER.md), so its times are the mutation's, not the source's.
+            continue
         for k in sorted(set(x) | set(y)):
             if k == "path" or k in skip:
                 continue

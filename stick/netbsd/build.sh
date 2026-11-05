@@ -32,7 +32,7 @@ CONFIG_PART=3                   # as platform.conf says
 CONFIG_SECTORS=65536            # marker.py's
 RW=/.backotter-rw               # the tmpfs behind /etc, /var, /root and /home
 
-# kernel_release KERNEL: "11.0" from "NetBSD 11.0 (GENERIC) #0: ..." in its
+# kernel_release KERNEL: "11.1" from "NetBSD 11.1 (GENERIC) #0: ..." in its
 # version string, as uname -r prints it.
 kernel_release() {
     grep -a -o -m 1 'NetBSD [0-9][0-9A-Za-z._-]* ([A-Z0-9_]*) #' "$1" | awk '{ print $2; exit }'

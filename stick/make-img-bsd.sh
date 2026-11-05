@@ -28,7 +28,8 @@
 #                   restic-bko (Haiku has none); RUSTIC_REQUIRED=yes if the
 #                   image must have rustic-bko; and
 #                   defines fetch MEDIA_DIR, which downloads and verifies the
-#                   official media into MEDIA_DIR and sets MEDIA to their names.
+#                   official media into MEDIA_DIR and sets MEDIA to their paths
+#                   there (in/ gets each by its file name).
 #   build.sh        sh, run as root (BUILD_VM_USER) in the VM, in a fresh
 #                   directory of its own:
 #                     build.sh info      prints KERNEL=..., and ZFS_VERSION=...
@@ -161,7 +162,7 @@ if [[ -x $BKO_BIN/$PLATFORM/rustic-bko ]]; then
 else
     echo "make-img-bsd: no rustic-bko for $PLATFORM; the image will have restic-bko only" >&2
 fi
-for m in "${MEDIA[@]}"; do ln -s "$media_dir/$m" "$work/in/$m"; done
+for m in "${MEDIA[@]}"; do ln -s "$media_dir/$m" "$work/in/${m##*/}"; done
 echo "Copying $(du -shL "$work/in" | cut -f1) into $BUILD_VM"
 rdir=/var/tmp/bko-build.$(hostname -s).$$     # this run's, in the VM
 ssh_vm "rm -rf $rdir && mkdir -p $rdir/out"

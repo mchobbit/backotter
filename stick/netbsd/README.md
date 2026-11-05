@@ -1,8 +1,8 @@
 # NetBSD rescue image
 
 `backotter-live-netbsd-VERSION-amd64.img`, made by `../make-img-bsd.sh netbsd`
-from NetBSD 11.0's official sets, inside a throwaway copy of the `netbsd11` test
-guest (`testvm/make-netbsd.sh 11.0 vms/netbsd11`).  It is also the image for
+from NetBSD 11.1's official sets, inside a throwaway copy of the `netbsd11` test
+guest (`testvm/make-netbsd.sh 11.1 vms/netbsd11`).  It is also the image for
 AlpineBSD, which runs NetBSD's kernel: the rescue system only needs the kernel to
 see the machine's disks and file systems, and AlpineBSD's are NetBSD's (FFSv2,
 with extended attributes; GPT wedges).
@@ -15,7 +15,7 @@ stick/boot-test.py IMG {bios,uefi} --platform netbsd
 ## What goes in
 
 `platform.conf`'s `fetch` downloads the sets `base etc kern-GENERIC misc modules
-rescue` from cdn.netbsd.org into `~/backotter-work/img-media/netbsd/` and checks
+rescue` from cdn.netbsd.org into `~/backotter-work/img-media/netbsd/RELEASE/` and checks
 each against the release's hash list signed by the NetBSD Security Officer (the key
 fetched by full fingerprint, as `testvm/make-netbsd.sh` does).  `EXTRA_SETS=comp`
 fetches more, e.g. for a build VM.  Not included: comp, games, man, tests, text, X.
@@ -23,8 +23,8 @@ fetches more, e.g. for a build VM.  Not included: comp, games, man, tests, text,
 `restic-bko` and `rustic-bko` come from `~/backotter-work/bko-bin/netbsd/`.
 `build-rustic.sh` makes rustic-bko natively in a throwaway copy of `netbsd11`:
 the comp set, then `rust` (1.96), `cmake`, `gmake`, `perl` and `pkgconf` from
-pkgsrc's binary packages (`pkgsrc/packages/NetBSD/x86_64/11.0_2026Q3`), then
-`cargo build --release --locked` of branch `backotter` of
+pkgsrc's binary packages (`pkgsrc/packages/NetBSD/x86_64/11.0_2026Q3`, which
+11.1 also uses), then `cargo build --release --locked` of branch `backotter` of
 github.com/mchobbit/rustic (its Cargo.lock pins rustic_core's commit), or with
 `SRC=DIR` the local trees `DIR/rustic` and `DIR/rustic_core`.  In the
 guest, libfetch needs `ip6addrctl_policy=ipv4_prefer` (QEMU's user network has no
@@ -82,7 +82,7 @@ aren't signed).  No first-boot resize, unlike NetBSD's own live image.
 - Disk tools are base's: gpt, dkctl, disklabel, fdisk, newfs, fsck_ffs,
   newfs_msdos, zpool/zfs (NetBSD's own ZFS, not OpenZFS, so the marker's `zfs` is
   null), lvm, raidctl, cgdconfig; and `/rescue`.
-- The marker is `/.disk/backotter.json`; its `kernel` is `uname -r` (`11.0`).
+- The marker is `/.disk/backotter.json`; its `kernel` is `uname -r` (`11.1`).
 
 ## Checks
 

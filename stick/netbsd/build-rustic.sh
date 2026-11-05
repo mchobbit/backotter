@@ -40,7 +40,7 @@ install_tools() {
 grep -q '^ip6addrctl_policy=ipv4_prefer' /etc/rc.conf ||
     printf 'ip6addrctl=YES\nip6addrctl_policy=ipv4_prefer\n' >>/etc/rc.conf
 /etc/rc.d/ip6addrctl start >/dev/null && certctl rehash"
-    T=1200 vm_ssh 'cd / && tar -xpJf -' <"$media_dir/comp.tar.xz"
+    T=1200 vm_ssh 'cd / && tar -xpJf -' <"$media_dir/$BASE_RELEASE/comp.tar.xz"
     vm_ssh "PATH=$GUEST_PATH; export PATH; pkg_info -e rust >/dev/null || PKG_PATH=$PKGSRC pkg_add rust cmake gmake perl pkgconf"
 }
 # shellcheck source=../build-rustic-native.sh

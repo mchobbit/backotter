@@ -424,7 +424,14 @@ NetBSD)
         if ! has pkgin; then
             say "installing pkgin and sysupgrade from $pkgs"
             PKG_PATH=$pkgs pkg_add pkgin || exit 1
+        fi
+        # pkgin follows the release the guest runs (11.0 to 11.1: from the
+        # update after the one that brought the new base), once pkgsrc has
+        # packages for it: the branch can say 11.2 before pkgsrc does.
+        if ftp -o /dev/null "$pkgs/pkg_summary.gz" >/dev/null 2>&1; then
             echo "$pkgs" >/usr/pkg/etc/pkgin/repositories.conf
+        else
+            say "no packages at $pkgs yet: pkgin stays on $(cat /usr/pkg/etc/pkgin/repositories.conf)"
         fi
         has sysupgrade || pkgin -y install sysupgrade || exit 1
         cat >/usr/pkg/etc/sysupgrade.conf <<EOF

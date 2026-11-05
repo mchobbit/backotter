@@ -5,7 +5,7 @@
 # place of sysinst, which has no unattended mode.
 #
 # Usage: ./make-netbsd.sh [--alpinebsd] VERSION WORK_DIR
-#   e.g. ./make-netbsd.sh 11.0 vms/netbsd11
+#   e.g. ./make-netbsd.sh 11.1 vms/netbsd11
 #        ./make-netbsd.sh --alpinebsd 11.0 vms/alpinebsd
 #
 # VERSION is a NetBSD release.  NetBSD-VERSION-amd64.iso is downloaded into

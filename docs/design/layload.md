@@ -1,6 +1,7 @@
 # bko-layload: rebuilding a machine's disks from bko-laydump's JSON
 
-Status: draft for discussion.  Nothing here is built yet.
+Status: draft.  Nothing here is built yet.  The decisions taken so far are
+listed at the end.
 
 ## Goal
 
@@ -188,10 +189,14 @@ efivarfs bound in):
 1. Identifier fix-ups (only with `--new-uuids`, or where a layer couldn't
    keep its old identifier; see "Identity"): rewrite fstab, crypttab and
    `mdadm.conf`, and regenerate `/etc/zfs/zpool.cache`.
-2. `update-initramfs -u -k all` when anything the initramfs embeds changed
+2. Key files: containers and encryption roots that were created with a
+   temporary key get the restored key file added and the temporary key
+   destroyed (see "Keys follow the original system").  If the restore didn't
+   bring the key file back, `boot` stops here and says which one is missing.
+3. `update-initramfs -u -k all` when anything the initramfs embeds changed
    (crypttab, mdadm.conf, the zpool cache, LVM or md identifiers), or when
    asked to.
-3. The boot loader, as `boot.loader` recorded it:
+4. The boot loader, as `boot.loader` recorded it:
    - GRUB on BIOS: `grub-install` on the target disks that map to debconf's
      `grub-pc/install_devices`, then `update-grub`.
    - GRUB on UEFI: `grub-install --target=x86_64-efi` into the mounted ESP,
@@ -200,7 +205,7 @@ efivarfs bound in):
      `boot.loader.via_shim` says the source booted through shim, then
      `update-grub`.
    - systemd-boot: `bootctl install`.
-4. UEFI boot entries (see "UEFI boot entries").
+5. UEFI boot entries (see "UEFI boot entries").
 
 ### UEFI boot entries
 
@@ -231,6 +236,35 @@ recorded value first), deactivates the VGs, closes the LUKS containers, and
 stops the md arrays.  The disks are then ready for a reboot into the
 restored system.
 
+`close` runs only when asked: `--through close` (the normal full run) or
+`--only close`.  `--through boot` stops after `boot` and leaves everything
+open, so an administrator can look around the restored tree or chroot into
+it first.
+
+Skipping `close` is mostly harmless (md, LVM and LUKS survive an unclean
+stop), except for ZFS: a pool the stick imported and didn't export is
+marked as in use by the stick's host ID.  The restored system's initramfs
+then refuses to import it without `-f`, and the first boot stops at an
+initramfs prompt.  So whenever a pool is still imported, the end of `boot`
+and every `status` say so plainly ("rpool is still imported: run `--only
+close` before rebooting, or the restored system won't import it").  That
+warning can't be turned off.  layload never reboots anything itself.
+
+## Logs
+
+Each stage logs every command it ran, with its output and exit status, and
+every check and its result.  Logs name devices, identifiers and paths, never
+keys or passphrases.  They go to:
+
+1. `/run/bko-layload/` while the stages run, since `partition`, `assemble`
+   and `format` run before there is any target filesystem to write to;
+2. the restored system's `/var/log/bko-layload/`, copied there once `mount`
+   has mounted it and again after each later stage, so the machine keeps the
+   record of how it was rebuilt;
+3. on the rescue stick, the restore log on its config partition
+   (`restore-logs/` in `stick-config.md`), the only storage that survives a
+   reboot when a rebuild fails before the target is mounted.
+
 ## Command line
 
 ```
@@ -240,7 +274,10 @@ bko-layload LAYOUT.json [--through STAGE | --only STAGE] [--commit]
             [--no-nvram] [--removable]
 ```
 
-- With neither `--through` nor `--only`, it runs `plan`.
+- With neither `--through` nor `--only`, it runs `plan`.  A whole rebuild is
+  `--through mount`, the restore, then `--only boot` and `--only close` (or
+  `--through close`, which runs `boot` and `close` once the earlier stages
+  are done).
 - `--through STAGE` runs every stage up to and including STAGE, skipping
   those already done.  `--only STAGE` runs just that stage.
 - `--commit` lets the writing stages write.  Without it they print their
@@ -385,15 +422,37 @@ The JSON records how each container was made but never a key.
   size, sector size, data offset (`--offset`), header and keyslot area sizes,
   label, subsystem and UUID, and the recorded KDF type (argon2id, argon2i or
   pbkdf2).  The KDF's cost is benchmarked anew on this machine rather than
-  copied.  It asks for the new passphrase on the terminal, once per container
-  (or reads `--key-file`).  The passphrase may differ from the old one.
+  copied.  The keys follow how the original system unlocked itself (below).
 - Tokens (systemd-tpm2, systemd-fido2, clevis) can't be restored: they're
   bound to hardware or to keys the backup doesn't hold.  `plan` lists them,
   and `status` reminds the administrator to enroll them again after the
   first boot (`systemd-cryptenroll`).
 - ZFS native encryption: each encryption root is created with its recorded
-  `encryption`, `keyformat` and `keylocation`, and a new key from the prompt or
-  `--key-file`.
+  `encryption` and `keyformat`, and its key as below.
+
+### Keys follow the original system
+
+layload asks for keys the way the original system asked for them at boot,
+as its crypttab and its encryption roots' `keylocation` recorded it:
+
+- Containers that shared one passphrase at boot (crypttab lines with
+  `keyscript=decrypt_keyctl` and the same key name in the third field) get
+  one prompt between them, and the same new passphrase.
+- Containers whose crypttab line says `none` (or `-`), containers not in
+  crypttab, and encryption roots with `keylocation=prompt` get a prompt each.
+- Containers and encryption roots unlocked by a key file (a path in
+  crypttab's third field, or `keylocation=file://...`) have a problem: that
+  file usually lives on the root filesystem, which the archiver restores only
+  after `assemble` created them.  So layload creates them with a temporary
+  random key kept in `/run/bko-layload/`, and in `boot`, once the restored
+  key file exists, adds it (`cryptsetup luksAddKey`, `zfs change-key -o
+  keylocation=file://...`) and destroys the temporary key.  The restored
+  system then unlocks exactly as before, and nobody has to handle the key
+  file.
+
+The new passphrases may differ from the old ones.  `--key-file NAME=FILE`
+gives a container's or encryption root's key from a file instead of a
+prompt, for scripted test restores.
 
 ## The JSON as a contract
 
@@ -462,25 +521,30 @@ The same layers as laydump's tests:
 
 ## Code layout
 
-`laydump/` becomes a Cargo workspace:
+`laydump/` becomes a Cargo workspace named after an otter's den, `holt/`:
 
-- a library crate with the JSON reader and writer, the layout types, the
-  on-disk parsers and the device scanner, shared by both tools;
+- `bko-holt`, a library crate with the JSON reader and writer, the layout
+  types, the on-disk parsers and the device scanner, shared by both tools;
 - `bko-laydump`, the dumper, unchanged in behavior;
 - `bko-layload`.
 
 Both keep laydump's rules: no dependencies, builds with Debian 13's cargo,
 and the system's own tools for every write.
 
-## Open questions
+## Decisions (2026-11-05)
 
-1. The workspace's directory and library name: keep `laydump/`, or rename
-   to something covering both tools?
-2. The default target directory: `/mnt/bko-target`?
-3. Should `close` run by itself after `boot` with `--through boot`, or only
-   when asked?
-4. Where should `status` and the stage logs persist across a reboot: the
-   stick's config partition (beside its restore logs) or the restored system's
-   `/var/log`?
-5. Passphrases: one prompt per LUKS container and ZFS encryption root, or one
-   passphrase for all of them unless told otherwise?
+- The archiver's restore stays outside layload, so an administrator can
+  prepare the disks and drive the archiver by hand.
+- It runs on the rescue stick, and on QEMU guests for test restores.
+- Version 1 rebuilds the same shape: the same disks, each the same size or
+  bigger, with the extra space left unused.  Resizing is version 2's.
+- The original identifiers are the default; `--new-uuids` gives new ones.
+- The workspace is `holt/` and its shared library `bko-holt`; the tools keep
+  their names, `bko-laydump` and `bko-layload`.
+- The default target directory is `/mnt/bko-target`, for now.
+- `close` runs only when asked (`--through close` is the full run), and an
+  imported pool left behind is always warned about (see `close`).
+- Logs go to the restored system's `/var/log/bko-layload/`, and on the stick
+  to its restore logs too (see "Logs"); not to `/boot`.
+- Keys follow how the original system unlocked itself (see "Keys follow the
+  original system").

@@ -73,6 +73,68 @@ impl TargetDisk {
 pub struct System {
     pub disks: Vec<TargetDisk>,
     pub mounts: Vec<Mount>,
+    pub pools: Vec<ImportedPool>,
+}
+
+/// A ZFS pool imported on the system load runs on.
+#[derive(Debug, Clone, PartialEq)]
+pub struct ImportedPool {
+    pub name: String,
+    /// "-" when none: the pool is mounted where its datasets say.
+    pub altroot: String,
+    /// Kernel names of its vdevs' devices.
+    pub devices: Vec<String>,
+}
+
+impl ImportedPool {
+    /// A pool assemble made: one of the layout's, imported under --target.
+    pub fn is_ours(&self, layout_pools: &[String], target: &str) -> bool {
+        layout_pools.contains(&self.name) && self.altroot == target
+    }
+}
+
+/// The device paths in `zpool status -P` output, per pool.
+pub fn parse_zpool_status(text: &str) -> Vec<(String, Vec<String>)> {
+    let mut out: Vec<(String, Vec<String>)> = Vec::new();
+    for l in text.lines() {
+        let t = l.trim();
+        if let Some(n) = t.strip_prefix("pool:") {
+            out.push((n.trim().to_string(), vec![]));
+        } else if let (Some(first), Some(cur)) = (t.split_whitespace().next(), out.last_mut()) {
+            if first.starts_with("/dev/") {
+                cur.1.push(first.to_string());
+            }
+        }
+    }
+    out
+}
+
+fn imported_pools(sys: &Sys) -> Vec<ImportedPool> {
+    let roots: Vec<(String, String)> = sys
+        .run("zpool", &["list", "-H", "-o", "name,altroot"])
+        .map(|o| o.lines().filter_map(|l| l.split_once('\t')).map(|(a, b)| (a.to_string(), b.trim().to_string())).collect())
+        .unwrap_or_default();
+    let status = sys.run("zpool", &["status", "-P"]).unwrap_or_default();
+    parse_zpool_status(&status)
+        .into_iter()
+        .map(|(name, paths)| ImportedPool {
+            altroot: roots.iter().find(|(n, _)| *n == name).map(|(_, a)| a.clone()).unwrap_or_else(|| "-".into()),
+            devices: paths.iter().map(|p| resolve_name(sys, p)).collect(),
+            name,
+        })
+        .collect()
+}
+
+/// The names of the pools a layout makes.
+pub fn layout_pools(layout: &Layout) -> Vec<String> {
+    layout
+        .v
+        .at(&["storage", "zfs", "tools", "imported_pools"])
+        .and_then(crate::json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|p| p.get("name").and_then(crate::json::Value::as_str).map(str::to_string))
+        .collect()
 }
 
 fn signatures_of(sys: &Sys, d: &BlockDev, out: &mut Vec<String>, uuids: &mut Vec<String>) {
@@ -107,12 +169,15 @@ pub fn resolve_name(sys: &Sys, spec: &str) -> String {
         .unwrap_or_else(|| spec.trim_start_matches("/dev/").to_string())
 }
 
-/// Reads every whole disk on the system `load` runs on.
-pub fn scan(sys: &Sys, opts: &Options) -> System {
+/// Reads every whole disk on the system `load` runs on.  `ours` are the
+/// pools the layout makes, which don't make their disks busy once imported
+/// under --target.
+pub fn scan(sys: &Sys, opts: &Options, ours: &[String]) -> System {
     let all = blockdev::scan(sys);
     let mounts = sys.read("/proc/self/mountinfo").map(|t| mounts::parse_mountinfo(&t)).unwrap_or_default();
     let swaps: Vec<String> =
         sys.read("/proc/swaps").map(|t| mounts::parse_swaps(&t)).unwrap_or_default().into_iter().map(|s| resolve_name(sys, &s.file)).collect();
+    let pools = imported_pools(sys);
     let mut disks = Vec::new();
     for b in all.iter().filter(|b| matches!(b.kind, Kind::Disk | Kind::Nbd)) {
         let parts: Vec<BlockDev> = all.iter().filter(|p| p.parent.as_deref() == Some(b.name.as_str())).cloned().collect();
@@ -147,6 +212,15 @@ pub fn scan(sys: &Sys, opts: &Options) -> System {
             if !d.holders.is_empty() {
                 in_use.push(format!("{} is held by {}", d.name, d.holders.join(", ")));
             }
+            // ZFS takes no holders, and its mounts name datasets, not devices.
+            for p in pools.iter().filter(|p| p.devices.contains(&d.name)) {
+                if !p.is_ours(ours, &opts.target) {
+                    in_use.push(format!("{} is a vdev of the imported pool {}", d.name, p.name));
+                }
+                if mounts.iter().any(|m| m.target == "/" && m.fstype == "zfs" && m.source.split('/').next() == Some(p.name.as_str())) {
+                    holds_root = true;
+                }
+            }
             if d.udev.get("ID_FS_LABEL") == Some(STICK_CONFIG_LABEL) {
                 boot_medium = true;
             }
@@ -156,7 +230,7 @@ pub fn scan(sys: &Sys, opts: &Options) -> System {
         }
         disks.push(TargetDisk { b: b.clone(), parts, table, signatures, uuids, in_use, boot_medium, holds_root });
     }
-    System { disks, mounts }
+    System { disks, mounts, pools }
 }
 
 impl System {
@@ -355,11 +429,27 @@ mod tests {
         let t = tree();
         let s = sys(&t);
         let o = opts(&["--map", "vda=/dev/disk/by-id/virtio-tgt"]);
-        let system = scan(&s, &o);
+        let system = scan(&s, &o, &[]);
         assert!(system.disk("sda").unwrap().boot_medium);
         let m = map(&layout(), &o, &system, &s);
         assert_eq!(m.pairs, vec![("vda".to_string(), "vdb".to_string())]);
         assert!(m.problems.is_empty(), "{:?}", m.problems);
+    }
+
+    #[test]
+    fn zpool_status_devices() {
+        let text = "  pool: rpool\n state: ONLINE\nconfig:\n\n\tNAME         STATE     READ WRITE CKSUM\n\trpool        ONLINE       0     0     0\n\t  /dev/vda3  ONLINE       0     0     0\n\nerrors: No known data errors\n\n  pool: tank\nconfig:\n\ttank  ONLINE\n\t  mirror-0  ONLINE\n\t    /dev/disk/by-id/ata-A-part1  ONLINE\n\t    /dev/sdb1  ONLINE\n";
+        assert_eq!(
+            parse_zpool_status(text),
+            vec![
+                ("rpool".to_string(), vec!["/dev/vda3".to_string()]),
+                ("tank".to_string(), vec!["/dev/disk/by-id/ata-A-part1".to_string(), "/dev/sdb1".to_string()])
+            ]
+        );
+        let p = ImportedPool { name: "rpool".into(), altroot: "/mnt/bko-target".into(), devices: vec![] };
+        assert!(p.is_ours(&["rpool".into()], "/mnt/bko-target"));
+        assert!(!p.is_ours(&["rpool".into()], "/mnt/elsewhere"));
+        assert!(!ImportedPool { altroot: "-".into(), ..p }.is_ours(&["rpool".into()], "/mnt/bko-target"));
     }
 
     #[test]
@@ -368,7 +458,7 @@ mod tests {
         let s = sys(&t);
         let p = |a: &[&str]| {
             let o = opts(a);
-            map(&layout(), &o, &scan(&s, &o), &s).problems.join("\n")
+            map(&layout(), &o, &scan(&s, &o, &[]), &s).problems.join("\n")
         };
         assert!(p(&[]).contains("has no target"));
         assert!(p(&["--map", "vda=vdc"]).contains("smaller"));

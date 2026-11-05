@@ -10,12 +10,16 @@ use crate::sys::Sys;
 /// Where `plan` looks for the programs the stages run.
 const PATH: [&str; 6] = ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"];
 
-/// Whether PROGRAM (a name or a path) is installed on the system load runs on.
-pub fn on_path(sys: &Sys, prog: &str) -> bool {
+/// Where PROGRAM (a name or a path) is installed on the system load runs on.
+pub fn find(sys: &Sys, prog: &str) -> Option<String> {
     if prog.starts_with('/') {
-        return sys.is_file(prog);
+        return sys.is_file(prog).then(|| prog.to_string());
     }
-    PATH.iter().any(|d| sys.is_file(&format!("{d}/{prog}")))
+    PATH.iter().map(|d| format!("{d}/{prog}")).find(|p| sys.is_file(p))
+}
+
+pub fn on_path(sys: &Sys, prog: &str) -> bool {
+    find(sys, prog).is_some()
 }
 
 /// The programs each stage runs here (not inside the restored system's
@@ -36,10 +40,13 @@ fn missing_tools(sys: &Sys, built: &Built) -> Vec<String> {
 /// The archiver must be BackOtter's, as the rescue stick's build checks.
 fn archiver_problem(sys: &Sys, opts: &Options) -> Option<String> {
     opts.repo.as_ref()?;
-    match sys.run(&opts.archiver, &["--version"]) {
+    let Some(exe) = find(sys, &opts.archiver) else {
+        return Some(format!("{} isn't installed here; restore can't run it", opts.archiver));
+    };
+    match sys.run_file(&exe, &["--version"]) {
         Some(v) if v.contains("backotter") => None,
         Some(v) => Some(format!("{} isn't BackOtter's rustic ({}); restore needs rustic-bko", opts.archiver, v.trim())),
-        None => Some(format!("{} --version failed; restore can't run it", opts.archiver)),
+        None => Some(format!("{exe} --version failed; restore can't run it")),
     }
 }
 
@@ -52,7 +59,7 @@ pub struct Planned {
 
 /// Every check `plan` makes; the writing stages make them again first.
 pub fn check(layout: &Layout, opts: &Options, sys: &Sys) -> Planned {
-    let system = target::scan(sys, opts);
+    let system = target::scan(sys, opts, &target::layout_pools(layout));
     let mapping = target::map(layout, opts, &system, sys);
     let built = commands::build(layout, opts, &mapping);
     let mut problems = mapping.problems.clone();
@@ -156,7 +163,7 @@ mod tests {
     #[test]
     fn clean_plan() {
         let t = tree();
-        let runner = FakeRunner::default().with("rustic-bko --version", "rustic-bko 0.10.0-backotter.3\n");
+        let runner = FakeRunner::default().with("/usr/sbin/rustic-bko --version", "rustic 0.11.4+backotter.4\n");
         let s = Sys::new(t.root(), Box::new(runner), true);
         let (code, out, err) = run(&layout(), &opts(&["--map", "vda=vdb", "--repo", "/srv/r"]), &s);
         assert_eq!(code, EXIT_OK, "{out}{err}");
@@ -174,7 +181,7 @@ mod tests {
         let (code, out, err) = run(&layout(), &opts(&["--repo", "/srv/r"]), &s);
         assert_eq!(code, EXIT_PLAN_PROBLEMS);
         assert!(out.contains("has no target"), "{out}");
-        assert!(out.contains("rustic-bko --version failed"), "{out}");
+        assert!(out.contains("/usr/sbin/rustic-bko --version failed"), "{out}");
         assert!(err.contains("problem"));
         std::fs::remove_file(t.p("/usr/sbin/sfdisk")).unwrap();
         let (_, out, _) = run(&layout(), &opts(&["--map", "vda=vdb"]), &s);

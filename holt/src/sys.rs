@@ -14,6 +14,13 @@ use std::time::{Duration, Instant};
 pub trait Runner {
     /// The command's standard output when it exits 0, else None.
     fn run(&self, prog: &str, args: &[&str]) -> Option<String>;
+
+    /// The same for a program named by its absolute path, wherever it is
+    /// (load's archiver, which the rescue stick keeps in /usr/local/bin).
+    /// The dump never uses this: it runs the system's own tools only.
+    fn run_file(&self, path: &str, args: &[&str]) -> Option<String> {
+        self.run(path, args)
+    }
 }
 
 /// Runs real commands, from the system directories only, in the C locale,
@@ -30,6 +37,20 @@ impl Runner for RealRunner {
             return None;
         }
         let exe = SYSTEM_PATH.split(':').map(|d| Path::new(d).join(prog)).find(|p| p.is_file())?;
+        self.exec(&exe, args)
+    }
+
+    fn run_file(&self, path: &str, args: &[&str]) -> Option<String> {
+        let p = Path::new(path);
+        if !p.is_absolute() || !p.is_file() {
+            return None;
+        }
+        self.exec(p, args)
+    }
+}
+
+impl RealRunner {
+    fn exec(&self, exe: &Path, args: &[&str]) -> Option<String> {
         let mut child = Command::new(exe)
             .args(args)
             .env("PATH", SYSTEM_PATH)
@@ -180,6 +201,11 @@ impl Sys {
 
     pub fn run(&self, prog: &str, args: &[&str]) -> Option<String> {
         self.runner.run(prog, args)
+    }
+
+    /// Runs the program at an absolute path; see `Runner::run_file`.
+    pub fn run_file(&self, path: &str, args: &[&str]) -> Option<String> {
+        self.runner.run_file(path, args)
     }
 
     pub fn warn(&self, msg: impl Into<String>) {

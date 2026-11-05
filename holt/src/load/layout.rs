@@ -107,8 +107,10 @@ fn table(v: &Value) -> Option<Table> {
     };
     let id = match kind {
         TableKind::Gpt => s(v, "disk_guid"),
+        // dump writes the MBR signature as bare hex ("ffe14ceb"); sfdisk
+        // wants it with 0x, or reads it as decimal.
         TableKind::Mbr => match v.get("disk_signature") {
-            Some(Value::Str(t)) => Some(t.clone()),
+            Some(Value::Str(t)) => u32::from_str_radix(t.trim_start_matches("0x"), 16).ok().map(|n| format!("0x{n:08x}")),
             Some(x) => x.as_u64().map(|n| format!("0x{n:08x}")),
             None => None,
         },
@@ -264,7 +266,7 @@ pub mod sample {
     "disks": [{
       "name": "vda", "kind": "disk", "size_bytes": 17179869184, "logical_sector_size": 512,
       "model": null, "serial": null, "wwid": null,
-      "partition_table": {"type": "dos", "sector_size": 512, "disk_signature": "0x1f2e3d4c"},
+      "partition_table": {"type": "dos", "sector_size": 512, "disk_signature": "1f2e3d4c"},
       "partitions": [
         {"name": "vda1", "number": 1, "start_lba": 2048, "sectors": 1953792, "type": "0x83", "bootable": true,
          "content": {"type": "ext4", "usage": "filesystem", "uuid": "0b0e2c6e-1111-4222-8333-444455556666", "label": null,

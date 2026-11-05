@@ -1313,7 +1313,10 @@ impl Builder<'_> {
             let name = s(&ds, "name").unwrap_or_default();
             let mp = s(&ds, "mountpoint").unwrap_or_default();
             let canmount = s(&ds, "canmount").unwrap_or("on".into());
-            if !mp.starts_with('/') || canmount == "off" || (canmount == "noauto" && !bootfs.contains(&name)) {
+            // A root dataset is canmount=noauto, mounted by the initramfs
+            // (root=ZFS=...); it was mounted when the dump was made.
+            let was_mounted = s(&ds, "mounted").as_deref() == Some("yes");
+            if !mp.starts_with('/') || canmount == "off" || (canmount == "noauto" && !bootfs.contains(&name) && !was_mounted) {
                 continue;
             }
             ms.push((mp, Cmd::new(&["zfs", "mount", &name])));

@@ -47,7 +47,7 @@ fn uuid_at(sys: &Sys, node: &str) -> Option<String> {
 }
 
 pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, String)>, Vec<String>) {
-    let system = target::scan(sys, opts);
+    let system = target::scan(sys, opts, &target::layout_pools(layout));
     let mapping = target::map(layout, opts, &system, sys);
     let built = commands::build(layout, opts, &mapping);
     let mut out = Vec::new();
@@ -76,14 +76,21 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     out.push((Stage::Partition, st, why.join("; ")));
 
     // assemble: the device nodes and pools.
-    let imported: Vec<String> = sys.run("zpool", &["list", "-H", "-o", "name"]).map(|o| o.lines().map(|l| l.trim().to_string()).collect()).unwrap_or_default();
+    // A pool counts when it's imported from the target disks; the system
+    // load runs on may have one of the same name of its own.
+    let targets: Vec<&str> = mapping.pairs.iter().map(|(_, t)| t.as_str()).collect();
+    let on_targets = |dev: &str| system.disks.iter().any(|d| targets.contains(&d.b.name.as_str()) && (d.b.name == dev || d.parts.iter().any(|p| p.name == dev)));
+    let imported: Vec<String> = system.pools.iter().filter(|p| !p.devices.is_empty() && p.devices.iter().all(|d| on_targets(d))).map(|p| p.name.clone()).collect();
     let mut missing: Vec<String> = built.made.iter().filter(|(_, node)| !sys.exists(node)).map(|(_, n)| n.clone()).collect();
     missing.extend(built.pools.iter().filter(|p| !imported.contains(p)).map(|p| format!("pool {p}")));
     let total = built.made.len() + built.pools.len();
     out.push((Stage::Assemble, tally(total - missing.len(), total), if missing.is_empty() { String::new() } else { format!("missing: {}", missing.join(", ")) }));
 
     // format: each filesystem's UUID on its device, and the ZFS datasets.
-    let datasets: Vec<String> = sys.run("zfs", &["list", "-H", "-o", "name"]).map(|o| o.lines().map(|l| l.trim().to_string()).collect()).unwrap_or_default();
+    let datasets: Vec<String> = sys
+        .run("zfs", &["list", "-H", "-o", "name"])
+        .map(|o| o.lines().map(|l| l.trim().to_string()).filter(|d| imported.iter().any(|p| d == p || d.starts_with(&format!("{p}/")))).collect())
+        .unwrap_or_default();
     let mut bad = vec![];
     for (node, ty, uuid) in &built.filesystems {
         let want = uuid.as_ref().map(|u| u.to_ascii_lowercase());

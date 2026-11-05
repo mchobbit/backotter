@@ -330,7 +330,7 @@ pub fn run(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
                 EXIT_FAILED,
                 String::new(),
                 format!(
-                    "bko-holt load: {} {} not built yet; only plan and status are.  `bko-holt load {}` shows every command {} will run.\n",
+                    "bko-holt load: {} {} built yet; only plan and status are.  `bko-holt load {}` shows every command {} will run.\n",
                     names.join(", "),
                     if names.len() == 1 { "isn't" } else { "aren't" },
                     opts.layout,

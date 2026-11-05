@@ -42,6 +42,7 @@ In `stick/`, the builds of rustic-bko, which tests and images share:
 |---|---|
 | `freebsd/build-rustic.sh`, `openbsd/build-rustic.sh`, `netbsd/build-rustic.sh`, `illumos/build-rustic.sh` | Native builds in a throwaway copy of freebsd15, openbsd8, netbsd11, omnios58 (the work is in `build-rustic-native.sh`); `--setup` keeps a build image with the tools installed |
 | `dragonfly/build-rustic.sh` | Cross-build for DragonFly on the host (its packaged Rust is too old) |
+| `haiku/build-rustic.sh` | Native build in a throwaway copy of haiku6, with HaikuPorts' current Rust (Haiku has rustic only, no restic) |
 | `prep-rustic-src.sh` | In `SRC=` mode, every one of them points rustic at the local rustic_core (and its vendored walkdir) with it |
 
 Each writes `$BKO_BIN/OS/rustic-bko` and `rustic-commit`.  `BKO_BIN`
@@ -94,8 +95,8 @@ runs on the Mac, where the forks' histories are:
 agent: it checks that `~/git/restic`, `rustic_core` and `rustic` are clean,
 takes their HEADs and source digests, syncs them to `roundROUND/src` on both
 hosts and runs both shares below at once (Chopin: restic-bko for the six
-OSes, rustic-bko for Linux and DragonFly; Cinqcent: the four native builds,
-two guests at a time).  A host builds nothing from a copy whose digests
+OSes, rustic-bko for Linux, DragonFly and Haiku; Cinqcent: the four native
+builds, two guests at a time).  A host builds nothing from a copy whose digests
 aren't the Mac's.  Both hosts end with the whole `roundROUND/bin` (illumos'
 also as `omnios`) and the same `SHA256SUMS`; it ends with a table, per
 binary: built, reused or FAILED, seconds, SHA-256 (logs in
@@ -159,7 +160,7 @@ the slow steps, native guest builds and round trips):
 | Chopin | Cinqcent |
 |---|---|
 | restic-bko cross-builds (the restic fork's build) | native rustic-bko builds: freebsd15, openbsd8, omnios58, netbsd11 |
-| rustic-bko for Linux, and `dragonfly/build-rustic.sh` | round trips and `nonroot-rt.sh` on freebsd15, freebsd15-ufs, netbsd11, alpinebsd, openbsd8, omnios58 |
+| rustic-bko for Linux, `dragonfly/build-rustic.sh` and `haiku/build-rustic.sh` | round trips and `nonroot-rt.sh` on freebsd15, freebsd15-ufs, netbsd11, alpinebsd, openbsd8, omnios58 |
 | `fs_roundtrip.py` on zfs, zfs onto ext4, bcachefs, xfs, btrfs; `nonroot-rt.sh linux`; `sparse-rt.sh` on xfs, btrfs (as root) | `fs_roundtrip.py` on ext4, f2fs, tmpfs, jfs; `sparse-rt.sh` on zfs, zfs-nocomp, ext4 (as root) |
 | round trips and `nonroot-rt.sh` on dragonfly6; `zfs-guest-rt.sh`; `compare.py` | `sparse-rt.sh` in freebsd15, freebsd15-ufs, netbsd11's build image, omnios58 |
 
@@ -168,8 +169,8 @@ Bring the logs back to one place for the audit.  Both
 hosts are shared with other work: give every guest a port of its own, and
 keep off the ports others use (2400 is the long-lived freebsd15-builder's;
 the image builds use 24xx).  The scripts' default ports are 2710-2713 for
-the round trips (Chopin's share; 2713 is `zfs-guest-rt.sh`'s) and 2901-2903 for the native builds
-(Cinqcent's); `netbsd/build-rustic.sh` keeps 2412 and
+the round trips (Chopin's share; 2713 is `zfs-guest-rt.sh`'s) and 2901-2904 for the native builds
+(Cinqcent's), 2905 for Haiku's (Chopin's); `netbsd/build-rustic.sh` keeps 2412 and
 `dragonfly/build-rustic.sh` 2421, the image builds' own.  Cinqcent takes at
 most three guests of ours at a time.
 

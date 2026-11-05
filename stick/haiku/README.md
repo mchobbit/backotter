@@ -31,7 +31,9 @@ It carries `rustic-bko` only: restic isn't ported to Haiku (Haiku's Go is
 - `boot`, `on-serial.py`: BackOtter's boot job and its serial console
   (below).
 - `checks.sh`, `config-checks.sh`: `boot-test.py --platform haiku`'s checks.
-- `build-rustic.sh`: builds `rustic-bko` natively in a `haiku6` copy.
+- `build-rustic.sh`: builds `rustic-bko` natively in a `haiku6` copy, from
+  the pushed fork or local trees (`SRC=`); `../build-round.sh` runs it on
+  Chopin in every round, so each round's binaries include Haiku's.
 
 ## The image
 

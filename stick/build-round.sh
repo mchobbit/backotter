@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
-# Build a whole test round's binaries unattended: restic-bko for every OS and
-# rustic-bko for Linux and DragonFly on Chopin, the native rustic-bko builds
-# on Cinqcent (testvm/compare/README.md, "Builds"), then a table of what was
+# Build a whole test round's binaries unattended: restic-bko for every OS but
+# Haiku (which has no restic) and rustic-bko for Linux, DragonFly and Haiku on
+# Chopin, the other native rustic-bko builds on Cinqcent
+# (testvm/compare/README.md, "Builds"), then a table of what was
 # built, reused or failed.  Here in stick/ beside the build scripts it drives;
 # the same file runs on the Mac and on the hosts.
 #
@@ -24,13 +25,15 @@
 # pushes what it built to Cinqcent, and --pull brings Cinqcent's back, so
 # both hosts end with the whole set and the same SHA256SUMS.
 #
-# LIST (comma-separated): restic linux dragonfly (Chopin's), freebsd netbsd
-# openbsd illumos (Cinqcent's).  Cinqcent builds in two lanes, freebsd then
-# netbsd and openbsd then illumos (BKO_GUEST_LANES=1: one); each guest first
-# takes one of the host-wide slots run-all.sh's guests take too
-# (testvm/compare/guest-slot.sh: BKO_GUEST_MAX, 3, on BKO_GUEST_RANGE,
-# 2900-2999, counting QEMU of ours there started without one), so builds
-# and tests together never run more than three.
+# LIST (comma-separated): restic linux dragonfly haiku (Chopin's), freebsd
+# netbsd openbsd illumos (Cinqcent's).  Chopin builds Linux, DragonFly and
+# Haiku at once, Haiku natively in a throwaway haiku6 (haiku/build-rustic.sh,
+# on BKO_HAIKU_PORT, 2905).  Cinqcent builds in two lanes, freebsd then
+# netbsd and openbsd then illumos (BKO_GUEST_LANES=1: one).  Each guest of a
+# native build first takes one of its host's slots that run-all.sh's guests
+# take too (testvm/compare/guest-slot.sh: BKO_GUEST_MAX, 3, on
+# BKO_GUEST_RANGE, 2900-2999, counting QEMU of ours there started without
+# one), so builds and tests together never run more than three.
 # illumos' binaries also go to bin/omnios (the harness takes either).
 # --dry-run syncs and checks the sources and prints what would be built or
 # reused, but builds and boots nothing.
@@ -40,7 +43,9 @@
 # goes into it: the sources (rustic's after prep-rustic-src.sh, Cargo.lock
 # included; *.md left out while no .rs has an include_str!/include_bytes!),
 # toolchain versions, profile, cargo config and CARGO_*/RUSTFLAGS
-# environment, the build scripts, and for guest builds the image booted.  A
+# environment, the build scripts, and for guest builds the image booted
+# (Haiku's Rust comes from HaikuPorts' rolling repository at build time, so
+# a newer one there doesn't count; BKO_REUSE=0 builds with it).  A
 # later round with the same digest copies it from there instead of building,
 # says so in the table and log, and adds a "reused" line to its commit file
 # (whose first lines name this round's commits); OS/NAME.digest beside each
@@ -71,7 +76,7 @@
 # testvm/, relative to home: backotter-work).  Passed to the hosts: BKO_ROUNDS,
 # SRC (default ROUNDDIR/src), BKO_BUILD_CACHE, BKO_PROFILE, BKO_GUEST_PROFILE,
 # BKO_REUSE, BKO_GUEST_LANES, BKO_DFLY_PORT (2701), BKO_GUEST_PORTS ("2901
-# 2902 2903 2904": freebsd netbsd openbsd illumos), BKO_GUEST_MAX,
+# 2902 2903 2904": freebsd netbsd openbsd illumos), BKO_HAIKU_PORT (2905), BKO_GUEST_MAX,
 # BKO_GUEST_RANGE, DFLY_CACHE, BKO_WORK (~/backotter-work: vms/, as for the
 # build scripts).  On a host by hand: RESTIC_COMMIT, RUSTIC_COMMIT,
 # RUSTIC_CORE_COMMIT and RESTIC_DIGEST, RESTIC_TREE_DIGEST, RUSTIC_DIGEST,
@@ -153,7 +158,7 @@ if [[ $mode == mac ]]; then
         local v out="RESTIC_COMMIT=$RESTIC_COMMIT RUSTIC_COMMIT=$RUSTIC_COMMIT RUSTIC_CORE_COMMIT=$RUSTIC_CORE_COMMIT"
         out+=" RESTIC_DIGEST=$RESTIC_DIGEST RESTIC_TREE_DIGEST=$RESTIC_TREE_DIGEST RUSTIC_DIGEST=$RUSTIC_DIGEST RUSTIC_CORE_DIGEST=$RUSTIC_CORE_DIGEST"
         out+=" BKO_ROUNDS=$rrounds SRC=$rsrc"
-        for v in BKO_BUILD_CACHE BKO_PROFILE BKO_GUEST_PROFILE BKO_REUSE BKO_DFLY_PORT BKO_GUEST_PORTS BKO_GUEST_LANES \
+        for v in BKO_BUILD_CACHE BKO_PROFILE BKO_GUEST_PROFILE BKO_REUSE BKO_DFLY_PORT BKO_GUEST_PORTS BKO_HAIKU_PORT BKO_GUEST_LANES \
             BKO_GUEST_MAX BKO_GUEST_RANGE DFLY_CACHE BKO_WORK; do
             [[ -n ${!v:-} ]] && out+=" $v='${!v}'"
         done
@@ -489,6 +494,35 @@ build_dragonfly() {
     row rustic-bko dragonfly built $((SECONDS - t0)) "$d"
     log "rustic-bko dragonfly built in $((SECONDS - t0)) s"
 }
+build_haiku() {  # natively in a throwaway haiku6, on a guest slot
+    local t0=$SECONDS d inputs=$LOGS/rustic-haiku.inputs port=${BKO_HAIKU_PORT:-2905} img fast="" s
+    img=$WORK/vms/haiku6/haiku6.qcow2
+    [[ -f $img ]] || { log "no $img"; row rustic-bko haiku FAILED 0; return 1; }
+    [[ $gprofile == fast ]] && fast=1
+    { echo "rustic-bko haiku, native in haiku6"; echo "sources $PREP_DIGEST"; echo "profile $gprofile"
+      echo "image ${img#"$WORK"/} $(stat -L -c '%s %Y' "$img")"
+      hash_files "$here/haiku/build-rustic.sh" "$here/prep-rustic-src.sh"; } >"$inputs"
+    d=$(digest_of "$inputs")
+    if reuse rustic-haiku "$d" haiku rustic-bko; then
+        [[ $dry == yes ]] || row rustic-bko haiku reused 0 "$d"
+        return 0
+    fi
+    if [[ $dry == yes ]]; then log "rustic-bko haiku: would build (haiku/build-rustic.sh $port, $gprofile)"; return 0; fi
+    slot_take "${BKO_GUEST_MAX:-3}" "${BKO_GUEST_RANGE:-2900-2999}"
+    log "rustic-bko haiku: building (haiku/build-rustic.sh $port, $gprofile; guest slot $BKO_GUEST_SLOT)"
+    env SRC="$PREPPED" BKO_BIN="$BIN" BKO_WORK="$WORK" FAST=$fast "$here/haiku/build-rustic.sh" "$port" \
+        >"$LOGS/build-rustic-haiku.log" 2>&1
+    s=$?
+    slot_give
+    if [[ $s != 0 ]]; then
+        tail -n 30 "$LOGS/build-rustic-haiku.log"
+        row rustic-bko haiku FAILED $((SECONDS - t0))
+        return 1
+    fi
+    keep rustic-haiku "$d" haiku rustic-bko "$inputs"
+    row rustic-bko haiku built $((SECONDS - t0)) "$d"
+    log "rustic-bko haiku built in $((SECONDS - t0)) s"
+}
 
 # --- Cinqcent's builds ---------------------------------------------------------------------
 vm_of() { case $1 in freebsd) echo freebsd15 ;; openbsd) echo openbsd8 ;; netbsd) echo netbsd11 ;; illumos) echo omnios58 ;; esac; }
@@ -532,11 +566,16 @@ build_native() {  # OS PORT
 t_all=$SECONDS
 if [[ $mode == chopin ]]; then
     want restic && build_restic
-    if want linux || want dragonfly; then
+    if want linux || want dragonfly || want haiku; then
         prepare
         pids=""
         if want linux; then build_linux & pids+=" $!"; fi
         if want dragonfly; then build_dragonfly & pids+=" $!"; fi
+        if want haiku; then
+            # shellcheck source=../testvm/compare/guest-slot.sh
+            . "$here/../testvm/compare/guest-slot.sh" || die "no $here/../testvm/compare/guest-slot.sh"
+            build_haiku & pids+=" $!"
+        fi
         for p in $pids; do wait "$p"; done
     fi
     [[ $dry == yes ]] || omnios_copies restic-bko

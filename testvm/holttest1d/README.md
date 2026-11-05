@@ -259,6 +259,29 @@ phases are `source`, `backup`, `rebuild` and `verify`; each needs the one
 before it, and the run stops at the first that fails.  After a bko-holt fix,
 `rebuild verify` is enough, unless the fix changed what `dump` writes.
 
+The plan's variants are chosen with `HT_VARIANT`, each in a directory of
+its own (`RUN/GUEST-VARIANT`): `oneshot` runs the rebuild as one
+`--through close --commit`, and `bigger` rebuilds onto disks 1 GiB bigger
+than the source's, judged with `judge.py --grow`, which lets only a disk's
+size, GPT's last usable LBA and backup header and the protective MBR move
+by exactly that much.  A full HoltTest1D is six runs: `debian13`,
+`debian13-zfs` and `debian13-stack`, `debian13-stack` with `bigger`, and
+`debian13` with `oneshot` on each host.  Never run two copies of
+`debian13-stack` on one host at once, nor beside a `compare.py` of it:
+`vm-mount` refuses a second `debian13-stack-vg`, since LVM's names are the
+host's.
+
+Each run also checks, as the plan asks:
+
+- a decoy disk after the targets, holding an ext4 filesystem, is refused
+  without `--erase` (for not being blank) and still holds it at the end;
+- the refusals and the dry run leave every target's and the decoy's first
+  and last MiB as they were;
+- the restored machine's health: `findmnt --verify`, every fstab mount
+  mounted, swap on, `zpool status -x`, md arrays clean or active, every
+  crypttab volume open, and load's log kept.  The same checks run on the
+  source; one that fails there too isn't counted.
+
 It differs from the plan above in these ways:
 
 - **The rescuer** is a throwaway overlay of a rescuer image, driven over

@@ -3,11 +3,15 @@
 copy's after it booted.  Prints one DIFF line per field that differs, and
 exits 1 if any field outside IGNORED differs.
 
-Usage: judge.py SRC.json DST.json
+Usage: judge.py [--grow BYTES] SRC.json DST.json
        judge.py fs FSMETA.py SRC-META.json DST-META.json
 
 The fs form judges fsmeta.py's records of the source and the restored disk:
 every path must match but what load's boot stage writes by design (BOOT_STAGE).
+
+--grow BYTES is for a restore onto disks BYTES bigger than the source's: a
+disk's size, GPT's last usable LBA and backup header, and the protective MBR's
+partition may then differ by exactly that much, and nothing else may.
 
 IGNORED lists what may differ between two boots of the same machine, or can't
 be kept by a restore, each with why.  judge.py prints which of them did differ,
@@ -104,9 +108,34 @@ def judge_fs(fsmeta_py, src_path, dst_path):
     sys.exit(1 if n else 0)
 
 
+# With --grow: the fields a bigger disk moves, and the unit of each.
+GROWN = [
+    (r"^storage\.disks\.\d+\.size_bytes$", "bytes"),
+    (r"^storage\.disks\.\d+\.partition_table\.(last_usable_lba|backup_lba)$", "sectors"),
+    (r"^storage\.disks\.\d+\.partition_table\.protective_mbr\.entries\.0\.sectors$", "sectors"),
+    (r"^storage\.disks\.\d+\.partition_table\.protective_mbr\.entries\.0\.size_bytes$", "bytes"),
+]
+
+
+def grown(k, va, vb, grow, flat):
+    """Why field K may differ by GROW, or None."""
+    if re.search(r"^storage\.disks\.\d+\.size$", k):
+        return "the disk's size, in words"
+    for pat, unit in GROWN:
+        if re.search(pat, k) and isinstance(va, int) and isinstance(vb, int):
+            ss = flat.get(re.sub(r"\.partition_table\..*|\.size_bytes$", "", k) + ".logical_sector_size", 512)
+            if vb - va == (grow if unit == "bytes" else grow // ss):
+                return "the target disk is bigger by --grow: GPT's backup header and last usable LBA move to its end"
+    return None
+
+
 def main():
     if sys.argv[1] == "fs":
         judge_fs(*sys.argv[2:5])
+    grow = 0
+    if sys.argv[1] == "--grow":
+        grow = int(sys.argv[2])
+        del sys.argv[1:3]
     src = json.load(open(sys.argv[1]))
     dst = json.load(open(sys.argv[2]))
     # Lists whose order is the boot's, not the layout's: ZFS mounts its
@@ -128,6 +157,8 @@ def main():
             continue
         why = next((w for p, w in IGNORED if re.search(p, k)), None)
         va, vb = a.get(k), b.get(k)
+        if not why and grow:
+            why = grown(k, va, vb, grow, a)
         if not why and k.startswith("storage.zfs.zpool_cache.") and k not in a:
             why = "zpool.cache fields only the rescue system's newer OpenZFS writes"
         if not why and re.search(r"\.features\.[a-z_]+$", k) and {va, vb} <= {"enabled", "active"}:

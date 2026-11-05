@@ -61,7 +61,7 @@ _WRITTEN = {"content", "mtime", "mtime (dirs)", "atime", "atime (dirs)", "extra"
 BOOT_STAGE = [
     (r"^boot/grub2?(/|$)", _WRITTEN | {"missing"}, "grub-install and update-grub rewrite /boot/grub (Fedora's /boot/grub2)"),
     (r"^boot/loader(/entries(/[^/]+)?)?$", _WRITTEN, "grub2-mkconfig rewrites Fedora's BLS entries' options lines"),
-    (r"^boot/(initrd\.img-[^/]+|initramfs-[^/]+\.img)$", _WRITTEN, "the boot stage rebuilds every initramfs"),
+    (r"^boot/(initrd\.img-[^/]+|initramfs-[^/]+)$", _WRITTEN, "the boot stage rebuilds every initramfs (Alpine's have no .img)"),
     (r"^boot$", {"mtime (dirs)", "atime (dirs)"}, "update-initramfs replaces the initrds"),
     (r"^var/log/bko-holt(/|$)", _WRITTEN, "load's own log, copied in by the boot stage"),
     (r"^etc/zfs/zpool\.cache$", _WRITTEN, "the boot stage writes the new pool's zpool.cache"),
@@ -69,6 +69,8 @@ BOOT_STAGE = [
     (r"^var/lib/initramfs-tools(/|$)", _WRITTEN, "update-initramfs records the kernels it built for"),
     (r"^var/lib/dracut(/|$)", _WRITTEN, "dracut's console-setup module, run by the boot stage's initramfs rebuild"),
     (r"^boot/efi[^/]*/EFI(/|$)", _WRITTEN, "grub-install writes the ESPs' loaders (a second ESP by the distribution's hook)"),
+    (r"^(boot/)?efi/EFI(/(BOOT|Boot|systemd|Linux)(/.*)?)?$", _WRITTEN, "bootctl install rewrites systemd-boot and makes EFI/Linux in an ESP at /efi (AerynOS)"),
+    (r"^(boot/)?efi/loader(/(random-seed|keys))?$", _WRITTEN, "bootctl install writes a new random seed and makes loader/keys"),
     (r"^(tmp|var/tmp)$", {"mtime (dirs)", "atime (dirs)"}, "update-initramfs and update-grub work in temporary directories"),
     (r"^var/lib/os-prober(/|$)", _WRITTEN, "update-grub runs os-prober (GRUB_DISABLE_OS_PROBER=false)"),
 ]
@@ -163,6 +165,10 @@ def main():
             why = "zpool.cache fields only the rescue system's newer OpenZFS writes"
         if not why and re.search(r"\.features\.[a-z_]+$", k) and {va, vb} <= {"enabled", "active"}:
             why = "a ZFS feature is active once something uses it (block cloning: cp)"
+        if not why and k.endswith(".version") and a.get(k[: -len("version")] + "type") == "f2fs":
+            why = "an F2FS superblock records the f2fs-tools release that made it (the rescuer's mkfs.f2fs, not the source's), and its checksum covers it"
+        if not why and k.endswith(".inodes") and a.get(k[: -len("inodes")] + "type") == "xfs":
+            why = "XFS's sb_icount counts the inodes allocated so far (in chunks of 64, as files are made): usage, not layout"
         m = re.match(r"^(storage\.other_devices\.\d+)\.", k)
         if not why and m and a.get(m.group(1) + ".kind") == "zram":
             why = "zram is made anew at each boot"

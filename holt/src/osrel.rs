@@ -65,12 +65,15 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
 }
 
 /// The systems bko-holt supports, as os-release's ID and the major part of
-/// VERSION_ID, with how people name them.  Each has a whole-machine test:
-/// HoltTest1D (Debian 13), HoltTest1M (Linux Mint 22), HoltTest1U (Ubuntu
-/// 24.04 and 26.04), HoltTest1Z (Zorin OS 18), HoltTest1A (Arch) and
-/// HoltTest1F (Fedora 44).  The Ubuntu-based ones use Debian's boot tools
-/// (update-initramfs, update-grub); Arch has mkinitcpio and grub-mkconfig,
-/// Fedora dracut and grub2-mkconfig.
+/// VERSION_ID ("*": any, for a rolling release that numbers its snapshots),
+/// with how people name them.  Each has a whole-machine test: HoltTest1D
+/// (Debian 13), HoltTest1M (Linux Mint 22), HoltTest1U (Ubuntu 24.04 and
+/// 26.04), HoltTest1Z (Zorin OS 18), HoltTest1A (Arch, Alpine, AerynOS,
+/// Artix) and HoltTest1F (Fedora 44).  The Ubuntu-based ones use Debian's
+/// boot tools (update-initramfs, update-grub); Arch and Artix have mkinitcpio
+/// and grub-mkconfig, Alpine mkinitfs and grub-mkconfig, Fedora dracut and
+/// grub2-mkconfig; AerynOS's initramfs comes prebuilt with its kernel, and
+/// systemd-boot boots it.
 pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("debian", "13", "Debian 13"),
     ("linuxmint", "22", "Linux Mint 22"),
@@ -80,13 +83,18 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     // Rolling: Arch's os-release has no VERSION_ID.
     ("arch", "", "Arch Linux"),
     ("fedora", "44", "Fedora 44"),
+    ("alpine", "3", "Alpine Linux 3"),
+    // Rolling, like Arch.
+    ("artix", "", "Artix Linux"),
+    // Rolling: VERSION_ID is the snapshot's year and month (2026.11).
+    ("aerynos", "*", "AerynOS"),
 ];
 
 /// Whether ID and VERSION_ID name a supported system: the same major version
 /// ("22.3" is Mint 22).  Derivatives don't count by their ID_LIKE.
 pub fn supported(id: &str, version_id: &str) -> bool {
     let major = version_id.split('.').next().unwrap_or("");
-    SUPPORTED.iter().any(|(i, v, _)| *i == id && *v == major)
+    SUPPORTED.iter().any(|(i, v, _)| *i == id && (*v == major || *v == "*"))
 }
 
 /// "Debian 13, Linux Mint 22, ... or Zorin OS 18", for messages.
@@ -167,7 +175,11 @@ mod tests {
         let ubuntu22 = parse("ID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"22.04\"\n");
         assert!(check_supported(Some(&ubuntu22)).unwrap_err().contains("ubuntu 22.04"));
         assert!(check_supported(Some(&parse("ID=zorin\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"18\"\n"))).is_ok());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, Arch Linux or Fedora 44"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux or AerynOS"), "{e}");
+        assert!(check_supported(Some(&parse("ID=alpine\nVERSION_ID=3.24.3\n"))).is_ok());
+        assert!(check_supported(Some(&parse("ID=artix\nNAME=\"Artix Linux\"\n"))).is_ok());
+        assert!(check_supported(Some(&parse("ID=\"aerynos\"\nVERSION_ID=\"2026.11\"\nID_LIKE=\"linux\"\n"))).is_ok());
+        assert!(check_supported(Some(&parse("ID=\"aerynos\"\nVERSION_ID=\"2027.01\"\n"))).is_ok());
         // Linux Mint 22.x; not 21, and not Mint's Debian edition (LMDE).
         let mint = parse("ID=linuxmint\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"22.3\"\n");
         assert!(check_supported(Some(&mint)).is_ok());

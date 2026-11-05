@@ -44,7 +44,7 @@ qemu-img resize -q "$D/$NAME.new.qcow2" +6G
 up
 if ((UEFI)); then
     INSTALL='apt-get update -q
-apt-get install -y -q zfsutils-linux f2fs-tools nilfs-tools mdadm cryptsetup lvm2 xfsprogs btrfs-progs dosfstools efibootmgr gdisk'
+apt-get install -y -q zfsutils-linux f2fs-tools nilfs-tools jfsutils mdadm cryptsetup lvm2 xfsprogs btrfs-progs dosfstools efibootmgr gdisk'
 else
     INSTALL='for f in /etc/apt/sources.list.d/debian.sources /etc/apt/sources.list; do
     [ -f "$f" ] && sed -i -E "/^(Components:|deb )/ { / contrib/! s/ main/ main contrib/ }" "$f"
@@ -55,7 +55,7 @@ echo "deb http://deb.debian.org/debian trixie-backports main contrib" > /etc/apt
 apt-get update -q
 apt-get install -y -q linux-image-amd64 linux-headers-amd64
 apt-get install -y -q -t trixie-backports zfs-dkms zfsutils-linux
-apt-get install -y -q f2fs-tools nilfs-tools mdadm cryptsetup lvm2 xfsprogs btrfs-progs dosfstools efibootmgr gdisk'
+apt-get install -y -q f2fs-tools nilfs-tools jfsutils mdadm cryptsetup lvm2 xfsprogs btrfs-progs dosfstools efibootmgr gdisk'
 fi
 ssh_r "set -e
 export DEBIAN_FRONTEND=noninteractive

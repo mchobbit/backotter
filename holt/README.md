@@ -1,6 +1,6 @@
 # bko-holt
 
-One binary with two halves, for a Debian 13 system's disks:
+One binary with two halves, for a Linux system's disks:
 
 - `bko-holt dump` writes a JSON description of the disk layout and boot setup
   to standard output: the `storage` and `boot` sections that
@@ -19,9 +19,13 @@ bko-holt load layout.json --map vda=/dev/sdb --erase /dev/sdb \
     --repo /srv/backup --password-file /run/pw --through close --commit
 ```
 
-`dump` refuses to run (exit 3) on anything but Debian 13 (`ID=debian`,
-`VERSION_ID=13` in os-release), and `load` refuses a layout from anything
-else.  Run both as root: partition tables, superblocks, LUKS headers and
+`dump` refuses to run (exit 3) on a system it doesn't support, and `load`
+refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
+`VERSION_ID`) is Debian 13, Linux Mint 22, Ubuntu 24.04 and 26.04, Zorin OS 18,
+Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux and AerynOS: each passes a
+whole-machine round trip (`testvm/holttest1d/README.md`).  Build it static
+(`RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target
+x86_64-unknown-linux-gnu`) to run it on musl systems such as Alpine too.  Run both as root: partition tables, superblocks, LUKS headers and
 LVM/ZFS labels are read from the devices themselves.  As another user `dump`
 falls back to udev's database and says so under `warnings`; `load` won't
 plan from such a dump.

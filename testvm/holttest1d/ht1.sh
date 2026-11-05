@@ -8,7 +8,8 @@
 # RUN names the run's directory, /bkoscratch/holttest1d/RUN/GUEST/.  Later
 # phases reuse what earlier ones left there, so after a bko-holt fix only
 # `rebuild verify` need running again.  Needs /bkoscratch/holttest1d/bin/
-# with bko-holt, rustic-bko and f2fs-tools_*.deb (installed in the rescuer).
+# with bko-holt, rustic-bko, f2fs-tools_*.deb and jfsutils_*.deb (installed
+# in a rescuer that lacks them).
 #
 #   source   dump the live guest (a throwaway overlay; the guest's own
 #            image is never written), with its boot state as the baseline
@@ -125,13 +126,31 @@ vm_down() { local key=$1
 HEALTH='f=0; no() { echo "FAIL $*"; f=1; }
 findmnt --verify >/dev/null 2>&1 && echo "fstab verifies" || no "findmnt --verify: $(findmnt --verify 2>&1 | grep -iE "error|warn" | head -2 | tr "\n" " ")"
 m=0; for t in $(awk "\$1 !~ /^#/ && \$2 ~ /^\// && \$4 !~ /noauto/ {print \$2}" /etc/fstab); do mountpoint -q "$t" && m=$((m + 1)) || no "fstab mount $t not mounted"; done; echo "$m fstab mounts mounted"
-swapon --show --noheadings | grep -q . && echo "swap on" || no "no swap"
+[ "$(grep -c . /proc/swaps)" -gt 1 ] && echo "swap on" || no "no swap"
 if command -v zpool >/dev/null && [ -n "$(zpool list -H -o name 2>/dev/null)" ]; then zpool status -x | grep -q "all pools are healthy" && echo "zpool healthy" || no "zpool status -x: $(zpool status -x | head -3 | tr "\n" " ")"; fi
 [ -r /proc/mdstat ] && for a in $(awk "/^md/ {print \$1}" /proc/mdstat); do st=$(mdadm --detail /dev/$a | sed -n "s/^ *State : *//p" | sed "s/ *$//"); case $st in clean|active|"active, resyncing"|"clean, resyncing") echo "$a $st" ;; *) no "$a: $st" ;; esac; done
 [ -f /etc/crypttab ] && for c in $(awk "\$1 !~ /^#/ && NF {print \$1}" /etc/crypttab); do cryptsetup status "$c" 2>/dev/null | grep -q "is active" && echo "$c open" || no "LUKS $c not open"; done
 ls /var/log/bko-holt/load.log >/dev/null 2>&1 && echo "load log kept" || no "/var/log/bko-holt/load.log missing"
 exit $f'
-bootstate() { sshk "$1" 'systemctl is-system-running; systemctl --failed --no-legend --plain | awk "{print \$1}" | sort'; }
+# Boot state: line 1 systemd's overall state (or the init system's name),
+# then one line per failed unit or service that isn't up, sorted.  A
+# restored machine may have no line its source lacked.
+BOOTSTATE='if [ -d /run/systemd/system ]; then
+    systemctl is-system-running; systemctl --failed --no-legend --plain | awk "{print \$1}" | sort
+elif command -v rc-status >/dev/null; then
+    echo openrc
+    { rc-status -a | awk "/^Runlevel: / {lv=\$2; next} /^Dynamic Runlevel: / {lv=\$3; next} (lv == \"sysinit\" || lv == \"boot\" || lv == \"default\" || lv == \"needed/wanted\") && !/\\[ *started *\\]/ {print \"down \" \$1}"
+      rc-status --crashed | sed "s/^/crashed /"; } | sort
+elif command -v dinitctl >/dev/null; then
+    echo dinit
+    dinitctl list | awk "!/^\\[[^]]*\\+[^]]*\\]/ {sub(/^\\[[^]]*\\] */, \"\"); print \"down \" \$1}" | sort
+elif command -v s6-rc >/dev/null; then
+    echo s6
+    s6-rc -da list | sed "s/^/down /" | sort
+else
+    echo "unknown init"
+fi'
+bootstate() { sshk "$1" "$BOOTSTATE"; }
 
 phase_source() {
     say "== source: $G"
@@ -168,7 +187,7 @@ phase_backup() {
     fi
     python3 "$T/compare/fsmeta.py" record "$SRC_MP" "$R/src-meta.json" > "$R/logs/fsmeta-src.log" 2>&1 || bad "fsmeta record of the source"
     "$T/vm-umount" "$SRC_MP" >> "$R/logs/backup-mount.log" 2>&1
-    cp "$BIN/bko-holt" "$BIN/rustic-bko" "$BIN"/f2fs-tools_*.deb "$S/"
+    cp "$BIN/bko-holt" "$BIN/rustic-bko" "$BIN"/*.deb "$S/"
     [[ -n $gpass ]] && cp "$gpass" "$S/passphrase"
     chmod -R a+rX "$S"
 }
@@ -184,7 +203,7 @@ load_step() { local want=$1 name=$2; shift 2
 
 phase_rebuild() {
     say "== rebuild"
-    cp "$BIN/bko-holt" "$S/"   # the latest build, when rerun after a fix
+    cp "$BIN/bko-holt" "$BIN"/*.deb "$S/"   # the latest build, when rerun after a fix
     rm -f "$R/rescuer.qcow2" "${dst[@]}"
     qemu-img create -q -f qcow2 -b "$RESCUER_IMG" -F qcow2 "$R/rescuer.qcow2"
     local disks=() grow=0
@@ -205,8 +224,8 @@ phase_rebuild() {
     vm_up "$R/rescuer.qcow2" "$R/logs/rescuer-serial.log" "${rfw[@]}" --memory 3072 "${disks[@]}" -- \
         -virtfs "local,path=$S,mount_tag=bkoshare,security_model=none,readonly=on"
     vm_wait "$rkey" || { bad "rescuer boots"; vm_down "$rkey"; return; }
-    sshk "$rkey" 'mkdir -p /mnt/share && mount -t 9p -o trans=virtio,version=9p2000.L,ro bkoshare /mnt/share && { command -v mkfs.f2fs >/dev/null || dpkg -i /mnt/share/f2fs-tools_*.deb >/dev/null; }' \
-        > "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup (share, f2fs-tools)"; vm_down "$rkey"; return; }
+    sshk "$rkey" 'mkdir -p /mnt/share && mount -t 9p -o trans=virtio,version=9p2000.L,ro bkoshare /mnt/share && inst() { apt-get install -y -q -o DPkg::Lock::Timeout=600 "$@" >/dev/null; } && { command -v mkfs.f2fs >/dev/null || inst /mnt/share/f2fs-tools_*.deb; } && { command -v mkfs.jfs >/dev/null || inst /mnt/share/jfsutils_*.deb; }' \
+        > "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup (share, f2fs-tools, jfsutils)"; vm_down "$rkey"; return; }
     sshk "$rkey" "mkfs.ext4 -q -F -L ht1decoy $decoy" >> "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup (the decoy's filesystem)"; vm_down "$rkey"; return; }
     ok "rescuer up, share mounted"
     # The first and last MiB of every target and the decoy, before and after

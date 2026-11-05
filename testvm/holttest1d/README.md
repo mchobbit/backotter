@@ -32,7 +32,7 @@ guests.  A guest passes only when every check passes.  Status is as of
 | 1U | Ubuntu | `ubuntu24`, `ubuntu26-uefi`, `ubuntu26-zfsmirror` | passes |
 | 1Z | Zorin OS | `zorin18` | passes |
 | 1F | Fedora, Rocky Linux | `fedora44`, `fedora44-uefi`, `rocky10`, `rocky10-lvm` | the Fedora guests pass; Rocky not run |
-| 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | `arch` passes; the rest not run |
+| 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | passes |
 | 1C | CachyOS, MX Linux | `cachyos`, `mx25` | not run |
 | 1V | Void Linux (musl) | `void-musl` | not run |
 | 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12 | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12` | not run |
@@ -42,16 +42,14 @@ guests.  A guest passes only when every check passes.  Status is as of
 
 What the ones not run need, as far as is known before running them:
 
-- **Supported systems:** bko-holt's list (`holt/src/osrel.rs`) lacks Alpine,
-  AerynOS, Artix, CachyOS, MX, Void, Pop!_OS, NixOS, Rocky, openSUSE and
-  Debian 12.
-- **Filesystems:** JFS (`cachyos`'s and `artix-dinit`'s roots) isn't probed
-  or made.
-- **Boot tools:** Alpine's mkinitfs, AerynOS's blsforme, Pop!_OS's
-  kernelstub, NixOS's nixos-rebuild, Void's and openSUSE's own; `load`
-  knows update-initramfs, mkinitcpio and dracut, GRUB and `bootctl install`.
-- **Init systems:** `ht1.sh`'s boot-state check uses systemctl; OpenRC,
-  runit, dinit, s6 and MX's sysvinit need their own.
+- **Supported systems:** bko-holt's list (`holt/src/osrel.rs`) lacks
+  CachyOS, MX, Void, Pop!_OS, NixOS, Rocky, openSUSE and Debian 12.
+- **Boot tools:** Pop!_OS's kernelstub, NixOS's nixos-rebuild, Void's and
+  openSUSE's own; `load` knows update-initramfs, mkinitcpio, dracut and
+  mkinitfs (or a prebuilt initramfs, as AerynOS's), GRUB and
+  `bootctl install`.
+- **Init systems:** `ht1.sh`'s boot-state check knows systemd, OpenRC, dinit
+  and s6; runit and MX's sysvinit need their own.
 - **Keyboard passphrases:** Omarchy's LUKS prompt is Plymouth's, typed on the
   keyboard (compare.py's `type-luks-passphrase.py`), not on the console.
 - **Not Linux (1H, 1I, 1BSD, Sculpt, Redox):** bko-holt reads Linux's /sys,
@@ -296,6 +294,12 @@ It differs from the plan above in these ways:
   (or the serial console) for `make-img.sh --test` images, and f2fs-tools,
   nilfs-tools and 9p in the image.
 - **The share** is 9p, read-only, mounted at `/mnt/share` in the rescuer.
+- **bko-holt is built static** (`+crt-static`), so one binary dumps glibc and
+  musl (Alpine) systems alike.
+- **Known limits, not counted:** an F2FS superblock records the f2fs-tools
+  release that made it, so a source made by a newer mkfs.f2fs (AerynOS's
+  1.17) comes back with the rescuer's (1.16); XFS's allocated-inode count
+  is usage.  `judge.py` names both when they differ.
 - **The file check** records fsmeta of the source (mounted read-only) and
   of the restored disk, and `judge.py fs` compares them.  Only what `load`'s
   boot stage writes by design may differ (`BOOT_STAGE`): `/boot/grub` (or

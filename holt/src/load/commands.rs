@@ -1240,6 +1240,28 @@ pub fn nilfs_tune(dev: &str, c: &Value) -> Option<Vec<String>> {
     s(c, "uuid").map(|u| vec!["nilfs-tune".to_string(), "-U".into(), u, dev.to_string()])
 }
 
+/// mkfs.jfs: 4 KiB blocks only, and no UUID option (jfs_tune sets it).
+pub fn mkfs_jfs(dev: &str, c: &Value) -> Vec<String> {
+    let mut a = vec!["mkfs.jfs".to_string(), "-q".into()];
+    if let Some(l) = s(c, "label") {
+        a.extend(["-L".into(), l]);
+    }
+    a.push(dev.to_string());
+    a
+}
+
+pub fn jfs_tune(dev: &str, c: &Value) -> Option<Vec<String>> {
+    s(c, "uuid").map(|u| vec!["jfs_tune".to_string(), "-U".into(), u, dev.to_string()])
+}
+
+/// s_version back to 1 in both superblocks (at 32 KiB and 60 KiB; the
+/// field is their fifth byte).  A version-1 superblock still has its UUID
+/// field: mkfs.jfs writes one there.
+pub fn jfs_version1(dev: &str) -> Vec<String> {
+    let w = |off: u32| format!("printf '\\001' | dd of={dev} bs=1 seek={off} count=1 conv=notrunc status=none");
+    vec!["sh".to_string(), "-c".into(), format!("{} && {}", w(0x8000 + 4), w(0xF000 + 4))]
+}
+
 pub fn mkswap(dev: &str, c: &Value) -> Vec<String> {
     let mut a = vec!["mkswap".to_string()];
     if let Some(u) = s(c, "uuid") {
@@ -1300,7 +1322,7 @@ impl Builder<'_> {
                 continue;
             };
             let why = format!("{src}: {ty}{}", s(&c, "label").map(|l| format!(" \"{l}\"")).unwrap_or_default());
-            if matches!(ty.as_str(), "ext2" | "ext3" | "ext4" | "xfs" | "btrfs" | "f2fs" | "nilfs2" | "vfat" | "msdos" | "swap") {
+            if matches!(ty.as_str(), "ext2" | "ext3" | "ext4" | "xfs" | "btrfs" | "f2fs" | "nilfs2" | "jfs" | "vfat" | "msdos" | "swap") {
                 self.filesystems.push((dev.clone(), ty.clone(), s(&c, "uuid")));
             }
             match ty.as_str() {
@@ -1349,6 +1371,19 @@ impl Builder<'_> {
                     out.push(Cmd { argv: mkfs_nilfs2(&dev, &c), why: Some(why), ..Cmd::default() });
                     if let Some(t) = nilfs_tune(&dev, &c) {
                         out.push(Cmd { argv: t, why: Some("the source's UUID (mkfs.nilfs2 can't set one)".into()), ..Cmd::default() });
+                    }
+                }
+                "jfs" => {
+                    if c.get("external_log").and_then(Value::as_bool) == Some(true) {
+                        self.problems.push(format!("{src}: JFS with an external log isn't one bko-holt load can make"));
+                        continue;
+                    }
+                    out.push(Cmd { argv: mkfs_jfs(&dev, &c), why: Some(why), ..Cmd::default() });
+                    if let Some(t) = jfs_tune(&dev, &c) {
+                        out.push(Cmd { argv: t, why: Some("the source's UUID (mkfs.jfs can't set one)".into()), ..Cmd::default() });
+                        if s(&c, "version").as_deref() == Some("1") {
+                            out.push(Cmd { argv: jfs_version1(&dev), why: Some("jfs_tune -U makes the superblock version 2; mkfs.jfs's, and the source's, is 1".into()), ..Cmd::default() });
+                        }
                     }
                 }
                 "swap" => {
@@ -1675,7 +1710,10 @@ impl Builder<'_> {
         for d in ["dev", "proc", "sys", "run"] {
             out.push(Cmd::new(&["mount", "--rbind", "--make-rslave", &format!("/{d}"), &format!("{t}/{d}")]));
         }
-        out.push(self.initramfs(&t));
+        match self.initramfs(&t) {
+            Some(c) => out.push(c),
+            None => self.notes.push("the initramfs came prebuilt with the kernel and was restored with it; nothing to rebuild".into()),
+        }
         let loader = self.layout.str_at(&["boot", "loader", "name"]).unwrap_or("unknown").to_string();
         let uefi = self.layout.uefi();
         match (loader.as_str(), uefi) {
@@ -1777,13 +1815,17 @@ impl Builder<'_> {
         }
     }
 
-    /// Every initramfs remade by the source's own generator.
-    fn initramfs(&self, t: &str) -> Cmd {
-        match self.layout.str_at(&["boot", "initramfs", "generator"]) {
+    /// Every initramfs remade by the source's own generator; None for one
+    /// that came prebuilt with its kernel (AerynOS).
+    fn initramfs(&self, t: &str) -> Option<Cmd> {
+        Some(match self.layout.str_at(&["boot", "initramfs", "generator"]) {
+            Some("prebuilt") => return None,
             Some("mkinitcpio") => Cmd::new(&["chroot", t, "mkinitcpio", "-P"]),
             Some("dracut") => Cmd::new(&["chroot", t, "dracut", "--regenerate-all", "--force"]),
+            // Alpine: mkinitfs KVER writes /boot/initramfs-FLAVOR.
+            Some("mkinitfs") => Cmd::new(&["chroot", t, "sh", "-c", "for k in /lib/modules/*; do mkinitfs \"${k##*/}\" || exit; done"]),
             _ => Cmd::new(&["chroot", t, "update-initramfs", "-u", "-k", "all"]),
-        }
+        })
     }
 
     fn grub_bios_devices(&self) -> Vec<String> {
@@ -2005,6 +2047,15 @@ mod tests {
         assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub2-mkconfig -o /boot/grub2/grub.cfg\n"), "{bt}");
         assert!(bt.contains("setfiles \"$f\" /boot"), "{bt}");
         assert!(bt.contains("mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober"), "{bt}");
+        let alpine = sample::bios_mbr()
+            .replace(r#""id": "debian", "version_id": "13""#, r#""id": "alpine", "version_id": "3.24.3""#)
+            .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "mkinitfs"},"#);
+        let bt = text(built_from(&alpine, &[]).stage(Stage::Boot));
+        assert!(bt.contains("mkinitfs"), "{bt}");
+        assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{bt}");
+        let prebuilt = arch.replace(r#""generator": "mkinitcpio""#, r#""generator": "prebuilt""#);
+        let bt = text(built_from(&prebuilt, &[]).stage(Stage::Boot));
+        assert!(!bt.contains("mkinitcpio") && !bt.contains("update-initramfs"), "{bt}");
     }
 
     #[test]
@@ -2056,6 +2107,17 @@ mod tests {
             "block_size": 4096, "blocks_per_segment": 2048, "reserved_segments_percentage": 5, "features": []}"#).unwrap();
         assert_eq!(mkfs_nilfs2("/dev/vdb3", &c).join(" "), "mkfs.nilfs2 -f -q -b 4096 -B 2048 -m 5 -O ^block_count /dev/vdb3");
         assert_eq!(nilfs_tune("/dev/vdb3", &c).unwrap().join(" "), "nilfs-tune -U 64962903-fd78-434b-9633-b73fd5eba5e8 /dev/vdb3");
+    }
+
+    #[test]
+    fn jfs() {
+        let c = crate::json::parse(r#"{"type": "jfs", "uuid": "d12ea338-ce14-4c47-90c8-7e72c24a87c6", "label": "root", "block_size": 4096}"#).unwrap();
+        assert_eq!(mkfs_jfs("/dev/vdb3", &c).join(" "), "mkfs.jfs -q -L root /dev/vdb3");
+        assert_eq!(jfs_tune("/dev/vdb3", &c).unwrap().join(" "), "jfs_tune -U d12ea338-ce14-4c47-90c8-7e72c24a87c6 /dev/vdb3");
+        assert_eq!(
+            jfs_version1("/dev/vdb3")[2],
+            "printf '\\001' | dd of=/dev/vdb3 bs=1 seek=32772 count=1 conv=notrunc status=none && printf '\\001' | dd of=/dev/vdb3 bs=1 seek=61444 count=1 conv=notrunc status=none"
+        );
     }
 
     #[test]

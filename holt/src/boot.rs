@@ -50,6 +50,20 @@ pub fn pacman_packages(sys: &Sys) -> Vec<(String, String, String)> {
     out
 }
 
+/// Installed packages from apk's database (Alpine): blocks of `K:value`
+/// lines, P the name, V the version, A the architecture.
+pub fn parse_apk_installed(text: &str) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for block in text.split("\n\n") {
+        let f = |k: &str| block.lines().find_map(|l| l.strip_prefix(k)).map(|v| v.trim().to_string());
+        if let (Some(n), Some(v)) = (f("P:"), f("V:")) {
+            out.push((n, v, f("A:").unwrap_or_default()));
+        }
+    }
+    out.sort();
+    out
+}
+
 /// Installed packages from rpm (Fedora): its database is SQLite, so rpm
 /// itself reads it.
 pub fn rpm_packages(sys: &Sys) -> Vec<(String, String, String)> {
@@ -76,6 +90,9 @@ pub fn installed_packages(sys: &Sys) -> Vec<(String, String, String)> {
     if sys.is_dir("/var/lib/rpm") || sys.is_dir("/usr/lib/sysimage/rpm") {
         return rpm_packages(sys);
     }
+    if let Some(t) = sys.read("/lib/apk/db/installed") {
+        return parse_apk_installed(&t);
+    }
     Vec::new()
 }
 
@@ -92,6 +109,8 @@ pub const PACKAGES: &[&str] = &[
     // Arch's and Fedora's names for the same.
     "grub", "grub2-pc", "grub2-efi-x64", "grub2-tools", "shim-x64", "mkinitcpio", "linux", "linux-lts", "kernel-core",
     "zfs-utils", "selinux-policy-targeted",
+    // Alpine's.
+    "grub-bios", "grub-efi", "mkinitfs", "linux-virt",
     "multipath-tools", "dmraid", "nvme-cli", "open-iscsi",
 ];
 
@@ -461,7 +480,8 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
     let files = sys.list("/boot");
     for f in &files {
         // Debian's initrd.img-V, Arch's and Fedora's initramfs-V.img.
-        let initramfs = f.strip_prefix("initramfs-").and_then(|v| v.strip_suffix(".img")).filter(|v| !v.ends_with("-fallback") && !v.ends_with("kdump"));
+        // Alpine's are vmlinuz-FLAVOR and initramfs-FLAVOR, with no .img.
+        let initramfs = f.strip_prefix("initramfs-").map(|v| v.strip_suffix(".img").unwrap_or(v)).filter(|v| !v.ends_with("-fallback") && !v.ends_with("kdump"));
         for p in ["vmlinuz-", "initrd.img-", "config-", "System.map-", "initramfs-"] {
             let v = if p == "initramfs-" { initramfs } else { f.strip_prefix(p) };
             if let Some(v) = v {
@@ -478,7 +498,12 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
             Obj::new()
                 .set("version", v.as_str())
                 .set("vmlinuz_bytes", sys.file_size(&format!("/boot/vmlinuz-{v}")))
-                .set("initrd_bytes", sys.file_size(&format!("/boot/initrd.img-{v}")).or_else(|| sys.file_size(&format!("/boot/initramfs-{v}.img"))))
+                .set(
+                    "initrd_bytes",
+                    sys.file_size(&format!("/boot/initrd.img-{v}"))
+                        .or_else(|| sys.file_size(&format!("/boot/initramfs-{v}.img")))
+                        .or_else(|| sys.file_size(&format!("/boot/initramfs-{v}"))),
+                )
                 .set("config", sys.is_file(&format!("/boot/config-{v}")))
                 .set("running", running == Some(v.as_str()))
                 .set("modules_installed", sys.is_dir(&format!("/lib/modules/{v}")) || sys.is_dir(&format!("/usr/lib/modules/{v}")))
@@ -514,7 +539,12 @@ pub fn cmdline_json(cmdline: &str) -> Value {
 
 fn initramfs_json(sys: &Sys, packages: &[(String, String, String)]) -> Value {
     let has = |p: &str| packages.iter().any(|(n, _, _)| n == p);
-    let generator = if has("mkinitcpio") {
+    // AerynOS: each kernel package ships its initramfs (/usr/lib/kernel's
+    // *.initrd), which blsforme copies to the ESP; nothing is generated.
+    let prebuilt = sys.list("/usr/lib/kernel").iter().any(|f| f.ends_with(".initrd"));
+    let generator = if prebuilt {
+        Some("prebuilt")
+    } else if has("mkinitcpio") {
         Some("mkinitcpio")
     } else if has("dracut") {
         Some("dracut")
@@ -522,6 +552,8 @@ fn initramfs_json(sys: &Sys, packages: &[(String, String, String)]) -> Value {
         Some("initramfs-tools")
     } else if has("tiny-initramfs") {
         Some("tiny-initramfs")
+    } else if has("mkinitfs") {
+        Some("mkinitfs")
     } else {
         None
     };
@@ -1008,5 +1040,28 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(i.get("compress").and_then(Value::as_str), Some("zstd"));
         assert_eq!(i.get("resume").and_then(Value::as_str), Some("UUID=abc"));
         assert_eq!(initramfs_json(&s, &pk(&["dracut", "initramfs-tools"])).get("generator").and_then(Value::as_str), Some("dracut"));
+        assert_eq!(initramfs_json(&s, &pk(&["mkinitfs"])).get("generator").and_then(Value::as_str), Some("mkinitfs"));
+    }
+
+    #[test]
+    fn alpine_and_aerynos() {
+        let apk = "C:Q1abc=\nP:mkinitfs\nV:3.12.0-r0\nA:x86_64\nS:1\n\nC:Q2\nP:grub-bios\nV:2.12-r9\nA:x86_64\n\n";
+        assert_eq!(
+            parse_apk_installed(apk),
+            vec![("grub-bios".into(), "2.12-r9".into(), "x86_64".into()), ("mkinitfs".into(), "3.12.0-r0".into(), "x86_64".into())]
+        );
+        let t = Tree::new("alpine-kernels");
+        t.file("/boot/vmlinuz-lts", vec![0u8; 10]).file("/boot/initramfs-lts", vec![0u8; 7]).file("/lib/apk/db/installed", apk);
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        assert_eq!(installed_packages(&s).len(), 2);
+        let k = kernels_json(&s, None);
+        let list = k.get("installed").unwrap().as_array().unwrap();
+        assert_eq!(list.len(), 1);
+        assert_eq!(list[0].get("version").and_then(Value::as_str), Some("lts"));
+        assert_eq!(list[0].get("initrd_bytes").and_then(Value::as_u64), Some(7));
+        let a = Tree::new("aerynos-kernels");
+        a.file("/usr/lib/kernel/current.stable.initrd", "").file("/usr/lib/kernel/current.stable.kernel", "");
+        let s = Sys::new(a.root(), Box::new(FakeRunner::default()), false);
+        assert_eq!(initramfs_json(&s, &pk(&["dracut"])).get("generator").and_then(Value::as_str), Some("prebuilt"));
     }
 }

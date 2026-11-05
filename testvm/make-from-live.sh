@@ -256,6 +256,12 @@ else
     # The live CD's self-check survives the removal of casper; it would fail
     # at every boot, looking for a CD.
     in_root systemctl mask casper-md5check.service >/dev/null 2>&1 || true
+    # casper itself, where the remove list left it (Mint's): it runs at every
+    # shutdown.  Purged if nothing else goes with it.
+    if in_root dpkg -s casper >/dev/null 2>&1 &&
+        [[ $(in_root apt-get -s purge casper 2>/dev/null | grep -c '^Purg ') == 1 ]]; then
+        in_root apt-get -y -q purge casper >/dev/null
+    fi
 fi
 
 # The initramfs must be able to mount / (F2FS and NILFS2 aren't in it by default).

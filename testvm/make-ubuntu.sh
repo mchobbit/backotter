@@ -5,10 +5,11 @@
 # under QEMU with KVM.  (Linux Mint 22 is built on Ubuntu 24.04, so a 24.04
 # guest covers what a Mint restore depends on, minus the desktop.)
 #
-# Usage: ./make-ubuntu.sh [--uefi | --zfs-mirror] [--name NAME] VERSION WORK_DIR
+# Usage: ./make-ubuntu.sh [--uefi] [--zfs-guided | --zfs-mirror] [--name NAME] VERSION WORK_DIR
 #   e.g. ./make-ubuntu.sh 24.04 vms/ubuntu24
 #        ./make-ubuntu.sh --zfs-mirror --name ubuntu26-zfsmirror 26.04.1 vms/ubuntu26-zfsmirror
 #        ./make-ubuntu.sh --uefi --name ubuntu26-uefi 26.04.1 vms/ubuntu26-uefi
+#        ./make-ubuntu.sh --uefi --zfs-guided --name ubuntu26-zfs 26.04.1 vms/ubuntu26-zfs
 #
 # VERSION is an Ubuntu release or point release (24.04, 24.04.1, ...).
 # ubuntu-VERSION-live-server-amd64.iso with its SHA256SUMS and SHA256SUMS.gpg
@@ -39,6 +40,11 @@
 # kernel; the guest's NVRAM boot entries aren't kept, so each boot starts from
 # EFI/BOOT/BOOTX64.EFI, as on a new machine.
 #
+# --zfs-guided lays the disk out as Subiquity's guided ZFS install does by
+# itself (ubuntu/storage-zfs-guided.yaml): bpool for /boot, with GRUB's
+# feature set (compatibility=grub2), rpool for the rest, swap, and on UEFI
+# (with --uefi) an EFI system partition.
+#
 # --zfs-mirror makes it two 16 GiB disks instead, with /boot on an mdadm
 # RAID 1 across both, swap on both, and rpool a two-way mirror, encrypted as
 # Subiquity's "ZFS with encryption" does it: a LUKS keystore volume in the
@@ -62,18 +68,20 @@ INSTALL_TIMEOUT=2400
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-ubuntu: $*" >&2; exit 1; }
 
-firmware=bios name="" mirror=no
+firmware=bios name="" mirror=no guided=no
 while [[ $# -gt 0 ]]; do
     case $1 in
         --uefi) firmware=uefi; shift ;;
         --zfs-mirror) mirror=yes; shift ;;
+        --zfs-guided) guided=yes; shift ;;
         --name) name=$2; shift 2 ;;
         -*) die "unknown option $1" ;;
         *) break ;;
     esac
 done
-[[ $# -eq 2 ]] || die "usage: $0 [--uefi | --zfs-mirror] [--name NAME] VERSION WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 [--uefi] [--zfs-guided | --zfs-mirror] [--name NAME] VERSION WORK_DIR"
 [[ $firmware == uefi && $mirror == yes ]] && die "--zfs-mirror is for BIOS only"
+[[ $guided == yes && $mirror == yes ]] && die "--zfs-guided and --zfs-mirror are two layouts"
 version=$1
 [[ $version =~ ^[0-9]{2}\.[0-9]{2}(\.[0-9]+)?$ ]] || die "VERSION looks like 24.04 or 24.04.1, not '$version'"
 release=$(cut -d. -f1-2 <<<"$version")
@@ -84,6 +92,7 @@ DISK=$guest_name.qcow2
 storage=zfs
 [[ $firmware == uefi ]] && storage=direct
 [[ $mirror == yes ]] && storage=zfs-mirror
+[[ $guided == yes ]] && storage=zfs-guided
 DISK_B=$guest_name-b.qcow2
 mkdir -p "$2"
 cd "$2"

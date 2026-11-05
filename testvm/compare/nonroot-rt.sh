@@ -24,7 +24,8 @@
 #        nonroot-rt.sh GUEST [PORT]   in a throwaway (--ram) copy of GUEST,
 #                                     with its SSH on PORT (default 2711):
 #           freebsd15       /bkonr a ZFS file system of its own
-#           freebsd15-ufs   /bkonr on the UFS root, with POSIX.1e ACLs
+#           freebsd15-ufs, hardenedbsd15, ghostbsd26
+#                           /bkonr on the UFS root, with POSIX.1e ACLs
 #           netbsd11, alpinebsd
 #                           /bkonr an FFSv2ea vnd image with POSIX.1e ACLs
 #                           (alpinebsd: NetBSD's tools from
@@ -102,7 +103,7 @@ fi
 
 guest=$target port=${2:-2711}
 case $guest in
-    freebsd15|freebsd15-ufs) binaries freebsd ;;
+    freebsd15|freebsd15-ufs|hardenedbsd15|ghostbsd26) binaries freebsd ;;
     netbsd11|alpinebsd) binaries netbsd ;;
     dragonfly6) binaries dragonfly ;;
     openbsd8) binaries openbsd ;;
@@ -122,7 +123,7 @@ vm_boot "$guest" "$port" "$logs/vm-$guest" --ram --memory "${MEMORY:-4096}" || e
 # the hook /bkonr/t/atimes, since it drops the atimes utimensat sets
 # where they are off).  The user bkonr, uid and gid 4321.
 case $guest in
-    freebsd*) setup='if zfs list zroot >/dev/null 2>&1; then zfs create -o mountpoint=/bkonr -o atime=off zroot/bkonr
+    freebsd*|hardenedbsd*|ghostbsd*) setup='if zfs list zroot >/dev/null 2>&1; then zfs create -o mountpoint=/bkonr -o atime=off zroot/bkonr
             else mkdir /bkonr && mount -u -o noatime,acls /; fi &&
         pw groupadd bkonr -g 4321 && pw useradd bkonr -u 4321 -g 4321 -s /bin/sh -d /nonexistent' ;;
     netbsd11|alpinebsd) setup='PATH=/sbin:/usr/sbin:/bin:/usr/bin:$PATH

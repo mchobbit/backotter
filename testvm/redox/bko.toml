@@ -1,6 +1,7 @@
 # redox_installer's configuration for make-redox.sh's guest: upstream's
 # server set (no GUI) plus openssh, set up for root's SSH key (sshd serves
-# no logins yet, 2026-11: the serial console's root login is the way in).
+# no logins yet, 2026-11: the serial console's root login is the way in),
+# and uutils-grep.
 # make-redox.sh fills in the @...@ placeholders.  Files without
 # postinstall are written before the packages, those with it after (over
 # what a package ships).  The installer makes each user's home last, mode
@@ -21,6 +22,10 @@ filesystem_size = 512
 
 [packages]
 openssh = {}
+# The grep the server set has (2026-11) is built against an older relibc
+# and panics at every run ("failed to initialize FILETABLE"); uutils'
+# works.  make-redox.sh's first boot checks that grep runs.
+uutils-grep = {}
 
 [[files]]
 path = "/etc/hostname"
@@ -79,18 +84,9 @@ data = ""
 directory = true
 mode = 0o755
 
-[[files]]
-path = "/etc/init.d/40_sshd.service"
-data = """
-[unit]
-description = "OpenSSH server"
-requires_weak = ["10_net.target"]
-
-[service]
-cmd = "/usr/bin/sshd"
-args = ["-D", "-e"]
-type = "oneshot_async"
-"""
+# No init service for sshd: started, it serves no logins (2026-11) and
+# keeps a host CPU busy for as long as the guest runs.  make-redox.sh's
+# first boot starts it once from the console, to see whether it works yet.
 
 # poweroff and reboot, as vm-update, vm-lib and compare call them (Redox has
 # only shutdown); /sbin for the callers that say /sbin/poweroff.

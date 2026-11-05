@@ -12,7 +12,9 @@
 #             then the ones given (--ram or --snapshot among them, for a
 #             throwaway copy), and wait for its sshd (VM_BOOT_TIMEOUT seconds,
 #             default 600).  The serial console goes to LOGDIR/serial.log,
-#             vm-run's output to LOGDIR/vm-run.log.  Returns 1 if the guest
+#             vm-run's output to LOGDIR/vm-run.log.  A guest whose disk asks
+#             for a passphrase on the console (vms/GUEST/console-passphrase)
+#             gets it typed there (console-boot.py).  Returns 1 if the guest
 #             didn't come up (QEMU is stopped then).
 #   vm_ssh COMMAND
 #             Run COMMAND as root through /bin/sh -c, whatever root's login
@@ -56,6 +58,12 @@ vm_boot() {
         return 1
     fi
     if [[ -f $dir/vm-run-options ]]; then read -ra opts <"$dir/vm-run-options" || true; fi
+    # Its --disk images are named relative to the guest's directory.
+    local i
+    for i in "${!opts[@]}"; do
+        [[ ${opts[$i]} == --disk && -n ${opts[$((i + 1))]:-} && ${opts[$((i + 1))]} != /* ]] &&
+            opts[$((i + 1))]=$dir/${opts[$((i + 1))]}
+    done
     # illumos' vioif can't map the modern virtio-net's registers: without
     # this the guest has no network (and no sshd to reach).
     if [[ $guest == omnios* && " ${opts[*]} " != *" --legacy-virtio-net "* ]]; then
@@ -65,8 +73,15 @@ vm_boot() {
     VM_GUEST=$guest VM_PORT=$port VM_KEY=$key
     # setsid: Ctrl-C here doesn't reach QEMU, and vm_halt does the stopping.
     # Not setsid -f: $! has to be vm-run itself.
-    SSH_PORT=$port setsid "$VM_LIB_DIR/vm-run" "${opts[@]}" "$@" --serial-log "$logdir/serial.log" \
-        "$image" </dev/null >"$logdir/vm-run.log" 2>&1 &
+    if [[ -z ${VM_IMAGE:-} && -f $dir/console-passphrase ]]; then
+        # The console on a pipe, where console-boot.py logs it and types the
+        # passphrase at each prompt for it.
+        SSH_PORT=$port setsid python3 "$VM_LIB_DIR/console-boot.py" "$logdir/serial.log" "$dir/console-passphrase" -- \
+            "$VM_LIB_DIR/vm-run" "${opts[@]}" "$@" "$image" </dev/null 2>"$logdir/vm-run.log" &
+    else
+        SSH_PORT=$port setsid "$VM_LIB_DIR/vm-run" "${opts[@]}" "$@" --serial-log "$logdir/serial.log" \
+            "$image" </dev/null >"$logdir/vm-run.log" 2>&1 &
+    fi
     VM_PID=$!
     deadline=$((SECONDS + ${VM_BOOT_TIMEOUT:-600}))
     until vm_owns_port && T=15 vm_ssh true 2>/dev/null && vm_owns_port; do
@@ -99,7 +114,10 @@ vm_owns_port() {
     [[ -n $pids ]] || return 0
     for p in $pids; do
         [[ $p == "$VM_PID" ]] && return 0
-        [[ $(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ') == "$VM_PID" ]] && return 0
+        p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+        [[ $p == "$VM_PID" ]] && return 0
+        # Under console-boot.py, vm-run (QEMU's parent) is VM_PID's child.
+        [[ -n $p && $(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ') == "$VM_PID" ]] && return 0
     done
     return 1
 }
@@ -139,8 +157,12 @@ vm_halt() {
         for _ in $(seq 15); do kill -0 "$pid" 2>/dev/null || break; sleep 2; done
     fi
     if kill -0 "$pid" 2>/dev/null; then
-        # QEMU by its PID (vm-run's child): vm-run then cleans up and exits.
-        for q in $(pgrep -P "$pid" 2>/dev/null); do kill -KILL "$q" 2>/dev/null || true; done
+        # QEMU by its PID (vm-run's child; under console-boot.py, its
+        # grandchild): vm-run then cleans up and exits.
+        for c in $(pgrep -P "$pid" 2>/dev/null); do
+            for q in $(pgrep -P "$c" -f qemu-system 2>/dev/null); do kill -KILL "$q" 2>/dev/null || true; done
+            [[ $(ps -o comm= -p "$c" 2>/dev/null) == qemu-system-* ]] && kill -KILL "$c" 2>/dev/null || true
+        done
         for _ in $(seq 10); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
         # Only if vm-run itself hangs; a --ram overlay may then stay in /dev/shm.
         kill -KILL "$pid" 2>/dev/null || true

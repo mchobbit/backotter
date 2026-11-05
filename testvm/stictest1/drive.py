@@ -1123,7 +1123,9 @@ def self_test():
         print(("ok   " if cond else "FAIL ") + what)
         ok = ok and cond
 
-    want_os = {"freebsd15": "freebsd", "freebsd15-ufs": "freebsd", "netbsd11": "netbsd", "alpinebsd": "netbsd",
+    want_os = {"freebsd15": "freebsd", "freebsd15-ufs": "freebsd", "hardenedbsd15": "freebsd",
+               "ghostbsd26": "freebsd", "ghostbsd26-zfs": "freebsd", "freebsd14": "freebsd",
+               "freebsd15-geli": "freebsd", "netbsd11": "netbsd", "alpinebsd": "netbsd",
                "openbsd8": "openbsd", "dragonfly6": "dragonfly", "omnios58": "omnios", "haiku6": "haiku"}
     guests = all_guests()
     spec = load_specs(guests)

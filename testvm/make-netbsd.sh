@@ -24,13 +24,17 @@
 #   root-password         root's password (mode 600)
 #   id_ed25519, .pub      SSH key that logs in as root
 #   install-serial.log    the installer's serial console
+#   vm-run-options        AlpineBSD: "--uefi --no-secure-boot", how vm-run
+#                         boots it (NetBSD's EFI loader isn't signed)
 #
 # The guest: BIOS, console on the serial port, 2 GB RAM, DHCP and SSH.
 # NetBSD: MBR and a disklabel with / (FFSv2 with a WAPBL log) and swap, as
 # NetBSD lays a disk out (no /boot of its own).  AlpineBSD: GPT with an EFI
 # system partition, swap and / (FFSv2 with extended attributes), booting by
-# BIOS (vm-run's default) or UEFI.  Run it with vm-run.  vm-mount can't open it: Linux's ufs driver reads FFSv2 at most,
-# and not through a disklabel or NetBSD's wedges.
+# BIOS or UEFI; its tests boot it by UEFI (vm-run-options), where netbsd11
+# boots by BIOS.  Run it with vm-run (and vm-run-options).  vm-mount can't
+# open it: Linux's ufs driver reads FFSv2 at most, and not through a
+# disklabel or NetBSD's wedges.
 #
 # Needs: qemu-system-x86_64 with KVM, qemu-img, xorriso, gpg, gpgv, openssl,
 # python3, wget.  Runs as an ordinary user in the kvm group.
@@ -152,4 +156,5 @@ grep -aq BACKOTTER-INSTALL-OK install-serial.log || {
 }
 
 qemu-img snapshot -c fresh-install "$DISK"
+[[ $flavor == alpinebsd ]] && echo "--uefi --no-secure-boot" >vm-run-options
 echo "Done: $2/$DISK ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""

@@ -12,9 +12,9 @@
 # sudo drops it from the environment, so another one goes in CMP_CMD:
 # CMP_CMD="env REBUILD_DIR=DIR DIR/testvm/rebuild-one.sh".
 # Builders that don't need root run as m, with TMPDIR=/mnt/bko-ram for their
-# small scratch; the root ones (make-from-live.sh, make-debian-zfs.sh) without
-# a TMPDIR, so in /tmp: theirs would reach the guest's chroot. Images go to
-# REBUILD_DIR. Results: REBUILD_DIR/vms/GUEST/rebuild-build.json and
+# small scratch; the root ones (make-from-live.sh, make-debian-zfs.sh,
+# make-debian-stack.sh) without a TMPDIR, so in /tmp: theirs would reach the
+# guest's chroot. Images go to REBUILD_DIR. Results: REBUILD_DIR/vms/GUEST/rebuild-build.json and
 # rebuild-boot.json; exit 0 only if it built and booted.
 set -u
 G=$1 SLOT=${4:-1}
@@ -40,12 +40,15 @@ debian12)   cmd=(asm $T/make-debian.sh 12.0.0 ext4 "$W") ;;
 debian13)   cmd=(asm $T/make-debian.sh 13.0.0 btrfs "$W") ;;
 devuan6)    cmd=(asm $T/make-debian.sh --devuan --init openrc 6.1.1 ext3 "$W") ;;
 debian13-zfs) cmd=($T/make-debian-zfs.sh "$W" debian13-zfs) ;;
+debian13-stack) cmd=($T/make-debian-stack.sh "$W" debian13-stack) ;;
 ubuntu24)   cmd=(asm $T/make-ubuntu.sh 24.04 "$W") ;;
 ubuntu26-uefi) cmd=(asm $T/make-ubuntu.sh --uefi --name ubuntu26-uefi 26.04.1 "$W") ;;
+ubuntu26-zfs) cmd=(asm $T/make-ubuntu.sh --uefi --zfs-guided --name ubuntu26-zfs 26.04.1 "$W") ;;
 ubuntu26-zfsmirror) cmd=(asm $T/make-ubuntu.sh --zfs-mirror --name ubuntu26-zfsmirror 26.04.1 "$W") ;;
 fedora44)   cmd=(asm $T/make-fedora.sh 44-1.7 "$W") ;;
 fedora44-uefi) cmd=(asm $T/make-fedora.sh --uefi --name fedora44-uefi 44-1.7 "$W") ;;
 rocky10)    cmd=(asm $T/make-rocky.sh 10.0 "$W") ;;
+rocky10-lvm) cmd=(asm $T/make-rocky.sh --lvm 10.0 "$W") ;;
 tumbleweed) cmd=(asm $T/make-opensuse.sh 20261030 "$W") ;;
 alpine324)  cmd=(asm $T/make-bootstrap.sh alpine "$W") ;;
 void-musl)  cmd=(asm $T/make-bootstrap.sh void "$W") ;;
@@ -60,9 +63,12 @@ zorin18)    cmd=($T/make-from-live.sh zorin nilfs2 "$SRC/Zorin-OS-18.1-Core-64-b
 omarchy)    cmd=(asm $T/make-omarchy.sh 4.0.6 "$W") ;;
 freebsd15)  cmd=(asm $T/make-freebsd.sh 15.1 zfs "$W") ;;
 freebsd15-ufs) cmd=(asm $T/make-freebsd.sh 15.1 ufs "$W") ;;
+freebsd15-geli) cmd=(asm $T/make-freebsd.sh --uefi-geli 15.1 zfs "$W") ;;
+freebsd14)  cmd=(asm $T/make-freebsd.sh 14.5 zfs "$W") ;;
 hardenedbsd15) cmd=(asm $T/make-hardenedbsd.sh 15 23 ufs "$W") ;;
 # ghostbsd26: its install VM takes 8 GB (INSTALL_MEMORY): reserve ~9 GiB.
 ghostbsd26) cmd=(asm $T/make-ghostbsd.sh 26.2-R15.1p6 ufs "$W") ;;
+ghostbsd26-zfs) cmd=(asm $T/make-ghostbsd.sh 26.2-R15.1p6 zfs "$W") ;;
 aerynos)    cmd=(asm $T/make-aerynos.sh 2026.11 2026-11-02-unstable-stream "$W") ;;
 openbsd8)   cmd=(asm $T/make-openbsd.sh 8.0 "$W") ;;
 netbsd11)   cmd=(asm $T/make-netbsd.sh 11.1 "$W") ;;
@@ -72,14 +78,16 @@ omnios58)   cmd=(asm $T/make-omnios.sh r151058 "$W") ;;
 sculpt2610) cmd=(asm $T/make-sculpt.sh 26.10 "$W") ;;
 *) echo "no recipe for $G" >&2; exit 2 ;;
 esac
-# The image's name: make-freebsd.sh calls it freebsd$major.qcow2 whatever the guest.
-IMG=$G; [ $G = freebsd15-ufs ] && IMG=freebsd15
+# The image's name: make-freebsd.sh calls it freebsd$major.qcow2 whatever the
+# guest, make-ghostbsd.sh ghostbsd$major.qcow2.
+IMG=$G; case $G in freebsd15-ufs|freebsd15-geli) IMG=freebsd15 ;; ghostbsd26-zfs) IMG=ghostbsd26 ;; esac
 # Never two VMs on one port: compare.py's boot uses 2230 + COMPARE_SLOT.
 if ss -ltnH "sport = :$((2230 + SLOT))" | grep -q .; then echo "port $((2230 + SLOT)) is taken" >&2; exit 2; fi
 case $G in mx25|mint22|pop24|zorin18) [ -f "${cmd[3]}" ] || { echo "no ISO ${cmd[3]}" >&2; exit 2; } ;; esac
-leftovers() {  # what a failed root builder may leave: this build's loop devices; mounts and pools of any build on the host
-    { losetup -a | grep -F "$W"; findmnt -rno TARGET | grep -E '^/mnt/(bko-debian-zfs|live-)'
-      zpool list -H -o name 2>/dev/null | grep '^bkodz'; } | tr '\n' ' '
+leftovers() {  # what a failed root builder may leave: this build's loop devices; mounts, pools, arrays and LUKS volumes of any build on the host
+    { losetup -a | grep -F "$W"; findmnt -rno TARGET | grep -E '^/mnt/(bko-debian-zfs|bko-debian-stack|live-)'
+      zpool list -H -o name 2>/dev/null | grep '^bkodz'
+      ls /dev/md 2>/dev/null | grep '^bkos'; dmsetup ls 2>/dev/null | grep -o '^bkos[^[:space:]]*'; } | tr '\n' ' '
 }
 
 mkdir -p $R/vms && chown m:m $R $R/vms

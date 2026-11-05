@@ -35,15 +35,19 @@ fresh-install state, and any other disks its vm-run-options name with
      once, where it is mounted.
   4. Each backup is restored onto blank disks laid out like the original's:
      the same partition tables and boot code (the first MiB, which holds
-     GRUB's core image on the BIOS + MBR guests), mdadm arrays, LUKS2
-     volumes and filesystems recreated with the same UUIDs and labels, by
+     GRUB's core image on the BIOS + MBR guests, and a BIOS boot partition,
+     which holds it on BIOS + GPT ones: rocky10-lvm), mdadm arrays, LUKS2
+     volumes, LVM volume groups (their metadata restored as it was: linear
+     and striped LVs) and filesystems recreated with the same UUIDs and
+     labels, by
      the guest's own mkfs tools (so the guest's GRUB and kernel can read
      them), btrfs subvolumes, ZFS pools (mirrors too, with the original's
      feature flags as far as this host's OpenZFS has them, and its
      encryption, with the same key) and bcachefs's on-disk version included.
-     A LUKS volume gets the passphrase in vms/GUEST/luks-passphrase or
-     zfs-passphrase; a ZFS volume (zvol, such as Ubuntu's LUKS keystore) is
-     copied as it is, since the archivers back up files only.
+     A LUKS volume gets the passphrase in vms/GUEST/luks-passphrase,
+     console-passphrase or zfs-passphrase; a ZFS volume (zvol, such as
+     Ubuntu's LUKS keystore) is copied as it is, since the archivers back
+     up files only.
   5. fsmeta.py compares every file's metadata before and after, and the
      restored disks are booted to see whether they come up as the original
      did: boot-state.sh reports what the guest's init (systemd, OpenRC,
@@ -57,8 +61,9 @@ That is the archiver's part of a bare-metal restore; recreating a layout
 from a recorded description, as BackOtter must, is not tested here.
 
 A boot types the guest's disk passphrase where it asks for one: on the
-serial console (Ubuntu's ZFS keystore), with vms/GUEST/zfs-passphrase, or
-on its keyboard (Omarchy's Plymouth), with vms/GUEST/luks-passphrase.
+serial console, with vms/GUEST/zfs-passphrase (Ubuntu's ZFS keystore) or
+console-passphrase (a LUKS root's initramfs: debian13-stack), or on its
+keyboard (Omarchy's Plymouth), with vms/GUEST/luks-passphrase.
 
 --mkfs-from STICK_IMG makes the filesystems with the mkfs tools of BackOtter's
 rescue stick (STICK_IMG, from stick/make-img.sh) instead of the guest's own,
@@ -121,9 +126,11 @@ from __future__ import annotations
 import json
 import os
 import re
+import secrets
 import shlex
 import shutil
 import signal
+import string
 import subprocess
 import sys
 import threading
@@ -153,7 +160,11 @@ if not re.fullmatch(r"[0-9]{4,5}", SSH_PORT) or not 1024 <= int(SSH_PORT) <= 655
     raise SystemExit("COMPARE_PORT must be a port number from 1024 to 65535")
 PASSWORD = "backotter-compare"                    # for restic's and borg's encryption
 DST_POOL_TEMP = f"{PREFIX}-dst{SUFFIX}"
-DST_NAME = f"{PREFIX}-dst{SUFFIX}"                # the restored disks' LUKS and md names start so
+DST_NAME = f"{PREFIX}-dst{SUFFIX}"                # the restored disks' LUKS, md and VG names start so
+BIOS_BOOT = "21686148-6449-6e6f-744e-656564454649"   # GPT's BIOS boot partition type
+# LVM sees only the devices each command names (--devices), never by this
+# host's devices file: src's and dst's groups have the same UUIDs.
+LVM_OPTS = ["--devicesfile", ""]
 # The work directories' parent: COMPARE_WORK, else compare/ (compare/NAME/
 # with COMPARE_NAME).
 COMPARE_DIR = (Path(os.environ["COMPARE_WORK"]).resolve() if os.environ.get("COMPARE_WORK")
@@ -219,7 +230,7 @@ class GuestConfig:
     hardware (vm-run-options without its --disk ones, or None without that
     file), its other disks (those --disk ones), and the file holding its
     disks' passphrase, with how it is asked for ("luks": on the keyboard,
-    "zfs": on the serial console)."""
+    "zfs" or "console": on the serial console)."""
 
     def __init__(self, guest_dir: Path):
         self.dir = guest_dir
@@ -241,7 +252,7 @@ class GuestConfig:
             else:
                 self.options.append(o)
         self.key = self.key_kind = None
-        for kind in ("luks", "zfs"):
+        for kind in ("luks", "zfs", "console"):
             if (guest_dir / f"{kind}-passphrase").exists():
                 self.key, self.key_kind = guest_dir / f"{kind}-passphrase", kind
                 break
@@ -459,6 +470,9 @@ class Layout:
         # LUKS volumes: the opened device -> the device it is on, and what
         # luksDump says of it.
         self.luks: dict[str, dict] = {}
+        # LVM volume groups: name -> their PVs (src's devices) and each's
+        # UUID, the metadata backup (vgcfgbackup) and each LV's device.
+        self.lvm: dict[str, dict] = {}
         for line in state[1:]:
             kind, _, what = line.partition(" ")
             if kind in ("md", "loop"):
@@ -480,6 +494,11 @@ class Layout:
                 self.luks[dev] = {"on": on, "dump": dump, "uuid": blkid(on).get("UUID"),
                                   "label": blkid(on).get("LABEL")}
                 self.fields[dev] = blkid(dev)
+            elif kind == "vg":
+                vg, pvlist = what.split()
+                self.lvm[vg] = self.lvm_layout(vg, pvlist, work)
+                for dev in self.lvm[vg]["lvs"].values():
+                    self.fields[dev] = blkid(dev)
         # What vm-mount left closed (a RAID it can't read with --ro, LUKS
         # without a key) would come back as blank partitions.
         in_md = {m for md in self.md.values() for m in md["members"]}
@@ -488,6 +507,8 @@ class Layout:
                 raise SystemExit(f"{p} is in a RAID that vm-mount didn't set up")
             if f.get("TYPE") == "crypto_LUKS" and p not in {l["on"] for l in self.luks.values()}:
                 raise SystemExit(f"{p} is LUKS-encrypted, and vm-mount didn't open it (no passphrase file?)")
+            if f.get("TYPE") == "LVM2_member" and p not in {pv for v in self.lvm.values() for pv in v["pvs"]}:
+                raise SystemExit(f"{p} is an LVM PV in no volume group vm-mount activated")
         for dev, f in self.fields.items():
             if f.get("TYPE") == "bcachefs":
                 f["BCACHEFS_VERSION"] = bcachefs_version(dev)
@@ -499,6 +520,29 @@ class Layout:
         pool = next((line.split()[1] for line in state[1:] if line.startswith("pool ")), None)
         if pool:
             self.zfs = self.zfs_layout(pool, key, work)
+
+    @staticmethod
+    def lvm_layout(vg: str, pvlist: str, work: Path) -> dict:
+        """Volume group vg, active on src's devices pvlist (vm-mount's
+        record): its PVs (by src's device names) with their UUIDs, the
+        metadata (vgcfgbackup: every UUID, extent and segment) and each
+        logical volume's device."""
+        opts = LVM_OPTS + ["--devices", pvlist]
+        backup = work / f"lvm-{vg}.vg"
+        run(["vgcfgbackup"] + opts + ["-f", str(backup), vg], quiet=True)
+        pvs = {}
+        for line in out(["pvs"] + opts + ["--noheadings", "--separator", "|", "-o", "pv_name,pv_uuid,vg_name"]).splitlines():
+            name, uuid, in_vg = (x.strip() for x in line.split("|"))
+            if in_vg == vg:
+                pvs[os.path.realpath(name)] = uuid
+        lvs = {}
+        for line in out(["lvs"] + opts + ["--noheadings", "--separator", "|", "-o", "lv_name,lv_dm_path,segtype",
+                                          vg]).splitlines():
+            name, path, segtype = (x.strip() for x in line.split("|"))
+            if segtype not in ("linear", "striped"):
+                raise SystemExit(f"{vg}/{name} is a {segtype} LV; recreate() makes linear and striped LVs only")
+            lvs[name] = os.path.realpath(path)
+        return {"pvs": pvs, "backup": backup, "lvs": lvs}
 
     @staticmethod
     def md_layout(members: list[str]) -> dict:
@@ -718,6 +762,7 @@ class Dst:
         self.dev: dict[str, str] = {}
         self.luks: list[str] = []
         self.md: list[str] = []
+        self.vgs: list[tuple[str, str, str, Path]] = []    # (its name here, the guest's, its PVs, src's metadata)
         self.pool = False
         try:
             for image in images:
@@ -753,6 +798,30 @@ def mkfs_cmd(f: dict[str, str], dev: str) -> list[str] | None:
         return ["mkfs.bcachefs", "-f", "-U", uuid, f"--version={f['BCACHEFS_VERSION']}",
                 f"--block_size={f['BCACHEFS_BLOCK_SIZE']}"] + lab + [dev]
     return None
+
+
+def lvm_metadata_as(text: str, vg: str, name: str) -> str:
+    """vgcfgbackup's text for vg, as volume group name with new VG and LV
+    UUIDs (its PVs keep theirs)."""
+    chars = string.ascii_letters + string.digits
+
+    def new_id() -> str:
+        u = "".join(secrets.choice(chars) for _ in range(32))
+        return "-".join(u[a:b] for a, b in ((0, 6), (6, 10), (10, 14), (14, 18), (18, 22), (22, 26), (26, 32)))
+    lines, stack, renamed = [], [], False
+    for line in text.splitlines():
+        if m := re.fullmatch(r"(\s*)(\S+) \{", line):
+            if not stack and m[2] == vg:
+                line, renamed = f"{m[1]}{name} {{", True
+            stack.append(m[2])
+        elif line.strip() == "}":
+            stack.pop()
+        elif stack and "physical_volumes" not in stack and (m := re.fullmatch(r'(\s*)id = "[^"]+"', line)):
+            line = f'{m[1]}id = "{new_id()}"'
+        lines.append(line)
+    if not renamed:
+        raise SystemExit(f"vgcfgbackup's text has no section for volume group {vg}")
+    return "\n".join(lines) + "\n"
 
 
 def luks_format(luks: dict, dev: str, passphrase: bytes) -> None:
@@ -793,6 +862,9 @@ def recreate(layout: Layout, dst: Dst, cfg: GuestConfig, tools: Path = SRC_MP) -
     run(["udevadm", "settle"], quiet=True)
     for p, i in layout.parts.items():
         dst.dev[p] = dst.disks[i] + p[len(layout.disks[i]):]
+        # GRUB's core image, on BIOS + GPT: no file system, so no backup has it.
+        if out(["blkid", "-p", "-o", "value", "-s", "PART_ENTRY_TYPE", p], check=False).lower() == BIOS_BOOT:
+            run(["dd", f"if={p}", f"of={dst.dev[p]}", "bs=1M", "status=none", "conv=fsync"])
     # Arrays on partitions, then LUKS volumes on either.
     for n, (src, md) in enumerate(layout.md.items()):
         dev = f"/dev/md/{DST_NAME}-{n}"
@@ -802,15 +874,45 @@ def recreate(layout: Layout, dst: Dst, cfg: GuestConfig, tools: Path = SRC_MP) -
              f"--level={md['level']}", f"--raid-devices={md['devices']}", f"--uuid={md['uuid']}",
              f"--name={name}", f"--homehost={host or '<none>'}"]
             + [dst.dev.get(m, m) for m in md["members"]])
-        dst.md.append(dev)
-        wait_for(dev)
-        dst.dev[src] = os.path.realpath(dev)
+        # The array by its kernel name, found through a member: the
+        # /dev/md/NAME link needn't appear (an array of the same UUID this
+        # host's udev assembled from someone else's disks takes it), and
+        # unmount_dst() must stop the array either way.
+        member = next(dst.dev[m] for m in md["members"] if m != "missing")
+        run(["udevadm", "settle"], quiet=True)
+        holders = sorted(Path(f"/sys/class/block/{Path(member).name}/holders").glob("md*"))
+        if not holders:
+            raise SystemExit(f"mdadm --create {dev} made no array on {member}")
+        kdev = f"/dev/{holders[0].name}"
+        dst.md.append(kdev)
+        dst.dev[src] = kdev
     for n, (src, luks) in enumerate(layout.luks.items()):
         name = f"{DST_NAME}-luks{n}"
         luks_format(luks, dst.dev[luks["on"]], cfg.passphrase())
         run(["cryptsetup", "open", "--key-file", "-", dst.dev[luks["on"]], name], input=cfg.passphrase().decode())
         dst.luks.append(name)
         dst.dev[src] = f"/dev/mapper/{name}"
+    run(["udevadm", "settle"], quiet=True)
+    # Volume groups on any of those: src's metadata restored (the same PVs
+    # with their UUIDs, the same extents), but while src's group is active
+    # here, under a name and VG and LV UUIDs of their own: device-mapper
+    # knows an active LV by its UUIDs, and would hand over src's.
+    # unmount_dst() writes src's metadata back once dst's is inactive.
+    for n, (vg, lv) in enumerate(layout.lvm.items()):
+        temp = f"{DST_NAME}-vg{n}"
+        backup = lv["backup"].with_suffix(".dst.vg")
+        backup.write_text(lvm_metadata_as(lv["backup"].read_text(), vg, temp))
+        pvs = {os.path.realpath(dst.dev[p]): u for p, u in lv["pvs"].items()}
+        opts = LVM_OPTS + ["--devices", ",".join(pvs)]
+        for dev, uuid in pvs.items():
+            run(["pvcreate", "-q", "-y"] + opts + ["--uuid", uuid, "--restorefile", str(backup), dev])
+        run(["vgcfgrestore", "-q"] + opts + ["-f", str(backup), temp])
+        run(["vgchange", "-q"] + opts + ["-a", "y", temp])
+        dst.vgs.append((temp, vg, ",".join(pvs), lv["backup"]))
+        for name, src in lv["lvs"].items():
+            path = f"/dev/mapper/{temp.replace('-', '--')}-{name.replace('-', '--')}"
+            wait_for(path)
+            dst.dev[src] = os.path.realpath(path)
     run(["udevadm", "settle"], quiet=True)
     with src_api(tools):
         def mkfs(cmd: list[str]) -> None:
@@ -819,8 +921,8 @@ def recreate(layout: Layout, dst: Dst, cfg: GuestConfig, tools: Path = SRC_MP) -
             in_src(cmd, tools)
         for src, f in layout.fields.items():
             fs, dev = f.get("TYPE"), dst.dev[src]
-            if fs in (None, "linux_raid_member", "crypto_LUKS", "zfs_member"):
-                continue                    # nothing, or the arrays, volumes and pool above and below
+            if fs in (None, "linux_raid_member", "crypto_LUKS", "LVM2_member", "zfs_member"):
+                continue                    # nothing, or the arrays, volumes, groups and pool above and below
             if fs == "nilfs2":
                 mkfs(["mkfs.nilfs2", "-q", "-f"] + (["-L", f["LABEL"]] if f.get("LABEL") else []) + [dev])
                 mkfs(["nilfs-tune", "-U", f["UUID"], dev])
@@ -1006,6 +1108,19 @@ def unmount_dst(dst: Dst) -> None:
             if run(["zpool", "list", "-H", "-o", "name", DST_POOL_TEMP], check=False, quiet=True).returncode == 0:
                 raise SystemExit(f"zpool export {DST_POOL_TEMP} failed: its disks ({', '.join(dst.disks)}) "
                                  "are left attached; export the pool, then qemu-nbd -d them")
+    # The volume groups get src's metadata back, names and UUIDs, which the
+    # guest's fstab and initramfs know them by; src's own are seen by none
+    # of these commands.  vgcfgrestore finds src's LVs, active by those
+    # UUIDs, and asks whether to go on: --force --yes, as it writes dst's
+    # metadata only, and src's devices stay as they are.
+    for temp, vg, pvs, backup in reversed(dst.vgs):
+        opts = LVM_OPTS + ["--devices", pvs]
+        for cmd in (["vgchange", "-q"] + opts + ["-a", "n", temp],
+                    ["vgcfgrestore", "-q", "--force", "--yes"] + opts + ["-f", str(backup), vg]):
+            r = run(cmd, check=False, stdin=subprocess.DEVNULL)
+            if r.returncode:
+                print(f"  failed ({r.returncode}): {(r.stderr or r.stdout).strip()[-2000:]}", flush=True)
+                break
     for name in reversed(dst.luks):
         run(["cryptsetup", "close", name], check=False)
     for md in reversed(dst.md):
@@ -1159,8 +1274,9 @@ FIRMWARE_PROBE = ("if [ -d /sys/firmware/efi ]; then "
                   "if [ \"$sb\" = 1 ]; then echo uefi+secure-boot; else echo uefi; fi; "
                   "else echo bios; fi")
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]")
-# A passphrase prompt on the serial console (Ubuntu's ZFS keystore).
-PROMPT = re.compile(rb"(?i)enter passphrase")
+# A passphrase prompt on the serial console: Ubuntu's ZFS keystore's, or
+# cryptsetup-initramfs's.
+PROMPT = re.compile(rb"(?i)enter passphrase|please unlock disk [^\n]*:\s*$|geli passphrase for \S+\s*$")
 
 
 class VM:
@@ -1190,7 +1306,7 @@ class VM:
                 if run(["qemu-img", "info", str(image)], check=False, quiet=True).returncode == 0:
                     break
                 time.sleep(1)
-        cmd, console = list(self.cmd), self.cfg.key_kind == "zfs"
+        cmd, console = list(self.cmd), self.cfg.key_kind in ("zfs", "console")
         if not console:
             cmd += ["--serial-log", str(self.log)]
         cmd.append(str(self.images[0]))

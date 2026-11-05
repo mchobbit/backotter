@@ -1,0 +1,13 @@
+#!/bin/sh
+# For make-freebsd.sh --uefi-geli: put first in the installer's PATH, this
+# answers bsdinstall's GELI passphrase boxes (zfsboot's
+# f_dialog_input_password runs "bsddialog --passwordbox", whose answer it
+# reads from stderr) with the guest's passphrase, which make-freebsd.sh
+# fills in, and runs the real bsddialog for every other box.
+for a; do
+	if [ "$a" = --passwordbox ]; then
+		printf '%s' '@GELI_PASSPHRASE@' >&2
+		exit 0
+	fi
+done
+exec /usr/bin/bsddialog "$@"

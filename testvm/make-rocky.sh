@@ -3,8 +3,9 @@
 # Enterprise Linux): an unattended Kickstart install from an official minimal
 # ISO into a qcow2 disk image, under QEMU with KVM.
 #
-# Usage: ./make-rocky.sh VERSION WORK_DIR
+# Usage: ./make-rocky.sh [--lvm] VERSION WORK_DIR
 #   e.g. ./make-rocky.sh 10.0 vms/rocky10
+#        ./make-rocky.sh --lvm 10.0 vms/rocky10-lvm
 #
 # VERSION is a Rocky release in https://dl.rockylinux.org/vault/rocky/.
 # Rocky-VERSION-x86_64-minimal.iso with the release's CHECKSUM and
@@ -19,7 +20,10 @@
 #
 # The guest, host name rockyN: BIOS + MBR, /boot (1 GiB), swap (2 GiB),
 # / (the rest), all XFS, 2 GB RAM, no desktop, its repositories pinned to the
-# vault's copy of VERSION; see rocky/ks.cfg.  Rocky 10 needs an x86-64-v3 CPU
+# vault's copy of VERSION; see rocky/ks.cfg.  --lvm: rockyN-lvm instead (its
+# disk rockyN-lvm.qcow2), laid out as the installer does by itself
+# (autopart --type=lvm: on BIOS, GPT with a BIOS boot partition, /boot XFS,
+# and volume group rl_rockyN-lvm with / XFS and swap).  Rocky 10 needs an x86-64-v3 CPU
 # (AVX2 and friends).  Run it with vm-run, and look inside it while it's off
 # with vm-mount.
 #
@@ -39,15 +43,18 @@ INSTALL_TIMEOUT=1800
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-rocky: $*" >&2; exit 1; }
 
-[[ $# -eq 2 ]] || die "usage: $0 VERSION WORK_DIR"
+lvm=no
+[[ ${1:-} == --lvm ]] && { lvm=yes; shift; }
+[[ $# -eq 2 ]] || die "usage: $0 [--lvm] VERSION WORK_DIR"
 version=$1
 [[ $version =~ ^[0-9]+\.[0-9]+$ ]] || die "VERSION looks like 10.0, not '$version'"
 major=${version%%.*}
 key_fpr=${RELEASE_KEYS[$major]:-}
 [[ -n $key_fpr ]] || die "no release key known for Rocky $major; add it to RELEASE_KEYS"
 ISO=Rocky-$version-x86_64-minimal.iso
-DISK=rocky$major.qcow2
 guest_name=rocky$major
+[[ $lvm == yes ]] && guest_name=rocky$major-lvm
+DISK=$guest_name.qcow2
 mkdir -p "$2"
 cd "$2"
 [[ -e $DISK ]] && die "$2/$DISK already exists; move it away to rebuild"
@@ -99,6 +106,13 @@ mkdir "$work/www"
 sed -e "s|@HOSTNAME@|$guest_name|" -e "s|@ROOT_PASSWORD_HASH@|$hash|" \
     -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" -e "s|@VERSION@|$version|g" \
     "$here/rocky/ks.cfg" >"$work/www/ks.cfg"
+if [[ $lvm == yes ]]; then
+    awk '/^zerombr$/ { skip = 1; print; print "clearpart --all --initlabel --drives=vda"; print "autopart --type=lvm"; next }
+         skip && /^# PARTITIONING-END$/ { skip = 0; next }
+         !skip' "$work/www/ks.cfg" >"$work/www/ks.lvm" && mv "$work/www/ks.lvm" "$work/www/ks.cfg"
+    grep -q '^autopart --type=lvm$' "$work/www/ks.cfg" && ! grep -q '^part ' "$work/www/ks.cfg" ||
+        die "ks.cfg's partitioning not replaced"
+fi
 if grep -n '@[A-Z_]\+@' "$work/www/ks.cfg"; then die "ks.cfg placeholders left unfilled"; fi
 
 # Serve ks.cfg to the guest only: QEMU's user-mode network maps 10.0.2.2 in

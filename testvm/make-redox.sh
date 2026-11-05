@@ -86,21 +86,22 @@
 #   vm-run $(<WORK_DIR/vm-run-options) WORK_DIR/redox.qcow2 -- \
 #       -chardev socket,id=con,path=SOCK,server=on,wait=off -serial chardev:con -monitor none
 #   redox/console.py SOCK WORK_DIR/root-password run 'uname -a'
-# SSH doesn't serve logins (2026-11): sshd stays installed and started, with
-# root's key, so that the guest is reached as root with
+# SSH doesn't serve logins (2026-11): sshd stays installed, with root's key,
+# but isn't started at boot (it would keep a host CPU busy), so that once
+# upstream fixes it, starting it (/usr/bin/sshd) reaches the guest with
 #   ssh -i WORK_DIR/id_ed25519 -p 2222 root@127.0.0.1
 # once upstream fixes it, but today a login gets no session.  relibc's
 # chroot (always EPERM), setgroups and initgroups (ENOSYS) and setitimer
 # (ENOSYS) are stubs, and each is fatal to sshd's privilege separation or
 # its login timer; past them (the calls renamed in the binaries, as a
 # test), the session still stalls before its channel opens, as root or as
-# an ordinary user.  The first boot checks that sshd listens, tries a
-# login, and records what sshd logged in no-ssh.  So vm-update, compare.py,
+# an ordinary user.  The first boot starts sshd from the console, checks
+# that it listens, tries a login, and records what sshd logged in no-ssh.  So vm-update, compare.py,
 # rebuild-one.sh and SticTest1, which all need SSH, can't use this guest
 # yet (don't pass it to them); update/in-guest.sh has its pkg case ready.
-# Also: GNU grep panics in the guest on every run (2026-11: "RELIBC PANIC
+# Also: the server set's grep panics at every run (2026-11: "RELIBC PANIC
 # ... failed to initialize FILETABLE", a build against an older relibc), so
-# a script meant to run in it must do without grep; root's chown -R
+# the guest gets uutils-grep's, which the first boot checks; root's chown -R
 # silently changes nothing, and su has no -c.
 # vm-mount can't open it: Linux has no RedoxFS driver.  redoxfs (FUSE, from
 # the same cargo install as redox_installer) reads a throwaway raw copy,
@@ -448,8 +449,10 @@ if ! console login "$LOGIN_TIMEOUT" >"$work/login.log" 2>&1; then
 fi
 echo "Root's shell on the console after $((SECONDS - start_time)) s"
 
-# SSH: sshd must listen (it's kept for when it works); a login says
-# whether it serves one, and what sshd logs, why not.
+# SSH: started here (not at boot: see the header), sshd must listen; a
+# login says whether it serves one, and what sshd logs, why not.
+# In the background of root's shell, logging to the console as init's did.
+console send '/usr/bin/sshd -D -e &' >/dev/null 2>&1 || die "can't start sshd on the console"
 for _ in $(seq 60); do
     grep -aqs 'Server listening on 0\.0\.0\.0 port 22' first-boot-serial.log && break
     sleep 1
@@ -481,12 +484,14 @@ check() {  # LABEL COMMAND
 (
     check uname-s 'uname -s' && check uname-a 'uname -a' && check hostname 'cat /etc/hostname; echo' &&
         check sh-s "printf 'echo ok\\n' | sh -s" && check command-v 'command -v sh pkg shutdown poweroff reboot' &&
+        check grep 'echo bko-grep-works | grep -c bko-grep' &&
         check df 'df -h /' && check os-release 'cat /etc/os-release' || exit 1
     echo "package index build: $build_id"
 ) >first-boot.log 2>&1 || die "the first boot's checks failed on the console; see $out/first-boot.log"
 grep -qx 'uname-s: Redox' first-boot.log || die "uname -s doesn't say Redox; see $out/first-boot.log"
 grep -qx "hostname: $guest_name" first-boot.log || die "the host name isn't $guest_name; see $out/first-boot.log"
 grep -qx 'sh-s: ok' first-boot.log || die "sh -s doesn't work; see $out/first-boot.log"
+grep -qx 'grep: 1' first-boot.log || die "grep doesn't run in the guest; see $out/first-boot.log"
 for c in sh pkg shutdown poweroff reboot; do
     grep -qx "command-v: /usr/bin/$c" first-boot.log || die "the guest has no $c; see $out/first-boot.log"
 done

@@ -293,13 +293,16 @@ def free_port() -> int:
 
 
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]")
-# A passphrase prompt on the serial console (Ubuntu's ZFS keystore).
-PROMPT = re.compile(rb"(?i)enter passphrase[^\n]*$")
+# A passphrase prompt on the serial console: Ubuntu's ZFS keystore's,
+# cryptsetup-initramfs's (debian13-stack) or FreeBSD's loader's (GELI).
+PROMPT = re.compile(rb"(?i)(enter passphrase[^\n]*|please unlock disk [^\n]*:\s*|geli passphrase for \S+\s*)$")
 KEPT = re.compile(r"vm-run: kept this run's writes to (\S+) in (\S+) \(")
 # Root's PATH over SSH lacks /sbin on some guests (NetBSD).
 SBIN = "PATH=/sbin:/usr/sbin:/bin:/usr/bin:$PATH; export PATH\n"
 # Haiku has only shutdown: -q, at once, without asking its applications.
-REBOOT = SBIN + ("(sleep 1; if [ $(uname) = Haiku ]; then shutdown -r -q; else reboot; fi)"
+# sync first: a shutdown an update broke (artix-s6's, once its s6-rc
+# needed the skalibs the update replaced) then loses no data.
+REBOOT = SBIN + ("(sleep 1; sync; if [ $(uname) = Haiku ]; then shutdown -r -q; else reboot; fi)"
                  " >/dev/null 2>&1 </dev/null &")
 # How long init has run, as ps prints it: [[DD-]HH:]MM:SS.  (Haiku's ps
 # has no -o: no answer, and the reboot is taken from SSH going down and up.)
@@ -308,7 +311,15 @@ POWEROFF = SBIN + """case $(uname) in
     Linux|SunOS|Redox) poweroff ;;
     Haiku) shutdown -q ;;
     # DragonFly's init ignores shutdown -p's request here; halt -p works.
-    OpenBSD|DragonFly) halt -p ;;
+    DragonFly) halt -p ;;
+    # OpenBSD relinks its kernel (KARL) in the background at every boot,
+    # replacing /bsd at the end: not halted midway, which leaves the next
+    # relink failing too.  At most 4 min, then halted anyway.
+    OpenBSD) boot=$(sysctl -n kern.boottime) i=0
+             while [ $i -lt 240 ] && { pgrep -qf reorder_kernel || [ $(stat -f %m /bsd) -lt $boot ]; }; do
+                 sleep 1; i=$((i + 1))
+             done
+             halt -p ;;
     *) if command -v apk >/dev/null; then /sbin/poweroff; else shutdown -p now; fi ;;
 esac"""
 
@@ -401,8 +412,10 @@ class VM:
             # Typed on the keyboard through a second monitor (Omarchy: Plymouth).
             self.monitor = f"{self.ram_dir}/monitor"
             cmd += ["--", "-monitor", f"unix:{self.monitor},server,nowait"]
-        pw_file = g.dir / "zfs-passphrase"
-        self.passphrase = pw_file.read_text().strip().encode() if pw_file.exists() else None
+        # Typed on the serial console at its prompt: zfs-passphrase (Ubuntu's
+        # ZFS keystore), console-passphrase (a LUKS root's initramfs).
+        pw_file = next((f for f in (g.dir / "zfs-passphrase", g.dir / "console-passphrase") if f.exists()), None)
+        self.passphrase = pw_file.read_text().strip().encode() if pw_file else None
         g.note(f"boot: SSH_PORT={self.port} RAM_DIR={self.ram_dir} {shlex.join(cmd)}")
         self.stderr: list[str] = []
         self.proc = self.stderr_thread = None

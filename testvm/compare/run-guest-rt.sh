@@ -6,7 +6,8 @@
 # direction, with the lines of every check that failed.
 #
 # Usage: run-guest-rt.sh GUEST [PORT] RESTIC_BIN RUSTIC_BIN [DIRECTION ...]
-#   GUEST       freebsd15 freebsd15-ufs openbsd8 netbsd11 alpinebsd dragonfly6 omnios58
+#   GUEST       freebsd15 freebsd15-ufs hardenedbsd15 ghostbsd26 openbsd8
+#               netbsd11 alpinebsd dragonfly6 omnios58
 #   PORT        the guest's SSH port here (default 2710)
 #   RESTIC_BIN  restic-bko built for the guest's OS (bko-bin/OS/restic-bko)
 #   RUSTIC_BIN  rustic-bko built for it (stick/OS/build-rustic.sh; alpinebsd
@@ -52,7 +53,7 @@ logs=${RT_LOGS:-$WORK/rt}/$guest
 tools=$WORK/netbsd-tools
 mkdir -p "$logs"
 case $guest in
-    freebsd*) os=freebsd ;;
+    freebsd*|hardenedbsd*|ghostbsd*) os=freebsd ;;
     openbsd*) os=openbsd ;;
     netbsd*|alpinebsd) os=netbsd ;;
     dragonfly*) os=dragonfly ;;

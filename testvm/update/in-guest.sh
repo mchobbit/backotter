@@ -205,6 +205,18 @@ Linux)
         # Error-Mode=any: a repository that failed to download is an error
         # (to retry), not a warning that leaves the old lists in place.
         apt="apt-get -y -o DPkg::Lock::Timeout=900 -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold"
+        # PackageKit's apt hook asks it over D-Bus to reload after every
+        # change, and with it masked above it fails loudly each time ("Unit
+        # packagekit.service is masked"): apt runs here with a copy of the
+        # guest's apt.conf.d less that hook (in /run, gone at the reboot).
+        # Only APT_CONFIG's file is read before the parts directory, so
+        # that's where it is named (-o comes too late).
+        if [ -f /etc/apt/apt.conf.d/20packagekit ]; then
+            rm -rf /run/bko-apt.conf.d && cp -a /etc/apt/apt.conf.d /run/bko-apt.conf.d &&
+                rm /run/bko-apt.conf.d/20packagekit &&
+                echo 'Dir::Etc::parts "/run/bko-apt.conf.d";' >/run/bko-apt.conf || exit 1
+            export APT_CONFIG=/run/bko-apt.conf
+        fi
         tries=0
         until $apt -o APT::Update::Error-Mode=any update; do
             tries=$((tries + 1)); [ $tries -lt 60 ] || exit 1; sleep 15
@@ -228,6 +240,14 @@ Linux)
             reclaim
         done
         $apt dist-upgrade && $apt autoremove --purge && $apt clean || exit 1
+        # Linux Mint (make-from-live.sh): the live session's casper outlived
+        # the live packages' removal, and runs at every shutdown.  Purged if
+        # nothing else goes with it.
+        if [ -f /etc/linuxmint/info ] && dpkg -s casper >/dev/null 2>&1 &&
+            [ "$($apt -s purge casper 2>/dev/null | grep -c '^Purg ')" = 1 ]; then
+            say "purging casper"
+            $apt purge casper || exit 1
+        fi
     elif has dnf; then
         # Fedora's server install has mcelog, which decodes Intel machine
         # checks only: on the hosts' AMD CPUs it fails at every boot, and the
@@ -250,7 +270,9 @@ Linux)
         # 103: zypper updated itself and wants to run again.  100-102: done,
         # with something to say (a reboot is needed, for one).
         for i in 1 2 3; do
-            zypper -n --gpg-auto-import-keys dup --auto-agree-with-licenses; rc=$?
+            # --no-recommends: as the install (autoinst.xml), which leaves
+            # them out; otherwise a dup brings some 1 GB of firmware.
+            zypper -n --gpg-auto-import-keys dup --auto-agree-with-licenses --no-recommends; rc=$?
             [ $rc -eq 103 ] || break
         done
         [ $rc -eq 0 ] || [ $rc -ge 100 -a $rc -le 102 ] || exit 1
@@ -464,22 +486,37 @@ NetBSD)
             say "no packages at $pkgs yet: pkgin stays on $(cat /usr/pkg/etc/pkgin/repositories.conf)"
         fi
         has sysupgrade || pkgin -y install sysupgrade || exit 1
+        releasedir=https://nycdn.netbsd.org/pub/NetBSD-daily/netbsd-${rel%%.*}/latest/$arch
         cat >/usr/pkg/etc/sysupgrade.conf <<EOF
-RELEASEDIR="https://nycdn.netbsd.org/pub/NetBSD-daily/netbsd-${rel%%.*}/latest/$arch"
+RELEASEDIR="$releasedir"
 KERNEL=${kernel:-GENERIC}
 SETS=AUTO
 POSTINSTALL_AUTOFIX="obsolete mtree opensslcertsrehash"
 ETCUPDATE=no
 AUTOCLEAN=yes
 EOF
-        sysupgrade auto || exit 1
-        # The sshd still running hands each new connection to the binaries
-        # just replaced, which needn't match it: the new one takes over.
-        # (Its pid file comes a moment after start returns.)
-        /etc/rc.d/sshd restart >/dev/null || exit 1
-        n=0; until /etc/rc.d/sshd status >/dev/null 2>&1; do
-            n=$((n + 1)); [ $n -lt 15 ] || { say "sshd didn't come back"; exit 1; }; sleep 1
-        done
+        # The build's checksums, sets' and kernels': the same as at the last
+        # sysupgrade, and there's nothing new to install (sysupgrade would
+        # fetch and extract every set again, some 500 MiB of writes).
+        sums=/var/db/bko-netbsd-daily.sha512
+        ftp -V -o $sums.sets "$releasedir/binary/sets/SHA512" >/dev/null 2>&1 &&
+            ftp -V -o $sums.kernel "$releasedir/binary/kernel/SHA512" >/dev/null 2>&1 &&
+            cat $sums.sets $sums.kernel >$sums.new || { rm -f $sums.sets $sums.kernel $sums.new; exit 1; }
+        rm -f $sums.sets $sums.kernel
+        if cmp -s $sums.new $sums; then
+            say "the netbsd-${rel%%.*} daily is the one installed: no sysupgrade"
+            rm -f $sums.new
+        else
+            sysupgrade auto || exit 1
+            mv $sums.new $sums || exit 1
+            # The sshd still running hands each new connection to the
+            # binaries just replaced, which needn't match it: the new one
+            # takes over.  (Its pid file comes a moment after start returns.)
+            /etc/rc.d/sshd restart >/dev/null || exit 1
+            n=0; until /etc/rc.d/sshd status >/dev/null 2>&1; do
+                n=$((n + 1)); [ $n -lt 15 ] || { say "sshd didn't come back"; exit 1; }; sleep 1
+            done
+        fi
         pkgin -y update && pkgin -y upgrade && pkgin -y clean || exit 1
     fi ;;
 SunOS)

@@ -1,0 +1,9 @@
+  # The layout Subiquity's guided "Use an entire disk" with ZFS gives
+  # (layout name zfs): a boot pool bpool (GRUB-readable features,
+  # compatibility=grub2) holding /boot, a root pool rpool with
+  # rpool/ROOT/ubuntu_XXXXXX and its user datasets, swap; on UEFI an EFI
+  # system partition too.  Unlike storage-zfs.yaml's, made by Subiquity
+  # itself, as an Ubuntu install with ZFS would be.
+  storage:
+    layout:
+      name: zfs

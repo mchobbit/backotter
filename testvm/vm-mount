@@ -16,7 +16,13 @@
 #                 or the LUKS keystore volume that Ubuntu's installer puts in
 #                 the pool to hold the real key
 #
-# / may be a partition, a btrfs subvolume, or a ZFS dataset.  A ZFS pool is
+# LVM: a volume group on the guest's partitions, arrays or LUKS volumes is
+# activated under its own name (read-only with --ro), its logical volumes
+# counting as partitions; vm-umount deactivates it.  LVM looks at this
+# image's devices only (--devices), with no devices file of this host's,
+# and a volume group of the same name already active here is refused.
+#
+# / may be a partition, a logical volume, a btrfs subvolume, or a ZFS dataset.  A ZFS pool is
 # imported from the image's partition only, under a temporary name (so it
 # can't clash with a pool of the host's, and the guest's own name is kept),
 # with MOUNTPOINT as its altroot; vm-umount exports it again, so the guest
@@ -58,7 +64,8 @@ state=$STATE_DIR/$(systemd-escape --path "$mp")
 [[ -d /sys/module/nbd ]] || modprobe nbd max_part=16
 mkdir -p "$STATE_DIR"
 # The state file: line 1, the first image's nbd device; further lines, what
-# else was set up, as "nbd DEVICE", "md DEVICE", "loop DEVICE", "luks NAME"
+# else was set up, as "nbd DEVICE", "md DEVICE", "loop DEVICE", "luks NAME",
+# "vg NAME DEVICE,..." (the volume group and the PVs it was activated from)
 # or "pool NAME", which
 # vm-umount undoes in reverse order.
 : >"$state"
@@ -88,6 +95,7 @@ for i in "${images[@]}"; do
     devs+=("$dev")
 done
 trap 'undo; die "failed"' ERR
+exec 9>&-       # the nbd lock, not for the commands below (LVM complains of it)
 udevadm settle
 parts=()
 for dev in "${devs[@]}"; do
@@ -110,6 +118,20 @@ n=0
 for u in "${!raids[@]}"; do
     # shellcheck disable=SC2206  # the members, one word each
     members=(${raids[$u]})
+    # This host's udev may have assembled the array by itself the moment the
+    # members appeared (mdadm --incremental, as md126 and up): stop that, so
+    # it is set up here as below, and isn't left behind.
+    # (This host's LVM may have activated a group on it by itself too: that
+    # first, or the array is busy.)
+    for m in "${members[@]}"; do
+        for h in /sys/class/block/"${m##*/}"/holders/md*; do
+            [[ -e $h ]] || continue
+            for d in "$h"/holders/dm-*; do
+                [[ -e $d ]] && { dmsetup remove "$(cat "$d/dm/name")" || { undo; die "${d##*/} holds ${h##*/}"; }; }
+            done
+            mdadm --stop "/dev/${h##*/}" >/dev/null || { undo; die "could not stop ${h##*/}, which this host assembled from ${m##*/}"; }
+        done
+    done
     if [[ $ro == yes ]]; then
         info=$(mdadm --examine "${members[0]}")
         [[ $(awk -F' : ' '/Raid Level/ { print $2 }' <<<"$info") == raid1 ]] ||
@@ -151,6 +173,43 @@ for p in "${parts[@]}"; do
     parts+=("/dev/mapper/$name")
 done
 
+# LVM physical volumes: their volume groups activated, the logical volumes
+# counted as partitions.
+pvs=()
+for p in "${parts[@]}"; do
+    [[ $(blkid -s TYPE -o value "$p" || true) == LVM2_member ]] && pvs+=("$(realpath "$p")")
+done
+if [[ ${#pvs[@]} -gt 0 ]]; then
+    pvlist=$(IFS=,; echo "${pvs[*]}")
+    lvm_opts=(--devicesfile "" --devices "$pvlist")
+    # The PVs' device numbers, as dmsetup deps prints them: "(MAJOR, MINOR)".
+    ours=$(for p in "${pvs[@]}"; do stat -L -c '%t %T' "$p"; done | while read -r ma mi; do
+        printf '(%d, %d)\n' "0x$ma" "0x$mi"; done)
+    for vg in $(vgs "${lvm_opts[@]}" --noheadings -o vg_name 2>/dev/null | sort -u); do
+        # A VG's name in read_only_volume_list covers all of its LVs ("*"
+        # there would match only a VG named "*").
+        ro_cfg=()
+        [[ $ro == yes ]] && ro_cfg=(--config "activation { read_only_volume_list = [ \"$vg\" ] }")
+        # device-mapper names a VG's volumes VG-LV, with VG's dashes doubled.
+        # Active already: on this image's PVs when this host's LVM activated
+        # it by itself as they appeared (event activation), which is undone
+        # here to activate it as below; on others, it's another group of
+        # the same name (another mount of this guest, or the host's own).
+        active=$(dmsetup ls 2>/dev/null | awk '{ print $1 }' | grep "^${vg//-/--}-[^-]" || true)
+        for lv in $active; do
+            dmsetup deps -o devno "$lv" | grep -o '([0-9]*, [0-9]*)' | grep -qvxF "$ours" &&
+                { undo; die "a volume group named $vg is already active on this host"; }
+        done
+        [[ -n $active ]] && { vgchange "${lvm_opts[@]}" -a n "$vg" >/dev/null || { undo; die "could not deactivate $vg"; }; }
+        vgchange "${lvm_opts[@]}" "${ro_cfg[@]}" -a y "$vg" >/dev/null || { undo; die "could not activate volume group $vg"; }
+        echo "vg $vg $pvlist" >>"$state"
+        udevadm settle
+        while read -r lv; do
+            [[ -n $lv && -b $lv ]] && parts+=("$(realpath "$lv")")
+        done < <(lvs "${lvm_opts[@]}" --noheadings -o lv_dm_path "$vg" 2>/dev/null | tr -d ' ')
+    done
+fi
+
 # Resolve fstab's device names against this image's partitions only, never
 # the host's disks (a cloned image may share UUIDs with something else).
 resolve() {
@@ -166,6 +225,10 @@ resolve() {
                 [[ ${raid_uuid[$p]:-} == "${spec#*md-uuid-}" ]] && { echo "$p"; return; } ;;
             LABEL=*|/dev/disk/by-label/*)
                 [[ $(blkid -s LABEL -o value "$p") == "${spec##*[=/]}" ]] && { echo "$p"; return; } ;;
+            # A logical volume, as /dev/mapper/VG-LV or /dev/VG/LV: activated
+            # above under the guest's own names.
+            /dev/mapper/*|/dev/*/*)
+                [[ -b $spec && $(realpath "$spec") == "$(realpath "$p")" ]] && { echo "$p"; return; } ;;
         esac
     done
     return 1

@@ -3,12 +3,16 @@
 # of OpenBSD with the comp set (cc), in a directory of its own holding in/
 # and out/ (see make-img-bsd.sh's header, and README.md here).
 #
-#   build.sh info       KERNEL=, from the release's bsd.mp
+#   build.sh info       KERNEL=, from the kernel the image gets
 #   build.sh assemble   out/image.img
 #
 # OpenBSD has no live system, so this makes one the way the installer makes
 # a system: the base set, bsd.mp as /bsd, the etc set (inside base) for /etc,
-# MAKEDEV for /dev.  The root stays read-only: /etc/rc is patched not to
+# MAKEDEV for /dev.  Then the release's errata, as syspatch would install
+# them: each in/syspatchNN-*.tgz in turn, its files over the root's (only
+# those the root has: no X11, no comp set), its kernel objects into the
+# base's relink kit, from which GENERIC.MP is linked anew (as syspatch's
+# reorder_kernel does) whenever a patch changed the kernel.  The root stays read-only: /etc/rc is patched not to
 # remount it read-write nor relink the kernel, and /etc, /var, /dev, /tmp,
 # /root and /home become memory file systems at boot.
 #
@@ -39,13 +43,47 @@ key=/etc/signify/openbsd-$r-base.pub
 [ -f $key ] || die "no $key: this VM's OpenBSD doesn't know release $r"
 (cd in && signify -C -q -p $key -x SHA256.sig "$base" bsd.mp) ||
     die "$base or bsd.mp doesn't match SHA256.sig"
+patches=$(cd in && ls syspatch$r-*.tgz 2>/dev/null | sort) || true
+if [ -n "$patches" ]; then
+    skey=/etc/signify/openbsd-$r-syspatch.pub
+    [ -f $skey ] || die "no $skey"
+    # shellcheck disable=SC2086  # one file name per word
+    (cd in && signify -C -q -p $skey -x syspatch-SHA256.sig $patches) ||
+        die "a syspatch doesn't match its signed list"
+fi
+
+# --- The errata, and the kernel ---------------------------------------------------
+# Once, by info; assemble runs in the same directory.  errata/ ends up with
+# every patched file, later patches over earlier ones; bsd is the kernel.
+if [ ! -f bsd ]; then
+    rm -rf errata kit
+    mkdir errata kit
+    for p in $patches; do
+        echo "Syspatch $p"
+        tar -xzpf "in/$p" -C errata
+    done
+    kobj=errata/usr/share/relink/kernel/GENERIC.MP
+    if [ -d $kobj ]; then
+        echo "Relinking GENERIC.MP with the errata's objects"
+        tar -xzpf "in/$base" -C kit ./usr/share/relink/kernel.tgz
+        tar -xzf kit/usr/share/relink/kernel.tgz -C kit GENERIC.MP
+        cp -p $kobj/* kit/GENERIC.MP/
+        (cd kit/GENERIC.MP && make newbsd) >relink.log 2>&1 ||
+            { tail -n 20 relink.log >&2; die "relinking the kernel failed"; }
+        mv kit/GENERIC.MP/bsd bsd.new
+    else
+        cp in/bsd.mp bsd.new
+    fi
+    rm -rf kit errata/usr/share/relink
+    mv bsd.new bsd
+fi
 
 case $cmd in
 info)
     # As uname -rv prints it: "8.0 GENERIC.MP#84".
-    k=$(grep -a -o 'OpenBSD [0-9.]* ([A-Z.]*) #[0-9]*' in/bsd.mp | head -n 1 |
+    k=$(grep -a -o 'OpenBSD [0-9.]* ([A-Z.]*) #[0-9]*' bsd | head -n 1 |
         sed 's/^OpenBSD \([0-9.]*\) (\([A-Z.]*\)) /\1 \2/')
-    [ -n "$k" ] || die "no version string in bsd.mp"
+    [ -n "$k" ] || die "no version string in the kernel"
     echo "KERNEL=$k"
     exit 0 ;;
 assemble) ;;
@@ -79,7 +117,15 @@ tar -xzpf "$root/var/sysmerge/etc.tgz" -C "$root"
 # The objects for relinking the kernel and libraries at boot, which a
 # read-only root can't do; sysmerge's copies of the etc set.
 rm -rf "$root/usr/share/relink" "$root/var/sysmerge"/*
-install -o root -g wheel -m 600 in/bsd.mp "$root/bsd"
+install -o root -g wheel -m 600 bsd "$root/bsd"
+# The errata's files, where the root has them (syspatch's install_file), and
+# their records in /var/syspatch, so that syspatch -l lists them.
+(cd errata && find . ! -type d ! -path './var/syspatch/*') | while read -r f; do
+    [ -e "$root/$f" ] || [ -h "$root/$f" ] || continue
+    rm -f "$root/$f"
+    (cd errata && tar -cf - "$f") | tar -xpf - -C "$root"
+done
+[ ! -d errata/var/syspatch ] || (cd errata && tar -cf - ./var/syspatch) | tar -xpf - -C "$root"
 (cd "$root/dev" && sh ./MAKEDEV all)
 # rc feeds this to /dev/random at boot and writes a new one.  It's the same
 # on every stick, so it adds no entropy (that comes from the boot loader and

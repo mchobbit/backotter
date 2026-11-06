@@ -5,6 +5,12 @@
 #   build.sh info      checks the official anyboot image, prints KERNEL=
 #   build.sh assemble  writes out/image.img
 #
+# The system is the anyboot image's, updated: each of its packages is
+# replaced by this VM's version where that differs.  The VM is a throwaway
+# copy of the haiku6 test guest, which testvm's vm-update keeps up to date
+# from Haiku's r1beta6 repository (pkgman full-sync), so the image gets the
+# packages of the guest's last update.
+#
 # The image is an MBR disk:
 #   1  type 0xEB, active: BFS "BackOtter", the anyboot image's system and home
 #      directories (as Haiku's Installer copies them, without the install
@@ -73,10 +79,22 @@ official() {
     [ -d src/system/packages ] && [ -d src/home ] || die "$iso's BFS has no system and home"
 }
 
+# updated NAME.hpkg: this VM's package of the same name, if it has one
+# other than NAME.hpkg; nothing otherwise.  (Package names have no "-".)
+updated() {
+    local b=${1##*/} f
+    for f in /boot/system/packages/"${b%%-*}"-*.hpkg; do
+        [ -f "$f" ] && [ "${f##*/}" != "$b" ] && echo "$f"
+    done
+    return 0
+}
+
 info() {
     official
     set -- src/system/packages/haiku-r1*.hpkg
     [ $# -eq 1 ] && [ -f "$1" ] || die "expected one haiku package in the official image"
+    u=$(updated "$1")
+    [ -z "$u" ] || set -- "$u"
     # haiku-r1~beta6_hrev59866_79-1-x86_64.hpkg: hrev59866+79, the first word
     # of the kernel's uname -v.
     kernel=$(basename "$1" | sed -n 's/^haiku-[^_]*_\(hrev[0-9]*\)\(_[0-9]*\)\{0,1\}-[0-9]*-x86_64\.hpkg$/\1\2/p' | tr _ +)
@@ -119,6 +137,15 @@ assemble() {
     mkdir -p dst
     mnt -t bfs "$dst_dev/0" dst
     copyattr -d -r src/home src/system dst/
+    loader=no
+    for f in dst/system/packages/*.hpkg; do
+        u=$(updated "$f")
+        [ -n "$u" ] || continue
+        echo "  ${f##*/} -> ${u##*/}"
+        rm "$f"
+        copyattr -d "$u" dst/system/packages/
+        case ${f##*/} in haiku_loader-*) loader=yes ;; esac
+    done
     (cd dst; configure)
     makebootable dst
     df dst | grep -E '(Used|Free) Blocks' || true
@@ -126,6 +153,19 @@ assemble() {
     unmount dst
     mounts=("${mounts[@]:1}")   # dst was mounted last: first in the list
     echo yes | writembr "$dst_dev/raw" >writembr.log 2>&1 || { cat writembr.log >&2; die "writembr failed"; }
+    # An updated haiku_loader package: the ESP's loader to match (BIOS boots
+    # take theirs from the package itself).  This VM's is that package's.
+    if [ $loader = yes ]; then
+        efi=/boot/system/data/platform_loaders/haiku_loader.efi
+        [ -f $efi ] || die "this VM has no $efi"
+        mkdir -p esp
+        mnt -t fat "$dst_dev/1" esp
+        [ -f esp/EFI/BOOT/BOOTX64.EFI ] || die "the ESP has no EFI/BOOT/BOOTX64.EFI"
+        cp $efi esp/EFI/BOOT/BOOTX64.EFI
+        sync
+        unmount esp
+        mounts=("${mounts[@]:1}")
+    fi
     diskimage unregister out/image.img >/dev/null
     disks=("${disks[@]:1}")
 }

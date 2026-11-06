@@ -61,6 +61,11 @@ PACKAGES=(wpasupplicant efibootmgr zfsutils-linux openssh-server jfsutils)
 # come from there (apt preferences pin everything else away).
 ARCHIVE=http://archive.ubuntu.com/ubuntu/
 ARCHIVE_PACKAGES=(dosfstools nilfs-tools f2fs-tools)
+# The release's -updates and -security pockets, whatever they have newer than
+# the above: the base is up to date with them (slim-base-layer.sh), so the
+# layer must be too.  Through another host of Ubuntu's, which serves the same
+# archive, so that apt's preferences can tell it from the release pocket.
+UPDATES=http://security.ubuntu.com/ubuntu/
 ARCHIVE_DEPENDENCIES=(libsodium23)          # bcachefs-tools needs it
 # bcachefs, from its own repository: the tools into the layer, and the DKMS
 # source of the same version to build the module from.  Pinned to the version
@@ -211,8 +216,14 @@ fpr=$(in_root env GNUPGHOME="$apt_dir/gnupg" gpg --batch --quiet --show-keys --w
 [[ $fpr == "$BCACHEFS_KEY_FPR" ]] || die "$BCACHEFS_KEY is key $fpr, not $BCACHEFS_KEY_FPR"
 write_source "$root$apt_dir/sources" ubuntu "$ARCHIVE" "$suite" /usr/share/keyrings/ubuntu-archive-keyring.gpg \
     "main universe"
+write_source "$root$apt_dir/sources" updates "$UPDATES" "$suite-updates $suite-security" \
+    /usr/share/keyrings/ubuntu-archive-keyring.gpg "main restricted universe"
 write_source "$root$apt_dir/sources" bcachefs "$BCACHEFS_REPO" "$BCACHEFS_SUITE" "$apt_dir/bcachefs.asc"
 cat >"$root$apt_dir/preferences/backotter" <<EOF
+Package: *
+Pin: origin "$(uri_host "$UPDATES")"
+Pin-Priority: 500
+
 Package: *
 Pin: origin "$(uri_host "$ARCHIVE")"
 Pin-Priority: -1
@@ -250,10 +261,10 @@ rm "$root/etc/apt/sources.list.d/cdrom.sources"
 # --- The bcachefs module -------------------------------------------------------------
 # Built by DKMS in a throwaway overlay on the layer so far, so the compiler,
 # the kernel's headers and DKMS itself never reach the layer; only the module
-# does.  The toolchain comes from the release pocket, with the headers for
-# exactly KVER from -updates (the only place they are): not linux-headers-
-# generic, which bcachefs-kernel-dkms depends on and which would be the
-# newest kernel's.  So the DKMS package isn't installed, only unpacked.
+# does.  The toolchain, and the headers for exactly KVER, come from the
+# release with its -updates and -security, as the base is: not
+# linux-headers-generic, which bcachefs-kernel-dkms depends on and which would
+# be the newest kernel's.  So the DKMS package isn't installed, only unpacked.
 kb=$work/kmod
 kb_root=$kb/root
 mkdir -p "$kb/upper" "$kb/overlay-work" "$kb_root"
@@ -264,17 +275,9 @@ in_kb() { chroot "$kb_root" "$@"; }
 kb_apt=/tmp/backotter-kmod-apt
 mkdir -p "$kb_root$kb_apt"/{sources,preferences,lists/partial}
 cp "$here/$BCACHEFS_KEY" "$kb_root$kb_apt/bcachefs.asc"
-write_source "$kb_root$kb_apt/sources" ubuntu "$ARCHIVE" "$suite $suite-updates" /usr/share/keyrings/ubuntu-archive-keyring.gpg
+write_source "$kb_root$kb_apt/sources" ubuntu "$ARCHIVE" "$suite $suite-updates $suite-security" \
+    /usr/share/keyrings/ubuntu-archive-keyring.gpg
 write_source "$kb_root$kb_apt/sources" bcachefs "$BCACHEFS_REPO" "$BCACHEFS_SUITE" "$kb_apt/bcachefs.asc"
-cat >"$kb_root$kb_apt/preferences/backotter" <<EOF
-Package: *
-Pin: release a=$suite-updates
-Pin-Priority: -1
-
-Package: linux-headers-$KVER linux-headers-${KVER%-*}
-Pin: release a=$suite-updates
-Pin-Priority: 500
-EOF
 kb_apt_opts=(-o "Dir::Etc::SourceList=/dev/null" -o "Dir::Etc::SourceParts=$kb_apt/sources"
              -o "Dir::Etc::Preferences=/dev/null" -o "Dir::Etc::PreferencesParts=$kb_apt/preferences"
              -o "Dir::State::Lists=$kb_apt/lists")

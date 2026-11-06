@@ -2,6 +2,7 @@
 # line at a time (keep each check on one line).  Each check prints one line:
 # "BKO-CHECK <name> <ok|FAIL> <detail>".
 check kernel 'sysctl -n kern.version | head -n 1'
+check errata 'n=$(ls /var/syspatch 2>/dev/null | wc -l | tr -d " "); echo "$n syspatches: $(ls /var/syspatch 2>/dev/null | tr "\n" " ")"'
 check root-device 'dmesg | grep "^root on"'
 check hostname 'test "$(hostname)" = backotter && hostname'
 check rootfs-ro 'mount | awk "\$3 == \"/\"" | grep "read-only"'

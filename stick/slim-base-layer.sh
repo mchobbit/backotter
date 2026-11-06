@@ -176,15 +176,31 @@ cleanup() {
     rm -f "$ROOT/usr/sbin/policy-rc.d"
 }
 trap cleanup EXIT
-# api_mounts DIR: the host's /proc, /sys and /dev in DIR, and a tmpfs on its
-# /run holding the host's resolver configuration, for apt's downloads (the
-# base's /etc/resolv.conf points into /run, at systemd-resolved's stub).
+# api_mounts DIR: the host's /proc, and /sys read-only, in DIR; a /dev of
+# its own (a tmpfs with the basic nodes, copied, and a devpts instance of its
+# own), never the host's: upgrading systemd and udev in the chroot re-creates
+# their static nodes (/dev/kvm and others) with the chroot's group IDs, which
+# on the host are other groups; and a tmpfs on its /run holding the host's
+# resolver configuration, for apt's downloads (the base's /etc/resolv.conf
+# points into /run, at systemd-resolved's stub).
 api_mounts() {
-    local m
-    for m in proc sys dev dev/pts; do
-        mount --bind "/$m" "$1/$m"
-        mounts+=("$1/$m")
-    done
+    local n
+    mount --bind /proc "$1/proc"
+    mounts+=("$1/proc")
+    mount --bind /sys "$1/sys"
+    mount -o remount,bind,ro "$1/sys"
+    mounts+=("$1/sys")
+    mount -t tmpfs -o mode=755 tmpfs "$1/dev"
+    mounts+=("$1/dev")
+    for n in null zero full random urandom tty; do cp -a "/dev/$n" "$1/dev/"; done
+    mkdir "$1/dev/pts" "$1/dev/shm"
+    mount -t devpts -o newinstance,ptmxmode=0666,mode=620 devpts "$1/dev/pts"
+    mounts+=("$1/dev/pts")
+    ln -s pts/ptmx "$1/dev/ptmx"
+    ln -s /proc/self/fd "$1/dev/fd"
+    ln -s /proc/self/fd/0 "$1/dev/stdin"
+    ln -s /proc/self/fd/1 "$1/dev/stdout"
+    ln -s /proc/self/fd/2 "$1/dev/stderr"
     mount -t tmpfs tmpfs "$1/run"
     mounts+=("$1/run")
     mkdir -p "$1/run/systemd/resolve"
@@ -220,7 +236,7 @@ kernels=("$ROOT"/lib/modules/*/)
 old_kver=$(basename "${kernels[0]}")
 in_root apt-get "${apt_opts[@]}" -q --error-on=any update >"$OUT/upgrade.log" 2>&1 ||
     { tail -n 20 "$OUT/upgrade.log" >&2; die "apt-get update failed"; }
-before=$(in_root dpkg-query -W -f '${Package}\t${Version}\n' | sort)
+before=$(in_root dpkg-query -W -f '${Package}\t${Version}\n' | LC_ALL=C sort)
 in_root apt-get "${apt_opts[@]}" -y -q full-upgrade >>"$OUT/upgrade.log" 2>&1 ||
     { tail -n 20 "$OUT/upgrade.log" >&2; die "apt-get full-upgrade failed; see $OUT/upgrade.log"; }
 mapfile -t kernels < <(cd "$ROOT/lib/modules" && ls | grep -vxF "$old_kver" || true)
@@ -235,7 +251,7 @@ if [[ $kver != "$old_kver" ]]; then
     rm -rf "$ROOT/lib/modules/$old_kver" "$ROOT/usr/lib/modules/$old_kver"
 fi
 [[ -f $ROOT/boot/vmlinuz-$kver ]] || die "no /boot/vmlinuz-$kver"
-updated=$(join -t $'\t' <(echo "$before") <(in_root dpkg-query -W -f '${Package}\t${Version}\n' | sort) |
+updated=$(LC_ALL=C join -t $'\t' <(echo "$before") <(in_root dpkg-query -W -f '${Package}\t${Version}\n' | LC_ALL=C sort) |
     awk -F '\t' '$2 != $3' | wc -l)
 log ""
 log "== Updates, from $ARCHIVE $suite-updates and $suite-security"

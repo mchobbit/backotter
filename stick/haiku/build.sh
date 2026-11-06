@@ -94,7 +94,7 @@ assemble() {
     # --- The layout ------------------------------------------------------------------
     esp_start=$(entry 2 8) esp_sectors=$(entry 2 12)
     used_kb=$(du -sk src/system src/home | awk '{ n += $1 } END { print n }')
-    ours_kb=$(du -skL in/rustic-bko | cut -f1)
+    ours_kb=$(du -skL in/rustic-bko in/bko-holt | awk '{ n += $1 } END { print n }')
     # BFS keeps small attributes in the inodes, which du doesn't count: 10%
     # for those, the journal and the indices.
     bfs_sectors=$(( ((used_kb + ours_kb) * 11 / 10 + ROOM_MB * 1024) * 2 ))
@@ -186,7 +186,7 @@ EOF
 
     mkdir -p "$lib" system/non-packaged/bin .disk
     install -m 755 ../in/console ../in/remote-access ../in/boot ../in/on-serial.py "$lib/"
-    install -m 755 ../in/rustic-bko system/non-packaged/bin/
+    install -m 755 ../in/rustic-bko ../in/bko-holt system/non-packaged/bin/
     install -m 444 ../in/backotter.json .disk/
 }
 

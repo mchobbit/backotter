@@ -40,7 +40,7 @@
 #                   sshd_config.backotter (from stick/bsd/), BUILD_FILES,
 #                   restic-bko (unless RESTIC_REQUIRED=no and there is none)
 #                   and rustic-bko (if there is one for this platform, and
-#                   always with RUSTIC_REQUIRED=yes), and for
+#                   always with RUSTIC_REQUIRED=yes), bko-holt, and for
 #                   assemble also backotter.json and config.img (marker.py's).
 #                   TEST=1 in its environment for --test (shorter boot menus).
 #   checks.sh, config-checks.sh
@@ -48,7 +48,10 @@
 #
 # The binaries come from $BKO_BIN/PLATFORM/ (default ~/backotter-work/bko-bin):
 # restic-bko is required unless platform.conf sets RESTIC_REQUIRED=no,
-# rustic-bko optional unless it sets RUSTIC_REQUIRED=yes.
+# rustic-bko optional unless it sets RUSTIC_REQUIRED=yes.  bko-holt, which
+# every image has, comes from $BKO_HOLT_BIN/PLATFORM/ (default
+# ~/backotter-work/holt-bin: a pinned set of holt/'s builds, with COMMIT and
+# SHA256SUMS, as testvm/holttest1d/build-holt.sh makes them).
 #
 # Needs: qemu with KVM (vm-run), ssh, python3 3.11 or later, dosfstools,
 # mtools, and what PLATFORM's fetch needs.
@@ -58,6 +61,7 @@ set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 WORK=${BKO_WORK:-$HOME/backotter-work}
 BKO_BIN=${BKO_BIN:-$WORK/bko-bin}
+BKO_HOLT_BIN=${BKO_HOLT_BIN:-$WORK/holt-bin}
 SSH_WAIT=600                    # seconds for the VM's sshd to come up
 die() { echo "make-img-bsd: $*" >&2; exit 1; }
 
@@ -82,6 +86,7 @@ vm=$WORK/vms/$BUILD_VM
     die "no $BKO_BIN/$PLATFORM/rustic-bko, and $PLATFORM's image needs it"
 [[ -x $BKO_BIN/$PLATFORM/restic-bko || -x $BKO_BIN/$PLATFORM/rustic-bko ]] ||
     die "neither restic-bko nor rustic-bko in $BKO_BIN/$PLATFORM"
+[[ -x $BKO_HOLT_BIN/$PLATFORM/bko-holt ]] || die "no $BKO_HOLT_BIN/$PLATFORM/bko-holt"
 
 if [[ -d $OUT_IMG ]]; then
     version=dev.$(date -u +%Y%m%d)
@@ -162,6 +167,7 @@ if [[ -x $BKO_BIN/$PLATFORM/rustic-bko ]]; then
 else
     echo "make-img-bsd: no rustic-bko for $PLATFORM; the image will have restic-bko only" >&2
 fi
+cp "$BKO_HOLT_BIN/$PLATFORM/bko-holt" "$work/in/"
 for m in "${MEDIA[@]}"; do ln -s "$media_dir/$m" "$work/in/${m##*/}"; done
 echo "Copying $(du -shL "$work/in" | cut -f1) into $BUILD_VM"
 rdir=/var/tmp/bko-build.$(hostname -s).$$     # this run's, in the VM

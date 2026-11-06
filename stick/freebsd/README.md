@@ -81,7 +81,8 @@ What changes from the memstick:
   (`al.Pc`), like Linux's tty2-tty6.
 - sshd: `../bsd/sshd_config.backotter`'s lines first in `sshd_config`; no
   host keys (`remote-access` makes them).
-- `/usr/local/bin/restic-bko` and `rustic-bko`, and the marker
+- `/usr/local/bin/restic-bko`, `rustic-bko` and `bko-holt` (from
+  `~/backotter-work/holt-bin/freebsd/`, `BKO_HOLT_BIN`), and the marker
   `/.disk/backotter.json`.  make-img-bsd.sh builds without a rustic-bko (with
   a warning) if there is none for freebsd; the boot test's rustic-bko check
   then fails, since the FreeBSD image is meant to have both.

@@ -2,7 +2,7 @@
 # Build BackOtter's own squashfs layer, stacked on the slimmed base layer from
 # slim-base-layer.sh: casper/ubuntu-server-minimal.backotter.squashfs.
 #
-# Usage: sudo [BKO_BIN=DIR] ./build-backotter-layer.sh SOURCE_ISO SLIM_DIR OUT_DIR
+# Usage: sudo [BKO_BIN=DIR] [BKO_HOLT_BIN=DIR] ./build-backotter-layer.sh SOURCE_ISO SLIM_DIR OUT_DIR
 #
 # SOURCE_ISO must be the ISO SLIM_DIR was built from: the packages come from
 # its pool/, which pins them to exactly the base layer's release.  The few the
@@ -11,7 +11,9 @@
 # BackOtter's archivers, restic-bko and rustic-bko (both required, statically
 # linked), come from BKO_BIN/linux/, as the other platforms' come from
 # BKO_BIN/PLATFORM/ for make-img-bsd.sh; BKO_BIN defaults to
-# ~/backotter-work/bko-bin in the home of the user who ran sudo.
+# ~/backotter-work/bko-bin in the home of the user who ran sudo.  bko-holt
+# (static) comes from BKO_HOLT_BIN/linux/, by default ~/backotter-work/holt-bin
+# there, as for make-img-bsd.sh.
 # OUT_DIR receives:
 #   ubuntu-server-minimal.backotter.squashfs   the layer
 #   ubuntu-server-minimal.backotter.manifest   package list of base + layer
@@ -36,7 +38,7 @@
 #     so it loads only with Secure Boot off.  Its build (compiler, kernel
 #     headers, DKMS) happens in a throwaway overlay; only the module lands
 #     in the layer.
-#   - adds restic-bko and rustic-bko in /usr/local/bin
+#   - adds restic-bko, rustic-bko and bko-holt in /usr/local/bin
 #   - tty1 and serial consoles run /usr/lib/backotter/console as root;
 #     tty2-tty6 are root shells
 #   - DHCP on wired interfaces; nothing waits for the network at boot
@@ -89,6 +91,7 @@ here=$(dirname "$(realpath "$0")")
 die() { echo "build-backotter-layer: $*" >&2; exit 1; }
 # Under sudo, $HOME is root's: the default is the invoking user's.
 BKO_BIN=${BKO_BIN:-$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/backotter-work/bko-bin}
+BKO_HOLT_BIN=${BKO_HOLT_BIN:-$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/backotter-work/holt-bin}
 
 [[ $# -eq 3 ]] || die "usage: $0 SOURCE_ISO SLIM_DIR OUT_DIR"
 SOURCE_ISO=$(realpath "$1")
@@ -103,6 +106,7 @@ command -v mksquashfs >/dev/null || die "missing mksquashfs"
 for a in "${ARCHIVERS[@]}"; do
     [[ -x $BKO_BIN/linux/$a ]] || die "no $BKO_BIN/linux/$a"
 done
+[[ -x $BKO_HOLT_BIN/linux/bko-holt ]] || die "no $BKO_HOLT_BIN/linux/bko-holt"
 # The image's one kernel, which the bcachefs module is built for (in a chroot
 # uname -r is the build host's).
 kernels=("$SLIM"/rootfs/lib/modules/*/)
@@ -317,6 +321,7 @@ done < <(find "$here/layer" -type f -print0)
 for a in "${ARCHIVERS[@]}"; do
     install -D -o root -g root -m 755 "$BKO_BIN/linux/$a" "$root/usr/local/bin/$a"
 done
+install -D -o root -g root -m 755 "$BKO_HOLT_BIN/linux/bko-holt" "$root/usr/local/bin/bko-holt"
 chmod 600 "$root/etc/netplan/50-backotter-wired.yaml"   # netplan warns otherwise
 chmod 440 "$root/etc/sudoers.d/backotter"
 in_root visudo -cq -f /etc/sudoers.d/backotter || die "sudoers file rejected"
@@ -349,10 +354,13 @@ restic_v=$(in_root restic-bko version | head -n 1) && [[ $restic_v == *backotter
     die "restic-bko isn't BackOtter's restic: $restic_v"
 rustic_v=$(in_root rustic-bko --version) && [[ $rustic_v == *backotter* ]] ||
     die "rustic-bko isn't BackOtter's rustic: $rustic_v"
+holt_v=$(in_root bko-holt --version) && [[ $holt_v == "bko-holt "[0-9]* ]] ||
+    die "bko-holt --version says: $holt_v"
 log ""
-log "== Archivers"
+log "== Archivers, and bko-holt"
 log "  $restic_v"
 log "  $rustic_v"
+log "  $holt_v"
 
 in_root dpkg-query -W -f '${binary:Package}\t${Version}\n' >"$OUT/$LAYER.manifest"
 rm -f "$root/usr/sbin/policy-rc.d"

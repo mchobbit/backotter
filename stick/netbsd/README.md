@@ -20,7 +20,8 @@ each against the release's hash list signed by the NetBSD Security Officer (the 
 fetched by full fingerprint, as `testvm/make-netbsd.sh` does).  `EXTRA_SETS=comp`
 fetches more, e.g. for a build VM.  Not included: comp, games, man, tests, text, X.
 
-`restic-bko` and `rustic-bko` come from `~/backotter-work/bko-bin/netbsd/`.
+`restic-bko` and `rustic-bko` come from `~/backotter-work/bko-bin/netbsd/`,
+and `bko-holt` from `~/backotter-work/holt-bin/netbsd/` (`BKO_HOLT_BIN`, a pinned set of holt's builds).
 `build-rustic.sh` makes rustic-bko natively in a throwaway copy of `netbsd11`:
 the comp set, then `rust` (1.96), `cmake`, `gmake`, `perl` and `pkgconf` from
 pkgsrc's binary packages (`pkgsrc/packages/NetBSD/x86_64/11.0_2026Q3`, which

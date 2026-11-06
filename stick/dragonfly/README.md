@@ -68,7 +68,8 @@ What changes from the official image:
   `stick/bsd/sshd_config.backotter`'s lines first and no host keys
   (`remote-access` makes them).
 - `restic-bko` and `rustic-bko` in `/usr/local/bin`, from
-  `~/backotter-work/bko-bin/dragonfly/` (both required), the marker in
+  `~/backotter-work/bko-bin/dragonfly/` (both required), `bko-holt` there
+  too, from `~/backotter-work/holt-bin/dragonfly/` (`BKO_HOLT_BIN`, a pinned set of holt's builds), the marker in
   `/.disk/backotter.json` (mode 444).  `zfs` is null: DragonFly has no
   OpenZFS.
 

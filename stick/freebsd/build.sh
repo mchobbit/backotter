@@ -10,8 +10,8 @@
 # the installer (rc.local, which starts it, and the packages it installs),
 # is copied into a new UFS2 labelled BACKOTTER-<first 8 hex digits of the
 # image ID>, so that a second stick (or the machine's own disks) can't stand
-# in for the root.  It gets BackOtter's console and remote access, restic-bko
-# and rustic-bko, and the marker /.disk/backotter.json.  The disk layout is the
+# in for the root.  It gets BackOtter's console and remote access, restic-bko,
+# rustic-bko and bko-holt, and the marker /.disk/backotter.json.  The disk layout is the
 # memstick's, plus the config partition:
 #
 #   MBR slice 1   the memstick's ESP, as is (EFI/BOOT/bootx64.efi is loader.efi)
@@ -160,6 +160,7 @@ mkdir -p "root$LIB" root/usr/local/bin root/.disk root/home
 install -m 755 in/console in/remote-access "root$LIB/"
 install -m 755 in/restic-bko root/usr/local/bin/
 [ ! -f in/rustic-bko ] || install -m 755 in/rustic-bko root/usr/local/bin/
+install -m 755 in/bko-holt root/usr/local/bin/
 install -m 644 in/backotter.json root/.disk/
 
 # /etc, /root and /home in memory (see the top).  rc.initdiskless copies each

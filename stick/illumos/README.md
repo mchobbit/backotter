@@ -126,7 +126,8 @@ What changes from OmniOS's installer:
   and OpenSSL, GNU coreutils and the xpg4 tools, terminfo, keymaps and time
   zones.  OmniOS has no `mpathadm` or `sasinfo` packages.
 - `restic-bko` and `rustic-bko` in `/usr/local/bin`, from
-  `~/backotter-work/bko-bin/illumos/` (both required), the marker in
+  `~/backotter-work/bko-bin/illumos/` (both required), `bko-holt` there
+  too, from `~/backotter-work/holt-bin/illumos/` (`BKO_HOLT_BIN`, a pinned set of holt's builds), the marker in
   `/.disk/backotter.json` (mode 444).  `zfs.version` is `illumos-r151058`
   (illumos' ZFS isn't OpenZFS), and its features are the VM's
   `zpool upgrade -v`.

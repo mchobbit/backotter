@@ -97,7 +97,8 @@ What changes from the official image:
 - Every shell's prompt ends in `# ` (`non-packaged/data/profile.d`): every
   process on Haiku is uid 0's.
 - `rustic-bko` in `/boot/system/non-packaged/bin`, from
-  `~/backotter-work/bko-bin/haiku/` (`BKO_BIN`), the marker in
+  `~/backotter-work/bko-bin/haiku/` (`BKO_BIN`), `bko-holt` beside it from
+  `~/backotter-work/holt-bin/haiku/` (`BKO_HOLT_BIN`, a pinned set of holt's builds), the marker in
   `/boot/.disk/backotter.json` (mode 444).  `zfs` is null: Haiku has no ZFS.
   `kernel` is the hrev, as the first word of `uname -v` says it
   (`hrev59866+79`).

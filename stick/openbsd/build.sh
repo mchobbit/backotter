@@ -52,7 +52,7 @@ assemble) ;;
 *) die "usage: build.sh info|assemble" ;;
 esac
 command -v cc >/dev/null || die "no cc: the build VM needs OpenBSD's comp set"
-for f in console remote-access sshd_config.backotter restic-bko backotter.json config.img; do
+for f in console remote-access sshd_config.backotter restic-bko bko-holt backotter.json config.img; do
     [ -f in/$f ] || die "no in/$f"
 done
 [ "$(wc -c <in/config.img)" -eq $((CFG_SIZE * 512)) ] || die "config.img isn't $CFG_SIZE sectors"
@@ -130,6 +130,7 @@ mkdir -p "$root$LIB" "$root/.disk"
 install -m 755 in/console in/remote-access "$root$LIB/"
 install -m 755 in/restic-bko "$root/usr/local/bin/"
 [ ! -f in/rustic-bko ] || install -m 755 in/rustic-bko "$root/usr/local/bin/"
+install -m 755 in/bko-holt "$root/usr/local/bin/"
 install -m 644 in/backotter.json "$root/.disk/"
 
 cat >"$root$LIB/boot-setup" <<'EOF'

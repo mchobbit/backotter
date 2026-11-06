@@ -45,6 +45,7 @@ check installer-gone 'test ! -e /etc/rc.local && test ! -e /usr/freebsd-packages
 check tools 'for c in gpart zpool zfs newfs newfs_msdos fsck_ffs fsck_msdosfs growfs tunefs geli gmirror graid gstripe gconcat mdconfig camcontrol nvmecontrol efibootmgr boot0cfg fstyp ssh sshd; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; echo all present'
 check restic-bko '/usr/local/bin/restic-bko version'
 check rustic-bko '/usr/local/bin/rustic-bko --version'
+check bko-holt '/usr/local/bin/bko-holt --version | grep "^bko-holt [0-9]"'
 check zfs-no-autoimport 'test "$(sysrc -n zfs_enable)" = NO && ! kldstat -q -n zfs.ko && echo "zfs_enable is NO, zfs.ko not loaded"'
 check network 'for i in $(seq 30); do a=$(ifconfig -a inet | awk "\$1 == \"inet\" && \$2 !~ /^127\\./ { print \$2 }"); test -n "$a" && break; sleep 1; done; test -n "$a" && echo "$a," $(grep "^nameserver" /etc/resolv.conf)'
 check console-screen 'ps -ax -o tt= -o command= | awk "\$1 == \"v0\" && /backotter\\/console/" | grep .'

@@ -16,5 +16,6 @@ check remote-access '/usr/local/lib/backotter/remote-access >/tmp/ra.out 2>&1 ||
 check root-ssh-refused 'test -x /tmp/askpass && pgrep -x sshd >/dev/null || { echo "no askpass or no sshd to test with"; exit 1; }; SSH_ASKPASS=/tmp/askpass SSH_ASKPASS_REQUIRE=force ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o NumberOfPasswordPrompts=1 root@127.0.0.1 true </dev/null 2>/tmp/ssh-root.err; r=$?; rm -f /tmp/askpass; test $r -ne 0 && grep "Permission denied" /tmp/ssh-root.err'
 check restic-bko 'restic-bko version'
 check rustic-bko 'rustic-bko --version'
+check bko-holt 'bko-holt --version | grep "^bko-holt [0-9]"'
 check marker 'grep -q "\"platform\": \"openbsd\"" /.disk/backotter.json && sed -E -n "s/.*\"(image_id|release|kernel)\": \"([^\"]*)\".*/\2/p" /.disk/backotter.json | tr "\n" " "'
 check memory 'top -b -d 1 | sed -n "s/^Memory: //p"'

@@ -225,8 +225,8 @@ assemble() {
 # Make the system in the current directory (kayak's miniroot) BackOtter's.
 configure() {
     mkdir -p usr/local/bin
-    cp "$here/in/restic-bko" "$here/in/rustic-bko" usr/local/bin/
-    chmod 755 usr/local/bin/restic-bko usr/local/bin/rustic-bko
+    cp "$here/in/restic-bko" "$here/in/rustic-bko" "$here/in/bko-holt" usr/local/bin/
+    chmod 755 usr/local/bin/restic-bko usr/local/bin/rustic-bko usr/local/bin/bko-holt
     mkdir -p .disk home
     cp "$here/in/backotter.json" .disk/
     chmod 444 .disk/backotter.json

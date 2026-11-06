@@ -24,7 +24,8 @@ console's small autologin helper.  `fetch` (in `platform.conf`) takes
 when it isn't there; both are checked against the release's `SHA256.sig` with
 signify, on the host with the key in `platform.conf` and again in the VM with
 its own copy.  `restic-bko` (required) and `rustic-bko` come from
-`~/backotter-work/bko-bin/openbsd/`, built natively on OpenBSD: Go and Rust
+`~/backotter-work/bko-bin/openbsd/` (and `bko-holt` from
+`~/backotter-work/holt-bin/openbsd/` (`BKO_HOLT_BIN`, a pinned set of holt's builds)), built natively on OpenBSD: Go and Rust
 binaries there link libc dynamically, and the image's base has `ld.so` and
 `libc`.  `build-rustic.sh [--setup] [PORT]` builds rustic-bko so, in a
 throwaway copy of `openbsd8`, with Rust from OpenBSD's packages; see

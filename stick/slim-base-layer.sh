@@ -172,7 +172,7 @@ commands_before=$(present_commands)
 mounts=()
 cleanup() {
     local i
-    for ((i = ${#mounts[@]} - 1; i >= 0; i--)); do umount "${mounts[i]}" || true; done
+    for ((i = ${#mounts[@]} - 1; i >= 0; i--)); do umount -R "${mounts[i]}" || true; done
     rm -f "$ROOT/usr/sbin/policy-rc.d"
 }
 trap cleanup EXIT
@@ -182,12 +182,17 @@ trap cleanup EXIT
 # their static nodes (/dev/kvm and others) with the chroot's group IDs, which
 # on the host are other groups; and a tmpfs on its /run holding the host's
 # resolver configuration, for apt's downloads (the base's /etc/resolv.conf
-# points into /run, at systemd-resolved's stub).
+# points into /run, at systemd-resolved's stub).  The binds are private: a
+# bind of the host's (shared) /sys would join its peer group, and what a
+# package script mounts on the chroot's (efivarfs, say) would turn up in the
+# other chroot's and keep it busy.  Each is unmounted recursively.
 api_mounts() {
     local n
     mount --bind /proc "$1/proc"
+    mount --make-rprivate "$1/proc"
     mounts+=("$1/proc")
     mount --bind /sys "$1/sys"
+    mount --make-rprivate "$1/sys"
     mount -o remount,bind,ro "$1/sys"
     mounts+=("$1/sys")
     mount -t tmpfs -o mode=755 tmpfs "$1/dev"
@@ -401,7 +406,7 @@ cp "$ROOT/boot/vmlinuz-$kver" "$OUT/vmlinuz"
 chmod 644 "$OUT/initrd" "$OUT/vmlinuz"
 for ((i = ${#mounts[@]} - 1; i >= 0; i--)); do
     [[ ${mounts[i]} == "$ird_root"* ]] || continue
-    umount "${mounts[i]}"
+    umount -R "${mounts[i]}"
     unset 'mounts[i]'
 done
 mounts=("${mounts[@]}")

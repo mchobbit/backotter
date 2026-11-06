@@ -272,6 +272,8 @@ def main():
             why = "zram is made anew at each boot"
         if not why and k not in a and any(re.search(r, k) for r in NEW_FIELDS):
             why = "a field bko-holt began recording after the source's dump was made"
+        if not why and re.match(r"^storage\.zfs\.tools\.datasets\.\d+\.origin$", k) and va and vb is None:
+            why = "a ZFS clone (a boot environment) comes back as a plain dataset: its origin snapshot isn't in the backup"
         if not why and all(isinstance(v, str) and v.startswith("/dev/disk/by-diskseq/") for v in (va, vb)):
             why = "by-diskseq links count the disks the kernel has seen since it booted"
         if why:

@@ -150,12 +150,30 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
             }
         }
         // A disklabel partition (ld1a, sd1a) or a wedge is this disk's too.
-        let mine = |n: &str| n == d.name || found.iter().any(|f| f.name == n) || (n.starts_with(&d.name) && n.len() == d.name.len() + 1);
+        // A slice, disklabel partition or wedge of this disk is it too.
+        let mine = |n: &str| n == d.name || found.iter().any(|f| f.name == n) || (n.starts_with(&d.name) && n[d.name.len()..].starts_with(|c: char| !c.is_ascii_digit()));
         let mut in_use = Vec::new();
         let mut holds_root = false;
-        for m in &mount_list {
+        for m in mount_list.iter().map(|m| {
+            // DragonFly's HAMMER2 PFS (vbd0s1d@ROOT) is its device's; Haiku
+            // boots from the volume at /boot.
+            let mut m = m.clone();
+            if let Some((dev, _)) = m.spec.split_once('@') {
+                m.spec = dev.to_string();
+            }
+            if fam == Family::Haiku && m.file == "/boot" {
+                m.file = "/".into();
+            }
+            m
+        }).collect::<Vec<_>>().iter() {
             let haiku = (fam == Family::Haiku).then(|| m.spec.rsplit_once('/').map(|(dir, i)| format!("{}_{i}", super::haiku::name_of(dir)))).flatten();
-            let Some(dev) = haiku.or_else(|| freebsd::resolve(&m.spec, &seen)).or_else(|| m.spec.strip_prefix("/dev/dsk/").or_else(|| m.spec.strip_prefix("/dev/")).map(str::to_string)) else { continue };
+            let Some(dev) = haiku
+                .or_else(|| freebsd::resolve(&m.spec, &seen))
+                .or_else(|| m.spec.strip_prefix("/dev/dsk/").or_else(|| m.spec.strip_prefix("/dev/")).map(str::to_string))
+                .or_else(|| (!m.spec.contains('/') && m.spec.starts_with(&d.name)).then(|| m.spec.clone()))
+            else {
+                continue;
+            };
             if !mine(&dev) {
                 continue;
             }
@@ -234,6 +252,7 @@ impl Builder<'_> {
                     .why(format!("{src} -> {dev}: the source's table, GUIDs and boot code exactly")),
             );
             match fam {
+                Family::Haiku => out.push(Cmd::note("Haiku publishes a new table's partitions only at boot: restart this system before the format stage".to_string())),
                 Family::Redox | Family::Genode => {
                     out.push(Cmd::new(&["partx", "-u", &dev]).why("the kernel reads the new table"));
                     out.push(Cmd::new(&["udevadm", "settle"]));
@@ -259,6 +278,10 @@ impl Builder<'_> {
                             let proto = format!("{RUN_DIR}/{src}.disklabel");
                             out.push(Cmd::write_file(&proto, text));
                             out.push(Cmd::new(&["disklabel", "-R", &tgt, &proto]).why(format!("{src}'s disklabel")));
+                            // disklabel -R makes a DUID of its own; fstab names the source's.
+                            if let Some(duid) = self.layout.device(&src).and_then(|v| s(v, "duid")) {
+                                out.push(Cmd::new(&["sh", "-c", &format!("printf 'i\\n%s\\nw\\nq\\n' {duid} | disklabel -E {tgt} >/dev/null")]).why(format!("{src}'s disklabel UID, {duid}")));
+                            }
                         }
                         (Some(TableKind::Gpt), None) if fam == Family::NetBsd => {
                             out.push(Cmd::new(&["sh", "-c", &format!("dkctl {tgt} listwedges | grep -q '^dk' || dkctl {tgt} makewedges")]).why("the GPT's partitions as wedges"));
@@ -288,7 +311,14 @@ impl Builder<'_> {
             Some(Family::NetBsd | Family::OpenBsd) if dev.starts_with("/dev/") => dev.replacen("/dev/", "/dev/r", 1),
             _ => dev.to_string(),
         };
-        let words: Vec<String> = cmd.split_whitespace().map(|w| if w == "DEVICE" { node.clone() } else { w.to_string() }).collect();
+        let mut words: Vec<String> = cmd.split_whitespace().map(|w| if w == "DEVICE" { node.clone() } else { w.to_string() }).collect();
+        // DragonFly's dumpfs -m gives -s in fragments, newfs takes sectors:
+        // the whole partition (what made it) instead.
+        if self.fam == Some(Family::DragonFly) {
+            if let Some(i) = words.iter().position(|w| w == "-s") {
+                words.drain(i..(i + 2).min(words.len()));
+            }
+        }
         let mut out = vec![Cmd { argv: words, why: Some(format!("{src}: UFS as the source's (dumpfs -m)")), ..Cmd::default() }];
         let tf = p.get("tunefs").cloned().unwrap_or(Value::Null);
         for (flag, on) in [("-a", "POSIX.1e ACLs"), ("-N", "NFSv4 ACLs"), ("-l", "MAC multilabel")] {
@@ -393,9 +423,10 @@ impl Builder<'_> {
             // The BFS boot block (the MBR's code went on with the table).
             for (src, tgt) in self.names.mapping.pairs.clone() {
                 let Some(d) = self.layout.disk(&src).cloned() else { continue };
-                for p in d.parts.iter().filter(|p| p.content.get("type").and_then(Value::as_str) == Some("befs")) {
-                    out.push(Cmd::new(&["makebootable", &part_node(fam, &d, &tgt, p.number)]).why(format!("{}: Haiku's boot block", p.name)));
-                }
+                // makebootable takes the volume by a directory on it (Haiku's
+                // partitions are no block devices it can open).
+                let _ = (&d, &tgt);
+                out.push(Cmd::new(&["makebootable", &t]).why("Haiku's boot block, on the restored volume"));
             }
         }
         // Sculpt's partition is its data: no log goes there.
@@ -422,7 +453,8 @@ impl Builder<'_> {
                 let Some(d) = self.layout.disk(&src).cloned() else { continue };
                 for p in d.parts.iter().filter(|p| p.content.get("type").and_then(Value::as_str) == Some("zfs_member")) {
                     let raw = format!("/dev/rdsk/{}", super::illumos::slice_name(&tgt, p.number));
-                    out.push(Cmd::new(&["installboot", "-m", "-f", "-b", &format!("{t}/boot"), &raw]).why("illumos' pmbr and gptzfsboot"));
+                    // (No -m: the partition stage wrote the source's MBR code.)
+                    out.push(Cmd::new(&["installboot", "-f", "-b", &format!("{t}/boot"), &raw]).why("illumos' gptzfsboot, in the pool's boot area"));
                 }
             }
         }

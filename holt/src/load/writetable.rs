@@ -144,6 +144,10 @@ pub fn plan(disk: &Value, size: u64) -> Result<Vec<(u64, Vec<u8>)>, String> {
                 }
                 mbr_entry(&mut mbr[446 + 16 * i..462 + 16 * i], e.get("bootable").and_then(Value::as_bool) == Some(true), ty, start, len);
             }
+            // Whole sectors (illumos' EFI label has 9 entries, 1152 bytes, and
+            // a raw disk device takes only whole sectors).
+            let mut entries = entries;
+            entries.resize(entry_sectors as usize * ss as usize, 0);
             out.push((0, mbr));
             out.push((ss, header(1, total - 1, 2)));
             out.push((2 * ss, entries.clone()));

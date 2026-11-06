@@ -102,7 +102,9 @@ pub fn parse_zpool_status(text: &str) -> Vec<(String, Vec<String>)> {
         if let Some(n) = t.strip_prefix("pool:") {
             out.push((n.trim().to_string(), vec![]));
         } else if let (Some(first), Some(cur)) = (t.split_whitespace().next(), out.last_mut()) {
-            if first.starts_with("/dev/") {
+            // illumos prints a vdev's device bare (c3t0d0s1) even with -P.
+            let bare = first.len() > 3 && first.starts_with('c') && first[1..].starts_with(|c: char| c.is_ascii_digit()) && first.contains('d') && !first.contains('-');
+            if first.starts_with("/dev/") || bare {
                 cur.1.push(first.to_string());
             }
         }
@@ -168,6 +170,10 @@ fn signatures_of(sys: &Sys, d: &BlockDev, out: &mut Vec<String>, uuids: &mut Vec
 pub fn resolve_name(sys: &Sys, spec: &str) -> String {
     if !spec.starts_with('/') {
         return spec.to_string();
+    }
+    // illumos' /dev/dsk names are links into /devices: the name is the one.
+    if let Some(n) = spec.strip_prefix("/dev/dsk/").or_else(|| spec.strip_prefix("/dev/rdsk/")) {
+        return n.to_string();
     }
     std::fs::canonicalize(sys.p(spec))
         .ok()

@@ -35,10 +35,10 @@ guests.  A guest passes only when every check passes.  Status is as of
 | 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | passes |
 | 1C | CachyOS, MX Linux | `cachyos`, `mx25` | passes |
 | 1V | Void Linux (musl) | `void-musl` | passes |
-| 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12 | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12` | all pass but `redox` (running) |
-| 1H | Haiku | `haiku6` | supported; not run yet |
-| 1I | illumos | `omnios58` | supported; fails (a ZFS vdev named by its slice) |
-| 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6`, `alpinebsd` | `freebsd14`, `ghostbsd26`, `hardenedbsd15` pass; the rest rerunning after fixes |
+| 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12 | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12` | passes |
+| 1H | Haiku | `haiku6` | passes (but for a known rustic-bko limit: the volume root's mtime) |
+| 1I | illumos | `omnios58` | passes |
+| 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6`, `alpinebsd` | passes |
 
 **HoltTest1All** (the user's definition, 2026-11-05): "like HoltTest1D
 except that HoltTest1All targets every single guest OS we have": every guest
@@ -54,6 +54,11 @@ omnios58), no SSH (redox, sculpt2610, haiku6, and omarchy, whose LUKS
 passphrase is typed at Plymouth), and `ubuntu26-zfs`, whose /boot is a
 second pool (`bpool`) that `vm-mount` doesn't import, so the backup lacked
 /boot and load's boot stage failed in dracut.
+
+By 2026-11-06 every one of the 39 had passed (runs `r1all` to `r31`, the last
+`omnios58` in `r31`).  Some of those passes were on builds before later
+changes; the confirming full run `r32` was stopped when Chopin's /bkoscratch
+filled, and is to be rerun from the start on one committed bko-holt.
 
 ## Systems other than Linux: ht1-bsd.sh and ht1-offline.sh
 

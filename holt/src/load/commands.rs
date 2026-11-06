@@ -460,7 +460,9 @@ fn leaf(names: &Names, v: &Value, name: &str, words: &mut Vec<String>, leaves: &
 }
 
 /// Pool properties `zpool create -o` can't or mustn't take.
-const POOL_PROPS_SKIP: [&str; 9] = ["cachefile", "altroot", "readonly", "bootfs", "guid", "load_guid", "name", "version", "health"];
+/// (bootsize: illumos' zpool create -B, whose ESP the partition stage
+/// writes as the source's instead.)
+const POOL_PROPS_SKIP: [&str; 10] = ["cachefile", "altroot", "readonly", "bootfs", "guid", "load_guid", "name", "version", "health", "bootsize"];
 /// Dataset properties `zfs create -o` can't take.
 const DS_PROPS_SKIP: [&str; 7] = ["pbkdf2salt", "objsetid", "guid", "createtxg", "keystatus", "encryptionroot", "mounted"];
 
@@ -927,6 +929,16 @@ impl Builder<'_> {
         // /zroot) at once; mount mounts it again in its place, after /.
         out.push(Cmd::new(&["sh", "-c", &format!("[ \"$(zfs get -H -o value mounted {here})\" != yes ] || zfs unmount {here}")]).why("mount mounts every dataset in order"));
         self.closers.push(Cmd::new(&["zpool", "export", &here]));
+        // Under another name here, the pool's own dataset would mount at
+        // /<that name>: at the source's default place while load works,
+        // inherited again before the export (closers run last first).
+        if here != name && p.get("local_properties").and_then(|l| l.get("mountpoint")).is_none() {
+            let local_mp = self.dataset(&name).and_then(|d| d.at(&["properties", "mountpoint", "source"]).and_then(Value::as_str).map(str::to_string));
+            if local_mp.as_deref() != Some("local") {
+                out.push(Cmd::new(&["zfs", "set", &format!("mountpoint=/{name}"), &here]).why(format!("{here} mounts where {name} does")));
+                self.closers.push(Cmd::new(&["zfs", "inherit", "mountpoint", &here]));
+            }
+        }
         self.pools.push(here.clone());
         // Its zvols, now: what sits on them (LUKS: Ubuntu's keystore) is
         // made next in this stage.  Their parents first.
@@ -1738,7 +1750,7 @@ impl Builder<'_> {
             if s(&ds, "type").as_deref() == Some("volume") {
                 a.extend(["-V".into(), num(&ds, "volsize").unwrap_or(0).to_string()]);
                 self.notes.push(format!("ZFS volume {name}: made empty; archivers back up files, not zvols"));
-            } else {
+            } else if self.fam != Some(crate::other::Family::Illumos) {
                 a.push("-u".into());
             }
             for (k, v) in self.ds_props(&ds, false) {
@@ -1748,9 +1760,15 @@ impl Builder<'_> {
                 a.push("-o".into());
                 a.push(format!("{k}={v}"));
             }
-            a.push(self.zname(&name));
+            let here = self.zname(&name);
+            a.push(here.clone());
             out.push(Cmd { argv: a, ..Cmd::default() });
-            self.datasets.push(self.zname(&name));
+            // illumos' zfs create has no -u: what it mounted, unmounted
+            // (mount mounts every dataset in order).
+            if self.fam == Some(crate::other::Family::Illumos) && s(&ds, "type").as_deref() != Some("volume") {
+                out.push(Cmd::new(&["sh", "-c", &format!("[ \"$(zfs get -H -o value mounted {here})\" != yes ] || zfs unmount {here}")]));
+            }
+            self.datasets.push(here);
         }
     }
 }
@@ -1788,6 +1806,7 @@ impl Builder<'_> {
         let target = self.opts.target.clone();
         // (mount point in the restored system, command)
         let mut ms: Vec<(String, Cmd)> = Vec::new();
+        let mut out_mkdir: Vec<String> = Vec::new();
         for e in self.layout.arr(&["storage", "fstab"]) {
             let file = s(e, "file").unwrap_or_default();
             let ty = s(e, "type").unwrap_or_default();
@@ -1812,7 +1831,10 @@ impl Builder<'_> {
             // RedoxFS mounts through its FUSE driver (it goes to the
             // background once the tree is up).
             if ty == "redoxfs" {
-                ms.push((file.clone(), Cmd::new(&["redoxfs", &dev, &dir])));
+                // Its daemon would hold load's output pipe open: its own log.
+                let script = format!("redoxfs {dev} {dir} >{RUN_DIR}/redoxfs.log 2>&1 </dev/null; i=0; until mountpoint -q {dir}; do i=$((i + 1)); [ $i -lt 60 ] || {{ cat {RUN_DIR}/redoxfs.log; exit 1; }}; sleep 1; done");
+                ms.push((file.clone(), Cmd::new(&["sh", "-c", &script])));
+                out_mkdir.push(dir.clone());
                 continue;
             }
             // Haiku's mount takes no option list worth giving.
@@ -1834,7 +1856,13 @@ impl Builder<'_> {
             if !mp.starts_with('/') || canmount == "off" || (canmount == "noauto" && !bootfs.contains(&name) && !was_mounted) {
                 continue;
             }
-            ms.push((mp, Cmd::new(&["zfs", "mount", &self.zname(&name)])));
+            // illumos won't mount over a directory that isn't empty (the
+            // mount points the datasets' creation left): -O, overlaid.
+            if self.fam == Some(crate::other::Family::Illumos) {
+                ms.push((mp, Cmd::new(&["zfs", "mount", "-O", &self.zname(&name)])));
+            } else {
+                ms.push((mp, Cmd::new(&["zfs", "mount", &self.zname(&name)])));
+            }
         }
         ms.sort_by(|a, b| {
             let depth = |p: &str| if p == "/" { 0 } else { p.matches('/').count() };
@@ -1847,7 +1875,7 @@ impl Builder<'_> {
         for (p, c) in ms {
             let dir = if p == "/" { target.clone() } else { format!("{target}{p}") };
             self.mount_points.push(dir.clone());
-            if c.argv[0] == "mount" || c.argv[0] == "redoxfs" {
+            if c.argv[0] == "mount" || out_mkdir.contains(&dir) {
                 out.push(Cmd::new(&["mkdir", "-p", &dir]));
             }
             out.push(c);

@@ -152,7 +152,10 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     for (src, tgt) in &mapping.pairs {
         let Some(d) = layout.disk(src) else { continue };
         for p in &d.parts {
-            if matches!(layout.content(&p.name).and_then(|c| c.get("type")).and_then(|t| t.as_str()), Some("ufs" | "hammer2" | "befs" | "redoxfs")) {
+            let ty = layout.content(&p.name).and_then(|c| c.get("type")).and_then(|t| t.as_str());
+            // illumos can't give a pool the source's GUID.
+            let illumos = crate::other::Family::of_layout(&layout.v) == Some(crate::other::Family::Illumos);
+            if matches!(ty, Some("ufs" | "hammer2" | "befs" | "redoxfs")) || (illumos && ty == Some("zfs_member")) {
                 continue;
             }
             let Some(want) = layout.content(&p.name).and_then(|c| c.get("uuid")).and_then(|u| u.as_str().map(str::to_string).or_else(|| u.as_u64().map(|n| n.to_string()))) else { continue };

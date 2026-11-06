@@ -9,14 +9,17 @@ use crate::json::Obj;
 
 const UFS1_MAGIC: u32 = 0x0001_1954;
 const UFS2_MAGIC: u32 = 0x1954_0119;
+/// NetBSD's FFSv2 with extended attributes (FS_UFS2EA_MAGIC).
+const UFS2EA_MAGIC: u32 = 0x1901_2038;
 /// Where struct fs keeps its magic number.
 const MAGIC_AT: usize = 1372;
 
 pub fn probe(src: &dyn ByteSource) -> Option<Content> {
     for off in [65536u64, 8192, 0, 262144] {
         let Some(b) = src.read_exact_at(off, 1536) else { continue };
-        let version = match le32(&b, MAGIC_AT) {
-            UFS2_MAGIC => 2,
+        let magic = le32(&b, MAGIC_AT);
+        let version = match magic {
+            UFS2_MAGIC | UFS2EA_MAGIC => 2,
             UFS1_MAGIC => 1,
             _ => continue,
         };
@@ -35,6 +38,9 @@ pub fn probe(src: &dyn ByteSource) -> Option<Content> {
             .set("fragment_size", fsize)
             .set("cylinder_groups", le32(&b, 44))
             .set("inodes_per_group", le32(&b, 184))
+            .set("minfree", le32(&b, 60))
+            .set("optimization", if le32(&b, 128) == 1 { "space" } else { "time" })
+            .set("extended_attributes", magic == UFS2EA_MAGIC)
             .set("last_mounted_on", crate::bytes::cstr(sub(&b, 212, 468)));
         return Some(Content {
             kind: "ufs".into(),

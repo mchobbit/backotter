@@ -506,6 +506,22 @@ pub fn zfs_tools_json(sys: &Sys) -> Value {
         );
     }
     let cols = "name,type,used,available,referenced,mountpoint,canmount,mounted,encryption,encryptionroot,keyformat,keylocation,keystatus,origin,compression,recordsize,volsize,volblocksize,acltype,xattr,dnodesize,normalization,utf8only,casesensitivity,atime,relatime,copies,com.sun:auto-snapshot";
+    // A zfs without some of them (illumos': no acltype, no relatime)
+    // refuses the list: then only the columns its datasets have.
+    let first = list.lines().map(str::trim).find(|l| !l.is_empty()).unwrap_or("").to_string();
+    let cols: String = match sys.run("zfs", &["list", "-H", "-p", "-t", "filesystem,volume", "-o", cols]) {
+        Some(_) => cols.to_string(),
+        None => {
+            // Every dataset's: a volume's (volsize) aren't a filesystem's.
+            let known: Vec<String> = sys.run("zfs", &["get", "-H", "-o", "property", "all"]).unwrap_or_default().lines().map(|l| l.trim().to_string()).collect();
+            let _ = &first;
+            // (origin, volsize and the like show only on datasets that have
+            // one: kept, as every zfs has them.)
+            const CLASSIC: [&str; 9] = ["type", "origin", "volsize", "volblocksize", "mounted", "encryption", "encryptionroot", "keyformat", "keylocation"];
+            cols.split(',').filter(|c| *c == "name" || c.contains(':') || CLASSIC.contains(c) || known.iter().any(|k| k == c)).collect::<Vec<_>>().join(",")
+        }
+    };
+    let cols = cols.as_str();
     let datasets: Vec<Value> = sys
         .run("zfs", &["list", "-H", "-p", "-t", "filesystem,volume", "-o", cols])
         .map(|out| {
@@ -602,6 +618,9 @@ pub fn parse_zpool_status_text(text: &str, pool: &str) -> Option<Value> {
             w if w.starts_with("raidz") => "raidz",
             w if w.starts_with("draid") => "draid",
             _ if name.starts_with('/') => "disk",
+            // illumos names a leaf by its device alone (c3t0d0s1), as do
+            // FreeBSD (vtbd0p3) and others without -P.
+            _ if name.chars().any(|c| c.is_ascii_digit()) && !name.contains('-') => "disk",
             _ => "unknown",
         }
     }

@@ -113,6 +113,29 @@ pub fn newfs_from_dumpfs(fam: Family, text: &str) -> Option<String> {
     Some(a.join(" "))
 }
 
+/// newfs's options from the superblock bko-holt read itself: version
+/// (FFSv2 with extended attributes is NetBSD's -O 2ea), block and fragment
+/// sizes, the inode count, free space and optimisation; the whole partition.
+pub fn newfs_from_probe(fam: Family, d: &Value) -> Option<String> {
+    let g = |k: &str| d.get(k).and_then(Value::as_u64);
+    let ea = d.get("extended_attributes").and_then(Value::as_bool) == Some(true);
+    let mut a = vec!["newfs".to_string(), "-O".into(), if ea && fam == Family::NetBsd { "2ea" } else { "2" }.into()];
+    a.extend(["-b".into(), g("block_size")?.to_string(), "-f".into(), g("fragment_size")?.to_string()]);
+    if let (Some(ipg), Some(ncg)) = (g("inodes_per_group"), g("cylinder_groups")) {
+        if fam == Family::NetBsd {
+            a.extend(["-n".into(), (ipg * ncg).to_string()]);
+        }
+    }
+    if let Some(m) = g("minfree") {
+        a.extend(["-m".into(), m.to_string()]);
+    }
+    if let Some(o) = d.get("optimization").and_then(Value::as_str) {
+        a.extend(["-o".into(), o.to_string()]);
+    }
+    a.push("DEVICE".into());
+    Some(a.join(" "))
+}
+
 struct DiskSeen {
     d: RawDisk,
     duid: Option<String>,
@@ -223,6 +246,9 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
             if let Some(t) = t {
                 x.put("newfs", newfs_from_dumpfs(fam, &t));
                 x.put("ffs_flags", dumpfs_fields(&t).into_iter().find(|(k, _)| k == "flags").map(|(_, v)| v));
+            } else if let Some(d) = c.first().map(|c| c.details.clone().build()) {
+                // No dumpfs (AlpineBSD): newfs from the superblock as read.
+                x.put("newfs", newfs_from_probe(fam, &d));
             }
         }
         x

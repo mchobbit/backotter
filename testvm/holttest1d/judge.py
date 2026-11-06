@@ -46,7 +46,10 @@ IGNORED = [
     (r"^storage\.disks\.\d+\.partitions\.\d+\.content\.device_uuid$", "an md member's own Device UUID: mdadm --create can't set it"),
     (r"\.content\.internal_uuid$", "bcachefs's internal UUID: bcachefs format sets only the user-visible one"),
     (r"\.content\.u64s$", "the bcachefs superblock's size, which grows with what the kernel records in it"),
-    (r"\.uuid:ufs$", "UFS's UUID is its fs_id, which newfs sets at random (dumpfs -m has no flag for it)"),
+    (r"\.esp_image\.", "an ESP nothing mounts, kept byte for byte for load to write back: its loader rewrites it as the system runs (AlpineBSD's)"),
+    (r"\.(local_)?properties\.bootsize$", "illumos' zpool create -B property: load writes the ESP as the source's instead"),
+    (r"^_illumos\.", "illumos: a pool's GUID can't be set (zpool reguid takes no -g there), and a clone (an inactive boot environment) comes back as a plain dataset, its snapshot not being backed up"),
+    (r"\.uuid:ufs$", "UFS's UUID (fs_id), HAMMER2's and RedoxFS's: their newfs makes a new one and takes none"),
     (r"\.links\.\d+:member$", "a by-uuid link of a filesystem's member UUID (bcachefs's), which can't be set"),
     (r"^storage\.lvm\.volume_groups\.\d+\.(creation_host|seqno)$", "LVM records the last host to write the VG's metadata, and counts the writes"),
     (r"^storage\.lvm\.volume_groups\.\d+\.physical_volumes\.\d+\.device_hint$", "LVM's hint is the PV's path when the metadata was last written"),
@@ -89,6 +92,52 @@ BOOT_STAGE = [
 ]
 
 
+def illumos_normalise(d):
+    """illumos: what can't be kept moves to keys ending in :illumos, which
+    IGNORED names; boot environments compared by name, flags and mount
+    point; mount options without their device numbers."""
+    if (d.get("os") or {}).get("family") != "illumos":
+        return d
+    import copy
+    d = copy.deepcopy(d)
+    st, extra = d.get("storage") or {}, {}
+    for x in st.get("disks") or []:
+        # illumos' loader stage1 (eb 3c 90) carries STAGE1_STAGE2_UUID at
+        # 262..277, which installboot makes up afresh at every install.
+        bc = x.get("boot_code") or {}
+        if isinstance(bc.get("code_b64"), str):
+            import base64
+            code = bytearray(base64.b64decode(bc["code_b64"]))
+            if code[:3] == b"\xeb\x3c\x90" and len(code) >= 278:
+                extra[f"{x['name']}.stage2_uuid"] = code[262:278].hex()
+                code[262:278] = bytes(16)
+                bc["code_b64"] = base64.b64encode(bytes(code)).decode()
+        for p in x.get("partitions") or []:
+            c = p.get("content") or {}
+            if c.get("type") == "zfs_member":
+                for k in ("pool_guid", "uuid"):
+                    if k in c:
+                        extra[f"{x['name']}.{p['name']}.{k}"] = c.pop(k)
+    z = st.get("zfs") or {}
+    for i, p in enumerate(z.get("pools_from_labels") or []):
+        extra[f"label{i}.pool_guid"] = p.pop("pool_guid", None)
+    for n, c in (z.get("zpool_cache") or {}).items():
+        if isinstance(c, dict):
+            extra[f"cache.{n}.pool_guid"] = c.pop("pool_guid", None)
+    for i, p in enumerate((z.get("tools") or {}).get("imported_pools") or []):
+        extra[f"pool{i}.guid"] = (p.get("properties") or {}).pop("guid", None)
+    for i, ds in enumerate((z.get("tools") or {}).get("datasets") or []):
+        extra[f"ds{i}.origin"] = ds.pop("origin", None)
+    for m in st.get("mounts") or []:
+        if isinstance(m.get("options"), str):
+            m["options"] = re.sub(r"(^|,)dev=[0-9a-f]+", "", m["options"])
+    b = d.get("boot") or {}
+    if isinstance(b.get("boot_environments"), str):
+        b["boot_environments"] = sorted(";".join(l.split(";")[:4:3] + [l.split(";")[2]]) for l in b["boot_environments"].splitlines() if l)
+    d["_illumos"] = {k: str(v) for k, v in extra.items()}
+    return d
+
+
 def flatten(v, path, out):
     if isinstance(v, dict) and isinstance(v.get("links"), list) and isinstance(v.get("content"), dict):
         # A by-uuid link that isn't the content's own UUID names a member
@@ -102,8 +151,9 @@ def flatten(v, path, out):
             else:
                 links.append(x)
         v = dict(v, links=links)
-    if isinstance(v, dict) and v.get("type") == "ufs" and "uuid" in v:
-        # UFS's UUID is its fs_id, which newfs picks at random.
+    if isinstance(v, dict) and v.get("type") in ("ufs", "hammer2", "redoxfs") and "uuid" in v:
+        # UFS's UUID is its fs_id, which newfs picks at random; HAMMER2's and
+        # RedoxFS's newfs take none either.
         out[f"{path}.uuid:ufs"] = v["uuid"]
         v = {k: x for k, x in v.items() if k != "uuid"}
     if isinstance(v, dict):
@@ -120,7 +170,7 @@ def flatten(v, path, out):
         out[path] = v
 
 
-def judge_fs(fsmeta_py, src_path, dst_path):
+def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False):
     import importlib.util
     spec = importlib.util.spec_from_file_location("fsmeta", fsmeta_py)
     fsmeta = importlib.util.module_from_spec(spec)
@@ -134,6 +184,8 @@ def judge_fs(fsmeta_py, src_path, dst_path):
             why = next((w for r, kinds, w in BOOT_STAGE if kind in kinds and re.search(r, p)), None)
             if not why and kind == "missing" and before.get(p, {}).get("type") == "socket":
                 why = "a socket is made by whatever listens on it; no archiver restores one"
+            if not why and no_atime and kind.startswith("atime"):
+                why = "the filesystem's driver here updates atimes on every read (RedoxFS's FUSE driver): the source's moved as it was backed up"
             if not why and kind == "inode flags":
                 # btrfs sets FS_NOCOMP_FL itself on a file whose data didn't
                 # compress, as it was written: not the restore's to keep.
@@ -173,13 +225,13 @@ def grown(k, va, vb, grow, flat):
 
 def main():
     if sys.argv[1] == "fs":
-        judge_fs(*sys.argv[2:5])
+        judge_fs(*sys.argv[2:5], no_atime="--no-atime" in sys.argv[5:])
     grow = 0
     if sys.argv[1] == "--grow":
         grow = int(sys.argv[2])
         del sys.argv[1:3]
-    src = json.load(open(sys.argv[1]))
-    dst = json.load(open(sys.argv[2]))
+    src = illumos_normalise(json.load(open(sys.argv[1])))
+    dst = illumos_normalise(json.load(open(sys.argv[2])))
     # Lists whose order is the boot's, not the layout's: ZFS mounts its
     # datasets in parallel.
     for d in (src, dst):

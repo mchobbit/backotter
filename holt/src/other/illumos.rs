@@ -32,7 +32,18 @@ pub fn parse_mnttab(text: &str) -> Vec<(String, String, String, String)> {
 }
 
 pub fn disks(sys: &Sys) -> Vec<RawDisk> {
-    parse_diskinfo(&sys.run("diskinfo", &["-Hp"]).unwrap_or_default())
+    // Just after a disk's label changed, its links are being remade and
+    // diskinfo may leave it out for a moment: asked again then.
+    let mut text = sys.run("diskinfo", &["-Hp"]).unwrap_or_default();
+    for _ in 0..5 {
+        let _ = sys.run("devfsadm", &["-c", "disk"]);
+        let again = sys.run("diskinfo", &["-Hp"]).unwrap_or_default();
+        if again.lines().count() <= text.lines().count() {
+            break;
+        }
+        text = again;
+    }
+    parse_diskinfo(&text)
         .into_iter()
         .map(|(n, size, model)| RawDisk { path: format!("/dev/rdsk/{n}p0"), name: n, size, sector: 512, model: Some(model), serial: None })
         .collect()

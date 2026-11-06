@@ -25,8 +25,9 @@ use crate::sys::{FakeRunner, Sys};
 /// Where `mount` builds the restored system's tree, unless --target says.
 pub const DEFAULT_TARGET: &str = "/mnt/bko-target";
 /// Stage state, logs and temporary keys, in RAM: nothing is written to the
-/// target disks before there's a filesystem on them.
-pub const RUN_DIR: &str = "/run/bko-holt";
+/// target disks before there's a filesystem on them.  (Haiku's / is
+/// virtual: its /var is the boot volume's.)
+pub const RUN_DIR: &str = if cfg!(target_os = "haiku") { "/var/run/bko-holt" } else { "/run/bko-holt" };
 /// restore's archiver, and the snapshot it restores unless --snapshot says.
 pub const DEFAULT_ARCHIVER: &str = "rustic-bko";
 pub const DEFAULT_SNAPSHOT: &str = "latest";

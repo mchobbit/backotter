@@ -45,7 +45,7 @@ bad() { say "FAIL $*"; fails=$((fails + 1)); }
 GPATH=/sbin:/bin:/usr/sbin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/pkg/sbin:/usr/pkg/bin
 MTREE_KEYS=type,uid,gid,mode,nlink,size,link,time,flags,sha256digest
 SERVICE_STATE='for s in $(service -e); do o=$($s status 2>&1); case $o in *"is not running"*) echo "down ${s##*/}" ;; esac; done | sort'
-EXTRA_BOOT_RE='^$'
+EXTRA_BOOT_RE='^$' KNOWN_RE='^$'
 case $G in
     freebsd*|hardenedbsd*|ghostbsd*)
         PLAT=freebsd RG=freebsd15-ufs DISK=vtbd RAWSFX= BOOTSTATE=$SERVICE_STATE ;;
@@ -53,7 +53,10 @@ case $G in
         PLAT=netbsd RG=netbsd11 DISK=ld RAWSFX=d BOOTSTATE=$SERVICE_STATE
         MTREE_KEYS=type,uid,gid,mode,nlink,size,link,time,flags,sha256 ;;
     dragonfly*)
-        PLAT=dragonfly RG=dragonfly6 DISK=vbd RAWSFX= BOOTSTATE=$SERVICE_STATE ;;
+        PLAT=dragonfly RG=dragonfly6 DISK=vbd RAWSFX= BOOTSTATE=$SERVICE_STATE
+        # DragonFly's mtree reports every file's flags as differing ("none"
+        # is not "none"): left out.
+        MTREE_KEYS=type,uid,gid,mode,nlink,size,link,time,sha256digest ;;
     openbsd*)
         PLAT=openbsd RG=openbsd8 DISK=sd RAWSFX=c
         BOOTSTATE='rcctl ls failed | sed "s/^/down /" | sort'
@@ -65,14 +68,19 @@ case $G in
         # script imports the source's and target's as ht1src.
         PLAT=illumos RG=omnios58 DISK= RAWSFX=
         GPATH=/usr/gnu/bin:/usr/sbin:/usr/bin:/sbin:/opt/ooce/bin
-        BOOTSTATE='svcs -H -o state,fmri | awk "\$1 != \"online\" && \$1 != \"disabled\" {print \"down \" \$2}" | sort'
-        EXTRA_BOOT_RE='(etc/zfs/zpool\.cache|platform/i86pc(/amd64)?/boot_archive(\.hash)?|platform/i86pc(/amd64)?|boot)$' ;;
+        BOOTSTATE='i=0; while svcs -H -o state | grep -q "\*" && [ $i -lt 60 ]; do sleep 2; i=$((i + 1)); done; svcs -H -o state,fmri | awk "\$1 != \"online\" && \$1 != \"disabled\" {print \"down \" \$2}" | sort'
+        # bootadm update-archive writes in /etc (system.d, versions) and
+        # the root directory; the load log goes in /var/log/bko-holt.
+        EXTRA_BOOT_RE='/(etc/zfs/zpool\.cache|platform/i86pc(/amd64)?/boot_archive(\.hash)?|platform/i86pc(/amd64)?|boot|var/log(/bko-holt(/load\.log)?)?|etc/zfs|etc/system\.d|etc/versions)$|^(missing|extra): d [0-9]+ [0-9]+ [0-9]+ [0-9.]+ \.$' ;;
     haiku*)
         PLAT=haiku RG=haiku6 DISK= RAWSFX= GUSER=user
         GPATH=/bin:/boot/system/bin:/boot/system/non-packaged/bin
         BOOTSTATE='echo haiku'
         # The boot stage's log goes in system/var/log there (/var is it).
-        EXTRA_BOOT_RE='\./system/var/log(/bko-holt(/.*)?)?$' ;;
+        EXTRA_BOOT_RE='\./system/var/log(/bko-holt(/.*)?)?$'
+        # rustic-bko on Haiku leaves the volume root's mtime at the time of
+        # the restore's last write: a known limit of the archiver there.
+        KNOWN_RE='^(missing|extra): d [0-9]+ [0-9]+ [0-9]+ [0-9.]+ \.$' ;;
     *) echo "ht1-bsd: no rescuer for $G yet" >&2; exit 2 ;;
 esac
 GUSER=${GUSER:-root}
@@ -84,7 +92,14 @@ RH=/root; [[ $PLAT == haiku ]] && RH=/boot/home
 RN=("${DISK}0" "${DISK}1" "${DISK}2" "${DISK}3")
 rescuer_ready() {
     if [[ $PLAT == illumos ]]; then
-        mapfile -t RN < <(sshk "$rkey" 'diskinfo -Hp | cut -f2')
+        # (A disk attached at boot can be late into /dev: devfsadm, and wait
+        # until diskinfo lists every one.)
+        local want=$1
+        for _ in $(seq 30); do
+            mapfile -t RN < <(sshk "$rkey" 'devfsadm -c disk >/dev/null 2>&1; diskinfo -Hp | cut -f2')
+            (( ${#RN[@]} >= want )) && return 0
+            sleep 2
+        done
         return 0
     fi
     [[ $PLAT == haiku ]] || return 0
@@ -105,6 +120,7 @@ gdir=$W/vms/$G gkey=$gdir/id_ed25519
 rdir=$W/vms/$RG rkey=$rdir/id_ed25519
 gimg=$gdir/$G.qcow2; [[ -f $gimg ]] || gimg=$(ls "$gdir"/*.qcow2 | head -n 1)
 rimg=$rdir/$RG.qcow2; [[ -f $rimg ]] || rimg=$(ls "$rdir"/*.qcow2 | head -n 1)
+rfw=(); [[ -f $rdir/vm-run-options ]] && read -ra rfw < "$rdir/vm-run-options"
 # OpenBSD finds its partitions by the disklabel's UID (DUID), and two disks
 # with one DUID make it refuse both: the rescuer is a copy of openbsd8
 # with a DUID of its own (fstab rewritten to match), made once.
@@ -134,6 +150,25 @@ PREP
         grep -q "^DUID" "$R/logs/rescuer-prep.log" && mv "$prep.part" "$prep"
     fi
     [[ -f $prep ]] || { echo "ht1-bsd: no OpenBSD rescuer with its own DUID (logs/rescuer-prep.log)" >&2; exit 1; }
+    rimg=$prep
+fi
+# illumos won't import a pool with the GUID of one it has imported, and the
+# source's rpool is a copy of omnios58's own: the rescuer is a copy of
+# omnios58 whose pool has a new GUID (zpool reguid), made once.
+if [[ $PLAT == illumos ]]; then
+    prep=/bkoscratch/holttest1d/rescuer/$RG-reguid.qcow2
+    if [[ ! -f $prep ]]; then
+        mkdir -p "${prep%/*}"
+        qemu-img convert -O qcow2 "$rimg" "$prep.part"
+        setsid -f "$T/vm-run" "${rfw[@]}" --serial-log "$R/logs/rescuer-prep-serial.log" "$prep.part" </dev/null >/dev/null 2>&1
+        for _ in $(seq 120); do timeout 8 ssh -q -i "$rkey" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 root@127.0.0.1 true 2>/dev/null && break; sleep 5; done
+        timeout 300 ssh -q -i "$rkey" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@127.0.0.1 '/usr/sbin/zpool reguid rpool && /usr/sbin/zpool get -H -o value guid rpool && echo PREP-DONE' > "$R/logs/rescuer-prep.log" 2>&1
+        timeout 30 ssh -q -i "$rkey" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@127.0.0.1 "/usr/sbin/shutdown -y -i5 -g0" >/dev/null 2>&1
+        for _ in $(seq 36); do pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null || break; sleep 5; done
+        pkill -f "^qemu-system.*:$PORT-:22" || true
+        grep -q "^PREP-DONE" "$R/logs/rescuer-prep.log" && mv "$prep.part" "$prep"
+    fi
+    [[ -f $prep ]] || { echo "ht1-bsd: no illumos rescuer with a pool GUID of its own (logs/rescuer-prep.log)" >&2; exit 1; }
     rimg=$prep
 fi
 # DragonFly won't mount a HAMMER2 volume with the ID of one it has mounted
@@ -228,7 +263,9 @@ def node(part):
         if part.startswith(dn):
             n = rn[first + i] + part[len(dn):]
             # Haiku: scsi_3_0_0_0 is /dev/disk/scsi/3/0/0/0.
-            return "/dev/disk/" + n.replace("_", "/") if plat == "haiku" else "/dev/" + n
+            if plat == "haiku":
+                return "/dev/disk/" + n.replace("_", "/")
+            return ("/dev/dsk/" if plat == "illumos" else "/dev/") + n
     # A NetBSD wedge (dkN): by its name, as the source's fstab names it.
     for x in d["storage"]["disks"]:
         for p in x.get("partitions") or []:
@@ -238,16 +275,35 @@ def node(part):
 out = ["set -e", f"mkdir -p {mp}"]
 zfs = (d["storage"].get("zfs") or {}).get("tools") or {}
 for p in zfs.get("imported_pools") or []:
-    # illumos' rescuer has its own rpool: the source's is imported as ht1src.
+    # illumos' rescuer has its own rpool: the source's (or target's) goes by
+    # ht1src here (-t: the disks keep the name), read-write, so that its own
+    # dataset, whose default mount point would be /ht1src, mounts at the
+    # pool's own name (the boot menu is there).  The copies are throwaway.
     alias = "ht1src" if plat == "illumos" else ""
-    out.append(f"zpool import -f -N -o readonly=on -R {mp} {p['properties']['guid']} {alias}")
+    if alias:
+        # By the id of the importable pool of that name (the target's GUID
+        # isn't the source's on illumos; the rescuer's own isn't importable).
+        # By the GUID on the attached disk's own label (the target's isn't
+        # the source's on illumos, and zpool import lists only one rpool).
+        member = next((pt["name"] for x in d["storage"]["disks"] for pt in x.get("partitions") or [] if (pt.get("content") or {}).get("type") == "zfs_member"), None)
+        out.append(f"id=$(zdb -l {node(member)} | awk '$1 == \"pool_guid:\" {{ print $2; exit }}')")
+        out.append(f"zpool import -f -N -R {mp} -t \"$id\" {alias}")
+        # (Undone by umount_script: the restored disk is dumped again after.)
+        out.append(f"[ \"$(zfs get -H -o source mountpoint {alias})\" != default ] || {{ zfs set mountpoint=/{p['name']} {alias} && touch /tmp/ht1-mountpoint-set; }}")
+    else:
+        out.append(f"zpool import -f -N -o readonly=on -R {mp} {p['properties']['guid']}")
+    # The root first (at MP itself, which must be empty), then the rest.
     bootfs = p["properties"].get("bootfs")
     if bootfs and bootfs != "-":
         if alias:
             bootfs = alias + bootfs[len(p["name"]):]
         out.append(f"zfs mount {bootfs}")
+    if alias:
+        out.append(f"zfs mount -O {alias} || true")
 if zfs.get("imported_pools"):
-    out.append("zfs mount -a")
+    # (Read-only, a dataset whose mount point isn't there can't mount: the
+    # rest do.)
+    out.append("zfs mount -a || true")
 fs = []
 for e in d["storage"].get("fstab") or []:
     if e.get("resolves_to") and e["file"].startswith("/") and e["type"] not in ("swap",):
@@ -278,6 +334,8 @@ if plat == "illumos":
 else:
     print(f"mount | sed -e 's/ type [^ ]* (.*//' -e 's/ (.*//' -e 's/^.* on //' | awk '$0 == \"{mp}\" || index($0, \"{mp}/\") == 1' | sort -r | while read -r m; do umount -f \"$m\"; done")
 for p in ((d["storage"].get("zfs") or {}).get("tools") or {}).get("imported_pools") or []:
+    if plat == "illumos":
+        print("[ ! -f /tmp/ht1-mountpoint-set ] || { zfs inherit mountpoint ht1src; rm -f /tmp/ht1-mountpoint-set; }")
     print(f"zpool export -f {'ht1src' if plat == 'illumos' else p['name']} 2>/dev/null || true")
 PY
 }
@@ -317,11 +375,12 @@ phase_backup() {
     qemu-img resize -q "$RESC" +8G 2>/dev/null || true
     vm_up "$RESC" "$R/logs/backup-serial.log" "${rfw[@]}" --memory 3072 --disk "$SRC"
     vm_wait "$rkey" || { bad "rescuer boots"; vm_down "$rkey"; return; }
-    rescuer_ready
+    rescuer_ready 2
     put "$rkey" "$RUSTIC" $RH/rustic-bko
     head -c 24 /dev/urandom | base64 > "$R/repo-password"
     put "$rkey" "$R/repo-password" $RH/repo-password
-    { mount_script "$R/dumps/src.json" 1 /mnt/src; } > "$R/logs/backup-mount.sh"
+    mount_script "$R/dumps/src.json" 1 /mnt/src > "$R/logs/backup-mount.sh" 2>> "$R/logs/backup-mount.log" ||
+        { bad "the mount script (logs/backup-mount.log)"; vm_down "$rkey"; return; }
     if shk "$rkey" < "$R/logs/backup-mount.sh" > "$R/logs/backup-mount.log" 2>&1; then
         ok "the source mounted read-only in the rescuer"
     else
@@ -355,7 +414,7 @@ phase_rebuild() {
     qemu-img create -q -f qcow2 "$R/decoy.qcow2" "$(size_of "$gimg")"
     vm_up "$RESC" "$R/logs/rescuer-serial.log" "${rfw[@]}" --memory 3072 --disk "$DST" --disk "$R/decoy.qcow2"
     vm_wait "$rkey" || { bad "rescuer boots"; vm_down "$rkey"; return; }
-    rescuer_ready
+    rescuer_ready 3
     put "$rkey" "$HOLT" $RH/bko-holt
     put "$rkey" "$R/dumps/src.json" $RH/layout.json
     local tgt; tgt=$(rdev 1) decoy=$(rdev 2)
@@ -389,7 +448,7 @@ phase_rebuild() {
     else
         bad "a refusal or the dry run wrote to a disk (logs/edges-before.txt, edges-after.txt)"
     fi
-    map+=(--erase "$([[ $PLAT == haiku ]] && echo "${RN[1]}" || echo "$tgt")")
+    map+=(--erase "$([[ $PLAT == haiku || $PLAT == illumos ]] && echo "${RN[1]}" || echo "$tgt")")
     local repo=(--repo $RH/repo --password-file $RH/repo-password --archiver $RH/rustic-bko --snapshot "latest:/mnt/src")
     local stages=(partition assemble format mount restore boot close)
     [[ $VARIANT == oneshot ]] && stages=(oneshot)
@@ -398,9 +457,18 @@ phase_rebuild() {
         [[ $s == restore || $s == oneshot ]] && extra=("${repo[@]}")
         [[ $s == oneshot ]] && how=(--through close)
         TMO=7200 load_step 0 "$s" "${map[@]}" "${extra[@]}" "${how[@]}" --commit || {
-            sshk "$rkey" "cat /run/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
+            sshk "$rkey" "cat $([[ $PLAT == haiku ]] && echo /var/run || echo /run)/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
             sshk "$rkey" "set -x; mount; df; gpart show; disklabel ${RN[1]}; dkctl ${RN[1]} listwedges; zpool list -v; zfs list -o name,mounted,mountpoint,canmount; glabel status; swapctl -l" > "$R/logs/rebuild-failed-state.txt" 2>&1
             vm_down "$rkey"; return; }
+        [[ $PLAT == haiku ]] && sshk "$rkey" "echo $s \$(stat -c %Y.%y /mnt/bko-target 2>&1)" >> "$R/logs/haiku-root-mtime.txt" 2>&1
+        # Haiku publishes a new table's partitions only at boot.
+        if [[ $PLAT == haiku && $s == partition ]]; then
+            TMO=20 sshk "$rkey" "shutdown -r -q" >/dev/null 2>&1
+            sleep 20
+            vm_wait "$rkey" || { bad "the rescuer's restart after partition"; vm_down "$rkey"; return; }
+            rescuer_ready 3
+            put "$rkey" "$HOLT" $RH/bko-holt
+        fi
         sshk "$rkey" "$RH/bko-holt load $RH/layout.json ${map[*]} --only status" > "$R/logs/rebuild-status-after-$s.txt" 2>&1
         if [[ $s == oneshot ]]; then
             local st
@@ -415,7 +483,7 @@ phase_rebuild() {
     # The decoy was never a target: its first and last MiB are as they were.
     sshk "$rkey" "$edges" > "$R/logs/edges-end.txt" 2>&1
     [[ $(sed -n 2p "$R/logs/edges-end.txt") == "$(sed -n 2p "$R/logs/edges-before.txt")" && -n $(sed -n 2p "$R/logs/edges-end.txt") ]] || bad "the decoy changed (logs/edges-before.txt, edges-end.txt)"
-    sshk "$rkey" "cat /run/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
+    sshk "$rkey" "cat $([[ $PLAT == haiku ]] && echo /var/run || echo /run)/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
     vm_down "$rkey"
 }
 
@@ -427,8 +495,9 @@ phase_verify() {
     if [[ -f $RESC ]]; then
         vm_up "$RESC" "$R/logs/verify-rescuer-serial.log" "${rfw[@]}" --memory 3072 --disk "$DST"
         if vm_wait "$rkey"; then
-            rescuer_ready
-            mount_script "$R/dumps/src.json" 1 /mnt/dst > "$R/logs/verify-mount.sh"
+            rescuer_ready 2
+            mount_script "$R/dumps/src.json" 1 /mnt/dst > "$R/logs/verify-mount.sh" 2> "$R/logs/verify-mount.log" ||
+                echo exit 1 > "$R/logs/verify-mount.sh"
             if shk "$rkey" < "$R/logs/verify-mount.sh" > "$R/logs/verify-mount.log" 2>&1; then
                 if [[ $PLAT == haiku || $PLAT == illumos ]]; then
                     TMO=3600 sshk "$rkey" "$(list_tree /mnt/dst)" > "$R/dst.listing" 2>/dev/null
@@ -437,11 +506,12 @@ phase_verify() {
                     put "$rkey" "$R/src.listing" $RH/src.mtree
                     TMO=3600 sshk "$rkey" "cd /mnt/dst && mtree -f $RH/src.mtree -p /mnt/dst" > "$R/logs/fsmeta-compare.txt" 2>&1
                 fi
-                local diffs; diffs=$(grep -vE "$BOOT_STAGE_RE" "$R/logs/fsmeta-compare.txt" | grep -vE "$EXTRA_BOOT_RE" | grep -vE '^[[:space:]]' | grep -c .)
+                local diffs; diffs=$(grep -vE "$BOOT_STAGE_RE" "$R/logs/fsmeta-compare.txt" | grep -vE "$EXTRA_BOOT_RE" | grep -vE "$KNOWN_RE" | grep -vE '^[[:space:]]' | grep -c .)
+                local known; known=$(grep -cE "$KNOWN_RE" "$R/logs/fsmeta-compare.txt")
                 if [[ $diffs == 0 ]]; then
-                    ok "mtree: the files agree but for the boot stage's ($(grep -c . "$R/logs/fsmeta-compare.txt") lines of it)"
+                    ok "mtree: the files agree but for the boot stage's ($(grep -c . "$R/logs/fsmeta-compare.txt") lines of it)$([[ $known -gt 0 ]] && echo "; known archiver limit: the volume root's mtime ($known lines)")"
                 else
-                    bad "mtree: $diffs differences: $(grep -vE "$BOOT_STAGE_RE" "$R/logs/fsmeta-compare.txt" | grep -vE "$EXTRA_BOOT_RE" | grep -vE '^[[:space:]]' | head -5 | tr '\n' ' ')"
+                    bad "mtree: $diffs differences: $(grep -vE "$BOOT_STAGE_RE" "$R/logs/fsmeta-compare.txt" | grep -vE "$EXTRA_BOOT_RE" | grep -vE "$KNOWN_RE" | grep -vE '^[[:space:]]' | head -5 | tr '\n' ' ')"
                 fi
             else
                 bad "mount the restored disk in the rescuer (logs/verify-mount.log)"

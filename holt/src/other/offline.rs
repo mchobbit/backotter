@@ -75,14 +75,15 @@ pub fn report(sys: &Sys, devs: &[String], generated: &str) -> Result<Value, Stri
         disks_json.push(o.build());
     }
     let fam = fam.ok_or("the disks hold neither RedoxFS (Redox) nor a GENODE partition with ext2 (Sculpt OS): bko-holt dump --disk reads only those")?;
-    let (rootdev, rootfs, rootuuid) = root.unwrap_or_default();
+    let (rootdev, rootfs, _uuid) = root.unwrap_or_default();
     let (id, name) = match fam {
         Family::Redox => ("redox", "Redox"),
         _ => ("sculpt", "Sculpt OS"),
     };
     let os = Obj::new().set("family", fam.name()).set("id", id).set("version_id", Value::Null).set("pretty_name", name).set("read_offline", true).set("architecture", "x86_64");
     let fstab = vec![Obj::new()
-        .set("spec", rootuuid.map(|u| format!("UUID={u}")).unwrap_or_else(|| format!("/dev/{rootdev}")))
+        // The device, not the UUID: RedoxFS's newfs makes a new one.
+        .set("spec", format!("/dev/{rootdev}"))
         .set("file", "/")
         .set("type", rootfs.as_str())
         .set("options", "")

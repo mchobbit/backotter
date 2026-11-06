@@ -50,8 +50,9 @@
 # restic-bko is required unless platform.conf sets RESTIC_REQUIRED=no,
 # rustic-bko optional unless it sets RUSTIC_REQUIRED=yes.  bko-holt, which
 # every image has, comes from $BKO_HOLT_BIN/PLATFORM/ (default
-# ~/backotter-work/holt-bin: a pinned set of holt/'s builds, with COMMIT and
-# SHA256SUMS, as testvm/holttest1d/build-holt.sh makes them).
+# ~/backotter-work/holt-bin: a pinned set of holt/'s builds, as
+# testvm/holttest1d/build-holt.sh makes them, each PLATFORM/ with the COMMIT
+# it was built from, and SHA256SUMS).
 #
 # Needs: qemu with KVM (vm-run), ssh, python3 3.11 or later, dosfstools,
 # mtools, and what PLATFORM's fetch needs.

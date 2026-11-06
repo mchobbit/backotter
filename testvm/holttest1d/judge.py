@@ -89,6 +89,7 @@ BOOT_STAGE = [
     (r"^boot/efi/loader/entries/[^/]+$", _WRITTEN, "kernelstub rewrites systemd-boot's entries"),
     (r"^usr/lib/modules/[^/]+(/modules\.[^/]+)?$", _WRITTEN, "depmod, run by the initramfs rebuild (Pop!_OS), rewrites modules.*"),
     (r"^boot(/EFI/Linux(/[^/]+\.efi)?|/limine\.conf(\.old)?)$", _WRITTEN, "Omarchy's mkinitcpio hook rebuilds the unified kernel image and Limine's entries"),
+    (r"^boot(/|$)", {"selinux"}, "the boot stage relabels /boot (setfiles): the policy's labels, where the source's can be stale (tumbleweed's update left its new kernel's files modules_object_t)"),
 ]
 
 

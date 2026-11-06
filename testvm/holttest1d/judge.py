@@ -245,6 +245,12 @@ def main():
     a, b = {}, {}
     flatten(src, "", a)
     flatten(dst, "", b)
+    # md: "active" is "clean" with writes in flight (it turns clean after
+    # safe_mode_delay idle), so either is a running, healthy array.
+    for m in (a, b):
+        for k, v in m.items():
+            if k.endswith(".md.array_state") and v in ("active", "clean", "active-idle"):
+                m[k] = "clean (or active)"
     real, ignored = [], {}
     for k in sorted(set(a) | set(b)):
         if a.get(k, "<absent>") == b.get(k, "<absent>"):

@@ -13,6 +13,15 @@ use super::{shell_quote, Options, Stage, RUN_DIR};
 use crate::json::Value;
 use std::collections::BTreeMap;
 
+/// A closer for a device just let go of (an LV, a LUKS mapping, an md
+/// array): udev probes a device when the last writer closes it, and while
+/// its worker has it open the device can't be stopped.  So udev is waited
+/// for first, and the command is tried up to five times, a second apart.
+fn settled(argv: &[&str]) -> Cmd {
+    let cmd = argv.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" ");
+    Cmd::new(&["sh", "-c", &format!("i=0; until udevadm settle; {cmd}; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done")])
+}
+
 /// One step: a command, or a file to write (`write` set), or only a note.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Cmd {
@@ -695,7 +704,7 @@ impl Builder<'_> {
         a.push(format!("--bitmap={}", if bitmap { "internal" } else { "none" }));
         a.extend(slots);
         out.push(Cmd { argv: a, why: Some(format!("md array {name} ({level})")), ..Cmd::default() });
-        self.closers.push(Cmd::new(&["mdadm", "--stop", &node]));
+        self.closers.push(settled(&["mdadm", "--stop", &node]));
     }
 
     fn luks(&mut self, v: &Value, outs: &[(String, String)], out: &mut Vec<Cmd>) {
@@ -807,7 +816,7 @@ impl Builder<'_> {
         o.push(dev);
         o.push(open_as.clone());
         out.push(Cmd { argv: o, ..Cmd::default() });
-        self.closers.push(Cmd::new(&["cryptsetup", "close", &open_as]));
+        self.closers.push(settled(&["cryptsetup", "close", &open_as]));
     }
 
     fn vg(&mut self, vg: &Value, out: &mut Vec<Cmd>) {
@@ -830,7 +839,7 @@ impl Builder<'_> {
         }
         out.push(Cmd::new(&["vgcfgrestore", "--file", &file, &name]));
         out.push(Cmd::new(&["vgchange", "--activate", "y", &name]));
-        self.closers.push(Cmd::new(&["vgchange", "--activate", "n", &name]));
+        self.closers.push(settled(&["vgchange", "--activate", "n", &name]));
     }
 
     fn pool(&mut self, p: &Value, out: &mut Vec<Cmd>) {

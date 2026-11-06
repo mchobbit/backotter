@@ -888,7 +888,15 @@ def update(name: str, args, hosts: list[str | None]) -> str:
         uname = vm.ssh("uname -sr", timeout=30, log=False).stdout.strip()
         say(name, f"booted again ({uname}); trimming")
         # Room it can't hand back only stays allocated, as before: not a failure.
-        r = vm.ssh((TESTVM / "update/trim.sh").read_text(), timeout=TRIM_TIMEOUT)
+        trim = (TESTVM / "update/trim.sh").read_text()
+        r = vm.ssh(trim, timeout=TRIM_TIMEOUT)
+        # 255 is ssh's own failure (silent: -q), not trim.sh's, and it
+        # passes: once, ghostbsd26-zfs's connection failed just after boot
+        # where a moment before and six runs since went fine (2026-11).
+        # trim.sh can run twice.
+        if r.returncode == 255 and not stopping.wait(10):
+            g.note("ssh failed (exit status 255); trimming again")
+            r = vm.ssh(trim, timeout=TRIM_TIMEOUT)
         if stopping.is_set():
             raise Failed("stopped")
         if r.returncode != 0:

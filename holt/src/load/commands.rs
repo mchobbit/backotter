@@ -937,7 +937,10 @@ impl Builder<'_> {
         // zpool create mounts the pool's own dataset (FreeBSD's zroot, at
         // /zroot) at once; mount mounts it again in its place, after /.
         out.push(Cmd::new(&["sh", "-c", &format!("[ \"$(zfs get -H -o value mounted {here})\" != yes ] || zfs unmount {here}")]).why("mount mounts every dataset in order"));
-        self.closers.push(Cmd::new(&["zpool", "export", &here]));
+        // (On Linux, udev and its workers' mount namespaces can keep the
+        // pool busy for a moment after the last unmount.)
+        let export = ["zpool", "export", here.as_str()];
+        self.closers.push(if self.fam.map_or(true, |f| f.on_linux()) { settled(&export) } else { Cmd::new(&export) });
         // Under another name here, the pool's own dataset would mount at
         // /<that name>: at the source's default place while load works,
         // inherited again before the export (closers run last first).

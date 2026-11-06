@@ -244,7 +244,7 @@ EOF
 apt_opts=(-o "Dir::Etc::SourceList=/dev/null" -o "Dir::Etc::SourceParts=$apt_dir/sources"
           -o "Dir::Etc::Preferences=/dev/null" -o "Dir::Etc::PreferencesParts=$apt_dir/preferences"
           -o "Dir::State::Lists=$apt_dir/lists")
-in_root apt-get "${apt_opts[@]}" -q update >/dev/null
+in_root apt-get "${apt_opts[@]}" -q --error-on=any update >/dev/null
 before=$(in_root dpkg-query -W -f '${Package}\n' | sort)
 in_root apt-get "${apt_opts[@]}" -y -q --no-install-recommends install \
     "${PACKAGES[@]}" "${ARCHIVE_PACKAGES[@]}" "bcachefs-tools=$BCACHEFS_DEB_VERSION" >/dev/null
@@ -281,7 +281,7 @@ write_source "$kb_root$kb_apt/sources" bcachefs "$BCACHEFS_REPO" "$BCACHEFS_SUIT
 kb_apt_opts=(-o "Dir::Etc::SourceList=/dev/null" -o "Dir::Etc::SourceParts=$kb_apt/sources"
              -o "Dir::Etc::Preferences=/dev/null" -o "Dir::Etc::PreferencesParts=$kb_apt/preferences"
              -o "Dir::State::Lists=$kb_apt/lists")
-in_kb apt-get "${kb_apt_opts[@]}" -q update >/dev/null
+in_kb apt-get "${kb_apt_opts[@]}" -q --error-on=any update >/dev/null
 # -updates lists a kernel's headers only while that kernel is recent.
 in_kb apt-cache "${kb_apt_opts[@]}" show "linux-headers-$KVER" >/dev/null 2>&1 ||
     die "$suite-updates no longer has linux-headers-$KVER: rebuild the base from a newer ISO"

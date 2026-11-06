@@ -176,10 +176,21 @@ cleanup() {
     rm -f "$ROOT/usr/sbin/policy-rc.d"
 }
 trap cleanup EXIT
-for m in proc sys dev dev/pts; do
-    mount --bind "/$m" "$ROOT/$m"
-    mounts+=("$ROOT/$m")
-done
+# api_mounts DIR: the host's /proc, /sys and /dev in DIR, and a tmpfs on its
+# /run holding the host's resolver configuration, for apt's downloads (the
+# base's /etc/resolv.conf points into /run, at systemd-resolved's stub).
+api_mounts() {
+    local m
+    for m in proc sys dev dev/pts; do
+        mount --bind "/$m" "$1/$m"
+        mounts+=("$1/$m")
+    done
+    mount -t tmpfs tmpfs "$1/run"
+    mounts+=("$1/run")
+    mkdir -p "$1/run/systemd/resolve"
+    cp -L /etc/resolv.conf "$1/run/systemd/resolve/stub-resolv.conf"
+}
+api_mounts "$ROOT"
 # Keep maintainer scripts from starting or stopping services.
 printf '#!/bin/sh\nexit 101\n' >"$ROOT/usr/sbin/policy-rc.d"
 chmod 755 "$ROOT/usr/sbin/policy-rc.d"
@@ -207,9 +218,10 @@ apt_opts=(-o "Dir::Etc::SourceList=/dev/null" -o "Dir::Etc::SourceParts=$apt_dir
 kernels=("$ROOT"/lib/modules/*/)
 [[ ${#kernels[@]} -eq 1 && -d ${kernels[0]} ]] || die "the stock base hasn't exactly one kernel"
 old_kver=$(basename "${kernels[0]}")
-in_root apt-get "${apt_opts[@]}" -q update >/dev/null
+in_root apt-get "${apt_opts[@]}" -q --error-on=any update >"$OUT/upgrade.log" 2>&1 ||
+    { tail -n 20 "$OUT/upgrade.log" >&2; die "apt-get update failed"; }
 before=$(in_root dpkg-query -W -f '${Package}\t${Version}\n' | sort)
-in_root apt-get "${apt_opts[@]}" -y -q full-upgrade >"$OUT/upgrade.log" 2>&1 ||
+in_root apt-get "${apt_opts[@]}" -y -q full-upgrade >>"$OUT/upgrade.log" 2>&1 ||
     { tail -n 20 "$OUT/upgrade.log" >&2; die "apt-get full-upgrade failed; see $OUT/upgrade.log"; }
 mapfile -t kernels < <(cd "$ROOT/lib/modules" && ls | grep -vxF "$old_kver" || true)
 [[ ${#kernels[@]} -le 1 ]] || die "the upgrade installed more than one kernel: ${kernels[*]}"
@@ -353,10 +365,7 @@ ird_root=$ird/root
 mkdir -p "$ird/upper" "$ird/work" "$ird_root"
 mount -t overlay overlay -o "lowerdir=$ROOT,upperdir=$ird/upper,workdir=$ird/work" "$ird_root"
 mounts+=("$ird_root")
-for m in proc sys dev dev/pts; do
-    mount --bind "/$m" "$ird_root/$m"
-    mounts+=("$ird_root/$m")
-done
+api_mounts "$ird_root"
 in_ird() { chroot "$ird_root" "$@"; }
 in_ird apt-get "${apt_opts[@]}" -y -q --no-install-recommends install casper initramfs-tools \
     >"$OUT/initrd.log" 2>&1 || { tail -n 20 "$OUT/initrd.log" >&2; die "installing casper failed"; }

@@ -5,12 +5,19 @@
 # Usage: sudo ./slim-base-layer.sh [--tiers "1 2 3"] SOURCE_ISO OUT_DIR
 #
 # It always starts from the untouched Ubuntu ISO, so the same cuts can be
-# re-applied to every point release.  OUT_DIR receives:
+# re-applied to every point release.  First it brings the base up to date:
+# every package to the release's current version from Ubuntu's -security and
+# -updates pockets, the kernel too, and the old kernel purged (the base keeps
+# one).  The ISO's vmlinuz and initrd are for the old kernel, so the new
+# kernel's (signed) vmlinuz and a casper initrd for it, made in a throwaway
+# overlay with casper and initramfs-tools as Ubuntu's live builds make it,
+# go beside the base for make-img.sh.  OUT_DIR receives:
 #   rootfs/                          the slimmed tree
 #   ubuntu-server-minimal.squashfs   the rebuilt layer
 #   ubuntu-server-minimal.manifest   package list, in the format Ubuntu ships
 #   ubuntu-server-minimal.size       unpacked size in bytes
-#   report.txt                       what was removed, and the size change
+#   vmlinuz, initrd                  the base's kernel, and casper's initrd for it
+#   report.txt                       what was updated and removed, and the size change
 #
 # The cuts come in three tiers (see the TIER sections below):
 #   1  software a rescue stick never runs: tracing and debug tools plus the
@@ -28,12 +35,16 @@
 # linux-firmware-minimal.  The rules stay in the image, so reinstalling or
 # upgrading those packages later keeps the same files out.
 #
-# Needs: Linux, root, xorriso, squashfs-tools 4.6 or later.
+# Needs: Linux, root, xorriso, squashfs-tools 4.6 or later, and HTTP access
+# to archive.ubuntu.com.
 
 set -euo pipefail
 
 TIERS="1 2 3"
 LAYER=ubuntu-server-minimal
+# The updates: Ubuntu's archive, the release's -updates and -security pockets.
+ARCHIVE=http://archive.ubuntu.com/ubuntu/
+ARCHIVE_COMPONENTS="main restricted universe multiverse"
 
 # --- TIER 1: packages -------------------------------------------------------
 # dpkg-query patterns; whatever is installed and matches gets purged.
@@ -133,8 +144,12 @@ log "Tiers:      $TIERS"
 
 # --- Unpack -------------------------------------------------------------------
 xorriso -osirrox on -indev "$SOURCE_ISO" \
-    -extract "/casper/$LAYER.squashfs" "$OUT/stock.squashfs" 2>"$OUT/xorriso.log" ||
+    -extract "/casper/$LAYER.squashfs" "$OUT/stock.squashfs" \
+    -extract /.disk/casper-uuid-generic "$OUT/casper-uuid" 2>"$OUT/xorriso.log" ||
     die "xorriso failed; see $OUT/xorriso.log"
+casper_uuid=$(cat "$OUT/casper-uuid")
+rm "$OUT/casper-uuid"
+[[ $casper_uuid =~ ^[0-9a-f-]{36}$ ]] || die "the ISO's .disk/casper-uuid-generic isn't a UUID"
 unsquashfs -q -n -d "$ROOT" "$OUT/stock.squashfs"
 stock_squashfs=$(stat -c %s "$OUT/stock.squashfs")
 rm "$OUT/stock.squashfs"
@@ -157,20 +172,96 @@ commands_before=$(present_commands)
 mounts=()
 cleanup() {
     local i
-    for ((i = ${#mounts[@]} - 1; i >= 0; i--)); do umount "${mounts[i]}" || true; done
+    for ((i = ${#mounts[@]} - 1; i >= 0; i--)); do umount -R "${mounts[i]}" || true; done
     rm -f "$ROOT/usr/sbin/policy-rc.d"
 }
 trap cleanup EXIT
-for m in proc sys dev dev/pts; do
-    mount --bind "/$m" "$ROOT/$m"
-    mounts+=("$ROOT/$m")
-done
+# api_mounts DIR: the host's /proc, and /sys read-only, in DIR; a /dev of
+# its own (a tmpfs with the basic nodes, copied, and a devpts instance of its
+# own), never the host's: upgrading systemd and udev in the chroot re-creates
+# their static nodes (/dev/kvm and others) with the chroot's group IDs, which
+# on the host are other groups; and a tmpfs on its /run holding the host's
+# resolver configuration, for apt's downloads (the base's /etc/resolv.conf
+# points into /run, at systemd-resolved's stub).  The binds are private: a
+# bind of the host's (shared) /sys would join its peer group, and what a
+# package script mounts on the chroot's (efivarfs, say) would turn up in the
+# other chroot's and keep it busy.  Each is unmounted recursively.
+api_mounts() {
+    local n
+    mount --bind /proc "$1/proc"
+    mount --make-rprivate "$1/proc"
+    mounts+=("$1/proc")
+    mount --bind /sys "$1/sys"
+    mount --make-rprivate "$1/sys"
+    mount -o remount,bind,ro "$1/sys"
+    mounts+=("$1/sys")
+    mount -t tmpfs -o mode=755 tmpfs "$1/dev"
+    mounts+=("$1/dev")
+    for n in null zero full random urandom tty; do cp -a "/dev/$n" "$1/dev/"; done
+    mkdir "$1/dev/pts" "$1/dev/shm"
+    mount -t devpts -o newinstance,ptmxmode=0666,mode=620 devpts "$1/dev/pts"
+    mounts+=("$1/dev/pts")
+    ln -s pts/ptmx "$1/dev/ptmx"
+    ln -s /proc/self/fd "$1/dev/fd"
+    ln -s /proc/self/fd/0 "$1/dev/stdin"
+    ln -s /proc/self/fd/1 "$1/dev/stdout"
+    ln -s /proc/self/fd/2 "$1/dev/stderr"
+    mount -t tmpfs tmpfs "$1/run"
+    mounts+=("$1/run")
+    mkdir -p "$1/run/systemd/resolve"
+    cp -L /etc/resolv.conf "$1/run/systemd/resolve/stub-resolv.conf"
+}
+api_mounts "$ROOT"
 # Keep maintainer scripts from starting or stopping services.
 printf '#!/bin/sh\nexit 101\n' >"$ROOT/usr/sbin/policy-rc.d"
 chmod 755 "$ROOT/usr/sbin/policy-rc.d"
 export DEBIAN_FRONTEND=noninteractive
 # needrestart's apt hook would inspect the build host's processes through /proc.
 export NEEDRESTART_SUSPEND=1
+
+# --- Updates -------------------------------------------------------------------------
+# Ubuntu's archive, release, -updates and -security, through a sources
+# directory of its own (removed before the squashfs is made); the base's own
+# sources (the ISO's pool) play no part.
+suite=$(sed -n 's/^Suites: *//p' "$ROOT/etc/apt/sources.list.d/cdrom.sources")
+[[ $suite =~ ^[a-z]+$ ]] || die "can't tell the release from cdrom.sources (Suites: $suite)"
+apt_dir=/tmp/backotter-apt
+mkdir -p "$ROOT$apt_dir"/{sources,lists/partial}
+cat >"$ROOT$apt_dir/sources/ubuntu.sources" <<EOF
+Types: deb
+URIs: $ARCHIVE
+Suites: $suite $suite-updates $suite-security
+Components: $ARCHIVE_COMPONENTS
+Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+EOF
+apt_opts=(-o "Dir::Etc::SourceList=/dev/null" -o "Dir::Etc::SourceParts=$apt_dir/sources"
+          -o "Dir::State::Lists=$apt_dir/lists" -o "Dpkg::Options::=--force-confold")
+kernels=("$ROOT"/lib/modules/*/)
+[[ ${#kernels[@]} -eq 1 && -d ${kernels[0]} ]] || die "the stock base hasn't exactly one kernel"
+old_kver=$(basename "${kernels[0]}")
+in_root apt-get "${apt_opts[@]}" -q --error-on=any update >"$OUT/upgrade.log" 2>&1 ||
+    { tail -n 20 "$OUT/upgrade.log" >&2; die "apt-get update failed"; }
+before=$(in_root dpkg-query -W -f '${Package}\t${Version}\n' | LC_ALL=C sort)
+in_root apt-get "${apt_opts[@]}" -y -q full-upgrade >>"$OUT/upgrade.log" 2>&1 ||
+    { tail -n 20 "$OUT/upgrade.log" >&2; die "apt-get full-upgrade failed; see $OUT/upgrade.log"; }
+mapfile -t kernels < <(cd "$ROOT/lib/modules" && ls | grep -vxF "$old_kver" || true)
+[[ ${#kernels[@]} -le 1 ]] || die "the upgrade installed more than one kernel: ${kernels[*]}"
+kver=${kernels[0]:-$old_kver}
+if [[ $kver != "$old_kver" ]]; then
+    # The old kernel's packages (image, modules, headers): the base keeps one.
+    mapfile -t old < <(installed_only "*$old_kver*")
+    [[ ${#old[@]} -gt 0 ]] || die "no packages for the old kernel $old_kver"
+    in_root apt-get -y -q purge "${old[@]}" >>"$OUT/upgrade.log" 2>&1 ||
+        { tail -n 20 "$OUT/upgrade.log" >&2; die "purging kernel $old_kver failed"; }
+    rm -rf "$ROOT/lib/modules/$old_kver" "$ROOT/usr/lib/modules/$old_kver"
+fi
+[[ -f $ROOT/boot/vmlinuz-$kver ]] || die "no /boot/vmlinuz-$kver"
+updated=$(LC_ALL=C join -t $'\t' <(echo "$before") <(in_root dpkg-query -W -f '${Package}\t${Version}\n' | LC_ALL=C sort) |
+    awk -F '\t' '$2 != $3' | wc -l)
+log ""
+log "== Updates, from $ARCHIVE $suite-updates and $suite-security"
+log "Packages updated: $updated"
+log "Kernel: $old_kver -> $kver"
 
 # --- TIER 1 ------------------------------------------------------------------------
 if has_tier 1; then
@@ -283,6 +374,47 @@ EOF
         [[ $removed_dir == yes ]] || break
     done
 fi
+
+# --- vmlinuz and casper's initrd -----------------------------------------------------
+# The initrd as Ubuntu's live builds make it (livecd-rootfs: casper installed,
+# casper's settings in initramfs-tools' conf.d), in a throwaway overlay on the
+# base, so that casper and initramfs-tools never reach it.  It carries the
+# ISO's casper UUID, which casper matches against the medium's
+# .disk/casper-uuid-generic, instead of a new one (CASPER_GENERATE_UUID).
+ird=$OUT/initrd-build
+ird_root=$ird/root
+mkdir -p "$ird/upper" "$ird/work" "$ird_root"
+mount -t overlay overlay -o "lowerdir=$ROOT,upperdir=$ird/upper,workdir=$ird/work" "$ird_root"
+mounts+=("$ird_root")
+api_mounts "$ird_root"
+in_ird() { chroot "$ird_root" "$@"; }
+in_ird apt-get "${apt_opts[@]}" -y -q --no-install-recommends install casper initramfs-tools \
+    >"$OUT/initrd.log" 2>&1 || { tail -n 20 "$OUT/initrd.log" >&2; die "installing casper failed"; }
+conf=$ird_root/etc/initramfs-tools
+printf 'if [ -z "$BOOT" ]; then\n    export BOOT=casper\nfi\n' >"$conf/conf.d/default-boot-to-casper.conf"
+echo "LAYERFS_PATH=$LAYER.backotter.squashfs" >"$conf/conf.d/default-layer.conf"
+cat >"$conf/hooks/backotter-casper-uuid" <<EOF
+#!/bin/sh
+[ "\$1" = prereqs ] && exit 0
+echo $casper_uuid >"\$DESTDIR/conf/uuid.conf"
+EOF
+chmod 755 "$conf/hooks/backotter-casper-uuid"
+in_ird mkinitramfs -o /tmp/initrd "$kver" >>"$OUT/initrd.log" 2>&1 ||
+    { tail -n 20 "$OUT/initrd.log" >&2; die "mkinitramfs failed"; }
+cp "$ird_root/tmp/initrd" "$OUT/initrd"
+cp "$ROOT/boot/vmlinuz-$kver" "$OUT/vmlinuz"
+chmod 644 "$OUT/initrd" "$OUT/vmlinuz"
+for ((i = ${#mounts[@]} - 1; i >= 0; i--)); do
+    [[ ${mounts[i]} == "$ird_root"* ]] || continue
+    umount -R "${mounts[i]}"
+    unset 'mounts[i]'
+done
+mounts=("${mounts[@]}")
+rm -rf --one-file-system "$ird"
+rm -rf "$ROOT$apt_dir"
+in_root apt-get clean
+log ""
+log "== Boot files: vmlinuz-$kver ($(du -k "$OUT/vmlinuz" | cut -f1) KB), casper initrd ($(du -k "$OUT/initrd" | cut -f1) KB)"
 
 # --- Checks --------------------------------------------------------------------------
 in_root dpkg --audit | grep . && die "dpkg --audit reports problems"

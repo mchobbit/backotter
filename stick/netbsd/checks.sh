@@ -27,6 +27,7 @@ check remote-access '/usr/local/lib/backotter/remote-access >/tmp/ra.out 2>&1 ||
 check root-ssh-refused '! sh /tmp/bko-ssh.sh root >/dev/null && grep -i -m 1 "denied" /tmp/bko-ssh.err'
 check restic-bko 'restic-bko version'
 check rustic-bko 'rustic-bko --version'
+check bko-holt 'bko-holt --version | grep "^bko-holt [0-9]"'
 check tools 'for c in gpt dkctl disklabel fdisk newfs newfs_msdos fsck_ffs mount_msdos zpool zfs lvm raidctl cgdconfig ssh pax; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; echo all present'
 check marker 'f=/.disk/backotter.json; grep -q "\"platform\": \"netbsd\"" $f && grep -q "\"zfs\": null" $f && sed -n -E "s/.*\"(image_id|release)\": \"([^\"]*)\".*/\\2/p" $f | tr "\n" " "'
 check memory 'echo "$(($(sysctl -n hw.physmem64) / 1048576)) MB; in memory: $(df -k /.backotter-rw | awk "NR == 2 { print \$3 }") KB"'

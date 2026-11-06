@@ -13,7 +13,9 @@
 # stick, hence .img, but inside it is still a hybrid ISO9660 image like the
 # stock one, so it also boots as a CD (a BMC's virtual media, say).  Compared
 # with the stock ISO, the result:
-#   - replaces casper/ubuntu-server-minimal.squashfs with the slimmed base
+#   - replaces casper/ubuntu-server-minimal.squashfs with the slimmed (and
+#     updated) base, and casper/vmlinuz and casper/initrd with its kernel and
+#     the casper initrd slim-base-layer.sh made for it
 #   - adds casper/ubuntu-server-minimal.backotter.squashfs on top of it
 #   - drops the stock ubuntu-server and installer layers (their copies of
 #     /var/lib/dpkg/status don't match the slimmed base, and Subiquity needs
@@ -55,7 +57,8 @@ if [[ ${1:-} == --test ]]; then
 fi
 [[ $# -eq 3 || $# -eq 4 ]] || die "usage: $0 [--test] SOURCE_ISO SLIM_DIR LAYER_DIR [OUT_IMG]"
 SOURCE_ISO=$1 SLIM=$2 LAYER_DIR=$3 OUT_IMG=${4:-.}
-for f in "$SOURCE_ISO" "$SLIM/$BASE".{squashfs,manifest,size} "$LAYER_DIR/$LAYER".{squashfs,manifest,size}; do
+for f in "$SOURCE_ISO" "$SLIM/$BASE".{squashfs,manifest,size} "$SLIM"/{vmlinuz,initrd} \
+    "$LAYER_DIR/$LAYER".{squashfs,manifest,size}; do
     [[ -f $f ]] || die "missing $f"
 done
 for c in xorriso unsquashfs python3; do
@@ -136,6 +139,8 @@ declare -A files=(
     [./casper/$BASE.squashfs]=$SLIM/$BASE.squashfs
     [./casper/$BASE.manifest]=$SLIM/$BASE.manifest
     [./casper/$BASE.size]=$SLIM/$BASE.size
+    [./casper/vmlinuz]=$SLIM/vmlinuz
+    [./casper/initrd]=$SLIM/initrd
     [./casper/$LAYER.squashfs]=$LAYER_DIR/$LAYER.squashfs
     [./casper/$LAYER.manifest]=$LAYER_DIR/$LAYER.manifest
     [./casper/$LAYER.size]=$LAYER_DIR/$LAYER.size

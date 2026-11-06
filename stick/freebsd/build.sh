@@ -2,19 +2,22 @@
 # FreeBSD's rescue image: make-img-bsd.sh runs this as root in the FreeBSD
 # build VM, in a fresh directory holding in/ (see make-img-bsd.sh's header).
 #
-#   build.sh info       KERNEL= and ZFS_VERSION= of the memstick's system,
-#                       and its OpenZFS feature list in in/zfs-features
+#   build.sh info       makes root/ (the memstick's system, updated), and
+#                       prints its KERNEL= and ZFS_VERSION=, with its
+#                       OpenZFS feature list in in/zfs-features
 #   build.sh assemble   out/image.img
 #
-# The image is the official memstick remastered.  Its root file system, less
+# The image is the official memstick remastered, with the release's security
+# updates (freebsd-update, to the latest -pN).  Its root file system, less
 # the installer (rc.local, which starts it, and the packages it installs),
 # is copied into a new UFS2 labelled BACKOTTER-<first 8 hex digits of the
 # image ID>, so that a second stick (or the machine's own disks) can't stand
-# in for the root.  It gets BackOtter's console and remote access, restic-bko
-# and rustic-bko, and the marker /.disk/backotter.json.  The disk layout is the
-# memstick's, plus the config partition:
+# in for the root.  It gets BackOtter's console and remote access, restic-bko,
+# rustic-bko and bko-holt, and the marker /.disk/backotter.json.  The disk
+# layout is the memstick's, plus the config partition:
 #
-#   MBR slice 1   the memstick's ESP, as is (EFI/BOOT/bootx64.efi is loader.efi)
+#   MBR slice 1   the memstick's ESP, its EFI/BOOT/bootx64.efi the updated
+#                 root's loader.efi
 #   MBR slice 2   active, BSD label with the root UFS2 as "a" (boot0-less MBR
 #                 boot code, then boot1/boot2 from the label, as the memstick)
 #   MBR slice 3   config.img, FAT16 (type 0x06)
@@ -54,39 +57,58 @@ cleanup() {
 # make-img-bsd.sh's ssh is gone), and the builder lives on.
 trap cleanup EXIT
 trap 'exit 1' HUP INT TERM PIPE
-mkdir -p mnt
-md=$(mdconfig -a -t vnode -o readonly -f "$memstick")
-mount -o ro "/dev/${md}s2a" mnt
+case $cmd in info|assemble) ;; *) die "usage: build.sh info|assemble" ;; esac
+
+# --- The root file system, with the release's security updates ------------------
+# The memstick's root, copied into root/ and brought to the release's latest
+# patch level (-pN) by freebsd-update, from FreeBSD's signed update server:
+# -b updates the tree, not the builder.  Done once, by info; assemble runs in
+# the same directory and takes root/ as it is.  File flags (schg and friends)
+# mean nothing on a read-only root, and would keep make-img-bsd.sh from
+# removing this directory.
+if [ ! -f root.done ]; then
+    rm -rf root fu
+    mkdir -p mnt root fu
+    md=$(mdconfig -a -t vnode -o readonly -f "$memstick")
+    mount -o ro "/dev/${md}s2a" mnt
+    echo "Copying the memstick's root"
+    tar -C mnt --no-fflags -cf - . | tar -C root -xpf -
+    umount mnt
+    mdconfig -d -u "$md"; md=
+    release=$(ROOT=root sh root/bin/freebsd-version -u)
+    echo "Updating it from $release with freebsd-update"
+    fu() {
+        PAGER=cat freebsd-update -b "$PWD/root" -d "$PWD/fu" -f root/etc/freebsd-update.conf \
+            --currently-running "$release" --not-running-from-cron "$@"
+    }
+    fu fetch >fu.log 2>&1 || { tail -n 20 fu.log >&2; die "freebsd-update fetch failed"; }
+    if ! grep -q '^No updates needed' fu.log; then
+        fu install >>fu.log 2>&1 || { tail -n 20 fu.log >&2; die "freebsd-update install failed"; }
+    fi
+    rm -rf fu
+        : >root.done
+fi
 
 case $cmd in
 info)
-    kernel=$(ROOT=mnt sh mnt/bin/freebsd-version -k)
+    kernel=$(ROOT=root sh root/bin/freebsd-version -k)
     # The first of zfs.ko's version strings (no head: SIGPIPE and pipefail).
-    zfs=$(strings mnt/boot/kernel/zfs.ko | sed -n 's/^\([0-9]*\.[0-9]*\.[0-9]*\)-[0-9]*-FreeBSD_g[0-9a-f]*$/\1/p')
+    zfs=$(strings root/boot/kernel/zfs.ko | sed -n 's/^\([0-9]*\.[0-9]*\.[0-9]*\)-[0-9]*-FreeBSD_g[0-9a-f]*$/\1/p')
     set -- $zfs
     zfs=${1:-}
     [ -n "$kernel" ] && [ -n "$zfs" ] || die "can't tell the kernel or ZFS version"
-    cp "mnt/usr/share/zfs/compatibility.d/openzfs-${zfs%.*}" in/zfs-features ||
-        die "the memstick has no ZFS feature list for $zfs"
+    cp "root/usr/share/zfs/compatibility.d/openzfs-${zfs%.*}" in/zfs-features ||
+        die "the root has no ZFS feature list for $zfs"
     echo "KERNEL=$kernel"
     echo "ZFS_VERSION=$zfs"
     exit 0 ;;
-assemble) ;;
-*) die "usage: build.sh info|assemble" ;;
 esac
 
 image_id=$(sed -n 's/^  "image_id": "\([0-9a-f-]*\)",$/\1/p' in/backotter.json)
 [ -n "$image_id" ] || die "in/backotter.json has no image_id"
 label=BACKOTTER-$(echo "$image_id" | cut -c1-8)
 
-# --- The root file system ---------------------------------------------------------
-# File flags (schg and friends) mean nothing on a read-only root, and would
-# keep make-img-bsd.sh from removing this directory.
-echo "Copying the memstick's root"
-mkdir root
-tar -C mnt --no-fflags -cf - . | tar -C root -xpf -
-umount mnt
-
+# --- BackOtter's changes to the root ----------------------------------------------
 # The installer: what starts it and what it installs.
 rm -rf root/etc/rc.local root/usr/freebsd-dist root/usr/freebsd-packages
 # Points into the installer's /tmp/bsdinstall_etc; dhclient writes the real one.
@@ -160,6 +182,7 @@ mkdir -p "root$LIB" root/usr/local/bin root/.disk root/home
 install -m 755 in/console in/remote-access "root$LIB/"
 install -m 755 in/restic-bko root/usr/local/bin/
 [ ! -f in/rustic-bko ] || install -m 755 in/rustic-bko root/usr/local/bin/
+install -m 755 in/bko-holt root/usr/local/bin/
 install -m 644 in/backotter.json root/.disk/
 
 # /etc, /root and /home in memory (see the top).  rc.initdiskless copies each
@@ -176,7 +199,16 @@ for d in etc root home; do echo md_size >"root/conf/base/$d.remove"; done
 # --- The image --------------------------------------------------------------------
 echo "Making the root file system, $label"
 makefs -t ffs -B little -o version=2 -o label="$label" root.ufs root
+# The memstick's ESP, with the updated root's loader.efi as its bootx64.efi.
+md=$(mdconfig -a -t vnode -o readonly -f "$memstick")
 dd if="/dev/${md}s1" of=efi.img bs=1m status=none
+mdconfig -d -u "$md"; md=
+md=$(mdconfig -a -t vnode -f efi.img)
+mount -t msdosfs "/dev/$md" mnt
+[ -f mnt/EFI/BOOT/bootx64.efi ] || die "the memstick's ESP has no EFI/BOOT/bootx64.efi"
+cp root/boot/loader.efi mnt/EFI/BOOT/bootx64.efi
+umount mnt
+mdconfig -d -u "$md"; md=
 mkimg -s mbr -b root/boot/mbr -p efi:=efi.img \
     -p freebsd:-"mkimg -s bsd -b root/boot/boot -p freebsd-ufs:=root.ufs" \
     -p fat16b:=in/config.img -a 2 -o out/image.img

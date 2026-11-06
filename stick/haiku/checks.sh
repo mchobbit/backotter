@@ -74,6 +74,7 @@ check serial-debug-off 'grep -q "^serial_debug_output false" /boot/home/config/s
 check tools 'for c in mkfs mount unmount diskimage makebootable writembr copyattr listattr addattr catattr ssh python3 dd; do command -v $c >/dev/null || { echo no $c; exit 1; }; done; echo all present'
 check filesystems 'cd /boot/system/add-ons/kernel/file_systems && for fs in bfs fat exfat ext2 btrfs ntfs; do test -e $fs || { echo no $fs; exit 1; }; done; ls | tr "\n" " "'
 check binaries 'rustic-bko --version | grep backotter && ! command -v restic-bko >/dev/null'
+check bko-holt 'bko-holt --version | grep "^bko-holt [0-9]"'
 check network 'i=0; until a=$(ifconfig | awk "\$1 == \"inet\" && \$2 == \"addr:\" && \$3 !~ /^127\./ { sub(\",\", \"\", \$3); print \$3 }"); test -n "$a"; do i=$((i + 1)); test $i -lt 30 || exit 1; sleep 1; done; echo $a'
 check console-screen 'bash /tmp/bko-checks.sh console-screen'
 check console-serial 'ps | grep -q "^/bin/python3 /boot/system/non-packaged/lib/backotter/on-serial" && echo "on-serial.py bridges pc_serial0 and $(tty)"'

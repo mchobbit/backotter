@@ -2,7 +2,12 @@
 
 `../make-img-bsd.sh haiku` makes `backotter-live-haiku-VERSION-amd64.img` from
 Haiku's official anyboot image (R1/beta6), built in a throwaway `--snapshot`
-copy of the `haiku6` test guest (`testvm/make-haiku.sh`).  Write it raw to a
+copy of the `haiku6` test guest (`testvm/make-haiku.sh`).  Its packages are
+updated: each of the anyboot image's is replaced by the guest's version where
+that differs, and testvm's vm-update keeps the guest up to date from Haiku's
+r1beta6 repository (`pkgman full-sync`), so the image gets the guest's last
+update.  An updated `haiku_loader` package brings the guest's
+`haiku_loader.efi` to the ESP as well.  Write it raw to a
 USB stick.  It boots with BIOS or UEFI, but not with Secure Boot on: Haiku's
 `haiku_loader.efi` isn't signed.
 
@@ -46,7 +51,8 @@ It carries `rustic-bko` only: restic isn't ported to Haiku (Haiku's Go is
 The MBR's boot code is `writembr`'s, partition 1's boot block
 `makebootable`'s, as Haiku's Installer leaves a disk.  Partition 1 holds the
 official image's `system` and `home`, copied with their attributes
-(`copyattr`), without the install media's `_packages_` and `_sources_`, and
+(`copyattr`), without the install media's `_packages_` and `_sources_`, with
+the updated packages in `system/packages`, and
 cut to its contents plus 256 MB.  The official image's ISO9660 part (for CDs)
 isn't kept: the image is for USB sticks.
 
@@ -97,7 +103,8 @@ What changes from the official image:
 - Every shell's prompt ends in `# ` (`non-packaged/data/profile.d`): every
   process on Haiku is uid 0's.
 - `rustic-bko` in `/boot/system/non-packaged/bin`, from
-  `~/backotter-work/bko-bin/haiku/` (`BKO_BIN`), the marker in
+  `~/backotter-work/bko-bin/haiku/` (`BKO_BIN`), `bko-holt` beside it from
+  `~/backotter-work/holt-bin/haiku/` (`BKO_HOLT_BIN`, a pinned set of holt's builds), the marker in
   `/boot/.disk/backotter.json` (mode 444).  `zfs` is null: Haiku has no ZFS.
   `kernel` is the hrev, as the first word of `uname -v` says it
   (`hrev59866+79`).

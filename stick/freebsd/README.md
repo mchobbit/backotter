@@ -1,7 +1,8 @@
 # The FreeBSD rescue image
 
 `../make-img-bsd.sh freebsd` makes `backotter-live-freebsd-VERSION-amd64.img`,
-a remaster of FreeBSD's official memstick (15.1-RELEASE), built in the
+a remaster of FreeBSD's official memstick (15.1-RELEASE) brought up to the
+release's latest patch level with `freebsd-update`, built in the
 long-lived FreeBSD builder VM (`vms/freebsd15-builder`, already running on
 SSH port 2400; see `testvm/freebsd/builder-setup.sh`).  Write it raw to a USB
 stick.  It boots with BIOS or UEFI, but not with Secure Boot on: FreeBSD's
@@ -20,17 +21,20 @@ loader isn't signed.
   and checks the memstick's SHA256 against the announcement, signed by the
   release engineer (FreeBSD publishes no signed checksum file; the same check
   as `testvm/make-freebsd.sh`'s).
-- `build.sh`: runs in the builder.  `info` reads the kernel version
-  (`freebsd-version -k`), the OpenZFS version (from `zfs.ko`) and its feature
-  list (`/usr/share/zfs/compatibility.d/openzfs-X.Y`) from the memstick;
-  `assemble` makes the image.
+- `build.sh`: runs in the builder.  `info` copies the memstick's root into
+  `root/` and updates it (`freebsd-update -b root fetch install`, from
+  FreeBSD's signed update server: the tree, not the builder), then reads the
+  kernel version (`freebsd-version -k`, e.g. `15.1-RELEASE-p6`), the OpenZFS
+  version (from `zfs.ko`) and its feature list
+  (`/usr/share/zfs/compatibility.d/openzfs-X.Y`) from it; `assemble`, in the
+  same directory, makes the image from that `root/`.
 - `checks.sh`, `config-checks.sh`: `boot-test.py --platform freebsd`'s checks.
 
 ## The image
 
 | MBR slice | Contents |
 |-----------|----------|
-| 1 | The memstick's ESP, as is (`EFI/BOOT/bootx64.efi` is `loader.efi`) |
+| 1 | The memstick's ESP, with the updated root's `loader.efi` as `EFI/BOOT/bootx64.efi` |
 | 2 | Active.  BSD label; `a` is the root, UFS2 labelled `BACKOTTER-xxxxxxxx` |
 | 3 | The config partition: FAT16 (type 0x06) `BACKOTTER`, 32 MiB |
 
@@ -81,7 +85,8 @@ What changes from the memstick:
   (`al.Pc`), like Linux's tty2-tty6.
 - sshd: `../bsd/sshd_config.backotter`'s lines first in `sshd_config`; no
   host keys (`remote-access` makes them).
-- `/usr/local/bin/restic-bko` and `rustic-bko`, and the marker
+- `/usr/local/bin/restic-bko`, `rustic-bko` and `bko-holt` (from
+  `~/backotter-work/holt-bin/freebsd/`, `BKO_HOLT_BIN`), and the marker
   `/.disk/backotter.json`.  make-img-bsd.sh builds without a rustic-bko (with
   a warning) if there is none for freebsd; the boot test's rustic-bko check
   then fails, since the FreeBSD image is meant to have both.

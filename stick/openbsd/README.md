@@ -4,8 +4,8 @@
 OpenBSD 8.0 from the stick with BIOS or UEFI (not with Secure Boot on:
 OpenBSD's EFI loader isn't signed), and shows BackOtter's console on the
 screen and on the first serial port.  For now it is a placeholder: the
-console, remote access over SSH, `restic-bko` and `rustic-bko`, and OpenBSD's
-base tools (fdisk, disklabel, newfs, fsck, bioctl, dump/restore, ...).  No
+console, remote access over SSH, `restic-bko`, `rustic-bko` and `bko-holt`,
+and OpenBSD's base tools (fdisk, disklabel, newfs, fsck, bioctl, dump/restore, ...).  No
 restore logic yet.
 
 ## Building
@@ -23,8 +23,12 @@ console's small autologin helper.  `fetch` (in `platform.conf`) takes
 `base80.tgz` and `bsd.mp` from that guest's `install80.iso`, or downloads them
 when it isn't there; both are checked against the release's `SHA256.sig` with
 signify, on the host with the key in `platform.conf` and again in the VM with
-its own copy.  `restic-bko` (required) and `rustic-bko` come from
-`~/backotter-work/bko-bin/openbsd/`, built natively on OpenBSD: Go and Rust
+its own copy.  So are the release's syspatches: `fetch` downloads their signed
+list afresh every time (as `syspatch-SHA256.sig`), and the patches not yet in
+the media cache, checked with the release's syspatch key.  `restic-bko`
+(required) and `rustic-bko` come from `~/backotter-work/bko-bin/openbsd/`, and
+`bko-holt` from `~/backotter-work/holt-bin/openbsd/` (`BKO_HOLT_BIN`, a pinned
+set of holt's builds), all built natively on OpenBSD: Go and Rust
 binaries there link libc dynamically, and the image's base has `ld.so` and
 `libc`.  `build-rustic.sh [--setup] [PORT]` builds rustic-bko so, in a
 throwaway copy of `openbsd8`, with Rust from OpenBSD's packages; see
@@ -35,7 +39,12 @@ throwaway copy of `openbsd8`, with Rust from OpenBSD's packages; see
 
 OpenBSD has no live system, so `build.sh` makes one the way the installer
 makes a system: the base set, `bsd.mp` as `/bsd`, `/var/sysmerge/etc.tgz`
-(inside base) for `/etc`, and `MAKEDEV all` for `/dev`.  Then:
+(inside base) for `/etc`, and `MAKEDEV all` for `/dev`.  The release's
+errata go in as syspatch would install them: each syspatch's files over the
+root's (only those the root has: X11 and comp-set files are left out), with
+its record in `/var/syspatch` (so `syspatch -l` lists it), and when a patch
+changes the kernel, GENERIC.MP is linked anew from the base's relink kit with
+the patched objects, as syspatch's `reorder_kernel` does.  Then:
 
 | MBR slot | Partition (marker) | Contents                                    | disklabel |
 |----------|--------------------|---------------------------------------------|-----------|
@@ -115,9 +124,9 @@ root can't log in over SSH.
   need it don't work: most Wi-Fi (iwm, iwx, ...), a few Ethernet chips (e.g.
   bnx), and amdgpu/radeondrm (the console stays a plain framebuffer).  Common
   wired Ethernet (em, igc, ix, re, ...) needs none.
-- **No errata.**  The sets are the release as shipped; syspatch's fixes
-  aren't in the image (and syspatch can't run on a read-only root).  Rebuild
-  from a newer release.
+- **Errata up to the build.**  The image has the syspatches published when it
+  was built; syspatch can't add later ones on a read-only root.  Rebuild the
+  image to take them.
 - No OpenZFS on OpenBSD; the marker says so.
 - No Secure Boot.
 - Network cards plugged in after boot (USB Ethernet) aren't configured:

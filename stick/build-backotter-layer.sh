@@ -2,7 +2,7 @@
 # Build BackOtter's own squashfs layer, stacked on the slimmed base layer from
 # slim-base-layer.sh: casper/ubuntu-server-minimal.backotter.squashfs.
 #
-# Usage: sudo [BKO_BIN=DIR] ./build-backotter-layer.sh SOURCE_ISO SLIM_DIR OUT_DIR
+# Usage: sudo [BKO_BIN=DIR] [BKO_HOLT_BIN=DIR] ./build-backotter-layer.sh SOURCE_ISO SLIM_DIR OUT_DIR
 #
 # SOURCE_ISO must be the ISO SLIM_DIR was built from: the packages come from
 # its pool/, which pins them to exactly the base layer's release.  The few the
@@ -11,7 +11,9 @@
 # BackOtter's archivers, restic-bko and rustic-bko (both required, statically
 # linked), come from BKO_BIN/linux/, as the other platforms' come from
 # BKO_BIN/PLATFORM/ for make-img-bsd.sh; BKO_BIN defaults to
-# ~/backotter-work/bko-bin in the home of the user who ran sudo.
+# ~/backotter-work/bko-bin in the home of the user who ran sudo.  bko-holt
+# (static) comes from BKO_HOLT_BIN/linux/, by default ~/backotter-work/holt-bin
+# there, as for make-img-bsd.sh.
 # OUT_DIR receives:
 #   ubuntu-server-minimal.backotter.squashfs   the layer
 #   ubuntu-server-minimal.backotter.manifest   package list of base + layer
@@ -36,7 +38,7 @@
 #     so it loads only with Secure Boot off.  Its build (compiler, kernel
 #     headers, DKMS) happens in a throwaway overlay; only the module lands
 #     in the layer.
-#   - adds restic-bko and rustic-bko in /usr/local/bin
+#   - adds restic-bko, rustic-bko and bko-holt in /usr/local/bin
 #   - tty1 and serial consoles run /usr/lib/backotter/console as root;
 #     tty2-tty6 are root shells
 #   - DHCP on wired interfaces; nothing waits for the network at boot
@@ -59,6 +61,11 @@ PACKAGES=(wpasupplicant efibootmgr zfsutils-linux openssh-server jfsutils)
 # come from there (apt preferences pin everything else away).
 ARCHIVE=http://archive.ubuntu.com/ubuntu/
 ARCHIVE_PACKAGES=(dosfstools nilfs-tools f2fs-tools)
+# The release's -updates and -security pockets, whatever they have newer than
+# the above: the base is up to date with them (slim-base-layer.sh), so the
+# layer must be too.  Through another host of Ubuntu's, which serves the same
+# archive, so that apt's preferences can tell it from the release pocket.
+UPDATES=http://security.ubuntu.com/ubuntu/
 ARCHIVE_DEPENDENCIES=(libsodium23)          # bcachefs-tools needs it
 # bcachefs, from its own repository: the tools into the layer, and the DKMS
 # source of the same version to build the module from.  Pinned to the version
@@ -89,6 +96,7 @@ here=$(dirname "$(realpath "$0")")
 die() { echo "build-backotter-layer: $*" >&2; exit 1; }
 # Under sudo, $HOME is root's: the default is the invoking user's.
 BKO_BIN=${BKO_BIN:-$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/backotter-work/bko-bin}
+BKO_HOLT_BIN=${BKO_HOLT_BIN:-$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/backotter-work/holt-bin}
 
 [[ $# -eq 3 ]] || die "usage: $0 SOURCE_ISO SLIM_DIR OUT_DIR"
 SOURCE_ISO=$(realpath "$1")
@@ -103,6 +111,7 @@ command -v mksquashfs >/dev/null || die "missing mksquashfs"
 for a in "${ARCHIVERS[@]}"; do
     [[ -x $BKO_BIN/linux/$a ]] || die "no $BKO_BIN/linux/$a"
 done
+[[ -x $BKO_HOLT_BIN/linux/bko-holt ]] || die "no $BKO_HOLT_BIN/linux/bko-holt"
 # The image's one kernel, which the bcachefs module is built for (in a chroot
 # uname -r is the build host's).
 kernels=("$SLIM"/rootfs/lib/modules/*/)
@@ -207,8 +216,14 @@ fpr=$(in_root env GNUPGHOME="$apt_dir/gnupg" gpg --batch --quiet --show-keys --w
 [[ $fpr == "$BCACHEFS_KEY_FPR" ]] || die "$BCACHEFS_KEY is key $fpr, not $BCACHEFS_KEY_FPR"
 write_source "$root$apt_dir/sources" ubuntu "$ARCHIVE" "$suite" /usr/share/keyrings/ubuntu-archive-keyring.gpg \
     "main universe"
+write_source "$root$apt_dir/sources" updates "$UPDATES" "$suite-updates $suite-security" \
+    /usr/share/keyrings/ubuntu-archive-keyring.gpg "main restricted universe"
 write_source "$root$apt_dir/sources" bcachefs "$BCACHEFS_REPO" "$BCACHEFS_SUITE" "$apt_dir/bcachefs.asc"
 cat >"$root$apt_dir/preferences/backotter" <<EOF
+Package: *
+Pin: origin "$(uri_host "$UPDATES")"
+Pin-Priority: 500
+
 Package: *
 Pin: origin "$(uri_host "$ARCHIVE")"
 Pin-Priority: -1
@@ -229,7 +244,7 @@ EOF
 apt_opts=(-o "Dir::Etc::SourceList=/dev/null" -o "Dir::Etc::SourceParts=$apt_dir/sources"
           -o "Dir::Etc::Preferences=/dev/null" -o "Dir::Etc::PreferencesParts=$apt_dir/preferences"
           -o "Dir::State::Lists=$apt_dir/lists")
-in_root apt-get "${apt_opts[@]}" -q update >/dev/null
+in_root apt-get "${apt_opts[@]}" -q --error-on=any update >/dev/null
 before=$(in_root dpkg-query -W -f '${Package}\n' | sort)
 in_root apt-get "${apt_opts[@]}" -y -q --no-install-recommends install \
     "${PACKAGES[@]}" "${ARCHIVE_PACKAGES[@]}" "bcachefs-tools=$BCACHEFS_DEB_VERSION" >/dev/null
@@ -246,10 +261,10 @@ rm "$root/etc/apt/sources.list.d/cdrom.sources"
 # --- The bcachefs module -------------------------------------------------------------
 # Built by DKMS in a throwaway overlay on the layer so far, so the compiler,
 # the kernel's headers and DKMS itself never reach the layer; only the module
-# does.  The toolchain comes from the release pocket, with the headers for
-# exactly KVER from -updates (the only place they are): not linux-headers-
-# generic, which bcachefs-kernel-dkms depends on and which would be the
-# newest kernel's.  So the DKMS package isn't installed, only unpacked.
+# does.  The toolchain, and the headers for exactly KVER, come from the
+# release with its -updates and -security, as the base is: not
+# linux-headers-generic, which bcachefs-kernel-dkms depends on and which would
+# be the newest kernel's.  So the DKMS package isn't installed, only unpacked.
 kb=$work/kmod
 kb_root=$kb/root
 mkdir -p "$kb/upper" "$kb/overlay-work" "$kb_root"
@@ -260,21 +275,13 @@ in_kb() { chroot "$kb_root" "$@"; }
 kb_apt=/tmp/backotter-kmod-apt
 mkdir -p "$kb_root$kb_apt"/{sources,preferences,lists/partial}
 cp "$here/$BCACHEFS_KEY" "$kb_root$kb_apt/bcachefs.asc"
-write_source "$kb_root$kb_apt/sources" ubuntu "$ARCHIVE" "$suite $suite-updates" /usr/share/keyrings/ubuntu-archive-keyring.gpg
+write_source "$kb_root$kb_apt/sources" ubuntu "$ARCHIVE" "$suite $suite-updates $suite-security" \
+    /usr/share/keyrings/ubuntu-archive-keyring.gpg
 write_source "$kb_root$kb_apt/sources" bcachefs "$BCACHEFS_REPO" "$BCACHEFS_SUITE" "$kb_apt/bcachefs.asc"
-cat >"$kb_root$kb_apt/preferences/backotter" <<EOF
-Package: *
-Pin: release a=$suite-updates
-Pin-Priority: -1
-
-Package: linux-headers-$KVER linux-headers-${KVER%-*}
-Pin: release a=$suite-updates
-Pin-Priority: 500
-EOF
 kb_apt_opts=(-o "Dir::Etc::SourceList=/dev/null" -o "Dir::Etc::SourceParts=$kb_apt/sources"
              -o "Dir::Etc::Preferences=/dev/null" -o "Dir::Etc::PreferencesParts=$kb_apt/preferences"
              -o "Dir::State::Lists=$kb_apt/lists")
-in_kb apt-get "${kb_apt_opts[@]}" -q update >/dev/null
+in_kb apt-get "${kb_apt_opts[@]}" -q --error-on=any update >/dev/null
 # -updates lists a kernel's headers only while that kernel is recent.
 in_kb apt-cache "${kb_apt_opts[@]}" show "linux-headers-$KVER" >/dev/null 2>&1 ||
     die "$suite-updates no longer has linux-headers-$KVER: rebuild the base from a newer ISO"
@@ -317,6 +324,7 @@ done < <(find "$here/layer" -type f -print0)
 for a in "${ARCHIVERS[@]}"; do
     install -D -o root -g root -m 755 "$BKO_BIN/linux/$a" "$root/usr/local/bin/$a"
 done
+install -D -o root -g root -m 755 "$BKO_HOLT_BIN/linux/bko-holt" "$root/usr/local/bin/bko-holt"
 chmod 600 "$root/etc/netplan/50-backotter-wired.yaml"   # netplan warns otherwise
 chmod 440 "$root/etc/sudoers.d/backotter"
 in_root visudo -cq -f /etc/sudoers.d/backotter || die "sudoers file rejected"
@@ -349,10 +357,13 @@ restic_v=$(in_root restic-bko version | head -n 1) && [[ $restic_v == *backotter
     die "restic-bko isn't BackOtter's restic: $restic_v"
 rustic_v=$(in_root rustic-bko --version) && [[ $rustic_v == *backotter* ]] ||
     die "rustic-bko isn't BackOtter's rustic: $rustic_v"
+holt_v=$(in_root bko-holt --version) && [[ $holt_v == "bko-holt "[0-9]* ]] ||
+    die "bko-holt --version says: $holt_v"
 log ""
-log "== Archivers"
+log "== Archivers, and bko-holt"
 log "  $restic_v"
 log "  $rustic_v"
+log "  $holt_v"
 
 in_root dpkg-query -W -f '${binary:Package}\t${Version}\n' >"$OUT/$LAYER.manifest"
 rm -f "$root/usr/sbin/policy-rc.d"

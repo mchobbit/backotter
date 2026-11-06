@@ -176,6 +176,7 @@ EOF
     install -m 555 "$in/console" "$in/remote-access" "$r/usr/local/lib/backotter/"
     install -m 555 "$in/restic-bko" "$r/usr/local/bin/"
     [ ! -f "$in/rustic-bko" ] || install -m 555 "$in/rustic-bko" "$r/usr/local/bin/"
+    install -m 555 "$in/bko-holt" "$r/usr/local/bin/"
     install -m 444 "$in/backotter.json" "$r/.disk/backotter.json"
 
     # BIOS boot's second stage, and the boot menu (for UEFI too).
@@ -196,7 +197,7 @@ EOF
 
 assemble() {
     for f in base.tar.xz etc.tar.xz kern-GENERIC.tar.xz backotter.json config.img console \
-        remote-access sshd_config.backotter restic-bko; do
+        remote-access sshd_config.backotter restic-bko bko-holt; do
         [ -e "$in/$f" ] || die "no in/$f"
     done
     [ "$(stat -L -f %z "$in/config.img")" -eq $((CONFIG_SECTORS * SECTOR)) ] ||

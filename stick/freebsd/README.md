@@ -86,8 +86,10 @@ What changes from the memstick:
   a warning) if there is none for freebsd; the boot test's rustic-bko check
   then fails, since the FreeBSD image is meant to have both.
   `build-rustic.sh [--setup] [PORT]` builds it natively in a throwaway copy of
-  the `freebsd15` test guest (not the builder) into `bko-bin/freebsd/`; see
-  `../build-rustic-native.sh` for `SRC=` (local trees) and the rest.
+  the `freebsd14` test guest (not the builder) into `bko-bin/freebsd/`, so
+  that the binary also runs on FreeBSD 14 (one built on 15 needs 15's libc
+  symbol versions); see `../build-rustic-native.sh` for `SRC=` (local trees)
+  and the rest.
 
 ## Notes
 

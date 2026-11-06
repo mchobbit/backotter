@@ -40,7 +40,7 @@ In `stick/`, the builds of rustic-bko, which tests and images share:
 
 | Script | What it does |
 |---|---|
-| `freebsd/build-rustic.sh`, `openbsd/build-rustic.sh`, `netbsd/build-rustic.sh`, `illumos/build-rustic.sh` | Native builds in a throwaway copy of freebsd15, openbsd8, netbsd11, omnios58 (the work is in `build-rustic-native.sh`); `--setup` keeps a build image with the tools installed |
+| `freebsd/build-rustic.sh`, `openbsd/build-rustic.sh`, `netbsd/build-rustic.sh`, `illumos/build-rustic.sh` | Native builds in a throwaway copy of freebsd14 (so that the binary runs on FreeBSD 14 and 15), openbsd8, netbsd11, omnios58 (the work is in `build-rustic-native.sh`); `--setup` keeps a build image with the tools installed |
 | `dragonfly/build-rustic.sh` | Cross-build for DragonFly on the host (its packaged Rust is too old) |
 | `haiku/build-rustic.sh` | Native build in a throwaway copy of haiku6, with HaikuPorts' current Rust (Haiku has rustic only, no restic) |
 | `prep-rustic-src.sh` | In `SRC=` mode, every one of them points rustic at the local rustic_core (and its vendored walkdir) with it |
@@ -159,7 +159,7 @@ the slow steps, native guest builds and round trips):
 
 | Chopin | Cinqcent |
 |---|---|
-| restic-bko cross-builds (the restic fork's build) | native rustic-bko builds: freebsd15, openbsd8, omnios58, netbsd11 |
+| restic-bko cross-builds (the restic fork's build) | native rustic-bko builds: freebsd14, openbsd8, omnios58, netbsd11 |
 | rustic-bko for Linux, `dragonfly/build-rustic.sh` and `haiku/build-rustic.sh` | round trips and `nonroot-rt.sh` on freebsd15, freebsd15-ufs, netbsd11, alpinebsd, openbsd8, omnios58 |
 | `fs_roundtrip.py` on zfs, zfs onto ext4, bcachefs, xfs, btrfs; `nonroot-rt.sh linux`; `sparse-rt.sh` on xfs, btrfs (as root) | `fs_roundtrip.py` on ext4, f2fs, tmpfs, jfs; `sparse-rt.sh` on zfs, zfs-nocomp, ext4 (as root) |
 | round trips and `nonroot-rt.sh` on dragonfly6; `zfs-guest-rt.sh`; `compare.py` | `sparse-rt.sh` in freebsd15, freebsd15-ufs, netbsd11's build image, omnios58 |

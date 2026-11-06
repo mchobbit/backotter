@@ -525,7 +525,7 @@ build_haiku() {  # natively in a throwaway haiku6, on a guest slot
 }
 
 # --- Cinqcent's builds ---------------------------------------------------------------------
-vm_of() { case $1 in freebsd) echo freebsd15 ;; openbsd) echo openbsd8 ;; netbsd) echo netbsd11 ;; illumos) echo omnios58 ;; esac; }
+vm_of() { case $1 in freebsd) echo freebsd14 ;; openbsd) echo openbsd8 ;; netbsd) echo netbsd11 ;; illumos) echo omnios58 ;; esac; }
 build_native() {  # OS PORT
     local os=$1 port=$2 t0=$SECONDS d inputs=$LOGS/rustic-$1.inputs vm img f fast="" s
     vm=$(vm_of "$os")

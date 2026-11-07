@@ -21,22 +21,29 @@
 # phase, src-I and dst-I, attached to the rescuer after its own disk in that
 # order, the decoy after the targets.  A ZFS pool on more than one disk must
 # import with every one of them ONLINE wherever the script mounts it.
+#
+# The debugging options are ht1.sh's (HT_RAM, HT_HOLT, HT_QUICK, HT_THROUGH,
+# HT_KEEP; ht1-debug.sh drives them).  Each rebuild runs its rescuer on a
+# throwaway overlay of the one holding the backup (R/rescuer-try.qcow2), so
+# no try leaves anything behind for the next (an imported pool, a log).
 set -uo pipefail
 
 G=$1 RUN=$2; shift 2
 PHASES=("$@"); [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source backup rebuild verify)
 W=/home/m/backotter-work
-T=$W/testvm
 BIN=/bkoscratch/holttest1d/bin
 HERE=$(dirname "$(realpath "$0")")
+T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, vm-lib, compare/), as ht1.sh's
 VARIANT=${HT_VARIANT:-}
 case $VARIANT in ""|bigger|oneshot) ;; *) echo "HT_VARIANT: bigger or oneshot" >&2; exit 2 ;; esac
 GV=$G${VARIANT:+-$VARIANT}
-R=/bkoscratch/holttest1d/$RUN/$GV
+BASE=/bkoscratch/holttest1d; [[ ${HT_RAM:-} == 1 ]] && BASE=/mnt/bko-ram/holttest1d
+R=$BASE/$RUN/$GV
 PORT=${HT_PORT:-2970}
 export SSH_PORT=$PORT
 mkdir -p "$R/logs" "$R/dumps" /bkoscratch/tmp
-export TMPDIR=/bkoscratch/tmp
+export TMPDIR=/bkoscratch/tmp; [[ ${HT_RAM:-} == 1 ]] && TMPDIR=/mnt/bko-ram/tmp
+install -d -m 1777 "$TMPDIR"
 fails=0
 say() { echo "$*" | tee -a "$R/report.txt"; }
 ok() { say "PASS $*"; }
@@ -76,8 +83,12 @@ case $G in
         GPATH=/usr/gnu/bin:/usr/sbin:/usr/bin:/sbin:/opt/ooce/bin
         BOOTSTATE='i=0; while svcs -H -o state | grep -q "\*" && [ $i -lt 60 ]; do sleep 2; i=$((i + 1)); done; svcs -H -o state,fmri | awk "\$1 != \"online\" && \$1 != \"disabled\" {print \"down \" \$2}" | sort'
         # bootadm update-archive writes in /etc (system.d, versions) and
-        # the root directory; the load log goes in /var/log/bko-holt.
-        EXTRA_BOOT_RE='/(etc/zfs/zpool\.cache|platform/i86pc(/amd64)?/boot_archive(\.hash)?|platform/i86pc(/amd64)?|boot|var/log(/bko-holt(/load\.log)?)?|etc/zfs|etc/system\.d|etc/versions)$|^(missing|extra): d [0-9]+ [0-9]+ [0-9]+ [0-9.]+ \.$' ;;
+        # the root directory; the load log goes in /var/log/bko-holt.  Where
+        # the source's archive was out of date (omnios58-mirror's: its own
+        # shutdown left it), the rebuild also writes boot/solaris's stat
+        # files and the archive cache, and leaves repository.db's mtime (the
+        # same content: only its metadata line may differ).
+        EXTRA_BOOT_RE='/(etc/zfs/zpool\.cache|platform/i86pc(/amd64)?/boot_archive(\.hash)?|platform/i86pc(/amd64)?(/archive_cache(/.*)?)?|boot(/solaris(/filestat\.ramdisk|/timestamp\.cache)?)?|var/log(/bko-holt(/load\.log)?)?|etc/zfs|etc/system\.d|etc/versions|etc/svc)$|^(missing|extra): d [0-9]+ [0-9]+ [0-9]+ [0-9.]+ \.$|^(missing|extra): f [0-9]+ [0-9]+ [0-9]+ [0-9]+ [0-9.]+  \./etc/svc/repository\.db$' ;;
     haiku*)
         PLAT=haiku RG=haiku6 DISK= RAWSFX= GUSER=user
         GPATH=/bin:/boot/system/bin:/boot/system/non-packaged/bin
@@ -103,9 +114,22 @@ rescuer_ready() {
         local want=$1
         for _ in $(seq 30); do
             mapfile -t RN < <(sshk "$rkey" 'devfsadm -c disk >/dev/null 2>&1; diskinfo -Hp | cut -f2')
-            (( ${#RN[@]} >= want )) && return 0
+            (( ${#RN[@]} >= want )) && break
             sleep 2
         done
+        # By their serials (s_resc, s_decoy): the rescuer's own, the
+        # guest's disks in order, the decoy.
+        local by; by=$(sshk "$rkey" 'iostat -En' | awk '/^c[0-9]/ {d = $1} /Serial No:/ {s = $0; sub(/.*Serial No: */, "", s); sub(/ .*/, "", s); print s, d}')
+        if grep -q '^bkoresc ' <<<"$by"; then
+            local order=(bkoresc) i
+            for ((i = 0; i < n; i++)); do order+=("bkodisk-$i"); done
+            order+=(bkodecoy)
+            RN=()
+            for i in "${order[@]}"; do
+                local d; d=$(awk -v s="$i" '$1 == s {print $2}' <<<"$by")
+                [[ -n $d ]] && RN+=("$d")
+            done
+        fi
         return 0
     fi
     [[ $PLAT == haiku ]] || return 0
@@ -120,7 +144,7 @@ rraw() { case $PLAT in haiku) echo "$(rdev "$1")/raw" ;; illumos) echo "/dev/rds
 LISTMOUNTS='mount | sed -e "s/ type [^ ]* (.*//" -e "s/ (.*//" -e "s/^.* on //"'
 # A disk's sectors (the name, ld1), and a checksum of some of them.
 SECTORS='sectors() { case $(uname) in FreeBSD) diskinfo /dev/$1 | cut -f4 ;; DragonFly) echo $(( $(printf %d 0x$(diskinfo /dev/$1 | sed -n "s/.*size=0x\([0-9a-fA-F]*\).*/\1/p")) / 512 )) ;; *) disklabel $1 | awk "/^total sectors:/ {print \$3}" ;; esac; }'
-HOLT=$BIN/$PLAT/bko-holt
+HOLT=${HT_HOLT:-$BIN/$PLAT/bko-holt}
 RUSTIC=${HT_RUSTIC:-$W/bko-bin/$PLAT/rustic-bko}
 gdir=$W/vms/$G gkey=$gdir/id_ed25519
 rdir=$W/vms/$RG rkey=$rdir/id_ed25519
@@ -249,6 +273,28 @@ for ((i = 0; i < n; i++)); do
     ((i > 0)) && src_more+=(--disk "$R/src-$i.qcow2") && dst_more+=(--disk "$R/dst-$i.qcow2")
 done
 SRC=${src[0]} DST=${dst[0]} RESC=$R/rescuer.qcow2
+# illumos: serial numbers for the disks, as real disks have (devids), a
+# source disk and its target sharing one (bkodisk-I); and in the rescuer,
+# its own disk in a PCI slot out of the way (16, booted first), so that the
+# disks it works on are in the slots the machine itself has them in (4 on).
+# illumos finds a mirrored rpool's other half by its physical path first: a
+# rescuer whose own disk took slot 4 left the restored mirror half found
+# (omnios58-mirror's DEGRADED rpool), where a real rescue stick, on USB,
+# takes no disk's slot.  So the rebuild's rescuer has its own disk in slot
+# 16 and the targets in the slots they have in the machine.  Only there: the
+# rescuer's own rpool label names slot 4 too, and with a real rpool in slot 4
+# (the source's, the restored one) it boots that one instead.  The backup's
+# and the verify's rescuers keep slot 4, and the verify's runs on --snapshot,
+# for its import (read-write, by an alias) would put their slots in the
+# restored labels.  rescuer_ready names the disks by their serials.
+s_guest=() s_resc=() s_decoy=() v_snap=()
+if [[ $PLAT == illumos ]]; then
+    ids=() sl=(); for ((i = 0; i < n; i++)); do ids+=("bkodisk-$i"); sl+=($((4 + i))); done
+    s_guest=(--disk-serials "$(IFS=,; echo "${ids[*]}")")
+    s_resc=(--disk-serials "$(IFS=,; echo "bkoresc,${ids[*]}")")
+    v_snap=(--snapshot)
+    s_decoy=(--disk-serials "$(IFS=,; echo "bkoresc,${ids[*]},bkodecoy")" --disk-slots "$(IFS=,; echo "16,${sl[*]},$((4 + n))")")
+fi
 size_of() { qemu-img info --output=json "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])'; }
 
 # The command goes on sh's stdin: no quoting to survive (csh is DragonFly's
@@ -404,7 +450,7 @@ phase_source() {
     for ((i = 0; i < n; i++)); do
         rm -f "${src[i]}"; qemu-img create -q -f qcow2 -b "${imgs[i]}" -F qcow2 "${src[i]}"
     done
-    vm_up "$SRC" "$R/logs/source-serial.log" "${fw[@]}" "${src_more[@]}"
+    vm_up "$SRC" "$R/logs/source-serial.log" "${fw[@]}" "${s_guest[@]}" "${src_more[@]}"
     vm_wait "$gkey" || { bad "source boots (no SSH)"; vm_down "$gkey"; return; }
     ok "source boots"
     sshk "$gkey" "$BOOTSTATE" > "$R/logs/source-bootstate.txt" 2>&1
@@ -423,7 +469,7 @@ phase_backup() {
     say "== backup"
     rm -f "$RESC"; qemu-img create -q -f qcow2 -b "$rimg" -F qcow2 "$RESC"
     qemu-img resize -q "$RESC" +8G 2>/dev/null || true
-    vm_up "$RESC" "$R/logs/backup-serial.log" "${rfw[@]}" --memory 3072 "${all_src[@]}"
+    vm_up "$RESC" "$R/logs/backup-serial.log" "${rfw[@]}" --memory 3072 "${s_resc[@]}" "${all_src[@]}"
     vm_wait "$rkey" || { bad "rescuer boots"; vm_down "$rkey"; return; }
     rescuer_ready $((1 + n))
     put "$rkey" "$RUSTIC" $RH/rustic-bko
@@ -459,13 +505,17 @@ load_step() { local want=$1 name=$2; shift 2
 phase_rebuild() {
     say "== rebuild"
     [[ -f $RESC ]] || { bad "no rescuer with the backup (run the backup phase)"; return; }
+    # A rescuer HT_KEEP left up from the last try.
+    pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null && vm_down "$rkey"
+    local try=$R/rescuer-try.qcow2
+    rm -f "$try"; qemu-img create -q -f qcow2 -b "$RESC" -F qcow2 "$try"
     local grow=0; [[ $VARIANT == bigger ]] && grow=$((1 << 30))
     rm -f "${dst[@]}" "$R/decoy.qcow2"
     for ((i = 0; i < n; i++)); do
         qemu-img create -q -f qcow2 "${dst[i]}" "$(($(size_of "${imgs[i]}") + grow))"
     done
     qemu-img create -q -f qcow2 "$R/decoy.qcow2" "$(size_of "$gimg")"
-    vm_up "$RESC" "$R/logs/rescuer-serial.log" "${rfw[@]}" --memory 3072 "${all_dst[@]}" --disk "$R/decoy.qcow2"
+    vm_up "$try" "$R/logs/rescuer-serial.log" "${rfw[@]}" --memory 3072 "${s_decoy[@]}" "${all_dst[@]}" --disk "$R/decoy.qcow2"
     vm_wait "$rkey" || { bad "rescuer boots"; vm_down "$rkey"; return; }
     rescuer_ready $((n + 2))
     put "$rkey" "$HOLT" $RH/bko-holt
@@ -497,16 +547,20 @@ phase_rebuild() {
     local edges="for x in" i
     for ((i = 0; i < n; i++)); do edges+=" $(rraw $((i + 1))):$((($(size_of "${imgs[i]}") + grow) / 512))"; done
     edges+=" $(rraw $D):$(($(size_of "$gimg") / 512)); do r=\${x%:*} s=\${x##*:}; echo \$r \$(dd if=\$r bs=512 count=2048 2>/dev/null | cksum) \$(dd if=\$r bs=512 skip=\$((s - 2048)) count=2048 2>/dev/null | cksum); done"
+    local quick=${HT_QUICK:-}
+    [[ $quick == 1 ]] || {
     sshk "$rkey" "$edges" > "$R/logs/edges-before.txt" 2>&1
     load_step 4 refuse-nomap
     load_step 4 refuse-root "--map ${srcn[0]}=${RN[0]} --erase ${RN[0]}" "${others[@]}"
     load_step 4 refuse-decoy "--map ${srcn[0]}=${RN[D]}" "${others[@]}" \
         && { cat "$R/logs/rebuild-refuse-decoy".{out,err} | grep -q "isn't blank" || bad "load refuse-decoy: refused, but not for the decoy's filesystem"; }
+    }
     local map=() erase=() written=()
     for ((i = 0; i < n; i++)); do
         map+=(--map "${srcn[i]}=${RN[i + 1]}")
         erase+=(--erase "$([[ $PLAT == haiku || $PLAT == illumos ]] && echo "${RN[i + 1]}" || rdev $((i + 1)))")
     done
+    [[ $quick == 1 ]] || {
     load_step 0 dry-partition "${map[@]}" --only partition
     for ((i = 1; i <= n; i++)); do
         sshk "$rkey" "dd if=$(rraw $i) bs=512 count=34 2>/dev/null | od -An -v | tr -d ' 0\n' | grep -q ." >/dev/null 2>&1 && written+=("$(rdev $i)")
@@ -518,10 +572,15 @@ phase_rebuild() {
     else
         bad "a refusal or the dry run wrote to a disk (logs/edges-before.txt, edges-after.txt)"
     fi
+    }
     map+=("${erase[@]}")
     local repo=(--repo $RH/repo --password-file $RH/repo-password --archiver $RH/rustic-bko --snapshot "latest:/mnt/src")
     local stages=(partition assemble format mount restore boot close)
     [[ $VARIANT == oneshot ]] && stages=(oneshot)
+    if [[ -n ${HT_THROUGH:-} ]]; then
+        [[ " ${stages[*]} " == *" $HT_THROUGH "* ]] || { bad "HT_THROUGH=$HT_THROUGH: not one of ${stages[*]}"; vm_down "$rkey"; return; }
+        local upto=() st; for st in "${stages[@]}"; do upto+=("$st"); [[ $st == "$HT_THROUGH" ]] && break; done; stages=("${upto[@]}")
+    fi
     for s in "${stages[@]}"; do
         local how=(--only "$s") extra=()
         [[ $s == restore || $s == oneshot ]] && extra=("${repo[@]}")
@@ -529,7 +588,7 @@ phase_rebuild() {
         TMO=7200 load_step 0 "$s" "${map[@]}" "${extra[@]}" "${how[@]}" --commit || {
             sshk "$rkey" "cat $([[ $PLAT == haiku ]] && echo /var/run || echo /run)/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
             sshk "$rkey" "set -x; mount; df; gpart show; disklabel ${RN[1]}; dkctl ${RN[1]} listwedges; zpool status; zpool list -v; zfs list -o name,mounted,mountpoint,canmount; glabel status; swapctl -l" > "$R/logs/rebuild-failed-state.txt" 2>&1
-            vm_down "$rkey"; return; }
+            kept_or_down; return; }
         [[ $PLAT == haiku ]] && sshk "$rkey" "echo $s \$(stat -c %Y.%y /mnt/bko-target 2>&1)" >> "$R/logs/haiku-root-mtime.txt" 2>&1
         # Haiku publishes a new table's partitions only at boot.
         if [[ $PLAT == haiku && $s == partition ]]; then
@@ -551,19 +610,33 @@ phase_rebuild() {
         fi
     done
     # The decoy was never a target: its first and last MiB are as they were.
-    sshk "$rkey" "$edges" > "$R/logs/edges-end.txt" 2>&1
-    [[ $(sed -n "${D}p" "$R/logs/edges-end.txt") == "$(sed -n "${D}p" "$R/logs/edges-before.txt")" && -n $(sed -n "${D}p" "$R/logs/edges-end.txt") ]] || bad "the decoy changed (logs/edges-before.txt, edges-end.txt)"
+    if [[ $quick != 1 ]]; then
+        sshk "$rkey" "$edges" > "$R/logs/edges-end.txt" 2>&1
+        [[ $(sed -n "${D}p" "$R/logs/edges-end.txt") == "$(sed -n "${D}p" "$R/logs/edges-before.txt")" && -n $(sed -n "${D}p" "$R/logs/edges-end.txt") ]] || bad "the decoy changed (logs/edges-before.txt, edges-end.txt)"
+    fi
     sshk "$rkey" "cat $([[ $PLAT == haiku ]] && echo /var/run || echo /run)/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
+    [[ ${HT_KEEP:-} == 1 ]] && { kept_or_down; return; }
     vm_down "$rkey"
+    rm -f "$try"
+}
+# HT_KEEP=1: the rescuer stays up, as the stage left it; else it goes down.
+kept_or_down() {
+    if [[ ${HT_KEEP:-} == 1 ]]; then
+        say "rescuer kept up: ssh -i $rkey -p $PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $GUSER@127.0.0.1 (load: $RH/bko-holt load $RH/layout.json ...)"
+    else
+        vm_down "$rkey"
+    fi
 }
 
 # mtree's report, but for what the boot stage writes.
 BOOT_STAGE_RE='^(extra: |missing: )?(\./)?(var/log/bko-holt|var/log|boot/zfs/zpool\.cache|etc/zfs/zpool\.cache|boot/zfs|etc/zfs|\.sujournal)( |:|/|$)'
 
 phase_verify() {
+    # A rescuer HT_KEEP left up has the targets open.
+    pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null && vm_down "$rkey"
     say "== verify"
     if [[ -f $RESC ]]; then
-        vm_up "$RESC" "$R/logs/verify-rescuer-serial.log" "${rfw[@]}" --memory 3072 "${all_dst[@]}"
+        vm_up "$RESC" "$R/logs/verify-rescuer-serial.log" "${v_snap[@]}" "${rfw[@]}" --memory 3072 "${s_resc[@]}" "${all_dst[@]}"
         if vm_wait "$rkey"; then
             rescuer_ready $((1 + n))
             mount_script "$R/dumps/src.json" 1 /mnt/dst > "$R/logs/verify-mount.sh" 2> "$R/logs/verify-mount.log" ||
@@ -593,7 +666,7 @@ phase_verify() {
         fi
         vm_down "$rkey"
     fi
-    vm_up "$DST" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${dst_more[@]}"
+    vm_up "$DST" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${s_guest[@]}" "${dst_more[@]}"
     if ! vm_wait "$gkey"; then bad "the restored disk boots by itself (no SSH; logs/restored-serial.log)"; vm_down "$gkey"; return; fi
     ok "the restored disk boots by itself, SSH with the guest's key"
     sshk "$gkey" "$BOOTSTATE" > "$R/logs/restored-bootstate.txt" 2>&1
@@ -620,7 +693,7 @@ say "HoltTest1 $G ($PLAT), run $RUN, $(date -u +%FT%TZ), phases: ${PHASES[*]}"
 for p in "${PHASES[@]}"; do "phase_$p"; done
 if ((fails == 0)); then
     say "RESULT: PASS"
-    [[ " ${PHASES[*]} " == *" verify "* ]] && rm -f "${src[@]}" "${dst[@]}" "$RESC" "$R/decoy.qcow2"
+    [[ " ${PHASES[*]} " == *" verify "* ]] && rm -f "${src[@]}" "${dst[@]}" "$RESC" "$R/rescuer-try.qcow2" "$R/decoy.qcow2"
     exit 0
 fi
 say "RESULT: FAIL ($fails)"

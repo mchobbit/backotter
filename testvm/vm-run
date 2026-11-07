@@ -2,8 +2,8 @@
 # Boot a BackOtter test VM from its disk image.
 #
 # Usage: vm-run [--uefi [--no-secure-boot] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]]
-#               [--discard] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--legacy-virtio-net]
-#               [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga]
+#               [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--nic MODEL]
+#               [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga]
 #               IMAGE [-- QEMU_ARGS...]
 #
 # The VM gets 2 CPUs, 2 GB RAM (MEMORY=MB overrides), KVM, and QEMU's
@@ -57,6 +57,17 @@
 #                 initramfs.
 #   --disk IMAGE  another disk on the same bus, after IMAGE (repeatable), e.g.
 #                 for RAID; --snapshot and --ram cover it too
+#   --disk-serials S0,S1,...
+#                 give the disks (IMAGE first, then each --disk) these serial
+#                 numbers, as real disks have: a guest then has device IDs
+#                 (illumos' devids, /dev/disk/by-id) to find a disk by when it
+#                 sits in another slot than before.  Without it, virtio disks
+#                 have none (and the PCI layout is the same either way)
+#   --disk-slots N0,N1,...
+#                 put the virtio disks in these PCI slots (decimal), IMAGE's
+#                 first; IMAGE then boots first whatever slot it has.  A
+#                 rescuer's own disk out of the way, so that the disks it
+#                 works on have the slots they have in the machine itself
 #   --nic MODEL   the network card's QEMU model instead of virtio-net-pci, e.g.
 #                 e1000e, e1000 or rtl8139: another driver.  It keeps the PCI
 #                 slot, so names by slot (ens3) stay the same.
@@ -88,7 +99,7 @@ fi
 die() { echo "vm-run: $*" >&2; exit 1; }
 
 cdrom="" uefi=no q35=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic) vga=()
-bus=virtio extra=() nic=virtio-net-pci nic_global=() mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
+bus=virtio extra=() serials=() slots=() nic=virtio-net-pci nic_global=() mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
 while [[ $# -gt 0 ]]; do
     case $1 in
         --cdrom) cdrom=$(realpath "$2"); shift 2 ;;
@@ -103,6 +114,8 @@ while [[ $# -gt 0 ]]; do
         --no-vga) vga=(-vga none); shift ;;
         --disk-bus) bus=$2; shift 2 ;;
         --disk) extra+=("$(realpath "$2")"); shift 2 ;;
+        --disk-serials) IFS=, read -ra serials <<<"$2"; shift 2 ;;
+        --disk-slots) IFS=, read -ra slots <<<"$2"; shift 2 ;;
         --nic) nic=$2; shift 2 ;;
         --legacy-virtio-net) nic_global=(-global virtio-net-pci.disable-modern=on); shift ;;
         --mac) mac=,mac=$2; shift 2 ;;
@@ -114,7 +127,7 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
-[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--discard] [--disk-bus BUS] [--disk IMAGE]... [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga] IMAGE [-- QEMU_ARGS...]"
+[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga] IMAGE [-- QEMU_ARGS...]"
 image=$(realpath "$1")
 shift
 [[ ${1:-} == -- ]] && shift
@@ -166,7 +179,18 @@ for i in "${!images[@]}"; do
     # Not $(drive_opts): a subshell would lose the overlays it records.
     drive_opts "${images[$i]}" >"$tmp/drive"
     opts=$(<"$tmp/drive")
-    if [[ $bus == virtio ]]; then
+    if [[ $bus == virtio && ( -n ${serials[$i]:-} || ${#slots[@]} -gt 0 ) ]]; then
+        # A virtio-blk device of its own, for the serial or the slot: added
+        # in the same order, it takes the same PCI slot if=virtio would.
+        dev="virtio-blk-pci,drive=disk$i"
+        [[ -n ${serials[$i]:-} ]] && dev+=",serial=${serials[$i]}"
+        if [[ -n ${slots[$i]:-} ]]; then
+            dev+=",addr=$(printf '0x%x' "${slots[$i]}")"
+            ((i == 0)) && dev+=",bootindex=0"
+        fi
+        disk_args+=(-drive "$opts,if=none,id=disk$i" -device "$dev")
+        continue
+    elif [[ $bus == virtio ]]; then
         # Exactly as every guest was installed: if=virtio keeps its PCI layout.
         disk_args+=(-drive "$opts,if=virtio")
         continue
@@ -174,7 +198,7 @@ for i in "${!images[@]}"; do
     disk_args+=(-drive "$opts,if=none,id=disk$i")
     case $bus in
         scsi) disk_args+=(-device "scsi-hd,drive=disk$i,bus=scsi0.0") ;;
-        nvme) disk_args+=(-device "nvme,drive=disk$i,serial=backotter$i") ;;
+        nvme) disk_args+=(-device "nvme,drive=disk$i,serial=${serials[$i]:-backotter$i}") ;;
         # On q35, from port 2: --cdrom (a legacy IDE drive) takes port 0.
         sata) if [[ $q35 == yes ]]; then disk_args+=(-device "ide-hd,drive=disk$i,bus=ide.$((i + 2))")
               else disk_args+=(-device "ide-hd,drive=disk$i,bus=ahci0.$i"); fi ;;

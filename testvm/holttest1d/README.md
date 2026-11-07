@@ -37,7 +37,7 @@ guests.  A guest passes only when every check passes.  Status is as of
 | 1V | Void Linux (musl) | `void-musl` | passes |
 | 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12 | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12` | passes |
 | 1H | Haiku | `haiku6` | passes (but for a known rustic-bko limit: the volume root's mtime) |
-| 1I | illumos | `omnios58`, `omnios58-mirror` | `omnios58` passes; `omnios58-mirror` (run `raid1`) backs up from both disks, then `load` refuses its layout: its boot environment is the cloud image's, `mountpoint=legacy`, which load's mount plan skips ("nothing ... mounts /") |
+| 1I | illumos | `omnios58`, `omnios58-mirror` | both pass (`omnios58-mirror`: run `raid6`, the restored `rpool` ONLINE on both disks) |
 | 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `freebsd15-mirror`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6`, `alpinebsd` | passes |
 
 **The RAID guests** (2026-11-07, run `raid1`), each with a `fresh-install`
@@ -128,6 +128,16 @@ The multi-disk guests are `freebsd15-mirror` (`make-freebsd.sh --zfs-mirror`:
 partition) and `omnios58-mirror` (`make-omnios.sh --rpool-mirror`: `rpool`
 attached to a second whole disk, the loader on both); either disk of each
 boots alone.
+
+On illumos a root mirror finds its other half by the physical path (the PCI
+slot) in its label before the device id, so the disks keep their slots
+(`vm-run --disk-slots`) and serials (`--disk-serials`) from the machine to
+the rescuer.  A real rescue stick is on USB and takes no disk's slot: the
+rebuild's rescuer has its own disk in slot 16.  Only the rebuild's, for the
+rescuer's own `rpool` names slot 4 too, and with a real `rpool` there (the
+source's, the restored one) the rescuer boots that one.  The verify's
+rescuer, whose import is read-write, runs on `--snapshot`, so its slots don't
+reach the restored labels.
 
 **ht1-offline.sh** (Redox, Sculpt OS) is for a system that can't run
 bko-holt: Redox's sshd serves no logins, and Sculpt has no shell.  The

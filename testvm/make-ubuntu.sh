@@ -43,7 +43,10 @@
 # --zfs-guided lays the disk out as Subiquity's guided ZFS install does by
 # itself (ubuntu/storage-zfs-guided.yaml): bpool for /boot, with GRUB's
 # feature set (compatibility=grub2), rpool for the rest, swap, and on UEFI
-# (with --uefi) an EFI system partition.
+# (with --uefi) an EFI system partition.  As Subiquity installs it, it has no
+# /etc/zfs/zfs-list.cache, so its boot mounts /boot/efi before bpool's /boot
+# hides it; the guest's first vm-update writes the cache
+# (update/in-guest.sh), after which /boot/efi mounts over /boot.
 #
 # --zfs-mirror makes it two 16 GiB disks instead, with /boot on an mdadm
 # RAID 1 across both, swap on both, and rpool a two-way mirror, encrypted as

@@ -175,6 +175,32 @@ if [ "$(uname)" = Linux ] && [ "$(findmnt -no FSTYPE / 2>/dev/null)" = btrfs ] &
     fi
     rmdir "$top"
 fi
+# Ubuntu's guided ZFS install (Subiquity: bpool holds /boot) leaves no
+# /etc/zfs/zfs-list.cache, so systemd has no mount unit for /boot, and
+# mounts the ESP's /boot/efi first: zfs-mount.service then mounts bpool's
+# /boot over it (ubuntu26-zfs, 2026-11-07: /boot/efi showed bpool's empty
+# directory), and a grub or shim update would miss the real ESP.  The cache
+# zed's zfs-list-cacher keeps (the OpenZFS root-on-ZFS guides' setup) gives
+# zfs-mount-generator what it needs to make one, and boot-efi.mount is
+# ordered after it.  It's written here as the cacher would; zed keeps it
+# current.  And for this boot, /boot/efi is mounted again, over /boot.
+if [ "$(uname)" = Linux ] && [ -d /run/systemd/system ] && [ "$(findmnt -no FSTYPE /boot 2>/dev/null)" = zfs ] &&
+    [ ! -d /etc/zfs/zfs-list.cache ] && [ -f /etc/zfs/zed.d/history_event-zfs-list-cacher.sh ]; then
+    say "ZFS: listing the pools' file systems in /etc/zfs/zfs-list.cache, for /boot's mount unit"
+    props=$(sed -n '/^PROPS="/,/"$/p' /etc/zfs/zed.d/history_event-zfs-list-cacher.sh | tr -d '\\\n' |
+        sed 's/^PROPS="//; s/"$//')
+    case $props in name,mountpoint,*) ;; *) say "can't read zfs-list-cacher's PROPS"; exit 1 ;; esac
+    mkdir -p /etc/zfs/zfs-list.cache || exit 1
+    for p in $(zpool list -H -o name); do
+        zfs list -H -t filesystem -o "$props" -r "$p" >"/etc/zfs/zfs-list.cache/$p" || exit 1
+    done
+    if findmnt -n /boot/efi >/dev/null && [ ! -d /boot/efi/EFI ]; then
+        b=$(findmnt -no SOURCE /boot)
+        umount /boot && umount /boot/efi && zfs mount "$b" && mount /boot/efi && [ -d /boot/efi/EFI ] ||
+            { say "could not mount /boot/efi again, over /boot"; exit 1; }
+        say "/boot/efi mounted again, over /boot"
+    fi
+fi
 
 case $(uname) in
 Linux)

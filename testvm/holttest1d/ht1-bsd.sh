@@ -94,10 +94,7 @@ case $G in
         GPATH=/bin:/boot/system/bin:/boot/system/non-packaged/bin
         BOOTSTATE='echo haiku'
         # The boot stage's log goes in system/var/log there (/var is it).
-        EXTRA_BOOT_RE='\./system/var/log(/bko-holt(/.*)?)?$'
-        # rustic-bko on Haiku leaves the volume root's mtime at the time of
-        # the restore's last write: a known limit of the archiver there.
-        KNOWN_RE='^(missing|extra): d [0-9]+ [0-9]+ [0-9]+ [0-9.]+ \.$' ;;
+        EXTRA_BOOT_RE='\./system/var/log(/bko-holt(/.*)?)?$' ;;
     *) echo "ht1-bsd: no rescuer for $G yet" >&2; exit 2 ;;
 esac
 GUSER=${GUSER:-root}

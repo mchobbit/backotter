@@ -82,7 +82,7 @@ vm_ssh "$env; rustc --version"
 # cargo rebuilds what changed).
 clean='rm -rf /tmp/holt && mkdir /tmp/holt'
 [[ $keep == yes ]] && clean='mkdir -p /tmp/holt && rm -rf /tmp/holt/src /tmp/holt/tests'
-tar -C "$SRC" -czf - Cargo.toml Cargo.lock src tests | T=600 vm_ssh "$clean && cd /tmp/holt && gzip -dc | tar -xf -"
+tar -C "$SRC" -czf - Cargo.toml Cargo.lock LICENSE src tests | T=600 vm_ssh "$clean && cd /tmp/holt && gzip -dc | tar -xf -"
 if ! T=3600 vm_ssh "$env; cd /tmp/holt && cargo build --release --offline 2>&1" >"$LOGS/build.log"; then
     grep -E "^(error|warning)" -A 6 "$LOGS/build.log" | head -80 >&2
     exit 1

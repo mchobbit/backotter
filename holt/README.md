@@ -99,12 +99,13 @@ rustic-bko; without `--repo`, run `--through mount`, restore by hand, then
 
 ## What load does
 
-`bko-holt load --help` lists the stages and flags.  Built so far: `plan`
-(the default: every check, and every command the writing stages would run)
-and `status` (what's on the target disks now, read from the disks, and which
-stage is next).  The writing stages, `partition`, `assemble`, `format`,
-`mount`, `restore`, `boot` and `close`, are planned in full but refuse to run
-until they're built.
+`bko-holt load --help` lists the stages and flags.  `plan` (the default)
+makes every check and prints every command the writing stages would run;
+`status` says what's on the target disks now, read from the disks, and which
+stage is next.  The writing stages, `partition`, `assemble`, `format`,
+`mount`, `restore`, `boot` and `close`, run those commands with `--commit`
+(without it they print them), and read the disks back after each stage to
+see it took.  `--through close` with `--repo` is a whole restore.
 
 ## Building
 

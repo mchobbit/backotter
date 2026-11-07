@@ -35,8 +35,8 @@ records and says so under \"warnings\".
   -h, --help      show this help
 
 Exit status: 0 on success, 2 for bad arguments, 3 when the system isn't
-Debian 13, Linux Mint 22, Ubuntu 24.04 or 26.04, or Zorin OS 18.  SOURCE_DATE_EPOCH, when set, fixes the
-report's timestamp.
+one bko-holt supports (the message then lists those it does).
+SOURCE_DATE_EPOCH, when set, fixes the report's timestamp.
 ";
 
 fn main() -> ExitCode {

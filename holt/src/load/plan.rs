@@ -79,9 +79,9 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, String) {
     let mut out = String::new();
     out += &format!("# bko-holt load plan for {}\n", opts.layout);
     out += &format!(
-        "# Source: {}, Debian {}, {} boot with {}, dumped {}\n",
+        "# Source: {}, {}, {} boot with {}, dumped {}\n",
         layout.hostname(),
-        layout.str_at(&["os", "version_id"]).unwrap_or("?"),
+        layout.os_name(),
         if layout.uefi() { "UEFI" } else { "BIOS" },
         layout.str_at(&["boot", "loader", "name"]).unwrap_or("an unknown loader"),
         layout.str_at(&["generated"]).unwrap_or("at an unknown time"),
@@ -168,6 +168,10 @@ mod tests {
         let (code, out, err) = run(&layout(), &opts(&["--map", "vda=vdb", "--repo", "/srv/r"]), &s);
         assert_eq!(code, EXIT_OK, "{out}{err}");
         assert!(out.contains("#   vda (16 GiB) -> /dev/vdb\n"), "{out}");
+        assert!(out.contains("# Source: deb13, debian 13, BIOS boot with grub,"), "{out}");
+        let named = Layout::from_json(crate::json::parse(&sample::bios_mbr().replace("\"version_id\": \"13\"", "\"version_id\": \"13\", \"pretty_name\": \"Debian GNU/Linux 13 (trixie)\"")).unwrap()).unwrap();
+        let (_, out, _) = run(&named, &opts(&["--map", "vda=vdb", "--repo", "/srv/r"]), &s);
+        assert!(out.contains("# Source: deb13, Debian GNU/Linux 13 (trixie), BIOS"), "{out}");
         for st in ["partition", "assemble", "format", "mount", "restore", "boot", "close"] {
             assert!(out.contains(&format!("# ---- {st} ----\n")), "{st}");
         }

@@ -215,6 +215,21 @@ impl Layout {
         self.str_at(&["host", "hostname"]).unwrap_or("?")
     }
 
+    /// The source system as people name it: os-release's PRETTY_NAME, else
+    /// its ID and VERSION_ID.
+    pub fn os_name(&self) -> String {
+        match self.str_at(&["os", "pretty_name"]).map(str::trim) {
+            Some(p) if !p.is_empty() => p.to_string(),
+            _ => {
+                let id = self.str_at(&["os", "id"]).unwrap_or("?");
+                match self.str_at(&["os", "version_id"]) {
+                    Some(v) if !v.is_empty() => format!("{id} {v}"),
+                    _ => id.to_string(),
+                }
+            }
+        }
+    }
+
     /// Every block device's entry by its kernel name on the source: disks,
     /// their partitions, md arrays and device-mapper devices.
     pub fn device(&self, name: &str) -> Option<&Value> {

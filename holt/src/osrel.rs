@@ -66,10 +66,8 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
 
 /// The systems bko-holt supports, as os-release's ID and the major part of
 /// VERSION_ID ("*": any, for a rolling release that numbers its snapshots),
-/// with how people name them.  Each has a whole-machine test: HoltTest1D
-/// (Debian 13), HoltTest1M (Linux Mint 22), HoltTest1U (Ubuntu 24.04 and
-/// 26.04), HoltTest1Z (Zorin OS 18), HoltTest1A (Arch, Alpine, AerynOS,
-/// Artix) and HoltTest1F (Fedora 44).  The Ubuntu-based ones use Debian's
+/// with how people name them.  Each has a whole-machine test in HoltTest1All
+/// (testvm/holttest1d/README.md says which guests pass).  The Ubuntu-based ones use Debian's
 /// boot tools (update-initramfs, update-grub); Arch and Artix have mkinitcpio
 /// and grub-mkconfig, Alpine mkinitfs and grub-mkconfig, Fedora dracut and
 /// grub2-mkconfig; AerynOS's initramfs comes prebuilt with its kernel, and

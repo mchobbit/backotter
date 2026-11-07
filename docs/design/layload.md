@@ -1,10 +1,13 @@
 # bko-holt load: rebuilding a machine's disks from bko-holt dump's JSON
 
-Status: draft.  Built so far (2026-11-05, in `holt/src/load/`): the argument
-parsing, the layout contract, disk mapping with its refusals, the commands of
-every stage, and the `plan` and `status` stages.  The writing stages print
-their commands in `plan` but refuse to run.  The decisions taken so far are
-listed at the end.
+Status: built (`holt/src/load/`): the argument parsing, the layout
+contract, disk mapping with its refusals, the commands of every stage, `plan`
+and `status`, and the writing stages, which run with `--commit`.  HoltTest1All
+(`testvm/holttest1d/README.md`) round-trips whole machines of every system
+bko-holt supports, and has which pass.  This document began as Debian 13's
+design; the other systems follow it, with their own tools where Linux's
+don't apply (`holt/README.md`).  The decisions taken so far are listed at the
+end.
 
 This was first written as two tools, `bko-laydump` and `bko-layload`.  They
 are now one binary, `bko-holt`, with the subcommands `dump` and `load` (see
@@ -12,8 +15,8 @@ are now one binary, `bko-holt`, with the subcommands `dump` and `load` (see
 
 ## Goal
 
-`bko-holt dump` (in `holt/`) records a Debian 13 machine's disk layout and
-boot setup as JSON.  `bko-holt load` takes that JSON and rebuilds the layout on
+`bko-holt dump` (in `holt/`) records a machine's disk layout and boot setup
+as JSON.  `bko-holt load` takes that JSON and rebuilds the layout on
 blank disks: partition tables, md arrays, LUKS containers, LVM, ZFS pools,
 filesystems, mounts, and, after the files are back, the boot loader.  The
 restored machine should boot as before, with the same identifiers wherever
@@ -36,7 +39,8 @@ Non-goals for version 1:
   encryption.
 - Key material.  LUKS and ZFS keys are never in the JSON, and TPM2/FIDO2
   enrollments can't be restored at all (see "Encryption").
-- Any source other than Debian 13, which is all `bko-holt dump` describes today.
+- A source system bko-holt doesn't support: dump and load share one list
+  (`SUPPORTED` in `holt/src/osrel.rs`).
 
 ## Where it runs
 
@@ -46,8 +50,9 @@ Non-goals for version 1:
 - Never on the machine being backed up.
 
 It doesn't check the os-release of the system it runs on.  It checks the JSON
-instead: `"format": "bko-holt"` (or the older `"bko-laydump"`), a schema it knows, and a source it
-supports (`os.id` `debian`, `os.version_id` `13`).
+instead: `"format": "bko-holt"` (or the older `"bko-laydump"`), a schema it
+knows, and a source it supports (`os.id` and `os.version_id` on the list in
+`holt/src/osrel.rs`).
 
 ### Newer tools than the machine
 
@@ -515,9 +520,11 @@ btrfs geometry and features.
 - LVM thin pools, cache volumes, RAID LVs and snapshots (version 1 builds
   linear and striped LVs);
 - ZFS dRAID and special/dedup vdevs;
-- filesystems other than ext2/3/4, XFS, btrfs, FAT and swap (NTFS and exFAT
-  partitions, say a Windows install next to Debian, are recreated empty and
-  `plan` says so);
+- filesystems load can't make: on Linux it makes ext2/3/4, XFS, btrfs,
+  f2fs, nilfs2, JFS (not with an external log), bcachefs (on one device,
+  unencrypted), FAT and swap, and on the other systems their own (UFS/FFS,
+  HAMMER2, BFS, ZFS).  NTFS and exFAT partitions, say a Windows install next
+  to Linux, are left empty, and `plan` says so;
 - multipath, dm-integrity and dm-verity devices.
 
 ## Testing
@@ -536,7 +543,8 @@ The same layers as dump's tests:
    from the rescue image on blank disks, boots the result, and compares its
    dump, files and boot with the original's.  `testvm/compare` does the same
    with its own Python `recreate()`; load is meant to replace that code, and
-   so gets exercised in every compare round.
+   so gets exercised in every compare round.  HoltTest1All does the same
+   for a guest of every supported system.
 
 ## Code layout
 

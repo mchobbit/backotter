@@ -213,9 +213,12 @@ if [ "${1:-}" = --reserve ]; then
     done
     # In a scope of its own, as m still, so that iolog.sh can count what it
     # writes to disk (the wear log; WEAR_LOG=off: not). exec keeps $$, so the
-    # reservation lasts as long as CMD.
+    # reservation lasts as long as CMD.  setpriv --init-groups, not
+    # systemd-run --uid/--gid: a scope's --uid keeps root's groups and drops
+    # m's own, kvm among them (every VM a reservation ran failed so).
     [ "${WEAR_LOG:-}" = off ] && exec "$@"
-    exec sudo -E systemd-run --quiet --scope --collect -p IOAccounting=yes --uid="$(id -u)" --gid="$(id -g)" \
+    exec sudo -E systemd-run --quiet --scope --collect -p IOAccounting=yes \
+        setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
         env PATH="$PATH" "$PWD/testvm/compare/iolog.sh" "reserve $*" -- "$@"
 fi
 

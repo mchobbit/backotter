@@ -1890,6 +1890,16 @@ impl Builder<'_> {
                 ms.push((mp, Cmd::new(&["zfs", "mount", &self.zname(&name)])));
             }
         }
+        // A pool's boot dataset with mountpoint=legacy (OmniOS's cloud image:
+        // the boot loader and the kernel mount it as /, fstab doesn't): mounted
+        // as / with the system's mount, since zfs mount refuses legacy ones.
+        if !ms.iter().any(|(p, _)| p == "/") {
+            let ds = self.layout.v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).cloned().unwrap_or_default();
+            if let Some(name) = ds.iter().filter_map(|d| s(d, "name").filter(|n| bootfs.contains(n) && s(d, "mountpoint").as_deref() == Some("legacy"))).next() {
+                let fs_flag = if self.fam == Some(crate::other::Family::Illumos) { "-F" } else { "-t" };
+                ms.push(("/".into(), Cmd::new(&["mount", fs_flag, "zfs", &self.zname(&name), &target])));
+            }
+        }
         ms.sort_by(|a, b| {
             let depth = |p: &str| if p == "/" { 0 } else { p.matches('/').count() };
             depth(&a.0).cmp(&depth(&b.0)).then(a.0.cmp(&b.0))

@@ -6,13 +6,16 @@
 # itself (on the install media), so it can test what the media holds.
 
 if [ @ROOT_FS@ = zfs ]; then
-	# GPT with a BIOS boot partition, 2 GB swap, pool "zroot" on the rest.
+	# GPT with a BIOS boot partition, 2 GB swap, pool "zroot" on the rest;
+	# make-freebsd.sh --zfs-mirror: so on vtbd0 and vtbd1 both, the pool a
+	# mirror of the two, each disk's swap partition its own (no gmirror).
 	# make-freebsd.sh --uefi-geli: an EFI system partition instead, and the
 	# pool on GELI, whose passphrase the loader asks for at boot.  The
 	# installer asks for it in a dialog box: bsddialog-geli, first in PATH,
 	# answers.
-	export ZFSBOOT_DISKS=vtbd0
-	export ZFSBOOT_VDEV_TYPE=stripe
+	export ZFSBOOT_DISKS="@ZFS_DISKS@"
+	export ZFSBOOT_VDEV_TYPE=@ZFS_VDEV_TYPE@
+	export ZFSBOOT_SWAP_MIRROR=
 	export ZFSBOOT_PARTITION_SCHEME=GPT
 	export ZFSBOOT_BOOT_TYPE=@BOOT_TYPE@
 	if [ -f /etc/bsddialog-geli ]; then

@@ -3,7 +3,7 @@
 copy's after it booted.  Prints one DIFF line per field that differs, and
 exits 1 if any field outside IGNORED differs.
 
-Usage: judge.py [--grow BYTES] SRC.json DST.json
+Usage: judge.py [--grow BYTES | --degraded] SRC.json DST.json
        judge.py fs FSMETA.py SRC-META.json DST-META.json
 
 The fs form judges fsmeta.py's records of the source and the restored disk:
@@ -12,6 +12,10 @@ every path must match but what load's boot stage writes by design (BOOT_STAGE).
 --grow BYTES is for a restore onto disks BYTES bigger than the source's: a
 disk's size, GPT's last usable LBA and backup header, and the protective MBR's
 partition may then differ by exactly that much, and nothing else may.
+
+--degraded is for a source dumped with a RAID member's disk detached, and
+restored onto one disk fewer: each dump must show an md array with an empty
+slot, and the same arrays with the same slots empty.
 
 IGNORED lists what may differ between two boots of the same machine, or can't
 be kept by a restore, each with why.  judge.py prints which of them did differ,
@@ -139,6 +143,37 @@ def illumos_normalise(d):
     return d
 
 
+def md_by_name(d):
+    """A named md array (Anaconda's /dev/md/boot, /dev/md/pv00) gets its
+    kernel number, md127 downwards, in the order the arrays come up at boot,
+    as mdadm.conf gives it none: each such mdN is called md:NAME throughout
+    the dump instead (its device number too), and md_arrays are sorted by
+    those names.  A numbered array (/dev/md/0, md0) keeps its name."""
+    ren = {}
+    for a in (d.get("storage") or {}).get("md_arrays") or []:
+        dn = str((a.get("md") or {}).get("devname") or "")
+        if dn and not dn.isdigit() and re.fullmatch(r"md\d+", a.get("name") or ""):
+            ren[a["name"]] = f"md:{dn}"
+    if not ren:
+        return d
+    word = re.compile(r"\b(" + "|".join(map(re.escape, ren)) + r")\b")
+
+    def walk(v):
+        if isinstance(v, dict):
+            return {(word.sub(lambda m: ren[m.group(1)], k) if isinstance(k, str) else k): walk(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [walk(x) for x in v]
+        return word.sub(lambda m: ren[m.group(1)], v) if isinstance(v, str) else v
+
+    d = walk(d)
+    arrays = d["storage"]["md_arrays"]
+    for a in arrays:
+        if a.get("name") in ren.values():
+            a["devno"] = f"9:<{a['name']}>"
+    arrays.sort(key=lambda a: a.get("name") or "")
+    return d
+
+
 def flatten(v, path, out):
     if isinstance(v, dict) and isinstance(v.get("links"), list) and isinstance(v.get("content"), dict):
         # A by-uuid link that isn't the content's own UUID names a member
@@ -232,8 +267,11 @@ def main():
     if sys.argv[1] == "--grow":
         grow = int(sys.argv[2])
         del sys.argv[1:3]
-    src = illumos_normalise(json.load(open(sys.argv[1])))
-    dst = illumos_normalise(json.load(open(sys.argv[2])))
+    degraded = sys.argv[1] == "--degraded"
+    if degraded:
+        del sys.argv[1]
+    src = md_by_name(illumos_normalise(json.load(open(sys.argv[1]))))
+    dst = md_by_name(illumos_normalise(json.load(open(sys.argv[2]))))
     # Lists whose order is the boot's, not the layout's: ZFS mounts its
     # datasets in parallel.
     for d in (src, dst):
@@ -265,6 +303,8 @@ def main():
             why = "zpool.cache fields only the rescue system's newer OpenZFS writes"
         if not why and re.search(r"\.features\.[a-z_]+$", k) and {va, vb} <= {"enabled", "active"}:
             why = "a ZFS feature is active once something uses it (block cloning: cp)"
+        if not why and k.endswith(".content.device_number") and a.get(k[: -len("device_number")] + "type") == "linux_raid_member":
+            why = "an md member's device number, which mdadm --create gives in order (the source's RAID 5, made without --assume-clean, got its last member as a spare to rebuild, numbered after the others); its role is compared"
         if not why and k.endswith(".version") and a.get(k[: -len("version")] + "type") == "f2fs":
             why = "an F2FS superblock records the f2fs-tools release that made it (the rescuer's mkfs.f2fs, not the source's), and its checksum covers it"
         if not why and k.endswith(".inodes") and a.get(k[: -len("inodes")] + "type") == "xfs":
@@ -283,6 +323,27 @@ def main():
         else:
             real.append(k)
             print(f"DIFF {k}: {json.dumps(a.get(k, '<absent>'))[:200]} -> {json.dumps(b.get(k, '<absent>'))[:200]}")
+    if degraded:
+        # Both dumps' arrays with empty slots: name -> the slots filled, of
+        # how many.  (The fields themselves are compared above.)
+        def empty_slots(d):
+            out = {}
+            for a in (d.get("storage") or {}).get("md_arrays") or []:
+                md = a.get("md") or {}
+                n = md.get("raid_disks") or 0
+                filled = sorted(int(m["slot"]) for m in md.get("members") or [] if str(m.get("slot", "")).isdigit())
+                if len(filled) < n:
+                    out[a.get("name")] = f"slots {filled} of {n}"
+            return out
+        es, ed = empty_slots(src), empty_slots(dst)
+        if not es:
+            real.append("md:degraded")
+            print("DIFF md:degraded: the source has no md array with an empty slot (--degraded)")
+        elif es != ed:
+            real.append("md:degraded")
+            print(f"DIFF md:degraded: source {es} -> restored {ed}")
+        else:
+            print(f"degraded as the source, as --degraded asks: {es}")
     for why, keys in ignored.items():
         print(f"ignored ({why}): {len(keys)}: {', '.join(keys[:6])}{' ...' if len(keys) > 6 else ''}")
     if dst.get("warnings"):

@@ -2,10 +2,11 @@
 # Build a FreeBSD test guest for BackOtter: an unattended install from an
 # official ISO into a qcow2 disk image, under QEMU with KVM.
 #
-# Usage: ./make-freebsd.sh [--uefi-geli] VERSION ROOT_FS WORK_DIR
+# Usage: ./make-freebsd.sh [--uefi-geli | --zfs-mirror] VERSION ROOT_FS WORK_DIR
 #   e.g. ./make-freebsd.sh 15.1 zfs vms/freebsd15
 #        ./make-freebsd.sh 14.5 ufs vms/freebsd14-ufs
 #        ./make-freebsd.sh --uefi-geli 15.1 zfs vms/freebsd15-geli
+#        ./make-freebsd.sh --zfs-mirror 15.1 zfs vms/freebsd15-mirror
 #
 # VERSION is a release in https://download.freebsd.org/releases/ISO-IMAGES/,
 # installed from its disc1 ISO.  ROOT_FS is zfs or ufs.  FreeBSD publishes
@@ -23,6 +24,10 @@
 #                         "--uefi --no-secure-boot" (the loader isn't signed)
 #   console-passphrase    with --uefi-geli: GELI's passphrase (mode 600),
 #                         which the loader asks for on the console at boot
+#   zroot-b.qcow2         with --zfs-mirror: the second disk, the same size,
+#                         snapshot "fresh-install" too; vm-run-options says
+#                         "--disk zroot-b.qcow2" (a name that sorts after
+#                         freebsdN.qcow2, so that stays the boot image)
 #
 # The guest, host name fbsdN: BIOS + GPT, swap (2 GB), / (ROOT_FS, the rest;
 # for zfs, pool "zroot" with boot environments), 2 CPUs, 2 GB RAM, the base
@@ -37,6 +42,12 @@
 # "Encrypt Disks?" makes it), unlocked by the loader with the passphrase it
 # asks for, which vm-update, vm-lib and SticTest1 type from
 # console-passphrase.  Host name fbsdN-geli.
+#
+# --zfs-mirror (zfs only): pool "zroot" a two-way mirror of vtbd0 and vtbd1
+# (bsdinstall's ZFSBOOT_DISKS and ZFSBOOT_VDEV_TYPE=mirror).  BIOS boot, so
+# each disk gets its own freebsd-boot partition with gptzfsboot, and either
+# one boots alone; each its own 2 GB swap partition, both in fstab (no
+# gmirror: bko-holt doesn't rebuild one).  Host name fbsdN-mirror.
 #
 # A bigger guest, e.g. for building (see freebsd/builder-setup.sh), from the
 # environment: DISK_SIZE (16G), CPUS (2), MEMORY (MB, 2048), and GUEST_NAME
@@ -59,13 +70,22 @@ INSTALL_TIMEOUT=3600
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-freebsd: $*" >&2; exit 1; }
 
-geli=no
-[[ ${1:-} == --uefi-geli ]] && { geli=yes; shift; }
-[[ $# -eq 3 ]] || die "usage: $0 [--uefi-geli] VERSION ROOT_FS WORK_DIR"
+geli=no mirror=no
+while [[ ${1:-} == --* ]]; do
+    case $1 in
+    --uefi-geli) geli=yes ;;
+    --zfs-mirror) mirror=yes ;;
+    *) die "unknown option $1" ;;
+    esac
+    shift
+done
+[[ $# -eq 3 ]] || die "usage: $0 [--uefi-geli | --zfs-mirror] VERSION ROOT_FS WORK_DIR"
 version=$1 root_fs=$2
 [[ $version =~ ^[0-9]+\.[0-9]+$ ]] || die "VERSION looks like 15.1, not '$version'"
 case $root_fs in zfs|ufs) ;; *) die "ROOT_FS must be zfs or ufs" ;; esac
 [[ $geli == no || $root_fs == zfs ]] || die "--uefi-geli needs ROOT_FS zfs"
+[[ $mirror == no || $root_fs == zfs ]] || die "--zfs-mirror needs ROOT_FS zfs"
+[[ $mirror == no || $geli == no ]] || die "--zfs-mirror and --uefi-geli don't go together"
 major=${version%%.*}
 
 ISO=FreeBSD-$version-RELEASE-amd64-disc1.iso
@@ -74,11 +94,13 @@ iso_url=https://download.freebsd.org/releases/ISO-IMAGES/$version/$ISO
 announce_url=https://www.freebsd.org/releases/${version}R/announce.asc
 guest_name=${GUEST_NAME:-fbsd$major}
 [[ $geli == yes ]] && guest_name=${GUEST_NAME:-fbsd$major-geli}
+[[ $mirror == yes ]] && guest_name=${GUEST_NAME:-fbsd$major-mirror}
 [[ $guest_name =~ ^[a-z0-9][a-z0-9-]*$ ]] || die "GUEST_NAME '$guest_name' isn't a host name"
-DISK=freebsd$major.qcow2
+DISK=freebsd$major.qcow2 DISK_B=zroot-b.qcow2
 mkdir -p "$3"
 cd "$3"
 [[ -e $DISK ]] && die "$3/$DISK already exists; move it away to rebuild"
+[[ $mirror == yes && -e $DISK_B ]] && die "$3/$DISK_B already exists; move it away to rebuild"
 
 # --- Fetch and verify the ISO -------------------------------------------------------
 download() {   # URL FILE
@@ -118,7 +140,8 @@ hash=$(printf '%s' "$password" | openssl passwd -6 -stdin)
 [[ -e id_ed25519 ]] || ssh-keygen -q -t ed25519 -N '' -C "root@$guest_name test guest" -f id_ed25519
 umask 022
 
-boot_type=BIOS extra_map=() extra_files=()
+boot_type=BIOS extra_map=() extra_files=() zfs_disks=vtbd0 zfs_vdev=stripe
+[[ $mirror == yes ]] && zfs_disks="vtbd0 vtbd1" zfs_vdev=mirror
 if [[ $geli == yes ]]; then
     boot_type=UEFI
     umask 077
@@ -134,6 +157,7 @@ sys.stdout.write(open(sys.argv[1]).read().replace("@GELI_PASSPHRASE@", k))' \
 fi
 sed -e "s|@ROOT_PASSWORD_HASH@|$hash|" -e "s|@HOSTNAME@|$guest_name|g" -e "s|@ROOT_FS@|$root_fs|g" \
     -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" -e "s|@BOOT_TYPE@|$boot_type|" \
+    -e "s|@ZFS_DISKS@|$zfs_disks|" -e "s|@ZFS_VDEV_TYPE@|$zfs_vdev|" \
     "$here/freebsd/installerconfig" >"$work/installerconfig"
 if grep -n '@[A-Z_]\+@' "$work/installerconfig"; then die "installerconfig placeholders left unfilled"; fi
 xorriso -osirrox on -indev "$ISO" -extract /boot/loader.conf "$work/loader.conf" 2>/dev/null ||
@@ -159,12 +183,17 @@ xorriso -indev "$ISO" -outdev "$media" \
 
 # --- Install ----------------------------------------------------------------------
 qemu-img create -q -f qcow2 "$DISK" "$DISK_SIZE"
+drive_b=()
+if [[ $mirror == yes ]]; then
+    qemu-img create -q -f qcow2 "$DISK_B" "$DISK_SIZE"
+    drive_b=(-drive "file=$DISK_B,if=virtio,format=qcow2")
+fi
 echo "Installing; the installer's console goes to $3/install-serial.log"
 # The install script reboots when it's done, which -no-reboot turns into
 # QEMU exiting; it powers off if the install failed.
 timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -enable-kvm -cpu host -smp "$CPUS" -m "$MEMORY" -machine pc \
-    -drive "file=$DISK,if=virtio,format=qcow2" \
+    -drive "file=$DISK,if=virtio,format=qcow2" "${drive_b[@]}" \
     -drive "file=$media,media=cdrom,readonly=on" -boot order=d \
     -nic user,model=virtio-net-pci \
     -display none -serial file:install-serial.log -monitor none -no-reboot ||
@@ -173,8 +202,10 @@ grep -q '^BACKOTTER-INSTALL: OK' install-serial.log ||
     die "the install failed; see install-serial.log"
 
 qemu-img snapshot -c fresh-install "$DISK"
+[[ $mirror == no ]] || qemu-img snapshot -c fresh-install "$DISK_B"
 opts=()
 [[ $geli == yes ]] && opts+=(--uefi --no-secure-boot)
+[[ $mirror == yes ]] && opts+=(--disk "$DISK_B")
 [[ $CPUS == 2 && $MEMORY == 2048 ]] || opts+=(--cpus "$CPUS" --memory "$MEMORY")
 [[ ${#opts[@]} -eq 0 ]] || echo "${opts[*]}" >vm-run-options
-echo "Done: $3/$DISK ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""
+echo "Done: $3/$DISK ($(du -h "$DISK" | cut -f1) on disk)${drive_b[*]:+ and $DISK_B ($(du -h "$DISK_B" | cut -f1))}, snapshot \"fresh-install\""

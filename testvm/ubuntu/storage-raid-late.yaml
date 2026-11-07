@@ -1,0 +1,6 @@
+    # md0's first resync, finished before the install ends, so the image's
+    # array is in sync (make-ubuntu.sh's QEMU writes zeros as holes).
+    - mdadm --wait /dev/md0 || true
+    - cat /proc/mdstat
+    # Which ESPs GRUB keeps alike (all four, by curtin's grub_device).
+    - curtin in-target -- sh -c 'echo get grub-efi/install_devices | debconf-communicate'

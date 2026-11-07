@@ -3,9 +3,10 @@
 # Enterprise Linux): an unattended Kickstart install from an official minimal
 # ISO into a qcow2 disk image, under QEMU with KVM.
 #
-# Usage: ./make-rocky.sh [--lvm] VERSION WORK_DIR
+# Usage: ./make-rocky.sh [--lvm | --raid5] VERSION WORK_DIR
 #   e.g. ./make-rocky.sh 10.0 vms/rocky10
 #        ./make-rocky.sh --lvm 10.0 vms/rocky10-lvm
+#        ./make-rocky.sh --raid5 10.0 vms/rocky10-raid5
 #
 # VERSION is a Rocky release in https://dl.rockylinux.org/vault/rocky/.
 # Rocky-VERSION-x86_64-minimal.iso with the release's CHECKSUM and
@@ -24,7 +25,13 @@
 # disk rockyN-lvm.qcow2), laid out as the installer does by itself
 # (autopart --type=lvm: on BIOS, GPT with a BIOS boot partition, /boot XFS,
 # and volume group rl_rockyN-lvm with / XFS and swap).  Rocky 10 needs an x86-64-v3 CPU
-# (AVX2 and friends).  Run it with vm-run, and look inside it while it's off
+# (AVX2 and friends).  --raid5: rockyN-raid5, on three 16 GiB disks
+# (rockyN-raid5.qcow2, -b and -c, each with the snapshot; vm-run-options
+# gives vm-run the other two): MBR on each, /boot (XFS) on md RAID1 across
+# all three, and md RAID5 across the rest of each holding volume group
+# rl_rockyN-raid5 with / (XFS) and swap (rocky/storage-raid5.ks).  The
+# install writes zeros as holes and waits for the arrays' first resync.
+# Run it with vm-run, and look inside it while it's off
 # with vm-mount.
 #
 # Needs: qemu-system-x86_64 with KVM, qemu-img, xorriso, gpg, gpgv, openssl,
@@ -43,9 +50,11 @@ INSTALL_TIMEOUT=1800
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-rocky: $*" >&2; exit 1; }
 
-lvm=no
+lvm=no raid5=no
 [[ ${1:-} == --lvm ]] && { lvm=yes; shift; }
-[[ $# -eq 2 ]] || die "usage: $0 [--lvm] VERSION WORK_DIR"
+[[ ${1:-} == --raid5 ]] && { raid5=yes; shift; }
+[[ $# -eq 2 ]] || die "usage: $0 [--lvm | --raid5] VERSION WORK_DIR"
+[[ $lvm == yes && $raid5 == yes ]] && die "--lvm and --raid5 are two layouts"
 version=$1
 [[ $version =~ ^[0-9]+\.[0-9]+$ ]] || die "VERSION looks like 10.0, not '$version'"
 major=${version%%.*}
@@ -54,7 +63,11 @@ key_fpr=${RELEASE_KEYS[$major]:-}
 ISO=Rocky-$version-x86_64-minimal.iso
 guest_name=rocky$major
 [[ $lvm == yes ]] && guest_name=rocky$major-lvm
+[[ $raid5 == yes ]] && guest_name=rocky$major-raid5
 DISK=$guest_name.qcow2
+# --raid5: the two disks after the first.
+more=()
+[[ $raid5 == yes ]] && more=("$guest_name-b.qcow2" "$guest_name-c.qcow2")
 mkdir -p "$2"
 cd "$2"
 [[ -e $DISK ]] && die "$2/$DISK already exists; move it away to rebuild"
@@ -113,6 +126,15 @@ if [[ $lvm == yes ]]; then
     grep -q '^autopart --type=lvm$' "$work/www/ks.cfg" && ! grep -q '^part ' "$work/www/ks.cfg" ||
         die "ks.cfg's partitioning not replaced"
 fi
+if [[ $raid5 == yes ]]; then
+    # The lines from zerombr to PARTITIONING-END give way to storage-raid5.ks.
+    awk -v f="$here/rocky/storage-raid5.ks" '/^zerombr$/ { skip = 1; while ((getline l < f) > 0) print l; next }
+         skip && /^# PARTITIONING-END$/ { skip = 0; next }
+         !skip' "$work/www/ks.cfg" >"$work/www/ks.raid5"
+    sed -e "s|@HOSTNAME@|$guest_name|g" "$work/www/ks.raid5" >"$work/www/ks.cfg"
+    grep -q '^raid pv.01 --level=5 ' "$work/www/ks.cfg" && ! grep -q '^part / ' "$work/www/ks.cfg" ||
+        die "ks.cfg's partitioning not replaced"
+fi
 if grep -n '@[A-Z_]\+@' "$work/www/ks.cfg"; then die "ks.cfg placeholders left unfilled"; fi
 
 # Serve ks.cfg to the guest only: QEMU's user-mode network maps 10.0.2.2 in
@@ -123,10 +145,18 @@ server=$!
 
 # --- Install --------------------------------------------------------------------------
 qemu-img create -q -f qcow2 "$DISK" "$DISK_SIZE"
+# --raid5: md's first resync writes every member whole, so zeros as holes.
+zeros=""
+[[ $raid5 == yes ]] && zeros=,detect-zeroes=on
+disks=(-drive "file=$DISK,if=virtio,format=qcow2$zeros")
+for d in "${more[@]}"; do
+    qemu-img create -q -f qcow2 "$d" "$DISK_SIZE"
+    disks+=(-drive "file=$d,if=virtio,format=qcow2$zeros")
+done
 echo "Installing; the installer's console goes to $2/install-serial.log"
 timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -enable-kvm -cpu host -smp 2 -m "$MEMORY" -machine pc \
-    -drive "file=$DISK,if=virtio,format=qcow2" \
+    "${disks[@]}" \
     -drive "file=$ISO,media=cdrom,readonly=on" \
     -nic user,model=virtio-net-pci \
     -kernel "$work/vmlinuz" -initrd "$work/initrd.img" \
@@ -138,5 +168,9 @@ timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
 [[ $(qemu-img info --output=json "$DISK" | python3 -c 'import json, sys; print(json.load(sys.stdin)["actual-size"])') -gt 500000000 ]] ||
     die "the disk is nearly empty; see install-serial.log"
 
+if [[ $raid5 == yes ]]; then
+    { printf -- '--disk %s ' "${more[@]}" | sed 's/ $//'; echo; } >vm-run-options
+fi
 qemu-img snapshot -c fresh-install "$DISK"
+for d in "${more[@]}"; do qemu-img snapshot -c fresh-install "$d"; done
 echo "Done: $2/$DISK ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""

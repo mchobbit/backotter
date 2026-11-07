@@ -32,7 +32,9 @@ wait_detach() {
 }
 # Line 1 of the state file is the first image's nbd device; the further
 # lines, undone last first, "pool NAME", "luks NAME", "vg NAME DEVICE,...",
-# "md DEVICE", "loop DEVICE" or "nbd DEVICE" (a bare
+# "md DEVICE", "dm NAME" (a RAID 10 read as a RAID 0), "cow NAME LOOP
+# FILE" (a RAID member's throwaway snapshot),
+# "loop DEVICE" or "nbd DEVICE" (a bare
 # name is a pool, as vm-mount once wrote them).
 while read -r kind name; do
     [[ -z $name ]] && { name=$kind; kind=pool; }
@@ -46,6 +48,11 @@ while read -r kind name; do
             vgchange --devicesfile "" --devices "$pvlist" -a n "$vg" >/dev/null ||
                 die "could not deactivate volume group $vg" ;;
         md) mdadm --stop "$name" >/dev/null || die "could not stop RAID $name" ;;
+        dm) dmsetup remove "$name" || die "could not remove $name" ;;
+        cow) read -r c l f <<<"$name"
+             dmsetup remove "$c" || die "could not remove snapshot $c"
+             losetup -d "$l" || die "could not detach $l"
+             rm -f "$f" ;;
         loop) losetup -d "$name" || die "could not detach $name" ;;
         nbd) wait_detach "$name" ;;
     esac

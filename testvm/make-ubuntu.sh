@@ -5,11 +5,12 @@
 # under QEMU with KVM.  (Linux Mint 22 is built on Ubuntu 24.04, so a 24.04
 # guest covers what a Mint restore depends on, minus the desktop.)
 #
-# Usage: ./make-ubuntu.sh [--uefi] [--zfs-guided | --zfs-mirror] [--name NAME] VERSION WORK_DIR
+# Usage: ./make-ubuntu.sh [--uefi] [--zfs-guided | --zfs-mirror | --raid] [--name NAME] VERSION WORK_DIR
 #   e.g. ./make-ubuntu.sh 24.04 vms/ubuntu24
 #        ./make-ubuntu.sh --zfs-mirror --name ubuntu26-zfsmirror 26.04.1 vms/ubuntu26-zfsmirror
 #        ./make-ubuntu.sh --uefi --name ubuntu26-uefi 26.04.1 vms/ubuntu26-uefi
 #        ./make-ubuntu.sh --uefi --zfs-guided --name ubuntu26-zfs 26.04.1 vms/ubuntu26-zfs
+#        ./make-ubuntu.sh --uefi --raid --name ubuntu26-raid 26.04.1 vms/ubuntu26-raid
 #
 # VERSION is an Ubuntu release or point release (24.04, 24.04.1, ...).
 # ubuntu-VERSION-live-server-amd64.iso with its SHA256SUMS and SHA256SUMS.gpg
@@ -23,8 +24,10 @@
 #   id_ed25519, .pub      SSH key that logs in as root and as tester
 #   install-serial.log    the installer's serial console
 #   vm-run-options        with --uefi: "--uefi", how vm-run must boot it;
-#                         with --zfs-mirror: "--disk NAME-b.qcow2"
-#   NAME-b.qcow2          with --zfs-mirror: the second disk
+#                         with --zfs-mirror: "--disk NAME-b.qcow2"; with
+#                         --raid: "--uefi --disk NAME-b.qcow2 ... NAME-d.qcow2"
+#   NAME-b.qcow2          with --zfs-mirror: the second disk (--raid: NAME-b,
+#                         -c and -d.qcow2, three more), each with the snapshot
 #   zfs-passphrase        with --zfs-mirror: the pool's passphrase (mode 600)
 #
 # The guest, host name NAME: BIOS + MBR, /boot (1 GiB ext4), swap (2 GiB),
@@ -54,6 +57,12 @@
 # pool, whose passphrase (zfs-passphrase) the guest asks for on its console
 # at every boot (ubuntu/storage-zfs-mirror.yaml).
 #
+# --raid (with --uefi) makes it four 16 GiB disks: an EFI system partition on
+# each (the first mounted, GRUB installed to all four), and md RAID10 across
+# the rest of each, holding LVM with / (ext4) and swap
+# (ubuntu/storage-raid.yaml).  The install writes zeros as holes and waits
+# for the array's first resync.
+#
 # Run it with vm-run (and vm-run-options), and look inside it while it's off
 # with vm-mount.
 #
@@ -71,18 +80,21 @@ INSTALL_TIMEOUT=2400
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-ubuntu: $*" >&2; exit 1; }
 
-firmware=bios name="" mirror=no guided=no
+firmware=bios name="" mirror=no guided=no raid=no
 while [[ $# -gt 0 ]]; do
     case $1 in
         --uefi) firmware=uefi; shift ;;
         --zfs-mirror) mirror=yes; shift ;;
         --zfs-guided) guided=yes; shift ;;
+        --raid) raid=yes; shift ;;
         --name) name=$2; shift 2 ;;
         -*) die "unknown option $1" ;;
         *) break ;;
     esac
 done
-[[ $# -eq 2 ]] || die "usage: $0 [--uefi] [--zfs-guided | --zfs-mirror] [--name NAME] VERSION WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 [--uefi] [--zfs-guided | --zfs-mirror | --raid] [--name NAME] VERSION WORK_DIR"
+[[ $raid == yes && $firmware != uefi ]] && die "--raid is for UEFI only (with --uefi)"
+[[ $raid == yes && ($mirror == yes || $guided == yes) ]] && die "--raid is a layout of its own"
 [[ $firmware == uefi && $mirror == yes ]] && die "--zfs-mirror is for BIOS only"
 [[ $guided == yes && $mirror == yes ]] && die "--zfs-guided and --zfs-mirror are two layouts"
 version=$1
@@ -96,7 +108,12 @@ storage=zfs
 [[ $firmware == uefi ]] && storage=direct
 [[ $mirror == yes ]] && storage=zfs-mirror
 [[ $guided == yes ]] && storage=zfs-guided
+[[ $raid == yes ]] && storage=raid
 DISK_B=$guest_name-b.qcow2
+# The disks after the first: one with --zfs-mirror, three with --raid.
+more=()
+[[ $mirror == yes ]] && more=("$DISK_B")
+[[ $raid == yes ]] && more=("$DISK_B" "$guest_name-c.qcow2" "$guest_name-d.qcow2")
 mkdir -p "$2"
 cd "$2"
 [[ -e $DISK ]] && die "$2/$DISK already exists; move it away to rebuild"
@@ -182,11 +199,14 @@ if [[ $firmware == uefi ]]; then
         -drive "if=pflash,format=raw,unit=1,file=$work/vars.fd")
 fi
 qemu-img create -q -f qcow2 "$DISK" "$DISK_SIZE"
-disks=(-drive "file=$DISK,if=virtio,format=qcow2")
-if [[ $mirror == yes ]]; then
-    qemu-img create -q -f qcow2 "$DISK_B" "$DISK_SIZE"
-    disks+=(-drive "file=$DISK_B,if=virtio,format=qcow2")
-fi
+# --raid: md's first resync writes every member whole, so zeros as holes.
+zeros=""
+[[ $raid == yes ]] && zeros=,detect-zeroes=on
+disks=(-drive "file=$DISK,if=virtio,format=qcow2$zeros")
+for d in "${more[@]}"; do
+    qemu-img create -q -f qcow2 "$d" "$DISK_SIZE"
+    disks+=(-drive "file=$d,if=virtio,format=qcow2$zeros")
+done
 echo "Installing; the installer's console goes to $2/install-serial.log"
 timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -enable-kvm -cpu host -smp 2 -m "$MEMORY" "${machine[@]}" \
@@ -205,6 +225,9 @@ timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
 
 [[ $firmware == uefi ]] && echo "--uefi" >vm-run-options
 [[ $mirror == yes ]] && echo "--disk $DISK_B" >vm-run-options
+if [[ $raid == yes ]]; then
+    { printf -- '--uefi'; printf -- ' --disk %s' "${more[@]}"; echo; } >vm-run-options
+fi
 qemu-img snapshot -c fresh-install "$DISK"
-[[ $mirror == yes ]] && qemu-img snapshot -c fresh-install "$DISK_B"
+for d in "${more[@]}"; do qemu-img snapshot -c fresh-install "$d"; done
 echo "Done: $2/$DISK ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""

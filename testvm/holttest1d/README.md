@@ -29,16 +29,42 @@ guests.  A guest passes only when every check passes.  Status is as of
 |---|---|---|---|
 | 1D | Debian 13 | `debian13`, `debian13-zfs`, `debian13-stack` | passes |
 | 1M | Linux Mint | `mint22` | passes |
-| 1U | Ubuntu | `ubuntu24`, `ubuntu26-uefi`, `ubuntu26-zfsmirror` | passes |
+| 1U | Ubuntu | `ubuntu24`, `ubuntu26-uefi`, `ubuntu26-zfsmirror`, `ubuntu26-raid` (and `degraded`) | passes |
 | 1Z | Zorin OS | `zorin18` | passes |
-| 1F | Fedora, Rocky Linux | `fedora44`, `fedora44-uefi`, `rocky10`, `rocky10-lvm` | passes |
+| 1F | Fedora, Rocky Linux | `fedora44`, `fedora44-uefi`, `fedora44-raid`, `rocky10`, `rocky10-lvm`, `rocky10-raid5` | passes, but for `fedora44-raid` and `rocky10-raid5` (bko-holt defects, below) |
 | 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | passes |
 | 1C | CachyOS, MX Linux | `cachyos`, `mx25` | passes |
 | 1V | Void Linux (musl) | `void-musl` | passes |
 | 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12 | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12` | passes |
 | 1H | Haiku | `haiku6` | passes (but for a known rustic-bko limit: the volume root's mtime) |
-| 1I | illumos | `omnios58` | passes |
-| 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6`, `alpinebsd` | passes |
+| 1I | illumos | `omnios58`, `omnios58-mirror` | `omnios58` passes; `omnios58-mirror` (run `raid1`) backs up from both disks, then `load` refuses its layout: its boot environment is the cloud image's, `mountpoint=legacy`, which load's mount plan skips ("nothing ... mounts /") |
+| 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `freebsd15-mirror`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6`, `alpinebsd` | passes |
+
+**The RAID guests** (2026-11-07, run `raid1`), each with a `fresh-install`
+snapshot on every disk:
+
+- `fedora44-raid` (`make-fedora.sh --uefi --raid`): two disks, /boot/efi
+  on md RAID1 with metadata 1.0, /boot on md RAID1, / on btrfs RAID1
+  (data and metadata).  Fails at `assemble`: `load` passes metadata 1.0
+  `--data-offset=0K`, which mdadm refuses (`invalid data-offset: 0K`).
+- `ubuntu26-raid` (`make-ubuntu.sh --uefi --raid`): four disks, an ESP on
+  each (GRUB kept on all four), md RAID10 (near-2) holding LVM with / ext4
+  and swap.  Passes, and passes `degraded`.
+- `rocky10-raid5` (`make-rocky.sh --raid5`): three disks, BIOS, /boot on md
+  RAID1 across all three, md RAID5 (left-symmetric, internal bitmap) holding
+  LVM with / XFS and swap.  Fails the dump check: `load`'s mkfs.xfs gives
+  `agcount` but neither the data size nor the AG size, so the rescuer's
+  xfsprogs makes another geometry (AG 458496 blocks, not 458368) and fills
+  the LV, where the source's XFS stopped 4 MiB short of its end.
+
+For these, `vm-mount --ro` reads a RAID10 of two near copies as a RAID0 of
+one member of each pair (dm's striped target, no md: the hosts' Linux 6.12
+won't take a superblock Linux 7 wrote), and a RAID5 through throwaway dm
+snapshots of its members, assembled read-only.  `judge.py` calls a named
+md array (`/dev/md/boot`) by its name, not its kernel number (md126, md127
+are handed out in the order the arrays come up at boot), and ignores an md
+member's device number (mdadm numbers members in order; a RAID5 made
+without `--assume-clean` numbers its last member after the others).
 
 **HoltTest1All** (the user's definition, 2026-11-05): "like HoltTest1D
 except that HoltTest1All targets every single guest OS we have": every guest
@@ -82,13 +108,26 @@ a guest of the same system, whose own disk comes first:
 | Haiku | `haiku6` | logs in as `user` (Haiku's uid 0); its mount_server is stopped, or it mounts every BFS volume it sees |
 
 Linux can't read most of these filesystems, so the rescuer does the backup
-too: the source's disk attached, mounted read-only from the layout, backed up
+too: the source's disks attached, mounted read-only from the layout, backed up
 into the rescuer's own disk (`R/rescuer.qcow2`, kept from backup to verify).
 The file check is mtree(8)'s (a spec of the source, sockets left out, checked
 against the restored tree), or on Haiku and illumos GNU find's listing and
 every file's SHA-256.  The boot state is the enabled services that say they
 aren't running (FreeBSD's `service -e`, OpenBSD's `rcctl ls failed`,
 illumos' `svcs`).
+
+The guest's disks are its image and its `vm-run-options`' `--disk` ones
+(named relative to its directory), as `ht1.sh` takes them, and each goes
+through every phase: attached in that order after the rescuer's own disk for
+the backup, one blank target each (then the decoy) for the rebuild, mapped
+with a `--map` and an `--erase` apiece, and all of them for verify's mount
+and the restored boot.  A ZFS pool on more than one disk must import with
+every one of them ONLINE, from the source's disks and from the restored ones.
+The multi-disk guests are `freebsd15-mirror` (`make-freebsd.sh --zfs-mirror`:
+`zroot` a mirror of two disks, each with its own gptzfsboot and swap
+partition) and `omnios58-mirror` (`make-omnios.sh --rpool-mirror`: `rpool`
+attached to a second whole disk, the loader on both); either disk of each
+boots alone.
 
 **ht1-offline.sh** (Redox, Sculpt OS) is for a system that can't run
 bko-holt: Redox's sshd serves no logins, and Sculpt has no shell.  The
@@ -133,12 +172,18 @@ its own (`RUN/GUEST-VARIANT`): `oneshot` runs the rebuild as one
 `--through close --commit`, and `bigger` rebuilds onto disks 1 GiB bigger
 than the source's, judged with `judge.py --grow`, which lets only a disk's
 size, GPT's last usable LBA and backup header and the protective MBR move
-by exactly that much.  A full HoltTest1D is six runs: `debian13`,
-`debian13-zfs` and `debian13-stack`, `debian13-stack` with `bigger`, and
-`debian13` with `oneshot` on each host.  Never run two copies of
-`debian13-stack` on one host at once, nor beside a `compare.py` of it:
+by exactly that much.  `degraded` runs the source with its last disk
+detached, a RAID member's, so its arrays are degraded when it is dumped
+and backed up; `load` recreates them with `missing` slots onto one disk
+fewer, and the restored machine must boot degraded with the same slots
+empty (`/proc/mdstat`'s `[UU_]`), judged with `judge.py --degraded`.  It
+runs on the guests whose arrays survive the loss of their last disk:
+`debian13-stack` and `ubuntu26-raid`.  A full HoltTest1D is six runs:
+`debian13`, `debian13-zfs` and `debian13-stack`, `debian13-stack` with
+`bigger`, and `debian13` with `oneshot` on each host.  Never run two copies
+of `debian13-stack` on one host at once, nor beside a `compare.py` of it:
 `vm-mount` refuses a second `debian13-stack-vg`, since LVM's names are the
-host's.
+host's (nor two of `ubuntu26-raid`, for its `ubuntu-vg`).
 
 Each run also checks, as the plan asks:
 
@@ -148,7 +193,8 @@ Each run also checks, as the plan asks:
   and last MiB as they were;
 - the restored machine's health: `findmnt --verify`, every fstab mount
   mounted, swap on, `zpool status -x`, md arrays clean or active, every
-  crypttab volume open, and load's log kept.  The same checks run on the
+  crypttab volume open (in the `degraded` variant an array may be
+  degraded too), and load's log kept.  The same checks run on the
   source; one that fails there too isn't counted.
 
 It differs from the plan above in these ways:

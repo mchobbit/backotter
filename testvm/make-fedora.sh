@@ -3,9 +3,10 @@
 # install from an official Server DVD into a qcow2 disk image, under QEMU with
 # KVM.  / is btrfs, laid out the way Fedora's installer does it.
 #
-# Usage: ./make-fedora.sh [--uefi] [--name NAME] RELEASE WORK_DIR
+# Usage: ./make-fedora.sh [--uefi [--raid]] [--name NAME] RELEASE WORK_DIR
 #   e.g. ./make-fedora.sh 44-1.7 vms/fedora44
 #        ./make-fedora.sh --uefi --name fedora44-uefi 44-1.7 vms/fedora44-uefi
+#        ./make-fedora.sh --uefi --raid --name fedora44-raid 44-1.7 vms/fedora44-raid
 #
 # RELEASE is a Fedora release and compose number, as in the ISO's name
 # (Fedora-Server-dvd-x86_64-RELEASE.iso).  The ISO and its CHECKSUM file are
@@ -19,6 +20,8 @@
 #   id_ed25519, .pub      SSH key that logs in as root
 #   install-serial.log    the installer's serial console
 #   vm-run-options        with --uefi: "--uefi", how vm-run must boot it
+#                         (with --raid, and "--disk NAME-b.qcow2")
+#   NAME-b.qcow2          with --raid: the second disk, snapshot "fresh-install"
 #
 # The guest, host name NAME: BIOS + MBR, /boot (1 GiB ext4), swap (2 GiB),
 # and btrfs for the rest (subvolumes root and home), 2 GB RAM, the Fedora
@@ -33,6 +36,11 @@
 # QEMU's -kernel boot has no shim to vouch for the kernel; the guest's NVRAM
 # boot entries aren't kept, so each boot starts from EFI/BOOT/BOOTX64.EFI, as
 # on a new machine.
+#
+# --raid (with --uefi) makes it two 16 GiB disks, everything mirrored:
+# /boot/efi on md RAID1 with metadata 1.0, /boot on md RAID1, and / on btrfs
+# RAID1 across a partition on each disk (fedora/storage-raid.ks).  The
+# install writes zeros as holes and waits for the arrays' first resync.
 #
 # Run it with vm-run (and vm-run-options), and look inside it while it's off
 # with vm-mount.
@@ -53,16 +61,18 @@ INSTALL_TIMEOUT=2400
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-fedora: $*" >&2; exit 1; }
 
-firmware=bios name=""
+firmware=bios name="" raid=no
 while [[ $# -gt 0 ]]; do
     case $1 in
         --uefi) firmware=uefi; shift ;;
+        --raid) raid=yes; shift ;;
         --name) name=$2; shift 2 ;;
         -*) die "unknown option $1" ;;
         *) break ;;
     esac
 done
-[[ $# -eq 2 ]] || die "usage: $0 [--uefi] [--name NAME] RELEASE WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 [--uefi [--raid]] [--name NAME] RELEASE WORK_DIR"
+[[ $raid == yes && $firmware != uefi ]] && die "--raid is for UEFI only (with --uefi)"
 release=$1
 [[ $release =~ ^([0-9]+)-[0-9]+\.[0-9]+$ ]] || die "RELEASE looks like 44-1.7, not '$release'"
 major=${BASH_REMATCH[1]}
@@ -72,6 +82,9 @@ ISO=Fedora-Server-dvd-x86_64-$release.iso
 SUMS=Fedora-Server-$major-${release#*-}-x86_64-CHECKSUM
 guest_name=${name:-fedora$major}
 DISK=$guest_name.qcow2
+DISK_B=$guest_name-b.qcow2
+storage=$firmware
+[[ $raid == yes ]] && storage=raid
 mkdir -p "$2"
 cd "$2"
 [[ -e $DISK ]] && die "$2/$DISK already exists; move it away to rebuild"
@@ -128,7 +141,7 @@ umask 022
 mkdir "$work/www"
 sed -e "s|@HOSTNAME@|$guest_name|" -e "s|@ROOT_PASSWORD_HASH@|$hash|" \
     -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" \
-    -e "/^@STORAGE@\$/{r $here/fedora/storage-$firmware.ks" -e "d}" "$here/fedora/ks.cfg" >"$work/www/ks.cfg"
+    -e "/^@STORAGE@\$/{r $here/fedora/storage-$storage.ks" -e "d}" "$here/fedora/ks.cfg" >"$work/www/ks.cfg"
 if grep -n '@[A-Z_]\+@' "$work/www/ks.cfg"; then die "ks.cfg placeholders left unfilled"; fi
 
 # Serve ks.cfg to the guest only: QEMU's user-mode network maps 10.0.2.2 in
@@ -147,10 +160,17 @@ if [[ $firmware == uefi ]]; then
         -drive "if=pflash,format=raw,unit=1,file=$work/vars.fd")
 fi
 qemu-img create -q -f qcow2 "$DISK" "$DISK_SIZE"
+disks=(-drive "file=$DISK,if=virtio,format=qcow2")
+if [[ $raid == yes ]]; then
+    # The arrays' first resync writes every member whole: zeros as holes.
+    qemu-img create -q -f qcow2 "$DISK_B" "$DISK_SIZE"
+    disks=(-drive "file=$DISK,if=virtio,format=qcow2,detect-zeroes=on"
+        -drive "file=$DISK_B,if=virtio,format=qcow2,detect-zeroes=on")
+fi
 echo "Installing; the installer's console goes to $2/install-serial.log"
 timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -enable-kvm -cpu host -smp 2 -m "$MEMORY" "${machine[@]}" \
-    -drive "file=$DISK,if=virtio,format=qcow2" \
+    "${disks[@]}" \
     -drive "file=$ISO,media=cdrom,readonly=on" \
     -nic user,model=virtio-net-pci \
     -kernel "$work/vmlinuz" -initrd "$work/initrd.img" \
@@ -161,5 +181,7 @@ timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     die "the disk is nearly empty; see install-serial.log"
 
 [[ $firmware == uefi ]] && echo "--uefi" >vm-run-options
+[[ $raid == yes ]] && echo "--uefi --disk $DISK_B" >vm-run-options
 qemu-img snapshot -c fresh-install "$DISK"
+[[ $raid == yes ]] && qemu-img snapshot -c fresh-install "$DISK_B"
 echo "Done: $2/$DISK ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""

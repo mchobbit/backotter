@@ -107,7 +107,15 @@ done
 # mdadm RAID members, assembled into arrays that count as partitions, e.g. a
 # /boot mirrored across two disks.  md won't take read-only devices, so with
 # --ro a RAID 1 is read through one member instead: its data area, on a
-# read-only loop device.
+# read-only loop device.  A RAID 10 with two near copies on an even number
+# of members (mdadm's default) is a RAID 0 of each pair's first member that
+# is there: read so, through device-mapper's striped target over those
+# members' data areas, with no md (this host's md may not read a newer
+# kernel's superblock: Linux 7's records its logical block size where 6.12's
+# expects zeros).  Any other level (RAID 5) is assembled read-only from
+# throwaway snapshots of its members (device-mapper's snapshot target, which
+# reads its origin only), their copy-on-write space a sparse file vm-umount
+# deletes.
 declare -A raids=() raid_uuid=()
 for p in "${parts[@]}"; do
     [[ $(blkid -s TYPE -o value "$p" || true) == linux_raid_member ]] || continue
@@ -132,10 +140,66 @@ for u in "${!raids[@]}"; do
             mdadm --stop "/dev/${h##*/}" >/dev/null || { undo; die "could not stop ${h##*/}, which this host assembled from ${m##*/}"; }
         done
     done
-    if [[ $ro == yes ]]; then
+    level=""
+    [[ $ro == yes ]] && level=$(mdadm --examine "${members[0]}" | awk -F' : ' '/Raid Level/ { print $2 }')
+    if [[ $level == raid10 ]]; then
         info=$(mdadm --examine "${members[0]}")
-        [[ $(awk -F' : ' '/Raid Level/ { print $2 }' <<<"$info") == raid1 ]] ||
-            { echo "vm-mount: skipping the RAID of ${members[*]}: only RAID 1 can be read with --ro" >&2; continue; }
+        ndev=$(awk -F' : ' '/Raid Devices/ { print $2 + 0 }' <<<"$info")
+        chunk=$(awk -F' : ' '/Chunk Size/ { print $2 + 0 }' <<<"$info")     # KiB
+        size=$(awk -F' : ' '/Array Size/ { print $2 + 0 }' <<<"$info")      # KiB
+        if [[ $(awk -F' : ' '/Layout/ { print $2 }' <<<"$info") != near=2 ]] || ((ndev % 2)); then
+            echo "vm-mount: skipping the RAID 10 of ${members[*]}: only two near copies on an even number of members can be read with --ro" >&2
+            continue
+        fi
+        unset slot; declare -A slot=()
+        for m in "${members[@]}"; do
+            r=$(mdadm --examine "$m" | awk -F' : ' '/Device Role/ { print $2 }')
+            [[ $r == "Active device "* ]] && slot[${r##* }]=$m
+        done
+        table="0 $((size * 2)) striped $((ndev / 2)) $((chunk * 2))"
+        for ((i = 0; i < ndev; i += 2)); do
+            m=${slot[$i]:-${slot[$((i + 1))]:-}}
+            [[ -n $m ]] || { table=""; break; }
+            # The member itself, from its data offset: a loop device of the
+            # data area would show this host's LVM a PV it might activate.
+            table+=" $m $(mdadm --examine "$m" | awk -F' : ' '/Data Offset/ { print $2 + 0 }')"
+        done
+        [[ -n $table ]] || { echo "vm-mount: skipping the RAID 10 of ${members[*]}: a pair has neither member" >&2; continue; }
+        c=vm-mount-$$-raid10-$((n++))
+        dmsetup create --readonly "$c" --table "$table"
+        echo "dm $c" >>"$state"
+        udevadm settle
+        parts+=("$(realpath "/dev/mapper/$c")")
+        raid_uuid[$(realpath "/dev/mapper/$c")]=$(mdadm --examine --export "${members[0]}" | sed -n 's/^MD_UUID=//p')
+    elif [[ -n $level && $level != raid1 ]]; then
+        cows=()
+        for m in "${members[@]}"; do
+            f=$(mktemp -p "${TMPDIR:-/tmp}" vm-mount-cow.XXXXXX)
+            truncate -s 1G "$f"
+            l=$(losetup --find --show "$f")
+            c=vm-mount-$$-cow-${m##*/}
+            dmsetup create "$c" --table "0 $(blockdev --getsz "$m") snapshot $m $l N 8"
+            echo "cow $c $l $f" >>"$state"
+            cows+=("/dev/mapper/$c")
+        done
+        udevadm settle
+        # This host's udev may have assembled them by itself, as above.
+        for c in "${cows[@]}"; do
+            for h in /sys/class/block/"$(basename "$(realpath "$c")")"/holders/md*; do
+                [[ -e $h ]] && { mdadm --stop "/dev/${h##*/}" >/dev/null || { undo; die "could not stop ${h##*/}, which this host assembled from $c"; }; }
+            done
+        done
+        modprobe -q raid456 raid10 || true
+        md=/dev/md/vm-mount-$$-$((n++))
+        if ! mdadm --assemble --readonly --run "$md" "${cows[@]}" >/dev/null 2>&1; then
+            echo "vm-mount: skipping the RAID of ${members[*]}: this host's md can't assemble it" >&2
+            continue
+        fi
+        echo "md $md" >>"$state"
+        parts+=("$(realpath "$md")")
+        raid_uuid[$(realpath "$md")]=$(mdadm --examine --export "${members[0]}" | sed -n 's/^MD_UUID=//p')
+    elif [[ $ro == yes ]]; then
+        info=$(mdadm --examine "${members[0]}")
         offset=$(awk -F' : ' '/Data Offset/ { print $2 + 0 }' <<<"$info")
         size=$(awk -F' : ' '/Array Size/ { print $2 + 0 }' <<<"$info")
         loop=$(losetup --read-only --find --show --offset $((offset * 512)) \

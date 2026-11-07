@@ -41,15 +41,18 @@ case $G in
 esac
 PHASES=("$@"); [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source backup rebuild verify)
 W=/home/m/backotter-work
-T=$W/testvm
-BIN=/bkoscratch/holttest1d/bin
 HERE=$(dirname "$(realpath "$0")")
+T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, vm-mount, compare/)
+BIN=/bkoscratch/holttest1d/bin
 # HT_VARIANT (README's HoltTest1D plan): "bigger" rebuilds onto disks 1 GiB
 # bigger than the source's (GPT's backup header must move to the new end);
 # "oneshot" runs the whole rebuild as one `--through close` command, as an
-# administrator would.  A variant has a directory of its own, GUEST-VARIANT.
+# administrator would; "degraded" runs the source with its last disk
+# detached (a RAID member's: its arrays degraded), so load recreates those
+# arrays with "missing" slots onto one disk fewer, and the restored machine
+# must boot degraded too.  A variant has a directory of its own, GUEST-VARIANT.
 VARIANT=${HT_VARIANT:-}
-case $VARIANT in ""|bigger|oneshot) ;; *) echo "HT_VARIANT: bigger or oneshot" >&2; exit 2 ;; esac
+case $VARIANT in ""|bigger|oneshot|degraded) ;; *) echo "HT_VARIANT: bigger, oneshot or degraded" >&2; exit 2 ;; esac
 GV=$G${VARIANT:+-$VARIANT}
 R=/bkoscratch/holttest1d/$RUN/$GV
 S=$R/share
@@ -84,6 +87,11 @@ if [[ -f $W/vms/$G/vm-run-options ]]; then
     done
 fi
 uefi=0; [[ " ${fw[*]} " == *" --uefi "* ]] && uefi=1
+detached=""
+if [[ $VARIANT == degraded ]]; then
+    ((${#imgs[@]} >= 2)) || { echo "HT_VARIANT=degraded: $G has one disk" >&2; exit 2; }
+    detached=${imgs[-1]}; unset 'imgs[-1]'
+fi
 # A UEFI source is rebuilt from a UEFI-booted rescuer (make-rescuer.sh
 # --uefi, from ubuntu26-uefi), as BackOtter's stick boots in the machine's
 # own firmware mode: grub-mkconfig writes UEFI's grub.cfg only there.
@@ -146,7 +154,7 @@ findmnt --verify >/dev/null 2>&1 && echo "fstab verifies" || no "findmnt --verif
 m=0; for t in $(awk "\$1 !~ /^#/ && \$2 ~ /^\// && \$4 !~ /noauto/ {print \$2}" /etc/fstab); do mountpoint -q "$t" && m=$((m + 1)) || no "fstab mount $t not mounted"; done; echo "$m fstab mounts mounted"
 [ "$(grep -c . /proc/swaps)" -gt 1 ] && echo "swap on" || no "no swap"
 if command -v zpool >/dev/null && [ -n "$(zpool list -H -o name 2>/dev/null)" ]; then zpool status -x | grep -q "all pools are healthy" && echo "zpool healthy" || no "zpool status -x: $(zpool status -x | head -3 | tr "\n" " ")"; fi
-[ -r /proc/mdstat ] && for a in $(awk "/^md/ {print \$1}" /proc/mdstat); do st=$(mdadm --detail /dev/$a | sed -n "s/^ *State : *//p" | sed "s/ *$//"); case $st in clean|active|"active, resyncing"|"clean, resyncing") echo "$a $st" ;; *) no "$a: $st" ;; esac; done
+[ -r /proc/mdstat ] && for a in $(awk "/^md/ {print \$1}" /proc/mdstat); do st=$(mdadm --detail /dev/$a | sed -n "s/^ *State : *//p" | sed "s/ *$//"); case $st in clean|active|"active, resyncing"|"clean, resyncing") echo "$a $st" ;; "clean, degraded"|"active, degraded") [ "${DEGRADED:-0}" = 1 ] && echo "$a $st" || no "$a: $st" ;; *) no "$a: $st" ;; esac; done
 [ -f /etc/crypttab ] && for c in $(awk "\$1 !~ /^#/ && NF {print \$1}" /etc/crypttab); do cryptsetup status "$c" 2>/dev/null | grep -q "is active" && echo "$c open" || no "LUKS $c not open"; done
 ls /var/log/bko-holt/load.log >/dev/null 2>&1 && echo "load log kept" || no "/var/log/bko-holt/load.log missing"
 exit $f'
@@ -169,6 +177,11 @@ else
     echo "unknown init"
 fi'
 bootstate() { sshk "$1" "$BOOTSTATE"; }
+# The degraded variant: the arrays may be degraded (and must be, see below).
+[[ $VARIANT == degraded ]] && HEALTH="DEGRADED=1; $HEALTH"
+# md's view of each array: its name, level, and member slots up or missing
+# ([UU_]), sorted.  A degraded run's restored machine must show the source's.
+MDSTAT='awk "/^md/ {a = \$1; for (i = 3; i <= NF; i++) if (\$i ~ /^(raid|linear)/) {l = \$i; break}} / blocks / && a {print a, l, \$NF; a = \"\"}" /proc/mdstat | sort'
 
 phase_source() {
     say "== source: $G"
@@ -177,7 +190,15 @@ phase_source() {
     done
     CONSOLE_KEY=$gpass vm_up "${src[0]}" "$R/logs/source-serial.log" "${fw[@]}" "${extra_src[@]}"
     vm_wait "$gkey" || { bad "source boots (no SSH)"; vm_down "$gkey"; return; }
-    ok "source boots"
+    ok "source boots${detached:+, with ${detached##*/} detached}"
+    if [[ -n $detached ]]; then
+        sshk "$gkey" "$MDSTAT" > "$R/logs/source-mdstat.txt"
+        if grep -q '_' "$R/logs/source-mdstat.txt"; then
+            ok "source's arrays degraded: $(grep '_' "$R/logs/source-mdstat.txt" | tr '\n' ';' | sed 's/;$//; s/;/; /g')"
+        else
+            bad "no array of the source is degraded with ${detached##*/} detached (logs/source-mdstat.txt)"
+        fi
+    fi
     bootstate "$gkey" > "$R/logs/source-bootstate.txt"
     sshk "$gkey" "$HEALTH" 2>&1 | grep -v 'bko-holt/load.log' > "$R/logs/source-health.txt"
     scpk "$gkey" "$BIN/bko-holt" root@127.0.0.1:/root/bko-holt
@@ -341,6 +362,14 @@ phase_verify() {
     CONSOLE_KEY=$gpass vm_up "${dst[0]}" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${extra_dst[@]}"
     if ! vm_wait "$gkey"; then bad "the restored disk boots by itself (no SSH; logs/restored-serial.log)"; vm_down "$gkey"; return; fi
     ok "the restored disk boots by itself, SSH with the guest's key"
+    if [[ -n $detached ]]; then
+        sshk "$gkey" "$MDSTAT" > "$R/logs/restored-mdstat.txt"
+        if cmp -s "$R/logs/source-mdstat.txt" "$R/logs/restored-mdstat.txt"; then
+            ok "restored arrays degraded as the source's: $(grep '_' "$R/logs/restored-mdstat.txt" | tr '\n' ';' | sed 's/;$//; s/;/; /g')"
+        else
+            bad "restored arrays: $(tr '\n' ' ' < "$R/logs/restored-mdstat.txt"), source's $(tr '\n' ' ' < "$R/logs/source-mdstat.txt")"
+        fi
+    fi
     bootstate "$gkey" > "$R/logs/restored-bootstate.txt"
     if diff -q <(head -1 "$R/logs/source-bootstate.txt") <(head -1 "$R/logs/restored-bootstate.txt") >/dev/null \
         && [[ -z $(comm -13 <(tail -n +2 "$R/logs/source-bootstate.txt") <(tail -n +2 "$R/logs/restored-bootstate.txt")) ]]; then
@@ -360,6 +389,7 @@ phase_verify() {
     sshk "$gkey" '/root/bko-holt dump; rm -f /root/bko-holt' > "$R/dumps/dst.json" 2> "$R/logs/restored-dump.err" || bad "dump of the restored system"
     vm_down "$gkey"
     local grow=(); [[ $VARIANT == bigger ]] && grow=(--grow $((1 << 30)))
+    [[ $VARIANT == degraded ]] && grow=(--degraded)
     if python3 "$HERE/judge.py" "${grow[@]}" "$R/dumps/src.json" "$R/dumps/dst.json" > "$R/logs/judge.txt" 2>&1; then
         ok "the dumps agree ($(tail -1 "$R/logs/judge.txt"))"
     else

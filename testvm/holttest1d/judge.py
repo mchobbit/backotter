@@ -151,7 +151,8 @@ def flatten(v, path, out):
                 links.append("/dev/disk/by-uuid/<member>")
             else:
                 links.append(x)
-        v = dict(v, links=links)
+        # Sorted again: the member's new UUID sorts elsewhere among the links.
+        v = dict(v, links=sorted(links, key=str))
     if isinstance(v, dict) and v.get("type") in ("ufs", "hammer2", "redoxfs") and "uuid" in v:
         # UFS's UUID is its fs_id, which newfs picks at random; HAMMER2's and
         # RedoxFS's newfs take none either.

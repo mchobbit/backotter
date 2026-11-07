@@ -9,6 +9,8 @@ Haiku; Redox and Sculpt OS from Linux):
 - `bko-holt load` rebuilds the disks from that JSON, in stages, and has the
   archiver (rustic-bko) restore the files into them
   (`docs/design/layload.md`).
+- `bko-holt report-bug` gathers what a bug report needs into one redacted
+  file (see "Reporting a bug" below).
 
 ```
 sudo bko-holt dump > layout.json
@@ -107,6 +109,45 @@ stage is next.  The writing stages, `partition`, `assemble`, `format`,
 (without it they print them), and read the disks back after each stage to
 see it took.  `--through close` with `--repo` is a whole restore.
 
+## Reporting a bug
+
+```
+sudo bko-holt report-bug                       # the last load run, found by itself
+sudo bko-holt report-bug --stderr errors.txt   # with an archiver's saved error output
+sudo bko-holt report-bug -- layout.json --map vda=/dev/sdb   # a load run of your choosing
+```
+
+writes `bko-report-DATE.txt` to attach to an issue
+(https://github.com/mchobbit/backotter/issues/new/choose): the versions of
+bko-holt, restic-bko, rustic-bko, the image (`/.disk/backotter.json`), the
+OS and kernel; this system's dump; the last `load` run, which `load` records
+in `/run/bko-holt/last-load.json` (command line, exit status, error output),
+with the layout it loaded, its plan and Problems and the target disks'
+status; and `/run/bko-holt/log/load.log` and `/var/log/bko-holt/`.  `load`
+and `dump` point at it when they fail.
+
+It's redacted unless `--no-redact` (`src/redact.rs`).  Every hostname,
+machine-id, UUID and GUID (ZFS's too), serial number and WWID, label, user
+name (from /home and Ubuntu's USERDATA datasets), key-file path, MAC address,
+MBR disk signature, hostid, repository and password-file path gets a
+pseudonym, the same one in every form it takes: upper and lower case, with
+and without dashes, md's colon form, device-mapper's doubled dashes, GPT's
+mixed-endian bytes inside EFI load options and boot code.  Sizes, offsets,
+feature flags, partition and filesystem types, kernel device names, models,
+pool, VG and LV names and the topology stay, and so do names that identify
+no one (installers' default hostnames, labels such as EFI or swap0); the
+command prints both lists.  Compressed parts of boot code (GRUB's core.img)
+are left as they are.
+
+The plan in the report is the redacted layout's own, checked against the
+original's: mapped back through the pseudonyms it must be the same, byte for
+byte.  `src/scenarios.rs` checks that for every fake system, and
+`tests/redact_dumps.rs` for real dumps:
+
+```
+BKO_HOLT_DUMPS=/bkoscratch/holttest1d/r3all cargo test --test redact_dumps -- --nocapture
+```
+
 ## Building
 
 No dependencies; builds offline with Debian 13's own cargo (1.85):
@@ -140,6 +181,10 @@ cargo test
   dump of the machine running the tests checked against `lsblk` (run it as
   root too: then our own superblock reading is what's checked).
 - `tests/load_cli.rs`: `load`'s arguments and exit codes.
+- `src/redact.rs`, `src/bugreport.rs`: the redaction, and the report.
+  `tests/redact_dumps.rs` checks real dumps when BKO_HOLT_DUMPS names a
+  directory of them (each `src.json` under it; BKO_HOLT_DUMPS_ALL=1 takes
+  every `*.json`).
 - `tests/root_stack.rs` (ignored by default): builds md RAID1 + LUKS2 + LVM
   + ext4/XFS and a ZFS mirror on loop devices and checks the dump against
   mdadm, cryptsetup, lvs and zpool.  It changes the running system, so run

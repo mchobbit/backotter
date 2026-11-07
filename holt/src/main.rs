@@ -4,13 +4,17 @@ use std::process::ExitCode;
 
 const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
        bko-holt load LAYOUT.json [--through STAGE | --only STAGE] [--commit] ...
+       bko-holt report-bug [--output FILE] [--stderr FILE]... [-- LOAD-ARGS...]
        bko-holt -h | --help | -V | --version
 
-  dump   writes a JSON description of this system's disk layout
-         and boot setup to standard output
-  load   rebuilds disks from such a description, in stages
+  dump        writes a JSON description of this system's disk layout
+              and boot setup to standard output
+  load        rebuilds disks from such a description, in stages
+  report-bug  gathers what a BackOtter bug report needs (versions, dump,
+              the last load run, logs) into one redacted file to attach
 
-`bko-holt dump --help` and `bko-holt load --help` say more.
+`bko-holt dump --help`, `bko-holt load --help` and `bko-holt report-bug --help`
+say more.
 ";
 
 const DUMP_USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR | --disk DEV...]
@@ -43,7 +47,14 @@ fn main() -> ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     match args.first().map(String::as_str) {
         Some("dump") => dump(&args[1..]),
-        Some("load") => ExitCode::from(bko_holt::load::main(&args[1..])),
+        Some("load") => {
+            let code = bko_holt::load::main(&args[1..]);
+            if matches!(code, bko_holt::load::EXIT_FAILED | bko_holt::load::EXIT_UNSUPPORTED) {
+                eprint!("{}", report_hint());
+            }
+            ExitCode::from(code)
+        }
+        Some("report-bug") => bko_holt::bugreport::main(&args[1..]),
         // Not in the usage: run by load's close stage.
         Some("md-lbs") => ExitCode::from(bko_holt::mdsb::main(&args[1..])),
         Some("write-table") => ExitCode::from(bko_holt::load::writetable::main(&args[1..])),
@@ -64,6 +75,14 @@ fn main() -> ExitCode {
             ExitCode::from(2)
         }
     }
+}
+
+/// After a fatal error: how to report it, if it's a bug.
+fn report_hint() -> String {
+    format!(
+        "bko-holt: if this looks like a bug in BackOtter, `bko-holt report-bug` gathers what a report\nneeds into one redacted file; attach it to an issue at {}\n",
+        bko_holt::bugreport::ISSUES
+    )
 }
 
 fn dump(args: &[String]) -> ExitCode {
@@ -113,6 +132,7 @@ fn dump(args: &[String]) -> ExitCode {
         Ok(r) => r,
         Err(e) => {
             eprintln!("bko-holt dump: {e}");
+            eprint!("{}", report_hint());
             return ExitCode::from(3);
         }
     };

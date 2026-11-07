@@ -30,6 +30,10 @@ fn run(t: &Tree, privileged: bool, runner: FakeRunner) -> Value {
     // (Compared as text: a positive Int reads back as a UInt.)
     assert_eq!(crate::json::parse(&v.pretty()).unwrap().compact(), v.compact());
     assert_eq!(crate::json::parse(&v.compact()).unwrap().compact(), v.compact());
+    // Redacted for a bug report, it still plans the same.
+    if let Err(e) = crate::bugreport::check_plan(&v.pretty()) {
+        panic!("redaction: {e}");
+    }
     v
 }
 

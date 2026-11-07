@@ -1,0 +1,5 @@
+blank_issues_enabled: true
+contact_links:
+  - name: How to report a bug
+    url: https://github.com/mchobbit/backotter#reporting-a-bug
+    about: What `bko-holt report-bug` gathers, and what it redacts.

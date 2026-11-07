@@ -1,0 +1,109 @@
+name: Bug report
+description: Something in BackOtter went wrong (a backup, a restore, a whole-machine rebuild, the rescue stick)
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting this.  One command gathers almost everything we need.
+        On the machine where it went wrong (the rescue stick, or the system you were backing up), run:
+
+        ```
+        sudo bko-holt report-bug
+        ```
+
+        It writes one file, `bko-report-DATE.txt`, with the versions of bko-holt, restic-bko,
+        rustic-bko, the rescue image, the OS and kernel; this system's `bko-holt dump`; the last
+        `bko-holt load` run (its plan and Problems); and bko-holt's logs.  To add the error output
+        of a backup or restore, save it and pass it along:
+
+        ```
+        restic-bko backup ... 2> errors.txt
+        sudo bko-holt report-bug --stderr errors.txt
+        ```
+
+        Issues are public, so the file is redacted: hostnames, UUIDs, serial numbers, labels,
+        user names, key-file paths, MAC addresses and the machine-id become pseudonyms such as
+        `host-1` and `label2`.  It's plain text: read it before you attach it.
+  - type: dropdown
+    id: doing
+    attributes:
+      label: What were you doing?
+      options:
+        - Backup (restic-bko or rustic-bko)
+        - Restoring files
+        - Whole-machine rebuild (bko-holt load)
+        - Recording the disk layout (bko-holt dump)
+        - Booting or using the rescue stick
+        - Something else
+    validations:
+      required: true
+  - type: dropdown
+    id: platform
+    attributes:
+      label: Platform
+      description: The system being backed up or rebuilt.
+      options:
+        - Linux
+        - FreeBSD (or HardenedBSD, GhostBSD)
+        - NetBSD (or AlpineBSD)
+        - OpenBSD
+        - DragonFly BSD
+        - illumos (OmniOS)
+        - Haiku
+        - Redox or Sculpt OS
+        - Other
+    validations:
+      required: true
+  - type: input
+    id: os
+    attributes:
+      label: Distribution and version
+      placeholder: Debian 13, Ubuntu 26.04, FreeBSD 15.0, ...
+  - type: dropdown
+    id: where
+    attributes:
+      label: Where did it run?
+      options:
+        - On the BackOtter rescue stick
+        - On the system itself
+        - Somewhere else
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What did you run?
+      description: The commands, in order, as you typed them.
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: What did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: What happened instead?
+      description: The error message, or what was wrong afterwards (a machine that doesn't boot, missing files).
+    validations:
+      required: true
+  - type: textarea
+    id: bundle
+    attributes:
+      label: The report file
+      description: |
+        Drag the `bko-report-DATE.txt` file from `bko-holt report-bug` here.  If you couldn't
+        run it (the stick wouldn't boot, bko-holt isn't there), say why instead.
+    validations:
+      required: true
+  - type: checkboxes
+    id: read
+    attributes:
+      label: Before you submit
+      options:
+        - label: I read the report file, and nothing in it is something I mind being public.
+          required: true

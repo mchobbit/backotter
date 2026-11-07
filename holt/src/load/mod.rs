@@ -280,37 +280,38 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
 }
 
 /// `bko-holt load ARGS`: prints the result and returns the exit status.
+/// Each run is recorded in RUN_DIR for `bko-holt report-bug`.
 pub fn main(args: &[String]) -> u8 {
+    let (code, err) = main_inner(args);
+    eprint!("{err}");
+    if !matches!(parse_args(args), Ok(Parsed::Help)) {
+        crate::bugreport::record_load_run(args, code, &err);
+    }
+    code
+}
+
+/// The exit status and standard error; standard output is printed.
+fn main_inner(args: &[String]) -> (u8, String) {
     let opts = match parse_args(args) {
         Ok(Parsed::Help) => {
             print!("{USAGE}");
-            return EXIT_OK;
+            return (EXIT_OK, String::new());
         }
         Ok(Parsed::Run(o)) => o,
-        Err(e) => {
-            eprintln!("bko-holt load: {e}\n\n{USAGE}");
-            return EXIT_BAD_ARGS;
-        }
+        Err(e) => return (EXIT_BAD_ARGS, format!("bko-holt load: {e}\n\n{USAGE}")),
     };
     let text = match std::fs::read_to_string(&opts.layout) {
         Ok(t) => t,
-        Err(e) => {
-            eprintln!("bko-holt load: {}: {e}", opts.layout);
-            return EXIT_BAD_ARGS;
-        }
+        Err(e) => return (EXIT_BAD_ARGS, format!("bko-holt load: {}: {e}\n", opts.layout)),
     };
     let sys = match &opts.sysroot {
-        Some(d) if !std::path::Path::new(d).is_dir() => {
-            eprintln!("bko-holt load: --sysroot {d}: not a directory");
-            return EXIT_BAD_ARGS;
-        }
+        Some(d) if !std::path::Path::new(d).is_dir() => return (EXIT_BAD_ARGS, format!("bko-holt load: --sysroot {d}: not a directory\n")),
         Some(d) => Sys::new(d, Box::new(FakeRunner::default()), crate::sys::euid() == 0),
         None => Sys::host(),
     };
     let (code, out, err) = run(&opts, &text, &sys);
     print!("{out}");
-    eprint!("{err}");
-    code
+    (code, err)
 }
 
 /// Runs what `opts` asks for on `sys` (the system load runs on, whose disks

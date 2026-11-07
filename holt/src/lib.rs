@@ -9,6 +9,7 @@
 pub mod blockdev;
 pub mod boot;
 pub mod bootcode;
+pub mod bugreport;
 pub mod bytes;
 pub mod efi;
 pub mod json;
@@ -19,6 +20,7 @@ pub mod osrel;
 pub mod other;
 pub mod parttable;
 pub mod probe;
+pub mod redact;
 pub mod report;
 #[cfg(test)]
 mod scenarios;

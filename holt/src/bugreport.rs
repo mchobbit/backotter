@@ -33,10 +33,11 @@ an issue at https://github.com/mchobbit/backotter/issues/new/choose :
   - the versions of bko-holt, restic-bko, rustic-bko, the rescue image, the
     operating system and the kernel
   - this system's `bko-holt dump`
-  - the last `bko-holt load` run (it records itself in /run/bko-holt): its
-    command line, exit status and error output, the layout it loaded, the
-    plan for it with its Problems, and the target disks' status
-  - bko-holt's logs: /run/bko-holt/log/load.log and /var/log/bko-holt/
+  - the last `bko-holt load` run (it records itself in /run/bko-holt, or
+    /var/run/bko-holt on systems other than Linux): its command line, exit
+    status and error output, the layout it loaded, the plan for it with its
+    Problems, and the target disks' status
+  - bko-holt's logs: load.log in that directory's log/, and /var/log/bko-holt/
   - error output you saved (--stderr FILE), for example from
     `restic-bko backup ... 2> backup-errors.txt`
 
@@ -191,6 +192,16 @@ fn last_run(sys: &Sys, a: &Args) -> Option<Run> {
     })
 }
 
+/// The last MAX bytes of TEXT at most, starting at a character boundary
+/// (error output may hold multibyte UTF-8).
+fn tail_bytes(text: &str, max: usize) -> &str {
+    let mut i = text.len().saturating_sub(max);
+    while !text.is_char_boundary(i) {
+        i += 1;
+    }
+    &text[i..]
+}
+
 /// `bko-holt load` records each run (but not --sysroot ones or --help)
 /// for `report-bug`.  It's in RAM, and failing to write it changes nothing.
 pub fn record_load_run(args: &[String], exit: u8, stderr: &str) {
@@ -198,7 +209,7 @@ pub fn record_load_run(args: &[String], exit: u8, stderr: &str) {
         return;
     }
     let cwd = std::env::current_dir().map(|p| p.display().to_string()).unwrap_or_default();
-    let err = if stderr.len() > 65536 { &stderr[stderr.len() - 65536..] } else { stderr };
+    let err = tail_bytes(stderr, 65536);
     let v = Obj::new()
         .set("format", "bko-holt-last-load")
         .set("time", crate::timestamp())
@@ -212,6 +223,9 @@ pub fn record_load_run(args: &[String], exit: u8, stderr: &str) {
     let _ = std::fs::write(format!("{RUN_DIR}/{LAST_RUN}"), v.pretty());
 }
 
+/// Where a BackOtter rescue image keeps its marker (stick/marker.py).
+const MARKERS: [&str; 3] = ["/.disk/backotter.json", "/boot/.disk/backotter.json", "/cdrom/.disk/backotter.json"];
+
 fn versions(sys: &Sys) -> (String, Vec<String>) {
     let mut s = format!("bko-holt      {}\n", env!("CARGO_PKG_VERSION"));
     let mut notes = Vec::new();
@@ -222,7 +236,9 @@ fn versions(sys: &Sys) -> (String, Vec<String>) {
         };
         s += &format!("{prog:<13} {v}\n");
     }
-    let marker = ["/.disk/backotter.json", "/boot/.disk/backotter.json"].iter().find_map(|p| sys.read(p).map(|t| (p, t)));
+    // The image's root on the BSDs and illumos; Haiku's boot volume; the
+    // Linux image's medium, which casper mounts on /cdrom.
+    let marker = MARKERS.iter().find_map(|p| sys.read(p).map(|t| (p, t)));
     match marker {
         Some((p, t)) => match crate::json::parse(&t) {
             Ok(m) => {
@@ -240,9 +256,10 @@ fn versions(sys: &Sys) -> (String, Vec<String>) {
             }
             Err(_) => s += &format!("image         {p} isn't JSON\n"),
         },
-        None => s += "image         none: not running from a BackOtter rescue image (no /.disk/backotter.json)\n",
+        None => s += "image         none: not running from a BackOtter rescue image (no .disk/backotter.json)\n",
     }
-    let os = crate::osrel::read(sys);
+    // As dump reads it: NetBSD, OpenBSD and Haiku have no os-release.
+    let os = if crate::other::Family::current().is_some() { crate::other::os_release(sys) } else { crate::osrel::read(sys) };
     let osline = os.as_ref().map(|o| format!("{} ({} {})", o.get("PRETTY_NAME").unwrap_or("?"), o.get("ID").unwrap_or("?"), o.get("VERSION_ID").unwrap_or("?")));
     s += &format!("os            {}\n", osline.unwrap_or_else(|| "no os-release".into()));
     let un = sys.run("uname", &["-s", "-r", "-v", "-m"]).map(|o| o.trim().to_string());
@@ -408,8 +425,18 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
         let mut so = ro.clone();
         so.only = Some(load::Stage::Status);
         so.through = None;
+        // With no --map, load matched the disks by WWID or serial, which the
+        // redacted layout's pseudonyms match nowhere: the original's pairs
+        // as --map instead.
+        let mut how = String::new();
+        if so.maps.is_empty() && !a.no_redact {
+            so.maps = load::disk_pairs(o, text, sys).into_iter().map(|(src, t)| (r.text(&src), t)).collect();
+            if !so.maps.is_empty() {
+                how = format!("(the run matched its disks by WWID or serial; given here as {})\n", so.maps.iter().map(|(s, t)| format!("--map {s}={t}")).collect::<Vec<_>>().join(" "));
+            }
+        }
         let (code, out, err) = load::run(&so, &red_text, sys);
-        parts.push(Part { title: "status of the target disks (--only status)".into(), body: Body::Text(format!("exit {code}\n{out}{err}")) });
+        parts.push(Part { title: "status of the target disks (--only status)".into(), body: Body::Text(format!("exit {code}\n{how}{out}{err}")) });
         parts.push(Part { title: format!("layout: {path} (the dump that run loaded)"), body: Body::Json(v.clone()) });
     }
     match own {
@@ -636,5 +663,49 @@ mod tests {
         let b = build(&sys, &a, "2026-11-07T03:42:00Z");
         assert!(b.text.contains("alice-pc") && b.text.contains("NOT redacted"));
         assert!(!b.text.contains("==== redaction"));
+    }
+
+    #[test]
+    fn stderr_tail_cuts_at_a_character() {
+        let t = "é".repeat(40);
+        let cut = tail_bytes(&t, 11);
+        assert_eq!(cut, "é".repeat(5));
+        assert_eq!(tail_bytes("abc", 10), "abc");
+    }
+
+    #[test]
+    fn linux_image_marker_on_cdrom() {
+        let t = Tree::new("report-bug-cdrom");
+        t.debian13();
+        t.file("/cdrom/.disk/backotter.json", r#"{"image_id": "6f1c2c1e-5b0e-4a51-9d8e-2a3c8f4e7b10", "platform": "linux"}"#);
+        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-43-generic #43 SMP x86_64\n")), true);
+        let (v, _) = versions(&sys);
+        assert!(v.contains("\"platform\":\"linux\"") && v.contains("(/cdrom/.disk/backotter.json)"), "{v}");
+    }
+
+    #[test]
+    fn status_of_disks_matched_by_serial() {
+        let t = Tree::new("report-bug-serial");
+        t.debian13();
+        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "33554432\n");
+        t.file("/sys/block/vdb/device/model", "QEMU HARDDISK\n").file("/sys/block/vdb/device/serial", "ALICE-SER-77\n");
+        let layout = crate::load::layout::sample::bios_mbr()
+            .replace("\"deb13\"", "\"alice-pc\"")
+            .replacen("\"model\": null, \"serial\": null", "\"model\": \"QEMU HARDDISK\", \"serial\": \"ALICE-SER-77\"", 1);
+        assert!(layout.contains("ALICE-SER-77"));
+        t.file("/srv/alice/layout.json", &layout);
+        let last = Obj::new()
+            .set("cwd", "/srv/alice")
+            .set("args", Value::Arr(s(&["layout.json", "--through", "format", "--commit"]).into_iter().map(Value::Str).collect()))
+            .set("exit", 1u64)
+            .build();
+        t.file(&format!("{RUN_DIR}/{LAST_RUN}"), last.pretty());
+        let sys = Sys::new(t.root(), Box::new(FakeRunner::default().with("uname -s -r -v -m", "Linux 7.0.0-30-generic #30 SMP x86_64\n")), true);
+        let b = build(&sys, &Args::default(), "2026-11-07T03:42:00Z");
+        let st = b.text.split("==== status of the target disks").nth(1).unwrap().split("\n==== ").next().unwrap();
+        assert!(st.contains("given here as --map vda=vdb"), "{st}");
+        assert!(!st.contains("has no target"), "{st}");
+        assert!(!b.text.contains("ALICE-SER-77"), "{}", b.text);
     }
 }

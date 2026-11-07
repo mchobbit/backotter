@@ -119,12 +119,14 @@ sudo bko-holt report-bug -- layout.json --map vda=/dev/sdb   # a load run of you
 
 writes `bko-report-DATE.txt` to attach to an issue
 (https://github.com/mchobbit/backotter/issues/new/choose): the versions of
-bko-holt, restic-bko, rustic-bko, the image (`/.disk/backotter.json`), the
-OS and kernel; this system's dump; the last `load` run, which `load` records
-in `/run/bko-holt/last-load.json` (command line, exit status, error output),
-with the layout it loaded, its plan and Problems and the target disks'
-status; and `/run/bko-holt/log/load.log` and `/var/log/bko-holt/`.  `load`
-and `dump` point at it when they fail.
+bko-holt, restic-bko, rustic-bko, the image (`.disk/backotter.json` on the
+image's root, its boot volume or, on Linux, `/cdrom`), the OS and kernel;
+this system's dump; the last `load` run, which `load` records in
+`/run/bko-holt/last-load.json` (`/var/run/bko-holt/` on systems other than
+Linux; command line, exit status, error output), with the layout it loaded,
+its plan and Problems and the target disks' status; and that directory's
+`log/load.log` and `/var/log/bko-holt/`.  `load` and `dump` point at it when
+they fail.
 
 It's redacted unless `--no-redact` (`src/redact.rs`).  Every hostname,
 machine-id, UUID and GUID (ZFS's too), serial number and WWID, label, user

@@ -586,7 +586,7 @@ phase_rebuild() {
         [[ $s == restore || $s == oneshot ]] && extra=("${repo[@]}")
         [[ $s == oneshot ]] && how=(--through close)
         TMO=7200 load_step 0 "$s" "${map[@]}" "${extra[@]}" "${how[@]}" --commit || {
-            sshk "$rkey" "cat $([[ $PLAT == haiku ]] && echo /var/run || echo /run)/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
+            sshk "$rkey" "cat /var/run/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
             sshk "$rkey" "set -x; mount; df; gpart show; disklabel ${RN[1]}; dkctl ${RN[1]} listwedges; zpool status; zpool list -v; zfs list -o name,mounted,mountpoint,canmount; glabel status; swapctl -l" > "$R/logs/rebuild-failed-state.txt" 2>&1
             kept_or_down; return; }
         [[ $PLAT == haiku ]] && sshk "$rkey" "echo $s \$(stat -c %Y.%y /mnt/bko-target 2>&1)" >> "$R/logs/haiku-root-mtime.txt" 2>&1
@@ -614,7 +614,7 @@ phase_rebuild() {
         sshk "$rkey" "$edges" > "$R/logs/edges-end.txt" 2>&1
         [[ $(sed -n "${D}p" "$R/logs/edges-end.txt") == "$(sed -n "${D}p" "$R/logs/edges-before.txt")" && -n $(sed -n "${D}p" "$R/logs/edges-end.txt") ]] || bad "the decoy changed (logs/edges-before.txt, edges-end.txt)"
     fi
-    sshk "$rkey" "cat $([[ $PLAT == haiku ]] && echo /var/run || echo /run)/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
+    sshk "$rkey" "cat /var/run/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
     [[ ${HT_KEEP:-} == 1 ]] && { kept_or_down; return; }
     vm_down "$rkey"
     rm -f "$try"

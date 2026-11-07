@@ -1154,7 +1154,35 @@ impl Redactor {
             }
             i += 1;
         }
+        if !short {
+            self.fat_serials(&mut out);
+        }
         out
+    }
+
+    /// A FAT boot sector's 4-byte volume serial (an EFI system partition's
+    /// "UUID", 122A-10FD), in its place only: at 39 (FAT12, FAT16) or 67
+    /// (FAT32) of a sector that is one, which an image of an ESP's sectors
+    /// holds twice (the boot sector and its backup).  Elsewhere a 4-byte
+    /// run matches by chance, as `bytes` says.
+    fn fat_serials(&self, out: &mut [u8]) {
+        for i in (0..out.len().saturating_sub(511)).step_by(512) {
+            let s = &out[i..i + 512];
+            if s[510..] != [0x55, 0xAA] || !matches!(s[0], 0xEB | 0xE9) {
+                continue;
+            }
+            let at = if &s[82..87] == b"FAT32" {
+                67
+            } else if &s[54..57] == b"FAT" {
+                39
+            } else {
+                continue;
+            };
+            let id = out[i + at..i + at + 4].to_vec();
+            if let Some((_, t, _)) = self.bin.iter().find(|(f, _, short)| *short && *f == id) {
+                out[i + at..i + at + 4].copy_from_slice(t);
+            }
+        }
     }
 
     /// Originals still in `text` (a check on the redaction itself).
@@ -1467,5 +1495,34 @@ mod tests {
         assert_eq!(link_serials("/dev/diskid/DISK-QM00001s1a"), vec!["QM00001"]);
         assert!(link_serials("/dev/disk/by-id/wwn-0x5002538e40a1b2c3 /dev/disk/by-id/dm-name-root /dev/disk/by-id/scsi-35002538e40a1b2c3").is_empty());
         assert!(user_like("alice") && !user_like("lost+found") && !user_like(""));
+    }
+
+    #[test]
+    fn fat_serial_in_an_esp_image() {
+        // A FAT32 boot sector and its backup, serial 122A-10FD (little-endian
+        // on disk), and a sector that isn't one holding the same 4 bytes.
+        let mut bs = vec![0u8; 512];
+        bs[..3].copy_from_slice(&[0xeb, 0x58, 0x90]);
+        bs[67..71].copy_from_slice(&[0xfd, 0x10, 0x2a, 0x12]);
+        bs[82..90].copy_from_slice(b"FAT32   ");
+        bs[510..].copy_from_slice(&[0x55, 0xaa]);
+        let mut other = vec![1u8; 512];
+        other[67..71].copy_from_slice(&[0xfd, 0x10, 0x2a, 0x12]);
+        let img = [bs.clone(), bs.clone(), other.clone()].concat();
+        let d = parse(&format!(
+            r#"{{"os": {{"id": "netbsd"}}, "p": {{"uuid": "122A-10FD", "type": "vfat", "esp_image": [{{"offset": 0, "b64": "{}"}}]}}}}"#,
+            crate::bytes::base64(&img)
+        ))
+        .unwrap();
+        let (r, _) = redact(&d);
+        assert_ne!(r.at(&["p", "uuid"]).and_then(Value::as_str), Some("122A-10FD"));
+        let out = crate::bytes::unbase64(r.at(&["p", "esp_image", "0", "b64"]).and_then(Value::as_str).unwrap()).unwrap();
+        assert_eq!(out.len(), img.len());
+        for i in [0, 512] {
+            assert_ne!(&out[i + 67..i + 71], &[0xfd, 0x10, 0x2a, 0x12], "boot sector at {i}");
+            assert_eq!(&out[i..i + 67], &bs[..67]);
+            assert_eq!(&out[i + 71..i + 512], &bs[71..]);
+        }
+        assert_eq!(&out[1024..], &other[..], "a 4-byte run elsewhere is left alone");
     }
 }

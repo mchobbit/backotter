@@ -695,8 +695,10 @@ impl Builder<'_> {
                 None => a.push(format!("--name={full}")),
             }
         }
+        // Metadata 1.0 keeps the data at the start of the member (offset 0),
+        // which mdadm's --data-offset refuses: only 1.1 and 1.2 take one.
         if meta.starts_with('1') {
-            if let Some(off) = num(&sb, "data_offset_bytes") {
+            if let Some(off) = num(&sb, "data_offset_bytes").filter(|&o| o > 0) {
                 a.push(format!("--data-offset={}K", off / 1024));
             }
         }
@@ -1184,8 +1186,20 @@ pub fn mkfs_xfs(dev: &str, c: &Value, logdev: Option<&str>) -> Vec<String> {
         a.extend(["-s".into(), format!("size={sz}")]);
     }
     let mut d = vec![];
-    if let Some(ag) = num(c, "ag_count") {
-        d.push(format!("agcount={ag}"));
+    // The source's data size and AG size where the dump has them: with
+    // agcount alone, another mkfs.xfs version picks its own AG size (it
+    // rounds to the stripe unit differently) and fills the device, so a
+    // filesystem the source's installer made smaller than its LV changes.
+    match (num(c, "blocks"), num(c, "ag_blocks"), num(c, "block_size")) {
+        (Some(n), Some(ag), Some(b)) if n > 0 && ag > 0 => {
+            d.push(format!("size={}", n * b));
+            d.push(format!("agsize={}", ag * b));
+        }
+        _ => {
+            if let Some(ag) = num(c, "ag_count") {
+                d.push(format!("agcount={ag}"));
+            }
+        }
     }
     if let (Some(su), Some(sw)) = (num(c, "stripe_unit"), num(c, "stripe_width")) {
         if su > 0 {
@@ -2292,6 +2306,18 @@ mod tests {
 
     fn text(cmds: &[Cmd]) -> String {
         cmds.iter().map(Cmd::shell).collect()
+    }
+
+    #[test]
+    fn mkfs_xfs_keeps_data_and_ag_size() {
+        // rocky10-raid5's root: Anaconda's mkfs left it 3 MiB short of its LV.
+        let c = crate::json::parse(r#"{"block_size":4096,"blocks":7333888,"ag_blocks":458368,"ag_count":16,"stripe_unit":128,"stripe_width":256}"#).unwrap();
+        let a = mkfs_xfs("/dev/x", &c, None).join(" ");
+        assert!(a.contains("-d size=30039605248,agsize=1877475328,sunit=1024,swidth=2048"), "{a}");
+        assert!(!a.contains("agcount"), "{a}");
+        // Without the sizes, the AG count as before.
+        let c = crate::json::parse(r#"{"block_size":4096,"ag_count":8}"#).unwrap();
+        assert!(mkfs_xfs("/dev/x", &c, None).join(" ").contains("-d agcount=8"));
     }
 
     #[test]

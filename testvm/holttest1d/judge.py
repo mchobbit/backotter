@@ -296,6 +296,8 @@ def main():
         if a.get(k, "<absent>") == b.get(k, "<absent>"):
             continue
         why = next((w for p, w in IGNORED if re.search(p, k)), None)
+        if not why and k.endswith(".content.device.uuid") and (a.get(k[: -len("device.uuid")] + "num_devices") or 1) > 1:
+            why = "a multi-device btrfs member's own device UUID: mkfs.btrfs --device-uuid sets it for a single device only"
         va, vb = a.get(k), b.get(k)
         if not why and grow:
             why = grown(k, va, vb, grow, a)

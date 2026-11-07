@@ -41,6 +41,8 @@
 # Each job runs in a systemd scope with MemoryHigh = DISK + MEM GiB (its
 # tmpfs pages count there too): past that it is slowed and reclaimed into
 # zram, never killed. zram (16 GiB) is the cushion under all of it.
+# Every job, a --reserve's CMD too, runs under iolog.sh, which logs what it
+# wrote to disk in /bkoscratch/wear/jobs.log (wear-report.sh sums it up).
 # Reservations live in /mnt/bko-ram/.reserve, shared by every cmp-run.sh on
 # the host. Nothing new starts while the CPU is over HOT_C (default 95) or an
 # NVMe over NVME_C (default 75).
@@ -209,7 +211,12 @@ if [ "${1:-}" = --reserve ]; then
         queue_up $$ "$d" "$m" reserve "$@"
         unlock; sleep 30
     done
-    exec "$@"   # keeps $$, so the reservation lasts as long as CMD
+    # In a scope of its own, as m still, so that iolog.sh can count what it
+    # writes to disk (the wear log; WEAR_LOG=off: not). exec keeps $$, so the
+    # reservation lasts as long as CMD.
+    [ "${WEAR_LOG:-}" = off ] && exec "$@"
+    exec sudo -E systemd-run --quiet --scope --collect -p IOAccounting=yes --uid="$(id -u)" --gid="$(id -g)" \
+        env PATH="$PATH" "$PWD/testvm/compare/iolog.sh" "reserve $*" -- "$@"
 fi
 
 tag=$1 slots=$2; shift 2
@@ -316,12 +323,12 @@ worker() {  # SLOT
         # CMP_CMD: a command run in compare.py's place, the same way, with
         # GUEST DISK MEM SLOT [ARGS] (rebuild-one.sh, or a stand-in for tests).
         if [ -n "${CMP_CMD:-}" ]; then
-            sudo systemd-run --quiet --scope --unit=${scope%.scope} -p MemoryHigh=${hi}M \
-                env COMPARE_SLOT=$slot COMPARE_GROW_GIB=$grow $dd $E $CMP_CMD "$g" "$d" "$m" "$slot" "${args[@]}" \
+            sudo systemd-run --quiet --scope --unit=${scope%.scope} -p MemoryHigh=${hi}M -p IOAccounting=yes \
+                testvm/compare/iolog.sh "$tag $g" -- env COMPARE_SLOT=$slot COMPARE_GROW_GIB=$grow $dd $E $CMP_CMD "$g" "$d" "$m" "$slot" "${args[@]}" \
                 >cmp-logs/$tag/$g.log 2>&1 &
         else
-            sudo systemd-run --quiet --scope --unit=${scope%.scope} -p MemoryHigh=${hi}M \
-                env COMPARE_SLOT=$slot COMPARE_GROW_GIB=$grow $dd $E python3 testvm/compare/compare.py "${args[@]}" "$g" \
+            sudo systemd-run --quiet --scope --unit=${scope%.scope} -p MemoryHigh=${hi}M -p IOAccounting=yes \
+                testvm/compare/iolog.sh "$tag $g" -- env COMPARE_SLOT=$slot COMPARE_GROW_GIB=$grow $dd $E python3 testvm/compare/compare.py "${args[@]}" "$g" \
                 restic-bko rustic-bko restic-to-rustic rustic-to-restic >cmp-logs/$tag/$g.log 2>&1 &
         fi
         jp=$!

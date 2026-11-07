@@ -301,7 +301,7 @@ def attach(image: Path) -> str:
     wrap = []
     if out(["stat", "-f", "-c", "%T", str(image)]) != "tmpfs":
         cg = Path("/proc/self/cgroup").read_text().strip().split("::", 1)[-1]
-        wrap = ["systemd-run", "--quiet", "--scope", "--collect",
+        wrap = ["systemd-run", "--quiet", "--scope", "--collect", "--property=IOAccounting=yes",
                 f"--unit=bko-nbd-{os.getpid()}-{time.monotonic_ns()}"]
         if re.fullmatch(r"/system\.slice/[^/]+\.scope", cg):
             wrap.append(f"--property=PartOf={cg.rsplit('/', 1)[-1]}")
@@ -333,6 +333,17 @@ def detach(dev: str) -> None:
                        if l.startswith("Tgid:")))
     except (OSError, StopIteration, ValueError):
         pass
+    # The wear log: what a qemu-nbd scope of its own (attach()) wrote to disk,
+    # read before it goes, as its job's (iolog.sh syncs first).
+    if pid is not None:
+        try:
+            cg = Path(f"/proc/{pid}/cgroup").read_text().strip().split("::", 1)[-1]
+            mine = Path("/proc/self/cgroup").read_text().strip().split("::", 1)[-1]
+            if re.fullmatch(r"/system\.slice/bko-nbd-[^/]+\.scope", cg):
+                run([str(Path(__file__).resolve().parent / "iolog.sh"), "--cgroup", f"/sys/fs/cgroup{cg}",
+                     f"nbd for {mine.rsplit('/', 1)[-1]}"], check=False, quiet=True)
+        except OSError:
+            pass
     run(["qemu-nbd", "--disconnect", dev], check=False, quiet=True)
     while pid is not None and Path(f"/proc/{pid}").exists():
         time.sleep(0.2)

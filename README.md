@@ -31,3 +31,14 @@ machine-id become pseudonyms (`host-1`, `label2`), the same one everywhere,
 while sizes, offsets, feature flags and the device layout stay.  The command
 prints what it replaced and what it kept.  Read the file, then attach it to a
 [new issue](https://github.com/mchobbit/backotter/issues/new/choose).
+
+## License
+
+BackOtter's own code (`holt/`, `stick/`, `testvm/`) and its documents are
+free software under the GNU General Public License, version 3 or later
+(`LICENSE`).
+
+The patched archivers keep their upstream licenses, so the patches can go
+back upstream: restic-bko is BSD-2-Clause like restic, and rustic-bko is
+MIT or Apache-2.0 like rustic.  The rescue images also carry their
+operating systems' own software under those systems' licenses.

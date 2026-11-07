@@ -5,7 +5,7 @@ use std::process::ExitCode;
 const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
        bko-holt load LAYOUT.json [--through STAGE | --only STAGE] [--commit] ...
        bko-holt report-bug [--output FILE] [--stderr FILE]... [-- LOAD-ARGS...]
-       bko-holt -h | --help | -V | --version
+       bko-holt -h | --help | -V | --version | --license
 
   dump        writes a JSON description of this system's disk layout
               and boot setup to standard output
@@ -15,7 +15,15 @@ const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
 
 `bko-holt dump --help`, `bko-holt load --help` and `bko-holt report-bug --help`
 say more.
+
+bko-holt is free software under the GNU GPL, version 3 or later, and comes
+with NO WARRANTY.  `bko-holt --license` prints the license.
+Source: https://github.com/mchobbit/backotter
 ";
+
+/// The GPL's text, carried in the binary so every image that ships bko-holt
+/// ships its license too.
+const LICENSE: &str = include_str!("../LICENSE");
 
 const DUMP_USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR | --disk DEV...]
 
@@ -64,6 +72,10 @@ fn main() -> ExitCode {
         }
         Some("-V" | "--version") => {
             println!("bko-holt {}", env!("CARGO_PKG_VERSION"));
+            ExitCode::SUCCESS
+        }
+        Some("--license") => {
+            print!("{LICENSE}");
             ExitCode::SUCCESS
         }
         Some(other) => {

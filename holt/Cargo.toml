@@ -4,6 +4,7 @@ version = "0.2.1"
 edition = "2021"
 rust-version = "1.85"
 description = "Record a Linux system's disk layout and boot setup as JSON, and rebuild disks from it"
+license = "GPL-3.0-or-later"
 publish = false
 
 # No dependencies on purpose: it builds offline with Debian's own cargo, and

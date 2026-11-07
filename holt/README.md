@@ -202,3 +202,8 @@ cargo test
 `SOURCE_DATE_EPOCH` fixes the report's timestamp.
 
 Whole machines are tested by `testvm/holttest1d/` (HoltTest1D).
+
+## License
+
+GPL-3.0-or-later (`LICENSE`, a copy of the top-level one, so the crate builds
+from `holt/` alone).  The binary carries the text: `bko-holt --license`.

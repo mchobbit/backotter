@@ -44,6 +44,10 @@ fn help_and_version() {
         assert_eq!(o.status.code(), Some(0));
         assert_eq!(stdout(&o), format!("bko-holt {}\n", env!("CARGO_PKG_VERSION")));
     }
+    let o = bin(&["--license"], &[]);
+    assert_eq!(o.status.code(), Some(0));
+    assert_eq!(stdout(&o), include_str!("../LICENSE"));
+    assert!(stdout(&o).contains("GNU GENERAL PUBLIC LICENSE\n                       Version 3, 29 June 2007"));
 }
 
 #[test]

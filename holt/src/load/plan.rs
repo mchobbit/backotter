@@ -73,6 +73,9 @@ pub fn check(layout: &Layout, opts: &Options, sys: &Sys) -> Planned {
     problems.extend(built.problems.iter().cloned());
     problems.extend(archiver_problem(sys, opts));
     problems.extend(missing_tools(sys, &built));
+    if super::has_omitted(&layout.v) {
+        problems.push("this layout comes from a bug report (`bko-holt report-bug`), which leaves boot-area and ESP images out: restore from the dump itself".into());
+    }
     if !sys.privileged {
         problems.push("not running as root: the target disks' tables and signatures can't be read, so blank disks can't be told from used ones".into());
     }

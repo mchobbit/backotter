@@ -144,7 +144,9 @@ backotter-live-illumos-0.1.0-amd64.img
 - `version` is BackOtter's, one number for all platforms: the backup tool and
   the stick are matched by schema, and the schemas are shared.  Until the first
   release it's `dev.DATE.COMMIT`, for example `dev.20261030.7230d49`, with
-  `.dirty` added when `stick/` has uncommitted changes.
+  `.dirty` added when `stick/` has uncommitted changes.  A copy of `stick/` on a
+  test host isn't a git checkout: there COMMIT comes from the
+  `.backotter-commit` that `testvm/sync-hosts.sh` writes.
 - `arch` is `amd64` or `arm64`, the names Debian and FreeBSD both use.
 - All lowercase, and no `-` inside a field, so a name splits on `-` into a
   fixed prefix and three fields.  `live` leaves room for other kinds of image

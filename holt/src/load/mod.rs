@@ -346,6 +346,21 @@ pub fn disk_pairs(opts: &Options, layout_text: &str, sys: &Sys) -> Vec<(String, 
     target::map(&layout, opts, &system, sys).pairs
 }
 
+/// The suffix `report-bug` gives a boot-area or ESP image's key when it
+/// leaves the image out of a report (KEY_omitted: its size and CRC-32).
+pub const OMITTED: &str = "_omitted";
+
+/// Whether V has an image `report-bug` left out: such a layout can be
+/// planned, but not written.
+pub fn has_omitted(v: &crate::json::Value) -> bool {
+    use crate::json::Value;
+    match v {
+        Value::Obj(kv) => kv.iter().any(|(k, x)| k.ends_with(OMITTED) || has_omitted(x)),
+        Value::Arr(a) => a.iter().any(has_omitted),
+        _ => false,
+    }
+}
+
 /// A word for a shell command line: quoted when it needs to be.
 pub fn shell_quote(s: &str) -> String {
     if !s.is_empty() && s.bytes().all(|b| b.is_ascii_alphanumeric() || b"-_./:=,+@%^".contains(&b)) {

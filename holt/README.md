@@ -190,8 +190,10 @@ cargo test
 - `tests/root_stack.rs` (ignored by default): builds md RAID1 + LUKS2 + LVM
   + ext4/XFS and a ZFS mirror on loop devices and checks the dump against
   mdadm, cryptsetup, lvs and zpool.  It changes the running system, so run
-  it as root in a throwaway guest, for example a `vm-run --snapshot` of
-  testvm's debian13-zfs, with the test binaries copied in:
+  it as root in a throwaway guest, a `vm-run --snapshot --memory 3072` of
+  testvm's debian13-zfs, with the test binary and `bko-holt` copied in and
+  mdadm, cryptsetup, lvm2, xfsprogs and dosfstools installed (last passed
+  2026-11-07, bko-holt 0.2.3):
 
   ```
   BKO_HOLT_BIN=/root/bko-holt ./root_stack-* --ignored --test-threads 1

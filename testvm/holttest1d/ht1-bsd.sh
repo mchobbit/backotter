@@ -324,6 +324,17 @@ if command -v zpool >/dev/null && [ -n "$(zpool list -H -o name 2>/dev/null)" ];
 ls /var/log/bko-holt/load.log >/dev/null 2>&1 && echo "load log kept" || no "/var/log/bko-holt/load.log missing"
 exit $f'
 
+# illumos has /etc/vfstab, not fstab: mount point $3, type $4, mount at boot
+# $6; `mount -p` lists what's mounted in that format.
+if [[ $PLAT == illumos ]]; then
+    HEALTH='f=0; no() { echo "FAIL $*"; f=1; }
+m=0; for t in $(awk "\$1 !~ /^#/ && \$3 ~ /^\// && \$4 != \"swap\" && \$6 == \"yes\" {print \$3}" /etc/vfstab); do mount -p | awk "{print \$3}" | grep -qx "$t" && m=$((m + 1)) || no "vfstab mount $t not mounted"; done; echo "$m vfstab mounts mounted"
+if awk "\$1 !~ /^#/ && \$4 == \"swap\"" /etc/vfstab | grep -q .; then [ "$(swap -l 2>/dev/null | grep -c /dev/)" -gt 0 ] && echo "swap on" || no "no swap"; fi
+if command -v zpool >/dev/null && [ -n "$(zpool list -H -o name 2>/dev/null)" ]; then zpool status -x | grep -q "all pools are healthy" && echo "zpool healthy" || no "zpool status -x: $(zpool status -x | head -3 | tr "\n" " ")"; fi
+ls /var/log/bko-holt/load.log >/dev/null 2>&1 && echo "load log kept" || no "/var/log/bko-holt/load.log missing"
+exit $f'
+fi
+
 if [[ $PLAT == haiku ]]; then
     HEALTH='f=0; no() { echo "FAIL $*"; f=1; }
 df | grep -q "/dev/disk/" && echo "boot volume mounted" || no "no boot volume"

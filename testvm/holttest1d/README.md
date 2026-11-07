@@ -176,7 +176,10 @@ reservation queue (as `m`, which owns the queue's lock files):
     cd ~/backotter-work && HT_PORT=2970 setsid -f ./cmp-run.sh --reserve 0 4 \
         sudo -E testvm/holttest1d/ht1.sh mint22 ht1m >/bkoscratch/holttest1d/ht1m.log 2>&1 </dev/null
 
-It needs `/bkoscratch/holttest1d/bin/` with `bko-holt`, `rustic-bko` and
+It needs `/bkoscratch/holttest1d/bin/` with `bko-holt`, `rustic-bko` (since
+2026-11-07 a copy of the shipped `~/backotter-work/bko-bin/linux/rustic-bko`,
+which the images carry; the patched build Linux runs used before is kept as
+`rustic-bko.backotter4`) and
 `f2fs-tools_*.deb` (installed in a rescuer that lacks the f2fs tools), and
 the rescuers that `make-rescuer.sh` builds (see below).  The guest's other
 disks and firmware come from its `vm-run-options`; a guest with a

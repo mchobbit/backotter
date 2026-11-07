@@ -223,6 +223,33 @@ pub fn record_load_run(args: &[String], exit: u8, stderr: &str) {
     let _ = std::fs::write(format!("{RUN_DIR}/{LAST_RUN}"), v.pretty());
 }
 
+/// Above this many base64 characters, a dump's boot-area or ESP image is
+/// left out of the report (its size and CRC-32 stay): such images are
+/// almost all of a report's bytes, and the plan and status sections already
+/// ran on the whole layout.
+const BLOB_MAX: usize = 4096;
+
+/// V with every base64 image longer than BLOB_MAX replaced: KEY becomes
+/// KEY_omitted, {"bytes", "crc32"}.  `load` refuses a layout that has one.
+fn slim(v: &Value) -> Value {
+    match v {
+        Value::Obj(kv) => Value::Obj(
+            kv.iter()
+                .map(|(k, x)| match x {
+                    Value::Str(b) if crate::redact::is_b64_key(k) && b.len() > BLOB_MAX => {
+                        let raw = crate::bytes::unbase64(b).unwrap_or_default();
+                        let crc = format!("{:08x}", crate::bytes::crc32(&raw));
+                        (format!("{k}{}", load::OMITTED), Obj::new().set("bytes", raw.len() as u64).set("crc32", crc).build())
+                    }
+                    _ => (k.clone(), slim(x)),
+                })
+                .collect(),
+        ),
+        Value::Arr(a) => Value::Arr(a.iter().map(slim).collect()),
+        _ => v.clone(),
+    }
+}
+
 /// Where a BackOtter rescue image keeps its marker (stick/marker.py).
 const MARKERS: [&str; 3] = ["/.disk/backotter.json", "/boot/.disk/backotter.json", "/cdrom/.disk/backotter.json"];
 
@@ -459,7 +486,7 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
     } else {
         "Redacted: identifiers are replaced by pseudonyms (host-1, label2, bc000000-0000-4000-8000-000000000003),\nthe same one everywhere in this file; the last section says what was and wasn't.\n"
     };
-    text += "Sections start with \"==== \"; a JSON section is one document, for `bko-holt load`.\n";
+    text += "Sections start with \"==== \"; a JSON section is one document, for `bko-holt load` to plan (boot-area and\nESP images over 4 KiB are left out, as KEY_omitted with their size and CRC-32, so it won't write them).\n";
     for p in &parts {
         text += &format!("\n==== {}\n", r.text(&p.title));
         match &p.body {
@@ -470,7 +497,7 @@ pub fn build(sys: &Sys, a: &Args, now: &str) -> Bundle {
                     text.push('\n');
                 }
             }
-            Body::Json(v) => text += &r.value(v).pretty(),
+            Body::Json(v) => text += &slim(&r.value(v)).pretty(),
         }
     }
     let summary_file = r.summary(false);
@@ -707,5 +734,17 @@ mod tests {
         assert!(st.contains("given here as --map vda=vdb"), "{st}");
         assert!(!st.contains("has no target"), "{st}");
         assert!(!b.text.contains("ALICE-SER-77"), "{}", b.text);
+    }
+
+    #[test]
+    fn big_images_are_left_out() {
+        let big = crate::bytes::base64(&vec![7u8; 6000]);
+        let v = crate::json::parse(&format!(r#"{{"p": {{"esp_image": [{{"offset": 0, "b64": "{big}"}}], "boot_code": {{"code_b64": "QlRY"}}}}}}"#)).unwrap();
+        let s = slim(&v);
+        let c = s.at(&["p", "esp_image", "0", "b64_omitted"]).unwrap();
+        assert_eq!(c.get("bytes").and_then(Value::as_u64), Some(6000));
+        assert!(s.at(&["p", "esp_image", "0", "b64"]).is_none());
+        assert_eq!(s.at(&["p", "boot_code", "code_b64"]).and_then(Value::as_str), Some("QlRY"));
+        assert!(load::has_omitted(&s) && !load::has_omitted(&v));
     }
 }

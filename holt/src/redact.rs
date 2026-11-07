@@ -141,8 +141,11 @@ const GENERIC_HOSTS: [&str; 30] = [
 ];
 /// Labels (lower case, trailing digits and '*' dropped) that installers
 /// and partitioners write: kept, because they help and identify no one.
-const GENERIC_LABELS: [&str; 54] = [
+const GENERIC_LABELS: [&str; 62] = [
     "", "efi", "esp", "efi system partition", "efi system", "efi-system", "efiboot", "bios", "biosboot", "bios boot partition",
+    // Hybrid ISO images (xorriso: EFISYS, Gap1, Appended2...) and BackOtter's
+    // and Haiku's own images.
+    "efisys", "iso", "iso9660", "gap", "appended", "haiku esp", "backotter root", "backotter config",
     "bios boot", "boot", "root", "rootfs", "swap", "home", "var", "tmp", "usr", "srv", "data", "system", "grub", "grub2", "loader",
     "zfs", "zroot", "rpool", "bpool", "gptboot", "gptzfs", "gptswap", "freebsd", "freebsd-boot", "freebsd-zfs", "freebsd-swap",
     "freebsd-ufs", "haiku", "redox", "genode", "noname", "no name", "linux", "linux filesystem", "linux swap", "primary", "logical",
@@ -166,6 +169,15 @@ pub struct Collector {
     /// zfs_member labels: pool names, part of the topology.
     pool_labels: BTreeSet<String>,
     corpus: String,
+}
+
+/// A release medium's volume label: a system's name, its version and an
+/// architecture ("Ubuntu-Server 26.04.1 LTS amd64", "Fedora-S-dvd-x86_64-44").
+fn release_label(low: &str) -> bool {
+    const SYSTEMS: [&str; 12] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos"];
+    const ARCHES: [&str; 5] = ["amd64", "x86_64", "x86-64", "arm64", "aarch64"];
+    let first = low.split(|c: char| !c.is_ascii_alphanumeric()).next().unwrap_or("");
+    SYSTEMS.contains(&first) && ARCHES.iter().any(|a| low.contains(a)) && low.bytes().any(|c| c.is_ascii_digit())
 }
 
 fn is_hex(c: u8) -> bool {
@@ -473,6 +485,13 @@ impl Collector {
             let mut from = 0;
             while let Some(i) = s[from..].find(pre) {
                 let st = from + i + pre.len();
+                // A path that starts there, not one inside another
+                // (DragonFly's kernel names its build's /usr/obj/home/USER/).
+                let before = s[..from + i].chars().next_back();
+                if pre == "/home/" && before.is_some_and(|c| c.is_alphanumeric() || "/_-.".contains(c)) {
+                    from = st;
+                    continue;
+                }
                 let rest = &s[st..];
                 let end = rest.find(|c: char| "/\"' \t\n:,;)]}".contains(c) || (pre == "USERDATA/" && c == '_')).unwrap_or(rest.len());
                 let u = &rest[..end];
@@ -557,7 +576,7 @@ fn is_hex_blob_key(key: &str) -> bool {
     key.ends_with("_hex") || key == "first_bytes"
 }
 
-fn is_b64_key(key: &str) -> bool {
+pub fn is_b64_key(key: &str) -> bool {
     key == "b64" || key.ends_with("_b64")
 }
 
@@ -706,7 +725,7 @@ impl Sealer {
         if hosts.iter().any(|h| contains_word(l, h) && self.word_sub(h)) {
             return;
         }
-        if GENERIC_LABELS.contains(&stem) || GENERIC_LABELS.contains(&low.as_str()) || self.c.os_words.contains(stem) {
+        if GENERIC_LABELS.contains(&stem) || GENERIC_LABELS.contains(&low.as_str()) || self.c.os_words.contains(stem) || release_label(&low) {
             self.kept(Kind::Label, l, "a default name");
             return;
         }
@@ -1524,5 +1543,23 @@ mod tests {
             assert_eq!(&out[i + 71..i + 512], &bs[71..]);
         }
         assert_eq!(&out[1024..], &other[..], "a 4-byte run elsewhere is left alone");
+    }
+
+    #[test]
+    fn image_labels_and_build_paths_are_kept() {
+        let d = parse(
+            r#"{"host": {"hostname": "backotter"}, "os": {"id": "dragonfly", "kernel_version": "DragonFly v6.4.2-RELEASE #11: root@www.shiningsilence.com:/usr/obj/home/justin/release/6_4/sys/X86_64_GENERIC"},
+                "storage": {"disks": [{"name": "da0", "serial": "1", "partitions": [
+                    {"partlabel": "EFISYS"}, {"partlabel": "Appended2"}, {"partlabel": "Gap1"}, {"partlabel": "HAIKU ESP"},
+                    {"partlabel": "BackOtter root"}, {"partlabel": "BackOtter config"},
+                    {"content": {"type": "iso9660", "label": "Ubuntu-Server 26.04.1 LTS amd64"}}, {"content": {"type": "iso9660", "label": "ISO9660"}}]}]}}"#,
+        )
+        .unwrap();
+        let (r, red) = redact(&d);
+        assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
+        // A home directory is still a user's.
+        let d = parse(r#"{"os": {"id": "debian"}, "x": "/home/alice/notes", "y": "HOME=/home/alice"}"#).unwrap();
+        let (r, _) = redact(&d);
+        assert!(!r.pretty().contains("alice"), "{}", r.pretty());
     }
 }

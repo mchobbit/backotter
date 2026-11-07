@@ -1,13 +1,18 @@
 //! Root-only end-to-end tests that build real storage stacks with the
 //! system's own tools and check the dump against those tools.  They change
 //! the running system (loop devices, md arrays, dm devices, a ZFS pool), so
-//! they're #[ignore]d: run them as root in a throwaway Debian 13 guest, e.g.
-//! a `vm-run --snapshot` of testvm's debian13 or debian13-zfs:
+//! they're #[ignore]d: run them as root in a throwaway Debian 13 guest, a
+//! `vm-run --snapshot --memory 3072` of testvm's debian13-zfs (debian13 has
+//! no ZFS).  Build on the host (`cargo test --release --no-run --test
+//! root_stack`), copy both the test binary (target/release/deps/root_stack-*)
+//! and target/release/bko-holt into the guest (BKO_HOLT_BIN points at the
+//! copy; without it the tests look for the build host's path), and run:
 //!
 //!     BKO_HOLT_BIN=/root/bko-holt ./root_stack-* --ignored --test-threads 1
 //!
-//! Needs mdadm, cryptsetup, lvm2, xfsprogs (and zfsutils-linux for the ZFS
-//! test).  Everything they create is torn down again, also on failure.
+//! Needs mdadm, cryptsetup, lvm2, xfsprogs, dosfstools (the ESP) and, for
+//! the ZFS test, zfsutils-linux.  Everything they create is torn down again,
+//! also on failure.
 
 use bko_holt::json::{self, Value};
 use std::path::PathBuf;

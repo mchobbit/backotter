@@ -24,6 +24,14 @@
 #            restored disk boots alone (writes thrown away) and is dumped;
 #            judge.py compares the dumps
 #
+# For debugging (ht1-debug.sh drives these): HT_RAM=1 puts the run in
+# /mnt/bko-ram/holttest1d instead (nothing of it on an SSD); HT_HOLT=FILE is
+# the bko-holt to test instead of bin/'s; HT_QUICK=1 leaves out rebuild's
+# refusals, dry run and edge checks; HT_THROUGH=STAGE ends rebuild after
+# that load stage; HT_KEEP=1 leaves the rescuer running after rebuild, its
+# disks and load's state as they are, for a look inside.  A rebuild first
+# stops whatever VM a kept rescuer left on the port.
+#
 # Exit 0 when every check of the phases run passed.  Results: logs/,
 # dumps/, report.txt.  The rescuer is Debian 13, not BackOtter's rescue
 # image yet (README: "Before it can run").
@@ -44,6 +52,8 @@ W=/home/m/backotter-work
 HERE=$(dirname "$(realpath "$0")")
 T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, vm-mount, compare/)
 BIN=/bkoscratch/holttest1d/bin
+HOLT=${HT_HOLT:-$BIN/bko-holt}
+BASE=/bkoscratch/holttest1d; [[ ${HT_RAM:-} == 1 ]] && BASE=/mnt/bko-ram/holttest1d
 # HT_VARIANT (README's HoltTest1D plan): "bigger" rebuilds onto disks 1 GiB
 # bigger than the source's (GPT's backup header must move to the new end);
 # "oneshot" runs the whole rebuild as one `--through close` command, as an
@@ -54,7 +64,7 @@ BIN=/bkoscratch/holttest1d/bin
 VARIANT=${HT_VARIANT:-}
 case $VARIANT in ""|bigger|oneshot|degraded) ;; *) echo "HT_VARIANT: bigger, oneshot or degraded" >&2; exit 2 ;; esac
 GV=$G${VARIANT:+-$VARIANT}
-R=/bkoscratch/holttest1d/$RUN/$GV
+R=$BASE/$RUN/$GV
 S=$R/share
 PORT=${HT_PORT:-2970}
 export SSH_PORT=$PORT   # vm-run's guest SSH port
@@ -65,8 +75,9 @@ RESCUER_IMG=${HT_RESCUER_IMG:-/bkoscratch/holttest1d/rescuer/rescuer.qcow2}
 [[ -f $RESCUER_IMG ]] || RESCUER_IMG=$W/vms/$RESCUER/$RESCUER.qcow2
 SRC_MP=/mnt/ht1-src-$GV
 DST_MP=/mnt/ht1-dst-$GV
-mkdir -p "$R/logs" "$R/dumps" "$S" /bkoscratch/tmp
-export TMPDIR=/bkoscratch/tmp RT_RAM=0
+TMPD=/bkoscratch/tmp; [[ ${HT_RAM:-} == 1 ]] && TMPD=/mnt/bko-ram/tmp
+mkdir -p "$R/logs" "$R/dumps" "$S"; install -d -m 1777 "$TMPD"
+export TMPDIR=$TMPD RT_RAM=0
 fails=0
 say() { echo "$*" | tee -a "$R/report.txt"; }
 ok() { say "PASS $*"; }
@@ -201,7 +212,7 @@ phase_source() {
     fi
     bootstate "$gkey" > "$R/logs/source-bootstate.txt"
     sshk "$gkey" "$HEALTH" 2>&1 | grep -v 'bko-holt/load.log' > "$R/logs/source-health.txt"
-    scpk "$gkey" "$BIN/bko-holt" root@127.0.0.1:/root/bko-holt
+    scpk "$gkey" "$HOLT" root@127.0.0.1:/root/bko-holt
     if sshk "$gkey" /root/bko-holt dump > "$R/dumps/src.json" 2> "$R/logs/source-dump.err"; then
         ok "dump on the live source"
     else
@@ -226,7 +237,7 @@ phase_backup() {
     fi
     python3 "$T/compare/fsmeta.py" record "$SRC_MP" "$R/src-meta.json" > "$R/logs/fsmeta-src.log" 2>&1 || bad "fsmeta record of the source"
     "$T/vm-umount" "$SRC_MP" >> "$R/logs/backup-mount.log" 2>&1
-    cp "$BIN/bko-holt" "$BIN/rustic-bko" "$BIN"/*.deb "$S/"
+    cp "$BIN/rustic-bko" "$BIN"/*.deb "$S/"; cp "$HOLT" "$S/bko-holt"
     [[ ! -f $BIN/bcachefs ]] || cp "$BIN/bcachefs" "$S/"   # make-bcachefs-tools.sh's
     # As typed: without the file's newline (cryptsetup keeps it in a key).
     [[ -n $gpass ]] && printf '%s' "$(cat "$gpass")" > "$S/passphrase"
@@ -244,7 +255,9 @@ load_step() { local want=$1 name=$2; shift 2
 
 phase_rebuild() {
     say "== rebuild"
-    cp "$BIN/bko-holt" "$BIN"/*.deb "$S/"   # the latest build, when rerun after a fix
+    # A rescuer HT_KEEP left up from the last try.
+    pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null && vm_down "$rkey"
+    cp "$BIN"/*.deb "$S/"; cp "$HOLT" "$S/bko-holt"   # the latest build, when rerun after a fix
     [[ ! -f $BIN/bcachefs ]] || cp "$BIN/bcachefs" "$S/"
     rm -f "$R/rescuer.qcow2" "${dst[@]}"
     qemu-img create -q -f qcow2 -b "$RESCUER_IMG" -F qcow2 "$R/rescuer.qcow2"
@@ -273,6 +286,9 @@ phase_rebuild() {
     # The first and last MiB of every target and the decoy, before and after
     # the refusals and the dry run, which must write nothing.
     local edges="for d in ${erase[*]#--erase} $decoy; do s=\$(blockdev --getsz \$d); echo \$d \$(dd if=\$d bs=512 count=2048 status=none | md5sum | cut -c1-32) \$(dd if=\$d bs=512 skip=\$((s - 2048)) count=2048 status=none | md5sum | cut -c1-32); done"
+    local flags=()
+    ((uefi)) && flags+=(--no-nvram)
+    if [[ ${HT_QUICK:-} != 1 ]]; then
     sshk "$rkey" "$edges" > "$R/logs/edges-before.txt" 2>&1
     # Safety first: each refuses and writes nothing.
     load_step 4 refuse-nomap
@@ -281,8 +297,7 @@ phase_rebuild() {
     # filesystem (the other disks map to their blank targets).
     load_step 4 refuse-decoy "--map vda=${decoy#/dev/}" "${map[@]:2}" \
         && { cat "$R/logs/rebuild-refuse-decoy".{out,err} | grep -q "isn't blank" || bad "load refuse-decoy: refused, but not for the decoy's filesystem"; }
-    local flags=()
-    ((uefi)) && flags+=(--no-nvram)
+    fi
     [[ -n $gpass ]] && flags+=($(python3 - "$S/layout.json" <<'PY'
 import json, sys
 d = json.load(open(sys.argv[1]))
@@ -300,6 +315,7 @@ for ds in ((d["storage"].get("zfs") or {}).get("tools") or {}).get("datasets") o
         print(f"--key-file {ds['name']}=/mnt/share/passphrase")
 PY
 ))
+    if [[ ${HT_QUICK:-} != 1 ]]; then
     load_step 0 dry-partition "${map[@]}" "${flags[@]}" --only partition
     if sshk "$rkey" 'test -z "$(wipefs -n /dev/vdb)"'; then ok "nothing written without --commit"; else bad "vdb was written without --commit"; fi
     sshk "$rkey" "$edges" > "$R/logs/edges-after.txt" 2>&1
@@ -308,12 +324,17 @@ PY
     else
         bad "a refusal or the dry run wrote to a disk (logs/edges-before.txt, edges-after.txt)"
     fi
+    fi
     local map=("${map[@]}" "${erase[@]}" "${flags[@]}")
     local repo=(--repo /mnt/share/repo --password-file /mnt/share/repo-password --archiver /mnt/share/rustic-bko --snapshot "latest:$SRC_MP")
     local stages=(partition assemble format mount restore boot close)
     # oneshot: the whole rebuild as one command; `status` after it must show
     # every stage it can see done.
     [[ $VARIANT == oneshot ]] && stages=(oneshot)
+    if [[ -n ${HT_THROUGH:-} ]]; then
+        [[ " ${stages[*]} " == *" $HT_THROUGH "* ]] || { bad "HT_THROUGH=$HT_THROUGH: not one of ${stages[*]}"; vm_down "$rkey"; return; }
+        local upto=() st; for st in "${stages[@]}"; do upto+=("$st"); [[ $st == "$HT_THROUGH" ]] && break; done; stages=("${upto[@]}")
+    fi
     for s in "${stages[@]}"; do
         local how=(--only "$s") extra=()
         [[ $s == restore || $s == oneshot ]] && extra=("${repo[@]}")
@@ -322,7 +343,7 @@ PY
             sshk "$rkey" 'cat /run/bko-holt/log/load.log' > "$R/logs/rebuild-load.log"
             # What the rescuer looked like when the stage failed.
             sshk "$rkey" 'set -x; findmnt -R /mnt/bko-target; grep -E "zfs|/mnt/bko" /proc/mounts; zpool list -v; zfs list -o name,mounted,mountpoint,canmount; fuser -vm /mnt/bko-target 2>&1; lsblk -f; cat /proc/swaps; ls -l /dev/zvol 2>&1; dmsetup ls; cat /proc/mdstat; for f in /proc/[0-9]*/mountinfo; do grep -q bko-target $f 2>/dev/null && p=${f#/proc/} && p=${p%/mountinfo} && echo "mount namespace with bko-target: pid $p $(cat /proc/$p/comm) $(readlink /proc/$p/ns/mnt)"; done; readlink /proc/self/ns/mnt' > "$R/logs/rebuild-failed-state.txt" 2>&1
-            vm_down "$rkey"; return; }
+            kept_or_down; return; }
         sshk "$rkey" "/mnt/share/bko-holt load /mnt/share/layout.json ${map[*]} --only status" > "$R/logs/rebuild-status-after-$s.txt" 2>&1
         if [[ $s == oneshot ]]; then
             # Once closed, mount, restore and boot can't be seen (status
@@ -339,12 +360,23 @@ PY
     # The decoy was never a target: it still holds its filesystem.
     [[ $(sshk "$rkey" "blkid -o value -s LABEL $decoy") == ht1decoy ]] || bad "the decoy lost its filesystem"
     sshk "$rkey" 'cat /run/bko-holt/log/load.log' > "$R/logs/rebuild-load.log"
+    [[ ${HT_KEEP:-} == 1 ]] && { kept_or_down; return; }
     vm_down "$rkey"
     rm -f "$R/rescuer.qcow2"
+}
+# HT_KEEP=1: the rescuer stays up, as the stage left it; else it goes down.
+kept_or_down() {
+    if [[ ${HT_KEEP:-} == 1 ]]; then
+        say "rescuer kept up: ssh -i $rkey -p $PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@127.0.0.1 (load: /mnt/share/bko-holt load /mnt/share/layout.json ...)"
+    else
+        vm_down "$rkey"
+    fi
 }
 
 phase_verify() {
     say "== verify"
+    # A rescuer HT_KEEP left up has the targets open.
+    pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null && vm_down "$rkey"
     mkdir -p "$DST_MP"
     local key=(); [[ -n $gpass ]] && key=(--key "$gpass")
     if "$T/vm-mount" --ro "${extra_dst[@]}" "${key[@]}" "${dst[0]}" "$DST_MP" > "$R/logs/verify-mount.log" 2>&1; then
@@ -385,7 +417,7 @@ phase_verify() {
     else
         bad "health: $(echo "$worse" | tr '\n' ' ')"
     fi
-    scpk "$gkey" "$BIN/bko-holt" root@127.0.0.1:/root/bko-holt
+    scpk "$gkey" "$HOLT" root@127.0.0.1:/root/bko-holt
     sshk "$gkey" '/root/bko-holt dump; rm -f /root/bko-holt' > "$R/dumps/dst.json" 2> "$R/logs/restored-dump.err" || bad "dump of the restored system"
     vm_down "$gkey"
     local grow=(); [[ $VARIANT == bigger ]] && grow=(--grow $((1 << 30)))

@@ -231,6 +231,33 @@ It differs from the plan above in these ways:
 - `vm-run` takes its SSH port from `SSH_PORT`; `ht1.sh` sets it from
   `HT_PORT`.
 
+## Debugging bko-holt: ht1-debug.sh
+
+For a fix that takes many tries (a RAID, LVM or ZFS layout load gets
+wrong), `ht1-debug.sh` runs HoltTest1's phases for one guest entirely in
+the RAM disk (`/mnt/bko-ram/holttest1d/debug/GUEST`), makes the backup
+once, and rebuilds from a fresh rescuer and blank targets on each try with
+the bko-holt just built.  Run as m, from the testvm/ copy with your changes:
+
+    ht1-debug.sh GUEST setup          # reserve room in cmp-run.sh's ledger; dump, back up
+    ht1-debug.sh GUEST build SRC      # bko-holt from SRC (holt/)
+    ht1-debug.sh GUEST again [STAGE]  # rebuild through STAGE, no safety checks; rescuer kept up
+    ht1-debug.sh GUEST ssh [CMD]      # look inside that rescuer
+    ht1-debug.sh GUEST verify         # HoltTest1's verify of the last full rebuild
+    ht1-debug.sh GUEST done           # stop the VMs, free the room, delete the run
+
+`full` is a rebuild with the safety checks, `status` where things stand.
+Linux bko-holt builds on the host (cargo's target/ in RAM); the others in a
+build guest that `build-holt.sh --keep` keeps up between builds, so cargo
+builds only what changed.  `HT_PORT` (default 2991; the build guest
+HT_PORT + 1) keeps two debugging sessions on one host apart.  Underneath,
+ht1.sh and ht1-bsd.sh take `HT_RAM`, `HT_HOLT`, `HT_QUICK`, `HT_THROUGH`
+and `HT_KEEP` (their headers).  Measured 2026-11-07: rocky10-raid5 (md
+RAID5 under LVM) setup 43 s, build 19 s, `again partition` 42 s, a whole
+rebuild 91 s, verify 38 s; freebsd15-mirror setup 142 s, a cold build 51 s,
+an incremental one 30 s, a whole rebuild 38 s, verify 81 s.  A HoltTest1 run
+of one guest is 15-25 minutes.  Confirm a fix with a normal run after.
+
 ## Before it can run
 
 1. bko-holt `load`'s writing stages, `partition` through `close` (with

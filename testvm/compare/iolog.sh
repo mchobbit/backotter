@@ -45,7 +45,13 @@ fi
 what=$1; shift 2
 cg=/sys/fs/cgroup$(sed -n 's/^0:://p' /proc/self/cgroup)
 t0=$(date +%s)
-"$@"
+# In the background, so that a TERM (a reservation ended with kill) still
+# gets its line: passed on to CMD, then logged with rc 143.
+# (<&0: a background command's stdin would be /dev/null otherwise.)
+"$@" <&0 &
+child=$!
+trap 'kill -TERM "$child" 2>/dev/null; wait "$child"; line "$cg" 143 "$(($(date +%s) - t0))" "$what"; exit 143' TERM INT HUP
+wait "$child"
 rc=$?
 line "$cg" "$rc" "$(($(date +%s) - t0))" "$what"
 exit $rc

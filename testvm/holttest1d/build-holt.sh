@@ -3,7 +3,7 @@
 # of a test guest of that system: holt/ has no dependencies, so cargo needs
 # nothing but the guest's Rust (1.85 or later).  Run as m on a test host:
 #
-#   build-holt.sh PLATFORM [PORT]
+#   build-holt.sh [--keep] PLATFORM [PORT]
 #
 # PLATFORM: freebsd (built on freebsd14, so that it runs on 14 and 15, and on
 # HardenedBSD and GhostBSD), netbsd, openbsd, dragonfly, illumos or haiku.
@@ -14,12 +14,22 @@
 # A stick/build-rustic.sh build image (~/backotter-work/vms-bko-build/
 # VM-rust.qcow2) is used when there is one: it has Rust already.  Otherwise
 # the guest gets Rust from its packages first (network needed).
+#
+# --keep (for a debugging loop, ht1-debug.sh): the build guest stays up
+# after the build, and a later --keep build on the same PORT uses it again,
+# its target/ kept, so cargo builds only what changed (seconds, not a fresh
+# guest's 6-12 minutes).  HOLT_SRC and HOLT_OUT override where the tree comes
+# from and the binary goes (DIR/bko-holt).  Stop the guest with
+# `build-holt.sh --stop PLATFORM [PORT]`.
 set -euo pipefail
 
+keep=no stop=no
+[[ ${1:-} == --keep ]] && { keep=yes; shift; }
+[[ ${1:-} == --stop ]] && { stop=yes; shift; }
 PLATFORM=$1 PORT=${2:-2950}
 WORK=/home/m/backotter-work
-SRC=$WORK/holt-src
-OUT=/bkoscratch/holttest1d/bin/$PLATFORM
+SRC=${HOLT_SRC:-$WORK/holt-src}
+OUT=${HOLT_OUT:-/bkoscratch/holttest1d/bin/$PLATFORM}
 LOGS=/bkoscratch/holttest1d/build-holt-$PLATFORM
 GUEST_PATH=/sbin:/usr/sbin:/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/pkg/sbin:/usr/pkg/bin:/opt/ooce/bin:/usr/gnu/bin
 case $PLATFORM in
@@ -37,12 +47,30 @@ VM_LIB_DIR=$WORK/testvm
 # shellcheck source=../vm-lib.sh
 . "$WORK/testvm/vm-lib.sh"
 mkdir -p "$OUT" "$LOGS"
-trap vm_halt EXIT
-if [[ -f $WORK/vms-bko-build/$VM-rust.qcow2 ]]; then
-    VM_IMAGE=$WORK/vms-bko-build/$VM-rust.qcow2 VM_IMAGE_KEY=$WORK/vms-bko-build/$VM.id_ed25519 \
-        vm_boot "$VM" "$PORT" "$LOGS" --snapshot --cpus 4 --memory 4096
+key=$WORK/vms/$VM/id_ed25519
+[[ -f $WORK/vms-bko-build/$VM-rust.qcow2 ]] && key=$WORK/vms-bko-build/$VM.id_ed25519
+# A kept build guest already on PORT.
+up=no
+if [[ -n $(ss -Hltn "sport = :$PORT" 2>/dev/null) ]]; then
+    VM_GUEST=$VM VM_PORT=$PORT VM_KEY=$key
+    T=15 vm_ssh true 2>/dev/null && up=yes
+fi
+if [[ $stop == yes ]]; then
+    [[ $up == yes ]] && { T=30 vm_ssh '/sbin/poweroff || /sbin/shutdown -p now || /usr/sbin/shutdown -y -i5 -g0 || shutdown' >/dev/null 2>&1; echo "stopped the $VM build guest on $PORT"; }
+    for _ in $(seq 30); do [[ -z $(ss -Hltn "sport = :$PORT" 2>/dev/null) ]] && exit 0; sleep 2; done
+    pkill -f "^qemu-system.*:$PORT-:22"; exit 0
+fi
+if [[ $up == yes && $keep == yes ]]; then
+    echo "Using the $VM build guest already on port $PORT"
 else
-    vm_boot "$VM" "$PORT" "$LOGS" --snapshot --cpus 4 --memory 4096
+    [[ $up == yes ]] && { echo "build-holt: port $PORT is in use (a kept build guest? --keep uses it, --stop stops it)" >&2; exit 1; }
+    [[ $keep == yes ]] || trap vm_halt EXIT
+    if [[ -f $WORK/vms-bko-build/$VM-rust.qcow2 ]]; then
+        VM_IMAGE=$WORK/vms-bko-build/$VM-rust.qcow2 VM_IMAGE_KEY=$key \
+            vm_boot "$VM" "$PORT" "$LOGS" --snapshot --cpus 4 --memory 4096
+    else
+        vm_boot "$VM" "$PORT" "$LOGS" --snapshot --cpus 4 --memory 4096
+    fi
 fi
 env="PATH=$GUEST_PATH; export PATH"
 if ! vm_ssh "$env; command -v cargo && command -v cc" >/dev/null 2>&1; then
@@ -50,7 +78,11 @@ if ! vm_ssh "$env; command -v cargo && command -v cc" >/dev/null 2>&1; then
     vm_ssh "$env; $RUST" >"$LOGS/rust-install.log" 2>&1 || { tail -20 "$LOGS/rust-install.log" >&2; exit 1; }
 fi
 vm_ssh "$env; rustc --version"
-tar -C "$SRC" -czf - Cargo.toml Cargo.lock src tests | T=600 vm_ssh 'rm -rf /tmp/holt && mkdir /tmp/holt && cd /tmp/holt && gzip -dc | tar -xf -'
+# --keep: the tree replaced, target/ kept (tar keeps the files' mtimes, so
+# cargo rebuilds what changed).
+clean='rm -rf /tmp/holt && mkdir /tmp/holt'
+[[ $keep == yes ]] && clean='mkdir -p /tmp/holt && rm -rf /tmp/holt/src /tmp/holt/tests'
+tar -C "$SRC" -czf - Cargo.toml Cargo.lock src tests | T=600 vm_ssh "$clean && cd /tmp/holt && gzip -dc | tar -xf -"
 if ! T=3600 vm_ssh "$env; cd /tmp/holt && cargo build --release --offline 2>&1" >"$LOGS/build.log"; then
     grep -E "^(error|warning)" -A 6 "$LOGS/build.log" | head -80 >&2
     exit 1

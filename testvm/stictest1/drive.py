@@ -730,7 +730,7 @@ class Driver:
         cmd = (f'L={L}; mkdir -p "$L" && '
                f'{{ ( set -C; date +%s >"$L/run.out.start" ) 2>/dev/null || {{ [ -e "$L/run.out.start" ] && exit 3; exit 1; }}; }} && '
                f'echo {",".join(str(p) for p in ports)} >"$L/run.out.port" && '
-               f'STC_LOGS="$L" setsid -f bash -c \'"$0" "$@" >"$STC_LOGS/run.out" 2>&1; rc=$?; '
+               f'WEAR_TAG=stic:{a.logs_mark}:{g} STC_LOGS="$L" setsid -f bash -c \'"$0" "$@" >"$STC_LOGS/run.out" 2>&1; rc=$?; '
                f'date +%s >"$STC_LOGS/run.out.end"; echo $rc >"$STC_LOGS/run.out.exit"\' '
                f'{check} {binos} {ports[0]} {a.logs_mark}-{g} </dev/null >/dev/null 2>&1')
         rc, _, err = ssh(host, cmd, t=60)

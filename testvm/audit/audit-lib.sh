@@ -92,7 +92,7 @@ launch() {
     # Every SPEC path is $HOME-relative or absolute and has no blanks.
     local specs="$*" cmd
     cmd="rm -f $L.exit; setsid -f bash -c 'echo \$\$ >\$HOME/$L.pid; exec </dev/null;"
-    cmd+=" $CMP_RUN --reserve $RESERVE_DISK $RESERVE_MEM nice -n 10 \$HOME/$RWORK/bin/audit-host.sh $specs"
+    cmd+=" WEAR_TAG=audit:$tag $CMP_RUN --reserve $RESERVE_DISK $RESERVE_MEM nice -n 10 \$HOME/$RWORK/bin/audit-host.sh $specs"
     cmd+=" >\$HOME/$L.log 2>&1; echo \$? >\$HOME/$L.exit' </dev/null >/dev/null 2>&1"
     "${SSH[@]}" -n "$h" "$cmd" || die "can't start $tag on $h"
     log "$h: started $tag (log $h:~/$L.log)"

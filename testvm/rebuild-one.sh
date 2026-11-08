@@ -7,7 +7,7 @@
 # rebuild under way:
 #   rm -rf /bkoscratch/rebuild/testvm; mkdir -p /bkoscratch/rebuild
 #   cp -a ~/backotter-work/testvm /bkoscratch/rebuild/testvm
-#   CMP_CMD=/bkoscratch/rebuild/testvm/rebuild-one.sh ~/backotter-work/cmp-run.sh TAG SLOTS GUEST=DISK%MEM ...
+#   WEAR_TAG=rebuild:TAG CMP_CMD=/bkoscratch/rebuild/testvm/rebuild-one.sh ~/backotter-work/cmp-run.sh TAG SLOTS GUEST=DISK%MEM ...
 # REBUILD_DIR (default /bkoscratch/rebuild) holds that testvm/ and vms/;
 # sudo drops it from the environment, so another one goes in CMP_CMD:
 # CMP_CMD="env REBUILD_DIR=DIR DIR/testvm/rebuild-one.sh".

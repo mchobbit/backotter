@@ -14,6 +14,11 @@
 #       works on that host's queue (over ssh), so both hosts share one;
 #   cmp-run.sh --reserve DISK_GIB MEM_GIB CMD ...
 #       runs CMD once its room is free, holding the room meanwhile.
+# WEAR_TAG names the work in the wear log (FAMILY:RUN[:CELL], e.g.
+# ht1:r4all:pop24): a --reserve's CMD is logged with it as it is, a queue's
+# jobs with :GUEST added (default cmp:TAG:GUEST). Give it to the cmp-run.sh
+# on each host, since it doesn't travel with the queue. Set it per command,
+# and don't export it.
 # A "!" puts the guest's restored disks on DISKS_DIR (default
 # /bkoscratch/compare-disks, a cool disk) instead of the RAM disk; its
 # DISK_GIB then counts only what stays in RAM (repositories, overlays).
@@ -32,17 +37,20 @@
 #   memory, live (other sessions): MemAvailable, less the tmpfs's room to
 #     grow, the ARC's, swap in use, 2 GiB, and what running jobs have reserved
 #     but not touched yet (MEM_GIB less their cgroup's anon; for a --reserve,
-#     which has no cgroup of its own, less the anon of CMD's process tree, the
-#     guest's QEMU included), covers it.
+#     whose row names no cgroup, less the anon of CMD's process tree: a VM
+#     started with setsid -f, as HoltTest's are, has left that tree, so its
+#     memory counts twice, never too little), covers it.
 #   The ARC counts as its size now plus ARC_ROOM_GIB (default 1), within its
 #     cap: not the whole cap (zfs_arc_max, 8 GiB on the hosts), which only the
 #     host's small throwaway test pools ever use, and the ARC gives memory back
 #     under pressure.
-# Each job runs in a systemd scope with MemoryHigh = DISK + MEM GiB (its
-# tmpfs pages count there too): past that it is slowed and reclaimed into
-# zram, never killed. zram (16 GiB) is the cushion under all of it.
+# Each queue job runs in a systemd scope with MemoryHigh = DISK + MEM GiB
+# (its tmpfs pages count there too): past that it is slowed and reclaimed
+# into zram, never killed. A --reserve's scope has no MemoryHigh. zram
+# (16 GiB) is the cushion under all of it.
 # Every job, a --reserve's CMD too, runs under iolog.sh, which logs what it
-# wrote to disk in /bkoscratch/wear/jobs.log (wear-report.sh sums it up).
+# wrote to disk in /bkoscratch/wear/jobs.log, with WEAR_TAG (wear-report.py
+# sums it up).
 # Reservations live in /mnt/bko-ram/.reserve, shared by every cmp-run.sh on
 # the host. Nothing new starts while the CPU is over HOT_C (default 95) or an
 # NVMe over NVME_C (default 75).
@@ -61,7 +69,11 @@
 # the lowest HOT_C of anyone before in line, so jobs behind a waiter that is
 # held back by heat don't keep the CPU hot.
 set -u
+HERE=$(dirname "$(realpath "${BASH_SOURCE[0]}")")   # before the cd: $0 may be relative
 cd ~/backotter-work
+# Jobs run under the iolog.sh beside this file (a private copy's own), or the
+# shared one when there is none there (a lone copy of cmp-run.sh).
+IOLOG=$HERE/iolog.sh; [ -x "$IOLOG" ] || IOLOG=$PWD/testvm/compare/iolog.sh
 RAM=/mnt/bko-ram LEDGER=/mnt/bko-ram/.reserve WAITS=/mnt/bko-ram/.reserve.wait
 mountpoint -q $RAM || { echo "no tmpfs at $RAM" >&2; exit 1; }
 touch $LEDGER $LEDGER.lock $WAITS 2>/dev/null; chmod 666 $LEDGER $LEDGER.lock $WAITS 2>/dev/null
@@ -219,7 +231,7 @@ if [ "${1:-}" = --reserve ]; then
     [ "${WEAR_LOG:-}" = off ] && exec "$@"
     exec sudo -E systemd-run --quiet --scope --collect -p IOAccounting=yes \
         setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
-        env PATH="$PATH" "$PWD/testvm/compare/iolog.sh" "reserve $*" -- "$@"
+        env PATH="$PATH" WEAR_TAG="${WEAR_TAG:-}" "$IOLOG" "reserve $*" -- "$@"
 fi
 
 tag=$1 slots=$2; shift 2
@@ -270,7 +282,7 @@ pop() {  # MAXDISK MAXMEM -> a queue line that fits; rc 0 got, 1 none fits (or f
 log() { echo "$(date -u +%T) $H slot $slot: $*" >>cmp-logs/$tag/progress; }
 
 worker() {  # SLOT
-    local slot=$1 line rc g stick grow ondisk d m lk maxd maxm ahead hotc jp scope args why hi dd waiting="" me=$BASHPID
+    local slot=$1 line rc g stick grow ondisk d m lk maxd maxm ahead hotc jp scope args why hi dd wt waiting="" me=$BASHPID
     while :; do
         if [ -e cmp-logs/$tag/stop ]; then
             if lock; then leave_line $me; unlock; fi
@@ -323,15 +335,18 @@ worker() {  # SLOT
         fi
         log "$g (reserved ${d}G RAM disk, ${m}G memory${dd:+, restored disks in $DISKS_DIR}; budget was ${maxd}G/${maxm}G)"
         hi=$(awk -v d="$d" -v m="$m" 'BEGIN { printf "%d", (d + m) * 1024 }')
+        # The job's wear tag (and WEAR_LOG, when set): sudo resets the
+        # environment, so env sets them.
+        wt=${WEAR_TAG:-cmp:$tag}:$g${stick:++$stick}
         # CMP_CMD: a command run in compare.py's place, the same way, with
         # GUEST DISK MEM SLOT [ARGS] (rebuild-one.sh, or a stand-in for tests).
         if [ -n "${CMP_CMD:-}" ]; then
             sudo systemd-run --quiet --scope --unit=${scope%.scope} -p MemoryHigh=${hi}M -p IOAccounting=yes \
-                testvm/compare/iolog.sh "$tag $g" -- env COMPARE_SLOT=$slot COMPARE_GROW_GIB=$grow $dd $E $CMP_CMD "$g" "$d" "$m" "$slot" "${args[@]}" \
+                env WEAR_TAG="$wt" ${WEAR_LOG:+WEAR_LOG="$WEAR_LOG"} "$IOLOG" "$tag $g" -- env COMPARE_SLOT=$slot COMPARE_GROW_GIB=$grow $dd $E $CMP_CMD "$g" "$d" "$m" "$slot" "${args[@]}" \
                 >cmp-logs/$tag/$g.log 2>&1 &
         else
             sudo systemd-run --quiet --scope --unit=${scope%.scope} -p MemoryHigh=${hi}M -p IOAccounting=yes \
-                testvm/compare/iolog.sh "$tag $g" -- env COMPARE_SLOT=$slot COMPARE_GROW_GIB=$grow $dd $E python3 testvm/compare/compare.py "${args[@]}" "$g" \
+                env WEAR_TAG="$wt" ${WEAR_LOG:+WEAR_LOG="$WEAR_LOG"} "$IOLOG" "$tag $g" -- env COMPARE_SLOT=$slot COMPARE_GROW_GIB=$grow $dd $E python3 testvm/compare/compare.py "${args[@]}" "$g" \
                 restic-bko rustic-bko restic-to-rustic rustic-to-restic >cmp-logs/$tag/$g.log 2>&1 &
         fi
         jp=$!

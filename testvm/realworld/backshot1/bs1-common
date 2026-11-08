@@ -1,0 +1,154 @@
+# BackShot1: what bs1-backup, bs1-restore and bs1-verify share.  Sourced.
+#
+# bs1.conf, beside this file, names the machine: SOURCE_HOST, INTERNAL_SERIAL,
+# BACKUP_LABEL.  Everything acts on the disk with that serial, never a /dev name.
+
+set -uo pipefail
+export LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
+# shellcheck disable=SC1091
+. "$HERE/bs1.conf" || { echo "no bs1.conf in $HERE" >&2; exit 2; }
+BIN=$HERE/bin
+RUNS=$HERE/runs
+SRC=/mnt/bs1-src                # the tree the snapshot is taken of, and named by
+LOG=/dev/null STEP=starting
+
+say() { printf '%s %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$LOG"; }
+step() { STEP=$1; sync; printf '\n' | tee -a "$LOG"; say "==== $STEP"; }
+die() { say "STOPPED during \"$STEP\": $*"; exit 1; }
+
+run() {
+    say "\$ $*"
+    local t0=$SECONDS rc
+    "$@" 2>&1 | tee -a "$LOG"
+    rc=${PIPESTATUS[0]}
+    say "  exit $rc after $((SECONDS - t0)) s"
+    return "$rc"
+}
+must() { run "$@" || die "this failed: $*"; }
+
+[[ $EUID -eq 0 ]] || { echo "$0: run it as root" >&2; exit 2; }
+
+# The one disk with INTERNAL_SERIAL, by name.
+internal_disk() {
+    local found
+    found=$(lsblk -dnro NAME,SERIAL | awk -v s="$INTERNAL_SERIAL" '$2 == s { print $1 }')
+    [[ -n $found && $(wc -l <<<"$found") -eq 1 ]] || return 1
+    echo "$found"
+}
+
+disk_of() { lsblk -no PKNAME "$1" | head -n 1; }
+
+# The backup drive's own disk, checked: on USB, and not the internal disk.
+backup_disk() {
+    local dev disk
+    dev=$(blkid -L "$BACKUP_LABEL") || return 1
+    disk=$(disk_of "$dev")
+    [[ -n $disk && $disk != "$1" && $(lsblk -dno TRAN "/dev/$disk") == usb ]] || return 1
+    echo "$disk"
+}
+
+REAL_FS='ext2|ext3|ext4|xfs|btrfs|vfat|f2fs|jfs|nilfs2|bcachefs|zfs'
+ESP_TYPE=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
+
+# on_disk SOURCE DISK: does this mount's source rest on DISK, through any stack
+# of partitions, md, LUKS and LVM, or a ZFS pool?
+on_disk() {
+    local src=${1%%\[*} disk=$2 v
+    if [[ $src == /dev/* ]]; then
+        lsblk -snlo NAME "$src" 2>/dev/null | awk -v d="$disk" '$1 == d { f = 1 } END { exit !f }'
+        return
+    fi
+    command -v zpool >/dev/null || return 1
+    for v in $(zpool list -vHPL "${src%%/*}" 2>/dev/null | awk '$1 ~ /^\// { print $1 }'); do
+        lsblk -snlo NAME "$v" 2>/dev/null | awk -v d="$disk" '$1 == d { f = 1 } END { exit !f }' && return 0
+    done
+    return 1
+}
+
+# The real filesystems mounted from DISK, parents first: TARGET<tab>FSTYPE.
+internal_mounts() {
+    local target src fs root
+    findmnt -rno TARGET,SOURCE,FSTYPE,FSROOT | while read -r target src fs root; do
+        [[ $fs =~ ^($REAL_FS)$ ]] || continue
+        # A bind mount shows a subdirectory; a btrfs subvolume does too, and counts.
+        [[ $fs == btrfs || $fs == zfs || $root == / ]] || continue
+        on_disk "$src" "$1" || continue
+        printf '%b\t%s\n' "$target" "$fs"
+    done | LC_ALL=C sort
+}
+
+# Stops if DISK holds a filesystem the running system hasn't mounted: it would be
+# erased without being in the backup.
+check_coverage() {
+    local mounted name fs
+    mounted=$(findmnt -rno SOURCE | sed 's/\[.*//')
+    while read -r name fs; do
+        [[ ${fs:-} =~ ^($REAL_FS)$ ]] || continue
+        grep -qxF "$name" <<<"$mounted" || die "$name ($fs) isn't mounted, so it wouldn't be backed up"
+    done < <(lsblk -lnpo NAME,FSTYPE "/dev/$1")
+}
+
+# The read-only tree of DISK's filesystems at $SRC.  Binds of each one alone, so
+# /proc, /sys, /run and the backup drive aren't in it.
+make_tree() {
+    local target fs dst
+    findmnt -rn "$SRC" >/dev/null && die "$SRC is already mounted"
+    mkdir -p "$SRC"
+    while IFS=$'\t' read -r target fs; do
+        dst=$SRC${target%/}
+        must mount --bind "$target" "$dst"
+        must mount -o remount,bind,ro "$dst"
+    done < <(internal_mounts "$1")
+    findmnt -rn "$SRC" >/dev/null || die "nothing on $1 is mounted"
+}
+
+drop_tree() {
+    if findmnt -rn "$SRC" >/dev/null; then umount --recursive "$SRC"; fi
+    sync
+}
+
+package_list() {
+    if command -v dpkg-query >/dev/null; then dpkg-query -W -f '${Package}\t${Version}\n'
+    elif command -v rpm >/dev/null; then rpm -qa
+    elif command -v pacman >/dev/null; then pacman -Q
+    elif command -v apk >/dev/null; then apk info -v
+    elif command -v xbps-query >/dev/null; then xbps-query -l
+    else echo "no package manager known"
+    fi 2>/dev/null | LC_ALL=C sort
+}
+
+swap_names() { swapon --show=NAME --noheadings 2>/dev/null | { grep -v zram || true; } | LC_ALL=C sort; }
+
+failed_units() {
+    command -v systemctl >/dev/null || return 0
+    systemctl --failed --no-legend --no-pager --plain 2>/dev/null | awk '{ print $1 }' | LC_ALL=C sort
+}
+
+# layout_keys LAYOUT PASSPHRASE_FILE: load's --key-file values, one a line: every
+# LUKS volume and every ZFS encryption root that asks for a passphrase.
+layout_keys() {
+    python3 - "$1" "$2" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+s = d["storage"]
+names = {e["name"] for e in (s.get("crypttab") or [])}
+for dm in s.get("dm_devices") or []:
+    if (dm.get("dm") or {}).get("target") == "crypt":
+        names.add(dm["dm"]["dm_name"])
+for ds in ((s.get("zfs") or {}).get("tools") or {}).get("datasets") or []:
+    if ds.get("encryptionroot") == ds.get("name") and ds.get("keyformat") == "passphrase":
+        names.add(ds["name"])
+for n in sorted(names):
+    print(f"{n}={sys.argv[2]}")
+PY
+}
+
+layout_is_uefi() {
+    python3 -c 'import json, sys; sys.exit(0 if json.load(open(sys.argv[1])).get("firmware", {}).get("mode") == "uefi" else 1)' "$1"
+}
+
+rustic_in() {       # rustic_in RUN_DIR: sets RUSTIC for that run's repository
+    RUSTIC=("$BIN/rustic-bko" -r "$1/repo" --password-file "$1/repo-password" --no-progress --no-cache)
+}

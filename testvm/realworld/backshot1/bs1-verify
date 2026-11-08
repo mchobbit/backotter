@@ -1,0 +1,77 @@
+#!/bin/bash
+# BackShot1: did the restored system come back?  As root, on the restored system.
+#
+# Usage: bs1-verify RUN
+#
+# Exit 0 only if every check passed.  Writes runs/RUN/verify.log and RESULT.
+
+# shellcheck disable=SC1091
+. "$(dirname "$(readlink -f "$0")")/bs1-common"
+
+RUN=$RUNS/${1:?usage: bs1-verify RUN}
+[[ -f $RUN/RESTORED ]] || { echo "$RUN was never restored" >&2; exit 2; }
+LOG=$RUN/verify.log
+: >"$LOG"
+fails=0
+check() {       # check WHAT COMMAND...
+    local what=$1; shift
+    if "$@" >>"$LOG" 2>&1; then say "  ok    $what"; else say "  FAIL  $what"; fails=$((fails + 1)); fi
+}
+trap drop_tree EXIT
+
+system_settled() {
+    local s= i
+    command -v systemctl >/dev/null || { echo no-systemd; return 0; }
+    for i in $(seq 60); do
+        s=$(systemctl is-system-running 2>/dev/null)
+        [[ $s == running || $s == degraded ]] && { echo "$s"; return 0; }
+        sleep 5
+    done
+    echo "${s:-unknown}"
+    return 1
+}
+packages_same() { package_list | cmp - "$RUN/baseline/packages.txt"; }
+swap_same() { swap_names | cmp - "$RUN/baseline/swap-names.txt"; }
+booted_the_restored_esp() {
+    local current guids
+    current=$(efibootmgr | awk '/^BootCurrent/ { print $2 }')
+    guids=$(lsblk -lno PARTUUID,PARTTYPE "/dev/$disk" | awk -v t="$ESP_TYPE" 'tolower($2) == t { print $1 }' | paste -sd'|')
+    [[ -n $current && -n $guids ]] && efibootmgr -v | grep -iE "^Boot$current.*($guids)"
+}
+
+state=$(system_settled)
+say "system state: $state"
+
+step "the checks"
+disk=$(internal_disk) || { say "no single disk has serial $INTERNAL_SERIAL"; exit 1; }
+# Mounts an ESP that's on an automount.
+ls /boot/efi /efi /boot >/dev/null 2>&1
+check "hostname is $SOURCE_HOST" test "$(hostname)" == "$SOURCE_HOST"
+check "/ is on the restored $disk" on_disk "$(findmnt -nro SOURCE /)" "$disk"
+check "this isn't the rescue stick" test ! -f /cdrom/.disk/backotter.json
+check "the boot finished" test "$state" != unknown
+failed_units >"$RUN/failed-units-after.txt"
+new_failed=$(comm -13 "$RUN/baseline/failed-units.txt" "$RUN/failed-units-after.txt")
+[[ -z $new_failed ]] || say "failed since the backup: $new_failed"
+check "no unit fails that didn't before the backup" test -z "$new_failed"
+check "the same swap is in use" swap_same
+check "the restore's log is on the restored system" test -d /var/log/bko-holt
+if [[ -d /sys/firmware/efi ]]; then
+    check "firmware booted the restored ESP's entry" booted_the_restored_esp
+fi
+check "the package list is unchanged" packages_same
+
+step "the layout, as the restored system sees it"
+check "bko-holt dump works" sh -c "'$BIN/bko-holt' dump --only-disk '$disk' >'$RUN/after.json'"
+
+step "the files, against the manifest from before the backup"
+make_tree "$disk"
+must python3 "$HERE/bs1-manifest" "$SRC" "$RUN/manifest-after.tsv"
+python3 "$HERE/bs1-manifest" --compare "$RUN/baseline/manifest.tsv" "$RUN/manifest-after.tsv" 2>&1 | tee "$RUN/compare.txt" | tee -a "$LOG" | tail -n 40
+[[ ${PIPESTATUS[0]} -eq 0 ]] || { say "  FAIL  files differ outside what a boot changes (compare.txt)"; fails=$((fails + 1)); }
+
+if [[ $fails -eq 0 ]]; then r=PASS; else r="FAIL: $fails checks"; fi
+echo "$r" >"$RUN/RESULT"
+printf '\n' | tee -a "$LOG"
+say "RESULT: $r"
+[[ $fails -eq 0 ]]

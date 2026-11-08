@@ -1,0 +1,103 @@
+#!/usr/bin/env bash
+# BackShot1: a bare-metal backup and restore of the Thinkpad, driven over SSH.
+# Run from the controlling machine; README.md has the whole procedure.
+#
+#   backshot1 stage TOOLS_DIR     put the scripts, tools and keys on the backup drive
+#   backshot1 adopt               run bs1-adopt on the machine, over the old login
+#   backshot1 preflight           check everything phase1 needs; changes nothing
+#   backshot1 phase1              back up the running system; prints RUN=...
+#   backshot1 find-rescue         find the booted rescue stick; prints its address
+#   backshot1 plan RUN            on the stick: read the backup, plan the restore
+#   backshot1 phase2 RUN          on the stick: WIPE the internal disk, restore
+#   backshot1 reboot              on the stick: boot the restored system
+#   backshot1 verify RUN          on the restored system: check it
+
+set -euo pipefail
+here=$(cd "$(dirname "$0")" && pwd)
+# shellcheck disable=SC1091
+. "$here/thinkpad.conf"
+
+HOST=${BS1_HOST:-thinkpad.local}
+MACS=(c8:a3:62:50:99:10 84:a9:38:9f:66:52)      # the USB Ethernet adapter, the onboard port
+STATE=${BS1_STATE:-${TMPDIR:-/tmp}/backshot1-state}
+mkdir -p "$STATE"
+KEYS=${BS1_KEYS:-$HOME/.ssh/backshot1}
+[[ -s $KEYS/id_ed25519 && -s $KEYS/known_hosts ]] || die_nokeys=1
+# Every install and the stick present one pinned host key (make-keys, bs1-adopt).
+OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30
+      -i "$KEYS/id_ed25519" -o IdentitiesOnly=yes
+      -o HostKeyAlias=bs1-thinkpad -o UserKnownHostsFile="$KEYS/known_hosts" -o StrictHostKeyChecking=yes)
+
+die() { echo "backshot1: $*" >&2; exit 1; }
+[[ -z ${die_nokeys:-} ]] || die "no keys in $KEYS: run make-keys"
+# Before bs1-adopt the machine knows only the old login.
+old_login_if_new() {
+    ssh "${OPTS[@]}" "root@$HOST" true 2>/dev/null || OPTS=(-o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=30)
+}
+on_host() { ssh "${OPTS[@]}" "root@$HOST" "$@"; }
+on_rescue() {
+    [[ -s $STATE/rescue-ip ]] || die "run find-rescue first"
+    ssh "${OPTS[@]}" "backotter@$(cat "$STATE/rescue-ip")" "$@"
+}
+
+# Prints the drive's mount point on the machine, mounting it if nothing has.
+DRIVE="d=\$(findmnt -nro TARGET -S LABEL=$BACKUP_LABEL | head -n 1); if [ -z \"\$d\" ]; then mkdir -p /mnt/bs1-backup; mount LABEL=$BACKUP_LABEL /mnt/bs1-backup || exit 1; d=/mnt/bs1-backup; fi"
+
+case ${1:-} in
+stage)
+    tools=${2:?usage: backshot1 stage TOOLS_DIR}
+    for b in bko-holt rustic-bko; do [[ -x $tools/$b ]] || die "no $tools/$b"; done
+    old_login_if_new
+    d=$(on_host "$DRIVE; echo \"\$d\"")
+    on_host "mkdir -p '$d/backshot1/bin' '$d/backshot1/runs' '$d/backshot1/keys'; chmod 700 '$d/backshot1/keys'"
+    scp -q "${OPTS[@]}" "$here"/bs1-{common,backup,restore,verify,manifest,adopt} "root@$HOST:$d/backshot1/"
+    scp -q "${OPTS[@]}" "$here/thinkpad.conf" "root@$HOST:$d/backshot1/bs1.conf"
+    scp -q "${OPTS[@]}" "$tools/bko-holt" "$tools/rustic-bko" "root@$HOST:$d/backshot1/bin/"
+    scp -q "${OPTS[@]}" "$KEYS/id_ed25519.pub" "root@$HOST:$d/backshot1/keys/authorized_keys"
+    scp -q "${OPTS[@]}" "$KEYS/ssh_host_ed25519_key" "$KEYS/ssh_host_ed25519_key.pub" "root@$HOST:$d/backshot1/keys/"
+    on_host "chmod 755 '$d'/backshot1/bs1-* '$d'/backshot1/bin/*; chmod 600 '$d'/backshot1/keys/ssh_host_ed25519_key; '$d/backshot1/bin/bko-holt' --version; '$d/backshot1/bin/rustic-bko' --version; ls -la '$d/backshot1'"
+    ;;
+adopt)
+    old_login_if_new
+    on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-adopt\""
+    ;;
+phase1)
+    on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-backup\""
+    ;;
+preflight)
+    on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-backup\" --preflight"
+    ;;
+find-rescue)
+    command -v arp >/dev/null || die "needs arp"
+    prefix=$(on_host 'ip -4 -o addr show scope global | awk "{print \$4; exit}"' 2>/dev/null | cut -d. -f1-3 || true)
+    prefix=${prefix:-${BS1_PREFIX:-192.168.68}}
+    for i in $(seq 1 254); do ping -c 1 -W 700 -t 1 "$prefix.$i" >/dev/null 2>&1 & done
+    wait
+    ip=
+    for m in "${MACS[@]}"; do
+        ip=$(arp -an | awk -v m="$m" 'index($0, m) { gsub(/[()]/, "", $2); print $2; exit }')
+        [[ -z $ip ]] || break
+    done
+    [[ -n $ip ]] || die "no answer from the laptop's wired adapters on $prefix.0/24"
+    echo "$ip" >"$STATE/rescue-ip"
+    on_rescue 'sudo -n true && test -f /cdrom/.disk/backotter.json && hostname' || die "$ip isn't an unlocked rescue stick"
+    on_rescue "lsblk -dno SERIAL | grep -qx $INTERNAL_SERIAL" || die "$ip doesn't have disk $INTERNAL_SERIAL"
+    echo "RESCUE=$ip"
+    ;;
+plan | phase2)
+    run=${2:?usage: backshot1 $1 RUN}
+    only=; [[ $1 == plan ]] && only=--plan-only
+    on_rescue "sudo -n bash -c '$DRIVE; exec bash \"\$d/backshot1/bs1-restore\" --erase-serial $INTERNAL_SERIAL $only $run'"
+    ;;
+reboot)
+    on_rescue 'sudo -n systemctl reboot' || true
+    ;;
+verify)
+    run=${2:?usage: backshot1 verify RUN}
+    on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-verify\" '$run'"
+    ;;
+*)
+    sed -n '2,14p' "$0"
+    exit 2
+    ;;
+esac

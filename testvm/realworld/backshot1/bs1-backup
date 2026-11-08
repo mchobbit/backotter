@@ -1,0 +1,100 @@
+#!/bin/bash
+# BackShot1, phase 1: back up the running system.  As root, on the machine.
+#
+# Writes runs/STAMP/ on the backup drive, beside this script: the layout, a
+# manifest, the repository and its password, run.log, and PHASE1_OK once the
+# backup has passed `check --read-data`.  Changes nothing on the internal disk.
+#
+# The snapshot is of a read-only bind tree of every real filesystem mounted from
+# the internal disk, through whatever stack of LUKS, LVM, md, btrfs or ZFS it is
+# on.  So /proc, /sys, /run and the backup drive aren't in it and no exclusions
+# are needed.  There's no filesystem snapshot: files that change while this
+# runs are caught at different moments, as they are for anyone backing up a live
+# system.  btrfs subvolumes and ZFS datasets that aren't mounted aren't backed up.
+
+# shellcheck disable=SC1091
+. "$(dirname "$(readlink -f "$0")")/bs1-common"
+
+trap drop_tree EXIT
+trap 'die "interrupted"' INT TERM HUP
+
+step "preflight"
+[[ $(hostname) == "$SOURCE_HOST" ]] || die "this is $(hostname), not $SOURCE_HOST"
+disk=$(internal_disk) || die "no single disk has serial $INTERNAL_SERIAL"
+on_disk "$(findmnt -nro SOURCE /)" "$disk" || die "/ isn't on $disk"
+# An ESP on an automount appears only when something looks at it.
+ls /boot/efi /efi /boot >/dev/null 2>&1
+check_coverage "$disk"
+drive=$(backup_disk "$disk") || die "LABEL=$BACKUP_LABEL isn't a USB drive apart from $disk"
+for b in bko-holt rustic-bko; do [[ -x $BIN/$b ]] || die "no $BIN/$b"; done
+"$BIN/bko-holt" dump --help 2>&1 | grep -q -- --only-disk || die "this bko-holt has no --only-disk"
+if [[ ${1:-} == --preflight ]]; then
+    say "internal: $disk (serial $INTERNAL_SERIAL), backup drive: $drive"
+    say "would back up:"
+    internal_mounts "$disk"
+    say "PREFLIGHT OK: nothing was changed"
+    exit 0
+fi
+
+RUN=$RUNS/$(date -u +%Y%m%d-%H%M%S)
+mkdir -p "$RUN/baseline" || die "can't make $RUN"
+LOG=$RUN/run.log
+: >"$LOG"
+say "internal: $disk (serial $INTERNAL_SERIAL), backup drive: $drive, run: $RUN"
+. /etc/os-release 2>/dev/null && say "system: ${PRETTY_NAME:-unknown}, kernel $(uname -r)"
+run "$BIN/bko-holt" --version
+run "$BIN/rustic-bko" --version
+run sha256sum "$BIN/bko-holt" "$BIN/rustic-bko"
+run lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL,MOUNTPOINTS
+
+need=0
+while IFS=$'\t' read -r target _; do
+    used=$(df -B1 --output=used "$target" | tail -n 1 | tr -dc 0-9)
+    need=$((need + used))
+done < <(internal_mounts "$disk")
+free=$(df -B1 --output=avail "$RUN" | tail -n 1 | tr -dc 0-9)
+say "in use: $((need / 1048576)) MiB; free on the drive: $((free / 1048576)) MiB"
+[[ $free -gt $need ]] || die "the backup drive hasn't enough room"
+
+step "the tree to back up"
+make_tree "$disk"
+run findmnt -R "$SRC"
+
+step "the layout"
+"$BIN/bko-holt" dump --only-disk "$disk" >"$RUN/layout.json" 2>>"$LOG" || die "bko-holt dump failed"
+say "layout.json: $(wc -c <"$RUN/layout.json") bytes"
+grep -q "\"$drive\"" "$RUN/layout.json" && die "the layout mentions the backup drive"
+keys=$(layout_keys "$RUN/layout.json" "$HERE/keys/disk-passphrase") || die "can't read the layout"
+if [[ -n $keys ]]; then
+    [[ -s $HERE/keys/disk-passphrase ]] ||
+        die "encrypted volumes need the passphrase in $HERE/keys/disk-passphrase: $keys"
+    say "encrypted: someone has to type the passphrase at the restored system's first boot"
+    touch "$RUN/NEEDS_PASSPHRASE_AT_BOOT"
+fi
+
+step "the baseline"
+B=$RUN/baseline
+package_list >"$B/packages.txt"
+efibootmgr -v >"$B/efibootmgr.txt" 2>&1
+lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL,UUID,PARTUUID,MOUNTPOINTS,MODEL,SERIAL >"$B/lsblk.txt" 2>&1
+sfdisk -d "/dev/$disk" >"$B/sfdisk.txt" 2>&1
+cp /etc/fstab "$B/fstab" 2>/dev/null
+swap_names >"$B/swap-names.txt"
+failed_units >"$B/failed-units.txt"
+must python3 "$HERE/bs1-manifest" "$SRC" "$B/manifest.tsv"
+
+step "backing up"
+pw=$RUN/repo-password
+(umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' >"$pw") || die "can't write the password"
+rustic_in "$RUN"
+must "${RUSTIC[@]}" init
+must "${RUSTIC[@]}" backup --set-atime yes "$SRC"
+must "${RUSTIC[@]}" snapshots
+
+step "checking the backup (reading all of its data)"
+must "${RUSTIC[@]}" check --read-data
+
+sha256sum "$RUN/layout.json" | cut -d' ' -f1 >"$RUN/PHASE1_OK"
+sync
+say "PHASE 1 OK: $RUN"
+echo "RUN=$(basename "$RUN")"

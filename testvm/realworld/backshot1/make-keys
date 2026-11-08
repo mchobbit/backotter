@@ -1,0 +1,21 @@
+#!/usr/bin/env bash
+# BackShot1's own SSH keys, on the controlling machine.  Run once; never replaces
+# a key that exists.  In ~/.ssh/backshot1 (or BS1_KEYS):
+#
+#   id_ed25519            the controller's login key; this half never leaves here
+#   id_ed25519.pub        goes in every install's and the stick's authorized_keys
+#   ssh_host_ed25519_key  the one host key every install and the stick present
+#   known_hosts           pins that key, under the name bs1-thinkpad
+#
+# The host key's private half is on the backup drive and the stick, in the open.
+# That's fine for this testbed and nowhere else.
+
+set -euo pipefail
+
+D=${BS1_KEYS:-$HOME/.ssh/backshot1}
+mkdir -p -m 700 "$D"
+[[ -s $D/id_ed25519 ]] || ssh-keygen -q -t ed25519 -N '' -C backshot1-controller -f "$D/id_ed25519"
+[[ -s $D/ssh_host_ed25519_key ]] || ssh-keygen -q -t ed25519 -N '' -C root@bs1-thinkpad -f "$D/ssh_host_ed25519_key"
+printf 'bs1-thinkpad %s\n' "$(cut -d' ' -f1,2 "$D/ssh_host_ed25519_key.pub")" >"$D/known_hosts"
+ssh-keygen -l -f "$D/id_ed25519.pub"
+ssh-keygen -l -f "$D/ssh_host_ed25519_key.pub"

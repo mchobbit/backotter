@@ -1,0 +1,95 @@
+#!/bin/bash
+# BackShot1: make a fresh install on the Thinkpad ready.  Once per install, as
+# root, on the machine, from the backup drive:
+#
+#   sudo bash /PATH/TO/mybig512/backshot1/bs1-adopt
+#
+# Sets the hostname, lets the controller's key log in as root, and installs the
+# fixed host key, so the controller sees one identity on every install and on the
+# stick.  Installs sshd and an mDNS responder if the system has none.
+
+set -euo pipefail
+
+here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
+# shellcheck disable=SC1091
+. "$here/bs1.conf"
+keys=$here/keys
+
+[[ $EUID -eq 0 ]] || { echo "bs1-adopt: run it as root" >&2; exit 2; }
+for f in authorized_keys ssh_host_ed25519_key ssh_host_ed25519_key.pub; do
+    [[ -s $keys/$f ]] || { echo "bs1-adopt: no $keys/$f" >&2; exit 2; }
+done
+
+pkg_install() {     # pkg_install DEBIAN_NAME FEDORA_NAME SUSE_NAME ARCH_NAME ALPINE_NAME VOID_NAME
+    if command -v apt-get >/dev/null; then DEBIAN_FRONTEND=noninteractive apt-get install -y "$1"
+    elif command -v dnf >/dev/null; then dnf install -y "$2"
+    elif command -v zypper >/dev/null; then zypper --non-interactive install "$3"
+    elif command -v pacman >/dev/null; then pacman -S --noconfirm --needed "$4"
+    elif command -v apk >/dev/null; then apk add "$5"
+    elif command -v xbps-install >/dev/null; then xbps-install -y "$6"
+    else echo "bs1-adopt: no package manager I know; install $1 by hand" >&2; return 1
+    fi
+}
+
+start_service() {   # start_service NAME...: the first name this system knows
+    local s
+    for s in "$@"; do
+        if command -v systemctl >/dev/null; then
+            systemctl cat "$s.service" >/dev/null 2>&1 || continue
+            systemctl enable "$s.service" >/dev/null 2>&1 || true
+            systemctl restart "$s.service" && return 0
+        elif command -v rc-service >/dev/null; then
+            [[ -e /etc/init.d/$s ]] || continue
+            rc-update add "$s" default >/dev/null 2>&1 || true
+            rc-service "$s" restart && return 0
+        elif command -v sv >/dev/null; then
+            [[ -d /etc/sv/$s ]] || continue
+            [[ -e /var/service/$s ]] || ln -s "/etc/sv/$s" /var/service/
+            sv restart "$s" && return 0
+        fi
+    done
+    echo "bs1-adopt: couldn't start any of: $*" >&2
+    return 1
+}
+
+echo "== hostname: $SOURCE_HOST"
+if command -v hostnamectl >/dev/null; then hostnamectl set-hostname "$SOURCE_HOST"; else echo "$SOURCE_HOST" >/etc/hostname; hostname "$SOURCE_HOST"; fi
+
+command -v sshd >/dev/null || [[ -x /usr/sbin/sshd ]] ||
+    pkg_install openssh-server openssh-server openssh openssh openssh openssh
+# What the BackShot1 scripts themselves need; minimal systems may lack them.
+command -v python3 >/dev/null || pkg_install python3 python3 python3 python python3 python3
+command -v findmnt >/dev/null && command -v lsblk >/dev/null ||
+    pkg_install util-linux util-linux util-linux util-linux "util-linux-misc" util-linux
+
+echo "== root's authorized_keys"
+install -d -m 700 /root/.ssh
+touch /root/.ssh/authorized_keys
+chmod 600 /root/.ssh/authorized_keys
+while read -r line; do
+    grep -qxF "$line" /root/.ssh/authorized_keys || echo "$line" >>/root/.ssh/authorized_keys
+done <"$keys/authorized_keys"
+
+echo "== the fixed host key"
+rm -f /etc/ssh/ssh_host_rsa_key* /etc/ssh/ssh_host_ecdsa_key* /etc/ssh/ssh_host_dsa_key*
+install -m 600 "$keys/ssh_host_ed25519_key" /etc/ssh/ssh_host_ed25519_key
+install -m 644 "$keys/ssh_host_ed25519_key.pub" /etc/ssh/ssh_host_ed25519_key.pub
+
+if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
+    mkdir -p /etc/ssh/sshd_config.d
+    echo 'PermitRootLogin prohibit-password' >/etc/ssh/sshd_config.d/00-backshot1.conf
+elif ! grep -q 'BackShot1' /etc/ssh/sshd_config; then
+    # sshd keeps the first value it reads.
+    sed -i '1i # BackShot1\nPermitRootLogin prohibit-password' /etc/ssh/sshd_config
+fi
+"$(command -v sshd || echo /usr/sbin/sshd)" -t
+if command -v restorecon >/dev/null; then restorecon -R /root/.ssh /etc/ssh; fi
+start_service ssh sshd
+
+echo "== mDNS, for $SOURCE_HOST.local"
+command -v avahi-daemon >/dev/null ||
+    pkg_install avahi-daemon avahi avahi avahi avahi avahi
+start_service avahi-daemon
+
+ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub
+echo "bs1-adopt: done.  Tell Claude: \"Let's run BackShot1.\""

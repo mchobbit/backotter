@@ -122,24 +122,26 @@ for p in "${parts[@]}"; do
     u=$(blkid -s UUID -o value "$p")
     raids[$u]="${raids[$u]:-} $p"
 done
+# This host's udev may have assembled an array by itself the moment DEV, one
+# of its members, appeared (mdadm --incremental, as md126 and up): stop that,
+# so it is set up here as below, and isn't left behind.  This host's LVM may
+# have activated a group on it by itself too (event activation): that first,
+# or the array is busy.
+release_host_md() {
+    local h d
+    for h in /sys/class/block/"$(basename "$(realpath "$1")")"/holders/md*; do
+        [[ -e $h ]] || continue
+        for d in "$h"/holders/dm-*; do
+            [[ -e $d ]] && { dmsetup remove "$(cat "$d/dm/name")" || { undo; die "${d##*/} holds ${h##*/}"; }; }
+        done
+        mdadm --stop "/dev/${h##*/}" >/dev/null || { undo; die "could not stop ${h##*/}, which this host assembled from ${1##*/}"; }
+    done
+}
 n=0
 for u in "${!raids[@]}"; do
     # shellcheck disable=SC2206  # the members, one word each
     members=(${raids[$u]})
-    # This host's udev may have assembled the array by itself the moment the
-    # members appeared (mdadm --incremental, as md126 and up): stop that, so
-    # it is set up here as below, and isn't left behind.
-    # (This host's LVM may have activated a group on it by itself too: that
-    # first, or the array is busy.)
-    for m in "${members[@]}"; do
-        for h in /sys/class/block/"${m##*/}"/holders/md*; do
-            [[ -e $h ]] || continue
-            for d in "$h"/holders/dm-*; do
-                [[ -e $d ]] && { dmsetup remove "$(cat "$d/dm/name")" || { undo; die "${d##*/} holds ${h##*/}"; }; }
-            done
-            mdadm --stop "/dev/${h##*/}" >/dev/null || { undo; die "could not stop ${h##*/}, which this host assembled from ${m##*/}"; }
-        done
-    done
+    for m in "${members[@]}"; do release_host_md "$m"; done
     level=""
     [[ $ro == yes ]] && level=$(mdadm --examine "${members[0]}" | awk -F' : ' '/Raid Level/ { print $2 }')
     if [[ $level == raid10 ]]; then
@@ -183,12 +185,8 @@ for u in "${!raids[@]}"; do
             cows+=("/dev/mapper/$c")
         done
         udevadm settle
-        # This host's udev may have assembled them by itself, as above.
-        for c in "${cows[@]}"; do
-            for h in /sys/class/block/"$(basename "$(realpath "$c")")"/holders/md*; do
-                [[ -e $h ]] && { mdadm --stop "/dev/${h##*/}" >/dev/null || { undo; die "could not stop ${h##*/}, which this host assembled from $c"; }; }
-            done
-        done
+        # This host's udev (and LVM) may have assembled them by itself, as above.
+        for c in "${cows[@]}"; do release_host_md "$c"; done
         modprobe -q raid456 raid10 || true
         md=/dev/md/vm-mount-$$-$((n++))
         if ! mdadm --assemble --readonly --run "$md" "${cows[@]}" >/dev/null 2>&1; then

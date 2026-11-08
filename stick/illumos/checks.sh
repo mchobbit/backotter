@@ -64,6 +64,9 @@ marker)
   test "$(field platform)" = illumos && grep -q '"version": "illumos-r' $f || { echo "platform or zfs wrong"; exit 1; }
   echo "$(field image_id) illumos $(field release), $(grep -c '^      "' $f) zfs features" ;;
 smf)
+  # First let services in transition (state ending in *) settle, up to a
+  # minute: console-release's start waits up to 30 s for a maintenance login.
+  i=0; while svcs -H -o state | grep -q '\*' && [ $i -lt 60 ]; do sleep 1; i=$((i + 1)); done
   x=$(svcs -x 2>&1 | grep '^svc:/' | sed 's/ .*//')
   test -z "$x" || { echo "in trouble: $x" | tr '\n' ' '; exit 1; }; echo "$(svcs -H | wc -l | tr -d ' ') services online, none in trouble" ;;
 idmap)

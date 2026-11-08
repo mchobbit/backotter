@@ -25,9 +25,11 @@ use crate::sys::{FakeRunner, Sys};
 /// Where `mount` builds the restored system's tree, unless --target says.
 pub const DEFAULT_TARGET: &str = "/mnt/bko-target";
 /// Stage state, logs and temporary keys, in RAM: nothing is written to the
-/// target disks before there's a filesystem on them.  (Haiku's / is
-/// virtual: its /var is the boot volume's.)
-pub const RUN_DIR: &str = if cfg!(target_os = "haiku") { "/var/run/bko-holt" } else { "/run/bko-holt" };
+/// target disks before there's a filesystem on them.  /run is Linux's;
+/// elsewhere it's /var/run, which the BSD rescue images keep in memory under
+/// a read-only / with no /run (Haiku's / is virtual: its /var is the boot
+/// volume's).
+pub const RUN_DIR: &str = if cfg!(target_os = "linux") { "/run/bko-holt" } else { "/var/run/bko-holt" };
 /// restore's archiver, and the snapshot it restores unless --snapshot says.
 pub const DEFAULT_ARCHIVER: &str = "rustic-bko";
 pub const DEFAULT_SNAPSHOT: &str = "latest";
@@ -330,6 +332,32 @@ pub fn run(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
         [Stage::Plan] => plan::run(&layout, opts, sys),
         [Stage::Status] => status::run(&layout, opts, sys),
         _ => exec::run(&layout, opts, sys, &stages),
+    }
+}
+
+/// The source-to-target disk pairs `plan` makes of LAYOUT_TEXT here, with
+/// OPTS's --map or else by WWID or serial (report-bug gives them as --map to
+/// a run on the redacted layout, whose serials match no disk).
+pub fn disk_pairs(opts: &Options, layout_text: &str, sys: &Sys) -> Vec<(String, String)> {
+    let Some(layout) = crate::json::parse(layout_text).ok().and_then(|j| layout::Layout::from_json(j).ok()) else {
+        return Vec::new();
+    };
+    let system = target::scan(sys, opts, &target::layout_pools(&layout));
+    target::map(&layout, opts, &system, sys).pairs
+}
+
+/// The suffix `report-bug` gives a boot-area or ESP image's key when it
+/// leaves the image out of a report (KEY_omitted: its size and CRC-32).
+pub const OMITTED: &str = "_omitted";
+
+/// Whether V has an image `report-bug` left out: such a layout can be
+/// planned, but not written.
+pub fn has_omitted(v: &crate::json::Value) -> bool {
+    use crate::json::Value;
+    match v {
+        Value::Obj(kv) => kv.iter().any(|(k, x)| k.ends_with(OMITTED) || has_omitted(x)),
+        Value::Arr(a) => a.iter().any(has_omitted),
+        _ => false,
     }
 }
 

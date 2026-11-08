@@ -33,31 +33,41 @@ guests.  A guest passes only when every check passes.  Status is as of
 | 1M | Linux Mint | `mint22` | passes |
 | 1U | Ubuntu | `ubuntu24`, `ubuntu26-uefi`, `ubuntu26-zfsmirror`, `ubuntu26-raid` (and `degraded`) | passes |
 | 1Z | Zorin OS | `zorin18` | passes |
-| 1F | Fedora, Rocky Linux | `fedora44`, `fedora44-uefi`, `fedora44-raid`, `rocky10`, `rocky10-lvm`, `rocky10-raid5` | passes, but for `fedora44-raid` and `rocky10-raid5` (bko-holt defects, below) |
+| 1F | Fedora, Rocky Linux | `fedora44`, `fedora44-uefi`, `fedora44-raid`, `rocky10`, `rocky10-lvm`, `rocky10-raid5` | passes (`fedora44-raid` and `rocky10-raid5`: run `raid022`, below) |
 | 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | passes |
 | 1C | CachyOS, MX Linux | `cachyos`, `mx25` | passes |
 | 1V | Void Linux (musl) | `void-musl` | passes |
 | 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12 | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12` | passes |
-| 1H | Haiku | `haiku6` | passes (but for a known rustic-bko limit: the volume root's mtime) |
+| 1H | Haiku | `haiku6` | passes (run `haiku024`, rustic-bko 0.11.4+backotter.7, which restores the volume root's metadata: Tracker's empty `trash` had made a new BFS volume look used) |
 | 1I | illumos | `omnios58`, `omnios58-mirror` | both pass (`omnios58-mirror`: run `raid6`, the restored `rpool` ONLINE on both disks) |
 | 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `freebsd15-mirror`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6`, `alpinebsd` | passes |
 
-**The RAID guests** (2026-11-07, run `raid1`), each with a `fresh-install`
-snapshot on every disk:
+**The RAID guests** (2026-11-07, run `raid1`; `fedora44-raid` and
+`rocky10-raid5` again in run `raid022` on Cinqcent, in RAM, with bko-holt
+0.2.2), each with a `fresh-install` snapshot on every disk:
 
 - `fedora44-raid` (`make-fedora.sh --uefi --raid`): two disks, /boot/efi
   on md RAID1 with metadata 1.0, /boot on md RAID1, / on btrfs RAID1
-  (data and metadata).  Fails at `assemble`: `load` passes metadata 1.0
-  `--data-offset=0K`, which mdadm refuses (`invalid data-offset: 0K`).
+  (data and metadata).  Passes.  In `raid1` it failed at `assemble`:
+  `load` passed metadata 1.0 `--data-offset=0K`, which mdadm refuses
+  (`invalid data-offset: 0K`); fixed in 78018db.  A btrfs RAID1 member's
+  own device UUID is new (`mkfs.btrfs --device-uuid` sets it only for a
+  single device), and `judge.py` ignores it.
 - `ubuntu26-raid` (`make-ubuntu.sh --uefi --raid`): four disks, an ESP on
   each (GRUB kept on all four), md RAID10 (near-2) holding LVM with / ext4
   and swap.  Passes, and passes `degraded`.
 - `rocky10-raid5` (`make-rocky.sh --raid5`): three disks, BIOS, /boot on md
   RAID1 across all three, md RAID5 (left-symmetric, internal bitmap) holding
-  LVM with / XFS and swap.  Fails the dump check: `load`'s mkfs.xfs gives
-  `agcount` but neither the data size nor the AG size, so the rescuer's
-  xfsprogs makes another geometry (AG 458496 blocks, not 458368) and fills
-  the LV, where the source's XFS stopped 4 MiB short of its end.
+  LVM with / XFS and swap.  Passes.  In `raid1` it failed the dump check:
+  `load`'s mkfs.xfs gave `agcount` but neither the data size nor the AG
+  size, so the rescuer's xfsprogs made another geometry (AG 458496 blocks,
+  not 458368) and filled the LV, where the source's XFS stopped 4 MiB short
+  of its end; fixed in 78018db.  Its first try in `raid022` stopped at the
+  backup's read-only mount: Cinqcent's udev assembled the RAID5 from
+  `vm-mount`'s copy-on-write members and its LVM activated the group on it,
+  so the array was busy.  `vm-mount` now takes down what the host's LVM
+  activated before stopping such an array, for RAID5 and 6 as it already
+  did for RAID1 and 10.
 
 For these, `vm-mount --ro` reads a RAID10 of two near copies as a RAID0 of
 one member of each pair (dm's striped target, no md: the hosts' Linux 6.12
@@ -196,7 +206,10 @@ ht1-offline.sh still take it from bin/ (or `HT_HOLT`) at each phase, so
 leave bin/'s alone while one runs.  rustic-bko is the shipped set's
 (`~/backotter-work/bko-bin/linux/rustic-bko`, checked against its
 `SHA256SUMS`); `HT_ROUND=NAME` takes round NAME's instead, and
-`HT_RUSTIC=FILE` a build of your own, unchecked.  The guest's other
+`HT_RUSTIC=FILE` a build of your own, unchecked.  No driver reads bin/'s
+`rustic-bko` any more: since 2026-11-07 it is a copy of the shipped one,
+which the images carry, and the patched build Linux runs used before is
+kept as `bin/rustic-bko.backotter4` (for `HT_RUSTIC`).  The guest's other
 disks and firmware come from its `vm-run-options`; a guest with a
 `console-passphrase` or `zfs-passphrase` has it typed at each boot
 (`testvm/console-boot.py`), given to `vm-mount --key`, and given to

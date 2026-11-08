@@ -7,8 +7,15 @@ use super::target::{self, Mapping};
 use super::{Options, Stage, EXIT_OK, EXIT_PLAN_PROBLEMS};
 use crate::sys::Sys;
 
-/// Where `plan` looks for the programs the stages run.
-const PATH: [&str; 6] = ["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"];
+/// Where `plan` looks for the programs the stages run.  Haiku's own come
+/// first there: its rescue image installs rustic-bko and bko-holt in
+/// /boot/system/non-packaged/bin (stick/haiku/build.sh), and /bin is
+/// /boot/system/bin.
+const PATH: &[&str] = if cfg!(target_os = "haiku") {
+    &["/boot/home/config/non-packaged/bin", "/boot/home/config/bin", "/boot/system/non-packaged/bin", "/boot/system/bin", "/bin"]
+} else {
+    &["/usr/local/sbin", "/usr/local/bin", "/usr/sbin", "/usr/bin", "/sbin", "/bin"]
+};
 
 /// Where PROGRAM (a name or a path) is installed on the system load runs on.
 pub fn find(sys: &Sys, prog: &str) -> Option<String> {
@@ -66,6 +73,9 @@ pub fn check(layout: &Layout, opts: &Options, sys: &Sys) -> Planned {
     problems.extend(built.problems.iter().cloned());
     problems.extend(archiver_problem(sys, opts));
     problems.extend(missing_tools(sys, &built));
+    if super::has_omitted(&layout.v) {
+        problems.push("this layout comes from a bug report (`bko-holt report-bug`), which leaves boot-area and ESP images out: restore from the dump itself".into());
+    }
     if !sys.privileged {
         problems.push("not running as root: the target disks' tables and signatures can't be read, so blank disks can't be told from used ones".into());
     }

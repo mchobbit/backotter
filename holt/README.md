@@ -119,12 +119,14 @@ sudo bko-holt report-bug -- layout.json --map vda=/dev/sdb   # a load run of you
 
 writes `bko-report-DATE.txt` to attach to an issue
 (https://github.com/mchobbit/backotter/issues/new/choose): the versions of
-bko-holt, restic-bko, rustic-bko, the image (`/.disk/backotter.json`), the
-OS and kernel; this system's dump; the last `load` run, which `load` records
-in `/run/bko-holt/last-load.json` (command line, exit status, error output),
-with the layout it loaded, its plan and Problems and the target disks'
-status; and `/run/bko-holt/log/load.log` and `/var/log/bko-holt/`.  `load`
-and `dump` point at it when they fail.
+bko-holt, restic-bko, rustic-bko, the image (`.disk/backotter.json` on the
+image's root, its boot volume or, on Linux, `/cdrom`), the OS and kernel;
+this system's dump; the last `load` run, which `load` records in
+`/run/bko-holt/last-load.json` (`/var/run/bko-holt/` on systems other than
+Linux; command line, exit status, error output), with the layout it loaded,
+its plan and Problems and the target disks' status; and that directory's
+`log/load.log` and `/var/log/bko-holt/`.  `load` and `dump` point at it when
+they fail.
 
 It's redacted unless `--no-redact` (`src/redact.rs`).  Every hostname,
 machine-id, UUID and GUID (ZFS's too), serial number and WWID, label, user
@@ -188,8 +190,10 @@ cargo test
 - `tests/root_stack.rs` (ignored by default): builds md RAID1 + LUKS2 + LVM
   + ext4/XFS and a ZFS mirror on loop devices and checks the dump against
   mdadm, cryptsetup, lvs and zpool.  It changes the running system, so run
-  it as root in a throwaway guest, for example a `vm-run --snapshot` of
-  testvm's debian13-zfs, with the test binaries copied in:
+  it as root in a throwaway guest, a `vm-run --snapshot --memory 3072` of
+  testvm's debian13-zfs, with the test binary and `bko-holt` copied in and
+  mdadm, cryptsetup, lvm2, xfsprogs and dosfstools installed (last passed
+  2026-11-07, bko-holt 0.2.3):
 
   ```
   BKO_HOLT_BIN=/root/bko-holt ./root_stack-* --ignored --test-threads 1

@@ -82,6 +82,9 @@ if [[ -d $OUT_IMG ]]; then
     if commit=$(git -C "$here" rev-parse --short=7 HEAD 2>/dev/null); then
         version+=.$commit
         [[ -z $(git -C "$here" status --porcelain -- . 2>/dev/null) ]] || version+=.dirty
+    elif [[ -s $here/.backotter-commit ]]; then
+        # A copy on a test host: testvm/sync-hosts.sh says which commit.
+        version+=.$(head -n 1 "$here/.backotter-commit")
     fi
     OUT_IMG=$OUT_IMG/backotter-live-$PLATFORM-$version-$arch.img
 fi

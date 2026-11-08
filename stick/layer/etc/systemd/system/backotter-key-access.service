@@ -1,0 +1,12 @@
+[Unit]
+Description=BackOtter remote access by the SSH keys on the stick, if it has any
+After=local-fs.target network.target
+ConditionPathIsMountPoint=/cdrom
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/lib/backotter/key-access
+
+[Install]
+WantedBy=multi-user.target

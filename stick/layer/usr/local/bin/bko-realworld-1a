@@ -1,0 +1,433 @@
+#!/bin/bash
+# BackOtter rescue stick: the real-world test, in one command.
+#
+# Usage: bko-realworld-1a      (as root, from the stick's shell)
+#
+# Takes the machine's internal disks through a whole backup and restore:
+# reads the installed system's layout off its disks, backs it up to the one
+# external drive, checks the backup, wipes the internal disks, repartitions,
+# reformats, restores, compares, redoes the boot loader, and checks the
+# result.  It asks once, at the start, and refuses to wipe anything unless the
+# backup passed `rustic-bko check --read-data`.
+#
+# Everything goes to the stick's BACKOTTER partition, in
+# backotter/realworld/DATE-TIME/: run.log (every command, its output and its
+# exit status), RESULT, layout.json, after.json, rustic's own logs, the diff,
+# the kernel's and the journal's logs, and on failure a bko-holt bug report.
+#
+# It runs the bko-holt and rustic-bko in BACKOTTER's backotter/bin/, so they
+# can be replaced without rebuilding the image, or the image's own if they
+# aren't there.
+#
+# Handles plain partitions holding ext2/3/4, XFS, vfat and swap.  It stops,
+# having changed nothing, at LUKS, LVM, md RAID, ZFS, btrfs, NTFS or anything
+# else; at more than one installed system; and at any filesystem the installed
+# system doesn't mount, since that would be erased without being backed up.
+#
+# A disk counts as external if it's on USB, or an SD card (mmcblk*).  Anything
+# else that isn't the stick counts as internal and is erased.
+
+set -uo pipefail
+export LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+
+CFG=/mnt/bko-config SRC=/mnt/bko-src BK=/mnt/bko-backup TGT=/mnt/bko-target
+RUN=/run/backotter BIN=$RUN/bin STAMP=$(date -u +%Y%m%d-%H%M%S)
+LOGDIR= LOG=/dev/null STEP=starting RESULT=FAIL REASON= WIPED=no REPO_DIR= LOADED=no
+MIN_LOG_MIB=40      # what BACKOTTER must have free at the start
+STICK= EXTERNAL= BACKUP_PART=
+INTERNAL=() ROOTS=()
+
+say() { printf '%s %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$LOG"; }
+step() { STEP=$1; sync; printf '\n' | tee -a "$LOG"; say "==== $STEP"; }
+
+# run CMD...: logs the command, its output and its exit status.
+run() {
+    say "\$ $*"
+    local t0=$SECONDS rc
+    "$@" 2>&1 | tee -a "$LOG"
+    rc=${PIPESTATUS[0]}
+    say "  exit $rc after $((SECONDS - t0)) s"
+    return "$rc"
+}
+
+die() { REASON=$*; say "STOPPED: $REASON"; exit 1; }
+must() { run "$@" || die "$STEP: this failed: $*"; }
+
+save_rustic_log() {     # save_rustic_log NAME
+    [[ -s $RUN/log/$1.log ]] && gzip -c "$RUN/log/$1.log" >"$LOGDIR/rustic-$1.log.gz"
+    sync
+}
+
+unbind() {
+    local b
+    for b in run sys proc dev; do
+        findmnt -rn "$SRC/$b" >/dev/null && umount --recursive "$SRC/$b" 2>&1 | tee -a "$LOG"
+    done
+}
+
+finish() {
+    local rc=$?
+    trap - EXIT INT TERM HUP
+    [[ $rc -eq 0 ]] || RESULT=FAIL
+    [[ -n $REASON || $RESULT == PASS ]] || REASON="stopped during: $STEP (exit $rc)"
+    # The tree the checks had mounted; a failed restore's stays up to look at.
+    unbind
+    findmnt -rn "$SRC" >/dev/null && umount --recursive "$SRC" 2>&1 | tee -a "$LOG"
+    if [[ -n $LOGDIR ]]; then
+        printf '\n' | tee -a "$LOG"
+        say "==== collecting the logs"
+        lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL,UUID,MOUNTPOINT,MODEL,SERIAL >"$LOGDIR/lsblk-end.txt" 2>&1
+        efibootmgr -v >"$LOGDIR/efibootmgr-end.txt" 2>&1
+        dmesg -T >"$LOGDIR/dmesg.txt" 2>&1
+        journalctl -b --no-pager 2>/dev/null | gzip -c >"$LOGDIR/journal.txt.gz"
+        if [[ -d /run/bko-holt/log ]]; then
+            cp -r /run/bko-holt/log "$LOGDIR/bko-holt-log" 2>&1 | tee -a "$LOG"
+        fi
+        if [[ $RESULT != PASS && $LOADED == yes ]]; then
+            run "$BIN/bko-holt" report-bug --output "$LOGDIR/bko-report.txt"
+        fi
+        {
+            echo "$RESULT"
+            [[ -z $REASON ]] || echo "$REASON"
+            echo "step: $STEP"
+            echo "wiped the internal disks: $WIPED"
+            echo "backup: ${REPO_DIR:-none}"
+        } >"$LOGDIR/RESULT"
+    fi
+    printf '\n' | tee -a "$LOG"
+    if [[ $RESULT == PASS ]]; then
+        say "RESULT: PASS"
+        say "Take out the stick and reboot to try the restored system."
+    else
+        say "RESULT: FAIL: $REASON"
+        if [[ $WIPED == yes ]]; then
+            say "The internal disks HAVE been wiped.  The backup is in $REPO_DIR on the external drive."
+        else
+            say "The internal disks have not been wiped."
+        fi
+    fi
+    say "Logs: backotter/realworld/$STAMP on the stick's BACKOTTER partition."
+    sync
+    findmnt -rn "$BK" >/dev/null && umount "$BK"
+    # Last: the log lives there.
+    LOG=/dev/null
+    findmnt -rn "$CFG" >/dev/null && umount "$CFG"
+    sync
+    rmdir "$RUN/realworld.lock" 2>/dev/null
+    [[ $RESULT == PASS ]] && exit 0
+    exit 1
+}
+
+[[ $EUID -eq 0 ]] || { echo "bko-realworld-1a: run it as root" >&2; exit 2; }
+mkdir -p -m 700 "$RUN" "$RUN/log"
+mkdir "$RUN/realworld.lock" 2>/dev/null || { echo "bko-realworld-1a: already running (or remove $RUN/realworld.lock)" >&2; exit 2; }
+trap finish EXIT
+trap 'die "interrupted during: $STEP"' INT TERM HUP
+
+# ---- The stick, and somewhere to log ----------------------------------------
+
+medium=$(findmnt -nro SOURCE /cdrom) || die "the live medium isn't mounted at /cdrom"
+STICK=$(lsblk -no PKNAME "$medium" | head -n 1)
+[[ -n $STICK ]] || die "$medium isn't a partition: this needs the image written to a stick"
+config=$(lsblk -lnpo NAME,LABEL "/dev/$STICK" | awk '$2 == "BACKOTTER" { print $1; exit }')
+[[ -n $config ]] || die "the stick has no BACKOTTER partition"
+for d in "$CFG" "$SRC" "$BK"; do
+    mkdir -p "$d"
+    ! findmnt -rn "$d" >/dev/null || die "$d is already mounted; reboot the stick and try again"
+done
+mount -t vfat -o rw,noatime "$config" "$CFG" || die "can't mount $config at $CFG"
+free_mib=$(df -BM --output=avail "$CFG" | tail -n 1 | tr -dc 0-9)
+[[ $free_mib -ge $MIN_LOG_MIB ]] ||
+    die "BACKOTTER has only $free_mib MiB free, and the logs need $MIN_LOG_MIB; delete old runs in backotter/realworld"
+LOGDIR=$CFG/backotter/realworld/$STAMP
+mkdir -p "$LOGDIR" || die "can't make $LOGDIR"
+LOG=$LOGDIR/run.log
+: >"$LOG" || die "can't write $LOG"
+cp "$0" "$LOGDIR/bko-realworld-1a.script" 2>/dev/null
+
+step "the tools"
+mkdir -p "$BIN"
+for b in bko-holt rustic-bko; do
+    if [[ -s $CFG/backotter/bin/$b ]]; then
+        cp "$CFG/backotter/bin/$b" "$BIN/$b" || die "can't copy $b"
+        say "$b: from BACKOTTER's backotter/bin"
+    else
+        cp "$(command -v "$b")" "$BIN/$b" || die "no $b on this stick"
+        say "$b: the image's own; BACKOTTER has none"
+    fi
+    chmod 755 "$BIN/$b"
+    must "$BIN/$b" --version
+    run sha256sum "$BIN/$b"
+done
+run cat /cdrom/.disk/backotter.json
+run uname -a
+run cat /proc/cmdline
+run lsblk -o NAME,SIZE,TYPE,TRAN,RM,RO,FSTYPE,LABEL,UUID,PARTUUID,MOUNTPOINT,MODEL,SERIAL
+run blkid
+run efibootmgr -v
+
+# ---- Which disk is which -----------------------------------------------------
+
+step "finding the disks"
+externals=()
+while read -r name type tran ro; do
+    [[ $type == disk && $ro == 0 && $name != "$STICK" ]] || continue
+    if [[ $tran == usb || $name == mmcblk* ]]; then
+        externals+=("$name")
+    else
+        INTERNAL+=("$name")
+    fi
+done < <(lsblk -dnro NAME,TYPE,TRAN,RO | awk 'NF == 3 { print $1, $2, "-", $3; next } { print }')
+say "stick: $STICK; internal: ${INTERNAL[*]:-none}; external: ${externals[*]:-none}"
+[[ ${#INTERNAL[@]} -ge 1 ]] || die "found no internal disk"
+[[ ${#externals[@]} -ge 1 ]] || die "found no external drive to back up to; plug one in"
+[[ ${#externals[@]} -eq 1 ]] || die "found several external drives (${externals[*]}); leave only the backup drive plugged in"
+EXTERNAL=${externals[0]}
+
+# The largest partition (or the bare disk) with a filesystem a repository suits.
+BACKUP_PART=$(lsblk -lnpbo NAME,SIZE,FSTYPE "/dev/$EXTERNAL" |
+    awk '$3 ~ /^(ext[234]|xfs|btrfs|exfat)$/ { print $2, $1 }' | sort -rn | awk 'NR == 1 { print $2 }')
+[[ -n $BACKUP_PART ]] || die "/dev/$EXTERNAL has no ext4, XFS, btrfs or exFAT filesystem to back up to; nothing here formats it"
+
+parts_of() { lsblk -lnpo NAME,TYPE,FSTYPE "/dev/$1" | awk '$2 == "part" { print $1, $3 }'; }
+
+ro_opts() {
+    case $1 in
+        ext3 | ext4) echo ro,noload ;;
+        xfs) echo ro,norecovery ;;
+        *) echo ro ;;
+    esac
+}
+
+for d in "${INTERNAL[@]}"; do
+    whole=$(lsblk -dno FSTYPE "/dev/$d")
+    [[ -z $whole ]] || die "/dev/$d holds $whole on the whole disk, which this test doesn't handle"
+    while read -r p fs; do
+        case $fs in
+            ext2 | ext3 | ext4 | xfs | vfat | swap | "") ;;
+            *) die "$p holds $fs, which this test doesn't handle (plain ext, XFS, vfat and swap only)" ;;
+        esac
+    done < <(parts_of "$d")
+done
+
+find_roots() {
+    ROOTS=()
+    local d p fs
+    for d in "${INTERNAL[@]}"; do
+        while read -r p fs; do
+            case $fs in ext2 | ext3 | ext4 | xfs) ;; *) continue ;; esac
+            mount -t "$fs" -o "$(ro_opts "$fs")" "$p" "$SRC" 2>>"$LOG" || continue
+            if [[ -f $SRC/etc/fstab && (-e $SRC/etc/os-release || -e $SRC/usr/lib/os-release) ]]; then
+                ROOTS+=("$p")
+            fi
+            umount "$SRC"
+        done < <(parts_of "$d")
+    done
+}
+
+is_internal_dev() {
+    local parent i
+    parent=$(lsblk -no PKNAME "$1" 2>/dev/null | head -n 1)
+    for i in "${INTERNAL[@]}"; do [[ $i == "$parent" ]] && return 0; done
+    return 1
+}
+
+# Mounts the installed system read-only at $SRC, by its own fstab.
+mount_installed() {
+    local root=$1 fs source target type real
+    fs=$(lsblk -no FSTYPE "$root")
+    if [[ $fs == ext3 || $fs == ext4 ]] && dumpe2fs -h "$root" 2>/dev/null | grep -q '^Filesystem features:.*needs_recovery'; then
+        die "$root wasn't shut down cleanly (its journal needs replaying); boot it and shut it down properly first"
+    fi
+    run mount -t "$fs" -o "$(ro_opts "$fs")" "$root" "$SRC" || die "can't mount $root"
+    while read -r source target type; do
+        case $type in
+            swap | tmpfs | proc | sysfs | devpts | none | auto | squashfs | nfs* | cifs | efivarfs | debugfs) say "fstab: not mounting $target ($type)"; continue ;;
+        esac
+        [[ $target != / && $target != none ]] || continue
+        [[ $source == /* ]] || die "fstab: can't find the device for $target ($source)"
+        real=$(readlink -f "$source")
+        [[ -b $real ]] || { say "fstab: not mounting $target ($source isn't a device)"; continue; }
+        is_internal_dev "$real" || die "fstab: $target is on $real, which isn't an internal disk"
+        fs=$(lsblk -no FSTYPE "$real")
+        [[ -d $SRC$target ]] || die "fstab: $target has no mount point in the installed system"
+        run mount -t "$fs" -o "$(ro_opts "$fs")" "$real" "$SRC$target" || die "can't mount $real at $target"
+    done < <(findmnt -F "$SRC/etc/fstab" -enro SOURCE,TARGET,FSTYPE | sort -k2,2)
+}
+
+step "finding the installed system"
+find_roots
+[[ ${#ROOTS[@]} -ge 1 ]] || die "no installed system on the internal disks"
+[[ ${#ROOTS[@]} -eq 1 ]] || die "more than one installed system (${ROOTS[*]}); this test handles one"
+ROOT=${ROOTS[0]}
+mount_installed "$ROOT"
+run findmnt -R "$SRC"
+
+# Anything with a filesystem the installed system doesn't mount would be erased
+# without being in the backup.
+for d in "${INTERNAL[@]}"; do
+    while read -r p fs; do
+        case $fs in swap | "") continue ;; esac
+        findmnt -rn -S "$p" >/dev/null || die "$p ($fs) isn't mounted by the installed system, so it wouldn't be backed up; this test won't erase it"
+    done < <(parts_of "$d")
+done
+
+os=$( . "$SRC/etc/os-release" 2>/dev/null || . "$SRC/usr/lib/os-release"; echo "${PRETTY_NAME:-unknown}")
+host=$(tr -dc 'A-Za-z0-9.-' <"$SRC/etc/hostname" 2>/dev/null)
+
+# ---- The one question --------------------------------------------------------
+
+STEP="waiting for confirmation"
+{
+    echo
+    echo "==================== bko-realworld-1a ===================="
+    echo "Installed system: $os (${host:-no hostname}), root on $ROOT"
+    echo
+    echo "THESE INTERNAL DISKS WILL BE ERASED and restored from the backup:"
+    for d in "${INTERNAL[@]}"; do lsblk -o NAME,SIZE,FSTYPE,LABEL,MODEL,SERIAL "/dev/$d"; done
+    echo
+    echo "The backup goes to $BACKUP_PART (not erased):"
+    lsblk -o NAME,SIZE,FSTYPE,LABEL,MODEL,SERIAL "/dev/$EXTERNAL"
+    echo
+    echo "The stick is /dev/$STICK (not erased)."
+    echo
+    echo "After this it runs unattended.  The disks are wiped only if the backup passes its check."
+} | tee -a "$LOG"
+read -r -p "Type YES to go ahead: " answer || die "no answer"
+say "answer: $answer"
+[[ $answer == YES ]] || { REASON="not confirmed; nothing was changed"; say "$REASON"; exit 1; }
+
+# ---- Layout and backup -------------------------------------------------------
+
+step "mounting the backup drive"
+fs=$(lsblk -no FSTYPE "$BACKUP_PART")
+existing=$(findmnt -nro TARGET -S "$BACKUP_PART" | head -n 1)
+if [[ -n $existing ]]; then
+    say "$BACKUP_PART is mounted at $existing: using a bind mount"
+    must mount --bind "$existing" "$BK"
+else
+    must mount -t "$fs" -o rw "$BACKUP_PART" "$BK"
+fi
+findmnt -nro OPTIONS "$BK" | grep -qE '(^|,)rw(,|$)' || die "$BACKUP_PART mounted read-only"
+used=0
+while read -r t; do
+    n=$(df -B1 --output=used "$t" | tail -n 1 | tr -dc 0-9)
+    used=$((used + n))
+done < <(findmnt -R -nro TARGET "$SRC")
+avail=$(df -B1 --output=avail "$BK" | tail -n 1 | tr -dc 0-9)
+say "the installed system uses $((used / 1048576)) MiB; the backup drive has $((avail / 1048576)) MiB free"
+[[ $avail -gt $used ]] || die "the backup drive hasn't enough room"
+REPO_DIR=$BK/backotter-realworld/$STAMP-${host:-machine}
+must mkdir -p "$REPO_DIR"
+REPO=$REPO_DIR/repo PW=$REPO_DIR/repo-password
+# On the backup drive only: the stick holds no secrets.
+(umask 077; openssl rand -hex 32 | tr -d '\n' >"$PW") || die "can't write the repository's password"
+
+# Runs the tested dump inside the installed system, where /etc and the mounts
+# are its own.  The stick's kernel and command line are what it reports as
+# running; load uses neither.
+chroot_dump() {     # chroot_dump OUTPUT
+    local args=() d b rc
+    for d in "${INTERNAL[@]}"; do args+=(--only-disk "$d"); done
+    for b in dev proc sys run; do
+        mount --rbind --make-rslave "/$b" "$SRC/$b" || { unbind; return 1; }
+    done
+    say "\$ chroot $SRC $BIN/bko-holt dump ${args[*]} > $1"
+    env -i PATH=/usr/sbin:/usr/bin:/sbin:/bin chroot "$SRC" "$BIN/bko-holt" dump "${args[@]}" >"$1" 2>>"$LOG"
+    rc=$?
+    say "  exit $rc, $(wc -c <"$1") bytes"
+    unbind
+    return "$rc"
+}
+
+step "saving the layout"
+LAYOUT=$LOGDIR/layout.json
+chroot_dump "$LAYOUT" || die "bko-holt dump failed"
+must cp "$LAYOUT" "$REPO_DIR/layout.json"
+LAYOUT=$REPO_DIR/layout.json
+
+RUSTIC=("$BIN/rustic-bko" -r "$REPO" --password-file "$PW" --no-progress --no-cache)
+rlog() { echo --log-level-logfile debug --log-file "$RUN/log/$1.log"; }
+
+step "backing up"
+must "${RUSTIC[@]}" $(rlog init) init
+must "${RUSTIC[@]}" $(rlog backup) backup --set-atime yes "$SRC"
+save_rustic_log init; save_rustic_log backup
+must "${RUSTIC[@]}" snapshots
+
+step "checking the backup (reading all of its data)"
+must "${RUSTIC[@]}" $(rlog check) check --read-data
+save_rustic_log check
+BACKUP_OK=yes
+
+# ---- Wipe and rebuild ----------------------------------------------------------
+
+step "planning the restore"
+must umount --recursive "$SRC"
+LOAD=("$BIN/bko-holt" load "$LAYOUT")
+for d in "${INTERNAL[@]}"; do LOAD+=(--map "$d=/dev/$d" --erase "/dev/$d"); done
+LOAD+=(--repo "$REPO" --password-file "$PW" --snapshot "latest:$SRC" --archiver "$BIN/rustic-bko")
+LOADED=yes
+"${LOAD[@]}" >"$LOGDIR/plan.txt" 2>&1
+rc=$?
+tee -a "$LOG" <"$LOGDIR/plan.txt"
+[[ $rc -eq 0 ]] || die "the restore plan found problems (exit $rc); nothing has been erased"
+for d in "$EXTERNAL" "$STICK"; do
+    ! grep -qE "/dev/$d([^a-z0-9]|$)" "$LOGDIR/plan.txt" || die "the plan touches /dev/$d, which must be left alone; nothing has been erased"
+done
+
+step "wiping the internal disks"
+[[ ${BACKUP_OK:-no} == yes ]] || die "the backup wasn't checked"
+WIPED=yes
+for d in "${INTERNAL[@]}"; do
+    while read -r p _; do must wipefs --all "$p"; done < <(parts_of "$d")
+    must wipefs --all "/dev/$d"
+    must blockdev --rereadpt "/dev/$d"
+done
+must udevadm settle
+run lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINT
+
+step "repartitioning, reformatting and restoring"
+must "${LOAD[@]}" --through restore --commit
+
+step "comparing the restored files with the backup"
+DIFF=$LOGDIR/diff.txt
+# Content and existence only.  --metadata also compares ctime, inode and link
+# count, which no restored file can match.  Rustic can't compare device nodes,
+# so calls them all M; and it counts the top directory as added.
+"${RUSTIC[@]}" diff "latest:$SRC" "$TGT" >"$DIFF" 2>&1
+rc=$?
+tail -n 20 "$DIFF" | tee -a "$LOG"
+[[ $rc -eq 0 ]] || die "rustic-bko diff failed (exit $rc)"
+grep -qE '^(Files|Dirs|Symlinks|Others) *:' "$DIFF" || die "rustic-bko diff printed no totals"
+changes=$(awk '
+    /^(Files|Dirs|Symlinks|Others) *:/ {
+        n += $7
+        if ($1 == "Dirs") { n += ($5 > 1 ? $5 - 1 : 0) } else { n += $5 }
+        if ($1 != "Others") { n += $9 }
+    }
+    /^T[[:space:]]/ { n++ }
+    END { print n + 0 }' "$DIFF")
+say "differences: $changes (the list is in diff.txt)"
+[[ $changes -eq 0 ]] || die "$changes files differ from the backup after the restore"
+
+step "redoing the boot loader"
+must "${LOAD[@]}" --through close --commit
+
+step "checking the rebuilt disks against the layout"
+"${LOAD[@]}" --only status >"$LOGDIR/status.txt" 2>&1
+rc=$?
+tee -a "$LOG" <"$LOGDIR/status.txt"
+[[ $rc -eq 0 ]] && grep -q '^next: nothing; every stage is done' "$LOGDIR/status.txt" ||
+    die "the disks don't match the layout (status.txt)"
+
+step "reading the restored system's layout"
+find_roots
+[[ ${#ROOTS[@]} -eq 1 && ${ROOTS[0]} == "$ROOT" ]] || die "the restored system's root isn't on $ROOT"
+mount_installed "$ROOT"
+chroot_dump "$LOGDIR/after.json" || die "bko-holt dump of the restored system failed"
+must umount --recursive "$SRC"
+run efibootmgr -v
+
+STEP=done RESULT=PASS REASON=
+exit 0

@@ -32,7 +32,7 @@ import sys
 import tomllib
 import uuid
 
-CONFIG_SECTORS = 65536          # 32 MiB; FAT32 would need more than that
+CONFIG_MIB = 32                 # the default; FAT32 would need more than that
 CONFIG_LABEL = "BACKOTTER"
 SYSTEM_SCHEMAS = [1]            # system.json schemas the stick can read
 PLATFORMS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "haiku")
@@ -56,6 +56,10 @@ def main() -> int:
     ap.add_argument("--base-release", required=True, help="e.g. 26.04.1 or 15.1-RELEASE")
     ap.add_argument("--kernel", required=True)
     ap.add_argument("--config-part", type=int, required=True, help="the config partition's number")
+    ap.add_argument("--config-mib", type=int, default=CONFIG_MIB,
+                    help="the config partition's size (FAT16 reaches 2 GiB)")
+    ap.add_argument("--config-bin", action="append", default=[], metavar="FILE",
+                    help="a program to put in the config partition's backotter/bin/")
     ap.add_argument("--zfs-version")
     ap.add_argument("--zfs-features")
     ap.add_argument("out_dir")
@@ -66,6 +70,7 @@ def main() -> int:
         if not shutil.which(c, path=os.environ.get("PATH", "") + ":/usr/sbin:/sbin"):
             die(f"missing {c}")
     os.makedirs(a.out_dir, exist_ok=True)
+    config_sectors = a.config_mib * 2048
 
     zfs = None
     if a.zfs_version:
@@ -83,7 +88,7 @@ def main() -> int:
         "built": built, "platform": a.platform,
         "base": {"os": a.base_os, "release": a.base_release}, "kernel": a.kernel,
         "zfs": zfs, "system_schemas": SYSTEM_SCHEMAS,
-        "config_partition": {"number": a.config_part, "sectors": CONFIG_SECTORS,
+        "config_partition": {"number": a.config_part, "sectors": config_sectors,
                              "label": CONFIG_LABEL, "fat_serial": f"{serial[:4]}-{serial[4:]}"},
     })
     stick_json = os.path.join(a.out_dir, "stick.json")
@@ -99,7 +104,7 @@ def main() -> int:
     if os.path.exists(img):
         os.remove(img)
     with open(img, "wb") as f:
-        f.truncate(CONFIG_SECTORS * 512)
+        f.truncate(config_sectors * 512)
     env = dict(os.environ, MTOOLS_SKIP_CHECK="1",
                PATH=os.environ.get("PATH", "") + ":/usr/sbin:/sbin")
     run = lambda *cmd: subprocess.run(cmd, check=True, env=env, stdout=subprocess.DEVNULL)
@@ -107,6 +112,9 @@ def main() -> int:
     run("mmd", "-i", img, "::/backotter", "::/backotter/machines")
     run("mcopy", "-i", img, stick_json, settings, "::/backotter/")
     run("mcopy", "-i", img, readme, "::/")
+    if a.config_bin:
+        run("mmd", "-i", img, "::/backotter/bin")
+        run("mcopy", "-i", img, *a.config_bin, "::/backotter/bin/")
     print(image_id)
     return 0
 

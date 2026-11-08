@@ -25,8 +25,10 @@
 #   - gets a GRUB menu with BackOtter entries only: normal, safe graphics,
 #     and serial console (console=ttyS0, for IPMI serial-over-LAN and tests)
 #   - adds /.disk/backotter.json, the image marker, and a third partition:
-#     32 MiB of FAT16 labelled BACKOTTER, the stick's writable config
-#     partition (see docs/design/stick-config.md)
+#     256 MiB of FAT16 labelled BACKOTTER, the stick's writable config
+#     partition (see docs/design/stick-config.md), holding copies of the
+#     layer's bko-holt and rustic-bko in backotter/bin/, and bko-realworld-1a's
+#     logs once that has run
 # The boot setup (BIOS and UEFI El Torito images, hybrid MBR/GPT, the appended
 # EFI partition) is replayed from SOURCE_ISO unchanged, so the signed shim and
 # GRUB still boot with Secure Boot on.
@@ -43,6 +45,7 @@ PLATFORM=linux                  # the backotter-live-PLATFORM-... in the name
 BASE=ubuntu-server-minimal
 LAYER=$BASE.backotter
 TIMEOUT=10
+CONFIG_MIB=256                  # the tools take 30, and a real-world run's logs tens more
 DEFAULT=0
 CONFIG_PART=3
 BASIC_DATA_GUID=ebd0a0a2-b9e5-4433-87c0-68b6b72699c7   # GPT "Microsoft basic data"
@@ -100,16 +103,24 @@ zfs=$(awk '$1 == "zfsutils-linux" { sub(/-.*/, "", $2); print $2 }' "$LAYER_DIR/
 unsquashfs -cat "$LAYER_DIR/$LAYER.squashfs" \
     "usr/share/zfs/compatibility.d/openzfs-${zfs%.*}" >"$work/zfs-features" 2>/dev/null ||
     die "the layer has no ZFS feature list for $zfs"
+# The tools for the config partition: the very ones in the layer.
+config_bins=()
+for b in bko-holt rustic-bko; do
+    unsquashfs -cat "$LAYER_DIR/$LAYER.squashfs" "usr/local/bin/$b" >"$work/$b" 2>/dev/null ||
+        die "the layer has no $b"
+    config_bins+=(--config-bin "$work/$b")
+done
 # The marker, stick.json and config.img; see marker.py.
 image_id=$(python3 "$(dirname "$0")/marker.py" --platform "$PLATFORM" --base-os ubuntu \
     --base-release "$ubuntu" --kernel "$kernel" --config-part "$CONFIG_PART" \
+    --config-mib "$CONFIG_MIB" "${config_bins[@]}" \
     --zfs-version "$zfs" --zfs-features "$work/zfs-features" "$work") || die "marker.py failed"
 
 entry() {   # entry TITLE EXTRA_KERNEL_ARGS
     cat <<EOF
 menuentry "$1" {
     set gfxpayload=keep
-    linux  /casper/vmlinuz layerfs-path=$LAYER.squashfs hostname=backotter $2 ---
+    linux  /casper/vmlinuz layerfs-path=$LAYER.squashfs hostname=backotter nopersistent $2 ---
     initrd /casper/initrd
 }
 EOF

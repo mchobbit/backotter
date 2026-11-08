@@ -73,8 +73,23 @@ the backup location by hand.
 /backotter/machines/<install-id>/system.prev.json
 /backotter/machines/<install-id>/system.prev.json.sha256
 /backotter/machines/<install-id>/restore-logs/<timestamp>.log
+/backotter/bin/{bko-holt,rustic-bko}     Linux image only
+/backotter/realworld/<date-time>/...     Linux image only; bko-realworld-1a's logs
+/backotter/authorized_keys               Linux image only; optional, see below
 /README.txt        what this partition is, for someone who finds it in a file manager
 ```
+
+On the Linux image the partition is 256 MiB rather than 32, to hold the two
+programs and those logs.  The GRUB entries pass `nopersistent`, or casper would
+add a partition in the stick's free space on first boot, moving the backup GPT.
+
+`authorized_keys` is for driving a restore from another machine.  With it,
+`key-access` starts sshd at boot and lets those public keys in as `backotter`,
+with passwordless sudo.  Without it sshd stays off until someone turns on remote
+access at the console.  `stick/add-ssh-key.sh` writes it, to an image or a stick;
+release images don't have one.  Its `--host-key` adds
+`/backotter/ssh_host_ed25519_key`, so a test bench can pin the stick's identity
+across boots.  That's a private key in the open, and for test benches only.
 
 There is no index of machines; the directory listing is the index, so nothing
 can disagree with it.

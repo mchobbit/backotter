@@ -43,7 +43,8 @@
 #     tty2-tty6 are root shells
 #   - DHCP on wired interfaces; nothing waits for the network at boot
 #   - sshd installed but off, with no host keys in the image; remote access
-#     is turned on from the console with a one-time password
+#     is turned on from the console with a one-time password, or at boot if
+#     the stick's config partition has SSH keys (add-ssh-key.sh)
 #   - ZFS pools are never imported or mounted automatically
 #   - cloud-init disabled; the ISO's package repository source removed
 #     (make-img.sh drops pool/ and dists/), and so are the build's own
@@ -84,7 +85,8 @@ MASK_UNITS=(
     zfs-share.service zfs-zed.service
     systemd-networkd-wait-online.service   # nothing on the stick needs network-online
 )
-DISABLE_UNITS=(ssh.service ssh.socket)     # remote-access starts ssh.service
+DISABLE_UNITS=(ssh.service ssh.socket)     # remote-access and key-access start ssh.service
+ENABLE_UNITS=(backotter-key-access.service)
 # The only base files the layer may hide (as overlay whiteouts).
 ALLOWED_WHITEOUTS=(/etc/apt/sources.list.d/cdrom.sources)
 # Same settings as slim-base-layer.sh; see the comment there.
@@ -331,6 +333,7 @@ in_root visudo -cq -f /etc/sudoers.d/backotter || die "sudoers file rejected"
 
 in_root systemctl mask "${MASK_UNITS[@]}" >/dev/null 2>&1
 in_root systemctl disable "${DISABLE_UNITS[@]}" >/dev/null 2>&1
+in_root systemctl enable "${ENABLE_UNITS[@]}" >/dev/null 2>&1
 # openssh-server's postinst generated host keys; every stick makes its own.
 rm -f "$root"/etc/ssh/ssh_host_*
 
@@ -349,8 +352,13 @@ for u in "${DISABLE_UNITS[@]}"; do
     [[ $(in_root systemctl is-enabled "$u" 2>/dev/null || true) == enabled ]] &&
         die "$u is still enabled"
 done
+for u in "${ENABLE_UNITS[@]}"; do
+    [[ $(in_root systemctl is-enabled "$u" 2>/dev/null || true) == enabled ]] ||
+        die "$u is not enabled"
+done
 in_root bash -n /usr/lib/backotter/console
 in_root bash -n /usr/lib/backotter/remote-access
+in_root bash -n /usr/lib/backotter/key-access
 # Run in the image's root: a binary that needs the build host's libraries
 # (not static after all) fails here, not on a stick.
 restic_v=$(in_root restic-bko version | head -n 1) && [[ $restic_v == *backotter* ]] ||

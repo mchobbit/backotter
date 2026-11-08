@@ -1,0 +1,84 @@
+#!/bin/bash
+# BackOtter rescue stick: remote access by SSH key, turned on at boot.
+#
+# If this stick's BACKOTTER partition has backotter/authorized_keys (public keys
+# only; stick/add-ssh-key.sh puts it there), those keys may log in as the
+# "backotter" user, who may then use sudo without a password, and sshd starts.
+# With no such file this does nothing and sshd stays off.  If the partition also
+# has backotter/ssh_host_ed25519_key, the stick presents that host key instead of
+# making a new one.  Nothing survives a reboot: the stick's root filesystem lives
+# in RAM.
+
+set -euo pipefail
+
+user=backotter
+run=/run/backotter
+
+medium=$(findmnt -nro SOURCE /cdrom) || exit 0
+disk=$(lsblk -no PKNAME "$medium" | head -n 1)
+[[ -n $disk ]] || exit 0        # booted as a CD: no writable partition
+
+# Asks the devices, not udev's records, which may not be ready this early.
+config=
+while read -r part type; do
+    [[ $type == part ]] || continue
+    if [[ $(blkid -p -o value -s LABEL "$part" 2>/dev/null) == BACKOTTER ]]; then
+        config=$part
+    fi
+done < <(lsblk -lnpo NAME,TYPE "/dev/$disk")
+[[ -n $config ]] || exit 0
+
+mkdir -p -m 700 "$run"
+mnt=$(mktemp -d "$run/config.XXXXXX")
+trap 'umount "$mnt" 2>/dev/null || true; rmdir "$mnt" 2>/dev/null || true' EXIT
+mount -t vfat -o ro,nosuid,nodev,noexec "$config" "$mnt"
+keys=$run/authorized_keys
+: >"$keys"
+chmod 600 "$keys"
+if [[ -s $mnt/backotter/authorized_keys ]]; then
+    # FAT, perhaps edited on Windows: no carriage returns, and key lines only.
+    tr -d '\r' <"$mnt/backotter/authorized_keys" |
+        grep -E '^(ssh-(ed25519|rsa)|ecdsa-sha2-[a-z0-9-]+|sk-[a-z0-9@.-]+) ' >>"$keys" || true
+fi
+# A fixed host key, if the stick has one (add-ssh-key.sh --host-key), so that a
+# controller can pin this stick's identity across boots.
+hostkey=$run/ssh_host_ed25519_key
+if grep -qs 'BEGIN OPENSSH PRIVATE KEY' "$mnt/backotter/ssh_host_ed25519_key"; then
+    (umask 077; tr -d '\r' <"$mnt/backotter/ssh_host_ed25519_key" >"$hostkey")
+fi
+umount "$mnt"
+if [[ ! -s $keys ]]; then
+    rm -f "$keys" "$hostkey"
+    exit 0
+fi
+if [[ -s $hostkey ]]; then
+    install -m 600 "$hostkey" /etc/ssh/ssh_host_ed25519_key
+    ssh-keygen -y -f /etc/ssh/ssh_host_ed25519_key >/etc/ssh/ssh_host_ed25519_key.pub
+    rm -f "$hostkey"
+fi
+
+if ! id "$user" >/dev/null 2>&1; then
+    useradd --create-home --shell /bin/bash --comment "BackOtter remote access" "$user"
+fi
+install -d -m 700 -o "$user" -g "$user" "/home/$user/.ssh"
+install -m 600 -o "$user" -g "$user" "$keys" "/home/$user/.ssh/authorized_keys"
+
+# The account has no password to give sudo.
+sudoers=/etc/sudoers.d/backotter-keys
+printf '%s ALL=(ALL:ALL) NOPASSWD: ALL\n' "$user" >"$sudoers.new"
+chmod 440 "$sudoers.new"
+visudo -cq -f "$sudoers.new"
+mv "$sudoers.new" "$sudoers"
+
+systemctl start ssh.service
+
+{
+    echo "Remote access is ON, for the SSH keys on this stick:"
+    ssh-keygen -l -f "$keys" | sed 's/^/  /'
+    echo "Log in as $user, at the address above."
+    echo "Host key fingerprints (check them on first connection):"
+    for key in /etc/ssh/ssh_host_*_key.pub; do
+        echo "  $(ssh-keygen -l -f "$key")"
+    done
+} >"$run/remote-access"
+chmod 600 "$run/remote-access"

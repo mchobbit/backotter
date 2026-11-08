@@ -309,6 +309,21 @@ mount_fs() {
             *) opts=ro${opts:+,$opts} ;;
         esac
     fi
+    # btrfs: this host's kernel keeps a device it once scanned, by path, after
+    # the nbd device is gone (a multi-device filesystem attached again on
+    # other nbd devices then fails to mount: "failed to open device for path
+    # /dev/nbd10p3").  So forget every unmounted one, and name this image's
+    # members of the filesystem (device=), which registers them at the mount
+    # itself, whatever another mount forgets meanwhile.
+    if [[ $(blkid -s TYPE -o value "$1") == btrfs ]]; then
+        local u q devs=""
+        u=$(blkid -s UUID -o value "$1")
+        command -v btrfs >/dev/null && btrfs device scan --forget >/dev/null 2>&1
+        for q in "${parts[@]}"; do
+            [[ $(blkid -s UUID -o value "$q" 2>/dev/null) == "$u" && $(blkid -s TYPE -o value "$q") == btrfs ]] && devs+=,device=$q
+        done
+        opts=${opts:+$opts}${devs:+${opts:+,}${devs#,}}
+    fi
     mount ${opts:+-o "$opts"} "$1" "$2"
 }
 # guest_file ROOT PATH: PATH inside the guest mounted at ROOT, its symlinks

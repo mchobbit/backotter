@@ -71,7 +71,8 @@ vm-run and cmp-run.sh still come from main's synced `~/backotter-work`.
   dragonfly, haiku).
 - `PORT` is a free SSH port in your own range: Chopin 2700-2799, Cinqcent
   2900-2999.
-- `PREFIX` names your scratch: `/mnt/bko-ram/PREFIX`, `/bkoscratch/PREFIX`.
+- `PREFIX` names your scratch: `/mnt/bko-ram/PREFIX`. Make it a plain name:
+  letters, digits, `.`, `_` and `-`, starting with a letter or digit.
 
 What the script does:
 
@@ -85,6 +86,11 @@ What the script does:
   replaces that one guest's logs directory, so set it per guest. Most also
   copy the latest results.json to the top of that directory.
 - It exits 0 if nothing FAILs, and cleans up after itself.
+- ubuntu26-zfsmirror and aerynos keep their scratch (disks, QEMU's
+  overlays) in `/mnt/bko-ram/PREFIX/GUEST`, under their `--reserve` (23
+  and 2 GiB, estimates), and log the run's peak use of it as
+  `ramdisk-peak-kib` in the log dir. If the check's shell is killed
+  outright, their sampler still stops the VM and removes that directory.
 - Most guests finish in 2 to 15 minutes.
 
 A recheck or a regression run is the same command with a newer round's

@@ -1,0 +1,72 @@
+# HoltTest1's room per guest: `cmp-run.sh --reserve D MEM`, D GiB of the RAM
+# disk and MEM GiB of memory.  ram-size.sh reads it (README "Where a run
+# works, and what it keeps").  Tab-separated; "-" is no variant, or no host.
+# D = ceil(1.10 x (left + 1.0 GiB)), at least 2 (Linux, offline) or 3 (BSD,
+# illumos, Haiku).  left is what the guest's run left on the host that ran it
+# (r3all's passes, else a raid run's), and the 1.0 GiB is for the rescuer's
+# overlay and the restored boot's snapshot, which a run deletes before it
+# ends.  MEM is 4 for all, never measured.
+# BSD, illumos and Haiku rows are estimates (a pass deletes their disks:
+# 1.6 x the image + 0.3 GiB, or omnios58's from jobs.log's writes), and
+# variant rows reuse their guest's figure, unverified.  The source column says
+# how each row was made.
+# Two or more whole passes in /bkoscratch/holttest1d/peaks.tsv (PASS, all
+# four phases, not seeded) replace a row in ram-size.sh; one never lowers it.
+guest	variant	host	left_bytes	proposed_D_GiB	proposed_MEM_GiB	source
+aerynos	-	chopin	2660667392	4	4	chopin:/bkoscratch/holttest1d/r3all/aerynos du -s -B1 (RESULT: PASS); D: left 2.48 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+alpine324	-	chopin	553926656	2	4	chopin:/bkoscratch/holttest1d/r3all/alpine324 du -s -B1 (RESULT: PASS); D: left 0.52 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+alpinebsd	-	chopin	2007040	3	4	chopin:/bkoscratch/holttest1d/r3all/alpinebsd du -s -B1 (RESULT: PASS); D: est. 1.6 x image 0.33 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
+arch	-	chopin	2517708800	4	4	chopin:/bkoscratch/holttest1d/r3all/arch du -s -B1 (RESULT: PASS); D: left 2.34 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+artix-dinit	-	chopin	1586864128	3	4	chopin:/bkoscratch/holttest1d/r3all/artix-dinit du -s -B1 (RESULT: PASS); D: left 1.48 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+artix-s6	-	cinqcent	1596858368	3	4	cinqcent:/bkoscratch/holttest1d/r3all/artix-s6 du -s -B1 (RESULT: PASS); D: left 1.49 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+cachyos	-	chopin	2683064320	4	4	chopin:/bkoscratch/holttest1d/r3all/cachyos du -s -B1 (RESULT: PASS); D: left 2.50 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+debian12	-	cinqcent	2705223680	4	4	cinqcent:/bkoscratch/holttest1d/r3all/debian12 du -s -B1 (RESULT: PASS); D: left 2.52 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+debian13	-	chopin	1801117696	3	4	chopin:/bkoscratch/holttest1d/r3all/debian13 du -s -B1 (RESULT: PASS); D: left 1.68 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+debian13-stack	-	chopin	2906333184	5	4	chopin:/bkoscratch/holttest1d/r3all/debian13-stack du -s -B1 (RESULT: PASS); D: left 2.71 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+debian13-zfs	-	cinqcent	1994702848	4	4	cinqcent:/bkoscratch/holttest1d/r3all/debian13-zfs du -s -B1 (RESULT: PASS); D: left 1.86 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+devuan6	-	chopin	2011574272	4	4	chopin:/bkoscratch/holttest1d/r3all/devuan6 du -s -B1 (RESULT: PASS); D: left 1.87 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+dragonfly6	-	cinqcent	4616192	3	4	cinqcent:/bkoscratch/holttest1d/r3all/dragonfly6 du -s -B1 (RESULT: PASS); D: est. 1.6 x image 1.24 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
+fedora44	-	chopin	4562923520	6	4	chopin:/bkoscratch/holttest1d/r3all/fedora44 du -s -B1 (RESULT: PASS); D: left 4.25 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+fedora44-uefi	-	chopin	4553527296	6	4	chopin:/bkoscratch/holttest1d/r3all/fedora44-uefi du -s -B1 (RESULT: PASS); D: left 4.24 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+freebsd14	-	chopin	6193152	3	4	chopin:/bkoscratch/holttest1d/r3all/freebsd14 du -s -B1 (RESULT: PASS); D: est. 1.6 x image 0.72 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
+freebsd15	-	cinqcent	5718016	3	4	cinqcent:/bkoscratch/holttest1d/r3all/freebsd15 du -s -B1 (RESULT: PASS); D: est. 1.6 x image 0.86 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
+ghostbsd26	-	chopin	4988928	3	4	chopin:/bkoscratch/holttest1d/r3all/ghostbsd26 du -s -B1 (RESULT: PASS); D: est. 1.6 x image 1.00 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
+ghostbsd26-zfs	-	cinqcent	5234688	3	4	cinqcent:/bkoscratch/holttest1d/r3all/ghostbsd26-zfs du -s -B1 (RESULT: PASS); D: est. 1.6 x image 1.51 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
+haiku6	-	cinqcent	679936	3	4	cinqcent:/bkoscratch/holttest1d/r3all/haiku6 du -s -B1 (RESULT: PASS); D: est. 1.6 x image 0.65 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
+hardenedbsd15	-	chopin	5836800	4	4	chopin:/bkoscratch/holttest1d/r3all/hardenedbsd15 du -s -B1 (RESULT: PASS); D: est. 1.6 x image 2.06 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
+mint22	-	chopin	14949056512	17	4	chopin:/bkoscratch/holttest1d/r3all/mint22 du -s -B1 (RESULT: PASS); D: left 13.92 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+mx25	-	cinqcent	13319610368	15	4	cinqcent:/bkoscratch/holttest1d/r3all/mx25 du -s -B1 (RESULT: PASS); D: left 12.40 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+netbsd11	-	chopin	2211840	3	4	chopin:/bkoscratch/holttest1d/r3all/netbsd11 du -s -B1 (RESULT: PASS); D: est. 1.6 x image 0.72 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
+nixos2605	-	chopin	2954178560	5	4	chopin:/bkoscratch/holttest1d/r3all/nixos2605 du -s -B1 (RESULT: PASS); D: left 2.75 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+omarchy	-	cinqcent	16536236032	19	4	cinqcent:/bkoscratch/holttest1d/r3all/omarchy du -s -B1 (RESULT: PASS); D: left 15.40 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+omnios58	-	chopin	28626944	4	4	chopin:/bkoscratch/holttest1d/r3all/omnios58 du -s -B1 (RESULT: PASS); D: peak <= written: jobs.log raid6 pass wrote 3.35 GB (raid4 3.20); x1.1
+openbsd8	-	chopin	4067328	5	4	chopin:/bkoscratch/holttest1d/r3all/openbsd8 du -s -B1 (RESULT: PASS); D: est. 1.6 x image 2.28 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
+pop24	-	chopin	17497141248	20	4	chopin:/bkoscratch/holttest1d/r3all/pop24 du -s -B1 (RESULT: PASS); D: left 16.30 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+redox	-	cinqcent	355819520	2	4	cinqcent:/bkoscratch/holttest1d/r3all/redox du -s -B1 (RESULT: PASS); D: left 0.33 + 1.0 rescuer + 0.18 raw copy (ht1-offline.sh host_mount), x1.1
+rocky10	-	chopin	3014549504	5	4	chopin:/bkoscratch/holttest1d/r3all/rocky10 du -s -B1 (RESULT: PASS); D: left 2.81 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+rocky10-lvm	-	chopin	2687938560	4	4	chopin:/bkoscratch/holttest1d/r3all/rocky10-lvm du -s -B1 (RESULT: PASS); D: left 2.50 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+sculpt2610	-	cinqcent	146644992	2	4	cinqcent:/bkoscratch/holttest1d/r3all/sculpt2610 du -s -B1 (RESULT: PASS); D: left 0.14 + 1.0 rescuer + 0.09 raw copy (ht1-offline.sh host_mount), x1.1
+tumbleweed	-	cinqcent	3997097984	6	4	cinqcent:/bkoscratch/holttest1d/r3all/tumbleweed du -s -B1 (RESULT: PASS); D: left 3.72 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+ubuntu24	-	cinqcent	4810940416	7	4	cinqcent:/bkoscratch/holttest1d/r3all/ubuntu24 du -s -B1 (RESULT: PASS); D: left 4.48 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+ubuntu26-uefi	-	chopin	9153409024	11	4	chopin:/bkoscratch/holttest1d/r3all/ubuntu26-uefi du -s -B1 (RESULT: PASS); D: left 8.52 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+ubuntu26-zfs	-	chopin	6038130688	8	4	chopin:/bkoscratch/holttest1d/r3all/ubuntu26-zfs du -s -B1 (RESULT: PASS); D: left 5.62 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+ubuntu26-zfsmirror	-	cinqcent	12675321856	15	4	cinqcent:/bkoscratch/holttest1d/r3all/ubuntu26-zfsmirror du -s -B1 (RESULT: PASS); D: left 11.80 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+void-musl	-	chopin	4211417088	6	4	chopin:/bkoscratch/holttest1d/r3all/void-musl du -s -B1 (RESULT: PASS); D: left 3.92 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+zorin18	-	chopin	12490080256	14	4	chopin:/bkoscratch/holttest1d/r3all/zorin18 du -s -B1 (RESULT: PASS); D: left 11.63 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+debian13-stack	degraded	chopin	1677602816	3	4	chopin:/bkoscratch/holttest1d/raid1/debian13-stack-degraded du -s -B1 (RESULT: PASS); D: left 1.56 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+ubuntu26-raid	-	chopin	10773905408	13	4	chopin:/bkoscratch/holttest1d/raid1/ubuntu26-raid du -s -B1 (RESULT: PASS); D: left 10.03 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+ubuntu26-raid	degraded	chopin	8628346880	10	4	chopin:/bkoscratch/holttest1d/raid1/ubuntu26-raid-degraded du -s -B1 (RESULT: PASS); D: left 8.04 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+ubuntu26-raid	degraded	cinqcent	8521420800	10	4	cinqcent:/bkoscratch/holttest1d/raid1/ubuntu26-raid-degraded du -s -B1 (RESULT: PASS); D: left 7.94 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+fedora44-raid	-	chopin	4794773504	7	4	chopin:/bkoscratch/holttest1d/raid2/fedora44-raid du -s -B1 (RESULT: FAIL (1)); D: left 4.47 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1; FAIL only on a judge rule added later (holt.md gaps), so a full run
+rocky10-raid5	-	chopin	3512795136	5	4	chopin:/bkoscratch/holttest1d/raid2/rocky10-raid5 du -s -B1 (RESULT: PASS); D: left 3.27 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
+freebsd15-mirror	-	chopin	6217728	3	4	chopin:/bkoscratch/holttest1d/raid1/freebsd15-mirror du -s -B1 (RESULT: PASS); D: est. 1.6 x image 1.29 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
+omnios58-mirror	-	cinqcent	4010401792	5	4	cinqcent:/bkoscratch/holttest1d/raid6/omnios58-mirror du -s -B1 (RESULT: FAIL (1)); D: peak <= written: jobs.log raid6 wrote 4.70 GB (raid4 4.26); raid6 FAIL kept 3.73 GiB; x1.1; kept everything (FAIL); left = what a FAIL keeps
+debian13-stack	bigger	chopin	2906333184	5	4	unverified: the variant's files were deleted (r1m/r3a/r3d); base chopin:r3all/debian13-stack left 2.71 GiB used (bigger adds 1 GiB of virtual size only, ht1.sh:265-267; oneshot writes the same); D as the base
+aerynos	bigger	chopin	2660667392	4	4	unverified: the variant's files were deleted (r1m/r3a/r3d); base chopin:r3all/aerynos left 2.48 GiB used (bigger adds 1 GiB of virtual size only, ht1.sh:265-267; oneshot writes the same); D as the base
+mint22	bigger	chopin	14949056512	17	4	unverified: the variant's files were deleted (r1m/r3a/r3d); base chopin:r3all/mint22 left 13.92 GiB used (bigger adds 1 GiB of virtual size only, ht1.sh:265-267; oneshot writes the same); D as the base
+debian13	oneshot	chopin	1801117696	3	4	unverified: the variant's files were deleted (r1m/r3a/r3d); base chopin:r3all/debian13 left 1.68 GiB used (bigger adds 1 GiB of virtual size only, ht1.sh:265-267; oneshot writes the same); D as the base
+mint22	oneshot	chopin	14949056512	17	4	unverified: the variant's files were deleted (r1m/r3a/r3d); base chopin:r3all/mint22 left 13.92 GiB used (bigger adds 1 GiB of virtual size only, ht1.sh:265-267; oneshot writes the same); D as the base
+arch	oneshot	chopin	2517708800	4	4	unverified: the variant's files were deleted (r1m/r3a/r3d); base chopin:r3all/arch left 2.34 GiB used (bigger adds 1 GiB of virtual size only, ht1.sh:265-267; oneshot writes the same); D as the base
+alpine324	oneshot	chopin	553926656	2	4	unverified: the variant's files were deleted (r1m/r3a/r3d); base chopin:r3all/alpine324 left 0.52 GiB used (bigger adds 1 GiB of virtual size only, ht1.sh:265-267; oneshot writes the same); D as the base
+freebsd15-ufs	-	-	0	4	4	unverified: never a HoltTest source (holt.md (b)); est. 1.6 x image 1.95 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3
+freebsd15-geli	-	-	0	3	4	unverified: never a HoltTest source (holt.md (b)); est. 1.6 x image 0.61 GiB + 0.3 (omnios58 ratio; pass deletes its qcow2s, ht1-bsd.sh:696), x1.1, floor 3

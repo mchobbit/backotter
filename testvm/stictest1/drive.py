@@ -1135,7 +1135,7 @@ def self_test():
             check(False, f"{g}: BIN_DIR bin/{spec[g].os}, want bin/{w}")
     check(all(spec[g].os == want_os.get(g, "linux") for g in guests),
           f"BIN_DIR of {len(guests)} guests as their usage says (Linux guests and sculpt2610: bin/linux)")
-    for g, d, m, n, sl in (("debian13-zfs", 13, 5, 1, 1), ("ubuntu26-zfsmirror", 9, 4.5, 1, 1),
+    for g, d, m, n, sl in (("debian13-zfs", 13, 5, 1, 1), ("ubuntu26-zfsmirror", 23, 4.5, 1, 1),
                            ("freebsd15-ufs", 3, 6, 3, 3), ("sculpt2610", 2, 2, 1, 0), ("mint22", 2, 4, 1, 1)):
         if g in spec:
             s = spec[g]

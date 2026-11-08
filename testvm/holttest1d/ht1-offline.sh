@@ -15,42 +15,79 @@
 #   - a boot is checked as the guest allows: Redox by logging in as root on
 #     its serial console (redox/console.py) and asking uname and /etc/hostname,
 #     Sculpt by sculpt-check.sh (its screen, and its GENODE partition used).
+#
+# The write path is ht1-lib.sh's, as ht1.sh's (README: "Where a run works,
+# and what it keeps").  HT_HOLT is the bko-holt to test instead of bin/'s.
 set -uo pipefail
 
 G=$1 RUN=$2; shift 2
 PHASES=("$@"); [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source backup rebuild verify)
 W=/home/m/backotter-work
-T=$W/testvm
-BIN=/bkoscratch/holttest1d/bin
 HERE=$(dirname "$(realpath "$0")")
+T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, compare/, redox/, sculpt-check.sh), as ht1.sh's
+BIN=/bkoscratch/holttest1d/bin
+HOLT=${HT_HOLT:-$BIN/bko-holt}
+[[ -r $HERE/ht1-lib.sh ]] || { echo "ht1-offline: no ht1-lib.sh beside $0" >&2; exit 2; }
+# shellcheck source=ht1-lib.sh
+. "$HERE/ht1-lib.sh"
 VARIANT=${HT_VARIANT:-}
 case $VARIANT in ""|bigger|oneshot) ;; *) echo "HT_VARIANT: bigger or oneshot" >&2; exit 2 ;; esac
 GV=$G${VARIANT:+-$VARIANT}
-R=/bkoscratch/holttest1d/$RUN/$GV
-S=$R/share
-PORT=${HT_PORT:-2970}
+PORT=${HT_PORT:-2690}
 export SSH_PORT=$PORT
-mkdir -p "$R/logs" "$R/dumps" "$S" /bkoscratch/tmp
-export TMPDIR=/bkoscratch/tmp RT_RAM=0
 fails=0
 say() { echo "$*" | tee -a "$R/report.txt"; }
 ok() { say "PASS $*"; }
 bad() { say "FAIL $*"; fails=$((fails + 1)); }
+ht_paths   # R, where the run works, and K, where it ends up (ht1-lib.sh)
+S=$R/share
 
 case $G in
     redox) KIND=redox ;;
     sculpt*) KIND=sculpt ;;
     *) echo "ht1-offline: $G isn't Redox or Sculpt" >&2; exit 2 ;;
 esac
+REDOX_TOOLS=$W/tools/redox/bin
+[[ $KIND != redox || ( -x $REDOX_TOOLS/redoxfs && -x $REDOX_TOOLS/redoxfs-mkfs ) ]] || { echo "ht1-offline: redox needs $REDOX_TOOLS (Cinqcent has it)" >&2; exit 2; }
 gdir=$W/vms/$G
 gimg=$gdir/$G.qcow2; [[ -f $gimg ]] || gimg=$(ls "$gdir"/*.qcow2 | head -n 1)
+imgs=("$gimg")   # the guest's disks, for ht1-lib.sh's manifest
 fw=(); [[ -f $gdir/vm-run-options ]] && read -ra fw < "$gdir/vm-run-options"
 RESCUER_IMG=${HT_RESCUER_IMG:-/bkoscratch/holttest1d/rescuer/rescuer.qcow2}
 rkey=$W/vms/debian13/id_ed25519
-REDOX_TOOLS=$W/tools/redox/bin
 SRC=$R/src-0.qcow2 DST=$R/dst-0.qcow2
 SRC_MP=/mnt/ht1-src-$GV DST_MP=/mnt/ht1-dst-$GV
 size_of() { qemu-img info --output=json "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])'; }
+# Where the run works and what a pass keeps (ht1-lib.sh; README "Where a run
+# works, and what it keeps").
+HT_BULK=(share src-0.qcow2 dst-0.qcow2 decoy.qcow2 'rescuer*.qcow2' 'boot-*.qcow2' 'console-*.sock' 'tmp-*' 'check-*/sculpt-check.qcow2' rustic-bko tmp)
+HT_ZIP=(src-meta.json dst-meta.json)
+ht_require
+case ${PHASES[0]} in   # what the first phase remakes is not copied back from K
+    backup)  ht_seed share/repo/ dst-0.qcow2 decoy.qcow2 'rescuer*.qcow2' 'tmp-*' tmp/ ;;
+    rebuild) ht_seed src-0.qcow2 dst-0.qcow2 decoy.qcow2 'rescuer*.qcow2' 'tmp-*' tmp/ ;;
+    verify)  ht_seed src-0.qcow2 share/repo/ decoy.qcow2 'rescuer*.qcow2' 'tmp-*' tmp/ ;;
+esac
+ht_begin; mkdir -p "$S"
+ht_rustic_take linux
+HT_MOUNTED=""
+ht_release() {   # before anything is moved: no mount, loop device or console VM may hold R
+    local raw l
+    [[ -n $HT_MOUNTED ]] && host_umount "$HT_MOUNTED" 2>/dev/null
+    # The raw copies are throwaway copies of src-0 or dst-0: gone on a failure too.
+    for raw in "$R"/tmp-*.raw; do [[ -f $raw ]] || continue
+        for l in $(losetup -j "$raw" | cut -d: -f1); do losetup -d "$l"; done; rm -f "$raw"; done
+    rm -f "$R"/tmp-*.loop
+    # shellcheck disable=SC2046  # PIDs
+    kill $(console_qemus "$R/console-") 2>/dev/null
+}
+# This run's console QEMU (boot_check's) on a socket whose path starts SOCK
+# (ht_qemus: one this run started), never another's with such a path.
+console_qemus() {  # SOCK
+    local q
+    for q in $(ht_qemus "$R"); do tr '\0' ' ' 2>/dev/null <"/proc/$q/cmdline" | grep -qF "path=$1" && echo "$q"; done
+    return 0
+}
 sshk() { timeout "${TMO:-600}" ssh -q -i "$rkey" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o ServerAliveInterval=15 root@127.0.0.1 "$@"; }
 r_up() { # IMAGE LOG [vm-run options...]: the rescuer, the share on 9p
     local image=$1 log=$2; shift 2
@@ -60,13 +97,20 @@ r_up() { # IMAGE LOG [vm-run options...]: the rescuer, the share on 9p
     TMO=8 sshk true 2>/dev/null || return 1
     sshk 'mkdir -p /mnt/share && mount -t 9p -o trans=virtio,version=9p2000.L,ro bkoshare /mnt/share'
 }
+# This run's rescuer only (ht_qemus: a QEMU with its disks in R that this
+# run started, ht_own), never another run's that took the port while none
+# of this run's was up, nor one started by hand on R's (K's) disks.
 r_down() {
+    [[ -n $(ht_qemus "$R") ]] || return 0
     TMO=20 sshk poweroff >/dev/null 2>&1
-    for _ in $(seq 36); do pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null || return 0; sleep 5; done
-    pkill -f "^qemu-system.*:$PORT-:22"; sleep 5; pkill -9 -f "^qemu-system.*:$PORT-:22"; sleep 1
+    for _ in $(seq 36); do [[ -n $(ht_qemus "$R") ]] || return 0; sleep 5; done
+    # shellcheck disable=SC2046  # PIDs
+    kill $(ht_qemus "$R") 2>/dev/null; sleep 5
+    # shellcheck disable=SC2046
+    kill -9 $(ht_qemus "$R") 2>/dev/null; sleep 1
 }
 share_tools() {
-    cp "$BIN/bko-holt" "$BIN/rustic-bko" "$S/"
+    cp "$HOLT" "$S/bko-holt"
     [[ $KIND != redox ]] || cp "$REDOX_TOOLS/redoxfs" "$REDOX_TOOLS/redoxfs-mkfs" "$S/"
     chmod -R a+rX "$S"
 }
@@ -100,6 +144,9 @@ PY
 )
     local loop; loop=$(losetup -f --show -o "$off" --sizelimit "$len" "$raw") || return 1
     echo "$loop $raw" > "$R/tmp-${3##*/}.loop"
+    # Set before the mount: a signal during redoxfs (it returns once the mount
+    # is up) or mount still leaves ht_release a host_umount to do.
+    HT_MOUNTED=$3
     mkdir -p "$3"
     if [[ $KIND == redox ]]; then
         "$REDOX_TOOLS/redoxfs" "$loop" "$3" > "$R/logs/redoxfs-${3##*/}.log" 2>&1
@@ -109,9 +156,13 @@ PY
     mount -o ro "$loop" "$3"
 }
 host_umount() { # MP
+    local loop="" raw=""
     umount "$1" 2>/dev/null || fusermount3 -u "$1" 2>/dev/null
+    # Cleared before the loop device goes: ht_release finds what is left by
+    # the raw copy (losetup -j), never by a loop name that may be another's now.
+    HT_MOUNTED=
     sleep 1
-    read -r loop raw < "$R/tmp-${1##*/}.loop"
+    read -r loop raw < "$R/tmp-${1##*/}.loop" || return 1
     losetup -d "$loop"; rm -f "$raw" "$R/tmp-${1##*/}.loop"
 }
 
@@ -135,8 +186,9 @@ boot_check() { # IMAGE NAME
         "${c[@]}" run 'uname -s; cat /etc/hostname' > "$R/logs/$2-check.log" 2>&1 && grep -qx Redox "$R/logs/$2-check.log" && s=0
         "${c[@]}" send 'poweroff' >/dev/null 2>&1
     fi
-    for _ in $(seq 24); do pgrep -f "path=$sock" >/dev/null || break; sleep 5; done
-    pkill -f "path=$sock" 2>/dev/null; sleep 2
+    for _ in $(seq 24); do [[ -n $(console_qemus "$sock,") ]] || break; sleep 5; done
+    # shellcheck disable=SC2046  # PIDs
+    kill $(console_qemus "$sock,") 2>/dev/null; sleep 2
     rm -f "$ov" "$sock"
     return $s
 }
@@ -153,7 +205,7 @@ phase_backup() {
     say "== backup"
     rm -rf "$S/repo"; head -c 24 /dev/urandom | base64 > "$S/repo-password"
     host_mount "$SRC" "$R/dumps/src.json" "$SRC_MP" > "$R/logs/backup-mount.log" 2>&1 || { bad "mount the source's root here (logs/backup-mount.log)"; return; }
-    local rustic=("$BIN/rustic-bko" -r "$S/repo" --password-file "$S/repo-password" --no-progress --no-cache)
+    local rustic=("$RUSTIC" -r "$S/repo" --password-file "$S/repo-password" --no-progress --no-cache)
     if "${rustic[@]}" init > "$R/logs/backup.log" 2>&1 && "${rustic[@]}" backup --set-atime yes "$SRC_MP" >> "$R/logs/backup.log" 2>&1; then
         ok "rustic-bko backup ($(du -sh "$S/repo" | cut -f1))"
     else
@@ -161,6 +213,7 @@ phase_backup() {
     fi
     python3 "$T/compare/fsmeta.py" record "$SRC_MP" "$R/src-meta.json" > "$R/logs/fsmeta-src.log" 2>&1 || bad "fsmeta record of the source"
     host_umount "$SRC_MP" >> "$R/logs/backup-mount.log" 2>&1
+    cp "$RUSTIC" "$S/rustic-bko"
 }
 
 load_step() { local want=$1 name=$2; shift 2
@@ -174,6 +227,7 @@ load_step() { local want=$1 name=$2; shift 2
 phase_rebuild() {
     say "== rebuild"
     share_tools
+    cp "$RUSTIC" "$S/rustic-bko"
     rm -f "$R/rescuer.qcow2" "$DST" "$R/decoy.qcow2"
     qemu-img create -q -f qcow2 -b "$RESCUER_IMG" -F qcow2 "$R/rescuer.qcow2"
     local grow=0; [[ $VARIANT == bigger ]] && grow=$((1 << 30))
@@ -251,9 +305,12 @@ phase_verify() {
 
 : > "$R/report.txt"
 say "HoltTest1 $G (read off its disks), run $RUN, $(date -u +%FT%TZ), phases: ${PHASES[*]}"
+tools=(); [[ $KIND == redox ]] && tools=("$REDOX_TOOLS/redoxfs" "$REDOX_TOOLS/redoxfs-mkfs")
+ht_manifest "$RESCUER_IMG" "${tools[@]}"
 for p in "${PHASES[@]}"; do
-    "phase_$p"
+    ht_phase_start "$p"; "phase_$p"; ht_phase_end "$p"
     [[ $fails == 0 ]] || { say "stopped after $p"; break; }
 done
+ht_summary
 say "RESULT: $([[ $fails == 0 ]] && echo PASS || echo "FAIL ($fails)")"
 [[ $fails == 0 ]]

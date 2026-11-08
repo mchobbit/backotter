@@ -5,12 +5,20 @@
 #   ht1.sh GUEST RUN [PHASE...]      PHASEs: source backup rebuild verify
 #                                    (default: all four, in that order)
 #
-# RUN names the run's directory, /bkoscratch/holttest1d/RUN/GUEST/.  Later
-# phases reuse what earlier ones left there, so after a bko-holt fix only
-# `rebuild verify` need running again.  Needs /bkoscratch/holttest1d/bin/
-# with bko-holt, rustic-bko, f2fs-tools_*.deb and jfsutils_*.deb (installed
-# in a rescuer that lacks them), and bcachefs with bcachefs-deps-*.deb
-# (make-bcachefs-tools.sh: Debian 13 has no bcachefs-tools).
+# RUN names the run's directory, /bkoscratch/holttest1d/RUN/GUEST/ (K),
+# where the run ends up.  Under a reservation of the RAM disk (cmp-run.sh
+# --reserve D M, D from ram-size.sh) it works in
+# /mnt/bko-ram/holttest1d/RUN/GUEST/ and moves to K at its end.  A pass
+# that ran verify keeps only report.txt, logs/, dumps/ and the fsmeta
+# records (zstd); a FAIL keeps everything (README "Where a run works, and
+# what it keeps").  Later phases reuse what earlier ones left, so after a
+# bko-holt fix only `rebuild verify` need running again: on a failure's
+# state, copied back into RAM from K, not on records only (a pass's).
+# Needs /bkoscratch/holttest1d/bin/ with bko-holt, f2fs-tools_*.deb and
+# jfsutils_*.deb (installed in a rescuer that lacks them), and bcachefs
+# with bcachefs-deps-*.deb (make-bcachefs-tools.sh: Debian 13 has no
+# bcachefs-tools).  rustic-bko is the shipped set's
+# (~/backotter-work/bko-bin/linux/, checked against its SHA256SUMS).
 #
 #   source   dump the live guest (a throwaway overlay; the guest's own
 #            image is never written), with its boot state as the baseline
@@ -24,17 +32,36 @@
 #            restored disk boots alone (writes thrown away) and is dumped;
 #            judge.py compares the dumps
 #
-# For debugging (ht1-debug.sh drives these): HT_RAM=1 puts the run in
-# /mnt/bko-ram/holttest1d instead (nothing of it on an SSD); HT_HOLT=FILE is
-# the bko-holt to test instead of bin/'s; HT_QUICK=1 leaves out rebuild's
-# refusals, dry run and edge checks; HT_THROUGH=STAGE ends rebuild after
-# that load stage; HT_KEEP=1 leaves the rescuer running after rebuild, its
-# disks and load's state as they are, for a look inside.  A rebuild first
-# stops whatever VM a kept rescuer left on the port.
+# Where it works (ht1-lib.sh): with HT_RAM unset, in RAM when the run holds
+# a reservation of at least 1 GiB, else on /bkoscratch (a note: line says
+# so); HT_RAM=1 refuses without one; HT_RAM=0 works on /bkoscratch.  In RAM
+# a run that outgrows its reservation is stopped (the harness's FAIL, which
+# keeps the records only).  HT_CLEAN=0 leaves the run as it ends: nothing
+# deleted, compressed or moved.  HT_RESERVE_PID is the ledger PID of a
+# reservation that outlives the run (ht1-debug.sh's); in RAM, HT_CLEAN=0
+# and HT_KEEP=1 need it.  For rustic-bko, HT_BKO_BIN=DIR takes another set,
+# HT_ROUND=NAME round NAME's (~/backotter-work/roundNAME/bin), and
+# HT_RUSTIC=FILE a file, unchecked.  HT_FAIL_AT=PHASE adds a FAIL line
+# after that phase (a test hook).
 #
-# Exit 0 when every check of the phases run passed.  Results: logs/,
-# dumps/, report.txt.  The rescuer is Debian 13, not BackOtter's rescue
-# image yet (README: "Before it can run").
+# For debugging (ht1-debug.sh drives these): HT_HOLT=FILE is the bko-holt
+# to test instead of bin/'s (either is copied as the run starts, and that
+# copy serves the whole run); HT_QUICK=1 leaves out rebuild's refusals, dry
+# run and edge checks; HT_THROUGH=STAGE ends rebuild after that load stage;
+# HT_KEEP=1 leaves the rescuer running after rebuild, its disks and load's
+# state as they are, for a look inside.  A rebuild first stops a rescuer
+# kept up by the last try; on /bkoscratch a run from source refuses while
+# one is up.  The report's note: line names those set.  A
+# run stops only its own VMs (the ones it started with disks in R:
+# ht1-lib.sh's ht_qemus), never another run's on its port (HT_PORT, default
+# 2690; by-hand runs use 2690-2699), nor one started by hand on R's files.
+#
+# Exit 0 when every check of the phases run passed; 1 when one failed or
+# the run ended early; 2 when it refused to start (nothing made or kept);
+# 129, 130 or 143 when HUP, INT or TERM ended it (RESULT: FAIL).  Results:
+# report.txt, logs/ (manifest.txt: the binaries and inputs; phases.tsv:
+# each phase's time and peaks), dumps/.  The rescuer is Debian 13, not
+# BackOtter's rescue image yet (README: "Before it can run").
 set -uo pipefail
 
 G=$1 RUN=$2; shift 2
@@ -51,9 +78,11 @@ PHASES=("$@"); [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source backup rebuild verify
 W=/home/m/backotter-work
 HERE=$(dirname "$(realpath "$0")")
 T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, vm-mount, compare/)
+[[ -r $HERE/ht1-lib.sh ]] || { echo "ht1: no ht1-lib.sh beside $0" >&2; exit 2; }
+# shellcheck source=ht1-lib.sh
+. "$HERE/ht1-lib.sh"
 BIN=/bkoscratch/holttest1d/bin
 HOLT=${HT_HOLT:-$BIN/bko-holt}
-BASE=/bkoscratch/holttest1d; [[ ${HT_RAM:-} == 1 ]] && BASE=/mnt/bko-ram/holttest1d
 # HT_VARIANT (README's HoltTest1D plan): "bigger" rebuilds onto disks 1 GiB
 # bigger than the source's (GPT's backup header must move to the new end);
 # "oneshot" runs the whole rebuild as one `--through close` command, as an
@@ -64,9 +93,7 @@ BASE=/bkoscratch/holttest1d; [[ ${HT_RAM:-} == 1 ]] && BASE=/mnt/bko-ram/holttes
 VARIANT=${HT_VARIANT:-}
 case $VARIANT in ""|bigger|oneshot|degraded) ;; *) echo "HT_VARIANT: bigger, oneshot or degraded" >&2; exit 2 ;; esac
 GV=$G${VARIANT:+-$VARIANT}
-R=$BASE/$RUN/$GV
-S=$R/share
-PORT=${HT_PORT:-2970}
+PORT=${HT_PORT:-2690}   # by-hand runs: 2690-2699 (ht1-queue.sh hands out 2600-2689)
 export SSH_PORT=$PORT   # vm-run's guest SSH port
 RESCUER=${HT_RESCUER:-debian13}
 # The rescuer: make-rescuer.sh's debian13 copy with ZFS and every mkfs, when
@@ -75,9 +102,6 @@ RESCUER_IMG=${HT_RESCUER_IMG:-/bkoscratch/holttest1d/rescuer/rescuer.qcow2}
 [[ -f $RESCUER_IMG ]] || RESCUER_IMG=$W/vms/$RESCUER/$RESCUER.qcow2
 SRC_MP=/mnt/ht1-src-$GV
 DST_MP=/mnt/ht1-dst-$GV
-TMPD=/bkoscratch/tmp; [[ ${HT_RAM:-} == 1 ]] && TMPD=/mnt/bko-ram/tmp
-mkdir -p "$R/logs" "$R/dumps" "$S"; install -d -m 1777 "$TMPD"
-export TMPDIR=$TMPD RT_RAM=0
 fails=0
 say() { echo "$*" | tee -a "$R/report.txt"; }
 ok() { say "PASS $*"; }
@@ -97,6 +121,10 @@ if [[ -f $W/vms/$G/vm-run-options ]]; then
         esac
     done
 fi
+# R, where the run works, and K, where it ends up (ht1-lib.sh: everything it
+# reads is set by here).  Nothing is made until ht_begin.
+ht_paths
+S=$R/share
 uefi=0; [[ " ${fw[*]} " == *" --uefi "* ]] && uefi=1
 detached=""
 if [[ $VARIANT == degraded ]]; then
@@ -124,6 +152,28 @@ size_of() { qemu-img info --output=json "$1" | python3 -c 'import json,sys; prin
 # A LUKS or ZFS passphrase the guest's disks need (vm-mount --key, and load's
 # --key-file for the volumes it makes).
 gpass=""; for f in console-passphrase zfs-passphrase luks-passphrase; do [[ -f $W/vms/$G/$f ]] && gpass=$W/vms/$G/$f && break; done
+# Where the run works and what a pass keeps (ht1-lib.sh; README "Where a run works, and what it keeps").
+HT_BULK=(share 'src-*.qcow2' 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 rustic-bko tmp)
+HT_ZIP=(src-meta.json dst-meta.json)
+# Settings that change what a run checks, or its rescuer: its report names them.
+dbg=""; for v in HT_QUICK HT_THROUGH HT_KEEP HT_FAIL_AT HT_RESCUER HT_RESCUER_IMG; do [[ -z ${!v:-} ]] || dbg+=" $v=${!v}"; done
+[[ -z $dbg ]] || ht_note "set for debugging or tests:$dbg"
+ht_require
+# A rerun from a later phase goes on from K's state (a failure's): all of it
+# but what the rerun makes again and the disks only a rebuild uses, so the
+# attempt it leaves in K can be rerun again.
+case ${PHASES[0]} in
+    backup)  ht_seed share/repo/ 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 tmp/ ;;
+    rebuild) ht_seed 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 tmp/ ;;
+    verify)  ht_seed decoy.qcow2 rescuer.qcow2 tmp/ ;;
+esac
+ht_begin; mkdir -p "$S"
+ht_rustic_take linux
+# bko-holt as the run starts (bin/'s may be replaced while it runs): the
+# dumps and the load are one build's.
+cp --remove-destination "$HOLT" "$S/bko-holt"
+HT_MOUNTED=""
+ht_release() { [[ -n $HT_MOUNTED ]] && mountpoint -q "$HT_MOUNTED" && "$T/vm-umount" "$HT_MOUNTED" >/dev/null 2>&1; rmdir "$SRC_MP" "$DST_MP" 2>/dev/null; }
 
 sshk() { local key=$1; shift; timeout "${TMO:-600}" ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o ServerAliveInterval=15 root@127.0.0.1 "$@"; }
 scpk() { local key=$1; shift; timeout 300 scp -q -i "$key" -P "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$@"; }
@@ -131,32 +181,40 @@ vm_up() { # IMAGE LOG [vm-run options...] [-- QEMU_ARGS...]
     local image=$1 log=$2 opts=() qargs=(); shift 2
     while [[ $# -gt 0 && $1 != -- ]]; do opts+=("$1"); shift; done
     [[ ${1:-} == -- ]] && { shift; qargs=(-- "$@"); }
+    # (Without ht_begin's copies of the caller's stdout and stderr: a rescuer
+    # HT_KEEP keeps up outlives the run, and its caller's ssh or pipe.)
     if [[ ${CONSOLE_KEY:-} == */luks-passphrase ]]; then
         # Asked for on the screen (Plymouth, Omarchy): typed on the guest's
         # keyboard through QEMU's monitor, every 30 s until SSH answers (at
         # a login prompt it does no harm), as compare.py does.
         rm -f "$log.monitor"
         [[ ${#qargs[@]} -gt 0 ]] || qargs=(--)
-        setsid -f "$T/vm-run" --serial-log "$log" "${opts[@]}" "$image" "${qargs[@]}" -monitor "unix:$log.monitor,server,nowait" </dev/null >"$log.vm-run" 2>&1
-        setsid -f python3 "$T/omarchy/type-luks-passphrase.py" "$log.monitor" "$CONSOLE_KEY" $(seq 25 30 295) </dev/null >/dev/null 2>&1
+        setsid -f "$T/vm-run" --serial-log "$log" "${opts[@]}" "$image" "${qargs[@]}" -monitor "unix:$log.monitor,server,nowait" </dev/null >"$log.vm-run" 2>&1 {HT_FD1}>&- {HT_FD2}>&-
+        setsid -f python3 "$T/omarchy/type-luks-passphrase.py" "$log.monitor" "$CONSOLE_KEY" $(seq 25 30 295) </dev/null >/dev/null 2>&1 {HT_FD1}>&- {HT_FD2}>&-
     elif [[ -n ${CONSOLE_KEY:-} ]]; then
         # The guest asks for its disk passphrase on the serial console:
         # console-boot.py logs the console and types it at each prompt.
         setsid -f python3 "$T/console-boot.py" "$log" "$CONSOLE_KEY" -- \
-            "$T/vm-run" "${opts[@]}" "$image" "${qargs[@]}" </dev/null 2>"$log.vm-run"
+            "$T/vm-run" "${opts[@]}" "$image" "${qargs[@]}" </dev/null 2>"$log.vm-run" {HT_FD1}>&- {HT_FD2}>&-
     else
-        setsid -f "$T/vm-run" --serial-log "$log" "${opts[@]}" "$image" "${qargs[@]}" </dev/null >"$log.vm-run" 2>&1
+        setsid -f "$T/vm-run" --serial-log "$log" "${opts[@]}" "$image" "${qargs[@]}" </dev/null >"$log.vm-run" 2>&1 {HT_FD1}>&- {HT_FD2}>&-
     fi
 }
 vm_wait() { local key=$1
     for _ in $(seq 72); do TMO=8 sshk "$key" true 2>/dev/null && return 0; sleep 5; done
     return 1
 }
+# This run's VM only (ht_qemus: a QEMU with its disks in R that this run
+# started, ht_own), never another run's that took the port while none of
+# this run's was up, nor one started by hand on R's (K's) disks.
 vm_down() { local key=$1
+    [[ -n $(ht_qemus "$R") ]] || return 0
     TMO=20 sshk "$key" poweroff >/dev/null 2>&1
-    for _ in $(seq 36); do pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null || return 0; sleep 5; done
-    pkill -f "^qemu-system.*:$PORT-:22"; sleep 5
-    pkill -9 -f "^qemu-system.*:$PORT-:22"; sleep 1
+    for _ in $(seq 36); do [[ -n $(ht_qemus "$R") ]] || return 0; sleep 5; done
+    # shellcheck disable=SC2046  # PIDs
+    kill $(ht_qemus "$R") 2>/dev/null; sleep 5
+    # shellcheck disable=SC2046
+    kill -9 $(ht_qemus "$R") 2>/dev/null; sleep 1
 }
 # The restored machine's health (README step 4): one line per check, FAIL
 # lines for those that fail, exit 1 if any did.
@@ -212,7 +270,7 @@ phase_source() {
     fi
     bootstate "$gkey" > "$R/logs/source-bootstate.txt"
     sshk "$gkey" "$HEALTH" 2>&1 | grep -v 'bko-holt/load.log' > "$R/logs/source-health.txt"
-    scpk "$gkey" "$HOLT" root@127.0.0.1:/root/bko-holt
+    scpk "$gkey" "$S/bko-holt" root@127.0.0.1:/root/bko-holt
     if sshk "$gkey" /root/bko-holt dump > "$R/dumps/src.json" 2> "$R/logs/source-dump.err"; then
         ok "dump on the live source"
     else
@@ -228,16 +286,20 @@ phase_backup() {
     rm -rf "$S/repo"; head -c 24 /dev/urandom | base64 > "$S/repo-password"
     mkdir -p "$SRC_MP"
     local key=(); [[ -n $gpass ]] && key=(--key "$gpass")
-    "$T/vm-mount" --ro "${extra_src[@]}" "${key[@]}" "${src[0]}" "$SRC_MP" > "$R/logs/backup-mount.log" 2>&1 || { bad "mount the source read-only"; return; }
-    local rustic=("$BIN/rustic-bko" -r "$S/repo" --password-file "$S/repo-password" --no-progress --no-cache)
+    # vm-mount and vm-umount ignore TERM, INT and HUP (a ^C, an abort): one
+    # cut short leaves the host's devices half done.  The driver's own trap
+    # runs once it returns.
+    (trap '' TERM INT HUP; exec "$T/vm-mount" --ro "${extra_src[@]}" "${key[@]}" "${src[0]}" "$SRC_MP") > "$R/logs/backup-mount.log" 2>&1 || { bad "mount the source read-only"; return; }
+    HT_MOUNTED=$SRC_MP
+    local rustic=("$RUSTIC" -r "$S/repo" --password-file "$S/repo-password" --no-progress --no-cache)
     if "${rustic[@]}" init > "$R/logs/backup.log" 2>&1 && "${rustic[@]}" backup --set-atime yes "$SRC_MP" >> "$R/logs/backup.log" 2>&1; then
         ok "rustic-bko backup ($(du -sh "$S/repo" | cut -f1))"
     else
         bad "rustic-bko backup (logs/backup.log)"
     fi
     python3 "$T/compare/fsmeta.py" record "$SRC_MP" "$R/src-meta.json" > "$R/logs/fsmeta-src.log" 2>&1 || bad "fsmeta record of the source"
-    "$T/vm-umount" "$SRC_MP" >> "$R/logs/backup-mount.log" 2>&1
-    cp "$BIN/rustic-bko" "$BIN"/*.deb "$S/"; cp "$HOLT" "$S/bko-holt"
+    (trap '' TERM INT HUP; exec "$T/vm-umount" "$SRC_MP") >> "$R/logs/backup-mount.log" 2>&1; HT_MOUNTED=
+    cp "$RUSTIC" "$S/rustic-bko"; cp "$BIN"/*.deb "$S/"   # (bko-holt is there from the run's start)
     [[ ! -f $BIN/bcachefs ]] || cp "$BIN/bcachefs" "$S/"   # make-bcachefs-tools.sh's
     # As typed: without the file's newline (cryptsetup keeps it in a key).
     [[ -n $gpass ]] && printf '%s' "$(cat "$gpass")" > "$S/passphrase"
@@ -256,8 +318,8 @@ load_step() { local want=$1 name=$2; shift 2
 phase_rebuild() {
     say "== rebuild"
     # A rescuer HT_KEEP left up from the last try.
-    pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null && vm_down "$rkey"
-    cp "$BIN"/*.deb "$S/"; cp "$HOLT" "$S/bko-holt"   # the latest build, when rerun after a fix
+    [[ -z $(ht_qemus "$R") ]] || vm_down "$rkey"
+    cp "$RUSTIC" "$S/rustic-bko"; cp "$BIN"/*.deb "$S/"   # this run's, when rerun after a fix (bko-holt: copied as the run started)
     [[ ! -f $BIN/bcachefs ]] || cp "$BIN/bcachefs" "$S/"
     rm -f "$R/rescuer.qcow2" "${dst[@]}"
     qemu-img create -q -f qcow2 -b "$RESCUER_IMG" -F qcow2 "$R/rescuer.qcow2"
@@ -376,12 +438,14 @@ kept_or_down() {
 phase_verify() {
     say "== verify"
     # A rescuer HT_KEEP left up has the targets open.
-    pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null && vm_down "$rkey"
+    [[ -z $(ht_qemus "$R") ]] || vm_down "$rkey"
     mkdir -p "$DST_MP"
     local key=(); [[ -n $gpass ]] && key=(--key "$gpass")
-    if "$T/vm-mount" --ro "${extra_dst[@]}" "${key[@]}" "${dst[0]}" "$DST_MP" > "$R/logs/verify-mount.log" 2>&1; then
+    # (As in backup: vm-mount and vm-umount ignore TERM, INT and HUP.)
+    if (trap '' TERM INT HUP; exec "$T/vm-mount" --ro "${extra_dst[@]}" "${key[@]}" "${dst[0]}" "$DST_MP") > "$R/logs/verify-mount.log" 2>&1; then
+        HT_MOUNTED=$DST_MP
         python3 "$T/compare/fsmeta.py" record "$DST_MP" "$R/dst-meta.json" > "$R/logs/fsmeta-dst.log" 2>&1
-        "$T/vm-umount" "$DST_MP" >> "$R/logs/verify-mount.log" 2>&1
+        (trap '' TERM INT HUP; exec "$T/vm-umount" "$DST_MP") >> "$R/logs/verify-mount.log" 2>&1; HT_MOUNTED=
         python3 "$T/compare/fsmeta.py" compare "$R/src-meta.json" "$R/dst-meta.json" > "$R/logs/fsmeta-compare.txt" 2>&1
         if python3 "$HERE/judge.py" fs "$T/compare/fsmeta.py" "$R/src-meta.json" "$R/dst-meta.json" > "$R/logs/fsjudge.txt" 2>&1; then
             ok "fsmeta: the files agree but for the boot stage's ($(tail -1 "$R/logs/fsjudge.txt"))"
@@ -417,7 +481,7 @@ phase_verify() {
     else
         bad "health: $(echo "$worse" | tr '\n' ' ')"
     fi
-    scpk "$gkey" "$HOLT" root@127.0.0.1:/root/bko-holt
+    scpk "$gkey" "$S/bko-holt" root@127.0.0.1:/root/bko-holt
     sshk "$gkey" '/root/bko-holt dump; rm -f /root/bko-holt' > "$R/dumps/dst.json" 2> "$R/logs/restored-dump.err" || bad "dump of the restored system"
     vm_down "$gkey"
     local grow=(); [[ $VARIANT == bigger ]] && grow=(--grow $((1 << 30)))
@@ -431,10 +495,12 @@ phase_verify() {
 
 : > "$R/report.txt"
 say "HoltTest1 $G, run $RUN, $(date -u +%FT%TZ), phases: ${PHASES[*]}"
+ht_manifest "$RESCUER_IMG" "$BIN/bcachefs" "$BIN"/*.deb "$S/bko-holt"
 # Each phase needs the one before it: stop at the first that fails.
 for p in "${PHASES[@]}"; do
-    "phase_$p"
+    ht_phase_start "$p"; "phase_$p"; ht_phase_end "$p"
     [[ $fails == 0 ]] || { say "stopped after $p"; break; }
 done
+ht_summary
 say "RESULT: $([[ $fails == 0 ]] && echo PASS || echo "FAIL ($fails)")"
 [[ $fails == 0 ]]

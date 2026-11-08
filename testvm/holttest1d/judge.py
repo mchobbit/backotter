@@ -26,6 +26,21 @@ import json
 import re
 import sys
 
+
+def load_json(path):
+    """A record, plain or zstd-compressed (a pass keeps fsmeta.py's as .zst)."""
+    if not str(path).endswith(".zst"):
+        with open(path) as f:
+            return json.load(f)
+    try:
+        from compression import zstd  # Python 3.14
+    except ImportError:  # the hosts' 3.13: the zstd command
+        import subprocess
+        return json.loads(subprocess.run(["zstd", "-dc", path], check=True, capture_output=True).stdout)
+    with zstd.open(path) as f:
+        return json.load(f)
+
+
 # Field-path patterns (dot-separated, list indexes as numbers) and why
 # they may differ.
 IGNORED = [
@@ -212,8 +227,8 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False):
     spec = importlib.util.spec_from_file_location("fsmeta", fsmeta_py)
     fsmeta = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(fsmeta)
-    before = json.load(open(src_path))
-    after = json.load(open(dst_path))
+    before = load_json(src_path)
+    after = load_json(dst_path)
     diff = fsmeta.differences(before, after)
     real, allowed = {}, {}
     for kind, paths in diff.items():
@@ -270,8 +285,8 @@ def main():
     degraded = sys.argv[1] == "--degraded"
     if degraded:
         del sys.argv[1]
-    src = md_by_name(illumos_normalise(json.load(open(sys.argv[1]))))
-    dst = md_by_name(illumos_normalise(json.load(open(sys.argv[2]))))
+    src = md_by_name(illumos_normalise(load_json(sys.argv[1])))
+    dst = md_by_name(illumos_normalise(load_json(sys.argv[2])))
     # Lists whose order is the boot's, not the layout's: ZFS mounts its
     # datasets in parallel.
     for d in (src, dst):

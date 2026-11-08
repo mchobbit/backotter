@@ -4,8 +4,8 @@
 # from a fresh rescuer and blank targets, with the bko-holt just built.
 # Run as m on a test host, from the testvm/ copy holding your changes:
 #
-#   ht1-debug.sh GUEST setup [GIB]    reserve GIB of RAM disk (default: from
-#                                     the guest's size) and 6 GiB of memory
+#   ht1-debug.sh GUEST setup [GIB]    reserve GIB of RAM disk (default:
+#                                     ram-size.sh's + 2) and 6 GiB of memory
 #                                     in cmp-run.sh's ledger until `done`;
 #                                     then dump the source and back it up
 #   ht1-debug.sh GUEST build [SRC]    build bko-holt from SRC (default
@@ -26,22 +26,34 @@
 # `again partition` (or the stage that failed) until it passes, `again`,
 # `verify`; `done`.  Confirm the fix with a normal HoltTest1 run after.
 #
-# HT_PORT (default 2991) is the rescuer's and the guests' SSH port, and
+# HT_PORT (default 2698) is the rescuer's and the guests' SSH port, and
 # HT_PORT + 1 the build guest's: give each debugging session on a host its
-# own.  The run is RUN "debug" of ht1.sh (HT_RAM=1, HT_HOLT the build here,
-# HT_QUICK, HT_THROUGH, HT_KEEP: see ht1.sh), in
-# /mnt/bko-ram/holttest1d/debug/GUEST; this script's own state (the
-# bko-holt build, cargo's target/, the reservation) in
-# /mnt/bko-ram/holttest1d/debug-state/GUEST.
+# own, from the 2690-2699 of runs by hand (ht1-queue.sh hands out none of
+# them).  The run's VMs are found by their disks in its directory, never by
+# the port.  The run is RUN "debug" of ht1.sh (HT_RAM=1, HT_HOLT the build
+# here, HT_QUICK, HT_THROUGH, HT_KEEP: see ht1.sh), in
+# /mnt/bko-ram/holttest1d/debug/GUEST, kept there as it is between calls
+# (HT_CLEAN=0: nothing deleted, nor moved to /bkoscratch) under setup's
+# reservation (HT_RESERVE_PID, its ledger PID); this script's own state
+# (the bko-holt build, cargo's target/, the reservation) in
+# /mnt/bko-ram/holttest1d/debug-state/GUEST.  setup's default size is the
+# run's (ram-size.sh) plus 2 GiB for that state.
 set -uo pipefail
 
 [[ $# -ge 2 ]] || { sed -n '2,/^set -uo/p' "$0" | sed '$d; s/^# \{0,1\}//'; exit 2; }
 G=$1 CMD=$2; shift 2
+# A plain name: R and ST below are deleted by `done`.
+[[ $G =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "ht1-debug: '$G' is no guest's name" >&2; exit 2; }
 HERE=$(dirname "$(realpath "$0")")
 W=/home/m/backotter-work
-PORT=${HT_PORT:-2991} BPORT=$((${HT_PORT:-2991} + 1))
+PORT=${HT_PORT:-2698}
+[[ $PORT =~ ^[1-9][0-9]{3,4}$ ]] && ((PORT >= 1024 && PORT < 65535)) || { echo "ht1-debug: HT_PORT=$PORT: a port, 1024-65534" >&2; exit 2; }
+BPORT=$((PORT + 1))
 R=/mnt/bko-ram/holttest1d/debug/$G
 ST=/mnt/bko-ram/holttest1d/debug-state/$G
+# The run's VMs (the rescuer kept up): a QEMU with its disks in R, never
+# another's on the port.
+RPAT="^qemu-system.*$(sed 's/[][\.*^$]/\\&/g' <<<"$R")/"
 BIN=/bkoscratch/holttest1d/bin
 case $G in
     freebsd*|hardenedbsd*|ghostbsd*) PLAT=freebsd ;;
@@ -57,13 +69,17 @@ esac
 mountpoint -q /mnt/bko-ram || { echo "ht1-debug: no RAM disk at /mnt/bko-ram" >&2; exit 1; }
 
 ht1() {  # PHASE... (with the env: HT_QUICK, HT_THROUGH, HT_KEEP)
-    sudo -E HT_RAM=1 HT_HOLT="$ST/bko-holt" HT_PORT="$PORT" "$HERE/ht1.sh" "$G" debug "$@"
+    # Left in RAM as it ends, under setup's reservation (reserve.pid: its ledger row's PID);
+    # no variant, whose run would be another directory than R.
+    sudo -E HT_RAM=1 HT_CLEAN=0 HT_RESERVE_PID="$(cat "$ST/reserve.pid" 2>/dev/null)" HT_HOLT="$ST/bko-holt" HT_PORT="$PORT" HT_VARIANT= "$HERE/ht1.sh" "$G" debug "$@"
     local rc=$?
     echo "--- $R/report.txt; logs in $R/logs"
     return $rc
 }
 held() { [[ -s $ST/reserve.pid ]] && ps -p "$(cat "$ST/reserve.pid")" >/dev/null 2>&1; }
-rescuer_up() { pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null; }
+rescuer_up() { pgrep -f "$RPAT" >/dev/null; }
+# The PID of a step (ht1.sh) at work in R, if one is.
+running() { local p=""; read -r p 2>/dev/null <"$R/.ht/pid"; [[ $p =~ ^[0-9]+$ ]] && tr '\0' ' ' 2>/dev/null <"/proc/$p/cmdline" | grep -q ht1 && echo "$p"; return 0; }
 
 # A rebuild needs setup's backup.
 case $CMD in again|full|verify)
@@ -76,13 +92,19 @@ setup)
     if ! held; then
         local_gib=${1:-}
         if [[ -z $local_gib ]]; then
-            # Overlays, the repository and the targets: about the guest's
-            # data two and a half times over, and the rescuer's overlay.
-            used=$(du -s --block-size=1G "$W/vms/$G"/*.qcow2 2>/dev/null | awk '{s += $1} END {print s + 0}')
-            local_gib=$(( used * 5 / 2 + 4 ))
+            # The run's room (ram-size.sh: logged peaks, else ram-sizes.tsv) plus 2 GiB
+            # of this script's own (the bko-holt build, cargo's target/).
+            local_gib=$("$HERE/ram-size.sh" "$G" 2>/dev/null | awk 'NF >= 3 { print $2 + 2 }')
+            if [[ -z $local_gib ]]; then   # no ram-size.sh beside it: the old rule
+                used=$(du -s --block-size=1G "$W/vms/$G"/*.qcow2 2>/dev/null | awk '{s += $1} END {print s + 0}')
+                local_gib=$(( used * 5 / 2 + 4 ))
+            fi
         fi
         echo "Reserving ${local_gib} GiB of RAM disk and 6 GiB of memory (cmp-run.sh's ledger)"
-        setsid bash -c "echo \$\$ > '$ST/reserve.pid'; exec '$W/cmp-run.sh' --reserve '$local_gib' 6 sleep infinity" \
+        rm -f "$ST/reserve.pid"   # a dead holder's: the wait below reads the new one's
+        # The debug steps run outside the holder's scope, so the wear log
+        # (jobs.log) sees only the holder: sleep's writes.
+        WEAR_TAG=ht1dbg:$G setsid bash -c "echo \$\$ > '$ST/reserve.pid'; exec '$W/cmp-run.sh' --reserve '$local_gib' 6 sleep infinity" \
             </dev/null >"$ST/reserve.log" 2>&1 &
         # Until the ledger has its row (cmp-run.sh waits there while the
         # room isn't free); the pid file comes a moment after the start.
@@ -140,13 +162,17 @@ status)
     echo "guest $G ($PLAT), run $R"
     held && echo "reserved: $(grep "^$(cat "$ST/reserve.pid") " /mnt/bko-ram/.reserve | cut -d' ' -f2,3 | sed 's/ / GiB RAM disk, /') GiB memory" || echo "not reserved"
     rescuer_up && echo "rescuer up on port $PORT" || echo "no rescuer up"
+    p=$(running); [[ -z $p ]] || echo "a step at work: ht1.sh, pid $p"
     [[ -n $(ss -Hltn "sport = :$BPORT" 2>/dev/null) ]] && echo "build guest up on port $BPORT"
     [[ -f $ST/bko-holt ]] && echo "bko-holt: $(sha256sum "$ST/bko-holt" | cut -c1-12), built $(date -r "$ST/bko-holt" +%T)"
     [[ -d $R ]] && echo "RAM disk use: $(sudo du -sh "$R" | cut -f1)"
+    [[ -f $R/logs/phases.tsv ]] && { echo "phases (KiB):"; sed 's/^/  /' "$R/logs/phases.tsv"; }
     [[ -f $R/report.txt ]] && { echo "last report:"; sed 's/^/  /' "$R/report.txt"; }
     ;;
 done)
-    rescuer_up && { HT_KEEP= sudo pkill -f "^qemu-system.*:$PORT-:22"; sleep 3; }
+    p=$(running)
+    [[ -z $p ]] || { echo "ht1-debug: a step (ht1.sh, pid $p) is at work in $R: let it end first" >&2; exit 1; }
+    rescuer_up && { sudo pkill -f "$RPAT"; sleep 3; }
     [[ $PLAT == linux ]] || "$HERE/build-holt.sh" --stop "$PLAT" "$BPORT" 2>/dev/null
     # The holder is sudo (cmp-run.sh runs CMD through it): root's to signal.
     held && sudo kill "$(cat "$ST/reserve.pid")"

@@ -22,10 +22,15 @@
 # order, the decoy after the targets.  A ZFS pool on more than one disk must
 # import with every one of them ONLINE wherever the script mounts it.
 #
-# The debugging options are ht1.sh's (HT_RAM, HT_HOLT, HT_QUICK, HT_THROUGH,
-# HT_KEEP; ht1-debug.sh drives them).  Each rebuild runs its rescuer on a
-# throwaway overlay of the one holding the backup (R/rescuer-try.qcow2), so
-# no try leaves anything behind for the next (an imported pool, a log).
+# The write path is ht1-lib.sh's (README: "Where a run works, and what it
+# keeps"): R is /mnt/bko-ram/holttest1d/RUN/GUEST when the caller holds a
+# reservation, and the run ends up in /bkoscratch/holttest1d/RUN/GUEST; the
+# restores use a checked copy of the shipped set's PLATFORM/rustic-bko
+# (HT_BKO_BIN, HT_ROUND, HT_RUSTIC).  The debugging options are ht1.sh's
+# (HT_RAM, HT_CLEAN, HT_HOLT, HT_QUICK, HT_THROUGH, HT_KEEP; ht1-debug.sh
+# drives them).  Each rebuild runs its rescuer on a throwaway overlay of the
+# one holding the backup (R/rescuer-try.qcow2), so no try leaves anything
+# behind for the next (an imported pool, a log).
 set -uo pipefail
 
 G=$1 RUN=$2; shift 2
@@ -34,20 +39,19 @@ W=/home/m/backotter-work
 BIN=/bkoscratch/holttest1d/bin
 HERE=$(dirname "$(realpath "$0")")
 T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, vm-lib, compare/), as ht1.sh's
+[[ -r $HERE/ht1-lib.sh ]] || { echo "ht1-bsd: no ht1-lib.sh beside $0" >&2; exit 2; }
+# shellcheck source=ht1-lib.sh
+. "$HERE/ht1-lib.sh"
 VARIANT=${HT_VARIANT:-}
 case $VARIANT in ""|bigger|oneshot) ;; *) echo "HT_VARIANT: bigger or oneshot" >&2; exit 2 ;; esac
 GV=$G${VARIANT:+-$VARIANT}
-BASE=/bkoscratch/holttest1d; [[ ${HT_RAM:-} == 1 ]] && BASE=/mnt/bko-ram/holttest1d
-R=$BASE/$RUN/$GV
-PORT=${HT_PORT:-2970}
+PORT=${HT_PORT:-2690}
 export SSH_PORT=$PORT
-mkdir -p "$R/logs" "$R/dumps" /bkoscratch/tmp
-export TMPDIR=/bkoscratch/tmp; [[ ${HT_RAM:-} == 1 ]] && TMPDIR=/mnt/bko-ram/tmp
-install -d -m 1777 "$TMPDIR"
 fails=0
 say() { echo "$*" | tee -a "$R/report.txt"; }
 ok() { say "PASS $*"; }
 bad() { say "FAIL $*"; fails=$((fails + 1)); }
+ht_paths   # R, where the run works, and K, where it ends up (ht1-lib.sh)
 
 # The guest's system, its rescuer guest, and the rescuer's disk names: its
 # own disk is the first (D0), the others follow in attachment order.
@@ -145,7 +149,6 @@ LISTMOUNTS='mount | sed -e "s/ type [^ ]* (.*//" -e "s/ (.*//" -e "s/^.* on //"'
 # A disk's sectors (the name, ld1), and a checksum of some of them.
 SECTORS='sectors() { case $(uname) in FreeBSD) diskinfo /dev/$1 | cut -f4 ;; DragonFly) echo $(( $(printf %d 0x$(diskinfo /dev/$1 | sed -n "s/.*size=0x\([0-9a-fA-F]*\).*/\1/p")) / 512 )) ;; *) disklabel $1 | awk "/^total sectors:/ {print \$3}" ;; esac; }'
 HOLT=${HT_HOLT:-$BIN/$PLAT/bko-holt}
-RUSTIC=${HT_RUSTIC:-$W/bko-bin/$PLAT/rustic-bko}
 gdir=$W/vms/$G gkey=$gdir/id_ed25519
 rdir=$W/vms/$RG rkey=$rdir/id_ed25519
 # The guest's other disks (vm-run-options' --disk, named relative to its
@@ -172,13 +175,42 @@ fi
 imgs=("$gimg" "${gextra[@]}") n=$((1 + ${#gextra[@]}))
 rimg=$rdir/$RG.qcow2; [[ -f $rimg ]] || rimg=$(ls "$rdir"/*.qcow2 | head -n 1)
 rfw=(); [[ -f $rdir/vm-run-options ]] && read -ra rfw < "$rdir/vm-run-options"
+# Where the run works and what a pass keeps (ht1-lib.sh; README "Where a run
+# works, and what it keeps").  RESC holds the repository: a rerun from
+# rebuild or verify needs it.
+HT_BULK=('src-*.qcow2' 'dst-*.qcow2' rescuer.qcow2 rescuer-try.qcow2 decoy.qcow2 prep-boot.qcow2 rustic-bko repo-password tmp)
+HT_ZIP=(src.listing dst.listing)
+ht_require
+case ${PHASES[0]} in   # what the first phase remakes is not copied back from K
+    backup)  ht_seed rescuer.qcow2 rescuer-try.qcow2 'dst-*.qcow2' decoy.qcow2 tmp/ ;;
+    rebuild) ht_seed 'src-*.qcow2' 'dst-*.qcow2' rescuer-try.qcow2 decoy.qcow2 tmp/ ;;
+    verify)  ht_seed 'src-*.qcow2' rescuer-try.qcow2 decoy.qcow2 tmp/ ;;
+esac
+ht_begin
+ht_rustic_take "$PLAT"
+# Each one-time rescuer below stays on /bkoscratch, and is made under a lock
+# (checked again inside it): two jobs can't both write its .part, and the
+# second finds it made.  The wait is in the background, so that a signal (the
+# sampler's stop, a kill) ends it at once; ht_release ends the waiter then.
+# Up to 2 h: DragonFly's prep can take up to 90 min (boot, cpdup, poweroff).
+plw=""
+prep_lock() {
+    { exec {plk}>>"/bkoscratch/holttest1d/rescuer/.$RG-prep.lock" && { flock -w 7200 "$plk" & plw=$!; wait "$plw"; }; }
+    local s=$?; plw=""
+    ((s == 0)) || { echo "ht1-bsd: no lock for $prep" >&2; exit 1; }
+}
+ht_release() { [[ -z $plw ]] || kill "$plw" 2>/dev/null; }   # (ht_end calls it)
+# The prep's VM: the QEMU on its image (vm-run names it by its real path; the
+# lock keeps it the only one), never another run's on the port.
+prep_qemu() { pgrep -f "^qemu-system.*$(realpath -m -- "$prep.part" | sed 's/[][\.*^$]/\\&/g')"; }
 # OpenBSD finds its partitions by the disklabel's UID (DUID), and two disks
 # with one DUID make it refuse both: the rescuer is a copy of openbsd8
 # with a DUID of its own (fstab rewritten to match), made once.
 if [[ $PLAT == openbsd ]]; then
     prep=/bkoscratch/holttest1d/rescuer/$RG-newduid.qcow2
+    mkdir -p "${prep%/*}"
+    prep_lock
     if [[ ! -f $prep ]]; then
-        mkdir -p "${prep%/*}"
         qemu-img convert -O qcow2 "$rimg" "$prep.part"
         setsid -f "$T/vm-run" --serial-log "$R/logs/rescuer-prep-serial.log" "$prep.part" </dev/null >/dev/null 2>&1
         for _ in $(seq 120); do timeout 8 ssh -q -i "$rkey" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 root@127.0.0.1 true 2>/dev/null && break; sleep 5; done
@@ -196,10 +228,13 @@ echo "DUID $old -> $new"
 sync
 PREP
         timeout 20 ssh -q -i "$rkey" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@127.0.0.1 "shutdown -p now" >/dev/null 2>&1
-        for _ in $(seq 36); do pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null || break; sleep 5; done
-        pkill -f "^qemu-system.*:$PORT-:22" || true
+        for _ in $(seq 36); do [[ -n $(prep_qemu) ]] || break; sleep 5; done
+        # shellcheck disable=SC2046  # PIDs
+        kill $(prep_qemu) 2>/dev/null
         grep -q "^DUID" "$R/logs/rescuer-prep.log" && mv "$prep.part" "$prep"
+        [[ -f $prep ]] && ht_note "made the one-time rescuer $prep ($(du -sh "$prep" | cut -f1) on /bkoscratch)"
     fi
+    exec {plk}>&-
     [[ -f $prep ]] || { echo "ht1-bsd: no OpenBSD rescuer with its own DUID (logs/rescuer-prep.log)" >&2; exit 1; }
     rimg=$prep
 fi
@@ -208,17 +243,21 @@ fi
 # omnios58 whose pool has a new GUID (zpool reguid), made once.
 if [[ $PLAT == illumos ]]; then
     prep=/bkoscratch/holttest1d/rescuer/$RG-reguid.qcow2
+    mkdir -p "${prep%/*}"
+    prep_lock
     if [[ ! -f $prep ]]; then
-        mkdir -p "${prep%/*}"
         qemu-img convert -O qcow2 "$rimg" "$prep.part"
         setsid -f "$T/vm-run" "${rfw[@]}" --serial-log "$R/logs/rescuer-prep-serial.log" "$prep.part" </dev/null >/dev/null 2>&1
         for _ in $(seq 120); do timeout 8 ssh -q -i "$rkey" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 root@127.0.0.1 true 2>/dev/null && break; sleep 5; done
         timeout 300 ssh -q -i "$rkey" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@127.0.0.1 '/usr/sbin/zpool reguid rpool && /usr/sbin/zpool get -H -o value guid rpool && echo PREP-DONE' > "$R/logs/rescuer-prep.log" 2>&1
         timeout 30 ssh -q -i "$rkey" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@127.0.0.1 "/usr/sbin/shutdown -y -i5 -g0" >/dev/null 2>&1
-        for _ in $(seq 36); do pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null || break; sleep 5; done
-        pkill -f "^qemu-system.*:$PORT-:22" || true
+        for _ in $(seq 36); do [[ -n $(prep_qemu) ]] || break; sleep 5; done
+        # shellcheck disable=SC2046  # PIDs
+        kill $(prep_qemu) 2>/dev/null
         grep -q "^PREP-DONE" "$R/logs/rescuer-prep.log" && mv "$prep.part" "$prep"
+        [[ -f $prep ]] && ht_note "made the one-time rescuer $prep ($(du -sh "$prep" | cut -f1) on /bkoscratch)"
     fi
+    exec {plk}>&-
     [[ -f $prep ]] || { echo "ht1-bsd: no illumos rescuer with a pool GUID of its own (logs/rescuer-prep.log)" >&2; exit 1; }
     rimg=$prep
 fi
@@ -229,8 +268,9 @@ fi
 # own; cpdup the files), made once.
 if [[ $PLAT == dragonfly ]]; then
     prep=/bkoscratch/holttest1d/rescuer/$RG-newfsid.qcow2
+    mkdir -p "${prep%/*}"
+    prep_lock
     if [[ ! -f $prep ]]; then
-        mkdir -p "${prep%/*}"
         rm -f "$prep.part" "$R/prep-boot.qcow2"
         qemu-img create -q -f qcow2 "$prep.part" "$(qemu-img info --output=json "$rimg" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])')"
         qemu-img create -q -f qcow2 -b "$rimg" -F qcow2 "$R/prep-boot.qcow2"
@@ -255,11 +295,14 @@ umount /mnt/new
 echo PREP-DONE
 PREP
         timeout 20 ssh -q -i "$rkey" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@127.0.0.1 "/sbin/poweroff" >/dev/null 2>&1
-        for _ in $(seq 36); do pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null || break; sleep 5; done
-        pkill -f "^qemu-system.*:$PORT-:22" || true
+        for _ in $(seq 36); do [[ -n $(prep_qemu) ]] || break; sleep 5; done
+        # shellcheck disable=SC2046  # PIDs
+        kill $(prep_qemu) 2>/dev/null
         rm -f "$R/prep-boot.qcow2"
         grep -q "^PREP-DONE" "$R/logs/rescuer-prep.log" && mv "$prep.part" "$prep"
+        [[ -f $prep ]] && ht_note "made the one-time rescuer $prep ($(du -sh "$prep" | cut -f1) on /bkoscratch)"
     fi
+    exec {plk}>&-
     [[ -f $prep ]] || { echo "ht1-bsd: no DragonFly rescuer with a HAMMER2 of its own (logs/rescuer-prep.log)" >&2; exit 1; }
     rimg=$prep
 fi
@@ -303,18 +346,26 @@ sshk() { local key=$1; shift; printf 'PATH=%s; export PATH\n%s\n' "$GPATH" "$*" 
 # A script on stdin, for anything longer than a line.
 shk() { local key=$1; { printf 'PATH=%s; export PATH\n' "$GPATH"; cat; } | timeout "${TMO:-600}" ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o ServerAliveInterval=15 "$GUSER@127.0.0.1" "/bin/sh -s"; }
 put() { local key=$1 file=$2 dest=$3; timeout 600 ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$GUSER@127.0.0.1" "cat > '$dest' && chmod 755 '$dest'" < "$file"; }
+# (Without ht_begin's copies of the caller's stdout and stderr: a rescuer
+# HT_KEEP keeps up outlives the run, and its caller's ssh or pipe.)
 vm_up() { local image=$1 log=$2; shift 2
-    setsid -f "$T/vm-run" --serial-log "$log" "$@" "$image" </dev/null >"$log.vm-run" 2>&1
+    setsid -f "$T/vm-run" --serial-log "$log" "$@" "$image" </dev/null >"$log.vm-run" 2>&1 {HT_FD1}>&- {HT_FD2}>&-
 }
 vm_wait() { local key=$1
     for _ in $(seq 120); do TMO=8 sshk "$key" true 2>/dev/null && return 0; sleep 5; done
     return 1
 }
+# This run's VM only (ht_qemus: a QEMU with its disks in R that this run
+# started, ht_own), never another run's that took the port while none of
+# this run's was up, nor one started by hand on R's (K's) disks.
 vm_down() { local key=$1
+    [[ -n $(ht_qemus "$R") ]] || return 0
     TMO=20 sshk "$key" "/sbin/poweroff || /sbin/shutdown -p now || /usr/sbin/shutdown -y -i5 -g0 || shutdown -q" >/dev/null 2>&1
-    for _ in $(seq 36); do pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null || return 0; sleep 5; done
-    pkill -f "^qemu-system.*:$PORT-:22"; sleep 5
-    pkill -9 -f "^qemu-system.*:$PORT-:22"; sleep 1
+    for _ in $(seq 36); do [[ -n $(ht_qemus "$R") ]] || return 0; sleep 5; done
+    # shellcheck disable=SC2046  # PIDs
+    kill $(ht_qemus "$R") 2>/dev/null; sleep 5
+    # shellcheck disable=SC2046
+    kill -9 $(ht_qemus "$R") 2>/dev/null; sleep 1
 }
 
 HEALTH='f=0; no() { echo "FAIL $*"; f=1; }
@@ -506,7 +557,7 @@ phase_rebuild() {
     say "== rebuild"
     [[ -f $RESC ]] || { bad "no rescuer with the backup (run the backup phase)"; return; }
     # A rescuer HT_KEEP left up from the last try.
-    pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null && vm_down "$rkey"
+    [[ -z $(ht_qemus "$R") ]] || vm_down "$rkey"
     local try=$R/rescuer-try.qcow2
     rm -f "$try"; qemu-img create -q -f qcow2 -b "$RESC" -F qcow2 "$try"
     local grow=0; [[ $VARIANT == bigger ]] && grow=$((1 << 30))
@@ -520,6 +571,7 @@ phase_rebuild() {
     rescuer_ready $((n + 2))
     put "$rkey" "$HOLT" $RH/bko-holt
     put "$rkey" "$R/dumps/src.json" $RH/layout.json
+    put "$rkey" "$RUSTIC" $RH/rustic-bko   # the run's binary, for a rebuild rerun too
     # The targets are the rescuer's disks 1..n, the decoy the one after.
     local D=$((n + 1))
     local decoy; decoy=$(rdev $D)
@@ -586,7 +638,7 @@ phase_rebuild() {
         [[ $s == restore || $s == oneshot ]] && extra=("${repo[@]}")
         [[ $s == oneshot ]] && how=(--through close)
         TMO=7200 load_step 0 "$s" "${map[@]}" "${extra[@]}" "${how[@]}" --commit || {
-            sshk "$rkey" "cat $([[ $PLAT == haiku ]] && echo /var/run || echo /run)/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
+            sshk "$rkey" "cat /var/run/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
             sshk "$rkey" "set -x; mount; df; gpart show; disklabel ${RN[1]}; dkctl ${RN[1]} listwedges; zpool status; zpool list -v; zfs list -o name,mounted,mountpoint,canmount; glabel status; swapctl -l" > "$R/logs/rebuild-failed-state.txt" 2>&1
             kept_or_down; return; }
         [[ $PLAT == haiku ]] && sshk "$rkey" "echo $s \$(stat -c %Y.%y /mnt/bko-target 2>&1)" >> "$R/logs/haiku-root-mtime.txt" 2>&1
@@ -614,7 +666,7 @@ phase_rebuild() {
         sshk "$rkey" "$edges" > "$R/logs/edges-end.txt" 2>&1
         [[ $(sed -n "${D}p" "$R/logs/edges-end.txt") == "$(sed -n "${D}p" "$R/logs/edges-before.txt")" && -n $(sed -n "${D}p" "$R/logs/edges-end.txt") ]] || bad "the decoy changed (logs/edges-before.txt, edges-end.txt)"
     fi
-    sshk "$rkey" "cat $([[ $PLAT == haiku ]] && echo /var/run || echo /run)/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
+    sshk "$rkey" "cat /var/run/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
     [[ ${HT_KEEP:-} == 1 ]] && { kept_or_down; return; }
     vm_down "$rkey"
     rm -f "$try"
@@ -633,7 +685,7 @@ BOOT_STAGE_RE='^(extra: |missing: )?(\./)?(var/log/bko-holt|var/log|boot/zfs/zpo
 
 phase_verify() {
     # A rescuer HT_KEEP left up has the targets open.
-    pgrep -f "^qemu-system.*:$PORT-:22" >/dev/null && vm_down "$rkey"
+    [[ -z $(ht_qemus "$R") ]] || vm_down "$rkey"
     say "== verify"
     if [[ -f $RESC ]]; then
         vm_up "$RESC" "$R/logs/verify-rescuer-serial.log" "${v_snap[@]}" "${rfw[@]}" --memory 3072 "${s_resc[@]}" "${all_dst[@]}"
@@ -690,11 +742,9 @@ phase_verify() {
 }
 
 say "HoltTest1 $G ($PLAT), run $RUN, $(date -u +%FT%TZ), phases: ${PHASES[*]}"
-for p in "${PHASES[@]}"; do "phase_$p"; done
-if ((fails == 0)); then
-    say "RESULT: PASS"
-    [[ " ${PHASES[*]} " == *" verify "* ]] && rm -f "${src[@]}" "${dst[@]}" "$RESC" "$R/rescuer-try.qcow2" "$R/decoy.qcow2"
-    exit 0
-fi
+ht_manifest "$rimg"
+for p in "${PHASES[@]}"; do ht_phase_start "$p"; "phase_$p"; ht_phase_end "$p"; done
+ht_summary
+if ((fails == 0)); then say "RESULT: PASS"; exit 0; fi
 say "RESULT: FAIL ($fails)"
 exit 1

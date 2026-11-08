@@ -5,35 +5,64 @@
 #   BIN_DIR holds restic-bko and rustic-bko for Linux (roundN/bin/linux).
 # Boots a --snapshot throwaway of ~/backotter-work/vms/aerynos (its
 # vm-run-options: --uefi --no-secure-boot) with two empty raw scratch disks in
-# /bkoscratch/PREFIX/aerynos (disk, not RAM), runs inner.sh there (the guest's
-# own mkfs.f2fs with the root's features: fixture, four directions into fresh
-# f2fs file systems, restore over immutable/append-only files, non-root run),
-# copies the dumps and repositories out and judges them with judge.py (node
-# identity with restic-bko cat blob).  Prints PASS/FAIL/LIMIT lines, writes
-# results.json in the run's log dir, exits 0 if nothing FAILs.  The guest has
-# no python3 and no e2fsprogs, so the comparison in the guest uses
+# /mnt/bko-ram/PREFIX/aerynos, where QEMU's snapshot overlays take every write
+# (ramdisk-peak-kib in the log dir is the run's peak), runs inner.sh there (the
+# guest's own mkfs.f2fs with the root's features: fixture, four directions into
+# fresh f2fs file systems, restore over immutable/append-only files, non-root
+# run), copies the dumps and repositories out and judges them with judge.py
+# (node identity with restic-bko cat blob).  Prints PASS/FAIL/LIMIT lines,
+# writes results.json in the run's log dir, exits 0 if nothing FAILs.  The
+# guest has no python3 and no e2fsprogs, so the comparison in the guest uses
 # stat/getfattr/getfacl (its own) and lsattr/chattr (the host's, shipped in
 # with their glibc loader and libraries).
 set -uo pipefail
 [[ $# -ge 3 ]] || { echo "usage: check.sh BIN_DIR PORT PREFIX [NEED_FILTER]" >&2; exit 2; }
 BIN=$(realpath "$1") PORT=$2 PFX=$3 FILTER=${4:-}
+# cleanup removes the scratch from a RAM disk other sessions share: it has to
+# stay inside /mnt/bko-ram/PREFIX.
+[[ $PFX =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "check.sh: PREFIX must be a plain name" >&2; exit 2; }
+[[ ! -L /mnt/bko-ram/$PFX ]] || { echo "check.sh: /mnt/bko-ram/$PFX is a symlink" >&2; exit 2; }
 HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=$HOME/backotter-work
-export TMPDIR=/bkoscratch/tmp; mkdir -p "$TMPDIR"
 if [[ -z ${CHECK_INNER:-} ]]; then
     # shellcheck source=/dev/null
     source "$WORK/testvm/compare/guest-slot.sh"
     case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
-    CHECK_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 1 5 env CHECK_INNER=1 TMPDIR="$TMPDIR" BKO_GUEST_SLOT="$BKO_GUEST_SLOT" STC_LOGS="${STC_LOGS:-}" "$HERE/$(basename "$0")" "$@"
+    CHECK_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 2 5 env CHECK_INNER=1 BKO_GUEST_SLOT="$BKO_GUEST_SLOT" STC_LOGS="${STC_LOGS:-}" "$HERE/$(basename "$0")" "$@"
     rc=$?; slot_give; exit $rc
 fi
-SCR=/bkoscratch/$PFX/aerynos
+# The scratch is made only here, once the reservation holds.
+SCR=/mnt/bko-ram/$PFX/aerynos; export TMPDIR=$SCR/tmp
 LOG=${STC_LOGS:-$WORK/stictest1/aerynos/logs}/$(date +%Y%m%d-%H%M%S); mkdir -p "$LOG"
-cleanup() { vm_halt; rm -rf "$SCR"; rmdir "/bkoscratch/$PFX" 2>/dev/null; }
+# trap '': a later signal can't cut the cleanup short.  The peak watcher goes
+# last: if this shell is killed outright meanwhile, it stops the VM and
+# removes SCR.
+cleanup() { trap '' INT TERM HUP PIPE; vm_halt; rm -rf "$SCR"; rmdir "/mnt/bko-ram/$PFX" 2>/dev/null; kill "${PEAK:-}" 2>/dev/null; }
 rm -rf "$SCR"; mkdir -p "$SCR/tmp" "$SCR/out/w" "$SCR/ship/c/b" "$SCR/ship/c/g/bin" "$SCR/ship/c/g/lib"
 # shellcheck source=/dev/null
 . "$WORK/testvm/vm-lib.sh"
 trap cleanup EXIT
+# What the run uses of the RAM disk, sampled: SCR, and QEMU's snapshot overlays
+# (unlinked, so counted through its open files); "10s", since drive.py counts
+# a check.sh's "sleep 10" as a slot wait.  If this shell is killed outright, it
+# stops the VM and removes SCR, unless a later run made SCR anew.
+peak() {
+    local m=0 k q f ino vm="^qemu-system.*${SCR//./\\.}/"
+    ino=$(stat -c %i "$SCR")
+    while sleep 10s && kill -0 $$ 2>/dev/null; do
+        k=$(du -sk "$SCR" 2>/dev/null | cut -f1)
+        for q in $(pgrep -f "^qemu-system.*:$PORT-:22"); do
+            for f in "/proc/$q/fd"/*; do
+                [[ $(readlink "$f") == "$SCR/"*"(deleted)" ]] && k=$((k + $(stat -L -c %b "$f" 2>/dev/null || echo 0) / 2))
+            done
+        done
+        ((k > m)) && m=$k && echo "$m" >"$LOG/ramdisk-peak-kib"
+    done
+    kill -0 $$ 2>/dev/null && return
+    [[ $(stat -c %i "$SCR" 2>/dev/null) == "$ino" ]] || return
+    pkill -f "$vm"; rm -rf "$SCR"; rmdir "/mnt/bko-ram/$PFX" 2>/dev/null
+}
+peak & PEAK=$!
 truncate -s 1500M "$SCR/src.img"; truncate -s 10G "$SCR/work.img"
 cp "$BIN/restic-bko" "$BIN/rustic-bko" "$SCR/ship/c/b/"
 cp "$HERE/inner.sh" "$SCR/ship/c/"

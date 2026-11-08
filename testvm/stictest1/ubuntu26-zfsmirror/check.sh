@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 # SticTest1 targeted check of ubuntu26-zfsmirror (Ubuntu 26.04, encrypted
 # mirrored ZFS root rpool with acltype=posix xattr=sa, ext4 /boot on md RAID1).
-# Never a whole-disk backup: in a throwaway (--ram, overlay in
-# /mnt/bko-ram/PREFIX) copy of the guest, with the guest's own ZFS and
+# Never a whole-disk backup: in a throwaway copy of the guest (--ram, overlays
+# in /mnt/bko-ram/PREFIX/ubuntu26-zfsmirror), with the guest's own ZFS and
 # e2fsprogs, it runs, first alone, then the other two at once:
 #   fs_roundtrip.py zfs-ds   torture.sh's tree (+ the guest's own real files,
 #                            below) in file systems of the root pool rpool
@@ -10,10 +10,11 @@
 #   nonroot-rt.sh linux      a backup as root, restores as uid 4321 (ZFS, ext4)
 # Only the source and target file systems are on rpool: the repositories
 # (about 1.1 GiB each, torture.sh's 1 GiB of random data) and the ext4 images
-# are on a spare disk (vdc, /var/tmp in the guest, /bkoscratch/PREFIX on the
-# host), so the overlays of rpool's two disks (every write twice) stay within
-# the --reserve's 9 GiB of RAM disk (both disks: 7.7 GiB at most, measured
-# 2026-11-04). The guest's ARC is capped at 1 GiB.
+# are on a spare disk (vdc, /var/tmp in the guest), so the mirror doesn't write
+# them twice. rpool's two overlays (7.7 GiB at most, measured 2026-11-04) and
+# the spare (sparse, with discard passed through, and the zfs-ds run's
+# repositories gone before the ext4 run) are all in
+# /mnt/bko-ram/PREFIX/ubuntu26-zfsmirror. The guest's ARC is capped at 1 GiB.
 # fs_roundtrip.py does all four directions (restic->restic, rustic->rustic,
 # restic->rustic, rustic->restic) into fresh file systems, a restore over a
 # changed copy (immutable/append-only files in the way) and a rerun over the
@@ -31,14 +32,19 @@
 # Prints PASS/FAIL/LIMIT lines, writes results.json into the log dir
 # (~/backotter-work/stictest1/ubuntu26-zfsmirror/logs/PREFIX-TIME/), exit 0 if
 # nothing FAILs.  Takes a guest slot (Chopin 3 on 2700-2799, Cinqcent 3 on
-# 2900-2999) and cmp-run.sh --reserve 9 MEM itself (MEM: the guest's MEMORY,
-# MB, default 4096, in GiB + 0.5): 9 GiB for the overlays of rpool's two disks.
+# 2900-2999) and cmp-run.sh --reserve 23 MEM itself (MEM: the guest's MEMORY,
+# MB, default 4096, in GiB + 0.5): 23 GiB of RAM disk for rpool's overlays and
+# the spare, an estimate; ramdisk-peak-kib in the log dir is the run's peak.
 set -uo pipefail
 G=ubuntu26-zfsmirror self=$(realpath "$0")
 WORK=${BKO_WORK:-$HOME/backotter-work}
-[[ $# -ge 3 ]] || { sed -n '2,30p' "$0" >&2; exit 2; }
+[[ $# -ge 3 ]] || { sed -n '2,31p' "$0" >&2; exit 2; }
 BIN=$(realpath "$1") PORT=$2 PREFIX=$3 FILTER=${4:-}
 [[ -x $BIN/restic-bko && -x $BIN/rustic-bko ]] || { echo "no restic-bko/rustic-bko in $BIN" >&2; exit 2; }
+# cleanup removes the scratch from a RAM disk other sessions share: it has to
+# stay inside /mnt/bko-ram/PREFIX.
+[[ $PREFIX =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "check.sh: PREFIX must be a plain name" >&2; exit 2; }
+[[ ! -L /mnt/bko-ram/$PREFIX ]] || { echo "check.sh: /mnt/bko-ram/$PREFIX is a symlink" >&2; exit 2; }
 
 if [[ -z ${STICK_INNER:-} ]]; then
     # shellcheck source=/dev/null
@@ -47,7 +53,7 @@ if [[ -z ${STICK_INNER:-} ]]; then
         chopin) slot_take 3 2700-2799 ;;
         *) slot_take 3 2900-2999 ;;
     esac
-    STICK_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 9 "$(awk -v m="${MEMORY:-4096}" 'BEGIN { print m / 1024 + 0.5 }')" "$self" "$@"; rc=$?
+    STICK_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 23 "$(awk -v m="${MEMORY:-4096}" 'BEGIN { print m / 1024 + 0.5 }')" "$self" "$@"; rc=$?
     slot_give
     exit $rc
 fi
@@ -57,14 +63,42 @@ here=$WORK/testvm/compare
 dir=$WORK/vms/$G
 LOGS=${STC_LOGS:-$WORK/stictest1/$G/logs}/$PREFIX-$(date +%Y%m%d-%H%M%S)
 mkdir -p "$LOGS"
-SCR=/mnt/bko-ram/$PREFIX
-mkdir -p "$SCR"
+SCR=/mnt/bko-ram/$PREFIX/$G   # its own, even where PREFIX names a shared directory (tmp, holttest1d)
+rm -rf "$SCR"; mkdir -p "$SCR"
 export TMPDIR=$SCR RAM_DIR=$SCR   # vm-run --ram's overlays (not /dev/shm); nothing here chroots
-SPARE=/bkoscratch/$PREFIX/spare.img   # vdc: /var/tmp in the guest (ext4 run, images), off the root pool
-mkdir -p "${SPARE%/*}" && truncate -s 24G "$SPARE"
-cleanup() { vm_halt 2>/dev/null; exec 9>&- 2>/dev/null; rm -rf "$SCR" "$LOGS/console.in" "${SPARE%/*}"; }
+SPARE=$SCR/spare.img   # vdc: /var/tmp in the guest (repositories, ext4 images), off the root pool; sparse
+truncate -s 24G "$SPARE"
+cleanup() {
+    trap '' INT TERM HUP PIPE   # a later signal can't cut it short
+    # The peak watcher goes last: if this shell is killed outright meanwhile,
+    # it stops the VM and removes SCR.
+    vm_halt 2>/dev/null; exec 9>&- 2>/dev/null
+    rm -rf "$SCR" "$LOGS/console.in"; rmdir "/mnt/bko-ram/$PREFIX" 2>/dev/null
+    kill "${PEAK:-}" 2>/dev/null
+}
 trap cleanup EXIT
-trap 'exit 1' INT TERM
+trap 'trap "" INT TERM HUP PIPE; exit 1' INT TERM HUP   # (a second signal can't skip cleanup)
+# What the run uses of the RAM disk, sampled: SCR (rpool's overlays, the spare)
+# and any unlinked file QEMU holds there; "10s", since drive.py counts a
+# check.sh's "sleep 10" as a slot wait.  If this shell is killed outright, it
+# stops the VM and removes SCR, unless a later run made SCR anew.
+peak() {
+    local m=0 k q f ino vm="^qemu-system.*${SCR//./\\.}/"
+    ino=$(stat -c %i "$SCR")
+    while sleep 10s && kill -0 $$ 2>/dev/null; do
+        k=$(du -sk "$SCR" 2>/dev/null | cut -f1)
+        for q in $(pgrep -f "^qemu-system.*:$PORT-:22"); do
+            for f in "/proc/$q/fd"/*; do
+                [[ $(readlink "$f") == "$SCR/"*"(deleted)" ]] && k=$((k + $(stat -L -c %b "$f" 2>/dev/null || echo 0) / 2))
+            done
+        done
+        ((k > m)) && m=$k && echo "$m" >"$LOGS/ramdisk-peak-kib"
+    done
+    kill -0 $$ 2>/dev/null && return
+    [[ $(stat -c %i "$SCR" 2>/dev/null) == "$ino" ]] || return
+    pkill -f "$vm"; rm -rf "$SCR"; rmdir "/mnt/bko-ram/$PREFIX" 2>/dev/null
+}
+peak & PEAK=$!
 
 boot() {
     local pass opts=() deadline answered=0 n
@@ -75,7 +109,7 @@ boot() {
     exec 9<>"$LOGS/console.in"
     VM_GUEST=$G VM_PORT=$PORT VM_KEY=$dir/id_ed25519
     (cd "$dir" && SSH_PORT=$PORT exec setsid "$VM_LIB_DIR/vm-run" "${opts[@]}" --ram \
-        --memory "${MEMORY:-4096}" "$G.qcow2" -- -drive "file=$SPARE,if=virtio,format=raw,cache=unsafe" <"$LOGS/console.in" >"$LOGS/serial.log" 2>"$LOGS/vm-run.log") &
+        --memory "${MEMORY:-4096}" "$G.qcow2" -- -drive "file=$SPARE,if=virtio,format=raw,cache=unsafe,discard=unmap,detect-zeroes=unmap" <"$LOGS/console.in" >"$LOGS/serial.log" 2>"$LOGS/vm-run.log") &
     VM_PID=$!
     deadline=$((SECONDS + 600))
     until T=15 vm_ssh true 2>/dev/null; do
@@ -159,8 +193,11 @@ vm_sh 'chmod 755 /root/bko/testvm/compare/*.sh /root/bko/bin/*
 cat "$LOGS/guest.log" >&2
 
 echo "== $G: fs_roundtrip zfs-ds, then ext4 and nonroot-rt linux at once" >&2
+# In between, the zfs-ds run's repositories go (the tar below leaves them out
+# anyway), and fstrim hands their blocks back to the RAM disk.
 T=930 vm_ssh 'cd /root/bko && export RESTIC_BKO=/root/bko/bin/restic-bko RUSTIC_BKO=/root/bko/bin/rustic-bko
     date +"%T zfs-ds"; timeout 480 python3 -I testvm/compare/fs_roundtrip.py zfs-ds >zfs-ds.log 2>&1; echo $? >zfs-ds.rc
+    (cd /var/tmp/fsrt-zfs-ds && rm -rf restic-bko rustic-bko restic-to-rustic rustic-to-restic); fstrim -v /var/tmp
     date +"%T zfs-ds rc $(cat zfs-ds.rc); ext4, nonroot"; zfs list -H -o name,used,avail rpool; df -h /var/tmp | tail -n 1
     (timeout 420 python3 -I testvm/compare/fs_roundtrip.py ext4 >ext4.log 2>&1; echo $? >ext4.rc) &
     (RESTIC=bin/restic-bko RUSTIC=bin/rustic-bko timeout 420 bash testvm/compare/nonroot-rt.sh linux >nonroot.log 2>&1; echo $? >nonroot.rc) &

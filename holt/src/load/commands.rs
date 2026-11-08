@@ -2210,13 +2210,33 @@ impl Builder<'_> {
         out
     }
 
-    /// The directory under EFI/ the source's loader lives in ("debian").
+    /// The directory under EFI/ the source's loader lives in ("debian").  Only
+    /// an entry on the layout's own disks can say: NVRAM outlives reinstalls,
+    /// and can list other disks' loaders and long-gone systems'.  The entry
+    /// that booted comes first, then BootOrder, then the rest; with none of
+    /// those, what's on the ESP.
     fn bootloader_id(&self) -> String {
-        for e in self.layout.arr(&["boot", "efi", "entries"]) {
-            if let Some(f) = e.get("file").and_then(Value::as_str) {
-                let parts: Vec<&str> = f.split(['\\', '/']).filter(|p| !p.is_empty()).collect();
-                if parts.len() >= 3 && parts[0].eq_ignore_ascii_case("EFI") && !parts[1].eq_ignore_ascii_case("BOOT") {
-                    return parts[1].to_ascii_lowercase();
+        let dir_of = |f: &str| {
+            let parts: Vec<&str> = f.split(['\\', '/']).filter(|p| !p.is_empty()).collect();
+            (parts.len() >= 3 && parts[0].eq_ignore_ascii_case("EFI") && !parts[1].eq_ignore_ascii_case("BOOT")).then(|| parts[1].to_ascii_lowercase())
+        };
+        let mut wanted: Vec<String> = self.layout.str_at(&["boot", "efi", "boot_current"]).map(str::to_string).into_iter().collect();
+        wanted.extend(self.layout.v.at(&["boot", "efi", "boot_order"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)));
+        let rank = |e: &Value| s(e, "number").and_then(|n| wanted.iter().position(|w| *w == n)).unwrap_or(usize::MAX);
+        let on_layout = |e: &Value| e.at(&["partition", "device"]).and_then(Value::as_str).is_some_and(|part| self.layout.disks.iter().any(|d| d.parts.iter().any(|p| p.name == part)));
+        let mut entries: Vec<&Value> = self.layout.arr(&["boot", "efi", "entries"]).iter().filter(|e| on_layout(e)).collect();
+        entries.sort_by_key(|e| rank(e));
+        if let Some(id) = entries.iter().find_map(|e| e.get("file").and_then(Value::as_str).and_then(dir_of)) {
+            return id;
+        }
+        for esp in self.layout.arr(&["boot", "esps"]) {
+            let files = esp.at(&["contents", "files"]).and_then(Value::as_array).into_iter().flatten();
+            for path in files.filter_map(|f| f.get("path").and_then(Value::as_str)) {
+                let low = path.to_ascii_lowercase();
+                if low.ends_with("/shimx64.efi") || low.ends_with("/grubx64.efi") {
+                    if let Some(id) = dir_of(path) {
+                        return id;
+                    }
                 }
             }
         }
@@ -2328,6 +2348,32 @@ mod tests {
         // Without the sizes, the AG count as before.
         let c = crate::json::parse(r#"{"block_size":4096,"ag_count":8}"#).unwrap();
         assert!(mkfs_xfs("/dev/x", &c, None).join(" ").contains("-d agcount=8"));
+    }
+
+    #[test]
+    fn bootloader_id_comes_from_the_layouts_own_disks() {
+        let id_of = |efi: &str, esps: &str| {
+            let j = sample::bios_mbr()
+                .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+                .replace(r#""firmware": "bios""#, r#""firmware": "uefi""#)
+                .replace(r#""efi": null,"#, &format!(r#""efi": {efi}, "esps": {esps},"#));
+            let t = text(built_from(&j, &[]).stage(Stage::Boot));
+            let at = t.find("--bootloader-id=").expect(&t) + "--bootloader-id=".len();
+            t[at..].split_whitespace().next().unwrap().to_string()
+        };
+        let win = r#"{"number": "0000", "description": "Windows", "file": "\\EFI\\Microsoft\\Boot\\bootmgfw.efi"}"#;
+        let zorin = r#"{"number": "0002", "description": "Zorin", "file": "\\EFI\\zorin\\shimx64.efi", "partition": {"device": "vda1"}}"#;
+        let ubuntu = r#"{"number": "0003", "description": "Ubuntu", "file": "\\EFI\\ubuntu\\shimx64.efi", "partition": {"device": "vda1"}}"#;
+        // A stale entry listed first, on no disk of the layout.
+        assert_eq!(id_of(&format!(r#"{{"entries": [{win}, {ubuntu}], "boot_order": ["0000", "0003"]}}"#), "[]"), "ubuntu");
+        // The entry that booted beats BootOrder and the listing.
+        assert_eq!(id_of(&format!(r#"{{"entries": [{zorin}, {ubuntu}], "boot_current": "0003", "boot_order": ["0002", "0003"]}}"#), "[]"), "ubuntu");
+        // Then BootOrder.
+        assert_eq!(id_of(&format!(r#"{{"entries": [{zorin}, {ubuntu}], "boot_order": ["0003", "0002"]}}"#), "[]"), "ubuntu");
+        // Nothing on the layout's disks: what's on the ESP.
+        let esps = r#"[{"contents": {"files": [{"path": "EFI/BOOT/BOOTX64.EFI"}, {"path": "EFI/ubuntu/shimx64.efi"}]}}]"#;
+        assert_eq!(id_of(&format!(r#"{{"entries": [{win}], "boot_order": ["0000"]}}"#), esps), "ubuntu");
+        assert_eq!(id_of(&format!(r#"{{"entries": [{win}], "boot_order": ["0000"]}}"#), "[]"), "debian");
     }
 
     #[test]

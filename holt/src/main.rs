@@ -25,7 +25,7 @@ Source: https://github.com/mchobbit/backotter
 /// ships its license too.
 const LICENSE: &str = include_str!("../LICENSE");
 
-const DUMP_USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR | --disk DEV...]
+const DUMP_USAGE: &str = "Usage: bko-holt dump [--compact] [--only-disk NAME...] [--sysroot DIR | --disk DEV...]
 
 Writes a JSON description of this system's disk layout and boot
 setup to standard output: disks and partition tables, boot code, md RAID,
@@ -38,6 +38,10 @@ from the devices themselves.  As another user it falls back to udev's
 records and says so under \"warnings\".
 
   --compact       one line of JSON instead of an indented document
+  --only-disk NAME
+                  leave out every other whole disk and its partitions (nvme0n1;
+                  repeat for more), so that a rescue stick or a backup drive
+                  plugged in stays out of the layout
   --disk DEV      describe the system on these disks instead (Linux only):
                   one that can't run bko-holt itself (Redox, Sculpt OS),
                   read off its disks attached here
@@ -101,6 +105,7 @@ fn dump(args: &[String]) -> ExitCode {
     let mut compact = false;
     let mut sysroot: Option<String> = None;
     let mut disks: Vec<String> = Vec::new();
+    let mut only: Vec<String> = Vec::new();
     let mut args = args.iter();
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -109,6 +114,13 @@ fn dump(args: &[String]) -> ExitCode {
                 Some(d) => disks.push(d.clone()),
                 None => {
                     eprintln!("bko-holt dump: --disk needs a device\n\n{DUMP_USAGE}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--only-disk" => match args.next() {
+                Some(d) => only.push(d.trim_start_matches("/dev/").to_string()),
+                None => {
+                    eprintln!("bko-holt dump: --only-disk needs a disk's name\n\n{DUMP_USAGE}");
                     return ExitCode::from(2);
                 }
             },
@@ -139,7 +151,15 @@ fn dump(args: &[String]) -> ExitCode {
         }
         None => Sys::host(),
     };
-    let result = if disks.is_empty() { bko_holt::dump(&sys) } else { bko_holt::other::offline::report(&sys, &disks, &bko_holt::timestamp()) };
+    if !only.is_empty() && !disks.is_empty() {
+        eprintln!("bko-holt dump: --only-disk and --disk don't go together\n\n{DUMP_USAGE}");
+        return ExitCode::from(2);
+    }
+    if let Some(n) = bko_holt::report::unknown_disk(&sys, &only) {
+        eprintln!("bko-holt dump: --only-disk {n}: no such whole disk here");
+        return ExitCode::from(2);
+    }
+    let result = if disks.is_empty() { bko_holt::dump_only(&sys, &only) } else { bko_holt::other::offline::report(&sys, &disks, &bko_holt::timestamp()) };
     let report = match result {
         Ok(r) => r,
         Err(e) => {

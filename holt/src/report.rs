@@ -1038,11 +1038,36 @@ fn host_json(sys: &Sys) -> Value {
         .build()
 }
 
+fn is_whole_disk(b: &blockdev::BlockDev) -> bool {
+    matches!(b.kind, Kind::Disk | Kind::Nbd | Kind::Ram)
+}
+
+/// The first of `only` that isn't a whole disk here.
+pub fn unknown_disk(sys: &Sys, only: &[String]) -> Option<String> {
+    if only.is_empty() {
+        return None;
+    }
+    let found = blockdev::scan(sys);
+    only.iter().find(|n| !found.iter().any(|b| is_whole_disk(b) && b.name == **n)).cloned()
+}
+
 pub fn build(sys: &Sys, os: Option<&OsRelease>, generated: &str) -> Value {
+    build_only(sys, os, generated, &[])
+}
+
+/// `build`, leaving out the whole disks not in `only`, and their partitions;
+/// everything else (loop devices, md, device-mapper) stays.  An empty `only`
+/// leaves nothing out.
+pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[String]) -> Value {
     if !sys.privileged {
         sys.warn("not running as root: partition tables, superblocks and LVM/ZFS labels were not read; device contents come from udev's database");
     }
-    let devs: Vec<Dev> = blockdev::scan(sys).into_iter().map(|b| examine(sys, b)).collect();
+    let mut scanned = blockdev::scan(sys);
+    if !only.is_empty() {
+        let left_out: Vec<String> = scanned.iter().filter(|b| is_whole_disk(b) && !only.contains(&b.name)).map(|b| b.name.clone()).collect();
+        scanned.retain(|b| !left_out.contains(&b.name) && !b.parent.as_ref().is_some_and(|p| left_out.contains(p)));
+    }
+    let devs: Vec<Dev> = scanned.into_iter().map(|b| examine(sys, b)).collect();
     let mountinfo = sys.read("/proc/self/mountinfo").map(|t| mounts::parse_mountinfo(&t)).unwrap_or_default();
     let ctx = Ctx { devs: &devs, mounts: &mountinfo };
 
@@ -1271,6 +1296,23 @@ mod tests {
         // "@home" isn't under "@" just because it starts with it.
         assert_eq!(btrfs_reachable_path(&[&root], "@home"), None);
         assert_eq!(btrfs_reachable_path(&[&top], "@snapshots/1").as_deref(), Some("/mnt/top/@snapshots/1"));
+    }
+
+    #[test]
+    fn only_disk_leaves_out_other_disks_and_their_partitions() {
+        let t = crate::testutil::Tree::new("only-disk");
+        t.disk("nvme0n1", "259:0", &[0u8; 4096], 512).disk("sda", "8:0", &[0u8; 4096], 512).partition("sda", "sda1", "8:1", 1, 2048, 2048, &[0u8; 512]);
+        t.file("/proc/self/mountinfo", "");
+        let s = Sys::new(t.root(), Box::new(crate::sys::FakeRunner::default()), true);
+        let names = |only: &[String]| -> Vec<String> {
+            let v = build_only(&s, None, "2026-11-08T00:00:00Z", only);
+            v.at(&["storage", "disks"]).and_then(Value::as_array).into_iter().flatten().filter_map(|d| d.get("name").and_then(Value::as_str).map(str::to_string)).collect()
+        };
+        assert_eq!(names(&[]).len(), 2);
+        assert_eq!(names(&["nvme0n1".to_string()]), vec!["nvme0n1".to_string()]);
+        assert_eq!(unknown_disk(&s, &["nvme0n1".to_string()]), None);
+        // A partition isn't a whole disk.
+        assert_eq!(unknown_disk(&s, &["sda1".to_string()]).as_deref(), Some("sda1"));
     }
 
     #[test]

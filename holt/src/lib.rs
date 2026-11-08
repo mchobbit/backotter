@@ -42,10 +42,19 @@ pub fn timestamp() -> String {
 
 /// `bko-holt dump`: the report for `sys`, after checking it's a supported system.
 pub fn dump(sys: &sys::Sys) -> Result<json::Value, String> {
+    dump_only(sys, &[])
+}
+
+/// `bko-holt dump --only-disk`: as `dump`, leaving out every whole disk not
+/// in `only` (none left out when it's empty).
+pub fn dump_only(sys: &sys::Sys, only: &[String]) -> Result<json::Value, String> {
     if let Some(fam) = other::Family::current() {
+        if !only.is_empty() {
+            return Err("--only-disk works on Linux only".to_string());
+        }
         return other::dump(sys, fam, &timestamp());
     }
     let os = osrel::read(sys);
     osrel::check_supported(os.as_ref())?;
-    Ok(report::build(sys, os.as_ref(), &timestamp()))
+    Ok(report::build_only(sys, os.as_ref(), &timestamp(), only))
 }

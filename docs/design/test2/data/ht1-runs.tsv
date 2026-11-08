@@ -1,0 +1,363 @@
+chopin	fin1a	arch	PASS	2026-11-05T15:11:47Z	0.2.0
+chopin	fin1f	fedora44	PASS	2026-11-05T15:19:40Z	0.2.0
+chopin	fin1f	fedora44-uefi	PASS	2026-11-05T15:19:40Z	0.2.0
+chopin	fin1m	mint22	PASS	2026-11-05T15:11:47Z	0.2.0
+chopin	fin1u	ubuntu26-uefi	PASS	2026-11-05T15:19:39Z	0.2.0
+chopin	fin1z	zorin18	PASS	2026-11-05T15:11:47Z	0.2.0
+chopin	fin2d	debian13	PASS	2026-11-05T15:35:17Z	0.2.0
+chopin	fin2m	mint22	PASS	2026-11-05T15:35:16Z	0.2.0
+chopin	fin2z	zorin18	PASS	2026-11-05T15:25:29Z	0.2.0
+chopin	fin3a	arch	PASS	2026-11-05T15:42:30Z	0.2.0
+chopin	fin3f	fedora44	PASS	2026-11-05T15:49:39Z	0.2.0
+chopin	fin3f	fedora44-uefi	PASS	2026-11-05T15:49:39Z	0.2.0
+chopin	fin3m	mint22	PASS	2026-11-05T15:49:39Z	0.2.0
+chopin	fin3u	ubuntu26-uefi	PASS	2026-11-05T15:42:30Z	0.2.0
+chopin	fin4a	arch	PASS	2026-11-05T16:15:38Z	0.2.0
+chopin	fin4d	debian13-zfs	PASS	2026-11-05T16:15:39Z	0.2.0
+chopin	fin4u	ubuntu26-uefi	PASS	2026-11-05T16:15:38Z	0.2.0
+chopin	ht1a	arch	PASS	2026-11-05T14:43:09Z	0.2.0
+chopin	ht1d	debian13-stack	PASS	2026-11-05T15:00:11Z	0.2.0
+chopin	ht1f	fedora44	PASS	2026-11-05T15:02:22Z	0.2.0
+chopin	ht1f	fedora44-uefi	PASS	2026-11-05T15:07:05Z	0.2.0
+chopin	ht1m	mint22	PASS	2026-11-05T14:02:44Z	0.2.0
+chopin	ht1u	ubuntu26-uefi	PASS	2026-11-05T14:43:09Z	0.2.0
+chopin	ht1z	zorin18	PASS	2026-11-05T14:43:08Z	0.2.0
+chopin	r11	dragonfly6	FAIL (6)	2026-11-05T22:35:44Z	0.2.0
+chopin	r11	freebsd14	FAIL (4)	2026-11-05T22:30:10Z	0.2.0
+chopin	r11	freebsd15	FAIL (4)	2026-11-05T22:30:10Z	0.2.0
+chopin	r11	haiku6	FAIL (4)	2026-11-05T22:57:18Z	0.2.0
+chopin	r11	hardenedbsd15	PASS	2026-11-05T22:30:10Z	0.2.0
+chopin	r11	omnios58	FAIL (5)	2026-11-05T22:43:46Z	0.2.0
+chopin	r11	openbsd8	FAIL (4)	2026-11-05T22:31:17Z	0.2.0
+chopin	r13	freebsd15	PASS	2026-11-05T22:57:48Z	0.2.0
+chopin	r13	openbsd8	FAIL (1)	2026-11-05T22:57:53Z	0.2.0
+chopin	r16	haiku6	FAIL (3)	2026-11-05T23:57:00Z	0.2.0
+chopin	r16	omnios58	FAIL (5)	2026-11-05T23:57:34Z	0.2.0
+chopin	r16	openbsd8	PASS	2026-11-05T23:57:00Z	0.2.0
+chopin	r18	haiku6	FAIL (2)	2026-11-06T00:37:12Z	0.2.0
+chopin	r18	omnios58	FAIL (4)	2026-11-06T00:37:12Z	0.2.0
+chopin	r19	haiku6	FAIL (1)	2026-11-06T01:13:43Z	0.2.0
+chopin	r19	omnios58	FAIL (5)	2026-11-06T01:13:43Z	0.2.0
+chopin	r1a	aerynos	FAIL (1)	2026-11-05T17:35:15Z	
+chopin	r1a	alpine324	FAIL (1)	2026-11-05T17:35:15Z	
+chopin	r1a	arch	PASS	2026-11-05T17:35:15Z	0.2.0
+chopin	r1all	alpine324	PASS	2026-11-05T18:12:06Z	0.2.0
+chopin	r1all	arch	PASS	2026-11-05T18:06:03Z	0.2.0
+chopin	r1all	artix-s6	PASS	2026-11-05T18:11:05Z	0.2.0
+chopin	r1all	cachyos	FAIL (1)	2026-11-05T18:13:07Z	
+chopin	r1all	debian13-stack	PASS	2026-11-05T18:06:03Z	0.2.0
+chopin	r1all	debian13-zfs	PASS	2026-11-05T18:06:03Z	0.2.0
+chopin	r1all	devuan6	FAIL (1)	2026-11-05T18:12:07Z	
+chopin	r1all	dragonfly6	FAIL (1)	2026-11-05T18:14:39Z	
+chopin	r1all	fedora44-uefi	PASS	2026-11-05T18:06:03Z	0.2.0
+chopin	r1all	freebsd14	FAIL (1)	2026-11-05T18:14:39Z	
+chopin	r1all	ghostbsd26	FAIL (1)	2026-11-05T18:13:38Z	
+chopin	r1all	nixos2605	FAIL (1)	2026-11-05T18:13:37Z	
+chopin	r1all	omnios58	FAIL (1)	2026-11-05T18:15:39Z	
+chopin	r1all	openbsd8	FAIL (1)	2026-11-05T18:14:39Z	
+chopin	r1all	redox	FAIL (1)	2026-11-05T18:15:09Z	
+chopin	r1all	rocky10	FAIL (1)	2026-11-05T18:13:38Z	
+chopin	r1all	tumbleweed	FAIL (1)	2026-11-05T18:13:07Z	
+chopin	r1all	ubuntu26-zfsmirror	PASS	2026-11-05T18:06:03Z	0.2.0
+chopin	r1all	void-musl	FAIL (1)	2026-11-05T18:11:36Z	
+chopin	r1all	zorin18	PASS	2026-11-05T18:11:06Z	0.2.0
+chopin	r1b	freebsd15	FAIL (3)	2026-11-05T21:28:36Z	0.2.0
+chopin	r1d	debian13-zfs	PASS	2026-11-05T16:59:29Z	0.2.0
+chopin	r1m	mint22-oneshot	PASS	2026-11-05T17:16:36Z	0.2.0
+chopin	r1m	mint22	PASS	2026-11-05T17:16:36Z	0.2.0
+chopin	r20	haiku6	FAIL (1)	2026-11-06T01:55:45Z	0.2.0
+chopin	r20	omnios58	FAIL (3)	2026-11-06T01:55:45Z	0.2.0
+chopin	r21	haiku6	PASS	2026-11-06T02:29:17Z	0.2.0
+chopin	r21	omnios58	FAIL (3)	2026-11-06T02:29:17Z	0.2.0
+chopin	r22	omnios58	FAIL (3)	2026-11-06T02:59:53Z	0.2.0
+chopin	r23	omnios58	FAIL (3)	2026-11-06T03:31:51Z	0.2.0
+chopin	r24	omnios58	FAIL (4)	2026-11-06T04:04:04Z	0.2.0
+chopin	r25	omnios58	FAIL (4)	2026-11-06T04:15:13Z	0.2.0
+chopin	r26	omnios58	FAIL (4)	2026-11-06T04:43:49Z	0.2.0
+chopin	r27	omnios58	FAIL (5)	2026-11-06T05:14:25Z	0.2.0
+chopin	r28	omnios58	FAIL (4)	2026-11-06T05:43:41Z	0.2.0
+chopin	r29	omnios58	FAIL (4)	2026-11-06T06:10:16Z	0.2.0
+chopin	r2a	aerynos	FAIL (2)	2026-11-05T17:42:43Z	0.2.0
+chopin	r2a	alpine324	PASS	2026-11-05T17:47:42Z	0.2.0
+chopin	r2all	aerynos	PASS	2026-11-06T10:31:13Z	0.2.0
+chopin	r2all	alpine324	PASS	2026-11-06T10:30:38Z	0.2.0
+chopin	r2all	arch	PASS	2026-11-06T10:28:17Z	0.2.0
+chopin	r2all	artix-dinit	PASS	2026-11-06T10:37:08Z	0.2.0
+chopin	r2all	artix-s6	PASS	2026-11-06T10:38:13Z	0.2.0
+chopin	r2all	cachyos	PASS	2026-11-06T10:46:23Z	0.2.0
+chopin	r2all	debian12	PASS	2026-11-06T11:03:05Z	0.2.0
+chopin	r2all	debian13	PASS	2026-11-06T10:09:15Z	0.2.0
+chopin	r2all	debian13-stack	PASS	2026-11-06T10:26:22Z	0.2.0
+chopin	r2all	debian13-stack.try1	FAIL (1)	2026-11-06T10:09:35Z	0.2.0
+chopin	r2all	debian13-stack.try2	FAIL (1)	2026-11-06T10:16:46Z	0.2.0
+chopin	r2all	debian13-zfs	PASS	2026-11-06T10:09:55Z	0.2.0
+chopin	r2all	devuan6	PASS	2026-11-06T10:45:33Z	0.2.0
+chopin	r2all	fedora44	PASS	2026-11-06T10:20:42Z	0.2.0
+chopin	r2all	fedora44-uefi	PASS	2026-11-06T10:21:17Z	0.2.0
+chopin	r2all	freebsd14	PASS	2026-11-06T10:48:34Z	0.2.0
+chopin	r2all	freebsd14.try1	FAIL (1)	2026-11-06T10:40:38Z	0.2.0
+chopin	r2all	freebsd15-geli	none	2026-11-06T11:16:46Z	
+chopin	r2all	freebsd15	PASS	2026-11-06T10:42:13Z	0.2.0
+chopin	r2all	ghostbsd26	PASS	2026-11-06T11:10:10Z	0.2.0
+chopin	r2all	ghostbsd26-zfs	PASS	2026-11-06T11:18:51Z	0.2.0
+chopin	r2all	haiku6	PASS	2026-11-06T11:28:27Z	0.2.0
+chopin	r2all	hardenedbsd15	PASS	2026-11-06T11:11:15Z	0.2.0
+chopin	r2all	mint22	PASS	2026-11-06T10:27:42Z	0.2.0
+chopin	r2all	mx25	PASS	2026-11-06T10:47:13Z	0.2.0
+chopin	r2all	netbsd11	PASS	2026-11-06T11:14:40Z	0.2.0
+chopin	r2all	nixos2605	PASS	2026-11-06T10:54:49Z	0.2.0
+chopin	r2all	omarchy	PASS	2026-11-06T10:56:54Z	0.2.0
+chopin	r2all	openbsd8	PASS	2026-11-06T11:12:35Z	0.2.0
+chopin	r2all	pop24	PASS	2026-11-06T10:49:24Z	0.2.0
+chopin	r2all	rocky10-lvm	PASS	2026-11-06T11:08:50Z	0.2.0
+chopin	r2all	rocky10	PASS	2026-11-06T11:04:55Z	0.2.0
+chopin	r2all	tumbleweed	PASS	2026-11-06T11:06:30Z	0.2.0
+chopin	r2all	tumbleweed.try1	FAIL (1)	2026-11-06T10:58:59Z	0.2.0
+chopin	r2all	ubuntu24	PASS	2026-11-06T10:12:01Z	0.2.0
+chopin	r2all	ubuntu26-uefi	PASS	2026-11-06T10:13:21Z	0.2.0
+chopin	r2all	ubuntu26-zfsmirror	PASS	2026-11-06T10:13:41Z	0.2.0
+chopin	r2all	ubuntu26-zfs	PASS	2026-11-06T10:33:03Z	0.2.0
+chopin	r2all	ubuntu26-zfs.try1	FAIL (1)	2026-11-06T10:19:52Z	0.2.0
+chopin	r2all	void-musl	PASS	2026-11-06T10:53:14Z	0.2.0
+chopin	r2all	zorin18	PASS	2026-11-06T10:39:33Z	0.2.0
+chopin	r2d	debian13-oneshot	PASS	2026-11-05T17:04:49Z	0.2.0
+chopin	r2d	debian13-stack-bigger	FAIL (1)	2026-11-05T17:02:41Z	0.2.0
+chopin	r2d	debian13-zfs	PASS	2026-11-05T17:02:40Z	0.2.0
+chopin	r2l	cachyos	PASS	2026-11-05T20:39:25Z	0.2.0
+chopin	r2l	devuan6	PASS	2026-11-05T20:39:25Z	0.2.0
+chopin	r2l	nixos2605	FAIL (2)	2026-11-05T20:39:25Z	0.2.0
+chopin	r2l	tumbleweed	FAIL (2)	2026-11-05T20:39:25Z	0.2.0
+chopin	r2l	void-musl	FAIL (1)	2026-11-05T20:39:25Z	0.2.0
+chopin	r30	omnios58	FAIL (2)	2026-11-06T06:38:01Z	0.2.0
+chopin	r31	omnios58	PASS	2026-11-06T06:48:37Z	0.2.0
+chopin	r32	alpine324	PASS	2026-11-06T07:13:51Z	0.2.0
+chopin	r32	arch	PASS	2026-11-06T07:12:51Z	0.2.0
+chopin	r32	artix-s6	PASS	2026-11-06T07:12:20Z	0.2.0
+chopin	r32	cachyos	FAIL (1)	2026-11-06T07:15:53Z	0.2.0
+chopin	r32	debian13-stack	PASS	2026-11-06T07:07:17Z	0.2.0
+chopin	r32	debian13-zfs	PASS	2026-11-06T07:07:17Z	0.2.0
+chopin	r32	devuan6	PASS	2026-11-06T07:14:52Z	0.2.0
+chopin	r32	fedora44-uefi	PASS	2026-11-06T07:07:17Z	0.2.0
+chopin	r32	freebsd14	FAIL (4)	2026-11-06T07:22:25Z	
+chopin	r32	nixos2605	FAIL (1)	2026-11-06T07:16:23Z	0.2.0
+chopin	r32	openbsd8	FAIL (4)	2026-11-06T07:22:25Z	
+chopin	r32	rocky10	FAIL (1)	2026-11-06T07:22:25Z	
+chopin	r32	tumbleweed	FAIL (2)	2026-11-06T07:22:25Z	0.2.0
+chopin	r32	ubuntu26-zfsmirror	PASS	2026-11-06T07:07:17Z	0.2.0
+chopin	r32	void-musl	FAIL (2)	2026-11-06T07:22:25Z	0.2.0
+chopin	r32	zorin18	FAIL (1)	2026-11-06T07:14:22Z	0.2.0
+chopin	r3a	aerynos-bigger	PASS	2026-11-05T17:55:13Z	0.2.0
+chopin	r3a	aerynos	PASS	2026-11-05T17:49:30Z	0.2.0
+chopin	r3a	alpine324	PASS	2026-11-05T17:49:30Z	0.2.0
+chopin	r3a	arch-oneshot	PASS	2026-11-05T17:49:31Z	0.2.0
+chopin	r3a	arch	PASS	2026-11-05T17:49:30Z	0.2.0
+chopin	r3all	aerynos	PASS	2026-11-06T23:16:31Z	0.2.1
+chopin	r3all	alpine324	PASS	2026-11-06T23:16:11Z	0.2.1
+chopin	r3all	alpinebsd	PASS	2026-11-06T22:28:08Z	0.2.0
+chopin	r3all	arch	PASS	2026-11-06T23:13:30Z	0.2.1
+chopin	r3all	artix-dinit	PASS	2026-11-06T23:17:36Z	0.2.1
+chopin	r3all	cachyos	PASS	2026-11-06T23:13:50Z	0.2.1
+chopin	r3all	debian13	PASS	2026-11-06T22:46:29Z	0.2.1
+chopin	r3all	debian13-stack	PASS	2026-11-06T21:53:16Z	0.2.1
+chopin	r3all	devuan6	PASS	2026-11-06T22:49:19Z	0.2.1
+chopin	r3all	fedora44	PASS	2026-11-06T22:57:59Z	0.2.1
+chopin	r3all	fedora44-uefi	PASS	2026-11-06T23:01:50Z	0.2.1
+chopin	r3all	freebsd14	PASS	2026-11-06T22:31:58Z	0.2.0
+chopin	r3all	ghostbsd26	PASS	2026-11-06T22:36:48Z	0.2.0
+chopin	r3all	hardenedbsd15	PASS	2026-11-06T22:40:53Z	0.2.0
+chopin	r3all	mint22	PASS	2026-11-06T23:04:30Z	0.2.1
+chopin	r3all	netbsd11	PASS	2026-11-06T22:23:48Z	0.2.0
+chopin	r3all	nixos2605	PASS	2026-11-06T22:14:07Z	0.2.1
+chopin	r3all	omnios58	PASS	2026-11-06T22:08:17Z	0.2.0
+chopin	r3all	openbsd8	PASS	2026-11-06T22:17:27Z	0.2.0
+chopin	r3all	pop24	PASS	2026-11-06T23:08:25Z	0.2.1
+chopin	r3all	rocky10-lvm	PASS	2026-11-06T21:56:51Z	0.2.1
+chopin	r3all	rocky10	PASS	2026-11-06T23:04:10Z	0.2.1
+chopin	r3all	ubuntu26-uefi	PASS	2026-11-06T22:52:09Z	0.2.1
+chopin	r3all	ubuntu26-zfs	PASS	2026-11-06T22:00:26Z	0.2.1
+chopin	r3all	void-musl	PASS	2026-11-06T23:18:11Z	0.2.1
+chopin	r3all	zorin18	PASS	2026-11-06T23:07:05Z	0.2.1
+chopin	r3d	debian13-oneshot	PASS	2026-11-05T17:08:39Z	0.2.0
+chopin	r3d	debian13-stack-bigger	PASS	2026-11-05T17:08:39Z	0.2.0
+chopin	r3d	debian13-zfs	PASS	2026-11-05T17:08:39Z	0.2.0
+chopin	r3l	tumbleweed	FAIL (1)	2026-11-05T20:50:27Z	0.2.0
+chopin	r3l	void-musl	PASS	2026-11-05T20:50:27Z	0.2.0
+chopin	r4l	nixos2605	FAIL (2)	2026-11-05T21:00:35Z	0.2.0
+chopin	r4l	tumbleweed	PASS	2026-11-05T20:58:34Z	0.2.0
+chopin	r4u	alpinebsd	PASS	2026-11-07T01:53:38Z	0.2.0
+chopin	r4u	nixos2605	FAIL (1)	2026-11-07T02:10:24Z	0.2.1
+chopin	r4u	ubuntu26-zfs	PASS	2026-11-07T02:10:04Z	0.2.1
+chopin	r4u	ubuntu26-zfs.stopped	none	2026-11-07T01:53:18Z	0.2.1
+chopin	r5	freebsd14	FAIL (2)	2026-11-05T21:39:25Z	0.2.0
+chopin	r5	freebsd15	FAIL (2)	2026-11-05T21:39:25Z	0.2.0
+chopin	r5	nixos2605	PASS	2026-11-05T21:39:25Z	0.2.0
+chopin	r5n	nixos2605	PASS	2026-11-07T02:19:45Z	0.2.1
+chopin	r6	openbsd8	FAIL (6)	2026-11-05T21:55:18Z	0.2.0
+chopin	r7	freebsd14	FAIL (1)	2026-11-05T22:13:48Z	0.2.0
+chopin	r7	freebsd15	FAIL (1)	2026-11-05T22:13:47Z	0.2.0
+chopin	r7	hardenedbsd15	FAIL (1)	2026-11-05T22:13:48Z	0.2.0
+chopin	raid1	debian13-stack-degraded	PASS	2026-11-07T02:47:17Z	0.2.1
+chopin	raid1	fedora44-raid	FAIL (1)	2026-11-07T02:41:38Z	0.2.1
+chopin	raid1	freebsd15-mirror	PASS	2026-11-07T02:54:32Z	0.2.0
+chopin	raid1	rocky10-raid5	FAIL (1)	2026-11-07T03:00:30Z	0.2.1
+chopin	raid1	ubuntu26-raid-degraded	PASS	2026-11-07T03:00:19Z	0.2.1
+chopin	raid1	ubuntu26-raid	PASS	2026-11-07T02:53:47Z	0.2.1
+chopin	raid2	debian13-stack	PASS	2026-11-07T03:16:34Z	0.2.1
+chopin	raid2	fedora44-raid	FAIL (1)	2026-11-07T03:12:48Z	0.2.1
+chopin	raid2	fedora44-uefi	PASS	2026-11-07T03:19:55Z	0.2.1
+chopin	raid2	rocky10-raid5	PASS	2026-11-07T03:26:58Z	0.2.1
+cinqcent	fin1d	debian13	PASS	2026-11-05T15:14:16Z	0.2.0
+cinqcent	fin1d	debian13-zfs	PASS	2026-11-05T15:14:47Z	0.2.0
+cinqcent	fin3d	debian13	PASS	2026-11-05T15:49:39Z	0.2.0
+cinqcent	fin3d	debian13-stack	FAIL (1)	2026-11-05T15:49:39Z	0.2.0
+cinqcent	fin3d	debian13-zfs	PASS	2026-11-05T15:42:31Z	0.2.0
+cinqcent	fin3u	ubuntu24	PASS	2026-11-05T15:42:31Z	0.2.0
+cinqcent	fin3z	zorin18	PASS	2026-11-05T15:49:40Z	0.2.0
+cinqcent	fin4d	debian13-stack	PASS	2026-11-05T16:15:38Z	0.2.0
+cinqcent	fin4u	ubuntu24	PASS	2026-11-05T16:15:38Z	0.2.0
+cinqcent	fin4u	ubuntu26-zfsmirror	PASS	2026-11-05T16:15:38Z	0.2.0
+cinqcent	ht1d	debian13	PASS	2026-11-05T14:29:13Z	0.2.0
+cinqcent	ht1d	debian13-zfs	PASS	2026-11-05T15:07:21Z	0.2.0
+cinqcent	ht1m	mint22	PASS	2026-11-05T13:56:38Z	0.2.0
+cinqcent	ht1u	ubuntu24	PASS	2026-11-05T15:07:21Z	0.2.0
+cinqcent	ht1u	ubuntu26-zfsmirror	PASS	2026-11-05T15:42:18Z	0.2.0
+cinqcent	r10	sculpt2610	FAIL (1)	2026-11-05T22:29:57Z	0.2.0
+cinqcent	r11	alpinebsd	FAIL (3)	2026-11-05T22:34:11Z	0.2.0
+cinqcent	r11	ghostbsd26	PASS	2026-11-05T22:30:10Z	0.2.0
+cinqcent	r11	netbsd11	FAIL (3)	2026-11-05T22:34:11Z	0.2.0
+cinqcent	r12	redox	FAIL (1)	2026-11-05T22:38:36Z	0.2.0
+cinqcent	r12	sculpt2610	PASS	2026-11-05T22:38:36Z	0.2.0
+cinqcent	r13	freebsd14	PASS	2026-11-05T22:42:15Z	0.2.0
+cinqcent	r14	alpinebsd	FAIL (4)	2026-11-05T22:54:33Z	0.2.0
+cinqcent	r14	dragonfly6	FAIL (3)	2026-11-05T22:55:29Z	0.2.0
+cinqcent	r14	netbsd11	PASS	2026-11-05T22:54:33Z	0.2.0
+cinqcent	r15	redox	FAIL (2)	2026-11-05T23:47:08Z	0.2.0
+cinqcent	r16	alpinebsd	FAIL (4)	2026-11-05T23:57:00Z	0.2.0
+cinqcent	r16	dragonfly6	FAIL (1)	2026-11-05T23:57:00Z	0.2.0
+cinqcent	r17	redox	PASS	2026-11-06T00:28:26Z	0.2.0
+cinqcent	r18	alpinebsd	FAIL (3)	2026-11-06T00:37:12Z	0.2.0
+cinqcent	r18	dragonfly6	PASS	2026-11-06T00:37:12Z	0.2.0
+cinqcent	r19	alpinebsd	FAIL (1)	2026-11-06T01:13:43Z	0.2.0
+cinqcent	r1a	artix-dinit	FAIL (1)	2026-11-05T17:35:15Z	
+cinqcent	r1a	artix-s6	FAIL (1)	2026-11-05T17:35:15Z	
+cinqcent	r1all	aerynos	PASS	2026-11-05T18:11:05Z	0.2.0
+cinqcent	r1all	alpinebsd	FAIL (1)	2026-11-05T18:17:38Z	
+cinqcent	r1all	artix-dinit	PASS	2026-11-05T18:11:05Z	0.2.0
+cinqcent	r1all	debian12	FAIL (1)	2026-11-05T18:16:07Z	
+cinqcent	r1all	debian13	PASS	2026-11-05T18:06:03Z	0.2.0
+cinqcent	r1all	fedora44	PASS	2026-11-05T18:06:04Z	0.2.0
+cinqcent	r1all	freebsd15	FAIL (1)	2026-11-05T18:16:37Z	
+cinqcent	r1all	haiku6	FAIL (1)	2026-11-05T18:18:08Z	
+cinqcent	r1all	hardenedbsd15	FAIL (1)	2026-11-05T18:17:07Z	
+cinqcent	r1all	mint22	PASS	2026-11-05T18:06:04Z	0.2.0
+cinqcent	r1all	mx25	PASS	2026-11-05T18:13:36Z	0.2.0
+cinqcent	r1all	netbsd11	FAIL (1)	2026-11-05T18:18:08Z	
+cinqcent	r1all	omarchy	FAIL (1)	2026-11-05T18:14:06Z	
+cinqcent	r1all	pop24	FAIL (1)	2026-11-05T18:15:37Z	
+cinqcent	r1all	rocky10-lvm	FAIL (1)	2026-11-05T18:17:38Z	
+cinqcent	r1all	sculpt2610	FAIL (1)	2026-11-05T18:19:39Z	
+cinqcent	r1all	ubuntu24	PASS	2026-11-05T18:06:03Z	0.2.0
+cinqcent	r1all	ubuntu26-uefi	PASS	2026-11-05T18:06:04Z	0.2.0
+cinqcent	r1all	ubuntu26-zfs	FAIL (1)	2026-11-05T18:12:06Z	0.2.0
+cinqcent	r1b	ghostbsd26	FAIL (3)	2026-11-05T21:28:36Z	0.2.0
+cinqcent	r1d	debian13	PASS	2026-11-05T16:59:29Z	0.2.0
+cinqcent	r1d	debian13-stack	PASS	2026-11-05T16:59:29Z	0.2.0
+cinqcent	r1m	mint22-bigger	PASS	2026-11-05T17:16:36Z	0.2.0
+cinqcent	r1m	mint22-oneshot	PASS	2026-11-05T17:16:36Z	0.2.0
+cinqcent	r20	alpinebsd	PASS	2026-11-06T01:55:45Z	0.2.0
+cinqcent	r2a	artix-dinit	PASS	2026-11-05T17:47:42Z	0.2.0
+cinqcent	r2a	artix-s6	PASS	2026-11-05T17:42:44Z	0.2.0
+cinqcent	r2all	alpinebsd	PASS	2026-11-06T11:15:04Z	0.2.0
+cinqcent	r2all	dragonfly6	PASS	2026-11-06T11:14:44Z	0.2.0
+cinqcent	r2all	omnios58	PASS	2026-11-06T11:15:57Z	0.2.0
+cinqcent	r2all	redox	PASS	2026-11-06T11:18:50Z	0.2.0
+cinqcent	r2all	sculpt2610	PASS	2026-11-06T11:15:44Z	0.2.0
+cinqcent	r2d	debian13-oneshot	PASS	2026-11-05T17:04:49Z	0.2.0
+cinqcent	r2d	debian13	PASS	2026-11-05T17:02:41Z	0.2.0
+cinqcent	r2d	debian13-stack-bigger	PASS	2026-11-05T17:05:29Z	0.2.0
+cinqcent	r2d	debian13-stack	PASS	2026-11-05T17:02:41Z	0.2.0
+cinqcent	r2l	debian12	PASS	2026-11-05T20:39:25Z	0.2.0
+cinqcent	r2l	pop24	FAIL (2)	2026-11-05T20:39:25Z	0.2.0
+cinqcent	r2l	rocky10-lvm	FAIL (3)	2026-11-05T20:39:25Z	0.2.0
+cinqcent	r2l	rocky10	FAIL (1)	2026-11-05T20:39:25Z	0.2.0
+cinqcent	r2l	ubuntu26-zfs	FAIL (2)	2026-11-05T20:40:01Z	0.2.0
+cinqcent	r32	aerynos	PASS	2026-11-06T07:20:53Z	0.2.0
+cinqcent	r32	alpinebsd	PASS	2026-11-06T07:43:31Z	0.2.0
+cinqcent	r32	artix-dinit	PASS	2026-11-06T07:17:22Z	0.2.0
+cinqcent	r32	debian12	PASS	2026-11-06T07:37:59Z	0.2.0
+cinqcent	r32	debian13	PASS	2026-11-06T07:07:18Z	0.2.0
+cinqcent	r32	fedora44	PASS	2026-11-06T07:07:18Z	0.2.0
+cinqcent	r32	freebsd15	PASS	2026-11-06T07:37:59Z	0.2.0
+cinqcent	r32	haiku6	PASS	2026-11-06T07:43:32Z	0.2.0
+cinqcent	r32	hardenedbsd15	PASS	2026-11-06T07:29:56Z	0.2.0
+cinqcent	r32	mint22	PASS	2026-11-06T07:16:21Z	0.2.0
+cinqcent	r32	mx25	PASS	2026-11-06T07:28:55Z	0.2.0
+cinqcent	r32	netbsd11	PASS	2026-11-06T07:41:00Z	0.2.0
+cinqcent	r32	omarchy	PASS	2026-11-06T07:41:00Z	0.2.0
+cinqcent	r32	pop24	PASS	2026-11-06T07:29:26Z	0.2.0
+cinqcent	r32	rocky10-lvm	PASS	2026-11-06T07:29:56Z	0.2.0
+cinqcent	r32	sculpt2610	PASS	2026-11-06T07:43:32Z	0.2.0
+cinqcent	r32	ubuntu24	PASS	2026-11-06T07:07:18Z	0.2.0
+cinqcent	r32	ubuntu26-uefi	PASS	2026-11-06T07:07:18Z	0.2.0
+cinqcent	r32	ubuntu26-zfs	PASS	2026-11-06T07:20:53Z	0.2.0
+cinqcent	r3a	alpine324-oneshot	PASS	2026-11-05T17:49:31Z	0.2.0
+cinqcent	r3a	artix-dinit	PASS	2026-11-05T17:55:13Z	0.2.0
+cinqcent	r3a	artix-s6	PASS	2026-11-05T17:49:31Z	0.2.0
+cinqcent	r3all	artix-s6	PASS	2026-11-06T23:17:53Z	0.2.1
+cinqcent	r3all	debian12	PASS	2026-11-06T22:48:11Z	0.2.1
+cinqcent	r3all	debian13-zfs	PASS	2026-11-06T22:08:13Z	0.2.1
+cinqcent	r3all	dragonfly6	PASS	2026-11-06T22:17:13Z	0.2.0
+cinqcent	r3all	freebsd15	PASS	2026-11-06T22:32:49Z	0.2.0
+cinqcent	r3all	ghostbsd26-zfs	PASS	2026-11-06T22:37:10Z	0.2.0
+cinqcent	r3all	haiku6	PASS	2026-11-06T22:11:03Z	0.2.0
+cinqcent	r3all	mx25	PASS	2026-11-06T23:18:13Z	0.2.1
+cinqcent	r3all	omarchy	PASS	2026-11-06T21:58:37Z	0.2.1
+cinqcent	r3all	redox	PASS	2026-11-06T22:14:38Z	0.2.1
+cinqcent	r3all	sculpt2610	PASS	2026-11-06T22:41:45Z	0.2.1
+cinqcent	r3all	tumbleweed	PASS	2026-11-06T22:44:50Z	0.2.1
+cinqcent	r3all	ubuntu24	PASS	2026-11-06T22:51:01Z	0.2.1
+cinqcent	r3all	ubuntu26-zfsmirror	PASS	2026-11-06T21:53:16Z	0.2.1
+cinqcent	r3d	debian13-oneshot	PASS	2026-11-05T17:08:39Z	0.2.0
+cinqcent	r3d	debian13	PASS	2026-11-05T17:08:39Z	0.2.0
+cinqcent	r3d	debian13-stack	PASS	2026-11-05T17:08:39Z	0.2.0
+cinqcent	r3l	omarchy	FAIL (1)	2026-11-05T20:53:28Z	
+cinqcent	r3l	rocky10-lvm	FAIL (1)	2026-11-05T20:50:27Z	0.2.0
+cinqcent	r3l	rocky10	PASS	2026-11-05T20:50:27Z	0.2.0
+cinqcent	r4l	omarchy	FAIL (1)	2026-11-05T20:58:34Z	0.2.0
+cinqcent	r4l	pop24	PASS	2026-11-05T20:58:34Z	0.2.0
+cinqcent	r4l	rocky10-lvm	PASS	2026-11-05T20:58:34Z	0.2.0
+cinqcent	r4l	ubuntu26-zfs	PASS	2026-11-05T20:58:34Z	0.2.0
+cinqcent	r5	ghostbsd26	FAIL (1)	2026-11-05T21:39:25Z	0.2.0
+cinqcent	r5	hardenedbsd15	FAIL (1)	2026-11-05T21:39:25Z	0.2.0
+cinqcent	r5	omarchy	FAIL (2)	2026-11-05T21:39:25Z	0.2.0
+cinqcent	r6	alpinebsd	FAIL (6)	2026-11-05T21:51:03Z	0.2.0
+cinqcent	r6	netbsd11	FAIL (5)	2026-11-05T21:51:02Z	0.2.0
+cinqcent	r6	omarchy	FAIL (2)	2026-11-05T21:51:03Z	0.2.0
+cinqcent	r7	alpinebsd	FAIL (3)	2026-11-05T22:13:48Z	0.2.0
+cinqcent	r7	ghostbsd26	FAIL (1)	2026-11-05T22:13:48Z	0.2.0
+cinqcent	r7	netbsd11	FAIL (5)	2026-11-05T22:13:48Z	0.2.0
+cinqcent	r8	redox	FAIL (1)	2026-11-05T22:23:35Z	
+cinqcent	r8	sculpt2610	FAIL (2)	2026-11-05T22:23:35Z	0.2.0
+cinqcent	r9	omarchy	PASS	2026-11-05T22:27:06Z	0.2.0
+cinqcent	r9	redox	FAIL (1)	2026-11-05T22:27:06Z	0.2.0
+cinqcent	raid1-firsttry	omnios58-mirror	none	2026-11-07T02:39:20Z	0.2.0
+cinqcent	raid1	freebsd15-mirror	PASS	2026-11-07T02:33:33Z	0.2.0
+cinqcent	raid1	omnios58-mirror	FAIL (4)	2026-11-07T02:59:21Z	0.2.0
+cinqcent	raid1-regress	freebsd15	PASS	2026-11-07T02:28:01Z	0.2.0
+cinqcent	raid1-regress	haiku6	PASS	2026-11-07T02:39:41Z	0.2.0
+cinqcent	raid1-regress	netbsd11	PASS	2026-11-07T02:39:41Z	0.2.0
+cinqcent	raid1-regress	omnios58	PASS	2026-11-07T02:33:33Z	0.2.0
+cinqcent	raid1	ubuntu26-raid-degraded	PASS	2026-11-07T03:00:19Z	0.2.1
+cinqcent	raid2	alpine324	PASS	2026-11-07T03:16:05Z	0.2.1
+cinqcent	raid2	omnios58-mirror	FAIL (2)	2026-11-07T03:25:52Z	0.2.1
+cinqcent	raid2	omnios58	PASS	2026-11-07T03:31:07Z	0.2.1
+cinqcent	raid2	rocky10-lvm	PASS	2026-11-07T03:12:49Z	0.2.1
+cinqcent	raid2	rocky10	PASS	2026-11-07T03:26:58Z	0.2.1
+cinqcent	raid3	omnios58-mirror	FAIL (5)	2026-11-07T03:40:09Z	
+cinqcent	raid3	omnios58	none	2026-11-07T04:30:15Z	
+cinqcent	raid4	omnios58-mirror	FAIL (2)	2026-11-07T04:51:06Z	0.2.1
+cinqcent	raid4	omnios58	PASS	2026-11-07T04:57:17Z	0.2.1
+cinqcent	raid5	omnios58-mirror	FAIL (4)	2026-11-07T05:05:13Z	0.2.1
+cinqcent	raid5	omnios58	FAIL (4)	2026-11-07T06:16:55Z	0.2.1
+cinqcent	raid6	omnios58-mirror	FAIL (1)	2026-11-07T07:09:53Z	0.2.1
+cinqcent	raid6	omnios58	PASS	2026-11-07T07:15:35Z	0.2.1

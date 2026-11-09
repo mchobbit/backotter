@@ -103,12 +103,22 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
             continue;
         }
         log_line(&mut log, &format!("==== stage {}", s.name()));
+        // A new tree needs its own boot stage.
+        if s == Stage::Restore {
+            let _ = std::fs::remove_file(status::boot_marker());
+        }
         for c in cmds {
             if let Err(e) = run_cmd(c, &mut log) {
                 log_line(&mut log, &format!("FAILED: {e}"));
                 err += &format!("bko-holt load: {}: {e}\n", s.name());
                 err += &format!("bko-holt load: the log is {RUN_DIR}/log/load.log\n");
                 return (EXIT_FAILED, out, err);
+            }
+        }
+        if s == Stage::Boot {
+            if let Err(e) = std::fs::write(status::boot_marker(), "") {
+                log_line(&mut log, &format!("FAILED: {e}"));
+                return (EXIT_FAILED, out, format!("bko-holt load: boot: {}: {e}\n", status::boot_marker()));
             }
         }
         // Read the disks back: the stage must show as done.

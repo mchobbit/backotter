@@ -2183,7 +2183,9 @@ impl Builder<'_> {
         Some(match self.layout.str_at(&["boot", "initramfs", "generator"]) {
             Some("prebuilt") => return None,
             Some("mkinitcpio") => Cmd::new(&["chroot", t, "mkinitcpio", "-P"]),
-            Some("dracut") => Cmd::new(&["chroot", t, "dracut", "--regenerate-all", "--force"]),
+            // Not --regenerate-all: it takes every directory in /lib/modules, and
+            // a removed kernel can leave one behind with only depmod's indexes.
+            Some("dracut") => Cmd::new(&["chroot", t, "sh", "-c", "n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; dracut --force --kver \"${k##*/}\" || exit; n=$((n + 1)); done; [ \"$n\" -gt 0 ]"]),
             // Alpine: mkinitfs KVER writes /boot/initramfs-FLAVOR.
             Some("mkinitfs") => Cmd::new(&["chroot", t, "sh", "-c", "for k in /lib/modules/*; do mkinitfs \"${k##*/}\" || exit; done"]),
             _ => Cmd::new(&["chroot", t, "update-initramfs", "-u", "-k", "all"]),
@@ -2465,7 +2467,9 @@ mod tests {
             .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"},"#)
             .replace(r#""grub": {"debconf""#, r#""grub": {"dir": "/boot/grub2", "debconf""#);
         let bt = text(built_from(&fedora, &[]).stage(Stage::Boot));
-        assert!(bt.contains("chroot /mnt/bko-target dracut --regenerate-all --force\n"), "{bt}");
+        assert!(bt.contains("dracut --force --kver"), "{bt}");
+        assert!(!bt.contains("--regenerate-all"), "{bt}");
+        assert!(bt.contains("[ -d \"$k/kernel\" ] || continue"), "{bt}");
         assert!(bt.contains("chroot /mnt/bko-target grub2-install --target=i386-pc /dev/vdb\n"), "{bt}");
         assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub2-mkconfig -o /boot/grub2/grub.cfg\n"), "{bt}");
         assert!(bt.contains("setfiles \"$f\" /boot"), "{bt}");

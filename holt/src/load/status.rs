@@ -1,11 +1,19 @@
 //! `bko-holt load --only status`: what's on the target disks now, read from
-//! the disks themselves (not from a state file), and which stage is next.
+//! the disks themselves, and which stage is next.  The boot stage is the one
+//! exception, since nothing on the disks can tell this restore's boot stage
+//! from the one before the backup: it's a mark in RUN_DIR, so after the rescue
+//! system reboots the stage runs again, which is harmless.
 
 use super::commands;
 use super::layout::Layout;
 use super::target::{self, table_id};
-use super::{Options, Stage, EXIT_OK, EXIT_PLAN_PROBLEMS};
+use super::{Options, Stage, EXIT_OK, EXIT_PLAN_PROBLEMS, RUN_DIR};
 use crate::sys::Sys;
+
+/// Exists once the boot stage has run for the tree restored in this RUN_DIR.
+pub fn boot_marker() -> String {
+    format!("{RUN_DIR}/boot.done")
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum State {
@@ -131,8 +139,9 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
             Some(_) => sys.exists(&format!("{t}/{}", crate::other::restored_marker(&layout.v))),
             None => sys.exists(&format!("{t}/etc/fstab")) && sys.exists(&format!("{t}/etc/os-release")),
         };
-    let logdir = if crate::other::Family::of_layout(&layout.v) == Some(crate::other::Family::Haiku) { "system/var/log/bko-holt" } else { "var/log/bko-holt" };
-    let booted = tree_up && !sys.list(&format!("{t}/{logdir}")).is_empty();
+    // Not from the tree: a backup of a machine restored before holds that
+    // restore's /var/log/bko-holt, so the log there says nothing about this one.
+    let booted = tree_up && sys.exists(&boot_marker());
     let unseen = if tree_up { "" } else { "the tree isn't mounted, so this can't be seen" };
     out.push((Stage::Restore, if restored { State::Done } else if tree_up { State::NotDone } else { State::Unknown }, if restored { String::new() } else { unseen.into() }));
     // Sculpt's boot stage has nothing to do: its boot areas came back with
@@ -229,6 +238,26 @@ mod tests {
         assert!(out.contains("partition  not done"), "{out}");
         assert!(out.contains("assemble   nothing to do"), "{out}");
         assert!(out.contains("next: partition\n"), "{out}");
+    }
+
+    #[test]
+    fn a_restored_log_does_not_mean_the_boot_stage_ran() {
+        let t = Tree::new("load-status-boot");
+        t.disk("vdb", "253:16", &[], 512).file("/sys/block/vdb/size", "33554432\n");
+        t.file("/proc/self/mountinfo", "36 35 253:17 / /mnt/bko-target rw,relatime - btrfs /dev/vdb2 rw\n37 36 253:18 / /mnt/bko-target/boot rw,relatime - ext4 /dev/vdb1 rw\n").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.file("/mnt/bko-target/etc/fstab", "").file("/mnt/bko-target/etc/os-release", "ID=debian\n");
+        // What a backup of a machine that was itself restored brings with it.
+        t.file("/mnt/bko-target/var/log/bko-holt/load.log", "==== stage boot done\n");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let l = Layout::from_json(crate::json::parse(&sample::bios_mbr()).unwrap()).unwrap();
+        let o = match parse_args(&["l.json".into(), "--map".into(), "vda=vdb".into()]).unwrap() {
+            Parsed::Run(o) => o,
+            _ => unreachable!(),
+        };
+        let boot = || rows(&l, &o, &s).0.into_iter().find(|r| r.0 == Stage::Boot).unwrap().1;
+        assert_eq!(boot(), State::NotDone);
+        t.file(&boot_marker(), "");
+        assert_eq!(boot(), State::Done);
     }
 
     #[test]

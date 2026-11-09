@@ -32,8 +32,9 @@ folder in vms/ next to this script's testvm/.  For each GUEST, vm-update
   5. copies the overlay (only the blocks the update wrote) to every other
      host, checks step 1 again on every host, and then on every host merges
      the overlay into the image (qemu-img commit), retakes the
-     "fresh-install" snapshot and records the new SHA-256s and generation in
-     image-state.
+     "fresh-install" snapshot, gives the clusters that freed back to the
+     host's file system (qcow2-punch.py) and records the new SHA-256s and
+     generation in image-state.
 
 So the hosts' images stay identical in what the guest sees, while only the
 update crosses the network.  (Not byte-identical: the snapshot tables carry
@@ -699,6 +700,12 @@ if [[ -n ${old// } ]]; then
     done
 fi
 rm -f -- "$overlay"
+# The clusters the old snapshot and the update freed: given back to the
+# host's file system (qcow2-punch.py), else they stay stored and the image
+# grows by every update's replaced blocks.  Only unused clusters, so what
+# the guest sees doesn't change; failing to only costs space.
+punch=${BKO_WORK:-$HOME/backotter-work}/testvm/qcow2-punch.py
+if [[ -f $punch ]]; then python3 "$punch" "$img" >&2 || echo "$img: qcow2-punch.py failed; its unused space stays" >&2; fi
 sha256sum -- "$img" | cut -d' ' -f1
 """
 

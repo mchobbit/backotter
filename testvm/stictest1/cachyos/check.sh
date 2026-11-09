@@ -308,6 +308,10 @@ for fs in $FSS; do
     if [[ $bt == 0 || $bt == - ]]; then r "birth_times LIMIT $fs keeps no birth time (stat %W 0)"
     else r "birth_times LIMIT $fs keeps birth times, but Linux can't set one; unix.birthtime isn't stored on Linux (restic BACKOTTER.md)"; fi
     grep -q 'project ids refused' $L/fixture-$fs.log && r "project_ids LIMIT $fs has no project IDs (chattr -p refused)"
+    # A flag the file system didn't keep has no file to back up or restore
+    # here: say so, or the summary reads as if it went unchecked.
+    nk=$(sed -n 's/^fixture: flag \(.\) not kept on flag-\(.*\)/\2 (\1)/p' $L/fixture-$fs.log | paste -sd, - | sed 's/,/, /g')
+    [[ -n $nk ]] && r "flags_kept LIMIT $fs doesn't keep $nk: chattr took them or refused them, lsattr doesn't show them, so neither tool has them to back up or restore here"
     echo "R flags_kept INFO $fs:$(cat $W/kept-$fs 2>/dev/null)"
 done
 

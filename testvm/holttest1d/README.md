@@ -96,7 +96,20 @@ second pool (`bpool`) that `vm-mount` doesn't import, so the backup lacked
 By 2026-11-06 every one of the 39 had passed (runs `r1all` to `r31`, the last
 `omnios58` in `r31`).  Some of those passes were on builds before later
 changes; the confirming full run `r32` was stopped when Chopin's /bkoscratch
-filled, and is to be rerun from the start on one committed bko-holt.
+filled.
+
+**Run `r4all`** (2026-11-08, the confirming run, on one build: bko-holt 0.2.4
+bef913e on every platform, the shipped rustic-bko of round rel4 with Haiku's
+0.11.4+backotter.7, testvm at 6fff54b and then 7a322d1): every guest in
+`vms/` but the build VM `freebsd15-builder`, 47, plus `ubuntu26-raid` and
+`debian13-stack` `+degraded`, through ht1-queue.sh on both hosts in RAM
+(Cinqcent 3 at a time, Chopin 2), in 55 minutes and 210 guest-minutes,
+keeping 0.43 GB of records.  All pass but `freebsd15-geli`:
+`fedora44-raid` failed first on Chopin ("no partition holds /etc/fstab":
+the kernel still had its btrfs's second member at the nbd path of the day
+before) and passed again after 7a322d1; `freebsd15-geli` waits at the
+loader's GELI passphrase prompt, which ht1-bsd.sh can't type yet (ht1.sh's
+console-passphrase is Linux's only), and was aborted in its source phase.
 
 ## Systems other than Linux: ht1-bsd.sh and ht1-offline.sh
 

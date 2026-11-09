@@ -25,6 +25,7 @@ EXPECTED = [
     "home/*/.cache/*", "home/*/.local/state/*", "home/*/.local/share/*", "home/*/.config/*",
     "home/*/.bash_history", "home/*/.lesshst", "home/*/.ssh/known_hosts",
     "root/.bash_history", "root/.cache/*", "root/.lesshst", "root/.ssh/known_hosts",
+    "root/.config/*", "root/.local/state/*", "root/.local/share/*",
     "tmp/*", "var/tmp/*", "var/cache/*", "var/crash/*", "var/log/*", "var/spool/*", "var/backups/*",
     "var/lib/*", "var/snap/*", "swap.img", "swapfile", "swap/*", "mnt/bs1-backup",
     "etc/lvm/archive/*", "etc/lvm/backup/*", "etc/lvm/devices/*", "etc/selinux/*/active/*", ".autorelabel",
@@ -64,7 +65,9 @@ def read(path):
     with open(path, encoding="utf-8", errors="surrogateescape") as f:
         for line in f:
             rel, *rest = line.rstrip("\n").split("\t")
-            rows[rel] = rest
+            # A socket belongs to the process that made it, and isn't backed up.
+            if not stat.S_ISSOCK(int(rest[0], 8)):
+                rows[rel] = rest
     return rows
 
 

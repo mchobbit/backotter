@@ -1118,6 +1118,12 @@ class RunnerFailures(unittest.TestCase):
             # The handler too: a signal between its exit and cleanup's first line ends the shell.
             self.assertIn("""trap 'trap "" INT TERM HUP; exit 130' INT TERM HUP""", text, f)
 
+    def test_run_all_and_a_stopped_loop_clean_up_too(self):
+        text = read_file(os.path.join(REPO, "testvm", "compare", "run-all.sh"))
+        self.assertIn("""trap 'trap "" INT TERM HUP; echo "run-all: interrupted\"""", text)
+        text = read_file(os.path.join(REPO, "testvm", "test2", "gate", "loop.sh"))
+        self.assertIn('[[ -z ${stopped:-} ]] || sudo -n rm -rf --one-file-system /mnt/bko-ram/"$pfx"-*', text)
+
     def test_fork_job_that_may_still_run_keeps_its_tools(self):
         o, _, sh = self.fork_env(2, ans="runs")
         self.assertEqual((o.verdict, o.still_running), ("HARNESS", True))

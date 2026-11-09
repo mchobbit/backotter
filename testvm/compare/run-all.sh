@@ -455,7 +455,7 @@ cleanup() {
     rm -rf "$W/ram"
 }
 trap cleanup EXIT
-trap 'echo "run-all: interrupted" >&2; exit 130' INT TERM HUP
+trap 'trap "" INT TERM HUP; echo "run-all: interrupted" >&2; exit 130' INT TERM HUP
 
 # A semaphore of this run: NAME N MAX.  Guests with COUNT_OTHERS=1: a
 # host-wide slot (guest-slot.sh) instead, one a step.

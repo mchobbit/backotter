@@ -454,7 +454,7 @@ class TestRowsStic(unittest.TestCase):
                dict(base, t="2", needs={"b": "PASS", "a": "LIMIT"}, groups={"harness": "h", "judge": "j"}),
                dict(base, t="3", needs={"bad": "PASS"}, valid=False, groups={"harness": "h", "judge": "j"})]
         me = argparse.Namespace(ctx=argparse.Namespace(ledger=led))
-        self.assertEqual(stic.SticRun.prev_needs(me, pc, "chopin"), ["a", "b"])
+        self.assertEqual(stic.SticRun.prev_needs(me, pc, "chopin"), ["b"])    # a LIMIT may stop applying
         led[1]["groups"] = {"harness": "edited", "judge": "j"}          # an edit of the check: its needs may change
         self.assertIsNone(stic.SticRun.prev_needs(me, pc, "chopin"))
 

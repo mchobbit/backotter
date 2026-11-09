@@ -298,7 +298,7 @@ class Runs(unittest.TestCase):
         plan = argparse.Namespace(cells=[pc])
         rs.ctx.ledger = [{"cell": "stic:x", "kind": "run", "verdict": "PASS", "valid": True, "t": "1",
                           "needs": {"b": "PASS", "a": "LIMIT"}, "groups": dict(g)}]
-        self.assertEqual(rs.cells_doc(plan, "cinqcent")["cells"]["x"]["prev_needs"], ["a", "b"])
+        self.assertEqual(rs.cells_doc(plan, "cinqcent")["cells"]["x"]["prev_needs"], ["b"])
         rs.ctx.ledger[0]["groups"] = dict(g, harness="edited")      # an edited check may change its needs
         self.assertIsNone(rs.cells_doc(plan, "cinqcent")["cells"]["x"]["prev_needs"])
         hp = argparse.Namespace(cells=[argparse.Namespace(**dict(vars(pc), cell="holt:x", family="holt"))])

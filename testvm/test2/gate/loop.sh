@@ -84,6 +84,9 @@ cleanup() {
             tar -C "$out/log" -xf - 2>/dev/null
         sudo -n rm -rf --one-file-system "$log"
     fi
+    # A stop kills fs_roundtrip.py before it clears its image folders, and the reservation
+    # ends with this script.  --one-file-system leaves anything still mounted alone.
+    [[ -z ${stopped:-} ]] || sudo -n rm -rf --one-file-system /mnt/bko-ram/"$pfx"-* /mnt/bko-ram/nonroot-"$pfx"-*
     # Left by fs_roundtrip.py (root) in the copy, once run-all.sh took its results.
     sudo -n rmdir "$copy/fs-roundtrip/$pfx-fs" "$copy/fs-roundtrip" 2>/dev/null
 }

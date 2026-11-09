@@ -39,9 +39,14 @@ caught at different moments; `bs1-manifest` tells those from real differences.
   `backotter`, with sudo.  Nobody types a password anywhere.
 - After each OS install, once, on the Thinkpad, from the backup drive:
 
-      sudo bash /PATH/TO/mybig512/backshot1/bs1-adopt
+      sudo sh /PATH/TO/mybig512/backshot1/bs1-adopt
 
-  It sets the hostname, installs the keys, and adds sshd and mDNS if missing.
+  (`sh`, because Alpine has no bash until this installs it, and as root without
+  the `sudo` on systems that have none.)  It sets the hostname, installs the
+  keys, and adds sshd, mDNS and the tools the scripts use if missing, under
+  systemd, OpenRC, sysvinit, runit, dinit or s6.  On NixOS it writes
+  `/etc/nixos/backshot1.nix`, imports it from `configuration.nix` and rebuilds;
+  a system built from a flake needs those settings added by hand.
 - The USB Ethernet adapter stays plugged in: the images are wired-only.
 
 ## The run
@@ -49,8 +54,13 @@ caught at different moments; `bs1-manifest` tells those from real differences.
     backshot1 stage TOOLS_DIR     scripts and tools onto the backup drive
     backshot1 phase1              back up; check --read-data; prints RUN=...
 
-The person boots the stick with the backup drive still attached and clicks Done,
-which authorizes erasing the internal disk.
+The person clicks Done, which authorizes erasing the internal disk.  The stick and
+the backup drive stay plugged in.
+
+    backshot1 to-stick            reboots into the stick, once, by BootNext
+
+If that doesn't work, the laptop comes back up as it was, and the person boots the
+stick by hand.  It needs a UEFI system with `efibootmgr`, so not AerynOS.
 
     backshot1 find-rescue         by the laptop's MAC addresses; hostname is backotter
     backshot1 plan NAME           reads the whole backup, plans; erases nothing
@@ -92,7 +102,18 @@ that carries over from one restore to the next.
 the time the backup took, and what `bko-holt` remakes on purpose (the initramfs,
 `grub.cfg` and the ESP's loader).  Anything else fails `verify`.
 
+It compares each file's extended attributes as well as its content, owner, mode
+and mtime: SELinux labels, capabilities, POSIX ACLs and `user.*` attributes.
+That's a check on the whole trip, `bko-holt`'s boot stage and the live backup
+included; SticTest1 is what tests `rustic-bko` itself, inode flags too.  A
+baseline taken before this has no attributes, and only the rest is compared.
+
 ## Rehearsal
 
 `bs1-qemu.py TEST_IMG GUEST_DIR TOOLS_DIR WORK_DIR` runs these same scripts on a
-UEFI test guest, as three boots: source, rescue, restored.
+test guest, as three boots: source, rescue, restored.  `--bios` is for a guest
+that doesn't boot by UEFI, `--virtio` for one whose initramfs has no NVMe driver.
+
+Passed on 2026-11-09: Ubuntu 26.04 and Fedora 44 (UEFI), Devuan 6 (OpenRC, and
+`bs1-adopt` alone on plain sysvinit), Alpine 3.24, Artix (dinit and s6), Void
+(musl), AerynOS and NixOS 26.05.  Artix's OpenRC and runit editions have no guest.

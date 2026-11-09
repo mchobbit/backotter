@@ -149,8 +149,25 @@ step "comparing the restored files with the backup"
 # count, which no restored file can match; bs1-verify's manifest checks modes,
 # owners and mtimes.  Rustic can't compare device nodes, so calls them all M;
 # and it counts the top directory as added.
+#
+# It reads every file, which would change nearly every atime; the boot stage
+# would then put each one back with a touch of its own, for a quarter of an hour.
+# So noatime for this, and each mount as it was afterwards.  If a filesystem
+# won't have it, that's only slower.
+target_mounts=$(findmnt -R -rno TARGET,OPTIONS /mnt/bko-target)
+while read -r m _; do
+    mount -o remount,noatime "$(printf %b "$m")" || say "couldn't make $m noatime: the boot stage will take longer"
+done <<<"$target_mounts"
 "${RUSTIC[@]}" diff "latest:$SRC" /mnt/bko-target >"$ATTEMPT/diff.txt" 2>&1
 rc=$?
+while read -r m opts; do
+    case ,$opts, in
+        *,noatime,*) a=noatime ;;
+        *,strictatime,*) a=strictatime ;;
+        *) a=relatime ;;
+    esac
+    mount -o "remount,$a" "$(printf %b "$m")" || say "couldn't put $m back to $a"
+done <<<"$target_mounts"
 tail -n 20 "$ATTEMPT/diff.txt" | tee -a "$LOG"
 [[ $rc -eq 0 ]] || die "rustic-bko diff failed (exit $rc)"
 changes=$(awk '
@@ -167,6 +184,9 @@ say "differences: $changes (the list is in diff.txt)"
 
 step "redoing the boot loader"
 must "${LOAD[@]}" --through close --commit
+# A restored system still boots here if the stage is skipped, from the boot files
+# in its backup and the firmware's old entry.  It wouldn't on another disk.
+! grep -q '^# ---- boot: done already' "$LOG" || die "bko-holt skipped the boot stage"
 
 step "checking the rebuilt disk against the layout"
 "${LOAD[@]}" --only status >"$ATTEMPT/status.txt" 2>&1

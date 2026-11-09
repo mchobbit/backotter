@@ -4,7 +4,8 @@
 # BACKUP_LABEL.  Everything acts on the disk with that serial, never a /dev name.
 
 set -uo pipefail
-export LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
+# The last two are NixOS's, which has none of the others.
+export LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/run/current-system/sw/bin:/run/wrappers/bin
 
 HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 # shellcheck disable=SC1091
@@ -30,10 +31,20 @@ must() { run "$@" || die "this failed: $*"; }
 
 [[ $EUID -eq 0 ]] || { echo "$0: run it as root" >&2; exit 2; }
 
+# Artix has no hostname command.
+this_host() { cat /proc/sys/kernel/hostname; }
+
 # The one disk with INTERNAL_SERIAL, by name.
 internal_disk() {
-    local found
+    local found d
     found=$(lsblk -dnro NAME,SERIAL | awk -v s="$INTERNAL_SERIAL" '$2 == s { print $1 }')
+    # lsblk gets some disks' serials from udev, which Alpine doesn't run.
+    if [[ -z $found ]]; then
+        for d in /sys/block/*; do
+            [[ $(cat "$d/serial" "$d/device/serial" 2>/dev/null | tr -d ' \n') == "$INTERNAL_SERIAL" ]] && found+=${d##*/}$'\n'
+        done
+        found=${found%$'\n'}
+    fi
     [[ -n $found && $(wc -l <<<"$found") -eq 1 ]] || return 1
     echo "$found"
 }
@@ -126,6 +137,8 @@ package_list() {
     elif command -v pacman >/dev/null; then pacman -Q
     elif command -v apk >/dev/null; then apk info -v
     elif command -v xbps-query >/dev/null; then xbps-query -l
+    elif command -v moss >/dev/null; then moss pkg list --installed
+    elif command -v nix-store >/dev/null; then nix-store -qR /run/current-system
     else echo "no package manager known"
     fi 2>/dev/null | LC_ALL=C sort
 }

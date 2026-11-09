@@ -90,6 +90,7 @@ def main():
     ap.add_argument("--bios", action="store_true", help="SeaBIOS, not OVMF")
     ap.add_argument("--discard-on-pass", action="store_true", help="delete the disk images if it passes")
     ap.add_argument("--restores", type=int, default=1, help="how many times to restore the one backup")
+    ap.add_argument("--earlier-restore", action="store_true", help="back up a system that shows it was restored once before (its /var/log/bko-holt)")
     a = ap.parse_args()
     os.makedirs(a.work, exist_ok=True)
     dev, parts = ("vda", "/dev/vda[0-9]*") if a.virtio else ("nvme0n1", "/dev/nvme0n1p*")
@@ -118,10 +119,16 @@ def main():
         sys.exit(f"want one qcow2 in {a.guest_dir}, found {guest}")
     key = os.path.join(a.guest_dir, "id_ed25519")
     w = a.work
-    internal, drive, stick_raw, stick, vars_file = (f"{w}/internal.qcow2", f"{w}/drive.qcow2", f"{w}/stick.img", f"{w}/stick.qcow2", f"{w}/vars.fd")
+    internal, drive_raw, drive, stick_raw, stick, vars_file = (f"{w}/internal.qcow2", f"{w}/drive.raw", f"{w}/drive.qcow2", f"{w}/stick.img", f"{w}/stick.qcow2", f"{w}/vars.fd")
     shutil.copy(f"{rw1a.OVMF}/{rw1a.VARS}", vars_file)
     rw1a.overlay(internal, guest[0], "32G")
-    rw1a.overlay(drive, None, "40G")
+    # Partitioned and formatted here: a guest fresh from its installer may have
+    # neither sfdisk (Alpine) nor mkfs.ext4 (AerynOS).
+    env = {**os.environ, "PATH": os.environ["PATH"] + ":/usr/sbin:/sbin"}
+    subprocess.run(["truncate", "-s", "40G", drive_raw], check=True)
+    subprocess.run(["sfdisk", "-q", "--label", "gpt", drive_raw], input=",,L\n", text=True, check=True, env=env)
+    subprocess.run(["mkfs.ext4", "-q", "-F", "-L", LABEL, "-E", "offset=1048576", drive_raw, "39G"], check=True, env=env)
+    rw1a.overlay(drive, drive_raw, "40G", "raw")
     shutil.copy(a.img, stick_raw)
     keys = f"{w}/keys"
     os.makedirs(keys, exist_ok=True)
@@ -142,9 +149,13 @@ def main():
     root = Ssh(key, a.port, "root")
     if not root.up(vm.proc):
         sys.exit("the source guest never answered")
-    _, host = root.run("hostname")
+    _, host = root.run("cat /proc/sys/kernel/hostname")
     host = host.strip().splitlines()[-1]
-    root.show(f"d=$(ls /dev/disk/by-id/usb-*{LABEL}*-0:0 | head -n 1); echo ',,L' | sfdisk -q --label gpt $d && udevadm settle && mkfs.ext4 -q -F -L {LABEL} ${{d}}-part1 && udevadm settle && mkdir -p /mnt/bs1-backup && mount LABEL={LABEL} /mnt/bs1-backup && mkdir -p /mnt/bs1-backup/backshot1/bin /mnt/bs1-backup/backshot1/runs; findmnt /mnt/bs1-backup; swapon --show; . /etc/os-release; echo $PRETTY_NAME")
+    rc, _ = root.show(f"mkdir -p /mnt/bs1-backup; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do mount LABEL={LABEL} /mnt/bs1-backup 2>/dev/null && break; sleep 2; done; mkdir -p /mnt/bs1-backup/backshot1/bin /mnt/bs1-backup/backshot1/runs && grep -q ' /mnt/bs1-backup ' /proc/mounts; rc=$?; . /etc/os-release; echo $PRETTY_NAME; exit $rc")
+    check(rc == 0, "the source guest mounts the backup drive")
+    if fails:
+        vm.proc.kill()
+        return 1
     conf = f"{w}/bs1.conf"
     with open(conf, "w") as f:
         f.write(f"SOURCE_HOST={host}\nINTERNAL_SERIAL={SERIAL}\nBACKUP_LABEL={LABEL}\n")
@@ -155,11 +166,27 @@ def main():
     root.run("mkdir -m 700 /mnt/bs1-backup/backshot1/keys; chmod 755 /mnt/bs1-backup/backshot1/bs1-* /mnt/bs1-backup/backshot1/bin/*")
     subprocess.run([*scp, f"{client}.pub", "root@127.0.0.1:/mnt/bs1-backup/backshot1/keys/authorized_keys"], check=True)
     subprocess.run([*scp, host_key, f"{host_key}.pub", "root@127.0.0.1:/mnt/bs1-backup/backshot1/keys/"], check=True)
-    rc, _ = root.show("bash /mnt/bs1-backup/backshot1/bs1-adopt")
+    rc, _ = root.show("sh /mnt/bs1-backup/backshot1/bs1-adopt")
     check(rc == 0, "bs1-adopt passes")
     check(host_key_is_pinned(), "the installed system presents the fixed host key")
     root = Ssh(client, a.port, "root")
     check(root.run("true", 30)[0] == 0, "the BackShot1 key logs in as root")
+    def mdns_up():
+        end = time.monotonic() + 60
+        while time.monotonic() < end:
+            if root.run("cat /proc/[0-9]*/comm 2>/dev/null | grep -q '^avahi-daemon'", 30)[0] == 0:
+                return True
+            time.sleep(3)
+        print(root.run("for p in /proc/[0-9]*; do echo \"$(cat $p/comm 2>/dev/null): $(tr '\\0' ' ' <$p/cmdline 2>/dev/null)\"; done | grep -iE 'avahi|dbus'", 30)[1], flush=True)
+        return False
+
+    check(mdns_up(), "avahi-daemon is running")
+    if fails:
+        vm.proc.kill()
+        print("FAILED: " + "; ".join(fails), flush=True)
+        return 1
+    if a.earlier_restore:
+        root.run("mkdir -p /var/log/bko-holt; echo '==== stage boot done' >/var/log/bko-holt/load.log")
     rc, out = root.show("bash /mnt/bs1-backup/backshot1/bs1-backup")
     check(rc == 0, "bs1-backup passes")
     run = next((ln[4:].strip() for ln in out.splitlines() if ln.startswith("RUN=")), None)
@@ -205,6 +232,10 @@ def main():
             rc, out = rescue.run("sudo -n cat /run/backotter/restore.exit", 30)
             status = out.strip() if rc == 0 else ""
         rescue.show("sudo -n tail -n 12 /run/backotter/restore.out")
+        # How long the boot stage took, and how many atimes it had to put back.
+        rescue.show("sudo -n sh -c 'grep -A200 \"==== redoing the boot loader\" /run/backotter/restore.out | grep -m1 -E \"exit [0-9]+ after\"; "
+                    "echo atimes to put back: $(LC_ALL=C comm -z -23 /run/bko-holt/atimes.before /run/bko-holt/atimes.after | tr -cd \"\\0\" | wc -c) "
+                    "of $(tr -cd \"\\0\" </run/bko-holt/atimes.before | wc -c)'")
         check(status == "0", f"restore {attempt} passes")
         rescue.run("sudo -n sh -c 'umount /mnt/bs1-backup; systemctl poweroff'")
         vm.wait_off()
@@ -215,12 +246,17 @@ def main():
         print(f"== restored {attempt}: the internal disk, by the NVRAM the run left", flush=True)
         # BIOS has no NVRAM to go by.
         vm = Vm(machine(f"restored{attempt}", [internal_disk(internal, a.bios), usb_drive]), f"{w}/console-restored{attempt}.log")
-        up = root.up(vm.proc, f"lsblk -snlo NAME \"$(findmnt -n -o SOURCE / | sed 's/\\[.*//')\" | grep -qx {dev}")
+        # A ZFS root is a dataset, which lsblk can't follow; bs1-verify checks its pool.
+        up = root.up(vm.proc, f"findmnt -no FSTYPE / | grep -qx zfs || lsblk -snlo NAME \"$(findmnt -n -o SOURCE / | sed 's/\\[.*//')\" | grep -qx {dev}")
         check(up, "the restored system boots from NVRAM and answers")
         if up:
             check(host_key_is_pinned(), "the restored system presents the fixed host key")
+            # Started by its boot this time, so it's enabled, not just running.
+            check(mdns_up(), "avahi-daemon comes up at boot")
             rc, out = root.show(f"mkdir -p /mnt/bs1-backup && mount LABEL={LABEL} /mnt/bs1-backup && bash /mnt/bs1-backup/backshot1/bs1-verify {run}; rc=$?; head -n 40 $(ls -d {restores}/*[0-9] | tail -n 1)/compare.txt; exit $rc")
             check(rc == 0, "bs1-verify passes")
+            if rc != 0:
+                root.show(f"tail -n 60 $(ls -d {restores}/*[0-9] | tail -n 1)/verify.log")
             if attempt == a.restores:
                 _, out = root.run(f"ls -d {restores}/*[0-9] | wc -l; cat {restores}/*[0-9]/RESULT | grep -c PASS")
                 check(out.split() == [str(a.restores), str(a.restores)], f"each of the {a.restores} restores kept its own PASS")
@@ -235,7 +271,7 @@ def main():
             break
     print("FAILED: " + "; ".join(fails) if fails else "PASS", flush=True)
     if a.discard_on_pass and not fails:
-        for f in (internal, drive, stick, stick_raw, vars_file):
+        for f in (internal, drive, drive_raw, stick, stick_raw, vars_file):
             os.remove(f)
     return 1 if fails else 0
 

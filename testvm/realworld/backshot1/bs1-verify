@@ -36,11 +36,38 @@ system_settled() {
 }
 packages_same() { package_list | cmp - "$RUN/baseline/packages.txt"; }
 swap_same() { swap_names | cmp - "$RUN/baseline/swap-names.txt"; }
+# From the firmware's variables themselves: AerynOS has no efibootmgr to ask.
 booted_the_restored_esp() {
-    local current guids
-    current=$(efibootmgr | awk '/^BootCurrent/ { print $2 }')
-    guids=$(lsblk -lno PARTUUID,PARTTYPE "/dev/$disk" | awk -v t="$ESP_TYPE" 'tolower($2) == t { print $1 }' | paste -sd'|')
-    [[ -n $current && -n $guids ]] && efibootmgr -v | grep -iE "^Boot$current.*($guids)"
+    local guids
+    guids=$(lsblk -lno PARTUUID,PARTTYPE "/dev/$disk" | awk -v t="$ESP_TYPE" 'tolower($2) == t { print $1 }')
+    [[ -n $guids ]] || return 1
+    findmnt -rn /sys/firmware/efi/efivars >/dev/null || mount -t efivarfs efivarfs /sys/firmware/efi/efivars || return 1
+    # shellcheck disable=SC2086
+    python3 - $guids <<'PY'
+import sys, uuid
+root, guid = "/sys/firmware/efi/efivars", "8be4df61-93ca-11d2-aa0d-00e098032b8c"
+# Each variable starts with four bytes of attributes.
+current = int.from_bytes(open(f"{root}/BootCurrent-{guid}", "rb").read()[4:6], "little")
+entry = open(f"{root}/Boot{current:04X}-{guid}", "rb").read()
+start = 10
+while entry[start:start + 2] != b"\0\0":
+    start += 2
+name = entry[10:start].decode("utf-16-le", "replace")
+# The device path follows the description: is there a partition in it?
+i, end, names_partition = start + 2, start + 2 + int.from_bytes(entry[8:10], "little"), False
+while i + 4 <= end and entry[i] != 0x7f:
+    names_partition |= entry[i] == 4 and entry[i + 1] == 1
+    step = int.from_bytes(entry[i + 2:i + 4], "little")
+    if step < 4:
+        break
+    i += step
+print(f"BootCurrent: {current:04X} ({name}), the disk's ESP: {' '.join(sys.argv[1:])}, entry: {entry[4:].hex()}")
+if any(uuid.UUID(g).bytes_le in entry for g in sys.argv[1:]):
+    sys.exit(0)
+# AerynOS installs its loader without a boot entry, so the firmware makes one for
+# the whole disk and takes the removable-media path.  Which disk is checked apart.
+sys.exit(1 if names_partition else 0)
+PY
 }
 
 state=$(system_settled)
@@ -50,7 +77,7 @@ step "the checks"
 disk=$(internal_disk) || { say "no single disk has serial $INTERNAL_SERIAL"; exit 1; }
 # Mounts an ESP that's on an automount.
 ls /boot/efi /efi /boot >/dev/null 2>&1
-check "hostname is $SOURCE_HOST" test "$(hostname)" == "$SOURCE_HOST"
+check "hostname is $SOURCE_HOST" test "$(this_host)" == "$SOURCE_HOST"
 check "/ is on the restored $disk" on_disk "$(findmnt -nro SOURCE /)" "$disk"
 check "this isn't the rescue stick" test ! -f /cdrom/.disk/backotter.json
 check "the boot finished" test "$state" != unknown

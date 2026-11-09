@@ -7,6 +7,7 @@
 #   backshot1 preflight           check everything phase1 needs; changes nothing
 #   backshot1 phase1              back up the running system; prints RUN=...
 #   backshot1 list                the backups on the drive, and how each last restored
+#   backshot1 to-stick            reboot the machine into the rescue stick, once
 #   backshot1 find-rescue         find the booted rescue stick; prints its address
 #   backshot1 plan NAME           on the stick: read the backup, plan the restore
 #   backshot1 phase2 NAME         on the stick: WIPE the internal disk, restore
@@ -61,7 +62,7 @@ stage)
     old_login_if_new
     d=$(on_host "$DRIVE; echo \"\$d\"")
     on_host "mkdir -p '$d/backshot1/bin' '$d/backshot1/runs' '$d/backshot1/keys'; chmod 700 '$d/backshot1/keys'"
-    scp -q "${OPTS[@]}" "$here"/bs1-{common,backup,restore,verify,manifest,adopt,list} "root@$HOST:$d/backshot1/"
+    scp -q "${OPTS[@]}" "$here"/bs1-{common,backup,restore,verify,manifest,adopt,list,to-stick} "root@$HOST:$d/backshot1/"
     scp -q "${OPTS[@]}" "$here/thinkpad.conf" "root@$HOST:$d/backshot1/bs1.conf"
     scp -q "${OPTS[@]}" "$tools/bko-holt" "$tools/rustic-bko" "root@$HOST:$d/backshot1/bin/"
     scp -q "${OPTS[@]}" "$KEYS/id_ed25519.pub" "root@$HOST:$d/backshot1/keys/authorized_keys"
@@ -70,13 +71,16 @@ stage)
     ;;
 adopt)
     old_login_if_new
-    on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-adopt\""
+    on_host "$DRIVE; exec sh \"\$d/backshot1/bs1-adopt\""
     ;;
 phase1)
     on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-backup\""
     ;;
 preflight)
     on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-backup\" --preflight"
+    ;;
+to-stick)
+    on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-to-stick\""
     ;;
 find-rescue)
     command -v arp >/dev/null || die "needs arp"

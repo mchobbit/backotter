@@ -1,0 +1,54 @@
+#!/bin/bash
+# BackShot1: reboot into the rescue stick, once.  As root, on the running system.
+#
+# Makes a firmware boot entry for the stick's ESP, leaves it out of BootOrder, and
+# points BootNext at it.  The firmware uses BootNext once and forgets it, so if the
+# stick doesn't boot, the laptop comes back up as it was.  Nothing on the internal
+# disk changes.
+
+# shellcheck disable=SC1091
+. "$(dirname "$(readlink -f "$0")")/bs1-common"
+
+LABEL="BKO rescue"
+
+[[ -d /sys/firmware/efi ]] || die "this system wasn't booted by UEFI"
+command -v efibootmgr >/dev/null || die "this system has no efibootmgr"
+findmnt -rn /sys/firmware/efi/efivars >/dev/null || mount -t efivarfs efivarfs /sys/firmware/efi/efivars || die "can't reach the firmware's variables"
+
+# The stick is what holds the BACKOTTER configuration partition.
+config=$(blkid -L BACKOTTER) || die "no stick here: nothing is labelled BACKOTTER"
+disk=$(disk_of "$config")
+[[ -n $disk && $(lsblk -dno TRAN "/dev/$disk") == usb ]] || die "BACKOTTER is on $config, which isn't a USB disk"
+internal=$(internal_disk) || die "no single disk has serial $INTERNAL_SERIAL"
+[[ $disk != "$internal" ]] || die "the stick can't be the internal disk"
+
+esp=$(lsblk -lnpo NAME,FSTYPE,LABEL "/dev/$disk" | awk '$2 == "vfat" && $3 == "ESP" { print $1; exit }')
+[[ -n $esp ]] || die "/dev/$disk has no vfat partition labelled ESP"
+part=$(cat "/sys/class/block/${esp##*/}/partition")
+
+tmp=$(mktemp -d)
+mount -o ro "$esp" "$tmp" || die "can't mount $esp"
+found=$(find "$tmp" -maxdepth 3 -iname bootx64.efi | head -n 1)
+umount "$tmp"
+rmdir "$tmp"
+[[ -n $found ]] || die "$esp has no BOOTX64.EFI"
+loader=${found#"$tmp"}
+loader=${loader//\//\\}
+
+entries() { efibootmgr | awk -v l="$LABEL" '/^Boot[0-9A-Fa-f]{4}/ && index($0, l) { print substr($1, 5, 4) }'; }
+
+# An older stick's entry names an ESP that's gone.
+for n in $(entries); do efibootmgr -q --bootnum "$n" --delete-bootnum || die "can't delete Boot$n"; done
+order=$(efibootmgr | awk '/^BootOrder/ { print $2 }')
+efibootmgr -q --create --disk "/dev/$disk" --part "$part" --label "$LABEL" --loader "$loader" || die "can't make a boot entry for $esp"
+entry=$(entries | head -n 1)
+[[ -n $entry ]] || die "the firmware didn't keep the new entry"
+# --create puts it first; the laptop's own boot order stays as it was.
+if [[ -n $order ]]; then efibootmgr -q --bootorder "$order" || die "can't put BootOrder back"; fi
+efibootmgr -q --bootnext "$entry" || die "can't set BootNext"
+efibootmgr | grep -E '^(BootNext|BootOrder)'
+efibootmgr | grep -E "^Boot$entry"
+say "rebooting into the stick ($esp, $loader), once"
+sync
+# After a moment, so the controller hears that this worked.
+(sleep 2; reboot) >/dev/null 2>&1 </dev/null &

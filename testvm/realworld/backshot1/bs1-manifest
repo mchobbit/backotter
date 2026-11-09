@@ -7,8 +7,13 @@ bs1-manifest --compare OLD NEW       differences; exit 1 if any isn't expected
 The comparison is between the system before its backup and after its restore and
 first boot, so booting's own changes are expected, as are the files bko-holt
 remakes on purpose (the initramfs, grub.cfg and the ESP's loader).
+
+Each file's extended attributes are compared too: SELinux labels, capabilities,
+POSIX ACLs and user.* attributes.  A baseline older than that has none, and
+then only the rest is compared.
 """
 
+import base64
 import fnmatch
 import hashlib
 import os
@@ -24,12 +29,25 @@ EXPECTED = [
     "usr/lib/sysimage/rpm/rpmdb.sqlite-shm", "usr/lib/sysimage/rpm/rpmdb.sqlite-wal",
     "home/*/.cache/*", "home/*/.local/state/*", "home/*/.local/share/*", "home/*/.config/*",
     "home/*/.bash_history", "home/*/.lesshst", "home/*/.ssh/known_hosts",
+    "home/*/.Xauthority", "home/*/.xsession-errors", "home/*/.xsession-errors.old",
     "root/.bash_history", "root/.cache/*", "root/.lesshst", "root/.ssh/known_hosts",
     "root/.config/*", "root/.local/state/*", "root/.local/share/*",
     "tmp/*", "var/tmp/*", "var/cache/*", "var/crash/*", "var/log/*", "var/spool/*", "var/backups/*",
-    "var/lib/*", "var/snap/*", "swap.img", "swapfile", "swap/*", "mnt/bs1-backup",
+    "var/lib/*", "var/db/dhcpcd/*", "var/snap/*", "swap.img", "swapfile", "swap/*", "mnt/bs1-backup",
     "etc/lvm/archive/*", "etc/lvm/backup/*", "etc/lvm/devices/*", "etc/selinux/*/active/*", ".autorelabel",
+    # bs1-adopt removes these, and some systems make them again at boot.  Not the
+    # ed25519 key: that one has to stay what it was.
+    "etc/ssh/ssh_host_rsa_key*", "etc/ssh/ssh_host_ecdsa_key*", "etc/ssh/ssh_host_dsa_key*",
+    # systemd's ConditionNeedsUpdate stamps: a restored /usr is newer than they are.
+    "etc/.updated", "var/.updated",
+    # Rewritten whenever the pool is imported.
+    "etc/zfs/zpool.cache",
 ]
+
+# NixOS makes these again from its store at every boot.
+NIXOS_EXPECTED = ["etc/.clean", "etc/group", "etc/passwd", "etc/shadow", "etc/subgid", "etc/subuid", "nix/var/nix/temproots/*", "nix/var/nix/db/*"]
+# And these, so their mtimes are new, but they have to be the same otherwise.
+NIXOS_REMADE = ["etc/*", "bin/sh", "usr/bin/env"]
 
 
 def digest(path):
@@ -38,6 +56,16 @@ def digest(path):
         while chunk := f.read(1 << 20):
             h.update(chunk)
     return h.hexdigest()
+
+
+def xattrs(path):
+    """NAME=BASE64 for each extended attribute, in order; "-" if there are none."""
+    try:
+        names = sorted(os.listxattr(path, follow_symlinks=False))
+        pairs = [f"{n}={base64.b64encode(os.getxattr(path, n, follow_symlinks=False)).decode()}" for n in names]
+    except OSError as e:
+        return f"unreadable:{e.errno}"
+    return ",".join(pairs) or "-"
 
 
 def write(root, out):
@@ -57,7 +85,7 @@ def write(root, out):
                         extra = f"dev:{os.major(st.st_rdev)}:{os.minor(st.st_rdev)}"
                 except OSError as e:
                     extra = f"unreadable:{e.errno}"
-                f.write("\t".join([rel, oct(st.st_mode), str(st.st_uid), str(st.st_gid), str(st.st_size), str(st.st_mtime_ns), extra]) + "\n")
+                f.write("\t".join([rel, oct(st.st_mode), str(st.st_uid), str(st.st_gid), str(st.st_size), str(st.st_mtime_ns), extra, xattrs(p)]) + "\n")
 
 
 def read(path):
@@ -71,28 +99,51 @@ def read(path):
     return rows
 
 
-def same(a, b):
+def same(rel, a, b, nixos):
     # A directory's size only says how big it has ever been, and its mtime
     # moves whenever something inside it does.
     if stat.S_ISDIR(int(a[0], 8)) and stat.S_ISDIR(int(b[0], 8)):
         return a[:3] == b[:3]
-    return a == b
+    if nixos and any(fnmatch.fnmatch(rel, pat) for pat in NIXOS_REMADE):
+        return a[:4] + a[5:6] == b[:4] + b[5:6]
+    return a[:6] == b[:6]
 
 
-def expected(rel):
-    return any(fnmatch.fnmatch(rel, pat) for pat in EXPECTED)
+def parse_xattrs(field):
+    if field == "-" or field.startswith("unreadable:"):
+        return {} if field == "-" else {field: ""}
+    return dict(p.partition("=")[::2] for p in field.split(","))
+
+
+def show(value):
+    return repr(base64.b64decode(value)) if value else "(none)"
+
+
+def xattr_diff(a, b):
+    """What differs between two rows' extended attributes, for the report."""
+    x, y = parse_xattrs(a[6]), parse_xattrs(b[6])
+    return "; ".join(f"{k}: {show(x.get(k))} -> {show(y.get(k))}" for k in sorted(set(x) | set(y)) if x.get(k) != y.get(k))
+
+
+def expected(rel, nixos):
+    return any(fnmatch.fnmatch(rel, pat) for pat in EXPECTED + (NIXOS_EXPECTED if nixos else []))
 
 
 def compare(old_path, new_path):
     old, new = read(old_path), read(new_path)
+    nixos = "etc/NIXOS" in old
     missing = sorted(set(old) - set(new))
     added = sorted(set(new) - set(old))
-    changed = sorted(p for p in set(old) & set(new) if not same(old[p], new[p]))
+    changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], nixos))
+    both = [p for p in set(old) & set(new) if len(old[p]) > 6 and len(new[p]) > 6]
+    relabeled = sorted(p for p in both if old[p][6] != new[p][6])
+    if not both:
+        print("xattrs: this baseline has none, so they weren't compared")
     bad = []
-    for label, paths in (("missing", missing), ("added", added), ("changed", changed)):
-        unexpected = [p for p in paths if not expected(p)]
+    for label, paths in (("missing", missing), ("added", added), ("changed", changed), ("xattrs", relabeled)):
+        unexpected = [p for p in paths if not expected(p, nixos)]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")
-        bad += [f"{label}: {p}" for p in unexpected]
+        bad += [f"{label}: {p}" + (f" ({xattr_diff(old[p], new[p])})" if label == "xattrs" else "") for p in unexpected]
     print(f"files compared: {len(old)}")
     for line in bad:
         print(line)

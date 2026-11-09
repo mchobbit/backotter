@@ -19,7 +19,7 @@ trap drop_tree EXIT
 trap 'die "interrupted"' INT TERM HUP
 
 step "preflight"
-[[ $(hostname) == "$SOURCE_HOST" ]] || die "this is $(hostname), not $SOURCE_HOST"
+[[ $(this_host) == "$SOURCE_HOST" ]] || die "this is $(this_host), not $SOURCE_HOST"
 disk=$(internal_disk) || die "no single disk has serial $INTERNAL_SERIAL"
 on_disk "$(findmnt -nro SOURCE /)" "$disk" || die "/ isn't on $disk"
 # An ESP on an automount appears only when something looks at it.

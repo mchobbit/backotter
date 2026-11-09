@@ -1,12 +1,19 @@
-#!/bin/bash
+#!/bin/sh
 # BackShot1: make a fresh install on the Thinkpad ready.  Once per install, as
 # root, on the machine, from the backup drive:
 #
-#   sudo bash /PATH/TO/mybig512/backshot1/bs1-adopt
+#   sudo sh /PATH/TO/mybig512/backshot1/bs1-adopt
 #
 # Sets the hostname, lets the controller's key log in as root, and installs the
 # fixed host key, so the controller sees one identity on every install and on the
-# stick.  Installs sshd and an mDNS responder if the system has none.
+# stick.  Installs sshd, an mDNS responder and what the BackShot1 scripts use, if
+# the system lacks them, under whichever init system it has.
+
+# Alpine comes without bash, so this much has to be plain sh.
+if [ -z "${BASH_VERSION:-}" ]; then
+    command -v bash >/dev/null || apk add bash || { echo "bs1-adopt: this needs bash" >&2; exit 2; }
+    exec bash "$0" "$@"
+fi
 
 set -euo pipefail
 
@@ -20,47 +27,174 @@ for f in authorized_keys ssh_host_ed25519_key ssh_host_ed25519_key.pub; do
     [[ -s $keys/$f ]] || { echo "bs1-adopt: no $keys/$f" >&2; exit 2; }
 done
 
-pkg_install() {     # pkg_install DEBIAN_NAME FEDORA_NAME SUSE_NAME ARCH_NAME ALPINE_NAME VOID_NAME
-    if command -v apt-get >/dev/null; then DEBIAN_FRONTEND=noninteractive apt-get install -y "$1"
-    elif command -v dnf >/dev/null; then dnf install -y "$2"
-    elif command -v zypper >/dev/null; then zypper --non-interactive install "$3"
-    elif command -v pacman >/dev/null; then pacman -S --noconfirm --needed "$4"
-    elif command -v apk >/dev/null; then apk add "$5"
-    elif command -v xbps-install >/dev/null; then xbps-install -y "$6"
+distro=$(. /etc/os-release; echo "${ID:-}")
+
+init=$(cat /proc/1/comm)
+case $init in
+    systemd | dinit | runit) ;;
+    s6-svscan) init=s6 ;;
+    *) if command -v rc-service >/dev/null; then init=openrc; else init=sysv; fi ;;
+esac
+echo "== $distro, under $init"
+
+# Artix packages each service's init script apart, per init system.
+with_script() { if [[ $distro == artix ]]; then echo "$1 $1-$init"; else echo "$1"; fi; }
+
+pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS, each one or more names
+    # shellcheck disable=SC2086
+    if command -v apt-get >/dev/null; then
+        export DEBIAN_FRONTEND=noninteractive
+        apt-get install -y $1 || { apt-get update && apt-get install -y $1; }
+    elif command -v dnf >/dev/null; then dnf install -y $2
+    elif command -v zypper >/dev/null; then zypper --non-interactive install $3
+    elif command -v pacman >/dev/null; then pacman -Sy --noconfirm --needed $4
+    elif command -v apk >/dev/null; then apk add $5
+    elif command -v xbps-install >/dev/null; then xbps-install -Sy $6
+    elif command -v moss >/dev/null; then moss -y pkg add $7
     else echo "bs1-adopt: no package manager I know; install $1 by hand" >&2; return 1
     fi
 }
 
+start_runit() {     # start_runit NAME: a service just linked in takes runsvdir a few seconds to notice
+    local dir=/etc/sv live=/var/service i
+    if [[ -d /etc/runit/sv ]]; then dir=/etc/runit/sv live=/run/runit/service; fi   # Artix
+    [[ -d $dir/$1 ]] || return 2
+    [[ -e $live/$1 ]] || ln -s "$dir/$1" "$live/"
+    for i in $(seq 20); do
+        sv restart "$1" && return 0
+        sleep 1
+    done
+    return 1
+}
+
 start_service() {   # start_service NAME...: the first name this system knows
-    local s
+    local s rc
+    [[ $init != systemd ]] || systemctl daemon-reload
     for s in "$@"; do
-        if command -v systemctl >/dev/null; then
+        case $init in
+        systemd)
             systemctl cat "$s.service" >/dev/null 2>&1 || continue
             systemctl enable "$s.service" >/dev/null 2>&1 || true
             systemctl restart "$s.service" && return 0
-        elif command -v rc-service >/dev/null; then
+            ;;
+        openrc)
             [[ -e /etc/init.d/$s ]] || continue
             rc-update add "$s" default >/dev/null 2>&1 || true
             rc-service "$s" restart && return 0
-        elif command -v sv >/dev/null; then
-            [[ -d /etc/sv/$s ]] || continue
-            [[ -e /var/service/$s ]] || ln -s "/etc/sv/$s" /var/service/
-            sv restart "$s" && return 0
-        fi
+            ;;
+        sysv)
+            [[ -e /etc/init.d/$s ]] || continue
+            update-rc.d "$s" defaults >/dev/null 2>&1 || true
+            service "$s" restart && return 0
+            ;;
+        runit)
+            rc=0
+            start_runit "$s" || rc=$?
+            [[ $rc -eq 2 ]] && continue
+            [[ $rc -eq 0 ]] && return 0
+            ;;
+        dinit)
+            [[ -e /etc/dinit.d/$s ]] || continue
+            dinitctl enable "$s" >/dev/null 2>&1 || true
+            dinitctl restart "$s" >/dev/null 2>&1 || dinitctl start "$s" && return 0
+            ;;
+        s6)
+            [[ -d /etc/s6/sv/$s-srv ]] || continue
+            s6 repository sync
+            s6 set enable "$s"
+            s6 set commit
+            s6 live install
+            s6 live start "$s"
+            s6-svc -r "/run/service/$s-srv" && { sleep 2; return 0; }
+            ;;
+        esac
     done
     echo "bs1-adopt: couldn't start any of: $*" >&2
     return 1
 }
 
-echo "== hostname: $SOURCE_HOST"
-if command -v hostnamectl >/dev/null; then hostnamectl set-hostname "$SOURCE_HOST"; else echo "$SOURCE_HOST" >/etc/hostname; hostname "$SOURCE_HOST"; fi
+running() { grep -Eqx "$1" /proc/[0-9]*/comm 2>/dev/null; }
 
-command -v sshd >/dev/null || [[ -x /usr/sbin/sshd ]] ||
-    pkg_install openssh-server openssh-server openssh openssh openssh openssh
-# What the BackShot1 scripts themselves need; minimal systems may lack them.
-command -v python3 >/dev/null || pkg_install python3 python3 python3 python python3 python3
-command -v findmnt >/dev/null && command -v lsblk >/dev/null ||
-    pkg_install util-linux util-linux util-linux util-linux "util-linux-misc" util-linux
+set_hostname() {
+    if [[ $init == systemd ]] && command -v hostnamectl >/dev/null; then
+        hostnamectl set-hostname "$SOURCE_HOST"
+        return
+    fi
+    echo "$SOURCE_HOST" >/etc/hostname
+    echo "$SOURCE_HOST" >/proc/sys/kernel/hostname
+    # OpenRC's own place for it, on Artix.
+    if [[ -f /etc/conf.d/hostname ]]; then sed -i "s/^hostname=.*/hostname=\"$SOURCE_HOST\"/" /etc/conf.d/hostname; fi
+}
+
+install_tools() {
+    command -v sshd >/dev/null || [[ -x /usr/sbin/sshd ]] ||
+        pkg_install openssh-server openssh-server openssh "$(with_script openssh)" openssh openssh openssh-server
+    # BusyBox's df, umount and blkid lack options the scripts use, and it has no
+    # findmnt, lsblk or sfdisk.
+    if command -v apk >/dev/null; then apk add coreutils findmnt lsblk blkid sfdisk mount umount util-linux-misc; fi
+    command -v python3 >/dev/null || pkg_install python3 python3 python3 python python3 python3 python
+    if ! command -v findmnt >/dev/null || ! command -v lsblk >/dev/null; then
+        pkg_install util-linux util-linux util-linux util-linux util-linux-misc util-linux util-linux
+    fi
+}
+
+allow_root_key_login() {
+    local conf=/etc/ssh/sshd_config
+    # AerynOS keeps the file itself in /usr, and reads /etc/ssh/sshd_config.d.
+    if [[ ! -e $conf ]] || grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' "$conf"; then
+        mkdir -p /etc/ssh/sshd_config.d
+        echo 'PermitRootLogin prohibit-password' >/etc/ssh/sshd_config.d/00-backshot1.conf
+    elif ! grep -q 'BackShot1' "$conf"; then
+        # sshd keeps the first value it reads.
+        sed -i '1i # BackShot1\nPermitRootLogin prohibit-password' "$conf"
+    fi
+}
+
+start_mdns() {
+    command -v avahi-daemon >/dev/null ||
+        pkg_install avahi-daemon avahi avahi "$(with_script avahi)" "avahi dbus" "avahi dbus" avahi
+    if [[ $init == s6 ]]; then
+        s6 repository sync
+        s6 set enable dbus
+    elif ! running 'dbus-(daemon|broker.*)'; then
+        start_service dbus
+    fi
+    start_service avahi-daemon
+}
+
+# NixOS builds /etc from its configuration, so all of that goes in there.
+adopt_nixos() {
+    local conf=/etc/nixos/configuration.nix module=/etc/nixos/backshot1.nix line lines=
+    if [[ -e /etc/nixos/flake.nix ]]; then
+        echo "bs1-adopt: this system is built from a flake; add BackShot1's settings to it by hand" >&2
+        return 1
+    fi
+    while read -r line; do lines+="\"$line\" "; done <"$keys/authorized_keys"
+    cat >"$module" <<EOF
+# Written by BackShot1's bs1-adopt.
+{ lib, pkgs, ... }:
+{
+  networking.hostName = lib.mkForce "$SOURCE_HOST";
+  services.openssh.enable = true;
+  services.openssh.settings.PermitRootLogin = lib.mkForce "prohibit-password";
+  users.users.root.openssh.authorizedKeys.keys = [ $lines];
+  services.avahi = { enable = true; publish = { enable = true; addresses = true; }; };
+  environment.systemPackages = [ pkgs.python3 ];
+}
+EOF
+    if ! grep -q 'backshot1\.nix' "$conf"; then
+        sed -i '0,/imports[[:space:]]*=[[:space:]]*\[/s//& .\/backshot1.nix/' "$conf"
+        grep -q 'backshot1\.nix' "$conf" || { echo "bs1-adopt: no imports list in $conf to add $module to" >&2; return 1; }
+    fi
+    nixos-rebuild switch
+}
+
+if [[ ! -e /etc/NIXOS ]]; then
+    echo "== hostname: $SOURCE_HOST"
+    set_hostname
+    echo "== what's missing"
+    install_tools
+fi
 
 echo "== root's authorized_keys"
 install -d -m 700 /root/.ssh
@@ -74,22 +208,19 @@ echo "== the fixed host key"
 rm -f /etc/ssh/ssh_host_rsa_key* /etc/ssh/ssh_host_ecdsa_key* /etc/ssh/ssh_host_dsa_key*
 install -m 600 "$keys/ssh_host_ed25519_key" /etc/ssh/ssh_host_ed25519_key
 install -m 644 "$keys/ssh_host_ed25519_key.pub" /etc/ssh/ssh_host_ed25519_key.pub
-
-if grep -qE '^[[:space:]]*Include[[:space:]]+/etc/ssh/sshd_config\.d/' /etc/ssh/sshd_config; then
-    mkdir -p /etc/ssh/sshd_config.d
-    echo 'PermitRootLogin prohibit-password' >/etc/ssh/sshd_config.d/00-backshot1.conf
-elif ! grep -q 'BackShot1' /etc/ssh/sshd_config; then
-    # sshd keeps the first value it reads.
-    sed -i '1i # BackShot1\nPermitRootLogin prohibit-password' /etc/ssh/sshd_config
-fi
-"$(command -v sshd || echo /usr/sbin/sshd)" -t
 if command -v restorecon >/dev/null; then restorecon -R /root/.ssh /etc/ssh; fi
-start_service ssh sshd
 
-echo "== mDNS, for $SOURCE_HOST.local"
-command -v avahi-daemon >/dev/null ||
-    pkg_install avahi-daemon avahi avahi avahi avahi avahi
-start_service avahi-daemon
+if [[ -e /etc/NIXOS ]]; then
+    echo "== NixOS: $SOURCE_HOST, sshd, mDNS and Python, in its configuration"
+    adopt_nixos
+    systemctl restart sshd.service
+else
+    allow_root_key_login
+    "$(command -v sshd || echo /usr/sbin/sshd)" -t
+    start_service ssh sshd
+    echo "== mDNS, for $SOURCE_HOST.local"
+    start_mdns
+fi
 
 ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub
 echo "bs1-adopt: done.  Tell Claude: \"Let's run BackShot1.\""

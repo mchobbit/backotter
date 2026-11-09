@@ -46,6 +46,7 @@
  },
  "cachyos": {
   "birth_times": "jfs keeps no birth time (stat %W 0) (inner.log:33) (+1 more)",
+  "flags_kept": "jfs doesn't keep nodump, notail, journal, topdir, nocow, compress; ext4 doesn't keep nocow (chattr took or refused them, lsattr doesn't show them)",
   "project_ids": "jfs has no project IDs (chattr -p refused) (inner.log:34) (+1 more)"
  },
  "debian12": {

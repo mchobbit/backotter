@@ -491,6 +491,18 @@ def driver_id(cell):
 
 # --- the run's state, for the runners -------------------------------------------------------------
 
+def prev_needs_of(pc, host, rows):
+    """The needs of a cell's newest valid PASS run row, while the row's own check and judge are
+    the cell's now; else None (a resumed plan.json has no pc.res, so it says None too)."""
+    now = getattr(getattr(pc, "res", None) or {}, "get", lambda _h: None)(host)
+    now = getattr(now, "groups", None) or {}
+    found = [r for r in rows or () if r.get("cell") == pc.cell and r.get("kind") == "run"
+             and r.get("verdict") == "PASS" and r.get("valid") is True]
+    best = max(found, key=lambda r: (r.get("t") or "", r.get("id", "")), default=None)
+    g = (best or {}).get("groups") or {}
+    return sorted(best["needs"]) if best and now and all(g.get(x) == now.get(x) for x in ("harness", "judge")) else None
+
+
 class RunState:
     """What a runner gets as ctx.run.
 
@@ -567,6 +579,8 @@ class RunState:
                    "planned_key": pc.keys.get(host), "attempt": int((rr or {}).get("attempt") or attempt),
                    "rerun_of": (rr or {}).get("rerun_of"), "flake": (rr or {}).get("flake"),
                    "limits_classed": limits_classed(pc.cell, self.limits, rows) if pc.family == "stic" else []}
+            if pc.family == "stic":
+                ent["prev_needs"] = prev_needs_of(pc, host, rows)
             if rr and rr.get("rule"):
                 ent["rule"] = rr["rule"]
             out["cells"][driver_id(pc.cell)] = ent

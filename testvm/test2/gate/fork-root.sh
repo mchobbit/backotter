@@ -106,7 +106,7 @@ cleanup() {
     sudo -n rm -rf --one-file-system "$ram"
 }
 trap cleanup EXIT
-trap 'exit 130' INT TERM HUP
+trap 'trap "" INT TERM HUP; exit 130' INT TERM HUP
 
 export GOTOOLCHAIN=local GOFLAGS=-modcacherw GOCACHE=$CACHE/gocache GOMODCACHE=$CACHE/gomod
 export PATH=$(dirname "$go"):$PATH LC_ALL=C.UTF-8 PYTHONDONTWRITEBYTECODE=1

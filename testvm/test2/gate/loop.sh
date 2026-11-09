@@ -69,6 +69,7 @@ mkdir -p "$out" "$log" || die "can't make $out or $log"
 rm -f "$out/info.txt" "$out/run-all.out"
 sampler=""
 cleanup() {
+    trap '' INT TERM HUP     # the stop's second signal must not cut this short
     local peak k
     [[ -z $sampler ]] || kill "$sampler" 2>/dev/null
     wait 2>/dev/null
@@ -87,7 +88,7 @@ cleanup() {
     sudo -n rmdir "$copy/fs-roundtrip/$pfx-fs" "$copy/fs-roundtrip" 2>/dev/null
 }
 trap cleanup EXIT
-trap 'exit 130' INT TERM HUP
+trap 'trap "" INT TERM HUP; exit 130' INT TERM HUP
 ( peak=0; while :; do
       k=$(sudo -n du -sxk /mnt/bko-ram/"$pfx"-* /mnt/bko-ram/nonroot-"$pfx"-* 2>/dev/null | awk '{ s += $1 } END { print s + 0 }')
       [[ ${k:-0} -gt $peak ]] && { peak=$k; echo "$peak" >"$log/.peak"; }

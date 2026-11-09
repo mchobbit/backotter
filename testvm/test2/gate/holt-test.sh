@@ -82,7 +82,7 @@ cleanup() {
     rm -rf "$ram"
 }
 trap cleanup EXIT
-trap 'exit 130' INT TERM HUP
+trap 'trap "" INT TERM HUP; exit 130' INT TERM HUP
 # The RAM directory's peak, every 10 s.
 ( peak=0; while :; do
       k=$(du -sk "$ram" 2>/dev/null | cut -f1)

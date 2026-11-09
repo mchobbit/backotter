@@ -5,6 +5,7 @@ cells.json, leftovers, the nothing-due lifecycle with its carried rows).
 T2_GOLDEN=bless rewrites tests/fixtures/p2/golden/*.  The fixture checkout copies real files
 (drive.py among them), so its base commit and drive.py's wall estimates are masked."""
 
+import argparse
 import contextlib
 import io
 import json
@@ -284,6 +285,24 @@ class Runs(unittest.TestCase):
         sd = run.RunState("t2s-20261108T0500-abcd", self.w.word("SticTest2 rel4 debian12", ctx), sp, ctx,
                           mac_root=self.mac, log=None).cells_doc(sp, "cinqcent")
         self.assertEqual(sd["cells"]["debian12"]["limits_classed"], ["selinux"])
+
+    def test_cells_json_gives_a_stic_cell_its_prev_needs(self):
+        """The writer real runs use, not SticRun.entry: a need that vanishes must reach the judge."""
+        ctx = self.w.ctx([])
+        sp = self.w.plan("SticTest2 rel4 debian12 plan")
+        rs = run.RunState("t2s-20261108T0500-abcd", self.w.word("SticTest2 rel4 debian12", ctx), sp, ctx,
+                          mac_root=self.mac, log=None)
+        g = {"harness": "h", "judge": "j"}
+        pc = argparse.Namespace(cell="stic:x", family="stic", status="due", rule="r", reasons=[],
+                                keys={"cinqcent": "k"}, res={"cinqcent": argparse.Namespace(groups=g)})
+        plan = argparse.Namespace(cells=[pc])
+        rs.ctx.ledger = [{"cell": "stic:x", "kind": "run", "verdict": "PASS", "valid": True, "t": "1",
+                          "needs": {"b": "PASS", "a": "LIMIT"}, "groups": dict(g)}]
+        self.assertEqual(rs.cells_doc(plan, "cinqcent")["cells"]["x"]["prev_needs"], ["a", "b"])
+        rs.ctx.ledger[0]["groups"] = dict(g, harness="edited")      # an edited check may change its needs
+        self.assertIsNone(rs.cells_doc(plan, "cinqcent")["cells"]["x"]["prev_needs"])
+        hp = argparse.Namespace(cells=[argparse.Namespace(**dict(vars(pc), cell="holt:x", family="holt"))])
+        self.assertNotIn("prev_needs", rs.cells_doc(hp, "cinqcent")["cells"]["x"])
 
     def test_leftovers(self):
         rid = "t2s-20261101T0000-dead"

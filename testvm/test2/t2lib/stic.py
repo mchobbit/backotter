@@ -493,12 +493,8 @@ class SticRun:
 
     def prev_needs(self, pc, host):
         """The needs of the cell's newest valid PASS run row, while its own check and judge are that row's; else None."""
-        now = getattr(getattr(pc, "res", {}).get(host), "groups", None) or {}
-        rows = [r for r in self.ctx.ledger or () if r.get("cell") == pc.cell and r.get("kind") == "run"
-                and r.get("verdict") == "PASS" and r.get("valid") is True]
-        best = max(rows, key=lambda r: (r.get("t") or "", r.get("id", "")), default=None)
-        g = (best or {}).get("groups") or {}
-        return sorted(best["needs"]) if best and now and all(g.get(x) == now.get(x) for x in ("harness", "judge")) else None
+        from . import run as runmod      # lazily: run loads the runners by name
+        return runmod.prev_needs_of(pc, host, self.ctx.ledger)
 
     def flakes(self):
         if self.rs is not None and getattr(self.rs, "flakes", None) is not None:

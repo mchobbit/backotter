@@ -1111,10 +1111,12 @@ class RunnerFailures(unittest.TestCase):
         self.assertEqual(r.stdout.strip(), "rc=7", r.stderr)
 
     def test_cleanup_is_not_cut_by_the_stops_second_signal(self):
-        for f in ("fork-root.sh", "holt-test.sh"):
+        for f in ("fork-root.sh", "holt-test.sh", "loop.sh"):
             text = read_file(os.path.join(REPO, "testvm", "test2", "gate", f))
             body = text[text.index("cleanup() {\n") + len("cleanup() {\n"):]
             self.assertTrue(body.lstrip().startswith("trap '' INT TERM HUP"), f)
+            # The handler too: a signal between its exit and cleanup's first line ends the shell.
+            self.assertIn("""trap 'trap "" INT TERM HUP; exit 130' INT TERM HUP""", text, f)
 
     def test_fork_job_that_may_still_run_keeps_its_tools(self):
         o, _, sh = self.fork_env(2, ans="runs")

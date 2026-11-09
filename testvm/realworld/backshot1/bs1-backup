@@ -1,7 +1,7 @@
 #!/bin/bash
 # BackShot1, phase 1: back up the running system.  As root, on the machine.
 #
-# Writes runs/STAMP/ on the backup drive, beside this script: the layout, a
+# Writes runs/DISTRO-STAMP/ on the backup drive, beside this script: the layout, a
 # manifest, the repository and its password, run.log, and PHASE1_OK once the
 # backup has passed `check --read-data`.  Changes nothing on the internal disk.
 #
@@ -36,7 +36,7 @@ if [[ ${1:-} == --preflight ]]; then
     exit 0
 fi
 
-RUN=$RUNS/$(date -u +%Y%m%d-%H%M%S)
+RUN=$RUNS/$(distro_name)-$(date -u +%Y%m%d-%H%M%S)
 mkdir -p "$RUN/baseline" || die "can't make $RUN"
 LOG=$RUN/run.log
 : >"$LOG"

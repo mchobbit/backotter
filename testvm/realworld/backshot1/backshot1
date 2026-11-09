@@ -6,11 +6,14 @@
 #   backshot1 adopt               run bs1-adopt on the machine, over the old login
 #   backshot1 preflight           check everything phase1 needs; changes nothing
 #   backshot1 phase1              back up the running system; prints RUN=...
+#   backshot1 list                the backups on the drive, and how each last restored
 #   backshot1 find-rescue         find the booted rescue stick; prints its address
-#   backshot1 plan RUN            on the stick: read the backup, plan the restore
-#   backshot1 phase2 RUN          on the stick: WIPE the internal disk, restore
+#   backshot1 plan NAME           on the stick: read the backup, plan the restore
+#   backshot1 phase2 NAME         on the stick: WIPE the internal disk, restore
 #   backshot1 reboot              on the stick: boot the restored system
-#   backshot1 verify RUN          on the restored system: check it
+#   backshot1 verify NAME         on the restored system: check it
+#
+# NAME is a run, or a distro for its newest backup: ubuntu-26.10, debian-13.
 
 set -euo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
@@ -43,6 +46,13 @@ on_rescue() {
 # Prints the drive's mount point on the machine, mounting it if nothing has.
 DRIVE="d=\$(findmnt -nro TARGET -S LABEL=$BACKUP_LABEL | head -n 1); if [ -z \"\$d\" ]; then mkdir -p /mnt/bs1-backup; mount LABEL=$BACKUP_LABEL /mnt/bs1-backup || exit 1; d=/mnt/bs1-backup; fi"
 
+# run_on_drive SCRIPT ARGS...: on the installed system or the stick, whichever is up.
+run_on_drive() {
+    local cmd="$DRIVE; exec bash \"\$d/backshot1/$*\""
+    if on_host true 2>/dev/null; then on_host "$cmd"; else on_rescue "sudo -n bash -c '$cmd'"; fi
+}
+resolve_run() { run_on_drive bs1-list --resolve "$1" || die "can't choose a backup for \"$1\""; }
+
 case ${1:-} in
 stage)
     tools=${2:?usage: backshot1 stage TOOLS_DIR}
@@ -50,7 +60,7 @@ stage)
     old_login_if_new
     d=$(on_host "$DRIVE; echo \"\$d\"")
     on_host "mkdir -p '$d/backshot1/bin' '$d/backshot1/runs' '$d/backshot1/keys'; chmod 700 '$d/backshot1/keys'"
-    scp -q "${OPTS[@]}" "$here"/bs1-{common,backup,restore,verify,manifest,adopt} "root@$HOST:$d/backshot1/"
+    scp -q "${OPTS[@]}" "$here"/bs1-{common,backup,restore,verify,manifest,adopt,list} "root@$HOST:$d/backshot1/"
     scp -q "${OPTS[@]}" "$here/thinkpad.conf" "root@$HOST:$d/backshot1/bs1.conf"
     scp -q "${OPTS[@]}" "$tools/bko-holt" "$tools/rustic-bko" "root@$HOST:$d/backshot1/bin/"
     scp -q "${OPTS[@]}" "$KEYS/id_ed25519.pub" "root@$HOST:$d/backshot1/keys/authorized_keys"
@@ -84,20 +94,37 @@ find-rescue)
     on_rescue "lsblk -dno SERIAL | grep -qx $INTERNAL_SERIAL" || die "$ip doesn't have disk $INTERNAL_SERIAL"
     echo "RESCUE=$ip"
     ;;
-plan | phase2)
-    run=${2:?usage: backshot1 $1 RUN}
-    only=; [[ $1 == plan ]] && only=--plan-only
-    on_rescue "sudo -n bash -c '$DRIVE; exec bash \"\$d/backshot1/bs1-restore\" --erase-serial $INTERNAL_SERIAL $only $run'"
+list)
+    run_on_drive bs1-list
+    ;;
+plan)
+    run=$(resolve_run "${2:?usage: backshot1 plan NAME}")
+    echo "backup: $run"
+    run_on_drive bs1-restore --erase-serial "$INTERNAL_SERIAL" --plan-only "$run"
+    ;;
+phase2)
+    run=$(resolve_run "${2:?usage: backshot1 phase2 NAME}")
+    echo "backup: $run"
+    # Detached: a dropped connection must not stop a restore halfway.
+    run_on_drive bs1-restore --erase-serial "$INTERNAL_SERIAL" --detach "$run"
+    status=
+    until [[ -n $status ]]; do
+        sleep 20
+        status=$(on_rescue 'sudo -n cat /run/backotter/restore.exit' 2>/dev/null || true)
+    done
+    on_rescue 'sudo -n tail -n 30 /run/backotter/restore.out'
+    exit "$status"
     ;;
 reboot)
     on_rescue 'sudo -n systemctl reboot' || true
     ;;
 verify)
-    run=${2:?usage: backshot1 verify RUN}
+    run=$(resolve_run "${2:?usage: backshot1 verify NAME}")
+    echo "backup: $run"
     on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-verify\" '$run'"
     ;;
 *)
-    sed -n '2,14p' "$0"
+    sed -n '2,17p' "$0"
     exit 2
     ;;
 esac

@@ -26,7 +26,7 @@ EXPECTED = [
     "home/*/.bash_history", "home/*/.lesshst", "home/*/.ssh/known_hosts",
     "root/.bash_history", "root/.cache/*", "root/.lesshst", "root/.ssh/known_hosts",
     "tmp/*", "var/tmp/*", "var/cache/*", "var/crash/*", "var/log/*", "var/spool/*", "var/backups/*",
-    "var/lib/*", "var/snap/*", "swap.img", "swapfile", "swap/*",
+    "var/lib/*", "var/snap/*", "swap.img", "swapfile", "swap/*", "mnt/bs1-backup",
     "etc/lvm/archive/*", "etc/lvm/backup/*", "etc/lvm/devices/*", "etc/selinux/*/active/*", ".autorelabel",
 ]
 

@@ -89,6 +89,7 @@ def main():
     ap.add_argument("--virtio", action="store_true", help="the internal disk is virtio, for a guest whose initramfs has no NVMe driver")
     ap.add_argument("--bios", action="store_true", help="SeaBIOS, not OVMF")
     ap.add_argument("--discard-on-pass", action="store_true", help="delete the disk images if it passes")
+    ap.add_argument("--restores", type=int, default=1, help="how many times to restore the one backup")
     a = ap.parse_args()
     os.makedirs(a.work, exist_ok=True)
     dev, parts = ("vda", "/dev/vda[0-9]*") if a.virtio else ("nvme0n1", "/dev/nvme0n1p*")
@@ -148,7 +149,7 @@ def main():
     with open(conf, "w") as f:
         f.write(f"SOURCE_HOST={host}\nINTERNAL_SERIAL={SERIAL}\nBACKUP_LABEL={LABEL}\n")
     scp = ["scp", "-q", *SSH, "-i", key, "-P", str(a.port)]
-    names = [os.path.join(HERE, f"bs1-{n}") for n in ("common", "backup", "restore", "verify", "manifest", "adopt")]
+    names = [os.path.join(HERE, f"bs1-{n}") for n in ("common", "backup", "restore", "verify", "manifest", "adopt", "list")]
     subprocess.run([*scp, *names, conf, f"root@127.0.0.1:/mnt/bs1-backup/backshot1/"], check=True)
     subprocess.run([*scp, f"{a.tools}/bko-holt", f"{a.tools}/rustic-bko", "root@127.0.0.1:/mnt/bs1-backup/backshot1/bin/"], check=True)
     root.run("mkdir -m 700 /mnt/bs1-backup/backshot1/keys; chmod 755 /mnt/bs1-backup/backshot1/bs1-* /mnt/bs1-backup/backshot1/bin/*")
@@ -169,44 +170,69 @@ def main():
         print("FAILED: " + "; ".join(fails), flush=True)
         return 1
 
-    print("== rescue: the stick", flush=True)
-    vm = Vm(machine("rescue", [rw1a.usb("stick", stick, "BKOSTICK", True), internal_disk(internal), usb_drive]), f"{w}/console-rescue.log")
-    rescue = Ssh(client, a.port, "backotter")
-    up = rescue.up(vm.proc, "sudo -n true")
-    check(up, "the stick starts SSH by itself and the key gets sudo")
-    if not up:
-        vm.proc.kill()
-        return 1
-    check(host_key_is_pinned(), "the stick presents the fixed host key")
-    sh = "sudo -n bash -c 'mkdir -p /mnt/bs1-backup && mount LABEL=%s /mnt/bs1-backup; exec bash /mnt/bs1-backup/backshot1/bs1-restore %s %s'"
     fp = f"sudo -n sh -c 'sfdisk -d /dev/{dev} | sha256sum; blkid -p {parts} | sha256sum'"
-    _, before = rescue.run(fp)
-    rc, out = rescue.run(sh % (LABEL, "--erase-serial WRONGSERIAL", run))
-    check(rc != 0 and "isn't this machine's internal disk" in out, "a wrong serial is refused")
-    rescue.run("sudo -n umount /mnt/bs1-backup")
-    rc, out = rescue.show(sh % (LABEL, f"--erase-serial {SERIAL} --plan-only", run))
-    check(rc == 0, "--plan-only passes")
-    check(rescue.run(fp)[1] == before, "--plan-only changes nothing")
-    rescue.run("sudo -n umount /mnt/bs1-backup")
-    rc, out = rescue.show(sh % (LABEL, f"--erase-serial {SERIAL}", run))
-    check(rc == 0, "bs1-restore passes")
-    rescue.run("sudo -n sh -c 'umount /mnt/bs1-backup; systemctl poweroff'")
-    vm.wait_off()
-    if fails:
-        print("FAILED: " + "; ".join(fails), flush=True)
-        return 1
+    bs1 = "sudo -n bash /mnt/bs1-backup/backshot1/"
+    restores = f"/mnt/bs1-backup/backshot1/runs/{run}/restores"
+    distro = run.rsplit("-", 2)[0]
+    for attempt in range(1, a.restores + 1):
+        print(f"== rescue {attempt}: the stick", flush=True)
+        vm = Vm(machine(f"rescue{attempt}", [rw1a.usb("stick", stick, "BKOSTICK", True), internal_disk(internal), usb_drive]), f"{w}/console-rescue{attempt}.log")
+        rescue = Ssh(client, a.port, "backotter")
+        up = rescue.up(vm.proc, "sudo -n true")
+        check(up, "the stick starts SSH by itself and the key gets sudo")
+        if not up:
+            vm.proc.kill()
+            return 1
+        check(host_key_is_pinned(), "the stick presents the fixed host key")
+        rescue.run(f"sudo -n sh -c 'mkdir -p /mnt/bs1-backup; mount LABEL={LABEL} /mnt/bs1-backup'")
+        rc, out = rescue.run(f"{bs1}bs1-list --resolve {distro}")
+        check(rc == 0 and out.strip() == run, f"\"{distro}\" finds its backup")
+        rc, _ = rescue.run(f"{bs1}bs1-list --resolve nosuchdistro")
+        check(rc != 0, "an unknown name is refused")
+        if attempt == 1:
+            _, before = rescue.run(fp)
+            rc, out = rescue.run(f"{bs1}bs1-restore --erase-serial WRONGSERIAL {run}")
+            check(rc != 0 and "isn't this machine's internal disk" in out, "a wrong serial is refused")
+            rc, out = rescue.show(f"{bs1}bs1-restore --erase-serial {SERIAL} --plan-only {run}")
+            check(rc == 0, "--plan-only passes")
+            check(rescue.run(fp)[1] == before, "--plan-only changes nothing")
+        rc, _ = rescue.show(f"{bs1}bs1-restore --erase-serial {SERIAL} --detach {run}")
+        check(rc == 0, "the detached restore starts")
+        status = ""
+        end = time.monotonic() + 3000
+        while not status and time.monotonic() < end:
+            time.sleep(15)
+            rc, out = rescue.run("sudo -n cat /run/backotter/restore.exit", 30)
+            status = out.strip() if rc == 0 else ""
+        rescue.show("sudo -n tail -n 12 /run/backotter/restore.out")
+        check(status == "0", f"restore {attempt} passes")
+        rescue.run("sudo -n sh -c 'umount /mnt/bs1-backup; systemctl poweroff'")
+        vm.wait_off()
+        if fails:
+            print("FAILED: " + "; ".join(fails), flush=True)
+            return 1
 
-    print("== restored: the internal disk, by the NVRAM the run left", flush=True)
-    # BIOS has no NVRAM to go by.
-    vm = Vm(machine("restored", [internal_disk(internal, a.bios), usb_drive]), f"{w}/console-restored.log")
-    up = root.up(vm.proc, f"lsblk -snlo NAME \"$(findmnt -n -o SOURCE / | sed 's/\\[.*//')\" | grep -qx {dev}")
-    check(up, "the restored system boots from NVRAM and answers")
-    if up:
-        check(host_key_is_pinned(), "the restored system presents the fixed host key")
-        rc, out = root.show(f"mkdir -p /mnt/bs1-backup && mount LABEL={LABEL} /mnt/bs1-backup && bash /mnt/bs1-backup/backshot1/bs1-verify {run}; rc=$?; head -n 40 /mnt/bs1-backup/backshot1/runs/{run}/compare.txt; exit $rc")
-        check(rc == 0, "bs1-verify passes")
-        root.run("umount /mnt/bs1-backup; poweroff")
-    vm.wait_off()
+        print(f"== restored {attempt}: the internal disk, by the NVRAM the run left", flush=True)
+        # BIOS has no NVRAM to go by.
+        vm = Vm(machine(f"restored{attempt}", [internal_disk(internal, a.bios), usb_drive]), f"{w}/console-restored{attempt}.log")
+        up = root.up(vm.proc, f"lsblk -snlo NAME \"$(findmnt -n -o SOURCE / | sed 's/\\[.*//')\" | grep -qx {dev}")
+        check(up, "the restored system boots from NVRAM and answers")
+        if up:
+            check(host_key_is_pinned(), "the restored system presents the fixed host key")
+            rc, out = root.show(f"mkdir -p /mnt/bs1-backup && mount LABEL={LABEL} /mnt/bs1-backup && bash /mnt/bs1-backup/backshot1/bs1-verify {run}; rc=$?; head -n 40 $(ls -d {restores}/*[0-9] | tail -n 1)/compare.txt; exit $rc")
+            check(rc == 0, "bs1-verify passes")
+            if attempt == a.restores:
+                _, out = root.run(f"ls -d {restores}/*[0-9] | wc -l; cat {restores}/*[0-9]/RESULT | grep -c PASS")
+                check(out.split() == [str(a.restores), str(a.restores)], f"each of the {a.restores} restores kept its own PASS")
+                root.run(f"mkdir {restores}/99990101-000000")
+                rc, out = root.run(f"bash /mnt/bs1-backup/backshot1/bs1-verify {run}")
+                check(rc == 2 and "didn't finish" in out, "bs1-verify refuses when the newest restore didn't finish")
+                root.run(f"rmdir {restores}/99990101-000000")
+                root.show("bash /mnt/bs1-backup/backshot1/bs1-list")
+            root.run("umount /mnt/bs1-backup; poweroff")
+        vm.wait_off()
+        if fails:
+            break
     print("FAILED: " + "; ".join(fails) if fails else "PASS", flush=True)
     if a.discard_on_pass and not fails:
         for f in (internal, drive, stick, stick_raw, vars_file):

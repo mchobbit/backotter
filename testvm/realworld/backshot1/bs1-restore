@@ -2,29 +2,54 @@
 # BackShot1, phase 2: wipe the internal disk and restore it.  As root, on the
 # rescue stick, from the backup drive.
 #
-# Usage: bs1-restore --erase-serial SERIAL [--plan-only] RUN
+# Usage: bs1-restore --erase-serial SERIAL [--plan-only] [--detach] RUN
 #
 # SERIAL has to be the internal disk's, repeated here on purpose.  Reads the whole
 # backup again first, and wipes nothing unless that passes and the restore plan
 # touches only that disk.  Leaves BootNext on the restored system; the caller
-# reboots.  Logs to runs/RUN/restore.log; RESTORED marks success.
+# reboots.  RUN can be restored any number of times: each attempt logs to its own
+# runs/RUN/restores/STAMP/, where RESTORED marks success (STAMP-plan for a
+# --plan-only).
+#
+# --detach starts the restore apart from this session, so a dropped connection
+# can't stop it halfway: output in /run/backotter/restore.out, and its exit status
+# in /run/backotter/restore.exit once it ends.
 
 # shellcheck disable=SC1091
 . "$(dirname "$(readlink -f "$0")")/bs1-common"
 
-ERASE= PLAN_ONLY=no RUN_NAME= WIPED=no
+ERASE= PLAN_ONLY=no DETACH=no RUN_NAME= WIPED=no
+ARGS=()
 while [[ $# -gt 0 ]]; do
     case $1 in
-        --erase-serial) ERASE=$2; shift 2 ;;
-        --plan-only) PLAN_ONLY=yes; shift ;;
+        --erase-serial) ERASE=$2; ARGS+=("$1" "$2"); shift 2 ;;
+        --plan-only) PLAN_ONLY=yes; ARGS+=("$1"); shift ;;
+        --detach) DETACH=yes; shift ;;
         -*) echo "unknown option $1" >&2; exit 2 ;;
-        *) RUN_NAME=$1; shift ;;
+        *) RUN_NAME=$1; ARGS+=("$1"); shift ;;
     esac
 done
-[[ -n $RUN_NAME ]] || { echo "usage: $0 --erase-serial SERIAL [--plan-only] RUN" >&2; exit 2; }
+[[ -n $RUN_NAME ]] || { echo "usage: $0 --erase-serial SERIAL [--plan-only] [--detach] RUN" >&2; exit 2; }
 RUN=$RUNS/$RUN_NAME
 [[ -d $RUN ]] || { echo "no run $RUN" >&2; exit 2; }
-LOG=$RUN/restore.log
+# Before anything is written: a refused restore isn't an attempt.
+if [[ $ERASE != "$INTERNAL_SERIAL" ]]; then
+    echo "--erase-serial isn't this machine's internal disk ($INTERNAL_SERIAL)" >&2
+    exit 1
+fi
+
+if [[ $DETACH == yes ]]; then
+    mkdir -p -m 700 /run/backotter
+    rm -f /run/backotter/restore.exit
+    setsid -f bash -c 'bash "$0" "$@"; echo $? >/run/backotter/restore.exit' "$(readlink -f "$0")" "${ARGS[@]}" </dev/null >/run/backotter/restore.out 2>&1
+    echo "started: output in /run/backotter/restore.out"
+    exit 0
+fi
+
+ATTEMPT=$RUN/restores/$(date -u +%Y%m%d-%H%M%S)
+[[ $PLAN_ONLY == no ]] || ATTEMPT=$ATTEMPT-plan
+mkdir -p "$ATTEMPT" || { echo "can't make $ATTEMPT" >&2; exit 2; }
+LOG=$ATTEMPT/restore.log
 touch "$LOG"
 
 finish() {
@@ -36,13 +61,13 @@ finish() {
     else
         say "RESULT: FAIL during \"$STEP\"; the internal disk has $([[ $WIPED == yes ]] || echo "not ")been wiped"
     fi
-    lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL,UUID,PARTUUID,MOUNTPOINT,MODEL,SERIAL >"$RUN/lsblk-rescue.txt" 2>&1
-    efibootmgr -v >"$RUN/efibootmgr-rescue.txt" 2>&1
-    dmesg -T >"$RUN/dmesg-rescue.txt" 2>&1
-    journalctl -b --no-pager 2>/dev/null | gzip -c >"$RUN/journal-rescue.txt.gz"
-    [[ -d /run/bko-holt/log ]] && cp -r /run/bko-holt/log "$RUN/bko-holt-log"
+    lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL,UUID,PARTUUID,MOUNTPOINT,MODEL,SERIAL >"$ATTEMPT/lsblk-rescue.txt" 2>&1
+    efibootmgr -v >"$ATTEMPT/efibootmgr-rescue.txt" 2>&1
+    dmesg -T >"$ATTEMPT/dmesg-rescue.txt" 2>&1
+    journalctl -b --no-pager 2>/dev/null | gzip -c >"$ATTEMPT/journal-rescue.txt.gz"
+    [[ -d /run/bko-holt/log ]] && cp -r /run/bko-holt/log "$ATTEMPT/bko-holt-log"
     if [[ $rc -ne 0 && ${LOADED:-no} == yes ]]; then
-        "$BIN/bko-holt" report-bug --output "$RUN/bko-report.txt" >>"$LOG" 2>&1
+        "$BIN/bko-holt" report-bug --output "$ATTEMPT/bko-report.txt" >>"$LOG" 2>&1
     fi
     sync
     exit "$rc"
@@ -51,12 +76,12 @@ trap finish EXIT
 trap 'die "interrupted"' INT TERM HUP
 
 step "preflight"
+say "restoring run $RUN_NAME, attempt $(basename "$ATTEMPT")"
 [[ -f /cdrom/.disk/backotter.json ]] || die "this isn't the BackOtter rescue stick"
 run cat /cdrom/.disk/backotter.json
 run uname -a
 [[ -f $RUN/PHASE1_OK ]] || die "this run's backup never passed its check"
 [[ $(sha256sum "$RUN/layout.json" | cut -d' ' -f1) == "$(cat "$RUN/PHASE1_OK")" ]] || die "layout.json changed since phase 1"
-[[ $ERASE == "$INTERNAL_SERIAL" ]] || die "--erase-serial isn't this machine's internal disk ($INTERNAL_SERIAL)"
 disk=$(internal_disk) || die "no single disk has serial $INTERNAL_SERIAL"
 drive=$(backup_disk "$disk") || die "LABEL=$BACKUP_LABEL isn't a USB drive apart from $disk"
 medium=$(findmnt -nro SOURCE /cdrom) || die "the live medium isn't mounted"
@@ -87,12 +112,12 @@ while read -r k; do
     LOAD+=(--key-file "$k")
 done < <(layout_keys "$RUN/layout.json" "$HERE/keys/disk-passphrase")
 LOADED=yes
-"${LOAD[@]}" >"$RUN/plan.txt" 2>&1
+"${LOAD[@]}" >"$ATTEMPT/plan.txt" 2>&1
 rc=$?
-tee -a "$LOG" <"$RUN/plan.txt"
+tee -a "$LOG" <"$ATTEMPT/plan.txt"
 [[ $rc -eq 0 ]] || die "the restore plan found problems (exit $rc); nothing has been erased"
 for d in "$drive" "$stick"; do
-    ! grep -qE "/dev/$d([^a-z0-9]|$)" "$RUN/plan.txt" || die "the plan touches /dev/$d; nothing has been erased"
+    ! grep -qE "/dev/$d([^a-z0-9]|$)" "$ATTEMPT/plan.txt" || die "the plan touches /dev/$d; nothing has been erased"
 done
 if [[ $PLAN_ONLY == yes ]]; then
     say "plan only: nothing has been erased"
@@ -124,9 +149,9 @@ step "comparing the restored files with the backup"
 # count, which no restored file can match; bs1-verify's manifest checks modes,
 # owners and mtimes.  Rustic can't compare device nodes, so calls them all M;
 # and it counts the top directory as added.
-"${RUSTIC[@]}" diff "latest:$SRC" /mnt/bko-target >"$RUN/diff.txt" 2>&1
+"${RUSTIC[@]}" diff "latest:$SRC" /mnt/bko-target >"$ATTEMPT/diff.txt" 2>&1
 rc=$?
-tail -n 20 "$RUN/diff.txt" | tee -a "$LOG"
+tail -n 20 "$ATTEMPT/diff.txt" | tee -a "$LOG"
 [[ $rc -eq 0 ]] || die "rustic-bko diff failed (exit $rc)"
 changes=$(awk '
     /^(Files|Dirs|Symlinks|Others) *:/ {
@@ -135,8 +160,8 @@ changes=$(awk '
         if ($1 != "Others") { n += $9 }
     }
     /^T[[:space:]]/ { n++ }
-    END { print n + 0 }' "$RUN/diff.txt")
-grep -qE '^(Files|Dirs|Symlinks|Others) *:' "$RUN/diff.txt" || die "rustic-bko diff printed no totals"
+    END { print n + 0 }' "$ATTEMPT/diff.txt")
+grep -qE '^(Files|Dirs|Symlinks|Others) *:' "$ATTEMPT/diff.txt" || die "rustic-bko diff printed no totals"
 say "differences: $changes (the list is in diff.txt)"
 [[ $changes -eq 0 ]] || die "$changes files differ from the backup after the restore"
 
@@ -144,10 +169,10 @@ step "redoing the boot loader"
 must "${LOAD[@]}" --through close --commit
 
 step "checking the rebuilt disk against the layout"
-"${LOAD[@]}" --only status >"$RUN/status.txt" 2>&1
+"${LOAD[@]}" --only status >"$ATTEMPT/status.txt" 2>&1
 rc=$?
-tee -a "$LOG" <"$RUN/status.txt"
-[[ $rc -eq 0 ]] && grep -q '^next: nothing; every stage is done' "$RUN/status.txt" ||
+tee -a "$LOG" <"$ATTEMPT/status.txt"
+[[ $rc -eq 0 ]] && grep -q '^next: nothing; every stage is done' "$ATTEMPT/status.txt" ||
     die "the disk doesn't match the layout (status.txt)"
 
 step "booting the restored system next"
@@ -166,5 +191,5 @@ if layout_is_uefi "$RUN/layout.json"; then
     fi
     run efibootmgr -v
 fi
-date -u >"$RUN/RESTORED"
+date -u >"$ATTEMPT/RESTORED"
 sync

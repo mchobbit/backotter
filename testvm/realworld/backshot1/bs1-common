@@ -109,6 +109,17 @@ drop_tree() {
     sync
 }
 
+# This system's name for its backup's folder: ubuntu-26.10, debian-13, arch.
+distro_name() {
+    local f name=linux
+    for f in /etc/os-release /usr/lib/os-release; do
+        [[ -r $f ]] || continue
+        name=$(. "$f"; echo "${ID:-linux}${VERSION_ID:+-$VERSION_ID}")
+        break
+    done
+    printf '%s' "$name" | tr -c 'A-Za-z0-9._-' '_'
+}
+
 package_list() {
     if command -v dpkg-query >/dev/null; then dpkg-query -W -f '${Package}\t${Version}\n'
     elif command -v rpm >/dev/null; then rpm -qa

@@ -3,15 +3,19 @@
 #
 # Usage: bs1-verify RUN
 #
-# Exit 0 only if every check passed.  Writes runs/RUN/verify.log and RESULT.
+# Checks the run's newest restore, which has to have succeeded: an older attempt's
+# success says nothing about what's on the disk now.  Exit 0 only if every check
+# passed.  Writes verify.log and RESULT beside that restore's logs.
 
 # shellcheck disable=SC1091
 . "$(dirname "$(readlink -f "$0")")/bs1-common"
 
 RUN=$RUNS/${1:?usage: bs1-verify RUN}
-[[ -f $RUN/RESTORED ]] || { echo "$RUN was never restored" >&2; exit 2; }
-LOG=$RUN/verify.log
+ATTEMPT=$(ls -d "$RUN"/restores/*[0-9] 2>/dev/null | tail -n 1)
+[[ -n $ATTEMPT && -f $ATTEMPT/RESTORED ]] || { echo "$RUN's newest restore (${ATTEMPT:-none}) didn't finish" >&2; exit 2; }
+LOG=$ATTEMPT/verify.log
 : >"$LOG"
+say "checking restore $(basename "$ATTEMPT") of $(basename "$RUN")"
 fails=0
 check() {       # check WHAT COMMAND...
     local what=$1; shift
@@ -50,8 +54,8 @@ check "hostname is $SOURCE_HOST" test "$(hostname)" == "$SOURCE_HOST"
 check "/ is on the restored $disk" on_disk "$(findmnt -nro SOURCE /)" "$disk"
 check "this isn't the rescue stick" test ! -f /cdrom/.disk/backotter.json
 check "the boot finished" test "$state" != unknown
-failed_units >"$RUN/failed-units-after.txt"
-new_failed=$(comm -13 "$RUN/baseline/failed-units.txt" "$RUN/failed-units-after.txt")
+failed_units >"$ATTEMPT/failed-units-after.txt"
+new_failed=$(comm -13 "$RUN/baseline/failed-units.txt" "$ATTEMPT/failed-units-after.txt")
 [[ -z $new_failed ]] || say "failed since the backup: $new_failed"
 check "no unit fails that didn't before the backup" test -z "$new_failed"
 check "the same swap is in use" swap_same
@@ -62,16 +66,16 @@ fi
 check "the package list is unchanged" packages_same
 
 step "the layout, as the restored system sees it"
-check "bko-holt dump works" sh -c "'$BIN/bko-holt' dump --only-disk '$disk' >'$RUN/after.json'"
+check "bko-holt dump works" sh -c "'$BIN/bko-holt' dump --only-disk '$disk' >'$ATTEMPT/after.json'"
 
 step "the files, against the manifest from before the backup"
 make_tree "$disk"
-must python3 "$HERE/bs1-manifest" "$SRC" "$RUN/manifest-after.tsv"
-python3 "$HERE/bs1-manifest" --compare "$RUN/baseline/manifest.tsv" "$RUN/manifest-after.tsv" 2>&1 | tee "$RUN/compare.txt" | tee -a "$LOG" | tail -n 40
+must python3 "$HERE/bs1-manifest" "$SRC" "$ATTEMPT/manifest-after.tsv"
+python3 "$HERE/bs1-manifest" --compare "$RUN/baseline/manifest.tsv" "$ATTEMPT/manifest-after.tsv" 2>&1 | tee "$ATTEMPT/compare.txt" | tee -a "$LOG" | tail -n 40
 [[ ${PIPESTATUS[0]} -eq 0 ]] || { say "  FAIL  files differ outside what a boot changes (compare.txt)"; fails=$((fails + 1)); }
 
 if [[ $fails -eq 0 ]]; then r=PASS; else r="FAIL: $fails checks"; fi
-echo "$r" >"$RUN/RESULT"
+echo "$r" >"$ATTEMPT/RESULT"
 printf '\n' | tee -a "$LOG"
 say "RESULT: $r"
 [[ $fails -eq 0 ]]

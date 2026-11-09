@@ -27,6 +27,7 @@ import select
 import shutil
 import subprocess
 import sys
+import threading
 import time
 
 OVMF = "/usr/share/OVMF"
@@ -39,7 +40,10 @@ SSH = ["-o", "BatchMode=yes", "-o", "StrictHostKeyChecking=no", "-o", "UserKnown
 
 
 class Console:
+    running: list["Console"] = []
+
     def __init__(self, cmd: list[str], log_path: str):
+        Console.running.append(self)
         self.log = open(log_path, "ab")
         self.proc = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE)
         self.buf = ""
@@ -64,6 +68,15 @@ class Console:
                 self.log.flush()
                 self.buf = (self.buf + chunk.decode("utf-8", "replace"))[-200000:]
 
+    def drain(self) -> None:
+        """Keeps reading the console in the background: a guest writing to a
+        full pipe stops, and a later phase may not be watching it."""
+        def read() -> None:
+            while chunk := os.read(self.proc.stdout.fileno(), 65536):
+                self.log.write(chunk)
+                self.log.flush()
+        threading.Thread(target=read, daemon=True).start()
+
     def send(self, text: str) -> None:
         self.proc.stdin.write(text.encode() + b"\n")
         self.proc.stdin.flush()
@@ -74,17 +87,19 @@ class Console:
 
     def capture(self, command: str, timeout: float = 120) -> str:
         """Runs command, returning what it printed."""
+        # The arithmetic keeps the terminal's echo of this line from matching,
+        # and the shell may put escape sequences before the marker.
         self.buf = ""
-        self.send(f"echo @@B; {command}; echo @@E")
-        self.expect(r"^@@B", timeout=timeout)
+        self.send(f"echo @@$((1))B; {command}; echo @@$((1))E")
+        self.expect(r"@@1B", timeout=timeout)
         end = time.monotonic() + timeout
-        while "\n@@E" not in self.buf and time.monotonic() < end:
+        while "@@1E" not in self.buf and time.monotonic() < end:
             ready, _, _ = select.select([self.proc.stdout], [], [], 1)
             if ready:
                 chunk = os.read(self.proc.stdout.fileno(), 65536)
                 self.log.write(chunk)
                 self.buf += chunk.decode("utf-8", "replace")
-        text, _, self.buf = self.buf.partition("\n@@E")
+        text, _, self.buf = self.buf.partition("@@1E")
         self.expect(PROMPT, timeout=30)
         return text.replace("\r", "").strip()
 
@@ -149,12 +164,36 @@ def check(ok: bool, what: str, fails: list[str]) -> None:
         fails.append(what)
 
 
+def restored_boot(a: argparse.Namespace, internal: str, vars_file: str, key: str, fails: list[str]) -> int:
+    print("== restored: boots alone", flush=True)
+    con = Console(qemu(a.work, "restored", vars_file, [nvme(internal, True)], a.port), f"{a.work}/console-restored.log")
+    con.drain()
+    up = False
+    ssh = ["ssh", *SSH, "-i", key, "-p", str(a.port), "root@127.0.0.1"]
+    end = time.monotonic() + 420
+    while time.monotonic() < end and not up:
+        # QEMU's user networking accepts before the guest is up: the timeout matters.
+        r = subprocess.run(["timeout", "15", *ssh, "findmnt -n -o SOURCE /; systemctl is-system-running; ls /var/log/bko-holt; bootctl status 2>/dev/null | grep -i 'current boot' ; efibootmgr | head -n 5"],
+                           capture_output=True, text=True)
+        up = r.returncode == 0 and "/dev/nvme0n1" in r.stdout
+        if not up:
+            time.sleep(5)
+    check(up, "the restored system boots and answers over SSH", fails)
+    print(r.stdout, r.stderr, flush=True)
+    subprocess.run(["timeout", "20", *ssh, "poweroff"], capture_output=True)
+    con.close()
+    print("FAILED: " + "; ".join(fails) if fails else "PASS", flush=True)
+    return 1 if fails else 0
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("img")
     ap.add_argument("guest_dir")
     ap.add_argument("work")
     ap.add_argument("--port", type=int, default=2696)
+    ap.add_argument("--restored-only", action="store_true",
+                    help="only the last boot, of the disks an earlier run left in WORK_DIR")
     a = ap.parse_args()
     os.makedirs(a.work, exist_ok=True)
     guest = glob.glob(os.path.join(a.guest_dir, "*.qcow2"))
@@ -165,12 +204,14 @@ def main() -> int:
     stick = f"{a.work}/stick.qcow2"
     internal = f"{a.work}/internal.qcow2"
     vars_file = f"{a.work}/vars.fd"
+    fails: list[str] = []
+    if a.restored_only:
+        return restored_boot(a, internal, vars_file, key, fails)
     shutil.copy(f"{OVMF}/{VARS}", vars_file)
     overlay(stick, a.img, "16G", "raw")
     overlay(internal, guest[0], "32G")
     for n in ("bk1", "bk2"):
         overlay(f"{a.work}/{n}.qcow2", None, "40G")
-    fails: list[str] = []
     fingerprint = lambda con: con.capture("sfdisk -d /dev/nvme0n1 | sha256sum; blkid -p /dev/nvme0n1p* | sha256sum")
 
     print("== refuse: two external drives", flush=True)
@@ -218,25 +259,14 @@ def main() -> int:
         print("FAILED before the restored boot:", fails)
         return 1
 
-    print("== restored: boots alone", flush=True)
-    con = Console(qemu(a.work, "restored", vars_file, [nvme(internal, True)], a.port), f"{a.work}/console-restored.log")
-    up = False
-    ssh = ["ssh", *SSH, "-i", key, "-p", str(a.port), "root@127.0.0.1"]
-    end = time.monotonic() + 420
-    while time.monotonic() < end and not up:
-        # QEMU's user networking accepts before the guest is up: the timeout matters.
-        r = subprocess.run(["timeout", "15", *ssh, "findmnt -n -o SOURCE /; systemctl is-system-running; ls /var/log/bko-holt; bootctl status 2>/dev/null | grep -i 'current boot' ; efibootmgr | head -n 5"],
-                           capture_output=True, text=True)
-        up = r.returncode == 0 and "/dev/nvme0n1" in r.stdout
-        if not up:
-            time.sleep(5)
-    check(up, "the restored system boots and answers over SSH", fails)
-    print(r.stdout, r.stderr, flush=True)
-    subprocess.run(["timeout", "20", *ssh, "poweroff"], capture_output=True)
-    con.close()
-    print("FAILED: " + "; ".join(fails) if fails else "PASS", flush=True)
-    return 1 if fails else 0
+    return restored_boot(a, internal, vars_file, key, fails)
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        sys.exit(main())
+    finally:
+        # A crash mustn't leave a guest running.
+        for con in Console.running:
+            if con.proc.poll() is None:
+                con.proc.kill()

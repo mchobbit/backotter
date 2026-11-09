@@ -53,15 +53,29 @@ The person boots the stick with the backup drive still attached and clicks Done,
 which authorizes erasing the internal disk.
 
     backshot1 find-rescue         by the laptop's MAC addresses; hostname is backotter
-    backshot1 plan RUN            reads the whole backup, plans; erases nothing
-    backshot1 phase2 RUN          wipes, restores, compares, redoes the boot loader
+    backshot1 plan NAME           reads the whole backup, plans; erases nothing
+    backshot1 phase2 NAME         wipes, restores, compares, redoes the boot loader
     backshot1 reboot              BootNext is the restored system
 
 Once `thinkpad.local` answers again:
 
-    backshot1 verify RUN          the checks; exit 0 and RESULT say PASS
+    backshot1 verify NAME         the checks; exit 0 and RESULT say PASS
 
-Logs and results are in `backshot1/runs/RUN/` on the backup drive.
+## Keeping a library of backups
+
+Each backup is a run of its own, named after the distro and the time:
+`backshot1/runs/ubuntu-26.10-20261108-204147/`, holding its repository, layout,
+password and baseline.  `backshot1 list` shows them and how each last restored.
+
+NAME is a whole run's name, or a distro (`ubuntu-26.10`, `debian-13`) for its
+newest backup.  A partial name that fits two distros is refused.  Any run can be
+restored any number of times, in any order, without reinstalling anything: its
+system already has BackShot1's keys.  Each attempt logs to
+`runs/RUN/restores/STAMP/`, and `verify` checks only the newest.
+
+An old backup tests the restore and the rescue image, not `dump` or the backup, so
+take a fresh one when those change.  The firmware's boot list is the one thing
+that carries over from one restore to the next.
 
 ## What guards the wipe
 

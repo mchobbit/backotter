@@ -1,0 +1,59 @@
+#!/bin/bash
+# BackShot1: the backups on this drive.  As root.
+#
+# Usage: bs1-list                  what's here, oldest first
+#        bs1-list --resolve NAME   the one run NAME means, or an error
+#
+# NAME is a whole run's name, or a distro (ubuntu-26.10, debian-13), which means
+# its newest backup.  A partial name that fits two distros (debian, for debian-12
+# and debian-13) is an error, not a guess: the run chosen is what gets restored.
+
+# shellcheck disable=SC1091
+. "$(dirname "$(readlink -f "$0")")/bs1-common"
+
+STAMP_RE='-[0-9]{8}-[0-9]{6}$'
+
+# Runs whose backup passed its check, oldest first, whatever the distro's name.
+good_runs() {
+    local d
+    for d in "$RUNS"/*/; do
+        [[ -f ${d}PHASE1_OK ]] && basename "$d"
+    done | sed -E 's/^(.*-)?([0-9]{8}-[0-9]{6})$/\2 &/' | LC_ALL=C sort | cut -d' ' -f2
+}
+
+last_result() {     # last_result RUN: how its newest restore went
+    local a
+    a=$(ls -d "$RUNS/$1"/restores/*[0-9] 2>/dev/null | tail -n 1)
+    if [[ -z $a ]]; then echo "never restored"
+    elif [[ -s $a/RESULT ]]; then head -n 1 "$a/RESULT"
+    elif [[ -f $a/RESTORED ]]; then echo "restored, not verified"
+    else echo "restore failed or was interrupted"
+    fi
+}
+
+if [[ ${1:-} == --resolve ]]; then
+    name=${2:?usage: bs1-list --resolve NAME}
+    matches=() distros=
+    for r in $(good_runs); do
+        if [[ $r == "$name" ]]; then echo "$r"; exit 0; fi
+        distro=$(sed -E "s/$STAMP_RE//" <<<"$r")
+        if [[ $distro == "$name" || $distro == "$name"-* ]]; then
+            matches+=("$r")
+            [[ " $distros " == *" $distro "* ]] || distros="$distros $distro"
+        fi
+    done
+    [[ ${#matches[@]} -gt 0 ]] || { echo "no backup matches \"$name\"" >&2; exit 1; }
+    if [[ $(wc -w <<<"$distros") -gt 1 ]]; then
+        echo "\"$name\" fits several distros:$distros" >&2
+        exit 1
+    fi
+    echo "${matches[-1]}"
+    exit 0
+fi
+
+printf '%-40s %8s %9s  %s\n' RUN REPO RESTORES "LAST RESTORE"
+for r in $(good_runs); do
+    n=$(ls -d "$RUNS/$r"/restores/*[0-9] 2>/dev/null | wc -l)
+    printf '%-40s %8s %9s  %s\n' "$r" "$(du -sh "$RUNS/$r/repo" | cut -f1)" "$n" "$(last_result "$r")"
+done
+df -h --output=avail "$RUNS" | tail -n 1 | awk '{ print "\nfree on the drive: " $1 }'

@@ -146,7 +146,10 @@ LOG=$LOGDIR/run.log
 cp "$0" "$LOGDIR/bko-realworld-1a.script" 2>/dev/null
 
 step "the tools"
+# The stick's /run is noexec.  A tmpfs of our own isn't, and chroot_dump's bind
+# of /run brings it along.
 mkdir -p "$BIN"
+findmnt -rn "$BIN" >/dev/null || mount -t tmpfs -o mode=700,size=128M tmpfs "$BIN" || die "can't make $BIN"
 for b in bko-holt rustic-bko; do
     if [[ -s $CFG/backotter/bin/$b ]]; then
         cp "$CFG/backotter/bin/$b" "$BIN/$b" || die "can't copy $b"
@@ -323,6 +326,30 @@ REPO=$REPO_DIR/repo PW=$REPO_DIR/repo-password
 # On the backup drive only: the stick holds no secrets.
 (umask 077; openssl rand -hex 32 | tr -d '\n' >"$PW") || die "can't write the repository's password"
 
+# A service started while $SRC was mounted has its own copy of the mounts, in
+# its own namespace, and that keeps the partitions busy after our umount.
+release_src() {
+    local me f p ns seen=
+    me=$(readlink /proc/self/ns/mnt)
+    for f in /proc/[0-9]*/mountinfo; do
+        grep -q " $SRC[ /]" "$f" 2>/dev/null || continue
+        p=${f#/proc/}
+        p=${p%/mountinfo}
+        ns=$(readlink "/proc/$p/ns/mnt") || continue
+        [[ $ns != "$me" && " $seen " != *" $ns "* ]] || continue
+        seen+=" $ns"
+        say "unmounting $SRC in $ns (pid $p, $(cat "/proc/$p/comm"))"
+        nsenter -t "$p" -m umount --recursive "$SRC" 2>&1 | tee -a "$LOG"
+    done
+}
+
+# Whether wipefs will be able to open them all: it wants them exclusively.
+all_free() {
+    python3 -c 'import os, sys
+for d in sys.argv[1:]:
+    os.close(os.open(d, os.O_RDONLY | os.O_EXCL))' "$@" 2>>"$LOG"
+}
+
 # Runs the tested dump inside the installed system, where /etc and the mounts
 # are its own.  The stick's kernel and command line are what it reports as
 # running; load uses neither.
@@ -364,6 +391,7 @@ BACKUP_OK=yes
 
 step "planning the restore"
 must umount --recursive "$SRC"
+release_src
 LOAD=("$BIN/bko-holt" load "$LAYOUT")
 for d in "${INTERNAL[@]}"; do LOAD+=(--map "$d=/dev/$d" --erase "/dev/$d"); done
 LOAD+=(--repo "$REPO" --password-file "$PW" --snapshot "latest:$SRC" --archiver "$BIN/rustic-bko")
@@ -378,6 +406,23 @@ done
 
 step "wiping the internal disks"
 [[ ${BACKUP_OK:-no} == yes ]] || die "the backup wasn't checked"
+# All or nothing: a partition still busy must not leave the others erased.
+targets=()
+for d in "${INTERNAL[@]}"; do
+    while read -r p _; do targets+=("$p"); done < <(parts_of "$d")
+    targets+=("/dev/$d")
+done
+for try in 1 2 3 4 5 6 7 8 9 10; do
+    all_free "${targets[@]}" && break
+    [[ $try -lt 10 ]] || {
+        run lsblk -o NAME,SIZE,FSTYPE,MOUNTPOINTS
+        run grep -l " $SRC" /proc/self/mountinfo
+        die "the internal disks are still in use; nothing has been erased"
+    }
+    say "the internal disks are busy; waiting ($try of 10)"
+    release_src
+    sleep 3
+done
 WIPED=yes
 for d in "${INTERNAL[@]}"; do
     while read -r p _; do must wipefs --all "$p"; done < <(parts_of "$d")

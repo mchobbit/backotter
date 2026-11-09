@@ -36,6 +36,7 @@ guests.  A guest passes only when every check passes.  Status is as of
 | 1F | Fedora, Rocky Linux | `fedora44`, `fedora44-uefi`, `fedora44-raid`, `rocky10`, `rocky10-lvm`, `rocky10-raid5` | passes (`fedora44-raid` and `rocky10-raid5`: run `raid022`, below) |
 | 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | passes |
 | 1C | CachyOS, MX Linux | `cachyos`, `mx25` | passes |
+| (1All only) | EndeavourOS, Manjaro | `endeavouros`, `endeavouros-grub`, `manjaro` (`make-arch.sh --live`: each one's own live ISO, with its installer's defaults) | passes on both hosts (runs `eosmj1` to `eosmj5`) |
 | 1V | Void Linux (musl) | `void-musl` | passes |
 | 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12 | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12` | passes |
 | 1H | Haiku | `haiku6` | passes (run `haiku024`, rustic-bko 0.11.4+backotter.7, which restores the volume root's metadata: Tracker's empty `trash` had made a new BFS volume look used) |

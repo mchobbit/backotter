@@ -3,8 +3,10 @@
 # install from an official Arch ISO into a qcow2 disk image, under QEMU with KVM.
 #
 # Usage: ./make-arch.sh [--cachyos] [--root-fs ext4|jfs] RELEASE WORK_DIR
+#        ./make-arch.sh --live endeavouros|endeavouros-grub|manjaro LIVE_ISO RELEASE WORK_DIR
 #   e.g. ./make-arch.sh 2026.10.01 vms/arch
 #        ./make-arch.sh --cachyos --root-fs jfs 2026.10.01 vms/cachyos
+#        ./make-arch.sh --live manjaro manjaro-xfce-26.1.1-minimal-260825-linux71.iso 2026.10.01 vms/manjaro
 #
 # RELEASE is an Arch ISO release date from https://archive.archlinux.org/iso/.
 # archlinux-RELEASE-x86_64.iso with its .sig and sha256sums.txt is downloaded
@@ -18,6 +20,14 @@
 # adds them to Arch.  CachyOS keeps no archive, so its packages and Arch's are
 # whatever is current, and the guest is frozen only by its qcow2 snapshot.  It
 # needs an x86-64-v3 CPU.
+#
+# --live installs an Arch-based desktop distribution from its own live ISO
+# (already verified) the way its Calamares does in an offline install, as
+# arch/install-live.sh says: the Arch ISO only runs that script, so that the
+# initramfs is built on the guest's own (virtual) hardware.  The guest is UEFI
+# (vm-run-options: its loader isn't signed), 24 GiB, with the distribution's
+# default partitions; WORK_DIR's other results are as below, NAME being the
+# distribution's.
 #
 # Results, in WORK_DIR (NAME is arch or cachyos):
 #   NAME.qcow2            the guest's 16 GiB disk (sparse), with a qcow2
@@ -47,17 +57,27 @@ INSTALL_TIMEOUT=1800
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-arch: $*" >&2; exit 1; }
 
-flavor=arch root_fs=ext4
+flavor=arch root_fs=ext4 live_iso=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --cachyos) flavor=cachyos; shift ;;
         --root-fs) root_fs=$2; shift 2 ;;
+        --live)
+            [[ $2 == endeavouros || $2 == endeavouros-grub || $2 == manjaro ]] || die "--live takes endeavouros, endeavouros-grub or manjaro"
+            flavor=$2 live_iso=$(realpath "$3"); shift 3 ;;
         -*) die "unknown option $1" ;;
         *) break ;;
     esac
 done
 [[ $root_fs == ext4 || $root_fs == jfs ]] || die "--root-fs must be ext4 or jfs"
-[[ $# -eq 2 ]] || die "usage: $0 [--cachyos] [--root-fs ext4|jfs] RELEASE WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 [--cachyos] [--root-fs ext4|jfs] [--live DISTRO LIVE_ISO] RELEASE WORK_DIR"
+install_script=install.sh live_drive=()
+if [[ -n $live_iso ]]; then
+    [[ -f $live_iso ]] || die "no such ISO: $live_iso"
+    DISK_SIZE=24G MEMORY=4096 install_script=install-live.sh
+    # Second CD: /dev/sr1 in the live system.
+    live_drive=(-drive "file=$live_iso,media=cdrom,readonly=on")
+fi
 GUEST_NAME=$flavor
 DISK=$flavor.qcow2
 release=$1
@@ -117,7 +137,7 @@ mkdir "$work/www"
 sed -e "s|@ARCHIVE_DATE@|${release//.//}|" -e "s|@HOSTNAME@|$GUEST_NAME|" \
     -e "s|@FLAVOR@|$flavor|" -e "s|@ROOT_FS@|$root_fs|" \
     -e "s|@ROOT_PASSWORD_HASH@|$hash|" -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" \
-    "$here/arch/install.sh" >"$work/www/install.sh"
+    "$here/arch/$install_script" >"$work/www/install.sh"
 if grep -n '@[A-Z_]\+@' "$work/www/install.sh"; then die "install.sh placeholders left unfilled"; fi
 
 # Serve install.sh to the guest only: QEMU's user-mode network maps
@@ -132,7 +152,7 @@ echo "Installing; the live system's console goes to $2/install-serial.log"
 timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
     -enable-kvm -cpu host -smp 2 -m "$MEMORY" -machine pc \
     -drive "file=$DISK,if=virtio,format=qcow2" \
-    -drive "file=$ISO,media=cdrom,readonly=on" \
+    -drive "file=$ISO,media=cdrom,readonly=on" "${live_drive[@]}" \
     -nic user,model=virtio-net-pci \
     -kernel "$work/vmlinuz" -initrd "$work/initramfs.img" \
     -append "$options console=tty0 console=ttyS0,115200n8 script=http://10.0.2.2:$port/install.sh" \
@@ -144,4 +164,5 @@ grep -q BACKOTTER-INSTALL-OK install-serial.log || {
 }
 
 qemu-img snapshot -c fresh-install "$DISK"
+[[ -z $live_iso ]] || echo "--uefi --no-secure-boot" >vm-run-options
 echo "Done: $2/$DISK ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""

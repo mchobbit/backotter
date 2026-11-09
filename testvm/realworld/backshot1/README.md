@@ -61,6 +61,45 @@ Once `thinkpad.local` answers again:
 
     backshot1 verify NAME         the checks; exit 0 and RESULT say PASS
 
+## The hands-free cycle
+
+Nobody has to be at the laptop for a restore, once the firmware is set up:
+
+- The stick must be in one of the laptop's own USB ports, not on a hub.  On the
+  X13, behind an external hub, a boot aimed at the stick reached it 1 time in 5
+  and otherwise fell through to the internal disk.  In a laptop port it reached
+  it 5 times in 5.
+- The firmware's `BootMode` is `Diagnostics`; those 5 boots were all in that
+  mode, and `Quick` hasn't been tried with the stick in a laptop port.  Over
+  SSH, as root, no BIOS visit:
+
+      echo Diagnostics > /sys/class/firmware-attributes/thinklmi/attributes/BootMode/current_value
+
+- The stick and the backup drive stay plugged in.
+
+`backshot1 stick-on` adds a boot entry for the stick's EFI partition, outside
+the boot order.  (Putting the stick first in `BootOrder` instead failed the one
+time it was tried, with the stick on the hub.)
+`backshot1 to-stick` sets `BootNext` to it and reboots: the firmware boots the
+stick once and clears `BootNext` itself.  Only the firmware's boot list changes,
+nothing on the disks, so a backup never sees it.
+
+    backshot1 cycle NAME COUNT --erase-serial SERIAL
+
+does COUNT rounds of: reboot onto the stick, plan, wipe and restore, boot the
+restored system, verify; it stops at the first failure.  `--erase-serial`, the
+internal disk's serial number, is the authorization that clicking Done gives by
+hand: this erases that disk, COUNT times.
+
+    backshot1 stick-off
+
+removes the entry when you're done.
+
+Still needs a person: a restored system that doesn't come up (its next boot goes
+to the internal disk again, so getting back to the stick takes F12, and a hang
+takes the power button; a battery defeats a smart plug), and an encrypted
+system's passphrase at first boot.
+
 ## Keeping a library of backups
 
 Each backup is a run of its own, named after the distro and the time:

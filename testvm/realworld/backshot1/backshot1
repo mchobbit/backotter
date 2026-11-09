@@ -13,6 +13,15 @@
 #   backshot1 reboot              on the stick: boot the restored system
 #   backshot1 verify NAME         on the restored system: check it
 #
+# Hands-free (README.md, "The hands-free cycle"):
+#
+#   backshot1 stick-on            give the firmware a boot entry for the stick
+#   backshot1 to-stick            reboot the installed system onto the stick, once
+#   backshot1 wait-host           wait for the restored system to answer
+#   backshot1 cycle NAME COUNT --erase-serial SERIAL
+#                                 COUNT restores of NAME, unattended: WIPES the disk
+#   backshot1 stick-off           remove the stick's boot entry again
+#
 # NAME is a run, or a distro for its newest backup: ubuntu-26.10, debian-13.
 
 set -euo pipefail
@@ -21,7 +30,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 . "$here/thinkpad.conf"
 
 HOST=${BS1_HOST:-thinkpad.local}
-MACS=(c8:a3:62:50:99:10 84:a9:38:9f:66:52)      # the USB Ethernet adapter, the onboard port
+MACS=(00:e0:4c:68:23:c3 c8:a3:62:50:99:10 84:a9:38:9f:66:52)      # USB Ethernet adapters, the onboard port
 STATE=${BS1_STATE:-${TMPDIR:-/tmp}/backshot1-state}
 mkdir -p "$STATE"
 KEYS=${BS1_KEYS:-$HOME/.ssh/backshot1}
@@ -48,10 +57,55 @@ DRIVE="d=\$(findmnt -nro TARGET -S LABEL=$BACKUP_LABEL | head -n 1); if [ -z \"\
 
 # run_on_drive SCRIPT ARGS...: on the installed system or the stick, whichever is up.
 run_on_drive() {
-    local cmd="$DRIVE; exec bash \"\$d/backshot1/$*\""
+    local script=$1
+    shift
+    local cmd="$DRIVE; exec bash \"\$d/backshot1/$script\" $*"
     if on_host true 2>/dev/null; then on_host "$cmd"; else on_rescue "sudo -n bash -c '$cmd'"; fi
 }
 resolve_run() { run_on_drive bs1-list --resolve "$1" || die "can't choose a backup for \"$1\""; }
+
+# The firmware's boot entry for the stick, on the installed system or the
+# stick itself.  An entry naming the stick's EFI partition, not the firmware's
+# "USB HDD", which can pick the backup drive and fall through to the disk.
+STICK_ENTRY='
+label="BackShot stick"
+entry() { efibootmgr | sed -n "s/^Boot\([0-9A-Fa-f]\{4\}\).*$label.*/\1/p" | head -n 1; }
+'
+# Run a script (stdin) as root on whichever is up.
+as_root() { if on_host true </dev/null 2>/dev/null; then on_host 'bash -s'; else on_rescue 'sudo -n bash -s'; fi; }
+
+stick_on() {
+    as_root <<EOF
+set -euo pipefail
+$STICK_ENTRY
+disk=\$(lsblk -lnpo NAME,LABEL,PKNAME | awk '\$2 == "BACKOTTER" { print \$3; exit }')
+[[ -n \$disk ]] || { echo "no stick with a BACKOTTER partition is plugged in" >&2; exit 1; }
+[[ \$(blkid -s TYPE -o value "\${disk}2") == vfat ]] || { echo "\${disk}2 isn't the stick's EFI partition" >&2; exit 1; }
+n=\$(entry)
+if [[ -z \$n ]]; then
+    efibootmgr -q -C -d "\$disk" -p 2 -L "\$label" -l '\\EFI\\BOOT\\BOOTX64.EFI'
+    n=\$(entry)
+fi
+[[ -n \$n ]] || { echo "the firmware didn't keep the stick's boot entry" >&2; exit 1; }
+mode=/sys/class/firmware-attributes/thinklmi/attributes/BootMode/current_value
+if [[ -r \$mode && \$(<"\$mode") != Diagnostics ]]; then
+    echo "warning: BootMode is \$(<"\$mode"): the firmware can skip the stick; it needs Diagnostics" >&2
+fi
+echo "stick: Boot\$n"
+EOF
+}
+
+# wait_for WHAT SECONDS COMMAND...: retry until COMMAND succeeds.
+wait_for() {
+    local what=$1 limit=$2 end; shift 2
+    end=$(( $(date +%s) + limit ))
+    until "$@" 2>/dev/null; do
+        [[ $(date +%s) -lt $end ]] || die "$what didn't answer within $limit seconds"
+        sleep 10
+    done
+}
+host_up() { on_host true; }
+rescue_up() { "$0" find-rescue >/dev/null; }
 
 case ${1:-} in
 stage)
@@ -83,16 +137,22 @@ find-rescue)
     prefix=${prefix:-${BS1_PREFIX:-192.168.68}}
     for i in $(seq 1 254); do ping -c 1 -W 700 -t 1 "$prefix.$i" >/dev/null 2>&1 & done
     wait
-    ip=
+    ips=
     for m in "${MACS[@]}"; do
-        ip=$(arp -an | awk -v m="$m" 'index($0, m) { gsub(/[()]/, "", $2); print $2; exit }')
-        [[ -z $ip ]] || break
+        # macOS's arp prints 00:e0:... as 0:e0:...
+        short=$(sed -E 's/(^|:)0([0-9a-f])/\1\2/g' <<<"$m")
+        ips+=" $(arp -an | awk -v m="$m" -v s=" $short " 'index($0, m) || index($0, s) { gsub(/[()]/, "", $2); print $2 }' | tr '\n' ' ')"
     done
-    [[ -n $ip ]] || die "no answer from the laptop's wired adapters on $prefix.0/24"
-    echo "$ip" >"$STATE/rescue-ip"
-    on_rescue 'sudo -n true && test -f /cdrom/.disk/backotter.json && hostname' || die "$ip isn't an unlocked rescue stick"
-    on_rescue "lsblk -dno SERIAL | grep -qx $INTERNAL_SERIAL" || die "$ip doesn't have disk $INTERNAL_SERIAL"
-    echo "RESCUE=$ip"
+    [[ -n ${ips// /} ]] || die "no answer from the laptop's wired adapters on $prefix.0/24"
+    # A MAC can have stale addresses in the ARP cache; only the stick passes this.
+    for ip in $ips; do
+        echo "$ip" >"$STATE/rescue-ip"
+        on_rescue 'sudo -n true && test -f /cdrom/.disk/backotter.json && hostname' 2>/dev/null || continue
+        on_rescue "lsblk -dno SERIAL | grep -qx $INTERNAL_SERIAL" || die "$ip doesn't have disk $INTERNAL_SERIAL"
+        echo "RESCUE=$ip"
+        exit 0
+    done
+    die "none of these is an unlocked rescue stick:$ips"
     ;;
 list)
     run_on_drive bs1-list
@@ -118,13 +178,63 @@ phase2)
 reboot)
     on_rescue 'sudo -n systemctl reboot' || true
     ;;
+stick-on)
+    stick_on
+    ;;
+stick-off)
+    as_root <<EOF
+set -euo pipefail
+$STICK_ENTRY
+n=\$(entry)
+if [[ -n \$n ]]; then efibootmgr -q -b "\$n" -B; echo "removed Boot\$n"; else echo "no stick entry"; fi
+efibootmgr | grep -E '^BootOrder'
+EOF
+    ;;
+to-stick)
+    # BootNext: the firmware's own one-shot; it clears it at that boot.
+    on_host 'bash -s' <<EOF || true
+set -euo pipefail
+$STICK_ENTRY
+n=\$(entry)
+[[ -n \$n ]] || { echo "no stick entry: backshot1 stick-on" >&2; exit 1; }
+efibootmgr -q --bootnext "\$n"
+sync
+systemctl reboot
+EOF
+    sleep 30
+    wait_for "the stick" 420 rescue_up
+    "$0" find-rescue
+    ;;
+wait-host)
+    sleep 30
+    wait_for "the restored system" 420 host_up
+    on_host 'hostname; . /etc/os-release; echo "$PRETTY_NAME"; efibootmgr | head -n 1'
+    ;;
+cycle)
+    run=${2:?usage: backshot1 cycle NAME COUNT --erase-serial SERIAL}
+    count=${3:?usage: backshot1 cycle NAME COUNT --erase-serial SERIAL}
+    [[ ${4:-} == --erase-serial && ${5:-} == "$INTERNAL_SERIAL" ]] ||
+        die "cycle wipes the internal disk: name it, --erase-serial $INTERNAL_SERIAL"
+    [[ $count =~ ^[1-9][0-9]*$ ]] || die "COUNT must be a positive number"
+    "$0" stick-on
+    for ((i = 1; i <= count; i++)); do
+        echo "=== cycle $i of $count: $run"
+        "$0" to-stick
+        "$0" plan "$run"
+        "$0" phase2 "$run"
+        "$0" reboot
+        "$0" wait-host
+        "$0" verify "$run"
+    done
+    echo "=== $count cycles passed; to remove the stick's boot entry: backshot1 stick-off"
+    ;;
 verify)
     run=$(resolve_run "${2:?usage: backshot1 verify NAME}")
     echo "backup: $run"
     on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-verify\" '$run'"
     ;;
 *)
-    sed -n '2,17p' "$0"
+    sed -n '2,26p' "$0"
     exit 2
     ;;
 esac

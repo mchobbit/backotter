@@ -1,0 +1,3 @@
+#!/bin/sh
+echo 'QEMU emulator version 10.0.2 (Debian 1:10.0.2+ds-1)'
+echo 'Copyright (c) 2003-2025 Fabrice Bellard and the QEMU Project developers'

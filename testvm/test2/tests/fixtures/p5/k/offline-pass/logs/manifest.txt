@@ -1,0 +1,18 @@
+host chopin kernel 6.12.115+deb13.1-amd64 QEMU emulator version 10.0.13 (Debian 1:10.0.13+ds-0+deb13u1)
+driver /home/m/backotter-work/testvm/holttest1d/ht1-offline.sh mode ram work /mnt/bko-ram/holttest1d/r4all/sculpt2610 records /bkoscratch/holttest1d/r4all/sculpt2610 reserved 2 (pid 1151007)
+env HT_PORT=2600
+env HT_RAM=1
+env HT_VARIANT=
+rustic-bko linux 886ef2281a118c55d084295e17d286f7360cd1511a95b73be5d15b15784857f8 /home/m/backotter-work/bko-bin/linux/rustic-bko (bko-bin set from round rel4, assembled 2026-11-06 10:05 UTC on chopin; rustic b518f42bcb1e)
+tree 7a322d1
+sha256 f341270ccedbbe34446f9d4e11595150a7c7cf5a82c63c7458a2d8ed478d661d /bkoscratch/holttest1d/bin/bko-holt
+sha256 886ef2281a118c55d084295e17d286f7360cd1511a95b73be5d15b15784857f8 /home/m/backotter-work/bko-bin/linux/rustic-bko
+sha256 d8f07cb3d95f681522af97c519688994db51977388042ccaadfcedcaec26423b /home/m/backotter-work/testvm/holttest1d/ht1-offline.sh
+sha256 c562200fdc006b0fc7459887599907cc2e0b5fccf3e935ea8a230d89562629a9 /home/m/backotter-work/testvm/holttest1d/ht1-lib.sh
+sha256 1f8f1c15b6eca7d8fc0bbdc50cd770479e9ffab590fa4759939a81b5da1ed8ef /home/m/backotter-work/testvm/holttest1d/judge.py
+sha256 a1555bf612a40318e8a96b41b9c67a3a5f300e61c376bc603f022f81d2c6e171 /home/m/backotter-work/testvm/compare/fsmeta.py
+sha256 ddfdd4025a9d5d29298fe008039c2815974c8f91ce9d069349899568a6b7b639 /home/m/backotter-work/testvm/vm-run
+sha256 29dbd790b105b005391bda5d1b43981c0ecc378038da7b37e491f196c6afa383 /home/m/backotter-work/testvm/vm-mount
+image /bkoscratch/holttest1d/rescuer/rescuer.qcow2 3518627840 1793890847 4333586631 sha256-file ddc4bd53fdfc05b432929fa1c3be766fcf415aae04cc98aed8212964e04638e3
+image /home/m/backotter-work/vms/sculpt2610/sculpt2610.qcow2 52953166 1793601295 2156174443
+version bko-holt 0.2.4; rustic 0.11.4+backotter.6

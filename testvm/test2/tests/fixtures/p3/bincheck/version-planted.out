@@ -1,0 +1,13 @@
+SKIP version linux/restic-bko [0.19.1+backotter.5]: prints 0.19.1+backotter.5; no expected version
+FAIL version linux/rustic-bko [0.11.4+backotter.6]: prints 0.11.4+backotter.6, not 0.11.4+backotter.7; no bko_core 0.13.0+backotter.6 in it
+SKIP version freebsd/restic-bko [0.19.1+backotter.5]: holds 0.19.1+backotter.5; no expected version
+SKIP version freebsd/rustic-bko [0.11.4+backotter.6 0.13.0+backotter.5]: holds 0.11.4+backotter.6 0.13.0+backotter.5; no expected version
+SKIP version netbsd/restic-bko [0.19.1+backotter.5]: holds 0.19.1+backotter.5; no expected version
+SKIP version netbsd/rustic-bko [0.11.4+backotter.6 0.13.0+backotter.5]: holds 0.11.4+backotter.6 0.13.0+backotter.5; no expected version
+SKIP version openbsd/restic-bko [0.19.1+backotter.5]: holds 0.19.1+backotter.5; no expected version
+SKIP version openbsd/rustic-bko [0.11.4+backotter.6 0.13.0+backotter.5]: holds 0.11.4+backotter.6 0.13.0+backotter.5; no expected version
+SKIP version dragonfly/restic-bko [0.19.1+backotter.5]: holds 0.19.1+backotter.5; no expected version
+SKIP version dragonfly/rustic-bko [0.11.4+backotter.6 0.13.0+backotter.5]: holds 0.11.4+backotter.6 0.13.0+backotter.5; no expected version
+SKIP version illumos/restic-bko [0.19.1+backotter.5]: holds 0.19.1+backotter.5; no expected version
+SKIP version illumos/rustic-bko [0.11.4+backotter.6 0.13.0+backotter.5]: holds 0.11.4+backotter.6 0.13.0+backotter.5; no expected version
+SKIP version haiku/rustic-bko [0.11.4+backotter.7 0.13.0+backotter.6]: holds 0.11.4+backotter.7 0.13.0+backotter.6; no expected version

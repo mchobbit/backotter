@@ -1,0 +1,20 @@
+=== RUN   TestBcachefsDirOptionsInherited
+--- PASS: TestBcachefsDirOptionsInherited (0.41s)
+=== RUN   TestClearRestrictingFlagsFile
+--- PASS: TestClearRestrictingFlagsFile (0.00s)
+=== RUN   TestFATAttributesOnVfat
+--- PASS: TestFATAttributesOnVfat (0.09s)
+=== RUN   TestFillHolesENOSPC
+    fillholes_linux_test.go:37: blocks 8 -> 26624, filled true
+--- PASS: TestFillHolesENOSPC (0.07s)
+=== RUN   TestNodeProjectIDBcachefs
+--- PASS: TestNodeProjectIDBcachefs (0.03s)
+=== RUN   TestPreallocateBtrfs
+--- PASS: TestPreallocateBtrfs (0.12s)
+=== RUN   TestRestoreFileFlagsBtrfsCompression
+--- PASS: TestRestoreFileFlagsBtrfsCompression (0.10s)
+=== RUN   TestRestoreLeavesSELinuxLabel
+--- PASS: TestRestoreLeavesSELinuxLabel (0.00s)
+=== RUN   TestXFSOptionsOnXFS
+--- PASS: TestXFSOptionsOnXFS (0.33s)
+PASS

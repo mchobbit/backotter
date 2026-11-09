@@ -1,0 +1,1198 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.4"
+  },
+  "generated": "2026-11-08T02:31:10Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host-1",
+    "machine_id": "bd000000000040008000000000000001",
+    "dmi": {
+      "sys_vendor": "QEMU",
+      "product_name": "Standard PC (i440FX + PIIX, 1996)",
+      "product_version": "pc-i440fx-10.0",
+      "board_vendor": null,
+      "board_name": null,
+      "bios_vendor": "SeaBIOS",
+      "bios_version": "1.16.3-debian-1.16.3-2",
+      "bios_date": "04/01/2014",
+      "product_uuid": null,
+      "chassis_type": "1"
+    },
+    "virtualization": "kvm"
+  },
+  "os": {
+    "id": "rocky",
+    "version_id": "10.0",
+    "version_codename": null,
+    "pretty_name": "Rocky Linux 10.0 (Red Quartz)",
+    "debian_version": null,
+    "kernel_release": "6.12.0-55.12.1.el10_0.x86_64",
+    "kernel_version": "#1 SMP PREEMPT_DYNAMIC Fri May 23 17:41:02 UTC 2025",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "bios"
+  },
+  "storage": {
+    "topology": {
+      "vda (disk, 16 GiB, dos)": {
+        "vda1 (partition, 1 GiB) linux_raid_member \"localhost.localdomain:boot\"": {
+          "md126 (md, 1022 MiB) xfs on /boot": {}
+        },
+        "vda2 (partition, 15 GiB) linux_raid_member \"localhost.localdomain:label1\"": {
+          "md127 (md, 30 GiB) LVM2_member": {
+            "dm-0 (dm, 28 GiB, rl_host--1-root) xfs on /": {},
+            "dm-1 (dm, 2 GiB, rl_host--1-swap) swap": {}
+          }
+        }
+      },
+      "vdb (disk, 16 GiB, dos)": {
+        "vdb1 (partition, 1 GiB) linux_raid_member \"localhost.localdomain:boot\"": {
+          "md126 (md, 1022 MiB) xfs on /boot": {}
+        },
+        "vdb2 (partition, 15 GiB) linux_raid_member \"localhost.localdomain:label1\"": {
+          "md127 (md, 30 GiB) LVM2_member": {
+            "dm-0 (dm, 28 GiB, rl_host--1-root) xfs on /": {},
+            "dm-1 (dm, 2 GiB, rl_host--1-swap) swap": {}
+          }
+        }
+      },
+      "vdc (disk, 16 GiB, dos)": {
+        "vdc1 (partition, 1 GiB) linux_raid_member \"localhost.localdomain:boot\"": {
+          "md126 (md, 1022 MiB) xfs on /boot": {}
+        },
+        "vdc2 (partition, 15 GiB) linux_raid_member \"localhost.localdomain:label1\"": {
+          "md127 (md, 30 GiB) LVM2_member": {
+            "dm-0 (dm, 28 GiB, rl_host--1-root) xfs on /": {},
+            "dm-1 (dm, 2 GiB, rl_host--1-swap) swap": {}
+          }
+        }
+      }
+    },
+    "disks": [
+      {
+        "name": "vda",
+        "path": "/dev/vda",
+        "kind": "disk",
+        "devno": "252:0",
+        "size_bytes": 17179869184,
+        "size": "16 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/1",
+          "/dev/disk/by-path/pci-0000:00:04.0",
+          "/dev/disk/by-path/virtio-pci-0000:00:04.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "dos",
+          "sector_size": 512,
+          "disk_signature": "bc000001",
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vda1",
+            "path": "/dev/vda1",
+            "devno": "252:1",
+            "number": 1,
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "start_bytes": 1048576,
+            "size_bytes": 1073741824,
+            "type": "0xfd",
+            "type_name": "Linux raid autodetect",
+            "bootable": true,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000001-01",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part1",
+              "/dev/disk/by-partuuid/bc000001-01",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partnum/1",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partuuid/bc000001-01",
+              "/dev/disk/by-path/pci-0000:00:04.0-part1",
+              "/dev/disk/by-path/virtio-pci-0000:00:04.0-part1"
+            ],
+            "holders": ["md126"],
+            "content": {
+              "type": "linux_raid_member",
+              "usage": "raid",
+              "uuid": "bc000000-0000-4000-8000-000000000001",
+              "label": "localhost.localdomain:boot",
+              "version": "1.2",
+              "metadata": "1.2",
+              "level": "raid1",
+              "raid_disks": 3,
+              "layout": 0,
+              "chunk_size": 0,
+              "component_size_bytes": 1071644672,
+              "data_offset_bytes": 2097152,
+              "data_size_bytes": 1071644672,
+              "super_offset_bytes": 4096,
+              "mdadm_uuid": "bc000000:00004000:80000000:00000001",
+              "device_uuid": "bc000000-0000-4000-8000-000000000002",
+              "device_number": 0,
+              "device_role": "active 0",
+              "events": 26,
+              "creation_time": 1794018730,
+              "update_time": 1794018986,
+              "feature_map": "0x1",
+              "write_intent_bitmap": true,
+              "ppl": false,
+              "logical_block_size": 0,
+              "bitmap_offset_sectors": 8
+            },
+            "mounted_at": []
+          },
+          {
+            "name": "vda2",
+            "path": "/dev/vda2",
+            "devno": "252:2",
+            "number": 2,
+            "start_lba": 2099200,
+            "sectors": 31455232,
+            "start_bytes": 1074790400,
+            "size_bytes": 16105078784,
+            "type": "0xfd",
+            "type_name": "Linux raid autodetect",
+            "bootable": false,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000001-02",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part2",
+              "/dev/disk/by-partuuid/bc000001-02",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partnum/2",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partuuid/bc000001-02",
+              "/dev/disk/by-path/pci-0000:00:04.0-part2",
+              "/dev/disk/by-path/virtio-pci-0000:00:04.0-part2"
+            ],
+            "holders": ["md127"],
+            "content": {
+              "type": "linux_raid_member",
+              "usage": "raid",
+              "uuid": "bc000000-0000-4000-8000-000000000003",
+              "label": "localhost.localdomain:label1",
+              "version": "1.2",
+              "metadata": "1.2",
+              "level": "raid5",
+              "raid_disks": 3,
+              "layout": 2,
+              "chunk_size": 524288,
+              "component_size_bytes": 16095641600,
+              "data_offset_bytes": 9437184,
+              "data_size_bytes": 16095641600,
+              "super_offset_bytes": 4096,
+              "mdadm_uuid": "bc000000:00004000:80000000:00000003",
+              "device_uuid": "bc000000-0000-4000-8000-000000000004",
+              "device_number": 0,
+              "device_role": "active 0",
+              "events": 65,
+              "creation_time": 1794018723,
+              "update_time": 1794105056,
+              "feature_map": "0x1",
+              "write_intent_bitmap": true,
+              "ppl": false,
+              "logical_block_size": 0,
+              "bitmap_offset_sectors": 8
+            },
+            "mounted_at": []
+          }
+        ],
+        "boot_code": {
+          "kind": "grub2",
+          "first_bytes": "eb6390108ed0bc00b0b800008ed88ec0",
+          "grub_core_lba": 1,
+          "grub_boot_drive": "0xff",
+          "grub_core_present": true,
+          "grub_core_in": "post-mbr-gap",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 162
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "vdb",
+        "path": "/dev/vdb",
+        "kind": "disk",
+        "devno": "252:16",
+        "size_bytes": 17179869184,
+        "size": "16 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/2",
+          "/dev/disk/by-path/pci-0000:00:05.0",
+          "/dev/disk/by-path/virtio-pci-0000:00:05.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "dos",
+          "sector_size": 512,
+          "disk_signature": "bc000002",
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vdb1",
+            "path": "/dev/vdb1",
+            "devno": "252:17",
+            "number": 1,
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "start_bytes": 1048576,
+            "size_bytes": 1073741824,
+            "type": "0xfd",
+            "type_name": "Linux raid autodetect",
+            "bootable": true,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000002-01",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/2-part1",
+              "/dev/disk/by-partuuid/bc000002-01",
+              "/dev/disk/by-path/pci-0000:00:05.0-part/by-partnum/1",
+              "/dev/disk/by-path/pci-0000:00:05.0-part/by-partuuid/bc000002-01",
+              "/dev/disk/by-path/pci-0000:00:05.0-part1",
+              "/dev/disk/by-path/virtio-pci-0000:00:05.0-part1"
+            ],
+            "holders": ["md126"],
+            "content": {
+              "type": "linux_raid_member",
+              "usage": "raid",
+              "uuid": "bc000000-0000-4000-8000-000000000001",
+              "label": "localhost.localdomain:boot",
+              "version": "1.2",
+              "metadata": "1.2",
+              "level": "raid1",
+              "raid_disks": 3,
+              "layout": 0,
+              "chunk_size": 0,
+              "component_size_bytes": 1071644672,
+              "data_offset_bytes": 2097152,
+              "data_size_bytes": 1071644672,
+              "super_offset_bytes": 4096,
+              "mdadm_uuid": "bc000000:00004000:80000000:00000001",
+              "device_uuid": "bc000000-0000-4000-8000-000000000005",
+              "device_number": 1,
+              "device_role": "active 1",
+              "events": 26,
+              "creation_time": 1794018730,
+              "update_time": 1794018986,
+              "feature_map": "0x1",
+              "write_intent_bitmap": true,
+              "ppl": false,
+              "logical_block_size": 0,
+              "bitmap_offset_sectors": 8
+            },
+            "mounted_at": []
+          },
+          {
+            "name": "vdb2",
+            "path": "/dev/vdb2",
+            "devno": "252:18",
+            "number": 2,
+            "start_lba": 2099200,
+            "sectors": 31455232,
+            "start_bytes": 1074790400,
+            "size_bytes": 16105078784,
+            "type": "0xfd",
+            "type_name": "Linux raid autodetect",
+            "bootable": false,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000002-02",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/2-part2",
+              "/dev/disk/by-partuuid/bc000002-02",
+              "/dev/disk/by-path/pci-0000:00:05.0-part/by-partnum/2",
+              "/dev/disk/by-path/pci-0000:00:05.0-part/by-partuuid/bc000002-02",
+              "/dev/disk/by-path/pci-0000:00:05.0-part2",
+              "/dev/disk/by-path/virtio-pci-0000:00:05.0-part2"
+            ],
+            "holders": ["md127"],
+            "content": {
+              "type": "linux_raid_member",
+              "usage": "raid",
+              "uuid": "bc000000-0000-4000-8000-000000000003",
+              "label": "localhost.localdomain:label1",
+              "version": "1.2",
+              "metadata": "1.2",
+              "level": "raid5",
+              "raid_disks": 3,
+              "layout": 2,
+              "chunk_size": 524288,
+              "component_size_bytes": 16095641600,
+              "data_offset_bytes": 9437184,
+              "data_size_bytes": 16095641600,
+              "super_offset_bytes": 4096,
+              "mdadm_uuid": "bc000000:00004000:80000000:00000003",
+              "device_uuid": "bc000000-0000-4000-8000-000000000006",
+              "device_number": 1,
+              "device_role": "active 1",
+              "events": 65,
+              "creation_time": 1794018723,
+              "update_time": 1794105056,
+              "feature_map": "0x1",
+              "write_intent_bitmap": true,
+              "ppl": false,
+              "logical_block_size": 0,
+              "bitmap_offset_sectors": 8
+            },
+            "mounted_at": []
+          }
+        ],
+        "boot_code": {
+          "kind": "grub2",
+          "first_bytes": "eb6390108ed0bc00b0b800008ed88ec0",
+          "grub_core_lba": 1,
+          "grub_boot_drive": "0xff",
+          "grub_core_present": true,
+          "grub_core_in": "post-mbr-gap",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 162
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "vdc",
+        "path": "/dev/vdc",
+        "kind": "disk",
+        "devno": "252:32",
+        "size_bytes": 17179869184,
+        "size": "16 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/3",
+          "/dev/disk/by-path/pci-0000:00:06.0",
+          "/dev/disk/by-path/virtio-pci-0000:00:06.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "dos",
+          "sector_size": 512,
+          "disk_signature": "bc000003",
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vdc1",
+            "path": "/dev/vdc1",
+            "devno": "252:33",
+            "number": 1,
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "start_bytes": 1048576,
+            "size_bytes": 1073741824,
+            "type": "0xfd",
+            "type_name": "Linux raid autodetect",
+            "bootable": true,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000003-01",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/3-part1",
+              "/dev/disk/by-partuuid/bc000003-01",
+              "/dev/disk/by-path/pci-0000:00:06.0-part/by-partnum/1",
+              "/dev/disk/by-path/pci-0000:00:06.0-part/by-partuuid/bc000003-01",
+              "/dev/disk/by-path/pci-0000:00:06.0-part1",
+              "/dev/disk/by-path/virtio-pci-0000:00:06.0-part1"
+            ],
+            "holders": ["md126"],
+            "content": {
+              "type": "linux_raid_member",
+              "usage": "raid",
+              "uuid": "bc000000-0000-4000-8000-000000000001",
+              "label": "localhost.localdomain:boot",
+              "version": "1.2",
+              "metadata": "1.2",
+              "level": "raid1",
+              "raid_disks": 3,
+              "layout": 0,
+              "chunk_size": 0,
+              "component_size_bytes": 1071644672,
+              "data_offset_bytes": 2097152,
+              "data_size_bytes": 1071644672,
+              "super_offset_bytes": 4096,
+              "mdadm_uuid": "bc000000:00004000:80000000:00000001",
+              "device_uuid": "bc000000-0000-4000-8000-000000000007",
+              "device_number": 2,
+              "device_role": "active 2",
+              "events": 26,
+              "creation_time": 1794018730,
+              "update_time": 1794018986,
+              "feature_map": "0x1",
+              "write_intent_bitmap": true,
+              "ppl": false,
+              "logical_block_size": 0,
+              "bitmap_offset_sectors": 8
+            },
+            "mounted_at": []
+          },
+          {
+            "name": "vdc2",
+            "path": "/dev/vdc2",
+            "devno": "252:34",
+            "number": 2,
+            "start_lba": 2099200,
+            "sectors": 31455232,
+            "start_bytes": 1074790400,
+            "size_bytes": 16105078784,
+            "type": "0xfd",
+            "type_name": "Linux raid autodetect",
+            "bootable": false,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000003-02",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/3-part2",
+              "/dev/disk/by-partuuid/bc000003-02",
+              "/dev/disk/by-path/pci-0000:00:06.0-part/by-partnum/2",
+              "/dev/disk/by-path/pci-0000:00:06.0-part/by-partuuid/bc000003-02",
+              "/dev/disk/by-path/pci-0000:00:06.0-part2",
+              "/dev/disk/by-path/virtio-pci-0000:00:06.0-part2"
+            ],
+            "holders": ["md127"],
+            "content": {
+              "type": "linux_raid_member",
+              "usage": "raid",
+              "uuid": "bc000000-0000-4000-8000-000000000003",
+              "label": "localhost.localdomain:label1",
+              "version": "1.2",
+              "metadata": "1.2",
+              "level": "raid5",
+              "raid_disks": 3,
+              "layout": 2,
+              "chunk_size": 524288,
+              "component_size_bytes": 16095641600,
+              "data_offset_bytes": 9437184,
+              "data_size_bytes": 16095641600,
+              "super_offset_bytes": 4096,
+              "mdadm_uuid": "bc000000:00004000:80000000:00000003",
+              "device_uuid": "bc000000-0000-4000-8000-000000000008",
+              "device_number": 3,
+              "device_role": "active 2",
+              "events": 65,
+              "creation_time": 1794018723,
+              "update_time": 1794105056,
+              "feature_map": "0x1",
+              "write_intent_bitmap": true,
+              "ppl": false,
+              "logical_block_size": 0,
+              "bitmap_offset_sectors": 8
+            },
+            "mounted_at": []
+          }
+        ],
+        "boot_code": {
+          "kind": "grub2",
+          "first_bytes": "eb6390108ed0bc00b0b800008ed88ec0",
+          "grub_core_lba": 1,
+          "grub_boot_drive": "0xff",
+          "grub_core_present": true,
+          "grub_core_in": "post-mbr-gap",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 162
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [
+      {
+        "name": "md126",
+        "path": "/dev/md126",
+        "kind": "md",
+        "devno": "9:126",
+        "size_bytes": 1071644672,
+        "size": "1022 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-id/md-name-localhost.localdomain:boot",
+          "/dev/disk/by-id/md-uuid-bc000000:00004000:80000000:00000001",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000009",
+          "/dev/md/boot"
+        ],
+        "holders": [],
+        "slaves": ["vda1", "vdb1", "vdc1"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "xfs",
+          "usage": "filesystem",
+          "uuid": "bc000000-0000-4000-8000-000000000009",
+          "label": null,
+          "version": "5",
+          "format_version": 5,
+          "block_size": 4096,
+          "blocks": 261632,
+          "size_bytes": 1071644672,
+          "sector_size": 512,
+          "inode_size": 512,
+          "ag_count": 4,
+          "ag_blocks": 65408,
+          "log_internal": true,
+          "log_blocks": 16384,
+          "log_sector_size": 0,
+          "log_stripe_unit": 1,
+          "stripe_unit": 0,
+          "stripe_width": 0,
+          "dir_block_size": 4096,
+          "imax_pct": 25,
+          "realtime_blocks": 0,
+          "realtime_extent_size": 1,
+          "inodes": 576,
+          "free_inodes": 214,
+          "free_blocks": 194695,
+          "version_flags": ["attr", "nlink", "align", "logv2", "extflg", "dirv2", "morebits"],
+          "features": [
+            "lazysbcount",
+            "attr2",
+            "projid32bit",
+            "crc",
+            "finobt",
+            "rmapbt",
+            "reflink",
+            "inobtcount",
+            "ftype",
+            "sparse",
+            "bigtime",
+            "nrext64"
+          ],
+          "log_incompat_features": []
+        },
+        "mounted_at": ["/boot"],
+        "md": {
+          "level": "raid1",
+          "raid_disks": 3,
+          "metadata_version": "1.2",
+          "chunk_size": 0,
+          "layout": "0",
+          "array_state": "clean",
+          "degraded": 0,
+          "sync_action": "idle",
+          "uuid": "bc000000:00004000:80000000:00000001",
+          "name": "localhost.localdomain:boot",
+          "devname": "boot",
+          "members": [
+            {
+              "device": "vda1",
+              "slot": "0",
+              "state": "in_sync"
+            },
+            {
+              "device": "vdb1",
+              "slot": "1",
+              "state": "in_sync"
+            },
+            {
+              "device": "vdc1",
+              "slot": "2",
+              "state": "in_sync"
+            }
+          ]
+        }
+      },
+      {
+        "name": "md127",
+        "path": "/dev/md127",
+        "kind": "md",
+        "devno": "9:127",
+        "size_bytes": 32191283200,
+        "size": "30 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": false,
+        "links": [
+          "/dev/disk/by-id/lvm-pv-uuid-bkoLVM-0000-0000-0000-0000-0000-000001",
+          "/dev/disk/by-id/md-name-localhost.localdomain:label1",
+          "/dev/disk/by-id/md-uuid-bc000000:00004000:80000000:00000003",
+          "/dev/md/label1"
+        ],
+        "holders": ["dm-0", "dm-1"],
+        "slaves": ["vda2", "vdb2", "vdc2"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "LVM2_member",
+          "usage": "raid",
+          "uuid": "bkoLVM-0000-0000-0000-0000-0000-000001",
+          "label": null,
+          "version": "LVM2 001",
+          "label_sector": 1,
+          "device_size": 32191283200,
+          "data_area_offset": 1048576,
+          "metadata_areas": [
+            {
+              "offset": 4096,
+              "size": 1044480
+            }
+          ],
+          "vg_name": "rl_host-1",
+          "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000002"
+        },
+        "mounted_at": [],
+        "md": {
+          "level": "raid5",
+          "raid_disks": 3,
+          "metadata_version": "1.2",
+          "chunk_size": 524288,
+          "layout": "2",
+          "array_state": "active",
+          "degraded": 0,
+          "sync_action": "idle",
+          "uuid": "bc000000:00004000:80000000:00000003",
+          "name": "localhost.localdomain:label1",
+          "devname": "label1",
+          "members": [
+            {
+              "device": "vda2",
+              "slot": "0",
+              "state": "in_sync"
+            },
+            {
+              "device": "vdb2",
+              "slot": "1",
+              "state": "in_sync"
+            },
+            {
+              "device": "vdc2",
+              "slot": "2",
+              "state": "in_sync"
+            }
+          ]
+        }
+      }
+    ],
+    "dm_devices": [
+      {
+        "name": "dm-0",
+        "path": "/dev/dm-0",
+        "kind": "dm",
+        "devno": "253:0",
+        "size_bytes": 30043799552,
+        "size": "28 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": false,
+        "links": [
+          "/dev/disk/by-id/dm-name-rl_host--1-root",
+          "/dev/disk/by-id/dm-uuid-LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000003",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-00000000000a",
+          "/dev/mapper/rl_host--1-root",
+          "/dev/rl_host-1/root"
+        ],
+        "holders": [],
+        "slaves": ["md127"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "xfs",
+          "usage": "filesystem",
+          "uuid": "bc000000-0000-4000-8000-00000000000a",
+          "label": null,
+          "version": "5",
+          "format_version": 5,
+          "block_size": 4096,
+          "blocks": 7333888,
+          "size_bytes": 30039605248,
+          "sector_size": 512,
+          "inode_size": 512,
+          "ag_count": 16,
+          "ag_blocks": 458368,
+          "log_internal": true,
+          "log_blocks": 16384,
+          "log_sector_size": 0,
+          "log_stripe_unit": 32768,
+          "stripe_unit": 128,
+          "stripe_width": 256,
+          "dir_block_size": 4096,
+          "imax_pct": 25,
+          "realtime_blocks": 0,
+          "realtime_extent_size": 1,
+          "inodes": 29248,
+          "free_inodes": 1649,
+          "free_blocks": 7060210,
+          "version_flags": ["attr", "nlink", "align", "dalign", "logv2", "extflg", "dirv2", "morebits"],
+          "features": [
+            "lazysbcount",
+            "attr2",
+            "projid32bit",
+            "crc",
+            "finobt",
+            "rmapbt",
+            "reflink",
+            "inobtcount",
+            "ftype",
+            "sparse",
+            "bigtime",
+            "nrext64"
+          ],
+          "log_incompat_features": []
+        },
+        "mounted_at": ["/"],
+        "dm": {
+          "dm_name": "rl_host--1-root",
+          "dm_uuid": "LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000003",
+          "mapper_path": "/dev/mapper/rl_host--1-root",
+          "target": "lvm",
+          "vg": "rl_host-1",
+          "lv": "root",
+          "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000002",
+          "lv_uuid": "bkoLVM-0000-0000-0000-0000-0000-000003"
+        }
+      },
+      {
+        "name": "dm-1",
+        "path": "/dev/dm-1",
+        "kind": "dm",
+        "devno": "253:1",
+        "size_bytes": 2143289344,
+        "size": "2 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": false,
+        "links": [
+          "/dev/disk/by-id/dm-name-rl_host--1-swap",
+          "/dev/disk/by-id/dm-uuid-LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000004",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-00000000000b",
+          "/dev/mapper/rl_host--1-swap",
+          "/dev/rl_host-1/swap"
+        ],
+        "holders": [],
+        "slaves": ["md127"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "swap",
+          "usage": "other",
+          "uuid": "bc000000-0000-4000-8000-00000000000b",
+          "label": null,
+          "version": "1",
+          "page_size": 4096,
+          "last_page": 523263,
+          "size_bytes": 2143289344,
+          "bad_pages": 0
+        },
+        "mounted_at": [],
+        "dm": {
+          "dm_name": "rl_host--1-swap",
+          "dm_uuid": "LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000004",
+          "mapper_path": "/dev/mapper/rl_host--1-swap",
+          "target": "lvm",
+          "vg": "rl_host-1",
+          "lv": "swap",
+          "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000002",
+          "lv_uuid": "bkoLVM-0000-0000-0000-0000-0000-000004"
+        }
+      }
+    ],
+    "loop_devices": [],
+    "other_devices": [
+      {
+        "name": "sr0",
+        "path": "/dev/sr0",
+        "kind": "rom",
+        "devno": "11:0",
+        "size_bytes": 1073741312,
+        "size": "1024 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": false,
+        "links": [
+          "/dev/cdrom",
+          "/dev/disk/by-diskseq/9",
+          "/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1",
+          "/dev/disk/by-path/pci-0000:00:01.1-ata-2",
+          "/dev/disk/by-path/pci-0000:00:01.1-ata-2.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "lvm": {
+      "volume_groups": [
+        {
+          "name": "rl_host-1",
+          "id": "bkoLVM-0000-0000-0000-0000-0000-000002",
+          "seqno": 3,
+          "format": "lvm2",
+          "status": ["RESIZEABLE", "READ", "WRITE"],
+          "flags": [],
+          "extent_size_bytes": 4194304,
+          "max_lv": 0,
+          "max_pv": 0,
+          "metadata_copies": 0,
+          "physical_volumes": [
+            {
+              "name": "pv0",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000001",
+              "device_hint": "/dev/md127",
+              "dev_size_bytes": 32191283200,
+              "pe_start_bytes": 1048576,
+              "pe_count": 7674,
+              "status": ["ALLOCATABLE"],
+              "device": "md127"
+            }
+          ],
+          "logical_volumes": [
+            {
+              "name": "root",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000003",
+              "status": ["READ", "WRITE", "VISIBLE"],
+              "flags": [],
+              "size_bytes": 30043799552,
+              "creation_host": "localhost.localdomain",
+              "creation_time": 1794018729,
+              "segments": [
+                {
+                  "start_extent": 0,
+                  "extent_count": 7163,
+                  "type": "striped",
+                  "stripe_count": 1,
+                  "stripes": ["pv0", 0]
+                }
+              ],
+              "active_device": "dm-0"
+            },
+            {
+              "name": "swap",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000004",
+              "status": ["READ", "WRITE", "VISIBLE"],
+              "flags": [],
+              "size_bytes": 2143289344,
+              "creation_host": "localhost.localdomain",
+              "creation_time": 1794018729,
+              "segments": [
+                {
+                  "start_extent": 0,
+                  "extent_count": 511,
+                  "type": "striped",
+                  "stripe_count": 1,
+                  "stripes": ["pv0", 7163]
+                }
+              ],
+              "active_device": "dm-1"
+            }
+          ],
+          "creation_host": "localhost.localdomain",
+          "creation_time": 1794018729
+        }
+      ]
+    },
+    "zfs": {
+      "pools_from_labels": [],
+      "zpool_cache": null,
+      "tools": null
+    },
+    "btrfs": [],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "/dev/mapper/rl_host--1-root",
+        "fstype": "xfs",
+        "devno": "253:0",
+        "device": "dm-0",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,sunit=1024,swidth=2048,noquota",
+        "size_bytes": 29972496384,
+        "used_bytes": 1665671168,
+        "available_bytes": 28306825216
+      },
+      {
+        "target": "/boot",
+        "source": "/dev/md126",
+        "fstype": "xfs",
+        "devno": "9:126",
+        "device": "md126",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,seclabel,attr2,inode64,logbufs=8,logbsize=32k,noquota",
+        "size_bytes": 1004535808,
+        "used_bytes": 240750592,
+        "available_bytes": 763785216
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/dm-1",
+        "type": "partition",
+        "size_bytes": 2143285248,
+        "used_bytes": 0,
+        "priority": -2,
+        "device": "dm-1"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-00000000000a",
+        "file": "/",
+        "type": "xfs",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "dm-0"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000009",
+        "file": "/boot",
+        "type": "xfs",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "md126"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-00000000000b",
+        "file": "none",
+        "type": "swap",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "dm-1"
+      }
+    ],
+    "crypttab": [],
+    "mdadm_conf": {
+      "arrays": [
+        {
+          "device": "/dev/md/boot",
+          "level": "raid1",
+          "num-devices": "3",
+          "uuid": "bc000000:00004000:80000000:00000001"
+        },
+        {
+          "device": "/dev/md/label1",
+          "level": "raid5",
+          "num-devices": "3",
+          "uuid": "bc000000:00004000:80000000:00000003"
+        }
+      ],
+      "settings": {
+        "mailaddr": "root",
+        "auto": "+imsm +1.x -all"
+      }
+    }
+  },
+  "boot": {
+    "loader": {
+      "name": "grub",
+      "firmware": "bios",
+      "via_shim": false,
+      "package": null,
+      "evidence": [
+        "vda's MBR holds GRUB 2's boot.img",
+        "vdb's MBR holds GRUB 2's boot.img",
+        "vdc's MBR holds GRUB 2's boot.img"
+      ]
+    },
+    "efi": null,
+    "esps": [],
+    "grub": {
+      "dir": "/boot/grub2",
+      "installed_platforms": ["i386-pc"],
+      "grub_cfg": {
+        "entries": ["UEFI Firmware Settings"],
+        "search_uuids": ["bc000000-0000-4000-8000-000000000009"],
+        "modules": [
+          "all_video",
+          "efi_gop",
+          "efi_uga",
+          "ieee1275_fb",
+          "vbe",
+          "vga",
+          "video_bochs",
+          "video_cirrus",
+          "increment",
+          "part_msdos",
+          "diskfilter",
+          "mdraid1x",
+          "xfs",
+          "blscfg"
+        ],
+        "default_linux": null,
+        "default_initrd": null,
+        "lang": null
+      },
+      "grubenv": {
+        "saved_entry": "bd000000000040008000000000000001-6.12.0-55.12.1.el10_0.x86_64",
+        "menu_auto_hide": "1",
+        "boot_success": "1"
+      },
+      "default_grub": {
+        "GRUB_TIMEOUT": "5",
+        "GRUB_DISTRIBUTOR": "$(sed 's, release .*$,,g' /etc/system-release)",
+        "GRUB_DEFAULT": "saved",
+        "GRUB_DISABLE_SUBMENU": "true",
+        "GRUB_TERMINAL": "serial console",
+        "GRUB_SERIAL_COMMAND": "serial --speed=115200",
+        "GRUB_CMDLINE_LINUX": "console=tty0 crashkernel=2G-64G:256M,64G-:512M resume=UUID=bc000000-0000-4000-8000-00000000000b rd.md.uuid=bc000000:00004000:80000000:00000003 rd.lvm.lv=rl_host-1/root rd.md.uuid=bc000000:00004000:80000000:00000001 rd.lvm.lv=rl_host-1/swap console=ttyS0,115200n8",
+        "GRUB_DISABLE_RECOVERY": "true",
+        "GRUB_ENABLE_BLSCFG": "true"
+      },
+      "debconf": null
+    },
+    "systemd_boot": {
+      "loader_conf": null,
+      "entries": [
+        {
+          "file": "bd000000000040008000000000000001-0-rescue.conf",
+          "title": "Rocky Linux (0-rescue-bd000000000040008000000000000001) 10.0 (Red Quartz)",
+          "version": "0-rescue-bd000000000040008000000000000001",
+          "linux": "/vmlinuz-0-rescue-bd000000000040008000000000000001",
+          "initrd": "/initramfs-0-rescue-bd000000000040008000000000000001.img",
+          "options": "root=/dev/mapper/rl_host--1-root ro console=tty0 crashkernel=2G-64G:256M,64G-:512M resume=UUID=bc000000-0000-4000-8000-00000000000b rd.md.uuid=bc000000:00004000:80000000:00000003 rd.lvm.lv=rl_host-1/root rd.md.uuid=bc000000:00004000:80000000:00000001 rd.lvm.lv=rl_host-1/swap console=ttyS0,115200n8",
+          "grub_users": "$grub_users",
+          "grub_arg": "--unrestricted",
+          "grub_class": "rocky"
+        },
+        {
+          "file": "bd000000000040008000000000000001-6.12.0-55.12.1.el10_0.x86_64.conf",
+          "title": "Rocky Linux (6.12.0-55.12.1.el10_0.x86_64) 10.0 (Red Quartz)",
+          "version": "6.12.0-55.12.1.el10_0.x86_64",
+          "linux": "/vmlinuz-6.12.0-55.12.1.el10_0.x86_64",
+          "initrd": "/initramfs-6.12.0-55.12.1.el10_0.x86_64.img",
+          "options": "root=/dev/mapper/rl_host--1-root ro console=tty0 crashkernel=2G-64G:256M,64G-:512M resume=UUID=bc000000-0000-4000-8000-00000000000b rd.md.uuid=bc000000:00004000:80000000:00000003 rd.lvm.lv=rl_host-1/root rd.md.uuid=bc000000:00004000:80000000:00000001 rd.lvm.lv=rl_host-1/swap console=ttyS0,115200n8",
+          "grub_users": "$grub_users",
+          "grub_arg": "--unrestricted",
+          "grub_class": "rocky"
+        }
+      ]
+    },
+    "kernels": {
+      "installed": [
+        {
+          "version": "0-rescue-bd000000000040008000000000000001",
+          "vmlinuz_bytes": 15866696,
+          "initrd_bytes": 57718120,
+          "config": false,
+          "running": false,
+          "modules_installed": false
+        },
+        {
+          "version": "6.12.0-55.12.1.el10_0.x86_64",
+          "vmlinuz_bytes": 15866696,
+          "initrd_bytes": 29125229,
+          "config": true,
+          "running": true,
+          "modules_installed": true
+        }
+      ],
+      "symlinks": {}
+    },
+    "cmdline": {
+      "raw": "BOOT_IMAGE=(mduuid/bc000000000040008000000000000001)/vmlinuz-6.12.0-55.12.1.el10_0.x86_64 root=/dev/mapper/rl_host--1-root ro console=tty0 crashkernel=2G-64G:256M,64G-:512M resume=UUID=bc000000-0000-4000-8000-00000000000b rd.md.uuid=bc000000:00004000:80000000:00000003 rd.lvm.lv=rl_host-1/root rd.md.uuid=bc000000:00004000:80000000:00000001 rd.lvm.lv=rl_host-1/swap console=ttyS0,115200n8",
+      "words": [
+        "BOOT_IMAGE=(mduuid/bc000000000040008000000000000001)/vmlinuz-6.12.0-55.12.1.el10_0.x86_64",
+        "root=/dev/mapper/rl_host--1-root",
+        "ro",
+        "console=tty0",
+        "crashkernel=2G-64G:256M,64G-:512M",
+        "resume=UUID=bc000000-0000-4000-8000-00000000000b",
+        "rd.md.uuid=bc000000:00004000:80000000:00000003",
+        "rd.lvm.lv=rl_host-1/root",
+        "rd.md.uuid=bc000000:00004000:80000000:00000001",
+        "rd.lvm.lv=rl_host-1/swap",
+        "console=ttyS0,115200n8\n"
+      ],
+      "storage": {
+        "BOOT_IMAGE": "(mduuid/bc000000000040008000000000000001)/vmlinuz-6.12.0-55.12.1.el10_0.x86_64",
+        "root": "/dev/mapper/rl_host--1-root",
+        "ro": "",
+        "resume": "UUID=bc000000-0000-4000-8000-00000000000b",
+        "rd.md.uuid": "bc000000:00004000:80000000:00000001",
+        "rd.lvm.lv": "rl_host-1/swap"
+      }
+    },
+    "kernel_cmdline_file": "root=/dev/mapper/rl_host--1-root ro console=tty0 crashkernel=2G-64G:256M,64G-:512M resume=UUID=bc000000-0000-4000-8000-00000000000b rd.md.uuid=bc000000:00004000:80000000:00000003 rd.lvm.lv=rl_host-1/root rd.md.uuid=bc000000:00004000:80000000:00000001 rd.lvm.lv=rl_host-1/swap console=ttyS0,115200n8",
+    "initramfs": {
+      "generator": "dracut",
+      "modules": null,
+      "compress": null,
+      "resume": null,
+      "crypttab_in_initramfs": true
+    },
+    "packages": {
+      "grub2-common": "2.12-14.el10_0",
+      "os-prober": "1.81-9.el10",
+      "dracut": "105-4.el10_0",
+      "mdadm": "4.3-5.el10",
+      "lvm2": "2.03.28-6.el10",
+      "tpm2-tools": "5.7-4.el10",
+      "xfsprogs": "6.11.0-1.el10",
+      "e2fsprogs": "1.47.1-3.el10",
+      "grub2-pc": "2.12-14.el10_0",
+      "grub2-tools": "2.12-14.el10_0",
+      "kernel-core": "6.12.0-55.12.1.el10_0",
+      "selinux-policy-targeted": "40.13.26-1.el10"
+    }
+  },
+  "warnings": []
+}

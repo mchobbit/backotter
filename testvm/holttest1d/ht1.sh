@@ -44,9 +44,12 @@
 # HT_RUSTIC=FILE a file, unchecked.  HT_FAIL_AT=PHASE adds a FAIL line
 # after that phase (a test hook).
 #
+# HT_HOLT_BIN=DIR takes bko-holt from DIR/bko-holt (DIR/PLATFORM/bko-holt in
+# ht1-bsd.sh) instead of bin/'s: a set laid out as bin/ is, HoltTest2's
+# builds (T2_HOST_ROOT/holt-bin/CODE); a run refuses when it lacks the file.
 # For debugging (ht1-debug.sh drives these): HT_HOLT=FILE is the bko-holt
-# to test instead of bin/'s (either is copied as the run starts, and that
-# copy serves the whole run); HT_QUICK=1 leaves out rebuild's refusals, dry
+# to test instead of bin/'s or HT_HOLT_BIN's (either is copied as the run
+# starts, and that copy serves the whole run); HT_QUICK=1 leaves out rebuild's refusals, dry
 # run and edge checks; HT_THROUGH=STAGE ends rebuild after that load stage;
 # HT_KEEP=1 leaves the rescuer running after rebuild, its disks and load's
 # state as they are, for a look inside.  A rebuild first stops a rescuer
@@ -82,7 +85,11 @@ T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, vm-mount, compare/)
 # shellcheck source=ht1-lib.sh
 . "$HERE/ht1-lib.sh"
 BIN=/bkoscratch/holttest1d/bin
-HOLT=${HT_HOLT:-$BIN/bko-holt}
+# bko-holt: HT_HOLT's file, else HT_HOLT_BIN's set (a directory laid out as
+# bin/ is, DIR/bko-holt and DIR/PLATFORM/bko-holt: HoltTest2's builds in
+# T2_HOST_ROOT/holt-bin/CODE), else bin/'s.  bin/'s debs and bcachefs stay.
+HOLT=${HT_HOLT:-${HT_HOLT_BIN:-$BIN}/bko-holt}
+[[ -n ${HT_HOLT:-} || -z ${HT_HOLT_BIN:-} || -f $HOLT ]] || { echo "ht1: no $HOLT (HT_HOLT_BIN=$HT_HOLT_BIN)" >&2; exit 2; }
 # HT_VARIANT (README's HoltTest1D plan): "bigger" rebuilds onto disks 1 GiB
 # bigger than the source's (GPT's backup header must move to the new end);
 # "oneshot" runs the whole rebuild as one `--through close` command, as an

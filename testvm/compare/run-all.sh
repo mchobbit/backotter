@@ -72,7 +72,8 @@
 #   RAM_DIR      the guests' --ram overlays (default LOG_DIR/work/ram, on
 #                disk: round 9 filled /dev/shm)
 #   BIG          sparse-rt.sh's big file on the host, GiB (20); GUEST_BIG in
-#                guests (2)
+#                guests (2).  IMG_GB, when set, its image or tmpfs on the host
+#                (sparse-rt.sh's default 16 otherwise)
 #   BASELINE     an earlier LOG_DIR/summary.json: nonroot's per-direction
 #                counts must be the same as there
 #   ALLOW_SKIP   comma-separated targets that may be skipped: a file system
@@ -80,6 +81,13 @@
 #                run-all.sh can't run (sparse-netbsd11); else a FAIL row
 #   KEEP_WORK=1  keep fs_roundtrip.py's repositories
 #   ANY_HOST=1   run another host's platforms here too
+#   RT_RAM, PYTHONDONTWRITEBYTECODE
+#                passed on to the root steps when set (RT_RAM=0: their work
+#                on disk; unset, the scripts' default, RAM where
+#                /mnt/bko-ram is mounted)
+# fs_roundtrip.py's results go to fs-roundtrip/ beside the testvm/ this
+# script is in (compare.py's WORK_BASE, the copy's root when run from a
+# private copy), and from there into LOG_DIR/linux/FS/.
 #
 # Steps of a platform run one after another in chains (one per port);
 # chains and platforms run at once, a step waiting for a guest slot (or a
@@ -259,7 +267,13 @@ js() { local s=${1//\\/\\\\}; s=${s//\"/\\\"}; s=${s//$'\t'/\\t}; printf '"%s"' 
 if [[ $(id -u) == 0 ]]; then SUDO=""; else SUDO="sudo -n"; fi
 ID=${BKO_RUNALL_ID:-$PFX-$$-$(date +%s)}
 export BKO_RUNALL_ID=$ID BKO_WORK=$W RAM_DIR=${RAM_DIR:-$W/ram}
-rootenv() { echo "$SUDO env BKO_RUNALL_ID=$ID BKO_WORK=$W"; }
+# sudo keeps none of the environment: RT_RAM and PYTHONDONTWRITEBYTECODE,
+# when set, go on to the root steps (GateTest2's loop.sh sets both: RAM only,
+# and no root-owned __pycache__ in its copy's testvm/compare).
+renv=""
+[[ -z ${RT_RAM:-} ]] || renv+=" RT_RAM=$(printf %q "$RT_RAM")"
+[[ -z ${PYTHONDONTWRITEBYTECODE:-} ]] || renv+=" PYTHONDONTWRITEBYTECODE=$(printf %q "$PYTHONDONTWRITEBYTECODE")"
+rootenv() { echo "$SUDO env BKO_RUNALL_ID=$ID BKO_WORK=$W$renv"; }
 
 guest_rt() {  # PLATFORM CHAIN GUEST PORT OS
     local n=4 to=14400
@@ -317,7 +331,7 @@ for p in $plats; do
         for run in $SPARSE_FS; do
             fs=${run%-nocomp} opts=""; [[ $run == zfs-nocomp ]] && opts="-O compression=off"
             step sparse "$run" "sparse-$run" sparse 0 sparse 10800 1 "${OLD:+--identity}" \
-                "$(rootenv) SPARSE_PREFIX=$PFX-sp SPARSE_FS=$fs SPARSE_RUN=$run SPARSE_ZFS_OPTS=$(q "$opts") BIG=${BIG:-20} \
+                "$(rootenv) SPARSE_PREFIX=$PFX-sp SPARSE_FS=$fs SPARSE_RUN=$run SPARSE_ZFS_OPTS=$(q "$opts") BIG=${BIG:-20} ${IMG_GB:+IMG_GB=$(q "$IMG_GB")} \
                     $(q "$C/sparse-rt.sh" "$BIN/linux/restic-bko" "$BIN/linux/rustic-bko") \
                     ${OLD:+$(q "$OLD/linux/restic-bko" "$OLD/linux/rustic-bko")}"
         done ;;

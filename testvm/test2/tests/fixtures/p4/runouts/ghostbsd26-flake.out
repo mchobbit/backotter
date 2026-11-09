@@ -1,0 +1,22 @@
+(wall 398 s; logs /home/m/backotter-work/stictest1/ghostbsd26/logs/gt1-fix4/20261105-145525)
+PASS roundtrip-restic->restic: torture.sh on UFS root (POSIX.1e) + UFS md (NFSv4): flags, ACLs, user+system extattrs, ns times, births, sparse, links, FIFO, symlinks, non-UTF-8, deep, setid, sockets skipped, restore over changed tree, no-ACL UFS
+PASS roundtrip-restic->rustic: torture.sh on UFS root (POSIX.1e) + UFS md (NFSv4): flags, ACLs, user+system extattrs, ns times, births, sparse, links, FIFO, symlinks, non-UTF-8, deep, setid, sockets skipped, restore over changed tree, no-ACL UFS
+PASS roundtrip-rustic->rustic: torture.sh on UFS root (POSIX.1e) + UFS md (NFSv4): flags, ACLs, user+system extattrs, ns times, births, sparse, links, FIFO, symlinks, non-UTF-8, deep, setid, sockets skipped, restore over changed tree, no-ACL UFS
+FAIL roundtrip-rustic->restic: no verdict (/home/m/backotter-work/stictest1/ghostbsd26/logs/gt1-fix4/20261105-145525/rt-b/ghostbsd26/rustic-restic.log)
+PASS snapshot-identity-torture-restic-rustic: identical (195 nodes)
+FAIL snapshot-identity-torture-rustic-restic: not identical or not run (/home/m/backotter-work/stictest1/ghostbsd26/logs/gt1-fix4/20261105-145525/rt-b/ghostbsd26/rustic-restic.log)
+PASS snapshot-identity: real files + devices + torture: 17 nodes identical
+PASS ancestor-nodes-identical: ancestor nodes of /root/bkosx/anc/b/src identical in both tools' snapshots (ls --json)
+PASS restore-restic-bko-restic-bko: fixture identical (flags, ACLs, extattrs, times, births, links, sparse, devices)
+PASS restore-restic-bko-rustic-bko: fixture identical (flags, ACLs, extattrs, times, births, links, sparse, devices)
+PASS restore-rustic-bko-rustic-bko: fixture identical (flags, ACLs, extattrs, times, births, links, sparse, devices)
+PASS restore-rustic-bko-restic-bko: fixture identical (flags, ACLs, extattrs, times, births, links, sparse, devices)
+PASS device-nodes: c 0,0 (rdev 0) and c 12,34 on UFS, all 4 directions
+PASS restore-over-immutable: schg/sappnd/uchg/uappnd/sunlnk + schg libc, changed, restored over in 4 directions, identical; the target's own "." kept as it was (not a fresh target, as stock)
+PASS guest-own-files: schg libc/ld-elf/init, setuid+schg su/passwd, nodump entropy, uarch services.db/termcap.db/yes/boot entropy, sujournal-like flags, schg /var/empty
+PASS ancestor-restore: whole-snapshot restore gives the ancestors their own mode, owner, mtime (4 directions)
+PASS nonroot: uid 4321 restores in 4 directions judged PASS by verdict.py
+LIMIT linux-only-attributes: SELinux labels, Linux inode flags, capabilities, project IDs, security/trusted xattrs: not on FreeBSD UFS
+LIMIT birth-time-exact: no system call sets a birth time: min(birth, mtime) is what both keep (BACKOTTER.md)
+LIMIT sujournal: ghostbsd26's root has soft updates without a journal (no /.sujournal); a journal's flags are tested on a copy
+LIMIT zfs-per-file-options: no ZFS pool on ghostbsd26 (UFS root; freebsd15 covers ZFS)

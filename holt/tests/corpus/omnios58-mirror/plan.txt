@@ -1,0 +1,79 @@
+# bko-holt load plan for layout.json
+# Source: host-1, OmniOS Community Edition v11 r151058, BIOS boot with illumos, dumped 2026-11-08T02:32:18Z
+#
+# Disks:
+#   c3t0d0 (16 GiB, Virtio Block Device) -> /dev/sdq
+#   c4t0d0 (16 GiB, Virtio Block Device) -> /dev/sdr
+#
+# Notes:
+#   - ZFS pool rpool: illumos can't set a pool's GUID; it gets a new one
+#   - c3t0d0s0: the ESP, written as the source's with the partition table
+#   - c4t0d0s0: the ESP, written as the source's with the partition table
+#   - ZFS volume rpool/swap: made empty; archivers back up files, not zvols
+
+# ---- partition ----
+# c3t0d0 -> /dev/sdq: the source's table, GUIDs and boot code exactly
+sh -c 'bko-holt write-table layout.json c3t0d0 /dev/rdsk/sdqp0 auto'
+# c4t0d0 -> /dev/sdr: the source's table, GUIDs and boot code exactly
+sh -c 'bko-holt write-table layout.json c4t0d0 /dev/rdsk/sdrp0 auto'
+
+# ---- assemble ----
+# ZFS pool rpool, with the source's feature flags only
+zpool create -f -d -o cachefile=none -o ashift=12 -o feature@async_destroy=enabled -o feature@empty_bpobj=enabled -o feature@lz4_compress=enabled -o feature@multi_vdev_crash_dump=enabled -o feature@spacemap_histogram=enabled -o feature@enabled_txg=enabled -o feature@hole_birth=enabled -o feature@extensible_dataset=enabled -o feature@embedded_data=enabled -o feature@bookmarks=enabled -o feature@filesystem_limits=enabled -o feature@large_blocks=enabled -o feature@large_dnode=enabled -o feature@sha512=enabled -o feature@skein=enabled -o feature@edonr=enabled -o feature@device_removal=enabled -o feature@obsolete_counts=enabled -o feature@zpool_checkpoint=enabled -o feature@spacemap_v2=enabled -o feature@allocation_classes=enabled -o feature@resilver_defer=enabled -o feature@encryption=enabled -o feature@bookmark_v2=enabled -o feature@userobj_accounting=enabled -o feature@project_quota=enabled -o feature@log_spacemap=enabled -O compression=on -R /mnt/bko-target rpool mirror /dev/dsk/sdqs1 /dev/dsk/sdrs1
+# mount mounts every dataset in order
+sh -c '[ "$(zfs get -H -o value mounted rpool)" != yes ] || zfs unmount rpool'
+
+# ---- format ----
+zfs create -o mountpoint=legacy -o canmount=off rpool/ROOT
+sh -c '[ "$(zfs get -H -o value mounted rpool/ROOT)" != yes ] || zfs unmount rpool/ROOT'
+zfs create -o mountpoint=legacy -o canmount=noauto -o org.opensolaris.libbe:policy=static -o org.opensolaris.libbe:uuid=bc000000-0000-4000-8000-000000000009 rpool/ROOT/omnios-r151058
+sh -c '[ "$(zfs get -H -o value mounted rpool/ROOT/omnios-r151058)" != yes ] || zfs unmount rpool/ROOT/omnios-r151058'
+zfs create -o mountpoint=/home rpool/home
+sh -c '[ "$(zfs get -H -o value mounted rpool/home)" != yes ] || zfs unmount rpool/home'
+zfs create rpool/home/omnios
+sh -c '[ "$(zfs get -H -o value mounted rpool/home/omnios)" != yes ] || zfs unmount rpool/home/omnios'
+zfs create -V 2147483648 -o refreservation=2216689664 -o volblocksize=8192 rpool/swap
+zpool set bootfs=rpool/ROOT/omnios-r151058 rpool
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+mount -F zfs rpool/ROOT/omnios-r151058 /mnt/bko-target
+zfs mount -O rpool/home
+zfs mount -O rpool
+zfs mount -O rpool/home/omnios
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+
+# ---- boot ----
+# the boot code (MBR, freebsd-boot) was written with the partition table
+# the restored system's zpool.cache names the new pool
+sh -c 'for c in /etc/zfs/zpool.cache /boot/zfs/zpool.cache; do [ -f /mnt/bko-target$c ] && zpool set cachefile=/mnt/bko-target$c rpool; done; true'
+# the boot archive, with the new pool's zpool.cache
+bootadm update-archive -R /mnt/bko-target
+# illumos' gptzfsboot, in the pool's boot area
+installboot -f -b /mnt/bko-target/boot /dev/rdsk/sdqs1
+# illumos' gptzfsboot, in the pool's boot area
+installboot -f -b /mnt/bko-target/boot /dev/rdsk/sdrs1
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -Rp /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+
+# ---- close ----
+# everything under the target, deepest first
+sh -c 'awk '\''{ print $2 }'\'' /etc/mnttab | awk '\''$0 == "/mnt/bko-target" || index($0, "/mnt/bko-target/") == 1'\'' | sort -r | while read -r m; do umount "$m" || exit; done'
+zpool export rpool
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status pool rpool
+# golden_plans.rs: status dataset rpool/ROOT
+# golden_plans.rs: status dataset rpool/ROOT/omnios-r151058
+# golden_plans.rs: status dataset rpool/home
+# golden_plans.rs: status dataset rpool/home/omnios
+# golden_plans.rs: status dataset rpool/swap
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: status mount /mnt/bko-target/home
+# golden_plans.rs: status mount /mnt/bko-target/rpool
+# golden_plans.rs: status mount /mnt/bko-target/home/omnios
+# golden_plans.rs: exit 0, nothing on stderr

@@ -1,0 +1,17 @@
+host chopin kernel 6.12.115+deb13.1-amd64 QEMU emulator version 10.0.13 (Debian 1:10.0.13+ds-0+deb13u1)
+driver /home/m/backotter-work/testvm/holttest1d/ht1-bsd.sh mode ram work /mnt/bko-ram/holttest1d/r4all/freebsd15-geli records /bkoscratch/holttest1d/r4all/freebsd15-geli reserved 3 (pid 1149602)
+env HT_PORT=2601
+env HT_RAM=1
+env HT_VARIANT=
+rustic-bko freebsd f6411bf9e2560599c050f1e2890118e35a19eaea74a8fe4b355f08ad25c99201 /home/m/backotter-work/bko-bin/freebsd/rustic-bko (bko-bin set from round rel4, assembled 2026-11-06 10:05 UTC on chopin; rustic b518f42bcb1e)
+tree 7a322d1
+sha256 690364f6fd48a1d81c6f5b323ccee67b2272a884d71acf7f09b63730295c425f /bkoscratch/holttest1d/bin/freebsd/bko-holt
+sha256 f6411bf9e2560599c050f1e2890118e35a19eaea74a8fe4b355f08ad25c99201 /home/m/backotter-work/bko-bin/freebsd/rustic-bko
+sha256 00f2c77246b6227c0c489024d6b31d4fedbffe926e1bd5c42f2afd033e2df404 /home/m/backotter-work/testvm/holttest1d/ht1-bsd.sh
+sha256 c562200fdc006b0fc7459887599907cc2e0b5fccf3e935ea8a230d89562629a9 /home/m/backotter-work/testvm/holttest1d/ht1-lib.sh
+sha256 1f8f1c15b6eca7d8fc0bbdc50cd770479e9ffab590fa4759939a81b5da1ed8ef /home/m/backotter-work/testvm/holttest1d/judge.py
+sha256 a1555bf612a40318e8a96b41b9c67a3a5f300e61c376bc603f022f81d2c6e171 /home/m/backotter-work/testvm/compare/fsmeta.py
+sha256 ddfdd4025a9d5d29298fe008039c2815974c8f91ce9d069349899568a6b7b639 /home/m/backotter-work/testvm/vm-run
+sha256 29dbd790b105b005391bda5d1b43981c0ecc378038da7b37e491f196c6afa383 /home/m/backotter-work/testvm/vm-mount
+image /home/m/backotter-work/vms/freebsd15-ufs/freebsd15.qcow2 2257846430 1793955128 3791379468
+image /home/m/backotter-work/vms/freebsd15-geli/freebsd15.qcow2 1343946910 1793956280 3251481041

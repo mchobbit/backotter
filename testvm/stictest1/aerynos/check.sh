@@ -26,7 +26,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=$HOME/backotter-work
 if [[ -z ${CHECK_INNER:-} ]]; then
     # shellcheck source=/dev/null
-    source "$WORK/testvm/compare/guest-slot.sh"
+    source "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
     case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
     CHECK_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 2 5 env CHECK_INNER=1 BKO_GUEST_SLOT="$BKO_GUEST_SLOT" STC_LOGS="${STC_LOGS:-}" "$HERE/$(basename "$0")" "$@"
     rc=$?; slot_give; exit $rc
@@ -40,7 +40,7 @@ LOG=${STC_LOGS:-$WORK/stictest1/aerynos/logs}/$(date +%Y%m%d-%H%M%S); mkdir -p "
 cleanup() { trap '' INT TERM HUP PIPE; vm_halt; rm -rf "$SCR"; rmdir "/mnt/bko-ram/$PFX" 2>/dev/null; kill "${PEAK:-}" 2>/dev/null; }
 rm -rf "$SCR"; mkdir -p "$SCR/tmp" "$SCR/out/w" "$SCR/ship/c/b" "$SCR/ship/c/g/bin" "$SCR/ship/c/g/lib"
 # shellcheck source=/dev/null
-. "$WORK/testvm/vm-lib.sh"
+. "${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh"
 trap cleanup EXIT
 # What the run uses of the RAM disk, sampled: SCR, and QEMU's snapshot overlays
 # (unlinked, so counted through its open files); "10s", since drive.py counts

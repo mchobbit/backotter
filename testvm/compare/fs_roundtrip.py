@@ -214,6 +214,21 @@ OVER_EXPECTED = {
 }
 
 
+# BackOtter's rule S5: where a restore doesn't allocate (btrfs but for a NOCOW
+# file, and bcachefs: neither compresses what fallocate(2) allocated, so a
+# restore onto a compressing mount could need every file's full size), it
+# leaves the holes OVER punched in a file whose content is already right.  A
+# fresh restore writes those files dense; a restore over one with its holes
+# doesn't fill them (restic's internal/fs allocates, rustic-bko's the same).
+OVER_EXPECTED_NO_ALLOC = {(k, f"{TORTURE}/{n}") for k in ("holes gained", "allocation lost")
+                          for n in ("swapfile", "preallocated", "zeros")}
+
+
+def over_expected(fs: str) -> set[tuple[str, str]]:
+    """OVER_EXPECTED on a restore onto file system fs."""
+    return OVER_EXPECTED | (OVER_EXPECTED_NO_ALLOC if fs in ("btrfs", "bcachefs") else set())
+
+
 # Sockets are skipped by both tools (results.json "sockets"): each one in
 # the source is "missing" after every restore, expected, so not a difference.
 
@@ -695,8 +710,9 @@ def main() -> int:
                 run(fsmeta + ["record", str(DST), f"after-over-{tool}.json"])
                 fsmeta_compare(fsmeta, "before.json", f"after-over-{tool}.json", f"diff-over-{tool}.json")
                 d = full_diff("before.json", f"after-over-{tool}.json")
+                expected = over_expected(onto)
                 res["over_diff_all"] = without_sockets({k: v for k, v in
-                                                        ((k, [p for p in v if (k, p) not in OVER_EXPECTED])
+                                                        ((k, [p for p in v if (k, p) not in expected])
                                                          for k, v in d.items()) if v}, src_sockets)
 
                 # And once more, over the result unchanged (a restore run twice).
@@ -704,7 +720,7 @@ def main() -> int:
                 run(fsmeta + ["record", str(DST), f"after-rerun-{tool}.json"])
                 d = full_diff("before.json", f"after-rerun-{tool}.json")
                 res["rerun_diff_all"] = without_sockets({k: v for k, v in
-                                                         ((k, [p for p in v if (k, p) not in OVER_EXPECTED])
+                                                         ((k, [p for p in v if (k, p) not in expected])
                                                           for k, v in d.items()) if v}, src_sockets)
                 # Skipped: none restored, by any of the three restores.
                 res["sockets_restored"] = {s: socks for s in ("", "over-", "rerun-")

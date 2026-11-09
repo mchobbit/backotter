@@ -1,0 +1,10 @@
+HoltTest1 mint22, run t2h-20261108T0500-0a1b, 2026-11-08T05:00:10Z, phases: source backup rebuild verify
+binaries: bko-holt f341270ccedb (/bkoscratch/test2/holt-bin/0000000000000000000000000000000000000000000000000000000000000001/bko-holt); rustic-bko linux 886ef2281a118c55d084295e17d286f7360cd1511a95b73be5d15b15784857f8 /home/m/backotter-work/bko-bin/linux/rustic-bko (bko-bin set from round rel4, assembled 2026-11-06 10:05 UTC on chopin; rustic b518f42bcb1e)
+== source: mint22
+PASS source boots
+PASS dump on the live source
+== backup
+PASS rustic-bko backup (5.1G)
+== rebuild
+RAM disk: peak 9.3 GiB, reserved 7 GiB: over the reservation, raise ram-sizes.tsv; memory: peak 3.0 GiB anon
+RESULT: FAIL (1; harness: over its reservation: 9.3 GiB, past the limit of 8.0 GiB (7 GiB reserved); stopped before its RESULT, exit 143)

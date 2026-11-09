@@ -1,0 +1,442 @@
+{
+ "cells": [
+  {
+   "cell": "gate:bin:abi",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "chopin",
+   "key": "fbc2e195898f17bb7b0946f697a0f190cd1572d068ffc36f3b833828c13b18a8",
+   "keys": {
+    "chopin": "fbc2e195898f17bb7b0946f697a0f190cd1572d068ffc36f3b833828c13b18a8"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000001Z-00000001",
+    "key": "fbc2e195898f17bb7b0946f697a0f190cd1572d068ffc36f3b833828c13b18a8",
+    "t": "2026-11-07T00:00:01Z"
+   },
+   "part": "fast",
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "gate:bin:static",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "chopin",
+   "key": "377d3f591324f121da1fa940e77b41f883c4be40bc6cb0479e7c350b3b606f14",
+   "keys": {
+    "chopin": "377d3f591324f121da1fa940e77b41f883c4be40bc6cb0479e7c350b3b606f14"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000002Z-00000002",
+    "key": "377d3f591324f121da1fa940e77b41f883c4be40bc6cb0479e7c350b3b606f14",
+    "t": "2026-11-07T00:00:02Z"
+   },
+   "part": "fast",
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "gate:bin:version",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "chopin",
+   "key": "46ed45f5c6e295dd076fc76297f6ab0d497da4f7d218678ab04260d8efc71c27",
+   "keys": {
+    "chopin": "46ed45f5c6e295dd076fc76297f6ab0d497da4f7d218678ab04260d8efc71c27"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000003Z-00000003",
+    "key": "46ed45f5c6e295dd076fc76297f6ab0d497da4f7d218678ab04260d8efc71c27",
+    "t": "2026-11-07T00:00:03Z"
+   },
+   "part": "fast",
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "gate:fork-root:restic",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "chopin",
+   "key": "ea20fc7c16c9f3c084a86e4631488e78b61f9b75c0b98e9ebf4fd47153f3e120",
+   "keys": {
+    "chopin": "ea20fc7c16c9f3c084a86e4631488e78b61f9b75c0b98e9ebf4fd47153f3e120"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000004Z-00000004",
+    "key": "ea20fc7c16c9f3c084a86e4631488e78b61f9b75c0b98e9ebf4fd47153f3e120",
+    "t": "2026-11-07T00:00:04Z"
+   },
+   "part": "fast",
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "gate:fork:restic",
+   "differ": [],
+   "est": {
+    "gb": 0.5,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "chopin",
+   "key": "bbd674f5eba2c05388a407244b2073dd81f6bd696954384c76a61466497888ba",
+   "keys": {
+    "chopin": "bbd674f5eba2c05388a407244b2073dd81f6bd696954384c76a61466497888ba"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000005Z-00000005",
+    "key": "bbd674f5eba2c05388a407244b2073dd81f6bd696954384c76a61466497888ba",
+    "t": "2026-11-07T00:00:05Z"
+   },
+   "part": "fast",
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "gate:fork:rustic",
+   "differ": [],
+   "est": {
+    "gb": 0.5,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "cinqcent",
+   "key": "36d54f8da25c007464bcd76e77389058256bbd1182a9db193f1acdf42128f585",
+   "keys": {
+    "cinqcent": "36d54f8da25c007464bcd76e77389058256bbd1182a9db193f1acdf42128f585"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "cinqcent",
+    "id": "cinqcent-20261107T000006Z-00000006",
+    "key": "36d54f8da25c007464bcd76e77389058256bbd1182a9db193f1acdf42128f585",
+    "t": "2026-11-07T00:00:06Z"
+   },
+   "part": "fast",
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "gate:fork:rustic_core",
+   "differ": [],
+   "est": {
+    "gb": 0.5,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "cinqcent",
+   "key": "ca5d63ffa50b0a6ce7baf10031a18459de61af312537fbe5ee6c26d026596bbf",
+   "keys": {
+    "cinqcent": "ca5d63ffa50b0a6ce7baf10031a18459de61af312537fbe5ee6c26d026596bbf"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "cinqcent",
+    "id": "cinqcent-20261107T000007Z-00000007",
+    "key": "ca5d63ffa50b0a6ce7baf10031a18459de61af312537fbe5ee6c26d026596bbf",
+    "t": "2026-11-07T00:00:07Z"
+   },
+   "part": "fast",
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "gate:holt",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "chopin",
+   "key": "900930961f84bb6ab1727be6c8efb112593e081928987203f453151eaa1c366d",
+   "keys": {
+    "chopin": "900930961f84bb6ab1727be6c8efb112593e081928987203f453151eaa1c366d"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000008Z-00000008",
+    "key": "900930961f84bb6ab1727be6c8efb112593e081928987203f453151eaa1c366d",
+    "t": "2026-11-07T00:00:08Z"
+   },
+   "part": "fast",
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "gate:loop:linux@chopin",
+   "differ": [],
+   "est": {
+    "gb": 0.05,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "chopin",
+   "key": "e0553a045e7d1d2bf88e934dd9ed0d43795fa374699b2dab3b5d852b269e6f38",
+   "keys": {
+    "chopin": "e0553a045e7d1d2bf88e934dd9ed0d43795fa374699b2dab3b5d852b269e6f38"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000009Z-00000009",
+    "key": "e0553a045e7d1d2bf88e934dd9ed0d43795fa374699b2dab3b5d852b269e6f38",
+    "t": "2026-11-07T00:00:09Z"
+   },
+   "part": "slow",
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "gate:loop:linux@cinqcent",
+   "differ": [],
+   "est": {
+    "gb": 0.05,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "cinqcent",
+   "key": "ad3e52b98459ff4880c94527ab781b7a82cf07d540978d2aa33e5b84d5623151",
+   "keys": {
+    "cinqcent": "ad3e52b98459ff4880c94527ab781b7a82cf07d540978d2aa33e5b84d5623151"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "cinqcent",
+    "id": "cinqcent-20261107T000010Z-0000000a",
+    "key": "ad3e52b98459ff4880c94527ab781b7a82cf07d540978d2aa33e5b84d5623151",
+    "t": "2026-11-07T00:00:10Z"
+   },
+   "part": "slow",
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "gate:loop:sparse@chopin",
+   "differ": [],
+   "est": {
+    "gb": 0.05,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "chopin",
+   "key": "2e3d58c58a6f525ea2d61b0ac49e9ea80dbb1904f4205415868306d5dbcedb47",
+   "keys": {
+    "chopin": "2e3d58c58a6f525ea2d61b0ac49e9ea80dbb1904f4205415868306d5dbcedb47"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000011Z-0000000b",
+    "key": "2e3d58c58a6f525ea2d61b0ac49e9ea80dbb1904f4205415868306d5dbcedb47",
+    "t": "2026-11-07T00:00:11Z"
+   },
+   "part": "slow",
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "gate:loop:sparse@cinqcent",
+   "differ": [],
+   "est": {
+    "gb": 0.05,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "cinqcent",
+   "key": "85ec6172a1a5973fe2e4c19c2fb6c5dae8488a375369e16d059dfcfbaa28b87b",
+   "keys": {
+    "cinqcent": "85ec6172a1a5973fe2e4c19c2fb6c5dae8488a375369e16d059dfcfbaa28b87b"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "cinqcent",
+    "id": "cinqcent-20261107T000012Z-0000000c",
+    "key": "85ec6172a1a5973fe2e4c19c2fb6c5dae8488a375369e16d059dfcfbaa28b87b",
+    "t": "2026-11-07T00:00:12Z"
+   },
+   "part": "slow",
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "gate:selftest",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "mac",
+   "key": "14e6d92cf2c0cca9a9ba600a73e4895902f2b149dd85979df18b75ea55b702e8",
+   "keys": {
+    "mac": "14e6d92cf2c0cca9a9ba600a73e4895902f2b149dd85979df18b75ea55b702e8"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "mac",
+    "id": "mac-20261107T000013Z-0000000d",
+    "key": "14e6d92cf2c0cca9a9ba600a73e4895902f2b149dd85979df18b75ea55b702e8",
+    "t": "2026-11-07T00:00:13Z"
+   },
+   "part": "fast",
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  }
+ ],
+ "classes": [],
+ "family": "gate",
+ "header": {
+  "base": "BASE",
+  "copy": "fixture",
+  "facts": {
+   "chopin": "2026-11-08T05:00:00Z",
+   "cinqcent": "2026-11-08T05:00:00Z"
+  },
+  "ledger_rows": 13,
+  "pulled": {
+   "chopin": null,
+   "cinqcent": null
+  },
+  "uncommitted": 0,
+  "unreachable": []
+ },
+ "notes": [],
+ "set": {
+  "at_heads": true,
+  "dir": "~/backotter-work/roundrel4/bin",
+  "name": "roundrel4",
+  "pending": null,
+  "round": "rel4"
+ },
+ "totals": {
+  "cells": 13,
+  "counts": {
+   "awaiting-canaries": 0,
+   "canary-verified": 0,
+   "carried": 0,
+   "class-pending": 0,
+   "current": 13,
+   "due": 0,
+   "not-runnable": 0,
+   "soft-stale": 0
+  },
+  "due": 0,
+  "gb": {
+   "chopin": 0.0,
+   "cinqcent": 0.0
+  },
+  "gm": 0
+ },
+ "unmapped": [],
+ "v": 1,
+ "word": {
+  "all": false,
+  "family": "gate",
+  "form": "bare",
+  "letters": [],
+  "names": [],
+  "notes": [],
+  "plan": true,
+  "prefixes": [],
+  "round": null,
+  "stale": false,
+  "text": "GateTest2 plan",
+  "variants": [],
+  "word": "GateTest2"
+ }
+}

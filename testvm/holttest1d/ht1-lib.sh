@@ -51,6 +51,15 @@
 # Exit codes: 0 PASS; 1 FAIL, ended early, or stopped over its reservation;
 # 2 refused before any phase, R removed; 129, 130, 143 ended by HUP, INT, TERM.
 #
+# Test2's ledger (README "Where a run works, and what it keeps"): ht_end
+# runs this copy's testvm/test2/t2-host (T/test2/t2-host) for the run's row
+# once K is in place, and for a refusal after ht_begin: best effort, at most
+# 30 s, nothing written into R or K, at most one note: line on the driver's
+# stderr; the exit code, what is kept and the move are the same with it or
+# without it.  T2_HOST_ROOT, T2_CELLS and T2_RUN reach it from the
+# environment (HoltTest2's queue sets them; without them the row is a
+# HoltTest1 run's, rule test1).  HT_CLEAN=0 and RUN debug get no row.
+#
 # R/.ht is the lib's: pid (the driver), k (K), seeding (a seed not finished),
 # moved (R is in K), held (left on purpose: the reservation PID that holds it),
 # summed, overrun and lowfree (ht_summary's and the sampler's; a dead run's go
@@ -757,6 +766,35 @@ ht_rsync() {
     return 1
 }
 
+# The run's row in Test2's ledger: t2-host row holt reads K's records (or
+# knows the run was refused, or its records lost) and appends the row to
+# T2_HOST_ROOT's ledger.  timeout's TERM at 30 s ends it though ht_end
+# ignores TERM (timeout gives its command TERM's default back: exit 124,
+# measured on Chopin), its KILL 5 s later one that ignores TERM itself.
+# python3 -B: no __pycache__ in the copy.  It reads no stdin, and its output
+# goes to one note: line: the row's id, or why there is none.
+ht_t2_row() {  # RC CODE --k DIR | --lost | --refused
+    local rc=$1 code=$2 tool=${T:-}/test2/t2-host out s last
+    shift 2
+    [[ ${HT_CLEAN:-1} != 0 && ${RUN:-} != debug ]] || return 0
+    if [[ ! -f $tool ]]; then
+        echo "${0##*/}: note: no Test2 ledger row ($tool isn't there)" >&2
+        return 0
+    fi
+    out=$(T2_WORK=${W:-} timeout -k 5 30 python3 -B "$tool" row holt "$@" --r "${R:-}" --run "${RUN:-}" \
+        --gv "${GV:-}" --driver "${0##*/}" --rc "$rc" --code "$code" </dev/null 2>&1)
+    s=$?
+    last=$(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -n 1 | cut -c1-200)
+    if ((s == 0)); then
+        echo "${0##*/}: note: Test2 ledger row ${last:-written}" >&2
+    elif ((s == 124 || s == 137)); then
+        echo "${0##*/}: note: no Test2 ledger row ($tool took over 30 s)" >&2
+    else
+        echo "${0##*/}: note: no Test2 ledger row ($tool exit $s: ${last:-no output})" >&2
+    fi
+    return 0
+}
+
 ht_copy_records() {  # R DEST [FILE...]: into a new DEST, R's records only (report.txt, logs/, dumps/, the FILEs)
     local f x=(--include=/report.txt --include='/logs/***' --include='/dumps/***')
     for f in "${@:3}"; do x+=("--include=/$f"); done
@@ -799,6 +837,7 @@ ht_end() {  # RC
         rmdir "$R/tmp" 2>/dev/null
         ((HT_MADE_R)) && { rm -rf --one-file-system "$R"; rmdir "${R%/*}" 2>/dev/null; }
         [[ -z $HT_ROTATED || -e $K ]] || { mv -T "$HT_ROTATED" "$K" && ht_repoint "$HT_ROTATED" "$K" >/dev/null 2>&1; }
+        ht_t2_row 2 2 --refused
         ht_unlock
         exit 2
     fi
@@ -897,8 +936,13 @@ ht_end() {  # RC
         fi
         rm -rf --one-file-system "$R"; rmdir "${R%/*}" 2>/dev/null
     fi
-    ht_unlock
     [[ -z $msg ]] || echo "${0##*/}: $msg"
+    # Test2's row, from K as it now is (README "Where a run works, and what it keeps").
+    if [[ $R == "$K" ]]; then ht_t2_row "$rc" "$code" --k "$K"
+    elif [[ -n $placed ]]; then ht_t2_row "$rc" "$code" --k "${placed%% *}"
+    elif [[ -n $what ]]; then ht_t2_row "$rc" "$code" --k "$K.part"
+    else ht_t2_row "$rc" "$code" --lost; fi
+    ht_unlock
     exit "$code"
 }
 

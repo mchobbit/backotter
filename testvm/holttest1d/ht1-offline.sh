@@ -17,7 +17,8 @@
 #     Sculpt by sculpt-check.sh (its screen, and its GENODE partition used).
 #
 # The write path is ht1-lib.sh's, as ht1.sh's (README: "Where a run works,
-# and what it keeps").  HT_HOLT is the bko-holt to test instead of bin/'s.
+# and what it keeps").  HT_HOLT is the bko-holt to test instead of bin/'s,
+# HT_HOLT_BIN a set to take it from (ht1.sh's header).
 set -uo pipefail
 
 G=$1 RUN=$2; shift 2
@@ -26,7 +27,10 @@ W=/home/m/backotter-work
 HERE=$(dirname "$(realpath "$0")")
 T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, compare/, redox/, sculpt-check.sh), as ht1.sh's
 BIN=/bkoscratch/holttest1d/bin
-HOLT=${HT_HOLT:-$BIN/bko-holt}
+# bko-holt (Linux's, run in the rescuer): HT_HOLT's, else HT_HOLT_BIN's set's
+# (DIR/bko-holt: HoltTest2's builds), else bin/'s (ht1.sh's header).
+HOLT=${HT_HOLT:-${HT_HOLT_BIN:-$BIN}/bko-holt}
+[[ -n ${HT_HOLT:-} || -z ${HT_HOLT_BIN:-} || -f $HOLT ]] || { echo "ht1-offline: no $HOLT (HT_HOLT_BIN=$HT_HOLT_BIN)" >&2; exit 2; }
 [[ -r $HERE/ht1-lib.sh ]] || { echo "ht1-offline: no ht1-lib.sh beside $0" >&2; exit 2; }
 # shellcheck source=ht1-lib.sh
 . "$HERE/ht1-lib.sh"

@@ -5,7 +5,8 @@
 #   ht1-bsd.sh GUEST RUN [PHASE...]    PHASEs: source backup rebuild verify
 #
 # The same round trip as ht1.sh, through bko-holt and rustic-bko built for
-# the guest's own system (bin/PLATFORM/bko-holt from build-holt.sh, and
+# the guest's own system (bin/PLATFORM/bko-holt from build-holt.sh, or
+# HT_HOLT_BIN/PLATFORM/bko-holt, and
 # ~/backotter-work/bko-bin/PLATFORM/rustic-bko), with a rescuer of that
 # system: a throwaway copy of another of its guests, whose own disk is
 # first, so that no pool, label or volume name of its own is the source's.
@@ -145,7 +146,10 @@ rraw() { case $PLAT in haiku) echo "$(rdev "$1")/raw" ;; illumos) echo "/dev/rds
 LISTMOUNTS='mount | sed -e "s/ type [^ ]* (.*//" -e "s/ (.*//" -e "s/^.* on //"'
 # A disk's sectors (the name, ld1), and a checksum of some of them.
 SECTORS='sectors() { case $(uname) in FreeBSD) diskinfo /dev/$1 | cut -f4 ;; DragonFly) echo $(( $(printf %d 0x$(diskinfo /dev/$1 | sed -n "s/.*size=0x\([0-9a-fA-F]*\).*/\1/p")) / 512 )) ;; *) disklabel $1 | awk "/^total sectors:/ {print \$3}" ;; esac; }'
-HOLT=${HT_HOLT:-$BIN/$PLAT/bko-holt}
+# bko-holt: HT_HOLT's, else HT_HOLT_BIN's set's (DIR/PLATFORM/bko-holt, as in
+# bin/: HoltTest2's builds), else bin/'s (ht1.sh's header).
+HOLT=${HT_HOLT:-${HT_HOLT_BIN:-$BIN}/$PLAT/bko-holt}
+[[ -n ${HT_HOLT:-} || -z ${HT_HOLT_BIN:-} || -f $HOLT ]] || { echo "ht1-bsd: no $HOLT (HT_HOLT_BIN=$HT_HOLT_BIN)" >&2; exit 2; }
 gdir=$W/vms/$G gkey=$gdir/id_ed25519
 rdir=$W/vms/$RG rkey=$rdir/id_ed25519
 # The guest's other disks (vm-run-options' --disk, named relative to its

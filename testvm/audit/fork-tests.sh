@@ -34,10 +34,24 @@
 #
 # Needs: as stock-baseline.sh, and its baselines (here or on a host).
 #
+# A run of its own (GateTest2's fork layers, testvm/test2/t2lib/gate.py):
+#   BKO_AUDIT_TAG  each host's job tag is BKO_AUDIT_TAG-HOST (default
+#                  fork-HOST), its log and exit in bko-audit/logs/ under that
+#                  name, and the tools go to bko-audit/bin-BKO_AUDIT_TAG: a
+#                  job of another session's fork-tests.sh is never taken for
+#                  this run's
+#   BKO_WEAR_TAG   the host jobs' WEAR_TAG (default audit:TAG), e.g.
+#                  gate:RUN:fork@chopin
+# with --force, so that results already there for the same commits are
+# built and tested again, and BKO_AUDIT_LOCAL for a results directory of its
+# own.
+#
 # Examples:
 #   fork-tests.sh
 #   fork-tests.sh restic
 #   fork-tests.sh --rustic-host chopin rustic_core=6e8b009 rustic=f989942
+#   BKO_AUDIT_TAG=t2g-20261108T0315-4f2a BKO_WEAR_TAG=gate:t2g-20261108T0315-4f2a:fork@cinqcent \
+#       BKO_AUDIT_LOCAL=~/backotter-work/test2/runs/t2g-20261108T0315-4f2a/audit fork-tests.sh --force rustic_core rustic
 
 set -u
 source "$(dirname "$0")/audit-lib.sh"
@@ -123,8 +137,8 @@ done
 
 pids=() tags=()
 for i in "${!hosts[@]}"; do
-    h=${hosts[$i]} tag=fork-${hosts[$i]#*@}
-    tag=${tag%%.*}
+    h=${hosts[$i]} hs=${hosts[$i]#*@}
+    tag=${BKO_AUDIT_TAG:-fork}-${hs%%.*}
     launch "$h" "$tag" ${specs[$i]}
     ( t0=$(date +%s); wait_tag "$h" "$tag"; rc=$?
       log "$h: $tag ($(echo ${jobnames[$i]})) ended: exit $rc after $(( $(date +%s) - t0 ))s"; exit $rc ) &

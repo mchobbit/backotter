@@ -203,7 +203,16 @@ the rescuers that `make-rescuer.sh` builds (see below).  ht1.sh copies
 bko-holt (or `HT_HOLT`'s) as the run starts, so its dumps and its load are
 one build's even if bin/'s is replaced while it runs; ht1-bsd.sh and
 ht1-offline.sh still take it from bin/ (or `HT_HOLT`) at each phase, so
-leave bin/'s alone while one runs.  rustic-bko is the shipped set's
+leave bin/'s alone while one runs.  `HT_HOLT_BIN=DIR` takes bko-holt from
+another set laid out as bin/ is (`DIR/bko-holt`, `DIR/PLATFORM/bko-holt`):
+HoltTest2's builds, one directory per code digest in
+`/bkoscratch/test2/holt-bin/CODE/` (with its `SHA256SUMS` and `BUILD-INFO`),
+which never change once built; a run refuses when the set lacks its
+platform's binary.  bin/'s debs and bcachefs stay bin/'s.  `build-holt.sh
+linux` builds the Linux one on the host (static glibc, as ht1-debug.sh
+does, cargo's target/ in `TMPDIR`), and `build-holt.sh --reserved RUN
+PLATFORM` any platform under a reservation of its own (HoltTest2's, its
+header says how).  rustic-bko is the shipped set's
 (`~/backotter-work/bko-bin/linux/rustic-bko`, checked against its
 `SHA256SUMS`); `HT_ROUND=NAME` takes round NAME's instead, and
 `HT_RUSTIC=FILE` a build of your own, unchecked.  No driver reads bin/'s
@@ -433,6 +442,44 @@ All three drivers write the same way, through `ht1-lib.sh`:
   the ledger PID of a reservation that outlives the run (ht1-debug.sh's),
   and so does `HT_KEEP=1`.
 
+- **Test2's ledger row.** At its very end, once K is in place (and for a
+  refusal after the run began, a rustic-bko that doesn't match its set,
+  say), `ht_end` runs the copy's own `testvm/test2/t2-host row holt` (as
+  `T2_WORK=W timeout -k 5 30 python3 -B T/test2/t2-host row holt --k K ...`),
+  which reads K's records (report.txt, `logs/manifest.txt`, `phases.tsv`,
+  `kept.txt`) and this host's facts and appends one row to
+  `T2_HOST_ROOT/ledger/HOST.jsonl` (default `/bkoscratch/test2`): the
+  cell (`holt:GUEST[+VARIANT]`), its verdict (PASS, FAIL, HARNESS for a
+  refusal, an overrun or no RESULT line, LOST for a run ended by a signal
+  or whose records couldn't be copied), the per-check needs, the inputs it
+  was keyed on, the tree's commit (a copy's `T2-COPY.json`, else the
+  synced tree's `.backotter-commit`) and the wear tag.  It is best effort:
+  at most 35 s, nothing written into R or K, and one `note:` line in the
+  caller's log, `note: Test2 ledger row ID` or why there is none (no
+  `t2-host` in that testvm/, its exit, or `took over 30 s`); the exit code,
+  what is kept and the move are the same with it or without it.  A run
+  that `HT_CLEAN=0` leaves in place, ht1-debug.sh's (RUN `debug`), a
+  refusal before the run began and a run that died (swept) get no row
+  here; HoltTest2 writes those itself, from its queue's done rows.  Under
+  HoltTest2's queue (`T2_CELLS`, `T2_RUN`) the row carries the plan's rule
+  and key and counts as a PASS only when the key it measures is the
+  plan's; a HoltTest1 run's row says rule `test1`, and its origin (the
+  writer's idempotency id) adds the run's start, so a rerun of the same RUN
+  and guest by hand is a row of its own.  A row never counts when the run
+  had a debugging or test setting (`HT_QUICK`, `HT_THROUGH`, `HT_KEEP`,
+  `HT_FAIL_AT`, `HT_RESCUER`, `HT_RESCUER_IMG`, `HT_LIMIT_KIB`,
+  `HT_FREE_KIB`), ran fewer than the four phases (or its report doesn't
+  say which), was seeded from K, used an `HT_HOLT_BIN` whose `SHA256SUMS`
+  doesn't vouch for its bko-holt, or when an input changed while it ran (a
+  file its manifest hashed, its guest's image, the tree's commit).  A run
+  stopped over its reservation only after its RESULT line keeps that
+  verdict, with a note.
+- **The self-test**, `ht1-lib-test.sh` (as root under `cmp-run.sh
+  --reserve 1 1`), runs the lib's cases with fake phases in
+  `/mnt/bko-ram/NAME` and `/bkoscratch/NAME` (`HT1_TEST_NAME`, default
+  `ht1-lib-test`; another refuses a NAME whose directories hold anything),
+  its ledger rows in its own fixtures, never the default ledger.
+
 Each run also records, in `logs/`:
 
 - `manifest.txt`: the host, kernel and QEMU; the mode, R, K and the
@@ -502,15 +549,18 @@ as root, no RAM disk) says why in its `.out` file only: its log,
   job gets the first free port from BASEPORT on, held by a lock in
   `/tmp/bko-ht1-ports/` for its life; a port another program listens on,
   or a QEMU forwards, is skipped.
-- **Binaries and settings.** `HT_HOLT`, `HT_BKO_BIN`, `HT_ROUND`,
+- **Binaries and settings.** `HT_HOLT`, `HT_HOLT_BIN`, `HT_BKO_BIN`, `HT_ROUND`,
   `HT_RUSTIC` and `HT_RAM` reach every job, and so do `HT_WORK` and
   `HT_RECORDS` (tests only: `/mnt/bko-ram/NAME` and `/bkoscratch/NAME`,
   one NAME); the runner logs them at its start.  It refuses to start while
   any other `HT_` variable is set, a debugging or test setting that would
   change every job's run (`HT_QUICK`, `HT_THROUGH`, `HT_KEEP`, `HT_CLEAN`,
   `HT_PORT`, `HT_LIMIT_KIB` and the like).  If rustic-bko's set changes
-  during the run, it starts nothing more and a job still waiting in line
-  leaves it: restart the queue to go on.  It starts nothing more either
+  during the run (or `HT_HOLT_BIN`'s `SHA256SUMS`, when it has one), it
+  starts nothing more and a job still waiting in line leaves it: restart
+  the queue to go on.  HoltTest2's `T2_RUN`, `T2_CELLS` and `T2_HOST_ROOT`
+  reach the jobs too (their ledger rows), and the runner's `env:` line
+  shows them.  It starts nothing more either
   after 3 jobs in a row that failed within 60 s, or a line `ram-size.sh`
   can't size.
 - **Done.** `queue/RUN/done` (on the runner's host) has a row per job: its
@@ -518,6 +568,19 @@ as root, no RAM disk) says why in its `.out` file only: its log,
   runner logs to `queue/RUN/runner-HOST.log`, each guest to
   `/bkoscratch/holttest1d/RUN-GUEST.log`.  A failure isn't rerun by
   itself.
+- **HoltTest2's queues** are these (testvm/test2/t2lib/holt.py): RUN is
+  the run id (`t2h-YYYYMMDDTHHMM-XXXX`), its rerun's `RUN-r2`; the todo is
+  on the first host, the canaries first, then the guests whose golden plan
+  changed, then the rest, each part biggest first; a runner on every host
+  from the run's private copy, with `HT_HOLT_BIN` its build, `HT_RAM=1`,
+  `ONLY_ELSEWHERE` from the plan's pins and UEFI rescuers, and its log in
+  `T2_HOST_ROOT/runs/RUN/runner-RUN.out`.  A stop rule touches `stop` on
+  both hosts, or takes one system's lines out of the todo (`todo.stopped`;
+  redox and sculpt2610 are systems of their own there).  Only a FAIL goes
+  into `RUN-r2`: a refusal, a signal or a sweep says nothing of the guest,
+  and no rerun starts after `stop`, `abort` or a stop rule.  A job whose
+  hook left no row gets one from its K's records (`t2-host row holt`), or,
+  with none there, a HARNESS or LOST one.
 - **Stop and abort** (on the runner's host): `touch queue/RUN/stop` starts
   nothing more; `queue/RUN/abort` also ends the running jobs, with TERM,
   once, to each job's driver and what it started (a vm-mount or vm-umount

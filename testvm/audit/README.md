@@ -105,7 +105,11 @@ over 95 °C.
   errors (`tests/errors.rs`, `test_check` cases 3 and 4) fail on stock too.
 - Tests run as user m, without root: the fork's tests that mount file
   systems or set restricting flags skip (15 restic tests, listed as added
-  and skipped).
+  and skipped).  GateTest2 runs those as root on their own
+  (`gate:fork-root:restic`, `testvm/test2/gate/fork-root.sh`): only the ones
+  `testvm/test2/gate/restic-root-tests.txt` lists, each reviewed (14 at
+  restic 5253b20), compiled as m with these caches and run as root with
+  their temporary files in a reserved RAM directory.
 
 ## Fork-only failures, 2026-11-04
 
@@ -121,6 +125,42 @@ rustic-bko gives the parents of a backup path nodes with their real
 metadata (rustic_core's `missing_dirs_get_their_own_nodes`); stock's are
 synthetic and never change.  The fork-harm audit's own run of the same suite
 on Chopin failed the same test.
+
+GateTest2 classes this one as known (`testvm/test2/gate/baseline.json`,
+a LIMIT with its reason): it still fails at the heads of 2026-11-08,
+rustic 6ccec58 with rustic_core 96596bb (`fork-tests.sh --force` on
+Cinqcent; rustic_core itself has no fork-only failure there).  Any other
+fork-only failure fails the gate.
+
+## GateTest2's fork layers
+
+`testvm/test2/t2lib/gate.py` runs `fork-tests.sh --force NAME...` for its
+layers `gate:fork:restic`, `gate:fork:rustic_core` and `gate:fork:rustic`
+(one job per host, as by hand), with a tag and results of its own:
+
+```
+BKO_AUDIT_TAG=RUN BKO_WEAR_TAG=gate:RUN:fork@HOST \
+    BKO_AUDIT_LOCAL=~/backotter-work/test2/runs/RUN/audit fork-tests.sh --force --restic-host H restic=COMMIT
+```
+
+with RUN the run id (`t2g-20261108T0315-4f2a`; SticTest2's `t2s-...` when it
+runs these layers, `RUN-r2` for the rerun), one such run per host, NAME=COMMIT
+the `backotter` heads of BKO_GIT (the layers' keys).
+
+- `BKO_AUDIT_TAG` makes each host's job `RUN-HOST` (by hand it is
+  `fork-HOST`), so a job another session's `fork-tests.sh` has running is
+  never taken for this run's (`launch` waits on a TAG already running), and
+  puts the tools in `~/backotter-work/bko-audit/bin-RUN` instead of the
+  shared `bin/` (gate.py removes it afterwards).
+- `BKO_WEAR_TAG` is the jobs' `WEAR_TAG` in the wear log (by hand
+  `audit:TAG`).
+- `--force`: results for the same commits are built and tested again, so a
+  rerun after a FAIL, or after a change to these scripts, really runs.
+- Each layer is judged from `NAME.report` against `baseline.json`: a
+  fork-only test failure or failing build target that it lists is a LIMIT
+  with its reason; any other one fails the layer.
+
+The defaults stay as they are for use by hand.
 
 ## A new upstream release
 

@@ -1,0 +1,209 @@
+stock: 6aa3a516ce654808a1f28f9fa21e9b7c8e6e90bf (chopin, 2026-11-04 19:24:14 +0100)
+  tests: 1701 pass, 0 fail, 33 skip; builds: 13 pass, 0 fail
+fork:  d2112d61996d85194c8fe994983ff6cbf4e76218 (chopin, 2026-11-04 19:42:05 +0100)
+  tests: 1873 pass, 0 fail, 48 skip; builds: 13 pass, 0 fail
+  go: stock go version go1.25.10 linux/amd64; fork go version go1.25.10 linux/amd64
+
+Fork-only test failures (fail on the fork, not on stock): 0
+
+Build targets that fail on the fork, not on stock: 0
+  (all builds on the fork: go build ./cmd/restic pass, aix/ppc64 pass, darwin/arm64 pass, dragonfly/amd64 pass, freebsd/amd64 pass, linux/386 pass, linux/arm pass, linux/s390x pass, netbsd/amd64 pass, openbsd/amd64 pass, solaris/amd64 pass, windows/amd64 pass)
+
+Skipped on the fork, passing on stock: 0
+
+On stock, missing on the fork: 0
+
+Added by the fork: 187 (172 pass, 0 fail, 15 skip)
+  github.com/restic/restic/cmd/restic :: TestBackupSizeScan  pass
+  github.com/restic/restic/cmd/restic :: TestBackupWithAtimeDefault  pass
+  github.com/restic/restic/internal/archiver :: TestDeviceIDForHardlinksByDefault  pass
+  github.com/restic/restic/internal/archiver :: TestFileChangedUnread  pass
+  github.com/restic/restic/internal/archiver :: TestFileSaverHolesSameBlobs  pass
+  github.com/restic/restic/internal/archiver :: TestMetadataBackupWarning  pass
+  github.com/restic/restic/internal/archiver :: TestSaveUnread  pass
+  github.com/restic/restic/internal/archiver :: TestZeroChunkID  pass
+  github.com/restic/restic/internal/data :: TestNodeBirthTime  pass
+  github.com/restic/restic/internal/data :: TestNodeFATAttributes  pass
+  github.com/restic/restic/internal/data :: TestNodeFileFlags  pass
+  github.com/restic/restic/internal/data :: TestNodeFileFlagsMalformed  pass
+  github.com/restic/restic/internal/data :: TestNodeProjectID  pass
+  github.com/restic/restic/internal/data :: TestNodeSparse  pass
+  github.com/restic/restic/internal/data :: TestNodeUnread  pass
+  github.com/restic/restic/internal/data :: TestNodeXFSOptions  pass
+  github.com/restic/restic/internal/data :: TestNodeZFSDosFlags  pass
+  github.com/restic/restic/internal/data :: TestSnapshotFromBackOtter  pass
+  github.com/restic/restic/internal/fs :: TestACEIsTrivial  pass
+  github.com/restic/restic/internal/fs :: TestACESID  pass
+  github.com/restic/restic/internal/fs :: TestACLsWarning  pass
+  github.com/restic/restic/internal/fs :: TestBSDACLSystems  pass
+  github.com/restic/restic/internal/fs :: TestBSDFileFlagMasks  pass
+  github.com/restic/restic/internal/fs :: TestBcachefsDirOptionsInherited  skip
+  github.com/restic/restic/internal/fs :: TestBcachefsOption  pass
+  github.com/restic/restic/internal/fs :: TestBirthTimeFirst  pass
+  github.com/restic/restic/internal/fs :: TestBirthTimeFirst/a_nanosecond_earlier  pass
+  github.com/restic/restic/internal/fs :: TestBirthTimeFirst/earlier  pass
+  github.com/restic/restic/internal/fs :: TestBirthTimeFirst/equal  pass
+  github.com/restic/restic/internal/fs :: TestBirthTimeFirst/later  pass
+  github.com/restic/restic/internal/fs :: TestBirthTimeFirst/none  pass
+  github.com/restic/restic/internal/fs :: TestChangeBitsBestEffort  pass
+  github.com/restic/restic/internal/fs :: TestClearRestrictingFlagsFile  skip
+  github.com/restic/restic/internal/fs :: TestClearRestrictingWith  pass
+  github.com/restic/restic/internal/fs :: TestClearRestrictingWith/ext4_i+a  pass
+  github.com/restic/restic/internal/fs :: TestClearRestrictingWith/ext4_none  pass
+  github.com/restic/restic/internal/fs :: TestClearRestrictingWith/no_FSSETXATTR  pass
+  github.com/restic/restic/internal/fs :: TestClearRestrictingWith/zfs_a  pass
+  github.com/restic/restic/internal/fs :: TestClearRestrictingWith/zfs_i  pass
+  github.com/restic/restic/internal/fs :: TestClearRestrictingWith/zfs_i+a  pass
+  github.com/restic/restic/internal/fs :: TestEncodeNvlist  pass
+  github.com/restic/restic/internal/fs :: TestFATAttributesIoctls  pass
+  github.com/restic/restic/internal/fs :: TestFATAttributesOnVfat  skip
+  github.com/restic/restic/internal/fs :: TestFillACLsBothSystems  pass
+  github.com/restic/restic/internal/fs :: TestFillExtendedAttributesLargeValue  pass
+  github.com/restic/restic/internal/fs :: TestFillExtendedAttributesSorted  pass
+  github.com/restic/restic/internal/fs :: TestFillHoles  pass
+  github.com/restic/restic/internal/fs :: TestFillHolesENOSPC  skip
+  github.com/restic/restic/internal/fs :: TestFsxattrIoctls  pass
+  github.com/restic/restic/internal/fs :: TestGenericSeekHole  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/SEEK_HOLE_EACCES  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/SEEK_HOLE_EINVAL  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/SEEK_HOLE_ENOTSUP  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/SEEK_HOLE_ENOTTY  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/SEEK_HOLE_ENXIO  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/SEEK_HOLE_EOPNOTSUPP  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/SEEK_HOLE_EWOULDBLOCK  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/all_hole  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/compressed,_no_holes  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/dense  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/empty  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/hole_in_the_middle  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/last_block_part_used  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/no_SEEK_HOLE  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/no_SEEK_HOLE,_dense  pass
+  github.com/restic/restic/internal/fs :: TestHasHoles/preallocated_beyond_its_size  pass
+  github.com/restic/restic/internal/fs :: TestHoleBlockSize  pass
+  github.com/restic/restic/internal/fs :: TestHoleBlockSizeRule  pass
+  github.com/restic/restic/internal/fs :: TestKeptFATAttributes  pass
+  github.com/restic/restic/internal/fs :: TestKeptFreeBSDFileFlags  pass
+  github.com/restic/restic/internal/fs :: TestKeptXFSOptions  pass
+  github.com/restic/restic/internal/fs :: TestKeptZFSDosFlags  pass
+  github.com/restic/restic/internal/fs :: TestLchownByNameFallback  pass
+  github.com/restic/restic/internal/fs :: TestMergeInodeFlags  pass
+  github.com/restic/restic/internal/fs :: TestMergeZFSDosFlags  pass
+  github.com/restic/restic/internal/fs :: TestNFS4TrivialACL  pass
+  github.com/restic/restic/internal/fs :: TestNodeFillProjectID  pass
+  github.com/restic/restic/internal/fs :: TestNodeFillSparse  pass
+  github.com/restic/restic/internal/fs :: TestNodeFillSparseGenericSeekHole  skip
+  github.com/restic/restic/internal/fs :: TestNodeFillSparseUnreadable  pass
+  github.com/restic/restic/internal/fs :: TestNodeProjectIDBcachefs  skip
+  github.com/restic/restic/internal/fs :: TestNodeRestoreExtendedAttributesUnsupported  pass
+  github.com/restic/restic/internal/fs :: TestNodeRestoreMetadataNotRoot  pass
+  github.com/restic/restic/internal/fs :: TestNodeRestoreProjectIDWarnings  pass
+  github.com/restic/restic/internal/fs :: TestNodeTimesMissing  pass
+  github.com/restic/restic/internal/fs :: TestNodeUnreadQuarantined  pass
+  github.com/restic/restic/internal/fs :: TestNotRootErrors  pass
+  github.com/restic/restic/internal/fs :: TestPOSIXOwningGroupPerms  pass
+  github.com/restic/restic/internal/fs :: TestParseBcachefsProject  pass
+  github.com/restic/restic/internal/fs :: TestPrepareDirForOptionsNotBcachefs  pass
+  github.com/restic/restic/internal/fs :: TestQuarantinedOpenError  pass
+  github.com/restic/restic/internal/fs :: TestRestoreCasefoldNotEmptyIsWarning  pass
+  github.com/restic/restic/internal/fs :: TestRestoreCasefoldNotEmptyRemoveIsWarning  pass
+  github.com/restic/restic/internal/fs :: TestRestoreFATAttributesWith  pass
+  github.com/restic/restic/internal/fs :: TestRestoreFATXFSNotThere  pass
+  github.com/restic/restic/internal/fs :: TestRestoreFileFlagsBtrfsCompression  skip
+  github.com/restic/restic/internal/fs :: TestRestoreFlagsWith  pass
+  github.com/restic/restic/internal/fs :: TestRestoreLeavesEqualXattrs  pass
+  github.com/restic/restic/internal/fs :: TestRestoreLeavesSELinuxLabel  skip
+  github.com/restic/restic/internal/fs :: TestRestoreZFSDosFlagsNotZFS  pass
+  github.com/restic/restic/internal/fs :: TestRestoreZFSDosFlagsWith  pass
+  github.com/restic/restic/internal/fs :: TestRestrictingFlags  pass
+  github.com/restic/restic/internal/fs :: TestSetBitsBestEffortWide  pass
+  github.com/restic/restic/internal/fs :: TestSetFlagsBestEffort  pass
+  github.com/restic/restic/internal/fs :: TestSetFlagsBestEffortUnsupported  pass
+  github.com/restic/restic/internal/fs :: TestSkipHolesChangingFile  pass
+  github.com/restic/restic/internal/fs :: TestSkipHolesChangingFile/grows_in_a_hole  pass
+  github.com/restic/restic/internal/fs :: TestSkipHolesChangingFile/grows_in_data  pass
+  github.com/restic/restic/internal/fs :: TestSkipHolesChangingFile/shrinks_in_a_hole,_after  pass
+  github.com/restic/restic/internal/fs :: TestSkipHolesChangingFile/shrinks_in_a_hole,_before  pass
+  github.com/restic/restic/internal/fs :: TestSkipHolesChangingFile/shrinks_in_a_hole,_to_its_start  pass
+  github.com/restic/restic/internal/fs :: TestSkipHolesChangingFile/shrinks_in_data  pass
+  github.com/restic/restic/internal/fs :: TestSkipHolesChangingFile/shrinks_in_the_trailing_hole  pass
+  github.com/restic/restic/internal/fs :: TestSkipHolesChangingFile/shrinks_to_nothing  pass
+  github.com/restic/restic/internal/fs :: TestSkipHolesOnlyMarked  pass
+  github.com/restic/restic/internal/fs :: TestSkipHolesPast4GiB  pass
+  github.com/restic/restic/internal/fs :: TestSkipHolesSameBytes  pass
+  github.com/restic/restic/internal/fs :: TestSkipHolesSeekFailures  pass
+  github.com/restic/restic/internal/fs :: TestSplitBackupWarnings  pass
+  github.com/restic/restic/internal/fs :: TestSplitSID  pass
+  github.com/restic/restic/internal/fs :: TestSplitWarnings  pass
+  github.com/restic/restic/internal/fs :: TestSplitWarningsSID  pass
+  github.com/restic/restic/internal/fs :: TestSysattrCrtime  pass
+  github.com/restic/restic/internal/fs :: TestSysattrCrtime/crtime_alone  pass
+  github.com/restic/restic/internal/fs :: TestSysattrCrtime/plain_view  pass
+  github.com/restic/restic/internal/fs :: TestSysattrCrtime/view_with_SIDs  pass
+  github.com/restic/restic/internal/fs :: TestSysattrKept  pass
+  github.com/restic/restic/internal/fs :: TestSysattrKept/archive_and_av_modified_cleared  pass
+  github.com/restic/restic/internal/fs :: TestSysattrKept/av_modified_cleared  pass
+  github.com/restic/restic/internal/fs :: TestSysattrKept/immutable,_nodump  pass
+  github.com/restic/restic/internal/fs :: TestSysattrKept/new_file  pass
+  github.com/restic/restic/internal/fs :: TestSysattrKept/no_attributes_in_the_view  pass
+  github.com/restic/restic/internal/fs :: TestSysattrMask  pass
+  github.com/restic/restic/internal/fs :: TestXFSOptionsOnXFS  skip
+  github.com/restic/restic/internal/fs :: TestXattrKept  pass
+  github.com/restic/restic/internal/fs :: TestXattrMetaJSON  pass
+  github.com/restic/restic/internal/fs :: TestZFSDosFlagsIoctls  pass
+  github.com/restic/restic/internal/fs :: TestZFSDosFlagsRoundTrip  skip
+  github.com/restic/restic/internal/fs :: TestZFSProject  pass
+  github.com/restic/restic/internal/restorer :: TestEnsureSizeSparseTruncates  pass
+  github.com/restic/restic/internal/restorer :: TestFileRestorerSparseMarker  pass
+  github.com/restic/restic/internal/restorer :: TestFileRestorerSparseMarker/--sparse,_target_exists  pass
+  github.com/restic/restic/internal/restorer :: TestFileRestorerSparseMarker/marked,_target_exists  pass
+  github.com/restic/restic/internal/restorer :: TestFileRestorerSparseMarker/no_zero_chunk,_--sparse  pass
+  github.com/restic/restic/internal/restorer :: TestFileRestorerSparseMarker/no_zero_chunk,_marked  pass
+  github.com/restic/restic/internal/restorer :: TestFileRestorerSparseMarker/single_blob,_marked  pass
+  github.com/restic/restic/internal/restorer :: TestFileRestorerSparseMarker/single_blob,_unmarked  pass
+  github.com/restic/restic/internal/restorer :: TestFileRestorerSparseMarker/zero_chunk,_--sparse  pass
+  github.com/restic/restic/internal/restorer :: TestFileRestorerSparseMarker/zero_chunk,_marked  pass
+  github.com/restic/restic/internal/restorer :: TestFileRestorerSparseMarker/zero_chunk,_unmarked  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerAttributeWarnings  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerCasefoldOrder  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerCasefoldOrder/backotter  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerCasefoldOrder/stock  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerExt4CasefoldProject  skip
+  github.com/restic/restic/internal/restorer :: TestRestorerFATAttributes  skip
+  github.com/restic/restic/internal/restorer :: TestRestorerFATXFSNotThere  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerFillHoles  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerFillHoles/backotter  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerFillHoles/stock  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerOverRestrictingFlags  skip
+  github.com/restic/restic/internal/restorer :: TestRestorerOverwriteChangedHardlinks  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerSparseBlocks  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerSparseMarker  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerSparseMarkerExistingTarget  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerSparseMarkerExistingTarget/directory,_--delete  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerSparseMarkerExistingTarget/regular_file  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerSparseMarkerExistingTarget/symlink  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerSparseMarkerExistingTarget/unreadable_regular_file  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerTargetNodeMetadata  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerTargetNodeMountedBelow  skip
+  github.com/restic/restic/internal/restorer :: TestRestorerUnread  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerUnreadSparse  pass
+  github.com/restic/restic/internal/restorer :: TestRestorerXFSOptions  skip
+  github.com/restic/restic/internal/restorer :: TestRestorerZFSDosFlagsNotZFS  pass
+  github.com/restic/restic/internal/restorer :: TestWriteSparse  pass
+  github.com/restic/restic/internal/restorer :: TestWriteSparseEdges  pass
+  github.com/restic/restic/internal/restorer :: TestWriteSparseEdges/aligned  pass
+  github.com/restic/restic/internal/restorer :: TestWriteSparseEdges/data_edges  pass
+  github.com/restic/restic/internal/restorer :: TestWriteSparseEdges/empty  pass
+  github.com/restic/restic/internal/restorer :: TestWriteSparseEdges/inside_one_block,_data  pass
+  github.com/restic/restic/internal/restorer :: TestWriteSparseEdges/inside_one_block,_zeros  pass
+  github.com/restic/restic/internal/restorer :: TestWriteSparseEdges/zero_block_between  pass
+  github.com/restic/restic/internal/restorer :: TestWriteSparseEdges/zero_edges  pass
+  github.com/restic/restic/internal/restorer :: TestWriteSparseEdges/zero_head,_data_tail  pass
+  github.com/restic/restic/internal/restorer :: TestWriteSparseError  pass
+
+Paired by name with their digits ignored (random or renumbered names): 6
+  github.com/restic/restic/internal/backend/mem :: stock TestSuiteBackendMem/TestList/max-1146, TestSuiteBackendMem/TestList/max-23#01, TestSuiteBackendMem/TestList/max-33; fork TestSuiteBackendMem/TestList/max-1147, TestSuiteBackendMem/TestList/max-24, TestSuiteBackendMem/TestList/max-34
+  github.com/restic/restic/internal/backend/sftp :: stock TestBackendSFTP/TestList/max-1161, TestBackendSFTP/TestList/max-38, TestBackendSFTP/TestList/max-48; fork TestBackendSFTP/TestList/max-1155, TestBackendSFTP/TestList/max-32, TestBackendSFTP/TestList/max-42
+
+Known stock failures: 0

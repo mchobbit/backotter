@@ -1,0 +1,9 @@
+2026-11-08T02:17:11Z	cinqcent	run-p1-i1.scope	0	441	nvme0n1=22504448	reserve sudo -E /home/m/backotter-work/testvm/holttest1d/ht1.sh pop24 r4all	tag=ht1:r4all:pop24	serial=nvme0n1:FAKESER-NOT-REAL-01	swpeak=0	mpeak=41160544256	host_dswap=0	host_zram=4096
+2026-11-08T02:55:32Z	cinqcent	run-p2-i2.scope	0	142	nvme0n1=1862656,zram0=4096,loop1=777	reserve sudo -E ht1.sh redox r4all	tag=ht1:r4all:redox	serial=nvme0n1:FAKESER-NOT-REAL-01
+2026-11-08T03:02:12Z	cinqcent	run-p3-i3.scope	0	375	sda=24576,nvme0n1=3066368,dm-0=99,md127=5	reserve sudo -E ht1.sh debian13-stack r4all	tag=ht1:r4all:debian13-stack-degraded	serial=sda:FAKESER-NOT-REAL-02,nvme0n1:FAKESER-NOT-REAL-01
+2026-11-08T05:00:00Z	cinqcent	run-p4-i4.scope	0	100	nvme0n1=1000	reserve sudo -E ht1.sh pop24 r4all	tag=ht1:r4all:pop24	serial=nvme0n1:FAKESER-NOT-REAL-01
+2026-11-08T05:01:00Z	cinqcent	bko-nbd-1.scope	-	-	nbd0=5000	nbd for run-p4-i4.scope	tag=ht1:r4all:pop24
+2026-11-08T05:02:00Z	cinqcent	x.scope	0	5	-	an untagged job
+2026-11-08T05:03:00Z	cinqcent	y.scope	0	9	nvme0n1=4096,nvme0n1=4096	drive.py check	tag=stic:t2s-20261108T0500-abcd:debian12
+not a line
+the rest of an old WHAT

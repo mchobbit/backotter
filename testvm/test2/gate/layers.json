@@ -1,0 +1,445 @@
+{
+ "v": 1,
+ "family": "gate",
+ "notes": "GateTest2's layers (testvm/test2/t2lib/gate.py runs them; keys.py reads this file like every spec, contract 1.3). An entry's bins, harness, judge, host, host_inputs and gitrepos are its cell's inputs; part, per_host, pin, families, reserve, peak_reserve, timeout_s, runs and needs aren't. bins are the set under test's (OS/NAME, globs), PLAT/bko-holt bko-holt's HOST_ROOT/holt-bin/CODE build (sha256, or absent until it is built: R14). gate:holt's host input is the raw dumps' default place (collect-dumps.sh's OUT): facts_host.py expands ~ only, not T2_HOST_ROOT. The fork layers' judge inputs include the hosts' stock baselines (testvm/audit/stock-baseline.sh): a new STOCK in audit-lib.sh needs its paths here too.",
+ "plumbing": [],
+ "soft": [],
+ "layers": {
+  "holt": {
+   "part": "fast",
+   "families": [
+    "gate",
+    "holt"
+   ],
+   "pin": "chopin",
+   "runs": "gate/holt-test.sh under cmp-run.sh --reserve 2 4: cargo test -- --skip golden_; the golden plans (BKO_HOLT_GOLDEN=report); redact_dumps over h1-raw and the corpus",
+   "needs": [
+    "cargo-test",
+    "golden-plans",
+    "invariants",
+    "redact-dumps"
+   ],
+   "reserve": [
+    2,
+    4
+   ],
+   "timeout_s": 3600,
+   "harness": [
+    "testvm/test2/gate/holt-test.sh",
+    "holt/**"
+   ],
+   "judge": [
+    "testvm/test2/t2lib/gate_judge.py"
+   ],
+   "host": [
+    "rustc",
+    "pkg:util-linux",
+    "pkg:fdisk",
+    "pkg:gdisk",
+    "pkg:e2fsprogs",
+    "pkg:xfsprogs",
+    "pkg:btrfs-progs",
+    "pkg:dosfstools",
+    "pkg:cryptsetup-bin"
+   ],
+   "host_inputs": [
+    "/bkoscratch/test2/h1-raw"
+   ]
+  },
+  "fork:restic": {
+   "part": "fast",
+   "families": [
+    "gate",
+    "stic"
+   ],
+   "pin": "chopin",
+   "runs": "testvm/audit/fork-tests.sh --force restic=HEAD on the Mac, the job on Chopin; restic.report against baseline.json",
+   "needs": [
+    "suite",
+    "build-targets"
+   ],
+   "harness": [
+    "testvm/audit/fork-tests.sh",
+    "testvm/audit/audit-lib.sh",
+    "testvm/audit/audit-host.sh",
+    "testvm/audit/results.py",
+    "stick/prep-rustic-src.sh"
+   ],
+   "judge": [
+    "testvm/test2/gate/baseline.json",
+    "testvm/audit/stock-baseline.txt",
+    "testvm/test2/t2lib/gate_judge.py"
+   ],
+   "host_inputs": [
+    {
+     "path": "~/backotter-work/bko-audit/stock/restic-0.19.1/results.tsv",
+     "group": "judge"
+    }
+   ],
+   "gitrepos": [
+    "restic"
+   ],
+   "host": [
+    "go"
+   ]
+  },
+  "fork:rustic_core": {
+   "part": "fast",
+   "families": [
+    "gate",
+    "stic"
+   ],
+   "pin": "cinqcent",
+   "runs": "testvm/audit/fork-tests.sh --force rustic_core=HEAD on the Mac, the job on Cinqcent; rustic_core.report against baseline.json",
+   "needs": [
+    "suite",
+    "build-targets"
+   ],
+   "harness": [
+    "testvm/audit/fork-tests.sh",
+    "testvm/audit/audit-lib.sh",
+    "testvm/audit/audit-host.sh",
+    "testvm/audit/results.py",
+    "stick/prep-rustic-src.sh"
+   ],
+   "judge": [
+    "testvm/test2/gate/baseline.json",
+    "testvm/audit/stock-baseline.txt",
+    "testvm/test2/t2lib/gate_judge.py"
+   ],
+   "host_inputs": [
+    {
+     "path": "~/backotter-work/bko-audit/stock/rustic_core-0.13.0/results.tsv",
+     "group": "judge"
+    },
+    "~/.rustup/toolchains/1.94.1-x86_64-unknown-linux-gnu/bin/rustc"
+   ],
+   "gitrepos": [
+    "rustic_core"
+   ]
+  },
+  "fork:rustic": {
+   "part": "fast",
+   "families": [
+    "gate",
+    "stic"
+   ],
+   "pin": "cinqcent",
+   "runs": "testvm/audit/fork-tests.sh --force rustic=HEAD on the Mac (built against rustic_core's HEAD), the job on Cinqcent; rustic.report against baseline.json",
+   "needs": [
+    "suite",
+    "build-targets"
+   ],
+   "harness": [
+    "testvm/audit/fork-tests.sh",
+    "testvm/audit/audit-lib.sh",
+    "testvm/audit/audit-host.sh",
+    "testvm/audit/results.py",
+    "stick/prep-rustic-src.sh"
+   ],
+   "judge": [
+    "testvm/test2/gate/baseline.json",
+    "testvm/audit/stock-baseline.txt",
+    "testvm/test2/t2lib/gate_judge.py"
+   ],
+   "host_inputs": [
+    {
+     "path": "~/backotter-work/bko-audit/stock/rustic-0.11.4/results.tsv",
+     "group": "judge"
+    },
+    "~/.rustup/toolchains/1.94.1-x86_64-unknown-linux-gnu/bin/rustc"
+   ],
+   "gitrepos": [
+    "rustic",
+    "rustic_core"
+   ]
+  },
+  "fork-root:restic": {
+   "part": "fast",
+   "families": [
+    "gate",
+    "stic"
+   ],
+   "pin": "chopin",
+   "runs": "gate/fork-root.sh under cmp-run.sh --reserve 1 2: the tests restic-root-tests.txt lists, compiled as m, run as root with TMPDIR in RAM",
+   "needs": [
+    "one per listed test",
+    "root-list"
+   ],
+   "reserve": [
+    1,
+    2
+   ],
+   "timeout_s": 3600,
+   "harness": [
+    "testvm/test2/gate/fork-root.sh",
+    "testvm/test2/gate/restic-root-tests.txt"
+   ],
+   "judge": [
+    "testvm/test2/t2lib/gate_judge.py"
+   ],
+   "gitrepos": [
+    "restic"
+   ],
+   "host": [
+    "go",
+    "kernel",
+    "pkg:e2fsprogs",
+    "pkg:xfsprogs",
+    "pkg:btrfs-progs",
+    "pkg:dosfstools",
+    "pkg:util-linux"
+   ],
+   "host_inputs": [
+    "~/backotter-work/round6/arch-root/usr/bin/bcachefs"
+   ]
+  },
+  "bin:abi": {
+   "part": "fast",
+   "families": [
+    "gate",
+    "stic"
+   ],
+   "runs": "gate/bincheck.sh abi: readelf's NEEDED libraries and version needs of freebsd/*-bko and FreeBSD's bko-holt against freebsd-14.5.abi",
+   "needs": [
+    "one per binary"
+   ],
+   "timeout_s": 600,
+   "bins": [
+    "freebsd/*-bko",
+    "freebsd/bko-holt"
+   ],
+   "harness": [
+    "testvm/test2/gate/bincheck.sh"
+   ],
+   "judge": [
+    "testvm/test2/gate/freebsd-14.5.abi",
+    "testvm/test2/t2lib/gate_judge.py"
+   ],
+   "host": [
+    "pkg:binutils"
+   ]
+  },
+  "bin:static": {
+   "part": "fast",
+   "families": [
+    "gate",
+    "stic"
+   ],
+   "runs": "gate/bincheck.sh static: Linux restic-bko and rustic-bko static, no glibc, no NSS; Go's CGO_ENABLED=0",
+   "needs": [
+    "one per binary"
+   ],
+   "timeout_s": 600,
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/test2/gate/bincheck.sh"
+   ],
+   "host": [
+    "pkg:binutils"
+   ],
+   "judge": [
+    "testvm/test2/gate/freebsd-14.5.abi",
+    "testvm/test2/t2lib/gate_judge.py"
+   ]
+  },
+  "bin:version": {
+   "part": "fast",
+   "families": [
+    "gate",
+    "stic"
+   ],
+   "runs": "gate/bincheck.sh version: each OS's binary prints or holds its fork commit's version, and bko-holt holt/Cargo.toml's; agree across OSes",
+   "needs": [
+    "one per binary",
+    "agree"
+   ],
+   "timeout_s": 600,
+   "bins": [
+    "linux",
+    "freebsd",
+    "netbsd",
+    "openbsd",
+    "dragonfly",
+    "illumos",
+    "haiku",
+    "bko-holt",
+    "freebsd/bko-holt",
+    "netbsd/bko-holt",
+    "openbsd/bko-holt",
+    "dragonfly/bko-holt",
+    "illumos/bko-holt",
+    "haiku/bko-holt"
+   ],
+   "harness": [
+    "testvm/test2/gate/bincheck.sh",
+    "holt/Cargo.toml"
+   ],
+   "judge": [
+    "testvm/test2/gate/freebsd-14.5.abi",
+    "testvm/test2/gate/baseline.json",
+    "testvm/test2/t2lib/gate_judge.py"
+   ],
+   "host": [
+    "pkg:binutils"
+   ]
+  },
+  "loop:linux": {
+   "part": "slow",
+   "per_host": true,
+   "families": [
+    "gate",
+    "stic"
+   ],
+   "runs": "gate/loop.sh linux: run-all.sh --platforms linux (fs_roundtrip.py on the host's share of file systems, nonroot-rt.sh linux), RT_RAM=1, HOST_JOBS=2, under cmp-run.sh --reserve D 4",
+   "needs": [
+    "one per run-all.sh row"
+   ],
+   "reserve": [
+    14,
+    4
+   ],
+   "peak_reserve": true,
+   "timeout_s": 21600,
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/test2/gate/loop.sh",
+    "testvm/compare/run-all.sh",
+    "testvm/compare/fs_roundtrip.py",
+    "testvm/compare/compare.py",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/torture.sh",
+    "testvm/compare/nonroot-rt.sh",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/sparse-rt.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/guest-slot.sh",
+    "testvm/compare/boot-state.sh",
+    "testvm/compare/run-guest-rt.sh",
+    "testvm/compare/zfs-guest-rt.sh",
+    "testvm/compare/guest-run.sh",
+    "testvm/compare/freebsd/fsmeta.sh",
+    "testvm/compare/freebsd/torture.sh",
+    "testvm/vm-lib.sh",
+    "testvm/vm-run",
+    "testvm/console-boot.py"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "testvm/test2/t2lib/gate_judge.py"
+   ],
+   "host": [
+    "kernel",
+    "zfs",
+    "pkg:e2fsprogs",
+    "pkg:xfsprogs",
+    "pkg:btrfs-progs",
+    "pkg:f2fs-tools",
+    "pkg:jfsutils",
+    "pkg:dosfstools",
+    "pkg:zfsutils-linux",
+    "pkg:attr",
+    "pkg:acl",
+    "pkg:util-linux"
+   ],
+   "host_inputs": [
+    "~/backotter-work/round6/arch-root/usr/bin/bcachefs"
+   ],
+   "notes": "run-all.sh's own scripts and what they source, its guest platforms' too (the static checker reads run-all.sh whole; --platforms linux runs only the linux steps)"
+  },
+  "loop:sparse": {
+   "part": "slow",
+   "per_host": true,
+   "families": [
+    "gate",
+    "stic"
+   ],
+   "runs": "gate/loop.sh sparse: run-all.sh --platforms sparse (sparse-rt.sh on the host's share), RT_RAM=1, SPARSE_JOBS=1, under cmp-run.sh --reserve D 4 (D: IMG_GB + 4 at first)",
+   "needs": [
+    "one per run-all.sh row"
+   ],
+   "reserve": [
+    20,
+    4
+   ],
+   "peak_reserve": true,
+   "timeout_s": 21600,
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/test2/gate/loop.sh",
+    "testvm/compare/run-all.sh",
+    "testvm/compare/fs_roundtrip.py",
+    "testvm/compare/compare.py",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/torture.sh",
+    "testvm/compare/nonroot-rt.sh",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/sparse-rt.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/guest-slot.sh",
+    "testvm/compare/boot-state.sh",
+    "testvm/compare/run-guest-rt.sh",
+    "testvm/compare/zfs-guest-rt.sh",
+    "testvm/compare/guest-run.sh",
+    "testvm/compare/freebsd/fsmeta.sh",
+    "testvm/compare/freebsd/torture.sh",
+    "testvm/vm-lib.sh",
+    "testvm/vm-run",
+    "testvm/console-boot.py"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "testvm/test2/t2lib/gate_judge.py"
+   ],
+   "host": [
+    "kernel",
+    "zfs",
+    "pkg:e2fsprogs",
+    "pkg:xfsprogs",
+    "pkg:btrfs-progs",
+    "pkg:zfsutils-linux",
+    "pkg:util-linux"
+   ],
+   "notes": "run-all.sh's own scripts and what they source, its guest platforms' too (the static checker reads run-all.sh whole; --platforms linux runs only the sparse steps); when the set isn't bko-bin, sparse-rt.sh's --identity step compares against bko-bin's linux restic-bko and rustic-bko (OLD_BIN), which this key doesn't hold: a promotion that changes bko-bin makes it due only through GateTest2All or the sweep"
+  },
+  "selftest": {
+   "part": "fast",
+   "families": [
+    "gate"
+   ],
+   "pin": "mac",
+   "runs": "on the Mac: testvm/test2/t2 self-test and testvm/stictest1/drive.py --self-test",
+   "needs": [
+    "t2-self-test",
+    "drive-self-test"
+   ],
+   "notes": "Its key is the self-tests' code, the specs they read and the unit tests' fixtures (which leakscan scans: tests/fixtures/** one input each), not every repo file the spec checker reads through them (a row holds at most 64 KiB); holt/tests/corpus/** is gate:holt's",
+   "harness": [
+    "testvm/test2/t2",
+    "testvm/test2/t2-host",
+    "testvm/test2/*.json",
+    "testvm/test2/*.tsv",
+    "testvm/test2/t2lib/*.py",
+    "testvm/test2/tests/*.py",
+    "testvm/test2/*/*.json",
+    "?testvm/test2/*/*.py",
+    "testvm/stictest1/drive.py",
+    "testvm/test2/tests/fixtures/**"
+   ],
+   "judge": [
+    "testvm/test2/t2lib/gate_judge.py"
+   ]
+  }
+ }
+}

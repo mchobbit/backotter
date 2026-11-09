@@ -1,0 +1,21 @@
+   Compiling bko-holt v0.2.4 (/home/m/backotter-work/t2/copy/6fff54b/holt)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.91s
+     Running unittests src/lib.rs (/mnt/bko-ram/t2g-20261108T0315-4f2a-holt/target/debug/deps/bko_holt-9f40474c940775b1)
+
+running 224 tests
+test load::commands::tests::sfdisk_script_for_gpt ... FAILED
+test load::commands::tests::xfs_geometry ... ok
+
+failures:
+
+---- load::commands::tests::sfdisk_script_for_gpt stdout ----
+
+thread 'load::commands::tests::sfdisk_script_for_gpt' panicked at src/load/commands.rs:812:9:
+assertion `left == right` failed
+
+failures:
+    load::commands::tests::sfdisk_script_for_gpt
+
+test result: FAILED. 223 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.32s
+
+error: test failed, to rerun pass `--lib`

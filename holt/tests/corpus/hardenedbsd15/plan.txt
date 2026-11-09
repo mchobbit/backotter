@@ -1,0 +1,40 @@
+# bko-holt load plan for layout.json
+# Source: host1, HardenedBSD 15.1-STABLE-HBSD, BIOS boot with freebsd, dumped 2026-11-08T02:37:19Z
+#
+# Disks:
+#   vtbd0 (16 GiB) -> /dev/sdq
+
+# ---- partition ----
+# vtbd0 -> /dev/sdq: the source's table, GUIDs and boot code exactly
+sh -c 'bko-holt write-table layout.json vtbd0 /dev/sdq $(diskinfo /dev/sdq | cut -f3)'
+gpart show sdq
+
+# ---- assemble ----
+# (nothing to do)
+
+# ---- format ----
+# vtbd0p3: UFS as the source's (dumpfs -m)
+newfs -O 2 -U -a 32 -b 32768 -d 32768 -e 4096 -f 4096 -g 16384 -h 64 -i 8192 -j -k 6400 -m 8 -o time -s 29359024 -t /dev/sdqp3
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+mount -t ufs -o rw /dev/sdqp3 /mnt/bko-target
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+
+# ---- boot ----
+# the boot code (MBR, freebsd-boot) was written with the partition table
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -Rp /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+
+# ---- close ----
+# everything under the target, deepest first
+sh -c 'mount -p | awk '\''{ print $2 }'\'' | awk '\''$0 == "/mnt/bko-target" || index($0, "/mnt/bko-target/") == 1'\'' | sort -r | while read -r m; do umount "$m" || exit; done'
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status filesystem /dev/sdqp3 ufs -
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: exit 0, nothing on stderr

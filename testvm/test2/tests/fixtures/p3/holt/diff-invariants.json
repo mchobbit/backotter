@@ -1,0 +1,1 @@
+{"v": 1, "corpus": 45, "differ": {"omnios58-mirror": {"stages": ["mount"], "lines_changed": 3}}, "invariants": {"omnios58-mirror": ["/ mounted: the mount stage mounts no root at /mnt/bko-target"]}}

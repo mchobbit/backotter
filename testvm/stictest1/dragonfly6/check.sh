@@ -25,7 +25,7 @@ set -uo pipefail
 self=$(realpath "$0")
 here=$(dirname "$self")
 WORK=${BKO_WORK:-$HOME/backotter-work}
-CMP=$WORK/testvm/compare
+CMP=${BKO_TESTVM:-$WORK/testvm}/compare
 guest=dragonfly6
 
 if [[ ${1:-} == --inner ]]; then

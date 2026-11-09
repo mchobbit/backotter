@@ -1,0 +1,3 @@
+PASS abi freebsd/restic-bko: no libraries needed (static)
+PASS abi freebsd/rustic-bko: libc.so.7(FBSD_1.0 FBSD_1.1 FBSD_1.2 FBSD_1.3 FBSD_1.4 FBSD_1.5 FBSD_1.7) libgcc_s.so.1(GCC_3.0 GCC_3.3 GCC_4.2.0) libm.so.5(FBSD_1.0 FBSD_1.2) libthr.so.3(FBSD_1.0 FBSD_1.2 FBSD_1.6), 212 symbols checked
+PASS abi holt/freebsd/bko-holt: libc.so.7(FBSD_1.0 FBSD_1.1 FBSD_1.3 FBSD_1.5 FBSD_1.7) libgcc_s.so.1(GCC_3.0 GCC_3.3 GCC_4.2.0) libthr.so.3(FBSD_1.0 FBSD_1.2 FBSD_1.6), 109 symbols checked

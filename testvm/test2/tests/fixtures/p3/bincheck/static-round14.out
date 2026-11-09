@@ -1,0 +1,1 @@
+FAIL static ~/backotter-work/round14/bin/linux/rustic-bko: an NT_GNU_ABI_TAG note (a glibc build, not musl); the string nsswitch.conf (glibc's NSS)

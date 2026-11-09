@@ -18,7 +18,7 @@ HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=$HOME/backotter-work
 if [[ -z ${CHECK_INNER:-} ]]; then
     # shellcheck source=/dev/null
-    source "$WORK/testvm/compare/guest-slot.sh"
+    source "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
     case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
     CHECK_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 6 env CHECK_INNER=1 BKO_GUEST_SLOT="$BKO_GUEST_SLOT" "$HERE/$(basename "$0")" "$@"
     rc=$?; slot_give; exit $rc
@@ -28,7 +28,7 @@ LOG=${STC_LOGS:-$WORK/stictest1/void-musl/logs}/$(date +%Y%m%d-%H%M%S); mkdir -p
 cleanup() { vm_halt; rm -rf "$RAM"; }
 rm -rf "$RAM"; mkdir -p "$RAM/tmp" "$RAM/out/w" "$RAM/ship/c/b" "$RAM/ship/c/g/bin" "$RAM/ship/c/g/lib"
 # shellcheck source=/dev/null
-. "$WORK/testvm/vm-lib.sh"
+. "${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh"
 trap cleanup EXIT
 truncate -s 1G "$RAM/src.img"; truncate -s 300M "$RAM/srcb.img"; truncate -s 8G "$RAM/work.img"
 cp "$BIN/restic-bko" "$BIN/rustic-bko" "$RAM/ship/c/b/"

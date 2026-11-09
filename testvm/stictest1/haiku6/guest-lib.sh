@@ -1,7 +1,7 @@
 # Sourced: boot a throwaway overlay of haiku6 and talk to it.
 # Needs: PORT, W (scratch dir).  g_boot [EXTRA_DISK...]; ssh_g CMD; g_stop
 VM=$HOME/backotter-work/vms/haiku6
-VMRUN=$HOME/backotter-work/testvm/vm-run
+VMRUN=${BKO_TESTVM:-$HOME/backotter-work/testvm}/vm-run
 ssh_g() {
     timeout "${T:-900}" ssh -q -i "$VM/id_ed25519" -p "$PORT" -o BatchMode=yes \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 \

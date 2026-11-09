@@ -1,0 +1,989 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.4"
+  },
+  "generated": "2026-11-08T02:19:01Z",
+  "privileged": true,
+  "host": {
+    "hostname": "tumbleweed",
+    "machine_id": "bd000000000040008000000000000001",
+    "dmi": {
+      "sys_vendor": "QEMU",
+      "product_name": "Standard PC (i440FX + PIIX, 1996)",
+      "product_version": "pc-i440fx-10.0",
+      "board_vendor": null,
+      "board_name": null,
+      "bios_vendor": "SeaBIOS",
+      "bios_version": "1.16.3-debian-1.16.3-2",
+      "bios_date": "04/01/2014",
+      "product_uuid": null,
+      "chassis_type": "1"
+    },
+    "virtualization": "kvm"
+  },
+  "os": {
+    "id": "opensuse-tumbleweed",
+    "version_id": "20261103",
+    "version_codename": null,
+    "pretty_name": "openSUSE Tumbleweed",
+    "debian_version": null,
+    "kernel_release": "7.3.1-1-default",
+    "kernel_version": "#1 SMP PREEMPT_DYNAMIC Sat Oct 31 11:17:21 UTC 2026 (8815021)",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "bios"
+  },
+  "storage": {
+    "topology": {
+      "vda (disk, 16 GiB, dos)": {
+        "vda1 (partition, 1 GiB) ext4 on /boot": {},
+        "vda2 (partition, 2 GiB) swap": {},
+        "vda3 (partition, 13 GiB) btrfs on /, /.snapshots, /home, /opt, /usr/local, /root, /srv, /var": {}
+      }
+    },
+    "disks": [
+      {
+        "name": "vda",
+        "path": "/dev/vda",
+        "kind": "disk",
+        "devno": "254:0",
+        "size_bytes": 17179869184,
+        "size": "16 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/9",
+          "/dev/disk/by-path/pci-0000:00:04.0",
+          "/dev/disk/by-path/virtio-pci-0000:00:04.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "dos",
+          "sector_size": 512,
+          "disk_signature": "bc000001",
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vda1",
+            "path": "/dev/vda1",
+            "devno": "254:1",
+            "number": 1,
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "start_bytes": 1048576,
+            "size_bytes": 1073741824,
+            "type": "0x83",
+            "type_name": "Linux",
+            "bootable": true,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000001-01",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part1",
+              "/dev/disk/by-partuuid/bc000001-01",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partnum/1",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partuuid/bc000001-01",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-uuid/bc000000-0000-4000-8000-000000000001",
+              "/dev/disk/by-path/pci-0000:00:04.0-part1",
+              "/dev/disk/by-path/virtio-pci-0000:00:04.0-part1",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "ext4",
+              "usage": "filesystem",
+              "uuid": "bc000000-0000-4000-8000-000000000001",
+              "label": null,
+              "version": "1.0",
+              "block_size": 4096,
+              "blocks": 262144,
+              "size_bytes": 1073741824,
+              "free_blocks": 217687,
+              "reserved_blocks": 13107,
+              "inodes": 65536,
+              "free_inodes": 65150,
+              "inode_size": 256,
+              "inodes_per_group": 8192,
+              "blocks_per_group": 32768,
+              "first_data_block": 0,
+              "revision": 1,
+              "features": [
+                "has_journal",
+                "ext_attr",
+                "resize_inode",
+                "dir_index",
+                "orphan_file",
+                "filetype",
+                "needs_recovery",
+                "extent",
+                "64bit",
+                "flex_bg",
+                "metadata_csum_seed",
+                "sparse_super",
+                "large_file",
+                "huge_file",
+                "dir_nlink",
+                "extra_isize",
+                "metadata_csum",
+                "orphan_present"
+              ],
+              "state": "clean",
+              "has_errors": false,
+              "errors_behavior": "continue",
+              "creator_os": "Linux",
+              "reserved_gdt_blocks": 127,
+              "default_hash": "half_md4",
+              "hash_seed": "bc000000-0000-4000-8000-000000000002",
+              "mkfs_time": 1793600069,
+              "last_mounted_on": "/boot",
+              "flex_bg_size": 16,
+              "descriptor_size": 64,
+              "min_extra_isize": 32,
+              "want_extra_isize": 32,
+              "journal_inode": 8
+            },
+            "mounted_at": ["/boot"]
+          },
+          {
+            "name": "vda2",
+            "path": "/dev/vda2",
+            "devno": "254:2",
+            "number": 2,
+            "start_lba": 2099200,
+            "sectors": 4194304,
+            "start_bytes": 1074790400,
+            "size_bytes": 2147483648,
+            "type": "0x82",
+            "type_name": "Linux swap / Solaris",
+            "bootable": false,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000001-02",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part2",
+              "/dev/disk/by-partuuid/bc000001-02",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partnum/2",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partuuid/bc000001-02",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-uuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:00:04.0-part2",
+              "/dev/disk/by-path/virtio-pci-0000:00:04.0-part2",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000003"
+            ],
+            "holders": [],
+            "content": {
+              "type": "swap",
+              "usage": "other",
+              "uuid": "bc000000-0000-4000-8000-000000000003",
+              "label": null,
+              "version": "1",
+              "page_size": 4096,
+              "last_page": 524287,
+              "size_bytes": 2147483648,
+              "bad_pages": 0
+            },
+            "mounted_at": []
+          },
+          {
+            "name": "vda3",
+            "path": "/dev/vda3",
+            "devno": "254:3",
+            "number": 3,
+            "start_lba": 6293504,
+            "sectors": 27260928,
+            "start_bytes": 3222274048,
+            "size_bytes": 13957595136,
+            "type": "0x83",
+            "type_name": "Linux",
+            "bootable": false,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000001-03",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part3",
+              "/dev/disk/by-partuuid/bc000001-03",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partnum/3",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partuuid/bc000001-03",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-uuid/bc000000-0000-4000-8000-000000000004",
+              "/dev/disk/by-path/pci-0000:00:04.0-part3",
+              "/dev/disk/by-path/virtio-pci-0000:00:04.0-part3",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000004"
+            ],
+            "holders": [],
+            "content": {
+              "type": "btrfs",
+              "usage": "filesystem",
+              "uuid": "bc000000-0000-4000-8000-000000000004",
+              "label": null,
+              "version": null,
+              "total_bytes": 13957595136,
+              "bytes_used": 1324556288,
+              "num_devices": 1,
+              "sector_size": 4096,
+              "node_size": 16384,
+              "stripe_size": 4096,
+              "checksum": "crc32c",
+              "generation": 109,
+              "features": [
+                "mixed_backref",
+                "default_subvol",
+                "big_metadata",
+                "extended_iref",
+                "skinny_metadata",
+                "no_holes"
+              ],
+              "compat_ro_features": ["free_space_tree", "free_space_tree_valid", "block_group_tree"],
+              "device": {
+                "devid": 1,
+                "uuid": "bc000000-0000-4000-8000-000000000005",
+                "total_bytes": 13957595136,
+                "bytes_used": 3783262208
+              }
+            },
+            "mounted_at": ["/", "/.snapshots", "/home", "/opt", "/root", "/srv", "/usr/local", "/var"]
+          }
+        ],
+        "boot_code": {
+          "kind": "grub2",
+          "first_bytes": "eb639000000000000000000000000000",
+          "grub_core_lba": 1,
+          "grub_boot_drive": "0xff",
+          "grub_core_present": true,
+          "grub_core_in": "post-mbr-gap",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 124
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [],
+    "loop_devices": [],
+    "other_devices": [
+      {
+        "name": "fd0",
+        "path": "/dev/fd0",
+        "kind": "floppy",
+        "devno": "2:0",
+        "size_bytes": 4096,
+        "size": "4 KiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": false,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "sr0",
+        "path": "/dev/sr0",
+        "kind": "rom",
+        "devno": "11:0",
+        "size_bytes": 1073741312,
+        "size": "1024 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": false,
+        "links": [
+          "/dev/cdrom",
+          "/dev/disk/by-diskseq/12",
+          "/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1",
+          "/dev/disk/by-path/pci-0000:00:01.1-ata-2",
+          "/dev/disk/by-path/pci-0000:00:01.1-ata-2.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "lvm": {
+      "volume_groups": []
+    },
+    "zfs": {
+      "pools_from_labels": [],
+      "zpool_cache": null,
+      "tools": null
+    },
+    "btrfs": [
+      {
+        "uuid": "bc000000-0000-4000-8000-000000000004",
+        "label": null,
+        "devices": ["vda3"],
+        "mounted": true,
+        "features": [
+          "block_group_tree",
+          "default_subvol",
+          "extended_iref",
+          "free_space_tree",
+          "no_holes",
+          "skinny_metadata"
+        ],
+        "allocation_profiles": {
+          "data": ["single"],
+          "metadata": ["dup"],
+          "system": ["dup"]
+        },
+        "mounted_subvolumes": [
+          {
+            "target": "/",
+            "subvol": "/@/.snapshots/1/snapshot"
+          },
+          {
+            "target": "/.snapshots",
+            "subvol": "/@/.snapshots"
+          },
+          {
+            "target": "/home",
+            "subvol": "/@/home"
+          },
+          {
+            "target": "/opt",
+            "subvol": "/@/opt"
+          },
+          {
+            "target": "/root",
+            "subvol": "/@/root"
+          },
+          {
+            "target": "/srv",
+            "subvol": "/@/srv"
+          },
+          {
+            "target": "/usr/local",
+            "subvol": "/@/usr/local"
+          },
+          {
+            "target": "/var",
+            "subvol": "/@/var"
+          }
+        ],
+        "subvolumes": [
+          {
+            "id": 256,
+            "gen": 19,
+            "parent": 5,
+            "top_level": 5,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-000000000006",
+            "path": "<FS_TREE>/@",
+            "readonly": false,
+            "properties": null
+          },
+          {
+            "id": 257,
+            "gen": 109,
+            "parent": 256,
+            "top_level": 256,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-000000000007",
+            "path": "<FS_TREE>/@/var",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          },
+          {
+            "id": 258,
+            "gen": 76,
+            "parent": 256,
+            "top_level": 256,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-000000000008",
+            "path": "<FS_TREE>/@/usr/local",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          },
+          {
+            "id": 259,
+            "gen": 48,
+            "parent": 256,
+            "top_level": 256,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-000000000009",
+            "path": "<FS_TREE>/@/srv",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          },
+          {
+            "id": 260,
+            "gen": 99,
+            "parent": 256,
+            "top_level": 256,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-00000000000a",
+            "path": "<FS_TREE>/@/root",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          },
+          {
+            "id": 261,
+            "gen": 48,
+            "parent": 256,
+            "top_level": 256,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-00000000000b",
+            "path": "<FS_TREE>/@/opt",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          },
+          {
+            "id": 262,
+            "gen": 48,
+            "parent": 256,
+            "top_level": 256,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-00000000000c",
+            "path": "<FS_TREE>/@/home",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          },
+          {
+            "id": 263,
+            "gen": 51,
+            "parent": 256,
+            "top_level": 256,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-00000000000d",
+            "path": "<FS_TREE>/@/.snapshots",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          },
+          {
+            "id": 264,
+            "gen": 108,
+            "parent": 263,
+            "top_level": 263,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-00000000000e",
+            "path": "<FS_TREE>/@/.snapshots/1/snapshot",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          },
+          {
+            "id": 265,
+            "gen": 45,
+            "parent": 263,
+            "top_level": 263,
+            "parent_uuid": "bc000000-0000-4000-8000-00000000000e",
+            "uuid": "bc000000-0000-4000-8000-00000000000f",
+            "path": "<FS_TREE>/@/.snapshots/2/snapshot",
+            "readonly": true,
+            "properties": {
+              "ro": "true"
+            }
+          }
+        ],
+        "default_subvolume": {
+          "id": 264,
+          "gen": 108,
+          "top_level": 263,
+          "path": "@/.snapshots/1/snapshot"
+        },
+        "quota_enabled": true,
+        "qgroups": [
+          {
+            "qgroupid": "0/5",
+            "referenced": 16384,
+            "exclusive": 16384,
+            "max_referenced": null,
+            "max_exclusive": null,
+            "parents": [],
+            "path": "<toplevel>"
+          },
+          {
+            "qgroupid": "0/256",
+            "referenced": 16384,
+            "exclusive": 16384,
+            "max_referenced": null,
+            "max_exclusive": null,
+            "parents": [],
+            "path": "@"
+          },
+          {
+            "qgroupid": "0/257",
+            "referenced": 79679488,
+            "exclusive": 79679488,
+            "max_referenced": null,
+            "max_exclusive": null,
+            "parents": [],
+            "path": "@/var"
+          },
+          {
+            "qgroupid": "0/258",
+            "referenced": 16384,
+            "exclusive": 16384,
+            "max_referenced": null,
+            "max_exclusive": null,
+            "parents": [],
+            "path": "@/usr/local"
+          },
+          {
+            "qgroupid": "0/259",
+            "referenced": 16384,
+            "exclusive": 16384,
+            "max_referenced": null,
+            "max_exclusive": null,
+            "parents": [],
+            "path": "@/srv"
+          },
+          {
+            "qgroupid": "0/260",
+            "referenced": 16384,
+            "exclusive": 16384,
+            "max_referenced": null,
+            "max_exclusive": null,
+            "parents": [],
+            "path": "@/root"
+          },
+          {
+            "qgroupid": "0/261",
+            "referenced": 16384,
+            "exclusive": 16384,
+            "max_referenced": null,
+            "max_exclusive": null,
+            "parents": [],
+            "path": "@/opt"
+          },
+          {
+            "qgroupid": "0/262",
+            "referenced": 16384,
+            "exclusive": 16384,
+            "max_referenced": null,
+            "max_exclusive": null,
+            "parents": [],
+            "path": "@/home"
+          },
+          {
+            "qgroupid": "0/263",
+            "referenced": 16384,
+            "exclusive": 16384,
+            "max_referenced": null,
+            "max_exclusive": null,
+            "parents": [],
+            "path": "@/.snapshots"
+          },
+          {
+            "qgroupid": "0/264",
+            "referenced": 1173524480,
+            "exclusive": 328744960,
+            "max_referenced": null,
+            "max_exclusive": null,
+            "parents": [],
+            "path": "@/.snapshots/1/snapshot"
+          },
+          {
+            "qgroupid": "0/265",
+            "referenced": 911904768,
+            "exclusive": 67125248,
+            "max_referenced": null,
+            "max_exclusive": null,
+            "parents": ["1/0"],
+            "path": "@/.snapshots/2/snapshot"
+          },
+          {
+            "qgroupid": "1/0",
+            "referenced": 911904768,
+            "exclusive": 67125248,
+            "max_referenced": null,
+            "max_exclusive": null,
+            "parents": [],
+            "path": "<0 member qgroups>"
+          }
+        ]
+      }
+    ],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "/dev/vda3",
+        "fstype": "btrfs",
+        "devno": "0:39",
+        "device": "vda3",
+        "root": "/@/.snapshots/1/snapshot",
+        "options": "rw,relatime",
+        "super_options": "rw,seclabel,discard=async,space_cache=v2,subvolid=264,subvol=/@/.snapshots/1/snapshot",
+        "size_bytes": 13957595136,
+        "used_bytes": 1380868096,
+        "available_bytes": 12129411072
+      },
+      {
+        "target": "/.snapshots",
+        "source": "/dev/vda3",
+        "fstype": "btrfs",
+        "devno": "0:37",
+        "device": "vda3",
+        "root": "/@/.snapshots",
+        "options": "rw,relatime",
+        "super_options": "rw,seclabel,discard=async,space_cache=v2,subvolid=263,subvol=/@/.snapshots",
+        "size_bytes": 13957595136,
+        "used_bytes": 1380868096,
+        "available_bytes": 12129411072
+      },
+      {
+        "target": "/home",
+        "source": "/dev/vda3",
+        "fstype": "btrfs",
+        "devno": "0:41",
+        "device": "vda3",
+        "root": "/@/home",
+        "options": "rw,relatime",
+        "super_options": "rw,seclabel,discard=async,space_cache=v2,subvolid=262,subvol=/@/home",
+        "size_bytes": 13957595136,
+        "used_bytes": 1380868096,
+        "available_bytes": 12129411072
+      },
+      {
+        "target": "/opt",
+        "source": "/dev/vda3",
+        "fstype": "btrfs",
+        "devno": "0:46",
+        "device": "vda3",
+        "root": "/@/opt",
+        "options": "rw,relatime",
+        "super_options": "rw,seclabel,discard=async,space_cache=v2,subvolid=261,subvol=/@/opt",
+        "size_bytes": 13957595136,
+        "used_bytes": 1380868096,
+        "available_bytes": 12129411072
+      },
+      {
+        "target": "/usr/local",
+        "source": "/dev/vda3",
+        "fstype": "btrfs",
+        "devno": "0:47",
+        "device": "vda3",
+        "root": "/@/usr/local",
+        "options": "rw,relatime",
+        "super_options": "rw,seclabel,discard=async,space_cache=v2,subvolid=258,subvol=/@/usr/local",
+        "size_bytes": 13957595136,
+        "used_bytes": 1380868096,
+        "available_bytes": 12129411072
+      },
+      {
+        "target": "/root",
+        "source": "/dev/vda3",
+        "fstype": "btrfs",
+        "devno": "0:48",
+        "device": "vda3",
+        "root": "/@/root",
+        "options": "rw,relatime",
+        "super_options": "rw,seclabel,discard=async,space_cache=v2,subvolid=260,subvol=/@/root",
+        "size_bytes": 13957595136,
+        "used_bytes": 1380868096,
+        "available_bytes": 12129411072
+      },
+      {
+        "target": "/srv",
+        "source": "/dev/vda3",
+        "fstype": "btrfs",
+        "devno": "0:49",
+        "device": "vda3",
+        "root": "/@/srv",
+        "options": "rw,relatime",
+        "super_options": "rw,seclabel,discard=async,space_cache=v2,subvolid=259,subvol=/@/srv",
+        "size_bytes": 13957595136,
+        "used_bytes": 1380868096,
+        "available_bytes": 12129411072
+      },
+      {
+        "target": "/var",
+        "source": "/dev/vda3",
+        "fstype": "btrfs",
+        "devno": "0:50",
+        "device": "vda3",
+        "root": "/@/var",
+        "options": "rw,relatime",
+        "super_options": "rw,seclabel,discard=async,space_cache=v2,subvolid=257,subvol=/@/var",
+        "size_bytes": 13957595136,
+        "used_bytes": 1380868096,
+        "available_bytes": 12129411072
+      },
+      {
+        "target": "/boot",
+        "source": "/dev/vda1",
+        "fstype": "ext4",
+        "devno": "254:1",
+        "device": "vda1",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,seclabel,data=ordered",
+        "size_bytes": 1020702720,
+        "used_bytes": 129056768,
+        "available_bytes": 821182464
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/vda2",
+        "type": "partition",
+        "size_bytes": 2147479552,
+        "used_bytes": 0,
+        "priority": -1,
+        "device": "vda2"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000004",
+        "file": "/",
+        "type": "btrfs",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda3"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000004",
+        "file": "/var",
+        "type": "btrfs",
+        "options": "subvol=/@/var",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda3"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000004",
+        "file": "/usr/local",
+        "type": "btrfs",
+        "options": "subvol=/@/usr/local",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda3"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000004",
+        "file": "/srv",
+        "type": "btrfs",
+        "options": "subvol=/@/srv",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda3"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000004",
+        "file": "/root",
+        "type": "btrfs",
+        "options": "subvol=/@/root",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda3"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000004",
+        "file": "/opt",
+        "type": "btrfs",
+        "options": "subvol=/@/opt",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda3"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000004",
+        "file": "/home",
+        "type": "btrfs",
+        "options": "subvol=/@/home",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda3"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000003",
+        "file": "swap",
+        "type": "swap",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda2"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000004",
+        "file": "/.snapshots",
+        "type": "btrfs",
+        "options": "subvol=/@/.snapshots",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda3"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000001",
+        "file": "/boot",
+        "type": "ext4",
+        "options": "data=ordered",
+        "freq": 0,
+        "passno": 2,
+        "resolves_to": "vda1"
+      }
+    ],
+    "crypttab": null,
+    "mdadm_conf": null
+  },
+  "boot": {
+    "loader": {
+      "name": "grub",
+      "firmware": "bios",
+      "via_shim": false,
+      "package": null,
+      "evidence": ["vda's MBR holds GRUB 2's boot.img"]
+    },
+    "efi": null,
+    "esps": [],
+    "grub": {
+      "dir": "/boot/grub2",
+      "installed_platforms": ["i386-pc"],
+      "grub_cfg": {
+        "entries": [
+          "Help on bootable snapshot #$snapshot_num",
+          "openSUSE Tumbleweed",
+          "Advanced options for openSUSE Tumbleweed>openSUSE Tumbleweed, with Linux 7.3.1-1-default",
+          "Advanced options for openSUSE Tumbleweed>openSUSE Tumbleweed, with Linux 7.3.1-1-default (recovery mode)",
+          "Advanced options for openSUSE Tumbleweed>openSUSE Tumbleweed, with Linux 7.3.0-1-default",
+          "Advanced options for openSUSE Tumbleweed>openSUSE Tumbleweed, with Linux 7.3.0-1-default (recovery mode)",
+          "UEFI Firmware Settings"
+        ],
+        "search_uuids": ["bc000000-0000-4000-8000-000000000001"],
+        "modules": [
+          "efi_gop",
+          "all_video",
+          "ieee1275_fb",
+          "vbe",
+          "vga",
+          "video_bochs",
+          "video_cirrus",
+          "gzio",
+          "part_msdos",
+          "ext2"
+        ],
+        "default_linux": null,
+        "default_initrd": null,
+        "lang": null
+      },
+      "grubenv": {
+        "saved_entry": "openSUSE Tumbleweed"
+      },
+      "default_grub": {
+        "GRUB_DISTRIBUTOR": "",
+        "GRUB_DEFAULT": "saved",
+        "GRUB_HIDDEN_TIMEOUT": "0",
+        "GRUB_HIDDEN_TIMEOUT_QUIET": "true",
+        "GRUB_TIMEOUT": "2",
+        "GRUB_CMDLINE_LINUX_DEFAULT": "mitigations=auto quiet console=tty0 console=ttyS0,115200n8 security=selinux selinux=1 crashkernel=499M,high",
+        "GRUB_CMDLINE_LINUX": "",
+        "GRUB_TERMINAL": "console serial",
+        "GRUB_GFXMODE": "auto",
+        "GRUB_SERIAL_COMMAND": "serial --unit=0 --speed=115200",
+        "SUSE_BTRFS_SNAPSHOT_BOOTING": "true",
+        "GRUB_DISABLE_OS_PROBER": "false",
+        "GRUB_ENABLE_CRYPTODISK": "n",
+        "GRUB_CMDLINE_XEN_DEFAULT": "console=com1 com1=115200 crashkernel=567M\\<4G",
+        "GRUB_CMDLINE_LINUX_XEN_REPLACE_DEFAULT": "console=hvc0"
+      },
+      "debconf": null
+    },
+    "systemd_boot": null,
+    "kernels": {
+      "installed": [
+        {
+          "version": "7.3.0-1-default",
+          "vmlinuz_bytes": 17725808,
+          "initrd_bytes": null,
+          "config": true,
+          "running": false,
+          "modules_installed": true
+        },
+        {
+          "version": "7.3.1-1-default",
+          "vmlinuz_bytes": 17729904,
+          "initrd_bytes": null,
+          "config": true,
+          "running": true,
+          "modules_installed": true
+        }
+      ],
+      "symlinks": {
+        "/boot/vmlinuz": "vmlinuz-7.3.1-1-default"
+      }
+    },
+    "cmdline": {
+      "raw": "BOOT_IMAGE=/vmlinuz-7.3.1-1-default root=UUID=bc000000-0000-4000-8000-000000000004 mitigations=auto quiet console=tty0 console=ttyS0,115200n8 security=selinux selinux=1 crashkernel=499M,high",
+      "words": [
+        "BOOT_IMAGE=/vmlinuz-7.3.1-1-default",
+        "root=UUID=bc000000-0000-4000-8000-000000000004",
+        "mitigations=auto",
+        "quiet",
+        "console=tty0",
+        "console=ttyS0,115200n8",
+        "security=selinux",
+        "selinux=1",
+        "crashkernel=499M,high\n"
+      ],
+      "storage": {
+        "BOOT_IMAGE": "/vmlinuz-7.3.1-1-default",
+        "root": "UUID=bc000000-0000-4000-8000-000000000004"
+      }
+    },
+    "kernel_cmdline_file": null,
+    "initramfs": {
+      "generator": "dracut",
+      "modules": null,
+      "compress": null,
+      "resume": null,
+      "crypttab_in_initramfs": false
+    },
+    "packages": {
+      "grub2-common": "2.16-4.1",
+      "os-prober": "1.85-1.1",
+      "dracut": "112+suse.62.g1b64cef-1.1",
+      "e2fsprogs": "1.47.4-1.1",
+      "selinux-policy-targeted": "20261030-1.1",
+      "grub2": "2.16-4.1",
+      "grub2-i386-pc": "2.16-4.1",
+      "kernel-default": "7.3.0-1.1",
+      "snapper": "0.13.1-3.4"
+    }
+  },
+  "warnings": []
+}

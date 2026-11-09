@@ -23,7 +23,7 @@ set -uo pipefail
 self=$(realpath "$0")
 here=$(dirname "$self")
 WORK=$HOME/backotter-work
-CMP=$WORK/testvm/compare
+CMP=${BKO_TESTVM:-$WORK/testvm}/compare
 [[ $# -ge 3 ]] || { sed -n 2,20p "$0" >&2; exit 2; }
 BIN=$(realpath "$1") PORT=$2 PREFIX=$3 FILTER=${4:-}
 LOGS=${CHECK_LOGS:-${STC_LOGS:-$WORK/stictest1/netbsd11/logs}/$PREFIX-$(date +%Y%m%d-%H%M%S)}
@@ -78,7 +78,7 @@ fi
 
 # --- Inside cmp-run.sh's reservation ------------------------------------------
 # shellcheck source=/dev/null
-. "$WORK/testvm/vm-lib.sh"
+. "${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh"
 mkdir -p "$SCR" && export TMPDIR=$SCR
 trap 'vm_halt; rm -rf "$SCR"' EXIT
 echo "== boot netbsd11 on $PORT ($(date))"

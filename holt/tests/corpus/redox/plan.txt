@@ -1,0 +1,50 @@
+# bko-holt load plan for layout.json
+# Source: ?, Redox, BIOS boot with redox, dumped 2026-11-08T02:53:51Z
+#
+# Disks:
+#   vdb (16 GiB) -> /dev/sdq
+#
+# Notes:
+#   - vdb2: the ESP, written as the source's with the partition table
+
+# ---- partition ----
+# vdb -> /dev/sdq: clear the old table and signatures
+wipefs --all /dev/sdq
+# vdb -> /dev/sdq: the source's table, GUIDs and boot code exactly
+sh -c 'bko-holt write-table layout.json vdb /dev/sdq $(blockdev --getsize64 /dev/sdq)'
+# the kernel reads the new table
+partx -u /dev/sdq
+udevadm settle
+
+# ---- assemble ----
+# (nothing to do)
+
+# ---- format ----
+# vdb3: RedoxFS
+redoxfs-mkfs /dev/sdq3
+# vdb4: swap "swap"
+mkswap -U bc000000-0000-4000-8000-000000000007 -L swap --pagesize 4096 /dev/sdq4
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+sh -c 'redoxfs /dev/sdq3 /mnt/bko-target >/run/bko-holt/redoxfs.log 2>&1 </dev/null; i=0; until mountpoint -q /mnt/bko-target; do i=$((i + 1)); [ $i -lt 60 ] || { cat /run/bko-holt/redoxfs.log; exit 1; }; sleep 1; done'
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+
+# ---- boot ----
+# the boot code (MBR, freebsd-boot) was written with the partition table
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -Rp /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+
+# ---- close ----
+# the restored tree
+umount --recursive /mnt/bko-target
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status filesystem /dev/sdq3 redoxfs -
+# golden_plans.rs: status filesystem /dev/sdq4 swap bc000000-0000-4000-8000-000000000007
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: exit 0, nothing on stderr

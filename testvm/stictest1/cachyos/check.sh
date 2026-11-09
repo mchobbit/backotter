@@ -27,7 +27,7 @@ WORK=${BKO_WORK:-$HOME/backotter-work} G=cachyos
 HERE=$(cd "$(dirname "$0")" && pwd)
 [[ -x $BIN/restic-bko && -x $BIN/rustic-bko ]] || { echo "check.sh: no restic-bko/rustic-bko in $BIN" >&2; exit 2; }
 if [[ -z ${BKO_CHECK_ADMITTED:-} ]]; then
-    source $WORK/testvm/compare/guest-slot.sh
+    source ${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh
     case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
     BKO_CHECK_ADMITTED=1 HOT_C=90 $WORK/cmp-run.sh --reserve 3 6 "$HERE/$(basename "$0")" "$@"
     rc=$?; slot_give; exit $rc
@@ -35,7 +35,7 @@ fi
 LOGS=${STC_LOGS:-$WORK/stictest1/$G/logs}/run-$(date +%Y%m%d-%H%M%S)
 RUN=/mnt/bko-ram/$PREFIX/check.$$
 mkdir -p "$LOGS/res" "$RUN"
-. $WORK/testvm/vm-lib.sh
+. ${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh
 cleanup() { vm_halt; rm -rf "$RUN"; rmdir /mnt/bko-ram/$PREFIX 2>/dev/null; }
 trap cleanup EXIT; trap "exit 143" TERM INT HUP
 export TMPDIR=$RUN
@@ -430,7 +430,7 @@ start=$SECONDS
 vm_boot $G $PORT $LOGS/boot --snapshot --memory 4096 --disk $RUN/spare.raw || { echo "FAIL harness: $G didn't boot"; exit 1; }
 vm_ssh 'mkdir -p /root/bin'
 for f in $BIN/restic-bko $BIN/rustic-bko; do vm_put $f /root/bin/$(basename $f); done
-for f in $RUN/inner.sh $RUN/dump.pl $RUN/cmp.pl $WORK/testvm/compare/rt-common.sh; do vm_put $f /root/$(basename $f); done
+for f in $RUN/inner.sh $RUN/dump.pl $RUN/cmp.pl ${BKO_TESTVM:-$WORK/testvm}/compare/rt-common.sh; do vm_put $f /root/$(basename $f); done
 T=780 vm_ssh "FSS='${FSS:-jfs ext4}' bash /root/inner.sh" >$LOGS/inner.log 2>&1
 echo "inner exit $? after $((SECONDS - start)) s" >>$LOGS/inner.log
 T=120 vm_ssh 'cd /root/res && tar cf - .' | tar xf - -C $LOGS/res

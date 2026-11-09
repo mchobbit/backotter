@@ -74,6 +74,27 @@ Options:
                   reads the hosts, over ssh, and writes nothing anywhere
   --self-test     check the queue logic, and this checkout's check.sh
                   parsing, without any host
+  --stop-file F   start nothing while F (here, on the Mac) exists; once
+                  nothing of ours runs, the round ends there (the guests
+                  not started are named in the summary)
+  --skip-file F   guests named in F (whitespace-separated, reread every
+                  poll) are never started
+Test2 (testvm/test2/t2 SticTest2 passes these; README.md "Test2"):
+  --t2-run RUN    the Test2 run id the rows belong to
+  --t2-copy DIR   run the checks from the run's private copy on the hosts,
+                  DIR/testvm/stictest1/GUEST/check.sh, with BKO_TESTVM=
+                  DIR/testvm and BKO_WORK=~/backotter-work set for them
+  --t2-cells F    the run's cells.json on the hosts (the same path on each)
+  --t2-attempt N  the attempt the rows record when cells.json names none
+                  (default 1)
+
+Ledger rows: as each guest's exit file shows up (or it is LOST), and once
+more at the end for any still missing, the host runs `t2-host row stic`
+(DIR/testvm/test2/t2-host with --t2-copy, else ~/backotter-work/testvm/
+test2/t2-host, else none, with a warning): one row per guest and attempt,
+idempotent by its origin stic:MARK:GUEST:A.  Without --t2-* these are
+SticTest1's rows (rule test1).  T2_HOST_ROOT and T2_LEDGER, when set here,
+go with the command.  A failed write changes nothing else.
 
 Needs: python3 (stdlib only), ssh with keys for m@HOST.local; git, tar and
 rsync for --private-copy.  On the hosts: bash, flock, pgrep, ss, md5sum, and
@@ -86,8 +107,10 @@ Examples:
 """
 
 import argparse
+import contextlib
 import fcntl
 import hashlib
+import io
 import json
 import os
 import re
@@ -112,6 +135,9 @@ RESTIC_FROM = {"haiku": "linux"}   # haiku6 reads its repository with Linux's re
 NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*\Z")
 WT_PRIVATE = "backotter-work/st1-wt/testvm/stictest1"
 WT_SYNCED = "backotter-work/testvm/stictest1"
+ST1_WT_COMMIT = "backotter-work/st1-wt/COMMIT"        # --private-copy's commit (40 hex), for the rows
+T2_TOOL_SYNCED = "~/backotter-work/testvm/test2/t2-host"
+T2_ENV = ("T2_HOST_ROOT", "T2_LEDGER")                 # passed on to the hosts' row writer
 
 
 # --- the guests -------------------------------------------------------------------
@@ -302,7 +328,72 @@ def simulate(guests, spec, est, hosts, cap, first=()):
     return rows, rem
 
 
+# --- the stop and skip files, and the ledger row writer (pure) -----------------------
+
+def stop_set(path):
+    """Whether --stop-file is there now (none given: never)."""
+    return bool(path) and os.path.exists(path)
+
+
+def skip_read(path):
+    """The guests --skip-file names now (a missing or unreadable file names none)."""
+    if not path:
+        return set()
+    try:
+        with open(path) as f:
+            return {w for w in f.read().split() if NAME.match(w)}
+    except OSError:
+        return set()
+
+
+def launch_cmd(a, wt, g, s, ports):
+    """The host shell command that starts guest g's check.sh, detached."""
+    L = f'"$HOME"/backotter-work/stictest1/{g}/logs/{a.logs_mark}'
+    check = rq(f"{wt}/{g}/check.sh")
+    binos = rq(f"{a.bin}/{s.os}")
+    # A Test2 run's private copy: its testvm/ for the checks' helpers; the
+    # work dir (guests, logs, cmp-run.sh) as always.
+    t2env = (f'BKO_TESTVM={rq(a.t2_copy + "/testvm")} BKO_WORK="$HOME"/backotter-work PYTHONDONTWRITEBYTECODE=1 '
+             if getattr(a, "t2_copy", None) else "")
+    # The start file is made (noclobber: only once) before the job starts: a
+    # second launch refuses (exit 3).  The port file lets a later driver
+    # that adopts the job keep its ports out of others' way.
+    return (f'L={L}; mkdir -p "$L" && '
+            f'{{ ( set -C; date +%s >"$L/run.out.start" ) 2>/dev/null || {{ [ -e "$L/run.out.start" ] && exit 3; exit 1; }}; }} && '
+            f'echo {",".join(str(p) for p in ports)} >"$L/run.out.port" && '
+            f'{t2env}WEAR_TAG=stic:{a.logs_mark}:{g} STC_LOGS="$L" setsid -f bash -c \'"$0" "$@" >"$STC_LOGS/run.out" 2>&1; rc=$?; '
+            f'date +%s >"$STC_LOGS/run.out.end"; echo $rc >"$STC_LOGS/run.out.exit"\' '
+            f'{check} {binos} {ports[0]} {a.logs_mark}-{g} </dev/null >/dev/null 2>&1')
+
+
+def writer_cmd(a, wt, g, load, waits, lost=False, env=None):
+    """The host shell command that appends guest g's row to that host's ledger
+    (t2-host row stic).  It prints the tool's output, or NOTOOL when the host
+    has no t2-host; it never fails the round."""
+    env = os.environ if env is None else env
+    q = shlex.quote
+    tools = ([f"{a.t2_copy}/testvm/test2/t2-host"] if a.t2_copy else []) + [T2_TOOL_SYNCED]
+    args = ["row", "stic", "--mark", q(a.logs_mark), "--guest", q(g), "--bin", rq(a.bin), "--load", q(str(load)),
+            "--waits", str(int(waits)), "--attempt", str(int(getattr(a, "t2_attempt", 1) or 1)),
+            "--checks", rq(wt)]
+    if a.t2_run:
+        args += ["--run", q(a.t2_run)]
+    if a.t2_cells:
+        args += ["--cells", rq(a.t2_cells)]
+    if lost:
+        args.append("--lost")
+    fwd = "".join(f"{k}={rq(env[k])} " for k in T2_ENV if env.get(k))
+    return ("T=; for t in " + " ".join(rq(t) for t in tools) + '; do [ -f "$t" ] && { T=$t; break; }; done; '
+            '[ -n "$T" ] || { echo NOTOOL; exit 0; }; '
+            f'env {fwd}PYTHONDONTWRITEBYTECODE=1 timeout -k 5 60 python3 -B "$T" {" ".join(args)} 2>&1')
+
+
 # --- the hosts -------------------------------------------------------------------
+
+def disp(p):
+    """A host path as the user reads it: ~/x for one under $HOME."""
+    return p if p.startswith(("/", "~")) else "~/" + p
+
 
 def rq(p):
     """A host path for a remote shell: ~/x and x are under $HOME."""
@@ -687,6 +778,44 @@ class Driver:
         for g in [g for g in self.state["jobs"] if g not in guests]:   # an earlier run's, with other guests
             del self.state["jobs"][g]
         self.seen = set()   # hosts read at least once: nothing starts before all are (no run twice)
+        self.stopped = False                        # --stop-file there (reread every poll)
+        self.skipped = set()                        # --skip-file's guests (reread every poll)
+        self.read_files()
+
+    def read_files(self):
+        a = self.a
+        was, self.stopped = self.stopped, stop_set(getattr(a, "stop_file", None))
+        if self.stopped and not was:
+            self.log("STOP FILE", a.stop_file, "is there: starting nothing more")
+        elif was and not self.stopped:
+            self.log("stop file gone: starting again")
+        skip = skip_read(getattr(a, "skip_file", None)) & set(self.guests)
+        if skip - self.skipped:
+            self.log("SKIP FILE names", " ".join(sorted(skip - self.skipped)), "- never started")
+        self.skipped |= skip   # once skipped, skipped for the round
+
+    def write_row(self, host, g, lost=False):
+        """The guest's ledger row, on its host (best effort: a failure changes nothing else)."""
+        j = self.jobs()[g]
+        if j.get("row"):
+            return
+        cmd = writer_cmd(self.a, self.wt, g, self.spec[g].load, j.get("ledger_wait", 0) + j.get("slot_wait", 0),
+                         lost=lost)
+        rc, out, err = ssh(host, cmd, t=90)
+        last = (out.strip().splitlines() or [""])[-1]
+        if rc == 0 and out.strip() == "NOTOOL":
+            if not self.state.setdefault("notool", {}).get(host):
+                self.state["notool"][host] = True
+                self.log("WARNING: no t2-host on", host, "- no ledger rows written there")
+            j["row"] = "none"
+        elif rc == 0 and re.fullmatch(r"[a-z0-9-]+-\d{8}T\d{6}Z-[0-9a-f]{8}", last):
+            j["row"] = last
+            self.log("ROW", g, "on", host, last + (" (lost)" if lost else ""))
+        else:
+            j["row_fail"] = j.get("row_fail", 0) + 1
+            self.log("ROW FAILED", g, "on", host, "rc", rc, (out + err).strip().replace("\n", " | ")[:300])
+            if j["row_fail"] >= 3:
+                j["row"] = "failed"
 
     def log(self, *x):
         line = time.strftime("%H:%M:%S ") + " ".join(str(y) for y in x)
@@ -702,7 +831,7 @@ class Driver:
         return self.state["jobs"]
 
     def remaining(self):
-        return [g for g in self.guests if g not in self.jobs()]
+        return [g for g in self.guests if g not in self.jobs() and g not in self.skipped]
 
     def running(self, host=None):
         return [g for g, j in self.jobs().items()
@@ -722,17 +851,7 @@ class Driver:
     def launch(self, host, g, ports):
         s, a = self.spec[g], self.a
         L = f'"$HOME"/backotter-work/stictest1/{g}/logs/{a.logs_mark}'
-        check = rq(f"{self.wt}/{g}/check.sh")
-        binos = rq(f"{a.bin}/{s.os}")
-        # The start file is made (noclobber: only once) before the job starts: a
-        # second launch refuses (exit 3).  The port file lets a later driver
-        # that adopts the job keep its ports out of others' way.
-        cmd = (f'L={L}; mkdir -p "$L" && '
-               f'{{ ( set -C; date +%s >"$L/run.out.start" ) 2>/dev/null || {{ [ -e "$L/run.out.start" ] && exit 3; exit 1; }}; }} && '
-               f'echo {",".join(str(p) for p in ports)} >"$L/run.out.port" && '
-               f'WEAR_TAG=stic:{a.logs_mark}:{g} STC_LOGS="$L" setsid -f bash -c \'"$0" "$@" >"$STC_LOGS/run.out" 2>&1; rc=$?; '
-               f'date +%s >"$STC_LOGS/run.out.end"; echo $rc >"$STC_LOGS/run.out.exit"\' '
-               f'{check} {binos} {ports[0]} {a.logs_mark}-{g} </dev/null >/dev/null 2>&1')
+        cmd = launch_cmd(a, self.wt, g, s, ports)
         rc, _, err = ssh(host, cmd, t=60)
         if rc == 3:
             self.jobs()[g] = self.new_job(host, ports, time.time(), adopted=True)
@@ -805,6 +924,8 @@ class Driver:
                 j.update(exit=jj["exit"], start=start, end=jj["end"])
                 self.log("DONE", g, "on", host, "exit", jj["exit"], "secs", (jj["end"] or start) - start,
                          "est", self.est[g])
+                self.save()
+                self.write_row(host, g)   # now, not only at the end: a driver that dies keeps it
                 continue
             # No exit file and no process of it (or no start file) twice running:
             # the host rebooted or it was killed.  Lost, so the round can end.
@@ -813,6 +934,8 @@ class Driver:
                 if j["gone"] >= 2:
                     j.update(exit="lost", start=(jj and jj["start"]) or j["launched"], end=None)
                     self.log("LOST", g, "on", host, "- no exit file and nothing of it runs" if jj else "- no start file")
+                    self.save()
+                    self.write_row(host, g, lost=True)
                     continue
             else:
                 j["gone"] = 0
@@ -839,6 +962,8 @@ class Driver:
 
     def start_some(self, snaps, now):
         a, spec = self.a, self.spec
+        if self.stopped:   # --stop-file: nothing new starts
+            return
         tried = set()
         progress = True
         while progress and self.remaining():
@@ -900,6 +1025,7 @@ class Driver:
             self.state["checks"] += 1
             now = time.time()
             dt, last = now - last, now
+            self.read_files()
             snaps = {}
             for host in self.hosts:
                 snap = self.take_status(host, now, dt)
@@ -908,6 +1034,10 @@ class Driver:
                     self.seen.add(host)
             self.save()
             if not self.remaining() and not self.running():
+                break
+            if self.stopped and not self.running() and self.seen >= set(self.hosts):
+                self.log("stop file: ending the round;", len(self.remaining()), "guests not started:",
+                         " ".join(self.remaining()))
                 break
             if self.seen >= set(self.hosts):
                 self.start_some(snaps, now)
@@ -929,6 +1059,11 @@ class Driver:
             mine = sorted(g for g, j in self.jobs().items() if j["host"] == host)
             if not mine:
                 continue
+            for g in mine:   # rows still missing (a driver that died between exit and row, say)
+                j = self.jobs()[g]
+                if not j.get("row") and j.get("exit") is not None:
+                    self.write_row(host, g, lost=j["exit"] == "lost")
+            self.save()
             rc, out, err = run_script(host, COLLECT_SH, a.logs_mark, *mine, t=180)
             if rc != 0 or "END" not in out:
                 self.log("collect FAILED on", host, err.strip()[:200])
@@ -950,10 +1085,12 @@ class Driver:
     def summary(self, res):
         a = self.a
         bad = [r[0] for r in res if r[2] != "0" or r[4] != "0"]
-        missing = [g for g in self.guests if g not in {r[0] for r in res}]
+        held = [g for g in self.guests if g not in self.jobs()]   # never started: skip or stop file
+        missing = [g for g in self.guests if g not in {r[0] for r in res} and g not in held]
         lines = [f"SticTest1 round {a.round}, mark {a.logs_mark}: {len(res)} guests ran, "
                  f"{len(res) - len(bad)} pass" + (f", {len(bad)} fail: {' '.join(bad)}" if bad else "")
-                 + (f"; no result for {' '.join(missing)}" if missing else "")]
+                 + (f"; no result for {' '.join(missing)}" if missing else "")
+                 + (f"; not started (skip or stop file): {' '.join(held)}" if held else "")]
         for host in self.hosts:
             js = {g: j for g, j in self.jobs().items() if j["host"] == host and j.get("end")}
             if not js:
@@ -1003,6 +1140,7 @@ def private_copy(hosts, probes, dry):
         print("it would refuse " + msg)
         return
     head = subprocess.run(["git", "-C", REPO, "rev-parse", "--short", "HEAD"], capture_output=True, text=True).stdout.strip()
+    full = subprocess.run(["git", "-C", REPO, "rev-parse", "HEAD"], capture_output=True, text=True).stdout.strip()
     if dry:
         print(f"--private-copy: would copy {rel} at {head} to ~/{WT_PRIVATE} on {', '.join(hosts)}")
         return
@@ -1012,12 +1150,20 @@ def private_copy(hosts, probes, dry):
         if arch.wait() != 0:
             raise SystemExit("drive.py: git archive failed")
         for h in hosts:
-            rc, _, err = ssh(h, f"mkdir -p {rq(WT_PRIVATE)}")
+            # The copy's commit, for the ledger rows (a test1 row counts only when
+            # it equals the synced tree's stamp): gone while the tree changes, so
+            # that a copy cut short never names the commit of the one before.
+            rc, _, err = ssh(h, f"mkdir -p {rq(WT_PRIVATE)} && rm -f {rq(ST1_WT_COMMIT)}")
             r = subprocess.run(["rsync", "-rlp", "--checksum", "--delete", "--exclude", "__pycache__",
                                 "--exclude", "*.pyc", "--exclude", ".DS_Store",
                                 os.path.join(tmp, rel) + "/", f"{HOSTS[h]['ssh']}:{WT_PRIVATE}/"])
             if rc != 0 or r.returncode != 0:
                 raise SystemExit(f"drive.py: --private-copy to {h} failed {err.strip()}")
+            if re.fullmatch(r"[0-9a-f]{40}", full):
+                rc, _, err = ssh(h, f"printf '%s\\n' {full} >{rq(ST1_WT_COMMIT)}")
+                if rc != 0:
+                    raise SystemExit(f"drive.py: --private-copy to {h}: can't write ~/{ST1_WT_COMMIT} "
+                                     f"(rc {rc}) {err.strip()}")
             print(f"--private-copy: {rel} at {head} -> {h}:~/{WT_PRIVATE}")
 
 
@@ -1055,10 +1201,10 @@ def dry_run(a, guests, spec, est, src, probes, wt, unrunnable):
               f"{HOSTS[h]['ports'][1]}: {len(snap['listen'])} listening")
         print(f"  binaries in {a.bin}: {' '.join(oses) or 'NONE'}")
         if p["nowt"]:
-            print(f"  checks: ~/{wt} is missing" + (" (--private-copy would make it)" if a.private_copy else ""))
+            print(f"  checks: {disp(wt)} is missing" + (" (--private-copy would make it)" if a.private_copy else ""))
         else:
             diff = copy_differs(local_md5(guests), p["md5"], guests)
-            print(f"  checks in ~/{wt}: " + ("same as this checkout for every guest" if not diff else
+            print(f"  checks in {disp(wt)}: " + ("same as this checkout for every guest" if not diff else
                   "DIFFER from this checkout for " + ", ".join(f"{g} ({n} files)" for g, n in sorted(diff.items()))
                   + (" (--private-copy would replace them)" if a.private_copy else "")))
         hosts_v[h] = dict(have=p["have"], slots_free=GUEST_SLOTS, room=snap["ceil"], ceil=snap["ceil"])
@@ -1195,6 +1341,140 @@ def self_test():
     check([r[0] for r in rows if r[4]] == ["big"] and not left, "plan: a guest over the room now waits (w), never lost")
     rows, left = simulate(["bsd"], sp, est, dict(b=hosts["b"]), 3)
     check(left == ["bsd"], "plan: no host with its binaries: left over")
+
+    # The stop and skip files, and the commands to the hosts.
+    with tempfile.TemporaryDirectory(prefix="drive-selftest-") as tmp:
+        stopf, skipf = os.path.join(tmp, "stop"), os.path.join(tmp, "skip")
+        check(not stop_set(stopf) and not stop_set(None), "no stop file: starts go on")
+        open(stopf, "w").close()
+        check(stop_set(stopf), "a stop file: nothing starts")
+        check(skip_read(skipf) == set() and skip_read(None) == set(), "no skip file: nothing skipped")
+        with open(skipf, "w") as f:
+            f.write("short\nbig  bad/name\n")
+        check(skip_read(skipf) == {"short", "big"}, f"skip file: names, one or more a line ({sorted(skip_read(skipf))})")
+        a = argparse.Namespace(out=tmp, logs_mark="t2s-20261108T0315-4f2a", hosts=["chopin"], slots=3, first=set(),
+                               poll=15, hot_c=90, round="rel4", bin="~/backotter-work/roundrel4/bin",
+                               t2_run=None, t2_copy=None, t2_cells=None, t2_attempt=1, stop_file=None, skip_file=skipf)
+        two = dict(short=sp["short"], big=sp["big"])
+
+        def quiet_driver():
+            with contextlib.redirect_stdout(io.StringIO()):
+                d = Driver(a, ["big", "short"], two, dict(big=900, short=100), {"chopin": dict(have=have)}, WT_SYNCED)
+            d.log = lambda *x: None
+            return d
+        drv = quiet_driver()
+        check(drv.remaining() == [], f"skip file: skipped guests aren't left to start ({drv.remaining()})")
+        os.remove(skipf)
+        drv.read_files()
+        check(drv.remaining() == [], "skip file: once skipped, skipped for the round")
+        a.skip_file, a.stop_file = None, stopf
+        drv.logf.close()
+        drv = quiet_driver()
+        started = []
+        drv.launch = lambda host, g, ports: started.append(g) or drv.jobs().setdefault(
+            g, drv.new_job(host, ports, time.time())) is not None
+        snap = dict(full=True, temp=50.0, nvme=[40.0], room=(26.0, 20.0, 0, 0), ceil=None, slots_other=0, qemu=[],
+                    listen=set())
+        drv.start_some({"chopin": snap}, time.time())
+        check(started == [], f"stop file: start_some starts nothing ({started})")
+        os.remove(stopf)
+        drv.read_files()
+        drv.start_some({"chopin": snap}, time.time())
+        check(started == ["big", "short"], f"stop file gone: the queue goes on, longest first ({started})")
+
+        old = ('L="$HOME"/backotter-work/stictest1/short/logs/t2s-20261108T0315-4f2a; mkdir -p "$L" && '
+               '{ ( set -C; date +%s >"$L/run.out.start" ) 2>/dev/null || { [ -e "$L/run.out.start" ] && exit 3; exit 1; }; } && '
+               'echo 2780 >"$L/run.out.port" && '
+               'WEAR_TAG=stic:t2s-20261108T0315-4f2a:short STC_LOGS="$L" setsid -f bash -c \'"$0" "$@" >"$STC_LOGS/run.out" 2>&1; rc=$?; '
+               'date +%s >"$STC_LOGS/run.out.end"; echo $rc >"$STC_LOGS/run.out.exit"\' '
+               '"$HOME"/backotter-work/testvm/stictest1/short/check.sh "$HOME"/backotter-work/roundrel4/bin/linux 2780 '
+               't2s-20261108T0315-4f2a-short </dev/null >/dev/null 2>&1')
+        check(launch_cmd(a, WT_SYNCED, "short", sp["short"], [2780]) == old,
+              "launch without --t2-copy: the command SticTest1 always ran")
+        a.t2_run, a.t2_copy = "t2s-20261108T0315-4f2a", "/home/m/backotter-work/t2/copy/6fff54b"
+        a.t2_cells = "/bkoscratch/test2/runs/t2s-20261108T0315-4f2a/cells.json"
+        wt2 = a.t2_copy + "/testvm/stictest1"
+        lc = launch_cmd(a, wt2, "short", sp["short"], [2780])
+        check("BKO_TESTVM=/home/m/backotter-work/t2/copy/6fff54b/testvm BKO_WORK=\"$HOME\"/backotter-work "
+              "PYTHONDONTWRITEBYTECODE=1 WEAR_TAG=stic:" in lc
+              and " /home/m/backotter-work/t2/copy/6fff54b/testvm/stictest1/short/check.sh " in lc,
+              "launch with --t2-copy: the copy's check.sh, BKO_TESTVM and BKO_WORK set")
+        wc = writer_cmd(a, wt2, "short", 1, 42.7, env={"T2_HOST_ROOT": "~/backotter-work/t2core-p4/state"})
+        check(wc.index("/home/m/backotter-work/t2/copy/6fff54b/testvm/test2/t2-host") < wc.index(
+            '"$HOME"/backotter-work/testvm/test2/t2-host'), "row writer: the copy's t2-host first, then the synced one")
+        check(" row stic --mark t2s-20261108T0315-4f2a --guest short --bin \"$HOME\"/backotter-work/roundrel4/bin"
+              " --load 1 --waits 42 --attempt 1 --checks /home/m/backotter-work/t2/copy/6fff54b/testvm/stictest1"
+              " --run t2s-20261108T0315-4f2a --cells /bkoscratch/test2/runs/t2s-20261108T0315-4f2a/cells.json" in wc
+              and "--lost" not in wc, f"row writer: its command line ({wc[wc.index(' row '):][:80]}...)")
+        check("env T2_HOST_ROOT=\"$HOME\"/backotter-work/t2core-p4/state PYTHONDONTWRITEBYTECODE=1 timeout" in wc
+              and "echo NOTOOL; exit 0" in wc, "row writer: T2_HOST_ROOT passed on; no tool: NOTOOL, never a failure")
+        a.t2_run = a.t2_copy = a.t2_cells = None
+        wc = writer_cmd(a, WT_SYNCED, "big", 1, 0, lost=True, env={})
+        check(wc.startswith("T=; for t in \"$HOME\"/backotter-work/testvm/test2/t2-host; do")
+              and " --run " not in wc and " --cells " not in wc and wc.endswith(" --lost 2>&1")
+              and "env PYTHONDONTWRITEBYTECODE=1 " in wc,
+              "row writer, SticTest1: the synced t2-host only, no run or cells, --lost for a lost guest")
+        drv.logf.close()
+
+        # The loop under a stop file, and the row writer's answers, with a fake host.
+        real = {k: globals()[k] for k in ("ssh", "status", "run_script")}
+        polls, sent, answer = {"n": 0}, [], {"rc": 0, "out": "NOTOOL\n"}
+
+        def fake_status(host, full, mark, guests):
+            polls["n"] += 1
+            done = polls["n"] >= 2
+            jobs = {"big": dict(start=1000, exit=0 if done else None, end=1900 if done else None, ports=[2780],
+                                alive=not done)}
+            return dict(full=full, temp=50.0, nvme=[], budget=None, room=(26.0, 20.0, 0, 0), ceil=None, noram=False,
+                        ledger=[], waits=[], slots_other=0, slots_ours=[], qemu=[], listen=set(), jobs=jobs,
+                        slotwait=[])
+
+        def fake_ssh(host, cmd, script=None, t=90):
+            if " row stic " in cmd:
+                sent.append(cmd)
+                return answer["rc"], answer["out"], "boom" if answer["rc"] else ""
+            return 0, "", ""
+        try:
+            globals().update(ssh=fake_ssh, status=fake_status, run_script=lambda *x, **k: (0, "END\n", ""))
+            open(stopf, "w").close()
+            a.stop_file, a.skip_file, a.poll = stopf, None, 0
+            drv = quiet_driver()
+            said = []
+            drv.log = lambda *x: said.append(" ".join(str(y) for y in x))
+            drv.jobs()["big"] = drv.new_job("chopin", [2780], time.time())
+            drv.loop()
+            check(polls["n"] == 2 and drv.remaining() == ["short"] and drv.jobs()["big"]["exit"] == 0,
+                  f"stop file: the running guest ends, nothing new starts, the round ends ({polls['n']} polls, "
+                  f"left {drv.remaining()})")
+            check(any(s.endswith("guests not started: short") for s in said),
+                  "stop file: the round's end names the guest not started")
+            ok_sum = drv.summary([["big", "chopin", "0", "5", "0", "0", "900", "-"]])
+            check(ok_sum and any("not started (skip or stop file): short" in s for s in said)
+                  and not any("no result for" in s for s in said),
+                  "stop file: a guest not started is no missing result (the exit stays SticTest1's)")
+            check(drv.jobs()["big"].get("row") == "none" and len(sent) == 1
+                  and sum("no t2-host on chopin" in s for s in said) == 1,
+                  "row writer: no t2-host on the host: NOTOOL, the row marked none, one warning")
+            drv.jobs()["short"] = dict(drv.new_job("chopin", [2781], time.time(), start=1000, end=1100), exit=0)
+            drv.write_row("chopin", "short")
+            check(drv.jobs()["short"].get("row") == "none" and len(sent) == 2
+                  and sum("no t2-host on chopin" in s for s in said) == 1,
+                  "row writer: NOTOOL again: no second warning")
+            answer.update(rc=1, out="")
+            drv.jobs()["short"].pop("row")
+            for _ in range(4):
+                drv.write_row("chopin", "short")
+            check(drv.jobs()["short"].get("row") == "failed" and drv.jobs()["short"].get("row_fail") == 3
+                  and len(sent) == 5 and sum("ROW FAILED short" in s for s in said) == 3,
+                  "row writer: a failed write is tried 3 times, then given up (the round goes on)")
+            answer.update(rc=0, out="note: x\nchopin-20261108T040000Z-0000abcd\n")
+            drv.jobs()["big"].pop("row")
+            drv.write_row("chopin", "big")
+            check(drv.jobs()["big"].get("row") == "chopin-20261108T040000Z-0000abcd",
+                  "row writer: the row id, the tool's last line")
+            drv.logf.close()
+        finally:
+            globals().update(real)
     print("self-test:", "all ok" if ok else "FAILED")
     return 0 if ok else 1
 
@@ -1223,6 +1503,12 @@ def main():
                     help=f"run the checks from a copy of this checkout's committed tree in ~/{WT_PRIVATE}")
     ap.add_argument("--dry-run", action="store_true", help="print the plan; start and write nothing")
     ap.add_argument("--self-test", action="store_true", help="check the queue logic without hosts")
+    ap.add_argument("--stop-file", metavar="F", help="start nothing while F exists (here)")
+    ap.add_argument("--skip-file", metavar="F", help="never start the guests F names (here, reread every poll)")
+    ap.add_argument("--t2-run", metavar="RUN", help="Test2: the run id the ledger rows belong to")
+    ap.add_argument("--t2-copy", metavar="DIR", help="Test2: the run's private copy on the hosts")
+    ap.add_argument("--t2-cells", metavar="F", help="Test2: the run's cells.json on the hosts")
+    ap.add_argument("--t2-attempt", type=int, default=1, metavar="N", help="Test2: the rows' attempt (1)")
     a = ap.parse_args()
     if a.self_test:
         return self_test()
@@ -1233,6 +1519,19 @@ def main():
     a.logs_mark = a.logs_mark or f"st1-{a.round}"
     if not NAME.match(a.logs_mark):
         ap.error(f"bad --logs-mark {a.logs_mark!r}")
+    if a.t2_run and not NAME.match(a.t2_run):
+        ap.error(f"bad --t2-run {a.t2_run!r}")
+    if a.t2_copy and a.private_copy:
+        ap.error("--t2-copy and --private-copy: one or the other")
+    if a.t2_copy and not re.fullmatch(r"[~A-Za-z0-9_./-]+", a.t2_copy):
+        ap.error(f"bad --t2-copy {a.t2_copy!r}")
+    if (a.t2_cells or a.t2_copy) and not a.t2_run:
+        ap.error("--t2-copy and --t2-cells go with --t2-run")
+    if a.t2_attempt not in (1, 2):
+        ap.error("--t2-attempt is 1 or 2")
+    for f in (a.stop_file, a.skip_file):
+        if f and not os.path.isdir(os.path.dirname(os.path.abspath(f))):
+            ap.error(f"no directory for {f}")
     a.bin = a.bin or f"~/backotter-work/round{a.round}/bin"
     a.out = os.path.expanduser(a.out or f"~/backotter-work/stictest1/{a.logs_mark}")
     a.hosts = [h for h in a.hosts.split(",") if h]
@@ -1252,6 +1551,8 @@ def main():
         ap.error("no guests left")
     spec = load_specs(guests)
     wt = WT_PRIVATE if a.private_copy else WT_SYNCED
+    if a.t2_copy:
+        wt = a.t2_copy.rstrip("/") + "/testvm/stictest1"
 
     probes = {}
     for h in a.hosts:
@@ -1262,7 +1563,7 @@ def main():
     unrunnable = {g: f"no host has {spec[g].os}/rustic-bko and {RESTIC_FROM.get(spec[g].os, spec[g].os)}/restic-bko in {a.bin}"
                   for g in guests if not any(has_bins(spec[g], probes[h]["have"]) for h in a.hosts)}
     if a.dry_run:
-        print(f"drive.py --dry-run: round {a.round}, mark {a.logs_mark}, binaries {a.bin}, checks from ~/{wt}, "
+        print(f"drive.py --dry-run: round {a.round}, mark {a.logs_mark}, binaries {a.bin}, checks from {disp(wt)}, "
               f"{len(guests)} guests" + (f" (excluded: {', '.join(sorted(excl))})" if excl else ""))
         dry_run(a, guests, spec, est, src, probes, wt, unrunnable)
         return 0
@@ -1284,7 +1585,7 @@ def main():
     for h in a.hosts:
         diff = copy_differs(local, probes[h]["md5"], guests)
         if diff:
-            drv.log(f"WARNING: {h}:~/{wt} differs from this checkout for", ", ".join(sorted(diff)))
+            drv.log(f"WARNING: {h}:{disp(wt)} differs from this checkout for", ", ".join(sorted(diff)))
     drv.log("estimates", {g: (est[g], src[g]) for g in order(guests, spec, est, a.first)})
     try:
         drv.loop()

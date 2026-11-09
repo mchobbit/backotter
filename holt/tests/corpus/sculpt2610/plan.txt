@@ -1,0 +1,46 @@
+# bko-holt load plan for layout.json
+# Source: ?, Sculpt OS, BIOS boot with sculpt, dumped 2026-11-08T02:54:28Z
+#
+# Disks:
+#   vdb (16 GiB) -> /dev/sdq
+#
+# Notes:
+#   - vdb2: the ESP, written as the source's with the partition table
+#   - Sculpt OS: load's log stays in the rescue system (its partition has no place for it)
+
+# ---- partition ----
+# vdb -> /dev/sdq: clear the old table and signatures
+wipefs --all /dev/sdq
+# vdb -> /dev/sdq: the source's table, GUIDs and boot code exactly
+sh -c 'bko-holt write-table layout.json vdb /dev/sdq $(blockdev --getsize64 /dev/sdq)'
+# the kernel reads the new table
+partx -u /dev/sdq
+udevadm settle
+
+# ---- assemble ----
+# (nothing to do)
+
+# ---- format ----
+# vdb3: ext2 "GENODE"
+mke2fs -F -q -t ext2 -O none,ext_attr,resize_inode,dir_index,filetype,sparse_super,large_file -U bc000000-0000-4000-8000-000000000005 -L GENODE -b 4096 -I 256 -N 446464 -g 32768 -E hash_seed=bc000000-0000-4000-8000-000000000006,resize=16777216 /dev/sdq3 16774420k
+tune2fs -r 209196 /dev/sdq3
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+mount -t ext2 -o defaults /dev/sdq3 /mnt/bko-target
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+
+# ---- boot ----
+# the boot code (MBR, freebsd-boot) was written with the partition table
+
+# ---- close ----
+# the restored tree
+umount --recursive /mnt/bko-target
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status filesystem /dev/sdq3 ext2 bc000000-0000-4000-8000-000000000005
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: exit 0, nothing on stderr

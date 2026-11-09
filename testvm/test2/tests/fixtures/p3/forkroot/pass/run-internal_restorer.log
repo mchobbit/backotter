@@ -1,0 +1,19 @@
+=== RUN   TestRestorerExt4CasefoldProject
+--- PASS: TestRestorerExt4CasefoldProject (0.21s)
+=== RUN   TestRestorerOverRestrictingFlags
+=== RUN   TestRestorerOverRestrictingFlags/backotter
+=== RUN   TestRestorerOverRestrictingFlags/stock
+--- PASS: TestRestorerOverRestrictingFlags (0.06s)
+    --- PASS: TestRestorerOverRestrictingFlags/backotter (0.03s)
+    --- PASS: TestRestorerOverRestrictingFlags/stock (0.03s)
+=== RUN   TestRestorerFATAttributes
+--- PASS: TestRestorerFATAttributes (0.08s)
+=== RUN   TestRestorerXFSOptions
+--- PASS: TestRestorerXFSOptions (0.30s)
+=== RUN   TestRestorerTargetNodeMountedBelow
+=== RUN   TestRestorerTargetNodeMountedBelow/ext4_lost+found
+=== PAUSE TestRestorerTargetNodeMountedBelow/ext4_lost+found
+=== CONT  TestRestorerTargetNodeMountedBelow/ext4_lost+found
+--- PASS: TestRestorerTargetNodeMountedBelow (0.52s)
+    --- PASS: TestRestorerTargetNodeMountedBelow/ext4_lost+found (0.11s)
+PASS

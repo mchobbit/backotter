@@ -1,0 +1,53 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running tests/redact_dumps.rs (/mnt/bko-ram/t2core-P3-holt2/target/debug/deps/redact_dumps-310d27e0392f6901)
+
+running 1 test
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/aerynos/src.json: 13 identifiers, plan of 82 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/alpine324/src.json: 6 identifiers, plan of 103 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/alpinebsd/src.json: 6 identifiers, plan of 43 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/arch/src.json: 8 identifiers, plan of 86 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/artix-dinit/src.json: 8 identifiers, plan of 89 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/artix-s6/src.json: 8 identifiers, plan of 86 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/cachyos/src.json: 8 identifiers, plan of 89 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/debian12/src.json: 9 identifiers, plan of 88 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/debian13/src.json: 10 identifiers, plan of 92 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/debian13-stack/src.json: 35 identifiers, plan of 216 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/debian13-zfs/src.json: 10 identifiers, plan of 111 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/devuan6/src.json: 8 identifiers, plan of 88 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/dragonfly6/src.json: 7 identifiers, plan of 77 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/fedora44/src.json: 13 identifiers, plan of 95 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/fedora44-raid/src.json: 31 identifiers, plan of 131 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/fedora44-uefi/src.json: 17 identifiers, plan of 96 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/freebsd14/src.json: 7 identifiers, plan of 67 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/freebsd15/src.json: 7 identifiers, plan of 66 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/freebsd15-mirror/src.json: 13 identifiers, plan of 70 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/ghostbsd26/src.json: 6 identifiers, plan of 50 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/ghostbsd26-zfs/src.json: 7 identifiers, plan of 70 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/haiku6/src.json: 1 identifiers, plan of 39 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/hardenedbsd15/src.json: 6 identifiers, plan of 37 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/mint22/src.json: 8 identifiers, plan of 85 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/mx25/src.json: 9 identifiers, plan of 86 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/netbsd11/src.json: 2 identifiers, plan of 73 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/nixos2605/src.json: 10 identifiers, plan of 79 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/omarchy/src.json: 22 identifiers, plan of 105 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/omnios58/src.json: 9 identifiers, plan of 63 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/omnios58-mirror/src.json: 14 identifiers, plan of 68 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/openbsd8/src.json: 3 identifiers, plan of 64 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/pop24/src.json: 16 identifiers, plan of 82 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/redox/src.json: 8 identifiers, plan of 46 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/rocky10/src.json: 7 identifiers, plan of 84 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/rocky10-lvm/src.json: 14 identifiers, plan of 155 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/rocky10-raid5/src.json: 23 identifiers, plan of 196 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/sculpt2610/src.json: 7 identifiers, plan of 43 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/tumbleweed/src.json: 18 identifiers, plan of 132 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/ubuntu24/src.json: 11 identifiers, plan of 92 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/ubuntu26-raid/src.json: 34 identifiers, plan of 216 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/ubuntu26-uefi/src.json: 12 identifiers, plan of 83 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/ubuntu26-zfs/src.json: 19 identifiers, plan of 138 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/ubuntu26-zfsmirror/src.json: 21 identifiers, plan of 139 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/void-musl/src.json: 8 identifiers, plan of 85 lines
+ok    /home/m/backotter-work/t2/copy/ID/holt/tests/corpus/zorin18/src.json: 8 identifiers, plan of 87 lines
+test redacted_dumps_plan_the_same ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 23.65s
+

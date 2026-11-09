@@ -1,0 +1,40 @@
+# The restic fork's tests that need root, which gate:fork-root:restic runs as
+# root (testvm/test2/gate/fork-root.sh): the tests whose skip message, when
+# testvm/audit/fork-tests.sh runs the suite as m, says root is needed ("needs
+# root", CAP_LINUX_IMMUTABLE, "operation not permitted").  The rest of the
+# suite stays m's.  Only these run as root; a new one runs once it is reviewed
+# and listed here.  fork-root.sh fails its root-list need for any such skip
+# that is neither a "run" nor an "out" line.
+#
+#   run PACKAGE TEST   # what it mounts or writes, and that it touches only
+#                      # loop devices and temporary files it makes itself
+#   out PACKAGE TEST   # why it stays out
+#
+# Reviewed against restic 5253b20 (branch backotter, 0.19.1+backotter.5) on
+# 2026-11-08: 14 tests.  Every temporary directory below is rtest.TempDir or
+# t.TempDir, both under TMPDIR, which fork-root.sh points at its reserved RAM
+# directory; every image is a sparse file there, mounted with mount -o loop
+# (the loop device mount sets up, freed again by umount) or a tmpfs mounted
+# below that directory; every one is unmounted by the test's cleanup, and
+# fork-root.sh unmounts and detaches by path what is left under that
+# directory.  None needs a network, a pool, a guest or a device of the host.
+#
+# Run as root on Chopin, these find mkfs.vfat, mkfs.xfs, xfs_io, mkfs.btrfs,
+# mkfs.ext4, chattr and lsattr in /usr/sbin and /usr/bin; bcachefs (format,
+# mkfs) comes from the Arch ISO's tools when the host has none
+# (~/backotter-work/round6/arch-root, as run-all.sh's BKO_MKFS_BCACHEFS).
+
+run internal/fs TestBcachefsDirOptionsInherited      # formats a 256 MiB bcachefs image in its t.TempDir (BKO_MKFS_BCACHEFS or mkfs.bcachefs), mount -t bcachefs -o loop there; mkdir, files, project IDs and bcachefs xattrs only inside that mount; umount at cleanup
+run internal/fs TestClearRestrictingFlagsFile        # one file in its t.TempDir: sets append-only, immutable and nodump with FS_IOC_SETFLAGS (CAP_LINUX_IMMUTABLE), clears them through clearRestrictingFlags and rewrites the file; nothing is mounted
+run internal/fs TestFATAttributesOnVfat              # mountLoop: a 64 MiB vfat image (mkfs.vfat) in its rtest.TempDir, mount -o loop; files, directories and FAT attribute ioctls only inside it; umount at cleanup
+run internal/fs TestFillHolesENOSPC                  # mountLoop: a 16 MiB ext4 image (mkfs.ext4 -q), mount -o loop; one sparse 64 MiB file filled there until ENOSPC; umount at cleanup
+run internal/fs TestNodeProjectIDBcachefs            # a 256 MiB bcachefs image in its rtest.TempDir (bcachefs format), mount -t bcachefs -o loop; chattr -p and the bcachefs.project xattr on two files inside it; umount (deferred)
+run internal/fs TestPreallocateBtrfs                 # mountLoop: a 256 MiB btrfs image (mkfs.btrfs -q), mount -o loop; three 4 MiB files there, chattr +C on two; files closed, then umount at cleanup
+run internal/fs TestRestoreFileFlagsBtrfsCompression # a 128 MiB btrfs image in its rtest.TempDir (mkfs.btrfs -q), mount -o loop; the btrfs.compression xattr and inode flags (immutable too, taken off again with chattr -i) on files inside it; umount (deferred)
+run internal/fs TestRestoreLeavesSELinuxLabel        # one file in its t.TempDir: user.old and security.selinux xattrs (root may set security.* on tmpfs; the hosts run no SELinux), then a restore of its xattrs; nothing is mounted
+run internal/fs TestXFSOptionsOnXFS                  # mountLoop: a 320 MiB XFS image (mkfs.xfs -q -f), mount -o loop; xfs_io extsize and chattr on files and directories inside it; umount at cleanup
+run internal/restorer TestRestorerExt4CasefoldProject # a 64 MiB ext4 image with casefold and project (mkfs.ext4 -O casefold,project) in its rtest.TempDir, mount -o loop; a test repository (TestRepository) and a restore into the mount, an immutable file there taken off again with chattr -i; umount (deferred)
+run internal/restorer TestRestorerFATAttributes      # mountLoopFS: a 64 MiB vfat image, mount -o loop; a test repository and a restore into it; FAT attribute ioctls on the restored files; umount at cleanup
+run internal/restorer TestRestorerOverRestrictingFlags # restores into its rtest.TempDir over four files it gives chattr +i or +a there (CAP_LINUX_IMMUTABLE), with a test repository; chattr -i -a on them again (deferred); nothing is mounted
+run internal/restorer TestRestorerTargetNodeMountedBelow # tmpfs mounts (size=1m) at directories it makes below its rtest.TempDir, and 32 MiB ext4 images (mountLoopFS, mount -o loop); restores into them from a test repository; unmounts (MNT_DETACH) and umounts at cleanup
+run internal/restorer TestRestorerXFSOptions         # mountLoopFS: a 320 MiB XFS image, mount -o loop; a restore into it from a test repository and xfs_io -r stat of what it restored; umount at cleanup

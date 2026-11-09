@@ -1,0 +1,125 @@
+# Test2's estimates for cells with no history (contract 1.7, R2.8): plan.py uses the median of a
+# cell's last 3 PASS-like `run` rows first, then this file, then testvm/stictest1/README.md's
+# estimates, then 5 gm.  Tab-separated; gm = guest-minutes, wall_s = seconds, gb = SSD GB written
+# per run, gb_disk = the GB a holt run would write on /bkoscratch instead of RAM (HT_RAM=0).
+# Seeded on 2026-11-08 from docs/design/test2/data/ (the design session's copies, 2026-11-07):
+#   stic: st1_marks.tsv (host guest mark start end exit), the median of every exit-0 run's
+#         end - start, not weighted by the VMs a check runs at once (as test2.md counts: the
+#         41 medians sum to 281.9 gm); gb 0: every check's scratch is in RAM since W1
+#         (stictest1/README.md), and logs are < 8 MiB.
+#   holt: ht_rows.json's r3all rows, gm = sec / 60 (HoltTest runs one VM job: gm = wall);
+#         gb 0, as HoltTest2 runs every guest in RAM (HT_RAM=1, W1); gb_disk = r3all_files.tsv's
+#         size left x 1.074 x 1.18 (test2.md Conventions).  The 5 RAID and mirror guests and
+#         the 9 variant cells take test2.md's HoltTest2 Cost figures (~6, 3.05 and 4.65 gm),
+#         which add up to its HoltTest2All ~247 gm.
+#   gate: no VMs (0 gm); wall and GB from test2.md GateTest2 Cost, cheap.md (a) and the
+#         contract's host-test estimates.
+family	cell	gm	wall_s	gb	gb_disk	src
+stic	stic:aerynos	2.17	130	0.00	-	st1_marks.tsv: median of 2 exit-0 runs
+stic	stic:alpine324	2.57	154	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:alpinebsd	6.65	399	0.00	-	st1_marks.tsv: median of 7 exit-0 runs
+stic	stic:arch	2.28	137	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:artix-dinit	2.83	170	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:artix-s6	6.12	367	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:cachyos	4.92	295	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:debian12	1.95	117	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:debian13	7.95	477	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:debian13-stack	9.23	554	0.00	-	st1_marks.tsv: median of 1 exit-0 runs
+stic	stic:debian13-zfs	14.28	857	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
+stic	stic:devuan6	5.17	310	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
+stic	stic:dragonfly6	7.37	442	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:fedora44	3.45	207	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:fedora44-uefi	4.47	268	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:freebsd14	11.95	717	0.00	-	st1_marks.tsv: median of 1 exit-0 runs
+stic	stic:freebsd15	12.68	760	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
+stic	stic:freebsd15-geli	12.41	744	0.00	-	st1_marks.tsv: median of 4 exit-0 runs
+stic	stic:freebsd15-ufs	6.50	390	0.00	-	st1_marks.tsv: median of 7 exit-0 runs
+stic	stic:ghostbsd26	6.47	388	0.00	-	st1_marks.tsv: median of 3 exit-0 runs
+stic	stic:ghostbsd26-zfs	12.48	749	0.00	-	st1_marks.tsv: median of 3 exit-0 runs
+stic	stic:haiku6	0.86	52	0.00	-	st1_marks.tsv: median of 2 exit-0 runs
+stic	stic:hardenedbsd15	6.77	406	0.00	-	st1_marks.tsv: median of 3 exit-0 runs
+stic	stic:mint22	13.57	814	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
+stic	stic:mx25	11.90	714	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:netbsd11	5.40	324	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:nixos2605	3.92	235	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
+stic	stic:omarchy	5.03	302	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
+stic	stic:omnios58	6.17	370	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:openbsd8	5.67	340	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:pop24	10.18	610	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
+stic	stic:rocky10	1.83	110	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:rocky10-lvm	2.23	134	0.00	-	st1_marks.tsv: median of 1 exit-0 runs
+stic	stic:sculpt2610	0.83	50	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:tumbleweed	3.13	188	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:ubuntu24	15.95	957	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
+stic	stic:ubuntu26-uefi	6.23	374	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:ubuntu26-zfs	16.38	982	0.00	-	st1_marks.tsv: median of 4 exit-0 runs
+stic	stic:ubuntu26-zfsmirror	10.35	621	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
+stic	stic:void-musl	1.87	112	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:zorin18	9.77	586	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+holt	holt:aerynos	5.98	359	0.00	3.15	ht_rows.json r3all chopin PASS; r3all_files.tsv left 2.48 GiB
+holt	holt:alpine324	1.90	114	0.00	0.66	ht_rows.json r3all chopin PASS; r3all_files.tsv left 0.52 GiB
+holt	holt:alpinebsd	3.70	222	0.00	0.01	ht_rows.json r3all chopin PASS; r3all_files.tsv left 0.00 GiB
+holt	holt:arch	2.43	146	0.00	2.98	ht_rows.json r3all chopin PASS; r3all_files.tsv left 2.35 GiB
+holt	holt:artix-dinit	2.78	167	0.00	1.88	ht_rows.json r3all chopin PASS; r3all_files.tsv left 1.48 GiB
+holt	holt:artix-s6	2.23	134	0.00	1.89	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 1.49 GiB
+holt	holt:cachyos	2.53	152	0.00	3.17	ht_rows.json r3all chopin PASS; r3all_files.tsv left 2.50 GiB
+holt	holt:debian12	2.65	159	0.00	3.20	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 2.53 GiB
+holt	holt:debian13	2.72	163	0.00	2.13	ht_rows.json r3all chopin PASS; r3all_files.tsv left 1.68 GiB
+holt	holt:debian13-stack	3.40	204	0.00	3.44	ht_rows.json r3all chopin PASS; r3all_files.tsv left 2.72 GiB
+holt	holt:debian13-zfs	2.80	168	0.00	2.36	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 1.86 GiB
+holt	holt:devuan6	2.65	159	0.00	2.38	ht_rows.json r3all chopin PASS; r3all_files.tsv left 1.88 GiB
+holt	holt:dragonfly6	15.38	923	0.00	0.01	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 0.01 GiB
+holt	holt:fedora44	3.60	216	0.00	5.39	ht_rows.json r3all chopin PASS; r3all_files.tsv left 4.25 GiB
+holt	holt:fedora44-uefi	5.18	311	0.00	5.38	ht_rows.json r3all chopin PASS; r3all_files.tsv left 4.25 GiB
+holt	holt:freebsd14	4.75	285	0.00	0.01	ht_rows.json r3all chopin PASS; r3all_files.tsv left 0.01 GiB
+holt	holt:freebsd15	4.12	247	0.00	0.01	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 0.01 GiB
+holt	holt:ghostbsd26	3.98	239	0.00	0.01	ht_rows.json r3all chopin PASS; r3all_files.tsv left 0.01 GiB
+holt	holt:ghostbsd26-zfs	4.42	265	0.00	0.01	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 0.01 GiB
+holt	holt:haiku6	3.35	201	0.00	0.01	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 0.01 GiB
+holt	holt:hardenedbsd15	5.48	329	0.00	0.01	ht_rows.json r3all chopin PASS; r3all_files.tsv left 0.01 GiB
+holt	holt:mint22	9.13	548	0.00	17.65	ht_rows.json r3all chopin PASS; r3all_files.tsv left 13.93 GiB
+holt	holt:mx25	5.38	323	0.00	15.73	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 12.41 GiB
+holt	holt:netbsd11	4.18	251	0.00	0.01	ht_rows.json r3all chopin PASS; r3all_files.tsv left 0.01 GiB
+holt	holt:nixos2605	3.22	193	0.00	3.50	ht_rows.json r3all chopin PASS; r3all_files.tsv left 2.76 GiB
+holt	holt:omarchy	9.35	561	0.00	19.52	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 15.41 GiB
+holt	holt:omnios58	5.62	337	0.00	0.04	ht_rows.json r3all chopin PASS; r3all_files.tsv left 0.03 GiB
+holt	holt:openbsd8	6.33	380	0.00	0.01	ht_rows.json r3all chopin PASS; r3all_files.tsv left 0.01 GiB
+holt	holt:pop24	9.17	550	0.00	20.66	ht_rows.json r3all chopin PASS; r3all_files.tsv left 16.30 GiB
+holt	holt:redox	2.50	150	0.00	0.43	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 0.34 GiB
+holt	holt:rocky10	4.23	254	0.00	3.57	ht_rows.json r3all chopin PASS; r3all_files.tsv left 2.81 GiB
+holt	holt:rocky10-lvm	3.53	212	0.00	3.18	ht_rows.json r3all chopin PASS; r3all_files.tsv left 2.51 GiB
+holt	holt:sculpt2610	2.92	175	0.00	0.18	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 0.15 GiB
+holt	holt:tumbleweed	3.23	194	0.00	4.72	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 3.73 GiB
+holt	holt:ubuntu24	3.82	229	0.00	5.69	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 4.49 GiB
+holt	holt:ubuntu26-uefi	5.63	338	0.00	10.81	ht_rows.json r3all chopin PASS; r3all_files.tsv left 8.53 GiB
+holt	holt:ubuntu26-zfs	7.73	464	0.00	7.13	ht_rows.json r3all chopin PASS; r3all_files.tsv left 5.63 GiB
+holt	holt:ubuntu26-zfsmirror	5.12	307	0.00	14.97	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 11.81 GiB
+holt	holt:void-musl	2.72	163	0.00	4.98	ht_rows.json r3all chopin PASS; r3all_files.tsv left 3.93 GiB
+holt	holt:zorin18	6.22	373	0.00	14.75	ht_rows.json r3all chopin PASS; r3all_files.tsv left 11.64 GiB
+holt	holt:fedora44-raid	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
+holt	holt:freebsd15-mirror	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
+holt	holt:omnios58-mirror	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
+holt	holt:rocky10-raid5	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
+holt	holt:ubuntu26-raid	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
+holt	holt:debian13-stack+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
+holt	holt:aerynos+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
+holt	holt:mint22+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
+holt	holt:debian13+oneshot	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
+holt	holt:mint22+oneshot	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
+holt	holt:arch+oneshot	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
+holt	holt:alpine324+oneshot	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
+holt	holt:debian13-stack+degraded	4.65	279	0.00	-	test2.md HoltTest2All: degraded x 4.65 (r3all's mean per guest)
+holt	holt:ubuntu26-raid+degraded	4.65	279	0.00	-	test2.md HoltTest2All: degraded x 4.65 (r3all's mean per guest)
+gate	gate:holt	0.00	360	0.00	-	contract 4 T3.1 (6 min)
+gate	gate:fork:restic	0.00	530	0.50	-	cheap.md (a): 97 s warm, 8.8 min for new trees; T3.3a <= 1.0 GB
+gate	gate:fork:rustic_core	0.00	530	0.50	-	cheap.md (a): 8.8 min for new trees; T3.3b <= 1.5 GB for two
+gate	gate:fork:rustic	0.00	530	0.50	-	cheap.md (a): 8.8 min for new trees; T3.3b <= 1.5 GB for two
+gate	gate:fork-root:restic	0.00	120	0.00	-	cheap.md (d) F: about 2 min warm
+gate	gate:bin:abi	0.00	30	0.00	-	cheap.md (d) I: seconds
+gate	gate:bin:static	0.00	30	0.00	-	cheap.md (d) I: seconds
+gate	gate:bin:version	0.00	60	0.00	-	cheap.md (d) I: seconds
+gate	gate:loop:linux@chopin	0.00	1800	0.05	-	test2.md GateTest2 Cost: slow part ~30-35 min per host
+gate	gate:loop:linux@cinqcent	0.00	1800	0.05	-	test2.md GateTest2 Cost: slow part ~30-35 min per host
+gate	gate:loop:sparse@chopin	0.00	900	0.05	-	cheap.md (a): sparse-rt.sh 10-20 min per filesystem (est.)
+gate	gate:loop:sparse@cinqcent	0.00	900	0.05	-	cheap.md (a): sparse-rt.sh 10-20 min per filesystem (est.)
+gate	gate:selftest	0.00	60	0.00	-	t2 self-test and drive.py --self-test: about a minute (est.)

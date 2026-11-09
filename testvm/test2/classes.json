@@ -1,0 +1,116 @@
+{
+  "v": 1,
+  "about": "Test2's class table (contract 1.8, rulings R5, R15, R17, R27). plan.py reads it; `t2 self-test` checks it. Decision 1: every Linux SticTest guest keeps its own pass, so classes exist only for the non-Linux systems; HoltTest2 has no classes.",
+  "stic": {
+    "classes": {
+      "B2": ["freebsd15", "freebsd15-geli", "ghostbsd26-zfs"],
+      "B3": ["freebsd15-ufs", "hardenedbsd15", "ghostbsd26"],
+      "B4": ["netbsd11", "alpinebsd"]
+    },
+    "alone": ["freebsd14", "openbsd8", "dragonfly6", "omnios58", "haiku6"],
+    "linux": "every Linux guest and sculpt2610 run alone (decision 1): 27 checks plus sculpt2610",
+    "non_linux": ["freebsd15", "freebsd15-geli", "ghostbsd26-zfs", "freebsd15-ufs", "hardenedbsd15", "ghostbsd26",
+                  "netbsd11", "alpinebsd", "freebsd14", "openbsd8", "dragonfly6", "omnios58", "haiku6"],
+    "canaries": {
+      "debian12": "RAM-disk overlay",
+      "zorin18": "guest tmpfs",
+      "debian13-zfs": "ZFS on the RAM disk",
+      "freebsd15-ufs": "/dev/shm",
+      "omnios58": "two boots",
+      "haiku6": "host side",
+      "sculpt2610": "host side",
+      "debian13-stack": "UEFI with Secure Boot, vm_boot's console passphrase (vm-lib.sh:77-80)",
+      "omarchy": "UEFI without Secure Boot, LUKS typed through QEMU's monitor"
+    },
+    "canaries_gm": 54.6,
+    "known_flakes": "testvm/test2/stic/flakes.json",
+    "limits": "testvm/test2/stic/limits.json"
+  },
+  "holt": {
+    "excluded": {
+      "freebsd15-builder": "a build helper, not a source",
+      "freebsd15-ufs": "the FreeBSD rescuer (holt.md (b)); never a HoltTest source",
+      "freebsd15-geli": "holt has no GELI, and nothing types its passphrase (holt.md (b))"
+    },
+    "families": {
+      "D": ["debian13", "debian13-zfs", "debian13-stack"],
+      "M": ["mint22"],
+      "Z": ["zorin18"],
+      "V": ["void-musl"],
+      "H": ["haiku6"],
+      "U": ["ubuntu24", "ubuntu26-uefi", "ubuntu26-zfsmirror", "ubuntu26-raid", "ubuntu26-zfs"],
+      "F": ["fedora44", "fedora44-uefi", "fedora44-raid", "rocky10", "rocky10-lvm", "rocky10-raid5"],
+      "A": ["arch", "alpine324", "aerynos", "artix-dinit", "artix-s6"],
+      "C": ["cachyos", "mx25"],
+      "I": ["omnios58", "omnios58-mirror"],
+      "Obscure": ["pop24", "nixos2605", "omarchy", "sculpt2610", "redox", "tumbleweed", "debian12"],
+      "BSD": ["freebsd15", "freebsd15-mirror", "freebsd14", "ghostbsd26", "ghostbsd26-zfs", "hardenedbsd15",
+              "netbsd11", "alpinebsd", "openbsd8", "dragonfly6"]
+    },
+    "no_family": ["devuan6"],
+    "family_variants": {
+      "D": ["debian13-stack+bigger", "debian13+oneshot"],
+      "U": ["ubuntu26-raid+degraded"]
+    },
+    "variants": {
+      "bigger": ["debian13-stack", "aerynos", "mint22"],
+      "oneshot": ["debian13", "mint22", "arch", "alpine324"],
+      "degraded": ["debian13-stack", "ubuntu26-raid"]
+    },
+    "variant_stages": ["partition", "assemble", "close"],
+    "pins": {"openbsd8": "chopin", "dragonfly6": "cinqcent", "redox": "cinqcent"},
+    "pins_why": "README Queues ONLY_ELSEWHERE: openbsd8's one-time rescuer is on Chopin, dragonfly6's on Cinqcent; redox's tools are on Cinqcent only (ht1-queue.sh:169)",
+    "uefi": ["aerynos", "debian13-stack", "fedora44-raid", "fedora44-uefi", "omarchy", "pop24", "ubuntu26-raid",
+             "ubuntu26-uefi", "ubuntu26-zfs"],
+    "uefi_why": "the Linux sources with --uefi in vm-run-options (both hosts, 2026-11-08); ht1.sh rebuilds them from rescuer-uefi.qcow2 when the host has it (ht1.sh:138-139, R17). alpinebsd is UEFI too, but netbsd11 rescues it",
+    "canaries": ["debian13", "ubuntu26-uefi", "freebsd15", "redox"],
+    "rescuer_panel": {
+      "bios": {"match": ["rescuer.qcow2"], "guests": ["debian12", "ubuntu24", "rocky10-raid5", "nixos2605"]},
+      "uefi": {"match": ["rescuer-uefi.qcow2"], "guests": ["debian13-stack", "aerynos"]},
+      "packages": {"match": [".deb", "bcachefs"], "guests": ["debian12", "ubuntu24", "rocky10-raid5", "nixos2605",
+                                                           "debian13-stack", "aerynos"]},
+      "freebsd15-ufs": {"match": ["freebsd15-ufs"], "stalest_of": ["freebsd15", "freebsd15-mirror", "freebsd14", "ghostbsd26",
+                                                                   "ghostbsd26-zfs", "hardenedbsd15"],
+                        "plus": ["freebsd14"]},
+      "netbsd11": {"match": ["netbsd11"], "stalest_of": ["netbsd11", "alpinebsd"]},
+      "haiku6": {"match": ["haiku6"], "guests": ["haiku6"]},
+      "openbsd8-newduid": {"match": ["openbsd8-newduid"], "guests": ["openbsd8"]},
+      "dragonfly6-newfsid": {"match": ["dragonfly6-newfsid"], "guests": ["dragonfly6"]},
+      "omnios58-reguid": {"match": ["omnios58-reguid"], "guests": ["omnios58", "omnios58-mirror"]}
+    },
+    "rustic_panel": {
+      "linux": ["omarchy", "nixos2605"],
+      "freebsd": ["freebsd15"],
+      "netbsd": ["netbsd11"],
+      "openbsd": ["openbsd8"],
+      "dragonfly": ["dragonfly6"],
+      "illumos": ["omnios58"],
+      "haiku": ["haiku6"]
+    },
+    "plan_visible": ["holt/src/load/commands.rs"]
+  },
+  "policy": {
+    "judge_change": "due",
+    "beside": 2,
+    "rerun_fail": 1,
+    "budget": {"run_gb": 2, "sweep_gb": 5, "day_gb": 50, "bind_from": null},
+    "stop": {"os_need_guests": 2, "harness_results": 2, "swap_out_gib": 1, "write_budget_x": 2},
+    "sweep_days": 14,
+    "sweep": {"days": 7, "then_days": 14, "shadow_until": null},
+    "watch": {
+      "stic": ["testvm/stictest1/**", "testvm/compare/**", "testvm/vm-*", "testvm/console-boot.py", "testvm/omarchy/**"],
+      "holt": ["testvm/holttest1d/**", "testvm/vm-*", "testvm/compare/fsmeta.py", "testvm/redox/**",
+               "testvm/sculpt-check.sh", "testvm/console-boot.py", "testvm/omarchy/**"],
+      "gate": ["testvm/audit/**", "testvm/compare/**"]
+    },
+    "unmapped_ignore": ["**/*.md", "testvm/test2/**", "testvm/compare/affected.sh", "testvm/compare/wear-report.py",
+                        "testvm/holttest1d/make-*.sh", "testvm/holttest1d/build-holt.sh",
+                        "testvm/holttest1d/ht1-debug.sh", "testvm/holttest1d/ht1-lib-test.sh",
+                        "testvm/vm-update", "testvm/vm-chroot", "testvm/compare/wear-setup.sh",
+                        "testvm/compare/wear-smart.sh", "testvm/compare/compare-freebsd.sh",
+                        "testvm/compare/freebsd/rescue.sh", "testvm/compare/openbsd/roundtrip.sh",
+                        "testvm/omarchy/cidata.py", "testvm/redox/answer-passwords.py", "testvm/redox/bko.toml",
+                        "testvm/audit/audited-heads", "testvm/audit/to-audit.sh",
+                        "testvm/compare/cmp-pop.sh", "testvm/audit/stock-baseline.sh"]
+  }
+}

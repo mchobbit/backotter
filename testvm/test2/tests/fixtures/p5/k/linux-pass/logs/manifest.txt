@@ -1,0 +1,34 @@
+host chopin kernel 6.12.115+deb13.1-amd64 QEMU emulator version 10.0.13 (Debian 1:10.0.13+ds-0+deb13u1)
+driver /home/m/backotter-work/testvm/holttest1d/ht1.sh mode ram work /mnt/bko-ram/holttest1d/r4all/debian13 records /bkoscratch/holttest1d/r4all/debian13 reserved 3 (pid 1140116)
+env HT_PORT=2600
+env HT_RAM=1
+env HT_VARIANT=
+rustic-bko linux 886ef2281a118c55d084295e17d286f7360cd1511a95b73be5d15b15784857f8 /home/m/backotter-work/bko-bin/linux/rustic-bko (bko-bin set from round rel4, assembled 2026-11-06 10:05 UTC on chopin; rustic b518f42bcb1e)
+tree 7a322d1
+sha256 f341270ccedbbe34446f9d4e11595150a7c7cf5a82c63c7458a2d8ed478d661d /bkoscratch/holttest1d/bin/bko-holt
+sha256 886ef2281a118c55d084295e17d286f7360cd1511a95b73be5d15b15784857f8 /home/m/backotter-work/bko-bin/linux/rustic-bko
+sha256 da9e9f88367b49e06bf427d7b09b08bb4f772e3f7589809b3f83f166cce72361 /home/m/backotter-work/testvm/holttest1d/ht1.sh
+sha256 c562200fdc006b0fc7459887599907cc2e0b5fccf3e935ea8a230d89562629a9 /home/m/backotter-work/testvm/holttest1d/ht1-lib.sh
+sha256 1f8f1c15b6eca7d8fc0bbdc50cd770479e9ffab590fa4759939a81b5da1ed8ef /home/m/backotter-work/testvm/holttest1d/judge.py
+sha256 a1555bf612a40318e8a96b41b9c67a3a5f300e61c376bc603f022f81d2c6e171 /home/m/backotter-work/testvm/compare/fsmeta.py
+sha256 ddfdd4025a9d5d29298fe008039c2815974c8f91ce9d069349899568a6b7b639 /home/m/backotter-work/testvm/vm-run
+sha256 29dbd790b105b005391bda5d1b43981c0ecc378038da7b37e491f196c6afa383 /home/m/backotter-work/testvm/vm-mount
+sha256 ee95b52870a885949383d88ed4af1d08b7541ba3b19317ecf051c1a8b46e3728 /bkoscratch/holttest1d/bin/bcachefs
+sha256 490c8a2d116001a5f3b0a6d7a7aabf6a7b629366590dc5c3f75b078e931dd129 /bkoscratch/holttest1d/bin/bcachefs-deps-libaio1t64_0.3.113-8+b1_amd64.deb
+sha256 81535f3c2c0efc732965907c8749103a0a26377c761622c9ce39b4c92dcde52f /bkoscratch/holttest1d/bin/bcachefs-deps-libblkid1_2.41.5-0+deb13u1_amd64.deb
+sha256 89fc4d34fc7a28ad6f0fcd0c561ab253b9dedf6f77f5a000b47c276c8295bf67 /bkoscratch/holttest1d/bin/bcachefs-deps-libcap2_1%3a2.75-10+deb13u1+b3_amd64.deb
+sha256 0b11ad17be0300b63ad4eeb4c6450fed24d34b7b740f23e5363dcb29ee6d5eba /bkoscratch/holttest1d/bin/bcachefs-deps-libkeyutils1_1.6.3-6_amd64.deb
+sha256 c31ec4c7c82755a38b2f3fe066fc0c5518cc91a601a268fbcd19bdacb1f22e1e /bkoscratch/holttest1d/bin/bcachefs-deps-liblz4-1_1.10.0-4_amd64.deb
+sha256 9ff9d97bb7ce3aee7f6e6ec3a785cdbe237454a7b9fd84728121bc4ef2bebebe /bkoscratch/holttest1d/bin/bcachefs-deps-libsodium23_1.0.18-1+deb13u1_amd64.deb
+sha256 5d41c284f5a93b05bc7d648b61a02dd2bb9ff05b2261ad1a8b7d96044a0cfa88 /bkoscratch/holttest1d/bin/bcachefs-deps-libudev1_257.13-1~deb13u1_amd64.deb
+sha256 bf6d8fe515004a491947c72af8ce2c015c5f9b4e8d024b81952ee8f372d507e9 /bkoscratch/holttest1d/bin/bcachefs-deps-liburcu8t64_0.15.2-2_amd64.deb
+sha256 c1bf4c4c3ff48c57fabf93307dfb56996b60cfa33927afc4158b5db36fb2721e /bkoscratch/holttest1d/bin/bcachefs-deps-libuuid1_2.41.5-0+deb13u1_amd64.deb
+sha256 81da7064d56fc044f5db4bb3c1e80ff50a4986dcbbf80d958eeca565b44c157f /bkoscratch/holttest1d/bin/bcachefs-deps-libxxhash0_0.8.3-2_amd64.deb
+sha256 2f6a2aeacfc925eba8b00ac9139bc4bfccf8cacb09eb93de067074b26948eef9 /bkoscratch/holttest1d/bin/bcachefs-deps-libzstd1_1.5.7+dfsg-1_amd64.deb
+sha256 015be740d6236ad114582dea500c1d907f29e16d6db00566ca32fb68d71ac90d /bkoscratch/holttest1d/bin/bcachefs-deps-zlib1g_1%3a1.3.dfsg+really1.3.1-1+b1_amd64.deb
+sha256 2470227305f92e0399147bd5f74a4b1c423d081a61ce705c0e689f2b408ead9e /bkoscratch/holttest1d/bin/f2fs-tools_1.16.0-1.1+b1_amd64.deb
+sha256 a454f4d57a1fe0af4be7cf9de50f0a30de1d2245f40f690fb6efcb1993de6751 /bkoscratch/holttest1d/bin/jfsutils_1.1.15-6_amd64.deb
+sha256 f341270ccedbbe34446f9d4e11595150a7c7cf5a82c63c7458a2d8ed478d661d /mnt/bko-ram/holttest1d/r4all/debian13/share/bko-holt
+image /bkoscratch/holttest1d/rescuer/rescuer.qcow2 3518627840 1793890847 4333586631 sha256-file ddc4bd53fdfc05b432929fa1c3be766fcf415aae04cc98aed8212964e04638e3
+image /home/m/backotter-work/vms/debian13/debian13.qcow2 3263955102 1793956730 5936973367
+version bko-holt 0.2.4; rustic 0.11.4+backotter.6

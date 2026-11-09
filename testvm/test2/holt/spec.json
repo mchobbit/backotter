@@ -1,0 +1,111 @@
+{
+  "v": 1,
+  "family": "holt",
+  "about": "What a HoltTest cell's key covers (contract 1.3, rulings R5, R14, R17). keys.py reads it: an entry (holt:GUEST[+VARIANT] is entries[GUEST]) merges over kinds[its kind], lists adding up; PLAT in a path is the entry's plat. A kind is the driver ht1.sh hands the guest to (ht1.sh:70-76); 'driver' names it and 'variants_run' what HT_VARIANT it takes. Variants have no inputs of their own: the cell name is in the key. Pins and family lists are classes.json's (holt.pins, holt.families). The floor is ht_manifest's list (ht1-lib.sh's manifest.txt): the driver, ht1-lib.sh, judge.py, fsmeta.py, vm-run, vm-mount, the rescuer image, bin/'s debs and bcachefs, bko-holt, rustic-bko and the guest's disks.",
+  "notes": [
+    "harness: what runs the round trip or makes its records. ht1.sh is in every kind's: the queue runs ht1.sh GUEST RUN, which hands BSD, illumos, Haiku, Redox and Sculpt guests to ht1-bsd.sh or ht1-offline.sh (ht1.sh:70-76). compare/fsmeta.py records the files, so it is harness, not judge (R5 (d)).",
+    "judge: holttest1d/judge.py alone (it reads the dumps and fsmeta's records).",
+    "plumbing: the write path and the queue (ht1-lib.sh, ht1-queue.sh, ram-size.sh, ram-sizes.tsv), vm-run and the shared cmp-run.sh and iolog.sh: a change makes the four canaries due (classes.json holt.canaries), the rest canary-verified.",
+    "rescuer, Linux kinds: '@firmware' is rescuer-uefi.qcow2 for a UEFI source on a host that has it, else rescuer.qcow2 (ht1.sh:134-141, R17); bin/*.deb and bin/bcachefs are what ht1.sh copies into the share (ht1.sh:302-303). ht1-offline.sh always takes rescuer.qcow2 and no debs (ht1-offline.sh:56, 112-116).",
+    "rescuer, other systems: the live rescuer guest's generation (freebsd15-ufs, netbsd11, haiku6), or the one-time copy's image (ht1-bsd.sh:206-305), which follows no update of its guest until R1. The rescuer guest's vm-run-options (ht1-bsd.sh:174) isn't keyed.",
+    "per_guest: files a driver references that only some guests use, so they are in those guests' entries, not the kind's: the passphrase typers (ht1.sh:186-198, the first of console-passphrase, zfs-passphrase, luks-passphrase the guest has: ht1.sh:154), Redox's console and tools, Sculpt's screen check (sculpt-check.sh imports testvm/haiku/drive.py).",
+    "firmware: the guests whose vm-run-options have --uefi (both hosts, 2026-11-08); holt.run keeps a UEFI Linux source off a host without rescuer-uefi.qcow2 (R17). classes.json holt.uefi lists the Linux ones too."
+  ],
+  "plumbing": [
+    "testvm/holttest1d/ht1-lib.sh",
+    "testvm/holttest1d/ht1-queue.sh",
+    "testvm/holttest1d/ram-size.sh",
+    "testvm/holttest1d/ram-sizes.tsv",
+    "testvm/vm-run",
+    "shared:cmp-run.sh",
+    "shared:testvm/compare/iolog.sh"
+  ],
+  "soft": ["kernel", "zfs", "qemu", "ovmf"],
+  "kinds": {
+    "linux": {
+      "driver": "testvm/holttest1d/ht1.sh",
+      "variants_run": ["bigger", "oneshot", "degraded"],
+      "plat": "linux",
+      "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
+      "harness": ["testvm/holttest1d/ht1.sh", "testvm/vm-mount", "testvm/vm-umount", "testvm/compare/fsmeta.py"],
+      "judge": ["testvm/holttest1d/judge.py"],
+      "rescuer": ["@firmware", "bin/*.deb", "bin/bcachefs"],
+      "per_guest": {
+        "testvm/console-boot.py": "guests whose first passphrase file is console-passphrase or zfs-passphrase",
+        "testvm/omarchy/type-luks-passphrase.py": "guests whose first passphrase file is luks-passphrase"
+      }
+    },
+    "bsd": {
+      "driver": "testvm/holttest1d/ht1-bsd.sh",
+      "variants_run": ["bigger", "oneshot"],
+      "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
+      "harness": ["testvm/holttest1d/ht1.sh", "testvm/holttest1d/ht1-bsd.sh"],
+      "judge": ["testvm/holttest1d/judge.py"]
+    },
+    "offline": {
+      "driver": "testvm/holttest1d/ht1-offline.sh",
+      "variants_run": ["bigger", "oneshot"],
+      "plat": "linux",
+      "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
+      "harness": ["testvm/holttest1d/ht1.sh", "testvm/holttest1d/ht1-offline.sh", "testvm/compare/fsmeta.py"],
+      "judge": ["testvm/holttest1d/judge.py"],
+      "rescuer": ["rescuer.qcow2"],
+      "per_guest": {
+        "testvm/redox/console.py": "redox: its root login on the serial console",
+        "testvm/sculpt-check.sh": "sculpt2610: its screen and partition",
+        "testvm/haiku/drive.py": "sculpt2610: sculpt-check.sh's screen reader"
+      }
+    }
+  },
+  "entries": {
+    "debian13": {"kind": "linux"},
+    "debian13-zfs": {"kind": "linux"},
+    "debian13-stack": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/console-boot.py"]},
+    "debian12": {"kind": "linux"},
+    "devuan6": {"kind": "linux"},
+    "mint22": {"kind": "linux"},
+    "zorin18": {"kind": "linux"},
+    "mx25": {"kind": "linux"},
+    "pop24": {"kind": "linux", "firmware": "uefi"},
+    "ubuntu24": {"kind": "linux"},
+    "ubuntu26-uefi": {"kind": "linux", "firmware": "uefi"},
+    "ubuntu26-zfs": {"kind": "linux", "firmware": "uefi"},
+    "ubuntu26-zfsmirror": {"kind": "linux", "harness": ["testvm/console-boot.py"]},
+    "ubuntu26-raid": {"kind": "linux", "firmware": "uefi"},
+    "fedora44": {"kind": "linux"},
+    "fedora44-uefi": {"kind": "linux", "firmware": "uefi"},
+    "fedora44-raid": {"kind": "linux", "firmware": "uefi"},
+    "rocky10": {"kind": "linux"},
+    "rocky10-lvm": {"kind": "linux"},
+    "rocky10-raid5": {"kind": "linux"},
+    "tumbleweed": {"kind": "linux"},
+    "arch": {"kind": "linux"},
+    "artix-dinit": {"kind": "linux"},
+    "artix-s6": {"kind": "linux"},
+    "cachyos": {"kind": "linux"},
+    "omarchy": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/omarchy/type-luks-passphrase.py"]},
+    "alpine324": {"kind": "linux"},
+    "aerynos": {"kind": "linux", "firmware": "uefi"},
+    "void-musl": {"kind": "linux"},
+    "nixos2605": {"kind": "linux"},
+    "freebsd15": {"kind": "bsd", "plat": "freebsd", "rescuer": ["freebsd15-ufs"]},
+    "freebsd15-mirror": {"kind": "bsd", "plat": "freebsd", "rescuer": ["freebsd15-ufs"]},
+    "freebsd14": {"kind": "bsd", "plat": "freebsd", "rescuer": ["freebsd15-ufs"]},
+    "ghostbsd26": {"kind": "bsd", "plat": "freebsd", "rescuer": ["freebsd15-ufs"]},
+    "ghostbsd26-zfs": {"kind": "bsd", "plat": "freebsd", "rescuer": ["freebsd15-ufs"]},
+    "hardenedbsd15": {"kind": "bsd", "plat": "freebsd", "rescuer": ["freebsd15-ufs"]},
+    "netbsd11": {"kind": "bsd", "plat": "netbsd", "rescuer": ["netbsd11"]},
+    "alpinebsd": {"kind": "bsd", "plat": "netbsd", "firmware": "uefi", "rescuer": ["netbsd11"]},
+    "openbsd8": {"kind": "bsd", "plat": "openbsd", "rescuer": ["openbsd8-newduid.qcow2"],
+                 "notes": "its one-time rescuer is on Chopin only (classes.json holt.pins)"},
+    "dragonfly6": {"kind": "bsd", "plat": "dragonfly", "rescuer": ["dragonfly6-newfsid.qcow2"],
+                   "notes": "its one-time rescuer is on Cinqcent only (classes.json holt.pins)"},
+    "omnios58": {"kind": "bsd", "plat": "illumos", "rescuer": ["omnios58-reguid.qcow2"]},
+    "omnios58-mirror": {"kind": "bsd", "plat": "illumos", "rescuer": ["omnios58-reguid.qcow2"]},
+    "haiku6": {"kind": "bsd", "plat": "haiku", "rescuer": ["haiku6"]},
+    "redox": {"kind": "offline", "harness": ["testvm/redox/console.py"],
+              "host_inputs": [{"path": "~/backotter-work/tools/redox/bin", "group": "rescuer"}],
+              "notes": "its tools are on Cinqcent only (classes.json holt.pins)"},
+    "sculpt2610": {"kind": "offline", "harness": ["testvm/sculpt-check.sh", "testvm/haiku/drive.py"]}
+  }
+}

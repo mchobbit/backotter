@@ -1,0 +1,28 @@
+HoltTest1 sculpt2610 (read off its disks), run r4all, 2026-11-08T02:53:22Z, phases: source backup rebuild verify
+binaries: bko-holt f341270ccedb (/bkoscratch/holttest1d/bin/bko-holt); rustic-bko linux 886ef2281a118c55d084295e17d286f7360cd1511a95b73be5d15b15784857f8 /home/m/backotter-work/bko-bin/linux/rustic-bko (bko-bin set from round rel4, assembled 2026-11-06 10:05 UTC on chopin; rustic b518f42bcb1e)
+== source: sculpt2610 (read off its disks)
+PASS source boots (sculpt-check: screen and partition)
+PASS dump of the source's disks (bko-holt dump --disk, in the rescuer)
+== backup
+PASS rustic-bko backup (37M)
+== rebuild
+PASS rescuer up, share mounted
+PASS load refuse-nomap (exit 4)
+PASS load refuse-root (exit 4)
+PASS load refuse-decoy (exit 4)
+PASS load dry-partition (exit 0)
+PASS nothing written without --commit
+PASS the refusals and the dry run left every target's and the decoy's first and last MiB as they were
+PASS load partition (exit 0)
+PASS load assemble (exit 0)
+PASS load format (exit 0)
+PASS load mount (exit 0)
+PASS load restore (exit 0)
+PASS load boot (exit 0)
+PASS load close (exit 0)
+== verify
+PASS fsmeta: the files agree but for the boot stage's (0 differences, 0 from the boot stage)
+PASS the restored disk boots by itself (Booting sculpt-check.qcow2 on an overlay, until the Leitzentrale is up (at most 300 s) Leitzentrale up after 10 s; 30 s )
+PASS the dumps agree (0 differences, 3 ignored, of 279 fields)
+RAM disk: peak 0.2 GiB, reserved 2 GiB; memory: peak 0.6 GiB anon
+RESULT: PASS

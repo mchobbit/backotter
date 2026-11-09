@@ -1,0 +1,14 @@
+=== RUN   TestBcachefsDirOptionsInherited
+    bcachefs_linux_test.go:55: needs root, to mount a file system
+--- SKIP: TestBcachefsDirOptionsInherited (0.00s)
+=== RUN   TestClearRestrictingFlagsFile
+--- PASS: TestClearRestrictingFlagsFile (0.00s)
+=== RUN   TestFATAttributesOnVfat
+    fatxfs_linux_test.go:186: hidden: kept false, want true (0x20)
+--- FAIL: TestFATAttributesOnVfat (0.09s)
+=== RUN   TestFillHolesENOSPC
+--- PASS: TestFillHolesENOSPC (0.07s)
+=== RUN   TestXFSOptionsOnXFS
+panic: runtime error: invalid memory address or nil pointer dereference [recovered]
+	panic: runtime error: invalid memory address or nil pointer dereference
+FAIL	github.com/restic/restic/internal/fs	0.310s

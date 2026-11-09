@@ -1,0 +1,76 @@
+# bko-holt load plan for layout.json
+# Source: host1, NetBSD 11.1, BIOS boot with netbsd, dumped 2026-11-08T02:42:51Z
+#
+# Disks:
+#   ld0 (16 GiB) -> /dev/sdq
+#
+# Notes:
+#   - fstab's /kern (kernfs) isn't on the layout's disks; not mounted
+#   - fstab's /dev/pts (ptyfs) isn't on the layout's disks; not mounted
+#   - fstab's /proc (procfs) isn't on the layout's disks; not mounted
+#   - fstab's /var/shm (tmpfs) isn't on the layout's disks; not mounted
+
+# ---- partition ----
+# ld0 -> /dev/sdq: the source's table, GUIDs and boot code exactly
+sh -c 'bko-holt write-table layout.json ld0 /dev/rsdqd $(disklabel sdq | awk '\''/^bytes.sector:/ { b = $2 } /^total sectors:/ { t = $3 } END { print b * t }'\'')'
+cat > /run/bko-holt/ld0.disklabel <<'EOF'
+# /dev/rld0:
+type: ld
+disk: ld0
+label: fictitious
+flags:
+bytes/sector: 512
+sectors/track: 63
+tracks/cylinder: 16
+sectors/cylinder: 1008
+cylinders: 16383
+total sectors: 33554432
+rpm: 3600
+interleave: 1
+trackskew: 0
+cylinderskew: 0
+headswitch: 0		# microseconds
+track-to-track seek: 0	# microseconds
+drivedata: 0 
+
+16 partitions:
+#        size    offset     fstype [fsize bsize cpg/sgs]
+ a:  29358080      2048     4.2BSD      0     0     0  # (Cyl.      2*-  29127*)
+ b:   4194304  29360128       swap                     # (Cyl.  29127*-  33288*)
+ c:  33552384      2048     unused      0     0        # (Cyl.      2*-  33288*)
+ d:  33554432         0     unused      0     0        # (Cyl.      0 -  33288*)
+EOF
+# ld0's disklabel
+disklabel -R sdq /run/bko-holt/ld0.disklabel
+
+# ---- assemble ----
+# (nothing to do)
+
+# ---- format ----
+# ld0a: UFS as the source's (dumpfs -m)
+newfs -O 2 -b 16384 -f 2048 -n 1782144 -m 5 -o time -e 2048 -s 29358080 /dev/rsdqa
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+mount -t ffs -o rw,log /dev/sdqa /mnt/bko-target
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+
+# ---- boot ----
+# the boot code (MBR, freebsd-boot) was written with the partition table
+# NetBSD's primary bootstrap, in the root partition
+installboot -v /dev/rsdqa /usr/mdec/bootxx_ffsv2
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -Rp /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+
+# ---- close ----
+# everything under the target, deepest first
+sh -c 'mount | sed -n '\''s/^.* on \(.*\) type .*/\1/p'\'' | awk '\''$0 == "/mnt/bko-target" || index($0, "/mnt/bko-target/") == 1'\'' | sort -r | while read -r m; do umount "$m" || exit; done'
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status filesystem /dev/sdqa ufs -
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: exit 0, nothing on stderr

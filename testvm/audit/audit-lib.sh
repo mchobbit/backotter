@@ -8,6 +8,12 @@
 #                    ${TMPDIR:-/tmp}/bko-audit): stock-baseline/NAME-VERSION,
 #                    fork-tests/NAME-COMMIT
 #   RESERVE          DISK_GIB MEM_GIB for cmp-run.sh --reserve (default "6 12")
+#   BKO_AUDIT_TAG    a run of its own (GateTest2's: the run id): fork-tests.sh's
+#                    job tag is BKO_AUDIT_TAG-HOST instead of fork-HOST, and
+#                    the tools go to ~/backotter-work/bko-audit/bin-TAG on
+#                    the hosts instead of bin/, so that neither another
+#                    session's job nor its copy of the tools is taken
+#   BKO_WEAR_TAG     the jobs' WEAR_TAG in the wear log (default audit:TAG)
 
 # Stock: what the forks are based on (their merge-bases with upstream).
 # NAME VERSION COMMIT; rustic_core 0.13.0 is the crates.io release stock
@@ -24,10 +30,16 @@ read -r RESERVE_DISK RESERVE_MEM <<<"${RESERVE:-6 12}"
 # /bkoscratch); RWORK relative to the login's home.
 RWORK=backotter-work/bko-audit
 RSRC=/bkoscratch/bko-audit/src
-CMP_RUN='$HOME/backotter-work/testvm/compare/cmp-run.sh'
+CMP_RUN='$HOME/backotter-work/cmp-run.sh'   # the shared queue (a link to the synced testvm/compare's)
 SSH=(ssh -o BatchMode=yes -o ConnectTimeout=20)
 
 die() { echo "$(basename "$0" .sh): $*" >&2; exit 1; }
+# Both tags reach the hosts' shell unquoted: plain characters only.
+[[ -z ${BKO_AUDIT_TAG:-} || $BKO_AUDIT_TAG =~ ^[A-Za-z0-9._-]+$ ]] || die "BKO_AUDIT_TAG: letters, digits, . _ - only"
+[[ -z ${BKO_WEAR_TAG:-} || $BKO_WEAR_TAG =~ ^[A-Za-z0-9._:@+-]+$ ]] || die "BKO_WEAR_TAG: letters, digits, . _ : @ + - only"
+# The tools' directory on the hosts, relative to the home.
+RBIN=$RWORK/bin
+[[ -z ${BKO_AUDIT_TAG:-} ]] || RBIN=$RWORK/bin-$BKO_AUDIT_TAG
 log() { echo "$(date '+%H:%M:%S') $*"; }
 here=$(cd "$(dirname "$0")" && pwd)
 repo=$(cd "$here/../.." && pwd)
@@ -46,11 +58,12 @@ host_of() {  # chopin -> m@chopin.local; anything with @ or a dot as is
 }
 
 # ship_tools HOST: audit-host.sh, results.py and prep-rustic-src.sh to
-# HOST:~/backotter-work/bko-audit/bin (only there: never testvm/ or stick/).
+# HOST:~/backotter-work/bko-audit/bin (bin-TAG with BKO_AUDIT_TAG; only
+# there: never testvm/ or stick/).
 ship_tools() {
-    "${SSH[@]}" "$1" "mkdir -p $RWORK/bin $RWORK/logs" &&
+    "${SSH[@]}" "$1" "mkdir -p $RBIN $RWORK/logs" &&
         rsync -p --checksum "$here/audit-host.sh" "$here/results.py" "$repo/stick/prep-rustic-src.sh" \
-            "$1:$RWORK/bin/" || die "can't copy the tools to $1"
+            "$1:$RBIN/" || die "can't copy the tools to $1"
 }
 
 # ship_src HOST NAME COMMIT: HOST:/bkoscratch/bko-audit/src/NAME-SHORT, a git
@@ -80,8 +93,9 @@ local_ok() {
 
 # launch HOST TAG SPEC...: audit-host.sh SPEC... on HOST, detached, under
 # cmp-run.sh --reserve, logging to ~/backotter-work/bko-audit/logs/TAG.log
-# and TAG.exit.  A TAG already running there isn't started again: the caller
-# then waits on it as if just launched.
+# and TAG.exit, with WEAR_TAG BKO_WEAR_TAG (default audit:TAG).  A TAG
+# already running there isn't started again: the caller then waits on it as
+# if just launched.
 launch() {
     local h=$1 tag=$2 L; shift 2
     L=$RWORK/logs/$tag
@@ -92,7 +106,7 @@ launch() {
     # Every SPEC path is $HOME-relative or absolute and has no blanks.
     local specs="$*" cmd
     cmd="rm -f $L.exit; setsid -f bash -c 'echo \$\$ >\$HOME/$L.pid; exec </dev/null;"
-    cmd+=" WEAR_TAG=audit:$tag $CMP_RUN --reserve $RESERVE_DISK $RESERVE_MEM nice -n 10 \$HOME/$RWORK/bin/audit-host.sh $specs"
+    cmd+=" WEAR_TAG=${BKO_WEAR_TAG:-audit:$tag} $CMP_RUN --reserve $RESERVE_DISK $RESERVE_MEM nice -n 10 \$HOME/$RBIN/audit-host.sh $specs"
     cmd+=" >\$HOME/$L.log 2>&1; echo \$? >\$HOME/$L.exit' </dev/null >/dev/null 2>&1"
     "${SSH[@]}" -n "$h" "$cmd" || die "can't start $tag on $h"
     log "$h: started $tag (log $h:~/$L.log)"
@@ -101,14 +115,18 @@ launch() {
 # wait_tag HOST TAG: until TAG.exit is there; prints audit-host.sh's last
 # line every 10 minutes; returns TAG's exit.
 wait_tag() {
-    local h=$1 L=$RWORK/logs/$2 rc n=0
+    local h=$1 L=$RWORK/logs/$2 rc s n=0
     local SSH=("${SSH[@]}" -n)
     while :; do
-        rc=$("${SSH[@]}" "$h" "cat $L.exit 2>/dev/null")
+        s=0; rc=$("${SSH[@]}" "$h" "cat $L.exit 2>/dev/null") || s=$?
+        (( s == 255 )) && { sleep 30; continue; }   # no answer isn't "ended"
         [[ -n $rc ]] && break
-        if ! "${SSH[@]}" "$h" "test -e $L.pid && kill -0 \$(cat $L.pid) 2>/dev/null"; then
+        s=0; "${SSH[@]}" "$h" "test -e $L.pid && kill -0 \$(cat $L.pid) 2>/dev/null" || s=$?
+        (( s == 255 )) && { sleep 30; continue; }
+        if (( s != 0 )); then
             sleep 5
-            rc=$("${SSH[@]}" "$h" "cat $L.exit 2>/dev/null")
+            s=0; rc=$("${SSH[@]}" "$h" "cat $L.exit 2>/dev/null") || s=$?
+            (( s == 255 )) && { sleep 30; continue; }
             [[ -n $rc ]] && break
             echo "$h: $2 ended without $L.exit" >&2; return 1
         fi

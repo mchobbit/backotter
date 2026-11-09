@@ -1,0 +1,1 @@
+pass: records only, 2026-11-08T02:53:12Z; deleted share src-*.qcow2 dst-*.qcow2 decoy.qcow2 rescuer.qcow2 rustic-bko tmp; zstd src-meta.json dst-meta.json

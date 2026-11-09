@@ -12,10 +12,10 @@ set -uo pipefail
 G=nixos2605
 HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=$HOME/backotter-work
-C=$WORK/testvm/compare
+C=${BKO_TESTVM:-$WORK/testvm}/compare
 if [[ ${1:-} == --inner ]]; then
     shift; BIN=$1 PORT=$2 PFX=$3 OUT=$4
-    . "$WORK/testvm/vm-lib.sh"
+    . "${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh"
     R=/mnt/bko-ram/$PFX/$G.$$
     mkdir -p "$R"
     trap 'vm_halt; rm -rf "$R"' EXIT

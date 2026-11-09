@@ -4,21 +4,28 @@
 #
 #   cd ~/backotter-work && ./cmp-run.sh --reserve 1 1 sudo -E PATH/ht1-lib-test.sh
 #
-# It works in /mnt/bko-ram/ht1-lib-test (HT_WORK) and /bkoscratch/ht1-lib-test
-# (HT_RECORDS), keeps its fake rustic-bko sets and other fixtures in
-# /mnt/bko-ram/ht1-lib-test-fx, and removes all three at the end.  One ok or
-# FAIL line per case; exit 1 if any case FAILs.  Its fake driver is this
-# script too, `ht1-lib-test.sh run RUN [PHASE...]`: ht1.sh's calls in ht1.sh's
-# order, with phases that write small files, steered by T1_* (t1_load).
+# It works in /mnt/bko-ram/NAME (HT_WORK) and /bkoscratch/NAME (HT_RECORDS),
+# NAME being HT1_TEST_NAME (default ht1-lib-test; a test of its own takes
+# another, as t2core-p5, and refuses one whose directories are there and
+# not empty), keeps its fake rustic-bko sets and other fixtures in
+# /mnt/bko-ram/NAME-fx, and removes all three at the end.  Test2's ledger
+# rows that ht_end writes (cases 47-49) go to NAME-fx/t2 (T2_HOST_ROOT),
+# never to the default ledger.  One self-test at a time per host, whatever
+# its NAME.  One ok or FAIL line per case; exit 1 if any case FAILs.  Its
+# fake driver is this script too, `ht1-lib-test.sh run RUN [PHASE...]`:
+# ht1.sh's calls in ht1.sh's order, with phases that write small files,
+# steered by T1_* (t1_load).
 set -uo pipefail
 HERE=$(dirname "$(realpath "$0")")
-FX=/mnt/bko-ram/ht1-lib-test-fx
+NAME=${HT1_TEST_NAME:-ht1-lib-test}
+FX=/mnt/bko-ram/$NAME-fx
 
 if [[ ${1:-} == run ]]; then
     exec 9>&-   # (the self-test's own lock)
     G=fake RUN=$2; shift 2
     PHASES=("$@"); [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source backup rebuild verify)
-    VARIANT="" GV=$G PORT=${T1_PORT:-${T1_PORT0:-}} W=$FX T=$(dirname "$HERE") fails=0
+    # (T1_TV: another testvm/ for T, whose test2/t2-host is missing, fails or hangs: cases 47-48.)
+    VARIANT="" GV=$G PORT=${T1_PORT:-${T1_PORT0:-}} W=$FX T=${T1_TV:-$(dirname "$HERE")} fails=0
     HOLT=$FX/bko-holt imgs=("$FX/guest.qcow2")
     [[ -z ${T1_RSYNC_FAIL:-} ]] || PATH=$FX/fakebin:$PATH
     say() { echo "$*" | tee -a "$R/report.txt"; }
@@ -169,14 +176,29 @@ if [[ ${1:-} == run ]]; then
 fi
 
 [[ $EUID == 0 ]] || { echo "ht1-lib-test: run as root, under cmp-run.sh --reserve 1 1 (the header says how)" >&2; exit 1; }
+# NAME's directories are deleted at the start and the end: a plain name, never
+# the real runs' (holttest1d), nor, but for the default, one already in use.
+[[ $NAME =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ && $NAME != tmp && $NAME != holttest1d && $NAME != test2 ]] ||
+    { echo "ht1-lib-test: HT1_TEST_NAME=$NAME: a plain name, not tmp, holttest1d or test2" >&2; exit 1; }
+if [[ $NAME != ht1-lib-test ]]; then
+    for d in "/mnt/bko-ram/$NAME" "/bkoscratch/$NAME" "$FX"; do
+        [[ ! -e $d ]] || { [[ -d $d && ! -L $d ]] && [[ -z $(ls -A "$d" 2>/dev/null) ]]; } ||
+            { echo "ht1-lib-test: $d is there and not empty: HT1_TEST_NAME=$NAME would delete it (remove it, or take another NAME)" >&2; exit 1; }
+    done
+fi
 mountpoint -q /mnt/bko-ram || { echo "ht1-lib-test: no RAM disk at /mnt/bko-ram" >&2; exit 1; }
 (($(df -Pk /mnt/bko-ram | awk 'NR == 2 { print $4 }') >= 2 << 20)) ||
     { echo "ht1-lib-test: under 2 GiB free in /mnt/bko-ram: too little for its cases" >&2; exit 1; }
 # One self-test at a time: its start-up deletes its roots and lock files.
 exec 9>>/run/lock/bko-ht1-test.lock && flock -n 9 ||
     { echo "ht1-lib-test: another run of it holds /run/lock/bko-ht1-test.lock" >&2; exit 1; }
-unset "${!HT_@}" "${!T1_@}"
-export HT_WORK=/mnt/bko-ram/ht1-lib-test HT_RECORDS=/bkoscratch/ht1-lib-test
+unset "${!HT_@}" "${!T1_@}" "${!T2_@}"
+export HT_WORK=/mnt/bko-ram/$NAME HT_RECORDS=/bkoscratch/$NAME
+# Test2's ledger rows (ht1-lib.sh's ht_t2_row, after every case's run) go into
+# the fixtures, never the default ledger (case 49 checks).
+export T2_HOST_ROOT=$FX/t2
+DEFLEDGER=/bkoscratch/test2/ledger/$(hostname -s).jsonl
+DEF0=$(stat -c %s "$DEFLEDGER" 2>/dev/null || echo 0)
 LEDGER=/mnt/bko-ram/.reserve
 # The ledger row this test runs under, by a walk of its own (through /proc), to check the lib's.
 ROW="" p=$$
@@ -200,7 +222,7 @@ export T1_PORT0
 
 TV=$(dirname "$HERE")   # this copy's testvm/ (vm-mount, vm-umount)
 # Case 46's look at a run's disk, by hand: a vm-mount of a file in R at LMP.
-LMP=/mnt/ht1-lib-test-look
+LMP=/mnt/$NAME-look
 LST=/run/vm-mount/$(systemd-escape --path "$LMP")
 # It is undone by its vm-umount while the test's qemu-nbd (on a file in
 # HT_WORK) still serves the state's device; else (by then the device may be
@@ -237,7 +259,7 @@ t1_cleanup() {
         [[ $f == "$HT_WORK"/* || $f == "$HT_RECORDS"/* ]] && losetup -d "$l"
     done < <(losetup -l -n -O NAME,BACK-FILE 2>/dev/null)
     rm -rf --one-file-system "$HT_WORK" "$HT_RECORDS" "$FX"
-    rm -f "$LOCKS"/%bkoscratch%ht1-lib-test%*.lock
+    rm -f "$LOCKS/%bkoscratch%$NAME%"*.lock
 }
 t1_cleanup; trap t1_cleanup EXIT
 
@@ -331,7 +353,9 @@ kept_ls="dst-meta.json.zst dumps logs report.txt src-meta.json.zst "
 # the overrun stop beside a vm-mount at work, and K put back on /bkoscratch; 42-43 the run's own processes
 # (on /bkoscratch what others started on K's files is left alone; in RAM an outside holder of R still goes);
 # 44 a full RAM disk stops only a run over its reservation; 45 an earlier attempt's VM still up on K's
-# files (a run from source on /bkoscratch refuses); 46 a vm-mount someone else made of a file in R stays up.
+# files (a run from source on /bkoscratch refuses); 46 a vm-mount someone else made of a file in R stays up;
+# 47-49 Test2's ledger rows (ht_t2_row): which runs get one and what it says, a missing, failing or hanging
+# t2-host changing nothing, and none in the default ledger.
 
 drive c1 source bogus
 chk "exit 2, not $rc" same "$rc" 2
@@ -1088,6 +1112,111 @@ chk "its vm-umount then: exit 0, not $urc" same "$urc" 0
 chk "  its qemu-nbd is gone, and its state" eval '[[ -n $nq ]] && dead "$nq" && [[ ! -e $LST ]]'
 verdict 46 "in RAM a vm-mount someone else made of a file in R stays up (its qemu-nbd isn't killed), and R is said still held" \
     "$out" "$FX/out-c46-mount" "$FX/out-c46-umount" "$FX/look.log"
+
+# 47-49: Test2's ledger rows (ht1-lib.sh's ht_t2_row, this copy's
+# testvm/test2/t2-host): every case above whose run reached ht_end left one in
+# T2_HOST_ROOT's ledger.  LROWS RUN: RUN's rows there, one TSV line each:
+# origin, verdict, class, cell, rule, attempt, planned_key, logs, note, fails.
+L2=$T2_HOST_ROOT/ledger/$(hostname -s).jsonl
+lrows() {
+    python3 -B - "$L2" "$1" <<'PY'
+import json, sys
+path, run = sys.argv[1], sys.argv[2]
+try:
+    lines = open(path, encoding="utf-8").read().splitlines()
+except OSError:
+    lines = []
+for line in lines:
+    try:
+        r = json.loads(line)
+    except ValueError:
+        continue
+    if not str(r.get("origin", "")).startswith(f"ht1:{run}:fake:"):
+        continue
+    print("\t".join(str(x) for x in (r.get("origin"), r.get("verdict"), r.get("class"), r.get("cell"), r.get("rule"),
+                                      r.get("attempt"), r.get("planned_key"), r.get("logs"), r.get("note") or "",
+                                      " | ".join(r.get("fails") or []))))
+PY
+}
+col() { awk -F'\t' -v c="$2" -v n="${3:-1}" 'NR == n { print $c }' <<<"$1"; }   # ROWS COLUMN [ROW]
+H=$(hostname -s)
+r3=$(lrows c3) r4=$(lrows c4) r9d=$(lrows c9d) r13=$(lrows c13) r10=$(lrows c10)
+chk "the ledger is there ($L2)" test -s "$L2"
+chk "c3 (cases 3 and 5): two rows, not $(grep -c . <<<"$r3")" same "$(grep -c . <<<"$r3")" 2
+chk "  both PASS, holt:fake, rule test1, attempt 1, no planned key" eval '[[ $(col "$r3" 2 1)$(col "$r3" 2 2) == PASSPASS &&
+    $(col "$r3" 4 1) == holt:fake && $(col "$r3" 5 1) == test1 && $(col "$r3" 6 1) == 1 && $(col "$r3" 7 1) == None ]]'
+chk "  two origins (one per attempt: a HoltTest1 rerun of RUN/GV keeps its own row)" eval '[[ $(col "$r3" 1 1) != "$(col "$r3" 1 2)" ]]'
+chk "  logs names this host and K" same "$(col "$r3" 8 2)" "$H:$HT_RECORDS/c3/fake"
+chk "c4's FAIL (case 4): FAIL, class fail, its FAIL line" eval '[[ $(col "$r4" 2 1) == FAIL && $(col "$r4" 3 1) == fail &&
+    $(col "$r4" 10 1) == *"HT_FAIL_AT=rebuild: a test hook (no check failed)"* ]]'
+chk "c9d's refusal after ht_begin (a wrong hash): HARNESS, harness, refused before any phase" eval '[[ $(col "$r9d" 2) == HARNESS &&
+    $(col "$r9d" 3) == harness && $(col "$r9d" 9) == *"refused before any phase"* ]]'
+chk "c13's overrun: HARNESS, harness (case 13's rerun was a refusal before ht_begin: no row)" eval '[[ $(grep -c . <<<"$r13") == 1 &&
+    $(col "$r13" 2) == HARNESS && $(col "$r13" 3) == harness ]]'
+chk "c10's TERM: LOST, lost" eval '[[ $(col "$r10" 2) == LOST && $(col "$r10" 3) == lost ]]'
+chk "no row for runs that never reached ht_end (c1, c14b, c17, c18's refusal) or kept R (c11)" eval \
+    '[[ -z $(lrows c1)$(lrows c14b)$(lrows c17)$(lrows c11) && $(grep -c . <<<"$(lrows c18)") == 1 ]]'
+chk "the drivers' logs say so: a note: line with the row's id" grep -qE '^ht1-lib-test\.sh: note: Test2 ledger row [A-Za-z0-9-]+$' "$FX"/out-c3.*
+verdict 47 "Test2's ledger rows: a pass, a FAIL, a refusal after ht_begin, an overrun and a TERM each get one; nothing else does" "$L2"
+
+# A testvm/ whose test2/t2-host is missing, fails (exit 3) or hangs (a 120 s
+# sleep: the hook's timeout ends it at 30 s): the fake tool records its arguments and a
+# listing of K (each file's sha256) as it ran.
+fake_t2() {  # DIR MODE
+    mkdir -p "$1/test2"
+    cat >"$1/test2/t2-host" <<'PY'
+import hashlib, os, sys, time
+args = sys.argv[1:]
+top = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))   # FX/tv-MODE
+out = os.path.join(top, "out")
+k = args[args.index("--k") + 1] if "--k" in args else None
+with open(out + ".args", "w") as f:
+    f.write(" ".join(args) + "\n")
+seen = []
+for dp, dn, fn in os.walk(k or "/nonexistent"):
+    for n in fn:
+        p = os.path.join(dp, n)
+        seen.append((os.path.relpath(p, k), hashlib.sha256(open(p, "rb").read()).hexdigest()))
+with open(out + ".k", "w") as f:
+    f.writelines(f"{r} {h}\n" for r, h in sorted(seen))
+if os.path.basename(top) == "tv-slow":
+    time.sleep(120)
+print("t2-host: a fake failure", file=sys.stderr)
+sys.exit(3)
+PY
+}
+klist() { (cd "$1" && find . -type f | LC_ALL=C sort | while read -r f; do echo "${f#./} $(sha "$f")"; done); }   # DIR
+mkdir -p "$FX/tv-none"; fake_t2 "$FX/tv-fail"; fake_t2 "$FX/tv-slow"
+T1_TV=$FX/tv-none drive c48a; r48=("$rc") oa=$out
+T1_TV=$FX/tv-fail drive c48b; r48+=("$rc") ob=$out
+t0=$SECONDS; T1_TV=$FX/tv-slow drive c48c; r48+=("$rc") oc=$out tc=$((SECONDS - t0))
+i=0
+for x in a b c; do
+    k=$HT_RECORDS/c48$x/fake
+    chk "c48$x: exit 0 as with the tool, not ${r48[i]}" same "${r48[i]}" 0
+    chk "  kept.txt: pass, and the kept set as ever, not $(ls_of "$k")" eval 'hasre "$k/logs/kept.txt" "^pass: records only" && same "$(ls_of "$k")" "$kept_ls"'
+    chk "  no row in T2_HOST_ROOT's ledger" test -z "$(lrows "c48$x")"
+    i=$((i + 1))
+done
+chk "a missing tool: one note: line says so" eval 'same "$(grep -c "note: no Test2 ledger row ($FX/tv-none/test2/t2-host isn.t there)" "$oa")" 1'
+chk "a failing tool: one note: line with its exit and last line" eval 'same "$(grep -c "note: no Test2 ledger row ($FX/tv-fail/test2/t2-host exit 3: t2-host: a fake failure)" "$ob")" 1'
+chk "  it was asked about K, the run's details" eval 'grep -qxF "row holt --k $HT_RECORDS/c48b/fake --r $HT_WORK/c48b/fake --run c48b --gv fake --driver ht1-lib-test.sh --rc 0 --code 0" "$FX/tv-fail/out.args"'
+chk "  K's records are byte for byte what the tool saw (it changed nothing)" eval '[[ -s $FX/tv-fail/out.k ]] && same "$(klist "$HT_RECORDS/c48b/fake")" "$(cat "$FX/tv-fail/out.k")"'
+# (The real tool, run again on c3's K as the hook runs it: K the same byte for byte after.)
+kb=$(klist "$HT_RECORDS/c3/fake")
+T2_WORK=$FX timeout -k 5 30 python3 -B "$(dirname "$HERE")/test2/t2-host" row holt --k "$HT_RECORDS/c3/fake" \
+    --r "$HT_WORK/c3/fake" --run c3again --gv fake --driver ht1-lib-test.sh --rc 0 --code 0 </dev/null >"$FX/out-c48d" 2>&1
+r48d=$?
+chk "the real t2-host on c3's K: exit 0, not $r48d, and K byte for byte as before it ran" eval \
+    '[[ $r48d == 0 && -n $kb ]] && same "$(klist "$HT_RECORDS/c3/fake")" "$kb"'
+chk "a hanging tool: stopped by the hook's timeout at 30 s, the run done in $tc s" eval '[[ $tc -ge 30 && $tc -lt 90 ]] && grep -qF "note: no Test2 ledger row ($FX/tv-slow/test2/t2-host took over 30 s)" "$oc"'
+verdict 48 "a missing, failing or hanging t2-host changes no exit, nothing kept, and nothing in K" "$oa" "$ob" "$oc"
+
+# None of this test's rows went to the default ledger (other runs on the host may write there meanwhile).
+DEF1=$(stat -c %s "$DEFLEDGER" 2>/dev/null || echo 0)
+chk "the default ledger has nothing of ours since the start ($DEF0 -> $DEF1 bytes)" eval \
+    '! { [[ $DEF1 -gt $DEF0 ]] && tail -c +"$((DEF0 + 1))" "$DEFLEDGER" | grep -qE "\"cell\": ?\"holt:fake\"|\"origin\": ?\"ht1:c[0-9]+[a-z]?:fake:"; }'
+verdict 49 "the default ledger ($DEFLEDGER) gets no row of the self-test's"
 
 if ((nfail == 0)); then echo "ht1-lib-test: all $ncase cases ok"; exit 0; fi
 echo "ht1-lib-test: $nfail of $ncase cases FAIL"

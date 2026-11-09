@@ -1,0 +1,5 @@
+phase	start_utc	seconds	peak_disk_kib	peak_anon_kib	reserved_gib	mode	fails
+source	2026-11-08T02:46:16Z	27	30240	1835008	3	ram	0
+backup	2026-11-08T02:46:43Z	109	431072	2824624	3	ram	0
+rebuild	2026-11-08T02:48:32Z	41	1052588	3210780	3	ram	0
+verify	2026-11-08T02:49:13Z	71	1025116	2465980	3	ram	0

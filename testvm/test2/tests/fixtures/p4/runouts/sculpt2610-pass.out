@@ -1,0 +1,10 @@
+LIMIT restic-bko runs natively: not applicable: grub.cfg boots Genode base-hw (bender + image-hw.elf: ELF 64-bit LSB executable, x86-64, version 1 (SYSV), statica); Go has no GOOS for Genode, and Genode has no Linux/BSD binary ABI
+LIMIT rustic-bko runs natively: not applicable: no Rust target for Genode (would need a custom target spec on Genode's libc + -Zbuild-std, and a Goa package)
+LIMIT native metadata (owners, xattrs, ACLs, flags, devices, hard links): not applicable: Genode's VFS/File_system session has only type, size, rwx and mtime; no owners, xattrs, ACLs, flags, device nodes or hard links
+PASS backup exits 0 (offline, GENODE ext2): restic; rustic
+PASS same repository format (node-identical snapshots): 38 nodes incl. Genode-written inodes (mtime 0)
+PASS restore exits 0: restic->restic; rustic->rustic; restic->rustic; rustic->restic
+PASS metadata round trip (contents, types, modes, owners incl. uid 1007 with no name, mtimes/atimes incl. 0 from Genode-written inodes, mode 0777 files): restic->restic; rustic->rustic; restic->rustic; rustic->restic
+PASS restore over an existing changed tree: restic exit 0; restic: tree as backed up; rustic exit 0; rustic: tree as backed up
+LIMIT restore over existing immutable/append-only files: not applicable: Genode's ext2 driver sets no inode flags (none on the guest's disk)
+LIMIT non-root backup and restore: not applicable: Genode has no users; the offline path runs as root on the rescue stick

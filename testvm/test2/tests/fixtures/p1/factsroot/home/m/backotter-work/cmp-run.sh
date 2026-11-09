@@ -1,0 +1,1 @@
+testvm/compare/cmp-run.sh

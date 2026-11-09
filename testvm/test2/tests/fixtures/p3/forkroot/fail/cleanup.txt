@@ -1,0 +1,2 @@
+unmounted /mnt/bko-ram/t2g-20261108T0315-4f2a-fork-root-restic/tmp/TestXFSOptionsOnXFS123/001/mnt
+detached /dev/loop7 (/mnt/bko-ram/t2g-20261108T0315-4f2a-fork-root-restic/tmp/TestXFSOptionsOnXFS123/001/fs.img)

@@ -48,7 +48,8 @@ DRIVE="d=\$(findmnt -nro TARGET -S LABEL=$BACKUP_LABEL | head -n 1); if [ -z \"\
 
 # run_on_drive SCRIPT ARGS...: on the installed system or the stick, whichever is up.
 run_on_drive() {
-    local cmd="$DRIVE; exec bash \"\$d/backshot1/$*\""
+    local script=$1; shift
+    local cmd="$DRIVE; exec bash \"\$d/backshot1/$script\" $*"
     if on_host true 2>/dev/null; then on_host "$cmd"; else on_rescue "sudo -n bash -c '$cmd'"; fi
 }
 resolve_run() { run_on_drive bs1-list --resolve "$1" || die "can't choose a backup for \"$1\""; }

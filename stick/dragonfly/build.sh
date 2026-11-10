@@ -229,7 +229,9 @@ EOF
     mv etc/ssh/sshd_config.new etc/ssh/sshd_config
     rm -f etc/ssh/ssh_host_*
 
-    mkdir -p "$console_dir" .disk
+    # /mnt/bko-target: where bko-holt load mounts what it restores (its
+    # default --target), which the read-only root can't make at run time.
+    mkdir -p "$console_dir" .disk mnt/bko-target
     install -m 755 ../in/console ../in/remote-access "$console_dir/"
     install -m 755 ../in/restic-bko usr/local/bin/
     install -m 755 ../in/rustic-bko usr/local/bin/

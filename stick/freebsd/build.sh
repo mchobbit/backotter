@@ -179,6 +179,9 @@ mv sshd_config root/etc/ssh/sshd_config
 ! ls root/etc/ssh/ssh_host_* >/dev/null 2>&1 || die "the memstick has SSH host keys"
 
 mkdir -p "root$LIB" root/usr/local/bin root/.disk root/home
+# Where bko-holt load mounts what it restores (its default --target): the
+# root is read-only, so the directory comes with the image.
+mkdir -p root/mnt/bko-target
 install -m 755 in/console in/remote-access "root$LIB/"
 install -m 755 in/restic-bko root/usr/local/bin/
 [ ! -f in/rustic-bko ] || install -m 755 in/rustic-bko root/usr/local/bin/

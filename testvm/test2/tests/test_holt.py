@@ -378,6 +378,12 @@ class U51RowsHolt(RecordsMixin, unittest.TestCase):
         row = self.build(os.path.dirname(rep), "debian13")
         self.assertFalse(row["valid"])
         self.assertIn("phases rebuild verify, not all four", row["note"])
+        # A refusal variant's whole run is source and rebuild.
+        t = rd(rep).replace("phases: rebuild verify", "phases: source rebuild")
+        wr(rep, t)
+        self.assertIn("phases source rebuild, not all four", self.build(os.path.dirname(rep), "debian13")["note"])
+        self.assertNotIn("phases", self.build(os.path.dirname(rep), "debian13-nearfull")["note"] or "")
+        self.assertEqual(rows_holt.cell_of("debian13-nearfull"), "holt:debian13+nearfull")
 
     def test_code_dir_and_variant(self):
         code = "c" * 64

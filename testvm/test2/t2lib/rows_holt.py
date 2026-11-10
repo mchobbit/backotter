@@ -49,7 +49,9 @@ SPEC = "testvm/test2/holt/spec.json"
 HOLT_BIN = "/bkoscratch/holttest1d/bin"
 RESCUERS = "/bkoscratch/holttest1d/rescuer"
 DRIVERS = {"ht1.sh": "linux", "ht1-bsd.sh": "bsd", "ht1-offline.sh": "offline"}
-VARIANTS = ("bigger", "oneshot", "degraded", "img")
+VARIANTS = ("bigger", "oneshot", "degraded", "img", "smaller", "fitbigger", "nearfull", "refuse")
+# HoltTest1's refusal variants (ht1.sh, ht1-offline.sh): source and rebuild are the whole run.
+REFUSALS = ("nearfull", "refuse")
 ALL_PHASES = ["source", "backup", "rebuild", "verify"]
 # Settings that change what a run checks or with what: such a run's row never counts (R7).
 DEBUG_ENV = ("HT_QUICK", "HT_THROUGH", "HT_KEEP", "HT_FAIL_AT", "HT_RESCUER", "HT_RESCUER_IMG",
@@ -825,8 +827,9 @@ def build(argv, hostctx=None):
             invalid.append(f"the tree changed during the run (tree {man['tree']} at its start, "
                            f"{commit[:7]}{'' if committed else '.dirty'} now)")
     asked = rep["phases"]
-    if asked is not None and asked != ALL_PHASES:
-        invalid.append("phases " + " ".join(asked) + ", not all four")
+    whole = ["source", "rebuild"] if cell.partition("+")[2] in REFUSALS else ALL_PHASES
+    if asked is not None and asked != whole:
+        invalid.append("phases " + " ".join(asked) + (", not source and rebuild" if whole != ALL_PHASES else ", not all four"))
     elif asked is None and not a.refused and not a.lost:
         invalid.append("the phases it ran are unknown (no HoltTest1 header line in report.txt)")
     if not a.refused and not a.lost and not man["driver"]:

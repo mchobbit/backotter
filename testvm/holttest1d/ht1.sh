@@ -120,6 +120,7 @@ case $VARIANT in
     nearfull|refuse)     DELTA=-$((1 << 30)); FIT=1; FITONLY=1 ;;
 esac
 if [[ -n $FITONLY ]]; then
+    HT_DONE_PHASE=rebuild   # ht1-lib's ht_end: the run is whole after it
     [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source rebuild)
     for p in "${PHASES[@]}"; do
         [[ $p == source || $p == rebuild ]] ||

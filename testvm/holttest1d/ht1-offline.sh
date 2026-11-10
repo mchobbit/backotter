@@ -50,6 +50,7 @@ DELTA=0 FIT_PCT=10
 [[ $VARIANT != bigger ]] || DELTA=$((1 << 30))
 [[ $VARIANT != refuse ]] || DELTA=-$((1 << 30))
 if [[ $VARIANT == refuse ]]; then
+    HT_DONE_PHASE=rebuild   # ht1-lib's ht_end: the run is whole after it
     [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source rebuild)
     for p in "${PHASES[@]}"; do
         [[ $p == source || $p == rebuild ]] ||

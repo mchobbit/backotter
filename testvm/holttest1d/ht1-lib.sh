@@ -880,7 +880,9 @@ ht_end() {  # RC
     ht_free "$R" "$GV" "$HT_MODE"
     ht_peaks_row "$rc" "$( ((code == 0)) && [[ -z $over ]] && echo PASS || echo FAIL)"
 
-    if [[ -n $over ]] || { ((code == 0)) && [[ " ${PHASES[*]} " == *" verify "* ]]; }; then
+    # A pass that ran its last phase: verify, or HT_DONE_PHASE (rebuild, for
+    # the refusal variants, whose whole run is source and rebuild).
+    if [[ -n $over ]] || { ((code == 0)) && [[ " ${PHASES[*]} " == *" ${HT_DONE_PHASE:-verify} "* ]]; }; then
         shopt -s nullglob
         for pat in "${HT_BULK[@]}"; do
             [[ -n $pat && $pat != /* && $pat != *..* ]] || continue
@@ -895,7 +897,7 @@ ht_end() {  # RC
         [[ -z $over ]] || kept="overrun: records only, $(date -u +%FT%TZ); harness: $over"
         echo "$kept; deleted ${HT_BULK[*]:-nothing}; zstd ${zipped[*]:-nothing}" >"$R/logs/kept.txt"
     else
-        echo "fail: everything kept (exit $rc${HT_SIG:+, SIG$HT_SIG}$( ((code == 0)) && echo ", no verify")), $(date -u +%FT%TZ)" >"$R/logs/kept.txt"
+        echo "fail: everything kept (exit $rc${HT_SIG:+, SIG$HT_SIG}$( ((code == 0)) && echo ", no ${HT_DONE_PHASE:-verify}")), $(date -u +%FT%TZ)" >"$R/logs/kept.txt"
     fi
 
     # R to K: copied into K.part (a full /bkoscratch can't leave half a run

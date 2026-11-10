@@ -263,7 +263,10 @@ its own (`RUN/GUEST-VARIANT`): `oneshot` runs the rebuild as one
 than the source's, judged with `judge.py --grow`, which lets only a disk's
 size, GPT's last usable LBA and backup header and the protective MBR move
 by exactly that much.  `smaller`, `fitbigger`, `nearfull` and `refuse` are
-"The fitting variants" below, for `load --fit-largest`.  `degraded` runs
+"The fitting variants" below, for `load --fit-largest`.  `img` (Test2's
+ImgTest2 panel; RAM only) rebuilds from the pinned BackOtter rescue image,
+`t2-host tool img pin`'s, instead of the rescuer, its own bko-holt and
+rustic-bko doing the load.  `degraded` runs
 the source with its last disk
 detached, a RAID member's, so its arrays are degraded when it is dumped
 and backed up; `load` recreates them with `missing` slots onto one disk
@@ -644,14 +647,16 @@ as root, no RAM disk) says why in its `.out` file only: its log,
 `queue/RUN/runner-HOST.log`, begins once it runs.
 
 - **todo** has a line per guest, `GUEST[+VARIANT][=D][%M]` (`#` starts a
-  comment): `+bigger`, `+oneshot`, `+degraded`, `+smaller`, `+fitbigger`,
-  `+nearfull` or `+refuse` is `HT_VARIANT`, and `=D`
+  comment): `+bigger`, `+oneshot`, `+degraded`, `+img`, `+smaller`,
+  `+fitbigger`, `+nearfull` or `+refuse` is `HT_VARIANT`, and `=D`
   and `%M` override ram-size.sh's sizes.  `ht1-queue.sh --order GUEST...`
   prints guests biggest first, for writing it.  Lines are taken from the
   top; a line that doesn't parse goes to `todo.bad`, and each line taken to
   `todo.taken`, with the host that took it.  A line waits while the same
-  guest (a variant of it included) runs on the host: vm-mount refuses a
-  second LVM volume group of one name.
+  guest (a variant of it included) runs on the host: both would mount at
+  `/mnt/ht1-src-GUEST` and `/mnt/ht1-dst-GUEST`, and vm-mount refuses the
+  second (its own LV names make LVM's no matter, but for a thin, cache,
+  RAID or snapshot group, which LVM still activates under its names).
 - **Reservations.** Each job runs under `cmp-run.sh --reserve D M`, with
   `HT_RAM=1`, so a job waits for its room rather than run on disk, and only
   one job of ours waits in the ledger's line at a time; one that has waited
@@ -777,8 +782,8 @@ minutes.  Confirm a fix with a normal run after.
 ## Not in HoltTest1D
 
 - The other systems: see "The HoltTest1 family".
-- `--new-uuids`; disks smaller than the source, or in a different number,
-  which is version 2 of `load`.
+- `--new-uuids`; disks in a different number, which is version 2 of
+  `load`.  Smaller disks only with `--fit-largest` ("The fitting variants").
 - Restoring onto the machine the stick runs on, or onto real hardware.
 - restic-bko: the test restores with rustic-bko only, as asked.  Adding
   restic-bko later means one more pass of steps 2 and 3.

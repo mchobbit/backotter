@@ -178,7 +178,7 @@ def _holt(w, args, known):
             if v in REFUSED_VARIANTS:
                 raise Refused(REFUSED_VARIANTS[v])
             if v not in VARIANTS:
-                raise Refused(f"no variant {t!r}: +bigger, +oneshot, +degraded or +img")
+                raise Refused(f"no variant {t!r}: +bigger, +oneshot, +degraded or +img (+smaller, +fitbigger, +nearfull and +refuse are HoltTest1's: ht1-queue.sh todo lines)")
             if w.all:
                 raise Refused("HoltTest2 +img runs the image cells; HoltTest2All has none" if v == "img"
                               else "HoltTest2All already runs every variant cell")

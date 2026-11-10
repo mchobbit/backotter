@@ -6,6 +6,10 @@
 set -uo pipefail
 # The last two are NixOS's, which has none of the others.
 export LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/run/current-system/sw/bin:/run/wrappers/bin
+# Our Python must leave no __pycache__ behind: on a fresh install (Debian 13)
+# the firmware check's imports were the first, and the manifest counted the
+# .pyc files they wrote into the restored system as added.
+export PYTHONDONTWRITEBYTECODE=1
 
 HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 # shellcheck disable=SC1091

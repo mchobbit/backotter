@@ -17,6 +17,7 @@ Exits 0 if all of that held.  Nothing outside WORK_DIR is written.
 
 import argparse
 import glob
+import json
 import importlib.util
 import os
 import shutil
@@ -88,6 +89,7 @@ def main():
     ap.add_argument("--port", type=int, default=2977)
     ap.add_argument("--virtio", action="store_true", help="the internal disk is virtio, for a guest whose initramfs has no NVMe driver")
     ap.add_argument("--bios", action="store_true", help="SeaBIOS, not OVMF")
+    ap.add_argument("--smaller", action="store_true", help="restore onto a blank disk 1 GiB smaller, with --fit-largest 10%%")
     ap.add_argument("--discard-on-pass", action="store_true", help="delete the disk images if it passes")
     ap.add_argument("--restores", type=int, default=1, help="how many times to restore the one backup")
     ap.add_argument("--earlier-restore", action="store_true", help="back up a system that shows it was restored once before (its /var/log/bko-holt)")
@@ -121,7 +123,9 @@ def main():
     w = a.work
     internal, drive_raw, drive, stick_raw, stick, vars_file = (f"{w}/internal.qcow2", f"{w}/drive.raw", f"{w}/drive.qcow2", f"{w}/stick.img", f"{w}/stick.qcow2", f"{w}/vars.fd")
     shutil.copy(f"{rw1a.OVMF}/{rw1a.VARS}", vars_file)
-    rw1a.overlay(internal, guest[0], "32G")
+    # --smaller: the source's real size, so that losing 1 GiB takes more than slack.
+    guest_size = json.loads(subprocess.run(["qemu-img", "info", "--output=json", guest[0]], capture_output=True, text=True, check=True).stdout)["virtual-size"]
+    rw1a.overlay(internal, guest[0], str(guest_size) if a.smaller else "32G")
     # Partitioned and formatted here: a guest fresh from its installer may have
     # neither sfdisk (Alpine) nor mkfs.ext4 (AerynOS).
     env = {**os.environ, "PATH": os.environ["PATH"] + ":/usr/sbin:/sbin"}
@@ -201,6 +205,11 @@ def main():
     bs1 = "sudo -n bash /mnt/bs1-backup/backshot1/"
     restores = f"/mnt/bs1-backup/backshot1/runs/{run}/restores"
     distro = run.rsplit("-", 2)[0]
+    fit = " --fit-largest 10" if a.smaller else ""
+    if a.smaller:
+        print("== the internal disk is replaced by a blank one 1 GiB smaller", flush=True)
+        os.remove(internal)
+        rw1a.overlay(internal, None, str(guest_size - (1 << 30)))
     for attempt in range(1, a.restores + 1):
         print(f"== rescue {attempt}: the stick", flush=True)
         vm = Vm(machine(f"rescue{attempt}", [rw1a.usb("stick", stick, "BKOSTICK", True), internal_disk(internal), usb_drive]), f"{w}/console-rescue{attempt}.log")
@@ -220,10 +229,10 @@ def main():
             _, before = rescue.run(fp)
             rc, out = rescue.run(f"{bs1}bs1-restore --erase-serial WRONGSERIAL {run}")
             check(rc != 0 and "isn't this machine's internal disk" in out, "a wrong serial is refused")
-            rc, out = rescue.show(f"{bs1}bs1-restore --erase-serial {SERIAL} --plan-only {run}")
+            rc, out = rescue.show(f"{bs1}bs1-restore --erase-serial {SERIAL} --plan-only{fit} {run}")
             check(rc == 0, "--plan-only passes")
             check(rescue.run(fp)[1] == before, "--plan-only changes nothing")
-        rc, _ = rescue.show(f"{bs1}bs1-restore --erase-serial {SERIAL} --detach {run}")
+        rc, _ = rescue.show(f"{bs1}bs1-restore --erase-serial {SERIAL} --detach{fit} {run}")
         check(rc == 0, "the detached restore starts")
         status = ""
         end = time.monotonic() + 3000

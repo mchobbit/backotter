@@ -2,7 +2,7 @@
 # BackShot1, phase 2: wipe the internal disk and restore it.  As root, on the
 # rescue stick, from the backup drive.
 #
-# Usage: bs1-restore --erase-serial SERIAL [--plan-only] [--detach] RUN
+# Usage: bs1-restore --erase-serial SERIAL [--plan-only] [--detach] [--fit-largest PCT] RUN
 #
 # SERIAL has to be the internal disk's, repeated here on purpose.  Reads the whole
 # backup again first, and wipes nothing unless that passes and the restore plan
@@ -20,16 +20,18 @@
 
 ERASE= PLAN_ONLY=no DETACH=no RUN_NAME= WIPED=no
 ARGS=()
+FIT=
 while [[ $# -gt 0 ]]; do
     case $1 in
         --erase-serial) ERASE=$2; ARGS+=("$1" "$2"); shift 2 ;;
         --plan-only) PLAN_ONLY=yes; ARGS+=("$1"); shift ;;
         --detach) DETACH=yes; shift ;;
+        --fit-largest) FIT=$2; ARGS+=("$1" "$2"); shift 2 ;;
         -*) echo "unknown option $1" >&2; exit 2 ;;
         *) RUN_NAME=$1; ARGS+=("$1"); shift ;;
     esac
 done
-[[ -n $RUN_NAME ]] || { echo "usage: $0 --erase-serial SERIAL [--plan-only] [--detach] RUN" >&2; exit 2; }
+[[ -n $RUN_NAME ]] || { echo "usage: $0 --erase-serial SERIAL [--plan-only] [--detach] [--fit-largest PCT] RUN" >&2; exit 2; }
 RUN=$RUNS/$RUN_NAME
 [[ -d $RUN ]] || { echo "no run $RUN" >&2; exit 2; }
 # Before anything is written: a refused restore isn't an attempt.
@@ -106,6 +108,7 @@ fi
 LOAD=("$BIN/bko-holt" load "$RUN/layout.json" --map "$disk=/dev/$disk" --erase "/dev/$disk"
       --repo "$RUN/repo" --password-file "$RUN/repo-password"
       --snapshot "latest:$SRC" --archiver "$BIN/rustic-bko")
+[[ -z $FIT ]] || LOAD+=(--fit-largest "$FIT")
 while read -r k; do
     [[ -n $k ]] || continue
     [[ -s ${k#*=} ]] || die "no passphrase file ${k#*=}"

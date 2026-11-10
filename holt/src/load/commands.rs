@@ -1809,14 +1809,15 @@ impl Builder<'_> {
     }
 
     /// Each btrfs's plan of shared snapshots (shared.rs), from its
-    /// subvolumes and the mounts the mount stage makes of it.  Without
-    /// --repo, or with --btrfs-snapshots copy, only its aliases.
+    /// subvolumes and the mounts the mount stage makes of it; with
+    /// --btrfs-snapshots copy, only its aliases.  Not by --repo: each stage
+    /// may run on its own (--only), and format's must be restore's.
     fn btrfs_plans(&mut self) {
         use crate::load::shared::{Mount, Sub};
         if self.fam.is_some() {
             return;
         }
-        let share = self.opts.repo.is_some() && !self.opts.btrfs_copy;
+        let share = !self.opts.btrfs_copy;
         for fs in self.layout.arr(&["storage", "btrfs"]).to_vec() {
             let Some(uuid) = s(&fs, "uuid") else { continue };
             let strip = |p: &str| p.trim_start_matches("<FS_TREE>/").trim_start_matches('/').to_string();
@@ -1829,6 +1830,7 @@ impl Builder<'_> {
                     Some(Sub {
                         path: strip(&s(v, "path")?),
                         id: v.get("id").and_then(Value::as_u64),
+                        gen: v.get("gen").and_then(Value::as_u64),
                         uuid: s(v, "uuid"),
                         parent_uuid: s(v, "parent_uuid"),
                         readonly: v.get("readonly").and_then(Value::as_bool) == Some(true),
@@ -1858,12 +1860,19 @@ impl Builder<'_> {
             let mut plan = crate::load::shared::plan(&subs, &mounts);
             if share {
                 self.notes.extend(plan.notes.iter().map(|n| format!("btrfs {uuid}: {n}")));
+                if self.opts.repo.is_none() && !plan.shared.is_empty() {
+                    let list: Vec<&str> = plan.shared.iter().map(|x| x.path.as_str()).collect();
+                    self.notes.push(format!(
+                        "btrfs {uuid}: the snapshots {} are made by the restore stage, with --repo; to restore by hand, give --btrfs-snapshots copy (format then makes them, for a restore in full)",
+                        list.join(", ")
+                    ));
+                }
             } else {
                 plan.shared.clear();
-                if self.opts.repo.is_none() {
-                    for a in &plan.aliases {
-                        self.notes.push(format!("btrfs {uuid}: {a} is a subvolume mounted elsewhere, seen again there: a restore by hand leaves it out"));
-                    }
+            }
+            if self.opts.repo.is_none() {
+                for a in &plan.aliases {
+                    self.notes.push(format!("btrfs {uuid}: {a} is a subvolume mounted elsewhere, seen again there: a restore by hand leaves it out"));
                 }
             }
             plan.notes.clear();
@@ -2065,21 +2074,42 @@ impl Builder<'_> {
         a.extend(["restore".into(), "--numeric-id".into()]);
         // Aliases and shared snapshots left out of the main restore.
         let globs: Vec<String> = self.btrfs.values().flat_map(|p| p.globs()).collect();
+        let aliases = self.btrfs.values().any(|p| !p.aliases.is_empty());
         let mut pre = Vec::new();
+        // What the archiver must have: --exact for shared snapshots,
+        // --target-metadata where an alias is left out.
+        let mut need = Vec::new();
         if self.btrfs.values().any(|p| !p.shared.is_empty()) {
+            need.push("--exact");
+        }
+        if aliases {
+            need.push("--target-metadata");
+        }
+        if !need.is_empty() {
             let arch = shell_quote(&self.opts.archiver);
+            let checks: Vec<String> = need.iter().map(|f| format!("grep -q -- '{f}' {RUN_DIR}/restore.help")).collect();
+            pre.push(Cmd::new(&["mkdir", "-p", RUN_DIR]));
             pre.push(
                 Cmd::new(&[
                     "sh",
                     "-c",
-                    &format!("{arch} restore --help 2>/dev/null | grep -q -- --exact || {{ echo \"{arch} has no restore --exact, which shared btrfs snapshots need: give --btrfs-snapshots copy, or use a newer one\" >&2; exit 1; }}"),
+                    &format!(
+                        "{arch} restore --help > {RUN_DIR}/restore.help 2>&1; {} || {{ echo \"{arch} has no restore {}, which this layout's btrfs needs: use rustic-bko 0.11.4+backotter.9 or newer\" >&2; exit 1; }}",
+                        checks.join(" && "),
+                        need.join(" and ")
+                    ),
                 ])
-                .why("shared btrfs snapshots need the archiver's restore --exact"),
+                .why(format!("the archiver's restore {}, for the btrfs snapshots and aliases", need.join(" and "))),
             );
+        }
+        if aliases {
+            a.push("--target-metadata".into());
         }
         if !globs.is_empty() {
             let file = format!("{RUN_DIR}/restore.globs");
-            pre.push(Cmd::new(&["mkdir", "-p", RUN_DIR]));
+            if need.is_empty() {
+                pre.push(Cmd::new(&["mkdir", "-p", RUN_DIR]));
+            }
             pre.push(Cmd::write_file(&file, globs.iter().map(|g| format!("{g}\n")).collect()).why("left out of the restore: btrfs subvolumes mounted elsewhere, seen again (aliases), and the contents of the shared snapshots, made after it"));
             a.extend(["--glob-file".into(), file]);
         }
@@ -2127,15 +2157,20 @@ impl Builder<'_> {
                 let mut r: Vec<String> = prefix.to_vec();
                 r.extend(["restore".into(), "--numeric-id".into(), "--exact".into()]);
                 if let Some((b, sub)) = &x.clone_from {
-                    r.extend(["--clone-from".into(), format!("{b}={top}/{sub}")]);
+                    r.extend(["--clone-from".into(), format!("{}={top}/{sub}", snapshot_path(&self.opts.snapshot, b).1)]);
                 }
-                r.extend([format!("{}:{}", self.opts.snapshot, x.backup), d.clone()]);
+                let (id, path) = snapshot_path(&self.opts.snapshot, &x.backup);
+                r.extend([format!("{id}:{path}"), d.clone()]);
                 let r = r.iter().map(|w| shell_quote(w)).collect::<Vec<_>>().join(" ");
                 let (qd, qb, qp, qpath) = (shell_quote(&d), shell_quote(&format!("{top}/{}", x.base)), shell_quote(&parent), x.path.replace('"', ""));
                 let id = x.new_id;
+                // The directory it's in keeps its times (snapper's N/, with
+                // info.xml), which rmdir and the snapshot would change.
                 let script = format!(
-                    "d={qd}; if [ -d \"$d\" ] && [ \"$(stat -c %i \"$d\")\" != 256 ] && [ -z \"$(ls -A \"$d\")\" ]; then rmdir \"$d\" && btrfs subvolume snapshot {qb} \"$d\" && RUSTIC_STRICT_EXIT=true {r}; \
-                     else mkdir -p {qp} && btrfs subvolume create \"$d\" && echo \"{qpath}: not in the backup; made empty\"; fi || exit; \
+                    "d={qd}; p={qp}; mkdir -p \"$p\" && touch -r \"$p\" {RUN_DIR}/times.ref || exit; \
+                     if [ -d \"$d\" ] && [ \"$(stat -c %i \"$d\")\" != 256 ] && [ -z \"$(ls -A \"$d\")\" ]; then rmdir \"$d\" && btrfs subvolume snapshot {qb} \"$d\" && RUSTIC_STRICT_EXIT=true {r}; \
+                     else btrfs subvolume create \"$d\" && echo \"{qpath}: not in the backup; made empty\"; fi || exit; \
+                     touch -r {RUN_DIR}/times.ref \"$p\" || exit; \
                      id=$(btrfs inspect-internal rootid \"$d\") && [ \"$id\" = {id} ] || echo \"{qpath}: ID $id here, {id} in the plan\""
                 );
                 let why = match x.id {
@@ -2167,6 +2202,20 @@ impl Builder<'_> {
 }
 
 // ---- boot, close --------------------------------------------------------
+
+/// The snapshot `--snapshot` names, and `path` (a path of the restored
+/// tree) as a path in it: below its own `ID:PATH`'s PATH, if it has one
+/// (a backup of a source mounted elsewhere, /mnt/src).
+fn snapshot_path(snapshot: &str, path: &str) -> (String, String) {
+    match snapshot.split_once(':') {
+        Some((id, sub)) if !sub.trim_end_matches('/').is_empty() => {
+            let sub = sub.trim_end_matches('/');
+            (id.to_string(), if path == "/" { sub.to_string() } else { format!("{sub}{path}") })
+        }
+        Some((id, _)) => (id.to_string(), path.to_string()),
+        None => (snapshot.to_string(), path.to_string()),
+    }
+}
 
 /// Every path's atime under the target (not the bind-mounted /dev, /proc,
 /// /sys, /run): "before" lists them to RUN_DIR/atimes.before (the restore
@@ -2576,6 +2625,31 @@ mod tests {
 
     fn text(cmds: &[Cmd]) -> String {
         cmds.iter().map(Cmd::shell).collect()
+    }
+
+    #[test]
+    fn snapshot_paths() {
+        assert_eq!(snapshot_path("latest", "/.snapshots/2/snapshot"), ("latest".into(), "/.snapshots/2/snapshot".into()));
+        assert_eq!(snapshot_path("latest:/mnt/src", "/.snapshots/2/snapshot"), ("latest".into(), "/mnt/src/.snapshots/2/snapshot".into()));
+        assert_eq!(snapshot_path("1a2b:/mnt/src/", "/"), ("1a2b".into(), "/mnt/src".into()));
+        assert_eq!(snapshot_path("1a2b:/", "/home"), ("1a2b".into(), "/home".into()));
+    }
+
+    #[test]
+    fn shared_snapshots_whatever_the_stage() {
+        // format without --repo plans what restore with it does.
+        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/tumbleweed/src.json")).unwrap();
+        let fmt = |extra: &[&str]| {
+            let b = built_from(&j, extra);
+            text(b.stage(Stage::Format))
+        };
+        let a = fmt(&[]);
+        assert_eq!(a, fmt(&["--repo", "/r", "--snapshot", "latest:/mnt/src"]));
+        assert!(!a.contains(".snapshots/2/snapshot"), "{a}");
+        assert!(fmt(&["--repo", "/r", "--btrfs-snapshots", "copy"]).contains("@/.snapshots/2/snapshot"));
+        let r = text(built_from(&j, &["--repo", "/r", "--snapshot", "latest:/mnt/src"]).stage(Stage::Restore));
+        assert!(r.contains("latest:/mnt/src/.snapshots/2/snapshot "), "{r}");
+        assert!(r.contains("--clone-from /mnt/src=/run/bko-holt/btrfs/"), "{r}");
     }
 
     #[test]

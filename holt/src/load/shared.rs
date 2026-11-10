@@ -12,6 +12,9 @@ pub struct Sub {
     /// Its path from the top level, without `<FS_TREE>/`.
     pub path: String,
     pub id: Option<u64>,
+    /// The generation it was last written in: a snapshot's creation, for
+    /// one never written after (snapper's read-only ones).
+    pub gen: Option<u64>,
     pub uuid: Option<String>,
     pub parent_uuid: Option<String>,
     pub readonly: bool,
@@ -50,7 +53,8 @@ pub struct Shared {
 pub struct Plan {
     /// Backup paths where a mounted subvolume shows up a second time.
     pub aliases: Vec<String>,
-    /// In the source's ID order.
+    /// In the order they are made: their contents' (`gen`), which is the
+    /// source's ID order but after a rollback.
     pub shared: Vec<Shared>,
     pub notes: Vec<String>,
 }
@@ -64,13 +68,14 @@ impl Plan {
         self.shared.iter().find(|s| s.path == path)
     }
 
-    /// The main restore's exclusions, as `--glob-file` lines: an alias and
-    /// everything below it; below a shared snapshot's directory, everything
-    /// (the directory itself stays, empty, which says the backup has it).
-    /// A glob excludes only what it matches, not what is below it: hence
+    /// The main restore's exclusions, as `--glob-file` lines: everything
+    /// below an alias (its directory stays: the subvolume's root, whose
+    /// metadata a backup of `/` holds only there) and below a shared
+    /// snapshot's directory (which stays, empty: the backup has it).  A
+    /// glob excludes only what it matches, not what is below it: hence
     /// `/**`.
     pub fn globs(&self) -> Vec<String> {
-        let mut g: Vec<String> = self.aliases.iter().flat_map(|a| [format!("!{a}"), format!("!{a}/**")]).collect();
+        let mut g: Vec<String> = self.aliases.iter().map(|a| format!("!{a}/**")).collect();
         g.extend(self.shared.iter().map(|s| format!("!{}/**", s.backup)));
         g
     }
@@ -153,7 +158,10 @@ pub fn plan(subs: &[Sub], mounts: &[Mount]) -> Plan {
         .filter(|s| !mounted.contains(s.path.as_str()))
         .filter(|s| s.parent_uuid.as_deref().is_some_and(|p| by_uuid.contains_key(p)) || snapper_slot(&s.path).is_some())
         .collect();
-    cands.sort_by_key(|s| (s.id.unwrap_or(u64::MAX), s.path.clone()));
+    // In the order their contents were last written: a chain from one to
+    // the next changes least.  It is the ID order but after a rollback,
+    // where snapper's old root (1) was written last of all.
+    cands.sort_by_key(|s| (s.gen.unwrap_or(u64::MAX), s.id.unwrap_or(u64::MAX), s.path.clone()));
     let mut accepted: Vec<(String, Shared)> = Vec::new(); // (family, shared)
     for s in cands {
         let Some(backup) = backup_path(mounts, &s.path) else { continue };
@@ -216,7 +224,7 @@ mod tests {
     use super::*;
 
     fn sub(path: &str, id: u64, uuid: &str, parent: Option<&str>, ro: bool) -> Sub {
-        Sub { path: path.into(), id: Some(id), uuid: Some(uuid.into()), parent_uuid: parent.map(str::to_string), readonly: ro }
+        Sub { path: path.into(), id: Some(id), gen: Some(id), uuid: Some(uuid.into()), parent_uuid: parent.map(str::to_string), readonly: ro }
     }
 
     fn m(target: &str, subvol: &str) -> Mount {
@@ -249,7 +257,7 @@ mod tests {
         assert_eq!((s.backup.as_str(), s.base.as_str(), s.new_id, s.readonly), ("/.snapshots/2/snapshot", "@/.snapshots/1/snapshot", 265, true));
         assert!(s.placeholders.is_empty());
         assert_eq!(s.clone_from, Some(("/".into(), "@/.snapshots/1/snapshot".into())));
-        assert_eq!(p.globs(), vec!["!/.snapshots/1/snapshot".to_string(), "!/.snapshots/1/snapshot/**".into(), "!/.snapshots/2/snapshot/**".into()]);
+        assert_eq!(p.globs(), vec!["!/.snapshots/1/snapshot/**".to_string(), "!/.snapshots/2/snapshot/**".into()]);
         assert!(p.notes.is_empty());
     }
 
@@ -279,27 +287,28 @@ mod tests {
     fn after_a_rollback() {
         // snapper rollback 2: 3 is the old root's read-only copy, 4 the new
         // root (read-write, a snapshot of 2), the default and mounted at /.
-        let p = plan(
-            &suse(&[
-                sub("@/.snapshots/2/snapshot", 265, "u265", Some("u264"), true),
-                sub("@/.snapshots/3/snapshot", 266, "u266", Some("u264"), true),
-                sub("@/.snapshots/4/snapshot", 267, "u267", Some("u265"), false),
-            ]),
-            &suse_mounts("@/.snapshots/4/snapshot"),
-        );
+        // The old root, 1, was written until the rollback: its gen is 3's.
+        let mut subs = suse(&[
+            sub("@/.snapshots/2/snapshot", 265, "u265", Some("u264"), true),
+            sub("@/.snapshots/3/snapshot", 266, "u266", Some("u264"), true),
+            sub("@/.snapshots/4/snapshot", 267, "u267", Some("u265"), false),
+        ]);
+        subs.iter_mut().find(|s| s.id == Some(264)).unwrap().gen = Some(266);
+        let p = plan(&subs, &suse_mounts("@/.snapshots/4/snapshot"));
         assert_eq!(p.aliases, vec!["/.snapshots/4/snapshot".to_string()]);
         let got: Vec<(&str, &str, u64)> = p.shared.iter().map(|s| (s.path.as_str(), s.base.as_str(), s.new_id)).collect();
-        // 1 (the old root, no parent) is snapper's slot, made from the live root.
+        // In the order of their contents: 2 (made from the live root, as 1,
+        // snapper's slot without a parent, comes later), 1, then 3 (1's copy).
         assert_eq!(
             got,
             vec![
-                ("@/.snapshots/1/snapshot", "@/.snapshots/4/snapshot", 268),
-                ("@/.snapshots/2/snapshot", "@/.snapshots/1/snapshot", 269),
-                ("@/.snapshots/3/snapshot", "@/.snapshots/2/snapshot", 270),
+                ("@/.snapshots/2/snapshot", "@/.snapshots/4/snapshot", 268),
+                ("@/.snapshots/1/snapshot", "@/.snapshots/2/snapshot", 269),
+                ("@/.snapshots/3/snapshot", "@/.snapshots/1/snapshot", 270),
             ]
         );
         assert_eq!(p.notes.len(), 3, "{:?}", p.notes);
-        assert!(p.notes[0].contains("ID 264 on the source, 268 here"), "{:?}", p.notes);
+        assert!(p.notes.iter().any(|n| n.starts_with("@/.snapshots/1/snapshot: ID 264 on the source, 269 here")), "{:?}", p.notes);
     }
 
     #[test]

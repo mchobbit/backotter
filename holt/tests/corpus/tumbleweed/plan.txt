@@ -77,22 +77,21 @@ mkdir -p /mnt/bko-target/usr/local
 mount -t btrfs -o subvol=/@/usr/local /dev/sdq3 /mnt/bko-target/usr/local
 
 # ---- restore ----
-# shared btrfs snapshots need the archiver's restore --exact
-sh -c 'rustic-bko restore --help 2>/dev/null | grep -q -- --exact || { echo "rustic-bko has no restore --exact, which shared btrfs snapshots need: give --btrfs-snapshots copy, or use a newer one" >&2; exit 1; }'
 mkdir -p /run/bko-holt
+# the archiver's restore --exact and --target-metadata, for the btrfs snapshots and aliases
+sh -c 'rustic-bko restore --help > /run/bko-holt/restore.help 2>&1; grep -q -- '\''--exact'\'' /run/bko-holt/restore.help && grep -q -- '\''--target-metadata'\'' /run/bko-holt/restore.help || { echo "rustic-bko has no restore --exact and --target-metadata, which this layout'\''s btrfs needs: use rustic-bko 0.11.4+backotter.9 or newer" >&2; exit 1; }'
 # left out of the restore: btrfs subvolumes mounted elsewhere, seen again (aliases), and the contents of the shared snapshots, made after it
 cat > /run/bko-holt/restore.globs <<'EOF'
-!/.snapshots/1/snapshot
 !/.snapshots/1/snapshot/**
 !/.snapshots/2/snapshot/**
 EOF
 # snapshot latest of /srv/bko-repo, with BackOtter's restore flags
-RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id --glob-file /run/bko-holt/restore.globs latest /mnt/bko-target
+RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id --target-metadata --glob-file /run/bko-holt/restore.globs latest /mnt/bko-target
 mkdir -p /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
 # btrfs bc000000-0000-4000-8000-000000000004: its shared snapshots (noatime: reading them changes nothing)
 mount -t btrfs -o subvolid=5,noatime /dev/sdq3 /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
 # @/.snapshots/2/snapshot: a snapshot of @/.snapshots/1/snapshot, then made exact from the backup's /.snapshots/2/snapshot (ID 265, as on the source)
-sh -c 'd=/run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/2/snapshot; if [ -d "$d" ] && [ "$(stat -c %i "$d")" != 256 ] && [ -z "$(ls -A "$d")" ]; then rmdir "$d" && btrfs subvolume snapshot /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/1/snapshot "$d" && RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id --exact --clone-from /=/run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/1/snapshot latest:/.snapshots/2/snapshot /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/2/snapshot; else mkdir -p /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/2 && btrfs subvolume create "$d" && echo "@/.snapshots/2/snapshot: not in the backup; made empty"; fi || exit; id=$(btrfs inspect-internal rootid "$d") && [ "$id" = 265 ] || echo "@/.snapshots/2/snapshot: ID $id here, 265 in the plan"'
+sh -c 'd=/run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/2/snapshot; p=/run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/2; mkdir -p "$p" && touch -r "$p" /run/bko-holt/times.ref || exit; if [ -d "$d" ] && [ "$(stat -c %i "$d")" != 256 ] && [ -z "$(ls -A "$d")" ]; then rmdir "$d" && btrfs subvolume snapshot /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/1/snapshot "$d" && RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id --exact --clone-from /=/run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/1/snapshot latest:/.snapshots/2/snapshot /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/2/snapshot; else btrfs subvolume create "$d" && echo "@/.snapshots/2/snapshot: not in the backup; made empty"; fi || exit; touch -r /run/bko-holt/times.ref "$p" || exit; id=$(btrfs inspect-internal rootid "$d") && [ "$id" = 265 ] || echo "@/.snapshots/2/snapshot: ID $id here, 265 in the plan"'
 btrfs property set -ts /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/2/snapshot ro true
 btrfs quota enable /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
 btrfs quota rescan -w /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004

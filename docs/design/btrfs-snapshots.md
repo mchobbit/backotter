@@ -101,15 +101,17 @@ time.
   any other shared snapshot, those with the same origin (`parent_uuid`).
 - **Base** of a shared snapshot: the subvolume it is snapshotted from before
   its changes are restored.  In order of preference:
-  1. the family member before it, in ID order (consecutive snapper snapshots
-     differ least);
+  1. the family member before it, in the order their contents were last
+     written (`gen`; consecutive snapper snapshots differ least).  That is
+     ID order, but after a rollback, where snapper's old root (`1`) was
+     written last;
   2. its origin, if that is restored before it (mounted, or an earlier shared
      snapshot);
   3. for a snapper slot, the subvolume mounted at `X`, the directory that
      holds the `.snapshots`.
 
-  ID order is creation order.  For snapper it is the same order as the
-  snapshots' numbers and their `ogen`.
+  Made in that order too; a snapshot keeps its source ID when nothing
+  made before it took a later one.
 - **Clone source**: the restored tree of the family's live subvolume (for
   snapper, the subvolume mounted at `X`).  It is passed to each snapshot's
   restore as `--clone-from`, below.
@@ -202,9 +204,14 @@ snapper's `info.xml` files sit in `@/.snapshots/N/`, outside the snapshot
 subvolumes, so the main restore puts them back as before.  Nothing special
 is needed for them.
 
-Without `--repo` (the administrator restores by hand), nothing changes:
-snapshots are made in `format` as today.  The plan's note says which paths to
-leave out of the restore: the aliases.
+Which snapshots are shared depends on the layout and `--btrfs-snapshots`
+only, never on `--repo`: each stage may run on its own (`--only`, as
+HoltTest1 runs them), and `format` must leave out what `restore` will make.
+Without `--repo` the plan's notes say so, and which paths a restore by hand
+leaves out (the aliases); restoring by hand, give `--btrfs-snapshots copy`,
+and `format` makes the snapshots for a restore in full.  A `--snapshot
+ID:PATH` (a backup of a source mounted at PATH) puts each snapshot's path,
+and `--clone-from`'s, below PATH.
 
 New option: `--btrfs-snapshots shared|copy`, default `shared`.  `copy` is
 today's behaviour, aliases left out.  It's for a stick whose rustic-bko

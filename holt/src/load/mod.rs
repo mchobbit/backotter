@@ -166,7 +166,7 @@ pub const USAGE: &str = "Usage: bko-holt load LAYOUT.json [--through STAGE | --o
                      [--target DIR] [--new-uuids] [--key-file NAME=FILE]...
                      [--no-nvram] [--removable]
                      [--repo REPO [--password-file FILE] [--snapshot ID]
-                      [--archiver PROGRAM] [--btrfs-snapshots shared|copy]]
+                      [--archiver PROGRAM]] [--btrfs-snapshots shared|copy]
 
 Rebuilds the disks LAYOUT.json (from `bko-holt dump`) describes, in stages:
 
@@ -214,7 +214,9 @@ Rebuilds the disks LAYOUT.json (from `bko-holt dump`) describes, in stages:
                     (snapper's) are made as snapshots of the one before
                     them, then only their changes restored, so they share
                     their extents; needs rustic-bko's restore --exact.
-                    copy: each is restored in full
+                    copy: each is restored in full.  Give every stage
+                    the same (format and restore must agree); to restore
+                    by hand, give copy
   -h, --help        show this help
 
 Exit status: 0 done, 1 a stage failed, 2 bad arguments, 3 the layout isn't
@@ -309,8 +311,8 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
     if o.through.is_some() && o.only.is_some() {
         return Err("--through and --only don't go together".into());
     }
-    if o.repo.is_none() && (o.password_file.is_some() || o.snapshot != DEFAULT_SNAPSHOT || o.archiver != DEFAULT_ARCHIVER || o.btrfs_copy) {
-        return Err("--password-file, --snapshot, --archiver and --btrfs-snapshots are for restore; give --repo too".into());
+    if o.repo.is_none() && (o.password_file.is_some() || o.snapshot != DEFAULT_SNAPSHOT || o.archiver != DEFAULT_ARCHIVER) {
+        return Err("--password-file, --snapshot and --archiver are for restore; give --repo too".into());
     }
     if o.repo.is_none() && o.stages().contains(&Stage::Restore) {
         return Err(format!(

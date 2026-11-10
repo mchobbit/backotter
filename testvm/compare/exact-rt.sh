@@ -85,6 +85,9 @@ setfattr -x user.color "$L/etc/h1"
 btrfs -q subvolume snapshot -r "$L" "$ST/@/.snapshots/3/snapshot"
 # State C (the live tree)
 echo "CCCC" >>"$L/etc/cfg"
+# Labels the live tree has and the snapshots don't (Tumbleweed's): the
+# snapshots made from it must lose them.
+setfattr -n security.selinux -v 'system_u:object_r:etc_t:s0' "$L/etc/cfg" "$L/etc/h1" "$L/usr/lib/big.so"
 rnd "$L/usr/lib/live-only.bin" $((8 << 20))
 sync
 mount -o noatime,subvol=@/.snapshots/1/snapshot "$SRC_LOOP" "$S"
@@ -107,18 +110,20 @@ umount "$DT"
 mount -o subvol=@/.snapshots/1/snapshot "$DST_LOOP" "$T"
 mkdir -p "$T/.snapshots"
 mount -o subvol=@/.snapshots "$DST_LOOP" "$T/.snapshots"
-printf '%s\n' '!/.snapshots/1/snapshot' '!/.snapshots/1/snapshot/**' '!/.snapshots/2/snapshot/**' '!/.snapshots/3/snapshot/**' >"$WORK/globs"
-RUSTIC_STRICT_EXIT=true "$R" -r "$REPO" restore --numeric-id --glob-file "$WORK/globs" "$SNAP" "$T" >"$WORK/restore-main.log" 2>&1 ||
+printf '%s\n' '!/.snapshots/1/snapshot/**' '!/.snapshots/2/snapshot/**' '!/.snapshots/3/snapshot/**' >"$WORK/globs"
+RUSTIC_STRICT_EXIT=true "$R" -r "$REPO" restore --numeric-id --target-metadata --glob-file "$WORK/globs" "$SNAP" "$T" >"$WORK/restore-main.log" 2>&1 ||
     { cat "$WORK/restore-main.log"; bad "the main restore failed"; }
 mount -o subvolid=5,noatime "$DST_LOOP" "$DT"
 base=@/.snapshots/1/snapshot
 for n in 2 3; do
     d=$DT/@/.snapshots/$n/snapshot
     [ -d "$d" ] && [ -z "$(ls -A "$d")" ] || bad "the main restore didn't leave $n/snapshot empty"
+    touch -r "${d%/*}" "$WORK/times.ref"
     rmdir "$d"
     btrfs -q subvolume snapshot "$DT/$base" "$d"
     RUSTIC_STRICT_EXIT=true "$R" -r "$REPO" restore --numeric-id --exact --clone-from "/=$DT/@/.snapshots/1/snapshot" \
         "$SNAP:/.snapshots/$n/snapshot" "$d" >"$WORK/restore-$n.log" 2>&1 || { cat "$WORK/restore-$n.log"; bad "snapshot $n's restore failed"; }
+    touch -r "$WORK/times.ref" "${d%/*}"
     base=@/.snapshots/$n/snapshot
 done
 
@@ -133,6 +138,8 @@ for n in 1 2 3; do
     manifest "$DT/@/.snapshots/$n/snapshot" | { [ $n = 1 ] && grep -v '^\.snapshots ' || cat; } >"$WORK/dst-$n.m"
     diff "$WORK/src-$n.m" "$WORK/dst-$n.m" >"$WORK/diff-$n" || { head -20 "$WORK/diff-$n"; bad "tree $n differs"; }
 done
+ manifest_top() { (cd "$1" && for n in 2 3; do stat -c "%n %Y %X %a" "$n" "$n/info.xml"; done); }
+[ "$(manifest_top "$ST/@/.snapshots")" = "$(manifest_top "$DT/@/.snapshots")" ] || bad "snapper's N/ directories' times differ"
 grep -q "AAAA" "$DT/@/.snapshots/2/snapshot/etc/trick" || bad "same size and mtime, other contents: not fixed"
 # Cloned: pkg-v2.bin in 3 is the live tree's extent.
 phys() { filefrag -v "$1" | awk '$1 == "0:" { print $4; exit }'; }

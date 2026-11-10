@@ -352,7 +352,7 @@ class TestJudgeExpect(unittest.TestCase):
             dst["boot"]["efi"]["entries"].append({"number": "0009", "description": "UEFI Misc Device 2", "device_path": ["PciRoot(0x0)/Pci(0x5,0x0)"]})
             dump(dst, b)
             self.assertEqual(self.judge("--expect", a, b).returncode, 1)
-            r = self.judge("--expect", "--removable", "--nvram-kept", a, b)
+            r = self.judge("--expect", "--grow", "0", "--removable", "--nvram-kept", a, b)
             self.assertEqual(r.returncode, 0, r.stdout)
 
 

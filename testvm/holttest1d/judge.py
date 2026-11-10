@@ -696,9 +696,10 @@ def main():
         judge_fs(*sys.argv[2:5], no_atime="--no-atime" in sys.argv[5:], new_uuids="--new-uuids" in sys.argv[5:])
     grow, fit, pct, plan_only = 0, None, None, None
     flags = set()
-    while sys.argv[1] in ("--expect", "--new-uuids", "--removable", "--nvram-kept"):
-        flags.add(sys.argv.pop(1))
-    while sys.argv[1] in ("--grow", "--fit", "--fit-pct", "--fit-plan"):
+    while sys.argv[1] in ("--expect", "--new-uuids", "--removable", "--nvram-kept", "--grow", "--fit", "--fit-pct", "--fit-plan"):
+        if sys.argv[1] in ("--expect", "--new-uuids", "--removable", "--nvram-kept"):
+            flags.add(sys.argv.pop(1))
+            continue
         if sys.argv[1] == "--grow":
             grow = int(sys.argv[2])
         elif sys.argv[1] == "--fit":

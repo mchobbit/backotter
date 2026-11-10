@@ -56,6 +56,26 @@ fn s(v: &Value, k: &str) -> Option<String> {
     v.get(k).and_then(Value::as_str).map(str::to_string)
 }
 
+/// The rescue stick's config partition's FAT label (stick-config.md), as
+/// load/target.rs has it for Linux: a disk with it is the stick.
+const STICK_CONFIG_LABEL: &str = "BACKOTTER";
+
+/// A DragonFly slice's disklabel64 name (its d_packname), read off the
+/// slice: what devfs shows as /dev/part-by-label/NAME.LETTER.  The label
+/// is in the slice's first sectors (the second, as disklabel64 writes it).
+fn label64_name(slice: &dyn crate::bytes::ByteSource) -> Option<String> {
+    const DISKMAGIC64: u32 = 0xc446_4c59;
+    (0..16u64).find_map(|i| {
+        let b = slice.read_exact_at(i * 512, 512)?;
+        (crate::bytes::le32(&b, 0) == DISKMAGIC64).then(|| crate::bytes::label(crate::bytes::sub(&b, 72, 64)))?
+    })
+}
+
+/// A partition's MBR type ("0xa5"), when it is an MBR's.
+fn mbr_type(f: &Found) -> Option<&str> {
+    f.json.0.iter().find(|(k, _)| k == "type").and_then(|(_, v)| v.as_str())
+}
+
 /// The disks here, read as `dump` reads them, for load's checks.
 pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
     let raw: Vec<RawDisk> = match fam {
@@ -109,8 +129,11 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
     let mut seen: Vec<(RawDisk, Vec<Found>, Vec<(String, String)>)> = Vec::new();
     let mut tables = Vec::new();
     let mut whole = Vec::new();
+    // What a mount's device may name inside a slice, beyond the disk's own
+    // partitions: FreeBSD's bsdlabel partitions (vtbd0s2a), for resolve.
+    let mut inner: Vec<Vec<Found>> = Vec::new();
     for d in raw {
-        let (table, found, labels, w) = match open(sys, &d) {
+        let (table, found, labels, w, x) = match open(sys, &d) {
             Some(src) => {
                 let name = d.name.clone();
                 let (t, f) = read_disk(&src, &d, &|n, t| match fam {
@@ -120,17 +143,35 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
                     Family::Illumos => super::illumos::slice_name(&name, n),
                     _ => format!("{name}:{n}"),
                 });
-                let labels: Vec<(String, String)> =
-                    f.iter().filter_map(|p| super::glabel(&crate::bytes::OffsetSource { inner: &src, start: p.start, len: p.size }).map(|l| (p.name.clone(), l))).collect();
+                let part = |p: &Found| crate::bytes::OffsetSource { inner: &src, start: p.start, len: p.size };
+                let mut labels: Vec<(String, String)> = f.iter().filter_map(|p| super::glabel(&part(p)).map(|l| (p.name.clone(), l))).collect();
+                let mut x = Vec::new();
+                for p in &f {
+                    match (fam, mbr_type(p)) {
+                        // FreeBSD's rescue image: / is the "a" of slice 2's bsdlabel.
+                        (Family::FreeBsd, Some("0xa5")) => {
+                            for (letter, start, len) in freebsd::bsdlabel_parts(&part(p)) {
+                                let contents = crate::probe::probe_all(&crate::bytes::OffsetSource { inner: &src, start: p.start + start, len });
+                                x.push(Found { name: format!("{}{letter}", p.name), number: p.number, start: p.start + start, size: len, json: crate::json::Obj::new(), contents });
+                            }
+                        }
+                        // DragonFly's: / is part-by-label/NAME.a, NAME slice 2's disklabel64's.
+                        (Family::DragonFly, Some("0x6c")) => labels.extend(label64_name(&part(p)).map(|l| (p.name.clone(), l))),
+                        _ => {}
+                    }
+                }
                 let w = if t.is_none() { crate::probe::probe_all(&src) } else { Vec::new() };
-                (t, f, labels, w)
+                (t, f, labels, w, x)
             }
-            None => (None, Vec::new(), Vec::new(), Vec::new()),
+            None => (None, Vec::new(), Vec::new(), Vec::new(), Vec::new()),
         };
         tables.push(table);
         whole.push(w);
+        inner.push(x);
         seen.push((d, found, labels));
     }
+    let rseen: Vec<(RawDisk, Vec<Found>, Vec<(String, String)>)> =
+        seen.iter().zip(&inner).map(|((d, f, l), x)| (d.clone(), f.iter().chain(x).cloned().collect(), l.clone())).collect();
     let mut disks = Vec::new();
     for (i, (d, found, _)) in seen.iter().enumerate() {
         let b = BlockDev { name: d.name.clone(), kind: Kind::Disk, size_bytes: d.size, logical_block_size: d.sector, physical_block_size: d.sector, model: d.model.clone(), serial: d.serial.clone(), ..BlockDev::default() };
@@ -149,8 +190,10 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
                 }
             }
         }
-        // A disklabel partition (ld1a, sd1a) or a wedge is this disk's too.
-        // A slice, disklabel partition or wedge of this disk is it too.
+        // A slice or disklabel partition of this disk (ld1a, sd1a, vtbd0s2a)
+        // is it too.  NetBSD's wedges (dkN) aren't named after their disk,
+        // so a mount of one isn't tied to it here: a NetBSD stick is known
+        // by its config partition (boot_medium, below).
         let mine = |n: &str| n == d.name || found.iter().any(|f| f.name == n) || (n.starts_with(&d.name) && n[d.name.len()..].starts_with(|c: char| !c.is_ascii_digit()));
         let mut in_use = Vec::new();
         let mut holds_root = false;
@@ -168,7 +211,7 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
         }).collect::<Vec<_>>().iter() {
             let haiku = (fam == Family::Haiku).then(|| m.spec.rsplit_once('/').map(|(dir, i)| format!("{}_{i}", super::haiku::name_of(dir)))).flatten();
             let Some(dev) = haiku
-                .or_else(|| freebsd::resolve(&m.spec, &seen))
+                .or_else(|| freebsd::resolve(&m.spec, &rseen))
                 .or_else(|| m.spec.strip_prefix("/dev/dsk/").or_else(|| m.spec.strip_prefix("/dev/")).map(str::to_string))
                 .or_else(|| (!m.spec.contains('/') && m.spec.starts_with(&d.name)).then(|| m.spec.clone()))
             else {
@@ -185,7 +228,7 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
             }
         }
         for sw in &swaps {
-            if let Some(dev) = freebsd::resolve(sw, &seen).or_else(|| sw.strip_prefix("/dev/").map(str::to_string)).filter(|x| mine(x)) {
+            if let Some(dev) = freebsd::resolve(sw, &rseen).or_else(|| sw.strip_prefix("/dev/").map(str::to_string)).filter(|x| mine(x)) {
                 in_use.push(format!("{dev} is in use as swap"));
             }
         }
@@ -197,7 +240,10 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
                 holds_root = true;
             }
         }
-        disks.push(TargetDisk { b, parts, table: tables[i].clone(), signatures, uuids, in_use, boot_medium: false, holds_root });
+        // The stick: its config partition's label, on every system (illumos'
+        // root is a RAM disk, so nothing mounted names the stick there).
+        let boot_medium = found.iter().chain(&inner[i]).flat_map(|f| f.contents.iter()).chain(whole[i].iter()).any(|c| c.label.as_deref() == Some(STICK_CONFIG_LABEL));
+        disks.push(TargetDisk { b, parts, table: tables[i].clone(), signatures, uuids, in_use, boot_medium, holds_root });
     }
     System { disks, mounts, pools }
 }
@@ -521,5 +567,174 @@ impl Builder<'_> {
         let _ = mps;
         out.extend(self.closers.iter().rev().cloned());
         out
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::parttable::build::mbr_entry;
+    use crate::sys::FakeRunner;
+    use crate::testutil::Tree;
+
+    const ROOT_LABEL: &str = "BACKOTTER-0123abcd";
+    const L64_NAME: &str = "BKO_0123456789abcdef0123456789abcdef";
+
+    fn opts() -> Options {
+        match crate::load::parse_args(&["l.json".to_string()]).unwrap() {
+            crate::load::Parsed::Run(o) => o,
+            _ => unreachable!(),
+        }
+    }
+
+    /// FreeBSD's rescue image as its build.sh lays it out, shrunk: slice 2 a
+    /// bsdlabel whose "a", 16 sectors in, is the UFS2 root; slice 3 the
+    /// config partition (with `config`).  1 MiB.
+    fn freebsd_stick(config: bool) -> Vec<u8> {
+        let mut img = vec![0u8; 2048 * 512];
+        mbr_entry(&mut img[..512], 1, 0x80, 0xa5, 64, 400);
+        let l = &mut img[65 * 512..66 * 512];
+        l[0..4].copy_from_slice(&0x8256_4557u32.to_le_bytes());
+        l[40..44].copy_from_slice(&512u32.to_le_bytes());
+        l[132..136].copy_from_slice(&0x8256_4557u32.to_le_bytes());
+        l[138..140].copy_from_slice(&8u16.to_le_bytes());
+        l[148..152].copy_from_slice(&384u32.to_le_bytes());
+        l[152..156].copy_from_slice(&16u32.to_le_bytes());
+        l[180..184].copy_from_slice(&400u32.to_le_bytes());
+        let ufs = crate::probe::ufs::sample::image(ROOT_LABEL);
+        img[80 * 512..80 * 512 + ufs.len()].copy_from_slice(&ufs);
+        if config {
+            mbr_entry(&mut img[..512], 2, 0, 0x06, 1024, 1024);
+            let fat = crate::probe::fat::sample::fat16(1024, 0x3f2a_9c71, STICK_CONFIG_LABEL);
+            img[1024 * 512..].copy_from_slice(&fat);
+        }
+        img
+    }
+
+    fn freebsd_sys(t: &Tree, mounts: &str) -> Sys {
+        let info = |n: &str| format!("{n}\n\t512         \t# sectorsize\n\t1048576     \t# mediasize in bytes (1.0M)\n");
+        let r = FakeRunner::default()
+            .with("sysctl -n kern.disks", "vtbd1 vtbd0")
+            .with("diskinfo -v vtbd0", &info("vtbd0"))
+            .with("diskinfo -v vtbd1", &info("vtbd1"))
+            .with("mount -p", mounts);
+        Sys::new(t.root(), Box::new(r), true)
+    }
+
+    #[test]
+    fn the_freebsd_stick_holds_root_and_is_the_boot_medium() {
+        // Its / is /dev/ufs/BACKOTTER-...: the bsdlabel's "a" (defect d), and
+        // its config partition says it's the stick (defect b).
+        let t = Tree::new("other-load-fbsd");
+        t.file("/dev/vtbd0", freebsd_stick(true)).file("/dev/vtbd1", vec![0u8; 2048 * 512]);
+        let s = freebsd_sys(&t, &format!("/dev/ufs/{ROOT_LABEL}\t/\tufs\tro,noatime\t1 1\ntmpfs\t/tmp\ttmpfs\trw\t0 0\n"));
+        let sys = scan(&s, Family::FreeBsd, &opts(), &[]);
+        let stick = sys.disk("vtbd0").unwrap();
+        assert!(stick.holds_root, "{:?}", stick.in_use);
+        assert!(stick.boot_medium);
+        assert!(stick.in_use.iter().any(|u| u == "vtbd0s2a is mounted at /"), "{:?}", stick.in_use);
+        // The bsdlabel's partition isn't one of the disk's own.
+        assert!(stick.parts.iter().all(|p| p.name != "vtbd0s2a"));
+        let other = sys.disk("vtbd1").unwrap();
+        assert!(!other.holds_root && !other.boot_medium && other.blank());
+    }
+
+    #[test]
+    fn the_config_partition_alone_makes_the_stick() {
+        // As on illumos, whose / is a RAM disk: nothing mounted names the
+        // stick, and its config partition still does.
+        let t = Tree::new("other-load-cfg");
+        t.file("/dev/vtbd0", freebsd_stick(true)).file("/dev/vtbd1", vec![0u8; 2048 * 512]);
+        let s = freebsd_sys(&t, "/dev/md0\t/\tufs\trw\t0 0\n");
+        let sys = scan(&s, Family::FreeBsd, &opts(), &[]);
+        let stick = sys.disk("vtbd0").unwrap();
+        assert!(stick.boot_medium && !stick.holds_root);
+        assert!(!sys.disk("vtbd1").unwrap().boot_medium);
+        // No config partition: not the stick (and / still found, by its label).
+        let t = Tree::new("other-load-nocfg");
+        t.file("/dev/vtbd0", freebsd_stick(false)).file("/dev/vtbd1", vec![0u8; 2048 * 512]);
+        let s = freebsd_sys(&t, &format!("/dev/ufs/{ROOT_LABEL}\t/\tufs\tro\t1 1\n"));
+        let sys = scan(&s, Family::FreeBsd, &opts(), &[]);
+        let d = sys.disk("vtbd0").unwrap();
+        assert!(!d.boot_medium && d.holds_root);
+        // A FAT with a label that only starts so isn't the config partition.
+        let mut img = freebsd_stick(false);
+        mbr_entry(&mut img[..512], 2, 0, 0x06, 1024, 1024);
+        img[1024 * 512..].copy_from_slice(&crate::probe::fat::sample::fat16(1024, 1, "BACKOTTERX"));
+        let t = Tree::new("other-load-otherfat");
+        t.file("/dev/vtbd0", img).file("/dev/vtbd1", vec![0u8; 2048 * 512]);
+        let s = freebsd_sys(&t, "");
+        assert!(!scan(&s, Family::FreeBsd, &opts(), &[]).disk("vtbd0").unwrap().boot_medium);
+    }
+
+    /// DragonFly's rescue image, shrunk: slice 2 a disklabel64 (in its second
+    /// sector) named NAME.
+    fn dragonfly_stick() -> Vec<u8> {
+        let mut img = vec![0u8; 2048 * 512];
+        mbr_entry(&mut img[..512], 1, 0x80, 0x6c, 64, 1024);
+        let l = &mut img[65 * 512..66 * 512];
+        l[0..4].copy_from_slice(&0xc446_4c59u32.to_le_bytes());
+        l[72..72 + L64_NAME.len()].copy_from_slice(L64_NAME.as_bytes());
+        img
+    }
+
+    #[test]
+    fn the_dragonfly_stick_holds_root_by_its_label() {
+        // Its / is /dev/part-by-label/NAME.a (defect c).
+        let t = Tree::new("other-load-dfly");
+        t.file("/dev/vbd0", dragonfly_stick()).file("/dev/vbd1", vec![0u8; 2048 * 512]);
+        let info = |n: &str| format!("/dev/{n}        blksize=512  offset=0x000000000000 size=0x000000100000 1.00 MB\n");
+        let r = FakeRunner::default()
+            .with("sysctl -n kern.disks", "vbd0 vbd1")
+            .with("diskinfo /dev/vbd0", &info("vbd0"))
+            .with("diskinfo /dev/vbd1", &info("vbd1"))
+            .with("mount -p", &format!("/dev/part-by-label/{L64_NAME}.a\t/\tufs\tro,noatime\t0 0\ntmpfs\t/tmp\ttmpfs\trw\t0 0\n"));
+        let s = Sys::new(t.root(), Box::new(r), true);
+        let sys = scan(&s, Family::DragonFly, &opts(), &[]);
+        let stick = sys.disk("vbd0").unwrap();
+        assert!(stick.holds_root, "{:?}", stick.in_use);
+        assert!(stick.in_use.iter().any(|u| u == "vbd0s2a is mounted at /"), "{:?}", stick.in_use);
+        assert!(!sys.disk("vbd1").unwrap().holds_root);
+    }
+
+    #[test]
+    fn the_illumos_stick_is_the_boot_medium_by_its_config_partition() {
+        // illumos' rescue image: an EFI label (GPT) whose 4th entry, slice
+        // s3, is the config partition, and / the RAM disk, so nothing
+        // mounted names the stick (defect b).
+        use crate::parttable::build::{write_gpt, GptSpec};
+        let mut img = vec![0u8; 2048 * 512];
+        const DATA: &str = "ebd0a0a2-b9e5-4433-87c0-68b6b72699c7";
+        write_gpt(&mut img, 512, &GptSpec {
+            disk_guid: "11111111-2222-3333-4444-555555555555",
+            parts: vec![
+                ("c12a7328-f81f-11d2-ba4b-00a0c93ec93b", "00000000-0000-0000-0000-000000000001", 34, 99, 0, "esp"),
+                (DATA, "00000000-0000-0000-0000-000000000002", 100, 199, 0, "two"),
+                (DATA, "00000000-0000-0000-0000-000000000003", 200, 899, 0, "three"),
+                (DATA, "00000000-0000-0000-0000-000000000004", 900, 1923, 0, "config"),
+            ],
+        });
+        img[900 * 512..1924 * 512].copy_from_slice(&crate::probe::fat::sample::fat16(1024, 0x0123_4567, STICK_CONFIG_LABEL));
+        let t = Tree::new("other-load-illumos");
+        t.file("/dev/rdsk/c1t0d0p0", img).file("/dev/rdsk/c2t0d0p0", vec![0u8; 2048 * 512]);
+        let r = FakeRunner::default()
+            .with("diskinfo -Hp", "SCSI\tc1t0d0\tQEMU\tHARDDISK\t1048576\tno\tno\nSCSI\tc2t0d0\tQEMU\tHARDDISK\t1048576\tno\tno\n");
+        t.file("/etc/mnttab", "/devices/ramdisk:a\t/\tufs\trw,nologging\t0\nswap\t/tmp\ttmpfs\txattr\t0\n");
+        let s = Sys::new(t.root(), Box::new(r), true);
+        let sys = scan(&s, Family::Illumos, &opts(), &[]);
+        let stick = sys.disk("c1t0d0").unwrap();
+        assert!(stick.parts.iter().any(|p| p.name == "c1t0d0s3"), "{:?}", stick.parts.iter().map(|p| &p.name).collect::<Vec<_>>());
+        assert!(stick.signatures.iter().any(|s| s.starts_with("c1t0d0s3: vfat")), "{:?}", stick.signatures);
+        assert!(stick.boot_medium && !stick.holds_root, "{:?}", stick.in_use);
+        let other = sys.disk("c2t0d0").unwrap();
+        assert!(!other.boot_medium && !other.holds_root && other.blank());
+    }
+
+    #[test]
+    fn label64_names() {
+        use crate::bytes::MemSource;
+        let img = dragonfly_stick();
+        assert_eq!(label64_name(&MemSource(img[64 * 512..1088 * 512].to_vec())).as_deref(), Some(L64_NAME));
+        assert_eq!(label64_name(&MemSource(vec![0u8; 8192])), None);
     }
 }

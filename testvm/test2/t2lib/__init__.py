@@ -37,7 +37,7 @@ V = 1   # the row schema's version
 # digested beside it but never keyed.
 HARD = ("bin", "harness", "judge", "guest", "xguest", "rescuer", "host")
 GROUPS = HARD + ("plumbing", "soft")
-FAMILIES = ("gate", "stic", "holt", "guest", "img")   # guest and img: reserved for later pieces
+FAMILIES = ("gate", "stic", "holt", "guest", "img", "bs2")   # guest and img: reserved for later pieces; bs2: BackShot2 (docs/design/backshot2.md)
 KINDS = ("run", "carried", "class")
 VERDICTS = ("PASS", "FAIL", "FLAKY-FAIL", "HARNESS", "LOST")
 CLASSES = ("pass", "fail", "harness", "lost", "known-flake")

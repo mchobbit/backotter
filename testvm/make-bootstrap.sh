@@ -8,12 +8,15 @@
 # Usage: ./make-bootstrap.sh DISTRO WORK_DIR
 #   e.g. ./make-bootstrap.sh alpine vms/alpine324
 #
-#   DISTRO        guest name    /          installed from
-#   alpine        alpine324     XFS        Alpine 3.24's minirootfs (musl, OpenRC)
-#   void          void-musl     btrfs      Void's musl ROOTFS tarball (runit)
-#   artix-dinit   artix-dinit   JFS        Artix's repositories (dinit)
-#   artix-s6      artix-s6      ext4       Artix's repositories (s6)
-#   nixos         nixos2605     bcachefs   NixOS 26.05's nixpkgs
+#   DISTRO        guest name      /          installed from
+#   alpine        alpine324       XFS        Alpine 3.24's minirootfs (musl, OpenRC)
+#   alpine-uefi   alpine324-uefi  ext4       the same, for UEFI (below)
+#   alpine-lvm    alpine324-lvm   XFS        the same, for UEFI, / on LVM
+#   alpine-luks   alpine324-luks  ext4       the same, for UEFI, / on LVM on LUKS2
+#   void          void-musl       btrfs      Void's musl ROOTFS tarball (runit)
+#   artix-dinit   artix-dinit     JFS        Artix's repositories (dinit)
+#   artix-s6      artix-s6        ext4       Artix's repositories (s6)
+#   nixos         nixos2605       bcachefs   NixOS 26.05's nixpkgs
 #
 # The versions are fixed below.  The Arch ISO (with its .sig and
 # sha256sums.txt) and the distribution's root file system tarball, if it has
@@ -29,9 +32,17 @@
 #   root-password         root's password (mode 600)
 #   id_ed25519, .pub      SSH key that logs in as root
 #   install-serial.log    the live system's serial console during the install
+#   vm-run-options        (UEFI guests) --uefi --no-secure-boot, for vm-run
+#   luks-keyfile          (alpine-luks) the key that unlocks / (mode 600, no
+#                         newline), as the guest's /crypto_keyfile.bin
 #
 # The guest: BIOS + MBR, /boot (1 GiB ext4), swap (2 GiB), / (the rest), 2 GB
-# RAM, no desktop, console on the serial port too, DHCP and sshd.
+# RAM, no desktop, console on the serial port too, DHCP and sshd.  The UEFI
+# ones, GPT with GRUB in a 512 MiB ESP at /boot/efi (bootstrap/common.sh's
+# LAYOUTs): alpine-uefi swap (2 GiB) and / (the rest); alpine-lvm an LVM PV,
+# VG vg0 with LVs root (12 GiB) and swap (1 GiB) and free extents left;
+# alpine-luks /boot (1 GiB ext4), then LUKS2 holding vg0 with root (10 GiB)
+# and swap (1 GiB), opened at boot by the key file in the initramfs.
 # bootstrap/common.sh partitions the disk; bootstrap/DISTRO.sh installs.
 # Run it with vm-run, and look inside it while it's off with vm-mount.
 #
@@ -63,13 +74,18 @@ NIX_VERSION=2.31.2
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-bootstrap: $*" >&2; exit 1; }
 
-[[ $# -eq 2 ]] || die "usage: $0 alpine|void|artix-dinit|artix-s6|nixos WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 alpine|alpine-uefi|alpine-lvm|alpine-luks|void|artix-dinit|artix-s6|nixos WORK_DIR"
 distro=$1
 iso_release=$ARCH_ISO_CURRENT
 script=$distro
+firmware=bios layout=classic           # the guest's firmware and disk (bootstrap/common.sh)
 extra=()                               # more @NAME@=value settings for the script
 case $distro in
     alpine) name=alpine324 root_fs=xfs
+        extra=("ALPINE_BRANCH=v${ALPINE_VERSION%.*}") ;;
+    alpine-uefi|alpine-lvm|alpine-luks)
+        layout=${distro#alpine-} name=alpine324-${distro#alpine-} script=alpine firmware=uefi
+        if [[ $layout == lvm ]]; then root_fs=xfs; else root_fs=ext4; fi
         extra=("ALPINE_BRANCH=v${ALPINE_VERSION%.*}") ;;
     void) name=void-musl root_fs=btrfs ;;
     artix-dinit) name=artix-dinit root_fs=jfs script=artix extra=(INIT=dinit) ;;
@@ -122,7 +138,7 @@ server=""
 cleanup() { [[ -n $server ]] && kill "$server" 2>/dev/null; chmod -R u+w "$work"; rm -rf "$work"; }
 trap cleanup EXIT
 mkdir "$work/www"
-case $distro in
+case $script in
     alpine)
         f=alpine-minirootfs-$ALPINE_VERSION-x86_64.tar.gz
         url=https://dl-cdn.alpinelinux.org/alpine/v${ALPINE_VERSION%.*}/releases/x86_64
@@ -165,12 +181,20 @@ password=$(openssl rand -base64 18)
 printf '%s\n' "$password" >root-password
 hash=$(printf '%s' "$password" | openssl passwd -6 -stdin)
 [[ -e id_ed25519 ]] || ssh-keygen -q -t ed25519 -N '' -C "root@$name test guest" -f id_ed25519
+# The LUKS key: printable, and without a newline, so the same bytes unlock it
+# from the guest's key file, from this one (vm-mount --key) and typed.
+luks_key=""
+if [[ $layout == luks ]]; then
+    luks_key=$(openssl rand -base64 32 | tr -d '\n')
+    printf '%s' "$luks_key" >luks-keyfile
+fi
 umask 022
+[[ $firmware == bios ]] || echo "--uefi --no-secure-boot" >vm-run-options
 
 # Serve the install script and files to the guest only: QEMU's user-mode
 # network maps 10.0.2.2 in the guest to the host's 127.0.0.1.
 port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
-settings=(DISTRO="$distro" ROOT_FS="$root_fs" FIRMWARE=bios HOSTNAME="$name"
+settings=(DISTRO="$distro" ROOT_FS="$root_fs" FIRMWARE="$firmware" LAYOUT="$layout" LUKS_KEY="$luks_key" HOSTNAME="$name"
     ROOT_PASSWORD="$password" ROOT_PASSWORD_HASH="$hash" AUTHORIZED_KEY="$(cat id_ed25519.pub)"
     SERVER="http://10.0.2.2:$port" "${extra[@]}")
 python3 - "$work/www/install.sh" "$here/bootstrap/common.sh" "$here/bootstrap/$script.sh" \

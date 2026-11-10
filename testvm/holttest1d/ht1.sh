@@ -224,7 +224,10 @@ done
 size_of() { qemu-img info --output=json "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])'; }
 # A LUKS or ZFS passphrase the guest's disks need (vm-mount --key, and load's
 # --key-file for the volumes it makes).
-gpass=""; for f in console-passphrase zfs-passphrase luks-passphrase; do [[ -f $W/vms/$G/$f ]] && gpass=$W/vms/$G/$f && break; done
+# A luks-keyfile (make-bootstrap.sh's alpine-luks) unlocks the guest at boot
+# from its initramfs: it serves vm-mount and load, with nothing to type (ckey).
+gpass=""; for f in console-passphrase zfs-passphrase luks-passphrase luks-keyfile; do [[ -f $W/vms/$G/$f ]] && gpass=$W/vms/$G/$f && break; done
+ckey=$gpass; [[ $gpass != */luks-keyfile ]] || ckey=""
 # Where the run works and what a pass keeps (ht1-lib.sh; README "Where a run works, and what it keeps").
 HT_BULK=(share 'src-*.qcow2' 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 rustic-bko tmp img-key img-key.pub)
 HT_ZIP=(src-meta.json dst-meta.json)
@@ -353,7 +356,7 @@ phase_source() {
     for ((i = 0; i < n; i++)); do
         rm -f "${src[i]}"; qemu-img create -q -f qcow2 -b "${imgs[i]}" -F qcow2 "${src[i]}"
     done
-    CONSOLE_KEY=$gpass vm_up "${src[0]}" "$R/logs/source-serial.log" "${fw[@]}" "${extra_src[@]}"
+    CONSOLE_KEY=$ckey vm_up "${src[0]}" "$R/logs/source-serial.log" "${fw[@]}" "${extra_src[@]}"
     vm_wait "$gkey" || { bad "source boots (no SSH)"; vm_down "$gkey"; return; }
     ok "source boots${detached:+, with ${detached##*/} detached}"
     if [[ -n $detached ]]; then
@@ -684,7 +687,7 @@ phase_verify() {
     else
         bad "mount the restored disk"
     fi
-    CONSOLE_KEY=$gpass vm_up "${dst[0]}" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${extra_dst[@]}"
+    CONSOLE_KEY=$ckey vm_up "${dst[0]}" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${extra_dst[@]}"
     if ! vm_wait "$gkey"; then bad "the restored disk boots by itself (no SSH; logs/restored-serial.log)"; vm_down "$gkey"; return; fi
     ok "the restored disk boots by itself, SSH with the guest's key"
     if [[ -n $detached ]]; then

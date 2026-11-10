@@ -17,6 +17,8 @@
 
 #![allow(dead_code)]
 
+pub mod invariants;
+
 use bko_holt::json::{self, Value};
 use bko_holt::load::{parse_args, run, Parsed};
 use bko_holt::sys::{FakeRunner, Sys};
@@ -61,6 +63,13 @@ pub fn dumped_disks(v: &Value) -> Vec<(String, u64, u32)> {
 
 /// Plans LAYOUT_TEXT onto blank targets GROW bytes bigger than its disks.
 pub fn plan(layout_text: &str, grow: u64) -> Result<Planned, String> {
+    plan_onto(layout_text, &|_, size| size + grow, &[])
+}
+
+/// Plans LAYOUT_TEXT onto blank targets of SIZE_OF(disk, its size) bytes,
+/// with EXTRA arguments after load's own (BackShot2's tier 0: a drifted
+/// layout, its case's targets and load options).
+pub fn plan_onto(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, extra: &[String]) -> Result<Planned, String> {
     let v = json::parse(layout_text).map_err(|e| format!("not JSON: {}", e.message))?;
     let t = Tree::new("golden-plan");
     t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
@@ -71,13 +80,14 @@ pub fn plan(layout_text: &str, grow: u64) -> Result<Planned, String> {
             return Err(format!("{} disks: the targets sdq..sdz hold 10", i + 1));
         }
         let tgt = format!("sd{}", (b'q' + i as u8) as char);
-        let bytes = size + grow;
+        let bytes = size_of(&name, size);
         t.disk(&tgt, &format!("8:{}", 16 * i), &[], ss).file(&format!("/sys/block/{tgt}/size"), format!("{}\n", bytes / 512));
         args.push("--map".into());
         args.push(format!("{name}={tgt}"));
         maps.push((name, tgt, bytes));
     }
     args.extend(["--repo".to_string(), REPO.to_string()]);
+    args.extend(extra.iter().cloned());
     let opts = match parse_args(&args) {
         Ok(Parsed::Run(o)) => o,
         Ok(Parsed::Help) => return Err(format!("load's arguments {args:?} asked for help")),

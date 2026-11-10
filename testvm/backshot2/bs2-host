@@ -1,0 +1,350 @@
+#!/usr/bin/env python3
+"""BackShot2 on a KVM test host (docs/design/backshot2.md): what testvm/backshot2/bs2
+runs over SSH.  Run from a private copy (~/backotter-work/bs2-wt/testvm/backshot2),
+never the shared ~/backotter-work/testvm.
+
+  bs2-host source SOURCE                 (root) the source's dump and tools, once per generation
+  bs2-host tier0 SOURCE N [--from SEED] [--run RUN] [--keep-passes K]
+                                         N new cases from SOURCE, through tier 0
+  bs2-host tier0-cases CASE... [--run RUN]   given cases, through tier 0
+  bs2-host tier1 CASE --tier 1|2 [--run RUN] [--port P]
+                                         (root, under cmp-run.sh --reserve) one case through ht1.sh
+  bs2-host gen SOURCE SEED              print the case SEED gives (no run)
+  bs2-host caps                          what the bko-holt under test supports (--new-uuids)
+
+Paths (ROOT=/bkoscratch/backshot2, BS2_ROOT overrides):
+  ROOT/sources/SOURCE/  gen (the generation), src.json (its live dump: holds
+                        identifiers, never leaves the host), tools/ (a copy of
+                        its root, for tier 0's dry runs)
+  ROOT/runs/RUN/        tier0.jsonl and tier1.jsonl (a line per case), cases/
+                        (each case run, as a .case file), logs/
+  ROOT/bin/             the bko-holt and planner under test (BS2_HOLT, BS2_PLANNER override)
+Work goes in /mnt/bko-ram/backshot2/ (RAM), deleted on a pass.
+"""
+
+import argparse
+import glob
+import hashlib
+import json
+import os
+import shutil
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+from bs2lib import case as C, dumpx, generate as G, ledger as L, tier0 as T0  # noqa: E402
+
+ROOT = os.environ.get("BS2_ROOT", "/bkoscratch/backshot2")
+RAM = os.environ.get("BS2_RAM", "/mnt/bko-ram/backshot2")
+TESTVM = os.path.dirname(HERE)
+WORK = os.path.expanduser("~m/backotter-work") if os.path.isdir(os.path.expanduser("~m/backotter-work")) else os.path.expanduser("~/backotter-work")
+VMS = f"{WORK}/vms"
+
+
+def die(msg, code=2):
+    print(f"bs2-host: {msg}", file=sys.stderr)
+    sys.exit(code)
+
+
+def sh(cmd, **kw):
+    return subprocess.run(cmd, check=True, **kw)
+
+
+# ---- sources -----------------------------------------------------------------------
+
+def generation(source):
+    """gen:HEX from the guest's image-state, else img:HEX of its image (cached by size, mtime and inode)."""
+    if source.startswith("run:"):
+        return source
+    d = f"{VMS}/{source}"
+    try:
+        with open(f"{d}/image-state") as f:
+            return "gen:" + json.load(f)["generation"]
+    except (OSError, ValueError, KeyError):
+        pass
+    img = f"{d}/{source}.qcow2"
+    st = os.stat(img)
+    stamp = f"{st.st_size}:{st.st_mtime_ns}:{st.st_ino}"
+    cache = f"{ROOT}/sources/{source}/imgsum"
+    try:
+        with open(cache) as f:
+            s, h = f.read().split()
+            if s == stamp:
+                return "img:" + h
+    except (OSError, ValueError):
+        pass
+    h = hashlib.sha256()
+    with open(img, "rb") as f:
+        for b in iter(lambda: f.read(1 << 22), b""):
+            h.update(b)
+    os.makedirs(os.path.dirname(cache), exist_ok=True)
+    with open(cache, "w") as f:
+        f.write(f"{stamp} {h.hexdigest()}\n")
+    return "img:" + h.hexdigest()
+
+
+def source_dir(source):
+    return f"{ROOT}/sources/{source.replace(':', '-')}"
+
+
+def source_ready(source):
+    d = source_dir(source)
+    try:
+        with open(f"{d}/gen") as f:
+            gen = f.read().strip()
+    except OSError:
+        return None
+    if not os.path.exists(f"{d}/src.json"):
+        return None
+    if not source.startswith("run:") and gen != generation(source):
+        return None
+    return gen
+
+
+def holt_bin():
+    return os.environ.get("BS2_HOLT") or f"{ROOT}/bin/bko-holt"
+
+
+def cmd_source(a):
+    """The source's live dump and a copy of its root (its tools), once per generation."""
+    src = a.source
+    if os.geteuid() != 0:
+        die("source: run as root (sudo -E)")
+    if src.startswith("run:"):
+        die("a BackShot1 run's source is copied in by bs2 on the Mac (layout.json and the run's tools)")
+    gen = generation(src)
+    if source_ready(src) == gen and os.path.isdir(f"{source_dir(src)}/tools/usr") and not a.force:
+        print(f"{src}: ready at {gen[:16]}")
+        return
+    d = source_dir(src)
+    os.makedirs(d, mode=0o700, exist_ok=True)
+    os.chmod(d, 0o700)
+    w = f"{RAM}/source-{src}"
+    shutil.rmtree(w, ignore_errors=True)
+    os.makedirs(w)
+    img = f"{VMS}/{src}/{src}.qcow2"
+    ov = f"{w}/src.qcow2"
+    sh(["qemu-img", "create", "-q", "-f", "qcow2", "-b", img, "-F", "qcow2", ov])
+    opts = []
+    try:
+        with open(f"{VMS}/{src}/vm-run-options") as f:
+            opts = f.read().split()
+    except OSError:
+        pass
+    port = str(a.port)
+    env = dict(os.environ, SSH_PORT=port, TMPDIR=w)
+    log = open(f"{w}/serial.vm-run", "w")
+    vm = subprocess.Popen([f"{TESTVM}/vm-run", "--serial-log", f"{w}/serial.log"] + opts + [ov], env=env,
+                          stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
+    key = f"{VMS}/{src}/id_ed25519"
+    ssh = ["ssh", "-q", "-i", key, "-p", port, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+           "-o", "ConnectTimeout=5", "root@127.0.0.1"]
+    try:
+        for _ in range(72):
+            if subprocess.run(["timeout", "10"] + ssh + ["true"], capture_output=True).returncode == 0:
+                break
+            time.sleep(5)
+        else:
+            die(f"{src} didn't answer SSH (see {w}/serial.log)", 1)
+        sh(["scp", "-q", "-i", key, "-P", port, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
+            holt_bin(), "root@127.0.0.1:/root/bko-holt"])
+        r = subprocess.run(["timeout", "300"] + ssh + ["/root/bko-holt dump; rc=$?; rm -f /root/bko-holt; exit $rc"], capture_output=True, text=True)
+        if r.returncode:
+            die(f"dump on {src}: {r.stderr[-500:]}", 1)
+        json.loads(r.stdout)
+        with open(f"{d}/src.json.part", "w") as f:
+            f.write(r.stdout)
+        os.replace(f"{d}/src.json.part", f"{d}/src.json")
+        subprocess.run(["timeout", "20"] + ssh + ["poweroff"], capture_output=True)
+        try:
+            vm.wait(120)
+        except subprocess.TimeoutExpired:
+            vm.terminate()
+            vm.wait(30)
+    finally:
+        if vm.poll() is None:
+            vm.terminate()
+    # The tools: the guest's root, copied out of a read-only mount of the overlay.
+    mp = f"{w}/mnt"
+    os.makedirs(mp)
+    key_args = []
+    for kf in ("luks-keyfile", "luks-passphrase", "console-passphrase"):
+        if os.path.exists(f"{VMS}/{src}/{kf}"):
+            key_args = ["--key", f"{VMS}/{src}/{kf}"]
+            break
+    sh([f"{TESTVM}/vm-mount", "--ro"] + key_args + [ov, mp], env=env, stdout=subprocess.DEVNULL)
+    try:
+        tools = f"{d}/tools"
+        shutil.rmtree(tools, ignore_errors=True)
+        sh(["rsync", "-a", "--exclude=/boot", "--exclude=/lib/modules", "--exclude=/lib/firmware", "--exclude=/usr/share/doc",
+            "--exclude=/usr/share/man", "--exclude=/var/cache", "--exclude=/home", "--exclude=/root", "--exclude=/srv",
+            f"{mp}/", f"{tools}/"])
+    finally:
+        subprocess.run([f"{TESTVM}/vm-umount", mp], env=env, stdout=subprocess.DEVNULL)
+    with open(f"{d}/gen", "w") as f:
+        f.write(gen + "\n")
+    shutil.rmtree(w, ignore_errors=True)
+    print(f"{src}: dumped and its tools copied, at {gen[:16]}")
+
+
+def load_source(source):
+    gen = source_ready(source)
+    if not gen:
+        die(f"{source} isn't prepared at its current generation: sudo -E bs2-host source {source}")
+    return gen, dumpx.load(f"{source_dir(source)}/src.json")
+
+
+# ---- tier 0 ------------------------------------------------------------------------
+
+def planner():
+    p = os.environ.get("BS2_PLANNER") or f"{ROOT}/bin/bs2_plan"
+    if not os.access(p, os.X_OK):
+        die(f"no planner at {p} (bs2-host build)")
+    return p
+
+
+def caps_of():
+    try:
+        with open(f"{ROOT}/bin/caps.json") as f:
+            return json.load(f)
+    except OSError:
+        return {}
+
+
+def run_dir(run):
+    d = f"{ROOT}/runs/{run}"
+    os.makedirs(f"{d}/cases", exist_ok=True)
+    return d
+
+
+def tier0_cases(source, gen, dump, cases, run, keep_passes=0):
+    """CASES: [(name, case)].  Runs them, writes the run's rows and the cases that didn't pass."""
+    rd = run_dir(run)
+    w = f"{RAM}/t0-{run}-{source}-{os.getpid()}"
+    os.makedirs(w, exist_ok=True)
+    tools = f"{source_dir(source)}/tools"
+    tools = tools if os.path.isdir(f"{tools}/usr") and os.geteuid() == 0 else None
+    t0 = time.time()
+    results, plans = T0.run(dump, cases, w, planner(), tools, caps_of())
+    wall = time.time() - t0
+    counts = {}
+    kept = 0
+    with open(f"{rd}/tier0.jsonl", "a") as f:
+        for (name, case), (_, verdict, why) in zip(cases, results):
+            counts[verdict] = counts.get(verdict, 0) + 1
+            f.write(json.dumps({"case": name, "hash": C.case_hash(case), "source": source, "gen": gen, "tier": 0,
+                                "verdict": verdict, "why": why[:5], "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}) + "\n")
+            if verdict != "PASS" or kept < keep_passes:
+                kept += verdict == "PASS"
+                C.write(f"{rd}/cases/{name}.case", dict(case, name=name))
+                if verdict != "PASS":
+                    with open(f"{rd}/cases/{name}.tier0.txt", "w") as g:
+                        g.write("\n".join(why) + "\n\n" + plans.get(name, {}).get("out", "") + plans.get(name, {}).get("err", ""))
+    L.write_rows(run, source, gen, [(n, c, v, w_) for (n, c), (_, v, w_) in zip(cases, results)], tier=0, wall=wall, bins=bins())
+    shutil.rmtree(w, ignore_errors=True)
+    print(json.dumps({"source": source, "cases": len(cases), "counts": counts, "wall_s": round(wall, 1), "dry_runs": bool(tools)}))
+    return results
+
+
+def bins():
+    out = {}
+    for name, p in (("linux/bko-holt", holt_bin()), ("bs2_plan", os.environ.get("BS2_PLANNER") or f"{ROOT}/bin/bs2_plan"),
+                    ("linux/rustic-bko", f"{WORK}/bko-bin/linux/rustic-bko")):
+        try:
+            with open(p, "rb") as f:
+                out[name] = "sha256:" + hashlib.sha256(f.read()).hexdigest()
+        except OSError:
+            out[name] = "missing"
+    return out
+
+
+def cmd_tier0(a):
+    gen, dump = load_source(a.source)
+    stats = G.Stats()
+    cases = []
+    for seed in range(a.start, a.start + a.n):
+        c = G.generate(a.source, gen, dump, seed, caps=caps_of(), stats=stats)
+        cases.append((C.name_of(c), c))
+    tier0_cases(a.source, gen, dump, cases, a.run, a.keep_passes)
+    print(json.dumps({"generator": {"tried": stats.tried, "kept": stats.kept,
+                                    "discarded": dict(sorted(stats.discarded.items(), key=lambda x: -x[1])[:12])}}))
+
+
+def cmd_tier0_cases(a):
+    groups = {}
+    for p in a.cases:
+        c = C.read(p)
+        groups.setdefault(C.source_name(c), []).append((c.get("name") or C.name_of(c), c))
+    for src, cs in groups.items():
+        gen, dump = load_source(src)
+        tier0_cases(src, gen, dump, cs, a.run)
+
+
+def cmd_gen(a):
+    gen, dump = load_source(a.source)
+    c = G.generate(a.source, gen, dump, a.seed, caps=caps_of())
+    c["name"] = C.name_of(c)
+    sys.stdout.write(C.text(c))
+
+
+def cmd_caps(a):
+    """Whether the bko-holt under test plans --new-uuids (it refused, "isn't built yet", until it does)."""
+    gen, dump = load_source(a.source)
+    w = f"{RAM}/caps-{os.getpid()}"
+    os.makedirs(w, exist_ok=True)
+    c = {"source": a.source, "edits": [], "load_options": ["--new-uuids"]}
+    res, plans = T0.run(dump, [("caps", c)], w, planner(), None, {})
+    caps = {"new_uuids": res[0][1] == "PASS", "probe": res[0][2][:2]}
+    with open(f"{ROOT}/bin/caps.json", "w") as f:
+        json.dump(caps, f)
+    shutil.rmtree(w, ignore_errors=True)
+    print(json.dumps(caps))
+
+
+# ---- tier 1 and 2 ------------------------------------------------------------------
+
+def cmd_tier1(a):
+    from bs2lib import tier1 as T1
+    c = C.read(a.case)
+    name = c.get("name") or C.name_of(c)
+    src = C.source_name(c)
+    gen, dump = load_source(src)
+    rc = T1.run(c, name, src, gen, dump, a.tier, a.run, a.port, HERE, TESTVM, ROOT, holt_bin(), bins())
+    sys.exit(rc)
+
+
+def main():
+    p = argparse.ArgumentParser(prog="bs2-host")
+    s = p.add_subparsers(dest="cmd", required=True)
+    x = s.add_parser("source")
+    x.add_argument("source")
+    x.add_argument("--port", type=int, default=2680)
+    x.add_argument("--force", action="store_true")
+    x = s.add_parser("tier0")
+    x.add_argument("source")
+    x.add_argument("n", type=int)
+    x.add_argument("--from", dest="start", type=int, default=0)
+    x.add_argument("--run", default=time.strftime("t0-%Y%m%d"))
+    x.add_argument("--keep-passes", type=int, default=0)
+    x = s.add_parser("tier0-cases")
+    x.add_argument("cases", nargs="+")
+    x.add_argument("--run", default=time.strftime("t0-%Y%m%d"))
+    x = s.add_parser("tier1")
+    x.add_argument("case")
+    x.add_argument("--tier", type=int, default=1, choices=(1, 2))
+    x.add_argument("--run", default=time.strftime("t1-%Y%m%d"))
+    x.add_argument("--port", type=int, default=2680)
+    x = s.add_parser("gen")
+    x.add_argument("source")
+    x.add_argument("seed", type=int)
+    x = s.add_parser("caps")
+    x.add_argument("source", nargs="?", default="alpine324")
+    a = p.parse_args()
+    {"source": cmd_source, "tier0": cmd_tier0, "tier0-cases": cmd_tier0_cases, "gen": cmd_gen, "caps": cmd_caps,
+     "tier1": cmd_tier1}[a.cmd](a)
+
+
+if __name__ == "__main__":
+    main()

@@ -12,6 +12,8 @@ debian13-stack	cinqcent	r4all	PASS	2026-11-08T02:30:36Z	2026-11-08T02:27:52Z	0.2
 debian13-zfs	cinqcent	r4all	PASS	2026-11-08T02:36:52Z	2026-11-08T02:34:17Z	0.2.4	9c180ee07447c14d9878b8821c864e577746238c8787812d84d20566f3cbd823	changed	10	ok:10:111	0	0	0	same	ok:10	-
 devuan6	chopin	r4all	PASS	2026-11-08T02:40:03Z	2026-11-08T02:37:51Z	0.2.4	38ad968a09162abcad3ae83ce7a3aadd395425f64ecfaece9d81f2b16f6a3c88	changed	8	ok:8:88	0	0	0	same	ok:8	-
 dragonfly6	cinqcent	r4all	PASS	2026-11-08T02:55:47Z	2026-11-08T02:42:45Z	0.2.4	c49b7388dc01e18ddb975bd40b4efa7d90478cbaf33877baab1eb9ae54e71cf5	changed	7	ok:7:77	1	1	440	same	ok:7	storage.disks.0.boot_code.code_b64=440/1ec39679
+endeavouros	chopin	eosmj3	PASS	2026-11-09T13:50:06Z	2026-11-09T13:45:25Z	0.2.4	-	same	12	ok:12:81	0	0	0	same	ok:12	-
+endeavouros-grub	chopin	eosmj5	PASS	2026-11-09T14:10:15Z	2026-11-09T14:05:08Z	0.2.4	-	same	13	ok:13:85	0	0	0	same	ok:13	-
 fedora44	chopin	r4all	PASS	2026-11-08T02:26:07Z	2026-11-08T02:22:33Z	0.2.4	a0b9aef33b46c75ef7bfb0f5678553a9adf687af4c206bfca0379c70582fefdf	changed	13	ok:13:95	0	0	0	same	ok:13	-
 fedora44-raid	chopin	r4all	PASS	2026-11-08T03:00:22Z	2026-11-08T02:57:05Z	0.2.4	-	same	30	ok:30:131	0	0	0	same	ok:30	-
 fedora44-uefi	cinqcent	r4all	PASS	2026-11-08T02:29:29Z	2026-11-08T02:24:51Z	0.2.4	36be7725b341d1629eb50406077c9302eb9c0922c75e7c66baf6520fb8096905	changed	17	ok:17:96	0	0	0	same	ok:17	-
@@ -22,6 +24,7 @@ ghostbsd26	chopin	r4all	PASS	2026-11-08T02:50:28Z	2026-11-08T02:46:48Z	0.2.4	3a5
 ghostbsd26-zfs	cinqcent	r4all	PASS	2026-11-08T02:50:57Z	2026-11-08T02:46:54Z	0.2.4	f9859fa36daa6ed35e006992ff6a95622338c90c93585ec7234a037bf1a710fb	changed	7	ok:7:70	0	2	178104	same	ok:7	storage.disks.0.partitions.0.boot_code.image_b64=177664/aaaca4d3 storage.disks.0.boot_code.code_b64=440/0d5e38c2
 haiku6	chopin	r4all	PASS	2026-11-08T02:40:14Z	2026-11-08T02:36:25Z	0.2.4	bc28f52db6818f232180e9f62384ce3a1b346eae229ad4497004add0d31c99a2	changed	1	ok:1:39	0	1	440	same	ok:1	storage.disks.0.boot_code.code_b64=440/14ed669c
 hardenedbsd15	cinqcent	r4all	PASS	2026-11-08T02:42:17Z	2026-11-08T02:37:19Z	0.2.4	abe8ce85847f09c92649c293290d38091568eb75b139c3325ac86f1e18071445	same	6	ok:6:37	0	2	62392	same	ok:6	storage.disks.0.partitions.1.boot_code.image_b64=61952/225ac46d storage.disks.0.boot_code.code_b64=440/0d5e38c2
+manjaro	cinqcent	eosmj2	PASS	2026-11-09T13:36:54Z	2026-11-09T13:31:42Z	0.2.4	-	same	16	ok:16:98	0	0	0	same	ok:16	-
 mint22	cinqcent	r4all	PASS	2026-11-08T02:23:53Z	2026-11-08T02:17:53Z	0.2.4	2e34eb0b95c4e6d43fada1d955062ce211f17cd15040f20127638f697f0508dc	changed	8	ok:8:85	0	0	0	same	ok:8	-
 mx25	chopin	r4all	PASS	2026-11-08T02:30:13Z	2026-11-08T02:24:59Z	0.2.4	9c6a5a6622e8a3f6e7f64e2bf33372c869186839853b2b062f68c86afb3c5919	changed	9	ok:9:86	0	0	0	same	ok:9	-
 netbsd11	cinqcent	r4all	PASS	2026-11-08T02:46:27Z	2026-11-08T02:42:51Z	0.2.4	833344fe4afaaa403f847d4c7f29b9184d45de08fe5eae69dc180922f34d8cca	changed	2	ok:2:73	1	1	440	same	ok:2	storage.disks.0.boot_code.code_b64=440/345a1df8

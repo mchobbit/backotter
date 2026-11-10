@@ -12,6 +12,8 @@
 #         size left x 1.074 x 1.18 (test2.md Conventions).  The 5 RAID and mirror guests and
 #         the 9 variant cells take test2.md's HoltTest2 Cost figures (~6, 3.05 and 4.65 gm),
 #         which add up to its HoltTest2All ~247 gm.
+#   guest, img, holt:G+img and the three guests of 11-09: test2.md's figures and the 11-07 boot logs
+#         (contract section 3, K1).
 #   gate: no VMs (0 gm); wall and GB from test2.md GateTest2 Cost, cheap.md (a) and the
 #         contract's host-test estimates.
 family	cell	gm	wall_s	gb	gb_disk	src
@@ -123,3 +125,75 @@ gate	gate:loop:linux@cinqcent	0.00	1800	0.05	-	test2.md GateTest2 Cost: slow par
 gate	gate:loop:sparse@chopin	0.00	900	0.05	-	cheap.md (a): sparse-rt.sh 10-20 min per filesystem (est.)
 gate	gate:loop:sparse@cinqcent	0.00	900	0.05	-	cheap.md (a): sparse-rt.sh 10-20 min per filesystem (est.)
 gate	gate:selftest	0.00	60	0.00	-	t2 self-test and drive.py --self-test: about a minute (est.)
+guest	guest:aerynos	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:alpine324	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:alpinebsd	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:arch	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:artix-dinit	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:artix-s6	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:cachyos	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:debian12	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:debian13	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:debian13-stack	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:debian13-zfs	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:devuan6	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:dragonfly6	6.00	360	0.00	-	test2 contract 3 K1: dragonfly6's --try
+guest	guest:endeavouros	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:endeavouros-grub	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:fedora44	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:fedora44-raid	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:fedora44-uefi	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:freebsd14	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:freebsd15	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:freebsd15-geli	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:freebsd15-mirror	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:freebsd15-ufs	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:ghostbsd26	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:ghostbsd26-zfs	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:haiku6	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:hardenedbsd15	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:manjaro	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:mint22	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:mx25	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:netbsd11	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:nixos2605	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:omarchy	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:omnios58	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:omnios58-mirror	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:openbsd8	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:pop24	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:redox	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:rocky10	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:rocky10-lvm	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:rocky10-raid5	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:sculpt2610	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:tumbleweed	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:ubuntu24	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:ubuntu26-raid	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:ubuntu26-uefi	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:ubuntu26-zfs	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:ubuntu26-zfsmirror	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:void-musl	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:zorin18	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+img	img:linux	3.00	180	0.00	-	11-07 boot logs: the --test image's boot tests (the files' times)
+img	img:freebsd	1.60	96	0.00	-	11-07 boot logs: the --test image's boot tests (the files' times)
+img	img:netbsd	1.30	80	0.00	-	11-07 boot logs: the --test image's boot tests (the files' times)
+img	img:openbsd	1.20	70	0.00	-	11-07 boot logs: the --test image's boot tests (the files' times)
+img	img:dragonfly	2.80	168	0.00	-	11-07 boot logs: the --test image's boot tests (the files' times)
+img	img:illumos	1.80	108	0.00	-	11-07 boot logs: the --test image's boot tests (the files' times)
+img	img:haiku	1.00	60	0.00	-	11-07 boot logs: the --test image's boot tests (the files' times)
+holt	holt:debian12+img	2.65	159	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:ubuntu24+img	3.80	228	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:rocky10-raid5+img	6.00	360	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:nixos2605+img	3.20	192	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:debian13-stack+img	3.40	204	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:aerynos+img	6.00	360	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:freebsd14+img	4.75	285	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:netbsd11+img	4.18	250	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:openbsd8+img	6.33	379	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:dragonfly6+img	15.38	922	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:omnios58+img	5.62	337	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:haiku6+img	3.35	201	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:endeavouros	4.00	240	0.00	-	contract: about one Linux source, 11-09
+holt	holt:endeavouros-grub	4.00	240	0.00	-	contract: about one Linux source, 11-09
+holt	holt:manjaro	4.00	240	0.00	-	contract: about one Linux source, 11-09

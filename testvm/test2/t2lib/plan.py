@@ -5,7 +5,7 @@ R14, R15, R17, R21, R27).
                                 and writes nothing anywhere
 
 Each cell of the word's universe gets a status: due, current, canary-verified,
-awaiting-canaries, soft-stale, carried, class-pending or not-runnable, with the selecting
+awaiting-canaries, soft-stale, carried, class-pending, to-class or not-runnable, with the selecting
 rule (1.6.1's vocabulary) and its reasons.  Family scope is decided here and nowhere else;
 the runners only execute plans.
 """
@@ -22,7 +22,7 @@ from . import bko_git as default_bko_git
 from . import carry, copies, estimates, keys, words
 
 STATUSES = ("due", "current", "canary-verified", "awaiting-canaries", "soft-stale", "carried",
-            "class-pending", "not-runnable")
+            "class-pending", "to-class", "not-runnable")
 HOSTS = ("chopin", "cinqcent")
 DECISIVE_KINDS = ("run", "carried", "class")
 DECISIVE_VERDICTS = ("PASS", "FAIL", "FLAKY-FAIL")
@@ -65,7 +65,7 @@ def short(v, n=4):
         return "-"
     if not isinstance(v, str):
         return str(v)
-    for p in ("sha256:", "gen:", "img:", "dir:", "entry:", "code:", "git:"):
+    for p in ("sha256:", "gen:", "img:", "dir:", "entry:", "code:", "git:", "fp:"):
         if v.startswith(p):
             return v[len(p):len(p) + n] + ".."
     if v.startswith("ver:"):
@@ -96,7 +96,8 @@ class Ctx:
     copy_preview   {"id", "dirty", "commit"} of the copy a run would make
     options        universe [cells] (test only), classes (dict), bko_git, now (epoch), pulled
                    {host: {t, rows, stale}}, running {cell: run}, inputs_fn(cell, host, opts) for
-                   tests, heads {repo: commit}, drive (module), plandiff (module)
+                   tests, heads {repo: commit}, drive (module), plandiff (module), last_sweep (sweep.json's),
+                   extra_due (cells or {cell: why}, rule canary:carried), identity_bad {guest: why}
     """
 
     def __init__(self, checkout, head=None, hosts=HOSTS, facts=None, ledger=None, copy_preview=None, options=None):
@@ -170,6 +171,10 @@ class PlanCell:
         self.change = None             # changed cells: {(group, name, new)} on the judged host (not serialized)
         self.part = None               # gate: fast or slow
         self.placed = None             # the host the estimate placed it on
+        self.refused = False           # not-runnable and the word's exit says so: an image a binary keeps from
+                                       # running, a named image that can't run, a bare update's stale --try
+        self.binaries = None           # img: {NAME: {state, digest, why, canary}} (real, carried, carried-other, none)
+        self.fp_carry = False          # its guest change is only the fingerprint's transition (not serialized)
 
     @property
     def key(self):
@@ -177,10 +182,15 @@ class PlanCell:
         return vals.pop() if len(vals) == 1 else None
 
     def to_json(self):
-        return dict(cell=self.cell, status=self.status, rule=self.rule, reasons=list(self.reasons), host=self.host,
-                    key=self.key, keys=dict(self.keys), last_pass=self.last_pass, est=dict(self.est), rep=self.rep,
-                    klass=self.klass, running=self.running, via=self.via, differ=list(self.differ), part=self.part,
-                    placed=self.placed)
+        out = dict(cell=self.cell, status=self.status, rule=self.rule, reasons=list(self.reasons), host=self.host,
+                   key=self.key, keys=dict(self.keys), last_pass=self.last_pass, est=dict(self.est), rep=self.rep,
+                   klass=self.klass, running=self.running, via=self.via, differ=list(self.differ), part=self.part,
+                   placed=self.placed)
+        if self.refused:
+            out["refused"] = True
+        if self.binaries:
+            out["binaries"] = self.binaries
+        return out
 
 
 class Plan:
@@ -193,6 +203,7 @@ class Plan:
         self.classes = []       # [{class, rep, members}]
         self.unmapped = []
         self.set = None         # the binaries' set: {name, dir, pending, round}
+        self.options = {}       # what resume needs back: extra_due, identity_bad, gate_fresh
         self.made = utc_now()
 
     def by_status(self, status):
@@ -208,9 +219,12 @@ class Plan:
         return self.by_status("due")
 
     def to_json(self):
-        return dict(v=1, word=self.word.to_json(), family=self.family, made=self.made, header=self.header,
-                    set=self.set, totals=self.totals, notes=list(self.notes), classes=self.classes,
-                    unmapped=self.unmapped, cells=[c.to_json() for c in self.cells])
+        out = dict(v=1, word=self.word.to_json(), family=self.family, made=self.made, header=self.header,
+                   set=self.set, totals=self.totals, notes=list(self.notes), classes=self.classes,
+                   unmapped=self.unmapped, cells=[c.to_json() for c in self.cells])
+        if self.options:
+            out["options"] = self.options
+        return out
 
     def render(self):
         from . import report
@@ -346,6 +360,7 @@ class Planner:
         self.cls = ctx.classes
         self.policy = self.cls.get("policy", {})
         self.plan = Plan(word, self.fam)
+        self.plan.options = {k: ctx.options[k] for k in ("extra_due", "identity_bad", "gate_fresh") if ctx.options.get(k)}
         self.notes = self.plan.notes
         self.carry = ctx.options.get("carry") or carry.ArchiverCarry(ctx.checkout, ctx.bko_git)
         self.plandiff = ctx.options.get("plandiff", optional_module("plandiff"))
@@ -363,6 +378,9 @@ class Planner:
         self._changed = {}
         self._wt = {}
         self._gate_holt = None
+        self._binrows = None
+        self._holt_codes = {}
+        self._estimator = None
         self.heads = ctx.options.get("heads")
         self.opts = {}
         self.set_name = None
@@ -421,7 +439,10 @@ class Planner:
 
     def setup_set(self):
         """The set a stic or gate word tests: ROUND's, the round at the fork heads, else (stic)
-        one to build (pending) or (gate) bko-bin."""
+        one to build (pending) or (gate) bko-bin.  Guest and img cells name no set."""
+        if self.fam in ("guest", "img"):
+            self.opts = {}
+            return
         if self.fam == "holt":
             self.opts = {"rustic_set": "bko-bin"}
             code = keys.holt_code(self.ctx.src)
@@ -518,6 +539,12 @@ class Planner:
             cells = [f"holt:{g}" for g in sorted(set(src))]
             for v, gs in h["variants"].items():
                 cells += [f"holt:{g}+{v}" for g in gs]
+            if self.img_asked(u):
+                cells += self.img_cells()
+        elif self.fam == "guest":
+            cells = self.guest_universe()
+        elif self.fam == "img":
+            cells = [f"img:{p}" for p in words.PLATS]
         else:
             cells = []
             ents, have = self.gate_entries()
@@ -538,6 +565,53 @@ class Planner:
             cells = [c for c in cells if c in want]
         return cells
 
+    def img_panel(self):
+        return self.cls.get("holt", {}).get("img_panel") or {}
+
+    def img_cells(self):
+        """Every holt:GUEST+img cell of holt.img_panel."""
+        return [f"holt:{g}+img" for p in self.img_panel().values() for g in p.get("guests", ())]
+
+    def img_asked(self, universe):
+        """+img cells are in a word's universe only when it names them, or ImgTest2 asks."""
+        return "img" in self.w.variants or any(n.endswith("+img") for n in self.w.names) \
+            or any(c.endswith("+img") for c in universe or ())
+
+    def panel_of(self, guest):
+        """(PLAT, its img_panel entry) of GUEST, or (None, {})."""
+        for p, e in self.img_panel().items():
+            if guest in e.get("guests", ()):
+                return p, e
+        return None, {}
+
+    def guest_spec(self):
+        sf = self.ctx.specs.get("guest")
+        if sf is None:
+            raise PlanError(f"{keys.SPEC_PATHS['guest']} isn't there: GuestTest2 isn't built")
+        return sf
+
+    def guest_entry(self, name):
+        sf = self.ctx.specs.get("guest")
+        try:
+            return sf.entry(name) if sf is not None else {}
+        except KeyError:
+            return {}
+
+    def guest_universe(self):
+        sf = self.guest_spec()
+        excl = sf.data.get("excluded") or {}
+        names = [n for n in sf.names() if n not in excl]
+        have = {g for f in self.ctx.facts.values() for g in (f.get("guests") or {})}
+        missing = sorted(have - set(names) - set(excl))
+        if missing:
+            self.notes.append("not in any spec: " + ", ".join(missing))
+        if self.w.update and self.w.form == "bare":
+            left = [n for n in names if self.guest_entry(n).get("update", True) is not True]
+            if left:
+                self.notes.append("not in a bare update round: " + ", ".join(left))
+            names = [n for n in names if n not in left]
+        return [f"guest:{n}" for n in names]
+
     # --- per cell ---
 
     def view(self, cell):
@@ -549,6 +623,8 @@ class Planner:
         v.allrows = allrows
         cleared = set()     # keys with an uncommitted PASS newer than the rows still to come
         for r in allrows:
+            if v.family == "guest" and (r.get("extra") or {}).get("merged"):
+                continue    # a merged update's row is no PASS: the merged image hasn't booted yet
             ok_flag, ok = self.valid(r)
             if ok:
                 v.rows.append(r)
@@ -606,6 +682,16 @@ class Planner:
     def place(self, v):
         """The hosts that may run the cell (pins, R17's UEFI rescuer) and, if none, why."""
         reach = [h for h in self.ctx.hosts if h in self.ctx.facts]
+        bad = (self.ctx.options.get("identity_bad") or {}).get(v.name)
+        if bad is not None and v.family in ("stic", "holt"):
+            v.why_not = f"its guest's identity failed: {bad}"
+            return
+        if v.family == "guest":
+            self.place_guest(v, reach)
+            return
+        if v.family == "img":
+            self.place_img(v, reach)
+            return
         if v.family == "gate":
             if v.name == "selftest" or (v.chost == "mac"):
                 v.hosts, v.pc.host = ["mac"], "mac"
@@ -640,7 +726,9 @@ class Planner:
                 v.hosts = [pin]
             else:
                 v.hosts = list(reach)
-            if self.holt_uefi(v.name) and v.hosts:
+            if v.variant == "img":
+                self.place_img_panel(v)
+            elif self.holt_uefi(v.name) and v.hosts:
                 with_u = [h for h in v.hosts if self.has_uefi_rescuer(h)]
                 if with_u:
                     if len(with_u) < len(v.hosts):
@@ -664,6 +752,47 @@ class Planner:
                 v.hosts = ok
         if not v.hosts and not v.why_not:
             v.why_not = "no host in --hosts is reachable"
+
+    def place_guest(self, v, reach):
+        e = self.guest_entry(v.name)
+        have = [h for h in reach if v.name in ((self.ctx.facts[h].get("guests")) or {})]
+        pin = e.get("pin")
+        if self.w.update and e.get("update", True) is False:
+            v.why_not = "vm-update can't update it (guest/spec.json: update false)"
+            return
+        if pin:
+            v.pc.host = pin
+            if pin not in self.ctx.hosts:
+                v.why_not = f"{v.name} runs on {pin} only, which is not in --hosts"
+            elif pin not in have:
+                v.why_not = f"{v.name} runs on {pin} only, which is unreachable or doesn't have it"
+            else:
+                v.hosts = [pin]
+            return
+        v.hosts = have
+        if not have:
+            v.why_not = f"{v.name} is on no reachable host"
+
+    def place_img(self, v, reach):
+        ims = {h: ((self.ctx.facts[h].get("images") or {}).get(v.name)) for h in reach}
+        v.hosts = [h for h, im in ims.items() if im and im.get("done_exit") is not None]
+        if not v.hosts:
+            building = any(im and im.get("done_exit") is None for im in ims.values())
+            v.why_not = (f"images/{v.name}/done.exit is missing: a build is under way, or stopped before its end"
+                         if building else f"no current image of {v.name} on a reachable host")
+
+    def place_img_panel(self, v):
+        plat, e = self.panel_of(v.name)
+        if e.get("blocked"):
+            v.hosts, v.why_not = [], f"blocked: {e['blocked']}"
+            return
+        ims = {h: ((self.ctx.facts.get(h) or {}).get("images") or {}).get(plat) for h in v.hosts}
+        ok = [h for h, im in ims.items() if im and not (im.get("pin") or {}).get("bins_stale")]
+        if not ok and v.hosts:
+            stale = [h for h, im in ims.items() if im]
+            v.why_not = (f"the {plat} image's binaries no longer match bko-bin.sha256 (bins-stale on {', '.join(stale)})"
+                         if stale else f"no current image of {plat} on a reachable host")
+        v.hosts = ok
 
     def holt_uefi(self, guest):
         """R17: a Linux-kind source with --uefi (classes.json holt.uefi, or holt/spec.json's
@@ -807,18 +936,35 @@ class Planner:
                 and r.get("verdict") in DECISIVE_VERDICTS]
         if at_k:
             top = at_k[0]
+            failing = []
             for k in sorted(ks):    # R4 is per key: a newer PASS at the other host's key doesn't answer a FAIL at this one's
                 here = next((r for r in at_k if r.get("key") == k), None)
                 if here is not None and here.get("verdict") in ("FAIL", "FLAKY-FAIL"):
-                    top = here
-                    break
+                    failing.append(here)
+            if failing:             # to-class only when every failing key is: a real FAIL at one key still reruns
+                top = next((r for r in failing if not (r.get("extra") or {}).get("to_class_only")), failing[0])
+            if v.family == "img" and self.panel_owed(v, at_k, ks):
+                return
             if top.get("verdict") in ("FAIL", "FLAKY-FAIL"):
+                if (top.get("extra") or {}).get("to_class_only"):
+                    pc.status, pc.rule = "to-class", None
+                    pc.reasons.append(f"to be classed: {top.get('id')} (t2 guest-lines {top.get('run')}, "
+                                      "or a guest/limits.json entry)")
+                    return
                 pc.status, pc.rule = "due", "failed"
                 pc.reasons.append(f"{top.get('verdict')} at this key: {top.get('id')} ({(top.get('t') or '')[:10]})")
                 if any(pass_like(r) and r.get("key") == top.get("key") for r in at_k):
                     pc.reasons.append("verdict changed at an unchanged key")
                     self.verdict_changed.append(v.cell)
                 return
+            if v.family in ("guest", "img"):
+                lacking = [h for h, k in pc.keys.items()
+                           if not any(r.get("key") == k and pass_like(r) for r in at_k)]
+                if lacking:     # a QEMU moved, or an image rebuilt, on one host: every reachable host's key needs a PASS
+                    v.hosts = lacking
+                    pc.host = lacking[0]
+                    self.changed(v, lacking[0])
+                    return
             self.at_pass(v, top)
             return
         # R4 at the last PASS's own key too: a FAIL after it there isn't hidden by a change since
@@ -833,7 +979,7 @@ class Planner:
                 return
         if v.P is None:
             pc.status = "due"
-            pc.rule = "holt:new" if v.family == "holt" else "new"
+            pc.rule = {"holt": "img:panel" if v.variant == "img" else "holt:new", "img": "img:new"}.get(v.family, "new")
             unc = [r for r in v.unc if r.get("key") in ks]
             if unc:
                 pc.rule = "pass-uncommitted"
@@ -842,6 +988,30 @@ class Planner:
                 pc.reasons.append("no PASS yet")
             return
         self.changed(v)
+
+    def panel_owed(self, v, at_k, ks):
+        """img:P whose newest decisive row at its key leaves the panel owed, failed, or blocked
+        by something that's gone: due, and the runner re-runs only the panel.  `release` requires
+        the panel: a boot PASS whose panel didn't pass is owed too (never run, or still blocked:
+        the runner's release check then ends the word nonzero)."""
+        panel = self.img_panel().get(v.name) or {}
+        blocked = panel.get("blocked")
+        for k in sorted(ks):
+            r = next((x for x in at_k if x.get("key") == k), None)
+            if r is not None and r.get("origin"):
+                # (a boot row's own .panel row supersedes it, whatever their times and ids say)
+                r = next((x for x in at_k if x.get("key") == k and x.get("origin") == r["origin"] + ".panel"), r)
+            res = ((r or {}).get("extra") or {}).get("panel") or {}
+            result = res.get("result")
+            if result in ("owed", "fail") or (result == "blocked" and not blocked):
+                v.pc.status, v.pc.rule = "due", "img:panel-owed"
+                v.pc.reasons.append(f"its panel is {result}: {r.get('id')}")
+                return True
+            if self.w.release and r is not None and pass_like(r) and result != "pass" and panel.get("guests"):
+                v.pc.status, v.pc.rule = "due", "img:panel-owed"
+                v.pc.reasons.append(f"release requires the panel, and its panel is {result or 'not recorded'}: {r.get('id')}")
+                return True
+        return False
 
     def explain_current(self, v):
         """A fresh cell's reasons say how it stands in the ledger."""
@@ -876,6 +1046,10 @@ class Planner:
         if g_now.get("plumbing") != rg.get("plumbing"):
             diffs = self.name_diffs(R.get("inputs"), self.inputs_on(v, h), ("plumbing",))
             self.plumbing_changed = True
+            if v.family == "img":   # no canaries: ImgTest2 tests the images built since their PASS
+                pc.status = "soft-stale"
+                pc.reasons.append("plumbing changed" + (": " + "; ".join(self.fmt_diffs(diffs, 2)) if diffs else ""))
+                return
             if canary:
                 pc.status, pc.rule = "due", "canary:plumbing"
                 pc.reasons += self.fmt_diffs(diffs) or ["plumbing changed"]
@@ -890,12 +1064,17 @@ class Planner:
             return
         if g_now.get("soft") != rg.get("soft"):
             diffs = self.name_diffs(R.get("inputs"), self.inputs_on(v, h), ("soft",))
-            if canary:
+            guest_only = bool(diffs) and all(":" in n for _, n, _, _ in diffs)   # a guest's generation or fine fingerprint
+            if canary and not guest_only:
                 pc.status, pc.rule = "due", "canary:host"
                 pc.reasons += self.fmt_diffs(diffs) or ["host versions changed"]
                 return
             pc.status = "soft-stale"
-            pc.reasons.append("host versions changed" + (": " + "; ".join(self.fmt_diffs(diffs, 2)) if diffs else ""))
+            if guest_only:
+                who = sorted({n.split(":", 1)[0] for _, n, _, _ in diffs})
+                pc.reasons.append(f"{', '.join(who)} soft inputs changed: " + "; ".join(self.fmt_diffs(diffs, 2)))
+            else:
+                pc.reasons.append("host versions changed" + (": " + "; ".join(self.fmt_diffs(diffs, 2)) if diffs else ""))
             return
         unk = sorted({f"{g}:{n}" for h in v.res for g, x in (v.inp.get(h) or {}).items() if g in ("guest", "xguest")
                       for n, val in (x or {}).items() if val == keys.UNKNOWN_IMG})
@@ -907,9 +1086,9 @@ class Planner:
             return
         pc.status = "current"
 
-    def changed(self, v):
+    def changed(self, v, host=None):
         pc, P = v.pc, v.P
-        h = self.match_host(v, P)
+        h = host or self.match_host(v, P)
         if h not in v.inp:
             h = next(iter(v.inp))
         now_g, now_i = v.grp[h], v.inp[h]
@@ -934,8 +1113,44 @@ class Planner:
             pc.status, pc.rule = "due", "changed:key"
             pc.reasons.append("its key changed with no hard input changed")
             return
-        fn = {"stic": self.stic_rule, "holt": self.holt_rule, "gate": self.gate_rule}[v.family]
+        if v.family in ("stic", "holt") and "guest" in v.G and self.fingerprint_change(v, h):
+            pc.fp_carry = True
+            if v.G == {"guest"}:
+                pc.status, pc.rule, pc.via = "carried", "carry:fingerprint", P.get("id")
+                pc.reasons.append("the guest's identity moved to its fingerprint: the same image")
+                return
+            v.G = v.G - {"guest"}
+            v.D = [d for d in v.D if d[0] != "guest"]
+        fn = {"stic": self.stic_rule, "holt": self.holt_rule, "gate": self.gate_rule, "guest": self.guest_rule,
+              "img": self.img_rule}[v.family]
         fn(v)
+
+    def fingerprint_change(self, v, h):
+        """True when the guest group's only change against P is one of carry:fingerprint's two
+        (G:generation gone and G:fingerprint added, the sidecar at P's generation; or
+        G:fingerprint changed, P's value in the sidecar's "was")."""
+        by = {}
+        for g, n, a, b in v.D:
+            if g != "guest":
+                continue
+            gname, _, what = n.rpartition(":")
+            if what not in ("generation", "fingerprint"):
+                return False
+            by.setdefault(gname, {})[what] = (a, b)
+        if not by:
+            return False
+        guests = (self.ctx.facts.get(h) or {}).get("guests") or {}
+        for gname, d in by.items():
+            rec = keys.fingerprint_of(guests.get(gname))
+            fp = d.get("fingerprint")
+            if rec is None or fp is None:
+                return False
+            if "generation" in d:
+                if d["generation"] != ("gen:" + rec["generation"], None) or fp[0] is not None:
+                    return False
+            elif not fp[0] or not fp[0].startswith("fp:") or fp[0][3:] not in (rec.get(f"{v.family}_was") or ()):
+                return False
+        return True
 
     def predict_unbuilt(self, v):
         """Binaries not built yet (contract 1.6), binary by binary: one whose own source repos
@@ -967,19 +1182,15 @@ class Planner:
     def named_paths(self):
         if self._named is None:
             named = set()
-            for fam in ("stic", "holt", "gate"):
+            for fam in ("stic", "holt", "gate", "guest", "img"):
                 sf = self.ctx.specs.get(fam)
                 if sf is None:
                     continue
-                cells = []
-                if fam == "stic":
-                    cells = [f"stic:{n}" for n in sf.names()]
-                elif fam == "holt":
-                    cells = [f"holt:{n}" for n in sf.names()]
+                cells = [f"{fam}:{n}" for n in sf.names()]
+                if fam == "holt":
                     for var, gs in self.cls["holt"]["variants"].items():
                         cells += [f"holt:{g}+{var}" for g in gs]
-                else:
-                    cells = [f"gate:{n}" for n in sf.names()]
+                    cells += self.img_cells()
                 for c in cells:
                     try:
                         r = keys.resolve(c, self.ctx.src, {}, self.ctx.specs,
@@ -988,7 +1199,7 @@ class Planner:
                         continue
                     for g in ("harness", "judge", "plumbing", "xguest", "host"):
                         for n in r.inputs.get(g, {}):
-                            p = n.split("#", 1)[0] if g == "judge" else n
+                            p = n.split("#", 1)[0] if g in ("judge", "harness") else n
                             if p.startswith("shared:"):
                                 p = p[len("shared:"):]
                                 p = "testvm/compare/cmp-run.sh" if p == "cmp-run.sh" else p
@@ -1081,6 +1292,295 @@ class Planner:
         pc.status, pc.rule = "due", "changed:" + "+".join(g for g in HARD if g in G)
         pc.reasons[:0] = self.fmt_diffs(v.D, v=v)
 
+    def guest_rule(self, v):
+        self.gate_rule(v)
+
+    def img_rule(self, v):
+        pc, G = v.pc, v.G
+        if "bin" in G:
+            pc.status, pc.rule = "due", "img:new"
+            pc.reasons[:0] = self.fmt_diffs(v.D, v=v)
+            return
+        pc.status = "soft-stale"
+        pc.reasons.append(f"changed ({'+'.join(g for g in HARD if g in G)}): ImgTest2 tests the images built since "
+                          "their PASS")
+        result = (((v.P or {}).get("extra") or {}).get("panel") or {}).get("result")
+        if self.w.release and result != "pass" and (self.img_panel().get(v.name) or {}).get("guests"):
+            pc.status, pc.rule = "due", "stale"     # the owed-panel path reads rows at the key, and this key has none
+            pc.reasons.insert(0, f"release requires the panel, and its last PASS's panel is {result or 'not recorded'}")
+
+    # --- GuestTest2's 7 days, the update round's --try ---
+
+    def try_days(self):
+        return float(((self.policy.get("guest") or {}).get("run") or {}).get("try_days", 7))
+
+    def try_when(self, r):
+        """When R's --try ran.  A class row only accepted that --try's log lines, later: it is dated
+        by the row it classes, or the 7 days would restart with no look at the upstream repositories."""
+        if r.get("kind") == "class" and r.get("via"):
+            via = self.rows_by_id.get(r["via"])
+            return row_t(via) if via is not None else ""
+        return row_t(r)
+
+    def last_try(self, v, passed=False):
+        """The time of the newest --try: rows with valid: true and extra.try_ran (any row, committed
+        or not: upstream repositories are in no key); PASSED: only a PASS, or the class row that
+        made one.  None when there is none."""
+        best = ""
+        for r in v.allrows:
+            if r.get("valid") is not True:
+                continue
+            ran = (r.get("extra") or {}).get("try_ran")
+            if r.get("kind") == "class" and r.get("via"):
+                via = self.rows_by_id.get(r["via"]) or {}
+                ran = ran or (via.get("extra") or {}).get("try_ran")
+            if ran and (not passed or pass_like(r)):
+                best = max(best, self.try_when(r))
+        return best or None
+
+    def older_than_days(self, when):
+        t = parse_utc(when) if when else None
+        return t is None or self.ctx.now - t > self.try_days() * 86400
+
+    def guest_try_pass(self, views):
+        """guest:7day: a --try cell not due, whose last --try is older than try_days."""
+        for v in views:
+            if v.pc.status not in ("current", "soft-stale", "canary-verified", "awaiting-canaries", "to-class"):
+                continue
+            if not self.guest_entry(v.name).get("try"):
+                continue
+            when = self.last_try(v)
+            if self.older_than_days(when):
+                v.pc.status, v.pc.rule = "due", "guest:7day"
+                v.pc.reasons.insert(0, "its last --try is older than " + f"{self.try_days():g} days"
+                                    + (f" ({when[:10]})" if when else " (none on record)"))
+
+    def guest_update_pass(self, views):
+        """A bare GuestTest2 update: every guest needs a --try PASS within try_days."""
+        if not (self.w.update and self.w.form == "bare"):
+            return
+        for v in views:
+            if v.pc.status == "due" and self.older_than_days(self.last_try(v, passed=True)):
+                v.pc.status, v.pc.rule, v.pc.refused = "not-runnable", None, True
+                v.pc.reasons = [f"no --try PASS within {self.try_days():g} days: run t2 GuestTest2 {v.name} first"]
+
+    # --- ImgTest2's refusal ---
+
+    def estimator(self):
+        if self._estimator is None:
+            rows = {c: sorted(rs, key=lambda r: (row_t(r), r.get("id", ""))) for c, rs in self.rows_by_cell.items()}
+            self._estimator = estimates.Estimator(rows, estimates.load_tsv(estimates.default_tsv_path(self.ctx.checkout)),
+                                                  estimates.readme_estimates(self.ctx.drive) if self.fam == "stic" else {})
+        return self._estimator
+
+    def bin_rows(self):
+        """{(family, name, value): {cell: [row, newest first]}}: every valid, committed, decisive
+        stic and holt row, by the binaries it names.  Never a +img cell's: a panel tests the image
+        itself, it is no evidence for letting that image be tested, and its FAIL is the
+        img:panel-owed rule's to answer."""
+        if self._binrows is None:
+            out = {}
+            for cell, rs in self.rows_by_cell.items():
+                fam = cell.split(":", 1)[0]
+                if fam not in ("stic", "holt") or cell.endswith("+img"):
+                    continue
+                for r in sorted(rs, key=lambda x: (row_t(x), x.get("id", "")), reverse=True):
+                    if r.get("kind") in DECISIVE_KINDS and r.get("verdict") in DECISIVE_VERDICTS and self.valid(r)[1]:
+                        for n, val in ((r.get("inputs") or {}).get("bin") or {}).items():
+                            if "#" not in n:
+                                out.setdefault((fam, n, val), {}).setdefault(cell, []).append(r)
+            self._binrows = out
+        return self._binrows
+
+    def carried_chain_ok(self, r):
+        """Walk a carried PASS through via to a run row: every link must be carry:version-only."""
+        seen = set()
+        while r is not None and r.get("kind") == "carried":
+            if r.get("rule") != "carry:version-only" or r.get("id") in seen:
+                return False
+            seen.add(r.get("id"))
+            r = self.rows_by_id.get(r.get("via"))
+        return r is not None and r.get("kind") == "run" and pass_like(r)
+
+    def holt_code_at(self, commit):
+        """CODE of the holt tree at COMMIT, or None when it isn't in this repository."""
+        if commit not in self._holt_codes:
+            try:
+                self._holt_codes[commit] = keys.holt_code(keys.GitSource(self.ctx.checkout, commit, scope=("holt",)))
+            except (ValueError, OSError):
+                self._holt_codes[commit] = None
+        return self._holt_codes[commit]
+
+    def binary_state(self, pairs):
+        """(state, why, failing cell or None) of a binary from PAIRS [(family, name, value)]: none
+        when no row or a cell's newest decisive row at that digest failed; else real, carried or
+        carried-other."""
+        per = {}
+        for fam, n, val in pairs:
+            for cell, rs in (self.bin_rows().get((fam, n, val)) or {}).items():
+                per.setdefault(cell, []).extend(rs)
+        best = None
+        for cell, rs in sorted(per.items()):
+            rs.sort(key=lambda x: (row_t(x), x.get("id", "")), reverse=True)
+            if rs[0].get("verdict") in ("FAIL", "FLAKY-FAIL"):
+                return "none", f"{cell}'s newest row at that digest is {rs[0].get('verdict')} ({rs[0].get('id')})", cell
+            atk = {}
+            for r in rs:
+                atk.setdefault(r.get("key"), r)
+            for r in atk.values():
+                if not pass_like(r):
+                    continue
+                st = "real" if r.get("kind") == "run" else \
+                    "carried" if r.get("kind") == "carried" and self.carried_chain_ok(r) else "carried-other"
+                rank = ("carried-other", "carried", "real").index(st)
+                if best is None or rank > best[0]:
+                    best = (rank, st, r)
+        if best is None:
+            return "none", "no PASS at its digest", None
+        return best[1], best[2].get("id"), None
+
+    @staticmethod
+    def cell_command(cell):
+        """The word that runs a stic or holt CELL by name."""
+        fam, name = cell.split(":", 1)
+        return f"t2 SticTest2 ROUND {name}" if fam == "stic" else f"t2 HoltTest2 {name}"
+
+    def canary_cell(self, plat, name):
+        """The platform's cheapest cell (by the Estimator) that uses binary NAME."""
+        est = self.estimator()
+        if name == "bko-holt":
+            sf = self.ctx.specs.get("holt")
+            cells = []
+            for g in (sf.names() if sf is not None else ()):
+                try:
+                    if (sf.entry(g).get("plat") or "linux") == plat:
+                        cells.append(f"holt:{g}")
+                except KeyError:
+                    continue
+        else:
+            osn = "omnios" if plat == "illumos" else plat
+            try:
+                cells = [f"stic:{g}" for g in self.ctx.drive.all_guests() if getattr(self.stic_spec(g), "os", None) == osn]
+            except PlanError:
+                cells = []
+        if not cells:
+            return None, None
+        c = min(cells, key=lambda c: (est.cell(c)["gm"], c))
+        return c, self.cell_command(c)
+
+    def judge_binary(self, plat, name, hexd, im):
+        """{state, digest, why, canary} of one of an image's binaries (contract 1.7's four steps)."""
+        out = {"state": "none", "digest": hexd, "why": None, "canary": None}
+        val = "sha256:" + hexd
+        pairs, failing = None, None
+        if name == "bko-holt":
+            commit = im.get("holt_commit")
+            code = self.holt_code_at(commit) if commit else None
+            if not commit:
+                out["why"] = "no bko-holt.commit beside the image: rebuild it (stick/img-refresh-holt.sh, stick/img-lanes.sh)"
+            elif code is None:
+                out["why"] = f"bko-holt.commit {commit[:12]} isn't in this repository: rebuild the image from a commit that is"
+            else:
+                pairs = [("holt", f"{plat}/bko-holt", "code:" + code), ("holt", f"{plat}/bko-holt", val)]
+        else:
+            osn = "omnios" if plat == "illumos" else plat
+            pairs = [("stic", f"{osn}/{name}", val), ("holt", f"{plat}/{name}", val)]
+        if pairs is not None:
+            out["state"], w, failing = self.binary_state(pairs)
+            if out["state"] != "real":
+                out["why"] = w
+        if pairs is None or out["state"] not in ("none", "carried-other"):
+            return out      # (with no commit to go on no test can give it a PASS: only the rebuild can)
+        out["canary"], out["command"] = (failing, self.cell_command(failing)) if failing else self.canary_cell(plat, name)
+        return out
+
+    def listed_bins(self, plat):
+        """The binaries img/spec.json says PLAT's image holds (restic-bko isn't on Haiku)."""
+        sf = self.ctx.specs.get("img")
+        try:
+            bins = sf.entry(plat).get("bins") or () if sf is not None else ()
+        except KeyError:
+            return ()
+        return [b.split("/", 1)[1] for b in bins if b.endswith(("/restic-bko", "/rustic-bko", "/bko-holt"))]
+
+    def bin_changed(self, v):
+        """True when img:P has no PASS, or its bin group differs from the PASS's on any host."""
+        if v.P is None:
+            return True
+        then = (v.P.get("groups") or {}).get("bin")
+        return any(g.get("bin") != then for g in v.grp.values())
+
+    def img_refuse_pass(self, views):
+        """Per img:P that would run: every binary needs a PASS at its digest (contract 1.7)."""
+        for v in views:
+            if v.pc.status != "due":
+                continue
+            bins, bad = {}, []
+            for h in v.hosts:
+                im = ((self.ctx.facts.get(h) or {}).get("images") or {}).get(v.name) or {}
+                for name, hexd in sorted((im.get("bins") or {}).items()):
+                    if (name, hexd) in bins:
+                        continue
+                    res = bins[(name, hexd)] = self.judge_binary(v.name, name, hexd, im)
+                    if res["state"] in ("none", "carried-other"):
+                        bad.append((name, res))
+                for name in self.listed_bins(v.name):   # one bko-bin.sha256 doesn't list can't be vouched for
+                    if name not in (im.get("bins") or {}) and (name, "") not in bins:
+                        res = bins[(name, "")] = {"state": "none", "digest": "", "canary": None,
+                                                  "why": f"not in images/{v.name}/bko-bin.sha256: rebuild the image"}
+                        bad.append((name, res))
+            v.pc.binaries = {n: r for (n, _), r in sorted(bins.items())}
+            if not bad:
+                continue
+            why = []
+            for name, res in bad:
+                what = "only a carried PASS, not by version bumps alone" if res["state"] == "carried-other" else "no PASS at its digest"
+                t = f"{v.name}/{name} {res['digest'][:12]}".rstrip() + f": {what}" + (f" ({res['why']})" if res.get("why") and res["why"] != what else "")
+                if res.get("command"):
+                    t += f"; run {res['command']}"
+                why.append(t)
+            # contract 1.7's exit: bin group changed since its PASS, or none; and what a word named. An
+            # owed panel's image can't be let off either ("a failed or owed panel exits nonzero")
+            v.pc.refused = v.cell in self.fresh or self.w.release or v.pc.rule == "img:panel-owed" or self.bin_changed(v)
+            v.pc.status, v.pc.rule = "not-runnable", None
+            v.pc.reasons = why
+
+    # --- notes over the guests' sidecars ---
+
+    def fingerprint_rules(self):
+        """sha256 of the two files' sha256 hex, fingerprint.py's first (as fingerprint.py writes it)."""
+        a, b = self.ctx.src.sha256("testvm/update/fingerprint.py"), self.ctx.src.sha256("testvm/holttest1d/judge.py")
+        return sha256_hex((a or "") + (b or "")) if a and b else None
+
+    def guest_notes(self, views):
+        """disk differs from its merge record; fingerprint rules changed."""
+        differ, rules_old = [], False
+        now = self.fingerprint_rules()
+        for name in sorted({v.name for v in views}):
+            for h in self.ctx.hosts:
+                g = ((self.ctx.facts.get(h) or {}).get("guests") or {}).get(name) or {}
+                st = g.get("stat") or {}
+                if st and g.get("generation") and st.get("generation") == g.get("generation") and name not in differ:
+                    rec = st.get("disks") or {}
+                    for d in g.get("disks") or ():
+                        want = rec.get(os.path.basename(d.get("path") or ""))
+                        if want is None:        # (a disk the record never saw differs, as guest.py has it)
+                            differ.append(name)
+                            break
+                        if d.get("mtime_ns") is None:
+                            continue
+                        if (d.get("size"), d.get("mtime_ns"), d.get("inode")) != \
+                                (want.get("size"), want.get("mtime_ns"), want.get("inode")):
+                            differ.append(name)
+                            break
+                rec = keys.fingerprint_of(g)
+                if now and rec and rec.get("rules") and rec["rules"] != now:
+                    rules_old = True
+        if differ:
+            self.notes.append("disk differs from its merge record: " + ", ".join(differ))
+        if rules_old:
+            self.notes.append("fingerprint rules changed: run t2 guest-fingerprints --reproject")
+
     # --- holt ---
 
     def holt_plat(self, name):
@@ -1089,6 +1589,10 @@ class Planner:
 
     def holt_rule(self, v):
         pc, G, D, P = v.pc, v.G, v.D, v.P
+        if v.variant == "img":
+            pc.status, pc.rule = "due", "img:panel"
+            pc.reasons[:0] = self.fmt_diffs(D, v=v)
+            return
         sel, carried, soft = [], [], []
         bins = sorted({n.split("#")[0] for g, n, a, b in D if g == "bin"})
         hb = [n for n in bins if n.endswith("bko-holt")]
@@ -1148,7 +1652,7 @@ class Planner:
         pc.reasons += soft[:2]
 
     def holt_code_rule(self, v):
-        """bko-holt's code changed: version-only (carried), plan-visible (R15) or all 45 (holt:code)."""
+        """bko-holt's code changed: version-only (carried), plan-visible (R15) or all 48 (holt:code)."""
         P = v.P
         # R14: rows of a build that isn't CODE's (HoltTest1 runs, --holt-bin sets) count only
         # where equal, whatever the tree's diff says; so does any row when the set is a --holt-bin one.
@@ -1313,7 +1817,7 @@ class Planner:
     def holt_new_pass(self, views):
         new = {v.name for v in views if v.variant is None and v.pc.rule == "holt:new" and v.pc.status == "due"}
         for v in views:
-            if v.variant and v.name in new and v.pc.status not in ("due", "not-runnable"):
+            if v.variant and v.variant != "img" and v.name in new and v.pc.status not in ("due", "not-runnable"):
                 v.pc.status, v.pc.rule = "due", "holt:new"
                 v.pc.reasons.insert(0, f"its source {v.name} is new: every applicable variant runs")
 
@@ -1369,10 +1873,18 @@ class Planner:
         w, out = self.w, {}
         cs = set(cells)
         if w.all:
-            return {c: ("fresh:All", [f"{w.word}: everything, fresh"]) for c in cells}
+            rule = "fresh:Sweep" if w.sweep else "fresh:All"
+            return {c: (rule, [f"{w.word}: everything, fresh"]) for c in cells}
+        if w.update and w.form == "bare":
+            return {c: ("fresh:update", ["GuestTest2 update"]) for c in cells}
         for c in w.names:
             if c in cs:
-                out[c] = ("fresh:names", ["named"])
+                out[c] = ("fresh:update", ["GuestTest2 update, named"]) if w.update else ("fresh:names", ["named"])
+        ed = self.ctx.options.get("extra_due") or ()
+        for c in ed:
+            if c in cs:
+                why = ed[c] if isinstance(ed, dict) else "a carried binary's canary"
+                out.setdefault(c, ("canary:carried", [why]))
         if self.fam == "holt":
             h = self.cls["holt"]
             for x in w.letters:
@@ -1385,8 +1897,9 @@ class Planner:
                         out.setdefault(c, (f"fresh:family:{x}", [f"HoltTest2{x}'s variant"]))
                 if x == "D" and "holt:debian13+oneshot" in cs:
                     self.notes.append("debian13+oneshot runs once (HoltTest1D ran it on each host)")
+            variants = dict(h["variants"], img=[c[5:].split("+")[0] for c in self.img_cells()])
             for var in w.variants:
-                gs = h["variants"].get(var, ())
+                gs = variants.get(var, ())
                 if w.names or w.letters:
                     base = {}   # a guest is selected by any of its cells, variant cells too
                     for c, (r, _) in out.items():
@@ -1419,7 +1932,20 @@ class Planner:
             self.holt_new_pass(views)
         if self.fam == "stic":
             self.stic_class_pass(views)
+        if self.fam == "guest":
+            self.guest_try_pass(views)
+            self.guest_update_pass(views)
+        if self.fam in ("guest", "stic", "holt"):
+            self.guest_notes(views)
+        if self.fam == "img":
+            self.img_refuse_pass(views)     # a refused image is no reason to run a soft-stale one beside it
         self.stale_pass(views)
+        if self.fam == "img":
+            self.img_refuse_pass(views)
+        if self.fam == "img" and (self.w.release or self.w.form == "names"):
+            for v in views:     # an image the word names, or that release must vouch for, and can't run
+                if v.pc.status == "not-runnable":
+                    v.pc.refused = True
         if self.w.form == "names" and self.w.stale:   # the named cells, fresh, and every soft-stale cell
             views = [v for v in views if v.cell in self.fresh or v.pc.rule == "stale"]
         for v in views:
@@ -1437,8 +1963,8 @@ class Planner:
         for v in views:
             for res in v.res.values():
                 for n in getattr(res, "notes", ()):
-                    if n.startswith(("guest identity unknown", "BIOS rescuer", "rescuer identity unknown")) \
-                            and n not in self.notes:
+                    if (n.startswith(("guest identity unknown", "BIOS rescuer", "rescuer identity unknown", "no section "))
+                            or n.endswith("test image isn't pinned yet: its identity is unknown")) and n not in self.notes:
                         self.notes.append(n)
             if v.pc.differ and v.pc.host == "any":
                 differ.append(f"{v.cell} ({', '.join(v.pc.differ[:4])})")
@@ -1486,6 +2012,13 @@ class Planner:
                                                     {v.name: v.pc.est["wall_s"] for v in due}, have, first)
             for v in due:
                 v.pc.placed = place.get(v.name)
+        elif self.fam in ("guest", "img"):
+            reach = [h for h in ctx.hosts if h in ctx.facts]
+            first = reach[:1] if self.w.update else reach
+            jobs = [(v.cell, v.pc.est["wall_s"], self.job_gib(v), [x for x in v.hosts if x in first] or None) for v in due]
+            wall, place, left = estimates.pack(jobs, first, slots=2 if self.w.update else estimates.HOLT_JOBS)
+            for v in due:
+                v.pc.placed = place.get(v.cell)
         elif self.fam == "holt":
             sizes = estimates.load_ram_sizes(os.path.join(ctx.checkout, "testvm", "holttest1d", "ram-sizes.tsv"))
             jobs = [(v.cell, v.pc.est["wall_s"], sizes.get(v.cell[5:], sizes.get(v.name, 6)),
@@ -1517,7 +2050,14 @@ class Planner:
                             "counts": {s: sum(1 for v in views if v.pc.status == s) for s in STATUSES},
                             "cells": getattr(self, "ncells", len(views))}
 
+    def job_gib(self, v):
+        if v.family == "img":
+            return 1
+        run = (self.policy.get("guest") or {}).get("run") or {}
+        return float(self.guest_entry(v.name).get("ram_gib") or run.get("ram_gib_first", 8))
+
     def header(self):
+        from . import report
         ctx = self.ctx
         dirty = (ctx.copy_preview or {}).get("dirty") or {}
         pulled = ctx.options.get("pulled") or {}
@@ -1527,7 +2067,15 @@ class Planner:
             "pulled": {h: pulled.get(h) for h in list(ctx.hosts) + [x for x in pulled if x not in ctx.hosts]},
             "facts": {h: (ctx.facts.get(h) or {}).get("t") for h in ctx.hosts if h in ctx.facts},
             "unreachable": [h for h in ctx.hosts if h not in ctx.facts],
+            "sweep": report.sweep_line(self.policy, ctx.options.get("last_sweep"), ctx.now),
         }
+        if self.fam == "img" and self.plan.due():
+            est = self.estimator()
+            cells = [f"holt:{g}+img" for c in self.plan.due() for g in self.img_panel().get(c.cell[4:], {}).get("guests", ())]
+            gm = sum(est.cell(c)["gm"] for c in cells)
+            must = self.w.release or self.w.all
+            self.plan.header["panel"] = (f"panel: {len(cells)} cells, {gm:.1f} gm" if must else
+                                         f"panel: decided after the boot tests' manifests (at most {gm:.1f} gm)")
         for h in self.plan.header["unreachable"]:
             self.notes.append(f"{h} is unreachable: its cells use its last ledger mirror; nothing runs there")
         for h, p in sorted(pulled.items()):
@@ -1557,17 +2105,25 @@ def known_names(ctx):
         stic = ctx.drive.all_guests()
     except Exception:   # noqa: BLE001 - a missing drive.py only loses stic names
         stic = []
+    variants = dict(h["variants"], img=[g for p in (h.get("img_panel") or {}).values() for g in p.get("guests", ())])
+    gs = ctx.specs.get("guest")
+    excl = (gs.data.get("excluded") or {}) if gs is not None else {}
     return {"stic": stic,
             "holt": {"sources": sorted({g for f in h["families"].values() for g in f} | set(h.get("no_family", []))),
-                     "variants": h["variants"], "families": h["families"], "refused": h.get("excluded", {})},
-            "gate": gl}
+                     "variants": variants, "families": h["families"], "refused": h.get("excluded", {})},
+            "gate": gl,
+            "guest": [n for n in gs.names() if n not in excl] if gs is not None else [],
+            "guest_refused": excl,
+            "img": list(words.PLATS)}
 
 
-def check_classes(ctx, holt_names=None):
+def check_classes(ctx, holt_names=None, notes=None):
     """The class table's check (contract 1.8): every name exists (stic: a check directory; holt:
-    a guest in the facts, else in holt/spec.json, else HOLT_NAMES for VM-less tests); the 45
+    a guest in the facts, else in holt/spec.json, else HOLT_NAMES for VM-less tests); the 48
     sources are exactly the families plus devuan6; every variant's guest is a source; the
-    canaries, pins, panels and classes name sources or checks.  Returns the errors."""
+    canaries, pins, panels and classes name sources or checks; the guest and img tables name
+    what their specs have (a spec that isn't there yet is skipped, with a line in NOTES).
+    Returns the errors."""
     c = ctx.classes
     errs = []
     try:
@@ -1591,8 +2147,8 @@ def check_classes(ctx, holt_names=None):
     src = set(fam) | set(h.get("no_family", []))
     if len(fam) != len(set(fam)):
         errs.append("holt: a guest in two families")
-    if len(src) != 45:
-        errs.append(f"holt: {len(src)} sources, not 45")
+    if len(src) != 48:
+        errs.append(f"holt: {len(src)} sources, not 48")
     known = set(holt_names or ())
     if not known:
         for f in ctx.facts.values():
@@ -1627,6 +2183,20 @@ def check_classes(ctx, holt_names=None):
         for g in gs:
             if g not in src:
                 errs.append(f"holt: rustic panel {pk}: {g} is no source")
+    hsf = ctx.specs.get("holt")
+    for pk, e in h.get("img_panel", {}).items():
+        if pk not in words.PLATS:
+            errs.append(f"holt: img_panel {pk}: no such platform")
+        for g in e.get("guests", ()):
+            if g not in src:
+                errs.append(f"holt: img_panel {pk}: {g} is no source")
+                continue
+            try:
+                plat = (hsf.entry(g).get("plat") or "linux") if hsf is not None else pk
+            except KeyError:
+                continue
+            if plat != pk:
+                errs.append(f"holt: img_panel {pk}: {g}'s platform is {plat}")
     sf = ctx.specs.get("holt")
     if sf is not None:
         spec_uefi = set()
@@ -1643,7 +2213,18 @@ def check_classes(ctx, holt_names=None):
     pol = c.get("policy", {})
     if pol.get("judge_change") not in ("due", "soft-stale"):
         errs.append("policy.judge_change: due or soft-stale")
-    for fam_ in ("stic", "holt", "gate"):
+    for fam_ in ("stic", "holt", "gate", "guest", "img"):
         if fam_ not in (pol.get("watch") or {}):
             errs.append(f"policy.watch has no {fam_}")
+    gsf = ctx.specs.get("guest")
+    if gsf is None:
+        if notes is not None:
+            notes.append(f"{keys.SPEC_PATHS['guest']} isn't there yet: guest.canaries not checked")
+    else:
+        excl = gsf.data.get("excluded") or {}
+        for g in c.get("guest", {}).get("canaries", ()):
+            if g not in gsf.names() or g in excl:
+                errs.append(f"guest: canary {g} is no guest of guest/spec.json")
+    if ctx.specs.get("img") is None and notes is not None:
+        notes.append(f"{keys.SPEC_PATHS['img']} isn't there yet: not checked")
     return errs

@@ -356,6 +356,12 @@ class U51RowsHolt(RecordsMixin, unittest.TestCase):
         row = self.build(k, "debian13", run="t2h-20261108T0300-abcd-r2")
         self.assertEqual((row["verdict"], row["class"]), ("PASS", "known-flake"))
 
+    def test_the_pins_image_line_is_checked_under_its_key_name(self):
+        # (+img keys the pin as rescuer/img-PLAT, keys.py's @image: a re-pin during the run is seen)
+        self.assertEqual(rows_holt.rescuer_name("/bkoscratch/test2/img-pin/netbsd/rescuer.img"), "rescuer/img-netbsd")
+        self.assertEqual(rows_holt.rescuer_name("/bkoscratch/holttest1d/rescuer/rescuer.qcow2"), "rescuer/rescuer.qcow2")
+        self.assertEqual(rows_holt.rescuer_name("/x/img-pin/linux/rescuer.img.tmp.1"), "rescuer/rescuer.img.tmp.1")
+
     def test_invalid_runs(self):
         row = self.build(self.k("linux-pass", env={"HT_QUICK": "1"}), "debian13")
         self.assertFalse(row["valid"])
@@ -424,6 +430,24 @@ class U51RowsHolt(RecordsMixin, unittest.TestCase):
             self.assertEqual(row["inputs"], planned.inputs, cell)
             self.assertEqual(row["key"], planned.key, cell)
             self.assertEqual(row["meta"]["holt"]["code"], code)
+
+    def test_an_img_row_checks_the_pins_bko_holt_against_the_key(self):
+        pin = "/bkoscratch/test2/img-pin/linux/bko-holt"
+        f = facts_for(["debian13", "freebsd15-ufs", "netbsd11", "haiku6"])
+        f["images"] = {"linux": {"bins": {"bko-holt": "a" * 64, "rustic-bko": RUSTIC["linux"], "restic-bko": "d" * 64},
+                                 "pin": {"sha256": "c" * 64, "current": True, "bins_stale": False}}}
+        for used, bad in (("a" * 64, False), ("0" * 64, True)):
+            k = self.k("linux-pass", env={"HT_VARIANT": "img", "HT_HOLT": pin}, drop_env=("HT_VARIANT",))
+            mp = os.path.join(k, "logs", "manifest.txt")
+            wr(mp, rd(mp) + f"sha256 {used} {pin}\n")
+            row = self.build(k, "debian13-img", facts=f)
+            self.assertEqual(row["cell"], "holt:debian13+img")
+            self.assertEqual(row["inputs"]["bin"]["linux/bko-holt"], "sha256:" + "a" * 64)
+            if bad:
+                self.assertFalse(row["valid"])
+                self.assertIn("isn't the image's aaaaaaaaaaaa", row["note"])
+            else:
+                self.assertNotIn("isn't the image's", row["note"] or "")
 
     def test_tree_moved(self):
         # The manifest's tree 7a322d1 against the tree's commit now.
@@ -554,7 +578,7 @@ class SpecJson(unittest.TestCase):
 
     def test_entries_and_kinds(self):
         names = self.sf.names()
-        self.assertEqual(len(names), 45)
+        self.assertEqual(len(names), 48)
         text = rd(os.path.join(WT, "testvm", "holttest1d", "ht1.sh"))
         m = re.search(r'case \$G in\n(.*?)\nesac', text, re.S)
         bsd = re.search(r"^\s*(\S+)\)\s*\n\s*exec .*ht1-bsd\.sh", m.group(1), re.M).group(1).split("|")

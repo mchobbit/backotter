@@ -1,0 +1,36 @@
+bios (usb): reached login in 26 s
+  ok   kernel               7.0.0-43-generic
+  ok   layers               layerfs-path=ubuntu-server-minimal.backotter.squashfs
+  ok   hostname             backotter
+  ok   rootfs               overlay
+  ok   secureboot           no EFI (BIOS boot)
+  ok   snapd-gone           
+  ok   llvm-gone            
+  ok   arm-firmware-gone    
+  ok   modem-firmware-kept  /usr/lib/firmware/qcom/sdx61
+  ok   switch-firmware      0 mellanox files
+  ok   tools                all present
+  ok   python               3.14.4
+  ok   layer-tools          all present
+  ok   fs-tools             1.39.7
+  ok   binaries             restic 0.19.1+backotter.5 compiled with go1.25.10 on linux/amd64 rustic 0.11.4+backotter.6
+  ok   bko-holt             bko-holt 0.2.4
+  ok   bcachefs-module      /lib/modules/7.0.0-43-generic/updates/dkms/bcachefs.ko.zst 1.39.7
+  ok   bcachefs-load        loaded, Secure Boot off
+  ok   dpkg-audit           
+  ok   zfs-no-autoimport    masked
+  ok   wait-online-masked   
+  ok   cloud-init-off       
+  ok   cdrom-source-gone    
+  ok   network              enp0s2           UP             ADDR metric 100
+  ok   tty1-console         
+  ok   tty2-root-shell      
+  ok   sshd-off-at-boot     
+  ok   remote-access        password login over SSH works
+  ok   root-ssh-refused     
+  ok   failed-units         
+  ok   marker               IMAGE-ID linux ubuntu 26.04.1 zfs 2.4.1 47 features
+  ok   memory               465 MB used of 3910
+  ok   config-partition     /cdrom is /dev/sda1; config is /dev/sda3, BACKOTTER FATSERIAL
+  ok   config-rw            boot-test.txt machines settings.toml stick.json
+  ok   config-settings      parses as shipped and as edited per its comments

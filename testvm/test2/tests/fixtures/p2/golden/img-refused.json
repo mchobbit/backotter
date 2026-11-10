@@ -1,0 +1,427 @@
+{
+ "cells": [
+  {
+   "binaries": {
+    "bko-holt": {
+     "canary": "holt:alpine324",
+     "command": "t2 HoltTest2 alpine324",
+     "digest": "8bb8df41689016264aa16e404b6b50366c9402248c7174d9638a3d1de6a21728",
+     "state": "none",
+     "why": "no PASS at its digest"
+    },
+    "restic-bko": {
+     "canary": "stic:sculpt2610",
+     "command": "t2 SticTest2 ROUND sculpt2610",
+     "digest": "879213069877117b58d4aeb772d99d57df332ace12396ff438c6d2a9cf495889",
+     "state": "none",
+     "why": "no PASS at its digest"
+    },
+    "rustic-bko": {
+     "canary": "stic:sculpt2610",
+     "command": "t2 SticTest2 ROUND sculpt2610",
+     "digest": "0e15cdd9c5ad475d88829f549442050994f62ca6e718841cbbc12963f1214dff",
+     "state": "none",
+     "why": "no PASS at its digest"
+    }
+   },
+   "cell": "img:linux",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 3.0,
+    "src": "tsv",
+    "wall_s": 180
+   },
+   "host": "any",
+   "key": "9661ed19830d3a062ce50a8476d9690b5478b7876730e077022670dbe88079e6",
+   "keys": {
+    "chopin": "9661ed19830d3a062ce50a8476d9690b5478b7876730e077022670dbe88079e6",
+    "cinqcent": "9661ed19830d3a062ce50a8476d9690b5478b7876730e077022670dbe88079e6"
+   },
+   "klass": null,
+   "last_pass": null,
+   "part": null,
+   "reasons": [
+    "linux/bko-holt 8bb8df416890: no PASS at its digest; run t2 HoltTest2 alpine324",
+    "linux/restic-bko 879213069877: no PASS at its digest; run t2 SticTest2 ROUND sculpt2610",
+    "linux/rustic-bko 0e15cdd9c5ad: no PASS at its digest; run t2 SticTest2 ROUND sculpt2610"
+   ],
+   "refused": true,
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "not-runnable",
+   "via": null
+  },
+  {
+   "binaries": {
+    "bko-holt": {
+     "canary": "holt:ghostbsd26",
+     "command": "t2 HoltTest2 ghostbsd26",
+     "digest": "59210e19f835aacf8d437ae04045ad9737c69b004c1e4b40aecfdaf94831b964",
+     "state": "none",
+     "why": "no PASS at its digest"
+    },
+    "restic-bko": {
+     "canary": "stic:ghostbsd26",
+     "command": "t2 SticTest2 ROUND ghostbsd26",
+     "digest": "30d10bfcdaa9a563cc514ede4ee953f1ab655777d2f96233e4eef87fa2be1f33",
+     "state": "none",
+     "why": "no PASS at its digest"
+    },
+    "rustic-bko": {
+     "canary": "stic:ghostbsd26",
+     "command": "t2 SticTest2 ROUND ghostbsd26",
+     "digest": "d175fa8d1c2cd07f89684b477273ded30ad56fb1c2eab2bff4e13002449db4a2",
+     "state": "none",
+     "why": "no PASS at its digest"
+    }
+   },
+   "cell": "img:freebsd",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.6,
+    "src": "tsv",
+    "wall_s": 96
+   },
+   "host": "any",
+   "key": "a37f327d3eda06cbc82bb36a5f9a6498bc1c3f75914be55a19d0b000bee5e190",
+   "keys": {
+    "chopin": "a37f327d3eda06cbc82bb36a5f9a6498bc1c3f75914be55a19d0b000bee5e190",
+    "cinqcent": "a37f327d3eda06cbc82bb36a5f9a6498bc1c3f75914be55a19d0b000bee5e190"
+   },
+   "klass": null,
+   "last_pass": null,
+   "part": null,
+   "reasons": [
+    "freebsd/bko-holt 59210e19f835: no PASS at its digest; run t2 HoltTest2 ghostbsd26",
+    "freebsd/restic-bko 30d10bfcdaa9: no PASS at its digest; run t2 SticTest2 ROUND ghostbsd26",
+    "freebsd/rustic-bko d175fa8d1c2c: no PASS at its digest; run t2 SticTest2 ROUND ghostbsd26"
+   ],
+   "refused": true,
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "not-runnable",
+   "via": null
+  },
+  {
+   "binaries": {
+    "bko-holt": {
+     "canary": "holt:alpinebsd",
+     "command": "t2 HoltTest2 alpinebsd",
+     "digest": "2c73fa291e766d8fca631fc59d1a6af0993ff754d3b5082037b64975a54ac2ca",
+     "state": "none",
+     "why": "no PASS at its digest"
+    },
+    "restic-bko": {
+     "canary": "stic:netbsd11",
+     "command": "t2 SticTest2 ROUND netbsd11",
+     "digest": "c8ab90feed8d592493499a771e26525bffc4f641379ce35abed2081efd3d4f29",
+     "state": "none",
+     "why": "no PASS at its digest"
+    },
+    "rustic-bko": {
+     "canary": "stic:netbsd11",
+     "command": "t2 SticTest2 ROUND netbsd11",
+     "digest": "7618f1110cd9a385e0a6d54047d012fb98278bc79052d6e431397e47776ff26d",
+     "state": "none",
+     "why": "no PASS at its digest"
+    }
+   },
+   "cell": "img:netbsd",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.3,
+    "src": "tsv",
+    "wall_s": 80
+   },
+   "host": "any",
+   "key": "468d8a8d3e16f1ffdd7abf14abe30190cbded542df33d3988801124d8aeaea04",
+   "keys": {
+    "chopin": "468d8a8d3e16f1ffdd7abf14abe30190cbded542df33d3988801124d8aeaea04",
+    "cinqcent": "468d8a8d3e16f1ffdd7abf14abe30190cbded542df33d3988801124d8aeaea04"
+   },
+   "klass": null,
+   "last_pass": null,
+   "part": null,
+   "reasons": [
+    "netbsd/bko-holt 2c73fa291e76: no PASS at its digest; run t2 HoltTest2 alpinebsd",
+    "netbsd/restic-bko c8ab90feed8d: no PASS at its digest; run t2 SticTest2 ROUND netbsd11",
+    "netbsd/rustic-bko 7618f1110cd9: no PASS at its digest; run t2 SticTest2 ROUND netbsd11"
+   ],
+   "refused": true,
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "not-runnable",
+   "via": null
+  },
+  {
+   "binaries": {
+    "bko-holt": {
+     "canary": "holt:openbsd8",
+     "command": "t2 HoltTest2 openbsd8",
+     "digest": "8d019a6f324c227ac7766665d5812b78130b19dbb63e1bdfb80078be6eb82492",
+     "state": "none",
+     "why": "no PASS at its digest"
+    },
+    "restic-bko": {
+     "canary": "stic:openbsd8",
+     "command": "t2 SticTest2 ROUND openbsd8",
+     "digest": "2b67f5e581bc890ecab505ad81ea96d54bf2639753ae8e495f6d9a870909f598",
+     "state": "none",
+     "why": "no PASS at its digest"
+    },
+    "rustic-bko": {
+     "canary": "stic:openbsd8",
+     "command": "t2 SticTest2 ROUND openbsd8",
+     "digest": "3343a242da0d6bb0e90bf26aef0270102f3c80fc74e7573ce086b68a931adc2d",
+     "state": "none",
+     "why": "no PASS at its digest"
+    }
+   },
+   "cell": "img:openbsd",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.2,
+    "src": "tsv",
+    "wall_s": 70
+   },
+   "host": "any",
+   "key": "1fad6ad6c74df8023576e26f82cbd134835d9a420c4fe1310a5566e523940b08",
+   "keys": {
+    "chopin": "1fad6ad6c74df8023576e26f82cbd134835d9a420c4fe1310a5566e523940b08",
+    "cinqcent": "1fad6ad6c74df8023576e26f82cbd134835d9a420c4fe1310a5566e523940b08"
+   },
+   "klass": null,
+   "last_pass": null,
+   "part": null,
+   "reasons": [
+    "openbsd/bko-holt 8d019a6f324c: no PASS at its digest; run t2 HoltTest2 openbsd8",
+    "openbsd/restic-bko 2b67f5e581bc: no PASS at its digest; run t2 SticTest2 ROUND openbsd8",
+    "openbsd/rustic-bko 3343a242da0d: no PASS at its digest; run t2 SticTest2 ROUND openbsd8"
+   ],
+   "refused": true,
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "not-runnable",
+   "via": null
+  },
+  {
+   "binaries": {
+    "bko-holt": {
+     "canary": "holt:dragonfly6",
+     "command": "t2 HoltTest2 dragonfly6",
+     "digest": "29a49119463369ff2204cb4ee1f2779647245da2d3a6072b4a3da359d414a66a",
+     "state": "none",
+     "why": "no PASS at its digest"
+    },
+    "restic-bko": {
+     "canary": "stic:dragonfly6",
+     "command": "t2 SticTest2 ROUND dragonfly6",
+     "digest": "a8015103d5db4d0471d77bb11cd2e83cc21403520af47de4a41b6a08e4a6b376",
+     "state": "none",
+     "why": "no PASS at its digest"
+    },
+    "rustic-bko": {
+     "canary": "stic:dragonfly6",
+     "command": "t2 SticTest2 ROUND dragonfly6",
+     "digest": "87350d635e7415a419aae9c21e5933d3efaaea7ecb288aa89f98983fb3f864de",
+     "state": "none",
+     "why": "no PASS at its digest"
+    }
+   },
+   "cell": "img:dragonfly",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 2.8,
+    "src": "tsv",
+    "wall_s": 168
+   },
+   "host": "any",
+   "key": "6b233b5f60677395d53742f3f58160469f1cd168a8d8dc046e804ec33d8723c6",
+   "keys": {
+    "chopin": "6b233b5f60677395d53742f3f58160469f1cd168a8d8dc046e804ec33d8723c6",
+    "cinqcent": "6b233b5f60677395d53742f3f58160469f1cd168a8d8dc046e804ec33d8723c6"
+   },
+   "klass": null,
+   "last_pass": null,
+   "part": null,
+   "reasons": [
+    "dragonfly/bko-holt 29a491194633: no PASS at its digest; run t2 HoltTest2 dragonfly6",
+    "dragonfly/restic-bko a8015103d5db: no PASS at its digest; run t2 SticTest2 ROUND dragonfly6",
+    "dragonfly/rustic-bko 87350d635e74: no PASS at its digest; run t2 SticTest2 ROUND dragonfly6"
+   ],
+   "refused": true,
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "not-runnable",
+   "via": null
+  },
+  {
+   "binaries": {
+    "bko-holt": {
+     "canary": "holt:omnios58",
+     "command": "t2 HoltTest2 omnios58",
+     "digest": "9f334a07f8e86c70f862ee0cde57e97bfcfa0e15a7905bf1ee561628fedd1fe4",
+     "state": "none",
+     "why": "no PASS at its digest"
+    },
+    "restic-bko": {
+     "canary": "stic:omnios58",
+     "command": "t2 SticTest2 ROUND omnios58",
+     "digest": "0d82a9690d13cfe7f7db9a96df9697ca946b296bae55916d1a43a2e8d69509ca",
+     "state": "none",
+     "why": "no PASS at its digest"
+    },
+    "rustic-bko": {
+     "canary": "stic:omnios58",
+     "command": "t2 SticTest2 ROUND omnios58",
+     "digest": "5a87834d63551527856e14d1aca40f746ecab8004dd5b9b515a55396e079d1b1",
+     "state": "none",
+     "why": "no PASS at its digest"
+    }
+   },
+   "cell": "img:illumos",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.8,
+    "src": "tsv",
+    "wall_s": 108
+   },
+   "host": "any",
+   "key": "1746ce57855e98d0cced64997e6aa01a57041c12f1b24f27229bf9e33f37514b",
+   "keys": {
+    "chopin": "1746ce57855e98d0cced64997e6aa01a57041c12f1b24f27229bf9e33f37514b",
+    "cinqcent": "1746ce57855e98d0cced64997e6aa01a57041c12f1b24f27229bf9e33f37514b"
+   },
+   "klass": null,
+   "last_pass": null,
+   "part": null,
+   "reasons": [
+    "illumos/bko-holt 9f334a07f8e8: no PASS at its digest; run t2 HoltTest2 omnios58",
+    "illumos/restic-bko 0d82a9690d13: no PASS at its digest; run t2 SticTest2 ROUND omnios58",
+    "illumos/rustic-bko 5a87834d6355: no PASS at its digest; run t2 SticTest2 ROUND omnios58"
+   ],
+   "refused": true,
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "not-runnable",
+   "via": null
+  },
+  {
+   "binaries": {
+    "bko-holt": {
+     "canary": "holt:haiku6",
+     "command": "t2 HoltTest2 haiku6",
+     "digest": "bb9e1e37dcbe84a7649fcdaa2ac5c330f3daa8cfddb577ae7e5ddc403418ba75",
+     "state": "none",
+     "why": "no PASS at its digest"
+    },
+    "rustic-bko": {
+     "canary": "stic:haiku6",
+     "command": "t2 SticTest2 ROUND haiku6",
+     "digest": "f0ca9138481df74bf011b9e27b1ecd779ee3a3dff4f2a28b278ef0a235291dd5",
+     "state": "none",
+     "why": "no PASS at its digest"
+    }
+   },
+   "cell": "img:haiku",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "tsv",
+    "wall_s": 60
+   },
+   "host": "any",
+   "key": "8d3257785cac9be8451eea965312ec60878d9c76f214d0c22d7d2e9be47d0eef",
+   "keys": {
+    "chopin": "8d3257785cac9be8451eea965312ec60878d9c76f214d0c22d7d2e9be47d0eef",
+    "cinqcent": "8d3257785cac9be8451eea965312ec60878d9c76f214d0c22d7d2e9be47d0eef"
+   },
+   "klass": null,
+   "last_pass": null,
+   "part": null,
+   "reasons": [
+    "haiku/bko-holt bb9e1e37dcbe: no PASS at its digest; run t2 HoltTest2 haiku6",
+    "haiku/rustic-bko f0ca9138481d: no PASS at its digest; run t2 SticTest2 ROUND haiku6"
+   ],
+   "refused": true,
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "not-runnable",
+   "via": null
+  }
+ ],
+ "classes": [],
+ "family": "img",
+ "header": {
+  "base": "BASE",
+  "copy": "fixture",
+  "facts": {
+   "chopin": "2026-11-08T05:00:00Z",
+   "cinqcent": "2026-11-08T05:00:00Z"
+  },
+  "ledger_rows": 0,
+  "pulled": {
+   "chopin": null,
+   "cinqcent": null
+  },
+  "sweep": "sweep: SweepTest2 never ran, due now",
+  "uncommitted": 0,
+  "unreachable": []
+ },
+ "notes": [],
+ "set": null,
+ "totals": {
+  "cells": 7,
+  "counts": {
+   "awaiting-canaries": 0,
+   "canary-verified": 0,
+   "carried": 0,
+   "class-pending": 0,
+   "current": 0,
+   "due": 0,
+   "not-runnable": 7,
+   "soft-stale": 0,
+   "to-class": 0
+  },
+  "due": 0,
+  "gb": {
+   "chopin": 0.0,
+   "cinqcent": 0.0
+  },
+  "gm": 0
+ },
+ "unmapped": [],
+ "v": 1,
+ "word": {
+  "all": false,
+  "family": "img",
+  "form": "bare",
+  "letters": [],
+  "names": [],
+  "notes": [],
+  "plan": true,
+  "prefixes": [],
+  "release": false,
+  "round": null,
+  "stale": false,
+  "sweep": false,
+  "text": "ImgTest2 plan",
+  "update": false,
+  "variants": [],
+  "word": "ImgTest2"
+ }
+}

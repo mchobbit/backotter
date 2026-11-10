@@ -1,0 +1,3 @@
+{"kernel": "7.0.0-43-generic", "zfs": "zfs-2.4.1-1ubuntu5.1", "image_id": "IMAGE-ID",
+ "bin:restic-bko": "aaaa", "bin:rustic-bko": "bbbb", "bin:bko-holt": "cccc",
+ "tool:mdadm": "1111", "tool:zpool": "2222", "pkg:mdadm": "4.5-5ubuntu1.1", "pkg:zfsutils-linux": "2.4.1-1ubuntu5.1"}

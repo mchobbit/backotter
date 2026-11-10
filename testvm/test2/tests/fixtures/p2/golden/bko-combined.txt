@@ -1,0 +1,191 @@
+GateTest2 plan: round rel4 (~/backotter-work/roundrel4/bin), base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
+due: 13 of 13 layers, est. 0.0 gm, ~N wall, 1.7 GB (chopin 0.6, cinqcent 1.1)
+  gate:bin:abi               chopin   new       no PASS yet  0.0 gm  tsv
+  gate:bin:static            chopin   new       no PASS yet  0.0 gm  tsv
+  gate:bin:version           chopin   new       no PASS yet  0.0 gm  tsv
+  gate:fork-root:restic      chopin   new       no PASS yet  0.0 gm  tsv
+  gate:fork:restic           chopin   new       no PASS yet  0.0 gm  tsv
+  gate:fork:rustic           cinqcent new       no PASS yet  0.0 gm  tsv
+  gate:fork:rustic_core      cinqcent new       no PASS yet  0.0 gm  tsv
+  gate:holt                  chopin   new       no PASS yet  0.0 gm  tsv
+  gate:loop:linux@chopin     chopin   new       no PASS yet  0.0 gm  tsv
+  gate:loop:linux@cinqcent   cinqcent new       no PASS yet  0.0 gm  tsv
+  gate:loop:sparse@chopin    chopin   new       no PASS yet  0.0 gm  tsv
+  gate:loop:sparse@cinqcent  cinqcent new       no PASS yet  0.0 gm  tsv
+  gate:selftest              mac      new       no PASS yet  0.0 gm  tsv
+current: 0
+sweep: SweepTest2 never ran, due now
+plan only: nothing started, nothing written
+SticTest2 plan: round rel4 (~/backotter-work/roundrel4/bin), base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
+due: 41 of 41 checks, est. 281.9 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+  stic:aerynos             any      new       no PASS yet  2.2 gm  tsv
+  stic:alpine324           any      new       no PASS yet  2.6 gm  tsv
+  stic:alpinebsd           any      new       no PASS yet  6.7 gm  tsv
+  stic:arch                any      new       no PASS yet  2.3 gm  tsv
+  stic:artix-dinit         any      new       no PASS yet  2.8 gm  tsv
+  stic:artix-s6            any      new       no PASS yet  6.1 gm  tsv
+  stic:cachyos             any      new       no PASS yet  4.9 gm  tsv
+  stic:debian12            any      new       no PASS yet  1.9 gm  tsv
+  stic:debian13            any      new       no PASS yet  8.0 gm  tsv
+  stic:debian13-stack      any      new       no PASS yet  9.2 gm  tsv
+  stic:debian13-zfs        any      new       no PASS yet  14.3 gm  tsv
+  stic:devuan6             any      new       no PASS yet  5.2 gm  tsv
+  stic:dragonfly6          any      new       no PASS yet  7.4 gm  tsv
+  stic:fedora44            any      new       no PASS yet  3.5 gm  tsv
+  stic:fedora44-uefi       any      new       no PASS yet  4.5 gm  tsv
+  stic:freebsd14           any      new       no PASS yet  11.9 gm  tsv
+  stic:freebsd15           any      new       no PASS yet  12.7 gm  tsv
+  stic:freebsd15-geli      any      new       no PASS yet  12.4 gm  tsv
+  stic:freebsd15-ufs       any      new       no PASS yet  6.5 gm  tsv
+  stic:ghostbsd26          any      new       no PASS yet  6.5 gm  tsv
+  stic:ghostbsd26-zfs      any      new       no PASS yet  12.5 gm  tsv
+  stic:haiku6              any      new       no PASS yet  0.9 gm  tsv
+  stic:hardenedbsd15       any      new       no PASS yet  6.8 gm  tsv
+  stic:mint22              any      new       no PASS yet  13.6 gm  tsv
+  stic:mx25                any      new       no PASS yet  11.9 gm  tsv
+  stic:netbsd11            any      new       no PASS yet  5.4 gm  tsv
+  stic:nixos2605           any      new       no PASS yet  3.9 gm  tsv
+  stic:omarchy             any      new       no PASS yet  5.0 gm  tsv
+  stic:omnios58            any      new       no PASS yet  6.2 gm  tsv
+  stic:openbsd8            any      new       no PASS yet  5.7 gm  tsv
+  stic:pop24               any      new       no PASS yet  10.2 gm  tsv
+  stic:rocky10             any      new       no PASS yet  1.8 gm  tsv
+  stic:rocky10-lvm         any      new       no PASS yet  2.2 gm  tsv
+  stic:sculpt2610          any      new       no PASS yet  0.8 gm  tsv
+  stic:tumbleweed          any      new       no PASS yet  3.1 gm  tsv
+  stic:ubuntu24            any      new       no PASS yet  15.9 gm  tsv
+  stic:ubuntu26-uefi       any      new       no PASS yet  6.2 gm  tsv
+  stic:ubuntu26-zfs        any      new       no PASS yet  16.4 gm  tsv
+  stic:ubuntu26-zfsmirror  any      new       no PASS yet  10.3 gm  tsv
+  stic:void-musl           any      new       no PASS yet  1.9 gm  tsv
+  stic:zorin18             any      new       no PASS yet  9.8 gm  tsv
+current: 0
+sweep: SweepTest2 never ran, due now
+plan only: nothing started, nothing written
+HoltTest2 plan: bko-holt code 5db6749 (not built), rustic-bko bko-bin, base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
+due: 57 of 57 cells, est. 258.7 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+  holt:aerynos                  any      holt:new  no PASS yet  6.0 gm  tsv
+  holt:alpine324                any      holt:new  no PASS yet  1.9 gm  tsv
+  holt:alpinebsd                any      holt:new  no PASS yet  3.7 gm  tsv
+  holt:arch                     any      holt:new  no PASS yet  2.4 gm  tsv
+  holt:artix-dinit              any      holt:new  no PASS yet  2.8 gm  tsv
+  holt:artix-s6                 any      holt:new  no PASS yet  2.2 gm  tsv
+  holt:cachyos                  any      holt:new  no PASS yet  2.5 gm  tsv
+  holt:debian12                 any      holt:new  no PASS yet  2.6 gm  tsv
+  holt:debian13                 any      holt:new  no PASS yet  2.7 gm  tsv
+  holt:debian13-stack           any      holt:new  no PASS yet  3.4 gm  tsv
+  holt:debian13-zfs             any      holt:new  no PASS yet  2.8 gm  tsv
+  holt:devuan6                  any      holt:new  no PASS yet  2.6 gm  tsv
+  holt:dragonfly6               cinqcent holt:new  no PASS yet  15.4 gm  tsv
+  holt:endeavouros              any      holt:new  no PASS yet  4.0 gm  tsv
+  holt:endeavouros-grub         any      holt:new  no PASS yet  4.0 gm  tsv
+  holt:fedora44                 any      holt:new  no PASS yet  3.6 gm  tsv
+  holt:fedora44-raid            any      holt:new  no PASS yet  6.0 gm  tsv
+  holt:fedora44-uefi            any      holt:new  no PASS yet  5.2 gm  tsv
+  holt:freebsd14                any      holt:new  no PASS yet  4.8 gm  tsv
+  holt:freebsd15                any      holt:new  no PASS yet  4.1 gm  tsv
+  holt:freebsd15-mirror         any      holt:new  no PASS yet  6.0 gm  tsv
+  holt:ghostbsd26               any      holt:new  no PASS yet  4.0 gm  tsv
+  holt:ghostbsd26-zfs           any      holt:new  no PASS yet  4.4 gm  tsv
+  holt:haiku6                   any      holt:new  no PASS yet  3.4 gm  tsv
+  holt:hardenedbsd15            any      holt:new  no PASS yet  5.5 gm  tsv
+  holt:manjaro                  any      holt:new  no PASS yet  4.0 gm  tsv
+  holt:mint22                   any      holt:new  no PASS yet  9.1 gm  tsv
+  holt:mx25                     any      holt:new  no PASS yet  5.4 gm  tsv
+  holt:netbsd11                 any      holt:new  no PASS yet  4.2 gm  tsv
+  holt:nixos2605                any      holt:new  no PASS yet  3.2 gm  tsv
+  holt:omarchy                  any      holt:new  no PASS yet  9.3 gm  tsv
+  holt:omnios58                 any      holt:new  no PASS yet  5.6 gm  tsv
+  holt:omnios58-mirror          any      holt:new  no PASS yet  6.0 gm  tsv
+  holt:openbsd8                 chopin   holt:new  no PASS yet  6.3 gm  tsv
+  holt:pop24                    any      holt:new  no PASS yet  9.2 gm  tsv
+  holt:redox                    cinqcent holt:new  no PASS yet  2.5 gm  tsv
+  holt:rocky10                  any      holt:new  no PASS yet  4.2 gm  tsv
+  holt:rocky10-lvm              any      holt:new  no PASS yet  3.5 gm  tsv
+  holt:rocky10-raid5            any      holt:new  no PASS yet  6.0 gm  tsv
+  holt:sculpt2610               any      holt:new  no PASS yet  2.9 gm  tsv
+  holt:tumbleweed               any      holt:new  no PASS yet  3.2 gm  tsv
+  holt:ubuntu24                 any      holt:new  no PASS yet  3.8 gm  tsv
+  holt:ubuntu26-raid            any      holt:new  no PASS yet  6.0 gm  tsv
+  holt:ubuntu26-uefi            any      holt:new  no PASS yet  5.6 gm  tsv
+  holt:ubuntu26-zfs             any      holt:new  no PASS yet  7.7 gm  tsv
+  holt:ubuntu26-zfsmirror       any      holt:new  no PASS yet  5.1 gm  tsv
+  holt:void-musl                any      holt:new  no PASS yet  2.7 gm  tsv
+  holt:zorin18                  any      holt:new  no PASS yet  6.2 gm  tsv
+  holt:debian13-stack+bigger    any      holt:new  no PASS yet  3.0 gm  tsv
+  holt:aerynos+bigger           any      holt:new  no PASS yet  3.0 gm  tsv
+  holt:mint22+bigger            any      holt:new  no PASS yet  3.0 gm  tsv
+  holt:debian13+oneshot         any      holt:new  no PASS yet  3.0 gm  tsv
+  holt:mint22+oneshot           any      holt:new  no PASS yet  3.0 gm  tsv
+  holt:arch+oneshot             any      holt:new  no PASS yet  3.0 gm  tsv
+  holt:alpine324+oneshot        any      holt:new  no PASS yet  3.0 gm  tsv
+  holt:debian13-stack+degraded  any      holt:new  no PASS yet  4.7 gm  tsv
+  holt:ubuntu26-raid+degraded   any      holt:new  no PASS yet  4.7 gm  tsv
+current: 0
+sweep: SweepTest2 never ran, due now
+plan only: nothing started, nothing written
+GuestTest2 plan: base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
+due: 50 of 50 guests, est. 106.2 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+  guest:aerynos             any      new       no PASS yet  1.8 gm  tsv
+  guest:alpine324           any      new       no PASS yet  1.8 gm  tsv
+  guest:alpinebsd           any      new       no PASS yet  1.8 gm  tsv
+  guest:arch                any      new       no PASS yet  1.8 gm  tsv
+  guest:artix-dinit         any      new       no PASS yet  1.8 gm  tsv
+  guest:artix-s6            any      new       no PASS yet  1.8 gm  tsv
+  guest:cachyos             any      new       no PASS yet  1.8 gm  tsv
+  guest:debian12            any      new       no PASS yet  1.8 gm  tsv
+  guest:debian13            any      new       no PASS yet  1.8 gm  tsv
+  guest:debian13-stack      any      new       no PASS yet  1.8 gm  tsv
+  guest:debian13-zfs        any      new       no PASS yet  1.8 gm  tsv
+  guest:devuan6             any      new       no PASS yet  1.8 gm  tsv
+  guest:dragonfly6          any      new       no PASS yet  6.0 gm  tsv
+  guest:endeavouros         any      new       no PASS yet  3.3 gm  tsv
+  guest:endeavouros-grub    any      new       no PASS yet  3.3 gm  tsv
+  guest:fedora44            any      new       no PASS yet  1.8 gm  tsv
+  guest:fedora44-raid       any      new       no PASS yet  3.3 gm  tsv
+  guest:fedora44-uefi       any      new       no PASS yet  1.8 gm  tsv
+  guest:freebsd14           any      new       no PASS yet  1.8 gm  tsv
+  guest:freebsd15           any      new       no PASS yet  1.8 gm  tsv
+  guest:freebsd15-geli      any      new       no PASS yet  1.8 gm  tsv
+  guest:freebsd15-mirror    any      new       no PASS yet  3.3 gm  tsv
+  guest:freebsd15-ufs       any      new       no PASS yet  1.8 gm  tsv
+  guest:ghostbsd26          any      new       no PASS yet  1.8 gm  tsv
+  guest:ghostbsd26-zfs      any      new       no PASS yet  1.8 gm  tsv
+  guest:haiku6              any      new       no PASS yet  1.8 gm  tsv
+  guest:hardenedbsd15       any      new       no PASS yet  1.8 gm  tsv
+  guest:manjaro             any      new       no PASS yet  3.3 gm  tsv
+  guest:mint22              any      new       no PASS yet  1.8 gm  tsv
+  guest:mx25                any      new       no PASS yet  1.8 gm  tsv
+  guest:netbsd11            any      new       no PASS yet  1.8 gm  tsv
+  guest:nixos2605           any      new       no PASS yet  1.8 gm  tsv
+  guest:omarchy             any      new       no PASS yet  1.8 gm  tsv
+  guest:omnios58            any      new       no PASS yet  1.8 gm  tsv
+  guest:omnios58-mirror     any      new       no PASS yet  3.3 gm  tsv
+  guest:openbsd8            any      new       no PASS yet  1.8 gm  tsv
+  guest:pop24               any      new       no PASS yet  1.8 gm  tsv
+  guest:redox               any      new       no PASS yet  1.8 gm  tsv
+  guest:rocky10             any      new       no PASS yet  1.8 gm  tsv
+  guest:rocky10-lvm         any      new       no PASS yet  1.8 gm  tsv
+  guest:rocky10-raid5       any      new       no PASS yet  3.3 gm  tsv
+  guest:sculpt2610          any      new       no PASS yet  1.8 gm  tsv
+  guest:tumbleweed          any      new       no PASS yet  1.8 gm  tsv
+  guest:ubuntu24            any      new       no PASS yet  1.8 gm  tsv
+  guest:ubuntu26-raid       any      new       no PASS yet  3.3 gm  tsv
+  guest:ubuntu26-uefi       any      new       no PASS yet  1.8 gm  tsv
+  guest:ubuntu26-zfs        any      new       no PASS yet  1.8 gm  tsv
+  guest:ubuntu26-zfsmirror  any      new       no PASS yet  1.8 gm  tsv
+  guest:void-musl           any      new       no PASS yet  1.8 gm  tsv
+  guest:zorin18             any      new       no PASS yet  1.8 gm  tsv
+current: 0
+sweep: SweepTest2 never ran, due now
+plan only: nothing started, nothing written
+ImgTest2: nothing due (7 not-runnable); base BASE
+not runnable: img:linux (linux/bko-holt 8bb8df416890: no PASS at its digest; run t2 HoltTest2 alpine324; linux/restic-bko 879213069877: no PASS at its digest; run t2 SticTest2 ROUND sculpt2610; linux/rustic-bko 0e15cdd9c5ad: no PASS at its digest; run t2 SticTest2 ROUND sculpt2610)
+not runnable: img:freebsd (freebsd/bko-holt 59210e19f835: no PASS at its digest; run t2 HoltTest2 ghostbsd26; freebsd/restic-bko 30d10bfcdaa9: no PASS at its digest; run t2 SticTest2 ROUND ghostbsd26; freebsd/rustic-bko d175fa8d1c2c: no PASS at its digest; run t2 SticTest2 ROUND ghostbsd26)
+not runnable: img:netbsd (netbsd/bko-holt 2c73fa291e76: no PASS at its digest; run t2 HoltTest2 alpinebsd; netbsd/restic-bko c8ab90feed8d: no PASS at its digest; run t2 SticTest2 ROUND netbsd11; netbsd/rustic-bko 7618f1110cd9: no PASS at its digest; run t2 SticTest2 ROUND netbsd11)
+not runnable: img:openbsd (openbsd/bko-holt 8d019a6f324c: no PASS at its digest; run t2 HoltTest2 openbsd8; openbsd/restic-bko 2b67f5e581bc: no PASS at its digest; run t2 SticTest2 ROUND openbsd8; openbsd/rustic-bko 3343a242da0d: no PASS at its digest; run t2 SticTest2 ROUND openbsd8)
+not runnable: img:dragonfly (dragonfly/bko-holt 29a491194633: no PASS at its digest; run t2 HoltTest2 dragonfly6; dragonfly/restic-bko a8015103d5db: no PASS at its digest; run t2 SticTest2 ROUND dragonfly6; dragonfly/rustic-bko 87350d635e74: no PASS at its digest; run t2 SticTest2 ROUND dragonfly6)
+not runnable: img:illumos (illumos/bko-holt 9f334a07f8e8: no PASS at its digest; run t2 HoltTest2 omnios58; illumos/restic-bko 0d82a9690d13: no PASS at its digest; run t2 SticTest2 ROUND omnios58; illumos/rustic-bko 5a87834d6355: no PASS at its digest; run t2 SticTest2 ROUND omnios58)
+not runnable: img:haiku (haiku/bko-holt bb9e1e37dcbe: no PASS at its digest; run t2 HoltTest2 haiku6; haiku/rustic-bko f0ca9138481d: no PASS at its digest; run t2 SticTest2 ROUND haiku6)
+sweep: SweepTest2 never ran, due now
+combined: 161 due, 646.9 gm, 7783 s wall, 1.7 GB, ['gate:selftest'] left over

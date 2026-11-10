@@ -21,7 +21,10 @@ KNOWN = {
     "gate": ["holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic", "bin:abi", "bin:static",
              "bin:version", "loop:linux@chopin", "loop:linux@cinqcent", "loop:sparse@chopin", "loop:sparse@cinqcent",
              "selftest"],
+    "guest": ["debian13", "arch", "haiku6"], "guest_refused": {"freebsd15-builder": "a build helper"},
+    "img": ["linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "haiku"],
 }
+KNOWN["holt"]["variants"]["img"] = ["debian13", "freebsd15"]
 
 
 def P(text):
@@ -119,6 +122,74 @@ class Forms(unittest.TestCase):
         self.assertEqual((j["word"], j["letters"], j["variants"], j["plan"]), ("HoltTest2D", ["D"], ["bigger"], True))
 
 
+class NewWords(unittest.TestCase):
+    def test_guest_forms(self):
+        w = P("GuestTest2")
+        self.assertEqual((w.family, w.form, w.word), ("guest", "bare", "GuestTest2"))
+        w = P("GuestTest2 arch stale plan")
+        self.assertEqual((w.form, w.names, w.stale, w.plan), ("names", ["guest:arch"], True, True))
+        self.assertEqual(P("GuestTest2 guest:arch").names, ["guest:arch"])
+        w = P("GuestTest2All plan")
+        self.assertEqual((w.form, w.all), ("All", True))
+        self.assertEqual(P("GuestTest2 All").form, "All")
+        w = P("GuestTest2 update")
+        self.assertEqual((w.update, w.form), (True, "bare"))
+        w = P("GuestTest2 update arch plan")
+        self.assertEqual((w.update, w.form, w.names, w.plan), (True, "names", ["guest:arch"], True))
+
+    def test_img_forms(self):
+        w = P("ImgTest2 linux netbsd release stale plan")
+        self.assertEqual((w.family, w.names, w.release, w.stale, w.plan), ("img", ["img:linux", "img:netbsd"], True, True, True))
+        self.assertEqual(P("ImgTest2").form, "bare")
+        w = P("ImgTest2All release plan")
+        self.assertEqual((w.all, w.release, w.form), (True, True, "All"))
+
+    def test_composites(self):
+        w = P("BkoTest2 rel4 stale plan")
+        self.assertEqual((w.family, w.round, w.stale, w.plan, w.word, w.sweep), ("bko", "rel4", True, True, "BkoTest2", False))
+        w = P("SweepTest2 rel4 plan")
+        self.assertEqual((w.family, w.round, w.plan, w.word, w.sweep), ("sweep", "rel4", True, "SweepTest2", True))
+        self.assertEqual(P("BkoTest2").form, "bare")
+
+    def test_img_variant(self):
+        self.assertEqual(P("HoltTest2 debian13+img").names, ["holt:debian13+img"])
+        w = P("HoltTest2 +img")
+        self.assertEqual((w.form, w.names, w.variants), ("names", ["holt:debian13+img", "holt:freebsd15+img"], []))
+        w = P("HoltTest2 debian13 +img")
+        self.assertEqual((w.names, w.variants), (["holt:debian13"], ["img"]))
+
+    def test_refusals(self):
+        def no(text, needle):
+            with self.assertRaises(words.Refused) as cm:
+                P(text)
+            self.assertIn(needle, str(cm.exception))
+        no("GuestTest2 update stale", "stale")
+        no("GuestTest2All update", "audit")
+        no("GuestTest2 nosuch", "no GuestTest2 guest")
+        no("GuestTest2 freebsd15-builder", "build helper")
+        no("GuestTest2All arch", "no guest names")
+        no("ImgTest2 riscos", "no image")
+        no("ImgTest2All linux", "every image")
+        no("BkoTest2 debian13", "takes no names")
+        no("BkoTest2 img:linux", "takes no names")
+        no("BkoTest2 All", "no All form")
+        no("BkoTest2All", "no All form")
+        no("SweepTest2 stale", "stale")
+        no("SweepTest2 arch", "takes no names")
+        no("SweepTest2All", "every All form")
+        no("SweepTest2 All", "every All form")
+        no("BkoTest2 rel4 rel5", "already")
+        no("HoltTest2 arch+img", "doesn't apply")
+        no("HoltTest2All +img", "HoltTest2 +img")
+
+    def test_to_json_keeps_the_new_fields(self):
+        j = P("GuestTest2 update arch").to_json()
+        self.assertEqual((j["update"], j["release"], j["sweep"]), (True, False, False))
+        j = P("ImgTest2All release").to_json()
+        self.assertTrue(j["release"])
+        self.assertTrue(P("SweepTest2").to_json()["sweep"])
+
+
 class Refusals(unittest.TestCase):
     def refused(self, text, *needle):
         with self.assertRaises(words.Refused) as cm:
@@ -126,11 +197,9 @@ class Refusals(unittest.TestCase):
         for n in needle:
             self.assertIn(n, str(cm.exception))
 
-    def test_close_and_img(self):
+    def test_close(self):
         self.refused("HoltTest2 +close", "H3")
-        self.refused("HoltTest2 +img", "I1")
         self.refused("HoltTest2 debian13+close", "H3")
-        self.refused("HoltTest2 debian13+img", "I1")
 
     def test_rescuer_and_geli(self):
         self.refused("HoltTest2 freebsd15-ufs", "rescuer")
@@ -164,15 +233,11 @@ class Refusals(unittest.TestCase):
         self.refused("SticTest3", "unknown word")
         self.refused("HoltTest2Q", "no HoltTest2 family")
         self.refused("SticTest2D", "unknown word")
-        self.refused("GuestTest2", "not built")
-        self.refused("ImgTest2All", "not built")
-        self.refused("BkoTest2", "not built")
-        self.refused("SweepTest2", "not built")
         with self.assertRaises(words.Refused):
             words.parse([], KNOWN)
 
     def test_is_word(self):
-        for t in ("SticTest2", "holttest2all", "HoltTest2BSD", "GuestTest2", "SweepTest2All"):
+        for t in ("SticTest2", "holttest2all", "HoltTest2BSD", "GuestTest2", "SweepTest2All", "ImgTest2", "BkoTest2"):
             self.assertTrue(words.is_word(t), t)
         for t in ("pull", "ledger", "plan", "rel4"):
             self.assertFalse(words.is_word(t), t)

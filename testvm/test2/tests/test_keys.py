@@ -558,5 +558,129 @@ class Values(unittest.TestCase):
         self.assertEqual(keys.ver(" QEMU  emulator\n10 "), "ver:QEMU emulator 10")
 
 
+class NewForms(unittest.TestCase):
+    """contract 1.4: fp:, projections, #SECTION, nested entry:, replace, bins_from_image, @image."""
+    FP = {"generation": "e" * 64, "holt": A, "stic": B, "fine": C, "holt_was": [], "stic_was": [], "rules": "r"}
+
+    @classmethod
+    def setUpClass(cls):
+        cls.root = os.path.join(_tmp, "newforms")
+        files = {"testvm/update/in-guest.sh": "head\n# t2-section: prologue\np1\n# t2-section: Linux.apt\napt1\n"
+                                              "  # t2-section: Linux.dnf\ndnf1\n# t2-section: Linux.apt\napt2\n",
+                 "testvm/plain.sh": "no sections\n",
+                 "testvm/test2/nest.json": json.dumps({"entries": {"g1": {"checks": {"a": 1}}}, "flat.key": 7}),
+                 "testvm/x.py": "x\n", "testvm/holttest1d/ht1.sh": "h\n"}
+        make_repo(cls.root, files)
+        cls.src = keys.TreeSource(cls.root)
+        cls.specs = keys.Specs(cls.src, overrides={
+            "guest": {"v": 1, "family": "guest", "entries": {
+                "g1": {"harness": ["testvm/update/in-guest.sh#Linux.apt", "testvm/plain.sh#Nope", "testvm/x.py"],
+                       "judge": ["entry:testvm/test2/nest.json#entries.{guest}.checks",
+                                 "entry:testvm/test2/nest.json#flat.key", "entry:testvm/test2/nest.json#entries.no.such"]}}},
+            "holt": {"v": 1, "family": "holt", "kinds": {
+                "linux": {"plat": "linux", "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"], "rescuer": ["rescuer.qcow2"],
+                          "harness": ["testvm/x.py"],
+                          "variants": {"img": {"replace": ["rescuer", "bins"], "bins_from_image": True,
+                                               "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"], "rescuer": ["@image"],
+                                               "harness": ["testvm/holttest1d/ht1.sh"]}}},
+                "bsd": {"plat": "netbsd", "bins": ["PLAT/bko-holt"], "rescuer": ["g2"],
+                        "variants": {"img": {"replace": ["bins"], "bins_from_image": True, "bins": ["PLAT/bko-holt"],
+                                             "rescuer": ["@image"]}}}},
+                "entries": {"g1": {"kind": "linux"}, "g2": {"kind": "bsd"}}},
+            "img": {"v": 1, "family": "img", "entries": {
+                "linux": {"bins_from_image": True, "bins": ["PLAT/restic-bko", "PLAT/test-image", "PLAT/release-image"],
+                          "harness": ["testvm/x.py"]}}}})
+
+    def facts(self, fp=None, images=True):
+        g = {"generation": "e" * 64, "files": {}, "firmware": "bios", "fingerprint": fp}
+        f = {"host": "h", "versions": {"kernel": "6", "zfs": "2", "qemu": "q", "ovmf": "o"},
+             "guests": {"g1": g, "g2": {"generation": "f" * 64, "files": {}}},
+             "rescuers": {"images": {"rescuer.qcow2": {"sha256": D}}, "bin": {}}}
+        if images:
+            f["images"] = {"linux": {"bins": {"restic-bko": A, "rustic-bko": B, "bko-holt": C},
+                                     "release": {"name": "r.img", "sha256": D},
+                                     "pin": {"sha256": "1" * 64, "current": True}},
+                           "netbsd": {"bins": {"bko-holt": C}, "pin": {"sha256": "2" * 64, "current": False}}}
+        return f
+
+    def test_section(self):
+        r = keys.resolve("guest:g1", self.src, self.facts(), self.specs)
+        self.assertEqual(r.inputs["harness"]["testvm/update/in-guest.sh#Linux.apt"], "sha256:" + sha("apt1\napt2\n"))
+
+    def test_section_fallback_is_the_whole_file_and_a_note(self):
+        r = keys.resolve("guest:g1", self.src, self.facts(), self.specs)
+        self.assertEqual(r.inputs["harness"]["testvm/plain.sh#Nope"], "sha256:" + sha("no sections\n"))
+        self.assertTrue(any("no section Nope" in n for n in r.notes))
+
+    def test_nested_entry(self):
+        r = keys.resolve("guest:g1", self.src, self.facts(), self.specs)
+        j = r.inputs["judge"]
+        self.assertEqual(j["testvm/test2/nest.json#entries.g1.checks"], "entry:" + sha(canonical({"a": 1})))
+        self.assertEqual(j["testvm/test2/nest.json#flat.key"], "entry:" + sha(canonical(7)))
+        self.assertEqual(j["testvm/test2/nest.json#entries.no.such"], "absent")
+
+    def test_guest_cell_keys_the_generation_never_the_fingerprint(self):
+        r = keys.resolve("guest:g1", self.src, self.facts(self.FP), self.specs)
+        self.assertEqual(r.inputs["guest"]["g1:generation"], "gen:" + "e" * 64)
+        self.assertNotIn("g1:fingerprint", r.inputs["guest"])
+
+    def test_projections(self):
+        specs = keys.Specs(self.src, overrides={
+            "holt": {"entries": {"g1": {}}}, "stic": {"entries": {"g1": {}}}})
+        h = keys.resolve("holt:g1", self.src, self.facts(self.FP), specs)
+        self.assertEqual(h.inputs["guest"]["g1:fingerprint"], "fp:" + A)
+        self.assertNotIn("g1:generation", h.inputs["guest"])
+        self.assertEqual(h.inputs["soft"]["g1:generation"], "gen:" + "e" * 64)
+        self.assertNotIn("g1:fp-fine", h.inputs["soft"])
+        s = keys.resolve("stic:g1", self.src, self.facts(self.FP), specs)
+        self.assertEqual(s.inputs["guest"]["g1:fingerprint"], "fp:" + B)
+        self.assertEqual(s.inputs["soft"]["g1:fp-fine"], "fp:" + C)
+        self.assertTrue(keys.valid_value("fp:" + A))
+        self.assertFalse(keys.valid_value("fp:abc"))
+
+    def test_a_fingerprint_of_another_generation_or_none_is_todays_input(self):
+        specs = keys.Specs(self.src, overrides={"holt": {"entries": {"g1": {}}}})
+        for fp in (None, dict(self.FP, generation="0" * 64), dict(self.FP, holt="short")):
+            r = keys.resolve("holt:g1", self.src, self.facts(fp), specs)
+            self.assertEqual(r.inputs["guest"]["g1:generation"], "gen:" + "e" * 64)
+            self.assertNotIn("g1:generation", r.inputs.get("soft", {}))
+
+    def test_replace(self):
+        e = keys.Specs(self.src, overrides=self.specs.overrides).get("holt").entry("g1", "img")
+        self.assertEqual(e["rescuer"], ["@image"])
+        self.assertEqual(e["bins"], ["PLAT/bko-holt", "PLAT/rustic-bko"])
+        self.assertIn("testvm/x.py", e["harness"])         # not replaced: adds
+        self.assertNotIn("replace", e)
+        e = self.specs.get("holt").entry("g2", "img")
+        self.assertEqual(e["rescuer"], ["g2", "@image"])   # BSD: the guest rescuer stays
+
+    def test_bins_from_image_and_at_image(self):
+        r = keys.resolve("holt:g1+img", self.src, self.facts(), self.specs)
+        self.assertEqual(r.inputs["bin"], {"linux/bko-holt": "sha256:" + C, "linux/rustic-bko": "sha256:" + B})
+        self.assertEqual(r.inputs["rescuer"], {"rescuer/img-linux": "sha256:" + "1" * 64})
+
+    def test_a_stale_pin_is_unknown(self):
+        r = keys.resolve("holt:g2+img", self.src, self.facts(), self.specs)
+        self.assertEqual(r.inputs["rescuer"]["rescuer/img-netbsd"], keys.UNKNOWN_IMG)
+        self.assertIn("rescuer/rescuer/img-netbsd", r.unknown)
+
+    def test_img_cell(self):
+        r = keys.resolve("img:linux", self.src, self.facts(), self.specs)
+        self.assertEqual(r.inputs["bin"], {"linux/restic-bko": "sha256:" + A, "linux/test-image": "sha256:" + "1" * 64,
+                                           "linux/release-image": "sha256:" + D})
+        self.assertEqual(sorted(r.inputs["soft"]), ["ovmf", "qemu"])
+
+    def test_empty_facts_resolve(self):
+        for c in ("holt:g1+img", "img:linux"):
+            r = keys.resolve(c, self.src, {}, self.specs, {"set": "x", "rustic_set": "x"})
+            self.assertTrue(r.inputs["bin"])
+        r = keys.resolve("img:linux", self.src, {}, self.specs)
+        self.assertEqual(r.inputs["bin"]["linux/test-image"], keys.UNKNOWN_IMG)
+
+    def test_wants_images(self):
+        self.assertTrue(keys.wants(self.specs, ("img",))["images"])
+        self.assertNotIn("images", keys.wants(self.specs, ("holt",)))
+
+
 if __name__ == "__main__":
     unittest.main()

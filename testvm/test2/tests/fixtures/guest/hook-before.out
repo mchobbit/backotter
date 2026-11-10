@@ -1,0 +1,39 @@
+=== cmd image-rules
+S-apt L-grub K-deb B-lin M-lin
+=== file /etc/os-release
+ID=debian
+VERSION_CODENAME=bookworm
+
+=== file /etc/apt/sources.list
+deb http://deb.debian.org/debian bookworm main
+deb http://security.debian.org/debian-security bookworm-security main
+
+=== file /boot/grub/grub.cfg
+set default="0"
+menuentry 'Debian' {
+	linux	/vmlinuz-6.1.0-54-amd64 root=UUID=x ro
+}
+
+=== cmd df
+Filesystem     1024-blocks      Used Available Capacity Mounted on
+/dev/vda3         13453016   1448976  11298880      12% /
+/dev/vda1           964900     89644    808888      10% /boot
+=== cmd kernels
+/boot/vmlinuz-6.1.0-54-amd64
+/boot/vmlinuz-6.1.0-9-amd64
+=== cmd after-rules
+S-apt L-grub K-deb B-lin M-lin
+=== cmd boot-state
+init systemd
+state running
+=== cmd fstab-check
+ok 2 fstab mounts mounted
+=== cmd mounts
+format mountinfo
+22 1 8:3 / / rw - ext4 /dev/vda3 rw
+24 22 8:1 / /boot rw - ext4 /dev/vda1 rw
+=== cmd kernel
+running 6.1.0-54-amd64
+installed 6.1.0-54-amd64
+installed 6.1.0-9-amd64
+=== end

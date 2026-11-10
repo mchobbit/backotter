@@ -18,7 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(HERE, "fixtures", "p2"))
 
-from t2lib import estimates, ledger, plan, run   # noqa: E402
+from t2lib import estimates, keys, ledger, plan, run   # noqa: E402
 import world                                     # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
@@ -61,7 +61,7 @@ class Scenarios(WorldCase):
     """The contract's U2.2 rows, one test each."""
 
     def test_nothing_changed(self):
-        for word, rows, n in (("SticTest2 rel4", self.r_stic, 41), ("HoltTest2", self.r_holt, 54),
+        for word, rows, n in (("SticTest2 rel4", self.r_stic, 41), ("HoltTest2", self.r_holt, 57),
                               ("GateTest2", self.r_gate, 13)):
             p = self.w.plan(word + " plan", rows)
             self.assertEqual(p.totals["due"], 0, word)
@@ -293,7 +293,8 @@ class Scenarios(WorldCase):
     def test_gate_unchanged_and_changed(self):
         p = self.w.plan("GateTest2 plan", self.r_gate)
         self.assertEqual(p.totals["due"], 0)
-        self.assertEqual(p.render().strip(), "GateTest2: nothing due (13 current); round rel4, base " + self.base[:7])
+        self.assertEqual(p.render().strip(), "GateTest2: nothing due (13 current); round rel4, base " + self.base[:7]
+                         + "\nsweep: SweepTest2 never ran, due now")
         self.w.edit("testvm/test2/gate/loop.sh", "# changed\n")
         p = self.w.plan("GateTest2 plan", self.r_gate)
         self.assertEqual({c.cell for c in p.due()}, {"gate:loop:linux@chopin", "gate:loop:linux@cinqcent",
@@ -332,20 +333,20 @@ class Holt(WorldCase):
         with self.assertRaises(plan.PlanError):
             self.w.plan("HoltTest2 plan", self.r_holt, holt_bin="~/nowhere")
 
-    def test_version_only_bump_carries_all_54(self):
+    def test_version_only_bump_carries_all_57(self):
         self.w.edit("holt/Cargo.toml", self.w.read("holt/Cargo.toml").replace("0.2.4", "0.2.5"))
         self.w.edit("holt/Cargo.lock", self.w.read("holt/Cargo.lock").replace("0.2.4", "0.2.5"), commit=True)
         p = self.w.plan("HoltTest2 plan", self.r_holt)
-        self.assertEqual(by(p), {("carried", "carry:version-only"): 54})
+        self.assertEqual(by(p), {("carried", "carry:version-only"): 57})
         res = p.cell("holt:debian13").res["chopin"]
         self.assertTrue(res.inputs["bin"]["linux/bko-holt"].startswith("code:"))   # R14
         g = self.w.plan("GateTest2 plan", self.r_gate)
         self.assertEqual(st(g, "gate:holt"), ("due", "changed:harness"))
 
-    def test_code_no_plan_shows_all_45(self):
+    def test_code_no_plan_shows_all_48(self):
         self.w.edit("holt/src/load/exec.rs", "// runs the plan, changed\n", commit=True)
         p = self.w.plan("HoltTest2 plan", self.r_holt)
-        self.assertEqual(sum(1 for c in p.cells if c.rule == "holt:code"), 45)
+        self.assertEqual(sum(1 for c in p.cells if c.rule == "holt:code"), 48)
         self.assertEqual(st(p, "holt:debian13+oneshot")[0] in ("soft-stale", "due"), True)
         self.assertNotEqual(st(p, "holt:debian13+oneshot")[1], "holt:variants")
         # the variants of a guest whose golden plan changed in partition, assemble or close run
@@ -361,7 +362,7 @@ class Holt(WorldCase):
     def test_commands_rs_with_and_without_the_gate_row(self):
         self.w.edit("holt/src/load/commands.rs", "// prints the plan, changed\n", commit=True)
         p = self.w.plan("HoltTest2 plan", self.r_holt + self.r_gate)
-        self.assertEqual(sum(1 for c in p.cells if c.rule == "holt:code"), 45)
+        self.assertEqual(sum(1 for c in p.cells if c.rule == "holt:code"), 48)
         self.assertIn("plan diff not known", "; ".join(p.cell("holt:arch").reasons))
         g = self.w.plan("GateTest2 plan", self.r_gate)
         gh = self.w.row(g.cell("gate:holt"), "chopin", plan_=g, extra={"plan_diff": {
@@ -374,7 +375,7 @@ class Holt(WorldCase):
                                "holt:mint22+bigger": "holt:variants", "holt:mint22+oneshot": "holt:variants",
                                "holt:debian13-stack+degraded": "holt:variants",
                                "holt:ubuntu26-raid+degraded": "holt:variants"})
-        self.assertEqual(by(p)[("carried", "carry:plan-diff")], 48)
+        self.assertEqual(by(p)[("carried", "carry:plan-diff")], 51)
 
     def test_rustic_only_change_panel_and_carried(self):
         f = self.w.facts(rustic_tag="bko2")
@@ -382,7 +383,7 @@ class Holt(WorldCase):
         self.assertEqual({c.cell for c in p.due()},
                          {f"holt:{g}" for g in ("omarchy", "nixos2605", "freebsd15", "netbsd11", "openbsd8",
                                                 "dragonfly6", "omnios58", "haiku6")})
-        self.assertEqual(by(p)[("carried", "carry:rustic-panel")], 46)
+        self.assertEqual(by(p)[("carried", "carry:rustic-panel")], 49)
 
     def test_rescuer_panel_and_soft_stale(self):
         f = self.w.facts(rescuer="r2")
@@ -449,7 +450,7 @@ class Holt(WorldCase):
                            ("HoltTest2 debian13+oneshot +oneshot plan", {"holt:debian13+oneshot"})):
             self.assertEqual({c.cell for c in self.w.plan(text, self.r_holt).due()}, want, text)
         p = self.w.plan("HoltTest2All plan", self.r_holt)
-        self.assertEqual(by(p), {("due", "fresh:All"): 54})
+        self.assertEqual(by(p), {("due", "fresh:All"): 57})
 
 
 class Classes(WorldCase):
@@ -513,7 +514,7 @@ class Classes(WorldCase):
         self.assertTrue(any("the panel didn't pass (holt:omarchy)" in n for n in notes), notes)
         rows["holt:omarchy"] = w.row(om, next(iter(om.res)), plan_=p)
         got, _ = derive(rows)
-        self.assertEqual(len(got), 46)
+        self.assertEqual(len(got), 49)
 
     def test_shared_helper_one_representative(self):
         self.w.edit("testvm/stictest1/freebsd15/extra.sh", "# shared, changed\n")
@@ -628,10 +629,11 @@ class Estimates(unittest.TestCase):
             self.assertAlmostEqual(tsv[f"holt:{g}"]["gm"], round(r["sec"] / 60, 2), places=2)
         fam = collections.defaultdict(float)
         for c, e in tsv.items():
-            fam[c.split(":")[0]] += e["gm"]
+            if not c.endswith("+img") and c not in ("holt:endeavouros", "holt:endeavouros-grub", "holt:manjaro"):
+                fam[c.split(":")[0]] += e["gm"]     # (test2.md's figures are of the 45 sources)
         self.assertAlmostEqual(fam["stic"], 281.9, delta=0.1)     # test2.md: SticTest2All 282 gm
         self.assertAlmostEqual(fam["holt"], 246.7, delta=0.5)     # test2.md: HoltTest2All ~247 gm
-        self.assertEqual(sum(1 for c in tsv if c.startswith("holt:")), 54)
+        self.assertEqual(sum(1 for c in tsv if c.startswith("holt:") and not c.endswith("+img")), 57)
         self.assertEqual(sum(1 for c in tsv if c.startswith("gate:")), 13)
 
     def test_pack_and_gate_wall(self):
@@ -648,7 +650,7 @@ class Estimates(unittest.TestCase):
 
 
 class Performance(unittest.TestCase):
-    """U2.6: a plan over every cell (41 stic, 45 holt with 9 variants, 13 gate) and 10,000 rows
+    """U2.6: a plan over every cell (41 stic, 48 holt with 9 variants, 13 gate) and 10,000 rows
     in under 2 s, without ssh."""
 
     @classmethod
@@ -665,7 +667,7 @@ class Performance(unittest.TestCase):
         for word in ("SticTest2 rel4 plan", "HoltTest2 plan", "GateTest2 plan"):
             rows += self.w.seed(self.w.plan(word))
         cells = sorted({r["cell"] for r in rows})
-        self.assertEqual(len(cells), 41 + 54 + 13)
+        self.assertEqual(len(cells), 41 + 57 + 13)
         filler = []
         i = 0
         while len(rows) + len(filler) < 10000:
@@ -714,13 +716,743 @@ class Performance(unittest.TestCase):
             self.w.reset(base)
 
 
+class GuestCase(WorldCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.p_guest = cls.w.plan("GuestTest2 plan")
+        cls.r_guest = cls.w.seed(cls.p_guest, extra={"try_ran": True},
+                                 needs={"identity": "PASS", "try": "PASS", "logs": "PASS"})
+
+
+class Guests(GuestCase):
+    """GuestTest2's planner arm (contract 1.7)."""
+
+    def plan(self, rows=None, text="GuestTest2 plan", **kw):
+        return self.w.plan(text, self.r_guest if rows is None else rows, **kw)
+
+    def aged(self, cell, days):
+        """The seed with CELL's row DAYS old (now is T0 + 8 days; a row's age_h is before T0 + 7)."""
+        out = [r for r in self.r_guest if r["cell"] != cell]
+        return out + self.w.seed(_only(self.p_guest, cell), age={cell: (days - 1) * 24}, extra={"try_ran": True},
+                                 needs={"identity": "PASS"})
+
+    def test_new_guests_fifty_cells(self):
+        self.assertEqual(self.p_guest.totals["cells"], 50)
+        self.assertEqual(by(self.p_guest), {("due", "new"): 50})
+        self.assertNotIn("freebsd15-builder", {c.cell[6:] for c in self.p_guest.cells})
+
+    def test_nothing_due_after_a_pass(self):
+        p = self.plan()
+        self.assertEqual(p.totals["due"], 0)
+        self.assertEqual(p.totals["counts"]["current"], 50)
+
+    def test_not_in_any_spec(self):
+        f = self.w.facts()
+        for h in f:
+            f[h]["guests"]["newguest"] = {"generation": "a" * 64, "files": {}}
+        self.assertIn("not in any spec: newguest", self.plan(facts=f).notes)
+
+    def test_seven_days(self):
+        p = self.plan(self.aged("guest:arch", 6.9))
+        self.assertEqual(st(p, "guest:arch"), ("current", None))
+        p = self.plan(self.aged("guest:arch", 7.1))
+        self.assertEqual(st(p, "guest:arch"), ("due", "guest:7day"))
+        self.assertEqual(p.totals["due"], 1)
+
+    def test_seven_days_only_where_the_spec_has_try(self):
+        p = self.plan(self.aged("guest:haiku6", 30))
+        self.assertEqual(st(p, "guest:haiku6"), ("current", None))
+
+    def test_seven_days_counts_any_valid_try_row_uncommitted_too(self):
+        rows = self.aged("guest:arch", 8)
+        pc = self.p_guest.cell("guest:arch")
+        h = sorted(pc.res)[0]
+        rows.append(self.w.row(pc, h, verdict="FAIL", age_h=1, committed=False, dirty={"testvm/x": None},
+                               needs={"try": "FAIL"}, extra={"try_ran": True, "to_class_only": True}))
+        p = self.plan(rows)
+        self.assertNotEqual(st(p, "guest:arch"), ("due", "guest:7day"))
+
+    def test_to_class_is_not_due_and_fails_the_exit(self):
+        pc = self.p_guest.cell("guest:arch")
+        h = sorted(pc.res)[0]
+        row = self.w.row(pc, h, verdict="FAIL", age_h=1, needs={"logs": "DIFF"},
+                         extra={"to_class_only": True, "try_ran": True})
+        p = self.plan(self.r_guest + [row])
+        self.assertEqual(st(p, "guest:arch"), ("to-class", None))
+        self.assertEqual(p.totals["due"], 0)
+        self.assertEqual(run.plan_exit(p, 0), 1)
+        self.assertIn("to-class: guest:arch", p.render())
+        self.assertIn("1 to-class", p.render())
+
+    def test_an_old_to_class_cell_is_due_at_seven_days(self):
+        rows = self.aged("guest:arch", 8)
+        pc = self.p_guest.cell("guest:arch")
+        h = sorted(pc.res)[0]
+        rows.append(self.w.row(pc, h, verdict="FAIL", age_h=170, needs={"logs": "DIFF"}, klass="fail",
+                               extra={"to_class_only": True, "try_ran": True}))
+        p = self.plan(rows)
+        self.assertEqual(st(p, "guest:arch"), ("due", "guest:7day"))   # its newest --try row is 8 days old
+
+    def test_qemu_moved_on_one_host(self):
+        f = self.w.facts(qemu={"chopin": "QEMU 10.0.3"})
+        p = self.plan(facts=f)
+        pc = p.cell("guest:debian13")
+        self.assertEqual((pc.status, pc.rule), ("due", "changed:host"))
+        self.assertEqual(pc.host, "chopin")
+        self.assertEqual(p.totals["due"], 50)
+
+    def test_one_section_selects_only_its_guests(self):
+        text = self.w.read("testvm/update/in-guest.sh").replace("update with moss", "update with moss, changed")
+        self.w.edit("testvm/update/in-guest.sh", text, commit=True)
+        p = self.plan()
+        self.assertEqual({c.cell for c in p.due()}, {"guest:aerynos"})
+        self.assertEqual(st(p, "guest:aerynos"), ("due", "changed:harness"))
+        self.assertIn("in-guest.sh#Linux.moss", "; ".join(p.cell("guest:aerynos").reasons))
+
+    def test_a_prologue_change_selects_every_ssh_guest(self):
+        text = self.w.read("testvm/update/in-guest.sh").replace("say hello", "say hello there")
+        self.w.edit("testvm/update/in-guest.sh", text, commit=True)
+        p = self.plan()
+        self.assertGreater(len(p.due()), 40)
+        self.assertEqual(st(p, "guest:redox")[0], "current")
+
+    def test_a_new_generation_is_due(self):
+        f = self.w.facts(gens={"arch": 2})
+        p = self.plan(facts=f)
+        self.assertEqual(st(p, "guest:arch"), ("due", "changed:guest"))
+        self.assertEqual(p.totals["due"], 1)
+
+    def test_a_merged_row_is_not_a_pass(self):
+        pc = self.p_guest.cell("guest:arch")
+        h = sorted(pc.res)[0]
+        rows = [r for r in self.r_guest if r["cell"] != "guest:arch"]
+        merged = self.w.row(pc, h, age_h=1, needs={"try": "PASS"}, extra={"merged": True, "try_ran": False})
+        p = self.plan(rows + [merged])
+        self.assertEqual(st(p, "guest:arch"), ("due", "new"))
+        # and the run that made it passes
+        rr = {"cells": [{"cell": "guest:arch", "rows": [merged["id"]], "verdict": "PASS"}]}
+        self.assertEqual(run.outcome_exit(_only(p, "guest:arch"), rr, [merged]), (0, []))
+
+    def class_rows(self, days):
+        """A to-class --try DAYS old, and the class row that accepted its lines just now."""
+        pc = self.p_guest.cell("guest:arch")
+        h = sorted(pc.res)[0]
+        bad = self.w.row(pc, h, verdict="FAIL", age_h=(days - 1) * 24, needs={"logs": "DIFF"},
+                         extra={"to_class_only": True, "try_ran": True})
+        ok = self.w.row(pc, h, verdict="PASS", kind="class", via=bad["id"], rule="guest:lines-classed", age_h=0.5,
+                        needs={"logs": "PASS"}, extra={"try_ran": True})
+        return [bad, ok]
+
+    def test_accepting_lines_does_not_restart_the_seven_days(self):
+        rows = self.aged("guest:arch", 30) + self.class_rows(10)
+        self.assertEqual(st(self.plan(rows), "guest:arch"), ("due", "guest:7day"))
+        self.assertEqual(st(self.plan(rows, text="GuestTest2 update plan"), "guest:arch"), ("not-runnable", None))
+
+    def test_a_recent_try_whose_lines_were_accepted_counts(self):
+        rows = self.aged("guest:arch", 30) + self.class_rows(2)
+        self.assertEqual(st(self.plan(rows), "guest:arch"), ("current", None))
+        self.assertEqual(st(self.plan(rows, text="GuestTest2 update plan"), "guest:arch"), ("due", "fresh:update"))
+
+    def test_a_to_class_fail_does_not_hide_a_real_fail_at_the_other_key(self):
+        f = self.w.facts(qemu={"chopin": "QEMU 10.0.3"})
+        pc = self.plan(facts=f).cell("guest:arch")
+        hosts = sorted(pc.keys, key=lambda h: pc.keys[h])
+        self.assertEqual(len(hosts), 2)
+        for classed, real in (hosts, reversed(hosts)):
+            rows = [self.w.row(pc, classed, verdict="FAIL", age_h=2, needs={"logs": "DIFF"},
+                               extra={"to_class_only": True, "try_ran": True}),
+                    self.w.row(pc, real, verdict="FAIL", age_h=2, needs={"try": "FAIL"}, extra={"try_ran": True})]
+            self.assertEqual(st(self.plan(rows, facts=f), "guest:arch"), ("due", "failed"), (classed, real))
+
+    def test_to_class_on_every_failing_key_is_to_class(self):
+        f = self.w.facts(qemu={"chopin": "QEMU 10.0.3"})
+        pc = self.plan(facts=f).cell("guest:arch")
+        rows = [self.w.row(pc, h, verdict="FAIL", age_h=2, needs={"logs": "DIFF"},
+                           extra={"to_class_only": True, "try_ran": True}) for h in sorted(pc.keys)]
+        self.assertEqual(st(self.plan(rows, facts=f), "guest:arch"), ("to-class", None))
+
+    def test_bare_update_with_no_recent_try_is_refused_naming_each_guest(self):
+        p = self.plan([], text="GuestTest2 update plan")
+        self.assertEqual(p.totals["due"], 0)
+        self.assertEqual(run.plan_exit(p, 0), 2)
+        text = p.render()
+        for c in p.by_status("not-runnable"):
+            self.assertIn(f"t2 GuestTest2 {c.cell[6:]} first", text)
+
+    def test_a_section_with_no_marker_is_a_plan_note(self):
+        text = self.w.read("testvm/update/in-guest.sh").replace("# t2-section: Linux.apk\n", "# t2-section: Linux.apkX\n")
+        self.w.edit("testvm/update/in-guest.sh", text)
+        p = self.plan([], text="GuestTest2 alpine324 plan")
+        self.assertTrue(any(n.startswith("no section Linux.apk in testvm/update/in-guest.sh") for n in p.notes), p.notes)
+        self.assertIn("no section Linux.apk", p.render())
+        rows = self.w.seed(self.plan([]), extra={"try_ran": True}, needs={"identity": "PASS"})
+        q = self.plan(rows)
+        self.assertEqual(q.totals["due"], 0)
+        self.assertIn("no section Linux.apk", q.render())       # the nothing-due form too
+
+    def test_a_disk_the_record_never_saw_differs(self):
+        f = self.w.facts()
+        for h in f:
+            g = f[h]["guests"]["debian12"]
+            g["disks"] = [{"path": "/x/debian12.qcow2", "size": 1, "mtime_ns": 1, "inode": 1},
+                          {"path": "/x/extra.qcow2", "size": 9, "mtime_ns": 9, "inode": 9}]
+            g["stat"] = {"generation": g["generation"], "disks": {"debian12.qcow2": {"size": 1, "mtime_ns": 1, "inode": 1}}}
+        p = self.plan([], text="GuestTest2 debian12 plan", facts=f)
+        self.assertIn("disk differs from its merge record: debian12", p.notes)
+
+    def test_bare_update_needs_a_recent_try(self):
+        p = self.plan(text="GuestTest2 update plan")
+        self.assertEqual(st(p, "guest:arch"), ("due", "fresh:update"))
+        names = {c.cell for c in p.cells}
+        self.assertNotIn("guest:redox", names)
+        self.assertNotIn("guest:haiku6", names)
+        self.assertTrue(any(n.startswith("not in a bare update round") for n in p.notes))
+        p = self.plan(self.aged("guest:arch", 9), text="GuestTest2 update plan")
+        self.assertEqual(st(p, "guest:arch"), ("not-runnable", None))
+        self.assertIn("t2 GuestTest2 arch", p.cell("guest:arch").reasons[0])
+
+    def test_named_update(self):
+        p = self.plan(text="GuestTest2 update haiku6 plan")
+        self.assertEqual(st(p, "guest:haiku6"), ("due", "fresh:update"))
+        p = self.plan(text="GuestTest2 update redox plan")
+        self.assertEqual(st(p, "guest:redox")[0], "not-runnable")
+
+    def test_named_and_all(self):
+        p = self.plan(text="GuestTest2 arch plan")
+        self.assertEqual(st(p, "guest:arch"), ("due", "fresh:names"))
+        self.assertEqual(len(p.cells), 1)
+        p = self.plan(text="GuestTest2All plan")
+        self.assertEqual(by(p), {("due", "fresh:All"): 50})
+
+    def test_sweep_child(self):
+        ctx = self.w.ctx(self.r_guest)
+        w = self.w.word("GuestTest2All plan", ctx)
+        w.sweep = True
+        p = plan.make(w, ctx)
+        self.assertEqual(by(p), {("due", "fresh:Sweep"): 50})
+
+    def test_a_disk_changed_behind_its_generation(self):
+        f = self.w.facts()
+        g = f["chopin"]["guests"]["arch"]
+        g["disks"] = [{"path": "/v/arch/arch.qcow2", "size": 9, "mtime_ns": 9, "inode": 9}]
+        g["stat"] = {"generation": g["generation"], "disks": {"arch.qcow2": {"size": 9, "mtime_ns": 8, "inode": 9}}}
+        self.assertIn("disk differs from its merge record: arch", self.plan(facts=f).notes)
+        g["stat"]["disks"]["arch.qcow2"]["mtime_ns"] = 9
+        self.assertFalse(any("disk differs" in n for n in self.plan(facts=f).notes))
+
+
+def _only(p, cell):
+    q = plan.Plan(p.word, p.family)
+    q.cells = [p.cell(cell)]
+    q.totals = {"due": 1}
+    return q
+
+
+class Fingerprints(WorldCase):
+    def facts(self, gen=1, **kw):
+        return self.w.facts(gens={"debian12": gen}, fps={"debian12": self.w.fp(gen, **kw)})
+
+    def seed(self, word, facts):
+        return self.w.seed(self.w.plan(word, facts=facts))
+
+    def test_generation_then_fingerprint_carries_and_the_next_plan_is_current(self):
+        for word, rows, rule in (("HoltTest2", self.r_holt, "carry:fingerprint"), ("SticTest2 rel4", self.r_stic, "carry:fingerprint")):
+            cell = "holt:debian12" if word == "HoltTest2" else "stic:debian12"
+            f = self.facts()
+            ctx = self.w.ctx(rows, facts=f)
+            wd = self.w.word(word + " plan", ctx)
+            p = plan.make(wd, ctx)
+            self.assertEqual(st(p, cell), ("carried", rule), word)
+            self.assertEqual(p.totals["due"], 0)
+            notes = []
+            der = run.derived_rows(p, "t2x-fixture", wd, ctx, rows=rows, notes=notes)
+            self.assertEqual([r["cell"] for r in der], [cell], notes)
+            self.assertIn("debian12:generation", der[0]["inputs"]["soft"])
+            q = self.w.plan(word + " plan", rows + der, facts=f)
+            self.assertEqual(st(q, cell), ("current", None), word)
+
+    def test_a_resumed_carry_takes_the_new_soft_inputs(self):
+        rows = self.r_holt
+        f = self.facts()
+        ctx = self.w.ctx(rows, facts=f)
+        wd = self.w.word("HoltTest2 plan", ctx)
+        fresh = plan.make(wd, ctx)
+        saved = run.plan_from_json(json.loads(json.dumps(fresh.to_json())), wd)
+        run.adopt_inputs(saved, fresh)
+        der = run.derived_rows(saved, "t2x-fixture", wd, ctx, rows=rows)
+        d = [r for r in der if r["cell"] == "holt:debian12"]
+        self.assertIn("debian12:generation", d[0]["inputs"]["soft"])
+        self.assertEqual(st(self.w.plan("HoltTest2 plan", rows + der, facts=f), "holt:debian12"), ("current", None))
+
+    def test_a_changed_fingerprint_with_the_old_one_in_was(self):
+        f1 = self.facts(holt="h1")
+        rows = self.seed("HoltTest2 plan", f1)
+        f2 = self.facts(holt="h2", holt_was=("h1",))
+        ctx = self.w.ctx(rows, facts=f2)
+        wd = self.w.word("HoltTest2 plan", ctx)
+        p = plan.make(wd, ctx)
+        self.assertEqual(st(p, "holt:debian12"), ("carried", "carry:fingerprint"))
+        der = run.derived_rows(p, "t2x-fixture", wd, ctx, rows=rows)
+        q = self.w.plan("HoltTest2 plan", rows + der, facts=f2)
+        self.assertEqual(st(q, "holt:debian12"), ("current", None))
+
+    def test_a_changed_fingerprint_is_due(self):
+        rows = self.seed("HoltTest2 plan", self.facts(holt="h1"))
+        p = self.w.plan("HoltTest2 plan", rows, facts=self.facts(holt="h2"))
+        self.assertEqual(st(p, "holt:debian12"), ("due", "holt:guest-update"))
+
+    def test_a_new_generation_with_the_same_fingerprint_is_soft_stale_and_no_canary(self):
+        rows = self.seed("SticTest2 rel4 plan", self.facts(1))
+        p = self.w.plan("SticTest2 rel4 plan", rows, facts=self.facts(2))
+        c = p.cell("stic:debian12")       # debian12 is a stic canary
+        self.assertEqual((c.status, c.rule), ("soft-stale", None))
+        self.assertIn("debian12 soft inputs changed", c.reasons[0])
+        self.assertEqual(p.totals["due"], 0)
+
+    def test_a_fine_move_is_soft_stale(self):
+        rows = self.seed("SticTest2 rel4 plan", self.facts(1, fine="f1"))
+        p = self.w.plan("SticTest2 rel4 plan", rows, facts=self.facts(1, fine="f2"))
+        self.assertEqual(st(p, "stic:debian12"), ("soft-stale", None))
+
+    def test_a_host_soft_change_still_runs_the_canary(self):
+        p = self.w.plan("SticTest2 rel4 plan", self.r_stic, facts=self.w.facts(kernel="6.12.200"))
+        self.assertEqual(st(p, "stic:debian12"), ("due", "canary:host"))
+
+    def test_rules_changed_is_noted(self):
+        self.w.edit("testvm/update/fingerprint.py", "# fixture\n", commit=True)
+        p = self.w.plan("HoltTest2 plan", facts=self.facts(rules="old"))
+        self.assertIn("fingerprint rules changed: run t2 guest-fingerprints --reproject", p.notes)
+
+
+class ImgCase(WorldCase):
+    def bin_row(self, cell, name, val, verdict="PASS", kind="run", rule=None, via=None, age_h=1.0, committed=True, dirty=None):
+        p = self.p_stic if cell.startswith("stic:") else self.p_holt
+        pc = p.cell(cell)
+        h = sorted(pc.res)[0]
+        inp = copy.deepcopy(pc.res[h].inputs)
+        inp["bin"][name] = val
+        return self.w.row(pc, h, inputs=inp, verdict=verdict, kind=kind, rule=rule, via=via, age_h=age_h, plan_=p,
+                          committed=committed, dirty=dirty, klass=None)
+
+    def good(self, plat="netbsd", guest=None, images=None, skip=()):
+        """Rows that give every binary of PLAT's image a real PASS, less SKIP."""
+        im = (images or self.w.images())[plat]
+        os_ = "omnios" if plat == "illumos" else plat
+        g = guest or {"netbsd": "netbsd11", "illumos": "omnios58", "haiku": "haiku6"}.get(plat, "debian12")
+        code = "code:" + keys.holt_code(keys.GitSource(self.w.repo, im["holt_commit"], scope=("holt",)))
+        rows = [self.bin_row(f"stic:{g}", f"{os_}/{n}", "sha256:" + h) for n, h in im["bins"].items()
+                if n != "bko-holt" and n not in skip]
+        rows.append(self.bin_row(f"holt:{g}", f"{plat}/bko-holt", code))
+        return rows
+
+    def plan_img(self, rows=(), text="ImgTest2 netbsd plan", **kw):
+        return self.w.plan(text, rows, **kw)
+
+
+class ImgRefusal(ImgCase):
+    def test_empty_ledger_refuses_every_image_naming_binaries(self):
+        p = self.plan_img(text="ImgTest2 plan")
+        self.assertEqual(len(p.cells), 7)
+        self.assertEqual(by(p), {("not-runnable", None): 7})
+        self.assertTrue(all(c.refused for c in p.cells))
+        why = "; ".join(p.cell("img:netbsd").reasons)
+        for n in ("restic-bko", "rustic-bko", "bko-holt"):
+            self.assertIn("netbsd/" + n, why)
+        self.assertIn("t2 ", why)
+        self.assertEqual(run.plan_exit(p, 0), 2)
+
+    def test_real_passes_at_the_digests(self):
+        p = self.plan_img(self.good())
+        self.assertEqual(st(p, "img:netbsd"), ("due", "fresh:names"))
+        self.assertEqual({r["state"] for r in p.cell("img:netbsd").binaries.values()}, {"real"})
+
+    def test_bare_runs_its_due_image(self):
+        p = self.plan_img(self.good(), text="ImgTest2 plan")
+        self.assertEqual(st(p, "img:netbsd"), ("due", "img:new"))
+        self.assertEqual(st(p, "img:linux")[0], "not-runnable")
+        self.assertEqual(run.plan_exit(p, 0), 2)
+
+    def test_gate_rows_do_not_count(self):
+        im = self.w.images()["netbsd"]
+        rows = [r for r in self.good() if r["cell"].startswith("holt:")]
+        g = self.w.plan("GateTest2 plan")
+        pc = g.cell("gate:bin:version")
+        inp = copy.deepcopy(pc.res["chopin"].inputs)
+        inp["bin"]["netbsd/restic-bko"] = "sha256:" + im["bins"]["restic-bko"]
+        inp["bin"]["netbsd/rustic-bko"] = "sha256:" + im["bins"]["rustic-bko"]
+        p = self.plan_img(rows + [self.w.row(pc, "chopin", inputs=inp, plan_=g)])
+        self.assertEqual(st(p, "img:netbsd")[0], "not-runnable")
+
+    def test_a_newest_decisive_fail_is_none(self):
+        rows = self.good()
+        restic = "netbsd/restic-bko"
+        val = "sha256:" + self.w.images()["netbsd"]["bins"]["restic-bko"]
+        rows.append(self.bin_row("stic:alpinebsd", restic, val, verdict="FAIL", age_h=0.5))
+        p = self.plan_img(rows)
+        self.assertEqual(st(p, "img:netbsd")[0], "not-runnable")
+        self.assertIn("is FAIL", "; ".join(p.cell("img:netbsd").reasons))
+
+    def test_a_pass_after_the_fail_at_that_cell_clears_it(self):
+        val = "sha256:" + self.w.images()["netbsd"]["bins"]["restic-bko"]
+        rows = [self.bin_row("stic:alpinebsd", "netbsd/restic-bko", val, verdict="FAIL", age_h=5)]
+        rows.append(self.bin_row("stic:alpinebsd", "netbsd/restic-bko", val, age_h=1))
+        rows += self.good(skip=("restic-bko",))
+        p = self.plan_img(rows)
+        self.assertEqual(st(p, "img:netbsd")[0], "due", p.cell("img:netbsd").reasons)
+
+    def test_carried_version_only_is_allowed(self):
+        val = "sha256:" + self.w.images()["netbsd"]["bins"]["restic-bko"]
+        base = self.bin_row("stic:alpinebsd", "netbsd/restic-bko", "sha256:" + "9" * 64, age_h=9)
+        link = self.bin_row("stic:netbsd11", "netbsd/restic-bko", val, kind="carried", rule="carry:version-only", via=base["id"])
+        rows = self.good(skip=("restic-bko",)) + [base, link]
+        p = self.plan_img(rows)
+        pc = p.cell("img:netbsd")
+        self.assertEqual(pc.status, "due", pc.reasons)
+        self.assertEqual(pc.binaries["restic-bko"]["state"], "carried")
+
+    def test_any_other_carried_is_not_runnable_and_names_the_canary(self):
+        val = "sha256:" + self.w.images()["netbsd"]["bins"]["restic-bko"]
+        base = self.bin_row("stic:alpinebsd", "netbsd/restic-bko", "sha256:" + "9" * 64, age_h=9)
+        link = self.bin_row("stic:netbsd11", "netbsd/restic-bko", val, kind="carried", rule="carry:affected-v1", via=base["id"])
+        rows = self.good(skip=("restic-bko",)) + [base, link]
+        pc = self.plan_img(rows).cell("img:netbsd")
+        self.assertEqual(pc.status, "not-runnable")
+        self.assertEqual(pc.binaries["restic-bko"]["state"], "carried-other")
+        self.assertIn(pc.binaries["restic-bko"]["canary"], ("stic:netbsd11", "stic:alpinebsd"))
+
+    def test_a_via_walk_through_two_links(self):
+        val = "sha256:" + self.w.images()["netbsd"]["bins"]["restic-bko"]
+        base = self.bin_row("stic:alpinebsd", "netbsd/restic-bko", "sha256:" + "9" * 64, age_h=9)
+        mid = self.bin_row("stic:netbsd11", "netbsd/restic-bko", "sha256:" + "8" * 64, kind="carried", rule="carry:version-only",
+                           via=base["id"], age_h=5)
+        for rule, state in (("carry:version-only", "carried"), ("carry:dfly-image", "carried-other")):
+            link = self.bin_row("stic:netbsd11", "netbsd/restic-bko", val, kind="carried", rule=rule, via=mid["id"], age_h=2)
+            rows = self.good(skip=("restic-bko",)) + [base, mid, link]
+            self.assertEqual(self.plan_img(rows).cell("img:netbsd").binaries["restic-bko"]["state"], state)
+        bad = self.bin_row("stic:netbsd11", "netbsd/restic-bko", "sha256:" + "8" * 64, kind="carried", rule="carry:affected-v1",
+                           via=base["id"], age_h=5)
+        link = self.bin_row("stic:netbsd11", "netbsd/restic-bko", val, kind="carried", rule="carry:version-only", via=bad["id"], age_h=2)
+        rows = self.good(skip=("restic-bko",)) + [base, bad, link]
+        self.assertEqual(self.plan_img(rows).cell("img:netbsd").binaries["restic-bko"]["state"], "carried-other")
+
+    def test_illumos_maps_to_omnios_for_stic_rows(self):
+        rows = self.good("illumos")
+        self.assertTrue(any(k.startswith("omnios/") for r in rows for k in r["inputs"]["bin"]))
+        p = self.plan_img(rows, text="ImgTest2 illumos plan")
+        self.assertEqual(st(p, "img:illumos"), ("due", "fresh:names"))
+
+    def test_bko_holt_needs_its_commit_in_this_repo(self):
+        for commit, needle in (("", "no bko-holt.commit"), ("1" * 40, "isn't in this repository")):
+            im = self.w.images(commit=commit)
+            p = self.plan_img(self.good(), facts=self.w.facts(images=im))
+            self.assertEqual(st(p, "img:netbsd")[0], "not-runnable")
+            self.assertIn(needle, "; ".join(p.cell("img:netbsd").reasons))
+
+    def test_bko_holt_by_sha256_from_a_holt_bin_row(self):
+        im = self.w.images()["netbsd"]
+        rows = [r for r in self.good() if not r["cell"].startswith("holt:")]
+        rows.append(self.bin_row("holt:netbsd11", "netbsd/bko-holt", "sha256:" + im["bins"]["bko-holt"]))
+        self.assertEqual(st(self.plan_img(rows), "img:netbsd")[0], "due")
+
+    def test_an_uncommitted_row_does_not_count(self):
+        rows = self.good()
+        rows2 = [r for r in rows if not r["cell"].startswith("holt:")]
+        val = "code:" + keys.holt_code(keys.GitSource(self.w.repo, self.w.head(), scope=("holt",)))
+        rows2.append(self.bin_row("holt:netbsd11", "netbsd/bko-holt", val, committed=False, dirty={"holt/src/main.rs": "a" * 64}))
+        self.assertEqual(st(self.plan_img(rows2), "img:netbsd")[0], "not-runnable")
+
+    def test_a_build_under_way(self):
+        im = self.w.images()
+        im["netbsd"]["done_exit"] = None
+        p = self.plan_img(self.good(), facts=self.w.facts(images=im))
+        c = p.cell("img:netbsd")
+        self.assertEqual(c.status, "not-runnable")
+        self.assertIn("done.exit", c.reasons[0])
+        self.assertTrue(c.refused)      # named: the word can't do what it says
+        c = self.plan_img(self.good(), text="ImgTest2 plan", facts=self.w.facts(images=im)).cell("img:netbsd")
+        self.assertEqual(c.status, "not-runnable")
+        self.assertFalse(c.refused)     # bare: the build is simply not ready
+        c = self.plan_img(self.good(), text="ImgTest2 release plan", facts=self.w.facts(images=im)).cell("img:netbsd")
+        self.assertTrue(c.refused)      # release can't vouch for it
+
+    def test_a_named_image_that_cannot_run_exits_2_beside_one_that_can(self):
+        im = self.w.images()
+        im["linux"]["done_exit"] = None
+        p = self.plan_img(self.good(), text="ImgTest2 netbsd linux release plan", facts=self.w.facts(images=im))
+        self.assertEqual(st(p, "img:netbsd")[0], "due")
+        self.assertEqual(run.plan_exit(p, 0), 2)
+
+    def test_no_commit_names_only_the_rebuild(self):
+        im = self.w.images()
+        im["netbsd"]["holt_commit"] = None
+        p = self.plan_img(self.good(skip=("bko-holt",)), facts=self.w.facts(images=im))
+        c = p.cell("img:netbsd")
+        why = "; ".join(c.reasons)
+        self.assertIn("rebuild", why)
+        self.assertNotIn("t2 HoltTest2", why)
+        self.assertIsNone(c.binaries["bko-holt"]["canary"])
+
+    def test_a_fail_at_the_digest_names_the_failing_cell(self):
+        val = "sha256:" + self.w.images()["netbsd"]["bins"]["restic-bko"]
+        bad = self.bin_row("stic:alpinebsd", "netbsd/restic-bko", val, verdict="FAIL", age_h=0.5)
+        c = self.plan_img(self.good() + [bad]).cell("img:netbsd")
+        self.assertEqual(c.status, "not-runnable")
+        self.assertIn("run t2 SticTest2 ROUND alpinebsd", "; ".join(c.reasons))
+        self.assertEqual(c.binaries["restic-bko"]["canary"], "stic:alpinebsd")
+
+    def test_a_binary_the_sums_file_omits_is_refused(self):
+        im = self.w.images()
+        del im["netbsd"]["bins"]["bko-holt"]
+        c = self.plan_img(self.good(), facts=self.w.facts(images=im)).cell("img:netbsd")
+        self.assertEqual(c.status, "not-runnable")
+        why = "; ".join(c.reasons)
+        self.assertIn("netbsd/bko-holt", why)
+        self.assertIn("bko-bin.sha256", why)
+        im = self.w.images()
+        im["netbsd"]["bins"] = {}
+        c = self.plan_img(facts=self.w.facts(images=im)).cell("img:netbsd")
+        self.assertEqual(sorted(c.binaries), ["bko-holt", "restic-bko", "rustic-bko"])
+
+    def test_haiku_lists_no_restic(self):
+        self.assertNotIn("restic-bko", self.plan_img(text="ImgTest2 haiku plan").cell("img:haiku").binaries)
+
+    def test_a_failed_boot_with_no_pass_exits_2_on_a_bare_word(self):
+        pc = self.w.plan("ImgTest2 plan", self.good()).cell("img:netbsd")
+        fail = self.w.row(pc, sorted(pc.res)[0], verdict="FAIL", age_h=2, needs={"boot:bios:x": "FAIL"},
+                          extra={"panel": {"result": "none"}})
+        val = "sha256:" + self.w.images()["netbsd"]["bins"]["restic-bko"]
+        bad = self.bin_row("stic:alpinebsd", "netbsd/restic-bko", val, verdict="FAIL", age_h=0.5)
+        p = self.plan_img(self.good() + [fail, bad], text="ImgTest2 plan")
+        self.assertEqual(st(p, "img:netbsd")[0], "not-runnable")
+        self.assertTrue(p.cell("img:netbsd").refused)
+        self.assertEqual(run.plan_exit(p, 0), 2)
+
+    def test_no_current_image(self):
+        p = self.plan_img(text="ImgTest2 netbsd plan", facts=self.w.facts(images={}))
+        self.assertIn("no current image", p.cell("img:netbsd").reasons[0])
+
+
+class ImgPanels(ImgCase):
+    @classmethod
+    def setUpClass(cls):
+        super().setUpClass()
+        cls.p_img = cls.w.plan("ImgTest2 plan")
+        cls.good_rows = []
+        probe = ImgCase("run")
+        probe.w, probe.p_stic, probe.p_holt = cls.w, cls.p_stic, cls.p_holt
+        for g in world.PLATS:
+            cls.good_rows += probe.good(g)
+        cls.p_ok = cls.w.plan("ImgTest2 plan", cls.good_rows)
+
+    def row(self, res, verdict="PASS", age=2.0):
+        pc = self.p_ok.cell("img:netbsd")
+        h = sorted(pc.res)[0]
+        return self.w.row(pc, h, verdict=verdict, age_h=age, needs={"boot:bios:x": "PASS"}, extra={"panel": {"result": res}})
+
+    def plan(self, rows, **kw):
+        return self.w.plan("ImgTest2 plan", self.good_rows + rows, **kw)
+
+    def panel_row(self, verdict, rows):
+        q = self.w.plan("HoltTest2 netbsd11+img plan", rows)
+        c = q.cell("holt:netbsd11+img")
+        return self.w.row(c, sorted(c.res)[0], verdict=verdict, age_h=1.5, needs={"stage:restore": verdict}, plan_=q)
+
+    def test_a_panels_own_fail_is_no_refusal(self):
+        boot = self.row("owed", age=3.0)
+        fail = self.row("fail", verdict="FAIL", age=1.0)
+        rows = [boot, fail, self.panel_row("FAIL", self.good_rows + [boot, fail])]
+        p = self.plan(rows)
+        self.assertEqual(st(p, "img:netbsd"), ("due", "img:panel-owed"))
+
+    def test_a_panels_own_pass_is_no_evidence_for_its_image(self):
+        netbsd = [r for r in self.good_rows if not (r["cell"].startswith("holt:netbsd11"))]
+        panel = self.panel_row("PASS", netbsd)
+        p = self.w.plan("ImgTest2 plan", netbsd + [panel])
+        self.assertEqual(st(p, "img:netbsd")[0], "not-runnable")
+        self.assertEqual(p.cell("img:netbsd").binaries["bko-holt"]["state"], "none")
+
+    def test_an_owed_panel_whose_binary_went_bad_exits_2(self):
+        val = "sha256:" + self.w.images()["netbsd"]["bins"]["restic-bko"]
+        bad = self.w.row(self.p_stic.cell("stic:alpinebsd"), sorted(self.p_stic.cell("stic:alpinebsd").res)[0], verdict="FAIL", age_h=0.5,
+                         inputs=dict(self.p_stic.cell("stic:alpinebsd").res[sorted(self.p_stic.cell("stic:alpinebsd").res)[0]].inputs,
+                                     bin={"netbsd/restic-bko": val}), plan_=self.p_stic, klass=None)
+        p = self.plan([self.row("owed"), bad])
+        self.assertEqual(st(p, "img:netbsd")[0], "not-runnable")
+        self.assertEqual(run.plan_exit(p, 0), 2)
+
+    def test_release_requires_the_panel(self):
+        for res in ("none", "blocked"):
+            p = self.w.plan("ImgTest2 release plan", self.good_rows + [self.row(res)])
+            self.assertEqual(st(p, "img:netbsd"), ("due", "img:panel-owed"), res)
+        p = self.w.plan("ImgTest2 release plan", self.good_rows + [self.row("pass")])
+        self.assertEqual(st(p, "img:netbsd"), ("current", None))
+        p = self.w.plan("ImgTest2 plan", self.good_rows + [self.row("none")])
+        self.assertEqual(st(p, "img:netbsd"), ("current", None))
+        cl = copy.deepcopy(json.load(open(os.path.join(self.w.repo, "testvm/test2/classes.json"))))
+        cl["holt"]["img_panel"]["netbsd"]["blocked"] = "a defect"
+        p = self.w.plan("ImgTest2 release plan", self.good_rows + [self.row("blocked")], classes=cl)
+        self.assertEqual(st(p, "img:netbsd"), ("due", "img:panel-owed"))    # the runner's release check ends it nonzero
+        p = self.w.plan("ImgTest2 release plan", self.good_rows + [self.row("none", verdict="FAIL")])
+        self.assertEqual(st(p, "img:netbsd"), ("due", "failed"))
+
+    def test_release_over_a_soft_stale_image_with_no_panel_boots_it(self):
+        ok = self.row("none")
+        self.w.edit("stick/boot-test.py", "# changed\n", commit=True)
+        p = self.w.plan("ImgTest2 release plan", self.good_rows + [ok], universe=["img:netbsd"])
+        self.assertEqual(st(p, "img:netbsd"), ("due", "stale"))
+        p = self.w.plan("ImgTest2 release plan", self.good_rows + [self.row("pass")], universe=["img:netbsd"])
+        self.assertEqual(st(p, "img:netbsd"), ("soft-stale", None))
+
+    def test_owed_then_fail_then_pass(self):
+        owed = self.row("owed")
+        p = self.plan([owed])
+        self.assertEqual(st(p, "img:netbsd"), ("due", "img:panel-owed"))
+        fail = self.row("fail", age=1.0)
+        self.assertEqual(st(self.plan([owed, fail]), "img:netbsd"), ("due", "img:panel-owed"))
+        ok = self.row("pass", age=0.5)
+        self.assertEqual(st(self.plan([owed, fail, ok]), "img:netbsd"), ("current", None))
+
+    def test_a_boot_rows_own_panel_row_answers_it_at_any_time_order(self):
+        # (a tie at equal times breaks on the row ids, which needn't put the .panel row last)
+        owed = self.row("owed", age=1.0)
+        ok = dict(self.row("pass", age=2.0), origin=owed["origin"] + ".panel")
+        self.assertEqual(st(self.plan([owed, ok]), "img:netbsd"), ("current", None))
+        other = dict(ok, origin="img:t2i-other:netbsd:1.panel")
+        self.assertEqual(st(self.plan([owed, other]), "img:netbsd"), ("due", "img:panel-owed"))
+
+    def test_a_failed_panel_row_with_a_fail_verdict_stays_panel_owed(self):
+        self.assertEqual(st(self.plan([self.row("fail", verdict="FAIL")]), "img:netbsd"), ("due", "img:panel-owed"))
+
+    def test_a_failed_boot_is_failed(self):
+        self.assertEqual(st(self.plan([self.row("none", verdict="FAIL")]), "img:netbsd"), ("due", "failed"))
+
+    def test_blocked_then_unblocked(self):
+        cl = copy.deepcopy(json.load(open(os.path.join(self.w.repo, "testvm/test2/classes.json"))))
+        cl["holt"]["img_panel"]["netbsd"]["blocked"] = "a defect"
+        r = self.row("blocked")
+        self.assertEqual(st(self.plan([r], classes=cl), "img:netbsd"), ("current", None))
+        self.assertEqual(st(self.plan([r]), "img:netbsd"), ("due", "img:panel-owed"))
+        q = self.w.plan("HoltTest2 netbsd11+img plan", classes=cl)
+        self.assertEqual(st(q, "holt:netbsd11+img")[0], "not-runnable")
+        self.assertIn("blocked: a defect", q.cell("holt:netbsd11+img").reasons[0])
+
+    def test_no_pass_is_new_a_harness_change_soft_stale(self):
+        self.assertEqual(st(self.p_ok, "img:netbsd"), ("due", "img:new"))
+        ok = self.row("none")
+        self.assertEqual(st(self.plan([ok]), "img:netbsd"), ("current", None))
+        self.w.edit("stick/boot-test.py", "# changed\n", commit=True)
+        p = self.plan([ok], universe=["img:netbsd"])
+        self.assertEqual(st(p, "img:netbsd"), ("soft-stale", None))
+
+    def test_a_rebuilt_image_is_new(self):
+        ok = self.row("none")
+        im = self.w.images()
+        im["netbsd"]["bins"]["rustic-bko"] = world.H("rebuilt")
+        p = self.plan([ok], facts=self.w.facts(images=im))
+        self.assertEqual(st(p, "img:netbsd")[0], "not-runnable")   # rebuilt, and no PASS at the new digest
+        self.assertTrue(p.cell("img:netbsd").refused)
+
+    def test_an_image_rebuilt_on_one_host(self):
+        ok = self.row("none")
+        im = self.w.images()
+        other = self.w.images(tag="i2")
+        other["netbsd"]["bins"] = dict(im["netbsd"]["bins"])
+        f = self.w.facts(images=im)
+        f["cinqcent"]["images"] = other
+        p = self.plan([ok], facts=f)
+        self.assertEqual(st(p, "img:netbsd"), ("due", "img:new"))
+        self.assertEqual(p.cell("img:netbsd").host, "cinqcent")
+
+    def test_panel_line_in_the_plan(self):
+        p = self.plan([])
+        self.assertIn("panel: decided after the boot tests' manifests", p.render())
+        q = self.w.plan("ImgTest2 netbsd release plan", self.good_rows)
+        self.assertIn("panel: 1 cells", q.render())
+
+
+class ImgCells(WorldCase):
+    def test_img_beside_names_and_letters(self):
+        p = self.w.plan("HoltTest2 debian12 +img plan")
+        self.assertEqual(sorted(c.cell for c in p.due()), ["holt:debian12", "holt:debian12+img"])
+        p = self.w.plan("HoltTest2 +img debian12 plan")
+        self.assertEqual(sorted(c.cell for c in p.due()), ["holt:debian12", "holt:debian12+img"])
+        p = self.w.plan("HoltTest2A +img plan")
+        self.assertEqual(st(p, "holt:aerynos+img")[0], "due")
+        self.assertEqual([c.cell for c in p.due() if c.cell.endswith("+img")], ["holt:aerynos+img"])
+
+    def test_only_when_asked(self):
+        self.assertFalse([c.cell for c in self.w.plan("HoltTest2 plan").cells if c.cell.endswith("+img")])
+        self.assertFalse([c.cell for c in self.w.plan("HoltTest2All plan").cells if c.cell.endswith("+img")])
+        p = self.w.plan("HoltTest2 debian12+img plan")
+        self.assertEqual([c.cell for c in p.cells], ["holt:debian12+img"])
+        self.assertEqual(st(p, "holt:debian12+img"), ("due", "fresh:names"))
+        p = self.w.plan("HoltTest2 +img plan")
+        self.assertEqual(len(p.cells), 12)
+        p = self.w.plan("HoltTest2 plan", universe=["holt:debian12+img"])
+        self.assertEqual(st(p, "holt:debian12+img"), ("due", "img:panel"))
+
+    def test_panel_is_due_when_a_hard_group_changes(self):
+        p = self.w.plan("HoltTest2 debian12+img plan")
+        rows = self.w.seed(p)
+        q = self.w.plan("HoltTest2 plan", rows, universe=["holt:debian12+img"])
+        self.assertEqual(st(q, "holt:debian12+img"), ("current", None))
+        im = self.w.images(tag="i2")
+        q = self.w.plan("HoltTest2 plan", rows, facts=self.w.facts(images=im), universe=["holt:debian12+img"])
+        self.assertEqual(st(q, "holt:debian12+img"), ("due", "img:panel"))
+
+    def test_no_uefi_filter_but_pins_apply(self):
+        p = self.w.plan("HoltTest2 debian13-stack+img plan", facts=self.w.facts(uefi_rescuer=()))
+        self.assertEqual(sorted(p.cell("holt:debian13-stack+img").keys), ["chopin", "cinqcent"])
+        p = self.w.plan("HoltTest2 openbsd8+img plan")
+        self.assertEqual(sorted(p.cell("holt:openbsd8+img").keys), ["chopin"])
+
+    def test_bins_stale(self):
+        im = self.w.images()
+        for h in im.values():
+            h["pin"]["bins_stale"] = True
+        p = self.w.plan("HoltTest2 debian12+img plan", facts=self.w.facts(images=im))
+        self.assertEqual(st(p, "holt:debian12+img")[0], "not-runnable")
+        self.assertIn("bins-stale", p.cell("holt:debian12+img").reasons[0])
+
+
+class IdentityBad(WorldCase):
+    def test_a_bad_identity_makes_stic_and_holt_cells_not_runnable(self):
+        for text, cell in (("SticTest2 rel4 plan", "stic:debian12"), ("HoltTest2 plan", "holt:debian12")):
+            p = self.w.plan(text, identity_bad={"debian12": "disk differs"})
+            self.assertEqual(st(p, cell)[0], "not-runnable")
+            self.assertIn("disk differs", p.cell(cell).reasons[0])
+        p = self.w.plan("HoltTest2 plan", identity_bad={"debian13": "x"})
+        self.assertEqual(st(p, "holt:debian13+oneshot")[0], "not-runnable")
+
+
+class ExtraDue(WorldCase):
+    def test_canary_carried(self):
+        p = self.w.plan("SticTest2 rel4 plan", self.r_stic, extra_due={"stic:debian12": "netbsd's canary"})
+        self.assertEqual(st(p, "stic:debian12"), ("due", "canary:carried"))
+        self.assertEqual(p.totals["due"], 1)
+        self.assertEqual(p.to_json()["options"]["extra_due"], {"stic:debian12": "netbsd's canary"})
+
+
+class Named(WorldCase):
+    def test_guest_and_img_paths_are_named(self):
+        ctx = self.w.ctx()
+        pl = plan.Planner(self.w.word("GuestTest2 plan", ctx), ctx)
+        pl.setup_set()
+        named = pl.named_paths()
+        for p in ("testvm/update/in-guest.sh", "testvm/test2/guest/job.sh", "stick/netbsd/checks.sh",
+                  "testvm/holttest1d/img-boot.py", "testvm/holttest1d/img-boot.d/netbsd.json"):
+            self.assertIn(p, named)
+        self.assertFalse([p for p in named if "#" in p])
+
+
 class ClassTable(unittest.TestCase):
     def test_the_real_class_table(self):
         ctx = plan.Ctx(REPO, hosts=[], options={})
         self.assertEqual(plan.check_classes(ctx, holt_names=world.GUESTS), [])
         h = ctx.classes["holt"]
         src = {g for f in h["families"].values() for g in f} | set(h["no_family"])
-        self.assertEqual(len(src), 45)
+        self.assertEqual(len(src), 48)
         self.assertEqual(sum(len(v) for v in h["variants"].values()), 9)
         self.assertEqual(sorted(set(world.GUESTS) - src), ["freebsd15-builder", "freebsd15-geli", "freebsd15-ufs"])
 

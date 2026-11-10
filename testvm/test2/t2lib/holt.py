@@ -19,6 +19,9 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      each host's CODE/SHA256SUMS, CODE/BUILD-INFO and CODE/build-PLAT.json are
      written for the builds it holds.  ctx.options["holt_bin"] (--holt-bin DIR)
      tests a ready set instead.
+  0. +img cells (ImgTest2's panel) run on the pinned rescue image's own binaries: no CODE
+     build for them, and no fast gate when they are all there is.  The pin of their
+     platforms (`t2-host tool img pin P...`) is made on each host before the image sums.
   1a. Image sums: a due cell's guest with no generation, or one-time rescuer copy
      with no .sha256, gets its sum cached by `t2-host imgsum` on each host that may
      run it (contract 1.4), and ctx.facts get it, so the re-plan keys it as the
@@ -70,6 +73,8 @@ import time
 from . import keys, utc_now
 from .rows_holt import backfill_row, cell_of, gv_of
 
+_STAMP = re.compile(r"t2[a-z]-(\d{8}T\d{4}-[0-9a-f]{4})(?:-img)?(?:-r\d)?\Z")   # (stic.py's: a run id's stamp)
+
 QUEUE = "/bkoscratch/holttest1d/queue"
 HOLT_L = "/bkoscratch/holttest1d"
 BASEPORT, MAXJOBS = 2600, 3
@@ -93,6 +98,11 @@ def todo_line(cell):
 
 def base_guest(cell):
     return todo_line(cell).partition("+")[0]
+
+
+def is_img(cell):
+    """A +img cell: the rescue image rebuilds, with its own binaries."""
+    return cell.endswith("+img")
 
 
 def spec_of(ctx):
@@ -373,6 +383,18 @@ with open(todo + ".lock", "a") as lk:
         r = self.h.ssh(host, script=script, args=[todo, why] + sorted(guests), timeout=90)
         return [x for x in r.text.splitlines() if x.strip()] if r.rc == 0 else []
 
+    def pin_images(self, host, tool, plats, env):
+        """t2-host tool img pin PLATS on HOST: {plat: result} (tool_img.py's), or None when it
+        couldn't be asked."""
+        envs = " ".join(f"{k}={self.h.rq(v)}" for k, v in sorted(env.items()))
+        rc, out, _ = self.sh(host, f"env {envs} python3 -B {self.h.rq(tool)} tool img pin "
+                                   + " ".join(shlex.quote(p) for p in plats) + " </dev/null", timeout=1800)
+        try:
+            got = json.loads((out or "").strip().splitlines()[-1])
+        except (ValueError, IndexError):
+            return None
+        return got if rc == 0 and isinstance(got, dict) else None
+
     def pswpout(self, host):
         rc, out, _ = self.sh(host, "awk '$1 == \"pswpout\" { print $2 }' /proc/vmstat", timeout=30)
         try:
@@ -499,6 +521,10 @@ class Runner:
     def host_root(self):
         from . import hostrun
         return hostrun.host_path(self.rs.host_root)
+
+    def pass_through(self):
+        """The test roots a job needs too, when the Mac's environment has them."""
+        return {k: os.environ[k] for k in ("T2_WORK", "T2_IMAGES") if os.environ.get(k)}
 
     def copy_path(self, host):
         p = ((self.rs.copy or {}).get(host) or {}).get("path")
@@ -844,6 +870,51 @@ class Runner:
                 self.notes.append(f"{h}: t2-host imgsum gave no sum for {', '.join(miss[:5])}")
         return added
 
+    # --- 0. the pins of +img cells ---------------------------------------------------------------------
+    def ensure_pins(self, pcs):
+        """The rescue image pinned on each host that may run a +img cell, as ensure_imgsums
+        does the sums: HoltTest2 G+img works alone, and the re-plan keys what the jobs will
+        boot.  A host where the pin was refused keeps the cell out of its queue
+        (self.pin_bad), and a cell no host can pin says why."""
+        wanted = {}
+        for pc in pcs:
+            if is_img(pc.cell):
+                for h in self.hosts:
+                    if not getattr(pc, "keys", None) or h in pc.keys:
+                        wanted.setdefault(h, set()).add(plat_of(self.sf, pc.cell))
+        fails = {}
+        for h, plats in wanted.items():
+            env = dict(self.pass_through(), T2_HOST_ROOT=self.host_root(), PYTHONDONTWRITEBYTECODE="1")
+            try:
+                got = self.remote.pin_images(h, self.t2_host(h), sorted(plats), env)
+            except NoCopy as e:
+                got, why = None, str(e)
+            else:
+                why = "t2-host tool img pin failed"
+            if got is None:
+                got = {p: {"ok": False, "why": why} for p in plats}
+            for p, r in got.items():
+                if r.get("ok"):
+                    self.note_pin(h, p, r)
+                    if r.get("stale"):
+                        fails.setdefault(h, {})[p] = f"bins-stale: {', '.join(r['stale'])}"
+                else:
+                    fails.setdefault(h, {})[p] = r.get("why") or "no pin"
+        for h, by in fails.items():
+            for p, why in sorted(by.items()):
+                self.notes.append(f"{h}: {p}'s rescue image isn't usable here: {why}")
+        self.pin_bad = {}
+        for h, by in fails.items():
+            self.pin_bad[h] = sorted({base_guest(pc.cell) for pc in pcs if is_img(pc.cell)
+                                      and plat_of(self.sf, pc.cell) in by})
+        self.state["pin_bad"] = self.pin_bad
+
+    def note_pin(self, h, plat, r):
+        """The facts as a fresh probe would give them after this pin (facts_host.one_image)."""
+        im = ((((self.ctx.facts or {}).get(h) or {}).get("images") or {}).get(plat))
+        if isinstance(im, dict):
+            im["pin"] = {"sha256": r.get("sha256"), "current": True, "bins_stale": bool(r.get("stale"))}
+
     # --- 2. the fast holt gate, the re-plan ---------------------------------------------------------
     def real_gate(self, ctx):
         """t2lib.gate's fast layers for holt (gate:holt), when its gate plan has them due:
@@ -863,9 +934,43 @@ class Runner:
                 if n not in due:
                     self.notes.append(f"gate:{n} {st.get('gate:' + n)}: not run")
             names = due
+        opts = getattr(ctx, "options", None) or {}
+        if opts.get("gate_universe") is not None:   # (--universe, test only: a composite's gate cells)
+            keep = set(opts["gate_universe"])
+            for n in names:
+                if "gate:" + n not in keep:
+                    self.notes.append(f"gate:{n}: not in the composite's --universe: not run")
+            names = [n for n in names if "gate:" + n in keep]
+        if opts.get("gate_fresh") and names:
+            names, failed = self.fresh_left(ctx, names)
+            if failed:
+                return {"cells": [], "failed": failed}
         if not names:
             return None
         return gate.run_layers(ctx, names, "fast", plan=gp)
+
+    def fresh_left(self, ctx, names):
+        """options.gate_fresh (a SweepTest2's children): gate.gate_plan has every layer due, fresh,
+        so a layer a run of this stamp already ran (this run before a resume) would run again, as
+        stic.py's fresh_left.  (NAMES less those, [the ones whose newest row there didn't pass])."""
+        m = _STAMP.match(self.run_id or "")
+        if not m:
+            return names, []
+        newest = {}
+        for r in getattr(ctx, "ledger", None) or []:
+            c = r.get("cell")
+            rm = _STAMP.match(r.get("run") or "")
+            if c and c[len("gate:"):] in names and r.get("kind") == "run" and rm and rm.group(1) == m.group(1):
+                if c not in newest or (r.get("t") or "", r.get("id", "")) >= (newest[c].get("t") or "", newest[c].get("id", "")):
+                    newest[c] = r
+        failed = []
+        for c, r in sorted(newest.items()):
+            ok = r.get("verdict") == "PASS" and r.get("valid") is not False
+            self.notes.append(f"{c} already ran in this sweep ({r.get('run')}, row {r.get('id')}, {r.get('verdict')})"
+                              + ("" if ok else ": not run twice, and the gate didn't pass"))
+            if not ok:
+                failed.append(c)
+        return [n for n in names if "gate:" + n not in newest], failed
 
     def gate(self):
         """(stop text or None): the fast holt gate, if due (contract 2.3 flow 3)."""
@@ -875,6 +980,8 @@ class Runner:
             return f"the fast holt gate failed to run: {type(e).__name__}: {e}"
         if not res:
             return None
+        if isinstance(res, dict) and res.get("failed"):
+            return f"fast holt gate: {res['failed'][0]} already ran in this sweep and didn't pass"
         self.gate_cells = list((res.get("cells") if isinstance(res, dict) else getattr(res, "cells", None)) or [])
         self.state["gate_cells"] = self.gate_cells
         stop = res.get("stop") if isinstance(res, dict) else getattr(res, "stop", None)
@@ -914,9 +1021,10 @@ class Runner:
     # --- 4-6. queues ---------------------------------------------------------------------------------
     def queue_env(self, host, cells_name):
         hr = self.host_root()
-        env = {"HT_HOLT_BIN": self.holt_dir(), "HT_RAM": "1", "T2_RUN": self.run_id,
-               "T2_CELLS": os.path.join(self.rs.host_run_dir(host), cells_name), "T2_HOST_ROOT": hr,
-               "PYTHONDONTWRITEBYTECODE": "1"}
+        env = dict(self.pass_through(), HT_RAM="1", T2_RUN=self.run_id, T2_HOST_ROOT=hr,
+                   T2_CELLS=os.path.join(self.rs.host_run_dir(host), cells_name), PYTHONDONTWRITEBYTECODE="1")
+        if not self.state["all_img"]:   # (+img cells take the pin's binaries)
+            env["HT_HOLT_BIN"] = self.holt_dir()
         for k in ("HT_WORK", "HT_RECORDS"):
             v = os.environ.get(k)
             if v:
@@ -941,6 +1049,9 @@ class Runner:
             self.state.save()
         q.setdefault("runners", {})
         oe = only_elsewhere(pcs, self.hosts, self.cls.get("pins") or {})
+        for h, gs in (getattr(self, "pin_bad", None) or self.state["pin_bad"] or {}).items():
+            if h in oe:
+                oe[h] = sorted(set(oe[h]) | set(gs))
         from . import hostrun
         for h in self.hosts:
             if h in q["runners"]:
@@ -1056,6 +1167,7 @@ class Runner:
             q["seen"] = sorted(seen)
             self.state.save()
             self.host_checks(qrun)
+            self.check_guards(qrun)
             live = []
             for h, r in (q.get("runners") or {}).items():
                 if not r.get("pid"):
@@ -1111,6 +1223,25 @@ class Runner:
                               + ", ".join(left[:10]))
         q["finished"] = utc_now()
         self.state.save()
+
+    def check_guards(self, qrun):
+        """A run-wide stop of the composite this run is part of (RunGuards): nothing more
+        starts, once per queue."""
+        q = self.state["queues"][qrun]
+        if q.get("guards_tripped"):
+            return
+        try:
+            from . import hostjob
+            trip = hostjob.tripped(self.rs)
+        except Exception:   # noqa: BLE001 - a guard that can't be read stops nothing
+            trip = False
+        if trip:
+            q["guards_tripped"] = utc_now()
+            self.state.save()
+            for h in self.hosts:
+                self.remote.touch(h, f"{QUEUE}/{qrun}/stop")
+            self.stops.append(f"stop-starts: a run-wide stop rule tripped: touched {qrun}/stop on {', '.join(self.hosts)}")
+            self.log(f"queue {qrun}: a run-wide stop rule tripped: nothing more starts")
 
     def host_checks(self, qrun):
         """The host-wide stop rules: swap-out since the run began, this run's bytes (R22)."""
@@ -1218,20 +1349,30 @@ class Runner:
             return self.result(start, self.due(), exit_=1)
 
     def flow(self, start, pcs):
+        if self.state["all_img"] is None:
+            self.state["all_img"] = all(is_img(pc.cell) for pc in pcs)
         if not self.state["built"]:
-            why = self.ensure_holt(pcs)
+            built = [pc for pc in pcs if not is_img(pc.cell)]   # +img cells: the pin's binaries
+            why = self.ensure_holt(built) if built else None
             if why:
                 self.stops.append("stop-family: " + why)
                 return self.result(start, pcs, exit_=1)
-            self.state["plats"] = needed_platforms(self.sf, [pc.cell for pc in pcs])
+            self.state["plats"] = needed_platforms(self.sf, [pc.cell for pc in built])
             self.state["built"] = utc_now()
         if not self.state["gated"]:
+            self.ensure_pins(pcs)
             self.ensure_imgsums(pcs)
-            why = self.gate()
+            # (+img cells alone have nothing of the checkout's bko-holt to gate; a sweep's
+            # options.gate_fresh still runs the holt layers, by gate.gate_plan.)
+            why = None if self.state["all_img"] and not self.opts.get("gate_fresh") else self.gate()
             if why:
                 self.stops.append("stop-family: " + why)
                 return self.result(start, pcs, exit_=1)
             self.replan()
+            # (A re-plan can add +img cells: their pins, then their sums.)
+            first = {pc.cell for pc in pcs}
+            if any(is_img(pc.cell) and pc.cell not in first for pc in self.due()):
+                self.ensure_pins(self.due())
             # (Cells the re-plan added may need image sums of their own: then once more.)
             if self.ensure_imgsums(self.due()):
                 self.replan(pull=False)
@@ -1240,10 +1381,12 @@ class Runner:
         if not pcs:
             self.notes.append("nothing due after the gate's re-plan")
             return self.result(start, [], exit_=0)
+        self.state["all_img"] = all(is_img(pc.cell) for pc in pcs)
         # Platforms the re-plan's cells need that the first builds didn't make (R1, R15).
-        more = [p for p in needed_platforms(self.sf, [pc.cell for pc in pcs]) if p not in (self.state["plats"] or [])]
+        built = [pc for pc in pcs if not is_img(pc.cell)]
+        more = [p for p in needed_platforms(self.sf, [pc.cell for pc in built]) if p not in (self.state["plats"] or [])]
         if more:
-            why = self.ensure_holt(pcs)
+            why = self.ensure_holt(built)
             if why:
                 self.stops.append("stop-family: " + why)
                 return self.result(start, pcs, exit_=1)

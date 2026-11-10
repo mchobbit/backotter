@@ -40,7 +40,7 @@
       "H": ["haiku6"],
       "U": ["ubuntu24", "ubuntu26-uefi", "ubuntu26-zfsmirror", "ubuntu26-raid", "ubuntu26-zfs"],
       "F": ["fedora44", "fedora44-uefi", "fedora44-raid", "rocky10", "rocky10-lvm", "rocky10-raid5"],
-      "A": ["arch", "alpine324", "aerynos", "artix-dinit", "artix-s6"],
+      "A": ["arch", "alpine324", "aerynos", "artix-dinit", "artix-s6", "endeavouros", "endeavouros-grub", "manjaro"],
       "C": ["cachyos", "mx25"],
       "I": ["omnios58", "omnios58-mirror"],
       "Obscure": ["pop24", "nixos2605", "omarchy", "sculpt2610", "redox", "tumbleweed", "debian12"],
@@ -60,8 +60,8 @@
     "variant_stages": ["partition", "assemble", "close"],
     "pins": {"openbsd8": "chopin", "dragonfly6": "cinqcent", "redox": "cinqcent"},
     "pins_why": "README Queues ONLY_ELSEWHERE: openbsd8's one-time rescuer is on Chopin, dragonfly6's on Cinqcent; redox's tools are on Cinqcent only (ht1-queue.sh:169)",
-    "uefi": ["aerynos", "debian13-stack", "fedora44-raid", "fedora44-uefi", "omarchy", "pop24", "ubuntu26-raid",
-             "ubuntu26-uefi", "ubuntu26-zfs"],
+    "uefi": ["aerynos", "debian13-stack", "endeavouros", "endeavouros-grub", "fedora44-raid", "fedora44-uefi", "manjaro",
+             "omarchy", "pop24", "ubuntu26-raid", "ubuntu26-uefi", "ubuntu26-zfs"],
     "uefi_why": "the Linux sources with --uefi in vm-run-options (both hosts, 2026-11-08); ht1.sh rebuilds them from rescuer-uefi.qcow2 when the host has it (ht1.sh:138-139, R17). alpinebsd is UEFI too, but netbsd11 rescues it",
     "canaries": ["debian13", "ubuntu26-uefi", "freebsd15", "redox"],
     "rescuer_panel": {
@@ -87,21 +87,38 @@
       "illumos": ["omnios58"],
       "haiku": ["haiku6"]
     },
-    "plan_visible": ["holt/src/load/commands.rs"]
+    "plan_visible": ["holt/src/load/commands.rs"],
+    "img_panel": {
+      "linux": {"guests": ["debian12", "ubuntu24", "rocky10-raid5", "nixos2605", "debian13-stack", "aerynos"]},
+      "freebsd": {"guests": ["freebsd14"]},
+      "netbsd": {"guests": ["netbsd11"]},
+      "openbsd": {"guests": ["openbsd8"]},
+      "dragonfly": {"guests": ["dragonfly6"]},
+      "illumos": {"guests": ["omnios58"]},
+      "haiku": {"guests": ["haiku6"]}
+    }
+  },
+  "guest": {
+    "canaries": ["debian12", "ubuntu26-uefi", "pop24", "debian13-stack", "omarchy", "ubuntu26-zfsmirror", "freebsd15-geli", "freebsd15"]
   },
   "policy": {
     "judge_change": "due",
     "beside": 2,
     "rerun_fail": 1,
-    "budget": {"run_gb": 2, "sweep_gb": 5, "day_gb": 50, "bind_from": null},
+    "budget": {"run_gb": 2, "sweep_gb": 5, "day_gb": 50, "update_gb": 40, "bind_from": null},
     "stop": {"os_need_guests": 2, "harness_results": 2, "swap_out_gib": 1, "write_budget_x": 2},
-    "sweep_days": 14,
-    "sweep": {"days": 7, "then_days": 14, "shadow_until": null},
+    "sweep": {"days": 7, "then_days": 14, "shadow_days": 14},
+    "guest": {
+      "run": {"try_days": 7, "ram_gib_first": 8, "ram_gib_max": 16, "big_gib": 13, "failed_overlay_mib": 1024, "failed_keep_days": 14},
+      "judge": {"free_note_pct": 80, "free_fail_pct": 90, "boot_free_min_mib": 200}
+    },
     "watch": {
       "stic": ["testvm/stictest1/**", "testvm/compare/**", "testvm/vm-*", "testvm/console-boot.py", "testvm/omarchy/**"],
       "holt": ["testvm/holttest1d/**", "testvm/vm-*", "testvm/compare/fsmeta.py", "testvm/redox/**",
                "testvm/sculpt-check.sh", "testvm/console-boot.py", "testvm/omarchy/**"],
-      "gate": ["testvm/audit/**", "testvm/compare/**"]
+      "gate": ["testvm/audit/**", "testvm/compare/**"],
+      "guest": ["testvm/update/**", "testvm/vm-update", "testvm/vm-run", "testvm/make-*.sh"],
+      "img": ["stick/boot-test.py", "stick/*/checks.sh", "stick/*/manifest.sh", "stick/*/config-checks.sh"]
     },
     "unmapped_ignore": ["**/*.md", "testvm/test2/**", "testvm/compare/affected.sh", "testvm/compare/wear-report.py",
                         "testvm/holttest1d/make-*.sh", "testvm/holttest1d/build-holt.sh",
@@ -111,6 +128,8 @@
                         "testvm/compare/freebsd/rescue.sh", "testvm/compare/openbsd/roundtrip.sh",
                         "testvm/omarchy/cidata.py", "testvm/redox/answer-passwords.py", "testvm/redox/bko.toml",
                         "testvm/audit/audited-heads", "testvm/audit/to-audit.sh",
-                        "testvm/compare/cmp-pop.sh", "testvm/audit/stock-baseline.sh"]
+                        "testvm/compare/cmp-pop.sh", "testvm/audit/stock-baseline.sh",
+                        "testvm/rebuild-one.sh", "testvm/update/trim.sh", "testvm/update/pkgset.sh",
+                        "testvm/update/fingerprint.py", "stick/img-*.sh"]
   }
 }

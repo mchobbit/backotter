@@ -1,0 +1,25 @@
+bios (usb): reached login in 16 s
+  ok   kernel               omnios-r151058-a3ed65d42f8
+  ok   firmware             BIOS
+  ok   hostname             backotter
+  ok   rootfs-ram           / is /devices/ramdisk:a ufs; nothing of the stick is mounted
+  ok   tmpfs                /tmp /var/run /etc/svc/volatile
+  ok   installer-gone       no installer, root locked
+  ok   tools                all present
+  ok   binaries             restic 0.19.1+backotter.5 compiled with go1.25.10 on illumos/amd64 rustic 0.11.4+backotter.6
+  ok   bko-holt             bko-holt 0.2.4
+  ok   network              ADDR
+  ok   console-screen       online, on console
+  ok   console-serial       online, on term/a
+  ok   root-shells          vt/2    /usr/bin/bash -l
+  ok   sshd-off-at-boot     disabled, no host keys
+  ok   remote-access        password login over SSH works
+  ok   root-ssh-refused     refused with the right password
+  ok   marker               IMAGE-ID illumos r151058, 27 zfs features
+  ok   zfs-no-import        no pools imported
+  ok   idmap                online, sid:S-1-5-21-1000-2000-3000-1001 -> uid:2147483649
+  FAIL smf                  in trouble: svc:/application/backotter/console-release:default
+  ok   memory               3401 MB free of 4096
+  ok   config-partition     config is c3t0d0s3, BACKOTTER FATSERIAL
+  ok   config-rw            MACHINES boot-test.txt settings.toml stick.json
+  ok   config-settings      format backotter-settings, schema 1

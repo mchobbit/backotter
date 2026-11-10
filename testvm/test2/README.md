@@ -3,9 +3,8 @@
 Test2 runs a check only when one of its inputs changed, and only where the change
 reaches (`docs/design/test2.md`).  A ledger keys every result by its inputs; a
 planner compares the inputs now with the last PASS and picks what to run.  This
-directory holds the words GateTest2, SticTest2 and HoltTest2, the ledger, the
-planner, the runners and their specs.  GuestTest2, ImgTest2, BkoTest2 and
-SweepTest2 aren't built yet; `t2` refuses them.
+directory holds the words GateTest2, SticTest2, HoltTest2, GuestTest2, ImgTest2,
+BkoTest2 and SweepTest2, the ledger, the planner, the runners and their specs.
 
 Everything runs from the Mac: `testvm/test2/t2`.  The hosts run the cells, from a
 private copy of this checkout (never from the synced `~/backotter-work/testvm`).
@@ -18,9 +17,17 @@ private copy of this checkout (never from the synced `~/backotter-work/testvm`).
 | `GateTest2All [ROUND]` | every layer, fresh | runs them all anyway |
 | `SticTest2 [ROUND] [GUEST...] [stale]` | the due SticTest checks on ROUND's binaries | one line |
 | `SticTest2All [ROUND]` | all 41 checks, fresh (SticTest1's scope) | runs them all anyway |
-| `HoltTest2 [GUEST[+VARIANT]...] [stale] [+bigger] [+oneshot] [+degraded]` | the due HoltTest cells | one line |
+| `HoltTest2 [GUEST[+VARIANT]...] [stale] [+bigger] [+oneshot] [+degraded] [+img]` | the due HoltTest cells | one line |
 | `HoltTest2X [X...]`, X in D A M U Z F C V BSD H I Obscure | that family's guests, fresh (HoltTest1's letters) | runs them anyway |
-| `HoltTest2All` | all 45 sources and their 9 variant cells, fresh | runs them all anyway |
+| `HoltTest2All` | all 48 sources and their 9 variant cells, fresh (no `+img` cells) | runs them all anyway |
+| `HoltTest2 G+img`, `HoltTest2 +img` | those cells fresh, a real rescue image as rescuer; `+img` alone: all 12 | runs them anyway |
+| `GuestTest2 [GUEST...] [stale]` | the due guests, or those guests fresh: identity, image checks, a `--try` in RAM, the checks after it, the log sweep | one line |
+| `GuestTest2All` | the graded audit: all 50 guests fresh, sha256 identity | runs them all anyway |
+| `GuestTest2 update [GUEST...]` | the real update round (merges); never with `stale` or All | a bare round needs a `--try` PASS within 7 days |
+| `ImgTest2 [PLAT...] [release] [stale]` | images built since their PASS and owed panels, or those platforms fresh; `release` requires the panel | one line |
+| `ImgTest2All [release]` | every current image, its panel included | runs them all anyway |
+| `BkoTest2 [ROUND] [stale]` | every family's due cells in one queue; names and All are refused | one line per family |
+| `SweepTest2 [ROUND]` | every All form but ImgTest2's, fresh; names, `stale` and All are refused | runs them all anyway |
 
 `WORD All` is the same as `WORDAll`, and `HoltTest2 D` or `HoltTest2 2D` the same as
 `HoltTest2D`; `HoltTest2 --holt-bin DIR` tests a ready bko-holt set (DIR/bko-holt,
@@ -37,7 +44,9 @@ its rows count only where the binaries are equal (R14).
 - ROUND is `~/backotter-work/roundROUND/bin` on both hosts.  Without it, SticTest2
   takes the round at the fork heads (BKO_GIT's `backotter` HEADs), or builds it as
   `t2r-R7-C7-U7`; GateTest2 takes that round, else bko-bin.
-- Refused (exit 2): `+close` (waits for H3), `+img` (waits for I1), freebsd15-ufs
+- Refused (exit 2): `+close` (waits for H3), an image with a binary that has no PASS at
+  its digest (`ImgTest2` names the binary and the command; a bare run runs its other due
+  images first, then exits 2), freebsd15-ufs
   (the FreeBSD rescuer) and freebsd15-geli (no GELI in holt) as HoltTest sources,
   unknown names, a ROUND missing on a host in use, a second run of a family while
   one runs (its run id, PID and start are named).
@@ -54,15 +63,22 @@ Examples:
 Other commands: `t2 pull` (each host's ledger mirrored, then the wear join),
 `t2 ledger show [--cell C] [--last N] [--json]`, `t2 explain CELL` (its inputs
 against its last PASS, group by group), `t2 copy [--hosts H,H] [--gc]`,
-`t2 resume RUN` (on the run's own hosts and cells; preflight runs again),
-`t2 self-test`, and the test-only `t2 ledger seed-current`.  Options anywhere:
+`t2 resume RUN` (on the run's own hosts and cells; preflight runs again; `t2b-` and
+`t2w-` resume the composite), `t2 guest-lines RUN [--show [GUEST]] [--accept GUEST...|--accept-all]`
+(a GuestTest2 run's new log lines; accepting adds them to the Mac's baseline and writes a
+`class` row, refused unless `logs` is the row's only unmet need), `t2 guest-fingerprints
+[GUEST...] [--reproject]` (probes guests with no fingerprint at their generation; never
+inside BkoTest2), `t2 self-test`, and the test-only `t2 ledger seed-current`
+(`--family guest` sets `extra.try_ran`, `--family img` seeds PASSes at the images' binaries' digests).  Options anywhere:
 `--hosts H,H` (default chopin,cinqcent; each host once), `--json` (the plan as
 JSON), `--universe CELL,...` (test only: the word's cells cut down to these).  Every
 plan and run pulls the `--hosts` and every host with a mirror in `MAC_ROOT/ledger`,
 since the merged view reads them all; a mirror that wasn't refreshed is said so.
 
 Exit codes: 0 PASS, nothing due, or a plan printed; 1 a FAIL or FLAKY-FAIL, or a
-stop rule stopped the run; 2 refused; 3 an internal error.
+stop rule stopped the run; 2 refused (a word's named cells can't run, an image a binary
+keeps from running, even after the due ones finish, a bare `GuestTest2 update` with a guest's
+`--try` too old); 3 an internal error.
 
 ## How a plan decides
 
@@ -108,7 +124,7 @@ change is carried; a change only to `holt.plan_visible` (commands.rs) runs the
 guests whose golden plan changed, their variants when the diff touches partition,
 assemble or close, and the degraded cells, and carries the rest (`carry:plan-diff`);
 before the plan diff is known (no blessed plan change, no gate:holt row at the
-current holt key) all 45 run (`holt:code`), as for any other code change (the stand-in
+current holt key) all 48 run (`holt:code`), as for any other code change (the stand-in
 for M1's module map).  A rustic-bko-only change runs that platform's rustic panel and
 carries the rest; a rescuer change runs its rescuer panel; a guest's new generation
 runs it and its variants; a driver change runs that driver's guests; a judge change
@@ -128,8 +144,9 @@ source commits didn't is never carried, but under dfly-image.
 `holt.variants`, `holt.pins`, `holt.uefi` (R17: a UEFI source keys only on hosts with
 rescuer-uefi.qcow2), `holt.canaries`, `holt.rescuer_panel`, `holt.rustic_panel`,
 `holt.plan_visible`, and `policy`: `judge_change`, `beside`, `budget` (warn only
-while `bind_from` is null or a later date; it binds from that date), `stop`, `sweep_days`, `sweep` (7 days in the shadow
-weeks, then 14), `watch` and `unmapped_ignore` (R5).  `t2 self-test` checks it.
+while `bind_from` is null or a later date; it binds from that date), `stop`, `sweep` (due every 7 days until
+`shadow_days` after the first complete SweepTest2, then every 14), `guest` (`run`: the 7-day `--try`, RAM sizes,
+failed-state caps; `judge`: free-space limits, a judge input), `watch` and `unmapped_ignore` (R5).  `t2 self-test` checks it.
 
 ## Estimates: estimates.tsv
 
@@ -158,7 +175,14 @@ writes its carried rows.  Run ids: `t2g-`, `t2s-`, `t2h-` and `YYYYMMDDTHHMM-XXX
 Unfinished runs and leftovers.  A run that began host work (a `cells-HOST.json`) and
 has no report.txt, changed in the last 12 hours, refuses a new run of its family:
 its lock went with the Mac process, but its checks or queue runners may still run.
-`t2 resume RUN` finishes it; a report.txt in its run dir sets it aside.  Preflight
+`t2 resume RUN` finishes it; a report.txt in its run dir sets it aside.  A child of an
+unfinished BkoTest2 or SweepTest2 (`t2s-S` under `t2b-S`, and `t2h-S-img`) is resumed only
+through its composite: `t2 resume t2b-S` (alone it would run outside the composite's
+run-wide stops), and the refusals name the composite.  Ctrl-C, TERM or HUP on a composite
+trips its guards and waits for the children (exit 130; `t2 resume` goes on).  `--universe`
+on BkoTest2 and SweepTest2 needs a test `T2_MAC_ROOT`; it also cuts the stic and holt
+children's gate steps to its `gate:` cells (`options.gate_universe`, test only), and a cut
+sweep's sweep.json never counts in the default root.  Preflight
 removes only a dead run's own leftovers (its made.json paths): never a run holding a
 lock or unfinished as above, and nothing of a run any of whose recorded PIDs still
 runs or can't be checked (an ssh that fails is no answer).
@@ -221,8 +245,21 @@ with every cell, fixture forks for BKO_GIT, both hosts' facts and seeded rows).
 
 ## Stand-ins until later pieces
 
-Until V1 and P1 the guest's generation stands in for its fingerprint; until M1
-affected.sh v1 serves the carry rule and any holt code change outside
-`plan_visible` reaches all 45 sources; until G2 a judge change makes cells due
-(`policy.judge_change`); until H3 `+close` is refused and variants run as runs of
-their own.  vm-update writes no ledger rows yet (V1).
+Until M1 affected.sh v1 serves the carry rule and any holt code change outside
+`plan_visible` reaches all 48 sources; until G2 a judge change makes cells due
+(`policy.judge_change`); until H3 `+close` is refused, variants run as runs of their
+own and `+img` runs as its own job.  G3, C1, S1 and R1 are later still.
+
+## GuestTest2 and ImgTest2 in the plan
+
+A guest's row with `extra.to_class_only` (a FAIL whose only causes are new log lines or
+standing LIMITs nobody has classed) makes the cell `to-class`: reported, exit 1, never
+due and never rerun, until `t2 guest-lines --accept` or a `guest/limits.json` entry
+classes it.  A `--try` cell whose last `--try` is over 7 days old is due
+(`guest:7day`).  A guest's merged update isn't a PASS: the merged image hasn't booted.
+Stic and holt cells key a guest's fingerprint (`vms/G/image-fingerprint.json`) when it
+speaks for the current generation, else the generation; a new generation at the same
+fingerprint is soft-stale and runs no canary, and the first plan after a fingerprint
+appears writes `carry:fingerprint` rows.  An image is due when its binaries moved
+(`img:new`) or its panel is owed (`img:panel-owed`); a harness change alone is soft-stale.
+Guest and img cells need a PASS at every reachable host's key.

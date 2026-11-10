@@ -11,7 +11,8 @@
 # `cmp-run.sh --reserve D M`, D and M from ram-size.sh unless the line gives
 # them (HT_RAM=0 here: it reserves no RAM disk and works on /bkoscratch).
 # Big guests (D of BIG_GIB or more, default 13) take turns: one HoltTest run
-# per host, running or waiting, ours or not; so do a guest and its variants.
+# per host, running or waiting, ours or not; so do a guest and its variants,
+# and guests whose volume groups share a name (VG_MATES: ubuntu-vg).
 # Nothing new starts while a job of ours waits for its room, so ours wait in
 # cmp-run.sh's line one at a time (every 30 min of it is logged, with the
 # ledger).  BASEPORT is 2600: a job's port is a free one in 2600-2689
@@ -122,6 +123,8 @@ RUN=$1 BASE=$2 MAX=$3 QHOST=${4:-}
 [[ $MAX =~ ^[0-9]+$ ]] || die "MAXJOBS: a number"
 MAX=$((10#$MAX))
 MINFREE_GB=${MINFREE_GB:-80} BIG_GIB=${BIG_GIB:-13} RAM=${HT_RAM:-1} ONLY_ELSEWHERE=${ONLY_ELSEWHERE:-}
+# Groups of guests with the same LVM volume group name (pop()).
+VG_MATES=("ubuntu26-raid ubuntu26-luks")
 [[ $MINFREE_GB =~ ^[0-9]+$ ]] || die "MINFREE_GB: a number of GB"
 MINFREE_GB=$((10#$MINFREE_GB))
 [[ $BIG_GIB =~ $NUM_RE ]] || die "BIG_GIB: a number of GiB"
@@ -331,6 +334,14 @@ pop() {  # NOBIG RUNS -> a todo line, @SKIPPED or @EMPTY; anything else is a fai
     # A guest and its variants: one at a time here, ours or not.
     for s in "${!BASEG[@]}"; do sk+=("${BASEG[$s]}"); done
     while read -r g _; do [[ -z $g ]] || sk+=("$g"); done <<<"$2"
+    # Guests whose LVM volume groups have one name (the host's LVM names are
+    # global, and vm-mount refuses a second): one of a group at a time here.
+    local grp m n
+    for grp in "${VG_MATES[@]}"; do
+        for m in $grp; do
+            for n in "${sk[@]}"; do [[ $n == "$m" ]] && { sk+=($grp); break 2; }; done
+        done
+    done
     a=("$Q" "$H" "$1" "$BIG_GIB" "$(IFS=,; echo "${sk[*]}")" "$BIGNAMES")
     close_locks   # (in $(...): the runner keeps them)
     [[ -n $QHOST ]] || { pop_here "${a[@]}"; return; }

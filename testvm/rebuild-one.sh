@@ -46,6 +46,7 @@ ubuntu26-uefi) cmd=(asm $T/make-ubuntu.sh --uefi --name ubuntu26-uefi 26.04.1 "$
 ubuntu26-zfs) cmd=(asm $T/make-ubuntu.sh --uefi --zfs-guided --name ubuntu26-zfs 26.04.1 "$W") ;;
 ubuntu26-zfsmirror) cmd=(asm $T/make-ubuntu.sh --zfs-mirror --name ubuntu26-zfsmirror 26.04.1 "$W") ;;
 ubuntu26-raid) cmd=(asm $T/make-ubuntu.sh --uefi --raid --name ubuntu26-raid 26.04.1 "$W") ;;
+ubuntu26-luks) cmd=(asm $T/make-ubuntu.sh --uefi --luks --name ubuntu26-luks 26.04.1 "$W") ;;
 fedora44)   cmd=(asm $T/make-fedora.sh 44-1.7 "$W") ;;
 fedora44-uefi) cmd=(asm $T/make-fedora.sh --uefi --name fedora44-uefi 44-1.7 "$W") ;;
 fedora44-raid) cmd=(asm $T/make-fedora.sh --uefi --raid --name fedora44-raid 44-1.7 "$W") ;;

@@ -100,13 +100,20 @@ fn bios_btrfs() -> Tree {
     t
 }
 
+/// What the btrfs tools answer in the bios_btrfs scenario.
+fn bios_btrfs_runner() -> FakeRunner {
+    FakeRunner::default()
+        .with("btrfs subvolume list -a -p -u -q /", "ID 256 gen 99 parent 5 top level 5 parent_uuid - uuid 6c8a1b2c-0000-4000-8000-000000000001 path @rootfs\n")
+        .with("btrfs subvolume get-default /", "ID 5 (FS_TREE)\n")
+        .with("btrfs subvolume list -a -r /", "")
+        .with("btrfs property get -t s /", "ro=false\n")
+        .with("btrfs property get -t i /", "compression=zstd\n")
+}
+
 #[test]
 fn bios_mbr_btrfs_guest() {
     let t = bios_btrfs();
-    let v = run(&t, true, FakeRunner::default().with("btrfs subvolume list -a -p -u -q /", "ID 256 gen 99 parent 5 top level 5 parent_uuid - uuid 6c8a1b2c-0000-4000-8000-000000000001 path @rootfs\n").with("btrfs subvolume get-default /", "ID 5 (FS_TREE)\n")
-            .with("btrfs subvolume list -a -r /", "")
-            .with("btrfs property get -t s /", "ro=false\n")
-            .with("btrfs property get -t i /", "compression=zstd\n"));
+    let v = run(&t, true, bios_btrfs_runner());
     assert_eq!(s(&v, &["format"]), "bko-holt");
     assert_eq!(s(&v, &["firmware", "mode"]), "bios");
     assert_eq!(v.get("privileged"), Some(&Value::Bool(true)));
@@ -200,8 +207,7 @@ fn unprivileged_falls_back_to_udev() {
 
 /// Chopin itself: UEFI with Secure Boot off, NVMe, GPT with an ESP and an
 /// ext4 root, shim + GRUB, its real EFI variables.
-#[test]
-fn uefi_gpt_nvme_shim() {
+fn uefi_shim() -> Tree {
     use crate::efi::real::*;
     use crate::efi::{GLOBAL, LOADER, SHIM};
     let t = Tree::new("scn-uefi");
@@ -246,6 +252,13 @@ fn uefi_gpt_nvme_shim() {
         .file("/etc/fstab", "UUID=10111213-1415-1617-1819-1a1b1c1d1e1f / ext4 errors=remount-ro 0 1\nPARTUUID=0b5f04ed-e731-4ac6-933e-83ff25657722 /boot/efi vfat umask=0077 0 1\n")
         .file("/var/lib/dpkg/status", "Package: grub-efi-amd64-signed\nStatus: install ok installed\nArchitecture: amd64\nVersion: 1+2.12+9+deb13u2\n\nPackage: shim-signed\nStatus: install ok installed\nArchitecture: amd64\nVersion: 1.47+15.8-1\n")
         .file("/boot/grub/x86_64-efi/normal.mod", "x");
+    t
+}
+
+/// Chopin's own layout read back.
+#[test]
+fn uefi_gpt_nvme_shim() {
+    let t = uefi_shim();
     let v = run(&t, true, FakeRunner::default());
     assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
     assert_eq!(v.at(&["firmware", "secure_boot"]), Some(&Value::Bool(false)));
@@ -283,8 +296,7 @@ fn uefi_gpt_nvme_shim() {
 
 /// Debian's "Guided - use entire disk and set up encrypted LVM": GPT with
 /// ESP, /boot, and LUKS2 holding a PV with root and swap_1.
-#[test]
-fn luks_lvm() {
+fn luks_lvm_tree() -> Tree {
     let t = Tree::new("scn-luks-lvm");
     t.debian13();
     let mut img = vec![0u8; 64 * MIB];
@@ -332,6 +344,14 @@ fn luks_lvm() {
         .file("/proc/self/mountinfo", "26 1 253:1 / / rw,relatime - ext4 /dev/mapper/vg0-root rw\n27 26 8:2 / /boot rw - ext4 /dev/sda2 rw\n28 27 8:1 / /boot/efi rw - vfat /dev/sda1 rw\n")
         .file("/etc/crypttab", format!("sda3_crypt UUID={luks_uuid} none luks,discard\n"))
         .file("/etc/fstab", "/dev/mapper/vg0-root / ext4 errors=remount-ro 0 1\n/dev/mapper/vg0-swap_1 none swap sw 0 0\n");
+    t
+}
+
+/// Debian's "Guided - use entire disk and set up encrypted LVM" read back.
+#[test]
+fn luks_lvm() {
+    let luks_uuid = "6c3e5f0e-6b0a-4d6c-9a2e-8f7e1d2c3b4a";
+    let t = luks_lvm_tree();
     let v = run(&t, true, FakeRunner::default());
     let p3 = v.at(&["storage", "disks", "0", "partitions", "2"]).unwrap();
     assert_eq!(s(p3, &["content", "type"]), "crypto_LUKS");
@@ -366,8 +386,7 @@ fn luks_lvm() {
 }
 
 /// Cinqcent-style md RAID1 over two disks' partitions, ext4 on md0.
-#[test]
-fn md_raid1() {
+fn md_raid1_tree() -> Tree {
     let t = Tree::new("scn-md");
     t.debian13();
     let mut a = vec![0u8; 16 * MIB];
@@ -402,6 +421,13 @@ fn md_raid1() {
         .file("/sys/block/md0/md/dev-sdb2/state", "in_sync\n")
         .file("/run/udev/data/b9:0", "S:md/0\nE:MD_UUID=30313233:34353637:38393a3b:3c3d3e3f\nE:MD_NAME=cinqcent:0\nE:MD_DEVNAME=0\n")
         .file("/etc/mdadm/mdadm.conf", "HOMEHOST <system>\nARRAY /dev/md/0 metadata=1.2 UUID=30313233:34353637:38393a3b:3c3d3e3f name=cinqcent:0\n");
+    t
+}
+
+/// Cinqcent-style md RAID1 over two disks' partitions, read back.
+#[test]
+fn md_raid1() {
+    let t = md_raid1_tree();
     let v = run(&t, true, FakeRunner::default());
     let md0 = v.at(&["storage", "md_arrays", "0"]).unwrap();
     assert_eq!(s(md0, &["md", "level"]), "raid1");
@@ -423,8 +449,7 @@ fn md_raid1() {
 
 /// The debian13-zfs test guest: MBR, /boot ext4, swap, and a ZFS pool on
 /// partition 3, imported, with the zfs tools answering.
-#[test]
-fn zfs_root() {
+fn zfs_root_tree() -> (Tree, FakeRunner) {
     let t = Tree::new("scn-zfs");
     t.debian13();
     let mut img = vec![0u8; 64 * MIB];
@@ -463,6 +488,13 @@ fn zfs_root() {
             r#"{"output_version": {"command": "zpool status", "vers_major": 0, "vers_minor": 1}, "pools": {"rpool": {"name": "rpool", "state": "ONLINE",
                "vdevs": {"rpool": {"name": "rpool", "vdev_type": "root", "vdevs": {"/dev/vda3": {"name": "/dev/vda3", "vdev_type": "disk", "path": "/dev/vda3"}}}}}}}"#,
         );
+    (t, runner)
+}
+
+/// The debian13-zfs test guest read back.
+#[test]
+fn zfs_root() {
+    let (t, runner) = zfs_root_tree();
     let v = run(&t, true, runner);
     let p3 = v.at(&["storage", "disks", "0", "partitions", "2"]).unwrap();
     assert_eq!(s(p3, &["type_name"]), "Solaris");
@@ -515,8 +547,7 @@ fn no_zfs_tools_no_section() {
 
 /// A disk with a filesystem straight on it (no table), a loop device, a
 /// zram swap device and an empty CD drive.
-#[test]
-fn whole_disk_fs_loop_zram() {
+fn misc_tree() -> Tree {
     let t = Tree::new("scn-misc");
     t.debian13();
     let x = crate::probe::xfs::sample::image("bulk");
@@ -528,6 +559,13 @@ fn whole_disk_fs_loop_zram() {
         .disk("sr1", "11:1", &vec![0u8; 1 << 20], 2048)
         .disk("fd0", "2:0", &[0u8; 4096], 512)
         .file("/proc/swaps", "Filename Type Size Used Priority\n/dev/zram0 partition 64 0 100\n/swapfile file 1024 0 -2\n");
+    t
+}
+
+/// A disk with a filesystem straight on it, a loop device, zram and a CD.
+#[test]
+fn whole_disk_fs_loop_zram() {
+    let t = misc_tree();
     let v = run(&t, true, FakeRunner::default());
     let d = v.at(&["storage", "disks", "0"]).unwrap();
     assert_eq!(s(d, &["name"]), "sdc");
@@ -564,4 +602,18 @@ fn unreadable_device_warns_and_carries_on() {
     let w = arr(&v, &["warnings"]);
     assert!(w.iter().any(|x| x.as_str().unwrap().starts_with("/dev/sda:")), "{w:?}");
     assert_eq!(s(&v, &["storage", "disks", "0", "name"]), "sda");
+}
+
+/// Every scenario's dump, by name, for tests that must hold over all of
+/// them (load's fit.rs).
+pub fn dumps() -> Vec<(&'static str, Value)> {
+    let (zfs, runner) = zfs_root_tree();
+    vec![
+        ("bios_btrfs", run(&bios_btrfs(), true, bios_btrfs_runner())),
+        ("uefi_shim", run(&uefi_shim(), true, FakeRunner::default())),
+        ("luks_lvm", run(&luks_lvm_tree(), true, FakeRunner::default())),
+        ("md_raid1", run(&md_raid1_tree(), true, FakeRunner::default())),
+        ("zfs_root", run(&zfs, true, runner)),
+        ("whole_disk_fs", run(&misc_tree(), true, FakeRunner::default())),
+    ]
 }

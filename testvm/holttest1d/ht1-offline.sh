@@ -18,11 +18,14 @@
 #
 # The write path is ht1-lib.sh's, as ht1.sh's (README: "Where a run works,
 # and what it keeps").  HT_HOLT is the bko-holt to test instead of bin/'s,
-# HT_HOLT_BIN a set to take it from (ht1.sh's header).
+# HT_HOLT_BIN a set to take it from (ht1.sh's header).  HT_VARIANT takes
+# "bigger" and "oneshot" as ht1.sh does, and "refuse", which checks that a
+# smaller target is still refused for a layout of another family, --fit-largest
+# or no --fit-largest (README "The fitting variants"): source and rebuild only.
 set -uo pipefail
 
 G=$1 RUN=$2; shift 2
-PHASES=("$@"); [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source backup rebuild verify)
+PHASES=("$@")   # the default is the variant's (below): all four, or source and rebuild
 W=/home/m/backotter-work
 HERE=$(dirname "$(realpath "$0")")
 T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, compare/, redox/, sculpt-check.sh), as ht1.sh's
@@ -35,8 +38,26 @@ HOLT=${HT_HOLT:-${HT_HOLT_BIN:-$BIN}/bko-holt}
 # shellcheck source=ht1-lib.sh
 . "$HERE/ht1-lib.sh"
 VARIANT=${HT_VARIANT:-}
-case $VARIANT in ""|bigger|oneshot) ;; *) echo "HT_VARIANT: bigger or oneshot" >&2; exit 2 ;; esac
+case $VARIANT in ""|bigger|oneshot|refuse) ;; *) echo "HT_VARIANT: bigger, oneshot or refuse" >&2; exit 2 ;; esac
 GV=$G${VARIANT:+-$VARIANT}
+# "refuse" here is the fitting variants' check that a layout of another family
+# is still refused on a smaller target: Redox's and Sculpt's tables are load's
+# own write-table's, not the sfdisk script --fit-largest rewrites.  The target
+# is 1 GiB smaller, plan must refuse naming the family, and nothing may be
+# written, so the run has no backup, restore or verify (README "The fitting
+# variants").
+DELTA=0 FIT_PCT=10
+[[ $VARIANT != bigger ]] || DELTA=$((1 << 30))
+[[ $VARIANT != refuse ]] || DELTA=-$((1 << 30))
+if [[ $VARIANT == refuse ]]; then
+    [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source rebuild)
+    for p in "${PHASES[@]}"; do
+        [[ $p == source || $p == rebuild ]] ||
+            { echo "HT_VARIANT=refuse: a refusal, so it has no $p phase (source and rebuild only)" >&2; exit 2; }
+    done
+else
+    [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source backup rebuild verify)
+fi
 PORT=${HT_PORT:-2690}
 export SSH_PORT=$PORT
 fails=0
@@ -234,18 +255,51 @@ phase_rebuild() {
     cp "$RUSTIC" "$S/rustic-bko"
     rm -f "$R/rescuer.qcow2" "$DST" "$R/decoy.qcow2"
     qemu-img create -q -f qcow2 -b "$RESCUER_IMG" -F qcow2 "$R/rescuer.qcow2"
-    local grow=0; [[ $VARIANT == bigger ]] && grow=$((1 << 30))
-    qemu-img create -q -f qcow2 "$DST" "$(($(size_of "$gimg") + grow))"
+    qemu-img create -q -f qcow2 "$DST" "$(($(size_of "$gimg") + DELTA))"
     qemu-img create -q -f qcow2 "$R/decoy.qcow2" "$(size_of "$gimg")"
     r_up "$R/rescuer.qcow2" "$R/logs/rescuer-serial.log" --disk "$DST" --disk "$R/decoy.qcow2" || { bad "rescuer boots"; r_down; return; }
     sshk 'for t in redoxfs redoxfs-mkfs; do [ ! -f /mnt/share/$t ] || install -m 755 /mnt/share/$t /usr/local/sbin/$t; done; mkfs.ext4 -q -F -L ht1decoy /dev/vdc' > "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup"; r_down; return; }
     ok "rescuer up, share mounted"
-    local st=$((($(size_of "$gimg") + grow) / 512)) sd=$(($(size_of "$gimg") / 512))
+    local st=$((($(size_of "$gimg") + DELTA) / 512)) sd=$(($(size_of "$gimg") / 512))
     local edges="for x in /dev/vdb:$st /dev/vdc:$sd; do r=\${x%:*} s=\${x##*:}; echo \$r \$(dd if=\$r bs=512 count=2048 status=none | md5sum | cut -c1-32) \$(dd if=\$r bs=512 skip=\$((s - 2048)) count=2048 status=none | md5sum | cut -c1-32); done"
     sshk "$edges" > "$R/logs/edges-before.txt" 2>&1
     load_step 4 refuse-nomap
     load_step 4 refuse-root --map vdb=vda --erase vda
     load_step 4 refuse-decoy --map vdb=vdc && { cat "$R/logs/rebuild-refuse-decoy".{out,err} | grep -q "isn't blank" || bad "load refuse-decoy: refused, but not for the decoy's filesystem"; }
+    if [[ $VARIANT == refuse ]]; then
+        # A smaller target is refused without the flag, and with it too: this
+        # family's table isn't the sfdisk script --fit-largest rewrites.  The
+        # target image must be byte for byte what it was after both.
+        local h1 h2 fam
+        fam=$(python3 -c 'import json, sys; print((json.load(open(sys.argv[1])).get("os") or {}).get("family") or "")' "$R/dumps/src.json")
+        if [[ -z $fam ]]; then
+            bad "HT_VARIANT=refuse: the dump of $G names no OS family, so there is no refusal of one to check for"
+            r_down; return
+        fi
+        h1=$(md5sum "$DST" | cut -d' ' -f1)
+        load_step 4 refuse-smaller --map vdb=vdb --erase /dev/vdb --only plan &&
+            { grep -qi "is smaller" "$R/logs/rebuild-refuse-smaller".{out,err} ||
+                bad "load refuse-smaller: refused, but not for the target's size"; }
+        load_step 4 refuse-fit --map vdb=vdb --erase /dev/vdb --fit-largest "$FIT_PCT%" --only plan &&
+            { grep -qiF -- "$fam" "$R/logs/rebuild-refuse-fit".{out,err} ||
+                bad "load refuse-fit: refused, but not for $fam's own partition table: $(grep -v '^$' "$R/logs/rebuild-refuse-fit".{out,err} | tail -3 | tr '\n' ' ')"; }
+        h2=$(md5sum "$DST" | cut -d' ' -f1)
+        if [[ $h1 == "$h2" ]]; then
+            ok "the plans left the target image's bytes as they were"
+        else
+            bad "a plan wrote to the target image ($h1 -> $h2)"
+        fi
+        sshk "$edges" > "$R/logs/edges-after.txt" 2>&1
+        if [[ -s $R/logs/edges-before.txt ]] && cmp -s "$R/logs/edges-before.txt" "$R/logs/edges-after.txt"; then
+            ok "the refusals left the target's and the decoy's first and last MiB as they were"
+        else
+            bad "a refusal wrote to a disk (logs/edges-before.txt, edges-after.txt)"
+        fi
+        [[ $(sshk 'blkid -o value -s LABEL /dev/vdc') == ht1decoy ]] || bad "the decoy lost its filesystem"
+        r_down
+        rm -f "$R/rescuer.qcow2"
+        return
+    fi
     load_step 0 dry-partition --map vdb=vdb --only partition
     if sshk 'test -z "$(wipefs -n /dev/vdb)"'; then ok "nothing written without --commit"; else bad "vdb was written without --commit"; fi
     sshk "$edges" > "$R/logs/edges-after.txt" 2>&1

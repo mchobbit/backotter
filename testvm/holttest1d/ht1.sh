@@ -77,7 +77,7 @@ case $G in
     redox|sculpt*)
         exec "$(dirname "$(realpath "$0")")/ht1-offline.sh" "$G" "$RUN" "$@" ;;
 esac
-PHASES=("$@"); [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source backup rebuild verify)
+PHASES=("$@")   # the default is the variant's (below): all four, or source and rebuild
 W=/home/m/backotter-work
 HERE=$(dirname "$(realpath "$0")")
 T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, vm-mount, compare/)
@@ -97,8 +97,36 @@ HOLT=${HT_HOLT:-${HT_HOLT_BIN:-$BIN}/bko-holt}
 # detached (a RAID member's: its arrays degraded), so load recreates those
 # arrays with "missing" slots onto one disk fewer, and the restored machine
 # must boot degraded too.  A variant has a directory of its own, GUEST-VARIANT.
+# The fitting variants (README "The fitting variants") give load
+# --fit-largest, which contracts or expands the largest partition of each
+# disk: "smaller" rebuilds onto disks 1 GiB smaller than the source's and
+# "fitbigger" onto disks 1 GiB bigger, both judged with judge.py --fit;
+# "nearfull" fills the source's / first and "refuse" takes a guest whose
+# largest partition is a stack load won't fit, and both check that plan
+# refuses and writes nothing, so neither backs up or restores anything.
 VARIANT=${HT_VARIANT:-}
-case $VARIANT in ""|bigger|oneshot|degraded) ;; *) echo "HT_VARIANT: bigger, oneshot or degraded" >&2; exit 2 ;; esac
+case $VARIANT in ""|bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse) ;;
+    *) echo "HT_VARIANT: bigger, oneshot, degraded, smaller, fitbigger, nearfull or refuse" >&2; exit 2 ;;
+esac
+# DELTA: how far the targets are from the source's disks.  FIT: load is given
+# --fit-largest FIT_PCT, so it fits the layout to them.  FITONLY: the run is a
+# refusal, and stops after plan.
+DELTA=0 FIT="" FITONLY="" FIT_PCT=10
+case $VARIANT in
+    bigger)              DELTA=$((1 << 30)) ;;
+    fitbigger)           DELTA=$((1 << 30)); FIT=1 ;;
+    smaller)             DELTA=-$((1 << 30)); FIT=1 ;;
+    nearfull|refuse)     DELTA=-$((1 << 30)); FIT=1; FITONLY=1 ;;
+esac
+if [[ -n $FITONLY ]]; then
+    [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source rebuild)
+    for p in "${PHASES[@]}"; do
+        [[ $p == source || $p == rebuild ]] ||
+            { echo "HT_VARIANT=$VARIANT: a refusal, so it has no $p phase (source and rebuild only)" >&2; exit 2; }
+    done
+else
+    [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source backup rebuild verify)
+fi
 GV=$G${VARIANT:+-$VARIANT}
 PORT=${HT_PORT:-2690}   # by-hand runs: 2690-2699 (ht1-queue.sh hands out 2600-2689)
 export SSH_PORT=$PORT   # vm-run's guest SSH port
@@ -255,6 +283,25 @@ fi'
 bootstate() { sshk "$1" "$BOOTSTATE"; }
 # The degraded variant: the arrays may be degraded (and must be, see below).
 [[ $VARIANT == degraded ]] && HEALTH="DEGRADED=1; $HEALTH"
+# nearfull's fill, run in the source guest: random files under /var/tmp until
+# df shows under 900 MiB free on /, so the fit's data check (free against what
+# the shrink takes, plus its margin) must refuse.  Each round writes what is
+# free beyond 700 MiB, at most 4 GiB at a time; it stops when a round frees
+# nothing, rather than looping, and prints what df says at the end.
+FILL='set -e
+for i in $(seq 24); do
+    a=$(df -k / | awk "NR > 1 {print \$4; exit}")
+    [ "$a" -le 900000 ] && break
+    w=$(( (a - 700000) / 1024 ))
+    [ "$w" -lt 1 ] && break
+    [ "$w" -gt 4096 ] && w=4096
+    dd if=/dev/urandom of=/var/tmp/ht1-fill.$i bs=1M count=$w 2>/dev/null ||
+        echo "round $i stopped short of $w MiB"
+    sync
+done
+a=$(df -k / | awk "NR > 1 {print \$4; exit}")
+[ "$a" -le 1048576 ] || { echo "still $a KiB free on /: nothing left to fill it with"; exit 1; }
+df -h / | tail -1'
 # md's view of each array: its name, level, and member slots up or missing
 # ([UU_]), sorted.  A degraded run's restored machine must show the source's.
 MDSTAT='awk "/^md/ {a = \$1; for (i = 3; i <= NF; i++) if (\$i ~ /^(raid|linear)/) {l = \$i; break}} / blocks / && a {print a, l, \$NF; a = \"\"}" /proc/mdstat | sort'
@@ -273,6 +320,19 @@ phase_source() {
             ok "source's arrays degraded: $(grep '_' "$R/logs/source-mdstat.txt" | tr '\n' ';' | sed 's/;$//; s/;/; /g')"
         else
             bad "no array of the source is degraded with ${detached##*/} detached (logs/source-mdstat.txt)"
+        fi
+    fi
+    if [[ $VARIANT == nearfull ]]; then
+        # Fill / in the overlay until under a gigabyte is free, so the fit's
+        # data check must refuse: random bytes, which compress as badly as a
+        # real disk's (Omarchy's btrfs has compress=zstd), in its own files
+        # under /var/tmp.  Nothing of the system is deleted, and only the
+        # throwaway overlay is written.
+        if TMO=1800 sshk "$gkey" "$FILL" > "$R/logs/source-fill.txt" 2>&1; then
+            ok "source's / filled: $(tail -1 "$R/logs/source-fill.txt")"
+        else
+            bad "filling the source's / (logs/source-fill.txt): $(tail -1 "$R/logs/source-fill.txt")"
+            vm_down "$gkey"; return
         fi
     fi
     bootstate "$gkey" > "$R/logs/source-bootstate.txt"
@@ -313,6 +373,75 @@ phase_backup() {
     chmod -R a+rX "$S"
 }
 
+# The fitting variants' checks, before anything is erased (README "The fitting
+# variants"), with load's arguments: what the fit must come to on this guest,
+# that plan refuses where it has to and for the reason it has to, and that
+# every target image is byte for byte what it was (plan writes nothing, and the
+# rescuer's QEMU leaves a blank qcow2 it isn't written through alone).  Exit 1
+# when the run can go no further.
+fit_checks() {
+    local plan rc=0 holds want h1 h2
+    # judge.py works the fit out from the source's layout, as load does from
+    # the same numbers and as the judging will: an amount here is the one the
+    # whole run is held to, and a stack load won't fit is a problem.
+    plan=$(python3 "$HERE/judge.py" --fit-plan "$DELTA" --fit-pct "$FIT_PCT" "$R/dumps/src.json" 2>&1) || rc=$?
+    say "the fit here, targets $DELTA bytes and --fit-largest $FIT_PCT%: ${plan//$'\n'/; }"
+    # The stacks the plan names on the largest partitions, for the refusal
+    # check below to grep for.  A disk with no partition to fit prints "-"
+    # there, and judge.py's own stderr is in $plan too: either in the
+    # alternation would match any refusal text at all ("-" every one with a
+    # hyphen, an empty branch every one), so only a plain type name counts.
+    holds=$(awk '!/^problem: / && $5 ~ /^[A-Za-z][A-Za-z0-9_]*$/ {print $5}' <<<"$plan" | sort -u | paste -sd'|' -)
+    if [[ $VARIANT == refuse ]]; then
+        grep -q '^problem: ' <<<"$plan" ||
+            { bad "HT_VARIANT=refuse: $G's largest partition ($holds) is one load can fit, so load has nothing to refuse"; return 1; }
+    elif ((rc != 0)); then
+        bad "HT_VARIANT=$VARIANT: no fit of $G to judge: ${plan//$'\n'/; }"
+        return 1
+    fi
+    h1=$(md5sum "${dst[@]}" | cut -d' ' -f1 | paste -sd' ' -)
+    if ((DELTA < 0)); then
+        # Without the flag a smaller target is refused, as it was before it.
+        load_step 4 refuse-smaller "$@" --only plan &&
+            { grep -qi "is smaller" "$R/logs/rebuild-refuse-smaller".{out,err} ||
+                bad "load refuse-smaller: refused, but not for the target's size: $(grep -v '^$' "$R/logs/rebuild-refuse-smaller".{out,err} | tail -3 | tr '\n' ' ')"; }
+        # And with a PCT too small for what the fit would take out of the
+        # largest partition.  (A guest whose largest partition is 100 GiB or
+        # more loses under 1% of it to a gigabyte: nothing for 1% to refuse.
+        # On a refuse guest the stack is refused first, whatever the PCT.)
+        if [[ $VARIANT == refuse ]]; then
+            ok "skipped the 1% refusal: load refuses $G's stack ($holds) whatever the percentage"
+        elif python3 "$HERE/judge.py" --fit-plan "$DELTA" --fit-pct 1 "$R/dumps/src.json" >/dev/null 2>&1; then
+            ok "skipped the 1% refusal: 1% of $G's largest partition covers the fit ($holds), so load has nothing to refuse there"
+        else
+            load_step 4 refuse-fit-1pct "$@" --fit-largest 1% --only plan &&
+                { grep -qi "1%" "$R/logs/rebuild-refuse-fit-1pct".{out,err} ||
+                    bad "load refuse-fit-1pct: refused, but not for the 1% limit: $(grep -v '^$' "$R/logs/rebuild-refuse-fit-1pct".{out,err} | tail -3 | tr '\n' ' ')"; }
+        fi
+    fi
+    if [[ -n $FITONLY ]]; then
+        # What the refusal has to name: the stack load won't fit, or the data
+        # that wouldn't fit in what is left.
+        case $VARIANT in
+            refuse)   want=$(sed 's/linux_raid_member/md|raid/g; s/zfs_member/zfs/g' <<<"$holds")
+                      [[ -n $want ]] || { bad "HT_VARIANT=refuse: the plan names no stack on $G's largest partition, so there is no reason to check for"; return 1; } ;;
+            nearfull) want='free|used|data' ;;
+        esac
+        load_step 4 refuse-fit "$@" --fit-largest "$FIT_PCT%" --only plan &&
+            { grep -qiE "($want)" "$R/logs/rebuild-refuse-fit".{out,err} ||
+                bad "load refuse-fit: refused, but not for $VARIANT's reason ($want): $(grep -v '^$' "$R/logs/rebuild-refuse-fit".{out,err} | tail -3 | tr '\n' ' ')"; }
+    else
+        load_step 0 fit-plan "$@" --fit-largest "$FIT_PCT%" --only plan
+    fi
+    h2=$(md5sum "${dst[@]}" | cut -d' ' -f1 | paste -sd' ' -)
+    if [[ $h1 == "$h2" ]]; then
+        ok "the plans left every target image's bytes as they were"
+    else
+        bad "a plan wrote to a target image ($h1 -> $h2)"
+    fi
+    return 0
+}
+
 # One bko-holt load call in the rescuer: WANT exit, NAME, then load's args.
 load_step() { local want=$1 name=$2; shift 2
     sshk "$rkey" "/mnt/share/bko-holt load /mnt/share/layout.json $*" > "$R/logs/rebuild-$name.out" 2> "$R/logs/rebuild-$name.err"
@@ -328,12 +457,15 @@ phase_rebuild() {
     [[ -z $(ht_qemus "$R") ]] || vm_down "$rkey"
     cp "$RUSTIC" "$S/rustic-bko"; cp "$BIN"/*.deb "$S/"   # this run's, when rerun after a fix (bko-holt: copied as the run started)
     [[ ! -f $BIN/bcachefs ]] || cp "$BIN/bcachefs" "$S/"
+    # load's --key-file needs it here too, in a run with no backup phase to
+    # have written it (the refusal variants) as typed, without the newline.
+    [[ -z $gpass ]] || printf '%s' "$(cat "$gpass")" > "$S/passphrase"
+    chmod -R a+rX "$S"
     rm -f "$R/rescuer.qcow2" "${dst[@]}"
     qemu-img create -q -f qcow2 -b "$RESCUER_IMG" -F qcow2 "$R/rescuer.qcow2"
-    local disks=() grow=0
-    [[ $VARIANT == bigger ]] && grow=$((1 << 30))
+    local disks=()
     for ((i = 0; i < n; i++)); do
-        qemu-img create -q -f qcow2 "${dst[i]}" "$(($(size_of "${imgs[i]}") + grow))"; disks+=(--disk "${dst[i]}")
+        qemu-img create -q -f qcow2 "${dst[i]}" "$(($(size_of "${imgs[i]}") + DELTA))"; disks+=(--disk "${dst[i]}")
     done
     # The decoy: a disk after the targets that already holds a filesystem,
     # as big as the source's first disk, so not being blank is the only
@@ -357,7 +489,8 @@ phase_rebuild() {
     local edges="for d in ${erase[*]#--erase} $decoy; do s=\$(blockdev --getsz \$d); echo \$d \$(dd if=\$d bs=512 count=2048 status=none | md5sum | cut -c1-32) \$(dd if=\$d bs=512 skip=\$((s - 2048)) count=2048 status=none | md5sum | cut -c1-32); done"
     local flags=()
     ((uefi)) && flags+=(--no-nvram)
-    if [[ ${HT_QUICK:-} != 1 ]]; then
+    # (A refusal variant always takes these: they are what it runs for.)
+    if [[ ${HT_QUICK:-} != 1 || -n $FITONLY ]]; then
     sshk "$rkey" "$edges" > "$R/logs/edges-before.txt" 2>&1
     # Safety first: each refuses and writes nothing.
     load_step 4 refuse-nomap
@@ -384,6 +517,31 @@ for ds in ((d["storage"].get("zfs") or {}).get("tools") or {}).get("datasets") o
         print(f"--key-file {ds['name']}=/mnt/share/passphrase")
 PY
 ))
+    # The fitting variants' own checks come before the dry run (and for
+    # nearfull and refuse they are as far as the run goes), on load's
+    # arguments as they are here, without --fit-largest: one of the checks is
+    # that plan refuses without it.
+    if [[ -n $FIT && ( ${HT_QUICK:-} != 1 || -n $FITONLY ) ]]; then
+        fit_checks "${map[@]}" "${erase[@]}" "${flags[@]}" || { kept_or_down; return; }
+    fi
+    # From here every call carries the flag, the dry run, each stage and each
+    # `status` alike: a stage run without it after a fit must not go on.
+    [[ -z $FIT ]] || flags+=(--fit-largest "$FIT_PCT%")
+    if [[ -n $FITONLY ]]; then
+        # The refusal was the whole run: nothing may have been written.
+        [[ $(sshk "$rkey" "blkid -o value -s LABEL $decoy") == ht1decoy ]] || bad "the decoy lost its filesystem"
+        sshk "$rkey" "$edges" > "$R/logs/edges-after.txt" 2>&1
+        if [[ -s $R/logs/edges-before.txt ]] && cmp -s "$R/logs/edges-before.txt" "$R/logs/edges-after.txt"; then
+            ok "the refusals left every target's and the decoy's first and last MiB as they were"
+        else
+            bad "a refusal wrote to a disk (logs/edges-before.txt, edges-after.txt)"
+        fi
+        sshk "$rkey" 'cat /run/bko-holt/log/load.log 2>/dev/null' > "$R/logs/rebuild-load.log"
+        [[ ${HT_KEEP:-} == 1 ]] && { kept_or_down; return; }
+        vm_down "$rkey"
+        rm -f "$R/rescuer.qcow2"
+        return
+    fi
     if [[ ${HT_QUICK:-} != 1 ]]; then
     load_step 0 dry-partition "${map[@]}" "${flags[@]}" --only partition
     if sshk "$rkey" 'test -z "$(wipefs -n /dev/vdb)"'; then ok "nothing written without --commit"; else bad "vdb was written without --commit"; fi
@@ -491,9 +649,12 @@ phase_verify() {
     scpk "$gkey" "$S/bko-holt" root@127.0.0.1:/root/bko-holt
     sshk "$gkey" '/root/bko-holt dump; rm -f /root/bko-holt' > "$R/dumps/dst.json" 2> "$R/logs/restored-dump.err" || bad "dump of the restored system"
     vm_down "$gkey"
-    local grow=(); [[ $VARIANT == bigger ]] && grow=(--grow $((1 << 30)))
-    [[ $VARIANT == degraded ]] && grow=(--degraded)
-    if python3 "$HERE/judge.py" "${grow[@]}" "$R/dumps/src.json" "$R/dumps/dst.json" > "$R/logs/judge.txt" 2>&1; then
+    local how=(); [[ $VARIANT == bigger ]] && how=(--grow $((1 << 30)))
+    [[ $VARIANT == degraded ]] && how=(--degraded)
+    # The fitting variants: judge.py works the new geometry out as load did,
+    # and lets nothing else differ.
+    [[ -z $FIT ]] || how=(--fit "$DELTA" --fit-pct "$FIT_PCT")
+    if python3 "$HERE/judge.py" "${how[@]}" "$R/dumps/src.json" "$R/dumps/dst.json" > "$R/logs/judge.txt" 2>&1; then
         ok "the dumps agree ($(tail -1 "$R/logs/judge.txt"))"
     else
         bad "the dumps differ: $(grep -c '^DIFF' "$R/logs/judge.txt") fields (logs/judge.txt)"

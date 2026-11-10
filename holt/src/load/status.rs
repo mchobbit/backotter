@@ -61,8 +61,10 @@ fn uuid_at(sys: &Sys, node: &str) -> Option<String> {
 }
 
 pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, String)>, Vec<String>) {
-    let system = target::scan(sys, opts, &target::layout_pools(layout));
-    let mapping = target::map(layout, opts, &system, sys);
+    // The disks hold what --fit-largest made of the layout, so that's the
+    // one every row is read against (target::prepare, fit.rs).
+    let target::Prepared { system, mapping, layout, .. } = target::prepare(layout, opts, sys);
+    let layout = &*layout;
     let built = commands::build(layout, opts, &mapping);
     let mut out = Vec::new();
 
@@ -238,6 +240,109 @@ mod tests {
         assert!(out.contains("partition  not done"), "{out}");
         assert!(out.contains("assemble   nothing to do"), "{out}");
         assert!(out.contains("next: partition\n"), "{out}");
+    }
+
+    /// The sample layout's MBR with its root partition `root` sectors long:
+    /// as a fit of it wrote the table, or (any other number) as nothing did.
+    fn mbr_with(root: u64) -> Vec<u8> {
+        use crate::parttable::build::mbr_entry;
+        let mut s = vec![0u8; 512];
+        s[440..444].copy_from_slice(&0x1f2e_3d4cu32.to_le_bytes());
+        mbr_entry(&mut s, 0, 0x80, 0x83, 2048, 1953792);
+        mbr_entry(&mut s, 1, 0, 0x82, 1955840, 3905536);
+        mbr_entry(&mut s, 2, 0, 0x83, 5861376, root as u32);
+        s
+    }
+
+    /// An MBR as a fit of the sample layout wrote it: the root partition a
+    /// GiB smaller, everything else where the source had it.
+    fn fitted_mbr() -> Vec<u8> {
+        mbr_with(27693056 - 2097152)
+    }
+
+    #[test]
+    fn a_fitted_table_needs_the_same_flag_again() {
+        let t = Tree::new("load-status-fit");
+        t.disk("vdb", "253:16", &fitted_mbr(), 512).file("/sys/block/vdb/size", format!("{}\n", 33554432 - 2097152));
+        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let l = Layout::from_json(crate::json::parse(&sample::fittable()).unwrap()).unwrap();
+        let o = |a: &[&str]| {
+            let mut v: Vec<String> = vec!["l.json".into(), "--map".into(), "vda=vdb".into()];
+            v.extend(a.iter().map(|x| x.to_string()));
+            match parse_args(&v).unwrap() {
+                Parsed::Run(o) => o,
+                _ => unreachable!(),
+            }
+        };
+        // With the same --fit-largest, the table there is the planned one.
+        let (code, out, _) = run(&l, &o(&["--fit-largest", "10"]), &s);
+        assert_eq!(code, EXIT_OK, "{out}");
+        assert!(out.contains("partition  done"), "{out}");
+        // Without it, every stage would read the disk as the source's.
+        let (code, out, err) = run(&l, &o(&[]), &s);
+        assert_eq!(code, EXIT_PLAN_PROBLEMS, "{out}");
+        assert!(out.contains("the table there is this layout's, fitted to the disk (vda3 is 1 GiB smaller there)"), "{out}");
+        assert!(out.contains("run the stages with the --fit-largest PCT that wrote it, or --erase /dev/vdb"), "{out}");
+        assert!(err.contains("see the problems above"));
+        // Nor is another percentage the one that wrote it: 20% would take
+        // the same GiB, so that one is the planned table too.
+        let (code, out, _) = run(&l, &o(&["--fit-largest", "20"]), &s);
+        assert_eq!(code, EXIT_OK, "{out}");
+        assert!(out.contains("partition  done"), "{out}");
+    }
+
+    /// A rescue system whose vdb is a GiB bigger than the sample layout's
+    /// source disk and holds `table`.
+    fn bigger_target(table: Vec<u8>) -> Tree {
+        let t = Tree::new("load-status-fit-bigger");
+        t.disk("vdb", "253:16", &table, 512).file("/sys/block/vdb/size", format!("{}\n", 33554432 + 2097152));
+        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t
+    }
+
+    fn fit_opts(a: &[&str]) -> Options {
+        let mut v: Vec<String> = vec!["l.json".into(), "--map".into(), "vda=vdb".into()];
+        v.extend(a.iter().map(|x| x.to_string()));
+        match parse_args(&v).unwrap() {
+            Parsed::Run(o) => o,
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn a_grown_table_is_cleared_by_erase() {
+        // A target a GiB bigger holding this layout's table with the root
+        // grown into it: --fit-largest 10% writes exactly that table, so
+        // without the flag every later stage would misread the disk.
+        let l = Layout::from_json(crate::json::parse(&sample::fittable()).unwrap()).unwrap();
+        let t = bigger_target(mbr_with(27693056 + 2097152));
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let (code, out, _) = run(&l, &fit_opts(&["--fit-largest", "10"]), &s);
+        assert_eq!(code, EXIT_OK, "{out}");
+        assert!(out.contains("partition  done"), "{out}");
+        let (code, out, _) = run(&l, &fit_opts(&[]), &s);
+        assert_eq!(code, EXIT_PLAN_PROBLEMS, "{out}");
+        assert!(out.contains("vda3 is 1 GiB bigger there"), "{out}");
+        // --erase wipes that table, which is what the refusal asks for.
+        let (code, out, _) = run(&l, &fit_opts(&["--erase", "/dev/vdb"]), &s);
+        assert_eq!(code, EXIT_OK, "{out}");
+        assert!(out.contains("partition  not done"), "{out}");
+        assert!(!out.contains("fitted to the disk"), "{out}");
+    }
+
+    #[test]
+    fn a_table_no_fit_wrote_keeps_its_row() {
+        // The same layout's table with its root grown by a megabyte: no
+        // --fit-largest percentage writes that, so it isn't one of ours and
+        // the rows are the ones a table that isn't the source's always got.
+        let l = Layout::from_json(crate::json::parse(&sample::fittable()).unwrap()).unwrap();
+        let t = bigger_target(mbr_with(27693056 + 2048));
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let (code, out, _) = run(&l, &fit_opts(&[]), &s);
+        assert_eq!(code, EXIT_OK, "{out}");
+        assert!(out.contains("partition  not done"), "{out}");
+        assert!(!out.contains("fitted to the disk"), "{out}");
     }
 
     #[test]

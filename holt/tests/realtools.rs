@@ -570,3 +570,304 @@ fn partitions_with_filesystems_end_to_end() {
     assert_eq!(again.parts.len(), 3);
     assert_eq!(blkid(&disk).get("TYPE"), None);
 }
+
+// ---- --fit-largest ------------------------------------------------------
+
+/// A sparse image file of exactly `bytes` bytes.
+fn image_bytes(dir: &TempDir, name: &str, bytes: u64) -> PathBuf {
+    let p = dir.path().join(name);
+    let f = std::fs::File::create(&p).unwrap();
+    f.set_len(bytes).unwrap();
+    p
+}
+
+/// A real filesystem filling an image of `sectors` sectors, with the
+/// content a dump would record for it.
+fn real_fs(dir: &TempDir, name: &str, sectors: u64, kind: &str) -> Value {
+    let img = image_bytes(dir, name, sectors * 512);
+    let p = s(&img);
+    match kind {
+        "ext4" | "ext2" => run("mke2fs", &["-q", "-F", "-t", kind, p]),
+        "xfs" => run("mkfs.xfs", &["-q", "-f", p]),
+        "btrfs" => run("mkfs.btrfs", &["-q", "-f", p]),
+        "f2fs" => run("mkfs.f2fs", &["-q", "-f", p]),
+        "jfs" => run("mkfs.jfs", &["-q", p]),
+        "nilfs2" => run("mkfs.nilfs2", &["-q", "-f", p]),
+        other => panic!("{other} isn't one this test makes"),
+    };
+    probe::content_json(&probe_file(&img))
+}
+
+/// The dump of one GPT disk of `total` sectors, with `parts` as (number,
+/// start, sectors, content) and the mount figures of its last partition.
+fn fit_dump(total: u64, parts: &[(u32, u64, u64, Value)], mount_dev: &str, size: u64, used: u64) -> Value {
+    let ps: Vec<String> = parts
+        .iter()
+        .map(|(n, start, sectors, c)| {
+            format!(
+                r#"{{"name": "vda{n}", "number": {n}, "start_lba": {start}, "end_lba": {}, "sectors": {sectors},
+                     "start_bytes": {}, "size_bytes": {}, "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+                     "uuid": "aa000000-0000-4000-8000-00000000000{n}", "partlabel": "", "attributes": "0x0000000000000000",
+                     "matches_kernel": true, "content": {}}}"#,
+                start + sectors - 1,
+                start * 512,
+                sectors * 512,
+                c.compact()
+            )
+        })
+        .collect();
+    let text = format!(
+        r#"{{"format": "bko-holt", "schema": 1, "privileged": true, "host": {{"hostname": "t"}},
+             "os": {{"id": "debian", "version_id": "13"}}, "firmware": {{"mode": "bios"}},
+             "storage": {{
+               "disks": [{{"name": "vda", "kind": "disk", "size_bytes": {}, "logical_sector_size": 512,
+                 "model": null, "serial": null, "wwid": null,
+                 "partition_table": {{"type": "gpt", "sector_size": 512, "disk_guid": "aa000000-0000-4000-8000-0000000000ff",
+                   "first_usable_lba": 34, "last_usable_lba": {}, "entry_count": 128, "entry_size": 128, "backup_lba": {}}},
+                 "partitions": [{}], "content": null}}],
+               "md_arrays": [], "dm_devices": [], "lvm": {{"volume_groups": []}}, "btrfs": [],
+               "mounts": [{{"target": "/", "source": "/dev/{mount_dev}", "device": "{mount_dev}", "fstype": "x",
+                 "size_bytes": {size}, "used_bytes": {used}, "available_bytes": {}}}],
+               "fstab": []}}}}"#,
+        total * 512,
+        total - 34,
+        total - 1,
+        ps.join(", "),
+        size.saturating_sub(used)
+    );
+    json::parse(&text).unwrap_or_else(|e| panic!("{} at byte {}: {text}", e.message, e.offset))
+}
+
+/// A fit of V onto a target of `bytes`, which must hold: the dump it makes
+/// and its one disk.
+fn fit_disk(v: &Value, bytes: u64, pct: u64) -> (Value, bko_holt::load::layout::Disk) {
+    let t = vec![bko_holt::load::fit::Target { disk: "vda".into(), path: "/dev/sdz".into(), size_bytes: bytes }];
+    let f = bko_holt::load::fit::fit(v, &t, pct);
+    assert!(f.problems.is_empty(), "the fit was refused: {:?}", f.problems);
+    let out = f.v.expect("a fitted dump");
+    let l = bko_holt::load::layout::Layout::from_json(out.clone()).unwrap();
+    (out, l.disks.into_iter().next().unwrap())
+}
+
+/// Writes the fitted disk's table onto an image of its size with the script
+/// load's partition stage would run, and reads it back with sfdisk.
+fn apply_table(dir: &TempDir, d: &bko_holt::load::layout::Disk) -> PathBuf {
+    let img = image_bytes(dir, "disk", d.size_bytes);
+    let script = bko_holt::load::commands::sfdisk_script(d, "bkofit", false).unwrap().replace("/dev/bkofit", s(&img));
+    run_stdin("sfdisk", &["-q", "--wipe", "always", "--wipe-partitions", "always", s(&img)], &script);
+    let pt = sfdisk_json(&img).get("partitiontable").cloned().unwrap();
+    assert_eq!(pt.get("lastlba").and_then(Value::as_u64), d.table.as_ref().unwrap().last_usable_lba, "the last usable LBA sfdisk wrote");
+    let parts = pt.get("partitions").and_then(Value::as_array).cloned().unwrap_or_default();
+    assert_eq!(parts.len(), d.parts.len());
+    for (p, got) in d.parts.iter().zip(&parts) {
+        assert_eq!(got.get("start").and_then(Value::as_u64), Some(p.start_lba), "partition {}'s start", p.number);
+        assert_eq!(got.get("size").and_then(Value::as_u64), Some(p.sectors), "partition {}'s size", p.number);
+        assert_eq!(got.get("uuid").and_then(Value::as_str).map(str::to_lowercase).as_deref(), p.uuid.as_deref(), "partition {}'s GUID", p.number);
+    }
+    img
+}
+
+/// The commands load's format stage would run to make CONTENT on DEV: its
+/// mkfs, and the tools that set what mkfs can't.
+fn mkfs_cmds(dev: &str, c: &Value) -> Vec<Vec<String>> {
+    use bko_holt::load::commands as cmd;
+    let ty = c.get("type").and_then(Value::as_str).unwrap_or("");
+    let mut out = vec![match ty {
+        "ext2" | "ext3" | "ext4" => cmd::mke2fs(dev, c),
+        "xfs" => cmd::mkfs_xfs(dev, c, None),
+        "btrfs" => cmd::mkfs_btrfs(&[dev.to_string()], c, &Value::Null),
+        "f2fs" => cmd::mkfs_f2fs(dev, c),
+        "jfs" => cmd::mkfs_jfs(dev, c),
+        "nilfs2" => cmd::mkfs_nilfs2(dev, c),
+        other => panic!("no mkfs here for {other}"),
+    }];
+    match ty {
+        "jfs" => {
+            out.extend(cmd::jfs_tune(dev, c));
+            if c.get("version").and_then(Value::as_str) == Some("1") {
+                out.push(cmd::jfs_version1(dev));
+            }
+        }
+        "nilfs2" => out.extend(cmd::nilfs_tune(dev, c)),
+        _ => {}
+    }
+    out
+}
+
+/// Runs them, as the format stage would (an `sh -c` step through a shell).
+fn run_cmds(cmds: &[Vec<String>]) {
+    for c in cmds {
+        let args: Vec<&str> = c[1..].iter().map(String::as_str).collect();
+        run(&c[0], &args);
+    }
+}
+
+/// What the dump records as a filesystem's size, however its kind gives it.
+fn recorded_size(c: &Value) -> u64 {
+    c.get("size_bytes")
+        .and_then(Value::as_u64)
+        .or_else(|| Some(c.get("blocks")?.as_u64()? * c.get("block_size")?.as_u64()?))
+        .or_else(|| c.get("total_bytes").and_then(Value::as_u64))
+        .unwrap_or_else(|| panic!("no size in {}", c.compact()))
+}
+
+/// The one line of dumpe2fs or xfs_db that gives a field.
+fn field(text: &str, name: &str) -> String {
+    text.lines().find_map(|l| l.strip_prefix(name)).map(|v| v.trim().trim_start_matches('=').trim().to_string()).unwrap_or_else(|| panic!("no {name} in {text}"))
+}
+
+/// --fit-largest's own numbers, against the tools that make them: a 6 GiB
+/// disk fitted onto one a GiB smaller, for each filesystem it resizes.
+#[test]
+fn fit_largest_table_and_filesystems_match_the_tools() {
+    for t in ["sfdisk", "mke2fs", "dumpe2fs", "mkfs.xfs", "xfs_db", "mkfs.btrfs", "btrfs", "mkfs.f2fs", "mkfs.jfs", "mkfs.nilfs2"] {
+        if need(t).is_none() {
+            return;
+        }
+    }
+    const GIB: u64 = 1 << 30;
+    let total = 6 * GIB / 512;
+    let boot = 64 * (1 << 20) / 512;
+    let root_start = 2048 + boot;
+    // Every whole MiB the table leaves, as an installer would have it.
+    let root = (total - 34 - root_start + 1) / 2048 * 2048;
+    for kind in ["ext4", "xfs", "btrfs", "f2fs", "jfs", "nilfs2"] {
+        let dir = TempDir::new(&format!("rt-fit-{kind}"));
+        let bc = real_fs(&dir, "boot", boot, "ext4");
+        let rc = real_fs(&dir, "root", root, kind);
+        assert!(recorded_size(&rc) <= root * 512, "{kind}: the dump's size of a filesystem of {root} sectors");
+        let v = fit_dump(total, &[(1, 2048, boot, bc), (2, root_start, root, rc.clone())], "vda2", root * 512, 512 << 20);
+        let (_, d) = fit_disk(&v, 5 * GIB, 25);
+        // The table sfdisk writes is the fitted one, GUIDs and all.
+        apply_table(&dir, &d);
+        // /boot keeps its sectors; the root gives up the GiB.
+        assert_eq!(d.parts[0].sectors, boot, "{kind}: /boot's size");
+        assert_eq!(d.parts[1].sectors, root - GIB / 512, "{kind}: the root's size");
+        // The mkfs load would run, on an image of the new partition.
+        let p = &d.parts[1];
+        let img = image_bytes(&dir, "newroot", p.sectors * 512);
+        run_cmds(&mkfs_cmds(s(&img), &p.content));
+        // What the dump says the new filesystem is, read back from it.
+        let after = probe::content_json(&probe_file(&img));
+        assert_eq!(after.get("type"), p.content.get("type"), "{kind}: the type");
+        assert_eq!(after.get("uuid"), p.content.get("uuid"), "{kind}: the UUID is still the source's");
+        assert_eq!(after.get("version"), p.content.get("version"), "{kind}: the version");
+        let (made, wrote) = (recorded_size(&after), recorded_size(&p.content));
+        assert!(made <= p.sectors * 512, "{kind}: {made} doesn't fit the {} of the partition", p.sectors * 512);
+        assert!(made <= recorded_size(&rc), "{kind}: {made} is bigger than the source's filesystem");
+        if kind == "jfs" {
+            // mkfs.jfs sizes the log from the device, so what it records
+            // isn't the fit's arithmetic to the byte (layload.md).
+            assert!(made.abs_diff(wrote) < wrote / 100, "jfs: it made {made} where the fit wrote {wrote} down");
+        } else {
+            assert_eq!(made, wrote, "{kind}: the size the fit wrote down");
+        }
+        // And by the tools' own reckoning.
+        match kind {
+            "ext4" => {
+                let d2 = run("dumpe2fs", &["-h", s(&img)]);
+                assert_eq!(field(&d2, "Block count:"), p.content.get("blocks").and_then(Value::as_u64).unwrap().to_string(), "ext4: dumpe2fs's block count");
+            }
+            "xfs" => {
+                let db = run("xfs_db", &["-r", "-c", "sb 0", "-c", "p dblocks agblocks agcount", s(&img)]);
+                for (k, f) in [("dblocks", "blocks"), ("agblocks", "ag_blocks"), ("agcount", "ag_count")] {
+                    assert_eq!(field(&db, &format!("{k} =")), p.content.get(f).and_then(Value::as_u64).unwrap().to_string(), "xfs: {k}");
+                }
+            }
+            "btrfs" => {
+                let sup = run("btrfs", &["inspect-internal", "dump-super", s(&img)]);
+                let got = field(&sup, "total_bytes").split_whitespace().next().unwrap().to_string();
+                assert_eq!(got, p.content.get("total_bytes").and_then(Value::as_u64).unwrap().to_string(), "btrfs: total_bytes");
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The XFS whose last allocation group would be a stub: mkfs.xfs leaves it
+/// out, so the fit has to leave it out of the dump as well.
+#[test]
+fn fit_largest_keeps_xfs_allocation_groups_whole() {
+    if need("mkfs.xfs").is_none() || need("xfs_db").is_none() || need("sfdisk").is_none() {
+        return;
+    }
+    const GIB: u64 = 1 << 30;
+    let dir = TempDir::new("rt-fit-ag");
+    // 4 GiB of four whole 1 GiB allocation groups.
+    let root = 4 * GIB / 512;
+    let total = 2048 + root + 34;
+    let img = image_bytes(&dir, "src", root * 512);
+    run("mkfs.xfs", &["-q", "-f", "-d", "agsize=1073741824", s(&img)]);
+    let c = probe::content_json(&probe_file(&img));
+    assert_eq!(c.get("ag_count").and_then(Value::as_u64), Some(4));
+    let v = fit_dump(total, &[(1, 2048, root, c.clone())], "vda1", root * 512, 256 << 20);
+    // A GiB less 8 MiB: three whole groups and 8 MiB, which mkfs.xfs won't
+    // make, so the fit asks for three groups.
+    let (_, d) = fit_disk(&v, (total - 2 * 1024 * 1024 + 16384) * 512, 30);
+    let p = &d.parts[0];
+    assert_eq!(p.content.get("ag_count").and_then(Value::as_u64), Some(3));
+    assert_eq!(p.content.get("blocks").and_then(Value::as_u64), Some(3 * GIB / 4096));
+    let newimg = image_bytes(&dir, "fitted", p.sectors * 512);
+    run_cmds(&mkfs_cmds(s(&newimg), &p.content));
+    let db = run("xfs_db", &["-r", "-c", "sb 0", "-c", "p dblocks agblocks agcount", s(&newimg)]);
+    assert_eq!(field(&db, "dblocks ="), (3 * GIB / 4096).to_string());
+    assert_eq!(field(&db, "agcount ="), "3");
+    // The stub really is one mkfs.xfs drops: asked for the 8 MiB too, it
+    // makes the same three groups, and the dump would then be wrong.
+    let stub = image_bytes(&dir, "stub", p.sectors * 512);
+    let size = 3 * GIB + (8 << 20);
+    run("mkfs.xfs", &["-q", "-f", "-b", "size=4096", "-d", &format!("size={size},agsize=1073741824"), s(&stub)]);
+    let db = run("xfs_db", &["-r", "-c", "sb 0", "-c", "p dblocks agcount", s(&stub)]);
+    assert_eq!(field(&db, "dblocks ="), (3 * GIB / 4096).to_string());
+}
+
+/// LUKS: the payload keeps its offset, so the filesystem inside loses what
+/// the partition lost, and cryptsetup's own header is as the source's.
+#[test]
+fn fit_largest_keeps_the_luks_payload_offset() {
+    if need("cryptsetup").is_none() || need("mke2fs").is_none() || need("dumpe2fs").is_none() {
+        return;
+    }
+    const GIB: u64 = 1 << 30;
+    let dir = TempDir::new("rt-fit-luks");
+    let root = 4 * GIB / 512;
+    let total = 2048 + root + 34;
+    let key = dir.path().join("key");
+    std::fs::write(&key, "not a secret").unwrap();
+    let img = image_bytes(&dir, "src", root * 512);
+    run(
+        "cryptsetup",
+        &["luksFormat", "-q", "--key-file", s(&key), "--type", "luks2", "--pbkdf", "pbkdf2", "--pbkdf-force-iterations", "1000", s(&img)],
+    );
+    let lc = probe::content_json(&probe_file(&img));
+    let off = lc.at(&["segments", "0", "offset"]).and_then(|x| x.as_str().map(|s| s.parse::<u64>().unwrap()).or_else(|| x.as_u64())).unwrap();
+    // The plaintext device, as big as the partition less the header.
+    let inner = image_bytes(&dir, "inner", root * 512 - off);
+    run("mke2fs", &["-q", "-F", "-t", "ext4", s(&inner)]);
+    let ic = probe::content_json(&probe_file(&inner));
+    let dm = format!(
+        r#"{{"name": "dm-0", "kind": "dm", "size_bytes": {}, "logical_sector_size": 512, "slaves": ["vda1"], "holders": [],
+             "partition_table": null, "partitions": [],
+             "dm": {{"dm_name": "vda1_crypt", "mapper_path": "/dev/mapper/vda1_crypt", "target": "crypt", "crypt_type": "LUKS2",
+                     "luks_uuid": "{}"}}, "content": {}}}"#,
+        root * 512 - off,
+        lc.get("uuid").and_then(Value::as_str).unwrap(),
+        ic.compact()
+    );
+    let v = fit_dump(total, &[(1, 2048, root, lc.clone())], "dm-0", root * 512 - off, 128 << 20);
+    let v = json::parse(&v.compact().replace(r#""dm_devices":[]"#, &format!(r#""dm_devices":[{}]"#, dm))).unwrap();
+    let (out, d) = fit_disk(&v, (total - 2 * 1024 * 1024) * 512, 60);
+    assert_eq!(d.parts[0].sectors, root - 2 * 1024 * 1024);
+    // The LUKS header is untouched, offset and all.
+    assert_eq!(d.parts[0].content, lc);
+    // The filesystem inside is a GiB smaller, and mke2fs makes it so.
+    let inner_now = out.at(&["storage", "dm_devices", "0"]).unwrap().clone();
+    let want = ic.get("blocks").and_then(Value::as_u64).unwrap() - GIB / 4096;
+    assert_eq!(inner_now.at(&["content", "blocks"]).and_then(Value::as_u64), Some(want));
+    assert_eq!(inner_now.get("size_bytes").and_then(Value::as_u64), Some(d.parts[0].sectors * 512 - off));
+    let newinner = image_bytes(&dir, "newinner", d.parts[0].sectors * 512 - off);
+    run_cmds(&mkfs_cmds(s(&newinner), inner_now.get("content").unwrap()));
+    let out = run("dumpe2fs", &["-h", s(&newinner)]);
+    assert_eq!(field(&out, "Block count:"), want.to_string());
+    assert_eq!(field(&out, "Filesystem UUID:"), ic.get("uuid").and_then(Value::as_str).unwrap());
+}

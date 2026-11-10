@@ -2,12 +2,14 @@
 //! and which of them each source disk goes to (layload.md, "Safety" and
 //! "Mapping disks").
 
+use super::fit::{self, Fit};
 use super::layout::{Disk, Layout};
 use super::Options;
 use crate::blockdev::{self, BlockDev, Kind};
 use crate::mounts::{self, Mount};
 use crate::parttable::{self, Table};
 use crate::sys::Sys;
+use std::borrow::Cow;
 
 /// Where a live system mounts the medium it booted from.
 const MEDIUM_MOUNTS: [&str; 4] = ["/cdrom", "/run/live/medium", "/lib/live/mount/medium", "/run/initramfs/live"];
@@ -259,7 +261,9 @@ impl System {
 pub struct Mapping {
     /// (source disk name, target disk kernel name)
     pub pairs: Vec<(String, String)>,
-    /// Source disks whose target is bigger (GPT's backup header moves).
+    /// Source disks whose table ends where the target does, not where the
+    /// source's did, so a GPT's backup header and last usable LBA go there:
+    /// a bigger target, or one --fit-largest sized the table to.
     pub bigger: Vec<String>,
     pub problems: Vec<String>,
     pub notes: Vec<String>,
@@ -384,9 +388,11 @@ fn check_target(src: &Disk, t: &TargetDisk, opts: &Options, ours: &[String], m: 
         m.problems.push(format!("{who}: {} holds the running system's /; never a target", t.path()));
         return;
     }
-    if t.b.size_bytes < src.size_bytes {
+    // With --fit-largest the sizes are the fit's business (fit.rs), which
+    // says what it changes and refuses what it can't fit.
+    if t.b.size_bytes < src.size_bytes && opts.fit_largest.is_none() {
         m.problems.push(format!(
-            "{who}: the target is smaller ({} < {}); version 1 needs the same size or bigger",
+            "{who}: the target is smaller ({} < {}); version 1 needs the same size or bigger, or --fit-largest PCT to fit the layout to it",
             crate::report::human(t.b.size_bytes),
             crate::report::human(src.size_bytes)
         ));
@@ -409,10 +415,91 @@ fn check_target(src: &Disk, t: &TargetDisk, opts: &Options, ours: &[String], m: 
         let what = if t.signatures.is_empty() { "a partition table".to_string() } else { t.signatures.join("; ") };
         m.problems.push(format!("{who}: the target isn't blank ({what}); give --erase {} to wipe it", t.path()));
     }
-    if t.b.size_bytes > src.size_bytes {
+    if t.b.size_bytes > src.size_bytes && opts.fit_largest.is_none() {
         m.notes.push(format!("{who}: the target is bigger; the extra {} stays unused", crate::report::human(t.b.size_bytes - src.size_bytes)));
         m.bigger.push(src.name.clone());
     }
+}
+
+/// What every stage works from: the disks here, which source disk goes to
+/// which, and the layout the commands are built from.
+pub struct Prepared<'a> {
+    pub system: System,
+    pub mapping: Mapping,
+    /// The dump, or (with --fit-largest) the rewrite of it the stages build
+    /// from.  Worked out once here, so every stage sees the same numbers.
+    pub layout: Cow<'a, Layout>,
+    pub fit: Fit,
+}
+
+/// Scans the disks here, maps the source disks onto them and, with
+/// --fit-largest, fits the layout to their sizes.
+pub fn prepare<'a>(layout: &'a Layout, opts: &Options, sys: &Sys) -> Prepared<'a> {
+    let system = scan(sys, opts, &layout_pools(layout));
+    let mut mapping = map(layout, opts, &system, sys);
+    let mut fit = Fit::default();
+    if let Some(pct) = opts.fit_largest {
+        let targets: Vec<fit::Target> = mapping
+            .pairs
+            .iter()
+            .filter_map(|(src, t)| system.disk(t).map(|t| fit::Target { disk: src.clone(), path: t.path(), size_bytes: t.b.size_bytes }))
+            .collect();
+        fit = fit::fit(&layout.v, &targets, pct);
+        mapping.problems.extend(fit.problems.iter().cloned());
+        mapping.notes.extend(fit.notes.iter().cloned());
+        for d in &fit.new_end {
+            if !mapping.bigger.contains(d) {
+                mapping.bigger.push(d.clone());
+            }
+        }
+    }
+    let mut out = Cow::Borrowed(layout);
+    if let Some(v) = fit.v.clone() {
+        match Layout::from_json(v) {
+            Ok(l) => out = Cow::Owned(l),
+            Err(e) => mapping.problems.push(format!("--fit-largest: the layout it fits isn't one load can read back: {e}")),
+        }
+    }
+    for p in fitted_already(layout, &out, &system, opts, &mapping) {
+        mapping.problems.push(p);
+    }
+    Prepared { system, mapping, layout: out, fit }
+}
+
+/// A table an earlier stage wrote with another --fit-largest: without the
+/// same one again, every later stage would read the disk as the source's and
+/// write over what's on it.  `planned` is the layout this run would write,
+/// fitted or not; a target that already holds it has nothing wrong with it.
+fn fitted_already(src: &Layout, planned: &Layout, system: &System, opts: &Options, m: &Mapping) -> Vec<String> {
+    let mut out = Vec::new();
+    for (name, tgt) in &m.pairs {
+        let (Some(d), Some(plan), Some(t)) = (src.disk(name), planned.disk(name), system.disk(tgt)) else { continue };
+        // --erase wipes the table, which is what the message below asks for.
+        if opts.erase.iter().any(|e| e == &t.path() || e == &t.b.name || resolve_tail(e) == t.b.name) {
+            continue;
+        }
+        let (Some(want), Some(have)) = (d.table.as_ref().and_then(|x| x.id.as_ref()), t.table.as_ref()) else { continue };
+        if !table_id(have).eq_ignore_ascii_case(want) {
+            continue;
+        }
+        // What this run plans is already there, by the same check status
+        // makes of the partition stage: the stages go on from it.
+        let ext = have.extents();
+        if plan.parts.iter().all(|q| ext.iter().any(|&(n, s, len)| n == q.number && s == q.start_lba && len == q.sectors)) {
+            continue;
+        }
+        let target = fit::Target { disk: name.clone(), path: t.path(), size_bytes: t.b.size_bytes };
+        let Some((n, by)) = fit::wrote(&src.v, &target, &ext) else { continue };
+        let part = d.parts.iter().find(|q| q.number == n).map(|q| q.name.clone()).unwrap_or_else(|| format!("partition {n}"));
+        out.push(format!(
+            "{name} -> {}: the table there is this layout's, fitted to the disk ({part} is {} {} there); run the stages with the --fit-largest PCT that wrote it, or --erase {} to start again",
+            t.path(),
+            crate::report::human(by.unsigned_abs() * d.sector_size),
+            if by < 0 { "smaller" } else { "bigger" },
+            t.path()
+        ));
+    }
+    out
 }
 
 fn resolve_tail(spec: &str) -> &str {
@@ -484,6 +571,28 @@ mod tests {
         assert!(p.is_ours(&["rpool".into()], "/mnt/bko-target"));
         assert!(!p.is_ours(&["rpool".into()], "/mnt/elsewhere"));
         assert!(!ImportedPool { altroot: "-".into(), ..p }.is_ours(&["rpool".into()], "/mnt/bko-target"));
+    }
+
+    #[test]
+    fn fit_largest_takes_a_smaller_target() {
+        let t = tree();
+        let s = sys(&t);
+        let l = layout();
+        // vdc is 8 GiB, half of the source's 16: too small to fit.
+        let o = opts(&["--map", "vda=vdc", "--fit-largest", "50"]);
+        let p = prepare(&l, &o, &s);
+        assert_eq!(p.mapping.pairs, vec![("vda".to_string(), "vdc".to_string())]);
+        assert!(p.mapping.problems.iter().any(|x| x.contains("more than 50%")), "{:?}", p.mapping.problems);
+        // Without the flag it's the old refusal, which names the flag.
+        let o = opts(&["--map", "vda=vdc"]);
+        let p = prepare(&l, &o, &s);
+        assert!(p.mapping.problems.iter().any(|x| x.contains("the target is smaller") && x.contains("--fit-largest PCT")), "{:?}", p.mapping.problems);
+        // The same size: the flag changes nothing, and says nothing.
+        let o = opts(&["--map", "vda=vdb", "--fit-largest", "10"]);
+        let p = prepare(&l, &o, &s);
+        assert!(p.mapping.problems.is_empty() && p.mapping.notes.is_empty(), "{:?} {:?}", p.mapping.problems, p.mapping.notes);
+        assert!(!p.fit.changed() && p.fit.disks.is_empty() && p.mapping.bigger.is_empty());
+        assert!(matches!(p.layout, Cow::Borrowed(_)));
     }
 
     #[test]

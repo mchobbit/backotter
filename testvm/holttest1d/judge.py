@@ -3,8 +3,9 @@
 copy's after it booted.  Prints one DIFF line per field that differs, and
 exits 1 if any field outside IGNORED differs.
 
-Usage: judge.py [--grow BYTES | --degraded] SRC.json DST.json
+Usage: judge.py [--grow BYTES | --fit BYTES [--fit-pct PCT] | --degraded] SRC.json DST.json
        judge.py fs FSMETA.py SRC-META.json DST-META.json
+       judge.py --fit-plan BYTES [--fit-pct PCT] LAYOUT.json
 
 The fs form judges fsmeta.py's records of the source and the restored disk:
 every path must match but what load's boot stage writes by design (BOOT_STAGE).
@@ -12,6 +13,16 @@ every path must match but what load's boot stage writes by design (BOOT_STAGE).
 --grow BYTES is for a restore onto disks BYTES bigger than the source's: a
 disk's size, GPT's last usable LBA and backup header, and the protective MBR's
 partition may then differ by exactly that much, and nothing else may.
+
+--fit BYTES is for a restore onto disks BYTES bigger, or smaller when BYTES is
+negative, with `load --fit-largest PCT`, which fits the layout by contracting
+or expanding the largest partition of each disk.  Besides --grow's fields, that
+partition's size, the start of the partitions after it, and the numbers that
+follow from the new size (block counts, a filesystem's geometry, LUKS's and
+LVM's sizes) may differ, each by the amount judge.py works out for itself the
+way load does; nothing else may.  A disk that was resized and whose partitions
+were not is a DIFF too, so the mode can't pass a run that fitted nothing.
+--fit-pct PCT is load's own PCT, which caps how far a partition may expand.
 
 --degraded is for a source dumped with a RAID member's disk detached, and
 restored onto one disk fewer: each dump must show an md array with an empty
@@ -278,13 +289,345 @@ def grown(k, va, vb, grow, flat):
     return None
 
 
+MIB = 1 << 20
+# What load can remake at another size, so what the largest partition may hold
+# (docs/design/layload.md's fitting section): one of these filesystems, plain,
+# inside LUKS, or holding LVM; btrfs on one device only.  Anything else is
+# refused, so a dump that shows it means the run should never have got here.
+FIT_FS = ("ext2", "ext3", "ext4", "xfs", "btrfs", "f2fs", "jfs", "nilfs2")
+# The numbers a mkfs picks from the size it is given, which a fit therefore
+# changes.  Everything that makes up the filesystem's identity (its UUID,
+# label, block and inode size, features) is compared as always.
+FIT_GEOMETRY = {
+    "ext2": ("inodes", "inodes_per_group", "reserved_blocks", "reserved_gdt_blocks"),
+    "ext3": ("inodes", "inodes_per_group", "reserved_blocks", "reserved_gdt_blocks"),
+    "ext4": ("inodes", "inodes_per_group", "reserved_blocks", "reserved_gdt_blocks"),
+    "xfs": ("ag_count", "ag_blocks", "log_blocks"),
+    "f2fs": ("segment_count",),
+    "nilfs2": ("segments",),
+    "btrfs": (),
+    "jfs": (),
+}
+
+
+def _int(v):
+    """V when it is a plain integer, else None (a bool is not a size)."""
+    return v if isinstance(v, int) and not isinstance(v, bool) else None
+
+
+def _step(va, vb):
+    """How much integer field value VA moved to VB, or None."""
+    a, b = _int(va), _int(vb)
+    return None if a is None or b is None else b - a
+
+
+def _round(n, unit, up):
+    """N rounded to a whole UNIT, up or down.  N may be negative."""
+    q, r = divmod(abs(n), unit)
+    return (q + (1 if r and up else 0)) * unit * (-1 if n < 0 else 1)
+
+
+def _dm_of(st, want):
+    """The index of the dm device WANT(its dm map) picks, or None."""
+    for i, dm in enumerate(st.get("dm_devices") or []):
+        if want(dm.get("dm") or {}):
+            return i
+    return None
+
+
+def fit_plan(src, delta, pct):
+    """What `load --fit-largest PCT` does to SRC's layout on targets DELTA
+    bytes bigger (negative: smaller), worked out as load works it out: per
+    disk, the largest partition and the bytes it gains or loses, the
+    partitions that move with it, and the dm, LUKS and LVM objects whose sizes
+    follow.  What load would refuse outright is a problem here, not a guess:
+    the run should not have reached the judging."""
+    plan = {"delta": delta, "disks": {}, "dm": {}, "vgs": {}, "problems": []}
+    st = src.get("storage") or {}
+    for i, disk in enumerate(st.get("disks") or []):
+        who = disk.get("name")
+        ss = _int(disk.get("logical_sector_size")) or 512
+        size = _int(disk.get("size_bytes"))
+        if size is None or delta % ss or (size + delta) % ss:
+            plan["problems"].append(f"disk {who}: its size {size} and the target's {delta} aren't whole {ss}-byte sectors")
+            continue
+        parts = [(j, p) for j, p in enumerate(disk.get("partitions") or []) if not p.get("extended")]
+        if not parts:
+            # No partition table (or an MBR extended container alone): there is
+            # nothing to fit, and the room a bigger target has goes unused, as
+            # it does without --fit-largest.  Such a disk may be no target at
+            # all (a guest's /dev/ram0, a zvol), so its new size is allowed,
+            # not expected.
+            plan["disks"][i] = {"disk": who, "ss": ss, "amount": 0, "big": None,
+                                "name": None, "moved": set(), "table": False}
+            continue
+        # new_last: the target's last usable LBA, with the source's table
+        # length kept (GPT's tail of entries and backup header), else its last
+        # sector.
+        table = disk.get("partition_table") or {}
+        tail = 0
+        if table.get("type") == "gpt":
+            tail = size // ss - 1 - (_int(table.get("last_usable_lba")) or size // ss - 1)
+        new_last = (size + delta) // ss - 1 - tail
+        big = max(parts, key=lambda jp: _int(jp[1].get("sectors")) or 0)
+        sectors = _int(big[1].get("sectors")) or 0
+        tied = [p.get("name") for _, p in parts if (_int(p.get("sectors")) or 0) == sectors]
+        if len(tied) > 1:
+            plan["problems"].append(f"disk {who}: {', '.join(tied)} tie for largest, which load refuses: nothing to judge")
+            continue
+        if big[1].get("logical"):
+            plan["problems"].append(f"disk {who}: its largest partition {tied[0]} is an MBR logical one, which load refuses")
+            continue
+        end = max((_int(p.get("start_lba")) or 0) + (_int(p.get("sectors")) or 0) - 1 for _, p in parts)
+        bytes_big = _int(big[1].get("size_bytes")) or sectors * ss
+        if delta < 0:
+            # The overrun past the target's end, rounded up to a whole MiB; a
+            # target that lost only the source's own slack changes nothing.
+            amount = -_round((end - new_last) * ss, MIB, True) if end > new_last else 0
+            if pct is not None and -amount * 100 > pct * bytes_big:
+                plan["problems"].append(
+                    f"disk {who}: {-amount} is more than {pct}% of {tied[0]}, which load refuses: nothing to judge")
+                continue
+        elif delta > 0:
+            amount = _round((new_last - end) * ss, MIB, False) if end < new_last else 0
+            if pct is not None:
+                amount = min(amount, _round(bytes_big * pct // 100, MIB, False))
+        else:
+            amount = 0
+        plan["disks"][i] = {
+            "disk": who, "ss": ss, "amount": amount, "big": big[0], "name": tied[0], "table": True,
+            "bytes": bytes_big, "holds": (big[1].get("content") or {}).get("type") or "-",
+            "moved": {j for j, p in parts if (_int(p.get("start_lba")) or 0) > (_int(big[1].get("start_lba")) or 0)}}
+        if amount:
+            fit_stack(plan, st, big[1], amount, who)
+    return plan
+
+
+def fit_plan_lines(delta, pct, path):
+    """`judge.py --fit-plan DELTA [--fit-pct PCT] LAYOUT.json`: what the fit
+    comes to on that layout, for the test rig to check its own run against.
+    One line "DISK LARGEST AMOUNT LARGEST_BYTES HOLDS" per disk, then a
+    "problem:" line for each thing load would refuse; exit 1 if there was one."""
+    plan = fit_plan(load_json(path), delta, pct)
+    for d in plan["disks"].values():
+        print(d["disk"], d["name"] or "-", d["amount"], d.get("bytes") or 0, d.get("holds") or "-")
+    for p in plan["problems"]:
+        print(f"problem: {p}")
+    sys.exit(1 if plan["problems"] else 0)
+
+
+def fit_stack(plan, st, part, amount, who):
+    """The dm, LUKS and LVM objects on PART whose sizes follow the fit, and the
+    problems a stack load refuses leaves (the judging would be meaningless)."""
+    content = part.get("content") or {}
+    kind, holder, inner = content.get("type"), part.get("name"), content
+    if kind == "crypto_LUKS":
+        # The payload offset doesn't move: what is inside loses or gains what
+        # the partition does.
+        i = _dm_of(st, lambda m: m.get("target") == "crypt" and m.get("luks_uuid") == content.get("uuid"))
+        if i is None:
+            plan["problems"].append(f"disk {who}: {part.get('name')} is LUKS with nothing open on it in the dump")
+            return
+        plan["dm"][i] = amount
+        holder = (st["dm_devices"][i].get("name"))
+        inner = st["dm_devices"][i].get("content") or {}
+        kind = inner.get("type")
+    if kind == "LVM2_member":
+        fit_vg(plan, st, inner, holder, amount, who)
+    elif kind not in FIT_FS:
+        plan["problems"].append(f"disk {who}: {part.get('name')} holds {kind}, which load refuses to fit")
+    elif kind == "btrfs" and (_int(inner.get("num_devices")) or 1) > 1:
+        plan["problems"].append(f"disk {who}: {part.get('name')} is one device of a btrfs of {inner['num_devices']}, which load refuses to fit")
+
+
+def fit_vg(plan, st, pv_content, holder, amount, who):
+    """The volume group on HOLDER: the PV's new size and extent count, and the
+    logical volume a shrink takes the rest out of (item 8 of the feature:
+    free extents first, then the largest LV, by whole extents from its end)."""
+    groups = ((st.get("lvm") or {}).get("volume_groups")) or []
+    found = [(v, vg) for v, vg in enumerate(groups)
+             if any(pv.get("device") == holder for pv in vg.get("physical_volumes") or [])]
+    if len(found) != 1:
+        plan["problems"].append(f"disk {who}: {len(found)} volume groups on {holder} in the dump")
+        return
+    v, vg = found[0]
+    pvs = vg.get("physical_volumes") or []
+    if len(pvs) > 1:
+        plan["problems"].append(f"disk {who}: volume group {vg.get('name')} has {len(pvs)} PVs, which load refuses to fit")
+        return
+    extent = _int(vg.get("extent_size_bytes"))
+    pe_count = _int(pvs[0].get("pe_count"))
+    pe_start = _int(pvs[0].get("pe_start_bytes"))
+    dev_size = _int(pvs[0].get("dev_size_bytes"))
+    lvs = vg.get("logical_volumes") or []
+    if not extent or pe_count is None or pe_start is None or dev_size is None:
+        plan["problems"].append(f"disk {who}: volume group {vg.get('name')} is missing its extent or PV sizes in the dump")
+        return
+    # The PV covers the whole of HOLDER, so the extents it gains or loses are
+    # what fits in the new area; its leftover tail stays whatever it was.
+    spare = (dev_size - pe_start) - pe_count * extent
+    new_count = pe_count + (spare + amount) // extent
+    used = sum(_int(s.get("extent_count")) or 0 for lv in lvs for s in lv.get("segments") or [])
+    free = pe_count - used
+    lost = pe_count - new_count
+    shrink, lv = 0, None
+    if lost > free:
+        # The largest LV gives up the rest, and must be one load can remake.
+        big = max(lvs, key=lambda x: _int(x.get("size_bytes")) or 0, default=None)
+        sizes = [_int(x.get("size_bytes")) or 0 for x in lvs]
+        if big is None or sizes.count(_int(big.get("size_bytes")) or 0) > 1:
+            plan["problems"].append(f"disk {who}: volume group {vg.get('name')} has no single largest LV, which load refuses")
+            return
+        segs = big.get("segments") or []
+        if any((s.get("type") or "") != "striped" or (_int(s.get("stripe_count")) or 1) != 1 for s in segs):
+            plan["problems"].append(f"disk {who}: LV {big.get('name')} isn't linear, which load refuses to shrink")
+            return
+        shrink = (lost - free) * extent
+        lv = lvs.index(big)
+        dm = _dm_of(st, lambda m: m.get("target") == "lvm" and m.get("vg") == vg.get("name") and m.get("lv") == big.get("name"))
+        if dm is not None:
+            plan["dm"][dm] = -shrink
+    plan["vgs"][v] = {"amount": amount, "extent": extent, "dev_size": dev_size + amount,
+                      "pe_count": new_count, "lv": lv, "shrink": shrink}
+
+
+def fit_fs_expect(want, flat, at, container, amount):
+    """What the fit decides about the sizes of the filesystem (or LVM PV) whose
+    fields start at AT, inside a CONTAINER that changed by AMOUNT bytes: one
+    that filled its container goes on filling it, with the block count that
+    follows.  One the source left short of its end is its mkfs's business, not
+    the fit's (JFS's aggregate is 52 MiB under its partition), so nothing is
+    expected of it; fit_may_differ lets it move."""
+    kind = flat.get(at + "type")
+    if kind == "LVM2_member":
+        fields = ("device_size",)
+    elif kind == "btrfs":
+        fields = ("total_bytes", "device.total_bytes")
+    elif kind in FIT_FS:
+        fields = ("size_bytes",)
+    else:
+        return
+    if container is None or _int(flat.get(at + fields[0])) != container:
+        return
+    for f in fields:
+        want[at + f] = container + amount
+    block = _int(flat.get(at + "block_size"))
+    blocks = _int(flat.get(at + "blocks"))
+    if block and blocks is not None and amount % block == 0:
+        want[at + "blocks"] = blocks + amount // block
+
+
+def fit_expect(plan, flat):
+    """Every field the fit must change, with the value it must then have, from
+    the source's own numbers.  A restored dump that left one of them as it was
+    is as much a DIFF as one that moved it by the wrong amount, so a run that
+    fitted nothing can't pass."""
+    want = {}
+
+    def step(k, by):
+        v = _int(flat.get(k))
+        if v is not None:
+            want[k] = v + by
+
+    delta = plan["delta"]
+    for i, d in plan["disks"].items():
+        at, ss, amount = f"storage.disks.{i}.", d["ss"], d["amount"]
+        if delta and d["table"]:
+            step(at + "size_bytes", delta)
+            for f in ("partition_table.last_usable_lba", "partition_table.backup_lba",
+                      "partition_table.protective_mbr.entries.0.sectors"):
+                step(at + f, delta // ss)
+            step(at + "partition_table.protective_mbr.entries.0.size_bytes", delta)
+        if not amount:
+            continue
+        p = at + f"partitions.{d['big']}."
+        step(p + "sectors", amount // ss)
+        step(p + "end_lba", amount // ss)
+        step(p + "size_bytes", amount)
+        fit_fs_expect(want, flat, p + "content.", _int(flat.get(p + "size_bytes")), amount)
+        for j in d["moved"]:
+            q = at + f"partitions.{j}."
+            step(q + "start_lba", amount // ss)
+            step(q + "end_lba", amount // ss)
+            step(q + "start_bytes", amount)
+    for i, amount in plan["dm"].items():
+        at = f"storage.dm_devices.{i}."
+        step(at + "size_bytes", amount)
+        fit_fs_expect(want, flat, at + "content.", _int(flat.get(at + "size_bytes")), amount)
+    for v, g in plan["vgs"].items():
+        at = f"storage.lvm.volume_groups.{v}."
+        want[at + "physical_volumes.0.dev_size_bytes"] = g["dev_size"]
+        want[at + "physical_volumes.0.pe_count"] = g["pe_count"]
+        if g["shrink"]:
+            step(at + f"logical_volumes.{g['lv']}.size_bytes", -g["shrink"])
+    return want
+
+
+def fit_may_differ(k, vb, plan, flat, want):
+    """Why field K may differ under --fit by an amount judge.py doesn't work
+    out, or None.  The sizes it does work out are WANT's, fit_expect's map."""
+    m = re.match(r"^storage\.(disks|dm_devices)\.(\d+)\.", k)
+    if m:
+        dm = m.group(1) == "dm_devices"
+        where = plan["dm"] if dm else plan["disks"]
+        if int(m.group(2)) not in where:
+            return None
+        rest = k[m.end():]
+        if rest == "size":
+            return "a disk's or volume's size, in words"
+        if not dm and rest == "size_bytes" and not plan["disks"][int(m.group(2))]["table"] \
+                and _step(flat.get(k), vb) == plan["delta"]:
+            # A target with no partition table: nothing to fit on it, so it is
+            # only bigger or smaller, as it is without --fit-largest.
+            return "the target disk is of another size, with no partition table to fit"
+        # The filesystem the fit remade: the fitted partition's, or the one in
+        # what that partition holds (LUKS, an LVM volume).
+        if dm:
+            fs = re.fullmatch(r"content\.(.+)", rest)
+        else:
+            big = plan["disks"][int(m.group(2))]["big"]
+            fs = big is not None and re.fullmatch(rf"partitions\.{big}\.content\.(.+)", rest)
+        at = re.sub(r"[^.]+$", "", k)
+        kind = flat.get(at + "type")
+        if fs and "." not in fs.group(1) and kind in FIT_FS:
+            field = fs.group(1)
+            if field in FIT_GEOMETRY[kind]:
+                return "a mkfs picks this from the size it is given"
+            if field in ("size_bytes", "blocks") and at + field not in want:
+                return "the source's filesystem was short of its container's end: its new size is its mkfs's"
+        return None
+    m = re.match(r"^storage\.lvm\.volume_groups\.(\d+)\.logical_volumes\.(\d+)\.", k)
+    if m and int(m.group(1)) in plan["vgs"]:
+        g, rest = plan["vgs"][int(m.group(1))], k[m.end():]
+        if not g["shrink"]:
+            return None
+        if int(m.group(2)) == g["lv"] and re.fullmatch(r"segments\.\d+\.extent_count", rest):
+            return "the shrunk LV's segments, by what it gave up (its size is compared)"
+        if re.fullmatch(r"segments\.\d+\.stripes\.1", rest):
+            return "the extents left were renumbered downward in order, keeping pe_start"
+    return None
+
+
 def main():
     if sys.argv[1] == "fs":
         judge_fs(*sys.argv[2:5], no_atime="--no-atime" in sys.argv[5:])
-    grow = 0
-    if sys.argv[1] == "--grow":
-        grow = int(sys.argv[2])
+    grow, fit, pct, plan_only = 0, None, None, None
+    while sys.argv[1] in ("--grow", "--fit", "--fit-pct", "--fit-plan"):
+        if sys.argv[1] == "--grow":
+            grow = int(sys.argv[2])
+        elif sys.argv[1] == "--fit":
+            fit = int(sys.argv[2])
+        elif sys.argv[1] == "--fit-plan":
+            plan_only = int(sys.argv[2])
+        else:
+            pct = int(sys.argv[2].rstrip("%"))
         del sys.argv[1:3]
+    if plan_only is not None:
+        fit_plan_lines(plan_only, pct, sys.argv[1])
+    if grow and fit is not None:
+        sys.exit("judge.py: --grow and --fit are two modes (--fit allows --grow's fields too)")
+    if pct is not None and fit is None:
+        sys.exit("judge.py: --fit-pct is load's PCT, for --fit")
     degraded = sys.argv[1] == "--degraded"
     if degraded:
         del sys.argv[1]
@@ -300,9 +643,13 @@ def main():
             st["swaps"].sort(key=lambda w: w.get("file") or "")
         if isinstance(st.get("mounts"), list):
             st["mounts"].sort(key=lambda m: (m.get("target") or "", m.get("source") or ""))
+    # The fit is worked out from the source's layout alone, before anything is
+    # compared, as load works it out from the same numbers.
+    plan = fit_plan(src, fit, pct) if fit is not None else None
     a, b = {}, {}
     flatten(src, "", a)
     flatten(dst, "", b)
+    want = fit_expect(plan, a) if plan is not None else {}
     # md: "active" is "clean" with writes in flight (it turns clean after
     # safe_mode_delay idle), so either is a running, healthy array.
     for m in (a, b):
@@ -319,6 +666,11 @@ def main():
         va, vb = a.get(k), b.get(k)
         if not why and grow:
             why = grown(k, va, vb, grow, a)
+        if not why and plan is not None:
+            if k in want and vb == want[k]:
+                why = "the fit's own: the size judge.py works out for it (checked below)"
+            else:
+                why = fit_may_differ(k, vb, plan, a, want)
         if not why and k.startswith("storage.zfs.zpool_cache.") and k not in a:
             why = "zpool.cache fields only the rescue system's newer OpenZFS writes"
         if not why and re.search(r"\.features\.[a-z_]+$", k) and {va, vb} <= {"enabled", "active"}:
@@ -364,6 +716,22 @@ def main():
             print(f"DIFF md:degraded: source {es} -> restored {ed}")
         else:
             print(f"degraded as the source, as --degraded asks: {es}")
+    if plan is not None:
+        # A fit that didn't happen must not pass: every size the fit decides
+        # has to be the one judge.py worked out, whether the restored dump
+        # moved it elsewhere or left it alone.
+        for p in plan["problems"]:
+            real.append("fit:plan")
+            print(f"DIFF fit:plan: {p}")
+        missed = [k for k in sorted(want) if b.get(k, "<absent>") != want[k]]
+        for k in missed:
+            real.append(f"fit:{k}")
+            print(f"DIFF fit:{k}: {json.dumps(a.get(k, '<absent>'))} should have been fitted to "
+                  f"{want[k]}, and is {json.dumps(b.get(k, '<absent>'))}")
+        if not missed and not plan["problems"]:
+            for d in plan["disks"].values():
+                what = f"{d['name']} by {d['amount']}" if d["amount"] else "no partition of it resized"
+                print(f"fitted as --fit asks: {d['disk']} by {plan['delta']} bytes, {what}")
     for why, keys in ignored.items():
         print(f"ignored ({why}): {len(keys)}: {', '.join(keys[:6])}{' ...' if len(keys) > 6 else ''}")
     if dst.get("warnings"):

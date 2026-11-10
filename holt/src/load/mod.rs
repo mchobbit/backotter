@@ -14,6 +14,7 @@
 
 pub mod commands;
 pub mod exec;
+pub mod fit;
 pub mod layout;
 pub mod plan;
 pub mod status;
@@ -33,6 +34,10 @@ pub const RUN_DIR: &str = if cfg!(target_os = "linux") { "/run/bko-holt" } else 
 /// restore's archiver, and the snapshot it restores unless --snapshot says.
 pub const DEFAULT_ARCHIVER: &str = "rustic-bko";
 pub const DEFAULT_SNAPSHOT: &str = "latest";
+
+/// The most --fit-largest takes: half a partition is as far as version 1
+/// goes either way.
+pub const FIT_MAX: u64 = 50;
 
 pub const EXIT_OK: u8 = 0;
 pub const EXIT_FAILED: u8 = 1;
@@ -92,6 +97,10 @@ pub struct Options {
     pub maps: Vec<(String, String)>,
     pub erase: Vec<String>,
     pub target: String,
+    /// --fit-largest PCT: a target a little smaller or bigger may be used by
+    /// contracting or expanding each disk's largest partition by at most
+    /// this many percent (fit.rs).
+    pub fit_largest: Option<u64>,
     pub new_uuids: bool,
     /// --key-file NAME=FILE: a LUKS container (by its crypttab name) or a
     /// ZFS encryption root (by dataset).
@@ -118,6 +127,7 @@ impl Options {
             maps: vec![],
             erase: vec![],
             target: DEFAULT_TARGET.to_string(),
+            fit_largest: None,
             new_uuids: false,
             key_files: vec![],
             no_nvram: false,
@@ -147,7 +157,7 @@ impl Options {
 }
 
 pub const USAGE: &str = "Usage: bko-holt load LAYOUT.json [--through STAGE | --only STAGE] [--commit]
-                     [--map SRC=DST]... [--erase DEV]...
+                     [--map SRC=DST]... [--erase DEV]... [--fit-largest PCT]
                      [--target DIR] [--new-uuids] [--key-file NAME=FILE]...
                      [--no-nvram] [--removable]
                      [--repo REPO [--password-file FILE] [--snapshot ID]
@@ -174,6 +184,11 @@ Rebuilds the disks LAYOUT.json (from `bko-holt dump`) describes, in stages:
   --map SRC=DST     the source disk SRC (its name in the JSON, e.g. vda)
                     goes to DST (/dev/sdb, /dev/disk/by-id/...)
   --erase DEV       a target disk that isn't blank may be wiped
+  --fit-largest PCT a target disk a little smaller or bigger than its
+                    source may be used: each disk's largest partition
+                    contracts or expands by at most PCT percent (1 to 50),
+                    and everything else keeps its size.  Linux layouts
+                    only; plan prints what changes
   --target DIR      where mount builds the tree (default /mnt/bko-target)
   --new-uuids       new identifiers everywhere instead of the original ones
   --key-file NAME=FILE
@@ -243,6 +258,14 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
                     return Err(format!("--target {v}: give an absolute directory other than /"));
                 }
                 o.target = v.trim_end_matches('/').to_string();
+            }
+            "--fit-largest" => {
+                let v = value(&mut it, a)?;
+                let n: u64 = v.strip_suffix('%').unwrap_or(&v).parse().map_err(|_| format!("--fit-largest {v}: give a whole percentage, 1 to {FIT_MAX}"))?;
+                if !(1..=FIT_MAX).contains(&n) {
+                    return Err(format!("--fit-largest {v}: give a whole percentage, 1 to {FIT_MAX}"));
+                }
+                o.fit_largest = Some(n);
             }
             "--new-uuids" => o.new_uuids = true,
             "--key-file" => {
@@ -416,6 +439,7 @@ mod tests {
     fn every_flag() {
         let o = opts(&[
             "--map", "vda=/dev/sdb", "x.json", "--map", "vdb=/dev/disk/by-id/ata-X", "--erase", "/dev/sdb", "--target", "/mnt/t/", "--new-uuids",
+            "--fit-largest", "15%",
             "--key-file", "root_crypt=/tmp/k", "--no-nvram", "--removable", "--commit", "--only", "partition", "--sysroot", "/tmp/fake",
             "--repo", "sftp:nas:/bko", "--password-file", "/run/pw", "--snapshot", "1a2b3c", "--archiver", "/usr/local/bin/rustic-bko",
         ]);
@@ -428,6 +452,10 @@ mod tests {
         assert_eq!(o.erase, vec!["/dev/sdb".to_string()]);
         assert_eq!(o.target, "/mnt/t");
         assert!(o.new_uuids && o.no_nvram && o.removable && o.commit);
+        assert_eq!(o.fit_largest, Some(15));
+        assert_eq!(opts(&["l", "--fit-largest", "1"]).fit_largest, Some(1));
+        assert_eq!(opts(&["l", "--fit-largest", "50"]).fit_largest, Some(50));
+        assert_eq!(opts(&["l"]).fit_largest, None);
         assert_eq!(o.key_file("root_crypt"), Some("/tmp/k"));
         assert_eq!(o.key_file("other"), None);
         assert_eq!(o.only, Some(Stage::Partition));
@@ -451,6 +479,10 @@ mod tests {
         assert!(err(&["a", "--target", "relative"]).contains("absolute"));
         assert!(err(&["a", "--target", "/"]).contains("absolute"));
         assert!(err(&["a", "--erase"]).contains("needs a value"));
+        assert!(err(&["a", "--fit-largest"]).contains("needs a value"));
+        for v in ["0", "51", "100", "lots", "", "5%%", "-5"] {
+            assert!(err(&["a", "--fit-largest", v]).contains("whole percentage, 1 to 50"), "{v:?}");
+        }
         assert_eq!(parse_args(&args(&["--help"])).unwrap(), Parsed::Help);
     }
 

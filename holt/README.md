@@ -20,6 +20,7 @@ bko-holt load layout.json --map vda=/dev/sdb                  # plan: writes not
 bko-holt load layout.json --only status --map vda=/dev/sdb
 bko-holt load layout.json --map vda=/dev/sdb --erase /dev/sdb \
     --repo /srv/backup --password-file /run/pw --through close --commit
+bko-holt load layout.json --map vda=/dev/sdb --fit-largest 5   # onto a smaller disk
 ```
 
 `dump` refuses to run (exit 3) on a system it doesn't support, and `load`
@@ -112,6 +113,17 @@ stage is next.  The writing stages, `partition`, `assemble`, `format`,
 (without it they print them), and read the disks back after each stage to
 see it took.  `--through close` with `--repo` is a whole restore.
 
+Each target disk must be at least as big as its source, with the same
+logical sector size.  `--fit-largest PCT` takes one a little smaller or
+bigger: per disk, the largest partition contracts or expands by at most PCT
+percent (1 to 50) and everything else keeps its size, identifiers and all.
+Nothing is resized in place; `load` remakes the filesystems anyway, so the
+fit only chooses other numbers, once, before anything is erased, and `plan`
+prints what it changed.  It's for Linux layouts, one filesystem, LUKS or LVM
+on the partition, and it refuses the shrink unless the dump's own figures
+show the data still fits with room to spare (`src/load/fit.rs`,
+`docs/design/layload.md`).
+
 ## Reporting a bug
 
 ```
@@ -174,11 +186,14 @@ cargo test
   `zpool.cache` and vdev label in `tests/fixtures/`), and whole fake Debian 13
   systems (`src/scenarios.rs`: BIOS/MBR/btrfs, UEFI/GPT/shim, LUKS+LVM, md
   RAID1, ZFS, unprivileged).  `src/load/`: argument parsing, the layout
-  contract, disk mapping and its refusals, and the commands each stage
-  would run, on fake rescue systems.
+  contract, disk mapping and its refusals, `--fit-largest`'s arithmetic and
+  refusals (`src/load/fit.rs`, over every scenario's layout as well), and the
+  commands each stage would run, on fake rescue systems.
 - `tests/realtools.rs`: images made by mkfs.*, mkswap, cryptsetup, sfdisk
   and sgdisk, read by both bko-holt and blkid, dumpe2fs, xfs_db, btrfs,
-  cryptsetup and sfdisk.  A missing tool fails its test
+  cryptsetup and sfdisk; and `--fit-largest`'s own numbers, by applying the
+  sfdisk script and mkfs commands it plans to smaller images and reading the
+  result back (f2fs and NILFS2 too, so it needs f2fs-tools and nilfs-tools).  A missing tool fails its test
   (`BKO_HOLT_ALLOW_MISSING_TOOLS=1` skips instead).  Needs util-linux,
   e2fsprogs, xfsprogs, btrfs-progs, dosfstools, exfatprogs, ntfs-3g,
   jfsutils, cryptsetup-bin, gdisk and xorriso.

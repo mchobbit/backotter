@@ -47,7 +47,7 @@ HERE=$(dirname "$(realpath "$0")")
 L=/bkoscratch/holttest1d
 H=$(hostname -s)
 # A todo line (README "Queues: ht1-queue.sh"); [+] is a plus in bash and awk alike.
-LINE_RE='^[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded))?(=[0-9.]+)?(%[0-9.]+)?$'
+LINE_RE='^[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse))?(=[0-9.]+)?(%[0-9.]+)?$'
 NUM_RE='^[0-9]+([.][0-9]+)?$'
 usage() { sed -n '2,/^set -uo/p' "$0" | sed '$d; s/^# \{0,1\}//' >&2; exit 2; }
 die() { echo "ht1-queue: $*" >&2; exit 2; }
@@ -254,7 +254,7 @@ host_runs() {
         if ! { [[ -e $r/.ht/pid ]] && alive "$(cat "$r/.ht/pid" 2>/dev/null)"; }; then
             h=$(cat "$r/.ht/held" 2>/dev/null); [[ $h =~ ^[0-9]+$ && -d /proc/$h ]] || continue
         fi
-        gv=${r##*/}; [[ $gv =~ ^(.*)-(bigger|oneshot|degraded)$ ]] && gv=${BASH_REMATCH[1]}
+        gv=${r##*/}; [[ $gv =~ ^(.*)-(bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse)$ ]] && gv=${BASH_REMATCH[1]}
         echo "$gv 0"
     done
 }

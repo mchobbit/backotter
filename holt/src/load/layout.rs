@@ -72,7 +72,7 @@ impl Disk {
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Layout {
     pub v: Value,
     pub disks: Vec<Disk>,
@@ -277,6 +277,15 @@ impl Layout {
 
 #[cfg(test)]
 pub mod sample {
+    /// The same dump with the figures --fit-largest needs: the root
+    /// filesystem's size on its partition, and how much of it is used.
+    pub fn fittable() -> String {
+        bios_mbr().replace("\"devid\": 1", "\"devid\": 1, \"total_bytes\": 14178844672").replace(
+            "\"mounts\": []",
+            "\"mounts\": [{\"target\": \"/\", \"source\": \"/dev/vda3\", \"device\": \"vda3\", \"fstype\": \"btrfs\", \"size_bytes\": 14178844672, \"used_bytes\": 2147483648}]",
+        )
+    }
+
     /// A minimal dump: Debian 13, one BIOS + MBR disk with /boot, swap and /.
     pub fn bios_mbr() -> String {
         r#"{

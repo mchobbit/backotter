@@ -175,7 +175,9 @@ filesystem on the host, from a raw throwaway copy (RedoxFS through its FUSE
 driver from `~/backotter-work/tools/redox`, so Redox runs on Cinqcent;
 Sculpt's GENODE ext2 read-only); a boot is checked by logging in as root on
 Redox's serial console (`redox/console.py`), and by `sculpt-check.sh` for
-Sculpt.  The rebuild is `ht1.sh`'s, in the Linux rescuer.
+Sculpt.  The rebuild is `ht1.sh`'s, in the Linux rescuer.  It takes
+`HT_VARIANT=refuse` as well as `bigger` and `oneshot`: see "The fitting
+variants".
 
 Other tools these runs need:
 
@@ -249,7 +251,9 @@ its own (`RUN/GUEST-VARIANT`): `oneshot` runs the rebuild as one
 `--through close --commit`, and `bigger` rebuilds onto disks 1 GiB bigger
 than the source's, judged with `judge.py --grow`, which lets only a disk's
 size, GPT's last usable LBA and backup header and the protective MBR move
-by exactly that much.  `degraded` runs the source with its last disk
+by exactly that much.  `smaller`, `fitbigger`, `nearfull` and `refuse` are
+"The fitting variants" below, for `load --fit-largest`.  `degraded` runs
+the source with its last disk
 detached, a RAID member's, so its arrays are degraded when it is dumped
 and backed up; `load` recreates them with `missing` slots onto one disk
 fewer, and the restored machine must boot degraded with the same slots
@@ -315,6 +319,81 @@ It differs from the plan above in these ways:
   device UUIDs, LVM's last-writer fields, mount order, usage, zram.
 - `vm-run` takes its SSH port from `SSH_PORT`; `ht1.sh` sets it from
   `HT_PORT`.
+
+## The fitting variants
+
+`load --fit-largest PCT` lets a target disk a little smaller or bigger than
+its source be used, by contracting or expanding the largest partition of
+each disk by at most PCT percent (`docs/design/layload.md`, the fitting
+section).  Four `HT_VARIANT` values test it, each in its own
+`RUN/GUEST-VARIANT` directory as the others are.  All four make their
+targets a gigabyte away from the source's disks, every disk, as `bigger`
+does, and give `load --fit-largest 10%`; none of them needs more room than
+`bigger` does, except `nearfull`, which fills the source.
+
+- **`smaller`**: targets 1 GiB smaller, the whole rebuild, judged with
+  `judge.py --fit -1073741824 --fit-pct 10`.  Before anything is erased it
+  also checks that `plan` **without** the flag still refuses the smaller
+  target (naming the size, as it always did), that `plan --fit-largest 1%`
+  refuses when a gigabyte is more than 1% of the guest's largest partition
+  (skipped, with a line saying so, for a guest whose largest partition is
+  100 GiB or more), and that the target images are byte for byte what they
+  were after those plans, by their md5 on the host.
+- **`fitbigger`**: targets 1 GiB bigger, the whole rebuild, judged the same
+  way with `+1073741824`: the largest partition grows into the room, or,
+  for LVM, the PV grows and the group gains free extents and no LV changes.
+- **`nearfull`**: `smaller`'s targets, but the source phase fills `/` in
+  the source overlay with random files under `/var/tmp` (nothing of the
+  system is deleted) until `df` shows under 900 MiB free, then dumps it.
+  `plan --fit-largest 10%` must then refuse, naming what the filesystem
+  holds and has free, and the targets must be untouched.  A pass is the
+  refusal: there is no backup, restore or verify phase.
+- **`refuse`**: `smaller`'s targets for a guest whose largest partition is
+  a stack `--fit-largest` won't resize.  `plan` must refuse naming the
+  stack, and the targets must be untouched; no backup or restore either.
+  Its guests are the md ones (`debian13-stack`, `ubuntu26-raid`,
+  `rocky10-raid5`), the ZFS ones (`debian13-zfs`, `ubuntu24`,
+  `ubuntu26-zfs`, `ubuntu26-zfsmirror`) and `fedora44-raid`, whose btrfs
+  spans two disks.  `ht1-offline.sh` takes `refuse` too, for `redox` and
+  `sculpt2610`: a layout of another family keeps its own partition table,
+  which `--fit-largest` doesn't rewrite, so a smaller target stays refused
+  there.  (`ht1-bsd.sh` doesn't: its rescuer is built in the backup phase,
+  so a BSD refusal would have to back the guest up first.)
+
+`judge.py --fit BYTES [--fit-pct PCT]` works the new geometry out from the
+source dump alone, as `load` works it out from the same numbers: the last
+usable LBA the target has, the overrun past it rounded up to a whole MiB
+(or, for a bigger target, the room rounded down and capped by PCT), and the
+largest partition of each disk.  Anything load would have refused outright
+is reported rather than judged: an exact tie for largest, an MBR logical
+partition, a shrink past PCT, a stack it won't resize.  Then every size
+that follows: the partition and the ones after it, the filesystem's own size and
+block count, a mkfs's geometry (XFS's AGs, ext's inode count, F2FS's
+segments), LUKS's payload and what is inside it, and LVM's PV size, extent
+count and the one LV a shrink takes the rest from.  Each of those must come
+back at exactly the value judge.py worked out, so a run that fitted nothing
+fails as surely as one that fitted the wrong partition.  Everything else
+must match as it must without the flag: every UUID, label, type, mount
+option, and the other partitions' sizes.  A filesystem the source left short
+of its container's end (JFS's aggregate) is its mkfs's business, and
+judge.py says so rather than expecting a figure.  `judge.py --fit-plan
+BYTES [--fit-pct PCT] LAYOUT.json` prints what the fit comes to on a layout
+(`DISK LARGEST AMOUNT LARGEST_BYTES HOLDS` per disk, then its problems),
+which is what the drivers check their own run against.  A disk with no
+partition to fit (a zvol, a guest's `/dev/ram0`) prints `-` in those
+columns, which is no stack for the `refuse` check to look for in the
+refusal; `judge-test.py` (`python3 -I judge-test.py`, no host and no VM)
+holds the mode's cases, the drivers' reading of a plan among them.
+
+Which guests suit which variant comes from the largest partition of each
+disk: `smaller` and `fitbigger` want a stack load can remake, which is
+every plain-filesystem guest (ext2/3/4, XFS, btrfs on one device, F2FS,
+JFS, NILFS2), `omarchy` (LUKS on a plain partition, btrfs inside) and
+`rocky10-lvm` (a PV with one group, `/` XFS and swap).  `nearfull` wants a
+guest that is nearly full already, since the fill is written into the RAM
+disk: `pop24` (3.0 GiB free), `omarchy` (3.8), `mint22` (4.2).
+`ram-size.sh` adds 4 GiB to `nearfull`'s D for it; give the queue line its
+own `=D` if that isn't enough.
 
 ## Where a run works, and what it keeps
 
@@ -492,7 +571,14 @@ All three drivers write the same way, through `ht1-lib.sh`:
   --reserve 1 1`), runs the lib's cases with fake phases in
   `/mnt/bko-ram/NAME` and `/bkoscratch/NAME` (`HT1_TEST_NAME`, default
   `ht1-lib-test`; another refuses a NAME whose directories hold anything),
-  its ledger rows in its own fixtures, never the default ledger.
+  its ledger rows in its own fixtures, never the default ledger.  Its last
+  case needs no RAM disk: that the `HT_VARIANT` names in the drivers, in
+  `ht1-queue.sh`'s line pattern and in `ram-size.sh` are one list, and that
+  a name none of them has stops a run before it makes anything.
+- **judge.py's own self-test**, `judge-test.py` (`python3 -I
+  judge-test.py`, or `python3 -m unittest discover`), over hand-made dumps:
+  the `--fit` mode's cases, where a wrong partition, a wrong amount, a
+  changed UUID or a fit that didn't happen must all fail.
 
 Each run also records, in `logs/`:
 
@@ -522,7 +608,9 @@ counts only the guest's whole passes there (all four phases, not from K):
 with two or more, D is 1.10 × the largest peak of the last three, plus
 0.25 GiB, rounded up; with fewer, it is never below the guest's row in
 `ram-sizes.tsv` (r3all's sizes; the BSD rows are estimates), and a guest
-without a row gets a default.  Its header has the details.
+without a row gets a default.  A variant without a row of its own has its
+guest's, and `+nearfull` 4 GiB on top, for the free space that variant
+writes away in the source overlay.  Its header has the details.
 
 ## Queues: ht1-queue.sh
 
@@ -544,7 +632,8 @@ as root, no RAM disk) says why in its `.out` file only: its log,
 `queue/RUN/runner-HOST.log`, begins once it runs.
 
 - **todo** has a line per guest, `GUEST[+VARIANT][=D][%M]` (`#` starts a
-  comment): `+bigger`, `+oneshot` or `+degraded` is `HT_VARIANT`, and `=D`
+  comment): `+bigger`, `+oneshot`, `+degraded`, `+smaller`, `+fitbigger`,
+  `+nearfull` or `+refuse` is `HT_VARIANT`, and `=D`
   and `%M` override ram-size.sh's sizes.  `ht1-queue.sh --order GUEST...`
   prints guests biggest first, for writing it.  Lines are taken from the
   top; a line that doesn't parse goes to `todo.bad`, and each line taken to

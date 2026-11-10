@@ -1,8 +1,9 @@
-# BackOtter's user interfaces: a terminal UI on every stick, a GUI later
+# BackOtter's user interfaces: a Whiptail-style terminal UI on every stick
 
 Status: draft for discussion.  Nothing here is built.  It proposes what
-bko-holt has to change so a UI can drive it, a terminal UI for the rescue
-sticks, and where a graphical UI fits later.  Open questions are at the end.
+bko-holt has to change so a UI can drive it, and a Whiptail-style 80x24
+terminal UI for the rescue sticks (decided 2026-11-09).  A graphical UI is for
+the backup side, later.  Open questions are at the end.
 
 ## Goal
 
@@ -32,9 +33,9 @@ There are two places, with very different limits:
 2. **The rescue stick**, to rebuild a whole machine.  This document is about
    this one.  The UI runs on whatever console the stick booted to:
 
-| Platform  | Console it gets                          | Graphics on the image |
+| Platform  | Console it gets                          | Display server        |
 |-----------|------------------------------------------|-----------------------|
-| linux     | fbcon (KMS), UTF-8; or a serial console  | none                  |
+| linux     | fbcon (UEFI), VGA text (BIOS); or serial | none                  |
 | freebsd   | vt(4), UTF-8; or serial                  | none                  |
 | netbsd    | wscons; or serial                        | none                  |
 | openbsd   | wscons; or serial                        | none                  |
@@ -47,17 +48,25 @@ server from another machine.
 
 ### Why not a GUI on the stick
 
-- Seven platforms, and only Haiku's image has a display stack.  The BSDs
-  and illumos would need X11, since Wayland is patchy outside Linux.  That's
-  a graphics stack to build, ship and test on each one.
-- Hundreds of MB on every image.
-- GPU drivers on unknown hardware, at the one moment nothing may fail.
-  A text console works on every machine that can boot the stick at all.
-- Serial consoles and ssh, where there is no screen, still need a UI.
+A framebuffer GUI by default, with this terminal UI as its fallback, was
+looked at and turned down on 2026-11-09.  Drawing straight to the framebuffer
+needs no display server and adds only a few MB, so size isn't the reason:
+
+- It wouldn't reach most platforms.  It works on Linux, and on FreeBSD and
+  NetBSD under UEFI.  OpenBSD (once a GPU driver attaches), DragonFly and
+  illumos are impractical or unproven, and BIOS boots come up in text.
+  Serial consoles and ssh have no screen at all.
+- It isn't safer where it matters.  The erase step would show the same
+  words and take the same typed confirmation.
+- It fails in new ways.  A program that owns the display also owns
+  recovering it, so a monitor power-cycle hours into a restore can leave a
+  black screen the kernel's console would have survived.  A black screen
+  can't be detected from software, so the fallback can't be automatic.
+- It costs far more: an estimated 4,000 to 6,500 lines beyond this UI, and
+  testing that needs real GPUs, because QEMU can't stand in for their drivers.
 
 So the stick's UI is a terminal UI, the same on every platform.  Haiku runs
-it in a Terminal window.  "A graphical mode on the Linux stick" under "Later"
-is the cheap way to add graphics there if people want it.
+it in a Terminal window.
 
 ## bko-holt stays a CLI; the UI is a separate program
 
@@ -70,7 +79,7 @@ code to call it directly:
 - Whatever the UI does, an administrator can do by hand with the same
   commands, and the UI can show them (see "Review").  Nothing it does is
   hidden or special.
-- The same protocol serves the terminal UI, a GUI later, and test harnesses
+- The same protocol serves the terminal UI and test harnesses
   (HoltTest1 could read the events instead of parsing text).
 
 Working name: **`bko-rescue`**, the stick's restore program.  It is also the
@@ -212,13 +221,31 @@ only the repository password.
 
 ## The stick's restore program
 
+### What it looks like
+
+Like `whiptail` or any other ncurses dialog: one modal dialog box per step, centred on a plain background
+with a title line, asking one thing.  Its widgets are Whiptail's: a menu, a
+radio list, a text box, a password box, a yes/no or message box, a progress
+gauge and a scrolling text view, with `<OK>` and `<Back>` buttons in a row
+under them.  Tab moves between the list and the buttons, and Enter presses
+the one in focus.
+
+`bko-rescue` draws these itself rather than running `whiptail` or `dialog`.
+The seven systems don't share one such program (FreeBSD has `bsddialog`, for
+one), and a shell script around them can't follow `load`'s events well.
+
 ### The terminal it can count on
 
-- **80×24.**  Every screen works at that size, and scrolls rather than
-  cuts off.  It redraws when the terminal is resized (SIGWINCH), for ssh
-  and Haiku's Terminal.
+- **80×24.**  Every screen is laid out for that size, and scrolls rather
+  than cuts off.  A bigger terminal gets the same box, centred.  It redraws
+  when the terminal is resized (SIGWINCH), for ssh and Haiku's Terminal.
+  Where the console can load a bigger font, the launcher picks the largest
+  that still leaves 80×24, so the text is readable on a high-resolution
+  screen.
 - **VT100 and 8 colours**, nothing more assumed: no terminfo lookups, no
-  256 colours, no mouse.  Bold and reverse video for focus.
+  256 colours, no mouse.  Whiptail's blue background and grey boxes where
+  there's colour.  Bold and reverse video for focus, so a monochrome serial
+  console still shows it.
 - **Colour never carries meaning alone.**  What will be erased says
   ERASES in words.  Some consoles map colours oddly, and a serial log has
   none.
@@ -230,9 +257,10 @@ only the repository password.
   serial consoles and some ssh clients don't pass through.  Each screen shows
   its keys on the bottom line.
 - **A plain mode** (`bko-rescue --plain`): the same steps as numbered
-  questions and answers, one line at a time.  It serves dumb terminals, the
-  braille and speech tools Linux consoles support, and logging a session
-  over serial.
+  questions and answers, one line at a time.  It serves dumb terminals,
+  logging a session over serial, and anyone using their own screen reader
+  over ssh (with an authorized key put on the stick beforehand).  The images
+  carry no speech or braille tools, so the console itself isn't accessible.
 
 ### Screens
 
@@ -261,20 +289,32 @@ already says what's chosen and confirmed.  Each step can go back.
    The layout JSON comes from the chosen snapshot's `system.json`, or from
    the stick's copy when the repository can't be reached.
 5. **Disks.**  `plan --json` with no `--map`: disks matched by identity
-   come preselected and marked as such.  The user picks a target for each
-   source disk that's left, from `candidates`.  Refused disks are shown,
-   greyed out, with the reason, so nobody wonders where a disk went:
+   come preselected and marked as such.  A menu lists the source disks and
+   where each goes, and choosing one opens a radio list of `candidates`,
+   each with its size, model and whole serial, so what's on screen can be
+   checked against the label on the disk.  Refused disks are shown with the
+   reason, so nobody wonders where a disk went:
 
    ```
-   ┌ Disks ─────────────────────────────────────────────────────────────────┐
-   │ From the backup of lovelace           ->  On this machine              │
-   │ vda  500 GB  Samsung 870  S3Z9…           sdb  512 GB  Crucial MX500   │
-   │ vdb  2.0 TB  WD Red       WD-WX41…        sdc  2.0 TB  WD Red  WD-WX52…│
-   │                                                                        │
-   │ Not used:  sda  32 GB  SanDisk Ultra   this stick, never a target      │
-   │                                                                        │
-   │ Enter: change   Tab: next   Esc: back                                  │
-   └────────────────────────────────────────────────────────────────────────┘
+    BackOtter rescue
+
+     ┌──────────────────── Disk 1 of 2: where does it go? ────────────────────┐
+     │                                                                        │
+     │ From the backup of lovelace:                                           │
+     │   vda  500 GB  Samsung SSD 870 EVO  serial S6PNNX0T123456A             │
+     │                                                                        │
+     │ Put it on this disk of this machine:                                   │
+     │  ┌──────────────────────────────────────────────────────────────────┐  │
+     │  │ (*) sdb   512 GB  CT512MX500SSD1      2213E6123456               │  │
+     │  │ ( ) sdc   2.0 TB  WDC WD20EFRX-68E    WD-WX52D1234567            │  │
+     │  └──────────────────────────────────────────────────────────────────┘  │
+     │                                                                        │
+     │ Not offered: sda  32 GB  SanDisk Ultra: this stick, never a target     │
+     │                                                                        │
+     │                      <  OK  >            < Back >                      │
+     └────────────────────────────────────────────────────────────────────────┘
+
+    Arrows move | Space selects | Tab goes to the buttons | Enter confirms
    ```
 
 6. **Passphrases**, when the layout has encryption: one per entry in
@@ -286,10 +326,12 @@ already says what's chosen and confirmed.  Each step can go back.
    erased with its size, model and serial.  Any problem left blocks the
    next step and says what to do about it.  `c` shows the full command plan,
    the same text `bko-holt load` prints, for anyone who wants to read every
-   command first.  To go on, the user types the names of the disks to erase
-   (`sdb sdc`).  That typed confirmation is the only one.  It becomes
-   `--erase` and `--commit`, and load doesn't ask again (`layload.md`,
-   "Safety", rule 2).
+   command first.  To go on, the user types the last six characters of each
+   erased disk's serial, as shown beside it, or its size and model where it
+   has none.  A kernel name such as `sdb` can't be checked against the
+   hardware.  That typed confirmation is the only one.  `bko-rescue` compares
+   it, then passes the node names as `--erase`, with `--commit`, and load
+   doesn't ask again (`layload.md`, "Safety", rule 2).
 8. **Restore.**  `load --through close --json`: the stages with ticks, the
    current command, a progress bar during `restore`, and `l` to show the
    end of the log.  Esc doesn't cancel the restore.  Cancelling asks first,
@@ -306,20 +348,29 @@ if stages are already done, offers to go on from the next one.
 `layload.md`'s stages check the disks themselves, so this works across
 reboots too.
 
+The restore outlives the UI.  `bko-rescue` doesn't run `load` as its own
+child: it starts it with stdout going to a file in RAM, and follows that file.
+On Linux that takes a unit of its own (`systemd-run`), because tty1's console
+runs inside `getty@tty1`, and systemd kills everything in that unit's control
+group when the unit stops.  Elsewhere it's a new session.  If the UI crashes,
+the console restarts it, it finds `load` still running, and it carries on
+following.  So that this file stays small, `progress` events come at most once
+a second, and load's JSON writer ignores write errors as its log does.
+
 A shell is always one key away on the first screen (and from the failure
 screen), for administrators who'd rather type `bko-holt load` themselves.
 
 ### Toolkit
 
-The needs are modest: lists, a text field, a password field, a progress bar,
-a scrolling text view, and screens that redraw on resize.  It has to build
+The needs are modest: the dialog widgets above, on screens that redraw on
+resize.  It has to build
 with Rust 1.85 on all seven platforms, offline (vendored), and run on a
 VT100.  Two candidates:
 
 - **ratatui** with **crossterm** or **termion**, vendored with `cargo
   vendor`.  Good widgets and well known.  Unknowns: whether crossterm
-  builds and behaves on illumos and Haiku, and whether recent ratatui still
-  supports Rust 1.85.  termion is plain termios, which the BSDs and illumos
+  builds and behaves on illumos and Haiku.  ratatui 0.30 needs Rust 1.86, so
+  it would have to be 0.29.  termion is plain termios, which the BSDs and illumos
   have, but it's less maintained.
 - **Our own small layer**: termios raw mode and a handful of VT100 escape
   sequences, with the widgets above on top.  Perhaps 1500 lines.  No
@@ -348,17 +399,6 @@ use it.  Otherwise write our own layer.
 
 ## Later
 
-### A graphical mode on the Linux stick
-
-If people want graphics on the Linux stick (the platform most restores
-will use), the cheapest way doesn't need a GUI at all.  `cage`, a kiosk
-Wayland compositor that runs one program full-screen, runs a terminal with
-a large font, and that runs `bko-rescue`.  It falls back to the text
-console when there's no usable GPU (simpledrm covers most UEFI machines).
-That's the same program and the same tests, with tens of MB on one image
-only.  A real graphical front end for the stick would be a second program
-on the same protocol, and isn't planned.
-
 ### The backup side
 
 The running system's UI comes with the backup tool.  Its choices, for when
@@ -368,8 +408,7 @@ that's designed:
   for KDE (Qt also runs on Haiku).  It looks right, at the cost of two code
   bases.
 - **One cross-platform Rust toolkit**: Slint (X11, Wayland, macOS,
-  Windows, and straight to the screen through KMS, which could also serve
-  the stick), or egui / iced.  One code base, which looks less native.
+  Windows), or egui / iced.  One code base, which looks less native.
 - **A local web UI** (`backotter serve` on localhost): any browser is the
   GUI, and it also serves restoring a headless server from another machine.
   The cost is a web server in the backup tool and the authentication that

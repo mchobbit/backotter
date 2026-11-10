@@ -505,9 +505,13 @@ class Layout:
                 self.luks[dev] = {"on": on, "dump": dump, "uuid": blkid(on).get("UUID"),
                                   "label": blkid(on).get("LABEL")}
                 self.fields[dev] = blkid(dev)
-            elif kind == "vg":
+            elif kind in ("vg", "lvm"):
+                # "lvm": vm-mount set the LVs up by hand, under names of its
+                # own ("lv VG LV DMNAME" lines); "vg": LVM activated them.
                 vg, pvlist = what.split()
-                self.lvm[vg] = self.lvm_layout(vg, pvlist, work)
+                names = {l.split()[2]: l.split()[3] for l in state[1:]
+                         if kind == "lvm" and l.startswith("lv ") and l.split()[1] == vg}
+                self.lvm[vg] = self.lvm_layout(vg, pvlist, work, names)
                 for dev in self.lvm[vg]["lvs"].values():
                     self.fields[dev] = blkid(dev)
         # What vm-mount left closed (a RAID it can't read with --ro, LUKS
@@ -533,11 +537,12 @@ class Layout:
             self.zfs = self.zfs_layout(pool, key, work)
 
     @staticmethod
-    def lvm_layout(vg: str, pvlist: str, work: Path) -> dict:
-        """Volume group vg, active on src's devices pvlist (vm-mount's
-        record): its PVs (by src's device names) with their UUIDs, the
-        metadata (vgcfgbackup: every UUID, extent and segment) and each
-        logical volume's device."""
+    def lvm_layout(vg: str, pvlist: str, work: Path, names: dict[str, str] | None = None) -> dict:
+        """Volume group vg, on src's devices pvlist (vm-mount's record): its
+        PVs (by src's device names) with their UUIDs, the metadata
+        (vgcfgbackup: every UUID, extent and segment) and each logical
+        volume's device: /dev/mapper/NAME for NAMES (LV -> the dm name
+        vm-mount gave it), else the one LVM activated."""
         opts = LVM_OPTS + ["--devices", pvlist]
         backup = work / f"lvm-{vg}.vg"
         run(["vgcfgbackup"] + opts + ["-f", str(backup), vg], quiet=True)
@@ -552,7 +557,7 @@ class Layout:
             name, path, segtype = (x.strip() for x in line.split("|"))
             if segtype not in ("linear", "striped"):
                 raise SystemExit(f"{vg}/{name} is a {segtype} LV; recreate() makes linear and striped LVs only")
-            lvs[name] = os.path.realpath(path)
+            lvs[name] = os.path.realpath(f"/dev/mapper/{names[name]}" if names else path)
         return {"pvs": pvs, "backup": backup, "lvs": lvs}
 
     @staticmethod

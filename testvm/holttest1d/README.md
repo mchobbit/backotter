@@ -268,16 +268,16 @@ empty (`/proc/mdstat`'s `[UU_]`), judged with `judge.py --degraded`.  It
 runs on the guests whose arrays survive the loss of their last disk:
 `debian13-stack` and `ubuntu26-raid`.  A full HoltTest1D is six runs:
 `debian13`, `debian13-zfs` and `debian13-stack`, `debian13-stack` with
-`bigger`, and `debian13` with `oneshot` on each host.  Never run two copies
-of `debian13-stack` on one host at once, in any variant, nor beside a
-`compare.py` of it: `vm-mount` refuses a second `debian13-stack-vg`, since
-LVM's names are the host's (nor two of `ubuntu26-raid`, nor it beside
-`ubuntu26-luks`: both name their group `ubuntu-vg`, as Ubuntu's installer
-does).  Nor run one guest twice on a host under two RUN names: both
+`bigger`, and `debian13` with `oneshot` on each host.  Guests whose
+volume groups share a name (`ubuntu26-raid` and `ubuntu26-luks`, both
+`ubuntu-vg` as Ubuntu's installer names it) may run on one host at once:
+`vm-mount` sets their logical volumes up under names of its own, not LVM's
+host-wide ones (run `vg2`, 2026-11-10: both PASS side by side).  Don't run
+one guest twice on a host under two RUN names: both
 mount at `/mnt/ht1-src-GUEST` and `/mnt/ht1-dst-GUEST` (`GUEST-VARIANT`
 for a variant), and while one's mount is up `vm-mount` refuses the
 other's, a FAIL that isn't bko-holt's.  ht1-queue.sh holds a guest back
-while a run of it, or of a guest in its `VG_MATES` group, is on the host, its own or by hand (a ledger row of
+while a run of it is on the host, its own or by hand (a ledger row of
 ht1.sh or a place in cmp-run.sh's line, or a live driver in
 `/mnt/bko-ram/holttest1d` or `/bkoscratch/holttest1d`); a run by hand
 doesn't wait for the queue's.

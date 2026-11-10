@@ -74,7 +74,7 @@
 # free; a swap file.  At every boot the initramfs (dracut's) asks for the
 # passphrase (console-passphrase) on the serial console, where vm-update,
 # compare.py and HoltTest1 type it.  The group's name, ubuntu-vg, is
-# ubuntu26-raid's too: ht1-queue.sh runs one of them at a time on a host.
+# ubuntu26-raid's too, which vm-mount's own names for LVs make no matter.
 #
 # Run it with vm-run (and vm-run-options), and look inside it while it's off
 # with vm-mount.

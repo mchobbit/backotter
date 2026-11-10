@@ -103,6 +103,7 @@ holt	holt:freebsd15-mirror	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirr
 holt	holt:omnios58-mirror	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
 holt	holt:rocky10-raid5	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
 holt	holt:ubuntu26-raid	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
+holt	holt:ubuntu26-luks	4.38	263	0.00	-	cinqcent lk1 PASS 2026-11-10, 14:00:45 to 14:05:08 (ht1.sh, in RAM)
 holt	holt:debian13-stack+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
 holt	holt:aerynos+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
 holt	holt:mint22+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
@@ -170,6 +171,7 @@ guest	guest:sculpt2610	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for
 guest	guest:tumbleweed	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ubuntu24	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ubuntu26-raid	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:ubuntu26-luks	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:ubuntu26-uefi	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ubuntu26-zfs	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ubuntu26-zfsmirror	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks

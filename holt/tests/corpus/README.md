@@ -1,6 +1,6 @@
 # H1: the dump corpus and its golden plans
 
-One redacted `bko-holt dump` of each of HoltTest2's 48 sources, and the plan
+One redacted `bko-holt dump` of each of HoltTest2's 49 sources, and the plan
 `bko-holt load` makes of each (docs/design/test2.md, "Shared pieces to
 build", H1).  `holt/tests/golden_plans.rs` plans every dump again and fails
 when a plan changes or breaks an invariant, so a change to load shows here
@@ -32,20 +32,22 @@ bf6797b, whose `bootloader_id` also looks at what's on the ESP.  This
 tree's load doesn't: neither guest has an EFI entry with a file, so their
 golden plans say `--bootloader-id=debian` where the runs said `endeavouros`
 and `manjaro`.  A plan here is this tree's plan, so that line of those two
-plans isn't what their runs executed.  The other 45 weren't collected again
-("Adding a source", below).  index.tsv's `host`, `run`, `result`,
+plans isn't what their runs executed.  ubuntu26-luks (`make-ubuntu.sh
+--uefi --luks`, Subiquity's guided LVM on LUKS), built on 2026-11-10, was
+added the same day from its HoltTest1 run lk1 on cinqcent, PASS, bko-holt
+0.2.4.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
 collection; `-` for the guests without one) say which, and `image` whether
 the guest's qcow2 still had the size, mtime and inode its run recorded
 (`changed` for 34 of r4all's: debian13's, for one, kept its size and inode
 and only its mtime moved, to 03:52Z on 2026-11-08, after r4all; `same` for
-the three of 2026-11-09).
+the four added since).
 
 The raw dumps hold the guests' serials, UUIDs and host names.  They stay on
 chopin, in the collector's directory (by default `/bkoscratch/test2/h1-raw`,
-mode 0700), and never reach the Mac or the repository.  The three added on
-2026-11-10 were collected into a private directory and deleted after the
+mode 0700), and never reach the Mac or the repository.  The four added on
+2026-11-10 were collected into private directories and deleted after the
 build, so that default directory holds only r4all's 45 until the next full
 collection.
 
@@ -78,13 +80,13 @@ raw dumps are), for each dump:
    blobs, 7.7 MB decoded, in 15 dumps).  EFI load options (`load_option_hex`) and
    `first_bytes` stay: they are data, and redact.rs has redacted them.
 5. The filled dump is planned against the unfilled one (`fill_plan`:
-   `same` for all 48) and passes check_plan itself (`check_plan`).
+   `same` for all 49) and passes check_plan itself (`check_plan`).
 
 Two builds of the same raw dumps give the same bytes.
 
 ### A raw dump that fails step 1
 
-All 48 raw dumps pass check_plan.  A dump that one day fails it is still put
+All 49 raw dumps pass check_plan.  A dump that one day fails it is still put
 in the corpus (step 2's leak checks, step 5 and leakscan below still apply);
 corpus_build then fails at its end, and so does `redact_dumps` over the raw
 dumps.  Nothing would show that dump's golden plan is its guest's own, so
@@ -114,7 +116,9 @@ Check mode only logs them.
 The three added on 2026-11-10 went through (a) and (b) the same way, 0
 findings: chopin with its 66 strings and their raw dumps' identifiers,
 cinqcent with its 69, and (a) again on the Mac with the git e-mail, before
-they entered the working tree.
+they entered the working tree.  So did ubuntu26-luks, scanned from cinqcent
+(chopin with its 66 strings, cinqcent with its 71 and the raw dump's
+identifiers) and on the Mac, 0 findings.
 
 ## The golden plans
 
@@ -126,7 +130,7 @@ BackOtter's, every tool the plan asks for installed.  Unlike check_plan it
 maps no RAM disk or ZFS volume (alpine324's 16 RAM disks would each be a
 Problem), installs load's own binary where it runs from, and names it
 `bko-holt` in the plan, which would otherwise hold the test binary's path.
-All 51 plans exit 0, without Problems.  They are Linux's plans (load's
+All 52 plans exit 0, without Problems.  They are Linux's plans (load's
 run directory is /run/bko-holt there, /var/run/bko-holt elsewhere): run
 golden_plans.rs on a Linux host.
 
@@ -148,8 +152,8 @@ BKO_HOLT_GOLDEN=bless cargo test --test golden_plans -- --nocapture
                                                                    # rewrite the plans that differ, unless an invariant fails
 ```
 
-diff.json is `{"v":1, "corpus":48, "plans":51, "planned":[NAME...],
-"sources":48, "differ":{NAME:{"stages":[...], "lines_changed":N[, "new":true]
+diff.json is `{"v":1, "corpus":49, "plans":52, "planned":[NAME...],
+"sources":49, "differ":{NAME:{"stages":[...], "lines_changed":N[, "new":true]
 [, "unplanned":WHY][, "unverified":CHECK_PLAN_RAW]}}, "invariants":{NAME:[...]},
 "invariants_skipped":{NAME:[...]}}`; `stages` are the plan's sections that
 changed (header, partition, assemble, format, mount, restore, boot, close,
@@ -194,8 +198,8 @@ the Mac, outside the repository, and scan it there first:
 Only then copy them into holt/tests/corpus (corpus_build refuses an OUT
 that holds dumps it doesn't make, so build into an empty one), and bless
 the plans.  A corpus dump never enters the working tree with a finding, and
-a plan is never blessed with a broken invariant.  The corpus is 11.8 MB (48
-dumps of 3 KB to 3.3 MB, the 51 plans 0.3 MB); 15 MB is its budget.
+a plan is never blessed with a broken invariant.  The corpus is 11.9 MB (49
+dumps of 3 KB to 3.3 MB, the 52 plans 0.3 MB); 15 MB is its budget.
 
 ### Adding a source
 

@@ -201,7 +201,7 @@ if layout_is_uefi "$RUN/layout.json"; then
     entry=
     while read -r espdev; do
         guid=$(blkid -p -o value -s PART_ENTRY_UUID "$espdev")
-        entry=$(efibootmgr -v | awk -v g="$guid" 'tolower($0) ~ tolower(g) && /^Boot[0-9A-Fa-f]{4}/ { print substr($1, 5, 4); exit }')
+        entry=$(efibootmgr -v | awk -v g="$guid" 'tolower($0) ~ tolower(g) && /^Boot[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]/ { print substr($1, 5, 4); exit }')
         [[ -z $entry ]] || break
     done < <(lsblk -lnpo NAME,PARTTYPE "/dev/$disk" | awk -v t="$ESP_TYPE" 'tolower($2) == t { print $1 }')
     if [[ -n $entry ]]; then

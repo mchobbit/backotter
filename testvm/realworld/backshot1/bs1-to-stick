@@ -35,16 +35,18 @@ rmdir "$tmp"
 loader=${found#"$tmp"}
 loader=${loader//\//\\}
 
-entries() { efibootmgr | awk -v l="$LABEL" '/^Boot[0-9A-Fa-f]{4}/ && index($0, l) { print substr($1, 5, 4) }'; }
+# No {4}: Debian 12's mawk has no interval expressions, and would match nothing.
+HEX4='[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]'
+entries() { efibootmgr | awk -v l="$LABEL" "/^Boot$HEX4/"' && index($0, l) { print substr($1, 5, 4) }'; }
 
 # An older stick's entry names an ESP that's gone.
 for n in $(entries); do efibootmgr -q --bootnum "$n" --delete-bootnum || die "can't delete Boot$n"; done
 order=$(efibootmgr | awk '/^BootOrder/ { print $2 }')
 efibootmgr -q --create --disk "/dev/$disk" --part "$part" --label "$LABEL" --loader "$loader" || die "can't make a boot entry for $esp"
+# --create puts it first; the laptop's own boot order stays as it was, whatever follows.
+if [[ -n $order ]]; then efibootmgr -q --bootorder "$order" || die "can't put BootOrder back"; fi
 entry=$(entries | head -n 1)
 [[ -n $entry ]] || die "the firmware didn't keep the new entry"
-# --create puts it first; the laptop's own boot order stays as it was.
-if [[ -n $order ]]; then efibootmgr -q --bootorder "$order" || die "can't put BootOrder back"; fi
 efibootmgr -q --bootnext "$entry" || die "can't set BootNext"
 efibootmgr | grep -E '^(BootNext|BootOrder)'
 efibootmgr | grep -E "^Boot$entry"

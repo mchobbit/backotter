@@ -1,9 +1,10 @@
-# BackShot2 and BackShotAlpine: restores onto layouts that drifted (proposed)
+# BackShot2 and BackShot2Alpine: restores onto layouts that drifted (approved)
 
-2026-11-10. Proposed for the user's approval; nothing is built. BackShot2 is the
-user's design (their description, condensed in "What BackShot2 is"); this spec
-fills it in and makes BackShotAlpine, the user's other new test group, its first
-milestone.
+2026-11-10. Approved by the user the same day, with the recommended decisions;
+nothing is built yet. BackShot2 is the user's design (their description,
+condensed in "What BackShot2 is"); this spec fills it in and makes
+BackShot2Alpine, the user's other new test group, its first milestone.
+BackShot2Alpine was first called BackShotAlpine; the user renamed it.
 
 **Conventions.** est. marks an estimate. A **case** is one drifted layout plus
 everything needed to run it again. **Tier** numbers run cheapest first.
@@ -22,12 +23,12 @@ everything needed to run it again. **Tier** numbers run cheapest first.
   Thinkpad. Each case is a file of exact edits, so it replays without
   randomness. A failure shrinks to the smallest edit list that still fails,
   and joins a corpus that reruns on every new bko-holt or rustic-bko.
-- **BackShotAlpine is milestone 1:** the same machinery, with Alpine as the only
+- **BackShot2Alpine is milestone 1:** the same machinery, with Alpine as the only
   source. Alpine restores in seconds and boots in ~30 s, so the QEMU tier runs
   several times more cases an hour than on other systems (est.). One OS also
   means one set of tools and one initramfs builder, so a difference between two
   cases can only come from the layout, the options or the files.
-- BackShotAlpine adds two things BackShot2's description leaves out:
+- BackShot2Alpine adds two things BackShot2's description leaves out:
   - **content drift**, for rustic-bko: a seeded tree of awkward files planted before
     the backup;
   - **an option sweep** of load's flags.
@@ -50,7 +51,7 @@ everything needed to run it again. **Tier** numbers run cheapest first.
    BackShot2 multiplies one install into thousands of layouts.
 4. **On one OS, a failure means BackOtter.** Across distros, a failure may come
    from the distro (its initramfs, its loader, its tools). On Alpine alone it
-   can't, which is the point of BackShotAlpine.
+   can't, which is the point of BackShot2Alpine.
 
 ## What BackShot2 is
 
@@ -124,7 +125,7 @@ A JSON file, `testvm/backshot2/cases/NAME.case`:
 - **`seed` and `generator`** record how the case was made. Replay uses only
   `edits`, so a later generator version can't change an old case.
 - **`target`** and **`load_options`** say what to restore onto, and how.
-- **`content`**, BackShotAlpine only, names the content drift (below).
+- **`content`**, BackShot2Alpine only, names the content drift (below).
 
 ## The generator
 
@@ -219,7 +220,7 @@ the three rules after each one. A draw that breaks a rule is discarded, not run.
   Test2's ledger key changes: the bko-holt or rustic-bko sha256, or the guest
   generation. A case fixed by a commit stays in the corpus as a regression test.
 
-## BackShotAlpine: milestone 1
+## BackShot2Alpine: milestone 1
 
 **Sources.**
 
@@ -282,7 +283,7 @@ a module the source's list lacks. That keeps the third rule.
 20 of 20, as HoltTest2's `+close` does. It's reported as N of 20, since
 that only bounds a race below ~15% (test2.md).
 
-**Phase 1's end for BackShotAlpine:**
+**Phase 1's end for BackShot2Alpine:**
 - all five sources pass a seed run of 1,000 cases at tier 0 and 200 at tier 1;
 - 30 cases pass tier 2 and 5 pass tier 3;
 - every FAIL found is shrunk and in the corpus.
@@ -293,9 +294,10 @@ Run by `testvm/backshot2/bs2` on the Mac, `bs2-host` on the hosts, the way t2 is
 
 | The user says | What runs |
 |---|---|
-| `BackShotAlpine [N]` | N new cases (default 200) from the Alpine sources, through the tiers each needs, then the corpus |
+| `BackShot2Alpine [N]` | N new cases (default 200) from the Alpine sources, through the tiers each needs, then the corpus |
 | `BackShot2 [SOURCE...] [N]` | the same over the named, or all, Linux sources |
 | `BackShot2 corpus` | the corpus alone |
+| `BackShot2All` | reserved for all of BackShot2, fresh, later |
 | `bs2 replay CASE`, `bs2 shrink CASE`, `bs2 soak CASE N` | as above |
 | any form with `plan` | the cases it would draw, their tiers, est. time and GB; nothing runs |
 
@@ -315,14 +317,14 @@ and rustic-bko sha256, and source generation, so an unchanged case doesn't rerun
 | B7 | The Alpine sources: `alpine324-uefi`, `-lvm`, `-luks` from bootstrap | 0.5 d |
 | B8 | Content drift: recipe, planter, shrinking | 1 d |
 | B9 | Option sweep: bs1-restore, bs1-verify and judge.py learn each flag's effect | 0.5 d |
-| | *Milestone 1, BackShotAlpine ≈ 7 d* | |
+| | *Milestone 1, BackShot2Alpine ≈ 7 d* | |
 | B10 | Tier 3 glue: a case onto the Thinkpad through backshot1 | 0.5 d |
 | B11 | Rule 2 tables and source quirks for the other Linux sources: dracut, systemd-boot, shim, snapper (the refusals in `reformat.md`, on `claude/holt-reformat`, as a model) | 2 d |
 | B12 | Their tier 1 and 2 runs, and the corpus over 45 sources | 0.5 d |
 | | *BackShot2 phase 1 ≈ 10 d in all* | |
 
 The user's 8.5 days covered BackShot2 alone. Content drift (B8), the option
-sweep (B9) and the extra Alpine sources (B7) are BackShotAlpine's ~2 days on top,
+sweep (B9) and the extra Alpine sources (B7) are BackShot2Alpine's ~2 days on top,
 for ~10 days in all (est.).
 
 ## Risks
@@ -354,7 +356,7 @@ for ~10 days in all (est.).
 
 ## Decisions for the user
 
-1. **BackShotAlpine as BackShot2's milestone 1**, sharing one generator, case
+1. **BackShot2Alpine as BackShot2's milestone 1**, sharing one generator, case
    format and corpus (recommended); or two tools.
 2. **Sources:** the five above, including three new Alpine guests (recommended); or
    start with `alpine324` and the Thinkpad's run.
@@ -362,7 +364,7 @@ for ~10 days in all (est.).
    rustic-bko); or later.
 4. **`--reformat` in the sweep** only after `claude/holt-reformat` is merged into
    main (recommended); or merge it first, as part of B9.
-5. **The words** `BackShotAlpine` and `BackShot2` as above, results in Test2's
+5. **The words** `BackShot2Alpine` and `BackShot2` as above, results in Test2's
    ledger (recommended).
-6. **Tier 3's budget:** 5 Thinkpad cases per BackShotAlpine round (recommended),
+6. **Tier 3's budget:** 5 Thinkpad cases per BackShot2Alpine round (recommended),
    or another number.

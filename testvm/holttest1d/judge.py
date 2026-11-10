@@ -253,6 +253,35 @@ def illumos_normalise(d):
     return d
 
 
+SNAPPER_SLOT = re.compile(r"(^|/)\.snapshots/\d+/snapshot$")
+
+
+def btrfs_by_path(d):
+    """btrfs subvolumes and level-0 qgroups compared by path, not in ID
+    order: load makes snapper's snapshots after the restore, as snapshots of
+    one another (docs/design/btrfs-snapshots.md), and one made after a
+    subvolume that comes later on the source gets a later ID.  A snapper
+    snapshot's ID, its qgroup's, and whether it has an origin (each is a
+    snapshot of the one before it; after a rollback the live root, made
+    first, has none) are not compared; its path, flags and qgroup
+    membership are."""
+    for fs in (d.get("storage") or {}).get("btrfs") or []:
+        subs = fs.get("subvolumes") or []
+        for v in subs:
+            path = str(v.get("path") or "").removeprefix("<FS_TREE>/")
+            if SNAPPER_SLOT.search(path):
+                v["id"] = "<a snapper snapshot's>"
+                v["parent_uuid"] = "<a snapper snapshot's>"
+        subs.sort(key=lambda v: str(v.get("path") or ""))
+        qs = fs.get("qgroups") or []
+        for q in qs:
+            path = str(q.get("path") or "")
+            if str(q.get("qgroupid") or "").startswith("0/") and SNAPPER_SLOT.search(path):
+                q["qgroupid"] = f"0/<{path}>"
+        qs.sort(key=lambda q: (str(q.get("qgroupid") or "")[:2], str(q.get("path") or ""), str(q.get("qgroupid") or "")))
+    return d
+
+
 def md_by_name(d):
     """A named md array (Anaconda's /dev/md/boot, /dev/md/pv00) gets its
     kernel number, md127 downwards, in the order the arrays come up at boot,
@@ -335,6 +364,10 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False):
                 why = "--new-uuids: load rewrites what names the new identifiers"
             if not why and no_atime and kind.startswith("atime"):
                 why = "the filesystem's driver here updates atimes on every read (RedoxFS's FUSE driver): the source's moved as it was backed up"
+            if not why and kind in ("mtime (dirs)", "atime (dirs)", "selinux") and re.search(r"^(.*/)?\.snapshots/\d+/snapshot/.", p) \
+                    and before.get(p, {}).get("type") == "dir" and not any(k.startswith(p + "/") for k in before):
+                why = ("a mount point hidden under its mount in a btrfs subvolume mounted elsewhere too (openSUSE's root, again at .snapshots/N/snapshot): "
+                       "the backup holds it only through that alias, which load leaves out (docs/design/btrfs-snapshots.md)")
             if not why and kind == "inode flags":
                 # btrfs sets FS_NOCOMP_FL itself on a file whose data didn't
                 # compress, as it was written: not the restore's to keep.
@@ -718,8 +751,8 @@ def main():
     degraded = sys.argv[1] == "--degraded"
     if degraded:
         del sys.argv[1]
-    src = md_by_name(illumos_normalise(load_json(sys.argv[1])))
-    dst = md_by_name(illumos_normalise(load_json(sys.argv[2])))
+    src = btrfs_by_path(md_by_name(illumos_normalise(load_json(sys.argv[1]))))
+    dst = btrfs_by_path(md_by_name(illumos_normalise(load_json(sys.argv[2]))))
     for d in (src, dst):
         if "--removable" in flags:
             drop_removable(d)

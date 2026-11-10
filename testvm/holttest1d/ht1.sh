@@ -42,7 +42,9 @@
 # and HT_KEEP=1 need it.  For rustic-bko, HT_BKO_BIN=DIR takes another set,
 # HT_ROUND=NAME round NAME's (~/backotter-work/roundNAME/bin), and
 # HT_RUSTIC=FILE a file, unchecked.  HT_FAIL_AT=PHASE adds a FAIL line
-# after that phase (a test hook).
+# after that phase (a test hook).  HT_SOURCE_PREP=FILE is a script run as
+# root in the source before its dump (its overlay only), rebooted after it
+# when its last line is REBOOT: prep/tumbleweed-snapper.sh.
 #
 # HT_HOLT_BIN=DIR takes bko-holt from DIR/bko-holt (DIR/PLATFORM/bko-holt in
 # ht1-bsd.sh) instead of bin/'s: a set laid out as bin/ is, HoltTest2's
@@ -237,7 +239,7 @@ ckey=$gpass; [[ $gpass != */luks-keyfile ]] || ckey=""
 HT_BULK=(share 'src-*.qcow2' 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 rustic-bko tmp img-key img-key.pub)
 HT_ZIP=(src-meta.json dst-meta.json)
 # Settings that change what a run checks, or its rescuer: its report names them.
-dbg=""; for v in HT_QUICK HT_THROUGH HT_KEEP HT_FAIL_AT HT_RESCUER HT_RESCUER_IMG; do [[ -z ${!v:-} ]] || dbg+=" $v=${!v}"; done
+dbg=""; for v in HT_QUICK HT_THROUGH HT_KEEP HT_FAIL_AT HT_RESCUER HT_RESCUER_IMG HT_SOURCE_PREP; do [[ -z ${!v:-} ]] || dbg+=" $v=${!v}"; done
 [[ -z $dbg ]] || ht_note "set for debugging or tests:$dbg"
 ht_require
 # A rerun from a later phase goes on from K's state (a failure's): all of it
@@ -383,6 +385,24 @@ phase_source() {
         else
             bad "filling the source's / (logs/source-fill.txt): $(tail -1 "$R/logs/source-fill.txt")"
             vm_down "$gkey"; return
+        fi
+    fi
+    if [[ -n ${HT_SOURCE_PREP:-} ]]; then
+        # A script of the test's, run as root in the source (its throwaway
+        # overlay) before the dump: e.g. snapper snapshots and a rollback.
+        # A last line REBOOT has the source rebooted after it.
+        scpk "$gkey" "$HT_SOURCE_PREP" root@127.0.0.1:/root/ht-source-prep
+        if TMO=1800 sshk "$gkey" 'sh /root/ht-source-prep; r=$?; rm -f /root/ht-source-prep; exit $r' > "$R/logs/source-prep.txt" 2>&1; then
+            ok "source prepared by ${HT_SOURCE_PREP##*/}"
+        else
+            bad "preparing the source with ${HT_SOURCE_PREP##*/} (logs/source-prep.txt): $(tail -1 "$R/logs/source-prep.txt")"
+            vm_down "$gkey"; return
+        fi
+        if [[ $(tail -1 "$R/logs/source-prep.txt") == REBOOT ]]; then
+            vm_down "$gkey"
+            CONSOLE_KEY=$gpass vm_up "${src[0]}" "$R/logs/source-serial-2.log" "${fw[@]}" "${extra_src[@]}"
+            vm_wait "$gkey" || { bad "source boots again after ${HT_SOURCE_PREP##*/} (no SSH)"; vm_down "$gkey"; return; }
+            ok "source rebooted after ${HT_SOURCE_PREP##*/}"
         fi
     fi
     bootstate "$gkey" > "$R/logs/source-bootstate.txt"

@@ -184,6 +184,12 @@ live on.
   feature list compared with the JSON.
 - btrfs: subvolumes created with their recorded paths and IDs where btrfs
   allows it, read-only flags and properties set, and the default subvolume.
+  With `--repo`, snapshots the backup holds below a mounted subvolume
+  (snapper's `/.snapshots/N/snapshot`) wait for `restore`, which makes each
+  one a snapshot of the one before it and restores only its changes, so they
+  share their extents; quotas go on after them
+  (docs/design/btrfs-snapshots.md; `--btrfs-snapshots copy` restores each in
+  full instead).
 - ZFS: datasets and volumes created top-down with every locally set
   property, encryption roots with their key format and location, and
   `canmount`/`mountpoint` exactly as recorded.

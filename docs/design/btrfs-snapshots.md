@@ -45,7 +45,7 @@ What `load` does today, on Tumbleweed (root `@/.snapshots/1/snapshot` at `/`,
 | Time per snapshot | About 20 s (read and hash the existing tree) | Clone plus walk, about 60 s | Write it all, then read it twice |
 | Subvolume IDs | The source's if snapshots come after every other subvolume (the usual case); otherwise new IDs | The source's, as today | The source's, as today |
 | `parent_uuid` | Each snapshot is a snapshot of the one before it in its family (below) | As today | As today |
-| Changes to rustic-bko | `--exact` (below) | `--exact` (below) | None, but a dedupe tool, or code for it in bko-holt |
+| Changes to rustic-bko | `--exact` and `--clone-from` (below) | `--exact` (below) | None, but a dedupe tool, or code for it in bko-holt |
 
 **Recommendation: (A).**  It is the only approach whose result looks like the
 source's: snapshots that share metadata as well as data.  It writes the least,
@@ -57,7 +57,8 @@ path and read neither value; the build checks this in their sources.  fstab
 never names a snapper snapshot.  The times in the table are estimates; the
 rehearsal measures them.  (B) is the fallback if exact IDs and parents matter more than
 metadata sharing.  (C) still runs out of space where today's restore does,
-so it is rejected.
+so it is rejected.  So are btrfs send streams in the backup: they don't fit
+rustic-bko's file-level format, and no other filesystem could restore them.
 
 Whichever approach is chosen, the fix for point 3 is the same: the main
 restore leaves out every path where a mounted subvolume shows up a second
@@ -101,6 +102,42 @@ time.
   3. for a snapper slot, the subvolume mounted at `X`, the directory that
      holds the `.snapshots`.
 
+  ID order is creation order.  For snapper it is the same order as the
+  snapshots' numbers and their `ogen`.
+- **Clone source**: the restored tree of the family's live subvolume (for
+  snapper, the subvolume mounted at `X`).  It is passed to each snapshot's
+  restore as `--clone-from`, below.
+
+### Which way the chain runs
+
+A chain from the oldest snapshot forward has one weakness when it starts
+from the live root.  A file added after snapshot *j* that is still in the
+live root isn't in snapshot *j*−1, so restoring snapshot *j* writes it again
+instead of sharing the live root's copy.  On Tumbleweed that means every
+package updated since the oldest snapshot.  There are three ways out:
+
+1. **Oldest snapshot in full, chain forward, live root last, made from its
+   ancestor** (the BackShot1 session's proposal).  Every file is shared.
+   But the live root is mounted at `/` before the restore, and its ID comes
+   before the snapshots.  Making it last would mean restoring every
+   subvolume through the top level, mounting afterwards, and changing the
+   live root's ID.  That rebuilds the stage order for a gain that (3) gets
+   too.
+2. **Newest first, from the live root, chain backward.**  Every file is
+   shared too, but the snapshots are created newest first, so their IDs come
+   out in reverse order.
+3. **Chain forward from the live root, with `--clone-from` the live root**
+   (chosen).  A file that differs from the base but whose contents equal a
+   file in the live root is cloned (`FICLONE`) from that file, not written.
+   The match uses the content lists in the backup, so nothing is read to
+   find it.  That shares whole files, which is what snapper snapshots differ
+   by: package files.  IDs stay in order, and the stages don't change.
+
+What (3) can't share is a file that is in neither the base nor the live
+root, but is in several snapshots, partly rewritten in each.  Only the first
+copy has its blocks shared with later ones.  That is rare outside databases
+and VM images, which snapper's default configs leave out of `/`.
+
 ### What changes, stage by stage
 
 `format`, for a btrfs with shared snapshots:
@@ -126,8 +163,8 @@ time.
    in full in the plan):
    - If the main restore left its directory (so the backup has it):
      `rmdir`, then `btrfs subvolume snapshot TOP/BASE TOP/PATH`, then
-     `rustic-bko … restore --numeric-id --exact SNAP:BACKUP_PATH
-     TOP/PATH`.
+     `rustic-bko … restore --numeric-id --exact --clone-from
+     LIVE_BACKUP_PATH=TOP/LIVE SNAP:BACKUP_PATH TOP/PATH`.
    - If not: `btrfs subvolume create TOP/PATH`, empty as today, and a note
      at run time that the backup didn't have it.
    - First, placeholders up to the source's ID, when the next free ID is
@@ -199,6 +236,19 @@ only what differs:
 - Symlinks, special files, and entries of another type: replaced, as the fork
   already does.  An identical symlink stays.
 
+`--clone-from SNAPPATH=DIR` (usable with `--exact` only).  Before the
+restore, rustic-bko walks the backup's tree at `SNAPPATH`, which is metadata
+only, from the cache.  It maps each regular file's content list to its path
+under `DIR`.  A file the restore would write whose content list is in the
+map is instead cloned whole from `DIR/PATH` with `FICLONE`, then given its
+own metadata.  `DIR` must hold `SNAPPATH` as restored, unchanged since:
+here, the live root right after the main restore, before `boot`.  A clone
+that fails (for example a file that has changed size) falls back to writing
+the file.
+
+None of this needs ordering in rustic-bko.  The order lives in bko-holt's
+plan.
+
 restic-bko is unchanged.  `load` restores only with rustic-bko, and this flag
 is restore-side, so node parity and cross-restores aren't affected.
 
@@ -213,6 +263,13 @@ expected differences, not failures:
   was made in `format`.  The plan notes which.
 - After a rollback, the mounted root has no parent.
 - ctime, as for every restored file.
+
+## Onto another filesystem
+
+`load` always restores btrfs onto btrfs today.  A future way of restoring
+onto XFS or ext4 (a `--reformat`) can't keep snapshots.  Its plan must say
+plainly that it drops them, name them, and leave them out of the restore,
+rather than restore them as directories.
 
 ## Tests
 
@@ -232,7 +289,10 @@ expected differences, not failures:
 - **rustic-bko**: tests in rustic_core for `--exact`: hard links broken,
   then remade; same size and mtime but different contents gets fixed; a
   restore over an identical tree changes nothing (no write and no inode
-  change, checked by ctime); destination metadata; immutable files.
+  change, checked by ctime); destination metadata; immutable files;
+  `--clone-from` clones a file added since the base (checked with
+  `FIEMAP`: the same physical extents as the source file) and writes one
+  whose content list isn't in the map.
 - **QEMU rehearsal** on Chopin or Cinqcent, under `cmp-run.sh` reservations,
   in RAM: the Tumbleweed guest in a `--keep` overlay, given about five
   snapshots (zypper changes and `snapper create`) and a rollback, then a
@@ -258,3 +318,5 @@ expected differences, not failures:
 3. A snapper slot with no parent (the original root, after a rollback) is
    treated as a shared snapshot of the live root.  On restore it gains a
    parent it didn't have.  Acceptable?
+4. Which way the chain runs: forward with `--clone-from` (recommended), or
+   newest first (every file shared, but snapshot IDs in reverse order)?

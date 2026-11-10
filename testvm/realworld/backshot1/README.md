@@ -87,6 +87,28 @@ An old backup tests the restore and the rescue image, not `dump` or the backup, 
 take a fresh one when those change.  The firmware's boot list is the one thing
 that carries over from one restore to the next.
 
+## Encrypted runs go first, in one block
+
+A run of an install whose LUKS asks for a typed passphrase needs the person
+once: at the restored system's first boot.  The backup is of the running,
+unlocked system, and the reboot into the stick asks for nothing.  So when a
+session has several runs to do:
+
+- Do every such run first, one after another, while the person is there; the
+  unattended runs follow.
+- End the block on a system without a passphrase: restore an unencrypted
+  backup from the library (or start the first unattended run) before the
+  person leaves.  A restored system left at its unlock prompt stops every
+  later run, since the next one starts from it.
+- When the restored system hasn't answered SSH a minute or two after its
+  reboot, send the person a push notification to type the passphrase, so
+  nobody has to watch the screen through the restore.
+- A LUKS install that unlocks without typing (a key file in its initramfs,
+  or SSH into the initramfs: dropbear-initramfs, dracut-sshd,
+  mkinitcpio-dropbear) needs nobody, and can run anywhere in the order.
+
+The same order holds for BackShot2's runs on the Thinkpad (its tier 3).
+
 ## What guards the wipe
 
 - `bs1-restore` wipes only with `--erase-serial` naming this machine's disk.

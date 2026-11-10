@@ -1,0 +1,1 @@
+uefi: no match for [b'Choose \\[1-4\\]: ', b'login: '] (see /bkoscratch/t2test/runs/t2i-x/img/freebsd/boot-uefi.log)

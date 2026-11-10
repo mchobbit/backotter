@@ -2,7 +2,7 @@
 """Boot a BackOtter image in QEMU and check the live system from inside.
 
 Usage: boot-test.py IMG {uefi-secureboot,uefi,bios} [--media {usb,cdrom}]
-                     [--log FILE] [--timeout S]
+                     [--log FILE] [--timeout S] [--manifest FILE]
 
 Watches the first serial port (an image from "make-img.sh --test" boots with a
 console there), picks "Shell" in BackOtter's console menu, runs the checks,
@@ -15,6 +15,10 @@ to a throwaway copy-on-write overlay, and the config partition checks run.
 --media cdrom attaches it as a CD instead (as a BMC's virtual media may),
 which has no partitions.
 
+--manifest FILE also types PLATFORM/manifest.sh after the checks, and writes
+its "BKO-MF KEY VALUE" lines to FILE as a JSON object (ImgTest2's image
+manifest: testvm/test2/t2lib/img.py compares them with the last one).
+
 Needs: qemu-system-x86_64 and qemu-img, with KVM; for the UEFI modes, OVMF (Debian/Ubuntu
 package "ovmf").  uefi-secureboot uses OVMF's Secure Boot build with
 Microsoft's keys enrolled, so it boots the image's signed shim and kernel the
@@ -24,6 +28,7 @@ way a stock PC with Secure Boot on would.
 from __future__ import annotations
 
 import argparse
+import json
 import os
 import re
 import select
@@ -76,6 +81,12 @@ DONE = re.compile(rb"BKO-42-DONE\r?\n")
 CHECK_FUNCTION = r"""
 check() { n=$1; shift; if out=$(sh -c "$*" 2>&1); then r=ok; else r=FAIL; fi
           echo "BKO-CHECK $n $r $(echo "$out" | tr '\n' ' ' | cut -c1-200)"; }
+"""
+# The manifest's lines (--manifest): "BKO-MF <key> <value>", one per mf, "-" for
+# what its command didn't print.  (Its stdin is /dev/null: a command that reads
+# one mustn't eat what is typed next.)
+MANIFEST_FUNCTION = r"""
+mf() { n=$1; shift; out=$(sh -c "$*" 2>/dev/null </dev/null); echo "BKO-MF $n $(echo "${out:--}" | tr '\n' ' ' | cut -c1-200)"; }
 """
 DONE_LINE = "echo BKO-$((6 * 7))-DONE"
 
@@ -156,7 +167,7 @@ def qemu_command(img: str, platform: str, mode: str, media: str, tmp: str) -> li
 
 
 def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: float,
-        user: str) -> bool:
+        user: str, manifest: str | None = None) -> bool:
     with tempfile.TemporaryDirectory() as tmp, open(log_path, "wb") as log:
         proc = subprocess.Popen(qemu_command(img, platform, mode, media, tmp),
                                 stdin=subprocess.PIPE, stdout=subprocess.PIPE)
@@ -191,12 +202,19 @@ def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: 
             # result: the guest's tty buffers little input (4 KB on Linux, 1 KB
             # on NetBSD), and drops what's typed beyond that while a slow
             # check runs.
-            script = CHECK_FUNCTION + check_script(platform, media) + DONE_LINE
+            script = CHECK_FUNCTION + check_script(platform, media)
+            if manifest:
+                script += MANIFEST_FUNCTION + manifest_script(platform)
+            script += DONE_LINE
             for line in script.strip().splitlines():
                 con.send(line + "\n")
                 m = re.match(r"check (\S+) ", line)
+                mf = re.match(r"mf (\S+) ", line)
                 if m:
                     con.expect(re.compile(rb"BKO-CHECK " + re.escape(m[1].encode()) + rb" .*\n"),
+                               timeout=120)
+                elif mf:
+                    con.expect(re.compile(rb"BKO-MF " + re.escape(mf[1].encode()) + rb" .*\n"),
                                timeout=120)
                 else:
                     time.sleep(0.1)
@@ -208,6 +226,10 @@ def run(img: str, platform: str, mode: str, media: str, log_path: str, timeout: 
             for name, status, detail in results:
                 all_ok &= status == b"ok"
                 print(f"  {status.decode():4} {name.decode():20} {detail.decode(errors='replace').strip()}")
+            if manifest:
+                fields = manifest_fields(log_contents(log_path))
+                write_manifest(manifest, fields)
+                print(f"manifest: {len(fields)} fields in {manifest}")
             # OpenBSD has no poweroff; Linux's, illumos' and Haiku's shutdown
             # have no -p (Haiku's -q: without asking the desktop's applications).
             con.send(POWEROFF.get(platform, "shutdown -p now") + "\n")
@@ -239,6 +261,33 @@ def check_script(platform: str, media: str) -> str:
     return "\n".join(parts) + "\n"
 
 
+def manifest_script(platform: str) -> str:
+    """PLATFORM/manifest.sh, without its leading comments."""
+    with open(os.path.join(HERE, platform, "manifest.sh"), encoding="utf-8") as f:
+        lines = f.read().splitlines()
+    while lines and (lines[0].startswith("#") or not lines[0].strip()):
+        lines.pop(0)
+    return "\n".join(lines) + "\n"
+
+
+def manifest_fields(log: bytes) -> dict[str, str]:
+    """The serial log's "BKO-MF KEY VALUE" lines, as {KEY: VALUE}.  A prompt, and on Linux
+    OSC 3008 sequences, come before the marker on its line; a KEY starting with $ is the
+    function's own body, echoed while it was typed."""
+    fields = {}
+    for key, value in re.findall(rb"BKO-MF ([^\s$]\S*) ?(.*?)\r?$", log, re.M):
+        fields[key.decode(errors="replace")] = value.decode(errors="replace").strip()
+    return fields
+
+
+def write_manifest(path: str, fields: dict[str, str]) -> None:
+    tmp = path + ".tmp"
+    with open(tmp, "w", encoding="utf-8") as f:
+        json.dump(fields, f, indent=1, sort_keys=True)
+        f.write("\n")
+    os.replace(tmp, path)
+
+
 def log_contents(path: str) -> bytes:
     with open(path, "rb") as f:
         return f.read()
@@ -255,9 +304,12 @@ def main() -> int:
     ap.add_argument("--log", help="serial log file (default: boot-test-MODE-MEDIA.log)")
     ap.add_argument("--timeout", type=float, default=300, help="seconds to reach login")
     ap.add_argument("--user", default=LIVE_USER, help=f"live user (default: {LIVE_USER})")
+    ap.add_argument("--manifest", metavar="FILE",
+                    help="also type PLATFORM/manifest.sh and write its fields to FILE (JSON)")
     args = ap.parse_args()
     ok = run(args.img, args.platform, args.mode, args.media,
-             args.log or f"boot-test-{args.mode}-{args.media}.log", args.timeout, args.user)
+             args.log or f"boot-test-{args.mode}-{args.media}.log", args.timeout, args.user,
+             args.manifest)
     return 0 if ok else 1
 
 

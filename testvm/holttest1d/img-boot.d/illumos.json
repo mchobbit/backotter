@@ -1,0 +1,11 @@
+{
+  "about": "What img-boot.py types differently for this image. user: the account SSH logs in as, sshd's AllowUsers; extra: shell lines typed before the sshd line; rate: typing speed in bytes a second (null: boot-test.py's); disk_bus: vm-run's --disk-bus for the image and its targets (null: the default, read by the driver).",
+  "why": "sshd is /usr/lib/ssh/sshd, out of the console shell's PATH (its own start is SMF's network/ssh, which takes no -o). The image locks root (*LK*, stick/illumos/build.sh), and both of sshd's account checks (PAM's pam_unix_account, OpenSSH's own) refuse a locked account even by key: root's entry becomes NP (no password login, not locked) in the image's RAM-disk /etc/shadow only, the image file unchanged, as remote-access edits it (the image has no passwd), a last change of 0 cleared so no new password is forced",
+  "user": "root",
+  "extra": [
+    "PATH=$PATH:/usr/lib/ssh; export PATH",
+    "(umask 077; awk -F: -v OFS=: '$1 == \"root\" { $2 = \"NP\"; if ($3 == \"0\") $3 = \"\" } { print }' /etc/shadow >/etc/shadow.new) && cat /etc/shadow.new >/etc/shadow; rm -f /etc/shadow.new"
+  ],
+  "rate": null,
+  "disk_bus": null
+}

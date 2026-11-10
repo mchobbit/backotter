@@ -1,0 +1,5 @@
+base pm openbsd
+syspatch 001_nfs
+syspatch 002_tmux
+base syspatch-count 2
+pkg quirks 7.14

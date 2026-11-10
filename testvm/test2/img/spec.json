@@ -1,0 +1,33 @@
+{
+  "v": 1,
+  "family": "img",
+  "about": "What an ImgTest2 cell's key covers (contract 1.4). img:PLAT is entries[PLAT] merged over kinds.image; {plat} in a path is the entry's plat. bins_from_image: the bin group is facts.images[PLAT]: restic-bko (not on Haiku), rustic-bko and bko-holt from images/P/bko-bin.sha256, test-image (the pin's sha256, else img:unknown) and release-image (SHA256SUMS' .img line).",
+  "notes": [
+    "A harness or host change alone leaves a cell soft-stale, not due: ImgTest2 tests images built since their last PASS (plan.py's img:new, on the bin group).",
+    "img.py's parsing of boot-*.out is the runner, not an input of the cell: a check's own wording is keyed by the checks.sh that prints it."
+  ],
+  "plumbing": ["shared:cmp-run.sh", "shared:testvm/compare/iolog.sh"],
+  "soft": ["qemu", "ovmf"],
+  "kinds": {
+    "image": {
+      "bins_from_image": true,
+      "bins": ["{plat}/rustic-bko", "{plat}/bko-holt", "{plat}/test-image", "{plat}/release-image"],
+      "harness": [
+        "stick/boot-test.py",
+        "stick/{plat}/checks.sh",
+        "stick/{plat}/manifest.sh",
+        "?stick/{plat}/config-checks.sh",
+        "testvm/test2/img/boot.sh"
+      ]
+    }
+  },
+  "entries": {
+    "linux": {"kind": "image", "plat": "linux", "bins": ["{plat}/restic-bko"], "modes": ["bios", "uefi", "uefi-secureboot", "cdrom"]},
+    "freebsd": {"kind": "image", "plat": "freebsd", "bins": ["{plat}/restic-bko"], "modes": ["bios", "uefi"]},
+    "netbsd": {"kind": "image", "plat": "netbsd", "bins": ["{plat}/restic-bko"], "modes": ["bios", "uefi"]},
+    "openbsd": {"kind": "image", "plat": "openbsd", "bins": ["{plat}/restic-bko"], "modes": ["bios", "uefi"]},
+    "dragonfly": {"kind": "image", "plat": "dragonfly", "bins": ["{plat}/restic-bko"], "modes": ["bios", "uefi"]},
+    "illumos": {"kind": "image", "plat": "illumos", "bins": ["{plat}/restic-bko"], "modes": ["bios", "uefi"]},
+    "haiku": {"kind": "image", "plat": "haiku", "modes": ["bios", "uefi"]}
+  }
+}

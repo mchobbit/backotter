@@ -26,11 +26,14 @@ policy.watch that no spec or plumbing list names and no policy.unmapped_ignore
 glob covers (R5 (a)), so the lists converge; --strict-watch makes each of
 them an error (for t2 self-test, once the lists have converged).
 
---spec FILE (testvm/test2/holt/spec.json, testvm/test2/gate/layers.json)
-checks that spec the same way (R5 (c)): every $HERE/, $T/, $C/ and literal
-testvm/ reference of a listed driver or script is in its entry, its kind's or
-the family's plumbing, and every listed path exists.  For holt it also checks
-each guest's kind against ht1.sh's dispatch (its `case $G in` at the top).
+--spec FILE (testvm/test2/holt/spec.json, testvm/test2/gate/layers.json,
+testvm/test2/guest/spec.json, testvm/test2/img/spec.json) checks that spec the
+same way (R5 (c)): every $HERE/, $T/, $C/ and literal testvm/ reference of a
+listed driver or script is in its entry, its kind's or the family's plumbing,
+and every listed path exists (PATH#SECTION: PATH does, and a section named
+with no marker in it is a note; entry:PATH#a.b.c walks objects, {guest} first).
+For holt it also checks each guest's kind against ht1.sh's dispatch (its
+`case $G in` at the top) and reports a kind's variant file that isn't there.
 --spec stic is manifests.json itself.
 
 --lint runs the lint only; --suggest GUEST prints the references found for one
@@ -483,14 +486,20 @@ def subst(item, guest, plat=None, kind=None):
 
 
 def listed_paths(items, files):
-    """The repo paths a spec list covers: (set of files, [paths or globs that match nothing])."""
+    """The repo paths a spec list covers: (set of files, [paths or globs that match nothing]).
+    A "?PATH" that isn't there is no error; PATH#SECTION is PATH."""
     have, dead = set(), []
     for it in items or []:
         if not isinstance(it, str):
             it = it.get("path") if isinstance(it, dict) else None
             if not it:
                 continue
-        it = it[1:] if it.startswith("?") else it
+        optional = it.startswith("?")
+        it = it[1:] if optional else it
+        if "#" in it and not it.startswith(("entry:", "shared:", "host:", "git:")):
+            it = it.split("#", 1)[0]
+        if optional and not is_glob(it) and it not in files:
+            continue
         if it.startswith(("entry:", "shared:", "host:", "git:")):
             if it.startswith("entry:"):
                 f = it[len("entry:"):].split("#", 1)[0]
@@ -634,6 +643,42 @@ def kind_driver(kind, entry):
     return {"linux": "ht1.sh", "bsd": "ht1-bsd.sh", "offline": "ht1-offline.sh"}.get(kind)
 
 
+def section_notes(items, name, path):
+    """Notes for each PATH#SECTION of ITEMS with no "# t2-section: SECTION" marker in PATH (keys.py
+    keys the whole file then), and each entry:PATH#KEY whose KEY isn't there."""
+    out = []
+    for it in items or ():
+        if not isinstance(it, str):
+            continue
+        it = it.lstrip("?")
+        if it.startswith("entry:"):
+            p, _, k = it[len("entry:"):].partition("#")
+            try:
+                cur = load_json(p)
+            except (OSError, ValueError):
+                continue
+            found = isinstance(cur, dict) and k in cur
+            if not found:
+                found = True
+                for part in k.split("."):
+                    if not isinstance(cur, dict) or part not in cur:
+                        found = False
+                        break
+                    cur = cur[part]
+            if not found and not p.endswith("limits.json"):     # (limits.json starts empty: R3)
+                out.append(f"{path}#{name}: {it}: no such entry (it keys as absent)")
+        elif "#" in it and not it.startswith(("shared:", "host:", "git:")):
+            p, _, sec = it.partition("#")
+            try:
+                with open(os.path.join(REPO, p), "rb") as f:
+                    data = f.read()
+            except OSError:
+                continue
+            if _keys is not None and _keys.section_text(data, sec) is None:
+                out.append(f"{path}#{name}: {it}: no such section (the whole file keys it)")
+    return out
+
+
 def check_spec(path, files):
     """R5 (c) for holt/spec.json or gate/layers.json: every reference of the scripts
     an entry runs is in the entry, its kind or the family's plumbing.  For holt the
@@ -643,26 +688,67 @@ def check_spec(path, files):
     names is used by some guests only, so a reference to it is no error."""
     errs, reps = [], []
     data = load_json(path)
-    fam = data.get("family") or ("holt" if "holt" in path else "gate" if "gate" in path else "stic")
+    fam = data.get("family") or ("holt" if "holt" in path else "gate" if "gate" in path else
+                                 "guest" if "guest/" in path else "img" if "img/" in path else "stic")
     if fam == "stic":
         e, r, _ = check_stic(files, path)
         return e, r
     fileset = set(files)
+    try:
+        ignore = [glob_rx(g) for g in (load_json(CLASSES).get("policy") or {}).get("unmapped_ignore") or []]
+    except (OSError, ValueError):
+        ignore = []
     plumbing, pdead = listed_paths(data.get("plumbing"), fileset)
     errs += [f"{path}: plumbing {p}: no such file" for p in pdead]
     entries = spec_entries(data)
     done = set()
+    for kn, kd in sorted((data.get("kinds") or {}).items()):
+        plats = sorted({(lambda m: m.get("plat") or m.get("platform") or "linux")(merged_entry(data, n, path))
+                        for n, own in entries.items() if own.get("kind") == kn})
+        for vn, v in sorted((kd.get("variants") or {}).items()):
+            items = [y for k in ("harness", "judge", "plumbing") for x in (v.get(k) or []) if isinstance(x, str)
+                     for y in ([x.replace("{plat}", p) for p in plats] if "{plat}" in x else [x])]
+            _, vdead = listed_paths(items, fileset)
+            reps += [f"{path}: kinds.{kn}.variants.{vn}: {p}: matches no file" for p in vdead]
+    somewhere, listed, mates = set(), {}, {}    # the guest family's shared job.sh names what only some entries list
+    if fam == "guest":
+        for name in entries:
+            e = merged_entry(data, name, path)
+            listed[name] = {x.lstrip("?") for x in (e.get("harness") or []) if isinstance(x, str)}
+            somewhere |= {x.split("#", 1)[0] for x in listed[name]}
+            mates.setdefault((e.get("plat"), (e.get("checks") or {}).get("pm")), []).append(name)
+        for names_ in mates.values():       # a package manager's or OS's guests share their in-guest.sh sections
+            for name in names_:
+                others = [listed[n] for n in names_ if n != name]
+                for sec in sorted(set.intersection(*others) - listed[name]) if others else ():
+                    if "#" in sec:
+                        errs.append(f"{path}#{name}: {sec}: every other guest of its package manager lists it")
+
+    def guest_exempt(entry, p):
+        """A path only some guests list: true unless it's a shared one this guest's peers all list."""
+        if p not in somewhere:
+            return False
+        if re.fullmatch(r"testvm/test2/guest/(new-guest|probe-[a-z]+)\.sh", p):
+            return True     # (per-guest by design: established: false, redox, sculpt2610)
+        peers = next(ns for ns in mates.values() if entry in ns)
+        others = [{x.split("#", 1)[0] for x in listed[n]} for n in peers if n != entry]
+        return not (others and all(p in o for o in others))
+
     for name in sorted(entries):
         e = merged_entry(data, name, path)
-        guest = e.get("guest") or (name if fam == "holt" else None)
-        plat, kind = e.get("plat") or e.get("platform"), e.get("kind")
+        guest = e.get("guest") or (name if fam in ("holt", "guest") else None)
+        plat, kind = e.get("plat") or e.get("platform") or (name if fam == "img" else None), e.get("kind")
         lists = [subst(x, guest, plat, kind) for k in ("harness", "judge", "plumbing") for x in (e.get(k) or [])]
+        reps += section_notes(lists, name, path)
         if e.get("driver"):
             lists.append(e["driver"])
         have, dead = listed_paths(lists, fileset)
         errs += [f"{path}#{name}: {p}: matches no file" for p in dead]
         globs = [x for x in lists if isinstance(x, str) and is_glob(x)]
         cond = set(e.get("per_guest") or {}) if isinstance(e.get("per_guest"), dict) else set(e.get("per_guest") or [])
+        for v in (((data.get("kinds") or {}).get(kind) or {}).get("variants") or {}).values():
+            # a variant's own files: the driver's branch for it uses them, the base cell doesn't
+            cond |= {subst(x, guest, plat, kind) for x in (v.get("harness") or []) if isinstance(x, str)}
         starts = []
         if fam == "holt":
             drv = kind_driver(kind, e)
@@ -679,6 +765,8 @@ def check_spec(path, files):
             for p, where in sorted(refs.items()):
                 if p in plumbing or p in cond:
                     continue
+                if guest_exempt(name, p) or (fam in ("guest", "img") and any(r.match(p) for r in ignore)):
+                    continue    # (D2: what decides no need, and the family's own runner, aren't keyed)
                 key = (name, p)
                 if p not in fileset:
                     if key not in done:
@@ -714,15 +802,20 @@ def watch_report(files, spec_paths):
         for kd in (data.get("kinds") or {}).values():
             for k in ("harness", "judge", "plumbing"):
                 items += kd.get(k) or []
+            for var in (kd.get("variants") or {}).values():
+                for k in ("harness", "judge", "plumbing"):
+                    items += var.get(k) or []
         for name, e in spec_entries(data).items():
             for k in ("harness", "judge", "plumbing"):
-                items += [subst(x, e.get("guest") or name, e.get("plat"), e.get("kind")) for x in (e.get(k) or [])]
+                plat = e.get("plat") or (name if data.get("family") == "img" else None)
+                items += [subst(x, e.get("guest") or name, plat, e.get("kind")) for x in (e.get(k) or [])]
         for it in items:
             if not isinstance(it, str):
                 continue
             it = it.lstrip("?")
             if it.startswith(("entry:", "host:", "git:")):
                 continue
+            it = it.split("#", 1)[0]
             if it.startswith("shared:"):
                 it = it[len("shared:"):]
                 # ~/backotter-work/cmp-run.sh links into the synced testvm/compare (contract 1.3)
@@ -731,9 +824,17 @@ def watch_report(files, spec_paths):
                 named_globs.append(it)
             else:
                 named.add(it)
-    rx_named = [glob_rx(g) for g in named_globs if "{" not in g and "GUEST" not in g]
+    rx_named = [glob_rx(g.replace("{plat}", "*").replace("{guest}", "*").replace("PLAT", "*"))
+                for g in named_globs if "GUEST" not in g]
+    plats = "linux freebsd netbsd openbsd dragonfly illumos haiku".split()
+    for it in [x for x in named if "{plat}" in x or "/PLAT/" in x]:     # a kind's or variant's per-platform file
+        for p in plats:
+            named.add(it.replace("{plat}", p).replace("/PLAT/", f"/{p}/"))
     rx_ignore = [glob_rx(g) for g in ignore]
     for fam, globs in sorted(watch.items()):
+        if fam in ("guest", "img") and not os.path.exists(os.path.join(REPO, f"testvm/test2/{fam}/spec.json")):
+            reps.append(f"watch {fam}: testvm/test2/{fam}/spec.json isn't there yet: skipped")
+            continue
         rx_watch = [glob_rx(g) for g in globs]
         for f in files:
             if not any(r.match(f) for r in rx_watch):
@@ -777,7 +878,8 @@ def main(argv=None):
     if not a.lint:
         specs = a.spec or [MANIFESTS]
         for sp in specs:
-            sp = {"stic": MANIFESTS, "holt": "testvm/test2/holt/spec.json", "gate": "testvm/test2/gate/layers.json"}.get(sp, sp)
+            sp = {"stic": MANIFESTS, "holt": "testvm/test2/holt/spec.json", "gate": "testvm/test2/gate/layers.json",
+                  "guest": "testvm/test2/guest/spec.json", "img": "testvm/test2/img/spec.json"}.get(sp, sp)
             if not os.path.exists(os.path.join(REPO, sp)):
                 errs.append(f"{sp}: no such spec")
                 continue
@@ -787,9 +889,11 @@ def main(argv=None):
                 e, r = [f"{sp}: {x}"], []
             errs += e
             reps += r
-        wr = watch_report(files, [MANIFESTS, "testvm/test2/holt/spec.json", "testvm/test2/gate/layers.json"])
+        wr = watch_report(files, [MANIFESTS, "testvm/test2/holt/spec.json", "testvm/test2/gate/layers.json",
+                                  "testvm/test2/guest/spec.json", "testvm/test2/img/spec.json"])
         if a.strict_watch:
-            errs += wr
+            errs += [x for x in wr if "isn't there yet" not in x]
+            reps += [x for x in wr if "isn't there yet" in x]
         else:
             reps += wr
     if a.json:

@@ -21,7 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(HERE, "fixtures", "p2"))
 
-from t2lib import ledger, plan, report, run   # noqa: E402
+from t2lib import estimates, ledger, plan, report, run   # noqa: E402
 import world                                 # noqa: E402
 
 GOLDEN = os.path.join(HERE, "fixtures", "p2", "golden")
@@ -41,6 +41,12 @@ def plan_json(p, base):
     for c in j["cells"]:
         c.pop("placed")
     return json.loads(json.dumps(j, sort_keys=True))
+
+
+def _only(p, cell):
+    q = plan.Plan(p.word, p.family)
+    q.cells = [p.cell(cell)]
+    return q
 
 
 class Golden(unittest.TestCase):
@@ -93,11 +99,41 @@ class Golden(unittest.TestCase):
         finally:
             self.w.reset(base)
 
+    def test_guest_nothing_due_and_seven_days(self):
+        p = self.w.plan("GuestTest2 plan")
+        rows = self.w.seed(p, extra={"try_ran": True}, needs={"identity": "PASS"})
+        self.golden("guest-nothing-due", self.w.plan("GuestTest2 plan", rows))
+        old = [r for r in rows if r["cell"] != "guest:arch"]
+        old += self.w.seed(_only(p, "guest:arch"), age={"guest:arch": 200}, extra={"try_ran": True}, needs={"identity": "PASS"})
+        self.golden("guest-7day", self.w.plan("GuestTest2 plan", old))
+
+    def test_img_refused(self):
+        self.golden("img-refused", self.w.plan("ImgTest2 plan"))
+
+    def test_bko_combined(self):
+        """Every child's plan, then one total by estimates.pack over all their due cells."""
+        out, jobs, gm, gbs = [], [], 0.0, 0.0
+        for text in ("GateTest2 plan", "SticTest2 rel4 plan", "HoltTest2 plan", "GuestTest2 plan", "ImgTest2 plan"):
+            p = self.w.plan(text)
+            out.append(mask(p.render(), self.w.head()))
+            jobs += [(c.cell, c.est["wall_s"], 4, sorted(c.keys) or None) for c in p.due()]
+            gm += sum(c.est["gm"] for c in p.due())
+            gbs += sum(c.est.get("gb") or 0.0 for c in p.due())
+        wall, _, left = estimates.pack(sorted(jobs), list(world.HOSTS))
+        total = f"combined: {len(jobs)} due, {gm:.1f} gm, {wall} s wall, {gbs:.1f} GB, {left or 'none'} left over\n"
+        text = "".join(out) + total
+        tp = os.path.join(GOLDEN, "bko-combined.txt")
+        if BLESS:
+            with open(tp, "w") as f:
+                f.write(text)
+        with open(tp) as f:
+            self.assertEqual(text, f.read())
+
     def test_gate_nothing_due(self):
         g0 = self.w.plan("GateTest2 plan")
         p = self.w.plan("GateTest2 plan", self.w.seed(g0))
         self.golden("gate-nothing-due", p)
-        self.assertEqual(p.render().count("\n"), 1)   # one line
+        self.assertEqual(p.render().count("\n"), 2)   # one line, and the sweep line
 
 
 class Report(unittest.TestCase):
@@ -134,8 +170,7 @@ class Report(unittest.TestCase):
         self.assertEqual(report.wear_lines({}), ["wear: no disk figures (facts or wear logs unreachable)"])
 
     def test_budget_and_sweep_lines(self):
-        pol = {"budget": {"run_gb": 2, "sweep_gb": 5, "day_gb": 50, "bind_from": None},
-               "sweep": {"days": 7, "then_days": 14, "shadow_until": None}, "sweep_days": 14}
+        pol = {"budget": {"run_gb": 2, "sweep_gb": 5, "day_gb": 50, "bind_from": None}}
         b = report.budget_lines(self.RR, pol, now=1794182400)
         self.assertEqual(b, ["budget: cinqcent wrote 2.50 GB in this run's jobs, over 2 GB (warn only (bind_from not set))"])
         self.assertEqual(report.budget_lines(self.RR, pol, sweep=True), [])
@@ -147,14 +182,30 @@ class Report(unittest.TestCase):
         b = report.budget_lines(self.RR, pol, ledger=day, now=1794182400)
         self.assertEqual(b[-1], "budget: cinqcent: Test2's jobs wrote 50.5 GB today, over 50 GB a day "
                                 "(warn only (bind_from not set))")
+    def test_sweep_line(self):
+        pol = {"sweep": {"days": 7, "then_days": 14, "shadow_days": 14}}
         now = 1794182400   # 2026-11-09T00:00:00Z
-        rows = [{"family": "stic", "rule": "fresh:All", "kind": "run", "t": "2026-11-05T00:00:00Z"}]
-        self.assertEqual(report.sweep_line("stic", rows, pol, now),
-                         "sweep: SticTest2All last ran 2026-11-05 (4 days ago), due in 3 days")
-        self.assertEqual(report.sweep_line("holt", rows, pol, now),
-                         "sweep: HoltTest2All never ran on the new write path, due now")
-        pol["sweep"]["shadow_until"] = "2026-11-06"
-        self.assertTrue(report.sweep_line("stic", rows, pol, now).endswith("due in 10 days"))
+        self.assertEqual(report.sweep_line(pol, None, now), "sweep: SweepTest2 never ran, due now")
+        last = {"t": "2026-11-05T00:00:00Z"}
+        self.assertEqual(report.sweep_line(pol, last, now),
+                         "sweep: SweepTest2 last ran 2026-11-05 (4 days ago), due in 3 days")
+        # shadow days after the first complete sweep: then_days
+        last = {"t": "2026-11-05T00:00:00Z", "first_t": "2026-10-20T00:00:00Z"}
+        self.assertEqual(report.sweep_line(pol, last, now),
+                         "sweep: SweepTest2 last ran 2026-11-05 (4 days ago), due in 10 days")
+        last = {"t": "2026-11-05T00:00:00Z", "first_t": "2026-11-01T00:00:00Z"}
+        self.assertTrue(report.sweep_line(pol, last, now).endswith("due in 3 days"))
+
+    def test_budget_update_round(self):
+        pol = {"budget": {"run_gb": 2, "update_gb": 40}}
+        self.assertEqual(report.budget_lines(self.RR, pol, update=True, now=1794182400), [])
+
+    def test_blocks_after_the_cell_lines(self):
+        rr = dict(self.RR, blocks=["grades:\n  arch solid"])
+        lines = report.render_report(rr, None, [], {"budget": {"run_gb": 2}}, now=1794182400).splitlines()
+        i = lines.index("grades:")
+        self.assertTrue(lines[i - 1].startswith("  "))
+        self.assertTrue(lines[i + 2].startswith("stops:"))
 
     def test_report_lines(self):
         text = report.render_report(self.RR, None, [], {"budget": {"run_gb": 2}}, now=1794182400)
@@ -167,8 +218,77 @@ class Report(unittest.TestCase):
         self.assertIn("stops: stop-os freebsd", text)
         self.assertIn("rows: 2 written (chopin 1, cinqcent 1)", text)
         self.assertTrue(lines[-1].startswith("cinqcent nvme0n1 (WD_Blue_SN770)"))
-        self.assertIn("sweep: SticTest2All never ran", text)
+        self.assertIn("sweep: SweepTest2 never ran, due now", text)
         self.assertNotRegex(text, r"serial")
+
+
+def flip_row(i, run, verdict="PASS", needs=None, soft=None, plumbing=None, cell="stic:a", key="k", klass=None, valid=True,
+             kind="run"):
+    return {"id": f"h-{i}", "t": f"2026-11-0{i}T00:00:00Z", "run": run, "cell": cell, "key": key, "verdict": verdict,
+            "kind": kind, "valid": valid, "needs": needs or {"x": "PASS"}, "class": klass or "pass",
+            "inputs": {"soft": soft or {}, "plumbing": plumbing or {}}}
+
+
+class Flips(unittest.TestCase):
+    def one(self, a, b):
+        got = report.verdict_flips([a, b], ["t2s-b"])
+        self.assertEqual(len(got), 1, got)
+        return got[0]
+
+    def test_both_ways(self):
+        f = self.one(flip_row(1, "t2s-a"), flip_row(2, "t2s-b", "FAIL", klass="fail"))
+        self.assertEqual(f["kind"], "verdict")
+        self.assertIn("new verdict at an unchanged key: stic:a PASS to FAIL (h-1, h-2)", f["text"])
+        f = self.one(flip_row(1, "t2s-a", "FAIL", klass="fail"), flip_row(2, "t2s-b"))
+        self.assertIn("FAIL to PASS", f["text"])
+
+    def test_host_soft_and_guest_soft_wording(self):
+        f = self.one(flip_row(1, "t2s-a", soft={"kernel": "ver:1"}), flip_row(2, "t2s-b", "FAIL", soft={"kernel": "ver:2"}))
+        self.assertIn("host soft inputs differ (kernel)", f["text"])
+        f = self.one(flip_row(1, "t2s-a", soft={"g:generation": "gen:" + "a" * 64}),
+                     flip_row(2, "t2s-b", "FAIL", soft={"g:generation": "gen:" + "b" * 64}))
+        self.assertIn("the fingerprint may miss an input", f["text"])
+        self.assertEqual(f["guest_gens"], [("g", "a" * 64, "b" * 64)])
+        f = self.one(flip_row(1, "t2s-a", plumbing={"p": "x"}), flip_row(2, "t2s-b", "FAIL", plumbing={"p": "y"}))
+        self.assertIn("plumbing differs (p)", f["text"])
+        f = self.one(flip_row(1, "t2s-a"), flip_row(2, "t2s-b", "FAIL"))
+        self.assertIn("soft and plumbing inputs are the same", f["text"])
+
+    def test_harness_on_its_own_line(self):
+        f = self.one(flip_row(1, "t2s-a"), flip_row(2, "t2s-b", "HARNESS", klass="harness"))
+        self.assertEqual(f["kind"], "harness")
+        self.assertIn("harness result at an unchanged key", f["text"])
+
+    def test_needs_quietly_and_flake_labelled(self):
+        f = self.one(flip_row(1, "t2s-a"), flip_row(2, "t2s-b", needs={"y": "PASS"}))
+        self.assertEqual(f["kind"], "needs")
+        self.assertIn("needs differ", f["text"])
+        f = self.one(flip_row(1, "t2s-a", "FAIL", klass="fail"), flip_row(2, "t2s-b", klass="known-flake"))
+        self.assertIn("(known flake)", f["text"])
+
+    def test_only_other_runs_valid_rows_at_that_key(self):
+        self.assertEqual(report.verdict_flips([flip_row(1, "t2s-b"), flip_row(2, "t2s-b", "FAIL")], ["t2s-b"]), [])
+        self.assertEqual(report.verdict_flips([flip_row(1, "t2s-a", key="o"), flip_row(2, "t2s-b", "FAIL")], ["t2s-b"]), [])
+        self.assertEqual(report.verdict_flips([flip_row(1, "t2s-a", valid=False), flip_row(2, "t2s-b", "FAIL")], ["t2s-b"]), [])
+        # an attempt of the run is the run
+        self.assertEqual(report.verdict_flips([flip_row(1, "t2s-b-r2"), flip_row(2, "t2s-b", "FAIL")], ["t2s-b"]), [])
+
+    def test_composite(self):
+        pol = {"sweep": {"days": 7, "then_days": 14, "shadow_days": 14}}
+        text = report.render_composite(
+            [{"word": "SticTest2", "run": "t2s-x", "exit": 0, "text": "stic report\n", "gm": 3.0, "wall_s": 100, "gb": {"chopin": 0.5}},
+             {"word": "HoltTest2", "run": "t2h-x", "exit": 1, "text": "holt report", "gm": 4.0, "wall_s": 200, "gb": {"chopin": 0.25, "cinqcent": 1}}],
+            [{"text": "new verdict at an unchanged key: x", "pkgdiff": "package p 1 -> 2"}],
+            {"word": "BkoTest2", "run": "t2b-x", "now": 1794182400}, ["stic: no check for manjaro", "coverage: not in any spec: z"], pol)
+        lines = text.splitlines()
+        self.assertEqual(lines[0], "BkoTest2 report: run t2b-x")
+        self.assertIn("== SticTest2 t2s-x (exit 0)", lines)
+        self.assertIn("total: 7.0 gm, ~5 min wall, chopin 0.75 GB, cinqcent 1.00 GB", lines)
+        self.assertIn("new verdict at an unchanged key: x", lines)
+        self.assertIn("  package p 1 -> 2", lines)
+        self.assertIn("coverage: stic: no check for manjaro", lines)
+        self.assertIn("coverage: not in any spec: z", lines)
+        self.assertEqual(lines[-1], "sweep: SweepTest2 never ran, due now")
 
 
 class Runs(unittest.TestCase):
@@ -187,6 +307,124 @@ class Runs(unittest.TestCase):
             r = run.new_run_id(fam)
             self.assertTrue(r.startswith(pre) and run.RUN_RE.match(r), r)
         self.assertTrue(run.RUN_RE.match("t2s-20261108T0315-4f2a-r2"))
+
+    def test_new_families_ids(self):
+        for fam, pre in (("guest", "t2v-"), ("img", "t2i-"), ("bko", "t2b-"), ("sweep", "t2w-")):
+            r = run.new_run_id(fam)
+            self.assertTrue(r.startswith(pre) and run.RUN_RE.match(r), r)
+        self.assertEqual(run.new_run_id("stic", stamp="20261110T0312-4f2a"), "t2s-20261110T0312-4f2a")
+        panel = run.new_run_id("holt", stamp="20261110T0312-4f2a", suffix="img")
+        self.assertEqual(panel, "t2h-20261110T0312-4f2a-img")
+        self.assertTrue(run.RUN_RE.match(panel))
+        self.assertTrue(run.RUN_RE.match(panel + "-r2"))
+        self.assertFalse(run.RUN_RE.match("t2x-20261110T0312-4f2a"))
+
+    def test_family_locks(self):
+        class W:
+            update = False
+        def lk(fam, update=False):
+            w = W()
+            w.family, w.update = fam, update
+            return run.family_locks(w)
+        self.assertEqual(lk("stic"), ["stic"])
+        self.assertEqual(lk("img"), ["img", "holt"])
+        self.assertEqual(lk("guest"), ["guest"])
+        every = ["bko", "gate", "stic", "holt", "guest", "img"]
+        self.assertEqual(lk("guest", update=True), every)
+        self.assertEqual(lk("bko"), every)
+        self.assertEqual(lk("sweep"), every)
+
+    def test_acquire_locks_all_or_none(self):
+        hold = run.FamilyLock("holt", self.mac).acquire("t2h-20261108T0315-4f2a")
+        try:
+            with self.assertRaises(run.Busy):
+                run.acquire_locks(["img", "holt"], "x", self.mac, wait=0.1)
+            self.assertFalse(run.FamilyLock("img", self.mac).held())
+        finally:
+            hold.release()
+        got = run.acquire_locks(["img", "holt"], "x", self.mac, wait=0.1)
+        self.assertTrue(run.FamilyLock("holt", self.mac).held())
+        for lk in got:
+            lk.release()
+
+    def test_run_guards(self):
+        pol = {"budget": {"run_gb": 2, "sweep_gb": 5, "update_gb": 40, "bind_from": None},
+               "stop": {"os_need_guests": 2, "harness_results": 2, "swap_out_gib": 1, "write_budget_x": 2}}
+        g = run.RunGuards(pol)
+        a, b = run.StopEngine("stic", pol, guards=g), run.StopEngine("holt", pol, guards=g)
+        self.assertEqual(a.feed({"cell": "stic:x", "verdict": "HARNESS", "class": "harness"}), "ok")
+        self.assertFalse(g.tripped())
+        self.assertEqual(b.feed({"cell": "holt:y", "verdict": "HARNESS", "class": "harness"}), "stop-run")
+        self.assertTrue(g.tripped())
+        self.assertFalse(a.may_start())
+        # write bytes sum per host across the families; another family's trip stops this one's feed
+        g = run.RunGuards(pol)
+        a, b = run.StopEngine("stic", pol, guards=g), run.StopEngine("holt", pol, guards=g)
+        self.assertEqual(a.feed_host("chopin", ours_bytes=int(3e9)), "ok")
+        self.assertEqual(b.feed_host("chopin", ours_bytes=int(2e9)).split()[0], "stop-starts")
+        self.assertEqual(g.host_bytes("chopin"), int(5e9))
+        self.assertEqual(a.feed_host("chopin").split()[0], "stop-starts")
+        # the same family's bytes are a running figure, not added up
+        g = run.RunGuards(pol)
+        g.feed_host("stic", "h", ours_bytes=int(3e9))
+        g.feed_host("stic", "h", ours_bytes=int(3e9))
+        self.assertFalse(g.tripped())
+        # swap, one host
+        g = run.RunGuards(pol)
+        self.assertIn("swapped out", g.feed_host("stic", "h", swap_out_bytes=2 << 30))
+        self.assertIsNone(g.feed_host("stic", "h", swap_out_bytes=2 << 30))     # says it once
+        # a per-family stop leaves the guards alone
+        g = run.RunGuards(pol)
+        a = run.StopEngine("gate", pol, guards=g)
+        a.feed({"cell": "gate:holt", "part": "fast", "verdict": "FAIL", "class": "fail"})
+        self.assertTrue(a.stop_family)
+        self.assertFalse(g.tripped())
+        # to and from JSON
+        g = run.RunGuards(pol)
+        g.add_harness("c")
+        g.feed_host("stic", "h", ours_bytes=7)
+        g2 = run.RunGuards.from_json(g.to_json(), pol)
+        self.assertEqual((g2.harness, g2.host_bytes("h"), g2.tripped()), (1, 7, False))
+
+    def test_update_budget(self):
+        pol = {"budget": {"run_gb": 2, "update_gb": 40, "bind_from": None}, "stop": {"write_budget_x": 2}}
+        s = run.StopEngine("guest", pol, update=True)
+        self.assertEqual(s.run_gb, 40.0)
+        self.assertEqual(s.feed_host("h", ours_bytes=int(60e9)), "ok")
+
+    def test_last_sweep(self):
+        mac = os.path.join(self.tmp, "mac-sweep")
+        self.assertIsNone(run.last_sweep(mac))
+        for rid, t, ok in (("t2w-20261101T0000-aaaa", "2026-11-01T00:00:00Z", True),
+                           ("t2w-20261105T0000-aaaa", "2026-11-05T00:00:00Z", True),
+                           ("t2w-20261107T0000-aaaa", "2026-11-07T00:00:00Z", False)):
+            run.write_json(os.path.join(run.run_dir(rid, mac), "sweep.json"), {"stamp": rid[4:], "complete": ok, "t": t})
+        d = run.last_sweep(mac)
+        self.assertEqual((d["t"], d["first_t"]), ("2026-11-05T00:00:00Z", "2026-11-01T00:00:00Z"))
+        cut = "t2w-20261108T0000-aaaa"     # a test's --universe sweep: counts in its own root, never the default's
+        run.write_json(os.path.join(run.run_dir(cut, mac), "sweep.json"),
+                       {"stamp": cut[4:], "complete": True, "t": "2026-11-08T00:00:00Z", "universe": ["guest:arch"]})
+        self.assertEqual(run.last_sweep(mac)["t"], "2026-11-08T00:00:00Z")
+        from unittest import mock
+        with mock.patch.object(run, "_is_default_root", lambda m=None: True):
+            self.assertEqual(run.last_sweep(mac)["t"], "2026-11-05T00:00:00Z")
+
+    def test_guest_and_img_flakes_come_from_their_own_family(self):
+        ctx = self.w.ctx([])
+        self.w.edit("testvm/test2/guest/flakes.json", json.dumps([{"guest": "*", "pattern": "x", "why": "w", "ref": "r"}]))
+        p = self.w.plan("GuestTest2 arch plan")
+        rs = run.RunState("t2v-20261108T0500-abcd", self.w.word("GuestTest2 arch", ctx), p, ctx, mac_root=self.mac, log=None)
+        self.assertEqual(rs.flakes[0]["pattern"], "x")
+        self.assertEqual(rs.limits, {})
+        self.assertEqual(rs.attempt_run(1), "t2v-20261108T0500-abcd")
+        self.assertEqual(rs.attempt_run(3), "t2v-20261108T0500-abcd-r3")
+
+    def test_update_cells_have_no_planned_key(self):
+        ctx = self.w.ctx([])
+        w = self.w.word("GuestTest2 update arch", ctx)
+        p = plan.make(w, ctx)
+        rs = run.RunState("t2v-20261108T0500-abcd", w, p, ctx, mac_root=self.mac, log=None)
+        self.assertIsNone(rs.cells_doc(p, "chopin")["cells"]["arch"]["planned_key"])
 
     def test_family_lock(self):
         a = run.FamilyLock("stic", self.mac).acquire("t2s-20261108T0315-4f2a")
@@ -434,6 +672,164 @@ class Derived(unittest.TestCase):
         import types
         run.copies.make = lambda checkout, hosts, log=None: {
             h: types.SimpleNamespace(id="fixture", path=f"/fake/{h}") for h in hosts}
+
+    def t2cli(self):
+        import importlib.machinery
+        import importlib.util
+        path = os.path.join(os.path.dirname(HERE), "t2")
+        spec = importlib.util.spec_from_loader("t2cli", importlib.machinery.SourceFileLoader("t2cli", path))
+        t2 = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(t2)
+        return t2
+
+    def test_seed_current_guest_sets_try_ran(self):
+        ctx = self.w.ctx([])
+        p = plan.make(self.w.word("GuestTest2 plan", ctx), ctx)
+        rows = {r["cell"]: r for r in self.t2cli().seed_rows(p, ctx)}
+        self.assertTrue(rows["guest:arch"]["extra"]["try_ran"])
+        self.assertNotIn("try_ran", rows["guest:haiku6"].get("extra") or {})   # a probe, no --try
+        self.assertEqual(self.w.plan("GuestTest2 plan", list(rows.values())).totals["due"], 0)
+
+    def test_seed_current_img_passes_the_refusal(self):
+        ctx = self.w.ctx([], universe=["img:netbsd"])
+        p = plan.make(self.w.word("ImgTest2 plan", ctx), ctx)
+        rows = self.t2cli().seed_img_rows(p, ctx)
+        self.assertEqual({r["family"] for r in rows}, {"stic", "holt"})
+        self.assertEqual([ledger.validate(r) for r in rows], [[]] * len(rows))
+        q = self.w.plan("ImgTest2 plan", rows, universe=["img:netbsd"])
+        self.assertEqual(st(q, "img:netbsd"), ("due", "img:new"))
+
+    def test_shared_child_takes_no_lock_and_uses_the_composites_things(self):
+        import types
+        w = self.w
+        ctx = w.ctx(self.r_holt)
+        wd = w.word("GateTest2", ctx)
+        p = plan.make(wd, ctx)
+        guards = run.RunGuards(ctx.classes.get("policy"))
+        seen = {}
+
+        def fake_run(c, pl):
+            seen.update(run=c.run.run, copy=dict(c.run.copy), guards=c.run.stops.guards, plan=pl)
+            return {"cells": [], "stops": [], "wear": {"chopin": {}}, "exit": 0}
+        calls = []
+        run.runner = lambda fam: types.SimpleNamespace(run=fake_run, pre_plan=lambda *a: calls.append("pre"),
+                                                       preflight=lambda *a: calls.append("pf"))
+        run.copies.make = lambda *a, **k: self.fail("no copy for a child")
+        hold = run.FamilyLock("gate", self.mac).acquire("t2b-other")
+        try:
+            shared = run.Shared("20261110T0312-4f2a", {"chopin": {"id": "c1"}}, guards, plan=p)
+            run.lifecycle(wd, ctx, mac_root=self.mac, out=lambda *_: None, shared=shared)
+        finally:
+            hold.release()
+        self.assertEqual(seen["run"], "t2g-20261110T0312-4f2a")
+        self.assertEqual(seen["copy"], {"chopin": {"id": "c1"}})
+        self.assertIs(seen["guards"], guards)
+        self.assertIs(seen["plan"], p)
+        self.assertEqual(calls, [])
+
+    def test_plain_run_calls_pre_plan_and_preflight(self):
+        import types
+        ctx = self.w.ctx(self.r_gate)
+        calls = []
+        run.runner = lambda fam: types.SimpleNamespace(run=lambda c, p: {}, pre_plan=lambda *a: calls.append("pre"),
+                                                       preflight=lambda *a: calls.append("pf"))
+        self.assertEqual(run.lifecycle(self.w.word("GateTest2", ctx), ctx, mac_root=self.mac, out=lambda *_: None), 0)
+        self.assertEqual(calls, ["pf", "pre"])
+
+    def test_nothing_due_exits_to_class_and_refused(self):
+        import types
+        w = self.w
+        p = w.plan("GuestTest2 plan")
+        rows = w.seed(p, extra={"try_ran": True}, needs={"identity": "PASS"})
+        pc = p.cell("guest:arch")
+        bad = w.row(pc, sorted(pc.res)[0], verdict="FAIL", age_h=1, needs={"logs": "DIFF"},
+                    extra={"to_class_only": True, "try_ran": True})
+        run.runner = lambda fam: types.SimpleNamespace(run=lambda c, q: self.fail("nothing is due"))
+        ctx = w.ctx(rows + [bad])
+        out = []
+        self.assertEqual(run.lifecycle(w.word("GuestTest2", ctx), ctx, mac_root=self.mac, out=out.append), 1)
+        self.assertIn("to-class: guest:arch", "\n".join(out))
+        self.assertIn("sweep: SweepTest2 never ran", "\n".join(out))
+        ctx = w.ctx([])
+        out = []
+        self.assertEqual(run.lifecycle(w.word("ImgTest2", ctx), ctx, mac_root=self.mac, out=out.append), 2)
+        self.assertIn("refused: img:linux", "\n".join(out))
+
+    def test_a_bare_update_nothing_can_run_says_why_and_exits_2(self):
+        import types
+        run.runner = lambda fam: types.SimpleNamespace(run=lambda c, q: self.fail("nothing is due"))
+        ctx = self.w.ctx([])
+        out = []
+        self.assertEqual(run.lifecycle(self.w.word("GuestTest2 update", ctx), ctx, mac_root=self.mac, out=out.append), 2)
+        text = "\n".join(out)
+        self.assertIn("refused: guest:arch: no --try PASS within 7 days: run t2 GuestTest2 arch first", text)
+        self.assertEqual(text.count("refused: guest:"), 47)
+
+    def test_a_refused_image_exits_2_after_the_due_ones_finish(self):
+        import types
+        w = self.w
+        ctx = w.ctx([], universe=["img:netbsd"])
+        rows = self.t2cli().seed_img_rows(plan.make(w.word("ImgTest2 plan", ctx), ctx), ctx)
+        ctx = w.ctx(rows)
+        out = []
+        ran = []
+        run.runner = lambda fam: types.SimpleNamespace(run=lambda c, q: ran.append(c.run.run) or
+                                                       {"cells": [], "stops": [], "wear": {"chopin": {}}, "exit": 0})
+        self.fake_copies()
+        self.assertEqual(run.lifecycle(w.word("ImgTest2", ctx), ctx, mac_root=self.mac, out=out.append), 2)
+        self.assertEqual(len(ran), 1)
+        self.assertIn("refused: img:linux", "\n".join(out))    # the report says why the exit is 2
+
+    def test_update_waits_for_every_unfinished_run(self):
+        rid = "t2s-20261110T0312-4f2a"
+        run.write_json(os.path.join(run.run_dir(rid, self.mac), "cells-chopin.json"), {})
+        ctx = self.w.ctx([])
+        out = []
+        import types
+        run.runner = lambda fam: types.SimpleNamespace(run=lambda c, q: {})
+        self.assertEqual(run.lifecycle(self.w.word("GuestTest2 update arch", ctx), ctx, mac_root=self.mac, out=out.append), 2)
+        self.assertIn("unfinished", "\n".join(out))
+
+    def test_a_composites_child_is_resumed_through_the_composite(self):
+        rid, comp = "t2s-20261110T0312-4f2a", "t2b-20261110T0312-4f2a"
+        run.write_json(os.path.join(run.run_dir(rid, self.mac), "cells-chopin.json"), {})
+        run.write_json(os.path.join(run.run_dir(rid, self.mac), "plan.json"), {"family": "stic", "word": {"text": "SticTest2"}})
+        self.assertIsNone(run.composite_of(rid, self.mac))
+        run.write_json(os.path.join(run.run_dir(comp, self.mac), "bko.json"), {"run": comp})
+        self.assertEqual(run.composite_of(rid, self.mac), comp)
+        self.assertEqual(run.composite_of("t2h-20261110T0312-4f2a-img-r2", self.mac), comp)
+        self.assertIsNone(run.composite_of(comp, self.mac))
+        ctx = self.w.ctx([])
+        out = []
+        import types
+        run.runner = lambda fam: types.SimpleNamespace(run=lambda c, q: {})
+        self.assertEqual(run.lifecycle(self.w.word("SticTest2 debian13", ctx), ctx, mac_root=self.mac, out=out.append), 2)
+        self.assertIn(f"`t2 resume {comp}` finishes it", "\n".join(out))
+        out = []
+        self.assertEqual(run.resume(rid, ctx, mac_root=self.mac, out=out.append), 2)
+        self.assertIn(f"{rid} is a child of {comp}, which hasn't finished: `t2 resume {comp}`", "\n".join(out))
+        run.write_text(os.path.join(run.run_dir(comp, self.mac), "report.txt"), "done\n")
+        self.assertIsNone(run.composite_of(rid, self.mac))
+
+    def test_resume_restores_what_a_parse_loses(self):
+        ctx = self.w.ctx([])
+        w = self.w.word("GuestTest2All", ctx)
+        w.sweep = True
+        ctx2 = self.w.ctx([], extra_due={"guest:arch": "x"}, identity_bad={"arch": "y"})
+        pj = plan.make(w, ctx2).to_json()
+        self.assertTrue(pj["word"]["sweep"])
+        self.assertEqual(pj["options"], {"extra_due": {"guest:arch": "x"}, "identity_bad": {"arch": "y"}})
+        ctx3 = self.w.ctx([])
+        w2 = run.restore_word(self.w.word("GuestTest2All", ctx3), pj, ctx3)
+        self.assertTrue(w2.sweep)
+        self.assertEqual(ctx3.options["identity_bad"], {"arch": "y"})
+        u = self.w.word("GuestTest2 update arch", ctx3)
+        self.assertTrue(u.to_json()["update"])
+
+    def test_carried_rows_of_run_attempts(self):
+        self.assertTrue(run._of_run("t2s-x-r3", "t2s-x"))
+        self.assertTrue(run._of_run("t2s-x", "t2s-x"))
+        self.assertFalse(run._of_run("t2s-xy", "t2s-x"))
 
     def test_lifecycle_uses_the_runners_last_plan(self):
         """A commands.rs fix with debian13's plan blessed: the step-4 plan carries mint22, the gate's

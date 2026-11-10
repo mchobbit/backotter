@@ -1,0 +1,4 @@
+base pm netbsd
+base netbsd-daily aaaabbbbccccddddaaaabbbbccccddddaaaabbbbccccddddaaaabbbbccccdddd
+pkg pkgin 25.10.0
+pkg sysupgrade 1.0

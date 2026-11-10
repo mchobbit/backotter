@@ -1,0 +1,10 @@
+{
+  "about": "What img-boot.py types differently for this image. user: the account SSH logs in as, sshd's AllowUsers; extra: shell lines typed before the sshd line; rate: typing speed in bytes a second (null: boot-test.py's); disk_bus: vm-run's --disk-bus for the image and its targets (null: the default, read by the driver).",
+  "why": "FreeBSD's sh edits lines (libedit) on a terminal, echoing despite stty -echo and losing the ends of long lines typed faster than it redraws them: off first, and stty -echo again (freebsd/checks.sh's first line)",
+  "user": "root",
+  "extra": [
+    "set +o emacs +o vi; stty -echo"
+  ],
+  "rate": null,
+  "disk_bus": null
+}

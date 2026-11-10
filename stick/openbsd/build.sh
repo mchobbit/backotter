@@ -172,7 +172,9 @@ if [ "${TEST:-0}" = 1 ]; then
     echo 'set timeout 1' >"$root/etc/boot.conf"
 fi
 
-mkdir -p "$root$LIB" "$root/.disk"
+# /mnt/bko-target: where bko-holt load mounts what it restores (its default
+# --target), which the read-only root can't make at run time.
+mkdir -p "$root$LIB" "$root/.disk" "$root/mnt/bko-target"
 install -m 755 in/console in/remote-access "$root$LIB/"
 install -m 755 in/restic-bko "$root/usr/local/bin/"
 [ ! -f in/rustic-bko ] || install -m 755 in/rustic-bko "$root/usr/local/bin/"
@@ -201,7 +203,7 @@ chmod 1777 /tmp
 mfs /etc -s 64m -o nodev,nosuid -P /etc
 mfs /var -s 256m -o nodev,nosuid -P /var
 mfs /dev -s 16m -o nosuid -P /dev           # ptys need a writable /dev
-mfs /root -s 64m -o nodev,nosuid -P /root
+mfs /root -s 1g -o nodev,nosuid -P /root    # restic's and rustic's caches (a restore's), as FreeBSD's
 mfs /home -s 256m -o nodev,nosuid           # for remote access's user
 
 # DHCP and SLAAC on every network card; netstart, later in rc, starts them.

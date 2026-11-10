@@ -8,7 +8,9 @@
 
 The pieces the runners use (t2lib.gate, t2lib.stic, t2lib.holt; their run(ctx, plan) gets this
 module's RunState as ctx.run):
-    new_run_id(family)          t2g-/t2s-/t2h-YYYYMMDDTHHMM-XXXX
+    new_run_id(family, stamp, suffix)   t2g-/t2s-/t2h-/t2v-/t2i-/t2b-/t2w-YYYYMMDDTHHMM-XXXX[-img]
+    family_locks(word), last_sweep(mac_root)
+    Shared, RunGuards           what a composite (BkoTest2, SweepTest2) hands its children
     RunState                    the run id, its directories, the copy, cells.json writing,
                                 record_made(), the StopEngine, limits and flakes
     StopEngine                  feed(result) -> ok | stop-family | stop-os OS | stop-starts | stop-run
@@ -33,9 +35,10 @@ from . import utc_now
 from . import plan as planmod
 from . import report
 
-RUN_PREFIX = {"gate": "t2g", "stic": "t2s", "holt": "t2h"}
-RUN_RE = re.compile(r"t2[gsh]-\d{8}T\d{4}-[0-9a-f]{4}(-r2)?\Z")
-RUNNERS = {"gate": "gate", "stic": "stic", "holt": "holt"}
+RUN_PREFIX = {"gate": "t2g", "stic": "t2s", "holt": "t2h", "guest": "t2v", "img": "t2i", "bko": "t2b", "sweep": "t2w"}
+RUN_RE = re.compile(r"t2[gshvibw]-\d{8}T\d{4}-[0-9a-f]{4}(-img)?(-r\d)?\Z")
+RUNNERS = {"gate": "gate", "stic": "stic", "holt": "holt", "guest": "guest", "img": "img", "bko": "bko", "sweep": "bko"}
+ALL_FAMILIES = ("gate", "stic", "holt", "guest", "img")
 PREFLIGHT = {"tctl_c": 90.0, "scratch_free_gb": 80.0}
 EXIT_OK, EXIT_FAIL, EXIT_REFUSED, EXIT_INTERNAL = 0, 1, 2, 3
 STOP_ORDER = ("ok", "stop-starts", "stop-os", "stop-family", "stop-run")
@@ -57,8 +60,15 @@ class Busy(Refused):
         self.holder = holder
 
 
-def new_run_id(family, t=None):
-    return f"{RUN_PREFIX[family]}-{time.strftime('%Y%m%dT%H%M', time.gmtime(t or time.time()))}-{secrets.token_hex(2)}"
+def new_stamp(t=None):
+    """YYYYMMDDTHHMM-XXXX: the part of a run id after its prefix; a composite's children share one."""
+    return f"{time.strftime('%Y%m%dT%H%M', time.gmtime(t or time.time()))}-{secrets.token_hex(2)}"
+
+
+def new_run_id(family, stamp=None, suffix=None):
+    """PREFIX-STAMP[-SUFFIX]: a new stamp, or a composite's (its children: t2s-S under t2b-S)."""
+    tail = f"-{suffix.lstrip('-')}" if suffix else ""
+    return f"{RUN_PREFIX[family]}-{stamp or new_stamp()}{tail}"
 
 
 def runs_dir(mac_root=None):
@@ -163,6 +173,31 @@ class FamilyLock:
         self.release()
 
 
+def family_locks(word):
+    """The lock names WORD takes (in order; a run takes each once).  sweep and bko share "bko"."""
+    fam = word.family
+    if fam in ("bko", "sweep"):
+        return ["bko"] + list(ALL_FAMILIES)
+    if fam == "guest" and getattr(word, "update", False):
+        return ["bko"] + list(ALL_FAMILIES)
+    if fam == "img":
+        return ["img", "holt"]     # its panel is a holt run
+    return [fam]
+
+
+def acquire_locks(names, run, mac_root=None, wait=1.0):
+    """[FamilyLock] of NAMES, all held; Busy (and none held) when any is taken."""
+    held = []
+    try:
+        for n in names:
+            held.append(FamilyLock(n, mac_root).acquire(run, wait))
+    except Busy:
+        for lk in held:
+            lk.release()
+        raise
+    return held
+
+
 def held_runs(mac_root=None):
     """The run ids holding a family lock in MAC_ROOT (any family; "pending" while one plans)."""
     out = set()
@@ -177,6 +212,8 @@ def unfinished_runs(family=None, mac_root=None, exclude=(), now=None, max_age=UN
     """[run] (of FAMILY, or any) that began host work (a cells-HOST.json), have no report.txt
     and changed within MAX_AGE: the lock went with the Mac process (Ctrl-C, a crash), but
     detached checks and queue runners on the hosts may still run (R21)."""
+    # (A guest or img run writes no cells-HOST.json before its pool starts: its runner's record
+    # counts the same, guest.json or img.json.)
     d = runs_dir(mac_root)
     out = []
     if not os.path.isdir(d):
@@ -189,7 +226,8 @@ def unfinished_runs(family=None, mac_root=None, exclude=(), now=None, max_age=UN
         rd = os.path.join(d, run)
         try:
             names = os.listdir(rd)
-            if "report.txt" in names or not any(n.startswith("cells-") and n.endswith(".json") for n in names):
+            if "report.txt" in names or not any((n.startswith("cells-") and n.endswith(".json")) or
+                                                n in ("guest.json", "img.json", "bko.json") for n in names):
                 continue
             newest = max(os.path.getmtime(os.path.join(rd, n)) for n in names)
         except (OSError, ValueError):
@@ -199,13 +237,31 @@ def unfinished_runs(family=None, mac_root=None, exclude=(), now=None, max_age=UN
     return out
 
 
+def composite_of(run, mac_root=None):
+    """The unfinished BkoTest2 or SweepTest2 run (t2b-S, t2w-S: a bko.json, no report.txt) whose
+    child RUN is, by its stamp, or None.  Its children go on under `t2 resume` of the composite."""
+    m = re.match(r"t2[gshvi]-(\d{8}T\d{4}-[0-9a-f]{4})", run or "")
+    if not m:
+        return None
+    for fam in ("bko", "sweep"):
+        d = run_dir(new_run_id(fam, stamp=m.group(1)), mac_root)
+        if os.path.exists(os.path.join(d, "bko.json")) and not os.path.exists(os.path.join(d, "report.txt")):
+            return os.path.basename(d)
+    return None
+
+
+def resume_hint(run, mac_root=None):
+    """`t2 resume RUN`, or the composite's when RUN is a child of an unfinished one."""
+    return f"t2 resume {composite_of(run, mac_root) or run}"
+
+
 def run_hosts(run, mac_root=None):
     """The hosts RUN used, in its order: its cells-HOST.json files, else its plan's facts."""
     rd = run_dir(run, mac_root)
     pj = read_json(os.path.join(rd, "plan.json"), {}) or {}
     order = [h for h in ((pj.get("header") or {}).get("facts") or {}) if h != "mac"]
     try:
-        cells = sorted(m.group(1) for m in (re.match(r"cells-(?!r2-)(.+)\.json\Z", n) for n in os.listdir(rd)) if m)
+        cells = sorted(m.group(1) for m in (re.match(r"cells-(?!r\d-)(.+)\.json\Z", n) for n in os.listdir(rd)) if m)
     except OSError:
         cells = []
     if not cells:
@@ -315,6 +371,104 @@ def remove_leftovers(items, log=print, dead=None):
 
 # --- the stop rules (1.9; R22) ------------------------------------------------------------------
 
+class RunGuards:
+    """The stop rules that hold across a whole run or composite, thread-safe: the harness count,
+    swap-out, and the write bytes per family and host.  One per composite (Shared.guards); a
+    plain run has its own.  StopEngine feeds it; each runner asks tripped() once per poll and
+    starts nothing more.
+
+        add_harness(cell) -> count
+        feed_host(family, host, swap_out_bytes=None, ours_bytes=None) -> why it tripped now, or None
+        trip(why); tripped() -> bool; why() -> [text]
+        to_json(), from_json(doc, policy...)    what a composite's resume rebuilds
+    """
+
+    def __init__(self, policy=None, sweep=False, update=False, now=None):
+        p = policy or {}
+        st, b = p.get("stop") or {}, p.get("budget") or {}
+        self.harness_max = int(st.get("harness_results", 2))
+        self.swap_max = float(st.get("swap_out_gib", 1)) * GIB
+        self.write_x = float(st.get("write_budget_x", 2))
+        self.run_gb = budget_gb(b, sweep, update)
+        self.bind = report.budget_binds(b.get("bind_from"), now)
+        self.harness = 0
+        self.bytes = {}         # {(family, host): the family's bytes on that host so far}
+        self.reasons = []
+        self._mu = threading.Lock()
+
+    def add_harness(self, cell=None):
+        with self._mu:
+            self.harness += 1
+            if self.harness >= self.harness_max and not self.reasons:
+                self.reasons.append(f"{self.harness} harness-class results (last {cell})")
+            return self.harness
+
+    def trip(self, why):
+        with self._mu:
+            if why not in self.reasons:
+                self.reasons.append(why)
+
+    def tripped(self):
+        with self._mu:
+            return bool(self.reasons)
+
+    def why(self):
+        with self._mu:
+            return list(self.reasons)
+
+    def host_bytes(self, host):
+        with self._mu:
+            return sum(v for (f, h), v in self.bytes.items() if h == host)
+
+    def feed_host(self, family, host, swap_out_bytes=None, ours_bytes=None):
+        """Why this feed tripped the guards (the first time), else None."""
+        with self._mu:
+            why = None
+            if swap_out_bytes is not None and swap_out_bytes > self.swap_max:
+                why = f"{host}: {swap_out_bytes / GIB:.2f} GiB swapped out since the run began"
+            if ours_bytes is not None:
+                self.bytes[(family, host)] = ours_bytes
+                total = sum(v for (f, h), v in self.bytes.items() if h == host)
+                if not why and total > self.write_x * self.run_gb * 1e9:
+                    why = (f"{host}: this run's jobs wrote {total / 1e9:.2f} GB, "
+                           f"over {self.write_x:g} x the {self.run_gb:g} GB budget")
+                if not why and self.bind and total > self.run_gb * 1e9:
+                    why = f"{host}: this run's jobs wrote {total / 1e9:.2f} GB, over the {self.run_gb:g} GB budget (bound)"
+            if why and not self.reasons:
+                self.reasons.append(why)
+                return why
+            return None
+
+    def to_json(self):
+        with self._mu:
+            return {"harness": self.harness, "reasons": list(self.reasons),
+                    "bytes": [[f, h, v] for (f, h), v in sorted(self.bytes.items())]}
+
+    @classmethod
+    def from_json(cls, doc, policy=None, sweep=False, update=False, now=None):
+        g = cls(policy, sweep, update, now)
+        doc = doc or {}
+        g.harness = int(doc.get("harness") or 0)
+        g.reasons = list(doc.get("reasons") or [])
+        g.bytes = {(f, h): v for f, h, v in doc.get("bytes") or []}
+        return g
+
+
+class Shared:
+    """What a composite gives each child's lifecycle() or resume(): its STAMP, the one private
+    COPY ({host: {id, path, commit, dirty}}), the run-wide GUARDS, the child's PLAN if it
+    made it already, and a run-id SUFFIX (ImgTest2's panel: img)."""
+
+    def __init__(self, stamp, copy, guards, plan=None, suffix=None):
+        self.stamp, self.copy, self.guards, self.plan, self.suffix = stamp, copy, guards, plan, suffix
+
+
+def budget_gb(b, sweep=False, update=False):
+    if update:
+        return float(b.get("update_gb", 40))
+    return float(b.get("sweep_gb" if sweep else "run_gb", 2))
+
+
 class StopEngine:
     """Runners feed it each cell's result as it lands:
 
@@ -324,9 +478,11 @@ class StopEngine:
                                                                run's bytes from its wear tags (R22)
 
     and gets back ok, stop-family, stop-os OS, stop-starts or stop-run.  Its state:
-    stop_family (no guest of the family starts), stopped_os, stop_starts, stop_run, stops [text]."""
+    stop_family (no guest of the family starts), stopped_os, stop_starts, stop_run, stops [text].
+    With GUARDS (a RunGuards), the harness count, swap-out and write bytes are the run's, shared
+    with the composite's other families, and a guard another family tripped stops this one."""
 
-    def __init__(self, family, policy=None, sweep=False, now=None):
+    def __init__(self, family, policy=None, sweep=False, update=False, now=None, guards=None):
         p = (policy or {})
         st = p.get("stop") or {}
         b = p.get("budget") or {}
@@ -335,8 +491,9 @@ class StopEngine:
         self.harness_max = int(st.get("harness_results", 2))
         self.swap_max = float(st.get("swap_out_gib", 1)) * GIB
         self.write_x = float(st.get("write_budget_x", 2))
-        self.run_gb = float(b.get("sweep_gb" if sweep else "run_gb", 2))
+        self.run_gb = budget_gb(b, sweep, update)
         self.bind = report.budget_binds(b.get("bind_from"), now)
+        self.guards = guards
         self.harness = 0
         self.need_fail = {}
         self.stop_family = self.stop_starts = self.stop_run = False
@@ -360,9 +517,10 @@ class StopEngine:
                 out = self._stop("stop-starts", f"slow gate {res.get('cell')} {verdict}")
         if klass in ("harness", "lost") and not res.get("flake"):
             self.harness += 1
-            if self.harness >= self.harness_max and not self.stop_run:
+            count = self.guards.add_harness(res.get("cell")) if self.guards is not None else self.harness
+            if count >= self.harness_max and not self.stop_run:
                 self.stop_run = True
-                return self._stop("stop-run", f"{self.harness} harness-class results (last {res.get('cell')})")
+                return self._stop("stop-run", f"{count} harness-class results (last {res.get('cell')})")
         osn = res.get("os")
         if verdict in FAILING and osn and klass != "known-flake" and not res.get("flake"):
             for need, v in (res.get("needs") or {}).items():
@@ -376,6 +534,12 @@ class StopEngine:
         return out
 
     def feed_host(self, host, swap_out_bytes=None, ours_bytes=None):
+        if self.guards is not None:
+            why = self.guards.feed_host(self.family, host, swap_out_bytes, ours_bytes)
+            if self.guards.tripped() and not self.stop_starts:
+                self.stop_starts = True
+                return self._stop("stop-starts", why or "; ".join(self.guards.why()))
+            return "ok"
         if swap_out_bytes is not None and swap_out_bytes > self.swap_max and not self.stop_starts:
             self.stop_starts = True
             return self._stop("stop-starts", f"{host}: {swap_out_bytes / GIB:.2f} GiB swapped out since the run began")
@@ -392,7 +556,8 @@ class StopEngine:
         return "ok"
 
     def may_start(self, cell_os=None):
-        return not (self.stop_run or self.stop_starts or self.stop_family or (cell_os and cell_os in self.stopped_os))
+        return not (self.stop_run or self.stop_starts or self.stop_family or (cell_os and cell_os in self.stopped_os)
+                    or (self.guards is not None and self.guards.tripped()))
 
 
 # --- reruns, flakes, LIMITs (1.9, R3) ----------------------------------------------------------
@@ -521,7 +686,7 @@ class RunState:
         log(text)      to MAC_ROOT/runs/RUN/run.log and stdout
     """
 
-    def __init__(self, run, word, plan, ctx, mac_root=None, host_root=None, log=print):
+    def __init__(self, run, word, plan, ctx, mac_root=None, host_root=None, log=print, shared=None):
         self.run, self.word, self.family = run, word, word.family
         self.plan = plan
         self.ctx = ctx
@@ -530,13 +695,19 @@ class RunState:
         self.host_root = host_root or default_host_root()
         self.hosts = [h for h in ctx.hosts if h in ctx.facts]
         self.copy = {}
-        # SweepTest2's 5 GB budget is its own: the All forms keep the per-run 2 GB
-        self.stops = StopEngine(word.family, ctx.classes.get("policy"), sweep=getattr(word, "sweep", False),
-                                now=getattr(ctx, "now", None))
-        self.flakes = read_json(os.path.join(ctx.checkout, "testvm", "test2", "stic", "flakes.json"), []) or []
+        self.shared = shared
+        pol = ctx.classes.get("policy")
+        # SweepTest2's 5 GB budget is its own: the All forms keep the per-run 2 GB; an update round has its own too
+        sweep, update = getattr(word, "sweep", False), getattr(word, "update", False)
+        now = getattr(ctx, "now", None)
+        self.guards = shared.guards if shared is not None and shared.guards is not None else \
+            RunGuards(pol, sweep=sweep, update=update, now=now)
+        self.stops = StopEngine(word.family, pol, sweep=sweep, update=update, now=now, guards=self.guards)
+        d = word.family if word.family in ("guest", "img") else "stic"
+        self.flakes = read_json(os.path.join(ctx.checkout, "testvm", "test2", d, "flakes.json"), []) or []
         if isinstance(self.flakes, dict):
             self.flakes = self.flakes.get("flakes") or []
-        self.limits = read_json(os.path.join(ctx.checkout, "testvm", "test2", "stic", "limits.json"), {}) or {}
+        self.limits = read_json(os.path.join(ctx.checkout, "testvm", "test2", d, "limits.json"), {}) or {}
         self._log = log
         os.makedirs(self.mac_dir, exist_ok=True)
 
@@ -549,6 +720,10 @@ class RunState:
 
     def host_run_dir(self, host):
         return os.path.join(hostrun.host_path(self.host_root), "runs", self.run)
+
+    def attempt_run(self, attempt):
+        """RUN for a job's first real start, RUN-rA after it."""
+        return self.run if int(attempt or 1) <= 1 else f"{self.run}-r{int(attempt)}"
 
     def record_made(self, host, path, pid=None):
         """Runners call it from several threads (gate's slow layers): one writer at a time,
@@ -580,7 +755,8 @@ class RunState:
             if reruns is not None and rr is None:
                 continue
             ent = {"cell": pc.cell, "rule": pc.rule, "reasons": list(pc.reasons)[:20],
-                   "planned_key": pc.keys.get(host), "attempt": int((rr or {}).get("attempt") or attempt),
+                   "planned_key": None if getattr(self.word, "update", False) else pc.keys.get(host),   # a merge changes it
+                   "attempt": int((rr or {}).get("attempt") or attempt),
                    "rerun_of": (rr or {}).get("rerun_of"), "flake": (rr or {}).get("flake"),
                    "limits_classed": limits_classed(pc.cell, self.limits, rows) if pc.family == "stic" else []}
             if pc.family == "stic":
@@ -699,6 +875,11 @@ def derivable(pc, host, P):
     return inputs, None
 
 
+def _of_run(row_run, run):
+    """True when a row's run id is RUN or one of its attempts (RUN-rA)."""
+    return row_run == run or bool(row_run and re.fullmatch(re.escape(run) + r"-r\d", row_run))
+
+
 def derived_rows(plan, run, word, ctx, result=None, rows=None, notes=None):
     """Complete carried rows (bare runs; contract 1.6 rule 4) and class rows (a representative's
     PASS covers its class-pending members, 1.6.2), for MAC_ROOT/ledger/mac.jsonl.
@@ -714,7 +895,7 @@ def derived_rows(plan, run, word, ctx, result=None, rows=None, notes=None):
     by_id = {r.get("id"): r for r in rows}
     rcells = (result or {}).get("cells") or []
     ran = {c.get("cell") for c in rcells if c.get("rows") and c.get("outcome", "ran") == "ran"}
-    ran |= {r.get("cell") for r in rows if r.get("kind") == "run" and r.get("run") in (run, f"{run}-r2")}
+    ran |= {r.get("cell") for r in rows if r.get("kind") == "run" and _of_run(r.get("run"), run)}
     stopped = [s for s in (result or {}).get("stops") or [] if str(s).startswith(("stop-family", "stop-run"))]
 
     def emit(pc, kind, extra):
@@ -728,8 +909,11 @@ def derived_rows(plan, run, word, ctx, result=None, rows=None, notes=None):
                 notes.append(f"no {kind} row for {pc.cell} at {h}'s key: {why}")
                 continue
             if kind == "carried":   # not in the key, and nothing ran with the new ones: the next plan sees the change
-                inputs = dict(inputs, plumbing=(P.get("inputs") or {}).get("plumbing") or {},
-                              soft=(P.get("inputs") or {}).get("soft") or {})
+                soft = (P.get("inputs") or {}).get("soft") or {}
+                if getattr(pc, "fp_carry", False):    # the guest soft inputs are the image as it is
+                    soft = dict({n: x for n, x in soft.items() if ":" not in n},
+                                **{n: x for n, x in (inputs.get("soft") or {}).items() if ":" in n})
+                inputs = dict(inputs, plumbing=(P.get("inputs") or {}).get("plumbing") or {}, soft=soft)
             res = pc.res.get(h)
             name = kind if len(set(pc.keys.values())) == 1 else f"{kind}@{h}"
             r = dict(base, origin=f"derived:{run}:{pc.cell}:{name}", family=pc.family, cell=pc.cell, kind=kind,
@@ -859,47 +1043,65 @@ def refresh_rows(ctx, pull, out):
         ctx.ledger = list(rows)
 
 
-def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None):
-    """Run WORD (not `plan`).  ctx has pulled rows and fresh facts (steps 1-2).  Returns the exit code."""
+def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None, shared=None):
+    """Run WORD (not `plan`).  ctx has pulled rows and fresh facts (steps 1-2).  Returns the exit code.
+    With SHARED (a composite's child) it takes no lock, refreshes no rows, runs neither the runner's
+    pre_plan nor its preflight, and uses the composite's stamp, copy and (when given) plan."""
     fam = word.family
     mod = runner(fam)
     if pull is not None:
         ctx.options.setdefault("pull", pull)
-    lock = FamilyLock(fam, mac_root)
+    locks = []
+    if shared is None:
+        try:
+            locks = acquire_locks(family_locks(word), "pending", mac_root)
+        except Busy as e:
+            out(f"t2: {e}")
+            return EXIT_REFUSED
     try:
-        lock.acquire("pending")
-    except Busy as e:
-        out(f"t2: {e}")
-        return EXIT_REFUSED
-    try:
-        refresh_rows(ctx, pull, out)
+        if shared is None:
+            refresh_rows(ctx, pull, out)
         # 3 preflight
         hosts = [h for h in ctx.hosts]
         bad = preflight(ctx.facts, hosts)
         if bad:
             out("t2: preflight refuses: " + "; ".join(bad))
             return EXIT_REFUSED
-        busy = unfinished_runs(fam, mac_root)   # file times: the real clock
-        if busy:
-            out(f"t2: run {busy[-1]} of {fam} is unfinished (it began host work and has no report): its checks "
-                f"or queue runners may still run on the hosts. `t2 resume {busy[-1]}` finishes it; once nothing "
-                f"of it runs, a report.txt in {run_dir(busy[-1], mac_root)} sets it aside")
-            return EXIT_REFUSED
-        # never another run's: a held lock (any family), or an unfinished run whose host work may go on
-        live = held_runs(mac_root) | {(lock.holder() or {}).get("run")}
-        live |= set(unfinished_runs(None, mac_root))
-        lefts = our_leftovers(mac_root, live)
-        if lefts:
-            remove_leftovers(lefts, out)
+        if shared is None:
+            if getattr(word, "update", False):
+                busy = unfinished_runs(None, mac_root)
+                if busy:
+                    out(f"t2: GuestTest2 update waits for every Test2 run to end: {busy[-1]} is unfinished. "
+                        f"`{resume_hint(busy[-1], mac_root)}` finishes it")
+                    return EXIT_REFUSED
+            for f_ in (x for x in family_locks(word) if x in RUN_PREFIX):
+                busy = unfinished_runs(f_, mac_root)   # file times: the real clock
+                if busy:
+                    out(f"t2: run {busy[-1]} of {f_} is unfinished (it began host work and has no report): its checks "
+                        f"or queue runners may still run on the hosts. `{resume_hint(busy[-1], mac_root)}` finishes it; once nothing "
+                        f"of it runs, a report.txt in {run_dir(busy[-1], mac_root)} sets it aside")
+                    return EXIT_REFUSED
+            # never another run's: a held lock (any family), or an unfinished run whose host work may go on
+            live = held_runs(mac_root) | {(lk.holder() or {}).get("run") for lk in locks}
+            live |= set(unfinished_runs(None, mac_root))
+            lefts = our_leftovers(mac_root, live)
+            if lefts:
+                remove_leftovers(lefts, out)
+            if mod is not None and hasattr(mod, "preflight"):
+                mod.preflight(ctx, out)
+            if mod is not None and hasattr(mod, "pre_plan"):
+                mod.pre_plan(ctx, word, out)
         # 4 plan
-        plan = planmod.make(word, ctx)
+        plan = shared.plan if shared is not None and shared.plan is not None else planmod.make(word, ctx)
         miss = (plan.set or {}).get("missing_on")
         if miss:
             out(f"t2: {plan.set['dir']} isn't on {', '.join(miss)}: a ROUND must be on every host in use "
                 "(stick/build-round.sh ROUND, or --hosts)")
             return EXIT_REFUSED
-        run = new_run_id(fam)
-        write_json(lock.info, {"run": run, "pid": os.getpid(), "start": utc_now()})
+        run = new_run_id(fam, stamp=shared.stamp if shared is not None else None,
+                         suffix=shared.suffix if shared is not None else None)
+        for lk in locks:
+            write_json(lk.info, {"run": run, "pid": os.getpid(), "start": utc_now()})
         if not plan.totals.get("due"):
             nr = plan.by_status("not-runnable")
             if word.form != "bare" and nr:
@@ -912,7 +1114,14 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None):
             out(report.nothing_due_line(plan).rstrip() + (f"; {len(rows)} carried row(s) written" if rows else ""))
             for n in notes[:10]:
                 out("note: " + n)
-            return EXIT_OK
+            for pc in plan.by_status("to-class"):
+                out(f"to-class: {pc.cell}: " + "; ".join(pc.reasons))
+            for pc in nr:
+                if getattr(pc, "refused", False):
+                    out(f"refused: {pc.cell}: " + "; ".join(pc.reasons))
+            if shared is None:
+                out(report.sweep_line(ctx.classes.get("policy"), last_sweep(mac_root), ctx.now))
+            return plan_exit(plan, EXIT_OK)
         if mod is None:
             out(f"t2: {word.word}'s runner (t2lib/{RUNNERS[fam]}.py) is not built; its plan:")
             out(plan.render().rstrip())
@@ -920,25 +1129,38 @@ def lifecycle(word, ctx, mac_root=None, host_root=None, out=print, pull=None):
         save_plan(plan, run, mac_root)
         ctx.options["facts_start"] = {h: dict(f) for h, f in ctx.facts.items()}
         ctx.options["run_start"] = time.time()
-        rs = RunState(run, word, plan, ctx, mac_root, host_root, log=out)
+        rs = RunState(run, word, plan, ctx, mac_root, host_root, log=out, shared=shared)
         ctx.run = rs
         rs.log(f"{word.word} run {run}: {plan.totals['due']} due, est. {plan.totals['gm']} gm")
         # 5 copy
-        try:
-            made = copies.make(ctx.checkout, rs.hosts, log=rs.log)
-        except copies.CopyError as e:
-            out(f"t2: no private copy: {e}")
-            return EXIT_REFUSED
-        pv = ctx.copy_preview or {}
-        for h, c in made.items():
-            rs.copy[h] = {"id": c.id, "path": c.path, "commit": pv.get("commit") or ctx.head, "dirty": pv.get("dirty")}
+        if shared is not None:
+            rs.copy = dict(shared.copy or {})
+        else:
+            try:
+                made = copies.make(ctx.checkout, rs.hosts, log=rs.log)
+            except copies.CopyError as e:
+                out(f"t2: no private copy: {e}")
+                return EXIT_REFUSED
+            pv = ctx.copy_preview or {}
+            for h, c in made.items():
+                rs.copy[h] = {"id": c.id, "path": c.path, "commit": pv.get("commit") or ctx.head, "dirty": pv.get("dirty")}
         # 5a-7: the runner builds, rekeys, writes cells.json (rs.write_cells) and runs
         result = mod.run(ctx, plan) or {}
         result = result if isinstance(result, dict) else getattr(result, "__dict__", {})
         # 8-10 on the runner's last plan (R1 5a, R15: its re-plans live in rs.plan)
         return finish(word, ctx, rs.plan or plan, run, result, mac_root, out, pull)
     finally:
-        lock.release()
+        for lk in reversed(locks):
+            lk.release()
+
+
+def plan_exit(plan, code):
+    """CODE, or higher: to-class cells make it 1, a refused image (contract 1.7) 2."""
+    if plan.by_status("to-class"):
+        code = max(code, EXIT_FAIL)
+    if any(getattr(pc, "refused", False) for pc in plan.by_status("not-runnable")):
+        code = max(code, EXIT_REFUSED)
+    return code
 
 
 WEAR_DRIVER = r'''
@@ -948,7 +1170,7 @@ _jobs = read_jobs(_d.get("log") or DEFAULT_LOG) or []
 _ours = collections.Counter()
 for _j in _jobs:
     _parts = (_j.tag or "").split(":")
-    if (_run in _parts or _run + "-r2" in _parts) and (_lo is None or (_j.t or 0) >= _lo):
+    if (_run in _parts or any(_p.startswith(_run + "-r") for _p in _parts)) and (_lo is None or (_j.t or 0) >= _lo):
         for _k, _v in _j.disks.items():
             if physical(_k):
                 _ours[_k] += _v
@@ -1037,11 +1259,44 @@ def finish(word, ctx, plan, run, result, mac_root=None, out=print, pull=None):
     if unpassed:
         notes.append("due and not passed: " + "; ".join(unpassed[:12]) + (f"; and {len(unpassed) - 12} more"
                                                                          if len(unpassed) > 12 else ""))
+    notes += [f"refused: {pc.cell}: " + "; ".join(pc.reasons) for pc in plan.by_status("not-runnable")
+              if getattr(pc, "refused", False)]
     result["notes"] = list(result.get("notes") or []) + notes
+    result.setdefault("last_sweep", last_sweep(mac_root))
     text = report.render_report(result, plan, rows, ctx.classes.get("policy"), ctx.now)
     write_text(os.path.join(run_dir(run, mac_root), "report.txt"), text)
     out(text.rstrip())
-    return max(int(ex), ex2)
+    return plan_exit(plan, max(int(ex), ex2))
+
+
+def _is_default_root(mac_root=None):
+    from . import DEFAULT_MAC_ROOT, expand
+    try:
+        return os.path.realpath(mac_root or default_mac_root()) == os.path.realpath(expand(DEFAULT_MAC_ROOT))
+    except (OSError, TypeError, ValueError):
+        return True
+
+
+def last_sweep(mac_root=None):
+    """The newest complete SweepTest2's sweep.json, with "first_t" (the first complete one's t),
+    or None.  An incomplete sweep doesn't count."""
+    d = runs_dir(mac_root)
+    try:
+        names = sorted(n for n in os.listdir(d) if n.startswith("t2w-"))
+    except OSError:
+        return None
+    done = []
+    real = _is_default_root(mac_root)
+    for n in names:
+        doc = read_json(os.path.join(d, n, "sweep.json"))
+        if isinstance(doc, dict) and doc.get("complete") is True and doc.get("t"):
+            if real and doc.get("universe"):    # (a test's cut sweep, which bko refuses in this root anyway)
+                continue
+            done.append(doc)
+    if not done:
+        return None
+    done.sort(key=lambda x: str(x.get("t")))
+    return dict(done[-1], first_t=done[0].get("t"))
 
 
 def adopt_inputs(saved, fresh):
@@ -1057,13 +1312,26 @@ def adopt_inputs(saved, fresh):
         if f is None or f.status != pc.status or dict(f.keys) != dict(pc.keys):
             continue
         pc.res, pc.inp, pc.change = f.res, getattr(f, "inp", {}), getattr(f, "change", None)
+        pc.fp_carry = getattr(f, "fp_carry", False)     # (not serialized: its derived row takes the new guest soft inputs)
         pc.last_pass = pc.last_pass or f.last_pass
     return saved
 
 
-def resume(run, ctx, mac_root=None, out=print, pull=None):
+def restore_word(w, pj, ctx):
+    """What a resumed word and its ctx lose by being parsed again: word.sweep, .update, .release
+    and options.extra_due, .identity_bad, .gate_fresh, as lifecycle's plan.json saved them."""
+    wj = pj.get("word") or {}
+    for k in ("sweep", "update", "release"):
+        setattr(w, k, bool(wj.get(k)))
+    for k, v in (pj.get("options") or {}).items():
+        ctx.options.setdefault(k, v)
+    return w
+
+
+def resume(run, ctx, mac_root=None, out=print, pull=None, shared=None):
     """R10: pick RUN up again: its plan.json, the hosts' cells.json, the runner's resume().
-    ctx must be made for the run's own hosts (run_hosts); preflight runs again."""
+    ctx must be made for the run's own hosts (run_hosts); preflight runs again.  With SHARED
+    (a composite's resume, under its locks) it takes no lock and refreshes no rows."""
     if not RUN_RE.match(run):
         out(f"t2: not a run id: {run}")
         return EXIT_REFUSED
@@ -1072,6 +1340,11 @@ def resume(run, ctx, mac_root=None, out=print, pull=None):
         out(f"t2: no {run_dir(run, mac_root)}/plan.json")
         return EXIT_REFUSED
     fam = pj.get("family")
+    comp = composite_of(run, mac_root) if shared is None else None
+    if comp:
+        # (alone it would run with guards and a lock of its own, outside the composite's run-wide stops)
+        out(f"t2: {run} is a child of {comp}, which hasn't finished: `t2 resume {comp}` goes on with it")
+        return EXIT_REFUSED
     mod = runner(fam)
     if mod is None or not hasattr(mod, "resume"):
         out(f"t2: resume for {fam} is not built (t2lib/{RUNNERS.get(fam, fam)}.py resume())")
@@ -1080,20 +1353,23 @@ def resume(run, ctx, mac_root=None, out=print, pull=None):
     if want and list(ctx.hosts) != want:
         out(f"t2: {run} ran on {','.join(want)}, not {','.join(ctx.hosts)}")
         return EXIT_REFUSED
-    lock = FamilyLock(fam, mac_root)
+    locks = []
     try:
-        lock.acquire(run)
+        if shared is None:
+            from . import words as _w
+            locks = acquire_locks(family_locks(restore_word(_w.Word(fam, ""), pj, ctx)), run, mac_root)
     except Busy as e:
         out(f"t2: {e}")
         return EXIT_REFUSED
     try:
-        refresh_rows(ctx, pull, out)
+        if shared is None:
+            refresh_rows(ctx, pull, out)
         bad = preflight(ctx.facts, list(ctx.hosts))
         if bad:
             out("t2: preflight refuses: " + "; ".join(bad))
             return EXIT_REFUSED
         from . import words
-        w = words.parse(pj["word"]["text"].split(), planmod.known_names(ctx))
+        w = restore_word(words.parse(pj["word"]["text"].split(), planmod.known_names(ctx)), pj, ctx)
         plan = plan_from_json(pj, w)
         try:
             fresh = planmod.make(w, ctx)
@@ -1101,16 +1377,17 @@ def resume(run, ctx, mac_root=None, out=print, pull=None):
             fresh = None
             out(f"t2: no fresh plan for the derived rows ({e}): none is written")
         adopt_inputs(plan, fresh)
-        rs = RunState(run, w, plan, ctx, mac_root, log=out)
+        rs = RunState(run, w, plan, ctx, mac_root, log=out, shared=shared)
         ctx.run = rs
         for h in rs.hosts:
             doc = read_json(os.path.join(rs.mac_dir, f"cells-{h}.json"), {}) or {}
-            rs.copy[h] = doc.get("copy") or {}
+            rs.copy[h] = doc.get("copy") or (shared.copy or {}).get(h, {}) if shared is not None else doc.get("copy") or {}
         result = mod.resume(ctx, plan) or {}
         result = result if isinstance(result, dict) else getattr(result, "__dict__", {})
         return finish(w, ctx, rs.plan or plan, run, result, mac_root, out, pull)
     finally:
-        lock.release()
+        for lk in reversed(locks):
+            lk.release()
 
 
 def plan_from_json(pj, word):
@@ -1118,10 +1395,11 @@ def plan_from_json(pj, word):
     p = planmod.Plan(word, pj.get("family"))
     p.header, p.set, p.totals = pj.get("header") or {}, pj.get("set"), pj.get("totals") or {}
     p.notes, p.classes, p.unmapped = list(pj.get("notes") or []), list(pj.get("classes") or []), list(pj.get("unmapped") or [])
+    p.options = dict(pj.get("options") or {})
     for c in pj.get("cells") or []:
         pc = planmod.PlanCell(c["cell"], c["cell"].split(":", 1)[0])
         for k in ("status", "rule", "reasons", "host", "keys", "last_pass", "est", "rep", "klass", "running", "via",
-                  "differ", "part", "placed"):
+                  "differ", "part", "placed", "refused", "binaries"):
             if k in c:
                 setattr(pc, k, c[k])
         p.cells.append(pc)

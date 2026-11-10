@@ -9,7 +9,7 @@
 # run this at once), or 2 on Chopin, whose cooler is weak.
 #
 # img-one.sh runs this for its platform after a build passes its boot tests,
-# and xcopy.sh on the host it copied to.
+# and img-xcopy.sh on the host it copied to (both in stick/).
 #
 #   PLATFORM/*.img            the current images, for download: X.img.xz is
 #                             made beside X.img, which stays (QEMU, boot-test.py

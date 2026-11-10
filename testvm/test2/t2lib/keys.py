@@ -16,7 +16,8 @@ Values:
     ver:TEXT     a version, at most 120 characters
     git:HEX40    an external repository's commit
     dir:HEX      a host directory's digest (sha256 over sorted "relpath<TAB>sha256" lines, links as "->target")
-    entry:HEX    sha256 of the canonical JSON of one top-level entry of a JSON file (R3: limits.json)
+    entry:HEX    sha256 of the canonical JSON of one entry of a JSON file (R3: limits.json); "a.b.c" walks objects
+    fp:HEX       a guest's fingerprint digest (image-fingerprint.json), the projection of the cell's family
     code:HEX     bko-holt by its code digest CODE (R14), built or not
     pending:ID   a binary not built yet, by its source identity (contract 1.6)
     absent       an optional file that isn't there; missing: a required one that isn't,
@@ -35,6 +36,8 @@ Spec files (one per family; P3, P4 and P5 own them):
     stic  testvm/test2/stic/manifests.json   one entry per check (stic:GUEST)
     holt  testvm/test2/holt/spec.json        per guest, merged over its kind (holt:GUEST[+VARIANT])
     gate  testvm/test2/gate/layers.json      one entry per layer (gate:LAYER[@HOST])
+    guest testvm/test2/guest/spec.json       per guest, merged over its kind (guest:GUEST)
+    img   testvm/test2/img/spec.json         per platform (img:PLAT)
 The canonical layout is
 
     {"v": 1, "plumbing": [...], "soft": [...], "defaults": {...},
@@ -43,8 +46,9 @@ The canonical layout is
 and an entry may also sit at the top level or under "cells", "checks",
 "guests" or "layers".  An entry with "kind" is merged over kinds[KIND] (and
 the file's "defaults"): lists add up, dicts merge, scalars are the entry's.
-"variants": {VARIANT: ENTRY} adds a variant's own inputs.  In strings, the
-path segments GUEST, PLAT and KIND (or {guest}, {plat}, {kind}) are the
+"variants": {VARIANT: ENTRY} adds a variant's own inputs; its "replace": [FIELD...]
+makes those fields replace the kind's and the entry's instead of adding to them.  In
+strings, the path segments GUEST, PLAT and KIND (or {guest}, {plat}, {kind}) are the
 entry's guest, platform ("plat") and kind.  Every field is optional:
 
     bins         binaries: "OS/NAME" ("linux/restic-bko"), "OS" (that OS's *-bko
@@ -53,14 +57,18 @@ entry's guest, platform ("plat") and kind.  Every field is optional:
                  digest line of its .digest file (R2), or absent.  Holt keys
                  PLAT/bko-holt as code:CODE (R14); other families as the sha256 of
                  HOST_ROOT/holt-bin/CODE's build, or absent.
-    harness      repo paths and globs (* within a segment, ** across them);
+    bins_from_image  bins are the image's own: "PLAT/NAME" from facts.images[PLAT].bins,
+                 "PLAT/test-image" the pin's sha256, "PLAT/release-image" SHA256SUMS' .img line
+    harness      repo paths and globs (* within a segment, ** across them); PATH#SECTION:
+                 the lines of PATH between "# t2-section: SECTION" markers (no marker: the whole file);
     judge        "?PATH" for an optional one; "entry:FILE#KEY" (R3); "shared:PATH"
     guest_files  the guest's files (default vm-run-options, ssh-user,
                  console-passphrase, luks-passphrase, zfs-passphrase, no-ssh): GUEST:FILE
     guests       more guests the cell boots (their generation and files)
     xguest       guest names (GUEST:generation) and "host:PATH" host inputs
     rescuer      rescuer images ("rescuer.qcow2", "@firmware": the UEFI one for
-                 a UEFI guest where the host has it), "bin/*.deb", "bin/bcachefs",
+                 a UEFI guest where the host has it, "@image": rescuer/img-PLAT, the
+                 pinned rescue image), "bin/*.deb", "bin/bcachefs",
                  guest names (a live rescuer's generation)
     host         host facts, hard: kernel, zfs, qemu, ovmf, rustc, go, pkg:NAME
     host_inputs  host paths (dir: digests), group host unless {"path", "group"} says
@@ -91,16 +99,22 @@ SPEC_PATHS = {
     "stic": "testvm/test2/stic/manifests.json",
     "holt": "testvm/test2/holt/spec.json",
     "gate": "testvm/test2/gate/layers.json",
+    "guest": "testvm/test2/guest/spec.json",
+    "img": "testvm/test2/img/spec.json",
 }
 GUEST_FILES = ("vm-run-options", "ssh-user", "console-passphrase", "luks-passphrase", "zfs-passphrase", "no-ssh")
-SOFT_DEFAULT = {"stic": ("kernel", "zfs", "qemu", "ovmf"), "holt": ("kernel", "zfs", "qemu", "ovmf"), "gate": ()}
+SOFT_DEFAULT = {"stic": ("kernel", "zfs", "qemu", "ovmf"), "holt": ("kernel", "zfs", "qemu", "ovmf"), "gate": (),
+                "guest": ("kernel", "zfs"), "img": ("qemu", "ovmf")}
 CONTAINERS = ("entries", "cells", "checks", "guests", "layers")
 RESERVED = {"v", "family", "plumbing", "soft", "notes", "kinds", "defaults", "variants", "policy",
             "comment", "_comment", "description", "doc", "version"} | set(CONTAINERS)
 VALUE_RE = re.compile(r"(sha256:[0-9a-f]{64}|gen:[0-9a-f]{64}|img:([0-9a-f]{64}|unknown)|ver:.{0,120}|"
-                      r"git:[0-9a-f]{40}|dir:[0-9a-f]{64}|entry:[0-9a-f]{64}|code:[0-9a-f]{64}|pending:.{1,200}|"
+                      r"git:[0-9a-f]{40}|dir:[0-9a-f]{64}|entry:[0-9a-f]{64}|code:[0-9a-f]{64}|fp:[0-9a-f]{64}|"
+                      r"pending:.{1,200}|"
                       r"absent|missing)\Z", re.S)
 UNKNOWN_IMG = "img:unknown"
+HEX64_RE = re.compile(r"[0-9a-f]{64}\Z")
+SECTION_RE = re.compile(rb"^[ \t]*#[ \t]*t2-section:[ \t]*(\S+)[ \t]*$")
 
 
 # --- values ---------------------------------------------------------------------
@@ -438,10 +452,13 @@ class SpecFile:
                     parts.append(v)
         merged = {}
         for p in parts:
+            replace = set(p.get("replace") or ())
             for k, v in p.items():
-                if k == "variants":
+                if k in ("variants", "replace"):
                     continue
-                if isinstance(v, list) and isinstance(merged.get(k), list):
+                if k in replace:
+                    merged[k] = v
+                elif isinstance(v, list) and isinstance(merged.get(k), list):
                     merged[k] = merged[k] + [x for x in v if x not in merged[k]]
                 elif isinstance(v, dict) and isinstance(merged.get(k), dict):
                     merged[k] = dict(merged[k], **v)
@@ -605,7 +622,15 @@ def _fact_version(facts, name):
     return v.get(name)
 
 
-def _guest_identity(r, facts, guest, group):
+def fingerprint_of(g):
+    """The guest facts' fingerprint record when it speaks for the current generation, else None."""
+    fp = (g or {}).get("fingerprint")
+    if not isinstance(fp, dict) or not g.get("generation") or fp.get("generation") != g["generation"]:
+        return None
+    return fp
+
+
+def _guest_identity(r, facts, guest, group, family=None):
     g = ((facts or {}).get("guests") or {}).get(guest)
     name = f"{guest}:generation"
     if g is None:
@@ -613,7 +638,16 @@ def _guest_identity(r, facts, guest, group):
         r.note(f"guest {guest} not on {(facts or {}).get('host', 'this host')}")
         r.unknown.append(f"{group}/{name}")
         return None
-    if g.get("generation"):
+    fp = fingerprint_of(g) if group == "guest" and family in ("stic", "holt") else None
+    digest = (fp or {}).get(family)
+    if isinstance(digest, str) and HEX64_RE.match(digest):
+        # what the cell depends on of the image; the generation stays beside it, soft
+        r.put(group, f"{guest}:fingerprint", "fp:" + digest)
+        r.put("soft", name, "gen:" + g["generation"])
+        fine = (fp or {}).get("fine")
+        if family == "stic" and isinstance(fine, str) and HEX64_RE.match(fine):
+            r.put("soft", f"{guest}:fp-fine", "fp:" + fine)
+    elif g.get("generation"):
         r.put(group, name, "gen:" + g["generation"])
     elif g.get("imgsum"):
         r.put(group, name, g["imgsum"] if g["imgsum"].startswith("img:") else "img:" + g["imgsum"])
@@ -633,12 +667,13 @@ def _file_input(r, group, src, specs, item, guest, plat, kind, facts):
         path, _, k = item[len("entry:"):].partition("#")
         data, _ = specs.json(path)
         name = f"{path}#{k}"
+        found, val = _walk_entry(data, k)
         if data is None:
             r.put(group, name, "absent" if optional else "missing")
-        elif not isinstance(data, dict) or k not in data:
+        elif not found:
             r.put(group, name, "absent")
         else:
-            r.put(group, name, "entry:" + sha256_hex(canonical(data[k])))
+            r.put(group, name, "entry:" + sha256_hex(canonical(val)))
         return
     if item.startswith("shared:"):
         v = ((facts or {}).get("plumbing") or {}).get(item, None)
@@ -652,6 +687,9 @@ def _file_input(r, group, src, specs, item, guest, plat, kind, facts):
     if item.startswith("host:"):
         _host_input(r, group, item[len("host:"):], facts)
         return
+    if "#" in item:
+        _section_input(r, group, src, item, optional)
+        return
     if is_glob(item):
         hits = expand_glob(item, src.files())
         if not hits:
@@ -660,6 +698,48 @@ def _file_input(r, group, src, specs, item, guest, plat, kind, facts):
             r.put(group, p, sha(src.sha256(p)))
         return
     r.put(group, item, sha(src.sha256(item), optional))
+
+
+def _walk_entry(data, k):
+    """(found, value) of K in DATA: the literal top-level key, else a dotted walk through objects."""
+    if not isinstance(data, dict):
+        return False, None
+    if k in data:
+        return True, data[k]
+    cur = data
+    for part in k.split("."):
+        if not isinstance(cur, dict) or part not in cur:
+            return False, None
+        cur = cur[part]
+    return True, cur
+
+
+def section_text(data, name):
+    """The lines of DATA (bytes) in section NAME, joined (a name may appear more than once):
+    each "# t2-section: X" marker opens X and closes what was open.  None: no such marker."""
+    out, cur, seen = [], None, False
+    for line in data.splitlines(keepends=True):
+        m = SECTION_RE.match(line.rstrip(b"\r\n"))
+        if m:
+            cur = m.group(1).decode("utf-8", "replace")
+            seen = seen or cur == name
+            continue
+        if cur == name:
+            out.append(line)
+    return b"".join(out) if seen else None
+
+
+def _section_input(r, group, src, item, optional):
+    path, _, section = item.partition("#")
+    data = src.read(path)
+    if data is None:
+        r.put(group, item, "absent" if optional else "missing")
+        return
+    text = section_text(data, section)
+    if text is None:
+        r.note(f"no section {section} in {path}: the whole file keys it")
+        text = data
+    r.put(group, item, "sha256:" + sha256_hex(text))
 
 
 def _host_input(r, group, path, facts):
@@ -677,10 +757,43 @@ def _set_facts(facts, set_name):
     return ((facts or {}).get("sets") or {}).get(set_name)
 
 
+def _image_of(facts, plat):
+    return (((facts or {}).get("images") or {}).get(plat)) or {}
+
+
+def _pin_sha(im):
+    """The pin's sha256 while it is the image's (a stale pin says nothing about the image now)."""
+    pin = (im or {}).get("pin") or {}
+    return pin.get("sha256") if pin.get("current") else None
+
+
+def _image_bin(r, facts, item, plat):
+    """One of an image's own binaries, or one of the images (works on empty facts)."""
+    im = _image_of(facts, plat)
+    name = item.rsplit("/", 1)[-1]
+    if not im:
+        r.put("bin", item, UNKNOWN_IMG if name == "test-image" else "missing")
+        if facts and "images" in facts:
+            r.note(f"no current image of {plat} on {facts.get('host', 'this host')}")
+    elif name == "test-image":
+        s = _pin_sha(im)
+        r.put("bin", item, "sha256:" + s if s else UNKNOWN_IMG)
+        if not s:
+            r.note(f"{plat}'s test image isn't pinned yet: its identity is unknown")
+            r.unknown.append(f"bin/{item}")
+    elif name == "release-image":
+        r.put("bin", item, sha((im.get("release") or {}).get("sha256")))
+    else:
+        r.put("bin", item, sha((im.get("bins") or {}).get(name)))
+
+
 def _bin_inputs(r, c, entry, facts, src, opts, plat, guest, kind):
     set_name = opts.get("set") or "bko-bin"
     for item in _list(entry.get("bins")):
         item = _subst(item, guest, plat, kind)
+        if entry.get("bins_from_image"):
+            _image_bin(r, facts, item, plat)
+            continue
         if item.endswith("/bko-holt") or item == "bko-holt":
             p = item[:-len("/bko-holt")] if "/" in item else "linux"
             _holt_bin(r, c, p, facts, src, opts)
@@ -747,6 +860,15 @@ def _rescuer_inputs(r, entry, facts, guest, g):
             item = "rescuer-uefi.qcow2" if uefi and "rescuer-uefi.qcow2" in images else "rescuer.qcow2"
             if uefi and item == "rescuer.qcow2":
                 r.note("BIOS rescuer for a UEFI source")
+        if item == "@image":
+            plat = entry.get("plat")
+            s = _pin_sha(_image_of(facts, plat))
+            name = f"rescuer/img-{plat}"
+            r.put("rescuer", name, "sha256:" + s if s else UNKNOWN_IMG)
+            if not s:
+                r.note(f"{plat}'s test image isn't pinned yet: its identity is unknown")
+                r.unknown.append("rescuer/" + name)
+            continue
         if item.startswith("bin/"):
             hits = expand_glob(item[4:], binf) if is_glob(item) else [item[4:]]
             if not hits:
@@ -798,8 +920,8 @@ def resolve(cell, src, facts, specs=None, opts=None):
     r.entry = entry
     r.spec = {"path": f"{sf.path}#{c.name}", "sha256": sf.sha256}
     r.pin = entry.get("pin")
-    guest = entry.get("guest") or (c.name if c.family in ("stic", "holt") else None)
-    plat = entry.get("plat") or entry.get("platform")
+    guest = entry.get("guest") or (c.name if c.family in ("stic", "holt", "guest") else None)
+    plat = entry.get("plat") or entry.get("platform") or (c.name if c.family == "img" else None)
     kind = entry.get("kind")
 
     _bin_inputs(r, c, entry, facts, src, opts, plat, guest, kind)
@@ -812,9 +934,9 @@ def resolve(cell, src, facts, specs=None, opts=None):
         if not head:
             r.unknown.append("harness/git:" + name)
     g = None
-    if c.family in ("stic", "holt") and guest:
+    if c.family in ("stic", "holt", "guest") and guest:
         for gname in [guest] + [x for x in _list(entry.get("guests")) if x != guest]:
-            gf = _guest_identity(r, facts, gname, "guest")
+            gf = _guest_identity(r, facts, gname, "guest", c.family)
             if gname == guest:
                 g = gf
             for fname in _list(entry.get("guest_files", GUEST_FILES)):
@@ -859,8 +981,9 @@ def measure(cell, src, facts, specs=None, opts=None):
 
 def wants(specs, families=("stic", "holt", "gate"), sets=()):
     """What facts_host.py must be asked for (its --want) to resolve these
-    families' cells: the shared: plumbing files, host inputs and sets.  (t2 adds
-    holt_bin_dirs for a HoltTest2 --holt-bin DIR.)"""
+    families' cells: the shared: plumbing files, host inputs, sets, and images when
+    the img family is asked for.  (t2 adds holt_bin_dirs for a HoltTest2 --holt-bin
+    DIR, and images for a word with +img cells.)"""
     shared, host_inputs = set(), set()
     for fam in families:
         sf = specs.get(fam)
@@ -882,4 +1005,7 @@ def wants(specs, families=("stic", "holt", "gate"), sets=()):
                 shared.add(x)
             elif x.startswith("host:"):
                 host_inputs.add(x[len("host:"):])
-    return {"sets": sorted(set(sets) | {"bko-bin"}), "plumbing": sorted(shared), "host_inputs": sorted(host_inputs)}
+    out = {"sets": sorted(set(sets) | {"bko-bin"}), "plumbing": sorted(shared), "host_inputs": sorted(host_inputs)}
+    if "img" in families:
+        out["images"] = True
+    return out

@@ -8,4 +8,5 @@ class-pending: stic:freebsd15-geli, stic:ghostbsd26-zfs (B2, covered if stic:fre
 class-pending: stic:ghostbsd26, stic:hardenedbsd15 (B3, covered if stic:freebsd15-ufs passes)
 carried: stic:aerynos, stic:alpine324, stic:alpinebsd, stic:arch, stic:artix-dinit, stic:artix-s6, stic:cachyos, stic:debian12 and 25 more (carry:affected-v1: affected.sh says freebsd)
 current: 0
+sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written

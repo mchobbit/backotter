@@ -27,8 +27,8 @@ def facts_dir(root=None):
 
 
 def probe(host, want=None, timeout=20, save=True, root=None, host_root=None, copy_root=None):
-    """HOST's facts.  HOST_ROOT and COPY_ROOT (default: T2_HOST_ROOT and
-    T2_COPY_ROOT here, if set) are passed to the probe in the hosts' terms."""
+    """HOST's facts.  HOST_ROOT and COPY_ROOT (default: T2_HOST_ROOT and T2_COPY_ROOT here, if
+    set), and T2_WORK and T2_IMAGES if set, are passed to the probe in the hosts' terms."""
     from . import hostrun
     args = []
     if want:
@@ -39,6 +39,10 @@ def probe(host, want=None, timeout=20, save=True, root=None, host_root=None, cop
         args += ["--host-root", hostrun.host_path(hr)]
     if cr:
         args += ["--copy-root", hostrun.host_path(cr)]
+    if os.environ.get("T2_WORK"):
+        args += ["--work", hostrun.host_path(os.environ["T2_WORK"])]
+    if os.environ.get("T2_IMAGES"):
+        args += ["--images", hostrun.host_path(os.environ["T2_IMAGES"])]
     t0 = time.monotonic()
     r = hostrun.ssh(host, script=FACTS_SCRIPT, args=args, timeout=timeout)
     if r.rc != 0:

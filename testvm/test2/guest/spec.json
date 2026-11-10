@@ -1,0 +1,1347 @@
+{
+ "v": 1,
+ "family": "guest",
+ "about": "What a GuestTest2 cell's key covers (contract 1.4, 2.1). keys.py reads it: entries[GUEST] merges over kinds[its kind], lists adding up. A kind says how the guest is reached: ssh (vm-update --try), probe (no --try: vm-update --probe), redox and sculpt (no SSH: a console probe). checks is what the judge reads, and keyed as a judge input; the rest (ram_gib, cpus, memory, timeout_s, update) is the runner's. S-*, L-*, K-*, B-* and M-* are guest_judge.py's rule codes. Not in guest: keys: update/trim.sh, update/pkgset.sh, update/fingerprint.py, holttest1d/judge.py (contract D2). sculpt2610's lack of SSH lives here, so that no no-ssh file changes its stic and holt keys.",
+ "plumbing": [
+  "testvm/vm-run",
+  "testvm/vm-lib.sh",
+  "shared:cmp-run.sh",
+  "shared:testvm/compare/iolog.sh"
+ ],
+ "soft": [
+  "kernel",
+  "zfs"
+ ],
+ "defaults": {
+  "host": [
+   "qemu",
+   "ovmf"
+  ],
+  "judge": [
+   "testvm/test2/t2lib/guest_judge.py",
+   "entry:testvm/test2/guest/known-lines.json#all",
+   "entry:testvm/test2/guest/limits.json#{guest}",
+   "entry:testvm/test2/guest/spec.json#entries.{guest}.checks",
+   "entry:testvm/test2/classes.json#policy.guest.judge"
+  ],
+  "bins": []
+ },
+ "excluded": {
+  "freebsd15-builder": "a build helper"
+ },
+ "kinds": {
+  "ssh": {
+   "try": true,
+   "harness": [
+    "testvm/vm-update",
+    "testvm/update/in-guest.sh#prologue",
+    "testvm/test2/guest/job.sh",
+    "testvm/test2/guest/check-image.sh",
+    "testvm/test2/guest/check-after.sh"
+   ]
+  },
+  "probe": {
+   "try": false,
+   "harness": [
+    "testvm/vm-update",
+    "testvm/update/in-guest.sh#prologue",
+    "testvm/test2/guest/job.sh",
+    "testvm/test2/guest/check-image.sh",
+    "testvm/test2/guest/check-after.sh"
+   ]
+  },
+  "redox": {
+   "try": false,
+   "harness": [
+    "testvm/test2/guest/job.sh"
+   ]
+  },
+  "sculpt": {
+   "try": false,
+   "harness": [
+    "testvm/test2/guest/job.sh"
+   ]
+  }
+ },
+ "entries": {
+  "aerynos": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-aerynos.sh",
+    "testvm/aerynos/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.moss",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#moss"
+   ],
+   "checks": {
+    "pm": "moss",
+    "rules": {
+     "source": "S-moss",
+     "loader": "L-sd",
+     "kernel": "K-moss",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": true
+   }
+  },
+  "alpine324": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-bootstrap.sh",
+    "testvm/bootstrap/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apk",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apk"
+   ],
+   "checks": {
+    "pm": "apk",
+    "rules": {
+     "source": "S-apk",
+     "loader": "L-grub",
+     "kernel": "K-apk",
+     "boot": "B-lin",
+     "mounts": "M-alp"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "alpinebsd": {
+   "kind": "ssh",
+   "plat": "netbsd",
+   "harness": [
+    "testvm/make-netbsd.sh",
+    "testvm/netbsd/**",
+    "testvm/update/in-guest.sh#NetBSD"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#alpinebsd"
+   ],
+   "checks": {
+    "pm": "alpinebsd",
+    "rules": {
+     "source": "S-apk",
+     "loader": "L-nbsd",
+     "kernel": "K-alpbsd",
+     "boot": "B-alpbsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "uefi",
+    "established": true
+   }
+  },
+  "arch": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-arch.sh",
+    "testvm/arch/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.pacman",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#pacman"
+   ],
+   "checks": {
+    "pm": "pacman",
+    "rules": {
+     "source": "S-pac",
+     "loader": "L-grub",
+     "kernel": "K-pac",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "artix-dinit": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-bootstrap.sh",
+    "testvm/bootstrap/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.pacman",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#pacman"
+   ],
+   "checks": {
+    "pm": "pacman",
+    "rules": {
+     "source": "S-pac",
+     "loader": "L-grub",
+     "kernel": "K-pac",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "artix-s6": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-bootstrap.sh",
+    "testvm/bootstrap/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.pacman",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#pacman"
+   ],
+   "checks": {
+    "pm": "pacman",
+    "rules": {
+     "source": "S-pac",
+     "loader": "L-grub",
+     "kernel": "K-pac",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "cachyos": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-arch.sh",
+    "testvm/arch/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.pacman",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#pacman"
+   ],
+   "checks": {
+    "pm": "pacman",
+    "rules": {
+     "source": "S-pac",
+     "loader": "L-grub",
+     "kernel": "K-pac",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "debian12": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-debian.sh",
+    "testvm/debian/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "debian13": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-debian.sh",
+    "testvm/debian/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "debian13-stack": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-debian-stack.sh",
+    "testvm/debian-stack/**",
+    "testvm/console-boot.py",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": true
+   }
+  },
+  "debian13-zfs": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-debian-zfs.sh",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-zfs"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "devuan6": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-debian.sh",
+    "testvm/debian/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "dragonfly6": {
+   "kind": "ssh",
+   "plat": "dragonfly",
+   "harness": [
+    "testvm/make-dragonfly.sh",
+    "testvm/dragonfly/**",
+    "testvm/update/in-guest.sh#DragonFly"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#dragonfly"
+   ],
+   "checks": {
+    "pm": "dragonfly",
+    "rules": {
+     "source": "S-dfly",
+     "loader": "L-dfly",
+     "kernel": "K-dfly",
+     "boot": "B-bsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "bios",
+    "established": true
+   },
+   "cpus": 4,
+   "memory": 6144,
+   "timeout_s": 7200
+  },
+  "endeavouros": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-arch.sh",
+    "testvm/arch/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.pacman",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#pacman"
+   ],
+   "checks": {
+    "pm": "pacman",
+    "rules": {
+     "source": "S-pac",
+     "loader": "L-sd",
+     "kernel": "K-pac",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false
+   }
+  },
+  "endeavouros-grub": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-arch.sh",
+    "testvm/arch/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.pacman",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#pacman"
+   ],
+   "checks": {
+    "pm": "pacman",
+    "rules": {
+     "source": "S-pac",
+     "loader": "L-grub",
+     "kernel": "K-pac",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false
+   }
+  },
+  "fedora44": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-fedora.sh",
+    "testvm/fedora/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.dnf",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#dnf"
+   ],
+   "checks": {
+    "pm": "dnf",
+    "rules": {
+     "source": "S-dnf",
+     "loader": "L-bls",
+     "kernel": "K-fed",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "fedora44-raid": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-fedora.sh",
+    "testvm/fedora/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.dnf",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#dnf"
+   ],
+   "checks": {
+    "pm": "dnf",
+    "rules": {
+     "source": "S-dnf",
+     "loader": "L-bls",
+     "kernel": "K-fed",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": false
+   }
+  },
+  "fedora44-uefi": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-fedora.sh",
+    "testvm/fedora/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.dnf",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#dnf"
+   ],
+   "checks": {
+    "pm": "dnf",
+    "rules": {
+     "source": "S-dnf",
+     "loader": "L-bls",
+     "kernel": "K-fed",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": true
+   }
+  },
+  "freebsd14": {
+   "kind": "ssh",
+   "plat": "freebsd",
+   "harness": [
+    "testvm/make-freebsd.sh",
+    "testvm/freebsd/**",
+    "testvm/update/in-guest.sh#FreeBSD"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#freebsd"
+   ],
+   "checks": {
+    "pm": "freebsd",
+    "rules": {
+     "source": "S-fbsd",
+     "loader": "L-fbsd",
+     "kernel": "K-fbsd",
+     "boot": "B-bsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "freebsd15": {
+   "kind": "ssh",
+   "plat": "freebsd",
+   "harness": [
+    "testvm/make-freebsd.sh",
+    "testvm/freebsd/**",
+    "testvm/update/in-guest.sh#FreeBSD"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#freebsd"
+   ],
+   "checks": {
+    "pm": "freebsd",
+    "rules": {
+     "source": "S-fbsd",
+     "loader": "L-fbsd",
+     "kernel": "K-fbsd",
+     "boot": "B-bsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "freebsd15-geli": {
+   "kind": "ssh",
+   "plat": "freebsd",
+   "harness": [
+    "testvm/make-freebsd.sh",
+    "testvm/freebsd/**",
+    "testvm/update/in-guest.sh#FreeBSD"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#freebsd"
+   ],
+   "checks": {
+    "pm": "freebsd",
+    "rules": {
+     "source": "S-fbsd",
+     "loader": "L-fbsd",
+     "kernel": "K-fbsd",
+     "boot": "B-bsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "uefi",
+    "established": true
+   }
+  },
+  "freebsd15-mirror": {
+   "kind": "ssh",
+   "plat": "freebsd",
+   "harness": [
+    "testvm/make-freebsd.sh",
+    "testvm/freebsd/**",
+    "testvm/update/in-guest.sh#FreeBSD",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#freebsd"
+   ],
+   "checks": {
+    "pm": "freebsd",
+    "rules": {
+     "source": "S-fbsd",
+     "loader": "L-fbsd",
+     "kernel": "K-fbsd",
+     "boot": "B-bsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "bios",
+    "established": false
+   }
+  },
+  "freebsd15-ufs": {
+   "kind": "ssh",
+   "plat": "freebsd",
+   "harness": [
+    "testvm/make-freebsd.sh",
+    "testvm/freebsd/**",
+    "testvm/update/in-guest.sh#FreeBSD"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#freebsd"
+   ],
+   "checks": {
+    "pm": "freebsd",
+    "rules": {
+     "source": "S-fbsd",
+     "loader": "L-fbsd",
+     "kernel": "K-fbsd",
+     "boot": "B-bsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "ghostbsd26": {
+   "kind": "ssh",
+   "plat": "freebsd",
+   "harness": [
+    "testvm/make-ghostbsd.sh",
+    "testvm/ghostbsd/**",
+    "testvm/update/in-guest.sh#FreeBSD"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#ghostbsd"
+   ],
+   "checks": {
+    "pm": "ghostbsd",
+    "rules": {
+     "source": "S-gbsd",
+     "loader": "L-fbsd",
+     "kernel": "K-fbsd",
+     "boot": "B-bsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "ghostbsd26-zfs": {
+   "kind": "ssh",
+   "plat": "freebsd",
+   "harness": [
+    "testvm/make-ghostbsd.sh",
+    "testvm/ghostbsd/**",
+    "testvm/update/in-guest.sh#FreeBSD"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#ghostbsd"
+   ],
+   "checks": {
+    "pm": "ghostbsd",
+    "rules": {
+     "source": "S-gbsd",
+     "loader": "L-fbsd",
+     "kernel": "K-fbsd",
+     "boot": "B-bsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "haiku6": {
+   "kind": "probe",
+   "plat": "haiku",
+   "harness": [
+    "testvm/make-haiku.sh",
+    "testvm/haiku/**",
+    "testvm/update/in-guest.sh#Haiku"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#haiku"
+   ],
+   "checks": {
+    "pm": "haiku",
+    "rules": {
+     "source": "S-haiku",
+     "loader": "L-none",
+     "kernel": "K-haiku",
+     "boot": "B-none",
+     "mounts": "M-haiku"
+    },
+    "fw": "bios",
+    "established": true
+   },
+   "update": "name-only"
+  },
+  "hardenedbsd15": {
+   "kind": "ssh",
+   "plat": "freebsd",
+   "harness": [
+    "testvm/make-hardenedbsd.sh",
+    "testvm/hardenedbsd/**",
+    "testvm/update/in-guest.sh#FreeBSD"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#hbsd"
+   ],
+   "checks": {
+    "pm": "hbsd",
+    "rules": {
+     "source": "S-hbsd",
+     "loader": "L-fbsd",
+     "kernel": "K-fbsd",
+     "boot": "B-bsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "manjaro": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-arch.sh",
+    "testvm/arch/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.pacman",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#pacman"
+   ],
+   "checks": {
+    "pm": "pacman",
+    "rules": {
+     "source": "S-pac",
+     "loader": "L-grub",
+     "kernel": "K-pac",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false,
+    "kernels_max": 3
+   }
+  },
+  "mint22": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-from-live.sh",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "mx25": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-from-live.sh",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "netbsd11": {
+   "kind": "ssh",
+   "plat": "netbsd",
+   "harness": [
+    "testvm/make-netbsd.sh",
+    "testvm/netbsd/**",
+    "testvm/update/in-guest.sh#NetBSD"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#netbsd"
+   ],
+   "checks": {
+    "pm": "netbsd",
+    "rules": {
+     "source": "S-nbsd",
+     "loader": "L-nbsd",
+     "kernel": "K-nbsd",
+     "boot": "B-bsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "nixos2605": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-bootstrap.sh",
+    "testvm/bootstrap/**",
+    "testvm/update/in-guest.sh#NixOS",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#nix"
+   ],
+   "checks": {
+    "pm": "nix",
+    "rules": {
+     "source": "S-nix",
+     "loader": "L-grub",
+     "kernel": "K-nix",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "omarchy": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-omarchy.sh",
+    "testvm/omarchy/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.pacman",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#pacman"
+   ],
+   "checks": {
+    "pm": "pacman",
+    "rules": {
+     "source": "S-pac",
+     "loader": "L-limine",
+     "kernel": "K-pac",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": true
+   }
+  },
+  "omnios58": {
+   "kind": "ssh",
+   "plat": "illumos",
+   "harness": [
+    "testvm/make-omnios.sh",
+    "testvm/omnios/**",
+    "testvm/update/in-guest.sh#SunOS"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#ips"
+   ],
+   "checks": {
+    "pm": "ips",
+    "rules": {
+     "source": "S-ips",
+     "loader": "L-ill",
+     "kernel": "K-ill",
+     "boot": "B-ill",
+     "mounts": "M-ill"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "omnios58-mirror": {
+   "kind": "ssh",
+   "plat": "illumos",
+   "harness": [
+    "testvm/make-omnios.sh",
+    "testvm/omnios/**",
+    "testvm/update/in-guest.sh#SunOS",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#ips"
+   ],
+   "checks": {
+    "pm": "ips",
+    "rules": {
+     "source": "S-ips",
+     "loader": "L-ill",
+     "kernel": "K-ill",
+     "boot": "B-ill",
+     "mounts": "M-ill"
+    },
+    "fw": "bios",
+    "established": false
+   }
+  },
+  "openbsd8": {
+   "kind": "ssh",
+   "plat": "openbsd",
+   "harness": [
+    "testvm/make-openbsd.sh",
+    "testvm/openbsd/**",
+    "testvm/update/in-guest.sh#OpenBSD"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#openbsd"
+   ],
+   "checks": {
+    "pm": "openbsd",
+    "rules": {
+     "source": "S-obsd",
+     "loader": "L-obsd",
+     "kernel": "K-obsd",
+     "boot": "B-obsd",
+     "mounts": "M-bsd"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "pop24": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-from-live.sh",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-sd",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": true
+   },
+   "ram_gib": 12
+  },
+  "redox": {
+   "kind": "redox",
+   "plat": "redox",
+   "harness": [
+    "testvm/make-redox.sh",
+    "testvm/redox/**",
+    "testvm/test2/guest/probe-redox.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#redox"
+   ],
+   "checks": {
+    "pm": "redox",
+    "rules": {
+     "source": "S-none",
+     "loader": "L-none",
+     "kernel": "K-none",
+     "boot": "B-none",
+     "mounts": "M-none"
+    },
+    "fw": "q35",
+    "established": true
+   },
+   "update": false
+  },
+  "rocky10": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-rocky.sh",
+    "testvm/rocky/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.dnf",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#dnf"
+   ],
+   "checks": {
+    "pm": "dnf",
+    "rules": {
+     "source": "S-dnf",
+     "loader": "L-bls",
+     "kernel": "K-fed",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "rocky10-lvm": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-rocky.sh",
+    "testvm/rocky/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.dnf",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#dnf"
+   ],
+   "checks": {
+    "pm": "dnf",
+    "rules": {
+     "source": "S-dnf",
+     "loader": "L-bls",
+     "kernel": "K-fed",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "rocky10-raid5": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-rocky.sh",
+    "testvm/rocky/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.dnf",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#dnf"
+   ],
+   "checks": {
+    "pm": "dnf",
+    "rules": {
+     "source": "S-dnf",
+     "loader": "L-bls",
+     "kernel": "K-fed",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": false
+   }
+  },
+  "sculpt2610": {
+   "kind": "sculpt",
+   "plat": "sculpt",
+   "harness": [
+    "testvm/make-sculpt.sh",
+    "testvm/test2/guest/probe-sculpt.sh",
+    "testvm/sculpt-check.sh",
+    "testvm/haiku/drive.py"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#sculpt"
+   ],
+   "checks": {
+    "pm": "sculpt",
+    "rules": {
+     "source": "S-none",
+     "loader": "L-none",
+     "kernel": "K-none",
+     "boot": "B-none",
+     "mounts": "M-none"
+    },
+    "fw": "q35",
+    "established": true
+   },
+   "update": false
+  },
+  "tumbleweed": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-opensuse.sh",
+    "testvm/opensuse/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.zypper",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#zypper"
+   ],
+   "checks": {
+    "pm": "zypper",
+    "rules": {
+     "source": "S-zyp",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "ubuntu24": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-ubuntu.sh",
+    "testvm/ubuntu/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-zfs"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "ubuntu26-raid": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-ubuntu.sh",
+    "testvm/ubuntu/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": false
+   }
+  },
+  "ubuntu26-uefi": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-ubuntu.sh",
+    "testvm/ubuntu/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": true
+   }
+  },
+  "ubuntu26-zfs": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-ubuntu.sh",
+    "testvm/ubuntu/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-zfs"
+    },
+    "fw": "uefi-sb",
+    "established": true
+   }
+  },
+  "ubuntu26-zfsmirror": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-ubuntu.sh",
+    "testvm/ubuntu/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-zfs"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "void-musl": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-bootstrap.sh",
+    "testvm/bootstrap/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.xbps",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#xbps"
+   ],
+   "checks": {
+    "pm": "xbps",
+    "rules": {
+     "source": "S-xbps",
+     "loader": "L-grub",
+     "kernel": "K-void",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   }
+  },
+  "zorin18": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-from-live.sh",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "bios",
+    "established": true
+   },
+   "ram_gib": 13
+  }
+ }
+}

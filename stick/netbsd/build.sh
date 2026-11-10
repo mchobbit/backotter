@@ -56,8 +56,10 @@ configure() {
     [ -f "$r/dev/MAKEDEV" ] || die "no /dev/MAKEDEV in the sets"
     find "$r/dev" -mindepth 1 -maxdepth 1 ! -name 'MAKEDEV*' -exec rm -rf {} +
 
+    # /mnt/bko-target: where bko-holt load mounts what it restores (its
+    # default --target), which the read-only root can't make at run time.
     mkdir -p "$r$RW" "$r/home" "$r/kern" "$r/proc" "$r/var/shm" "$r/.disk" \
-        "$r/usr/local/bin" "$r/usr/local/lib/backotter"
+        "$r/usr/local/bin" "$r/usr/local/lib/backotter" "$r/mnt/bko-target"
 
     cat >"$r/etc/fstab" <<'EOF'
 # BackOtter rescue stick: / is read-only, and never checked or written.

@@ -24,12 +24,17 @@
   "kinds": {
     "linux": {
       "driver": "testvm/holttest1d/ht1.sh",
-      "variants_run": ["bigger", "oneshot", "degraded"],
+      "variants_run": ["bigger", "oneshot", "degraded", "img"],
       "plat": "linux",
       "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
       "harness": ["testvm/holttest1d/ht1.sh", "testvm/vm-mount", "testvm/vm-umount", "testvm/compare/fsmeta.py"],
       "judge": ["testvm/holttest1d/judge.py"],
       "rescuer": ["@firmware", "bin/*.deb", "bin/bcachefs"],
+      "variants": {
+        "img": {"replace": ["rescuer", "bins"], "bins_from_image": true, "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
+                "rescuer": ["@image"],
+                "harness": ["testvm/holttest1d/img-boot.py", "testvm/holttest1d/img-boot.d/{plat}.json", "stick/boot-test.py"]}
+      },
       "per_guest": {
         "testvm/console-boot.py": "guests whose first passphrase file is console-passphrase or zfs-passphrase",
         "testvm/omarchy/type-luks-passphrase.py": "guests whose first passphrase file is luks-passphrase"
@@ -37,10 +42,15 @@
     },
     "bsd": {
       "driver": "testvm/holttest1d/ht1-bsd.sh",
-      "variants_run": ["bigger", "oneshot"],
+      "variants_run": ["bigger", "oneshot", "img"],
       "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
       "harness": ["testvm/holttest1d/ht1.sh", "testvm/holttest1d/ht1-bsd.sh"],
-      "judge": ["testvm/holttest1d/judge.py"]
+      "judge": ["testvm/holttest1d/judge.py"],
+      "variants": {
+        "img": {"replace": ["bins"], "bins_from_image": true, "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
+                "rescuer": ["@image"],
+                "harness": ["testvm/holttest1d/img-boot.py", "testvm/holttest1d/img-boot.d/{plat}.json", "stick/boot-test.py"]}
+      }
     },
     "offline": {
       "driver": "testvm/holttest1d/ht1-offline.sh",
@@ -80,6 +90,9 @@
     "rocky10-raid5": {"kind": "linux"},
     "tumbleweed": {"kind": "linux"},
     "arch": {"kind": "linux"},
+    "endeavouros": {"kind": "linux", "firmware": "uefi"},
+    "endeavouros-grub": {"kind": "linux", "firmware": "uefi"},
+    "manjaro": {"kind": "linux", "firmware": "uefi"},
     "artix-dinit": {"kind": "linux"},
     "artix-s6": {"kind": "linux"},
     "cachyos": {"kind": "linux"},

@@ -88,12 +88,60 @@ pub fn newfs_of(dumpfs_m: &str, dev: &str) -> Option<String> {
     Some(l.trim().strip_suffix(dev).map(|s| format!("{}DEVICE", s)).unwrap_or_else(|| l.trim().to_string()))
 }
 
+/// The partitions of a BSD disklabel (bsdlabel) in a FreeBSD MBR slice, read
+/// off the slice: (letter, start, length), in bytes from the slice's start,
+/// the whole-slice partition c left out.  The label is the slice's second
+/// sector; its offsets are the slice's own when c starts at 0 (mkimg and
+/// gpart write them so), else the disk's, made the slice's here.  FreeBSD's
+/// rescue image keeps its root in such a label ("a", 16 sectors in), where a
+/// probe of the slice itself doesn't reach its superblock.
+pub fn bsdlabel_parts(slice: &dyn ByteSource) -> Vec<(char, u64, u64)> {
+    const DISKMAGIC: u32 = 0x8256_4557;
+    let Some(b) = slice.read_exact_at(512, 512) else { return Vec::new() };
+    if crate::bytes::le32(&b, 0) != DISKMAGIC || crate::bytes::le32(&b, 132) != DISKMAGIC {
+        return Vec::new();
+    }
+    // (The label's own fields: a sector size that's none (0, 512) or a
+    // power of two up to 64 KiB, and sums checked, so a corrupt or crafted
+    // label on any disk gives nothing rather than wrapping.)
+    let secsize = match crate::bytes::le32(&b, 40) {
+        0 => 512,
+        n if (512..=65536).contains(&n) && n.is_power_of_two() => n as u64,
+        _ => return Vec::new(),
+    };
+    let n = (crate::bytes::le16(&b, 138) as usize).min(20);
+    let entry = |i: usize| (crate::bytes::le32(&b, 148 + 16 * i) as u64, crate::bytes::le32(&b, 148 + 16 * i + 4) as u64);
+    let base = if n > 2 { entry(2).1 } else { 0 };
+    (0..n)
+        .filter(|&i| i != 2)
+        .filter_map(|i| {
+            let (size, off) = entry(i);
+            if size == 0 || off < base {
+                return None;
+            }
+            let (start, len) = ((off - base).checked_mul(secsize)?, size.checked_mul(secsize)?);
+            (start.checked_add(len)? <= slice.size()).then_some(((b'a' + i as u8) as char, start, len))
+        })
+        .collect()
+}
+
 /// The partition a device spec names: /dev/vtbd0p2, /dev/gpt/LABEL,
-/// /dev/gptid/UUID, /dev/label/NAME (glabel), /dev/ufsid/ID, /dev/ufs/LABEL.
+/// /dev/gptid/UUID, /dev/label/NAME (glabel), /dev/ufsid/ID, /dev/ufs/LABEL;
+/// and DragonFly's /dev/part-by-label/NAME.LETTER, the partition LETTER of
+/// the slice whose disklabel64 is named NAME.  Each disk's list of names
+/// holds its GEOM labels (FreeBSD) or its slices' disklabel64 names
+/// (DragonFly), as (partition, name).
 pub fn resolve(spec: &str, disks: &[(RawDisk, Vec<Found>, Vec<(String, String)>)]) -> Option<String> {
     let s = spec.strip_prefix("/dev/")?;
     let parts = || disks.iter().flat_map(|(_, f, g)| f.iter().map(move |p| (p, g)));
     let pj = |p: &Found, k: &str| p.json.0.iter().find(|(key, _)| key == k).and_then(|(_, v)| v.as_str().map(str::to_string));
+    if let Some(l) = s.strip_prefix("part-by-label/") {
+        let (name, letter) = l.rsplit_once('.')?;
+        if letter.len() != 1 || !letter.bytes().all(|c| c.is_ascii_lowercase()) {
+            return None;
+        }
+        return parts().find(|(p, g)| g.iter().any(|(n, gl)| *n == p.name && gl == name)).map(|(p, _)| format!("{}{letter}", p.name));
+    }
     if let Some(l) = s.strip_prefix("gpt/") {
         return parts().find(|(p, _)| pj(p, "partlabel").as_deref() == Some(l)).map(|(p, _)| p.name.clone());
     }
@@ -279,6 +327,93 @@ mod tests {
         );
         let d = "# newfs command for /dev/vtbd0p3 (/dev/vtbd0p3)\nnewfs -O 2 -U -a 32 -b 32768 -j -s 29359024 -t /dev/vtbd0p3 \n";
         assert_eq!(newfs_of(d, "/dev/vtbd0p3").as_deref(), Some("newfs -O 2 -U -a 32 -b 32768 -j -s 29359024 -t DEVICE"));
+    }
+
+    fn found(name: &str, number: u32, contents: Vec<Content>) -> Found {
+        Found { name: name.into(), number, start: 0, size: 0, json: Obj::new(), contents }
+    }
+
+    fn raw(name: &str) -> RawDisk {
+        RawDisk { name: name.into(), path: format!("/dev/{name}"), size: 1 << 30, sector: 512, model: None, serial: None }
+    }
+
+    #[test]
+    fn dragonfly_part_by_label() {
+        // DragonFly's rescue image mounts / from part-by-label/BKO_<id>.a:
+        // the "a" of the slice whose disklabel64 has that name.
+        let disks = vec![
+            (raw("vbd0"), vec![found("vbd0s1", 1, vec![]), found("vbd0s2", 2, vec![]), found("vbd0s3", 3, vec![])], vec![("vbd0s2".to_string(), "BKO_0123abcd".to_string())]),
+            (raw("vbd1"), vec![found("vbd1s1", 1, vec![])], vec![("vbd1s1".to_string(), "DragonFly_v6.4.2".to_string())]),
+        ];
+        assert_eq!(resolve("/dev/part-by-label/BKO_0123abcd.a", &disks).as_deref(), Some("vbd0s2a"));
+        assert_eq!(resolve("/dev/part-by-label/DragonFly_v6.4.2.d", &disks).as_deref(), Some("vbd1s1d"));
+        assert_eq!(resolve("/dev/part-by-label/BKO_other.a", &disks), None);
+        assert_eq!(resolve("/dev/part-by-label/BKO_0123abcd", &disks), None);
+        assert_eq!(resolve("/dev/part-by-label/BKO_0123abcd.ab", &disks), None);
+        assert_eq!(resolve("/dev/part-by-label/BKO_0123abcd.1", &disks), None);
+        // The slice itself is still found by its name.
+        assert_eq!(resolve("/dev/vbd0s2", &disks).as_deref(), Some("vbd0s2"));
+    }
+
+    /// A slice with a bsdlabel: partitions (letter index, offset, sectors),
+    /// c over the slice from `c_off`.
+    fn bsd_slice(sectors: u32, c_off: u32, parts: &[(usize, u32, u32)]) -> Vec<u8> {
+        let mut img = vec![0u8; sectors as usize * 512];
+        let l = &mut img[512..1024];
+        l[0..4].copy_from_slice(&0x8256_4557u32.to_le_bytes());
+        l[40..44].copy_from_slice(&512u32.to_le_bytes());
+        l[132..136].copy_from_slice(&0x8256_4557u32.to_le_bytes());
+        l[138..140].copy_from_slice(&8u16.to_le_bytes());
+        let mut put = |i: usize, off: u32, size: u32| {
+            l[148 + 16 * i..152 + 16 * i].copy_from_slice(&size.to_le_bytes());
+            l[152 + 16 * i..156 + 16 * i].copy_from_slice(&off.to_le_bytes());
+        };
+        put(2, c_off, sectors);
+        for &(i, off, size) in parts {
+            put(i, off, size);
+        }
+        img
+    }
+
+    #[test]
+    fn bsdlabel_in_a_slice() {
+        use crate::bytes::MemSource;
+        // As mkimg -s bsd lays out FreeBSD's rescue image: "a" 16 sectors in.
+        let mut img = bsd_slice(400, 0, &[(0, 16, 384)]);
+        let ufs = crate::probe::ufs::sample::image("BACKOTTER-0123abcd");
+        img[16 * 512..16 * 512 + ufs.len()].copy_from_slice(&ufs);
+        let src = MemSource(img);
+        assert_eq!(bsdlabel_parts(&src), vec![('a', 8192, 384 * 512)]);
+        // The slice's own probe doesn't see that UFS; the partition's does.
+        assert!(crate::probe::probe_all(&src).iter().all(|c| c.kind != "ufs"));
+        let a = OffsetSource { inner: &src, start: 8192, len: 384 * 512 };
+        assert_eq!(crate::probe::probe_all(&a).first().and_then(|c| c.label.clone()).as_deref(), Some("BACKOTTER-0123abcd"));
+        // Offsets from the disk's start (c's offset is the slice's), and a
+        // swap partition; one past the slice's end left out.
+        let src = MemSource(bsd_slice(400, 1000, &[(0, 1016, 100), (1, 1116, 100), (3, 1300, 200)]));
+        assert_eq!(bsdlabel_parts(&src), vec![('a', 8192, 51200), ('b', 116 * 512, 51200)]);
+        // No label: nothing.
+        assert!(bsdlabel_parts(&MemSource(vec![0u8; 4096])).is_empty());
+        // A label whose fields would overflow (a 4 GiB "sector", the
+        // largest sizes and offsets) or name a sector size that isn't one:
+        // nothing, without a panic.
+        for ss in [u32::MAX, 3000, 256] {
+            let mut img = bsd_slice(400, 0, &[(0, u32::MAX, u32::MAX)]);
+            img[512 + 40..512 + 44].copy_from_slice(&ss.to_le_bytes());
+            assert!(bsdlabel_parts(&MemSource(img)).is_empty(), "{ss}");
+        }
+        let img = bsd_slice(400, 0, &[(0, u32::MAX, u32::MAX), (1, 16, 100)]);
+        assert_eq!(bsdlabel_parts(&MemSource(img)), vec![('b', 8192, 51200)]);
+    }
+
+    #[test]
+    fn ufs_label_of_a_bsdlabel_partition() {
+        // FreeBSD's rescue image mounts / from /dev/ufs/BACKOTTER-...: found
+        // once the slice's bsdlabel partitions are among the disk's.
+        let ufs = Content { kind: "ufs".into(), usage: "filesystem", uuid: None, label: Some("BACKOTTER-0123abcd".into()), version: Some("2".into()), details: Obj::new(), extra: None };
+        let disks = vec![(raw("vtbd0"), vec![found("vtbd0s1", 1, vec![]), found("vtbd0s2", 2, vec![]), found("vtbd0s2a", 2, vec![ufs])], vec![])];
+        assert_eq!(resolve("/dev/ufs/BACKOTTER-0123abcd", &disks).as_deref(), Some("vtbd0s2a"));
+        assert_eq!(resolve("/dev/ufs/BACKOTTER-00000000", &disks), None);
     }
 
     #[test]

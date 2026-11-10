@@ -175,6 +175,27 @@ class Schema(unittest.TestCase):
         self.assertEqual(ledger.validate(r), [])
 
 
+class NewFamilies(unittest.TestCase):
+    def row(self, **over):
+        r = run_row(0, family="guest", cell="guest:arch", needs={"identity": "PASS", "logs": "PASS"})
+        r.update(over)
+        return ledger.complete(r, host="chopin")
+
+    def test_guest_and_img_rows(self):
+        self.assertEqual(ledger.validate(self.row()), [])
+        self.assertEqual(ledger.validate(self.row(family="img", cell="img:linux", needs={"refuse:restic-bko": "PASS"})), [])
+
+    def test_a_pass_without_needs_is_refused(self):
+        for f, c in (("guest", "guest:arch"), ("img", "img:linux")):
+            self.assertTrue(any("names what passed" in e for e in ledger.validate(self.row(family=f, cell=c, needs={}))))
+
+    def test_a_class_row_with_a_fail_need_is_refused(self):
+        for v in ("FAIL", "LIMIT-NEW"):
+            errs = ledger.validate(self.row(kind="class", via="x", start=None, needs={"after:fstab": v}))
+            self.assertTrue(any("class row" in e for e in errs), errs)
+        self.assertEqual(ledger.validate(self.row(kind="class", via="x", start=None, needs={"logs": "PASS", "x": "LIMIT"})), [])
+
+
 class Files(unittest.TestCase):
     """U1.2."""
 

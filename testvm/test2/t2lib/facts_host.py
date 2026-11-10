@@ -10,21 +10,22 @@ that it runs from stdin:
     t2-host facts [--want JSON]
 
 ARGS: --want JSON ({"sets": [...], "plumbing": ["shared:PATH"...], "host_inputs": [PATH...],
-"guests": [NAME...]: only those guests; default every one}),
---work DIR (~/backotter-work), --host-root DIR (T2_HOST_ROOT, /bkoscratch/test2),
---copy-root DIR (T2_COPY_ROOT, ~/backotter-work/t2/copy), --user NAME (the
-work directory's owner; for the kvm group).  T2_FACTS_ROOT=DIR reads every
-system path (/proc, /sys, /etc, /var/lib/dpkg, /bkoscratch, /mnt/bko-ram)
-under DIR instead: a fake root for tests.
+"guests": [NAME...]: only those guests, default every one; "images": true: the images part}),
+--work DIR (T2_WORK, ~/backotter-work), --host-root DIR (T2_HOST_ROOT, /bkoscratch/test2),
+--copy-root DIR (T2_COPY_ROOT, ~/backotter-work/t2/copy), --images DIR (T2_IMAGES, WORK/images),
+--user NAME and --home DIR (for fake roots: the process's own otherwise; never derived
+from --work).  T2_FACTS_ROOT=DIR reads every system path (/proc, /sys, /etc,
+/var/lib/dpkg, /bkoscratch, /mnt/bko-ram) under DIR instead: a fake root for tests.
 
 Fields: host, t, versions, preflight, sets, rounds, holt_bins, guests,
-rescuers, plumbing, host_inputs, synced, copies, errors, took_s.
+rescuers, plumbing, host_inputs, synced, copies, errors, took_s, and images when asked.
 """
 
 import glob
 import hashlib
 import json
 import os
+import pwd
 import re
 import shutil
 import socket
@@ -451,6 +452,38 @@ def guest_disks(gdir, opts_text):
     return disks
 
 
+def fw_of(tokens):
+    """The firmware a guest claims, from vm-run-options' words: bios, uefi, uefi-sb or q35."""
+    if "--uefi" in tokens:
+        return "uefi" if "--no-secure-boot" in tokens else "uefi-sb"
+    return "q35" if "--q35" in tokens else "bios"
+
+
+def read_json(path):
+    try:
+        with open(path, encoding="utf-8") as f:
+            d = json.load(f)
+        return d if isinstance(d, dict) else None
+    except (OSError, ValueError):
+        return None
+
+
+def fingerprint_of(gdir, generation):
+    """vms/G/image-fingerprint.json as the keys read it, or None: it counts only at the
+    generation image-state names."""
+    d = read_json(os.path.join(gdir, "image-fingerprint.json"))
+    if not d or not generation or d.get("generation") != generation:
+        return None
+    h, s = d.get("holt") or {}, d.get("stic") or {}
+    return {"generation": generation, "holt": h.get("digest"), "stic": s.get("digest"), "fine": s.get("fine"),
+            "holt_was": list(h.get("was") or []), "stic_was": list(s.get("was") or []), "rules": d.get("rules")}
+
+
+def stat_of(gdir):
+    """vms/G/image-stat.json (this host's record of its disks at the last merge), or None."""
+    return read_json(os.path.join(gdir, "image-stat.json"))
+
+
 def guests(work, host_root, only=None):
     """Each vms/GUEST holding a qcow2 (ONLY: just these names)."""
     out = {}
@@ -477,10 +510,11 @@ def guests(work, host_root, only=None):
             try:
                 s = os.stat(p)
             except OSError:
-                disks.append({"path": p, "size": None, "mtime": None})
+                disks.append({"path": p, "size": None, "mtime": None, "mtime_ns": None, "inode": None})
                 ok = False
                 continue
-            disks.append({"path": p, "size": s.st_size, "mtime": int(s.st_mtime)})
+            disks.append({"path": p, "size": s.st_size, "mtime": int(s.st_mtime), "mtime_ns": s.st_mtime_ns,
+                          "inode": s.st_ino})
             h = cached_sum(cache, p)
             if h is None:
                 ok = False
@@ -488,7 +522,9 @@ def guests(work, host_root, only=None):
                 sums[os.path.basename(p)] = h
         out[g] = {"generation": (st or {}).get("generation"), "updates": (st or {}).get("updates"),
                   "files": files, "disks": disks, "imgsum": combine(sums) if ok and sums else None,
-                  "firmware": "uefi" if "--uefi" in (opts or "").split() else "bios"}
+                  "firmware": "uefi" if "--uefi" in (opts or "").split() else "bios",
+                  "fw": fw_of((opts or "").split()), "stat": stat_of(gdir),
+                  "fingerprint": fingerprint_of(gdir, (st or {}).get("generation"))}
     return out
 
 
@@ -514,24 +550,93 @@ def rescuers(host_root):
     return {"images": images, "bin": binf}
 
 
+def one_image(d, plat, host_root):
+    """images/PLAT's facts, or None with no current image (no test/*.img: a build moved it away)."""
+    tests = sorted(glob.glob(os.path.join(d, "test", "*.img")))
+    if not tests:
+        return None
+    tp = tests[-1]
+    s = os.stat(tp)
+    rel = {"name": None, "sha256": None}
+    for n, h in sums_file(os.path.join(d, "SHA256SUMS")).items():
+        if n.endswith(".img"):
+            rel = {"name": n, "sha256": h}
+    pdir = os.path.join(host_root, "img-pin", plat)
+    src = read_json(os.path.join(pdir, "source.json")) or {}
+    same = bool(src) and os.path.realpath(str(src.get("path"))) == os.path.realpath(tp) \
+        and (src.get("size"), src.get("mtime_ns"), src.get("inode")) == (s.st_size, s.st_mtime_ns, s.st_ino)
+    sl = first_line(os.path.join(pdir, "rescuer.img.sha256"))
+    pin = sl.split()[0] if sl and sl.split() and HEX64.match(sl.split()[0]) else None
+    done = first_line(os.path.join(d, "done.exit"))
+    commit = first_line(os.path.join(d, "bko-holt.commit"))
+    return {"bins": sums_file(os.path.join(d, "bko-bin.sha256")), "release": rel,
+            "test": {"name": os.path.basename(tp), "path": tp, "size": s.st_size, "mtime_ns": s.st_mtime_ns,
+                     "inode": s.st_ino},
+            "pin": {"sha256": pin, "current": bool(same and pin), "bins_stale": os.path.exists(os.path.join(pdir, "bins-stale"))},
+            "done_exit": int(done) if done and done.lstrip("-").isdigit() else None,
+            "holt_commit": commit if commit and HEX40.match(commit) else None,
+            "bko_bin_info": first_line(os.path.join(d, "result.txt"))}
+
+
+def images_part(images, host_root, errors=None):
+    """{PLAT: facts} of each IMAGES/PLAT with a current image.  One that can't be read is left
+    out and named in ERRORS: the other platforms' images stand."""
+    out = {}
+    for d in sorted(glob.glob(os.path.join(images, "*"))):
+        if not os.path.isdir(d):
+            continue
+        try:
+            im = one_image(d, os.path.basename(d), host_root)
+        except OSError as e:
+            if errors is not None:
+                errors.append(f"images/{os.path.basename(d)}: {type(e).__name__}: {e}")
+            continue
+        if im is not None:
+            out[os.path.basename(d)] = im
+    return out
+
+
+def default_home():
+    """The process's home; as root under sudo, SUDO_USER's (never $HOME)."""
+    su = os.environ.get("SUDO_USER")
+    if su and os.geteuid() == 0:
+        try:
+            return pwd.getpwnam(su).pw_dir
+        except KeyError:
+            pass
+    return os.path.expanduser("~")
+
+
+def default_user():
+    su = os.environ.get("SUDO_USER")
+    if su and os.geteuid() == 0:
+        return su
+    try:
+        return pwd.getpwuid(os.getuid()).pw_name
+    except KeyError:
+        return os.environ.get("USER") or "m"
+
+
 def expand_home(p, home):
     return home + p[1:] if p == "~" or p.startswith("~/") else p
 
 
-def collect(want=None, work=None, host_root=None, copy_root=None, user=None):
-    """The facts as a dict."""
+def collect(want=None, work=None, host_root=None, copy_root=None, user=None, home=None, images=None):
+    """The facts as a dict.  Home and user are the process's (under T2_FACTS_ROOT the fake root's
+    home), or --home and --user; a WORK set for a test world says nothing about them."""
     t0 = time.monotonic()
     want = want or {}
+    home = os.path.abspath(os.path.expanduser(home)) if home else R(default_home())
     if work is None:
-        work = os.environ.get("T2_WORK") or (R(os.path.expanduser("~")) + "/backotter-work" if ROOT else
-                                             os.path.expanduser("~/backotter-work"))
-    work = os.path.abspath(os.path.expanduser(work))
-    home = os.path.dirname(work)
+        work = os.environ.get("T2_WORK") or os.path.join(home, "backotter-work")
+    work = os.path.abspath(os.path.expanduser(expand_home(work, home)))
     host_root = expand_home(os.path.expandvars(host_root or os.environ.get("T2_HOST_ROOT") or R("/bkoscratch/test2")),
                             home)
     copy_root = expand_home(os.path.expandvars(copy_root or os.environ.get("T2_COPY_ROOT")
                                                or os.path.join(work, "t2", "copy")), home)
-    user = user or os.path.basename(home)
+    user = user or default_user()
+    images = images or os.environ.get("T2_IMAGES") or os.path.join(work, "images")
+    images = os.path.abspath(os.path.expanduser(expand_home(images, home)))
     f = {"v": V, "host": socket.gethostname().split(".")[0], "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
          "work": work, "host_root": host_root, "copy_root": copy_root, "errors": []}
 
@@ -549,6 +654,8 @@ def collect(want=None, work=None, host_root=None, copy_root=None, user=None):
     part("holt_bins", holt_bins, host_root, want.get("holt_bin_dirs"), home)
     part("guests", guests, work, host_root, set(want["guests"]) if want.get("guests") is not None else None)
     part("rescuers", rescuers, host_root)
+    if want.get("images"):
+        part("images", images_part, images, host_root, f["errors"])
     part("plumbing", lambda: {n: sha_file(os.path.join(work, n[len("shared:"):]))
                               for n in (want.get("plumbing") or DEFAULT_PLUMBING) if n.startswith("shared:")})
 
@@ -579,11 +686,13 @@ def main(argv):
     a.add_argument("--host-root")
     a.add_argument("--copy-root")
     a.add_argument("--user")
+    a.add_argument("--home")
+    a.add_argument("--images")
     o = a.parse_args(argv)
     want = json.loads(o.want) if o.want else {}
     if not want and "_T2_DATA" in globals():
         want = json.loads(globals()["_T2_DATA"])
-    f = collect(want, o.work, o.host_root, o.copy_root, o.user)
+    f = collect(want, o.work, o.host_root, o.copy_root, o.user, o.home, o.images)
     sys.stdout.write(json.dumps(f, sort_keys=True) + "\n")
     return 0
 

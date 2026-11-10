@@ -160,6 +160,14 @@ class CorpusMatchesClasses(unittest.TestCase):
         for g in sorted(have):
             self.assertTrue(os.path.isfile(os.path.join(CORPUS, g, "plan.txt")), g)
 
+    def test_index_tsv_lists_exactly_the_dumps(self):
+        # (golden_plans.rs's unverified_in counts a dump with no index.tsv row as verified)
+        with open(os.path.join(CORPUS, "index.tsv"), encoding="utf-8") as f:
+            rows = [l.split("\t")[0] for l in f.read().splitlines()[1:] if l.strip()]
+        have = {g for g in os.listdir(CORPUS) if os.path.isfile(os.path.join(CORPUS, g, "src.json"))}
+        self.assertEqual(len(rows), len(set(rows)), "a guest twice in index.tsv")
+        self.assertEqual(sorted(rows), sorted(have), "index.tsv's guests against the dumps")
+
 
 if __name__ == "__main__":
     unittest.main()

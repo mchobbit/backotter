@@ -1,0 +1,5 @@
+base pm haiku
+pkg haiku r1~beta6_hrev59866_92-1-x86_64
+pkg haiku_loader r1~beta6_hrev59866_92-1-x86_64
+pkg haiku_datatranslators r1~beta6_hrev59866_92-1-x86_64
+pkg bash 5.2.037-1-x86_64

@@ -4,8 +4,12 @@
   t2 WORD [ARG...] [plan] [--json] [--hosts H,H] [--universe CELL,...]
         GateTest2 [ROUND] [LAYER...] [stale] [plan]       GateTest2All [ROUND] [plan]
         SticTest2 [ROUND] [GUEST...] [stale] [plan]       SticTest2All [ROUND] [plan]
-        HoltTest2 [GUEST[+VARIANT]...] [stale] [plan] [+bigger] [+oneshot] [+degraded] [--holt-bin DIR]
+        HoltTest2 [GUEST[+VARIANT]...] [stale] [plan] [+bigger] [+oneshot] [+degraded] [+img] [--holt-bin DIR]
         HoltTest2X [X...] for X in D A M U Z F C V BSD H I Obscure      HoltTest2All [plan]
+        GuestTest2 [GUEST...] [stale] [plan]              GuestTest2All [plan]
+        GuestTest2 update [GUEST...] [plan]               the real update round
+        ImgTest2 [PLAT...] [release] [stale] [plan]       ImgTest2All [release] [plan]
+        BkoTest2 [ROUND] [stale] [plan]                   SweepTest2 [ROUND] [plan]
         (--universe is test-only: it cuts the word's cells down to those named)
   t2 plan WORD [ARG...]                  the same as WORD ... plan
   t2 pull                                each host's ledger mirrored, then the wear join
@@ -13,18 +17,24 @@
   t2 explain CELL [--hosts H,H] [--round R]
                                          its inputs against its last PASS, group by group
   t2 copy [--hosts H,H] [--gc]           the private copy of this checkout on the hosts
-  t2 resume RUN                          a run picked up again (R10)
+  t2 resume RUN                          a run picked up again (R10); t2b-/t2w-: the composite
+  t2 guest-lines RUN [--show [GUEST]] [--accept GUEST...|--accept-all]
+                                         a GuestTest2 run's new log lines, and accepting them
+  t2 guest-fingerprints [GUEST...] [--reproject]
+                                         probe guests with no fingerprint at their generation
   t2 self-test                           tests/test_*.py, drive.py --self-test, the specs' checker,
                                          the fixtures' leak scan and the class table's check
-  t2 ledger seed-current --family F [--perturb GROUP] [--cells C,...] [--age CELL=HOURS,...]
+  t2 ledger seed-current --family gate|stic|holt|guest|img [--perturb GROUP] [--cells C,...] [--age CELL=HOURS,...]
         [--round R] [--hosts H,H]        test only: synthetic PASS rows at the current keys
                                          (refused unless T2_MAC_ROOT is set and isn't the default)
 
 Roots: T2_MAC_ROOT (~/backotter-work/test2), T2_HOST_ROOT (/bkoscratch/test2), T2_COPY_ROOT
 (~/backotter-work/t2/copy), BKO_GIT (~/git).  Exit 0: PASS, nothing due or a plan printed;
-1: a FAIL or FLAKY-FAIL, or a stop rule stopped the run; 2: refused; 3: an internal error.
+1: a FAIL or FLAKY-FAIL, a to-class cell, or a stop rule stopped the run; 2: refused; 3: an internal error.
 """
 
+import glob
+import importlib
 import json
 import os
 import subprocess
@@ -151,19 +161,26 @@ def light_ctx(hosts):
     return planmod.Ctx(CHECKOUT, hosts=hosts, options={})
 
 
-def want_for(ctx, family, word):
+def want_for(ctx, family, word, universe=None):
     specs = ctx.specs
     sets = ["bko-bin"]
     if word.round:
         sets.append("round" + word.round)
-    fams = [family] + (["gate"] if family in ("holt", "stic") else [])
-    return keys.wants(specs, fams, sets)
+    if family in words.COMPOSITE_WORD:
+        fams = ["stic", "holt", "gate", "guest"] + (["img"] if family == "bko" else [])
+    else:
+        fams = [family] + (["gate"] if family in ("holt", "stic") else [])
+    want = keys.wants(specs, fams, sets)
+    if family in ("img", "bko", "sweep") or any(n.endswith("+img") for n in list(word.names) + list(universe or ())) \
+            or "img" in word.variants:
+        want["images"] = True
+    return want
 
 
 def full_ctx(word, hosts, universe=None, do_pull=True, holt_bin=None):
     """Steps 1-2 of every plan and run: pull and facts, in parallel; then the default round's set."""
     lc = light_ctx(hosts)
-    want = want_for(lc, word.family, word)
+    want = want_for(lc, word.family, word, universe)
     if holt_bin:
         want["holt_bin_dirs"] = [holt_bin]
     box = {}
@@ -181,7 +198,8 @@ def full_ctx(word, hosts, universe=None, do_pull=True, holt_bin=None):
     if "error" in box:
         e = box["error"]
         raise Fatal(f"the ledger can't be read ({type(e).__name__}: {e}): no plan from an empty ledger")
-    opts = {"pulled": box.get("pulled"), "running": runmod.running_cells(word.family)}
+    opts = {"pulled": box.get("pulled"), "running": runmod.running_cells(word.family),
+            "last_sweep": runmod.last_sweep()}
     if universe:
         opts["universe"] = universe
     if holt_bin:
@@ -222,6 +240,14 @@ def cmd_word(argv):
         err("--holt-bin goes with HoltTest2 words only")
         return 2
     universe = [c for c in (opts.get("--universe") or "").split(",") if c] or None
+    if w.family in words.COMPOSITE_WORD:
+        try:
+            bko = importlib.import_module("t2lib.bko")
+        except ImportError:
+            err(f"{w.word} is not built (t2lib/bko.py)")
+            return 2
+        w.universe = universe       # (--universe, test only: the conductor cuts each child's cells down to these)
+        return bko.conduct(w, hosts, CHECKOUT, out=say)
     t0 = time.time()
     ctx = full_ctx(w, hosts, universe, holt_bin=holt_bin)
     if w.plan:
@@ -297,7 +323,7 @@ def cmd_ledger(argv):
 def word_for_cell(cell):
     fam = cell.split(":", 1)[0]
     if fam not in words.FAMILY_WORD:
-        raise Usage(f"not a cell: {cell} (stic:GUEST, holt:GUEST[+VARIANT], gate:LAYER[@HOST])")
+        raise Usage(f"not a cell: {cell} (stic:GUEST, holt:GUEST[+VARIANT], gate:LAYER[@HOST], guest:GUEST, img:PLAT)")
     return fam
 
 
@@ -366,6 +392,13 @@ def cmd_resume(argv):
     opts, rest = take_opts(argv, {"--hosts": True})
     if len(rest) != 1:
         raise Usage("t2 resume RUN")
+    if rest[0].startswith(("t2b-", "t2w-")):
+        try:
+            bko = importlib.import_module("t2lib.bko")
+        except ImportError:
+            err("BkoTest2 is not built (t2lib/bko.py)")
+            return 2
+        return bko.resume(rest[0], hosts_opt(opts), out=say)
     pj = runmod.read_json(os.path.join(runmod.run_dir(rest[0]), "plan.json"))
     if not pj:
         err(f"no run {rest[0]} in {runmod.runs_dir()}")
@@ -377,6 +410,8 @@ def cmd_resume(argv):
         err(f"{rest[0]} ran on {','.join(saved)}: resume it there (leave --hosts out)")
         return 2
     w = words.parse(pj["word"]["text"].split(), planmod.known_names(light_ctx(hosts)))
+    for k in ("sweep", "update", "release"):
+        setattr(w, k, bool((pj.get("word") or {}).get(k)))
     universe = [c["cell"] for c in pj.get("cells") or [] if c.get("cell")] or None
     holt_bin = (pj.get("set") or {}).get("holt_bin")
     try:
@@ -401,7 +436,7 @@ def cmd_seed(argv):
         return 2
     fam = opts["--family"]
     if fam not in words.FAMILY_WORD:
-        raise Usage(f"--family: gate, stic or holt, not {fam}")
+        raise Usage(f"--family: gate, stic, holt, guest or img, not {fam}")
     g = opts.get("--perturb")
     if g and g not in GROUPS:
         raise Usage(f"--perturb: one of {', '.join(GROUPS)}, not {g}")
@@ -411,13 +446,15 @@ def cmd_seed(argv):
     for a in [x for x in (opts.get("--age") or "").split(",") if x]:
         c, _, hrs = a.partition("=")
         ages[c] = float(hrs)
+    if opts.get("--round") and fam in ("guest", "img", "holt"):
+        raise Usage(f"--round goes with gate and stic, not {fam}")
     w = words.parse([words.FAMILY_WORD[fam]] + ([opts["--round"]] if opts.get("--round") else []) + ["plan"],
                     planmod.known_names(light_ctx(hosts)))
     ctx = full_ctx(w, hosts, cells)
     if seed_imgsums(ctx, hosts):
         ctx = full_ctx(w, hosts, cells)
     p = planmod.make(w, ctx)
-    rows = seed_rows(p, ctx, g, ages)
+    rows = seed_img_rows(p, ctx) if fam == "img" else seed_rows(p, ctx, g, ages)
     res = ledger.append(mac_ledger_file(), rows) if rows else []
     say(f"seeded {sum(1 for _, ok in res if ok)} rows into {mac_ledger_file()}"
         + (f" ({sum(1 for _, ok in res if not ok)} already there)" if any(not ok for _, ok in res) else ""))
@@ -490,6 +527,8 @@ def seed_rows(p, ctx, perturb=None, ages=None):
     pv = ctx.copy_preview or {}
     dirty = pv.get("dirty") or {}
     out = []
+    pl = planmod.Planner(p.word, ctx)
+    try_cells = {pc.cell: bool(pl.guest_entry(pc.cell[6:]).get("try")) for pc in p.cells if pc.family == "guest"}
     for pc in p.cells:
         if not pc.res:
             continue
@@ -514,10 +553,59 @@ def seed_rows(p, ctx, perturb=None, ages=None):
                  "waits_s": 0, "wear": {}, "commit": ctx.head, "committed": not dirty, "dirty": dict(dirty),
                  "copy": pv.get("id") or "seed", "host": h, "meta": meta,
                  "t": utc_now(t_end), "start": utc_now(t_end - wall), "note": "t2 ledger seed-current"}
+            if pc.family == "guest" and try_cells.get(pc.cell):
+                r["extra"] = {"try_ran": True}
             if pc.family == "gate" and not r["host"]:
                 r["host"] = "mac"
             out.append(ledger.complete(r, host=h))
     return out
+
+
+def seed_img_rows(p, ctx):
+    """Synthetic PASS rows that pass ImgTest2's refusal for the plan's images (contract 2): each
+    of an image's binaries, at its digest, on its platform's cheapest cell (a stic cell for an
+    archiver, a holt cell for bko-holt).  No img: row: the image itself stays to be tested."""
+    pl = planmod.Planner(p.word, ctx)
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    run, pv, out, seen = f"seed-{stamp}", ctx.copy_preview or {}, [], set()
+    dirty = pv.get("dirty") or {}
+    for pc in p.cells:
+        plat = pc.cell[4:]
+        for h in pc.keys or [x for x in ctx.hosts if x in ctx.facts]:
+            bins = (((ctx.facts.get(h) or {}).get("images") or {}).get(plat) or {}).get("bins") or {}
+            cells = {}
+            for name, hexd in sorted(bins.items()):
+                cell = pl.canary_cell(plat, name)[0]
+                if cell:
+                    osn = "omnios" if plat == "illumos" and cell.startswith("stic:") else plat
+                    cells.setdefault(cell, {})[f"{osn}/{name}"] = "sha256:" + hexd
+            for cell, b in sorted(cells.items()):
+                k = canonical([cell, b])
+                if k in seen:
+                    continue
+                seen.add(k)
+                t = time.time()
+                out.append(ledger.complete({
+                    "origin": f"seed:{run}:{cell}:{plat}@{h}", "family": cell.split(":", 1)[0], "cell": cell, "kind": "run",
+                    "run": run, "word": "t2 ledger seed-current", "rule": "seed", "reasons": ["synthetic, test only"],
+                    "attempt": 1, "inputs": {"bin": b}, "spec": None, "planned_key": None, "valid": True, "verdict": "PASS",
+                    "class": "pass", "needs": {"seeded": "PASS"}, "counts": {"PASS": 1, "FAIL": 0, "LIMIT": 0}, "gm": 0.0,
+                    "wall_s": 0, "waits_s": 0, "wear": {}, "commit": ctx.head, "committed": not dirty, "dirty": dict(dirty),
+                    "copy": pv.get("id") or "seed", "host": h, "meta": {}, "t": utc_now(t), "start": utc_now(t),
+                    "note": "t2 ledger seed-current: an image's binaries"}, host=h))
+    return out
+
+
+def guest_tool(name):
+    """A GuestTest2 command from t2lib.guest (not built: refused, not a traceback)."""
+    def cmd(argv):
+        try:
+            guest = importlib.import_module("t2lib.guest")
+        except ImportError:
+            err("GuestTest2 is not built (t2lib/guest.py)")
+            return 2
+        return getattr(guest, name)(argv)
+    return cmd
 
 
 def cmd_self_test(argv):
@@ -534,10 +622,12 @@ def cmd_self_test(argv):
     if os.path.isfile(chk):
         steps.append(("check-manifests.py (stic)", [py, "-B", chk]))
         steps.append(("check-manifests.py --strict-watch", [py, "-B", chk, "--strict-watch"]))
-        for spec in ("holt/spec.json", "gate/layers.json"):
+        for spec in ("holt/spec.json", "gate/layers.json", "guest/spec.json", "img/spec.json"):
             if os.path.isfile(os.path.join(HERE, spec)):
                 steps.append((f"check-manifests.py --spec {spec}",
                               [py, "-B", chk, "--spec", os.path.join("testvm", "test2", spec)]))
+            else:
+                say(f"not there yet: testvm/test2/{spec} (skipped)")
     else:
         say("not built: testvm/test2/stic/check-manifests.py (P4)")
     leak = os.path.join(HERE, "t2lib", "leakscan.py")
@@ -551,6 +641,13 @@ def cmd_self_test(argv):
         steps.append(("leakscan (a) over tests/fixtures (host names allowed)",
                       [py, "-B", leak, "scan", "--allow-hosts", "--git-email", CHECKOUT,
                        os.path.join(HERE, "tests", "fixtures")]))
+        for d in ("guest", "img"):
+            jsons = sorted(glob.glob(os.path.join(HERE, d, "*.json")))
+            if jsons:
+                steps.append((f"leakscan (a) over testvm/test2/{d}/*.json",
+                              [py, "-B", leak, "scan", "--allow-hosts", "--git-email", CHECKOUT] + jsons))
+            else:
+                say(f"not there yet: testvm/test2/{d}/*.json (leak scan skipped)")
     else:
         say("not built: testvm/test2/t2lib/leakscan.py (P6)")
     for name, cmd in steps:
@@ -563,7 +660,10 @@ def cmd_self_test(argv):
         if not good:
             for line in tail[-30:]:
                 say("     " + line)
-    errs = planmod.check_classes(light_ctx(list(HOSTS)))
+    lines = []
+    errs = planmod.check_classes(light_ctx(list(HOSTS)), notes=lines)
+    for line in lines:
+        say(line)
     say(("ok  " if not errs else "FAIL") + " classes.json" + (": " + "; ".join(errs) if errs else ""))
     ok = ok and not errs
     say("self-test: " + ("all ok" if ok else "FAILED"))
@@ -571,7 +671,8 @@ def cmd_self_test(argv):
 
 
 COMMANDS = {"pull": cmd_pull, "ledger": cmd_ledger, "explain": cmd_explain, "copy": cmd_copy,
-            "resume": cmd_resume, "self-test": cmd_self_test}
+            "resume": cmd_resume, "self-test": cmd_self_test,
+            "guest-lines": guest_tool("cmd_lines"), "guest-fingerprints": guest_tool("cmd_fingerprints")}
 
 
 def main(argv):
@@ -582,7 +683,7 @@ def main(argv):
         if argv[0] in COMMANDS:
             return COMMANDS[argv[0]](argv[1:])
         return cmd_word(argv)
-    except Usage as e:
+    except (Usage, words.Refused) as e:
         err(str(e))
         return 2
     except Fatal as e:

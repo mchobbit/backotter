@@ -358,15 +358,15 @@
     "wall_s": 100
    },
    "host": "mac",
-   "key": "14e6d92cf2c0cca9a9ba600a73e4895902f2b149dd85979df18b75ea55b702e8",
+   "key": "e9e5ca2804753bc7db07f72d12ad2213529a40755aa39aaaad56f125bb164ba8",
    "keys": {
-    "mac": "14e6d92cf2c0cca9a9ba600a73e4895902f2b149dd85979df18b75ea55b702e8"
+    "mac": "e9e5ca2804753bc7db07f72d12ad2213529a40755aa39aaaad56f125bb164ba8"
    },
    "klass": null,
    "last_pass": {
     "host": "mac",
     "id": "mac-20261107T000013Z-0000000d",
-    "key": "14e6d92cf2c0cca9a9ba600a73e4895902f2b149dd85979df18b75ea55b702e8",
+    "key": "e9e5ca2804753bc7db07f72d12ad2213529a40755aa39aaaad56f125bb164ba8",
     "t": "2026-11-07T00:00:13Z"
    },
    "part": "fast",
@@ -392,6 +392,7 @@
    "chopin": null,
    "cinqcent": null
   },
+  "sweep": "sweep: SweepTest2 never ran, due now",
   "uncommitted": 0,
   "unreachable": []
  },
@@ -413,7 +414,8 @@
    "current": 13,
    "due": 0,
    "not-runnable": 0,
-   "soft-stale": 0
+   "soft-stale": 0,
+   "to-class": 0
   },
   "due": 0,
   "gb": {
@@ -433,9 +435,12 @@
   "notes": [],
   "plan": true,
   "prefixes": [],
+  "release": false,
   "round": null,
   "stale": false,
+  "sweep": false,
   "text": "GateTest2 plan",
+  "update": false,
   "variants": [],
   "word": "GateTest2"
  }

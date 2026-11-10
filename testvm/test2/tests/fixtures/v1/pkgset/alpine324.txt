@@ -1,0 +1,8 @@
+base pm apk
+pkg xfsprogs 7.0.1-r0
+pkg e2fsprogs 1.47.4-r0
+pkg grub 2.14-r0
+pkg grub-bios 2.14-r0
+pkg linux-lts 6.18.60-r0
+pkg mkinitfs 3.14.1-r0
+pkg acl 2.3.2-r1

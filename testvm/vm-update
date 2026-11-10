@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
 """Bring BackOtter test guests up to date, on every test host at once.
 
-Usage: vm-update [--try] [--hosts HOST,...] [--jobs N] [--cpus N] [--memory MB] GUEST...
-       vm-update --status|--finish [--hosts HOST,...] GUEST...
+Usage: vm-update [--try | --probe] [--hosts H,...] [--jobs N] [--cpus N] [--memory MB]
+                 [--out DIR] [--hook before=FILE]... [--hook after=FILE]... [--push LOCAL=REMOTE]...
+                 [--write-fingerprint] [--merge-gate CMD] [--keep-failed] GUEST...
+       vm-update --status|--finish [--hosts H,...] GUEST...
+       vm-update --reproject [--hosts H,...] GUEST...
+       vm-update --hold-fleet-lock RUN
 
 Run on the host that has the guests (Chopin), from anywhere: GUEST is a
-folder in vms/ next to this script's testvm/.  For each GUEST, vm-update
+folder in vms/ next to this script's testvm/ (or under BKO_WORK).  For each
+GUEST, vm-update
 
   1. checks that nothing uses the guest's images, here or on the other hosts
      (a QEMU program with them open, or a qcow2 overlay on top of them), and
@@ -14,27 +19,34 @@ folder in vms/ next to this script's testvm/.  For each GUEST, vm-update
      the same generation as here;
   2. boots the guest with vm-run --ram --keep (its vm-run-options, the
      passphrase typed when it has one), so that every write goes to an
-     overlay beside the image, which itself is only read, once this host
-     has memory to spare for the VM;
-  3. runs update/in-guest.sh in it over SSH: the guest's own package manager
-     (apt, dnf, pacman, zypper, xbps, apk, moss, nixos-rebuild, pkg,
-     syspatch and pkg_add, pkg on OmniOS, pkgman on Haiku, hbsd-update on
-     HardenedBSD), unattended, after pointing a
-     guest that its builder froze at its distribution's live repositories;
-     as root, or as the user named in vms/GUEST/ssh-user (Haiku's "user",
-     which is uid 0: Haiku has no root);
+     overlay, beside the image or in RAM (VM_UPDATE_RAM), and the image
+     itself is only read, once this host has memory to spare for the VM;
+  3. lists its packages (update/pkgset.sh), then runs update/in-guest.sh in
+     it over SSH: the guest's own package manager (apt, dnf, pacman, zypper,
+     xbps, apk, moss, nixos-rebuild, pkg, syspatch and pkg_add, pkg on
+     OmniOS, pkgman on Haiku, hbsd-update on HardenedBSD), unattended, after
+     pointing a guest that its builder froze at its distribution's live
+     repositories; as root, or as the user named in vms/GUEST/ssh-user
+     (Haiku's "user", which is uid 0: Haiku has no root);
   4. reboots it and waits for SSH again, so a broken kernel or boot loader
-     stops here, runs update/trim.sh in it (fstrim, zpool trim: vm-run
-     --discard makes the room the guest frees, its old packages and
-     downloads, zero clusters that hold no data in the overlay; the merge
-     carries them into the image, where retaking the snapshot frees them),
-     then powers it off;
+     stops here, and lists the packages again.  The merge rule: there is an
+     update to merge when the two listings differ, or in-guest.sh printed a
+     "step:" line (a fix no package shows), or either listing is unknown.
+     With nothing to merge, the guest is powered off and its overlay thrown
+     away: no trim, no new generation.  With --merge-gate, its command then
+     decides: exit 0 merges, exit 10 doesn't, and the overlay goes.  Next a
+     `bko-holt dump` for the fingerprint (update/fingerprint.py), and
+     update/trim.sh in it (fstrim, zpool trim: vm-run --discard makes the room
+     the guest frees, its old packages and downloads, zero clusters that hold
+     no data in the overlay; the merge carries them into the image, where
+     retaking the snapshot frees them), then it is powered off;
   5. copies the overlay (only the blocks the update wrote) to every other
-     host, checks step 1 again on every host, and then on every host merges
-     the overlay into the image (qemu-img commit), retakes the
-     "fresh-install" snapshot, gives the clusters that freed back to the
-     host's file system (qcow2-punch.py) and records the new SHA-256s and
-     generation in image-state.
+     host, checks step 1 again on every host, and then merges the overlay
+     into the image (qemu-img commit) on one host at a time, this one last,
+     so that a host always holds a good image; retakes the "fresh-install"
+     snapshot, gives the clusters that freed back to the host's file system
+     (qcow2-punch.py) and records the new SHA-256s and generation in
+     image-state, with image-fingerprint.json and image-stat.json beside it.
 
 So the hosts' images stay identical in what the guest sees, while only the
 update crosses the network.  (Not byte-identical: the snapshot tables carry
@@ -42,27 +54,92 @@ each host's own timestamps, hence image-state.)  A guest that nothing can
 update (NetBSD: a release's base sets) is reported and left alone.
 
   --try         stop after step 4 and throw the overlay away: test that the
-                guest updates and still boots, changing nothing
+                guest updates and still boots, changing nothing.  No trim, no
+                dump; result.json says what would merge
+  --probe       boot the guest and run its hooks only: no update, no reboot.
+                With --write-fingerprint also its listing and dump, which
+                make its image-fingerprint.json on every host (the hosts must
+                be at one generation)
   --hosts HOST,...
                 the other hosts (default: chopin and cinqcent, but this
                 one); --hosts '' updates only this host's copy, after
                 which the others no longer match it
   --jobs N      update N guests at once (default 3); each takes a 2 GB VM,
-                its overlay on disk and a free SSH port, and waits for the
-                memory it needs
+                its overlay and a free SSH port, and waits for the memory it
+                needs
   --cpus N      the VM's CPUs instead of vm-run's 2 (DragonFly rebuilds its
                 base system from source: about 25 min with 8 and --memory
                 6144, the whole update)
   --memory MB   the VM's RAM instead of vm-run's 2048
+  --out DIR     update.log, serial.log, result.json, the two listings, the
+                steps and the hooks' outputs go in DIR (DIR/GUEST with several
+                guests); the guest's own
+                update.log gets one line saying so.  Without it, result.json
+                goes in vms/GUEST/.vm-update-last/
+  --hook before=FILE, --hook after=FILE
+                run FILE in the guest with sh, after SSH is up and before the
+                update, or after the reboot; its output goes in
+                DIR/hook-NAME.out, NAME the file's name less any extension
+                (a second of one name: NAME-2).  A hook ends by
+                printing "=== end".  One that fails, or doesn't get there,
+                doesn't stop the run, and no merge follows it
+  --push LOCAL=REMOTE
+                copy LOCAL to the guest's REMOTE, executable, before the hooks
+  --write-fingerprint
+                with --probe, as above.  A real update always writes one
+  --merge-gate CMD
+                a real update's last word, run with sh on this host after the
+                after-hooks and before the trim: exit 0 merges, exit 10 is a
+                blocked merge, anything else a failure that doesn't merge
+  --keep-failed with --try or --probe: a run that fails leaves its folder
+                (its overlays and logs) for the caller, named in result.json
   --status      only step 1's checks: whether the hosts agree, and what uses
-                the images
+                the images (and, with those checked, image-stat.json if the
+                host has none)
   --finish      complete merges that step 5 left undone on some host (it
                 says so, and keeps the overlay there for this)
+  --reproject   recompute the guests' fingerprints from their stored dumps
+                (HOST_ROOT/guest-dumps/GUEST/GEN.*), with no boot, after
+                fingerprint.py or holttest1d/judge.py changed.  A digest that
+                moved goes in the sidecar's `was`
+  --hold-fleet-lock RUN
+                for GuestTest2 update's driver: take the fleet lock for round
+                RUN, print "held", and keep it while a line arrives on stdin
+                at least every 120 s
+
+A real update or --finish holds the fleet lock, vms/.vm-update.fleet.lock on
+the first host, exclusively for as long as it runs: one driver at a time,
+from either host.  A job of a GuestTest2 update round (VM_UPDATE_ROUND=RUN)
+holds it shared instead, and needs .vm-update.fleet.round to name RUN.
+
+Environment:
+  VM_UPDATE_RAM=GIB        the overlays in /mnt/bko-ram, kept there up to the
+                           merge, under the reservation of GIB this job holds
+                           from `cmp-run.sh --reserve` (an ancestor's row, or
+                           it fails, and never falls back to disk).  One guest
+                           to a reservation.  A run that outgrows it, or
+                           outlives it, is stopped.  Unset: beside the image
+  VM_UPDATE_ROUND=RUN      this job belongs to round RUN
+  BKO_WORK                 the tree holding vms/ instead of this script's
+  VM_UPDATE_REMOTE_VMS     the other hosts' vms/, relative to their home.  A
+                           tree of its own (BKO_WORK) must name it before
+                           anything looks at or changes the other hosts: the
+                           default is the real fleet's
+  VM_UPDATE_HOLT_BIN       the bko-holt set for the dump (default
+                           /bkoscratch/holttest1d/bin)
+  VM_UPDATE_LIMIT_KIB, VM_UPDATE_FREE_KIB
+                           tests only: the overrun limit and the RAM disk's
+                           free room, in place of the real ones
+
+Real updates run only from a synced tree (this script at WORK/testvm, vms/
+not a link), and neither they, --finish, --reproject nor --probe
+--write-fingerprint run on the real tree with T2_HOST_ROOT or T2_WORK pointing
+elsewhere: a test's world has a tree of its own.
 
 Logs: vms/GUEST/update.log (what ran, with the guest's output) and
-vms/GUEST/update-serial.log (the serial console).  Stopping vm-update
-(Ctrl-C, or a hangup or TERM) stops its VMs and deletes their overlays,
-changing nothing; merges already under way finish first.
+vms/GUEST/update-serial.log (the serial console), or --out's.  Stopping
+vm-update (Ctrl-C, or a hangup or TERM) stops its VMs and deletes their
+overlays, changing nothing; merges already under way finish first.
 """
 
 from __future__ import annotations
@@ -71,9 +148,12 @@ import argparse
 import concurrent.futures
 import fcntl
 import hashlib
+import importlib.util
 import json
+import math
 import os
 import re
+import select
 import shlex
 import shutil
 import signal
@@ -88,16 +168,33 @@ import traceback
 from pathlib import Path
 
 TESTVM = Path(__file__).resolve().parent
-WORK = TESTVM.parent
+WORK = Path(os.environ["BKO_WORK"]).expanduser() if os.environ.get("BKO_WORK") else TESTVM.parent
 VMS = WORK / "vms"
+# The other hosts' vms/, relative to their home.
+REMOTE_VMS = (os.environ.get("VM_UPDATE_REMOTE_VMS") or "backotter-work/vms").rstrip("/")
 ALL_HOSTS = ["chopin.local", "cinqcent.local"]
 SNAPSHOT = "fresh-install"
 STATE_FILE = "image-state"
 PENDING_FILE = ".vm-update.pending"     # a merge step 5 left undone, for --finish
+FP_FILE = "image-fingerprint.json"      # beside image-state: see update/fingerprint.py
+STAT_FILE = "image-stat.json"           # each disk's size, mtime and inode at its last merge
+FLEET_LOCK = ".vm-update.fleet.lock"
+FLEET_ROUND = ".vm-update.fleet.round"
+HEARTBEAT_TIMEOUT = 120                 # --hold-fleet-lock: a line on stdin at least this often
+DEFAULT_HOST_ROOT = "/bkoscratch/test2"
+DEFAULT_HOLT_BIN = "/bkoscratch/holttest1d/bin"
+HOOK_SENTINEL = "=== end"               # the last thing a hook prints
+GATE_BLOCKED = 10                       # --merge-gate's "don't merge"
+WATCH_INTERVAL = 5
+RESERVE_WAIT = 3600                     # at most this long for room on another host
 SSH_UP_TIMEOUT = 900
 UPDATE_TIMEOUT = 3 * 3600
 TRIM_TIMEOUT = 1800
 POWEROFF_TIMEOUT = 300
+HOOK_TIMEOUT = 1800
+PKGSET_TIMEOUT = 600
+DUMP_TIMEOUT = 900
+GATE_TIMEOUT = 600
 
 print_lock = threading.Lock()
 running: set["VM"] = set()                     # VMs to stop when stopping
@@ -105,7 +202,18 @@ stopping = threading.Event()
 
 
 class Failed(Exception):
-    pass
+    rc = 1
+    status = None                              # the exit status of what failed, when that was a command
+
+
+class OverlayLost(Failed):
+    """A merge began on a host and its overlay is gone: only a copy of the image mends it."""
+    rc = 4
+
+
+class Blocked(Failed):
+    """No merge, by the hooks' or the gate's word; nothing went wrong in vm-update."""
+    rc = GATE_BLOCKED
 
 
 def say(guest: str, msg: str) -> None:
@@ -140,13 +248,33 @@ def on_host(host: str | None, script: str, *args: str, input: str | None = None)
     # merge under way finish rather than leave it half done.
     r = run(cmd, input=input, start_new_session=True)
     if r.returncode != 0:
-        raise Failed(f"on {where(host)}: {(r.stderr or r.stdout).strip() or f'exit status {r.returncode}'}")
+        e = Failed(f"on {where(host)}: {(r.stderr or r.stdout).strip() or f'exit status {r.returncode}'}")
+        e.status = r.returncode
+        raise e
     return r.stdout
+
+
+# Another host's merge writes to its disk outside any reservation of this
+# job: in a scope of its own under iolog.sh, as cmp-run.sh's, so that the wear
+# log counts it.  $1 is the wear tag, $2 what to log, the rest the command.
+COUNTED = (
+    'exec sudo -E systemd-run --quiet --scope --collect -p IOAccounting=yes '
+    'setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups '
+    'env PATH="$PATH" HOME="$HOME" WEAR_TAG="$1" "$HOME/backotter-work/testvm/compare/iolog.sh" "$2" -- "${@:3}"'
+)
+
+
+def on_host_counted(host: str | None, tag: str, what: str, script: str, *args: str) -> str:
+    """on_host, the writes of a script run on another host counted under TAG.
+    (This host's run under the job's own reservation, already counted.)"""
+    if host is None:
+        return on_host(None, script, *args)
+    return on_host(host, COUNTED, tag, what, "bash", "-c", script, "bash", *args)
 
 
 # Paths on another host are relative to its home: ~/backotter-work/vms/GUEST.
 def guest_dir_on(host: str | None, guest: str) -> str:
-    return str(VMS / guest) if host is None else f"backotter-work/vms/{guest}"
+    return str(VMS / guest) if host is None else f"{REMOTE_VMS}/{guest}"
 
 
 # Prints a line for each thing that uses IMAGE (in GUEST_DIR), but the
@@ -157,8 +285,9 @@ def guest_dir_on(host: str | None, guest: str) -> str:
 #    for them needs only read access, whoever the program runs as.
 #  - Overlays on top of it that no program has open: a kept vm-run --ram
 #    overlay, or one a vm-update left.  Those in RAM and in the guest's
-#    folder (and its vm-update run folders) are looked at; one
-#    that can't be read but is named after the guest or image counts too.
+#    folder (and its vm-update run folders), and the guest's folder in the
+#    RAM disk with its shipped overlays, are looked at; one that can't be
+#    read but is named after the guest or image counts too.
 #  - A comparison of the guest under way (compare.py, compare-freebsd.sh):
 #    between its mounts it holds no lock.  The src.qcow2 a comparison leaves
 #    behind doesn't count: the next one makes it anew.
@@ -180,7 +309,8 @@ for p in $(pgrep -f 'compare(\.py|-freebsd\.sh)' || true); do
         echo "a comparison of $guest runs (pid $p)"
 done
 for o in /dev/shm/*.qcow2 /dev/shm/*/*.qcow2 "$dir"/*.qcow2 "$dir"/.vm-update-run.*/*.qcow2 \
-         /mnt/bko-ram/vm-update."$guest"/.vm-update-run.*/*.qcow2; do
+         /mnt/bko-ram/vm-update."$guest"/.vm-update-run.*/*.qcow2 /mnt/bko-ram/vm-update."$guest"/*.qcow2 \
+         /mnt/bko-ram/vm-update.????????."$guest"/.vm-update-run.*/*.qcow2 /mnt/bko-ram/vm-update.????????."$guest"/*.qcow2; do
     o=$(realpath "$o")
     [[ $o != "$img" && $exclude != *" $o "* ]] || continue
     if info=$(qemu-img info -U --output=json "$o" 2>/dev/null); then
@@ -242,7 +372,8 @@ def machine_id(host: str | None, guest: str) -> str:
 # --- The guest's images and how it boots -------------------------------------------
 
 class Guest:
-    def __init__(self, name: str):
+    def __init__(self, name: str, out: Path | None = None, log_here: bool = False):
+        """OUT: the run's own folder for its logs (log_here: use it)."""
         self.name = name
         self.dir = VMS / name
         if not self.dir.is_dir():
@@ -257,7 +388,15 @@ class Guest:
         self.images = main + extra
         user_file = self.dir / "ssh-user"
         self.user = user_file.read_text().strip() if user_file.exists() else "root"
-        self.log = open(self.dir / "update.log", "a", encoding="utf-8")
+        self.out = out
+        if out is not None and log_here:
+            with open(self.dir / "update.log", "a", encoding="utf-8") as shared:
+                shared.write(f"{time.strftime('%F %T')} this run's log is {out}/update.log\n")
+            self.log = open(out / "update.log", "a", encoding="utf-8")
+            self.serial_path = out / "serial.log"
+        else:
+            self.log = open(self.dir / "update.log", "a", encoding="utf-8")
+            self.serial_path = self.dir / "update-serial.log"
         # One vm-update at a time per guest; held until this process exits.
         self.lock = open(self.dir / ".vm-update.lock", "a")
         try:
@@ -356,36 +495,179 @@ def wait_for_memory(g: Guest, mb: int) -> None:
             raise Failed("stopped")
 
 
-# The tmpfs (not /dev/shm, which the VMs' RAM shares) that VM_UPDATE_RAM=1
-# puts the overlays in, and the room an update's overlay may need there (a
-# desktop's upgrade writes gigabytes).  Not by default: cmp-run.sh's ledger
-# doesn't know of them, and two Fedora updates' overlays there filled the
-# tmpfs under a compare.py run (2026-11-04).  Beside the image they cost
-# only disk writes, which the user prefers to RAM.
+# The tmpfs (not /dev/shm, which the VMs' RAM shares) that VM_UPDATE_RAM=GIB
+# puts the overlays in.  Only under a cmp-run.sh reservation of that size,
+# held by an ancestor of this process: the ledger is what keeps the RAM disk
+# from filling under someone else's run (two Fedora updates' overlays filled
+# it under a compare.py run, 2026-11-04), so without a row in it, this fails;
+# it never falls back to disk.
 RAM_BASE = Path("/mnt/bko-ram")
-RAM_ROOM = 16 << 30
+
+
+def same_path(a: str | os.PathLike, b: str | os.PathLike) -> bool:
+    """Whether A and B are one directory by any path: /bkoscratch/work and
+    ~/backotter-work are one through two mounts, which realpath can't see."""
+    try:
+        return os.path.samefile(a, b)
+    except OSError:
+        return os.path.realpath(a) == os.path.realpath(b)
+
+
+def world_tag() -> str:
+    """The RAM folder's mark for a tree other than the real one: a test's
+    world mustn't meet the real guest of the same name there."""
+    if same_path(VMS, os.path.expanduser("~/backotter-work/vms")):
+        return ""
+    return hashlib.sha256(os.path.realpath(VMS).encode()).hexdigest()[:8] + "."
 
 
 def ram_dir_of(guest: str) -> Path:
-    return RAM_BASE / f"vm-update.{guest}"
+    return RAM_BASE / f"vm-update.{world_tag()}{guest}"
+
+
+def ram_gib() -> float | None:
+    """VM_UPDATE_RAM's reservation in GiB; None when the overlays stay on disk."""
+    v = os.environ.get("VM_UPDATE_RAM")
+    if not v:
+        return None
+    try:
+        gib = float(v)
+    except ValueError:
+        gib = 0.0
+    if gib <= 0:
+        raise Failed(f"VM_UPDATE_RAM={v}: GiB, the reservation this job holds")
+    return gib
+
+
+def ancestors() -> list[int]:
+    """This process and those above it, nearest first."""
+    pids, p = [], os.getpid()
+    for _ in range(64):
+        if p <= 1:
+            break
+        pids.append(p)
+        r = run(["ps", "-o", "ppid=", "-p", str(p)])
+        try:
+            p = int(r.stdout.strip())
+        except ValueError:
+            break
+    return pids
+
+
+def pid_alive(pid: int) -> bool:
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        pass                                   # cmp-run.sh's reserving PID can be sudo's
+    return True
+
+
+def reserve_rows() -> dict[int, float]:
+    """cmp-run.sh's ledger: {PID: DISK GiB}.  Read, never locked."""
+    rows = {}
+    try:
+        text = (RAM_BASE / ".reserve").read_text()
+    except OSError:
+        return rows
+    for line in text.splitlines():
+        f = line.split()
+        try:
+            rows[int(f[0])] = float(f[1])
+        except (IndexError, ValueError):
+            continue
+    return rows
+
+
+def reserve_row() -> tuple[int, float] | None:
+    """The reservation this process holds, (PID, DISK GiB): the nearest
+    ancestor's live row.  (A row outlives its holder until cmp-run.sh prunes it.)"""
+    rows = reserve_rows()
+    for p in ancestors():
+        if p in rows and pid_alive(p):
+            return p, rows[p]
+    return None
+
+
+def require_reservation(gib: float) -> int:
+    """The PID of the row that GIB of the RAM disk runs under, or Failed."""
+    if not os.path.ismount(RAM_BASE):
+        raise Failed(f"VM_UPDATE_RAM is set but {RAM_BASE} isn't mounted")
+    row = reserve_row()
+    if row is None:
+        raise Failed("RAM requires an ancestor's reservation: run under cmp-run.sh --reserve DISK MEM")
+    if gib > row[1]:
+        raise Failed(f"VM_UPDATE_RAM={gib:g} is more than the {row[1]:g} GiB reserved (pid {row[0]})")
+    return row[0]
+
+
+def run_id() -> str | None:
+    """The Test2 run this job is of, if any (its wear tag is guest:RUN:GUEST)."""
+    tag = (os.environ.get("WEAR_TAG") or "").split(":")
+    return os.environ.get("T2_RUN") or os.environ.get("VM_UPDATE_ROUND") or (tag[1] if tag[0] == "guest" and len(tag) > 1 else None)
 
 
 def overlay_dir(g: "Guest") -> Path:
-    """Where g's run folder goes: beside the image; with VM_UPDATE_RAM=1,
-    RAM_BASE when it is mounted with RAM_ROOM free."""
-    if os.environ.get("VM_UPDATE_RAM") == "1" and os.path.ismount(RAM_BASE):
+    """Where g's run folder goes: beside the image, or in the RAM disk."""
+    if ram_gib() is None:
+        return g.dir
+    d = ram_dir_of(g.name)
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def tree_kib(path: str | os.PathLike) -> int:
+    """What the files under PATH hold, in KiB (st_blocks: a tmpfs file's real size)."""
+    blocks = 0
+    for root, _, files in os.walk(path):
+        for name in files:
+            try:
+                blocks += os.lstat(os.path.join(root, name)).st_blocks
+            except OSError:
+                pass
+    return blocks // 2
+
+
+def free_kib() -> int | None:
+    v = os.environ.get("VM_UPDATE_FREE_KIB")
+    if v:
+        return int(v)
+    try:
         st = os.statvfs(RAM_BASE)
-        if st.f_bavail * st.f_frsize >= RAM_ROOM:
-            d = ram_dir_of(g.name)
-            d.mkdir(exist_ok=True)
-            return d
-    return g.dir
+    except OSError:
+        return None
+    return st.f_bavail * st.f_frsize // 1024
+
+
+def overrun_why(kib: int, reserved_gib: float, free: int | None, misses: int, limit_kib: int | None = None) -> str | None:
+    """Why a run using KIB of its RESERVED_GIB is to be stopped, or None: ht1-lib.sh's sampler's
+    three rules.  Past the reservation by a margin; past it at all with
+    under 1 GiB left on the RAM disk; or the reservation gone (MISSES: read
+    gone so many times in a row, for cmp-run.sh rewrites the ledger in place)."""
+    reserved_kib = int(reserved_gib * 1048576)
+    limit = limit_kib if limit_kib is not None else int((reserved_gib + max(1, reserved_gib * 0.1)) * 1048576)
+    if kib > limit:
+        return f"over its reservation: {kib / 1048576:.2f} GiB, past the limit of {limit / 1048576:.2f} GiB ({reserved_gib:g} reserved)"
+    if free is not None and free < 1048576 and kib > reserved_kib:
+        return f"the RAM disk has under 1 GiB free ({free / 1048576:.2f} GiB), the run over its reservation at {kib / 1048576:.2f} of {reserved_gib:g} GiB"
+    if misses >= 2:
+        return "its reservation ended (no live row in the ledger)"
+    return None
+
+
+# Which bko-holt a guest's `uname -s` runs: the folders of VM_UPDATE_HOLT_BIN
+# ("": Linux's, at its top).  HardenedBSD and GhostBSD say FreeBSD, AlpineBSD says NetBSD.
+DUMP_PLATS = {"Linux": "", "FreeBSD": "freebsd", "NetBSD": "netbsd", "OpenBSD": "openbsd",
+              "DragonFly": "dragonfly", "SunOS": "illumos", "Haiku": "haiku"}
 
 
 class VM:
     """The guest under vm-run --ram --keep, its serial console on a pipe and
     its overlays in a folder of its own, where overlay_dir() says.  (Not in /dev/shm: a big update's overlay
-    holds gigabytes, which there would starve this host's other VMs.)"""
+    holds gigabytes, which there would starve this host's other VMs.)
+    A thread keeps the peak of what the folder holds, and with VM_UPDATE_RAM
+    stops a VM that outgrows its reservation."""
 
     def __init__(self, g: Guest, memory: int | None, cpus: int | None = None):
         if memory:
@@ -394,15 +676,23 @@ class VM:
             mb = int(g.options[g.options.index("--memory") + 1])
         else:
             mb = int(os.environ.get("MEMORY", 2048))      # vm-run's default
+        self.reserved = ram_gib()
+        self.reserve_pid = require_reservation(self.reserved) if self.reserved is not None else None
+        where_to = overlay_dir(g)
         wait_for_memory(g, mb)
         self.mb = mb
         self.g, self.port = g, free_port()
+        self.peak_kib = 0
+        self.overrun: str | None = None
+        self.watch_end = threading.Event()
         try:
-            self.ram_dir = tempfile.mkdtemp(prefix=".vm-update-run.", dir=overlay_dir(g))
+            self.ram_dir = tempfile.mkdtemp(prefix=".vm-update-run.", dir=where_to)
         except BaseException:
             self.release_memory()
             raise
-        cmd = [str(TESTVM / "vm-run"), "--ram", "--keep", "--discard", *g.options]
+        # --pdeathsig: should vm-update die at once (SIGKILL), vm-run gets its
+        # TERM, whose trap stops QEMU.  setpriv execs, so the PID is vm-run's.
+        cmd = ["setpriv", "--pdeathsig", "TERM", str(TESTVM / "vm-run"), "--ram", "--keep", "--discard", *g.options]
         if memory:
             cmd += ["--memory", str(memory)]
         if cpus:
@@ -421,12 +711,16 @@ class VM:
         self.stderr: list[str] = []
         self.proc = self.stderr_thread = None
         try:
-            self.serial = open(g.dir / "update-serial.log", "wb")
+            self.serial = open(g.serial_path, "wb")
             self.proc = subprocess.Popen(cmd, cwd=g.dir,
                                          env=dict(os.environ, SSH_PORT=str(self.port), RAM_DIR=self.ram_dir),
                                          stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
                                          start_new_session=True)
             running.add(self)
+            (Path(self.ram_dir) / "owner.json").write_text(json.dumps({
+                "run": run_id(),
+                "vm_update_pid": os.getpid(), "vm_run_pid": self.proc.pid}) + "\n")
+            threading.Thread(target=self._watch, daemon=True).start()
             threading.Thread(target=self._console, daemon=True).start()
             self.stderr_thread = threading.Thread(target=self._stderr, daemon=True)
             self.stderr_thread.start()
@@ -434,6 +728,24 @@ class VM:
         except BaseException:
             self.discard()
             raise
+
+    def _watch(self) -> None:
+        misses = 0
+        limit = os.environ.get("VM_UPDATE_LIMIT_KIB")
+        while not self.watch_end.wait(WATCH_INTERVAL):
+            kib = tree_kib(self.ram_dir)
+            self.peak_kib = max(self.peak_kib, kib)
+            if self.reserved is None:
+                continue
+            alive = self.reserve_pid in reserve_rows() and pid_alive(self.reserve_pid)
+            misses = 0 if alive else misses + 1
+            why = overrun_why(kib, self.reserved, free_kib(), misses, int(limit) if limit else None)
+            if why:
+                self.overrun = why
+                self.g.note(f"overrun: {why}")
+                say(self.g.name, f"stopping the VM: {why}")
+                self.signal()
+                return
 
     def _console(self) -> None:
         buf, last = b"", 0.0
@@ -484,6 +796,84 @@ class VM:
             self.g.note(f"exit status {r.returncode}")
         return r
 
+    def ssh_checked(self, script: str, timeout: float, log: bool = False) -> subprocess.CompletedProcess:
+        """VM.ssh for what a verdict hangs on (hooks, the listing, the dump,
+        uname): once more on ssh's own failure, 255, after 10 s
+        (ghostbsd26-zfs's connection once failed just after boot where a
+        moment before and six runs since went fine), and then a failed run,
+        never a wrong answer."""
+        r = self.ssh(script, timeout, log)
+        if r.returncode == 255:
+            self.g.note("ssh failed (exit status 255); again in 10 s")
+            if stopping.wait(10):
+                raise Failed("stopped")
+            r = self.ssh(script, timeout, log)
+            if r.returncode == 255:
+                raise Failed(f"ssh to the guest failed twice (exit status 255); see {self.g.serial_path}")
+        return r
+
+    def ssh_bytes(self, remote: list[str], data: bytes | None, timeout: float) -> subprocess.CompletedProcess:
+        """Run REMOTE in the guest, bytes in and out, retried as ssh_checked."""
+        def once():
+            try:
+                return subprocess.run(self.g.ssh_cmd(self.port, *remote), input=data or b"",
+                                      capture_output=True, timeout=timeout)
+            except subprocess.TimeoutExpired:
+                return subprocess.CompletedProcess([], 124, b"", b"timed out")
+        r = once()
+        if r.returncode == 255:
+            self.g.note("ssh failed (exit status 255); again in 10 s")
+            if stopping.wait(10):
+                raise Failed("stopped")
+            r = once()
+            if r.returncode == 255:
+                raise Failed(f"ssh to the guest failed twice (exit status 255); see {self.g.serial_path}")
+        return r
+
+    def put(self, local: str | os.PathLike, remote: str) -> int:
+        """Copy LOCAL to the guest's REMOTE, executable, over cat (some
+        guests' scp support is thin); ssh's exit status."""
+        q = shlex.quote(remote)
+        return self.ssh_bytes([f"cat >{q} && chmod 755 {q}"], Path(local).read_bytes(), 600).returncode
+
+    def listing(self) -> str:
+        """update/pkgset.sh's output.  What it couldn't list it says; a
+        script that fails outright is unknown too.  Its error output goes to
+        the log, and so does the line that makes a listing unknown: the
+        caller keeps only what it printed."""
+        r = self.ssh_checked((TESTVM / "update/pkgset.sh").read_text(), PKGSET_TIMEOUT)
+        if r.stderr.strip():
+            self.g.log.write(f"pkgset.sh's error output:\n{r.stderr.rstrip()}\n")
+        if r.returncode != 0 or not r.stdout.strip():
+            out = f"unknown pkgset.sh: exit status {r.returncode}\n"
+        else:
+            out = r.stdout
+        bad = [l.strip() for l in out.splitlines() if l.strip() and l.split()[0] not in LISTING_TYPES]
+        if bad:
+            self.g.note(f"package listing: {bad[0][:200]}")
+        return out
+
+    def dump(self, uname: str) -> tuple[bytes | None, str]:
+        """bko-holt dump of the running guest: (its bytes, ""), or (None, why).
+        Only an ssh failure fails the run: without a dump there is simply no
+        fingerprint, and the generation stands in."""
+        system = uname.split()[0] if uname else ""
+        plat = DUMP_PLATS.get(system)
+        if plat is None:
+            return None, f"no bko-holt for {system or 'this system'}"
+        binary = Path(os.environ.get("VM_UPDATE_HOLT_BIN") or DEFAULT_HOLT_BIN) / plat / "bko-holt"
+        if not binary.is_file():
+            return None, f"no {binary}"
+        dest = ("/root" if system == "Linux" else "/tmp") + "/bko-holt"
+        if (rc := self.put(binary, dest)) != 0:
+            return None, f"copying bko-holt in failed (exit status {rc})"
+        r = self.ssh_bytes([dest, "dump"], None, DUMP_TIMEOUT)
+        self.ssh_bytes(["rm", "-f", dest], None, 60)
+        if r.returncode != 0:
+            tail = r.stderr.decode(errors="replace").strip().splitlines()[-1:]
+            return None, f"bko-holt dump: exit status {r.returncode} {' '.join(tail)}"
+        return r.stdout, ""
+
     def stderr_tail(self, n: int = 6) -> str:
         """vm-run's (and QEMU's) last lines of error output, for a message."""
         if self.stderr_thread:
@@ -512,7 +902,7 @@ class VM:
                 raise Failed("stopped")
             if self.proc.poll() is not None:
                 raise Failed(f"the VM stopped while booting (vm-run exit status {self.proc.returncode});"
-                             f" see {self.g.dir}/update-serial.log{self.stderr_tail()}")
+                             f" see {self.g.serial_path}{self.stderr_tail()}")
             # Within a timeout: QEMU's user network accepts the connection
             # before the guest is up, so ConnectTimeout alone never fires.
             r = self.ssh("echo up", timeout=20, log=False)
@@ -525,7 +915,7 @@ class VM:
             else:
                 down, answers = True, 0
             time.sleep(2 if not down else 5)
-        raise Failed(f"no SSH as {self.g.user} within {SSH_UP_TIMEOUT} s; see {self.g.dir}/update-serial.log")
+        raise Failed(f"no SSH as {self.g.user} within {SSH_UP_TIMEOUT} s; see {self.g.serial_path}")
 
     def poweroff(self) -> dict[str, str]:
         """Power the guest off; {image path: overlay holding its writes}."""
@@ -541,6 +931,8 @@ class VM:
                     raise Failed(f"the guest didn't power off within {POWEROFF_TIMEOUT} s")
         running.discard(self)              # off: from here on, stopping waits for the merge
         self.release_memory()
+        self.watch_end.set()
+        self.peak_kib = max(self.peak_kib, tree_kib(self.ram_dir))
         if stopping.is_set():
             raise Failed("stopped")
         overlays = self.overlays()
@@ -584,12 +976,14 @@ class VM:
             promised -= self.mb
             self.mb = 0
 
-    def discard(self) -> None:
-        """Stop the VM if it still runs, and delete its overlays."""
+    def discard(self, keep: bool = False) -> None:
+        """Stop the VM if it still runs, and delete its overlays (KEEP: leave them)."""
         running.discard(self)
+        self.watch_end.set()
         self.kill()
         self.release_memory()
-        shutil.rmtree(self.ram_dir, ignore_errors=True)
+        if not keep:
+            shutil.rmtree(self.ram_dir, ignore_errors=True)
         try:
             self.serial.close()
         except (OSError, AttributeError):
@@ -597,6 +991,23 @@ class VM:
 
 
 # --- Step 1: the hosts agree -------------------------------------------------------
+
+# The merge marks of the images $2... in folder $1 that exist, by name.  (Beside
+# the file the image name resolves to, as COMMIT_SCRIPT puts them.)
+MARKS_SCRIPT = r"""
+d=$1; shift
+for f; do
+    i=$(realpath -- "$d/$f")
+    for m in "$(dirname "$i")/.vm-update.$(basename "$i").merging"{,.committed}; do
+        if [[ -e $m ]]; then basename -- "$m"; fi
+    done
+done
+"""
+MARKS_RM_SCRIPT = r"""
+i=$(realpath -- "$1")
+m=$(dirname "$i")/.vm-update.$(basename "$i").merging
+rm -f -- "$m" "$m.committed"
+"""
 
 def check_hosts(g: Guest, hosts: list[str | None], start: bool, exclude: dict | None = None) -> dict:
     """Check that nothing uses the images and every host holds the same
@@ -610,7 +1021,8 @@ def check_hosts(g: Guest, hosts: list[str | None], start: bool, exclude: dict | 
         users = [u for img in g.images for u in busy(host, g.name, img, (exclude or {}).get(host, []))]
         sums = {img: sha256_on(host, f"{guest_dir_on(host, g.name)}/{img}") for img in g.images}
         pending = read_json(host, g.name, PENDING_FILE)
-        return users, sums, read_json(host, g.name, STATE_FILE), pending, machine_id(host, g.name)
+        marks = on_host(host, MARKS_SCRIPT, guest_dir_on(host, g.name), *g.images).split()
+        return users, sums, read_json(host, g.name, STATE_FILE), pending, machine_id(host, g.name), marks
 
     with concurrent.futures.ThreadPoolExecutor(len(hosts)) as pool:
         results = dict(zip(hosts, pool.map(one, hosts)))
@@ -621,12 +1033,15 @@ def check_hosts(g: Guest, hosts: list[str | None], start: bool, exclude: dict | 
         ids[r[4]] = host
     problems = [u for r in results.values() for u in r[0]]
     problems += [f"{where(h)}: a merge left undone (vm-update --finish)" for h, r in results.items() if r[3]]
+    problems += [f"{where(h)}: {', '.join(r[5])} with no merge pending: left over if the images match {STATE_FILE}, "
+                 "and then to be deleted by hand; a merge that began and lost its record if not"
+                 for h, r in results.items() if r[5] and not r[3]]
     if problems:
         raise Failed("in use: " + "; ".join(problems))
 
     here_sums, here_state = results[None][1], results[None][2]
     if here_state is None:
-        for host, (_, sums, state, _, _) in results.items():
+        for host, (_, sums, state, *_) in results.items():
             if state is not None:
                 raise Failed(f"{where(host)} has an {STATE_FILE} but this host has none")
             if sums != here_sums:
@@ -639,7 +1054,7 @@ def check_hosts(g: Guest, hosts: list[str | None], start: bool, exclude: dict | 
             write_json(host, g.name, STATE_FILE, states[host])
         g.note(f"{STATE_FILE} started on {len(hosts)} host(s), generation {generation[:12]}")
         return states
-    for host, (_, sums, state, _, _) in results.items():
+    for host, (_, sums, state, *_) in results.items():
         if state is None:
             raise Failed(f"{where(host)} has no {STATE_FILE}; copy {g.name} there again")
         if state["sha256"] != sums:
@@ -653,33 +1068,66 @@ def check_hosts(g: Guest, hosts: list[str | None], start: bool, exclude: dict | 
 # --- Step 5: every host merges the update ------------------------------------------
 
 # Merge OVERLAY into IMAGE if IMAGE is still what vm-update checked (SHA-256
-# WANT), retake the snapshot if IMAGE had it, delete OVERLAY; prints IMAGE's
-# new SHA-256.  Safe to repeat after it failed or was cut short anywhere
-# (--finish): once the check has passed, a mark beside the image says so and
-# holds the old snapshots' IDs, and commit -d leaves the overlay's data in
-# place, so committing it again writes the same.  The mark stays for the
-# caller to remove once it has recorded the result.  The new snapshot is
+# WANT) and OVERLAY what it shipped (OSUM), retake the snapshot if IMAGE had
+# it, delete OVERLAY; prints IMAGE's new SHA-256.  Safe to repeat after it
+# failed or was cut short anywhere (--finish): once the checks have passed, a
+# mark beside the image says so and holds the old snapshots' IDs and which
+# merge it is (WANT and OSUM); once the commit is done and on disk,
+# MARK.committed says that.  Both stay for the caller to remove once it has
+# recorded the result.  A mark of another merge is refused, for it would pass
+# for this one's: no checks, no commit, and the overlay deleted.  (A mark that
+# names no merge is an older vm-update's, which wrote no committed marker: with
+# one beside it, it is refused too.)  The new snapshot is
 # made before the old ones go (they share a name; their IDs tell them
 # apart, and qemu-img deletes the oldest of a name), so the image always
 # has one.
+#
+# The overlay can be in RAM, the marks are on disk: after a crash the mark
+# with no overlay and no MARK.committed means a commit that may be half
+# done, and nothing here can tell or mend it.  Exit 4, the snapshots
+# untouched and the marks kept: vm-update --finish says what to do.
 COMMIT_SCRIPT = r"""
 set -euo pipefail
-overlay=$1 img=$(realpath "$2") snapshot=$3 want=$4
+overlay=$1 img=$(realpath "$2") snapshot=$3 want=$4 osum=${5:-}
 mark=$(dirname "$img")/.vm-update.$(basename "$img").merging
+committed=$mark.committed
+stamp="$want ${osum:--}"
 snaps() { qemu-img snapshot -l "$img" | awk -v s="$snapshot" 'NR > 2 && $2 == s { print $1 }'; }
 if [[ ! -e $mark ]]; then
-    [[ -e $overlay ]] || { echo "$overlay is missing" >&2; exit 1; }
+    rm -f -- "$committed"                      # a marker with no mark is no merge's
+    [[ -e $overlay ]] || {
+        echo "$overlay is missing and $img has no merge mark: no merge began here, unless a crash lost the mark." \
+             "If $img's SHA-256 is still the one in image-state, remove .vm-update.pending on the hosts that took it" \
+             "and update again; if not, copy $(basename "$img") and image-state from the other host first" >&2
+        exit 1
+    }
     [[ $(sha256sum -- "$img" | cut -d' ' -f1) == "$want" ]] ||
         { echo "$img changed since vm-update checked it" >&2; exit 1; }
-    echo $(snaps) >"$mark.tmp"
+    [[ -z $osum || $(sha256sum -- "$overlay" | cut -d' ' -f1) == "$osum" ]] ||
+        { echo "$overlay isn't the overlay vm-update shipped" >&2; exit 1; }
+    { echo $(snaps); echo "$stamp"; } >"$mark.tmp"
     mv "$mark.tmp" "$mark"
+    sync -- "$mark" "$(dirname "$img")"
 fi
-old=" $(<"$mark") "
-if [[ -e $overlay ]]; then
+{ IFS= read -r ids || true; IFS= read -r marked || true; } <"$mark"
+if [[ $marked != "$stamp" && ( -n $marked || -e $committed ) ]]; then
+    echo "$mark isn't this merge's: it says ${marked:-nothing}, this merge is $stamp." \
+         "If $(basename "$img")'s SHA-256 is the one in image-state, it is left over: remove it and $(basename "$committed")" >&2
+    exit 1
+fi
+old=" $ids "
+if [[ ! -e $committed ]]; then
+    if [[ ! -e $overlay ]]; then
+        echo "OVERLAY-LOST: $overlay is gone and $img's commit may be half done" >&2
+        exit 4
+    fi
     fmt=$(qemu-img info -U --output=json "$img" | python3 -c 'import json, sys; print(json.load(sys.stdin)["format"])')
     # The overlay names its base by the path it had where it was made.
     qemu-img rebase -u -b "$img" -F "$fmt" "$overlay"
     qemu-img commit -q -d "$overlay"
+    sync -- "$img"
+    : >"$committed"
+    sync -- "$committed" "$(dirname "$img")"
 fi
 if [[ -n ${old// } ]]; then
     now=" $(snaps | tr '\n' ' ') " made=no
@@ -716,44 +1164,185 @@ def shipped_name(img: str) -> str:
     return f".vm-update.{img}"
 
 
+def wear_tag(g: Guest) -> str:
+    return os.environ.get("WEAR_TAG") or f"guest:by-hand:{g.name}"
+
+
+def overlay_lost_steps(g: Guest, host: str | None, img: str) -> str:
+    return (f"OVERLAY-LOST on {where(host)}: {img}'s overlay is gone and its commit may be half done, so the image"
+            f" there can't be trusted.  Nothing more was changed.  To mend it: copy {img} and {STATE_FILE} from the"
+            f" other host (which holds either the old image or the finished merge); remove"
+            f" .vm-update.{img}.merging, .vm-update.{img}.merging.committed and {PENDING_FILE} on the hosts that"
+            f" took them; and update {g.name} again")
+
+
+def stat_of(host: str | None, g: Guest) -> dict:
+    """image-stat.json's "disks" as this moment's HOST sees them."""
+    d = guest_dir_on(host, g.name)
+    out = on_host(host, 'for f in "${@:2}"; do stat -L -c "%s %.9Y %i" -- "$1/$f"; done', d, *g.images)
+    disks = {}
+    for img, line in zip(g.images, out.splitlines()):
+        size, mtime, inode = line.split()
+        disks[img] = {"size": int(size), "mtime_ns": int(mtime.replace(".", "")), "inode": int(inode)}
+    return disks
+
+
+def write_stat(host: str | None, g: Guest, generation: str) -> None:
+    write_json(host, g.name, STAT_FILE, {"generation": generation, "disks": stat_of(host, g)})
+
+
 def merge_on(g: Guest, host: str | None, pending: dict) -> None:
     """Merge the overlays named in PENDING on HOST and record the new state,
     noting each image's progress in PENDING as it goes."""
     d = guest_dir_on(host, g.name)
     done = pending.setdefault("done", {})
+    sums = pending.get("overlay_sums") or {}
     for img, overlay in pending["overlays"].items():
-        if img in done:
-            continue
-        done[img] = on_host(host, COMMIT_SCRIPT, overlay, f"{d}/{img}", SNAPSHOT, pending["before"][img]).strip()
-        write_json(host, g.name, PENDING_FILE, pending)
-        on_host(host, 'rm -f -- "$1"', f"{d}/.vm-update.{img}.merging")
-    sums = {img: done.get(img, pending["before"][img]) for img in g.images}
-    write_json(host, g.name, STATE_FILE, dict(pending["state"], sha256=sums))
+        if img not in done:
+            try:
+                done[img] = on_host_counted(host, pending.get("wear_tag") or wear_tag(g), f"vm-update merge {g.name}",
+                                            COMMIT_SCRIPT, overlay, f"{d}/{img}", SNAPSHOT, pending["before"][img],
+                                            sums.get(img, "")).strip()
+            except Failed as e:
+                if e.status == 4:
+                    raise OverlayLost(overlay_lost_steps(g, host, img))
+                raise
+            write_json(host, g.name, PENDING_FILE, pending)
+        # For an image already in DONE too: a run cut short just after
+        # recording it leaves its marks, for this pass to remove.
+        on_host(host, MARKS_RM_SCRIPT, f"{d}/{img}")
+    sums_after = {img: done.get(img, pending["before"][img]) for img in g.images}
+    write_json(host, g.name, STATE_FILE, dict(pending["state"], sha256=sums_after))
+    if pending.get("fingerprint"):
+        write_json(host, g.name, FP_FILE, pending["fingerprint"])
+    write_stat(host, g, pending["state"]["generation"])
     write_json(host, g.name, PENDING_FILE, None)
     g.note(f"merged on {where(host)}: update {pending['state']['updates']}, "
            f"generation {pending['state']['generation'][:12]}")
 
 
-def ship_and_commit(g: Guest, hosts: list[str | None], overlays: dict[str, str], states: dict) -> None:
+# On the host that takes an overlay: reserve $1 GiB, and hold it while ssh keeps
+# our stdin open.  cmp-run.sh waiting in line reads no stdin and writes nothing,
+# so the end of ssh wouldn't reach it: it would keep its place in the line, and
+# hold up those behind it, until room came.  So it runs in a session of its own
+# (WEAR_LOG=off: no sudo, its PID stays the group's, ours to signal) and goes
+# the moment stdin ends, its `sleep 30` with it.  Signalled under the ledger's
+# lock ($2), the one thing that can't catch it rewriting the ledger in place.
+# Its row in the line goes at the next prune.  The held command watches this
+# shell, so a reservation can't outlive it however it dies.  It must stay one
+# line: the ledger's rows are lines, and name it.
+ROOM_SCRIPT = r"""
+WEAR_LOG=off setsid "$HOME/backotter-work/cmp-run.sh" --reserve "$1" 0 \
+    sh -c 'echo reserved; while kill -0 "$1" 2>/dev/null; do sleep 5; done' sh "$$" </dev/null &
+pid=$!
+while kill -0 "$pid" 2>/dev/null; do
+    read -r -t 2 line
+    rc=$?
+    if (( rc != 0 && rc <= 128 )); then
+        flock -w 30 "$2" kill -TERM -- "-$pid" 2>/dev/null || kill -TERM -- "-$pid" 2>/dev/null
+        exit 0
+    fi
+done
+wait "$pid"
+"""
+
+
+class RoomElsewhere:
+    """A reservation on another host's RAM disk for an overlay on its way
+    there, held as long as our end of this ssh stays open."""
+
+    def __init__(self, host: str, gib: int):
+        self.host, self.gib = host, gib
+        remote = " ".join(shlex.quote(a) for a in ["bash", "-c", ROOM_SCRIPT, "bash", str(gib), f"{RAM_BASE}/.reserve.lock"])
+        self.proc = subprocess.Popen(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10",
+                                      "-o", "ServerAliveInterval=15", host, remote],
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                                     start_new_session=True)
+
+    def wait(self, seconds: float) -> None:
+        """Until it is held; Failed when SECONDS pass, or vm-update is stopped."""
+        deadline, seen = time.monotonic() + seconds, b""
+        fd = self.proc.stdout.fileno()
+        while b"reserved" not in seen:
+            if stopping.is_set():
+                raise Failed("stopped")
+            if time.monotonic() > deadline:
+                raise Failed(f"no room for the overlay in {self.host}'s RAM disk within {seconds:.0f} s")
+            if select.select([fd], [], [], 5)[0]:
+                chunk = os.read(fd, 4096)
+                if not chunk:
+                    raise Failed(f"the reservation on {self.host} failed: "
+                                 f"{self.proc.stderr.read().decode(errors='replace').strip() or 'no reason given'}")
+                seen += chunk
+
+    def release(self) -> None:
+        try:
+            self.proc.stdin.close()
+        except OSError:
+            pass
+        try:
+            self.proc.wait(30)
+        except subprocess.TimeoutExpired:
+            self.proc.terminate()
+            self.proc.wait()
+
+
+def merge_order(hosts: list[str | None]) -> list[str | None]:
+    """One at a time, this host last: at most one image is ever mid-commit,
+    and the other stays a good source."""
+    return [h for h in hosts if h is not None] + [h for h in hosts if h is None]
+
+
+def overlays_to_disk(g: Guest, host: str | None, pending: dict) -> None:
+    """A merge failed: PENDING's overlays still in RAM move to the guest's
+    folder on HOST, as --finish must outlive a reboot."""
+    d = guest_dir_on(host, g.name)
+    moved = False
+    for img, overlay in list(pending["overlays"].items()):
+        if img in pending.get("done", {}) or not overlay.startswith(f"{RAM_BASE}/"):
+            continue
+        dest = f"{d}/{shipped_name(img)}"
+        on_host(host, '[[ ! -e $1 ]] || mv -- "$1" "$2"', overlay, dest)
+        pending["overlays"][img] = dest
+        moved = True
+    if moved:
+        write_json(host, g.name, PENDING_FILE, pending)
+
+
+def remove_empty_ram_dir(g: Guest, host: str | None = None) -> None:
+    try:
+        on_host(host, 'rmdir --ignore-fail-on-non-empty -- "$1" 2>/dev/null || true', str(ram_dir_of(g.name)))
+    except Failed:
+        pass
+
+
+def ship_and_commit(g: Guest, hosts: list[str | None], overlays: dict[str, str], states: dict,
+                    rec: dict | None = None, dump: bytes | None = None, listing: str | None = None) -> str:
+    """Step 5; the new generation.  REC: fingerprint.py's record of this
+    update, with DUMP and LISTING what it was made from."""
     others = [h for h in hosts if h is not None]
     changed = [img for img in g.images if g.path(img) in overlays]   # an image nothing wrote has none
-    # Out of the run's folder, which vm-update deletes, into the guest's:
-    # what step 5 leaves undone must survive it.
+    in_ram = ram_gib() is not None
+    shipped_dir = ram_dir_of(g.name) if in_ram else g.dir
+    # Out of the run's folder, which vm-update deletes, into the guest's (or
+    # its RAM folder: a rename): what step 5 leaves undone must survive it.
     local = {}
     try:
         for img in changed:
-            dest = str(g.dir / shipped_name(img))
+            dest = str(shipped_dir / shipped_name(img))
             shutil.move(overlays[g.path(img)], dest)
             local[img] = dest
     except OSError as e:
         for path in local.values():
             Path(path).unlink(missing_ok=True)
-        raise Failed(f"moving the overlay into {g.dir}: {e}")
-    sums = {img: sha256_on(None, local[img]) for img in changed}
+        raise Failed(f"moving the overlay into {shipped_dir}: {e}")
     # Where it goes on the other hosts (relative to their home, as guest_dir_on).
-    remote = {img: f"backotter-work/vms/{g.name}/{shipped_name(img)}" for img in changed}
+    remote = {img: (str(shipped_dir / shipped_name(img)) if in_ram else f"{REMOTE_VMS}/{g.name}/{shipped_name(img)}")
+              for img in changed}
 
     def copy(host):
+        if in_ram:
+            on_host(host, 'mkdir -p -- "$1"', str(shipped_dir))
         for img in changed:
             r = run(["scp", "-q", "-o", "BatchMode=yes", local[img], f"{host}:{remote[img]}"])
             if r.returncode != 0:
@@ -771,54 +1360,87 @@ def ship_and_commit(g: Guest, hosts: list[str | None], overlays: dict[str, str],
                 except Failed:
                     say(g.name, f"couldn't delete {remote[img]} on {host}; delete it by hand")
 
-    say(g.name, f"copying the update ({', '.join(f'{os.path.getsize(o) >> 20} MiB' for o in local.values())})"
-                f" to {', '.join(others) or 'no other host'}")
-    generation = hashlib.sha256((states[None]["generation"] + json.dumps(sums, sort_keys=True)).encode()).hexdigest()
-    new_state = {"generation": generation, "updates": states[None]["updates"] + 1}
-    pend = {h: {"overlays": local if h is None else remote, "before": states[h]["sha256"], "state": new_state}
-            for h in hosts}
     written = []
+    rooms: list[RoomElsewhere] = []
     try:
-        with concurrent.futures.ThreadPoolExecutor(max(1, len(others))) as pool:
-            list(pool.map(copy, others))
-        # Step 1 again: the images may have changed, or come into use, since.
-        exclude = {None: list(local.values())}
-        exclude.update({h: [on_host(h, 'realpath -- "$1"', remote[img]).strip() for img in changed] for h in others})
-        now = check_hosts(g, hosts, start=False, exclude=exclude)
-        if now != states:
-            raise Failed("the hosts' image-state changed during the update")
-        if stopping.is_set():
-            raise Failed("stopped before merging")
-        # Recorded on every host before any merges, so that a merge that
-        # fails or is cut short can be finished later (--finish).
-        for host in hosts:
-            write_json(host, g.name, PENDING_FILE, pend[host])
-            written.append(host)
-    except BaseException:
-        for host in written:
-            try:
-                write_json(host, g.name, PENDING_FILE, None)
-            except Failed:
-                say(g.name, f"couldn't delete {PENDING_FILE} on {where(host)}; delete it by hand")
-        remove_overlays()
-        raise
+        # From the moves on, anything that goes wrong before the merges takes the
+        # overlays with it: with no pending to name them, they would only
+        # block the guest (on disk) or hold RAM outside any reservation.
+        try:
+            sums = {img: sha256_on(None, local[img]) for img in changed}
+            say(g.name, f"copying the update ({', '.join(f'{os.path.getsize(o) >> 20} MiB' for o in local.values())})"
+                        f" to {', '.join(others) or 'no other host'}")
+            generation = hashlib.sha256((states[None]["generation"] + json.dumps(sums, sort_keys=True)).encode()).hexdigest()
+            new_state = {"generation": generation, "updates": states[None]["updates"] + 1}
+            side = None
+            if rec is not None:
+                side = fingerprint_mod().sidecar(rec, generation, "update", utc_now(), read_json(None, g.name, FP_FILE))
+            pend = {h: {"overlays": dict(local if h is None else remote), "before": states[h]["sha256"], "state": new_state,
+                        "overlay_sums": sums, "wear_tag": wear_tag(g), "fingerprint": side}
+                    for h in hosts}
+            if in_ram and others:
+                gib = max(1, math.ceil(sum(os.path.getsize(p) for p in local.values()) / (1 << 30) + 0.25))
+                for host in others:
+                    say(g.name, f"waiting for {gib} GiB of room in {host}'s RAM disk")
+                    rooms.append(RoomElsewhere(host, gib))
+                    rooms[-1].wait(RESERVE_WAIT)
+            with concurrent.futures.ThreadPoolExecutor(max(1, len(others))) as pool:
+                list(pool.map(copy, others))
+            # Step 1 again: the images may have changed, or come into use, since.
+            exclude = {None: [os.path.realpath(p) for p in local.values()]}
+            exclude.update({h: [on_host(h, 'realpath -- "$1"', remote[img]).strip() for img in changed] for h in others})
+            now = check_hosts(g, hosts, start=False, exclude=exclude)
+            if now != states:
+                raise Failed("the hosts' image-state changed during the update")
+            if stopping.is_set():
+                raise Failed("stopped")
+            save_dump(g, generation, dump, listing)
+            # Recorded on every host before any merges, so that a merge that
+            # fails or is cut short can be finished later (--finish).
+            for host in hosts:
+                write_json(host, g.name, PENDING_FILE, pend[host])
+                written.append(host)
+        except BaseException:
+            for host in written:
+                try:
+                    write_json(host, g.name, PENDING_FILE, None)
+                except Failed:
+                    say(g.name, f"couldn't delete {PENDING_FILE} on {where(host)}; delete it by hand")
+            remove_overlays()
+            raise
 
-    failed = []
-    with concurrent.futures.ThreadPoolExecutor(len(hosts)) as pool:
-        for host, fut in [(h, pool.submit(merge_on, g, h, pend[h])) for h in hosts]:
+        failed = None
+        for host in merge_order(hosts):
             try:
-                fut.result()
+                merge_on(g, host, pend[host])
             except Exception as e:
-                failed.append((host, str(e) if isinstance(e, Failed) else f"{type(e).__name__}: {e}"))
-    if failed:
-        raise Failed("the merge failed on " + "; ".join(f"{where(h)} ({e})" for h, e in failed)
-                     + ", so the hosts now differ.  The overlays are kept there: once the cause is gone,"
-                       f" vm-update --finish {g.name} completes it")
+                failed = (host, e)
+                break
+        if failed:
+            for host in hosts:
+                try:
+                    if read_json(host, g.name, PENDING_FILE):
+                        overlays_to_disk(g, host, pend[host])
+                except Failed as e:
+                    say(g.name, f"keeping the overlay on {where(host)}: {e}")
+            host, e = failed
+            if isinstance(e, OverlayLost):
+                raise e
+            raise Failed(f"the merge failed on {where(host)} ({e if isinstance(e, Failed) else f'{type(e).__name__}: {e}'})"
+                         ", so the hosts may now differ.  The overlays are kept there: once the cause is gone,"
+                         f" vm-update --finish {g.name} completes it")
+    finally:
+        for room in rooms:
+            room.release()
+        if in_ram:
+            for host in others:
+                remove_empty_ram_dir(g, host)
+    return generation
 
 
 def finish(g: Guest, hosts: list[str | None]) -> str:
     done = []
-    for host in hosts:
+    for host in merge_order(hosts):
         pending = read_json(host, g.name, PENDING_FILE)
         if not pending:
             continue
@@ -834,54 +1456,509 @@ def finish(g: Guest, hosts: list[str | None]) -> str:
     return f"merged on {', '.join(done)}; update {state['updates']} on {len(hosts)} host(s)"
 
 
+# --- Fingerprints ------------------------------------------------------------------
+
+_fingerprint = None
+
+
+def fingerprint_mod():
+    """update/fingerprint.py, loaded from this tree."""
+    global _fingerprint
+    if _fingerprint is None:
+        spec = importlib.util.spec_from_file_location("bko_fingerprint", TESTVM / "update" / "fingerprint.py")
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        _fingerprint = m
+    return _fingerprint
+
+
+def utc_now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+def host_root() -> Path:
+    return Path(os.environ.get("T2_HOST_ROOT") or DEFAULT_HOST_ROOT).expanduser()
+
+
+def dumps_dir(guest: str) -> Path:
+    return host_root() / "guest-dumps" / guest
+
+
+def save_dump(g: Guest, generation: str, dump: bytes | None, listing: str | None) -> None:
+    """HOST_ROOT/guest-dumps/G/GEN.{json,pkgset}: what --reproject reads.  A
+    raw dump holds serials and hostnames: 0600 in a 0700 folder, and it stays
+    on this host.  Best effort: a fingerprint needs none of it."""
+    if dump is None:
+        return
+    d = dumps_dir(g.name)
+    try:
+        for p in (d.parent, d):
+            p.mkdir(parents=True, exist_ok=True)
+            p.chmod(0o700)
+        for name, data in ((f"{generation}.json", dump), (f"{generation}.pkgset", (listing or "").encode())):
+            tmp = d / (name + ".tmp")
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+            with os.fdopen(fd, "wb") as f:
+                f.write(data)
+            os.replace(tmp, d / name)
+    except OSError as e:
+        g.note(f"couldn't keep the dump for --reproject: {e}")
+
+
+def make_record(g: Guest, res: dict, dump: bytes | None, why: str, listing: str) -> dict | None:
+    """fingerprint.py's record of a dump, or None with res saying why.  No
+    fingerprint is never an error: the generation stands in."""
+    rec = None
+    if dump is None:
+        res["fingerprint_why"] = why
+    else:
+        fp = fingerprint_mod()
+        try:
+            rec = fp.build(json.loads(dump), listing)
+        except fp.NoFingerprint as e:
+            res["fingerprint_why"] = str(e)
+        except Exception as e:                 # a bug of ours mustn't stop an update
+            res["fingerprint_why"] = f"{type(e).__name__}: {e}"
+    if rec is None:
+        g.note(f"no fingerprint: {res['fingerprint_why']}")
+        say(g.name, f"no fingerprint: {res['fingerprint_why']}")
+    else:
+        res["fingerprint"] = rec["holt"]["digest"]
+    return rec
+
+
+def sidecar_current(side: dict | None, generation: str | None) -> bool:
+    """Whether SIDE is the fingerprint of GENERATION: one of another counts for nothing."""
+    return bool(side) and generation is not None and side.get("generation") == generation
+
+
+def write_sidecars(g: Guest, hosts: list[str | None], rec: dict, generation: str, source: str) -> None:
+    side = fingerprint_mod().sidecar(rec, generation, source, utc_now(), read_json(None, g.name, FP_FILE))
+    for host in hosts:
+        write_json(host, g.name, FP_FILE, side)
+
+
+def generations(g: Guest, hosts: list[str | None]) -> str:
+    """The generation every host's image-state names, or Failed."""
+    gens = {}
+    for host in hosts:
+        state = read_json(host, g.name, STATE_FILE)
+        if state is None:
+            raise Failed(f"{where(host)} has no {STATE_FILE}: no generation to fingerprint")
+        gens[host] = state["generation"]
+    if len(set(gens.values())) != 1:
+        raise Failed("the hosts' generations differ: " + ", ".join(f"{where(h)} {v[:12]}" for h, v in gens.items()))
+    return gens[None]
+
+
+def reproject(g: Guest, hosts: list[str | None]) -> str:
+    """The sidecars recomputed from the stored dump, with no boot."""
+    side = read_json(None, g.name, FP_FILE)
+    if not side:
+        return "no fingerprint to reproject"
+    gen = side["generation"]
+    jpath, ppath = dumps_dir(g.name) / f"{gen}.json", dumps_dir(g.name) / f"{gen}.pkgset"
+    if not jpath.exists() or not ppath.exists():
+        raise Failed(f"no stored dump of generation {gen[:12]} here ({jpath}): vm-update --probe --write-fingerprint makes one")
+    fp = fingerprint_mod()
+    try:
+        new = fp.reproject(side, json.loads(jpath.read_text()), ppath.read_text())
+    except fp.NoFingerprint as e:
+        for host in hosts:
+            write_json(host, g.name, FP_FILE, None)
+        return f"no fingerprint by today's rules ({e}): the sidecars are gone, and the generation stands in"
+    for host in hosts:
+        write_json(host, g.name, FP_FILE, new)
+    moved = [f for f in ("holt", "stic") if new[f]["digest"] != side[f]["digest"]]
+    return f"reprojected; {'moved: ' + ', '.join(moved) if moved else 'the digests are as they were'}"
+
+
+# --- The merge rule ----------------------------------------------------------------
+
+STEP = re.compile(r"^in-guest: step: (.*)$", re.M)
+LISTING_TYPES = ("pkg", "base", "nix-pkg", "nix-system", "syspatch")
+
+
+def parse_steps(stdout: str) -> list[str]:
+    """What in-guest.sh says it changed besides packages."""
+    return [m[1].strip() for m in STEP.finditer(stdout)]
+
+
+def listing_lines(text: str) -> set[str] | None:
+    """A listing's lines, or None when it is unknown: says so, is empty, or
+    holds a line of no known type."""
+    lines = {l.strip() for l in text.splitlines() if l.strip()}
+    if not lines or any(l.split()[0] not in LISTING_TYPES for l in lines):
+        return None
+    return lines
+
+
+def merge_decision(before: str, after: str, steps: list[str]) -> dict:
+    """The merge rule.  {decided, why, pkg_changed, steps, unknown, gate}, DECIDED: there is an update to merge."""
+    a, b = listing_lines(before), listing_lines(after)
+    unknown = a is None or b is None
+    changed = not unknown and a != b
+    n = 0 if unknown else len({" ".join(l.split()[:2]) for l in a ^ b})
+    if unknown:
+        why = "a package listing is unknown: merging"
+    elif changed and steps:
+        why = f"{n} package(s) changed and {len(steps)} step(s)"
+    elif changed:
+        why = f"{n} package(s) changed"
+    elif steps:
+        why = f"{len(steps)} step(s): {steps[0]}"
+    else:
+        why = "nothing changed"
+    return {"decided": bool(unknown or changed or steps), "why": why, "pkg_changed": changed, "packages": n,
+            "steps": steps, "unknown": unknown, "gate": None}
+
+
+def hook_status(rc: int, stdout: str) -> dict:
+    """A hook's {rc, sentinel}: SENTINEL, whether its output got to its end."""
+    lines = [l.strip() for l in stdout.splitlines() if l.strip()]
+    return {"rc": rc, "sentinel": bool(lines) and lines[-1] == HOOK_SENTINEL}
+
+
+def hook_problems(hooks: dict) -> list[str]:
+    return [name for name, h in hooks.items() if h["rc"] != 0 or not h["sentinel"]]
+
+
+def run_gate(cmd: str, res_merge: dict, g: Guest) -> None:
+    """--merge-gate: returns to merge; Blocked or Failed not to, RES_MERGE saying which."""
+    try:
+        r = run(["sh", "-c", cmd], timeout=GATE_TIMEOUT, stdin=subprocess.DEVNULL)
+        rc, out = r.returncode, (r.stdout + r.stderr).strip()
+    except subprocess.TimeoutExpired:
+        rc, out = 124, f"timed out after {GATE_TIMEOUT} s"
+    g.log.write(out + "\n")
+    g.note(f"merge gate: exit status {rc}")
+    if rc != 0 and stopping.is_set():
+        raise Failed("stopped")
+    res_merge["gate"] = rc
+    if rc == 0:
+        return
+    res_merge["decided"] = False
+    last = (out.splitlines() or [f"exit status {rc}"])[-1]
+    if rc == GATE_BLOCKED:
+        res_merge["why"] = f"the merge gate blocked it: {last}"
+        raise Blocked(res_merge["why"])
+    res_merge["why"] = f"the merge gate failed (exit status {rc}): {last}"
+    raise Failed(res_merge["why"])
+
+
 # --- One guest, start to end -------------------------------------------------------
 
-def update(name: str, args, hosts: list[str | None]) -> str:
-    g = Guest(name)
-    mode = "--status" if args.status else "--finish" if args.finish else "--try" if args.try_ else ""
+def out_dir(name: str, args) -> Path:
+    """Where this guest's run records go."""
+    if args.out:
+        return Path(args.out) if len(args.guests) == 1 else Path(args.out) / name
+    return VMS / name / ".vm-update-last"
+
+
+def new_result(name: str, mode: str) -> dict:
+    return {"guest": name, "mode": mode, "rc": None, "phase": "start", "uname": None,
+            "merge": {"decided": False, "why": None, "pkg_changed": False, "steps": [], "unknown": False, "gate": None},
+            "merged": False, "overlay_mib": None, "overlay_dir": None, "ram_peak_kib": None,
+            "reserved_gib": None, "overrun": False, "overrun_why": None, "generation_before": None,
+            "generation_after": None, "trim_rc": None, "wall_s": None, "tail": [], "hooks": {},
+            "kept_failed": False, "fingerprint": None, "fingerprint_why": None}
+
+
+def write_result(out: Path, res: dict) -> None:
+    tmp = out / "result.json.tmp"
+    tmp.write_text(json.dumps(res, indent=1) + "\n")
+    tmp.replace(out / "result.json")
+
+
+def by_hand_row(res: dict, out: Path, g_note) -> None:
+    """A plain --try or real update's ledger row, valid: false (it ran no Test2
+    checks): best effort, at most 30 s, as ht1-lib.sh's ht_t2_row."""
+    if os.environ.get("T2_CELLS") or res["mode"] not in ("try", "update"):
+        return
+    tool = TESTVM / "test2" / "t2-host"
+    if not tool.is_file():
+        return
+    try:
+        r = run(["timeout", "-k", "5", "30", "python3", "-B", str(tool), "row", "guest", "--by-hand",
+                 "--guest", res["guest"], "--out", str(out), "--mode", res["mode"], "--rc", str(res["rc"])],
+                env=dict(os.environ, T2_WORK=str(WORK)), stdin=subprocess.DEVNULL)
+        note = (r.stdout + r.stderr).strip().splitlines()[-1:] or [f"exit status {r.returncode}"]
+    except OSError as e:
+        note = [str(e)]
+    g_note(f"Test2 ledger row: {note[0][:200]}")
+
+
+def hooks_of(args) -> dict[str, list[tuple[str, Path]]]:
+    """{phase: [(NAME, file)]}: NAME is the file's, less any extension; a
+    second file of that name gets -2, and so on."""
+    out: dict[str, list[tuple[str, Path]]] = {"before": [], "after": []}
+    seen: dict[str, int] = {}
+    for spec in args.hook or ():
+        phase, _, path = spec.partition("=")
+        stem = Path(path).stem
+        seen[stem] = seen.get(stem, 0) + 1
+        out[phase].append((stem if seen[stem] == 1 else f"{stem}-{seen[stem]}", Path(path)))
+    return out
+
+
+def run_hooks(vm: VM, phase: str, hooks: list[tuple[str, Path]], res: dict, out: Path) -> None:
+    for name, path in hooks:
+        res["phase"] = f"{phase}-hook"
+        r = vm.ssh_checked(path.read_text(), HOOK_TIMEOUT)
+        (out / f"hook-{name}.out").write_text(r.stdout, encoding="utf-8")
+        if r.stderr.strip():
+            vm.g.log.write(f"hook {name}'s error output:\n{r.stderr}")
+        res["hooks"][name] = hook_status(r.returncode, r.stdout)
+        vm.g.note(f"hook {name}: exit status {r.returncode}, sentinel {res['hooks'][name]['sentinel']}")
+
+
+def probe(g: Guest, vm: VM, args, hosts: list[str | None], hooks: dict, res: dict, out: Path) -> str:
+    """--probe, with the VM up: the hooks, and the fingerprint if asked for."""
+    run_hooks(vm, "before", hooks["before"], res, out)
+    res["phase"] = "uname"
+    res["uname"] = uname = vm.ssh_checked("uname -sr", 30).stdout.strip()
+    run_hooks(vm, "after", hooks["after"], res, out)
+    msg = f"probed ({uname})"
+    if args.write_fingerprint:
+        res["phase"] = "pkgset"
+        listing = vm.listing()
+        (out / "pkgset-after.txt").write_text(listing, encoding="utf-8")
+        res["phase"] = "dump"
+        dump, why = vm.dump(uname)
+        rec = make_record(g, res, dump, why, listing)
+        generation = generations(g, hosts)         # again: nothing may have moved since the boot
+        res["generation_before"] = res["generation_after"] = generation
+        if rec is not None:
+            write_sidecars(g, hosts, rec, generation, "probe")
+            save_dump(g, generation, dump, listing)
+            msg += f"; fingerprint {rec['holt']['digest'][:12]}"
+        else:
+            msg += f"; no fingerprint: {res['fingerprint_why']}"
+    res["phase"] = "poweroff"
+    vm.poweroff()
+    return msg
+
+
+def real_tree(work: Path) -> bool:
+    return same_path(work, os.path.expanduser("~/backotter-work"))
+
+
+def refuse_on_real_tree() -> None:
+    """A test's T2_HOST_ROOT or T2_WORK with the real tree under this script:
+    someone's test is about to merge into the real fleet."""
+    if not real_tree(WORK):
+        return
+    root = os.environ.get("T2_HOST_ROOT")
+    if root and os.path.realpath(os.path.expanduser(root)) != os.path.realpath(DEFAULT_HOST_ROOT):
+        raise Failed(f"T2_HOST_ROOT={root} with the real tree: a test merges only in a world of its own (BKO_WORK)")
+    work = os.environ.get("T2_WORK")
+    if work and not real_tree(Path(work).expanduser()):
+        raise Failed(f"T2_WORK={work} with the real tree: a test merges only in a world of its own (BKO_WORK)")
+
+
+def refuse_real_update() -> None:
+    if os.path.realpath(TESTVM) != os.path.realpath(WORK / "testvm"):
+        raise Failed(f"a real update runs only from a synced tree: this is {TESTVM}, not {WORK}/testvm")
+    if VMS.is_symlink():
+        raise Failed(f"{VMS} is a link: a real update runs only from a synced tree")
+    refuse_no_vms()
+    refuse_on_real_tree()
+
+
+def refuse_no_vms() -> None:
+    if not VMS.is_dir():
+        raise Failed(f"no {VMS}: nothing here to update (a private copy has none; a world sets BKO_WORK)")
+
+
+def refuse_unaimed_world(others: list[str], lock_elsewhere: bool) -> None:
+    """A tree of its own whose other hosts' path was left to the default,
+    which is the real fleet's: its guards would all pass, for they look at
+    this tree, while its reads and writes went to the real guests over there."""
+    if real_tree(WORK) or os.environ.get("VM_UPDATE_REMOTE_VMS"):
+        return
+    if others or lock_elsewhere:
+        raise Failed(f"BKO_WORK={WORK} with no VM_UPDATE_REMOTE_VMS: on the other hosts that would be the real fleet"
+                     " (name the world's vms/ there, or --hosts '')")
+
+
+def on_first_host() -> bool:
+    return socket.gethostname().split(".")[0].casefold() == ALL_HOSTS[0].split(".")[0].casefold()
+
+
+def fleet_paths() -> tuple[Path, Path]:
+    return VMS / FLEET_LOCK, VMS / FLEET_ROUND
+
+
+def round_name() -> str:
+    try:
+        return fleet_paths()[1].read_text().strip()
+    except OSError:
+        return ""
+
+
+# On the first host, for a driver on another: take the lock on fd 9 and hold
+# it for as long as ssh keeps our stdin open.  $3 -x or -s.
+FLEET_SCRIPT = r"""
+exec 9>>"$1"
+flock -n "$3" 9 || { echo "$(cat -- "$2" 2>/dev/null)"; exit 75; }
+echo held
+echo "$(cat -- "$2" 2>/dev/null)"
+exec cat >/dev/null
+"""
+
+
+def fleet_held_error(by: str) -> Failed:
+    return Failed(f"the fleet lock is held, by a by-hand update or a round: {FLEET_ROUND} says {by or 'nothing'}")
+
+
+def take_fleet_lock(shared_run: str | None):
+    """The fleet lock for this process's life: exclusive for a by-hand
+    driver, shared for SHARED_RUN's job, which must be that round's.  What
+    keeps it held is returned, to be kept referenced."""
+    if on_first_host():
+        lock, _ = fleet_paths()
+        f = open(lock, "a")
+        try:
+            fcntl.flock(f, (fcntl.LOCK_SH if shared_run else fcntl.LOCK_EX) | fcntl.LOCK_NB)
+        except BlockingIOError:
+            f.close()
+            raise fleet_held_error(round_name())
+        by = round_name()
+        keep = f
+    else:
+        remote = " ".join(shlex.quote(a) for a in ["bash", "-c", FLEET_SCRIPT, "bash", f"{REMOTE_VMS}/{FLEET_LOCK}",
+                                                   f"{REMOTE_VMS}/{FLEET_ROUND}", "-s" if shared_run else "-x"])
+        p = subprocess.Popen(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=15",
+                              ALL_HOSTS[0], remote], stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+                             stderr=subprocess.PIPE, text=True, start_new_session=True)
+        first = p.stdout.readline().strip()
+        if first != "held":
+            p.stdin.close()
+            err = p.stderr.read().strip()
+            p.wait()
+            if p.returncode == 75 or first:
+                raise fleet_held_error(first)
+            raise Failed(f"taking the fleet lock on {ALL_HOSTS[0]}: {err or f'exit status {p.returncode}'}")
+        by = p.stdout.readline().strip() if shared_run else ""
+        keep = p
+    if shared_run and by != shared_run:
+        raise Failed(f"this job is of round {shared_run}, but the round in progress is {by or 'none'}")
+    return keep
+
+
+def hold_fleet_lock(run_id: str) -> int:
+    """--hold-fleet-lock: EX to be sure nothing else is at work, then the
+    round's name, then SH, which its jobs share."""
+    if not re.fullmatch(r"[A-Za-z0-9._-]+", run_id):
+        print(f"vm-update: not a run id: {run_id}", file=sys.stderr)
+        return 2
+    if not on_first_host():
+        print(f"vm-update: --hold-fleet-lock runs on {ALL_HOSTS[0]}", file=sys.stderr)
+        return 2
+    if not VMS.is_dir():
+        print(f"vm-update: no {VMS}", file=sys.stderr)
+        return 2
+    lock, rnd = fleet_paths()
+    f = open(lock, "a")
+    try:
+        fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError:
+        print(f"vm-update: {fleet_held_error(round_name())}", file=sys.stderr)
+        return 75
+    tmp = rnd.with_name(rnd.name + ".tmp")
+    tmp.write_text(run_id + "\n")
+    tmp.replace(rnd)
+    try:
+        fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+    except BlockingIOError:                    # flock converts by letting go first
+        print("vm-update: lost the fleet lock while making it shared", file=sys.stderr)
+        return 75
+    print("held", flush=True)
+    # A line at least this often, or the driver is gone and the jobs it
+    # started finish by themselves, each holding the lock for its life.
+    while True:
+        if not select.select([0], [], [], HEARTBEAT_TIMEOUT)[0]:
+            print(f"vm-update: no heartbeat in {HEARTBEAT_TIMEOUT} s; letting go", file=sys.stderr)
+            return 75
+        if not os.read(0, 4096):
+            return 0
+
+
+def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, hold: list) -> str:
+    g = Guest(name, out, log_here=bool(args.out))
+    hold.append(g)
+    mode = "--try" if args.try_ else "--probe" if args.probe else ""
     g.note(f"vm-update {mode} on {socket.gethostname()}, hosts {[where(h) for h in hosts]}")
-    if args.finish:
-        return finish(g, hosts)
-    if args.status:
-        state = check_hosts(g, hosts, start=False)[None]
-        if state is None:
-            return f"not updated by vm-update yet; the images are identical on {len(hosts)} host(s)"
-        return f"update {state['updates']}, generation {state['generation'][:12]}, the same on {len(hosts)} host(s)"
     # A guest whose sshd serves no logins (Redox today) can't be updated
     # over SSH: refused at once, rather than after a boot's timeout.
     no_ssh = g.dir / "no-ssh"
     if no_ssh.exists():
         raise Failed(f"no SSH to update it over: {no_ssh.read_text().strip()}")
+    states = None
+    state_now = None
     if args.try_:
         # Nothing to check: the images are only read, and a VM writing to
         # them would keep vm-run from opening them.
-        states = None
+        state_now = read_json(None, name, STATE_FILE)
+    elif args.probe:
+        if args.write_fingerprint:
+            generations(g, hosts)              # before spending a boot on it
+        state_now = read_json(None, name, STATE_FILE)
     else:
         states = check_hosts(g, hosts, start=True)
+        state_now = states[None]
+    res["generation_before"] = res["generation_after"] = state_now["generation"] if state_now else None
     if stopping.is_set():
         raise Failed("stopped")
+    hooks = hooks_of(args)
+    res["phase"] = "boot"
     vm = VM(g, args.memory, args.cpus)
+    res["overlay_dir"], res["reserved_gib"] = vm.ram_dir, vm.reserved
+    keep = False
     try:
         say(name, f"booting (SSH port {vm.port})")
         vm.wait_ssh()
+        for spec in args.push or ():
+            local, _, remote = spec.partition("=")
+            res["phase"] = "push"
+            if (rc := vm.put(local, remote)) != 0:
+                raise Failed(f"copying {local} to the guest's {remote} failed (exit status {rc})")
+        if args.probe:
+            msg = probe(g, vm, args, hosts, hooks, res, out)
+            res["phase"] = "done"
+            return msg
+        run_hooks(vm, "before", hooks["before"], res, out)
+        res["phase"] = "pkgset"
+        listing_before = vm.listing()
+        (out / "pkgset-before.txt").write_text(listing_before, encoding="utf-8")
         say(name, "updating")
+        res["phase"] = "update"
         r = vm.ssh((TESTVM / "update/in-guest.sh").read_text(), timeout=UPDATE_TIMEOUT)
         if r.returncode == 3:
             vm.poweroff()
+            res["phase"] = "done"
+            res["merge"]["why"] = "nothing updates this guest"
             return "nothing updates this guest: " + (r.stdout.strip().splitlines() or ["?"])[-1]
+        if r.returncode != 0 and stopping.is_set():
+            raise Failed("stopped")                # its ssh died with the VM: no finding about the guest
         if r.returncode != 0:
-            raise Failed(f"the update failed (exit status {r.returncode}); see {g.dir}/update.log:\n  "
-                         + "\n  ".join((r.stdout + r.stderr).strip().splitlines()[-8:]))
+            res["tail"] = (r.stdout + r.stderr).strip().splitlines()[-8:]
+            raise Failed(f"the update failed (exit status {r.returncode}); see {g.log.name}:\n  "
+                         + "\n  ".join(res["tail"]))
+        steps = parse_steps(r.stdout)
+        (out / "steps.txt").write_text("".join(f"{s}\n" for s in steps), encoding="utf-8")
         if stopping.is_set():
             raise Failed("stopped")
         say(name, "rebooting")
+        res["phase"] = "reboot"
         up_before, t_before = vm.uptime(), time.monotonic()
         for attempt in range(5):
             if vm.ssh(REBOOT, timeout=30).returncode == 0:
                 break
-            time.sleep(10)
+            if stopping.wait(10):
+                raise Failed("stopped")
         else:
-            raise Failed(f"the reboot command failed; see {g.dir}/update.log")
+            raise Failed(f"the reboot command failed; see {g.log.name}")
         vm.type_passphrase()
         vm.wait_ssh(rebooting=True)
         # Proof that it did reboot: init is younger than it would be had it
@@ -892,8 +1969,56 @@ def update(name: str, args, hosts: list[str | None]) -> str:
             g.note("no ps -o etime here: the reboot is taken from SSH going down and up")
         elif up_after >= (ran_on := up_before + (time.monotonic() - t_before)) - min(30, ran_on / 2):
             raise Failed(f"the guest didn't reboot (init has run {up_after} s)")
-        uname = vm.ssh("uname -sr", timeout=30, log=False).stdout.strip()
-        say(name, f"booted again ({uname}); trimming")
+        res["uname"] = uname = vm.ssh_checked("uname -sr", 30).stdout.strip()
+        say(name, f"booted again ({uname})")
+        run_hooks(vm, "after", hooks["after"], res, out)
+        res["phase"] = "pkgset"
+        listing_after = vm.listing()
+        (out / "pkgset-after.txt").write_text(listing_after, encoding="utf-8")
+        res["merge"] = decision = merge_decision(listing_before, listing_after, steps)
+        g.note(f"merge rule: {decision['why']}")
+
+        if args.try_:
+            res["phase"] = "poweroff"
+            overlays = vm.poweroff()
+            sizes = [os.path.getsize(o) for o in overlays.values()]
+            res["overlay_mib"] = sum(sizes) >> 20
+            res["phase"] = "done"
+            would = f"would merge: {decision['why']}" if decision["decided"] else "nothing to merge"
+            return (f"updated and rebooted ({uname}); {would}; overlay"
+                    f" {', '.join(f'{s >> 20} MiB' for s in sizes)} thrown away (--try)")
+
+        if not decision["decided"]:
+            # The reboot came first: illumos's and Haiku's package sets change
+            # only with it.  The guest stands as it was: nothing to merge,
+            # but what it is can still be recorded.
+            generation = state_now["generation"]
+            if not sidecar_current(read_json(None, name, FP_FILE), generation):
+                res["phase"] = "dump"
+                dump, why = vm.dump(uname)
+                if (rec := make_record(g, res, dump, why, listing_after)) is not None:
+                    write_sidecars(g, hosts, rec, generation, "update-nochange")
+                    save_dump(g, generation, dump, listing_after)
+            res["phase"] = "poweroff"
+            vm.poweroff()
+            res["phase"] = "done"
+            return f"updated and rebooted ({uname}); nothing changed; no merge"
+
+        bad = hook_problems(res["hooks"])
+        if bad:
+            decision["decided"] = False
+            decision["why"] = f"no merge: hook(s) {', '.join(bad)} failed or were cut off"
+            raise Blocked(decision["why"])
+        if args.merge_gate:
+            res["phase"] = "gate"
+            write_result(out, res)             # the gate reads the hooks' results here
+            run_gate(args.merge_gate, decision, g)
+
+        res["phase"] = "dump"
+        dump, why = vm.dump(uname)
+        rec = make_record(g, res, dump, why, listing_after)
+        say(name, "trimming")
+        res["phase"] = "trim"
         # Room it can't hand back only stays allocated, as before: not a failure.
         trim = (TESTVM / "update/trim.sh").read_text()
         r = vm.ssh(trim, timeout=TRIM_TIMEOUT)
@@ -906,97 +2031,233 @@ def update(name: str, args, hosts: list[str | None]) -> str:
             r = vm.ssh(trim, timeout=TRIM_TIMEOUT)
         if stopping.is_set():
             raise Failed("stopped")
+        res["trim_rc"] = r.returncode
         if r.returncode != 0:
-            say(name, f"trimming failed (exit status {r.returncode}), see {g.dir}/update.log; going on")
+            say(name, f"trimming failed (exit status {r.returncode}), see {g.log.name}; going on")
         say(name, "powering off")
+        res["phase"] = "poweroff"
         overlays = vm.poweroff()
         if not overlays or not set(overlays) <= {g.path(img) for img in g.images}:
             raise Failed(f"vm-run didn't report the overlays: {overlays}")
-        if args.try_:
-            sizes = ", ".join(f"{os.path.getsize(o) >> 20} MiB" for o in overlays.values())
-            return f"updated and rebooted ({uname}); overlay {sizes} thrown away (--try)"
-        ship_and_commit(g, hosts, overlays, states)
+        res["overlay_mib"] = sum(os.path.getsize(o) for o in overlays.values()) >> 20
+        res["phase"] = "ship"
+        generation = ship_and_commit(g, hosts, overlays, states, rec, dump, listing_after)
+        res["merged"], res["generation_after"] = True, generation
+        res["phase"] = "done"
         return f"updated ({uname}), merged on {len(hosts)} host(s)"
-    except BaseException:
+    except BaseException as e:
         g.log.write(traceback.format_exc())
+        if vm.overrun:
+            res["overrun"], res["overrun_why"] = True, vm.overrun
+        keep = args.keep_failed and not isinstance(e, Blocked) and not stopping.is_set()
+        res["kept_failed"] = keep
         raise
     finally:
-        vm.discard()
+        res["ram_peak_kib"] = vm.peak_kib or tree_kib(vm.ram_dir)
+        vm.discard(keep=keep)
+        if not keep and ram_gib() is not None:
+            remove_empty_ram_dir(g)
+
+
+def update(name: str, args, hosts: list[str | None]) -> str:
+    if args.status or args.finish or args.reproject:
+        g = Guest(name)
+        what = "--status" if args.status else "--finish" if args.finish else "--reproject"
+        g.note(f"vm-update {what} on {socket.gethostname()}, hosts {[where(h) for h in hosts]}")
+        if args.finish:
+            return finish(g, hosts)
+        if args.reproject:
+            return reproject(g, hosts)
+        states = check_hosts(g, hosts, start=False)
+        state = states[None]
+        if state is None:
+            return f"not updated by vm-update yet; the images are identical on {len(hosts)} host(s)"
+        for host in hosts:
+            if not sidecar_current(read_json(host, name, STAT_FILE), state["generation"]):
+                write_stat(host, g, state["generation"])   # check_hosts just matched its sha256s
+        return f"update {state['updates']}, generation {state['generation'][:12]}, the same on {len(hosts)} host(s)"
+
+    mode = "try" if args.try_ else "probe" if args.probe else "update"
+    res = new_result(name, mode)
+    if not args.out and not (VMS / name).is_dir():         # the default place for records is in the guest's folder
+        raise Failed(f"no such guest: {VMS / name}")
+    out = out_dir(name, args)
+    out.mkdir(parents=True, exist_ok=True)
+    t0 = time.monotonic()
+    hold: list = []
+    try:
+        msg = run_guest(name, args, hosts, res, out, hold)
+        res["rc"] = 0
+        return msg
+    except BaseException as e:
+        res["rc"] = getattr(e, "rc", 1)
+        if not res["tail"]:
+            res["tail"] = [l.strip() for l in str(e).strip().splitlines()][-8:]
+        raise
+    finally:
+        res["wall_s"] = round(time.monotonic() - t0, 1)
+        write_result(out, res)
+        if hold:
+            by_hand_row(res, out, hold[0].note)
 
 
 def main() -> int:
-    p = argparse.ArgumentParser(prog="vm-update", usage=__doc__.split("\n\n")[1].removeprefix("Usage: "))
+    if len(sys.argv) > 1 and sys.argv[1] in ("-h", "--help"):
+        print(__doc__)
+        return 0
+    p = argparse.ArgumentParser(prog="vm-update", usage=__doc__.split("\n\n")[1].removeprefix("Usage: "), add_help=False)
     p.add_argument("--try", dest="try_", action="store_true")
+    p.add_argument("--probe", action="store_true")
     p.add_argument("--status", action="store_true")
     p.add_argument("--finish", action="store_true")
+    p.add_argument("--reproject", action="store_true")
+    p.add_argument("--hold-fleet-lock", metavar="RUN")
     p.add_argument("--hosts")
     p.add_argument("--jobs", type=int, default=3)
     p.add_argument("--cpus", type=int)
     p.add_argument("--memory", type=int)
-    p.add_argument("guests", nargs="+")
+    p.add_argument("--out")
+    p.add_argument("--hook", action="append")
+    p.add_argument("--push", action="append")
+    p.add_argument("--write-fingerprint", action="store_true")
+    p.add_argument("--merge-gate")
+    p.add_argument("--keep-failed", action="store_true")
+    p.add_argument("guests", nargs="*")
     args = p.parse_args()
-    if sum([args.try_, args.status, args.finish]) > 1:
-        p.error("--try, --status and --finish don't combine")
+    if args.hold_fleet_lock:
+        if args.guests:
+            p.error("--hold-fleet-lock takes no guests")
+        return hold_fleet_lock(args.hold_fleet_lock)
+    if not args.guests:
+        p.error("no guests named")
+    if sum([args.try_, args.probe, args.status, args.finish, args.reproject]) > 1:
+        p.error("--try, --probe, --status, --finish and --reproject don't combine")
+    real_update = not (args.try_ or args.probe or args.status or args.finish or args.reproject)
+    for spec in args.hook or ():
+        phase, eq, path = spec.partition("=")
+        if phase not in ("before", "after") or not eq or not os.path.isfile(path):
+            p.error(f"--hook {spec}: before=FILE or after=FILE, of a file that exists")
+    for spec in args.push or ():
+        local, eq, remote = spec.partition("=")
+        if not eq or not remote or not os.path.isfile(local):
+            p.error(f"--push {spec}: LOCAL=REMOTE, of a file that exists")
+    if args.hook and not args.out:
+        p.error("--hook needs --out: that is where its output goes")
+    if args.keep_failed and not (args.try_ or args.probe):
+        p.error("--keep-failed is for --try and --probe: after a failed merge the overlays belong to --finish")
+    if args.merge_gate and not real_update:
+        p.error("--merge-gate is for a real update")
+    if args.write_fingerprint and not (args.probe or real_update):
+        p.error("--write-fingerprint is for --probe or a real update")
+    if (args.status or args.finish or args.reproject) and (args.hook or args.push or args.out):
+        p.error("--status, --finish and --reproject take no --out, --hook or --push")
     me = socket.gethostname().split(".")[0].casefold()
     names = ALL_HOSTS if args.hosts is None else [h for h in args.hosts.split(",") if h]
     others = list(dict.fromkeys(h for h in names if h.split(".")[0].casefold() != me))
     hosts: list[str | None] = [None, *others]
-    guests = list(dict.fromkeys(name.rstrip("/") for name in args.guests))
+    guests = args.guests = list(dict.fromkeys(name.rstrip("/") for name in args.guests))
+    boots = not (args.status or args.finish or args.reproject)
+    if boots and os.environ.get("VM_UPDATE_RAM") and len(guests) > 1:
+        p.error("VM_UPDATE_RAM is one guest's reservation: each guest watches only its own overlays against it")
 
-    # A hangup (the SSH session to this host dropped) or TERM stops it as
-    # Ctrl-C does.
-    def hangup(signum, frame):
+    # Before anything starts: who may change the fleet, and when.
+    _fleet_lock = None                         # held as long as this function runs
+    round_run = os.environ.get("VM_UPDATE_ROUND")
+    writes_sidecars = args.reproject or (args.probe and args.write_fingerprint)
+    takes_lock = real_update or args.finish
+    try:
+        if real_update:
+            refuse_real_update()
+        elif args.finish:
+            refuse_no_vms()
+        if takes_lock or writes_sidecars or args.status:
+            refuse_unaimed_world(others, takes_lock and not on_first_host())
+        if args.finish or writes_sidecars:
+            refuse_on_real_tree()
+        if takes_lock:
+            _fleet_lock = take_fleet_lock(round_run)
+    except Failed as e:
+        print(f"vm-update: {e}", file=sys.stderr)
+        if boots:
+            mode = "try" if args.try_ else "probe" if args.probe else "update"
+            for name in guests:
+                if (VMS / name).is_dir() or args.out:
+                    res = dict(new_result(name, mode), rc=e.rc, tail=str(e).splitlines()[-8:])
+                    try:
+                        out = out_dir(name, args)
+                        out.mkdir(parents=True, exist_ok=True)
+                        write_result(out, res)
+                    except OSError:
+                        pass
+        return e.rc
+
+    # Ctrl-C, a hangup (the SSH session to this host dropped) or TERM stops it.
+    # The handler only counts them, for the loop below to act on: raising from
+    # here, a second signal could land inside the first one's handling and
+    # lose the stop, or end up in a hard exit.  Only a second Ctrl-C (of a human,
+    # who means it) stops at once.
+    asked = [0]
+
+    def on_signal(signum, frame):
         if signum == signal.SIGHUP:
-            devnull = open(os.devnull, "w")
-            sys.stdout = sys.stderr = devnull
-        if stopping.is_set():                  # only a second Ctrl-C stops at once
-            return
-        raise KeyboardInterrupt
-    signal.signal(signal.SIGHUP, hangup)
-    signal.signal(signal.SIGTERM, hangup)
+            sys.stdout = sys.stderr = open(os.devnull, "w")
+        if signum == signal.SIGINT and asked[0]:
+            try:
+                os.write(2, b"vm-update: stopped at once; VMs may be left running, merges half done\n")
+            except OSError:
+                pass
+            os._exit(130)
+        asked[0] += 1
+    for sig in (signal.SIGINT, signal.SIGHUP, signal.SIGTERM):
+        signal.signal(sig, on_signal)
+
+    def stop_everything(futures) -> None:
+        stopping.set()
+        try:
+            print("vm-update: stopping: the running VMs are stopped and their overlays deleted;"
+                  " merges under way finish (Ctrl-C again to stop at once)", file=sys.stderr)
+        except OSError:
+            pass
+        for fut in futures:
+            fut.cancel()
+        vms = list(running)
+        for vm in vms:                         # all at once, then wait
+            vm.signal()
+        for vm in vms:
+            vm.kill()
 
     results = {}
+    failures: dict[str, int] = {}
     with concurrent.futures.ThreadPoolExecutor(max(1, args.jobs)) as pool:
         futures = {pool.submit(update, name, args, hosts): name for name in guests}
         pending = set(futures)
         while pending:
-            try:
-                for fut in concurrent.futures.as_completed(pending):
-                    pending.discard(fut)
-                    name = futures[fut]
-                    if fut.cancelled():
-                        continue
-                    try:
-                        results[name] = (True, fut.result())
-                    except Failed as e:
-                        results[name] = (False, str(e))
-                    except Exception as e:
-                        results[name] = (False, f"{type(e).__name__}: {e}")
-                    say(name, ("" if results[name][0] else "FAILED: ") + results[name][1])
-            except KeyboardInterrupt:
+            if asked[0] and not stopping.is_set():
+                stop_everything(futures)
+            done, pending = concurrent.futures.wait(pending, timeout=0.5)
+            for fut in done:
+                name = futures[fut]
+                if fut.cancelled():
+                    continue
                 try:
-                    if not stopping.is_set():
-                        stopping.set()
-                        print("vm-update: stopping: the running VMs are stopped and their overlays deleted;"
-                              " merges under way finish (Ctrl-C again to stop at once)", file=sys.stderr)
-                        for fut in futures:
-                            fut.cancel()
-                        vms = list(running)
-                        for vm in vms:             # all at once, then wait
-                            vm.signal()
-                        for vm in vms:
-                            vm.kill()
-                    else:
-                        raise KeyboardInterrupt
-                except (KeyboardInterrupt, OSError):
-                    print("vm-update: stopped at once; VMs may be left running, merges half done",
-                          file=sys.stderr)
-                    os._exit(130)
+                    results[name] = (True, fut.result())
+                except Failed as e:
+                    results[name] = (False, str(e))
+                    failures[name] = e.rc
+                except Exception as e:
+                    results[name] = (False, f"{type(e).__name__}: {e}")
+                    failures[name] = 1
+                say(name, ("" if results[name][0] else "FAILED: ") + results[name][1])
     print()
     for name in guests:
         ok, msg = results.get(name, (False, "not run"))
         print(f"{'ok    ' if ok else 'FAILED'} {name}: {msg.splitlines()[0]}")
-    return 0 if all(results.get(name, (False,))[0] for name in guests) else 1
+    if all(results.get(name, (False,))[0] for name in guests):
+        return 0
+    # One guest: its own status (10: a blocked merge, 4: an overlay lost).
+    if OverlayLost.rc in failures.values():
+        return OverlayLost.rc
+    return failures.get(guests[0], 1) if len(guests) == 1 else 1
 
 
 if __name__ == "__main__":

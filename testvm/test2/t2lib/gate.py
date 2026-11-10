@@ -65,6 +65,9 @@ import threading
 import time
 
 from . import utc_now
+from .hostjob import (  # noqa: F401 - host_job and its helpers, as gate.X too
+    CMP_RUN, FETCH_SCRIPT, POLL_S, UNKNOWN_MAX, HostIO, JobFailure, _q, guards_of, host_job, job_poll_cmd, job_times,
+    layer_dir, tripped)
 from .gate_judge import (  # noqa: F401 - the judge's names, as gate.X too
     NEED_FAIL, TEXT_MAX, ROOTISH, cut, verdict_of, counts_of, Outcome, harness, CARGO_RESULT,
     CARGO_FAILED, CARGO_ERROR, parse_cargo, parse_steps, parse_kv, parse_diff_json, REDACT_LINE,
@@ -82,8 +85,6 @@ ROOT_LIST_PATH = "testvm/test2/gate/restic-root-tests.txt"
 HOSTS = ("chopin", "cinqcent")
 FORKS = ("restic", "rustic_core", "rustic")
 NOT_PASSED = ("FAIL", "FLAKY-FAIL", "HARNESS", "LOST")
-CMP_RUN = "~/backotter-work/cmp-run.sh"
-POLL_S = 15
 LOCK_POLL_S = 10
 FAST_ORDER = ("holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic",
               "bin:abi", "bin:static", "bin:version", "selftest")
@@ -151,12 +152,6 @@ def split_cell(cell):
         name, host = rest.rsplit("@", 1)
         return name, host
     return rest, None
-
-
-def layer_dir(name):
-    """loop:linux@chopin -> loop-linux-chopin: a layer's directory and lock name."""
-    return re.sub(r"[^A-Za-z0-9._-]+", "-", name)
-
 
 
 def full_run(row):
@@ -278,26 +273,6 @@ def _stderr(msg):
     sys.stderr.flush()
 
 
-# --- host I/O (t2lib.hostrun underneath; the unit tests give a fake) ------------------------
-
-FETCH_SCRIPT = r'''
-import json, os, sys
-d = json.loads(_T2_DATA)
-out, total = {}, 0
-base = os.path.expanduser(d["dir"])   # a HOST_ROOT under the Mac's home reaches the host as ~/...
-for n in d["names"]:
-    try:
-        with open(os.path.join(base, n), "rb") as f:
-            b = f.read(d.get("max", 4 << 20))
-    except OSError:
-        continue
-    total += len(b)
-    if total > d.get("total", 16 << 20):
-        break
-    out[n] = b.decode("utf-8", "replace")
-sys.stdout.write(json.dumps(out))
-'''
-
 # Measures cells from the run's copy with this host's facts, and appends rows, through
 # the copy's own t2lib (hostrun.HostCtx: what t2-host's row builders get).
 HOST_SCRIPT = r'''
@@ -327,226 +302,6 @@ if d.get("append"):
             out["ids"].append(["error", "%s: %s" % (type(e).__name__, e)])
 sys.stdout.write(json.dumps(out))
 '''
-
-
-class HostIO:
-    """The gate's operations on hosts and on the Mac."""
-
-    def __init__(self):
-        from . import hostrun
-        self.h = hostrun
-
-    def sh(self, host, cmd, timeout=60, input=None):
-        r = self.h.ssh(host, cmd, timeout=timeout, input=input)
-        return r.rc, r.text, r.errtext
-
-    def script(self, host, script, data, timeout=120):
-        r = self.h.ssh(host, script=script, data=data, timeout=timeout)
-        if r.rc != 0:
-            raise RuntimeError(f"{host}: script exit {r.rc}: {r.errtext.strip()[-300:]}")
-        return json.loads(r.text or "{}")
-
-    def start(self, host, cmd, log, pidfile):
-        return self.h.detached(host, cmd, log, pidfile)
-
-    def alive(self, host, pid, needle=None):
-        """True while PID runs on HOST with NEEDLE in its command line, False when the host
-        says it doesn't, None when the host didn't answer (an ssh that failed is no answer)."""
-        pid = int(pid)
-        test = (f"test -r /proc/{pid}/cmdline && tr '\\0' ' ' < /proc/{pid}/cmdline | grep -qF -- {shlex.quote(needle)}"
-                if needle else f"test -d /proc/{pid}")
-        rc, text, _ = self.sh(host, f"if {test}; then echo alive; else echo gone; fi", timeout=30)
-        ans = (text or "").strip()
-        return True if rc == 0 and ans == "alive" else False if rc == 0 and ans == "gone" else None
-
-    def stop(self, host, pid, needle, wait_s=300):
-        """TERM the process group of a job this run started (PID leads it: setsid), only
-        while PID is still that job (NEEDLE in its command line); then wait up to WAIT_S for
-        the group to be gone.  True once nothing of it runs, False when it may still run.
-        Never a KILL: the scripts' TERM traps clean up their pools, mounts and RAM."""
-        pid = int(pid)
-        if pid <= 1:
-            return False
-        state = self.alive(host, pid, needle)
-        if state is None:
-            return False
-        if state:
-            rc, text, _ = self.sh(host, f"[ \"$(ps -o pgid= -p {pid} | tr -d ' ')\" = {pid} ] && kill -TERM -- -{pid}"
-                                        f" && echo sent", timeout=30)
-            if rc != 0 or "sent" not in (text or ""):
-                return False
-        else:   # the leader is gone; what is left of its group is still ours (Linux reuses no
-            # PID while a process group of that number lives)
-            self.sh(host, f"kill -TERM -- -{pid} 2>/dev/null", timeout=30)
-        t0 = time.time()
-        while True:   # the group: kill -0 says "No such process" once none of it is left
-            rc, text, err = self.sh(host, f"kill -0 -- -{pid} 2>&1; echo rc=$?", timeout=30)
-            if rc == 0 and "rc=1" in text and "No such process" in text:
-                return True
-            if time.time() - t0 > wait_s:
-                return False
-            self.sleep(POLL_S)
-
-    def fetch(self, host, d, names):
-        """{name: text} of the files of D on HOST that are there."""
-        try:
-            return self.script(host, FETCH_SCRIPT, {"dir": d, "names": list(names)})
-        except (RuntimeError, ValueError):
-            return {}
-
-    def local(self, argv, cwd=None, env=None, timeout=None):
-        """(rc, output) of ARGV on the Mac, in a process group of its own: past TIMEOUT the
-        whole group gets a TERM (fork-tests.sh's background waiters too), rc 124."""
-        import signal as _sig
-        try:
-            p = subprocess.Popen(argv, cwd=cwd, env=env, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                                 start_new_session=True)
-        except OSError as e:
-            return 127, str(e)
-        try:
-            out, err = p.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
-            try:
-                os.killpg(p.pid, _sig.SIGTERM)
-            except OSError:
-                pass
-            try:
-                out, err = p.communicate(timeout=60)
-            except subprocess.TimeoutExpired:
-                try:
-                    os.killpg(p.pid, _sig.SIGKILL)
-                except OSError:
-                    pass
-                out, err = p.communicate()
-            return 124, f"timed out after {timeout} s\n" + (out or b"").decode("utf-8", "replace")[-2000:]
-        return p.returncode, out.decode("utf-8", "replace") + err.decode("utf-8", "replace")
-
-    def sleep(self, s):
-        time.sleep(s)
-
-
-def _q(p):
-    """P for a remote shell; a leading ~/ stays for it to expand."""
-    if p == "~":
-        return '"$HOME"'
-    if p.startswith("~/"):
-        return '"$HOME"/' + shlex.quote(p[2:])
-    return shlex.quote(p)
-
-
-# --- one job on a host ----------------------------------------------------------------------
-
-class JobFailure(str):
-    """host_job's why: the text, and whether the job may still run on the host (then the
-    layer isn't run again beside it)."""
-
-    def __new__(cls, text, still_running=False):
-        o = str.__new__(cls, text)
-        o.still_running = still_running
-        return o
-
-
-UNKNOWN_MAX = 20   # polls in a row with no answer from the host before host_job gives up
-
-
-def job_poll_cmd(out):
-    """host_job's poll: .exit, a blank line, .began.  Exit 0 whether or not they are there yet
-    (exit 1 only when the job's directory is gone): a job waiting in cmp-run.sh's line has
-    neither, and that isn't 'no answer'."""
-    return f"cd {_q(out)} || exit 1; cat .exit 2>/dev/null; echo; cat .began 2>/dev/null; exit 0"
-
-
-def host_job(env, host, name, attempt, script_cmd, reserve=None, wear_tag=None, timeout_s=3600,
-             wait_s=4 * 3600, extra_env=None, ram=None):
-    """SCRIPT_CMD (a shell command, run in the copy's root) on HOST, detached, under
-    ~/backotter-work/cmp-run.sh --reserve when RESERVE is (DISK, MEM), with WEAR_TAG for
-    that command alone; waits for its end.  (rc or None, out_dir, times, why): why (a
-    JobFailure) says what went wrong when rc is None, never empty.  TIMEOUT_S counts from
-    the job's start, after the wait for room (at most WAIT_S); a job past either is stopped
-    (its process group gets a TERM), and when it can't be seen gone, why.still_running."""
-    out = env.out_dir(name, attempt)
-    copy = env.copy_path(host)
-    # In the job's command line as written ("$HOME"/'...' for a ~/ root): never a reused PID.
-    needle = f"/runs/{env.attempt_run(attempt)}/gate/{layer_dir(name)}/"
-    ev = dict({"PYTHONDONTWRITEBYTECODE": "1"}, **(extra_env or {}))
-    exports = " ".join(f"{k}={shlex.quote(str(v))}" for k, v in sorted(ev.items()))
-    # cmp-run.sh runs its command in ~/backotter-work (the synced tree's root): back to the copy.
-    inner = f"cd {_q(copy)} || exit 2; date +%s > {_q(out + '/.began')}; exec {script_cmd}"
-    if reserve:
-        wt = f"WEAR_TAG={shlex.quote(wear_tag)} " if wear_tag else ""
-        run = f"{wt}{CMP_RUN} --reserve {reserve[0]:g} {reserve[1]:g} bash -c {shlex.quote(inner)}"
-    else:
-        run = f"bash -c {shlex.quote(inner)}"
-    body = (f"cd {_q(copy)} || {{ echo 'no copy here' >&2; echo 2 > {_q(out + '/.exit')}; exit 2; }}; "
-            f"export {exports}; date +%s > {_q(out + '/.submitted')}; "
-            f"{run}; rc=$?; date +%s > {_q(out + '/.ended')}; echo $rc > {_q(out + '/.exit')}")
-    rc, _, err = env.io.sh(host, f"mkdir -p {_q(out)} && cd {_q(out)} && rm -f .exit .began .submitted .ended .pid")
-    if rc != 0:
-        return None, out, {}, JobFailure(f"can't make {out} on {host}: {err.strip()[-150:]}")
-    pid = env.io.start(host, f"bash -c {shlex.quote(body)}", out + "/job.log", out + "/.pid")
-    if not pid:
-        return None, out, {}, JobFailure(f"the job didn't start on {host}")
-    if ram and env.rs is not None and hasattr(env.rs, "record_made"):
-        try:   # for preflight's leftovers of a run that died (the job removes it itself)
-            env.rs.record_made(host, ram, pid)
-        except Exception:   # noqa: BLE001
-            pass
-    env.log(f"{host}: gate:{name} attempt {attempt} started, pid {pid}, records {out}")
-
-    def give_up(why):
-        gone = False
-        if hasattr(env.io, "stop"):
-            try:
-                gone = env.io.stop(host, pid, needle)
-            except Exception:   # noqa: BLE001
-                gone = False
-        env.log(f"{host}: gate:{name} attempt {attempt}: {why}; "
-                + ("stopped" if gone else f"pid {pid} may still run: no rerun beside it"))
-        return None, out, {}, JobFailure(f"{why}; " + ("stopped" if gone else f"pid {pid} may still run"),
-                                         still_running=not gone)
-
-    t0, began, said, unknown, ex = time.time(), None, False, 0, None
-    while True:
-        rc, text, _ = env.io.sh(host, job_poll_cmd(out))
-        e1, _, b = (text or "").partition("\n")
-        if rc == 0 and e1.strip().lstrip("-").isdigit():
-            ex = int(e1.strip())
-            break
-        if rc == 0 and b.strip().isdigit() and began is None:
-            began = time.time()
-        state = env.io.alive(host, pid, needle) if rc == 0 else None
-        if state is False:
-            rc2, text2, _ = env.io.sh(host, f"cat {_q(out + '/.exit')} 2>/dev/null")
-            if rc2 == 0 and text2.strip().lstrip("-").isdigit():
-                ex = int(text2.strip())
-                break
-            if rc2 == 0:
-                return give_up(f"the job on {host} ended without an exit status (pid {pid}; {out}/job.log)")
-            state = None
-        unknown = unknown + 1 if state is None else 0
-        now = time.time()
-        if unknown >= UNKNOWN_MAX:
-            return give_up(f"no answer from {host} in {unknown} polls")
-        if began is None and now - t0 > wait_s:
-            return give_up(f"no room for it on {host} after {wait_s} s")
-        if began is not None and now - began > timeout_s:
-            return give_up(f"no end after {timeout_s} s ({out}/job.log)")
-        if began is None and not said and now - t0 > 120:
-            env.log(f"{host}: gate:{name} waits for room in cmp-run.sh's ledger")
-            said = True
-        env.io.sleep(POLL_S)
-    f = env.io.fetch(host, out, [".submitted", ".began", ".ended", ".exit"])
-    t = {k[1:]: int(v.strip()) for k, v in f.items() if v.strip().lstrip("-").isdigit()}
-    t["exit"] = ex   # the polled exit: a fetch that failed afterwards loses only the times
-    return ex, out, t, None
-
-
-def job_times(t):
-    """(wall_s, waits_s) of host_job's times: the waits are the time in cmp-run.sh's line."""
-    sub, began, ended = t.get("submitted"), t.get("began"), t.get("ended")
-    if began is None:
-        return (max(ended - sub, 0) if ended and sub else 0), 0
-    return max((ended or began) - began, 0), max(began - (sub or began), 0)
 
 
 def _finish(o, host, out, t, tag=None):
@@ -1145,8 +900,11 @@ def gate_plan(ctx):
         rs = getattr(ctx, "run", None)
         s = getattr(getattr(rs, "plan", None), "set", None) or {}
         rnd = s.get("round") if isinstance(s, dict) else None
-        w = words.Word("gate", "GateTest2" + (f" {rnd}" if rnd else ""))
+        fresh = bool((getattr(ctx, "options", None) or {}).get("gate_fresh"))   # a sweep's children: every layer
+        w = words.Word("gate", ("GateTest2All" if fresh else "GateTest2") + (f" {rnd}" if rnd else ""))
         w.round = rnd
+        if fresh:
+            w.all = w.sweep = True
         c = copy.copy(ctx)   # the caller's --universe names its own family's cells
         c.options = {k: v for k, v in (getattr(ctx, "options", None) or {}).items() if k != "universe"}
         return planmod.make(w, c)
@@ -1157,7 +915,8 @@ def gate_plan(ctx):
 def run_layers(ctx, names, part=None, plan=None, env=None, io=None, log=None):
     """Run the gate layers NAMES (fast: one after another; slow: all at once).
     {"cells": [entry], "rows": [id], "stops": [text], "stop": None|stop-family|stop-starts,
-    "ok": bool, "exit": 0|1}."""
+    "ok": bool, "exit": 0|1}.  Once a run-wide stop rule (RunGuards) has fired, no further layer
+    starts: its entry is outcome not-started, with no row."""
     if env is None:
         if plan is None:
             plan = gate_plan(ctx)
@@ -1167,11 +926,16 @@ def run_layers(ctx, names, part=None, plan=None, env=None, io=None, log=None):
         part = "slow" if cells and all(entry_or_empty(env.layers, split_cell(c)[0]).get("part") == "slow"
                                        for c in cells) else "fast"
     results = []
+
+    def guarded(fn, c):
+        """FN()'s entry for C, or C's not-started entry once a run-wide stop rule has fired."""
+        return not_started(env, c) if tripped(env.rs) else fn()
+
     if part == "slow":
         res, lock = {}, threading.Lock()
 
         def one(c):
-            r = locked(env, c, lambda: run_cell(env, c))
+            r = guarded(lambda: locked(env, c, lambda: run_cell(env, c)), c)
             with lock:
                 res[c] = r
 
@@ -1190,19 +954,32 @@ def run_layers(ctx, names, part=None, plan=None, env=None, io=None, log=None):
             name = split_cell(c)[0]
             if name.startswith("fork:"):
                 if not done:
-                    commits = fork_commits(env, [split_cell(x)[0][5:] for x in forks])
-                    done = run_fork_cells(env, forks, commits)
+                    if tripped(env.rs):
+                        done = {x: not_started(env, x) for x in forks}
+                    else:
+                        commits = fork_commits(env, [split_cell(x)[0][5:] for x in forks])
+                        done = run_fork_cells(env, forks, commits)
                 results.append(done[c])
                 continue
             if name == "fork-root:restic" and "restic" not in commits:
                 commits.update(fork_commits(env, ["restic"]))
-            results.append(locked(env, c, lambda c=c: run_cell(env, c, commits)))
+            results.append(guarded(lambda c=c: locked(env, c, lambda c=c: run_cell(env, c, commits)), c))
     stops = [f"{'stop-family' if part == 'fast' else 'stop-starts'}: {part} gate {r['cell']} {r['verdict']}"
              for r in results if r["verdict"] in NOT_PASSED]
     lost = any(r.get("class") == "lost" for r in results)
+    unran = any(r.get("outcome") == "not-started" for r in results)   # a gate that didn't run didn't pass
     return {"cells": results, "rows": [i for r in results for i in r["rows"]], "stops": stops,
             "stop": (("stop-family" if part == "fast" else "stop-starts") if stops else None),
-            "ok": not stops, "exit": 1 if stops or lost else 0}
+            "ok": not stops and not unran, "exit": 1 if stops or lost or unran else 0}
+
+
+def not_started(env, cell):
+    """The entry of a layer a run-wide stop rule kept from starting: no row, no verdict."""
+    pc = env.plan_cell(cell)
+    return {"cell": cell, "outcome": "not-started", "rule": getattr(pc, "rule", None), "reasons": ["a run-wide stop rule fired first"],
+            "rows": [], "verdict": None, "class": None, "gm": 0.0, "wall_s": 0, "gb": None, "host": None, "needs": {},
+            "fails": [], "note": None, "part": entry_or_empty(env.layers, split_cell(cell)[0]).get("part") or "fast",
+            "plan_diff": None}
 
 
 def locked(env, cell, fn):

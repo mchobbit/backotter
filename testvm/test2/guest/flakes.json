@@ -1,0 +1,50 @@
+[
+ {
+  "guest": "*",
+  "pattern": "\\bE: Failed to fetch ",
+  "why": "a mirror that didn't answer apt: not the guest's fault, and no check of the guest ran into it",
+  "ref": "apt-get's message when a repository can't be fetched; in-guest.sh retries apt update only, not the installs"
+ },
+ {
+  "guest": "*",
+  "pattern": "\\bTemporary failure resolving\\b",
+  "why": "the resolver had no answer: the network, not the guest",
+  "ref": "apt's text for getaddrinfo's EAI_AGAIN"
+ },
+ {
+  "guest": "*",
+  "pattern": "\\berror: failed retrieving file\\b",
+  "why": "a pacman mirror that didn't serve a package",
+  "ref": "pacman's message for a failed download"
+ },
+ {
+  "guest": "*",
+  "pattern": "\\berror: failed to synchronize all databases\\b",
+  "why": "pacman couldn't reach any mirror for a database",
+  "ref": "pacman's message at -Sy"
+ },
+ {
+  "guest": "*",
+  "pattern": "\\bCannot download .*: All mirrors were tried\\b",
+  "why": "dnf found no mirror serving a file",
+  "ref": "dnf's message when every mirror failed"
+ },
+ {
+  "guest": "*",
+  "pattern": "\\bFailed to download metadata for repo\\b",
+  "why": "dnf couldn't read a repository's metadata",
+  "ref": "dnf's message for a repository it can't read"
+ },
+ {
+  "guest": "*",
+  "pattern": "\\bCould not resolve host\\b",
+  "why": "the resolver had no answer for curl or libfetch",
+  "ref": "curl's error text, as zypper, pkg and others print it"
+ },
+ {
+  "guest": "*",
+  "pattern": "\\bDownload \\(curl\\) error for\\b",
+  "why": "zypper couldn't fetch from a mirror",
+  "ref": "zypper's message for a failed download"
+ }
+]

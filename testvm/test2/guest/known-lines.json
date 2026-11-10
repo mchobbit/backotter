@@ -1,0 +1,151 @@
+{
+ "about": [
+  "Patterns only, reviewed by hand: lines GuestTest2's log sweep drops, as re.search over a normalized line (guest_judge.normalize: numbers are N, hex HEX, times TIME). all: every guest; the others by the spec's checks.pm. A pattern marked list: also drops the indented lines under the line it matches (package names, wrapped). A new pattern re-runs only those guests. Keep it package-manager chatter: a real error must never match. The accepted per-guest lines are never here: they live on the Mac (guest-baselines), since they can hold machine IDs and hostnames."
+ ],
+ "all": [
+  "^in-guest: (Linux|FreeBSD|NetBSD|OpenBSD|DragonFly|SunOS|Haiku|Redox) ",
+  "^in-guest: updated$",
+  "^\\[ +OK +\\] ",
+  "^Starting (?!.*\\b[Ff]ailed\\b)",
+  "^Reached target ",
+  "^TIME boot: SSH_PORT=N ",
+  "^TIME (merged on |image-state started on |vm-update( --\\S+)? on |merge rule: |hook \\S+: exit status N, sentinel )"
+ ],
+ "apt": [
+  "^(Get|Hit|Ign):N ",
+  "^Fetched ",
+  "^Reading (package lists|state information)\\.\\.\\.( Done)?$",
+  "^\\(Reading database",
+  "^Building dependency tree(\\.\\.\\.)?( Done)?$",
+  "^Preparing to unpack ",
+  "^Unpacking ",
+  "^Setting up ",
+  "^Processing triggers for ",
+  "^Selecting previously unselected ",
+  "^Removing ",
+  "^Purging configuration ",
+  "list:^The following (NEW |additional )?packages? (will be|were|was|have been kept)",
+  "list:^(Suggested|Recommended) packages:$",
+  "^N upgraded, ",
+  "^Need to get ",
+  "^After this operation",
+  "^Calculating upgrade(\\.\\.\\.)?( Done)?$",
+  "^Del ",
+  "^\\S+ is already the newest version \\(",
+  "^Found (linux|initrd) image: ",
+  "^update-initramfs: Generating "
+ ],
+ "dnf": [
+  "^(Upgrading|Installing|Reinstalling|Downgrading|Cleanup|Verifying|Erasing|Obsoleting|Running scriptlet|Preparing) ?: .*N/N$",
+  "^(Upgrading|Installing|Installing dependencies|Installing weak dependencies|Removing|Removing unused dependencies|Upgraded|Installed|Removed|Downloading Packages|Transaction Summary|Running transaction|Running transaction check|Running transaction test|Dependencies resolved\\.|Transaction check succeeded\\.|Transaction test succeeded\\.|Complete!|Nothing to do\\.):?$",
+  "N% \\| N(\\.N)? \\S+/s \\| N(\\.N)? \\S+ \\| \\S+$",
+  "^(replacing )?\\S+ (xN_N|noarch|iN|aarchN) \\S+ @?\\S+ N(\\.N)?( ([kMG]|[KMG]?i?B))?$",
+  "^Package Arch Version Repo Size$",
+  "^>>> (Running|Finished) \\S+ scriptlet: ",
+  "^Total ",
+  "^Last metadata expiration"
+ ],
+ "pacman": [
+  "^\\( ?N/N\\) (upgrading|installing|checking|loading|reinstalling|removing|downgrading|synchronizing|arming|evaluating)",
+  "^(upgrading|installing|reinstalling|removing|downgrading) \\S+\\.\\.\\.$",
+  "^\\( ?N/N\\) [A-Z][^:]*\\.\\.\\.$",
+  "^[a-z-]+/\\S+ N\\S*( N\\S*)? -?N(\\.N)? [KMG]?i?B( N(\\.N)? [KMG]?i?B)?$",
+  "^Packages \\(N\\) ",
+  "^Total (Download|Installed) Size",
+  "^Net Upgrade Size",
+  "^:: (Synchronizing|Starting full|Running|Retrieving|Processing|Proceed)",
+  "downloading\\.\\.\\.$"
+ ],
+ "zypper": [
+  "^Retrieving: (?!.*[Ee]rror)",
+  "^\\( ?N/N\\) Installing",
+  "list:^The following N packages? (is|are) going to be ",
+  "^Checking for file conflicts",
+  "^Loading repository data",
+  "^Reading installed packages",
+  "^Refreshing service"
+ ],
+ "xbps": [
+  "^\\[\\*\\] ",
+  "^(Updating|Downloading|Verifying|Unpacking|Configuring|Removing) ",
+  "^N downloaded, ",
+  "^\\S+(\\.xbps(\\.sigN?)?|-repodata): (\\[N[KMG]?B N%\\]|N[KMG]?B \\[avg rate: )",
+  "^\\S+: (verifying RSA signature|collecting files|unpacking|configuring|updated successfully)(\\.\\.\\.| \\.\\.\\.|\\.)$"
+ ],
+ "apk": [
+  "^\\( ?N/N\\) (Upgrading|Installing|Purging|Replacing|Downgrading)",
+  "^fetch ",
+  "^OK: N(\\.N)? ",
+  "^Executing "
+ ],
+ "moss": [
+  "^(Fetched|Downloading|Unpacking) ",
+  "^Installed \\S+$",
+  "^\\S+ N\\S* -> N\\S*$"
+ ],
+ "nix": [
+  "^(?!.*\\b([Ee]rror|[Ff]ailed|[Cc]annot)\\b).*/nix/store/",
+  "^(?!.*\\b([Ee]rror|[Ff]ailed|[Cc]annot)\\b)(building|copying|unpacking|evaluating|activating|restarting|these N )"
+ ],
+ "freebsd": [
+  "^\\[ ?N/N\\] (Upgrading|Installing|Reinstalling|Deleting|Deinstalling|Extracting) ",
+  "^\\[ ?N/N\\] Fetching \\S+(: \\.* ?done)?$",
+  "^Updating .* repository catalogue",
+  "^Fetching \\S+: (\\.* ?done|N% )",
+  "^Number of packages to be ",
+  "list:^(New|Installed) packages to be [A-Z]+:$",
+  "list:^The following package files will be deleted:$",
+  "^/\\S+$"
+ ],
+ "ghostbsd": [
+  "^\\[ ?N/N\\] (Upgrading|Installing|Reinstalling|Deleting|Deinstalling|Extracting) ",
+  "^\\[ ?N/N\\] Fetching \\S+(: \\.* ?done)?$",
+  "^Updating .* repository catalogue",
+  "^Fetching \\S+: (\\.* ?done|N% )",
+  "^Number of packages to be ",
+  "list:^(New|Installed) packages to be [A-Z]+:$",
+  "list:^The following package files will be deleted:$"
+ ],
+ "hbsd": [
+  "^\\[hbsd-update\\] "
+ ],
+ "netbsd": [
+  "^(installing|removing|upgrading) \\S+",
+  "^pkg_summary",
+  "^Removed obsolete file "
+ ],
+ "alpinebsd": [
+  "^\\( ?N/N\\) (Upgrading|Installing|Purging|Replacing|Downgrading)",
+  "^fetch ",
+  "^OK: N(\\.N)? ",
+  "^Executing "
+ ],
+ "openbsd": [
+  "^(quirks|Update candidates)",
+  "^Installing patch ",
+  "^Get/Verify syspatch"
+ ],
+ "dragonfly": [
+  "^\\[ ?N/N\\] (Upgrading|Installing|Reinstalling|Deleting|Deinstalling|Extracting) ",
+  "^\\[ ?N/N\\] Fetching \\S+(: \\.* ?done)?$",
+  "^Updating .* repository catalogue",
+  "^Fetching \\S+: (\\.* ?done|N% )",
+  "^Number of packages to be ",
+  "list:^(New|Installed) packages to be [A-Z]+:$",
+  "list:^The following package files will be deleted:$",
+  "^in-guest: base system: make \\S+( \\S+)* \\(TIME\\)$"
+ ],
+ "ips": [
+  "^(Packages to update|Create boot environment|Create backup boot environment|DOWNLOAD|PHASE|Planning|Downloading|Executing)"
+ ],
+ "haiku": [
+  "^(Refreshing repository|Validating checksum|Downloading|Fetching|Skipping)",
+  "^N% \\S+ \\[N(\\.N)? \\S+\\]$",
+  "^(upgrade|install|uninstall) package \\S+( to \\S+)?( from repository \\S+)?$"
+ ],
+ "redox": [
+  "^Downloading ",
+  "^Installing "
+ ],
+ "sculpt": []
+}

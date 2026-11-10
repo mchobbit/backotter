@@ -1,0 +1,6 @@
+base pm illumos
+pkg entire 11-151058.0
+pkg system/kernel 0.5.11-151058.0
+pkg system/boot/loader 0.5.11-151058.0
+pkg system/file-system/zfs 0.5.11-151058.0
+pkg web/curl 8.12.1-151058.0

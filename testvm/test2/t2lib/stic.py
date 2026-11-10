@@ -26,7 +26,11 @@ The flow (2.2):
   2. cells.json on every host (R1 6), each host's planned keys in it.
   3. The fast archiver gate (gate:fork:*, gate:fork-root:restic, gate:bin:*)
      when the gate plan has any of them due: a failure starts no guest, and a
-     gate that can't be loaded or planned refuses the run (exit 2).
+     gate that can't be loaded or planned refuses the run (exit 2).  As a
+     SweepTest2 child (options.gate_fresh) every layer is due, fresh: a layer
+     a run of this stamp already ran isn't run again, and one whose row there
+     didn't pass fails the gate.  options.gate_universe (a composite's
+     --universe, test only) cuts the layers to those it names.
   4. drive.py --t2-run RUN --t2-copy COPY --t2-cells CELLS --logs-mark RUN ...
      with the due checks (canaries first after a plumbing change, drive.py's
      longest first otherwise), the slow gate (gate:loop:*) beside it.  As rows
@@ -35,7 +39,11 @@ The flow (2.2):
      --skip-file; 2 harness results (known flakes aside), a failed slow gate,
      swap-out over 1 GiB on a host since the run began, or this run's own jobs
      (their wear tags in jobs.log, R22) writing over 2 x the run budget start
-     nothing more (--stop-file).  A resumed run waits for a drive.py still
+     nothing more (--stop-file), as does a run-wide stop of the composite this
+     run is a child of (run.py's RunGuards, checked each poll: another family's
+     results can trip it; tripped before a round, no drive.py and no slow gate
+     start).  A
+     resumed run waits for a drive.py still
      running on the same --out, and counts the rows its first part fed again;
      an error here stops our drive.py (SIGINT, then SIGTERM: its PID is ours),
      whose started checks run on for a resume.
@@ -61,6 +69,7 @@ import fcntl
 import json
 import os
 import random
+import re
 import signal
 import subprocess
 import sys
@@ -98,6 +107,20 @@ def new_run_id(prefix="t2s", t=None):
 
 def guest_of(cell):
     return cell.split(":", 1)[1] if cell.startswith("stic:") else cell
+
+
+_STAMP = re.compile(r"t2[a-z]-(\d{8}T\d{4}-[0-9a-f]{4})(?:-img)?(?:-r\d)?\Z")
+
+
+def stamp_of(run):
+    """The part of a run id after its prefix (a composite's children share it), or None."""
+    m = _STAMP.match(run or "")
+    return m.group(1) if m else None
+
+
+def of_stamp(run, stamp):
+    """True when RUN (any family, any attempt) carries STAMP."""
+    return bool(stamp) and stamp_of(run) == stamp
 
 
 def _host_path(p):
@@ -682,6 +705,14 @@ class SticRun:
         if gp is None:
             return False, f"the {part} archiver gate can't be planned"
         due = [c.cell for c in gp.due() if c.cell[len("gate:"):].split("@")[0] in names]
+        opts = getattr(self.ctx, "options", None) or {}
+        if opts.get("gate_universe") is not None:   # (--universe, test only: a composite's gate cells)
+            keep = set(opts["gate_universe"])
+            due = [c for c in due if c in keep]
+        if opts.get("gate_fresh") and due:
+            due, failed = self.fresh_left(due, part)
+            if failed:
+                return False, None
         if not due:
             return True, None
         self.log(f"gate {part}: {', '.join(due)}")
@@ -696,8 +727,57 @@ class SticRun:
                 self.state.setdefault("gate_cells", []).extend(res.get("cells") or [])
         return bool(ok), None
 
+    def fresh_left(self, due, part):
+        """options.gate_fresh (a SweepTest2's children): gate.gate_plan has every layer due, fresh,
+        so a layer this sweep already ran (this run's first part, or a sibling of its stamp) would
+        run again.  (DUE less those, [the ones whose row there didn't pass]): the gate runs once."""
+        stamp = stamp_of(self.info.get("id"))
+        if not stamp:
+            return due, []
+        newest = {}
+        for r in self.env.rows(self.info["hosts"]):
+            c = r.get("cell")
+            if c in due and r.get("kind") == "run" and of_stamp(r.get("run"), stamp):
+                if c not in newest or (r.get("t") or "", r.get("id", "")) >= (newest[c].get("t") or "", newest[c].get("id", "")):
+                    newest[c] = r
+        failed = []
+        for c, r in sorted(newest.items()):
+            ok = r.get("verdict") == "PASS" and r.get("valid") is not False
+            self.log(f"gate {part}: {c} already ran in this sweep ({r.get('run')}, row {r.get('id')}, {r.get('verdict')})"
+                     + ("" if ok else ": not run twice, and the gate didn't pass"))
+            if not ok:
+                failed.append(c)
+        return [c for c in due if c not in newest], failed
+
+    def guards_check(self):
+        """A run-wide stop rule of the composite this run is part of (run.py's RunGuards, which
+        another family's results can trip): nothing more starts, said once.  True once tripped."""
+        if self.state.get("guards_tripped"):
+            return True
+        rs = self.rs
+        g = getattr(rs, "guards", None) or getattr(getattr(rs, "shared", None), "guards", None)
+        try:
+            trip = bool(g is not None and g.tripped())
+        except Exception:   # noqa: BLE001 - a guard that can't be read stops nothing
+            trip = False
+        if not trip:
+            return False
+        with self.mu:
+            self.state["guards_tripped"] = utc_now()
+        if any(s.split(" ")[0].rstrip(":") in STOPPING for s in self.stops):
+            self.save()   # this run's own stop already stopped its starts
+        else:
+            self.act("stop-starts", "a run-wide stop rule tripped: " + "; ".join(g.why() or ["?"]))
+        return True
+
     def slow_gate(self):
         """The slow gate beside the guests (a thread): a failure starts nothing more."""
+        if self.guards_check():   # a run-wide stop before it began: it doesn't start (and didn't fail)
+            with self.mu:
+                self.state["gate_slow"] = None
+            self.save()
+            self.log("gate slow: not started: a run-wide stop rule tripped")
+            return
         try:
             ok, refused = self.gate_step("slow")
         except Exception as e:   # noqa: BLE001 - a thread's error, said and stopped on
@@ -817,15 +897,34 @@ class SticRun:
         with self.mu:
             self.state.setdefault("drives", {})[mark] = {"argv": argv, "out": out, "guests": list(guests)}
         self.save()
-        busy, n = self._env("driver_busy"), 0
+        busy, n, waited = self._env("driver_busy"), 0, False
         if busy is not None and busy(out):   # a resumed run's earlier drive.py runs on: no second one
             self.log(f"drive.py {mark}: an earlier drive.py still runs on {out}: waiting for it")
+            waited = True
             while busy(out):
                 self.feed_rows(mark)
                 if n % HOST_EVERY == 0:
                     self.check_hosts()
+                self.guards_check()
                 n += 1
                 self.env.sleep(POLL)
+        if self.guards_check():   # a run-wide stop before this round began: no drive.py at all
+            if waited:   # (the earlier drive.py ran checks: what it did, not "not started")
+                landed = self.landed(mark)
+                ds = (self._env("drive_state") or (lambda o: None))(out) or {}
+                with self.mu:
+                    self.state["drives"][mark].update(
+                        exit=None, rows=len(landed), started=sorted(g for g, j in (ds.get("jobs") or {}).items() if g in guests),
+                        skipped="the earlier drive.py ended; no new one: a run-wide stop rule tripped")
+                self.save()
+                self.log(f"drive.py {mark}: the earlier one ended; no new one: a run-wide stop rule tripped")
+                return None
+            with self.mu:
+                self.state["drives"][mark].update(exit=None, rows=0, started=[],
+                                                  skipped="a run-wide stop rule tripped before it began")
+            self.save()
+            self.log(f"drive.py {mark}: not started: a run-wide stop rule tripped")
+            return None
         self.log(f"drive.py {mark}: {len(guests)} checks: {' '.join(guests)}")
         p = self.env.spawn(argv, os.path.join(out, "drive.out"), env)
         rc, n = None, 0
@@ -835,6 +934,7 @@ class SticRun:
                 self.feed_rows(mark)
                 if n % HOST_EVERY == 0:
                     self.check_hosts()
+                self.guards_check()   # another family's run-wide stop: drive.py's --stop-file
                 n += 1
                 if rc is not None:
                     break
@@ -1117,7 +1217,8 @@ class SticRun:
                           "host": "mac" if d else None})
         for mark, d in sorted((st.get("drives") or {}).items()):
             notes.append(f"drive.py {mark}: exit {d.get('exit')}, {d.get('rows', 0)} row(s)"
-                         + (f"; REFUSED: {d['refused']}" if d.get("refused") else ""))
+                         + (f"; REFUSED: {d['refused']}" if d.get("refused") else "")
+                         + (f"; not started: {d['skipped']}" if d.get("skipped") else ""))
         if st.get("imgsum"):
             notes.append(f"imgsum: {st['imgsum']}")
         if st.get("rekey"):

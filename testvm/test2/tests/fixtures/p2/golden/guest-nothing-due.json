@@ -1,0 +1,1564 @@
+{
+ "cells": [
+  {
+   "cell": "guest:aerynos",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "dbecd99ee6922e27411a96106bc9e54139c8f9830b0ea5467090db8b117bdce5",
+   "keys": {
+    "chopin": "dbecd99ee6922e27411a96106bc9e54139c8f9830b0ea5467090db8b117bdce5",
+    "cinqcent": "dbecd99ee6922e27411a96106bc9e54139c8f9830b0ea5467090db8b117bdce5"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000014Z-0000000e",
+    "key": "dbecd99ee6922e27411a96106bc9e54139c8f9830b0ea5467090db8b117bdce5",
+    "t": "2026-11-07T00:00:14Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:alpine324",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "6674d4356e7786c330517d3d6f8950faf74bc1f8f18aa75b31e7566567fdd382",
+   "keys": {
+    "chopin": "6674d4356e7786c330517d3d6f8950faf74bc1f8f18aa75b31e7566567fdd382",
+    "cinqcent": "6674d4356e7786c330517d3d6f8950faf74bc1f8f18aa75b31e7566567fdd382"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000015Z-0000000f",
+    "key": "6674d4356e7786c330517d3d6f8950faf74bc1f8f18aa75b31e7566567fdd382",
+    "t": "2026-11-07T00:00:15Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:alpinebsd",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "dcf2385f862e09d4132ea93ec777b4e53993096655c49aaabcf043f9a7923591",
+   "keys": {
+    "chopin": "dcf2385f862e09d4132ea93ec777b4e53993096655c49aaabcf043f9a7923591",
+    "cinqcent": "dcf2385f862e09d4132ea93ec777b4e53993096655c49aaabcf043f9a7923591"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000016Z-00000010",
+    "key": "dcf2385f862e09d4132ea93ec777b4e53993096655c49aaabcf043f9a7923591",
+    "t": "2026-11-07T00:00:16Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:arch",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "03e493621f62bf43578f9223993faf11062674a7daa5789279face237eb5d590",
+   "keys": {
+    "chopin": "03e493621f62bf43578f9223993faf11062674a7daa5789279face237eb5d590",
+    "cinqcent": "03e493621f62bf43578f9223993faf11062674a7daa5789279face237eb5d590"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000017Z-00000011",
+    "key": "03e493621f62bf43578f9223993faf11062674a7daa5789279face237eb5d590",
+    "t": "2026-11-07T00:00:17Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:artix-dinit",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "6a8d872ad05ef56efa593180832119a1face46cd1d608aea9f97cdb71346b95d",
+   "keys": {
+    "chopin": "6a8d872ad05ef56efa593180832119a1face46cd1d608aea9f97cdb71346b95d",
+    "cinqcent": "6a8d872ad05ef56efa593180832119a1face46cd1d608aea9f97cdb71346b95d"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000018Z-00000012",
+    "key": "6a8d872ad05ef56efa593180832119a1face46cd1d608aea9f97cdb71346b95d",
+    "t": "2026-11-07T00:00:18Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:artix-s6",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "2d4457f656dddc2516a007bd8a99dbd6afabe645aa50d989e3f1e5c7292e493c",
+   "keys": {
+    "chopin": "2d4457f656dddc2516a007bd8a99dbd6afabe645aa50d989e3f1e5c7292e493c",
+    "cinqcent": "2d4457f656dddc2516a007bd8a99dbd6afabe645aa50d989e3f1e5c7292e493c"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000019Z-00000013",
+    "key": "2d4457f656dddc2516a007bd8a99dbd6afabe645aa50d989e3f1e5c7292e493c",
+    "t": "2026-11-07T00:00:19Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:cachyos",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "1b8a861d00a31cff0c94998ddcdab36574c0494f728e63fab69524402f05b239",
+   "keys": {
+    "chopin": "1b8a861d00a31cff0c94998ddcdab36574c0494f728e63fab69524402f05b239",
+    "cinqcent": "1b8a861d00a31cff0c94998ddcdab36574c0494f728e63fab69524402f05b239"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000020Z-00000014",
+    "key": "1b8a861d00a31cff0c94998ddcdab36574c0494f728e63fab69524402f05b239",
+    "t": "2026-11-07T00:00:20Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:debian12",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "067e49f7e3366193b74349f54ba6ee63f2dc99f2f78bd10653823b6bd06ad984",
+   "keys": {
+    "chopin": "067e49f7e3366193b74349f54ba6ee63f2dc99f2f78bd10653823b6bd06ad984",
+    "cinqcent": "067e49f7e3366193b74349f54ba6ee63f2dc99f2f78bd10653823b6bd06ad984"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000021Z-00000015",
+    "key": "067e49f7e3366193b74349f54ba6ee63f2dc99f2f78bd10653823b6bd06ad984",
+    "t": "2026-11-07T00:00:21Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:debian13",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "c7a7bfcb4292adb3530c4db9d3586981d9318db3cff3ea8c22ef07eb0a63c956",
+   "keys": {
+    "chopin": "c7a7bfcb4292adb3530c4db9d3586981d9318db3cff3ea8c22ef07eb0a63c956",
+    "cinqcent": "c7a7bfcb4292adb3530c4db9d3586981d9318db3cff3ea8c22ef07eb0a63c956"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000022Z-00000016",
+    "key": "c7a7bfcb4292adb3530c4db9d3586981d9318db3cff3ea8c22ef07eb0a63c956",
+    "t": "2026-11-07T00:00:22Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:debian13-stack",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "bd868c67435c7cb9b7a8df7bc96346ed55442b9218b2ac05fc9bca149b38f6f6",
+   "keys": {
+    "chopin": "bd868c67435c7cb9b7a8df7bc96346ed55442b9218b2ac05fc9bca149b38f6f6",
+    "cinqcent": "bd868c67435c7cb9b7a8df7bc96346ed55442b9218b2ac05fc9bca149b38f6f6"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000023Z-00000017",
+    "key": "bd868c67435c7cb9b7a8df7bc96346ed55442b9218b2ac05fc9bca149b38f6f6",
+    "t": "2026-11-07T00:00:23Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:debian13-zfs",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "66b22731a40705331f1eaa891a978fb95270210b9c8b6594120f2a6b6a55c9b7",
+   "keys": {
+    "chopin": "66b22731a40705331f1eaa891a978fb95270210b9c8b6594120f2a6b6a55c9b7",
+    "cinqcent": "66b22731a40705331f1eaa891a978fb95270210b9c8b6594120f2a6b6a55c9b7"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000024Z-00000018",
+    "key": "66b22731a40705331f1eaa891a978fb95270210b9c8b6594120f2a6b6a55c9b7",
+    "t": "2026-11-07T00:00:24Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:devuan6",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "dce457cf78028c6628b74ec668f829aca289a19cae19fdbf4d519da11c82207f",
+   "keys": {
+    "chopin": "dce457cf78028c6628b74ec668f829aca289a19cae19fdbf4d519da11c82207f",
+    "cinqcent": "dce457cf78028c6628b74ec668f829aca289a19cae19fdbf4d519da11c82207f"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000025Z-00000019",
+    "key": "dce457cf78028c6628b74ec668f829aca289a19cae19fdbf4d519da11c82207f",
+    "t": "2026-11-07T00:00:25Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:dragonfly6",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "777c496e7ceb35136221ada5519fab29e773aa3798d95c810175f7f26444997c",
+   "keys": {
+    "chopin": "777c496e7ceb35136221ada5519fab29e773aa3798d95c810175f7f26444997c",
+    "cinqcent": "777c496e7ceb35136221ada5519fab29e773aa3798d95c810175f7f26444997c"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000026Z-0000001a",
+    "key": "777c496e7ceb35136221ada5519fab29e773aa3798d95c810175f7f26444997c",
+    "t": "2026-11-07T00:00:26Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:endeavouros",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "cac1f35a6c6f38f1c34da28b2a391cc3233ec3aad39454548c8dcffb4c15b9bd",
+   "keys": {
+    "chopin": "cac1f35a6c6f38f1c34da28b2a391cc3233ec3aad39454548c8dcffb4c15b9bd",
+    "cinqcent": "cac1f35a6c6f38f1c34da28b2a391cc3233ec3aad39454548c8dcffb4c15b9bd"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000027Z-0000001b",
+    "key": "cac1f35a6c6f38f1c34da28b2a391cc3233ec3aad39454548c8dcffb4c15b9bd",
+    "t": "2026-11-07T00:00:27Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:endeavouros-grub",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "d9be72ee3ae54dbe24d3b62551c709425ef3efa3a131c2815a3a0fe463a15dd3",
+   "keys": {
+    "chopin": "d9be72ee3ae54dbe24d3b62551c709425ef3efa3a131c2815a3a0fe463a15dd3",
+    "cinqcent": "d9be72ee3ae54dbe24d3b62551c709425ef3efa3a131c2815a3a0fe463a15dd3"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000028Z-0000001c",
+    "key": "d9be72ee3ae54dbe24d3b62551c709425ef3efa3a131c2815a3a0fe463a15dd3",
+    "t": "2026-11-07T00:00:28Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:fedora44",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "86f2dc4ed6d177b67efe9567b7609a67ec3cfe5519dfbf15f8e8d7e389a41ab1",
+   "keys": {
+    "chopin": "86f2dc4ed6d177b67efe9567b7609a67ec3cfe5519dfbf15f8e8d7e389a41ab1",
+    "cinqcent": "86f2dc4ed6d177b67efe9567b7609a67ec3cfe5519dfbf15f8e8d7e389a41ab1"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000029Z-0000001d",
+    "key": "86f2dc4ed6d177b67efe9567b7609a67ec3cfe5519dfbf15f8e8d7e389a41ab1",
+    "t": "2026-11-07T00:00:29Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:fedora44-raid",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "3906828e0c697c28b489f4bf0d243bbb3a21d47a217042285b37262750b1c666",
+   "keys": {
+    "chopin": "3906828e0c697c28b489f4bf0d243bbb3a21d47a217042285b37262750b1c666",
+    "cinqcent": "3906828e0c697c28b489f4bf0d243bbb3a21d47a217042285b37262750b1c666"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000030Z-0000001e",
+    "key": "3906828e0c697c28b489f4bf0d243bbb3a21d47a217042285b37262750b1c666",
+    "t": "2026-11-07T00:00:30Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:fedora44-uefi",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "7e0560a00324c34b93ca739ce7ae7cd1cf2af328282e1378c28c9eac9c9f63f6",
+   "keys": {
+    "chopin": "7e0560a00324c34b93ca739ce7ae7cd1cf2af328282e1378c28c9eac9c9f63f6",
+    "cinqcent": "7e0560a00324c34b93ca739ce7ae7cd1cf2af328282e1378c28c9eac9c9f63f6"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000031Z-0000001f",
+    "key": "7e0560a00324c34b93ca739ce7ae7cd1cf2af328282e1378c28c9eac9c9f63f6",
+    "t": "2026-11-07T00:00:31Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:freebsd14",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "6d062abd9d473383a10d51ea80756ae6a24a0eae738c266b03d6a96fe5fd1712",
+   "keys": {
+    "chopin": "6d062abd9d473383a10d51ea80756ae6a24a0eae738c266b03d6a96fe5fd1712",
+    "cinqcent": "6d062abd9d473383a10d51ea80756ae6a24a0eae738c266b03d6a96fe5fd1712"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000032Z-00000020",
+    "key": "6d062abd9d473383a10d51ea80756ae6a24a0eae738c266b03d6a96fe5fd1712",
+    "t": "2026-11-07T00:00:32Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:freebsd15",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "ae51f64a395fd4f0671322661738630e884ad4629a034396d9278bedcb41ef01",
+   "keys": {
+    "chopin": "ae51f64a395fd4f0671322661738630e884ad4629a034396d9278bedcb41ef01",
+    "cinqcent": "ae51f64a395fd4f0671322661738630e884ad4629a034396d9278bedcb41ef01"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000033Z-00000021",
+    "key": "ae51f64a395fd4f0671322661738630e884ad4629a034396d9278bedcb41ef01",
+    "t": "2026-11-07T00:00:33Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:freebsd15-geli",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "de1afe2b63f3e8e538ac5c2a669882844e5b861c0ed465ac02cf39a2e993e52e",
+   "keys": {
+    "chopin": "de1afe2b63f3e8e538ac5c2a669882844e5b861c0ed465ac02cf39a2e993e52e",
+    "cinqcent": "de1afe2b63f3e8e538ac5c2a669882844e5b861c0ed465ac02cf39a2e993e52e"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000034Z-00000022",
+    "key": "de1afe2b63f3e8e538ac5c2a669882844e5b861c0ed465ac02cf39a2e993e52e",
+    "t": "2026-11-07T00:00:34Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:freebsd15-mirror",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "a3cc9a190c3d7e45015fd671b169944b2a334d7b081de995006defec6070a5c5",
+   "keys": {
+    "chopin": "a3cc9a190c3d7e45015fd671b169944b2a334d7b081de995006defec6070a5c5",
+    "cinqcent": "a3cc9a190c3d7e45015fd671b169944b2a334d7b081de995006defec6070a5c5"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000035Z-00000023",
+    "key": "a3cc9a190c3d7e45015fd671b169944b2a334d7b081de995006defec6070a5c5",
+    "t": "2026-11-07T00:00:35Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:freebsd15-ufs",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "5dc1810b69fb95749742afe9a42cd83f53541178f6eb7f61d0690f40e3899e82",
+   "keys": {
+    "chopin": "5dc1810b69fb95749742afe9a42cd83f53541178f6eb7f61d0690f40e3899e82",
+    "cinqcent": "5dc1810b69fb95749742afe9a42cd83f53541178f6eb7f61d0690f40e3899e82"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000036Z-00000024",
+    "key": "5dc1810b69fb95749742afe9a42cd83f53541178f6eb7f61d0690f40e3899e82",
+    "t": "2026-11-07T00:00:36Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:ghostbsd26",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "e3861c1240715f8c838755b0329486811c23bfeee35faa8a74a14369b14eabf0",
+   "keys": {
+    "chopin": "e3861c1240715f8c838755b0329486811c23bfeee35faa8a74a14369b14eabf0",
+    "cinqcent": "e3861c1240715f8c838755b0329486811c23bfeee35faa8a74a14369b14eabf0"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000037Z-00000025",
+    "key": "e3861c1240715f8c838755b0329486811c23bfeee35faa8a74a14369b14eabf0",
+    "t": "2026-11-07T00:00:37Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:ghostbsd26-zfs",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "5dac6a75ff3ab7f6877beaad1e668091ee7912430336914bb3078b6ae095121a",
+   "keys": {
+    "chopin": "5dac6a75ff3ab7f6877beaad1e668091ee7912430336914bb3078b6ae095121a",
+    "cinqcent": "5dac6a75ff3ab7f6877beaad1e668091ee7912430336914bb3078b6ae095121a"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000038Z-00000026",
+    "key": "5dac6a75ff3ab7f6877beaad1e668091ee7912430336914bb3078b6ae095121a",
+    "t": "2026-11-07T00:00:38Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:haiku6",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "e9c21db4ef5d4ab627ae538c3edfee7e915e566effa5d503035b0e2070fb8717",
+   "keys": {
+    "chopin": "e9c21db4ef5d4ab627ae538c3edfee7e915e566effa5d503035b0e2070fb8717",
+    "cinqcent": "e9c21db4ef5d4ab627ae538c3edfee7e915e566effa5d503035b0e2070fb8717"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000039Z-00000027",
+    "key": "e9c21db4ef5d4ab627ae538c3edfee7e915e566effa5d503035b0e2070fb8717",
+    "t": "2026-11-07T00:00:39Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:hardenedbsd15",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "298bb913b41a909241463b73931198fa4b0adcc57d9e9090020372027bb0e3ac",
+   "keys": {
+    "chopin": "298bb913b41a909241463b73931198fa4b0adcc57d9e9090020372027bb0e3ac",
+    "cinqcent": "298bb913b41a909241463b73931198fa4b0adcc57d9e9090020372027bb0e3ac"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000040Z-00000028",
+    "key": "298bb913b41a909241463b73931198fa4b0adcc57d9e9090020372027bb0e3ac",
+    "t": "2026-11-07T00:00:40Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:manjaro",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "63bc8574b21970b082a565f659c43e97445c242ca3ea2fbc7be5975b945daaf4",
+   "keys": {
+    "chopin": "63bc8574b21970b082a565f659c43e97445c242ca3ea2fbc7be5975b945daaf4",
+    "cinqcent": "63bc8574b21970b082a565f659c43e97445c242ca3ea2fbc7be5975b945daaf4"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000041Z-00000029",
+    "key": "63bc8574b21970b082a565f659c43e97445c242ca3ea2fbc7be5975b945daaf4",
+    "t": "2026-11-07T00:00:41Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:mint22",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "1b564e8aad4c60e09427e3e5b2407bdc12fa4c975d63a6392329659e809f48c0",
+   "keys": {
+    "chopin": "1b564e8aad4c60e09427e3e5b2407bdc12fa4c975d63a6392329659e809f48c0",
+    "cinqcent": "1b564e8aad4c60e09427e3e5b2407bdc12fa4c975d63a6392329659e809f48c0"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000042Z-0000002a",
+    "key": "1b564e8aad4c60e09427e3e5b2407bdc12fa4c975d63a6392329659e809f48c0",
+    "t": "2026-11-07T00:00:42Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:mx25",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "0398ec28e6b34325f4c3d0961471009e03be1aefb2d84e2870916e21d95e7bc2",
+   "keys": {
+    "chopin": "0398ec28e6b34325f4c3d0961471009e03be1aefb2d84e2870916e21d95e7bc2",
+    "cinqcent": "0398ec28e6b34325f4c3d0961471009e03be1aefb2d84e2870916e21d95e7bc2"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000043Z-0000002b",
+    "key": "0398ec28e6b34325f4c3d0961471009e03be1aefb2d84e2870916e21d95e7bc2",
+    "t": "2026-11-07T00:00:43Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:netbsd11",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "1b12736bd2e8faba7ca5d9bd16bd8b27390a69d012e786b0a608566fd44e2d55",
+   "keys": {
+    "chopin": "1b12736bd2e8faba7ca5d9bd16bd8b27390a69d012e786b0a608566fd44e2d55",
+    "cinqcent": "1b12736bd2e8faba7ca5d9bd16bd8b27390a69d012e786b0a608566fd44e2d55"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000044Z-0000002c",
+    "key": "1b12736bd2e8faba7ca5d9bd16bd8b27390a69d012e786b0a608566fd44e2d55",
+    "t": "2026-11-07T00:00:44Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:nixos2605",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "9953da194364f5a40d163a73e87add2502c29a8b2779fbf92837d03c9c8e131c",
+   "keys": {
+    "chopin": "9953da194364f5a40d163a73e87add2502c29a8b2779fbf92837d03c9c8e131c",
+    "cinqcent": "9953da194364f5a40d163a73e87add2502c29a8b2779fbf92837d03c9c8e131c"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000045Z-0000002d",
+    "key": "9953da194364f5a40d163a73e87add2502c29a8b2779fbf92837d03c9c8e131c",
+    "t": "2026-11-07T00:00:45Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:omarchy",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "80c29b6af18af574416b9fbfa6a2574721182920b90388138301c84b85497a8a",
+   "keys": {
+    "chopin": "80c29b6af18af574416b9fbfa6a2574721182920b90388138301c84b85497a8a",
+    "cinqcent": "80c29b6af18af574416b9fbfa6a2574721182920b90388138301c84b85497a8a"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000046Z-0000002e",
+    "key": "80c29b6af18af574416b9fbfa6a2574721182920b90388138301c84b85497a8a",
+    "t": "2026-11-07T00:00:46Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:omnios58",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "cdf7112d6b420159ec776068ae3b09e2c46b9b8b89637a07373372d7dd175c3c",
+   "keys": {
+    "chopin": "cdf7112d6b420159ec776068ae3b09e2c46b9b8b89637a07373372d7dd175c3c",
+    "cinqcent": "cdf7112d6b420159ec776068ae3b09e2c46b9b8b89637a07373372d7dd175c3c"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000047Z-0000002f",
+    "key": "cdf7112d6b420159ec776068ae3b09e2c46b9b8b89637a07373372d7dd175c3c",
+    "t": "2026-11-07T00:00:47Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:omnios58-mirror",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "60a63417ff35ce85e22c806546f474239dac63d7b8377aeab3e65106e5da82be",
+   "keys": {
+    "chopin": "60a63417ff35ce85e22c806546f474239dac63d7b8377aeab3e65106e5da82be",
+    "cinqcent": "60a63417ff35ce85e22c806546f474239dac63d7b8377aeab3e65106e5da82be"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000048Z-00000030",
+    "key": "60a63417ff35ce85e22c806546f474239dac63d7b8377aeab3e65106e5da82be",
+    "t": "2026-11-07T00:00:48Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:openbsd8",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "86eb44ae690497e049b2a757405898603057e61270d5eb7186cccf4a7a346fe8",
+   "keys": {
+    "chopin": "86eb44ae690497e049b2a757405898603057e61270d5eb7186cccf4a7a346fe8",
+    "cinqcent": "86eb44ae690497e049b2a757405898603057e61270d5eb7186cccf4a7a346fe8"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000049Z-00000031",
+    "key": "86eb44ae690497e049b2a757405898603057e61270d5eb7186cccf4a7a346fe8",
+    "t": "2026-11-07T00:00:49Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:pop24",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "a4917dce671e07a25b5ee1abd0d1ecfc0ee829be02a39d1af1f172fc7df21c30",
+   "keys": {
+    "chopin": "a4917dce671e07a25b5ee1abd0d1ecfc0ee829be02a39d1af1f172fc7df21c30",
+    "cinqcent": "a4917dce671e07a25b5ee1abd0d1ecfc0ee829be02a39d1af1f172fc7df21c30"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000050Z-00000032",
+    "key": "a4917dce671e07a25b5ee1abd0d1ecfc0ee829be02a39d1af1f172fc7df21c30",
+    "t": "2026-11-07T00:00:50Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:redox",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "5720c0daa43669e5c60a8e22855d6e7e207657ff64a828723078731de2a7e23d",
+   "keys": {
+    "chopin": "5720c0daa43669e5c60a8e22855d6e7e207657ff64a828723078731de2a7e23d",
+    "cinqcent": "5720c0daa43669e5c60a8e22855d6e7e207657ff64a828723078731de2a7e23d"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000051Z-00000033",
+    "key": "5720c0daa43669e5c60a8e22855d6e7e207657ff64a828723078731de2a7e23d",
+    "t": "2026-11-07T00:00:51Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:rocky10",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "b6ea01bc1c6247728e3ce598eb4e1ffe47030d059d38785269234e34cfa0cb2e",
+   "keys": {
+    "chopin": "b6ea01bc1c6247728e3ce598eb4e1ffe47030d059d38785269234e34cfa0cb2e",
+    "cinqcent": "b6ea01bc1c6247728e3ce598eb4e1ffe47030d059d38785269234e34cfa0cb2e"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000052Z-00000034",
+    "key": "b6ea01bc1c6247728e3ce598eb4e1ffe47030d059d38785269234e34cfa0cb2e",
+    "t": "2026-11-07T00:00:52Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:rocky10-lvm",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "7eb5aa1b65babbce75b2a10b95bcf7eedc70e0c4ea04008b06b2ea68153918fd",
+   "keys": {
+    "chopin": "7eb5aa1b65babbce75b2a10b95bcf7eedc70e0c4ea04008b06b2ea68153918fd",
+    "cinqcent": "7eb5aa1b65babbce75b2a10b95bcf7eedc70e0c4ea04008b06b2ea68153918fd"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000053Z-00000035",
+    "key": "7eb5aa1b65babbce75b2a10b95bcf7eedc70e0c4ea04008b06b2ea68153918fd",
+    "t": "2026-11-07T00:00:53Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:rocky10-raid5",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "3a26849d3a2e4e3689048792f1ee0735dce5d974ca09310bf162db09f62f3215",
+   "keys": {
+    "chopin": "3a26849d3a2e4e3689048792f1ee0735dce5d974ca09310bf162db09f62f3215",
+    "cinqcent": "3a26849d3a2e4e3689048792f1ee0735dce5d974ca09310bf162db09f62f3215"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000054Z-00000036",
+    "key": "3a26849d3a2e4e3689048792f1ee0735dce5d974ca09310bf162db09f62f3215",
+    "t": "2026-11-07T00:00:54Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:sculpt2610",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "f69c600b3d1dd3a333571839a51a16e0390ebd6d3f52fa17931f49dd286990b5",
+   "keys": {
+    "chopin": "f69c600b3d1dd3a333571839a51a16e0390ebd6d3f52fa17931f49dd286990b5",
+    "cinqcent": "f69c600b3d1dd3a333571839a51a16e0390ebd6d3f52fa17931f49dd286990b5"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000055Z-00000037",
+    "key": "f69c600b3d1dd3a333571839a51a16e0390ebd6d3f52fa17931f49dd286990b5",
+    "t": "2026-11-07T00:00:55Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:tumbleweed",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "5d2a004c95bc96f40b073f11f6caa944977b937c8409b299430ffc5ee171f826",
+   "keys": {
+    "chopin": "5d2a004c95bc96f40b073f11f6caa944977b937c8409b299430ffc5ee171f826",
+    "cinqcent": "5d2a004c95bc96f40b073f11f6caa944977b937c8409b299430ffc5ee171f826"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000056Z-00000038",
+    "key": "5d2a004c95bc96f40b073f11f6caa944977b937c8409b299430ffc5ee171f826",
+    "t": "2026-11-07T00:00:56Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:ubuntu24",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "f4e11cd633efb93ac812f7cf16bcbca8c85ca37aa4f0caec2be2b6844c212142",
+   "keys": {
+    "chopin": "f4e11cd633efb93ac812f7cf16bcbca8c85ca37aa4f0caec2be2b6844c212142",
+    "cinqcent": "f4e11cd633efb93ac812f7cf16bcbca8c85ca37aa4f0caec2be2b6844c212142"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000057Z-00000039",
+    "key": "f4e11cd633efb93ac812f7cf16bcbca8c85ca37aa4f0caec2be2b6844c212142",
+    "t": "2026-11-07T00:00:57Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:ubuntu26-raid",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "972111394a59f073e3f0518e9c370f1d915f02198b2d3f772cc2dda1d21c4ab9",
+   "keys": {
+    "chopin": "972111394a59f073e3f0518e9c370f1d915f02198b2d3f772cc2dda1d21c4ab9",
+    "cinqcent": "972111394a59f073e3f0518e9c370f1d915f02198b2d3f772cc2dda1d21c4ab9"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000058Z-0000003a",
+    "key": "972111394a59f073e3f0518e9c370f1d915f02198b2d3f772cc2dda1d21c4ab9",
+    "t": "2026-11-07T00:00:58Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:ubuntu26-uefi",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "48190e4423ee813cd0a456a7dc81ea1b10268ffb22ce6bc8813aa92f79259974",
+   "keys": {
+    "chopin": "48190e4423ee813cd0a456a7dc81ea1b10268ffb22ce6bc8813aa92f79259974",
+    "cinqcent": "48190e4423ee813cd0a456a7dc81ea1b10268ffb22ce6bc8813aa92f79259974"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000059Z-0000003b",
+    "key": "48190e4423ee813cd0a456a7dc81ea1b10268ffb22ce6bc8813aa92f79259974",
+    "t": "2026-11-07T00:00:59Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:ubuntu26-zfs",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "a67243bab22bf7e26014027e87a1634c2cbe44a5cb0613dccfc1735949b40d12",
+   "keys": {
+    "chopin": "a67243bab22bf7e26014027e87a1634c2cbe44a5cb0613dccfc1735949b40d12",
+    "cinqcent": "a67243bab22bf7e26014027e87a1634c2cbe44a5cb0613dccfc1735949b40d12"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000100Z-0000003c",
+    "key": "a67243bab22bf7e26014027e87a1634c2cbe44a5cb0613dccfc1735949b40d12",
+    "t": "2026-11-07T00:01:00Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:ubuntu26-zfsmirror",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "4267ddfd569ba9e59e0ded93aa49e1ecd96a8a55e2cb350838ebb3d4810678f8",
+   "keys": {
+    "chopin": "4267ddfd569ba9e59e0ded93aa49e1ecd96a8a55e2cb350838ebb3d4810678f8",
+    "cinqcent": "4267ddfd569ba9e59e0ded93aa49e1ecd96a8a55e2cb350838ebb3d4810678f8"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000101Z-0000003d",
+    "key": "4267ddfd569ba9e59e0ded93aa49e1ecd96a8a55e2cb350838ebb3d4810678f8",
+    "t": "2026-11-07T00:01:01Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:void-musl",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "b0c180bfd2e41384dfcfa57959f297d330d614ed95515d9a5b6f4e2bc4fffce0",
+   "keys": {
+    "chopin": "b0c180bfd2e41384dfcfa57959f297d330d614ed95515d9a5b6f4e2bc4fffce0",
+    "cinqcent": "b0c180bfd2e41384dfcfa57959f297d330d614ed95515d9a5b6f4e2bc4fffce0"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000102Z-0000003e",
+    "key": "b0c180bfd2e41384dfcfa57959f297d330d614ed95515d9a5b6f4e2bc4fffce0",
+    "t": "2026-11-07T00:01:02Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  },
+  {
+   "cell": "guest:zorin18",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "57b9ce7bcbe4f1344bc0df4be493cb21e94640f6a4cdaa11c3c7a7455c26d69b",
+   "keys": {
+    "chopin": "57b9ce7bcbe4f1344bc0df4be493cb21e94640f6a4cdaa11c3c7a7455c26d69b",
+    "cinqcent": "57b9ce7bcbe4f1344bc0df4be493cb21e94640f6a4cdaa11c3c7a7455c26d69b"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000103Z-0000003f",
+    "key": "57b9ce7bcbe4f1344bc0df4be493cb21e94640f6a4cdaa11c3c7a7455c26d69b",
+    "t": "2026-11-07T00:01:03Z"
+   },
+   "part": null,
+   "reasons": [],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "current",
+   "via": null
+  }
+ ],
+ "classes": [],
+ "family": "guest",
+ "header": {
+  "base": "BASE",
+  "copy": "fixture",
+  "facts": {
+   "chopin": "2026-11-08T05:00:00Z",
+   "cinqcent": "2026-11-08T05:00:00Z"
+  },
+  "ledger_rows": 50,
+  "pulled": {
+   "chopin": null,
+   "cinqcent": null
+  },
+  "sweep": "sweep: SweepTest2 never ran, due now",
+  "uncommitted": 0,
+  "unreachable": []
+ },
+ "notes": [],
+ "set": null,
+ "totals": {
+  "cells": 50,
+  "counts": {
+   "awaiting-canaries": 0,
+   "canary-verified": 0,
+   "carried": 0,
+   "class-pending": 0,
+   "current": 50,
+   "due": 0,
+   "not-runnable": 0,
+   "soft-stale": 0,
+   "to-class": 0
+  },
+  "due": 0,
+  "gb": {
+   "chopin": 0.0,
+   "cinqcent": 0.0
+  },
+  "gm": 0
+ },
+ "unmapped": [],
+ "v": 1,
+ "word": {
+  "all": false,
+  "family": "guest",
+  "form": "bare",
+  "letters": [],
+  "names": [],
+  "notes": [],
+  "plan": true,
+  "prefixes": [],
+  "release": false,
+  "round": null,
+  "stale": false,
+  "sweep": false,
+  "text": "GuestTest2 plan",
+  "update": false,
+  "variants": [],
+  "word": "GuestTest2"
+ }
+}

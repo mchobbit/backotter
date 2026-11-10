@@ -38,6 +38,7 @@ import sys
 import time
 
 from . import keys as _keys
+from . import facts_host as _facts
 
 try:   # P1's helpers; the fallbacks below keep this module usable without them
     from . import file_sha256, parse_utc, short_host, utc_now, work_dir, host_root
@@ -48,7 +49,7 @@ SPEC = "testvm/test2/holt/spec.json"
 HOLT_BIN = "/bkoscratch/holttest1d/bin"
 RESCUERS = "/bkoscratch/holttest1d/rescuer"
 DRIVERS = {"ht1.sh": "linux", "ht1-bsd.sh": "bsd", "ht1-offline.sh": "offline"}
-VARIANTS = ("bigger", "oneshot", "degraded")
+VARIANTS = ("bigger", "oneshot", "degraded", "img")
 ALL_PHASES = ["source", "backup", "rebuild", "verify"]
 # Settings that change what a run checks or with what: such a run's row never counts (R7).
 DEBUG_ENV = ("HT_QUICK", "HT_THROUGH", "HT_KEEP", "HT_FAIL_AT", "HT_RESCUER", "HT_RESCUER_IMG",
@@ -422,13 +423,16 @@ def guest_facts(work, guest, imgsums=None):
             d = opts[i + 1]
             disks.append(d if d.startswith("/") else os.path.join(gdir, d))
     out = {"generation": st.get("generation"), "updates": st.get("updates"), "files": files,
-           "firmware": "uefi" if "--uefi" in opts else "bios", "disks": [], "imgsum": None}
+           "firmware": "uefi" if "--uefi" in opts else "bios", "disks": [], "imgsum": None,
+           "fw": _facts.fw_of(opts), "stat": _facts.stat_of(gdir),
+           "fingerprint": _facts.fingerprint_of(gdir, st.get("generation"))}
     for d in disks:
         try:
             s = os.stat(d)
-            out["disks"].append({"path": d, "size": s.st_size, "mtime": int(s.st_mtime), "inode": s.st_ino})
+            out["disks"].append({"path": d, "size": s.st_size, "mtime": int(s.st_mtime), "mtime_ns": s.st_mtime_ns,
+                                 "inode": s.st_ino})
         except OSError:
-            out["disks"].append({"path": d, "size": None, "mtime": None, "inode": None})
+            out["disks"].append({"path": d, "size": None, "mtime": None, "mtime_ns": None, "inode": None})
     if not out["generation"] and imgsums is not None:
         out["imgsum"] = _cached_imgsum(imgsums, out["disks"])
     return out
@@ -519,6 +523,8 @@ def local_facts(work, hroot, guests, sets, entry, shared=()):
     cache = _imgsum_cache(hroot)
     f = {"host": _host(), "t": _now(), "versions": _versions(), "guests": {}, "sets": {},
          "rescuers": {"images": {}, "bin": {}}, "plumbing": {}, "host_inputs": {}}
+    if entry.get("bins_from_image"):
+        f["images"] = _facts.images_part(os.environ.get("T2_IMAGES") or os.path.join(work, "images"), hroot)
     for g in guests:
         gf = guest_facts(work, g, cache)
         if gf is not None:
@@ -555,8 +561,10 @@ def local_facts(work, hroot, guests, sets, entry, shared=()):
 
 def host_facts(hostctx, work, hroot, guests, sets, entry, shared):
     """This host's facts: the host context's (P1's probe), else local_facts()."""
-    want = {"guests": sorted(guests), "sets": sorted(sets), "plumbing": sorted(shared),
+    want = {"guests": sorted(guests), "sets": sorted(x for x in sets if x), "plumbing": sorted(shared),
             "host_inputs": sorted((i["path"] if isinstance(i, dict) else i) for i in (entry.get("host_inputs") or []))}
+    if entry.get("bins_from_image"):
+        want["images"] = True
     for attr in ("facts", "get_facts"):
         v = getattr(hostctx, attr, None)
         try:
@@ -699,7 +707,8 @@ def build(argv, hostctx=None):
     plat = entry.get("plat") or (man["rustic"] or {}).get("plat") or "linux"
     rustic_src = (man["rustic"] or {}).get("src")
     set_name, set_dir = _set_of(rustic_src, work)
-    loose_rustic = env.get("HT_RUSTIC") or ("no set" in ((man["rustic"] or {}).get("id") or ""))
+    is_img = variant == "img"   # the image's own binaries: facts.images, by bins_from_image
+    loose_rustic = not is_img and (env.get("HT_RUSTIC") or ("no set" in ((man["rustic"] or {}).get("id") or "")))
     rescuer_guests = [x for x in (entry.get("rescuer") or []) if isinstance(x, str) and not x.startswith(("@", "bin/"))
                       and not x.endswith((".qcow2", ".img", ".raw"))]
     shared = [x for x in (sf.data.get("plumbing") or []) if isinstance(x, str) and x.startswith("shared:")] if sf else []
@@ -712,7 +721,9 @@ def build(argv, hostctx=None):
     used = holt_used(man, plat, holt_file, holt_bin)
     opts = {"rustic_set": set_name}
     code = None
-    if not holt_file and holt_bin and re.fullmatch(r"[0-9a-f]{64}", os.path.basename(holt_bin.rstrip("/"))):
+    if is_img:
+        pass
+    elif not holt_file and holt_bin and re.fullmatch(r"[0-9a-f]{64}", os.path.basename(holt_bin.rstrip("/"))):
         code = os.path.basename(holt_bin.rstrip("/"))
         want = _holt_sums(holt_bin).get(plat)
         if want and used and want != used:
@@ -737,6 +748,10 @@ def build(argv, hostctx=None):
         notes.append(f"inputs not measured: {e}")
         m = {"inputs": {}, "key": _keys.key(cell, {}), "groups": _keys.groups({}), "spec": None,
              "notes": [], "unknown": ["all"]}
+    if is_img and used:     # the pin's bko-holt and the key's (the image's own) must be one build
+        keyed = ((m.get("inputs") or {}).get("bin") or {}).get(f"{plat}/bko-holt")
+        if keyed and keyed != f"sha256:{used}":
+            unmeasured.append(f"bko-holt {used[:12]} isn't the image's {str(keyed)[-64:][:12]} (bko-bin.sha256)")
     inputs = m["inputs"]
     if loose_rustic and man["rustic"]:
         b = inputs.setdefault("bin", {})
@@ -773,7 +788,7 @@ def build(argv, hostctx=None):
             except OSError:
                 changed.append(p)
         elif im.get("sha256_file"):
-            name = "rescuer/" + os.path.basename(p)
+            name = rescuer_name(p)
             v = (inputs.get("rescuer") or {}).get(name)
             if v and v.startswith("sha256:") and v[7:] != im["sha256_file"]:
                 changed.append(p)
@@ -893,6 +908,7 @@ def build(argv, hostctx=None):
             "rescuer": {p: im.get("sha256_file") for p, im in man["images"].items() if "/vms/" not in p},
             "round": env.get("HT_ROUND"),
             "facts": facts_by,
+            **({"img": _img_meta(plat, facts, hroot, t2_run)} if is_img else {}),
             "tree": man["tree"],
             "version": man["version"],
             "dumps": dumps,
@@ -911,6 +927,29 @@ def build(argv, hostctx=None):
     if ce and ce.get("rerun_of"):
         row["extra"]["rerun_of"] = ce["rerun_of"]
     return row
+
+
+def rescuer_name(path):
+    """The rescuer group's name for a manifest image line: the +img pin
+    (HOST_ROOT/img-pin/PLAT/rescuer.img) is keyed rescuer/img-PLAT (keys.py's @image), any
+    other image rescuer/BASENAME."""
+    m = re.search(r"/img-pin/([^/]+)/rescuer\.img\Z", path)
+    return f"rescuer/img-{m.group(1)}" if m else "rescuer/" + os.path.basename(path)
+
+
+def _img_meta(plat, facts, hroot, t2_run):
+    """meta.img of a +img row: the pinned image's sha256 and, for a panel of ImgTest2 (run
+    t2h-STAMP-img), the kernel of that run's boot-test manifest (HOST_ROOT/runs/t2i-STAMP/img/PLAT)."""
+    pin = (((facts.get("images") or {}).get(plat) or {}).get("pin") or {})
+    kernel = None
+    m = re.fullmatch(r"t2h-(.+)-img(-r\d)?", t2_run or "")
+    if m:
+        t = _read(os.path.join(hroot, "runs", f"t2i-{m.group(1)}", "img", plat, "manifest.json"))
+        try:
+            kernel = (json.loads(t) if t else {}).get("kernel")
+        except ValueError:
+            kernel = None
+    return {"plat": plat, "sha256": pin.get("sha256"), "manifest_kernel": kernel}
 
 
 def backfill_row(host, run, ht1_run, gv, attempt, rc, kept, start, cells_entry=None, word=None, now=None,

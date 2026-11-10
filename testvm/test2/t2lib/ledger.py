@@ -80,7 +80,7 @@ VERDICT_CLASSES = {
     "PASS": ("pass", "known-flake"), "FAIL": ("fail", "harness"), "FLAKY-FAIL": ("fail",),
     "HARNESS": ("harness",), "LOST": ("lost", "harness"),
 }
-NEEDS_FAMILIES = ("stic", "holt")   # their PASS run rows always name their needs
+NEEDS_FAMILIES = ("stic", "holt", "guest", "img")   # their PASS run rows always name their needs
 
 
 class LedgerError(Exception):
@@ -300,6 +300,10 @@ def validate(row, check_c=True):
             err.append(f"needs: a {row['family']} PASS run row names what passed")
         elif bad:
             err.append(f"needs: a PASS run row with FAIL or LIMIT-NEW needs ({', '.join(bad[:5])})")
+    if row["kind"] == "class":
+        bad = sorted(n for n, v in row["needs"].items() if v in ("FAIL", "LIMIT-NEW"))
+        if bad:
+            err.append(f"needs: a class row with FAIL or LIMIT-NEW needs ({', '.join(bad[:5])})")
     if row["committed"] and row["commit"] is None:
         err.append("committed: true needs the commit (null: the tree's commit is unknown)")
     if row["spec"] is not None and (not isinstance(row["spec"].get("path"), str)

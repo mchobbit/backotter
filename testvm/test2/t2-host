@@ -8,6 +8,7 @@ Usage (run it as python3 -B, from the run's private copy or the synced tree):
                                                already: the old id); exit 0 ok, 2 invalid, 1 I/O
   t2-host [--work DIR] row KIND ARGS...        t2lib.rows_KIND.build(ARGS, hostctx) gives the
                                                row; it is appended and its id printed
+  t2-host [--work DIR] tool NAME ARGS...       t2lib.tool_NAME.main(ARGS, hostctx): its exit code
   t2-host facts [--want JSON]                  this host's facts (facts_host.py), as JSON
   t2-host imgsum PATH...                       content sums of disk images, cached by
                                                (path, size, mtime_ns, ctime_ns, inode) in
@@ -151,6 +152,25 @@ def cmd_row(ctx, args):
         if not appended:
             sys.stderr.write(f"t2-host: row {kind}: {rid} was there already (same origin)\n")
     return 0
+
+
+def cmd_tool(ctx, args):
+    if not args or not re.fullmatch(r"[a-z][a-z0-9_]*", args[0]):
+        return die("usage: tool NAME ARGS...")
+    name, rest = args[0], args[1:]
+    try:
+        mod = importlib.import_module("t2lib.tool_" + name)
+    except ImportError as e:
+        return die(f"tool: no tool {name} (t2lib/tool_{name}.py): {e}", 3)
+    try:
+        rc = mod.main(rest, ctx)
+    except SystemExit as e:
+        return e.code if isinstance(e.code, int) else (0 if e.code is None else die(f"tool {name}: {e.code}"))
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return die(f"tool {name}: {type(e).__name__}: {e}", 3)
+    return int(rc or 0)
 
 
 def cmd_facts(ctx, args):
@@ -326,7 +346,7 @@ def cmd_self_test(ctx, args):
     return 0 if ok else 1
 
 
-COMMANDS = {"append": cmd_append, "row": cmd_row, "facts": cmd_facts, "imgsum": cmd_imgsum,
+COMMANDS = {"append": cmd_append, "row": cmd_row, "tool": cmd_tool, "facts": cmd_facts, "imgsum": cmd_imgsum,
             "wear": cmd_wear, "hash": cmd_hash, "self-test": cmd_self_test}
 
 

@@ -1,0 +1,8 @@
+{
+  "about": "What img-boot.py types differently for this image. user: the account SSH logs in as, sshd's AllowUsers; extra: shell lines typed before the sshd line; rate: typing speed in bytes a second (null: boot-test.py's); disk_bus: vm-run's --disk-bus for the image and its targets (null: the default, read by the driver).",
+  "why": "typed at boot-test.py's rate for DragonFly (960 bytes a second: its sio drops faster input at 9600 baud)",
+  "user": "root",
+  "extra": [],
+  "rate": null,
+  "disk_bus": null
+}

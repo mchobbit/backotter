@@ -308,6 +308,8 @@ def input_files(m, src, work, bdir, facts, home):
                 if not gf.get("generation"):   # keyed by its disks' sum
                     out += [(f"{g}:{os.path.basename(d['path'])}", d["path"]) for d in gf.get("disks") or []
                             if isinstance(d, dict) and d.get("path")]
+            elif f == "fingerprint":
+                out.append((f"{g}:image-fingerprint", os.path.join(gdir, "image-fingerprint.json")))
             else:
                 out.append((name, os.path.join(gdir, f)))
     return out

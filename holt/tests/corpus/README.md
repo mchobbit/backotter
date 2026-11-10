@@ -1,6 +1,6 @@
 # H1: the dump corpus and its golden plans
 
-One redacted `bko-holt dump` of each of HoltTest2's 45 sources, and the plan
+One redacted `bko-holt dump` of each of HoltTest2's 48 sources, and the plan
 `bko-holt load` makes of each (docs/design/test2.md, "Shared pieces to
 build", H1).  `holt/tests/golden_plans.rs` plans every dump again and fails
 when a plan changes or breaks an invariant, so a change to load shows here
@@ -21,19 +21,33 @@ HoltTest1 records each source's dump as `/bkoscratch/holttest1d/RUN/GUEST/dumps/
 `testvm/test2/h1/collect-dumps.sh` took, for each source, the newest one on
 chopin or cinqcent whose report says `RESULT: PASS` (a guest without one
 would take the newest that passed its source phase, flagged
-`FAIL-after-source`).  On 2026-11-08 all 45 came from r4all, the
+`FAIL-after-source`).  On 2026-11-08, 45 of them came from r4all, the
 HoltTest1All of that night, all PASS, all dumped by bko-holt 0.2.4: 21 from
-chopin, 24 from cinqcent.  index.tsv's `host`, `run`, `result`,
+chopin, 24 from cinqcent.  The three guests built on 2026-11-09
+(endeavouros, endeavouros-grub, manjaro) were added on 2026-11-10, from
+HoltTest1 runs of 2026-11-09, again PASS and bko-holt 0.2.4: endeavouros
+(eosmj3) and endeavouros-grub (eosmj5) from chopin, manjaro (eosmj2) from
+cinqcent.  Those runs used a bko-holt built outside this tree, with commit
+bf6797b, whose `bootloader_id` also looks at what's on the ESP.  This
+tree's load doesn't: neither guest has an EFI entry with a file, so their
+golden plans say `--bootloader-id=debian` where the runs said `endeavouros`
+and `manjaro`.  A plan here is this tree's plan, so that line of those two
+plans isn't what their runs executed.  The other 45 weren't collected again
+("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
 collection; `-` for the guests without one) say which, and `image` whether
 the guest's qcow2 still had the size, mtime and inode its run recorded
-(`changed` for 34 of them: debian13's, for one, kept its size and inode
-and only its mtime moved, to 03:52Z on 2026-11-08, after r4all).
+(`changed` for 34 of r4all's: debian13's, for one, kept its size and inode
+and only its mtime moved, to 03:52Z on 2026-11-08, after r4all; `same` for
+the three of 2026-11-09).
 
 The raw dumps hold the guests' serials, UUIDs and host names.  They stay on
 chopin, in the collector's directory (by default `/bkoscratch/test2/h1-raw`,
-mode 0700), and never reach the Mac or the repository.
+mode 0700), and never reach the Mac or the repository.  The three added on
+2026-11-10 were collected into a private directory and deleted after the
+build, so that default directory holds only r4all's 45 until the next full
+collection.
 
 ## What was done to them
 
@@ -64,13 +78,13 @@ raw dumps are), for each dump:
    blobs, 7.7 MB decoded, in 15 dumps).  EFI load options (`load_option_hex`) and
    `first_bytes` stay: they are data, and redact.rs has redacted them.
 5. The filled dump is planned against the unfilled one (`fill_plan`:
-   `same` for all 45) and passes check_plan itself (`check_plan`).
+   `same` for all 48) and passes check_plan itself (`check_plan`).
 
 Two builds of the same raw dumps give the same bytes.
 
 ### A raw dump that fails step 1
 
-All 45 raw dumps pass check_plan.  A dump that one day fails it is still put
+All 48 raw dumps pass check_plan.  A dump that one day fails it is still put
 in the corpus (step 2's leak checks, step 5 and leakscan below still apply);
 corpus_build then fails at its end, and so does `redact_dumps` over the raw
 dumps.  Nothing would show that dump's golden plan is its guest's own, so
@@ -97,6 +111,11 @@ Check mode only logs them.
   corpus dump without its raw twin, a torn strings line or a git without an
   e-mail is an incomplete scan, exit 2.
 
+The three added on 2026-11-10 went through (a) and (b) the same way, 0
+findings: chopin with its 66 strings and their raw dumps' identifiers,
+cinqcent with its 69, and (a) again on the Mac with the git e-mail, before
+they entered the working tree.
+
 ## The golden plans
 
 Each dump is planned as check_plan plans it, through holt's public API
@@ -107,7 +126,7 @@ BackOtter's, every tool the plan asks for installed.  Unlike check_plan it
 maps no RAM disk or ZFS volume (alpine324's 16 RAM disks would each be a
 Problem), installs load's own binary where it runs from, and names it
 `bko-holt` in the plan, which would otherwise hold the test binary's path.
-All 48 plans exit 0, without Problems.  They are Linux's plans (load's
+All 51 plans exit 0, without Problems.  They are Linux's plans (load's
 run directory is /run/bko-holt there, /var/run/bko-holt elsewhere): run
 golden_plans.rs on a Linux host.
 
@@ -129,8 +148,8 @@ BKO_HOLT_GOLDEN=bless cargo test --test golden_plans -- --nocapture
                                                                    # rewrite the plans that differ, unless an invariant fails
 ```
 
-diff.json is `{"v":1, "corpus":45, "plans":48, "planned":[NAME...],
-"sources":45, "differ":{NAME:{"stages":[...], "lines_changed":N[, "new":true]
+diff.json is `{"v":1, "corpus":48, "plans":51, "planned":[NAME...],
+"sources":48, "differ":{NAME:{"stages":[...], "lines_changed":N[, "new":true]
 [, "unplanned":WHY][, "unverified":CHECK_PLAN_RAW]}}, "invariants":{NAME:[...]},
 "invariants_skipped":{NAME:[...]}}`; `stages` are the plan's sections that
 changed (header, partition, assemble, format, mount, restore, boot, close,
@@ -154,14 +173,15 @@ guests whose plans changed.
 
 ## Rebuilding it
 
-On chopin, as m, from a private copy of the tree, with the Rust build in a
-reserved RAM directory (NAME, yours):
+On chopin, as m, from the root of a private copy of the tree, with the Rust
+build in a reserved RAM directory (NAME, yours).  RAW and OUT are absolute
+paths: cmp-run.sh changes to ~/backotter-work, and cargo test runs in holt/.
 
 ```
 testvm/test2/h1/collect-dumps.sh --out RAW         # default T2_HOST_ROOT/h1-raw
 ~/backotter-work/cmp-run.sh --reserve 2 4 env CARGO_TARGET_DIR=/mnt/bko-ram/NAME/target \
     BKO_HOLT_CORPUS_RAW=RAW BKO_HOLT_CORPUS_OUT=OUT ~/.cargo/bin/cargo test \
-    --manifest-path holt/Cargo.toml --test corpus_build -- --ignored --nocapture
+    --manifest-path "$PWD/holt/Cargo.toml" --test corpus_build -- --ignored --nocapture
                                                    # twice, into two OUTs: the same sha256s
 testvm/test2/h1/collect-dumps.sh --scan OUT --out RAW
                                                    # leakscan (a) and (b) on both hosts: 0 findings
@@ -174,5 +194,42 @@ the Mac, outside the repository, and scan it there first:
 Only then copy them into holt/tests/corpus (corpus_build refuses an OUT
 that holds dumps it doesn't make, so build into an empty one), and bless
 the plans.  A corpus dump never enters the working tree with a finding, and
-a plan is never blessed with a broken invariant.  The corpus is 11.7 MB (45
-dumps of 3 KB to 3.3 MB, the 48 plans 0.3 MB); 15 MB is its budget.
+a plan is never blessed with a broken invariant.  The corpus is 11.8 MB (48
+dumps of 3 KB to 3.3 MB, the 51 plans 0.3 MB); 15 MB is its budget.
+
+### Adding a source
+
+A new guest doesn't need the others collected again.  It must already be
+one of classes.json's HoltTest2 sources: otherwise golden_plans.rs only
+notes it, and test_plandiff.py fails.
+RAW and OUT here are new, private directories: never the default RAW,
+because a collection removes every dump that isn't one of its sources.
+Both absolute, and run from the copy's root, as above.
+
+```
+printf '%s\n' GUEST... > SOURCES
+testvm/test2/h1/collect-dumps.sh --sources SOURCES --out RAW
+~/backotter-work/cmp-run.sh --reserve 2 4 env CARGO_TARGET_DIR=/mnt/bko-ram/NAME/target \
+    BKO_HOLT_CORPUS_RAW=RAW BKO_HOLT_CORPUS_OUT=OUT ~/.cargo/bin/cargo test \
+    --manifest-path "$PWD/holt/Cargo.toml" --test corpus_build -- --ignored --nocapture
+                                                   # twice, into two OUTs: the same sha256s
+testvm/test2/h1/collect-dumps.sh --scan OUT --out RAW
+                                                   # 0 findings on both hosts
+rm -rf /mnt/bko-ram/NAME
+```
+
+Scan OUT on the Mac as above.  Then copy OUT's `GUEST/src.json` in, merge
+the rows of OUT's index.tsv into index.tsv in guest order (the columns are
+the same), and check the merge, because golden_plans.rs doesn't notice a
+dump with no row.  From holt/tests/corpus this must print nothing:
+
+```
+diff <(tail -n +2 index.tsv | cut -f1) <(for d in */src.json; do echo "${d%/src.json}"; done | LC_ALL=C sort)
+```
+
+Then run `report`.  `differ` must name only the new guests, each
+with `"new":true`, and `invariants` must be empty.  Then `bless`, check
+that no other guest's files changed, and run the plain check.  Delete RAW
+and OUT, and `/mnt/bko-ram/NAME` if `report` or `bless` built there again.
+`collect-dumps.sh --scan` over the whole corpus needs every
+dump's raw twin, so it needs a full collection first.

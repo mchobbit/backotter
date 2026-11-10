@@ -60,7 +60,7 @@ class FactsHost(unittest.TestCase):
         cls.work = os.path.join(cls.root, "home", "m", "backotter-work")
 
     def probe(self, want=None, extra=()):
-        args = [sys.executable, "-I", "-", "--work", self.work, "--user", "m"] + list(extra)
+        args = [sys.executable, "-I", "-", "--work", self.work, "--user", "m", "--home", os.path.dirname(self.work)] + list(extra)
         if want is not None:
             args += ["--want", json.dumps(want)]
         env = dict(os.environ, T2_FACTS_ROOT=self.root)
@@ -70,6 +70,157 @@ class FactsHost(unittest.TestCase):
             p = subprocess.run(args, stdin=f, capture_output=True, env=env, timeout=60)
         self.assertEqual(p.returncode, 0, p.stderr)
         return p.stdout.decode(), json.loads(p.stdout)
+
+    def test_home_and_user_never_come_from_work(self):
+        """A test world two levels below home: rustc's version is still read from home's rustup."""
+        deep = os.path.join(self.root, "home", "m", "backotter-work", "t2rest", "world")
+        shutil.rmtree(deep, ignore_errors=True)
+        os.makedirs(os.path.join(deep, "vms"))
+        try:
+            args = [sys.executable, "-I", "-", "--work", deep, "--user", "m", "--home", os.path.join(self.root, "home", "m")]
+            env = dict(os.environ, T2_FACTS_ROOT=self.root)
+            with open(FACTS, "rb") as f:
+                p = subprocess.run(args, stdin=f, capture_output=True, env=env, timeout=60)
+            j = json.loads(p.stdout)
+            self.assertEqual(j["versions"]["rustc"], "rustc 1.94.1 (e408947bf 2026-03-25)")
+            self.assertTrue(j["preflight"]["kvm"])
+            self.assertEqual(j["work"], deep)
+        finally:
+            shutil.rmtree(deep, ignore_errors=True)
+
+    def test_the_process_user_when_no_user_is_given(self):
+        sys.path.insert(0, TEST2)
+        from t2lib import facts_host
+        import getpass
+        self.assertEqual(facts_host.default_user(), getpass.getuser())
+        self.assertEqual(facts_host.default_home(), os.path.expanduser("~"))
+
+    def test_fw(self):
+        sys.path.insert(0, TEST2)
+        from t2lib import facts_host as fh
+        self.assertEqual(fh.fw_of([]), "bios")
+        self.assertEqual(fh.fw_of(["--uefi"]), "uefi-sb")
+        self.assertEqual(fh.fw_of(["--uefi", "--no-secure-boot"]), "uefi")
+        self.assertEqual(fh.fw_of(["--q35"]), "q35")
+
+    def _guest_dir(self, name="fpguest", gen="a" * 64):
+        g = os.path.join(self.work, "vms", name)
+        os.makedirs(g, exist_ok=True)
+        with open(os.path.join(g, name + ".qcow2"), "w") as f:
+            f.write("disk")
+        with open(os.path.join(g, "image-state"), "w") as f:
+            json.dump({"generation": gen, "updates": 1}, f)
+        return g
+
+    def test_sidecars(self):
+        g = self._guest_dir()
+        try:
+            doc = {"v": 1, "generation": "a" * 64, "rules": "r" * 64,
+                   "holt": {"digest": "1" * 64, "was": ["2" * 64]},
+                   "stic": {"digest": "3" * 64, "fine": "4" * 64, "was": ["5" * 64]}}
+            with open(os.path.join(g, "image-fingerprint.json"), "w") as f:
+                json.dump(doc, f)
+            with open(os.path.join(g, "image-stat.json"), "w") as f:
+                json.dump({"generation": "a" * 64, "disks": {"fpguest.qcow2": {"size": 4, "mtime_ns": 1, "inode": 2}}}, f)
+            with open(os.path.join(g, "vm-run-options"), "w") as f:
+                f.write("--uefi --no-secure-boot\n")
+            _, j = self.probe({"guests": ["fpguest"]})
+            e = j["guests"]["fpguest"]
+            self.assertEqual(e["fingerprint"], {"generation": "a" * 64, "holt": "1" * 64, "stic": "3" * 64, "fine": "4" * 64,
+                                                "holt_was": ["2" * 64], "stic_was": ["5" * 64], "rules": "r" * 64})
+            self.assertEqual(e["stat"]["disks"]["fpguest.qcow2"]["size"], 4)
+            self.assertEqual(e["fw"], "uefi")
+            d = e["disks"][0]
+            self.assertTrue(isinstance(d["inode"], int) and isinstance(d["mtime_ns"], int))
+            # a sidecar of another generation is no fingerprint
+            doc["generation"] = "b" * 64
+            with open(os.path.join(g, "image-fingerprint.json"), "w") as f:
+                json.dump(doc, f)
+            _, j = self.probe({"guests": ["fpguest"]})
+            self.assertIsNone(j["guests"]["fpguest"]["fingerprint"])
+        finally:
+            shutil.rmtree(g, ignore_errors=True)
+
+    def test_rows_holt_agrees_with_the_probe(self):
+        g = self._guest_dir("fpguest2")
+        sys.path.insert(0, TEST2)
+        from t2lib import rows_holt
+        try:
+            doc = {"generation": "a" * 64, "holt": {"digest": "1" * 64}, "stic": {"digest": "3" * 64, "fine": "4" * 64}}
+            with open(os.path.join(g, "image-fingerprint.json"), "w") as f:
+                json.dump(doc, f)
+            _, j = self.probe({"guests": ["fpguest2"]})
+            mine = rows_holt.guest_facts(self.work, "fpguest2")
+            for k in ("fingerprint", "stat", "fw", "generation", "firmware"):
+                self.assertEqual(mine[k], j["guests"]["fpguest2"][k], k)
+        finally:
+            shutil.rmtree(g, ignore_errors=True)
+
+    def _image(self, images, plat, hostroot):
+        d = os.path.join(images, plat)
+        os.makedirs(os.path.join(d, "test"))
+        tp = os.path.join(d, "test", "bko.img")
+        with open(tp, "w") as f:
+            f.write("image")
+        with open(os.path.join(d, "bko-bin.sha256"), "w") as f:
+            f.write("%s  ./restic-bko\n%s  ./bko-holt\n" % ("1" * 64, "2" * 64))
+        with open(os.path.join(d, "SHA256SUMS"), "w") as f:
+            f.write("%s  bko.img\n%s  bko.img.xz\n" % ("3" * 64, "4" * 64))
+        with open(os.path.join(d, "done.exit"), "w") as f:
+            f.write("0\n")
+        with open(os.path.join(d, "bko-holt.commit"), "w") as f:
+            f.write("a" * 40 + "\n")
+        with open(os.path.join(d, "result.txt"), "w") as f:
+            f.write("bko-bin set from round rel4\nmore\n")
+        return tp
+
+    def test_images_part(self):
+        images = os.path.join(_tmp, "imgs")
+        hr = os.path.join(_tmp, "hr-img")
+        tp = self._image(images, "netbsd", hr)
+        os.makedirs(os.path.join(images, "linux", "prev-1"))        # no current image: not listed
+        s = os.stat(tp)
+        pd = os.path.join(hr, "img-pin", "netbsd")
+        os.makedirs(pd)
+        with open(os.path.join(pd, "rescuer.img.sha256"), "w") as f:
+            f.write("5" * 64 + "  rescuer.img\n")
+        with open(os.path.join(pd, "source.json"), "w") as f:
+            json.dump({"path": tp, "size": s.st_size, "mtime_ns": s.st_mtime_ns, "inode": s.st_ino, "sha256": "5" * 64}, f)
+        _, j = self.probe({"images": True, "guests": []}, extra=["--images", images, "--host-root", hr])
+        self.assertEqual(sorted(j["images"]), ["netbsd"])
+        im = j["images"]["netbsd"]
+        self.assertEqual(im["bins"], {"restic-bko": "1" * 64, "bko-holt": "2" * 64})
+        self.assertEqual(im["release"], {"name": "bko.img", "sha256": "3" * 64})
+        self.assertEqual((im["test"]["name"], im["test"]["size"]), ("bko.img", 5))
+        self.assertEqual(im["pin"], {"sha256": "5" * 64, "current": True, "bins_stale": False})
+        self.assertEqual((im["done_exit"], im["holt_commit"]), (0, "a" * 40))
+        self.assertEqual(im["bko_bin_info"], "bko-bin set from round rel4")
+        # the image moved: the pin isn't current
+        os.utime(tp, ns=(1, 1))
+        _, j = self.probe({"images": True, "guests": []}, extra=["--images", images, "--host-root", hr])
+        self.assertFalse(j["images"]["netbsd"]["pin"]["current"])
+        # no commit file, no pin, no done.exit
+        os.remove(os.path.join(images, "netbsd", "bko-holt.commit"))
+        os.remove(os.path.join(images, "netbsd", "done.exit"))
+        shutil.rmtree(os.path.join(hr, "img-pin"))
+        _, j = self.probe({"images": True, "guests": []}, extra=["--images", images, "--host-root", hr])
+        im = j["images"]["netbsd"]
+        self.assertEqual((im["holt_commit"], im["done_exit"]), (None, None))
+        self.assertEqual(im["pin"], {"sha256": None, "current": False, "bins_stale": False})
+        # not asked for
+        _, j = self.probe({"guests": []}, extra=["--images", images, "--host-root", hr])
+        self.assertNotIn("images", j)
+
+    def test_an_image_that_cannot_be_read_costs_only_its_platform(self):
+        images = os.path.join(_tmp, "imgs-bad")
+        hr = os.path.join(_tmp, "hr-img-bad")
+        self._image(images, "linux", hr)
+        tp = self._image(images, "netbsd", hr)
+        os.remove(tp)
+        os.symlink("/nonexistent", tp)
+        _, j = self.probe({"images": True, "guests": []}, extra=["--images", images, "--host-root", hr])
+        self.assertEqual(sorted(j["images"]), ["linux"])
+        self.assertEqual(len([e for e in j["errors"] if e.startswith("images/netbsd: ")]), 1)
 
     def test_facts(self):
         before = tree_state(self.root)

@@ -1,8 +1,8 @@
 """A synthetic world for P2's tests (U2.2-U2.6): a fixture checkout (git), BKO_GIT's three
 forks, both hosts' facts and a seeded ledger.  Nothing here touches a host or a default root.
 
-    w = World(tmpdir)            the checkout: 41 SticTest checks, 45 HoltTest sources and 9
-                                 variants, 13 gate cells, with the real classes.json,
+    w = World(tmpdir)            the checkout: 41 SticTest checks, 48 HoltTest sources and 9
+                                 variants, 13 gate cells, 50 guests, 7 images, with the real classes.json,
                                  estimates.tsv, drive.py, affected.sh and ram-sizes.tsv
     w.facts()                    {host: facts}, as facts_host.py gives them
     w.ctx(rows, facts=..., **options)   a plan.Ctx
@@ -38,9 +38,22 @@ GUESTS = ("aerynos alpine324 alpinebsd arch artix-dinit artix-s6 cachyos debian1
           "freebsd15-geli freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs haiku6 hardenedbsd15 mint22 mx25 "
           "netbsd11 nixos2605 omarchy omnios58 omnios58-mirror openbsd8 pop24 redox rocky10 rocky10-lvm "
           "rocky10-raid5 sculpt2610 tumbleweed ubuntu24 ubuntu26-raid ubuntu26-uefi ubuntu26-zfs ubuntu26-zfsmirror "
-          "void-musl zorin18").split()
+          "void-musl zorin18 endeavouros endeavouros-grub manjaro").split()
 UEFI = set("aerynos alpinebsd debian13-stack fedora44-raid fedora44-uefi freebsd15-geli omarchy pop24 ubuntu26-raid "
-           "ubuntu26-uefi ubuntu26-zfs".split())
+           "ubuntu26-uefi ubuntu26-zfs endeavouros endeavouros-grub manjaro".split())
+PLATS = words.PLATS
+NEW_GUESTS = set("endeavouros endeavouros-grub manjaro fedora44-raid ubuntu26-raid rocky10-raid5 freebsd15-mirror "
+                 "omnios58-mirror".split())
+PM = {"apt": "debian12 debian13 debian13-stack debian13-zfs devuan6 mint22 mx25 pop24 ubuntu24 ubuntu26-raid ubuntu26-uefi "
+             "ubuntu26-zfs ubuntu26-zfsmirror zorin18",
+      "dnf": "fedora44 fedora44-raid fedora44-uefi rocky10 rocky10-lvm rocky10-raid5",
+      "pacman": "arch artix-dinit artix-s6 cachyos omarchy endeavouros endeavouros-grub manjaro",
+      "zypper": "tumbleweed", "xbps": "void-musl", "apk": "alpine324", "moss": "aerynos", "NixOS": "nixos2605",
+      "FreeBSD": "freebsd14 freebsd15 freebsd15-geli freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs hardenedbsd15",
+      "NetBSD": "netbsd11 alpinebsd", "OpenBSD": "openbsd8", "DragonFly": "dragonfly6", "SunOS": "omnios58 omnios58-mirror",
+      "Haiku": "haiku6", "Redox": "redox", "Sculpt": "sculpt2610"}
+PM_OF = {g: pm for pm, gs in PM.items() for g in gs.split()}
+LINUX_PMS = ("apt", "dnf", "pacman", "zypper", "xbps", "apk", "moss")
 BSD_PLAT = {"freebsd15": "freebsd", "freebsd15-mirror": "freebsd", "freebsd14": "freebsd", "ghostbsd26": "freebsd",
             "ghostbsd26-zfs": "freebsd", "hardenedbsd15": "freebsd", "netbsd11": "netbsd", "alpinebsd": "netbsd",
             "openbsd8": "openbsd", "dragonfly6": "dragonfly", "omnios58": "illumos", "omnios58-mirror": "illumos",
@@ -130,6 +143,20 @@ class World:
                     "testvm/test2/gate/bincheck.sh", "testvm/test2/gate/loop.sh", "testvm/test2/gate/baseline.json",
                     "testvm/redox/console.py", "testvm/sculpt-check.sh"):
             write(r, rel, f"# fixture {rel}\n")
+        write(r, "testvm/update/in-guest.sh", self.in_guest_text())
+        for rel in ("testvm/vm-update", "testvm/compare/boot-state.sh", "testvm/make-fixture.sh", "testvm/test2/guest/job.sh",
+                    "testvm/test2/guest/check-image.sh", "testvm/test2/guest/check-after.sh", "testvm/test2/guest/new-guest.sh",
+                    "testvm/test2/guest/probe-redox.sh", "testvm/test2/guest/probe-sculpt.sh", "testvm/test2/t2lib/guest_judge.py",
+                    "testvm/test2/img/boot.sh", "stick/boot-test.py", "testvm/holttest1d/img-boot.py"):
+            write(r, rel, f"# fixture {rel}\n")
+        for p_ in PLATS:
+            write(r, f"stick/{p_}/checks.sh", f"# fixture {p_}\n")
+            write(r, f"stick/{p_}/manifest.sh", f"# fixture {p_}\n")
+            write(r, f"testvm/holttest1d/img-boot.d/{p_}.json", "{}\n")
+        write(r, "testvm/test2/guest/known-lines.json", json.dumps({"all": ["x"], **{m: [m] for m in PM}}, indent=1, sort_keys=True))
+        write(r, "testvm/test2/guest/limits.json", "{}\n")
+        write(r, "testvm/test2/guest/spec.json", json.dumps(self.guest_spec(), indent=1, sort_keys=True))
+        write(r, "testvm/test2/img/spec.json", json.dumps(self.img_spec(), indent=1, sort_keys=True))
         write(r, "holt/Cargo.toml", '[package]\nname = "bko-holt"\nversion = "0.2.4"\nedition = "2021"\n')
         write(r, "holt/Cargo.lock", 'version = 4\n\n[[package]]\nname = "bko-holt"\nversion = "0.2.4"\n')
         write(r, "holt/LICENSE", "fixture licence text\n")
@@ -174,14 +201,85 @@ class World:
                              "testvm/console-boot.py", "testvm/stictest1/drive.py", "shared:cmp-run.sh",
                              "shared:testvm/compare/iolog.sh"]}
 
+    @staticmethod
+    def in_guest_text():
+        out = ["#!/bin/sh\n", "# t2-section: prologue\n", "say hello\n", "# t2-section: Linux.common\n", "linux common\n"]
+        for pm in LINUX_PMS:
+            out += [f"# t2-section: Linux.{pm}\n", f"update with {pm}\n"]
+        for osn in ("NixOS", "FreeBSD", "NetBSD", "OpenBSD", "DragonFly", "SunOS", "Haiku", "Redox"):
+            out += [f"# t2-section: {osn}\n", f"update on {osn}\n"]
+        out += ["# t2-section: prologue\n", "say done\n"]
+        return "".join(out)
+
+    def guest_spec(self):
+        kinds = {"ssh": {"try": True,
+                         "harness": ["testvm/vm-update", "testvm/update/in-guest.sh#prologue", "testvm/test2/guest/job.sh",
+                                     "testvm/test2/guest/check-image.sh", "testvm/test2/guest/check-after.sh",
+                                     "testvm/make-fixture.sh"],
+                         "judge": ["testvm/test2/t2lib/guest_judge.py", "entry:testvm/test2/guest/known-lines.json#all",
+                                   "entry:testvm/test2/guest/limits.json#{guest}",
+                                   "entry:testvm/test2/guest/spec.json#entries.{guest}.checks",
+                                   "entry:testvm/test2/classes.json#policy.guest.judge"],
+                         "host": ["qemu", "ovmf"], "update": True},
+                 "probe": {"harness": ["testvm/vm-update", "testvm/update/in-guest.sh#prologue", "testvm/test2/guest/job.sh",
+                                       "testvm/test2/guest/check-image.sh", "testvm/test2/guest/check-after.sh"],
+                           "judge": ["testvm/test2/t2lib/guest_judge.py", "entry:testvm/test2/guest/limits.json#{guest}"],
+                           "host": ["qemu", "ovmf"]},
+                 "redox": {"harness": ["testvm/test2/guest/job.sh", "testvm/test2/guest/probe-redox.sh", "testvm/redox/console.py"],
+                           "judge": ["testvm/test2/t2lib/guest_judge.py"], "host": ["qemu", "ovmf"], "update": False},
+                 "sculpt": {"harness": ["testvm/test2/guest/job.sh", "testvm/test2/guest/probe-sculpt.sh",
+                                        "testvm/sculpt-check.sh"],
+                            "judge": ["testvm/test2/t2lib/guest_judge.py"], "host": ["qemu", "ovmf"], "update": False}}
+        entries = {}
+        for g in GUESTS:
+            if g == "freebsd15-builder":
+                continue
+            pm = PM_OF[g]
+            e = {"kind": "ssh", "plat": BSD_PLAT.get(g, "linux"), "checks": {"pm": pm, "fw": "uefi" if g in UEFI else "bios",
+                                                                              "established": g not in NEW_GUESTS}}
+            if pm in LINUX_PMS:
+                e["harness"] = ["testvm/update/in-guest.sh#Linux.common", f"testvm/update/in-guest.sh#Linux.{pm}",
+                                "testvm/compare/boot-state.sh"]
+            elif pm not in ("Redox", "Sculpt"):
+                e["harness"] = [f"testvm/update/in-guest.sh#{pm}"]
+            if g in NEW_GUESTS:
+                e.setdefault("harness", []).append("testvm/test2/guest/new-guest.sh")
+            if g == "haiku6":
+                e["kind"], e["update"] = "probe", "name-only"
+            if pm == "Redox":
+                e["kind"] = "redox"
+            if pm == "Sculpt":
+                e["kind"] = "sculpt"
+            entries[g] = e
+        return {"v": 1, "family": "guest", "kinds": kinds, "entries": entries,
+                "excluded": {"freebsd15-builder": "a build helper"},
+                "plumbing": ["testvm/vm-run", "testvm/vm-lib.sh", "shared:cmp-run.sh", "shared:testvm/compare/iolog.sh"]}
+
+    @staticmethod
+    def img_spec():
+        entries = {}
+        for p_ in PLATS:
+            entries[p_] = {"plat": p_, "bins_from_image": True,
+                           "bins": ([] if p_ == "haiku" else ["PLAT/restic-bko"]) +
+                                   ["PLAT/rustic-bko", "PLAT/bko-holt", "PLAT/test-image", "PLAT/release-image"],
+                           "harness": ["stick/boot-test.py", "stick/PLAT/checks.sh", "stick/PLAT/manifest.sh",
+                                       "?stick/PLAT/config-checks.sh", "testvm/test2/img/boot.sh"]}
+        return {"v": 1, "family": "img", "entries": entries,
+                "plumbing": ["shared:cmp-run.sh", "shared:testvm/compare/iolog.sh"]}
+
     def holt_spec(self):
+        var = lambda replace: {"replace": replace, "bins_from_image": True, "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
+                               "rescuer": ["@image"],
+                               "harness": ["testvm/holttest1d/img-boot.py", "testvm/holttest1d/img-boot.d/{plat}.json",
+                                           "stick/boot-test.py"]}
         kinds = {"linux": {"plat": "linux", "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
                            "harness": ["testvm/holttest1d/ht1.sh", "testvm/vm-mount", "testvm/vm-umount",
                                        "testvm/compare/fsmeta.py"],
-                           "judge": ["testvm/holttest1d/judge.py"], "rescuer": ["@firmware", "bin/*.deb", "bin/bcachefs"]},
+                           "judge": ["testvm/holttest1d/judge.py"], "rescuer": ["@firmware", "bin/*.deb", "bin/bcachefs"],
+                           "variants": {"img": var(["rescuer", "bins"])}},
                  "bsd": {"bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
                          "harness": ["testvm/holttest1d/ht1.sh", "testvm/holttest1d/ht1-bsd.sh"],
-                         "judge": ["testvm/holttest1d/judge.py"]},
+                         "judge": ["testvm/holttest1d/judge.py"], "variants": {"img": var(["bins"])}},
                  "offline": {"plat": "linux", "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
                              "harness": ["testvm/holttest1d/ht1.sh", "testvm/holttest1d/ht1-offline.sh"],
                              "judge": ["testvm/holttest1d/judge.py"], "rescuer": ["rescuer.qcow2"]}}
@@ -319,13 +417,35 @@ class World:
         return {"path": f"/home/m/backotter-work/{tag}/bin", "sums": sums, "commits": cm, "digests": dg,
                 "digest_texts": dt, "build_info": f"build {tag}"}
 
+    def images(self, tag="i1", commit=None, only=None, pin_current=True):
+        """facts.images: every platform (ONLY: those), the bko-holt commit COMMIT (default HEAD; "": none)."""
+        out = {}
+        for p_ in (only or PLATS):
+            names = ["rustic-bko", "bko-holt"] + ([] if p_ == "haiku" else ["restic-bko"])
+            c = self.head() if commit is None else (commit or None)
+            out[p_] = {"bins": {n: H(f"{tag} {p_} {n}") for n in names},
+                       "release": {"name": f"{p_}.img", "sha256": H(f"release {tag} {p_}")},
+                       "test": {"name": f"{p_}.img", "path": f"/x/{p_}.img", "size": 1, "mtime_ns": 1, "inode": 1},
+                       "pin": {"sha256": H(f"pin {tag} {p_}"), "current": pin_current, "bins_stale": False},
+                       "done_exit": 0, "holt_commit": c, "bko_bin_info": "fixture"}
+        return out
+
+    @staticmethod
+    def fp(gen, holt="h1", stic="s1", fine="f1", holt_was=(), stic_was=(), rules="r"):
+        """A guest's fingerprint record, as facts_host.py gives it, for generation number GEN of the guest."""
+        return {"holt": H("holt " + holt), "stic": H("stic " + stic), "fine": H("fine " + fine),
+                "holt_was": [H("holt " + x) for x in holt_was], "stic_was": [H("stic " + x) for x in stic_was],
+                "rules": rules, "gen_of": gen}
+
     def facts(self, kernel="6.12.115", gens=None, plumb="p1", rescuer="r1", rustic_tag="bko", round_tag="rel4",
-              round_commits=None, sets_extra=None, uefi_rescuer=("chopin", "cinqcent"), hosts=HOSTS):
+              round_commits=None, sets_extra=None, uefi_rescuer=("chopin", "cinqcent"), hosts=HOSTS, images=None,
+              fps=None, qemu=None):
+        """FPS: {guest: fp(...)}: its fingerprint record, generation filled in.  QEMU: {host: version}."""
         out = {}
         rc = round_commits or self.round_commits["rel4"]
         for h in hosts:
             f = {"v": 1, "host": h, "t": "2026-11-08T05:00:00Z",
-                 "versions": {"kernel": kernel, "zfs": "2.3.9", "qemu": "QEMU 10.0.2", "ovmf": "2025.02-8",
+                 "versions": {"kernel": kernel, "zfs": "2.3.9", "qemu": (qemu or {}).get(h, "QEMU 10.0.2"), "ovmf": "2025.02-8",
                               "pkgs": {}, "rustc": "rustc 1.94.1"},
                  "preflight": {"tctl_c": 50.0, "ram": {"mounted": True, "free": 30 << 30}, "kvm": True,
                                "scratch_free_gb": 900.0, "pswpout": 0, "diskstats": {}},
@@ -348,6 +468,9 @@ class World:
                 f["rescuers"]["images"]["rescuer-uefi.qcow2"] = {"sha256": H("rescuer-uefi " + rescuer)}
             for k, v in (sets_extra or {}).items():
                 f["sets"][k] = v
+            f["images"] = images if images is not None else self.images()
+            for g, rec in (fps or {}).items():
+                f["guests"][g]["fingerprint"] = dict(rec, generation=H(f"gen {g} {rec['gen_of']}"))
             out[h] = f
         return out
 

@@ -31,7 +31,8 @@
 # (HT_RAM, HT_CLEAN, HT_HOLT, HT_QUICK, HT_THROUGH, HT_KEEP; ht1-debug.sh
 # drives them).  Each rebuild runs its rescuer on a throwaway overlay of the
 # one holding the backup (R/rescuer-try.qcow2), so no try leaves anything
-# behind for the next (an imported pool, a log).
+# behind for the next (an imported pool, a log).  HT_VARIANT=img rebuilds in
+# BackOtter's own rescue image of the system instead (below, "+img").
 set -uo pipefail
 
 G=$1 RUN=$2; shift 2
@@ -44,7 +45,7 @@ T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, vm-lib, compare/), as ht1.
 # shellcheck source=ht1-lib.sh
 . "$HERE/ht1-lib.sh"
 VARIANT=${HT_VARIANT:-}
-case $VARIANT in ""|bigger|oneshot) ;; *) echo "HT_VARIANT: bigger or oneshot" >&2; exit 2 ;; esac
+case $VARIANT in ""|bigger|oneshot|img) ;; *) echo "HT_VARIANT: bigger, oneshot or img" >&2; exit 2 ;; esac
 GV=$G${VARIANT:+-$VARIANT}
 PORT=${HT_PORT:-2690}
 export SSH_PORT=$PORT
@@ -105,6 +106,53 @@ esac
 GUSER=${GUSER:-root}
 # Where the rescuer keeps the repository and the tools: root's home.
 RH=/root; [[ $PLAT == haiku ]] && RH=/boot/home
+# +img (ImgTest2's panel, as ht1.sh's HT_VARIANT=img): the rebuild runs in
+# BackOtter's own rescue image of this system, the --test image t2-host tool
+# img pin pinned, as the first disk through a 16 GiB throwaway overlay
+# (R/img.qcow2), booted with the rescuer guest's options and the source's
+# firmware.  Its own bko-holt and rustic-bko do the load, as a user's would;
+# source and backup take the pin's copies of them (checked against the
+# image's bko-bin.sha256 when it was pinned), so the dumps and the load are
+# one build.  backup and verify keep the rescuer guest: its disk with the
+# repository (R/rescuer.qcow2, through the throwaway R/rescuer-try.qcow2) is
+# the image's last disk, after the decoy, mounted read-only at IMG_RR.  The
+# image's sshd is off and refuses root by its own settings: img-boot.py
+# starts one over the serial console with a key made for this run
+# (img-boot.d/PLATFORM.json says what differs per system), R/img-key, never
+# in an image, deleted at the rebuild's end and in ht_release.  +img runs
+# only in the RAM disk, and its rebuild checks that the pin is still the one
+# the run started with.
+IMG=0; [[ $VARIANT == img ]] && IMG=1
+IMG_PIN=${T2_HOST_ROOT:-/bkoscratch/test2}/img-pin/$PLAT
+IMG_BIN=/usr/local/bin; [[ $PLAT == haiku ]] && IMG_BIN=/boot/system/non-packaged/bin
+IMG_RR=/tmp/bko-repo
+if ((IMG)); then
+    [[ -f $IMG_PIN/rescuer.img && -f $IMG_PIN/rustic-bko && -f $IMG_PIN/bko-holt ]] || { echo "ht1-bsd: +img: no pinned image in $IMG_PIN (t2-host tool img pin $PLAT)" >&2; exit 2; }
+    [[ ! -e $IMG_PIN/bins-stale ]] || { echo "ht1-bsd: +img: $IMG_PIN/bins-stale: the pin's binaries aren't the image's" >&2; exit 2; }
+    [[ ${HT_KEEP:-} != 1 && ${HT_CLEAN:-1} != 0 ]] || { echo "ht1-bsd: +img: no HT_KEEP or HT_CLEAN=0 (the run's key goes at its end)" >&2; exit 2; }
+    # (In RAM only: on disk R is K, where a killed run would leave the key.)
+    [[ $HT_MODE == ram ]] || { echo "ht1-bsd: +img: only in the RAM disk (under cmp-run.sh --reserve, not HT_RAM=0): on disk the run's key would be in $K" >&2; exit 2; }
+    [[ -f $HERE/img-boot.py && -f $HERE/img-boot.d/$PLAT.json && -f $T/../stick/boot-test.py ]] ||
+        { echo "ht1-bsd: +img: no img-boot.py or img-boot.d/$PLAT.json beside $0, or no stick/boot-test.py (img-boot.py's) beside $T" >&2; exit 2; }
+    python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$HERE/img-boot.d/$PLAT.json" 2>/dev/null ||
+        { echo "ht1-bsd: +img: img-boot.d/$PLAT.json doesn't read as JSON" >&2; exit 2; }
+    export HT_RUSTIC=$IMG_PIN/rustic-bko HT_HOLT=$IMG_PIN/bko-holt
+fi
+# The pin as this run took it: the image's and the binaries' size, mtime and
+# inode, and rescuer.img.sha256's hash (what the row is keyed to).  A re-pin
+# renames over them; the rebuild checks the pin is still this one, else it
+# isn't the image the row would be credited to (a harness FAIL).
+pin_id() {
+    local f; for f in rescuer.img bko-holt rustic-bko; do echo -n "$f $(stat -L -c '%s %Y %i' "$IMG_PIN/$f" 2>/dev/null || echo none); "; done
+    echo "sha256 $(head -n 1 "$IMG_PIN/rescuer.img.sha256" 2>/dev/null | cut -d' ' -f1)"
+}
+IMG_ID=""; ((IMG)) && IMG_ID=$(pin_id)
+IMG_HARNESS=""   # a harness failure's why, for the RESULT line (rows_holt: HARNESS)
+# What the load runs in the rescuer, and where it finds the repository (+img:
+# the image's own binaries; the repository on its disk, Haiku's /boot/home
+# being that volume's /home).
+RHOLT=$RH/bko-holt RARCH=$RH/rustic-bko RREPO=$RH
+((IMG)) && RHOLT=$IMG_BIN/bko-holt RARCH=$IMG_BIN/rustic-bko RREPO=$IMG_RR${RH#/boot}
 # The rescuer's disks' names, its own first (RN, set by rescuer_ready once
 # it's up: Haiku numbers them by the controller's ports); rdev N is the Nth's
 # device, rraw N the node that reads it whole.
@@ -125,7 +173,7 @@ rescuer_ready() {
         if grep -q '^bkoresc ' <<<"$by"; then
             local order=(bkoresc) i
             for ((i = 0; i < n; i++)); do order+=("bkodisk-$i"); done
-            order+=(bkodecoy)
+            order+=(bkodecoy bkorepo)   # (bkorepo: +img's repository disk)
             RN=()
             for i in "${order[@]}"; do
                 local d; d=$(awk -v s="$i" '$1 == s {print $2}' <<<"$by")
@@ -179,13 +227,13 @@ rfw=(); [[ -f $rdir/vm-run-options ]] && read -ra rfw < "$rdir/vm-run-options"
 # Where the run works and what a pass keeps (ht1-lib.sh; README "Where a run
 # works, and what it keeps").  RESC holds the repository: a rerun from
 # rebuild or verify needs it.
-HT_BULK=('src-*.qcow2' 'dst-*.qcow2' rescuer.qcow2 rescuer-try.qcow2 decoy.qcow2 prep-boot.qcow2 rustic-bko repo-password tmp)
+HT_BULK=('src-*.qcow2' 'dst-*.qcow2' rescuer.qcow2 rescuer-try.qcow2 decoy.qcow2 prep-boot.qcow2 rustic-bko repo-password tmp img.qcow2 img-key img-key.pub)
 HT_ZIP=(src.listing dst.listing)
 ht_require
 case ${PHASES[0]} in   # what the first phase remakes is not copied back from K
-    backup)  ht_seed rescuer.qcow2 rescuer-try.qcow2 'dst-*.qcow2' decoy.qcow2 tmp/ ;;
-    rebuild) ht_seed 'src-*.qcow2' 'dst-*.qcow2' rescuer-try.qcow2 decoy.qcow2 tmp/ ;;
-    verify)  ht_seed 'src-*.qcow2' rescuer-try.qcow2 decoy.qcow2 tmp/ ;;
+    backup)  ht_seed rescuer.qcow2 rescuer-try.qcow2 'dst-*.qcow2' decoy.qcow2 img.qcow2 tmp/ ;;
+    rebuild) ht_seed 'src-*.qcow2' 'dst-*.qcow2' rescuer-try.qcow2 decoy.qcow2 img.qcow2 tmp/ ;;
+    verify)  ht_seed 'src-*.qcow2' rescuer-try.qcow2 decoy.qcow2 img.qcow2 tmp/ ;;
 esac
 ht_begin
 ht_rustic_take "$PLAT"
@@ -200,7 +248,7 @@ prep_lock() {
     local s=$?; plw=""
     ((s == 0)) || { echo "ht1-bsd: no lock for $prep" >&2; exit 1; }
 }
-ht_release() { [[ -z $plw ]] || kill "$plw" 2>/dev/null; }   # (ht_end calls it)
+ht_release() { rm -f "$R/img-key" "$R/img-key.pub"; [[ -z $plw ]] || kill "$plw" 2>/dev/null; }   # (ht_end calls it)
 # The prep's VM: the QEMU on its image (vm-run names it by its real path; the
 # lock keeps it the only one), never another run's on the port.
 prep_qemu() { pgrep -f "^qemu-system.*$(realpath -m -- "$prep.part" | sed 's/[][\.*^$]/\\&/g')"; }
@@ -308,6 +356,21 @@ PREP
     rimg=$prep
 fi
 rfw=(); [[ -f $rdir/vm-run-options ]] && read -ra rfw < "$rdir/vm-run-options"
+# +img: the image's options, the rescuer guest's (omnios58's
+# --legacy-virtio-net, haiku6's --disk-bus sata) less its disks and firmware,
+# with the source's firmware (a stick boots in the machine's own mode), and
+# img-boot.d's disk_bus where the rescuer guest names none.
+ifw=()
+if ((IMG)); then
+    for ((i = 0; i < ${#rfw[@]}; i++)); do
+        case ${rfw[i]} in --disk) ((i++)) ;; --uefi|--no-secure-boot|--q35) ;; *) ifw+=("${rfw[i]}") ;; esac
+    done
+    [[ " ${fw[*]} " == *" --uefi "* ]] && ifw+=(--uefi)
+    [[ " ${fw[*]} " == *" --no-secure-boot "* ]] && ifw+=(--no-secure-boot)
+    bus=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1])).get("disk_bus") or "")' "$HERE/img-boot.d/$PLAT.json") ||
+        { echo "ht1-bsd: +img: img-boot.d/$PLAT.json doesn't read" >&2; exit 2; }
+    [[ -z $bus || " ${ifw[*]} " == *" --disk-bus "* ]] || ifw+=(--disk-bus "$bus")
+fi
 # The throwaway copies of the guest's disks (src-I) and the targets (dst-I),
 # and --disk options attaching all of them (all_*) or all but the first.
 src=() dst=() src_more=() dst_more=() all_src=() all_dst=()
@@ -338,6 +401,8 @@ if [[ $PLAT == illumos ]]; then
     s_resc=(--disk-serials "$(IFS=,; echo "bkoresc,${ids[*]}")")
     v_snap=(--snapshot)
     s_decoy=(--disk-serials "$(IFS=,; echo "bkoresc,${ids[*]},bkodecoy")" --disk-slots "$(IFS=,; echo "16,${sl[*]},$((4 + n))")")
+    # +img: the image is the rescuer's own disk, and the repository's disk follows the decoy.
+    ((IMG)) && s_decoy=(--disk-serials "$(IFS=,; echo "bkoresc,${ids[*]},bkodecoy,bkorepo")" --disk-slots "$(IFS=,; echo "16,${sl[*]},$((4 + n)),$((5 + n))")")
 fi
 size_of() { qemu-img info --output=json "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])'; }
 
@@ -350,6 +415,12 @@ put() { local key=$1 file=$2 dest=$3; timeout 600 ssh -q -i "$key" -p "$PORT" -o
 # (Without ht_begin's copies of the caller's stdout and stderr: a rescuer
 # HT_KEEP keeps up outlives the run, and its caller's ssh or pipe.)
 vm_up() { local image=$1 log=$2; shift 2
+    if [[ -n ${IMG_BOOT:-} ]]; then
+        # The rescue image (+img): img-boot.py logs its console and starts sshd with the run's key.
+        setsid -f python3 -B "$HERE/img-boot.py" "$log" "$PLAT" "$R/img-key.pub" -- \
+            "$T/vm-run" "$@" "$image" </dev/null >"$log.vm-run" 2>&1 {HT_FD1}>&- {HT_FD2}>&-
+        return
+    fi
     setsid -f "$T/vm-run" --serial-log "$log" "$@" "$image" </dev/null >"$log.vm-run" 2>&1 {HT_FD1}>&- {HT_FD2}>&-
 }
 vm_wait() { local key=$1
@@ -557,8 +628,66 @@ phase_backup() {
     vm_down "$rkey"
 }
 
+# +img: the rescue image ready for the load, a script for it: the
+# repository's disk (the rescuer guest's, disk n + 2, after the decoy)
+# mounted read-only at IMG_RR, where its root's RH is, as each system's own
+# tools mount the rescuer guest's root; and the image's own binaries there.
+# Nothing is installed.  Its last line says what's wrong, or HT1-IMG-READY.
+img_setup_script() {
+    local rd=$((n + 2)) d
+    d=${RN[rd]}
+    echo "mkdir -p $IMG_RR || exit 1"
+    case $PLAT in
+        freebsd)   # freebsd15-ufs: its root is the UFS partition of its GPT
+            cat <<EOF
+p=; for x in /dev/${d}p*; do [ "\$(fstyp \$x 2>/dev/null)" = ufs ] && { p=\$x; break; }; done
+[ -n "\$p" ] || { echo "no UFS partition on /dev/$d"; exit 1; }
+mount -r \$p $IMG_RR || { echo "mount -r \$p failed"; exit 1; }
+EOF
+            ;;
+        netbsd)    # netbsd11: an MBR and its disklabel, root in "a"; /dev is the image's MAKEDEV in tmpfs
+            local all=() i; for ((i = 0; i <= rd; i++)); do all+=("${RN[i]}"); done
+            cat <<EOF
+for x in ${all[*]}; do [ -e /dev/r\${x}d ] || (cd /dev && sh ./MAKEDEV \$x); done
+mount -r -t ffs /dev/${d}a $IMG_RR || { echo "mount -r /dev/${d}a failed"; exit 1; }
+EOF
+            ;;
+        openbsd)   # openbsd8 (its DUID of its own): root in the disklabel's "a"
+            echo "mount -r /dev/${d}a $IMG_RR || { echo \"mount -r /dev/${d}a failed\"; exit 1; }" ;;
+        dragonfly) # dragonfly6 (its HAMMER2 of its own): root the PFS ROOT of s1d
+            echo "mount -t hammer2 -o ro /dev/${d}s1d@ROOT $IMG_RR || { echo \"mount /dev/${d}s1d@ROOT failed\"; exit 1; }" ;;
+        illumos)   # omnios58 (its pool GUID of its own): rpool, imported by its GUID under another name, read-only
+            cat <<EOF
+id=; for x in /dev/dsk/${d}s*; do id=\$(zdb -l \$x 2>/dev/null | awk '\$1 == "pool_guid:" { print \$2; exit }'); [ -n "\$id" ] && break; done
+[ -n "\$id" ] || { echo "no pool label on $d"; exit 1; }
+zpool import -f -o readonly=on -N -R $IMG_RR -t "\$id" bkorepo || { echo "zpool import \$id failed"; exit 1; }
+b=\$(zpool get -H -o value bootfs bkorepo); b=bkorepo/\${b#*/}
+if [ "\$(zfs get -H -o value mountpoint \$b)" = legacy ]; then mount -F zfs -o ro \$b $IMG_RR; else zfs mount \$b; fi || { echo "mount \$b failed"; exit 1; }
+EOF
+            ;;
+        haiku)     # haiku6: its BFS, partition 0; mounted at boot before rescuer_ready stopped mount_server
+            local p; p=$(rdev $rd)/0
+            cat <<EOF
+for m in \$(df | sed 's/\x1b\[[0-9;]*m//g' | awk -v d=$p '{ if (\$NF == d) print last; last = \$1 }'); do unmount "\$m"; done
+mount -ro -t bfs $p $IMG_RR || { echo "mount -ro $p failed"; exit 1; }
+EOF
+            ;;
+    esac
+    cat <<EOF
+[ -f $RREPO/repo/config ] && [ -f $RREPO/repo-password ] || { echo "no repository at $RREPO on the last disk ($d)"; exit 1; }
+for c in $RHOLT $RARCH; do [ -x \$c ] || { echo "missing: \$c"; exit 1; }; done
+echo HT1-IMG-READY
+EOF
+}
+img_setup() {
+    local out rc
+    out=$(img_setup_script | shk "$rkey" 2>&1); rc=$?
+    printf '%s\n' "$out" >> "$R/logs/rescuer-img-setup.log"
+    ((rc == 0)) && [[ $(tail -n 1 <<<"$out") == HT1-IMG-READY ]]
+}
+
 load_step() { local want=$1 name=$2; shift 2
-    sshk "$rkey" "$RH/bko-holt load $RH/layout.json $*" > "$R/logs/rebuild-$name.out" 2> "$R/logs/rebuild-$name.err"
+    sshk "$rkey" "$RHOLT load $RH/layout.json $*" > "$R/logs/rebuild-$name.out" 2> "$R/logs/rebuild-$name.err"
     local got=$?
     if [[ $got == "$want" ]]; then ok "load $name (exit $got)"; return 0; fi
     bad "load $name: exit $got, want $want: $(grep -v '^$' "$R/logs/rebuild-$name.err" | tail -3 | tr '\n' ' ')"
@@ -578,12 +707,40 @@ phase_rebuild() {
         qemu-img create -q -f qcow2 "${dst[i]}" "$(($(size_of "${imgs[i]}") + grow))"
     done
     qemu-img create -q -f qcow2 "$R/decoy.qcow2" "$(size_of "$gimg")"
-    vm_up "$try" "$R/logs/rescuer-serial.log" "${rfw[@]}" --memory 3072 "${s_decoy[@]}" "${all_dst[@]}" --disk "$R/decoy.qcow2"
+    # (+img: the rescuer is the image, reached with the run's key, from here
+    # to the rebuild's end.)
+    local rkey=$rkey
+    if ((IMG)); then
+        rkey=$R/img-key
+        rm -f "$R/img.qcow2" "$R/img-key" "$R/img-key.pub" "$R/logs/rescuer-img-setup.log"
+        qemu-img create -q -f qcow2 -b "$IMG_PIN/rescuer.img" -F raw "$R/img.qcow2" 16G
+        ssh-keygen -q -t ed25519 -N '' -C ht1-img -f "$R/img-key" || { bad "rescuer setup (the rescue image: no key for the run)"; return; }
+        IMG_BOOT=1 vm_up "$R/img.qcow2" "$R/logs/rescuer-serial.log" "${ifw[@]}" --memory 3072 "${s_decoy[@]}" "${all_dst[@]}" --disk "$R/decoy.qcow2" --disk "$try"
+    else
+        vm_up "$try" "$R/logs/rescuer-serial.log" "${rfw[@]}" --memory 3072 "${s_decoy[@]}" "${all_dst[@]}" --disk "$R/decoy.qcow2"
+    fi
     vm_wait "$rkey" || { bad "rescuer boots"; vm_down "$rkey"; return; }
-    rescuer_ready $((n + 2))
-    put "$rkey" "$HOLT" $RH/bko-holt
+    if ((IMG)); then
+        # (After QEMU opened the image: the pin unchanged now means the
+        # inode it booted is the one the run started with.)
+        local now; now=$(pin_id)
+        if [[ $now != "$IMG_ID" ]]; then
+            IMG_HARNESS="the pin changed during the run"
+            bad "rescuer setup (the rescue image: $IMG_HARNESS: $IMG_PIN at the start: $IMG_ID; at the rebuild: $now)"
+            vm_down "$rkey"; return
+        fi
+        say "note: booted the pin $IMG_PIN: $IMG_ID"
+    fi
+    rescuer_ready $((n + 2 + IMG))
+    local how=""
+    if ((IMG)); then
+        img_setup || { bad "rescuer setup (the rescue image: the repository's disk and its own binaries: $(tail -n 1 "$R/logs/rescuer-img-setup.log"))"; vm_down "$rkey"; return; }
+        how=": the rescue image ($(sshk "$rkey" "uname -sr" 2>/dev/null)), its own $RHOLT and $RARCH, the repository read-only at $RREPO"
+    else
+        put "$rkey" "$HOLT" $RH/bko-holt
+    fi
     put "$rkey" "$R/dumps/src.json" $RH/layout.json
-    put "$rkey" "$RUSTIC" $RH/rustic-bko   # the run's binary, for a rebuild rerun too
+    ((IMG)) || put "$rkey" "$RUSTIC" $RH/rustic-bko   # the run's binary, for a rebuild rerun too
     # The targets are the rescuer's disks 1..n, the decoy the one after.
     local D=$((n + 1))
     local decoy; decoy=$(rdev $D)
@@ -598,7 +755,7 @@ phase_rebuild() {
            isdecoy="dd if=$(rraw $D) bs=512 count=1 2>/dev/null | strings | grep -q HT1DECOY" ;;
     esac
     sshk "$rkey" "$mkdecoy" > "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup (the decoy's filesystem)"; vm_down "$rkey"; return; }
-    ok "rescuer up"
+    ok "rescuer up$how"
     # The source's disks, by the layout's names, in the order they were
     # attached (the dump lists them so).
     local srcn; mapfile -t srcn < <(python3 -c 'import json,sys; [print(x["name"]) for x in json.load(open(sys.argv[1]))["storage"]["disks"]]' "$R/dumps/src.json")
@@ -638,7 +795,7 @@ phase_rebuild() {
     fi
     }
     map+=("${erase[@]}")
-    local repo=(--repo $RH/repo --password-file $RH/repo-password --archiver $RH/rustic-bko --snapshot "latest:/mnt/src")
+    local repo=(--repo $RREPO/repo --password-file $RREPO/repo-password --archiver $RARCH --snapshot "latest:/mnt/src")
     local stages=(partition assemble format mount restore boot close)
     [[ $VARIANT == oneshot ]] && stages=(oneshot)
     if [[ -n ${HT_THROUGH:-} ]]; then
@@ -659,10 +816,16 @@ phase_rebuild() {
             TMO=20 sshk "$rkey" "shutdown -r -q" >/dev/null 2>&1
             sleep 20
             vm_wait "$rkey" || { bad "the rescuer's restart after partition"; vm_down "$rkey"; return; }
-            rescuer_ready $((n + 2))
-            put "$rkey" "$HOLT" $RH/bko-holt
+            rescuer_ready $((n + 2 + IMG))
+            if ((IMG)); then
+                # (img-boot.py started sshd again at the image's menu.)
+                img_setup || { bad "the rescuer's restart after partition (the rescue image's repository disk: $(tail -n 1 "$R/logs/rescuer-img-setup.log"))"; vm_down "$rkey"; return; }
+                put "$rkey" "$R/dumps/src.json" $RH/layout.json
+            else
+                put "$rkey" "$HOLT" $RH/bko-holt
+            fi
         fi
-        sshk "$rkey" "$RH/bko-holt load $RH/layout.json ${map[*]} --only status" > "$R/logs/rebuild-status-after-$s.txt" 2>&1
+        sshk "$rkey" "$RHOLT load $RH/layout.json ${map[*]} --only status" > "$R/logs/rebuild-status-after-$s.txt" 2>&1
         if [[ $s == oneshot ]]; then
             local st
             for st in partition format close; do
@@ -681,12 +844,12 @@ phase_rebuild() {
     sshk "$rkey" "cat /var/run/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
     [[ ${HT_KEEP:-} == 1 ]] && { kept_or_down; return; }
     vm_down "$rkey"
-    rm -f "$try"
+    rm -f "$try" "$R/img.qcow2" "$R/img-key" "$R/img-key.pub"
 }
 # HT_KEEP=1: the rescuer stays up, as the stage left it; else it goes down.
 kept_or_down() {
     if [[ ${HT_KEEP:-} == 1 ]]; then
-        say "rescuer kept up: ssh -i $rkey -p $PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $GUSER@127.0.0.1 (load: $RH/bko-holt load $RH/layout.json ...)"
+        say "rescuer kept up: ssh -i $rkey -p $PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null $GUSER@127.0.0.1 (load: $RHOLT load $RH/layout.json ...)"
     else
         vm_down "$rkey"
     fi
@@ -754,9 +917,11 @@ phase_verify() {
 }
 
 say "HoltTest1 $G ($PLAT), run $RUN, $(date -u +%FT%TZ), phases: ${PHASES[*]}"
-ht_manifest "$rimg"
+((IMG)) && say "rebuilt in the rescue image $IMG_PIN/rescuer.img (+img)"
+if ((IMG)); then ht_manifest "$rimg" "$IMG_PIN/rescuer.img" "$HERE/img-boot.py" "$HERE/img-boot.d/$PLAT.json" "$T/../stick/boot-test.py"
+else ht_manifest "$rimg"; fi
 for p in "${PHASES[@]}"; do ht_phase_start "$p"; "phase_$p"; ht_phase_end "$p"; done
 ht_summary
 if ((fails == 0)); then say "RESULT: PASS"; exit 0; fi
-say "RESULT: FAIL ($fails)"
+say "RESULT: FAIL ($fails${IMG_HARNESS:+; harness: $IMG_HARNESS})"
 exit 1

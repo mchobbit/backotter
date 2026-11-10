@@ -63,8 +63,8 @@
 # the run ended early; 2 when it refused to start (nothing made or kept);
 # 129, 130 or 143 when HUP, INT or TERM ended it (RESULT: FAIL).  Results:
 # report.txt, logs/ (manifest.txt: the binaries and inputs; phases.tsv:
-# each phase's time and peaks), dumps/.  The rescuer is Debian 13, not
-# BackOtter's rescue image yet (README: "Before it can run").
+# each phase's time and peaks), dumps/.  The rescuer is Debian 13, or
+# BackOtter's own rescue image under HT_VARIANT=img.
 set -uo pipefail
 
 G=$1 RUN=$2; shift 2
@@ -89,17 +89,42 @@ BIN=/bkoscratch/holttest1d/bin
 # bin/ is, DIR/bko-holt and DIR/PLATFORM/bko-holt: HoltTest2's builds in
 # T2_HOST_ROOT/holt-bin/CODE), else bin/'s.  bin/'s debs and bcachefs stay.
 HOLT=${HT_HOLT:-${HT_HOLT_BIN:-$BIN}/bko-holt}
-[[ -n ${HT_HOLT:-} || -z ${HT_HOLT_BIN:-} || -f $HOLT ]] || { echo "ht1: no $HOLT (HT_HOLT_BIN=$HT_HOLT_BIN)" >&2; exit 2; }
+[[ ${HT_VARIANT:-} == img || -n ${HT_HOLT:-} || -z ${HT_HOLT_BIN:-} || -f $HOLT ]] || { echo "ht1: no $HOLT (HT_HOLT_BIN=$HT_HOLT_BIN)" >&2; exit 2; }
 # HT_VARIANT (README's HoltTest1D plan): "bigger" rebuilds onto disks 1 GiB
 # bigger than the source's (GPT's backup header must move to the new end);
 # "oneshot" runs the whole rebuild as one `--through close` command, as an
 # administrator would; "degraded" runs the source with its last disk
 # detached (a RAID member's: its arrays degraded), so load recreates those
 # arrays with "missing" slots onto one disk fewer, and the restored machine
-# must boot degraded too.  A variant has a directory of its own, GUEST-VARIANT.
+# must boot degraded too; "img" rebuilds from BackOtter's own rescue image
+# (ImgTest2's panel: below).  A variant has a directory of its own, GUEST-VARIANT.
 VARIANT=${HT_VARIANT:-}
-case $VARIANT in ""|bigger|oneshot|degraded) ;; *) echo "HT_VARIANT: bigger, oneshot or degraded" >&2; exit 2 ;; esac
+case $VARIANT in ""|bigger|oneshot|degraded|img) ;; *) echo "HT_VARIANT: bigger, oneshot, degraded or img" >&2; exit 2 ;; esac
 GV=$G${VARIANT:+-$VARIANT}
+# +img: the pinned --test image (t2-host tool img pin) is the rescuer, as a
+# 16 GiB throwaway overlay, its own bko-holt and rustic-bko do the load, and
+# nothing is installed in it; source and backup take the pin's bko-holt and
+# rustic-bko, so the dumps and the load are one build.  Its sshd is started
+# over the serial console with a key made for this run (img-boot.py): R's
+# img-key, never in an image, deleted at the rebuild's end and in ht_release.
+IMG_PIN=${T2_HOST_ROOT:-/bkoscratch/test2}/img-pin/linux
+if [[ $VARIANT == img ]]; then
+    [[ -f $IMG_PIN/rescuer.img && -f $IMG_PIN/rustic-bko && -f $IMG_PIN/bko-holt ]] || { echo "ht1: +img: no pinned image in $IMG_PIN (t2-host tool img pin linux)" >&2; exit 2; }
+    [[ ! -e $IMG_PIN/bins-stale ]] || { echo "ht1: +img: $IMG_PIN/bins-stale: the pin's binaries aren't the image's" >&2; exit 2; }
+    [[ ${HT_KEEP:-} != 1 && ${HT_CLEAN:-1} != 0 ]] || { echo "ht1: +img: no HT_KEEP or HT_CLEAN=0 (the run's key goes at its end)" >&2; exit 2; }
+    export HT_RUSTIC=$IMG_PIN/rustic-bko HT_HOLT=$IMG_PIN/bko-holt
+    HOLT=$HT_HOLT IMG_PLAT=linux
+fi
+# The pin as this run took it: the image's and the binaries' size, mtime and
+# inode, and rescuer.img.sha256's hash (what the row is keyed to).  A re-pin
+# renames over them; the rebuild checks the pin is still this one, else it
+# isn't the image the row would be credited to (a harness FAIL), as ht1-bsd.sh.
+pin_id() {
+    local f; for f in rescuer.img bko-holt rustic-bko; do echo -n "$f $(stat -L -c '%s %Y %i' "$IMG_PIN/$f" 2>/dev/null || echo none); "; done
+    echo "sha256 $(head -n 1 "$IMG_PIN/rescuer.img.sha256" 2>/dev/null | cut -d' ' -f1)"
+}
+IMG_ID=""; [[ $VARIANT == img ]] && IMG_ID=$(pin_id)
+IMG_HARNESS=""   # a harness failure's why, for the RESULT line (rows_holt: HARNESS)
 PORT=${HT_PORT:-2690}   # by-hand runs: 2690-2699 (ht1-queue.sh hands out 2600-2689)
 export SSH_PORT=$PORT   # vm-run's guest SSH port
 RESCUER=${HT_RESCUER:-debian13}
@@ -107,6 +132,7 @@ RESCUER=${HT_RESCUER:-debian13}
 # there is one; else the debian13 guest itself.
 RESCUER_IMG=${HT_RESCUER_IMG:-/bkoscratch/holttest1d/rescuer/rescuer.qcow2}
 [[ -f $RESCUER_IMG ]] || RESCUER_IMG=$W/vms/$RESCUER/$RESCUER.qcow2
+if [[ $VARIANT == img ]]; then RESCUER=img-pin RESCUER_IMG=$IMG_PIN/rescuer.img; fi
 SRC_MP=/mnt/ht1-src-$GV
 DST_MP=/mnt/ht1-dst-$GV
 fails=0
@@ -132,6 +158,8 @@ fi
 # reads is set by here).  Nothing is made until ht_begin.
 ht_paths
 S=$R/share
+# (+img in RAM only: on disk R is K, where a killed run would leave the key.)
+[[ $VARIANT != img || $HT_MODE == ram ]] || { echo "ht1: +img: only in the RAM disk (under cmp-run.sh --reserve, not HT_RAM=0): on disk the run's key would be in $K" >&2; exit 2; }
 uefi=0; [[ " ${fw[*]} " == *" --uefi "* ]] && uefi=1
 detached=""
 if [[ $VARIANT == degraded ]]; then
@@ -142,10 +170,19 @@ fi
 # --uefi, from ubuntu26-uefi), as BackOtter's stick boots in the machine's
 # own firmware mode: grub-mkconfig writes UEFI's grub.cfg only there.
 rfw=()
-if ((uefi)) && [[ -z ${HT_RESCUER_IMG:-} && -f /bkoscratch/holttest1d/rescuer/rescuer-uefi.qcow2 ]]; then
+if [[ $VARIANT == img ]]; then
+    # The image boots in the source's firmware mode, as a stick would.  (Its shim and
+    # kernel are signed; a guest with --no-secure-boot runs it with Secure Boot off.)
+    ((uefi)) && rfw=(--uefi)
+    [[ " ${fw[*]} " == *" --no-secure-boot "* ]] && rfw+=(--no-secure-boot)
+    rkey=$R/img-key
+elif ((uefi)) && [[ -z ${HT_RESCUER_IMG:-} && -f /bkoscratch/holttest1d/rescuer/rescuer-uefi.qcow2 ]]; then
     RESCUER=ubuntu26-uefi RESCUER_IMG=/bkoscratch/holttest1d/rescuer/rescuer-uefi.qcow2 rfw=(--uefi)
     rkey=$W/vms/$RESCUER/id_ed25519
 fi
+# What the load runs in the rescuer (+img: the image's own, as a user's would).
+RHOLT=/mnt/share/bko-holt RARCH=/mnt/share/rustic-bko
+if [[ $VARIANT == img ]]; then RHOLT=/usr/local/bin/bko-holt RARCH=/usr/local/bin/rustic-bko; fi
 n=${#imgs[@]}
 src=() dst=() extra_src=() extra_dst=() map=() erase=()
 letters=(a b c d e f g h)
@@ -160,7 +197,7 @@ size_of() { qemu-img info --output=json "$1" | python3 -c 'import json,sys; prin
 # --key-file for the volumes it makes).
 gpass=""; for f in console-passphrase zfs-passphrase luks-passphrase; do [[ -f $W/vms/$G/$f ]] && gpass=$W/vms/$G/$f && break; done
 # Where the run works and what a pass keeps (ht1-lib.sh; README "Where a run works, and what it keeps").
-HT_BULK=(share 'src-*.qcow2' 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 rustic-bko tmp)
+HT_BULK=(share 'src-*.qcow2' 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 rustic-bko tmp img-key img-key.pub)
 HT_ZIP=(src-meta.json dst-meta.json)
 # Settings that change what a run checks, or its rescuer: its report names them.
 dbg=""; for v in HT_QUICK HT_THROUGH HT_KEEP HT_FAIL_AT HT_RESCUER HT_RESCUER_IMG; do [[ -z ${!v:-} ]] || dbg+=" $v=${!v}"; done
@@ -180,7 +217,7 @@ ht_rustic_take linux
 # dumps and the load are one build's.
 cp --remove-destination "$HOLT" "$S/bko-holt"
 HT_MOUNTED=""
-ht_release() { [[ -n $HT_MOUNTED ]] && mountpoint -q "$HT_MOUNTED" && "$T/vm-umount" "$HT_MOUNTED" >/dev/null 2>&1; rmdir "$SRC_MP" "$DST_MP" 2>/dev/null; }
+ht_release() { rm -f "$R/img-key" "$R/img-key.pub"; [[ -n $HT_MOUNTED ]] && mountpoint -q "$HT_MOUNTED" && "$T/vm-umount" "$HT_MOUNTED" >/dev/null 2>&1; rmdir "$SRC_MP" "$DST_MP" 2>/dev/null; }
 
 sshk() { local key=$1; shift; timeout "${TMO:-600}" ssh -q -i "$key" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ConnectTimeout=5 -o ServerAliveInterval=15 root@127.0.0.1 "$@"; }
 scpk() { local key=$1; shift; timeout 300 scp -q -i "$key" -P "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$@"; }
@@ -190,7 +227,11 @@ vm_up() { # IMAGE LOG [vm-run options...] [-- QEMU_ARGS...]
     [[ ${1:-} == -- ]] && { shift; qargs=(-- "$@"); }
     # (Without ht_begin's copies of the caller's stdout and stderr: a rescuer
     # HT_KEEP keeps up outlives the run, and its caller's ssh or pipe.)
-    if [[ ${CONSOLE_KEY:-} == */luks-passphrase ]]; then
+    if [[ -n ${IMG_BOOT:-} ]]; then
+        # The rescue image: img-boot.py logs its console and starts sshd with the run's key.
+        setsid -f python3 -B "$HERE/img-boot.py" "$log" "$IMG_BOOT" "$R/img-key.pub" -- \
+            "$T/vm-run" "${opts[@]}" "$image" "${qargs[@]}" </dev/null 2>"$log.vm-run" {HT_FD1}>&- {HT_FD2}>&-
+    elif [[ ${CONSOLE_KEY:-} == */luks-passphrase ]]; then
         # Asked for on the screen (Plymouth, Omarchy): typed on the guest's
         # keyboard through QEMU's monitor, every 30 s until SSH answers (at
         # a login prompt it does no harm), as compare.py does.
@@ -315,7 +356,7 @@ phase_backup() {
 
 # One bko-holt load call in the rescuer: WANT exit, NAME, then load's args.
 load_step() { local want=$1 name=$2; shift 2
-    sshk "$rkey" "/mnt/share/bko-holt load /mnt/share/layout.json $*" > "$R/logs/rebuild-$name.out" 2> "$R/logs/rebuild-$name.err"
+    sshk "$rkey" "$RHOLT load /mnt/share/layout.json $*" > "$R/logs/rebuild-$name.out" 2> "$R/logs/rebuild-$name.err"
     local got=$?
     if [[ $got == "$want" ]]; then ok "load $name (exit $got)"; return 0; fi
     bad "load $name: exit $got, want $want: $(grep -v '^$' "$R/logs/rebuild-$name.err" | tail -3 | tr '\n' ' ')"
@@ -329,7 +370,12 @@ phase_rebuild() {
     cp "$RUSTIC" "$S/rustic-bko"; cp "$BIN"/*.deb "$S/"   # this run's, when rerun after a fix (bko-holt: copied as the run started)
     [[ ! -f $BIN/bcachefs ]] || cp "$BIN/bcachefs" "$S/"
     rm -f "$R/rescuer.qcow2" "${dst[@]}"
-    qemu-img create -q -f qcow2 -b "$RESCUER_IMG" -F qcow2 "$R/rescuer.qcow2"
+    if [[ $VARIANT == img ]]; then
+        qemu-img create -q -f qcow2 -b "$RESCUER_IMG" -F raw "$R/rescuer.qcow2" 16G
+        rm -f "$R/img-key" "$R/img-key.pub"; ssh-keygen -q -t ed25519 -N '' -C ht1-img -f "$R/img-key" || { bad "rescue image: no run key"; return; }
+    else
+        qemu-img create -q -f qcow2 -b "$RESCUER_IMG" -F qcow2 "$R/rescuer.qcow2"
+    fi
     local disks=() grow=0
     [[ $VARIANT == bigger ]] && grow=$((1 << 30))
     for ((i = 0; i < n; i++)); do
@@ -345,11 +391,28 @@ phase_rebuild() {
     # aren't the restored machine's (each vm-run --uefi starts fresh), so
     # the boot stage runs with --no-nvram, and the restored disk boots from
     # the ESP's removable path.
-    vm_up "$R/rescuer.qcow2" "$R/logs/rescuer-serial.log" "${rfw[@]}" --memory 3072 "${disks[@]}" -- \
+    IMG_BOOT=${IMG_PLAT:-} vm_up "$R/rescuer.qcow2" "$R/logs/rescuer-serial.log" "${rfw[@]}" --memory 3072 "${disks[@]}" -- \
         -virtfs "local,path=$S,mount_tag=bkoshare,security_model=none,readonly=on"
     vm_wait "$rkey" || { bad "rescuer boots"; vm_down "$rkey"; return; }
+    if [[ $VARIANT == img ]]; then
+        # (After QEMU opened the image: the pin unchanged now means the
+        # inode it booted is the one the run started with.)
+        local now; now=$(pin_id)
+        if [[ $now != "$IMG_ID" ]]; then
+            IMG_HARNESS="the pin changed during the run"
+            bad "rescue image: $IMG_HARNESS: $IMG_PIN at the start: $IMG_ID; at the rebuild: $now"
+            vm_down "$rkey"; return
+        fi
+        say "note: booted the pin $IMG_PIN: $IMG_ID"
+    fi
+    if [[ $VARIANT == img ]]; then
+        # The image's own tools, or a FAIL: nothing is installed in it.
+        sshk "$rkey" 'mkdir -p /mnt/share && mount -t 9p -o trans=virtio,version=9p2000.L,ro bkoshare /mnt/share && for c in mkfs.ext4 mkfs.xfs mkfs.btrfs mkfs.vfat mkfs.f2fs mkfs.nilfs2 mkfs.jfs mkfs.bcachefs zpool zfs mdadm cryptsetup lvm sgdisk bko-holt rustic-bko; do command -v $c >/dev/null || { echo "missing: $c"; exit 1; }; done; uname -r' \
+            > "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescue image: share and tools ($(tail -n 1 "$R/logs/rescuer-setup.log"))"; vm_down "$rkey"; return; }
+    else
     sshk "$rkey" 'mkdir -p /mnt/share && mount -t 9p -o trans=virtio,version=9p2000.L,ro bkoshare /mnt/share && inst() { apt-get install -y -q -o DPkg::Lock::Timeout=600 "$@" >/dev/null; } && { command -v mkfs.f2fs >/dev/null || inst /mnt/share/f2fs-tools_*.deb; } && { command -v mkfs.jfs >/dev/null || inst /mnt/share/jfsutils_*.deb; } && { [ ! -f /mnt/share/bcachefs ] || command -v bcachefs >/dev/null || { for d in /mnt/share/bcachefs-deps-*.deb; do [ ! -f "$d" ] || inst "$d"; done; install -m 755 /mnt/share/bcachefs /usr/local/sbin/bcachefs; }; }' \
         > "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup (share, f2fs-tools, jfsutils)"; vm_down "$rkey"; return; }
+    fi
     sshk "$rkey" "mkfs.ext4 -q -F -L ht1decoy $decoy" >> "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup (the decoy's filesystem)"; vm_down "$rkey"; return; }
     ok "rescuer up, share mounted"
     # The first and last MiB of every target and the decoy, before and after
@@ -395,7 +458,7 @@ PY
     fi
     fi
     local map=("${map[@]}" "${erase[@]}" "${flags[@]}")
-    local repo=(--repo /mnt/share/repo --password-file /mnt/share/repo-password --archiver /mnt/share/rustic-bko --snapshot "latest:$SRC_MP")
+    local repo=(--repo /mnt/share/repo --password-file /mnt/share/repo-password --archiver "$RARCH" --snapshot "latest:$SRC_MP")
     local stages=(partition assemble format mount restore boot close)
     # oneshot: the whole rebuild as one command; `status` after it must show
     # every stage it can see done.
@@ -413,7 +476,7 @@ PY
             # What the rescuer looked like when the stage failed.
             sshk "$rkey" 'set -x; findmnt -R /mnt/bko-target; grep -E "zfs|/mnt/bko" /proc/mounts; zpool list -v; zfs list -o name,mounted,mountpoint,canmount; fuser -vm /mnt/bko-target 2>&1; lsblk -f; cat /proc/swaps; ls -l /dev/zvol 2>&1; dmsetup ls; cat /proc/mdstat; for f in /proc/[0-9]*/mountinfo; do grep -q bko-target $f 2>/dev/null && p=${f#/proc/} && p=${p%/mountinfo} && echo "mount namespace with bko-target: pid $p $(cat /proc/$p/comm) $(readlink /proc/$p/ns/mnt)"; done; readlink /proc/self/ns/mnt' > "$R/logs/rebuild-failed-state.txt" 2>&1
             kept_or_down; return; }
-        sshk "$rkey" "/mnt/share/bko-holt load /mnt/share/layout.json ${map[*]} --only status" > "$R/logs/rebuild-status-after-$s.txt" 2>&1
+        sshk "$rkey" "$RHOLT load /mnt/share/layout.json ${map[*]} --only status" > "$R/logs/rebuild-status-after-$s.txt" 2>&1
         if [[ $s == oneshot ]]; then
             # Once closed, mount, restore and boot can't be seen (status
             # says so), just as after the staged run's close.
@@ -431,12 +494,12 @@ PY
     sshk "$rkey" 'cat /run/bko-holt/log/load.log' > "$R/logs/rebuild-load.log"
     [[ ${HT_KEEP:-} == 1 ]] && { kept_or_down; return; }
     vm_down "$rkey"
-    rm -f "$R/rescuer.qcow2"
+    rm -f "$R/rescuer.qcow2" "$R/img-key" "$R/img-key.pub"
 }
 # HT_KEEP=1: the rescuer stays up, as the stage left it; else it goes down.
 kept_or_down() {
     if [[ ${HT_KEEP:-} == 1 ]]; then
-        say "rescuer kept up: ssh -i $rkey -p $PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@127.0.0.1 (load: /mnt/share/bko-holt load /mnt/share/layout.json ...)"
+        say "rescuer kept up: ssh -i $rkey -p $PORT -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null root@127.0.0.1 (load: $RHOLT load /mnt/share/layout.json ...)"
     else
         vm_down "$rkey"
     fi
@@ -509,5 +572,5 @@ for p in "${PHASES[@]}"; do
     [[ $fails == 0 ]] || { say "stopped after $p"; break; }
 done
 ht_summary
-say "RESULT: $([[ $fails == 0 ]] && echo PASS || echo "FAIL ($fails)")"
+say "RESULT: $([[ $fails == 0 ]] && echo PASS || echo "FAIL ($fails${IMG_HARNESS:+; harness: $IMG_HARNESS})")"
 [[ $fails == 0 ]]

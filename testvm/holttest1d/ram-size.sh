@@ -39,7 +39,7 @@ while [[ ${1:-} == --* ]]; do
     shift 2
 done
 if [[ -n $BIG ]]; then [[ $# -eq 0 ]] || usage; else [[ $# -gt 0 ]] || usage; fi
-name='^[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded))?$'
+name='^[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded|img))?$'
 for n; do [[ $n =~ $name ]] || { echo "ram-size.sh: not GUEST[+VARIANT]: $n" >&2; exit 2; }; done
 [[ -r $TABLE && ! -d $TABLE ]] || { echo "ram-size.sh: no table $TABLE" >&2; exit 2; }
 [[ -r $PEAKS && ! -d $PEAKS ]] || PEAKS=/dev/null   # no run logged yet
@@ -99,7 +99,7 @@ awk -F'\t' -v host="$(hostname -s)" -v big="$BIG" -v names="$*" '
         if ($cg == "" || $cd !~ /^[0-9]+$/ || ph != "source,backup,rebuild,verify" || $cr != "PASS" || (cs && $cs != "0")) next
         gv = $cg; k = np[gv]++ % 3
         pd[gv, k] = $cd + 0; pa[gv, k] = ($ca ~ /^[0-9]+$/) ? $ca + 0 : -1   # anon "-": none
-        n = gv; if (match(n, /-(bigger|oneshot|degraded)$/)) n = substr(n, 1, RSTART - 1) "+" substr(n, RSTART + 1)
+        n = gv; if (match(n, /-(bigger|oneshot|degraded|img)$/)) n = substr(n, 1, RSTART - 1) "+" substr(n, RSTART + 1)
         known[n] = 1
     }
     END {
@@ -107,7 +107,7 @@ awk -F'\t' -v host="$(hostname -s)" -v big="$BIG" -v names="$*" '
         if (big == "") { k = split(names, a, " "); for (i = 1; i <= k; i++) print a[i], size(a[i]); exit }
         for (n in td) known[n] = 1
         for (n in known) { g = n; sub(/[+].*/, "", g); base[g] = 1 }
-        for (g in base) { known[g] = 1; known[g "+bigger"] = 1; known[g "+oneshot"] = 1; known[g "+degraded"] = 1 }
+        for (g in base) { known[g] = 1; known[g "+bigger"] = 1; known[g "+oneshot"] = 1; known[g "+degraded"] = 1; known[g "+img"] = 1 }
         for (n in known) { split(size(n), r, " "); if (r[1] + 0 >= big + 0) print n | "sort" }
         close("sort")
     }' t=1 "$TABLE" t=0 "$PEAKS"

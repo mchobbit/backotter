@@ -18,7 +18,11 @@
 # HOLT_OUT and HOLT_LOGS override where the tree comes from, the binary goes
 # (DIR/bko-holt) and the log goes; HOLT_INFO=FILE gets a JSON object about
 # the build (platform, sha256, rustc, host, time).  The guest's vm-run is
-# this copy's (the vm-lib.sh beside this script's testvm/).
+# this copy's (the vm-lib.sh beside this script's testvm/).  With a test's
+# T2_HOST_ROOT (set, and not /bkoscratch/test2) it needs HOLT_OUT and
+# HOLT_LOGS, and refuses (exit 2) any of HOLT_OUT, HOLT_LOGS and HOLT_INFO's
+# directory in ~/backotter-work/holt-bin or bko-bin or in
+# /bkoscratch/holttest1d, by whatever path (a link, /bkoscratch/work).
 #
 # A stick/build-rustic.sh build image (~/backotter-work/vms-bko-build/
 # VM-rust.qcow2) is used when there is one: it has Rust already.  Otherwise
@@ -47,8 +51,51 @@ WORK=/home/m/backotter-work
 HERE=$(dirname "$(realpath "$0")")
 PLATFORMS="linux, freebsd, netbsd, openbsd, dragonfly, illumos or haiku"
 
+# A test's build (T2_HOST_ROOT set, and not HoltTest2's own /bkoscratch/test2)
+# never lands in the shipped sets, WORK/holt-bin and WORK/bko-bin (the images
+# are built from them), nor in HoltTest1's shared /bkoscratch/holttest1d
+# (bin/PLATFORM/bko-holt is every by-hand BSD run's), by any path to them: a
+# link, or /bkoscratch/work, of which WORK is a bind mount, so the same
+# directories under another realpath.  So each path is compared by device
+# and inode (-ef), it and every ancestor of it that exists.  HOLT_OUT and
+# HOLT_LOGS must be set: their defaults are HoltTest1's.  A test world's
+# holt-bin is a directory of its own.
+SHARED=("$WORK/holt-bin" "$WORK/bko-bin" /bkoscratch/holttest1d)
+# PATH: the shared directory it is or is in, printed; else false.
+in_shared() {
+    local p d; p=$(realpath -m -- "$1")
+    while :; do
+        if [[ -e $p ]]; then
+            for d in "${SHARED[@]}"; do
+                [[ -e $d && $p -ef $d ]] && { echo "$d"; return 0; }
+            done
+        fi
+        [[ $p == / ]] && return 1
+        p=$(dirname -- "$p")
+    done
+}
+refuse_shipped() {
+    [[ -n ${T2_HOST_ROOT:-} ]] || return 0
+    [[ $(realpath -m -- "$T2_HOST_ROOT") != "$(realpath -m /bkoscratch/test2)" ]] || return 0
+    local v p d
+    for v in HOLT_OUT HOLT_LOGS; do
+        [[ -n ${!v:-} ]] && continue
+        echo "build-holt: $v is unset, and T2_HOST_ROOT=$T2_HOST_ROOT is a test's: its default is HoltTest1's shared one; a test names its own" >&2
+        exit 2
+    done
+    for v in HOLT_OUT HOLT_LOGS HOLT_INFO; do
+        [[ -n ${!v:-} ]] || continue
+        p=${!v}; [[ $v == HOLT_INFO ]] && p=$(dirname -- "$p")
+        if d=$(in_shared "$p"); then
+            echo "build-holt: $v=${!v} is in $d (the same device and inode), and T2_HOST_ROOT=$T2_HOST_ROOT is a test's: a test builds into its own world's holt-bin, a real directory" >&2
+            exit 2
+        fi
+    done
+}
+
 if [[ ${1:-} == --reserved ]]; then
     [[ $# -eq 3 ]] || { echo "build-holt: --reserved RUN PLATFORM" >&2; exit 2; }
+    refuse_shipped
     RUN=$2 PLATFORM=$3
     [[ $RUN =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "build-holt: RUN '$RUN': a plain name" >&2; exit 2; }
     case $PLATFORM in linux|freebsd|netbsd|openbsd|dragonfly|illumos|haiku) ;;
@@ -96,6 +143,7 @@ SRC=${HOLT_SRC:-$WORK/holt-src}
 OUT=${HOLT_OUT:-/bkoscratch/holttest1d/bin/$PLATFORM}
 [[ $PLATFORM != linux ]] || OUT=${HOLT_OUT:-/bkoscratch/holttest1d/bin}
 LOGS=${HOLT_LOGS:-/bkoscratch/holttest1d/build-holt-$PLATFORM}
+refuse_shipped
 GUEST_PATH=/sbin:/usr/sbin:/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/pkg/sbin:/usr/pkg/bin:/opt/ooce/bin:/usr/gnu/bin
 case $PLATFORM in
     linux) ;;
@@ -109,6 +157,7 @@ case $PLATFORM in
     *) echo "build-holt: PLATFORM: $PLATFORMS" >&2; exit 2 ;;
 esac
 [[ -f $SRC/Cargo.toml ]] || { echo "build-holt: no $SRC/Cargo.toml" >&2; exit 1; }
+refuse_shipped   # (again, just before the first write)
 mkdir -p "$OUT" "$LOGS"
 
 # HOLT_INFO's JSON: PLATFORM SHA256 RUSTC.

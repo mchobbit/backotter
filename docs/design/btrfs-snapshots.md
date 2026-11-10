@@ -6,7 +6,16 @@ Status: **approved 2026-11-10** (approach A, the chain forward with
 0.13.0+backotter.8 / rustic 0.11.4+backotter.9 `restore --exact` and
 `--clone-from` (`crates/core/src/commands/restore/exact.rs`); tests
 `testvm/compare/exact-rt.sh` and HoltTest1's `HT_SOURCE_PREP` with
-`testvm/holttest1d/prep/tumbleweed-snapper.sh`.  Follow-up to
+`testvm/holttest1d/prep/tumbleweed-snapper.sh`.
+
+Results, 2026-11-10 on cinqcent: exact-rt.sh PASS; HoltTest1 tumbleweed
+with eight snapper snapshots after a rollback (run `bkoexact`) PASS, no
+`AlreadyExists` in load.log.  The seven shared snapshots wrote 145 MiB of
+data between them (each about 1.1 GiB in full before); their exclusive
+sizes, restored (source): 1: 11.2 (0.2), 2: 70.2 (64.0), 3: 52.0 (0.2),
+4–7: 3.8–3.9 (0.0–0.1) MiB.  What's left over is whole-file: a file changed
+in place on the source that is in neither the base nor the live root is
+written again.  Rebuild 163 s, verify 96 s.  Follow-up to
 BackShot1's openSUSE Tumbleweed pass (run
 opensuse-tumbleweed-20261108-20261110-165711, commit 81922b2).
 

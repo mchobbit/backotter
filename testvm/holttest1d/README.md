@@ -257,6 +257,13 @@ That works on a failure's state, which comes back into RAM from
 /bkoscratch for it, but not on a pass's records, which keep no disks or
 repository: run those from `source`.
 
+`HT_SOURCE_PREP=FILE` runs a script of the test's as root in the source,
+in its throwaway overlay, before the dump, and reboots the source when its
+last line is `REBOOT`.  `prep/tumbleweed-snapper.sh` gives tumbleweed four
+snapper snapshots of a changing root and a `snapper rollback`, for load's
+shared btrfs snapshots (docs/design/btrfs-snapshots.md; run `bkoexact` on
+cinqcent, 2026-11-10: PASS).
+
 The plan's variants are chosen with `HT_VARIANT`, each in a directory of
 its own (`RUN/GUEST-VARIANT`): `oneshot` runs the rebuild as one
 `--through close --commit`, and `bigger` rebuilds onto disks 1 GiB bigger

@@ -11,12 +11,18 @@ remakes on purpose (the initramfs, grub.cfg and the ESP's loader).
 Each file's extended attributes are compared too: SELinux labels, capabilities,
 POSIX ACLs and user.* attributes.  A baseline older than that has none, and
 then only the rest is compared.
+
+A directory met a second time (openSUSE's root subvolume, mounted at / and
+seen again at .snapshots/N/snapshot under /.snapshots) is listed once, as an
+alias, and not walked again.  snapper's own snapshots come and go with its
+timers, so a snapshot only one side has is expected; the others are compared.
 """
 
 import base64
 import fnmatch
 import hashlib
 import os
+import re
 import stat
 import sys
 
@@ -48,7 +54,8 @@ EXPECTED = [
 # otherwise.  machine-id: systemd writes it again from the kernel command
 # line's systemd.machine_id= (EndeavourOS with systemd-boot); a different ID
 # would orphan the ESP's /MACHINE-ID/ directory and loader entries.
-REMADE = ["etc/machine-id"]
+# mimeinfo.cache: openSUSE rebuilds it at boot after the restore.
+REMADE = ["etc/machine-id", "usr/share/applications/mimeinfo.cache"]
 
 # NixOS makes these again from its store at every boot.
 NIXOS_EXPECTED = ["etc/.clean", "etc/group", "etc/passwd", "etc/shadow", "etc/subgid", "etc/subuid", "nix/var/nix/temproots/*", "nix/var/nix/db/*"]
@@ -75,15 +82,23 @@ def xattrs(path):
 
 
 def write(root, out):
+    st = os.lstat(root)
+    seen = {(st.st_dev, st.st_ino): "."}
     with open(out, "w", encoding="utf-8", errors="surrogateescape") as f:
         for d, dirs, files in os.walk(root):
+            again = []
             for name in dirs + files:
                 p = os.path.join(d, name)
                 rel = os.path.relpath(p, root)
                 st = os.lstat(p)
                 extra = "-"
                 try:
-                    if stat.S_ISLNK(st.st_mode):
+                    if stat.S_ISDIR(st.st_mode):
+                        first = seen.setdefault((st.st_dev, st.st_ino), rel)
+                        if first != rel:
+                            extra = f"alias:{first}"
+                            again.append(name)
+                    elif stat.S_ISLNK(st.st_mode):
                         extra = os.readlink(p)
                     elif stat.S_ISREG(st.st_mode):
                         extra = digest(p)
@@ -92,6 +107,7 @@ def write(root, out):
                 except OSError as e:
                     extra = f"unreadable:{e.errno}"
                 f.write("\t".join([rel, oct(st.st_mode), str(st.st_uid), str(st.st_gid), str(st.st_size), str(st.st_mtime_ns), extra, xattrs(p)]) + "\n")
+            dirs[:] = [n for n in dirs if n not in again]
 
 
 def read(path):
@@ -135,11 +151,34 @@ def expected(rel, nixos):
     return any(fnmatch.fnmatch(rel, pat) for pat in EXPECTED + (NIXOS_EXPECTED if nixos else []))
 
 
+SNAPSHOT = re.compile(r"(.*?)\.snapshots/([0-9]+)(?:/|$)")
+
+
+def snapshots(rows):
+    """snapper's snapshots, as (where its .snapshots is, number)."""
+    return {m.groups() for rel in rows if (m := SNAPSHOT.fullmatch(rel + "/"))}
+
+
+def unaliased(rows, aliases):
+    """Without what's under a directory listed as another's alias: a baseline
+    written before aliases has those rows, and they'd be the other's twice."""
+    return {rel: r for rel, r in rows.items() if not any(rel.startswith(a + "/") for a in aliases)}
+
+
 def compare(old_path, new_path):
     old, new = read(old_path), read(new_path)
+    aliases = sorted({rel for rows in (old, new) for rel, r in rows.items() if len(r) > 5 and r[5].startswith("alias:")})
+    if aliases:
+        old, new = unaliased(old, aliases), unaliased(new, aliases)
+        print(f"aliases, compared once: {' '.join(aliases)}")
     nixos = "etc/NIXOS" in old
     missing = sorted(set(old) - set(new))
     added = sorted(set(new) - set(old))
+    # A snapshot snapper took after the backup, or cleaned up since.
+    def own(paths, other):
+        theirs = snapshots(other)
+        return {p for p in paths if (m := SNAPSHOT.match(p)) and m.groups() not in theirs}
+    snapper = own(missing, new) | own(added, old)
     changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], nixos))
     both = [p for p in set(old) & set(new) if len(old[p]) > 6 and len(new[p]) > 6]
     relabeled = sorted(p for p in both if old[p][6] != new[p][6])
@@ -147,7 +186,7 @@ def compare(old_path, new_path):
         print("xattrs: this baseline has none, so they weren't compared")
     bad = []
     for label, paths in (("missing", missing), ("added", added), ("changed", changed), ("xattrs", relabeled)):
-        unexpected = [p for p in paths if not expected(p, nixos)]
+        unexpected = [p for p in paths if not expected(p, nixos) and p not in snapper]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")
         bad += [f"{label}: {p}" + (f" ({xattr_diff(old[p], new[p])})" if label == "xattrs" else "") for p in unexpected]
     print(f"files compared: {len(old)}")

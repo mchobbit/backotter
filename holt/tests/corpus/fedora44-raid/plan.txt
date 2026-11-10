@@ -99,7 +99,7 @@ mkdir -p /mnt/bko-target/var/log/bko-holt
 # this restore's log, on the restored system
 cp -a /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
 # SELinux labels for the files the boot stage wrote
-chroot /mnt/bko-target sh -c '[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ "${SELINUX:-disabled}" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ ! -f "$f" ] || ! command -v setfiles >/dev/null || setfiles "$f" /boot /var/log/bko-holt'
+chroot /mnt/bko-target sh -c '[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ "${SELINUX:-disabled}" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ ! -f "$f" ] || ! command -v setfiles >/dev/null || { [ ! -d /etc/kernel ] || set -- /etc/kernel; setfiles "$f" /boot /var/log/bko-holt "$@"; }'
 umount --recursive /mnt/bko-target/run
 umount --recursive /mnt/bko-target/sys
 umount --recursive /mnt/bko-target/proc

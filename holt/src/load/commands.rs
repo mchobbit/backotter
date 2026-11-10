@@ -2116,6 +2116,13 @@ impl Builder<'_> {
                 out.push(Cmd { argv: a, ..Cmd::default() });
                 self.remake_grub_cfg(&t, &mut out);
             }
+            // Through shim (openSUSE's sdbootutil): the ESP's shim, its
+            // signed systemd-boot and the fallback came back with the ESP.
+            // bootctl install would put an unsigned systemd-boot where shim
+            // is the fallback, EFI/BOOT/BOOTX64.EFI.
+            ("systemd-boot", true) if self.layout.v.at(&["boot", "loader", "via_shim"]).and_then(Value::as_bool) == Some(true) => {
+                self.notes.push("systemd-boot through shim: shim, systemd-boot and the loader entries are the restored ESP's; only the boot entries are made".into());
+            }
             ("systemd-boot", true) => {
                 out.push(Cmd::new(&["chroot", &t, "bootctl", "install", "--no-variables"]));
             }
@@ -2131,14 +2138,15 @@ impl Builder<'_> {
         out.push(Cmd::new(&["cp", "-a", &format!("{RUN_DIR}/log/."), &format!("{t}/var/log/bko-holt/")]).why("this restore's log, on the restored system"));
         if self.layout.str_at(&["os", "id"]) != Some("nixos") {
             // The restore kept every file's SELinux label; what this stage
-            // wrote (initramfs images, grub.cfg, the log) gets the policy's.
+            // wrote (initramfs images, grub.cfg, the log, bootctl's
+            // /etc/kernel/entry-token) gets the policy's.
             out.push(
                 Cmd::new(&[
                     "chroot",
                     &t,
                     "sh",
                     "-c",
-                    "[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ \"${SELINUX:-disabled}\" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ ! -f \"$f\" ] || ! command -v setfiles >/dev/null || setfiles \"$f\" /boot /var/log/bko-holt",
+                    "[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ \"${SELINUX:-disabled}\" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ ! -f \"$f\" ] || ! command -v setfiles >/dev/null || { [ ! -d /etc/kernel ] || set -- /etc/kernel; setfiles \"$f\" /boot /var/log/bko-holt \"$@\"; }",
                 ])
                 .why("SELinux labels for the files the boot stage wrote"),
             );
@@ -2417,6 +2425,24 @@ mod tests {
         let esps = r#"[{"contents": {"files": [{"path": "EFI/BOOT/BOOTX64.EFI"}, {"path": "EFI/ubuntu/shimx64.efi"}]}}]"#;
         assert_eq!(id_of(&format!(r#"{{"entries": [{win}], "boot_order": ["0000"]}}"#), esps), "ubuntu");
         assert_eq!(id_of(&format!(r#"{{"entries": [{win}], "boot_order": ["0000"]}}"#), "[]"), "debian");
+    }
+
+    #[test]
+    fn systemd_boot_through_shim_keeps_the_esp() {
+        let boot = |via_shim: bool| {
+            let j = sample::bios_mbr()
+                .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+                .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, &format!(r#""loader": {{"name": "systemd-boot", "firmware": "uefi", "via_shim": {via_shim}}}"#));
+            let b = built_from(&j, &[]);
+            (text(b.stage(Stage::Boot)), b.notes.join("\n"))
+        };
+        let (t, n) = boot(true);
+        assert!(!t.contains("bootctl"), "{t}");
+        assert!(n.contains("systemd-boot through shim"), "{n}");
+        let (t, _) = boot(false);
+        assert!(t.contains("chroot /mnt/bko-target bootctl install --no-variables\n"), "{t}");
+        // bootctl writes /etc/kernel/entry-token: relabelled, when it's there.
+        assert!(t.contains(r#"[ ! -d /etc/kernel ] || set -- /etc/kernel; setfiles "$f" /boot /var/log/bko-holt "$@";"#), "{t}");
     }
 
     #[test]

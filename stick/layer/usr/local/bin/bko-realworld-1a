@@ -374,6 +374,11 @@ must cp "$LAYOUT" "$REPO_DIR/layout.json"
 LAYOUT=$REPO_DIR/layout.json
 
 RUSTIC=("$BIN/rustic-bko" -r "$REPO" --password-file "$PW" --no-progress --no-cache)
+# rustic-bko exits as restic-bko does (--strict-exit, 0.11.4+backotter.8): 3
+# for a backup that left out files or metadata it couldn't read, so that
+# `must` stops here before the wipe; 1 for a restore that couldn't set
+# metadata.  The variable, not the flag: an older rustic-bko ignores it.
+export RUSTIC_STRICT_EXIT=true
 rlog() { echo --log-level-logfile debug --log-file "$RUN/log/$1.log"; }
 
 step "backing up"

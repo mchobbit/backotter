@@ -49,7 +49,7 @@ zfs mount zroot/var/tmp
 
 # ---- restore ----
 # snapshot latest of /srv/bko-repo, with BackOtter's restore flags
-rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
 
 # ---- boot ----
 # the boot code (MBR, freebsd-boot) was written with the partition table

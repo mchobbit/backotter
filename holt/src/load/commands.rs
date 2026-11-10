@@ -30,6 +30,8 @@ pub struct Cmd {
     /// For a file to write: its path; the contents are `stdin`.
     pub write: Option<String>,
     pub why: Option<String>,
+    /// Environment variables the command runs with (shown before it).
+    pub env: Vec<(String, String)>,
 }
 
 impl Cmd {
@@ -72,7 +74,13 @@ impl Cmd {
         }
         let line = match &self.write {
             Some(p) => format!("cat > {}", shell_quote(p)),
-            None => self.argv.iter().map(|a| shell_quote(a)).collect::<Vec<_>>().join(" "),
+            None => self
+                .env
+                .iter()
+                .map(|(k, v)| format!("{k}={}", shell_quote(v)))
+                .chain(self.argv.iter().map(|a| shell_quote(a)))
+                .collect::<Vec<_>>()
+                .join(" "),
         };
         match &self.stdin {
             Some(s) => {
@@ -1932,12 +1940,20 @@ impl Builder<'_> {
         }
         a.push("--no-progress".into());
         a.extend(["restore".into(), "--numeric-id".into(), self.opts.snapshot.clone(), self.opts.target.clone()]);
+        // rustic-bko's --strict-exit, as its environment variable: the
+        // restore exits 1 when it couldn't set metadata or make a special
+        // file, as restic-bko does, where by default it only warns, and this
+        // stage would pass.  As a variable, not the flag, so that a stick
+        // whose rustic-bko predates the option (0.11.4+backotter.8) still
+        // runs the command: clap reads only the variables it knows.
+        let env = vec![("RUSTIC_STRICT_EXIT".to_string(), "true".to_string())];
+        let why = Some(format!("snapshot {} of {repo}, with BackOtter's restore flags", self.opts.snapshot));
         if self.fam.is_some() {
             // The boot stage there reads nothing of the restored tree.
-            return vec![Cmd { argv: a, why: Some(format!("snapshot {} of {repo}, with BackOtter's restore flags", self.opts.snapshot)), ..Cmd::default() }];
+            return vec![Cmd { argv: a, why, env, ..Cmd::default() }];
         }
         vec![
-            Cmd { argv: a, why: Some(format!("snapshot {} of {repo}, with BackOtter's restore flags", self.opts.snapshot)), ..Cmd::default() },
+            Cmd { argv: a, why, env, ..Cmd::default() },
             Cmd::new(&["sh", "-c", &atimes_cmd(&self.opts.target, "before")]).why("the atimes the restore set, for boot to put back after its reads"),
         ]
     }
@@ -2418,7 +2434,7 @@ mod tests {
         assert!(root < boot);
         assert!(!m.contains("swap"));
         let r = text(b.stage(Stage::Restore));
-        assert!(r.contains("rustic-bko --repository /srv/repo --password-file /run/pw --no-progress restore --numeric-id latest /mnt/bko-target\n"), "{r}");
+        assert!(r.contains("RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/repo --password-file /run/pw --no-progress restore --numeric-id latest /mnt/bko-target\n"), "{r}");
         let bt = text(b.stage(Stage::Boot));
         assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
         assert!(bt.contains("chroot /mnt/bko-target update-initramfs -u -k all\n"));

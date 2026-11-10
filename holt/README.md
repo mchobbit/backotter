@@ -60,8 +60,11 @@ mkfs -t bfs, zpool create), installs boot blocks from the rescue system's own
 system.
 
 bko-holt never copies file data itself.  `load`'s `restore` stage runs
-rustic-bko; without `--repo`, run `--through mount`, restore by hand, then
-`--only boot`.
+rustic-bko with `RUSTIC_STRICT_EXIT=true` (its `--strict-exit`, from
+0.11.4+backotter.8; an older one ignores the variable), so a restore that
+couldn't set metadata or make a special file exits 1 and fails the stage,
+as restic-bko's would; without `--repo`, run `--through mount`, restore by
+hand, then `--only boot`.
 
 ## What dump reports
 

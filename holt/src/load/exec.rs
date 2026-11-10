@@ -36,7 +36,7 @@ fn run_cmd(c: &Cmd, log: &mut Option<std::fs::File>) -> Result<(), String> {
         return std::fs::write(path, c.stdin.as_deref().unwrap_or("")).map_err(|e| format!("{path}: {e}"));
     }
     let mut cmd = Command::new(&c.argv[0]);
-    cmd.args(&c.argv[1..]).env("LC_ALL", "C").stdout(Stdio::piped()).stderr(Stdio::piped());
+    cmd.args(&c.argv[1..]).env("LC_ALL", "C").envs(c.env.iter().map(|(k, v)| (k, v))).stdout(Stdio::piped()).stderr(Stdio::piped());
     // No stdin given: the terminal's, so cryptsetup can ask for a passphrase.
     cmd.stdin(if c.stdin.is_some() { Stdio::piped() } else { Stdio::inherit() });
     let mut child = cmd.spawn().map_err(|e| format!("{}: {e}", c.argv[0]))?;

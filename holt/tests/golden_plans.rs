@@ -1301,7 +1301,7 @@ fn golden_invariant_every_fstab_mount_planned() {
 #[test]
 fn golden_invariant_archiver_found() {
     let (v, p) = synth();
-    let restore = p.out.lines().find(|l| l.starts_with("rustic-bko ")).unwrap().to_string();
+    let restore = p.out.lines().find(|l| l.contains("rustic-bko --repository")).unwrap().to_string();
     let bad = edit(&p, &format!("{restore}\n"), "");
     assert!(has(&invariants(&v, &bad), "the archiver found: the restore stage runs no"));
     // rustic-bko run, but no restore into the target.

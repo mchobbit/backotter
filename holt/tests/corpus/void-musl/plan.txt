@@ -42,7 +42,7 @@ mount -t ext4 -o rw,relatime /dev/sdq1 /mnt/bko-target/boot
 
 # ---- restore ----
 # snapshot latest of /srv/bko-repo, with BackOtter's restore flags
-rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
 # the atimes the restore set, for boot to put back after its reads
 sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
 

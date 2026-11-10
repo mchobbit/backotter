@@ -16,11 +16,17 @@
 #                 or the LUKS keystore volume that Ubuntu's installer puts in
 #                 the pool to hold the real key
 #
-# LVM: a volume group on the guest's partitions, arrays or LUKS volumes is
-# activated under its own name (read-only with --ro), its logical volumes
-# counting as partitions; vm-umount deactivates it.  LVM looks at this
-# image's devices only (--devices), with no devices file of this host's,
-# and a volume group of the same name already active here is refused.
+# LVM: the logical volumes of a volume group on the guest's partitions,
+# arrays or LUKS volumes are set up as device-mapper devices named
+# vmm-nbdN-VG-LV (read-only with --ro), from the group's metadata, and count
+# as partitions; fstab's /dev/mapper/VG-LV and the like resolve to them, and
+# vm-umount removes them.  So two guests whose groups share a name
+# (ubuntu-vg), or two mounts of one guest, can be mounted at once.  A group
+# with a thin, cache or RAID LV, or a snapshot, is activated by LVM itself,
+# under its own name, which another group of that name active here makes it refuse.  LVM
+# looks at this image's devices only (--devices), with no devices file of
+# this host's.  Under vm-chroot, the LVs aren't at the guest's own
+# /dev/mapper names: don't make an initramfs or grub.cfg there.
 #
 # / may be a partition, a logical volume, a btrfs subvolume, or a ZFS dataset.  A ZFS pool is
 # imported from the image's partition only, under a temporary name (so it
@@ -65,9 +71,10 @@ state=$STATE_DIR/$(systemd-escape --path "$mp")
 mkdir -p "$STATE_DIR"
 # The state file: line 1, the first image's nbd device; further lines, what
 # else was set up, as "nbd DEVICE", "md DEVICE", "loop DEVICE", "luks NAME",
-# "vg NAME DEVICE,..." (the volume group and the PVs it was activated from)
-# or "pool NAME", which
-# vm-umount undoes in reverse order.
+# "vg NAME DEVICE,..." (the volume group and the PVs LVM activated it from),
+# "lvm NAME DEVICE,..." and "lv VG LV DMNAME" (a group set up by hand, and
+# each of its LVs, a record), "dm NAME" or "pool NAME", which vm-umount
+# undoes in reverse order.
 : >"$state"
 undo() { "$(dirname "$(realpath "$0")")/vm-umount" "$mp" >/dev/null 2>&1 || rm -f "$state"; }
 devs=()
@@ -235,8 +242,18 @@ for p in "${parts[@]}"; do
     parts+=("/dev/mapper/$name")
 done
 
-# LVM physical volumes: their volume groups activated, the logical volumes
-# counted as partitions.
+# LVM physical volumes: each volume group's logical volumes set up as
+# device-mapper devices under names of this mount's own (TAG-VG-LV, TAG from
+# the first image's nbd device), from the group's metadata, and counted as
+# partitions.  LVM itself activates nothing: its names are the host's, and
+# two guests' groups often share one (ubuntu-vg), as do two mounts of one
+# guest.  The guest's own names for them (/dev/mapper/VG-LV, /dev/VG/LV,
+# /dev/disk/by-id/dm-name-... and dm-uuid-LVM-...) are resolved in fstab to
+# those devices.  A group with an LV of another type than linear or striped
+# (thin, cache, raid), or a classic snapshot, is activated by LVM as it was
+# before, under its own names, and refused if a group of that name is active
+# here already.
+declare -A lvdev=()
 pvs=()
 for p in "${parts[@]}"; do
     [[ $(blkid -s TYPE -o value "$p" || true) == LVM2_member ]] && pvs+=("$(realpath "$p")")
@@ -244,25 +261,77 @@ done
 if [[ ${#pvs[@]} -gt 0 ]]; then
     pvlist=$(IFS=,; echo "${pvs[*]}")
     lvm_opts=(--devicesfile "" --devices "$pvlist")
+    tag=vmm-${devs[0]##*/}
     # The PVs' device numbers, as dmsetup deps prints them: "(MAJOR, MINOR)".
     ours=$(for p in "${pvs[@]}"; do stat -L -c '%t %T' "$p"; done | while read -r ma mi; do
         printf '(%d, %d)\n' "0x$ma" "0x$mi"; done)
+    declare -A pestart=()
+    while IFS='|' read -r pv start; do
+        pv=${pv// /}; [[ -n $pv ]] && pestart[$(realpath "$pv")]=${start// /}
+    done < <(pvs "${lvm_opts[@]}" --noheadings --separator '|' --units s --nosuffix -o pv_name,pe_start 2>/dev/null)
     for vg in $(vgs "${lvm_opts[@]}" --noheadings -o vg_name 2>/dev/null | sort -u); do
+        # device-mapper names a VG's volumes VG-LV, with VG's dashes doubled.
+        # Active already on this image's PVs when this host's LVM activated it
+        # by itself as they appeared (event activation): undone here.  On
+        # others, it's another group of the same name (another guest's, or a
+        # mount of this one): no matter, but for a group LVM activates below.
+        active=$(dmsetup ls 2>/dev/null | awk '{ print $1 }' | grep "^${vg//-/--}-[^-]" || true)
+        mine=no others=no
+        for lv in $active; do
+            if dmsetup deps -o devno "$lv" | grep -o '([0-9]*, [0-9]*)' | grep -qvxF "$ours"; then others=yes; else mine=yes; fi
+        done
+        [[ $mine == yes ]] && { vgchange "${lvm_opts[@]}" -a n "$vg" >/dev/null || { undo; die "could not deactivate $vg"; }; }
+        types=$(lvs "${lvm_opts[@]}" --noheadings --segments -o segtype "$vg" 2>/dev/null | tr -d ' ' | sort -u)
+        # A classic snapshot and its origin have linear segments too, but are
+        # no plain mapping of their extents (lv_attr o, O, s or S).
+        snaps=$(lvs "${lvm_opts[@]}" --noheadings -o lv_attr "$vg" 2>/dev/null | tr -d ' ' | grep '^[oOsS]' || true)
+        if [[ -z $(grep -vxE 'linear|striped' <<<"$types" || true) && -z $snaps ]]; then
+            esz=$(vgs "${lvm_opts[@]}" --noheadings --units s --nosuffix -o vg_extent_size "$vg" | tr -d ' ')
+            echo "lvm $vg $pvlist" >>"$state"
+            while IFS='|' read -r lv lvuuid vguuid; do
+                lv=${lv// /} lvuuid=${lvuuid// /} vguuid=${vguuid// /}
+                [[ -n $lv ]] || continue
+                table=""
+                while IFS='|' read -r start size type stripes ssize ranges; do
+                    start=${start// /} size=${size// /} type=${type// /} stripes=${stripes// /} ssize=${ssize// /}
+                    targets=()
+                    for r in $ranges; do
+                        d=$(realpath "${r%:*}") pe=${r##*:}; pe=${pe%%-*}
+                        [[ -n ${pestart[$d]:-} ]] || { undo; die "$vg/$lv: no PV $d among $pvlist"; }
+                        targets+=("$d $((pestart[$d] + pe * esz))")
+                    done
+                    case $type in
+                        linear) table+="$start $size linear ${targets[0]}"$'\n' ;;
+                        striped) table+="$start $size striped $stripes $ssize ${targets[*]}"$'\n' ;;
+                    esac
+                done < <(lvs "${lvm_opts[@]}" --noheadings --segments --separator '|' --units s --nosuffix \
+                             -o seg_start,seg_size,segtype,stripes,stripe_size,seg_pe_ranges "$vg/$lv")
+                name=$tag-${vg//-/--}-${lv//-/--}
+                ro_opt=(); [[ $ro == yes ]] && ro_opt=(--readonly)
+                printf '%s' "$table" | dmsetup create "${ro_opt[@]}" "$name" || { undo; die "could not set up $vg/$lv as $name"; }
+                echo "dm $name" >>"$state"
+                echo "lv $vg $lv $name" >>"$state"
+                lvd=$(realpath "/dev/mapper/$name")
+                parts+=("$lvd")
+                for n in "/dev/mapper/${vg//-/--}-${lv//-/--}" "/dev/$vg/$lv" "/dev/disk/by-id/dm-name-${vg//-/--}-${lv//-/--}" \
+                         "/dev/disk/by-id/dm-uuid-LVM-${vguuid//-/}${lvuuid//-/}"; do
+                    lvdev[$n]=$lvd
+                done
+            done < <(lvs "${lvm_opts[@]}" --noheadings --separator '|' -o lv_name,lv_uuid,vg_uuid "$vg")
+            udevadm settle
+            # The host's event activation of this group, if it came only now:
+            # its own mappings of these PVs, by the group's UUIDs (vm-umount
+            # does this again, for one later still).
+            dmsetup ls 2>/dev/null | awk '{ print $1 }' | grep -q "^${vg//-/--}-[^-]" &&
+                { vgchange "${lvm_opts[@]}" -a n "$vg" >/dev/null 2>&1 || true; }
+            continue
+        fi
+        # LVM's own activation, under the guest's names.
+        [[ $others == yes ]] && { undo; die "a volume group named $vg is already active on this host"; }
         # A VG's name in read_only_volume_list covers all of its LVs ("*"
         # there would match only a VG named "*").
         ro_cfg=()
         [[ $ro == yes ]] && ro_cfg=(--config "activation { read_only_volume_list = [ \"$vg\" ] }")
-        # device-mapper names a VG's volumes VG-LV, with VG's dashes doubled.
-        # Active already: on this image's PVs when this host's LVM activated
-        # it by itself as they appeared (event activation), which is undone
-        # here to activate it as below; on others, it's another group of
-        # the same name (another mount of this guest, or the host's own).
-        active=$(dmsetup ls 2>/dev/null | awk '{ print $1 }' | grep "^${vg//-/--}-[^-]" || true)
-        for lv in $active; do
-            dmsetup deps -o devno "$lv" | grep -o '([0-9]*, [0-9]*)' | grep -qvxF "$ours" &&
-                { undo; die "a volume group named $vg is already active on this host"; }
-        done
-        [[ -n $active ]] && { vgchange "${lvm_opts[@]}" -a n "$vg" >/dev/null || { undo; die "could not deactivate $vg"; }; }
         vgchange "${lvm_opts[@]}" "${ro_cfg[@]}" -a y "$vg" >/dev/null || { undo; die "could not activate volume group $vg"; }
         echo "vg $vg $pvlist" >>"$state"
         udevadm settle
@@ -276,6 +345,8 @@ fi
 # the host's disks (a cloned image may share UUIDs with something else).
 resolve() {
     local spec=$1 p
+    # A logical volume by one of the guest's own names for it (above).
+    [[ -n ${lvdev[$spec]:-} ]] && { echo "${lvdev[$spec]}"; return; }
     for p in "${parts[@]}"; do
         # Both spellings: UUID=... and /dev/disk/by-uuid/... (Ubuntu's installer).
         case $spec in
@@ -287,8 +358,8 @@ resolve() {
                 [[ ${raid_uuid[$p]:-} == "${spec#*md-uuid-}" ]] && { echo "$p"; return; } ;;
             LABEL=*|/dev/disk/by-label/*)
                 [[ $(blkid -s LABEL -o value "$p") == "${spec##*[=/]}" ]] && { echo "$p"; return; } ;;
-            # A logical volume, as /dev/mapper/VG-LV or /dev/VG/LV: activated
-            # above under the guest's own names.
+            # A logical volume of a group LVM activated above, under the
+            # guest's own names: as /dev/mapper/VG-LV or /dev/VG/LV.
             /dev/mapper/*|/dev/*/*)
                 [[ -b $spec && $(realpath "$spec") == "$(realpath "$p")" ]] && { echo "$p"; return; } ;;
         esac

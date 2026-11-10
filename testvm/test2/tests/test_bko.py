@@ -848,8 +848,8 @@ class TestRealPlans(unittest.TestCase):
         out = "\n".join(self.said)
         for w_ in ("GateTest2 plan:", "SticTest2 plan:", "HoltTest2 plan:", "GuestTest2 plan:", "ImgTest2: nothing due"):
             self.assertIn(w_, out)
-        # the golden's 161 cells; its gm summed the cells' raw figures, this the plans' printed ones
-        self.assertTrue(self.said[-2].startswith("combined: 161 due, 646.8 gm, "), self.said[-2])
+        # the golden's 163 cells; its gm summed the cells' raw figures, this the plans' printed ones
+        self.assertTrue(self.said[-2].startswith("combined: 163 due, 654.5 gm, "), self.said[-2])
         self.assertTrue(self.said[-1].startswith("sweep: SweepTest2 "), self.said[-1])
         self.assertEqual(out.count("sweep: SweepTest2"), 1)
         self.assertEqual(env.kids, [])

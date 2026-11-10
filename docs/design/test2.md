@@ -123,7 +123,7 @@ A cell is **due** when a scope rule selects it and it has no PASS at its current
 
 **Steps.**
 1. **Identity:** image-state on both hosts, each disk's size, mtime and inode against its merge record, `qemu-img info -U`; sha256 only on a mismatch.
-2. **Image checks, no boot** (vm-mount --ro): package sources (#19), the loader's default entry (#18), zfs-list.cache (#20), free space, the kernel count. Roots vm-mount can't read (UFS2 SU+J, HAMMER2, BFS, illumos) get a `--snapshot` probe boot. Host-global LVM names (debian13-stack-vg, ubuntu-vg) take a lock per name, shared with HoltTest2 (holttest1d/README.md:193-196).
+2. **Image checks, no boot** (vm-mount --ro): package sources (#19), the loader's default entry (#18), zfs-list.cache (#20), free space, the kernel count. Roots vm-mount can't read (UFS2 SU+J, HAMMER2, BFS, illumos) get a `--snapshot` probe boot. Host-global LVM names (debian13-stack-vg, ubuntu-vg) need no lock: vm-mount sets a guest's logical volumes up under names of its own, not LVM's (2026-11-10).
 3. **`--try`** in RAM (after V1, reserved), without trim. After its reboot: boot-state.sh, failed units, `findmnt --verify`, every fstab mount mounted and not shadowed, the newest kernel running. Its dump feeds the corpus and the sweep, never a fingerprint.
 4. **New guests:** each firmware mode the guest claims, SSH, both archivers' `--version`, a smoke backup, and a manual probe where there's no SSH. Such checks found 10 of run 1's 78 defects [guest (b)].
 5. **Log sweep:** the newest `--try` and update logs, normalized and diffed against a per-guest baseline; agents read only new lines.

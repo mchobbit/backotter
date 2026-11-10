@@ -167,7 +167,10 @@ live on.
   from the JSON (`storage.lvm.volume_groups`, which carries every segment as
   LVM recorded it), then runs `pvcreate --uuid ... --restorefile` per PV and
   `vgcfgrestore`.  That keeps the VG, PV and LV UUIDs, the extent size and
-  every LV's exact extents.  Then `vgchange -ay`.
+  every LV's exact extents.  Then `vgchange -ay`.  Every LVM command load
+  runs sees the group's own PVs only (`--devicesfile "" --devices PV,...`),
+  so a group elsewhere on the machine, or a PV with one of the group's
+  UUIDs on another disk, is never what it acts on.
 - ZFS: `zpool create -d` with exactly the recorded features, the
   `compatibility` property, `ashift`, the vdev tree (mirrors, raidz, log,
   cache and spare vdevs) and the other locally set pool properties.  It's
@@ -346,6 +349,16 @@ The tool erases disks.  So:
      LVM, LUKS, device-mapper), or a vdev of an imported pool, unless
      load made those itself in an earlier stage of this layout;
    - any disk holding the running system's `/`.
+   And the plan is refused when a volume group with a name or UUID the
+   layout's has, or a PV with one of its PVs' UUIDs, is on a disk that
+   isn't a target (most often the source's own disk, still attached):
+   load's own commands wouldn't see it, but the restored system's tools in
+   `boot` (its initramfs generator; GRUB, which finds LVs by UUID) and its
+   first boot would find it twice.  LVM has no in-core name to give the
+   layout's for a while, as ZFS has (a pool of the layout's name imported
+   here is imported as NAME_bko).  The way out is to disconnect that disk,
+   or `vgimportclone` its group (a new name and new UUIDs; `vgrename`
+   keeps the UUIDs).
 4. A target disk smaller than its source is refused unless `--fit-largest
    PCT` says by how much the layout may be fitted to it (see "Fitting a disk
    of another size"); one with another logical sector size is always refused.

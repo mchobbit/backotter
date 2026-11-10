@@ -245,7 +245,7 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
         let boot_medium = found.iter().chain(&inner[i]).flat_map(|f| f.contents.iter()).chain(whole[i].iter()).any(|c| c.label.as_deref() == Some(STICK_CONFIG_LABEL));
         disks.push(TargetDisk { b, parts, table: tables[i].clone(), signatures, uuids, in_use, boot_medium, holds_root });
     }
-    System { disks, mounts, pools }
+    System { disks, mounts, pools, pvs: vec![] }
 }
 
 impl Builder<'_> {

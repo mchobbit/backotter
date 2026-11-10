@@ -44,6 +44,26 @@ fn missing_tools(sys: &Sys, built: &Built) -> Vec<String> {
     out
 }
 
+/// load's LVM commands take --devices and --devicesfile, which lvm2 has had
+/// since 2.03.12: an older one is a problem for a layout with volume groups.
+/// (An lvm that won't say its version is left to missing_tools.)
+fn lvm_problem(sys: &Sys, layout: &Layout) -> Option<String> {
+    if layout.v.at(&["storage", "lvm", "volume_groups"]).and_then(crate::json::Value::as_array).is_none_or(|a| a.is_empty()) {
+        return None;
+    }
+    let out = sys.run("lvm", &["version"])?;
+    let v = lvm_version(&out)?;
+    (v < (2, 3, 12)).then(|| format!("lvm2 {}.{:02}.{:02} is older than 2.03.12, which load's LVM commands need (--devices)", v.0, v.1, v.2))
+}
+
+/// "  LVM version:     2.03.31(2) (2025-02-27)" -> (2, 3, 31).
+fn lvm_version(out: &str) -> Option<(u32, u32, u32)> {
+    let l = out.lines().find(|l| l.trim_start().starts_with("LVM version:"))?;
+    let v = l.split(':').nth(1)?.split_whitespace().next()?;
+    let mut n = v.split(|c: char| !c.is_ascii_digit()).filter(|s| !s.is_empty()).map(|s| s.parse::<u32>().ok());
+    Some((n.next()??, n.next()??, n.next()??))
+}
+
 /// The archiver must be BackOtter's, as the rescue stick's build checks.
 fn archiver_problem(sys: &Sys, opts: &Options) -> Option<String> {
     opts.repo.as_ref()?;
@@ -75,6 +95,7 @@ pub fn check(layout: &Layout, opts: &Options, sys: &Sys) -> Planned {
     problems.extend(built.problems.iter().cloned());
     problems.extend(archiver_problem(sys, opts));
     problems.extend(missing_tools(sys, &built));
+    problems.extend(lvm_problem(sys, layout));
     if super::has_omitted(&layout.v) {
         problems.push("this layout comes from a bug report (`bko-holt report-bug`), which leaves boot-area and ESP images out: restore from the dump itself".into());
     }
@@ -155,6 +176,15 @@ mod tests {
     use crate::testutil::Tree;
 
     const TOOLS: [&str; 8] = ["wipefs", "sfdisk", "udevadm", "mke2fs", "tune2fs", "mkswap", "mkfs.btrfs", "btrfs"];
+
+    #[test]
+    fn lvm_versions() {
+        let out = "  LVM version:     2.03.31(2) (2025-02-27)\n  Library version: 1.02.205 (2025-02-27)\n";
+        assert_eq!(lvm_version(out), Some((2, 3, 31)));
+        assert_eq!(lvm_version("  LVM version:     2.03.11(2) (2021-01-08)\n"), Some((2, 3, 11)));
+        assert!(lvm_version("  LVM version:     2.03.11(2) (2021-01-08)\n").unwrap() < (2, 3, 12));
+        assert_eq!(lvm_version("nothing"), None);
+    }
 
     fn opts(a: &[&str]) -> Options {
         let mut v = vec!["l.json".to_string()];

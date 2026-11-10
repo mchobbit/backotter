@@ -38,7 +38,9 @@ wait_detach() {
 }
 # Line 1 of the state file is the first image's nbd device; the further
 # lines, undone last first, "pool NAME", "luks NAME", "vg NAME DEVICE,...",
-# "md DEVICE", "dm NAME" (a RAID 10 read as a RAID 0), "cow NAME LOOP
+# "md DEVICE", "dm NAME" (a RAID 10 read as a RAID 0, or a logical volume
+# set up by hand; its "lv" lines are records only, and its "lvm" line takes
+# down what the host's LVM may have activated of it), "cow NAME LOOP
 # FILE" (a RAID member's throwaway snapshot),
 # "loop DEVICE" or "nbd DEVICE" (a bare
 # name is a pool, as vm-mount once wrote them).
@@ -53,6 +55,11 @@ while read -r kind name; do
         vg) read -r vg pvlist <<<"$name"
             vgchange --devicesfile "" --devices "$pvlist" -a n "$vg" >/dev/null ||
                 die "could not deactivate volume group $vg" ;;
+        # A group vm-mount set up by hand (its "dm" lines come after, so are
+        # undone before): what the host's own LVM activated of it meanwhile,
+        # by the group's UUIDs on these PVs only.
+        lvm) read -r vg pvlist <<<"$name"
+             vgchange --devicesfile "" --devices "$pvlist" -a n "$vg" >/dev/null 2>&1 || true ;;
         md) mdadm --stop "$name" >/dev/null || die "could not stop RAID $name" ;;
         dm) dmsetup remove "$name" || die "could not remove $name" ;;
         cow) read -r c l f <<<"$name"

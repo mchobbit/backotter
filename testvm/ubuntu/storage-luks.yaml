@@ -1,0 +1,11 @@
+  # Subiquity's guided "LVM with encryption" (layout name lvm with a
+  # password), as an interactive install with "Encrypt the LVM group with
+  # LUKS" ticked lays it out: on UEFI, GPT with an EFI system partition at
+  # /boot/efi, /boot (ext4) on a partition of its own, and the rest LUKS2
+  # holding the volume group ubuntu-vg, with / (ext4) on its logical volume
+  # ubuntu-lv, sized by the default "scaled" policy; and a swap file.  The
+  # passphrase is asked for at every boot.
+  storage:
+    layout:
+      name: lvm
+      password: '@PASSPHRASE@'

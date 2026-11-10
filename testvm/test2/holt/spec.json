@@ -82,6 +82,7 @@
     "ubuntu26-zfs": {"kind": "linux", "firmware": "uefi"},
     "ubuntu26-zfsmirror": {"kind": "linux", "harness": ["testvm/console-boot.py"]},
     "ubuntu26-raid": {"kind": "linux", "firmware": "uefi"},
+    "ubuntu26-luks": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/console-boot.py"]},
     "fedora44": {"kind": "linux"},
     "fedora44-uefi": {"kind": "linux", "firmware": "uefi"},
     "fedora44-raid": {"kind": "linux", "firmware": "uefi"},

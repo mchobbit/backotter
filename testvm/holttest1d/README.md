@@ -31,7 +31,7 @@ guests.  A guest passes only when every check passes.  Status is as of
 |---|---|---|---|
 | 1D | Debian 13 | `debian13`, `debian13-zfs`, `debian13-stack` | passes |
 | 1M | Linux Mint | `mint22` | passes |
-| 1U | Ubuntu | `ubuntu24`, `ubuntu26-uefi`, `ubuntu26-zfsmirror`, `ubuntu26-raid` (and `degraded`) | passes |
+| 1U | Ubuntu | `ubuntu24`, `ubuntu26-uefi`, `ubuntu26-zfsmirror`, `ubuntu26-raid` (and `degraded`), `ubuntu26-luks` | passes |
 | 1Z | Zorin OS | `zorin18` | passes |
 | 1F | Fedora, Rocky Linux | `fedora44`, `fedora44-uefi`, `fedora44-raid`, `rocky10`, `rocky10-lvm`, `rocky10-raid5` | passes (`fedora44-raid` and `rocky10-raid5`: run `raid022`, below) |
 | 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | passes |
@@ -78,6 +78,17 @@ md array (`/dev/md/boot`) by its name, not its kernel number (md126, md127
 are handed out in the order the arrays come up at boot), and ignores an md
 member's device number (mdadm numbers members in order; a RAID5 made
 without `--assume-clean` numbers its last member after the others).
+
+**The encrypted LVM guest** (2026-11-10, run `lk1` on Cinqcent, in RAM,
+bko-holt 0.2.4): `ubuntu26-luks` (`make-ubuntu.sh --uefi --luks`) is what an
+Ubuntu install with "Encrypt the LVM group with LUKS" ticked lays out,
+Subiquity's guided LVM: GPT, an ESP, /boot (ext4), and LUKS2 holding
+`ubuntu-vg`, whose 10 GiB `ubuntu-lv` is / (ext4), 3.5 GiB of the group left
+free; a swap file.  Its initramfs asks for `console-passphrase` on the
+serial console.  Passes: `load` recreates the LUKS2 header with the
+source's cipher, key derivation and offset, opens it as `dm_crypt-0` (the
+crypttab name), restores the group with `vgcfgrestore`, and the restored
+disk boots with the passphrase typed.
 
 **HoltTest1All** (the user's definition, 2026-11-05): "like HoltTest1D
 except that HoltTest1All targets every single guest OS we have": every guest
@@ -261,11 +272,12 @@ empty (`/proc/mdstat`'s `[UU_]`), judged with `judge.py --degraded`.  It
 runs on the guests whose arrays survive the loss of their last disk:
 `debian13-stack` and `ubuntu26-raid`.  A full HoltTest1D is six runs:
 `debian13`, `debian13-zfs` and `debian13-stack`, `debian13-stack` with
-`bigger`, and `debian13` with `oneshot` on each host.  Never run two copies
-of `debian13-stack` on one host at once, in any variant, nor beside a
-`compare.py` of it: `vm-mount` refuses a second `debian13-stack-vg`, since
-LVM's names are the host's (nor two of `ubuntu26-raid`, for its
-`ubuntu-vg`).  Nor run one guest twice on a host under two RUN names: both
+`bigger`, and `debian13` with `oneshot` on each host.  Guests whose
+volume groups share a name (`ubuntu26-raid` and `ubuntu26-luks`, both
+`ubuntu-vg` as Ubuntu's installer names it) may run on one host at once:
+`vm-mount` sets their logical volumes up under names of its own, not LVM's
+host-wide ones (run `vg2`, 2026-11-10: both PASS side by side).  Don't run
+one guest twice on a host under two RUN names: both
 mount at `/mnt/ht1-src-GUEST` and `/mnt/ht1-dst-GUEST` (`GUEST-VARIANT`
 for a variant), and while one's mount is up `vm-mount` refuses the
 other's, a FAIL that isn't bko-holt's.  ht1-queue.sh holds a guest back

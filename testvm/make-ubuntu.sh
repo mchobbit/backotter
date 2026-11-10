@@ -5,12 +5,13 @@
 # under QEMU with KVM.  (Linux Mint 22 is built on Ubuntu 24.04, so a 24.04
 # guest covers what a Mint restore depends on, minus the desktop.)
 #
-# Usage: ./make-ubuntu.sh [--uefi] [--zfs-guided | --zfs-mirror | --raid] [--name NAME] VERSION WORK_DIR
+# Usage: ./make-ubuntu.sh [--uefi] [--zfs-guided | --zfs-mirror | --raid | --luks] [--name NAME] VERSION WORK_DIR
 #   e.g. ./make-ubuntu.sh 24.04 vms/ubuntu24
 #        ./make-ubuntu.sh --zfs-mirror --name ubuntu26-zfsmirror 26.04.1 vms/ubuntu26-zfsmirror
 #        ./make-ubuntu.sh --uefi --name ubuntu26-uefi 26.04.1 vms/ubuntu26-uefi
 #        ./make-ubuntu.sh --uefi --zfs-guided --name ubuntu26-zfs 26.04.1 vms/ubuntu26-zfs
 #        ./make-ubuntu.sh --uefi --raid --name ubuntu26-raid 26.04.1 vms/ubuntu26-raid
+#        ./make-ubuntu.sh --uefi --luks --name ubuntu26-luks 26.04.1 vms/ubuntu26-luks
 #
 # VERSION is an Ubuntu release or point release (24.04, 24.04.1, ...).
 # ubuntu-VERSION-live-server-amd64.iso with its SHA256SUMS and SHA256SUMS.gpg
@@ -29,6 +30,7 @@
 #   NAME-b.qcow2          with --zfs-mirror: the second disk (--raid: NAME-b,
 #                         -c and -d.qcow2, three more), each with the snapshot
 #   zfs-passphrase        with --zfs-mirror: the pool's passphrase (mode 600)
+#   console-passphrase    with --luks: the LUKS passphrase (mode 600)
 #
 # The guest, host name NAME: BIOS + MBR, /boot (1 GiB ext4), swap (2 GiB),
 # and / on ZFS (pool rpool, dataset rpool/ROOT/ubuntu), 2 GB RAM, no desktop,
@@ -63,6 +65,17 @@
 # (ubuntu/storage-raid.yaml).  The install writes zeros as holes and waits
 # for the array's first resync.
 #
+# --luks (with --uefi) is Subiquity's guided "LVM with encryption", the
+# layout an Ubuntu install gets when "Encrypt the LVM group with LUKS" is
+# ticked (ubuntu/storage-luks.yaml): GPT, an EFI system partition, /boot
+# (ext4) on a partition of its own, and the rest LUKS2 holding the volume
+# group ubuntu-vg, whose logical volume ubuntu-lv (ext4) is / and is sized
+# by Subiquity's default "scaled" policy, leaving the rest of the group
+# free; a swap file.  At every boot the initramfs (dracut's) asks for the
+# passphrase (console-passphrase) on the serial console, where vm-update,
+# compare.py and HoltTest1 type it.  The group's name, ubuntu-vg, is
+# ubuntu26-raid's too, which vm-mount's own names for LVs make no matter.
+#
 # Run it with vm-run (and vm-run-options), and look inside it while it's off
 # with vm-mount.
 #
@@ -80,23 +93,26 @@ INSTALL_TIMEOUT=2400
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-ubuntu: $*" >&2; exit 1; }
 
-firmware=bios name="" mirror=no guided=no raid=no
+firmware=bios name="" mirror=no guided=no raid=no luks=no
 while [[ $# -gt 0 ]]; do
     case $1 in
         --uefi) firmware=uefi; shift ;;
         --zfs-mirror) mirror=yes; shift ;;
         --zfs-guided) guided=yes; shift ;;
         --raid) raid=yes; shift ;;
+        --luks) luks=yes; shift ;;
         --name) name=$2; shift 2 ;;
         -*) die "unknown option $1" ;;
         *) break ;;
     esac
 done
-[[ $# -eq 2 ]] || die "usage: $0 [--uefi] [--zfs-guided | --zfs-mirror | --raid] [--name NAME] VERSION WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 [--uefi] [--zfs-guided | --zfs-mirror | --raid | --luks] [--name NAME] VERSION WORK_DIR"
 [[ $raid == yes && $firmware != uefi ]] && die "--raid is for UEFI only (with --uefi)"
 [[ $raid == yes && ($mirror == yes || $guided == yes) ]] && die "--raid is a layout of its own"
 [[ $firmware == uefi && $mirror == yes ]] && die "--zfs-mirror is for BIOS only"
 [[ $guided == yes && $mirror == yes ]] && die "--zfs-guided and --zfs-mirror are two layouts"
+[[ $luks == yes && $firmware != uefi ]] && die "--luks is for UEFI only (with --uefi)"
+[[ $luks == yes && ($mirror == yes || $guided == yes || $raid == yes) ]] && die "--luks is a layout of its own"
 version=$1
 [[ $version =~ ^[0-9]{2}\.[0-9]{2}(\.[0-9]+)?$ ]] || die "VERSION looks like 24.04 or 24.04.1, not '$version'"
 release=$(cut -d. -f1-2 <<<"$version")
@@ -109,6 +125,7 @@ storage=zfs
 [[ $mirror == yes ]] && storage=zfs-mirror
 [[ $guided == yes ]] && storage=zfs-guided
 [[ $raid == yes ]] && storage=raid
+[[ $luks == yes ]] && storage=luks
 DISK_B=$guest_name-b.qcow2
 # The disks after the first: one with --zfs-mirror, three with --raid.
 more=()
@@ -163,20 +180,21 @@ printf '%s\n' "$password" >root-password
 hash=$(printf '%s' "$password" | openssl passwd -6 -stdin)
 # Letters and digits only, so it needs no quoting anywhere.
 [[ $mirror == yes ]] && openssl rand -base64 24 | tr -dc 'A-Za-z0-9' >zfs-passphrase
+[[ $luks == yes ]] && openssl rand -base64 24 | tr -dc 'A-Za-z0-9' >console-passphrase
 [[ -e id_ed25519 ]] || ssh-keygen -q -t ed25519 -N '' -C "root@$guest_name test guest" -f id_ed25519
 umask 022
 
 mkdir "$work/cidata"
 late=$here/ubuntu/storage-$storage-late.yaml
 [[ -f $late ]] || late=/dev/null
-passphrase=$(cat zfs-passphrase 2>/dev/null || true)
+passphrase=$(cat zfs-passphrase console-passphrase 2>/dev/null || true)
 sed -e "s|@HOSTNAME@|$guest_name|" -e "s|@PASSWORD_HASH@|$hash|g" \
     -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|g" -e "s|@SNAPSHOT@|$snapshot|g" \
     -e "/^@STORAGE@\$/{r $here/ubuntu/storage-$storage.yaml" -e "d}" \
     -e "/^@STORAGE_LATE@\$/{r $late" -e "d}" \
     "$here/ubuntu/user-data" >"$work/cidata/user-data"
 # The storage files' own settings: sed's r inserts text after its edits.
-sed -i "s|@ZFS_PASSPHRASE@|$passphrase|g" "$work/cidata/user-data"
+sed -i "s|@PASSPHRASE@|$passphrase|g" "$work/cidata/user-data"
 if grep -n '@[A-Z_]\+@' "$work/cidata/user-data"; then die "user-data placeholders left unfilled"; fi
 # cloud-init quietly ignores user-data it can't parse, and the installer then
 # waits for answers until the timeout; catch that here.

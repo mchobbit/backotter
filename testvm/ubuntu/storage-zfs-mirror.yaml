@@ -8,7 +8,7 @@
   # (storage-zfs-mirror-late.yaml).
   early-commands:
     # curtin reads the keystore's passphrase from this file: no newline.
-    - printf '%s' '@ZFS_PASSPHRASE@' >/tmp/zfs-passphrase
+    - printf '%s' '@PASSPHRASE@' >/tmp/zfs-passphrase
   storage:
     config:
       - {type: disk, id: disk0, path: /dev/vda, ptable: msdos, wipe: superblock-recursive,

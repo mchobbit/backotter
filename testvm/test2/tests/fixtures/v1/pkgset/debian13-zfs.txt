@@ -1,0 +1,6 @@
+base pm dpkg
+pkg e2fsprogs 1.47.2-3 amd64
+pkg zfsutils-linux 2.3.2-2 amd64
+pkg zfs-initramfs 2.3.2-2 all
+pkg grub-pc 2.12-9 amd64
+pkg linux-image-amd64 6.12.57-1 amd64

@@ -1,0 +1,4 @@
+base pm alpinebsd
+pkg netbsd-base 11.1-r0
+pkg netbsd-kernel-generic-bin 11.1-r0
+pkg apk-tools 3.0.3-r1

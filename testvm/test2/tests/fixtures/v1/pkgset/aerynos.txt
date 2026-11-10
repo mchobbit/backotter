@@ -1,0 +1,8 @@
+base pm moss
+pkg acl 2.4.0-6
+pkg attr 2.6.0-7
+pkg dosfstools 4.2-4
+pkg dracut 112-15
+pkg f2fs-tools 1.17.0-6
+pkg lvm2 2.03.44-24
+pkg systemd-boot 261.4-107

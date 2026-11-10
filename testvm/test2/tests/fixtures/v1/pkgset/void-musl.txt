@@ -1,0 +1,11 @@
+base pm xbps
+pkg os-prober 1.84_1
+pkg dracut 112_1
+pkg btrfs-progs 6.11_1
+pkg xfsprogs 6.19.0_1
+pkg e2fsprogs 1.47.2_1
+pkg dosfstools 4.2_1
+pkg f2fs-tools 1.17.0_1
+pkg attr-progs 2.5.2_1
+pkg acl-progs 2.3.2_1
+pkg grub 2.14_1

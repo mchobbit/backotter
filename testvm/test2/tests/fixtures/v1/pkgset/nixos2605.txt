@@ -1,0 +1,10 @@
+base pm nixos
+nix-system /nix/store/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa-nixos-system-host-26.05.20261030
+nix-pkg bcachefs-tools 1.25.3
+nix-pkg e2fsprogs 1.47.3
+nix-pkg dosfstools 4.2
+nix-pkg grub 2.12
+nix-pkg linux 6.18.60
+nix-pkg lvm2 2.03.35
+nix-pkg attr 2.5.2
+nix-pkg acl 2.3.2

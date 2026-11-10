@@ -1,0 +1,10 @@
+base pm rpm
+pkg e2fsprogs 0:1.47.3-2.fc44.x86_64
+pkg xfsprogs 0:6.17.0-1.fc44.x86_64
+pkg attr 0:2.5.2-6.fc44.x86_64
+pkg acl 0:2.3.2-4.fc44.x86_64
+pkg kernel-core 0:7.2.15-200.fc44.x86_64
+pkg kernel-core 0:7.2.11-200.fc44.x86_64
+pkg grub2-common 1:2.12-66.fc44.noarch
+pkg dracut 0:108-8.fc44.x86_64
+pkg selinux-policy-targeted 0:42.1-1.fc44.noarch

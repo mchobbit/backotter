@@ -1,0 +1,12 @@
+base pm rpm
+pkg e2fsprogs 0:1.47.3-1.1.x86_64
+pkg xfsprogs 0:6.17.0-1.1.x86_64
+pkg btrfsprogs 0:6.17-1.1.x86_64
+pkg dosfstools 0:4.2-5.1.x86_64
+pkg attr 0:2.5.2-2.1.x86_64
+pkg acl 0:2.3.2-3.1.x86_64
+pkg grub2 0:2.12-60.1.x86_64
+pkg grub2-x86_64-efi 0:2.12-60.1.noarch
+pkg kernel-default 0:6.17.7-1.1.x86_64
+pkg systemd 0:258.1-1.1.x86_64
+pkg snapper 0:0.13.0-1.1.x86_64

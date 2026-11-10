@@ -10,13 +10,23 @@
 # so that the install is reproducible; updating such a guest would change
 # nothing.  So the first update points it at its distribution's live
 # repositories, where it stays.
+#
+# "in-guest: step: WHAT" lines name what this run changed besides packages:
+# vm-update's merge rule reads them, with update/pkgset.sh's listing before and
+# after.  So each fires only when it changed something: a step on every run
+# would merge every run.  The "# t2-section: NAME" lines mark what each kind of
+# guest runs, for GuestTest2's keys (testvm/test2/README.md): a change in one
+# section re-tests only its guests.  From one marker to the next is that name's.
 
+# t2-section: prologue
 PATH=/usr/local/sbin:/usr/local/bin:/usr/pkg/sbin:/usr/pkg/bin:/usr/sbin:/usr/bin:/sbin:/bin:$PATH
 export PATH
 has() { command -v "$1" >/dev/null 2>&1; }
 say() { echo "in-guest: $*"; }
+step() { echo "in-guest: step: $*"; }
 say "$(uname -srm)"
 
+# t2-section: NixOS
 if [ -e /etc/NIXOS ]; then
     # Built from a pinned release tarball (nix.nixPath): move it to the
     # newest of the same release's channel, and rebuild from that.
@@ -25,9 +35,14 @@ if [ -e /etc/NIXOS ]; then
     say "nixos-rebuild from $url"
     # nix.nixPath holds only nixpkgs=, so name the configuration too (in the
     # guest's own path as well, for its later nixos-rebuild runs).
-    sed -i "s|\"nixpkgs=[^\"]*\"|\"nixpkgs=$url\"|" /etc/nixos/configuration.nix
-    grep -q 'nixos-config=' /etc/nixos/configuration.nix ||
+    if ! grep -qF "\"nixpkgs=$url\"" /etc/nixos/configuration.nix; then
+        sed -i "s|\"nixpkgs=[^\"]*\"|\"nixpkgs=$url\"|" /etc/nixos/configuration.nix
+        step "configuration.nix: nixpkgs is $url"
+    fi
+    if ! grep -q 'nixos-config=' /etc/nixos/configuration.nix; then
         sed -i "s|\"nixpkgs=$url\"|& \"nixos-config=/etc/nixos/configuration.nix\"|" /etc/nixos/configuration.nix
+        step "configuration.nix: nixos-config named in nixPath"
+    fi
     nixos-rebuild switch -I "nixpkgs=$url" -I nixos-config=/etc/nixos/configuration.nix || exit 1
     # Every generation is a GC root and keeps its kernel in the 1 GiB /boot:
     # keep this one and the one before, drop what only the others held, and
@@ -38,21 +53,23 @@ if [ -e /etc/NIXOS ]; then
     exit 0
 fi
 
+# t2-section: Linux.common
 # --- Unfreeze -----------------------------------------------------------------------
 # Each pin is recognized by its own mark, so an unfrozen guest is left alone.
 if [ "$(uname)" = Linux ]; then
     . /etc/os-release
+    # t2-section: Linux.apt
     f=/etc/apt/sources.list.d/ubuntu.sources
     if [ -f $f ] && grep -q 'snapshot\.ubuntu\.com' $f; then
         # The archive serves the -security suites too.
-        say "unfreezing: $f from snapshot.ubuntu.com to archive.ubuntu.com"
+        step "unfreezing: $f from snapshot.ubuntu.com to archive.ubuntu.com"
         sed -i -E 's#https://snapshot\.ubuntu\.com/ubuntu/[^/ ]+/?#http://archive.ubuntu.com/ubuntu/#' $f
     fi
     if [ "$ID" = debian ] && has apt-get &&
         ! grep -hqsE '^[[:space:]]*(deb|URIs:)[[:space:]]' /etc/apt/sources.list /etc/apt/sources.list.d/*; then
         # Installed from the DVD alone, which the installer then disabled.
         f=/etc/apt/sources.list.d/debian.sources
-        say "unfreezing: $f, Debian's mirror and security archive for $VERSION_CODENAME"
+        step "unfreezing: $f, Debian's mirror and security archive for $VERSION_CODENAME"
         cat >$f <<EOF
 Types: deb
 URIs: http://deb.debian.org/debian
@@ -73,13 +90,14 @@ EOF
         # make-debian.sh's Devuan installs have the release's own suite
         # only: no security fixes, no point-release updates.
         f=/etc/apt/sources.list.d/devuan-updates.list
-        say "unfreezing: $f, Devuan's $VERSION_CODENAME-security and -updates"
+        step "unfreezing: $f, Devuan's $VERSION_CODENAME-security and -updates"
         printf 'deb http://deb.devuan.org/merged %s main\n' \
             $VERSION_CODENAME-security $VERSION_CODENAME-updates >$f || exit 1
     fi
+    # t2-section: Linux.pacman
     f=/etc/pacman.d/mirrorlist
     if [ -f $f ] && grep -q 'archive\.archlinux\.org/repos/' $f; then
-        say "unfreezing: $f from Arch's archive to its mirrors"
+        step "unfreezing: $f from Arch's archive to its mirrors"
         echo 'Server = https://geo.mirror.pkgbuild.com/$repo/os/$arch' >$f
     fi
     if grep -qs '^ID=artix' /etc/os-release && [ -f $f ] && ! grep -q '^Server = .*artix' $f; then
@@ -87,44 +105,50 @@ EOF
         # mirror list in (no -M), whose mirrors serve no Artix repository.
         # Artix's own, the file as its artix-mirrorlist package has it,
         # fetched through the mirror the guest was built from.
-        say "unfreezing: $f, Artix's mirrors instead of Arch's"
+        step "unfreezing: $f, Artix's mirrors instead of Arch's"
         echo 'Server = https://mirrors.dotsrc.org/artix-linux/repos/$repo/os/$arch' >$f
         pkg=/var/cache/pacman/pkg/$(pacman -Sy >/dev/null && pacman -Sp artix-mirrorlist | sed 's|.*/||')
         pacman -Sw --noconfirm artix-mirrorlist && bsdtar -xOf "$pkg" etc/pacman.d/mirrorlist >$f.new &&
             mv $f.new $f || exit 1
         grep -q '^Server = .*artix' $f || { say "artix-mirrorlist gave no Artix mirrors"; exit 1; }
     fi
+    # t2-section: Linux.dnf
     f=/etc/yum.repos.d/fedora-updates.repo
     if [ -f $f ] && sed -n '/^\[updates\]/,/^\[/p' $f | grep -q '^enabled=0'; then
-        say "unfreezing: $f, the updates repository on again"
+        step "unfreezing: $f, the updates repository on again"
         sed -i '/^\[updates\]/,/^\[/ s/^enabled=0/enabled=1/' $f
     fi
     if grep -qs '^baseurl=https://dl\.rockylinux\.org/vault/rocky/' /etc/yum.repos.d/rocky*.repo; then
-        say "unfreezing: Rocky's repositories from the vault to the mirrors"
+        step "unfreezing: Rocky's repositories from the vault to the mirrors"
         sed -i -e 's/^#mirrorlist=/mirrorlist=/' \
             -e 's|^baseurl=https://dl\.rockylinux\.org/vault/rocky/[^/]*/|#baseurl=http://dl.rockylinux.org/$contentdir/$releasever/|' \
             /etc/yum.repos.d/rocky*.repo
     fi
+    # t2-section: Linux.zypper
     if grep -qs '^baseurl=https\?://download\.opensuse\.org/history/' /etc/zypp/repos.d/*.repo; then
-        say "unfreezing: Tumbleweed's repositories from openSUSE's history to the live ones"
+        step "unfreezing: Tumbleweed's repositories from openSUSE's history to the live ones"
         sed -i -E 's#^baseurl=https?://download\.opensuse\.org/history/[^/]+/#baseurl=http://download.opensuse.org/#' \
             /etc/zypp/repos.d/*.repo
     fi
+    # t2-section: Linux.moss
     # AerynOS's builder pins its repository at one day's tag (version
     # "tag/2026-11-02-unstable-stream"); the live one is the unstable stream.
     for f in $(grep -lsE '^[[:space:]]*version "tag/' /etc/moss/repo.d/*.kdl /etc/moss/system-model.kdl); do
-        say "unfreezing: $f from its tag to the unstable stream"
+        step "unfreezing: $f from its tag to the unstable stream"
         sed -i -E 's#^([[:space:]]*version )"tag/[^"]*"#\1"stream/unstable"#' "$f"
     done
+    # t2-section: Linux.zypper
     # The DVD it was installed from, which YaST adds as a repository after
     # the profile's own scripts have run: no DVD here, and zypper fails on
     # a repository it can't reach.
     for f in $(grep -lsE '^baseurl=(cd|dvd):' /etc/zypp/repos.d/*.repo); do
-        say "dropping the install DVD's repository ($(basename "$f"))"
+        step "dropping the install DVD's repository ($(basename "$f"))"
         rm -f "$f"
     done
+    # t2-section: Linux.common
 fi
 
+# t2-section: prologue
 # --- Room ---------------------------------------------------------------------------
 # NILFS2 (zorin18's root) keeps what is deleted or overwritten, in its
 # checkpoints, until its cleaner reclaims it, an hour later by default: an
@@ -135,6 +159,7 @@ fi
 # suspended.
 nilfs=
 reclaim() { :; }
+# t2-section: Linux.apt
 if [ "$(uname)" = Linux ] && [ "$(findmnt -no FSTYPE / 2>/dev/null)" = nilfs2 ] && has nilfs-clean; then
     nilfs=$(findmnt -no SOURCE /)
     reclaim() {
@@ -160,6 +185,7 @@ if [ "$(uname)" = Linux ] && [ "$(findmnt -no FSTYPE / 2>/dev/null)" = nilfs2 ] 
     }
     reclaim
 fi
+# t2-section: Linux.pacman
 # Omarchy's installer keeps a read-only snapshot of the fresh install,
 # @factory (for its factory reset), beside @ at the btrfs top level, outside
 # the mounted tree.  It holds on to every file an update replaces: on
@@ -168,13 +194,14 @@ if [ "$(uname)" = Linux ] && [ "$(findmnt -no FSTYPE / 2>/dev/null)" = btrfs ] &
     top=$(mktemp -d)
     if mount -o subvolid=5 "$(findmnt -nvo SOURCE /)" "$top"; then
         if [ -d "$top/@factory" ]; then
-            say "deleting the installer's read-only @factory snapshot"
+            step "deleting the installer's read-only @factory snapshot"
             btrfs subvolume delete "$top/@factory" || { umount "$top"; exit 1; }
         fi
         umount "$top"
     fi
     rmdir "$top"
 fi
+# t2-section: Linux.apt
 # Ubuntu's guided ZFS install (Subiquity: bpool holds /boot) leaves no
 # /etc/zfs/zfs-list.cache, so systemd has no mount unit for /boot, and
 # mounts the ESP's /boot/efi first: zfs-mount.service then mounts bpool's
@@ -186,7 +213,7 @@ fi
 # current.  And for this boot, /boot/efi is mounted again, over /boot.
 if [ "$(uname)" = Linux ] && [ -d /run/systemd/system ] && [ "$(findmnt -no FSTYPE /boot 2>/dev/null)" = zfs ] &&
     [ ! -d /etc/zfs/zfs-list.cache ] && [ -f /etc/zfs/zed.d/history_event-zfs-list-cacher.sh ]; then
-    say "ZFS: listing the pools' file systems in /etc/zfs/zfs-list.cache, for /boot's mount unit"
+    step "ZFS: listing the pools' file systems in /etc/zfs/zfs-list.cache, for /boot's mount unit"
     props=$(sed -n '/^PROPS="/,/"$/p' /etc/zfs/zed.d/history_event-zfs-list-cacher.sh | tr -d '\\\n' |
         sed 's/^PROPS="//; s/"$//')
     case $props in name,mountpoint,*) ;; *) say "can't read zfs-list-cacher's PROPS"; exit 1 ;; esac
@@ -202,8 +229,11 @@ if [ "$(uname)" = Linux ] && [ -d /run/systemd/system ] && [ "$(findmnt -no FSTY
     fi
 fi
 
+# t2-section: prologue
 case $(uname) in
+# t2-section: Linux.common
 Linux)
+    # t2-section: Linux.apt
     if has apt-get; then
         export DEBIAN_FRONTEND=noninteractive
         # The guest's own apt jobs (apt-daily, unattended-upgrades, PackageKit)
@@ -225,7 +255,7 @@ Linux)
         l=/boot/efi/loader/loader.conf
         if [ -f /etc/kernelstub/configuration ] && [ -f $l ] &&
             ! grep -qE '^[[:space:]]*default[[:space:]]' $l; then
-            say "boot menu: Pop_OS-current by default"
+            step "boot menu: Pop_OS-current by default"
             echo "default Pop_OS-current" >>$l || exit 1
         fi
         # Error-Mode=any: a repository that failed to download is an error
@@ -254,8 +284,9 @@ Linux)
         # snapd's postinst sets file capabilities, which NILFS2 can't store
         # (make-from-live.sh unpacked the system without them), and fails
         # (2.77.1's still does, unconditionally): there it stays as built.
-        if [ -n "$nilfs" ] && dpkg -s snapd >/dev/null 2>&1; then
+        if [ -n "$nilfs" ] && dpkg -s snapd >/dev/null 2>&1 && ! apt-mark showhold | grep -qx snapd; then
             apt-mark hold snapd >/dev/null || exit 1
+            step "snapd held: its postinst fails on NILFS2"
         fi
         apt-mark showhold >/run/bko-held || exit 1
         set -- $(apt list --upgradable 2>/dev/null | sed -n 's|/.*||p' | grep -vxF -f /run/bko-held)
@@ -271,9 +302,10 @@ Linux)
         # nothing else goes with it.
         if [ -f /etc/linuxmint/info ] && dpkg -s casper >/dev/null 2>&1 &&
             [ "$($apt -s purge casper 2>/dev/null | grep -c '^Purg ')" = 1 ]; then
-            say "purging casper"
+            step "purging casper"
             $apt purge casper || exit 1
         fi
+    # t2-section: Linux.dnf
     elif has dnf; then
         # Fedora's server install has mcelog, which decodes Intel machine
         # checks only: on the hosts' AMD CPUs it fails at every boot, and the
@@ -283,6 +315,7 @@ Linux)
             dnf -y remove mcelog || exit 1
         fi
         dnf -y upgrade --refresh && dnf clean all || exit 1
+    # t2-section: Linux.pacman
     elif has pacman; then
         # The keyrings first: packages signed by keys newer than the guest's
         # keyring would fail to verify.  Omarchy's pacman hook stops a plain
@@ -297,6 +330,7 @@ Linux)
         keyrings=$(pacman -Qq archlinux-keyring artix-keyring cachyos-keyring endeavouros-keyring manjaro-keyring omarchy-keyring 2>/dev/null)
         pacman -Sy --noconfirm --needed $keyrings && pacman -Su --noconfirm || exit 1
         yes | pacman -Scc >/dev/null
+    # t2-section: Linux.zypper
     elif has zypper; then
         # 103: zypper updated itself and wants to run again.  100-102: done,
         # with something to say (a reboot is needed, for one).
@@ -308,6 +342,7 @@ Linux)
         done
         [ $rc -eq 0 ] || [ $rc -ge 100 -a $rc -le 102 ] || exit 1
         zypper -n clean -a
+    # t2-section: Linux.xbps
     elif has xbps-install; then
         # xbps itself first, as xbps-install asks.
         xbps-install -Syu xbps || [ $? -eq 17 ] || exit 1   # 17: it is current already
@@ -317,8 +352,10 @@ Linux)
         # running, nor any a package still owns).
         if has vkpurge; then vkpurge rm all || exit 1; fi
         xbps-remove -yO || exit 1
+    # t2-section: Linux.apk
     elif has apk; then
         apk upgrade -U || exit 1
+    # t2-section: Linux.moss
     elif has moss; then
         # AerynOS: each sync makes a new state and keeps the ones before it
         # (each a /usr of hard links into /.moss's assets, with its boot
@@ -328,9 +365,11 @@ Linux)
         # again what it needs).
         moss -y sync -u && moss -y state remove --keep 2 && moss -y cache prune || exit 1
         rm -rf /.moss/cache/downloads
+    # t2-section: Linux.common
     else
         say "no package manager found"; exit 3
     fi ;;
+# t2-section: FreeBSD
 FreeBSD)
     export ASSUME_ALWAYS_YES=yes
     if has hbsd-update; then
@@ -355,6 +394,7 @@ FreeBSD)
         pkg upgrade -y || exit 1
     fi
     ! pkg -N >/dev/null 2>&1 || pkg clean -ay ;;
+# t2-section: DragonFly
 DragonFly)
     export ASSUME_ALWAYS_YES=yes
     pkg upgrade -y || exit 1
@@ -419,10 +459,11 @@ DragonFly)
         # just replaced, which needn't match it: the new one takes over.
         /etc/rc.d/sshd restart >/dev/null || exit 1
         rm -rf /usr/src /usr/obj/*
-        say "base system: rebuilt from $branch at $commit ($(date +%T)), running from the next boot"
+        step "base system: rebuilt from $branch at $commit ($(date +%T)), running from the next boot"
     fi
     [ -z "$gitpkgs" ] || pkg delete -y $gitpkgs || exit 1
     pkg clean -ay || exit 1 ;;
+# t2-section: OpenBSD
 OpenBSD)
     # Not while the kernel is relinked (KARL), as every boot does, starting
     # late: two relinks at once break each other.  So wait for 30 s with
@@ -453,6 +494,7 @@ OpenBSD)
         [ $i -lt 3 ] || { say "the kernel relink keeps failing"; exit 1; }
     done
     pkg_add -u -I || exit 1 ;;
+# t2-section: NetBSD
 NetBSD)
     if has apk; then
         # AlpineBSD.  Its kernel (netbsd-kernel-generic-bin: NetBSD's own
@@ -467,7 +509,7 @@ NetBSD)
         # before netbsd/install.sh added it lacks.  apk update, not add -U:
         # add goes on with the old index when a repository can't be fetched.
         if [ ! -s /etc/ssl/certs/ca-certificates.crt ]; then
-            say "fetching the CA certificates unchecked"
+            step "fetching the CA certificates unchecked"
             apk add -U --check-certificate=no ca-certificates-bundle &&
                 apk fix --check-certificate=no ca-certificates-bundle || exit 1
         fi
@@ -498,27 +540,34 @@ NetBSD)
         # The running kernel's configuration, "(GENERIC)" in uname -v:
         # KERNEL=AUTO would need config(1), from the comp set, not here.
         kernel=$(uname -v | sed -n 's/.*(\([A-Za-z0-9_]*\)).*/\1/p')
-        [ -n "$(ls /etc/openssl/certs)" ] || certctl rehash || exit 1
+        if [ -z "$(ls /etc/openssl/certs)" ]; then
+            certctl rehash || exit 1
+            step "certctl rehash: the base set's CA certificates"
+        fi
         if ! grep -q '^ip6addrctl_policy=ipv4_prefer' /etc/rc.conf; then
             printf 'ip6addrctl=YES\nip6addrctl_policy=ipv4_prefer\n' >>/etc/rc.conf
+            step "rc.conf: IPv4 first"
         fi
         /etc/rc.d/ip6addrctl start >/dev/null || exit 1
         pkgs=https://cdn.netbsd.org/pub/pkgsrc/packages/NetBSD/$arch/$rel/All
         if ! has pkgin; then
-            say "installing pkgin and sysupgrade from $pkgs"
+            step "installing pkgin and sysupgrade from $pkgs"
             PKG_PATH=$pkgs pkg_add pkgin || exit 1
         fi
         # pkgin follows the release the guest runs (11.0 to 11.1: from the
         # update after the one that brought the new base), once pkgsrc has
         # packages for it: the branch can say 11.2 before pkgsrc does.
         if ftp -o /dev/null "$pkgs/pkg_summary.gz" >/dev/null 2>&1; then
-            echo "$pkgs" >/usr/pkg/etc/pkgin/repositories.conf
+            if [ "$(cat /usr/pkg/etc/pkgin/repositories.conf 2>/dev/null)" != "$pkgs" ]; then
+                echo "$pkgs" >/usr/pkg/etc/pkgin/repositories.conf
+                step "pkgin's repository is $pkgs"
+            fi
         else
             say "no packages at $pkgs yet: pkgin stays on $(cat /usr/pkg/etc/pkgin/repositories.conf)"
         fi
         has sysupgrade || pkgin -y install sysupgrade || exit 1
         releasedir=https://nycdn.netbsd.org/pub/NetBSD-daily/netbsd-${rel%%.*}/latest/$arch
-        cat >/usr/pkg/etc/sysupgrade.conf <<EOF
+        cat >/usr/pkg/etc/sysupgrade.conf.new <<EOF
 RELEASEDIR="$releasedir"
 KERNEL=${kernel:-GENERIC}
 SETS=AUTO
@@ -526,6 +575,12 @@ POSTINSTALL_AUTOFIX="obsolete mtree opensslcertsrehash"
 ETCUPDATE=no
 AUTOCLEAN=yes
 EOF
+        if cmp -s /usr/pkg/etc/sysupgrade.conf.new /usr/pkg/etc/sysupgrade.conf; then
+            rm -f /usr/pkg/etc/sysupgrade.conf.new
+        else
+            mv /usr/pkg/etc/sysupgrade.conf.new /usr/pkg/etc/sysupgrade.conf || exit 1
+            step "sysupgrade.conf: the netbsd-${rel%%.*} daily, kernel ${kernel:-GENERIC}"
+        fi
         # The build's checksums, sets' and kernels': the same as at the last
         # sysupgrade, and there's nothing new to install (sysupgrade would
         # fetch and extract every set again, some 500 MiB of writes).
@@ -540,6 +595,7 @@ EOF
         else
             sysupgrade auto || exit 1
             mv $sums.new $sums || exit 1
+            step "base system: sysupgrade to the netbsd-${rel%%.*} daily"
             # The sshd still running hands each new connection to the
             # binaries just replaced, which needn't match it: the new one
             # takes over.  (Its pid file comes a moment after start returns.)
@@ -550,11 +606,13 @@ EOF
         fi
         pkgin -y update && pkgin -y upgrade && pkgin -y clean || exit 1
     fi ;;
+# t2-section: SunOS
 SunOS)
     # A new boot environment when the update needs one; the reboot after
     # this activates it.  4: nothing to update.
     pkg update -v; rc=$?
     [ $rc -eq 0 ] || [ $rc -eq 4 ] || exit 1 ;;
+# t2-section: Haiku
 Haiku)
     # Each update keeps the packages it replaced in a state folder, to boot
     # back into from the boot menu: the last update's go first, as the
@@ -575,6 +633,7 @@ Haiku)
     cat /tmp/bko-pkgman.log
     [ $rc -eq 0 ] || exit 1
     ! unrefreshed || { say "a repository couldn't be refreshed"; exit 1; } ;;
+# t2-section: Redox
 Redox)
     # Every installed package: kernel, initfs and relibc too (the boot
     # loader's stages in the boot partitions only redox_installer writes).
@@ -598,6 +657,7 @@ Redox)
         break
     done
     rm -rf /tmp/pkg_download /tmp/bko-pkg.log ;;
+# t2-section: prologue
 *)
     say "no updater for $(uname)"; exit 3 ;;
 esac

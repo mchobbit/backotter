@@ -1,0 +1,9 @@
+base pm pacman
+pkg e2fsprogs 1.47.4-1
+pkg grub 2:2.16-1
+pkg mkinitcpio 42.2-1
+pkg linux 7.2.14.arch1-1
+pkg cryptsetup 2.8.8-1
+pkg attr 2.5.2-2
+pkg acl 2.3.2-2
+pkg nilfs-utils 2.2.11-1

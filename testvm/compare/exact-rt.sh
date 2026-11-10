@@ -164,8 +164,10 @@ done
 echo "sizes: $(grep -h 'cloning\|total restore size\|using' "$WORK"/restore-[23].log | tr '\n' ' ')"
 if [ $fail = 0 ]; then
     echo "PASS"
+    trap - EXIT
     cleanup
     rm -rf "$WORK"
+    exit 0
 else
     echo "FAIL (state kept in $WORK)"
     exit 1

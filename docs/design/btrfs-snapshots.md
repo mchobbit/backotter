@@ -270,6 +270,11 @@ expected differences, not failures:
   was made in `format`.  The plan notes which.
 - After a rollback, the mounted root has no parent.
 - ctime, as for every restored file.
+- The mount-point directories inside the live root that the backup held
+  only through its alias (Tumbleweed's `/.snapshots`, `/home`, `/var`,
+  … under their mounts) get their times from the mount stage's `mkdir`, as
+  on every system without such an alias.  compare.py's backups leave the
+  aliases out the same way.
 
 ## Onto another filesystem
 

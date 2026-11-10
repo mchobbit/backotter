@@ -44,6 +44,12 @@ EXPECTED = [
     "etc/zfs/zpool.cache",
 ]
 
+# Rewritten at every boot, so with a new mtime, but they have to be the same
+# otherwise.  machine-id: systemd writes it again from the kernel command
+# line's systemd.machine_id= (EndeavourOS with systemd-boot); a different ID
+# would orphan the ESP's /MACHINE-ID/ directory and loader entries.
+REMADE = ["etc/machine-id"]
+
 # NixOS makes these again from its store at every boot.
 NIXOS_EXPECTED = ["etc/.clean", "etc/group", "etc/passwd", "etc/shadow", "etc/subgid", "etc/subuid", "nix/var/nix/temproots/*", "nix/var/nix/db/*"]
 # And these, so their mtimes are new, but they have to be the same otherwise.
@@ -104,7 +110,7 @@ def same(rel, a, b, nixos):
     # moves whenever something inside it does.
     if stat.S_ISDIR(int(a[0], 8)) and stat.S_ISDIR(int(b[0], 8)):
         return a[:3] == b[:3]
-    if nixos and any(fnmatch.fnmatch(rel, pat) for pat in NIXOS_REMADE):
+    if any(fnmatch.fnmatch(rel, pat) for pat in REMADE + (NIXOS_REMADE if nixos else [])):
         return a[:4] + a[5:6] == b[:4] + b[5:6]
     return a[:6] == b[:6]
 

@@ -162,6 +162,24 @@ start_mdns() {
     start_service avahi-daemon
 }
 
+# An active firewall must let ssh and the mDNS answers through: EndeavourOS's
+# firewalld zone allows only ssh and DHCPv6, so $SOURCE_HOST.local never
+# resolved; openSUSE's doesn't allow ssh.  NixOS's avahi module opens its own.
+open_firewall() {
+    local z
+    if command -v firewall-cmd >/dev/null && firewall-cmd --state >/dev/null 2>&1; then
+        # --get-active-zones: "public (default)", then indented "interfaces: ..."
+        for z in $( { firewall-cmd --get-default-zone; firewall-cmd --get-active-zones | awk '!/^[[:space:]]/ { print $1 }'; } | sort -u); do
+            firewall-cmd -q --permanent --zone="$z" --add-service=ssh --add-service=mdns
+            echo "firewalld: ssh and mdns allowed in zone $z"
+        done
+        firewall-cmd -q --reload
+    fi
+    if command -v ufw >/dev/null && ufw status 2>/dev/null | grep -q '^Status: active'; then
+        ufw allow 22/tcp >/dev/null && ufw allow 5353/udp >/dev/null && echo "ufw: 22/tcp and 5353/udp allowed"
+    fi
+}
+
 # NixOS builds /etc from its configuration, so all of that goes in there.
 adopt_nixos() {
     local conf=/etc/nixos/configuration.nix module=/etc/nixos/backshot1.nix line lines=
@@ -220,6 +238,8 @@ else
     start_service ssh sshd
     echo "== mDNS, for $SOURCE_HOST.local"
     start_mdns
+    echo "== the firewall, if one is on"
+    open_firewall
 fi
 
 ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub

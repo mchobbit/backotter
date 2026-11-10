@@ -225,6 +225,10 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
         mount_points: vec![],
         fam: crate::other::Family::of_layout(&layout.v),
     };
+    // --reformat's findings (reformat.rs), carried in the edited layout.
+    for (k, list) in [("problems", &mut b.problems), ("notes", &mut b.notes)] {
+        list.extend(layout.arr(&["load_reformat", k]).iter().filter_map(Value::as_str).map(str::to_string));
+    }
     if opts.new_uuids {
         b.problems.push("--new-uuids isn't built yet: it also has to rewrite the restored fstab, crypttab and boot configuration".into());
     }
@@ -2031,6 +2035,7 @@ impl Builder<'_> {
         // reads gets its atime bumped: each file's atime, as the restore
         // set it, is kept here and put back at the end.
         out.push(Cmd::new(&["sh", "-c", &atimes_cmd(&t, "if-missing")]).why("the restored atimes (the restore stage lists them), to put back after this stage's reads"));
+        out.extend(self.rewrite_cmd(false));
         // LVM's devices file (RHEL, Fedora): LVM run in the chroot (by dracut)
         // would record the rescue system's names for the PVs in it; it's
         // put back as restored when the chroot's work is done.
@@ -2106,6 +2111,7 @@ impl Builder<'_> {
         if uefi && !self.opts.no_nvram {
             out.extend(self.efi_entries());
         }
+        out.extend(self.rewrite_cmd(true));
         out.push(Cmd::new(&["mkdir", "-p", &format!("{t}/var/log/bko-holt")]));
         out.push(Cmd::new(&["cp", "-a", &format!("{RUN_DIR}/log/."), &format!("{t}/var/log/bko-holt/")]).why("this restore's log, on the restored system"));
         if self.layout.str_at(&["os", "id"]) != Some("nixos") {
@@ -2152,6 +2158,27 @@ impl Builder<'_> {
             out.push(Cmd::new(&["umount", &top]));
         }
         out
+    }
+
+    /// `bko-holt rewrite` for --reformat (rewrite.rs): first the restored
+    /// files that name the old filesystems, before the initramfs and the
+    /// loader are made from them; with CHECK, at the end, the initramfs read
+    /// back for the new type's module, and what's left of the old type listed.
+    fn rewrite_cmd(&self, check: bool) -> Option<Cmd> {
+        if self.opts.reformats.is_empty() {
+            return None;
+        }
+        let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
+        let mut a = vec![exe, "rewrite".into(), self.opts.layout.clone(), self.opts.target.clone()];
+        if check {
+            a.push("--check".into());
+        }
+        for (m, ty) in &self.opts.reformats {
+            a.push("--reformat".into());
+            a.push(format!("{m}={ty}"));
+        }
+        let why = if check { "--reformat: the initramfs has the new type's module; what's left of the old type, listed" } else { "--reformat: fstab and the kernel command lines for the new filesystem" };
+        Some(Cmd { argv: a, why: Some(why.into()), ..Cmd::default() })
     }
 
     /// grub.cfg remade, with the LANG the source's was made with: it

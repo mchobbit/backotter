@@ -61,6 +61,12 @@ pub fn dumped_disks(v: &Value) -> Vec<(String, u64, u32)> {
 
 /// Plans LAYOUT_TEXT onto blank targets GROW bytes bigger than its disks.
 pub fn plan(layout_text: &str, grow: u64) -> Result<Planned, String> {
+    plan_with(layout_text, grow, &[])
+}
+
+/// plan(), with EXTRA given to load as well (a variant's own arguments,
+/// such as --reformat /=xfs).
+pub fn plan_with(layout_text: &str, grow: u64, extra: &[String]) -> Result<Planned, String> {
     let v = json::parse(layout_text).map_err(|e| format!("not JSON: {}", e.message))?;
     let t = Tree::new("golden-plan");
     t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
@@ -78,6 +84,7 @@ pub fn plan(layout_text: &str, grow: u64) -> Result<Planned, String> {
         maps.push((name, tgt, bytes));
     }
     args.extend(["--repo".to_string(), REPO.to_string()]);
+    args.extend(extra.iter().cloned());
     let opts = match parse_args(&args) {
         Ok(Parsed::Run(o)) => o,
         Ok(Parsed::Help) => return Err(format!("load's arguments {args:?} asked for help")),

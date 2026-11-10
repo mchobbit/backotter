@@ -6,3 +6,14 @@
 aerynos+bigger
 debian13-stack+bigger
 mint22+bigger
+# +reformat-TYPE plans GUEST's dump with --reformat /=TYPE
+# (docs/design/reformat.md): golden-only, not HoltTest2 cells.  A tree
+# whose load has no --reformat skips them.
+# The omarchy ones are refusals: it has no xfsprogs (xfs), and it
+# hibernates into a swap file on its btrfs (ext4).
+debian13+reformat-ext4
+fedora44+reformat-xfs
+omarchy+reformat-ext4
+omarchy+reformat-xfs
+tumbleweed+reformat-ext4
+void-musl+reformat-xfs

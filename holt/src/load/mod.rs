@@ -16,6 +16,8 @@ pub mod commands;
 pub mod exec;
 pub mod layout;
 pub mod plan;
+pub mod reformat;
+pub mod rewrite;
 pub mod status;
 pub mod target;
 pub mod writetable;
@@ -93,6 +95,9 @@ pub struct Options {
     pub erase: Vec<String>,
     pub target: String,
     pub new_uuids: bool,
+    /// --reformat MOUNT=TYPE: the filesystem mounted at MOUNT is made as
+    /// TYPE instead of its own (reformat.rs).
+    pub reformats: Vec<(String, String)>,
     /// --key-file NAME=FILE: a LUKS container (by its crypttab name) or a
     /// ZFS encryption root (by dataset).
     pub key_files: Vec<(String, String)>,
@@ -119,6 +124,7 @@ impl Options {
             erase: vec![],
             target: DEFAULT_TARGET.to_string(),
             new_uuids: false,
+            reformats: vec![],
             key_files: vec![],
             no_nvram: false,
             removable: false,
@@ -149,6 +155,7 @@ impl Options {
 pub const USAGE: &str = "Usage: bko-holt load LAYOUT.json [--through STAGE | --only STAGE] [--commit]
                      [--map SRC=DST]... [--erase DEV]...
                      [--target DIR] [--new-uuids] [--key-file NAME=FILE]...
+                     [--reformat MOUNT=TYPE]...
                      [--no-nvram] [--removable]
                      [--repo REPO [--password-file FILE] [--snapshot ID]
                       [--archiver PROGRAM]]
@@ -176,6 +183,9 @@ Rebuilds the disks LAYOUT.json (from `bko-holt dump`) describes, in stages:
   --erase DEV       a target disk that isn't blank may be wiped
   --target DIR      where mount builds the tree (default /mnt/bko-target)
   --new-uuids       new identifiers everywhere instead of the original ones
+  --reformat MOUNT=TYPE
+                    make the filesystem mounted at MOUNT as TYPE (ext4, xfs
+                    or btrfs) instead of its own; boot rewrites what names it
   --key-file NAME=FILE
                     a LUKS container's (crypttab name) or ZFS encryption
                     root's (dataset) key or passphrase, instead of a prompt;
@@ -245,6 +255,21 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
                 o.target = v.trim_end_matches('/').to_string();
             }
             "--new-uuids" => o.new_uuids = true,
+            "--reformat" => {
+                let v = value(&mut it, a)?;
+                let (m, ty) = pair(a, &v)?;
+                if !m.starts_with('/') {
+                    return Err(format!("--reformat {v}: MOUNT is a mount point, such as /"));
+                }
+                if !reformat::TYPES.contains(&ty.as_str()) {
+                    return Err(format!("--reformat {v}: TYPE is one of {}", reformat::TYPES.join(", ")));
+                }
+                let m = if m == "/" { m } else { m.trim_end_matches('/').to_string() };
+                if o.reformats.iter().any(|(x, _)| *x == m) {
+                    return Err(format!("--reformat {m}=...: {m} is given twice"));
+                }
+                o.reformats.push((m, ty));
+            }
             "--key-file" => {
                 let v = value(&mut it, a)?;
                 o.key_files.push(pair(a, &v)?);
@@ -323,6 +348,8 @@ pub fn run(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
         Ok(v) => v,
         Err(e) => return (EXIT_UNSUPPORTED, String::new(), format!("bko-holt load: {}: not JSON ({} at byte {})\n", opts.layout, e.message, e.offset)),
     };
+    // --reformat: every stage works from the edited layout.
+    let json = if opts.reformats.is_empty() { json } else { reformat::apply(json.clone(), &reformat::work_out(&json, &opts.reformats)) };
     let layout = match layout::Layout::from_json(json) {
         Ok(l) => l,
         Err(e) => return (EXIT_UNSUPPORTED, String::new(), format!("bko-holt load: {}: {e}\n", opts.layout)),

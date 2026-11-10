@@ -158,8 +158,9 @@ and VM images, which snapper's default configs leave out of `/`.
   was a snapshot of `@/.snapshots/K/snapshot`, which is restored later.
 
 `restore`:
-1. Writes `RUN_DIR/restore.globs`: one `!ALIAS` line per alias, and one
-   `!BACKUP_PATH/*` line per shared snapshot.  The main restore then leaves
+1. Writes `RUN_DIR/restore.globs`: `!ALIAS` and `!ALIAS/**` per alias, and
+   `!BACKUP_PATH/**` per shared snapshot (a glob excludes only what it
+   matches, not what is below it).  The main restore then leaves
    each shared snapshot's directory empty if the backup has it, and absent
    if the backup doesn't.
 2. Runs the main restore as today, with `--glob-file RUN_DIR/restore.globs`.

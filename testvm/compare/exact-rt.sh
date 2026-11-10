@@ -32,7 +32,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$WORK"
 SRC_IMG=$WORK/src.img DST_IMG=$WORK/dst.img REPO=$WORK/repo
 S=$WORK/s T=$WORK/t ST=$WORK/stop DT=$WORK/dtop
-export RUSTIC_PASSWORD=exact-rt RUSTIC_NO_PROGRESS=true
+export RUSTIC_PASSWORD=exact-rt RUSTIC_NO_PROGRESS=true RUSTIC_NO_CACHE=true
 fail=0
 bad() { echo "FAIL: $*"; fail=1; }
 cleanup() {
@@ -93,7 +93,7 @@ mount -o noatime,subvol=@/.snapshots "$SRC_LOOP" "$S/.snapshots"
 # ---- backup ----
 "$R" -r "$REPO" init >/dev/null 2>&1
 "$R" -r "$REPO" backup --set-atime yes --as-path / "$S" >"$WORK/backup.log" 2>&1 || { cat "$WORK/backup.log"; exit 1; }
-SNAP=$("$R" -r "$REPO" snapshots --json | python3 -c 'import json,sys; d=json.load(sys.stdin); print([s for g in d for s in g[1]][-1]["id"])')
+SNAP=latest
 
 # ---- the restore, as bko-holt's plan does it ----
 DST_LOOP=$(mkfs "$DST_IMG")
@@ -107,7 +107,7 @@ umount "$DT"
 mount -o subvol=@/.snapshots/1/snapshot "$DST_LOOP" "$T"
 mkdir -p "$T/.snapshots"
 mount -o subvol=@/.snapshots "$DST_LOOP" "$T/.snapshots"
-printf '%s\n' '!/.snapshots/1/snapshot' '!/.snapshots/2/snapshot/*' '!/.snapshots/3/snapshot/*' >"$WORK/globs"
+printf '%s\n' '!/.snapshots/1/snapshot' '!/.snapshots/1/snapshot/**' '!/.snapshots/2/snapshot/**' '!/.snapshots/3/snapshot/**' >"$WORK/globs"
 RUSTIC_STRICT_EXIT=true "$R" -r "$REPO" restore --numeric-id --glob-file "$WORK/globs" "$SNAP" "$T" >"$WORK/restore-main.log" 2>&1 ||
     { cat "$WORK/restore-main.log"; bad "the main restore failed"; }
 mount -o subvolid=5,noatime "$DST_LOOP" "$DT"
@@ -125,9 +125,12 @@ done
 # ---- checks ----
 grep -l AlreadyExists "$WORK"/restore-*.log && bad "AlreadyExists in a restore's output"
 manifest() { python3 -I "$here/exact-manifest.py" "$1"; }
+# The live root's .snapshots, the mount point under /.snapshots: the backup
+# holds it only through the alias, which the restore leaves out, so its
+# times are its mkdir's (as when a backup leaves aliases out, compare.py).
 for n in 1 2 3; do
-    manifest "$ST/@/.snapshots/$n/snapshot" >"$WORK/src-$n.m"
-    manifest "$DT/@/.snapshots/$n/snapshot" >"$WORK/dst-$n.m"
+    manifest "$ST/@/.snapshots/$n/snapshot" | { [ $n = 1 ] && grep -v '^\.snapshots ' || cat; } >"$WORK/src-$n.m"
+    manifest "$DT/@/.snapshots/$n/snapshot" | { [ $n = 1 ] && grep -v '^\.snapshots ' || cat; } >"$WORK/dst-$n.m"
     diff "$WORK/src-$n.m" "$WORK/dst-$n.m" >"$WORK/diff-$n" || { head -20 "$WORK/diff-$n"; bad "tree $n differs"; }
 done
 grep -q "AAAA" "$DT/@/.snapshots/2/snapshot/etc/trick" || bad "same size and mtime, other contents: not fixed"
@@ -136,15 +139,16 @@ phys() { filefrag -v "$1" | awk '$1 == "0:" { print $4; exit }'; }
 [ "$(phys "$DT/@/.snapshots/3/snapshot/usr/lib/pkg-v2.bin")" = "$(phys "$DT/@/.snapshots/1/snapshot/usr/lib/pkg-v2.bin")" ] ||
     bad "pkg-v2.bin in snapshot 3 isn't the live tree's (not cloned)"
 # Again over itself: nothing changes.
-find "$DT/@/.snapshots/3/snapshot" -printf '%Z %i %p\n' | sort >"$WORK/ctime-before"
+find "$DT/@/.snapshots/3/snapshot" -printf '%C@ %i %p\n' | sort >"$WORK/ctime-before"
 RUSTIC_STRICT_EXIT=true "$R" -r "$REPO" restore --numeric-id --exact "$SNAP:/.snapshots/3/snapshot" "$DT/@/.snapshots/3/snapshot" >"$WORK/restore-again.log" 2>&1 ||
     { cat "$WORK/restore-again.log"; bad "the restore again failed"; }
-find "$DT/@/.snapshots/3/snapshot" -printf '%Z %i %p\n' | sort >"$WORK/ctime-after"
+find "$DT/@/.snapshots/3/snapshot" -printf '%C@ %i %p\n' | sort >"$WORK/ctime-after"
 diff "$WORK/ctime-before" "$WORK/ctime-after" >"$WORK/ctime-diff" || { head "$WORK/ctime-diff"; bad "an --exact restore over a matching tree changed $(grep -c '^>' "$WORK/ctime-diff") entries"; }
 # Sharing, by qgroups, against the source's.
 for n in 2 3; do btrfs property set -ts "$DT/@/.snapshots/$n/snapshot" ro true; done
 excl() {
-    btrfs quota enable "$1" && btrfs quota rescan -w "$1" >/dev/null
+    # enable starts a rescan of its own: wait for it, then for a whole one.
+    btrfs quota enable "$1" && btrfs quota rescan -W "$1" && btrfs quota rescan -w "$1" >/dev/null
     for n in 2 3; do
         id=$(btrfs inspect-internal rootid "$1/@/.snapshots/$n/snapshot")
         btrfs qgroup show --raw "$1" | awk -v q="0/$id" '$1 == q { print $3 }'

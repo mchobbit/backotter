@@ -64,10 +64,14 @@ impl Plan {
         self.shared.iter().find(|s| s.path == path)
     }
 
-    /// The main restore's exclusions, as `--glob-file` lines.
+    /// The main restore's exclusions, as `--glob-file` lines: an alias and
+    /// everything below it; below a shared snapshot's directory, everything
+    /// (the directory itself stays, empty, which says the backup has it).
+    /// A glob excludes only what it matches, not what is below it: hence
+    /// `/**`.
     pub fn globs(&self) -> Vec<String> {
-        let mut g: Vec<String> = self.aliases.iter().map(|a| format!("!{a}")).collect();
-        g.extend(self.shared.iter().map(|s| format!("!{}/*", s.backup)));
+        let mut g: Vec<String> = self.aliases.iter().flat_map(|a| [format!("!{a}"), format!("!{a}/**")]).collect();
+        g.extend(self.shared.iter().map(|s| format!("!{}/**", s.backup)));
         g
     }
 }
@@ -245,7 +249,7 @@ mod tests {
         assert_eq!((s.backup.as_str(), s.base.as_str(), s.new_id, s.readonly), ("/.snapshots/2/snapshot", "@/.snapshots/1/snapshot", 265, true));
         assert!(s.placeholders.is_empty());
         assert_eq!(s.clone_from, Some(("/".into(), "@/.snapshots/1/snapshot".into())));
-        assert_eq!(p.globs(), vec!["!/.snapshots/1/snapshot".to_string(), "!/.snapshots/2/snapshot/*".into()]);
+        assert_eq!(p.globs(), vec!["!/.snapshots/1/snapshot".to_string(), "!/.snapshots/1/snapshot/**".into(), "!/.snapshots/2/snapshot/**".into()]);
         assert!(p.notes.is_empty());
     }
 

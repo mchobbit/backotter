@@ -1,0 +1,192 @@
+#!/usr/bin/env python3
+"""BackShot2 from the Mac (docs/design/backshot2.md, "Words"): runs bs2-host
+on Chopin and Cinqcent over SSH, from a private copy of this worktree's
+testvm/ and holt/ in ~/backotter-work/bs2-wt (never the shared testvm/).
+
+  bs2 BackShot2Alpine [N] [plan]    N new cases (default 200) from each Alpine source,
+                                    through tier 0, then tier 1, then tier 2 for the UEFI
+                                    sources' cases that touch an ESP or the NVRAM (30 in all),
+                                    then the corpus
+  bs2 BackShot2 [SOURCE...] [N] [plan]   the same over the named sources (only Alpine's exist)
+  bs2 BackShot2 corpus [plan]       the corpus alone, at tier 0 (tier 1 with --tier 1)
+  bs2 replay CASE [--tier N]        one case again, exactly
+  bs2 shrink CASE [--tier N]        a failing case down to its smallest; saved in the corpus
+  bs2 soak CASE N                   CASE N times at tier 1 (reported as K of N)
+  bs2 sync                          copy testvm/ and holt/ to the hosts' bs2-wt
+  bs2 status RUN                    the run's verdicts so far, on both hosts
+
+Results: each host's /bkoscratch/backshot2/runs/RUN/ and Test2's ledger
+(family bs2).  "plan" prints the cases, tiers, time and GB and runs nothing.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+REPO = os.path.dirname(os.path.dirname(HERE))
+HOSTS = {"chopin": "m@chopin.local", "cinqcent": "m@cinqcent.local"}
+# Which host runs which source (split-chopin-cinqcent): two each.
+HOME = {"alpine324": "chopin", "alpine324-uefi": "chopin", "alpine324-lvm": "cinqcent", "alpine324-luks": "cinqcent"}
+ALPINE = list(HOME)
+HOST_BS2 = "~/backotter-work/bs2-wt/testvm/backshot2/bs2-host"
+# Measured on 2026-11-10 (est. elsewhere): seconds per case and GB written to the SSDs.
+SECS = {0: 0.3, 1: 110, 2: 140}
+SLOTS = 3
+
+
+def ssh(host, cmd, check=True, capture=False):
+    r = subprocess.run(["ssh", HOSTS[host], cmd], text=True, capture_output=capture)
+    if check and r.returncode:
+        sys.exit(f"bs2: {host}: {cmd[:80]}... exit {r.returncode}{(': ' + r.stderr[-400:]) if capture else ''}")
+    return r
+
+
+def sync():
+    for h in HOSTS.values():
+        subprocess.run(["rsync", "-a", "--delete", "--exclude", "target", "--exclude", "__pycache__",
+                        f"{REPO}/holt", f"{REPO}/testvm", f"{h}:backotter-work/bs2-wt/"], check=True)
+
+
+def root(cmd):
+    """CMD as root under a small reservation, as m submits it (cmp-run.sh as m)."""
+    return f"cd ~/backotter-work && WEAR_TAG=bs2:mac ./cmp-run.sh --reserve 2 2 sudo -E {cmd}"
+
+
+def plan_words(sources, n, tier2=30):
+    rows = []
+    for s in sources:
+        rows.append((s, HOME[s], n, n, (tier2 // 2) if s != "alpine324" and s in ("alpine324-uefi", "alpine324-lvm", "alpine324-luks") else 0))
+    total = {h: 0 for h in HOSTS}
+    print(f"{'source':18} {'host':9} {'tier0':>6} {'tier1':>6} {'tier2':>6}")
+    for s, h, t0, t1, t2 in rows:
+        t2 = min(t2, tier2)
+        print(f"{s:18} {h:9} {t0:6} {t1:6} {t2:6}")
+        total[h] += t0 * SECS[0] + (t1 * SECS[1] + t2 * SECS[2]) / SLOTS
+    for h, sec in total.items():
+        print(f"{h}: ~{sec / 3600:.1f} h est., {SLOTS} slots, in RAM: ~0 GB written to the SSDs (records only, ~5 MB a case)")
+
+
+def run_words(sources, n, run):
+    sync()
+    by_host = {}
+    for s in sources:
+        by_host.setdefault(HOME[s], []).append(s)
+    tier2_each = max(1, 30 // max(1, len([s for s in sources if s != "alpine324"])))
+    for h, ss in by_host.items():
+        cmds = []
+        for s in ss:
+            cmds.append(root(f"{HOST_BS2} tier0 {s} {n * 5} --run {run}-t0 --keep-passes 50"))
+            cmds.append(root(f"{HOST_BS2} enqueue {s} {n} --tier 1 --run {run}"))
+            if s != "alpine324":
+                cmds.append(root(f"{HOST_BS2} enqueue {s} {tier2_each} --tier 2 --run {run} --from 500000"))
+        cmds.append(f"sudo chown -R m: /bkoscratch/backshot2/runs/{run}")
+        cmds.append(f"{HOST_BS2} queue {run} --slots {SLOTS}")
+        script = " && ".join(cmds)
+        log = f"/bkoscratch/backshot2/logs/{run}.log"
+        ssh(h, f"mkdir -p /bkoscratch/backshot2/logs && setsid -f bash -c {json.dumps(script)} > {log} 2>&1 < /dev/null")
+        print(f"{h}: started {', '.join(ss)} (log {log})")
+
+
+def status(run):
+    for h in HOSTS:
+        r = ssh(h, f"cat /bkoscratch/backshot2/runs/{run}*/tier*.jsonl 2>/dev/null", check=False, capture=True)
+        counts = {}
+        for line in r.stdout.splitlines():
+            try:
+                j = json.loads(line)
+            except ValueError:
+                continue
+            k = (j["source"], j["tier"], j["verdict"])
+            counts[k] = counts.get(k, 0) + 1
+        for k in sorted(counts):
+            print(f"{h:9} {k[0]:18} tier {k[1]} {k[2]:8} {counts[k]}")
+
+
+def corpus(plan, tier):
+    cases = sorted(f for f in os.listdir(f"{HERE}/cases") if f.endswith(".case"))
+    if plan:
+        print(f"{len(cases)} corpus cases at tier {tier}")
+        return
+    sync()
+    by = {}
+    for f in cases:
+        with open(f"{HERE}/cases/{f}") as fh:
+            src = json.load(fh)["source"].split("@")[0]
+        by.setdefault(HOME.get(src, "chopin"), []).append(f"~/backotter-work/bs2-wt/testvm/backshot2/cases/{f}")
+    stamp = time.strftime("corpus-%Y%m%d-%H%M")
+    for h, fs in by.items():
+        if tier == 0:
+            ssh(h, root(f"{HOST_BS2} tier0-cases {' '.join(fs)} --run {stamp}"))
+        else:
+            for f in fs:
+                ssh(h, f"cd ~/backotter-work && ./cmp-run.sh --reserve 2 3 sudo -E {HOST_BS2} tier1 {f} --tier {tier} --run {stamp} --port 2949", check=False)
+
+
+def main():
+    a = sys.argv[1:]
+    if not a:
+        sys.exit(__doc__)
+    plan = "plan" in a
+    a = [x for x in a if x != "plan"]
+    tier = 0
+    if "--tier" in a:
+        i = a.index("--tier")
+        tier = int(a[i + 1])
+        del a[i:i + 2]
+    w = a[0]
+    if w == "sync":
+        sync()
+    elif w == "status":
+        status(a[1])
+    elif w in ("BackShot2Alpine", "BackShot2"):
+        rest = a[1:]
+        if rest[:1] == ["corpus"]:
+            return corpus(plan, tier)
+        n = int(rest[-1]) if rest and rest[-1].isdigit() else 200
+        sources = [x for x in rest if not x.isdigit()] or ALPINE
+        bad = [s for s in sources if s not in HOME]
+        if bad:
+            sys.exit(f"bs2: no source {bad} (BackShot2's Linux sources other than Alpine's are B11, not built)")
+        if plan:
+            return plan_words(sources, n)
+        run_words(sources, n, time.strftime("bs2a-%Y%m%d-%H%M"))
+        if w == "BackShot2Alpine" or True:
+            print("then: bs2 BackShot2 corpus (once the queues finish; bs2 status RUN shows them)")
+    elif w in ("replay", "shrink", "soak"):
+        path = a[1]
+        with open(path) as f:
+            c = json.load(f)
+        src = c["source"].split("@")[0]
+        h = HOME.get(src, "chopin")
+        sync()
+        rp = f"~/backotter-work/bs2-wt/testvm/backshot2/{os.path.relpath(os.path.abspath(path), HERE)}"
+        stamp = time.strftime(f"{w}-%Y%m%d-%H%M")
+        if plan:
+            n = int(a[2]) if w == "soak" else 1
+            print(f"{w} {path} on {h}: tier {tier or 1 if w == 'soak' else tier}, ~{n * SECS[tier or 1] / 60:.0f} min est.")
+            return
+        if w == "replay" and tier == 0:
+            ssh(h, root(f"{HOST_BS2} tier0-cases {rp} --run {stamp}"))
+        elif w == "replay":
+            ssh(h, f"cd ~/backotter-work && ./cmp-run.sh --reserve 2 3 sudo -E {HOST_BS2} tier1 {rp} --tier {tier} --run {stamp} --port 2949", check=False)
+        elif w == "shrink":
+            if tier == 0:
+                ssh(h, root(f"{HOST_BS2} shrink {rp} --tier 0"))
+            else:
+                ssh(h, f"cd ~/backotter-work && {HOST_BS2} shrink {rp} --tier {tier}")
+        else:
+            n = int(a[2])
+            ok = 0
+            for i in range(n):
+                r = ssh(h, f"cd ~/backotter-work && ./cmp-run.sh --reserve 2 3 sudo -E {HOST_BS2} tier1 {rp} --tier 1 --run {stamp} --port 2949", check=False)
+                ok += r.returncode == 0
+            print(f"soak: {ok} of {n} passed (N of {n} bounds a race below ~{300 // max(1, n)}% only)")
+    else:
+        sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    main()

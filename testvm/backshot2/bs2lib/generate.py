@@ -87,7 +87,10 @@ def draw_align(rng, d):
 
 def draw_renumber(rng, d):
     dk = dumpx.disk(d)
-    p = _pick(rng, _movable_parts(d, dk))
+    ps = _movable_parts(d, dk)
+    if "fail-002" in KNOWN and boots_from_fallback(d):
+        ps = [p for p in ps if p["name"] not in boot_parts(d)]
+    p = _pick(rng, ps)
     if not p:
         return None
     used = {q["number"] for q in dk["partitions"]}
@@ -355,6 +358,38 @@ def planted_of(source, content):
     return {m["target"]: C.sizes(entries)}
 
 
+def boots_from_fallback(dump):
+    """Whether a UEFI source booted its ESP's removable path (no NVRAM entry of
+    its own: a firmware entry, \"UEFI Misc Device\", was BootCurrent)."""
+    efi = (dump.get("boot") or {}).get("efi") or {}
+    if dumpx.firmware(dump) != "uefi":
+        return False
+    cur = next((e for e in efi.get("entries") or [] if e.get("number") == efi.get("boot_current")), None)
+    return cur is None or not any("HD(" in str(p) for p in cur.get("device_path") or [])
+
+
+# Known findings the generator steers around, so that the cases it draws can
+# find new ones (each has its own case in testvm/backshot2/cases/, run with
+# the corpus, and comes back into the draws once it's fixed):
+#   fail-002  load leaves the source's fallback loader (EFI/BOOT/BOOTX64.EFI)
+#             as restored, its embedded prefix naming /boot's old partition
+#             number: no renumbering of /boot's partition on a UEFI source
+#             that boots from it
+#   fail-003  --removable runs grub-install --force-extra-removable, Debian's
+#             own option, which Alpine's GRUB refuses: no --removable
+KNOWN = ("fail-002", "fail-003")
+
+
+def boot_parts(d):
+    ms = {m.get("target"): m.get("device") for m in dumpx.storage(d).get("mounts") or []}
+    where = ms.get("/boot") or ms.get("/")
+    return {where} | dumpx.holders_down(d, where or "")
+
+
+def avoid_known(source, drifted, edits, opts):
+    return [o for o in opts if not ("fail-003" in KNOWN and o == "--removable")]
+
+
 def generate(source_name, source_gen, dump, seed, caps=None, n_edits=None, with_content=True, with_options=True, stats=None):
     """A case for SOURCE_NAME's DUMP, from SEED."""
     caps = caps or {}
@@ -415,6 +450,7 @@ def generate(source_name, source_gen, dump, seed, caps=None, n_edits=None, with_
             opts = opts or []
     elif any(targets[k] < v["size_bytes"] for k, v in ((dk["name"], dk) for dk in dumpx.disks(d))):
         opts = ["--fit-largest", str(fitcalc.pct_needed(d, targets))]
+    opts = avoid_known(dump, d, edits, opts)
     if "--fit-largest" in opts:
         pct = int(opts[opts.index("--fit-largest") + 1])
         bad = fitcalc.fits_after(d, targets, pct, planted)

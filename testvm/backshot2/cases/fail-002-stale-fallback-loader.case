@@ -1,0 +1,11 @@
+{
+ "name": "fail-002-stale-fallback-loader",
+ "source": "alpine324-luks@img:60930c5d605f65ded1494ce3ca054a1f740ff27d1bd1809e07bc7e16d68b86ad",
+ "seed": 12,
+ "generator": "1",
+ "edits": [
+   {"disk": "vda", "from": 2, "op": "renumber", "to": 12}],
+ "load_options": [],
+ "failed": {"check": "the restored disk boots by itself", "excerpt": ["FAIL the restored disk boots by itself (no SSH; logs/restored-serial.log)", "BdsDxe: starting Boot0001 \"UEFI Misc Device\" ... grub_disk_open:262:no such partition. Entering rescue mode...", "load's boot stage reinstalled EFI/alpine/grubx64.efi (grub-install --no-nvram), not EFI/BOOT/BOOTX64.EFI, the fallback the source booted from: its embedded prefix still names /boot's old partition (gpt2)"], "tier": 1},
+ "from": "alpine324-luks-c929effcdac5c7e0 (tier 1, Cinqcent, 2026-11-10; one edit, nothing to shrink)",
+ "finding": "bko-holt"}

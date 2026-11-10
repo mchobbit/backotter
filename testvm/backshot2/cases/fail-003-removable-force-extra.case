@@ -1,0 +1,10 @@
+{
+ "name": "fail-003-removable-force-extra",
+ "source": "alpine324-uefi@img:6c42511f2374967e576dede9fc621d38edd860feb7a839e40cc20bdbb7d4ca7a",
+ "seed": 0,
+ "generator": "1",
+ "edits": [],
+ "load_options": ["--removable"],
+ "failed": {"check": "load boot", "excerpt": ["FAIL load boot: exit 1, want 0", "chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=alpine --no-nvram --force-extra-removable", "grub-install: unrecognized option '--force-extra-removable' (Alpine's GRUB 2.14: upstream has no such option; it's a Debian patch)"], "tier": 1},
+ "from": "alpine324-luks-c12-removable (fail-002's case with --removable, tier 1, Cinqcent, 2026-11-10); no edits are needed",
+ "finding": "bko-holt"}

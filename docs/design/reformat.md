@@ -290,3 +290,16 @@ come along to a filesystem without it.
   --reformat ...` and `bs1-qemu.py --reformat`.  bs1-verify checks each
   reformatted mount's type and has `bs1-manifest --compare --reformatted`
   expect the rewritten files and the lost `btrfs.*` xattrs.
+
+### Test results (2026-11-10)
+
+- Golden plans: the six variants above; the existing 48 plans unchanged.
+- QEMU (bs1-qemu.py): EndeavourOS ext4 onto XFS, and Manjaro btrfs onto
+  ext4 (GRUB, mkinitcpio, four subvolumes folded; the fallback GRUB renewed),
+  PASS.
+- The Thinkpad (BackShot1, run endeavouros-20261110-090500): EndeavourOS
+  backed up live from btrfs (@, @home, @cache, @log; systemd-boot; dracut
+  through kernel-install; kernels 6.18 LTS and 7.2), restored onto XFS with
+  the lts_6.12 profile: fstab and `/etc/kernel/cmdline` and four loader
+  entries rewritten, all four initramfs images read back with xfs.ko, booted
+  from NVRAM; bs1-verify PASS, 325,867 files compared, none unexpected.

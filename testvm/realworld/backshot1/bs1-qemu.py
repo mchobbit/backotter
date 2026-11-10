@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rehearse BackShot1 in QEMU: the real scripts, the way the laptop will run them.
 
-Usage: bs1-qemu.py TEST_IMG GUEST_DIR TOOLS_DIR WORK_DIR [--port N]
+Usage: bs1-qemu.py TEST_IMG GUEST_DIR TOOLS_DIR WORK_DIR [--port N] [--reformat MOUNT=TYPE]...
 
 TEST_IMG is an image from "make-img.sh --test".  GUEST_DIR is a UEFI test guest
 (vms/ubuntu26-uefi), attached as NVMe with its writes in WORK_DIR.  TOOLS_DIR has
@@ -11,6 +11,9 @@ bko-holt and rustic-bko.  Three boots, all over SSH with the guest's key:
   rescue    the stick, its key added by add-ssh-key.sh: wrong serial refused,
             --plan-only changes nothing, then bs1-restore
   restored  the internal disk and the drive, with the NVRAM the run left: bs1-verify
+
+--reformat goes to bs1-restore, and so to bko-holt load: the restore makes
+that filesystem as TYPE, and bs1-verify checks it is.
 
 Exits 0 if all of that held.  Nothing outside WORK_DIR is written.
 """
@@ -90,8 +93,10 @@ def main():
     ap.add_argument("--bios", action="store_true", help="SeaBIOS, not OVMF")
     ap.add_argument("--discard-on-pass", action="store_true", help="delete the disk images if it passes")
     ap.add_argument("--restores", type=int, default=1, help="how many times to restore the one backup")
+    ap.add_argument("--reformat", action="append", default=[], metavar="MOUNT=TYPE", help="restore the filesystem at MOUNT as TYPE (bko-holt load --reformat)")
     ap.add_argument("--earlier-restore", action="store_true", help="back up a system that shows it was restored once before (its /var/log/bko-holt)")
     a = ap.parse_args()
+    reformat = "".join(f" --reformat {r}" for r in a.reformat)
     os.makedirs(a.work, exist_ok=True)
     dev, parts = ("vda", "/dev/vda[0-9]*") if a.virtio else ("nvme0n1", "/dev/nvme0n1p*")
 
@@ -220,10 +225,10 @@ def main():
             _, before = rescue.run(fp)
             rc, out = rescue.run(f"{bs1}bs1-restore --erase-serial WRONGSERIAL {run}")
             check(rc != 0 and "isn't this machine's internal disk" in out, "a wrong serial is refused")
-            rc, out = rescue.show(f"{bs1}bs1-restore --erase-serial {SERIAL} --plan-only {run}")
+            rc, out = rescue.show(f"{bs1}bs1-restore --erase-serial {SERIAL} --plan-only{reformat} {run}")
             check(rc == 0, "--plan-only passes")
             check(rescue.run(fp)[1] == before, "--plan-only changes nothing")
-        rc, _ = rescue.show(f"{bs1}bs1-restore --erase-serial {SERIAL} --detach {run}")
+        rc, _ = rescue.show(f"{bs1}bs1-restore --erase-serial {SERIAL} --detach{reformat} {run}")
         check(rc == 0, "the detached restore starts")
         status = ""
         end = time.monotonic() + 3000

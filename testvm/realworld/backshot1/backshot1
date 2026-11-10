@@ -9,8 +9,11 @@
 #   backshot1 list                the backups on the drive, and how each last restored
 #   backshot1 to-stick            reboot the machine into the rescue stick, once
 #   backshot1 find-rescue         find the booted rescue stick; prints its address
-#   backshot1 plan NAME           on the stick: read the backup, plan the restore
-#   backshot1 phase2 NAME         on the stick: WIPE the internal disk, restore
+#   backshot1 plan NAME [--reformat MOUNT=TYPE]...
+#                                 on the stick: read the backup, plan the restore
+#   backshot1 phase2 NAME [--reformat MOUNT=TYPE]...
+#                                 on the stick: WIPE the internal disk, restore
+#                                 (--reformat: that filesystem comes back as TYPE)
 #   backshot1 reboot              on the stick: boot the restored system
 #   backshot1 verify NAME         on the restored system: check it
 #
@@ -105,13 +108,13 @@ list)
 plan)
     run=$(resolve_run "${2:?usage: backshot1 plan NAME}")
     echo "backup: $run"
-    run_on_drive bs1-restore --erase-serial "$INTERNAL_SERIAL" --plan-only "$run"
+    run_on_drive bs1-restore --erase-serial "$INTERNAL_SERIAL" --plan-only "${@:3}" "$run"
     ;;
 phase2)
     run=$(resolve_run "${2:?usage: backshot1 phase2 NAME}")
     echo "backup: $run"
     # Detached: a dropped connection must not stop a restore halfway.
-    run_on_drive bs1-restore --erase-serial "$INTERNAL_SERIAL" --detach "$run"
+    run_on_drive bs1-restore --erase-serial "$INTERNAL_SERIAL" --detach "${@:3}" "$run"
     status=
     until [[ -n $status ]]; do
         sleep 20
@@ -129,7 +132,7 @@ verify)
     on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-verify\" '$run'"
     ;;
 *)
-    sed -n '2,17p' "$0"
+    sed -n '2,21p' "$0"
     exit 2
     ;;
 esac

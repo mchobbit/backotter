@@ -2097,7 +2097,19 @@ impl Builder<'_> {
                 if self.opts.removable {
                     a.push("--force-extra-removable".into());
                 }
+                // --reformat: a fallback loader that's a copy of this GRUB
+                // (Calamares's installEFIFallback) reads only the old type,
+                // so firmware that falls back to it would stop in grub rescue.
+                // It's renewed with GRUB.  (FAT finds EFI/BOOT in any case.)
+                let (fallback, loader) = (format!("{t}{esp}/EFI/BOOT/BOOTX64.EFI"), format!("{t}{esp}/EFI/{id}/grubx64.efi"));
+                let renew = !self.opts.reformats.is_empty() && !self.opts.removable;
+                if renew {
+                    out.push(Cmd::new(&["sh", "-c", &format!("rm -f {RUN_DIR}/fallback-is-grub; [ ! -f {fallback} ] || ! cmp -s {fallback} {loader} || touch {RUN_DIR}/fallback-is-grub")]).why("--reformat: is the fallback loader a copy of GRUB?"));
+                }
                 out.push(Cmd { argv: a, ..Cmd::default() });
+                if renew {
+                    out.push(Cmd::new(&["sh", "-c", &format!("[ ! -e {RUN_DIR}/fallback-is-grub ] || cp {loader} {fallback}")]).why("--reformat: the fallback loader, a copy of GRUB, renewed with it"));
+                }
                 self.remake_grub_cfg(&t, &mut out);
             }
             ("systemd-boot", true) => {

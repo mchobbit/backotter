@@ -91,6 +91,14 @@ if [[ -d /sys/firmware/efi ]]; then
     check "firmware booted the restored ESP's entry" booted_the_restored_esp
 fi
 check "the package list is unchanged" packages_same
+# bs1-restore --reformat: each filesystem it names is that type now.
+reformatted=
+if [[ -s $ATTEMPT/reformat ]]; then
+    reformatted=--reformatted
+    while IFS='=' read -r m ty; do
+        check "$m is $ty now" test "$(findmnt -nro FSTYPE -M "$m")" = "$ty"
+    done <"$ATTEMPT/reformat"
+fi
 
 step "the layout, as the restored system sees it"
 check "bko-holt dump works" sh -c "'$BIN/bko-holt' dump --only-disk '$disk' >'$ATTEMPT/after.json'"
@@ -98,7 +106,7 @@ check "bko-holt dump works" sh -c "'$BIN/bko-holt' dump --only-disk '$disk' >'$A
 step "the files, against the manifest from before the backup"
 make_tree "$disk"
 must python3 "$HERE/bs1-manifest" "$SRC" "$ATTEMPT/manifest-after.tsv"
-python3 "$HERE/bs1-manifest" --compare "$RUN/baseline/manifest.tsv" "$ATTEMPT/manifest-after.tsv" 2>&1 | tee "$ATTEMPT/compare.txt" | tee -a "$LOG" | tail -n 40
+python3 "$HERE/bs1-manifest" --compare "$RUN/baseline/manifest.tsv" "$ATTEMPT/manifest-after.tsv" $reformatted 2>&1 | tee "$ATTEMPT/compare.txt" | tee -a "$LOG" | tail -n 40
 [[ ${PIPESTATUS[0]} -eq 0 ]] || { say "  FAIL  files differ outside what a boot changes (compare.txt)"; fails=$((fails + 1)); }
 
 if [[ $fails -eq 0 ]]; then r=PASS; else r="FAIL: $fails checks"; fi

@@ -1,6 +1,10 @@
 # bko-holt load --reformat: restoring onto another filesystem
 
-Status: proposed (2026-11-10), not built.  It awaits the decisions at the end.
+Status: approved as proposed and being built (2026-11-10): `--reformat` in
+`holt/src/load/reformat.rs`, the boot stage's rewriting in
+`holt/src/load/rewrite.rs` (`bko-holt rewrite`), golden plans, and BackShot1's
+`--reformat`.  Where the build differs from the text below, "Built so far" at
+the end says so.
 It's the first piece of what `layload.md` leaves to version 2 ("Changing the
 layout: another filesystem, ..."), and it builds the rewriting that
 `--new-uuids` needs too, which `plan` refuses today because it isn't built
@@ -257,3 +261,32 @@ come along to a filesystem without it.
    layers on EndeavourOS (systemd-boot, dracut).  Then Fedora (GRUB, BLS,
    dracut), Omarchy (Limine, mkinitcpio) and Debian 13 (GRUB,
    initramfs-tools).  Then the other directions.
+
+## Built so far (2026-11-10)
+
+- `--reformat MOUNT=TYPE` with every check and refusal above, except the
+  space check: a snapshot bigger than the partition fails in the restore
+  stage instead, with the archiver's ENOSPC.
+- The plan's lines are Notes: `reformat SRC: OLD UUID -> NEW ...`, the new
+  fstab entry and dropped options, one `fstab's MOUNT: a directory of ...`
+  per folded mount, the nested and unmounted subvolumes, and that chattr C/c
+  and `btrfs.*` xattrs don't come along.  rustic-bko warns about each of
+  those and exits 0; the Restic & Rustic session tested a btrfs restore
+  onto XFS with rustic-bko 0.11.4+backotter.6 and .8, strict exit or not.
+- `bko-holt rewrite` makes the edits in the table, and with `--check` lists
+  each initramfs image and fails on a missing module or a command line still
+  asking for a subvolume.  The leftovers and the old type's tools are
+  listed in load.log, not yet in `status`.  The `grub.d` exception is waiting
+  for a case that needs it.
+- The oldest kernel is the lowest of `boot.kernels.installed` and
+  `os.kernel_release`: an Arch dump lists no versions (vmlinuz-linux).
+- Golden plans (golden-only; a tree without `--reformat` skips them):
+  `fedora44` and `void-musl` onto XFS, `debian13` and `tumbleweed` onto ext4
+  (their dumps have no xfsprogs, which is refused), and Omarchy's two
+  refusals: no xfsprogs (XFS), and hibernation into a swap file on its btrfs
+  (ext4).  EndeavourOS joins once the Test2 session's corpus build lands
+  with its dump.
+- BackShot1: `bs1-restore --reformat`, `backshot1 plan|phase2 NAME
+  --reformat ...` and `bs1-qemu.py --reformat`.  bs1-verify checks each
+  reformatted mount's type and has `bs1-manifest --compare --reformatted`
+  expect the rewritten files and the lost `btrfs.*` xattrs.

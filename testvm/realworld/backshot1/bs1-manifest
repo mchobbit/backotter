@@ -2,7 +2,9 @@
 """BackShot1's file manifest.
 
 bs1-manifest ROOT OUT.tsv            every file under ROOT, with a checksum
-bs1-manifest --compare OLD NEW       differences; exit 1 if any isn't expected
+bs1-manifest --compare OLD NEW [--reformatted]
+                                     differences; exit 1 if any isn't expected
+                                     (--reformatted: after bs1-restore --reformat)
 
 The comparison is between the system before its backup and after its restore and
 first boot, so booting's own changes are expected, as are the files bko-holt
@@ -49,6 +51,11 @@ EXPECTED = [
 # line's systemd.machine_id= (EndeavourOS with systemd-boot); a different ID
 # would orphan the ESP's /MACHINE-ID/ directory and loader entries.
 REMADE = ["etc/machine-id"]
+
+# After bko-holt load --reformat (bs1-restore --reformat): what its boot
+# stage rewrites for the new filesystem type.
+# lost+found: mke2fs's, on a filesystem reformatted onto ext4.
+REFORMAT_EXPECTED = ["etc/fstab", "etc/kernel/cmdline", "etc/default/grub", "etc/mkinitcpio.conf", "etc/mkinitcpio.conf.d/*", "etc/systemd/system/*.mount", "lost+found", "*/lost+found"]
 
 # NixOS makes these again from its store at every boot.
 NIXOS_EXPECTED = ["etc/.clean", "etc/group", "etc/passwd", "etc/shadow", "etc/subgid", "etc/subuid", "nix/var/nix/temproots/*", "nix/var/nix/db/*"]
@@ -135,9 +142,20 @@ def expected(rel, nixos):
     return any(fnmatch.fnmatch(rel, pat) for pat in EXPECTED + (NIXOS_EXPECTED if nixos else []))
 
 
-def compare(old_path, new_path):
+def without_btrfs_xattrs(row):
+    """ROW with its btrfs.* extended attributes taken out: no other filesystem
+    holds them, so they don't survive a reformat (rustic-bko warns)."""
+    if len(row) <= 6 or row[6] == "-" or row[6].startswith("unreadable:"):
+        return row
+    kept = [p for p in row[6].split(",") if not p.startswith("btrfs.")]
+    return row[:6] + [",".join(kept) or "-"] + row[7:]
+
+
+def compare(old_path, new_path, reformatted=False):
     old, new = read(old_path), read(new_path)
     nixos = "etc/NIXOS" in old
+    if reformatted:
+        old = {p: without_btrfs_xattrs(r) for p, r in old.items()}
     missing = sorted(set(old) - set(new))
     added = sorted(set(new) - set(old))
     changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], nixos))
@@ -147,7 +165,7 @@ def compare(old_path, new_path):
         print("xattrs: this baseline has none, so they weren't compared")
     bad = []
     for label, paths in (("missing", missing), ("added", added), ("changed", changed), ("xattrs", relabeled)):
-        unexpected = [p for p in paths if not expected(p, nixos)]
+        unexpected = [p for p in paths if not expected(p, nixos) and not (reformatted and any(fnmatch.fnmatch(p, pat) for pat in REFORMAT_EXPECTED))]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")
         bad += [f"{label}: {p}" + (f" ({xattr_diff(old[p], new[p])})" if label == "xattrs" else "") for p in unexpected]
     print(f"files compared: {len(old)}")
@@ -158,8 +176,8 @@ def compare(old_path, new_path):
 
 def main():
     a = sys.argv[1:]
-    if len(a) == 3 and a[0] == "--compare":
-        return compare(a[1], a[2])
+    if len(a) in (3, 4) and a[0] == "--compare" and a[3:] in ([], ["--reformatted"]):
+        return compare(a[1], a[2], reformatted=a[3:] == ["--reformatted"])
     if len(a) == 2:
         write(a[0], a[1])
         return 0

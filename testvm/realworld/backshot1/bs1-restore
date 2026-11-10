@@ -2,7 +2,7 @@
 # BackShot1, phase 2: wipe the internal disk and restore it.  As root, on the
 # rescue stick, from the backup drive.
 #
-# Usage: bs1-restore --erase-serial SERIAL [--plan-only] [--detach] RUN
+# Usage: bs1-restore --erase-serial SERIAL [--plan-only] [--detach] [--reformat MOUNT=TYPE]... RUN
 #
 # SERIAL has to be the internal disk's, repeated here on purpose.  Reads the whole
 # backup again first, and wipes nothing unless that passes and the restore plan
@@ -14,22 +14,28 @@
 # --detach starts the restore apart from this session, so a dropped connection
 # can't stop it halfway: output in /run/backotter/restore.out, and its exit status
 # in /run/backotter/restore.exit once it ends.
+#
+# --reformat MOUNT=TYPE is bko-holt load's (docs/design/reformat.md): the
+# filesystem at MOUNT comes back as TYPE.  The attempt's reformat file lists
+# them, for bs1-verify.
 
 # shellcheck disable=SC1091
 . "$(dirname "$(readlink -f "$0")")/bs1-common"
 
 ERASE= PLAN_ONLY=no DETACH=no RUN_NAME= WIPED=no
-ARGS=()
+ARGS=() REFORMAT=()
 while [[ $# -gt 0 ]]; do
     case $1 in
         --erase-serial) ERASE=$2; ARGS+=("$1" "$2"); shift 2 ;;
         --plan-only) PLAN_ONLY=yes; ARGS+=("$1"); shift ;;
         --detach) DETACH=yes; shift ;;
+        --reformat) [[ ${2:-} == /*=* ]] || { echo "--reformat wants MOUNT=TYPE" >&2; exit 2; }
+            REFORMAT+=("$2"); ARGS+=("$1" "$2"); shift 2 ;;
         -*) echo "unknown option $1" >&2; exit 2 ;;
         *) RUN_NAME=$1; ARGS+=("$1"); shift ;;
     esac
 done
-[[ -n $RUN_NAME ]] || { echo "usage: $0 --erase-serial SERIAL [--plan-only] [--detach] RUN" >&2; exit 2; }
+[[ -n $RUN_NAME ]] || { echo "usage: $0 --erase-serial SERIAL [--plan-only] [--detach] [--reformat MOUNT=TYPE]... RUN" >&2; exit 2; }
 RUN=$RUNS/$RUN_NAME
 [[ -d $RUN ]] || { echo "no run $RUN" >&2; exit 2; }
 # Before anything is written: a refused restore isn't an attempt.
@@ -51,6 +57,7 @@ ATTEMPT=$RUN/restores/$(date -u +%Y%m%d-%H%M%S)
 mkdir -p "$ATTEMPT" || { echo "can't make $ATTEMPT" >&2; exit 2; }
 LOG=$ATTEMPT/restore.log
 touch "$LOG"
+[[ ${#REFORMAT[@]} -eq 0 ]] || printf '%s\n' "${REFORMAT[@]}" >"$ATTEMPT/reformat"
 
 finish() {
     local rc=$?
@@ -106,6 +113,7 @@ fi
 LOAD=("$BIN/bko-holt" load "$RUN/layout.json" --map "$disk=/dev/$disk" --erase "/dev/$disk"
       --repo "$RUN/repo" --password-file "$RUN/repo-password"
       --snapshot "latest:$SRC" --archiver "$BIN/rustic-bko")
+for r in ${REFORMAT[@]+"${REFORMAT[@]}"}; do LOAD+=(--reformat "$r"); done
 while read -r k; do
     [[ -n $k ]] || continue
     [[ -s ${k#*=} ]] || die "no passphrase file ${k#*=}"
@@ -179,6 +187,16 @@ changes=$(awk '
     /^T[[:space:]]/ { n++ }
     END { print n + 0 }' "$ATTEMPT/diff.txt")
 grep -qE '^(Files|Dirs|Symlinks|Others) *:' "$ATTEMPT/diff.txt" || die "rustic-bko diff printed no totals"
+# A filesystem reformatted onto ext4 has mke2fs's lost+found, which the backup
+# of another type can't have.
+for r in ${REFORMAT[@]+"${REFORMAT[@]}"}; do
+    [[ ${r#*=} == ext4 ]] || continue
+    rel=${r%%=*}; rel=${rel#/}
+    if grep -qxF "+    \"${rel:+$rel/}lost+found\"" "$ATTEMPT/diff.txt"; then
+        changes=$((changes - 1))
+        say "${r%%=*}'s lost+found is mke2fs's (--reformat $r), not a difference"
+    fi
+done
 say "differences: $changes (the list is in diff.txt)"
 [[ $changes -eq 0 ]] || die "$changes files differ from the backup after the restore"
 

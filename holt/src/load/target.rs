@@ -75,6 +75,53 @@ pub struct System {
     pub disks: Vec<TargetDisk>,
     pub mounts: Vec<Mount>,
     pub pools: Vec<ImportedPool>,
+    /// The LVM physical volumes this system's block devices hold.
+    pub pvs: Vec<HostPv>,
+}
+
+/// An LVM physical volume on the system load runs on: its device's kernel
+/// name, its own UUID, its volume group's name and UUID, and the whole disks
+/// it sits on (through partitions, md arrays and device-mapper).
+#[derive(Debug, Clone, PartialEq)]
+pub struct HostPv {
+    pub dev: String,
+    pub uuid: String,
+    pub vg: String,
+    pub vg_uuid: String,
+    pub disks: Vec<String>,
+}
+
+/// The PVs among ALL, each with the whole disks it sits on.
+fn host_pvs(sys: &Sys, all: &[BlockDev]) -> Vec<HostPv> {
+    fn base(all: &[BlockDev], name: &str, depth: usize, out: &mut Vec<String>) {
+        let Some(b) = all.iter().find(|b| b.name == name) else { return };
+        if let Some(p) = &b.parent {
+            base(all, p, depth + 1, out);
+        } else if b.slaves.is_empty() || depth > 16 {
+            if !out.contains(&b.name) {
+                out.push(b.name.clone());
+            }
+        } else {
+            for s in &b.slaves {
+                base(all, s, depth + 1, out);
+            }
+        }
+    }
+    let mut out = Vec::new();
+    // Not optical, floppy, zram or RAM disks: no PV there, and opening an
+    // empty drive is slow and warns.
+    for b in all.iter().filter(|b| !matches!(b.kind, Kind::Rom | Kind::Floppy | Kind::Zram | Kind::Ram)) {
+        let Some(src) = sys.open_dev(&b.dev_path()) else { continue };
+        for c in crate::probe::probe_all(&src).into_iter().filter(|c| c.kind == "LVM2_member") {
+            let vg = |k: &str| c.extra.as_ref().and_then(|v| v.get(k)).and_then(crate::json::Value::as_str).map(str::to_string);
+            if let Some(name) = vg("name") {
+                let mut disks = Vec::new();
+                base(all, &b.name, 0, &mut disks);
+                out.push(HostPv { dev: b.name.clone(), uuid: c.uuid.clone().unwrap_or_default(), vg: name, vg_uuid: vg("id").unwrap_or_default(), disks });
+            }
+        }
+    }
+    out
 }
 
 /// A ZFS pool imported on the system load runs on.
@@ -245,7 +292,8 @@ pub fn scan(sys: &Sys, opts: &Options, ours: &[String]) -> System {
         }
         disks.push(TargetDisk { b: b.clone(), parts, table, signatures, uuids, in_use, boot_medium, holds_root });
     }
-    System { disks, mounts, pools }
+    let pvs = host_pvs(sys, &all);
+    System { disks, mounts, pools, pvs }
 }
 
 impl System {
@@ -336,6 +384,34 @@ pub fn map(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Mappi
     // A pool of the layout's name imported here, but not from the targets
     // (the rescue system's own): the layout's goes by another name here.
     let targets: Vec<String> = m.pairs.iter().map(|(_, t)| t.clone()).collect();
+    // A volume group of the layout's name, or with its UUID or one of its
+    // PVs' UUIDs, on a disk that isn't a target (the source's own disk,
+    // still attached, most often).  load's own LVM commands see the targets
+    // only (--devices), but the restored system's tools in the boot stage
+    // (its initramfs's, GRUB's, which finds LVs by UUID) see every disk, and
+    // so would its first boot: two groups of one name, or duplicate PVs.
+    // LVM has no in-core name to give the layout's, as ZFS has.
+    let s = |v: &crate::json::Value, k: &str| v.get(k).and_then(crate::json::Value::as_str).unwrap_or_default().to_string();
+    for vg in layout.v.at(&["storage", "lvm", "volume_groups"]).and_then(crate::json::Value::as_array).into_iter().flatten() {
+        let (n, id) = (s(vg, "name"), s(vg, "id"));
+        let pv_ids: Vec<String> = vg.get("physical_volumes").and_then(crate::json::Value::as_array).into_iter().flatten().map(|p| s(p, "id")).filter(|u| !u.is_empty()).collect();
+        for pv in system.pvs.iter().filter(|pv| !pv.disks.iter().all(|d| targets.contains(d))) {
+            let why = if !n.is_empty() && pv.vg == n {
+                format!("a volume group named {n}")
+            } else if !id.is_empty() && pv.vg_uuid == id {
+                format!("volume group {n}'s UUID (as {})", pv.vg)
+            } else if pv_ids.contains(&pv.uuid) {
+                format!("the UUID of one of {n}'s PVs (in {})", pv.vg)
+            } else {
+                continue;
+            };
+            m.problems.push(format!(
+                "{why} is on {} ({}), which isn't a target: the restored system's boot tools and its first boot would find it twice; disconnect that disk, or give its group a new name and UUIDs (vgimportclone) first",
+                pv.dev,
+                pv.disks.join(", ")
+            ));
+        }
+    }
     for n in layout.v.at(&["storage", "zfs", "tools", "imported_pools"]).and_then(crate::json::Value::as_array).into_iter().flatten().filter_map(|p| p.get("name").and_then(crate::json::Value::as_str)) {
         if let Some(ip) = system.pools.iter().find(|ip| ip.name == n) {
             if !ip.devices.iter().all(|d| targets.iter().any(|t| d.starts_with(t.as_str()))) {
@@ -500,5 +576,53 @@ mod tests {
         assert!(p(&["--map", "vdz=vdb"]).contains("no disk vdz"));
         assert!(p(&["--map", "vda=vdq"]).contains("no whole disk vdq"));
         assert!(p(&["--map", "vda=vdb", "--erase", "vdc"]).contains("isn't a target"));
+    }
+
+    #[test]
+    fn a_same_named_volume_group_elsewhere_is_refused() {
+        let t = tree();
+        // vdd: a whole-disk PV of the volume group vg0.
+        t.disk("vdd", "253:48", &crate::probe::lvm::sample::pv(512, 1 << 20), 512);
+        // Privileged: scan reads the devices.
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let with = |vg: &str| {
+            let j = sample::bios_mbr().replace(r#""lvm": {"volume_groups": []}"#, &format!(r#""lvm": {{"volume_groups": [{{"name": "{vg}"}}]}}"#));
+            assert_ne!(j, sample::bios_mbr());
+            Layout::from_json(crate::json::parse(&j).unwrap()).unwrap()
+        };
+        let o = opts(&["--map", "vda=vdb"]);
+        let system = scan(&s, &o, &[]);
+        assert_eq!(
+            system.pvs,
+            vec![HostPv {
+                dev: "vdd".into(),
+                uuid: "Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff".into(),
+                vg: "vg0".into(),
+                vg_uuid: "Yb3kFa-0Pz1-AbCd-EfGh-IjKl-MnOp-QrStUv".into(),
+                disks: vec!["vdd".into()]
+            }],
+            "vdd: {:?}",
+            system.disk("vdd").map(|d| &d.signatures)
+        );
+        let p = map(&with("vg0"), &o, &system, &s).problems.join("\n");
+        assert!(p.contains("a volume group named vg0 is on vdd (vdd), which isn't a target"), "{p}");
+        assert!(map(&with("ubuntu-vg"), &o, &system, &s).problems.is_empty());
+        // Renamed, but with the same UUIDs (vgrename keeps them).
+        let ids = |vg: &str, id: &str, pv: &str| {
+            let j = sample::bios_mbr().replace(
+                r#""lvm": {"volume_groups": []}"#,
+                &format!(r#""lvm": {{"volume_groups": [{{"name": "{vg}", "id": "{id}", "physical_volumes": [{{"id": "{pv}"}}]}}]}}"#),
+            );
+            Layout::from_json(crate::json::parse(&j).unwrap()).unwrap()
+        };
+        let p = map(&ids("ubuntu-vg", "Yb3kFa-0Pz1-AbCd-EfGh-IjKl-MnOp-QrStUv", "x"), &o, &system, &s).problems.join("\n");
+        assert!(p.contains("volume group ubuntu-vg's UUID (as vg0) is on vdd"), "{p}");
+        let p = map(&ids("ubuntu-vg", "y", "Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff"), &o, &system, &s).problems.join("\n");
+        assert!(p.contains("the UUID of one of ubuntu-vg's PVs (in vg0) is on vdd"), "{p}");
+        assert!(map(&ids("ubuntu-vg", "y", "z"), &o, &system, &s).problems.is_empty());
+        // On a target, it's the old system's, which load replaces.
+        let o = opts(&["--map", "vda=vdd", "--erase", "vdd"]);
+        let p = map(&with("vg0"), &o, &scan(&s, &o, &[]), &s).problems.join("\n");
+        assert!(!p.contains("volume group named"), "{p}");
     }
 }

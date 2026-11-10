@@ -74,9 +74,9 @@ description = "made by bko-holt load from a bko-holt dump"
 creation_host = "ubuntu-server"
 creation_time = 1794315436
 EOF
-pvcreate --uuid bkoLVM-0000-0000-0000-0000-0000-000001 --restorefile /run/bko-holt/lvm/ubuntu-vg.vg /dev/mapper/dm_crypt-0
-vgcfgrestore --file /run/bko-holt/lvm/ubuntu-vg.vg ubuntu-vg
-vgchange --activate y ubuntu-vg
+pvcreate --devicesfile '' --devices /dev/mapper/dm_crypt-0 --uuid bkoLVM-0000-0000-0000-0000-0000-000001 --restorefile /run/bko-holt/lvm/ubuntu-vg.vg /dev/mapper/dm_crypt-0
+vgcfgrestore --devicesfile '' --devices /dev/mapper/dm_crypt-0 --file /run/bko-holt/lvm/ubuntu-vg.vg ubuntu-vg
+vgchange --devicesfile '' --devices /dev/mapper/dm_crypt-0 --activate y ubuntu-vg
 
 # ---- format ----
 # vda1: vfat
@@ -138,7 +138,7 @@ bash -c 'find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-tar
 umount --recursive /mnt/bko-target
 # other mount namespaces' copies of the target's mounts
 sh -c 'me=$(readlink /proc/self/ns/mnt); seen=; for f in /proc/[0-9]*/mountinfo; do grep -q '\'' /mnt/bko-target[ /]'\'' "$f" 2>/dev/null || continue; p=${f#/proc/}; p=${p%/mountinfo}; ns=$(readlink /proc/$p/ns/mnt) || continue; case "$me $seen " in *"$ns "*) continue;; esac; seen="$seen $ns"; echo "unmounting /mnt/bko-target in $ns (pid $p, $(cat /proc/$p/comm))"; nsenter -t "$p" -m umount --recursive /mnt/bko-target || true; done'
-sh -c 'i=0; until udevadm settle; vgchange --activate n ubuntu-vg; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done'
+sh -c 'i=0; until udevadm settle; vgchange --devicesfile '\'''\'' --devices /dev/mapper/dm_crypt-0 --activate n ubuntu-vg; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done'
 sh -c 'i=0; until udevadm settle; cryptsetup close dm_crypt-0; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done'
 
 # Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit

@@ -22,6 +22,14 @@ fn settled(argv: &[&str]) -> Cmd {
     Cmd::new(&["sh", "-c", &format!("i=0; until udevadm settle; {cmd}; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done")])
 }
 
+/// An LVM command that sees DEVICES only (comma-separated), and no devices
+/// file: `CMD --devicesfile "" --devices DEVICES REST...`.
+fn lvm_argv<'a>(cmd: &'a str, devices: &'a str, rest: &[&'a str]) -> Vec<&'a str> {
+    let mut v = vec![cmd, "--devicesfile", "", "--devices", devices];
+    v.extend_from_slice(rest);
+    v
+}
+
 /// One step: a command, or a file to write (`write` set), or only a note.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Cmd {
@@ -833,15 +841,28 @@ impl Builder<'_> {
         let file = format!("{RUN_DIR}/lvm/{name}.vg");
         out.push(Cmd::new(&["mkdir", "-p", &format!("{RUN_DIR}/lvm")]));
         out.push(Cmd::write_file(&file, text).why(format!("volume group {name}: its metadata, for pvcreate and vgcfgrestore")));
-        for pv in vg.get("physical_volumes").and_then(Value::as_array).into_iter().flatten() {
-            let src = s(pv, "device").unwrap_or_default();
-            let dev = self.names.dev(&src).unwrap_or_else(|| format!("<{src}>"));
-            let id = s(pv, "id").unwrap_or_default();
-            out.push(Cmd::new(&["pvcreate", "--uuid", &id, "--restorefile", &file, &dev]));
+        // LVM sees the group's own PVs only (--devices, and no devices file):
+        // a group of the same name elsewhere on this system, or a PV of
+        // another's with one of this group's UUIDs, is never what these
+        // commands act on (target.rs refuses the first, for the boot stage's
+        // sake).
+        let pvs: Vec<(String, String)> = vg
+            .get("physical_volumes")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|pv| {
+                let src = s(pv, "device").unwrap_or_default();
+                (self.names.dev(&src).unwrap_or_else(|| format!("<{src}>")), s(pv, "id").unwrap_or_default())
+            })
+            .collect();
+        let devices = pvs.iter().map(|(d, _)| d.as_str()).collect::<Vec<_>>().join(",");
+        for (dev, id) in &pvs {
+            out.push(Cmd::new(&lvm_argv("pvcreate", &devices, &["--uuid", id, "--restorefile", &file, dev])));
         }
-        out.push(Cmd::new(&["vgcfgrestore", "--file", &file, &name]));
-        out.push(Cmd::new(&["vgchange", "--activate", "y", &name]));
-        self.closers.push(settled(&["vgchange", "--activate", "n", &name]));
+        out.push(Cmd::new(&lvm_argv("vgcfgrestore", &devices, &["--file", &file, &name])));
+        out.push(Cmd::new(&lvm_argv("vgchange", &devices, &["--activate", "y", &name])));
+        self.closers.push(settled(&lvm_argv("vgchange", &devices, &["--activate", "n", &name])));
     }
 
     fn pool(&mut self, p: &Value, out: &mut Vec<Cmd>) {

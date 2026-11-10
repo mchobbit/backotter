@@ -36,7 +36,7 @@ Non-goals for version 1:
   are accepted, with the extra space left unused (see "Mapping disks").
   Version 2 takes on resizing, carefully.
 - Changing the layout: another filesystem, another RAID level, dropping
-  encryption.
+  encryption.  (Another filesystem is proposed in `reformat.md`.)
 - Key material.  LUKS and ZFS keys are never in the JSON, and TPM2/FIDO2
   enrollments can't be restored at all (see "Encryption").
 - A source system bko-holt doesn't support: dump and load share one list

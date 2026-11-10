@@ -227,7 +227,8 @@ def draw_ext4_geometry(rng, d):
     which = rng.sample(["block_size", "inode_size", "inodes_per_group", "flex_bg_size", "reserved_gdt_blocks"], rng.randint(1, 3))
     bs = c["block_size"]
     if "block_size" in which:
-        bs = rng.choice([b for b in tables.allowed(d, "e2fsprogs", "block_size") or [4096] if b != c["block_size"]] or [bs])
+        bs = rng.choice([b for b in tables.allowed(d, "e2fsprogs", "block_size") or [4096]
+                         if b != c["block_size"] and not ("fail-004" in KNOWN and b == 1024)] or [bs])
         p["block_size"] = bs
     isz = c["inode_size"]
     if "inode_size" in which:
@@ -377,7 +378,9 @@ def boots_from_fallback(dump):
 #             that boots from it
 #   fail-003  --removable runs grub-install --force-extra-removable, Debian's
 #             own option, which Alpine's GRUB refuses: no --removable
-KNOWN = ("fail-002", "fail-003")
+#   fail-004  ext4 with 1 KiB blocks: load's -E resize= gives one reserved GDT
+#             block more than the layout's: no 1 KiB blocks
+KNOWN = ("fail-002", "fail-003", "fail-004")
 
 
 def boot_parts(d):

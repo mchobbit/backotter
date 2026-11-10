@@ -1,0 +1,11 @@
+{
+ "name": "fail-004-ext4-1k-reserved-gdt",
+ "source": "alpine324@gen:d562e3effb42ec7ccce5b809e1bffdea71bfd91897b0fa2b9a9f52d04dd9fa4c",
+ "seed": 62,
+ "generator": "1",
+ "edits": [
+   {"block_size": 1024, "fs": "vda1", "inode_size": 1024, "inodes_per_group": 624, "op": "ext4_geometry", "sets": {"vda1": {"content": {"block_size": 1024, "blocks": 1048576, "blocks_per_group": 8192, "first_data_block": 1, "flex_bg_size": 16, "inode_size": 1024, "inodes": 79872, "inodes_per_group": 624, "reserved_blocks": 52428, "reserved_gdt_blocks": 127, "size_bytes": 1073741824}}}}],
+ "load_options": [],
+ "failed": {"check": "DEV extN: load's mkeNfs: reserved_gdt_blocks: layout X, made X", "excerpt": ["vda1 ext4: load's mke2fs: reserved_gdt_blocks: layout 127, made 128", "commands.rs mke2fs(): resize=(d + r) * gdpb * bpg + first; mke2fs works the reserved GDT blocks out from ceil(resize / bpg) groups, so the + first (1 with 1 KiB blocks) adds a group, and with it one more reserved GDT block"], "tier": 0},
+ "from": "alpine324-ebb943ba5072692d",
+ "finding": "bko-holt"}

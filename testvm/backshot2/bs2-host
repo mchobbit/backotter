@@ -119,8 +119,9 @@ def cmd_source(a):
         print(f"{src}: ready at {gen[:16]}")
         return
     d = source_dir(src)
-    os.makedirs(d, mode=0o700, exist_ok=True)
-    os.chmod(d, 0o700)
+    # (Readable by m, who runs the queue and the shrinker: a test guest's
+    # dump stays on the host, never the Mac or the repository.)
+    os.makedirs(d, mode=0o755, exist_ok=True)
     w = f"{RAM}/source-{src}"
     shutil.rmtree(w, ignore_errors=True)
     os.makedirs(w)

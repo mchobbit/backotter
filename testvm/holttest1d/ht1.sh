@@ -106,8 +106,8 @@ HOLT=${HT_HOLT:-${HT_HOLT_BIN:-$BIN}/bko-holt}
 # largest partition is a stack load won't fit, and both check that plan
 # refuses and writes nothing, so neither backs up or restores anything.
 VARIANT=${HT_VARIANT:-}
-case $VARIANT in ""|bigger|oneshot|degraded|img|smaller|fitbigger|nearfull|refuse) ;;
-    *) echo "HT_VARIANT: bigger, oneshot, degraded, img, smaller, fitbigger, nearfull or refuse" >&2; exit 2 ;;
+case $VARIANT in ""|bigger|oneshot|degraded|img|smaller|fitbigger|nearfull|refuse|bs2) ;;
+    *) echo "HT_VARIANT: bigger, oneshot, degraded, img, smaller, fitbigger, nearfull, refuse or bs2" >&2; exit 2 ;;
 esac
 # DELTA: how far the targets are from the source's disks.  FIT: load is given
 # --fit-largest FIT_PCT, so it fits the layout to them.  FITONLY: the run is a
@@ -130,6 +130,10 @@ else
     [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source backup rebuild verify)
 fi
 GV=$G${VARIANT:+-$VARIANT}
+# bs2: a BackShot2 case (testvm/backshot2/ht1-bs2.sh: its hooks, and GV the case's name).
+BS2_FLAGS=() BS2_VFW=() BS2_FSJUDGE=() BS2_FSMETA=()
+# shellcheck source=../backshot2/ht1-bs2.sh
+[[ $VARIANT != bs2 ]] || . "$(dirname "$HERE")/backshot2/ht1-bs2.sh"
 # +img: the pinned --test image (t2-host tool img pin) is the rescuer, as a
 # 16 GiB throwaway overlay, its own bko-holt and rustic-bko do the load, and
 # nothing is installed in it; source and backup take the pin's bko-holt and
@@ -209,6 +213,7 @@ elif ((uefi)) && [[ -z ${HT_RESCUER_IMG:-} && -f /bkoscratch/holttest1d/rescuer/
     RESCUER=ubuntu26-uefi RESCUER_IMG=/bkoscratch/holttest1d/rescuer/rescuer-uefi.qcow2 rfw=(--uefi)
     rkey=$W/vms/$RESCUER/id_ed25519
 fi
+[[ $VARIANT != bs2 ]] || bs2_setup
 # What the load runs in the rescuer (+img: the image's own, as a user's would).
 RHOLT=/mnt/share/bko-holt RARCH=/mnt/share/rustic-bko
 if [[ $VARIANT == img ]]; then RHOLT=/usr/local/bin/bko-holt RARCH=/usr/local/bin/rustic-bko; fi
@@ -391,9 +396,11 @@ phase_source() {
     sshk "$gkey" 'rm -f /root/bko-holt'
     vm_down "$gkey"
     cp "$R/dumps/src.json" "$S/layout.json"
+    [[ $VARIANT != bs2 ]] || bs2_after_source
 }
 
 phase_backup() {
+    [[ $VARIANT != bs2 ]] || { phase_backup_bs2; return; }
     say "== backup"
     rm -rf "$S/repo"; head -c 24 /dev/urandom | base64 > "$S/repo-password"
     mkdir -p "$SRC_MP"
@@ -515,7 +522,11 @@ phase_rebuild() {
     fi
     local disks=()
     for ((i = 0; i < n; i++)); do
-        qemu-img create -q -f qcow2 "${dst[i]}" "$(($(size_of "${imgs[i]}") + DELTA))"; disks+=(--disk "${dst[i]}")
+        if [[ $VARIANT == bs2 ]]; then
+            qemu-img create -q -f qcow2 "${dst[i]}" "$(bs2_target_size "$i")"; disks+=(--disk "${dst[i]}")
+        else
+            qemu-img create -q -f qcow2 "${dst[i]}" "$(($(size_of "${imgs[i]}") + DELTA))"; disks+=(--disk "${dst[i]}")
+        fi
     done
     # The decoy: a disk after the targets that already holds a filesystem,
     # as big as the source's first disk, so not being blank is the only
@@ -555,7 +566,10 @@ phase_rebuild() {
     # the refusals and the dry run, which must write nothing.
     local edges="for d in ${erase[*]#--erase} $decoy; do s=\$(blockdev --getsz \$d); echo \$d \$(dd if=\$d bs=512 count=2048 status=none | md5sum | cut -c1-32) \$(dd if=\$d bs=512 skip=\$((s - 2048)) count=2048 status=none | md5sum | cut -c1-32); done"
     local flags=()
-    ((uefi)) && flags+=(--no-nvram)
+    # (bs2: tier 1 boots with a fresh NVRAM, so --no-nvram as ever; tier 2
+    # keeps one, and the case's own options say.)
+    ((uefi)) && [[ $VARIANT != bs2 || $BS2_TIER == 1 ]] && flags+=(--no-nvram)
+    [[ $VARIANT != bs2 ]] || flags+=("${BS2_FLAGS[@]}")
     # (A refusal variant always takes these: they are what it runs for.)
     if [[ ${HT_QUICK:-} != 1 || -n $FITONLY ]]; then
     sshk "$rkey" "$edges" > "$R/logs/edges-before.txt" 2>&1
@@ -621,6 +635,7 @@ PY
     fi
     local map=("${map[@]}" "${erase[@]}" "${flags[@]}")
     local repo=(--repo /mnt/share/repo --password-file /mnt/share/repo-password --archiver "$RARCH" --snapshot "latest:$SRC_MP")
+    [[ $VARIANT != bs2 ]] || repo=(--repo /mnt/share/repo --password-file /mnt/share/repo-password --archiver "$RARCH" --snapshot "$(bs2_snapshot)")
     local stages=(partition assemble format mount restore boot close)
     # oneshot: the whole rebuild as one command; `status` after it must show
     # every stage it can see done.
@@ -676,10 +691,11 @@ phase_verify() {
     # (As in backup: vm-mount and vm-umount ignore TERM, INT and HUP.)
     if (trap '' TERM INT HUP; exec "$T/vm-mount" --ro "${extra_dst[@]}" "${key[@]}" "${dst[0]}" "$DST_MP") > "$R/logs/verify-mount.log" 2>&1; then
         HT_MOUNTED=$DST_MP
-        python3 "$T/compare/fsmeta.py" record "$DST_MP" "$R/dst-meta.json" > "$R/logs/fsmeta-dst.log" 2>&1
+        python3 "$T/compare/fsmeta.py" record "$DST_MP" "$R/dst-meta.json" "${BS2_FSMETA[@]}" > "$R/logs/fsmeta-dst.log" 2>&1
+        [[ $VARIANT != bs2 ]] || bs2_after_dst_record
         (trap '' TERM INT HUP; exec "$T/vm-umount" "$DST_MP") >> "$R/logs/verify-mount.log" 2>&1; HT_MOUNTED=
         python3 "$T/compare/fsmeta.py" compare "$R/src-meta.json" "$R/dst-meta.json" > "$R/logs/fsmeta-compare.txt" 2>&1
-        if python3 "$HERE/judge.py" fs "$T/compare/fsmeta.py" "$R/src-meta.json" "$R/dst-meta.json" > "$R/logs/fsjudge.txt" 2>&1; then
+        if python3 "$HERE/judge.py" fs "$T/compare/fsmeta.py" "$R/src-meta.json" "$R/dst-meta.json" "${BS2_FSJUDGE[@]}" > "$R/logs/fsjudge.txt" 2>&1; then
             ok "fsmeta: the files agree but for the boot stage's ($(tail -1 "$R/logs/fsjudge.txt"))"
         else
             bad "fsmeta: $(grep '^DIFF' "$R/logs/fsjudge.txt" | head -5 | tr '\n' ' ')"
@@ -687,7 +703,7 @@ phase_verify() {
     else
         bad "mount the restored disk"
     fi
-    CONSOLE_KEY=$ckey vm_up "${dst[0]}" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${extra_dst[@]}"
+    CONSOLE_KEY=$ckey vm_up "${dst[0]}" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${BS2_VFW[@]}" "${extra_dst[@]}"
     if ! vm_wait "$gkey"; then bad "the restored disk boots by itself (no SSH; logs/restored-serial.log)"; vm_down "$gkey"; return; fi
     ok "the restored disk boots by itself, SSH with the guest's key"
     if [[ -n $detached ]]; then
@@ -721,7 +737,10 @@ phase_verify() {
     # The fitting variants: judge.py works the new geometry out as load did,
     # and lets nothing else differ.
     [[ -z $FIT ]] || how=(--fit "$DELTA" --fit-pct "$FIT_PCT")
-    if python3 "$HERE/judge.py" "${how[@]}" "$R/dumps/src.json" "$R/dumps/dst.json" > "$R/logs/judge.txt" 2>&1; then
+    # bs2: the restored dump against the drifted layout the case asked for.
+    local jsrc=$R/dumps/src.json
+    [[ $VARIANT != bs2 ]] || { how=("${BS2_JUDGE[@]}"); jsrc=$R/dumps/drifted.json; }
+    if python3 "$HERE/judge.py" "${how[@]}" "$jsrc" "$R/dumps/dst.json" > "$R/logs/judge.txt" 2>&1; then
         ok "the dumps agree ($(tail -1 "$R/logs/judge.txt"))"
     else
         bad "the dumps differ: $(grep -c '^DIFF' "$R/logs/judge.txt") fields (logs/judge.txt)"

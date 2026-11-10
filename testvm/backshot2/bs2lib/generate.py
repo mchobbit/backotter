@@ -22,6 +22,10 @@ from .geometry import Invalid, cdiv, lcm
 MIB = 1 << 20
 SECT_MIB = 2048
 
+# The content recipe drawn (content.py): alpine-small-2 until rustic-bko keeps
+# paths past PATH_MAX (fail-001).
+RECIPE = "alpine-small-2"
+
 PARTITION_OPS = {"gap_before": 3, "align": 2, "renumber": 2, "resize": 4, "swap_order": 2}
 STACK_OPS = {"lv_split": 3, "lv_resize": 3, "luks_geometry": 3}
 FS_OPS = {"ext4_geometry": 3, "xfs_geometry": 3, "btrfs_geometry": 1}
@@ -356,7 +360,7 @@ def generate(source_name, source_gen, dump, seed, caps=None, n_edits=None, with_
     caps = caps or {}
     stats = stats or Stats()
     rng = random.Random(f"{source_name}:{seed}")
-    content = {"recipe": "alpine-small-1", "seed": seed} if with_content and rng.random() < 0.7 else None
+    content = {"recipe": RECIPE, "seed": seed} if with_content and rng.random() < 0.7 else None
     planted = planted_of(dump, content)
     budget = n_edits if n_edits is not None else rng.randint(1, 6)
     d, edits = dump, []

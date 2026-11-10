@@ -777,6 +777,8 @@ ht_t2_row() {  # RC CODE --k DIR | --lost | --refused
     local rc=$1 code=$2 tool=${T:-}/test2/t2-host out s last
     shift 2
     [[ ${HT_CLEAN:-1} != 0 && ${RUN:-} != debug ]] || return 0
+    # BackShot2's cases write rows of their own (family bs2: testvm/backshot2/bs2lib/ledger.py).
+    [[ ${HT_VARIANT:-} != bs2 ]] || return 0
     if [[ ! -f $tool ]]; then
         echo "${0##*/}: note: no Test2 ledger row ($tool isn't there)" >&2
         return 0

@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Boot a BackOtter test VM from its disk image.
 #
-# Usage: vm-run [--uefi [--no-secure-boot] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]]
+# Usage: vm-run [--uefi [--no-secure-boot] [--uefi-vars FILE] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]]
 #               [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--nic MODEL]
 #               [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga]
 #               IMAGE [-- QEMU_ARGS...]
@@ -19,6 +19,11 @@
 #                 Boot on and Microsoft's keys enrolled, like a stock PC
 #   --no-secure-boot
 #                 with --uefi: Secure Boot off (Pop!_OS, for one, needs that)
+#   --uefi-vars FILE
+#                 with --uefi: keep OVMF's variable store in FILE instead of a
+#                 fresh copy per run (made from the template when FILE doesn't
+#                 exist), so boot entries outlive the VM: BackShot2's tier 2
+#                 boots a rescuer and then the restored disk on one NVRAM
 #   --q35         SeaBIOS on QEMU's q35 machine (ICH9, PCIe; --uefi has it
 #                 too) instead of its PC machine (i440FX, from 1996), for a
 #                 guest that needs newer hardware but can't boot with OVMF
@@ -98,13 +103,14 @@ elif [[ -z ${TMPDIR:-} ]] && mountpoint -q /bkoscratch 2>/dev/null && mkdir -p /
 fi
 die() { echo "vm-run: $*" >&2; exit 1; }
 
-cdrom="" uefi=no q35=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic) vga=()
+uefi_vars="" cdrom="" uefi=no q35=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic) vga=()
 bus=virtio extra=() serials=() slots=() nic=virtio-net-pci nic_global=() mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
 while [[ $# -gt 0 ]]; do
     case $1 in
         --cdrom) cdrom=$(realpath "$2"); shift 2 ;;
         --uefi) uefi=yes; shift ;;
         --no-secure-boot) secure_boot=no; shift ;;
+        --uefi-vars) uefi_vars=$2; shift 2 ;;
         --q35) q35=yes; shift ;;
         --snapshot) snapshot=(-snapshot); shift ;;
         --ram) ram=yes; shift ;;
@@ -236,10 +242,16 @@ if [[ $uefi == yes ]]; then
     else
         code=OVMF_CODE_4M.fd vars=OVMF_VARS_4M.fd
     fi
-    cp "/usr/share/OVMF/$vars" "$tmp/vars.fd"
+    vfile=$tmp/vars.fd
+    if [[ -n $uefi_vars ]]; then
+        vfile=$uefi_vars
+        [[ -f $vfile ]] || cp "/usr/share/OVMF/$vars" "$vfile"
+    else
+        cp "/usr/share/OVMF/$vars" "$vfile"
+    fi
     args+=(-machine q35,smm=on -global driver=cfi.pflash01,property=secure,value=on
         -drive "if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/$code"
-        -drive "if=pflash,format=raw,unit=1,file=$tmp/vars.fd")
+        -drive "if=pflash,format=raw,unit=1,file=$vfile")
 elif [[ $q35 == yes ]]; then
     args+=(-machine q35)
 else

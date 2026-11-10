@@ -31,7 +31,13 @@ CHUNK_MIN = 512 << 10
 
 RECIPES = {
     # A few hundred entries, ~40 MiB of data: small enough for every Alpine source.
-    "alpine-small-1": {"files": 60, "large": 24 << 20, "deep": 1, "links": 8, "symlinks": 12, "names": 10, "nodes": 4},
+    "alpine-small-1": {"files": 60, "large": 24 << 20, "deep": 1, "deep_bytes": 4300, "links": 8, "symlinks": 12, "names": 10, "nodes": 4},
+    # The same, with the deep tree kept under PATH_MAX (3,800 bytes below
+    # /srv/bs2, so under 4,096 with any mount point ht1.sh uses): rustic-bko's
+    # backup skips what's past it with a warning and exits 0 (BackShot2
+    # finding fail-001, testvm/backshot2/cases/), which would otherwise fail
+    # every case with content.  The generator draws this one until that's fixed.
+    "alpine-small-2": {"files": 60, "large": 24 << 20, "deep": 1, "deep_bytes": 3800, "links": 8, "symlinks": 12, "names": 10, "nodes": 4},
 }
 
 # What each filesystem holds: xattrs (user.* and security.capability), POSIX
@@ -115,7 +121,8 @@ def plan(content, fs_type, ext4_big_inodes=True, xfs_bigtime=True):
     add("symlink", b"a/abs", to=b"/etc/os-release".hex())
     add("symlink", b"a/rel", to=b"../b/large".hex())
     add("symlink", b"a/dangling", to=b"nowhere/at/all".hex())
-    add("symlink", b"a/long", to=(b"x/" * 1000 + b"end").hex())
+    # A symlink as long as the filesystem allows (XFS: 1,024 bytes; ext4: 4,095).
+    add("symlink", b"a/long", to=(b"x/" * (500 if fs_type == "xfs" else 2040) + b"end").hex())
     for k in range(recipe["symlinks"] - 4):
         add("symlink", b"b/s" + str(k).encode(), to=rng.choice([b"../a", b"/tmp", b"f0", b"\xff\xfe"]).hex())
     # Names: 255 bytes, not UTF-8, with a newline.
@@ -129,7 +136,7 @@ def plan(content, fs_type, ext4_big_inodes=True, xfs_bigtime=True):
     for t in range(recipe["deep"]):
         p = b"deep" + str(t).encode()
         add("dir", p, mode=0o755)
-        while len(p) < 4300:
+        while len(p) < recipe["deep_bytes"] - 61:
             p += b"/" + _name(rng, 60).encode()
             add("dir", p, mode=0o755)
         add("file", p + b"/leaf", size=11, holes=[], fill=t, mode=0o644)
@@ -193,70 +200,122 @@ def _data(fill, n):
     return bytes(out[:n])
 
 
-def _within(root, path):
-    return os.path.join(root.encode(), path)
+FS_IOC_GETFLAGS, FS_IOC_SETFLAGS = 0x80086601, 0x40086602
+FLAG_BITS = {"i": 0x10, "a": 0x20}
 
 
-def plant(root, entries, chattr="chattr"):
+class _Dirs:
+    """Directory fds under BASE, opened component by component, so paths
+    past PATH_MAX (the deep tree) are made and touched with the *at calls."""
+
+    def __init__(self, base):
+        self.base = os.open(base, os.O_RDONLY | os.O_DIRECTORY)
+        self.fds = {b"": self.base}
+
+    def dir(self, rel, make=False):
+        if rel in self.fds:
+            return self.fds[rel]
+        parent, _, name = rel.rpartition(b"/")
+        pfd = self.dir(parent, make)
+        if make:
+            try:
+                os.mkdir(name, 0o755, dir_fd=pfd)
+            except FileExistsError:
+                pass
+        fd = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=pfd)
+        self.fds[rel] = fd
+        return fd
+
+    def at(self, rel, make=False):
+        """(fd of REL's directory, REL's last name)."""
+        parent, _, name = rel.rpartition(b"/")
+        return self.dir(parent, make), name
+
+    def close(self):
+        for fd in self.fds.values():
+            os.close(fd)
+
+
+def plant(root, entries):
     """Makes ENTRIES under ROOT + DIR (ROOT: the source's root, mounted).
     Returns what it couldn't make, as [(index, why)]: those are the
     harness's own problem, and the case says so."""
-    import subprocess
+    import fcntl
+    import stat
     base = (root.rstrip("/") + DIR).encode()
     os.makedirs(base, exist_ok=True)
     fails, flags = [], []
+    dirs = _Dirs(base)
+    made = []
     for e in entries:
-        p = os.path.join(base, bytes.fromhex(e["path"]))
+        rel = bytes.fromhex(e["path"])
         try:
             k = e["kind"]
             if k == "dir":
-                os.makedirs(p, exist_ok=True)
-            elif k == "file":
-                os.makedirs(os.path.dirname(p), exist_ok=True)
-                with open(p, "wb") as f:
-                    f.truncate(e["size"])
-                    holes = e.get("holes") or []
-                    pos = 0
-                    for off, ln in sorted(holes) + [[e["size"], 0]]:
-                        if off > pos:
-                            f.seek(pos)
-                            f.write(_data(e["fill"] + pos, off - pos))
-                        pos = max(pos, off + ln)
-            elif k == "hardlink":
-                os.link(os.path.join(base, bytes.fromhex(e["to"])), p)
-            elif k == "symlink":
-                os.symlink(bytes.fromhex(e["to"]), p)
-            elif k == "fifo":
-                os.mkfifo(p)
-            elif k in ("chr", "blk"):
-                import stat
-                os.mknod(p, (stat.S_IFCHR if k == "chr" else stat.S_IFBLK) | e.get("mode", 0o600), os.makedev(*e["rdev"]))
-            if k in ("hardlink",):
-                continue
+                dirs.dir(rel, make=True)
+            else:
+                fd, name = dirs.at(rel, make=True)
+                if k == "file":
+                    f = os.open(name, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600, dir_fd=fd)
+                    try:
+                        os.ftruncate(f, e["size"])
+                        pos = 0
+                        for off, ln in sorted(e.get("holes") or []) + [[e["size"], 0]]:
+                            if off > pos:
+                                os.pwrite(f, _data(e["fill"] + pos, off - pos), pos)
+                            pos = max(pos, off + ln)
+                    finally:
+                        os.close(f)
+                elif k == "hardlink":
+                    sfd, sname = dirs.at(bytes.fromhex(e["to"]))
+                    os.link(sname, name, src_dir_fd=sfd, dst_dir_fd=fd, follow_symlinks=False)
+                    continue
+                elif k == "symlink":
+                    os.symlink(bytes.fromhex(e["to"]), name, dir_fd=fd)
+                elif k == "fifo":
+                    os.mkfifo(name, 0o644, dir_fd=fd)
+                elif k in ("chr", "blk"):
+                    os.mknod(name, (stat.S_IFCHR if k == "chr" else stat.S_IFBLK) | e.get("mode", 0o600), os.makedev(*e["rdev"]), dir_fd=fd)
+            fd, name = dirs.at(rel) if rel else (dirs.base, b".")
             if "uid" in e or "gid" in e:
-                os.lchown(p, e.get("uid", 0), e.get("gid", 0))
+                os.chown(name, e.get("uid", 0), e.get("gid", 0), dir_fd=fd, follow_symlinks=False)
             if "mode" in e and k != "symlink":
-                os.chmod(p, e["mode"])
-            for n, v in (e.get("xattrs") or {}).items():
-                os.setxattr(p, n, bytes.fromhex(v), follow_symlinks=False)
+                os.chmod(name, e["mode"], dir_fd=fd)
+            if e.get("xattrs") or e.get("flags"):
+                o = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | (os.O_DIRECTORY if k == "dir" else 0) | (os.O_NONBLOCK if k == "fifo" else 0), dir_fd=fd)
+                try:
+                    for n, v in (e.get("xattrs") or {}).items():
+                        os.setxattr(o, n, bytes.fromhex(v))
+                finally:
+                    os.close(o)
             if e.get("flags"):
-                flags.append((p, e))
+                flags.append((rel, e))
+            made.append(e)
         except OSError as x:
             fails.append((e["i"], f"{e['kind']} {bytes.fromhex(e['path'])[:60]!r}: {errno.errorcode.get(x.errno, x.errno)} {x.strerror}"))
     # Times last, deepest first (making a child moves its directory's mtime), then flags.
-    for e in sorted(entries, key=lambda e: -len(e["path"])):
+    for e in sorted(made, key=lambda e: -len(e["path"])):
         if e["kind"] == "hardlink":
             continue
-        p = os.path.join(base, bytes.fromhex(e["path"]))
+        rel = bytes.fromhex(e["path"])
         mt = e.get("mtime_ns", 1_700_000_000 * 10**9 + e["i"])
         try:
-            os.utime(p, ns=(mt, mt), follow_symlinks=False)
+            fd, name = dirs.at(rel)
+            os.utime(name, ns=(mt, mt), dir_fd=fd, follow_symlinks=False)
         except OSError as x:
             fails.append((e["i"], f"utime: {x.strerror}"))
-    for p, e in flags:
-        r = subprocess.run([chattr, "+" + e["flags"], p], capture_output=True)
-        if r.returncode:
-            fails.append((e["i"], f"chattr +{e['flags']}: {r.stderr.decode(errors='replace').strip()}"))
+    for rel, e in flags:
+        try:
+            fd, name = dirs.at(rel)
+            o = os.open(name, os.O_RDONLY | os.O_NOFOLLOW, dir_fd=fd)
+            try:
+                cur = struct.unpack("l", fcntl.ioctl(o, FS_IOC_GETFLAGS, struct.pack("l", 0)))[0]
+                fcntl.ioctl(o, FS_IOC_SETFLAGS, struct.pack("l", cur | FLAG_BITS[e["flags"]]))
+            finally:
+                os.close(o)
+        except OSError as x:
+            fails.append((e["i"], f"chattr +{e['flags']}: {x.strerror}"))
+    dirs.close()
     return fails
 
 
@@ -273,3 +332,60 @@ def change(root, content, round_no):
     old = f"{base}/rounds/r{round_no - 2}"
     if os.path.exists(old):
         os.unlink(old)
+
+
+def deep_record(root):
+    """{relative path (hex): attributes} of DIR's deep trees (deep*), walked by
+    directory fds: past PATH_MAX, where fsmeta.py's paths can't go."""
+    import hashlib as H
+    import stat as S
+    out = {}
+    base = (root.rstrip("/") + DIR).encode()
+    try:
+        top = os.open(base, os.O_RDONLY | os.O_DIRECTORY)
+    except FileNotFoundError:
+        return out
+
+    def walk(fd, rel):
+        for name in sorted(os.listdir(fd)):
+            name = os.fsencode(name)
+            if not rel and not name.startswith(b"deep"):
+                continue
+            st = os.lstat(name, dir_fd=fd)
+            r = rel + b"/" + name if rel else name
+            e = {"mode": st.st_mode, "uid": st.st_uid, "gid": st.st_gid, "mtime": st.st_mtime_ns}
+            if S.S_ISREG(st.st_mode):
+                o = os.open(name, os.O_RDONLY, dir_fd=fd)
+                try:
+                    h = H.sha256()
+                    while True:
+                        b = os.read(o, 1 << 20)
+                        if not b:
+                            break
+                        h.update(b)
+                    e["sha256"], e["size"] = h.hexdigest(), st.st_size
+                finally:
+                    os.close(o)
+            out[r.hex()] = e
+            if S.S_ISDIR(st.st_mode):
+                sub = os.open(name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd)
+                try:
+                    walk(sub, r)
+                finally:
+                    os.close(sub)
+
+    try:
+        walk(top, b"")
+    finally:
+        os.close(top)
+    return out
+
+
+def deep_compare(a, b):
+    """The differences between two deep_record()s, as lines."""
+    out = []
+    for k in sorted(set(a) | set(b)):
+        if a.get(k) != b.get(k):
+            name = bytes.fromhex(k)
+            out.append(f"{name[:40]!r}...{name[-40:]!r} ({len(name)} bytes): {a.get(k)} -> {b.get(k)}")
+    return out

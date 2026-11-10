@@ -3,8 +3,9 @@
 copy's after it booted.  Prints one DIFF line per field that differs, and
 exits 1 if any field outside IGNORED differs.
 
-Usage: judge.py [--grow BYTES | --fit BYTES [--fit-pct PCT] | --degraded] SRC.json DST.json
-       judge.py fs FSMETA.py SRC-META.json DST-META.json
+Usage: judge.py [--expect] [--new-uuids] [--removable] [--nvram-kept]
+                [--grow BYTES | --fit BYTES [--fit-pct PCT] | --degraded] SRC.json DST.json
+       judge.py fs FSMETA.py SRC-META.json DST-META.json [--no-atime] [--new-uuids]
        judge.py --fit-plan BYTES [--fit-pct PCT] LAYOUT.json
 
 The fs form judges fsmeta.py's records of the source and the restored disk:
@@ -27,6 +28,24 @@ were not is a DIFF too, so the mode can't pass a run that fitted nothing.
 --degraded is for a source dumped with a RAID member's disk detached, and
 restored onto one disk fewer: each dump must show an md array with an empty
 slot, and the same arrays with the same slots empty.
+
+--expect is BackShot2's (docs/design/backshot2.md, "Oracles"): SRC.json is
+then the drifted layout the case asked load to build (its edits applied to
+the source's dump), not a dump of a running machine, and the restored dump
+must match it.  The few fields a drifted layout can't predict are EXPECT_IGNORED
+(the topology's words, a partition's kernel device number).
+
+BackShot2's option sweep (B9) adds what each of load's flags changes on purpose:
+--new-uuids    every identifier is new: each source identifier must map to one
+               new value, the same wherever it appears, and differ from the old
+               one; the fs form allows fstab, crypttab and the boot settings
+               that name them
+--removable    load also installed the ESP's removable-media loader: EFI/BOOT/
+               files on the ESP may be new or rewritten
+--nvram-kept   tier 2's boots shared one NVRAM with the rescuer: the firmware's
+               own boot entries (no HD() path: its disks, network, shell) and
+               the boot order and current entry are the rescue session's; the
+               entries on a disk (HD()) are compared, as a set
 
 IGNORED lists what may differ between two boots of the same machine, or can't
 be kept by a restore, each with why.  judge.py prints which of them did differ,
@@ -91,6 +110,68 @@ IGNORED = [
     (r"^storage\.zfs\.zpool_cache\.[^.]+\.(hostid|hostname|txg|vdev_tree\..*\.(guid|path|metaslab_array))$", "the rescue system wrote zpool.cache: its host, its names for the vdevs, and their new GUIDs (ZFS finds vdevs by GUID)"),
     (r"^boot\.kernels\.installed\.\d+\.initrd_bytes$", "load's boot stage rebuilds every initramfs (update-initramfs -k all)"),
 ]
+
+# With --expect (BackShot2): what a drifted layout can't predict.
+EXPECT_IGNORED = [
+    (r"^storage\.topology\.", "the topology's words: the dump writes them from fields compared on their own"),
+    (r"^storage\.disks\.\d+\.partitions\.\d+\.devno$", "a partition's device number is the kernel's (past 15 partitions, an extended number)"),
+]
+
+# What --new-uuids rewrites on the restored system, for the fs form.
+NEW_UUIDS_FILES = (r"^etc/(fstab|crypttab|mdadm\.conf|mdadm/mdadm\.conf|default/grub|kernel/cmdline|initramfs-tools/conf\.d/resume)$",)
+
+# Identifier fields: what --new-uuids changes.
+ID_FIELD = re.compile(r"(^|\.)(uuid|disk_guid|disk_signature|hash_seed|luks_uuid|vg_uuid|lv_uuid|id|dm_uuid)$")
+
+
+def id_map(a, b):
+    """{old: new} from the flattened source A and restored B, for --new-uuids:
+    each identifier field's value at the same place.  Problems: an old value
+    mapped two ways, or kept."""
+    m, bad = {}, []
+    for k, va in a.items():
+        if not k.startswith("storage.") or not ID_FIELD.search(k) or not isinstance(va, str) or not va:
+            continue
+        vb = b.get(k)
+        if not isinstance(vb, str):
+            continue
+        if va == vb:
+            bad.append(f"{k}: kept {va} under --new-uuids")
+        elif m.setdefault(va, vb) != vb:
+            bad.append(f"{k}: {va} became both {m[va]} and {vb}")
+    return m, bad
+
+
+def remap(a, m):
+    """A's string values with every old identifier replaced by its new one."""
+    if not m:
+        return a
+    pat = re.compile("|".join(re.escape(k) for k in sorted(m, key=len, reverse=True)))
+    return {k: (pat.sub(lambda x: m[x.group(0)], v) if isinstance(v, str) else v) for k, v in a.items()}
+
+
+def drop_removable(d):
+    """--removable: the ESPs' EFI/BOOT/ files left out of the comparison."""
+    for e in (d.get("boot") or {}).get("esps") or []:
+        fs = (e.get("contents") or {}).get("files")
+        if isinstance(fs, list):
+            e["contents"]["files"] = [f for f in fs if not str(f.get("path", "")).upper().startswith("EFI/BOOT/")]
+            for f in e["contents"]["files"]:
+                if str(f.get("same_as", "")).upper().startswith("EFI/BOOT/"):
+                    f.pop("same_as")
+
+
+def nvram_kept(d):
+    """--nvram-kept: only the boot entries on a disk, as a set; the rest is the rescue session's."""
+    efi = (d.get("boot") or {}).get("efi")
+    if not isinstance(efi, dict):
+        return
+    ents = [e for e in efi.get("entries") or [] if any("HD(" in str(p) for p in e.get("device_path") or [])]
+    efi["entries"] = sorted(({k: v for k, v in e.items() if k not in ("number", "in_boot_order")} for e in ents),
+                            key=lambda e: json.dumps(e, sort_keys=True))
+    for k in ("boot_order", "boot_current", "boot_next"):
+        efi.pop(k, None)
+
 
 # Fields added to the dump on 2026-11-05: a source dumped before then lacks them.
 NEW_FIELDS = [r"^boot\.grub\.dir$", r"^boot\.grub\.grub_cfg\.lang$", r"\.content\.logical_block_size$"]
@@ -236,7 +317,7 @@ def flatten(v, path, out):
         out[path] = v
 
 
-def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False):
+def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False):
     import importlib.util
     spec = importlib.util.spec_from_file_location("fsmeta", fsmeta_py)
     fsmeta = importlib.util.module_from_spec(spec)
@@ -250,6 +331,8 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False):
             why = next((w for r, kinds, w in BOOT_STAGE if kind in kinds and re.search(r, p)), None)
             if not why and kind == "missing" and before.get(p, {}).get("type") == "socket":
                 why = "a socket is made by whatever listens on it; no archiver restores one"
+            if not why and new_uuids and any(re.search(r, p) for r in NEW_UUIDS_FILES) and kind in _WRITTEN:
+                why = "--new-uuids: load rewrites what names the new identifiers"
             if not why and no_atime and kind.startswith("atime"):
                 why = "the filesystem's driver here updates atimes on every read (RedoxFS's FUSE driver): the source's moved as it was backed up"
             if not why and kind == "inode flags":
@@ -610,8 +693,11 @@ def fit_may_differ(k, vb, plan, flat, want):
 
 def main():
     if sys.argv[1] == "fs":
-        judge_fs(*sys.argv[2:5], no_atime="--no-atime" in sys.argv[5:])
+        judge_fs(*sys.argv[2:5], no_atime="--no-atime" in sys.argv[5:], new_uuids="--new-uuids" in sys.argv[5:])
     grow, fit, pct, plan_only = 0, None, None, None
+    flags = set()
+    while sys.argv[1] in ("--expect", "--new-uuids", "--removable", "--nvram-kept"):
+        flags.add(sys.argv.pop(1))
     while sys.argv[1] in ("--grow", "--fit", "--fit-pct", "--fit-plan"):
         if sys.argv[1] == "--grow":
             grow = int(sys.argv[2])
@@ -633,6 +719,11 @@ def main():
         del sys.argv[1]
     src = md_by_name(illumos_normalise(load_json(sys.argv[1])))
     dst = md_by_name(illumos_normalise(load_json(sys.argv[2])))
+    for d in (src, dst):
+        if "--removable" in flags:
+            drop_removable(d)
+        if "--nvram-kept" in flags:
+            nvram_kept(d)
     # Lists whose order is the boot's, not the layout's: ZFS mounts its
     # datasets in parallel.
     for d in (src, dst):
@@ -650,6 +741,13 @@ def main():
     flatten(src, "", a)
     flatten(dst, "", b)
     want = fit_expect(plan, a) if plan is not None else {}
+    idbad = []
+    if "--new-uuids" in flags:
+        m, idbad = id_map(a, b)
+        a = remap(a, m)
+        want = {k: (remap({0: v}, m)[0]) for k, v in want.items()}
+        if not m:
+            idbad.append("--new-uuids, and no identifier changed")
     # md: "active" is "clean" with writes in flight (it turns clean after
     # safe_mode_delay idle), so either is a running, healthy array.
     for m in (a, b):
@@ -660,7 +758,7 @@ def main():
     for k in sorted(set(a) | set(b)):
         if a.get(k, "<absent>") == b.get(k, "<absent>"):
             continue
-        why = next((w for p, w in IGNORED if re.search(p, k)), None)
+        why = next((w for p, w in IGNORED + (EXPECT_IGNORED if "--expect" in flags else []) if re.search(p, k)), None)
         if not why and k.endswith(".content.device.uuid") and (a.get(k[: -len("device.uuid")] + "num_devices") or 1) > 1:
             why = "a multi-device btrfs member's own device UUID: mkfs.btrfs --device-uuid sets it for a single device only"
         va, vb = a.get(k), b.get(k)
@@ -695,6 +793,9 @@ def main():
         else:
             real.append(k)
             print(f"DIFF {k}: {json.dumps(a.get(k, '<absent>'))[:200]} -> {json.dumps(b.get(k, '<absent>'))[:200]}")
+    for x in idbad:
+        real.append("new-uuids")
+        print(f"DIFF new-uuids: {x}")
     if degraded:
         # Both dumps' arrays with empty slots: name -> the slots filled, of
         # how many.  (The fields themselves are compared above.)

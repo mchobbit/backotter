@@ -140,11 +140,17 @@ class Tools:
     root, with a scratch directory (in RAM) bound at ROOT/bs2-scratch."""
 
     def __init__(self, root, scratch):
-        self.root, self.scratch = root, scratch
+        # A bind of ROOT of this run's own, so two runs on one source never
+        # share (or unmount) each other's /dev, /proc and scratch.
+        self.tools, self.scratch = root, scratch
+        self.root = f"{os.path.dirname(scratch)}/root"
         self.inside = "/bs2-scratch"
 
     def __enter__(self):
         os.makedirs(self.scratch, exist_ok=True)
+        os.makedirs(self.root, exist_ok=True)
+        subprocess.run(["mount", "--bind", self.tools, self.root], check=True)
+        subprocess.run(["mount", "--make-private", self.root], check=False)
         os.makedirs(f"{self.root}{self.inside}", exist_ok=True)
         subprocess.run(["mount", "--bind", self.scratch, f"{self.root}{self.inside}"], check=True)
         for p in ("dev", "proc"):
@@ -154,8 +160,11 @@ class Tools:
         return self
 
     def __exit__(self, *a):
-        for p in (self.inside, "/proc", "/dev"):
-            subprocess.run(["umount", "-R", f"{self.root}{p}"], check=False)
+        subprocess.run(["umount", "-R", self.root], check=False)
+        try:
+            os.rmdir(self.root)
+        except OSError:
+            pass
 
     def run(self, argv, stdin=None, timeout=120):
         r = subprocess.run(["chroot", self.root, "/usr/bin/env", "PATH=/usr/sbin:/usr/bin:/sbin:/bin", "LC_ALL=C"] + argv,
@@ -270,7 +279,7 @@ def with_lazy(argv):
     return a
 
 
-def dry_runs(tools, name, plan, drifted, targets, fitted):
+def dry_runs(tools, name, plan, drifted, targets, fitted, shifts=None):
     """[(verdict, why)] from the dry runs; empty: they agree.  FITTED: the
     device names --fit-largest resizes (their sizes are the fit's)."""
     out = []
@@ -297,7 +306,7 @@ def dry_runs(tools, name, plan, drifted, targets, fitted):
                 made = None
             if made is not None:
                 dk = dumpx.disk(drifted)
-                want = {p["number"]: (p["start_lba"], p["sectors"]) for p in dk["partitions"] if not p.get("extended")}
+                want = {p["number"]: (p["start_lba"] + (shifts or {}).get(p["name"], 0), p["sectors"]) for p in dk["partitions"] if not p.get("extended")}
                 for n, se in want.items():
                     if n in made and made[n] != se and p_name(dk, n) not in fitted:
                         out.append(("FAIL", f"partition {n}: layout start {se[0]} size {se[1]}, load's sfdisk made {made[n]}"))
@@ -315,7 +324,7 @@ def dry_runs(tools, name, plan, drifted, targets, fitted):
         dev, want = by_uuid[u]
         devnode = next((a for a in argv if a.startswith("/dev/")), None)
         skip = FIT_CHANGES if dev["name"] in fitted else set()
-        size = max(dumpx.size_of(dev), (want.get("blocks") or 0) * (want.get("block_size") or 0)) + (1 << 20)
+        size = max(dumpx.size_of(dev), (want.get("blocks") or 0) * (want.get("block_size") or 0), cmd_bytes(argv)) + (1 << 20)
         inside, real = tools.scratch_file(f"{name}.fs", size)
         mine = [inside if a == devnode else a for a in argv]
         if argv[0] == "mke2fs":
@@ -350,9 +359,36 @@ def dry_runs(tools, name, plan, drifted, targets, fitted):
     return out
 
 
+def cmd_bytes(argv):
+    """The filesystem size a mkfs command asks for, in bytes (0: none given)."""
+    if argv[0] == "mke2fs" and re.fullmatch(r"\d+k", argv[-1]):
+        return int(argv[-1][:-1]) * 1024
+    for a in argv:
+        m = re.search(r"(?:^|,)size=(\d+)(?:,|$)", a)
+        if m and "agsize" in a:
+            return int(m.group(1))
+    return 0
+
+
 def p_name(dk, n):
     p = dumpx.part(dk, n)
     return p["name"] if p else None
+
+
+def fit_shifts(drifted, targets, case):
+    """{partition: sectors} the fit moves the partitions after the largest by (judge.py's plan)."""
+    if "--fit-largest" not in (case.get("load_options") or []):
+        return {}
+    from . import fitcalc
+    pl = fitcalc.plan(drifted, targets, sweep.expected(case)["fit"])
+    out = {}
+    for dd in (pl or {}).get("disks", {}).values():
+        if dd.get("amount") and dd.get("name"):
+            dk = dumpx.disk(drifted, dd["disk"])
+            parts = dk.get("partitions") or []
+            for j in dd["moved"]:
+                out[parts[j]["name"]] = dd["amount"] // dd["ss"]
+    return out
 
 
 def fitted_devices(drifted, targets, case):
@@ -386,7 +422,7 @@ def judge_one(name, case, drifted, targets, res, tools, caps):
     if tools is None:
         return "PASS", ["planned; no dry runs (no source tools here)"]
     try:
-        found = dry_runs(tools, name, res["out"], drifted, targets, fitted_devices(drifted, targets, case))
+        found = dry_runs(tools, name, res["out"], drifted, targets, fitted_devices(drifted, targets, case), fit_shifts(drifted, targets, case))
     except (OSError, subprocess.SubprocessError) as e:
         return "HARNESS", [f"dry runs: {e}"]
     for v in ("INVALID", "FAIL"):

@@ -1,0 +1,360 @@
+"""Unit tests for BackShot2's library: the edits and replay (B1), the
+generator and the rules (B2), the shrinker (B6), content drift's plan (B8),
+the sweep (B9) and judge.py's --expect and flag modes (B4, B9).  Stdlib
+only, on the Mac or a host, from the corpus's redacted dumps:
+
+    python3 -m unittest discover -s testvm/backshot2/tests
+"""
+
+import copy
+import json
+import os
+import subprocess
+import sys
+import tempfile
+import unittest
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+BS2 = os.path.dirname(HERE)
+sys.path.insert(0, BS2)
+CORPUS = os.path.join(BS2, "..", "..", "holt", "tests", "corpus")
+JUDGE = os.path.join(BS2, "..", "holttest1d", "judge.py")
+
+from bs2lib import case as C, content as CT, dumpx, edits as E, generate as G, geometry as GE, rules, shrink as S, sweep  # noqa: E402
+from bs2lib.geometry import Invalid  # noqa: E402
+
+
+def dump(v, path):
+    with open(path, "w") as f:
+        json.dump(v, f)
+
+
+def corpus(name):
+    return dumpx.load(os.path.join(CORPUS, name, "src.json"))
+
+
+ALPINE = corpus("alpine324")
+LUKS = corpus("ubuntu26-luks")
+STACK = corpus("debian13-stack")
+LVM = corpus("rocky10-lvm")
+VOID = corpus("void-musl")
+
+
+class TestApply(unittest.TestCase):
+    def test_pure(self):
+        before = json.dumps(ALPINE, sort_keys=True)
+        e = E.build(ALPINE, "resize", {"disk": "vda", "partition": 3, "by_sectors": -409600, "grow_fs": True})
+        d = E.apply(ALPINE, [e])
+        self.assertEqual(json.dumps(ALPINE, sort_keys=True), before)
+        self.assertEqual(dumpx.part(dumpx.disk(d), 3)["sectors"], 27260928 - 409600)
+        # Replay is the same function of the same edits, every time.
+        self.assertEqual(json.dumps(E.apply(ALPINE, [e]), sort_keys=True), json.dumps(d, sort_keys=True))
+
+    def test_resize_shrinks_the_xfs_with_it(self):
+        e = E.build(ALPINE, "resize", {"disk": "vda", "partition": 3, "by_sectors": -409600})
+        c = dumpx.part(dumpx.disk(E.apply(ALPINE, [e])), 3)["content"]
+        self.assertEqual(c["blocks"], (27260928 - 409600) * 512 // 4096)
+        self.assertEqual(c["ag_blocks"], 851904)
+        self.assertEqual(c["ag_count"], 4)
+
+    def test_renumber_renames_everywhere(self):
+        e = E.build(ALPINE, "renumber", {"disk": "vda", "from": 3, "to": 4})
+        d = E.apply(ALPINE, [e])
+        p = dumpx.part(dumpx.disk(d), 4)
+        self.assertEqual(p["name"], "vda4")
+        self.assertEqual(p["devno"], "253:4")
+        self.assertEqual(p["uuid"], "bc000001-04")   # MBR: signature and number
+        self.assertIsNone(dumpx.part(dumpx.disk(d), 3))
+        self.assertEqual(next(m for m in d["storage"]["mounts"] if m["target"] == "/")["source"], "/dev/vda4")
+        self.assertEqual(next(f for f in d["storage"]["fstab"] if f["file"] == "/")["resolves_to"], "vda4")
+        self.assertNotIn("vda3", json.dumps(d["storage"]))
+
+    def test_gap_and_swap_order(self):
+        e = E.build(ALPINE, "resize", {"disk": "vda", "partition": 3, "by_sectors": -4096})
+        d = E.apply(ALPINE, [e])
+        g = E.build(d, "gap_before", {"disk": "vda", "partition": 2, "sectors": 2049})
+        d = E.apply(d, [g])
+        self.assertEqual(dumpx.part(dumpx.disk(d), 2)["start_lba"], 2099200 + 2049)
+        self.assertEqual(dumpx.part(dumpx.disk(d), 3)["start_lba"], 6293504 + 2049)
+        sw = E.build(d, "swap_order", {"disk": "vda", "a": 2, "b": 3})
+        d2 = E.apply(d, [sw])
+        dk = dumpx.disk(d2)
+        self.assertLess(dumpx.part(dk, 3)["start_lba"], dumpx.part(dk, 2)["start_lba"])
+        self.assertEqual(dumpx.part(dk, 3)["start_lba"], 2099200 + 2049)
+        with self.assertRaises(Invalid):
+            E.build(ALPINE, "gap_before", {"disk": "vda", "partition": 2, "sectors": 1 << 20})   # no room
+
+    def test_lv_split_keeps_the_size(self):
+        v = dumpx.vg(LUKS, "ubuntu-vg")
+        x = v["logical_volumes"][0]
+        total = E.lv_extents(x)
+        runs = E.free_runs(v, x["name"])
+        free = [r for r in runs if r[1] >= total] or runs
+        self.assertTrue(free)
+        e = E.build(LUKS, "lv_split", {"vg": "ubuntu-vg", "lv": x["name"], "segments": [["pv0", 0, 100], [free[-1][0], free[-1][1] + free[-1][2] - (total - 100), total - 100]]})
+        d = E.apply(LUKS, [e])
+        x2 = dumpx.lv(dumpx.vg(d, "ubuntu-vg"), x["name"])
+        self.assertEqual(len(x2["segments"]), 2)
+        self.assertEqual(x2["size_bytes"], x["size_bytes"])
+        with self.assertRaises(Invalid):
+            E.build(LUKS, "lv_split", {"vg": "ubuntu-vg", "lv": x["name"], "segments": [["pv0", 0, total]]})   # one piece
+
+    def test_luks_offset_moves_the_payload(self):
+        dev = "vda3"
+        c = dumpx.devices(LUKS)[dev]["content"]
+        f = E.luks_fields(c)
+        e = E.build(LUKS, "luks_geometry", {"dev": dev, "header_size": 65536, "keyslots_size": f["keyslots_size"], "offset": f["offset"] + (1 << 20), "sector_size": 512})
+        d = E.apply(LUKS, [e])
+        kid = dumpx.devices(d)["dm-0"]
+        self.assertEqual(kid["size_bytes"], dumpx.devices(LUKS)["dm-0"]["size_bytes"] - (1 << 20))
+        pv = dumpx.vg(d, "ubuntu-vg")["physical_volumes"][0]
+        self.assertEqual(pv["dev_size_bytes"], kid["size_bytes"])
+        self.assertEqual(dumpx.devices(d)[dev]["content"]["json_size"], str(65536 - 4096))
+        with self.assertRaises(Invalid):
+            E.build(LUKS, "luks_geometry", {"dev": dev, "header_size": 12345, "keyslots_size": f["keyslots_size"], "offset": f["offset"], "sector_size": 512})
+
+
+class TestModels(unittest.TestCase):
+    def test_ext4_matches_the_corpus(self):
+        c = dumpx.part(dumpx.disk(ALPINE), 1)["content"]
+        g = GE.ext4(c["blocks"], 4096, c["inodes_per_group"], 256, c["reserved_gdt_blocks"], c["features"], 64, 16, c["reserved_blocks"])
+        for k, v in g.items():
+            self.assertEqual(c.get(k), v, k)
+
+    def test_ext4_refuses_a_short_last_group(self):
+        c = dumpx.part(dumpx.disk(ALPINE), 1)["content"]
+        with self.assertRaises(Invalid):
+            GE.ext4(32768 * 3 + 30, 4096, 8192, 256, 127, c["features"])
+
+    def test_mke2fs_resize_inverts_its_own_formula(self):
+        c = dumpx.part(dumpx.disk(ALPINE), 1)["content"]
+        c1 = dict(c, block_size=1024, blocks=1048574, blocks_per_group=8192, first_data_block=1, reserved_gdt_blocks=127)
+        r = GE.mke2fs_resize_for(c1)
+        # mke2fs: rsv = ceil(ceil(resize/bpg)/gdpb) - ceil(ceil(blocks/bpg)/gdpb)
+        gdpb = 1024 // 64
+        rsv = GE.cdiv(GE.cdiv(r, 8192), gdpb) - GE.cdiv(GE.cdiv(1048574, 8192), gdpb)
+        self.assertEqual(rsv, 127)
+
+    def test_xfs(self):
+        c = dumpx.part(dumpx.disk(ALPINE), 3)["content"]
+        g = GE.xfs(c["blocks"], 4096, c["ag_blocks"], c["log_blocks"], 512, 512, c["features"])
+        self.assertEqual(g["ag_count"], 4)
+        with self.assertRaises(Invalid):
+            GE.xfs(c["blocks"], 4096, c["blocks"] - 100, c["log_blocks"], 512, 512, c["features"])   # last AG under 16 MiB
+        with self.assertRaises(Invalid):
+            GE.xfs(60000, 4096, 30000, 16384, 512, 512, c["features"])   # under 300 MiB
+
+    def test_luks2(self):
+        self.assertEqual(GE.luks2(1 << 30, 16384, 16744448, 16777216, 512, 1)["payload_bytes"], (1 << 30) - 16777216)
+        with self.assertRaises(Invalid):
+            GE.luks2(1 << 30, 16384, 16744448, 16384, 512, 1)   # offset inside the header
+
+
+class TestRules(unittest.TestCase):
+    def test_the_source_is_valid(self):
+        for d in (ALPINE, LUKS, STACK, LVM, VOID):
+            self.assertEqual(rules.check(d, d, []), [], d["os"]["id"])
+
+    def test_rule1_data_must_fit(self):
+        d = copy.deepcopy(ALPINE)
+        m = next(m for m in d["storage"]["mounts"] if m["target"] == "/")
+        m["used_bytes"] = 13 << 30
+        self.assertTrue([r for r in rules.rule1(d) if r[0] == 1])
+
+    def test_rule1_planted_content_counts(self):
+        self.assertEqual(rules.rule1(ALPINE), [])
+        self.assertTrue(rules.rule1(ALPINE, {"/boot": (2 << 30, 10)}))
+
+    def test_rule2_tables(self):
+        e = {"op": "ext4_geometry", "fs": "vda1", "block_size": 8192}
+        self.assertTrue(rules.rule2(ALPINE, [e]))
+        self.assertFalse(rules.rule2(ALPINE, [dict(e, block_size=2048)]))
+
+    def test_rule3_identifiers(self):
+        d = copy.deepcopy(ALPINE)
+        dumpx.part(dumpx.disk(d), 1)["content"]["uuid"] = "00000000-0000-4000-8000-000000000000"
+        self.assertTrue([r for r in rules.rule3(ALPINE, d, []) if r[0] == 3])
+
+    def test_rule3_named_by_number(self):
+        d = copy.deepcopy(ALPINE)
+        d["storage"]["fstab"][0]["spec"] = "/dev/vda3"
+        e = E.build(d, "renumber", {"disk": "vda", "from": 3, "to": 4})
+        bad = rules.rule3(d, E.apply(d, [e]), [e])
+        self.assertTrue(any("names it by number" in r[1] for r in bad), bad)
+        # Through PARTUUID too: on MBR it's the number.
+        d = copy.deepcopy(ALPINE)
+        d["boot"]["cmdline"]["raw"] = "root=PARTUUID=bc000001-03 ro"
+        e = E.build(d, "renumber", {"disk": "vda", "from": 3, "to": 4})
+        self.assertTrue(rules.rule3(d, E.apply(d, [e]), [e]))
+
+    def test_rule3_grub_without_search(self):
+        d = copy.deepcopy(ALPINE)
+        d["boot"]["grub"]["grub_cfg"]["search_uuids"] = []
+        e = E.build(d, "swap_order", {"disk": "vda", "a": 1, "b": 2})
+        self.assertTrue(rules.rule3(d, E.apply(d, [e]), [e]))
+
+
+class TestGenerator(unittest.TestCase):
+    def test_deterministic(self):
+        a = G.generate("alpine324", "gen:x", ALPINE, 4217)
+        b = G.generate("alpine324", "gen:x", ALPINE, 4217)
+        self.assertEqual(C.text(a), C.text(b))
+        self.assertNotEqual(C.case_hash(a), C.case_hash(G.generate("alpine324", "gen:x", ALPINE, 4218)))
+
+    def test_every_case_keeps_the_rules(self):
+        for d, name in ((ALPINE, "alpine324"), (LUKS, "ubuntu26-luks"), (STACK, "debian13-stack"), (LVM, "rocky10-lvm"), (VOID, "void-musl")):
+            ops = set()
+            for seed in range(60):
+                c = G.generate(name, None, d, seed)
+                dr = C.replay(c, d)
+                self.assertEqual(rules.check(d, dr, c["edits"], G.planted_of(d, c.get("content"))), [], (name, seed))
+                ops |= {e["op"] for e in c["edits"]}
+                if any(C.targets(c, dr)[dk["name"]] < dk["size_bytes"] for dk in dumpx.disks(dr)):
+                    self.assertIn("--fit-largest", c["load_options"], (name, seed))
+            self.assertGreaterEqual(len(ops), 4, (name, ops))
+
+    def test_lvm_and_luks_edits_are_drawn(self):
+        ops = set()
+        for seed in range(80):
+            ops |= {e["op"] for e in G.generate("ubuntu26-luks", None, LUKS, seed)["edits"]}
+        self.assertTrue({"lv_split", "lv_resize", "luks_geometry", "ext4_geometry"} <= ops, ops)
+
+    def test_case_file_round_trip(self):
+        c = G.generate("alpine324", "gen:" + "a" * 64, ALPINE, 7)
+        c["name"] = C.name_of(c)
+        with tempfile.TemporaryDirectory() as t:
+            p = os.path.join(t, "x.case")
+            C.write(p, c)
+            back = C.read(p)
+        self.assertEqual(back, json.loads(json.dumps(c)))
+        self.assertEqual(C.case_hash(back), C.case_hash(c))
+
+    def test_new_uuids_only_when_built(self):
+        for seed in range(100):
+            self.assertNotIn("--new-uuids", G.generate("ubuntu26-luks", None, LUKS, seed)["load_options"])
+        self.assertTrue(any("--new-uuids" in G.generate("ubuntu26-luks", None, LUKS, s, caps={"new_uuids": True})["load_options"] for s in range(100)))
+
+
+class TestShrinker(unittest.TestCase):
+    def test_drops_what_doesnt_matter(self):
+        # A fake failure: "fails" whenever an edit resizes partition 3 by over 1000 sectors.
+        c = None
+        for seed in range(300):
+            x = G.generate("alpine324", None, ALPINE, seed)
+            if any(e["op"] == "resize" and e["partition"] == 3 and abs(e["by_sectors"]) > 1000 for e in x["edits"]) and len(x["edits"]) >= 3:
+                c = x
+                break
+        self.assertIsNotNone(c)
+
+        def fails(case):
+            return any(e["op"] == "resize" and e["partition"] == 3 and abs(e["by_sectors"]) > 1000 for e in case["edits"])
+        sh = S.Shrinker(ALPINE, fails, budget=200, log=lambda *a: None)
+        best = sh.shrink(c)
+        self.assertTrue(fails(best))
+        self.assertEqual([e["op"] for e in best["edits"]], ["resize"])
+        # Moved halfway back towards zero while it still failed.
+        self.assertLessEqual(abs(best["edits"][0]["by_sectors"]), 2000)
+        self.assertFalse(best.get("content"))
+
+    def test_ddmin(self):
+        self.assertEqual(S.ddmin(list(range(10)), lambda xs: 3 in xs and 7 in xs), [3, 7])
+        self.assertEqual(S.ddmin([1, 2], lambda xs: True), [])
+
+    def test_rebuild_refuses_what_no_longer_fits(self):
+        e1 = E.build(ALPINE, "renumber", {"disk": "vda", "from": 3, "to": 4})
+        e2 = E.build(E.apply(ALPINE, [e1]), "resize", {"disk": "vda", "partition": 4, "by_sectors": -2048})
+        self.assertIsNotNone(S.rebuild(ALPINE, [e1, e2]))
+        self.assertIsNone(S.rebuild(ALPINE, [e2]))   # partition 4 isn't there without the renumber
+
+
+class TestContent(unittest.TestCase):
+    def test_plan_is_seeded_and_fits_the_fs(self):
+        a = CT.plan({"recipe": "alpine-small-2", "seed": 3}, "xfs")
+        self.assertEqual(a, CT.plan({"recipe": "alpine-small-2", "seed": 3}, "xfs"))
+        self.assertNotEqual(a, CT.plan({"recipe": "alpine-small-2", "seed": 4}, "xfs"))
+        kinds = {e["kind"] for e in a}
+        self.assertTrue({"file", "dir", "hardlink", "symlink", "fifo", "chr", "blk"} <= kinds, kinds)
+        longest = max(len(bytes.fromhex(e["path"])) for e in a)
+        self.assertGreater(longest, 3500)
+        self.assertLess(longest, 3900)
+        deep = max(len(bytes.fromhex(e["path"])) for e in CT.plan({"recipe": "alpine-small-1", "seed": 3}, "xfs"))
+        self.assertGreater(deep, 4096)
+        self.assertLessEqual(max(len(bytes.fromhex(e["to"])) for e in a if e["kind"] == "symlink"), 1024)   # XFS's limit
+        self.assertFalse(any(e.get("xattrs") for e in CT.plan({"recipe": "alpine-small-2", "seed": 3}, "vfat")))
+
+    def test_only_keeps_hardlinks_whole(self):
+        a = CT.plan({"recipe": "alpine-small-2", "seed": 3}, "ext4")
+        keep = [e["i"] for e in a if e["kind"] == "hardlink"][:1]
+        b = CT.plan({"recipe": "alpine-small-2", "seed": 3, "only": keep}, "ext4")
+        self.assertEqual(b, [])
+
+
+class TestSweep(unittest.TestCase):
+    def test_expected(self):
+        c = {"load_options": ["--new-uuids", "--fit-largest", "10", "--snapshot", "@1", "--removable"]}
+        self.assertEqual(sweep.expected(c), {"new_uuids": True, "no_nvram": False, "removable": True, "fit": 10, "snapshot": 1})
+
+    def test_touches_esp(self):
+        uefi = corpus("ubuntu26-uefi")
+        # (Its NVRAM names vda1 by number: such an ESP isn't moved at all.)
+        with self.assertRaises(Invalid):
+            E.build(uefi, "renumber", {"disk": "vda", "from": 1, "to": 9})
+        uefi = copy.deepcopy(uefi)
+        uefi["boot"]["efi"]["entries"] = []
+        e = E.build(uefi, "renumber", {"disk": "vda", "from": 1, "to": 9})
+        self.assertTrue(C.touches_esp({"edits": [e]}, uefi))
+        self.assertFalse(C.touches_esp({"edits": []}, uefi))
+        self.assertTrue(C.touches_esp({"edits": [], "load_options": ["--removable"]}, uefi))
+
+
+class TestJudgeExpect(unittest.TestCase):
+    def judge(self, *args):
+        return subprocess.run([sys.executable, JUDGE] + list(args), capture_output=True, text=True)
+
+    def test_expect_against_the_drifted_layout(self):
+        e = E.build(ALPINE, "renumber", {"disk": "vda", "from": 3, "to": 4})
+        d = E.apply(ALPINE, [e])
+        with tempfile.TemporaryDirectory() as t:
+            a, b = os.path.join(t, "drifted.json"), os.path.join(t, "dst.json")
+            dump(d, a)
+            dst = copy.deepcopy(d)
+            dumpx.part(dumpx.disk(dst), 4)["devno"] = "259:7"
+            dst["storage"]["topology"] = {"something": {}}
+            dump(dst, b)
+            r = self.judge("--expect", a, b)
+            self.assertEqual(r.returncode, 0, r.stdout)
+            # Without --expect the kernel's numbers are compared.
+            self.assertEqual(self.judge(a, b).returncode, 1)
+            # The source isn't the drifted layout.
+            dump(ALPINE, a)
+            self.assertEqual(self.judge("--expect", a, b).returncode, 1)
+
+    def test_new_uuids_maps_identifiers(self):
+        with tempfile.TemporaryDirectory() as t:
+            a, b = os.path.join(t, "a.json"), os.path.join(t, "b.json")
+            dump(ALPINE, a)
+            txt = json.dumps(ALPINE).replace("bc0000", "cd0000")   # every identifier new, and what names them
+            dump(json.loads(txt), b)
+            self.assertEqual(self.judge("--expect", a, b).returncode, 1)
+            r = self.judge("--expect", "--new-uuids", a, b)
+            self.assertEqual(r.returncode, 0, r.stdout)
+            # An identifier kept under --new-uuids is a DIFF.
+            self.assertEqual(self.judge("--expect", "--new-uuids", a, a).returncode, 1)
+
+    def test_removable_and_nvram_kept(self):
+        uefi = corpus("ubuntu26-uefi")
+        with tempfile.TemporaryDirectory() as t:
+            a, b = os.path.join(t, "a.json"), os.path.join(t, "b.json")
+            dump(uefi, a)
+            dst = copy.deepcopy(uefi)
+            dst["boot"]["esps"][0]["contents"]["files"].insert(0, {"path": "EFI/BOOT/grubx64.efi", "size": 5})
+            dst["boot"]["efi"]["boot_order"] = ["0001"]
+            dst["boot"]["efi"]["entries"].append({"number": "0009", "description": "UEFI Misc Device 2", "device_path": ["PciRoot(0x0)/Pci(0x5,0x0)"]})
+            dump(dst, b)
+            self.assertEqual(self.judge("--expect", a, b).returncode, 1)
+            r = self.judge("--expect", "--removable", "--nvram-kept", a, b)
+            self.assertEqual(r.returncode, 0, r.stdout)
+
+
+if __name__ == "__main__":
+    unittest.main()

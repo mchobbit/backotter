@@ -1,6 +1,12 @@
 # bko-holt load: btrfs snapshots that share their extents
 
-Status: **spec, for approval.**  Nothing below is built.  Follow-up to
+Status: **approved 2026-11-10** (approach A, the chain forward with
+`--clone-from`, `--exact` always verifying, as recommended).  Built:
+`holt/src/load/shared.rs` and its use in `commands.rs`; rustic_core
+0.13.0+backotter.8 / rustic 0.11.4+backotter.9 `restore --exact` and
+`--clone-from` (`crates/core/src/commands/restore/exact.rs`); tests
+`testvm/compare/exact-rt.sh` and HoltTest1's `HT_SOURCE_PREP` with
+`testvm/holttest1d/prep/tumbleweed-snapper.sh`.  Follow-up to
 BackShot1's openSUSE Tumbleweed pass (run
 opensuse-tumbleweed-20261108-20261110-165711, commit 81922b2).
 

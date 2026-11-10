@@ -53,15 +53,7 @@ mkdir -p /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@
 btrfs subvolume create /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots
 mkdir -p /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/1
 btrfs subvolume create /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/1/snapshot
-mkdir -p /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/2
-# a snapshot of @/.snapshots/1/snapshot, as on the source
-btrfs subvolume snapshot /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/1/snapshot /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/2/snapshot
 btrfs subvolume set-default /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/1/snapshot
-btrfs quota enable /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
-btrfs quota rescan -w /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
-btrfs qgroup create 1/0 /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
-btrfs qgroup assign --no-rescan 0/265 1/0 /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
-btrfs quota rescan -w /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
 umount /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
 
 # ---- mount ----
@@ -85,15 +77,35 @@ mkdir -p /mnt/bko-target/usr/local
 mount -t btrfs -o subvol=/@/usr/local /dev/sdq3 /mnt/bko-target/usr/local
 
 # ---- restore ----
+# shared btrfs snapshots need the archiver's restore --exact
+sh -c 'rustic-bko restore --help 2>/dev/null | grep -q -- --exact || { echo "rustic-bko has no restore --exact, which shared btrfs snapshots need: give --btrfs-snapshots copy, or use a newer one" >&2; exit 1; }'
+mkdir -p /run/bko-holt
+# left out of the restore: btrfs subvolumes mounted elsewhere, seen again (aliases), and the contents of the shared snapshots, made after it
+cat > /run/bko-holt/restore.globs <<'EOF'
+!/.snapshots/1/snapshot
+!/.snapshots/2/snapshot/*
+EOF
 # snapshot latest of /srv/bko-repo, with BackOtter's restore flags
-RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id --glob-file /run/bko-holt/restore.globs latest /mnt/bko-target
+mkdir -p /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
+# btrfs bc000000-0000-4000-8000-000000000004: its shared snapshots (noatime: reading them changes nothing)
+mount -t btrfs -o subvolid=5,noatime /dev/sdq3 /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
+# @/.snapshots/2/snapshot: a snapshot of @/.snapshots/1/snapshot, then made exact from the backup's /.snapshots/2/snapshot (ID 265, as on the source)
+sh -c 'd=/run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/2/snapshot; if [ -d "$d" ] && [ "$(stat -c %i "$d")" != 256 ] && [ -z "$(ls -A "$d")" ]; then rmdir "$d" && btrfs subvolume snapshot /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/1/snapshot "$d" && RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id --exact --clone-from /=/run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/1/snapshot latest:/.snapshots/2/snapshot /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/2/snapshot; else mkdir -p /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/2 && btrfs subvolume create "$d" && echo "@/.snapshots/2/snapshot: not in the backup; made empty"; fi || exit; id=$(btrfs inspect-internal rootid "$d") && [ "$id" = 265 ] || echo "@/.snapshots/2/snapshot: ID $id here, 265 in the plan"'
+btrfs property set -ts /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/2/snapshot ro true
+btrfs quota enable /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
+btrfs quota rescan -w /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
+btrfs qgroup create 1/0 /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
+btrfs qgroup assign --no-rescan 0/265 1/0 /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
+btrfs quota rescan -w /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
+umount /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
 # the atimes the restore set, for boot to put back after its reads
-sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
+sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run -o -path /mnt/bko-target/.snapshots/2/snapshot \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
 
 # ---- boot ----
 # refuses to start unless /mnt/bko-target/etc/fstab is the restored system's (its / matches the layout's)
 # the restored atimes (the restore stage lists them), to put back after this stage's reads
-sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
+sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run -o -path /mnt/bko-target/.snapshots/2/snapshot \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
 # the restored LVM devices file, kept
 sh -c 'rm -rf /run/bko-holt/lvm-devices; [ ! -d /mnt/bko-target/etc/lvm/devices ] || { cp -a /mnt/bko-target/etc/lvm/devices /run/bko-holt/lvm-devices && touch -r /mnt/bko-target/etc/lvm /run/bko-holt/lvm-devices.parent; }'
 mount --rbind --make-rslave /dev /mnt/bko-target/dev
@@ -118,11 +130,8 @@ umount --recursive /mnt/bko-target/dev
 # the restored LVM devices file, put back
 sh -c '[ ! -d /run/bko-holt/lvm-devices ] || { rm -rf /mnt/bko-target/etc/lvm/devices && cp -a /run/bko-holt/lvm-devices /mnt/bko-target/etc/lvm/devices && touch -r /run/bko-holt/lvm-devices.parent /mnt/bko-target/etc/lvm; }'
 # the atimes this stage's reads changed, put back
-bash -c 'find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.after && LC_ALL=C comm -z -23 /run/bko-holt/atimes.before /run/bko-holt/atimes.after | \
+bash -c 'find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run -o -path /mnt/bko-target/.snapshots/2/snapshot \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.after && LC_ALL=C comm -z -23 /run/bko-holt/atimes.before /run/bko-holt/atimes.after | \
              while IFS=$'\''\t'\'' read -r -d '\'''\'' a p; do [ -L "$p" ] || [ -e "$p" ] || continue; touch -a -h -d "@$a" -- "$p" 2>/dev/null || { [ ! -L "$p" ] && lsattr -d -- "$p" 2>/dev/null | cut -d'\'' '\'' -f1 | grep -q i && { chattr -i -- "$p"; touch -a -h -d "@$a" -- "$p"; chattr +i -- "$p"; }; }; done'
-mount -t btrfs -o subvolid=5 /dev/sdq3 /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
-btrfs property set -ts /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004/@/.snapshots/2/snapshot ro true
-umount /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000004
 
 # ---- close ----
 umount --recursive /mnt/bko-target

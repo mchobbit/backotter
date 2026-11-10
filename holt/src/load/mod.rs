@@ -17,6 +17,7 @@ pub mod exec;
 pub mod fit;
 pub mod layout;
 pub mod plan;
+pub mod shared;
 pub mod status;
 pub mod target;
 pub mod writetable;
@@ -112,6 +113,9 @@ pub struct Options {
     pub password_file: Option<String>,
     pub snapshot: String,
     pub archiver: String,
+    /// --btrfs-snapshots copy: btrfs snapshots restored as full copies, as
+    /// before shared snapshots (docs/design/btrfs-snapshots.md).
+    pub btrfs_copy: bool,
     /// For tests: read the system load runs on from this tree, running no
     /// commands.
     pub sysroot: Option<String>,
@@ -136,6 +140,7 @@ impl Options {
             password_file: None,
             snapshot: DEFAULT_SNAPSHOT.to_string(),
             archiver: DEFAULT_ARCHIVER.to_string(),
+            btrfs_copy: false,
             sysroot: None,
         }
     }
@@ -161,7 +166,7 @@ pub const USAGE: &str = "Usage: bko-holt load LAYOUT.json [--through STAGE | --o
                      [--target DIR] [--new-uuids] [--key-file NAME=FILE]...
                      [--no-nvram] [--removable]
                      [--repo REPO [--password-file FILE] [--snapshot ID]
-                      [--archiver PROGRAM]]
+                      [--archiver PROGRAM] [--btrfs-snapshots shared|copy]]
 
 Rebuilds the disks LAYOUT.json (from `bko-holt dump`) describes, in stages:
 
@@ -204,6 +209,12 @@ Rebuilds the disks LAYOUT.json (from `bko-holt dump`) describes, in stages:
   --snapshot ID     the snapshot to restore (default latest)
   --archiver PROGRAM
                     the archiver to run (default rustic-bko)
+  --btrfs-snapshots shared|copy
+                    shared (the default): btrfs snapshots in the backup
+                    (snapper's) are made as snapshots of the one before
+                    them, then only their changes restored, so they share
+                    their extents; needs rustic-bko's restore --exact.
+                    copy: each is restored in full
   -h, --help        show this help
 
 Exit status: 0 done, 1 a stage failed, 2 bad arguments, 3 the layout isn't
@@ -278,6 +289,13 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
             "--password-file" => o.password_file = Some(value(&mut it, a)?),
             "--snapshot" => o.snapshot = value(&mut it, a)?,
             "--archiver" => o.archiver = value(&mut it, a)?,
+            "--btrfs-snapshots" => {
+                o.btrfs_copy = match value(&mut it, a)?.as_str() {
+                    "shared" => false,
+                    "copy" => true,
+                    v => return Err(format!("--btrfs-snapshots {v}: give shared or copy")),
+                }
+            }
             "--sysroot" => o.sysroot = Some(value(&mut it, a)?),
             s if s.starts_with('-') => return Err(format!("unknown argument {s:?}")),
             s => {
@@ -291,8 +309,8 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
     if o.through.is_some() && o.only.is_some() {
         return Err("--through and --only don't go together".into());
     }
-    if o.repo.is_none() && (o.password_file.is_some() || o.snapshot != DEFAULT_SNAPSHOT || o.archiver != DEFAULT_ARCHIVER) {
-        return Err("--password-file, --snapshot and --archiver are for restore; give --repo too".into());
+    if o.repo.is_none() && (o.password_file.is_some() || o.snapshot != DEFAULT_SNAPSHOT || o.archiver != DEFAULT_ARCHIVER || o.btrfs_copy) {
+        return Err("--password-file, --snapshot, --archiver and --btrfs-snapshots are for restore; give --repo too".into());
     }
     if o.repo.is_none() && o.stages().contains(&Stage::Restore) {
         return Err(format!(

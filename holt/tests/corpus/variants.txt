@@ -1,0 +1,8 @@
+# Golden plans of variants (holt/tests/golden_plans.rs), GUEST+VARIANT a line;
+# each is GUEST/plan+VARIANT.txt.  +bigger plans GUEST's dump onto targets
+# 1 GiB bigger than its disks, as ht1.sh's bigger variant rebuilds: these are
+# testvm/test2/classes.json's holt.variants.bigger.  +oneshot plans as its
+# guest does, and +degraded has no dump here, so neither has a plan of its own.
+aerynos+bigger
+debian13-stack+bigger
+mint22+bigger

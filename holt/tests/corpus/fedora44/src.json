@@ -1,0 +1,716 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.4"
+  },
+  "generated": "2026-11-08T02:22:33Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host1",
+    "machine_id": "bd000000000040008000000000000001",
+    "dmi": {
+      "sys_vendor": "QEMU",
+      "product_name": "Standard PC (i440FX + PIIX, 1996)",
+      "product_version": "pc-i440fx-10.0",
+      "board_vendor": null,
+      "board_name": null,
+      "bios_vendor": "SeaBIOS",
+      "bios_version": "1.16.3-debian-1.16.3-2",
+      "bios_date": "04/01/2014",
+      "product_uuid": null,
+      "chassis_type": "1"
+    },
+    "virtualization": "kvm"
+  },
+  "os": {
+    "id": "fedora",
+    "version_id": "44",
+    "version_codename": "",
+    "pretty_name": "Fedora Linux 44 (Server Edition)",
+    "debian_version": null,
+    "kernel_release": "7.2.15-200.fc44.x86_64",
+    "kernel_version": "#1 SMP PREEMPT_DYNAMIC Sun Nov  1 16:10:54 UTC 2026",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "bios"
+  },
+  "storage": {
+    "topology": {
+      "vda (disk, 16 GiB, dos)": {
+        "vda1 (partition, 1 GiB) ext4 on /boot": {},
+        "vda2 (partition, 2 GiB) swap": {},
+        "vda3 (partition, 13 GiB) btrfs \"fedora\" on /, /home": {}
+      }
+    },
+    "disks": [
+      {
+        "name": "vda",
+        "path": "/dev/vda",
+        "kind": "disk",
+        "devno": "253:0",
+        "size_bytes": 17179869184,
+        "size": "16 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/1",
+          "/dev/disk/by-path/pci-0000:00:04.0",
+          "/dev/disk/by-path/virtio-pci-0000:00:04.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "dos",
+          "sector_size": 512,
+          "disk_signature": "bc000001",
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vda1",
+            "path": "/dev/vda1",
+            "devno": "253:1",
+            "number": 1,
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "start_bytes": 1048576,
+            "size_bytes": 1073741824,
+            "type": "0x83",
+            "type_name": "Linux",
+            "bootable": true,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000001-01",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part1",
+              "/dev/disk/by-partuuid/bc000001-01",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partnum/1",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partuuid/bc000001-01",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-uuid/bc000000-0000-4000-8000-000000000001",
+              "/dev/disk/by-path/pci-0000:00:04.0-part1",
+              "/dev/disk/by-path/virtio-pci-0000:00:04.0-part1",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "ext4",
+              "usage": "filesystem",
+              "uuid": "bc000000-0000-4000-8000-000000000001",
+              "label": null,
+              "version": "1.0",
+              "block_size": 4096,
+              "blocks": 262144,
+              "size_bytes": 1073741824,
+              "free_blocks": 132661,
+              "reserved_blocks": 13107,
+              "inodes": 65536,
+              "free_inodes": 65156,
+              "inode_size": 256,
+              "inodes_per_group": 8192,
+              "blocks_per_group": 32768,
+              "first_data_block": 0,
+              "revision": 1,
+              "features": [
+                "has_journal",
+                "ext_attr",
+                "resize_inode",
+                "dir_index",
+                "orphan_file",
+                "filetype",
+                "needs_recovery",
+                "extent",
+                "64bit",
+                "flex_bg",
+                "metadata_csum_seed",
+                "sparse_super",
+                "large_file",
+                "huge_file",
+                "dir_nlink",
+                "extra_isize",
+                "metadata_csum",
+                "orphan_present"
+              ],
+              "state": "clean",
+              "has_errors": false,
+              "errors_behavior": "continue",
+              "creator_os": "Linux",
+              "reserved_gdt_blocks": 127,
+              "default_hash": "half_md4",
+              "hash_seed": "bc000000-0000-4000-8000-000000000002",
+              "mkfs_time": 1793600282,
+              "last_mounted_on": "/boot",
+              "flex_bg_size": 16,
+              "descriptor_size": 64,
+              "min_extra_isize": 32,
+              "want_extra_isize": 32,
+              "journal_inode": 8
+            },
+            "mounted_at": ["/boot"]
+          },
+          {
+            "name": "vda2",
+            "path": "/dev/vda2",
+            "devno": "253:2",
+            "number": 2,
+            "start_lba": 2099200,
+            "sectors": 4194304,
+            "start_bytes": 1074790400,
+            "size_bytes": 2147483648,
+            "type": "0x82",
+            "type_name": "Linux swap / Solaris",
+            "bootable": false,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000001-02",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part2",
+              "/dev/disk/by-partuuid/bc000001-02",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partnum/2",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partuuid/bc000001-02",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-uuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:00:04.0-part2",
+              "/dev/disk/by-path/virtio-pci-0000:00:04.0-part2",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000003"
+            ],
+            "holders": [],
+            "content": {
+              "type": "swap",
+              "usage": "other",
+              "uuid": "bc000000-0000-4000-8000-000000000003",
+              "label": null,
+              "version": "1",
+              "page_size": 4096,
+              "last_page": 524287,
+              "size_bytes": 2147483648,
+              "bad_pages": 0
+            },
+            "mounted_at": []
+          },
+          {
+            "name": "vda3",
+            "path": "/dev/vda3",
+            "devno": "253:3",
+            "number": 3,
+            "start_lba": 6293504,
+            "sectors": 27260928,
+            "start_bytes": 3222274048,
+            "size_bytes": 13957595136,
+            "type": "0x83",
+            "type_name": "Linux",
+            "bootable": false,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000001-03",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part3",
+              "/dev/disk/by-label/fedora",
+              "/dev/disk/by-partuuid/bc000001-03",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-label/fedora",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partnum/3",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partuuid/bc000001-03",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-uuid/bc000000-0000-4000-8000-000000000004",
+              "/dev/disk/by-path/pci-0000:00:04.0-part3",
+              "/dev/disk/by-path/virtio-pci-0000:00:04.0-part3",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000004"
+            ],
+            "holders": [],
+            "content": {
+              "type": "btrfs",
+              "usage": "filesystem",
+              "uuid": "bc000000-0000-4000-8000-000000000004",
+              "label": "fedora",
+              "version": null,
+              "total_bytes": 13957595136,
+              "bytes_used": 1688633344,
+              "num_devices": 1,
+              "sector_size": 4096,
+              "node_size": 16384,
+              "stripe_size": 4096,
+              "checksum": "crc32c",
+              "generation": 99,
+              "features": [
+                "mixed_backref",
+                "compress_zstd",
+                "big_metadata",
+                "extended_iref",
+                "skinny_metadata",
+                "no_holes"
+              ],
+              "compat_ro_features": ["free_space_tree", "free_space_tree_valid", "block_group_tree"],
+              "device": {
+                "devid": 1,
+                "uuid": "bc000000-0000-4000-8000-000000000005",
+                "total_bytes": 13957595136,
+                "bytes_used": 4848615424
+              }
+            },
+            "mounted_at": ["/", "/home"]
+          }
+        ],
+        "boot_code": {
+          "kind": "grub2",
+          "first_bytes": "eb6390108ed0bc00b0b800008ed88ec0",
+          "grub_core_lba": 1,
+          "grub_boot_drive": "0xff",
+          "grub_core_present": true,
+          "grub_core_in": "post-mbr-gap",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 140
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [],
+    "loop_devices": [],
+    "other_devices": [
+      {
+        "name": "sr0",
+        "path": "/dev/sr0",
+        "kind": "rom",
+        "devno": "11:0",
+        "size_bytes": 1073741312,
+        "size": "1024 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": false,
+        "links": [
+          "/dev/cdrom",
+          "/dev/disk/by-diskseq/3",
+          "/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1",
+          "/dev/disk/by-path/pci-0000:00:01.1-ata-2",
+          "/dev/disk/by-path/pci-0000:00:01.1-ata-2.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "zram0",
+        "path": "/dev/zram0",
+        "kind": "zram",
+        "devno": "251:0",
+        "size_bytes": 2047868928,
+        "size": "1.9 GiB",
+        "logical_sector_size": 4096,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/4",
+          "/dev/disk/by-label/zram0",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000006"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "swap",
+          "usage": "other",
+          "uuid": "bc000000-0000-4000-8000-000000000006",
+          "label": "zram0",
+          "version": "1",
+          "page_size": 4096,
+          "last_page": 499967,
+          "size_bytes": 2047868928,
+          "bad_pages": 0
+        },
+        "mounted_at": []
+      }
+    ],
+    "lvm": {
+      "volume_groups": []
+    },
+    "zfs": {
+      "pools_from_labels": [],
+      "zpool_cache": null,
+      "tools": null
+    },
+    "btrfs": [
+      {
+        "uuid": "bc000000-0000-4000-8000-000000000004",
+        "label": "fedora",
+        "devices": ["vda3"],
+        "mounted": true,
+        "features": [
+          "block_group_tree",
+          "compress_zstd",
+          "extended_iref",
+          "free_space_tree",
+          "no_holes",
+          "skinny_metadata"
+        ],
+        "allocation_profiles": {
+          "data": ["single"],
+          "metadata": ["dup"],
+          "system": ["dup"]
+        },
+        "mounted_subvolumes": [
+          {
+            "target": "/",
+            "subvol": "/root"
+          },
+          {
+            "target": "/home",
+            "subvol": "/home"
+          }
+        ],
+        "subvolumes": [
+          {
+            "id": 256,
+            "gen": 84,
+            "parent": 5,
+            "top_level": 5,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-000000000007",
+            "path": "<FS_TREE>/home",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          },
+          {
+            "id": 257,
+            "gen": 99,
+            "parent": 5,
+            "top_level": 5,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-000000000008",
+            "path": "<FS_TREE>/root",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          },
+          {
+            "id": 258,
+            "gen": 38,
+            "parent": 257,
+            "top_level": 257,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-000000000009",
+            "path": "root/var/lib/portables",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          }
+        ],
+        "default_subvolume": {
+          "id": 5
+        },
+        "quota_enabled": false,
+        "qgroups": null
+      }
+    ],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "/dev/vda3",
+        "fstype": "btrfs",
+        "devno": "0:34",
+        "device": "vda3",
+        "root": "/root",
+        "options": "rw,relatime",
+        "super_options": "rw,seclabel,compress=zstd:1,discard=async,space_cache=v2,subvolid=257,subvol=/root",
+        "size_bytes": 13957595136,
+        "used_bytes": 1768607744,
+        "available_bytes": 11788070912
+      },
+      {
+        "target": "/boot",
+        "source": "/dev/vda1",
+        "fstype": "ext4",
+        "devno": "253:1",
+        "device": "vda1",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,seclabel",
+        "size_bytes": 1020702720,
+        "used_bytes": 477323264,
+        "available_bytes": 472915968
+      },
+      {
+        "target": "/home",
+        "source": "/dev/vda3",
+        "fstype": "btrfs",
+        "devno": "0:34",
+        "device": "vda3",
+        "root": "/home",
+        "options": "rw,relatime",
+        "super_options": "rw,seclabel,compress=zstd:1,discard=async,space_cache=v2,subvolid=256,subvol=/home",
+        "size_bytes": 13957595136,
+        "used_bytes": 1768607744,
+        "available_bytes": 11788070912
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/zram0",
+        "type": "partition",
+        "size_bytes": 2047864832,
+        "used_bytes": 0,
+        "priority": 100,
+        "device": "zram0"
+      },
+      {
+        "file": "/dev/vda2",
+        "type": "partition",
+        "size_bytes": 2147479552,
+        "used_bytes": 0,
+        "priority": -1,
+        "device": "vda2"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000004",
+        "file": "/",
+        "type": "btrfs",
+        "options": "subvol=root,compress=zstd:1",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda3"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000001",
+        "file": "/boot",
+        "type": "ext4",
+        "options": "defaults",
+        "freq": 1,
+        "passno": 2,
+        "resolves_to": "vda1"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000004",
+        "file": "/home",
+        "type": "btrfs",
+        "options": "subvol=home,compress=zstd:1",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda3"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000003",
+        "file": "none",
+        "type": "swap",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda2"
+      }
+    ],
+    "crypttab": [],
+    "mdadm_conf": null
+  },
+  "boot": {
+    "loader": {
+      "name": "grub",
+      "firmware": "bios",
+      "via_shim": false,
+      "package": null,
+      "evidence": ["vda's MBR holds GRUB 2's boot.img"]
+    },
+    "efi": null,
+    "esps": [],
+    "grub": {
+      "dir": "/boot/grub2",
+      "installed_platforms": ["i386-pc"],
+      "grub_cfg": {
+        "entries": ["UEFI Firmware Settings"],
+        "search_uuids": ["bc000000-0000-4000-8000-000000000001"],
+        "modules": [
+          "all_video",
+          "efi_gop",
+          "efi_uga",
+          "ieee1275_fb",
+          "vbe",
+          "vga",
+          "video_bochs",
+          "video_cirrus",
+          "increment",
+          "part_msdos",
+          "ext2",
+          "blscfg"
+        ],
+        "default_linux": null,
+        "default_initrd": null,
+        "lang": null
+      },
+      "grubenv": {
+        "saved_entry": "bd000000000040008000000000000001-7.2.15-200.fc44.x86_64",
+        "boot_success": "0"
+      },
+      "default_grub": {
+        "GRUB_TIMEOUT": "5",
+        "GRUB_DISTRIBUTOR": "$(sed 's, release .*$,,g' /etc/system-release)",
+        "GRUB_DEFAULT": "saved",
+        "GRUB_DISABLE_SUBMENU": "true",
+        "GRUB_TERMINAL": "serial console",
+        "GRUB_SERIAL_COMMAND": "serial --speed=115200",
+        "GRUB_CMDLINE_LINUX": "resume=UUID=bc000000-0000-4000-8000-000000000003 console=tty0 console=ttyS0,115200n8",
+        "GRUB_DISABLE_RECOVERY": "true",
+        "GRUB_ENABLE_BLSCFG": "true"
+      },
+      "debconf": null
+    },
+    "systemd_boot": {
+      "loader_conf": null,
+      "entries": [
+        {
+          "file": "bd000000000040008000000000000001-0-rescue.conf",
+          "title": "Fedora Linux (0-rescue-bd000000000040008000000000000001) 44 (Server Edition)",
+          "version": "0-rescue-bd000000000040008000000000000001",
+          "linux": "/vmlinuz-0-rescue-bd000000000040008000000000000001",
+          "initrd": "/initramfs-0-rescue-bd000000000040008000000000000001.img",
+          "options": "root=UUID=bc000000-0000-4000-8000-000000000004 ro rootflags=subvol=root resume=UUID=bc000000-0000-4000-8000-000000000003 console=tty0 console=ttyS0,115200n8",
+          "grub_users": "$grub_users",
+          "grub_arg": "--unrestricted",
+          "grub_class": "fedora"
+        },
+        {
+          "file": "bd000000000040008000000000000001-6.19.10-300.fc44.x86_64.conf",
+          "title": "Fedora Linux (6.19.10-300.fc44.x86_64) 44 (Server Edition)",
+          "version": "6.19.10-300.fc44.x86_64",
+          "linux": "/vmlinuz-6.19.10-300.fc44.x86_64",
+          "initrd": "/initramfs-6.19.10-300.fc44.x86_64.img",
+          "options": "root=UUID=bc000000-0000-4000-8000-000000000004 ro rootflags=subvol=root resume=UUID=bc000000-0000-4000-8000-000000000003 console=tty0 console=ttyS0,115200n8",
+          "grub_users": "$grub_users",
+          "grub_arg": "--unrestricted",
+          "grub_class": "fedora"
+        },
+        {
+          "file": "bd000000000040008000000000000001-7.2.14-200.fc44.x86_64.conf",
+          "title": "Fedora Linux (7.2.14-200.fc44.x86_64) 44 (Server Edition)",
+          "version": "7.2.14-200.fc44.x86_64",
+          "linux": "/vmlinuz-7.2.14-200.fc44.x86_64",
+          "initrd": "/initramfs-7.2.14-200.fc44.x86_64.img",
+          "options": "root=UUID=bc000000-0000-4000-8000-000000000004 ro rootflags=subvol=root resume=UUID=bc000000-0000-4000-8000-000000000003 console=tty0 console=ttyS0,115200n8",
+          "grub_users": "$grub_users",
+          "grub_arg": "--unrestricted",
+          "grub_class": "fedora"
+        },
+        {
+          "file": "bd000000000040008000000000000001-7.2.15-200.fc44.x86_64.conf",
+          "title": "Fedora Linux (7.2.15-200.fc44.x86_64) 44 (Server Edition)",
+          "version": "7.2.15-200.fc44.x86_64",
+          "linux": "/vmlinuz-7.2.15-200.fc44.x86_64",
+          "initrd": "/initramfs-7.2.15-200.fc44.x86_64.img",
+          "options": "root=UUID=bc000000-0000-4000-8000-000000000004 ro rootflags=subvol=root resume=UUID=bc000000-0000-4000-8000-000000000003 console=tty0 console=ttyS0,115200n8",
+          "grub_users": "$grub_users",
+          "grub_arg": "--unrestricted",
+          "grub_class": "fedora"
+        }
+      ]
+    },
+    "kernels": {
+      "installed": [
+        {
+          "version": "0-rescue-bd000000000040008000000000000001",
+          "vmlinuz_bytes": 18479464,
+          "initrd_bytes": 233998045,
+          "config": false,
+          "running": false,
+          "modules_installed": false
+        },
+        {
+          "version": "6.19.10-300.fc44.x86_64",
+          "vmlinuz_bytes": 18479464,
+          "initrd_bytes": 39335583,
+          "config": true,
+          "running": false,
+          "modules_installed": true
+        },
+        {
+          "version": "7.2.14-200.fc44.x86_64",
+          "vmlinuz_bytes": 19024232,
+          "initrd_bytes": 39750766,
+          "config": true,
+          "running": false,
+          "modules_installed": true
+        },
+        {
+          "version": "7.2.15-200.fc44.x86_64",
+          "vmlinuz_bytes": 19028328,
+          "initrd_bytes": 39759179,
+          "config": true,
+          "running": true,
+          "modules_installed": true
+        }
+      ],
+      "symlinks": {}
+    },
+    "cmdline": {
+      "raw": "BOOT_IMAGE=(hd0,msdos1)/vmlinuz-7.2.15-200.fc44.x86_64 root=UUID=bc000000-0000-4000-8000-000000000004 ro rootflags=subvol=root resume=UUID=bc000000-0000-4000-8000-000000000003 console=tty0 console=ttyS0,115200n8",
+      "words": [
+        "BOOT_IMAGE=(hd0,msdos1)/vmlinuz-7.2.15-200.fc44.x86_64",
+        "root=UUID=bc000000-0000-4000-8000-000000000004",
+        "ro",
+        "rootflags=subvol=root",
+        "resume=UUID=bc000000-0000-4000-8000-000000000003",
+        "console=tty0",
+        "console=ttyS0,115200n8\n"
+      ],
+      "storage": {
+        "BOOT_IMAGE": "(hd0,msdos1)/vmlinuz-7.2.15-200.fc44.x86_64",
+        "root": "UUID=bc000000-0000-4000-8000-000000000004",
+        "ro": "",
+        "rootflags": "subvol=root",
+        "resume": "UUID=bc000000-0000-4000-8000-000000000003"
+      }
+    },
+    "kernel_cmdline_file": "root=UUID=bc000000-0000-4000-8000-000000000004 ro rootflags=subvol=root resume=UUID=bc000000-0000-4000-8000-000000000003 console=tty0 console=ttyS0,115200n8",
+    "initramfs": {
+      "generator": "dracut",
+      "modules": null,
+      "compress": null,
+      "resume": null,
+      "crypttab_in_initramfs": true
+    },
+    "packages": {
+      "grub2-common": "2.12-66.fc44",
+      "os-prober": "1.81-11.fc44",
+      "dracut": "108-8.fc44",
+      "mdadm": "4.3-11.fc44",
+      "lvm2": "2.03.38-2.fc44",
+      "cryptsetup": "2.8.8-1.fc44",
+      "tpm2-tools": "5.7-5.fc44",
+      "btrfs-progs": "7.1-1.fc44",
+      "xfsprogs": "7.1.1-1.fc44",
+      "e2fsprogs": "1.47.3-4.fc44",
+      "dosfstools": "4.2-18.fc44",
+      "exfatprogs": "1.4.3-1.fc44",
+      "ntfs-3g": "2026.2.25-1.fc44",
+      "grub2-pc": "2.12-66.fc44",
+      "grub2-tools": "2.12-66.fc44",
+      "kernel-core": "6.19.10-300.fc44",
+      "selinux-policy-targeted": "44.11-1.fc44"
+    }
+  },
+  "warnings": []
+}

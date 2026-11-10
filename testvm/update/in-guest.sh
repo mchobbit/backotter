@@ -289,7 +289,12 @@ Linux)
         # pacman upgrade (for "omarchy update", which is interactive) unless
         # told this is meant.
         export OMARCHY_ALLOW_DIRECT_PACMAN=1
-        keyrings=$(pacman -Qq archlinux-keyring artix-keyring cachyos-keyring omarchy-keyring 2>/dev/null)
+        # EndeavourOS's live image has plasma-x11-session, which Plasma 6.8
+        # conflicts with; --noconfirm answers no to removing it, and stops.
+        if grep -qs '^ID="*endeavouros' /etc/os-release && pacman -Qq plasma-x11-session >/dev/null 2>&1; then
+            pacman -Rdd --noconfirm plasma-x11-session || exit 1
+        fi
+        keyrings=$(pacman -Qq archlinux-keyring artix-keyring cachyos-keyring endeavouros-keyring manjaro-keyring omarchy-keyring 2>/dev/null)
         pacman -Sy --noconfirm --needed $keyrings && pacman -Su --noconfirm || exit 1
         yes | pacman -Scc >/dev/null
     elif has zypper; then

@@ -1,0 +1,222 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.4"
+  },
+  "generated": "2026-11-08T02:42:45Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host1"
+  },
+  "os": {
+    "family": "dragonfly",
+    "id": "dragonfly",
+    "version_id": "6.4",
+    "pretty_name": "DragonFlyBSD 6.4-SYNTH",
+    "kernel_name": "DragonFly",
+    "kernel_release": "6.4-RELEASE",
+    "kernel_version": "DragonFly 832c4d84-RELEASE #0: Wed Nov  4 19:55:38 UTC 2026     root@host1:/usr/obj/usr/src/sys/X86_64_GENERIC",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "bios"
+  },
+  "storage": {
+    "disks": [
+      {
+        "name": "vbd0",
+        "path": "/dev/vbd0",
+        "kind": "disk",
+        "size_bytes": 17179869184,
+        "size": "16 GiB",
+        "logical_sector_size": 512,
+        "partition_table": {
+          "type": "dos",
+          "sector_size": 512,
+          "disk_signature": "00000000",
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vbd0s1",
+            "number": 1,
+            "start_lba": 63,
+            "sectors": 33554241,
+            "start_bytes": 32256,
+            "size_bytes": 17179771392,
+            "type": "0x6c",
+            "type_name": null,
+            "bootable": true,
+            "logical": false,
+            "extended": false,
+            "uuid": "00000000-01",
+            "content": null,
+            "mounted_at": []
+          }
+        ],
+        "label_partitions": [
+          {
+            "name": "vbd0s1a",
+            "letter": "a",
+            "slice": 1,
+            "start_bytes": 1048576,
+            "size_bytes": 1073741824,
+            "fstype": "4.2BSD",
+            "content": {
+              "type": "ufs",
+              "usage": "filesystem",
+              "uuid": "bc00000000000001",
+              "label": null,
+              "version": "1",
+              "superblock_offset": 8192,
+              "block_size": 16384,
+              "fragment_size": 2048,
+              "cylinder_groups": 6,
+              "inodes_per_group": 21632,
+              "minfree": 8,
+              "optimization": "time",
+              "extended_attributes": false,
+              "last_mounted_on": "/boot"
+            },
+            "newfs": "newfs -a 7 -b 16384 -e 4096 -f 2048 -g 16384 -h 64 -m 8  -o time -s 524288 DEVICE",
+            "mounted_at": ["/boot"]
+          },
+          {
+            "name": "vbd0s1b",
+            "letter": "b",
+            "slice": 1,
+            "start_bytes": 1074790400,
+            "size_bytes": 2147483648,
+            "fstype": "swap",
+            "content": null,
+            "mounted_at": []
+          },
+          {
+            "name": "vbd0s1d",
+            "letter": "d",
+            "slice": 1,
+            "start_bytes": 3222274048,
+            "size_bytes": 13956546560,
+            "fstype": "HAMMER2",
+            "content": {
+              "type": "hammer2",
+              "usage": "filesystem",
+              "uuid": "bc000000-0000-4000-8000-000000000001",
+              "label": null,
+              "version": "2",
+              "volume_size": 13950255104,
+              "volumes": 1
+            },
+            "pfs": ["LOCAL", "ROOT"],
+            "mounted_at": ["/"]
+          }
+        ],
+        "disklabels64": [
+          {
+            "slice": 1,
+            "text": "# /dev/vbd0s1:\n#\n# Calculated informational fields for the slice:\n#\n# boot space:    1012224 bytes\n# data space:   16775168 blocks\t# 16382.00 MB (17177772032 bytes)\n#\n# NOTE: The partition data base and stop are physically\n#       aligned instead of slice-relative aligned.\n#\n# All byte equivalent offsets must be aligned.\n#\ndiskid: bc000000-0000-4000-8000-000000000002\nlabel: \nboot2 data base:      0x000000001000\npartitions data base: 0x0000000f8200\npartitions data stop: 0x0003ffef8200\nbackup label:         0x0003fffe7200\ntotal size:           0x0003fffe8200\t# 16383.91 MB\nalignment: 4096\ndisplay block size: 1024\t# for partition display and edit only\n\n16 partitions:\n#          size     offset    fstype   fsuuid\n  a:    1048576          0    4.2BSD\t#    1024.000MB\n  b:    2097152    1048576      swap\t#    2048.000MB\n  d:   13629440    3145728   HAMMER2\t#   13310.000MB\n  a-stor_uuid: bc000000-0000-4000-8000-000000000003\n  b-stor_uuid: bc000000-0000-4000-8000-000000000004\n  d-stor_uuid: bc000000-0000-4000-8000-000000000005\n"
+          }
+        ],
+        "boot_code": {
+          "kind": "windows",
+          "first_bytes": "fc31c08ec08ed88ed0bc007cbe1a7cbf",
+          "code_b64": "YmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGU="
+        },
+        "mounted_at": []
+      }
+    ],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "vbd0s1d@ROOT",
+        "fstype": "hammer2",
+        "options": "rw",
+        "device": "vbd0s1d"
+      },
+      {
+        "target": "/dev",
+        "source": "devfs",
+        "fstype": "devfs",
+        "options": "rw,nosymfollow",
+        "device": null
+      },
+      {
+        "target": "/boot",
+        "source": "/dev/vbd0s1a",
+        "fstype": "ufs",
+        "options": "rw",
+        "device": "vbd0s1a"
+      },
+      {
+        "target": "/proc",
+        "source": "procfs",
+        "fstype": "procfs",
+        "options": "rw",
+        "device": null
+      },
+      {
+        "target": "/var/run/shm",
+        "source": "tmpfs",
+        "fstype": "tmpfs",
+        "options": "rw",
+        "device": null
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/vbd0s1b",
+        "size_bytes": 2147483648,
+        "device": "vbd0s1b"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "/dev/vbd0s1d@ROOT",
+        "file": "/",
+        "type": "hammer2",
+        "options": "rw",
+        "freq": 1,
+        "passno": 1,
+        "resolves_to": "vbd0s1d"
+      },
+      {
+        "spec": "/dev/vbd0s1a",
+        "file": "/boot",
+        "type": "ufs",
+        "options": "rw",
+        "freq": 1,
+        "passno": 1,
+        "resolves_to": "vbd0s1a"
+      },
+      {
+        "spec": "/dev/vbd0s1b",
+        "file": "none",
+        "type": "swap",
+        "options": "sw",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vbd0s1b"
+      },
+      {
+        "spec": "proc",
+        "file": "/proc",
+        "type": "procfs",
+        "options": "rw",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      }
+    ]
+  },
+  "boot": {
+    "loader": {
+      "name": "dragonfly",
+      "firmware": "bios",
+      "evidence": ["DragonFly's boot0/boot1/boot2"]
+    },
+    "loader_conf": "vfs.root.mountfrom=\"hammer2:vbd0s1d@ROOT\"\nconsole=\"comconsole\"\nboot_serial=\"YES\"\nautoboot_delay=\"3\"\n"
+  },
+  "warnings": []
+}

@@ -48,7 +48,7 @@ BIN=$(realpath "$1") PORT=$2 PREFIX=$3 FILTER=${4:-}
 
 if [[ -z ${STICK_INNER:-} ]]; then
     # shellcheck source=/dev/null
-    source "$WORK/testvm/compare/guest-slot.sh"
+    source "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
     case $(hostname -s) in
         chopin) slot_take 3 2700-2799 ;;
         *) slot_take 3 2900-2999 ;;
@@ -58,8 +58,8 @@ if [[ -z ${STICK_INNER:-} ]]; then
     exit $rc
 fi
 
-here=$WORK/testvm/compare
-. "$WORK/testvm/vm-lib.sh"
+here=${BKO_TESTVM:-$WORK/testvm}/compare
+. "${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh"
 dir=$WORK/vms/$G
 LOGS=${STC_LOGS:-$WORK/stictest1/$G/logs}/$PREFIX-$(date +%Y%m%d-%H%M%S)
 mkdir -p "$LOGS"

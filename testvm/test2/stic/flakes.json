@@ -1,0 +1,29 @@
+[
+ {
+  "guest": "ghostbsd26-zfs",
+  "pattern": "^FAIL Backup and restore exit 0: restic-restic:no-verdict rustic-rustic:no-verdict restic-rustic:no-verdict rustic-restic:no-verdict$",
+  "fails": "(?:: (?:(?:restic|rustic)-(?:restic|rustic):no-verdict ?){4}$|: (?:[a-z0-9-]+: no result ?)+$|: see rt-restic-rustic\\.log/rt-rustic-restic\\.log$|\\\"checks\\\": \\[\\\"no log)",
+  "over": "fails",
+  "why": "ssh exit 255 right after the boot (1 in 8, 5918ec2): the first vm_ssh after vm_boot fails silently (ssh -q), the inner part ends, and no direction, extra.sh or non-root run has a result",
+  "evidence": "derived",
+  "ref": "5918ec2 (vm-update's trim, 2026-11-06; no SticTest run.out of it on either host on 2026-11-08). The lines are what ghostbsd26-zfs/check.sh prints for an empty log dir: testvm/test2/tests/fixtures/p4/runouts/ghostbsd26-zfs-ssh255.out"
+ },
+ {
+  "guest": "freebsd15-ufs",
+  "pattern": "^FAIL roundtrip-rustic->restic: no verdict \\(",
+  "fails": "^FAIL (?:roundtrip-rustic->restic: no verdict|snapshot-identity-torture-rustic-restic: not identical or not run) \\(",
+  "over": "fails",
+  "why": "the rustic->restic direction ends with no verdict (3 of about 47 direction logs, yield.md (c)): a vm_put failure hidden by ssh -q (ST2R)",
+  "evidence": "log",
+  "ref": "cinqcent:~/backotter-work/stictest1/freebsd15-ufs/logs/20261102-132742/rt-b/freebsd15-ufs/rustic-restic.log (the versions, then nothing); the FAIL lines as ghostbsd26's gt1-fix4 run printed them (same check)"
+ },
+ {
+  "guest": "ghostbsd26",
+  "pattern": "^FAIL roundtrip-rustic->restic: no verdict \\(",
+  "fails": "^FAIL (?:roundtrip-rustic->restic: no verdict|snapshot-identity-torture-rustic-restic: not identical or not run) \\(",
+  "over": "fails",
+  "why": "the rustic->restic direction ends with no verdict, as freebsd15-ufs's (yield.md (c), ST2R)",
+  "evidence": "log",
+  "ref": "chopin:~/backotter-work/stictest1/ghostbsd26/logs/gt1-fix4/run.out (exit 1, 2026-11-05; 20261105-145525/rt-b/ghostbsd26/rustic-restic.log has no verdict)"
+ }
+]

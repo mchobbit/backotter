@@ -21,11 +21,11 @@ set -uo pipefail
 G=debian13-stack
 HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=$HOME/backotter-work
-C=$WORK/testvm/compare
+C=${BKO_TESTVM:-$WORK/testvm}/compare
 SPARE=26G      # each spare disk; inner.sh picks them by this size (the guest's own are 12 GiB)
 if [[ ${1:-} == --inner ]]; then
     shift; BIN=$1 PORT=$2 PFX=$3 OUT=$4
-    . "$WORK/testvm/vm-lib.sh"
+    . "${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh"
     R=/mnt/bko-ram/$PFX/$G.$$
     mkdir -p "$R"
     # What the run used of the RAM disk: the spare disks and QEMU's snapshot

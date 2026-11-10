@@ -1,0 +1,10 @@
+HoltTest1 fedora44-raid, run r4all, 2026-11-08T02:17:59Z, phases: source backup rebuild verify
+binaries: bko-holt f341270ccedb (/bkoscratch/holttest1d/bin/bko-holt); rustic-bko linux 886ef2281a118c55d084295e17d286f7360cd1511a95b73be5d15b15784857f8 /home/m/backotter-work/bko-bin/linux/rustic-bko (bko-bin set from round rel4, assembled 2026-11-06 10:05 UTC on chopin; rustic b518f42bcb1e)
+== source: fedora44-raid
+PASS source boots
+PASS dump on the live source
+== backup
+FAIL mount the source read-only
+stopped after backup
+RAM disk: peak 0.1 GiB, reserved 7 GiB; memory: peak 0.8 GiB anon
+RESULT: FAIL (1)

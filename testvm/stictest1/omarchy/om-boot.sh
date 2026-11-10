@@ -11,10 +11,10 @@ om_boot() {
     read -ra opts <"$dir/vm-run-options" || true
     mkdir -p "$logdir"
     VM_GUEST=omarchy VM_PORT=$port VM_KEY=$dir/id_ed25519
-    SSH_PORT=$port setsid "$WORK/testvm/vm-run" "${opts[@]}" "$@" --serial-log "$logdir/serial.log" \
+    SSH_PORT=$port setsid "${BKO_TESTVM:-$WORK/testvm}/vm-run" "${opts[@]}" "$@" --serial-log "$logdir/serial.log" \
         "$dir/omarchy.qcow2" -- -monitor "unix:$logdir/mon,server,nowait" </dev/null >"$logdir/vm-run.log" 2>&1 &
     VM_PID=$!
-    python3 "$WORK/testvm/omarchy/type-luks-passphrase.py" "$logdir/mon" "$dir/luks-passphrase" $(seq 20 20 400) \
+    python3 "${BKO_TESTVM:-$WORK/testvm}/omarchy/type-luks-passphrase.py" "$logdir/mon" "$dir/luks-passphrase" $(seq 20 20 400) \
         >"$logdir/typer.log" 2>&1 &
     typer=$!
     deadline=$((SECONDS + ${VM_BOOT_TIMEOUT:-480}))

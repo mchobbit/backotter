@@ -1,0 +1,67 @@
+# bko-holt load plan for layout.json
+# Source: host1, OpenBSD 8.0, BIOS boot with openbsd, dumped 2026-11-08T02:30:50Z
+#
+# Disks:
+#   sd0 (16 GiB) -> /dev/sdq
+
+# ---- partition ----
+# sd0 -> /dev/sdq: the source's table, GUIDs and boot code exactly
+sh -c 'bko-holt write-table layout.json sd0 /dev/rsdqc $(disklabel sdq | awk '\''/^bytes.sector:/ { b = $2 } /^total sectors:/ { t = $3 } END { print b * t }'\'')'
+cat > /run/bko-holt/sd0.disklabel <<'EOF'
+# /dev/rsd0c:
+type: SCSI
+disk: SCSI disk
+label: Block Device    
+duid: bc00000000000001
+flags:
+bytes/sector: 512
+sectors/track: 63
+tracks/cylinder: 255
+sectors/cylinder: 16065
+cylinders: 2088
+total sectors: 33554432
+boundstart: 64
+boundend: 33554432
+
+16 partitions:
+#                size           offset  fstype [fsize bsize   cpg]
+  a:         29360064               64  4.2BSD   2048 16384 12960 # /
+  b:          4194304         29360128    swap                    # none
+  c:         33554432                0  unused                    
+EOF
+# sd0's disklabel
+disklabel -R sdq /run/bko-holt/sd0.disklabel
+# sd0's disklabel UID, bc00000000000001
+sh -c 'printf '\''i\n%s\nw\nq\n'\'' bc00000000000001 | disklabel -E sdq >/dev/null'
+
+# ---- assemble ----
+# (nothing to do)
+
+# ---- format ----
+# sd0a: UFS as the source's (dumpfs -m)
+newfs -O 2 -b 16384 -f 2048 -i 8192 -m 5 -o time -s 29360064 /dev/rsdqa
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+mount -t ffs -o rw,wxallowed /dev/sdqa /mnt/bko-target
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+
+# ---- boot ----
+# the boot code (MBR, freebsd-boot) was written with the partition table
+# OpenBSD's biosboot, and /boot it loads
+installboot -v -r /mnt/bko-target '' /usr/mdec/biosboot /usr/mdec/boot
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -Rp /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+
+# ---- close ----
+# everything under the target, deepest first
+sh -c 'mount | sed -n '\''s/^.* on \(.*\) type .*/\1/p'\'' | awk '\''$0 == "/mnt/bko-target" || index($0, "/mnt/bko-target/") == 1'\'' | sort -r | while read -r m; do umount "$m" || exit; done'
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status filesystem /dev/sdqa ufs -
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: exit 0, nothing on stderr

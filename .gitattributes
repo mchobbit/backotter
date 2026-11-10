@@ -1,0 +1,5 @@
+# Rust sources: hunk headers name the fn (git's built-in rust diff driver).
+*.rs diff=rust
+# H1's dump corpus, made by holt/tests/corpus_build.rs: collapsed in GitHub's
+# diffs.  Its golden plans (GUEST/plan*.txt) stay diffable as they are.
+holt/tests/corpus/*/src.json linguist-generated=true

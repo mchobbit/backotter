@@ -26,7 +26,7 @@ set -uo pipefail
 [[ $# -ge 3 ]] || { sed -n 2,24p "$0"; exit 2; }
 BIN=$(realpath "$1") PORT=$2 PFX=$3 FILTER=${4:-.}
 here=$(cd "$(dirname "$0")" && pwd)
-W=$HOME/backotter-work C=$W/testvm/compare G=hardenedbsd15
+W=$HOME/backotter-work C=${BKO_TESTVM:-$W/testvm}/compare G=hardenedbsd15
 STC_LOGS=${STC_LOGS:-$W/stictest1/$G/logs}
 LOGS=$STC_LOGS/$(date +%Y%m%d-%H%M%S); mkdir -p "$LOGS"
 RAM=/mnt/bko-ram/$PFX; mkdir -p "$RAM/tmp"
@@ -55,7 +55,7 @@ want roundtrip-rustic- || want snapshot-identity-torture-rustic &&
 admit rt2 env RT_LOGS="$LOGS/rt-b" RT_TIMEOUT=780 "$C/run-guest-rt.sh" $G $((PORT + 1)) "$BIN/restic-bko" "$BIN/rustic-bko" rustic-rustic rustic-restic & pids+=($!)
 want snapshot-identity ancestor-nodes-identical restore-restic-bko-restic-bko restore-over-immutable device-nodes guest-own-files ancestor-restore nonroot &&
 admit extras bash -c '
-    WORK="'"$W"'"; . "'"$W"'/testvm/vm-lib.sh"; trap vm_halt EXIT
+    WORK="'"$W"'"; . "'"${BKO_TESTVM:-$W/testvm}"'/vm-lib.sh"; trap vm_halt EXIT
     vm_boot '$G' '$((PORT + 2))' "'"$LOGS"'/vm-extras" --ram --memory 5120 || exit 1
     for f in "'"$BIN"'/restic-bko" "'"$BIN"'/rustic-bko" "'"$here"'/../freebsd15-ufs/extras.sh" "'"$C"'/rt-common.sh" "'"$C"'/freebsd/torture.sh" "'"$C"'/freebsd/fsmeta.sh"; do
         vm_put "$f" "/root/$(basename "$f")" || exit 1; done

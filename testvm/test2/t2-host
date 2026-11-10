@@ -1,0 +1,355 @@
+#!/usr/bin/env python3
+"""t2-host: Test2's tool on a KVM test host (contract P1; rulings R7, R8, R11, R12, R26).
+
+Usage (run it as python3 -B, from the run's private copy or the synced tree):
+  t2-host [--work DIR] append                  row(s) on stdin (a JSON object, an array, or
+                                               JSON lines) appended to this host's ledger;
+                                               prints each id (a row whose origin is there
+                                               already: the old id); exit 0 ok, 2 invalid, 1 I/O
+  t2-host [--work DIR] row KIND ARGS...        t2lib.rows_KIND.build(ARGS, hostctx) gives the
+                                               row; it is appended and its id printed
+  t2-host facts [--want JSON]                  this host's facts (facts_host.py), as JSON
+  t2-host imgsum PATH...                       content sums of disk images, cached by
+                                               (path, size, mtime_ns, ctime_ns, inode) in
+                                               HOST_ROOT/cache/imgsum.json
+  t2-host wear --tags TAG... [--log FILE]      physical-disk bytes per wear tag in jobs.log
+  t2-host hash --root DIR [PATH...]            the hashes of DIR's files under PATHs (default
+                                               testvm stick holt), as a private copy's check uses
+  t2-host self-test [--concurrency WxN] [--kill]
+                                               the ledger writer and reader in a scratch
+                                               ledger: W writers of N rows at once, a writer
+                                               killed after half a row, origins, the golden key
+
+Roots: T2_HOST_ROOT (/bkoscratch/test2), T2_LEDGER (HOST_ROOT/ledger/HOST.jsonl),
+T2_COPY_ROOT (~/backotter-work/t2/copy), T2_WORK or --work (~/backotter-work).
+As root ~ is SUDO_USER's home, never $HOME; what root creates gets SUDO_UID:SUDO_GID,
+else the owner of the nearest existing directory.  Nothing here writes outside
+its ledger, the imgsum cache and the self-test's scratch directory.
+
+Exit codes: 0 ok; 1 I/O (no lock in 30 s, a write failed); 2 invalid (usage, a
+bad row); 3 internal (a row builder failed); 4 nothing written (row: the builder
+gave no row).
+"""
+
+import sys
+
+sys.dont_write_bytecode = True
+
+import importlib  # noqa: E402
+import json  # noqa: E402
+import os  # noqa: E402
+import re  # noqa: E402
+import shutil  # noqa: E402
+import tempfile  # noqa: E402
+
+HERE = os.path.dirname(os.path.realpath(__file__))
+if HERE not in sys.path:
+    sys.path.insert(0, HERE)
+
+from t2lib import (host_root, is_root, utc_now)  # noqa: E402
+from t2lib import ledger  # noqa: E402
+
+# U1.4's first golden key: canonical JSON and sha256 must give this on every host.
+GOLDEN = ("stic:debian13", {"bin": {"linux/restic-bko": "sha256:" + "a" * 64},
+                            "harness": {"testvm/stictest1/debian13/check.sh": "sha256:" + "b" * 64},
+                            "soft": {"kernel": "ver:6.12.48+deb13-amd64"}},
+          "600b25864fd3ee85a6389899bc8dd97c51bcee1e5631fd3b16f2aa067c0ede07")
+
+
+def die(msg, rc=2):
+    sys.stderr.write(f"t2-host: {msg}\n")
+    return rc
+
+
+def read_rows(text):
+    text = text.strip()
+    if not text:
+        return []
+    try:
+        o = json.loads(text)
+        return o if isinstance(o, list) else [o]
+    except ValueError:
+        return [json.loads(line) for line in text.split("\n") if line.strip()]
+
+
+def cmd_append(ctx, args):
+    if args:
+        return die("append takes its rows on stdin, no arguments")
+    try:
+        rows = read_rows(sys.stdin.read())
+    except ValueError as e:
+        return die(f"append: not JSON: {e}")
+    if not rows:
+        return die("append: no rows on stdin")
+    serials = ledger.local_serials()
+    done, bad = [], []
+    for i, r in enumerate(rows):
+        if not isinstance(r, dict):
+            bad.append(f"row {i + 1}: not a JSON object")
+            continue
+        if r.get("host") not in (None, ctx.host):
+            bad.append(f"row {i + 1}: host {r.get('host')!r}, but this is {ctx.host}")
+            continue
+        c = ledger.complete(r, host=ctx.host, serials=serials)
+        e = ledger.validate(c)
+        if e:
+            bad.append(f"row {i + 1} ({r.get('origin', '?')}): " + "; ".join(e[:8]))
+        else:
+            done.append(c)
+    if bad:
+        for b in bad:
+            sys.stderr.write(f"t2-host: append: {b}\n")
+        return 2
+    try:
+        res = ledger.append(ctx.ledger_path, done)
+    except ledger.LockTimeout as e:
+        return die(f"append: {ctx.ledger_path}: {e}", 1)
+    except OSError as e:
+        return die(f"append: {ctx.ledger_path}: {e}", 1)
+    for rid, appended in res:
+        print(rid)
+        if not appended:
+            sys.stderr.write(f"t2-host: append: {rid} was there already (same origin): nothing appended\n")
+    return 0
+
+
+def cmd_row(ctx, args):
+    if not args or not re.fullmatch(r"[a-z][a-z0-9_]*", args[0]):
+        return die("usage: row KIND ARGS...")
+    kind, rest = args[0], args[1:]
+    try:
+        mod = importlib.import_module("t2lib.rows_" + kind)
+    except ImportError as e:
+        return die(f"row: no row builder for {kind} (t2lib/rows_{kind}.py): {e}", 3)
+    try:
+        built = mod.build(rest, ctx)
+    except SystemExit as e:
+        if e.code is None or e.code == 0:
+            return die(f"row {kind}: the builder exited without a row: nothing written", 4)
+        return int(e.code) if isinstance(e.code, int) else die(f"row {kind}: {e.code}")
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return die(f"row {kind}: {type(e).__name__}: {e}", 3)
+    if built is None:
+        return die(f"row {kind}: nothing to write", 4)
+    rows = built if isinstance(built, list) else [built]
+    serials = ledger.local_serials()
+    done = []
+    for r in rows:
+        c = ledger.complete(r, host=ctx.host, serials=serials)
+        e = ledger.validate(c)
+        if e:
+            return die(f"row {kind}: the row isn't valid: " + "; ".join(e[:8]))
+        done.append(c)
+    try:
+        res = ledger.append(ctx.ledger_path, done)
+    except (ledger.LockTimeout, OSError) as e:
+        return die(f"row {kind}: {ctx.ledger_path}: {e}", 1)
+    for rid, appended in res:
+        print(rid)
+        if not appended:
+            sys.stderr.write(f"t2-host: row {kind}: {rid} was there already (same origin)\n")
+    return 0
+
+
+def cmd_facts(ctx, args):
+    from t2lib import facts_host
+    want = {}
+    i = 0
+    while i < len(args):
+        if args[i] == "--want" and i + 1 < len(args):
+            try:
+                want = json.loads(args[i + 1])
+            except ValueError as e:
+                return die(f"facts: --want: {e}")
+            i += 2
+        else:
+            return die(f"facts: unknown argument {args[i]!r}")
+    print(json.dumps(facts_host.collect(want=want, work=ctx.work), sort_keys=True))
+    return 0
+
+
+def _imgsum_one(path):
+    import hashlib
+    st0 = os.stat(path)
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(4 << 20), b""):
+            h.update(chunk)
+    st1 = os.stat(path)
+    if (st0.st_size, st0.st_mtime_ns, st0.st_ctime_ns, st0.st_ino) != \
+            (st1.st_size, st1.st_mtime_ns, st1.st_ctime_ns, st1.st_ino):
+        return None, st1   # it changed while it was read
+    return h.hexdigest(), st1
+
+
+def cmd_imgsum(ctx, args):
+    from t2lib import facts_host
+    if not args:
+        return die("usage: imgsum PATH...")
+    cdir = os.path.join(ctx.host_root, "cache")
+    owner = ledger._owner_for(cdir) if is_root() else None
+    ledger.ensure_dir(cdir, owner)
+    lockp = os.path.join(cdir, "imgsum.lock")
+    fd = ledger.open_for_append(lockp)
+    out, rc = {}, 0
+    try:
+        ledger._lock(fd, 120)
+        cpath = os.path.join(cdir, "imgsum.json")
+        try:
+            with open(cpath, encoding="utf-8") as f:
+                cache = json.load(f)
+        except (OSError, ValueError):
+            cache = {"v": 1, "files": {}}
+        files = cache.setdefault("files", {})
+        for p in args:
+            p = os.path.abspath(p)
+            if not os.path.isfile(p):
+                out[p] = None
+                rc = 1
+                sys.stderr.write(f"t2-host: imgsum: no file {p}\n")
+                continue
+            h = facts_host.cached_sum(files, p)
+            if h is None:
+                h, st = _imgsum_one(p)
+                if h is None:
+                    sys.stderr.write(f"t2-host: imgsum: {p} changed while it was read: not cached\n")
+                    rc = 1
+                else:
+                    files[p] = {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "ctime_ns": st.st_ctime_ns,
+                                "inode": st.st_ino, "sha256": h, "t": utc_now()}
+            out[p] = h
+        new = not os.path.exists(cpath)
+        tmp = cpath + f".tmp.{os.getpid()}"
+        with open(tmp, "w", encoding="utf-8") as f:
+            json.dump(cache, f, sort_keys=True, indent=1)
+            f.write("\n")
+        os.chmod(tmp, 0o644)
+        if owner is not None:
+            os.chown(tmp, owner[0], owner[1])
+        elif not new and is_root():
+            st = os.stat(cpath)
+            os.chown(tmp, st.st_uid, st.st_gid)
+        os.replace(tmp, cpath)
+    except ledger.LockTimeout as e:
+        return die(f"imgsum: {lockp}: {e}", 1)
+    finally:
+        os.close(fd)
+    print(json.dumps(out, sort_keys=True))
+    return rc
+
+
+def cmd_wear(ctx, args):
+    from t2lib import wear
+    tags, log, i = [], os.environ.get("WEAR_LOG") or wear.DEFAULT_LOG, 0
+    while i < len(args):
+        if args[i] == "--tags":
+            i += 1
+            while i < len(args) and not args[i].startswith("--"):
+                tags.append(args[i])
+                i += 1
+        elif args[i] == "--log" and i + 1 < len(args):
+            log, i = args[i + 1], i + 2
+        else:
+            return die(f"wear: unknown argument {args[i]!r}")
+    if not tags:
+        return die("usage: wear --tags TAG... [--log FILE]")
+    jobs = wear.read_jobs(log)
+    if jobs is None:
+        return die(f"wear: no {log}", 1)
+    print(json.dumps(wear.tag_sums(jobs, tags), sort_keys=True))
+    return 0
+
+
+def cmd_hash(ctx, args):
+    from t2lib import copies
+    if len(args) < 2 or args[0] != "--root":
+        return die("usage: hash --root DIR [PATH...]")
+    root, paths = os.path.abspath(args[1]), args[2:] or list(copies.SCOPE)
+    if not os.path.isdir(root):
+        return die(f"hash: no directory {root}", 1)
+    h = copies.tree_hashes(root, paths)
+    print(json.dumps({"root": root, "files": h, "digest": copies.hashes_digest(h)}, sort_keys=True))
+    return 0
+
+
+def cmd_self_test(ctx, args):
+    from t2lib import keys
+    workers, n, kill, i = 4, 100, False, 0
+    while i < len(args):
+        if args[i] == "--concurrency" and i + 1 < len(args):
+            m = re.fullmatch(r"(\d+)x(\d+)", args[i + 1])
+            if not m:
+                return die("self-test: --concurrency WxN, e.g. 8x500")
+            workers, n, i = int(m.group(1)), int(m.group(2)), i + 2
+        elif args[i] == "--kill":
+            kill, i = True, i + 1
+        else:
+            return die(f"self-test: unknown argument {args[i]!r}")
+    if os.environ.get("T2_LEDGER"):
+        base = os.path.dirname(os.path.abspath(os.environ["T2_LEDGER"]))
+    elif os.environ.get("T2_HOST_ROOT"):
+        base = os.path.join(host_root(), "self-test")
+    else:
+        base = None   # never the default root: a temporary directory
+    if base:
+        ledger.ensure_dir(base, ledger._owner_for(base) if is_root() else None)
+    d = tempfile.mkdtemp(prefix=f"t2-selftest-{os.getpid()}-", dir=base)
+    ok = True
+    try:
+        cell, inp, want = GOLDEN
+        got = keys.key(cell, inp)
+        if got != want:
+            print(f"golden key: FAIL: {got}, want {want}")
+            ok = False
+        else:
+            print("golden key: ok")
+        o = ledger.selftest_origin(os.path.join(d, "origin.jsonl"))
+        print(f"origin: {'ok' if o['ok'] else 'FAIL'}: the same origin twice gave {o['first']} and {o['second']}")
+        ok &= o["ok"]
+        c = ledger.selftest_concurrency(os.path.join(d, "concurrency.jsonl"), workers, n)
+        print(f"concurrency: {'ok' if c['ok'] else 'FAIL'}: {workers} x {n}: {c['rows']} rows of {c['want']}, "
+              f"{c['bad']} bad, {c['dup_ids']} duplicate ids, {c['dup_origins']} duplicate origins, "
+              f"{c['seconds']} s" + (f"; errors: {c['errors'][:2]}" if c["errors"] else ""))
+        ok &= c["ok"]
+        k = None
+        if kill:
+            k = ledger.selftest_kill(os.path.join(d, "kill.jsonl"))
+            print(f"kill: {'ok' if k['ok'] else 'FAIL'}: torn tail before the next append {k.get('torn_before')}, "
+                  f"then {k.get('rows')} rows, {k.get('bad')} bad line (the killed writer's), torn {k.get('torn_after')}")
+            ok &= k["ok"]
+        print(f"self-test: {c['rows']} rows, {c['bad']} bad" + (", torn tail repaired" if k and k["ok"] else "")
+              + ("" if ok else "; FAILED") + f" (in {d}, removed)")
+    finally:
+        shutil.rmtree(d, ignore_errors=True)
+    return 0 if ok else 1
+
+
+COMMANDS = {"append": cmd_append, "row": cmd_row, "facts": cmd_facts, "imgsum": cmd_imgsum,
+            "wear": cmd_wear, "hash": cmd_hash, "self-test": cmd_self_test}
+
+
+def main(argv):
+    from t2lib.hostrun import HostCtx
+    work = None
+    while argv and argv[0].startswith("--"):
+        if argv[0] == "--work" and len(argv) > 1:
+            work, argv = argv[1], argv[2:]
+        elif argv[0] in ("-h", "--help"):
+            print(__doc__)
+            return 0
+        else:
+            return die(f"unknown option {argv[0]}")
+    if not argv or argv[0] not in COMMANDS:
+        sys.stderr.write(__doc__)
+        return 2
+    ctx = HostCtx(work=work, tool=os.path.realpath(__file__))
+    try:
+        return COMMANDS[argv[0]](ctx, argv[1:])
+    except KeyboardInterrupt:
+        return 130
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

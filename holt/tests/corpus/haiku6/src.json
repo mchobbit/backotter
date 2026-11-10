@@ -1,0 +1,109 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.4"
+  },
+  "generated": "2026-11-08T02:36:25Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host1"
+  },
+  "os": {
+    "family": "haiku",
+    "id": "haiku",
+    "version_id": "",
+    "pretty_name": "Haiku R1~beta6",
+    "kernel_name": "Haiku",
+    "kernel_release": "R1~beta6",
+    "kernel_version": "hrev59866+92 Oct 14 2026 20:20:",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "bios"
+  },
+  "storage": {
+    "disks": [
+      {
+        "name": "scsi_2_0_0",
+        "path": "/dev/disk/scsi/2/0/0/raw",
+        "kind": "disk",
+        "size_bytes": 17179869184,
+        "size": "16 GiB",
+        "logical_sector_size": 512,
+        "partition_table": {
+          "type": "dos",
+          "sector_size": 512,
+          "disk_signature": "00000000",
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "scsi_2_0_0_0",
+            "number": 1,
+            "start_lba": 2048,
+            "sectors": 33552384,
+            "start_bytes": 1048576,
+            "size_bytes": 17178820608,
+            "type": "0xeb",
+            "type_name": "BeOS fs",
+            "bootable": true,
+            "logical": false,
+            "extended": false,
+            "uuid": "00000000-01",
+            "content": {
+              "type": "befs",
+              "usage": "filesystem",
+              "uuid": null,
+              "label": "Haiku",
+              "version": null,
+              "block_size": 2048,
+              "blocks": 8388096,
+              "size_bytes": 17178820608,
+              "inode_size": 2048,
+              "blocks_per_ag": 4,
+              "allocation_groups": 128
+            },
+            "mounted_at": ["/boot"]
+          }
+        ],
+        "boot_code": {
+          "kind": "unknown",
+          "first_bytes": "fa31c08ec08ed88ed0bcf80dfdbe007c",
+          "code_b64": "YmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGU="
+        },
+        "mounted_at": []
+      }
+    ],
+    "mounts": [
+      {
+        "target": "/boot",
+        "source": "/dev/disk/scsi/2/0/0/0",
+        "fstype": "bfs",
+        "device": "scsi_2_0_0_0"
+      }
+    ],
+    "swaps": [],
+    "fstab": [
+      {
+        "spec": "/dev/disk/scsi/2/0/0/0",
+        "file": "/",
+        "type": "bfs",
+        "options": "",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "scsi_2_0_0_0",
+        "made_up": true
+      }
+    ]
+  },
+  "boot": {
+    "loader": {
+      "name": "haiku",
+      "firmware": "bios",
+      "evidence": ["Haiku's MBR and BFS boot block (makebootable)"]
+    }
+  },
+  "warnings": []
+}

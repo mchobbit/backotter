@@ -2183,6 +2183,10 @@ impl Builder<'_> {
         Some(match self.layout.str_at(&["boot", "initramfs", "generator"]) {
             Some("prebuilt") => return None,
             Some("mkinitcpio") => Cmd::new(&["chroot", t, "mkinitcpio", "-P"]),
+            // EndeavourOS with GRUB: eos-dracut names each initramfs after its
+            // kernel's package (/boot/initramfs-linux.img), which dracut's own
+            // choice of path would miss; its command builds them, with fallbacks.
+            Some("dracut") if self.layout.str_at(&["boot", "packages", "eos-dracut"]).is_some() => Cmd::new(&["chroot", t, "dracut-rebuild"]),
             // Not --regenerate-all: it takes every directory in /lib/modules, and
             // a removed kernel can leave one behind with only depmod's indexes.
             Some("dracut") => Cmd::new(&["chroot", t, "sh", "-c", "n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; dracut --force --kver \"${k##*/}\" || exit; n=$((n + 1)); done; [ \"$n\" -gt 0 ]"]),
@@ -2474,6 +2478,11 @@ mod tests {
         assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub2-mkconfig -o /boot/grub2/grub.cfg\n"), "{bt}");
         assert!(bt.contains("setfiles \"$f\" /boot"), "{bt}");
         assert!(bt.contains("mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober"), "{bt}");
+        let eos = sample::bios_mbr()
+            .replace(r#""id": "debian", "version_id": "13""#, r#""id": "endeavouros""#)
+            .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"}, "packages": {"eos-dracut": "1.7-1"},"#);
+        let bt = text(built_from(&eos, &[]).stage(Stage::Boot));
+        assert!(bt.contains("chroot /mnt/bko-target dracut-rebuild\n") && !bt.contains("--regenerate-all"), "{bt}");
         let alpine = sample::bios_mbr()
             .replace(r#""id": "debian", "version_id": "13""#, r#""id": "alpine", "version_id": "3.24.3""#)
             .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "mkinitfs"},"#);

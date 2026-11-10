@@ -28,7 +28,7 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
 
 - Linux: Debian 12 and 13, Devuan 6, Ubuntu 24.04 and 26.04, Linux Mint 22,
   Pop!_OS 24.04, Zorin OS 18, Arch Linux, CachyOS, Artix Linux, Omarchy,
-  Alpine Linux 3, AerynOS, Void Linux, Fedora 44, Rocky Linux 10, openSUSE
+  EndeavourOS, Manjaro, Alpine Linux 3, AerynOS, Void Linux, Fedora 44, Rocky Linux 10, openSUSE
   Tumbleweed and NixOS 26.05;
 - FreeBSD 14 and 15, HardenedBSD 15, GhostBSD 26 (`src/other/freebsd.rs`),
   NetBSD 11, AlpineBSD 1 and OpenBSD 8 (`labelled.rs`), DragonFly 6

@@ -1,0 +1,6 @@
+running 1 test
+ok    /home/m/backotter-work/t2/copy/6fff54b/holt/tests/corpus/aerynos/src.json: 31 identifiers, plan of 88 lines
+FAIL  /home/m/backotter-work/t2/copy/6fff54b/holt/tests/corpus/debian13/src.json: the plan of the redacted dump differs: line 12
+test redacted_dumps_plan_the_same ... FAILED
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.80s

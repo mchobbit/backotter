@@ -17,7 +17,7 @@ WORK=$HOME/backotter-work
 LOGS=${STC_LOGS:-$WORK/stictest1/$GUEST/logs}; mkdir -p "$LOGS"
 if [[ -z ${CHECK_RESERVED:-} ]]; then
     # shellcheck source=/dev/null
-    source "$WORK/testvm/compare/guest-slot.sh"
+    source "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
     case $(hostname) in chopin*) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
     CHECK_RESERVED=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 6 "$HERE/check.sh" "$@"; rc=$?
     slot_give
@@ -26,7 +26,7 @@ fi
 SCR=/mnt/bko-ram/$PFX/$GUEST
 mkdir -p "$SCR"
 export TMPDIR=$SCR WORK
-. "$WORK/testvm/vm-lib.sh"
+. "${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh"
 cleanup() { vm_halt; rm -rf -- "${SCR:?}"; rmdir "/mnt/bko-ram/${PFX:?}" 2>/dev/null; }
 trap cleanup EXIT
 log=$LOGS/check-$(date +%Y%m%d-%H%M%S).log
@@ -36,7 +36,7 @@ log=$LOGS/check-$(date +%Y%m%d-%H%M%S).log
     VM_BOOT_TIMEOUT=300 vm_boot $GUEST "$PORT" "$LOGS/vm" --snapshot --memory 4096 || { echo "FAIL boot: guest didn't come up"; exit 1; }
     T=300 vm_sh 'apk add -q --no-progress bash attr acl libcap-utils python3 e2fsprogs-extra xfsprogs-extra coreutils file 2>&1 | tail -3' ||
         echo "FAIL harness-tools: apk add failed"
-    for f in "$BIN/restic-bko" "$BIN/rustic-bko" "$WORK/testvm/compare/fsmeta.py" "$WORK/testvm/compare/rt-common.sh" "$HERE/check-inner.sh"; do
+    for f in "$BIN/restic-bko" "$BIN/rustic-bko" "${BKO_TESTVM:-$WORK/testvm}/compare/fsmeta.py" "${BKO_TESTVM:-$WORK/testvm}/compare/rt-common.sh" "$HERE/check-inner.sh"; do
         vm_put "$f" "/root/$(basename "$f")" || echo "FAIL harness-copy: $f"
     done
     T=780 vm_sh 'bash /root/check-inner.sh' 2>&1

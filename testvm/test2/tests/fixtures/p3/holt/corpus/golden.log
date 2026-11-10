@@ -1,0 +1,66 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.01s
+     Running tests/golden_plans.rs (/mnt/bko-ram/t2core-P3-holt2/target/debug/deps/golden_plans-c87d516ce5c96689)
+
+running 10 tests
+test golden_invariant_pool_disks_in_use ... ok
+test golden_sections_and_stages ... ok
+test golden_invariant_write_table_ids ... ok
+test golden_invariant_root_mounted ... ok
+test golden_invariant_every_fstab_mount_planned ... ok
+test golden_invariant_archiver_found ... ok
+test golden_invariant_disk_ids_round_tripped ... ok
+test golden_invariants_hold_on_a_synthetic_plan ... ok
+test golden_modes ... ok
+ok    aerynos: 83 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    aerynos+bigger: 83 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    alpine324: 86 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    alpinebsd: 44 lines; checked / by mount, 1 fstab, 0 pools, 1 tables (0 sfdisk, 1 write-table)
+ok    arch: 87 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    artix-dinit: 90 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    artix-s6: 87 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    cachyos: 90 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    debian12: 89 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    debian13: 93 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    debian13-stack: 214 lines; checked / by mount, 5 fstab, 2 pools, 2 tables (2 sfdisk, 0 write-table)
+ok    debian13-stack+bigger: 216 lines; checked / by mount, 5 fstab, 2 pools, 2 tables (2 sfdisk, 0 write-table)
+ok    debian13-zfs: 112 lines; checked / by zfs mount, 1 fstab, 1 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    devuan6: 89 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    dragonfly6: 78 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (0 sfdisk, 1 write-table)
+ok    fedora44: 96 lines; checked / by mount, 3 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    fedora44-raid: 129 lines; checked / by mount, 4 fstab, 3 pools, 2 tables (2 sfdisk, 0 write-table)
+ok    fedora44-uefi: 97 lines; checked / by mount, 3 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    freebsd14: 68 lines; checked / by zfs mount, 0 fstab, 1 pools, 1 tables (0 sfdisk, 1 write-table)
+ok    freebsd15: 67 lines; checked / by zfs mount, 0 fstab, 1 pools, 1 tables (0 sfdisk, 1 write-table)
+ok    freebsd15-mirror: 71 lines; checked / by zfs mount, 0 fstab, 1 pools, 2 tables (0 sfdisk, 2 write-table)
+ok    ghostbsd26: 51 lines; checked / by mount, 1 fstab, 0 pools, 1 tables (0 sfdisk, 1 write-table)
+ok    ghostbsd26-zfs: 71 lines; checked / by zfs mount, 0 fstab, 1 pools, 1 tables (0 sfdisk, 1 write-table)
+ok    haiku6: 40 lines; checked / by mount, 1 fstab, 0 pools, 1 tables (0 sfdisk, 1 write-table)
+ok    hardenedbsd15: 38 lines; checked / by mount, 1 fstab, 0 pools, 1 tables (0 sfdisk, 1 write-table)
+ok    mint22: 86 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    mint22+bigger: 87 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    mx25: 87 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    netbsd11: 74 lines; checked / by mount, 1 fstab, 0 pools, 1 tables (0 sfdisk, 1 write-table)
+ok    nixos2605: 80 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    omarchy: 106 lines; checked / by mount, 5 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    omnios58: 64 lines; checked / by zfs mount, 0 fstab, 1 pools, 1 tables (0 sfdisk, 1 write-table)
+ok    omnios58-mirror: 69 lines; checked / by mount, 0 fstab, 1 pools, 2 tables (0 sfdisk, 2 write-table)
+ok    openbsd8: 65 lines; checked / by mount, 1 fstab, 0 pools, 1 tables (0 sfdisk, 1 write-table)
+ok    pop24: 83 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    redox: 47 lines; checked / by mount, 1 fstab, 0 pools, 1 tables (0 sfdisk, 1 write-table)
+ok    rocky10: 85 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    rocky10-lvm: 156 lines; checked / by mount, 2 fstab, 1 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    rocky10-raid5: 194 lines; checked / by mount, 2 fstab, 2 pools, 3 tables (3 sfdisk, 0 write-table)
+ok    sculpt2610: 44 lines; checked / by mount, 1 fstab, 0 pools, 1 tables (0 sfdisk, 1 write-table)
+ok    tumbleweed: 133 lines; checked / by mount, 9 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    ubuntu24: 93 lines; checked / by zfs mount, 1 fstab, 1 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    ubuntu26-raid: 214 lines; checked / by mount, 2 fstab, 1 pools, 4 tables (4 sfdisk, 0 write-table)
+ok    ubuntu26-uefi: 84 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    ubuntu26-zfs: 139 lines; checked / by zfs mount, 1 fstab, 2 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    ubuntu26-zfsmirror: 136 lines; checked / by zfs mount, 1 fstab, 2 pools, 2 tables (2 sfdisk, 0 write-table)
+ok    void-musl: 86 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+ok    zorin18: 88 lines; checked / by mount, 2 fstab, 0 pools, 1 tables (1 sfdisk, 0 write-table)
+48 plans of 45 dumps: 0 differ, 0 break an invariant; 1 written to /mnt/bko-ram/t2core-P3-holt2/plans
+test golden_plans ... ok
+
+test result: ok. 10 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.93s
+

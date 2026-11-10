@@ -168,6 +168,8 @@ pub struct Collector {
     vocab: BTreeSet<String>,
     /// zfs_member labels: pool names, part of the topology.
     pool_labels: BTreeSet<String>,
+    /// md's array names, "host:name": the labels whose colon is md's.
+    md_labels: BTreeSet<String>,
     corpus: String,
 }
 
@@ -331,6 +333,11 @@ impl Collector {
                 if v.get("type").and_then(Value::as_str) == Some("zfs_member") {
                     if let Some(l) = v.get("label").and_then(Value::as_str) {
                         self.pool_labels.insert(l.to_string());
+                    }
+                }
+                if key == "md_arrays" || v.get("type").and_then(Value::as_str) == Some("linux_raid_member") {
+                    if let Some(l) = v.get("label").and_then(Value::as_str) {
+                        self.md_labels.insert(l.to_string());
                     }
                 }
                 for (k, x) in kv {
@@ -721,6 +728,25 @@ impl Sealer {
                 self.kept(Kind::Label, l, "an md array named after a default hostname");
                 return;
             }
+        }
+        // md's array name, "host:name" with a name that isn't a number
+        // (Anaconda's localhost.localdomain:pv00): load gives md the two
+        // parts apart (--homehost, --name), so the pseudonym keeps them
+        // apart.  The name after the host is a label like any other.
+        let parts = l.split_once(':').filter(|_| self.c.md_labels.contains(l)).filter(|(h, n)| {
+            let host_like = h.bytes().next().is_some_and(|c| c.is_ascii_alphabetic()) && h.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'.' | b'-'));
+            let name_like = !n.is_empty() && n.bytes().all(|c| c.is_ascii_alphanumeric() || matches!(c, b'_' | b'.' | b'-'));
+            host_like && name_like && !n.bytes().all(|c| c.is_ascii_digit()) && !hosts.iter().any(|x| contains_word(n, x))
+        });
+        if let Some((h, n)) = parts {
+            if !self.generic_host(h) {
+                self.name(Kind::Hostname, h, "host");
+            }
+            self.label(n, hosts);
+            let pseudo = |r: &Redactor, k: Kind, o: &str| r.entries.iter().find(|e| e.kind == k && e.original == o).map_or(o.to_string(), |e| e.pseudonym.clone());
+            let to = format!("{}:{}", pseudo(&self.r, Kind::Hostname, h), pseudo(&self.r, Kind::Label, n));
+            self.whole(Kind::Label, l, &to);
+            return;
         }
         if hosts.iter().any(|h| contains_word(l, h) && self.word_sub(h)) {
             return;
@@ -1126,6 +1152,9 @@ impl Redactor {
             }
             i += 1;
         }
+        if !short {
+            self.fat_serials(&mut out, false);
+        }
         out
     }
 
@@ -1174,7 +1203,7 @@ impl Redactor {
             i += 1;
         }
         if !short {
-            self.fat_serials(&mut out);
+            self.fat_serials(&mut out, true);
         }
         out
     }
@@ -1183,8 +1212,9 @@ impl Redactor {
     /// "UUID", 122A-10FD), in its place only: at 39 (FAT12, FAT16) or 67
     /// (FAT32) of a sector that is one, which an image of an ESP's sectors
     /// holds twice (the boot sector and its backup).  Elsewhere a 4-byte
-    /// run matches by chance, as `bytes` says.
-    fn fat_serials(&self, out: &mut [u8]) {
+    /// run matches by chance, as `bytes` says.  `redacting`: original to
+    /// pseudonym, else back (`unbytes`, for the proof in check_plan).
+    fn fat_serials(&self, out: &mut [u8], redacting: bool) {
         for i in (0..out.len().saturating_sub(511)).step_by(512) {
             let s = &out[i..i + 512];
             if s[510..] != [0x55, 0xAA] || !matches!(s[0], 0xEB | 0xE9) {
@@ -1198,8 +1228,9 @@ impl Redactor {
                 continue;
             };
             let id = out[i + at..i + at + 4].to_vec();
-            if let Some((_, t, _)) = self.bin.iter().find(|(f, _, short)| *short && *f == id) {
-                out[i + at..i + at + 4].copy_from_slice(t);
+            let found = self.bin.iter().find(|(f, t, short)| *short && if redacting { *f == id } else { *t == id });
+            if let Some((f, t, _)) = found {
+                out[i + at..i + at + 4].copy_from_slice(if redacting { t } else { f });
             }
         }
     }
@@ -1533,7 +1564,7 @@ mod tests {
             crate::bytes::base64(&img)
         ))
         .unwrap();
-        let (r, _) = redact(&d);
+        let (r, red) = redact(&d);
         assert_ne!(r.at(&["p", "uuid"]).and_then(Value::as_str), Some("122A-10FD"));
         let out = crate::bytes::unbase64(r.at(&["p", "esp_image", "0", "b64"]).and_then(Value::as_str).unwrap()).unwrap();
         assert_eq!(out.len(), img.len());
@@ -1543,6 +1574,57 @@ mod tests {
             assert_eq!(&out[i + 71..i + 512], &bs[71..]);
         }
         assert_eq!(&out[1024..], &other[..], "a 4-byte run elsewhere is left alone");
+        // And back: check_plan's proof that the redacted dump maps to the original.
+        assert_eq!(red.unredact_value(&r).compact(), d.compact());
+    }
+
+    #[test]
+    fn md_name_with_a_host_and_a_name_keeps_its_parts() {
+        // A default host and a name that isn't a number: load splits it at
+        // the colon into --homehost and --name, so a pseudonym must too.
+        let d = parse(
+            r#"{"os": {"id": "fedora"}, "storage": {"md_arrays": [
+                {"label": "localhost.localdomain:boot"},
+                {"label": "localhost.localdomain:pv00"},
+                {"label": "oldbox:media"},
+                {"label": "localhost:abc"}]},
+              "p": ["/dev/md/pv00", "/dev/disk/by-id/md-name-localhost.localdomain:pv00"]}"#,
+        )
+        .unwrap();
+        let (r, red) = redact(&d);
+        let s = |i: &str| r.at(&["storage", "md_arrays", i, "label"]).and_then(Value::as_str).unwrap().to_string();
+        assert_eq!(s("0"), "localhost.localdomain:boot", "{}", red.summary(true));
+        assert!(s("1").starts_with("localhost.localdomain:label") && !s("1").contains("pv00"), "{}", s("1"));
+        assert!(s("2").starts_with("host") && s("2").contains(":label") && !s("2").contains("oldbox") && !s("2").contains("media"), "{}", s("2"));
+        assert!(s("3").starts_with("localhost:label") && !s("3").contains("abc"), "{}", s("3"));
+        assert!(!r.compact().contains("pv00"), "{}", r.compact());
+        assert_eq!(red.unredact_value(&r).compact(), d.compact());
+    }
+
+    #[test]
+    fn a_colon_outside_md_is_part_of_the_label() {
+        let d = parse(
+            r#"{"os": {"id": "debian"}, "storage": {"disks": [{"name": "vda", "partitions": [
+                  {"name": "vda1", "links": ["/dev/disk/by-label/home:media"], "content": {"type": "ext4", "label": "home:media"}},
+                  {"name": "vda2", "partlabel": "ab:xy", "content": {"type": "ext4", "label": "photos:old"}},
+                  {"name": "vda3", "content": {"type": "linux_raid_member", "label": "oldbox:media"}}]}],
+                "fstab": [{"spec": "LABEL=home:media", "file": "/home"}, {"spec": "PARTLABEL=ab:xy", "file": "/srv/x"}, {"spec": "LABEL=photos:old", "file": "/mnt/p"}]}}"#,
+        )
+        .unwrap();
+        let (r, red) = redact(&d);
+        let s = |p: &[&str]| r.at(p).and_then(Value::as_str).unwrap().to_string();
+        let home = s(&["storage", "disks", "0", "partitions", "0", "content", "label"]);
+        assert!(home.starts_with("label") && !home.contains(':'), "{home}");
+        assert_eq!(s(&["storage", "fstab", "0", "spec"]), format!("LABEL={home}"));
+        assert_eq!(s(&["storage", "fstab", "0", "file"]), "/home");
+        assert_eq!(s(&["storage", "disks", "0", "partitions", "0", "links", "0"]), format!("/dev/disk/by-label/{home}"));
+        assert_eq!(s(&["storage", "fstab", "1", "spec"]), format!("PARTLABEL={}", s(&["storage", "disks", "0", "partitions", "1", "partlabel"])));
+        assert_eq!(s(&["storage", "fstab", "2", "spec"]), format!("LABEL={}", s(&["storage", "disks", "0", "partitions", "1", "content", "label"])));
+        let md = s(&["storage", "disks", "0", "partitions", "2", "content", "label"]);
+        assert!(md.starts_with("host") && md.contains(":label"), "{md}");
+        assert!(!r.compact().contains("ab:xy") && !r.compact().contains("photos:old"), "{}", r.compact());
+        assert!(red.entries.iter().all(|e| e.kind != Kind::Hostname || e.original == "oldbox"), "{}", red.summary(true));
+        assert_eq!(red.unredact_value(&r).compact(), d.compact());
     }
 
     #[test]

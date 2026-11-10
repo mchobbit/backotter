@@ -1,0 +1,178 @@
+# H1: the dump corpus and its golden plans
+
+One redacted `bko-holt dump` of each of HoltTest2's 45 sources, and the plan
+`bko-holt load` makes of each (docs/design/test2.md, "Shared pieces to
+build", H1).  `holt/tests/golden_plans.rs` plans every dump again and fails
+when a plan changes or breaks an invariant, so a change to load shows here
+first, as a diff of plans, and HoltTest2 runs the guests whose plans
+changed.
+
+| File | What it is |
+|---|---|
+| `GUEST/src.json` | The source dump, redacted (below) |
+| `GUEST/plan.txt` | Its golden plan: load's standard output, golden_plans.rs's `status` lines (what `status` looks for after each stage: what load builds but never prints), then its line with the exit status and standard error |
+| `GUEST/plan+bigger.txt` | The plan onto targets 1 GiB bigger, for the guests in `variants.txt` |
+| `variants.txt` | The variant plans: `aerynos+bigger`, `debian13-stack+bigger`, `mint22+bigger` (classes.json's `holt.variants.bigger`) |
+| `index.tsv` | A row per dump: where it came from, and what the build did to it |
+
+## Where the dumps came from
+
+HoltTest1 records each source's dump as `/bkoscratch/holttest1d/RUN/GUEST/dumps/src.json`.
+`testvm/test2/h1/collect-dumps.sh` took, for each source, the newest one on
+chopin or cinqcent whose report says `RESULT: PASS` (a guest without one
+would take the newest that passed its source phase, flagged
+`FAIL-after-source`).  On 2026-11-08 all 45 came from r4all, the
+HoltTest1All of that night, all PASS, all dumped by bko-holt 0.2.4: 21 from
+chopin, 24 from cinqcent.  index.tsv's `host`, `run`, `result`,
+`report_time` (report.txt's mtime), `generated` (the dump's own time),
+`tool_version` and `generation` (the guest's image-state generation at
+collection; `-` for the guests without one) say which, and `image` whether
+the guest's qcow2 still had the size, mtime and inode its run recorded
+(`changed` for 34 of them: debian13's, for one, kept its size and inode
+and only its mtime moved, to 03:52Z on 2026-11-08, after r4all).
+
+The raw dumps hold the guests' serials, UUIDs and host names.  They stay on
+chopin, in the collector's directory (by default `/bkoscratch/test2/h1-raw`,
+mode 0700), and never reach the Mac or the repository.
+
+## What was done to them
+
+`holt/tests/corpus_build.rs` (an `#[ignore]`d test, run by hand where the
+raw dumps are), for each dump:
+
+1. `bugreport::check_plan` on the raw dump: load's plan of its redaction is
+   its own, pseudonyms aside, and no identifier is left.  index.tsv's
+   `check_plan_raw` is `ok:IDENTIFIERS:PLAN_LINES`, or the failure's class.
+2. `redact::redact`, the dump on its own (twice: the same bytes), then its
+   own leak checks on the redacted dump and on its plan
+   (`Redactor::leaks`).
+3. Every e-mail-shaped token in a string value becomes
+   `builder-at-redacted`: redact.rs has no kind for them, and two dumps
+   carry a kernel build signature (alpinebsd's and netbsd11's
+   `os.kernel_version`, NetBSD's build address).  A word of
+   `os.kernel_version` or `os.kernel_release` (which redact.rs leaves as
+   they are) that is a hostname redact.rs replaced becomes that hostname's
+   pseudonym (dragonfly6's build signature, debian13's release tag).
+   index.tsv's `scrubbed` counts both.
+4. Third-party boot code (FreeBSD's and NetBSD's boot blocks, illumos's and
+   Sculpt's ESP images, MBR boot code) is replaced by a fixed filler of the
+   same length (the bytes `bko-holt corpus: boot code left out, see
+   holt/tests/corpus/README.md\n`, ending in a newline, repeated): every `esp_image[].b64`,
+   `boot_code.image_b64`, `boot_code.code_b64` and `boot_code.gap_b64`.
+   index.tsv's `filled` lists each as `PATH=BYTES/CRC32`, the length and
+   CRC-32 of its redacted bytes; `blobs` and `blob_bytes` sum them (139
+   blobs, 7.7 MB decoded, in 15 dumps).  EFI load options (`load_option_hex`) and
+   `first_bytes` stay: they are data, and redact.rs has redacted them.
+5. The filled dump is planned against the unfilled one (`fill_plan`:
+   `same` for all 45) and passes check_plan itself (`check_plan`).
+
+Two builds of the same raw dumps give the same bytes.
+
+### A raw dump that fails step 1
+
+All 45 raw dumps pass check_plan.  A dump that one day fails it is still put
+in the corpus (step 2's leak checks, step 5 and leakscan below still apply);
+corpus_build then fails at its end, and so does `redact_dumps` over the raw
+dumps.  Nothing would show that dump's golden plan is its guest's own, so
+golden_plans.rs reads index.tsv and lists each such dump (and its variants)
+in diff.json's `differ` with `"unverified"`, even when the plan is the same,
+and HoltTest2 runs them on any plan-visible change instead of carrying them.
+Check mode only logs them.
+
+### Checked for leaks
+
+`testvm/test2/t2lib/leakscan.py` found nothing:
+
+- (a) patterns, on chopin and on the Mac: MAC addresses other than
+  redact.rs's pseudonyms, private and link-local addresses, e-mail
+  addresses, keys, the hosts' names; in every string value, every blob
+  (decoded, read as latin-1 and as UTF-16LE), every plan; the Mac's run with
+  the repository's git e-mail as a string too;
+- (b) with both hosts' strings (the guests' passphrase files, disk serials
+  and WWIDs, LAN addresses, MACs; 125 of 8 bytes or more) and each raw
+  dump's own identifiers (serials, WWIDs, UUIDs as text and as bytes,
+  machine-ids, GUIDs, MACs).  `collect-dumps.sh --scan` now runs (b) on each
+  host against that host's own strings, which never leave it (the corpus,
+  public anyway, is copied there), and the raw identifiers on chopin; a
+  corpus dump without its raw twin, a torn strings line or a git without an
+  e-mail is an incomplete scan, exit 2.
+
+## The golden plans
+
+Each dump is planned as check_plan plans it, through holt's public API
+only (holt/tests/common/mod.rs): a fake rescue system with a blank disk
+`sdq`, `sdr`, ... of each dumped disk's size (1 GiB more for `+bigger`),
+`--map NAME=TARGET`, `--repo /srv/bko-repo`, a rustic-bko that says it is
+BackOtter's, every tool the plan asks for installed.  Unlike check_plan it
+maps no RAM disk or ZFS volume (alpine324's 16 RAM disks would each be a
+Problem), installs load's own binary where it runs from, and names it
+`bko-holt` in the plan, which would otherwise hold the test binary's path.
+All 48 plans exit 0, without Problems.  They are Linux's plans (load's
+run directory is /run/bko-holt there, /var/run/bko-holt elsewhere): run
+golden_plans.rs on a Linux host.
+
+Each plan must keep five invariants: / mounted; every fstab mount on a
+dumped device or filesystem planned (or named in a Note); the archiver
+found; the disks of every ZFS pool, md array, LVM volume group and
+multi-device btrfs named by the command making it; the disk IDs
+round-tripped (an MBR's signature and a GPT's GUIDs in sfdisk's input, and
+for the tables load writes itself, `load::writetable::plan`'s bytes read
+back by `parttable`).  golden_plans.rs's header says how each is checked;
+each has a synthetic negative test there (`golden_invariant_*`).
+
+```
+cd holt
+cargo test --test golden_plans                                     # check: any difference fails
+BKO_HOLT_GOLDEN=report BKO_HOLT_PLANS_OUT=DIR cargo test --test golden_plans -- --nocapture
+                                                                   # DIR/NAME.plan and DIR/diff.json; only invariants fail
+BKO_HOLT_GOLDEN=bless cargo test --test golden_plans -- --nocapture
+                                                                   # rewrite the plans that differ, unless an invariant fails
+```
+
+diff.json is `{"v":1, "corpus":45, "plans":48, "planned":[NAME...],
+"sources":45, "differ":{NAME:{"stages":[...], "lines_changed":N[, "new":true]
+[, "unplanned":WHY][, "unverified":CHECK_PLAN_RAW]}}, "invariants":{NAME:[...]},
+"invariants_skipped":{NAME:[...]}}`; `stages` are the plan's sections that
+changed (header, partition, assemble, format, mount, restore, boot, close,
+trailer), as `testvm/test2/t2lib/plandiff.py` splits them.
+
+The corpus must hold together in every mode: a directory with a plan but no
+src.json, a `plan+VARIANT.txt` that variants.txt doesn't list, or variant
+plans without a variants.txt fail the test.  Where
+`testvm/test2/classes.json` is beside holt/ (a checkout or a private copy),
+every HoltTest2 source (holt.families, holt.no_family) needs a dump here and
+every `holt.variants.bigger` guest a `plan+bigger.txt`; a cell without one is
+a difference, `"unplanned"` in diff.json, so it runs instead of being
+carried.  `testvm/test2/tests/test_plandiff.py` checks the same lists on the
+Mac.  Every test in golden_plans.rs
+is named `golden_*`, and GateTest2 runs the rest of holt's tests with
+`cargo test -- --skip golden_`.
+
+After a change to load: run `report`, read the plans that differ, and
+`bless` them in the same commit as the change.  HoltTest2 then runs the
+guests whose plans changed.
+
+## Rebuilding it
+
+On chopin, as m, from a private copy of the tree, with the Rust build in a
+reserved RAM directory (NAME, yours):
+
+```
+testvm/test2/h1/collect-dumps.sh --out RAW         # default T2_HOST_ROOT/h1-raw
+~/backotter-work/cmp-run.sh --reserve 2 4 env CARGO_TARGET_DIR=/mnt/bko-ram/NAME/target \
+    BKO_HOLT_CORPUS_RAW=RAW BKO_HOLT_CORPUS_OUT=OUT ~/.cargo/bin/cargo test \
+    --manifest-path holt/Cargo.toml --test corpus_build -- --ignored --nocapture
+                                                   # twice, into two OUTs: the same sha256s
+testvm/test2/h1/collect-dumps.sh --scan OUT --out RAW
+                                                   # leakscan (a) and (b) on both hosts: 0 findings
+rm -rf /mnt/bko-ram/NAME
+```
+
+Then copy OUT's `GUEST/src.json` and `index.tsv` to a staging directory on
+the Mac, outside the repository, and scan it there first:
+`leakscan.py scan --git-email . STAGING` must give 0 findings and exit 0.
+Only then copy them into holt/tests/corpus (corpus_build refuses an OUT
+that holds dumps it doesn't make, so build into an empty one), and bless
+the plans.  A corpus dump never enters the working tree with a finding, and
+a plan is never blessed with a broken invariant.  The corpus is 11.7 MB (45
+dumps of 3 KB to 3.3 MB, the 48 plans 0.3 MB); 15 MB is its budget.

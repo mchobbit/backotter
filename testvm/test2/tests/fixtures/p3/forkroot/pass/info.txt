@@ -1,0 +1,5 @@
+commit=5253b20ac68a876a8f60b9c90747882710cddef7
+go=go version go1.25.10 linux/amd64
+packages=internal/fs internal/restorer
+bcachefs=the Arch ISO's
+host=chopin

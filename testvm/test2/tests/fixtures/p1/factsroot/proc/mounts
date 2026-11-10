@@ -1,0 +1,2 @@
+/dev/nvme0n1p1 /bkoscratch xfs rw 0 0
+bko-ram /mnt/bko-ram tmpfs rw,size=31457280k 0 0

@@ -27,7 +27,7 @@ set -uo pipefail
 GUEST=pop24
 HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=${BKO_WORK:-$HOME/backotter-work}
-C=$WORK/testvm/compare
+C=${BKO_TESTVM:-$WORK/testvm}/compare
 BIN=$(cd "$1" && pwd); PORT=$2; PREFIX=$3; FILTER=${4:-.}
 LOGS=${STC_LOGS:-$WORK/stictest1/$GUEST/logs}; mkdir -p "$LOGS"
 for f in restic-bko rustic-bko; do [[ -x $BIN/$f ]] || { echo "check: no $BIN/$f" >&2; exit 2; }; done
@@ -50,7 +50,7 @@ fi
 SCR=/mnt/bko-ram/$PREFIX/check-$GUEST
 mkdir -p "$SCR"
 # shellcheck source=/dev/null
-. "$WORK/testvm/vm-lib.sh"
+. "${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh"
 cleanup() { vm_halt; rm -rf "$SCR"; }
 trap cleanup EXIT
 trap 'exit 130' INT TERM

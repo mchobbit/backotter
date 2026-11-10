@@ -1,0 +1,82 @@
+# bko-holt load plan for layout.json
+# Source: host1, DragonFlyBSD 6.4-SYNTH, BIOS boot with dragonfly, dumped 2026-11-08T02:42:45Z
+#
+# Disks:
+#   vbd0 (16 GiB) -> /dev/sdq
+#
+# Notes:
+#   - fstab's /proc (procfs) isn't on the layout's disks; not mounted
+
+# ---- partition ----
+# vbd0 -> /dev/sdq: the source's table, GUIDs and boot code exactly
+sh -c 'bko-holt write-table layout.json vbd0 /dev/sdq $(printf %d 0x$(diskinfo /dev/sdq | sed -n '\''s/.*size=0x\([0-9a-fA-F]*\).*/\1/p'\''))'
+cat > /run/bko-holt/vbd0s1.disklabel64 <<'EOF'
+# /dev/vbd0s1:
+#
+# Calculated informational fields for the slice:
+#
+# boot space:    1012224 bytes
+# data space:   16775168 blocks	# 16382.00 MB (17177772032 bytes)
+#
+# NOTE: The partition data base and stop are physically
+#       aligned instead of slice-relative aligned.
+#
+# All byte equivalent offsets must be aligned.
+#
+diskid: bc000000-0000-4000-8000-000000000002
+label: 
+boot2 data base:      0x000000001000
+partitions data base: 0x0000000f8200
+partitions data stop: 0x0003ffef8200
+backup label:         0x0003fffe7200
+total size:           0x0003fffe8200	# 16383.91 MB
+alignment: 4096
+display block size: 1024	# for partition display and edit only
+
+16 partitions:
+#          size     offset    fstype   fsuuid
+  a:    1048576          0    4.2BSD	#    1024.000MB
+  b:    2097152    1048576      swap	#    2048.000MB
+  d:   13629440    3145728   HAMMER2	#   13310.000MB
+  a-stor_uuid: bc000000-0000-4000-8000-000000000003
+  b-stor_uuid: bc000000-0000-4000-8000-000000000004
+  d-stor_uuid: bc000000-0000-4000-8000-000000000005
+EOF
+# vbd0s1's disklabel64, and DragonFly's boot1/boot2
+disklabel64 -R -B sdqs1 /run/bko-holt/vbd0s1.disklabel64
+
+# ---- assemble ----
+# (nothing to do)
+
+# ---- format ----
+# vbd0s1a: UFS as the source's (dumpfs -m)
+newfs -a 7 -b 16384 -e 4096 -f 2048 -g 16384 -h 64 -m 8 -o time /dev/sdqs1a
+# vbd0s1d: HAMMER2, with the PFSs ROOT
+newfs_hammer2 -L ROOT /dev/sdqs1d
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+mount -t hammer2 -o rw /dev/sdqs1d@ROOT /mnt/bko-target
+mkdir -p /mnt/bko-target/boot
+mount -t ufs -o rw /dev/sdqs1a /mnt/bko-target/boot
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+
+# ---- boot ----
+# the boot code (MBR, freebsd-boot) was written with the partition table
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -Rp /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+
+# ---- close ----
+# everything under the target, deepest first
+sh -c 'mount -p | awk '\''{ print $2 }'\'' | awk '\''$0 == "/mnt/bko-target" || index($0, "/mnt/bko-target/") == 1'\'' | sort -r | while read -r m; do umount "$m" || exit; done'
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status filesystem /dev/sdqs1a ufs -
+# golden_plans.rs: status filesystem /dev/sdqs1d hammer2 -
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: status mount /mnt/bko-target/boot
+# golden_plans.rs: exit 0, nothing on stderr

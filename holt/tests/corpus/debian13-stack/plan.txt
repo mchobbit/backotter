@@ -1,0 +1,231 @@
+# bko-holt load plan for layout.json
+# Source: host-1, Debian GNU/Linux 13 (trixie), UEFI boot with grub, dumped 2026-11-08T02:27:52Z
+#
+# Disks:
+#   vda (12 GiB) -> /dev/sdq
+#   vdb (12 GiB) -> /dev/sdr
+
+# ---- partition ----
+# vda -> /dev/sdq: clear the old table and signatures
+wipefs --all /dev/sdq
+sfdisk --wipe always --wipe-partitions always /dev/sdq <<'EOF'
+label: gpt
+label-id: bc000000-0000-4000-8000-000000000001
+unit: sectors
+sector-size: 512
+table-length: 128
+first-lba: 2048
+last-lba: 25165790
+
+/dev/sdq1 : start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=BC000000-0000-4000-8000-000000000002, name="EFI system partition"
+/dev/sdq2 : start=1050624, size=2097152, type=A19D880F-05FC-4D3B-A006-743F0F84911E, uuid=BC000000-0000-4000-8000-000000000003, name="boot"
+/dev/sdq3 : start=3147776, size=22016000, type=A19D880F-05FC-4D3B-A006-743F0F84911E, uuid=BC000000-0000-4000-8000-000000000006, name="system"
+EOF
+# vdb -> /dev/sdr: clear the old table and signatures
+wipefs --all /dev/sdr
+sfdisk --wipe always --wipe-partitions always /dev/sdr <<'EOF'
+label: gpt
+label-id: bc000000-0000-4000-8000-000000000009
+unit: sectors
+sector-size: 512
+table-length: 128
+first-lba: 2048
+last-lba: 25165790
+
+/dev/sdr1 : start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=BC000000-0000-4000-8000-00000000000A, name="EFI system partition"
+/dev/sdr2 : start=1050624, size=2097152, type=A19D880F-05FC-4D3B-A006-743F0F84911E, uuid=BC000000-0000-4000-8000-00000000000B, name="boot"
+/dev/sdr3 : start=3147776, size=22016000, type=A19D880F-05FC-4D3B-A006-743F0F84911E, uuid=BC000000-0000-4000-8000-00000000000D, name="system"
+EOF
+udevadm settle
+
+# ---- assemble ----
+# md array md0 (raid1)
+mdadm --create /dev/md/0 --run --assume-clean --metadata=1.2 --level=raid1 --raid-devices=2 --uuid=bc000000:00004000:80000000:00000004 --homehost=host-1 --name=0 --data-offset=2048K --bitmap=none /dev/sdq2 /dev/sdr2
+# md array md1 (raid1)
+mdadm --create /dev/md/1 --run --assume-clean --metadata=1.2 --level=raid1 --raid-devices=2 --uuid=bc000000:00004000:80000000:00000007 --homehost=host-1 --name=1 --data-offset=9216K --bitmap=none /dev/sdq3 /dev/sdr3
+# LUKS2 on /dev/md/1: asks for the new passphrase
+cryptsetup luksFormat --batch-mode --type=luks2 --cipher=aes-xts-plain64 --key-size=512 --sector-size=512 --offset=32768 --pbkdf=argon2id --pbkdf-memory=262144 --pbkdf-parallel=4 --pbkdf-force-iterations=30 --hash=sha256 --luks2-metadata-size=16384 --luks2-keyslots-size=16744448 --uuid=bc000000-0000-4000-8000-000000000011 /dev/md/1
+cryptsetup open /dev/md/1 md1_crypt
+mkdir -p /run/bko-holt/lvm
+# volume group host-1-vg: its metadata, for pvcreate and vgcfgrestore
+cat > /run/bko-holt/lvm/host-1-vg.vg <<'EOF'
+host-1-vg {
+	id = "bkoLVM-0000-0000-0000-0000-0000-000002"
+	seqno = 4
+	format = "lvm2"
+	status = ["RESIZEABLE", "READ", "WRITE"]
+	flags = []
+	extent_size = 8192
+	max_lv = 0
+	max_pv = 0
+	metadata_copies = 0
+	physical_volumes {
+		pv0 {
+			id = "bkoLVM-0000-0000-0000-0000-0000-000001"
+			device = "/dev/mapper/bkos881281-crypt"
+			status = ["ALLOCATABLE"]
+			flags = []
+			dev_size = 21964800
+			pe_start = 2048
+			pe_count = 2681
+		}
+	}
+	logical_volumes {
+		root {
+			id = "bkoLVM-0000-0000-0000-0000-0000-000003"
+			status = ["READ", "WRITE", "VISIBLE"]
+			flags = []
+			creation_host = "host2"
+			creation_time = 1793887413
+			segment_count = 1
+			segment1 {
+				start_extent = 0
+				extent_count = 1792
+				type = "striped"
+				stripe_count = 1
+				stripes = ["pv0", 0]
+			}
+		}
+		srv {
+			id = "bkoLVM-0000-0000-0000-0000-0000-000004"
+			status = ["READ", "WRITE", "VISIBLE"]
+			flags = []
+			creation_host = "host2"
+			creation_time = 1793887413
+			segment_count = 1
+			segment1 {
+				start_extent = 0
+				extent_count = 512
+				type = "striped"
+				stripe_count = 1
+				stripes = ["pv0", 1792]
+			}
+		}
+		swap_1 {
+			id = "bkoLVM-0000-0000-0000-0000-0000-000005"
+			status = ["READ", "WRITE", "VISIBLE"]
+			flags = []
+			creation_host = "host2"
+			creation_time = 1793887414
+			segment_count = 1
+			segment1 {
+				start_extent = 0
+				extent_count = 256
+				type = "striped"
+				stripe_count = 1
+				stripes = ["pv0", 2304]
+			}
+		}
+	}
+}
+contents = "Text Format Volume Group"
+version = 1
+description = "made by bko-holt load from a bko-holt dump"
+creation_host = "host2"
+creation_time = 1793887414
+EOF
+pvcreate --uuid bkoLVM-0000-0000-0000-0000-0000-000001 --restorefile /run/bko-holt/lvm/host-1-vg.vg /dev/mapper/md1_crypt
+vgcfgrestore --file /run/bko-holt/lvm/host-1-vg.vg host-1-vg
+vgchange --activate y host-1-vg
+
+# ---- format ----
+# vda1: vfat
+mkfs.fat -F 32 -i BC000001 -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdq1
+# vdb1: vfat
+mkfs.fat -F 32 -i BC000002 -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdr1
+# md0: ext4
+mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-00000000000f -b 4096 -I 256 -N 65408 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000010,desc_size=64,resize=268435456 /dev/md/0 1046528k
+tune2fs -r 13081 /dev/md/0
+# dm-1: ext4
+mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000012 -b 4096 -I 256 -N 458752 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000013,desc_size=64,resize=1879048192 /dev/mapper/host--1--vg-root 7340032k
+tune2fs -r 91750 /dev/mapper/host--1--vg-root
+# dm-2: xfs
+mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=bc000000-0000-4000-8000-000000000014 -i sparse=1,nrext64=1,size=512 -n ftype=1,size=4096 -b size=4096 -s size=512 -d size=2147483648,agsize=536870912 -l lazy-count=1,size=78794752 /dev/mapper/host--1--vg-srv
+# dm-3: swap
+mkswap -U bc000000-0000-4000-8000-000000000015 --pagesize 4096 /dev/mapper/host--1--vg-swap_1
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+mount -t ext4 -o errors=remount-ro /dev/mapper/host--1--vg-root /mnt/bko-target
+mkdir -p /mnt/bko-target/boot
+mount -t ext4 -o defaults /dev/md/0 /mnt/bko-target/boot
+mkdir -p /mnt/bko-target/srv
+mount -t xfs -o defaults /dev/mapper/host--1--vg-srv /mnt/bko-target/srv
+mkdir -p /mnt/bko-target/boot/efi
+mount -t vfat -o umask=0077 /dev/sdq1 /mnt/bko-target/boot/efi
+mkdir -p /mnt/bko-target/boot/efi2
+mount -t vfat -o umask=0077 /dev/sdr1 /mnt/bko-target/boot/efi2
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+# the atimes the restore set, for boot to put back after its reads
+sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
+
+# ---- boot ----
+# refuses to start unless /mnt/bko-target/etc/fstab is the restored system's (its / matches the layout's)
+# the restored atimes (the restore stage lists them), to put back after this stage's reads
+sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
+# the restored LVM devices file, kept
+sh -c 'rm -rf /run/bko-holt/lvm-devices; [ ! -d /mnt/bko-target/etc/lvm/devices ] || { cp -a /mnt/bko-target/etc/lvm/devices /run/bko-holt/lvm-devices && touch -r /mnt/bko-target/etc/lvm /run/bko-holt/lvm-devices.parent; }'
+mount --rbind --make-rslave /dev /mnt/bko-target/dev
+mount --rbind --make-rslave /proc /mnt/bko-target/proc
+mount --rbind --make-rslave /sys /mnt/bko-target/sys
+mount --rbind --make-rslave /run /mnt/bko-target/run
+chroot /mnt/bko-target update-initramfs -u -k all
+chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --no-nvram
+# os-prober off: it would list the rescue system's disks
+sh -c '[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober'
+chroot /mnt/bko-target env LANG=C update-grub
+sh -c '! grep -q '\'' /mnt/bko-target/usr/bin/os-prober '\'' /proc/self/mountinfo || umount /mnt/bko-target/usr/bin/os-prober'
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -a /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+# SELinux labels for the files the boot stage wrote
+chroot /mnt/bko-target sh -c '[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ "${SELINUX:-disabled}" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ ! -f "$f" ] || ! command -v setfiles >/dev/null || setfiles "$f" /boot /var/log/bko-holt'
+umount --recursive /mnt/bko-target/run
+umount --recursive /mnt/bko-target/sys
+umount --recursive /mnt/bko-target/proc
+umount --recursive /mnt/bko-target/dev
+# the restored LVM devices file, put back
+sh -c '[ ! -d /run/bko-holt/lvm-devices ] || { rm -rf /mnt/bko-target/etc/lvm/devices && cp -a /run/bko-holt/lvm-devices /mnt/bko-target/etc/lvm/devices && touch -r /run/bko-holt/lvm-devices.parent /mnt/bko-target/etc/lvm; }'
+# the atimes this stage's reads changed, put back
+bash -c 'find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.after && LC_ALL=C comm -z -23 /run/bko-holt/atimes.before /run/bko-holt/atimes.after | \
+             while IFS=$'\''\t'\'' read -r -d '\'''\'' a p; do [ -L "$p" ] || [ -e "$p" ] || continue; touch -a -h -d "@$a" -- "$p" 2>/dev/null || { [ ! -L "$p" ] && lsattr -d -- "$p" 2>/dev/null | cut -d'\'' '\'' -f1 | grep -q i && { chattr -i -- "$p"; touch -a -h -d "@$a" -- "$p"; chattr +i -- "$p"; }; }; done'
+
+# ---- close ----
+umount --recursive /mnt/bko-target
+# other mount namespaces' copies of the target's mounts
+sh -c 'me=$(readlink /proc/self/ns/mnt); seen=; for f in /proc/[0-9]*/mountinfo; do grep -q '\'' /mnt/bko-target[ /]'\'' "$f" 2>/dev/null || continue; p=${f#/proc/}; p=${p%/mountinfo}; ns=$(readlink /proc/$p/ns/mnt) || continue; case "$me $seen " in *"$ns "*) continue;; esac; seen="$seen $ns"; echo "unmounting /mnt/bko-target in $ns (pid $p, $(cat /proc/$p/comm))"; nsenter -t "$p" -m umount --recursive /mnt/bko-target || true; done'
+sh -c 'i=0; until udevadm settle; vgchange --activate n host-1-vg; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done'
+sh -c 'i=0; until udevadm settle; cryptsetup close md1_crypt; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done'
+sh -c 'i=0; until udevadm settle; mdadm --stop /dev/md/1; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done'
+sh -c 'i=0; until udevadm settle; mdadm --stop /dev/md/0; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done'
+# vda2: the md superblock as the source's kernel reads it
+bko-holt md-lbs /dev/sdq2 4096 0
+# vdb2: the md superblock as the source's kernel reads it
+bko-holt md-lbs /dev/sdr2 4096 0
+# vda3: the md superblock as the source's kernel reads it
+bko-holt md-lbs /dev/sdq3 4096 0
+# vdb3: the md superblock as the source's kernel reads it
+bko-holt md-lbs /dev/sdr3 4096 0
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status made dm-0 /dev/mapper/md1_crypt
+# golden_plans.rs: status made dm-1 /dev/mapper/host--1--vg-root
+# golden_plans.rs: status made dm-2 /dev/mapper/host--1--vg-srv
+# golden_plans.rs: status made dm-3 /dev/mapper/host--1--vg-swap_1
+# golden_plans.rs: status made md0 /dev/md/0
+# golden_plans.rs: status made md1 /dev/md/1
+# golden_plans.rs: status filesystem /dev/sdq1 vfat BC00-0001
+# golden_plans.rs: status filesystem /dev/sdr1 vfat BC00-0002
+# golden_plans.rs: status filesystem /dev/md/0 ext4 bc000000-0000-4000-8000-00000000000f
+# golden_plans.rs: status filesystem /dev/mapper/host--1--vg-root ext4 bc000000-0000-4000-8000-000000000012
+# golden_plans.rs: status filesystem /dev/mapper/host--1--vg-srv xfs bc000000-0000-4000-8000-000000000014
+# golden_plans.rs: status filesystem /dev/mapper/host--1--vg-swap_1 swap bc000000-0000-4000-8000-000000000015
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: status mount /mnt/bko-target/boot
+# golden_plans.rs: status mount /mnt/bko-target/srv
+# golden_plans.rs: status mount /mnt/bko-target/boot/efi
+# golden_plans.rs: status mount /mnt/bko-target/boot/efi2
+# golden_plans.rs: exit 0, nothing on stderr

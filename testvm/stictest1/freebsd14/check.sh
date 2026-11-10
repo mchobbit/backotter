@@ -22,12 +22,12 @@
 # Prints "PASS|FAIL|LIMIT need: detail", writes results.json, exit 0 unless a FAIL.
 set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
-WORK=~/backotter-work C=$WORK/testvm/compare
+WORK=~/backotter-work C=${BKO_TESTVM:-$WORK/testvm}/compare
 GUEST=freebsd14
 if [[ ${1:-} == --inner ]]; then
     shift; BIN=$1 PORT=$2 PREFIX=$3 L=$4
     export TMPDIR=/mnt/bko-ram/$PREFIX
-    . $WORK/testvm/vm-lib.sh
+    . ${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh
     trap vm_halt EXIT
     VM_BOOT_TIMEOUT=300 vm_boot $GUEST $PORT $L/vm --snapshot --memory 4096 || { echo "BOOT FAILED" >$L/boot.fail; exit 1; }
     vm_ssh 'mkdir -p /root/st1' || exit 1

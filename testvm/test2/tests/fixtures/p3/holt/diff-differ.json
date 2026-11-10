@@ -1,0 +1,1 @@
+{"v": 1, "corpus": 45, "differ": {"rocky10-raid5": {"stages": ["format"], "lines_changed": 2}, "fedora44": {"stages": ["format", "mount"], "lines_changed": 5}}, "invariants": {}, "invariants_skipped": {"debian13": ["/proc proc: pseudo"]}}

@@ -20,7 +20,7 @@ BIN=$(realpath "$1") PORT=$2 PREFIX=$3 FILTER=${4:-}
 if [[ -z ${BKST_INNER:-} ]]; then
     case $(hostname -s) in chopin) slots="3 2700-2799" ;; *) slots="3 2900-2999" ;; esac
     # shellcheck source=/dev/null
-    . "$WORK/testvm/compare/guest-slot.sh"
+    . "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
     slot_take $slots
     BKST_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 6 "$here/check.sh" "$@"
     rc=$?
@@ -31,22 +31,22 @@ STC_LOGS=${STC_LOGS:-$WORK/stictest1/rocky10/logs}
 S=/mnt/bko-ram/$PREFIX/rocky10 LOGS=$STC_LOGS/$PREFIX-$(date +%Y%m%d-%H%M%S)
 mkdir -p "$S" "$LOGS"
 export TMPDIR=$S
-. "$WORK/testvm/vm-lib.sh"
+. "${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh"
 cleanup() { vm_halt; rm -rf "$S"; rmdir "/mnt/bko-ram/$PREFIX" 2>/dev/null; }
 trap cleanup EXIT
 qemu-img create -q -f qcow2 "$S/spare.qcow2" 16G
 VM_BOOT_TIMEOUT=300 vm_boot rocky10 "$PORT" "$S/vm" --snapshot --memory 4096 --cpus 2 --disk "$S/spare.qcow2" ||
     { echo "FAIL harness: rocky10 didn't boot"; exit 2; }
 T=60 vm_ssh "mkdir -p /root/bk"
-for f in "$BIN/restic-bko" "$BIN/rustic-bko" "$WORK/testvm/compare/fsmeta.py" "$WORK/testvm/compare/rt-common.sh" \
-         "$WORK/testvm/compare/nonroot-inner.sh" "$here/fixture.sh" "$here/inner.sh" "$here/judge.py"; do
+for f in "$BIN/restic-bko" "$BIN/rustic-bko" "${BKO_TESTVM:-$WORK/testvm}/compare/fsmeta.py" "${BKO_TESTVM:-$WORK/testvm}/compare/rt-common.sh" \
+         "${BKO_TESTVM:-$WORK/testvm}/compare/nonroot-inner.sh" "$here/fixture.sh" "$here/inner.sh" "$here/judge.py"; do
     vm_put "$f" "/root/bk/$(basename "$f")" || { echo "FAIL harness: copying $f"; exit 2; }
 done
 T=780 vm_ssh "bash /root/bk/inner.sh" >"$LOGS/check.out" 2>&1
 echo "inner exit $?" >>"$LOGS/check.out"
 T=300 vm_ssh "cat /root/bk/logs.tar" 2>"$LOGS/tar.err" | tar xf - -C "$LOGS" 2>>"$LOGS/tar.err"
 # The non-root run, judged as run-all.sh judges nonroot-rt.sh's log.
-nr=$(python3 "$WORK/testvm/compare/verdict.py" judge nonroot "$LOGS/nonroot.log" --full "$LOGS/nonroot.log" 2>&1)
+nr=$(python3 "${BKO_TESTVM:-$WORK/testvm}/compare/verdict.py" judge nonroot "$LOGS/nonroot.log" --full "$LOGS/nonroot.log" 2>&1)
 echo "$nr" >"$LOGS/nonroot.verdict"
 python3 - "$LOGS" <<'PY' >>"$LOGS/check.out"
 import json, sys, os

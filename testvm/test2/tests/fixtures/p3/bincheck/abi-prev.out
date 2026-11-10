@@ -1,0 +1,1 @@
+FAIL abi ~/backotter-work/bko-bin.prev-20261105/freebsd/rustic-bko: libc.so.7: posix_spawn_file_actions_addchdir@FBSD_1.9, setgroups@FBSD_1.8 not in FreeBSD 14.5

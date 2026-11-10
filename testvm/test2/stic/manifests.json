@@ -1,0 +1,791 @@
+{
+ "v": 1,
+ "family": "stic",
+ "notes": "SticTest's input specs, one entry per check (cell stic:GUEST): what its key covers (contract 1.3, rulings R2, R3, R5). harness: the check's own directory and the repo files outside it its scripts use; judge: what reads the records (judge.py, verdict.py, expected-coverage.json) and its limits.json entry. The guest group (generation and vm-run-options, ssh-user, console-passphrase, luks-passphrase, zfs-passphrase, no-ssh) and the soft host facts come by default. check-manifests.py checks it.",
+ "plumbing": [
+  "testvm/vm-run",
+  "testvm/vm-lib.sh",
+  "testvm/compare/guest-slot.sh",
+  "testvm/console-boot.py",
+  "testvm/stictest1/drive.py",
+  "shared:cmp-run.sh",
+  "shared:testvm/compare/iolog.sh"
+ ],
+ "soft": [
+  "kernel",
+  "zfs",
+  "qemu",
+  "ovmf"
+ ],
+ "defaults": {
+  "guest_files": [
+   "vm-run-options",
+   "ssh-user",
+   "console-passphrase",
+   "luks-passphrase",
+   "zfs-passphrase",
+   "no-ssh"
+  ]
+ },
+ "entries": {
+  "aerynos": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/aerynos/**"
+   ],
+   "judge": [
+    "testvm/stictest1/aerynos/judge.py",
+    "entry:testvm/test2/stic/limits.json#aerynos"
+   ]
+  },
+  "alpine324": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/alpine324/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#alpine324"
+   ]
+  },
+  "alpinebsd": {
+   "os": "netbsd",
+   "bins": [
+    "netbsd/restic-bko",
+    "netbsd/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/alpinebsd/**",
+    "testvm/compare/netbsd/roundtrip.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#alpinebsd"
+   ],
+   "xguest": [
+    "netbsd11",
+    "host:~/backotter-work/netbsd-tools"
+   ],
+   "notes": "NetBSD's tools: ~/backotter-work/netbsd-tools, fetched from a throwaway netbsd11 when a tool is missing"
+  },
+  "arch": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/arch/**",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#arch"
+   ],
+   "host": [
+    "kernel"
+   ],
+   "notes": "host phase: the restored ext4 images are mounted on the host and compared there with arch's own fsmeta.py"
+  },
+  "artix-dinit": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/artix-dinit/**",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#artix-dinit"
+   ],
+   "host": [
+    "kernel"
+   ],
+   "host_inputs": [
+    "/etc/nsswitch.conf"
+   ],
+   "notes": "host step: both tools back up and restore owners with no name on the host, as root, through the host's nsswitch.conf (its nsswitch.conf is a host input; no fact keys the NSS modules)"
+  },
+  "artix-s6": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/artix-s6/**",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#artix-s6"
+   ],
+   "host": [
+    "kernel"
+   ],
+   "host_inputs": [
+    "/etc/nsswitch.conf"
+   ],
+   "notes": "host step: as artix-dinit's (owners with no name, the host's NSS)"
+  },
+  "cachyos": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/cachyos/**",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#cachyos"
+   ]
+  },
+  "debian12": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/debian12/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#debian12"
+   ]
+  },
+  "debian13": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/debian13/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/debian13/judge.py",
+    "entry:testvm/test2/stic/limits.json#debian13"
+   ]
+  },
+  "debian13-stack": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/debian13-stack/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/debian13-stack/judge.py",
+    "entry:testvm/test2/stic/limits.json#debian13-stack"
+   ]
+  },
+  "debian13-zfs": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/debian13-zfs/**",
+    "testvm/compare/boot-state.sh",
+    "testvm/compare/compare.py",
+    "testvm/compare/fs_roundtrip.py",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#debian13-zfs"
+   ]
+  },
+  "devuan6": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/devuan6/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/devuan6/judge.py",
+    "entry:testvm/test2/stic/limits.json#devuan6"
+   ]
+  },
+  "dragonfly6": {
+   "os": "dragonfly",
+   "bins": [
+    "dragonfly/restic-bko",
+    "dragonfly/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/dragonfly6/**",
+    "testvm/compare/dragonfly/roundtrip.sh",
+    "testvm/compare/freebsd/fsmeta.sh",
+    "testvm/compare/freebsd/torture.sh",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/nonroot-rt.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/run-guest-rt.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#dragonfly6"
+   ],
+   "notes": "run-guest-rt.sh lists freebsd/torture.sh and fsmeta.sh for FreeBSD only; they stay listed (the checker reads no OS branch)"
+  },
+  "fedora44": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/fedora44/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/fedora44/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#fedora44"
+   ]
+  },
+  "fedora44-uefi": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/fedora44-uefi/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/fedora44-uefi/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#fedora44-uefi"
+   ]
+  },
+  "freebsd14": {
+   "os": "freebsd",
+   "bins": [
+    "freebsd/restic-bko",
+    "freebsd/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/freebsd14/**",
+    "testvm/compare/freebsd/fsmeta.sh",
+    "testvm/compare/freebsd/roundtrip.sh",
+    "testvm/compare/freebsd/torture.sh",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/stictest1/freebsd15/extra.sh"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#freebsd14"
+   ],
+   "notes": "freebsd15/extra.sh, freebsd15's checklist"
+  },
+  "freebsd15": {
+   "os": "freebsd",
+   "bins": [
+    "freebsd/restic-bko",
+    "freebsd/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/freebsd15/**",
+    "testvm/compare/freebsd/fsmeta.sh",
+    "testvm/compare/freebsd/roundtrip.sh",
+    "testvm/compare/freebsd/torture.sh",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#freebsd15"
+   ]
+  },
+  "freebsd15-geli": {
+   "os": "freebsd",
+   "bins": [
+    "freebsd/restic-bko",
+    "freebsd/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/freebsd15-geli/**",
+    "testvm/compare/freebsd/fsmeta.sh",
+    "testvm/compare/freebsd/roundtrip.sh",
+    "testvm/compare/freebsd/torture.sh",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/stictest1/freebsd15/extra.sh"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#freebsd15-geli"
+   ],
+   "notes": "freebsd15/extra.sh; GELI's passphrase typed by vm_boot (console-passphrase)"
+  },
+  "freebsd15-ufs": {
+   "os": "freebsd",
+   "bins": [
+    "freebsd/restic-bko",
+    "freebsd/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/freebsd15-ufs/**",
+    "testvm/compare/freebsd/fsmeta.sh",
+    "testvm/compare/freebsd/roundtrip.sh",
+    "testvm/compare/freebsd/torture.sh",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/nonroot-rt.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/run-guest-rt.sh"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#freebsd15-ufs"
+   ]
+  },
+  "ghostbsd26": {
+   "os": "freebsd",
+   "bins": [
+    "freebsd/restic-bko",
+    "freebsd/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/ghostbsd26/**",
+    "testvm/compare/freebsd/fsmeta.sh",
+    "testvm/compare/freebsd/roundtrip.sh",
+    "testvm/compare/freebsd/torture.sh",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/nonroot-rt.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/run-guest-rt.sh"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#ghostbsd26"
+   ]
+  },
+  "ghostbsd26-zfs": {
+   "os": "freebsd",
+   "bins": [
+    "freebsd/restic-bko",
+    "freebsd/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/ghostbsd26-zfs/**",
+    "testvm/compare/freebsd/fsmeta.sh",
+    "testvm/compare/freebsd/roundtrip.sh",
+    "testvm/compare/freebsd/torture.sh",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/stictest1/freebsd15/extra.sh"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#ghostbsd26-zfs"
+   ],
+   "notes": "freebsd15/extra.sh, freebsd15's checklist"
+  },
+  "haiku6": {
+   "os": "haiku",
+   "bins": [
+    "haiku/rustic-bko",
+    "linux/restic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/haiku6/**",
+    "testvm/haiku/attrs.py"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#haiku6"
+   ],
+   "host": [
+    "kernel"
+   ],
+   "notes": "host-side read: Linux's restic-bko checks and restores the Haiku repository on the host's tmpfs; rustic-bko for Haiku; Linux's restic-bko (BIN_DIR/../linux) reads the repository"
+  },
+  "hardenedbsd15": {
+   "os": "freebsd",
+   "bins": [
+    "freebsd/restic-bko",
+    "freebsd/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/hardenedbsd15/**",
+    "testvm/compare/freebsd/fsmeta.sh",
+    "testvm/compare/freebsd/roundtrip.sh",
+    "testvm/compare/freebsd/torture.sh",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/nonroot-rt.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/run-guest-rt.sh",
+    "testvm/stictest1/freebsd15-ufs/extras.sh"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#hardenedbsd15"
+   ],
+   "notes": "freebsd15-ufs/extras.sh in the extras VM"
+  },
+  "mint22": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/mint22/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#mint22"
+   ]
+  },
+  "mx25": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/mx25/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#mx25"
+   ]
+  },
+  "netbsd11": {
+   "os": "netbsd",
+   "bins": [
+    "netbsd/restic-bko",
+    "netbsd/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/netbsd11/**",
+    "testvm/compare/netbsd/roundtrip.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#netbsd11"
+   ]
+  },
+  "nixos2605": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/nixos2605/**",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#nixos2605"
+   ]
+  },
+  "omarchy": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/omarchy/**",
+    "testvm/compare/rt-common.sh",
+    "testvm/omarchy/type-luks-passphrase.py"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#omarchy"
+   ],
+   "notes": "om-boot.sh boots it; LUKS typed through QEMU's monitor (testvm/omarchy/type-luks-passphrase.py)"
+  },
+  "omnios58": {
+   "os": "omnios",
+   "bins": [
+    "omnios/restic-bko",
+    "omnios/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/omnios58/**",
+    "testvm/compare/illumos/roundtrip.sh",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#omnios58"
+   ]
+  },
+  "openbsd8": {
+   "os": "openbsd",
+   "bins": [
+    "openbsd/restic-bko",
+    "openbsd/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/openbsd8/**",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#openbsd8"
+   ]
+  },
+  "pop24": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/pop24/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#pop24"
+   ]
+  },
+  "rocky10": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/rocky10/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/rocky10/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#rocky10"
+   ]
+  },
+  "rocky10-lvm": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/rocky10-lvm/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/rocky10-lvm/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#rocky10-lvm"
+   ]
+  },
+  "sculpt2610": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/sculpt2610/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#sculpt2610"
+   ],
+   "host": [
+    "kernel",
+    "qemu",
+    "pkg:e2fsprogs",
+    "pkg:util-linux"
+   ],
+   "notes": "host-side: the whole check runs on the host as root (qemu-img convert, losetup, mkfs.ext2, both tools)"
+  },
+  "tumbleweed": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/tumbleweed/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/tumbleweed/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#tumbleweed"
+   ]
+  },
+  "ubuntu24": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/ubuntu24/**",
+    "testvm/compare/boot-state.sh",
+    "testvm/compare/compare.py",
+    "testvm/compare/fs_roundtrip.py",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#ubuntu24"
+   ]
+  },
+  "ubuntu26-uefi": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/ubuntu26-uefi/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/ubuntu26-uefi/judge.py",
+    "entry:testvm/test2/stic/limits.json#ubuntu26-uefi"
+   ]
+  },
+  "ubuntu26-zfs": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/ubuntu26-zfs/**",
+    "testvm/compare/boot-state.sh",
+    "testvm/compare/compare.py",
+    "testvm/compare/fs_roundtrip.py",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh",
+    "testvm/stictest1/ubuntu24/real.sh"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#ubuntu26-zfs"
+   ],
+   "notes": "ubuntu24/real.sh, the guest's own examples"
+  },
+  "ubuntu26-zfsmirror": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/ubuntu26-zfsmirror/**",
+    "testvm/compare/boot-state.sh",
+    "testvm/compare/compare.py",
+    "testvm/compare/fs_roundtrip.py",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/nonroot-rt.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/sparse-rt.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#ubuntu26-zfsmirror"
+   ]
+  },
+  "void-musl": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/void-musl/**"
+   ],
+   "judge": [
+    "testvm/stictest1/void-musl/judge.py",
+    "entry:testvm/test2/stic/limits.json#void-musl"
+   ]
+  },
+  "zorin18": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/zorin18/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#zorin18"
+   ]
+  }
+ }
+}

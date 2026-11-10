@@ -1,0 +1,8 @@
+PASS rustic-bko backs up owners with no name (nsswitch files systemd): exit 0 with uids 1234, 4321, 54321 unnamed
+PASS restic-bko runs natively (Debian 12, glibc 2.36): backup exit 0
+PASS restic-bko backup leaves source atimes alone (strictatime): same; atime (symlinks) x3 (expected)
+FAIL Round trip restic-rustic (fsmeta: xattrs, ACLs, caps, flags, owners, set-id, links, sparse, devices, FIFOs, symlinks, names, times, ancestors): 2 differences: ./xattr-big user.big; ./fifo mtime
+LIMIT SELinux labels: Debian 12 runs AppArmor (no on-disk labels); no SELinux
+LIMIT Birth times: ext4 keeps them, Linux can't set them (BACKOTTER.md)
+LIMIT Project IDs, compression, nocow, casefold: the guest's ext4 has no project/casefold feature; ext4 has no c/C (fs_roundtrip.py ext4 covers project and casefold)
+logs: /home/m/backotter-work/stictest1/debian12/logs/t2s-20261108T0315-4f2a/run-20261108-031700

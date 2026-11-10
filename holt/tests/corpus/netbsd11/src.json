@@ -1,0 +1,229 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.4"
+  },
+  "generated": "2026-11-08T02:42:51Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host1"
+  },
+  "os": {
+    "family": "netbsd",
+    "id": "netbsd",
+    "version_id": "11.1",
+    "pretty_name": "NetBSD 11.1",
+    "kernel_name": "NetBSD",
+    "kernel_release": "11.1",
+    "kernel_version": "NetBSD 11.1 (GENERIC) #0: Mon Nov  2 16:34:32 UTC 2026  builder-at-redacted:/usr/src/sys/arch/amd64/compile/GENERIC",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "bios"
+  },
+  "storage": {
+    "disks": [
+      {
+        "name": "ld0",
+        "path": "/dev/rld0d",
+        "kind": "disk",
+        "size_bytes": 17179869184,
+        "size": "16 GiB",
+        "logical_sector_size": 512,
+        "duid": null,
+        "partition_table": {
+          "type": "dos",
+          "sector_size": 512,
+          "disk_signature": "00000000",
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "ld0mbr1",
+            "number": 1,
+            "start_lba": 2048,
+            "sectors": 33552384,
+            "start_bytes": 1048576,
+            "size_bytes": 17178820608,
+            "type": "0xa9",
+            "type_name": "NetBSD",
+            "bootable": true,
+            "logical": false,
+            "extended": false,
+            "uuid": "00000000-01",
+            "content": null,
+            "mounted_at": []
+          }
+        ],
+        "label_partitions": [
+          {
+            "name": "ld0a",
+            "letter": "a",
+            "start_lba": 2048,
+            "sectors": 29358080,
+            "start_bytes": 1048576,
+            "size_bytes": 15031336960,
+            "fstype": "4.2BSD",
+            "content": {
+              "type": "ufs",
+              "usage": "filesystem",
+              "uuid": "bc00000000000001",
+              "label": null,
+              "version": "2",
+              "superblock_offset": 65536,
+              "block_size": 16384,
+              "fragment_size": 2048,
+              "cylinder_groups": 78,
+              "inodes_per_group": 22848,
+              "minfree": 5,
+              "optimization": "time",
+              "extended_attributes": false,
+              "last_mounted_on": "/"
+            },
+            "newfs": "newfs -O 2 -b 16384 -f 2048 -n 1782144 -m 5 -o time -e 2048 -s 29358080 DEVICE",
+            "ffs_flags": "0x0",
+            "mounted_at": ["/"]
+          },
+          {
+            "name": "ld0b",
+            "letter": "b",
+            "start_lba": 29360128,
+            "sectors": 4194304,
+            "start_bytes": 15032385536,
+            "size_bytes": 2147483648,
+            "fstype": "swap",
+            "content": null,
+            "mounted_at": []
+          }
+        ],
+        "disklabel": "# /dev/rld0:\ntype: ld\ndisk: ld0\nlabel: fictitious\nflags:\nbytes/sector: 512\nsectors/track: 63\ntracks/cylinder: 16\nsectors/cylinder: 1008\ncylinders: 16383\ntotal sectors: 33554432\nrpm: 3600\ninterleave: 1\ntrackskew: 0\ncylinderskew: 0\nheadswitch: 0\t\t# microseconds\ntrack-to-track seek: 0\t# microseconds\ndrivedata: 0 \n\n16 partitions:\n#        size    offset     fstype [fsize bsize cpg/sgs]\n a:  29358080      2048     4.2BSD      0     0     0  # (Cyl.      2*-  29127*)\n b:   4194304  29360128       swap                     # (Cyl.  29127*-  33288*)\n c:  33552384      2048     unused      0     0        # (Cyl.      2*-  33288*)\n d:  33554432         0     unused      0     0        # (Cyl.      0 -  33288*)\n",
+        "boot_code": {
+          "kind": "unknown",
+          "first_bytes": "31c08ed0bc007c8ec08ed8bf1d88be1d",
+          "code_b64": "YmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGUgbGVmdCBvdXQsIHNlZSBob2x0L3Rlc3RzL2NvcnB1cy9SRUFETUUubWQKYmtvLWhvbHQgY29ycHVzOiBib290IGNvZGU="
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "/dev/ld0a",
+        "fstype": "ffs",
+        "options": "log,local",
+        "device": "ld0a"
+      },
+      {
+        "target": "/kern",
+        "source": "kernfs",
+        "fstype": "kernfs",
+        "options": "local",
+        "device": null
+      },
+      {
+        "target": "/dev/pts",
+        "source": "ptyfs",
+        "fstype": "ptyfs",
+        "options": "local",
+        "device": null
+      },
+      {
+        "target": "/proc",
+        "source": "procfs",
+        "fstype": "procfs",
+        "options": "local",
+        "device": null
+      },
+      {
+        "target": "/var/shm",
+        "source": "tmpfs",
+        "fstype": "tmpfs",
+        "options": "local",
+        "device": null
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/ld0b",
+        "size_bytes": 2147483648,
+        "device": "ld0b"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "/dev/ld0a",
+        "file": "/",
+        "type": "ffs",
+        "options": "rw,log",
+        "freq": 1,
+        "passno": 1,
+        "resolves_to": "ld0a"
+      },
+      {
+        "spec": "/dev/ld0b",
+        "file": "none",
+        "type": "swap",
+        "options": "sw",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "ld0b"
+      },
+      {
+        "spec": "kernfs",
+        "file": "/kern",
+        "type": "kernfs",
+        "options": "rw",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "ptyfs",
+        "file": "/dev/pts",
+        "type": "ptyfs",
+        "options": "rw",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "procfs",
+        "file": "/proc",
+        "type": "procfs",
+        "options": "rw",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "tmpfs",
+        "file": "/var/shm",
+        "type": "tmpfs",
+        "options": "rw,-m1777,-sram%25",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      }
+    ],
+    "zfs": {
+      "pools_from_labels": [],
+      "zpool_cache": {
+        "error": "too short"
+      },
+      "tools": null
+    }
+  },
+  "boot": {
+    "loader": {
+      "name": "netbsd",
+      "firmware": "bios",
+      "evidence": ["netbsd's own boot blocks (bios)"]
+    },
+    "boot_cfg": "consdev=com0,115200\nmenu=Boot normally:rndseed /var/db/entropy-file;boot\nmenu=Boot single user:rndseed /var/db/entropy-file;boot -s\ndefault=1\ntimeout=3\n",
+    "secondary_boot": true
+  },
+  "warnings": []
+}

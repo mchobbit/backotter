@@ -1,0 +1,28 @@
+stock: 6b96f976ff437a0528a4742358b172b32c3e3932 (cinqcent, 2026-11-04 19:17:58 +0100)
+  tests: 69 pass, 0 fail, 6 skip; builds: 2 pass, 0 fail
+fork:  3034635fc6296b1672ff0a4f93c3ab90a4af9e37 (cinqcent, 2026-11-05 08:00:51 +0100)
+  tests: 69 pass, 1 fail, 6 skip; builds: 2 pass, 0 fail
+  rustc: stock rustc 1.94.1 (e408947bf 2026-03-25); fork rustc 1.94.1 (e408947bf 2026-03-25)
+  rustic_core_used: stock 0.13.0 registry+https://github.com/rust-lang/crates.io-index; fork 0.13.0+backotter.4 path
+  walkdir_used: stock 2.5.0 registry+https://github.com/rust-lang/crates.io-index; fork 2.5.0 path
+
+Fork-only test failures (fail on the fork, not on stock): 1
+  tests/backup_restore.rs [backup_restore] :: test_backup_and_check_passes  (stock: pass)
+      | 
+      | 
+      | thread 'test_backup_and_check_passes' (784441) panicked at tests/backup_restore.rs:83:14:
+      | Unexpected stderr, failed var.contains(Added to the repo: 0 B)
+
+Build targets that fail on the fork, not on stock: 0
+  (all builds on the fork: cargo test pass, cargo test --doc pass)
+
+Skipped on the fork, passing on stock: 0
+
+On stock, missing on the fork: 0
+
+Added by the fork: 1 (1 pass, 0 fail, 0 skip)
+  src/lib.rs [rustic_rs] :: config::logging::tests::jiffs_time_zone_warnings_silenced  pass
+
+Paired by name with their digits ignored (random or renumbered names): 0
+
+Known stock failures: 0

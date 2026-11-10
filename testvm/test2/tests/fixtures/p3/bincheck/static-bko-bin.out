@@ -1,0 +1,2 @@
+PASS static linux/restic-bko: no PT_INTERP, no DT_NEEDED, no GLIBC_ needs, Go build info: CGO_ENABLED=0
+PASS static linux/rustic-bko: no PT_INTERP, no DT_NEEDED, no GLIBC_ needs, no GNU ABI tag, no nsswitch.conf

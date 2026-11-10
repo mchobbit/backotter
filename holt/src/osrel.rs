@@ -98,6 +98,10 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("rocky", "10", "Rocky Linux 10"),
     // Arch-based, rolling.
     ("omarchy", "*", "Omarchy"),
+    // Arch-based, rolling; neither has a VERSION_ID.  EndeavourOS boots by
+    // systemd-boot with dracut, Manjaro by GRUB with mkinitcpio.
+    ("endeavouros", "", "EndeavourOS"),
+    ("manjaro", "", "Manjaro"),
     // Not Linux (other/): os-release, or uname for those without one.
     ("freebsd", "14", "FreeBSD 14"),
     ("freebsd", "15", "FreeBSD 15"),
@@ -201,12 +205,14 @@ mod tests {
         let ubuntu22 = parse("ID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"22.04\"\n");
         assert!(check_supported(Some(&ubuntu22)).unwrap_err().contains("ubuntu 22.04"));
         assert!(check_supported(Some(&parse("ID=zorin\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"18\"\n"))).is_ok());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
         assert!(check_supported(Some(&parse("ID=alpine\nVERSION_ID=3.24.3\n"))).is_ok());
         assert!(check_supported(Some(&parse("ID=artix\nNAME=\"Artix Linux\"\n"))).is_ok());
+        assert!(check_supported(Some(&parse("NAME=\"EndeavourOS\"\nID=\"endeavouros\"\nID_LIKE=\"arch\"\nBUILD_ID=rolling\n"))).is_ok());
+        assert!(check_supported(Some(&parse("NAME=\"Manjaro Linux\"\nID=manjaro\nID_LIKE=arch\nBUILD_ID=rolling\n"))).is_ok());
         assert!(check_supported(Some(&parse("ID=\"aerynos\"\nVERSION_ID=\"2026.11\"\nID_LIKE=\"linux\"\n"))).is_ok());
         assert!(check_supported(Some(&parse("ID=\"aerynos\"\nVERSION_ID=\"2027.01\"\n"))).is_ok());
         // Linux Mint 22.x; not 21, and not Mint's Debian edition (LMDE).

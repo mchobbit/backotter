@@ -1,0 +1,5 @@
+HoltTest1 freebsd15-geli (freebsd), run r4all, 2026-11-08T02:53:06Z, phases: source backup rebuild verify
+binaries: bko-holt 690364f6fd48 (/bkoscratch/holttest1d/bin/freebsd/bko-holt); rustic-bko freebsd f6411bf9e2560599c050f1e2890118e35a19eaea74a8fe4b355f08ad25c99201 /home/m/backotter-work/bko-bin/freebsd/rustic-bko (bko-bin set from round rel4, assembled 2026-11-06 10:05 UTC on chopin; rustic b518f42bcb1e)
+== source: freebsd15-geli
+RAM disk: peak 0.0 GiB, reserved 3 GiB; memory: peak 0.1 GiB anon
+RESULT: FAIL (1; ended by SIGTERM before its RESULT, exit 143)

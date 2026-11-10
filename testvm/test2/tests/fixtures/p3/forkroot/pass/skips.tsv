@@ -1,0 +1,5 @@
+internal/fs	TestBcachefsDirOptionsInherited	bcachefs_linux_test.go:55: needs root, to mount a file system
+internal/fs	TestNodeFillSparseGenericSeekHole	sparse_linux_test.go:43: BKO_TEST_GENERIC_SEEK_HOLE_DIR not set
+internal/fs	TestClearRestrictingFlagsFile	restrictflags_linux_test.go:92: can't set flags 0x20: operation not permitted
+internal/restorer	TestRestorerOverRestrictingFlags	restorer_linux_test.go:475: needs root (CAP_LINUX_IMMUTABLE)
+internal/archiver	TestPathComponents	tree_test.go:98: skip test on unix

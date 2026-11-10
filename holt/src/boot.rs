@@ -156,6 +156,8 @@ pub const PACKAGES: &[&str] = &[
     "zfs-utils", "selinux-policy-targeted",
     // Alpine's.
     "grub-bios", "grub-efi", "mkinitfs", "linux-virt",
+    // EndeavourOS's and Manjaro's.
+    "kernel-install-for-dracut", "eos-dracut", "mhwd",
     // Omarchy's, openSUSE's and Void's.
     "limine", "limine-mkinitcpio-hook", "limine-snapper-sync", "grub2", "grub2-i386-pc", "grub2-x86_64-efi", "kernel-default", "snapper", "linux-base",
     "multipath-tools", "dmraid", "nvme-cli", "open-iscsi",

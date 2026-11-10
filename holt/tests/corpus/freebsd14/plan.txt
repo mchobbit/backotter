@@ -1,0 +1,94 @@
+# bko-holt load plan for layout.json
+# Source: host1, FreeBSD 14.5-RELEASE-p3, BIOS boot with freebsd, dumped 2026-11-08T02:46:23Z
+#
+# Disks:
+#   vtbd0 (16 GiB) -> /dev/sdq
+
+# ---- partition ----
+# vtbd0 -> /dev/sdq: the source's table, GUIDs and boot code exactly
+sh -c 'bko-holt write-table layout.json vtbd0 /dev/sdq $(diskinfo /dev/sdq | cut -f3)'
+gpart show sdq
+
+# ---- assemble ----
+# ZFS pool zroot, with the source's feature flags only; its vdevs' ashift 12, as the source's
+sh -c 'old=$(sysctl -n vfs.zfs.min_auto_ashift); sysctl vfs.zfs.min_auto_ashift=12 >/dev/null; zpool create -f -d -o cachefile=none -o feature@async_destroy=enabled -o feature@empty_bpobj=enabled -o feature@lz4_compress=enabled -o feature@multi_vdev_crash_dump=enabled -o feature@spacemap_histogram=enabled -o feature@enabled_txg=enabled -o feature@hole_birth=enabled -o feature@extensible_dataset=enabled -o feature@embedded_data=enabled -o feature@bookmarks=enabled -o feature@filesystem_limits=enabled -o feature@large_blocks=enabled -o feature@large_dnode=enabled -o feature@sha512=enabled -o feature@skein=enabled -o feature@edonr=enabled -o feature@userobj_accounting=enabled -o feature@encryption=enabled -o feature@project_quota=enabled -o feature@device_removal=enabled -o feature@obsolete_counts=enabled -o feature@zpool_checkpoint=enabled -o feature@spacemap_v2=enabled -o feature@allocation_classes=enabled -o feature@resilver_defer=enabled -o feature@bookmark_v2=enabled -o feature@redaction_bookmarks=enabled -o feature@redacted_datasets=enabled -o feature@bookmark_written=enabled -o feature@log_spacemap=enabled -o feature@livelist=enabled -o feature@device_rebuild=enabled -o feature@zstd_compress=enabled -o feature@draid=enabled -o feature@zilsaxattr=enabled -o feature@head_errlog=enabled -o feature@blake3=enabled -o feature@block_cloning=enabled -o feature@vdev_zaps_v2=enabled -O mountpoint=/zroot -O compression=on -O atime=off -R /mnt/bko-target zroot /dev/sdqp3; s=$?; sysctl vfs.zfs.min_auto_ashift=$old >/dev/null; exit $s'
+# the source pool's GUID (vdev GUIDs can't be kept)
+zpool reguid -g 1000000000000000001 zroot
+# mount mounts every dataset in order
+sh -c '[ "$(zfs get -H -o value mounted zroot)" != yes ] || zfs unmount zroot'
+
+# ---- format ----
+zfs create -u -o mountpoint=none zroot/ROOT
+zfs create -u -o mountpoint=/ -o canmount=noauto zroot/ROOT/14.5-RELEASE_2026-11-06_085140
+zfs create -u -o mountpoint=/ -o canmount=noauto zroot/ROOT/default
+zfs create -u -o mountpoint=/home zroot/home
+zfs create -u -o mountpoint=/tmp -o exec=on -o setuid=off zroot/tmp
+zfs create -u -o mountpoint=/usr -o canmount=off zroot/usr
+zfs create -u -o setuid=off zroot/usr/ports
+zfs create -u zroot/usr/src
+zfs create -u -o mountpoint=/var -o canmount=off zroot/var
+zfs create -u -o exec=off -o setuid=off zroot/var/audit
+zfs create -u -o exec=off -o setuid=off zroot/var/crash
+zfs create -u -o exec=off -o setuid=off zroot/var/log
+zfs create -u -o atime=on zroot/var/mail
+zfs create -u -o setuid=off zroot/var/tmp
+zpool set bootfs=zroot/ROOT/default zroot
+
+# ---- mount ----
+zfs mount zroot/ROOT/default
+zfs mount zroot/home
+zfs mount zroot/tmp
+zfs mount zroot
+zfs mount zroot/usr/ports
+zfs mount zroot/usr/src
+zfs mount zroot/var/audit
+zfs mount zroot/var/crash
+zfs mount zroot/var/log
+zfs mount zroot/var/mail
+zfs mount zroot/var/tmp
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+
+# ---- boot ----
+# the boot code (MBR, freebsd-boot) was written with the partition table
+# the restored system's zpool.cache names the new pool
+sh -c 'for c in /etc/zfs/zpool.cache /boot/zfs/zpool.cache; do [ -f /mnt/bko-target$c ] && zpool set cachefile=/mnt/bko-target$c zroot; done; true'
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -Rp /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+
+# ---- close ----
+# everything under the target, deepest first
+sh -c 'mount -p | awk '\''{ print $2 }'\'' | awk '\''$0 == "/mnt/bko-target" || index($0, "/mnt/bko-target/") == 1'\'' | sort -r | while read -r m; do umount "$m" || exit; done'
+zpool export zroot
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status pool zroot
+# golden_plans.rs: status dataset zroot/ROOT
+# golden_plans.rs: status dataset zroot/ROOT/14.5-RELEASE_2026-11-06_085140
+# golden_plans.rs: status dataset zroot/ROOT/default
+# golden_plans.rs: status dataset zroot/home
+# golden_plans.rs: status dataset zroot/tmp
+# golden_plans.rs: status dataset zroot/usr
+# golden_plans.rs: status dataset zroot/usr/ports
+# golden_plans.rs: status dataset zroot/usr/src
+# golden_plans.rs: status dataset zroot/var
+# golden_plans.rs: status dataset zroot/var/audit
+# golden_plans.rs: status dataset zroot/var/crash
+# golden_plans.rs: status dataset zroot/var/log
+# golden_plans.rs: status dataset zroot/var/mail
+# golden_plans.rs: status dataset zroot/var/tmp
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: status mount /mnt/bko-target/home
+# golden_plans.rs: status mount /mnt/bko-target/tmp
+# golden_plans.rs: status mount /mnt/bko-target/zroot
+# golden_plans.rs: status mount /mnt/bko-target/usr/ports
+# golden_plans.rs: status mount /mnt/bko-target/usr/src
+# golden_plans.rs: status mount /mnt/bko-target/var/audit
+# golden_plans.rs: status mount /mnt/bko-target/var/crash
+# golden_plans.rs: status mount /mnt/bko-target/var/log
+# golden_plans.rs: status mount /mnt/bko-target/var/mail
+# golden_plans.rs: status mount /mnt/bko-target/var/tmp
+# golden_plans.rs: exit 0, nothing on stderr

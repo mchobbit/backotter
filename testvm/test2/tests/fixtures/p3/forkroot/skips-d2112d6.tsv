@@ -1,0 +1,32 @@
+cmd/restic	TestBackupVSS	cmd_backup_integration_test.go:161: vss fs test can only be run on windows with admin privileges
+internal/backend/azure	TestBackendAzure	azure_test.go:56: environment variable RESTIC_TEST_AZURE_ACCOUNT_NAME not set
+internal/backend/azure	TestBackendAzureAccountToken	azure_test.go:98: set RESTIC_TEST_AZURE_ACCOUNT_NAME to test SAS/SAT Token Authentication
+internal/backend/azure	TestBackendAzureContainerToken	azure_test.go:141: set RESTIC_TEST_AZURE_ACCOUNT_NAME to test SAS/SAT Token Authentication
+internal/backend/azure	TestUploadLargeFile	azure_test.go:170: set RESTIC_AZURE_TEST_LARGE_UPLOAD=1 to test large uploads
+internal/backend/b2	TestBackendB2	b2_test.go:48: environment variable RESTIC_TEST_B2_ACCOUNT_ID not set
+internal/backend/gs	TestBackendGS	gs_test.go:49: environment variable RESTIC_TEST_GS_PROJECT_ID not set
+internal/backend/rclone	TestBackendRclone	backend_test.go:32: exec: "rclone": executable file not found in $PATH
+internal/backend/rclone	TestRcloneExit	internal_test.go:21: program "rclone" not found
+internal/backend/rest	TestBackendREST	rest_test.go:28: exec: "rest-server": executable file not found in $PATH
+internal/backend/rest	TestBackendRESTExternalServer	rest_test.go:186: environment variable RESTIC_TEST_REST_REPOSITORY not set
+internal/backend/rest	TestBackendRESTWithUnixSocket	rest_test.go:28: exec: "rest-server": executable file not found in $PATH
+internal/backend/s3	TestBackendMinio	s3_test.go:148: exec: "minio": executable file not found in $PATH
+internal/backend/s3	TestBackendS3	s3_test.go:209: environment variable RESTIC_TEST_S3_KEY not set
+internal/backend/swift	TestBackendSwift	swift_test.go:61: RESTIC_TEST_SWIFT unset, skipping test
+internal/crypto	TestLargeEncrypt	
+internal/fs	TestBcachefsDirOptionsInherited	bcachefs_linux_test.go:55: needs root, to mount a file system
+internal/fs	TestClearRestrictingFlagsFile	restrictflags_linux_test.go:92: can't set flags 0x20: operation not permitted
+internal/fs	TestFATAttributesOnVfat	fatxfs_linux_test.go:124: needs root, to mount a file system
+internal/fs	TestFillHolesENOSPC	fatxfs_linux_test.go:124: needs root, to mount a file system
+internal/fs	TestNodeFillSparseGenericSeekHole	sparse_linux_test.go:43: BKO_TEST_GENERIC_SEEK_HOLE_DIR not set
+internal/fs	TestNodeProjectIDBcachefs	flags_linux_test.go:296: needs root, to mount a file system
+internal/fs	TestRestoreFileFlagsBtrfsCompression	flags_linux_test.go:225: needs root, to mount a file system
+internal/fs	TestRestoreLeavesSELinuxLabel	node_xattr_unix_test.go:59: can't set security.selinux: xattr.LSet /mnt/bko-ram/bko-audit/restic-d2112d61996d/T security.selinux: operation not permitted
+internal/fs	TestXFSOptionsOnXFS	fatxfs_linux_test.go:124: needs root, to mount a file system
+internal/fs	TestZFSDosFlagsRoundTrip	dosflags_linux_test.go:184: the temporary directory isn't on ZFS
+internal/restorer	TestRestorerExt4CasefoldProject	restorer_linux_test.go:387: needs root, to mount a file system
+internal/restorer	TestRestorerFATAttributes	restorer_linux_test.go:630: needs root, to mount a file system
+internal/restorer	TestRestorerOverRestrictingFlags	restorer_linux_test.go:475: needs root (CAP_LINUX_IMMUTABLE)
+internal/restorer	TestRestorerTargetNodeMountedBelow	restorer_linux_test.go:739: mounting file systems needs root
+internal/restorer	TestRestorerXFSOptions	restorer_linux_test.go:630: needs root, to mount a file system
+internal/terminal	TestIsProcessBackground	background_unix_test.go:15: can't open terminal: open /dev/tty: no such device or address

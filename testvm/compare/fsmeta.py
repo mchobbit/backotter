@@ -254,6 +254,17 @@ def record(root: str, skip: list[str] = ()) -> dict[str, dict]:
     return entries
 
 
+def xattr_value(xattrs: dict[str, str], name: str) -> str | None:
+    """The hex value of xattr name, as compared: bcachefs_effective.project is
+    derived and appears once a project ID has been set at all, so a value of
+    0 (no project ID: Linux 6.12 lists it on a file given ID 0) is the same as
+    none; the project ID itself is compared as "project ID"."""
+    v = xattrs.get(name)
+    if name == "bcachefs_effective.project" and v is not None and bytes.fromhex(v).strip(b"\0 \n") == b"0":
+        return None
+    return v
+
+
 def differences(before: dict[str, dict], after: dict[str, dict]) -> dict[str, list[str]]:
     diff: dict[str, list[str]] = {}
 
@@ -305,7 +316,7 @@ def differences(before: dict[str, dict], after: dict[str, dict]) -> dict[str, li
             note("hard links", path)
         bx, ax = b["xattrs"], a["xattrs"]
         for name in sorted(bx.keys() | ax.keys()):
-            if bx.get(name) != ax.get(name):
+            if xattr_value(bx, name) != xattr_value(ax, name):
                 note(xattr_kind(name), path)
         bf, af = b.get("flags"), a.get("flags")
         if bf is not None and af is not None and (bf ^ af) & ~FLAGS_FS_INTERNAL:

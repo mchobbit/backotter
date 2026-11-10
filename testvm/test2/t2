@@ -1,0 +1,603 @@
+#!/usr/bin/env python3
+"""t2: BackOtter's Test2 words, run on the Mac (contract 1.7; rulings R10, R21, R27).
+
+  t2 WORD [ARG...] [plan] [--json] [--hosts H,H] [--universe CELL,...]
+        GateTest2 [ROUND] [LAYER...] [stale] [plan]       GateTest2All [ROUND] [plan]
+        SticTest2 [ROUND] [GUEST...] [stale] [plan]       SticTest2All [ROUND] [plan]
+        HoltTest2 [GUEST[+VARIANT]...] [stale] [plan] [+bigger] [+oneshot] [+degraded] [--holt-bin DIR]
+        HoltTest2X [X...] for X in D A M U Z F C V BSD H I Obscure      HoltTest2All [plan]
+        (--universe is test-only: it cuts the word's cells down to those named)
+  t2 plan WORD [ARG...]                  the same as WORD ... plan
+  t2 pull                                each host's ledger mirrored, then the wear join
+  t2 ledger show [--cell C] [--last N] [--json]
+  t2 explain CELL [--hosts H,H] [--round R]
+                                         its inputs against its last PASS, group by group
+  t2 copy [--hosts H,H] [--gc]           the private copy of this checkout on the hosts
+  t2 resume RUN                          a run picked up again (R10)
+  t2 self-test                           tests/test_*.py, drive.py --self-test, the specs' checker,
+                                         the fixtures' leak scan and the class table's check
+  t2 ledger seed-current --family F [--perturb GROUP] [--cells C,...] [--age CELL=HOURS,...]
+        [--round R] [--hosts H,H]        test only: synthetic PASS rows at the current keys
+                                         (refused unless T2_MAC_ROOT is set and isn't the default)
+
+Roots: T2_MAC_ROOT (~/backotter-work/test2), T2_HOST_ROOT (/bkoscratch/test2), T2_COPY_ROOT
+(~/backotter-work/t2/copy), BKO_GIT (~/git).  Exit 0: PASS, nothing due or a plan printed;
+1: a FAIL or FLAKY-FAIL, or a stop rule stopped the run; 2: refused; 3: an internal error.
+"""
+
+import json
+import os
+import subprocess
+import sys
+import threading
+import time
+import traceback
+
+os.environ["PYTHONDONTWRITEBYTECODE"] = "1"
+sys.dont_write_bytecode = True
+HERE = os.path.dirname(os.path.realpath(__file__))
+sys.path.insert(0, HERE)
+CHECKOUT = os.path.dirname(os.path.dirname(HERE))
+
+from t2lib import DEFAULT_HOST_ROOT, DEFAULT_MAC_ROOT, GROUPS, canonical, expand, mac_ledger_file, mac_root  # noqa: E402
+from t2lib import sha256_hex, utc_now                                               # noqa: E402
+from t2lib import copies, hostrun, keys, ledger, words                              # noqa: E402
+from t2lib import facts as factsmod                                                 # noqa: E402
+from t2lib import plan as planmod                                                   # noqa: E402
+from t2lib import run as runmod                                                     # noqa: E402
+
+HOSTS = ("chopin", "cinqcent")
+
+
+class Usage(Exception):
+    pass
+
+
+class Fatal(Exception):
+    """Exit 3: what a plan needs can't be read (the ledger), so planning on would mislead."""
+
+
+def say(*a):
+    print(*a, flush=True)
+
+
+def err(*a):
+    print("t2:", *a, file=sys.stderr, flush=True)
+
+
+def take_opts(argv, spec):
+    """Options of SPEC {--name: takes_value} out of ARGV, anywhere; the rest in order."""
+    opts, rest, i = {}, [], 0
+    while i < len(argv):
+        a = argv[i]
+        name, eq, val = a.partition("=")
+        if name in spec:
+            if spec[name]:
+                if not eq:
+                    i += 1
+                    if i >= len(argv):
+                        raise Usage(f"{name} needs a value")
+                    val = argv[i]
+                opts[name] = val
+            else:
+                opts[name] = True
+        else:
+            rest.append(a)
+        i += 1
+    return opts, rest
+
+
+def hosts_opt(opts):
+    """--hosts H,H (each once, in order), or both hosts when it isn't given."""
+    if "--hosts" not in opts:
+        return list(HOSTS)
+    hs = list(dict.fromkeys(h.strip() for h in str(opts["--hosts"]).split(",") if h.strip()))
+    if not hs:
+        raise Usage("--hosts names no host")
+    return hs
+
+
+def mirror_hosts():
+    """The hosts with a mirror in MAC_ROOT/ledger (HOST.jsonl), for pulls."""
+    try:
+        names = os.listdir(ledger.ledger_dir())
+    except OSError:
+        return []
+    return sorted(n[:-len(".jsonl")] for n in names
+                  if n.endswith(".jsonl") and not n.endswith(".lost.jsonl") and n != "mac.jsonl")
+
+
+# --- facts and the ledger ----------------------------------------------------------------------
+
+def probe(hosts, want, save=False):
+    """{host: facts} from P1's facts.probe_all (facts_host.py on each host, at once); an
+    unreachable host is left out, and said so.  SAVE keeps them in MAC_ROOT/facts/ (runs)."""
+    got = factsmod.probe_all(hosts, want, save=save)
+    out = {}
+    for h in hosts:
+        f = got.get(h) or {}
+        if f.get("ok") is False or not f:
+            err(f"{h}: no facts: {f.get('error') or 'no answer'}")
+        else:
+            out[h] = f
+    return out
+
+
+def pull_rows(hosts, do_pull=True):
+    """(merged rows, pull records): t2 pull first, then the merged view.  Every host with a
+    mirror is pulled, not only --hosts: the view merges every mirror, and a stale one would
+    hide that host's FAILs."""
+    recs = {}
+    every = list(dict.fromkeys(list(hosts) + mirror_hosts()))
+    if do_pull:
+        try:
+            recs = ledger.pull(every)
+        except Exception as e:   # noqa: BLE001 - a pull never stops a plan
+            err(f"pull failed: {e}")
+    v = ledger.view()
+    for w in v.warnings:
+        err("ledger: " + w)
+    for h in every:
+        if do_pull and h not in hosts and not (recs.get(h) or {}).get("ok"):
+            err(f"{h}'s ledger mirror wasn't refreshed: {(recs.get(h) or {}).get('error') or 'no answer'}")
+    pulled = {}
+    for h in every:
+        p = (v.pull or {}).get(h) or recs.get(h) or {}
+        pulled[h] = {"t": p.get("t"), "rows": p.get("rows"), "ok": p.get("ok"), "stale": not (recs.get(h) or {}).get("ok")}
+    return v.rows, pulled
+
+
+def light_ctx(hosts):
+    return planmod.Ctx(CHECKOUT, hosts=hosts, options={})
+
+
+def want_for(ctx, family, word):
+    specs = ctx.specs
+    sets = ["bko-bin"]
+    if word.round:
+        sets.append("round" + word.round)
+    fams = [family] + (["gate"] if family in ("holt", "stic") else [])
+    return keys.wants(specs, fams, sets)
+
+
+def full_ctx(word, hosts, universe=None, do_pull=True, holt_bin=None):
+    """Steps 1-2 of every plan and run: pull and facts, in parallel; then the default round's set."""
+    lc = light_ctx(hosts)
+    want = want_for(lc, word.family, word)
+    if holt_bin:
+        want["holt_bin_dirs"] = [holt_bin]
+    box = {}
+
+    def p():
+        try:
+            box["rows"], box["pulled"] = pull_rows(hosts, do_pull)
+        except BaseException as e:   # noqa: BLE001 - re-raised below, in the main thread
+            box["error"] = e
+
+    th = threading.Thread(target=p)
+    th.start()
+    facts = probe(hosts, want, save=not word.plan)
+    th.join()
+    if "error" in box:
+        e = box["error"]
+        raise Fatal(f"the ledger can't be read ({type(e).__name__}: {e}): no plan from an empty ledger")
+    opts = {"pulled": box.get("pulled"), "running": runmod.running_cells(word.family)}
+    if universe:
+        opts["universe"] = universe
+    if holt_bin:
+        opts["holt_bin"] = holt_bin
+    pv = copies.preview(CHECKOUT)
+    ctx = planmod.Ctx(CHECKOUT, head=pv.commit, hosts=hosts, facts=facts, ledger=box.get("rows") or [],
+                      copy_preview={"id": pv.id, "dirty": pv.dirty, "commit": pv.commit}, options=opts)
+    if word.family in ("stic", "gate") and not word.round:
+        pl = planmod.Planner(word, ctx)
+        heads = pl.fork_heads()
+        names = set()
+        for h, f in facts.items():
+            for n, e in (f.get("rounds") or {}).items():
+                if planmod.round_commits(e) == heads:
+                    names.add("round" + n)
+        need = sorted(n for n in names if any(n not in ((f.get("sets") or {})) for f in facts.values()))
+        if need:
+            want["sets"] = sorted(set(want["sets"]) | set(need))
+            more = probe(list(facts), want, save=not word.plan)
+            ctx.facts.update(more)
+    return ctx
+
+
+# --- commands ------------------------------------------------------------------------------------
+
+def cmd_word(argv):
+    opts, rest = take_opts(argv, {"--json": False, "--hosts": True, "--universe": True, "--holt-bin": True})
+    rest = words.split_plan_form(rest)
+    hosts = hosts_opt(opts)
+    lc = light_ctx(hosts)
+    try:
+        w = words.parse(rest, planmod.known_names(lc))
+    except words.Refused as e:
+        err(str(e))
+        return 2
+    holt_bin = opts.get("--holt-bin")
+    if holt_bin and w.family != "holt":
+        err("--holt-bin goes with HoltTest2 words only")
+        return 2
+    universe = [c for c in (opts.get("--universe") or "").split(",") if c] or None
+    t0 = time.time()
+    ctx = full_ctx(w, hosts, universe, holt_bin=holt_bin)
+    if w.plan:
+        try:
+            p = planmod.make(w, ctx)
+        except planmod.PlanError as e:
+            err(str(e))
+            return 2
+        if opts.get("--json"):
+            say(json.dumps(p.to_json(), indent=1, sort_keys=True))
+        else:
+            sys.stdout.write(p.render())
+        if os.environ.get("T2_TIMING"):
+            err(f"plan took {time.time() - t0:.1f} s")
+        return 0
+    pull = lambda: pull_rows(hosts)[0]   # noqa: E731
+    ctx.options["pull"] = pull
+    try:
+        return runmod.lifecycle(w, ctx, out=say, pull=pull)
+    except (planmod.PlanError, runmod.Refused) as e:
+        err(str(e))
+        return 2
+
+
+def cmd_pull(argv):
+    opts, rest = take_opts(argv, {"--hosts": True})
+    if rest:
+        raise Usage("t2 pull [--hosts H,H]")
+    recs = ledger.pull(hosts_opt(opts))
+    bad = 0
+    for h, r in sorted(recs.items()):
+        if r.get("ok"):
+            say(f"{h}: {r.get('rows', 0)} rows ({r.get('mode')}), {r.get('bad', 0)} bad lines"
+                + (f"; {r['warning']}" if r.get("warning") else ""))
+        else:
+            bad += 1
+            say(f"{h}: unreachable, its last mirror kept ({r.get('error')})")
+    return 0 if not bad else 2
+
+
+def cmd_ledger(argv):
+    if argv[:1] == ["seed-current"]:
+        return cmd_seed(argv[1:])
+    if argv[:1] != ["show"]:
+        raise Usage("t2 ledger show [--cell C] [--last N] [--json] | t2 ledger seed-current ...")
+    opts, rest = take_opts(argv[1:], {"--cell": True, "--last": True, "--json": False})
+    if rest:
+        raise Usage("t2 ledger show [--cell C] [--last N] [--json]")
+    last = None
+    if "--last" in opts:
+        try:
+            last = int(opts["--last"])
+        except ValueError:
+            last = 0
+        if last < 1:
+            raise Usage(f"--last takes a number of rows, 1 or more, not {opts['--last']}")
+    v = ledger.view()
+    rows = [r for r in v.rows if not opts.get("--cell") or r.get("cell") == opts["--cell"]]
+    if last:
+        rows = rows[-last:]
+    if opts.get("--json"):
+        for r in rows:
+            say(canonical(r))
+        return 0
+    for r in rows:
+        say(f"{r.get('t')}  {r.get('id'):<40} {r.get('cell'):<28} {r.get('kind'):<7} {r.get('verdict'):<10} "
+            f"{r.get('rule') or '-':<18} {(r.get('key') or '')[:12]}  {'valid' if r.get('valid') else 'INVALID'}"
+            f"{'' if r.get('committed') else ' (uncommitted)'}")
+    say(f"{len(rows)} rows" + (f" ({sum(v.bad.values())} bad lines skipped)" if sum(v.bad.values()) else ""))
+    return 0
+
+
+def word_for_cell(cell):
+    fam = cell.split(":", 1)[0]
+    if fam not in words.FAMILY_WORD:
+        raise Usage(f"not a cell: {cell} (stic:GUEST, holt:GUEST[+VARIANT], gate:LAYER[@HOST])")
+    return fam
+
+
+def cmd_explain(argv):
+    opts, rest = take_opts(argv, {"--hosts": True, "--round": True})
+    if len(rest) != 1:
+        raise Usage("t2 explain CELL [--hosts H,H] [--round R]")
+    cell = rest[0]
+    fam = word_for_cell(cell)
+    hosts = hosts_opt(opts)
+    w = words.parse([words.FAMILY_WORD[fam]] + ([opts["--round"]] if opts.get("--round") else []) + ["plan"],
+                    planmod.known_names(light_ctx(hosts)))
+    try:
+        ctx = full_ctx(w, hosts, [cell])
+        p = planmod.make(w, ctx)
+    except planmod.PlanError as e:
+        err(str(e))
+        return 2
+    pc = p.cell(cell)
+    if pc is None:
+        err(f"{cell}: not a cell of {words.FAMILY_WORD[fam]}")
+        return 2
+    say(f"{cell}: {pc.status}" + (f" ({pc.rule})" if pc.rule else "") + (": " + "; ".join(pc.reasons) if pc.reasons else ""))
+    pl = planmod.Planner(w, ctx)
+    pl.setup_set()
+    v = pl.view(cell)
+    P = v.P
+    if P is None:
+        say("no valid PASS row: every input is new")
+    else:
+        say(f"last PASS: {P.get('id')} ({P.get('kind')}, {P.get('t')}, {P.get('host')}, key {P.get('key', '')[:12]})")
+    for h, inp in v.inp.items():
+        say(f"-- inputs on {h}: key {v.pc.keys.get(h, '')[:12]}")
+        g_now = v.grp[h]
+        pg = (P or {}).get("groups") or {}
+        for g in GROUPS:
+            mark = "same" if P is not None and g_now.get(g) == pg.get(g) else ("CHANGED" if P is not None else "new")
+            say(f"   {g:<9} {g_now.get(g)}  {mark}")
+            if P is not None and mark == "CHANGED":
+                for gg, n, a, b in keys.diff_inputs((P or {}).get("inputs"), inp):
+                    if gg == g:
+                        say(f"      {n}: {planmod.short(a, 8)} -> {planmod.short(b, 8)}")
+    return 0
+
+
+def cmd_copy(argv):
+    opts, rest = take_opts(argv, {"--hosts": True, "--gc": False})
+    if rest:
+        raise Usage("t2 copy [--hosts H,H] [--gc]")
+    hosts = hosts_opt(opts)
+    if opts.get("--gc"):
+        for h, r in sorted(copies.gc(hosts).items()):
+            say(f"{h}: {json.dumps(r, sort_keys=True)}")
+        return 0
+    try:
+        made = copies.make(CHECKOUT, hosts, log=say)
+    except copies.CopyError as e:
+        err(str(e))
+        return 2
+    for h, c in sorted(made.items()):
+        say(f"{h}: {c.path} ({'made' if c.made else 'reused'})")
+    return 0
+
+
+def cmd_resume(argv):
+    opts, rest = take_opts(argv, {"--hosts": True})
+    if len(rest) != 1:
+        raise Usage("t2 resume RUN")
+    pj = runmod.read_json(os.path.join(runmod.run_dir(rest[0]), "plan.json"))
+    if not pj:
+        err(f"no run {rest[0]} in {runmod.runs_dir()}")
+        return 2
+    # the run's own hosts (its cells-HOST.json, else its plan's facts) and its own cells
+    saved = runmod.run_hosts(rest[0])
+    hosts = saved or hosts_opt(opts)
+    if "--hosts" in opts and saved and hosts_opt(opts) != saved:
+        err(f"{rest[0]} ran on {','.join(saved)}: resume it there (leave --hosts out)")
+        return 2
+    w = words.parse(pj["word"]["text"].split(), planmod.known_names(light_ctx(hosts)))
+    universe = [c["cell"] for c in pj.get("cells") or [] if c.get("cell")] or None
+    holt_bin = (pj.get("set") or {}).get("holt_bin")
+    try:
+        ctx = full_ctx(w, hosts, universe, holt_bin=holt_bin)
+    except planmod.PlanError as e:
+        err(f"{e}; resuming without its universe")
+        ctx = full_ctx(w, hosts, holt_bin=holt_bin)
+    pull = lambda: pull_rows(hosts)[0]   # noqa: E731
+    ctx.options["pull"] = pull
+    return runmod.resume(rest[0], ctx, out=say, pull=pull)
+
+
+def cmd_seed(argv):
+    opts, rest = take_opts(argv, {"--family": True, "--perturb": True, "--cells": True, "--age": True,
+                                  "--round": True, "--hosts": True})
+    if rest or not opts.get("--family"):
+        raise Usage("t2 ledger seed-current --family F [--perturb GROUP] [--cells C,...] [--age CELL=HOURS,...] "
+                    "[--round R] [--hosts H,H]")
+    if not os.environ.get("T2_MAC_ROOT") or \
+            os.path.realpath(mac_root()) == os.path.realpath(expand(DEFAULT_MAC_ROOT)):
+        err("seed-current is test-only: set T2_MAC_ROOT to a test root (not the default)")
+        return 2
+    fam = opts["--family"]
+    if fam not in words.FAMILY_WORD:
+        raise Usage(f"--family: gate, stic or holt, not {fam}")
+    g = opts.get("--perturb")
+    if g and g not in GROUPS:
+        raise Usage(f"--perturb: one of {', '.join(GROUPS)}, not {g}")
+    hosts = hosts_opt(opts)
+    cells = [c for c in (opts.get("--cells") or "").split(",") if c] or None
+    ages = {}
+    for a in [x for x in (opts.get("--age") or "").split(",") if x]:
+        c, _, hrs = a.partition("=")
+        ages[c] = float(hrs)
+    w = words.parse([words.FAMILY_WORD[fam]] + ([opts["--round"]] if opts.get("--round") else []) + ["plan"],
+                    planmod.known_names(light_ctx(hosts)))
+    ctx = full_ctx(w, hosts, cells)
+    if seed_imgsums(ctx, hosts):
+        ctx = full_ctx(w, hosts, cells)
+    p = planmod.make(w, ctx)
+    rows = seed_rows(p, ctx, g, ages)
+    res = ledger.append(mac_ledger_file(), rows) if rows else []
+    say(f"seeded {sum(1 for _, ok in res if ok)} rows into {mac_ledger_file()}"
+        + (f" ({sum(1 for _, ok in res if not ok)} already there)" if any(not ok for _, ok in res) else ""))
+    return 0
+
+
+SEED_IMGSUM = r'''
+import hashlib, json, os, sys
+root, paths = os.path.expanduser(sys.argv[1]), json.loads(_T2_DATA)
+cdir = os.path.join(root, "cache")
+os.makedirs(cdir, exist_ok=True)
+cpath = os.path.join(cdir, "imgsum.json")
+try:
+    with open(cpath, encoding="utf-8") as f:
+        cache = json.load(f)
+except (OSError, ValueError):
+    cache = {"v": 1, "files": {}}
+for p in paths:
+    st = os.stat(p)
+    h = hashlib.sha256(f"seed:{p}:{st.st_size}:{st.st_mtime_ns}".encode()).hexdigest()
+    cache.setdefault("files", {})[p] = {"size": st.st_size, "mtime_ns": st.st_mtime_ns, "ctime_ns": st.st_ctime_ns,
+                                        "inode": st.st_ino, "sha256": h, "t": "seed-current"}
+tmp = cpath + f".tmp.{os.getpid()}"
+with open(tmp, "w", encoding="utf-8") as f:
+    json.dump(cache, f, sort_keys=True, indent=1)
+    f.write("\n")
+os.replace(tmp, cpath)
+print(len(paths))
+'''
+
+
+def seed_imgsums(ctx, hosts):
+    """The guests and rescuers whose identity is unknown get a synthetic sum in the test
+    HOST_ROOT's image-sum cache, as a run's preflight would make a real one (the planner
+    never hashes): without it they key as img:unknown, due whatever the ledger holds.
+    Never on the default HOST_ROOT.  Returns how many images got one."""
+    hr = os.environ.get("T2_HOST_ROOT")
+    if not hr or os.path.realpath(expand(hr)) == os.path.realpath(expand(DEFAULT_HOST_ROOT)):
+        say("seed-current: T2_HOST_ROOT isn't a test root: guests of unknown identity stay due")
+        return 0
+    done = 0
+    for h in hosts:
+        f = (ctx.facts or {}).get(h)
+        if not isinstance(f, dict):
+            continue
+        paths = set()
+        for g in (f.get("guests") or {}).values():
+            if isinstance(g, dict) and not g.get("generation") and not g.get("imgsum"):
+                ds = [d.get("path") for d in g.get("disks") or [] if isinstance(d, dict) and d.get("size") is not None]
+                paths.update(p for p in ds if p)
+        for n, im in ((f.get("rescuers") or {}).get("images") or {}).items():
+            if isinstance(im, dict) and not im.get("sha256") and not im.get("imgsum"):
+                paths.add(os.path.join("/bkoscratch/holttest1d/rescuer", n))
+        if not paths:
+            continue
+        r = hostrun.ssh(h, script=SEED_IMGSUM, args=[hostrun.host_path(hr)], data=sorted(paths), timeout=60)
+        if r.rc != 0:
+            err(f"seed-current: no image sums on {h}: {r.err.decode(errors='replace')[-200:]}")
+            continue
+        done += len(paths)
+        say(f"seed-current: {len(paths)} synthetic image sum(s) on {h}")
+    return done
+
+
+def seed_rows(p, ctx, perturb=None, ages=None):
+    """Synthetic PASS rows at each cell's current keys (one per distinct key), with the meta
+    real writers give and one synthetic need set (contract 1.7, test only)."""
+    stamp = time.strftime("%Y%m%dT%H%M%SZ", time.gmtime())
+    run = f"seed-{stamp}"
+    pv = ctx.copy_preview or {}
+    dirty = pv.get("dirty") or {}
+    out = []
+    for pc in p.cells:
+        if not pc.res:
+            continue
+        done = set()
+        for h, res in sorted(pc.res.items()):
+            if pc.keys.get(h) in done:
+                continue
+            done.add(pc.keys.get(h))
+            inputs = json.loads(json.dumps(res.inputs))
+            if perturb:
+                inputs[perturb] = {n: "ver:perturbed " + sha256_hex(v)[:12]
+                                   for n, v in (inputs.get(perturb) or {"seed": "absent"}).items()}
+            age = (ages or {}).get(pc.cell, 0.0)
+            t_end = time.time() - age * 3600
+            wall = int(pc.est.get("wall_s") or 60)
+            meta = runmod._meta_now(ctx, pc, h, p)
+            r = {"origin": f"seed:{run}:{pc.cell}@{h}", "family": pc.family, "cell": pc.cell, "kind": "run",
+                 "run": run, "word": "t2 ledger seed-current", "rule": "seed", "reasons": ["synthetic, test only"],
+                 "attempt": 1, "inputs": inputs, "spec": getattr(res, "spec", None), "planned_key": None,
+                 "valid": True, "verdict": "PASS", "class": "pass", "needs": {"seeded": "PASS"},
+                 "counts": {"PASS": 1, "FAIL": 0, "LIMIT": 0}, "gm": float(pc.est.get("gm") or 0.0), "wall_s": wall,
+                 "waits_s": 0, "wear": {}, "commit": ctx.head, "committed": not dirty, "dirty": dict(dirty),
+                 "copy": pv.get("id") or "seed", "host": h, "meta": meta,
+                 "t": utc_now(t_end), "start": utc_now(t_end - wall), "note": "t2 ledger seed-current"}
+            if pc.family == "gate" and not r["host"]:
+                r["host"] = "mac"
+            out.append(ledger.complete(r, host=h))
+    return out
+
+
+def cmd_self_test(argv):
+    if argv:
+        raise Usage("t2 self-test")
+    ok = True
+    py = sys.executable
+    env = dict(os.environ, PYTHONDONTWRITEBYTECODE="1")
+    steps = [("unit tests (tests/test_*.py)", [py, "-B", "-m", "unittest", "discover", "-s",
+                                               os.path.join(HERE, "tests"), "-p", "test_*.py"]),
+             ("drive.py --self-test", [py, "-B", os.path.join(CHECKOUT, "testvm", "stictest1", "drive.py"),
+                                       "--self-test"])]
+    chk = os.path.join(HERE, "stic", "check-manifests.py")
+    if os.path.isfile(chk):
+        steps.append(("check-manifests.py (stic)", [py, "-B", chk]))
+        steps.append(("check-manifests.py --strict-watch", [py, "-B", chk, "--strict-watch"]))
+        for spec in ("holt/spec.json", "gate/layers.json"):
+            if os.path.isfile(os.path.join(HERE, spec)):
+                steps.append((f"check-manifests.py --spec {spec}",
+                              [py, "-B", chk, "--spec", os.path.join("testvm", "test2", spec)]))
+    else:
+        say("not built: testvm/test2/stic/check-manifests.py (P4)")
+    leak = os.path.join(HERE, "t2lib", "leakscan.py")
+    if os.path.isfile(leak):
+        corpus = os.path.join(CHECKOUT, "holt", "tests", "corpus")
+        if os.path.isdir(corpus):
+            steps.append(("leakscan (a) over holt/tests/corpus",
+                          [py, "-B", leak, "scan", "--git-email", CHECKOUT, corpus]))
+        else:
+            say("not there yet: holt/tests/corpus (P6)")
+        steps.append(("leakscan (a) over tests/fixtures (host names allowed)",
+                      [py, "-B", leak, "scan", "--allow-hosts", "--git-email", CHECKOUT,
+                       os.path.join(HERE, "tests", "fixtures")]))
+    else:
+        say("not built: testvm/test2/t2lib/leakscan.py (P6)")
+    for name, cmd in steps:
+        t0 = time.time()
+        r = subprocess.run(cmd, cwd=CHECKOUT, capture_output=True, text=True, env=env)
+        good = r.returncode == 0
+        ok = ok and good
+        tail = (r.stdout + r.stderr).strip().splitlines()
+        say(f"{'ok  ' if good else 'FAIL'} {name} ({time.time() - t0:.1f} s): {tail[-1] if tail else ''}")
+        if not good:
+            for line in tail[-30:]:
+                say("     " + line)
+    errs = planmod.check_classes(light_ctx(list(HOSTS)))
+    say(("ok  " if not errs else "FAIL") + " classes.json" + (": " + "; ".join(errs) if errs else ""))
+    ok = ok and not errs
+    say("self-test: " + ("all ok" if ok else "FAILED"))
+    return 0 if ok else 1
+
+
+COMMANDS = {"pull": cmd_pull, "ledger": cmd_ledger, "explain": cmd_explain, "copy": cmd_copy,
+            "resume": cmd_resume, "self-test": cmd_self_test}
+
+
+def main(argv):
+    if not argv or argv[0] in ("-h", "--help", "help"):
+        say(__doc__.strip())
+        return 0 if argv else 2
+    try:
+        if argv[0] in COMMANDS:
+            return COMMANDS[argv[0]](argv[1:])
+        return cmd_word(argv)
+    except Usage as e:
+        err(str(e))
+        return 2
+    except Fatal as e:
+        err(str(e))
+        return 3
+    except KeyboardInterrupt:
+        err("interrupted")
+        return 130
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main(sys.argv[1:]))
+    except SystemExit:
+        raise
+    except Exception:   # noqa: BLE001 - exit 3: an internal error, with its traceback
+        traceback.print_exc()
+        sys.exit(3)

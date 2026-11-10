@@ -1,6 +1,6 @@
 # Test2: targeted tests for BackOtter (draft)
 
-2026-11-07. A draft for discussion with the user. Of its pieces only W1 and W2 are built (landed 2026-11-08).
+2026-11-07. A draft for discussion with the user. Of its pieces W1, W2 (landed 2026-11-08), L1, G1 and H1 (landed 2026-11-09) are built.
 
 **Sources.** Reports in `test2/reports/`, cited as [stic], [holt], [guest], [cost], [yield], [cheap] and [change]. SticTest medians: `test2/data/st1_marks.tsv` (41 checks, 281.9 gm). r3all: `test2/data/ht_rows.json` (40 guests, 186.1 gm) and `test2/data/r3all_files.tsv`. HoltTest history: `test2/data/ht1-runs.tsv`. Classes: `test2/design-classes.md` §2.0. They are copies of the design session's working files as of 2026-11-07. img-one.sh (~/backotter-work/images/) exists only on the hosts; ht1-queue.sh has been in testvm/holttest1d/ since W1.
 
@@ -244,13 +244,13 @@ With every piece built, eleven findings come earlier, four earlier or the same (
 
 ## Decisions for the user
 
-Decided so far: 2 and 10 (2026-11-07).
+Decided so far: 2 and 10 (2026-11-07); 1, 3, 4 and 5 as recommended (2026-11-08, built into L1, G1 and H1).
 
-1. **"Every Linux guest gets its own pass" (11-01).** Test2 keeps it. Representatives would cost 179 gm, not 238, per change reaching every OS (est. 10–15 min less), with the Linux classes {debian13, devuan6, mx25, debian13-stack, debian13-zfs}, {ubuntu26-zfs, ubuntu26-zfsmirror}, {rocky10, rocky10-lvm} and {arch, artix-s6}, fedora44 in sweeps only, and the other 15 Linux guests and sculpt2610 alone [design-classes §2.0]. *Recommend:* switch once G2 lands; no second guest of a class ever found more [yield (c)]. #5 needs enforcing SELinux, which the hosts lack, so fedora44-uefi, tumbleweed and the rocky10 class stay on their own.
+1. **"Every Linux guest gets its own pass" (11-01).** **Decided 2026-11-08: as recommended.** Test2 keeps it. Representatives would cost 179 gm, not 238, per change reaching every OS (est. 10–15 min less), with the Linux classes {debian13, devuan6, mx25, debian13-stack, debian13-zfs}, {ubuntu26-zfs, ubuntu26-zfsmirror}, {rocky10, rocky10-lvm} and {arch, artix-s6}, fedora44 in sweeps only, and the other 15 Linux guests and sculpt2610 alone [design-classes §2.0]. *Recommend:* switch once G2 lands; no second guest of a class ever found more [yield (c)]. #5 needs enforcing SELinux, which the hosts lack, so fedora44-uefi, tumbleweed and the rocky10 class stay on their own.
 2. **RAM before disk.** **Decided 2026-11-07: RAM first.** On 11-04 the user chose disk thrash for speed; since 11-06 /bkoscratch is the P3, so "disk first" and "never the P3" conflict (work-in-ram.md, testvm-chopin.md). *Recommend:* RAM first under reservations, delete on a pass, the 6 largest HoltTest guests and zfsmirror taking turns in RAM (est. +30 min a sweep, ~103 GB less a run), no routine compare.py `!` rounds. The P3 might wear ~4× slower (est., from 67 GB written outside HoltTest1 windows in ~12 h [cost (c)]).
-3. **Sweep cadence.** *Recommend:* weekly in the shadow weeks, then every 14 days and before each image release, on the user's word.
-4. **Canaries after a plumbing change**, the rest canary-verified until they ride along or the sweep comes. round-speedups.md makes this the user's call; its "final round runs everything" becomes SweepTest2. *Recommend:* yes (~70 gm against ~200).
-5. **What an OS update triggers.** *Recommend:* HoltTest2 on any kernel, boot-chain or storage-package change; SticTest2 when the kernel line, ZFS, bcachefs, the LSM, or the mkfs and attr tools move. A dump lists ~20 such packages (fedora44-uefi's: 20), so HoltTest2 may fire on 20–40 guests a round (est. 93–186 gm); narrow it to minor versions if it fires on most guests for two weeks.
+3. **Sweep cadence.** **Decided 2026-11-08: as recommended.** *Recommend:* weekly in the shadow weeks, then every 14 days and before each image release, on the user's word.
+4. **Canaries after a plumbing change**, the rest canary-verified until they ride along or the sweep comes. **Decided 2026-11-08: as recommended.** round-speedups.md makes this the user's call; its "final round runs everything" becomes SweepTest2. *Recommend:* yes (~70 gm against ~200).
+5. **What an OS update triggers.** **Decided 2026-11-08: as recommended.** *Recommend:* HoltTest2 on any kernel, boot-chain or storage-package change; SticTest2 when the kernel line, ZFS, bcachefs, the LSM, or the mkfs and attr tools move. A dump lists ~20 such packages (fedora44-uefi's: 20), so HoltTest2 may fire on 20–40 guests a round (est. 93–186 gm); narrow it to minor versions if it fires on most guests for two weeks.
 6. **Cross-tool directions on guests** (needs S1). *Recommend:* all four at the gate every time; on guests in sweeps and when the repository format, node encoding or that OS's attribute code changes, so node parity and cross-restores stay tested (cross-tool-compat-courtesy.md).
 7. **Backup cache** (~40 GiB per fleet refresh, or 1.6 gm more per cell without it). *Recommend:* last, and only if the ledger shows frequent reruns at one generation.
 8. **ImgTest2 as the rescue-image release gate.** *Recommend:* yes, with carried PASSes and their canaries (est. ≤42 gm), and with I1's Linux part in phase 1, since until then the BIOS rescuer panel tests Debian 13's mkfs tools, not the image's.

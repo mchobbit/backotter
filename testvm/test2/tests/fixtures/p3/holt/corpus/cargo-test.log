@@ -1,0 +1,314 @@
+   Compiling bko-holt v0.2.4 (/home/m/backotter-work/t2/copy/ID/holt)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 5.72s
+     Running unittests src/lib.rs (/mnt/bko-ram/t2core-P3-holt2/target/debug/deps/bko_holt-9f40474c940775b1)
+
+running 224 tests
+test blockdev::tests::kinds ... ok
+test boot::tests::dpkg_status ... ok
+test boot::tests::debconf ... ok
+test blockdev::tests::lvm_names ... ok
+test boot::tests::default_grub ... ok
+test boot::tests::cmdline ... ok
+test blockdev::tests::transports ... ok
+test blockdev::tests::udev_db_parsing ... ok
+test boot::tests::grub_stub_and_env ... ok
+test boot::tests::alpine_and_aerynos ... ok
+test boot::tests::grub_cfg_parse ... ok
+test boot::tests::shell_word_splitting ... ok
+test boot::tests::loader_uefi_shim_grub ... ok
+test boot::tests::loader_other_cases ... ok
+test boot::tests::xbps ... ok
+test bootcode::tests::grub2 ... ok
+test bootcode::tests::grub_legacy ... ok
+test bootcode::tests::empty_and_unknown ... ok
+test bugreport::tests::arguments ... ok
+test bootcode::tests::partition_sectors ... ok
+test boot::tests::kernels_and_initramfs ... ok
+test bugreport::tests::stderr_tail_cuts_at_a_character ... ok
+test bootcode::tests::other_loaders ... ok
+test bytes::tests::crc32_check_values ... ok
+test bytes::base64_tests::round_trip ... ok
+test boot::tests::esp_and_systemd_boot ... ok
+test bytes::tests::guid_and_uuid_formats ... ok
+test bytes::tests::integers ... ok
+test bytes::tests::file_source_small_file ... ok
+test bytes::tests::strings ... ok
+test bugreport::tests::linux_image_marker_on_cdrom ... ok
+test bytes::tests::mem_source_reads ... ok
+test efi::tests::device_path_nodes ... ok
+test efi::tests::bios_and_empty_efivars ... ok
+test efi::tests::load_option_rejects ... ok
+test efi::tests::real_debian_entries ... ok
+test json::tests::accessors ... ok
+test efi::tests::real_windows_entry_has_two_paths ... ok
+test json::tests::long_scalar_arrays_break_lines ... ok
+test json::tests::obj_set_replaces_in_place ... ok
+test json::tests::option_and_vec_into ... ok
+test json::tests::parse_basics ... ok
+test json::tests::parse_big_numbers ... ok
+test json::tests::parse_rejects_bad_input ... ok
+test json::tests::parse_unicode_escapes ... ok
+test json::tests::pretty_layout ... ok
+test json::tests::strings_escape ... ok
+test json::tests::scalars_print ... ok
+test json::tests::parse_depth_limit ... ok
+test load::commands::tests::btrfs_device_uuid ... ok
+test load::commands::tests::f2fs ... ok
+test load::commands::tests::helpers ... ok
+test load::commands::tests::jfs ... ok
+test load::commands::tests::mkfs_xfs_keeps_data_and_ag_size ... ok
+test load::commands::tests::bios_grub_device_from_the_mbr ... ok
+test efi::tests::firmware_and_boot_json ... ok
+test load::commands::tests::nilfs2 ... ok
+test load::commands::tests::filesystems ... ok
+test load::commands::tests::partition_script ... ok
+test bugreport::tests::big_images_are_left_out ... ok
+test load::commands::tests::mount_restore_boot_close ... ok
+test load::commands::tests::vg_text ... ok
+test load::commands::tests::zfs_create_time_properties ... ok
+test load::layout::tests::reads_the_sample ... ok
+test load::commands::tests::update_grub_lang ... ok
+test load::status::tests::tallies ... ok
+test load::commands::tests::arch_and_fedora_boot_tools ... ok
+test load::layout::tests::contract_checks ... ok
+test blockdev::tests::scans_fake_sysfs ... ok
+test load::status::tests::blank_disk_means_partition_next ... ok
+test load::target::tests::zpool_status_devices ... ok
+test load::tests::bad_arguments ... ok
+test load::tests::every_flag ... ok
+test load::tests::quoting ... ok
+test load::tests::defaults_and_stage_selection ... ok
+test load::tests::stage_names_and_order ... ok
+test load::writetable::tests::mbr_round_trip ... ok
+test mdsb::tests::checksum_and_rewrite ... ok
+test mounts::tests::crypttab ... ok
+test mounts::tests::escapes ... ok
+test load::tests::writing_stages_check_first ... ok
+test mounts::tests::fstab ... ok
+test bootcode::tests::core_present_and_gap ... ok
+test mounts::tests::mdadm_conf ... ok
+test mounts::tests::mountinfo ... ok
+test mounts::tests::swaps ... ok
+test osrel::tests::quoting_and_junk ... ok
+test osrel::tests::parses_trixie ... ok
+test osrel::tests::json_fields ... ok
+test other::bsdlabel::tests::mount_lines ... ok
+test osrel::tests::reads_usr_lib_fallback ... ok
+test other::bsdlabel::tests::openbsd_label ... ok
+test osrel::tests::refuses_other_systems ... ok
+test load::plan::tests::problems_give_exit_4 ... ok
+test load::target::tests::maps_by_flag_and_checks ... ok
+test other::dfly::tests::diskinfo_and_label64 ... ok
+test other::freebsd::tests::tunefs_and_newfs ... ok
+test other::freebsd::tests::names ... ok
+test other::haiku::tests::names_and_df ... ok
+test other::illumos::tests::parsers ... ok
+test other::labelled::tests::names_and_wedges ... ok
+test other::tests::diskinfo ... ok
+test other::tests::families ... ok
+test other::tests::glabels ... ok
+test other::labelled::tests::newfs_args ... ok
+test parttable::tests::attribute_flags ... ok
+test load::plan::tests::clean_plan ... ok
+test parttable::tests::dos_with_logicals ... ok
+test parttable::tests::gpt_bad_entry_geometry_and_problems ... ok
+test parttable::tests::gpt_entry_size_sanity ... ok
+test load::target::tests::refusals ... ok
+test bugreport::tests::the_sample_layouts_plan_the_same_redacted ... ok
+test parttable::tests::gpt_mismatched_backup ... ok
+test parttable::tests::ebr_chain_faults ... ok
+test parttable::tests::gpt_damaged_primary_uses_backup ... ok
+test parttable::tests::mbr_odd_cases ... ok
+test probe::bfs::tests::reads_a_superblock ... ok
+test probe::bcachefs::tests::reads_a_superblock ... ok
+test probe::btrfs::tests::metadata_uuid_and_unknown_bits ... ok
+test probe::btrfs::tests::rejects ... ok
+test probe::btrfs::tests::trixie_defaults ... ok
+test parttable::tests::type_names ... ok
+test parttable::tests::gpt_round_trip ... ok
+test probe::ext::tests::raid_hints ... ok
+test probe::ext::tests::rejects ... ok
+test probe::ext::tests::optional_fields ... ok
+test probe::ext::tests::sixty_four_bit_counts ... ok
+test probe::ext::tests::unknown_feature_bits_named_like_e2fsprogs ... ok
+test probe::ext::tests::trixie_ext4 ... ok
+test probe::fat::tests::dir_label_edge_cases ... ok
+test probe::f2fs::tests::reads_a_superblock ... ok
+test probe::ext::tests::versions ... ok
+test parttable::tests::gpt_4k_sectors ... ok
+test probe::fat::tests::exfat_and_ntfs ... ok
+test probe::fat::tests::fat12_small ... ok
+test probe::fat::tests::small_fat32_is_still_fat32 ... ok
+test probe::hammer2::tests::reads_a_volume_header ... ok
+test parttable::tests::gpt_without_pmbr ... ok
+test probe::luks::tests::luks1_header ... ok
+test probe::fat::tests::vfat_rejects ... ok
+test probe::fat::tests::fat32_esp ... ok
+test probe::luks::tests::luks2_summary ... ok
+test probe::fat::tests::root_label_wins_over_boot_sector ... ok
+test probe::lvm::tests::config_syntax ... ok
+test probe::lvm::tests::parses_installer_metadata ... ok
+test probe::luks::tests::luks2_bad_json_and_sizes ... ok
+test parttable::tests::hybrid_mbr ... ok
+test probe::lvm::tests::uuid_grouping ... ok
+test probe::md::tests::level_names ... ok
+test probe::fat::tests::fat16_no_name ... ok
+test probe::md::tests::location_math ... ok
+test probe::md::tests::stale_superblock_at_wrong_offset_is_ignored ... ok
+test probe::md::tests::v090_member ... ok
+test probe::lvm::tests::pv_probe_reads_metadata ... ok
+test probe::lvm::tests::pv_metadata_wraps_around ... ok
+test probe::misc::tests::iso ... ok
+test probe::md::tests::v12_member ... ok
+test probe::misc::tests::jfs_labels_by_version ... ok
+test probe::misc::tests::swap_hibernated_and_big_pages ... ok
+test probe::misc::tests::swap_v1_and_none ... ok
+test probe::misc::tests::swap_v2 ... ok
+test probe::redoxfs::tests::reads_the_header ... ok
+test probe::nilfs2::tests::reads_a_superblock ... ok
+test bytes::tests::file_source_reads_head_and_tail ... ok
+test probe::lvm::tests::pv_metadata_problems ... ok
+test probe::tests::content_json_fields ... ok
+test probe::md::tests::v11_and_v10 ... ok
+test probe::ufs::tests::reads_a_superblock ... ok
+test probe::xfs::tests::rejects ... ok
+test probe::xfs::tests::external_log_device ... ok
+test probe::xfs::tests::meta_uuid_unknown_bits_and_quota ... ok
+test probe::xfs::tests::v5_defaults ... ok
+test probe::tests::nothing_on_blank_or_empty ... ok
+test probe::xfs::tests::v4_ignores_v5_fields ... ok
+test probe::zfs::tests::label_offsets_math ... ok
+test probe::tests::md10_member_shows_its_filesystem_too ... ok
+test probe::zfs::tests::native_big_endian_and_scalar_types ... ok
+test bugreport::tests::status_of_disks_matched_by_serial ... ok
+test probe::zfs::tests::member_from_labels ... ok
+test probe::zfs::tests::damaged_labels_still_found ... ok
+test load::writetable::tests::gpt_round_trip ... ok
+test parttable::tests::gpt_backup_states ... ok
+test probe::zfs::tests::unpack_all_types ... ok
+test probe::zfs::tests::unpack_rejects_garbage ... ok
+test redact::tests::boot_code_keeps_its_length ... ok
+test redact::tests::defaults_and_words_are_left_alone ... ok
+test redact::tests::image_labels_and_build_paths_are_kept ... ok
+test redact::tests::spans ... ok
+test probe::lvm::tests::not_a_pv ... ok
+test report::tests::btrfs_paths_through_mounts ... ok
+test probe::tests::each_sample_is_found_alone ... ok
+test report::tests::btrfs_subvol_lines ... ok
+test report::tests::btrfs_qgroup_table ... ok
+test report::tests::human_sizes ... ok
+test report::tests::timestamps ... ok
+test report::tests::udev_escapes ... ok
+test report::tests::zfs_get_lines ... ok
+test report::tests::zpool_status_text ... ok
+test probe::zfs::tests::real_zpool_cache_native_encoding ... ok
+test redact::tests::fat_serial_in_an_esp_image ... ok
+test probe::zfs::tests::real_label_xdr_encoding ... ok
+test probe::zfs::tests::end_labels_alone_are_not_a_vdev ... ok
+test redact::tests::kept_what_identifies_no_one ... ok
+test redact::tests::unredact_inverts_text ... ok
+test report::tests::dm_classification ... ok
+test redact::tests::identifiers_go_everywhere_they_appear ... ok
+test sys::tests::fake_runner_answers_and_records ... ok
+test bugreport::tests::bundle_from_a_failed_run ... ok
+test sys::tests::natural_order ... ok
+test scenarios::no_zfs_tools_no_section ... ok
+test sys::tests::open_dev_needs_privilege ... ok
+test sys::tests::statvfs_of_root ... ok
+test sys::tests::reads_under_root ... ok
+test sys::tests::warnings_dedupe ... ok
+test redact::tests::stable_and_consistent ... ok
+test scenarios::unreadable_device_warns_and_carries_on ... ok
+test scenarios::whole_disk_fs_loop_zram ... ok
+test scenarios::md_raid1 ... ok
+test scenarios::unprivileged_falls_back_to_udev ... ok
+test scenarios::bios_mbr_btrfs_guest ... ok
+test scenarios::uefi_gpt_nvme_shim ... ok
+test scenarios::zfs_root ... ok
+test scenarios::luks_lvm ... ok
+test sys::tests::real_runner_runs_and_times_out ... ok
+
+test result: ok. 224 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.30s
+
+     Running unittests src/main.rs (/mnt/bko-ram/t2core-P3-holt2/target/debug/deps/bko_holt-b8ce3c62d0cf31a7)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/cli.rs (/mnt/bko-ram/t2core-P3-holt2/target/debug/deps/cli-3f1227b2d37b6224)
+
+running 5 tests
+test refuses_other_systems_with_exit_3 ... ok
+test bad_arguments_exit_2 ... ok
+test sysroot_dump_is_json ... ok
+test help_and_version ... ok
+test live_host_matches_lsblk ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.15s
+
+     Running tests/corpus_build.rs (/mnt/bko-ram/t2core-P3-holt2/target/debug/deps/corpus_build-3ddc8eb1276f7997)
+
+running 3 tests
+test corpus_build ... ignored
+test e_mail_shapes ... ok
+test boot_code_is_filled_to_its_length ... ok
+
+test result: ok. 2 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/golden_plans.rs (/mnt/bko-ram/t2core-P3-holt2/target/debug/deps/golden_plans-c87d516ce5c96689)
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 10 filtered out; finished in 0.00s
+
+     Running tests/load_cli.rs (/mnt/bko-ram/t2core-P3-holt2/target/debug/deps/load_cli-e7c2dc6864d5dcd8)
+
+running 4 tests
+test not_a_layout_exits_3 ... ok
+test writing_stages_check_first ... ok
+test arguments ... ok
+test plan_and_status ... ok
+
+test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.01s
+
+     Running tests/realtools.rs (/mnt/bko-ram/t2core-P3-holt2/target/debug/deps/realtools-7c2f5ad52dd253b0)
+
+running 13 tests
+test runs_on_debian13 ... ok
+test swap_matches_blkid ... ok
+test fat_matches_blkid ... ok
+test ext_family_matches_blkid_and_dumpe2fs ... ok
+test exfat_ntfs_jfs_iso_match_blkid ... ok
+test btrfs_matches_blkid_and_dump_super ... ok
+test gpt_4k_sectors_match_sfdisk ... ok
+test dos_with_logicals_matches_sfdisk ... ok
+test gpt_matches_sfdisk ... ok
+test xfs_matches_blkid_and_xfs_db ... ok
+test partitions_with_filesystems_end_to_end ... ok
+test hybrid_mbr_from_sgdisk ... ok
+test luks_matches_blkid_and_dump ... ok
+
+test result: ok. 13 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 2.17s
+
+     Running tests/redact_dumps.rs (/mnt/bko-ram/t2core-P3-holt2/target/debug/deps/redact_dumps-310d27e0392f6901)
+
+running 1 test
+test redacted_dumps_plan_the_same ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+     Running tests/root_stack.rs (/mnt/bko-ram/t2core-P3-holt2/target/debug/deps/root_stack-05594339638694c4)
+
+running 2 tests
+test md_luks_lvm_stack ... ignored
+test zfs_mirror_pool ... ignored
+
+test result: ok. 0 passed; 0 failed; 2 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Doc-tests bko_holt
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+

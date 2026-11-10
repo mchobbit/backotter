@@ -55,7 +55,8 @@ logs, results and drivers. A run reads its inner phase and helpers from
 `~/backotter-work/testvm/stictest1/GUEST/` after it waits for a slot, so a
 sync during a run can hand it newer ones: don't sync while SticTest1 runs.
 A copy run from a worktree takes its own GUEST/ helpers, but testvm/compare,
-vm-run and cmp-run.sh still come from main's synced `~/backotter-work`.
+vm-run and cmp-run.sh still come from main's synced `~/backotter-work`,
+unless `BKO_TESTVM` names another testvm/ (below).
 
 | Host | Guests |
 |---|---|
@@ -124,7 +125,15 @@ watched through their exit files every 15 s; the results land in
   process (a host reboot) counts as LOST, so the round still ends.
 - haiku6 runs only where a round has `bin/haiku`; leave it out with
   `--exclude haiku6` otherwise.
-- `--self-test` checks the queue logic and how it reads the check scripts.
+- `--self-test` checks the queue logic and how it reads the check scripts,
+  the stop and skip files, and the commands it sends the hosts.
+- `--stop-file F` (here, on the Mac): while F exists nothing new starts,
+  and once nothing of ours runs the round ends, naming the guests not
+  started. `--skip-file F`: the guests F names (whitespace-separated,
+  reread every poll) are never started. SticTest2 drives its stop rules
+  through these two.
+- Test2's own flags, which `testvm/test2/t2 SticTest2` passes (see "Test2"
+  below): `--t2-run RUN`, `--t2-copy DIR`, `--t2-cells F`, `--t2-attempt N`.
 
 The queue times guests by their newest passing run on the hosts, else by these.
 
@@ -137,3 +146,95 @@ ghostbsd26-zfs 751, hardenedbsd15 519, mint22 814, mx25 685, netbsd11 324,
 nixos2605 236, omarchy 302, omnios58 370, openbsd8 338, pop24 622,
 rocky10 113, rocky10-lvm 151, sculpt2610 49, tumbleweed 186, ubuntu24 957, ubuntu26-uefi 374,
 ubuntu26-zfs 957, ubuntu26-zfsmirror 623, void-musl 115, zorin18 586.
+
+## BKO_TESTVM: checks from another testvm/
+
+Every check, and the host-side helpers haiku6/guest-lib.sh and
+omarchy/om-boot.sh, reads the synced tree's files as
+`${BKO_TESTVM:-$WORK/testvm}/...` (or `$W`'s or `$HOME/backotter-work`'s
+equivalent): vm-lib.sh, compare/ (guest-slot.sh, fsmeta.py, rt-common.sh,
+torture.sh, verdict.py, run-guest-rt.sh, nonroot-rt.sh, OS/roundtrip.sh ...),
+vm-run, haiku/attrs.py and omarchy/type-luks-passphrase.py. Unset, they read
+`~/backotter-work/testvm` as before, byte for byte. Set to a private copy's
+testvm/ (`drive.py --t2-copy DIR` sets `BKO_TESTVM=DIR/testvm` and
+`BKO_WORK=~/backotter-work`), a check and everything it runs come from that
+copy; the work dir still gives the guests, the logs and `cmp-run.sh` (the
+queue every session shares). sculpt2610's root step passes BKO_TESTVM on
+through its `sudo env`; cmp-run.sh's `sudo -E` keeps it for the rest.
+`testvm/test2/stic/check-manifests.py --lint` fails on any other reference
+to the synced tree.
+
+## Test2: SticTest2, the rows and the manifests
+
+`testvm/test2/t2 SticTest2 [ROUND] [GUEST...] [stale] [plan]` and
+`SticTest2All` (testvm/test2/README.md) run the due checks of this
+directory through drive.py, from the run's private copy, and record each
+result in the Test2 ledger.
+
+**Rows.** As drive.py sees a guest's exit file (or marks it LOST), and once
+more at the end for any still missing, it has the host run
+`t2-host row stic --mark MARK --guest GUEST --bin BIN --load N --waits S
+--attempt A --checks DIR [--run RUN --cells CELLS] [--lost]` (the copy's
+testvm/test2/t2-host, else `~/backotter-work/testvm/test2/t2-host`, else
+none, with a warning in driver.log). The row (origin `stic:MARK:GUEST:A`,
+so a repeat appends nothing) goes into that host's ledger,
+`/bkoscratch/test2/ledger/HOST.jsonl` (`T2_HOST_ROOT`, `T2_LEDGER`; drive.py
+passes those on when they are set). t2lib/rows_stic.py builds it from the
+check's own PASS/FAIL/LIMIT lines in run.out (what results.tsv counts), the
+run.out times (gm = (wall - waits) / 60), the run's cells.json, and the
+inputs measured on the host from the tree the check ran from. Its verdict:
+PASS when nothing FAILs and every LIMIT is classed, FAIL for a FAIL line or
+a LIMIT not classed (LIMIT-NEW), HARNESS when only boot, copy, binaries,
+check ran, harness or guest boots FAILs (or the check exited non-zero with
+no FAIL line), LOST with no exit file; on attempt 2 a PASS is a FLAKY-FAIL,
+or PASS (known-flake) when attempt 1's FAILs matched testvm/test2/stic/
+flakes.json. SticTest1 rounds (no `--t2-*`) write rows too, rule `test1`:
+testvm/stictest1 from the tree the checks ran from (the synced one, or
+`--private-copy`'s `~/backotter-work/st1-wt`, whose commit drive.py records
+in `~/backotter-work/st1-wt/COMMIT`) and the rest of testvm from the synced
+tree; such a row counts as a PASS only when the synced stamp is clean and,
+with `--private-copy`, the same commit. A failed write changes nothing else:
+results.tsv, fails.txt, the summary and the exit code are as before.
+
+A row is measured when it is written, which can be long after its check
+began: a mark run again adopts the checks that ended then. So rows_stic
+looks at every file the row's inputs stand for (the tree's files, the
+binaries with their digests and SHA256SUMS, the guest's image-state and
+files, a disk-keyed guest's disks, the host inputs), and one modified after
+run.out.start makes the row `valid: false` (it never counts, and its note
+names the files). A Test2 row is also invalid without its cells.json entry
+or its planned key.
+
+**A SticTest2 run** exits 0 only when every check it had to run, and every
+rerun and fan-out, ended in a valid PASS (an attempt-2 HARNESS or LOST
+leaves attempt 1's FAIL standing); 1 when any ended otherwise, had no row,
+or a stop rule fired (one need failing on 2 guests of an OS, 2 harness
+results, a failed slow gate, swap-out over 1 GiB on a host since the run
+began, or the run's own wear-tagged writes over 2 x its budget); 2 when it
+was refused (the archiver gate can't be loaded or planned, or drive.py
+ended non-zero having started nothing). Before cells.json it has the copy's
+`t2-host imgsum` sum the disks of a due guest with no image-state
+(sculpt2610), so that guest's rows have an identity. `t2 resume RUN` waits
+for a drive.py still running on the round's --out rather than start a
+second, and counts the rows already fed in its stop rules again.
+
+**What a check's key covers** is its entry in
+`testvm/test2/stic/manifests.json`: its OS binaries (haiku6 also Linux's
+restic-bko), its own directory (`testvm/stictest1/GUEST/**`) and every repo
+file outside it that its scripts use (harness), what reads the records
+(judge.py, verdict.py, expected-coverage.json) and its
+`testvm/test2/stic/limits.json` entry (judge), the guest's generation and
+files, alpinebsd's netbsd11 and ~/backotter-work/netbsd-tools, and for the
+host-side checks (sculpt2610, haiku6, artix-dinit, artix-s6, arch) the host's
+versions. vm-run, vm-lib.sh, guest-slot.sh, console-boot.py, drive.py,
+cmp-run.sh and iolog.sh are the family's plumbing: a change there runs the
+canaries first. After changing a check, run
+`testvm/test2/stic/check-manifests.py`: it follows each check's scripts
+(sources, the scripts they run or copy, Python imports) and names any repo
+file one uses that its entry lacks.
+
+**LIMITs** a check reports are classed in `testvm/test2/stic/limits.json`
+(`{GUEST: {NEED: why}}`, seeded 2026-11-08 from each check's newest passing
+st1-rel4* run.out on Chopin and Cinqcent: 154 needs). A LIMIT need that is
+neither there nor in the check's last pass makes the result FAIL until it
+is added.

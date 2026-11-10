@@ -26,7 +26,7 @@ set -uo pipefail
 GUEST=sculpt2610
 HERE=$(cd "$(dirname "$0")" && pwd)
 WORK=${BKO_WORK:-$HOME/backotter-work}
-C=$WORK/testvm/compare
+C=${BKO_TESTVM:-$WORK/testvm}/compare
 BIN=$(cd "$1" && pwd); PORT=$2; PREFIX=$3; FILTER=${4:-.}
 LOGS=${STC_LOGS:-$WORK/stictest1/$GUEST/logs}; mkdir -p "$LOGS"
 for f in restic-bko rustic-bko; do [[ -x $BIN/$f ]] || { echo "check: no $BIN/$f" >&2; exit 2; }; done
@@ -35,7 +35,7 @@ IMG=$WORK/vms/$GUEST/$GUEST.qcow2
 
 if [[ ${STC_INNER:-} != "$PREFIX" ]]; then
     HOT_C=90 "$WORK/cmp-run.sh" --reserve 2 2 sudo env STC_INNER="$PREFIX" BKO_WORK="$WORK" STC_LOGS="$LOGS" \
-        bash "$HERE/$(basename "$0")" "$BIN" "$PORT" "$PREFIX" "$FILTER"
+        ${BKO_TESTVM:+BKO_TESTVM="$BKO_TESTVM"} bash "$HERE/$(basename "$0")" "$BIN" "$PORT" "$PREFIX" "$FILTER"
     exit $?
 fi
 

@@ -29,11 +29,13 @@
 # queue/RUN/max-HOST holds a new MAXJOBS for HOST.  queue/RUN/done gets a row
 # per job (end_utc host gv rc d_gib m_gib port wait_s run_s),
 # queue/RUN/runner-HOST.log what the runner did, /bkoscratch/holttest1d/
-# RUN-GV.log each job's output.  HT_HOLT, HT_BKO_BIN, HT_ROUND, HT_RUSTIC and
-# HT_RAM reach ht1.sh (paths made absolute), and HT_WORK with HT_RECORDS
-# (tests: /mnt/bko-ram/NAME and /bkoscratch/NAME); any other HT_ one
-# (HT_QUICK, HT_LIMIT_KIB and the like) refuses the start.  If the binaries
-# change during the run, nothing more starts and a job of ours still in line
+# RUN-GV.log each job's output.  HT_HOLT, HT_HOLT_BIN, HT_BKO_BIN, HT_ROUND,
+# HT_RUSTIC and HT_RAM reach ht1.sh (paths made absolute), and HT_WORK with
+# HT_RECORDS (tests: /mnt/bko-ram/NAME and /bkoscratch/NAME); any other HT_
+# one (HT_QUICK, HT_LIMIT_KIB and the like) refuses the start.  HoltTest2's
+# T2_RUN, T2_CELLS and T2_HOST_ROOT reach the jobs too (their ledger rows:
+# ht1-lib.sh).  If the binaries (rustic-bko's set, and HT_HOLT_BIN's
+# SHA256SUMS when it has one) change during the run, nothing more starts and a job of ours still in line
 # leaves it; nothing more starts either after 3 jobs in a row that
 # failed within 60 s, or a line ram-size.sh can't size.
 # (--pop is the queue host's half of taking a line.)
@@ -128,18 +130,19 @@ MINFREE_GB=$((10#$MINFREE_GB))
 # (sudo -E passes them on).
 for v in $(compgen -e); do
     case $v in
-    HT_HOLT|HT_BKO_BIN|HT_ROUND|HT_RUSTIC|HT_RAM|HT_WORK|HT_RECORDS) ;;
+    HT_HOLT|HT_HOLT_BIN|HT_BKO_BIN|HT_ROUND|HT_RUSTIC|HT_RAM|HT_WORK|HT_RECORDS) ;;
     HT_*) die "$v is set: unset it (the queue's jobs are plain HoltTest1 runs)" ;;
     esac
 done
 ((EUID)) || die "run it as m, not root: cmp-run.sh's lock files are m's"
 # Paths as this runner and its jobs both see them (this works in $L, and
 # cmp-run.sh in ~/backotter-work).
-for v in HT_HOLT HT_BKO_BIN HT_RUSTIC; do
+for v in HT_HOLT HT_HOLT_BIN HT_BKO_BIN HT_RUSTIC; do
     [[ -n ${!v:-} ]] || continue
     p=$(realpath -e -- "${!v}" 2>/dev/null) || die "$v=${!v}: no such file"
     export "$v=$p"
 done
+[[ -z ${HT_HOLT_BIN:-} || -d $HT_HOLT_BIN ]] || die "HT_HOLT_BIN=$HT_HOLT_BIN: not a directory (DIR/bko-holt, DIR/PLATFORM/bko-holt)"
 p=${CMP_RUN:-$W/cmp-run.sh}   # the shared ledger, always
 CMP_RUN=$(realpath -e -- "$p" 2>/dev/null) || die "no $p"
 # The sweep (as root) takes each WORK/X/Y whose run lock, named after
@@ -161,7 +164,9 @@ else
     binfile=$bset/SHA256SUMS
     bins="$bset: $(head -1 "$bset/BUILD-INFO" 2>/dev/null || echo "${HT_ROUND:+round $HT_ROUND}")"
 fi
-binsum() { sha256sum 2>/dev/null < "$binfile" | cut -c1-64; }
+# HT_HOLT_BIN's SHA256SUMS too, when it has one (HoltTest2's builds do).
+hsums=""; [[ -z ${HT_HOLT_BIN:-} || ! -f $HT_HOLT_BIN/SHA256SUMS ]] || hsums=$HT_HOLT_BIN/SHA256SUMS
+binsum() { [[ -r $binfile ]] || return 0; cat -- "$binfile" ${hsums:+"$hsums"} 2>/dev/null | sha256sum | cut -c1-64; }
 BINSUM=$(binsum); [[ -n $BINSUM ]] || die "no $binfile: every job would refuse"
 bignames() { "$HERE/ram-size.sh" --big "$BIG_GIB" | paste -sd, -; }
 BIGNAMES=$(bignames) || die "ram-size.sh --big $BIG_GIB failed"
@@ -268,8 +273,8 @@ sweep() {  # runs that died in RAM: their records to /bkoscratch, R deleted (as 
 
 where="in RAM"; ((RAM)) || where="on /bkoscratch (HT_RAM=0)"
 say "start: run $RUN, ports $BASE-$((BASE + 89)), at most $MAX, queue ${QHOST:-here}, $HERE/ht1.sh, $where"
-say "env: $(env | grep -E '^(HT_[A-Za-z0-9_]*|BIG_GIB|MINFREE_GB|ONLY_ELSEWHERE|CMP_RUN)=' | sort | tr '\n' ' ')"
-say "binaries: $bins (sha256 ${BINSUM:0:12} of $binfile)"
+say "env: $(env | grep -E '^(HT_[A-Za-z0-9_]*|T2_[A-Za-z0-9_]*|BIG_GIB|MINFREE_GB|ONLY_ELSEWHERE|CMP_RUN)=' | sort | tr '\n' ' ')"
+say "binaries: $bins (sha256 ${BINSUM:0:12} of $binfile${hsums:+ and $hsums}); bko-holt ${HT_HOLT:-${HT_HOLT_BIN:-$L/bin}}"
 say "big (D >= $BIG_GIB GiB; one at a time here): ${BIGNAMES//,/ }"
 ((${#skip[@]})) && say "left for other hosts: ${skip[*]}"
 SWEPT=""; sweep

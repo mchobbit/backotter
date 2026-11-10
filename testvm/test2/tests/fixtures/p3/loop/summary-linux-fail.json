@@ -1,0 +1,194 @@
+{
+ "pass": false,
+ "host": "chopin",
+ "platforms": "linux",
+ "bin": "/home/m/backotter-work/round9/bin",
+ "old_bin": "/home/m/backotter-work/round8/bin",
+ "wall": 3692,
+ "id": "bkosp4-345561-1793537482",
+ "restic": "5aa3892341951eaa21a9295dbbbdee741d5893ce",
+ "restic_digest": "7ebf0be8972475fde1d2e5d5d4fd02bd33ed562bafa0f39af9dd2c9f1cceff37",
+ "rustic": "2f9c59b618bfb4829f114454be0bfa4a64f00295",
+ "rustic_core": "e8cbde992d2e90488e1ba74a4a145df3d3202037",
+ "notes": [
+  "OLD_BIN=none: snapshot identity (SPEC3 2) not checked"
+ ],
+ "rows": [
+  {
+   "platform": "linux",
+   "step": "zfs-onto-ext4",
+   "target": "",
+   "direction": "restic-bko",
+   "verdict": "FAIL",
+   "wall": "3640",
+   "checks": [
+    "xattr_order: user.zz-first not first",
+    "log tail: ..."
+   ],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/zfs-onto-ext4.log"
+  },
+  {
+   "platform": "linux",
+   "step": "zfs-onto-ext4",
+   "target": "",
+   "direction": "rustic-bko",
+   "verdict": "PASS",
+   "wall": "3640",
+   "checks": [],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/zfs-onto-ext4.log"
+  },
+  {
+   "platform": "linux",
+   "step": "zfs-onto-ext4",
+   "target": "",
+   "direction": "restic-to-rustic",
+   "verdict": "PASS",
+   "wall": "3640",
+   "checks": [],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/zfs-onto-ext4.log"
+  },
+  {
+   "platform": "linux",
+   "step": "zfs-onto-ext4",
+   "target": "",
+   "direction": "rustic-to-restic",
+   "verdict": "PASS",
+   "wall": "3640",
+   "checks": [],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/zfs-onto-ext4.log"
+  },
+  {
+   "platform": "linux",
+   "step": "zfs-onto-ext4",
+   "target": "",
+   "direction": "tools",
+   "verdict": "PASS",
+   "wall": "3640",
+   "checks": [],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/zfs-onto-ext4.log"
+  },
+  {
+   "platform": "linux",
+   "step": "ext4",
+   "target": "",
+   "direction": "restic-bko",
+   "verdict": "PASS",
+   "wall": "3664",
+   "checks": [],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/ext4.log"
+  },
+  {
+   "platform": "linux",
+   "step": "ext4",
+   "target": "",
+   "direction": "rustic-bko",
+   "verdict": "PASS",
+   "wall": "3664",
+   "checks": [],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/ext4.log"
+  },
+  {
+   "platform": "linux",
+   "step": "ext4",
+   "target": "",
+   "direction": "restic-to-rustic",
+   "verdict": "PASS",
+   "wall": "3664",
+   "checks": [],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/ext4.log"
+  },
+  {
+   "platform": "linux",
+   "step": "ext4",
+   "target": "",
+   "direction": "rustic-to-restic",
+   "verdict": "PASS",
+   "wall": "3664",
+   "checks": [],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/ext4.log"
+  },
+  {
+   "platform": "linux",
+   "step": "ext4",
+   "target": "",
+   "direction": "tools",
+   "verdict": "PASS",
+   "wall": "3664",
+   "checks": [],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/ext4.log"
+  },
+  {
+   "platform": "linux",
+   "step": "jfs",
+   "target": "",
+   "direction": "restic-bko",
+   "verdict": "PASS",
+   "wall": "3544",
+   "checks": [],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/jfs.log"
+  },
+  {
+   "platform": "linux",
+   "step": "jfs",
+   "target": "",
+   "direction": "rustic-bko",
+   "verdict": "PASS",
+   "wall": "3544",
+   "checks": [],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/jfs.log"
+  },
+  {
+   "platform": "linux",
+   "step": "jfs",
+   "target": "",
+   "direction": "restic-to-rustic",
+   "verdict": "PASS",
+   "wall": "3544",
+   "checks": [],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/jfs.log"
+  },
+  {
+   "platform": "linux",
+   "step": "jfs",
+   "target": "",
+   "direction": "rustic-to-restic",
+   "verdict": "PASS",
+   "wall": "3544",
+   "checks": [],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/jfs.log"
+  },
+  {
+   "platform": "linux",
+   "step": "jfs",
+   "target": "",
+   "direction": "tools",
+   "verdict": "PASS",
+   "wall": "3544",
+   "checks": [],
+   "log": "/home/m/backotter-work/speed-wt/val4/logs/linux/jfs.log"
+  },
+  {
+   "platform": "linux",
+   "step": "bcachefs",
+   "target": "",
+   "direction": "",
+   "verdict": "SKIP",
+   "wall": "1",
+   "checks": [
+    "bcachefs: no mkfs.bcachefs"
+   ],
+   "log": "x"
+  },
+  {
+   "platform": "linux",
+   "step": "jfs",
+   "target": "",
+   "direction": "",
+   "verdict": "SKIP",
+   "allowed": true,
+   "wall": "1",
+   "checks": [],
+   "log": "x"
+  }
+ ]
+}

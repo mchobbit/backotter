@@ -1,0 +1,53 @@
+# bko-holt load plan for layout.json
+# Source: host1, GhostBSD 26.2-R15.1p6, BIOS boot with freebsd, dumped 2026-11-08T02:46:48Z
+#
+# Disks:
+#   vtbd0 (16 GiB) -> /dev/sdq
+#
+# Notes:
+#   - fstab's /proc (procfs) isn't on the layout's disks; not mounted
+#   - fstab's /compat/linux/proc (linprocfs) isn't on the layout's disks; not mounted
+#   - fstab's /tmp (tmpfs) isn't on the layout's disks; not mounted
+#   - fstab's /compat/linux/sys (linsysfs) isn't on the layout's disks; not mounted
+#   - fstab's /dev/fd (fdescfs) isn't on the layout's disks; not mounted
+
+# ---- partition ----
+# vtbd0 -> /dev/sdq: the source's table, GUIDs and boot code exactly
+sh -c 'bko-holt write-table layout.json vtbd0 /dev/sdq $(diskinfo /dev/sdq | cut -f3)'
+gpart show sdq
+
+# ---- assemble ----
+# (nothing to do)
+
+# ---- format ----
+# vtbd0p2: UFS as the source's (dumpfs -m)
+newfs -O 2 -U -a 32 -b 32768 -d 32768 -e 4096 -f 4096 -g 16384 -h 64 -i 8192 -k 6400 -m 8 -o time -s 29349888 -t /dev/sdqp2
+# vtbd0p2: GEOM label rootfs0, as the source's
+glabel label rootfs0 /dev/sdqp2
+# vtbd0p3: GEOM label swap0, as the source's
+glabel label swap0 /dev/sdqp3
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+mount -t ufs -o rw,noatime /dev/sdqp2 /mnt/bko-target
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+
+# ---- boot ----
+# the boot code (MBR, freebsd-boot) was written with the partition table
+# / had no .snap on the source (its directory's times kept)
+sh -c '[ ! -d /mnt/bko-target/.snap ] || { touch -r /mnt/bko-target /run/bko-holt/snapref && rmdir /mnt/bko-target/.snap && touch -r /run/bko-holt/snapref /mnt/bko-target; }'
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -Rp /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+
+# ---- close ----
+# everything under the target, deepest first
+sh -c 'mount -p | awk '\''{ print $2 }'\'' | awk '\''$0 == "/mnt/bko-target" || index($0, "/mnt/bko-target/") == 1'\'' | sort -r | while read -r m; do umount "$m" || exit; done'
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status filesystem /dev/sdqp2 ufs -
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: exit 0, nothing on stderr

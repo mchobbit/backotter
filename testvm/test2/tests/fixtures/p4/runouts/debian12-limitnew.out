@@ -1,0 +1,20 @@
+PASS rustic-bko backs up owners with no name (nsswitch files systemd): exit 0 with uids 1234, 4321, 54321 unnamed
+PASS restic-bko runs natively (Debian 12, glibc 2.36): backup exit 0
+PASS restic-bko backup leaves source atimes alone (strictatime): same; atime (symlinks) x3 (expected)
+PASS rustic-bko backup leaves source atimes alone (strictatime): same; atime (symlinks) x3 (expected)
+PASS Same repository format: snapshots node-identical: 129 nodes from /mnt down
+PASS Ancestor directories stored the same by both tools: /mnt, /mnt/bkc, /mnt/bkc/src, anc: no node differences
+PASS Round trip restic-restic (fsmeta: xattrs, ACLs, caps, flags, owners, set-id, links, sparse, devices, FIFOs, symlinks, names, times, ancestors): identical; 0 message lines
+PASS Round trip rustic-rustic (fsmeta: xattrs, ACLs, caps, flags, owners, set-id, links, sparse, devices, FIFOs, symlinks, names, times, ancestors): identical; 1 message lines
+PASS Round trip restic-rustic (fsmeta: xattrs, ACLs, caps, flags, owners, set-id, links, sparse, devices, FIFOs, symlinks, names, times, ancestors): identical; 1 message lines
+PASS Round trip rustic-restic (fsmeta: xattrs, ACLs, caps, flags, owners, set-id, links, sparse, devices, FIFOs, symlinks, names, times, ancestors): identical; 0 message lines
+PASS Ancestor directories restored the same from both tools' repositories: 755 0:0 1793600763 1794005624;755 0:0 1794005624 1794005624;
+PASS Ancestor directories stored with their real metadata: mode/owner/mtime of /mnt, /mnt/bkc as at backup time (755 0:0 1794005624;755 0:0 1794005624;); src (0705) and anc (2751, 4321:8765, xattrs, times) in the fsmeta round trips
+PASS Restore over existing immutable/append-only files (restic): exit 0, identical
+PASS Restore over existing immutable/append-only files (rustic): exit 0, identical
+PASS Sockets skipped by both tools: no socket node, none restored
+PASS Non-root backup and restore (uid 4321, own tree: xattrs, default ACL, FIFO, sparse, times): all four directions identical
+LIMIT SELinux labels: Debian 12 runs AppArmor (no on-disk labels); no SELinux
+LIMIT Birth times: ext4 keeps them, Linux can't set them (BACKOTTER.md)
+LIMIT Project IDs, compression, nocow, casefold: the guest's ext4 has no project/casefold feature; ext4 has no c/C (fs_roundtrip.py ext4 covers project and casefold)
+LIMIT Sparse files: the guest's ext4 gave a hole to a file the fixture wrote whole (synthetic)

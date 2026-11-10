@@ -26,11 +26,11 @@ if [[ ${1:-} == --guest-phase ]]; then
     # Run under the slot and the reservation: boot, run the inner part, fetch the images.
     shift; BIN=$1 PORT=$2 W=$3 LOGS=$4
     export TMPDIR=$W/tmp; mkdir -p "$TMPDIR" "$W/img"
-    . "$WORK/testvm/vm-lib.sh"
+    . "${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh"
     trap vm_halt EXIT
     vm_boot $GUEST "$PORT" "$LOGS/vm" --snapshot --memory 4096 || { echo "guest didn't come up"; exit 3; }
     vm_sh 'mkdir -p /root/bko-st' || exit 3
-    for f in "$BIN/restic-bko" "$BIN/rustic-bko" "$here/check-inner.sh" "$WORK/testvm/compare/rt-common.sh"; do
+    for f in "$BIN/restic-bko" "$BIN/rustic-bko" "$here/check-inner.sh" "${BKO_TESTVM:-$WORK/testvm}/compare/rt-common.sh"; do
         vm_put "$f" "/root/bko-st/$(basename "$f")" || { echo "copying $f failed"; exit 3; }
     done
     T=720 vm_sh 'bash /root/bko-st/check-inner.sh' >"$LOGS/inner.log" 2>&1; echo "inner exit $?" >>"$LOGS/inner.log"
@@ -57,7 +57,7 @@ trap cleanup EXIT
 echo "check.sh $GUEST: bin $BIN ($(cat "$BIN/restic-commit" 2>/dev/null | head -n1); $(cat "$BIN/rustic-commit" 2>/dev/null | head -n1)), port $PORT, logs $LOGS"
 
 # --- guest phase, under a slot and a reservation ---------------------------------------
-. "$WORK/testvm/compare/guest-slot.sh"
+. "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
 slot_take $SLOTMAX $SLOTRANGE
 HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 6 "$here/check.sh" --guest-phase "$BIN" "$PORT" "$W" "$LOGS" \
     >"$LOGS/guest-phase.log" 2>&1

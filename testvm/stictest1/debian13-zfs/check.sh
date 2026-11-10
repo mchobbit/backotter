@@ -42,7 +42,7 @@ HERE=$(dirname "$SELF") STC_LOGS=${STC_LOGS:-$WORK/stictest1/$GUEST/logs}
 [[ -x $BIN/restic-bko && -x $BIN/rustic-bko ]] || { echo "no restic-bko/rustic-bko in $BIN" >&2; exit 2; }
 
 if [[ -z ${CHECK_RESERVED:-} ]]; then
-    . $WORK/testvm/compare/guest-slot.sh
+    . ${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh
     case $(hostname -s) in
         chopin) slot_take 3 2700-2799 ;;
         *) slot_take 3 2900-2999 ;;
@@ -57,7 +57,7 @@ RAM=/mnt/bko-ram/$PREFIX/$GUEST
 LOGS=$STC_LOGS/$(date +%Y%m%d-%H%M%S)
 mkdir -p "$RAM" "$LOGS"
 : >"$LOGS/verdicts.txt"
-. $WORK/testvm/vm-lib.sh
+. ${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh
 cleanup() { vm_halt; rm -rf "$RAM"; rmdir /mnt/bko-ram/$PREFIX 2>/dev/null; }
 trap cleanup EXIT
 v() {  # VERDICT NEED DETAIL
@@ -69,7 +69,7 @@ vm_boot $GUEST "$PORT" "$LOGS/vm" --snapshot --memory 4096 || { echo "FAIL boot:
 unset TMPDIR
 C=/root/bko/testvm/compare
 vm_ssh "mkdir -p $C /root/bko/bin" || exit 1
-for f in fs_roundtrip.py compare.py fsmeta.py torture.sh rt-common.sh nonroot-inner.sh; do vm_put $WORK/testvm/compare/$f $C/$f || exit 1; done
+for f in fs_roundtrip.py compare.py fsmeta.py torture.sh rt-common.sh nonroot-inner.sh; do vm_put ${BKO_TESTVM:-$WORK/testvm}/compare/$f $C/$f || exit 1; done
 vm_put "$HERE/real.sh" $C/real.sh || exit 1
 if [[ -n ${INVENTORY:-} ]]; then
     vm_put "$HERE/inv.sh" /root/bko/inv.sh && T=900 vm_ssh "sh /root/bko/inv.sh" >"$LOGS/inventory.txt" 2>&1
@@ -92,7 +92,7 @@ for fs in zfs-ds zfs ext4; do
     rm -rf "${LOGS:?}/fsrt-$fs" && mkdir -p "$LOGS/fsrt-$fs"
     T=300 vm_ssh "d=\$(dirname \$(find /root -path '*fs-roundtrip*/$PREFIX/$fs/results.json' | head -n 1)) && cd \$d && tar -cf - --exclude=./restic-bko --exclude=./rustic-bko --exclude=./restic-to-rustic --exclude=./rustic-to-restic . && rm -rf \$d" |
         tar -C "$LOGS/fsrt-$fs" -xf - 2>/dev/null
-    python3 $WORK/testvm/compare/verdict.py judge fsrt "$LOGS/fsrt-$fs.log" --results "$LOGS/fsrt-$fs" --platform linux \
+    python3 ${BKO_TESTVM:-$WORK/testvm}/compare/verdict.py judge fsrt "$LOGS/fsrt-$fs.log" --results "$LOGS/fsrt-$fs" --platform linux \
         --step $GUEST --target "$fs" --rc $rc --wall $((SECONDS - s)) >"$LOGS/fsrt-$fs.rows" 2>&1
     python3 - "$LOGS/fsrt-$fs.rows" "$fs" >>"$LOGS/verdicts.txt" <<'EOF'
 import json, sys

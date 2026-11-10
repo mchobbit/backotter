@@ -1,0 +1,20 @@
+FAIL FreeBSD file flags (schg/sappnd/sunlnk/nodump/uarch, ZFS DOS flags; uchg/uappnd/uunlnk/arch on UFS): restic-restic:no-verdict rustic-rustic:no-verdict restic-rustic:no-verdict rustic-restic:no-verdict
+FAIL NFSv4 ACLs on ZFS and UFS; restore onto UFS without ACLs warns and exits 0: restic-restic:no-verdict rustic-rustic:no-verdict restic-rustic:no-verdict rustic-restic:no-verdict
+FAIL Extended attributes user+system, stored sorted by name: restic-restic:no-verdict rustic-rustic:no-verdict restic-rustic:no-verdict rustic-restic:no-verdict
+FAIL Birth times min(birth, mtime): restic-restic:no-verdict rustic-rustic:no-verdict restic-rustic:no-verdict rustic-restic:no-verdict
+FAIL atime/mtime to the nanosecond, files, dirs, symlinks: restic-restic:no-verdict rustic-rustic:no-verdict restic-rustic:no-verdict rustic-restic:no-verdict
+FAIL Hard links, symlinks, set-id/sticky, owners with no name, FIFO, non-UTF-8/deep/empty names: restic-restic:no-verdict rustic-rustic:no-verdict restic-rustic:no-verdict rustic-restic:no-verdict
+FAIL Sparse files (UFS md disk): restic-restic:no-verdict rustic-rustic:no-verdict restic-rustic:no-verdict rustic-restic:no-verdict
+FAIL Sockets skipped (no node, no restore, no message): restic-restic:no-verdict rustic-rustic:no-verdict restic-rustic:no-verdict rustic-restic:no-verdict
+FAIL Restore over an existing, changed tree: restic-restic:no-verdict rustic-rustic:no-verdict restic-rustic:no-verdict rustic-restic:no-verdict
+FAIL Backup and restore exit 0: restic-restic:no-verdict rustic-rustic:no-verdict restic-rustic:no-verdict rustic-restic:no-verdict
+FAIL Snapshots of both tools node-identical (same repository format): snap-identical: no result
+FAIL Snapshots node-identical (torture tree, roundtrip.sh rt_snapshots): see rt-restic-rustic.log/rt-rustic-restic.log
+FAIL Guest's real files (libc/su schg, /boot/entropy uarch,nodump), ZFS project IDs, sappnd/sunlnk, system xattrs, NFSv4 ACL, FIFO, sparse: 4 directions: rt-restic-restic: no result rt-rustic-rustic: no result rt-restic-rustic: no result rt-rustic-restic: no result
+FAIL Restore over existing immutable (schg) / append-only (sappnd) files changed under their flags: over-restic-restic: no result over-rustic-rustic: no result over-restic-rustic: no result over-rustic-restic: no result
+FAIL Ancestor directories of the backup path stored with their metadata, the same by both tools: ancestors: no result
+FAIL Device nodes (rdev 0): devnodes-made: no result
+FAIL Non-root restore (uid 4321, 4 directions): {"platform": "", "step": "", "target": "", "direction": "", "verdict": "FAIL", "wall": "", "checks": ["no log (exit )", "no log: [Errno 2] No such file or directory: '/home/m/backotter-work/stictest1/ghostbsd26-zfs/logs/t2s-20261108T0315-4f2a/20261108-031600-roundtest/nonroot.log'"], "log": "/home/m/backotter-work/stictest1/ghostbsd26-zfs/logs/t2s-20261108T0315-4f2a/20261108-031600-roundtest/nonroot.log"} 
+LIMIT Linux-only metadata (SELinux, capabilities, inode flags, POSIX ACL default on ZFS): not on FreeBSD/ZFS: NFSv4 ACLs instead, no security.* namespace (MAC labels off: security.mac.labeled=0)
+LIMIT Whole-disk needs (zpool.cache, boot): out of scope: whole-disk
+logs: /home/m/backotter-work/stictest1/ghostbsd26-zfs/logs/t2s-20261108T0315-4f2a/20261108-031600-roundtest (0 s)

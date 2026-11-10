@@ -1,0 +1,566 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.4"
+  },
+  "generated": "2026-11-08T02:24:59Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host1",
+    "machine_id": "bd000000000040008000000000000001",
+    "dmi": {
+      "sys_vendor": "QEMU",
+      "product_name": "Standard PC (i440FX + PIIX, 1996)",
+      "product_version": "pc-i440fx-10.0",
+      "board_vendor": null,
+      "board_name": null,
+      "bios_vendor": "SeaBIOS",
+      "bios_version": "1.16.3-debian-1.16.3-2",
+      "bios_date": "04/01/2014",
+      "product_uuid": null,
+      "chassis_type": "1"
+    },
+    "virtualization": "kvm"
+  },
+  "os": {
+    "id": "debian",
+    "version_id": "13",
+    "version_codename": "trixie",
+    "pretty_name": "Debian GNU/Linux 13 (trixie)",
+    "debian_version": "13.7",
+    "kernel_release": "6.12.115+deb13.1-amd64",
+    "kernel_version": "#1 SMP PREEMPT_DYNAMIC Debian 6.12.115-2 (2026-11-01)",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "bios"
+  },
+  "storage": {
+    "topology": {
+      "vda (disk, 16 GiB, dos)": {
+        "vda1 (partition, 1 GiB) ext4 on /boot": {},
+        "vda2 (partition, 2 GiB) swap": {},
+        "vda3 (partition, 13 GiB) ext2 on /": {}
+      }
+    },
+    "disks": [
+      {
+        "name": "vda",
+        "path": "/dev/vda",
+        "kind": "disk",
+        "devno": "254:0",
+        "size_bytes": 17179869184,
+        "size": "16 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/1",
+          "/dev/disk/by-path/pci-0000:00:04.0",
+          "/dev/disk/by-path/virtio-pci-0000:00:04.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "dos",
+          "sector_size": 512,
+          "disk_signature": "bc000001",
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vda1",
+            "path": "/dev/vda1",
+            "devno": "254:1",
+            "number": 1,
+            "start_lba": 2048,
+            "sectors": 2097152,
+            "start_bytes": 1048576,
+            "size_bytes": 1073741824,
+            "type": "0x83",
+            "type_name": "Linux",
+            "bootable": true,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000001-01",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part1",
+              "/dev/disk/by-partuuid/bc000001-01",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partnum/1",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partuuid/bc000001-01",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-uuid/bc000000-0000-4000-8000-000000000001",
+              "/dev/disk/by-path/pci-0000:00:04.0-part1",
+              "/dev/disk/by-path/virtio-pci-0000:00:04.0-part1",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "ext4",
+              "usage": "filesystem",
+              "uuid": "bc000000-0000-4000-8000-000000000001",
+              "label": null,
+              "version": "1.0",
+              "block_size": 4096,
+              "blocks": 262144,
+              "size_bytes": 1073741824,
+              "free_blocks": 168399,
+              "reserved_blocks": 13107,
+              "inodes": 65536,
+              "free_inodes": 64959,
+              "inode_size": 256,
+              "inodes_per_group": 8192,
+              "blocks_per_group": 32768,
+              "first_data_block": 0,
+              "revision": 1,
+              "features": [
+                "has_journal",
+                "ext_attr",
+                "resize_inode",
+                "dir_index",
+                "orphan_file",
+                "filetype",
+                "needs_recovery",
+                "extent",
+                "64bit",
+                "flex_bg",
+                "metadata_csum_seed",
+                "sparse_super",
+                "large_file",
+                "huge_file",
+                "dir_nlink",
+                "extra_isize",
+                "metadata_csum",
+                "orphan_present"
+              ],
+              "state": "clean",
+              "has_errors": false,
+              "errors_behavior": "continue",
+              "creator_os": "Linux",
+              "reserved_gdt_blocks": 127,
+              "default_hash": "half_md4",
+              "hash_seed": "bc000000-0000-4000-8000-000000000002",
+              "mkfs_time": 1793604542,
+              "last_mounted_on": "/boot",
+              "flex_bg_size": 16,
+              "descriptor_size": 64,
+              "min_extra_isize": 32,
+              "want_extra_isize": 32,
+              "journal_inode": 8
+            },
+            "mounted_at": ["/boot"]
+          },
+          {
+            "name": "vda2",
+            "path": "/dev/vda2",
+            "devno": "254:2",
+            "number": 2,
+            "start_lba": 2099200,
+            "sectors": 4194304,
+            "start_bytes": 1074790400,
+            "size_bytes": 2147483648,
+            "type": "0x82",
+            "type_name": "Linux swap / Solaris",
+            "bootable": false,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000001-02",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part2",
+              "/dev/disk/by-partuuid/bc000001-02",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partnum/2",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partuuid/bc000001-02",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-uuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:00:04.0-part2",
+              "/dev/disk/by-path/virtio-pci-0000:00:04.0-part2",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000003"
+            ],
+            "holders": [],
+            "content": {
+              "type": "swap",
+              "usage": "other",
+              "uuid": "bc000000-0000-4000-8000-000000000003",
+              "label": null,
+              "version": "1",
+              "page_size": 4096,
+              "last_page": 524287,
+              "size_bytes": 2147483648,
+              "bad_pages": 0
+            },
+            "mounted_at": []
+          },
+          {
+            "name": "vda3",
+            "path": "/dev/vda3",
+            "devno": "254:3",
+            "number": 3,
+            "start_lba": 6293504,
+            "sectors": 27260928,
+            "start_bytes": 3222274048,
+            "size_bytes": 13957595136,
+            "type": "0x83",
+            "type_name": "Linux",
+            "bootable": false,
+            "logical": false,
+            "extended": false,
+            "uuid": "bc000001-03",
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part3",
+              "/dev/disk/by-partuuid/bc000001-03",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partnum/3",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partuuid/bc000001-03",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-uuid/bc000000-0000-4000-8000-000000000004",
+              "/dev/disk/by-path/pci-0000:00:04.0-part3",
+              "/dev/disk/by-path/virtio-pci-0000:00:04.0-part3",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000004"
+            ],
+            "holders": [],
+            "content": {
+              "type": "ext2",
+              "usage": "filesystem",
+              "uuid": "bc000000-0000-4000-8000-000000000004",
+              "label": null,
+              "version": "1.0",
+              "block_size": 4096,
+              "blocks": 3407616,
+              "size_bytes": 13957595136,
+              "free_blocks": 1409126,
+              "reserved_blocks": 170380,
+              "inodes": 851968,
+              "free_inodes": 544542,
+              "inode_size": 256,
+              "inodes_per_group": 8192,
+              "blocks_per_group": 32768,
+              "first_data_block": 0,
+              "revision": 1,
+              "features": ["ext_attr", "resize_inode", "dir_index", "filetype", "sparse_super", "large_file"],
+              "state": "not clean",
+              "has_errors": false,
+              "errors_behavior": "continue",
+              "creator_os": "Linux",
+              "reserved_gdt_blocks": 831,
+              "default_hash": "half_md4",
+              "hash_seed": "bc000000-0000-4000-8000-000000000005",
+              "mkfs_time": 1793604543,
+              "last_mounted_on": "/"
+            },
+            "mounted_at": ["/"]
+          }
+        ],
+        "boot_code": {
+          "kind": "grub2",
+          "first_bytes": "eb639000000000000000000000000000",
+          "grub_core_lba": 1,
+          "grub_boot_drive": "0xff",
+          "grub_core_present": true,
+          "grub_core_in": "post-mbr-gap",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 112
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [],
+    "loop_devices": [],
+    "other_devices": [
+      {
+        "name": "fd0",
+        "path": "/dev/fd0",
+        "kind": "floppy",
+        "devno": "2:0",
+        "size_bytes": 4096,
+        "size": "4 KiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": false,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "sr0",
+        "path": "/dev/sr0",
+        "kind": "rom",
+        "devno": "11:0",
+        "size_bytes": 1073741312,
+        "size": "1024 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": false,
+        "links": [
+          "/dev/cdrom",
+          "/dev/disk/by-diskseq/12",
+          "/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1",
+          "/dev/disk/by-path/pci-0000:00:01.1-ata-2",
+          "/dev/disk/by-path/pci-0000:00:01.1-ata-2.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "lvm": {
+      "volume_groups": []
+    },
+    "zfs": {
+      "pools_from_labels": [],
+      "zpool_cache": null,
+      "tools": null
+    },
+    "btrfs": [],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "/dev/vda3",
+        "fstype": "ext2",
+        "devno": "254:3",
+        "device": "vda3",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw",
+        "size_bytes": 13704519680,
+        "used_bytes": 7936081920,
+        "available_bytes": 5070561280
+      },
+      {
+        "target": "/boot",
+        "source": "/dev/vda1",
+        "fstype": "ext4",
+        "devno": "254:1",
+        "device": "vda1",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw",
+        "size_bytes": 1020702720,
+        "used_bytes": 330940416,
+        "available_bytes": 619298816
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/vda2",
+        "type": "partition",
+        "size_bytes": 2147479552,
+        "used_bytes": 0,
+        "priority": -2,
+        "device": "vda2"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000004",
+        "file": "/",
+        "type": "ext2",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 1,
+        "resolves_to": "vda3"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000001",
+        "file": "/boot",
+        "type": "ext4",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 2,
+        "resolves_to": "vda1"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000003",
+        "file": "none",
+        "type": "swap",
+        "options": "sw",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda2"
+      }
+    ],
+    "crypttab": [],
+    "mdadm_conf": {
+      "arrays": [],
+      "settings": {
+        "homehost": "<system>",
+        "mailaddr": "root"
+      }
+    }
+  },
+  "boot": {
+    "loader": {
+      "name": "grub",
+      "firmware": "bios",
+      "via_shim": false,
+      "package": "grub-pc",
+      "evidence": ["vda's MBR holds GRUB 2's boot.img", "package grub-pc is installed"]
+    },
+    "efi": null,
+    "esps": [],
+    "grub": {
+      "dir": "/boot/grub",
+      "installed_platforms": ["i386-pc"],
+      "grub_cfg": {
+        "entries": [
+          "MX 25.3 Infinity",
+          "Advanced options for MX 25.3 Infinity>MX 25.3 Infinity, with Linux 6.12.115+deb13.1-amd64",
+          "Advanced options for MX 25.3 Infinity>MX 25.3 Infinity, with Linux 6.12.115+deb13.1-amd64 (systemd)",
+          "Advanced options for MX 25.3 Infinity>MX 25.3 Infinity, with Linux 6.12.107+deb13-amd64",
+          "Advanced options for MX 25.3 Infinity>MX 25.3 Infinity, with Linux 6.12.107+deb13-amd64 (systemd)"
+        ],
+        "search_uuids": ["bc000000-0000-4000-8000-000000000004", "bc000000-0000-4000-8000-000000000001"],
+        "modules": [
+          "all_video",
+          "efi_gop",
+          "efi_uga",
+          "ieee1275_fb",
+          "vbe",
+          "vga",
+          "video_bochs",
+          "video_cirrus",
+          "part_msdos",
+          "ext2",
+          "gfxterm",
+          "gettext",
+          "gfxmenu",
+          "jpeg",
+          "png",
+          "gzio",
+          "bli"
+        ],
+        "default_linux": "/vmlinuz-6.12.115+deb13.1-amd64 root=UUID=bc000000-0000-4000-8000-000000000004 ro console=tty0 console=ttyS0,115200n8",
+        "default_initrd": "/initrd.img-6.12.115+deb13.1-amd64",
+        "lang": "en_US"
+      },
+      "grubenv": {},
+      "default_grub": {
+        "GRUB_DEFAULT": "0",
+        "GRUB_TIMEOUT": "5",
+        "GRUB_DISTRIBUTOR": "$(unset PRETTY_NAME; (. /etc/lsb-release; echo ${PRETTY_NAME:?}) 2>/dev/null || echo Debian)",
+        "GRUB_CMDLINE_LINUX_DEFAULT": "console=tty0 console=ttyS0,115200n8",
+        "GRUB_CMDLINE_LINUX": "",
+        "GRUB_GFXMODE": "1024x768",
+        "GRUB_DISABLE_RECOVERY": "true",
+        "GRUB_DISABLE_OS_PROBER": "false",
+        "GRUB_THEME": "/boot/grub/themes/mx_linux/theme.txt"
+      },
+      "debconf": {
+        "grub-pc/install_devices": "",
+        "grub2/enable_os_prober": "true",
+        "grub2/grub_files_mx_enable_os_prober": "true",
+        "grub2/linux_cmdline": "",
+        "grub2/linux_cmdline_default": "quiet"
+      }
+    },
+    "systemd_boot": null,
+    "kernels": {
+      "installed": [
+        {
+          "version": "6.12.107+deb13-amd64",
+          "vmlinuz_bytes": 12142528,
+          "initrd_bytes": 142170383,
+          "config": true,
+          "running": false,
+          "modules_installed": true
+        },
+        {
+          "version": "6.12.115+deb13.1-amd64",
+          "vmlinuz_bytes": 12167104,
+          "initrd_bytes": 142494558,
+          "config": true,
+          "running": true,
+          "modules_installed": true
+        }
+      ],
+      "symlinks": {
+        "/vmlinuz": "boot/vmlinuz-6.12.115+deb13.1-amd64",
+        "/vmlinuz.old": "boot/vmlinuz-6.12.107+deb13-amd64",
+        "/initrd.img": "boot/initrd.img-6.12.115+deb13.1-amd64",
+        "/initrd.img.old": "boot/initrd.img-6.12.107+deb13-amd64"
+      }
+    },
+    "cmdline": {
+      "raw": "BOOT_IMAGE=/vmlinuz-6.12.115+deb13.1-amd64 root=UUID=bc000000-0000-4000-8000-000000000004 ro console=tty0 console=ttyS0,115200n8",
+      "words": [
+        "BOOT_IMAGE=/vmlinuz-6.12.115+deb13.1-amd64",
+        "root=UUID=bc000000-0000-4000-8000-000000000004",
+        "ro",
+        "console=tty0",
+        "console=ttyS0,115200n8\n"
+      ],
+      "storage": {
+        "BOOT_IMAGE": "/vmlinuz-6.12.115+deb13.1-amd64",
+        "root": "UUID=bc000000-0000-4000-8000-000000000004",
+        "ro": ""
+      }
+    },
+    "kernel_cmdline_file": null,
+    "initramfs": {
+      "generator": "initramfs-tools",
+      "modules": "most",
+      "compress": "zstd",
+      "resume": null,
+      "crypttab_in_initramfs": true
+    },
+    "packages": {
+      "grub-pc": "2.12-9+deb13u2",
+      "grub-pc-bin": "2.12-9+deb13u2",
+      "grub-efi-amd64-bin": "2.12-9+deb13u2",
+      "grub-efi-amd64-signed": "1+2.12+9+deb13u2",
+      "grub-efi-ia32-bin": "2.12-9+deb13u2",
+      "grub2-common": "2.12-9+deb13u2",
+      "grub-common": "2.12-9+deb13u2",
+      "shim-signed": "1.51~1+deb13u1+16.1-2~deb13u1",
+      "shim-unsigned": "16.1-2~deb13u1",
+      "shim-helpers-amd64-signed": "1+16.1+2~deb13u1",
+      "mokutil": "0.7.2-1",
+      "efibootmgr": "18-2",
+      "syslinux": "3:6.04~git20190206.bf6db5b4+dfsg1-3.1",
+      "extlinux": "3:6.04~git20190206.bf6db5b4+dfsg1-3.1",
+      "os-prober": "1.83",
+      "linux-image-amd64": "6.12.115-2",
+      "initramfs-tools": "0.148.4",
+      "mdadm": "4.4-11",
+      "lvm2": "2.03.31-2",
+      "cryptsetup": "2:2.7.5-2",
+      "cryptsetup-initramfs": "2:2.7.5-2",
+      "cryptsetup-bin": "2:2.7.5-2",
+      "systemd-cryptsetup": "257.13-1~deb13u1",
+      "btrfs-progs": "6.14-1",
+      "xfsprogs": "6.13.0-2+deb13u1",
+      "e2fsprogs": "1.47.2-3+b12",
+      "dosfstools": "4.2-1.2",
+      "exfatprogs": "1.2.9-1+deb13u1",
+      "ntfs-3g": "1:2022.10.3-5+deb13u3",
+      "jfsutils": "1.1.15-6",
+      "f2fs-tools": "1.16.0-1.1+b1",
+      "linux-base": "4.12.1",
+      "nvme-cli": "2.13-2"
+    }
+  },
+  "warnings": []
+}

@@ -1,0 +1,31 @@
+HoltTest1 freebsd15 (freebsd), run r4all, 2026-11-08T02:46:16Z, phases: source backup rebuild verify
+binaries: bko-holt 690364f6fd48 (/bkoscratch/holttest1d/bin/freebsd/bko-holt); rustic-bko freebsd f6411bf9e2560599c050f1e2890118e35a19eaea74a8fe4b355f08ad25c99201 /home/m/backotter-work/bko-bin/freebsd/rustic-bko (bko-bin set from round rel4, assembled 2026-11-06 10:05 UTC on chopin; rustic b518f42bcb1e)
+== source: freebsd15
+PASS source boots
+PASS dump on the live source
+== backup
+PASS the source mounted read-only in the rescuer
+PASS rustic-bko backup (346M)
+== rebuild
+PASS rescuer up
+PASS load refuse-nomap (exit 4)
+PASS load refuse-root (exit 4)
+PASS load refuse-decoy (exit 4)
+PASS load dry-partition (exit 0)
+PASS nothing written without --commit
+PASS the refusals and the dry run left every target's and the decoy's first and last MiB as they were
+PASS load partition (exit 0)
+PASS load assemble (exit 0)
+PASS load format (exit 0)
+PASS load mount (exit 0)
+PASS load restore (exit 0)
+PASS load boot (exit 0)
+PASS load close (exit 0)
+== verify
+PASS mtree: the files agree but for the boot stage's (7 lines of it)
+PASS the restored disk boots by itself, SSH with the guest's key
+PASS boot state as the source's (1 services down on both)
+PASS health: 0 fstab mounts mounted, swap on, zpool healthy, load log kept
+PASS the dumps agree (0 differences, 39 ignored, of 785 fields)
+RAM disk: peak 1.0 GiB, reserved 3 GiB; memory: peak 3.1 GiB anon
+RESULT: PASS

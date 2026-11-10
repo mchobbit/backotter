@@ -1,0 +1,9 @@
+   Compiling bko-holt v0.2.4 (/home/m/backotter-work/t2/copy/6fff54b.d1a2b3c4d/holt)
+error[E0425]: cannot find value `stage` in this scope
+   --> src/load/commands.rs:301:17
+    |
+301 |         let s = stage;
+    |                 ^^^^^ not found in this scope
+
+For more information about this error, try `rustc --explain E0425`.
+error: could not compile `bko-holt` (lib) due to 1 previous error

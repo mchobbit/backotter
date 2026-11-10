@@ -1,0 +1,46 @@
+# bko-holt load plan for layout.json
+# Source: alpinebsd, AlpineBSD v1.0, UEFI boot with netbsd, dumped 2026-11-08T02:43:07Z
+#
+# Disks:
+#   ld0 (16 GiB) -> /dev/sdq
+#
+# Notes:
+#   - dk0: the ESP, written as the source's with the partition table
+
+# ---- partition ----
+# ld0 -> /dev/sdq: the source's table, GUIDs and boot code exactly
+sh -c 'bko-holt write-table layout.json ld0 /dev/rsdqd $(disklabel sdq | awk '\''/^bytes.sector:/ { b = $2 } /^total sectors:/ { t = $3 } END { print b * t }'\'')'
+# the GPT's partitions as wedges
+sh -c 'dkctl sdq listwedges | grep -q '\''^dk'\'' || dkctl sdq makewedges'
+
+# ---- assemble ----
+# (nothing to do)
+
+# ---- format ----
+# dk2: UFS as the source's (dumpfs -m)
+newfs -O 2ea -b 16384 -f 2048 -n 1654272 -m 5 -o time NAME=AlpineBSD
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+mount -t ffs -o rw,log NAME=AlpineBSD /mnt/bko-target
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+
+# ---- boot ----
+# the boot code (MBR, freebsd-boot) was written with the partition table
+# the ESP's loader (BOOTX64.EFI), as the source's
+sh -c 'mkdir -p /run/bko-holt/esp && mount -t msdos NAME=EFI /run/bko-holt/esp && mkdir -p /run/bko-holt/esp/EFI/BOOT && cp /usr/mdec/bootx64.efi /run/bko-holt/esp/EFI/BOOT/BOOTX64.EFI; s=$?; umount /run/bko-holt/esp; exit $s'
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -Rp /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+
+# ---- close ----
+# everything under the target, deepest first
+sh -c 'mount | sed -n '\''s/^.* on \(.*\) type .*/\1/p'\'' | awk '\''$0 == "/mnt/bko-target" || index($0, "/mnt/bko-target/") == 1'\'' | sort -r | while read -r m; do umount "$m" || exit; done'
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status filesystem NAME=AlpineBSD ufs -
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: exit 0, nothing on stderr

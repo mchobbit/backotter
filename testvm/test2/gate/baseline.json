@@ -1,0 +1,31 @@
+{
+ "v": 1,
+ "notes": "GateTest2's classed exceptions (t2lib/gate.py). fork.NAME: fork-only failures of testvm/audit/fork-tests.sh's NAME.report that the fork layer gives as a LIMIT with its reason instead of a FAIL (suite: the report's SUITE, test: its TEST; build targets: suite #build, #cross or #vet and test the target). bin.version-agree: a binary of the set that comes from another commit than the rest of its tool's, a LIMIT for gate:bin:version's agree only while it is that very binary (sha256). Never GLIBC, NSS or ABI failures. Classing a new one means adding it here, with its reason and where it was seen.",
+ "fork": {
+  "restic": [],
+  "rustic_core": [],
+  "rustic": [
+   {
+    "suite": "tests/backup_restore.rs [backup_restore]",
+    "test": "test_backup_and_check_passes",
+    "expect": "failed var.contains(Added to the repo: 0 B)",
+    "why": "the second, unchanged backup must add 0 B but adds 235-983 B (Dirs: 0 new, 5 changed): rustic-bko gives a backup path's parents nodes with their real metadata (rustic_core's missing_dirs_get_their_own_nodes), and the other tests of the binary change the shared TMPDIR beside it; it passes alone (RUST_TEST_THREADS=1)",
+    "ref": "testvm/audit/README.md, Fork-only failures, 2026-11-04",
+    "seen": ["rustic f989942 + rustic_core 6e8b009 (2026-11-04)", "rustic 21688bf + rustic_core 6c1cdad (2026-11-05)",
+             "rustic 3034635 + rustic_core 1cd8fd5 (2026-11-05)",
+             "rustic 6ccec58 + rustic_core 96596bb, the backotter heads (2026-11-08, fork-tests.sh --force on Cinqcent)"]
+   }
+  ]
+ },
+ "bin": {
+  "version-agree": [
+   {
+    "set": "bko-bin",
+    "binary": "haiku/rustic-bko",
+    "sha256": "12181a04a6f5143c5265c9ec38ca7af9f6d3ab560882326cf278aebb21386e65",
+    "why": "bko-bin took Haiku's rustic-bko alone from rustic 6ccec58 with rustic_core 96596bb (0.11.4+backotter.7, a Haiku-only fix) on 2026-11-07; the other OSes are round rel4's b518f42 (BUILD-INFO)",
+    "ref": "~/backotter-work/bko-bin/BUILD-INFO on both hosts, 2026-11-07"
+   }
+  ]
+ }
+}

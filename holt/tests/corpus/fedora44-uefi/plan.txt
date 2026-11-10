@@ -1,0 +1,103 @@
+# bko-holt load plan for layout.json
+# Source: host-1, Fedora Linux 44 (Server Edition), UEFI boot with grub, dumped 2026-11-08T02:24:51Z
+#
+# Disks:
+#   vda (16 GiB) -> /dev/sdq
+#
+# Notes:
+#   - UEFI GRUB on Fedora: the ESP's shim and GRUB are the restored ones; only grub.cfg is remade
+
+# ---- partition ----
+# vda -> /dev/sdq: clear the old table and signatures
+wipefs --all /dev/sdq
+sfdisk --wipe always --wipe-partitions always /dev/sdq <<'EOF'
+label: gpt
+label-id: bc000000-0000-4000-8000-000000000001
+unit: sectors
+sector-size: 512
+table-length: 128
+first-lba: 34
+last-lba: 33554398
+
+/dev/sdq1 : start=2048, size=1228800, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=BC000000-0000-4000-8000-000000000002, name="EFI System Partition"
+/dev/sdq2 : start=1230848, size=4194304, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=BC000000-0000-4000-8000-000000000003
+/dev/sdq3 : start=5425152, size=28127232, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=BC000000-0000-4000-8000-000000000005
+EOF
+udevadm settle
+
+# ---- assemble ----
+# (nothing to do)
+
+# ---- format ----
+# vda1: vfat
+mkfs.fat -F 32 -i BC000001 -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdq1
+# vda2: xfs
+mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=bc000000-0000-4000-8000-000000000004 -i sparse=1,nrext64=1,size=512,exchange=1 -n ftype=1,size=4096,parent=1 -b size=4096 -s size=512 -d size=2147483648,agsize=536870912 -l lazy-count=1,size=67108864 /dev/sdq2
+# vda3: btrfs "fedora_host-1"
+mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U bc000000-0000-4000-8000-000000000006 -L fedora_host-1 --csum crc32c -n 16384 -s 4096 -d single -m dup --device-uuid bc000000-0000-4000-8000-000000000007 /dev/sdq3
+mkdir -p /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000006
+# btrfs bc000000-0000-4000-8000-000000000006: its subvolumes
+mount -t btrfs -o subvolid=5 /dev/sdq3 /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000006
+btrfs subvolume create /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000006/root
+mkdir -p /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000006/root/var/lib
+btrfs subvolume create /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000006/root/var/lib/portables
+umount /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000006
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+mount -t btrfs -o subvol=root,compress=zstd:1 /dev/sdq3 /mnt/bko-target
+mkdir -p /mnt/bko-target/boot
+mount -t xfs -o defaults /dev/sdq2 /mnt/bko-target/boot
+mkdir -p /mnt/bko-target/boot/efi
+mount -t vfat -o umask=0077,shortname=winnt /dev/sdq1 /mnt/bko-target/boot/efi
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+# the atimes the restore set, for boot to put back after its reads
+sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
+
+# ---- boot ----
+# refuses to start unless /mnt/bko-target/etc/fstab is the restored system's (its / matches the layout's)
+# the restored atimes (the restore stage lists them), to put back after this stage's reads
+sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
+# the restored LVM devices file, kept
+sh -c 'rm -rf /run/bko-holt/lvm-devices; [ ! -d /mnt/bko-target/etc/lvm/devices ] || { cp -a /mnt/bko-target/etc/lvm/devices /run/bko-holt/lvm-devices && touch -r /mnt/bko-target/etc/lvm /run/bko-holt/lvm-devices.parent; }'
+mount --rbind --make-rslave /dev /mnt/bko-target/dev
+mount --rbind --make-rslave /proc /mnt/bko-target/proc
+mount --rbind --make-rslave /sys /mnt/bko-target/sys
+mount --rbind --make-rslave /run /mnt/bko-target/run
+chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d "$k/kernel" ] || continue; dracut --force --kver "${k##*/}" || exit; n=$((n + 1)); done; [ "$n" -gt 0 ]'
+# os-prober off: it would list the rescue system's disks
+sh -c '[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober'
+chroot /mnt/bko-target env LANG=C grub2-mkconfig -o /boot/grub2/grub.cfg
+sh -c '! grep -q '\'' /mnt/bko-target/usr/bin/os-prober '\'' /proc/self/mountinfo || umount /mnt/bko-target/usr/bin/os-prober'
+efibootmgr --quiet --create --disk /dev/sdq --part 1 --label Fedora --loader '\EFI\fedora\shimx64.efi'
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -a /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+# SELinux labels for the files the boot stage wrote
+chroot /mnt/bko-target sh -c '[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ "${SELINUX:-disabled}" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ ! -f "$f" ] || ! command -v setfiles >/dev/null || setfiles "$f" /boot /var/log/bko-holt'
+umount --recursive /mnt/bko-target/run
+umount --recursive /mnt/bko-target/sys
+umount --recursive /mnt/bko-target/proc
+umount --recursive /mnt/bko-target/dev
+# the restored LVM devices file, put back
+sh -c '[ ! -d /run/bko-holt/lvm-devices ] || { rm -rf /mnt/bko-target/etc/lvm/devices && cp -a /run/bko-holt/lvm-devices /mnt/bko-target/etc/lvm/devices && touch -r /run/bko-holt/lvm-devices.parent /mnt/bko-target/etc/lvm; }'
+# the atimes this stage's reads changed, put back
+bash -c 'find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.after && LC_ALL=C comm -z -23 /run/bko-holt/atimes.before /run/bko-holt/atimes.after | \
+             while IFS=$'\''\t'\'' read -r -d '\'''\'' a p; do [ -L "$p" ] || [ -e "$p" ] || continue; touch -a -h -d "@$a" -- "$p" 2>/dev/null || { [ ! -L "$p" ] && lsattr -d -- "$p" 2>/dev/null | cut -d'\'' '\'' -f1 | grep -q i && { chattr -i -- "$p"; touch -a -h -d "@$a" -- "$p"; chattr +i -- "$p"; }; }; done'
+
+# ---- close ----
+umount --recursive /mnt/bko-target
+# other mount namespaces' copies of the target's mounts
+sh -c 'me=$(readlink /proc/self/ns/mnt); seen=; for f in /proc/[0-9]*/mountinfo; do grep -q '\'' /mnt/bko-target[ /]'\'' "$f" 2>/dev/null || continue; p=${f#/proc/}; p=${p%/mountinfo}; ns=$(readlink /proc/$p/ns/mnt) || continue; case "$me $seen " in *"$ns "*) continue;; esac; seen="$seen $ns"; echo "unmounting /mnt/bko-target in $ns (pid $p, $(cat /proc/$p/comm))"; nsenter -t "$p" -m umount --recursive /mnt/bko-target || true; done'
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status filesystem /dev/sdq1 vfat BC00-0001
+# golden_plans.rs: status filesystem /dev/sdq2 xfs bc000000-0000-4000-8000-000000000004
+# golden_plans.rs: status filesystem /dev/sdq3 btrfs bc000000-0000-4000-8000-000000000006
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: status mount /mnt/bko-target/boot
+# golden_plans.rs: status mount /mnt/bko-target/boot/efi
+# golden_plans.rs: exit 0, nothing on stderr

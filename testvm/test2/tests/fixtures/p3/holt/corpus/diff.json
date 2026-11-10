@@ -1,0 +1,99 @@
+{
+  "v": 1,
+  "corpus": 45,
+  "plans": 48,
+  "differ": {},
+  "invariants": {},
+  "invariants_skipped": {
+    "aerynos": ["fstab none (PARTUUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"],
+    "aerynos+bigger": ["fstab none (PARTUUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"],
+    "alpine324": ["fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"],
+    "alpinebsd": ["fstab none (NAME=swap, swap): no absolute mount point"],
+    "arch": ["fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"],
+    "artix-dinit": ["fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"],
+    "artix-s6": ["fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"],
+    "cachyos": ["fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"],
+    "debian12": [
+      "fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point",
+      "fstab /media/cdrom0 (/dev/sr0, udf,iso9660): noauto",
+      "fstab /media/cdrom1 (/dev/sr1, udf,iso9660): noauto"
+    ],
+    "debian13": [
+      "fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point",
+      "fstab /media/cdrom0 (/dev/sr0, udf,iso9660): noauto",
+      "fstab /media/cdrom1 (/dev/sr1, udf,iso9660): noauto"
+    ],
+    "debian13-stack": ["fstab none (/dev/mapper/host--1--vg-swap_1, swap): no absolute mount point"],
+    "debian13-stack+bigger": ["fstab none (/dev/mapper/host--1--vg-swap_1, swap): no absolute mount point"],
+    "debian13-zfs": ["fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"],
+    "devuan6": [
+      "fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point",
+      "fstab /media/cdrom0 (/dev/sr0, udf,iso9660): noauto",
+      "fstab /media/cdrom1 (/dev/sr1, udf,iso9660): noauto"
+    ],
+    "dragonfly6": [
+      "fstab none (/dev/vbd0s1b, swap): no absolute mount point",
+      "fstab /proc (proc, procfs): a pseudo filesystem"
+    ],
+    "fedora44": ["fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"],
+    "freebsd14": ["fstab none (/dev/vtbd0p2, swap): no absolute mount point"],
+    "freebsd15": ["fstab none (/dev/vtbd0p2, swap): no absolute mount point"],
+    "freebsd15-mirror": [
+      "fstab none (/dev/vtbd0p2, swap): no absolute mount point",
+      "fstab none (/dev/vtbd1p2, swap): no absolute mount point"
+    ],
+    "ghostbsd26": [
+      "fstab none (/dev/label/swap0, swap): no absolute mount point",
+      "fstab /proc (procfs, procfs): a pseudo filesystem",
+      "fstab /compat/linux/proc (linprocfs, linprocfs): a pseudo filesystem",
+      "fstab /tmp (tmpfs, tmpfs): a pseudo filesystem",
+      "fstab /compat/linux/sys (linsysfs, linsysfs): a pseudo filesystem",
+      "fstab /dev/fd (fdesc, fdescfs): a pseudo filesystem"
+    ],
+    "ghostbsd26-zfs": [
+      "fstab none (/dev/label/swap0, swap): no absolute mount point",
+      "fstab /proc (procfs, procfs): a pseudo filesystem",
+      "fstab /compat/linux/proc (linprocfs, linprocfs): a pseudo filesystem",
+      "fstab /tmp (tmpfs, tmpfs): a pseudo filesystem",
+      "fstab /compat/linux/sys (linsysfs, linsysfs): a pseudo filesystem",
+      "fstab /dev/fd (fdesc, fdescfs): a pseudo filesystem"
+    ],
+    "hardenedbsd15": ["fstab none (/dev/vtbd0p1, swap): no absolute mount point"],
+    "mint22": ["fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"],
+    "mint22+bigger": ["fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"],
+    "mx25": ["fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"],
+    "netbsd11": [
+      "fstab none (/dev/ld0b, swap): no absolute mount point",
+      "fstab /kern (kernfs, kernfs): a pseudo filesystem",
+      "fstab /dev/pts (ptyfs, ptyfs): a pseudo filesystem",
+      "fstab /proc (procfs, procfs): a pseudo filesystem",
+      "fstab /var/shm (tmpfs, tmpfs): a pseudo filesystem"
+    ],
+    "nixos2605": [
+      "fstab none (/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"
+    ],
+    "omarchy": ["fstab none (/swap/swapfile, swap): no absolute mount point"],
+    "openbsd8": ["fstab none (bc00000000000001.b, swap): no absolute mount point"],
+    "pop24": ["fstab none (UUID=bc000000-0000-4000-8000-000000000004, swap): no absolute mount point"],
+    "rocky10": ["fstab none (UUID=bc000000-0000-4000-8000-000000000002, swap): no absolute mount point"],
+    "rocky10-lvm": ["fstab none (UUID=bc000000-0000-4000-8000-000000000007, swap): no absolute mount point"],
+    "rocky10-raid5": ["fstab none (UUID=bc000000-0000-4000-8000-00000000000b, swap): no absolute mount point"],
+    "tumbleweed": ["fstab swap (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"],
+    "ubuntu24": [
+      "fstab none (/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"
+    ],
+    "ubuntu26-raid": [
+      "fstab none (/dev/disk/by-id/dm-uuid-LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000004, swap): no absolute mount point"
+    ],
+    "ubuntu26-uefi": ["fstab none (/swap.img, swap): no absolute mount point"],
+    "ubuntu26-zfs": [
+      "fstab none (/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000005, swap): no absolute mount point"
+    ],
+    "ubuntu26-zfsmirror": [
+      "fstab none (/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000003, swap): no absolute mount point",
+      "fstab none (/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000005, swap): no absolute mount point"
+    ],
+    "void-musl": ["fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"],
+    "zorin18": ["fstab none (UUID=bc000000-0000-4000-8000-000000000003, swap): no absolute mount point"]
+  }
+}

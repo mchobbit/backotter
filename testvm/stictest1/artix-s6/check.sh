@@ -32,7 +32,7 @@ if [[ ${1:-} != --guest && -z ${CHECK_INNER:-} ]]; then
     mkdir -p "$LOGS" "$S"
     # Run the whole check inside a guest slot and a reservation.
     # shellcheck source=/dev/null
-    source "$WORK/testvm/compare/guest-slot.sh"
+    source "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
     case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
     cd "$WORK" && HOT_C=90 CHECK_INNER=1 CHECK_LOGS=$LOGS ./cmp-run.sh --reserve 3 6 \
         timeout 900 "$here/check.sh" "$BIN" "$PORT" "$PREFIX" "$FILTER" >"$LOGS/run.log" 2>&1
@@ -47,7 +47,7 @@ fi
 
 # ---- inside the reservation ----
 mkdir -p "$LOGS" "$S"
-. "$WORK/testvm/vm-lib.sh"
+. "${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh"
 VM_PID=""
 cleanup() { vm_halt; sudo rm -rf "$S/host"; }
 trap cleanup EXIT
@@ -86,7 +86,7 @@ export TMPDIR=$S
 if vm_boot artix-s6 "$PORT" "$LOGS/vm" --snapshot --memory 3072; then
     tar -C "$BIN" -cf - restic-bko rustic-bko | vm_ssh 'rm -rf /root/bko && mkdir -p /root/bko && tar -C /root/bko -xf -'
     vm_put "$here/inner.sh" /root/bko/inner.sh
-    vm_put "$WORK/testvm/compare/rt-common.sh" /root/bko/rt-common.sh 644
+    vm_put "${BKO_TESTVM:-$WORK/testvm}/compare/rt-common.sh" /root/bko/rt-common.sh 644
     T=780 vm_ssh 'bash /root/bko/inner.sh' >"$LOGS/inner.log" 2>&1
     echo "inner.sh exit $?" >>"$LOGS/inner.log"
     vm_ssh 'cat /root/bko/fails' >>"$FAILS"

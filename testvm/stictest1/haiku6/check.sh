@@ -27,7 +27,7 @@ RESTIC=$(realpath "$BIN/../linux/restic-bko" 2>/dev/null || true)
 [[ -x $RB ]] || { echo "no $RB" >&2; exit 2; }
 
 if [[ -z ${BKO_ADMITTED:-} ]]; then
-    source ~/backotter-work/testvm/compare/guest-slot.sh
+    source "${BKO_TESTVM:-$HOME/backotter-work/testvm}/compare/guest-slot.sh"
     case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
     BKO_ADMITTED=1 HOT_C=90 ~/backotter-work/cmp-run.sh --reserve 3 6 "$H/${0##*/}" "$@"; rc=$?
     slot_give; exit $rc
@@ -45,7 +45,7 @@ qemu-img create -f raw "$W/b.img" 2G >/dev/null
 g_boot "$W/a.img" "$W/b.img" || { echo "FAIL boot: guest didn't come up"; exit 1; }
 ssh_g 'rm -rf ~/ck && mkdir ~/ck'
 ssh_g 'cat > ~/ck/rustic && chmod 755 ~/ck/rustic' <"$RB"
-ssh_g 'cat > ~/ck/attrs.py' <~/backotter-work/testvm/haiku/attrs.py
+ssh_g 'cat > ~/ck/attrs.py' <"${BKO_TESTVM:-$HOME/backotter-work/testvm}/haiku/attrs.py"
 ssh_g 'cat > ~/ck/ck.py' <"$H/ck.py"
 ssh_g 'cat > ~/ck/guest.sh' <"$H/guest.sh"
 T=840 ssh_g 'bash ~/ck/guest.sh' >"$LOG/guest.log" 2>&1

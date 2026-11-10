@@ -14,6 +14,8 @@
 #                      (the default's, without a row)
 #       table          its row in ram-sizes.tsv: this host's, else the largest;
 #                      a variant without a row has its guest's
+#   +nearfull on the end: 4 GiB more D, for the free space that variant fills
+#   in the source overlay (no row of its own tells anyone how much)
 #       default        D 6 (Linux), 4 (BSD, illumos, Haiku), 2 (redox,
 #                      sculpt); M 4
 #   ram-size.sh [--table FILE] [--peaks FILE] --big GIB
@@ -39,7 +41,7 @@ while [[ ${1:-} == --* ]]; do
     shift 2
 done
 if [[ -n $BIG ]]; then [[ $# -eq 0 ]] || usage; else [[ $# -gt 0 ]] || usage; fi
-name='^[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded))?$'
+name='^[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse))?$'
 for n; do [[ $n =~ $name ]] || { echo "ram-size.sh: not GUEST[+VARIANT]: $n" >&2; exit 2; }; done
 [[ -r $TABLE && ! -d $TABLE ]] || { echo "ram-size.sh: no table $TABLE" >&2; exit 2; }
 [[ -r $PEAKS && ! -d $PEAKS ]] || PEAKS=/dev/null   # no run logged yet
@@ -60,7 +62,16 @@ awk -F'\t' -v host="$(hostname -s)" -v big="$BIG" -v names="$*" '
         if (n in td) return td[n] " " tm[n] " table"
         return (fam(g) == 1 ? 4 : fam(g) == 2 ? 2 : 6) " 4 default"
     }
-    function size(n,   g, v, gv, i, k, p, a, d, m, fl, tb) {   # GUEST[+VARIANT] -> "D M FROM"
+    function size(n,   v, i, r, p) {   # GUEST[+VARIANT] -> "D M FROM", the variant included
+        v = ""; i = index(n, "+"); if (i) v = substr(n, i + 1)
+        r = runsize(n)
+        # nearfull fills / in the source guest in its source phase, so the
+        # overlay grows by the free space it writes away: 4 GiB over a plain
+        # run of the same guest, which the table and the peaks know nothing of.
+        if (v == "nearfull") { split(r, p, " "); r = (p[1] + 4) " " p[2] " " p[3] "+nearfull" }
+        return r
+    }
+    function runsize(n,   g, v, gv, i, k, p, a, d, m, fl, tb) {   # GUEST[+VARIANT] -> "D M FROM"
         g = n; v = ""; i = index(n, "+"); if (i) { g = substr(n, 1, i - 1); v = substr(n, i + 1) }
         gv = g (v != "" ? "-" v : "")
         if (!(gv in np)) return table(n, g)
@@ -99,7 +110,7 @@ awk -F'\t' -v host="$(hostname -s)" -v big="$BIG" -v names="$*" '
         if ($cg == "" || $cd !~ /^[0-9]+$/ || ph != "source,backup,rebuild,verify" || $cr != "PASS" || (cs && $cs != "0")) next
         gv = $cg; k = np[gv]++ % 3
         pd[gv, k] = $cd + 0; pa[gv, k] = ($ca ~ /^[0-9]+$/) ? $ca + 0 : -1   # anon "-": none
-        n = gv; if (match(n, /-(bigger|oneshot|degraded)$/)) n = substr(n, 1, RSTART - 1) "+" substr(n, RSTART + 1)
+        n = gv; if (match(n, /-(bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse)$/)) n = substr(n, 1, RSTART - 1) "+" substr(n, RSTART + 1)
         known[n] = 1
     }
     END {
@@ -107,7 +118,9 @@ awk -F'\t' -v host="$(hostname -s)" -v big="$BIG" -v names="$*" '
         if (big == "") { k = split(names, a, " "); for (i = 1; i <= k; i++) print a[i], size(a[i]); exit }
         for (n in td) known[n] = 1
         for (n in known) { g = n; sub(/[+].*/, "", g); base[g] = 1 }
-        for (g in base) { known[g] = 1; known[g "+bigger"] = 1; known[g "+oneshot"] = 1; known[g "+degraded"] = 1 }
+        for (g in base) { known[g] = 1
+            split("bigger oneshot degraded smaller fitbigger nearfull refuse", vs, " ")
+            for (i in vs) known[g "+" vs[i]] = 1 }
         for (n in known) { split(size(n), r, " "); if (r[1] + 0 >= big + 0) print n | "sort" }
         close("sort")
     }' t=1 "$TABLE" t=0 "$PEAKS"

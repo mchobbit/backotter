@@ -1218,6 +1218,29 @@ chk "the default ledger has nothing of ours since the start ($DEF0 -> $DEF1 byte
     '! { [[ $DEF1 -gt $DEF0 ]] && tail -c +"$((DEF0 + 1))" "$DEFLEDGER" | grep -qE "\"cell\": ?\"holt:fake\"|\"origin\": ?\"ht1:c[0-9]+[a-z]?:fake:"; }'
 verdict 49 "the default ledger ($DEFLEDGER) gets no row of the self-test's"
 
+# The HT_VARIANT names: one list, in the drivers and in what sizes and queues
+# their runs.  A variant added to ht1.sh alone would be refused by the queue
+# the moment someone put it in a todo, so they are checked against each other
+# here, where no VM is needed.
+vars_of() { sed -n 's/^case \$VARIANT in ""|\([a-z|]*\)).*/\1/p' "$1" | tr '|' '\n' | sort; }
+v1=$(vars_of "$HERE/ht1.sh")
+chk "ht1.sh names its variants in one case line" eval '[[ -n $v1 ]]'
+for v in $v1; do
+    chk "the queue takes fake+$v (its LINE_RE, and ram-size.sh)" "$HERE/ht1-queue.sh" --order "fake+$v"
+    chk "ram-size.sh sizes fake+$v" eval '[[ $("$HERE/ram-size.sh" "fake+'"$v"'") == "fake+'"$v"' "[0-9]*" "[0-9]*" "* ]]'
+done
+chk "the queue refuses a variant no driver has" eval '! "$HERE/ht1-queue.sh" --order fake+nonsense'
+for d in ht1-bsd.sh ht1-offline.sh; do
+    chk "$d's variants are ht1.sh's or fewer" eval '[[ -z $(comm -13 <(echo "$v1") <(vars_of "$HERE/'"$d"'")) ]]'
+done
+# And a name none of them has stops a run before it makes anything.
+HT_VARIANT=nonsense "$HERE/ht1.sh" fake "$NAME-v" >"$FX/out-c50a" 2>&1; rca=$?
+HT_VARIANT=nonsense "$HERE/ht1-offline.sh" sculpt2610 "$NAME-v" >"$FX/out-c50b" 2>&1; rcb=$?
+chk "ht1.sh refuses it: exit 2, not $rca, naming HT_VARIANT" eval 'same "$rca" 2 && hasre "$FX/out-c50a" "^HT_VARIANT: "'
+chk "ht1-offline.sh refuses it: exit 2, not $rcb, naming HT_VARIANT" eval 'same "$rcb" 2 && hasre "$FX/out-c50b" "^HT_VARIANT: "'
+chk "  and neither made a run directory" eval 'gone "$HT_WORK/$NAME-v" "$HT_RECORDS/$NAME-v"'
+verdict 50 "the HT_VARIANT names agree across the drivers, the queue and ram-size.sh" "$FX/out-c50a" "$FX/out-c50b"
+
 if ((nfail == 0)); then echo "ht1-lib-test: all $ncase cases ok"; exit 0; fi
 echo "ht1-lib-test: $nfail of $ncase cases FAIL"
 exit 1

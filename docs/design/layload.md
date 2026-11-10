@@ -32,9 +32,11 @@ Non-goals for version 1:
 
 - Copying file data itself.  The archiver does that, in `restore` or by
   hand, between `mount` and `boot`.
-- Disks of another shape: fewer or more disks, or smaller ones.  Bigger disks
-  are accepted, with the extra space left unused (see "Mapping disks").
-  Version 2 takes on resizing, carefully.
+- Disks of another shape: fewer or more disks.  Bigger disks are accepted,
+  with the extra space left unused (see "Mapping disks"), and a disk a little
+  smaller or bigger can be used with `--fit-largest PCT`, which resizes one
+  partition per disk (see "Fitting a disk of another size").  Resizing
+  anything else is version 2's, carefully.
 - Changing the layout: another filesystem, another RAID level, dropping
   encryption.
 - Key material.  LUKS and ZFS keys are never in the JSON, and TPM2/FIDO2
@@ -109,7 +111,9 @@ Checks, in this order, and reports all failures at once:
 
 1. The JSON's format, schema and source system are ones load supports.
 2. Every source disk maps to exactly one target disk (see "Mapping disks"),
-   each at least as big, with the same logical sector size.
+   each at least as big, with the same logical sector size.  With
+   `--fit-largest PCT` a target a little smaller is allowed too, and the
+   layout is fitted to it (see "Fitting a disk of another size").
 3. No target disk is in use, and each is named with `--erase` unless it's
    blank (see "Safety").
 4. The stick's tools can recreate every feature the source had: ext4, XFS
@@ -119,7 +123,8 @@ Checks, in this order, and reports all failures at once:
 5. Everything in the layout is something version 1 can build (see "Out of
    scope").
 6. Each mounted filesystem's recorded used space fits in its new size.  With
-   same-size or bigger disks it always does; the check is there for version 2.
+   same-size or bigger disks it always does; with `--fit-largest` it's the
+   check that decides whether a shrink is allowed at all.
 
 Then it prints the commands of every later stage, with the target devices
 filled in.
@@ -282,7 +287,7 @@ keys or passphrases.  They go to:
 
 ```
 bko-holt load LAYOUT.json [--through STAGE | --only STAGE] [--commit]
-            [--map SRC=DST]... [--erase DEV]...
+            [--map SRC=DST]... [--erase DEV]... [--fit-largest PCT]
             [--target DIR] [--new-uuids] [--key-file NAME=FILE]...
             [--no-nvram] [--removable]
             [--repo REPO [--password-file FILE] [--snapshot ID]
@@ -302,6 +307,10 @@ bko-holt load LAYOUT.json [--through STAGE | --only STAGE] [--commit]
   to a target disk (`/dev/nvme0n1`, or a `/dev/disk/by-id` link).
 - `--erase DEV` allows a target disk that isn't blank to be wiped.  It names
   the whole disk, once per disk.  There's no "erase everything" flag.
+- `--fit-largest PCT`: a target disk a little smaller or bigger than its
+  source may be used, by contracting or expanding each disk's largest
+  partition by at most PCT percent (1 to 50).  Linux layouts only; `plan`
+  prints what it changed (see "Fitting a disk of another size").
 - `--target DIR`: where `mount` builds the tree, default `/mnt/bko-target`.
 - `--new-uuids`: give every layer new identifiers, and have `boot` rewrite
   everything that names them.  Off by default.
@@ -337,8 +346,9 @@ The tool erases disks.  So:
      LVM, LUKS, device-mapper), or a vdev of an imported pool, unless
      load made those itself in an earlier stage of this layout;
    - any disk holding the running system's `/`.
-4. A target disk smaller than its source, or with another logical sector
-   size, is refused in version 1.
+4. A target disk smaller than its source is refused unless `--fit-largest
+   PCT` says by how much the layout may be fitted to it (see "Fitting a disk
+   of another size"); one with another logical sector size is always refused.
 5. `boot` refuses to run on a target root that doesn't hold the restored
    system (see `boot`).
 6. Each stage reads the disks back before doing anything (see "Stages check
@@ -349,8 +359,8 @@ In QEMU guests the same rules hold.  Test harnesses pass `--map` and
 
 ## Mapping disks
 
-Version 1 needs the same number of disks as the source, each at least as
-big, with the same logical sector size.
+Version 1 needs the same number of disks as the source, each at least as big
+(or within `--fit-largest PCT` of it), with the same logical sector size.
 
 A source disk maps to a target disk:
 
@@ -366,8 +376,107 @@ QEMU guests' disks have QEMU's serials, so test restores always use `--map`.
 
 A bigger target keeps the source's partitions where they were and leaves the
 rest unused.  For GPT that means a new backup header and last usable LBA at
-the new disk's end.  For MBR nothing changes.  Growing a partition, pool or
-filesystem into that space is version 2's job.
+the new disk's end.  For MBR nothing changes.  `--fit-largest PCT` will grow
+the largest partition into that space instead; growing a pool, an md array or
+anything else is version 2's job.
+
+## Fitting a disk of another size
+
+`--fit-largest PCT` (an integer 1 to 50, with an optional `%`) lets a target
+disk a little smaller or bigger than its source be used: per disk, the
+largest partition contracts or expands by at most PCT percent of its own
+size, and everything else keeps the size it had.  The motivating case is a
+replacement disk a gigabyte smaller than the one that died: `/boot` 300 MB,
+swap 16 GB, `/` the rest.
+
+Nothing is resized in place.  `load` remakes every filesystem with mkfs and
+the archiver refills it, so the fit only chooses other numbers before
+anything is erased, in one pure function of (the dump, the targets' sizes,
+PCT) in `holt/src/load/fit.rs`.  It rewrites the dump `load` works from, once,
+where every stage reads it (`target::prepare`), so `partition`, `assemble`,
+`format`, `mount`, `boot`, `close` and `status` all see the same table.
+
+Without the flag nothing changes at all: the same commands, the same output,
+except that the "target is smaller" problem now names the flag.
+
+- **Scope.** Linux-family layouts, the ones whose table goes on with an
+  `sfdisk` script.  A BSD, illumos or Haiku layout (`other/`, whose table
+  `bko-holt write-table` writes itself) is still refused a smaller target,
+  and a bigger one is left as it is, with a note.
+- **Which partition.** Per disk, independently: the largest by sectors, which
+  an MBR's extended container never is.  An exact tie is refused, naming
+  them.  Nothing else on the disk is resized: `/boot`, the ESP, swap and
+  every UUID, GUID, label and attribute keep their values.
+- **Shrinking.** If the last partition already ends inside the new disk, no
+  partition changes at all (only the source's own slack was lost), and a note
+  says so.  Otherwise the overrun is rounded up to a whole MiB; that much is
+  refused if it's more than PCT percent of the largest partition.  The
+  largest keeps its start and loses it from its end; the partitions after it
+  move down by as much and keep their sizes, since swap at the end of a disk
+  is common.
+- **Growing.** The room past the last partition, rounded down to a whole MiB,
+  capped at PCT percent of the largest partition, and on an MBR by the last
+  sector a partition entry can reach (its start and its sector count are
+  both 32-bit, so `sfdisk` refuses a table that goes further).  Whatever is
+  left over stays unused, with a note.
+- **What the largest partition may hold.** A filesystem among ext2/3/4, XFS,
+  btrfs on one device, f2fs, JFS and NILFS2; LUKS with one of those inside;
+  or LVM as below, directly or inside LUKS.  Swap, an md member, ZFS, btrfs
+  over several devices, bcachefs, anything else, and any layout where the
+  largest partition or one that would have to move is an MBR logical or
+  extended partition, are refused with the reason.  So is moving a partition
+  whose bytes the dump holds to put back where they were (an unmounted ESP, a
+  boot area): a BIOS boot partition is not one of those, since `grub-install`
+  in the `boot` stage makes it again.  A FAT that moves is the one other
+  thing that knows where it is: its BPB records its partition's first
+  sector, which `mkfs.fat` is given as `-h`, so the fit writes the new one
+  down, and refuses the move if what's recorded was never the partition's
+  own start.
+- **Everything the size is pinned to changes with it.** The partition's
+  sectors and end, the disk's size, a GPT's last usable and backup LBAs (and
+  its protective MBR's own entry), XFS's `size=` and `agsize=`, `mke2fs -E
+  resize=` and the ext block count, btrfs, f2fs, JFS and NILFS2 sizes, the
+  LUKS payload offset (unchanged, so the plaintext device loses the
+  difference) and LVM's `dev_size`, `pe_count` and segments.  A filesystem
+  the source left smaller than its container keeps that slack; one that
+  filled its container fills it again.  XFS gets one more rule: a last
+  allocation group that would be a stub (under 16 MiB, xfsprogs'
+  `XFS_AG_MIN_BYTES`) is left out, because `mkfs.xfs` leaves it out too, and
+  the dump has to say what the tool will make.  Where that last group is the
+  one `mkfs.xfs` puts the internal log in (group `agcount/2`, so the last of
+  two) it has to hold the log as well, or it goes the same way.  JFS sizes its own log from
+  the device, so the size written down for it is the fit's arithmetic rather
+  than the byte-exact figure `mkfs.jfs` will record (nothing reads it back:
+  `mkfs.jfs` takes no size).
+- **LVM.** The partition (or the LUKS inside it) is a PV of a volume group
+  that lies wholly on that one partition; a VG with more than one PV is
+  refused.  Shrinking takes nothing at all where the room the PV already
+  leaves past its last extent covers what the disk lost; otherwise it takes
+  the group's free extents first, from the highest down, and if they don't
+  cover it the largest logical volume gives up the rest from its end, which
+  PCT limits as well.  That volume must be linear, hold a
+  filesystem the fit resizes, and never be swap; a tie for largest is
+  refused.  The extents that go are dropped and the ones above them
+  renumbered downwards in order, keeping `pe_start` and the extent size, with
+  the segments, `pe_count` and `dev_size` worked out again.  A striped, thin,
+  cached, RAID or snapshot volume that would have to change or move is
+  refused.  Growing adds extents, which stay free in the group, and no
+  logical volume changes.
+- **Does the data still fit.** For every filesystem that would shrink, the
+  dump's own figures (`storage.mounts`' `size_bytes` and `used_bytes`, else
+  the superblock's free blocks) must leave `shrink + max(1 GiB, 5% of what's
+  used)` free, at plan time, before anything is erased.  Figures the dump
+  doesn't have refuse the shrink.  Working from free space rather than
+  capacity accounts for each filesystem's own overhead.
+- **Reporting.** `plan` prints a `# Fit` block: each disk's old and new
+  geometry, what shrank or grew, what moved, and the data-fit figures.  A
+  table an earlier stage wrote with `--fit-largest` is recognised on the disk
+  (`fit::wrote`: the geometry a fit of this layout onto a disk of that size
+  comes to, for some PCT and no other, so a partition somebody resized by
+  hand is nothing of ours and keeps the rows it always had), so a later
+  stage run without the same flag is refused with that reason instead of
+  reading the disk as the source's.  `--erase` for that disk clears the
+  refusal, since the table is then wiped anyway.
 
 ## Identity
 
@@ -515,8 +624,8 @@ btrfs geometry and features.
 
 `plan` refuses layouts that need any of these, and says which:
 
-- disks smaller than the source, a different number of disks, or a different
-  logical sector size;
+- a different number of disks, or a different logical sector size; a disk
+  smaller than the source, unless `--fit-largest PCT` fits the layout to it;
 - LVM thin pools, cache volumes, RAID LVs and snapshots (version 1 builds
   linear and striped LVs);
 - ZFS dRAID and special/dedup vdevs;
@@ -587,3 +696,15 @@ the system's own tools for every write.
   to its restore logs too (see "Logs"); not to `/boot`.
 - Keys follow how the original system unlocked itself (see "Keys follow the
   original system").
+
+## Decisions (2026-11-09)
+
+- A target disk a little smaller or bigger is taken with `--fit-largest PCT`,
+  which resizes exactly one partition per disk, the largest, and leaves every
+  other partition, every identifier and every other layer alone (see "Fitting
+  a disk of another size").  Without the flag everything is as it was.
+- The fit is one pure function of the dump, the targets' sizes and PCT,
+  applied once to the dump every stage then works from, so no two stages can
+  disagree about the geometry.
+- Whether the data still fits is decided from free space, not capacity, with
+  `max(1 GiB, 5%)` to spare; figures the dump doesn't have refuse the shrink.

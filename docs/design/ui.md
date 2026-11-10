@@ -138,7 +138,11 @@ and stays as it is.
 - `candidates` lists this machine's whole disks that aren't targets, each
   with why it's refused, if it is (`boot_disk`, `running_root`, `in_use`,
   `read_only`, `too_small`, `sector_size`).  The mapping screen is built from
-  `disks` and `candidates`, and needs nothing else.
+  `disks` and `candidates`, and needs nothing else.  `too_small` is the one a
+  flag can answer: `--fit-largest PCT` fits the layout to a disk a little
+  smaller (`layload.md`, "Fitting a disk of another size"), so a candidate
+  refused for it also says how much smaller it is, and the plan the UI then
+  asks for carries the percentage it offered.
 - `problems` and `notes` keep today's text and add a stable `code`, plus the
   disk or name each one is about.  The codes are a small enum next to the
   strings `target.rs`, `plan.rs` and `commands.rs` already build.  A code

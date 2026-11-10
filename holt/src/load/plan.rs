@@ -62,12 +62,14 @@ pub struct Planned {
     pub built: Built,
     pub problems: Vec<String>,
     pub notes: Vec<String>,
+    /// What --fit-largest changed, if anything (fit.rs).
+    pub fit: super::fit::Fit,
 }
 
 /// Every check `plan` makes; the writing stages make them again first.
 pub fn check(layout: &Layout, opts: &Options, sys: &Sys) -> Planned {
-    let system = target::scan(sys, opts, &target::layout_pools(layout));
-    let mapping = target::map(layout, opts, &system, sys);
+    let target::Prepared { mapping, layout, fit, .. } = target::prepare(layout, opts, sys);
+    let layout = &*layout;
     let built = commands::build(layout, opts, &mapping);
     let mut problems = mapping.problems.clone();
     problems.extend(built.problems.iter().cloned());
@@ -81,7 +83,7 @@ pub fn check(layout: &Layout, opts: &Options, sys: &Sys) -> Planned {
     }
     let mut notes = mapping.notes.clone();
     notes.extend(built.notes.iter().cloned());
-    Planned { mapping, built, problems, notes }
+    Planned { mapping, built, problems, notes, fit }
 }
 
 pub fn run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, String) {
@@ -101,6 +103,14 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, String) {
         match p.mapping.target_of(&d.name) {
             Some(t) => out += &format!("#   {} -> /dev/{t}\n", d.describe()),
             None => out += &format!("#   {} -> (no target)\n", d.describe()),
+        }
+    }
+    // What --fit-largest made of each disk: the plan says so plainly, since
+    // the result isn't the source's own geometry.
+    if let (Some(pct), false) = (opts.fit_largest, p.fit.disks.is_empty()) {
+        out += "#\n# Fit: this is not the source's geometry\n";
+        for l in p.fit.report(pct) {
+            out += &format!("#   {l}\n");
         }
     }
     if !p.problems.is_empty() {
@@ -186,6 +196,33 @@ mod tests {
             assert!(out.contains(&format!("# ---- {st} ----\n")), "{st}");
         }
         assert!(out.contains("--through close --commit"), "{out}");
+    }
+
+    #[test]
+    fn fit_largest_plans_a_smaller_target() {
+        let t = tree();
+        // vdb a GiB smaller than the source's vda.
+        t.file("/sys/block/vdb/size", format!("{}\n", 33554432 - 2097152));
+        let runner = FakeRunner::default().with("/usr/sbin/rustic-bko --version", "rustic 0.11.4+backotter.4\n");
+        let s = Sys::new(t.root(), Box::new(runner), true);
+        let l = Layout::from_json(crate::json::parse(&sample::fittable()).unwrap()).unwrap();
+        // Without the flag a smaller target is refused, and says there is one.
+        let (code, out, _) = run(&l, &opts(&["--map", "vda=vdb", "--repo", "/srv/r"]), &s);
+        assert_eq!(code, EXIT_PLAN_PROBLEMS);
+        assert!(out.contains("the target is smaller (15 GiB < 16 GiB); version 1 needs the same size or bigger, or --fit-largest PCT"), "{out}");
+        // With it, the root gives up the GiB and the plan says what it did.
+        let (code, out, err) = run(&l, &opts(&["--map", "vda=vdb", "--repo", "/srv/r", "--fit-largest", "10"]), &s);
+        assert_eq!(code, EXIT_OK, "{out}{err}");
+        assert!(out.contains("# Fit: this is not the source's geometry"), "{out}");
+        assert!(out.contains("vda -> /dev/vdb: fitted with --fit-largest 10%: 16 GiB -> 15 GiB, last usable sector 33554431 -> 31457279"), "{out}");
+        assert!(out.contains("vda3 (btrfs) shrinks by 1 GiB: 27693056 -> 25595904 sectors"), "{out}");
+        assert!(out.contains("vda3 (btrfs): 2 GiB used, 11.2 GiB free; the shrink of 1 GiB needs 2 GiB free"), "{out}");
+        // The script the partition stage runs carries the new size.
+        assert!(out.contains("/dev/vdb3 : start=5861376, size=25595904, type=83"), "{out}");
+        // 2% of the root isn't the GiB it would have to give up.
+        let (code, out, _) = run(&l, &opts(&["--map", "vda=vdb", "--repo", "/srv/r", "--fit-largest", "2"]), &s);
+        assert_eq!(code, EXIT_PLAN_PROBLEMS);
+        assert!(out.contains("more than 2%"), "{out}");
     }
 
     #[test]

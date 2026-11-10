@@ -98,7 +98,7 @@ mount -t vfat -o defaults /dev/sdq1 /mnt/bko-target/boot/efi
 
 # ---- restore ----
 # snapshot latest of /srv/bko-repo, with BackOtter's restore flags
-rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
 # the atimes the restore set, for boot to put back after its reads
 sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
 
@@ -112,7 +112,7 @@ mount --rbind --make-rslave /dev /mnt/bko-target/dev
 mount --rbind --make-rslave /proc /mnt/bko-target/proc
 mount --rbind --make-rslave /sys /mnt/bko-target/sys
 mount --rbind --make-rslave /run /mnt/bko-target/run
-chroot /mnt/bko-target dracut --regenerate-all --force
+chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d "$k/kernel" ] || continue; dracut --force --kver "${k##*/}" || exit; n=$((n + 1)); done; [ "$n" -gt 0 ]'
 chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=ubuntu --no-nvram
 # os-prober off: it would list the rescue system's disks
 sh -c '[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober'

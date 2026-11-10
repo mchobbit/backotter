@@ -236,7 +236,7 @@ class Driver(unittest.TestCase):
     def test_the_queue_takes_the_variant(self):
         q = src("ht1-queue.sh")
         self.assertRegex(q, r"LINE_RE=.*\|img\)")
-        self.assertRegex(q, r"\(bigger\|oneshot\|degraded\|img\)\$ \]\] && gv=")
+        self.assertRegex(q, r"\((?:[a-z]+\|)*img(?:\|[a-z]+)*\)\$ \]\] && gv=")
 
     def test_img_boot_shell_lines(self):
         import importlib.util

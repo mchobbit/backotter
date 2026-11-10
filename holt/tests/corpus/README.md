@@ -28,11 +28,10 @@ chopin, 24 from cinqcent.  The three guests built on 2026-11-09
 HoltTest1 runs of 2026-11-09, again PASS and bko-holt 0.2.4: endeavouros
 (eosmj3) and endeavouros-grub (eosmj5) from chopin, manjaro (eosmj2) from
 cinqcent.  Those runs used a bko-holt built outside this tree, with commit
-bf6797b, whose `bootloader_id` also looks at what's on the ESP.  This
-tree's load doesn't: neither guest has an EFI entry with a file, so their
-golden plans say `--bootloader-id=debian` where the runs said `endeavouros`
-and `manjaro`.  A plan here is this tree's plan, so that line of those two
-plans isn't what their runs executed.  ubuntu26-luks (`make-ubuntu.sh
+bf6797b, whose `bootloader_id` also looks at what's on the ESP; since the
+merge into main (2026-11-10) this tree's load does too, so their golden
+plans say `--bootloader-id=endeavouros` and `manjaro`, as the runs did.
+ubuntu26-luks (`make-ubuntu.sh
 --uefi --luks`, Subiquity's guided LVM on LUKS), built on 2026-11-10, was
 added the same day from its HoltTest1 run lk1 on cinqcent, PASS, bko-holt
 0.2.4.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,

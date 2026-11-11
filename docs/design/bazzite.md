@@ -1293,7 +1293,13 @@ The golden plan and Test2's registration, 2026-11-11.
   the boot's serial chatter, the remount failure, and a KVM
   clocksource-watchdog timeout on the loaded host. Those were read and
   accepted with `t2 guest-lines --accept kinoite44`. The class row that
-  makes is the cell's PASS, `pass-uncommitted` until this commit.
+  wrote couldn't count: the run's copy also held other sessions'
+  uncommitted files in the shared checkout. So after B7's commit,
+  GuestTest2 ran again from a clean clone of main
+  (`t2v-20261111T1520-0822`, copy `ae2a242`). That run's only finding was
+  21 more serial fragments: boot lines that two writers interleaved on
+  the console. They were accepted too, and `guest:kinoite44` is current:
+  the first current guest cell in the real ledger.
 
 ## BackShot1 on the Thinkpad
 

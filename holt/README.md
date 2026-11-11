@@ -95,13 +95,22 @@ hand, then `--only boot`.
   subvolume, and quotas with their qgroups.
 - `storage.xfs_external_logs`: which device holds each XFS external log.
 - `storage.mounts`, `swaps`, `fstab`, `crypttab`, `mdadm_conf`, each entry
-  resolved to the device it names.
+  resolved to the device it names; a mount that is a directory of another
+  mount of the same filesystem (a bind) says which (`alias_of`).
+- `storage.backup_sources`: the filesystems a whole-system backup reads,
+  each at the path fstab mounts it (`path`) and where the running system
+  has it (`from`), aliases left out; `storage.physical_root` is the one at
+  `/`.  On ostree `/` is read from /sysroot and `/home` from /var/home.
 - `boot`: which loader boots the machine and why (`loader.evidence`), the
   UEFI boot entries with device paths decoded, tied to partitions and kept
   raw (`load_option_hex`), the ESPs' files, GRUB's config, grubenv,
   /etc/default/grub and debconf answers, systemd-boot's entries, kernels and
   initramfs, the kernel command line, and the versions of the packages
   behind all of it.
+- `boot.ostree`, on an ostree system (Fedora's atomic desktops, Bazzite):
+  the booted deployment, every deployment, the loader entries and the
+  deployment each leads to, composefs's and the repository's settings,
+  bootupd's state file, grubenv's boot counting keys, and bootc's image.
 
 ## What load does
 

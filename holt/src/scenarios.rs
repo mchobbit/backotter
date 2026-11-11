@@ -1,4 +1,5 @@
-//! Whole-system tests: fake Debian 13 machines, and one Chimera Linux (their /sys, /proc, /dev,
+//! Whole-system tests: fake Debian 13 machines, one Chimera Linux and one
+//! Fedora Kinoite on ostree (their /sys, /proc, /dev,
 //! /etc, /run, /boot and /var as a directory tree, the disks as image files
 //! under /dev) laid out the way Debian's installer and BackOtter's test
 //! guests lay real ones out, run through the full report.
@@ -161,6 +162,15 @@ fn bios_mbr_btrfs_guest() {
     let m = arr(&v, &["storage", "mounts"]);
     assert_eq!(m.len(), 2);
     assert_eq!(s(&m[0], &["device"]), "vda6");
+    assert!(m.iter().all(|x| x.get("alias_of").is_none()));
+    // Not ostree: the backup reads each mount where it is.
+    assert_eq!(s(&v, &["storage", "physical_root"]), "/");
+    let bs = arr(&v, &["storage", "backup_sources"]);
+    let pairs: Vec<(&str, &str)> = bs.iter().map(|x| (s(x, &["path"]), s(x, &["from"]))).collect();
+    assert_eq!(pairs, vec![("/", "/"), ("/boot", "/boot")]);
+    assert_eq!(s(&bs[0], &["subvol"]), "/@rootfs");
+    assert!(bs[1].get("subvol").unwrap().is_null());
+    assert!(v.at(&["boot", "ostree"]).is_none());
     // Boot.
     assert_eq!(s(&v, &["boot", "loader", "name"]), "grub");
     assert_eq!(s(&v, &["boot", "loader", "package"]), "grub-pc");
@@ -662,6 +672,253 @@ fn unreadable_device_warns_and_carries_on() {
     assert_eq!(s(&v, &["storage", "disks", "0", "name"]), "sda");
 }
 
+const KINOITE_CSUM: &str = "10e6a37fe91449ab0256dc707f50023505f76d29b6d34844b63843d0950f7de6";
+const KINOITE_BOOTCSUM: &str = "1cc099369334fad8952283b3221e6d78fd79263e6dedc35ce40302458681d413";
+const KINOITE_KERNEL: &str = "7.3.3-200.fc44.x86_64";
+
+/// The kinoite44 guest (docs/design/bazzite.md, "What B1 found"), booted:
+/// UEFI through shim; GPT with the ESP, an ext4 /boot and a btrfs whose
+/// subvolumes root, home and var fstab mounts at /, /home and /var.  `/` is
+/// a composefs overlay; the physical root (subvolume root) is at /sysroot,
+/// the booted deployment's etc bound at /etc before it in mountinfo, and the
+/// stateroot's var bound beneath it.  Two deployments of one commit: .1
+/// booted and the default (ostree-2.conf), .0 the rollback.
+fn kinoite_ostree() -> Tree {
+    use crate::efi::real::*;
+    use crate::efi::GLOBAL;
+    let (c, b, v) = (KINOITE_CSUM, KINOITE_BOOTCSUM, KINOITE_KERNEL);
+    let t = Tree::new("scn-ostree");
+    let mut img = vec![0u8; 96 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "6f1c2c3d-0000-4000-8000-00000000cccc",
+            parts: vec![
+                (ESP, "e53caff6-0000-4000-8000-000000000001", 2048, 73727, 0, "EFI System Partition"),
+                (LINUX, "e53caff6-0000-4000-8000-000000000002", 73728, 106495, 0, ""),
+                (LINUX, "e53caff6-0000-4000-8000-000000000003", 106496, 196574, 0, ""),
+            ],
+        },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(71680, 0x1e3b_f9f2, ""));
+    put(&mut img, 73728, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
+    put(&mut img, 106496, &btrfs::sample::image("fedora", 0x1 | 0x20 | 0x40 | 0x100 | 0x200));
+    let boot_uuid = "10111213-1415-1617-1819-1a1b1c1d1e1f";
+    let root_uuid = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
+    // Fedora's shim entry: Debian's from Chopin, renamed (same lengths).
+    let shim = BOOT0001_SHIM.replace("6400 6500 6200 6900 6100 6e00", "4600 6500 6400 6f00 7200 6100").replace("4400 4500 4200 4900 4100 4e00", "6600 6500 6400 6f00 7200 6100");
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    let dep = |n: u32| format!("/sysroot/ostree/deploy/default/deploy/{c}.{n}");
+    let fstab = format!("# Updated by bootc-fstab-edit.service\nUUID={root_uuid} / btrfs subvol=root,compress=zstd:1,ro 0 0\nUUID={boot_uuid} /boot ext4 defaults 1 2\nUUID=1E3B-F9F2 /boot/efi vfat defaults,uid=0,gid=0,umask=077,shortname=winnt 0 2\nUUID={root_uuid} /home btrfs subvol=home,compress=zstd:1 0 0\nUUID={root_uuid} /var btrfs subvol=var,compress=zstd:1 0 0\n");
+    let bls = |n: u32, ser: u32, extra: &str| {
+        format!("title Fedora Linux 44.20261111.0 (Kinoite) (ostree:{ser})\nversion {n}\noptions ostree=/ostree/boot.1/default/{b}/{ser} console=tty0 console=ttyS0,115200n8 root=UUID={root_uuid} rootflags=subvol=root rw{extra}\nlinux /ostree/default-{b}/vmlinuz-{v}\ninitrd /ostree/default-{b}/initramfs-{v}.img\n")
+    };
+    t.disk("vda", "253:0", &img, 512)
+        .partition("vda", "vda1", "253:1", 1, 2048, 71680, &img)
+        .partition("vda", "vda2", "253:2", 2, 73728, 32768, &img)
+        .partition("vda", "vda3", "253:3", 3, 106496, 90079, &img)
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&var("Boot0001"), unhex(&shim))
+        .file(&var("BootOrder"), unhex("07000000 0100"))
+        .file(&var("BootCurrent"), unhex("06000000 0100"))
+        .file(&var("SecureBoot"), unhex("06000000 00"))
+        .file("/usr/lib/os-release", "NAME=\"Fedora Linux\"\nVERSION=\"44.20261111.0 (Kinoite)\"\nID=fedora\nVERSION_ID=44\nPRETTY_NAME=\"Fedora Linux 44.20261111.0 (Kinoite)\"\nVARIANT_ID=kinoite\nOSTREE_VERSION='44.20261111.0'\n")
+        .symlink("/etc/os-release", "../usr/lib/os-release")
+        .file("/run/ostree-booted", "")
+        .file(
+            "/proc/self/mountinfo",
+            format!(
+                "51 1 0:42 / / ro,relatime shared:1 - overlay composefs ro,seclabel,lowerdir+=/run/ostree/.private/cfsroot-lower,datadir+=/sysroot/ostree/repo/objects,redirect_dir=on,metacopy=on
+48 51 0:37 /root/ostree/deploy/default/deploy/{c}.1/etc /etc rw,relatime shared:2 - btrfs /dev/vda3 rw,seclabel,discard=async,space_cache=v2,subvolid=258,subvol=/root
+52 51 0:37 /root /sysroot ro,relatime shared:3 - btrfs /dev/vda3 rw,seclabel,discard=async,space_cache=v2,subvolid=258,subvol=/root
+53 52 0:37 /root/ostree/deploy/default/var /sysroot/ostree/deploy/default/var rw,relatime shared:4 - btrfs /dev/vda3 rw,seclabel,discard=async,space_cache=v2,subvolid=258,subvol=/root
+42 51 0:9 / /dev rw,nosuid shared:5 - devtmpfs devtmpfs rw,seclabel
+125 51 0:37 /var /var rw,relatime shared:215 - btrfs /dev/vda3 rw,seclabel,discard=async,space_cache=v2,subvolid=256,subvol=/var
+82 125 0:37 /home /var/home rw,relatime shared:203 - btrfs /dev/vda3 rw,seclabel,discard=async,space_cache=v2,subvolid=257,subvol=/home
+120 51 253:2 / /boot rw,relatime shared:209 - ext4 /dev/vda2 rw,seclabel
+220 120 253:1 / /boot/efi rw,relatime shared:221 - vfat /dev/vda1 rw,fmask=0077,dmask=0077,codepage=437,iocharset=ascii,shortname=winnt,errors=remount-ro
+"
+            ),
+        )
+        .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n/dev/zram0 partition 3984380 0 100\n")
+        .file("/proc/cmdline", format!("BOOT_IMAGE=(hd0,gpt2)/ostree/default-{b}/vmlinuz-{v} ostree=/ostree/boot.1/default/{b}/0 console=tty0 console=ttyS0,115200n8 root=UUID={root_uuid} rootflags=subvol=root rw bko.rollback=1\n"))
+        .file("/proc/sys/kernel/osrelease", format!("{v}\n"))
+        .file("/proc/sys/kernel/hostname", "kinoite44\n")
+        .file("/etc/fstab", &fstab)
+        .file("/etc/crypttab", "")
+        .dir("/usr/lib/sysimage/rpm")
+        .dir(&format!("/usr/lib/modules/{v}/kernel"))
+        .file("/usr/lib/ostree/prepare-root.conf", "[composefs]\nenabled = yes\n[sysroot]\nreadonly = true\n")
+        // The physical root.
+        .file(&format!("{}/etc/fstab", dep(0)), &fstab)
+        .file(&format!("{}/etc/fstab", dep(1)), &fstab)
+        .file(&format!("{}/etc/bko-deployment", dep(1)), format!("deployment {c}.1\n"))
+        .file(&format!("{}.origin", dep(0)), "[origin]\ncontainer-image-reference=ostree-unverified-registry:quay.io/fedora/fedora-kinoite:44\n")
+        .file(&format!("{}.origin", dep(1)), "[origin]\ncontainer-image-reference=ostree-unverified-registry:quay.io/fedora/fedora-kinoite:44\n")
+        .dir("/sysroot/ostree/deploy/default/var/tmp")
+        .dir("/sysroot/ostree/deploy/default/backing")
+        .file("/sysroot/ostree/repo/config", "[core]\nrepo_version=1\nmode=bare\n\n[remote \"default\"]\nurl=quay.io/fedora/fedora-kinoite@sha256:d78c9d54\ngpg-verify=false\n\n[sysroot]\nreadonly=true\nbootloader=none\n")
+        .file("/sysroot/ostree/repo/objects/03/ce65e1429cd57bf8e169ef1eb52ede93040a1cc054cf160b1d1f8dafb5b3a2.file", "x")
+        .symlink("/sysroot/ostree/boot.1", "boot.1.1")
+        .symlink(&format!("/sysroot/ostree/boot.1.1/default/{b}/0"), &format!("../../../deploy/default/deploy/{c}.1"))
+        .symlink(&format!("/sysroot/ostree/boot.1.1/default/{b}/1"), &format!("../../../deploy/default/deploy/{c}.0"))
+        // /boot and the ESP.
+        .symlink("/boot/boot", ".")
+        .symlink("/boot/loader", "loader.1")
+        .file("/boot/loader.1/entries/ostree-1.conf", bls(1, 1, ""))
+        .file("/boot/loader.1/entries/ostree-2.conf", bls(2, 0, " bko.rollback=1"))
+        .file(&format!("/boot/ostree/default-{b}/vmlinuz-{v}"), vec![0u8; 19])
+        .file(&format!("/boot/ostree/default-{b}/initramfs-{v}.img"), vec![0u8; 24])
+        .file(&format!("/boot/ostree/default-{b}/.vmlinuz-{v}.hmac"), "x")
+        .file("/boot/bootupd-state.json", "{\"installed\":{\"EFI\":{}}}\n")
+        .file("/boot/grub2/grub.cfg", "# Generated by bootupd\nset timeout=1\nsearch --no-floppy --set=root --fs-uuid 10111213-1415-1617-1819-1a1b1c1d1e1f\ninsmod blscfg\nblscfg\n")
+        .file("/boot/grub2/grubenv", "# GRUB Environment Block\nboot_success=1\n######\n")
+        .file("/boot/grub2/bootuuid.cfg", format!("set BOOT_UUID=\"{boot_uuid}\"\n"))
+        .file("/boot/efi/EFI/fedora/shimx64.efi", vec![1u8; 300])
+        .file("/boot/efi/EFI/fedora/grubx64.efi", vec![2u8; 400])
+        .file("/boot/efi/EFI/fedora/grub.cfg", "search --no-floppy --root-dev-only --fs-uuid --set=dev 10111213-1415-1617-1819-1a1b1c1d1e1f\nset prefix=($dev)/grub2\nconfigfile $prefix/grub.cfg\n")
+        .file("/boot/efi/EFI/fedora/bootuuid.cfg", format!("set BOOT_UUID=\"{boot_uuid}\"\n"))
+        .file("/boot/efi/EFI/BOOT/BOOTX64.EFI", vec![1u8; 300]);
+    t
+}
+
+/// What rpm, btrfs and bootc answer on kinoite44.  The btrfs tools are
+/// asked at /sysroot, never at /etc (which comes first in mountinfo).
+fn kinoite_runner() -> FakeRunner {
+    let mut r = FakeRunner::default()
+        .with(
+            "rpm -qa --qf %{NAME}\t%{VERSION}-%{RELEASE}\t%{ARCH}\n",
+            "grub2-efi-x64\t2.12-66.fc44\tx86_64\nshim-x64\t16.1-7\tx86_64\ngrub2-tools\t2.12-66.fc44\tx86_64\ndracut\t110-1.fc44\tx86_64\nbtrfs-progs\t6.17-1.fc44\tx86_64\nkernel-core\t7.3.3-200.fc44\tx86_64\nostree\t2026.4-1.fc44\tx86_64\nbootupd\t0.3.2-1.fc44\tx86_64\nefibootmgr\t18-11.fc44\tx86_64\n",
+        )
+        .with("btrfs subvolume list -a -p -u -q /sysroot", "ID 256 gen 113 parent 5 top level 5 parent_uuid - uuid 6c8a1b2c-0000-4000-8000-000000000256 path var\nID 257 gen 88 parent 5 top level 5 parent_uuid - uuid 6c8a1b2c-0000-4000-8000-000000000257 path home\nID 258 gen 113 parent 5 top level 5 parent_uuid - uuid 6c8a1b2c-0000-4000-8000-000000000258 path root\n")
+        .with("btrfs subvolume list -a -r /sysroot", "")
+        .with("btrfs subvolume get-default /sysroot", "ID 5 (FS_TREE)\n")
+        .with(
+            "bootc status --json",
+            r#"{"apiVersion": "org.containers.bootc/v1", "kind": "BootcHost", "status": {"staged": null, "booted": {"image": {"image": {"image": "quay.io/fedora/fedora-kinoite:44", "transport": "registry"}, "version": "44.20261111.0", "imageDigest": "sha256:c5e91226b7c92214a5fff04ca2836504663bb8025792ad77c9c70b9c5ace3b19"}, "ostree": {"stateroot": "default", "deploySerial": 1}}}}"#,
+        );
+    for p in ["/sysroot", "/var", "/var/home"] {
+        r = r.with(&format!("btrfs property get -t s {p}"), "ro=false\n").with(&format!("btrfs property get -t i {p}"), "");
+    }
+    r
+}
+
+#[test]
+fn kinoite_ostree_guest() {
+    let (c, b, kv) = (KINOITE_CSUM, KINOITE_BOOTCSUM, KINOITE_KERNEL);
+    let v = run(&kinoite_ostree(), true, kinoite_runner());
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+    assert_eq!(s(&v, &["os", "id"]), "fedora");
+    assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
+    // Storage: the composefs / isn't a layout mount; /etc and the stateroot
+    // var are aliases of /sysroot; the backup tree is fstab's.
+    let st = v.get("storage").unwrap();
+    assert_eq!(s(st, &["physical_root"]), "/sysroot");
+    let ms = arr(st, &["mounts"]);
+    let targets: Vec<&str> = ms.iter().map(|m| m.get("target").and_then(Value::as_str).unwrap()).collect();
+    assert_eq!(targets, vec!["/etc", "/sysroot", "/sysroot/ostree/deploy/default/var", "/var", "/var/home", "/boot", "/boot/efi"]);
+    let alias: Vec<Option<&str>> = ms.iter().map(|m| m.get("alias_of").and_then(Value::as_str)).collect();
+    assert_eq!(alias, vec![Some("/sysroot"), None, Some("/sysroot"), None, None, None, None]);
+    let src: Vec<(&str, &str, &str)> = arr(st, &["backup_sources"])
+        .iter()
+        .map(|x| (x.get("path").and_then(Value::as_str).unwrap(), x.get("from").and_then(Value::as_str).unwrap(), x.get("device").and_then(Value::as_str).unwrap()))
+        .collect();
+    assert_eq!(src, vec![("/", "/sysroot", "vda3"), ("/boot", "/boot", "vda2"), ("/boot/efi", "/boot/efi", "vda1"), ("/home", "/var/home", "vda3"), ("/var", "/var", "vda3")]);
+    // Its paths are the mount points fstab gives, as load plans them.
+    let mut fs: Vec<&str> = arr(st, &["fstab"]).iter().map(|e| e.get("file").and_then(Value::as_str).unwrap()).collect();
+    fs.sort();
+    assert_eq!(src.iter().map(|x| x.0).collect::<Vec<_>>(), fs);
+    assert_eq!(s(st, &["fstab", "0", "resolves_to"]), "vda3");
+    // btrfs: subvolume root's properties from /sysroot (not the /etc bind),
+    // and only the subvolumes' own mounts.
+    let bt = st.at(&["btrfs", "0"]).unwrap();
+    let msv: Vec<(&str, &str)> = arr(bt, &["mounted_subvolumes"]).iter().map(|x| (x.get("target").and_then(Value::as_str).unwrap(), x.get("subvol").and_then(Value::as_str).unwrap())).collect();
+    assert_eq!(msv, vec![("/sysroot", "/root"), ("/var", "/var"), ("/var/home", "/home")]);
+    for (i, path) in [(0, "var"), (1, "home"), (2, "root")] {
+        assert_eq!(s(bt, &["subvolumes", &i.to_string(), "path"]), path);
+        assert_eq!(s(bt, &["subvolumes", &i.to_string(), "properties", "ro"]), "false", "{path}");
+    }
+    // Boot: GRUB through shim from Fedora's packages, bootupd's grub.cfg.
+    let bo = v.get("boot").unwrap();
+    assert_eq!(s(bo, &["loader", "name"]), "grub");
+    assert_eq!(bo.at(&["loader", "via_shim"]), Some(&Value::Bool(true)));
+    assert_eq!(s(bo, &["loader", "package"]), "grub2-efi-x64");
+    assert_eq!(s(bo, &["loader", "shim_package"]), "shim-x64");
+    assert_eq!(s(bo, &["grub", "dir"]), "/boot/grub2");
+    assert!(bo.get("systemd_boot").unwrap().is_null(), "{}", bo.get("systemd_boot").unwrap().compact());
+    assert_eq!(s(bo, &["initramfs", "generator"]), "prebuilt");
+    let k = arr(bo, &["kernels", "installed"]);
+    assert_eq!(k.len(), 1);
+    assert_eq!(s(&k[0], &["version"]), kv);
+    assert_eq!(s(&k[0], &["dir"]), format!("/boot/ostree/default-{b}"));
+    assert_eq!(k[0].get("running"), Some(&Value::Bool(true)));
+    assert_eq!(u(&k[0], &["initrd_bytes"]), 24);
+    assert_eq!(s(bo, &["packages", "grub2-efi-x64"]), "2.12-66.fc44");
+    // boot.ostree.
+    let o = bo.get("ostree").unwrap();
+    assert_eq!(o.get("booted"), Some(&Value::Bool(true)));
+    assert_eq!(s(o, &["karg"]), format!("/ostree/boot.1/default/{b}/0"));
+    assert_eq!(s(o, &["physical_root"]), "/sysroot");
+    assert_eq!(s(o, &["stateroot"]), "default");
+    assert_eq!(s(o, &["booted_deployment"]), format!("/ostree/deploy/default/deploy/{c}.1"));
+    let d = arr(o, &["deployments"]);
+    assert_eq!(d.len(), 2);
+    assert_eq!((u(&d[0], &["serial"]), d[0].get("booted")), (0, Some(&Value::Bool(false))));
+    assert_eq!((u(&d[1], &["serial"]), d[1].get("booted")), (1, Some(&Value::Bool(true))));
+    assert_eq!(s(&d[1], &["checksum"]), c);
+    assert_eq!(s(&d[1], &["origin"]), "ostree-unverified-registry:quay.io/fedora/fedora-kinoite:44");
+    assert_eq!(d[0].get("has_etc"), Some(&Value::Bool(true)));
+    let e = arr(o, &["entries"]);
+    assert_eq!((s(&e[0], &["file"]), s(&e[0], &["version"]), s(&e[0], &["deployment"])), ("ostree-1.conf", "1", format!("/ostree/deploy/default/deploy/{c}.0").as_str()));
+    assert_eq!((s(&e[1], &["file"]), s(&e[1], &["version"]), s(&e[1], &["deployment"])), ("ostree-2.conf", "2", format!("/ostree/deploy/default/deploy/{c}.1").as_str()));
+    assert!(s(&e[1], &["options"]).ends_with(" rw bko.rollback=1"));
+    assert_eq!(s(&e[1], &["linux"]), format!("/ostree/default-{b}/vmlinuz-{kv}"));
+    assert_eq!(s(o, &["boot_loader"]), "loader.1");
+    assert_eq!(s(o, &["boot_links", "boot.1"]), "boot.1.1");
+    assert_eq!(s(o, &["prepare_root", "composefs"]), "yes");
+    assert_eq!(s(o, &["prepare_root", "readonly"]), "true");
+    assert_eq!(s(o, &["prepare_root", "files", "0"]), "/usr/lib/ostree/prepare-root.conf");
+    assert_eq!(s(o, &["repo", "mode"]), "bare");
+    assert_eq!(s(o, &["repo", "sysroot_readonly"]), "true");
+    assert_eq!(s(o, &["repo", "sysroot_bootloader"]), "none");
+    assert!(o.at(&["repo", "ex_fsverity"]).unwrap().is_null());
+    assert_eq!(o.get("bootupd_state"), Some(&Value::Bool(true)));
+    assert_eq!(s(o, &["grubenv", "boot_success"]), "1");
+    assert!(o.at(&["grubenv", "boot_counter"]).unwrap().is_null());
+    assert_eq!(s(o, &["image", "image"]), "quay.io/fedora/fedora-kinoite:44");
+    assert_eq!(s(o, &["image", "digest"]), "sha256:c5e91226b7c92214a5fff04ca2836504663bb8025792ad77c9c70b9c5ace3b19");
+}
+
+/// The same tree as Bazzite names itself, and with composefs left to
+/// prepare-root.conf in /etc and fs-verity required by the repository:
+/// what load's plan problems will read.  Without /run/ostree-booted it's
+/// still told by its composefs `/` and its ostree= karg.
+#[test]
+fn bazzite_ostree_guest() {
+    let t = kinoite_ostree();
+    std::fs::remove_file(t.p("/run/ostree-booted")).unwrap();
+    std::fs::remove_file(t.p("/usr/lib/os-release")).unwrap();
+    t.file("/usr/lib/os-release", "NAME=\"Bazzite\"\nID=bazzite\nID_LIKE=\"fedora\"\nVERSION_ID=44\nVARIANT_ID=bazzite\n")
+        .file("/etc/ostree/prepare-root.conf", "[composefs]\nenabled = verity\n")
+        .file("/sysroot/ostree/repo/config", "[core]\nmode=bare\n[ex-fsverity]\nrequired=true\n");
+    let v = run(&t, true, kinoite_runner());
+    assert_eq!(s(&v, &["os", "id"]), "bazzite");
+    let o = v.at(&["boot", "ostree"]).unwrap();
+    assert_eq!(o.get("booted"), Some(&Value::Bool(false)));
+    assert_eq!(s(o, &["prepare_root", "composefs"]), "verity");
+    assert_eq!(s(o, &["prepare_root", "readonly"]), "true");
+    assert_eq!(arr(o, &["prepare_root", "files"]).len(), 2);
+    assert_eq!(s(o, &["repo", "ex_fsverity", "required"]), "true");
+    assert!(o.at(&["repo", "sysroot_bootloader"]).unwrap().is_null());
+    // Without ostree's markers, the same tree is an ordinary system.
+    std::fs::remove_file(t.p("/proc/self/mountinfo")).unwrap();
+    t.file("/proc/self/mountinfo", "52 1 0:37 /root /sysroot ro - btrfs /dev/vda3 rw,subvolid=258,subvol=/root\n").file("/proc/cmdline", "root=UUID=x rw\n");
+    let v = run(&t, true, kinoite_runner());
+    assert!(v.at(&["boot", "ostree"]).is_none());
+    assert_eq!(s(&v, &["storage", "backup_sources", "0", "path"]), "/sysroot");
+}
+
 /// Every scenario's dump, by name, for tests that must hold over all of
 /// them (load's fit.rs).
 pub fn dumps() -> Vec<(&'static str, Value)> {
@@ -673,5 +930,6 @@ pub fn dumps() -> Vec<(&'static str, Value)> {
         ("md_raid1", run(&md_raid1_tree(), true, FakeRunner::default())),
         ("zfs_root", run(&zfs, true, runner)),
         ("whole_disk_fs", run(&misc_tree(), true, FakeRunner::default())),
+        ("kinoite_ostree", run(&kinoite_ostree(), true, kinoite_runner())),
     ]
 }

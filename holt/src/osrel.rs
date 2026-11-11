@@ -108,6 +108,11 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     // names carry the snapshot's date).  "*" rather than "", as for
     // AerynOS: a snapshot that starts writing one is still Chimera.
     ("chimera", "*", "Chimera Linux"),
+    // ostree-based, on Fedora's atomic desktops (Kinoite): ID=bazzite,
+    // VERSION_ID the Fedora release.  Silverblue and Kinoite themselves say
+    // fedora 44, so the Fedora row takes them; ostree is told by its own
+    // markers (crate::ostree::detect).
+    ("bazzite", "44", "Bazzite 44"),
     // Not Linux (other/): os-release, or uname for those without one.
     ("freebsd", "14", "FreeBSD 14"),
     ("freebsd", "15", "FreeBSD 15"),
@@ -211,7 +216,7 @@ mod tests {
         let ubuntu22 = parse("ID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"22.04\"\n");
         assert!(check_supported(Some(&ubuntu22)).unwrap_err().contains("ubuntu 22.04"));
         assert!(check_supported(Some(&parse("ID=zorin\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"18\"\n"))).is_ok());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, Chimera Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, Chimera Linux, Bazzite 44, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -256,6 +261,23 @@ mod tests {
         assert!(supported_names().contains("Chimera Linux"));
         // Not by its likeness: another musl/apk system isn't Chimera.
         assert!(check_supported(Some(&parse("ID=\"chimera-ish\"\nID_LIKE=\"chimera\"\n"))).is_err());
+    }
+
+    /// The Thinkpad's /usr/lib/os-release (Bazzite 44.20261012), and
+    /// kinoite44's (Fedora Kinoite 44.20261111.0).
+    #[test]
+    fn bazzite_and_kinoite() {
+        let b = parse("NAME=\"Bazzite\"\nVERSION=\"44.20261012.0 (Kinoite)\"\nID=bazzite\nID_LIKE=\"fedora\"\nVERSION_ID=44\nVARIANT_ID=bazzite\nPRETTY_NAME=\"Bazzite 44 (FROM Fedora Kinoite)\"\nOSTREE_VERSION='44.20261012.0'\n");
+        assert_eq!(b.get("ID"), Some("bazzite"));
+        assert_eq!(b.get("OSTREE_VERSION"), Some("44.20261012.0"));
+        assert!(check_supported(Some(&b)).is_ok());
+        assert!(supported_names().contains("Bazzite 44"));
+        // Not the next Fedora major until a guest or a run shows it.
+        assert!(check_supported(Some(&parse("ID=bazzite\nID_LIKE=fedora\nVERSION_ID=45\n"))).is_err());
+        // Bluefin and Aurora aren't Bazzite, and ID_LIKE=fedora doesn't let them in.
+        assert!(check_supported(Some(&parse("ID=bluefin\nID_LIKE=fedora\nVERSION_ID=44\n"))).is_err());
+        let k = parse("NAME=\"Fedora Linux\"\nVERSION=\"44.20261111.0 (Kinoite)\"\nID=fedora\nVERSION_ID=44\nVARIANT_ID=kinoite\nOSTREE_VERSION='44.20261111.0'\n");
+        assert!(check_supported(Some(&k)).is_ok());
     }
 
     #[test]

@@ -297,7 +297,12 @@ def read_facts(dump, ls):
 
 # Top-level fields that are the machine's, the run's or the tool's, and
 # versions.  boot.* holds versions and loader files that any update rewrites.
-LAYOUT_DROP = re.compile(r"^(generated|format|schema|privileged|warnings|host\.|tool\.|os\.|_illumos\.)")
+# storage.backup_sources, storage.physical_root and a mount's alias_of are
+# worked out from the mounts and fstab, which the layout already has
+# (docs/design/bazzite.md, B2): a dump that first carries them is the same
+# layout.
+LAYOUT_DROP = re.compile(r"^(generated|format|schema|privileged|warnings|host\.|tool\.|os\.|_illumos\."
+                         r"|storage\.backup_sources\.|storage\.physical_root$|storage\.mounts\.\d+\.alias_of$)")
 LAYOUT_BOOT_KEEP = re.compile(r"^boot\.loader\.(name|firmware)$")
 
 

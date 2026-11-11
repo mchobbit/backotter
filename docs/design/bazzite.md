@@ -6,7 +6,8 @@ ostree support at all; nothing in holt/, docs/ or testvm/ mentions ostree,
 composefs, rpm-ostree, bootc or bootupd.
 
 B1 (the `kinoite44` guest) was built the same day, and its *checks* are
-settled below: see "What B1 found".
+settled below: see "What B1 found". B2 (`dump`) followed: see "What B2
+found".
 
 **Conventions.** est. marks an estimate. *Check* marks a fact not yet seen, to be
 settled on the first guest (B1) or on the Thinkpad before the code that depends
@@ -307,14 +308,19 @@ only once their os-release is seen (*check*: `ID=bluefin`/`aurora`, or
   Optionally `bootc status --json` for the image reference. `load` re-derives
   the same facts from the restored tree and cross-checks.
 - `storage`: name the physical root (fstab's `/` at `/sysroot`), mark aliases,
-  and add `backup_sources`.
+  and add `backup_sources`. (B2: `storage.physical_root`, `alias_of` on an
+  alias's entry in `storage.mounts`, and `storage.backup_sources` entries of
+  `path`, `from`, `device`, `fstype`, `source` and `subvol`; see "What B2
+  found".)
 - `kernels_json`: also `/boot/ostree/*/vmlinuz-*` and `initramfs-*.img`.
 - `initramfs_json`: `prebuilt` on ostree, even with dracut installed.
 - The BLS entries recorded as ostree's, not as systemd-boot's.
 - `btrfs_reachable_path` and `mounted_subvolumes` skip mounts whose FSROOT
   isn't the subvolume's own root (generic fix).
 - `grub2-efi-x64` and `shim-x64` in the UEFI package lookup (generic Fedora
-  fix).
+  fix). (B2: both were already in `PACKAGES` and fingerprint.py's mirror;
+  the gap was `detect_loader`'s GRUB list, which now ends with
+  `grub2-efi-x64`, and the loader gets `shim_package`.)
 
 Systems without bootupd (a Silverblue or Kinoite upgraded from a release
 before it may lack `bootupd-state.json` and have `bootloader=auto` or `grub2`
@@ -653,6 +659,74 @@ etc, Bluefin's os-release) stay open; B1 doesn't touch the Thinkpad.
 - **vm-update** must not run on kinoite44 before B4: its `has dnf` branch
   would run `dnf -y upgrade`, which fails on an image-mode system.
 
+## What B2 found
+
+`dump` built as "The design" says (holt/src/ostree.rs, report.rs, mounts.rs,
+boot.rs, osrel.rs), 2026-11-11. Checked against the shipped bko-holt by
+dumping booted guests with both: kinoite44 and fedora44-uefi on Chopin,
+tumbleweed and debian13 on Cinqcent (`--ram`, thrown away after).
+
+- **The FSROOT bug was real on kinoite44.** The shipped dump asked
+  `btrfs property get` at `/etc`, so subvolume `root` had no `ro` at all,
+  and `mounted_subvolumes` listed `/etc` and the stateroot var as mounts of
+  `/root`. Now the mounts that count are those whose FSROOT is their
+  `subvol=` (`Mount::is_subvolume_root`): `root` resolves to `/sysroot`,
+  and `mounted_subvolumes` is `/sysroot`, `/var`, `/var/home`.
+- **Elsewhere nothing moved.** On tumbleweed (nine subvolume mounts,
+  snapper's among them), fedora44-uefi and debian13 the new dump differs from
+  the shipped one only by the new keys (`physical_root`, `backup_sources`,
+  and on Fedora `loader.package` `grub2-efi-x64` and `shim_package`
+  `shim-x64`): `mounted_subvolumes` and every subvolume's properties are as
+  they were. So update/fingerprint.py, test_vm_update.py,
+  holttest1d/judge.py and backshot2's bs2lib see the same values as before
+  on every guest without a subdirectory bind. bs2lib reads only
+  `storage.mounts`' `target` and `device`, which stay; judge.py compares two
+  dumps of one binary, and `backup_sources` is sorted by path, so it needs
+  no rule. fingerprint.py's layout now leaves out `backup_sources`,
+  `physical_root` and `alias_of` (worked out from the mounts and fstab it
+  already has), so no guest's holt digest moves on its first dump by the
+  new binary; test_vm_update.py has a test for it. That edit changes
+  fingerprint.py's `rules`, so the next `t2` plan says to run
+  `guest-fingerprints --reproject`, which leaves the stored digests as they
+  are.
+- **Aliases** (`mounts::alias_of`): a mount whose FSROOT is a strict
+  subdirectory of another mount of the same filesystem; of several, the
+  deepest; a btrfs subvolume's own root never, though the top level is
+  mounted too. On kinoite44 `/etc` and `/sysroot/ostree/deploy/default/var`
+  are aliases of `/sysroot`. They stay in `storage.mounts` (with
+  `alias_of`), since `--fit-largest` and bs2lib read the mounts by device.
+- **`backup_sources` on kinoite44:** `/` from `/sysroot`, `/boot`,
+  `/boot/efi`, `/home` from `/var/home`, `/var`, the same paths as fstab's
+  mount points (B7's corpus test is to hold that for every dump). Matching is
+  by the device fstab's spec resolves to plus `subvol=` (or `subvolid=`;
+  neither means the top level), and only on ostree; elsewhere each
+  non-alias mount is its own path (`physical_root` is then `/`). When two
+  mounts share a path, the later (the one on top) wins.
+- **`boot.ostree`** has: `booted` (`/run/ostree-booted`), `karg`,
+  `physical_root`, `stateroot`, `booted_deployment` (the karg resolved
+  through `boot.1 -> boot.1.1` and `N -> ../../../deploy/...`, as a path
+  from the physical root's top), `deployments` (stateroot, checksum,
+  serial, path, booted, origin, has_etc), `boot_loader` (`loader.1`),
+  `boot_links`, `entries` (each BLS file's title, version, linux, initrd,
+  options, `ostree=` and the deployment it leads to), `prepare_root`
+  (effective `composefs` and `readonly`, `/etc`'s file over `/usr/lib`'s,
+  and which files there were), `repo` (`mode`, `sysroot_readonly`,
+  `sysroot_bootloader`, `ex_fsverity` as an object or null),
+  `bootupd_state`, `grubenv` (`boot_success`, `boot_counter`,
+  `next_entry`) and `image` (from `bootc status --json`: image, transport,
+  digest, version). On kinoite44 every value matched B1's checks; its
+  grubenv has no keys at all, so all three are null.
+- **Kernels:** `/boot/ostree/*/vmlinuz-V` with `initramfs-V.img`, each with
+  its `dir`; `config` is false (the image keeps it in `/usr/lib/modules/V`).
+  `initramfs.generator` is `prebuilt`, and `boot.systemd_boot` is null.
+- **Detection** is by `/run/ostree-booted`, a composefs `/`, or `ostree=`
+  in the cmdline; the `bazzite_ostree_guest` scenario drops the first and
+  is still told by the other two.
+- **Load untouched:** the golden plans don't move (they are planned from the
+  stored src.json, and no plan reads `loader.package`), so B7's expected
+  re-bless of fedora* plans "from the package-name fix" won't happen unless
+  B7 also re-dumps those guests.
+
 ## BackShot1 on the Thinkpad
 
 After the bs1 fixes (B8) and a `bs1-qemu.py` rehearsal on `kinoite44`:
@@ -713,7 +787,7 @@ Boot0009 when the old one survives the erase. It predates ostree.
 | # | Piece | Effort |
 |---|---|---|
 | B1 | `make-fedora.sh --ostree`, `ks-ostree.cfg`, `storage-ostree.ks`; the second deployment; `kinoite44` on Chopin, copied to Cinqcent; the two-boot manifest diff; settle the *checks* above. **Done 2026-11-11:** built on Chopin, copied to Cinqcent (same SHA-256), booted on both; see "What B1 found" | 0.75 d |
-| B2 | `dump`: detection, `SUPPORTED` row, holt/src/ostree.rs and `boot.ostree`, `backup_sources` and aliases, kernels, `prebuilt`, the BLS label, the btrfs FSROOT fix, Fedora's loader packages; a scenarios.rs fake composefs tree (mountinfo, `/run/ostree-booted`, `/boot/ostree/*`, `prepare-root.conf`, the `/etc` bind); unit tests; check fingerprint.py, test_vm_update.py, holttest1d/judge.py and backshot2's bs2lib against the new `mounted_subvolumes` and properties | 1.5 d |
+| B2 | `dump`: detection, `SUPPORTED` row, holt/src/ostree.rs and `boot.ostree`, `backup_sources` and aliases, kernels, `prebuilt`, the BLS label, the btrfs FSROOT fix, Fedora's loader packages; a scenarios.rs fake composefs tree (mountinfo, `/run/ostree-booted`, `/boot/ostree/*`, `prepare-root.conf`, the `/etc` bind); unit tests; check fingerprint.py, test_vm_update.py, holttest1d/judge.py and backshot2's bs2lib against the new `mounted_subvolumes` and properties. **Done 2026-11-11:** see "What B2 found" | 1.5 d |
 | B3 | `load`: mount stage without `ro`, the ostree marker, `ostree_boot` (atimes listed, note, consistency check, NVRAM, log and labels, the shared tail), the v1 plan problems; unit tests | 1.5 d |
 | B4 | vm-mount's ostree mode (HoltTest1, vm-chroot); `ostree_paths.py` for bs1-manifest and compare.py; vm-update's ostree branch | 1 d |
 | B5 | SticTest1 `kinoite44` entry and runs, both archivers | 0.25 d |

@@ -17,6 +17,7 @@ pub mod load;
 pub mod mdsb;
 pub mod mounts;
 pub mod osrel;
+pub mod ostree;
 pub mod other;
 pub mod parttable;
 pub mod probe;

@@ -450,6 +450,22 @@ class TestFingerprint(unittest.TestCase):
         e["boot"]["kernels"]["installed"] = []
         self.assertEqual(a, FP.layout(e, JUDGE))
 
+    def test_derived_storage_fields_leave_the_layout(self):
+        # B2 of docs/design/bazzite.md: backup_sources, physical_root and a
+        # mount's alias_of are worked out from the mounts and fstab.
+        d = dump_of("tumbleweed")
+        a = FP.layout(d, JUDGE)
+        e = copy.deepcopy(d)
+        ms = e["storage"]["mounts"]
+        e["storage"]["physical_root"] = "/"
+        e["storage"]["backup_sources"] = [{"path": m["target"], "from": m["target"], "device": m.get("device"),
+                                           "fstype": m.get("fstype"), "source": m.get("source"), "subvol": None} for m in ms]
+        ms[-1]["alias_of"] = ms[0]["target"]
+        self.assertEqual(a, FP.layout(e, JUDGE))
+        # The mounts themselves still count.
+        ms[-1]["root"] = "/elsewhere"
+        self.assertNotEqual(a, FP.layout(e, JUDGE))
+
     def test_two_boot_only_rules(self):
         d = dump_of("fedora44-raid") if (CORPUS / "fedora44-raid" / "src.json").exists() else None
         if d is None or not d["storage"].get("md_arrays"):

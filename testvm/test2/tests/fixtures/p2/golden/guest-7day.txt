@@ -1,7 +1,6 @@
-GuestTest2 plan: base BASE, ledger 52 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 1 of 52 guests, est. 1.0 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+GuestTest2 plan: base BASE, ledger 53 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
+due: 1 of 53 guests, est. 1.0 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   guest:arch  any      guest:7day  its last --try is older than 7 days (2026-10-30)  1.0 gm  history:1
-current: 51
-note: not in any spec: kinoite44
+current: 52
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written

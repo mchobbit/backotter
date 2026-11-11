@@ -515,6 +515,13 @@ class RealLogLines(unittest.TestCase):
         "netbsd": ["Removed obsolete file /usr/lib/libunbound.so.8.1"],
         "openbsd": ["Installing patch 002_aesgmac", "Get/Verify syspatch78-002_aesgmac.tgz"],
         "haiku": ["100% brotli-1.1.0-3-x86_64.hpkg [234.1 KiB]", "upgrade package brotli-1.1.0-2 to 1.1.0-3 from repository HaikuPorts"],
+        # kinoite44's (B4's --try and its staged upgrade to :45, docs/design/bazzite.md)
+        "rpm-ostree": ["Pulling manifest: ostree-unverified-registry:quay.io/fedora/fedora-kinoite:45",
+                       "Importing: ostree-unverified-registry:quay.io/fedora/fedora-kinoite:45 (digest: sha256:"
+                       "6942ebd1efac34b3e09b44406313048baf481e380de74f0c0d19d25d3a028826)",
+                       "ostree chunk layers already present: 9", "ostree chunk layers needed: 56 (2.7 GB)",
+                       "[1/56] Fetching ostree chunk a3c0f99e1253fe268a6 (121.1 MB)...done", "Staging deployment...done",
+                       'Run "systemctl reboot" to start a reboot', "No upgrade available."],
     }
 
     def test_each_package_managers_chatter_goes(self):
@@ -530,6 +537,10 @@ class RealLogLines(unittest.TestCase):
         "pacman": ["error: failed to commit transaction (conflicting files)"],
         "dnf": ["Error: Transaction test error:"],
         "zypper": ["Retrieving: foo-1.0.rpm [Error: not found]"],
+        "rpm-ostree": ["error: Creating importer: failed to invoke method OpenImage: reading manifest 44 in quay.io/fedora/fedora-kinoite: manifest unknown",
+                       "[3/56] Fetching ostree chunk 7ef9932682b330f4496 (70.1 MB)...failed",
+                       "in-guest: step: ostree: deployment 7afcf66486b5600eac1bb112d6c054f57b4972189465e60d026c15f6551a4b71 staged, "
+                       "in place of 10e6a37fe91449ab0256dc707f50023505f76d29b6d34844b63843d0950f7de6"],
     }
 
     def test_a_real_error_is_never_dropped(self):
@@ -544,6 +555,11 @@ class RealLogLines(unittest.TestCase):
     def test_an_unmet_list_stays(self):
         raw = "The following packages have unmet dependencies:\n libfoo : Depends: bar but it is not installable\n"
         self.assertEqual(len(self.left("apt", raw)), 2)
+
+    def test_rpm_ostrees_package_lists_go(self):
+        raw = ("Upgraded:\n  7zip 26.04-1.fc44 -> 26.04-1.fc45\n  NetworkManager 1:1.56.1-2.fc44 -> 1:1.58.1-3.fc45\n"
+               "Removed:\n  foo-1.0-1.fc44.x86_64\nAdded:\n  bar-2.0-1.fc45.x86_64\n")
+        self.assertEqual(self.left("rpm-ostree", raw), [])
 
     def test_pkgs_list_too(self):
         raw = "Installed packages to be UPGRADED:\n\tcurl: 8.14 -> 8.15 [FreeBSD]\n\tzstd: 1.5.6 -> 1.5.7 [FreeBSD]\n"

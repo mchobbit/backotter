@@ -1,8 +1,8 @@
 """A synthetic world for P2's tests (U2.2-U2.6): a fixture checkout (git), BKO_GIT's three
 forks, both hosts' facts and a seeded ledger.  Nothing here touches a host or a default root.
 
-    w = World(tmpdir)            the checkout: 42 SticTest checks, 50 HoltTest sources and 9
-                                 variants, 13 gate cells, 52 guests, 7 images, with the real classes.json,
+    w = World(tmpdir)            the checkout: 42 SticTest checks, 51 HoltTest sources and 9
+                                 variants, 13 gate cells, 53 guests, 7 images, with the real classes.json,
                                  estimates.tsv, drive.py, affected.sh and ram-sizes.tsv
     w.facts()                    {host: facts}, as facts_host.py gives them
     w.ctx(rows, facts=..., **options)   a plan.Ctx
@@ -38,22 +38,23 @@ GUESTS = ("aerynos alpine324 alpinebsd arch artix-dinit artix-s6 cachyos debian1
           "freebsd15-geli freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs haiku6 hardenedbsd15 mint22 mx25 "
           "netbsd11 nixos2605 omarchy omnios58 omnios58-mirror openbsd8 pop24 redox rocky10 rocky10-lvm "
           "rocky10-raid5 sculpt2610 tumbleweed ubuntu24 ubuntu26-raid ubuntu26-uefi ubuntu26-zfs ubuntu26-zfsmirror "
-          "void-musl zorin18 endeavouros endeavouros-grub manjaro ubuntu26-luks chimera").split()
+          "void-musl zorin18 endeavouros endeavouros-grub manjaro ubuntu26-luks chimera kinoite44").split()
 UEFI = set("aerynos alpinebsd debian13-stack fedora44-raid fedora44-uefi freebsd15-geli omarchy pop24 ubuntu26-raid "
            "ubuntu26-uefi ubuntu26-zfs endeavouros endeavouros-grub manjaro ubuntu26-luks kinoite44".split())
 PLATS = words.PLATS
-NEW_GUESTS = set("endeavouros endeavouros-grub manjaro ubuntu26-luks chimera fedora44-raid ubuntu26-raid rocky10-raid5 freebsd15-mirror "
+NEW_GUESTS = set("endeavouros endeavouros-grub manjaro ubuntu26-luks chimera kinoite44 fedora44-raid ubuntu26-raid rocky10-raid5 freebsd15-mirror "
                  "omnios58-mirror".split())
 PM = {"apt": "debian12 debian13 debian13-stack debian13-zfs devuan6 mint22 mx25 pop24 ubuntu24 ubuntu26-raid ubuntu26-uefi "
              "ubuntu26-zfs ubuntu26-zfsmirror zorin18 ubuntu26-luks",
-      "dnf": "fedora44 fedora44-raid fedora44-uefi rocky10 rocky10-lvm rocky10-raid5",
+      "dnf": "fedora44 fedora44-raid fedora44-uefi rocky10 rocky10-lvm rocky10-raid5", "rpm-ostree": "kinoite44",
       "pacman": "arch artix-dinit artix-s6 cachyos omarchy endeavouros endeavouros-grub manjaro",
       "zypper": "tumbleweed", "xbps": "void-musl", "apk": "alpine324 chimera", "moss": "aerynos", "NixOS": "nixos2605",
       "FreeBSD": "freebsd14 freebsd15 freebsd15-geli freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs hardenedbsd15",
       "NetBSD": "netbsd11 alpinebsd", "OpenBSD": "openbsd8", "DragonFly": "dragonfly6", "SunOS": "omnios58 omnios58-mirror",
       "Haiku": "haiku6", "Redox": "redox", "Sculpt": "sculpt2610"}
 PM_OF = {g: pm for pm, gs in PM.items() for g in gs.split()}
-LINUX_PMS = ("apt", "dnf", "pacman", "zypper", "xbps", "apk", "moss")
+LINUX_PMS = ("apt", "dnf", "pacman", "zypper", "xbps", "apk", "moss", "rpm-ostree")
+SECTION = {"rpm-ostree": "ostree"}          # in-guest.sh's Linux.NAME, where it isn't the pm's
 BSD_PLAT = {"freebsd15": "freebsd", "freebsd15-mirror": "freebsd", "freebsd14": "freebsd", "ghostbsd26": "freebsd",
             "ghostbsd26-zfs": "freebsd", "hardenedbsd15": "freebsd", "netbsd11": "netbsd", "alpinebsd": "netbsd",
             "openbsd8": "openbsd", "dragonfly6": "dragonfly", "omnios58": "illumos", "omnios58-mirror": "illumos",
@@ -205,7 +206,7 @@ class World:
     def in_guest_text():
         out = ["#!/bin/sh\n", "# t2-section: prologue\n", "say hello\n", "# t2-section: Linux.common\n", "linux common\n"]
         for pm in LINUX_PMS:
-            out += [f"# t2-section: Linux.{pm}\n", f"update with {pm}\n"]
+            out += [f"# t2-section: Linux.{SECTION.get(pm, pm)}\n", f"update with {pm}\n"]
         for osn in ("NixOS", "FreeBSD", "NetBSD", "OpenBSD", "DragonFly", "SunOS", "Haiku", "Redox"):
             out += [f"# t2-section: {osn}\n", f"update on {osn}\n"]
         out += ["# t2-section: prologue\n", "say done\n"]
@@ -238,7 +239,7 @@ class World:
             e = {"kind": "ssh", "plat": BSD_PLAT.get(g, "linux"), "checks": {"pm": pm, "fw": "uefi" if g in UEFI else "bios",
                                                                               "established": g not in NEW_GUESTS}}
             if pm in LINUX_PMS:
-                e["harness"] = ["testvm/update/in-guest.sh#Linux.common", f"testvm/update/in-guest.sh#Linux.{pm}",
+                e["harness"] = ["testvm/update/in-guest.sh#Linux.common", f"testvm/update/in-guest.sh#Linux.{SECTION.get(pm, pm)}",
                                 "testvm/compare/boot-state.sh"]
             elif pm not in ("Redox", "Sculpt"):
                 e["harness"] = [f"testvm/update/in-guest.sh#{pm}"]
@@ -432,7 +433,7 @@ class World:
 
     def fact_guests(self):
         """The guests the hosts' facts name: GUESTS, and a SticTest check's guest that isn't one
-        yet (kinoite44 until its Test2 registration, docs/design/bazzite.md B7)."""
+        yet (as kinoite44 was between docs/design/bazzite.md's B5 and B7)."""
         return GUESTS + [g for g in self.stic if g not in GUESTS]
 
     @staticmethod

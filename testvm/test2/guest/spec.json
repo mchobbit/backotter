@@ -779,6 +779,34 @@
     "established": true
    }
   },
+  "kinoite44": {
+   "kind": "ssh",
+   "plat": "linux",
+   "memory": 4096,
+   "harness": [
+    "testvm/make-fedora.sh",
+    "testvm/fedora/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.ostree",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#rpm-ostree"
+   ],
+   "checks": {
+    "pm": "rpm-ostree",
+    "rules": {
+     "source": "S-none",
+     "loader": "L-bls",
+     "kernel": "K-fed",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false
+   }
+  },
   "manjaro": {
    "kind": "ssh",
    "plat": "linux",

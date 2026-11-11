@@ -54,8 +54,8 @@ class Spec(unittest.TestCase):
     def setUp(self):
         self.sf = rows_guest.load_spec(REPO)
 
-    def test_fifty_two_guests_and_the_exclusion(self):
-        self.assertEqual(len(self.sf.names()), 52)
+    def test_fifty_three_guests_and_the_exclusion(self):
+        self.assertEqual(len(self.sf.names()), 53)
         self.assertNotIn("freebsd15-builder", self.sf.names())
         self.assertEqual(self.sf.data["excluded"], {"freebsd15-builder": "a build helper"})
 
@@ -75,7 +75,7 @@ class Spec(unittest.TestCase):
     def test_new_guests(self):
         new = sorted(n for n in self.sf.names() if not self.sf.entry(n)["checks"]["established"])
         self.assertEqual(new, sorted(["endeavouros", "endeavouros-grub", "manjaro", "fedora44-raid", "ubuntu26-raid", "rocky10-raid5",
-                                      "freebsd15-mirror", "omnios58-mirror", "ubuntu26-luks", "chimera"]))
+                                      "freebsd15-mirror", "omnios58-mirror", "ubuntu26-luks", "chimera", "kinoite44"]))
         for n in new:
             self.assertIn("testvm/test2/guest/new-guest.sh", self.sf.entry(n)["harness"], n)
 
@@ -107,9 +107,18 @@ class Spec(unittest.TestCase):
                 base = p[:p.index("*")].rstrip("/") if "*" in p else p
                 self.assertTrue(os.path.exists(os.path.join(REPO, base)), f"{n}: {x}")
 
-    def test_limits_start_empty(self):
+    def test_limits_class_only_kinoite44s_standing_lines(self):
+        # Empty until kinoite44's first GuestTest2 run (docs/design/bazzite.md, What B7 found):
+        # its composefs / and the failed remount, degraded state and fstab order every ostree boot has.
+        from t2lib import guest_judge as J
         with open(os.path.join(REPO, "testvm/test2/guest/limits.json"), encoding="utf-8") as f:
-            self.assertEqual(json.load(f), {})
+            d = json.load(f)
+        self.assertEqual(sorted(d), ["kinoite44"])
+        self.assertEqual(sorted(d["kinoite44"]), ["after:boot-state", "after:failed-units", "after:fstab", "image:free"])
+        for n, e in d["kinoite44"].items():
+            self.assertIn(n, J.IMAGE_NEEDS + J.AFTER_NEEDS)
+            self.assertTrue(e["lines"] and all(isinstance(x, str) and x for x in e["lines"]), n)
+            self.assertTrue(e.get("why"), n)
 
 
 class CheckAfterKernelString(unittest.TestCase):

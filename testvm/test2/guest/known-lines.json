@@ -45,6 +45,16 @@
   "^Total ",
   "^Last metadata expiration"
  ],
+ "rpm-ostree": [
+  "^Pulling manifest: ostree-[a-z-]+:\\S+$",
+  "^Importing: ostree-[a-z-]+:\\S+ \\(digest: shaN:HEX\\)$",
+  "^ostree chunk layers (already present|needed): N( \\(N(\\.N)? [kMG]?B\\))?$",
+  "^\\[N/N\\] Fetching ostree chunk HEX \\(N(\\.N)? [kMG]?B\\)\\.\\.\\.done$",
+  "^Staging deployment\\.\\.\\.done$",
+  "list:^(Upgraded|Downgraded|Removed|Added):$",
+  "^Run \"systemctl reboot\" to start a reboot$",
+  "^No upgrade available\\.$"
+ ],
  "pacman": [
   "^\\( ?N/N\\) (upgrading|installing|checking|loading|reinstalling|removing|downgrading|synchronizing|arming|evaluating)",
   "^(upgrading|installing|reinstalling|removing|downgrading) \\S+\\.\\.\\.$",

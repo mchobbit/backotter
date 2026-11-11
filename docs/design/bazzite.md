@@ -9,7 +9,8 @@ B1 (the `kinoite44` guest) was built the same day, and its *checks* are
 settled below: see "What B1 found". B2 (`dump`) followed: see "What B2
 found"; then B3 (`load`): see "What B3 found"; then B4 (the guest tools):
 see "What B4 found"; then B5 (SticTest1's `kinoite44` check): see "What B5
-found"; then B6 (HoltTest1): see "What B6 found".
+found"; then B6 (HoltTest1): see "What B6 found"; then B7 (the golden
+plan and Test2): see "What B7 found".
 
 **Conventions.** est. marks an estimate. *Check* marks a fact not yet seen, to be
 settled on the first guest (B1) or on the Thinkpad before the code that depends
@@ -523,7 +524,8 @@ vm-run-options (Secure Boot off, as on the Thinkpad: with it on,
 `bootloader-update.service` fails at every boot because OVMF's db lacks
 Microsoft's 2023 UEFI CA, B1), `ram-sizes.tsv`
 rows, a `stictest1/kinoite44` entry, a GuestTest1 grade, both hosts, and the
-Test2 registration in B7.
+Test2 registration in B7. (B7: registered; the grade is GuestTest2's run of
+it, see "What B7 found".)
 
 Not built: a `bazzite44` guest (8-10 GB deployed; a bs1-qemu.py rehearsal would
 need ~22-26 GB of the 30G RAM disk, so it can't share it). The Thinkpad is the
@@ -1181,6 +1183,118 @@ count and the peaks differ: 7,159 and 7,156 files; 11.8 and 11.5 GiB).
       variant (BackShot2's) is unknown to ram-size.sh and the queue. The
       other 49 cases pass.
 
+## What B7 found
+
+The golden plan and Test2's registration, 2026-11-11.
+
+- **The corpus.** kinoite44's dump is B6's `bzb6a` source dump on chopin
+  (PASS; B6's bko-holt from main, version 0.2.4, the first corpus dump with
+  `boot.ostree` and `storage.backup_sources`). It was collected by
+  `collect-dumps.sh --sources` into a private directory in chopin's RAM
+  disk and built twice by corpus_build, to the same sha256s: 20
+  identifiers, a plan of 129 lines, nothing scrubbed, no boot-code blobs,
+  check_plan `ok:20`. The leak scans found nothing: chopin with its 79
+  strings and the raw dump's identifiers, cinqcent with its 83, and the Mac
+  with the git e-mail. The raw and built directories were deleted after.
+  `report` on cinqcent named only kinoite44, as new, with no invariant
+  broken. Its golden plan was blessed there and checks clean on both hosts:
+  54 plans of 51 dumps. The plan mounts `[/root]` at the target with
+  `compress=zstd:1` and no `ro`, then `/boot`, `/home`, `/var` and
+  `/boot/efi`; it creates the subvolumes in the source's ID order (var,
+  home, root); and its boot stage is B3's (the note, the consistency
+  check with `want=loader.1`, efibootmgr, the log and its label, the
+  atimes).
+- **No fedora\* plan moved.** B2 already said they wouldn't: the plans come
+  from the stored dumps, and no plan reads `loader.package`. Re-dumping
+  fedora44, fedora44-uefi and fedora44-raid with today's bko-holt would add
+  the package names to their dumps without changing a plan line, so they
+  weren't re-collected. fingerprint.py needed no change either: B2's names
+  (`grub2-efi-x64`, `shim-x64`) were already in boot.rs's `PACKAGES` and in
+  its mirror, and test_vm_update.py's `test_packages_are_boot_rs` passes.
+- **The `backup_sources` corpus test** (decision 4) is
+  `golden_backup_sources_are_loads_mounts` in holt/tests/golden_plans.rs.
+  For every corpus dump that has `storage.backup_sources`, it plans the dump
+  and requires the backup paths to be exactly the mount points that the
+  mount stage mounts at `/mnt/bko-target` (a `zfs mount` counts by its
+  dataset's mountpoint). A path missing from either side fails, and so
+  does a duplicate. The older dumps have no `backup_sources` and are passed
+  over, so kinoite44's is the only one checked so far: `/`, `/boot`,
+  `/boot/efi`, `/home`, `/var` on both sides.
+  `golden_backup_sources_check` is its synthetic test. It is not a sixth
+  invariant in common/invariants.rs, because BackShot2's tier 0 shares
+  those and its drifted layouts change fstab without changing
+  `backup_sources`.
+- **Test2.**
+  - classes.json: kinoite44 is in holt's family F and in its `uefi` list,
+    and stic's `linux` line says 28 checks.
+  - holt/spec.json: `{"kind": "linux", "firmware": "uefi"}`.
+  - estimates.tsv: holt 10.75 gm (bzb6a's 645 s, the same on both hosts);
+    guest 3.30 gm (a new guest's figure). Both are kept out of the
+    design-data totals, as the other guests added since are.
+  - Counts in plan.py, the README and the tests: 51 sources, 60 HoltTest2
+    cells, 53 guests.
+  - The p2 world has kinoite44 in `GUESTS` and `NEW_GUESTS`, under a pm of
+    its own. Its goldens were re-blessed with only the expected changes:
+    the new cells; the shifted ledger ids, gm totals and gate key; and
+    B5's `not in any spec: kinoite44` note gone.
+  - The gate golden key moved because classes.json changed, as B5 said it
+    would.
+- **guest/spec.json** gives kinoite44 its own package manager, `rpm-ostree`.
+  An update round runs the cheapest guest of each package manager first,
+  and kinoite44's updater isn't dnf, so it shouldn't wait on Fedora's dnf
+  guests or hold them back.
+  - Harness: in-guest.sh's `Linux.common` and `Linux.ostree`,
+    make-fedora.sh, `testvm/fedora/**`, boot-state.sh and new-guest.sh. It
+    is a new guest.
+  - `memory` 4096, as vm-run-options has it.
+  - Rules:
+    - `S-none`: the update source is the image's origin, which rpm-ostree
+      checks itself; there is no repository file to judge.
+    - `L-bls`: two entries, and grubenv has no `saved_entry`.
+    - `K-fed`: the BLS entries, and the running kernel's modules in
+      `/usr/lib/modules`.
+    - `B-lin` and `M-lin`.
+    - `fw` `uefi`: Secure Boot is off.
+  - guest/known-lines.json gets an `rpm-ostree` list, taken from B4's
+    `--try` and its `:45` upgrade: the pull, import, chunk and staging
+    lines, `No upgrade available.`, the reboot hint, and the
+    Upgraded/Downgraded/Removed/Added lists with their indented package
+    lines. The `step:` line stays, as it does for every pm.
+    test_guest_judge.py has the chatter, three real errors that must stay,
+    and the package lists.
+- **GuestTest2 of kinoite44** (the grade "Guests" asks for; the first real
+  GuestTest2 row of any guest). `t2 GuestTest2 kinoite44` ran on chopin
+  (run `t2v-20261111T1454-af53`). Identity, `--try`, every new-guest check
+  (UEFI, both archivers, the smoke backup of /etc), `image:loader`,
+  `image:kernels` (2), `after:newest-kernel` and `after:shadow` passed.
+  The rpm-ostree list dropped all of rpm-ostree's output, and the update
+  log's only new line was the generic exit status. It failed twice on the
+  same lines (the second attempt is the rerun of a FAIL):
+  - `image:free`: "/ is at least 90% full". `/` is the composefs overlay,
+    an EROFS image that df always shows 100% full. The physical root's
+    btrfs shows at `/etc` and `/var`, which are still judged, so a full
+    disk still fails there.
+  - standing lines, the same before and after the update:
+    - `state degraded` and `failed systemd-remount-fs.service` (B1);
+    - `findmnt --verify failed` and `[E] wrong order: /var/home specified
+      before /var`. Anaconda's ostree fstab lists `/home` before `/var`,
+      and findmnt follows the `/home -> var/home` link. B6's
+      `findmnt --verify` error is this one, on the source and on the
+      restore alike.
+
+  guest/limits.json classes those five lines for kinoite44 alone, each with
+  its reason. It is the file's first entry: test_guest.py's
+  `test_limits_start_empty` became `test_limits_class_only_kinoite44s_
+  standing_lines`, which checks exactly that entry. A judge change
+  (composefs among guest_judge.py's pseudo sources) would also have fixed
+  `image:free`. It wasn't made, because guest_judge.py keys every guest's
+  cell, and the per-guest class holds the same lines. The rerun
+  (`t2v-20261111T1506-d998`) failed only on its 819 unaccepted log lines:
+  the boot's serial chatter, the remount failure, and a KVM
+  clocksource-watchdog timeout on the loaded host. Those were read and
+  accepted with `t2 guest-lines --accept kinoite44`. The class row that
+  makes is the cell's PASS, `pass-uncommitted` until this commit.
+
 ## BackShot1 on the Thinkpad
 
 After the bs1 fixes (B8) and a `bs1-qemu.py` rehearsal on `kinoite44`:
@@ -1246,7 +1360,7 @@ Boot0009 when the old one survives the erase. It predates ostree.
 | B4 | vm-mount's ostree mode (HoltTest1, vm-chroot); `ostree_paths.py` for bs1-manifest and compare.py; vm-update's ostree branch. **Done 2026-11-11:** see "What B4 found" | 1 d |
 | B5 | SticTest1 `kinoite44` entry and runs, both archivers. **Done 2026-11-11:** both hosts, 65 PASS, 8 LIMIT, 0 FAIL; see "What B5 found" | 0.25 d |
 | B6 | HoltTest1: `kinoite44` in 1F, `ram-sizes.tsv`, the rollback boot in the restored-boot check, runs on both hosts. **Done 2026-11-11:** run `bzb6a` PASS on both hosts; see "What B6 found" | 0.5 d |
-| B7 | Golden plan and Test2: `kinoite44`'s dump from B6's PASS run through corpus_build into the corpus (index.tsv, src.json, plan.txt), the `backup_sources` corpus test; `classes.json` (holt families F and uefi, and stic's `linux` line: 28 checks since B5), holt/spec.json and guest/spec.json, estimates.tsv, plan.py's source and guest counts (with README and tests), kinoite44 in the p2 world's `GUESTS` (which drops B5's "not in any spec: kinoite44" note from the guest goldens), re-blessed p2 golden fixtures, fingerprint.py's mirror of the new package names; re-blessed fedora* golden plans from the package-name fix are expected. SticTest2's share (manifests, limits, the 42-check counts) came with B5 | 0.5 d |
+| B7 | Golden plan and Test2: `kinoite44`'s dump from B6's PASS run through corpus_build into the corpus (index.tsv, src.json, plan.txt), the `backup_sources` corpus test; `classes.json` (holt families F and uefi, and stic's `linux` line: 28 checks since B5), holt/spec.json and guest/spec.json, estimates.tsv, plan.py's source and guest counts (with README and tests), kinoite44 in the p2 world's `GUESTS` (which drops B5's "not in any spec: kinoite44" note from the guest goldens), re-blessed p2 golden fixtures, fingerprint.py's mirror of the new package names; re-blessed fedora* golden plans from the package-name fix are expected. SticTest2's share (manifests, limits, the 42-check counts) came with B5. **Done 2026-11-11:** the golden plan blessed (only kinoite44's plan is new; no fedora\* plan moved), the corpus test, the registration, and a GuestTest2 pass of kinoite44; see "What B7 found" | 0.5 d |
 | B8 | BackShot1: the table's fixes, `TREE`/`SNAP`, the preflight, backup's before/after check, baseline and verify additions, the rollback boot; `bs1-qemu.py` rehearsal on `kinoite44`; README.md's ostree steps (updates held, the staged refusal, the rollback boot, the new verify outputs) | 1.25 d |
 | B9 | BackShot1 on the Thinkpad's Bazzite | 0.5 d |
 | B10 | Docs: README supported lists, HoltTest1's table, `osrel.rs`'s comment, memory | 0.1 d |

@@ -1,6 +1,6 @@
 # H1: the dump corpus and its golden plans
 
-One redacted `bko-holt dump` of each of HoltTest2's 50 sources, and the plan
+One redacted `bko-holt dump` of each of HoltTest2's 51 sources, and the plan
 `bko-holt load` makes of each (docs/design/test2.md, "Shared pieces to
 build", H1).  `holt/tests/golden_plans.rs` plans every dump again and fails
 when a plan changes or breaks an invariant, so a change to load shows here
@@ -36,14 +36,19 @@ ubuntu26-luks (`make-ubuntu.sh
 added the same day from its HoltTest1 run lk1 on cinqcent, PASS, bko-holt
 0.2.4.  chimera (`make-bootstrap.sh chimera`: BIOS, GRUB, / on XFS), built
 on 2026-11-11, was added the same day from its HoltTest1 run chim2 on
-chopin, PASS, bko-holt 0.2.4.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
+chopin, PASS, bko-holt 0.2.4.  kinoite44 (`make-fedora.sh --ostree`: Fedora
+Kinoite 44, an ostree system; docs/design/bazzite.md), built on 2026-11-11,
+was added the same day from its HoltTest1 run bzb6a on chopin, PASS, dumped
+by the bko-holt Bazzite's B6 built from this tree for that run (version
+0.2.4, with the ostree code), so its dump is the first here with
+`boot.ostree` and `storage.backup_sources`.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
 collection; `-` for the guests without one) say which, and `image` whether
 the guest's qcow2 still had the size, mtime and inode its run recorded
 (`changed` for 34 of r4all's: debian13's, for one, kept its size and inode
 and only its mtime moved, to 03:52Z on 2026-11-08, after r4all; `same` for
-the five added since).
+the six added since).
 
 The raw dumps hold the guests' serials, UUIDs and host names.  They stay on
 chopin, in the collector's directory (by default `/bkoscratch/test2/h1-raw`,
@@ -81,13 +86,13 @@ raw dumps are), for each dump:
    blobs, 7.7 MB decoded, in 15 dumps).  EFI load options (`load_option_hex`) and
    `first_bytes` stay: they are data, and redact.rs has redacted them.
 5. The filled dump is planned against the unfilled one (`fill_plan`:
-   `same` for all 50) and passes check_plan itself (`check_plan`).
+   `same` for all 51) and passes check_plan itself (`check_plan`).
 
 Two builds of the same raw dumps give the same bytes.
 
 ### A raw dump that fails step 1
 
-All 50 raw dumps pass check_plan.  A dump that one day fails it is still put
+All 51 raw dumps pass check_plan.  A dump that one day fails it is still put
 in the corpus (step 2's leak checks, step 5 and leakscan below still apply);
 corpus_build then fails at its end, and so does `redact_dumps` over the raw
 dumps.  Nothing would show that dump's golden plan is its guest's own, so
@@ -123,7 +128,10 @@ identifiers) and on the Mac, 0 findings.  So did chimera (2026-11-11), collected
 on chopin into private directories that were deleted after the build: chopin
 with its 78 strings and the raw dump's identifiers, cinqcent with its 82,
 and the Mac with the git e-mail, 0 findings.  Its two builds gave the same
-sha256.
+sha256.  So did kinoite44 (2026-11-11), collected on chopin into a private
+directory in its RAM disk, deleted after the build: chopin with its 79 strings
+and the raw dump's identifiers, cinqcent with its 83, the Mac with the git
+e-mail, 0 findings, and the same sha256 from both builds.
 
 ## The golden plans
 
@@ -135,7 +143,7 @@ BackOtter's, every tool the plan asks for installed.  Unlike check_plan it
 maps no RAM disk or ZFS volume (alpine324's 16 RAM disks would each be a
 Problem), installs load's own binary where it runs from, and names it
 `bko-holt` in the plan, which would otherwise hold the test binary's path.
-All 53 plans exit 0, without Problems.  They are Linux's plans (load's
+All 54 plans exit 0, without Problems.  They are Linux's plans (load's
 run directory is /run/bko-holt there, /var/run/bko-holt elsewhere): run
 golden_plans.rs on a Linux host.
 
@@ -148,6 +156,16 @@ for the tables load writes itself, `load::writetable::plan`'s bytes read
 back by `parttable`).  golden_plans.rs's header says how each is checked;
 each has a synthetic negative test there (`golden_invariant_*`).
 
+One more check ties `dump` to load (docs/design/bazzite.md, decision 4):
+`golden_backup_sources_are_loads_mounts` plans every dump that has
+`storage.backup_sources` (the tree BackShot1 backs up, which `dump` writes
+since Bazzite's B2) and fails unless its paths are exactly the mount points
+the plan's mount stage mounts at /mnt/bko-target (a `zfs mount` counts by its
+dataset's mountpoint).  Load builds its tree from fstab, `dump` from the
+running mounts, so this holds the two rules together.  The older dumps have
+no `backup_sources` and are passed over; kinoite44's is the only one so far.
+`golden_backup_sources_check` is its synthetic test.
+
 ```
 cd holt
 cargo test --test golden_plans                                     # check: any difference fails
@@ -157,8 +175,8 @@ BKO_HOLT_GOLDEN=bless cargo test --test golden_plans -- --nocapture
                                                                    # rewrite the plans that differ, unless an invariant fails
 ```
 
-diff.json is `{"v":1, "corpus":50, "plans":53, "planned":[NAME...],
-"sources":50, "differ":{NAME:{"stages":[...], "lines_changed":N[, "new":true]
+diff.json is `{"v":1, "corpus":51, "plans":54, "planned":[NAME...],
+"sources":51, "differ":{NAME:{"stages":[...], "lines_changed":N[, "new":true]
 [, "unplanned":WHY][, "unverified":CHECK_PLAN_RAW]}}, "invariants":{NAME:[...]},
 "invariants_skipped":{NAME:[...]}}`; `stages` are the plan's sections that
 changed (header, partition, assemble, format, mount, restore, boot, close,
@@ -203,8 +221,8 @@ the Mac, outside the repository, and scan it there first:
 Only then copy them into holt/tests/corpus (corpus_build refuses an OUT
 that holds dumps it doesn't make, so build into an empty one), and bless
 the plans.  A corpus dump never enters the working tree with a finding, and
-a plan is never blessed with a broken invariant.  The corpus is 11.9 MB (50
-dumps of 3 KB to 3.3 MB, the 53 plans 0.3 MB); 15 MB is its budget.
+a plan is never blessed with a broken invariant.  The corpus is 11.9 MB (51
+dumps of 3 KB to 3.3 MB, the 54 plans 0.4 MB); 15 MB is its budget.
 
 ### Adding a source
 

@@ -86,6 +86,7 @@
     "fedora44": {"kind": "linux"},
     "fedora44-uefi": {"kind": "linux", "firmware": "uefi"},
     "fedora44-raid": {"kind": "linux", "firmware": "uefi"},
+    "kinoite44": {"kind": "linux", "firmware": "uefi"},
     "rocky10": {"kind": "linux"},
     "rocky10-lvm": {"kind": "linux"},
     "rocky10-raid5": {"kind": "linux"},

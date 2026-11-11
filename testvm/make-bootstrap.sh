@@ -14,6 +14,7 @@
 #   alpine-lvm    alpine324-lvm   XFS        the same, for UEFI, / on LVM
 #   alpine-luks   alpine324-luks  ext4       the same, for UEFI, / on LVM on LUKS2
 #   void          void-musl       btrfs      Void's musl ROOTFS tarball (runit)
+#   chimera       chimera         XFS        Chimera Linux's full ROOTFS tarball (dinit)
 #   artix-dinit   artix-dinit     JFS        Artix's repositories (dinit)
 #   artix-s6      artix-s6        ext4       Artix's repositories (s6)
 #   nixos         nixos2605       bcachefs   NixOS 26.05's nixpkgs
@@ -23,6 +24,8 @@
 # one, are downloaded into WORK_DIR unless already there, and checked
 # against their release keys before use; what is fetched later, inside the
 # VM, is checked by the package manager doing it (apk, xbps, pacman, Nix).
+# Chimera's ROOTFS is fixed by its date, but apk then upgrades it from the
+# live repository, so a rebuild gets newer packages.
 # bcachefs needs an Arch ISO whose kernel still has it (6.12), so NixOS's
 # install uses an older one.
 #
@@ -67,6 +70,10 @@ ALPINE_KEY=0482D84022F52DF1C4E7CD43293ACD0907D9495A
 VOID_DATE=20250202
 # void-release-20250202.pub, from void-linux/void-packages's void-release-keys
 VOID_KEY=RWT5+SoQD+dWTeOdNuc4Q/jq2+3+jpql7+JJp4WukkxTdpsZlk2EGuPj
+CHIMERA_DATE=20261103
+# The key for that release batch: main/chimera-image-keys/files/20261103.pub
+# in chimera-linux/cports (key ID B7CC5D3A17688906).
+CHIMERA_KEY=RWQGiWgXOl3Mt/2GUL9HpuxyHyWBc29/lZ9wW6XZz29lx2YLwkKfXk52
 NIXOS_RELEASE=26.05
 NIXPKGS=https://releases.nixos.org/nixos/26.05/nixos-26.05.13164.6f06d204d8f2/nixexprs.tar.xz
 NIX_VERSION=2.31.2
@@ -74,7 +81,7 @@ NIX_VERSION=2.31.2
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-bootstrap: $*" >&2; exit 1; }
 
-[[ $# -eq 2 ]] || die "usage: $0 alpine|alpine-uefi|alpine-lvm|alpine-luks|void|artix-dinit|artix-s6|nixos WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 alpine|alpine-uefi|alpine-lvm|alpine-luks|void|chimera|artix-dinit|artix-s6|nixos WORK_DIR"
 distro=$1
 iso_release=$ARCH_ISO_CURRENT
 script=$distro
@@ -88,6 +95,7 @@ case $distro in
         if [[ $layout == lvm ]]; then root_fs=xfs; else root_fs=ext4; fi
         extra=("ALPINE_BRANCH=v${ALPINE_VERSION%.*}") ;;
     void) name=void-musl root_fs=btrfs ;;
+    chimera) name=chimera root_fs=xfs ;;
     artix-dinit) name=artix-dinit root_fs=jfs script=artix extra=(INIT=dinit) ;;
     artix-s6) name=artix-s6 root_fs=ext4 script=artix extra=(INIT=s6) ;;
     nixos) name=nixos2605 root_fs=bcachefs iso_release=$ARCH_ISO_LINUX_6_12
@@ -159,6 +167,17 @@ case $script in
             -x "void-sha256sum-$VOID_DATE.sig" || die "Void's sha256sum.txt is not signed by its release key"
         grep -F "$f" "void-sha256sum-$VOID_DATE.txt" | sha256sum -c --quiet - || die "$f does not match Void's sha256sum.txt"
         ln -s "$PWD/$f" "$work/www/rootfs.tar.xz"
+        ;;
+    chimera)
+        f=chimera-linux-x86_64-ROOTFS-$CHIMERA_DATE-full.tar.gz
+        url=https://repo.chimera-linux.org/live/$CHIMERA_DATE
+        fetch "$url/sha256sums.txt" "chimera-sha256sums-$CHIMERA_DATE.txt"
+        fetch "$url/sha256sums.txt.minisig" "chimera-sha256sums-$CHIMERA_DATE.txt.minisig"
+        fetch "$url/$f"
+        minisign -q -V -P "$CHIMERA_KEY" -m "chimera-sha256sums-$CHIMERA_DATE.txt" \
+            -x "chimera-sha256sums-$CHIMERA_DATE.txt.minisig" || die "Chimera's sha256sums.txt is not signed by its release key"
+        grep -F " $f" "chimera-sha256sums-$CHIMERA_DATE.txt" | sha256sum -c --quiet - || die "$f does not match Chimera's sha256sums.txt"
+        ln -s "$PWD/$f" "$work/www/rootfs.tar.gz"
         ;;
 esac
 

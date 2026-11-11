@@ -73,7 +73,12 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
 /// grub2-mkconfig; AerynOS's initramfs comes prebuilt with its kernel, and
 /// systemd-boot boots it.  Chimera Linux (musl, dinit, apk, FreeBSD's
 /// userland) has Debian's initramfs-tools (update-initramfs) but no debconf,
-/// and grub-mkconfig, or systemd-boot with gen-systemd-boot.
+/// and grub-mkconfig, or systemd-boot with gen-systemd-boot.  Bazzite, and
+/// Fedora's atomic desktops under the Fedora row, are ostree systems
+/// (crate::ostree): the initramfs comes with the image and bootupd's GRUB
+/// config is static, so load regenerates nothing there (load/ostree.rs).
+/// Their whole-machine test is `kinoite44`, Bazzite's Kinoite base, in
+/// HoltTest1F; BackShot1 runs Bazzite itself on real hardware.
 pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("debian", "13", "Debian 13"),
     ("linuxmint", "22", "Linux Mint 22"),

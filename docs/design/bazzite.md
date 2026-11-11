@@ -11,7 +11,8 @@ found"; then B3 (`load`): see "What B3 found"; then B4 (the guest tools):
 see "What B4 found"; then B5 (SticTest1's `kinoite44` check): see "What B5
 found"; then B6 (HoltTest1): see "What B6 found"; then B7 (the golden
 plan and Test2): see "What B7 found"; then B8 (BackShot1 and its
-`kinoite44` rehearsal): see "What B8 found".
+`kinoite44` rehearsal): see "What B8 found"; then B10 (the docs and
+memory, ahead of B9): see "What B10 found".
 
 **Conventions.** est. marks an estimate. *Check* marks a fact not yet seen, to be
 settled on the first guest (B1) or on the Thinkpad before the code that depends
@@ -1532,6 +1533,45 @@ included.
   Test2 cell covers testvm/realworld, so no golden moved and no ledger row
   was written.
 
+## What B10 found
+
+The docs, written 2026-11-11 before B9 (B9 needs the Thinkpad, and nothing
+in them waits on its result):
+
+- **holt/README.md's supported list** gains Bazzite 44 among the Linux
+  systems, and a line for the ostree systems: Bazzite 44 and Fedora's
+  atomic desktops (Silverblue and Kinoite 44 go by the `fedora 44` row),
+  told apart by ostree's markers, with `load`'s version 1 refusals (BIOS,
+  LUKS, LVM, no separate /boot, composefs `verity` or `signed`) and a
+  pointer to "What load does", which B3 wrote. The HoltTest1All sentence
+  says Bazzite's whole-machine test is `kinoite44`, with BackShot1 as the
+  real-hardware one. It claims no BackShot1 pass: that is B9's to add.
+- **HoltTest1's table** (testvm/holttest1d/README.md) already had
+  `kinoite44` in 1F with run `bzb6a`, from B6; B10 adds "Fedora Kinoite
+  (ostree, Bazzite's base)" to the row's Systems column.
+- **osrel.rs's comment** on `SUPPORTED` now says what the ostree systems
+  are, that `load` regenerates nothing there (load/ostree.rs), and that
+  their whole-machine test is `kinoite44` in HoltTest1F, with BackShot1 on
+  real hardware. The `("bazzite", "44")` row's own comment, from B2, stays.
+- **BackShot1's README** (not named in the row, but a supported list too):
+  the opening paragraph says an ostree system goes by UEFI without LUKS or
+  LVM, and the rehearsal list gains Kinoite 44 (B8's PASS on both hosts,
+  rollback booted).
+- **Memory:** the Bazzite note records B1-B8 and B10 with their commits,
+  the gotchas the pieces found, and that B9 is still owed; the HoltTest1
+  note's 1F definition names `kinoite44` (decision 8).
+- **Not mine, left as found:** holt/README.md's list has no Chimera
+  Linux, though C2 made it supported; that is Chimera's C7, the same docs
+  row in docs/design/chimera.md. /bkoscratch/holttest1d/bin/bko-holt is
+  still 0.2.4 without ostree, as the HoltTest1 README says (B6, B7).
+- **Test2:** `*.md` is in `unmapped_ignore` and outside holt's CODE, so the
+  READMEs move no key. osrel.rs's comment does move holt's CODE digest,
+  like any holt/src change. B2-B8 had moved it already: `t2 plan
+  HoltTest2 stale` on the Mac (its ledger mirror as it was, not pulled)
+  has 0 of 62 holt cells current either way. holt's suite passed on
+  Chopin in RAM (351 passed, 3 ignored; golden plans in check mode, none
+  re-blessed).
+
 ## BackShot1 on the Thinkpad
 
 After the bs1 fixes (B8) and a `bs1-qemu.py` rehearsal on `kinoite44`:
@@ -1600,7 +1640,7 @@ Boot0009 when the old one survives the erase. It predates ostree.
 | B7 | Golden plan and Test2: `kinoite44`'s dump from B6's PASS run through corpus_build into the corpus (index.tsv, src.json, plan.txt), the `backup_sources` corpus test; `classes.json` (holt families F and uefi, and stic's `linux` line: 28 checks since B5), holt/spec.json and guest/spec.json, estimates.tsv, plan.py's source and guest counts (with README and tests), kinoite44 in the p2 world's `GUESTS` (which drops B5's "not in any spec: kinoite44" note from the guest goldens), re-blessed p2 golden fixtures, fingerprint.py's mirror of the new package names; re-blessed fedora* golden plans from the package-name fix are expected. SticTest2's share (manifests, limits, the 42-check counts) came with B5. **Done 2026-11-11:** the golden plan blessed (only kinoite44's plan is new; no fedora\* plan moved), the corpus test, the registration, and a GuestTest2 pass of kinoite44; see "What B7 found" | 0.5 d |
 | B8 | BackShot1: the table's fixes, `TREE`/`SNAP`, the preflight, backup's before/after check, baseline and verify additions, the rollback boot; `bs1-qemu.py` rehearsal on `kinoite44`; README.md's ostree steps (updates held, the staged refusal, the rollback boot, the new verify outputs). **Done 2026-11-11:** the rehearsal PASSes on both hosts, rollback boot included; see "What B8 found" | 1.25 d |
 | B9 | BackShot1 on the Thinkpad's Bazzite | 0.5 d |
-| B10 | Docs: README supported lists, HoltTest1's table, `osrel.rs`'s comment, memory | 0.1 d |
+| B10 | Docs: README supported lists, HoltTest1's table, `osrel.rs`'s comment, memory. **Done 2026-11-11** (before B9): see "What B10 found" | 0.1 d |
 | | *≈ 7.85 d in all; ~7.6 d if the extra verify checks are cut (decision 7)* | |
 
 Each piece is committed on main when its tests pass. Nothing is pushed until

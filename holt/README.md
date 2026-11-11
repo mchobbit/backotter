@@ -29,8 +29,13 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
 
 - Linux: Debian 12 and 13, Devuan 6, Ubuntu 24.04 and 26.04, Linux Mint 22,
   Pop!_OS 24.04, Zorin OS 18, Arch Linux, CachyOS, Artix Linux, Omarchy,
-  EndeavourOS, Manjaro, Alpine Linux 3, AerynOS, Void Linux, Fedora 44, Rocky Linux 10, openSUSE
-  Tumbleweed and NixOS 26.05;
+  EndeavourOS, Manjaro, Alpine Linux 3, AerynOS, Void Linux, Fedora 44,
+  Bazzite 44, Rocky Linux 10, openSUSE Tumbleweed and NixOS 26.05;
+- ostree (image-mode) systems among them: Bazzite 44, and Fedora's atomic
+  desktops (Silverblue and Kinoite 44, which say `fedora 44`), told apart
+  by ostree's own markers (`src/ostree.rs`).  `load` version 1 refuses
+  some of their layouts: BIOS boot, LUKS, LVM, no separate /boot, composefs
+  `verity` or `signed` ("What load does" below);
 - FreeBSD 14 and 15, HardenedBSD 15, GhostBSD 26 (`src/other/freebsd.rs`),
   NetBSD 11, AlpineBSD 1 and OpenBSD 8 (`labelled.rs`), DragonFly 6
   (`dfly.rs`), OmniOS (illumos, `illumos.rs`) and Haiku (`haiku.rs`): built
@@ -39,9 +44,11 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
   reads them off their disks from Linux, and `load` rebuilds them from Linux.
 
 HoltTest1All round-trips each whole machine (`testvm/holttest1d/README.md`
-has which pass).  Build it static (`RUSTFLAGS="-C target-feature=+crt-static"
-cargo build --release --target x86_64-unknown-linux-gnu`) to run it on musl
-systems such as Alpine and Void too; on the other systems, build it there
+has which pass; Bazzite's is `kinoite44`, its Kinoite base, and BackShot1
+is its test on real hardware).  Build it static
+(`RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target
+x86_64-unknown-linux-gnu`) to run it on musl systems such as Alpine and Void
+too; on the other systems, build it there
 (`testvm/holttest1d/build-holt.sh PLATFORM`: it needs nothing but Rust 1.85).
 Run both as root: partition tables, superblocks and LVM/ZFS labels are read
 from the devices themselves.  As another user `dump` falls back to udev's

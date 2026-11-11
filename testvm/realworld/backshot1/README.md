@@ -8,7 +8,8 @@ backing up to a USB drive labelled `mybig512`.  Everything acts on the disk with
 that serial number, never on a `/dev` name.
 
 It handles any Linux `bko-holt` supports, on any stack of partitions, LUKS, LVM,
-md, btrfs and ZFS on that disk, booted by UEFI or BIOS.  It backs up every real
+md, btrfs and ZFS on that disk, booted by UEFI or BIOS (an ostree system such as
+Bazzite by UEFI, without LUKS or LVM: "ostree" below).  It backs up every real
 filesystem the running system has mounted from the disk, and stops, before
 changing anything, if the disk holds a filesystem that isn't mounted.  Not
 covered: the BSDs, illumos and Haiku, which need their own rescue images, and
@@ -217,7 +218,9 @@ that doesn't boot by UEFI, `--virtio` for one whose initramfs has no NVMe driver
 
 Passed on 2026-11-09: Ubuntu 26.04 and Fedora 44 (UEFI), Devuan 6 (OpenRC, and
 `bs1-adopt` alone on plain sysvinit), Alpine 3.24, Artix (dinit and s6), Void
-(musl), AerynOS and NixOS 26.05.  Artix's OpenRC and runit editions have no guest.
+(musl), AerynOS and NixOS 26.05; on 2026-11-11, Kinoite 44 (ostree, on both
+hosts, with its rollback booted).  Artix's OpenRC and runit editions have no
+guest.
 
 Every rehearsal also runs the preflight, and checks that the snapshot is named
 `/mnt/bs1-src` and keeps a file's real access time.  On an ostree guest

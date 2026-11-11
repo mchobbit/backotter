@@ -1372,11 +1372,29 @@ pub fn mkfs_f2fs(dev: &str, c: &Value) -> Vec<String> {
     a
 }
 
-/// bcachefs format with the source's UUID, label and options.  The tools'
-/// release decides the on-disk version: the rescuer's must make one the
-/// source's kernel reads.
+/// BCH_VERSION(major, minor) = major << 10 | minor, from "1.13".
+fn bcachefs_version(v: &str) -> Option<u32> {
+    let (major, minor) = v.split_once('.')?;
+    let (major, minor): (u32, u32) = (major.parse().ok()?, minor.parse().ok()?);
+    (major < 64 && minor < 1024).then_some(major << 10 | minor)
+}
+
+/// bcachefs format with the source's UUID, label, options and on-disk
+/// version: its version_min (the oldest version anything on it is
+/// written in), or its version when it has none.
 pub fn mkfs_bcachefs(dev: &str, c: &Value) -> Vec<String> {
     let mut a = vec!["bcachefs".to_string(), "format".into(), "--force".into()];
+    // Left to itself, format writes the tools' newest version (1.39 from
+    // the Linux image's 1.39 tools), which the source's older kernel may
+    // not mount: the one-kernel rescue recreates the source's version
+    // instead.  The number is BCH_VERSION as a decimal integer, which
+    // both tools generations take the same way: 1.13's C cmd_format.c
+    // reads --version with kstrtouint base 10, and 1.39's Rust
+    // version_parse reads a bare integer as the minor with major 0, the
+    // same number.  "1.13" wouldn't parse in the C tools.
+    if let Some(n) = s(c, "version_min").or_else(|| s(c, "version")).as_deref().and_then(bcachefs_version) {
+        a.push(format!("--version={n}"));
+    }
     if let Some(u) = s(c, "uuid") {
         a.push(format!("--uuid={u}"));
     }
@@ -2911,11 +2929,21 @@ mod tests {
     fn jfs() {
         let c = crate::json::parse(r#"{"type": "jfs", "uuid": "d12ea338-ce14-4c47-90c8-7e72c24a87c6", "label": "root", "block_size": 4096}"#).unwrap();
         assert_eq!(mkfs_jfs("/dev/vdb3", &c).join(" "), "mkfs.jfs -q -L root /dev/vdb3");
-        let b = crate::json::parse(r#"{"type": "bcachefs", "uuid": "c9cbba71-4054-4849-a19c-e7d40fb5b1e4", "label": null, "block_size": 4096, "btree_node_size": 262144, "metadata_checksum": "crc32c", "data_checksum": "crc32c", "compression": "none", "str_hash": "siphash", "metadata_replicas": 1, "data_replicas": 1}"#).unwrap();
+        let b = crate::json::parse(r#"{"type": "bcachefs", "uuid": "c9cbba71-4054-4849-a19c-e7d40fb5b1e4", "label": null, "version": "1.13", "block_size": 4096, "btree_node_size": 262144, "metadata_checksum": "crc32c", "data_checksum": "crc32c", "compression": "none", "str_hash": "siphash", "metadata_replicas": 1, "data_replicas": 1}"#).unwrap();
         assert_eq!(
             mkfs_bcachefs("/dev/vdb3", &b).join(" "),
-            "bcachefs format --force --uuid=c9cbba71-4054-4849-a19c-e7d40fb5b1e4 --block_size=4096 --btree_node_size=262144 --metadata_checksum=crc32c --data_checksum=crc32c --str_hash=siphash /dev/vdb3"
+            "bcachefs format --force --version=1037 --uuid=c9cbba71-4054-4849-a19c-e7d40fb5b1e4 --block_size=4096 --btree_node_size=262144 --metadata_checksum=crc32c --data_checksum=crc32c --str_hash=siphash /dev/vdb3"
         );
+        // version_min, not the version a newer kernel raised it to (nixos2605's).
+        let b2 = crate::json::parse(r#"{"type": "bcachefs", "version": "1.39", "version_min": "1.13"}"#).unwrap();
+        assert_eq!(mkfs_bcachefs("/dev/vdb3", &b2).join(" "), "bcachefs format --force --version=1037 /dev/vdb3");
+        // No version, or one that doesn't parse: no flag.
+        for v in [r#"{"type": "bcachefs"}"#, r#"{"type": "bcachefs", "version": "1.x", "version_min": "junk"}"#] {
+            let x = crate::json::parse(v).unwrap();
+            assert_eq!(mkfs_bcachefs("/dev/vdb3", &x).join(" "), "bcachefs format --force /dev/vdb3");
+        }
+        assert_eq!(bcachefs_version("1.39"), Some(1063));
+        assert_eq!(bcachefs_version("0.24"), Some(24));
         assert_eq!(jfs_tune("/dev/vdb3", &c).unwrap().join(" "), "jfs_tune -U d12ea338-ce14-4c47-90c8-7e72c24a87c6 /dev/vdb3");
         assert_eq!(
             jfs_version1("/dev/vdb3")[2],

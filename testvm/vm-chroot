@@ -13,12 +13,16 @@
 # ostree (vm-mount put the physical root at MOUNTPOINT): the root is the
 # default deployment (ostree_paths.py's), as at boot: what vm-mount mounted
 # below MOUNTPOINT is bound at the deployment's paths for it (/var, /home
-# through its var/home link, /boot, /boot/efi), the physical root at
-# /sysroot, and the deployment's /usr is read-only.  Its files are hard links
-# into the repository, whose checksums cover their content, mode, owner and
-# SELinux label: a write there would corrupt the repository unseen.  So
-# nothing that installs or rebuilds runs here (rpm-ostree and bootc need the
-# booted system); reading does, and `ostree admin --sysroot=/sysroot status`.
+# through its var/home link, /boot, /boot/efi), and the physical root at
+# /sysroot; /sysroot and the deployment's /usr are read-only, /sysroot as
+# the booted system has it (sysroot.readonly), since the deployment's
+# /ostree links into it.  /usr's files are hard links into the repository,
+# whose checksums cover their content, mode, owner and SELinux label: a
+# write there, or through /sysroot (a restorecon -R / would relabel the
+# objects), would corrupt the repository unseen.  So nothing that installs
+# or rebuilds runs here (rpm-ostree and bootc need the booted system);
+# reading does, and `ostree admin --sysroot=/sysroot status`, which only
+# reads.
 #
 # For more isolation (its own /proc, hostname and process tree), use instead:
 #   sudo systemd-nspawn -D MOUNTPOINT
@@ -81,8 +85,12 @@ r = o.resolve(sys.argv[2], sys.argv[3]); print(r if r is not None else "")' "$he
         ((${#left[@]} < ${#pending[@]})) || die "the default deployment ($ostree) has no directory for: ${left[*]}"
         pending=("${left[@]}")
     done
+    # Read-only, as the booted system has it (sysroot.readonly): the
+    # deployment's /ostree links to sysroot/ostree, so a read-write /sysroot
+    # would reach the repository and every deployment's /usr.
     mount --bind "$mp" "$root/sysroot"
     mounted+=("$root/sysroot")
+    mount -o remount,bind,ro "$root/sysroot"
 fi
 for m in proc sys dev dev/pts; do
     mount --bind "/$m" "$root/$m"

@@ -882,6 +882,24 @@ in-guest.sh's section tests in test_vm_update.py.
   and the `var` and `home` subvolumes. Found on the way, not ostree's:
   vm-chroot exited 1 after every command (its EXIT trap's last test failed
   under `set -e`); fixed.
+  Review fix: `/sysroot` was bound read-write, and the deployment's
+  `/ostree` links to `sysroot/ostree`, so the repository and every
+  deployment's `/usr` were writable from the chroot (a `restorecon -R /`
+  there would have relabeled objects, whose checksums cover the label). It
+  is now remounted read-only right after the bind, as the booted system has
+  it (`sysroot.readonly`). On kinoite44, both hosts, `--ro` and read-write
+  (`bazzite-wt/b4f-chroot.sh`, results in `b4f-results/chroot`):
+  `/sysroot` is `ro`; a write to `/sysroot`, `/ostree/repo`, either
+  deployment's `/usr` (through `/sysroot`) and `/usr` fails; `chcon` on a
+  repository object is refused and its label is unchanged afterwards;
+  `ostree admin status` exits 0 with `--sysroot=/sysroot` and `--sysroot=/`;
+  read-write, `/etc`, `/var` and `/home` are still written. Left open: the
+  deployment's top-level links (`/bin`, `/ostree`, `/home`, `/root`; link
+  counts 3-5) are repository objects too, and stay writable in a read-write
+  chroot, since its root is the deployment directory itself. Only their own
+  metadata is exposed there (a relabel or chown of the link), not file
+  data; making them read-only would take a read-only bind of the whole
+  deployment with `/etc` bound read-write over it.
 - **The etc mapping in bs1-manifest.** A manifest of an ostree tree starts
   with a row `/ostree-default<TAB>DEPLOYMENT` (no file can be named `/...`).
   A manifest without it (B1's) gets the default from its own rows: the only

@@ -370,9 +370,10 @@ resolve() {
 # mount_fs DEVICE TARGET [OPTIONS]; read-only mounts must not replay a
 # journal or log, since that would mean writing.
 mount_fs() {
-    local opts=$3
+    local opts=$3 fstype
+    fstype=$(blkid -s TYPE -o value "$1" || true)
     if [[ $ro == yes ]]; then
-        case $(blkid -s TYPE -o value "$1") in
+        case $fstype in
             ext3|ext4) opts=ro,noload${opts:+,$opts} ;;   # ext2 has no journal, and rejects noload
             btrfs) opts=ro,rescue=nologreplay${opts:+,$opts} ;;
             xfs|f2fs|nilfs2) opts=ro,norecovery${opts:+,$opts} ;;
@@ -380,13 +381,17 @@ mount_fs() {
             *) opts=ro${opts:+,$opts} ;;
         esac
     fi
+    # XFS refuses a second filesystem of a UUID already mounted on this host
+    # ("Filesystem has duplicate UUID"): another slot's copy of the same
+    # guest, a source and its restore.  nouuid lets both mount.
+    [[ $fstype == xfs ]] && opts=${opts:+$opts,}nouuid
     # btrfs: this host's kernel keeps a device it once scanned, by path, after
     # the nbd device is gone (a multi-device filesystem attached again on
     # other nbd devices then fails to mount: "failed to open device for path
     # /dev/nbd10p3").  So forget every unmounted one, and name this image's
     # members of the filesystem (device=), which registers them at the mount
     # itself, whatever another mount forgets meanwhile.
-    if [[ $(blkid -s TYPE -o value "$1") == btrfs ]]; then
+    if [[ $fstype == btrfs ]]; then
         local u q devs=""
         u=$(blkid -s UUID -o value "$1")
         command -v btrfs >/dev/null && btrfs device scan --forget >/dev/null 2>&1
@@ -396,6 +401,16 @@ mount_fs() {
         opts=${opts:+$opts}${devs:+${opts:+,}${devs#,}}
     fi
     mount ${opts:+-o "$opts"} "$1" "$2"
+}
+# try_mount DEVICE TARGET [OPTIONS]: mount_fs, quietly; a failure's message
+# is kept in mount_err (the last one is in the error if no partition turns
+# out to hold /etc/fstab).
+mount_err=""
+try_mount() {
+    local e
+    { e=$(mount_fs "$@" 2>&1 1>&3 3>&-); } 3>&1 && return 0
+    mount_err="$1: ${e//$'\n'/; }"
+    return 1
 }
 # guest_file ROOT PATH: PATH inside the guest mounted at ROOT, its symlinks
 # followed as the guest would follow them (an absolute link means ROOT/...,
@@ -518,14 +533,14 @@ for p in "${parts[@]}"; do
     fi
     top=""
     [[ $type == btrfs ]] && top=subvolid=5   # the top level, whatever the default
-    mount_fs "$p" "$mp" "$top" 2>/dev/null || continue
+    try_mount "$p" "$mp" "$top" || continue
     fstab=$(guest_file "$mp" /etc/fstab || true)
     if [[ -z $fstab && $type == btrfs ]]; then
         # One level down: the subvolume's fstab.
         fstab=$(compgen -G "$mp/*/etc/fstab" | head -n 1 || true)
         if [[ -z $fstab ]]; then
             umount "$mp"
-            mount_fs "$p" "$mp" "" 2>/dev/null || continue
+            try_mount "$p" "$mp" "" || continue
             if guest_file "$mp" /etc/fstab >/dev/null; then root=$p; break; fi
         fi
     fi
@@ -539,7 +554,7 @@ for p in "${parts[@]}"; do
     fi
     break
 done
-[[ -n $root ]] || { undo; die "no partition holds /etc/fstab"; }
+[[ -n $root ]] || { undo; die "no partition holds /etc/fstab${mount_err:+ (the last mount that failed: $mount_err)}"; }
 
 # The guest's other ZFS pools (Ubuntu's bpool, /boot): those with a dataset
 # that mounts somewhere ZFS itself mounts it, not through fstab.  A

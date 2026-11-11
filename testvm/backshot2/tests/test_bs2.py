@@ -464,5 +464,41 @@ class TestJudgeExpect(unittest.TestCase):
             self.assertEqual(r.returncode, 0, r.stdout)
 
 
+VM_MOUNT = os.path.join(BS2, "..", "vm-mount")
+
+
+class TestVmMount(unittest.TestCase):
+    """testvm/vm-mount's mount_fs and try_mount, with blkid and mount stubbed."""
+
+    def mount(self, fstype, ro, fails=""):
+        with open(VM_MOUNT) as f:
+            src = f.read()
+        import re
+        funcs = "".join(re.findall(r"^(?:mount_fs|try_mount)\(\) \{\n.*?^\}\n", src, re.M | re.S))
+        self.assertIn("try_mount()", funcs)
+        sh = f"""set -euo pipefail
+blkid() {{ [[ $* == *TYPE* ]] && echo {fstype}; true; }}
+mount() {{ if [[ -n "{fails}" ]]; then echo "{fails}" >&2; echo second line >&2; return 32; fi; echo "mount $*"; }}
+ro={ro} parts=() mount_err=""
+{funcs}
+try_mount /dev/nbd9p3 /mnt/x "" && echo ok || echo "failed: $mount_err"
+"""
+        return subprocess.run(["bash", "-c", sh], capture_output=True, text=True).stdout
+
+    def test_xfs_mounts_nouuid(self):
+        # Another slot's copy of the same guest has this XFS's UUID mounted.
+        self.assertIn("mount -o ro,norecovery,nouuid /dev/nbd9p3 /mnt/x", self.mount("xfs", "yes"))
+        self.assertIn("mount -o nouuid /dev/nbd9p3 /mnt/x", self.mount("xfs", "no"))
+        # Nothing else changes.
+        self.assertIn("mount -o ro,noload /dev/nbd9p3 /mnt/x", self.mount("ext4", "yes"))
+        self.assertIn("mount /dev/nbd9p3 /mnt/x\nok", self.mount("ext4", "no"))
+
+    def test_a_failed_mount_keeps_its_error(self):
+        out = self.mount("xfs", "yes", fails="mount: Filesystem has duplicate UUID")
+        self.assertIn("failed: /dev/nbd9p3: mount: Filesystem has duplicate UUID; second line", out)
+        with open(VM_MOUNT) as f:
+            self.assertIn('die "no partition holds /etc/fstab${mount_err:+', f.read())
+
+
 if __name__ == "__main__":
     unittest.main()

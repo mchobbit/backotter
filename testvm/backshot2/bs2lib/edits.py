@@ -715,7 +715,9 @@ class XfsGeometry(Op):
         sector = dev.get("logical_sector_size") or 512
         if ss < sector:
             raise Invalid(f"{ss}-byte XFS sectors on a {sector}-byte device")
-        g = geometry.xfs(blocks, bs, agb, lb, isz, ss, c.get("features") or [], c)
+        # What -s size= sets beside the sector size, only where it changes:
+        # a log stripe unit set by hand stays as it was otherwise.
+        g = geometry.xfs(blocks, bs, agb, lb, isz, ss, c.get("features") or [], c if ss != c["sector_size"] else None)
         if all(c.get(k) == v for k, v in g.items()):
             raise Invalid("no change")
         e = {"op": self.name, "fs": dumpx.locator(d, dev)}
@@ -855,7 +857,8 @@ def propagate(d, dev, new_bytes, grow_fs=True, grow_pv=True, sector=None):
         bs = c["block_size"]
         cur = c["blocks"] * bs
         if new_bytes < cur or (grow_fs and new_bytes // bs != c["blocks"]):
-            g = geometry.xfs(new_bytes // bs, bs, c["ag_blocks"], c["log_blocks"], c["inode_size"], c["sector_size"], c.get("features") or [], c)
+            # The sector size stays, and so does what it set (xfs_sector_fields).
+            g = geometry.xfs(new_bytes // bs, bs, c["ag_blocks"], c["log_blocks"], c["inode_size"], c["sector_size"], c.get("features") or [])
             sets = merge_sets(sets, {loc: {"content": g}})
         return sets
     if new_bytes is None:

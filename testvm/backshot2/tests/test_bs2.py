@@ -165,6 +165,21 @@ class TestApply(unittest.TestCase):
         for k in ("log_sector_size", "log_stripe_unit", "version_flags"):
             self.assertEqual(c2[k], c0[k], k)
 
+    def test_xfs_sector_fields_only_when_the_sector_size_changes(self):
+        # A log stripe unit set by hand (4096 on 512-byte sectors) stays
+        # through a resize and an xfs_geometry that leaves the sector size.
+        src = copy.deepcopy(ALPINE)
+        c = dumpx.part(dumpx.disk(src), 3)["content"]
+        c["log_stripe_unit"] = 4096
+        d = E.apply(src, [E.build(src, "resize", {"disk": "vda", "partition": 3, "by_sectors": -4096})])
+        self.assertEqual(dumpx.part(dumpx.disk(d), 3)["content"]["log_stripe_unit"], 4096)
+        e = E.build(src, "xfs_geometry", {"fs": "vda3", "ag_count": 5})
+        self.assertNotIn("log_stripe_unit", e["sets"]["vda3"]["content"])
+        self.assertEqual(dumpx.part(dumpx.disk(E.apply(src, [e])), 3)["content"]["log_stripe_unit"], 4096)
+        # A change of sector size sets it as mkfs.xfs -s does.
+        e = E.build(src, "xfs_geometry", {"fs": "vda3", "sector_size": 4096})
+        self.assertEqual(e["sets"]["vda3"]["content"]["log_stripe_unit"], 4096)
+
     def test_swap_size_is_whole_pages(self):
         # bko-holt's dump: a swap's size_bytes is (last_page + 1) pages
         # (holt/src/probe/misc.rs), not its partition's bytes.

@@ -33,7 +33,7 @@ guests.  A guest passes only when every check passes.  Status is as of
 | 1M | Linux Mint | `mint22` | passes |
 | 1U | Ubuntu | `ubuntu24`, `ubuntu26-uefi`, `ubuntu26-zfsmirror`, `ubuntu26-raid` (and `degraded`), `ubuntu26-luks` | passes |
 | 1Z | Zorin OS | `zorin18` | passes |
-| 1F | Fedora, Rocky Linux | `fedora44`, `fedora44-uefi`, `fedora44-raid`, `rocky10`, `rocky10-lvm`, `rocky10-raid5` | passes (`fedora44-raid` and `rocky10-raid5`: run `raid022`, below) |
+| 1F | Fedora, Rocky Linux | `fedora44`, `fedora44-uefi`, `fedora44-raid`, `rocky10`, `rocky10-lvm`, `rocky10-raid5`, `kinoite44` | passes (`fedora44-raid` and `rocky10-raid5`: run `raid022`; `kinoite44`: run `bzb6a`; both below) |
 | 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | passes |
 | 1C | CachyOS, MX Linux | `cachyos`, `mx25` | passes |
 | (1All only) | EndeavourOS, Manjaro | `endeavouros`, `endeavouros-grub`, `manjaro` (`make-arch.sh --live`: each one's own live ISO, with its installer's defaults) | passes on both hosts (runs `eosmj1` to `eosmj5`) |
@@ -89,6 +89,51 @@ serial console.  Passes: `load` recreates the LUKS2 header with the
 source's cipher, key derivation and offset, opens it as `dm_crypt-0` (the
 crypttab name), restores the group with `vgcfgrestore`, and the restored
 disk boots with the passphrase typed.
+
+**The ostree guest** (2026-11-11, run `bzb6a` on both hosts, in RAM,
+B6's static bko-holt from main, `HT_HOLT`): `kinoite44`
+(`make-fedora.sh --ostree`; docs/design/bazzite.md) is Fedora Kinoite 44,
+an image-mode system: UEFI with Secure Boot off, GPT, an ESP, ext4 /boot
+with bootupd's static GRUB config, and btrfs subvolumes `root` (ostree's
+repository and deployments under a composefs `/`), `home` and `var`.  It
+has two deployments of one commit, `.1` (the default, with the karg
+`bko.rollback=1` and an `/etc/bko-deployment`) and `.0` (the rollback).
+ht1.sh boots both, on the source and on the restored disk:
+
+- **The source's baseline.**  On a source with `/run/ostree-booted`, the
+  source phase first wants exactly two BLS entries.  It then boots the
+  rollback entry and the default again, and only then dumps.  Each boot
+  writes the booted deployment (`CHECKSUM.SERIAL`), `/proc/cmdline`,
+  `/etc/bko-deployment`, the root's type and source, SELinux's mode and
+  `ostree admin status` (`logs/source-ostree.txt`,
+  `source-ostree-rollback.txt`), and the rollback's boot state.  The
+  rollback must boot another deployment, the default must show the same
+  as its first boot, and grubenv must be byte for byte as it was.
+- **The restored disk's two boots.**  After the default boot's checks and
+  its dump, the rollback entry boots in the same QEMU.  Each boot must
+  show exactly what the source's did, and the rollback's boot state may
+  have no line the source's lacked.
+- **How the rollback is picked.**  bootupd's `grub.cfg` loads grubenv but
+  never reads `next_entry`, so `grub2-reboot` does nothing there.  ht1.sh
+  sets `default` in grubenv instead, to the ID of the one entry whose
+  `ostree=` leads to the deployment not booted (`ostree-1`, the BLS file's
+  name).  `grub2-editenv unset default` in the rollback boot then puts
+  grubenv back as it was.
+- **What the file check allows.**  `judge.py fs` lets a hardlinked
+  symlink come back as separate symlinks, since both archivers relink
+  regular files only: 95,521 paths, ostree's symlink objects and their
+  links in each deployment.  It also lets btrfs's own no-compress flag
+  through: 7,159 files restored onto fstab's `compress=zstd:1` by the
+  Ubuntu rescuer's kernel (7.0) gained it.  The regular objects keep their
+  links.
+- **Results.**  It passes on both hosts: 0 file differences, 0 dump
+  differences, all of load's stages, and both restored boots the
+  source's.  The RAM-disk peak was 11.8 GiB (Chopin; Cinqcent 11.5) in
+  the rebuild phase, and the run took 645 s.  So ram-sizes.tsv's D is 14,
+  one of ht1-queue.sh's big guests.
+- **bko-holt.**  bin/'s bko-holt (0.2.4 of 2026-11-07) has no ostree
+  support, so until bin/ is refreshed a run of `kinoite44` needs
+  `HT_HOLT` or `HT_HOLT_BIN` naming a build from main.
 
 **HoltTest1All** (the user's definition, 2026-11-05): "like HoltTest1D
 except that HoltTest1All targets every single guest OS we have": every guest
@@ -307,6 +352,9 @@ Each run also checks, as the plan asks:
   crypttab volume open (in the `degraded` variant an array may be
   degraded too), and load's log kept.  The same checks run on the
   source; one that fails there too isn't counted.
+- on an ostree source, its two deployments booted in turn, on the source
+  first and then on the restored disk, which must show what the source's
+  boots did ("The ostree guest" above).
 
 It differs from the plan above in these ways:
 

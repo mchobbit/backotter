@@ -647,5 +647,68 @@ class Rig(unittest.TestCase):
         self.assertFalse(self.unrelated(holds))
 
 
+FSMETA = os.path.join(os.path.dirname(HERE), "compare", "fsmeta.py")
+
+
+def meta(kind, **kw):
+    """One path's fsmeta.py record, as `fsmeta.py record` writes it."""
+    e = {"type": kind, "mode": 0o777 if kind == "symlink" else 0o644, "uid": 0, "gid": 0,
+         "mtime": 1, "xattrs": {"security.selinux": "73797374656d5f753a6f626a6563745f723a7573725f743a733000"}}
+    if kind == "file":
+        e.update(size=3, sha256="ab", holes=False)
+    if kind == "symlink":
+        e["target"] = "usr/bin"
+    e.update(kw)
+    return e
+
+
+class Fs(unittest.TestCase):
+    """judge.py fs over an ostree repository's links (kinoite44, B6)."""
+
+    def judge(self, before, after):
+        with tempfile.TemporaryDirectory() as tmp:
+            s, t = os.path.join(tmp, "src-meta.json"), os.path.join(tmp, "dst-meta.json")
+            for path, d in ((s, before), (t, after)):
+                with open(path, "w") as f:
+                    json.dump(d, f)
+            r = subprocess.run([sys.executable, "-I", JUDGE, "fs", FSMETA, s, t], capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    LINKED = ["ostree/deploy/default/deploy/c.0/bin", "ostree/deploy/default/deploy/c.1/bin",
+              "ostree/repo/objects/ab/cd.file"]
+
+    def test_hardlinked_symlinks_come_back_separate(self):
+        before = {p: meta("symlink", links=self.LINKED) for p in self.LINKED}
+        after = {p: meta("symlink") for p in self.LINKED}
+        rc, out = self.judge(before, after)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("hardlinked symlink restored as separate symlinks: the archivers relink regular files only): 3", out)
+
+    def test_regular_files_must_stay_linked(self):
+        before = {p: meta("file", links=self.LINKED) for p in self.LINKED}
+        after = {p: meta("file") for p in self.LINKED}
+        rc, out = self.judge(before, after)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF hard links: 3", out)
+
+    def test_symlinks_linked_otherwise_are_a_difference(self):
+        """Separate symlinks are what the archivers make; symlinks linked
+        into another group than the source's aren't."""
+        before = {p: meta("symlink", links=self.LINKED) for p in self.LINKED}
+        after = {p: meta("symlink", links=self.LINKED[:2]) for p in self.LINKED[:2]}
+        after[self.LINKED[2]] = meta("symlink")
+        rc, out = self.judge(before, after)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF hard links: 2", out)
+
+    def test_a_symlinks_target_still_counts(self):
+        before = {p: meta("symlink", links=self.LINKED) for p in self.LINKED}
+        after = {p: meta("symlink") for p in self.LINKED}
+        after[self.LINKED[0]]["target"] = "usr/sbin"
+        rc, out = self.judge(before, after)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF symlink target: 1", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

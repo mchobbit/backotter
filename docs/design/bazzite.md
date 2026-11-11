@@ -9,7 +9,7 @@ B1 (the `kinoite44` guest) was built the same day, and its *checks* are
 settled below: see "What B1 found". B2 (`dump`) followed: see "What B2
 found"; then B3 (`load`): see "What B3 found"; then B4 (the guest tools):
 see "What B4 found"; then B5 (SticTest1's `kinoite44` check): see "What B5
-found".
+found"; then B6 (HoltTest1): see "What B6 found".
 
 **Conventions.** est. marks an estimate. *Check* marks a fact not yet seen, to be
 settled on the first guest (B1) or on the Thinkpad before the code that depends
@@ -515,7 +515,8 @@ the repository (est. ~3-4 GiB), and the restored internal disk (~6 GiB): est.
 peak ~11-12 GiB. Both run from /mnt/bko-ram under `cmp-run.sh --reserve`
 (rehearsal: `--reserve 12 6`, `WEAR_TAG=bs1:kinoite44`), and wait for room
 rather than fall back to /bkoscratch ([[work-in-ram]]). B6 and B8 measure the
-peaks and replace these.
+peaks and replace these. (B6: HoltTest1 peaked at 11.8 GiB, in its rebuild
+phase, so its reservation is 14 4; see "What B6 found".)
 
 It gets: a `rebuild-one.sh` line, `--uefi --no-secure-boot --memory 4096` in
 vm-run-options (Secure Boot off, as on the Thinkpad: with it on,
@@ -564,7 +565,9 @@ second kickstart, and est. +0.5 d. B1 decides that on its own and says so.
 - **HoltTest1 and the bs1-qemu.py rehearsal boot the restored guest twice**:
   the default entry, then the rollback, picked with `grub2-reboot 1` over
   SSH (or the GRUB menu on serial). Each boot's deployment serial, kargs and
-  `/etc/bko-deployment` must match the baseline.
+  `/etc/bko-deployment` must match the baseline. (B6: `grub2-reboot` does
+  nothing under bootupd's static `grub.cfg`, which never reads `next_entry`;
+  a `default` in grubenv does it. See "What B6 found".)
 
 ## What B1 found
 
@@ -1088,6 +1091,96 @@ ledger rows.
   object nlink 2 and 10 objects at nlink 3, real roots `.1` and the new
   commit's `.0`.
 
+## What B6 found
+
+HoltTest1's `kinoite44` built, 2026-11-11: testvm/holttest1d/ht1.sh (the
+two deployments booted in turn), judge.py (hardlinked symlinks), README
+(`kinoite44` in 1F, "The ostree guest") and ram-sizes.tsv. Run `bzb6a` on
+both hosts, in RAM, from `bazzite-wt` with B6's static bko-holt from main
+(`HT_HOLT`, sha256 `7f1662f8...`, `build-holt.sh linux`) and the shipped
+rel4 rustic-bko: PASS on both, every check alike (only the no-compress
+count and the peaks differ: 7,159 and 7,156 files; 11.8 and 11.5 GiB).
+
+- **`grub2-reboot` does nothing on kinoite44.** bootupd's static
+  `grub.cfg` runs `load_env` but never reads `next_entry` or
+  `saved_entry`, unlike grub2-mkconfig's `00_header`. So `grub2-reboot 1`
+  leaves `next_entry=1` in grubenv, and the default boots again. A
+  `default` key in grubenv is what its menu takes, since `load_env` sets
+  the variable itself. Both the index (`default=1`) and an entry's ID (its
+  BLS file name without `.conf`, `ostree-1`) boot the rollback `.0`.
+  `grub2-editenv unset default` then leaves grubenv byte for byte as it
+  was (same sha256). The Thinkpad's bootupd is the same 0.3.2, so B8's
+  rehearsal (and decision 6's `grub2-reboot` option, had it been taken)
+  needs the same `default` key.
+- **The rollback boot in ht1.sh.** On a source with `/run/ostree-booted`:
+  - The source phase wants exactly two BLS entries (the assertion "Two
+    deployments" asks of B5 and B6).
+  - It boots the source's rollback, then its default again, before the
+    dump, so the dump and the backup see grubenv and the rollback's etc as
+    the restored disk will.
+  - Each boot records the booted deployment (`CHECKSUM.SERIAL`, from
+    `ostree=` followed through `boot.1`), `/proc/cmdline` (the kargs),
+    `/etc/bko-deployment`, the root's type and source, SELinux's mode and
+    `ostree admin status`. The rollback must boot another deployment, the
+    default's second boot must show what its first did, and grubenv must
+    be as it was.
+  - The restored disk boots its default, which is checked and dumped as
+    every guest's is, then its rollback in the same QEMU. Both must show
+    exactly what the source's boots did. The rollback's boot state may
+    have no failed unit the source's rollback lacked.
+  - The rollback is picked as the one entry whose `ostree=` leads to a
+    deployment other than the booted one. After a merged vm-update (B4)
+    the pair differs only by checksum and serial, and the record still
+    tells them apart.
+- **What the restored boots showed:** `.1` with `bko.rollback=1` and its
+  `/etc/bko-deployment`, then `.0` with neither. Both have a `composefs`
+  overlay root and are Enforcing. In the rollback boot `ostree admin
+  status` marks `.1` "(pending)", on the source as on the restore. Both
+  boots are `degraded` by `systemd-remount-fs` alone (B1). `findmnt
+  --verify` reports 1 error and 1 warning on the source and the restore
+  alike, so health doesn't count it.
+- **fsmeta: 0 differences.** What `judge.py fs` allows:
+  - 95,521 hardlinked symlinks come back as separate symlinks. This is a
+    new rule: a symlink whose link group is gone after the restore, with
+    its target and metadata judged as ever (judge-test.py's `Fs` cases,
+    4). The regular objects keep their links.
+  - 7,159 files gained `FS_NOCOMP_FL` (0x400), under the existing rule.
+    This settles B5's question: the UEFI rescuer's Linux 7.0 sets the flag
+    as rustic-bko writes onto `compress=zstd:1`, as 6.12 does and the
+    guest's 7.3.3 doesn't.
+  - load's own log.
+- **The dumps agree:** 0 differences of 775 fields, 23 ignored (btrfs
+  generations and subvolume UUIDs, usage, zram). `boot.ostree` comes back
+  whole.
+- **load:** every stage passes with no warning from the ostree check. This
+  covers what B3 left: a rustic-bko restore, and the restored rollback
+  booted.
+- **Room and time:** the RAM-disk peak was 11.8 GiB on Chopin and 11.5 on
+  Cinqcent, in rebuild (the 3.1 GiB repository, the restored disk and the
+  source's and the rescuer's overlays). That is above
+  the Room estimate of ~9-10. Memory peaked at 3.6 GiB anon, in verify.
+  ram-sizes.tsv's row is D 14, M 4 (ram-size.sh's peak rule), one of
+  ht1-queue.sh's big guests (D of 13 or more: one at a time per host).
+  A run takes 645 s: source 77, backup 127, rebuild 300, verify 141.
+- **Not done here (B7's, or not ostree's):**
+  - bin/'s bko-holt (`/bkoscratch/holttest1d/bin`, 0.2.4 of 2026-11-07)
+    still has no ostree code. Until it is refreshed, a run of `kinoite44`
+    by hand or by ht1-queue.sh needs `HT_HOLT` or `HT_HOLT_BIN` naming a
+    build from main; with bin/'s, it would fail. The same binary serves
+    vm-update's fingerprint dump (B4). The README says so.
+  - Each run left a Test2 ledger row, as every ht1.sh run does
+    (`chopin-20261111T141551Z-c364c0a6`, `cinqcent-20261111T141550Z-4bba4b5f`).
+    The corpus dump for B7 is `bzb6a/kinoite44/dumps/src.json`, kept on
+    both hosts.
+  - Two failures were already there before B6:
+    - `t2 self-test`'s `check-manifests.py --strict-watch` gives 5 errors
+      at HEAD before B6 too (`compare/exact-*`,
+      `holttest1d/prep/tumbleweed-snapper.sh` named by no spec). Every
+      other step passes.
+    - `ht1-lib-test.sh` case 50 fails the same way: ht1.sh's `bs2`
+      variant (BackShot2's) is unknown to ram-size.sh and the queue. The
+      other 49 cases pass.
+
 ## BackShot1 on the Thinkpad
 
 After the bs1 fixes (B8) and a `bs1-qemu.py` rehearsal on `kinoite44`:
@@ -1152,7 +1245,7 @@ Boot0009 when the old one survives the erase. It predates ostree.
 | B3 | `load`: mount stage without `ro`, the ostree marker, `ostree_boot` (atimes listed, note, consistency check, NVRAM, log and labels, the shared tail), the v1 plan problems; unit tests. **Done 2026-11-11:** see "What B3 found" | 1.5 d |
 | B4 | vm-mount's ostree mode (HoltTest1, vm-chroot); `ostree_paths.py` for bs1-manifest and compare.py; vm-update's ostree branch. **Done 2026-11-11:** see "What B4 found" | 1 d |
 | B5 | SticTest1 `kinoite44` entry and runs, both archivers. **Done 2026-11-11:** both hosts, 65 PASS, 8 LIMIT, 0 FAIL; see "What B5 found" | 0.25 d |
-| B6 | HoltTest1: `kinoite44` in 1F, `ram-sizes.tsv`, the rollback boot in the restored-boot check, runs on both hosts | 0.5 d |
+| B6 | HoltTest1: `kinoite44` in 1F, `ram-sizes.tsv`, the rollback boot in the restored-boot check, runs on both hosts. **Done 2026-11-11:** run `bzb6a` PASS on both hosts; see "What B6 found" | 0.5 d |
 | B7 | Golden plan and Test2: `kinoite44`'s dump from B6's PASS run through corpus_build into the corpus (index.tsv, src.json, plan.txt), the `backup_sources` corpus test; `classes.json` (holt families F and uefi, and stic's `linux` line: 28 checks since B5), holt/spec.json and guest/spec.json, estimates.tsv, plan.py's source and guest counts (with README and tests), kinoite44 in the p2 world's `GUESTS` (which drops B5's "not in any spec: kinoite44" note from the guest goldens), re-blessed p2 golden fixtures, fingerprint.py's mirror of the new package names; re-blessed fedora* golden plans from the package-name fix are expected. SticTest2's share (manifests, limits, the 42-check counts) came with B5 | 0.5 d |
 | B8 | BackShot1: the table's fixes, `TREE`/`SNAP`, the preflight, backup's before/after check, baseline and verify additions, the rollback boot; `bs1-qemu.py` rehearsal on `kinoite44`; README.md's ostree steps (updates held, the staged refusal, the rollback boot, the new verify outputs) | 1.25 d |
 | B9 | BackShot1 on the Thinkpad's Bazzite | 0.5 d |

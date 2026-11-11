@@ -30,7 +30,10 @@
 #            checked after each
 #   verify   fsmeta.py compares the restored disk with the source; then the
 #            restored disk boots alone (writes thrown away) and is dumped;
-#            judge.py compares the dumps
+#            judge.py compares the dumps.  An ostree source (kinoite44) has
+#            its rollback deployment booted too, on the source before its
+#            dump and on the restored disk after its dump, each boot held
+#            to the source's (README "The ostree guest")
 #
 # Where it works (ht1-lib.sh): with HT_RAM unset, in RAM when the run holds
 # a reservation of at least 1 GiB, else on /bkoscratch (a note: line says
@@ -291,6 +294,17 @@ vm_wait() { local key=$1
     for _ in $(seq 72); do TMO=8 sshk "$key" true 2>/dev/null && return 0; sleep 5; done
     return 1
 }
+# Reboot the guest over SSH and wait for its next boot (a new boot ID: its
+# SSH answers for a while after `systemctl reboot`, so vm_wait can't tell).
+vm_reboot() { local key=$1 id now
+    id=$(TMO=20 sshk "$key" cat /proc/sys/kernel/random/boot_id) && [[ -n $id ]] || return 1
+    TMO=20 sshk "$key" 'systemctl reboot' >/dev/null 2>&1
+    for _ in $(seq 72); do
+        now=$(TMO=8 sshk "$key" cat /proc/sys/kernel/random/boot_id 2>/dev/null) && [[ -n $now && $now != "$id" ]] && return 0
+        sleep 5
+    done
+    return 1
+}
 # This run's VM only (ht_qemus: a QEMU with its disks in R that this run
 # started, ht_own), never another run's that took the port while none of
 # this run's was up, nor one started by hand on R's (K's) disks.
@@ -357,6 +371,93 @@ df -h / | tail -1'
 # md's view of each array: its name, level, and member slots up or missing
 # ([UU_]), sorted.  A degraded run's restored machine must show the source's.
 MDSTAT='awk "/^md/ {a = \$1; for (i = 3; i <= NF; i++) if (\$i ~ /^(raid|linear)/) {l = \$i; break}} / blocks / && a {print a, l, \$NF; a = \"\"}" /proc/mdstat | sort'
+# An ostree guest (kinoite44; docs/design/bazzite.md, B6) has two
+# deployments, the default and the rollback, and boots each in turn: the
+# source for the baseline, then the restored disk, whose two boots must show
+# what the source's did.  OSTREE_STATE is what a boot shows: the booted
+# deployment (CHECKSUM.SERIAL, which the kernel's ostree= leads to), the
+# kernel's command line (the deployment's kargs), its /etc/bko-deployment,
+# `ostree admin status`, the root's type and source (the composefs
+# overlay) and SELinux's mode.
+OSTREE_STATE='o=$(tr " " "\n" </proc/cmdline | sed -n "s/^ostree=//p")
+echo "deployment $(basename "$(readlink -f "$o")")"
+echo "cmdline $(cat /proc/cmdline)"
+echo "bko-deployment $(cat /etc/bko-deployment 2>/dev/null || echo none)"
+echo "root $(findmnt -no FSTYPE,SOURCE /)"
+echo "selinux $(getenforce 2>/dev/null || echo none)"
+ostree admin status'
+# OSTREE_OTHER points GRUB at the one BLS entry whose ostree= leads to a
+# deployment other than the booted one, for the next boots, and prints its
+# ID.  bootupd's static grub.cfg loads grubenv but never reads next_entry,
+# so grub2-reboot does nothing there; a `default` in grubenv is what its
+# menu takes (an index or an entry's ID, its file name without .conf).  The
+# caller unsets it again: `grub2-editenv FILE unset default` leaves grubenv
+# byte for byte as it was.
+OSTREE_OTHER='b=$(readlink -f "$(tr " " "\n" </proc/cmdline | sed -n "s/^ostree=//p")"); n=0; id=""
+for e in /boot/loader/entries/ostree-*.conf; do
+    [ -f "$e" ] || continue
+    o=$(sed -n "s/^options[ \t]*//p" "$e" | tr " " "\n" | sed -n "s/^ostree=//p")
+    [ -n "$o" ] && [ "$(readlink -f "$o")" != "$b" ] && { id=$(basename "$e" .conf); n=$((n + 1)); }
+done
+[ "$n" = 1 ] || { echo "$n BLS entries lead to a deployment other than the booted $b" >&2; exit 1; }
+grub2-editenv /boot/grub2/grubenv set default="$id" && echo "$id"'
+OSTREE_UNSET='grub2-editenv /boot/grub2/grubenv unset default'
+# The source's baseline: its two BLS entries (B5 and B6 need the two
+# deployments B1 built), each deployment booted, and the default again for
+# the dump, with grubenv as it was.  Exit 1 when the run can go no further.
+ostree_source() {
+    local L=$R/logs ne id a r
+    ne=$(sshk "$gkey" 'ls /boot/loader/entries/ostree-*.conf 2>/dev/null | wc -l')
+    [[ $ne == 2 ]] || { bad "ostree: the source has ${ne:-no} BLS entries, not the default's and the rollback's"; return 1; }
+    sshk "$gkey" "$OSTREE_STATE" > "$L/source-ostree-first.txt" 2>&1
+    sshk "$gkey" 'sha256sum </boot/grub2/grubenv' > "$L/source-grubenv-before.txt" 2>&1
+    id=$(sshk "$gkey" "$OSTREE_OTHER" 2>"$L/source-ostree-other.err") ||
+        { bad "ostree: no rollback entry on the source: $(tail -1 "$L/source-ostree-other.err")"; return 1; }
+    vm_reboot "$gkey" || { bad "ostree: the source's rollback entry $id boots (no SSH; logs/source-serial.log)"; return 1; }
+    sshk "$gkey" "$OSTREE_STATE" > "$L/source-ostree-rollback.txt" 2>&1
+    bootstate "$gkey" > "$L/source-rollback-bootstate.txt"
+    sshk "$gkey" "$OSTREE_UNSET" || { bad "ostree: grub2-editenv unset default on the source"; return 1; }
+    vm_reboot "$gkey" || { bad "ostree: the source boots its default entry again (no SSH; logs/source-serial.log)"; return 1; }
+    sshk "$gkey" "$OSTREE_STATE" > "$L/source-ostree.txt" 2>&1
+    sshk "$gkey" 'sha256sum </boot/grub2/grubenv' > "$L/source-grubenv-after.txt" 2>&1
+    a=$(sed -n 's/^deployment //p' "$L/source-ostree.txt") r=$(sed -n 's/^deployment //p' "$L/source-ostree-rollback.txt")
+    if [[ -z $a || -z $r || $a == "$r" ]]; then
+        bad "ostree: the source's rollback boot ($id) booted ${r:-nothing}, its default ${a:-nothing}"; return 1
+    fi
+    cmp -s "$L/source-ostree-first.txt" "$L/source-ostree.txt" ||
+        { bad "ostree: the source's default boot after its rollback isn't its first: $(diff "$L/source-ostree-first.txt" "$L/source-ostree.txt" | grep '^[<>]' | head -2 | tr '\n' ' ')"; return 1; }
+    cmp -s "$L/source-grubenv-before.txt" "$L/source-grubenv-after.txt" ||
+        { bad "ostree: the source's grubenv isn't as it was after the rollback boot"; return 1; }
+    ok "ostree: the source booted its default $a and its rollback $r (entry $id), grubenv left as it was"
+}
+# The restored disk's two boots against the baseline: the default (booted
+# already, and dumped), then the rollback.  Its bootstate may have no line
+# the source's rollback boot lacked.
+ostree_verify() {
+    local L=$R/logs id
+    sshk "$gkey" "$OSTREE_STATE" > "$L/restored-ostree.txt" 2>&1
+    if cmp -s "$L/source-ostree.txt" "$L/restored-ostree.txt"; then
+        ok "ostree: the restored default boot is the source's ($(sed -n 's/^deployment //p' "$L/restored-ostree.txt"): kargs, /etc/bko-deployment, ostree admin status, composefs root, SELinux)"
+    else
+        bad "ostree: the restored default boot isn't the source's: $(diff "$L/source-ostree.txt" "$L/restored-ostree.txt" | grep '^[<>]' | head -4 | tr '\n' ' ')"
+    fi
+    id=$(sshk "$gkey" "$OSTREE_OTHER" 2>"$L/restored-ostree-other.err") ||
+        { bad "ostree: no rollback entry on the restored disk: $(tail -1 "$L/restored-ostree-other.err")"; return; }
+    vm_reboot "$gkey" || { bad "ostree: the restored rollback entry $id boots (no SSH; logs/restored-serial.log)"; return; }
+    sshk "$gkey" "$OSTREE_STATE" > "$L/restored-ostree-rollback.txt" 2>&1
+    if cmp -s "$L/source-ostree-rollback.txt" "$L/restored-ostree-rollback.txt"; then
+        ok "ostree: the restored rollback boot (entry $id) is the source's ($(sed -n 's/^deployment //p' "$L/restored-ostree-rollback.txt"): kargs, /etc/bko-deployment, ostree admin status, composefs root, SELinux)"
+    else
+        bad "ostree: the restored rollback boot (entry $id) isn't the source's: $(diff "$L/source-ostree-rollback.txt" "$L/restored-ostree-rollback.txt" | grep '^[<>]' | head -4 | tr '\n' ' ')"
+    fi
+    bootstate "$gkey" > "$L/restored-rollback-bootstate.txt"
+    if diff -q <(head -1 "$L/source-rollback-bootstate.txt") <(head -1 "$L/restored-rollback-bootstate.txt") >/dev/null \
+        && [[ -z $(comm -13 <(tail -n +2 "$L/source-rollback-bootstate.txt") <(tail -n +2 "$L/restored-rollback-bootstate.txt")) ]]; then
+        ok "ostree: the rollback's boot state as the source's ($(head -1 "$L/restored-rollback-bootstate.txt"))"
+    else
+        bad "ostree: the rollback's boot state: source $(tr '\n' ' ' < "$L/source-rollback-bootstate.txt"), restored $(tr '\n' ' ' < "$L/restored-rollback-bootstate.txt")"
+    fi
+}
 
 phase_source() {
     say "== source: $G"
@@ -405,6 +506,14 @@ phase_source() {
             ok "source rebooted after ${HT_SOURCE_PREP##*/}"
         fi
     fi
+    # An ostree source boots its rollback and its default again first: the
+    # baseline the restored disk's two boots are held to.
+    rm -f "$R/logs/source-ostree"*.txt "$R/logs/source-rollback-bootstate.txt"
+    case $(sshk "$gkey" 'if [ -e /run/ostree-booted ]; then echo ostree; else echo plain; fi') in
+        ostree) ostree_source || { vm_down "$gkey"; return; } ;;
+        plain) ;;
+        *) bad "source: no answer over SSH to whether it is ostree"; vm_down "$gkey"; return ;;
+    esac
     bootstate "$gkey" > "$R/logs/source-bootstate.txt"
     sshk "$gkey" "$HEALTH" 2>&1 | grep -v 'bko-holt/load.log' > "$R/logs/source-health.txt"
     scpk "$gkey" "$S/bko-holt" root@127.0.0.1:/root/bko-holt
@@ -751,6 +860,9 @@ phase_verify() {
     fi
     scpk "$gkey" "$S/bko-holt" root@127.0.0.1:/root/bko-holt
     sshk "$gkey" '/root/bko-holt dump; rm -f /root/bko-holt' > "$R/dumps/dst.json" 2> "$R/logs/restored-dump.err" || bad "dump of the restored system"
+    # An ostree source's baseline (its source phase): the rollback boots too,
+    # after the dump, which is of the default boot as the source's was.
+    [[ ! -f $R/logs/source-ostree-rollback.txt ]] || ostree_verify
     vm_down "$gkey"
     local how=(); [[ $VARIANT == bigger ]] && how=(--grow $((1 << 30)))
     [[ $VARIANT == degraded ]] && how=(--degraded)

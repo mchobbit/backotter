@@ -368,6 +368,12 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False):
                     and before.get(p, {}).get("type") == "dir" and not any(k.startswith(p + "/") for k in before):
                 why = ("a mount point hidden under its mount in a btrfs subvolume mounted elsewhere too (openSUSE's root, again at .snapshots/N/snapshot): "
                        "the backup holds it only through that alias, which load leaves out (docs/design/btrfs-snapshots.md)")
+            if not why and kind == "hard links" and before.get(p, {}).get("type") == "symlink" and not after.get(p, {}).get("links"):
+                # rustic-bko (and restic-bko) relink regular files only: an
+                # ostree repository's symlink objects, hardlinked into each
+                # deployment, come back as separate symlinks, each with its
+                # target and metadata (SticTest1's kinoite44 LIMIT).
+                why = "a hardlinked symlink restored as separate symlinks: the archivers relink regular files only"
             if not why and kind == "inode flags":
                 # btrfs sets FS_NOCOMP_FL itself on a file whose data didn't
                 # compress, as it was written: not the restore's to keep.

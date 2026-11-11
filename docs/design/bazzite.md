@@ -5,6 +5,9 @@ and `backshot1 preflight` stops with "/ isn't on nvme0n1". bko-holt has no
 ostree support at all; nothing in holt/, docs/ or testvm/ mentions ostree,
 composefs, rpm-ostree, bootc or bootupd.
 
+B1 (the `kinoite44` guest) was built the same day, and its *checks* are
+settled below: see "What B1 found".
+
 **Conventions.** est. marks an estimate. *Check* marks a fact not yet seen, to be
 settled on the first guest (B1) or on the Thinkpad before the code that depends
 on it. The facts come from reading holt/src, testvm/ and the rustic_core fork,
@@ -108,6 +111,8 @@ deployment's `etc`, and fstab mounts `var` and `home` after it.
   `btrfs property get -t s /etc` fails, and `root`'s ro and compression
   properties are lost. `mounted_subvolumes` lists `/etc` as a mount of `root`
   too. *Check* the order on the Thinkpad (`/etc` has mount ID 46, `/sysroot` 50).
+  On kinoite44 (B1) `/etc` (48) comes before `/sysroot` (52) in mountinfo,
+  so the guest shows the bug.
 - **No kernels.** `kernels_json` (boot.rs:532) lists `/boot`'s top level only;
   ostree's are in `/boot/ostree/<stateroot>-<bootcsum>/`.
 - **Wrong initramfs generator.** `initramfs_json` (boot.rs:594) says `dracut`
@@ -345,8 +350,9 @@ bootupd layout is tested, so the plan says so in a note when
   Objects need them exactly, since the label is part of each checksum. No
   relabel, ever. The only new files are the log directory and its files,
   labelled by copying `var/log`'s `security.selinux` onto the directory and
-  every file in it with `getfattr`/`setfattr` from the rescue system (*check*
-  that the image has `attr`).
+  every file in it from the rescue system. The image has no `attr` package
+  (B1: no `getfattr`/`setfattr` in the slim base, only `libattr1`), but it has
+  python3, whose `os.getxattr`/`os.setxattr` do it with no image change.
 
 ### `load`
 
@@ -414,10 +420,13 @@ disk 32G, memory 4096 (make-fedora.sh's 16G and 2048 are too small).
 
 - `ostreecontainer --url=quay.io/fedora/fedora-kinoite@sha256:DIGEST
   --no-signature-verification` in place of `cdrom`, and no `%packages`.
+  DIGEST is the `:44` manifest list's, from the registry's HTTP API.
 - Kept: `text`, `lang`, `keyboard`, `timezone`, `network ... --hostname`,
   `firstboot --disable`, `skipx`, `rootpw --iscrypted`,
   `sshkey --username=root` (it lands in `/var/roothome/.ssh`), `poweroff`.
-- New: `services --enabled=sshd` (the atomic desktops ship sshd disabled).
+- New: `services --enabled=sshd --disabled=mcelog` (the atomic desktops ship
+  sshd disabled; mcelog fails at every boot on the hosts' AMD CPUs, and an
+  image can't leave its package out as the Server guests do).
 - Dropped: the `%post` that turns off the fedora-updates dnf repositories,
   which means nothing on ostree.
 - *Check* whether Kinoite 44 starts a first-boot setup on SDDM despite
@@ -432,7 +441,8 @@ bko restores. *Check* whether `quay.io/fedora/fedora-kinoite` is signed with a
 policy the installer can use; if so, drop the flag.
 
 **Two deployments, like the Thinkpad.** Anaconda leaves one. B1 then makes a
-second exactly as the Thinkpad's differ: `rpm-ostree kargs
+second exactly as the Thinkpad's differ (`fedora/ostree-boots.sh`, run by
+make-fedora.sh over SSH): `rpm-ostree kargs
 --append=bko.rollback=1`, a clean `systemctl reboot` (ostree-finalize-staged
 writes the staged deployment only on a clean shutdown), and one `/etc` edit
 in the new booted deployment (`/etc/bko-deployment` with its serial). So `.1`
@@ -443,15 +453,19 @@ B5 and B6 assert two BLS entries before they start.
 
 **Built once, on Chopin.** The `:44` tag's digest is resolved and recorded
 beside the disk (`kinoite44.digest`), the install uses `@sha256:` of it, and
-B1 then runs `bootc switch quay.io/fedora/fedora-kinoite:44` (a
-`rpm-ostree rebase` would do) so later updates follow the tag. *Check* that
-switching to the tag of the same digest stages nothing new. The finished
+B1 then runs `bootc switch --mutate-in-place --transport registry
+quay.io/fedora/fedora-kinoite:44` on the first boot, before the kargs, so later
+updates follow the tag. A plain `bootc switch` (or `rpm-ostree rebase`) to the
+same image under another reference stages a new deployment (B1: serial 2,
+same commit), so it would have left three; `--mutate-in-place` rewrites the
+booted deployment's origin and nothing else. It writes in `/sysroot`, so it
+runs in a mount namespace of its own with `/sysroot` remounted rw. The finished
 image is copied to Cinqcent once; after that, updates go Chopin first in a
 `--keep` overlay that's shipped ([[update-guests-not-copy]],
 [[split-chopin-cinqcent]]). An ostree upgrade writes GBs of new objects into
 that overlay; vm-update runs `qcow2-punch.py` after it.
 
-*Checks* to settle on it, before B2:
+*Checks* to settle on it, before B2 (all settled in "What B1 found"):
 
 - The F44 DVD's Anaconda accepts `ostreecontainer` with no `%packages`, and
   `btrfs ... --subvol --name=var` beside it.
@@ -479,16 +493,22 @@ that overlay; vm-update runs `qcow2-punch.py` after it.
 - `Fedora-Server-dvd-x86_64-44-1.7.iso` on Cinqcent (`/bkoscratch/rebuild-inputs`,
   not looked at). Chopin has it.
 
-**Room.** kinoite44 deploys to an est. ~8 GiB repository plus ~1 GiB of
-checkouts, /var and /boot. HoltTest1's D is est. ~10-11 GiB. A bs1-qemu.py
-rehearsal holds the guest's overlay (~1 GiB), the USB drive with the
-repository (est. ~6 GiB, compressed), and the restored internal disk (~9 GiB):
-est. peak ~16-18 GiB. Both run from /mnt/bko-ram under `cmp-run.sh --reserve`
-(rehearsal: `--reserve 18 6`, `WEAR_TAG=bs1:kinoite44`), and wait for room
-rather than fall back to /bkoscratch ([[work-in-ram]]). The sizes are measured
-in B1 and replace these.
+**Room** (measured in B1). kinoite44's repository is 6.8 GiB (du), the two
+checkouts 165 MiB beyond their links into it, /boot 263 MiB, the ESP 14 MiB,
+/var 15 MiB, /home empty; btrfs uses 5.0 GiB in all (uncompressed: see
+below), and the qcow2 is 5.9 GiB. HoltTest1's D is then est. ~9-10 GiB (the
+source's overlay, a repository of est. ~3 GiB, the restored disk ~6 GiB). A
+bs1-qemu.py rehearsal holds the guest's overlay (~1 GiB), the USB drive with
+the repository (est. ~3-4 GiB), and the restored internal disk (~6 GiB): est.
+peak ~11-12 GiB. Both run from /mnt/bko-ram under `cmp-run.sh --reserve`
+(rehearsal: `--reserve 12 6`, `WEAR_TAG=bs1:kinoite44`), and wait for room
+rather than fall back to /bkoscratch ([[work-in-ram]]). B6 and B8 measure the
+peaks and replace these.
 
-It gets: a `rebuild-one.sh` line, `--uefi` in vm-run-options, `ram-sizes.tsv`
+It gets: a `rebuild-one.sh` line, `--uefi --no-secure-boot --memory 4096` in
+vm-run-options (Secure Boot off, as on the Thinkpad: with it on,
+`bootloader-update.service` fails at every boot because OVMF's db lacks
+Microsoft's 2023 UEFI CA, B1), `ram-sizes.tsv`
 rows, a `stictest1/kinoite44` entry, a GuestTest1 grade, both hosts, and the
 Test2 registration in B7.
 
@@ -529,6 +549,109 @@ second kickstart, and est. +0.5 d. B1 decides that on its own and says so.
   the default entry, then the rollback, picked with `grub2-reboot 1` over
   SSH (or the GRUB menu on serial). Each boot's deployment serial, kargs and
   `/etc/bko-deployment` must match the baseline.
+
+## What B1 found
+
+Settled on `kinoite44` (Fedora Kinoite 44.20261111.0, `:44` =
+`sha256:d78c9d54...` (manifest list), amd64 manifest `sha256:c5e91226...`,
+commit `10e6a37f...`; kernel 7.3.3-200.fc44, ostree 2026.4, rpm-ostree 2026.3,
+bootc 1.17.1, bootupd 0.3.2, composefs 1.0.8), 2026-11-11. The checks the
+Thinkpad has to answer (uupd's timer, greenboot, its mountinfo order, `.0`'s
+etc, Bluefin's os-release) stay open; B1 doesn't touch the Thinkpad.
+
+- **Anaconda takes the layout.** The Server DVD's installer accepts
+  `ostreecontainer` with no `%packages` and `btrfs /var --subvol --name=var`
+  beside it; no fallback to the Kinoite ISO was needed. The install, most of
+  it the guest pulling 3.1 GB of layers, took ~11 min; the two boots after it
+  ~2 min.
+- **What Anaconda writes:** fstab's `/` is `subvol=root,compress=zstd:1,ro`
+  ("Updated by bootc-fstab-edit.service"), `/home` and `/var` the `home` and
+  `var` subvolumes, all by UUID. The subvolume IDs differ from the
+  Thinkpad's: var 256, home 257, root 258 (Thinkpad: root 256, home 257,
+  var 258). The stateroot is `default`. The kernel command line has
+  `root=UUID= rootflags=subvol=root rw`, and nothing mounts with `compress`:
+  the initramfs mounts the filesystem first without it, so the guest's data
+  is uncompressed (*check* the Thinkpad's mountinfo for `compress=`).
+- **mountinfo order:** `/etc` (ID 48) before `/sysroot` (52), then the
+  stateroot var bind (53), `/var` (83), `/var/home` (150). So the B2 FSROOT
+  bug shows on the guest.
+- **Repository config:** `mode=bare`, `[sysroot] readonly=true`, and
+  `bootloader=none` once `bootloader-update.service` has run (the first boot
+  after the install writes it, with `bootupd-state.json`; Anaconda leaves no
+  `bootloader=` key). Anaconda also leaves a `[remote "default"]` whose url is
+  the install's `@sha256:` reference, with `gpg-verify=false`; nothing uses
+  it. `bootupd-state.json` exists; `bootupctl status` says "At latest
+  version". GRUB's `grub.cfg` is bootupd's static one, unchanged by later
+  deployments.
+- **composefs, verity, flags:** `/usr/lib/ostree/prepare-root.conf` says
+  `enabled = yes`, `readonly = true`; there's no `/etc/ostree/prepare-root.conf`.
+  No object has fs-verity (`lsattr` shows no `V`). Both deployment roots
+  have `+i`.
+- **Links:** 134,530 `.file` objects, 14,195 of them symlinks; 120,320 regular
+  objects with links>1 (the hardlink map's entries on subvolume `root`, vs.
+  the Thinkpad's ~176k). Regular files under `ostree/` by link count: 1:
+  18,107, 3: 339,954, 5: 29,760, then a tail of odd counts (files a
+  deployment holds more than once).
+- **Two deployments:** after `make-fedora.sh`, `.1` (default, booted,
+  `bko.rollback=1`, `/etc/bko-deployment`) and `.0` (rollback), one commit,
+  both origins `ostree-unverified-registry:quay.io/fedora/fedora-kinoite:44`;
+  `boot.1 -> boot.1.1`, whose `0` links to `.1` and `1` to `.0`; BLS
+  `ostree-2.conf` (`version 2`, `ostree=.../0`, `bko.rollback=1`: the default,
+  `.1`) and `ostree-1.conf` (`version 1`, `.0`), so vm-mount's "highest
+  `version`" rule picks `.1`; one `/boot/ostree/default-<bootcsum>/` with
+  `vmlinuz-` and `initramfs-*.img` for both.
+  The two etcs differ in `bko-deployment`, `selinux/targeted/active/commit_num`
+  and two semanage lock files.
+- **Tools on Kinoite:** python3, avahi-daemon (enabled), rsync, efibootmgr,
+  findmnt, lsblk, getfattr/setfattr, chattr/lsattr, bash, sha256sum, and dnf
+  (dnf5) are all in the image; nothing needs layering. **bs1-adopt passes on
+  kinoite44 unattended, as it is** (in a throwaway VM, with throwaway keys):
+  it installs nothing, so `pkg_install` never meets the read-only `/usr`, and
+  firewalld's FedoraWorkstation zone gets ssh and mdns. What it writes lands
+  in the booted deployment's etc only (`ostree admin config-diff`: hostname,
+  `ssh/sshd_config.d/00-backshot1.conf`, the host keys, sshd's enablement),
+  so on the guest too the rollback `.0` keeps the old hostname and host key.
+  root's `authorized_keys` is in `/var/roothome`, which both deployments
+  share, so the BackShot1 key logs in to either. B8's ostree branch in
+  bs1-adopt is then only a guard (never `pkg_install` on ostree).
+- **Updates:** no updater is enabled. `rpm-ostreed-automatic.timer`,
+  `bootc-fetch-apply-updates.timer`, `podman-auto-update.timer`,
+  `fwupd-refresh.timer` and `systemd-sysupdate.timer` are disabled; uupd
+  isn't there. Enabled and harmless: `rpm-ostree-countme.timer` (a weekly
+  ping), `bootloader-update.service` (bootupd at boot; a no-op at the latest
+  version), `flatpak-add-fedora-repos.service`.
+- **First-boot setup:** Kinoite 44 has no SDDM (Plasma Login,
+  `plasmalogin.conf.d`), and `skipx` makes the default target
+  `multi-user.target`, so no display manager starts. `plasma-setup.service`
+  (WantedBy multi-user) runs at every boot, writes the autologin setting
+  `etc/plasmalogin.conf.d/99-plasma-setup.conf` and exits; it doesn't hold
+  sshd back. The Thinkpad boots graphical; the guest doesn't.
+- **Signatures:** the image has no sigstore attachment on quay.io
+  (`sha256-<digest>.sig` is 404) and the guest's `policy.json` is
+  `insecureAcceptAnything`, so `--no-signature-verification` stays.
+- **Failed units:** `systemd-remount-fs.service` fails at every boot: it
+  remounts `/` with fstab's options and the composefs overlay refuses ("No
+  changes allowed in reconfigure"). The Thinkpad's fstab `/` is the same, so
+  it likely fails there too (*check* in B8's baseline); HoltTest1 compares
+  failed units between source and restore, so it needs no exception.
+  `bootloader-update.service` fails only with Secure Boot on (above).
+- **What changes at boot** (the fstab tree, `mount --bind -o ro` per entry
+  at `/run/bko-tree`, bs1-manifest after a boot and again after a reboot in
+  the same QEMU; 535,025 rows, 77 s each): besides what EXPECTED already
+  covers (`var/tmp/*` (systemd's private dirs), `var/cache/*`, `var/lib/*`,
+  `var/log/*`, and `boot/efi/NvVars`, which only OVMF writes), only the
+  booted deployment's `etc/plasmalogin.conf.d/99-plasma-setup.conf`,
+  `etc/tuned/{active_profile,bootcmdline,post_loaded_profile,profile_mode}`
+  and `etc/systemd/system.control/**` (root's SSH login's slice settings)
+  changed, all in mtime only. Through the etc mapping those are three REMADE
+  patterns for `ostree_paths.py`: `etc/plasmalogin.conf.d/*`, `etc/tuned/*`,
+  `etc/systemd/system.control/*`. Nothing changed under `ostree/repo`
+  (`tmp/` included) or `ostree/bootc`, in `boot/grub2/grubenv` or in
+  `boot/bootupd-state.json`, though `rpm-ostree status` and `bootc status`
+  ran before each manifest. The rollback's etc didn't change.
+- **The rescue image has no `attr`** (above): B3 labels with python3.
+- **vm-update** must not run on kinoite44 before B4: its `has dnf` branch
+  would run `dnf -y upgrade`, which fails on an image-mode system.
 
 ## BackShot1 on the Thinkpad
 
@@ -589,7 +712,7 @@ Boot0009 when the old one survives the erase. It predates ostree.
 
 | # | Piece | Effort |
 |---|---|---|
-| B1 | `make-fedora.sh --ostree`, `ks-ostree.cfg`, `storage-ostree.ks`; the second deployment; `kinoite44` on Chopin, copied to Cinqcent; the two-boot manifest diff; settle the *checks* above | 0.75 d |
+| B1 | `make-fedora.sh --ostree`, `ks-ostree.cfg`, `storage-ostree.ks`; the second deployment; `kinoite44` on Chopin, copied to Cinqcent; the two-boot manifest diff; settle the *checks* above. **Done 2026-11-11:** built on Chopin, copied to Cinqcent (same SHA-256), booted on both; see "What B1 found" | 0.75 d |
 | B2 | `dump`: detection, `SUPPORTED` row, holt/src/ostree.rs and `boot.ostree`, `backup_sources` and aliases, kernels, `prebuilt`, the BLS label, the btrfs FSROOT fix, Fedora's loader packages; a scenarios.rs fake composefs tree (mountinfo, `/run/ostree-booted`, `/boot/ostree/*`, `prepare-root.conf`, the `/etc` bind); unit tests; check fingerprint.py, test_vm_update.py, holttest1d/judge.py and backshot2's bs2lib against the new `mounted_subvolumes` and properties | 1.5 d |
 | B3 | `load`: mount stage without `ro`, the ostree marker, `ostree_boot` (atimes listed, note, consistency check, NVRAM, log and labels, the shared tail), the v1 plan problems; unit tests | 1.5 d |
 | B4 | vm-mount's ostree mode (HoltTest1, vm-chroot); `ostree_paths.py` for bs1-manifest and compare.py; vm-update's ostree branch | 1 d |

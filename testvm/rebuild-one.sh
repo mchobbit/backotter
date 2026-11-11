@@ -50,6 +50,9 @@ ubuntu26-luks) cmd=(asm $T/make-ubuntu.sh --uefi --luks --name ubuntu26-luks 26.
 fedora44)   cmd=(asm $T/make-fedora.sh 44-1.7 "$W") ;;
 fedora44-uefi) cmd=(asm $T/make-fedora.sh --uefi --name fedora44-uefi 44-1.7 "$W") ;;
 fedora44-raid) cmd=(asm $T/make-fedora.sh --uefi --raid --name fedora44-raid 44-1.7 "$W") ;;
+# kinoite44: the :44 tag as it is at the rebuild, so newer content than the
+# guest's (kinoite44.digest says which).
+kinoite44)  cmd=(asm $T/make-fedora.sh --ostree quay.io/fedora/fedora-kinoite:44 --name kinoite44 44-1.7 "$W") ;;
 rocky10)    cmd=(asm $T/make-rocky.sh 10.0 "$W") ;;
 rocky10-lvm) cmd=(asm $T/make-rocky.sh --lvm 10.0 "$W") ;;
 rocky10-raid5) cmd=(asm $T/make-rocky.sh --raid5 10.0 "$W") ;;

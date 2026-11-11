@@ -23,10 +23,15 @@ default deployment ("/ostree-default", a path no file can have), and only
 that deployment's etc/ is matched against the lists below as etc/; every
 other deployment's etc must come back as it was.  ostree_paths.py (beside
 this script on the backup drive, or testvm/ in the repository) has that rule
-and what an ostree boot changes besides.
+and what an ostree boot changes besides.  Regular files under ostree/ get two
+more columns, their link count and inode flags, so a repository object that
+came back unlinked from its deployments, or lost a flag, shows; a gained
+FS_NOCOMP_FL alone is btrfs's own, set as the restore writes data that won't
+compress (B5, B6).  A file with several links is read once.
 """
 
 import base64
+import fcntl
 import fnmatch
 import hashlib
 import os
@@ -77,12 +82,24 @@ NIXOS_EXPECTED = ["etc/.clean", "etc/group", "etc/passwd", "etc/shadow", "etc/su
 NIXOS_REMADE = ["etc/*", "bin/sh", "usr/bin/env"]
 
 
-def digest(path):
+FS_IOC_GETFLAGS = 0x80086601
+FS_NOCOMP_FL = 0x400
+
+
+def digest(path, flags=False):
+    """The file's sha256, and with FLAGS its inode flags too (as "0x..", or
+    "-" where the filesystem has none)."""
     h = hashlib.sha256()
     with open(path, "rb") as f:
+        fl = None
+        if flags:
+            try:
+                fl = f"{int.from_bytes(fcntl.ioctl(f.fileno(), FS_IOC_GETFLAGS, bytes(8))[:4], 'little'):#x}"
+            except OSError:
+                fl = "-"
         while chunk := f.read(1 << 20):
             h.update(chunk)
-    return h.hexdigest()
+    return h.hexdigest(), fl
 
 
 def xattrs(path):
@@ -98,8 +115,12 @@ def xattrs(path):
 def write(root, out):
     st = os.lstat(root)
     seen = {(st.st_dev, st.st_ino): "."}
+    # Each inode with several links is read once: an ostree repository's
+    # objects are linked into every deployment.
+    digests = {}
     with open(out, "w", encoding="utf-8", errors="surrogateescape") as f:
-        if ostree_paths.is_ostree(root):
+        ostree = ostree_paths.is_ostree(root)
+        if ostree:
             f.write(f"{OSTREE_DEFAULT}\t{ostree_paths.default_deployment(root) or '-'}\n")
         for d, dirs, files in os.walk(root):
             again = []
@@ -107,7 +128,8 @@ def write(root, out):
                 p = os.path.join(d, name)
                 rel = os.path.relpath(p, root)
                 st = os.lstat(p)
-                extra = "-"
+                extra, links = "-", None
+                under = ostree and (rel == "ostree" or rel.startswith("ostree/"))
                 try:
                     if stat.S_ISDIR(st.st_mode):
                         first = seen.setdefault((st.st_dev, st.st_ino), rel)
@@ -117,12 +139,21 @@ def write(root, out):
                     elif stat.S_ISLNK(st.st_mode):
                         extra = os.readlink(p)
                     elif stat.S_ISREG(st.st_mode):
-                        extra = digest(p)
+                        key = (st.st_dev, st.st_ino)
+                        extra, fl = digests.get(key, (None, None))
+                        if extra is None or (under and fl is None):
+                            extra, fl = digest(p, under)
+                            if st.st_nlink > 1:
+                                digests[key] = (extra, fl)
+                        if under:
+                            links = [str(st.st_nlink), fl]
                     elif stat.S_ISCHR(st.st_mode) or stat.S_ISBLK(st.st_mode):
                         extra = f"dev:{os.major(st.st_rdev)}:{os.minor(st.st_rdev)}"
                 except OSError as e:
                     extra = f"unreadable:{e.errno}"
-                f.write("\t".join([rel, oct(st.st_mode), str(st.st_uid), str(st.st_gid), str(st.st_size), str(st.st_mtime_ns), extra, xattrs(p)]) + "\n")
+                if under and stat.S_ISREG(st.st_mode) and links is None:
+                    links = [str(st.st_nlink), "-"]
+                f.write("\t".join([rel, oct(st.st_mode), str(st.st_uid), str(st.st_gid), str(st.st_size), str(st.st_mtime_ns), extra, xattrs(p)] + (links or [])) + "\n")
             dirs[:] = [n for n in dirs if n not in again]
 
 
@@ -146,6 +177,26 @@ def read(path):
     return rows, default
 
 
+def flags_same(a, b):
+    """Inode flags, before and after: the same, or after only gained
+    FS_NOCOMP_FL (btrfs marks data that didn't compress as it's written)."""
+    if a == b:
+        return True
+    try:
+        x, y = int(a, 16), int(b, 16)
+    except ValueError:
+        return False
+    return (y & ~FS_NOCOMP_FL) == x and bool(y & FS_NOCOMP_FL)
+
+
+def links_same(a, b, flags=True):
+    """A regular file under ostree/: its link count and flags, where both
+    rows have them (a baseline from before has neither)."""
+    if len(a) < 9 or len(b) < 9:
+        return True
+    return a[7] == b[7] and (not flags or flags_same(a[8], b[8]))
+
+
 def same(rel, a, b, nixos, ostree=None):
     # A directory's size only says how big it has ever been, and its mtime
     # moves whenever something inside it does.
@@ -153,8 +204,9 @@ def same(rel, a, b, nixos, ostree=None):
         return a[:3] == b[:3]
     remade = REMADE + (NIXOS_REMADE if nixos else []) + (ostree_paths.REMADE if ostree else [])
     if any(fnmatch.fnmatch(ostree_paths.logical(rel, ostree), pat) for pat in remade):
-        return a[:4] + a[5:6] == b[:4] + b[5:6]
-    return a[:6] == b[:6]
+        # Written again by the running system, so its flags are its kernel's.
+        return a[:4] + a[5:6] == b[:4] + b[5:6] and links_same(a, b, flags=False)
+    return a[:6] == b[:6] and links_same(a, b)
 
 
 def parse_xattrs(field):
@@ -225,6 +277,9 @@ def compare(old_path, new_path):
         unexpected = [p for p in paths if not expected(p, nixos, mapping[label]) and p not in snapper]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")
         bad += [f"{label}: {p}" + (f" ({xattr_diff(old[p], new[p])})" if label == "xattrs" else "") for p in unexpected]
+    linked = sum(1 for p in set(old) & set(new) if len(old[p]) > 8 and len(new[p]) > 8)
+    if linked:
+        print(f"ostree: link counts and inode flags compared for {linked} regular files under ostree/")
     print(f"files compared: {len(old)}")
     for line in bad:
         print(line)

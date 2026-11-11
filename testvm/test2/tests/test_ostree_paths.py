@@ -245,6 +245,88 @@ class TestManifest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertNotIn("ostree", out)
 
+    def objects(self):
+        """A repository object hardlinked into both deployments (nlink 3), as
+        a bare repository has them, and a file outside ostree/."""
+        kinoite(self.root)
+        obj = self.root / "ostree" / "repo" / "objects" / "ab" / "cdef.file"
+        obj.parent.mkdir(parents=True)
+        obj.write_text("object\n")
+        for d in (DEP0, DEP1):
+            os.link(obj, self.root / d / "usr" / "bash")
+        (self.root / "boot" / "vmlinuz").write_text("k\n")
+        return obj
+
+    def test_link_and_flag_columns_under_ostree_only(self):
+        self.objects()
+        rows = {ln.split("\t")[0]: ln.split("\t") for ln in self.manifest("a.tsv").read_text().splitlines()}
+        obj = rows["ostree/repo/objects/ab/cdef.file"]
+        self.assertEqual(len(obj), 10)
+        self.assertEqual(obj[8], "3")
+        self.assertEqual(rows[f"{DEP1}/usr/bash"][8], "3")
+        self.assertEqual(len(rows["boot/vmlinuz"]), 8)
+        self.assertEqual(len(rows[f"{DEP1}/usr"]), 8)          # a directory
+
+    def test_unlinked_object_is_a_change(self):
+        obj = self.objects()
+        a = self.manifest("a.tsv")
+        # A restore that wrote the deployment's file apart: same content and
+        # metadata, one link fewer everywhere.
+        dep = self.root / DEP0 / "usr" / "bash"
+        st = os.stat(obj)
+        dep.unlink()
+        dep.write_text("object\n")
+        os.utime(dep, ns=(st.st_atime_ns, st.st_mtime_ns))
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 1)
+        self.assertIn("changed: ostree/repo/objects/ab/cdef.file", out)
+        self.assertIn(f"changed: {DEP0}/usr/bash", out)
+        self.assertIn("link counts and inode flags compared for", out)
+
+    def test_baseline_without_link_columns(self):
+        obj = self.objects()
+        a = self.manifest("a.tsv")
+        a.write_text("".join("\t".join(ln.split("\t")[:8]) + "\n" for ln in a.read_text().splitlines()))
+        dep = self.root / DEP0 / "usr" / "bash"
+        st = os.stat(obj)
+        dep.unlink()
+        dep.write_text("object\n")
+        os.utime(dep, ns=(st.st_atime_ns, st.st_mtime_ns))
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("link counts", out)
+
+    def test_flags(self):
+        f = self.M.flags_same
+        self.assertTrue(f("0x0", "0x0"))
+        self.assertTrue(f("-", "-"))
+        self.assertTrue(f("0x0", "0x400"))           # FS_NOCOMP_FL, btrfs's own
+        self.assertTrue(f("0x10", "0x410"))
+        self.assertFalse(f("0x400", "0x0"))          # lost
+        self.assertFalse(f("0x0", "0x10"))           # immutable gained
+        self.assertFalse(f("0x10", "0x400"))
+        self.assertFalse(f("0x0", "-"))
+
+    def test_flag_change_is_a_change(self):
+        self.objects()
+        a = self.manifest("a.tsv")
+        # The immutable flag (0x10) on every file: neither "0x0" (Linux) nor
+        # "-" (macOS, no flags to read) is that.
+        with mock.patch.object(self.M, "digest", lambda p, flags=False: (self.M.hashlib.sha256(Path(p).read_bytes()).hexdigest(), "0x10" if flags else None)):
+            b = self.manifest("b.tsv")
+        rc, out = self.compare(a, b)
+        self.assertEqual(rc, 1)
+        self.assertIn("changed: ostree/repo/objects/ab/cdef.file", out)
+        self.assertNotIn("changed: boot/vmlinuz", out)
+
+    def test_linked_file_is_read_once(self):
+        self.objects()
+        calls = []
+        real = self.M.digest
+        with mock.patch.object(self.M, "digest", lambda p, flags=False: calls.append(p) or real(p, flags)):
+            self.manifest("a.tsv")
+        self.assertEqual(sum(1 for p in calls if p.endswith(("cdef.file", "usr/bash"))), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

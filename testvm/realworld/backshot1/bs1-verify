@@ -2,18 +2,37 @@
 # BackShot1: did the restored system come back?  As root, on the restored system.
 #
 # Usage: bs1-verify RUN
+#        bs1-verify --boot RUN     ostree: check the deployment this boot started
 #
 # Checks the run's newest restore, which has to have succeeded: an older attempt's
 # success says nothing about what's on the disk now.  Exit 0 only if every check
 # passed.  Writes verify.log and RESULT beside that restore's logs.
+#
+# On ostree (docs/design/bazzite.md) it also holds the updaters off and fails
+# if one ran since the boot, then compares the files, then the deployments
+# with the baseline's deployments.txt: the booted one by checksum and serial,
+# ostree admin status, the BLS entries, link counts, the deployment roots'
+# flags, btrfs space, ostree fsck, bootupd and grubenv.  --boot, after the
+# main check, checks a boot of the restored rollback (or of the default
+# again) against the baseline's record of that deployment: its kargs,
+# hostname and SELinux, and that the deployments haven't moved.  It writes
+# boot-STAMP.log and a line in BOOTS.
 
 # shellcheck disable=SC1091
 . "$(dirname "$(readlink -f "$0")")/bs1-common"
 
-RUN=$RUNS/${1:?usage: bs1-verify RUN}
+BOOT_CHECK=no
+if [[ ${1:-} == --boot ]]; then BOOT_CHECK=yes; shift; fi
+RUN=$RUNS/${1:?usage: bs1-verify [--boot] RUN}
 ATTEMPT=$(ls -d "$RUN"/restores/*[0-9] 2>/dev/null | tail -n 1)
 [[ -n $ATTEMPT && -f $ATTEMPT/RESTORED ]] || { echo "$RUN's newest restore (${ATTEMPT:-none}) didn't finish" >&2; exit 2; }
-LOG=$ATTEMPT/verify.log
+if [[ $BOOT_CHECK == yes ]]; then
+    is_ostree || { echo "--boot is for an ostree system's deployments" >&2; exit 2; }
+    [[ -s $ATTEMPT/RESULT ]] || { echo "bs1-verify $1 hasn't checked this restore yet" >&2; exit 2; }
+    LOG=$ATTEMPT/boot-$(date -u +%Y%m%d-%H%M%S).log
+else
+    LOG=$ATTEMPT/verify.log
+fi
 : >"$LOG"
 say "checking restore $(basename "$ATTEMPT") of $(basename "$RUN")"
 fails=0
@@ -33,6 +52,24 @@ system_settled() {
     done
     echo "${s:-unknown}"
     return 1
+}
+# The updaters stopped for this boot, then: did one run since it started?
+hold_updates() {
+    local u t
+    for u in $UPDATERS; do
+        for t in timer service; do
+            if systemctl is-active -q "$u.$t"; then systemctl stop "$u.$t"; say "stopped $u.$t for this boot"; fi
+        done
+    done
+}
+updaters_quiet() {
+    local u ran=
+    for u in $UPDATERS; do ran+=$(journalctl -b -q --no-pager -u "$u.service" 2>/dev/null); done
+    [[ -z $ran ]] || { echo "the journal since this boot:"; tail -n 20 <<<"$ran"; return 1; }
+}
+OSTREE_TOOL=$HERE/bs1-ostree
+rpm_ostree_same() {
+    diff <(grep '^rpm-ostree ' "$RUN/baseline/deployments.txt") <(python3 "$OSTREE_TOOL" rpm-ostree)
 }
 packages_same() { package_list | cmp - "$RUN/baseline/packages.txt"; }
 swap_same() { swap_names | cmp - "$RUN/baseline/swap-names.txt"; }
@@ -73,12 +110,38 @@ PY
 state=$(system_settled)
 say "system state: $state"
 
+if [[ $BOOT_CHECK == yes ]]; then
+    step "this boot's deployment, against the baseline"
+    disk=$(internal_disk) || { say "no single disk has serial $INTERNAL_SERIAL"; exit 1; }
+    hold_updates
+    check "no updater ran since this boot" updaters_quiet
+    check "/sysroot is on the restored $disk" on_disk "$(root_source)" "$disk"
+    python3 "$OSTREE_TOOL" boot-check "$RUN/baseline/deployments.txt" >"$LOG.check" 2>&1
+    rc=$?
+    tee -a "$LOG" <"$LOG.check"
+    [[ $rc -eq 0 ]] || fails=$((fails + 1))
+    which=$(sed -n '1s/^booted: the \([a-z]*\) deployment .*/\1/p' "$LOG.check")
+    rm -f "$LOG.check"
+    if [[ $fails -eq 0 ]]; then r=PASS; else r="FAIL: $fails checks"; fi
+    echo "$(basename "$LOG" .log) ${which:-unknown}: $r" >>"$ATTEMPT/BOOTS"
+    printf '\n' | tee -a "$LOG"
+    say "BOOT: ${which:-unknown}: $r"
+    [[ $fails -eq 0 ]]
+    exit
+fi
+
 step "the checks"
 disk=$(internal_disk) || { say "no single disk has serial $INTERNAL_SERIAL"; exit 1; }
 # Mounts an ESP that's on an automount.
 ls /boot/efi /efi /boot >/dev/null 2>&1
+if is_ostree; then
+    # First, so nothing stages a deployment while the rest is compared.
+    hold_updates
+    check "no updater ran since this boot" updaters_quiet
+    check "rpm-ostree's deployments are the baseline's: none staged or new" rpm_ostree_same
+fi
 check "hostname is $SOURCE_HOST" test "$(this_host)" == "$SOURCE_HOST"
-check "/ is on the restored $disk" on_disk "$(findmnt -nro SOURCE /)" "$disk"
+check "$(root_mount) is on the restored $disk" on_disk "$(root_source)" "$disk"
 check "this isn't the rescue stick" test ! -f /cdrom/.disk/backotter.json
 check "the boot finished" test "$state" != unknown
 failed_units >"$ATTEMPT/failed-units-after.txt"
@@ -96,10 +159,49 @@ step "the layout, as the restored system sees it"
 check "bko-holt dump works" sh -c "'$BIN/bko-holt' dump --only-disk '$disk' >'$ATTEMPT/after.json'"
 
 step "the files, against the manifest from before the backup"
-make_tree "$disk"
-must python3 "$HERE/bs1-manifest" "$SRC" "$ATTEMPT/manifest-after.tsv"
+# On ostree the tree is laid out from a dump: the restored system's own, else
+# the backup's.
+tree_layout=$ATTEMPT/after.json
+python3 -c 'import json, sys; json.load(open(sys.argv[1]))' "$tree_layout" 2>/dev/null || tree_layout=$RUN/layout.json
+make_tree "$disk" "$tree_layout"
+must python3 "$HERE/bs1-manifest" "$TREE" "$ATTEMPT/manifest-after.tsv"
 python3 "$HERE/bs1-manifest" --compare "$RUN/baseline/manifest.tsv" "$ATTEMPT/manifest-after.tsv" 2>&1 | tee "$ATTEMPT/compare.txt" | tee -a "$LOG" | tail -n 40
 [[ ${PIPESTATUS[0]} -eq 0 ]] || { say "  FAIL  files differ outside what a boot changes (compare.txt)"; fails=$((fails + 1)); }
+
+if is_ostree; then
+    step "the deployments, against the baseline's"
+    B=$RUN/baseline O=$ATTEMPT/ostree
+    mkdir -p "$O"
+    python3 "$OSTREE_TOOL" record "$TREE" >"$O/deployments.txt" 2>>"$LOG"
+    python3 "$OSTREE_TOOL" links "$TREE" >"$O/links.txt" 2>>"$LOG"
+    python3 "$OSTREE_TOOL" space "$TREE" >"$O/space.txt" 2>>"$LOG"
+    same() { diff <(grep "^$1 " "$B/deployments.txt") <(grep "^$1 " "$O/deployments.txt"); }
+    # One-sided: compression makes a good restore smaller; broken hard links
+    # would make it about three times as big.
+    space_within() {
+        awk 'NR == FNR { b[$1] = $2; next }
+             { seen[$1] = 1; printf "%s: %d bytes before, %d after\n", $1, b[$1], $2; if (!($1 in b) || $2 > b[$1] * 1.05) bad = 1 }
+             END { for (u in b) if (!(u in seen)) { print u ": not in the tree"; bad = 1 }; exit bad }' "$B/space.txt" "$O/space.txt"
+    }
+    no_boot_counter() { ! grep '^grubenv boot_counter=' "$O/deployments.txt"; }
+    at_latest() { grep -x 'bootupctl At latest version' "$O/deployments.txt"; }
+    check "the booted deployment is the baseline's, checksum and serial: $(sed -n 's/^booted //p' "$O/deployments.txt")" same booted
+    check "/ is a composefs overlay" test "$(findmnt -no FSTYPE,SOURCE /)" == "overlay composefs"
+    check "SELinux is as before: $(sed -n 's/^selinux //p' "$O/deployments.txt")" same selinux
+    check "ostree admin status is the baseline's: deployments, order, pins" same status
+    check "the deployments and their hostnames are the baseline's" same deployment
+    check "each BLS entry's options line is the baseline's" same entry
+    check "/boot/loader is the baseline's: $(sed -n 's/^loader //p' "$O/deployments.txt")" same loader
+    check "the kernel command line is the baseline's" same cmdline
+    check "the regular files' link counts are the baseline's, per filesystem" diff "$B/links.txt" "$O/links.txt"
+    check "the deployment roots' flags (lsattr -d) are the baseline's" same lsattr
+    check "each btrfs filesystem uses at most 5% more than before" space_within
+    check "ostree fsck passes (every object's checksum)" sh -c "ostree fsck >'$O/fsck.txt' 2>&1"
+    check "rpm-ostree status works" rpm-ostree status
+    check "bootupctl status says At latest version" at_latest
+    check "bootupd-state.json is the baseline's" same bootupd-state
+    check "grubenv has no boot_counter" no_boot_counter
+fi
 
 if [[ $fails -eq 0 ]]; then r=PASS; else r="FAIL: $fails checks"; fi
 echo "$r" >"$ATTEMPT/RESULT"

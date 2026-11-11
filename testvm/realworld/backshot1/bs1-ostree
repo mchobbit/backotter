@@ -1,0 +1,300 @@
+#!/usr/bin/env python3
+"""BackShot1's ostree records and checks (docs/design/bazzite.md, "BackShot1
+on the Thinkpad").  As root, on the running ostree system.
+
+bs1-ostree preflight LAYOUT      no rpm-ostree transaction, nothing staged or
+                                 pending, every btrfs subvolume in the backup;
+                                 prints each problem, exit 1 if any
+bs1-ostree record TREE           deployments.txt: what the deployments are and
+                                 how this boot started (one "KEY VALUE" a line)
+bs1-ostree rpm-ostree            rpm-ostree's deployments, the record's lines
+bs1-ostree links TREE            per filesystem of TREE, the regular files with
+                                 more than one link: their inodes, and how
+                                 many paths have each link count
+bs1-ostree space TREE            each btrfs filesystem's bytes in use
+bs1-ostree boot-check BASELINE   which of the baseline's deployments booted,
+                                 checked against its record; exit 1 if wrong
+
+TREE is BackShot1's fstab tree (bs1-common's make_tree): the physical root,
+with /boot, /home and /var as fstab mounts them.  BASELINE is a run's
+baseline/deployments.txt.  The record's keys:
+
+  booted DEPLOYMENT          what /proc/cmdline's ostree= leads to
+  default DEPLOYMENT         the BLS entry with the highest version's
+  deployment DEP hostname=H  each deployment, with its etc/hostname
+  entry FILE DEP options=O   each BLS entry, the deployment it leads to
+  loader TARGET              /boot/loader's
+  cmdline CMDLINE            /proc/cmdline but BOOT_IMAGE=, GRUB's name for
+                             the disk it read the kernel from ((hd0,gpt2)),
+                             which moves with the disks plugged in
+  selinux MODE               getenforce
+  rpm-ostree C.S staged=B pinned=B image=REF digest=D   in rpm-ostree's order
+  bootupd-state SHA256       of /boot/bootupd-state.json, or -
+  bootupctl UPDATE           bootupctl status's "Update:" line, or -
+  grubenv KEY=VALUE          grubenv's keys
+  lsattr DEP FLAGS           lsattr -d of each deployment root
+  status LINE                ostree admin status, line by line
+
+DEPLOYMENT is a path from the physical root (ostree/deploy/S/deploy/C.N).
+"""
+
+import collections
+import hashlib
+import json
+import os
+import re
+import stat
+import subprocess
+import sys
+
+_here = os.path.dirname(os.path.realpath(__file__))
+sys.path[:0] = [_here, os.path.join(_here, "..", "..")]
+import ostree_paths  # noqa: E402
+
+SYSROOT = "/sysroot"
+
+
+def out(cmd):
+    """CMD's output, or None if it can't run or fails."""
+    try:
+        r = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    except OSError:
+        return None
+    return r.stdout if r.returncode == 0 else None
+
+
+def kargs(cmdline):
+    """The kernel command line without BOOT_IMAGE=: what the BLS entry's
+    options line says, the same whichever disk GRUB counted first."""
+    return " ".join(w for w in cmdline.split() if not w.startswith("BOOT_IMAGE="))
+
+
+def booted(root=SYSROOT, cmdline=None):
+    """The booted deployment, from the kernel's ostree=, as a path from ROOT."""
+    if cmdline is None:
+        with open("/proc/cmdline") as f:
+            cmdline = f.read()
+    k = ostree_paths.karg(cmdline, "ostree")
+    return ostree_paths.resolve(root, k) if k else None
+
+
+def rpm_ostree_lines(status=None):
+    """rpm-ostree's deployments, in its order: the booted flag left out, since
+    a rollback boot changes only that."""
+    if status is None:
+        status = json.loads(out(["rpm-ostree", "status", "--json"]) or '{"deployments": []}')
+    lines = []
+    for d in status.get("deployments") or []:
+        b = lambda k: "yes" if d.get(k) else "no"
+        lines.append(f"rpm-ostree {d.get('checksum')}.{d.get('serial')} staged={b('staged')} pinned={b('pinned')} "
+                     f"image={d.get('container-image-reference') or '-'} digest={d.get('container-image-reference-digest') or '-'}")
+    return lines
+
+
+def preflight(layout, status=None, subvolumes=None):
+    """The reasons not to back up now, each a line."""
+    problems = []
+    if status is None:
+        text = out(["rpm-ostree", "status", "--json"])
+        if text is None:
+            return ["rpm-ostree status --json failed"]
+        status = json.loads(text)
+    if status.get("transaction"):
+        problems.append(f"an rpm-ostree transaction is running: {status['transaction']}")
+    deps = status.get("deployments") or []
+    for d in deps:
+        if d.get("staged"):
+            problems.append(f"deployment {d.get('checksum')}.{d.get('serial')} is staged: its etc and boot entry wait for the next shutdown")
+    if deps and not deps[0].get("booted"):
+        b = next((f"{d.get('checksum')}.{d.get('serial')}" for d in deps if d.get("booted")), "none")
+        problems.append(f"deployment {deps[0].get('checksum')}.{deps[0].get('serial')} is pending: the next boot starts it, not the booted {b}")
+    problems += uncovered_subvolumes(layout, subvolumes)
+    return problems
+
+
+def uncovered_subvolumes(layout, listing=None):
+    """btrfs subvolumes that no backup source holds: neither one's own
+    subvolume nor beneath one.  LISTING maps a source's FROM to its
+    `btrfs subvolume list -a` output (for tests)."""
+    with open(layout) as f:
+        sources = json.load(f)["storage"].get("backup_sources") or []
+    by_dev = collections.defaultdict(list)
+    for s in sources:
+        if s.get("fstype") == "btrfs":
+            by_dev[s.get("device") or s.get("source")].append(s)
+    problems = []
+    for dev, group in sorted(by_dev.items()):
+        mounted = {(s.get("subvol") or "").strip("/") for s in group}
+        text = (listing or {}).get(group[0]["from"]) if listing is not None else out(["btrfs", "subvolume", "list", "-a", group[0]["from"]])
+        if text is None:
+            problems.append(f"btrfs subvolume list -a {group[0]['from']} failed")
+            continue
+        for line in text.splitlines():
+            m = re.search(r" path (?:<FS_TREE>/)?(.*)$", line)
+            if not m:
+                continue
+            p = m[1].strip("/")
+            if not any(v == "" or p == v or p.startswith(v + "/") for v in mounted):
+                problems.append(f"btrfs subvolume {p} on {dev} isn't mounted, so it wouldn't be backed up")
+    return problems
+
+
+def deployment_dirs(tree):
+    return ostree_paths.deployments(tree)
+
+
+def record(tree):
+    boot = os.path.join(tree, "boot")
+    lines = [f"booted {booted(tree) or '-'}", f"default {ostree_paths.default_deployment(tree) or '-'}"]
+    for dep in deployment_dirs(tree):
+        try:
+            with open(os.path.join(tree, dep, "etc", "hostname")) as f:
+                host = f.read().strip() or "-"
+        except OSError:
+            host = "-"
+        lines.append(f"deployment {dep} hostname={host}")
+    for e in ostree_paths.bls_entries(boot):
+        k = ostree_paths.karg(e["options"], "ostree")
+        dep = (ostree_paths.resolve(tree, k) if k else None) or "-"
+        lines.append(f"entry {e['file']} {dep} options={e['options']}")
+    try:
+        lines.append(f"loader {os.readlink(os.path.join(boot, 'loader'))}")
+    except OSError:
+        lines.append("loader -")
+    with open("/proc/cmdline") as f:
+        lines.append(f"cmdline {kargs(f.read())}")
+    lines.append(f"selinux {(out(['getenforce']) or '-').strip()}")
+    lines += rpm_ostree_lines()
+    try:
+        with open(os.path.join(boot, "bootupd-state.json"), "rb") as f:
+            lines.append(f"bootupd-state {hashlib.sha256(f.read()).hexdigest()}")
+    except OSError:
+        lines.append("bootupd-state -")
+    m = re.search(r"^\s*Update:\s*(.*)$", out(["bootupctl", "status"]) or "", re.M)
+    lines.append(f"bootupctl {m[1].strip() if m else '-'}")
+    for kv in (out(["grub2-editenv", os.path.join(boot, "grub2", "grubenv"), "list"]) or "").splitlines():
+        if kv.strip():
+            lines.append(f"grubenv {kv.strip()}")
+    for dep in deployment_dirs(tree):
+        a = (out(["lsattr", "-d", os.path.join(tree, dep)]) or "- ").split()[0]
+        lines.append(f"lsattr {dep} {a}")
+    for s in (out(["ostree", "admin", "status"]) or "-\n").splitlines():
+        lines.append(f"status {s}")
+    return lines
+
+
+def links(tree):
+    """Per filesystem (each mount and btrfs subvolume of TREE, by the path
+    where it starts), the regular files with more than one link: how many
+    inodes, and how many paths have each link count.  Files with one link
+    come and go as the system runs; a link a restore lost shows as a smaller
+    count here."""
+    multi = collections.defaultdict(set)
+    hist = collections.defaultdict(collections.Counter)
+    top = {}
+    st = os.lstat(tree)
+    top[st.st_dev] = "."
+    for d, dirs, files in os.walk(tree):
+        here = os.lstat(d).st_dev
+        label = top.setdefault(here, os.path.relpath(d, tree))
+        for name in dirs:
+            s = os.lstat(os.path.join(d, name))
+            if s.st_dev != here:
+                top.setdefault(s.st_dev, os.path.relpath(os.path.join(d, name), tree))
+        for name in files:
+            s = os.lstat(os.path.join(d, name))
+            if not stat.S_ISREG(s.st_mode) or s.st_nlink < 2:
+                continue
+            hist[label][s.st_nlink] += 1
+            multi[label].add(s.st_ino)
+    lines = []
+    for label in sorted(top.values()):
+        lines.append(f"{label} multi-link-inodes {len(multi[label])}")
+        for n, c in sorted(hist[label].items()):
+            lines.append(f"{label} nlink {n} files {c}")
+    return lines
+
+
+def space(tree):
+    """Each btrfs filesystem in TREE (by UUID), the bytes it has in use."""
+    seen, lines = set(), []
+    text = out(["findmnt", "-R", "-rn", "-o", "TARGET,FSTYPE,UUID", tree]) or ""
+    for line in text.splitlines():
+        target, fstype, uuid = (line.split() + ["-", "-"])[:3]
+        if fstype != "btrfs" or uuid in seen:
+            continue
+        seen.add(uuid)
+        v = os.statvfs(target.encode().decode("unicode_escape"))
+        lines.append(f"{uuid} {(v.f_blocks - v.f_bfree) * v.f_frsize}")
+    return lines
+
+
+def parse(path):
+    keyed = collections.defaultdict(list)
+    with open(path) as f:
+        for line in f:
+            k, _, v = line.rstrip("\n").partition(" ")
+            keyed[k].append(v)
+    return keyed
+
+
+def boot_check(baseline, now_booted=None, cmdline=None, hostname=None, selinux=None, rpm=None, root_fs=None):
+    """(kind, lines, ok): which of the baseline's deployments this boot
+    started, and the checks of it against the baseline's record."""
+    base = parse(baseline)
+    now_booted = now_booted if now_booted is not None else booted()
+    if cmdline is None:
+        with open("/proc/cmdline") as f:
+            cmdline = f.read().strip()
+    if hostname is None:
+        with open("/proc/sys/kernel/hostname") as f:
+            hostname = f.read().strip()
+    selinux = selinux if selinux is not None else (out(["getenforce"]) or "-").strip()
+    rpm = rpm if rpm is not None else [ln.partition(" ")[2] for ln in rpm_ostree_lines()]
+    root_fs = root_fs if root_fs is not None else (out(["findmnt", "-no", "FSTYPE,SOURCE", "/"]) or "").split()
+    default = (base.get("default") or ["-"])[0]
+    deps = {v.split()[0]: v for v in base.get("deployment", [])}
+    kind = "default" if now_booted == default else "rollback" if now_booted in deps else "unknown"
+    res = []
+
+    def check(ok, what):
+        res.append(("  ok    " if ok else "  FAIL  ") + what)
+
+    check(now_booted in deps, f"the booted deployment {now_booted} is one of the baseline's")
+    host = dict(w.split("=", 1) for w in deps.get(now_booted, "").split()[1:] if "=" in w).get("hostname", "-")
+    opts = [v.split(" ", 2)[2][len("options="):] for v in base.get("entry", []) if len(v.split(" ", 2)) == 3 and v.split(" ", 2)[1] == now_booted]
+    karg_line = kargs(cmdline)
+    check(len(opts) == 1 and karg_line == opts[0], f"the kernel command line is its BLS entry's from the baseline: {karg_line}")
+    if host != "-":
+        check(hostname == host, f"the hostname is its etc/hostname's from the baseline ({host}): {hostname}")
+    check(selinux == (base.get("selinux") or ["-"])[0], f"SELinux is as before: {selinux}")
+    check(root_fs == ["overlay", "composefs"], f"/ is a composefs overlay: {' '.join(root_fs) or 'nothing'}")
+    check(rpm == base.get("rpm-ostree", []), "rpm-ostree's deployments are the baseline's: none staged or new")
+    return kind, res, all(r.startswith("  ok") for r in res)
+
+
+def main(argv):
+    if len(argv) == 2 and argv[0] == "preflight":
+        problems = preflight(argv[1])
+        for p in problems:
+            print(p)
+        return 1 if problems else 0
+    if len(argv) == 2 and argv[0] in ("record", "links", "space"):
+        for line in {"record": record, "links": links, "space": space}[argv[0]](argv[1]):
+            print(line)
+        return 0
+    if len(argv) == 1 and argv[0] == "rpm-ostree":
+        for line in rpm_ostree_lines():
+            print(line)
+        return 0
+    if len(argv) == 2 and argv[0] == "boot-check":
+        kind, lines, ok = boot_check(argv[1])
+        print(f"booted: the {kind} deployment {booted() or '-'}")
+        for line in lines:
+            print(line)
+        return 0 if ok else 1
+    sys.exit(__doc__)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

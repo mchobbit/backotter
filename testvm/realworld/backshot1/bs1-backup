@@ -11,6 +11,13 @@
 # are needed.  There's no filesystem snapshot: files that change while this
 # runs are caught at different moments, as they are for anyone backing up a live
 # system.  btrfs subvolumes and ZFS datasets that aren't mounted aren't backed up.
+#
+# On ostree (docs/design/bazzite.md) the tree is fstab's, from the layout's
+# storage.backup_sources: the physical root (/sysroot) at /, /var/home at /home.
+# It also stops if a deployment is staged or pending, or a btrfs subvolume
+# isn't in the tree; holds the updaters off for this boot; records the
+# deployments in the baseline; and fails if they or /boot/loader moved while
+# it ran.
 
 # shellcheck disable=SC1091
 . "$(dirname "$(readlink -f "$0")")/bs1-common"
@@ -21,17 +28,36 @@ trap 'die "interrupted"' INT TERM HUP
 step "preflight"
 [[ $(this_host) == "$SOURCE_HOST" ]] || die "this is $(this_host), not $SOURCE_HOST"
 disk=$(internal_disk) || die "no single disk has serial $INTERNAL_SERIAL"
-on_disk "$(findmnt -nro SOURCE /)" "$disk" || die "/ isn't on $disk"
+on_disk "$(root_source)" "$disk" || die "$(root_mount) isn't on $disk"
 # An ESP on an automount appears only when something looks at it.
 ls /boot/efi /efi /boot >/dev/null 2>&1
 check_coverage "$disk"
 drive=$(backup_disk "$disk") || die "LABEL=$BACKUP_LABEL isn't a USB drive apart from $disk"
 for b in bko-holt rustic-bko; do [[ -x $BIN/$b ]] || die "no $BIN/$b"; done
 "$BIN/bko-holt" dump --help 2>&1 | grep -q -- --only-disk || die "this bko-holt has no --only-disk"
+# The deployments and where /boot/loader points, now; again after the backup.
+ostree_moved() { ostree admin status; readlink /boot/loader; }
+if is_ostree; then
+    for u in $UPDATERS; do
+        ! systemctl is-active -q "$u.service" || die "$u.service is running: an update may be under way; wait for it to finish"
+    done
+fi
+
 if [[ ${1:-} == --preflight ]]; then
     say "internal: $disk (serial $INTERNAL_SERIAL), backup drive: $drive"
-    say "would back up:"
-    internal_mounts "$disk"
+    tmp=$(mktemp)
+    # dump refuses a system it doesn't support: a Bazzite that moved to 45 stops here.
+    "$BIN/bko-holt" dump --only-disk "$disk" >"$tmp" || { rm -f "$tmp"; die "bko-holt dump failed"; }
+    if is_ostree; then
+        problems=$(python3 "$HERE/bs1-ostree" preflight "$tmp")
+        [[ -z $problems ]] || { rm -f "$tmp"; die "$problems"; }
+        for u in $UPDATERS; do
+            ! systemctl is-active -q "$u.timer" || say "$u.timer is active: phase1 stops it for this boot"
+        done
+    fi
+    say "would back up (path in the backup, from):"
+    internal_mounts "$disk" "$tmp" | awk -F'\t' '{ print "  " $1 "  <-  " $2 " (" $3 ")" }'
+    rm -f "$tmp"
     say "PREFLIGHT OK: nothing was changed"
     exit 0
 fi
@@ -46,20 +72,14 @@ run "$BIN/bko-holt" --version
 run "$BIN/rustic-bko" --version
 run sha256sum "$BIN/bko-holt" "$BIN/rustic-bko"
 run lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL,MOUNTPOINTS
+if is_ostree; then
+    for u in $UPDATERS; do
+        if systemctl is-active -q "$u.timer"; then must systemctl stop "$u.timer"; say "stopped $u.timer for this boot"; fi
+    done
+    ostree_moved >"$RUN/baseline/ostree-before.txt" 2>&1
+fi
 
-need=0
-while IFS=$'\t' read -r target _; do
-    used=$(df -B1 --output=used "$target" | tail -n 1 | tr -dc 0-9)
-    need=$((need + used))
-done < <(internal_mounts "$disk")
-free=$(df -B1 --output=avail "$RUN" | tail -n 1 | tr -dc 0-9)
-say "in use: $((need / 1048576)) MiB; free on the drive: $((free / 1048576)) MiB"
-[[ $free -gt $need ]] || die "the backup drive hasn't enough room"
-
-step "the tree to back up"
-make_tree "$disk"
-run findmnt -R "$SRC"
-
+# Before the tree is mounted, so the layout doesn't list its binds.
 step "the layout"
 "$BIN/bko-holt" dump --only-disk "$disk" >"$RUN/layout.json" 2>>"$LOG" || die "bko-holt dump failed"
 say "layout.json: $(wc -c <"$RUN/layout.json") bytes"
@@ -71,6 +91,19 @@ if [[ -n $keys ]]; then
     say "encrypted: someone has to type the passphrase at the restored system's first boot"
     touch "$RUN/NEEDS_PASSPHRASE_AT_BOOT"
 fi
+if is_ostree; then
+    problems=$(python3 "$HERE/bs1-ostree" preflight "$RUN/layout.json")
+    [[ -z $problems ]] || die "$problems"
+fi
+
+need=$(space_in_use "$disk" "$RUN/layout.json")
+free=$(df -B1 --output=avail "$RUN" | tail -n 1 | tr -dc 0-9)
+say "in use: $((need / 1048576)) MiB; free on the drive: $((free / 1048576)) MiB"
+[[ $free -gt $need ]] || die "the backup drive hasn't enough room"
+
+step "the tree to back up"
+make_tree "$disk" "$RUN/layout.json"
+run findmnt -R "$TREE"
 
 step "the baseline"
 B=$RUN/baseline
@@ -81,15 +114,28 @@ sfdisk -d "/dev/$disk" >"$B/sfdisk.txt" 2>&1
 cp /etc/fstab "$B/fstab" 2>/dev/null
 swap_names >"$B/swap-names.txt"
 failed_units >"$B/failed-units.txt"
-must python3 "$HERE/bs1-manifest" "$SRC" "$B/manifest.tsv"
+must python3 "$HERE/bs1-manifest" "$TREE" "$B/manifest.tsv"
+if is_ostree; then
+    python3 "$HERE/bs1-ostree" record "$TREE" >"$B/deployments.txt" || die "can't record the deployments"
+    python3 "$HERE/bs1-ostree" links "$TREE" >"$B/links.txt" || die "can't count the hard links"
+    python3 "$HERE/bs1-ostree" space "$TREE" >"$B/space.txt" || die "can't measure the btrfs filesystems"
+    say "deployments: $(grep -c '^deployment ' "$B/deployments.txt"), booted $(sed -n 's/^booted //p' "$B/deployments.txt")"
+    run cat "$B/links.txt"
+fi
 
 step "backing up"
 pw=$RUN/repo-password
 (umask 077; head -c 32 /dev/urandom | od -An -tx1 | tr -d ' \n' >"$pw") || die "can't write the password"
 rustic_in "$RUN"
 must "${RUSTIC[@]}" init
-must "${RUSTIC[@]}" backup --set-atime yes "$SRC"
+must "${RUSTIC[@]}" backup --set-atime yes --as-path "$SNAP" "$TREE"
 must "${RUSTIC[@]}" snapshots
+if is_ostree; then
+    ostree_moved >"$RUN/baseline/ostree-after.txt" 2>&1
+    cmp -s "$RUN/baseline/ostree-before.txt" "$RUN/baseline/ostree-after.txt" ||
+        die "the deployments or /boot/loader moved during the backup: $(diff "$RUN/baseline/ostree-before.txt" "$RUN/baseline/ostree-after.txt" | grep '^[<>]' | head -n 4 | tr '\n' ' ')"
+    say "the deployments and /boot/loader didn't move during the backup"
+fi
 
 step "checking the backup (reading all of its data)"
 must "${RUSTIC[@]}" check --read-data

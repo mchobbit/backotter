@@ -10,7 +10,8 @@ settled below: see "What B1 found". B2 (`dump`) followed: see "What B2
 found"; then B3 (`load`): see "What B3 found"; then B4 (the guest tools):
 see "What B4 found"; then B5 (SticTest1's `kinoite44` check): see "What B5
 found"; then B6 (HoltTest1): see "What B6 found"; then B7 (the golden
-plan and Test2): see "What B7 found".
+plan and Test2): see "What B7 found"; then B8 (BackShot1 and its
+`kinoite44` rehearsal): see "What B8 found".
 
 **Conventions.** est. marks an estimate. *Check* marks a fact not yet seen, to be
 settled on the first guest (B1) or on the Thinkpad before the code that depends
@@ -222,7 +223,7 @@ with `--as-path "$SNAP"`; `SNAP` in bs1-restore's `--snapshot latest:` (110)
 and `diff latest:` (164). The fork's backup has `--as-path` (one source only,
 which is what bs1 passes). *Check* on kinoite44 that a backup of
 `/run/bs1-src --as-path /mnt/bs1-src` lists as `latest:/mnt/bs1-src` and that
-`--set-atime` still applies.
+`--set-atime` still applies. (B8: it does, both; see "What B8 found".)
 
 Adopt has already run on the Thinkpad (its `00-backshot1.conf` and host key
 show in `ostree admin config-diff` of the booted `.1`), so the tools it needs
@@ -517,7 +518,9 @@ peak ~11-12 GiB. Both run from /mnt/bko-ram under `cmp-run.sh --reserve`
 (rehearsal: `--reserve 12 6`, `WEAR_TAG=bs1:kinoite44`), and wait for room
 rather than fall back to /bkoscratch ([[work-in-ram]]). B6 and B8 measure the
 peaks and replace these. (B6: HoltTest1 peaked at 11.8 GiB, in its rebuild
-phase, so its reservation is 14 4; see "What B6 found".)
+phase, so its reservation is 14 4; see "What B6 found". B8: the rehearsal
+peaked at 10.3 GiB on both hosts, so `--reserve 12 6` stays; see "What B8
+found".)
 
 It gets: a `rebuild-one.sh` line, `--uefi --no-secure-boot --memory 4096` in
 vm-run-options (Secure Boot off, as on the Thinkpad: with it on,
@@ -1376,6 +1379,144 @@ kinoite44's kernel rule is now `K-ostree`:
     chatter. They were read and accepted, and the cell's PASS counts once
     this diff is committed.
 
+## What B8 found
+
+BackShot1's ostree support, built 2026-11-11 in testvm/realworld/backshot1:
+bs1-common, bs1-backup, bs1-verify, bs1-restore, bs1-manifest, bs1-adopt,
+bs1-qemu.py, the `backshot1` driver, README.md, and a new `bs1-ostree`
+(Python, beside the others on the drive, with ostree_paths.py): the
+preflight's refusals, the deployments record, the link counts, btrfs space
+and the rollback boot's check. Unit tests: testvm/test2/tests/
+test_bs1_ostree.py (17) and 6 more in test_ostree_paths.py for the
+manifest's new columns. The `bs1-qemu.py` rehearsal on `kinoite44`
+(`bazzite-wt/b8-rehearse.sh`, results in `bazzite-wt/b8-results/reh-b`,
+B6's bko-holt from main `7f1662f8...`, rel4's rustic-bko, the pinned test
+image `4fd4186a...`) PASSes on both hosts, 75 checks each, rollback boot
+included.
+
+- **The table's fixes, as built.**
+  - The physical root: `root_mount` is `/sysroot` on ostree
+    (`/run/ostree-booted`), so bs1-backup's preflight, bs1-verify and the
+    rehearsal's restored-boot probe ask `/sysroot`'s source.
+  - The tree: on ostree `internal_mounts` reads `storage.backup_sources`
+    from the layout (each entry on the internal disk and of a real
+    filesystem) and binds each `from` at `TREE/path`: `/sysroot` at `/`,
+    `/var/home` at `/home`. Elsewhere it is findmnt as before, so the
+    distros BackShot1 has passed on keep their tree. To read
+    `backup_sources`, bs1-backup now dumps *before* the tree is mounted, on
+    every system: the layout no longer lists the tree's own binds. The
+    restored system's verify builds its tree from its own dump
+    (`after.json`), else the backup's.
+  - `TREE=/run/bs1-src`, `SNAP=/mnt/bs1-src` on every system, so older
+    library runs still restore as `latest:/mnt/bs1-src`. **The `--as-path`
+    check:** on `kinoite44` the snapshot lists as `/mnt/bs1-src` (`paths
+    [/mnt/bs1-src]`), and an atime set to 2001-02-03 04:05:06 UTC on a
+    file under `/var/tmp` before the backup is in the snapshot's tree as
+    that (`cat tree`), so `--set-atime yes` still applies. With
+    `--as-path`, rustic-bko stores no nodes for the directories above the
+    path (archiver.rs), which no restore of `latest:/mnt/bs1-src` reads.
+    bs1-qemu.py checks both on every guest from now on.
+  - `df`: `space_in_use` counts each filesystem once (by source, without
+    `[subvol]`), on every system: 5,426 MiB on `kinoite44`, not three times
+    its btrfs.
+  - bs1-manifest reads a file with several links once (cached by device
+    and inode, on every system), and gives each regular file under
+    `ostree/` two more columns, its link count and inode flags
+    (`FS_IOC_GETFLAGS`). The comparison treats a different link count, or
+    flags other than a gained `FS_NOCOMP_FL`, as a change; a REMADE file's
+    flags aren't compared (the running kernel wrote it). A baseline without
+    the columns compares as before. On `kinoite44`: 405,838 regular files
+    under `ostree/`; 159 had `FS_NOCOMP_FL` in the source and 7,282 after
+    the restore (B6 saw 7,159), every other flag 0.
+  - bs1-adopt: on ostree `pkg_install` installs nothing; it names the
+    missing package, says to `rpm-ostree install` it and reboot, and
+    fails. On `kinoite44` it installs nothing, as B1 found.
+  - bs1-qemu.py: the internal disk is the guest's own size (it was 32G
+    without `--smaller`), and the source's mount check is `mountpoint -q`
+    (on ostree `/proc/mounts` names the drive `/var/mnt/bs1-backup`, so
+    the old `grep` failed the first rehearsal at once).
+- **The preflight** (`bs1-backup --preflight`, and phase 1 itself) now runs
+  `bko-holt dump` on every system, so an unsupported OS stops it (a
+  Bazzite at 45). On ostree it also refuses, from `rpm-ostree status
+  --json`: a running transaction, a staged deployment, and a pending one
+  (the first deployment isn't the booted); a running updater service
+  (uupd, rpm-ostreed-automatic, bootc-fetch-apply-updates); and a btrfs
+  subvolume in `btrfs subvolume list -a` that is neither a backup source's
+  subvolume nor beneath one. The last is a little wider than "every
+  subvolume mounted": a nested subvolume inside a mounted one is in the
+  backup (as a directory), so it isn't refused.
+- **Updates held:** phase 1 stops the updaters' timers for its boot;
+  verify (and `--boot`) stop their timers and services, then fail if any
+  of the three services has journal lines since the boot. `kinoite44` has
+  none enabled (B1); the person disables uupd.timer on the Thinkpad
+  (decision 5, README).
+- **Backup's before/after check:** `ostree admin status` and `readlink
+  /boot/loader`, taken before the dump and after the backup, must be equal
+  ("the deployments and /boot/loader didn't move during the backup").
+- **The baseline** gains `deployments.txt` (`bs1-ostree record`: the booted
+  and default deployments, each deployment with its etc's hostname, each
+  BLS entry with its deployment and `options`, `/boot/loader`, the command
+  line, SELinux, rpm-ostree's list with image and digest, bootupd-state's
+  sha256, `bootupctl status`'s Update line, grubenv's keys, `lsattr -d` of
+  each deployment root, `ostree admin status`), `links.txt` and
+  `space.txt`. Two things the rehearsal's first run (`reh-a`) showed, both
+  fixed:
+  - The command line is recorded without `BOOT_IMAGE=`: GRUB names the
+    disk it read the kernel from by its own count, `(hd0,gpt2)` on the
+    source and `(hd1,gpt2)` on the restored boot, with the same disks
+    plugged in. The Thinkpad's USB drive and stick can move it the same
+    way.
+  - `links.txt` counts only regular files with more than one link (per
+    filesystem: the inodes, and the paths at each link count). The
+    one-link count of `/var` moved from 121 to 123 with the boot; a link a
+    restore lost still shows, as a smaller count at 3 or more. On
+    `kinoite44`: 120,320 multi-link inodes on the root, none elsewhere.
+- **Verify on ostree,** in the spec's order: the updaters and rpm-ostree's
+  list first; the generic checks and dump; the manifest; then the
+  deployments: booted checksum and serial, composefs `/`, SELinux, `ostree
+  admin status`, the deployments and hostnames, each BLS `options`,
+  `/boot/loader`, the command line, `links.txt`, `lsattr -d`, btrfs space
+  (5,414,727,680 bytes before, 4,719,595,520 after: compressed), `ostree
+  fsck` (146,429 objects, 25 s on the guest; it adds nothing under
+  `repo/tmp`, checked by hand), `rpm-ostree status`, bootupctl "At latest
+  version", bootupd-state.json unchanged, no `boot_counter`. All pass on
+  both hosts. **B1's check, `systemd-remount-fs`:** it is in the
+  baseline's failed units on `kinoite44` (as B1 found), so "no unit fails
+  that didn't before" passes; the Thinkpad's is B9's to see.
+- **The rollback boot.** `bs1-verify --boot RUN` (`backshot1 check-boot
+  NAME`) tells which of the baseline's deployments booted and checks it
+  against the baseline's record of that one: its BLS entry's options
+  equal `/proc/cmdline` without `BOOT_IMAGE=`, its etc's hostname is the
+  running one, SELinux, the composefs `/`, `/sysroot` on the disk,
+  rpm-ostree's list unchanged, and no updater ran. It appends `NAME
+  KIND: RESULT` to the restore's `BOOTS`. The rehearsal points GRUB at the
+  rollback with grubenv's `default` (B6's way), boots it, checks it
+  ("BOOT: rollback: PASS"), unsets `default` (grubenv byte for byte as it
+  was), boots the default and checks it ("BOOT: default: PASS"). **The
+  rollback presents the guest's own host key, not the fixed one**: B1's
+  finding that adopt writes only the booted deployment's etc holds on the
+  restored disk too, so on the Thinkpad `backshot1 check-boot` reaches
+  `.0` only if its etc has the key (the *check* that stays B9's), else it
+  is the console and by eye, as decision 6 says. The README says how.
+- **Room and time:** the rehearsal's RAM directory peaked at 10.3 GiB on
+  both hosts (Chopin 10,333 MiB, Cinqcent 10,302), under the estimated
+  11-12, so `--reserve 12 6` stays. A rehearsal takes 786-804 s: the
+  backup's manifest 62-71 s, the backup 90-99 s, `check --read-data`
+  16-18 s, the restore 156-166 s, verify's manifest 52-56 s.
+- **Non-ostree regression:** the changes for every system (dump before the
+  tree, `TREE`/`SNAP`, `space_in_use`, the digest cache, the guest-sized
+  disk, the preflight and atime checks in the rehearsal) were rehearsed
+  once more on a guest each: `fedora44-uefi` (btrfs, 16 GiB) on Chopin and
+  `ubuntu26-uefi` on Cinqcent, both PASS (35 checks; 316 s and 397 s; RAM
+  peaks 5.3 and 9.5 GiB), the snapshot named `/mnt/bs1-src` and the
+  probe's atime kept on each (`b8-results/reh-fedora44-uefi`,
+  `reh-ubuntu26-uefi`).
+- **Not done here:** BackShot1 on the Thinkpad (B9) and its *checks*
+  (uupd's `Persistent=`, greenboot, `.0`'s etc and host key, the
+  Thinkpad's mountinfo order and `compress=`, `systemd-remount-fs`). No
+  Test2 cell covers testvm/realworld, so no golden moved and no ledger row
+  was written.
+
 ## BackShot1 on the Thinkpad
 
 After the bs1 fixes (B8) and a `bs1-qemu.py` rehearsal on `kinoite44`:
@@ -1442,7 +1583,7 @@ Boot0009 when the old one survives the erase. It predates ostree.
 | B5 | SticTest1 `kinoite44` entry and runs, both archivers. **Done 2026-11-11:** both hosts, 65 PASS, 8 LIMIT, 0 FAIL; see "What B5 found" | 0.25 d |
 | B6 | HoltTest1: `kinoite44` in 1F, `ram-sizes.tsv`, the rollback boot in the restored-boot check, runs on both hosts. **Done 2026-11-11:** run `bzb6a` PASS on both hosts; see "What B6 found" | 0.5 d |
 | B7 | Golden plan and Test2: `kinoite44`'s dump from B6's PASS run through corpus_build into the corpus (index.tsv, src.json, plan.txt), the `backup_sources` corpus test; `classes.json` (holt families F and uefi, and stic's `linux` line: 28 checks since B5), holt/spec.json and guest/spec.json, estimates.tsv, plan.py's source and guest counts (with README and tests), kinoite44 in the p2 world's `GUESTS` (which drops B5's "not in any spec: kinoite44" note from the guest goldens), re-blessed p2 golden fixtures, fingerprint.py's mirror of the new package names; re-blessed fedora* golden plans from the package-name fix are expected. SticTest2's share (manifests, limits, the 42-check counts) came with B5. **Done 2026-11-11:** the golden plan blessed (only kinoite44's plan is new; no fedora\* plan moved), the corpus test, the registration, and a GuestTest2 pass of kinoite44; see "What B7 found" | 0.5 d |
-| B8 | BackShot1: the table's fixes, `TREE`/`SNAP`, the preflight, backup's before/after check, baseline and verify additions, the rollback boot; `bs1-qemu.py` rehearsal on `kinoite44`; README.md's ostree steps (updates held, the staged refusal, the rollback boot, the new verify outputs) | 1.25 d |
+| B8 | BackShot1: the table's fixes, `TREE`/`SNAP`, the preflight, backup's before/after check, baseline and verify additions, the rollback boot; `bs1-qemu.py` rehearsal on `kinoite44`; README.md's ostree steps (updates held, the staged refusal, the rollback boot, the new verify outputs). **Done 2026-11-11:** the rehearsal PASSes on both hosts, rollback boot included; see "What B8 found" | 1.25 d |
 | B9 | BackShot1 on the Thinkpad's Bazzite | 0.5 d |
 | B10 | Docs: README supported lists, HoltTest1's table, `osrel.rs`'s comment, memory | 0.1 d |
 | | *≈ 7.85 d in all; ~7.6 d if the extra verify checks are cut (decision 7)* | |

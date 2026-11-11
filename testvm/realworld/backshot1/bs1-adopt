@@ -41,6 +41,16 @@ echo "== $distro, under $init"
 with_script() { if [[ $distro == artix ]]; then echo "$1 $1-$init"; else echo "$1"; fi; }
 
 pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS, each one or more names
+    # An ostree system's /usr is its image's, read-only: nothing is installed
+    # here.  Everything this installs is something BackShot1 needs, so it
+    # stops and names it (Fedora's names: Bazzite, Silverblue and Kinoite
+    # are Fedora's), and leaves layering it, and the reboot, to the person.
+    # Kinoite 44 has it all (docs/design/bazzite.md, B1).
+    if [[ -e /run/ostree-booted ]]; then
+        echo "bs1-adopt: this image-mode (ostree) system lacks $2, and its /usr is read-only." >&2
+        echo "bs1-adopt: layer it with \"rpm-ostree install $2\", reboot, and run bs1-adopt again." >&2
+        return 1
+    fi
     # shellcheck disable=SC2086
     if command -v apt-get >/dev/null; then
         export DEBIAN_FRONTEND=noninteractive

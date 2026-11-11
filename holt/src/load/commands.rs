@@ -40,6 +40,9 @@ pub struct Cmd {
     pub why: Option<String>,
     /// Environment variables the command runs with (shown before it).
     pub env: Vec<(String, String)>,
+    /// Whether the terminal sees its stderr's `warning:` lines when it
+    /// succeeds (the log has all its output either way).
+    pub warns: bool,
 }
 
 impl Cmd {
@@ -57,6 +60,13 @@ impl Cmd {
 
     pub fn why(mut self, w: impl Into<String>) -> Cmd {
         self.why = Some(w.into());
+        self
+    }
+
+    /// Its stderr's lines with `warning:` in them go to the terminal too,
+    /// when it succeeds.
+    pub fn warns(mut self) -> Cmd {
+        self.warns = true;
         self
     }
 

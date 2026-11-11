@@ -766,6 +766,23 @@ dump's `boot.ostree`, which B2 writes only on ostree.
   `boot_loader`: the backup came after a deploy the dump didn't see, and
   the tree is still whole. That second warning is the "cross-check"
   against the dump that the `dump` section asks for.
+
+  The review after B3 found both warnings reached only load.log: a command
+  that succeeds keeps its stderr there, and a failing one shows the
+  terminal only its last 5 stderr lines, where the orphan warnings (one
+  per deployment when every entry leads nowhere) came after the errors.
+  So the script now prints the warnings first, holds the errors until the
+  end, and ends a failure with a count (`ostree: N of M loader entries
+  inconsistent with the restored tree`). A `Cmd` can now `warns()`: when
+  it succeeds, its stderr's `warning:` lines also go to the terminal, as
+  `bko-holt load: boot: ostree: warning: ...`. Only the check uses it.
+  The host check `bazzite-wt/b3f-hc.sh` on Chopin (results in
+  `b3-results/hcf`) used kinoite44's RAM overlay by nbd, as above, with
+  the dump's `boot_loader` set to `loader.0`. `--only boot --no-nvram`
+  passed and showed the loader warning. With `ostree/boot.1` then removed
+  (a `/boot` from after a deploy that the root never saw), it failed. Its
+  last 5 lines were both orphan warnings, both "leads nowhere" errors, and
+  `2 of 2 loader entries inconsistent`.
 - **Log and label:** the log goes into fstab's `/var`. Without one it goes
   into the stateroot's var, taken from `boot.ostree.stateroot` (else the
   booted deployment's, else the first). If neither can be found that is a

@@ -37,13 +37,17 @@ pub fn of(layout: &Value) -> Option<&Value> {
 /// staged) is only a warning: it boots nothing, and goes at the next
 /// `ostree admin cleanup`.  So is a /boot/loader other than the dump's
 /// (WANT_LOADER, when it had one): the backup was taken after a deploy the
-/// dump didn't see, and the restored tree is still whole.
+/// dump didn't see, and the restored tree is still whole.  The warnings
+/// come first and the errors after them, ended by a count, so the last
+/// lines of a failure (all the terminal shows of it) name what failed;
+/// the boot stage shows the warnings on the terminal on success too.
 pub fn check_script(t: &str, want_loader: Option<&str>) -> String {
     let t = super::shell_quote(t);
     let want = want_loader.map(super::shell_quote).unwrap_or_default();
     format!(
-        r#"t=$(readlink -f {t}) || exit 1; want={want}; bad=0; seen=
-err() {{ echo "ostree: $*" >&2; bad=1; }}
+        r#"t=$(readlink -f {t}) || exit 1; want={want}; errs=; nbad=0; f=; cur=; seen=
+err() {{ errs="${{errs}}ostree: $*
+"; [ "$cur" = "$f" ] || {{ nbad=$((nbad + 1)); cur=$f; }}; }}
 l=$(readlink "$t/boot/loader") || {{ echo "ostree: $t/boot/loader isn't a symlink" >&2; exit 1; }}
 case $l in loader.[0-9]*) n=${{l#loader.}} ;; *) echo "ostree: $t/boot/loader leads to $l, not loader.N" >&2; exit 1 ;; esac
 [ -z "$want" ] || [ "$l" = "$want" ] || echo "ostree: warning: /boot/loader is $l here, $want in the dump: the backup was taken after a deploy the dump didn't see" >&2
@@ -67,12 +71,12 @@ for e in "$t"/boot/loader/entries/ostree-*.conf; do
     *) err "$f: ostree=$o leads to ${{d#"$t"}}, not to a deployment (ostree/deploy/STATEROOT/deploy/NAME)" ;;
   esac
 done
-[ "$found" -gt 0 ] || err "no loader entries (boot/loader/entries/ostree-*.conf) on the restored /boot"
 for d in "$t"/ostree/deploy/*/deploy/*; do
   [ -d "$d" ] && [ ! -L "$d" ] || continue
   case "$seen " in *" $d "*) ;; *) echo "ostree: warning: no loader entry leads to ${{d#"$t"}} (an orphan checkout: it boots nothing, and goes at the next ostree admin cleanup)" >&2 ;; esac
 done
-[ "$bad" = 0 ] || exit 1
+[ "$found" -gt 0 ] || {{ echo "ostree: no loader entries (boot/loader/entries/ostree-*.conf) on the restored /boot" >&2; exit 1; }}
+[ -z "$errs" ] || {{ printf %s "$errs" >&2; echo "ostree: $nbad of $found loader entries inconsistent with the restored tree (a backup taken across a deploy?)" >&2; exit 1; }}
 echo "ostree: $found loader entries, each with its kernel, initramfs and deployment"
 "#
     )
@@ -176,7 +180,8 @@ impl Builder<'_> {
         out.push(Cmd::note(what));
         out.push(
             Cmd::new(&["sh", "-c", &check_script(&t, o.get("boot_loader").and_then(Value::as_str))])
-                .why("each loader entry's kernel, initramfs and deployment are in the restored tree, by its boot.N"),
+                .why("each loader entry's kernel, initramfs and deployment are in the restored tree, by its boot.N")
+                .warns(),
         );
         if self.layout.uefi() && !self.opts.no_nvram {
             out.extend(self.efi_entries());
@@ -450,6 +455,19 @@ mod tests {
         let (ok, _, err) = sh(&check_script(&r, None));
         assert!(!ok && err.contains(&format!("ostree-1.conf: ostree=/ostree/boot.1/default/{b}/1 leads nowhere in the restored tree")), "{err}");
         assert!(!err.contains("ostree-2.conf"), "{err}");
+        assert!(err.ends_with("ostree: 1 of 2 loader entries inconsistent with the restored tree (a backup taken across a deploy?)\n"), "{err}");
+        // /boot from after a deploy, the root from before it: every entry
+        // leads nowhere, so every deployment is an orphan.  The warnings
+        // come first, the errors after them, and the count last, so the
+        // terminal's tail of a failure names it.
+        let (_d, r) = fresh("ostree-check-across");
+        std::fs::remove_file(format!("{r}/ostree/boot.1")).unwrap();
+        let (ok, _, err) = sh(&check_script(&r, Some("loader.0")));
+        let lines: Vec<&str> = err.lines().collect();
+        assert!(!ok && lines.len() == 6, "{err}");
+        assert!(lines[0].contains("warning: /boot/loader is loader.1 here") && lines[1..3].iter().all(|l| l.contains("warning: no loader entry leads to")), "{err}");
+        assert!(lines[3..5].iter().all(|l| l.contains("leads nowhere in the restored tree")), "{err}");
+        assert_eq!(lines[5], "ostree: 2 of 2 loader entries inconsistent with the restored tree (a backup taken across a deploy?)");
         let (_d, r) = fresh("ostree-check-version");
         std::fs::remove_file(format!("{r}/boot/loader")).unwrap();
         std::os::unix::fs::symlink("loader.0", format!("{r}/boot/loader")).unwrap();
@@ -469,7 +487,7 @@ mod tests {
         let (_d, r) = fresh("ostree-check-none");
         std::fs::remove_dir_all(format!("{r}/boot/loader.1/entries")).unwrap();
         let (ok, _, err) = sh(&check_script(&r, None));
-        assert!(!ok && err.contains("no loader entries"), "{err}");
+        assert!(!ok && err.lines().last().unwrap().contains("no loader entries"), "{err}");
         assert!(err.contains("warning: no loader entry leads to"), "{err}");
         std::fs::remove_file(format!("{r}/boot/loader")).unwrap();
         let (ok, _, err) = sh(&check_script(&r, None));

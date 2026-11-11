@@ -140,7 +140,7 @@ class TestSteps(unittest.TestCase):
 
 class TestInGuest(unittest.TestCase):
     TEXT = (TESTVM / "update" / "in-guest.sh").read_text()
-    NAMES = {"prologue", "NixOS", "Linux.common", "Linux.apt", "Linux.dnf", "Linux.pacman", "Linux.zypper",
+    NAMES = {"prologue", "NixOS", "Linux.common", "Linux.apt", "Linux.ostree", "Linux.dnf", "Linux.pacman", "Linux.zypper",
              "Linux.xbps", "Linux.apk", "Linux.moss", "FreeBSD", "DragonFly", "OpenBSD", "NetBSD", "SunOS",
              "Haiku", "Redox"}
 
@@ -165,6 +165,8 @@ class TestInGuest(unittest.TestCase):
                              ("Linux.pacman", "geo.mirror.pkgbuild.com"), ("Linux.pacman", "Artix's mirrors"),
                              ("Linux.pacman", "@factory"), ("Linux.pacman", "has pacman"),
                              ("Linux.dnf", "fedora-updates.repo"), ("Linux.dnf", "vault"), ("Linux.dnf", "has dnf"),
+                             ("Linux.ostree", "/run/ostree-booted"), ("Linux.ostree", "rpm-ostree upgrade"),
+                             ("Linux.ostree", "rpm-ostree cleanup -b -m"),
                              ("Linux.zypper", "history"), ("Linux.zypper", "install DVD"), ("Linux.zypper", "has zypper"),
                              ("Linux.moss", "unstable stream"), ("Linux.moss", "has moss"),
                              ("Linux.xbps", "has xbps-install"), ("Linux.apk", "apk upgrade"),
@@ -174,6 +176,15 @@ class TestInGuest(unittest.TestCase):
                              ("OpenBSD", "syspatch"), ("NetBSD", "sysupgrade"), ("SunOS", "pkg update"),
                              ("Haiku", "pkgman"), ("Redox", "pkg --yes update")):
             self.assertIn(needle, s[name], name)
+
+    def test_ostree_before_dnf(self):
+        """An image-mode system has dnf too, which can't change its /usr: the
+        ostree branch has to come first, and never cleans up the rollback."""
+        t = self.TEXT
+        self.assertLess(t.index('elif [ -e /run/ostree-booted ] && has rpm-ostree; then'), t.index("elif has dnf; then"))
+        code = "\n".join(l for l in self.sections()["Linux.ostree"].splitlines() if not l.lstrip().startswith("#"))
+        self.assertNotIn("cleanup -r", code)
+        self.assertNotIn("dnf", code)
 
     def test_linux_common_holds_no_package_manager(self):
         common = self.sections()["Linux.common"]

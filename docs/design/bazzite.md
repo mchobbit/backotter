@@ -7,7 +7,8 @@ composefs, rpm-ostree, bootc or bootupd.
 
 B1 (the `kinoite44` guest) was built the same day, and its *checks* are
 settled below: see "What B1 found". B2 (`dump`) followed: see "What B2
-found"; then B3 (`load`): see "What B3 found".
+found"; then B3 (`load`): see "What B3 found"; then B4 (the guest tools):
+see "What B4 found".
 
 **Conventions.** est. marks an estimate. *Check* marks a fact not yet seen, to be
 settled on the first guest (B1) or on the Thinkpad before the code that depends
@@ -237,7 +238,9 @@ as long as `load` mounts the target in the same shape the backup has.
   (vm-mount:520-535). On ostree it's five down. HoltTest1's backup
   (ht1.sh:431-434), vm-chroot and compare.py all go through vm-mount.
 - **compare.py** expects logical paths in its expected-difference lists, the
-  same problem as bs1-manifest. Of the probes that ask for `/`'s source, only
+  same problem as bs1-manifest. (B4: it has no such lists; what it needed
+  was its chroots into the source and its fstab read: see "What B4
+  found".) Of the probes that ask for `/`'s source, only
   bs1-qemu.py:259 runs against an ostree guest (ht1.sh's `findmnt --verify`
   and compare.py's `findmnt -R` of its own mount point don't).
 - **vm-update** takes `has dnf` and runs `dnf -y upgrade` (in-guest.sh:309-317),
@@ -548,6 +551,8 @@ second kickstart, and est. +0.5 d. B1 decides that on its own and says so.
   ostree keeps the booted deployment plus one rollback by itself, and the
   guest must keep two. After an upgrade the two are different commits, unlike
   the Thinkpad's; the `fresh-install` snapshot keeps the same-commit pair.
+  (B4: it doesn't: a merged update retakes `fresh-install`. See "What B4
+  found".)
 - **SticTest1's `kinoite44` check:** fedora44-uefi's btrfs checks, plus a repo
   object hardlinked into both deployments (nlink 3), the deployment root's
   `+i`, and `security.selinux` on bare objects, for rustic-bko and restic.
@@ -838,6 +843,124 @@ dump's `boot.ostree`, which B2 writes only on ostree.
   boot. So `--only boot` after the rescue system rebooted would fail for a
   layout with a read-only subvolume that isn't a shared snapshot.
 
+## What B4 found
+
+The guest tools built as "Guest tools" says, 2026-11-11, with one change of
+plan for compare.py (below). New: `testvm/ostree_paths.py` (the default
+deployment, the etc mapping, ostree's EXPECTED and REMADE lists; a module
+and a CLI, `ostree_paths.py default ROOT`). Changed: vm-mount, vm-chroot,
+bs1-manifest (and `backshot1 stage` and bs1-qemu.py, which copy
+ostree_paths.py beside it onto the backup drive), compare.py,
+update/in-guest.sh (a `Linux.ostree` section) and Test2's holt spec (the
+linux kind's harness names ostree_paths.py, since vm-mount runs it).
+Unit tests: testvm/test2/tests/test_ostree_paths.py (18, fake trees) and
+in-guest.sh's section tests in test_vm_update.py.
+
+- **vm-mount, ostree mode.** When a filesystem's top has no `/etc/fstab`
+  but `ostree/deploy/*/deploy/*/etc/fstab` at its top or one btrfs level
+  down, that is the physical root. It is mounted by any deployment's fstab
+  `/`, that fstab's `/boot` mounted to read the BLS entries, the default
+  deployment found by ostree_paths.py (the highest `version`, followed
+  through `boot.N`), `/boot` unmounted, and the rest mounted from the
+  default deployment's fstab (the root again if its `/` names another
+  subvolume). On kinoite44 (`--ro` and read-write) that is exactly load's
+  tree: `[/root]` at MP, ext4 `/boot`, vfat `/boot/efi`, `[/home]` at
+  `/home`, `[/var]` at `/var`; the default is `.1`. The ostree check runs
+  only when nothing else has an fstab, so other guests mount as before:
+  fedora44-uefi, debian13, tumbleweed (snapper), ubuntu26-uefi and omarchy
+  (LUKS) gave the same mounts with this vm-mount as with main's.
+  HoltTest1 needs nothing more: ht1.sh backs up and records MP (B6 runs it).
+- **vm-chroot, ostree mode.** It chroots into the default deployment, not the
+  physical root (which has no `/bin`): `/usr` bound read-only on itself
+  first (its files are repository objects), vm-mount's mounts bound at the
+  deployment's own paths, its links followed (`/home -> var/home`, bound in
+  a second round, once `/var` is), the physical root at `/sysroot`, then
+  `/proc`, `/sys` and `/dev`. No policy-rc.d (it would go in `/usr`). Inside:
+  `/etc/bko-deployment` is `.1`'s, `rpm -q` works, `ostree admin
+  --sysroot=/ status` lists both deployments, a write to `/usr` fails, and
+  read-write a file written to `/etc`, `/var` and `/home` lands in `.1`'s etc
+  and the `var` and `home` subvolumes. Found on the way, not ostree's:
+  vm-chroot exited 1 after every command (its EXIT trap's last test failed
+  under `set -e`); fixed.
+- **The etc mapping in bs1-manifest.** A manifest of an ostree tree starts
+  with a row `/ostree-default<TAB>DEPLOYMENT` (no file can be named `/...`).
+  A manifest without it (B1's) gets the default from its own rows: the only
+  deployment, or the deployment `boot.N`'s link 0 leads to when all
+  deployments share one boot checksum (`ostree_paths.default_from_rows`).
+  Only that deployment's etc is matched as `etc/` against EXPECTED and
+  REMADE, each side by its own default; when the default moved, the
+  comparison says so and the moved paths count as unexpected. ostree's own
+  lists from B1's diff: REMADE `etc/plasmalogin.conf.d/*`, `etc/tuned/*`,
+  `etc/systemd/system.control/*`; EXPECTED nothing beyond the lists for
+  every system. B1's two-boot manifests now compare clean (with main's
+  bs1-manifest, 15 unexpected: the booted deployment's files under those
+  three REMADE patterns).
+  Two manifests of the vm-mount tree, 535,013 rows, took 63 s each and
+  compare clean. The digest cache by (dev, inode) and the nlink and flags
+  columns in the table's bs1-manifest row stay B8's. A system whose `/var`
+  is the stateroot's var (no var subvolume) gets no var mapping; neither
+  kinoite44 nor the Thinkpad is one.
+- **compare.py had no expected-difference lists** (the design was wrong
+  there): fsmeta.py compares the source with each archiver's restore
+  exactly, with no boot in between. What broke on ostree was that compare.py
+  runs the guest's own tools by `chroot SRC_MP` (mkfs, `btrfs subvolume
+  list` and `create`) and reads `SRC_MP/etc/fstab` for btrfs's `compress=`.
+  Now `tools_root()` gives the default deployment for those on ostree (via
+  ostree_paths.py, imported only then), and the subvolumes are made through
+  `/sysroot` there, since a deployment's `/mnt` is a link to `var/mnt`.
+  compare.py's stic and gate entries in Test2 don't list ostree_paths.py
+  (none of their guests is ostree); classes.json's watch is unchanged (it
+  would have moved the gate golden report's key). A whole-disk run on
+  Cinqcent (`compare.py kinoite44 rustic-bko`, in RAM, results in
+  `bazzite-wt/compare/bzb4/kinoite44`): backup 64.5 s (4,159 MB), restore
+  52.9 s, the restore boots with no new failed unit (both have
+  `systemd-remount-fs`, as in B1). Differences, for B5 and B6 to judge:
+  - missing 1: torture.sh's socket, as on every guest;
+  - hard links 95,521: the hardlinked symlinks, as "rustic-bko" above says;
+  - inode flags 63,720, every one 0 to 0x400 (`FS_NOCOMP_FL`), on
+    repository objects and checkouts and 8 others. btrfs sets it itself on
+    a file whose data didn't compress, and only when the filesystem is
+    mounted with `compress`: the source was written without (B1), the
+    restore with fstab's `compress=zstd:1` (compare.py adds it; load's
+    mount stage keeps it too). fedora44-uefi, compressed on both sides,
+    shows none. HoltTest1's fsmeta judging (B6) will meet the same.
+- **vm-update's ostree branch** (`Linux.ostree`, before `has dnf`, on
+  `/run/ostree-booted` and rpm-ostree): `rpm-ostree upgrade`, a `step:` line
+  when a new deployment is staged (an image can change with no package's
+  version, and the step makes vm-update merge it), `rpm-ostree cleanup -b
+  -m`. The cleanup runs before vm-update's reboot, in in-guest.sh, which is
+  the only guest step before it; the spec's order put it after.
+  qcow2-punch.py runs at the merge as for every guest. `vm-update --try
+  kinoite44` (Chopin, `--hosts ''`, overlay in RAM): "No upgrade
+  available" (B1's image is the `:44` tag's current one), reboot, "nothing
+  to merge", a 925 MiB overlay thrown away. It left a Test2 ledger row, as
+  every vm-update run does. quay.io keeps no older `:44` image (the tag's
+  earlier digests are 404), so the staging path was run by hand
+  (`bazzite-wt/b4-upgrade.sh`, results in `b4-upgrade-results`): a RAM
+  overlay of kinoite44 had its origin moved in place to `:45`, as `:stable`
+  moves at a new major, then in-guest.sh over SSH, a clean reboot, and a
+  look. The upgrade pulled 56 chunks (2.7 GB) in 595 s, staged
+  `7afcf664...` (45.20261111.0) and printed the step line; after the reboot
+  the new `.0` booted and `.1` was the rollback, the old `.0` was gone (two
+  deployments, two BLS entries, `boot.0` now). The kargs (`bko.rollback=1`)
+  and `/etc/bko-deployment` came from `.1`, as below. The overlay ended at
+  5.6 GiB (before trim and punch), so a real update of kinoite44 wants
+  `VM_UPDATE_RAM` of est. ~8 and takes est. ~15 min.
+- **`fresh-install` after an update** (the design said it keeps the
+  same-commit pair; it doesn't): a merged update retakes `fresh-install`.
+  The guest's pair is then the new commit (booted, default) and the old
+  `.1` (rollback), and the new deployment takes `.1`'s kargs and merges
+  `.1`'s etc, so both have `bko.rollback=1` and the same
+  `/etc/bko-deployment` text: the rollback differs from the default only by
+  checksum and serial. B6's rollback boot checks the serial against the
+  source's, so it still tells them apart; it shouldn't expect the kargs to.
+- **Not ready for a real update yet:** a merged update dumps the guest for
+  its fingerprint with `/bkoscratch/holttest1d/bin/bko-holt` (0.2.4, from
+  2026-11-07), which has no ostree code, so kinoite44's first fingerprint
+  would be of a pre-B2 dump. That bko-holt has to be refreshed first, or
+  `VM_UPDATE_HOLT_BIN` pointed at B3's build (B6/B7, with the fingerprint
+  registration).
+
 ## BackShot1 on the Thinkpad
 
 After the bs1 fixes (B8) and a `bs1-qemu.py` rehearsal on `kinoite44`:
@@ -900,7 +1023,7 @@ Boot0009 when the old one survives the erase. It predates ostree.
 | B1 | `make-fedora.sh --ostree`, `ks-ostree.cfg`, `storage-ostree.ks`; the second deployment; `kinoite44` on Chopin, copied to Cinqcent; the two-boot manifest diff; settle the *checks* above. **Done 2026-11-11:** built on Chopin, copied to Cinqcent (same SHA-256), booted on both; see "What B1 found" | 0.75 d |
 | B2 | `dump`: detection, `SUPPORTED` row, holt/src/ostree.rs and `boot.ostree`, `backup_sources` and aliases, kernels, `prebuilt`, the BLS label, the btrfs FSROOT fix, Fedora's loader packages; a scenarios.rs fake composefs tree (mountinfo, `/run/ostree-booted`, `/boot/ostree/*`, `prepare-root.conf`, the `/etc` bind); unit tests; check fingerprint.py, test_vm_update.py, holttest1d/judge.py and backshot2's bs2lib against the new `mounted_subvolumes` and properties. **Done 2026-11-11:** see "What B2 found" | 1.5 d |
 | B3 | `load`: mount stage without `ro`, the ostree marker, `ostree_boot` (atimes listed, note, consistency check, NVRAM, log and labels, the shared tail), the v1 plan problems; unit tests. **Done 2026-11-11:** see "What B3 found" | 1.5 d |
-| B4 | vm-mount's ostree mode (HoltTest1, vm-chroot); `ostree_paths.py` for bs1-manifest and compare.py; vm-update's ostree branch | 1 d |
+| B4 | vm-mount's ostree mode (HoltTest1, vm-chroot); `ostree_paths.py` for bs1-manifest and compare.py; vm-update's ostree branch. **Done 2026-11-11:** see "What B4 found" | 1 d |
 | B5 | SticTest1 `kinoite44` entry and runs, both archivers | 0.25 d |
 | B6 | HoltTest1: `kinoite44` in 1F, `ram-sizes.tsv`, the rollback boot in the restored-boot check, runs on both hosts | 0.5 d |
 | B7 | Golden plan and Test2: `kinoite44`'s dump from B6's PASS run through corpus_build into the corpus (index.tsv, src.json, plan.txt), the `backup_sources` corpus test; `classes.json` (holt families F and uefi), holt/spec.json and guest/spec.json, estimates.tsv, plan.py's source and guest counts (with README and tests), re-blessed p2 golden fixtures, fingerprint.py's mirror of the new package names; re-blessed fedora* golden plans from the package-name fix are expected | 0.5 d |

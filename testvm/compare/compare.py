@@ -439,9 +439,35 @@ def guest_path(root: Path, path: str) -> Path | None:
     return None
 
 
+def tools_root(root: Path) -> Path:
+    """The system mounted at root, as a root to chroot into: root itself, or
+    on ostree, where vm-mount mounted the physical root (ostree/repo and the
+    deployments, but no /etc, /usr or /bin) at root, its default deployment
+    (testvm/ostree_paths.py), whose /etc is the system's."""
+    if (root / "etc").exists() or not (root / "ostree" / "deploy").is_dir():
+        return root
+    if str(TESTVM) not in sys.path:
+        sys.path.insert(0, str(TESTVM))
+    import ostree_paths
+    d = ostree_paths.default_deployment(str(root))
+    if d is None:
+        raise SystemExit(f"{root} holds ostree deployments, but no default one")
+    return root / d
+
+
+def bind_point(root: Path) -> str:
+    """A directory in the system at root to bind something at for a command
+    run there: /mnt, or where /mnt is a link (ostree's, to var/mnt, empty
+    in a deployment) /sysroot, which a deployment has empty."""
+    for d in ("mnt", "sysroot"):
+        if (root / d).is_dir() and not (root / d).is_symlink():
+            return d
+    raise SystemExit(f"no /mnt or /sysroot directory in {root}")
+
+
 def fstab_options(root: Path) -> dict[str, list[str]]:
     """The guest's fstab: each mount point's options."""
-    f = guest_path(root, "/etc/fstab")
+    f = guest_path(tools_root(root), "/etc/fstab")
     opts = {}
     for line in f.read_text().splitlines() if f else []:
         fields = line.split()
@@ -701,16 +727,17 @@ class Layout:
         if self.mounts[0]["FSTYPE"] != "btrfs" or len(btrfs) > 1:
             raise SystemExit("recreate() handles btrfs only as the one file system at /")
         with src_api():
-            listing = out(["chroot", str(SRC_MP), "btrfs", "subvolume", "list", "-a", "/"])
-            default = out(["chroot", str(SRC_MP), "btrfs", "subvolume", "get-default", "/"])
+            listing = out(["chroot", str(tools_root(SRC_MP)), "btrfs", "subvolume", "list", "-a", "/"])
+            default = out(["chroot", str(tools_root(SRC_MP)), "btrfs", "subvolume", "get-default", "/"])
         path = default.split(" path ", 1)[1].replace("<FS_TREE>/", "") if " path " in default else None
         return [line.split(" path ")[-1].replace("<FS_TREE>/", "") for line in listing.splitlines()], path
 
 
 def in_src(cmd: list[str], root: Path = SRC_MP) -> None:
     """Run a tool from the original system (its mkfs etc.), or from the
-    system at root; see src_api()."""
-    run(["chroot", str(root)] + cmd)
+    system at root (on ostree, its default deployment: tools_root()); see
+    src_api()."""
+    run(["chroot", str(tools_root(root))] + cmd)
 
 
 class src_api:
@@ -718,7 +745,7 @@ class src_api:
     or the tree at root, so that tools run there with in_src() see the disks."""
 
     def __init__(self, root: Path = SRC_MP):
-        self.root = root
+        self.root = tools_root(root)
 
     def __enter__(self):
         for d in ("dev", "proc", "sys"):
@@ -932,7 +959,7 @@ def recreate(layout: Layout, dst: Dst, cfg: GuestConfig, tools: Path = SRC_MP) -
     run(["udevadm", "settle"], quiet=True)
     with src_api(tools):
         def mkfs(cmd: list[str]) -> None:
-            if run(["chroot", str(tools), "sh", "-c", f"command -v {cmd[0]}"], check=False, quiet=True).returncode:
+            if run(["chroot", str(tools_root(tools)), "sh", "-c", f"command -v {cmd[0]}"], check=False, quiet=True).returncode:
                 raise SystemExit(f"no {cmd[0]} in {tools}" + (" (the stick)" if tools != SRC_MP else ""))
             in_src(cmd, tools)
         for src, f in layout.fields.items():
@@ -981,7 +1008,8 @@ def recreate(layout: Layout, dst: Dst, cfg: GuestConfig, tools: Path = SRC_MP) -
             top.mkdir(exist_ok=True)
             run(["mount", "-t", "btrfs", "-o", "subvolid=5", dev, str(top)])
             try:
-                run(["mount", "--bind", str(top), str(SRC_MP / "mnt")])
+                at = bind_point(tools_root(SRC_MP))
+                run(["mount", "--bind", str(top), str(tools_root(SRC_MP) / at)])
                 try:
                     with src_api():
                         for sv in subvols:
@@ -989,11 +1017,11 @@ def recreate(layout: Layout, dst: Dst, cfg: GuestConfig, tools: Path = SRC_MP) -
                             # lib/portables) needs the directories above it;
                             # the restore gives them their metadata.
                             (top / sv).parent.mkdir(parents=True, exist_ok=True)
-                            in_src(["btrfs", "subvolume", "create", f"/mnt/{sv}"])
+                            in_src(["btrfs", "subvolume", "create", f"/{at}/{sv}"])
                         if default_subvol:
-                            in_src(["btrfs", "subvolume", "set-default", f"/mnt/{default_subvol}"])
+                            in_src(["btrfs", "subvolume", "set-default", f"/{at}/{default_subvol}"])
                 finally:
-                    run(["umount", str(SRC_MP / "mnt")], check=False)
+                    run(["umount", str(tools_root(SRC_MP) / at)], check=False)
             finally:
                 run(["umount", str(top)], check=False)
             subvols = []

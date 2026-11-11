@@ -305,6 +305,32 @@ Linux)
             step "purging casper"
             $apt purge casper || exit 1
         fi
+    # t2-section: Linux.ostree
+    elif [ -e /run/ostree-booted ] && has rpm-ostree; then
+        # An image-mode system (Fedora's atomic desktops, Bazzite; kinoite44):
+        # /usr is the image's and read-only, so dnf can't, though it's there.
+        # rpm-ostree pulls the image the origin names (kinoite44's follows
+        # the :44 tag) and stages it as a new deployment; vm-update's clean
+        # reboot boots it (ostree-finalize-staged writes it at shutdown), and
+        # ostree keeps the one booted now as the rollback and drops the one
+        # before.  No `cleanup -r`: the guest keeps two deployments.
+        # cleanup -b -m drops the pull's temporary files and rpm-ostree's
+        # metadata cache, which would stay in the image; vm-update's
+        # qcow2-punch.py hands back what the dropped deployment's objects
+        # held.  A new deployment is a step: an image can change with no
+        # package's version.
+        booted() {
+            rpm-ostree status --json | python3 -c 'import json, sys
+d = [x for x in json.load(sys.stdin)["deployments"] if x.get(sys.argv[1])]
+print(d[0]["checksum"] if d else "")' "$1"
+        }
+        was=$(booted booted) || exit 1
+        rpm-ostree upgrade || exit 1
+        staged=$(booted staged) || exit 1
+        if [ -n "$staged" ] && [ "$staged" != "$was" ]; then
+            step "ostree: deployment $staged staged, in place of $was"
+        fi
+        rpm-ostree cleanup -b -m || exit 1
     # t2-section: Linux.dnf
     elif has dnf; then
         # Fedora's server install has mcelog, which decodes Intel machine

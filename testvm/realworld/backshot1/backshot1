@@ -63,6 +63,7 @@ stage)
     d=$(on_host "$DRIVE; echo \"\$d\"")
     on_host "mkdir -p '$d/backshot1/bin' '$d/backshot1/runs' '$d/backshot1/keys'; chmod 700 '$d/backshot1/keys'"
     scp -q "${OPTS[@]}" "$here"/bs1-{common,backup,restore,verify,manifest,adopt,list,to-stick} "root@$HOST:$d/backshot1/"
+    scp -q "${OPTS[@]}" "$here/../../ostree_paths.py" "root@$HOST:$d/backshot1/"   # bs1-manifest's
     scp -q "${OPTS[@]}" "$here/thinkpad.conf" "root@$HOST:$d/backshot1/bs1.conf"
     scp -q "${OPTS[@]}" "$tools/bko-holt" "$tools/rustic-bko" "root@$HOST:$d/backshot1/bin/"
     scp -q "${OPTS[@]}" "$KEYS/id_ed25519.pub" "root@$HOST:$d/backshot1/keys/authorized_keys"

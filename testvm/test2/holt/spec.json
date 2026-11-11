@@ -27,7 +27,7 @@
       "variants_run": ["bigger", "oneshot", "degraded", "img"],
       "plat": "linux",
       "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
-      "harness": ["testvm/holttest1d/ht1.sh", "testvm/vm-mount", "testvm/vm-umount", "testvm/compare/fsmeta.py"],
+      "harness": ["testvm/holttest1d/ht1.sh", "testvm/vm-mount", "testvm/vm-umount", "testvm/ostree_paths.py", "testvm/compare/fsmeta.py"],
       "judge": ["testvm/holttest1d/judge.py"],
       "rescuer": ["@firmware", "bin/*.deb", "bin/bcachefs"],
       "variants": {

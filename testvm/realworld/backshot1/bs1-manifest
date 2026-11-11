@@ -16,6 +16,14 @@ A directory met a second time (openSUSE's root subvolume, mounted at / and
 seen again at .snapshots/N/snapshot under /.snapshots) is listed once, as an
 alias, and not walked again.  snapper's own snapshots come and go with its
 timers, so a snapshot only one side has is expected; the others are compared.
+
+On ostree (ROOT is the physical root, with /boot, /home and /var as fstab
+mounts them: docs/design/bazzite.md), the manifest's first row names the
+default deployment ("/ostree-default", a path no file can have), and only
+that deployment's etc/ is matched against the lists below as etc/; every
+other deployment's etc must come back as it was.  ostree_paths.py (beside
+this script on the backup drive, or testvm/ in the repository) has that rule
+and what an ostree boot changes besides.
 """
 
 import base64
@@ -25,6 +33,12 @@ import os
 import re
 import stat
 import sys
+
+_here = os.path.dirname(os.path.realpath(__file__))
+sys.path[:0] = [_here, os.path.join(_here, "..", "..")]
+import ostree_paths  # noqa: E402
+
+OSTREE_DEFAULT = "/ostree-default"
 
 # Paths a boot, the restore, or the time the backup took may change.  Anything
 # else that differs is reported as unexpected.
@@ -85,6 +99,8 @@ def write(root, out):
     st = os.lstat(root)
     seen = {(st.st_dev, st.st_ino): "."}
     with open(out, "w", encoding="utf-8", errors="surrogateescape") as f:
+        if ostree_paths.is_ostree(root):
+            f.write(f"{OSTREE_DEFAULT}\t{ostree_paths.default_deployment(root) or '-'}\n")
         for d, dirs, files in os.walk(root):
             again = []
             for name in dirs + files:
@@ -111,22 +127,32 @@ def write(root, out):
 
 
 def read(path):
-    rows = {}
+    """The rows, by path, and the ostree default deployment (None if not ostree)."""
+    rows, default = {}, None
     with open(path, encoding="utf-8", errors="surrogateescape") as f:
         for line in f:
             rel, *rest = line.rstrip("\n").split("\t")
+            if rel == OSTREE_DEFAULT:
+                default = rest[0]
+                continue
             # A socket belongs to the process that made it, and isn't backed up.
             if not stat.S_ISSOCK(int(rest[0], 8)):
                 rows[rel] = rest
-    return rows
+    if default is None and any(rel.startswith(ostree_paths.DEPLOY + "/") for rel in rows):
+        # A manifest written before the row: from the tree's own links.
+        links = {rel: r[5] for rel, r in rows.items() if stat.S_ISLNK(int(r[0], 8))}
+        dirs = {rel for rel, r in rows.items() if stat.S_ISDIR(int(r[0], 8))}
+        default = ostree_paths.default_from_rows(links, dirs) or "-"
+    return rows, default
 
 
-def same(rel, a, b, nixos):
+def same(rel, a, b, nixos, ostree=None):
     # A directory's size only says how big it has ever been, and its mtime
     # moves whenever something inside it does.
     if stat.S_ISDIR(int(a[0], 8)) and stat.S_ISDIR(int(b[0], 8)):
         return a[:3] == b[:3]
-    if any(fnmatch.fnmatch(rel, pat) for pat in REMADE + (NIXOS_REMADE if nixos else [])):
+    remade = REMADE + (NIXOS_REMADE if nixos else []) + (ostree_paths.REMADE if ostree else [])
+    if any(fnmatch.fnmatch(ostree_paths.logical(rel, ostree), pat) for pat in remade):
         return a[:4] + a[5:6] == b[:4] + b[5:6]
     return a[:6] == b[:6]
 
@@ -147,8 +173,12 @@ def xattr_diff(a, b):
     return "; ".join(f"{k}: {show(x.get(k))} -> {show(y.get(k))}" for k in sorted(set(x) | set(y)) if x.get(k) != y.get(k))
 
 
-def expected(rel, nixos):
-    return any(fnmatch.fnmatch(rel, pat) for pat in EXPECTED + (NIXOS_EXPECTED if nixos else []))
+def expected(rel, nixos, ostree=None):
+    """Whether a difference at REL is one a boot or the restore makes.  OSTREE:
+    the default deployment (its etc is etc), or "-" (an ostree system's whose
+    default couldn't be told: no mapping, but its lists)."""
+    pats = EXPECTED + (NIXOS_EXPECTED if nixos else []) + (ostree_paths.EXPECTED if ostree else [])
+    return any(fnmatch.fnmatch(ostree_paths.logical(rel, ostree), pat) for pat in pats)
 
 
 SNAPSHOT = re.compile(r"(.*?)\.snapshots/([0-9]+)(?:/|$)")
@@ -166,12 +196,18 @@ def unaliased(rows, aliases):
 
 
 def compare(old_path, new_path):
-    old, new = read(old_path), read(new_path)
+    (old, odef), (new, ndef) = read(old_path), read(new_path)
     aliases = sorted({rel for rows in (old, new) for rel, r in rows.items() if len(r) > 5 and r[5].startswith("alias:")})
     if aliases:
         old, new = unaliased(old, aliases), unaliased(new, aliases)
         print(f"aliases, compared once: {' '.join(aliases)}")
     nixos = "etc/NIXOS" in old
+    if odef or ndef:
+        print(f"ostree: default deployment {odef or '(none)'}, after {ndef or '(none)'}; its etc is matched as etc/")
+        if odef != ndef:
+            print("ostree: the default deployment moved")
+    # A path both sides have takes the baseline's mapping; one side's, its own.
+    mapping = {"missing": odef, "added": ndef, "changed": odef, "xattrs": odef}
     missing = sorted(set(old) - set(new))
     added = sorted(set(new) - set(old))
     # A snapshot snapper took after the backup, or cleaned up since.
@@ -179,14 +215,14 @@ def compare(old_path, new_path):
         theirs = snapshots(other)
         return {p for p in paths if (m := SNAPSHOT.match(p)) and m.groups() not in theirs}
     snapper = own(missing, new) | own(added, old)
-    changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], nixos))
+    changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], nixos, odef))
     both = [p for p in set(old) & set(new) if len(old[p]) > 6 and len(new[p]) > 6]
     relabeled = sorted(p for p in both if old[p][6] != new[p][6])
     if not both:
         print("xattrs: this baseline has none, so they weren't compared")
     bad = []
     for label, paths in (("missing", missing), ("added", added), ("changed", changed), ("xattrs", relabeled)):
-        unexpected = [p for p in paths if not expected(p, nixos) and p not in snapper]
+        unexpected = [p for p in paths if not expected(p, nixos, mapping[label]) and p not in snapper]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")
         bad += [f"{label}: {p}" + (f" ({xattr_diff(old[p], new[p])})" if label == "xattrs" else "") for p in unexpected]
     print(f"files compared: {len(old)}")

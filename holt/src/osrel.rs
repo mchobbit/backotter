@@ -71,7 +71,9 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
 /// boot tools (update-initramfs, update-grub); Arch and Artix have mkinitcpio
 /// and grub-mkconfig, Alpine mkinitfs and grub-mkconfig, Fedora dracut and
 /// grub2-mkconfig; AerynOS's initramfs comes prebuilt with its kernel, and
-/// systemd-boot boots it.
+/// systemd-boot boots it.  Chimera Linux (musl, dinit, apk, FreeBSD's
+/// userland) has Debian's initramfs-tools (update-initramfs) but no debconf,
+/// and grub-mkconfig, or systemd-boot with gen-systemd-boot.
 pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("debian", "13", "Debian 13"),
     ("linuxmint", "22", "Linux Mint 22"),
@@ -102,6 +104,10 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     // systemd-boot with dracut, Manjaro by GRUB with mkinitcpio.
     ("endeavouros", "", "EndeavourOS"),
     ("manjaro", "", "Manjaro"),
+    // Rolling: Chimera's os-release has no VERSION_ID at all (only its image
+    // names carry the snapshot's date).  "*" rather than "", as for
+    // AerynOS: a snapshot that starts writing one is still Chimera.
+    ("chimera", "*", "Chimera Linux"),
     // Not Linux (other/): os-release, or uname for those without one.
     ("freebsd", "14", "FreeBSD 14"),
     ("freebsd", "15", "FreeBSD 15"),
@@ -205,7 +211,7 @@ mod tests {
         let ubuntu22 = parse("ID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"22.04\"\n");
         assert!(check_supported(Some(&ubuntu22)).unwrap_err().contains("ubuntu 22.04"));
         assert!(check_supported(Some(&parse("ID=zorin\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"18\"\n"))).is_ok());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, Chimera Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -231,6 +237,25 @@ mod tests {
         let devuan = parse("ID=devuan\nID_LIKE=debian\nVERSION_ID=13\n");
         assert!(check_supported(Some(&devuan)).is_err());
         assert!(check_supported(None).unwrap_err().contains("os-release"));
+    }
+
+    /// The chimera guest's /etc/os-release (snapshot 20261103): ID quoted,
+    /// and no VERSION_ID line.
+    const CHIMERA: &str = "NAME=\"Chimera\"\nID=\"chimera\"\nPRETTY_NAME=\"Chimera Linux\"\n";
+
+    #[test]
+    fn chimera() {
+        let o = parse(CHIMERA);
+        assert_eq!(o.get("ID"), Some("chimera"));
+        assert_eq!(o.get("NAME"), Some("Chimera"));
+        assert_eq!(o.get("PRETTY_NAME"), Some("Chimera Linux"));
+        assert_eq!(o.get("VERSION_ID"), None);
+        assert!(check_supported(Some(&o)).is_ok());
+        assert!(supported("chimera", ""));
+        assert!(supported("chimera", "20261103"));
+        assert!(supported_names().contains("Chimera Linux"));
+        // Not by its likeness: another musl/apk system isn't Chimera.
+        assert!(check_supported(Some(&parse("ID=\"chimera-ish\"\nID_LIKE=\"chimera\"\n"))).is_err());
     }
 
     #[test]

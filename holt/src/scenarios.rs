@@ -1,4 +1,4 @@
-//! Whole-system tests: fake Debian 13 machines (their /sys, /proc, /dev,
+//! Whole-system tests: fake Debian 13 machines, and one Chimera Linux (their /sys, /proc, /dev,
 //! /etc, /run, /boot and /var as a directory tree, the disks as image files
 //! under /dev) laid out the way Debian's installer and BackOtter's test
 //! guests lay real ones out, run through the full report.
@@ -180,6 +180,64 @@ fn bios_mbr_btrfs_guest() {
     assert!(kids[3].starts_with("vda6 (partition, ") && kids[3].ends_with("btrfs on /"), "{kids:?}");
     assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
     assert_eq!(s(&v, &["host", "hostname"]), "deb13");
+}
+
+/// The chimera guest's system on bios_btrfs's disk: Chimera's os-release
+/// (ID quoted, no VERSION_ID), apk's database through /lib -> usr/lib, no
+/// dpkg or debconf, initramfs-tools' kernel files as Chimera names them.
+fn chimera_bios() -> Tree {
+    let t = bios_btrfs();
+    let v = "6.18.62-0-generic";
+    for f in ["/var/lib/dpkg/status", "/var/cache/debconf/config.dat", "/etc/debian_version", "/boot/vmlinuz-6.12.48+deb13-amd64", "/boot/initrd.img-6.12.48+deb13-amd64"] {
+        std::fs::remove_file(t.p(f)).unwrap();
+    }
+    let root_uuid = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
+    t.file("/etc/os-release", "NAME=\"Chimera\"\nID=\"chimera\"\nPRETTY_NAME=\"Chimera Linux\"\n")
+        .symlink("/lib", "usr/lib")
+        .file(
+            "/usr/lib/apk/db/installed",
+            "C:Q1aaa=\nP:linux-lts\nV:6.18.62-r0\nA:x86_64\n\nC:Q1bbb=\nP:grub\nV:2.14-r1\nA:x86_64\n\nC:Q1ccc=\nP:grub-i386-pc\nV:2.14-r1\nA:x86_64\n\nC:Q1ddd=\nP:initramfs-tools\nV:0.148.3-r2\nA:noarch\n\nC:Q1eee=\nP:btrfs-progs\nV:6.17-r0\nA:x86_64\n\n",
+        )
+        .file(&format!("/boot/vmlinuz-{v}"), "k")
+        .file(&format!("/boot/initrd.img-{v}"), "i")
+        .file(&format!("/boot/config-{v}"), "")
+        .dir(&format!("/usr/lib/modules/{v}/kernel"))
+        .file("/etc/initramfs-tools/initramfs.conf", "MODULES=most\nCOMPRESS=zstd\n")
+        .file("/proc/sys/kernel/osrelease", format!("{v}\n"))
+        .file("/proc/sys/kernel/hostname", "chimera\n")
+        .file("/proc/cmdline", format!("BOOT_IMAGE=/vmlinuz-{v} root=UUID={root_uuid} ro rootflags=subvol=@rootfs\n"))
+        .file("/boot/grub/grub.cfg", format!("insmod part_msdos\ninsmod ext2\nmenuentry 'Chimera Linux' {{\n\tlinux\t/vmlinuz-{v} root=UUID={root_uuid} ro rootflags=subvol=@rootfs\n\tinitrd\t/initrd.img-{v}\n}}\n"));
+    t
+}
+
+#[test]
+fn chimera_bios_guest() {
+    let v = run(&chimera_bios(), true, bios_btrfs_runner());
+    assert_eq!(s(&v, &["os", "id"]), "chimera");
+    assert!(v.at(&["os", "version_id"]).unwrap().is_null());
+    assert_eq!(s(&v, &["os", "pretty_name"]), "Chimera Linux");
+    assert_eq!(s(&v, &["boot", "loader", "name"]), "grub");
+    assert_eq!(s(&v, &["boot", "loader", "firmware"]), "bios");
+    assert_eq!(s(&v, &["boot", "loader", "package"]), "grub-i386-pc");
+    assert!(v.at(&["boot", "grub", "debconf"]).unwrap().is_null());
+    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "initramfs-tools");
+    assert_eq!(s(&v, &["boot", "kernels", "installed", "0", "version"]), "6.18.62-0-generic");
+    assert_eq!(arr(&v, &["boot", "kernels", "installed"]).len(), 1);
+    assert_eq!(v.at(&["boot", "kernels", "installed", "0", "running"]), Some(&Value::Bool(true)));
+    assert_eq!(v.at(&["boot", "kernels", "installed", "0", "modules_installed"]), Some(&Value::Bool(true)));
+    assert_eq!(s(&v, &["boot", "packages", "initramfs-tools"]), "0.148.3-r2");
+    assert_eq!(s(&v, &["boot", "packages", "linux-lts"]), "6.18.62-r0");
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+    // load reads it, and boots it with Chimera's own tools.
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    let l = Layout::from_json(v).unwrap();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+    let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+    let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
+    assert!(bt.contains("chroot /mnt/bko-target update-initramfs -u -k all\n"), "{bt}");
+    assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
+    assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{bt}");
+    assert!(!bt.contains("update-grub"), "{bt}");
 }
 
 #[test]

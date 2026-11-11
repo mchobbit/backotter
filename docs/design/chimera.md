@@ -184,6 +184,35 @@ chimerautils 15.1.2, dinit 0.22.0, musl 1.2.6, `linux-lts` 6.18.62),
   (`/usr/lib/apk/repositories.d/01-repo-main.list`). The installed guest is
   2.3 GiB on disk. `apk --no-interactive` is accepted.
 
+## What C2 found
+
+Tracing every branch `dump` and `load` take on the OS, the package manager
+and the boot tools, 2026-11-11:
+
+- **`SUPPORTED`:** a `chimera` row with version `*`, "Chimera Linux" in
+  messages. `ID="chimera"` with no `VERSION_ID` passes `dump`'s and `load`'s
+  checks.
+- **`PACKAGES`:** besides the seven names above, `zfs` (Chimera's ZFS
+  userland) and `ckms` were missing too. The report's `boot.loader.package`
+  now names `grub-i386-pc` (BIOS) or `grub-x86_64-efi` (UEFI), which only
+  Debian's names did before; `load` doesn't read it.
+- **Nothing assumes Debian from initramfs-tools.** The only Debian-only
+  branch is `update-grub`, taken by os-release ID (debian, ubuntu,
+  linuxmint, zorin), so Chimera gets `grub-mkconfig -o /boot/grub/grub.cfg`.
+  debconf is read only if `/var/cache/debconf/config.dat` exists; without
+  it BIOS GRUB's install disk is the one whose MBR holds GRUB. No
+  `/etc/kernel/postinst.d` or dpkg is touched.
+- **One wrong note, left:** BIOS GRUB's plan notes that "debconf's
+  grub-pc/install_devices still names the source's disks" and suggests
+  `dpkg-reconfigure grub-pc`, on every system, Chimera's included. Arch's,
+  Alpine's, Void's and others' golden plans have it too, so changing it is
+  its own change, not C2's.
+- **The chroot's commands:** `grub-install`, `update-initramfs -u -k all`,
+  `env LANG=C grub-mkconfig -o ...`, and the SELinux check (POSIX sh). None
+  uses a GNU-only option.
+- **No golden plan yet:** it is made from a passing HoltTest1 run's dump of
+  `chimera` (C5), as the corpus's others were.
+
 ## Guests
 
 Built by `make-bootstrap.sh`, as for Void: from the Arch ISO's live system,

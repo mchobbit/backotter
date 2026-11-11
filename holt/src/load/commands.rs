@@ -2820,6 +2820,40 @@ mod tests {
         assert!(!bt.contains("mkinitcpio") && !bt.contains("update-initramfs"), "{bt}");
     }
 
+    /// Chimera: Debian's initramfs-tools, without debconf or update-grub's
+    /// Debian side; GRUB by grub-PLATFORM packages and grub-mkconfig.  What
+    /// runs in the chroot runs on FreeBSD's userland (chimerautils).
+    #[test]
+    fn chimera_boot_tools() {
+        let bios = sample::bios_mbr()
+            .replace(r#""id": "debian", "version_id": "13""#, r#""id": "chimera""#)
+            .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "initramfs-tools"}, "packages": {"grub": "2.14-r1", "grub-i386-pc": "2.14-r1", "initramfs-tools": "0.148.3-r2"},"#)
+            .replace(r#""grub": {"debconf": {"grub-pc/install_devices": "/dev/disk/by-id/virtio-x"}}"#, r#""grub": {"dir": "/boot/grub", "debconf": null}"#);
+        let b = built_from(&bios, &[]);
+        let bt = text(b.stage(Stage::Boot));
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        assert!(bt.contains("chroot /mnt/bko-target update-initramfs -u -k all\n"), "{bt}");
+        // The disk whose MBR holds GRUB, with no debconf to name it.
+        assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
+        assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{bt}");
+        assert!(!bt.contains("update-grub") && !bt.contains("dpkg"), "{bt}");
+        let uefi = bios
+            .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+            .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, r#""loader": {"name": "grub", "firmware": "uefi", "via_shim": false, "package": "grub-x86_64-efi"}"#)
+            .replace(r#""efi": null,"#, r#""efi": {"entries": [], "boot_order": []}, "esps": [{"device": "vda1", "mounted_at": "/boot/efi", "contents": {"files": [{"path": "EFI/chimera/grubx64.efi"}]}}],"#);
+        let b = built_from(&uefi, &[]);
+        let ut = text(b.stage(Stage::Boot));
+        assert!(ut.contains("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=chimera --no-nvram\n"), "{ut}");
+        assert!(ut.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{ut}");
+        assert!(ut.contains("chroot /mnt/bko-target update-initramfs -u -k all\n"), "{ut}");
+        // No GNU-only option in what runs on the target's own tools.
+        for l in bt.lines().chain(ut.lines()).filter(|l| l.starts_with("chroot ")) {
+            for gnu in ["stat -c", "sed -i", "df --output", "df -B", "date -d", "cp --", "sort -V", "readlink -e", "tac "] {
+                assert!(!l.contains(gnu), "{gnu} in {l}");
+            }
+        }
+    }
+
     #[test]
     fn zfs_create_time_properties() {
         let ds = crate::json::parse(r#"{"name": "rpool/home", "type": "filesystem", "normalization": "formD", "utf8only": "on", "casesensitivity": "sensitive",

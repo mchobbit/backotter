@@ -161,6 +161,11 @@ pub const PACKAGES: &[&str] = &[
     // Omarchy's, openSUSE's and Void's.
     "limine", "limine-mkinitcpio-hook", "limine-snapper-sync", "grub2", "grub2-i386-pc", "grub2-x86_64-efi", "kernel-default", "snapper", "linux-base",
     "multipath-tools", "dmraid", "nvme-cli", "open-iscsi",
+    // Chimera's ("grub", "linux-lts", "initramfs-tools", "systemd-boot" and
+    // the rest are above): its ZFS userland is "zfs", built for the kernel
+    // by ckms (zfs-ckms) or prebuilt (linux-*-zfs-bin).
+    "grub-i386-pc", "grub-x86_64-efi", "linux-stable", "linux-lts-zfs-bin", "linux-stable-zfs-bin", "zfs", "zfs-ckms", "ckms",
+    "cryptsetup-scripts",
 ];
 
 /// debconf answers from /var/cache/debconf/config.dat whose names start with
@@ -704,8 +709,9 @@ pub fn detect_loader(e: &Evidence) -> Value {
         }
     }
     let package = match (name, e.uefi) {
-        (Some("grub"), true) => ["grub-efi-amd64-signed", "grub-efi-amd64", "grub-efi-ia32", "grub-efi-arm64"].into_iter().find(|p| has(p)),
-        (Some("grub"), false) => ["grub-pc"].into_iter().find(|p| has(p)),
+        // Chimera's (and Void's) GRUB for each platform is grub-PLATFORM.
+        (Some("grub"), true) => ["grub-efi-amd64-signed", "grub-efi-amd64", "grub-efi-ia32", "grub-efi-arm64", "grub-x86_64-efi"].into_iter().find(|p| has(p)),
+        (Some("grub"), false) => ["grub-pc", "grub-i386-pc"].into_iter().find(|p| has(p)),
         (Some("systemd-boot"), _) => ["systemd-boot"].into_iter().find(|p| has(p)),
         (Some("refind"), _) => ["refind"].into_iter().find(|p| has(p)),
         (Some("limine"), _) => ["limine"].into_iter().find(|p| has(p)),
@@ -1127,5 +1133,64 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         a.file("/usr/lib/kernel/current.stable.initrd", "").file("/usr/lib/kernel/current.stable.kernel", "");
         let s = Sys::new(a.root(), Box::new(FakeRunner::default()), false);
         assert_eq!(initramfs_json(&s, &pk(&["dracut"])).get("generator").and_then(Value::as_str), Some("prebuilt"));
+    }
+
+    /// Shaped like the chimera guest (BIOS, GRUB in the MBR): apk-tools 3
+    /// still writes v2's installed database, reached through /lib ->
+    /// usr/lib; initramfs-tools names the kernel's files as Debian's does.
+    #[test]
+    fn chimera() {
+        let apk = "C:Q1aaa=\nP:linux-lts\nV:6.18.62-r0\nA:x86_64\no:linux-lts\n\nC:Q1bbb=\nP:grub\nV:2.14-r1\nA:x86_64\n\nC:Q1ccc=\nP:grub-i386-pc\nV:2.14-r1\nA:x86_64\n\nC:Q1ddd=\nP:initramfs-tools\nV:0.148.3-r2\nA:noarch\n\n";
+        let v = "6.18.62-0-generic";
+        let t = Tree::new("chimera-boot");
+        t.symlink("/lib", "usr/lib")
+            .file("/usr/lib/apk/db/installed", apk)
+            .file(&format!("/boot/vmlinuz-{v}"), vec![0u8; 10])
+            .file(&format!("/boot/initrd.img-{v}"), vec![0u8; 7])
+            .file(&format!("/boot/config-{v}"), "")
+            .dir(&format!("/usr/lib/modules/{v}/kernel"))
+            .file("/boot/grub/i386-pc/normal.mod", "x")
+            .file("/boot/grub/i386-pc/core.img", "x")
+            .file("/etc/default/grub", "GRUB_DEFAULT=0\nGRUB_TIMEOUT=5\n")
+            .file("/etc/initramfs-tools/initramfs.conf", "MODULES=most\nBUSYBOX=auto\nCOMPRESS=zstd\n")
+            .file("/proc/sys/kernel/osrelease", format!("{v}\n"));
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        let p = installed_packages(&s);
+        let names: Vec<&str> = p.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["grub", "grub-i386-pc", "initramfs-tools", "linux-lts"]);
+        let b = boot_json(&s, &p, &[], Value::Null, vec![("vda".into(), "grub2".into())]);
+        assert_eq!(b.at(&["loader", "name"]).and_then(Value::as_str), Some("grub"));
+        assert_eq!(b.at(&["loader", "firmware"]).and_then(Value::as_str), Some("bios"));
+        assert_eq!(b.at(&["loader", "package"]).and_then(Value::as_str), Some("grub-i386-pc"));
+        assert_eq!(b.at(&["grub", "dir"]).and_then(Value::as_str), Some("/boot/grub"));
+        assert_eq!(b.at(&["grub", "installed_platforms", "0"]).and_then(Value::as_str), Some("i386-pc"));
+        assert!(b.at(&["grub", "debconf"]).unwrap().is_null());
+        assert_eq!(b.at(&["initramfs", "generator"]).and_then(Value::as_str), Some("initramfs-tools"));
+        assert_eq!(b.at(&["initramfs", "modules"]).and_then(Value::as_str), Some("most"));
+        assert_eq!(b.at(&["initramfs", "compress"]).and_then(Value::as_str), Some("zstd"));
+        let k = b.at(&["kernels", "installed"]).and_then(Value::as_array).unwrap();
+        assert_eq!(k.len(), 1, "{}", b.get("kernels").unwrap().compact());
+        assert_eq!(k[0].get("version").and_then(Value::as_str), Some(v));
+        assert_eq!(k[0].get("vmlinuz_bytes").and_then(Value::as_u64), Some(10));
+        assert_eq!(k[0].get("initrd_bytes").and_then(Value::as_u64), Some(7));
+        assert_eq!(k[0].get("config"), Some(&Value::Bool(true)));
+        assert_eq!(k[0].get("running"), Some(&Value::Bool(true)));
+        assert_eq!(k[0].get("modules_installed"), Some(&Value::Bool(true)));
+        assert_eq!(b.at(&["packages", "grub-i386-pc"]).and_then(Value::as_str), Some("2.14-r1"));
+        assert_eq!(b.at(&["packages", "linux-lts"]).and_then(Value::as_str), Some("6.18.62-r0"));
+        // chimera-zfs: UEFI GRUB from grub-x86_64-efi, found on the ESP.
+        let p = pk(&["grub", "grub-x86_64-efi", "initramfs-tools", "linux-lts-zfs-bin", "zfs"]);
+        let l = detect_loader(&Evidence {
+            uefi: true,
+            current_file: Some("\\EFI\\chimera\\grubx64.efi".into()),
+            loader_info: None,
+            shim_variables: false,
+            mbr_codes: vec![],
+            packages: &p,
+            esp_files: vec!["EFI/chimera/grubx64.efi".into()],
+        });
+        assert_eq!(l.get("name").and_then(Value::as_str), Some("grub"));
+        assert_eq!(l.get("package").and_then(Value::as_str), Some("grub-x86_64-efi"));
+        assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)));
     }
 }

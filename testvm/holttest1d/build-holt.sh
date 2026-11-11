@@ -150,7 +150,12 @@ case $PLATFORM in
     freebsd) VM=freebsd14 RUST='env ASSUME_ALWAYS_YES=yes pkg install -y rust' ;;
     netbsd) VM=netbsd11 RUST='pkg_info -e rust >/dev/null || pkgin -y install rust' ;;
     openbsd) VM=openbsd8 RUST='pkg_add -I rust' ;;
-    dragonfly) VM=dragonfly6 RUST='env ASSUME_ALWAYS_YES=yes pkg install -y rust' ;;
+    # DragonFly: upgrade first.  Avalon carries two packages named openssl
+    # (3.0, libssl.so.12, and 3.5, .so.17); rust and curl need 3.5's, but
+    # pkg install takes the guest's 3.0 as meeting "openssl" ("duplicate
+    # dependency listing") and leaves it, so cargo can't load.  cargo
+    # --version checks that it loads.
+    dragonfly) VM=dragonfly6 RUST='export ASSUME_ALWAYS_YES=yes; pkg upgrade -y && pkg install -y rust && cargo --version' ;;
     illumos) VM=omnios58 RUST='pkg install -q ooce/developer/rust developer/gcc14; s=$?; [ $s -eq 0 ] || [ $s -eq 4 ]' ;;
     haiku) VM=haiku6 RUST='pkgman install -y rust_bin gcc binutils haiku_devel' GUEST_PATH=/bin:/boot/system/bin:/boot/system/non-packaged/bin
         export VM_USER=user ;;   # Haiku's uid 0

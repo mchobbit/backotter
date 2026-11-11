@@ -60,7 +60,10 @@ What changes from the memstick:
   `/conf/base/etc` is the image's `/etc` hard-linked, so it costs no space.
   The sizes are caps (tmpfs takes memory only as files fill it): `/tmp` and
   `/root` 1 GiB (restic's and rustic's caches live under `/root/.cache`),
-  `/var` 256 MiB, `/home` 64 MiB, `/etc` 20 MiB.
+  `/var` 256 MiB, `/home` 64 MiB, `/etc` 20 MiB.  `/mnt` is a tmpfs too
+  (fstab), so that `bko-holt load` can make its target, `/mnt/bko-target`,
+  and what goes under it before anything is mounted there: `zpool create -R`
+  makes the new pool's own mountpoint at once.
 - `rc.conf.local`: host name `backotter`, DHCP on every interface
   (`ifconfig_DEFAULT`, in the background, as on Linux), sshd off,
   sendmail off, no dump device.  ZFS stays off (`zfs_enable` is unset), so no

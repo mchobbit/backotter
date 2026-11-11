@@ -101,7 +101,9 @@ else
 fi
 # --- the running kernel against the installed ones
 same() {  # FILE: does the running kernel's version string appear in FILE?
-    v=$(uname -v | sed 's/[[:space:]][^[:space:]]*@.*//')
+    # uname(3) turns the version's newline and tab into spaces (NetBSD: `... UTC 2026  mkrepro@...`),
+    # so cutting the builder leaves trailing blanks that the kernel file's string doesn't have
+    v=$(uname -v | sed 's/[[:space:]][^[:space:]]*@.*//; s/[[:space:]]*$//')
     if [ ! -r "$1" ] || [ -z "$v" ]; then echo "unverified can't read $1"
     elif grep -aqF "$v" "$1"; then echo "match yes"
     else echo "match no"; fi

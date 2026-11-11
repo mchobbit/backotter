@@ -84,6 +84,8 @@ class World:
         self.verdict = {}       # {cell: verdict} when it runs (PASS)
         self.gate_verdict = {}  # {gate cell: verdict} when a child's gate step runs it
         self.status = {}        # {cell: status} the planner gives whatever the rows say
+        self.reasons = {}       # {cell: [reason]} with it
+        self.invalid = {}       # {cell: note}: its rows are invalid (an input not measured)
         self.identity_res = {}  # {guest: identity_check's answer}
         self.behave = {}        # {family: fn(world, word, ctx, shared, out) -> exit or None}
         self.inp = {}           # {cell: {bin name: value}} its planned inputs
@@ -101,6 +103,8 @@ class World:
                  "cell": cell, "run": run, "kind": kind, "verdict": verdict, "valid": True, "key": H64("1"),
                  "host": "chopin", "gm": 1.0, "wear": {"nvme0n1": 1e8}, "needs": {"a": verdict}, "class": "pass",
                  "groups": {}, "inputs": {}, "extra": extra or {}}
+            if cell in self.invalid:
+                r.update(valid=False, note=self.invalid[cell])
             self.rows.append(r)
             return r
 
@@ -118,7 +122,7 @@ class World:
             pc.keys = {"chopin": H64("1")}
             pc.est = {"gm": 1.0, "wall_s": 60, "gb": 0.0}
             pc.inp = {"chopin": {"bin": dict(self.inp.get(c) or {})}}
-            mine = [r for r in ctx.ledger if r.get("cell") == c and r.get("kind") in ("run", "carried")]
+            mine = [r for r in ctx.ledger if r.get("cell") == c and r.get("kind") in ("run", "carried") and r.get("valid") is not False]
             last = max(mine, key=lambda r: (r["t"], r["id"]), default=None)
             if word.all:
                 pc.status, pc.rule = "due", "fresh:Sweep" if word.sweep else "fresh:All"
@@ -132,6 +136,8 @@ class World:
                 pc.status, pc.rule, pc.reasons = "not-runnable", None, [f"its guest's identity failed: {bad[bko.guest_of(c)]}"]
             if c in self.status:
                 pc.status = self.status[c]
+            if c in self.reasons:
+                pc.reasons = list(self.reasons[c])
             if c in self.binaries:
                 pc.binaries = self.binaries[c]
             p.cells.append(pc)
@@ -558,6 +564,30 @@ class TestBko(Base):
         self.assertIsNone(stic_run[8])   # no --universe: no gate_universe
         self.assertFalse(stic_run[9])    # BkoTest2: no gate_fresh
 
+    def test_an_invalid_pass_in_a_gate_step_runs_again_and_fails_the_exit(self):
+        """rel4's gate:bin:version: PASS, but 'not measured: bin/haiku/*-bko'.  Not left out of the
+        gate child as if it were done, and no child's exit 0 hides it."""
+        self.w.invalid = {"gate:bin:version": "not measured: bin/haiku/*-bko"}
+        ex = self.conduct("BkoTest2 rel4")
+        self.assertEqual(ex, 1)
+        gate = [e for e in self.runs_of() if e[1] == "gate"][0]
+        self.assertEqual(gate[6], ("gate:bin:version", "gate:selftest"))   # gate:holt passed in holt's step: left out
+        run, doc = self.only_run()
+        self.assertEqual(doc["children"]["stic"]["exit"], 1)               # its own plan's cells all passed
+        self.assertTrue(any(n.startswith("SticTest2: gate:bin:version PASS, but its row ") and "not measured: bin/haiku" in n
+                            for n in doc["notes"]), doc["notes"])
+        self.assertTrue(any("ran in this run, but no valid row: again: gate:bin:version" in x for x in self.said), self.said[-20:])
+
+    def test_a_sweep_with_an_invalid_gate_pass_is_incomplete(self):
+        self.w.invalid = {"gate:bin:version": "not measured: bin/haiku/*-bko"}
+        self.assertEqual(self.conduct("SweepTest2 rel4"), 1)
+        run, _ = self.only_run("t2w-")
+        sw = runmod.read_json(os.path.join(self.w.mac, "runs", run, "sweep.json"))
+        self.assertFalse(sw["complete"])
+        self.assertIn("1 due cell(s) with no decisive row: gate:bin:version", sw["missing"])
+        doc = runmod.read_json(os.path.join(self.w.mac, "runs", run, "bko.json"))
+        self.assertNotEqual(doc["children"]["gate"].get("state"), "skipped")
+
     def test_no_gate_child_when_nothing_is_left(self):
         self.w.row("gate:selftest", "t2x-old", "PASS")
         self.w.gate_verdict = {"gate:holt": "FAIL"}     # due again, but holt's gate step ran it
@@ -698,7 +728,7 @@ class TestSweep(Base):
         run, _ = self.sweep_doc()
         text = slurp(os.path.join(self.w.mac, "runs", run, "report.txt"))
         self.assertIn("coverage: img: panels passed: netbsd 3 days ago", text)
-        self.assertIn("coverage: img: panels never passed: linux, freebsd, openbsd, dragonfly, illumos, haiku", text)
+        self.assertIn("coverage: img: panels never passed: linux, freebsd, dragonfly, illumos, haiku", text)
 
     def test_a_flip_and_its_packages(self):
         old = self.w.row("stic:arch", "t2s-20261101T0000-aaaa", "PASS")
@@ -779,6 +809,56 @@ class TestSweep(Base):
         self.assertEqual(self.conduct("SweepTest2 rel4"), 1)
         self.check_incomplete("guest:debian12: identity: identity unknown: chopin didn't answer")
         self.assertEqual([r for r in self.w.rows if r["cell"] == "guest:debian12" and r["run"].startswith("t2w-")], [])
+
+    def test_incomplete_on_a_hosts_subset(self):
+        """`t2 SweepTest2 rel4 --hosts chopin`: every due cell may get its row, yet nothing ran on cinqcent."""
+        ex = self.conduct("SweepTest2 rel4", env=FakeEnv(self.w, hosts=["chopin"]))
+        self.assertEqual(ex, 1)
+        sw = self.check_incomplete("ran on chopin only: cinqcent not swept (--hosts)")
+        self.assertEqual((sw["hosts"], sw["hosts_with_facts"]), (["chopin"], ["chopin"]))
+        text = slurp(os.path.join(self.w.mac, "runs", sw["run"], "report.txt"))
+        self.assertIn("sweep: INCOMPLETE", text)
+
+    def test_a_host_with_no_facts_is_not_swept(self):
+        env = FakeEnv(self.w)
+        real = env.make_ctx
+
+        def no_cinqcent(word, log=None):
+            c = real(word, log)
+            c.facts.pop("cinqcent")
+            return c
+        env.make_ctx = no_cinqcent
+        self.conduct("SweepTest2 rel4", env=env)
+        sw = self.check_incomplete("no facts from cinqcent: not swept")
+        self.assertEqual(sw["hosts_with_facts"], ["chopin"])
+
+    def test_cells_a_host_kept_from_running(self):
+        self.w.status = {"holt:debian12": "not-runnable", "guest:redox": "not-runnable"}
+        self.w.reasons = {"holt:debian12": ["debian12 runs on cinqcent only, which is unreachable"],
+                          "guest:redox": ["blocked: its console probe isn't built"]}
+        self.conduct("SweepTest2 rel4")
+        sw = self.check_incomplete("1 cell(s) not runnable for want of a host: holt:debian12")
+        self.assertFalse([m for m in sw["missing"] if "guest:redox" in m], sw["missing"])   # its own reason: coverage's
+
+    def test_a_cell_not_runnable_for_its_own_reason_leaves_it_complete(self):
+        self.w.status = {"guest:redox": "not-runnable"}
+        self.w.reasons = {"guest:redox": ["blocked: its console probe isn't built"]}
+        self.conduct("SweepTest2 rel4")
+        run, sw = self.sweep_doc()
+        self.assertTrue(sw["complete"], sw["missing"])
+        self.assertEqual(sw["hosts"], HOSTS)
+
+    def test_last_sweep_skips_a_hosts_subset(self):
+        d = os.path.join(self.w.mac, "runs")
+        for n, hosts in (("t2w-20261101T0000-aaaa", HOSTS), ("t2w-20261102T0000-bbbb", ["chopin"]),
+                         ("t2w-20261103T0000-cccc", None)):
+            doc = {"run": n, "complete": True, "missing": [], "t": n[4:8] + "-" + n[8:10] + "-" + n[10:12] + "T00:00:00Z"}
+            if hosts is not None:
+                doc["hosts"] = hosts
+            runmod.write_json(os.path.join(d, n, "sweep.json"), doc)
+        self.assertEqual(runmod.last_sweep(self.w.mac)["run"], "t2w-20261103T0000-cccc")   # (before hosts were recorded)
+        os.remove(os.path.join(d, "t2w-20261103T0000-cccc", "sweep.json"))
+        self.assertEqual(runmod.last_sweep(self.w.mac)["run"], "t2w-20261101T0000-aaaa")
 
     def test_refusals_of_the_words(self):
         for text in ("SweepTest2 stale", "SweepTest2 arch", "SweepTest2All", "BkoTest2 All", "BkoTest2 stic:arch"):
@@ -874,7 +954,7 @@ class TestRealPlans(unittest.TestCase):
         self.assertFalse(sw["complete"])     # the children wrote no rows
         self.assertEqual(ex, 1)
         text = slurp(os.path.join(self.w.mac, "runs", run, "report.txt"))
-        self.assertIn("coverage: img: panels never passed: linux, freebsd, netbsd, openbsd, dragonfly, illumos, haiku", text)
+        self.assertIn("coverage: img: panels never passed: linux, freebsd, netbsd, dragonfly, illumos, haiku", text)
 
 
 # --- stic.py's two pieces -------------------------------------------------------------------------

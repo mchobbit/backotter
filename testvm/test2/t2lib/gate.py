@@ -785,7 +785,7 @@ def run_one(env, cell, attempt_fn):
     if pc is not None:
         planned = (getattr(pc, "keys", None) or {}).get(host) or getattr(pc, "key", None)
     ids, first, prev, o = [], None, None, None
-    lost = 0
+    lost, row = 0, None
     for a in (1, 2):
         start = utc_now()
         env.log(f"{cell} on {host}: attempt {a}")
@@ -823,8 +823,11 @@ def run_one(env, cell, attempt_fn):
     cls = {"PASS": "pass", "FLAKY-FAIL": "fail", "FAIL": "fail", "HARNESS": "harness"}.get(o.verdict, "lost")
     if lost:   # the ledger doesn't hold what this entry says: the cell stays due, and the run says so
         cls = "lost"
+    valid = bool((row or {}).get("valid"))
+    if not valid and row is not None:   # the report says it: a PASS nothing measured is no PASS
+        reasons = [cut(f"row invalid: {row.get('note') or 'not measured'}", 160)] + reasons
     return {"cell": cell, "outcome": "ran", "rule": rule, "reasons": reasons, "rows": ids, "verdict": o.verdict,
-            "class": cls, "unwritten": lost,
+            "class": cls, "unwritten": lost, "valid": valid,
             "gm": 0.0, "wall_s": o.wall_s, "gb": None, "host": host, "needs": o.needs, "fails": o.fails,
             "note": o.note, "part": "slow" if entry_or_empty(env.layers, name).get("part") == "slow" else "fast",
             "plan_diff": o.extra.get("plan_diff") if name == "holt" else None}

@@ -45,9 +45,12 @@ def config(platform):
 def shell_lines(pubkey, cfg):
     """What is typed at the root shell, in order.  Echo goes off first (the key needn't be
     in the log), and then the system's own lines (FreeBSD's libedit must be off before a
-    long one).  ssh-keygen -A: the images have no host keys."""
+    long one).  The key file's umask is its subshell's only: sshd and every SSH session
+    it starts inherit the shell's, and a run's rebuild (grub-install, update-grub in the
+    chroot) must write with the image's default, as a console user's would, not 077.
+    ssh-keygen -A: the images have no host keys."""
     return (["export TERM=dumb; stty -echo"] + list(cfg["extra"])
-            + ["umask 077", "printf '%s\\n' " + shquote(pubkey) + " >/tmp/bko-k", "ssh-keygen -A",
+            + ["(umask 077; printf '%s\\n' " + shquote(pubkey) + " >/tmp/bko-k)", "ssh-keygen -A",
                "$(command -v sshd) -o AuthorizedKeysFile=/tmp/bko-k -o StrictModes=no"
                f" -o PermitRootLogin=prohibit-password -o AllowUsers={cfg['user']} -o PasswordAuthentication=no",
                "echo BKO-IMG-SSHD-$?"])

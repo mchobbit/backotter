@@ -65,6 +65,13 @@ impl FileSource {
         Ok(FileSource { file: File::open(path)?, size, head: OnceCell::new() })
     }
 
+    /// The same open file, with the size the caller knows.  Not a second
+    /// open: NetBSD refuses to open a block device that is open already
+    /// (EBUSY; its rescue image's /dev/ld1a, HoltTest2's netbsd11+img).
+    pub fn with_size(self, size: u64) -> FileSource {
+        FileSource { file: self.file, size, head: OnceCell::new() }
+    }
+
     /// Reads whole 4 KiB blocks: a BSD's or illumos' raw disk device takes
     /// only reads that start and end on a sector boundary.
     fn raw_read(&self, offset: u64, len: usize) -> Vec<u8> {
@@ -367,6 +374,10 @@ mod tests {
         assert_eq!(f.read_at(HEAD as u64 + 4000, 200), data[HEAD + 4000..].to_vec());
         assert_eq!(f.read_at(data.len() as u64, 10), Vec::<u8>::new());
         assert!(FileSource::open(&dir.path().join("missing")).is_err());
+        // with_size keeps the open file and takes the size it's given.
+        let s = FileSource::open(&path).unwrap().with_size(HEAD as u64);
+        assert_eq!(s.size(), HEAD as u64);
+        assert_eq!(s.read_at(0, 16), data[0..16].to_vec());
     }
 
     #[test]

@@ -114,7 +114,16 @@ rm -rf root/etc/rc.local root/usr/freebsd-dist root/usr/freebsd-packages
 # Points into the installer's /tmp/bsdinstall_etc; dhclient writes the real one.
 rm root/etc/resolv.conf
 
-printf '/dev/ufs/%s / ufs ro,noatime 1 1\n' "$label" >root/etc/fstab
+# /mnt is a tmpfs: bko-holt load's target (/mnt/bko-target) and what is made
+# under it must be writable before anything is mounted there.  zpool create
+# -R /mnt/bko-target makes the new pool's own mountpoint (zroot's /zroot) at
+# once, which the read-only root refused ("failed to create mountpoint",
+# HoltTest2's freebsd14+img).  Not on /mnt/bko-target itself: load's status
+# would read a mount there as the target tree's.
+{
+    printf '/dev/ufs/%s / ufs ro,noatime 1 1\n' "$label"
+    printf 'tmpfs /mnt tmpfs rw,mode=755 0 0\n'
+} >root/etc/fstab
 cat >root/etc/rc.conf.local <<EOF
 # BackOtter rescue stick.
 hostname="backotter"
@@ -180,7 +189,8 @@ mv sshd_config root/etc/ssh/sshd_config
 
 mkdir -p "root$LIB" root/usr/local/bin root/.disk root/home
 # Where bko-holt load mounts what it restores (its default --target): the
-# root is read-only, so the directory comes with the image.
+# root is read-only, so the directory comes with the image (under the tmpfs
+# on /mnt, for when that mount fails).
 mkdir -p root/mnt/bko-target
 install -m 755 in/console in/remote-access "root$LIB/"
 install -m 755 in/restic-bko root/usr/local/bin/

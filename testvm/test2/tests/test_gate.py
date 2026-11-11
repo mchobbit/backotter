@@ -831,10 +831,18 @@ class Runner(unittest.TestCase):
     def test_row_invalid_when_keys_differ_or_unmeasured(self):
         io = FakeIO(key="z" * 64)
         env, _ = env_with(io, ["gate:bin:abi"])
-        gate.run_one(env, "gate:bin:abi", self.outcomes("PASS"))
+        entry = gate.run_one(env, "gate:bin:abi", self.outcomes("PASS"))
         row = io.rows[0]
         self.assertFalse(row["valid"])
         self.assertIn("differ from the plan's", row["note"])
+        # the entry says so too, so a child's report doesn't print a bare "ran ... PASS"
+        self.assertFalse(entry["valid"])
+        self.assertTrue(entry["reasons"][0].startswith("row invalid: its inputs as run differ"), entry["reasons"])
+        ok_io = FakeIO()
+        ok_env, _ = env_with(ok_io, ["gate:bin:abi"])
+        ok = gate.run_one(ok_env, "gate:bin:abi", self.outcomes("PASS"))
+        self.assertTrue(ok["valid"])
+        self.assertFalse([x for x in ok["reasons"] if x.startswith("row invalid")])
         self.assertEqual(row["planned_key"], "k" * 64)
         self.assertEqual(row["gm"], 0.0)
         self.assertEqual(row["counts"], {"PASS": 1, "FAIL": 0, "LIMIT": 0})

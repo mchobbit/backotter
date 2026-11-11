@@ -970,6 +970,43 @@ class TestFleetLock(World):
         h.stdin = None
         self.assertEqual(h.wait(10), 0)
 
+    def assert_round_gone(self, run="t2v-1"):
+        self.assertFalse((self.vms / VU.FLEET_ROUND).exists(), "the round's name outlived its holder")
+        self.assertIn("none", self.refused("sh", run))   # a later job of the round fails its check
+
+    def test_the_round_file_goes_at_end_of_input(self):
+        h = self.hold()
+        self.end(h)
+        self.assertEqual(h.returncode, 0)
+        self.assert_round_gone()
+
+    def test_the_round_file_goes_on_silence(self):
+        h = self.hold(env={"HEARTBEAT": "0.5"})
+        self.assertEqual(h.wait(6), 75)
+        self.assert_round_gone()
+
+    def test_the_round_file_goes_on_term_and_hup(self):
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            h = self.hold()
+            h.send_signal(sig)
+            self.assertEqual(h.wait(10), 75)
+            self.assert_round_gone()
+
+    def test_a_running_job_keeps_its_lock_when_the_round_file_goes(self):
+        h = self.hold()
+        j = self.job()
+        self.end(h)
+        self.assertFalse((self.vms / VU.FLEET_ROUND).exists())
+        self.refused("ex")                          # the job still holds it shared
+        self.end(j)
+        self.end(self._ok("ex"))
+
+    def test_another_rounds_file_is_left_alone(self):
+        VU.clear_round(self.vms / VU.FLEET_ROUND, "t2v-1")   # no file: nothing to do
+        (self.vms / VU.FLEET_ROUND).write_text("t2v-2\n")
+        VU.clear_round(self.vms / VU.FLEET_ROUND, "t2v-1")
+        self.assertEqual((self.vms / VU.FLEET_ROUND).read_text().strip(), "t2v-2")
+
     def test_a_bad_run_id(self):
         self.assertEqual(VU.hold_fleet_lock("a b"), 2)
 

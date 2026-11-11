@@ -1405,8 +1405,8 @@ class ImgCells(WorldCase):
     def test_no_uefi_filter_but_pins_apply(self):
         p = self.w.plan("HoltTest2 debian13-stack+img plan", facts=self.w.facts(uefi_rescuer=()))
         self.assertEqual(sorted(p.cell("holt:debian13-stack+img").keys), ["chopin", "cinqcent"])
-        p = self.w.plan("HoltTest2 openbsd8+img plan")
-        self.assertEqual(sorted(p.cell("holt:openbsd8+img").keys), ["chopin"])
+        p = self.w.plan("HoltTest2 dragonfly6+img plan")
+        self.assertEqual(sorted(p.cell("holt:dragonfly6+img").keys), ["cinqcent"])
 
     def test_bins_stale(self):
         im = self.w.images()

@@ -1292,6 +1292,9 @@ def last_sweep(mac_root=None):
         if isinstance(doc, dict) and doc.get("complete") is True and doc.get("t"):
             if real and doc.get("universe"):    # (a test's cut sweep, which bko refuses in this root anyway)
                 continue
+            hs = doc.get("hosts")
+            if isinstance(hs, list) and set(planmod.HOSTS) - set(hs):   # a --hosts subset is no sweep
+                continue
             done.append(doc)
     if not done:
         return None

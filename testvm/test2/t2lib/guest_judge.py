@@ -323,10 +323,11 @@ def _pkg_repos(sec, patterns=("/etc/pkg/*.conf", "/usr/local/etc/pkg/repos/*.con
             text = re.sub(r"\$\{[^}]*\}", "X", text)   # the ${ABI} in a url isn't a block's end
             for m in re.finditer(r"([A-Za-z0-9_.-]+)\s*:\s*\{(.*?)\}", text, re.S):
                 r = repos.setdefault(m.group(1), {})
-                u = re.search(r'url\s*:\s*"([^"]*)"', m.group(2))
-                e = re.search(r"enabled\s*:\s*\"?(yes|no|true|false)\"?", m.group(2), re.I)
+                # UCL takes a url quoted or bare (DragonFly's df-latest.conf: `url : https://...,`)
+                u = re.search(r'\burl\s*[:=]\s*(?:"([^"]*)"|([^\s",;}]+))', m.group(2))
+                e = re.search(r"enabled\s*[:=]\s*\"?(yes|no|true|false)\"?", m.group(2), re.I)
                 if u:
-                    r["url"] = u.group(1)
+                    r["url"] = u.group(1) if u.group(1) is not None else u.group(2)
                 if e:
                     r["enabled"] = e.group(1).lower() in ("yes", "true")
     return repos

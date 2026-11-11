@@ -179,6 +179,14 @@ class Sources(unittest.TestCase):
         dr = 'Avalon: {\n url: "https://x",\n enabled: yes\n}\n'
         self.assertEqual(src("S-dfly", sec(("file /usr/local/etc/pkg/repos/df-latest.conf", dr))).v, "PASS")
         self.assertEqual(src("S-dfly", sec(("cmd x", ""))).v, "FAIL")
+        # dragonfly6's own df-latest.conf (T3.8): bare urls, one block enabled
+        bare = ('Avalon: {\n\turl\t\t: https://mirror-master.dragonflybsd.org/dports/${ABI}/LATEST,\n'
+                '\tmirror_type\t: NONE,\n\tpriority\t: 0,\n\tenabled\t\t: yes\n}\n'
+                'MUUG: {\n\turl\t\t: https://muug.ca/mirror/dragonflybsd/dports/${ABI}/LATEST,\n\tenabled\t\t: no\n}\n')
+        self.assertEqual(src("S-dfly", sec(("file /usr/local/etc/pkg/repos/df-latest.conf", bare))).v, "PASS")
+        self.assertEqual(J._enabled_repos(J._pkg_repos(sec(("file /usr/local/etc/pkg/repos/df-latest.conf", bare)))),
+                         {"Avalon": {"url": "https://mirror-master.dragonflybsd.org/dports/X/LATEST", "enabled": True}})
+        self.assertEqual(src("S-dfly", sec(("file /usr/local/etc/pkg/repos/df-latest.conf", bare.replace("yes", "no")))).v, "FAIL")
         self.assertEqual(src("S-ips", sec(("cmd pkg-publisher", "omnios origin online F https://pkg.omnios.org/r151058/core/"))).v, "PASS")
         self.assertEqual(src("S-ips", sec(("cmd pkg-publisher", ""))).v, "FAIL")
         self.assertEqual(src("S-haiku", sec(("cmd pkgman-repos", "HaikuPorts"))).v, "PASS")

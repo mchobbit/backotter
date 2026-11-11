@@ -61,7 +61,7 @@ pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
 }
 
 /// Virtual filesystems that say nothing about the disk layout.
-const PSEUDO: &[&str] = &[
+pub(crate) const PSEUDO: &[&str] = &[
     "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "securityfs", "cgroup", "cgroup2", "pstore", "efivarfs", "bpf",
     "debugfs", "tracefs", "configfs", "fusectl", "mqueue", "hugetlbfs", "autofs", "binfmt_misc", "rpc_pipefs", "nsfs",
     "ramfs", "selinuxfs", "fuse.gvfsd-fuse", "fuse.portal", "nfsd", "overlay", "squashfs", "fuse.lxcfs",

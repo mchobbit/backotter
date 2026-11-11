@@ -907,7 +907,8 @@ fn bazzite_ostree_guest() {
     let o = v.at(&["boot", "ostree"]).unwrap();
     assert_eq!(o.get("booted"), Some(&Value::Bool(false)));
     assert_eq!(s(o, &["prepare_root", "composefs"]), "verity");
-    assert_eq!(s(o, &["prepare_root", "readonly"]), "true");
+    // /etc's file replaces /usr/lib's whole: its readonly = true is gone.
+    assert!(o.at(&["prepare_root", "readonly"]).unwrap().is_null());
     assert_eq!(arr(o, &["prepare_root", "files"]).len(), 2);
     assert_eq!(s(o, &["repo", "ex_fsverity", "required"]), "true");
     assert!(o.at(&["repo", "sysroot_bootloader"]).unwrap().is_null());
@@ -917,6 +918,35 @@ fn bazzite_ostree_guest() {
     let v = run(&t, true, kinoite_runner());
     assert!(v.at(&["boot", "ostree"]).is_none());
     assert_eq!(s(&v, &["storage", "backup_sources", "0", "path"]), "/sysroot");
+}
+
+/// On ostree, a mount no fstab entry matched is said, not left for restore
+/// to find: here fstab's `/` names a subvolume that isn't the one at
+/// /sysroot (as when its UUID resolves to another btrfs member), and then
+/// /etc/fstab can't be read at all.
+#[test]
+fn ostree_unmatched_fstab_warns() {
+    let t = kinoite_ostree();
+    let fstab = std::fs::read_to_string(t.p("/etc/fstab")).unwrap();
+    std::fs::remove_file(t.p("/etc/fstab")).unwrap();
+    t.file("/etc/fstab", fstab.replace(" / btrfs subvol=root,", " / btrfs subvol=root2,").replace(" /home btrfs subvol=home,", " /home btrfs subvol=home2,"));
+    let v = run(&t, true, kinoite_runner());
+    let w: Vec<&str> = arr(&v, &["warnings"]).iter().map(|x| x.as_str().unwrap()).collect();
+    assert_eq!(w.len(), 2, "{w:?}");
+    assert!(w[0].starts_with("ostree: no running mount matched these fstab entries by device and subvol=: / (UUID=b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf -> vda3), /home (UUID="), "{}", w[0]);
+    assert!(w[1].starts_with("ostree: no running mount matched fstab's `/`, so backup_sources has no `/`"), "{}", w[1]);
+    let st = v.get("storage").unwrap();
+    assert!(st.get("physical_root").unwrap().is_null());
+    let paths: Vec<&str> = arr(st, &["backup_sources"]).iter().map(|x| x.get("path").and_then(Value::as_str).unwrap()).collect();
+    assert_eq!(paths, vec!["/boot", "/boot/efi", "/sysroot", "/var", "/var/home"]);
+    // boot.ostree still reads the physical root at /sysroot.
+    assert_eq!(s(&v, &["boot", "ostree", "physical_root"]), "/sysroot");
+    assert_eq!(arr(&v, &["boot", "ostree", "deployments"]).len(), 2);
+    // No fstab: only the missing `/` is said.
+    std::fs::remove_file(t.p("/etc/fstab")).unwrap();
+    let v = run(&t, true, kinoite_runner());
+    let w: Vec<&str> = arr(&v, &["warnings"]).iter().map(|x| x.as_str().unwrap()).collect();
+    assert_eq!(w, vec!["ostree: /etc/fstab could not be read, so backup_sources has no `/`, storage.physical_root is null and boot.ostree read /sysroot"]);
 }
 
 /// Every scenario's dump, by name, for tests that must hold over all of

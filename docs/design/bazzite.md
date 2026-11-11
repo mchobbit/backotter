@@ -701,7 +701,14 @@ tumbleweed and debian13 on Cinqcent (`--ram`, thrown away after).
   by the device fstab's spec resolves to plus `subvol=` (or `subvolid=`;
   neither means the top level), and only on ostree; elsewhere each
   non-alias mount is its own path (`physical_root` is then `/`). When two
-  mounts share a path, the later (the one on top) wins.
+  mounts share a path, the later (the one on top) wins. On ostree, `dump`
+  warns when a filesystem fstab entry (not swap, `noauto`, a bind or a
+  pseudo filesystem) matched no running mount, naming each as
+  `FILE (SPEC -> DEVICE)`, and again when `backup_sources` has no `/` (so
+  `physical_root` is null and `boot.ostree` read `/sysroot`), saying
+  whether fstab was unreadable, had no `/`, or its `/` matched nothing
+  (scenario `ostree_unmatched_fstab_warns`). kinoite44 dumps with no
+  warnings.
 - **`boot.ostree`** has: `booted` (`/run/ostree-booted`), `karg`,
   `physical_root`, `stateroot`, `booted_deployment` (the karg resolved
   through `boot.1 -> boot.1.1` and `N -> ../../../deploy/...`, as a path
@@ -709,8 +716,11 @@ tumbleweed and debian13 on Cinqcent (`--ram`, thrown away after).
   serial, path, booted, origin, has_etc), `boot_loader` (`loader.1`),
   `boot_links`, `entries` (each BLS file's title, version, linux, initrd,
   options, `ostree=` and the deployment it leads to), `prepare_root`
-  (effective `composefs` and `readonly`, `/etc`'s file over `/usr/lib`'s,
-  and which files there were), `repo` (`mode`, `sysroot_readonly`,
+  (effective `composefs` and `readonly`, and which files there were:
+  `/etc`'s file, when there is one, replaces `/usr/lib`'s whole, since
+  ostree's `otcore_load_config` loads both into one GKeyFile and loading
+  clears it first; a key the effective file leaves out is null, ostree's
+  built-in default, never `/usr/lib`'s value), `repo` (`mode`, `sysroot_readonly`,
   `sysroot_bootloader`, `ex_fsverity` as an object or null),
   `bootupd_state`, `grubenv` (`boot_success`, `boot_counter`,
   `next_entry`) and `image` (from `bootc status --json`: image, transport,

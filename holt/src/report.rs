@@ -1050,6 +1050,27 @@ pub fn backup_sources(mounts: &[&Mount], device: &dyn Fn(&Mount) -> Option<Strin
     out.into_values().collect()
 }
 
+/// The fstab entries backup_sources has no path for: each one a running
+/// system mounts (a filesystem, not swap, `noauto`, a bind or a pseudo
+/// filesystem) whose mount point no source took, as `FILE (SPEC -> DEVICE)`.
+/// On an ostree system each is a mount that stays at its running path (or a
+/// filesystem that isn't mounted), so the backup's tree isn't fstab's.
+pub fn unmatched_fstab(sources: &[BackupSource], fstab: &[(&mounts::FstabEntry, Option<String>)]) -> Vec<String> {
+    let trim = |p: &str| if p.len() > 1 { p.trim_end_matches('/').to_string() } else { p.to_string() };
+    fstab
+        .iter()
+        .filter(|(e, _)| {
+            let opts: Vec<&str> = e.options.split(',').collect();
+            e.file.starts_with('/')
+                && e.vfstype != "swap"
+                && !mounts::PSEUDO.contains(&e.vfstype.as_str())
+                && !opts.iter().any(|o| matches!(*o, "noauto" | "bind" | "rbind"))
+                && !sources.iter().any(|s| s.path == trim(&e.file))
+        })
+        .map(|(e, r)| format!("{} ({} -> {})", e.file, e.spec, r.as_deref().unwrap_or("unresolved")))
+        .collect()
+}
+
 /// The stacking of devices as a tree, for a person to read: keys describe a
 /// device, values hold what sits on it.
 fn topology(ctx: &Ctx, sys: &Sys) -> Value {
@@ -1192,6 +1213,26 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     let fstab_resolved: Vec<(&mounts::FstabEntry, Option<String>)> = fstab_entries.iter().flatten().map(|e| (e, ctx.resolve(sys, &e.spec))).collect();
     let sources = backup_sources(&layout_mounts, &mount_dev, &fstab_resolved, ostree);
     let physical_root = sources.iter().find(|s| s.path == "/").map(|s| s.from.clone());
+    if ostree {
+        // The backup tree is fstab's only where every mount matched its entry
+        // (docs/design/bazzite.md, "One tree convention"); say where not, now
+        // rather than at restore.
+        let unmatched = unmatched_fstab(&sources, &fstab_resolved);
+        if !unmatched.is_empty() {
+            sys.warn(format!(
+                "ostree: no running mount matched these fstab entries by device and subvol=: {}; backup_sources keeps such mounts at their running paths, which is not the tree load restores from fstab",
+                unmatched.join(", ")
+            ));
+        }
+        if physical_root.is_none() {
+            let why = match &fstab_entries {
+                None => "/etc/fstab could not be read",
+                Some(f) if !f.iter().any(|e| e.file == "/") => "/etc/fstab has no `/`",
+                Some(_) => "no running mount matched fstab's `/`",
+            };
+            sys.warn(format!("ostree: {why}, so backup_sources has no `/`, storage.physical_root is null and boot.ostree read {}", crate::ostree::SYSROOT));
+        }
+    }
     let crypttab: Value = match sys.read("/etc/crypttab") {
         Some(t) => Value::Arr(mounts::parse_crypttab(&t).iter().map(|e| e.to_json(ctx.resolve(sys, &e.device).as_deref())).collect()),
         None => Value::Null,

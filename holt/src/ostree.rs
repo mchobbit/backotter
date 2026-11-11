@@ -193,23 +193,21 @@ pub fn json(sys: &Sys, phys: &str) -> Value {
         }
     }
 
-    // composefs and the read-only sysroot: /etc's file overrides /usr/lib's.
+    // composefs and the read-only sysroot.  ostree (otcore_load_config)
+    // loads each file into one GKeyFile, and loading clears it first, so
+    // /etc's file, when there is one, replaces /usr/lib's whole: no key falls
+    // back to /usr/lib's.  A key the effective file leaves out is null
+    // (ostree's built-in default).
     let mut prepare = Obj::new();
-    let (mut composefs, mut readonly) = (None, None);
+    let mut effective = Vec::new();
     let mut files = Vec::new();
     for f in ["/usr/lib/ostree/prepare-root.conf", "/etc/ostree/prepare-root.conf"] {
         let Some(t) = sys.read(f) else { continue };
-        let ini = parse_ini(&t);
+        effective = parse_ini(&t);
         files.push(f);
-        if let Some(v) = ini_get(&ini, "composefs", "enabled") {
-            composefs = Some(v.to_string());
-        }
-        if let Some(v) = ini_get(&ini, "sysroot", "readonly") {
-            readonly = Some(v.to_string());
-        }
     }
-    prepare.put("composefs", composefs);
-    prepare.put("readonly", readonly);
+    prepare.put("composefs", ini_get(&effective, "composefs", "enabled"));
+    prepare.put("readonly", ini_get(&effective, "sysroot", "readonly"));
     prepare.put("files", files);
 
     let repo = sys.read(&format!("{phys}/ostree/repo/config")).map(|t| {
@@ -314,5 +312,31 @@ mod tests {
         assert_eq!(resolve(&s, "/sysroot", "/ostree/boot.1/default/bb/2"), None);
         assert_eq!(resolve(&s, "/sysroot", "/loop/x"), None);
         assert_eq!(resolve(&s, "/sysroot", "/").as_deref(), Some("/"));
+    }
+
+    /// /etc's prepare-root.conf replaces /usr/lib's whole, as ostree's
+    /// GKeyFile loading does: no key falls back to /usr/lib's.
+    #[test]
+    fn prepare_root_last_file_wins() {
+        let pr = |usr: Option<&str>, etc: Option<&str>| {
+            let t = Tree::new("ostree-prepare-root");
+            t.dir("/sysroot/ostree");
+            if let Some(u) = usr {
+                t.file("/usr/lib/ostree/prepare-root.conf", u);
+            }
+            if let Some(e) = etc {
+                t.file("/etc/ostree/prepare-root.conf", e);
+            }
+            let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+            let v = json(&s, "/sysroot");
+            let g = |k: &str| v.at(&["prepare_root", k]).and_then(Value::as_str).map(str::to_string);
+            (g("composefs"), g("readonly"), v.at(&["prepare_root", "files"]).and_then(Value::as_array).map_or(0, |a| a.len()))
+        };
+        let o = |s: &str| Some(s.to_string());
+        assert_eq!(pr(Some("[composefs]\nenabled=yes\n[sysroot]\nreadonly=true\n"), None), (o("yes"), o("true"), 1));
+        assert_eq!(pr(Some("[composefs]\nenabled=yes\n[sysroot]\nreadonly=true\n"), Some("[composefs]\nenabled=verity\n")), (o("verity"), None, 2));
+        assert_eq!(pr(Some("[composefs]\nenabled=verity\n"), Some("[sysroot]\nreadonly=true\n")), (None, o("true"), 2));
+        assert_eq!(pr(Some("[composefs]\nenabled=signed\n"), Some("")), (None, None, 2));
+        assert_eq!(pr(None, None), (None, None, 0));
     }
 }

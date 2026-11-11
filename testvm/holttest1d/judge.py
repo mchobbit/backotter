@@ -410,6 +410,9 @@ MIB = 1 << 20
 # (docs/design/layload.md's fitting section): one of these filesystems, plain,
 # inside LUKS, or holding LVM; btrfs on one device only.  Anything else is
 # refused, so a dump that shows it means the run should never have got here.
+# A field a dump doesn't have, as the comparison prints it (and a fit's WANT
+# names one that must be gone).
+ABSENT = "<absent>"
 FIT_FS = ("ext2", "ext3", "ext4", "xfs", "btrfs", "f2fs", "jfs", "nilfs2")
 # The numbers a mkfs picks from the size it is given, which a fit therefore
 # changes.  Everything that makes up the filesystem's identity (its UUID,
@@ -510,10 +513,18 @@ def fit_plan(src, delta, pct):
                 amount = min(amount, _round(bytes_big * pct // 100, MIB, False))
         else:
             amount = 0
+        moved = {j for j, p in parts if (_int(p.get("start_lba")) or 0) > (_int(big[1].get("start_lba")) or 0)}
+        if amount:
+            # A filesystem's BPB that records a first sector other than its
+            # partition's start (or 0) isn't one load can move (fit.rs).
+            for j, p in parts:
+                hs = _int((p.get("content") or {}).get("hidden_sectors"))
+                if j in moved and hs not in (None, 0, _int(p.get("start_lba"))):
+                    plan["problems"].append(f"disk {who}: {p.get('name')} would have to move, and its filesystem records "
+                                            f"sector {hs} as its first, which load refuses")
         plan["disks"][i] = {
             "disk": who, "ss": ss, "amount": amount, "big": big[0], "name": tied[0], "table": True,
-            "bytes": bytes_big, "holds": (big[1].get("content") or {}).get("type") or "-",
-            "moved": {j for j, p in parts if (_int(p.get("start_lba")) or 0) > (_int(big[1].get("start_lba")) or 0)}}
+            "bytes": bytes_big, "holds": (big[1].get("content") or {}).get("type") or "-", "moved": moved}
         if amount:
             fit_stack(plan, st, big[1], amount, who)
     return plan
@@ -586,7 +597,7 @@ def fit_vg(plan, st, pv_content, holder, amount, who):
     used = sum(_int(s.get("extent_count")) or 0 for lv in lvs for s in lv.get("segments") or [])
     free = pe_count - used
     lost = pe_count - new_count
-    shrink, lv = 0, None
+    shrink, lv, need = 0, None, 0
     if lost > free:
         # The largest LV gives up the rest, and must be one load can remake.
         big = max(lvs, key=lambda x: _int(x.get("size_bytes")) or 0, default=None)
@@ -598,13 +609,108 @@ def fit_vg(plan, st, pv_content, holder, amount, who):
         if any((s.get("type") or "") != "striped" or (_int(s.get("stripe_count")) or 1) != 1 for s in segs):
             plan["problems"].append(f"disk {who}: LV {big.get('name')} isn't linear, which load refuses to shrink")
             return
-        shrink = (lost - free) * extent
+        need = lost - free
+        shrink = need * extent
         lv = lvs.index(big)
         dm = _dm_of(st, lambda m: m.get("target") == "lvm" and m.get("vg") == vg.get("name") and m.get("lv") == big.get("name"))
         if dm is not None:
             plan["dm"][dm] = -shrink
+    segments = {}
+    if lost > 0:
+        segments = fit_segments(plan, lvs, pe_count, lost, lv, need, f"disk {who}: volume group {vg.get('name')}")
     plan["vgs"][v] = {"amount": amount, "extent": extent, "dev_size": dev_size + amount,
-                      "pe_count": new_count, "lv": lv, "shrink": shrink}
+                      "pe_count": new_count, "lv": lv, "shrink": shrink, "segments": segments}
+
+
+def _stripe_runs(seg):
+    """[(pv, first physical extent, extents)] of segment SEG, one per stripe."""
+    st = seg.get("stripes") or []
+    n = max(_int(seg.get("stripe_count")) or 1, 1)
+    count = _int(seg.get("extent_count")) or 0
+    return [(st[2 * k], _int(st[2 * k + 1]), count // n) for k in range(n)
+            if 2 * k + 1 < len(st) and _int(st[2 * k + 1]) is not None]
+
+
+def _below(runs, x):
+    """How many of RUNS' extents lie below extent X."""
+    return sum(min(n, max(0, x - s)) for s, n in runs)
+
+
+def _mergeable(a, b):
+    """Whether LVM keeps segments A and B (in that logical order) as one: of
+    one type and stripe set, and next to each other in both logical and
+    physical extents on each PV (lv_merge_segments)."""
+    if a.get("type") != b.get("type") or a.get("type") != "striped":
+        return False
+    rest = lambda x: {k: v for k, v in x.items() if k not in ("start_extent", "extent_count", "stripes")}
+    if rest(a) != rest(b):
+        return False
+    if (_int(a.get("start_extent")) or 0) + (_int(a.get("extent_count")) or 0) != _int(b.get("start_extent")):
+        return False
+    ra, rb = _stripe_runs(a), _stripe_runs(b)
+    return len(ra) == len(rb) and len(ra) > 0 and all(
+        pa == pb and sa + na == sb for (pa, sa, na), (pb, sb, _) in zip(ra, rb))
+
+
+def fit_segments(plan, lvs, pe_count, lost, lv, need, who):
+    """Every LV's segments once the fit drops LOST extents from the PV, as
+    load drops them (holt/src/load/fit.rs resize_vg and rewrite_lvs): the
+    highest free extents, or every free one and NEED from the logical end of
+    LV (the index of the one that shrinks); every extent above a dropped one
+    moves down by as many as were dropped below it; then segments made
+    adjacent, in logical and physical extents on the same PV, are one, as
+    LVM merges them.  {LV index: segments}, for the LVs whose segments change."""
+    used = sorted((s, n) for x in lvs for seg in x.get("segments") or [] for _, s, n in _stripe_runs(seg))
+    free, at = [], 0
+    for s, n in used:
+        if s > at:
+            free.append((at, s - at))
+        at = max(at, s + n)
+    if at < pe_count:
+        free.append((at, pe_count - at))
+    if lv is None:
+        gone, left = [], lost
+        for s, n in reversed(free):
+            take = min(left, n)
+            if take:
+                gone.append((s + n - take, take))
+                left -= take
+    else:
+        gone, left = list(free), need
+        for seg in sorted(lvs[lv].get("segments") or [], key=lambda x: -(_int(x.get("start_extent")) or 0)):
+            for _, s, n in _stripe_runs(seg):
+                take = min(left, n)
+                if take:
+                    gone.append((s + n - take, take))
+                    left -= take
+    gone.sort()
+    out = {}
+    for i, x in enumerate(lvs):
+        segs = json.loads(json.dumps(x.get("segments") or []))
+        left = need if i == lv else 0
+        for seg in sorted(segs, key=lambda y: -(_int(y.get("start_extent")) or 0)):
+            n = _int(seg.get("extent_count")) or 0
+            take = min(left, n)
+            left -= take
+            if take:
+                seg["extent_count"] = n - take
+        segs = [y for y in segs if (_int(y.get("extent_count")) or 0) > 0]
+        for seg in segs:
+            st = seg.get("stripes")
+            for k in range(1, len(st or []), 2):
+                if _int(st[k]) is not None:
+                    st[k] -= _below(gone, st[k])
+        merged = []
+        for seg in segs:
+            if merged and _mergeable(merged[-1], seg):
+                merged[-1]["extent_count"] += seg["extent_count"]
+            else:
+                merged.append(seg)
+        if merged != (x.get("segments") or []):
+            if any((_int(y.get("stripe_count")) or 1) != 1 for y in x.get("segments") or []):
+                plan["problems"].append(f"{who}: LV {x.get('name')} is striped and would have to move, which load refuses")
+            out[i] = merged
+    return out
 
 
 def fit_fs_expect(want, flat, at, container, amount):
@@ -667,8 +773,11 @@ def fit_expect(plan, flat):
             step(q + "end_lba", amount // ss)
             step(q + "start_bytes", amount)
             # A FAT records its start (mkfs.fat's hidden sectors), and load
-            # makes a moved one where it now starts.
-            if flat.get(q + "content.type") == "vfat":
+            # makes a moved one where it now starts: only one that recorded
+            # its own start (0 stays 0; anything else, load refuses to move,
+            # fit_plan's problem).  holt/src/load/fit.rs
+            hs = _int(flat.get(q + "content.hidden_sectors"))
+            if hs is not None and hs != 0 and hs == _int(flat.get(q + "start_lba")):
                 step(q + "content.hidden_sectors", amount // ss)
     for i, amount in plan["dm"].items():
         at = f"storage.dm_devices.{i}."
@@ -680,6 +789,16 @@ def fit_expect(plan, flat):
         want[at + "physical_volumes.0.pe_count"] = g["pe_count"]
         if g["shrink"]:
             step(at + f"logical_volumes.{g['lv']}.size_bytes", -g["shrink"])
+        # Each LV's segments as the fit leaves them: a segment that's gone
+        # (merged with the one before it, or the shrink's) must be absent.
+        for li, segs in g.get("segments", {}).items():
+            sp = at + f"logical_volumes.{li}.segments"
+            pred = {}
+            flatten(segs, sp, pred)
+            for k in flat:
+                if k.startswith(sp + "."):
+                    want[k] = ABSENT
+            want.update(pred)
     return want
 
 
@@ -716,15 +835,8 @@ def fit_may_differ(k, vb, plan, flat, want):
             if field in ("size_bytes", "blocks") and at + field not in want:
                 return "the source's filesystem was short of its container's end: its new size is its mkfs's"
         return None
-    m = re.match(r"^storage\.lvm\.volume_groups\.(\d+)\.logical_volumes\.(\d+)\.", k)
-    if m and int(m.group(1)) in plan["vgs"]:
-        g, rest = plan["vgs"][int(m.group(1))], k[m.end():]
-        if not g["shrink"]:
-            return None
-        if int(m.group(2)) == g["lv"] and re.fullmatch(r"segments\.\d+\.extent_count", rest):
-            return "the shrunk LV's segments, by what it gave up (its size is compared)"
-        if re.fullmatch(r"segments\.\d+\.stripes\.1", rest):
-            return "the extents left were renumbered downward in order, keeping pe_start"
+    # An LV's segments, under a fit, are WANT's (fit_segments): where the
+    # extents left were renumbered, merged, or the shrink taken from.
     return None
 
 
@@ -803,7 +915,7 @@ def main():
         if not why and grow:
             why = grown(k, va, vb, grow, a)
         if not why and plan is not None:
-            if k in want and vb == want[k]:
+            if k in want and b.get(k, ABSENT) == want[k]:
                 why = "the fit's own: the size judge.py works out for it (checked below)"
             else:
                 why = fit_may_differ(k, vb, plan, a, want)
@@ -862,7 +974,7 @@ def main():
         for p in plan["problems"]:
             real.append("fit:plan")
             print(f"DIFF fit:plan: {p}")
-        missed = [k for k in sorted(want) if b.get(k, "<absent>") != want[k]]
+        missed = [k for k in sorted(want) if b.get(k, ABSENT) != want[k]]
         for k in missed:
             real.append(f"fit:{k}")
             print(f"DIFF fit:{k}: {json.dumps(a.get(k, '<absent>'))} should have been fitted to "

@@ -465,6 +465,138 @@ class Fit(unittest.TestCase):
         vg["physical_volumes"][0]["pe_count"] += 256
         self.good(src, dst, "--fit", str(GIB), "--fit-pct", "10")
 
+    # LVM with free extents scattered over the PV (BackShot2's lv_split and
+    # lv_resize): load drops the highest free extents first (or all of them,
+    # and the rest from the largest LV's logical end), moves every extent
+    # above a dropped one down, and LVM merges what that makes adjacent.
+
+    @staticmethod
+    def scattered(root, swap_at):
+        """lvm_guest with root's and swap's segments [(extents, first PE)]."""
+        src = lvm_guest()
+        vg = src["storage"]["lvm"]["volume_groups"][0]
+        for lv, segs in zip(vg["logical_volumes"], (swap_at, root)):
+            le = 0
+            lv["segments"] = []
+            for n, pe in segs:
+                lv["segments"].append({"start_extent": le, "extent_count": n, "type": "striped",
+                                       "stripe_count": 1, "stripes": ["pv0", pe]})
+                le += n
+            lv["size_bytes"] = le * 4 * MIB
+        dm_root, dm_swap = src["storage"]["dm_devices"]
+        dm_root["size_bytes"] = vg["logical_volumes"][1]["size_bytes"]
+        dm_root["content"] = xfs(dm_root["size_bytes"], dm_root["content"]["uuid"])
+        dm_swap["size_bytes"] = vg["logical_volumes"][0]["size_bytes"]
+        dm_swap["content"] = swap(dm_swap["size_bytes"])
+        return src
+
+    @staticmethod
+    def fitted(src, amount, extents):
+        """SRC's restored dump with the partition, PV and VG fitted by
+        AMOUNT bytes (EXTENTS of them), and no LV touched yet."""
+        dst = copy.deepcopy(src)
+        x = shrink_disk(dst, 0, amount)
+        p = fit_part(x, 2, amount)
+        p["content"]["device_size"] += amount
+        vg = dst["storage"]["lvm"]["volume_groups"][0]
+        vg["physical_volumes"][0]["dev_size_bytes"] += amount
+        vg["physical_volumes"][0]["pe_count"] += extents
+        return dst, vg
+
+    def test_lvm_scattered_free_covers_the_shrink(self):
+        """Free [0,100), [1100,1300), [3710,3839): 256 extents go, 129 from the
+        top run and 127 from the top of [1100,1300); what's above moves down."""
+        src = self.scattered(root=[(1000, 100), (2000, 1300)], swap_at=[(410, 3300)])
+        dst, vg = self.fitted(src, -GIB, -256)
+        vg["logical_volumes"][1]["segments"][1]["stripes"][1] = 1173
+        vg["logical_volumes"][0]["segments"][0]["stripes"][1] = 3173
+        self.good(src, dst, "--fit", str(-GIB), "--fit-pct", "10")
+        # A move by the wrong amount, or none, is a DIFF.
+        vg["logical_volumes"][0]["segments"][0]["stripes"][1] = 3300 - 256
+        out = self.bad(src, dst, "--fit", str(-GIB), "--fit-pct", "10")
+        self.assertIn("DIFF fit:storage.lvm.volume_groups.0.logical_volumes.0.segments.0.stripes.1", out)
+        vg["logical_volumes"][0]["segments"][0]["stripes"][1] = 3173
+        vg["logical_volumes"][1]["segments"][1]["stripes"][1] = 1300
+        out = self.bad(src, dst, "--fit", str(-GIB), "--fit-pct", "10")
+        self.assertIn("DIFF fit:storage.lvm.volume_groups.0.logical_volumes.1.segments.1.stripes.1", out)
+
+    def test_lvm_scattered_free_and_a_shrink_merge(self):
+        """512 extents to go, 429 free: every free one and 83 from root's
+        logical end.  Root's two segments end up adjacent, so they're one."""
+        src = self.scattered(root=[(1000, 100), (2000, 1300)], swap_at=[(410, 3300)])
+        dst, vg = self.fitted(src, -2 * GIB, -512)
+        root = vg["logical_volumes"][1]
+        root["segments"] = [{"start_extent": 0, "extent_count": 2917, "type": "striped",
+                             "stripe_count": 1, "stripes": ["pv0", 0]}]
+        root["size_bytes"] -= 83 * 4 * MIB
+        vg["logical_volumes"][0]["segments"][0]["stripes"][1] = 2917
+        dm = dst["storage"]["dm_devices"][0]
+        dm["size_bytes"] -= 83 * 4 * MIB
+        refit_fs(dm["content"], -83 * 4 * MIB)
+        self.good(src, dst, "--fit", str(-2 * GIB), "--fit-pct", "20")
+        # Left as two segments (LVM merges them), it's a DIFF.
+        root["segments"] = [{"start_extent": 0, "extent_count": 1000, "type": "striped",
+                             "stripe_count": 1, "stripes": ["pv0", 0]},
+                            {"start_extent": 1000, "extent_count": 1917, "type": "striped",
+                             "stripe_count": 1, "stripes": ["pv0", 1000]}]
+        out = self.bad(src, dst, "--fit", str(-2 * GIB), "--fit-pct", "20")
+        self.assertIn("DIFF fit:storage.lvm.volume_groups.0.logical_volumes.1.segments.0.extent_count", out)
+        self.assertIn("DIFF fit:storage.lvm.volume_groups.0.logical_volumes.1.segments.1.extent_count", out)
+
+    def test_lvm_dropped_gap_merges_segments(self):
+        """Swap in two pieces with 200 free extents between them: a fit that
+        drops every free extent makes them adjacent, and LVM makes them one
+        (alpine324-lvm-2293ff504ed4970e); no LV shrinks."""
+        src = self.scattered(root=[(3000, 0)], swap_at=[(200, 3000), (210, 3400)])
+        dst, vg = self.fitted(src, -1716 * MIB, -429)
+        sw = vg["logical_volumes"][0]
+        sw["segments"] = [{"start_extent": 0, "extent_count": 410, "type": "striped",
+                           "stripe_count": 1, "stripes": ["pv0", 3000]}]
+        self.good(src, dst, "--fit", str(-1716 * MIB), "--fit-pct", "20")
+        # Unmerged, but moved: a DIFF (the second segment should be gone).
+        sw["segments"] = [{"start_extent": 0, "extent_count": 200, "type": "striped",
+                           "stripe_count": 1, "stripes": ["pv0", 3000]},
+                          {"start_extent": 200, "extent_count": 210, "type": "striped",
+                           "stripe_count": 1, "stripes": ["pv0", 3200]}]
+        out = self.bad(src, dst, "--fit", str(-1716 * MIB), "--fit-pct", "20")
+        self.assertIn("DIFF fit:storage.lvm.volume_groups.0.logical_volumes.0.segments.1.start_extent", out)
+
+    # A FAT after the fitted partition: its hidden sectors follow its start
+    # only where they recorded it (holt/src/load/fit.rs); 0 stays 0.
+
+    def fat_after(self, hidden):
+        src = gpt_guest()
+        x = src["storage"]["disks"][0]
+        p = x["partitions"][2]
+        p["content"] = {"type": "vfat", "usage": "filesystem", "uuid": "ABCD-0001", "label": None,
+                        "version": "FAT32", "hidden_sectors": p["start_lba"] if hidden is None else hidden,
+                        "total_sectors": p["sectors"]}
+        dst = copy.deepcopy(src)
+        y = shrink_disk(dst, 0, -GIB)
+        refit_fs(fit_part(y, 1, -GIB)["content"], -GIB)
+        return src, dst, y["partitions"][2]
+
+    def test_moved_fat_hidden_sectors(self):
+        src, dst, q = self.fat_after(None)
+        q["content"]["hidden_sectors"] = q["start_lba"]
+        self.good(src, dst, "--fit", str(-GIB), "--fit-pct", "10")
+        # Left at the old start: a DIFF.
+        q["content"]["hidden_sectors"] = src["storage"]["disks"][0]["partitions"][2]["start_lba"]
+        out = self.bad(src, dst, "--fit", str(-GIB), "--fit-pct", "10")
+        self.assertIn("DIFF fit:storage.disks.0.partitions.2.content.hidden_sectors", out)
+
+    def test_moved_fat_hidden_sectors_zero_stays(self):
+        src, dst, q = self.fat_after(0)
+        self.assertEqual(q["content"]["hidden_sectors"], 0)
+        self.good(src, dst, "--fit", str(-GIB), "--fit-pct", "10")
+        q["content"]["hidden_sectors"] = q["start_lba"]
+        self.bad(src, dst, "--fit", str(-GIB), "--fit-pct", "10")
+
+    def test_moved_fat_other_hidden_sectors_refused(self):
+        src, dst, _ = self.fat_after(63)
+        out = self.bad(src, dst, "--fit", str(-GIB), "--fit-pct", "10")
+        self.assertIn("records sector 63 as its first, which load refuses", out)
+
     # LUKS on a plain partition: what is inside follows, the header does not.
 
     def test_luks_shrink(self):

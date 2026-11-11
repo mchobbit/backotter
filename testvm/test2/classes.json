@@ -121,6 +121,7 @@
       "img": ["stick/boot-test.py", "stick/*/checks.sh", "stick/*/manifest.sh", "stick/*/config-checks.sh"]
     },
     "unmapped_ignore": ["**/*.md", "testvm/test2/**", "testvm/compare/affected.sh", "testvm/compare/wear-report.py",
+                        "testvm/compare/exact-rt.sh", "testvm/compare/exact-manifest.py", "testvm/holttest1d/prep/tumbleweed-snapper.sh",
                         "testvm/holttest1d/make-*.sh", "testvm/holttest1d/build-holt.sh",
                         "testvm/holttest1d/ht1-debug.sh", "testvm/holttest1d/ht1-lib-test.sh", "testvm/holttest1d/judge-test.py",
                         "testvm/vm-update", "testvm/vm-chroot", "testvm/compare/wear-setup.sh",

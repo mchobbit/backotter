@@ -1,7 +1,7 @@
 """A synthetic world for P2's tests (U2.2-U2.6): a fixture checkout (git), BKO_GIT's three
 forks, both hosts' facts and a seeded ledger.  Nothing here touches a host or a default root.
 
-    w = World(tmpdir)            the checkout: 41 SticTest checks, 50 HoltTest sources and 9
+    w = World(tmpdir)            the checkout: 42 SticTest checks, 50 HoltTest sources and 9
                                  variants, 13 gate cells, 52 guests, 7 images, with the real classes.json,
                                  estimates.tsv, drive.py, affected.sh and ram-sizes.tsv
     w.facts()                    {host: facts}, as facts_host.py gives them
@@ -40,7 +40,7 @@ GUESTS = ("aerynos alpine324 alpinebsd arch artix-dinit artix-s6 cachyos debian1
           "rocky10-raid5 sculpt2610 tumbleweed ubuntu24 ubuntu26-raid ubuntu26-uefi ubuntu26-zfs ubuntu26-zfsmirror "
           "void-musl zorin18 endeavouros endeavouros-grub manjaro ubuntu26-luks chimera").split()
 UEFI = set("aerynos alpinebsd debian13-stack fedora44-raid fedora44-uefi freebsd15-geli omarchy pop24 ubuntu26-raid "
-           "ubuntu26-uefi ubuntu26-zfs endeavouros endeavouros-grub manjaro ubuntu26-luks".split())
+           "ubuntu26-uefi ubuntu26-zfs endeavouros endeavouros-grub manjaro ubuntu26-luks kinoite44".split())
 PLATS = words.PLATS
 NEW_GUESTS = set("endeavouros endeavouros-grub manjaro ubuntu26-luks chimera fedora44-raid ubuntu26-raid rocky10-raid5 freebsd15-mirror "
                  "omnios58-mirror".split())
@@ -430,6 +430,11 @@ class World:
                        "done_exit": 0, "holt_commit": c, "bko_bin_info": "fixture"}
         return out
 
+    def fact_guests(self):
+        """The guests the hosts' facts name: GUESTS, and a SticTest check's guest that isn't one
+        yet (kinoite44 until its Test2 registration, docs/design/bazzite.md B7)."""
+        return GUESTS + [g for g in self.stic if g not in GUESTS]
+
     @staticmethod
     def fp(gen, holt="h1", stic="s1", fine="f1", holt_was=(), stic_was=(), rules="r"):
         """A guest's fingerprint record, as facts_host.py gives it, for generation number GEN of the guest."""
@@ -456,7 +461,7 @@ class World:
                  "holt_bins": {},
                  "guests": {g: {"generation": H(f"gen {g} {(gens or {}).get(g, 1)}"), "updates": 1,
                                 "files": {"vm-run-options": H("opts " + g)},
-                                "firmware": "uefi" if g in UEFI else "bios"} for g in GUESTS},
+                                "firmware": "uefi" if g in UEFI else "bios"} for g in self.fact_guests()},
                  "rescuers": {"images": {"rescuer.qcow2": {"sha256": H("rescuer " + rescuer)},
                                          "openbsd8-newduid.qcow2": {"sha256": H("ob")},
                                          "dragonfly6-newfsid.qcow2": {"sha256": H("df")},

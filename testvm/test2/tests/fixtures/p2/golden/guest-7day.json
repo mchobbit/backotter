@@ -1581,7 +1581,9 @@
   "uncommitted": 0,
   "unreachable": []
  },
- "notes": [],
+ "notes": [
+  "not in any spec: kinoite44"
+ ],
  "set": null,
  "totals": {
   "cells": 52,

@@ -147,6 +147,17 @@
   "sujournal": "/.sujournal belongs to the file system (newfs -j); its flags are tested on a copy",
   "zfs-per-file-options": "no ZFS on hardenedbsd15 (UFS root; freebsd15 covers ZFS)"
  },
+ "kinoite44": {
+  "[btrfs] birth times (statx btime on btrfs)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "[btrfs] ostree hardlinked symlink objects (repository + both deployments)": "both tools relink regular files only (restic-bko's restorer, rustic-bko's hardlink_key), so each of ostree's hardlinked symlink objects comes back as its own symlink with the same target, mode, owner, times and label; accepted (docs/design/bazzite.md): composefs and ostree fsck read a symlink's target and xattrs, not its link count",
+  "[btrfs] project IDs (and P inheritance)": "btrfs here takes no project ID (chattr -p refused: btrfs has none); not applicable",
+  "[btrfs] restore onto fstab's compress=zstd:1 (as bko-holt load mounts /)": "btrfs itself marks some files FS_NOCOMP_FL (0x400) when they are written under compress= (Linux 6.12 does for tiny files and xz data; the guest's 7.3 didn't); not a tool's doing, and harmless",
+  "[ext4] birth times (statx btime on ext4)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "[ext4] project IDs (and P inheritance)": "ext4 here takes no project ID (chattr -p refused: no project feature, as /boot); not applicable",
+  "[vfat] birth times (statx btime on vfat)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime); FAT's creation time is Linux's ctime, which no one sets",
+  "[vfat] metadata of the directories above the backed-up path": "both tools' snapshots, 4 directions: up1, up1/up2 and /mnt/src restored exactly (owner 1234:5678, 0710/1755, label, xattrs, ACL, times); FAT's root directory (.) has no times (0): restored as a dir...",
+  "[vfat] security.selinux (the mount's label) on a FAT restore target": "not settable on FAT: warnings, exit 0, as documented: restic->restic 1 warnings (exit 0), rustic->rustic 1 warnings (exit 0), restic->rustic 1 warnings (exit 0), rustic->restic 1 warnings (exit 0)"
+ },
  "mint22": {
   "backup leaves the source unchanged (atimes)": "f2fs: readlink(2) moves a symlink's atime (no O_NOATIME for it): atime (symlinks) 5 e.g. 'atime-symlink', 'symlink', 'symlink-abs' ; f2fs+: readlink(2) moves a symlink's atime (no O_NOATIME for it)...",
   "birth times": "ext4 /boot and f2fs inode_crtime keep one, Linux can't set it (BACKOTTER.md unix.birthtime: not on Linux)",

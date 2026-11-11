@@ -1,2 +1,3 @@
 GuestTest2: nothing due (52 current); base BASE
+note: not in any spec: kinoite44
 sweep: SweepTest2 never ran, due now

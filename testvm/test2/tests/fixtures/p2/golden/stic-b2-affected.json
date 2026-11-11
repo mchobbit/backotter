@@ -755,6 +755,38 @@
    "via": null
   },
   {
+   "cell": "stic:kinoite44",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 1.0,
+    "src": "history:1",
+    "wall_s": 100
+   },
+   "host": "any",
+   "key": "fc5729cdb45f73f817bafd5f2fa8734bf97abd4b6ab58b6522722decda98572b",
+   "keys": {
+    "chopin": "fc5729cdb45f73f817bafd5f2fa8734bf97abd4b6ab58b6522722decda98572b",
+    "cinqcent": "fc5729cdb45f73f817bafd5f2fa8734bf97abd4b6ab58b6522722decda98572b"
+   },
+   "klass": null,
+   "last_pass": {
+    "host": "chopin",
+    "id": "chopin-20261107T000243Z-000000a3",
+    "key": "704e58e153d1afcc33e36218995043dbd688a970a6bf2a8ef2dd2e4d29333649",
+    "t": "2026-11-07T00:02:43Z"
+   },
+   "part": null,
+   "reasons": [
+    "affected.sh says freebsd"
+   ],
+   "rep": null,
+   "rule": "carry:affected-v1",
+   "running": null,
+   "status": "carried",
+   "via": "chopin-20261107T000243Z-000000a3"
+  },
+  {
    "cell": "stic:mint22",
    "differ": [],
    "est": {
@@ -772,9 +804,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000243Z-000000a3",
+    "id": "chopin-20261107T000244Z-000000a4",
     "key": "b2d94f88f8a0cf6c8e98e446daa41a89215fced8b8d2fda561b236949ab4e14c",
-    "t": "2026-11-07T00:02:43Z"
+    "t": "2026-11-07T00:02:44Z"
    },
    "part": null,
    "reasons": [
@@ -784,7 +816,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000243Z-000000a3"
+   "via": "chopin-20261107T000244Z-000000a4"
   },
   {
    "cell": "stic:mx25",
@@ -804,9 +836,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000244Z-000000a4",
+    "id": "chopin-20261107T000245Z-000000a5",
     "key": "ec4a86c1db53e4f084a35baa4339fb0453b402098fb881fbfedfa803803bf84c",
-    "t": "2026-11-07T00:02:44Z"
+    "t": "2026-11-07T00:02:45Z"
    },
    "part": null,
    "reasons": [
@@ -816,7 +848,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000244Z-000000a4"
+   "via": "chopin-20261107T000245Z-000000a5"
   },
   {
    "cell": "stic:netbsd11",
@@ -836,9 +868,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000245Z-000000a5",
+    "id": "chopin-20261107T000246Z-000000a6",
     "key": "afeeabaf713adb72ece6b5b99341c4868485a420bc7ce433182e95710eb55d2e",
-    "t": "2026-11-07T00:02:45Z"
+    "t": "2026-11-07T00:02:46Z"
    },
    "part": null,
    "reasons": [
@@ -848,7 +880,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000245Z-000000a5"
+   "via": "chopin-20261107T000246Z-000000a6"
   },
   {
    "cell": "stic:nixos2605",
@@ -868,9 +900,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000246Z-000000a6",
+    "id": "chopin-20261107T000247Z-000000a7",
     "key": "d7bdc9eadf2e53d40c8aa9c0efcef682dc035023bc41069c890a273ce4ed18a7",
-    "t": "2026-11-07T00:02:46Z"
+    "t": "2026-11-07T00:02:47Z"
    },
    "part": null,
    "reasons": [
@@ -880,7 +912,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000246Z-000000a6"
+   "via": "chopin-20261107T000247Z-000000a7"
   },
   {
    "cell": "stic:omarchy",
@@ -900,9 +932,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000247Z-000000a7",
+    "id": "chopin-20261107T000248Z-000000a8",
     "key": "faba744e52d95ab9de1c589b3e92aae734636f7bdaf50ca6ebc6953979109f2c",
-    "t": "2026-11-07T00:02:47Z"
+    "t": "2026-11-07T00:02:48Z"
    },
    "part": null,
    "reasons": [
@@ -912,7 +944,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000247Z-000000a7"
+   "via": "chopin-20261107T000248Z-000000a8"
   },
   {
    "cell": "stic:omnios58",
@@ -932,9 +964,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000248Z-000000a8",
+    "id": "chopin-20261107T000249Z-000000a9",
     "key": "be9ff6e15bd6c92f7cb6360c852f775e562a2afb388595dd0f2632a1daf2c716",
-    "t": "2026-11-07T00:02:48Z"
+    "t": "2026-11-07T00:02:49Z"
    },
    "part": null,
    "reasons": [
@@ -944,7 +976,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000248Z-000000a8"
+   "via": "chopin-20261107T000249Z-000000a9"
   },
   {
    "cell": "stic:openbsd8",
@@ -964,9 +996,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000249Z-000000a9",
+    "id": "chopin-20261107T000250Z-000000aa",
     "key": "e96e6ba78768844d4d2de1516c4c51468b093e20d0f14b25e66be7402da42a4d",
-    "t": "2026-11-07T00:02:49Z"
+    "t": "2026-11-07T00:02:50Z"
    },
    "part": null,
    "reasons": [
@@ -976,7 +1008,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000249Z-000000a9"
+   "via": "chopin-20261107T000250Z-000000aa"
   },
   {
    "cell": "stic:pop24",
@@ -996,9 +1028,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000250Z-000000aa",
+    "id": "chopin-20261107T000251Z-000000ab",
     "key": "a40d3953ce2e2ef6454554a27db79f90cd248e0b4dd9f095d37df7224624d554",
-    "t": "2026-11-07T00:02:50Z"
+    "t": "2026-11-07T00:02:51Z"
    },
    "part": null,
    "reasons": [
@@ -1008,7 +1040,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000250Z-000000aa"
+   "via": "chopin-20261107T000251Z-000000ab"
   },
   {
    "cell": "stic:rocky10",
@@ -1028,9 +1060,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000251Z-000000ab",
+    "id": "chopin-20261107T000252Z-000000ac",
     "key": "3a24c729cd0c4e8a6539d48977d4d6d9f753450a6d8fceb5b1948fe43669269b",
-    "t": "2026-11-07T00:02:51Z"
+    "t": "2026-11-07T00:02:52Z"
    },
    "part": null,
    "reasons": [
@@ -1040,7 +1072,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000251Z-000000ab"
+   "via": "chopin-20261107T000252Z-000000ac"
   },
   {
    "cell": "stic:rocky10-lvm",
@@ -1060,9 +1092,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000252Z-000000ac",
+    "id": "chopin-20261107T000253Z-000000ad",
     "key": "e39110190e4a2905bdbd524783f815fc708054dc649f4427887c6c0677ae4fdd",
-    "t": "2026-11-07T00:02:52Z"
+    "t": "2026-11-07T00:02:53Z"
    },
    "part": null,
    "reasons": [
@@ -1072,7 +1104,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000252Z-000000ac"
+   "via": "chopin-20261107T000253Z-000000ad"
   },
   {
    "cell": "stic:sculpt2610",
@@ -1092,9 +1124,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000253Z-000000ad",
+    "id": "chopin-20261107T000254Z-000000ae",
     "key": "7b935c2ff38605f43788aac17b2ae33a9f494c5800b73d30ce2fe0c46090496f",
-    "t": "2026-11-07T00:02:53Z"
+    "t": "2026-11-07T00:02:54Z"
    },
    "part": null,
    "reasons": [
@@ -1104,7 +1136,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000253Z-000000ad"
+   "via": "chopin-20261107T000254Z-000000ae"
   },
   {
    "cell": "stic:tumbleweed",
@@ -1124,9 +1156,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000254Z-000000ae",
+    "id": "chopin-20261107T000255Z-000000af",
     "key": "392c1bc698f7dcec6b94d7d41653105c4a525391c035d6a067b09aea8286005a",
-    "t": "2026-11-07T00:02:54Z"
+    "t": "2026-11-07T00:02:55Z"
    },
    "part": null,
    "reasons": [
@@ -1136,7 +1168,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000254Z-000000ae"
+   "via": "chopin-20261107T000255Z-000000af"
   },
   {
    "cell": "stic:ubuntu24",
@@ -1156,9 +1188,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000255Z-000000af",
+    "id": "chopin-20261107T000256Z-000000b0",
     "key": "02da17928090a302a5230535f0d33c035f14e2b8d0262866dfa00c13f61f79a5",
-    "t": "2026-11-07T00:02:55Z"
+    "t": "2026-11-07T00:02:56Z"
    },
    "part": null,
    "reasons": [
@@ -1168,7 +1200,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000255Z-000000af"
+   "via": "chopin-20261107T000256Z-000000b0"
   },
   {
    "cell": "stic:ubuntu26-uefi",
@@ -1188,9 +1220,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000256Z-000000b0",
+    "id": "chopin-20261107T000257Z-000000b1",
     "key": "d395b01b8aa95cd7ecc73f9bb823128bc6c593954533814c2c087b6913ac135d",
-    "t": "2026-11-07T00:02:56Z"
+    "t": "2026-11-07T00:02:57Z"
    },
    "part": null,
    "reasons": [
@@ -1200,7 +1232,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000256Z-000000b0"
+   "via": "chopin-20261107T000257Z-000000b1"
   },
   {
    "cell": "stic:ubuntu26-zfs",
@@ -1220,9 +1252,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000257Z-000000b1",
+    "id": "chopin-20261107T000258Z-000000b2",
     "key": "35ca839c5669b6ebaf8f755dae90e62593503c9b34daece6013fe20d1ade2514",
-    "t": "2026-11-07T00:02:57Z"
+    "t": "2026-11-07T00:02:58Z"
    },
    "part": null,
    "reasons": [
@@ -1232,7 +1264,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000257Z-000000b1"
+   "via": "chopin-20261107T000258Z-000000b2"
   },
   {
    "cell": "stic:ubuntu26-zfsmirror",
@@ -1252,9 +1284,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000258Z-000000b2",
+    "id": "chopin-20261107T000259Z-000000b3",
     "key": "3a240bdc1b12865a7d5c7469b7b8d3e7eb91084acef2fd285f66c8c506a8ec2f",
-    "t": "2026-11-07T00:02:58Z"
+    "t": "2026-11-07T00:02:59Z"
    },
    "part": null,
    "reasons": [
@@ -1264,7 +1296,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000258Z-000000b2"
+   "via": "chopin-20261107T000259Z-000000b3"
   },
   {
    "cell": "stic:void-musl",
@@ -1284,9 +1316,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000259Z-000000b3",
+    "id": "chopin-20261107T000300Z-000000b4",
     "key": "546d3b9cd1b0325c98761fe694897cd2cd3dd3d370b00a270e62c22985258bac",
-    "t": "2026-11-07T00:02:59Z"
+    "t": "2026-11-07T00:03:00Z"
    },
    "part": null,
    "reasons": [
@@ -1296,7 +1328,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000259Z-000000b3"
+   "via": "chopin-20261107T000300Z-000000b4"
   },
   {
    "cell": "stic:zorin18",
@@ -1316,9 +1348,9 @@
    "klass": null,
    "last_pass": {
     "host": "chopin",
-    "id": "chopin-20261107T000300Z-000000b4",
+    "id": "chopin-20261107T000301Z-000000b5",
     "key": "a3157475354afb16f4835b34a7373401de161174670900f58a61127bf3e1fd48",
-    "t": "2026-11-07T00:03:00Z"
+    "t": "2026-11-07T00:03:01Z"
    },
    "part": null,
    "reasons": [
@@ -1328,7 +1360,7 @@
    "rule": "carry:affected-v1",
    "running": null,
    "status": "carried",
-   "via": "chopin-20261107T000300Z-000000b4"
+   "via": "chopin-20261107T000301Z-000000b5"
   }
  ],
  "classes": [
@@ -1369,7 +1401,7 @@
    "chopin": "2026-11-08T05:00:00Z",
    "cinqcent": "2026-11-08T05:00:00Z"
   },
-  "ledger_rows": 41,
+  "ledger_rows": 42,
   "pulled": {
    "chopin": null,
    "cinqcent": null
@@ -1387,11 +1419,11 @@
   "round": "rel4"
  },
  "totals": {
-  "cells": 41,
+  "cells": 42,
   "counts": {
    "awaiting-canaries": 0,
    "canary-verified": 0,
-   "carried": 33,
+   "carried": 34,
    "class-pending": 4,
    "current": 0,
    "due": 4,

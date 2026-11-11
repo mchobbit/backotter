@@ -61,7 +61,7 @@ class Scenarios(WorldCase):
     """The contract's U2.2 rows, one test each."""
 
     def test_nothing_changed(self):
-        for word, rows, n in (("SticTest2 rel4", self.r_stic, 41), ("HoltTest2", self.r_holt, 59),
+        for word, rows, n in (("SticTest2 rel4", self.r_stic, 42), ("HoltTest2", self.r_holt, 59),
                               ("GateTest2", self.r_gate, 13)):
             p = self.w.plan(word + " plan", rows)
             self.assertEqual(p.totals["due"], 0, word)
@@ -78,7 +78,7 @@ class Scenarios(WorldCase):
             f[h]["sets"]["roundrel4"] = self.w.binset("rel4", rc, only={"linux/rustic-bko": "rel4b"})
         p = self.w.plan("SticTest2 rel4 plan", self.r_stic, facts=f)
         due = {c.cell for c in p.due()}
-        self.assertEqual(len(due), 28)   # 27 Linux checks and sculpt2610
+        self.assertEqual(len(due), 29)   # 28 Linux checks and sculpt2610
         self.assertTrue(all(st(p, c) == ("due", "changed:bin") for c in due))
         self.assertEqual(st(p, "stic:freebsd15"), ("current", None))
         self.assertIn("(rustic", "; ".join(p.cell("stic:debian13").reasons))
@@ -86,7 +86,7 @@ class Scenarios(WorldCase):
     def test_version_only(self):
         f = self.w.facts(round_commits=self.w.forks["c1"], round_tag="rel5")
         p = self.w.plan("SticTest2 rel4 plan", self.r_stic, facts=f)
-        self.assertEqual(by(p), {("carried", "carry:version-only"): 41})
+        self.assertEqual(by(p), {("carried", "carry:version-only"): 42})
         self.assertEqual(p.cell("stic:debian13").via, self.r_stic[[r["cell"] for r in self.r_stic].index("stic:debian13")]["id"])
 
     def test_affected_v1_and_b2_representative(self):
@@ -136,11 +136,11 @@ class Scenarios(WorldCase):
                                                           "omnios58", "haiku6", "sculpt2610", "debian13-stack",
                                                           "omarchy")))
         self.assertTrue(all(c.rule == "canary:plumbing" for c in p.due()))
-        self.assertEqual(len(p.by_status("awaiting-canaries")), 32)
+        self.assertEqual(len(p.by_status("awaiting-canaries")), 33)
         rows = self.r_stic + [self.w.row(p.cell(c), "chopin", plan_=p) for c in can]
         p2 = self.w.plan("SticTest2 rel4 plan", rows, facts=f)
         self.assertEqual(p2.totals["due"], 0)
-        self.assertEqual(len(p2.by_status("canary-verified")), 32)
+        self.assertEqual(len(p2.by_status("canary-verified")), 33)
         # R27: a canary-verified cell may ride along beside a bare run
         f3 = self.w.facts(plumb="p2", gens={"debian13": 2})
         p3 = self.w.plan("SticTest2 rel4 plan", rows, facts=f3)
@@ -152,15 +152,15 @@ class Scenarios(WorldCase):
         p = self.w.plan("SticTest2 rel4 plan", self.r_stic, facts=f)
         self.assertEqual(sum(1 for c in p.due() if c.rule == "canary:host"), 9)
         self.assertEqual(sum(1 for c in p.due() if c.rule == "stale:beside"), 2)
-        self.assertEqual(len(p.by_status("soft-stale")), 30)
+        self.assertEqual(len(p.by_status("soft-stale")), 31)
         self.assertIn("6.12.115->6.12.116", "; ".join(p.by_status("soft-stale")[0].reasons))
         p = self.w.plan("SticTest2 rel4 stale plan", self.r_stic, facts=f)
-        self.assertEqual(sum(1 for c in p.due() if c.rule == "stale"), 32)
+        self.assertEqual(sum(1 for c in p.due() if c.rule == "stale"), 33)
 
     def test_stale_with_names_adds_the_soft_stale_cells(self):
         f = self.w.facts(kernel="6.12.116")
         p = self.w.plan("SticTest2 rel4 debian13 stale plan", self.r_stic, facts=f)
-        self.assertEqual(by(p), {("due", "fresh:names"): 1, ("due", "stale"): 31})
+        self.assertEqual(by(p), {("due", "fresh:names"): 1, ("due", "stale"): 32})
         p = self.w.plan("SticTest2 rel4 debian13 plan", self.r_stic, facts=f)
         self.assertEqual(by(p), {("due", "fresh:names"): 1})
 
@@ -197,7 +197,7 @@ class Scenarios(WorldCase):
         p = self.w.plan("SticTest2 rel4 plan", self.r_stic, facts=fa)
         rows = self.r_stic + [self.w.row(c, "chopin", age_h=-2, plan_=p) for c in p.due()]
         got = self.w.plan("SticTest2 rel4 plan", rows, facts=fa)
-        self.assertEqual(sum(1 for c in got.cells if c.status == "canary-verified"), 32)
+        self.assertEqual(sum(1 for c in got.cells if c.status == "canary-verified"), 33)
         bad = self.w.row(p.cell("stic:debian12"), "chopin", verdict="FAIL", age_h=-3, plan_=p)
         got = self.w.plan("SticTest2 rel4 plan", rows + [bad], facts=fa)
         self.assertEqual(st(got, "stic:debian12"), ("due", "failed"))
@@ -258,7 +258,7 @@ class Scenarios(WorldCase):
     def test_unmapped_path(self):
         self.w.edit("testvm/compare/newhelper.sh", "# no spec names it\n", commit=True)
         p = self.w.plan("SticTest2 rel4 plan", self.r_stic)
-        self.assertEqual(by(p), {("due", "changed:unmapped"): 41})
+        self.assertEqual(by(p), {("due", "changed:unmapped"): 42})
         self.assertEqual(p.unmapped, ["testvm/compare/newhelper.sh"])
         self.assertIn("unmapped: name them in a spec", p.render())
         # not under holt's watch: holt is unaffected; an ignored path is unmapped for nobody
@@ -274,7 +274,7 @@ class Scenarios(WorldCase):
         cl = json.loads(self.w.read("testvm/test2/classes.json"))
         cl["policy"]["judge_change"] = "soft-stale"
         p = self.w.plan("SticTest2 rel4 plan", self.r_stic, classes=cl)
-        self.assertEqual(by(p), {("soft-stale", None): 41})
+        self.assertEqual(by(p), {("soft-stale", None): 42})
         self.w.edit("testvm/holttest1d/judge.py", "# holt judge changed\n")
         p = self.w.plan("HoltTest2 plan", self.r_holt)
         self.assertEqual(st(p, "holt:debian13"), ("due", "holt:judge"))
@@ -483,9 +483,9 @@ class Classes(WorldCase):
             ctx = w.ctx(self.r_stic, fa)
             wd = w.word("SticTest2 rel4", ctx)
             p = plan.make(wd, ctx)
-            self.assertEqual(len(p.by_status("carried")), 41)
+            self.assertEqual(len(p.by_status("carried")), 42)
             rows = run.derived_rows(p, "t2s-20261109T0000-abcd", wd, ctx, {"cells": [], "stops": []}, self.r_stic)
-            self.assertEqual(len(rows), 41)
+            self.assertEqual(len(rows), 42)
             now = w.plan("SticTest2 rel4 plan", self.r_stic + rows, facts=fa)
             self.assertEqual(sum(1 for c in now.due() if c.rule == rule), 9, rule)
 
@@ -584,7 +584,7 @@ class Unbuilt(WorldCase):
         self.assertTrue(p.set["round"].startswith("t2r-"))
         self.assertTrue(any("isn't built" in n for n in p.notes))
         # rel4's PASSes ran c0; the heads are a version bump: carried, by source diff
-        self.assertEqual(by(p), {("carried", "carry:version-only"): 41})
+        self.assertEqual(by(p), {("carried", "carry:version-only"): 42})
         # heads equal to the last PASS's commits: the binaries are predicted unchanged
         self.w.set_heads("c0")
         f = self.w.facts()
@@ -592,7 +592,7 @@ class Unbuilt(WorldCase):
             f[h]["rounds"] = {}
         p = self.w.plan("SticTest2 plan", self.r_stic, facts=f)
         self.assertTrue(p.set["pending"])
-        self.assertEqual(by(p), {("current", None): 41})
+        self.assertEqual(by(p), {("current", None): 42})
         self.assertIn("not built: assumed reused", "; ".join(p.cell("stic:debian13").reasons))
 
 
@@ -651,7 +651,7 @@ class Estimates(unittest.TestCase):
 
 
 class Performance(unittest.TestCase):
-    """U2.6: a plan over every cell (41 stic, 50 holt with 9 variants, 13 gate) and 10,000 rows
+    """U2.6: a plan over every cell (42 stic, 50 holt with 9 variants, 13 gate) and 10,000 rows
     in under 2 s, without ssh."""
 
     @classmethod
@@ -668,7 +668,7 @@ class Performance(unittest.TestCase):
         for word in ("SticTest2 rel4 plan", "HoltTest2 plan", "GateTest2 plan"):
             rows += self.w.seed(self.w.plan(word))
         cells = sorted({r["cell"] for r in rows})
-        self.assertEqual(len(cells), 41 + 59 + 13)
+        self.assertEqual(len(cells), 42 + 59 + 13)
         filler = []
         i = 0
         while len(rows) + len(filler) < 10000:
@@ -752,7 +752,7 @@ class Guests(GuestCase):
         f = self.w.facts()
         for h in f:
             f[h]["guests"]["newguest"] = {"generation": "a" * 64, "files": {}}
-        self.assertIn("not in any spec: newguest", self.plan(facts=f).notes)
+        self.assertIn("not in any spec: kinoite44, newguest", self.plan(facts=f).notes)
 
     def test_seven_days(self):
         p = self.plan(self.aged("guest:arch", 6.9))

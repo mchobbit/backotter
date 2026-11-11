@@ -8,7 +8,8 @@ composefs, rpm-ostree, bootc or bootupd.
 B1 (the `kinoite44` guest) was built the same day, and its *checks* are
 settled below: see "What B1 found". B2 (`dump`) followed: see "What B2
 found"; then B3 (`load`): see "What B3 found"; then B4 (the guest tools):
-see "What B4 found".
+see "What B4 found"; then B5 (SticTest1's `kinoite44` check): see "What B5
+found".
 
 **Conventions.** est. marks an estimate. *Check* marks a fact not yet seen, to be
 settled on the first guest (B1) or on the Thinkpad before the code that depends
@@ -557,7 +558,9 @@ second kickstart, and est. +0.5 d. B1 decides that on its own and says so.
   object hardlinked into both deployments (nlink 3), the deployment root's
   `+i`, and `security.selinux` on bare objects, for rustic-bko and restic.
   *Check* what restic keeps of `+i` and of hardlinked symlinks; a difference
-  is recorded, not fixed ([[cross-tool-compat-courtesy]]).
+  is recorded, not fixed ([[cross-tool-compat-courtesy]]). (B5: restic keeps
+  `+i` and, like rustic-bko, restores hardlinked symlinks as separate ones;
+  see "What B5 found".)
 - **HoltTest1 and the bs1-qemu.py rehearsal boot the restored guest twice**:
   the default entry, then the rollback, picked with `grub2-reboot 1` over
   SSH (or the GRUB menu on serial). Each boot's deployment serial, kargs and
@@ -979,6 +982,94 @@ in-guest.sh's section tests in test_vm_update.py.
   `VM_UPDATE_HOLT_BIN` pointed at B3's build (B6/B7, with the fingerprint
   registration).
 
+## What B5 found
+
+SticTest1's `kinoite44` check built, 2026-11-11: `testvm/stictest1/kinoite44`
+(check.sh, inner.sh, fixture.sh, judge.py, fatattr.py and a new ostree.sh).
+It is fedora44-uefi's check with fedora44's ext4 pass for `/boot` in place of
+xfs: btrfs, ext4 and vfat file systems made like the guest's, four
+directions, restores over immutable and append-only files, one non-root run.
+On btrfs the fixture also holds ostree's layout (ostree.sh), in two parts:
+
+- `made/`: a `mode=bare` repository that the guest's own ostree commits
+  (`--selinux-policy=/`) from 11 real files and 3 symlinks of the booted
+  deployment. The files include setuid binaries, a capability, a mode-0
+  shadow and an xz kernel module. The commit is checked out twice with
+  `-H`, into `deploy/default/deploy/C.0` and `C.1`, each with its own etc,
+  their roots `+i`, plus the `boot.1 -> boot.1.1` chain;
+- `real/`: the same paths' real objects from `/sysroot/ostree/repo` and
+  both deployments' links to them, copied in one `cp -a`, which keeps the
+  links (regular files and symlinks alike, checked on the guest); the
+  roots are then made `+i`.
+
+New needs, judged over the four directions, both restores over existing,
+and two restores onto fstab's `compress=zstd:1` (each tool's own snapshot):
+
+- the guest has two deployments (two BLS entries), as B1 built it;
+- regular objects stay linked into both deployments (nlink 3);
+- hardlinked symlink objects;
+- the deployment roots keep `+i`;
+- `security.selinux` on every object;
+- `ostree fsck` of `made/`, before the backup and after each restore;
+- the restores onto `compress=zstd:1`, which must match the uncompressed
+  source except for a gained `FS_NOCOMP_FL`.
+
+Runs from `~/backotter-work/bazzite-wt` (`BKO_TESTVM`, `bazzite-wt/b5-stic.sh`,
+results in `b5-results/stic/kinoite44`), rel4's binaries (restic
+0.19.1+backotter.5, rustic 0.11.4+backotter.6), on both hosts: 65 PASS,
+8 LIMIT, 0 FAIL, ~400 s each, identical lines. The LIMITs: birth times
+(btrfs, ext4, vfat), project IDs (btrfs, ext4), the two FAT ones of
+fedora44-uefi, and the hardlinked symlinks. No drive.py run, so no Test2
+ledger rows.
+
+- **restic keeps `+i`** on the deployment roots, as rustic-bko does, in all
+  8 restores.
+- **Neither tool keeps hardlinked symlinks.** restic-bko's restorer relinks
+  regular files only (`node.Type != NodeTypeFile` returns before its
+  hardlink index), as rustic-bko's `hardlink_key` does. So the 18 symlink
+  links in 6 groups come back as separate symlinks from both tools, with
+  target, mode, owner, times and label kept. That is a LIMIT, classed in
+  limits.json, not a difference between the tools. Regular files keep
+  their links with either tool, in every direction.
+- **`ostree fsck` passes** on every restored repository, so content, mode,
+  owner and xattrs of each object (the checksum's inputs) come back exactly.
+- **`/mnt` is a link on ostree** (`/mnt -> var/mnt`). rustic-bko stores a
+  source under its canonical path; restic-bko stores the path given. The
+  first run mounted the scratch file systems under `/mnt`: rustic's
+  snapshots named `/var/mnt/...`, its restores landed in `TARGET/var/mnt`,
+  and nothing compared. The check now mounts under `/var/mnt`, so five
+  directories lie above the backed-up path (`/var` and `/var/mnt` among
+  them). This is the fact behind BackShot1's `TREE`/`SNAP` split (B8). The
+  `--as-path` *check* there stays B8's.
+- **`FS_NOCOMP_FL` is the kernel's, not the tools'** (B4's 63,720 files).
+  The restores onto `compress=zstd:1` inside the guest (Linux 7.3.3) gain
+  no flag. A probe written there afterwards gains none either: a 16-byte
+  file, a 600-byte file and xz data. On Cinqcent's 6.12.115 the 16-byte
+  file and the xz file get `m` at once. B4's restore ran in the host's
+  kernel, through qemu-nbd, and its examples were small etc files.
+
+  Whether a `bko-holt load` shows the flag depends on the rescuer's
+  kernel: the image's 7.0, or 6.12 for a debian13 copy. So B6's fsmeta
+  judging should count a gained 0x400 and nothing else as btrfs's own, not
+  as a FAIL, as omarchy's check does with `m`.
+- **Test2.** A stictest1 directory is a SticTest2 cell, so B5 did the stic
+  share of the registration that B7 holds for holt and guest:
+  - kinoite44 entries in stic/manifests.json and stic/limits.json;
+  - the README estimate (404 s);
+  - 41 to 42 checks in check-manifests.py, the Test2 README and the tests
+    (test_stic, test_plan, test_report, test_bko);
+  - p2's world facts now name kinoite44 (`fact_guests`), as the hosts'
+    facts have since B1;
+  - re-blessed p2 goldens, with only the expected changes:
+    - bko-combined and stic-b2-affected: the new cell and the seeded rows'
+      ticks;
+    - guest-7day and guest-nothing-due: a `not in any spec: kinoite44`
+      note, which real plans print too until B7's guest/spec.json entry.
+
+  Left to B7: classes.json's stic `linux` line ("27 checks plus
+  sculpt2610", now 28). B7 edits classes.json anyway, and an edit there
+  moves the gate golden key.
+
 ## BackShot1 on the Thinkpad
 
 After the bs1 fixes (B8) and a `bs1-qemu.py` rehearsal on `kinoite44`:
@@ -1042,9 +1133,9 @@ Boot0009 when the old one survives the erase. It predates ostree.
 | B2 | `dump`: detection, `SUPPORTED` row, holt/src/ostree.rs and `boot.ostree`, `backup_sources` and aliases, kernels, `prebuilt`, the BLS label, the btrfs FSROOT fix, Fedora's loader packages; a scenarios.rs fake composefs tree (mountinfo, `/run/ostree-booted`, `/boot/ostree/*`, `prepare-root.conf`, the `/etc` bind); unit tests; check fingerprint.py, test_vm_update.py, holttest1d/judge.py and backshot2's bs2lib against the new `mounted_subvolumes` and properties. **Done 2026-11-11:** see "What B2 found" | 1.5 d |
 | B3 | `load`: mount stage without `ro`, the ostree marker, `ostree_boot` (atimes listed, note, consistency check, NVRAM, log and labels, the shared tail), the v1 plan problems; unit tests. **Done 2026-11-11:** see "What B3 found" | 1.5 d |
 | B4 | vm-mount's ostree mode (HoltTest1, vm-chroot); `ostree_paths.py` for bs1-manifest and compare.py; vm-update's ostree branch. **Done 2026-11-11:** see "What B4 found" | 1 d |
-| B5 | SticTest1 `kinoite44` entry and runs, both archivers | 0.25 d |
+| B5 | SticTest1 `kinoite44` entry and runs, both archivers. **Done 2026-11-11:** both hosts, 65 PASS, 8 LIMIT, 0 FAIL; see "What B5 found" | 0.25 d |
 | B6 | HoltTest1: `kinoite44` in 1F, `ram-sizes.tsv`, the rollback boot in the restored-boot check, runs on both hosts | 0.5 d |
-| B7 | Golden plan and Test2: `kinoite44`'s dump from B6's PASS run through corpus_build into the corpus (index.tsv, src.json, plan.txt), the `backup_sources` corpus test; `classes.json` (holt families F and uefi), holt/spec.json and guest/spec.json, estimates.tsv, plan.py's source and guest counts (with README and tests), re-blessed p2 golden fixtures, fingerprint.py's mirror of the new package names; re-blessed fedora* golden plans from the package-name fix are expected | 0.5 d |
+| B7 | Golden plan and Test2: `kinoite44`'s dump from B6's PASS run through corpus_build into the corpus (index.tsv, src.json, plan.txt), the `backup_sources` corpus test; `classes.json` (holt families F and uefi, and stic's `linux` line: 28 checks since B5), holt/spec.json and guest/spec.json, estimates.tsv, plan.py's source and guest counts (with README and tests), kinoite44 in the p2 world's `GUESTS` (which drops B5's "not in any spec: kinoite44" note from the guest goldens), re-blessed p2 golden fixtures, fingerprint.py's mirror of the new package names; re-blessed fedora* golden plans from the package-name fix are expected. SticTest2's share (manifests, limits, the 42-check counts) came with B5 | 0.5 d |
 | B8 | BackShot1: the table's fixes, `TREE`/`SNAP`, the preflight, backup's before/after check, baseline and verify additions, the rollback boot; `bs1-qemu.py` rehearsal on `kinoite44`; README.md's ostree steps (updates held, the staged refusal, the rollback boot, the new verify outputs) | 1.25 d |
 | B9 | BackShot1 on the Thinkpad's Bazzite | 0.5 d |
 | B10 | Docs: README supported lists, HoltTest1's table, `osrel.rs`'s comment, memory | 0.1 d |

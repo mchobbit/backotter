@@ -4,7 +4,8 @@ on the Thinkpad").  As root, on the running ostree system.
 
 bs1-ostree preflight LAYOUT      no rpm-ostree transaction, nothing staged or
                                  pending, every btrfs subvolume in the backup;
-                                 prints each problem, exit 1 if any
+                                 prints each problem, exit 1 if any; exit 2
+                                 (and says why) if it couldn't tell
 bs1-ostree record TREE           deployments.txt: what the deployments are and
                                  how this boot started (one "KEY VALUE" a line)
 bs1-ostree rpm-ostree            rpm-ostree's deployments, the record's lines
@@ -113,8 +114,11 @@ def preflight(layout, status=None, subvolumes=None):
 
 
 def uncovered_subvolumes(layout, listing=None):
-    """btrfs subvolumes that no backup source holds: neither one's own
-    subvolume nor beneath one.  LISTING maps a source's FROM to its
+    """btrfs subvolumes that aren't in the backup: neither a backup source's
+    own subvolume nor beneath one where the tree shows it.  A subvolume
+    beneath a source is backed up through that source's mount (load makes
+    it a subvolume again, from the dump's list), unless another source is
+    mounted over where it would be.  LISTING maps a source's FROM to its
     `btrfs subvolume list -a` output (for tests)."""
     with open(layout) as f:
         sources = json.load(f)["storage"].get("backup_sources") or []
@@ -122,9 +126,22 @@ def uncovered_subvolumes(layout, listing=None):
     for s in sources:
         if s.get("fstype") == "btrfs":
             by_dev[s.get("device") or s.get("source")].append(s)
+    paths = [os.path.normpath(s["path"]) for s in sources]
+
+    def under(p, d):
+        return d in ("", "/") or p == d or p.startswith(d.rstrip("/") + "/")
+
+    def shown(s, p):
+        """Whether the tree shows subvolume P through source S's mount."""
+        v = (s.get("subvol") or "").strip("/")
+        if not (v == "" or p == v or p.startswith(v + "/")):
+            return False
+        top = os.path.normpath(s["path"])
+        at = os.path.normpath(os.path.join(top, p[len(v):].lstrip("/")))
+        return not any(o != top and under(o, top) and under(at, o) for o in paths)
+
     problems = []
     for dev, group in sorted(by_dev.items()):
-        mounted = {(s.get("subvol") or "").strip("/") for s in group}
         text = (listing or {}).get(group[0]["from"]) if listing is not None else out(["btrfs", "subvolume", "list", "-a", group[0]["from"]])
         if text is None:
             problems.append(f"btrfs subvolume list -a {group[0]['from']} failed")
@@ -134,7 +151,11 @@ def uncovered_subvolumes(layout, listing=None):
             if not m:
                 continue
             p = m[1].strip("/")
-            if not any(v == "" or p == v or p.startswith(v + "/") for v in mounted):
+            if any((s.get("subvol") or "").strip("/") == p for s in group) or any(shown(s, p) for s in group):
+                continue
+            if any(under(p, (s.get("subvol") or "").strip("/")) for s in group):
+                problems.append(f"btrfs subvolume {p} on {dev} is where another mount covers it, so it wouldn't be backed up")
+            else:
                 problems.append(f"btrfs subvolume {p} on {dev} isn't mounted, so it wouldn't be backed up")
     return problems
 
@@ -275,7 +296,14 @@ def boot_check(baseline, now_booted=None, cmdline=None, hostname=None, selinux=N
 
 def main(argv):
     if len(argv) == 2 and argv[0] == "preflight":
-        problems = preflight(argv[1])
+        # A refusal skipped because something broke would let the backup
+        # through, so a crash is a failure of its own (exit 2), never "no
+        # problems".
+        try:
+            problems = preflight(argv[1])
+        except Exception as e:  # noqa: BLE001
+            print(f"bs1-ostree preflight couldn't tell: {type(e).__name__}: {e}")
+            return 2
         for p in problems:
             print(p)
         return 1 if problems else 0

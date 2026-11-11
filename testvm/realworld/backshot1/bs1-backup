@@ -37,6 +37,17 @@ for b in bko-holt rustic-bko; do [[ -x $BIN/$b ]] || die "no $BIN/$b"; done
 "$BIN/bko-holt" dump --help 2>&1 | grep -q -- --only-disk || die "this bko-holt has no --only-disk"
 # The deployments and where /boot/loader points, now; again after the backup.
 ostree_moved() { ostree admin status; readlink /boot/loader; }
+# bs1-ostree's refusals for LAYOUT, or why it couldn't tell, and false;
+# true only if it exits 0 with nothing to say.  Its exit status counts, not
+# only what it printed, so a crash is never a pass.
+ostree_preflight() {
+    local problems rc
+    problems=$(python3 "$HERE/bs1-ostree" preflight "$1")
+    rc=$?
+    [[ $rc -eq 0 && -z $problems ]] && return 0
+    if [[ $rc -eq 1 && -n $problems ]]; then echo "$problems"; else echo "bs1-ostree preflight failed (exit $rc)${problems:+: $problems}"; fi
+    return 1
+}
 if is_ostree; then
     for u in $UPDATERS; do
         ! systemctl is-active -q "$u.service" || die "$u.service is running: an update may be under way; wait for it to finish"
@@ -49,8 +60,7 @@ if [[ ${1:-} == --preflight ]]; then
     # dump refuses a system it doesn't support: a Bazzite that moved to 45 stops here.
     "$BIN/bko-holt" dump --only-disk "$disk" >"$tmp" || { rm -f "$tmp"; die "bko-holt dump failed"; }
     if is_ostree; then
-        problems=$(python3 "$HERE/bs1-ostree" preflight "$tmp")
-        [[ -z $problems ]] || { rm -f "$tmp"; die "$problems"; }
+        why=$(ostree_preflight "$tmp") || { rm -f "$tmp"; die "$why"; }
         for u in $UPDATERS; do
             ! systemctl is-active -q "$u.timer" || say "$u.timer is active: phase1 stops it for this boot"
         done
@@ -92,8 +102,7 @@ if [[ -n $keys ]]; then
     touch "$RUN/NEEDS_PASSPHRASE_AT_BOOT"
 fi
 if is_ostree; then
-    problems=$(python3 "$HERE/bs1-ostree" preflight "$RUN/layout.json")
-    [[ -z $problems ]] || die "$problems"
+    why=$(ostree_preflight "$RUN/layout.json") || die "$why"
 fi
 
 need=$(space_in_use "$disk" "$RUN/layout.json")

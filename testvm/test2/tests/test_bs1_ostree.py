@@ -7,9 +7,12 @@ import importlib.util
 import json
 import os
 import shutil
+import contextlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
+from unittest import mock
 
 TESTS = Path(__file__).resolve().parent
 TESTVM = TESTS.parent.parent
@@ -82,6 +85,14 @@ class TestPreflight(unittest.TestCase):
         p = self.problems([dep(1, booted=True)], listing=LISTING + "ID 261 gen 9 top level 256 path <FS_TREE>/var/lib/machines\n")
         self.assertEqual(p, [])
 
+    def test_nested_subvolume_under_another_mount_is_refused(self):
+        # root/var/x would be at /var/x, where subvol var is mounted: not in the tree.
+        p = self.problems([dep(1, booted=True)], listing=LISTING + "ID 262 gen 9 top level 258 path <FS_TREE>/root/var/x\n")
+        self.assertEqual(p, ["btrfs subvolume root/var/x on vda3 is where another mount covers it, so it wouldn't be backed up"])
+        # root/etc/x is at /etc/x, which no mount covers.
+        p = self.problems([dep(1, booted=True)], listing=LISTING + "ID 262 gen 9 top level 258 path <FS_TREE>/root/etc/x\n")
+        self.assertEqual(p, [])
+
     def test_listing_fails(self):
         p = self.problems([dep(1, booted=True)], listing=None)
         self.assertEqual(p, ["btrfs subvolume list -a /sysroot failed"])
@@ -91,6 +102,54 @@ class TestPreflight(unittest.TestCase):
         self.layout.write_text(json.dumps({"storage": {"backup_sources": top}}))
         p = self.problems([dep(1, booted=True)], listing=LISTING + "ID 260 gen 9 top level 5 path <FS_TREE>/snapshots\n")
         self.assertEqual(p, [])
+
+
+class TestPreflightMain(unittest.TestCase):
+    """A preflight that breaks is a failure (exit 2, with the reason), never
+    an empty list of problems: bs1-backup reads the exit status too."""
+
+    def setUp(self):
+        self.t = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, self.t)
+        self.layout = self.t / "layout.json"
+        self.layout.write_text(json.dumps({"storage": {"backup_sources": SOURCES}}))
+
+    def run_main(self, rpm_status, listing=LISTING):
+        def fake_out(cmd):
+            return rpm_status if cmd[0] == "rpm-ostree" else listing
+        buf = io.StringIO()
+        with mock.patch.object(T, "out", fake_out), contextlib.redirect_stdout(buf):
+            rc = T.main(["preflight", str(self.layout)])
+        return rc, buf.getvalue()
+
+    def test_clean(self):
+        self.assertEqual(self.run_main(json.dumps({"deployments": [dep(1, booted=True)]})), (0, ""))
+
+    def test_refusal(self):
+        rc, text = self.run_main(json.dumps({"deployments": [dep(2, staged=True), dep(1, booted=True)]}))
+        self.assertEqual(rc, 1)
+        self.assertIn("is staged", text)
+
+    def test_malformed_status(self):
+        rc, text = self.run_main("{not json")
+        self.assertEqual(rc, 2)
+        self.assertIn("couldn't tell: JSONDecodeError", text)
+
+    def test_status_not_an_object(self):
+        rc, text = self.run_main("[]")
+        self.assertEqual(rc, 2)
+        self.assertIn("couldn't tell", text)
+
+    def test_layout_without_storage(self):
+        self.layout.write_text("{}")
+        rc, text = self.run_main(json.dumps({"deployments": [dep(1, booted=True)]}))
+        self.assertEqual(rc, 2)
+        self.assertIn("couldn't tell: KeyError", text)
+
+    def test_no_layout(self):
+        self.layout.unlink()
+        rc, text = self.run_main(json.dumps({"deployments": [dep(1, booted=True)]}))
+        self.assertEqual((rc, "FileNotFoundError" in text), (2, True))
 
 
 class TestRpmOstree(unittest.TestCase):
@@ -112,6 +171,31 @@ class TestLinks(unittest.TestCase):
         (t / "b").write_text("y")
         (t / "c").symlink_to("b")
         self.assertEqual(T.links(str(t)), [". multi-link-inodes 1", ". nlink 3 files 3"])
+
+    def test_nested_subvolume_has_its_own_label(self):
+        # A subvolume nested in a source (var/lib/machines, a fake st_dev
+        # here) is counted on its own: load makes it a subvolume again from
+        # the dump's list, so the restored tree has the same label.
+        t = Path(tempfile.mkdtemp())
+        self.addCleanup(shutil.rmtree, t)
+        (t / "var" / "lib" / "machines").mkdir(parents=True)
+        (t / "var" / "a").write_text("x")
+        os.link(t / "var" / "a", t / "var" / "a1")
+        (t / "var" / "lib" / "machines" / "m").write_text("y")
+        os.link(t / "var" / "lib" / "machines" / "m", t / "var" / "lib" / "machines" / "m1")
+        nested = str(t / "var" / "lib" / "machines")
+        real = os.lstat
+
+        def fake(p):
+            r = real(p)
+            if str(p) == nested or str(p).startswith(nested + "/"):
+                f = list(r)
+                f[2] = r.st_dev + 1  # st_dev
+                return os.stat_result(f)
+            return r
+        with mock.patch.object(T.os, "lstat", fake):
+            self.assertEqual(T.links(str(t)), [". multi-link-inodes 1", ". nlink 2 files 2",
+                                               "var/lib/machines multi-link-inodes 1", "var/lib/machines nlink 2 files 2"])
 
     def test_kargs(self):
         self.assertEqual(T.kargs("BOOT_IMAGE=(hd1,gpt2)/ostree/x/vmlinuz ostree=/o rw\n"), "ostree=/o rw")

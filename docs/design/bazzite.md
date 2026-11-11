@@ -1444,7 +1444,22 @@ included.
   subvolume in `btrfs subvolume list -a` that is neither a backup source's
   subvolume nor beneath one. The last is a little wider than "every
   subvolume mounted": a nested subvolume inside a mounted one is in the
-  backup (as a directory), so it isn't refused.
+  backup (its files, through the enclosing source's mount), and `load`
+  makes it a subvolume again from the dump's list (fedora44-uefi's
+  `root/var/lib/portables` is one), so it isn't refused. One beneath a
+  source but where another source is mounted over it (`root/var/x` under
+  subvol `var` at `/var`) isn't in the tree, and is refused.
+  **Review fixes (after 498eaa9):** bs1-backup reads the preflight's exit
+  status as well as its output: it passes only on exit 0 with nothing
+  printed, and bs1-ostree's preflight catches anything that escapes (bad
+  `rpm-ostree status --json`, a layout without `storage`, a missing file)
+  and says so with exit 2, so a crash can't skip the refusals. `links.txt`
+  keeps one label per filesystem, a nested subvolume's own included: the
+  review's case of its files moving under the parent's label after the
+  restore doesn't arise, since the restore has it as a subvolume too.
+  Retested: the kinoite44 rehearsal passes again on both hosts (805 s on
+  Chopin, 769 s on Cinqcent; RAM peaks 10,297 and 10,517 MiB;
+  `b8-results/reh-c`, `reh-d`).
 - **Updates held:** phase 1 stops the updaters' timers for its boot;
   verify (and `--boot`) stop their timers and services, then fail if any
   of the three services has journal lines since the boot. `kinoite44` has

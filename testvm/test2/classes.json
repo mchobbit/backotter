@@ -43,7 +43,7 @@
       "A": ["arch", "alpine324", "aerynos", "artix-dinit", "artix-s6", "endeavouros", "endeavouros-grub", "manjaro"],
       "C": ["cachyos", "mx25"],
       "I": ["omnios58", "omnios58-mirror"],
-      "Obscure": ["pop24", "nixos2605", "omarchy", "sculpt2610", "redox", "tumbleweed", "debian12"],
+      "Obscure": ["pop24", "nixos2605", "omarchy", "sculpt2610", "redox", "tumbleweed", "debian12", "chimera"],
       "BSD": ["freebsd15", "freebsd15-mirror", "freebsd14", "ghostbsd26", "ghostbsd26-zfs", "hardenedbsd15",
               "netbsd11", "alpinebsd", "openbsd8", "dragonfly6"]
     },

@@ -62,6 +62,8 @@ PACKAGES = (
     "limine", "limine-mkinitcpio-hook", "limine-snapper-sync", "grub2", "grub2-i386-pc", "grub2-x86_64-efi",
     "kernel-default", "snapper", "linux-base",
     "multipath-tools", "dmraid", "nvme-cli", "open-iscsi",
+    "grub-i386-pc", "grub-x86_64-efi", "linux-stable", "linux-lts-zfs-bin", "linux-stable-zfs-bin", "zfs", "zfs-ckms", "ckms",
+    "cryptsetup-scripts",
 )
 # Of those, what handles storage; the rest is boot.
 STORAGE = frozenset((
@@ -69,6 +71,7 @@ STORAGE = frozenset((
     "systemd-cryptsetup", "tpm2-tools", "zfsutils-linux", "zfs-initramfs", "zfs-dracut", "zfs-dkms", "zfs-utils",
     "btrfs-progs", "xfsprogs", "e2fsprogs", "dosfstools", "exfatprogs", "ntfs-3g", "jfsutils", "f2fs-tools",
     "nilfs-tools", "bcachefs-tools", "snapper", "multipath-tools", "dmraid", "nvme-cli", "open-iscsi",
+    "zfs", "zfs-ckms", "linux-lts-zfs-bin", "linux-stable-zfs-bin", "cryptsetup-scripts",
 ))
 FIXTURE = ("e2fsprogs", "xfsprogs", "btrfs-progs", "f2fs-tools", "jfsutils", "nilfs-tools", "dosfstools", "attr", "acl")
 # Another distribution's name for a fixture tool.

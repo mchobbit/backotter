@@ -1,8 +1,8 @@
 """A synthetic world for P2's tests (U2.2-U2.6): a fixture checkout (git), BKO_GIT's three
 forks, both hosts' facts and a seeded ledger.  Nothing here touches a host or a default root.
 
-    w = World(tmpdir)            the checkout: 41 SticTest checks, 49 HoltTest sources and 9
-                                 variants, 13 gate cells, 51 guests, 7 images, with the real classes.json,
+    w = World(tmpdir)            the checkout: 41 SticTest checks, 50 HoltTest sources and 9
+                                 variants, 13 gate cells, 52 guests, 7 images, with the real classes.json,
                                  estimates.tsv, drive.py, affected.sh and ram-sizes.tsv
     w.facts()                    {host: facts}, as facts_host.py gives them
     w.ctx(rows, facts=..., **options)   a plan.Ctx
@@ -38,17 +38,17 @@ GUESTS = ("aerynos alpine324 alpinebsd arch artix-dinit artix-s6 cachyos debian1
           "freebsd15-geli freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs haiku6 hardenedbsd15 mint22 mx25 "
           "netbsd11 nixos2605 omarchy omnios58 omnios58-mirror openbsd8 pop24 redox rocky10 rocky10-lvm "
           "rocky10-raid5 sculpt2610 tumbleweed ubuntu24 ubuntu26-raid ubuntu26-uefi ubuntu26-zfs ubuntu26-zfsmirror "
-          "void-musl zorin18 endeavouros endeavouros-grub manjaro ubuntu26-luks").split()
+          "void-musl zorin18 endeavouros endeavouros-grub manjaro ubuntu26-luks chimera").split()
 UEFI = set("aerynos alpinebsd debian13-stack fedora44-raid fedora44-uefi freebsd15-geli omarchy pop24 ubuntu26-raid "
            "ubuntu26-uefi ubuntu26-zfs endeavouros endeavouros-grub manjaro ubuntu26-luks".split())
 PLATS = words.PLATS
-NEW_GUESTS = set("endeavouros endeavouros-grub manjaro ubuntu26-luks fedora44-raid ubuntu26-raid rocky10-raid5 freebsd15-mirror "
+NEW_GUESTS = set("endeavouros endeavouros-grub manjaro ubuntu26-luks chimera fedora44-raid ubuntu26-raid rocky10-raid5 freebsd15-mirror "
                  "omnios58-mirror".split())
 PM = {"apt": "debian12 debian13 debian13-stack debian13-zfs devuan6 mint22 mx25 pop24 ubuntu24 ubuntu26-raid ubuntu26-uefi "
              "ubuntu26-zfs ubuntu26-zfsmirror zorin18 ubuntu26-luks",
       "dnf": "fedora44 fedora44-raid fedora44-uefi rocky10 rocky10-lvm rocky10-raid5",
       "pacman": "arch artix-dinit artix-s6 cachyos omarchy endeavouros endeavouros-grub manjaro",
-      "zypper": "tumbleweed", "xbps": "void-musl", "apk": "alpine324", "moss": "aerynos", "NixOS": "nixos2605",
+      "zypper": "tumbleweed", "xbps": "void-musl", "apk": "alpine324 chimera", "moss": "aerynos", "NixOS": "nixos2605",
       "FreeBSD": "freebsd14 freebsd15 freebsd15-geli freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs hardenedbsd15",
       "NetBSD": "netbsd11 alpinebsd", "OpenBSD": "openbsd8", "DragonFly": "dragonfly6", "SunOS": "omnios58 omnios58-mirror",
       "Haiku": "haiku6", "Redox": "redox", "Sculpt": "sculpt2610"}

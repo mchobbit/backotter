@@ -640,7 +640,9 @@ class TestFingerprint(unittest.TestCase):
     def test_packages_are_boot_rs(self):
         text = (REPO / "holt" / "src" / "boot.rs").read_text()
         body = re.search(r"pub const PACKAGES: &\[&str\] = &\[(.*?)\];", text, re.S)[1]
+        body = re.sub(r"//[^\n]*", "", body)     # its comments quote names too (Chimera's)
         self.assertEqual(sorted(re.findall(r'"([^"]+)"', body)), sorted(FP.PACKAGES))
+        self.assertEqual(len(FP.PACKAGES), len(set(FP.PACKAGES)))
         self.assertLessEqual(FP.STORAGE, set(FP.PACKAGES))
 
     def test_rules(self):

@@ -1,0 +1,91 @@
+# bko-holt load plan for layout.json
+# Source: chimera, Chimera Linux, BIOS boot with grub, dumped 2026-11-11T06:42:52Z
+#
+# Disks:
+#   vda (16 GiB) -> /dev/sdq
+#
+# Notes:
+#   - debconf's grub-pc/install_devices still names the source's disks; `dpkg-reconfigure grub-pc` on the restored system fixes it
+
+# ---- partition ----
+# vda -> /dev/sdq: clear the old table and signatures
+wipefs --all /dev/sdq
+sfdisk --wipe always --wipe-partitions always /dev/sdq <<'EOF'
+label: dos
+label-id: 0xbc000001
+unit: sectors
+sector-size: 512
+
+/dev/sdq1 : start=2048, size=2097152, type=83, bootable
+/dev/sdq2 : start=2099200, size=4194304, type=82
+/dev/sdq3 : start=6293504, size=27260928, type=83
+EOF
+udevadm settle
+
+# ---- assemble ----
+# (nothing to do)
+
+# ---- format ----
+# vda1: ext4
+mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000001 -b 4096 -I 256 -N 65536 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000002,desc_size=64,resize=268435456 /dev/sdq1 1048576k
+tune2fs -r 13107 /dev/sdq1
+# vda2: swap
+mkswap -U bc000000-0000-4000-8000-000000000003 --pagesize 4096 /dev/sdq2
+# vda3: xfs
+mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=bc000000-0000-4000-8000-000000000004 -i sparse=1,nrext64=1,size=512,exchange=1 -n ftype=1,size=4096,parent=1 -b size=4096 -s size=512 -d size=13957595136,agsize=3489398784 -l lazy-count=1,size=67108864 /dev/sdq3
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+mount -t xfs -o rw,relatime,inode64,logbufs=8,logbsize=32k,noquota /dev/sdq3 /mnt/bko-target
+mkdir -p /mnt/bko-target/boot
+mount -t ext4 -o rw,relatime /dev/sdq1 /mnt/bko-target/boot
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+# the atimes the restore set, for boot to put back after its reads
+sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
+
+# ---- boot ----
+# refuses to start unless /mnt/bko-target/etc/fstab is the restored system's (its / matches the layout's)
+# the restored atimes (the restore stage lists them), to put back after this stage's reads
+sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
+# the restored LVM devices file, kept
+sh -c 'rm -rf /run/bko-holt/lvm-devices; [ ! -d /mnt/bko-target/etc/lvm/devices ] || { cp -a /mnt/bko-target/etc/lvm/devices /run/bko-holt/lvm-devices && touch -r /mnt/bko-target/etc/lvm /run/bko-holt/lvm-devices.parent; }'
+mount --rbind --make-rslave /dev /mnt/bko-target/dev
+mount --rbind --make-rslave /proc /mnt/bko-target/proc
+mount --rbind --make-rslave /sys /mnt/bko-target/sys
+mount --rbind --make-rslave /run /mnt/bko-target/run
+chroot /mnt/bko-target update-initramfs -u -k all
+chroot /mnt/bko-target grub-install --target=i386-pc /dev/sdq
+# os-prober off: it would list the rescue system's disks
+sh -c '[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober'
+chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg
+sh -c '! grep -q '\'' /mnt/bko-target/usr/bin/os-prober '\'' /proc/self/mountinfo || umount /mnt/bko-target/usr/bin/os-prober'
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -a /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+# SELinux labels for the files the boot stage wrote
+chroot /mnt/bko-target sh -c '[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ "${SELINUX:-disabled}" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ ! -f "$f" ] || ! command -v setfiles >/dev/null || { [ ! -d /etc/kernel ] || set -- /etc/kernel; setfiles "$f" /boot /var/log/bko-holt "$@"; }'
+umount --recursive /mnt/bko-target/run
+umount --recursive /mnt/bko-target/sys
+umount --recursive /mnt/bko-target/proc
+umount --recursive /mnt/bko-target/dev
+# the restored LVM devices file, put back
+sh -c '[ ! -d /run/bko-holt/lvm-devices ] || { rm -rf /mnt/bko-target/etc/lvm/devices && cp -a /run/bko-holt/lvm-devices /mnt/bko-target/etc/lvm/devices && touch -r /run/bko-holt/lvm-devices.parent /mnt/bko-target/etc/lvm; }'
+# the atimes this stage's reads changed, put back
+bash -c 'find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.after && LC_ALL=C comm -z -23 /run/bko-holt/atimes.before /run/bko-holt/atimes.after | \
+             while IFS=$'\''\t'\'' read -r -d '\'''\'' a p; do [ -L "$p" ] || [ -e "$p" ] || continue; touch -a -h -d "@$a" -- "$p" 2>/dev/null || { [ ! -L "$p" ] && lsattr -d -- "$p" 2>/dev/null | cut -d'\'' '\'' -f1 | grep -q i && { chattr -i -- "$p"; touch -a -h -d "@$a" -- "$p"; chattr +i -- "$p"; }; }; done'
+
+# ---- close ----
+umount --recursive /mnt/bko-target
+# other mount namespaces' copies of the target's mounts
+sh -c 'me=$(readlink /proc/self/ns/mnt); seen=; for f in /proc/[0-9]*/mountinfo; do grep -q '\'' /mnt/bko-target[ /]'\'' "$f" 2>/dev/null || continue; p=${f#/proc/}; p=${p%/mountinfo}; ns=$(readlink /proc/$p/ns/mnt) || continue; case "$me $seen " in *"$ns "*) continue;; esac; seen="$seen $ns"; echo "unmounting /mnt/bko-target in $ns (pid $p, $(cat /proc/$p/comm))"; nsenter -t "$p" -m umount --recursive /mnt/bko-target || true; done'
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status filesystem /dev/sdq1 ext4 bc000000-0000-4000-8000-000000000001
+# golden_plans.rs: status filesystem /dev/sdq2 swap bc000000-0000-4000-8000-000000000003
+# golden_plans.rs: status filesystem /dev/sdq3 xfs bc000000-0000-4000-8000-000000000004
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: status mount /mnt/bko-target/boot
+# golden_plans.rs: exit 0, nothing on stderr

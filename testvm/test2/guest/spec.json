@@ -799,7 +799,7 @@
     "rules": {
      "source": "S-none",
      "loader": "L-bls",
-     "kernel": "K-fed",
+     "kernel": "K-ostree",
      "boot": "B-lin",
      "mounts": "M-lin"
     },

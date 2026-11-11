@@ -1250,9 +1250,12 @@ The golden plan and Test2's registration, 2026-11-11.
   - Rules:
     - `S-none`: the update source is the image's origin, which rpm-ostree
       checks itself; there is no repository file to judge.
-    - `L-bls`: two entries, and grubenv has no `saved_entry`.
-    - `K-fed`: the BLS entries, and the running kernel's modules in
-      `/usr/lib/modules`.
+    - `L-bls`: two entries, and grubenv has no `saved_entry`. This is
+      the image check only, and on kinoite44 it can't fail on what
+      matters: bootupd's `grub.cfg` never reads `saved_entry` (B6).
+    - `K-ostree` (B7 had `K-fed`; see "The B7 review fix" below): the
+      image check counts the BLS entries (at most 2). The after-check
+      asks which deployment booted, not which kernel.
     - `B-lin` and `M-lin`.
     - `fw` `uefi`: Secure Boot is off.
   - guest/known-lines.json gets an `rpm-ostree` list, taken from B4's
@@ -1300,6 +1303,78 @@ The golden plan and Test2's registration, 2026-11-11.
   21 more serial fragments: boot lines that two writers interleaved on
   the console. They were accepted too, and `guest:kinoite44` is current:
   the first current guest cell in the real ledger.
+
+### The B7 review fix: K-ostree
+
+A review found that on kinoite44 `K-fed` and `L-bls` judged nothing that
+matters, and it was right:
+
+- check-after.sh listed the installed kernels from `/lib/modules` and
+  `/usr/lib/modules`. On ostree those hold only the booted deployment's
+  kernel, so "running is the newest installed" was always true, and
+  `after:newest-kernel` passed even when the reboot came up in the old
+  deployment or the rollback. That happens if ostree-finalize-staged doesn't
+  write the staged deployment, or if grubenv keeps a `default` key.
+- `l_bls` reads only `saved_entry`, and bootupd's `grub.cfg` boots
+  grubenv's `default` instead (B6).
+- Nothing compared in-guest.sh's "deployment X staged" step with what
+  booted. So a round where the new deployment never booted would have
+  passed and merged. B7's "`K-fed`: the BLS entries" was also wrong: the
+  BLS entries were counted only by the image check (`image:kernels`), never
+  by the after-check.
+
+kinoite44's kernel rule is now `K-ostree`:
+
+- **check-image.sh** counts the BLS entries as `K-fed` does.
+  `KERNELS_MAX` is 2: the booted deployment and one rollback.
+- **check-after.sh** prints:
+  - the running kernel and `/usr/lib/modules`;
+  - from `rpm-ostree status --json`, `booted` and `default` as
+    `CHECKSUM.SERIAL`. The default is the first deployment that isn't
+    staged, the one GRUB boots. The serial matters because the fresh pair
+    is one commit.
+  - a `grubenv-key` line for each `default` or `next_entry` key in
+    `/boot/grub2/grubenv`.
+- **guest_judge.py** turns these into `after:newest-kernel` lines:
+  - the booted deployment isn't the default one;
+  - when the update's steps hold `ostree: deployment X staged`, the booted
+    deployment isn't X;
+  - grubenv has a `default` key (bootupd's `grub.cfg` boots it) or a
+    `next_entry` key;
+  - the running kernel has no modules.
+
+  The steps come from result.json's `merge.steps`. vm-update writes those
+  before it calls the merge gate, so `tool_guest.gate` and `rows_guest`
+  both pass them to `judge_after`, for the after reading only. A reading
+  taken before the update is never judged against the update's steps.
+  Each line is fixed text with no checksum in it, so a line that stands
+  through an update is LIMIT, as everywhere else. A new line is FAIL and
+  blocks the merge.
+- **`L-bls` stays** as kinoite44's image check. It is shared with the
+  Fedora guests, and its grubenv question is now `K-ostree`'s.
+- **Tests:** test_guest_judge.py has the K-ostree cases:
+  - the same-commit pair told apart by serial;
+  - finalize never writing the deployment;
+  - the rollback booted;
+  - grubenv's keys;
+  - the merge gate blocking the old deployment;
+  - a probe left unjudged.
+
+  test_guest.py runs check-after.sh's `rpm-ostree` reader and its grubenv
+  `sed` on fixtures. The whole test2 suite passes: 1,297 tests, 16 skipped.
+- **The cost:** guest_judge.py and check-after.sh are in every guest's
+  key, so every guest cell's key moved. kinoite44's was the only current
+  one, so that cost nothing else.
+- **GuestTest2 of kinoite44 again** (`t2v-20261111T1542-bff4`, cinqcent):
+  - The run was made from a clean clone of `563ed5e` with this diff
+    uncommitted.
+  - Both readings show `booted` = `default` = `10e6a37f….1`, with
+    `image:kernels` (2), `image:loader` and `after:newest-kernel` passing.
+  - `rpm-ostree upgrade` found no upgrade, so the staged comparison wasn't
+    exercised on the guest. The unit tests cover it.
+  - The only finding was 20 more interleaved serial fragments of boot
+    chatter. They were read and accepted, and the cell's PASS counts once
+    this diff is committed.
 
 ## BackShot1 on the Thinkpad
 

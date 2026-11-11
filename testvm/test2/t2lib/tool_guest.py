@@ -478,7 +478,9 @@ def gate(guest, out, base, say=print):
     bad = sorted(n for n, h in (res.get("hooks") or {}).items() if (h or {}).get("rc") not in (0, None))
     if bad:   # vm-update wrote the hooks' exits just before it called this
         hooks_ok, why = False, "; ".join(x for x in (why, "exit status of " + ", ".join(bad)) if x)
-    ok, text, _new = J.merge_gate(J.parse_sections(tb), J.parse_sections(ta), checks, R.classed_of(base, guest), hooks_ok, why)
+    steps = (res.get("merge") or {}).get("steps")   # what the after reading is judged against (K-ostree)
+    ok, text, _new = J.merge_gate(J.parse_sections(tb), J.parse_sections(ta), checks, R.classed_of(base, guest), hooks_ok, why,
+                                  steps)
     if ok:
         say("gate: merge")
         return 0

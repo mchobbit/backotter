@@ -154,6 +154,43 @@ class CheckAfterKernelString(unittest.TestCase):
                                        "/usr/src/sys/arch/amd64/compile/GENERIC", k), "match no")
 
 
+class CheckAfterOstree(unittest.TestCase):
+    """check-after.sh's K-ostree reading of `rpm-ostree status --json`: booted and default, as
+    CHECKSUM.SERIAL, the default being the first deployment that isn't staged."""
+
+    def run_py(self, doc):
+        import subprocess
+        with open(os.path.join(REPO, "testvm/test2/guest/check-after.sh"), encoding="utf-8") as f:
+            text = f.read()
+        branch = text[text.index("elif has_rule K-ostree"):]
+        code = re.search(r"python3 -c '(.*?)'\n", branch, re.S).group(1)
+        return subprocess.run([sys.executable, "-I", "-c", code], input=doc, capture_output=True, text=True,
+                              check=True).stdout.splitlines()
+
+    def test_booted_and_default(self):
+        d = {"deployments": [{"checksum": "ef56", "serial": 0, "staged": True},
+                             {"checksum": "ab12", "serial": 1, "booted": True},
+                             {"checksum": "ab12", "serial": 0}]}
+        self.assertEqual(self.run_py(json.dumps(d)), ["booted ab12.1", "default ab12.1"])
+        d["deployments"][1]["booted"], d["deployments"][2]["booted"] = False, True
+        self.assertEqual(self.run_py(json.dumps(d)), ["booted ab12.0", "default ab12.1"])
+
+    def test_no_answer_prints_nothing(self):
+        self.assertEqual(self.run_py(""), [])
+
+    def test_grubenv_keys(self):
+        import subprocess
+        with open(os.path.join(REPO, "testvm/test2/guest/check-after.sh"), encoding="utf-8") as f:
+            line = next(x for x in f if "grubenv-key" in x).strip()
+        d = tempfile.mkdtemp(prefix="t2-grubenv-", dir=_tmp)
+        env = os.path.join(d, "grubenv")
+        with open(env, "w", encoding="utf-8") as f:
+            f.write("# GRUB Environment Block\nboot_success=1\nnext_entry=1\ndefault=ostree-1\nsaved_entry=x\n" + "#" * 64)
+        out = subprocess.run(["sh", "-c", line.replace('"$f"', '"$1"'), "sh", env], capture_output=True, text=True,
+                             check=True).stdout.splitlines()
+        self.assertEqual(out, ["grubenv-key next_entry", "grubenv-key default"])
+
+
 # --- a run on fake hosts ---------------------------------------------------------------------------
 
 class PC:

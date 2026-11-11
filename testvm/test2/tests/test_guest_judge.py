@@ -578,6 +578,56 @@ class NewestKernel(unittest.TestCase):
         self.assertEqual(self.k("K-deb", "running 6.1.0-9-amd64\ninstalled 6.1.0-54-amd64\ninstalled 6.1.0-9-amd64"), [J.NOT_NEWEST])
         self.assertEqual(self.k("K-fed", "running 7.0.4\ninstalled 7.0.4\ninstalled 6.17.1"), [])
 
+    def test_ostree_running_against_installed_says_nothing(self):
+        # /usr/lib/modules is the booted deployment's alone: the rule is which deployment booted
+        body = "running 7.3.3-200.fc44.x86_64\ninstalled 7.3.3-200.fc44.x86_64\nbooted ab12.0\ndefault ab12.0"
+        self.assertEqual(self.k("K-ostree", body), [])
+        self.assertEqual(self.k("K-ostree", body.replace("booted ab12.0", "booted cd34.1")), [J.OSTREE_NOT_DEFAULT])
+        self.assertEqual(self.k("K-ostree", "running 7.3.3\ninstalled 7.3.3\nbooted ab12.0"),
+                         ["kernel unverified: rpm-ostree status gave no booted or default deployment"])
+        self.assertEqual(self.k("K-ostree", "running 7.3.3\ninstalled 7.2.9\nbooted ab12.0\ndefault ab12.0"), [J.NO_MODULES])
+
+    def test_ostree_same_commit_pair_tells_by_serial(self):
+        # kinoite44's fresh pair: one commit, two serials; booting .1 when .0 is the default is a finding
+        self.assertEqual(self.k("K-ostree", "running 7.3.3\ninstalled 7.3.3\nbooted ab12.1\ndefault ab12.0"),
+                         [J.OSTREE_NOT_DEFAULT])
+
+    def test_ostree_the_staged_deployment_must_boot(self):
+        steps = ["ostree: deployment ef56 staged, in place of ab12"]
+        run = "running 7.3.3\ninstalled 7.3.3\n"
+        k = lambda body: J.newest_kernel_lines((run + body).splitlines(), "K-ostree", None, steps)
+        self.assertEqual(k("booted ef56.0\ndefault ef56.0"), [])
+        # ostree-finalize-staged never wrote it: the old one is still the default and boots
+        self.assertEqual(k("booted ab12.1\ndefault ab12.1"), [J.OSTREE_NOT_STAGED])
+        # it was written, but the rollback booted
+        self.assertEqual(k("booted ab12.1\ndefault ef56.0"), [J.OSTREE_NOT_DEFAULT, J.OSTREE_NOT_STAGED])
+        # other steps say nothing about the deployment
+        self.assertEqual(J.newest_kernel_lines((run + "booted ab12.1\ndefault ab12.1").splitlines(), "K-ostree", None,
+                                               ["purging casper"]), [])
+
+    def test_ostree_grubenv_keys(self):
+        body = "running 7.3.3\ninstalled 7.3.3\nbooted ab12.0\ndefault ab12.0\n"
+        self.assertEqual(self.k("K-ostree", body + "grubenv-key default"), [J.GRUBENV_KEY["default"]])
+        self.assertEqual(self.k("K-ostree", body + "grubenv-key next_entry\ngrubenv-key default"),
+                         [J.GRUBENV_KEY["default"], J.GRUBENV_KEY["next_entry"]])
+
+    def test_ostree_after_an_update_where_the_old_deployment_booted(self):
+        # The round B7's K-fed passed: the pre-update reading is clean, the update staged ef56, and the
+        # reboot came up in the old deployment.  The line is new, so the merge gate blocks it.
+        c = checks(source="S-none", loader="L-bls", kernel="K-ostree")
+        before = reading("init systemd\nstate running", kernel="running 7.3.3\ninstalled 7.3.3\nbooted ab12.1\ndefault ab12.1",
+                         mounts=MI_OK)
+        steps = ["ostree: deployment ef56 staged, in place of ab12"]
+        r = J.judge_after(before, before, c, steps=steps)
+        self.assertEqual(r["after:newest-kernel"].v, "FAIL")
+        self.assertEqual(r["after:newest-kernel"].new, [J.OSTREE_NOT_STAGED])
+        ok, why, new = J.merge_gate(before, before, c, steps=steps)
+        self.assertFalse(ok)
+        self.assertEqual(new, ["after:newest-kernel: " + J.OSTREE_NOT_STAGED])
+        # a probe (one reading) has no update to judge against
+        self.assertEqual(J.judge_after(None, before, c)["after:newest-kernel"].v, "PASS")
+        self.assertTrue(J.merge_gate(before, before, c)[0])
+
     def test_match_forms(self):
         for rule in ("K-pac", "K-apk", "K-nix", "K-obsd", "K-nbsd", "K-dfly", "K-alpbsd"):
             self.assertEqual(self.k(rule, "match yes"), [], rule)

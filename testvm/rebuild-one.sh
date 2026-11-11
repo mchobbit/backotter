@@ -56,6 +56,7 @@ rocky10-raid5) cmd=(asm $T/make-rocky.sh --raid5 10.0 "$W") ;;
 tumbleweed) cmd=(asm $T/make-opensuse.sh 20261030 "$W") ;;
 alpine324)  cmd=(asm $T/make-bootstrap.sh alpine "$W") ;;
 void-musl)  cmd=(asm $T/make-bootstrap.sh void "$W") ;;
+chimera)    cmd=(asm $T/make-bootstrap.sh chimera "$W") ;;
 artix-dinit|artix-s6) cmd=(asm $T/make-bootstrap.sh $G "$W") ;;
 nixos2605)  cmd=(asm $T/make-bootstrap.sh nixos "$W") ;;
 arch)       cmd=(asm $T/make-arch.sh 2026.10.01 "$W") ;;

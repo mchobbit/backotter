@@ -1,7 +1,9 @@
-# Chimera Linux support (draft, for approval)
+# Chimera Linux support (approved)
 
 2026-11-11. The user's idea ("I'm thinking of adding Chimera Linux
-support"); this spec is for their approval, and nothing is built yet.
+support"). Approved by the user the same day, with the recommended decisions:
+three guests, root on ZFS for the Thinkpad, HoltTest1Obscure, and a supported
+system. Nothing is built yet.
 
 **Conventions.** est. marks an estimate. *Check* marks a fact the docs don't
 state, to be settled on the first guest before the code that depends on it.
@@ -191,7 +193,7 @@ user says so.
 - BackShot2 or BackShot2Alpine cases on Chimera: later, through BackShot2All.
 - Changes to the rescue image.
 
-## Decisions for the user
+## Decisions (approved with the recommendations)
 
 1. **Three guests** (`chimera`, `chimera-uefi`, `chimera-zfs`; recommended), or
    just `chimera` for now.

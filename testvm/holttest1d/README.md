@@ -476,11 +476,12 @@ the stick, onto an old target: the panel is `holt.img_panel` in
 
 First runs (2026-11-10 and 11-11, Test2's test worlds): `debian12`,
 `debian13-stack`, `aerynos`, `ubuntu24` and `rocky10-raid5` pass on the
-Linux image.  `nixos2605` fails: load made its bcachefs with the image's
+Linux image.  `nixos2605` failed: load made its bcachefs with the image's
 tools at on-disk version 1.39 where the source's was 1.13, and the
-restored disk boots but the host's `vm-mount` can't read it in verify
-(load now formats at the source's `version_min`, `--version=1037`; not
-retested yet).
+restored disk booted but the host's `vm-mount` couldn't read it in verify.
+Load now formats at the source's `version_min` (`--version=1037`, e2b31ad),
+and on the image of 2026-11-11 built with that bko-holt `nixos2605` passes
+on both hosts.
 On the other systems' images of 2026-11-07 only `haiku6` passed.  The
 rest failed on defects that were fixed, not classed: the read-only roots
 (`mkdir: /mnt/bko-target: Read-only file system`: the builders now ship

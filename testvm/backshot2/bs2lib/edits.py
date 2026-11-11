@@ -96,6 +96,23 @@ def sort_parts(dk):
     dk["partitions"].sort(key=lambda p: p["number"])
 
 
+def gap_follows(dk):
+    """DK's boot code record once its partitions moved: bko-holt's dump
+    (holt/src/bootcode.rs) counts the gap after the MBR up to the first
+    partition's start, lowest start of any table entry, and says whether
+    GRUB's core sits in it."""
+    bc = dk.get("boot_code")
+    starts = [p["start_lba"] for p in dk.get("partitions") or [] if p.get("start_lba")]
+    if not isinstance(bc, dict) or not starts:
+        return
+    first = min(starts)
+    if isinstance(bc.get("post_mbr_gap"), dict) and first > 1:
+        bc["post_mbr_gap"]["sectors"] = first - 1
+    lba = bc.get("grub_core_lba")
+    if isinstance(lba, int) and "grub_core_in" in bc:
+        bc["grub_core_in"] = "post-mbr-gap" if 0 < lba < first else "partition"
+
+
 def _disk_minor(dk, number):
     """The devno of partition NUMBER, where the kernel's rule fixes it: 16
     minors per disk for virtio and SCSI disks, partitions 1 to 15."""
@@ -145,6 +162,10 @@ def renumber_part(d, dk, p, to):
     dn = _disk_minor(dk, to)
     if dn:
         p["devno"] = dn
+    # bko-holt's dump lists a disk's partitions in natural name order, so by
+    # number.  Sorted here, before the renaming below rebuilds storage's
+    # records: DK is a stale copy once it has.
+    sort_parts(dk)
     st = d["storage"]
     for k in list(st):
         if k != "topology":
@@ -152,7 +173,6 @@ def renumber_part(d, dk, p, to):
     d["boot"] = _rename_strings(d.get("boot"), old, new)
     topo = st.get("topology") or {}
     st["topology"] = _rename_topology(topo, old, new)
-    sort_parts(dk)
 
 
 def _rename_topology(t, old, new):
@@ -240,6 +260,7 @@ class GapBefore(Op):
         for q in dk["partitions"]:
             if q["start_lba"] >= p["start_lba"] and not q.get("extended"):
                 set_part(dk, q, q["start_lba"] + k, q["sectors"])
+        gap_follows(dk)
 
     def build(self, d, params):
         dk, p = _disk_part(d, params)
@@ -268,6 +289,7 @@ class Align(Op):
     def apply(self, d, e):
         dk, p = _disk_part(d, e)
         set_part(dk, p, p["start_lba"] + e["sectors"], p["sectors"] - e["sectors"])
+        gap_follows(dk)
 
     def build(self, d, params):
         dk, p = _disk_part(d, params)
@@ -369,6 +391,7 @@ class SwapOrder(Op):
         start = a["start_lba"]
         set_part(dk, b, start, b["sectors"])
         set_part(dk, a, start + b["sectors"] + gap, a["sectors"])
+        gap_follows(dk)
 
     def build(self, d, params):
         dk = dumpx.disk(d, params.get("disk"))
@@ -692,7 +715,7 @@ class XfsGeometry(Op):
         sector = dev.get("logical_sector_size") or 512
         if ss < sector:
             raise Invalid(f"{ss}-byte XFS sectors on a {sector}-byte device")
-        g = geometry.xfs(blocks, bs, agb, lb, isz, ss, c.get("features") or [])
+        g = geometry.xfs(blocks, bs, agb, lb, isz, ss, c.get("features") or [], c)
         if all(c.get(k) == v for k, v in g.items()):
             raise Invalid("no change")
         e = {"op": self.name, "fs": dumpx.locator(d, dev)}
@@ -832,7 +855,7 @@ def propagate(d, dev, new_bytes, grow_fs=True, grow_pv=True, sector=None):
         bs = c["block_size"]
         cur = c["blocks"] * bs
         if new_bytes < cur or (grow_fs and new_bytes // bs != c["blocks"]):
-            g = geometry.xfs(new_bytes // bs, bs, c["ag_blocks"], c["log_blocks"], c["inode_size"], c["sector_size"], c.get("features") or [])
+            g = geometry.xfs(new_bytes // bs, bs, c["ag_blocks"], c["log_blocks"], c["inode_size"], c["sector_size"], c.get("features") or [], c)
             sets = merge_sets(sets, {loc: {"content": g}})
         return sets
     if new_bytes is None:

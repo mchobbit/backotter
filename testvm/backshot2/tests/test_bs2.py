@@ -20,7 +20,7 @@ sys.path.insert(0, BS2)
 CORPUS = os.path.join(BS2, "..", "..", "holt", "tests", "corpus")
 JUDGE = os.path.join(BS2, "..", "holttest1d", "judge.py")
 
-from bs2lib import case as C, content as CT, dumpx, edits as E, generate as G, geometry as GE, rules, shrink as S, sweep  # noqa: E402
+from bs2lib import case as C, content as CT, dumpx, edits as E, fitcalc, generate as G, geometry as GE, rules, shrink as S, sweep  # noqa: E402
 from bs2lib.geometry import Invalid  # noqa: E402
 
 
@@ -112,6 +112,89 @@ class TestApply(unittest.TestCase):
         self.assertEqual(dumpx.devices(d)[dev]["content"]["json_size"], str(65536 - 4096))
         with self.assertRaises(Invalid):
             E.build(LUKS, "luks_geometry", {"dev": dev, "header_size": 12345, "keyslots_size": f["keyslots_size"], "offset": f["offset"], "sector_size": 512})
+
+    def test_renumber_keeps_partitions_in_number_order(self):
+        # bko-holt's dump lists partitions by number (natural name order), and
+        # judge.py compares them by index: vda2 renumbered to 4 comes last.
+        e = E.build(ALPINE, "renumber", {"disk": "vda", "from": 2, "to": 4})
+        d = E.apply(ALPINE, [e])
+        dk = dumpx.disk(d)
+        self.assertEqual([p["number"] for p in dk["partitions"]], [1, 3, 4])
+        self.assertEqual([p["name"] for p in dk["partitions"]], ["vda1", "vda3", "vda4"])
+        self.assertEqual(dumpx.part(dk, 4)["start_lba"], 2099200)
+        # On GPT too, and a later edit works on the reordered list.
+        uefi = copy.deepcopy(corpus("ubuntu26-uefi"))
+        uefi["boot"]["efi"]["entries"] = []
+        e1 = E.build(uefi, "renumber", {"disk": "vda", "from": 1, "to": 4})
+        d1 = E.apply(uefi, [e1])
+        e2 = E.build(d1, "resize", {"disk": "vda", "partition": 2, "by_sectors": -32768 * 8})
+        dk = dumpx.disk(E.apply(d1, [e2]))
+        self.assertEqual([p["number"] for p in dk["partitions"]], [2, 4])
+        self.assertEqual(dk["partitions"][0]["sectors"], 31987712 - 32768 * 8)
+
+    def test_moving_the_first_partition_moves_the_mbr_gap(self):
+        # holt/src/bootcode.rs: post_mbr_gap.sectors is the first partition's start less one.
+        self.assertEqual(dumpx.disk(ALPINE)["boot_code"]["post_mbr_gap"]["sectors"], 2047)
+        d = E.apply(ALPINE, [E.build(ALPINE, "resize", {"disk": "vda", "partition": 3, "by_sectors": -4096})])
+        g = E.apply(d, [E.build(d, "gap_before", {"disk": "vda", "partition": 1, "sectors": 2})])
+        bc = dumpx.disk(g)["boot_code"]
+        self.assertEqual(bc["post_mbr_gap"]["sectors"], 2049)
+        self.assertEqual(bc["grub_core_in"], "post-mbr-gap")
+        a = E.apply(ALPINE, [E.build(ALPINE, "align", {"disk": "vda", "partition": 1, "sectors": 7})])
+        self.assertEqual(dumpx.disk(a)["boot_code"]["post_mbr_gap"]["sectors"], 2054)
+        # A gap later on the disk leaves it be; so does swapping the first two
+        # partitions (the lowest start stays).
+        g2 = E.apply(d, [E.build(d, "gap_before", {"disk": "vda", "partition": 2, "sectors": 5})])
+        self.assertEqual(dumpx.disk(g2)["boot_code"]["post_mbr_gap"]["sectors"], 2047)
+        s = E.apply(ALPINE, [E.build(ALPINE, "swap_order", {"disk": "vda", "a": 1, "b": 2})])
+        self.assertEqual(dumpx.disk(s)["boot_code"]["post_mbr_gap"]["sectors"], 2047)
+
+    def test_xfs_4k_sectors_set_the_log_sector_too(self):
+        # mkfs.xfs -s size=4096: the log's sector size, a 4 KiB log stripe
+        # unit and the "sector" version bit, as the restored dump has them.
+        e = E.build(ALPINE, "xfs_geometry", {"fs": "vda3", "sector_size": 4096})
+        c = dumpx.part(dumpx.disk(E.apply(ALPINE, [e])), 3)["content"]
+        self.assertEqual((c["sector_size"], c["log_sector_size"], c["log_stripe_unit"]), (4096, 4096, 4096))
+        self.assertEqual(c["version_flags"], ["attr", "nlink", "align", "logv2", "sector", "extflg", "dirv2", "morebits"])
+        # A resize after it keeps them; back to 512 drops them again.
+        d = E.apply(ALPINE, [e])
+        d = E.apply(d, [E.build(d, "resize", {"disk": "vda", "partition": 3, "by_sectors": -4096})])
+        self.assertEqual(dumpx.part(dumpx.disk(d), 3)["content"]["log_stripe_unit"], 4096)
+        back = E.apply(d, [E.build(d, "xfs_geometry", {"fs": "vda3", "sector_size": 512})])
+        c0, c2 = dumpx.part(dumpx.disk(ALPINE), 3)["content"], dumpx.part(dumpx.disk(back), 3)["content"]
+        for k in ("log_sector_size", "log_stripe_unit", "version_flags"):
+            self.assertEqual(c2[k], c0[k], k)
+
+    def test_swap_size_is_whole_pages(self):
+        # bko-holt's dump: a swap's size_bytes is (last_page + 1) pages
+        # (holt/src/probe/misc.rs), not its partition's bytes.
+        e = E.build(ALPINE, "align", {"disk": "vda", "partition": 2, "sectors": 940})
+        p = dumpx.part(dumpx.disk(E.apply(ALPINE, [e])), 2)
+        self.assertEqual(p["size_bytes"], 2147002368)
+        self.assertEqual(p["content"]["last_page"], 524169)
+        self.assertEqual(p["content"]["size_bytes"], 2147000320)
+        self.assertEqual(e["sets"]["vda2"]["swap"]["size_bytes"], 2146996224)
+
+    def test_chained_swap_order_moves_the_esp_and_its_hidden_sectors(self):
+        uefi = copy.deepcopy(corpus("ubuntu26-uefi"))
+        uefi["boot"]["efi"]["entries"] = []
+        e = E.build(uefi, "swap_order", {"disk": "vda", "a": 1, "b": 2})
+        d = E.apply(uefi, [e])
+        esp = dumpx.part(dumpx.disk(d), 1)
+        self.assertEqual(esp["start_lba"], 2048 + 31987712)
+        self.assertEqual(esp["content"]["hidden_sectors"], esp["start_lba"])
+        # judge.py --fit: the largest partition shrinks, the ESP after it
+        # moves down, and its FAT's hidden sectors with it.
+        J = fitcalc.judge()
+        plan = J.fit_plan(d, -(1 << 30), 10)
+        flat = {}
+        J.flatten(d, "", flat)
+        want = J.fit_expect(plan, flat)
+        i = [k for k, dk in enumerate(d["storage"]["disks"]) if dk["name"] == "vda"][0]
+        j = [k for k, p in enumerate(dumpx.disk(d)["partitions"]) if p["number"] == 1][0]
+        at = f"storage.disks.{i}.partitions.{j}."
+        self.assertEqual(want[at + "content.hidden_sectors"], want[at + "start_lba"])
+        self.assertLess(want[at + "start_lba"], esp["start_lba"])
 
 
 class TestModels(unittest.TestCase):
@@ -281,6 +364,31 @@ class TestContent(unittest.TestCase):
         self.assertGreater(deep, 4096)
         self.assertLessEqual(max(len(bytes.fromhex(e["to"])) for e in a if e["kind"] == "symlink"), 1024)   # XFS's limit
         self.assertFalse(any(e.get("xattrs") for e in CT.plan({"recipe": "alpine-small-2", "seed": 3}, "vfat")))
+
+    def test_long_symlink_fits_the_restored_fs(self):
+        c = {"recipe": "alpine-small-2", "seed": 3}
+
+        def long(entries):
+            return len(bytes.fromhex(next(e for e in entries if bytes.fromhex(e["path"]) == b"a/long")["to"]))
+        # The recipes stay as they were where nothing shrinks.
+        self.assertEqual(long(CT.plan(c, "ext4")), 4083)
+        self.assertEqual(long(CT.plan(c, "xfs")), 1003)
+        self.assertEqual(long(CT.plan(c, "ext4", symlink_max=4095)), 4083)
+        self.assertEqual(CT.symlink_max(ALPINE), 1024)   # / (srv/bs2) is XFS
+        # An ext4 root drifted to 2 KiB blocks stores 2,047 bytes at most.
+        uefi = corpus("ubuntu26-uefi")
+        self.assertEqual(CT.symlink_max(uefi), 4095)
+        rc = dumpx.part(dumpx.disk(uefi), 2)["content"]
+        e = E.build(uefi, "ext4_geometry", {"fs": "vda2", "block_size": 2048, "inodes_per_group": rc["inodes_per_group"] // 2,
+                                             "reserved_gdt_blocks": 256})
+        lim = CT.symlink_max(E.apply(uefi, [e]))
+        self.assertEqual(lim, 2047)
+        a, b = CT.plan(c, "ext4"), CT.plan(c, "ext4", symlink_max=lim)
+        self.assertLessEqual(long(b), 2047)
+        self.assertGreater(long(b), 2000)
+        # The same entries and indexes, so a shrunk case's "only" still means the same.
+        self.assertEqual([(x["i"], x["path"]) for x in a], [(x["i"], x["path"]) for x in b])
+        self.assertEqual(long(CT.plan(c, "ext4", symlink_max=1023)), 1023)
 
     def test_only_keeps_hardlinks_whole(self):
         a = CT.plan({"recipe": "alpine-small-2", "seed": 3}, "ext4")

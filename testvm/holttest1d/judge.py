@@ -666,6 +666,10 @@ def fit_expect(plan, flat):
             step(q + "start_lba", amount // ss)
             step(q + "end_lba", amount // ss)
             step(q + "start_bytes", amount)
+            # A FAT records its start (mkfs.fat's hidden sectors), and load
+            # makes a moved one where it now starts.
+            if flat.get(q + "content.type") == "vfat":
+                step(q + "content.hidden_sectors", amount // ss)
     for i, amount in plan["dm"].items():
         at = f"storage.dm_devices.{i}."
         step(at + "size_bytes", amount)

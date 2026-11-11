@@ -65,7 +65,7 @@ phase_backup_bs2() {
         if [[ $BS2_CONTENT == 1 ]] || ((r > 0)); then
             bs2_mount rw || { bad "mount the source read-write, to plant (logs/backup-mount.log)"; return; }
             if ((r == 0)); then
-                if python3 "$BS2_HOST" plant "$BS2_CASE" "$SRC_MP" > "$R/logs/bs2-plant.log" 2>&1; then
+                if python3 "$BS2_HOST" plant "$BS2_CASE" "$SRC_MP" --layout "$R/dumps/drifted.json" > "$R/logs/bs2-plant.log" 2>&1; then
                     ok "content planted: $(tail -1 "$R/logs/bs2-plant.log")"
                 else
                     bad "content planting (logs/bs2-plant.log): $(tail -1 "$R/logs/bs2-plant.log")"; bs2_umount; return

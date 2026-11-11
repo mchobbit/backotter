@@ -73,8 +73,36 @@ def _caps():
     return struct.pack("<IIIII", 0x02000001, 1 << 10, 0, 0, 0)
 
 
-def plan(content, fs_type, ext4_big_inodes=True, xfs_bigtime=True):
+# The longest symlink target each filesystem stores, in bytes: XFS's
+# XFS_SYMLINK_MAXLEN; ext2/3/4 keep a target and its NUL in one block, so a
+# block less one (symlink_max() works that out from the drifted layout).
+SYMLINK_MAX = {"xfs": 1024}
+LONG_DEFAULT = {"xfs": 500}   # a/long's "x/" pairs: 1,003 bytes on XFS, 4,083 elsewhere
+LONG_PAIRS = 2040
+
+
+def symlink_max(layout, path=DIR):
+    """The longest symlink target the filesystem holding PATH stores, in
+    LAYOUT (a dump, or a drifted layout: what the restore makes it), or None
+    where nothing tighter than PATH_MAX holds."""
+    from . import dumpx
+    ms = sorted((m for m in dumpx.storage(layout).get("mounts") or []
+                 if (path + "/").startswith(str(m.get("target") or "").rstrip("/") + "/")), key=lambda m: len(m["target"]))
+    if not ms:
+        return None
+    dev = dumpx.devices(layout).get(ms[-1].get("device"))
+    c = (dev or {}).get("content") or {}
+    t = c.get("type") or ms[-1].get("fstype")
+    if t in ("ext2", "ext3", "ext4") and c.get("block_size"):
+        return int(c["block_size"]) - 1
+    return SYMLINK_MAX.get(t)
+
+
+def plan(content, fs_type, ext4_big_inodes=True, xfs_bigtime=True, symlink_max=None):
     """The entries of CONTENT on a filesystem of FS_TYPE, in planting order.
+    SYMLINK_MAX (bytes) caps a/long, the long symlink, where the filesystem
+    restored onto stores less (ext4 with smaller blocks: symlink_max()); the
+    entries themselves, and their indexes, are the same.
 
     An entry: {"i": INDEX, "kind": file|dir|hardlink|symlink|fifo|chr|blk,
     "path": hex of the bytes under DIR, ...}; files have "size" and "holes"
@@ -121,8 +149,12 @@ def plan(content, fs_type, ext4_big_inodes=True, xfs_bigtime=True):
     add("symlink", b"a/abs", to=b"/etc/os-release".hex())
     add("symlink", b"a/rel", to=b"../b/large".hex())
     add("symlink", b"a/dangling", to=b"nowhere/at/all".hex())
-    # A symlink as long as the filesystem allows (XFS: 1,024 bytes; ext4: 4,095).
-    add("symlink", b"a/long", to=(b"x/" * (500 if fs_type == "xfs" else 2040) + b"end").hex())
+    # A symlink nearly as long as the filesystem allows (XFS: 1,024 bytes;
+    # ext4: its block size less one), on the source and on what it's restored onto.
+    pairs = LONG_DEFAULT.get(fs_type, LONG_PAIRS)
+    if symlink_max is not None:
+        pairs = max(1, min(pairs, (symlink_max - 3) // 2))
+    add("symlink", b"a/long", to=(b"x/" * pairs + b"end").hex())
     for k in range(recipe["symlinks"] - 4):
         add("symlink", b"b/s" + str(k).encode(), to=rng.choice([b"../a", b"/tmp", b"f0", b"\xff\xfe"]).hex())
     # Names: 255 bytes, not UTF-8, with a newline.

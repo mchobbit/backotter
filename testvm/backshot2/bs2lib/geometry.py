@@ -153,10 +153,40 @@ XFS_LOG_MIN_BYTES = 64 * MIB   # the smallest log the generator draws (mkfs.xfs'
 XFS_LOG_MAX_BYTES = (1 << 31) - (1 << 20)
 
 
-def xfs(blocks, block_size, ag_blocks, log_blocks, inode_size, sector_size, features):
+# The superblock's version bits, in bko-holt's order (holt/src/probe/xfs.rs
+# VERSION_BITS): the dump's version_flags list them so.
+XFS_VERSION_BITS = ("attr", "nlink", "quota", "align", "dalign", "shared", "logv2", "sector",
+                    "extflg", "dirv2", "asciici", "morebits")
+
+
+def xfs_sector_fields(c, sector_size):
+    """The superblock fields mkfs.xfs -s size=SECTOR_SIZE sets beside the
+    sector size itself, for an XFS whose dump record is C.  -s sets the log's
+    sector size too; mkfs.xfs writes sb_logsectsize 0 and no "sector" version
+    bit for 512-byte sectors and logs, else the size and the bit, and a v2
+    log on 4 KiB sectors gets a 4 KiB stripe unit of its own (1 otherwise,
+    "none").  A log stripe unit the source set by hand is kept."""
+    out = {}
+    big = sector_size != 512
+    if "log_sector_size" in c:
+        out["log_sector_size"] = sector_size if big else 0
+    lsu = c.get("log_stripe_unit")
+    if lsu in (0, 1, 4096):
+        out["log_stripe_unit"] = 4096 if big else 1
+    vf = c.get("version_flags")
+    if isinstance(vf, list):
+        have = set(vf) - {"sector"}
+        if big:
+            have.add("sector")
+        out["version_flags"] = [b for b in XFS_VERSION_BITS if b in have] + [b for b in vf if b not in XFS_VERSION_BITS]
+    return out
+
+
+def xfs(blocks, block_size, ag_blocks, log_blocks, inode_size, sector_size, features, c=None):
     """The superblock numbers of an XFS made by mkfs.xfs -d size=,agsize=
-    -l size= -i size= -s size=.  Raises Invalid where it refuses, or would
-    drop a short last AG."""
+    -l size= -i size= -s size=, and with C (the source's dump record) what
+    the sector size sets beside itself (xfs_sector_fields).  Raises Invalid
+    where it refuses, or would drop a short last AG."""
     bs = block_size
     if blocks * bs < XFS_MIN_BYTES:
         raise Invalid(f"XFS of {blocks * bs} bytes: mkfs.xfs wants 300 MiB")
@@ -177,8 +207,11 @@ def xfs(blocks, block_size, ag_blocks, log_blocks, inode_size, sector_size, feat
         raise Invalid(f"inode size {inode_size}")
     if sector_size not in (512, 4096) or sector_size > bs:
         raise Invalid(f"sector size {sector_size}")
-    return {"blocks": blocks, "size_bytes": blocks * bs, "ag_blocks": ag_blocks, "ag_count": agcount,
-            "log_blocks": log_blocks, "inode_size": inode_size, "sector_size": sector_size}
+    out = {"blocks": blocks, "size_bytes": blocks * bs, "ag_blocks": ag_blocks, "ag_count": agcount,
+           "log_blocks": log_blocks, "inode_size": inode_size, "sector_size": sector_size}
+    if c is not None:
+        out.update(xfs_sector_fields(c, sector_size))
+    return out
 
 
 def xfs_overhead(blocks, block_size, ag_count, log_blocks):
@@ -199,11 +232,15 @@ def btrfs(node_size, sector_size, features):
 # ---- swap --------------------------------------------------------------------
 
 def swap(container_bytes, page_size=4096):
-    """mkswap on the whole of a device of CONTAINER_BYTES (load gives it no size)."""
+    """mkswap on the whole of a device of CONTAINER_BYTES (load gives it no
+    size): whole pages, the last one LAST_PAGE.  bko-holt's dump gives the
+    swap's size as its pages, (last_page + 1) x page size
+    (holt/src/probe/misc.rs), so a device that isn't whole pages has a tail
+    the swap doesn't count."""
     pages = container_bytes // page_size
     if pages < 10:
         raise Invalid("swap too small")
-    return {"last_page": pages - 1, "size_bytes": container_bytes}
+    return {"last_page": pages - 1, "size_bytes": pages * page_size}
 
 
 # ---- LUKS2 (cryptsetup) ------------------------------------------------------

@@ -18,4 +18,7 @@ test hosts.  Stdlib only; Python 3.9 or newer.
 - tier0.py     the tier 0 runner (B3), run on a host
 """
 
-GENERATOR = "1"   # the generator's version, recorded in every case it makes
+# The generator's version, recorded in every case it makes.  2 (2026-11-11):
+# swap sizes in whole pages, XFS's 4 KiB sectors set the log's, renumbered
+# partitions kept in number order, the MBR gap follows the first partition.
+GENERATOR = "2"

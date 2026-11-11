@@ -271,6 +271,59 @@
     "established": false
    }
   },
+  "chimera-uefi": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-bootstrap.sh",
+    "testvm/bootstrap/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apk",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apk"
+   ],
+   "checks": {
+    "pm": "apk",
+    "rules": {
+     "source": "S-none",
+     "loader": "L-sd",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false
+   }
+  },
+  "chimera-zfs": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-chimera-zfs.sh",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apk",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apk"
+   ],
+   "checks": {
+    "pm": "apk",
+    "rules": {
+     "source": "S-none",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-zfs"
+    },
+    "fw": "uefi",
+    "established": false
+   }
+  },
   "debian12": {
    "kind": "ssh",
    "plat": "linux",

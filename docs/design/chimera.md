@@ -213,6 +213,44 @@ and the boot tools, 2026-11-11:
 - **No golden plan yet:** it is made from a passing HoltTest1 run's dump of
   `chimera` (C5), as the corpus's others were.
 
+## What C3 found (load)
+
+Read on the `chimera` guest (`systemd-boot` 256.11-r5, `/usr/bin/gen-systemd-boot`),
+2026-11-11:
+
+- **When `load` runs it:** UEFI systemd-boot, not through shim, os-release
+  `ID` `chimera`, and the dump's `boot.packages` lists `systemd-boot` (the
+  package holding `bootctl` and `gen-systemd-boot`). By the dump, as
+  `update-grub` (by ID) and `dracut-rebuild` (by `eos-dracut`) are: Pop!_OS's
+  `systemd-boot` package has no `gen-systemd-boot`, so the package alone
+  isn't enough, and a test in the chroot would add a line to every systemd-boot
+  plan. The boot stage is then `update-initramfs -u -k all`, `bootctl install
+  --no-variables`, `gen-systemd-boot`; every other golden plan is unchanged.
+- **Exit status:** 0 made the entries; 1 made nothing (`SD_BOOT_DISABLE_KERNEL_HOOK`
+  set, or `bootctl is-installed` isn't `yes`), which the kernel hook
+  (`99-gen-systemd-boot.sh`) doesn't count as failing; 2 to 6 are ESP or
+  /boot checks (not a mount point, not an ESP, not FAT32, a separate /boot
+  that isn't XBOOTLDR); 69 is no `bootctl`. `load` takes 0 and 1, warns on 1
+  (the restored entries stay), and fails on the rest with their status.
+- **root= never comes from the rescue system.** `gen-systemd-boot` doesn't
+  read `/proc/cmdline`. Its command line is `SD_BOOT_CMDLINE` (from
+  `/usr/lib/systemd/boot/systemd-boot`, then `/etc/default/systemd-boot`),
+  `/etc/default/systemd-boot-cmdline` (or `/usr/lib/systemd/boot/cmdline`),
+  and `SD_BOOT_CMDLINE_DEFAULT` (`quiet splash` by default) for the normal
+  entry; `ro single` for the recovery one. If that has no `root=`,
+  `/usr/lib/base-kernel/kernel-root-detect` adds it from `findmnt -no source
+  /` in the chroot (the restored root as `load` mounted it): `PARTUUID=` from
+  `/dev/disk/by-partuuid`, else a `/dev/mapper` path, else `UUID=`, else the
+  node; `ZFS=DATASET` for ZFS, `rootflags=subvol=` for btrfs. So the entries
+  name the target's root by its new identity, which is what `--new-uuids`
+  (not built yet) needs; a `root=` the user wrote into those files stays as
+  written, and rewriting it is `--new-uuids`'s job, with fstab and crypttab.
+- It deletes and rewrites `/boot/loader/entries/TOKEN-*.conf` (`TOKEN` from
+  `/etc/kernel/entry-token`, `chimera` by default): one entry per kernel in
+  `linux-version list` and a `-recovery` one, the initrd when
+  `/boot/initrd.img-V` exists. Hand edits to those entries are lost, as on the
+  source's next kernel update.
+
 ## Guests
 
 Built by `make-bootstrap.sh`, as for Void: from the Arch ISO's live system,

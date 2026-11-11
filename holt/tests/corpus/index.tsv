@@ -7,6 +7,8 @@ artix-dinit	chopin	r4all	PASS	2026-11-08T02:52:57Z	2026-11-08T02:51:06Z	0.2.4	24
 artix-s6	cinqcent	r4all	PASS	2026-11-08T02:53:00Z	2026-11-08T02:51:10Z	0.2.4	83c31d471dad98577d4995fe798615dcc64c7503d5e9f0ac02ca6c3bc3ae9b1f	changed	8	ok:8:86	0	0	0	same	ok:8	-
 cachyos	chopin	r4all	PASS	2026-11-08T02:42:30Z	2026-11-08T02:40:28Z	0.2.4	912733658b2ec6f7fe6c63aa621bcca18fa3f78d803568c256789f6b1f8ee122	changed	8	ok:8:89	0	0	0	same	ok:8	-
 chimera	chopin	chim2	PASS	2026-11-11T06:44:55Z	2026-11-11T06:42:52Z	0.2.4	-	same	7	ok:7:85	0	0	0	same	ok:7	-
+chimera-uefi	chopin	chim4	PASS	2026-11-11T15:52:54Z	2026-11-11T15:49:30Z	0.2.4	-	same	20	ok:20:158	0	0	0	same	ok:20	-
+chimera-zfs	cinqcent	chim3	PASS	2026-11-11T15:41:27Z	2026-11-11T15:38:13Z	0.2.4	-	same	19	ok:19:97	0	0	0	same	ok:19	-
 debian12	cinqcent	r4all	PASS	2026-11-08T02:39:54Z	2026-11-08T02:37:34Z	0.2.4	b7d2728f47fa86feec4a36beeb5c40c8edfe0f3e98247ae521ce0616ba5ed7a6	changed	9	ok:9:88	0	0	0	same	ok:9	-
 debian13	chopin	r4all	PASS	2026-11-08T02:53:11Z	2026-11-08T02:50:59Z	0.2.4	0c453f0127b0a3151883b4bd971a90558aa3312d2cb00f85e0a333d5b7ecb425	changed	10	ok:10:92	1	0	0	same	ok:10	-
 debian13-stack	cinqcent	r4all	PASS	2026-11-08T02:30:36Z	2026-11-08T02:27:52Z	0.2.4	7e0364d7d0b090976efaeb01af0bb4339fc04d5be9136e3c11108a2e09dda471	same	35	ok:35:216	0	0	0	same	ok:35	-

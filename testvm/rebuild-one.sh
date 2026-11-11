@@ -13,7 +13,7 @@
 # CMP_CMD="env REBUILD_DIR=DIR DIR/testvm/rebuild-one.sh".
 # Builders that don't need root run as m, with TMPDIR=/mnt/bko-ram for their
 # small scratch; the root ones (make-from-live.sh, make-debian-zfs.sh,
-# make-debian-stack.sh) without a TMPDIR, so in /tmp: theirs would reach the
+# make-debian-stack.sh, make-chimera-zfs.sh) without a TMPDIR, so in /tmp: theirs would reach the
 # guest's chroot. Images go to REBUILD_DIR. Results: REBUILD_DIR/vms/GUEST/rebuild-build.json and
 # rebuild-boot.json; exit 0 only if it built and booted.
 set -u
@@ -60,6 +60,8 @@ tumbleweed) cmd=(asm $T/make-opensuse.sh 20261030 "$W") ;;
 alpine324)  cmd=(asm $T/make-bootstrap.sh alpine "$W") ;;
 void-musl)  cmd=(asm $T/make-bootstrap.sh void "$W") ;;
 chimera)    cmd=(asm $T/make-bootstrap.sh chimera "$W") ;;
+chimera-uefi) cmd=(asm $T/make-bootstrap.sh chimera-uefi "$W") ;;
+chimera-zfs) cmd=($T/make-chimera-zfs.sh "$W" chimera-zfs) ;;
 artix-dinit|artix-s6) cmd=(asm $T/make-bootstrap.sh $G "$W") ;;
 nixos2605)  cmd=(asm $T/make-bootstrap.sh nixos "$W") ;;
 arch)       cmd=(asm $T/make-arch.sh 2026.10.01 "$W") ;;
@@ -96,8 +98,8 @@ IMG=$G; case $G in freebsd15-ufs|freebsd15-geli) IMG=freebsd15 ;; ghostbsd26-zfs
 if ss -ltnH "sport = :$((2230 + SLOT))" | grep -q .; then echo "port $((2230 + SLOT)) is taken" >&2; exit 2; fi
 case $G in mx25|mint22|pop24|zorin18) [ -f "${cmd[3]}" ] || { echo "no ISO ${cmd[3]}" >&2; exit 2; } ;; esac
 leftovers() {  # what a failed root builder may leave: this build's loop devices; mounts, pools, arrays and LUKS volumes of any build on the host
-    { losetup -a | grep -F "$W"; findmnt -rno TARGET | grep -E '^/mnt/(bko-debian-zfs|bko-debian-stack|live-)'
-      zpool list -H -o name 2>/dev/null | grep '^bkodz'
+    { losetup -a | grep -F "$W"; findmnt -rno TARGET | grep -E '^/mnt/(bko-debian-zfs|bko-debian-stack|bko-chimera-zfs|live-)'
+      zpool list -H -o name 2>/dev/null | grep -E '^bko(dz|cz)'
       ls /dev/md 2>/dev/null | grep '^bkos'; dmsetup ls 2>/dev/null | grep -o '^bkos[^[:space:]]*'; } | tr '\n' ' '
 }
 

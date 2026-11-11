@@ -1,5 +1,5 @@
-//! Whole-system tests: fake Debian 13 machines, one Chimera Linux and one
-//! Fedora Kinoite on ostree (their /sys, /proc, /dev,
+//! Whole-system tests: fake Debian 13 machines, two Chimera Linux (BIOS
+//! GRUB, UEFI systemd-boot) and one Fedora Kinoite on ostree (their /sys, /proc, /dev,
 //! /etc, /run, /boot and /var as a directory tree, the disks as image files
 //! under /dev) laid out the way Debian's installer and BackOtter's test
 //! guests lay real ones out, run through the full report.
@@ -248,6 +248,91 @@ fn chimera_bios_guest() {
     assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
     assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{bt}");
     assert!(!bt.contains("update-grub"), "{bt}");
+}
+
+/// The chimera-uefi guest's boot, on uefi_shim's disk: GPT, the ESP as /boot
+/// (vmlinuz-V and initrd.img-V on it), Chimera's systemd-boot without systemd
+/// (LoaderInfo, apk's systemd-boot), gen-systemd-boot's entries, root ext4.
+fn chimera_uefi() -> Tree {
+    use crate::efi::{GLOBAL, LOADER};
+    let t = Tree::new("scn-chimera-uefi");
+    let v = "6.18.62-0-generic";
+    let mut img = vec![0u8; 64 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "6f1c2c3d-0000-4000-8000-00000000bbbb",
+            parts: vec![(ESP, "0b5f04ed-e731-4ac6-933e-83ff25657722", 2048, 73727, 0, ""), (LINUX, "11112222-3333-4444-5555-666677778888", 73728, 131038, 0, "")],
+        },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(71680, 0x1234_abcd, ""));
+    put(&mut img, 73728, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
+    let mut loader_info = vec![6u8, 0, 0, 0];
+    for c in "systemd-boot 256.11".encode_utf16().chain([0]) {
+        loader_info.extend(c.to_le_bytes());
+    }
+    let opts = "root=PARTUUID=11112222-3333-4444-5555-666677778888 ro console=ttyS0,115200n8";
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 57311, &img)
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&format!("/sys/firmware/efi/efivars/SecureBoot-{GLOBAL}"), [6u8, 0, 0, 0, 0])
+        .file(&format!("/sys/firmware/efi/efivars/LoaderInfo-{LOADER}"), loader_info)
+        .symlink("/dev/disk/by-partuuid/0b5f04ed-e731-4ac6-933e-83ff25657722", "../../vda1")
+        .symlink("/dev/disk/by-partuuid/11112222-3333-4444-5555-666677778888", "../../vda2")
+        .file("/proc/self/mountinfo", "26 1 254:2 / / rw,relatime shared:1 - ext4 /dev/vda2 rw\n27 26 254:1 / /boot rw,relatime shared:2 - vfat /dev/vda1 rw,fmask=0022\n")
+        .file("/etc/fstab", "UUID=10111213-1415-1617-1819-1a1b1c1d1e1f / ext4 defaults 0 1\nPARTUUID=0b5f04ed-e731-4ac6-933e-83ff25657722 /boot vfat defaults 0 2\n")
+        .file("/etc/os-release", "NAME=\"Chimera\"\nID=\"chimera\"\nPRETTY_NAME=\"Chimera Linux\"\n")
+        .symlink("/lib", "usr/lib")
+        .file(
+            "/usr/lib/apk/db/installed",
+            "C:Q1aaa=\nP:linux-lts\nV:6.18.62-r0\nA:x86_64\n\nC:Q1bbb=\nP:systemd-boot\nV:256.11-r5\nA:x86_64\n\nC:Q1ccc=\nP:systemd-boot-efi\nV:256.11-r5\nA:x86_64\n\nC:Q1ddd=\nP:initramfs-tools\nV:0.148.3-r2\nA:noarch\n\nC:Q1eee=\nP:efibootmgr\nV:18-r0\nA:x86_64\n\n",
+        )
+        .file("/boot/EFI/systemd/systemd-bootx64.efi", vec![1u8; 300])
+        .file("/boot/EFI/BOOT/BOOTX64.EFI", vec![1u8; 300])
+        .file("/boot/loader/loader.conf", "timeout 3\n")
+        .file(&format!("/boot/loader/entries/chimera-{v}.conf"), format!("title Chimera Linux\nlinux /vmlinuz-{v}\ninitrd /initrd.img-{v}\noptions {opts} quiet splash\n"))
+        .file(&format!("/boot/loader/entries/chimera-{v}-recovery.conf"), format!("title Chimera Linux\nlinux /vmlinuz-{v}\ninitrd /initrd.img-{v}\noptions {opts} single\n"))
+        .file(&format!("/boot/vmlinuz-{v}"), "k")
+        .file(&format!("/boot/initrd.img-{v}"), "i")
+        .file(&format!("/boot/config-{v}"), "")
+        .dir(&format!("/usr/lib/modules/{v}/kernel"))
+        .file("/etc/initramfs-tools/initramfs.conf", "MODULES=most\nCOMPRESS=zstd\n")
+        .file("/etc/default/systemd-boot-cmdline", "console=ttyS0,115200n8\n")
+        .file("/proc/sys/kernel/osrelease", format!("{v}\n"))
+        .file("/proc/sys/kernel/hostname", "chimera-uefi\n")
+        .file("/proc/cmdline", format!("initrd=\\initrd.img-{v} {opts} quiet splash\n"));
+    t
+}
+
+#[test]
+fn chimera_uefi_guest() {
+    let v = run(&chimera_uefi(), true, FakeRunner::default());
+    assert_eq!(s(&v, &["os", "id"]), "chimera");
+    assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
+    assert_eq!(s(&v, &["boot", "loader", "name"]), "systemd-boot");
+    assert_eq!(s(&v, &["boot", "loader", "firmware"]), "uefi");
+    assert_eq!(s(&v, &["boot", "loader", "package"]), "systemd-boot");
+    assert_eq!(v.at(&["boot", "loader", "via_shim"]), Some(&Value::Bool(false)));
+    assert_eq!(s(&v, &["boot", "packages", "systemd-boot"]), "256.11-r5");
+    assert_eq!(s(&v, &["boot", "esps", "0", "mounted_at"]), "/boot");
+    assert_eq!(arr(&v, &["boot", "systemd_boot", "entries"]).len(), 2);
+    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "initramfs-tools");
+    assert_eq!(s(&v, &["boot", "kernels", "installed", "0", "version"]), "6.18.62-0-generic");
+    // load reinstalls systemd-boot, then gen-systemd-boot remakes the
+    // entries after the initramfs; nothing GRUB's.
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    let l = Layout::from_json(v).unwrap();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+    let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
+    let initramfs = bt.find("chroot /mnt/bko-target update-initramfs -u -k all\n").expect(&bt);
+    let bootctl = bt.find("chroot /mnt/bko-target bootctl install --no-variables\n").expect(&bt);
+    let made = bt.find("chroot /mnt/bko-target sh -c 'gen-systemd-boot; r=$?;").expect(&bt);
+    assert!(initramfs < bootctl && bootctl < made, "{bt}");
+    assert!(!bt.contains("grub"), "{bt}");
 }
 
 #[test]

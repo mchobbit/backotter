@@ -194,6 +194,12 @@ BOOT_STAGE = [
     (r"^boot/efi[^/]*/EFI(/|$)", _WRITTEN, "grub-install writes the ESPs' loaders (a second ESP by the distribution's hook)"),
     (r"^(boot/)?efi/EFI(/(BOOT|Boot|systemd|Linux)(/.*)?)?$", _WRITTEN, "bootctl install rewrites systemd-boot and makes EFI/Linux in an ESP at /efi (AerynOS)"),
     (r"^(boot/)?efi/loader(/(random-seed|keys))?$", _WRITTEN, "bootctl install writes a new random seed and makes loader/keys"),
+    # An ESP mounted as /boot itself (Chimera): its EFI/ is boot/EFI, which
+    # nothing but an ESP has, and its loader/ is boot/loader.
+    (r"^boot/EFI/(BOOT(/BOOT[A-Z0-9]+\.EFI)?|systemd(/systemd-boot[a-z0-9]+\.efi)?)$", _WRITTEN, "bootctl install rewrites systemd-boot in an ESP at /boot (Chimera)"),
+    (r"^boot/loader/random-seed$", _WRITTEN, "bootctl install writes a new random seed in an ESP at /boot"),
+    (r"^etc/kernel/entry-token$", _WRITTEN, "bootctl install writes the entry token (all it writes in /etc/kernel; install.conf it only reads)"),
+    (r"^etc/kernel$", {"mtime (dirs)", "atime (dirs)"}, "bootctl install replaces etc/kernel/entry-token"),
     (r"^efi/EFI/endeavouros(/|$)", _WRITTEN, "grub-install writes the loader in an ESP at /efi (EndeavourOS with GRUB)"),
     (r"^(boot/)?efi/[0-9a-f]{32}/[^/]+/initrd$", _WRITTEN, "dracut --regenerate-all rebuilds a Type 1 entry's initrd, on the ESP under the machine id (EndeavourOS)"),
     (r"^(boot/)?efi/[0-9a-f]{32}/[^/]+$", {"mtime (dirs)", "atime (dirs)"}, "dracut replaces the initrd in its directory"),

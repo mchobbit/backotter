@@ -2394,6 +2394,9 @@ impl Builder<'_> {
             }
             ("systemd-boot", true) => {
                 out.push(Cmd::new(&["chroot", &t, "bootctl", "install", "--no-variables"]));
+                if let Some(c) = self.gen_systemd_boot(&t) {
+                    out.push(c);
+                }
             }
             // Limine on UEFI is files on the ESP (its EFI binary,
             // limine.conf), restored with it; only the boot entries are made.
@@ -2518,6 +2521,35 @@ impl Builder<'_> {
             Some("mkinitfs") => Cmd::new(&["chroot", t, "sh", "-c", "for k in /lib/modules/*; do mkinitfs \"${k##*/}\" || exit; done"]),
             _ => Cmd::new(&["chroot", t, "update-initramfs", "-u", "-k", "all"]),
         })
+    }
+
+    /// Chimera's systemd-boot entries, remade as its kernel hook
+    /// (/usr/lib/kernel.d/99-gen-systemd-boot.sh) remakes them: one per
+    /// kernel in /boot and a recovery one, named by /etc/kernel/entry-token.
+    /// The command line is /etc/default/systemd-boot's and
+    /// systemd-boot-cmdline's, restored; root= is theirs when they have one,
+    /// else kernel-root-detect's, from what / is mounted from in the chroot
+    /// (the target's root, by PARTUUID, /dev/mapper name or UUID), never the
+    /// rescue system's /proc/cmdline.  Its exit status 1 is "made nothing"
+    /// (disabled, or bootctl says systemd-boot isn't installed), which the
+    /// hook doesn't count as failing: the restored ESP's entries stay.
+    /// Other systems with systemd-boot write their entries with
+    /// kernel-install or their own tools, and they came back with the ESP.
+    fn gen_systemd_boot(&self, t: &str) -> Option<Cmd> {
+        if self.layout.str_at(&["os", "id"]) != Some("chimera") || self.layout.str_at(&["boot", "packages", "systemd-boot"]).is_none() {
+            return None;
+        }
+        Some(
+            Cmd::new(&[
+                "chroot",
+                t,
+                "sh",
+                "-c",
+                "gen-systemd-boot; r=$?; [ \"$r\" -ne 1 ] || { echo 'gen-systemd-boot: warning: it made no entries (disabled, or bootctl says systemd-boot is not installed); the restored ones stay' >&2; r=0; }; exit \"$r\"",
+            ])
+            .why("the boot entries, for the restored kernels and root (Chimera's gen-systemd-boot, as its kernel hook runs it)")
+            .warns(),
+        )
     }
 
     fn grub_bios_devices(&self) -> Vec<String> {
@@ -2887,8 +2919,45 @@ mod tests {
         assert!(ut.contains("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=chimera --no-nvram\n"), "{ut}");
         assert!(ut.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{ut}");
         assert!(ut.contains("chroot /mnt/bko-target update-initramfs -u -k all\n"), "{ut}");
+        assert!(!ut.contains("gen-systemd-boot"), "{ut}");
+        // UEFI with systemd-boot (chimera-uefi): the ESP as /boot; bootctl
+        // reinstalls it, and gen-systemd-boot remakes the entries after the
+        // initramfs, as Chimera's kernel hook does.
+        let sd = bios
+            .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+            .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, r#""loader": {"name": "systemd-boot", "firmware": "uefi", "via_shim": false, "package": "systemd-boot"}"#)
+            .replace(r#""grub": "2.14-r1", "grub-i386-pc": "2.14-r1""#, r#""systemd-boot": "256.11-r5", "systemd-boot-efi": "256.11-r5""#)
+            .replace(r#""efi": null,"#, r#""efi": {"entries": [], "boot_order": []}, "esps": [{"device": "vda1", "mounted_at": "/boot", "contents": {"files": [{"path": "EFI/systemd/systemd-bootx64.efi"}, {"path": "EFI/BOOT/BOOTX64.EFI"}]}}],"#);
+        let b = built_from(&sd, &[]);
+        let st = text(b.stage(Stage::Boot));
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let gen = "chroot /mnt/bko-target sh -c 'gen-systemd-boot; r=$?; [ \"$r\" -ne 1 ] || { echo '\\''gen-systemd-boot: warning: it made no entries (disabled, or bootctl says systemd-boot is not installed); the restored ones stay'\\'' >&2; r=0; }; exit \"$r\"'\n";
+        let initramfs = st.find("chroot /mnt/bko-target update-initramfs -u -k all\n").expect(&st);
+        let bootctl = st.find("chroot /mnt/bko-target bootctl install --no-variables\n").expect(&st);
+        let made = st.find(gen).expect(&st);
+        assert!(initramfs < made && bootctl < made, "{st}");
+        assert_eq!(st.matches("gen-systemd-boot;").count(), 1, "{st}");
+        assert!(!st.contains("grub"), "{st}");
+        // gen-systemd-boot's exit status: 0 and 1 (made nothing) succeed,
+        // with a warning for 1; the rest fail, with their own status.
+        let c = b.stage(Stage::Boot).iter().find(|c| c.argv.iter().any(|a| a.starts_with("gen-systemd-boot;"))).unwrap().clone();
+        assert!(c.warns);
+        let script = c.argv[4].replace("gen-systemd-boot;", "f() { return \"$1\"; }; f \"$0\";");
+        for (rc, want) in [(0, 0), (1, 0), (2, 2), (69, 69), (127, 127)] {
+            let o = std::process::Command::new("sh").args(["-c", &script, &rc.to_string()]).output().unwrap();
+            assert_eq!(o.status.code(), Some(want), "{rc}");
+            assert_eq!(String::from_utf8_lossy(&o.stderr).contains("warning: it made no entries"), rc == 1, "{rc}");
+        }
+        // Only Chimera's: not without its systemd-boot package, and not on
+        // another system whose systemd-boot package has no gen-systemd-boot
+        // (Pop!_OS's, Debian's).
+        let no_pkg = sd.replace(r#""systemd-boot": "256.11-r5", "#, "");
+        assert!(!text(built_from(&no_pkg, &[]).stage(Stage::Boot)).contains("gen-systemd-boot"));
+        let pop = sd.replace(r#""id": "chimera""#, r#""id": "pop", "version_id": "24.04""#);
+        let pt = text(built_from(&pop, &[]).stage(Stage::Boot));
+        assert!(pt.contains("chroot /mnt/bko-target bootctl install --no-variables\n") && !pt.contains("gen-systemd-boot"), "{pt}");
         // No GNU-only option in what runs on the target's own tools.
-        for l in bt.lines().chain(ut.lines()).filter(|l| l.starts_with("chroot ")) {
+        for l in bt.lines().chain(ut.lines()).chain(st.lines()).filter(|l| l.starts_with("chroot ")) {
             for gnu in ["stat -c", "sed -i", "df --output", "df -B", "date -d", "cp --", "sort -V", "readlink -e", "tac "] {
                 assert!(!l.contains(gnu), "{gnu} in {l}");
             }

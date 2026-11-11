@@ -103,6 +103,8 @@
     "aerynos": {"kind": "linux", "firmware": "uefi"},
     "void-musl": {"kind": "linux"},
     "chimera": {"kind": "linux"},
+    "chimera-uefi": {"kind": "linux", "firmware": "uefi"},
+    "chimera-zfs": {"kind": "linux", "firmware": "uefi"},
     "nixos2605": {"kind": "linux"},
     "freebsd15": {"kind": "bsd", "plat": "freebsd", "rescuer": ["freebsd15-ufs"]},
     "freebsd15-mirror": {"kind": "bsd", "plat": "freebsd", "rescuer": ["freebsd15-ufs"]},

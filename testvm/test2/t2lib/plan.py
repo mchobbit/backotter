@@ -1652,7 +1652,7 @@ class Planner:
         pc.reasons += soft[:2]
 
     def holt_code_rule(self, v):
-        """bko-holt's code changed: version-only (carried), plan-visible (R15) or all 51 (holt:code)."""
+        """bko-holt's code changed: version-only (carried), plan-visible (R15) or all 53 (holt:code)."""
         P = v.P
         # R14: rows of a build that isn't CODE's (HoltTest1 runs, --holt-bin sets) count only
         # where equal, whatever the tree's diff says; so does any row when the set is a --holt-bin one.
@@ -2119,7 +2119,7 @@ def known_names(ctx):
 
 def check_classes(ctx, holt_names=None, notes=None):
     """The class table's check (contract 1.8): every name exists (stic: a check directory; holt:
-    a guest in the facts, else in holt/spec.json, else HOLT_NAMES for VM-less tests); the 51
+    a guest in the facts, else in holt/spec.json, else HOLT_NAMES for VM-less tests); the 53
     sources are exactly the families plus devuan6; every variant's guest is a source; the
     canaries, pins, panels and classes name sources or checks; the guest and img tables name
     what their specs have (a spec that isn't there yet is skipped, with a line in NOTES).
@@ -2147,8 +2147,8 @@ def check_classes(ctx, holt_names=None, notes=None):
     src = set(fam) | set(h.get("no_family", []))
     if len(fam) != len(set(fam)):
         errs.append("holt: a guest in two families")
-    if len(src) != 51:
-        errs.append(f"holt: {len(src)} sources, not 51")
+    if len(src) != 53:
+        errs.append(f"holt: {len(src)} sources, not 53")
     known = set(holt_names or ())
     if not known:
         for f in ctx.facts.values():

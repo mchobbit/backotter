@@ -273,7 +273,7 @@ def judge_job(guest, mode, result, out, entry, policy, classed, updates, rc, sto
     if one_reading and "before" in secs:
         add(J.judge_after(None, secs["before"], checks, classed))
     elif "after" in secs and "before" in secs:
-        add(J.judge_after(secs["before"], secs["after"], checks, classed))
+        add(J.judge_after(secs["before"], secs["after"], checks, classed, (result.get("merge") or {}).get("steps")))
     elif "after" not in hook_failed and "before" not in hook_failed:
         for n in J.AFTER_NEEDS:
             needs[n], details[n] = "SKIP", J.skip("the update failed before the reboot's checks")

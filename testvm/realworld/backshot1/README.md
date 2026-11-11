@@ -8,7 +8,8 @@ backing up to a USB drive labelled `mybig512`.  Everything acts on the disk with
 that serial number, never on a `/dev` name.
 
 It handles any Linux `bko-holt` supports, on any stack of partitions, LUKS, LVM,
-md, btrfs and ZFS on that disk, booted by UEFI or BIOS.  It backs up every real
+md, btrfs and ZFS on that disk, booted by UEFI or BIOS (an ostree system such as
+Bazzite by UEFI, without LUKS or LVM: "ostree" below).  It backs up every real
 filesystem the running system has mounted from the disk, and stops, before
 changing anything, if the disk holds a filesystem that isn't mounted.  Not
 covered: the BSDs, illumos and Haiku, which need their own rescue images, and
@@ -70,6 +71,85 @@ stick by hand.  It needs a UEFI system with `efibootmgr`, so not AerynOS.
 Once `thinkpad.local` answers again:
 
     backshot1 verify NAME         the checks; exit 0 and RESULT say PASS
+
+On an ostree system, then the rollback, as below:
+
+    backshot1 check-boot NAME     the deployment this boot started, against the baseline
+
+The tree is mounted at `/run/bs1-src` and backed up as `/mnt/bs1-src`
+(`--as-path`), so every snapshot is `latest:/mnt/bs1-src`, older backups' too.
+
+## ostree: Bazzite, Silverblue, Kinoite
+
+An image-mode system (`/run/ostree-booted`; docs/design/bazzite.md) has a
+composefs overlay for `/`, so what BackShot1 backs up is fstab's tree, from
+`bko-holt dump`'s `storage.backup_sources`: the physical root (`/sysroot`, the
+btrfs subvolume holding `ostree/repo` and the deployments) at `/`, `/boot`,
+the ESP, `/var/home` at `/home`, and `/var`.  The `/etc` and stateroot binds
+are left out: their files are in the physical root already.
+
+- **Hold the updates off** for as long as the run takes, from the backup to
+  the last check: `systemctl disable --now uupd.timer` on Bazzite, and turn it
+  back on (`systemctl enable --now uupd.timer`) on the restored system once
+  it has passed.  Phase 1 and `verify` stop the updaters (uupd,
+  rpm-ostreed-automatic, bootc-fetch-apply-updates) for their own boot
+  anyway, and `verify` fails if one ran since the boot.
+- **bs1-adopt installs nothing** there (`/usr` is the image's, read-only).
+  If a tool BackShot1 needs is missing, it stops and names it: layer it with
+  `rpm-ostree install`, reboot, and run bs1-adopt again.  Kinoite 44 has
+  them all.  What it writes lands in the booted deployment's `/etc` only, so
+  the rollback keeps its old hostname and host key.
+- **Preflight refuses** (and so does phase 1) when the OS isn't one
+  `bko-holt dump` supports (a Bazzite that moved to 45 stops here); a
+  deployment is staged, or pending (the next boot would start another one
+  than the booted: reboot first, or `rpm-ostree cleanup -p`); an rpm-ostree
+  transaction or an updater is running; or a btrfs subvolume that `btrfs
+  subvolume list` shows is neither mounted nor inside one that is.
+- **Phase 1 fails** if `ostree admin status` or `/boot/loader`'s target
+  moved while it ran: the backup would hold /boot and the root on either
+  side of a deploy.  Its baseline gains `deployments.txt` (the deployments
+  and their hostnames, which one booted, the BLS entries' `options`, the
+  command line but `BOOT_IMAGE=` (GRUB's count of the disks), SELinux, rpm-ostree's list, the image, bootupd, grubenv,
+  `lsattr -d` of each deployment root, `ostree admin status`), `links.txt`
+  (per filesystem, the regular files with more than one link, and how many
+  paths have each link count) and `space.txt` (each btrfs filesystem's bytes
+  in use).  The manifest adds each regular file's link count and inode flags
+  under `ostree/`.
+- **What verify adds,** after holding the updaters off and checking that
+  rpm-ostree shows no staged or new deployment, then the manifest:
+  - the booted deployment is the baseline's, checksum *and* serial (the
+    two deployments may be one commit, told apart only by serial, kargs and
+    `/etc`);
+  - `/` is a composefs overlay, `/sysroot` is on the restored disk;
+  - SELinux, `ostree admin status`, the deployments and their hostnames,
+    each BLS entry's `options`, `/boot/loader` and the command line are the
+    baseline's;
+  - the link counts and the deployment roots' flags are the baseline's;
+  - each btrfs filesystem uses at most 5% more than before (restored onto
+    `compress=zstd:1`, it is usually smaller; broken hard links would make
+    the repository about three times as big);
+  - `ostree fsck` passes (every object's checksum, which covers its
+    content, mode, owner and SELinux label), `rpm-ostree status` works,
+    `bootupctl status` says "At latest version", `bootupd-state.json` is
+    unchanged (so a first-boot ESP rewrite shows), and grubenv has no
+    `boot_counter`.
+
+  A gained `FS_NOCOMP_FL` on a repository object is not a difference: btrfs
+  sets it as the restore writes data that won't compress.  Hardlinked
+  symlinks come back as separate symlinks, which ostree doesn't mind.
+- **The rollback boots too.**  After `verify` passes, boot the restored
+  rollback once from the GRUB menu at the laptop's console (the second
+  entry, its title ending `(ostree:1)`; if no menu shows, hold Esc as GRUB
+  starts), then `backshot1 check-boot NAME`:
+  the booted deployment must be the baseline's rollback, with that entry's
+  kargs, its own hostname and SELinux as before, and the deployments
+  unmoved.  If the rollback lacks bs1-adopt's host key (adopt ran in the
+  default deployment only), the controller refuses it, and the console is
+  the only way: check by eye that `rpm-ostree status` marks the rollback
+  (`.0`) as booted and `cat /proc/cmdline` lacks the default's own kargs.
+  Then reboot: GRUB starts the default again by itself, and `backshot1
+  check-boot NAME` must say so.  Each check adds a line to the restore's
+  `BOOTS`.  Nothing on the laptop is written for this but by GRUB itself.
 
 ## Keeping a library of backups
 
@@ -138,4 +218,13 @@ that doesn't boot by UEFI, `--virtio` for one whose initramfs has no NVMe driver
 
 Passed on 2026-11-09: Ubuntu 26.04 and Fedora 44 (UEFI), Devuan 6 (OpenRC, and
 `bs1-adopt` alone on plain sysvinit), Alpine 3.24, Artix (dinit and s6), Void
-(musl), AerynOS and NixOS 26.05.  Artix's OpenRC and runit editions have no guest.
+(musl), AerynOS and NixOS 26.05; on 2026-11-11, Kinoite 44 (ostree, on both
+hosts, with its rollback booted).  Artix's OpenRC and runit editions have no
+guest.
+
+Every rehearsal also runs the preflight, and checks that the snapshot is named
+`/mnt/bs1-src` and keeps a file's real access time.  On an ostree guest
+(`kinoite44`) the restored rollback then boots, pointed at by a `default` key
+in grubenv (bootupd's `grub.cfg` ignores `grub2-reboot`'s `next_entry`), and
+`bs1-verify --boot` checks it, then the default again, with grubenv put back
+as it was.  The internal disk is the guest's own size.

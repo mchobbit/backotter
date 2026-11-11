@@ -101,8 +101,27 @@ def qemu_info(path):
         return {"ok": False, "why": "qemu-img: bad JSON"}
     fs = d.get("format-specific", {}).get("data", {}) if isinstance(d.get("format-specific"), dict) else {}
     return {"ok": True, "format": d.get("format"), "backing": d.get("backing-filename") or d.get("full-backing-filename"),
+            "backing_full": d.get("full-backing-filename"),
             "dirty": bool(d.get("dirty-flag")), "corrupt": bool(fs.get("corrupt")),
             "snapshots": [s.get("name") for s in d.get("snapshots") or []]}
+
+
+def world_base(work, guest, name, path, q):
+    """A world's thin disk (contract 4: world/vms/G holds a thin qcow2 over the real image): when WORK
+    isn't the fleet's and the disk's backing file is the fleet's same disk of the same guest, that
+    disk's qemu-img info and its guest's generation, for identity_compare to judge as it judges
+    the fleet's.  None for anything else: a backing file anywhere else is never vouched for."""
+    real_dir = os.path.join(_home(), "backotter-work", "vms", guest)
+    if os.path.realpath(os.path.join(work, "vms", guest)) == os.path.realpath(real_dir):
+        return None                            # the fleet itself: its disks have no backing file
+    b = q.get("backing_full") or q.get("backing")
+    if not b:
+        return None
+    b = b if os.path.isabs(b) else os.path.join(os.path.dirname(path), b)
+    real = os.path.join(real_dir, name)
+    if os.path.realpath(b) != os.path.realpath(real):
+        return None
+    return {"path": real, "qemu": qemu_info(real), "generation": (_json(os.path.join(real_dir, "image-state")) or {}).get("generation")}
 
 
 def identity_of(work, guest, sha=False, backfill=False):
@@ -120,7 +139,9 @@ def identity_of(work, guest, sha=False, backfill=False):
             out["disks"][n] = None
             continue
         out["disks"][n] = {"size": s.st_size, "mtime_ns": s.st_mtime_ns, "inode": s.st_ino}
-        out["qemu"][n] = qemu_info(p)
+        out["qemu"][n] = q = qemu_info(p)
+        if q.get("ok") and q.get("backing"):
+            q["base"] = world_base(work, guest, n, p, q)
     if sha or backfill:
         out["sha256"] = {}
         for n in names:
@@ -382,14 +403,19 @@ def failed_state(guest, run, attempt, out, hroot, flakes=(), cap_mib=OVERLAY_CAP
                         pass
             say(f"failed-state: {guest}: known-flake PASS, overlay deleted")
         return {"action": "after-row"}
-    res = _json(os.path.join(out, "result.json")) or {}
+    res = _json(os.path.join(out, "result.json"))
+    res = res if isinstance(res, dict) else {}
     overlay_dir = res.get("overlay_dir")
-    tail = res.get("tail") or []
-    flake = _match_flake(guest, tail, flakes)
-    os.makedirs(dest, exist_ok=True)
-    action = {"action": "logs", "flake": bool(flake), "overlay": None, "note": None}
-    ram_dir = overlay_dir if overlay_dir and os.path.basename(overlay_dir.rstrip("/")).startswith(".vm-update-run.") and os.path.isdir(overlay_dir) else None
+    ram_dir = overlay_dir if isinstance(overlay_dir, str) and os.path.basename(overlay_dir.rstrip("/")).startswith(".vm-update-run.") \
+        and os.path.isdir(overlay_dir) else None
+    action = {"action": "logs", "flake": False, "overlay": None, "note": None}
+    # The reservation goes with this job: whatever fails below (a full or unwritable HOST_ROOT
+    # included), the RAM folder is given back, so nothing of ours sits in /mnt/bko-ram unreserved.
     try:
+        tail = res.get("tail") or []
+        flake = _match_flake(guest, tail if isinstance(tail, list) else [], flakes)
+        action["flake"] = bool(flake)
+        os.makedirs(dest, exist_ok=True)
         for n in LOG_NAMES:
             p = os.path.join(out, n)
             if os.path.isfile(p):
@@ -406,12 +432,12 @@ def failed_state(guest, run, attempt, out, hroot, flakes=(), cap_mib=OVERLAY_CAP
                 action["overlay"] = target
             else:
                 action["note"] = f"overlay {mib:.0f} MiB, over the {cap_mib} MiB cap: not kept"
-    finally:   # the reservation goes with this job: whatever happened above, the RAM is given back
+        if action["note"]:
+            with open(os.path.join(dest, "note.txt"), "a", encoding="utf-8") as f:
+                f.write(f"attempt {attempt}: {action['note']}\n")
+    finally:
         if ram_dir:
             shutil.rmtree(ram_dir, ignore_errors=True)
-    if action["note"]:
-        with open(os.path.join(dest, "note.txt"), "a", encoding="utf-8") as f:
-            f.write(f"attempt {attempt}: {action['note']}\n")
     say(f"failed-state: {guest}: {action}")
     return action
 
@@ -452,7 +478,9 @@ def gate(guest, out, base, say=print):
     bad = sorted(n for n, h in (res.get("hooks") or {}).items() if (h or {}).get("rc") not in (0, None))
     if bad:   # vm-update wrote the hooks' exits just before it called this
         hooks_ok, why = False, "; ".join(x for x in (why, "exit status of " + ", ".join(bad)) if x)
-    ok, text, _new = J.merge_gate(J.parse_sections(tb), J.parse_sections(ta), checks, R.classed_of(base, guest), hooks_ok, why)
+    steps = (res.get("merge") or {}).get("steps")   # what the after reading is judged against (K-ostree)
+    ok, text, _new = J.merge_gate(J.parse_sections(tb), J.parse_sections(ta), checks, R.classed_of(base, guest), hooks_ok, why,
+                                  steps)
     if ok:
         say("gate: merge")
         return 0
@@ -546,8 +574,14 @@ def main(args, ctx=None):
         guest, run, attempt, out = _opt(rest, "--guest"), _opt(rest, "--run"), int(_opt(rest, "--attempt", 1)), _opt(rest, "--out")
         base = getattr(ctx, "base", None) or _base()
         from . import rows_guest as R
-        pol = (R.policy_of(base).get("run") or {})
-        failed_state(guest, run, attempt, out, hroot, R.flakes_of(base), int(pol.get("failed_overlay_mib", OVERLAY_CAP_DEFAULT)), after)
+        try:
+            pol = (R.policy_of(base).get("run") or {})
+            flakes, cap = R.flakes_of(base), int(pol.get("failed_overlay_mib", OVERLAY_CAP_DEFAULT))
+        except Exception as e:   # noqa: BLE001 - the RAM folder must still go (failed_state's finally)
+            sys.stderr.write(f"failed-state: the policy or flakes couldn't be read ({type(e).__name__}: {e}): "
+                             "no flake matched, the default cap\n")
+            flakes, cap = (), OVERLAY_CAP_DEFAULT
+        failed_state(guest, run, attempt, out, hroot, flakes, cap, after)
         return 0
     if sub == "pkgdiff":
         if len(rest) != 3:

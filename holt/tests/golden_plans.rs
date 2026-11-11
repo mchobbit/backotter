@@ -37,6 +37,11 @@
 //!                          disk's own target and is load::writetable::plan's
 //!                          bytes, read back by parttable with the dump's IDs
 //!
+//! Beside the invariants, golden_backup_sources_are_loads_mounts holds each
+//! dump's `storage.backup_sources` (where it has one) to the mount points
+//! its plan's mount stage builds at /mnt/bko-target: `dump` and load are
+//! two implementations of one tree (docs/design/bazzite.md, decision 4).
+//!
 //! The corpus must hold together, in every mode: each directory holds its
 //! src.json (a plan kept without its dump fails), and variants.txt lists
 //! every plan+VARIANT.txt.  Where testvm/test2/classes.json is beside holt/
@@ -847,6 +852,117 @@ fn golden_invariant_write_table_ids() {
     // Another disk's write-table doesn't count for this one.
     let others = Planned { out: ok.out.replace("vtbd0", "vtbd1"), ..ok.clone() };
     assert!(disk_ids(&dump, &Sections::of(&others.out), &others).iter().any(|x| x.contains("writes no table")));
+}
+
+// ---- backup_sources against load's mounts ----
+
+/// The mount points the plan's mount stage builds under the target: a
+/// mount's last operand, or a `zfs mount` dataset's mountpoint, as a path
+/// from the target's root ("/" for the target itself).
+fn planned_mount_points(dump: &Value, p: &Planned) -> Vec<String> {
+    let ds = datasets(dump);
+    let mut out = Vec::new();
+    for s in Sections::of(&p.out).steps("mount") {
+        for c in commands(&s.cmd) {
+            let pr = prog(&c[0]);
+            if (pr == "mount" || pr.starts_with("mount_") || pr == "redoxfs") && c.len() >= 3 {
+                let last = c.last().map(String::as_str).unwrap_or("");
+                if last == TARGET {
+                    out.push("/".to_string());
+                } else if let Some(rest) = last.strip_prefix(TARGET).filter(|r| r.starts_with('/')) {
+                    out.push(rest.trim_end_matches('/').to_string());
+                }
+            }
+        }
+        for d in zfs_mounted(&s) {
+            if let Some((_, mp)) = ds.iter().find(|(n, _)| *n == d) {
+                out.push(mp.clone());
+            }
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
+}
+
+/// The `backup_sources` check (docs/design/bazzite.md, decision 4): `dump`
+/// writes `storage.backup_sources` for BackShot1 (the tree it backs up),
+/// and load and vm-mount build theirs from fstab; one rule, two
+/// implementations.  So a dump's backup paths must be exactly the mount
+/// points load's plan of it mounts at the target.  None when the dump has
+/// no backup_sources (bko-holt's dumps have it since B2; the corpus's
+/// older dumps don't); else the differences, empty when they agree.
+fn backup_sources_differences(dump: &Value, p: &Planned) -> Option<Vec<String>> {
+    let src = dump.at(&["storage", "backup_sources"])?.as_array()?;
+    let mut paths: Vec<String> = src.iter().filter_map(|e| str_at(e, "path")).map(|s| if s == "/" { s.to_string() } else { s.trim_end_matches('/').to_string() }).collect();
+    let mut bad = Vec::new();
+    if paths.len() != src.len() {
+        bad.push(format!("{} of {} backup_sources entries have no path", src.len() - paths.len(), src.len()));
+    }
+    paths.sort();
+    let n = paths.len();
+    paths.dedup();
+    if paths.len() != n {
+        bad.push("backup_sources names a path twice".to_string());
+    }
+    let planned = planned_mount_points(dump, p);
+    for x in paths.iter().filter(|x| !planned.contains(x)) {
+        bad.push(format!("backup_sources' {x} is mounted at no {TARGET}{} by the mount stage", if x == "/" { "" } else { x }));
+    }
+    for x in planned.iter().filter(|x| !paths.contains(x)) {
+        bad.push(format!("the mount stage mounts {TARGET}{}, which backup_sources doesn't name", if x == "/" { "" } else { x }));
+    }
+    Some(bad)
+}
+
+#[test]
+fn golden_backup_sources_are_loads_mounts() {
+    let corpus = corpus_dir();
+    let list = entries(&corpus).unwrap_or_else(|e| panic!("{e}"));
+    let (mut checked, mut bad) = (Vec::new(), Vec::new());
+    for e in list.iter().filter(|e| e.grow == 0) {
+        let text = std::fs::read_to_string(&e.dump).unwrap();
+        let dump = json::parse(&text).unwrap();
+        if dump.at(&["storage", "backup_sources"]).is_none() {
+            continue;
+        }
+        let p = common::plan(&text, 0).unwrap_or_else(|x| panic!("{}: {x}", e.name));
+        match backup_sources_differences(&dump, &p) {
+            Some(d) if d.is_empty() => checked.push(e.name.clone()),
+            Some(d) => bad.push(format!("{}: {}", e.name, d.join("; "))),
+            None => bad.push(format!("{}: storage.backup_sources isn't a list", e.name)),
+        }
+    }
+    println!("backup_sources: {} dumps carry it, all load's mount points: {}", checked.len(), checked.join(", "));
+    assert!(bad.is_empty(), "backup_sources and load's mount stage disagree:\n{}", bad.join("\n"));
+}
+
+#[test]
+fn golden_backup_sources_check() {
+    let (v, p) = synth();
+    // No backup_sources (a dump from before B2): nothing to check.
+    assert_eq!(backup_sources_differences(&v, &p), None);
+    let with = |paths: &[&str]| {
+        let list = paths.iter().map(|x| format!(r#"{{"path": "{x}", "from": "{x}", "device": "vda3", "fstype": "ext4", "source": "/dev/vda3", "subvol": null}}"#)).collect::<Vec<_>>().join(", ");
+        json::parse(&SYNTH.replacen(r#""crypttab": null,"#, &format!(r#""backup_sources": [{list}], "crypttab": null,"#), 1)).unwrap()
+    };
+    assert_eq!(planned_mount_points(&v, &p), ["/", "/boot"], "{}", p.out);
+    assert_eq!(backup_sources_differences(&with(&["/", "/boot"]), &p), Some(vec![]));
+    assert_eq!(backup_sources_differences(&with(&["/boot/", "/"]), &p), Some(vec![]));
+    let d = backup_sources_differences(&with(&["/"]), &p).unwrap();
+    assert_eq!(d, [format!("the mount stage mounts {TARGET}/boot, which backup_sources doesn't name")]);
+    let d = backup_sources_differences(&with(&["/", "/boot", "/home"]), &p).unwrap();
+    assert_eq!(d, [format!("backup_sources' /home is mounted at no {TARGET}/home by the mount stage")]);
+    let d = backup_sources_differences(&with(&["/", "/boot", "/boot"]), &p).unwrap();
+    assert_eq!(d, ["backup_sources names a path twice"]);
+    // The plan without its root mount: / is named and not mounted.
+    let line = p.out.lines().find(|l| l.starts_with("mount ") && l.ends_with(&format!(" {TARGET}"))).unwrap().to_string();
+    let d = backup_sources_differences(&with(&["/", "/boot"]), &edit(&p, &format!("{line}\n"), "")).unwrap();
+    assert_eq!(d, [format!("backup_sources' / is mounted at no {TARGET} by the mount stage")]);
+    // A zfs mount counts by its dataset's mountpoint.
+    let dump = json::parse(r#"{"storage": {"zfs": {"tools": {"datasets": [{"name": "rpool/ROOT/debian", "mountpoint": "/"}, {"name": "rpool/home", "mountpoint": "/home"}]}}, "backup_sources": [{"path": "/"}, {"path": "/home"}]}}"#).unwrap();
+    let z = Planned { code: 0, out: "# ---- mount ----\nzfs mount rpool/ROOT/debian\nzfs mount rpool/home\n".to_string(), err: String::new(), maps: vec![] };
+    assert_eq!(backup_sources_differences(&dump, &z), Some(vec![]));
 }
 
 #[test]

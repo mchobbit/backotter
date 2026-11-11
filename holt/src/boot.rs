@@ -161,6 +161,11 @@ pub const PACKAGES: &[&str] = &[
     // Omarchy's, openSUSE's and Void's.
     "limine", "limine-mkinitcpio-hook", "limine-snapper-sync", "grub2", "grub2-i386-pc", "grub2-x86_64-efi", "kernel-default", "snapper", "linux-base",
     "multipath-tools", "dmraid", "nvme-cli", "open-iscsi",
+    // Chimera's ("grub", "linux-lts", "initramfs-tools", "systemd-boot" and
+    // the rest are above): its ZFS userland is "zfs", built for the kernel
+    // by ckms (zfs-ckms) or prebuilt (linux-*-zfs-bin).
+    "grub-i386-pc", "grub-x86_64-efi", "linux-stable", "linux-lts-zfs-bin", "linux-stable-zfs-bin", "zfs", "zfs-ckms", "ckms",
+    "cryptsetup-scripts",
 ];
 
 /// debconf answers from /var/cache/debconf/config.dat whose names start with
@@ -541,7 +546,7 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
         }
     }
     versions.sort_by(|a, b| crate::sys::natural_cmp(a, b));
-    let list: Vec<Value> = versions
+    let mut list: Vec<Value> = versions
         .iter()
         .map(|v| {
             Obj::new()
@@ -559,6 +564,28 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
                 .build()
         })
         .collect();
+    // ostree's: /boot/ostree/STATEROOT-BOOTCSUM/vmlinuz-V and
+    // initramfs-V.img, one directory per kernel and initramfs pair.
+    for d in sys.list("/boot/ostree") {
+        let dir = format!("/boot/ostree/{d}");
+        if !sys.is_dir(&dir) {
+            continue;
+        }
+        for f in sys.list(&dir) {
+            let Some(v) = f.strip_prefix("vmlinuz-") else { continue };
+            list.push(
+                Obj::new()
+                    .set("version", v)
+                    .set("dir", dir.as_str())
+                    .set("vmlinuz_bytes", sys.file_size(&format!("{dir}/{f}")))
+                    .set("initrd_bytes", sys.file_size(&format!("{dir}/initramfs-{v}.img")))
+                    .set("config", sys.is_file(&format!("{dir}/config-{v}")))
+                    .set("running", running == Some(v))
+                    .set("modules_installed", sys.is_dir(&format!("/lib/modules/{v}")) || sys.is_dir(&format!("/usr/lib/modules/{v}")))
+                    .build(),
+            );
+        }
+    }
     let mut links = Obj::new();
     for l in ["/vmlinuz", "/vmlinuz.old", "/initrd.img", "/initrd.img.old", "/boot/vmlinuz", "/boot/initrd.img"] {
         if let Some(t) = sys.readlink(l) {
@@ -586,11 +613,13 @@ pub fn cmdline_json(cmdline: &str) -> Value {
     Obj::new().set("raw", cmdline.trim()).set("words", words).set("storage", picked).build()
 }
 
-fn initramfs_json(sys: &Sys, packages: &[(String, String, String)]) -> Value {
+fn initramfs_json(sys: &Sys, packages: &[(String, String, String)], ostree: bool) -> Value {
     let has = |p: &str| packages.iter().any(|(n, _, _)| n == p);
     // AerynOS: each kernel package ships its initramfs (/usr/lib/kernel's
     // *.initrd), which blsforme copies to the ESP; nothing is generated.
-    let prebuilt = sys.list("/usr/lib/kernel").iter().any(|f| f.ends_with(".initrd"));
+    // ostree: the image's own, in /boot/ostree (its directory is named after
+    // the kernel's and initramfs's checksum), though dracut is installed.
+    let prebuilt = ostree || sys.list("/usr/lib/kernel").iter().any(|f| f.ends_with(".initrd"));
     let generator = if prebuilt {
         Some("prebuilt")
     } else if has("mkinitcpio") {
@@ -704,8 +733,10 @@ pub fn detect_loader(e: &Evidence) -> Value {
         }
     }
     let package = match (name, e.uefi) {
-        (Some("grub"), true) => ["grub-efi-amd64-signed", "grub-efi-amd64", "grub-efi-ia32", "grub-efi-arm64"].into_iter().find(|p| has(p)),
-        (Some("grub"), false) => ["grub-pc"].into_iter().find(|p| has(p)),
+        // Chimera's (and Void's) GRUB for each platform is grub-PLATFORM;
+        // Fedora's (and its atomic desktops') is grub2-efi-x64.
+        (Some("grub"), true) => ["grub-efi-amd64-signed", "grub-efi-amd64", "grub-efi-ia32", "grub-efi-arm64", "grub-x86_64-efi", "grub2-efi-x64"].into_iter().find(|p| has(p)),
+        (Some("grub"), false) => ["grub-pc", "grub-i386-pc"].into_iter().find(|p| has(p)),
         (Some("systemd-boot"), _) => ["systemd-boot"].into_iter().find(|p| has(p)),
         (Some("refind"), _) => ["refind"].into_iter().find(|p| has(p)),
         (Some("limine"), _) => ["limine"].into_iter().find(|p| has(p)),
@@ -724,18 +755,21 @@ pub fn detect_loader(e: &Evidence) -> Value {
             }
         }
     }
-    Obj::new()
+    // Debian's signed shim, Fedora's.
+    let shim_package = (e.uefi && shim).then(|| ["shim-signed", "shim-x64"].into_iter().find(|p| has(p))).flatten();
+    let mut o = Obj::new()
         .set("name", name.unwrap_or("unknown"))
         .set("firmware", if e.uefi { "uefi" } else { "bios" })
         .set("via_shim", e.uefi && shim)
-        .set("package", package)
-        .set("evidence", why)
-        .build()
+        .set("package", package);
+    o.put_some("shim_package", shim_package);
+    o.set("evidence", why).build()
 }
 
 /// Everything in this module, for the report's "boot" section.  `esps` are
-/// the mounted ESPs (device, mount point).
-pub fn boot_json(sys: &Sys, packages: &[(String, String, String)], esps: &[(String, String)], efi_boot: Value, mbr_codes: Vec<(String, String)>) -> Value {
+/// the mounted ESPs (device, mount point); `ostree` is boot.ostree on an
+/// ostree system (crate::ostree::json).
+pub fn boot_json(sys: &Sys, packages: &[(String, String, String)], esps: &[(String, String)], efi_boot: Value, mbr_codes: Vec<(String, String)>, ostree: Option<Value>) -> Value {
     let running = sys.read_trim("/proc/sys/kernel/osrelease");
     let mut esp_list = Vec::new();
     let mut esp_files = Vec::new();
@@ -750,8 +784,10 @@ pub fn boot_json(sys: &Sys, packages: &[(String, String, String)], esps: &[(Stri
         }
         esp_list.push(Obj::new().set("device", dev.as_str()).set("mounted_at", mnt.as_str()).set("contents", inv).build());
     }
-    if sd_boot.is_none() {
+    if sd_boot.is_none() && ostree.is_none() {
         // systemd-boot can also keep its entries on an XBOOTLDR at /boot.
+        // Not on ostree: those are ostree's own entries, which GRUB's
+        // blscfg reads (boot.ostree.entries).
         sd_boot = systemd_boot_json(sys, "/boot");
     }
     let current_file = efi_boot.get("boot_current").and_then(Value::as_str).and_then(|cur| {
@@ -777,7 +813,8 @@ pub fn boot_json(sys: &Sys, packages: &[(String, String, String)], esps: &[(Stri
             pk.put(p, v.as_str());
         }
     }
-    Obj::new()
+    let is_ostree = ostree.is_some();
+    let mut o = Obj::new()
         .set("loader", detect_loader(&ev))
         .set("efi", efi_boot)
         .set("esps", esp_list)
@@ -786,9 +823,10 @@ pub fn boot_json(sys: &Sys, packages: &[(String, String, String)], esps: &[(Stri
         .set("kernels", kernels_json(sys, running.as_deref()))
         .set("cmdline", sys.read("/proc/cmdline").map(|c| cmdline_json(&c)))
         .set("kernel_cmdline_file", sys.read_trim("/etc/kernel/cmdline"))
-        .set("initramfs", initramfs_json(sys, packages))
-        .set("packages", pk)
-        .build()
+        .set("initramfs", initramfs_json(sys, packages, is_ostree))
+        .set("packages", pk);
+    o.put_some("ostree", ostree);
+    o.build()
 }
 
 #[cfg(test)]
@@ -1090,12 +1128,12 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert!(list[1].get("initrd_bytes").unwrap().is_null());
         assert!(list[0].get("vmlinuz_bytes").unwrap().is_null());
         assert_eq!(k.at(&["symlinks", "/vmlinuz"]).and_then(Value::as_str), Some("boot/vmlinuz-6.12.115+deb13.1-amd64"));
-        let i = initramfs_json(&s, &pk(&["initramfs-tools"]));
+        let i = initramfs_json(&s, &pk(&["initramfs-tools"]), false);
         assert_eq!(i.get("generator").and_then(Value::as_str), Some("initramfs-tools"));
         assert_eq!(i.get("compress").and_then(Value::as_str), Some("zstd"));
         assert_eq!(i.get("resume").and_then(Value::as_str), Some("UUID=abc"));
-        assert_eq!(initramfs_json(&s, &pk(&["dracut", "initramfs-tools"])).get("generator").and_then(Value::as_str), Some("dracut"));
-        assert_eq!(initramfs_json(&s, &pk(&["mkinitfs"])).get("generator").and_then(Value::as_str), Some("mkinitfs"));
+        assert_eq!(initramfs_json(&s, &pk(&["dracut", "initramfs-tools"]), false).get("generator").and_then(Value::as_str), Some("dracut"));
+        assert_eq!(initramfs_json(&s, &pk(&["mkinitfs"]), false).get("generator").and_then(Value::as_str), Some("mkinitfs"));
     }
 
     #[test]
@@ -1126,6 +1164,120 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         let a = Tree::new("aerynos-kernels");
         a.file("/usr/lib/kernel/current.stable.initrd", "").file("/usr/lib/kernel/current.stable.kernel", "");
         let s = Sys::new(a.root(), Box::new(FakeRunner::default()), false);
-        assert_eq!(initramfs_json(&s, &pk(&["dracut"])).get("generator").and_then(Value::as_str), Some("prebuilt"));
+        assert_eq!(initramfs_json(&s, &pk(&["dracut"]), false).get("generator").and_then(Value::as_str), Some("prebuilt"));
+    }
+
+    /// Fedora through shim (fedora44-uefi, kinoite44): GRUB's package is
+    /// grub2-efi-x64 and shim's shim-x64.  On ostree the kernels are in
+    /// /boot/ostree, the initramfs comes with the image though dracut is
+    /// installed, and /boot's loader entries aren't systemd-boot's.
+    #[test]
+    fn fedora_shim_and_ostree_kernels() {
+        let p = pk(&["grub2-efi-x64", "shim-x64", "dracut", "grub2-tools"]);
+        let l = detect_loader(&Evidence {
+            uefi: true,
+            current_file: Some("\\EFI\\fedora\\shimx64.efi".into()),
+            loader_info: None,
+            shim_variables: false,
+            mbr_codes: vec![],
+            packages: &p,
+            esp_files: vec![],
+        });
+        assert_eq!(l.get("name").and_then(Value::as_str), Some("grub"));
+        assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
+        assert_eq!(l.get("package").and_then(Value::as_str), Some("grub2-efi-x64"));
+        assert_eq!(l.get("shim_package").and_then(Value::as_str), Some("shim-x64"));
+        // No shim, no shim_package.
+        let l = detect_loader(&Evidence { uefi: true, current_file: Some("\\EFI\\fedora\\grubx64.efi".into()), loader_info: None, shim_variables: false, mbr_codes: vec![], packages: &p, esp_files: vec![] });
+        assert!(l.get("shim_package").is_none());
+        let v = "7.3.3-200.fc44.x86_64";
+        let d = "/boot/ostree/default-1cc099369334fad8952283b3221e6d78fd79263e6dedc35ce40302458681d413";
+        let t = Tree::new("ostree-kernels");
+        t.file(&format!("{d}/vmlinuz-{v}"), vec![0u8; 10])
+            .file(&format!("{d}/initramfs-{v}.img"), vec![0u8; 7])
+            .file(&format!("{d}/.vmlinuz-{v}.hmac"), "x")
+            .file("/boot/ostree/stray", "x")
+            .dir(&format!("/usr/lib/modules/{v}/kernel"))
+            .file("/boot/loader.1/entries/ostree-1.conf", "title Fedora\nversion 1\noptions ostree=/ostree/boot.1/default/x/1 rw\n")
+            .symlink("/boot/loader", "loader.1")
+            .file("/proc/sys/kernel/osrelease", format!("{v}\n"));
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        let k = kernels_json(&s, Some(v));
+        let list = k.get("installed").and_then(Value::as_array).unwrap();
+        assert_eq!(list.len(), 1, "{}", k.compact());
+        assert_eq!(list[0].get("version").and_then(Value::as_str), Some(v));
+        assert_eq!(list[0].get("dir").and_then(Value::as_str), Some(d));
+        assert_eq!(list[0].get("vmlinuz_bytes").and_then(Value::as_u64), Some(10));
+        assert_eq!(list[0].get("initrd_bytes").and_then(Value::as_u64), Some(7));
+        assert_eq!(list[0].get("running"), Some(&Value::Bool(true)));
+        assert_eq!(list[0].get("modules_installed"), Some(&Value::Bool(true)));
+        assert_eq!(initramfs_json(&s, &p, true).get("generator").and_then(Value::as_str), Some("prebuilt"));
+        assert_eq!(initramfs_json(&s, &p, false).get("generator").and_then(Value::as_str), Some("dracut"));
+        let b = boot_json(&s, &p, &[], Value::Null, vec![], Some(Obj::new().set("booted", true).build()));
+        assert!(b.get("systemd_boot").unwrap().is_null(), "{}", b.compact());
+        assert_eq!(b.at(&["ostree", "booted"]), Some(&Value::Bool(true)));
+        // Without ostree, the same entries read as systemd-boot's on an XBOOTLDR.
+        let b = boot_json(&s, &p, &[], Value::Null, vec![], None);
+        assert_eq!(b.at(&["systemd_boot", "entries", "0", "file"]).and_then(Value::as_str), Some("ostree-1.conf"));
+        assert!(b.get("ostree").is_none());
+    }
+
+    /// Shaped like the chimera guest (BIOS, GRUB in the MBR): apk-tools 3
+    /// still writes v2's installed database, reached through /lib ->
+    /// usr/lib; initramfs-tools names the kernel's files as Debian's does.
+    #[test]
+    fn chimera() {
+        let apk = "C:Q1aaa=\nP:linux-lts\nV:6.18.62-r0\nA:x86_64\no:linux-lts\n\nC:Q1bbb=\nP:grub\nV:2.14-r1\nA:x86_64\n\nC:Q1ccc=\nP:grub-i386-pc\nV:2.14-r1\nA:x86_64\n\nC:Q1ddd=\nP:initramfs-tools\nV:0.148.3-r2\nA:noarch\n\n";
+        let v = "6.18.62-0-generic";
+        let t = Tree::new("chimera-boot");
+        t.symlink("/lib", "usr/lib")
+            .file("/usr/lib/apk/db/installed", apk)
+            .file(&format!("/boot/vmlinuz-{v}"), vec![0u8; 10])
+            .file(&format!("/boot/initrd.img-{v}"), vec![0u8; 7])
+            .file(&format!("/boot/config-{v}"), "")
+            .dir(&format!("/usr/lib/modules/{v}/kernel"))
+            .file("/boot/grub/i386-pc/normal.mod", "x")
+            .file("/boot/grub/i386-pc/core.img", "x")
+            .file("/etc/default/grub", "GRUB_DEFAULT=0\nGRUB_TIMEOUT=5\n")
+            .file("/etc/initramfs-tools/initramfs.conf", "MODULES=most\nBUSYBOX=auto\nCOMPRESS=zstd\n")
+            .file("/proc/sys/kernel/osrelease", format!("{v}\n"));
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        let p = installed_packages(&s);
+        let names: Vec<&str> = p.iter().map(|(n, _, _)| n.as_str()).collect();
+        assert_eq!(names, vec!["grub", "grub-i386-pc", "initramfs-tools", "linux-lts"]);
+        let b = boot_json(&s, &p, &[], Value::Null, vec![("vda".into(), "grub2".into())], None);
+        assert_eq!(b.at(&["loader", "name"]).and_then(Value::as_str), Some("grub"));
+        assert_eq!(b.at(&["loader", "firmware"]).and_then(Value::as_str), Some("bios"));
+        assert_eq!(b.at(&["loader", "package"]).and_then(Value::as_str), Some("grub-i386-pc"));
+        assert_eq!(b.at(&["grub", "dir"]).and_then(Value::as_str), Some("/boot/grub"));
+        assert_eq!(b.at(&["grub", "installed_platforms", "0"]).and_then(Value::as_str), Some("i386-pc"));
+        assert!(b.at(&["grub", "debconf"]).unwrap().is_null());
+        assert_eq!(b.at(&["initramfs", "generator"]).and_then(Value::as_str), Some("initramfs-tools"));
+        assert_eq!(b.at(&["initramfs", "modules"]).and_then(Value::as_str), Some("most"));
+        assert_eq!(b.at(&["initramfs", "compress"]).and_then(Value::as_str), Some("zstd"));
+        let k = b.at(&["kernels", "installed"]).and_then(Value::as_array).unwrap();
+        assert_eq!(k.len(), 1, "{}", b.get("kernels").unwrap().compact());
+        assert_eq!(k[0].get("version").and_then(Value::as_str), Some(v));
+        assert_eq!(k[0].get("vmlinuz_bytes").and_then(Value::as_u64), Some(10));
+        assert_eq!(k[0].get("initrd_bytes").and_then(Value::as_u64), Some(7));
+        assert_eq!(k[0].get("config"), Some(&Value::Bool(true)));
+        assert_eq!(k[0].get("running"), Some(&Value::Bool(true)));
+        assert_eq!(k[0].get("modules_installed"), Some(&Value::Bool(true)));
+        assert_eq!(b.at(&["packages", "grub-i386-pc"]).and_then(Value::as_str), Some("2.14-r1"));
+        assert_eq!(b.at(&["packages", "linux-lts"]).and_then(Value::as_str), Some("6.18.62-r0"));
+        // chimera-zfs: UEFI GRUB from grub-x86_64-efi, found on the ESP.
+        let p = pk(&["grub", "grub-x86_64-efi", "initramfs-tools", "linux-lts-zfs-bin", "zfs"]);
+        let l = detect_loader(&Evidence {
+            uefi: true,
+            current_file: Some("\\EFI\\chimera\\grubx64.efi".into()),
+            loader_info: None,
+            shim_variables: false,
+            mbr_codes: vec![],
+            packages: &p,
+            esp_files: vec!["EFI/chimera/grubx64.efi".into()],
+        });
+        assert_eq!(l.get("name").and_then(Value::as_str), Some("grub"));
+        assert_eq!(l.get("package").and_then(Value::as_str), Some("grub-x86_64-efi"));
+        assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)));
     }
 }

@@ -12,14 +12,24 @@ bko-holt and rustic-bko.  Three boots, all over SSH with the guest's key:
             --plan-only changes nothing, then bs1-restore
   restored  the internal disk and the drive, with the NVRAM the run left: bs1-verify
 
+The internal disk is the guest's own size.  The backup is checked to be named
+/mnt/bs1-src (the tree is mounted elsewhere: --as-path) and to keep a file's
+real access time.  An ostree guest (kinoite44: docs/design/bazzite.md) then
+boots its restored rollback and its default again, each checked by
+"bs1-verify --boot": GRUB is pointed at the rollback by a `default` in
+grubenv, since bootupd's grub.cfg never reads next_entry (grub2-reboot), and
+grubenv is put back as it was.
+
 Exits 0 if all of that held.  Nothing outside WORK_DIR is written.
 """
 
 import argparse
+import datetime
 import glob
 import json
 import importlib.util
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -31,6 +41,20 @@ rw1a = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rw1a)
 
 SERIAL, LABEL = "BKOINTERNAL", "BKOBACKUPA"
+# A file whose access time the backup must keep (rustic-bko's --set-atime yes,
+# with --as-path): written before bs1-backup, found in the snapshot after.
+PROBE, PROBE_ATIME = "var/tmp/bs1-atime-probe", "2001-02-03 04:05:06"     # UTC
+# Points GRUB at the one BLS entry whose ostree= leads to a deployment other
+# than the booted one, by grubenv's `default`, and prints the entry's ID
+# (ht1.sh's OSTREE_OTHER, docs/design/bazzite.md B6).
+OSTREE_OTHER = r'''b=$(readlink -f "$(tr " " "\n" </proc/cmdline | sed -n "s/^ostree=//p")"); n=0; id=""
+for e in /boot/loader/entries/ostree-*.conf; do
+    [ -f "$e" ] || continue
+    o=$(sed -n "s/^options[ \t]*//p" "$e" | tr " " "\n" | sed -n "s/^ostree=//p")
+    [ -n "$o" ] && [ "$(readlink -f "$o")" != "$b" ] && { id=$(basename "$e" .conf); n=$((n + 1)); }
+done
+[ "$n" = 1 ] || { echo "$n BLS entries lead to a deployment other than the booted $b" >&2; exit 1; }
+grub2-editenv /boot/grub2/grubenv set default="$id" && echo "$id"'''
 SSH = rw1a.SSH + ["-o", "ServerAliveInterval=30"]
 fails = []
 
@@ -79,6 +103,57 @@ class Ssh:
         print(out[-6000:], flush=True)
         return rc, out
 
+    def reboot(self, proc, timeout=420):
+        """Reboots the guest and waits for its next boot: a new boot ID, since
+        sshd answers for a while after `systemctl reboot`."""
+        rc, old = self.run("cat /proc/sys/kernel/random/boot_id", 30)
+        if rc != 0:
+            return False
+        self.run("systemctl reboot", 30)
+        end = time.monotonic() + timeout
+        while time.monotonic() < end:
+            if proc.poll() is not None:
+                return False
+            rc, now = self.run("cat /proc/sys/kernel/random/boot_id", 15)
+            if rc == 0 and now.strip() and now.strip() != old.strip():
+                return True
+            time.sleep(5)
+        return False
+
+
+def rollback_boots(root, vm, run, restores, host_key_is_pinned):
+    """The restored ostree system's rollback booted once, then its default
+    again, each checked by bs1-verify --boot against the baseline.  False if
+    the guest stopped answering."""
+    drive = f"mkdir -p /mnt/bs1-backup && mount LABEL={LABEL} /mnt/bs1-backup"
+    _, grubenv = root.run("sha256sum </boot/grub2/grubenv", 30)
+    rc, out = root.run(OSTREE_OTHER, 60)
+    entry = out.strip().splitlines()[-1] if out.strip() else ""
+    check(rc == 0, f"GRUB is pointed at the restored rollback, entry {entry or out.strip()}")
+    if rc != 0:
+        return True
+    root.run("umount /mnt/bs1-backup", 60)
+    up = root.reboot(vm.proc)
+    check(up, "the restored rollback boots and answers")
+    if not up:
+        return False
+    # Informational: bs1-adopt writes the fixed host key into the booted
+    # deployment's etc only, so the rollback may present the old one.
+    print(f"  (the rollback presents the fixed host key: {'yes' if host_key_is_pinned() else 'no'})", flush=True)
+    rc, out = root.show(f"{drive} && bash /mnt/bs1-backup/backshot1/bs1-verify --boot {run}")
+    check(rc == 0 and "BOOT: rollback: PASS" in out, "bs1-verify --boot: the rollback is the source's")
+    rc, _ = root.run("grub2-editenv /boot/grub2/grubenv unset default", 30)
+    _, after = root.run("sha256sum </boot/grub2/grubenv", 30)
+    check(rc == 0 and after == grubenv, "grubenv is as it was again")
+    root.run("umount /mnt/bs1-backup", 60)
+    up = root.reboot(vm.proc)
+    check(up, "the restored default boots again")
+    if not up:
+        return False
+    rc, out = root.show(f"{drive} && bash /mnt/bs1-backup/backshot1/bs1-verify --boot {run}; cat $(ls -d {restores}/*[0-9] | tail -n 1)/BOOTS")
+    check(rc == 0 and "BOOT: default: PASS" in out, "bs1-verify --boot: then the default is the source's again")
+    return True
+
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
@@ -123,9 +198,10 @@ def main():
     w = a.work
     internal, drive_raw, drive, stick_raw, stick, vars_file = (f"{w}/internal.qcow2", f"{w}/drive.raw", f"{w}/drive.qcow2", f"{w}/stick.img", f"{w}/stick.qcow2", f"{w}/vars.fd")
     shutil.copy(f"{rw1a.OVMF}/{rw1a.VARS}", vars_file)
-    # --smaller: the source's real size, so that losing 1 GiB takes more than slack.
+    # The source's real size: the dump and the restore see the disk the guest
+    # has (and with --smaller, losing 1 GiB takes more than slack).
     guest_size = json.loads(subprocess.run(["qemu-img", "info", "--output=json", guest[0]], capture_output=True, text=True, check=True).stdout)["virtual-size"]
-    rw1a.overlay(internal, guest[0], str(guest_size) if a.smaller else "32G")
+    rw1a.overlay(internal, guest[0], str(guest_size))
     # Partitioned and formatted here: a guest fresh from its installer may have
     # neither sfdisk (Alpine) nor mkfs.ext4 (AerynOS).
     env = {**os.environ, "PATH": os.environ["PATH"] + ":/usr/sbin:/sbin"}
@@ -155,7 +231,7 @@ def main():
         sys.exit("the source guest never answered")
     _, host = root.run("cat /proc/sys/kernel/hostname")
     host = host.strip().splitlines()[-1]
-    rc, _ = root.show(f"mkdir -p /mnt/bs1-backup; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do mount LABEL={LABEL} /mnt/bs1-backup 2>/dev/null && break; sleep 2; done; mkdir -p /mnt/bs1-backup/backshot1/bin /mnt/bs1-backup/backshot1/runs && grep -q ' /mnt/bs1-backup ' /proc/mounts; rc=$?; . /etc/os-release; echo $PRETTY_NAME; exit $rc")
+    rc, _ = root.show(f"mkdir -p /mnt/bs1-backup; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do mount LABEL={LABEL} /mnt/bs1-backup 2>/dev/null && break; sleep 2; done; mkdir -p /mnt/bs1-backup/backshot1/bin /mnt/bs1-backup/backshot1/runs && mountpoint -q /mnt/bs1-backup; rc=$?; . /etc/os-release; echo $PRETTY_NAME; exit $rc")
     check(rc == 0, "the source guest mounts the backup drive")
     if fails:
         vm.proc.kill()
@@ -164,7 +240,8 @@ def main():
     with open(conf, "w") as f:
         f.write(f"SOURCE_HOST={host}\nINTERNAL_SERIAL={SERIAL}\nBACKUP_LABEL={LABEL}\n")
     scp = ["scp", "-q", *SSH, "-i", key, "-P", str(a.port)]
-    names = [os.path.join(HERE, f"bs1-{n}") for n in ("common", "backup", "restore", "verify", "manifest", "adopt", "list")]
+    names = [os.path.join(HERE, f"bs1-{n}") for n in ("common", "backup", "restore", "verify", "manifest", "ostree", "adopt", "list")]
+    names.append(os.path.join(HERE, "..", "..", "ostree_paths.py"))      # bs1-manifest's and bs1-ostree's
     subprocess.run([*scp, *names, conf, f"root@127.0.0.1:/mnt/bs1-backup/backshot1/"], check=True)
     subprocess.run([*scp, f"{a.tools}/bko-holt", f"{a.tools}/rustic-bko", "root@127.0.0.1:/mnt/bs1-backup/backshot1/bin/"], check=True)
     root.run("mkdir -m 700 /mnt/bs1-backup/backshot1/keys; chmod 755 /mnt/bs1-backup/backshot1/bs1-* /mnt/bs1-backup/backshot1/bin/*")
@@ -191,10 +268,44 @@ def main():
         return 1
     if a.earlier_restore:
         root.run("mkdir -p /var/log/bko-holt; echo '==== stage boot done' >/var/log/bko-holt/load.log")
+    _, ostree = root.run("test -e /run/ostree-booted && echo ostree-booted", 30)
+    ostree = "ostree-booted" in ostree
+    # Not on a /var/tmp in RAM, which isn't in the backup.
+    rc, _ = root.run(f"findmnt -no FSTYPE --target /var/tmp | grep -qvx tmpfs && echo probe >/{PROBE} && TZ=UTC touch -a -d '{PROBE_ATIME}' /{PROBE}", 30)
+    probe = rc == 0
+    rc, _ = root.show("bash /mnt/bs1-backup/backshot1/bs1-backup --preflight")
+    check(rc == 0, "bs1-backup --preflight passes")
     rc, out = root.show("bash /mnt/bs1-backup/backshot1/bs1-backup")
     check(rc == 0, "bs1-backup passes")
     run = next((ln[4:].strip() for ln in out.splitlines() if ln.startswith("RUN=")), None)
     check(run is not None, "bs1-backup names its run")
+    if run:
+        r = f"/mnt/bs1-backup/backshot1/runs/{run}"
+        rustic = f"/mnt/bs1-backup/backshot1/bin/rustic-bko -r {r}/repo --password-file {r}/repo-password --no-progress --no-cache"
+        rc, out = root.run(f"{rustic} snapshots --json 2>/dev/null", 300)
+        try:
+            # Grouped ({"group_key", "snapshots"}) unless nothing groups them.
+            items = json.loads(out)
+            paths = [p for g in items for sn in (g["snapshots"] if "snapshots" in g else [g]) for p in sn.get("paths", [])]
+        except (ValueError, TypeError, AttributeError, IndexError, KeyError):
+            paths = out.strip().splitlines()[-3:]
+        check(paths == ["/mnt/bs1-src"], f"the snapshot is named /mnt/bs1-src, not where the tree is mounted: {paths}")
+        if probe:
+            rc, out = root.run(f"{rustic} cat tree latest:/mnt/bs1-src/{os.path.dirname(PROBE)} 2>/dev/null", 300)
+            try:
+                node = next(n for n in json.loads(out)["nodes"] if n["name"] == os.path.basename(PROBE))
+                atime = node.get("atime") or ""
+            except (ValueError, StopIteration, KeyError, TypeError):
+                atime = f"(no node: {out.strip()[-200:]})"
+            want = datetime.datetime.fromisoformat(PROBE_ATIME).replace(tzinfo=datetime.timezone.utc)
+            try:
+                # Whole seconds: the fraction may have more digits than Python reads.
+                kept = datetime.datetime.fromisoformat(re.sub(r"\.[0-9]+", "", atime).replace("Z", "+00:00")) == want
+            except ValueError:
+                kept = False
+            check(kept, f"the backup keeps a file's real access time (--set-atime yes): {atime}")
+        else:
+            print("  (no access-time probe: /var/tmp is in RAM)", flush=True)
     root.run("umount /mnt/bs1-backup; poweroff")
     vm.wait_off()
     if fails:
@@ -255,8 +366,9 @@ def main():
         print(f"== restored {attempt}: the internal disk, by the NVRAM the run left", flush=True)
         # BIOS has no NVRAM to go by.
         vm = Vm(machine(f"restored{attempt}", [internal_disk(internal, a.bios), usb_drive]), f"{w}/console-restored{attempt}.log")
-        # A ZFS root is a dataset, which lsblk can't follow; bs1-verify checks its pool.
-        up = root.up(vm.proc, f"findmnt -no FSTYPE / | grep -qx zfs || lsblk -snlo NAME \"$(findmnt -n -o SOURCE / | sed 's/\\[.*//')\" | grep -qx {dev}")
+        # A ZFS root is a dataset, which lsblk can't follow; bs1-verify checks its
+        # pool.  On ostree / is a composefs overlay, and the disk is /sysroot's.
+        up = root.up(vm.proc, f"r=/; [ -e /run/ostree-booted ] && r=/sysroot; findmnt -no FSTYPE $r | grep -qx zfs || lsblk -snlo NAME \"$(findmnt -n -o SOURCE $r | sed 's/\\[.*//')\" | grep -qx {dev}")
         check(up, "the restored system boots from NVRAM and answers")
         if up:
             check(host_key_is_pinned(), "the restored system presents the fixed host key")
@@ -266,7 +378,9 @@ def main():
             check(rc == 0, "bs1-verify passes")
             if rc != 0:
                 root.show(f"tail -n 60 $(ls -d {restores}/*[0-9] | tail -n 1)/verify.log")
-            if attempt == a.restores:
+            if rc == 0 and ostree and attempt == a.restores:
+                up = rollback_boots(root, vm, run, restores, host_key_is_pinned)
+            if up and attempt == a.restores:
                 _, out = root.run(f"ls -d {restores}/*[0-9] | wc -l; cat {restores}/*[0-9]/RESULT | grep -c PASS")
                 check(out.split() == [str(a.restores), str(a.restores)], f"each of the {a.restores} restores kept its own PASS")
                 root.run(f"mkdir {restores}/99990101-000000")

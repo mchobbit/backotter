@@ -14,6 +14,8 @@
 #   alpine-lvm    alpine324-lvm   XFS        the same, for UEFI, / on LVM
 #   alpine-luks   alpine324-luks  ext4       the same, for UEFI, / on LVM on LUKS2
 #   void          void-musl       btrfs      Void's musl ROOTFS tarball (runit)
+#   chimera       chimera         XFS        Chimera Linux's full ROOTFS tarball (dinit)
+#   chimera-uefi  chimera-uefi    ext4       the same, for UEFI, / on LVM on LUKS2 (below)
 #   artix-dinit   artix-dinit     JFS        Artix's repositories (dinit)
 #   artix-s6      artix-s6        ext4       Artix's repositories (s6)
 #   nixos         nixos2605       bcachefs   NixOS 26.05's nixpkgs
@@ -23,6 +25,8 @@
 # one, are downloaded into WORK_DIR unless already there, and checked
 # against their release keys before use; what is fetched later, inside the
 # VM, is checked by the package manager doing it (apk, xbps, pacman, Nix).
+# Chimera's ROOTFS is fixed by its date, but apk then upgrades it from the
+# live repository, so a rebuild gets newer packages.
 # bcachefs needs an Arch ISO whose kernel still has it (6.12), so NixOS's
 # install uses an older one.
 #
@@ -33,8 +37,10 @@
 #   id_ed25519, .pub      SSH key that logs in as root
 #   install-serial.log    the live system's serial console during the install
 #   vm-run-options        (UEFI guests) --uefi --no-secure-boot, for vm-run
-#   luks-keyfile          (alpine-luks) the key that unlocks / (mode 600, no
-#                         newline), as the guest's /crypto_keyfile.bin
+#   luks-keyfile          (alpine-luks, chimera-uefi) the key that unlocks /
+#                         (mode 600, no newline), as the guest's
+#                         /crypto_keyfile.bin (Alpine) or
+#                         /etc/cryptsetup-keys.d/cryptroot.key (Chimera)
 #
 # The guest: BIOS + MBR, /boot (1 GiB ext4), swap (2 GiB), / (the rest), 2 GB
 # RAM, no desktop, console on the serial port too, DHCP and sshd.  The UEFI
@@ -43,6 +49,8 @@
 # VG vg0 with LVs root (12 GiB) and swap (1 GiB) and free extents left;
 # alpine-luks /boot (1 GiB ext4), then LUKS2 holding vg0 with root (10 GiB)
 # and swap (1 GiB), opened at boot by the key file in the initramfs.
+# chimera-uefi: systemd-boot instead, in a 1 GiB ESP that is /boot itself
+# (LAYOUT luks-esp), then the same LUKS2 and vg0 as alpine-luks.
 # bootstrap/common.sh partitions the disk; bootstrap/DISTRO.sh installs.
 # Run it with vm-run, and look inside it while it's off with vm-mount.
 #
@@ -67,6 +75,10 @@ ALPINE_KEY=0482D84022F52DF1C4E7CD43293ACD0907D9495A
 VOID_DATE=20250202
 # void-release-20250202.pub, from void-linux/void-packages's void-release-keys
 VOID_KEY=RWT5+SoQD+dWTeOdNuc4Q/jq2+3+jpql7+JJp4WukkxTdpsZlk2EGuPj
+CHIMERA_DATE=20261103
+# The key for that release batch: main/chimera-image-keys/files/20261103.pub
+# in chimera-linux/cports (key ID B7CC5D3A17688906).
+CHIMERA_KEY=RWQGiWgXOl3Mt/2GUL9HpuxyHyWBc29/lZ9wW6XZz29lx2YLwkKfXk52
 NIXOS_RELEASE=26.05
 NIXPKGS=https://releases.nixos.org/nixos/26.05/nixos-26.05.13164.6f06d204d8f2/nixexprs.tar.xz
 NIX_VERSION=2.31.2
@@ -74,7 +86,7 @@ NIX_VERSION=2.31.2
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-bootstrap: $*" >&2; exit 1; }
 
-[[ $# -eq 2 ]] || die "usage: $0 alpine|alpine-uefi|alpine-lvm|alpine-luks|void|artix-dinit|artix-s6|nixos WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 alpine|alpine-uefi|alpine-lvm|alpine-luks|void|chimera|chimera-uefi|artix-dinit|artix-s6|nixos WORK_DIR"
 distro=$1
 iso_release=$ARCH_ISO_CURRENT
 script=$distro
@@ -88,6 +100,8 @@ case $distro in
         if [[ $layout == lvm ]]; then root_fs=xfs; else root_fs=ext4; fi
         extra=("ALPINE_BRANCH=v${ALPINE_VERSION%.*}") ;;
     void) name=void-musl root_fs=btrfs ;;
+    chimera) name=chimera root_fs=xfs ;;
+    chimera-uefi) name=chimera-uefi root_fs=ext4 script=chimera firmware=uefi layout=luks-esp ;;
     artix-dinit) name=artix-dinit root_fs=jfs script=artix extra=(INIT=dinit) ;;
     artix-s6) name=artix-s6 root_fs=ext4 script=artix extra=(INIT=s6) ;;
     nixos) name=nixos2605 root_fs=bcachefs iso_release=$ARCH_ISO_LINUX_6_12
@@ -160,6 +174,17 @@ case $script in
         grep -F "$f" "void-sha256sum-$VOID_DATE.txt" | sha256sum -c --quiet - || die "$f does not match Void's sha256sum.txt"
         ln -s "$PWD/$f" "$work/www/rootfs.tar.xz"
         ;;
+    chimera)
+        f=chimera-linux-x86_64-ROOTFS-$CHIMERA_DATE-full.tar.gz
+        url=https://repo.chimera-linux.org/live/$CHIMERA_DATE
+        fetch "$url/sha256sums.txt" "chimera-sha256sums-$CHIMERA_DATE.txt"
+        fetch "$url/sha256sums.txt.minisig" "chimera-sha256sums-$CHIMERA_DATE.txt.minisig"
+        fetch "$url/$f"
+        minisign -q -V -P "$CHIMERA_KEY" -m "chimera-sha256sums-$CHIMERA_DATE.txt" \
+            -x "chimera-sha256sums-$CHIMERA_DATE.txt.minisig" || die "Chimera's sha256sums.txt is not signed by its release key"
+        grep -F " $f" "chimera-sha256sums-$CHIMERA_DATE.txt" | sha256sum -c --quiet - || die "$f does not match Chimera's sha256sums.txt"
+        ln -s "$PWD/$f" "$work/www/rootfs.tar.gz"
+        ;;
 esac
 
 # --- The live system's kernel, initramfs and boot options ---------------------------
@@ -184,7 +209,7 @@ hash=$(printf '%s' "$password" | openssl passwd -6 -stdin)
 # The LUKS key: printable, and without a newline, so the same bytes unlock it
 # from the guest's key file, from this one (vm-mount --key) and typed.
 luks_key=""
-if [[ $layout == luks ]]; then
+if [[ $layout == luks || $layout == luks-esp ]]; then
     luks_key=$(openssl rand -base64 32 | tr -d '\n')
     printf '%s' "$luks_key" >luks-keyfile
 fi

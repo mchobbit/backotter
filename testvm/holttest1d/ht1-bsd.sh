@@ -168,12 +168,15 @@ rescuer_ready() {
             sleep 2
         done
         # By their serials (s_resc, s_decoy): the rescuer's own, the
-        # guest's disks in order, the decoy.
+        # guest's disks in order, the decoy.  The rescue image (+img's
+        # rebuild, bkoimg) is its own disk, and the rescuer guest's disk
+        # (bkoresc, the repository's) comes after the decoy.
         local by; by=$(sshk "$rkey" 'iostat -En' | awk '/^c[0-9]/ {d = $1} /Serial No:/ {s = $0; sub(/.*Serial No: */, "", s); sub(/ .*/, "", s); print s, d}')
         if grep -q '^bkoresc ' <<<"$by"; then
-            local order=(bkoresc) i
+            local order=(bkoresc) last=() i
+            grep -q '^bkoimg ' <<<"$by" && order=(bkoimg) last=(bkoresc)
             for ((i = 0; i < n; i++)); do order+=("bkodisk-$i"); done
-            order+=(bkodecoy bkorepo)   # (bkorepo: +img's repository disk)
+            order+=(bkodecoy "${last[@]}")
             RN=()
             for i in "${order[@]}"; do
                 local d; d=$(awk -v s="$i" '$1 == s {print $2}' <<<"$by")
@@ -401,8 +404,15 @@ if [[ $PLAT == illumos ]]; then
     s_resc=(--disk-serials "$(IFS=,; echo "bkoresc,${ids[*]}")")
     v_snap=(--snapshot)
     s_decoy=(--disk-serials "$(IFS=,; echo "bkoresc,${ids[*]},bkodecoy")" --disk-slots "$(IFS=,; echo "16,${sl[*]},$((4 + n))")")
-    # +img: the image is the rescuer's own disk, and the repository's disk follows the decoy.
-    ((IMG)) && s_decoy=(--disk-serials "$(IFS=,; echo "bkoresc,${ids[*]},bkodecoy,bkorepo")" --disk-slots "$(IFS=,; echo "16,${sl[*]},$((4 + n)),$((5 + n))")")
+    # +img: the image is the rescuer's own disk (bkoimg), and the
+    # repository's disk follows the decoy.  That disk is the rescuer guest's
+    # and keeps its serial, bkoresc, as a disk moved to another machine
+    # does: its pool's label names the disk by a devid made from it, and
+    # illumos opens a whole-disk vdev whose devid doesn't match by that devid
+    # instead.  With bkoresc on the image, the import read the image's
+    # partition as the pool ("corrupted data", then EOVERFLOW and an abort
+    # in zpool import).
+    ((IMG)) && s_decoy=(--disk-serials "$(IFS=,; echo "bkoimg,${ids[*]},bkodecoy,bkoresc")" --disk-slots "$(IFS=,; echo "16,${sl[*]},$((4 + n)),$((5 + n))")")
 fi
 size_of() { qemu-img info --output=json "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])'; }
 

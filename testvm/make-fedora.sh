@@ -3,10 +3,11 @@
 # install from an official Server DVD into a qcow2 disk image, under QEMU with
 # KVM.  / is btrfs, laid out the way Fedora's installer does it.
 #
-# Usage: ./make-fedora.sh [--uefi [--raid]] [--name NAME] RELEASE WORK_DIR
+# Usage: ./make-fedora.sh [--uefi [--raid] | --ostree IMAGE] [--name NAME] RELEASE WORK_DIR
 #   e.g. ./make-fedora.sh 44-1.7 vms/fedora44
 #        ./make-fedora.sh --uefi --name fedora44-uefi 44-1.7 vms/fedora44-uefi
 #        ./make-fedora.sh --uefi --raid --name fedora44-raid 44-1.7 vms/fedora44-raid
+#        ./make-fedora.sh --ostree quay.io/fedora/fedora-kinoite:44 --name kinoite44 44-1.7 vms/kinoite44
 #
 # RELEASE is a Fedora release and compose number, as in the ISO's name
 # (Fedora-Server-dvd-x86_64-RELEASE.iso).  The ISO and its CHECKSUM file are
@@ -22,6 +23,10 @@
 #   vm-run-options        with --uefi: "--uefi", how vm-run must boot it
 #                         (with --raid, and "--disk NAME-b.qcow2")
 #   NAME-b.qcow2          with --raid: the second disk, snapshot "fresh-install"
+#   NAME.digest           with --ostree: the image installed, by digest
+#   first-boot-serial.log, second-boot-serial.log
+#                         with --ostree: the serial consoles of the two boots
+#                         that make the second deployment
 #
 # The guest, host name NAME: BIOS + MBR, /boot (1 GiB ext4), swap (2 GiB),
 # and btrfs for the rest (subvolumes root and home), 2 GB RAM, the Fedora
@@ -42,11 +47,29 @@
 # RAID1 across a partition on each disk (fedora/storage-raid.ks).  The
 # install writes zeros as holes and waits for the arrays' first resync.
 #
+# --ostree IMAGE installs a Fedora atomic desktop instead (Kinoite,
+# Silverblue): the same Anaconda from the Server DVD, whose payload is the
+# bootable container IMAGE (REGISTRY/REPO:TAG), pulled inside the guest over
+# QEMU's user network, so the host needs no container tools.  The tag is
+# resolved to its digest first, recorded in NAME.digest, and the install
+# takes IMAGE@sha256:DIGEST (fedora/ks-ostree.cfg).  The disk (32 GiB; 4 GB
+# RAM) is laid out like the Thinkpad's Bazzite: GPT, ESP at /boot/efi, ext4
+# /boot, btrfs subvolumes root, home and var (fedora/storage-ostree.ks).  It
+# boots through shim and GRUB with Secure Boot off, as the Thinkpad does
+# (vm-run-options): with it on, bootupd's bootloader-update.service fails at
+# every boot, as OVMF's db lacks Microsoft's 2023 UEFI CA.  Two
+# boots after the install leave two deployments, as the Thinkpad has: the
+# first points the deployment's origin at IMAGE's tag in place (bootc switch
+# --mutate-in-place: no new deployment, and later updates follow the tag)
+# and stages a second deployment of the same commit with one more kernel
+# argument, bko.rollback=1; the second boots that one (serial 1, the
+# default; serial 0 is the rollback) and writes /etc/bko-deployment in it.
+#
 # Run it with vm-run (and vm-run-options), and look inside it while it's off
 # with vm-mount.
 #
 # Needs: qemu-system-x86_64 with KVM, qemu-img, xorriso, gpg, gpgv, openssl,
-# python3, wget.  Runs as an ordinary user in the kvm group.
+# python3, wget, ssh.  Runs as an ordinary user in the kvm group.
 
 set -euo pipefail
 
@@ -57,22 +80,30 @@ declare -A RELEASE_KEYS=(
     [44]=36F612DCF27F7D1A48A835E4DBFCF71C6D9F90A6   # Fedora (44)
 )
 INSTALL_TIMEOUT=2400
+BOOT_TIMEOUT=900
 
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-fedora: $*" >&2; exit 1; }
 
-firmware=bios name="" raid=no
+firmware=bios name="" raid=no image=""
 while [[ $# -gt 0 ]]; do
     case $1 in
         --uefi) firmware=uefi; shift ;;
         --raid) raid=yes; shift ;;
+        --ostree) image=$2; shift 2 ;;
         --name) name=$2; shift 2 ;;
         -*) die "unknown option $1" ;;
         *) break ;;
     esac
 done
-[[ $# -eq 2 ]] || die "usage: $0 [--uefi [--raid]] [--name NAME] RELEASE WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 [--uefi [--raid] | --ostree IMAGE] [--name NAME] RELEASE WORK_DIR"
 [[ $raid == yes && $firmware != uefi ]] && die "--raid is for UEFI only (with --uefi)"
+if [[ -n $image ]]; then
+    [[ $raid == no ]] || die "--ostree and --raid don't go together"
+    [[ $image =~ ^[a-z0-9.-]+\.[a-z]+(:[0-9]+)?/[a-z0-9._/-]+:[A-Za-z0-9._-]+$ ]] ||
+        die "--ostree takes REGISTRY/REPO:TAG, e.g. quay.io/fedora/fedora-kinoite:44, not '$image'"
+    firmware=uefi DISK_SIZE=32G MEMORY=4096 INSTALL_TIMEOUT=5400
+fi
 release=$1
 [[ $release =~ ^([0-9]+)-[0-9]+\.[0-9]+$ ]] || die "RELEASE looks like 44-1.7, not '$release'"
 major=${BASH_REMATCH[1]}
@@ -85,6 +116,7 @@ DISK=$guest_name.qcow2
 DISK_B=$guest_name-b.qcow2
 storage=$firmware
 [[ $raid == yes ]] && storage=raid
+[[ -n $image ]] && storage=ostree
 mkdir -p "$2"
 cd "$2"
 [[ -e $DISK ]] && die "$2/$DISK already exists; move it away to rebuild"
@@ -138,10 +170,52 @@ hash=$(printf '%s' "$password" | openssl passwd -6 -stdin)
 [[ -e id_ed25519 ]] || ssh-keygen -q -t ed25519 -N '' -C "root@$guest_name test guest" -f id_ed25519
 umask 022
 
+# --- The image's digest (--ostree) -----------------------------------------------
+# What IMAGE's tag points at now, from the registry's HTTP API (with an
+# anonymous token where the registry wants one): the manifest list's digest,
+# which the install then pulls by.
+ks=ks.cfg image_url=""
+if [[ -n $image ]]; then
+    ks=ks-ostree.cfg
+    digest=$(python3 -I - "$image" <<'PY'
+import json, re, sys, urllib.error, urllib.request
+reg, _, rest = sys.argv[1].partition("/")
+repo, _, tag = rest.rpartition(":")
+url = f"https://{reg}/v2/{repo}/manifests/{tag}"
+headers = {"Accept": ", ".join([
+    "application/vnd.oci.image.index.v1+json",
+    "application/vnd.docker.distribution.manifest.list.v2+json",
+    "application/vnd.oci.image.manifest.v1+json",
+    "application/vnd.docker.distribution.manifest.v2+json"])}
+def head():
+    req = urllib.request.Request(url, method="HEAD", headers=headers)
+    return urllib.request.urlopen(req, timeout=60)
+try:
+    r = head()
+except urllib.error.HTTPError as e:
+    auth = e.headers.get("WWW-Authenticate", "")
+    if e.code != 401 or not auth.startswith("Bearer "):
+        raise
+    p = dict(re.findall(r'(\w+)="([^"]*)"', auth))
+    q = f"{p['realm']}?service={p.get('service', '')}&scope=repository:{repo}:pull"
+    token = json.load(urllib.request.urlopen(q, timeout=60))
+    headers["Authorization"] = "Bearer " + (token.get("token") or token["access_token"])
+    r = head()
+d = r.headers.get("Docker-Content-Digest", "")
+if not re.fullmatch(r"sha256:[0-9a-f]{64}", d):
+    sys.exit(f"no digest for {sys.argv[1]} (got {d!r})")
+print(d)
+PY
+    ) || die "can't resolve $image's digest"
+    image_url=${image%:*}@$digest
+    echo "$image_url" >"$guest_name.digest"
+    echo "Installing $image as $image_url"
+fi
+
 mkdir "$work/www"
 sed -e "s|@HOSTNAME@|$guest_name|" -e "s|@ROOT_PASSWORD_HASH@|$hash|" \
-    -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" \
-    -e "/^@STORAGE@\$/{r $here/fedora/storage-$storage.ks" -e "d}" "$here/fedora/ks.cfg" >"$work/www/ks.cfg"
+    -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" -e "s|@IMAGE_URL@|$image_url|" \
+    -e "/^@STORAGE@\$/{r $here/fedora/storage-$storage.ks" -e "d}" "$here/fedora/$ks" >"$work/www/ks.cfg"
 if grep -n '@[A-Z_]\+@' "$work/www/ks.cfg"; then die "ks.cfg placeholders left unfilled"; fi
 
 # Serve ks.cfg to the guest only: QEMU's user-mode network maps 10.0.2.2 in
@@ -182,6 +256,48 @@ timeout "$INSTALL_TIMEOUT" qemu-system-x86_64 \
 
 [[ $firmware == uefi ]] && echo "--uefi" >vm-run-options
 [[ $raid == yes ]] && echo "--uefi --disk $DISK_B" >vm-run-options
+[[ -n $image ]] && echo "--uefi --no-secure-boot --memory $MEMORY" >vm-run-options
+
+# --- Two deployments (--ostree) ---------------------------------------------------------
+# Booted as vm-run boots it (vm-run-options).  Each boot ends in a clean
+# poweroff over SSH: ostree-finalize-staged writes a staged deployment only
+# then.  fedora/ostree-boots.sh does the work in the guest.
+if [[ -n $image ]]; then
+    port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
+    ssh_guest() {
+        # timeout: QEMU's user network accepts the connection before the
+        # guest is up, so ConnectTimeout never fires.
+        timeout "${SSH_TIMEOUT:-60}" ssh -i id_ed25519 -p "$port" -o StrictHostKeyChecking=no \
+            -o UserKnownHostsFile=/dev/null -o LogLevel=ERROR -o BatchMode=yes root@127.0.0.1 "$@"
+    }
+    boot() {  # boot LOG STEP: boot, run ostree-boots.sh STEP IMAGE, power off
+        echo "Booting it for '$2'; the console goes to $out/$1"
+        # shellcheck disable=SC2046
+        SSH_PORT=$port timeout "$BOOT_TIMEOUT" "$here/vm-run" $(<vm-run-options) --serial-log "$1" "$DISK" \
+            >"$1.vm-run.log" 2>&1 &
+        qemu_pid=$!
+        local up=no deadline=$((SECONDS + BOOT_TIMEOUT - 120))
+        while (( SECONDS < deadline )); do
+            if [[ $(SSH_TIMEOUT=20 ssh_guest uname -n </dev/null 2>/dev/null) == "$guest_name" ]]; then up=yes; break; fi
+            kill -0 "$qemu_pid" 2>/dev/null || break
+            sleep 10
+        done
+        [[ $up == yes ]] || die "the guest never answered on SSH; see $out/$1"
+        local rc=0
+        # Copied first, not run from sh's input, where the commands in it
+        # could read the rest of the script.
+        ssh_guest 'cat >/run/ostree-boots.sh' <"$here/fedora/ostree-boots.sh" &&
+            SSH_TIMEOUT=600 ssh_guest sh /run/ostree-boots.sh "$2" "$image" </dev/null || rc=$?
+        ssh_guest systemctl poweroff </dev/null || true
+        wait "$qemu_pid" || die "the guest didn't power off in time; see $out/$1"
+        qemu_pid=""
+        [[ $rc == 0 ]] || die "ostree-boots.sh $2 failed in the guest (exit $rc)"
+    }
+    out=$PWD qemu_pid=""
+    trap '[[ -n $qemu_pid ]] && kill "$qemu_pid" 2>/dev/null; cleanup' EXIT
+    boot first-boot-serial.log switch
+    boot second-boot-serial.log mark
+fi
 qemu-img snapshot -c fresh-install "$DISK"
 [[ $raid == yes ]] && qemu-img snapshot -c fresh-install "$DISK_B"
 echo "Done: $2/$DISK ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""

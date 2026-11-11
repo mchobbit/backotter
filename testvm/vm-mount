@@ -28,6 +28,13 @@
 # this host's.  Under vm-chroot, the LVs aren't at the guest's own
 # /dev/mapper names: don't make an initramfs or grub.cfg there.
 #
+# ostree (Fedora's atomic desktops, Bazzite): MOUNTPOINT gets the physical
+# root (fstab's /, which holds ostree/repo and the deployments), with the
+# default deployment's fstab mounted beneath it: /boot, /boot/efi, /home,
+# /var.  That is the tree load's mount stage makes, and what a backup of
+# the system holds; the composefs / it boots from is made from it at boot.
+# vm-chroot runs commands in the default deployment, with /usr read-only.
+#
 # / may be a partition, a logical volume, a btrfs subvolume, or a ZFS dataset.  A ZFS pool is
 # imported from the image's partition only, under a temporary name (so it
 # can't clash with a pool of the host's, and the guest's own name is kept),
@@ -447,6 +454,59 @@ PY
 }
 # The btrfs subvolume options (subvol=, subvolid=) from fstab options on stdin.
 subvol_opts() { tr ',' '\n' | grep -E '^subvol(id)?=' | paste -sd, - || true; }
+# fstab_line FSTAB TARGET: TARGET's line in FSTAB, as SPEC TYPE OPTIONS.
+fstab_line() { awk -v t="$2" '!/^[[:space:]]*(#|$)/ && $2 == t { print $1, $3, $4; exit }' "$1"; }
+
+# ostree (docs/design/bazzite.md): no /etc/fstab at the top of anything,
+# but one in each deployment, ostree/deploy/STATEROOT/deploy/CSUM.N/etc/, in
+# the physical root (a btrfs subvolume one level down, Fedora's "root", or a
+# filesystem's top).  It is mounted at MP as load's mount stage mounts it:
+# fstab's / (the physical root), then the rest of the default deployment's
+# fstab beneath it (/boot, /boot/efi, /home, /var).  The default deployment
+# is ostree_paths.py's: the BLS entry on /boot with the highest version,
+# followed to its deployment, so /boot is mounted first, by any deployment's
+# fstab, to find it.  Its etc/fstab is then the one the rest is mounted by.
+# Called with PARTITION mounted at MP at its top level; on success sets
+# ostree_dep and fstab_file, and leaves the physical root mounted at MP.
+ostree_dep=""
+mount_ostree() {
+    local p=$1 type=$2 cands cand phys="" sub sub2 line spec bdev booted=no
+    cands=$(compgen -G "$mp/ostree/deploy/*/deploy/*/etc/fstab" || true)
+    if [[ -z $cands && $type == btrfs ]]; then
+        cands=$(compgen -G "$mp/*/ostree/deploy/*/deploy/*/etc/fstab" || true)
+    fi
+    [[ -n $cands ]] || return 1
+    cand=$(head -n 1 <<<"$cands")
+    if [[ $cand != "$mp"/ostree/* ]]; then phys=${cand#"$mp"/}; phys=${phys%%/*}; fi
+    sub=$(fstab_line "$cand" / | awk '{ print $3 }' | subvol_opts)
+    if [[ -n $phys ]]; then
+        [[ -n $sub ]] || sub=subvol=$phys
+        umount "$mp"
+        mount_fs "$p" "$mp" "$sub" || { undo; die "ostree: could not mount $p's $sub"; }
+        cand=$mp/${cand#"$mp/$phys/"}       # now at MP's top
+        [[ -f $cand ]] || { undo; die "ostree: $p's $sub isn't the subvolume $phys"; }
+    fi
+    line=$(fstab_line "$cand" /boot)
+    if [[ -n $line ]]; then
+        read -r spec _ _ <<<"$line"
+        bdev=$(resolve "$spec") || { undo; die "ostree: /boot's $spec is not on this image"; }
+        mount_fs "$bdev" "$mp/boot" "" || { undo; die "ostree: could not mount /boot ($bdev)"; }
+        booted=yes
+    fi
+    ostree_dep=$(python3 "$(dirname "$(realpath "$0")")/ostree_paths.py" default "$mp" || true)
+    [[ $booted == no ]] || umount "$mp/boot"
+    [[ -n $ostree_dep ]] || { undo; die "ostree: no default deployment among the $(wc -l <<<"$cands") on $p"; }
+    fstab_file=$mp/$ostree_dep/etc/fstab
+    [[ -f $fstab_file ]] || { undo; die "ostree: the default deployment $ostree_dep has no etc/fstab"; }
+    # The default deployment's / may name another subvolume than the first's.
+    sub2=$(fstab_line "$fstab_file" / | awk '{ print $3 }' | subvol_opts)
+    if [[ $sub2 != "$sub" ]]; then
+        [[ -n $sub2 || -z $phys ]] || sub2=subvol=$phys
+        umount "$mp"
+        mount_fs "$p" "$mp" "$sub2" || { undo; die "ostree: could not mount $p's $sub2"; }
+        [[ -f $fstab_file ]] || { undo; die "ostree: $p's ${sub2:-top level} holds no $ostree_dep"; }
+    fi
+}
 
 # Find /: the filesystem whose /etc/fstab this is.  On btrfs it is usually
 # in a subvolume: one level down from the top level (Debian's installer uses
@@ -535,6 +595,7 @@ for p in "${parts[@]}"; do
     [[ $type == btrfs ]] && top=subvolid=5   # the top level, whatever the default
     try_mount "$p" "$mp" "$top" || continue
     fstab=$(guest_file "$mp" /etc/fstab || true)
+    if [[ -z $fstab ]] && mount_ostree "$p" "$type"; then root=$p; break; fi
     if [[ -z $fstab && $type == btrfs ]]; then
         # One level down: the subvolume's fstab.
         fstab=$(compgen -G "$mp/*/etc/fstab" | head -n 1 || true)
@@ -590,11 +651,12 @@ if command -v zpool >/dev/null; then
 fi
 
 # The guest's other filesystems, parents before children.
+[[ -n $ostree_dep ]] || fstab_file=$(guest_file "$mp" /etc/fstab)
 while read -r spec target type options; do
     [[ $target == / || $type == swap || $target != /* || ,$options, == *,noauto,* ]] && continue
     p=$(resolve "$spec") || { echo "vm-mount: skipping $target: $spec is not on this image" >&2; continue; }
     mount_fs "$p" "$mp$target" "$(subvol_opts <<<"$options")"
-done < <(awk '!/^[[:space:]]*(#|$)/ { print $1, $2, $3, $4 }' "$(guest_file "$mp" /etc/fstab)" |
+done < <(awk '!/^[[:space:]]*(#|$)/ { print $1, $2, $3, $4 }' "$fstab_file" |
     awk '{ print gsub("/", "/", $2), $0 }' | sort -n | cut -d' ' -f2-)
 
 trap - ERR
@@ -602,3 +664,4 @@ how=read-write
 [[ $ro == yes ]] && how=read-only
 echo "Mounted $image ($dev, $how) at $mp:"
 findmnt -R -n -o TARGET,SOURCE,FSTYPE "$mp" | sed 's/^/  /'
+[[ -z $ostree_dep ]] || echo "ostree: the default deployment is $ostree_dep (its etc/fstab mounted the rest)"

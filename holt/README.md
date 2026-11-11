@@ -29,8 +29,13 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
 
 - Linux: Debian 12 and 13, Devuan 6, Ubuntu 24.04 and 26.04, Linux Mint 22,
   Pop!_OS 24.04, Zorin OS 18, Arch Linux, CachyOS, Artix Linux, Omarchy,
-  EndeavourOS, Manjaro, Alpine Linux 3, AerynOS, Void Linux, Fedora 44, Rocky Linux 10, openSUSE
-  Tumbleweed and NixOS 26.05;
+  EndeavourOS, Manjaro, Alpine Linux 3, AerynOS, Void Linux, Fedora 44,
+  Bazzite 44, Rocky Linux 10, openSUSE Tumbleweed and NixOS 26.05;
+- ostree (image-mode) systems among them: Bazzite 44, and Fedora's atomic
+  desktops (Silverblue and Kinoite 44, which say `fedora 44`), told apart
+  by ostree's own markers (`src/ostree.rs`).  `load` version 1 refuses
+  some of their layouts: BIOS boot, LUKS, LVM, no separate /boot, composefs
+  `verity` or `signed` ("What load does" below);
 - FreeBSD 14 and 15, HardenedBSD 15, GhostBSD 26 (`src/other/freebsd.rs`),
   NetBSD 11, AlpineBSD 1 and OpenBSD 8 (`labelled.rs`), DragonFly 6
   (`dfly.rs`), OmniOS (illumos, `illumos.rs`) and Haiku (`haiku.rs`): built
@@ -39,9 +44,11 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
   reads them off their disks from Linux, and `load` rebuilds them from Linux.
 
 HoltTest1All round-trips each whole machine (`testvm/holttest1d/README.md`
-has which pass).  Build it static (`RUSTFLAGS="-C target-feature=+crt-static"
-cargo build --release --target x86_64-unknown-linux-gnu`) to run it on musl
-systems such as Alpine and Void too; on the other systems, build it there
+has which pass; Bazzite's is `kinoite44`, its Kinoite base, and BackShot1
+is its test on real hardware).  Build it static
+(`RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target
+x86_64-unknown-linux-gnu`) to run it on musl systems such as Alpine and Void
+too; on the other systems, build it there
 (`testvm/holttest1d/build-holt.sh PLATFORM`: it needs nothing but Rust 1.85).
 Run both as root: partition tables, superblocks and LVM/ZFS labels are read
 from the devices themselves.  As another user `dump` falls back to udev's
@@ -95,13 +102,22 @@ hand, then `--only boot`.
   subvolume, and quotas with their qgroups.
 - `storage.xfs_external_logs`: which device holds each XFS external log.
 - `storage.mounts`, `swaps`, `fstab`, `crypttab`, `mdadm_conf`, each entry
-  resolved to the device it names.
+  resolved to the device it names; a mount that is a directory of another
+  mount of the same filesystem (a bind) says which (`alias_of`).
+- `storage.backup_sources`: the filesystems a whole-system backup reads,
+  each at the path fstab mounts it (`path`) and where the running system
+  has it (`from`), aliases left out; `storage.physical_root` is the one at
+  `/`.  On ostree `/` is read from /sysroot and `/home` from /var/home.
 - `boot`: which loader boots the machine and why (`loader.evidence`), the
   UEFI boot entries with device paths decoded, tied to partitions and kept
   raw (`load_option_hex`), the ESPs' files, GRUB's config, grubenv,
   /etc/default/grub and debconf answers, systemd-boot's entries, kernels and
   initramfs, the kernel command line, and the versions of the packages
   behind all of it.
+- `boot.ostree`, on an ostree system (Fedora's atomic desktops, Bazzite):
+  the booted deployment, every deployment, the loader entries and the
+  deployment each leads to, composefs's and the repository's settings,
+  bootupd's state file, grubenv's boot counting keys, and bootc's image.
 
 ## What load does
 
@@ -112,6 +128,17 @@ stage is next.  The writing stages, `partition`, `assemble`, `format`,
 `mount`, `restore`, `boot` and `close`, run those commands with `--commit`
 (without it they print them), and read the disks back after each stage to
 see it took.  `--through close` with `--repo` is a whole restore.
+
+On an ostree system (a dump with `boot.ostree`) the tree is fstab's, as on
+any other: the physical root at the target, with /boot, the ESP, /home and
+/var beneath it (the mount stage leaves out fstab's `ro`, on every system).
+Its boot stage regenerates nothing and runs no chroot: /boot, the ESP and
+/ostree come back as they were.  It checks that each loader entry's kernel,
+initramfs and deployment are in the restored tree, makes the UEFI entries,
+writes its log with /var/log's SELinux label, and puts the atimes back
+(`src/load/ostree.rs`).  Version 1 refuses composefs `verity` or `signed`,
+required fs-verity, BIOS boot, LUKS, LVM, and an fstab without `/` or
+without a separate /boot.
 
 Each target disk must be at least as big as its source, with the same
 logical sector size.  `--fit-largest PCT` takes one a little smaller or
@@ -188,7 +215,9 @@ cargo test
   RAID1, ZFS, unprivileged).  `src/load/`: argument parsing, the layout
   contract, disk mapping and its refusals, `--fit-largest`'s arithmetic and
   refusals (`src/load/fit.rs`, over every scenario's layout as well), and the
-  commands each stage would run, on fake rescue systems.
+  commands each stage would run, on fake rescue systems; ostree's
+  boot-stage check and log labeller run on fake restored trees
+  (`src/load/ostree.rs`).
 - `tests/realtools.rs`: images made by mkfs.*, mkswap, cryptsetup, sfdisk
   and sgdisk, read by both bko-holt and blkid, dumpe2fs, xfs_db, btrfs,
   cryptsetup and sfdisk; and `--fit-largest`'s own numbers, by applying the

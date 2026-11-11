@@ -568,14 +568,14 @@ class Runs(unittest.TestCase):
             with contextlib.redirect_stdout(out):
                 code = run.lifecycle(wd, ctx, mac_root=mac, out=print)
             self.assertEqual(code, 0)
-            self.assertIn("SticTest2: nothing due (41 carried)", out.getvalue())
-            self.assertIn("41 carried row(s) written", out.getvalue())
+            self.assertIn("SticTest2: nothing due (42 carried)", out.getvalue())
+            self.assertIn("42 carried row(s) written", out.getvalue())
             got = ledger.read(os.path.join(mac, "ledger", "mac.jsonl")).rows
-            self.assertEqual(len(got), 41)
+            self.assertEqual(len(got), 42)
             self.assertTrue(all(r["kind"] == "carried" and r["host"] == "mac" and r["via"] for r in got))
-            self.assertEqual([ledger.validate(r) for r in got], [[]] * 41)
+            self.assertEqual([ledger.validate(r) for r in got], [[]] * 42)
             p = self.w.plan("SticTest2 rel4 plan", rows + got, facts=f)
-            self.assertEqual(p.totals["counts"]["current"], 41)
+            self.assertEqual(p.totals["counts"]["current"], 42)
             self.assertFalse(run.FamilyLock("stic", mac).held())
         finally:
             if old is None:
@@ -763,7 +763,7 @@ class Derived(unittest.TestCase):
         self.assertEqual(run.lifecycle(self.w.word("GuestTest2 update", ctx), ctx, mac_root=self.mac, out=out.append), 2)
         text = "\n".join(out)
         self.assertIn("refused: guest:arch: no --try PASS within 7 days: run t2 GuestTest2 arch first", text)
-        self.assertEqual(text.count("refused: guest:"), 48)
+        self.assertEqual(text.count("refused: guest:"), 52)
 
     def test_a_refused_image_exits_2_after_the_due_ones_finish(self):
         import types
@@ -933,7 +933,7 @@ class Derived(unittest.TestCase):
         wd = w.word("SticTest2 rel4", ctx)
         p = plan.make(wd, ctx)
         fresh = run.derived_rows(p, "t2s-20261108T0500-abcd", wd, ctx, {"cells": []}, self.r_stic)
-        self.assertEqual(len(fresh), 41)
+        self.assertEqual(len(fresh), 42)
         saved = run.plan_from_json(json.loads(json.dumps(p.to_json())), wd)
         self.assertEqual(run.derived_rows(saved, "t2s-20261108T0500-abcd", wd, ctx, {"cells": []}, self.r_stic), [])
         run.adopt_inputs(saved, plan.make(wd, w.ctx(self.r_stic, facts=f1)))
@@ -968,7 +968,7 @@ class Derived(unittest.TestCase):
         self.assertEqual(run.resume(rid, c1, mac_root=self.mac, out=out.append), 0)
         self.assertEqual(seen["hosts"], ["chopin"])
         got = ledger.read(os.path.join(self.mac, "ledger", "mac.jsonl")).rows
-        self.assertEqual(len(got), 41)
+        self.assertEqual(len(got), 42)
         self.assertTrue(all(r["inputs"] and r["key"] == p.cell(r["cell"]).keys["chopin"] for r in got))
         self.assertTrue(os.path.exists(os.path.join(run.run_dir(rid, self.mac), "report.txt")))
 
@@ -1009,7 +1009,7 @@ class Derived(unittest.TestCase):
         self.assertIn("linux/restic-bko assumed reused", "; ".join(p.cell("stic:debian13").reasons))
         out = []
         self.assertEqual(run.lifecycle(wd, ctx, mac_root=self.mac, out=out.append), 0)
-        self.assertIn("nothing due (41 carried)", out[0])
+        self.assertIn("nothing due (42 carried)", out[0])
         self.assertNotIn("row(s) written", out[0])
         self.assertFalse(os.path.exists(os.path.join(self.mac, "ledger", "mac.jsonl")))
 

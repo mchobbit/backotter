@@ -107,7 +107,7 @@ if layout_is_uefi "$RUN/layout.json" && [[ ! -d /sys/firmware/efi ]]; then
 fi
 LOAD=("$BIN/bko-holt" load "$RUN/layout.json" --map "$disk=/dev/$disk" --erase "/dev/$disk"
       --repo "$RUN/repo" --password-file "$RUN/repo-password"
-      --snapshot "latest:$SRC" --archiver "$BIN/rustic-bko")
+      --snapshot "latest:$SNAP" --archiver "$BIN/rustic-bko")
 [[ -z $FIT ]] || LOAD+=(--fit-largest "$FIT")
 while read -r k; do
     [[ -n $k ]] || continue
@@ -161,7 +161,7 @@ target_mounts=$(findmnt -R -rno TARGET,OPTIONS /mnt/bko-target)
 while read -r m _; do
     mount -o remount,noatime "$(printf %b "$m")" || say "couldn't make $m noatime: the boot stage will take longer"
 done <<<"$target_mounts"
-"${RUSTIC[@]}" diff "latest:$SRC" /mnt/bko-target >"$ATTEMPT/diff.txt" 2>&1
+"${RUSTIC[@]}" diff "latest:$SNAP" /mnt/bko-target >"$ATTEMPT/diff.txt" 2>&1
 rc=$?
 while read -r m opts; do
     case ,$opts, in

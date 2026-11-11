@@ -80,7 +80,7 @@ if has_rule K-haiku; then df 2>&1 | qt; else df -Pk 2>&1 | qt; fi
 if ! has_rule K-none; then
     cmd kernels
     if has_rule K-deb || has_rule K-void; then ls -1 /boot/vmlinuz-* 2>/dev/null | grep -v '\.old$'; fi
-    if has_rule K-fed; then ls -1 /boot/loader/entries/*.conf 2>/dev/null | grep -v rescue; fi
+    if has_rule K-fed || has_rule K-ostree; then ls -1 /boot/loader/entries/*.conf 2>/dev/null | grep -v rescue; fi
     if has_rule K-pac; then
         for d in /usr/lib/modules/*/; do [ -e "${d}vmlinuz" ] && echo "$d"; done
     fi

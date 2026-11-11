@@ -18,8 +18,8 @@ trap 'echo "BACKOTTER-INSTALL-FAILED at line $LINENO"; sync; sleep 2; poweroff' 
 DISTRO='@DISTRO@'
 ROOT_FS='@ROOT_FS@'                    # what make-bootstrap.sh chose for /
 FIRMWARE='@FIRMWARE@'                  # bios (MBR) or uefi (GPT, ESP as /boot)
-LAYOUT='@LAYOUT@'                      # classic, or uefi, lvm, luks (UEFI, ESP at /boot/efi): below
-LUKS_KEY='@LUKS_KEY@'                  # luks: the key file's contents (no newline)
+LAYOUT='@LAYOUT@'                      # classic, or uefi, lvm, luks (UEFI, ESP at /boot/efi), luks-esp: below
+LUKS_KEY='@LUKS_KEY@'                  # luks, luks-esp: the key file's contents (no newline)
 GUEST_NAME='@HOSTNAME@'
 ROOT_PASSWORD='@ROOT_PASSWORD@'
 ROOT_PASSWORD_HASH='@ROOT_PASSWORD_HASH@'
@@ -43,6 +43,10 @@ until systemctl is-active -q pacman-init.service; do sleep 1; done
 #   luks  /boot 1 GiB ext4, then LUKS2 for the rest, opened as cryptroot
 #         with LUKS_KEY, holding vg0's PV: LVs root (10 GiB) and swap
 #         (1 GiB), the other extents free
+# and one with the ESP as /boot, for systemd-boot:
+#   luks-esp  an ESP of 1 GiB (ESP_PART) mounted at /boot, then LUKS2 for
+#         the rest, as luks has it: cryptroot holding vg0's PV, LVs root
+#         (10 GiB) and swap (1 GiB), the other extents free
 BOOT_PART="" ESP_PART="" LUKS_PART="" VG=""
 wipefs -q -a "$DISK"
 case $LAYOUT in
@@ -75,7 +79,7 @@ EOF
     udevadm settle
     ESP_PART=${DISK}1 SWAP_PART=${DISK}2 ROOT_PART=${DISK}3
     ;;
-lvm|luks)
+lvm|luks|luks-esp)
     if [[ $LAYOUT == lvm ]]; then
         sfdisk -q "$DISK" <<'EOF'
 label: gpt
@@ -85,16 +89,26 @@ EOF
         udevadm settle
         ESP_PART=${DISK}1 PV=${DISK}2 ROOT_SIZE=12G
     else
-        sfdisk -q "$DISK" <<'EOF'
+        if [[ $LAYOUT == luks ]]; then
+            sfdisk -q "$DISK" <<'EOF'
 label: gpt
 size=512MiB, type=uefi
 size=1GiB, type=linux
 type=linux
 EOF
-        udevadm settle
-        ESP_PART=${DISK}1 BOOT_PART=${DISK}2 ROOT_SIZE=10G
-        [[ -n $LUKS_KEY ]] || { echo "LAYOUT=luks without LUKS_KEY"; false; }
-        LUKS_PART=${DISK}3
+            udevadm settle
+            ESP_PART=${DISK}1 BOOT_PART=${DISK}2 LUKS_PART=${DISK}3
+        else
+            sfdisk -q "$DISK" <<'EOF'
+label: gpt
+size=1GiB, type=uefi
+type=linux
+EOF
+            udevadm settle
+            ESP_PART=${DISK}1 LUKS_PART=${DISK}2
+        fi
+        ROOT_SIZE=10G
+        [[ -n $LUKS_KEY ]] || { echo "LAYOUT=$LAYOUT without LUKS_KEY"; false; }
         printf '%s' "$LUKS_KEY" | cryptsetup -q luksFormat --type luks2 --key-file - "$LUKS_PART"
         printf '%s' "$LUKS_KEY" | cryptsetup open --key-file - "$LUKS_PART" cryptroot
         PV=/dev/mapper/cryptroot
@@ -127,7 +141,10 @@ mkfs_root() {
 }
 # mount_boot: /boot (and the ESP at /boot/efi), once / is mounted at /mnt.
 mount_boot() {
-    if [[ $LAYOUT != classic ]]; then
+    if [[ $LAYOUT == luks-esp ]]; then
+        mkfs.fat -F 32 -n EFI "$ESP_PART" >/dev/null
+        mount -t vfat --mkdir "$ESP_PART" /mnt/boot
+    elif [[ $LAYOUT != classic ]]; then
         if [[ -n $BOOT_PART ]]; then
             mkfs.ext4 -q -F "$BOOT_PART"
             mount -t ext4 --mkdir "$BOOT_PART" /mnt/boot
@@ -161,7 +178,7 @@ finish() {
     swapoff "$SWAP_PART"
     umount -R /mnt
     if [[ -n $VG ]]; then vgchange -q -a n "$VG" >/dev/null; fi
-    if [[ $LAYOUT == luks ]]; then cryptsetup close cryptroot; fi
+    if [[ -n $LUKS_PART ]]; then cryptsetup close cryptroot; fi
     sync
     echo "BACKOTTER-INSTALL-OK"
     poweroff

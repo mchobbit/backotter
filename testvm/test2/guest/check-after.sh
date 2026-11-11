@@ -101,7 +101,9 @@ else
 fi
 # --- the running kernel against the installed ones
 same() {  # FILE: does the running kernel's version string appear in FILE?
-    v=$(uname -v | sed 's/[[:space:]][^[:space:]]*@.*//')
+    # uname(3) turns the version's newline and tab into spaces (NetBSD: `... UTC 2026  mkrepro@...`),
+    # so cutting the builder leaves trailing blanks that the kernel file's string doesn't have
+    v=$(uname -v | sed 's/[[:space:]][^[:space:]]*@.*//; s/[[:space:]]*$//')
     if [ ! -r "$1" ] || [ -z "$v" ]; then echo "unverified can't read $1"
     elif grep -aqF "$v" "$1"; then echo "match yes"
     else echo "match no"; fi
@@ -116,6 +118,31 @@ if ! has_rule K-none && ! has_rule K-haiku; then
             d=${d%/}
             echo "installed ${d##*/}"
         done | sort -u
+    elif has_rule K-ostree; then
+        # ostree: /usr/lib/modules is the booted deployment's alone, so what tells is which
+        # deployment booted.  booted and default as CHECKSUM.SERIAL (the default is the first
+        # deployment that isn't staged: what GRUB boots), and grubenv's keys that would make
+        # bootupd's static grub.cfg boot something else (B6: it takes `default`).
+        echo "running $r"
+        for d in /usr/lib/modules/*/; do
+            [ -e "${d}vmlinuz" ] || [ -e "${d}modules.dep" ] || continue
+            d=${d%/}
+            echo "installed ${d##*/}"
+        done | sort -u
+        rpm-ostree status --json 2>/dev/null | python3 -c 'import json, sys
+try:
+    d = [x for x in json.load(sys.stdin)["deployments"] if not x.get("staged")]
+except Exception:
+    d = []
+i = lambda x: "%s.%s" % (x.get("checksum"), x.get("serial"))
+b = [x for x in d if x.get("booted")]
+if b: print("booted", i(b[0]))
+if d: print("default", i(d[0]))'
+        for f in /boot/grub2/grubenv /boot/grub/grubenv; do
+            [ -r "$f" ] || continue
+            sed -n -e 's/^default=.*/grubenv-key default/p' -e 's/^next_entry=.*/grubenv-key next_entry/p' "$f"
+            break
+        done
     elif has_rule K-pac || has_rule K-apk; then
         echo "running $r"
         if [ -e "/usr/lib/modules/$r/vmlinuz" ] || [ -e "/usr/lib/modules/$r/modules.dep" ] ||

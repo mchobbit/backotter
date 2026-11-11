@@ -32,7 +32,7 @@ tune2fs -r 13107 /dev/sdq1
 # vda2: swap
 mkswap -U bc000000-0000-4000-8000-000000000003 --pagesize 4096 /dev/sdq2
 # vda3: bcachefs
-bcachefs format --force --uuid=bc000000-0000-4000-8000-000000000004 --block_size=512 --btree_node_size=262144 --metadata_checksum=crc32c --data_checksum=crc32c --str_hash=siphash --acl /dev/sdq3
+bcachefs format --force --version=1037 --uuid=bc000000-0000-4000-8000-000000000004 --block_size=512 --btree_node_size=262144 --metadata_checksum=crc32c --data_checksum=crc32c --str_hash=siphash --acl /dev/sdq3
 
 # ---- mount ----
 mkdir -p /mnt/bko-target

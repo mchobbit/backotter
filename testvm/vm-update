@@ -111,6 +111,9 @@ A real update or --finish holds the fleet lock, vms/.vm-update.fleet.lock on
 the first host, exclusively for as long as it runs: one driver at a time,
 from either host.  A job of a GuestTest2 update round (VM_UPDATE_ROUND=RUN)
 holds it shared instead, and needs .vm-update.fleet.round to name RUN.
+--hold-fleet-lock removes that file when it lets go, whatever the cause
+(end of input, no heartbeat, TERM or HUP), so no later job of a round whose
+holder is gone passes the check.
 
 Environment:
   VM_UPDATE_RAM=GIB        the overlays in /mnt/bko-ram, kept there up to the
@@ -1865,23 +1868,52 @@ def hold_fleet_lock(run_id: str) -> int:
     except BlockingIOError:
         print(f"vm-update: {fleet_held_error(round_name())}", file=sys.stderr)
         return 75
-    tmp = rnd.with_name(rnd.name + ".tmp")
-    tmp.write_text(run_id + "\n")
-    tmp.replace(rnd)
+    def gone(signum, _frame):
+        raise SystemExit(75)
+
+    old = {s: signal.signal(s, gone) for s in (signal.SIGTERM, signal.SIGHUP)}
     try:
-        fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
-    except BlockingIOError:                    # flock converts by letting go first
-        print("vm-update: lost the fleet lock while making it shared", file=sys.stderr)
-        return 75
-    print("held", flush=True)
-    # A line at least this often, or the driver is gone and the jobs it
-    # started finish by themselves, each holding the lock for its life.
-    while True:
-        if not select.select([0], [], [], HEARTBEAT_TIMEOUT)[0]:
-            print(f"vm-update: no heartbeat in {HEARTBEAT_TIMEOUT} s; letting go", file=sys.stderr)
+        tmp = rnd.with_name(rnd.name + ".tmp")
+        tmp.write_text(run_id + "\n")
+        tmp.replace(rnd)
+        try:
+            fcntl.flock(f, fcntl.LOCK_SH | fcntl.LOCK_NB)
+        except BlockingIOError:                # flock converts by letting go first
+            print("vm-update: lost the fleet lock while making it shared", file=sys.stderr)
+            try:                               # held again: the round's name can go
+                fcntl.flock(f, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                return 75
+            clear_round(rnd, run_id)
             return 75
-        if not os.read(0, 4096):
-            return 0
+        try:
+            print("held", flush=True)
+            # A line at least this often, or the driver is gone and the jobs it
+            # started finish by themselves, each holding the lock for its life.
+            while True:
+                if not select.select([0], [], [], HEARTBEAT_TIMEOUT)[0]:
+                    print(f"vm-update: no heartbeat in {HEARTBEAT_TIMEOUT} s; letting go", file=sys.stderr)
+                    return 75
+                if not os.read(0, 4096):
+                    return 0
+        finally:
+            clear_round(rnd, run_id)           # still held (shared): no writer can be at work
+    finally:
+        for s, h in old.items():
+            signal.signal(s, h)
+
+
+def clear_round(rnd: Path, run_id: str) -> None:
+    """The round's name goes when its holder lets go, whatever the cause, so a
+    job of a round whose holder is gone fails the round check instead of
+    passing it on a stale file.  Only while the lock is still held, and only
+    if the file still names RUN; the round's running jobs checked at their
+    start, and keep their shared lock to their end."""
+    try:
+        if rnd.read_text().strip() == run_id:
+            rnd.unlink()
+    except OSError:
+        pass
 
 
 def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, hold: list) -> str:

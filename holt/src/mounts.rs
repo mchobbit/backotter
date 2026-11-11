@@ -61,7 +61,7 @@ pub fn parse_mountinfo(text: &str) -> Vec<Mount> {
 }
 
 /// Virtual filesystems that say nothing about the disk layout.
-const PSEUDO: &[&str] = &[
+pub(crate) const PSEUDO: &[&str] = &[
     "proc", "sysfs", "devtmpfs", "devpts", "tmpfs", "securityfs", "cgroup", "cgroup2", "pstore", "efivarfs", "bpf",
     "debugfs", "tracefs", "configfs", "fusectl", "mqueue", "hugetlbfs", "autofs", "binfmt_misc", "rpc_pipefs", "nsfs",
     "ramfs", "selinuxfs", "fuse.gvfsd-fuse", "fuse.portal", "nfsd", "overlay", "squashfs", "fuse.lxcfs",
@@ -71,10 +71,48 @@ pub fn is_layout_mount(m: &Mount) -> bool {
     !PSEUDO.contains(&m.fstype.as_str())
 }
 
+/// Whether ROOT (a mount's FSROOT) is a strict subdirectory of ANC.
+fn strictly_under(root: &str, anc: &str) -> bool {
+    let (r, a) = (root.trim_end_matches('/'), anc.trim_end_matches('/'));
+    !r.is_empty() && r != a && r.starts_with(&format!("{a}/"))
+}
+
+/// The mount M is an alias of, if any: another of MOUNTS of the same
+/// filesystem whose FSROOT is a parent directory of M's, so M's files are
+/// already in it (ostree's /etc, a bind of /root/ostree/deploy/S/deploy/C.N/etc
+/// beside /sysroot's /root; its stateroot var; any bind of a directory).
+/// Of several, the deepest.  A btrfs subvolume's own root is never an
+/// alias, though the top level (FSROOT /) is mounted too: it's another
+/// subvolume, not a directory of one.
+pub fn alias_of<'a>(m: &Mount, mounts: &[&'a Mount]) -> Option<&'a Mount> {
+    if m.fstype == "btrfs" && m.is_subvolume_root() {
+        return None;
+    }
+    mounts
+        .iter()
+        .copied()
+        .filter(|o| !std::ptr::eq(*o, m) && o.id != m.id && o.devno == m.devno && o.fstype == m.fstype)
+        .filter(|o| o.fstype != "btrfs" || o.is_subvolume_root())
+        .filter(|o| strictly_under(&m.root, &o.root))
+        .fold(None, |best: Option<&Mount>, o| match best {
+            Some(b) if b.root.len() >= o.root.len() => Some(b),
+            _ => Some(o),
+        })
+}
+
 impl Mount {
     /// The btrfs subvolume (subvol=) of a btrfs mount.
     pub fn btrfs_subvol(&self) -> Option<String> {
         self.super_options.split(',').find_map(|o| o.strip_prefix("subvol=")).map(str::to_string)
+    }
+    /// Whether a btrfs mount shows a subvolume's own root (FSROOT is its
+    /// subvol=), not a directory inside it.  A mount without subvol= (older
+    /// kernels) counts as one.
+    pub fn is_subvolume_root(&self) -> bool {
+        match self.btrfs_subvol() {
+            Some(sv) => sv.trim_matches('/') == self.root.trim_matches('/'),
+            None => true,
+        }
     }
     pub fn to_json(&self, device: Option<&str>, usage: Option<(u64, u64, u64)>) -> Value {
         let mut o = Obj::new()
@@ -288,6 +326,42 @@ bogus line
         assert_eq!(j.get("available_bytes").and_then(Value::as_u64), Some(30));
         assert_eq!(j.get("device").and_then(Value::as_str), Some("nvme1n1p2"));
         assert!(m[0].to_json(None, None).get("size_bytes").is_none());
+    }
+
+    /// kinoite44's mountinfo (B1): the /etc bind comes before /sysroot.
+    const OSTREE: &str = "51 1 0:42 / / ro,relatime shared:1 - overlay composefs ro,seclabel,lowerdir+=/run/ostree/.private/cfsroot-lower,datadir+=/sysroot/ostree/repo/objects,redirect_dir=on,metacopy=on
+48 51 0:37 /root/ostree/deploy/default/deploy/10e6a37f.1/etc /etc rw,relatime shared:2 - btrfs /dev/vda3 rw,seclabel,discard=async,space_cache=v2,subvolid=258,subvol=/root
+52 51 0:37 /root /sysroot ro,relatime shared:3 - btrfs /dev/vda3 rw,seclabel,discard=async,space_cache=v2,subvolid=258,subvol=/root
+53 52 0:37 /root/ostree/deploy/default/var /sysroot/ostree/deploy/default/var rw,relatime shared:4 - btrfs /dev/vda3 rw,seclabel,subvolid=258,subvol=/root
+125 51 0:37 /var /var rw,relatime shared:215 - btrfs /dev/vda3 rw,seclabel,subvolid=256,subvol=/var
+82 125 0:37 /home /var/home rw,relatime shared:203 - btrfs /dev/vda3 rw,seclabel,subvolid=257,subvol=/home
+120 51 253:2 / /boot rw,relatime shared:209 - ext4 /dev/vda2 rw,seclabel
+130 51 0:37 / /mnt/top rw - btrfs /dev/vda3 rw,subvolid=5,subvol=/
+131 51 253:2 /srv/data /data rw - ext4 /dev/vda2 rw
+132 51 253:9 /only /lone rw - ext4 /dev/vdb1 rw
+";
+
+    #[test]
+    fn aliases() {
+        let m = parse_mountinfo(OSTREE);
+        let all: Vec<&Mount> = m.iter().filter(|x| is_layout_mount(x)).collect();
+        assert_eq!(all.len(), 9);
+        let alias = |t: &str| alias_of(all.iter().find(|x| x.target == t).unwrap(), &all).map(|a| a.target.as_str());
+        assert_eq!(alias("/etc"), Some("/sysroot"));
+        assert_eq!(alias("/sysroot/ostree/deploy/default/var"), Some("/sysroot"));
+        // Subvolumes' own roots, the top level among them, never are.
+        for t in ["/sysroot", "/var", "/var/home", "/mnt/top"] {
+            assert_eq!(alias(t), None, "{t}");
+        }
+        assert_eq!(alias("/boot"), None);
+        assert_eq!(alias("/data"), Some("/boot"));
+        // A directory of a filesystem mounted nowhere else is all there is of it.
+        assert_eq!(alias("/lone"), None);
+        assert!(m[2].is_subvolume_root());
+        assert!(!m[1].is_subvolume_root());
+        assert!(strictly_under("/a/b", "/"));
+        assert!(!strictly_under("/", "/"));
+        assert!(!strictly_under("/ab", "/a"));
     }
 
     #[test]

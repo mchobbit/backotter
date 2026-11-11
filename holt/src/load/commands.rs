@@ -40,6 +40,9 @@ pub struct Cmd {
     pub why: Option<String>,
     /// Environment variables the command runs with (shown before it).
     pub env: Vec<(String, String)>,
+    /// Whether the terminal sees its stderr's `warning:` lines when it
+    /// succeeds (the log has all its output either way).
+    pub warns: bool,
 }
 
 impl Cmd {
@@ -57,6 +60,13 @@ impl Cmd {
 
     pub fn why(mut self, w: impl Into<String>) -> Cmd {
         self.why = Some(w.into());
+        self
+    }
+
+    /// Its stderr's lines with `warning:` in them go to the terminal too,
+    /// when it succeeds.
+    pub fn warns(mut self) -> Cmd {
+        self.warns = true;
         self
     }
 
@@ -1372,11 +1382,29 @@ pub fn mkfs_f2fs(dev: &str, c: &Value) -> Vec<String> {
     a
 }
 
-/// bcachefs format with the source's UUID, label and options.  The tools'
-/// release decides the on-disk version: the rescuer's must make one the
-/// source's kernel reads.
+/// BCH_VERSION(major, minor) = major << 10 | minor, from "1.13".
+fn bcachefs_version(v: &str) -> Option<u32> {
+    let (major, minor) = v.split_once('.')?;
+    let (major, minor): (u32, u32) = (major.parse().ok()?, minor.parse().ok()?);
+    (major < 64 && minor < 1024).then_some(major << 10 | minor)
+}
+
+/// bcachefs format with the source's UUID, label, options and on-disk
+/// version: its version_min (the oldest version anything on it is
+/// written in), or its version when it has none.
 pub fn mkfs_bcachefs(dev: &str, c: &Value) -> Vec<String> {
     let mut a = vec!["bcachefs".to_string(), "format".into(), "--force".into()];
+    // Left to itself, format writes the tools' newest version (1.39 from
+    // the Linux image's 1.39 tools), which the source's older kernel may
+    // not mount: the one-kernel rescue recreates the source's version
+    // instead.  The number is BCH_VERSION as a decimal integer, which
+    // both tools generations take the same way: 1.13's C cmd_format.c
+    // reads --version with kstrtouint base 10, and 1.39's Rust
+    // version_parse reads a bare integer as the minor with major 0, the
+    // same number.  "1.13" wouldn't parse in the C tools.
+    if let Some(n) = s(c, "version_min").or_else(|| s(c, "version")).as_deref().and_then(bcachefs_version) {
+        a.push(format!("--version={n}"));
+    }
     if let Some(u) = s(c, "uuid") {
         a.push(format!("--uuid={u}"));
     }
@@ -1882,7 +1910,7 @@ impl Builder<'_> {
 
     /// The read-only shared snapshots, as paths in the target: made
     /// read-only in the restore stage, which nothing reads after.
-    fn ro_shared(&self) -> Vec<String> {
+    pub(crate) fn ro_shared(&self) -> Vec<String> {
         let t = &self.opts.target;
         self.btrfs.values().flat_map(|p| p.shared.iter().filter(|x| x.readonly).map(|x| format!("{t}{}", x.backup))).collect()
     }
@@ -1955,12 +1983,14 @@ impl Builder<'_> {
 
 // ---- mount, restore -----------------------------------------------------
 
-/// fstab options that only matter at the restored system's own boot.
+/// fstab's options for the mount stage's own mounts: without those that
+/// only matter at the restored system's own boot, and without `ro`, since
+/// the restore writes into every mount (ostree's fstab mounts / ro).
 fn mount_options(o: &str) -> String {
     let keep: Vec<&str> = o
         .split(',')
         .filter(|x| !x.is_empty())
-        .filter(|x| !matches!(*x, "defaults" | "noauto" | "auto" | "nofail" | "_netdev" | "user" | "users" | "owner" | "sw"))
+        .filter(|x| !matches!(*x, "defaults" | "noauto" | "auto" | "nofail" | "_netdev" | "user" | "users" | "owner" | "sw" | "ro"))
         .filter(|x| !x.starts_with("x-") && !x.starts_with("comment="))
         .collect();
     if keep.is_empty() { "defaults".to_string() } else { keep.join(",") }
@@ -2224,7 +2254,7 @@ fn snapshot_path(snapshot: &str, path: &str) -> (String, String) {
 /// other way); "restore" lists them again and puts back each that changed
 /// (testing a symlink with -L first: -e would follow it, and reading a
 /// symlink bumps its atime, perhaps after it was put back).
-fn atimes_cmd(t: &str, what: &str, prune: &[String]) -> String {
+pub(crate) fn atimes_cmd(t: &str, what: &str, prune: &[String]) -> String {
     let more: String = prune.iter().map(|p| format!(" -o -path {}", shell_quote(p))).collect();
     let list = format!(
         "find {t} \\( -path {t}/dev -o -path {t}/proc -o -path {t}/sys -o -path {t}/run{more} \\) -prune -o -printf '%A@\\t%p\\0' | LC_ALL=C sort -z"
@@ -2247,6 +2277,9 @@ impl Builder<'_> {
     fn boot(&mut self) -> Vec<Cmd> {
         if let Some(fam) = self.fam {
             return self.other_boot(fam);
+        }
+        if let Some(o) = super::ostree::of(&self.layout.v) {
+            return self.ostree_boot(&o.clone());
         }
         let t = self.opts.target.clone();
         let mut out = Vec::new();
@@ -2361,6 +2394,9 @@ impl Builder<'_> {
             }
             ("systemd-boot", true) => {
                 out.push(Cmd::new(&["chroot", &t, "bootctl", "install", "--no-variables"]));
+                if let Some(c) = self.gen_systemd_boot(&t) {
+                    out.push(c);
+                }
             }
             // Limine on UEFI is files on the ESP (its EFI binary,
             // limine.conf), restored with it; only the boot entries are made.
@@ -2391,8 +2427,16 @@ impl Builder<'_> {
             out.push(Cmd::new(&["umount", "--recursive", &format!("{t}/{d}")]));
         }
         out.push(lvm_devices_back);
+        out.extend(self.boot_tail(&t));
+        out
+    }
+
+    /// How every Linux boot stage ends (ostree's too, load/ostree.rs): the
+    /// atimes put back, then the read-only btrfs subvolumes made so.
+    pub(crate) fn boot_tail(&mut self, t: &str) -> Vec<Cmd> {
+        let mut out = Vec::new();
         // Last but for read-only flags: nothing may read the tree after this.
-        out.push(Cmd::new(&["bash", "-c", &atimes_cmd(&t, "restore", &self.ro_shared())]).why("the atimes this stage's reads changed, put back"));
+        out.push(Cmd::new(&["bash", "-c", &atimes_cmd(t, "restore", &self.ro_shared())]).why("the atimes this stage's reads changed, put back"));
         // Read-only btrfs subvolumes: set now that the restore filled them,
         // and after the atimes are put back (touch can't on a read-only one).
         for fs in self.layout.arr(&["storage", "btrfs"]).to_vec() {
@@ -2479,6 +2523,35 @@ impl Builder<'_> {
         })
     }
 
+    /// Chimera's systemd-boot entries, remade as its kernel hook
+    /// (/usr/lib/kernel.d/99-gen-systemd-boot.sh) remakes them: one per
+    /// kernel in /boot and a recovery one, named by /etc/kernel/entry-token.
+    /// The command line is /etc/default/systemd-boot's and
+    /// systemd-boot-cmdline's, restored; root= is theirs when they have one,
+    /// else kernel-root-detect's, from what / is mounted from in the chroot
+    /// (the target's root, by PARTUUID, /dev/mapper name or UUID), never the
+    /// rescue system's /proc/cmdline.  Its exit status 1 is "made nothing"
+    /// (disabled, or bootctl says systemd-boot isn't installed), which the
+    /// hook doesn't count as failing: the restored ESP's entries stay.
+    /// Other systems with systemd-boot write their entries with
+    /// kernel-install or their own tools, and they came back with the ESP.
+    fn gen_systemd_boot(&self, t: &str) -> Option<Cmd> {
+        if self.layout.str_at(&["os", "id"]) != Some("chimera") || self.layout.str_at(&["boot", "packages", "systemd-boot"]).is_none() {
+            return None;
+        }
+        Some(
+            Cmd::new(&[
+                "chroot",
+                t,
+                "sh",
+                "-c",
+                "gen-systemd-boot; r=$?; [ \"$r\" -ne 1 ] || { echo 'gen-systemd-boot: warning: it made no entries (disabled, or bootctl says systemd-boot is not installed); the restored ones stay' >&2; r=0; }; exit \"$r\"",
+            ])
+            .why("the boot entries, for the restored kernels and root (Chimera's gen-systemd-boot, as its kernel hook runs it)")
+            .warns(),
+        )
+    }
+
     fn grub_bios_devices(&self) -> Vec<String> {
         let mut out = Vec::new();
         if let Some(list) = self.layout.str_at(&["boot", "grub", "debconf", "grub-pc/install_devices"]) {
@@ -2535,7 +2608,7 @@ impl Builder<'_> {
     /// The source's boot entries on the restored disks, created in reverse
     /// BootOrder so that the first ends up first (efibootmgr puts each new
     /// one at the front).
-    fn efi_entries(&mut self) -> Vec<Cmd> {
+    pub(crate) fn efi_entries(&mut self) -> Vec<Cmd> {
         let entries = self.layout.arr(&["boot", "efi", "entries"]).to_vec();
         let order: Vec<String> = self.layout.v.at(&["boot", "efi", "boot_order"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
         let mut picked: Vec<&Value> = Vec::new();
@@ -2820,6 +2893,77 @@ mod tests {
         assert!(!bt.contains("mkinitcpio") && !bt.contains("update-initramfs"), "{bt}");
     }
 
+    /// Chimera: Debian's initramfs-tools, without debconf or update-grub's
+    /// Debian side; GRUB by grub-PLATFORM packages and grub-mkconfig.  What
+    /// runs in the chroot runs on FreeBSD's userland (chimerautils).
+    #[test]
+    fn chimera_boot_tools() {
+        let bios = sample::bios_mbr()
+            .replace(r#""id": "debian", "version_id": "13""#, r#""id": "chimera""#)
+            .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "initramfs-tools"}, "packages": {"grub": "2.14-r1", "grub-i386-pc": "2.14-r1", "initramfs-tools": "0.148.3-r2"},"#)
+            .replace(r#""grub": {"debconf": {"grub-pc/install_devices": "/dev/disk/by-id/virtio-x"}}"#, r#""grub": {"dir": "/boot/grub", "debconf": null}"#);
+        let b = built_from(&bios, &[]);
+        let bt = text(b.stage(Stage::Boot));
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        assert!(bt.contains("chroot /mnt/bko-target update-initramfs -u -k all\n"), "{bt}");
+        // The disk whose MBR holds GRUB, with no debconf to name it.
+        assert!(bt.contains("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
+        assert!(bt.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{bt}");
+        assert!(!bt.contains("update-grub") && !bt.contains("dpkg"), "{bt}");
+        let uefi = bios
+            .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+            .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, r#""loader": {"name": "grub", "firmware": "uefi", "via_shim": false, "package": "grub-x86_64-efi"}"#)
+            .replace(r#""efi": null,"#, r#""efi": {"entries": [], "boot_order": []}, "esps": [{"device": "vda1", "mounted_at": "/boot/efi", "contents": {"files": [{"path": "EFI/chimera/grubx64.efi"}]}}],"#);
+        let b = built_from(&uefi, &[]);
+        let ut = text(b.stage(Stage::Boot));
+        assert!(ut.contains("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=chimera --no-nvram\n"), "{ut}");
+        assert!(ut.contains("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n"), "{ut}");
+        assert!(ut.contains("chroot /mnt/bko-target update-initramfs -u -k all\n"), "{ut}");
+        assert!(!ut.contains("gen-systemd-boot"), "{ut}");
+        // UEFI with systemd-boot (chimera-uefi): the ESP as /boot; bootctl
+        // reinstalls it, and gen-systemd-boot remakes the entries after the
+        // initramfs, as Chimera's kernel hook does.
+        let sd = bios
+            .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+            .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, r#""loader": {"name": "systemd-boot", "firmware": "uefi", "via_shim": false, "package": "systemd-boot"}"#)
+            .replace(r#""grub": "2.14-r1", "grub-i386-pc": "2.14-r1""#, r#""systemd-boot": "256.11-r5", "systemd-boot-efi": "256.11-r5""#)
+            .replace(r#""efi": null,"#, r#""efi": {"entries": [], "boot_order": []}, "esps": [{"device": "vda1", "mounted_at": "/boot", "contents": {"files": [{"path": "EFI/systemd/systemd-bootx64.efi"}, {"path": "EFI/BOOT/BOOTX64.EFI"}]}}],"#);
+        let b = built_from(&sd, &[]);
+        let st = text(b.stage(Stage::Boot));
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let gen = "chroot /mnt/bko-target sh -c 'gen-systemd-boot; r=$?; [ \"$r\" -ne 1 ] || { echo '\\''gen-systemd-boot: warning: it made no entries (disabled, or bootctl says systemd-boot is not installed); the restored ones stay'\\'' >&2; r=0; }; exit \"$r\"'\n";
+        let initramfs = st.find("chroot /mnt/bko-target update-initramfs -u -k all\n").expect(&st);
+        let bootctl = st.find("chroot /mnt/bko-target bootctl install --no-variables\n").expect(&st);
+        let made = st.find(gen).expect(&st);
+        assert!(initramfs < made && bootctl < made, "{st}");
+        assert_eq!(st.matches("gen-systemd-boot;").count(), 1, "{st}");
+        assert!(!st.contains("grub"), "{st}");
+        // gen-systemd-boot's exit status: 0 and 1 (made nothing) succeed,
+        // with a warning for 1; the rest fail, with their own status.
+        let c = b.stage(Stage::Boot).iter().find(|c| c.argv.iter().any(|a| a.starts_with("gen-systemd-boot;"))).unwrap().clone();
+        assert!(c.warns);
+        let script = c.argv[4].replace("gen-systemd-boot;", "f() { return \"$1\"; }; f \"$0\";");
+        for (rc, want) in [(0, 0), (1, 0), (2, 2), (69, 69), (127, 127)] {
+            let o = std::process::Command::new("sh").args(["-c", &script, &rc.to_string()]).output().unwrap();
+            assert_eq!(o.status.code(), Some(want), "{rc}");
+            assert_eq!(String::from_utf8_lossy(&o.stderr).contains("warning: it made no entries"), rc == 1, "{rc}");
+        }
+        // Only Chimera's: not without its systemd-boot package, and not on
+        // another system whose systemd-boot package has no gen-systemd-boot
+        // (Pop!_OS's, Debian's).
+        let no_pkg = sd.replace(r#""systemd-boot": "256.11-r5", "#, "");
+        assert!(!text(built_from(&no_pkg, &[]).stage(Stage::Boot)).contains("gen-systemd-boot"));
+        let pop = sd.replace(r#""id": "chimera""#, r#""id": "pop", "version_id": "24.04""#);
+        let pt = text(built_from(&pop, &[]).stage(Stage::Boot));
+        assert!(pt.contains("chroot /mnt/bko-target bootctl install --no-variables\n") && !pt.contains("gen-systemd-boot"), "{pt}");
+        // No GNU-only option in what runs on the target's own tools.
+        for l in bt.lines().chain(ut.lines()).chain(st.lines()).filter(|l| l.starts_with("chroot ")) {
+            for gnu in ["stat -c", "sed -i", "df --output", "df -B", "date -d", "cp --", "sort -V", "readlink -e", "tac "] {
+                assert!(!l.contains(gnu), "{gnu} in {l}");
+            }
+        }
+    }
+
     #[test]
     fn zfs_create_time_properties() {
         let ds = crate::json::parse(r#"{"name": "rpool/home", "type": "filesystem", "normalization": "formD", "utf8only": "on", "casesensitivity": "sensitive",
@@ -2877,11 +3021,21 @@ mod tests {
     fn jfs() {
         let c = crate::json::parse(r#"{"type": "jfs", "uuid": "d12ea338-ce14-4c47-90c8-7e72c24a87c6", "label": "root", "block_size": 4096}"#).unwrap();
         assert_eq!(mkfs_jfs("/dev/vdb3", &c).join(" "), "mkfs.jfs -q -L root /dev/vdb3");
-        let b = crate::json::parse(r#"{"type": "bcachefs", "uuid": "c9cbba71-4054-4849-a19c-e7d40fb5b1e4", "label": null, "block_size": 4096, "btree_node_size": 262144, "metadata_checksum": "crc32c", "data_checksum": "crc32c", "compression": "none", "str_hash": "siphash", "metadata_replicas": 1, "data_replicas": 1}"#).unwrap();
+        let b = crate::json::parse(r#"{"type": "bcachefs", "uuid": "c9cbba71-4054-4849-a19c-e7d40fb5b1e4", "label": null, "version": "1.13", "block_size": 4096, "btree_node_size": 262144, "metadata_checksum": "crc32c", "data_checksum": "crc32c", "compression": "none", "str_hash": "siphash", "metadata_replicas": 1, "data_replicas": 1}"#).unwrap();
         assert_eq!(
             mkfs_bcachefs("/dev/vdb3", &b).join(" "),
-            "bcachefs format --force --uuid=c9cbba71-4054-4849-a19c-e7d40fb5b1e4 --block_size=4096 --btree_node_size=262144 --metadata_checksum=crc32c --data_checksum=crc32c --str_hash=siphash /dev/vdb3"
+            "bcachefs format --force --version=1037 --uuid=c9cbba71-4054-4849-a19c-e7d40fb5b1e4 --block_size=4096 --btree_node_size=262144 --metadata_checksum=crc32c --data_checksum=crc32c --str_hash=siphash /dev/vdb3"
         );
+        // version_min, not the version a newer kernel raised it to (nixos2605's).
+        let b2 = crate::json::parse(r#"{"type": "bcachefs", "version": "1.39", "version_min": "1.13"}"#).unwrap();
+        assert_eq!(mkfs_bcachefs("/dev/vdb3", &b2).join(" "), "bcachefs format --force --version=1037 /dev/vdb3");
+        // No version, or one that doesn't parse: no flag.
+        for v in [r#"{"type": "bcachefs"}"#, r#"{"type": "bcachefs", "version": "1.x", "version_min": "junk"}"#] {
+            let x = crate::json::parse(v).unwrap();
+            assert_eq!(mkfs_bcachefs("/dev/vdb3", &x).join(" "), "bcachefs format --force /dev/vdb3");
+        }
+        assert_eq!(bcachefs_version("1.39"), Some(1063));
+        assert_eq!(bcachefs_version("0.24"), Some(24));
         assert_eq!(jfs_tune("/dev/vdb3", &c).unwrap().join(" "), "jfs_tune -U d12ea338-ce14-4c47-90c8-7e72c24a87c6 /dev/vdb3");
         assert_eq!(
             jfs_version1("/dev/vdb3")[2],
@@ -2912,6 +3066,11 @@ mod tests {
         assert_eq!(md_layout_name("raid1", 0), None);
         assert_eq!(mount_options("defaults,noatime,x-systemd.device-timeout=5,nofail"), "noatime");
         assert_eq!(mount_options("defaults"), "defaults");
+        // The stage writes into every mount, ostree's ro `/` too.
+        assert_eq!(mount_options("subvol=root,compress=zstd:1,ro"), "subvol=root,compress=zstd:1");
+        assert_eq!(mount_options("ro,noatime"), "noatime");
+        assert_eq!(mount_options("ro"), "defaults");
+        assert_eq!(mount_options("errors=remount-ro"), "errors=remount-ro");
         let c = Cmd::write_file("/run/x", "a\n".into());
         assert_eq!(c.shell(), "cat > /run/x <<'EOF'\na\nEOF\n");
     }

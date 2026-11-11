@@ -771,7 +771,14 @@ fn btrfs_json(sys: &Sys, ctx: &Ctx) -> Value {
                 .collect();
             alloc.put(kind, profiles);
         }
-        let mounts: Vec<&Mount> = ctx.mounts.iter().filter(|m| m.fstype == "btrfs" && devs.iter().any(|d| ctx.resolve(sys, &m.source).as_deref() == Some(d.b.name.as_str()))).collect();
+        let all: Vec<&Mount> = ctx.mounts.iter().filter(|m| m.fstype == "btrfs" && devs.iter().any(|d| ctx.resolve(sys, &m.source).as_deref() == Some(d.b.name.as_str()))).collect();
+        // The mounts of a subvolume's own root: not binds of a directory in
+        // one (ostree's /etc, its FSROOT /root/ostree/deploy/.../etc, carries
+        // the same subvol=/root as /sysroot, and may come first).
+        let mut mounts: Vec<&Mount> = all.iter().copied().filter(|m| m.is_subvolume_root()).collect();
+        if mounts.is_empty() {
+            mounts = all.clone();
+        }
         let mut subvols = Value::Null;
         let mut default = Value::Null;
         let mut qgroups = Value::Null;
@@ -813,7 +820,7 @@ fn btrfs_json(sys: &Sys, ctx: &Ctx) -> Value {
                 .set("uuid", uuid.as_str())
                 .set("label", devs.first().and_then(|d| d.fs_label()))
                 .set("devices", devs.iter().map(|d| d.b.name.clone()).collect::<Vec<_>>())
-                .set("mounted", !mounts.is_empty())
+                .set("mounted", !all.is_empty())
                 .set("features", sys.is_dir(&sysfs).then(|| sys.list(&format!("{sysfs}/features"))))
                 .set("allocation_profiles", if sys.is_dir(&sysfs) { alloc.build() } else { Value::Null })
                 .set(
@@ -837,9 +844,11 @@ fn btrfs_json(sys: &Sys, ctx: &Ctx) -> Value {
 
 /// Where a subvolume (its path from the top level, as `btrfs subvolume list
 /// -a` prints it) can be reached through one of the filesystem's mounts.
+/// Only a mount of a subvolume's own root counts: a bind of a directory
+/// inside one has the subvolume's subvol= but not its contents at its top.
 pub fn btrfs_reachable_path(mounts: &[&Mount], path: &str) -> Option<String> {
     let path = path.strip_prefix("<FS_TREE>/").unwrap_or(path).trim_matches('/');
-    for m in mounts {
+    for m in mounts.iter().filter(|m| m.is_subvolume_root()) {
         let sub = m.btrfs_subvol().unwrap_or_default();
         let sub = sub.trim_matches('/');
         let rest = if sub.is_empty() {
@@ -969,6 +978,99 @@ pub fn parse_btrfs_subvol_line(l: &str) -> Option<Value> {
     Some(o.build())
 }
 
+/// One filesystem a whole-system backup reads: the tree it's mounted in
+/// (`path`, fstab's mount point), where the running system has it (`from`),
+/// and what it is.
+#[derive(Debug, Clone, PartialEq)]
+pub struct BackupSource {
+    pub path: String,
+    pub from: String,
+    pub device: Option<String>,
+    pub fstype: String,
+    pub source: String,
+    pub subvol: Option<String>,
+}
+
+impl BackupSource {
+    pub fn to_json(&self) -> Value {
+        Obj::new()
+            .set("path", self.path.as_str())
+            .set("from", self.from.as_str())
+            .set("device", self.device.clone())
+            .set("fstype", self.fstype.as_str())
+            .set("source", self.source.as_str())
+            .set("subvol", self.subvol.clone())
+            .build()
+    }
+}
+
+/// storage.backup_sources: the filesystems a whole-system backup reads,
+/// laid out as fstab mounts them, one per path, sorted by path (parents
+/// first).  Aliases (mounts::alias_of) are left out: their files are in the
+/// mount they're a directory of.  On an ostree system each mount takes the
+/// mount point of the fstab entry it is, matched by (device, subvol=) since
+/// the targets differ (fstab's `/` is the running /sysroot, `/home` is
+/// /var/home), so the tree is the one `load` mounts from fstab
+/// (docs/design/bazzite.md, "One tree convention").  Elsewhere the path is
+/// the mount's own target.  When two mounts share a path, the later one
+/// (the one on top) wins.  `fstab` is each entry with the device it
+/// resolves to.
+pub fn backup_sources(mounts: &[&Mount], device: &dyn Fn(&Mount) -> Option<String>, fstab: &[(&mounts::FstabEntry, Option<String>)], ostree: bool) -> Vec<BackupSource> {
+    let norm = |s: &str| s.trim_matches('/').to_string();
+    let mut out: BTreeMap<String, BackupSource> = BTreeMap::new();
+    for m in mounts {
+        if mounts::alias_of(m, mounts).is_some() {
+            continue;
+        }
+        let dev = device(m);
+        let subvol = (m.fstype == "btrfs").then(|| m.btrfs_subvol()).flatten();
+        let path = if !ostree {
+            m.target.clone()
+        } else {
+            let found = fstab.iter().find(|(e, r)| {
+                if e.vfstype == "swap" || !e.file.starts_with('/') || dev.is_none() || *r != dev {
+                    return false;
+                }
+                if m.fstype != "btrfs" {
+                    return m.root == "/";
+                }
+                let opt = |k: &str| e.options.split(',').find_map(|o| o.strip_prefix(k)).map(str::to_string);
+                match (opt("subvol="), opt("subvolid=")) {
+                    (Some(sv), _) => Some(norm(&sv)) == subvol.as_deref().map(norm),
+                    (None, Some(id)) => m.super_options.split(',').any(|o| o.strip_prefix("subvolid=") == Some(id.as_str())),
+                    // The default subvolume, the top level unless set.
+                    (None, None) => subvol.as_deref().map(norm).as_deref() == Some(""),
+                }
+            });
+            found.map(|(e, _)| e.file.clone()).unwrap_or_else(|| m.target.clone())
+        };
+        let path = if path.len() > 1 { path.trim_end_matches('/').to_string() } else { path };
+        out.insert(path.clone(), BackupSource { path, from: m.target.clone(), device: dev, fstype: m.fstype.clone(), source: m.source.clone(), subvol });
+    }
+    out.into_values().collect()
+}
+
+/// The fstab entries backup_sources has no path for: each one a running
+/// system mounts (a filesystem, not swap, `noauto`, a bind or a pseudo
+/// filesystem) whose mount point no source took, as `FILE (SPEC -> DEVICE)`.
+/// On an ostree system each is a mount that stays at its running path (or a
+/// filesystem that isn't mounted), so the backup's tree isn't fstab's.
+pub fn unmatched_fstab(sources: &[BackupSource], fstab: &[(&mounts::FstabEntry, Option<String>)]) -> Vec<String> {
+    let trim = |p: &str| if p.len() > 1 { p.trim_end_matches('/').to_string() } else { p.to_string() };
+    fstab
+        .iter()
+        .filter(|(e, _)| {
+            let opts: Vec<&str> = e.options.split(',').collect();
+            e.file.starts_with('/')
+                && e.vfstype != "swap"
+                && !mounts::PSEUDO.contains(&e.vfstype.as_str())
+                && !opts.iter().any(|o| matches!(*o, "noauto" | "bind" | "rbind"))
+                && !sources.iter().any(|s| s.path == trim(&e.file))
+        })
+        .map(|(e, r)| format!("{} ({} -> {})", e.file, e.spec, r.as_deref().unwrap_or("unresolved")))
+        .collect()
+}
+
 /// The stacking of devices as a tree, for a person to read: keys describe a
 /// device, values hold what sits on it.
 fn topology(ctx: &Ctx, sys: &Sys) -> Value {
@@ -1090,18 +1192,47 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     let loops = section(&[Kind::Loop], &|d| Some(("backing_file", Value::from(d.b.loop_backing_file.clone()))));
     let other = section(&[Kind::Zram, Kind::Rom, Kind::Floppy], &|_| None);
 
-    let mounts_json: Vec<Value> = mountinfo
+    let layout_mounts: Vec<&Mount> = mountinfo.iter().filter(|m| mounts::is_layout_mount(m)).collect();
+    let mount_dev = |m: &Mount| ctx.by_devno(&m.devno).map(|d| d.b.name.clone()).or_else(|| ctx.resolve(sys, &m.source));
+    let mounts_json: Vec<Value> = layout_mounts
         .iter()
-        .filter(|m| mounts::is_layout_mount(m))
         .map(|m| {
-            let dev = ctx.by_devno(&m.devno).map(|d| d.b.name.clone()).or_else(|| ctx.resolve(sys, &m.source));
-            m.to_json(dev.as_deref(), sys.statvfs(&m.target))
+            let mut v = m.to_json(mount_dev(m).as_deref(), sys.statvfs(&m.target));
+            if let (Some(a), Value::Obj(o)) = (mounts::alias_of(m, &layout_mounts), &mut v) {
+                o.push(("alias_of".into(), Value::from(a.target.as_str())));
+            }
+            v
         })
         .collect();
-    let fstab: Value = match sys.read("/etc/fstab") {
-        Some(t) => Value::Arr(mounts::parse_fstab(&t).iter().map(|e| e.to_json(ctx.resolve(sys, &e.spec).as_deref())).collect()),
+    let fstab_entries = sys.read("/etc/fstab").map(|t| mounts::parse_fstab(&t));
+    let fstab: Value = match &fstab_entries {
+        Some(f) => Value::Arr(f.iter().map(|e| e.to_json(ctx.resolve(sys, &e.spec).as_deref())).collect()),
         None => Value::Null,
     };
+    let ostree = crate::ostree::detect(sys, &mountinfo);
+    let fstab_resolved: Vec<(&mounts::FstabEntry, Option<String>)> = fstab_entries.iter().flatten().map(|e| (e, ctx.resolve(sys, &e.spec))).collect();
+    let sources = backup_sources(&layout_mounts, &mount_dev, &fstab_resolved, ostree);
+    let physical_root = sources.iter().find(|s| s.path == "/").map(|s| s.from.clone());
+    if ostree {
+        // The backup tree is fstab's only where every mount matched its entry
+        // (docs/design/bazzite.md, "One tree convention"); say where not, now
+        // rather than at restore.
+        let unmatched = unmatched_fstab(&sources, &fstab_resolved);
+        if !unmatched.is_empty() {
+            sys.warn(format!(
+                "ostree: no running mount matched these fstab entries by device and subvol=: {}; backup_sources keeps such mounts at their running paths, which is not the tree load restores from fstab",
+                unmatched.join(", ")
+            ));
+        }
+        if physical_root.is_none() {
+            let why = match &fstab_entries {
+                None => "/etc/fstab could not be read",
+                Some(f) if !f.iter().any(|e| e.file == "/") => "/etc/fstab has no `/`",
+                Some(_) => "no running mount matched fstab's `/`",
+            };
+            sys.warn(format!("ostree: {why}, so backup_sources has no `/`, storage.physical_root is null and boot.ostree read {}", crate::ostree::SYSROOT));
+        }
+    }
     let crypttab: Value = match sys.read("/etc/crypttab") {
         Some(t) => Value::Arr(mounts::parse_crypttab(&t).iter().map(|e| e.to_json(ctx.resolve(sys, &e.device).as_deref())).collect()),
         None => Value::Null,
@@ -1158,11 +1289,14 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         .set("btrfs", btrfs_json(sys, &ctx))
         .set("xfs_external_logs", xfs_external_logs(sys, &ctx))
         .set("mounts", mounts_json)
+        .set("physical_root", physical_root.clone())
+        .set("backup_sources", sources.iter().map(BackupSource::to_json).collect::<Vec<_>>())
         .set("swaps", swaps)
         .set("fstab", fstab)
         .set("crypttab", crypttab)
         .set("mdadm_conf", mdadm_conf);
-    let boot = crate::boot::boot_json(sys, &packages, &esps, efi_boot, mbr_codes);
+    let ostree_json = ostree.then(|| crate::ostree::json(sys, physical_root.as_deref().unwrap_or(crate::ostree::SYSROOT)));
+    let boot = crate::boot::boot_json(sys, &packages, &esps, efi_boot, mbr_codes, ostree_json);
 
     let mut out = Obj::new()
         .set("format", FORMAT)
@@ -1296,6 +1430,37 @@ mod tests {
         // "@home" isn't under "@" just because it starts with it.
         assert_eq!(btrfs_reachable_path(&[&root], "@home"), None);
         assert_eq!(btrfs_reachable_path(&[&top], "@snapshots/1").as_deref(), Some("/mnt/top/@snapshots/1"));
+        // ostree's /etc: a directory of subvolume root, with root's subvol=,
+        // mounted before the physical root at /sysroot.  It doesn't count.
+        let mut etc = m("/etc", "/root");
+        etc.root = "/root/ostree/deploy/default/deploy/c.1/etc".into();
+        let sysroot = m("/sysroot", "/root");
+        assert_eq!(btrfs_reachable_path(&[&etc, &sysroot], "root").as_deref(), Some("/sysroot"));
+        assert_eq!(btrfs_reachable_path(&[&etc], "root"), None);
+    }
+
+    #[test]
+    fn backup_sources_fstab_tree() {
+        let mi = crate::mounts::parse_mountinfo(
+            "51 1 0:42 / / ro - overlay composefs ro\n48 51 0:37 /root/ostree/deploy/default/deploy/c.1/etc /etc rw - btrfs /dev/vda3 rw,subvolid=258,subvol=/root\n52 51 0:37 /root /sysroot ro - btrfs /dev/vda3 rw,subvolid=258,subvol=/root\n53 52 0:37 /root/ostree/deploy/default/var /sysroot/ostree/deploy/default/var rw - btrfs /dev/vda3 rw,subvolid=258,subvol=/root\n125 51 0:37 /var /var rw - btrfs /dev/vda3 rw,subvolid=256,subvol=/var\n82 125 0:37 /home /var/home rw - btrfs /dev/vda3 rw,subvolid=257,subvol=/home\n120 51 253:2 / /boot rw - ext4 /dev/vda2 rw\n220 120 253:1 / /boot/efi rw - vfat /dev/vda1 rw\n300 51 253:9 / /var/mnt/usb rw - ext4 /dev/sdb1 rw\n",
+        );
+        let all: Vec<&Mount> = mi.iter().filter(|m| crate::mounts::is_layout_mount(m)).collect();
+        let fstab = crate::mounts::parse_fstab("UUID=b / btrfs subvol=root,compress=zstd:1,ro 0 0\nUUID=x /boot ext4 defaults 1 2\nUUID=E /boot/efi vfat umask=077 0 2\nUUID=b /home btrfs subvol=home,compress=zstd:1 0 0\nUUID=b /var btrfs subvol=var,compress=zstd:1 0 0\n");
+        let dev = |m: &Mount| Some(m.source.trim_start_matches("/dev/").to_string());
+        let res = |e: &crate::mounts::FstabEntry| Some(match e.spec.as_str() { "UUID=b" => "vda3", "UUID=x" => "vda2", _ => "vda1" }.to_string());
+        let f: Vec<(&crate::mounts::FstabEntry, Option<String>)> = fstab.iter().map(|e| (e, res(e))).collect();
+        let pairs = |v: Vec<BackupSource>| v.into_iter().map(|s| (s.path, s.from)).collect::<Vec<_>>();
+        let p = |a: &str, b: &str| (a.to_string(), b.to_string());
+        let ostree = backup_sources(&all, &dev, &f, true);
+        assert_eq!(ostree[0].subvol.as_deref(), Some("/root"));
+        assert_eq!(ostree[0].device.as_deref(), Some("vda3"));
+        assert_eq!(pairs(ostree), vec![p("/", "/sysroot"), p("/boot", "/boot"), p("/boot/efi", "/boot/efi"), p("/home", "/var/home"), p("/var", "/var"), p("/var/mnt/usb", "/var/mnt/usb")]);
+        // Not ostree: each mount where it is, aliases still left out.
+        assert_eq!(pairs(backup_sources(&all, &dev, &f, false)), vec![p("/boot", "/boot"), p("/boot/efi", "/boot/efi"), p("/sysroot", "/sysroot"), p("/var", "/var"), p("/var/home", "/var/home"), p("/var/mnt/usb", "/var/mnt/usb")]);
+        // subvolid= in fstab matches too.
+        let fstab = crate::mounts::parse_fstab("UUID=b / btrfs subvolid=258 0 0\n");
+        let f: Vec<(&crate::mounts::FstabEntry, Option<String>)> = fstab.iter().map(|e| (e, res(e))).collect();
+        assert_eq!(backup_sources(&all, &dev, &f, true)[0].from, "/sysroot");
     }
 
     #[test]

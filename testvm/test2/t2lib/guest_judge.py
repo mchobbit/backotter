@@ -5,9 +5,9 @@ No I/O: every function takes text and dicts, so the judge is a key input and uni
     check_hook(text, required)     (ok, why): empty, cut off, or a section missing
     required_image(checks), required_after(checks)
     judge_image(sec, checks, policy, updates)    {need: Need}: step 2, S-*, L-*, K-*, free space, #20
-    after_lines(sec, checks)                     {need: [line] or None (SKIP)}, step 3's readings
-    judge_after(before, after, checks, classed)  {need: Need}: standing lines LIMIT, new ones FAIL
-    merge_gate(before, after, checks, classed, hooks_ok)   (ok, why, new lines)
+    after_lines(sec, checks, steps)              {need: [line] or None (SKIP)}, step 3's readings
+    judge_after(before, after, checks, classed, steps)   {need: Need}: standing lines LIMIT, new ones FAIL
+    merge_gate(before, after, checks, classed, hooks_ok, hook_why, steps)   (ok, why, new lines)
     new_guest_needs(sec, checks), probe_need(sec)    step 4
     normalize(line), known_filter(known, pm), sweep_lines(...)    step 5, the log sweep
     apply_limits(needs, standing, classed)       LIMIT or LIMIT-NEW, line by line
@@ -24,7 +24,7 @@ HEAD = re.compile(r"=== (file|cmd) (.+)\Z")
 IMAGE_NEEDS = ("image:sources", "image:loader", "image:zfs-cache", "image:free", "image:kernels")
 AFTER_NEEDS = ("after:boot-state", "after:failed-units", "after:fstab", "after:shadow", "after:newest-kernel")
 NEW_NEEDS = ("new:firmware", "new:ssh", "new:restic", "new:rustic", "new:smoke")
-KERNELS_MAX = {"K-deb": 3, "K-fed": 5, "K-pac": 2, "K-apk": 3, "K-void": 2, "K-moss": 3, "K-nix": 3, "K-fbsd": 3,
+KERNELS_MAX = {"K-deb": 3, "K-fed": 5, "K-ostree": 2, "K-pac": 2, "K-apk": 3, "K-void": 2, "K-moss": 3, "K-nix": 3, "K-fbsd": 3,
                "K-nbsd": 3, "K-obsd": 4, "K-dfly": 3, "K-ill": 4, "K-haiku": 2, "K-alpbsd": 3}
 NO_RULE = "no rule for it"
 U0 = "not updated yet (u0): frozen by its builder"
@@ -323,10 +323,11 @@ def _pkg_repos(sec, patterns=("/etc/pkg/*.conf", "/usr/local/etc/pkg/repos/*.con
             text = re.sub(r"\$\{[^}]*\}", "X", text)   # the ${ABI} in a url isn't a block's end
             for m in re.finditer(r"([A-Za-z0-9_.-]+)\s*:\s*\{(.*?)\}", text, re.S):
                 r = repos.setdefault(m.group(1), {})
-                u = re.search(r'url\s*:\s*"([^"]*)"', m.group(2))
-                e = re.search(r"enabled\s*:\s*\"?(yes|no|true|false)\"?", m.group(2), re.I)
+                # UCL takes a url quoted or bare (DragonFly's df-latest.conf: `url : https://...,`)
+                u = re.search(r'\burl\s*[:=]\s*(?:"([^"]*)"|([^\s",;}]+))', m.group(2))
+                e = re.search(r"enabled\s*[:=]\s*\"?(yes|no|true|false)\"?", m.group(2), re.I)
                 if u:
-                    r["url"] = u.group(1)
+                    r["url"] = u.group(1) if u.group(1) is not None else u.group(2)
                 if e:
                     r["enabled"] = e.group(1).lower() in ("yes", "true")
     return repos
@@ -731,9 +732,10 @@ NO_FSTAB_OK = "the fstab check printed no ok line"
 NO_MOUNTS = "the mount list is empty"
 
 
-def after_lines(sec, checks):
+def after_lines(sec, checks, steps=None):
     """{need: [line]}, or {need: None} where no rule applies (SKIP), from one reading.  Every
-    reading must be positive: a check that printed nothing is a finding, never all clear."""
+    reading must be positive: a check that printed nothing is a finding, never all clear.
+    STEPS: in-guest.sh's steps of the update this reading follows (None for a pre-update one)."""
     r = rules_of(checks)
     out = {n: None for n in AFTER_NEEDS}
     boot, mounts, kernel = r.get("boot"), r.get("mounts"), r.get("kernel")
@@ -768,30 +770,58 @@ def after_lines(sec, checks):
             parsed = parse_mounts(sec.cmd("mounts"))
             out["after:shadow"] = shadowed(parsed) if parsed else [NO_MOUNTS]
     if kernel not in (None, "K-none", "K-haiku"):
-        out["after:newest-kernel"] = newest_kernel_lines(sec.cmd("kernel") or [], kernel, sec)
+        out["after:newest-kernel"] = newest_kernel_lines(sec.cmd("kernel") or [], kernel, sec, steps)
     return out
 
 
 NOT_NEWEST = "the running kernel isn't the newest installed"
+NO_MODULES = "the running kernel has no modules installed"
+# K-ostree: /usr/lib/modules is the booted deployment's alone, so running against installed says
+# nothing.  What boots is the deployment, so the after-check is which one did (bazzite.md, B7 fix).
+OSTREE_NOT_DEFAULT = "the booted deployment isn't the default one"
+OSTREE_NOT_STAGED = "the booted deployment isn't the one the update staged"
+OSTREE_STAGED = re.compile(r"ostree: deployment ([0-9a-f]+) staged\b")
+GRUBENV_KEY = {"default": "grubenv has a default key, which bootupd's grub.cfg boots",
+               "next_entry": "grubenv has a next_entry key"}
 
 
-def newest_kernel_lines(lines, rule, sec=None):
+def _ostree_lines(kv, run, installed, keys, steps):
+    out = []
+    if run not in installed:
+        out.append(NO_MODULES)
+    booted, dflt = kv.get("booted"), kv.get("default")
+    if not booted or not dflt:
+        return out + ["kernel unverified: rpm-ostree status gave no booted or default deployment"]
+    if booted != dflt:
+        out.append(OSTREE_NOT_DEFAULT)
+    staged = [m.group(1) for m in (OSTREE_STAGED.match(s or "") for s in steps or ()) if m]
+    if staged and booted.split(".", 1)[0] != staged[-1]:
+        out.append(OSTREE_NOT_STAGED)
+    out += [GRUBENV_KEY[k] for k in sorted(set(keys)) if k in GRUBENV_KEY]
+    return out
+
+
+def newest_kernel_lines(lines, rule, sec=None, steps=None):
     kv = {}
-    installed = []
+    installed, keys = [], []
     for x in lines:
         f = x.split(None, 1)
         if len(f) == 2 and f[0] == "installed":
             installed.append(f[1].strip())
+        elif len(f) == 2 and f[0] == "grubenv-key":
+            keys.append(f[1].strip())
         elif len(f) == 2:
             kv[f[0]] = f[1].strip()
     if "unverified" in kv:
         return [f"kernel unverified: {kv['unverified']}"]
-    if rule in ("K-deb", "K-fed", "K-void", "K-moss"):
+    if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree"):
         run = kv.get("running")
         if not run or not installed:
             return ["kernel unverified: no running or installed kernel listed"]
+        if rule == "K-ostree":
+            return _ostree_lines(kv, run, installed, keys, steps)
         if run not in installed:
-            return ["the running kernel has no modules installed"]
+            return [NO_MODULES]
         return [] if version_key(run) == version_key(newest(installed)) else [NOT_NEWEST]
     if rule == "K-ill":
         bes = _beadm(sec.cmd("beadm-after") if sec is not None else None)
@@ -814,11 +844,12 @@ def newest_kernel_lines(lines, rule, sec=None):
 SKIP_WHY = {"boot-state": "this OS's service state is one list: after:boot-state", "haiku": "no stacked mounts on Haiku"}
 
 
-def judge_after(before, after, checks, classed=None):
+def judge_after(before, after, checks, classed=None, steps=None):
     """Step 3.  BEFORE and AFTER are Sections (BEFORE None: a probe, one reading, every line
     standing).  {need: Need}: a line present in both is standing (LIMIT); new after the update,
-    FAIL, unless limits.json classes that line (CLASSED {need: {"lines": [...]}})."""
-    a = after_lines(after, checks)
+    FAIL, unless limits.json classes that line (CLASSED {need: {"lines": [...]}}).  STEPS: the
+    update's steps (result.json's merge.steps), which AFTER is judged against; never BEFORE."""
+    a = after_lines(after, checks, steps if before is not None else None)
     b = after_lines(before, checks) if before is not None else None
     out = {}
     for n in AFTER_NEEDS:
@@ -847,12 +878,12 @@ def _classed_lines(classed, need):
     return set((e or {}).get("lines") or ()) if isinstance(e, dict) else set()
 
 
-def merge_gate(before, after, checks, classed=None, hooks_ok=True, hook_why=None):
+def merge_gate(before, after, checks, classed=None, hooks_ok=True, hook_why=None, steps=None):
     """(ok, why, new lines): may this update merge?  No when a hook failed, or an after:* line is
     new against the pre-update boot and limits.json doesn't class it."""
     if not hooks_ok:
         return False, "a hook failed: " + (hook_why or "see hook-*.out"), []
-    res = judge_after(before, after, checks, classed)
+    res = judge_after(before, after, checks, classed, steps)
     new = [f"{n}: {x}" for n in AFTER_NEEDS for x in res[n].new]
     if new:
         return False, "new against the pre-update boot: " + "; ".join(new[:5]), new

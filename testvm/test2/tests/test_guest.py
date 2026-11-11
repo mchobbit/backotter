@@ -1,5 +1,7 @@
 """K3's tests: the runner, the row builder and the host tools (no host, no VM)."""
 
+import contextlib
+import io as io_mod
 import json
 import os
 import re
@@ -52,8 +54,8 @@ class Spec(unittest.TestCase):
     def setUp(self):
         self.sf = rows_guest.load_spec(REPO)
 
-    def test_fifty_one_guests_and_the_exclusion(self):
-        self.assertEqual(len(self.sf.names()), 51)
+    def test_fifty_five_guests_and_the_exclusion(self):
+        self.assertEqual(len(self.sf.names()), 55)
         self.assertNotIn("freebsd15-builder", self.sf.names())
         self.assertEqual(self.sf.data["excluded"], {"freebsd15-builder": "a build helper"})
 
@@ -73,7 +75,8 @@ class Spec(unittest.TestCase):
     def test_new_guests(self):
         new = sorted(n for n in self.sf.names() if not self.sf.entry(n)["checks"]["established"])
         self.assertEqual(new, sorted(["endeavouros", "endeavouros-grub", "manjaro", "fedora44-raid", "ubuntu26-raid", "rocky10-raid5",
-                                      "freebsd15-mirror", "omnios58-mirror", "ubuntu26-luks"]))
+                                      "freebsd15-mirror", "omnios58-mirror", "ubuntu26-luks", "chimera", "kinoite44",
+                                      "chimera-uefi", "chimera-zfs"]))
         for n in new:
             self.assertIn("testvm/test2/guest/new-guest.sh", self.sf.entry(n)["harness"], n)
 
@@ -105,9 +108,88 @@ class Spec(unittest.TestCase):
                 base = p[:p.index("*")].rstrip("/") if "*" in p else p
                 self.assertTrue(os.path.exists(os.path.join(REPO, base)), f"{n}: {x}")
 
-    def test_limits_start_empty(self):
+    def test_limits_class_only_kinoite44s_standing_lines(self):
+        # Empty until kinoite44's first GuestTest2 run (docs/design/bazzite.md, What B7 found):
+        # its composefs / and the failed remount, degraded state and fstab order every ostree boot has.
+        from t2lib import guest_judge as J
         with open(os.path.join(REPO, "testvm/test2/guest/limits.json"), encoding="utf-8") as f:
-            self.assertEqual(json.load(f), {})
+            d = json.load(f)
+        self.assertEqual(sorted(d), ["kinoite44"])
+        self.assertEqual(sorted(d["kinoite44"]), ["after:boot-state", "after:failed-units", "after:fstab", "image:free"])
+        for n, e in d["kinoite44"].items():
+            self.assertIn(n, J.IMAGE_NEEDS + J.AFTER_NEEDS)
+            self.assertTrue(e["lines"] and all(isinstance(x, str) and x for x in e["lines"]), n)
+            self.assertTrue(e.get("why"), n)
+
+
+class CheckAfterKernelString(unittest.TestCase):
+    """check-after.sh's same(): the running kernel's `uname -v` against the kernel file (K-nbsd, K-dfly)."""
+
+    def run_same(self, uname_v, kernel_bytes):
+        import subprocess
+        with open(os.path.join(REPO, "testvm/test2/guest/check-after.sh"), encoding="utf-8") as f:
+            fn = re.search(r"^same\(\) \{.*?^\}", f.read(), re.S | re.M).group(0)
+        d = tempfile.mkdtemp(prefix="t2-same-", dir=_tmp)
+        with open(os.path.join(d, "uname"), "w", encoding="utf-8") as f:
+            f.write("#!/bin/sh\nprintf '%s\\n' \"$UNAME_V\"\n")
+        os.chmod(os.path.join(d, "uname"), 0o755)
+        with open(os.path.join(d, "kernel"), "wb") as f:
+            f.write(b"\x7fELF\0" + kernel_bytes + b"\0rest")
+        env = dict(os.environ, PATH=d + os.pathsep + os.environ.get("PATH", ""), UNAME_V=uname_v)
+        return subprocess.run(["sh", "-c", fn + '\nsame "$1"', "sh", os.path.join(d, "kernel")],
+                              env=env, capture_output=True, text=True, check=True).stdout.strip()
+
+    def test_netbsd_two_spaces_where_the_kernel_has_newline_tab(self):
+        k = b"NetBSD 11.1 (GENERIC) #0: Mon Nov  2 16:34:32 UTC 2026\n\tuser@host1:/usr/src/sys/arch/amd64/compile/GENERIC\n"
+        self.assertEqual(self.run_same("NetBSD 11.1 (GENERIC) #0: Mon Nov  2 16:34:32 UTC 2026  user@host1:"
+                                       "/usr/src/sys/arch/amd64/compile/GENERIC", k), "match yes")
+
+    def test_dragonfly_newline_and_indent(self):
+        k = b"DragonFly v6.4.2-RELEASE #0: Mon Nov  2 10:00:00 UTC 2026\n    user@host1:/usr/obj/usr/src/sys/X86_64_GENERIC\n"
+        self.assertEqual(self.run_same("DragonFly v6.4.2-RELEASE #0: Mon Nov  2 10:00:00 UTC 2026     user@host1:"
+                                       "/usr/obj/usr/src/sys/X86_64_GENERIC", k), "match yes")
+
+    def test_another_kernel_is_no_match(self):
+        k = b"NetBSD 11.0 (GENERIC) #0: Tue Aug  4 09:00:00 UTC 2026\n\tuser@host1:/usr/src/sys/arch/amd64/compile/GENERIC\n"
+        self.assertEqual(self.run_same("NetBSD 11.1 (GENERIC) #0: Mon Nov  2 16:34:32 UTC 2026  user@host1:"
+                                       "/usr/src/sys/arch/amd64/compile/GENERIC", k), "match no")
+
+
+class CheckAfterOstree(unittest.TestCase):
+    """check-after.sh's K-ostree reading of `rpm-ostree status --json`: booted and default, as
+    CHECKSUM.SERIAL, the default being the first deployment that isn't staged."""
+
+    def run_py(self, doc):
+        import subprocess
+        with open(os.path.join(REPO, "testvm/test2/guest/check-after.sh"), encoding="utf-8") as f:
+            text = f.read()
+        branch = text[text.index("elif has_rule K-ostree"):]
+        code = re.search(r"python3 -c '(.*?)'\n", branch, re.S).group(1)
+        return subprocess.run([sys.executable, "-I", "-c", code], input=doc, capture_output=True, text=True,
+                              check=True).stdout.splitlines()
+
+    def test_booted_and_default(self):
+        d = {"deployments": [{"checksum": "ef56", "serial": 0, "staged": True},
+                             {"checksum": "ab12", "serial": 1, "booted": True},
+                             {"checksum": "ab12", "serial": 0}]}
+        self.assertEqual(self.run_py(json.dumps(d)), ["booted ab12.1", "default ab12.1"])
+        d["deployments"][1]["booted"], d["deployments"][2]["booted"] = False, True
+        self.assertEqual(self.run_py(json.dumps(d)), ["booted ab12.0", "default ab12.1"])
+
+    def test_no_answer_prints_nothing(self):
+        self.assertEqual(self.run_py(""), [])
+
+    def test_grubenv_keys(self):
+        import subprocess
+        with open(os.path.join(REPO, "testvm/test2/guest/check-after.sh"), encoding="utf-8") as f:
+            line = next(x for x in f if "grubenv-key" in x).strip()
+        d = tempfile.mkdtemp(prefix="t2-grubenv-", dir=_tmp)
+        env = os.path.join(d, "grubenv")
+        with open(env, "w", encoding="utf-8") as f:
+            f.write("# GRUB Environment Block\nboot_success=1\nnext_entry=1\ndefault=ostree-1\nsaved_entry=x\n" + "#" * 64)
+        out = subprocess.run(["sh", "-c", line.replace('"$f"', '"$1"'), "sh", env], capture_output=True, text=True,
+                             check=True).stdout.splitlines()
+        self.assertEqual(out, ["grubenv-key next_entry", "grubenv-key default"])
 
 
 # --- a run on fake hosts ---------------------------------------------------------------------------
@@ -733,6 +815,33 @@ class Waves(unittest.TestCase):
         r.run()
         self.assertEqual([c["guest"] for c in jobs.calls], ["mint22", "debian12"])
 
+    def test_a_lost_fleet_lock_holder_starts_no_more_jobs(self):
+        io, jobs = FakeIO(), FakeJobs()
+        for g in ("debian12", "mint22", "arch", "cachyos"):
+            io.summ[g] = summary()
+
+        class Fleet:
+            def take(self):
+                return True
+
+            def lost(self):
+                return "its ssh ended" if len(jobs.calls) >= 2 else None
+
+            def release(self):
+                pass
+        r, rs, ctx, _ = make(["debian12", "mint22", "arch", "cachyos"], io, jobs, word=Word(update=True), fleet=Fleet())
+        for pc, gm in zip(r.plan.cells, (3.0, 1.0, 2.0, 5.0)):
+            pc.est = {"gm": gm}
+        with mock.patch.object(guest.Runner, "tree_matches", lambda *a: None), mock.patch.object(guest.Runner, "reproject_if_needed", lambda *a: None):
+            res = r.run()
+        self.assertEqual(sorted(c["guest"] for c in jobs.calls), ["arch", "mint22"], "wave 2 started without a holder")
+        skip = sorted(c["cell"] for c in res["cells"] if c["outcome"] == "skipped")
+        self.assertEqual(skip, ["guest:cachyos", "guest:debian12"])
+        self.assertTrue(all("fleet-lock holder is gone" in c["note"] for c in res["cells"] if c["outcome"] == "skipped"))
+        self.assertEqual(sum("fleet-lock holder was lost" in n for n in res["notes"]), 1, res["notes"])
+        self.assertIn("not run: the round's fleet-lock holder is gone", "\n".join(res["blocks"]))
+        self.assertEqual(res["exit"], 1)
+
     def test_a_tree_that_isnt_this_checkout_refuses(self):
         io, jobs = FakeIO(), FakeJobs()
         fl = mock.Mock(take=lambda: True)
@@ -1167,6 +1276,66 @@ class Identity(unittest.TestCase):
             i["qemu"]["a"][field] = val
             self.assertIs(guest.identity_compare({"chopin": i})["ok"], False, field)
 
+    def thin(self, **base):
+        """A world's thin disk (contract 4) over the fleet's, no image-state in the world."""
+        bq = dict({"ok": True, "format": "qcow2", "backing": None, "dirty": False, "corrupt": False, "snapshots": ["fresh-install"]},
+                  **base.pop("qemu", {}))
+        b = dict({"path": "/r/vms/g/a", "qemu": bq, "generation": "G"}, **base)
+        q = {"ok": True, "format": "qcow2", "backing": "/r/vms/g/a", "dirty": False, "corrupt": False, "snapshots": [], "base": b}
+        return {"image_state": None, "stat": None, "disks": {"a": {}}, "qemu": {"a": q}, "sha256": {"a": "S"}}
+
+    def test_world_thin_disk_over_the_fleet(self):
+        self.assertTrue(guest.identity_compare({"chopin": self.thin()}, hashed=True)["ok"])
+        self.assertTrue(guest.identity_compare({"chopin": self.thin(), "cinqcent": self.thin()}, hashed=True)["ok"])
+        i = self.thin()   # after a merge in the world: its image-state, the snapshot still in the base
+        d = {"size": 1, "mtime_ns": 2, "inode": 3}
+        i.update(image_state={"generation": "w", "sha256": {"a": "S"}}, disks={"a": d}, stat={"generation": "w", "disks": {"a": d}})
+        self.assertTrue(guest.identity_compare({"chopin": i})["ok"])
+
+    def test_world_thin_disk_refused(self):
+        cases = (("not over the fleet's disk", self.thin(), None),
+                 ("base unreadable", self.thin(qemu={"ok": False, "why": "gone"}), "gone"),
+                 ("base has a backing file", self.thin(qemu={"backing": "y"}), "sound"),
+                 ("base dirty", self.thin(qemu={"dirty": True}), "sound"),
+                 ("base corrupt", self.thin(qemu={"corrupt": True}), "sound"),
+                 ("base raw", self.thin(qemu={"format": "raw"}), "sound"),
+                 ("base has no image-state", self.thin(generation=None), "image-state"),
+                 ("no fresh-install in the base", self.thin(qemu={"snapshots": []}), "fresh-install"))
+        cases[0][1]["qemu"]["a"]["base"] = None
+        for name, i, word in cases:
+            r = guest.identity_compare({"chopin": i}, hashed=True)
+            self.assertIs(r["ok"], False, name)
+            self.assertIn(word or "it has a backing file", r["why"], name)
+        i = self.thin()
+        i["qemu"]["a"]["dirty"] = True
+        self.assertIn("dirty", guest.identity_compare({"chopin": i}, hashed=True)["why"])
+        r = guest.identity_compare({"chopin": self.thin(), "cinqcent": self.thin(generation="H")}, hashed=True)
+        self.assertIs(r["ok"], False)
+        self.assertIn("generations differ", r["why"])
+        plain = dict(self.thin(), qemu={"a": {"ok": True, "format": "qcow2", "backing": None, "dirty": False, "corrupt": False, "snapshots": []}})
+        r = guest.identity_compare({"chopin": self.thin(), "cinqcent": plain}, hashed=True)
+        self.assertIs(r["ok"], False, "thin on one host only")
+
+    def test_tool_world_base(self):
+        home = tmpdir()
+        real = os.path.join(home, "backotter-work", "vms", "g1")
+        world = os.path.join(home, "backotter-work", "t2rest-x", "world")
+        os.makedirs(real)
+        os.makedirs(os.path.join(world, "vms", "g1"))
+        with open(os.path.join(real, "image-state"), "w", encoding="utf-8") as f:
+            json.dump({"generation": "G"}, f)
+        thin = os.path.join(world, "vms", "g1", "a.qcow2")
+        ok = {"ok": True}
+        with mock.patch.object(tool_guest, "_home", lambda: home), mock.patch.object(tool_guest, "qemu_info", lambda p: ok):
+            b = tool_guest.world_base(world, "g1", "a.qcow2", thin, {"backing": os.path.join(real, "a.qcow2")})
+            self.assertEqual((b["path"], b["generation"], b["qemu"]), (os.path.join(real, "a.qcow2"), "G", ok))
+            self.assertIsNone(tool_guest.world_base(world, "g1", "a.qcow2", thin, {"backing": os.path.join(real, "b.qcow2")}))
+            self.assertIsNone(tool_guest.world_base(world, "g1", "a.qcow2", thin, {"backing": "/elsewhere/a.qcow2"}))
+            self.assertIsNone(tool_guest.world_base(world, "g2", "a.qcow2", thin, {"backing": os.path.join(real, "a.qcow2")}))
+            fleet = os.path.join(home, "backotter-work")
+            self.assertIsNone(tool_guest.world_base(fleet, "g1", "a.qcow2", os.path.join(real, "a.qcow2"),
+                                                    {"backing": os.path.join(real, "a.qcow2")}), "the fleet vouches for no backing file")
+
     def test_no_image_state_compares_the_hosts(self):
         a = {"image_state": None, "disks": {"a": {}}, "qemu": {}, "stat": None, "sha256": {"a": "S"}}
         b = dict(a, sha256={"a": "T"})
@@ -1491,6 +1660,33 @@ class FailedState(unittest.TestCase):
         with mock.patch.object(tool_guest.shutil, "copytree", side_effect=OSError(28, "No space left on device")):
             with self.assertRaises(OSError):
                 self.go()
+        self.assertFalse(os.path.exists(self.ram))
+
+    def test_an_unwritable_host_root_still_gives_the_ram_back(self):
+        """makedirs of failed/RUN/G raising (a full or read-only /bkoscratch, a bad T2_HOST_ROOT)."""
+        self.res()
+        os.makedirs(self.hroot)
+        os.chmod(self.hroot, 0o555)
+        self.addCleanup(os.chmod, self.hroot, 0o755)
+        with self.assertRaises(OSError):
+            self.go()
+        self.assertFalse(os.path.exists(self.ram))
+
+    def test_a_bad_flake_list_still_gives_the_ram_back(self):
+        self.res(["x"])
+        with self.assertRaises(Exception):
+            self.go(flakes=["not an entry"])
+        self.assertFalse(os.path.exists(self.ram))
+
+    def test_the_cli_frees_the_ram_when_the_policy_cant_be_read(self):
+        self.res()
+        from t2lib import rows_guest
+        ctx = mock.Mock(base=REPO, host_root=self.hroot, work=self.t)
+        with mock.patch.object(rows_guest, "policy_of", side_effect=ValueError("bad policy")), \
+                contextlib.redirect_stderr(io_mod.StringIO()) as err, contextlib.redirect_stdout(io_mod.StringIO()):
+            rc = tool_guest.main(["failed-state", "--guest", "g1", "--run", "t2v-x", "--attempt", "1", "--out", self.out], ctx)
+        self.assertEqual(rc, 0)
+        self.assertIn("couldn't be read", err.getvalue())
         self.assertFalse(os.path.exists(self.ram))
 
     def test_a_flake_keeps_logs_only(self):
@@ -1876,6 +2072,25 @@ class RunnerBlocks(unittest.TestCase):
             io.sh = lambda h, c, timeout=60, input=None: (0, json.dumps({"files": {"a": "2"}}), "")
             self.assertIn("differs", r.tree_matches("chopin"))
 
+    def test_tree_matches_covers_what_the_merge_gate_runs(self):
+        """The gate (t2-host tool guest gate: tool_guest, guest_judge, rows_guest, keys) runs from the synced tree."""
+        r, rs, ctx, io = make(["debian12"], word=Word(update=True), hosts=("chopin",))
+        from t2lib import copies
+        asked = {}
+        io.sh = lambda h, c, timeout=60, input=None: asked.setdefault("cmd", c) and (0, json.dumps({"files": {}}), "")
+        with mock.patch.object(copies, "tree_hashes", lambda c, p: asked.setdefault("paths", list(p)) and {}):
+            r.tree_matches("chopin")
+        for p in ("testvm/vm-update", "testvm/update", "testvm/test2/guest", "testvm/test2/t2-host", "testvm/test2/t2lib",
+                  "testvm/test2/classes.json"):
+            self.assertIn(p, asked["paths"])
+            self.assertIn(p, asked["cmd"])
+        # and a real tree's hashes do hold the judge's files
+        h = copies.tree_hashes(REPO, list(guest.TREE_PATHS))
+        for f in ("testvm/test2/t2lib/guest_judge.py", "testvm/test2/t2lib/tool_guest.py", "testvm/test2/t2lib/rows_guest.py",
+                  "testvm/test2/t2lib/keys.py", "testvm/test2/t2-host", "testvm/test2/guest/limits.json", "testvm/test2/guest/job.sh"):
+            self.assertIn(f, h)
+        self.assertFalse([k for k in h if "__pycache__" in k or k.endswith(".pyc")])
+
     def test_fingerprint_rules_with_a_file_missing(self):
         self.assertIsNone(guest.fingerprint_rules(tmpdir()))
 
@@ -1897,6 +2112,77 @@ class RunnerBlocks(unittest.TestCase):
         p.stdin.close.assert_called()
         self.assertTrue(p.waited)
         self.assertTrue(p.stdin.write.called)
+
+    def test_fleet_lock_sees_its_holder_go(self):
+        class P:
+            """After "held": nothing (the ssh ended), or a quiet line now and then (alive)."""
+            def __init__(self, alive):
+                self.stdin, self.stdout, self.rc, self.said = mock.Mock(), mock.Mock(), None, False
+                self.stdout.readline = lambda: self.line(alive)
+
+            def line(self, alive):
+                if not self.said:
+                    self.said = True
+                    return b"held\n"
+                if alive:
+                    time.sleep(0.05)
+                    return b"\n"
+                return b""
+
+            def poll(self):
+                return self.rc
+
+            def wait(self, timeout=None):
+                pass
+
+        def lost_soon(f):
+            for _ in range(200):
+                if f.lost():
+                    break
+                time.sleep(0.01)
+            return f.lost()
+
+        p = P(alive=False)
+        with mock.patch.object(guest.subprocess, "Popen", lambda *a, **k: p):
+            f = guest.FleetLock("chopin", "/w", "R", beat_s=30)
+            self.assertTrue(f.take())
+            self.assertEqual(lost_soon(f), "its ssh ended")
+            f.release()
+        p = P(alive=True)
+        p.stdin.write.side_effect = BrokenPipeError()
+        with mock.patch.object(guest.subprocess, "Popen", lambda *a, **k: p):
+            f = guest.FleetLock("chopin", "/w", "R", beat_s=0.01)
+            self.assertTrue(f.take())
+            self.assertIn("heartbeat", lost_soon(f))
+            f.release()
+        p = P(alive=True)
+        with mock.patch.object(guest.subprocess, "Popen", lambda *a, **k: p):
+            f = guest.FleetLock("chopin", "/w", "R", beat_s=30)
+            self.assertTrue(f.take())
+            self.assertIsNone(f.lost())
+            p.rc = 75
+            self.assertEqual(f.lost(), "it exited (75)")
+            f.release()
+
+    def test_a_released_fleet_lock_isnt_lost(self):
+        class P:
+            def __init__(self):
+                self.stdin, self.stdout = mock.Mock(), mock.Mock()
+                self.lines = [b"held\n"]
+                self.stdout.readline = lambda: self.lines.pop(0) if self.lines else (time.sleep(0.02) or b"")
+
+            def poll(self):
+                return 0
+
+            def wait(self, timeout=None):
+                pass
+        p = P()
+        with mock.patch.object(guest.subprocess, "Popen", lambda *a, **k: p):
+            f = guest.FleetLock("chopin", "/w", "R", beat_s=30)
+            self.assertTrue(f.take())
+            f.release()
+            time.sleep(0.1)
+            self.assertIsNone(f.lost())
 
     def test_fleet_lock_refused(self):
         class P:

@@ -10,6 +10,20 @@
 # a command such as grub-install must be pointed at the image's /dev/nbdN,
 # never at a host disk.
 #
+# ostree (vm-mount put the physical root at MOUNTPOINT): the root is the
+# default deployment (ostree_paths.py's), as at boot: what vm-mount mounted
+# below MOUNTPOINT is bound at the deployment's paths for it (/var, /home
+# through its var/home link, /boot, /boot/efi), and the physical root at
+# /sysroot; /sysroot and the deployment's /usr are read-only, /sysroot as
+# the booted system has it (sysroot.readonly), since the deployment's
+# /ostree links into it.  /usr's files are hard links into the repository,
+# whose checksums cover their content, mode, owner and SELinux label: a
+# write there, or through /sysroot (a restorecon -R / would relabel the
+# objects), would corrupt the repository unseen.  So nothing that installs
+# or rebuilds runs here (rpm-ostree and bootc need the booted system);
+# reading does, and `ostree admin --sysroot=/sysroot status`, which only
+# reads.
+#
 # For more isolation (its own /proc, hostname and process tree), use instead:
 #   sudo systemd-nspawn -D MOUNTPOINT
 
@@ -21,9 +35,15 @@ die() { echo "vm-chroot: $*" >&2; exit 1; }
 [[ $EUID -eq 0 ]] || die "must run as root"
 mp=$(realpath "$1")
 shift
+here=$(dirname "$(realpath "$0")")
+root=$mp ostree=""
 # -e, not -f: NixOS's /etc/fstab is a link into /nix/store, which only
 # resolves inside the guest (-L for that).
-[[ -e $mp/etc/fstab || -L $mp/etc/fstab ]] || die "$mp does not look like a mounted guest (run vm-mount first)"
+if [[ ! -e $mp/etc/fstab && ! -L $mp/etc/fstab && -d $mp/ostree/deploy ]]; then
+    ostree=$(python3 "$here/ostree_paths.py" default "$mp") || die "$mp holds ostree deployments, but no default one"
+    root=$mp/$ostree
+fi
+[[ -e $root/etc/fstab || -L $root/etc/fstab ]] || die "$mp does not look like a mounted guest (run vm-mount first)"
 [[ $# -gt 0 ]] || set -- /bin/bash --login
 
 mounted=()
@@ -31,17 +51,55 @@ added_policy=no
 cleanup() {
     local i
     for ((i = ${#mounted[@]} - 1; i >= 0; i--)); do umount "${mounted[i]}" || true; done
-    [[ $added_policy == yes ]] && rm -f "$mp/usr/sbin/policy-rc.d"
+    # (Not `&&`: a false test last would make it, under set -e, the exit status.)
+    [[ $added_policy != yes ]] || rm -f "$root/usr/sbin/policy-rc.d"
 }
 trap cleanup EXIT
+if [[ -n $ostree ]]; then
+    # What vm-mount mounted, before anything here is.
+    pending=()
+    while read -r t; do [[ $t == "$mp" ]] || pending+=("${t#"$mp"/}"); done < <(findmnt -R -n -l -o TARGET "$mp")
+    # /usr first, so nothing below can write there.
+    mount --bind "$root/usr" "$root/usr"
+    mounted+=("$root/usr")
+    mount -o remount,bind,ro "$root/usr"
+    # vm-mount's mounts below MOUNTPOINT, each at the path the deployment
+    # has for it, its links followed (home -> var/home): parents first, and
+    # a mount whose path only a later bind makes (var/home, by /var's) in a
+    # later round.
+    while ((${#pending[@]})); do
+        left=()
+        for rel in "${pending[@]}"; do
+            above=no
+            for o in "${pending[@]}"; do [[ $rel == "$o"/* ]] && above=yes; done
+            at=""
+            [[ $above == yes ]] || at=$(python3 -c 'import sys; sys.path.insert(0, sys.argv[1]); import ostree_paths as o
+r = o.resolve(sys.argv[2], sys.argv[3]); print(r if r is not None else "")' "$here" "$root" "$rel")
+            if [[ -n $at && -d $root/$at ]]; then
+                mount --bind "$mp/$rel" "$root/$at"
+                mounted+=("$root/$at")
+            else
+                left+=("$rel")
+            fi
+        done
+        ((${#left[@]} < ${#pending[@]})) || die "the default deployment ($ostree) has no directory for: ${left[*]}"
+        pending=("${left[@]}")
+    done
+    # Read-only, as the booted system has it (sysroot.readonly): the
+    # deployment's /ostree links to sysroot/ostree, so a read-write /sysroot
+    # would reach the repository and every deployment's /usr.
+    mount --bind "$mp" "$root/sysroot"
+    mounted+=("$root/sysroot")
+    mount -o remount,bind,ro "$root/sysroot"
+fi
 for m in proc sys dev dev/pts; do
-    mount --bind "/$m" "$mp/$m"
-    mounted+=("$mp/$m")
+    mount --bind "/$m" "$root/$m"
+    mounted+=("$root/$m")
 done
 # (On a read-only mount, nothing can be installed anyway.)
-if [[ ! -e $mp/usr/sbin/policy-rc.d && -w $mp/usr/sbin ]]; then
-    printf '#!/bin/sh\nexit 101\n' >"$mp/usr/sbin/policy-rc.d"
-    chmod 755 "$mp/usr/sbin/policy-rc.d"
+if [[ -z $ostree && ! -e $root/usr/sbin/policy-rc.d && -w $root/usr/sbin ]]; then
+    printf '#!/bin/sh\nexit 101\n' >"$root/usr/sbin/policy-rc.d"
+    chmod 755 "$root/usr/sbin/policy-rc.d"
     added_policy=yes
 fi
-NEEDRESTART_SUSPEND=1 chroot "$mp" "$@"
+NEEDRESTART_SUSPEND=1 chroot "$root" "$@"

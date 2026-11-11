@@ -1,1 +1,20 @@
-{}
+{
+ "kinoite44": {
+  "image:free": {
+   "lines": ["/ is at least 90% full"],
+   "why": "ostree: / is the composefs overlay, a read-only EROFS image that df always shows 100% full; the physical root's btrfs shows at /etc and /var (docs/design/bazzite.md, What B7 found)"
+  },
+  "after:boot-state": {
+   "lines": ["state degraded"],
+   "why": "systemd-remount-fs fails at every boot on ostree (below), so the system is degraded (bazzite.md, What B1 found)"
+  },
+  "after:failed-units": {
+   "lines": ["failed systemd-remount-fs.service"],
+   "why": "it remounts / with fstab's options and the composefs overlay refuses (\"No changes allowed in reconfigure\"); every boot, the Thinkpad's fstab the same (bazzite.md, What B1 found)"
+  },
+  "after:fstab": {
+   "lines": ["findmnt --verify failed", "findmnt: [E] wrong order: /var/home specified before /var"],
+   "why": "Anaconda's ostree fstab lists /home (a link to var/home) before /var; findmnt resolves the link, systemd orders the mounts itself, and HoltTest1 sees the same on source and restore (bazzite.md, What B6 found)"
+  }
+ }
+}

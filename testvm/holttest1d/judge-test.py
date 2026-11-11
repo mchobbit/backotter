@@ -779,5 +779,142 @@ class Rig(unittest.TestCase):
         self.assertFalse(self.unrelated(holds))
 
 
+FSMETA = os.path.join(os.path.dirname(HERE), "compare", "fsmeta.py")
+
+
+def meta(kind, **kw):
+    """One path's fsmeta.py record, as `fsmeta.py record` writes it."""
+    e = {"type": kind, "mode": 0o777 if kind == "symlink" else 0o644, "uid": 0, "gid": 0,
+         "mtime": 1, "xattrs": {"security.selinux": "73797374656d5f753a6f626a6563745f723a7573725f743a733000"}}
+    if kind == "file":
+        e.update(size=3, sha256="ab", holes=False)
+    if kind == "symlink":
+        e["target"] = "usr/bin"
+    e.update(kw)
+    return e
+
+
+class Fs(unittest.TestCase):
+    """judge.py fs over an ostree repository's links (kinoite44, B6)."""
+
+    def judge(self, before, after):
+        with tempfile.TemporaryDirectory() as tmp:
+            s, t = os.path.join(tmp, "src-meta.json"), os.path.join(tmp, "dst-meta.json")
+            for path, d in ((s, before), (t, after)):
+                with open(path, "w") as f:
+                    json.dump(d, f)
+            r = subprocess.run([sys.executable, "-I", JUDGE, "fs", FSMETA, s, t], capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    LINKED = ["ostree/deploy/default/deploy/c.0/bin", "ostree/deploy/default/deploy/c.1/bin",
+              "ostree/repo/objects/ab/cd.file"]
+
+    def test_hardlinked_symlinks_come_back_separate(self):
+        before = {p: meta("symlink", links=self.LINKED) for p in self.LINKED}
+        after = {p: meta("symlink") for p in self.LINKED}
+        rc, out = self.judge(before, after)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("hardlinked symlink restored as separate symlinks: the archivers relink regular files only): 3", out)
+
+    def test_regular_files_must_stay_linked(self):
+        before = {p: meta("file", links=self.LINKED) for p in self.LINKED}
+        after = {p: meta("file") for p in self.LINKED}
+        rc, out = self.judge(before, after)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF hard links: 3", out)
+
+    def test_symlinks_linked_otherwise_are_a_difference(self):
+        """Separate symlinks are what the archivers make; symlinks linked
+        into another group than the source's aren't."""
+        before = {p: meta("symlink", links=self.LINKED) for p in self.LINKED}
+        after = {p: meta("symlink", links=self.LINKED[:2]) for p in self.LINKED[:2]}
+        after[self.LINKED[2]] = meta("symlink")
+        rc, out = self.judge(before, after)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF hard links: 2", out)
+
+    def test_a_symlinks_target_still_counts(self):
+        before = {p: meta("symlink", links=self.LINKED) for p in self.LINKED}
+        after = {p: meta("symlink") for p in self.LINKED}
+        after[self.LINKED[0]]["target"] = "usr/sbin"
+        rc, out = self.judge(before, after)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF symlink target: 1", out)
+
+
+
+class FsEspAtBoot(unittest.TestCase):
+    """judge.py fs over what bootctl install does to an ESP mounted as /boot
+    (chimera-uefi, C3): a new random seed, systemd-boot's loaders put back
+    and /etc/kernel/entry-token written again."""
+
+    SRC = {"boot": meta("dir"), "boot/EFI": meta("dir"), "boot/EFI/BOOT": meta("dir"),
+           "boot/EFI/BOOT/BOOTX64.EFI": meta("file"), "boot/EFI/systemd": meta("dir"),
+           "boot/EFI/systemd/systemd-bootx64.efi": meta("file"), "boot/EFI/chimera": meta("dir"),
+           "boot/EFI/chimera/x": meta("file"), "boot/loader": meta("dir"),
+           "boot/loader/random-seed": meta("file"), "boot/loader/loader.conf": meta("file"),
+           "etc/kernel": meta("dir"), "etc/kernel/entry-token": meta("file"),
+           "etc/kernel/cmdline": meta("file")}
+
+    judge = Fs.judge
+
+    def judge_changed(self, changes):
+        a = copy.deepcopy(self.SRC)
+        for p, kw in changes.items():
+            a[p].update(kw)
+        return self.judge(self.SRC, a)
+
+    def test_bootctl_install_is_the_boot_stages(self):
+        """chim3's three DIFF lines, now the boot stage's."""
+        rc, out = self.judge_changed({
+            "boot/loader/random-seed": {"sha256": "cd", "mtime": 2},
+            "etc/kernel/entry-token": {"mtime": 2},
+            "boot/EFI/BOOT": {"mtime": 2}, "boot/EFI/systemd": {"mtime": 2}, "etc/kernel": {"mtime": 2}})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn("bootctl install rewrites systemd-boot in an ESP at /boot (Chimera)): 2: boot/EFI/BOOT, boot/EFI/systemd", out)
+        self.assertIn("bootctl install writes a new random seed in an ESP at /boot): 2: boot/loader/random-seed, boot/loader/random-seed", out)
+        self.assertIn("1: etc/kernel/entry-token", out)
+        self.assertIn("bootctl install replaces etc/kernel/entry-token): 1: etc/kernel", out)
+
+    def test_the_loaders_themselves_may_be_rewritten(self):
+        rc, out = self.judge_changed({"boot/EFI/BOOT/BOOTX64.EFI": {"sha256": "cd", "mtime": 2},
+                                      "boot/EFI/systemd/systemd-bootx64.efi": {"sha256": "cd", "mtime": 2}})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+
+    def test_another_loaders_directory_still_counts(self):
+        rc, out = self.judge_changed({"boot/EFI/chimera": {"mtime": 2}, "boot/EFI/chimera/x": {"sha256": "cd"}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF content: 1: boot/EFI/chimera/x", out)
+        self.assertIn("DIFF mtime (dirs): 1: boot/EFI/chimera", out)
+
+    def test_the_rest_of_loader_and_etc_kernel_still_count(self):
+        rc, out = self.judge_changed({"boot/loader/loader.conf": {"sha256": "cd"},
+                                      "etc/kernel/cmdline": {"sha256": "cd"}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF content: 2: boot/loader/loader.conf, etc/kernel/cmdline", out)
+
+    def test_a_missing_loader_still_counts(self):
+        a = copy.deepcopy(self.SRC)
+        del a["boot/EFI/BOOT/BOOTX64.EFI"], a["etc/kernel/entry-token"]
+        rc, out = self.judge(self.SRC, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF missing: 2: boot/EFI/BOOT/BOOTX64.EFI, etc/kernel/entry-token", out)
+
+    def test_a_grub_boots_lower_case_efi_is_not_an_esp_at_boot(self):
+        """boot/efi/... (an ESP at /boot/efi) and boot/grub2 keep their own
+        rules; boot/EFI's don't reach a GRUB system's other /boot files."""
+        src = {"boot/efi/EFI/fedora": meta("dir"), "boot/efi/EFI/fedora/x": meta("file"),
+               "boot/vmlinuz-6.1": meta("file"), "boot/config-6.1": meta("file")}
+        a = copy.deepcopy(src)
+        for p in a:
+            a[p].update(sha256="cd", mtime=2)
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF content: 2: boot/config-6.1, boot/vmlinuz-6.1", out)
+        self.assertNotIn("in an ESP at /boot", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

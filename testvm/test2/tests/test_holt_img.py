@@ -256,6 +256,32 @@ class Driver(unittest.TestCase):
             self.assertIn(o, sshd)
         self.assertTrue(all(len(x) < 300 for x in lines))
 
+    def test_img_boot_umask_is_the_key_files_only(self):
+        # sshd and its sessions inherit the console shell's umask: a shell-wide 077 made a
+        # run's grub-install and update-grub write /boot/grub 0600 (T4.4's fsmeta DIFFs).
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("img_boot", os.path.join(HT, "img-boot.py"))
+        m = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(m)
+        for plat in ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "haiku"):
+            lines = m.shell_lines("ssh-" + "ed25519 AAAA t2", m.config(plat))
+            for x in lines:
+                bare = x
+                while "(" in bare and ")" in bare[bare.index("("):]:
+                    i = bare.index("(")
+                    bare = bare[:i] + bare[bare.index(")", i) + 1:]
+                self.assertNotIn("umask", bare, (plat, x))
+        key = next(x for x in m.shell_lines("ssh-" + "ed25519 AAAA t2", m.config("linux")) if "/tmp/bko-k" in x and "AAAA" in x)
+        with tempfile.TemporaryDirectory() as t:
+            k = os.path.join(t, "bko-k")
+            r = subprocess.run(["/bin/sh", "-c", "umask 022; " + key.replace("/tmp/bko-k", k) + "; umask"],
+                               capture_output=True, text=True, timeout=30)
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertEqual(r.stdout.strip().lstrip("0"), "22")
+            self.assertEqual(os.stat(k).st_mode & 0o777, 0o600)
+            with open(k) as f:
+                self.assertEqual(f.read(), "ssh-" + "ed25519 AAAA t2\n")
+
     def test_img_boot_uses_boot_tests_own_prompts(self):
         import importlib.util
         spec = importlib.util.spec_from_file_location("img_boot", os.path.join(HT, "img-boot.py"))

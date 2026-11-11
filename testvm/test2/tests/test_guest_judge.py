@@ -179,6 +179,14 @@ class Sources(unittest.TestCase):
         dr = 'Avalon: {\n url: "https://x",\n enabled: yes\n}\n'
         self.assertEqual(src("S-dfly", sec(("file /usr/local/etc/pkg/repos/df-latest.conf", dr))).v, "PASS")
         self.assertEqual(src("S-dfly", sec(("cmd x", ""))).v, "FAIL")
+        # dragonfly6's own df-latest.conf (T3.8): bare urls, one block enabled
+        bare = ('Avalon: {\n\turl\t\t: https://mirror-master.dragonflybsd.org/dports/${ABI}/LATEST,\n'
+                '\tmirror_type\t: NONE,\n\tpriority\t: 0,\n\tenabled\t\t: yes\n}\n'
+                'MUUG: {\n\turl\t\t: https://muug.ca/mirror/dragonflybsd/dports/${ABI}/LATEST,\n\tenabled\t\t: no\n}\n')
+        self.assertEqual(src("S-dfly", sec(("file /usr/local/etc/pkg/repos/df-latest.conf", bare))).v, "PASS")
+        self.assertEqual(J._enabled_repos(J._pkg_repos(sec(("file /usr/local/etc/pkg/repos/df-latest.conf", bare)))),
+                         {"Avalon": {"url": "https://mirror-master.dragonflybsd.org/dports/X/LATEST", "enabled": True}})
+        self.assertEqual(src("S-dfly", sec(("file /usr/local/etc/pkg/repos/df-latest.conf", bare.replace("yes", "no")))).v, "FAIL")
         self.assertEqual(src("S-ips", sec(("cmd pkg-publisher", "omnios origin online F https://pkg.omnios.org/r151058/core/"))).v, "PASS")
         self.assertEqual(src("S-ips", sec(("cmd pkg-publisher", ""))).v, "FAIL")
         self.assertEqual(src("S-haiku", sec(("cmd pkgman-repos", "HaikuPorts"))).v, "PASS")
@@ -507,6 +515,13 @@ class RealLogLines(unittest.TestCase):
         "netbsd": ["Removed obsolete file /usr/lib/libunbound.so.8.1"],
         "openbsd": ["Installing patch 002_aesgmac", "Get/Verify syspatch78-002_aesgmac.tgz"],
         "haiku": ["100% brotli-1.1.0-3-x86_64.hpkg [234.1 KiB]", "upgrade package brotli-1.1.0-2 to 1.1.0-3 from repository HaikuPorts"],
+        # kinoite44's (B4's --try and its staged upgrade to :45, docs/design/bazzite.md)
+        "rpm-ostree": ["Pulling manifest: ostree-unverified-registry:quay.io/fedora/fedora-kinoite:45",
+                       "Importing: ostree-unverified-registry:quay.io/fedora/fedora-kinoite:45 (digest: sha256:"
+                       "6942ebd1efac34b3e09b44406313048baf481e380de74f0c0d19d25d3a028826)",
+                       "ostree chunk layers already present: 9", "ostree chunk layers needed: 56 (2.7 GB)",
+                       "[1/56] Fetching ostree chunk a3c0f99e1253fe268a6 (121.1 MB)...done", "Staging deployment...done",
+                       'Run "systemctl reboot" to start a reboot', "No upgrade available."],
     }
 
     def test_each_package_managers_chatter_goes(self):
@@ -522,6 +537,10 @@ class RealLogLines(unittest.TestCase):
         "pacman": ["error: failed to commit transaction (conflicting files)"],
         "dnf": ["Error: Transaction test error:"],
         "zypper": ["Retrieving: foo-1.0.rpm [Error: not found]"],
+        "rpm-ostree": ["error: Creating importer: failed to invoke method OpenImage: reading manifest 44 in quay.io/fedora/fedora-kinoite: manifest unknown",
+                       "[3/56] Fetching ostree chunk 7ef9932682b330f4496 (70.1 MB)...failed",
+                       "in-guest: step: ostree: deployment 7afcf66486b5600eac1bb112d6c054f57b4972189465e60d026c15f6551a4b71 staged, "
+                       "in place of 10e6a37fe91449ab0256dc707f50023505f76d29b6d34844b63843d0950f7de6"],
     }
 
     def test_a_real_error_is_never_dropped(self):
@@ -536,6 +555,11 @@ class RealLogLines(unittest.TestCase):
     def test_an_unmet_list_stays(self):
         raw = "The following packages have unmet dependencies:\n libfoo : Depends: bar but it is not installable\n"
         self.assertEqual(len(self.left("apt", raw)), 2)
+
+    def test_rpm_ostrees_package_lists_go(self):
+        raw = ("Upgraded:\n  7zip 26.04-1.fc44 -> 26.04-1.fc45\n  NetworkManager 1:1.56.1-2.fc44 -> 1:1.58.1-3.fc45\n"
+               "Removed:\n  foo-1.0-1.fc44.x86_64\nAdded:\n  bar-2.0-1.fc45.x86_64\n")
+        self.assertEqual(self.left("rpm-ostree", raw), [])
 
     def test_pkgs_list_too(self):
         raw = "Installed packages to be UPGRADED:\n\tcurl: 8.14 -> 8.15 [FreeBSD]\n\tzstd: 1.5.6 -> 1.5.7 [FreeBSD]\n"
@@ -553,6 +577,56 @@ class NewestKernel(unittest.TestCase):
         self.assertEqual(self.k("K-deb", RUN), [])
         self.assertEqual(self.k("K-deb", "running 6.1.0-9-amd64\ninstalled 6.1.0-54-amd64\ninstalled 6.1.0-9-amd64"), [J.NOT_NEWEST])
         self.assertEqual(self.k("K-fed", "running 7.0.4\ninstalled 7.0.4\ninstalled 6.17.1"), [])
+
+    def test_ostree_running_against_installed_says_nothing(self):
+        # /usr/lib/modules is the booted deployment's alone: the rule is which deployment booted
+        body = "running 7.3.3-200.fc44.x86_64\ninstalled 7.3.3-200.fc44.x86_64\nbooted ab12.0\ndefault ab12.0"
+        self.assertEqual(self.k("K-ostree", body), [])
+        self.assertEqual(self.k("K-ostree", body.replace("booted ab12.0", "booted cd34.1")), [J.OSTREE_NOT_DEFAULT])
+        self.assertEqual(self.k("K-ostree", "running 7.3.3\ninstalled 7.3.3\nbooted ab12.0"),
+                         ["kernel unverified: rpm-ostree status gave no booted or default deployment"])
+        self.assertEqual(self.k("K-ostree", "running 7.3.3\ninstalled 7.2.9\nbooted ab12.0\ndefault ab12.0"), [J.NO_MODULES])
+
+    def test_ostree_same_commit_pair_tells_by_serial(self):
+        # kinoite44's fresh pair: one commit, two serials; booting .1 when .0 is the default is a finding
+        self.assertEqual(self.k("K-ostree", "running 7.3.3\ninstalled 7.3.3\nbooted ab12.1\ndefault ab12.0"),
+                         [J.OSTREE_NOT_DEFAULT])
+
+    def test_ostree_the_staged_deployment_must_boot(self):
+        steps = ["ostree: deployment ef56 staged, in place of ab12"]
+        run = "running 7.3.3\ninstalled 7.3.3\n"
+        k = lambda body: J.newest_kernel_lines((run + body).splitlines(), "K-ostree", None, steps)
+        self.assertEqual(k("booted ef56.0\ndefault ef56.0"), [])
+        # ostree-finalize-staged never wrote it: the old one is still the default and boots
+        self.assertEqual(k("booted ab12.1\ndefault ab12.1"), [J.OSTREE_NOT_STAGED])
+        # it was written, but the rollback booted
+        self.assertEqual(k("booted ab12.1\ndefault ef56.0"), [J.OSTREE_NOT_DEFAULT, J.OSTREE_NOT_STAGED])
+        # other steps say nothing about the deployment
+        self.assertEqual(J.newest_kernel_lines((run + "booted ab12.1\ndefault ab12.1").splitlines(), "K-ostree", None,
+                                               ["purging casper"]), [])
+
+    def test_ostree_grubenv_keys(self):
+        body = "running 7.3.3\ninstalled 7.3.3\nbooted ab12.0\ndefault ab12.0\n"
+        self.assertEqual(self.k("K-ostree", body + "grubenv-key default"), [J.GRUBENV_KEY["default"]])
+        self.assertEqual(self.k("K-ostree", body + "grubenv-key next_entry\ngrubenv-key default"),
+                         [J.GRUBENV_KEY["default"], J.GRUBENV_KEY["next_entry"]])
+
+    def test_ostree_after_an_update_where_the_old_deployment_booted(self):
+        # The round B7's K-fed passed: the pre-update reading is clean, the update staged ef56, and the
+        # reboot came up in the old deployment.  The line is new, so the merge gate blocks it.
+        c = checks(source="S-none", loader="L-bls", kernel="K-ostree")
+        before = reading("init systemd\nstate running", kernel="running 7.3.3\ninstalled 7.3.3\nbooted ab12.1\ndefault ab12.1",
+                         mounts=MI_OK)
+        steps = ["ostree: deployment ef56 staged, in place of ab12"]
+        r = J.judge_after(before, before, c, steps=steps)
+        self.assertEqual(r["after:newest-kernel"].v, "FAIL")
+        self.assertEqual(r["after:newest-kernel"].new, [J.OSTREE_NOT_STAGED])
+        ok, why, new = J.merge_gate(before, before, c, steps=steps)
+        self.assertFalse(ok)
+        self.assertEqual(new, ["after:newest-kernel: " + J.OSTREE_NOT_STAGED])
+        # a probe (one reading) has no update to judge against
+        self.assertEqual(J.judge_after(None, before, c)["after:newest-kernel"].v, "PASS")
+        self.assertTrue(J.merge_gate(before, before, c)[0])
 
     def test_match_forms(self):
         for rule in ("K-pac", "K-apk", "K-nix", "K-obsd", "K-nbsd", "K-dfly", "K-alpbsd"):

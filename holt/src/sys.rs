@@ -216,8 +216,14 @@ impl Sys {
         }
         match FileSource::open(&self.p(abs)) {
             // A BSD's raw disk device seeks to 0 for its end: its size
-            // comes from the system's own tools.
-            Ok(f) if f.size() == 0 => crate::other::dev_size(self, abs).and_then(|n| FileSource::open_sized(&self.p(abs), n).ok()).or(Some(f)),
+            // comes from the system's own tools.  The file already open
+            // takes it: NetBSD refuses a second open of a block device
+            // (/dev/ld1a) while the first is open, and the device would
+            // then read as empty.
+            Ok(f) if f.size() == 0 => Some(match crate::other::dev_size(self, abs) {
+                Some(n) => f.with_size(n),
+                None => f,
+            }),
             Ok(f) => Some(f),
             Err(e) => {
                 self.warn(format!("{abs}: {e}"));

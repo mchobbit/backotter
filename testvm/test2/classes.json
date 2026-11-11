@@ -8,7 +8,7 @@
       "B4": ["netbsd11", "alpinebsd"]
     },
     "alone": ["freebsd14", "openbsd8", "dragonfly6", "omnios58", "haiku6"],
-    "linux": "every Linux guest and sculpt2610 run alone (decision 1): 27 checks plus sculpt2610",
+    "linux": "every Linux guest and sculpt2610 run alone (decision 1): 28 checks plus sculpt2610",
     "non_linux": ["freebsd15", "freebsd15-geli", "ghostbsd26-zfs", "freebsd15-ufs", "hardenedbsd15", "ghostbsd26",
                   "netbsd11", "alpinebsd", "freebsd14", "openbsd8", "dragonfly6", "omnios58", "haiku6"],
     "canaries": {
@@ -39,11 +39,12 @@
       "V": ["void-musl"],
       "H": ["haiku6"],
       "U": ["ubuntu24", "ubuntu26-uefi", "ubuntu26-zfsmirror", "ubuntu26-raid", "ubuntu26-zfs", "ubuntu26-luks"],
-      "F": ["fedora44", "fedora44-uefi", "fedora44-raid", "rocky10", "rocky10-lvm", "rocky10-raid5"],
+      "F": ["fedora44", "fedora44-uefi", "fedora44-raid", "rocky10", "rocky10-lvm", "rocky10-raid5", "kinoite44"],
       "A": ["arch", "alpine324", "aerynos", "artix-dinit", "artix-s6", "endeavouros", "endeavouros-grub", "manjaro"],
       "C": ["cachyos", "mx25"],
       "I": ["omnios58", "omnios58-mirror"],
-      "Obscure": ["pop24", "nixos2605", "omarchy", "sculpt2610", "redox", "tumbleweed", "debian12"],
+      "Obscure": ["pop24", "nixos2605", "omarchy", "sculpt2610", "redox", "tumbleweed", "debian12", "chimera",
+                  "chimera-uefi", "chimera-zfs"],
       "BSD": ["freebsd15", "freebsd15-mirror", "freebsd14", "ghostbsd26", "ghostbsd26-zfs", "hardenedbsd15",
               "netbsd11", "alpinebsd", "openbsd8", "dragonfly6"]
     },
@@ -60,8 +61,9 @@
     "variant_stages": ["partition", "assemble", "close"],
     "pins": {"openbsd8": "chopin", "dragonfly6": "cinqcent", "redox": "cinqcent"},
     "pins_why": "README Queues ONLY_ELSEWHERE: openbsd8's one-time rescuer is on Chopin, dragonfly6's on Cinqcent; redox's tools are on Cinqcent only (ht1-queue.sh:169)",
-    "uefi": ["aerynos", "debian13-stack", "endeavouros", "endeavouros-grub", "fedora44-raid", "fedora44-uefi", "manjaro",
-             "omarchy", "pop24", "ubuntu26-luks", "ubuntu26-raid", "ubuntu26-uefi", "ubuntu26-zfs"],
+    "uefi": ["aerynos", "chimera-uefi", "chimera-zfs", "debian13-stack", "endeavouros", "endeavouros-grub", "fedora44-raid",
+             "fedora44-uefi", "kinoite44", "manjaro", "omarchy", "pop24", "ubuntu26-luks", "ubuntu26-raid", "ubuntu26-uefi",
+             "ubuntu26-zfs"],
     "uefi_why": "the Linux sources with --uefi in vm-run-options (both hosts, 2026-11-08); ht1.sh rebuilds them from rescuer-uefi.qcow2 when the host has it (ht1.sh:138-139, R17). alpinebsd is UEFI too, but netbsd11 rescues it",
     "canaries": ["debian13", "ubuntu26-uefi", "freebsd15", "redox"],
     "rescuer_panel": {
@@ -92,7 +94,7 @@
       "linux": {"guests": ["debian12", "ubuntu24", "rocky10-raid5", "nixos2605", "debian13-stack", "aerynos"]},
       "freebsd": {"guests": ["freebsd14"]},
       "netbsd": {"guests": ["netbsd11"]},
-      "openbsd": {"guests": ["openbsd8"]},
+      "openbsd": {"guests": ["openbsd8"], "blocked": "rustic-bko's restore is killed out of memory in the 3 GiB rescue image with no swap (UVM: killed: out of swap at ~1.7 GB RSS); needs a bounded-memory restore in the rustic_core fork"},
       "dragonfly": {"guests": ["dragonfly6"]},
       "illumos": {"guests": ["omnios58"]},
       "haiku": {"guests": ["haiku6"]}
@@ -121,6 +123,7 @@
       "img": ["stick/boot-test.py", "stick/*/checks.sh", "stick/*/manifest.sh", "stick/*/config-checks.sh"]
     },
     "unmapped_ignore": ["**/*.md", "testvm/test2/**", "testvm/compare/affected.sh", "testvm/compare/wear-report.py",
+                        "testvm/compare/exact-rt.sh", "testvm/compare/exact-manifest.py", "testvm/holttest1d/prep/tumbleweed-snapper.sh",
                         "testvm/holttest1d/make-*.sh", "testvm/holttest1d/build-holt.sh",
                         "testvm/holttest1d/ht1-debug.sh", "testvm/holttest1d/ht1-lib-test.sh", "testvm/holttest1d/judge-test.py",
                         "testvm/vm-update", "testvm/vm-chroot", "testvm/compare/wear-setup.sh",

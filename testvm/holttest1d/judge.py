@@ -194,6 +194,12 @@ BOOT_STAGE = [
     (r"^boot/efi[^/]*/EFI(/|$)", _WRITTEN, "grub-install writes the ESPs' loaders (a second ESP by the distribution's hook)"),
     (r"^(boot/)?efi/EFI(/(BOOT|Boot|systemd|Linux)(/.*)?)?$", _WRITTEN, "bootctl install rewrites systemd-boot and makes EFI/Linux in an ESP at /efi (AerynOS)"),
     (r"^(boot/)?efi/loader(/(random-seed|keys))?$", _WRITTEN, "bootctl install writes a new random seed and makes loader/keys"),
+    # An ESP mounted as /boot itself (Chimera): its EFI/ is boot/EFI, which
+    # nothing but an ESP has, and its loader/ is boot/loader.
+    (r"^boot/EFI/(BOOT(/BOOT[A-Z0-9]+\.EFI)?|systemd(/systemd-boot[a-z0-9]+\.efi)?)$", _WRITTEN, "bootctl install rewrites systemd-boot in an ESP at /boot (Chimera)"),
+    (r"^boot/loader/random-seed$", _WRITTEN, "bootctl install writes a new random seed in an ESP at /boot"),
+    (r"^etc/kernel/entry-token$", _WRITTEN, "bootctl install writes the entry token (all it writes in /etc/kernel; install.conf it only reads)"),
+    (r"^etc/kernel$", {"mtime (dirs)", "atime (dirs)"}, "bootctl install replaces etc/kernel/entry-token"),
     (r"^efi/EFI/endeavouros(/|$)", _WRITTEN, "grub-install writes the loader in an ESP at /efi (EndeavourOS with GRUB)"),
     (r"^(boot/)?efi/[0-9a-f]{32}/[^/]+/initrd$", _WRITTEN, "dracut --regenerate-all rebuilds a Type 1 entry's initrd, on the ESP under the machine id (EndeavourOS)"),
     (r"^(boot/)?efi/[0-9a-f]{32}/[^/]+$", {"mtime (dirs)", "atime (dirs)"}, "dracut replaces the initrd in its directory"),
@@ -368,6 +374,12 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False):
                     and before.get(p, {}).get("type") == "dir" and not any(k.startswith(p + "/") for k in before):
                 why = ("a mount point hidden under its mount in a btrfs subvolume mounted elsewhere too (openSUSE's root, again at .snapshots/N/snapshot): "
                        "the backup holds it only through that alias, which load leaves out (docs/design/btrfs-snapshots.md)")
+            if not why and kind == "hard links" and before.get(p, {}).get("type") == "symlink" and not after.get(p, {}).get("links"):
+                # rustic-bko (and restic-bko) relink regular files only: an
+                # ostree repository's symlink objects, hardlinked into each
+                # deployment, come back as separate symlinks, each with its
+                # target and metadata (SticTest1's kinoite44 LIMIT).
+                why = "a hardlinked symlink restored as separate symlinks: the archivers relink regular files only"
             if not why and kind == "inode flags":
                 # btrfs sets FS_NOCOMP_FL itself on a file whose data didn't
                 # compress, as it was written: not the restore's to keep.

@@ -514,6 +514,10 @@ def carried_canaries(img_plan, child_plans, holt_code_of=None):
     return extra, notes
 
 
+# plan.place's reasons for a cell that a host's absence keeps from running (not in --hosts, no facts)
+HOST_GONE = re.compile(r"not in --hosts|unreachable|no host in --hosts is reachable|on no reachable host")
+
+
 def run_rows(rows, runs):
     """The rows of RUNS (their attempts too)."""
     base = set(runs)
@@ -559,6 +563,21 @@ def ran_cells(rows, stamp, prefix=""):
     """{cell} a run of STAMP has a run row for (any verdict)."""
     return {r.get("cell") for r in rows or () if r.get("kind") == "run" and of_stamp(r.get("run"), stamp)
             and str(r.get("cell") or "").startswith(prefix)}
+
+
+def invalid_passes(rows):
+    """ROWS' run rows that say PASS but are invalid (a PASS nothing measured is no PASS)."""
+    return [r for r in rows or () if r.get("kind") == "run" and r.get("verdict") == "PASS" and r.get("valid") is not True]
+
+
+def done_cells(rows, stamp, prefix=""):
+    """{cell} this stamp needn't run again: a valid decisive row of STAMP, or a run row of STAMP
+    that didn't pass (a layer that failed in a sibling's gate isn't run twice).  A cell whose
+    only rows of STAMP are invalid PASSes isn't done: nothing measured it."""
+    mine = [r for r in rows or () if str(r.get("cell") or "").startswith(prefix)]
+    out = {c for c in decisive_cells(mine, stamp)}
+    out |= {r.get("cell") for r in mine if r.get("kind") == "run" and of_stamp(r.get("run"), stamp) and r.get("verdict") != "PASS"}
+    return out
 
 
 def report_stops(path):
@@ -1261,8 +1280,11 @@ class Conductor:
         else:
             full = self.final["gate"]
         due = [c.cell for c in full.due()]
-        ran = ran_cells(self.ctx.ledger, self.stamp, "gate:")
+        ran = done_cells(self.ctx.ledger, self.stamp, "gate:")
         rest = [c for c in due if c not in ran]
+        again = sorted(c for c in set(due) & ran_cells(self.ctx.ledger, self.stamp, "gate:") if c not in ran)
+        if again:
+            self.log(f"{self.words['gate'].word}: ran in this run, but no valid row: again: {', '.join(again)}")
         with self.mu:
             self.doc["gate_due"] = due
         if due and not rest:
@@ -1360,6 +1382,36 @@ class Conductor:
                        + (f" and {len(left) - 12} more" if len(left) > 12 else ""))
         for g, why in sorted((self.doc.get("identity_bad") or {}).items()):
             out.append(f"guest:{g}: identity: {cut(why, 120)}")
+        out += self.hosts_missing()
+        return out
+
+    def hosts_missing(self):
+        """A sweep is everything, fresh: on every host (plan.HOSTS), each with facts.  A --hosts
+        subset, or a host with no facts, leaves its pinned cells not runnable rather than due, so
+        "every due cell has a decisive row" alone would call it complete.  Those cells, and every
+        other cell a host's absence kept from running, are named too (a cell that is not runnable
+        for a reason of its own, such as a blocked panel or missing binaries, is the coverage
+        lines' business, not the sweep's)."""
+        out = []
+        facts = getattr(self.ctx, "facts", None) or {}
+        absent = [h for h in planmod.HOSTS if h not in self.hosts]
+        if absent:
+            out.append(f"ran on {', '.join(self.hosts)} only: {', '.join(absent)} not swept (--hosts)")
+        blind = [h for h in self.hosts if h not in facts]
+        if blind:
+            out.append(f"no facts from {', '.join(blind)}: not swept")
+        cells = []
+        for f in PLAN_ORDER[self.fam]:
+            p = self.final.get(f)
+            if p is None:
+                continue
+            for c in p.by_status("not-runnable"):
+                if any(HOST_GONE.search(r or "") for r in c.reasons or ()):
+                    cells.append(c.cell)
+        cells = sorted(set(cells))
+        if cells:
+            out.append(f"{len(cells)} cell(s) not runnable for want of a host: {', '.join(cells[:12])}"
+                       + (f" and {len(cells) - 12} more" if len(cells) > 12 else ""))
         return out
 
     def coverage(self):
@@ -1471,6 +1523,14 @@ class Conductor:
             if e is None and st.get("state") == "done":     # its exit wasn't recorded (a resume)
                 e = judged_exit(st, run_rows(rows, self.child_runs(f)))
                 st["exit"] = e
+            inv = invalid_passes(run_rows(rows, self.child_runs(f)))
+            if inv and st.get("state") == "done":   # (its own exit may count only its plan's cells: a gate step's
+                for r in inv[:6]:                    #  layers aren't in a SticTest2 plan)
+                    t = f"{words.FAMILY_WORD[f]}: {r.get('cell')} PASS, but its row {r.get('id')} is invalid: {cut(r.get('note'), 120)}"
+                    if t not in self.notes:
+                        self.note(t)
+                if not isinstance(e, int) or e < EXIT_FAIL:
+                    e = st["exit"] = EXIT_FAIL
             if isinstance(e, int):
                 ex = max(ex, e)
         if self.doc.get("identity_bad"):
@@ -1481,7 +1541,8 @@ class Conductor:
         if w.sweep:
             miss = self.missing(rows)
             sw = {"stamp": self.stamp, "run": self.run, "children": {f: (kids.get(f) or {}).get("run") for f in order},
-                  "complete": not miss, "missing": miss, "t": utc_now()}
+                  "complete": not miss, "missing": miss, "t": utc_now(), "hosts": list(self.hosts),
+                  "hosts_with_facts": [h for h in self.hosts if h in (getattr(self.ctx, "facts", None) or {})]}
             if self.universe is not None:   # (test only, never in the default root: conduct refuses it there)
                 sw["universe"] = getattr(self.word, "universe", None) or sorted(c for v in self.universe.values() for c in v)
             runmod.write_json(os.path.join(self.rdir(), "sweep.json"), sw)

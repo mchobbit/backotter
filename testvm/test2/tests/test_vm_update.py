@@ -140,7 +140,7 @@ class TestSteps(unittest.TestCase):
 
 class TestInGuest(unittest.TestCase):
     TEXT = (TESTVM / "update" / "in-guest.sh").read_text()
-    NAMES = {"prologue", "NixOS", "Linux.common", "Linux.apt", "Linux.dnf", "Linux.pacman", "Linux.zypper",
+    NAMES = {"prologue", "NixOS", "Linux.common", "Linux.apt", "Linux.ostree", "Linux.dnf", "Linux.pacman", "Linux.zypper",
              "Linux.xbps", "Linux.apk", "Linux.moss", "FreeBSD", "DragonFly", "OpenBSD", "NetBSD", "SunOS",
              "Haiku", "Redox"}
 
@@ -165,6 +165,8 @@ class TestInGuest(unittest.TestCase):
                              ("Linux.pacman", "geo.mirror.pkgbuild.com"), ("Linux.pacman", "Artix's mirrors"),
                              ("Linux.pacman", "@factory"), ("Linux.pacman", "has pacman"),
                              ("Linux.dnf", "fedora-updates.repo"), ("Linux.dnf", "vault"), ("Linux.dnf", "has dnf"),
+                             ("Linux.ostree", "/run/ostree-booted"), ("Linux.ostree", "rpm-ostree upgrade"),
+                             ("Linux.ostree", "rpm-ostree cleanup -b -m"),
                              ("Linux.zypper", "history"), ("Linux.zypper", "install DVD"), ("Linux.zypper", "has zypper"),
                              ("Linux.moss", "unstable stream"), ("Linux.moss", "has moss"),
                              ("Linux.xbps", "has xbps-install"), ("Linux.apk", "apk upgrade"),
@@ -174,6 +176,15 @@ class TestInGuest(unittest.TestCase):
                              ("OpenBSD", "syspatch"), ("NetBSD", "sysupgrade"), ("SunOS", "pkg update"),
                              ("Haiku", "pkgman"), ("Redox", "pkg --yes update")):
             self.assertIn(needle, s[name], name)
+
+    def test_ostree_before_dnf(self):
+        """An image-mode system has dnf too, which can't change its /usr: the
+        ostree branch has to come first, and never cleans up the rollback."""
+        t = self.TEXT
+        self.assertLess(t.index('elif [ -e /run/ostree-booted ] && has rpm-ostree; then'), t.index("elif has dnf; then"))
+        code = "\n".join(l for l in self.sections()["Linux.ostree"].splitlines() if not l.lstrip().startswith("#"))
+        self.assertNotIn("cleanup -r", code)
+        self.assertNotIn("dnf", code)
 
     def test_linux_common_holds_no_package_manager(self):
         common = self.sections()["Linux.common"]
@@ -450,6 +461,22 @@ class TestFingerprint(unittest.TestCase):
         e["boot"]["kernels"]["installed"] = []
         self.assertEqual(a, FP.layout(e, JUDGE))
 
+    def test_derived_storage_fields_leave_the_layout(self):
+        # B2 of docs/design/bazzite.md: backup_sources, physical_root and a
+        # mount's alias_of are worked out from the mounts and fstab.
+        d = dump_of("tumbleweed")
+        a = FP.layout(d, JUDGE)
+        e = copy.deepcopy(d)
+        ms = e["storage"]["mounts"]
+        e["storage"]["physical_root"] = "/"
+        e["storage"]["backup_sources"] = [{"path": m["target"], "from": m["target"], "device": m.get("device"),
+                                           "fstype": m.get("fstype"), "source": m.get("source"), "subvol": None} for m in ms]
+        ms[-1]["alias_of"] = ms[0]["target"]
+        self.assertEqual(a, FP.layout(e, JUDGE))
+        # The mounts themselves still count.
+        ms[-1]["root"] = "/elsewhere"
+        self.assertNotEqual(a, FP.layout(e, JUDGE))
+
     def test_two_boot_only_rules(self):
         d = dump_of("fedora44-raid") if (CORPUS / "fedora44-raid" / "src.json").exists() else None
         if d is None or not d["storage"].get("md_arrays"):
@@ -640,7 +667,9 @@ class TestFingerprint(unittest.TestCase):
     def test_packages_are_boot_rs(self):
         text = (REPO / "holt" / "src" / "boot.rs").read_text()
         body = re.search(r"pub const PACKAGES: &\[&str\] = &\[(.*?)\];", text, re.S)[1]
+        body = re.sub(r"//[^\n]*", "", body)     # its comments quote names too (Chimera's)
         self.assertEqual(sorted(re.findall(r'"([^"]+)"', body)), sorted(FP.PACKAGES))
+        self.assertEqual(len(FP.PACKAGES), len(set(FP.PACKAGES)))
         self.assertLessEqual(FP.STORAGE, set(FP.PACKAGES))
 
     def test_rules(self):
@@ -969,6 +998,43 @@ class TestFleetLock(World):
         h.stdin.close()
         h.stdin = None
         self.assertEqual(h.wait(10), 0)
+
+    def assert_round_gone(self, run="t2v-1"):
+        self.assertFalse((self.vms / VU.FLEET_ROUND).exists(), "the round's name outlived its holder")
+        self.assertIn("none", self.refused("sh", run))   # a later job of the round fails its check
+
+    def test_the_round_file_goes_at_end_of_input(self):
+        h = self.hold()
+        self.end(h)
+        self.assertEqual(h.returncode, 0)
+        self.assert_round_gone()
+
+    def test_the_round_file_goes_on_silence(self):
+        h = self.hold(env={"HEARTBEAT": "0.5"})
+        self.assertEqual(h.wait(6), 75)
+        self.assert_round_gone()
+
+    def test_the_round_file_goes_on_term_and_hup(self):
+        for sig in (signal.SIGTERM, signal.SIGHUP):
+            h = self.hold()
+            h.send_signal(sig)
+            self.assertEqual(h.wait(10), 75)
+            self.assert_round_gone()
+
+    def test_a_running_job_keeps_its_lock_when_the_round_file_goes(self):
+        h = self.hold()
+        j = self.job()
+        self.end(h)
+        self.assertFalse((self.vms / VU.FLEET_ROUND).exists())
+        self.refused("ex")                          # the job still holds it shared
+        self.end(j)
+        self.end(self._ok("ex"))
+
+    def test_another_rounds_file_is_left_alone(self):
+        VU.clear_round(self.vms / VU.FLEET_ROUND, "t2v-1")   # no file: nothing to do
+        (self.vms / VU.FLEET_ROUND).write_text("t2v-2\n")
+        VU.clear_round(self.vms / VU.FLEET_ROUND, "t2v-1")
+        self.assertEqual((self.vms / VU.FLEET_ROUND).read_text().strip(), "t2v-2")
 
     def test_a_bad_run_id(self):
         self.assertEqual(VU.hold_fleet_lock("a b"), 2)

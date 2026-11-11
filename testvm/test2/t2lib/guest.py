@@ -122,7 +122,9 @@ def _json_out(text):
 def identity_compare(per_host, hashed=False):
     """Step 1 on what the hosts answered ({host: tool_guest.identity_of's dict}).
     {"ok": True|False|None, "why", "rehash": [hosts]}; ok None: hash on the hosts in rehash first.
-    A host marked no_answer vouches for nothing and condemns nothing: ok False, harness True."""
+    A host marked no_answer vouches for nothing and condemns nothing: ok False, harness True.
+    A disk with a backing file fails, but for a world's thin disk over the fleet's same disk
+    (contract 4), whose backing disk passes the fleet's checks, at one generation on every host."""
     silent = sorted(h for h, i in per_host.items() if i and i.get("no_answer"))
     if silent:
         return {"ok": False, "harness": True, "why": ", ".join(silent) + ": no answer to the identity step", "rehash": []}
@@ -135,23 +137,42 @@ def identity_compare(per_host, hashed=False):
     if has_state and len(states) > 1:
         return {"ok": False, "why": "the hosts' generations differ: " + ", ".join(f"{h} {str(g)[:12]}" for h, g in sorted(gens.items())),
                 "rehash": []}
+    bases = {}
     for h, i in sorted(per_host.items()):
         for n, q in sorted((i.get("qemu") or {}).items()):
-            why = None
-            if not q.get("ok"):
-                why = q.get("why") or "qemu-img failed"
-            elif q.get("format") != "qcow2":
-                why = f"format {q.get('format')}"
-            elif q.get("backing"):
-                why = "it has a backing file"
-            elif q.get("dirty"):
-                why = "dirty flag set"
-            elif q.get("corrupt"):
-                why = "marked corrupt"
-            elif has_state and "fresh-install" not in (q.get("snapshots") or []):
-                why = "no fresh-install snapshot"
+            why, snaps = None, q.get("snapshots") or []
+            if q.get("ok") and q.get("format") == "qcow2" and q.get("backing"):
+                # only a world's thin disk over the fleet's same disk (tool_guest.world_base), and that
+                # disk is judged as the fleet's are: the snapshot lives there, not in the thin one
+                b = q.get("base")
+                bq = (b or {}).get("qemu") or {}
+                if not b:
+                    why = "it has a backing file"
+                elif not bq.get("ok"):
+                    why = "its backing file: " + (bq.get("why") or "qemu-img failed")
+                elif bq.get("format") != "qcow2" or bq.get("backing") or bq.get("dirty") or bq.get("corrupt"):
+                    why = "its backing file isn't a sound fleet image"
+                elif not b.get("generation"):
+                    why = "its backing file's guest has no image-state"
+                snaps = bq.get("snapshots") or []
+                bases.setdefault(n, {})[h] = (b or {}).get("generation")
+            if why is None:
+                if not q.get("ok"):
+                    why = q.get("why") or "qemu-img failed"
+                elif q.get("format") != "qcow2":
+                    why = f"format {q.get('format')}"
+                elif q.get("dirty"):
+                    why = "dirty flag set"
+                elif q.get("corrupt"):
+                    why = "marked corrupt"
+                elif (has_state or q.get("backing")) and "fresh-install" not in snaps:
+                    why = "no fresh-install snapshot"
             if why:
                 return {"ok": False, "why": f"{h}: {n}: {why}", "rehash": []}
+    for n, g in sorted(bases.items()):
+        if len(g) != len(per_host) or len(set(g.values())) > 1:
+            return {"ok": False, "why": f"{n}: the backing files' generations differ: " +
+                    ", ".join(f"{h} {str(x)[:12]}" for h, x in sorted(g.items())), "rehash": []}
     if not has_state:
         sums = {h: i.get("sha256") for h, i in per_host.items()}
         if not hashed:
@@ -397,6 +418,11 @@ def preflight(ctx, out=print, io=None):
 
 # --- the fleet lock an update round holds ----------------------------------------------------------
 
+# What an update round runs from the synced tree, and so must be this checkout's (contract 2.1 step 1).
+TREE_PATHS = ("testvm/vm-update", "testvm/update", "testvm/test2/guest",
+              "testvm/test2/t2-host", "testvm/test2/t2lib", "testvm/test2/classes.json")
+
+
 class FleetLock:
     """ssh HOST vm-update --hold-fleet-lock RUN: held once it says so, a heartbeat line every 30 s."""
 
@@ -404,6 +430,7 @@ class FleetLock:
         self.host, self.work, self.run, self.beat_s = host, work, run, beat_s
         self.p = None
         self.stop_ev = threading.Event()
+        self.dead = None          # why the holder is gone, once it is: its jobs then start no more
 
     def take(self, timeout=120):
         envs = " ".join(f"{k}={hostrun.rq(v)}" for k, v in sorted(vm_update_env().items()))
@@ -415,15 +442,42 @@ class FleetLock:
             self.release()
             return False
         threading.Thread(target=self._beat, daemon=True).start()
+        threading.Thread(target=self._watch, args=(self.p,), daemon=True).start()
         return True
+
+    def _gone(self, why):
+        if self.dead is None and not self.stop_ev.is_set():
+            self.dead = why
 
     def _beat(self):
         while not self.stop_ev.wait(self.beat_s):
             try:
                 self.p.stdin.write(b"\n")
                 self.p.stdin.flush()
-            except (OSError, ValueError):
+            except (OSError, ValueError, AttributeError) as e:
+                self._gone(f"a heartbeat couldn't be sent ({e.__class__.__name__})")
                 return
+
+    def _watch(self, p):
+        """The holder prints nothing after "held": its stdout's end is its end."""
+        try:
+            while p.stdout.readline() and not self.stop_ev.is_set():
+                pass
+        except (OSError, ValueError):
+            pass
+        self._gone("its ssh ended")
+
+    def lost(self):
+        """Why the holder is gone (its ssh ended, a heartbeat failed, it exited), or None.
+        Once it is, vm-update has removed the round's name: no job of this round may start."""
+        if self.dead is None and self.p is not None and not self.stop_ev.is_set():
+            try:
+                rc = self.p.poll()
+            except (OSError, AttributeError):
+                rc = None
+            if isinstance(rc, int):
+                self._gone(f"it exited ({rc})")
+        return self.dead
 
     def release(self):
         self.stop_ev.set()
@@ -486,6 +540,7 @@ class Runner:
         self.job = job or hostjob.host_job
         self.reattach = reattach or hostjob.reattach_job
         self.fleet = fleet
+        self.held_fleet, self.holder_noted = None, False   # an update round's holder, while it holds
         self.poll, self.clock = poll, clock or time.time
         self.t0 = self.clock()
         self.sf = rows_guest.load_spec(ctx.checkout)
@@ -675,11 +730,28 @@ class Runner:
 
     def stopped(self, it):
         """Why IT mustn't start now, or None."""
+        lost = self.holder_lost()
+        if lost:
+            return f"the round's fleet-lock holder is gone ({lost}): no job starts without it"
         if hostjob.tripped(self.rs):
             return "a run-wide stop rule fired first"
         if not self.rs.stops.may_start(self.pm_of(it)):
             return "a stop rule stopped the run first"
         return None
+
+    def holder_lost(self):
+        """An update round's: why its --hold-fleet-lock holder is gone, or None.  Noted once."""
+        fl = getattr(self, "held_fleet", None)
+        lost = getattr(fl, "lost", None) if fl is not None else None
+        why = lost() if callable(lost) else None
+        if not isinstance(why, str) or not why:
+            return None
+        if not self.holder_noted:
+            self.holder_noted = True
+            self.notes.append(f"the fleet-lock holder was lost mid-round ({why}); the jobs not yet started weren't run, "
+                              "and nothing kept a by-hand driver out after it")
+            self.log(f"fleet lock: the holder is gone ({why})")
+        return why
 
     # --- the end of an attempt ----------------------------------------------------------------------
     def finish_job(self, it, host, rc, odir, t, why, files):
@@ -834,9 +906,11 @@ class Runner:
 
     # --- update round ------------------------------------------------------------------------------
     def tree_matches(self, host):
-        """Contract 2.1 update step 1: the synced tree's vm-update, update/* and test2/guest/* are this checkout's."""
+        """Contract 2.1 update step 1: the synced tree's vm-update, update/* and test2/guest/* are this checkout's,
+        and so are t2-host, t2lib/* and classes.json, which the merge gate and the rows run from that tree
+        (job.sh's --merge-gate: t2-host tool guest gate, guest_judge, rows_guest)."""
         from . import copies
-        paths = ["testvm/vm-update", "testvm/update", "testvm/test2/guest"]
+        paths = list(TREE_PATHS)
         local = copies.tree_hashes(self.ctx.checkout, paths)
         envs = " ".join(f"{k}={hostrun.rq(v)}" for k, v in sorted(host_env().items()))
         tool = hostrun.rq(self.work.rstrip("/") + "/testvm/test2/t2-host")
@@ -885,6 +959,7 @@ class Runner:
         if not fleet.take():
             self.notes.append("GuestTest2 update refused: the fleet lock is held (vm-update --hold-fleet-lock)")
             return 2
+        self.held_fleet = fleet
         try:
             items = self.adopt(items)
             w1, w2 = self.waves(items)
@@ -907,8 +982,9 @@ class Runner:
                     self.pending.append(it)
             self.drive()
         finally:
+            self.held_fleet = None
             fleet.release()
-        return 0
+        return 1 if self.holder_noted else 0
 
     def update_block(self):
         lines = ["update round:"]

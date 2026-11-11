@@ -16,7 +16,12 @@ HERE=$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)
 . "$HERE/bs1.conf" || { echo "no bs1.conf in $HERE" >&2; exit 2; }
 BIN=$HERE/bin
 RUNS=$HERE/runs
-SRC=/mnt/bs1-src                # the tree the snapshot is taken of, and named by
+# The read-only tree is mounted at TREE and backed up as SNAP (rustic-bko's
+# --as-path), which is what the snapshot is named by: latest:/mnt/bs1-src.  Not
+# one path, because on ostree /mnt is a link to var/mnt, and rustic-bko names a
+# source by its canonical path (docs/design/bazzite.md, B5).
+TREE=/run/bs1-src
+SNAP=/mnt/bs1-src
 LOG=/dev/null STEP=starting
 
 say() { printf '%s %s\n' "$(date -u +%H:%M:%S)" "$*" | tee -a "$LOG"; }
@@ -67,6 +72,17 @@ backup_disk() {
 REAL_FS='ext2|ext3|ext4|xfs|btrfs|vfat|f2fs|jfs|nilfs2|bcachefs|zfs'
 ESP_TYPE=c12a7328-f81f-11d2-ba4b-00a0c93ec93b
 
+# An ostree system (Bazzite, Silverblue, Kinoite): its / is a composefs
+# overlay, and the physical root, fstab's /, is at /sysroot
+# (docs/design/bazzite.md).
+is_ostree() { [[ -e /run/ostree-booted ]]; }
+root_mount() { if is_ostree; then echo /sysroot; else echo /; fi; }
+root_source() { findmnt -nro SOURCE "$(root_mount)"; }
+# The updaters an ostree system may have: uupd is Bazzite's (ublue's), the
+# others Fedora's own.  bs1-backup and bs1-verify hold them off for the boot
+# they run in; the person disables them for longer (README.md).
+UPDATERS="uupd rpm-ostreed-automatic bootc-fetch-apply-updates"
+
 # on_disk SOURCE DISK: does this mount's source rest on DISK, through any stack
 # of partitions, md, LUKS and LVM, or a ZFS pool?
 on_disk() {
@@ -82,16 +98,43 @@ on_disk() {
     return 1
 }
 
-# The real filesystems mounted from DISK, parents first: TARGET<tab>FSTYPE.
+# The real filesystems mounted from DISK, parents first: PATH<tab>FROM<tab>FSTYPE,
+# PATH where the tree has it, FROM where the running system mounts it.  They
+# are one path but on ostree, where LAYOUT (bko-holt dump's) is read: its
+# storage.backup_sources lays them out as fstab mounts them, / from /sysroot
+# and /home from /var/home, leaving out the /etc and stateroot var binds.
 internal_mounts() {
-    local target src fs root
+    local disk=$1 layout=${2:-} target src fs root
+    if is_ostree; then
+        [[ -s $layout ]] || { echo "internal_mounts: on ostree the tree is read from a layout, and there is none" >&2; return 1; }
+        python3 - "$layout" <<'PY' | while IFS=$'\t' read -r target root fs src; do
+import json, sys
+for s in json.load(open(sys.argv[1]))["storage"].get("backup_sources") or []:
+    print("\t".join([s["path"], s["from"], s["fstype"], s.get("source") or "-"]))
+PY
+            [[ $fs =~ ^($REAL_FS)$ ]] || continue
+            on_disk "$src" "$disk" || continue
+            printf '%s\t%s\t%s\n' "$target" "$root" "$fs"
+        done | LC_ALL=C sort
+        return
+    fi
     findmnt -rno TARGET,SOURCE,FSTYPE,FSROOT | while read -r target src fs root; do
         [[ $fs =~ ^($REAL_FS)$ ]] || continue
         # A bind mount shows a subdirectory; a btrfs subvolume does too, and counts.
         [[ $fs == btrfs || $fs == zfs || $root == / ]] || continue
-        on_disk "$src" "$1" || continue
-        printf '%b\t%s\n' "$target" "$fs"
+        on_disk "$src" "$disk" || continue
+        target=$(printf '%b' "$target")
+        printf '%s\t%s\t%s\n' "$target" "$target" "$fs"
     done | LC_ALL=C sort
+}
+
+# What the tree's filesystems hold, in bytes, each filesystem counted once:
+# three mounts of one btrfs are one filesystem.
+space_in_use() {
+    local from fs
+    internal_mounts "$@" | while IFS=$'\t' read -r _ from fs; do
+        df -B1 --output=source,used "$from" | tail -n 1
+    done | awk '{ sub(/\[.*/, "", $1) } !seen[$1]++ { n += $2 } END { print n + 0 }'
 }
 
 # Stops if DISK holds a filesystem the running system hasn't mounted: it would be
@@ -105,22 +148,24 @@ check_coverage() {
     done < <(lsblk -lnpo NAME,FSTYPE "/dev/$1")
 }
 
-# The read-only tree of DISK's filesystems at $SRC.  Binds of each one alone, so
-# /proc, /sys, /run and the backup drive aren't in it.
+# The read-only tree of DISK's filesystems at $TREE.  Binds of each one alone, so
+# /proc, /sys, /run and the backup drive aren't in it.  LAYOUT: internal_mounts'.
 make_tree() {
-    local target fs dst
-    findmnt -rn "$SRC" >/dev/null && die "$SRC is already mounted"
-    mkdir -p "$SRC"
-    while IFS=$'\t' read -r target fs; do
-        dst=$SRC${target%/}
-        must mount --bind "$target" "$dst"
+    local path from dst list
+    findmnt -rn "$TREE" >/dev/null && die "$TREE is already mounted"
+    list=$(internal_mounts "$@") || die "can't tell which filesystems to back up"
+    mkdir -p "$TREE"
+    while IFS=$'\t' read -r path from _; do
+        [[ -n $path ]] || continue
+        dst=$TREE${path%/}
+        must mount --bind "$from" "$dst"
         must mount -o remount,bind,ro "$dst"
-    done < <(internal_mounts "$1")
-    findmnt -rn "$SRC" >/dev/null || die "nothing on $1 is mounted"
+    done <<<"$list"
+    findmnt -rn "$TREE" >/dev/null || die "nothing on $1 is mounted"
 }
 
 drop_tree() {
-    if findmnt -rn "$SRC" >/dev/null; then umount --recursive "$SRC"; fi
+    if findmnt -rn "$TREE" >/dev/null; then umount --recursive "$TREE"; fi
     sync
 }
 

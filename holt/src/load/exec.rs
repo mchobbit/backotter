@@ -23,17 +23,19 @@ fn log_line(log: &mut Option<std::fs::File>, text: &str) {
 }
 
 /// Runs one step for real.  A command's output goes to the log (and, for
-/// the restore's archiver, the terminal sees nothing until it's done).
-fn run_cmd(c: &Cmd, log: &mut Option<std::fs::File>) -> Result<(), String> {
+/// the restore's archiver, the terminal sees nothing until it's done).  It
+/// gives back, for a command that `warns`, its stderr's `warning:` lines,
+/// for the terminal.
+fn run_cmd(c: &Cmd, log: &mut Option<std::fs::File>) -> Result<Vec<String>, String> {
     log_line(log, &c.shell());
     if c.is_note() {
-        return Ok(());
+        return Ok(Vec::new());
     }
     if let Some(path) = &c.write {
         if let Some(dir) = std::path::Path::new(path).parent() {
             std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
         }
-        return std::fs::write(path, c.stdin.as_deref().unwrap_or("")).map_err(|e| format!("{path}: {e}"));
+        return std::fs::write(path, c.stdin.as_deref().unwrap_or("")).map(|_| Vec::new()).map_err(|e| format!("{path}: {e}"));
     }
     let mut cmd = Command::new(&c.argv[0]);
     cmd.args(&c.argv[1..]).env("LC_ALL", "C").envs(c.env.iter().map(|(k, v)| (k, v))).stdout(Stdio::piped()).stderr(Stdio::piped());
@@ -47,7 +49,8 @@ fn run_cmd(c: &Cmd, log: &mut Option<std::fs::File>) -> Result<(), String> {
     log_line(log, &String::from_utf8_lossy(&out.stdout));
     log_line(log, &String::from_utf8_lossy(&out.stderr));
     if out.status.success() {
-        Ok(())
+        let err = String::from_utf8_lossy(&out.stderr);
+        Ok(if c.warns { err.lines().filter(|l| l.contains("warning:")).map(str::to_string).collect() } else { Vec::new() })
     } else {
         let err = String::from_utf8_lossy(&out.stderr);
         let tail: Vec<&str> = err.lines().rev().take(5).collect::<Vec<_>>().into_iter().rev().collect();
@@ -108,11 +111,18 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
             let _ = std::fs::remove_file(status::boot_marker());
         }
         for c in cmds {
-            if let Err(e) = run_cmd(c, &mut log) {
-                log_line(&mut log, &format!("FAILED: {e}"));
-                err += &format!("bko-holt load: {}: {e}\n", s.name());
-                err += &format!("bko-holt load: the log is {RUN_DIR}/log/load.log\n");
-                return (EXIT_FAILED, out, err);
+            match run_cmd(c, &mut log) {
+                Ok(warnings) => {
+                    for w in warnings {
+                        err += &format!("bko-holt load: {}: {w}\n", s.name());
+                    }
+                }
+                Err(e) => {
+                    log_line(&mut log, &format!("FAILED: {e}"));
+                    err += &format!("bko-holt load: {}: {e}\n", s.name());
+                    err += &format!("bko-holt load: the log is {RUN_DIR}/log/load.log\n");
+                    return (EXIT_FAILED, out, err);
+                }
             }
         }
         if s == Stage::Boot {
@@ -144,5 +154,23 @@ fn st_word(s: State) -> &'static str {
         State::Partly => "partly done",
         State::NotDone => "not done",
         State::Unknown => "can't tell",
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A command that `warns` gives back its stderr's warning lines when it
+    /// succeeds; one that doesn't gives back nothing; a failure ends with
+    /// its stderr's last lines.
+    #[test]
+    fn run_cmd_warnings() {
+        let script = "echo 'x: warning: one' >&2; echo other >&2; echo 'x: warning: two' >&2";
+        let c = Cmd::new(&["sh", "-c", script]);
+        assert_eq!(run_cmd(&c, &mut None), Ok(Vec::new()));
+        assert_eq!(run_cmd(&c.clone().warns(), &mut None), Ok(vec!["x: warning: one".to_string(), "x: warning: two".to_string()]));
+        let e = run_cmd(&Cmd::new(&["sh", "-c", &format!("{script}; echo 'x: 1 failed' >&2; exit 1")]).warns(), &mut None).unwrap_err();
+        assert!(e.ends_with("x: warning: two\n    x: 1 failed"), "{e}");
     }
 }

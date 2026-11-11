@@ -33,7 +33,7 @@ guests.  A guest passes only when every check passes.  Status is as of
 | 1M | Linux Mint | `mint22` | passes |
 | 1U | Ubuntu | `ubuntu24`, `ubuntu26-uefi`, `ubuntu26-zfsmirror`, `ubuntu26-raid` (and `degraded`), `ubuntu26-luks` | passes |
 | 1Z | Zorin OS | `zorin18` | passes |
-| 1F | Fedora, Rocky Linux | `fedora44`, `fedora44-uefi`, `fedora44-raid`, `rocky10`, `rocky10-lvm`, `rocky10-raid5` | passes (`fedora44-raid` and `rocky10-raid5`: run `raid022`, below) |
+| 1F | Fedora, Rocky Linux, Fedora Kinoite (ostree, Bazzite's base) | `fedora44`, `fedora44-uefi`, `fedora44-raid`, `rocky10`, `rocky10-lvm`, `rocky10-raid5`, `kinoite44` | passes (`fedora44-raid` and `rocky10-raid5`: run `raid022`; `kinoite44`: run `bzb6a`; both below) |
 | 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | passes |
 | 1C | CachyOS, MX Linux | `cachyos`, `mx25` | passes |
 | (1All only) | EndeavourOS, Manjaro | `endeavouros`, `endeavouros-grub`, `manjaro` (`make-arch.sh --live`: each one's own live ISO, with its installer's defaults) | passes on both hosts (runs `eosmj1` to `eosmj5`) |
@@ -89,6 +89,51 @@ serial console.  Passes: `load` recreates the LUKS2 header with the
 source's cipher, key derivation and offset, opens it as `dm_crypt-0` (the
 crypttab name), restores the group with `vgcfgrestore`, and the restored
 disk boots with the passphrase typed.
+
+**The ostree guest** (2026-11-11, run `bzb6a` on both hosts, in RAM,
+B6's static bko-holt from main, `HT_HOLT`): `kinoite44`
+(`make-fedora.sh --ostree`; docs/design/bazzite.md) is Fedora Kinoite 44,
+an image-mode system: UEFI with Secure Boot off, GPT, an ESP, ext4 /boot
+with bootupd's static GRUB config, and btrfs subvolumes `root` (ostree's
+repository and deployments under a composefs `/`), `home` and `var`.  It
+has two deployments of one commit, `.1` (the default, with the karg
+`bko.rollback=1` and an `/etc/bko-deployment`) and `.0` (the rollback).
+ht1.sh boots both, on the source and on the restored disk:
+
+- **The source's baseline.**  On a source with `/run/ostree-booted`, the
+  source phase first wants exactly two BLS entries.  It then boots the
+  rollback entry and the default again, and only then dumps.  Each boot
+  writes the booted deployment (`CHECKSUM.SERIAL`), `/proc/cmdline`,
+  `/etc/bko-deployment`, the root's type and source, SELinux's mode and
+  `ostree admin status` (`logs/source-ostree.txt`,
+  `source-ostree-rollback.txt`), and the rollback's boot state.  The
+  rollback must boot another deployment, the default must show the same
+  as its first boot, and grubenv must be byte for byte as it was.
+- **The restored disk's two boots.**  After the default boot's checks and
+  its dump, the rollback entry boots in the same QEMU.  Each boot must
+  show exactly what the source's did, and the rollback's boot state may
+  have no line the source's lacked.
+- **How the rollback is picked.**  bootupd's `grub.cfg` loads grubenv but
+  never reads `next_entry`, so `grub2-reboot` does nothing there.  ht1.sh
+  sets `default` in grubenv instead, to the ID of the one entry whose
+  `ostree=` leads to the deployment not booted (`ostree-1`, the BLS file's
+  name).  `grub2-editenv unset default` in the rollback boot then puts
+  grubenv back as it was.
+- **What the file check allows.**  `judge.py fs` lets a hardlinked
+  symlink come back as separate symlinks, since both archivers relink
+  regular files only: 95,521 paths, ostree's symlink objects and their
+  links in each deployment.  It also lets btrfs's own no-compress flag
+  through: 7,159 files restored onto fstab's `compress=zstd:1` by the
+  Ubuntu rescuer's kernel (7.0) gained it.  The regular objects keep their
+  links.
+- **Results.**  It passes on both hosts: 0 file differences, 0 dump
+  differences, all of load's stages, and both restored boots the
+  source's.  The RAM-disk peak was 11.8 GiB (Chopin; Cinqcent 11.5) in
+  the rebuild phase, and the run took 645 s.  So ram-sizes.tsv's D is 14,
+  one of ht1-queue.sh's big guests.
+- **bko-holt.**  bin/'s bko-holt (0.2.4 of 2026-11-07) has no ostree
+  support, so until bin/ is refreshed a run of `kinoite44` needs
+  `HT_HOLT` or `HT_HOLT_BIN` naming a build from main.
 
 **HoltTest1All** (the user's definition, 2026-11-05): "like HoltTest1D
 except that HoltTest1All targets every single guest OS we have": every guest
@@ -273,8 +318,8 @@ by exactly that much.  `smaller`, `fitbigger`, `nearfull` and `refuse` are
 "The fitting variants" below, for `load --fit-largest`.  `img` (Test2's
 ImgTest2 panel; RAM only) rebuilds from the pinned BackOtter rescue image,
 `t2-host tool img pin`'s, instead of the rescuer, its own bko-holt and
-rustic-bko doing the load.  `degraded` runs
-the source with its last disk
+rustic-bko doing the load ("The rescue image as rescuer: +img"; ht1-bsd.sh
+takes it too).  `degraded` runs the source with its last disk
 detached, a RAID member's, so its arrays are degraded when it is dumped
 and backed up; `load` recreates them with `missing` slots onto one disk
 fewer, and the restored machine must boot degraded with the same slots
@@ -307,6 +352,9 @@ Each run also checks, as the plan asks:
   crypttab volume open (in the `degraded` variant an array may be
   degraded too), and load's log kept.  The same checks run on the
   source; one that fails there too isn't counted.
+- on an ostree source, its two deployments booted in turn, on the source
+  first and then on the restored disk, which must show what the source's
+  boots did ("The ostree guest" above).
 
 It differs from the plan above in these ways:
 
@@ -318,9 +366,9 @@ It differs from the plan above in these ways:
   (UEFI; Ubuntu's OpenZFS 2.4).  A UEFI source is rebuilt from the UEFI
   one, as the stick boots in the machine's firmware mode: grub-mkconfig
   writes a UEFI grub.cfg only there.  Build them on one host, copy them
-  to the other.  The `.img` needs bko-holt in the stick layer, an SSH key
-  (or the serial console) for `make-img.sh --test` images, and f2fs-tools,
-  nilfs-tools and 9p in the image.
+  to the other.  `HT_VARIANT=img` rebuilds from BackOtter's rescue `.img`
+  instead, its `--test` build driven through its serial console: see "The
+  rescue image as rescuer: +img".
 - **The share** is 9p, read-only, mounted at `/mnt/share` in the rescuer.
 - **bko-holt is built static** (`+crt-static`), so one binary dumps glibc and
   musl (Alpine) systems alike.
@@ -416,6 +464,84 @@ guest that is nearly full already, since the fill is written into the RAM
 disk: `pop24` (3.0 GiB free), `omarchy` (3.8), `mint22` (4.2).
 `ram-size.sh` adds 4 GiB to `nearfull`'s D for it; give the queue line its
 own `=D` if that isn't enough.
+
+## The rescue image as rescuer: +img
+
+`HT_VARIANT=img` (built 2026-11-10, for Test2's ImgTest2) runs the rebuild
+in BackOtter's own rescue image of the guest's system, its `--test` build,
+instead of the rescuer: ht1.sh for Linux, ht1-bsd.sh for FreeBSD, NetBSD,
+OpenBSD, DragonFly, illumos and Haiku.  It is the restore a user gets from
+the stick, onto an old target: the panel is `holt.img_panel` in
+`testvm/test2/classes.json`, 12 guests (`debian12`, `ubuntu24`,
+`rocky10-raid5`, `nixos2605`, `debian13-stack` and `aerynos` for Linux;
+`freebsd14`, `netbsd11`, `openbsd8`, `dragonfly6`, `omnios58` and
+`haiku6`), each in `RUN/GUEST-img`.
+
+- **The pin.** The run takes the image from
+  `$T2_HOST_ROOT/img-pin/PLATFORM/` (default `/bkoscratch/test2`), which
+  `t2-host tool img pin PLATFORM` fills: `rescuer.img`, a hard link of the
+  `--test` image (or a reflink copy), its sha256, and the image's own
+  bko-holt, rustic-bko and restic-bko, checked against the image's
+  `bko-bin.sha256`.  A run refuses with no pin or with `bins-stale` there,
+  and the rebuild checks that the pin is still the one the run started
+  with (a re-pin during the run is a harness FAIL).  HoltTest2 pins before
+  it runs `+img` cells and builds no bko-holt for them; by hand, pin first.
+- **Its binaries.** The load runs the image's own
+  `/usr/local/bin/bko-holt` and `/usr/local/bin/rustic-bko`
+  (`/boot/system/non-packaged/bin/` on Haiku), as a user's would; source
+  and backup take the pin's copies of the same two, so the dumps and the
+  load are one build.  On Linux nothing is installed in the image: the
+  setup checks every tool load may run (each `mkfs.*`, `zpool`, `zfs`,
+  `mdadm`, `cryptsetup`, `lvm`, `sgdisk`), and one missing is a FAIL.
+- **The boot.** The image is the first disk, through a 16 GiB throwaway
+  overlay, in the source's firmware mode (`--uefi`, and `--no-secure-boot`
+  where the guest has it), as a stick boots in the machine's own;
+  ht1-bsd.sh adds the rescuer guest's options (omnios58's
+  `--legacy-virtio-net`, haiku6's `--disk-bus sata`).
+  `img-boot.py LOG PLATFORM PUBKEY -- vm-run ...` runs it with the serial
+  console on its own stdin: at each `Choose [1-4]: ` it picks the shell,
+  types the run's public key into `/tmp/bko-k` and starts `sshd` with
+  command-line options (`AuthorizedKeysFile`, `PermitRootLogin
+  prohibit-password`, `AllowUsers`, no passwords), which win over the
+  image's own settings.  Nothing in the image file changes.  The menu, the
+  prompt and the typing rates are `stick/boot-test.py`'s.
+  `img-boot.d/PLATFORM.json` holds what differs: FreeBSD turns its line
+  editor off first, DragonFly is typed at 960 bytes a second, illumos adds
+  `/usr/lib/ssh` to the PATH and marks root `NP` (not locked) in the
+  RAM disk's `/etc/shadow`, and Haiku logs in as `user` on SATA disks.
+- **The key** is made for the run in R (`R/img-key`), deleted at the
+  rebuild's end and in `ht_release`, and never moved to K: so `+img` runs
+  only in the RAM disk (`HT_RAM=1` under a reservation) and refuses
+  `HT_KEEP=1` and `HT_CLEAN=0`.  No image carries a key.
+- **The repository.** Linux mounts the share over 9p, as its other runs
+  do.  On the other systems backup and verify keep the rescuer guest: its
+  disk holding the repository (through a throwaway overlay) is the image's
+  last disk, after the decoy, mounted read-only at `/tmp/bko-repo`.  On
+  illumos it keeps its serial, `bkoresc`, and the image's disk is `bkoimg`:
+  illumos opens a pool's whole-disk vdev by the devid its label records.
+- **Queues and sizes.** A todo line `GUEST+img` runs it; `ram-size.sh`
+  sizes it as its guest.
+
+First runs (2026-11-10 and 11-11, Test2's test worlds): `debian12`,
+`debian13-stack`, `aerynos`, `ubuntu24` and `rocky10-raid5` pass on the
+Linux image.  `nixos2605` failed: load made its bcachefs with the image's
+tools at on-disk version 1.39 where the source's was 1.13, and the
+restored disk booted but the host's `vm-mount` couldn't read it in verify.
+Load now formats at the source's `version_min` (`--version=1037`, e2b31ad),
+and on the image of 2026-11-11 built with that bko-holt `nixos2605` passes
+on both hosts.
+On the other systems' images of 2026-11-07 only `haiku6` passed.  The
+rest failed on defects that were fixed, not classed: the read-only roots
+(`mkdir: /mnt/bko-target: Read-only file system`: the builders now ship
+that directory, and FreeBSD's a tmpfs on `/mnt` for `zpool create -R`),
+NetBSD refusing bko-holt's second open of a block device (bko-holt keeps
+the first open), illumos importing the image's own disk as the pool (the
+serials above), and `refuse-root` let through on FreeBSD, NetBSD and
+DragonFly (bko-holt now knows the stick by its config partition's
+label).  On images rebuilt with those fixes, `freebsd14`, `netbsd11`,
+`dragonfly6`, `omnios58` and `haiku6` pass; `openbsd8` fails, rustic-bko
+killed out of swap during the restore (the image's VM has 3 GiB and no
+swap).
 
 ## Where a run works, and what it keeps
 
@@ -774,9 +900,11 @@ minutes.  Confirm a fix with a normal run after.
    command the others will run.
 2. `vm-run --uefi-vars FILE`, so the rescue VM and the restored boot share one
    UEFI variable store.  Today every run gets a fresh copy.
-3. 9p in the rescue image's kernel (`9pnet_virtio`, `9p`).  If it's missing,
-   the share becomes a small read-only virtio disk with serial `bko-share`.
-   `load` must then be given that disk as off-limits.
+3. ~~9p in the rescue image's kernel (`9pnet_virtio`, `9p`)~~: there, and
+   `+img` mounts the share with it on Linux (2026-11-10).  ht1-bsd.sh's
+   `+img` runs take the repository on a disk instead, as its other runs do:
+   the rescuer guest's, attached after the decoy and mounted read-only at
+   `/tmp/bko-repo`.
 4. ~~A builder for `debian13-stack`~~: done, `testvm/make-debian-stack.sh`
    (built from the host, since Debian's installer can't preseed LUKS on md),
    with an entry in `rebuild-one.sh`; built on Cinqcent and copied

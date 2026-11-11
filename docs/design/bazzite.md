@@ -12,7 +12,8 @@ see "What B4 found"; then B5 (SticTest1's `kinoite44` check): see "What B5
 found"; then B6 (HoltTest1): see "What B6 found"; then B7 (the golden
 plan and Test2): see "What B7 found"; then B8 (BackShot1 and its
 `kinoite44` rehearsal): see "What B8 found"; then B10 (the docs and
-memory, ahead of B9): see "What B10 found".
+memory, ahead of B9): see "What B10 found"; then B9 (BackShot1 on the
+Thinkpad), so far: see "What B9 found".
 
 **Conventions.** est. marks an estimate. *Check* marks a fact not yet seen, to be
 settled on the first guest (B1) or on the Thinkpad before the code that depends
@@ -1571,6 +1572,36 @@ in them waits on its result):
   has 0 of 62 holt cells current either way. holt's suite passed on
   Chopin in RAM (351 passed, 3 ignored; golden plans in check mode, none
   re-blessed).
+
+## What B9 found
+
+BackShot1 run `bazzite-44-20261111-173140` restored the Thinkpad's Bazzite
+44, and `bs1-verify` failed one check only, "files differ outside what a
+boot changes": 6 unexpected entries in compare.txt, all the restored
+system's first boot (logical paths, the default deployment's etc as
+etc/). testvm/ostree_paths.py now lists them, with where they were measured:
+
+- **REMADE** (the same but for the mtime): `etc/modprobe.d/tuned.conf`
+  (empty; tuned rewrites it at boot) and `etc/motd.d/boot-status`
+  (greenboot's "Greenboot healthcheck passed - status is GREEN"; a RED
+  line still fails).
+- **EXPECTED** `etc/systemd/system.control/user-*.slice.d/50-*.conf`: the
+  `systemctl set-property` drop-ins of user-967.slice (plasmalogin's
+  greeter account) are written again at each boot, CPUWeight, IOWeight
+  and MemoryMin with new *values* (MemoryMin=262144000 before; sizes 141
+  to 149 bytes; MemoryLow came back the same), which kinoite44's REMADE
+  `etc/systemd/system.control/*` (root's SSH slice, same content) didn't
+  excuse. Only the user slices' `50-*.conf` move to EXPECTED; any other
+  drop-in there, an administrator's set-property, stays REMADE.
+- **EXPECTED** `var/mnt/bs1-backup`: verify mounts the backup drive at
+  `/mnt/bs1-backup`, which on ostree is `var/mnt/bs1-backup` (`/mnt` links
+  to `var/mnt`); phase 1 had it at `/tmp/a`. Only the mountpoint: anything
+  under it still shows.
+
+The rollback deployment's etc still gets none of these (its paths keep
+their `ostree/deploy/...` names). Unit tests: 4 more in
+testvm/test2/tests/test_ostree_paths.py. The verify on the Thinkpad is
+still to be rerun with them.
 
 ## BackShot1 on the Thinkpad
 

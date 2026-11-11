@@ -225,6 +225,70 @@ class TestManifest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn(f"added: {DEP0}/etc/.updated", out)
 
+    def thinkpad_churn(self):
+        """The Thinkpad's Bazzite 44 (B9, run bazzite-44-20261111-173140):
+        what its first boot after the restore changed, in both deployments'
+        etc; returns the baseline."""
+        kinoite(self.root)
+        (self.root / "var" / "mnt").mkdir(parents=True)
+        for d in (DEP0, DEP1):
+            etc = self.root / d / "etc"
+            (etc / "modprobe.d").mkdir()
+            (etc / "modprobe.d" / "tuned.conf").write_text("")
+            (etc / "motd.d").mkdir()
+            (etc / "motd.d" / "boot-status").write_text("Greenboot healthcheck passed - status is GREEN\n")
+            slice_d = etc / "systemd" / "system.control" / "user-967.slice.d"
+            slice_d.mkdir(parents=True)
+            (slice_d / "50-MemoryMin.conf").write_text("[Slice]\nMemoryMin=262144000\n")
+            svc = etc / "systemd" / "system.control" / "foo.service.d"
+            svc.mkdir()
+            (svc / "50-CPUWeight.conf").write_text("[Service]\nCPUWeight=50\n")
+        return self.manifest("a.tsv")
+
+    def test_thinkpad_boot_churn_is_expected(self):
+        a = self.thinkpad_churn()
+        self.touch(f"{DEP1}/etc/modprobe.d/tuned.conf")             # REMADE
+        self.touch(f"{DEP1}/etc/motd.d/boot-status")                # REMADE
+        self.touch(f"{DEP1}/etc/systemd/system.control/foo.service.d/50-CPUWeight.conf")     # REMADE
+        self.touch(f"{DEP1}/etc/systemd/system.control/user-967.slice.d/50-MemoryMin.conf",
+                   "[Slice]\nMemoryMin=274726912\n")                 # EXPECTED: new values
+        (self.root / "var" / "mnt" / "bs1-backup").mkdir()          # EXPECTED: verify's mountpoint
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 0, out)
+
+    def test_thinkpad_churn_content_is_not(self):
+        a = self.thinkpad_churn()
+        self.touch(f"{DEP1}/etc/motd.d/boot-status", "Greenboot healthcheck failed - status is RED\n")
+        self.touch(f"{DEP1}/etc/modprobe.d/tuned.conf", "options x y\n")
+        # An administrator's set-property drop-in keeps its values.
+        self.touch(f"{DEP1}/etc/systemd/system.control/foo.service.d/50-CPUWeight.conf", "[Service]\nCPUWeight=10\n")
+        (self.root / "var" / "mnt" / "bs1-backup" / "x").mkdir(parents=True)     # only the mountpoint
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 1)
+        for p in (f"changed: {DEP1}/etc/motd.d/boot-status", f"changed: {DEP1}/etc/modprobe.d/tuned.conf",
+                  f"changed: {DEP1}/etc/systemd/system.control/foo.service.d/50-CPUWeight.conf",
+                  "added: var/mnt/bs1-backup/x"):
+            self.assertIn(p, out)
+        self.assertNotIn("added: var/mnt/bs1-backup\n", out)
+
+    def test_thinkpad_churn_in_rollback_etc_is_not(self):
+        a = self.thinkpad_churn()
+        self.touch(f"{DEP0}/etc/modprobe.d/tuned.conf")
+        self.touch(f"{DEP0}/etc/systemd/system.control/user-967.slice.d/50-MemoryMin.conf",
+                   "[Slice]\nMemoryMin=274726912\n")
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 1)
+        self.assertIn(f"changed: {DEP0}/etc/modprobe.d/tuned.conf", out)
+        self.assertIn(f"changed: {DEP0}/etc/systemd/system.control/user-967.slice.d/50-MemoryMin.conf", out)
+
+    def test_var_mnt_is_ostree_only(self):
+        (self.root / "var" / "mnt").mkdir(parents=True)
+        a = self.manifest("a.tsv")
+        (self.root / "var" / "mnt" / "bs1-backup").mkdir()
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 1)
+        self.assertIn("added: var/mnt/bs1-backup", out)
+
     def test_old_manifest_without_the_row(self):
         kinoite(self.root)
         a = self.manifest("a.tsv")

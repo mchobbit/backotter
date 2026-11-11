@@ -24,7 +24,8 @@ etc/ stands for the system's /etc, so only its paths are matched against the
 lists of expected differences as etc/...; every other deployment's etc keeps
 its own path and gets no exceptions.  EXPECTED and REMADE are what booting an
 ostree system changes beyond the lists for any Linux, as logical paths:
-measured on kinoite44 (B1's two-boot manifest diff).
+measured on kinoite44 (B1's two-boot manifest diff), and on the Thinkpad's
+Bazzite 44 (B9: BackShot1 run bazzite-44-20261111-173140).
 """
 
 from __future__ import annotations
@@ -37,12 +38,26 @@ DEPLOY = "ostree/deploy"
 
 # What booting changes, beyond bs1-manifest's lists for every system (B1:
 # nothing more; var/tmp, var/cache, var/lib, var/log and boot/efi/NvVars are
-# those lists').
-EXPECTED: list[str] = []
+# those lists').  Measured on the Thinkpad's Bazzite 44 (B9, BackShot1 run
+# bazzite-44-20261111-173140):
+# - a user slice's resource settings: "systemctl set-property" drop-ins
+#   (50-CPUWeight.conf, 50-IOWeight.conf, 50-MemoryMin.conf, 50-MemoryLow.conf)
+#   for user-967.slice, plasmalogin's greeter account, written again at each
+#   boot with new values (MemoryMin=262144000 before, another after).  Only
+#   the user slices' 50-*.conf: any other drop-in there (an administrator's
+#   set-property) stays under REMADE, the same but for the mtime.
+# - var/mnt/bs1-backup: verify mounts the backup drive at /mnt/bs1-backup,
+#   which on ostree is var/mnt/bs1-backup (/mnt links to var/mnt); phase 1
+#   had it at /tmp/a.  bs1-manifest's own "mnt/bs1-backup" is the others'.
+EXPECTED = ["etc/systemd/system.control/user-*.slice.d/50-*.conf", "var/mnt/bs1-backup"]
 # Rewritten at every boot, the same but for the mtime: plasma-setup's
 # autologin setting, tuned's state, and systemd's per-slice settings of a
-# root login (SSH's).
-REMADE = ["etc/plasmalogin.conf.d/*", "etc/tuned/*", "etc/systemd/system.control/*"]
+# root login (SSH's; kinoite44, B1).  On the Thinkpad's Bazzite 44 (B9, run
+# bazzite-44-20261111-173140) also tuned's modprobe.d file (empty) and
+# greenboot's motd line ("Greenboot healthcheck passed - status is GREEN"):
+# a failed healthcheck changes the line, so it isn't EXPECTED.
+REMADE = ["etc/plasmalogin.conf.d/*", "etc/tuned/*", "etc/systemd/system.control/*",
+          "etc/modprobe.d/tuned.conf", "etc/motd.d/boot-status"]
 
 _DEPLOYMENT = re.compile(r"ostree/deploy/[^/]+/deploy/[^/]+\.[0-9]+")
 

@@ -380,7 +380,11 @@ def boots_from_fallback(dump):
 #             own option, which Alpine's GRUB refuses: no --removable
 #   fail-004  ext4 with 1 KiB blocks: load's -E resize= gives one reserved GDT
 #             block more than the layout's: no 1 KiB blocks
-KNOWN = ("fail-002", "fail-003", "fail-004")
+#   fail-005  --fit-largest shrinking an ext filesystem keeps its inode count,
+#             so where that count no longer fits the fewer groups at 8 x
+#             block size each, mke2fs cuts blocks per group: no target that
+#             shrinks one that far (fitcalc.ext_inodes_past_groups)
+KNOWN = ("fail-002", "fail-003", "fail-004", "fail-005")
 
 
 def boot_parts(d):
@@ -456,13 +460,15 @@ def generate(source_name, source_gen, dump, seed, caps=None, n_edits=None, with_
     opts = avoid_known(dump, d, edits, opts)
     if "--fit-largest" in opts:
         pct = int(opts[opts.index("--fit-largest") + 1])
-        bad = fitcalc.fits_after(d, targets, pct, planted)
+        bad = [f"rule 1: {w}" for _, w in fitcalc.fits_after(d, targets, pct, planted)]
+        if not bad and "fail-005" in KNOWN:
+            bad = fitcalc.ext_inodes_past_groups(d, targets, pct)
         if bad:
             i = opts.index("--fit-largest")
             del opts[i:i + 2]
             edits = [e for e in edits if e["op"] != "target_size"]
             targets = {dk["name"]: dk["size_bytes"] for dk in dumpx.disks(d)}
-            stats.discard("target_size", f"rule 1: {bad[0][1]}")
+            stats.discard("target_size", bad[0])
     case = {"source": f"{source_name}@{source_gen}" if source_gen else source_name, "seed": seed, "generator": GENERATOR,
             "edits": edits, "load_options": opts}
     if any(e["op"] == "target_size" for e in edits):

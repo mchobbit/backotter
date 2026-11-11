@@ -6,7 +6,7 @@ needs, and whether the data still fits once the largest partition shrinks.
 import importlib.util
 import os
 
-from . import dumpx, rules
+from . import dumpx, geometry, rules
 
 _judge = None
 
@@ -79,6 +79,57 @@ def fits_after(drifted, targets, pct, planted=None):
                 need = int(used * rules.MARGIN) + rules.overhead(c) + extra
                 if need > size:
                     out.append((1, f"after --fit-largest, {dev['name']} has {size} bytes for {need}"))
+    return out
+
+
+def fs_blocks(drifted, targets, pct):
+    """{device name: blocks} the fit should give each ext or XFS filesystem
+    it remakes, from judge.py's plan of what each device gains or loses: the
+    source's own slack is kept, so a filesystem loses what its device does,
+    and gains it only where it filled the device (holt/src/load/fit.rs
+    resize_fs, in whole blocks)."""
+    pl = plan(drifted, targets, pct)
+    if not pl or pl["problems"]:
+        return {}
+    st = dumpx.storage(drifted)
+    devs = []
+    for i, dd in pl["disks"].items():
+        if dd.get("amount") and dd.get("big") is not None:
+            devs.append((st["disks"][i]["partitions"][dd["big"]], dd["amount"]))
+    for i, amount in pl["dm"].items():
+        devs.append((st["dm_devices"][i], amount))
+    out = {}
+    for dev, amount in devs:
+        c = dev.get("content") or {}
+        bs = c.get("block_size")
+        if c.get("type") not in ("ext2", "ext3", "ext4", "xfs") or not bs or not c.get("blocks"):
+            continue
+        size = c.get("size_bytes") or c["blocks"] * bs
+        if amount < 0 or size == dev.get("size_bytes"):
+            size += amount
+        out[dev["name"]] = size // bs
+    return out
+
+
+def ext_inodes_past_groups(drifted, targets, pct):
+    """fail-005's trigger: an ext filesystem the fit shrinks to fewer groups
+    than its inodes fit in at 8 x block size a group (the most an inode
+    bitmap block holds).  load's mke2fs keeps the source's inode count
+    (-N) at the source's blocks per group (-g), so mke2fs cuts blocks per
+    group until they fit, where resize2fs keeps it.  [why] for each."""
+    out = []
+    devs = dumpx.devices(drifted)
+    for name, nb in fs_blocks(drifted, targets, pct).items():
+        c = (devs.get(name) or {}).get("content") or {}
+        if c.get("type") not in ("ext2", "ext3", "ext4") or not c.get("blocks_per_group") or nb >= c["blocks"]:
+            continue
+        try:
+            g = geometry.ext4_resize2fs(c, nb)
+        except geometry.Invalid:
+            continue
+        groups = g["inodes"] // c["inodes_per_group"]
+        if c["inodes"] > groups * 8 * c["block_size"]:
+            out.append(f"fail-005: {name}'s {c['inodes']} inodes in {groups} groups of at most {8 * c['block_size']}")
     return out
 
 

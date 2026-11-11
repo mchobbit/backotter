@@ -107,6 +107,47 @@ def ext4(blocks, block_size, inodes_per_group, inode_size, reserved_gdt, feature
     return out
 
 
+def ext4_resize2fs(c, blocks):
+    """C (an ext2/3/4 content record) as resize2fs leaves it on BLOCKS
+    blocks (resize2fs.c adjust_fs_info): the same blocks and inodes per
+    group, so as many groups as the blocks need, a last group too small for
+    its own overhead dropped, and their inodes; the reserved GDT blocks take
+    up what the descriptors no longer need (or give it), the reserved
+    blocks keep their share.  What --fit-largest should make of a fitted
+    ext filesystem, and what mke2fs -N (groups x inodes per group) -g makes
+    at that size."""
+    bs, bpg, ipg = c["block_size"], c["blocks_per_group"], c["inodes_per_group"]
+    feats = c.get("features") or []
+    first = c.get("first_data_block", 1 if bs == 1024 else 0)
+    dsz = (c.get("descriptor_size") or 64) if "64bit" in feats else 32
+    gdpb = bs // dsz
+    rsv = c.get("reserved_gdt_blocks", 0) if "resize_inode" in feats else 0
+    old_db = cdiv(ext4_groups(c), gdpb)
+    ibpg = cdiv(ipg * c["inode_size"], bs)
+    while True:
+        if blocks - first <= 0:
+            raise Invalid("no blocks")
+        groups = cdiv(blocks - first, bpg)
+        db = cdiv(groups, gdpb)
+        rem = (blocks - first) % bpg
+        over = 2 + ibpg
+        if _ext_has_super(groups - 1, "sparse_super" in feats):
+            over += 1 + db + rsv
+        if groups == 1 and rem and rem < over:
+            raise Invalid("too small")
+        if groups > 1 and rem and rem < over + 50:
+            blocks -= rem
+            continue
+        break
+    out = {"blocks": blocks, "size_bytes": blocks * bs, "blocks_per_group": bpg, "first_data_block": first,
+           "inodes_per_group": ipg, "inodes": groups * ipg}
+    if "resize_inode" in feats:
+        out["reserved_gdt_blocks"] = max(0, min(bs // 4, rsv + old_db - db))
+    if c.get("reserved_blocks") is not None and c.get("blocks"):
+        out["reserved_blocks"] = c["reserved_blocks"] * blocks // c["blocks"]
+    return out
+
+
 def ext4_groups(c):
     return cdiv(c["blocks"] - c.get("first_data_block", 0), c["blocks_per_group"])
 

@@ -26,7 +26,7 @@ import re
 import shlex
 import subprocess
 
-from . import case as C, dumpx, sweep
+from . import case as C, dumpx, geometry, sweep
 
 EXT_FIELDS = {"Block count": "blocks", "Inode count": "inodes", "Block size": "block_size", "Inode size": "inode_size",
               "Reserved GDT blocks": "reserved_gdt_blocks", "Inodes per group": "inodes_per_group",
@@ -279,9 +279,16 @@ def with_lazy(argv):
     return a
 
 
-def dry_runs(tools, name, plan, drifted, targets, fitted, shifts=None):
+def dry_runs(tools, name, plan, drifted, targets, fitted, shifts=None, fit_blocks=None):
     """[(verdict, why)] from the dry runs; empty: they agree.  FITTED: the
-    device names --fit-largest resizes (their sizes are the fit's)."""
+    device names --fit-largest resizes (their sizes are the fit's);
+    FIT_BLOCKS, the block counts judge.py's fit gives their filesystems.
+
+    A fitted ext filesystem is expected as resize2fs would leave the
+    layout's at its fitted size (geometry.ext4_resize2fs), and the
+    generator's own command is run for that: so a load that makes another
+    geometry at that size (fail-005) is a FAIL, not judged against the
+    layout's unfitted record."""
     out = []
     by_uuid = {}
     for dev, c in dumpx.filesystems(drifted):
@@ -324,6 +331,15 @@ def dry_runs(tools, name, plan, drifted, targets, fitted, shifts=None):
         dev, want = by_uuid[u]
         devnode = next((a for a in argv if a.startswith("/dev/")), None)
         skip = FIT_CHANGES if dev["name"] in fitted else set()
+        modelled = False
+        if argv[0] == "mke2fs" and dev["name"] in fitted and want.get("blocks_per_group"):
+            nb = (fit_blocks or {}).get(dev["name"]) or cmd_bytes(argv) // want["block_size"]
+            try:
+                want = dict(want, **geometry.ext4_resize2fs(want, nb))
+                modelled = True
+            except geometry.Invalid as e:
+                out.append(("INVALID", f"{dev['name']} ext4: resize2fs to {nb} blocks: {e}"))
+                continue
         size = max(dumpx.size_of(dev), (want.get("blocks") or 0) * (want.get("block_size") or 0), cmd_bytes(argv)) + (1 << 20)
         inside, real = tools.scratch_file(f"{name}.fs", size)
         mine = [inside if a == devnode else a for a in argv]
@@ -340,7 +356,9 @@ def dry_runs(tools, name, plan, drifted, targets, fitted, shifts=None):
             if diffs:
                 crc, ctxt = tools.run(canon_mke2fs(want, inside))
                 cgot = read_ext(tools, inside)[0] if crc == 0 else None
-                cdiffs = compare(want, cgot or {}, [k for k in EXT_FIELDS.values() if k != "reserved_blocks"], skip) if cgot else [f"refused: {ctxt.strip()[-200:]}"]
+                # The resize2fs model is checked whole, against the source's mke2fs.
+                cdiffs = compare(want, cgot or {}, [k for k in EXT_FIELDS.values() if k != "reserved_blocks"],
+                                 () if modelled else skip) if cgot else [f"refused: {ctxt.strip()[-200:]}"]
                 verdict = "INVALID" if cdiffs else "FAIL"
                 out.append((verdict, f"{dev['name']} ext4: load's mke2fs: {'; '.join(diffs)}"
                                      + (f"; the generator's own: {'; '.join(cdiffs)}" if cdiffs else "")))
@@ -408,6 +426,14 @@ def fitted_devices(drifted, targets, case):
     return out
 
 
+def fit_blocks(drifted, targets, case):
+    """{device name: blocks} the fit gives each filesystem it remakes (fitcalc.fs_blocks)."""
+    if "--fit-largest" not in (case.get("load_options") or []):
+        return {}
+    from . import fitcalc
+    return fitcalc.fs_blocks(drifted, targets, sweep.expected(case)["fit"])
+
+
 def judge_one(name, case, drifted, targets, res, tools, caps):
     """A case's tier 0 verdict and its reasons."""
     if "error" in res:
@@ -422,7 +448,8 @@ def judge_one(name, case, drifted, targets, res, tools, caps):
     if tools is None:
         return "PASS", ["planned; no dry runs (no source tools here)"]
     try:
-        found = dry_runs(tools, name, res["out"], drifted, targets, fitted_devices(drifted, targets, case), fit_shifts(drifted, targets, case))
+        found = dry_runs(tools, name, res["out"], drifted, targets, fitted_devices(drifted, targets, case),
+                         fit_shifts(drifted, targets, case), fit_blocks(drifted, targets, case))
     except (OSError, subprocess.SubprocessError) as e:
         return "HARNESS", [f"dry runs: {e}"]
     for v in ("INVALID", "FAIL"):

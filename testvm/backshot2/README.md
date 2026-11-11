@@ -80,7 +80,10 @@ Unit tests: `python3 -m unittest discover -s testvm/backshot2/tests`.
   today's load refuses it ("isn't built yet").  judge.py's `--new-uuids` mode
   is built and tested for when it is.
 - **`fat_geometry`** isn't drawn: the spec puts it at tier 3.  An ESP that
-  moves keeps its FAT; its hidden sectors follow its start.
+  moves keeps its FAT; its hidden sectors follow its start where they
+  recorded it (0 stays 0), as load moves them.
+- **A fitted ext filesystem** is expected as resize2fs would leave it
+  (the same blocks and inodes per group, fewer or more groups), at tier 0 too.
 - **Moving partitions a UEFI boot entry names** (by start and number) is
   refused in phase 1; the QEMU sources have none such.
 - **MBR renumbering** changes the partition's PARTUUID (signature and

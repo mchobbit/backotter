@@ -224,6 +224,29 @@ class TestModels(unittest.TestCase):
         with self.assertRaises(Invalid):
             GE.ext4(32768 * 3 + 30, 4096, 8192, 256, 127, c["features"])
 
+    def test_ext4_resize2fs_keeps_the_groups_geometry(self):
+        # fail-005's layout (ipg 32096, 108 groups) on a 4 KiB-block source's
+        # features, fitted 444 MiB smaller: resize2fs keeps 32768 blocks and
+        # 32096 inodes a group, with fewer groups (mke2fs given the source's
+        # inode count instead has to cut blocks per group).
+        base = dumpx.part(dumpx.disk(corpus("ubuntu26-uefi")), 2)["content"]
+        c = dict(base, blocks=3538432, inodes_per_group=32096, inodes=3466368, reserved_gdt_blocks=261, reserved_blocks=176921)
+        n = 3538432 - 444 * 256
+        g = GE.ext4_resize2fs(c, n)
+        self.assertEqual((g["blocks"], g["blocks_per_group"], g["inodes_per_group"]), (n, 32768, 32096))
+        self.assertEqual(g["inodes"], 105 * 32096)
+        self.assertGreater(c["inodes"], 105 * 8 * 4096)   # what fail-005 trips on: -N past groups x 8 x block size
+        # Descriptors: 108 and 105 groups both take 2 blocks (64 to a block), so the reserve stays.
+        self.assertEqual(g["reserved_gdt_blocks"], 261)
+        # The same numbers as the generator's own mke2fs model at that size.
+        m = GE.ext4(n, 4096, 32096, 256, 261, c["features"], 64)
+        for k in ("blocks", "inodes", "inodes_per_group", "blocks_per_group"):
+            self.assertEqual(g[k], m[k], k)
+        # A last group too small for its overhead is dropped; growing past a
+        # descriptor block's 64 groups takes a reserved GDT block.
+        self.assertEqual(GE.ext4_resize2fs(c, 32768 * 100 + 10)["blocks"], 32768 * 100)
+        self.assertEqual(GE.ext4_resize2fs(c, 32768 * 129)["reserved_gdt_blocks"], 260)
+
     def test_mke2fs_resize_inverts_its_own_formula(self):
         c = dumpx.part(dumpx.disk(ALPINE), 1)["content"]
         c1 = dict(c, block_size=1024, blocks=1048574, blocks_per_group=8192, first_data_block=1, reserved_gdt_blocks=127)
@@ -326,6 +349,42 @@ class TestGenerator(unittest.TestCase):
             back = C.read(p)
         self.assertEqual(back, json.loads(json.dumps(c)))
         self.assertEqual(C.case_hash(back), C.case_hash(c))
+
+    def test_steers_around_fail_005(self):
+        # An ext4 / whose inode count needs nearly all of its groups at 8 x
+        # block size each: a fit that takes a few groups away trips fail-005.
+        d = copy.deepcopy(corpus("ubuntu26-uefi"))
+        d["boot"]["efi"]["entries"] = []
+        d = E.apply(d, [E.build(d, "resize", {"disk": "vda", "partition": 2, "by_sectors": -6144})])
+        rsv = dumpx.part(dumpx.disk(d), 2)["content"]["reserved_gdt_blocks"]
+        d = E.apply(d, [E.build(d, "ext4_geometry", {"fs": "vda2", "inodes_per_group": 32096, "reserved_gdt_blocks": rsv})])
+        size = dumpx.disk(d)["size_bytes"]
+        small, big = {"vda": size - (64 << 20)}, {"vda": size - (1 << 30)}
+        self.assertEqual(fitcalc.ext_inodes_past_groups(d, small, fitcalc.pct_needed(d, small)), [])
+        self.assertEqual(fitcalc.ext_inodes_past_groups(d, big, fitcalc.pct_needed(d, big)),
+                         ["fail-005: vda2's 3915712 inodes in 114 groups of at most 32768"])
+        # Tier 0's dry run expects the fitted size judge.py works out, as
+        # resize2fs would leave it: 114 groups of 32,096 inodes, 32,768 blocks.
+        from bs2lib import tier0 as T0
+        nb = T0.fit_blocks(d, big, {"load_options": ["--fit-largest", "7"]})
+        self.assertEqual(nb, {"vda2": 3736320})
+        g = GE.ext4_resize2fs(dumpx.part(dumpx.disk(d), 2)["content"], nb["vda2"])
+        self.assertEqual((g["blocks_per_group"], g["inodes"]), (32768, 114 * 32096))
+        # Seed 99 draws a target that far down; with fail-005 known, the draw
+        # keeps the rest of the case and drops the target and its fit.
+        known = G.KNOWN
+        try:
+            G.KNOWN = tuple(k for k in known if k != "fail-005")
+            c = G.generate("t", None, d, 99, n_edits=0, with_content=False)
+            self.assertIn("--fit-largest", c["load_options"])
+            G.KNOWN = known
+            st = G.Stats()
+            c = G.generate("t", None, d, 99, n_edits=0, with_content=False, stats=st)
+        finally:
+            G.KNOWN = known
+        self.assertNotIn("--fit-largest", c["load_options"])
+        self.assertFalse(any(e["op"] == "target_size" for e in c["edits"]))
+        self.assertIn("target_size: fail-005", st.discarded)
 
     def test_new_uuids_only_when_built(self):
         for seed in range(100):

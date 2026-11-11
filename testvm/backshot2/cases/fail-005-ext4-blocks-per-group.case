@@ -1,0 +1,13 @@
+{
+ "name": "fail-005-ext4-blocks-per-group",
+ "source": "alpine324-uefi@img:6c42511f2374967e576dede9fc621d38edd860feb7a839e40cc20bdbb7d4ca7a",
+ "seed": 402,
+ "generator": "1",
+ "edits": [
+   {"fs": "vda3", "inodes_per_group": 32096, "op": "ext4_geometry", "reserved_gdt_blocks": 261, "sets": {"vda3": {"content": {"block_size": 4096, "blocks": 3538432, "blocks_per_group": 32768, "first_data_block": 0, "flex_bg_size": 16, "inode_size": 256, "inodes": 3466368, "inodes_per_group": 32096, "reserved_blocks": 176921, "reserved_gdt_blocks": 261, "size_bytes": 14493417472}}}},
+   {"by_bytes": -464835584, "disk": "vda", "op": "target_size"}],
+ "target": {"vda": {"size_bytes": 16715033600}},
+ "load_options": ["--fit-largest", "9"],
+ "failed": {"check": "DEV extN: load's mkeNfs: blocks_per_group: layout X, made X", "excerpt": ["vda3 ext4: load's mke2fs: blocks_per_group: layout 32768, made 32592", "fit.rs resize_fs(): shrinking an ext filesystem sets only its blocks; its inodes stay the source's, so mke2fs -N asks for more inodes than the fewer groups can hold at -g 32768 (inodes per group at most 8 x block size), and mke2fs cuts blocks per group until they fit", "resize2fs of the layout's filesystem to the same size keeps 32768 blocks and 32096 inodes per group, with fewer groups and fewer inodes; -N (groups x inodes per group) makes exactly that"], "tier": 0},
+ "from": "alpine324-uefi-ff08faaa1011aa0b (tier 0, Chopin, run bs2a-t0-2, 2026-11-10; shrunk at tier 0 2026-11-11); also alpine324-uefi-9e6752d23f7e7d92 (bs2a-20261110-2157's tier 0, --fit-largest 24) and -e8ee352e78280f8e (bs2a-t0-2, vda7, 2 KiB blocks, --fit-largest 8)",
+ "finding": "bko-holt"}

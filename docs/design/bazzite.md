@@ -1,4 +1,4 @@
-# Bazzite and ostree support (for approval)
+# Bazzite and ostree support (approved)
 
 2026-11-11. Came out of "Let's do BackShot1": the Thinkpad now runs Bazzite 44,
 and `backshot1 preflight` stops with "/ isn't on nvme0n1". bko-holt has no
@@ -658,6 +658,8 @@ the user says so.
 - Changes to the rescue image beyond `attr`, if it lacks it.
 
 ## Decisions for the user
+
+**Approved by the user on 2026-11-11, with every recommended option.**
 
 1. **Guests:** `kinoite44` alone, with a second deployment like the Thinkpad's
    (recommended: Bazzite's base, fits the RAM disk; the Thinkpad is the

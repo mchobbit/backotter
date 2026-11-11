@@ -389,6 +389,15 @@ class TestContent(unittest.TestCase):
         # The same entries and indexes, so a shrunk case's "only" still means the same.
         self.assertEqual([(x["i"], x["path"]) for x in a], [(x["i"], x["path"]) for x in b])
         self.assertEqual(long(CT.plan(c, "ext4", symlink_max=1023)), 1023)
+        # bs2-host plant takes the tighter of the source's limit (planted
+        # there first) and the restored layout's: a 1 KiB-block source.
+        self.assertEqual(CT.fs_symlink_max("ext4", 1024), 1023)
+        self.assertEqual(CT.fs_symlink_max("xfs", 4096), 1024)
+        self.assertIsNone(CT.fs_symlink_max("btrfs", 4096))
+        self.assertEqual(CT.tightest(CT.fs_symlink_max("ext4", 1024), lim), 1023)
+        self.assertEqual(CT.tightest(CT.fs_symlink_max("ext4", 4096), lim), 2047)
+        self.assertEqual(CT.tightest(None, None), None)
+        self.assertEqual(long(CT.plan(c, "ext4", symlink_max=CT.tightest(CT.fs_symlink_max("ext4", 1024), lim))), 1023)
 
     def test_only_keeps_hardlinks_whole(self):
         a = CT.plan({"recipe": "alpine-small-2", "seed": 3}, "ext4")

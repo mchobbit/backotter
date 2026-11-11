@@ -361,10 +361,16 @@ def _content_fs(root):
 def cmd_plant(a):
     from bs2lib import content as CT
     c = C.read(a.case)
-    # The long symlink is sized for the filesystem restored onto as well
-    # (ext4's limit is its block size, which an ext4_geometry may shrink).
-    lim = CT.symlink_max(dumpx.load(a.layout)) if a.layout else None
-    entries = CT.plan(c["content"], _content_fs(a.root), symlink_max=lim)
+    # The long symlink must fit the source's filesystem, planted here, and
+    # the one restored onto (ext4's limit is its block size less one, which
+    # an ext4_geometry may shrink): the tighter of the two.
+    fs = _content_fs(a.root)
+    at = a.root + CT.DIR
+    while not os.path.isdir(at) and at != a.root:
+        at = os.path.dirname(at)
+    lim = CT.tightest(CT.fs_symlink_max(fs, os.statvfs(at).f_bsize),
+                      CT.symlink_max(dumpx.load(a.layout)) if a.layout else None)
+    entries = CT.plan(c["content"], fs, symlink_max=lim)
     fails = CT.plant(a.root, entries)
     for i, why in fails:
         print(f"could not plant entry {i}: {why}")

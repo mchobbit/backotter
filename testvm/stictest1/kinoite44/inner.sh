@@ -77,7 +77,7 @@ for FS in btrfs ext4 vfat; do
         ext4_feat $W/src$FS.img >>$L/env.txt
     fi
     echo >>$L/env.txt
-    bash $B/fixture.sh $S $FS 2>$L/fixture.err
+    OSTREE_REC=$L/ostree-real.txt bash $B/fixture.sh $S $FS 2>$L/fixture.err
     P=$S/up1/up2/tree
     [[ $FS == btrfs ]] && fsck_all $S src
     sync; python3 $B/fsmeta.py record $S $L/src.json

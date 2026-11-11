@@ -248,10 +248,26 @@ if FS == "btrfs":
         if diffs.get(d) is None: bad.append(f"{NAMES[d]}: no record"); continue
         ps = [p for p in diffs[d].get("hard links", []) if in_ostree(p) and p not in OSYM]
         if ps: bad.append(f"{NAMES[d]}: {len(ps)} e.g. {ps[:2]}")
-    n3 = {a: sum(1 for x in gf[a] if len(x) == 3) for a in gf}
-    if not all(n3.values()): bad.append(f"fixture: groups of 3 links made/real {n3}: {rd('fixture.err')[-300:]!r}")
+    # The source: made/'s groups are of 3 (repo object, .0, .1); real/'s of
+    # 1 + the deployments that link each object (ostree.sh's record): 3 while
+    # the guest's two deployments are one commit, 2 for an object a merged
+    # vm-update changed (B4: the old .1 is then another commit's rollback).
+    n3 = sum(1 for x in gf["made"] if len(x) == 3)
+    RP = OSTREE + "/real/"
+    rec = [l.split() for l in rd("ostree-real.txt").splitlines() if l.strip()]
+    robj = {RP + x[1]: int(x[2]) for x in rec if x[0] == "obj" and len(x) == 3}
+    rdep = sorted(RP + x[1] for x in rec if x[0] == "dep" and len(x) == 2)
+    rbad = [f"{p[len(RP):]} {len(src.get(p, {}).get('links') or [p])} links, want {1 + k}" for p, k in robj.items()
+            if k < 1 or len(src.get(p, {}).get("links") or [p]) != 1 + k]
+    rfile = [p for p in robj if src.get(p, {}).get("type") == "file"]
+    rn = {}
+    for p in rfile: rn[1 + robj[p]] = rn.get(1 + robj[p], 0) + 1
+    if not n3: bad.append(f"fixture: no group of 3 links in made/: {rd('fixture.err')[-300:]!r}")
+    if not rfile: bad.append(f"fixture: no regular object recorded in real/ (ostree-real.txt): {rd('fixture.err')[-300:]!r}")
+    if rbad: bad.append(f"fixture: real/ groups not as recorded: {rbad[:4]}")
     line("FAIL" if bad else "PASS", "ostree regular objects hardlinked into both deployments (nlink 3)",
-         "; ".join(bad)[:900] if bad else f"made {len(gf['made'])} and real {len(gf['real'])} groups ({n3['made']} and {n3['real']} of 3: repo object, .0, .1) kept in {len(ALL)} restores")
+         "; ".join(bad)[:900] if bad else f"made {len(gf['made'])} groups ({n3} of 3: repo object, .0, .1) and real {len(gf['real'])} groups "
+         f"(regular objects by links: {', '.join(f'{v} of {k}' for k, v in sorted(rn.items()))}; repo object and each of {len(rdep)} deployments' links) kept in {len(ALL)} restores")
     # Hardlinked symlinks: kept, or each one a separate symlink (accepted:
     # composefs and ostree fsck read a symlink's target and xattrs only).
     lost = {}
@@ -279,9 +295,11 @@ if FS == "btrfs":
         for p in deps:
             f = ((full.get(d) or {}).get(p) or {}).get("flags")
             if f is None or not f & 0x10: bad.append(f"{NAMES[d]}: {p[len(OSTREE) + 1:]} flags {f}")
-    if len(deps) != 4: bad.append(f"{len(deps)} deployment roots in the source, not 4: {deps}")
+    mdep = [p for p in deps if p.startswith(OSTREE + "/made/")]
+    if len(mdep) != 2 or not rdep or sorted(p for p in deps if p.startswith(RP)) != rdep:
+        bad.append(f"{len(deps)} deployment roots in the source, not 2 made and real's {len(rdep)} recorded: {deps}")
     line("FAIL" if bad else "PASS", "ostree deployment roots keep the immutable flag (+i)",
-         "; ".join(bad)[:900] if bad else f"{len(deps)} roots (made .0 .1, real .0 .1) +i in the source and {len(ALL)} restores")
+         "; ".join(bad)[:900] if bad else f"{len(deps)} roots (made .0 .1, real {' '.join(n[:8] + '.' + n.rsplit('.', 1)[1] for n in (p.rsplit('/', 1)[1] for p in rdep))}) +i in the source and {len(ALL)} restores")
     # Labels on bare objects (the label is part of each object's checksum).
     lab = [p for p in objs if "security.selinux" in src[p]["xattrs"]]
     bad = [f"{NAMES[d]}: {len(ps)} e.g. {ps[:2]}" for d in ALL if diffs.get(d)

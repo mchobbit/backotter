@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # SticTest1's targeted check for kinoite44 (Fedora Kinoite 44, ostree: the
 # physical root is btrfs subvolume root at /sysroot, holding ostree/repo
-# (mode=bare) and two deployments of one commit; ext4 /boot, vfat ESP
+# (mode=bare) and two deployments, one commit as B1 built it and two after
+# a merged vm-update (B4); ext4 /boot, vfat ESP
 # /boot/efi, SELinux enforcing; docs/design/bazzite.md): boots a throwaway
 # overlay (vm-run --snapshot) with a spare disk, builds the fixture
 # (fixture.sh, and on btrfs ostree.sh's repositories: objects hardlinked into

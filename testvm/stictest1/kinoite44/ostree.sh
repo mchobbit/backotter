@@ -10,11 +10,18 @@
 #     object hardlinked into both, nlink 3; each its own etc; the roots +i),
 #     and the boot.1 -> boot.1.1 chain.  `ostree fsck` proves it whole
 #     before the backup and after each restore (inner.sh).
-#   real/ostree: real objects of /sysroot/ostree/repo and both deployments'
-#     paths to them, copied in one cp -a (so linked as on the guest, nlink 3
-#     within the copy, labels kept), the deployment roots +i.
+#   real/ostree: real objects of the booted commit in /sysroot/ostree/repo
+#     and every deployment's path that is a link to them, copied in one cp -a
+#     (so linked as on the guest, labels kept), the deployment roots +i.  The
+#     guest's two deployments are one commit as B1 built it (every object at
+#     nlink 3), and two commits after a merged vm-update (B4: the new one
+#     booted, the old .1 the rollback), where an object the update changed
+#     has only the booted deployment's link (nlink 2).
 #
-# Prints what it made on stdout; what it skipped on stderr.
+# Prints what it made on stdout; what it skipped on stderr.  With OSTREE_REC
+# set, writes there what real/ holds, for judge.py: a "dep PATH" line per
+# deployment root made +i, an "obj PATH N" line per object (N deployment
+# links), paths relative to real/.
 set -u
 T=$1
 skip() { echo "ostree: skipped: $*" >&2; }
@@ -24,7 +31,8 @@ REPO=/sysroot/ostree/repo
 read -r ST DEP < <(ostree admin status 2>/dev/null | awk '$1 == "*" { print $2, $3; exit }')
 [[ -n ${DEP:-} && -d /sysroot/ostree/deploy/$ST/deploy/$DEP ]] || { skip "no booted deployment"; exit 1; }
 C=${DEP%.*}
-mapfile -t DEPS < <(cd /sysroot && find ostree/deploy/$ST/deploy -mindepth 1 -maxdepth 1 -type d -regex ".*/$C\.[0-9]+" | sort)
+# Every deployment of the stateroot, whatever its commit.
+mapfile -t DEPS < <(cd /sysroot && find ostree/deploy/$ST/deploy -mindepth 1 -maxdepth 1 -type d -regextype posix-extended -regex '.*/[0-9a-f]{64}\.[0-9]+' | sort)
 # Regular files (setuid 4755 and 4111, a capability, mode 0, a shared
 # license file with 191 links on the guest) and symlinks of the commit.
 # The largest file system module, xz-compressed already: data that btrfs's
@@ -38,19 +46,30 @@ ko=$(cd "/sysroot/ostree/deploy/$ST/deploy/$DEP" && ls -S usr/lib/modules/*/kern
 [[ -n $ko ]] && FILES="$FILES $ko" || skip "a compressed kernel module"
 LINKS="bin lib usr/sbin"
 
-# real/: one cp -a of every object and both deployments' paths to it.
-srcs=()
+# real/: one cp -a of every object and each deployment's path to it, where
+# that path is the object's own inode (a deployment of another commit has
+# its own object where the update changed the file).
+srcs=() rec=()
+declare -A used=()
 for p in $FILES $LINKS; do
     cs=$(ostree --repo=$REPO ls -C "$C" "/$p" 2>/dev/null | awk '{ print $5; exit }')
-    [[ ${#cs} == 64 && -e $REPO/objects/${cs:0:2}/${cs:2}.file || -L $REPO/objects/${cs:0:2}/${cs:2}.file ]] ||
-        { skip "object of /$p"; continue; }
-    srcs+=("ostree/repo/objects/${cs:0:2}/${cs:2}.file")
-    for d in "${DEPS[@]}"; do srcs+=("$d/$p"); done
+    o=ostree/repo/objects/${cs:0:2}/${cs:2}.file
+    [[ ${#cs} == 64 && ( -e /sysroot/$o || -L /sysroot/$o ) ]] || { skip "object of /$p"; continue; }
+    oi=$(stat -c %d:%i "/sysroot/$o") ds=()
+    for d in "${DEPS[@]}"; do
+        [[ $(stat -c %d:%i "/sysroot/$d/$p" 2>/dev/null) == "$oi" ]] && { ds+=("$d/$p"); used[$d]=1; }
+    done
+    [[ ${#ds[@]} -gt 0 ]] || { skip "no deployment links the object of /$p"; continue; }
+    srcs+=("$o" "${ds[@]}") rec+=("obj $o ${#ds[@]}")
 done
 mkdir -p "$T/real"
 (cd /sysroot && cp -a --parents "${srcs[@]}" "$T/real/") || skip "cp -a of the real objects"
-for d in "${DEPS[@]}"; do chattr +i "$T/real/$d" 2>/dev/null || skip "chattr +i real/$d"; done
-echo "real: ${#DEPS[@]} deployments of $ST/$C, ${#srcs[@]} paths"
+for d in "${DEPS[@]}"; do
+    [[ -n ${used[$d]:-} ]] || { skip "no object linked from $d"; continue; }
+    chattr +i "$T/real/$d" 2>/dev/null && rec+=("dep $d") || skip "chattr +i real/$d"
+done
+[[ -n ${OSTREE_REC:-} ]] && printf '%s\n' "${rec[@]}" >"$OSTREE_REC"
+echo "real: ${#used[@]} of ${#DEPS[@]} deployments of $ST (booted $DEP), ${#srcs[@]} paths"
 
 # made/: the guest's ostree makes a repository of those files and checks
 # its commit out twice.

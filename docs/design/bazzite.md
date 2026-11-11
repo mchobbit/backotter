@@ -1069,6 +1069,24 @@ ledger rows.
   Left to B7: classes.json's stic `linux` line ("27 checks plus
   sculpt2610", now 28). B7 edits classes.json anyway, and an edit there
   moves the gate golden key.
+- **B5 fixes: `real/` after an update.** As first built, `real/` took only
+  the deployments of the booted commit and the judge wanted 4 roots and
+  every object at nlink 3. B4 found that a merged vm-update leaves two
+  commits (the booted new one, the old `.1` as rollback), so the first real
+  update of `kinoite44` would have made the check FAIL on a healthy guest.
+  ostree.sh now takes every deployment of the stateroot and copies a
+  deployment's path only when it is the repo object's own inode. It records
+  what `real/` holds in `ostree-real.txt` (each object's deployment links,
+  each `+i` root). The judge checks the source against that record: made's
+  2 roots plus real's recorded ones, and real's groups of 1 + their
+  deployment links. Need names are unchanged, so limits.json and the
+  goldens are too. Rerun on both hosts with rel4's binaries (`bazzite-wt/
+  b5f-stic.sh`, results in `b5f-results/stic`): 65 PASS, 8 LIMIT, 0 FAIL,
+  both as the image is (11 objects at nlink 3) and in a variant
+  (`b5f-two/sim.sh`) that first deploys a second commit in the overlay. The
+  second commit changes only `usr/lib/os-release`, and gives os-release's
+  object nlink 2 and 10 objects at nlink 3, real roots `.1` and the new
+  commit's `.0`.
 
 ## BackShot1 on the Thinkpad
 

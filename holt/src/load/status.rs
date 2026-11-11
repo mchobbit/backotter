@@ -136,10 +136,11 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     // restore and boot: what's in the mounted tree.
     let t = &opts.target;
     // (lstat only: following /etc/os-release, a symlink, would bump its atime.)
+    // On ostree, the physical root has no etc: the repository's config.
     let restored = tree_up
         && match crate::other::Family::of_layout(&layout.v) {
-            Some(_) => sys.exists(&format!("{t}/{}", crate::other::restored_marker(&layout.v))),
-            None => sys.exists(&format!("{t}/etc/fstab")) && sys.exists(&format!("{t}/etc/os-release")),
+            None if crate::load::ostree::of(&layout.v).is_none() => sys.exists(&format!("{t}/etc/fstab")) && sys.exists(&format!("{t}/etc/os-release")),
+            _ => sys.exists(&format!("{t}/{}", crate::other::restored_marker(&layout.v))),
         };
     // Not from the tree: a backup of a machine restored before holds that
     // restore's /var/log/bko-holt, so the log there says nothing about this one.

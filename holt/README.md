@@ -122,6 +122,17 @@ stage is next.  The writing stages, `partition`, `assemble`, `format`,
 (without it they print them), and read the disks back after each stage to
 see it took.  `--through close` with `--repo` is a whole restore.
 
+On an ostree system (a dump with `boot.ostree`) the tree is fstab's, as on
+any other: the physical root at the target, with /boot, the ESP, /home and
+/var beneath it (the mount stage leaves out fstab's `ro`, on every system).
+Its boot stage regenerates nothing and runs no chroot: /boot, the ESP and
+/ostree come back as they were.  It checks that each loader entry's kernel,
+initramfs and deployment are in the restored tree, makes the UEFI entries,
+writes its log with /var/log's SELinux label, and puts the atimes back
+(`src/load/ostree.rs`).  Version 1 refuses composefs `verity` or `signed`,
+required fs-verity, BIOS boot, LUKS, LVM, and an fstab without `/` or
+without a separate /boot.
+
 Each target disk must be at least as big as its source, with the same
 logical sector size.  `--fit-largest PCT` takes one a little smaller or
 bigger: per disk, the largest partition contracts or expands by at most PCT
@@ -197,7 +208,9 @@ cargo test
   RAID1, ZFS, unprivileged).  `src/load/`: argument parsing, the layout
   contract, disk mapping and its refusals, `--fit-largest`'s arithmetic and
   refusals (`src/load/fit.rs`, over every scenario's layout as well), and the
-  commands each stage would run, on fake rescue systems.
+  commands each stage would run, on fake rescue systems; ostree's
+  boot-stage check and log labeller run on fake restored trees
+  (`src/load/ostree.rs`).
 - `tests/realtools.rs`: images made by mkfs.*, mkswap, cryptsetup, sfdisk
   and sgdisk, read by both bko-holt and blkid, dumpe2fs, xfs_db, btrfs,
   cryptsetup and sfdisk; and `--fit-largest`'s own numbers, by applying the

@@ -7,7 +7,7 @@ composefs, rpm-ostree, bootc or bootupd.
 
 B1 (the `kinoite44` guest) was built the same day, and its *checks* are
 settled below: see "What B1 found". B2 (`dump`) followed: see "What B2
-found".
+found"; then B3 (`load`): see "What B3 found".
 
 **Conventions.** est. marks an estimate. *Check* marks a fact not yet seen, to be
 settled on the first guest (B1) or on the Thinkpad before the code that depends
@@ -368,8 +368,10 @@ bootupd layout is tested, so the plan says so in a note when
   been; harmless.
 - **Gate and status:** on ostree, `restored_marker()` returns
   `ostree/repo/config` instead of `etc/fstab`. One path, so it keeps its
-  `&'static str` and exec.rs and status.rs stay as they are. `boot/loader`
+  `&'static str` and exec.rs stays as it is. `boot/loader`
   pointing at `loader.0` or `loader.1` is left to the consistency check.
+  (B3: status.rs did need a line: on Linux it tested `etc/fstab` and
+  `etc/os-release` itself, not `restored_marker()`.)
 - **The boot stage**, an early `if self.ostree { return self.ostree_boot(); }`
   next to the non-Linux return (commands.rs:2248). Its order follows the
   generic path's:
@@ -737,6 +739,88 @@ tumbleweed and debian13 on Cinqcent (`--ram`, thrown away after).
   re-bless of fedora* plans "from the package-name fix" won't happen unless
   B7 also re-dumps those guests.
 
+## What B3 found
+
+`load` built as "The design" says, 2026-11-11: holt/src/load/ostree.rs
+(`ostree_boot`, its consistency check and labeller, the v1 plan
+problems), commands.rs (`mount_options` drops `ro`; the boot stage's tail
+factored out as `boot_tail`, called by both paths), other/mod.rs
+(`restored_marker`) and status.rs. load tells an ostree layout by the
+dump's `boot.ostree`, which B2 writes only on ostree.
+
+- **status.rs needed a change** (the design said it wouldn't): its Linux
+  branch tests `etc/fstab` and `etc/os-release` itself rather than
+  `restored_marker()`, so on ostree it now tests the marker too. exec.rs's
+  gate is unchanged.
+- **The consistency check** is one `sh -c` script in the plan. For each
+  `boot/loader/entries/ostree-*.conf` it checks four things, and each
+  failure is named:
+  1. every `linux` and `initrd` file is on the restored /boot;
+  2. `ostree=` resolves (`readlink -e`, inside the target) to a directory
+     `ostree/deploy/STATEROOT/deploy/NAME`, not to a path inside one;
+  3. its `boot.N` is `/boot/loader`'s `loader.N`;
+  4. at least one entry exists.
+
+  Two cases warn and don't fail. One is an orphan deployment that no entry
+  leads to. The other is a `/boot/loader` other than the dump's
+  `boot_loader`: the backup came after a deploy the dump didn't see, and
+  the tree is still whole. That second warning is the "cross-check"
+  against the dump that the `dump` section asks for.
+- **Log and label:** the log goes into fstab's `/var`. Without one it goes
+  into the stateroot's var, taken from `boot.ostree.stateroot` (else the
+  booted deployment's, else the first). If neither can be found that is a
+  plan problem. The label is `python3 -c LABEL_PY security.selinux
+  {var}/log {var}/log/bko-holt`. It copies the attribute onto the
+  directory and everything in it, and does nothing when `/var/log` has no
+  label.
+- **Plan problems and notes as built:**
+  - problems: composefs `verity` or `signed`, `[ex-fsverity] required=true`,
+    BIOS boot, LUKS (a `crypto_LUKS` signature or any crypttab entry), LVM
+    (an `LVM2_member` signature or a volume group), no fstab `/`, no fstab
+    `/boot`; `--new-uuids` is the global problem it already was;
+  - notes: composefs `maybe`, or no `enabled` key (ostree's default);
+    an `[ex-fsverity]` section without `required=true`; no
+    `bootupd-state.json`.
+- **Dropping `ro`** changed no golden plan: no corpus fstab mounts `/` with
+  `ro`. The full holt suite passes on both hosts (302 unit tests; golden
+  plans in check mode, unchanged; realtools). Unit tests:
+  - kinoite44's scenario dump planned whole;
+  - the log in the stateroot's var;
+  - every v1 problem and note;
+  - status by the marker;
+  - the consistency check run by `sh` on fake restored trees, whole and
+    broken seven ways;
+  - the labeller run by `python3` with a `user.` attribute in place of
+    `security.selinux`, which needs root.
+- **Host check on Chopin** (`bazzite-wt/b3-hc.sh`, results in
+  `b3-results/hc`). B3's release binary ran `load` on B2's kinoite44 dump
+  with `--map vda=nbd0`, against a RAM overlay of kinoite44's disk attached
+  by nbd. It ran in a mount namespace of its own with a private `/run`, so
+  `/run/bko-holt` was the run's own, and ran these stages: `plan`,
+  `--only mount`, `--only boot --no-nvram`, `status`, `--only close`.
+  - `/` was mounted `rw,compress=zstd:1`.
+  - The check found 2 entries, each with its kernel, initramfs and
+    deployment.
+  - Of 535,010 atimes, only the 2 new log paths differ afterwards.
+  - Both deployment roots kept `+i`.
+  - The log and its directory are `system_u:object_r:var_log_t:s0`.
+  - `status` shows restore done by `ostree/repo/config`.
+
+  The overlay then booted the default `.1`: `bko.rollback=1`,
+  `/etc/bko-deployment` `.1`, rpm-ostree's booted serial 1, Enforcing.
+  The only failed unit was `systemd-remount-fs` (as in B1). The boot logged
+  the same two AVC denials as the untouched image's boot (tuned's `chcon`
+  `mac_admin`), and none for bko-holt.
+- **Not covered here:**
+  - a restore through rustic-bko, and booting the rollback (B6's HoltTest1);
+  - `efibootmgr` (`--no-nvram` on the host); its command is the generic
+    one, unchanged.
+- **Deferred, not ostree's:** `boot_tail`'s read-only-subvolume step mounts
+  `RUN_DIR/btrfs/UUID` without a `mkdir -p`. This is unchanged from before
+  B3. The directory exists only because format made it in the same rescue
+  boot. So `--only boot` after the rescue system rebooted would fail for a
+  layout with a read-only subvolume that isn't a shared snapshot.
+
 ## BackShot1 on the Thinkpad
 
 After the bs1 fixes (B8) and a `bs1-qemu.py` rehearsal on `kinoite44`:
@@ -798,7 +882,7 @@ Boot0009 when the old one survives the erase. It predates ostree.
 |---|---|---|
 | B1 | `make-fedora.sh --ostree`, `ks-ostree.cfg`, `storage-ostree.ks`; the second deployment; `kinoite44` on Chopin, copied to Cinqcent; the two-boot manifest diff; settle the *checks* above. **Done 2026-11-11:** built on Chopin, copied to Cinqcent (same SHA-256), booted on both; see "What B1 found" | 0.75 d |
 | B2 | `dump`: detection, `SUPPORTED` row, holt/src/ostree.rs and `boot.ostree`, `backup_sources` and aliases, kernels, `prebuilt`, the BLS label, the btrfs FSROOT fix, Fedora's loader packages; a scenarios.rs fake composefs tree (mountinfo, `/run/ostree-booted`, `/boot/ostree/*`, `prepare-root.conf`, the `/etc` bind); unit tests; check fingerprint.py, test_vm_update.py, holttest1d/judge.py and backshot2's bs2lib against the new `mounted_subvolumes` and properties. **Done 2026-11-11:** see "What B2 found" | 1.5 d |
-| B3 | `load`: mount stage without `ro`, the ostree marker, `ostree_boot` (atimes listed, note, consistency check, NVRAM, log and labels, the shared tail), the v1 plan problems; unit tests | 1.5 d |
+| B3 | `load`: mount stage without `ro`, the ostree marker, `ostree_boot` (atimes listed, note, consistency check, NVRAM, log and labels, the shared tail), the v1 plan problems; unit tests. **Done 2026-11-11:** see "What B3 found" | 1.5 d |
 | B4 | vm-mount's ostree mode (HoltTest1, vm-chroot); `ostree_paths.py` for bs1-manifest and compare.py; vm-update's ostree branch | 1 d |
 | B5 | SticTest1 `kinoite44` entry and runs, both archivers | 0.25 d |
 | B6 | HoltTest1: `kinoite44` in 1F, `ram-sizes.tsv`, the rollback boot in the restored-boot check, runs on both hosts | 0.5 d |

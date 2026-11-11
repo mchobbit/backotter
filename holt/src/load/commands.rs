@@ -1900,7 +1900,7 @@ impl Builder<'_> {
 
     /// The read-only shared snapshots, as paths in the target: made
     /// read-only in the restore stage, which nothing reads after.
-    fn ro_shared(&self) -> Vec<String> {
+    pub(crate) fn ro_shared(&self) -> Vec<String> {
         let t = &self.opts.target;
         self.btrfs.values().flat_map(|p| p.shared.iter().filter(|x| x.readonly).map(|x| format!("{t}{}", x.backup))).collect()
     }
@@ -1973,12 +1973,14 @@ impl Builder<'_> {
 
 // ---- mount, restore -----------------------------------------------------
 
-/// fstab options that only matter at the restored system's own boot.
+/// fstab's options for the mount stage's own mounts: without those that
+/// only matter at the restored system's own boot, and without `ro`, since
+/// the restore writes into every mount (ostree's fstab mounts / ro).
 fn mount_options(o: &str) -> String {
     let keep: Vec<&str> = o
         .split(',')
         .filter(|x| !x.is_empty())
-        .filter(|x| !matches!(*x, "defaults" | "noauto" | "auto" | "nofail" | "_netdev" | "user" | "users" | "owner" | "sw"))
+        .filter(|x| !matches!(*x, "defaults" | "noauto" | "auto" | "nofail" | "_netdev" | "user" | "users" | "owner" | "sw" | "ro"))
         .filter(|x| !x.starts_with("x-") && !x.starts_with("comment="))
         .collect();
     if keep.is_empty() { "defaults".to_string() } else { keep.join(",") }
@@ -2242,7 +2244,7 @@ fn snapshot_path(snapshot: &str, path: &str) -> (String, String) {
 /// other way); "restore" lists them again and puts back each that changed
 /// (testing a symlink with -L first: -e would follow it, and reading a
 /// symlink bumps its atime, perhaps after it was put back).
-fn atimes_cmd(t: &str, what: &str, prune: &[String]) -> String {
+pub(crate) fn atimes_cmd(t: &str, what: &str, prune: &[String]) -> String {
     let more: String = prune.iter().map(|p| format!(" -o -path {}", shell_quote(p))).collect();
     let list = format!(
         "find {t} \\( -path {t}/dev -o -path {t}/proc -o -path {t}/sys -o -path {t}/run{more} \\) -prune -o -printf '%A@\\t%p\\0' | LC_ALL=C sort -z"
@@ -2265,6 +2267,9 @@ impl Builder<'_> {
     fn boot(&mut self) -> Vec<Cmd> {
         if let Some(fam) = self.fam {
             return self.other_boot(fam);
+        }
+        if let Some(o) = super::ostree::of(&self.layout.v) {
+            return self.ostree_boot(&o.clone());
         }
         let t = self.opts.target.clone();
         let mut out = Vec::new();
@@ -2409,8 +2414,16 @@ impl Builder<'_> {
             out.push(Cmd::new(&["umount", "--recursive", &format!("{t}/{d}")]));
         }
         out.push(lvm_devices_back);
+        out.extend(self.boot_tail(&t));
+        out
+    }
+
+    /// How every Linux boot stage ends (ostree's too, load/ostree.rs): the
+    /// atimes put back, then the read-only btrfs subvolumes made so.
+    pub(crate) fn boot_tail(&mut self, t: &str) -> Vec<Cmd> {
+        let mut out = Vec::new();
         // Last but for read-only flags: nothing may read the tree after this.
-        out.push(Cmd::new(&["bash", "-c", &atimes_cmd(&t, "restore", &self.ro_shared())]).why("the atimes this stage's reads changed, put back"));
+        out.push(Cmd::new(&["bash", "-c", &atimes_cmd(t, "restore", &self.ro_shared())]).why("the atimes this stage's reads changed, put back"));
         // Read-only btrfs subvolumes: set now that the restore filled them,
         // and after the atimes are put back (touch can't on a read-only one).
         for fs in self.layout.arr(&["storage", "btrfs"]).to_vec() {
@@ -2553,7 +2566,7 @@ impl Builder<'_> {
     /// The source's boot entries on the restored disks, created in reverse
     /// BootOrder so that the first ends up first (efibootmgr puts each new
     /// one at the front).
-    fn efi_entries(&mut self) -> Vec<Cmd> {
+    pub(crate) fn efi_entries(&mut self) -> Vec<Cmd> {
         let entries = self.layout.arr(&["boot", "efi", "entries"]).to_vec();
         let order: Vec<String> = self.layout.v.at(&["boot", "efi", "boot_order"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
         let mut picked: Vec<&Value> = Vec::new();
@@ -2974,6 +2987,11 @@ mod tests {
         assert_eq!(md_layout_name("raid1", 0), None);
         assert_eq!(mount_options("defaults,noatime,x-systemd.device-timeout=5,nofail"), "noatime");
         assert_eq!(mount_options("defaults"), "defaults");
+        // The stage writes into every mount, ostree's ro `/` too.
+        assert_eq!(mount_options("subvol=root,compress=zstd:1,ro"), "subvol=root,compress=zstd:1");
+        assert_eq!(mount_options("ro,noatime"), "noatime");
+        assert_eq!(mount_options("ro"), "defaults");
+        assert_eq!(mount_options("errors=remount-ro"), "errors=remount-ro");
         let c = Cmd::write_file("/run/x", "a\n".into());
         assert_eq!(c.shell(), "cat > /run/x <<'EOF'\na\nEOF\n");
     }

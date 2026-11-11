@@ -16,6 +16,7 @@ pub mod commands;
 pub mod exec;
 pub mod fit;
 pub mod layout;
+pub mod ostree;
 pub mod plan;
 pub mod shared;
 pub mod status;

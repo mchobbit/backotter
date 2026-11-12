@@ -1447,6 +1447,68 @@ fn gentoo_thinkpad_guest() {
     assert!(b.notes.iter().any(|n| n.starts_with("Gentoo: no initramfs generator")), "{:?}", b.notes);
 }
 
+/// Gentoo's plan for a Thinkpad tree changed by `change`, and its dump.
+fn gentoo_plan(change: impl Fn(&Tree)) -> (Value, crate::load::commands::Built) {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let t = gentoo_thinkpad();
+    change(&t);
+    let v = run(&t, true, FakeRunner::default());
+    let l = Layout::from_json(v.clone()).unwrap();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+    (v, commands::build(&l, &o, &Mapping { pairs: vec![("nvme0n1".into(), "vda".into())], ..Mapping::default() }))
+}
+
+/// One dracut command per kernel with an initramfs, in version order; a
+/// kernel with an initramfs but no /lib/modules/K keeps its restored image,
+/// with a note; only dracut with no initramfs at all is refused; an image
+/// at /lib/modules/K/initrd (through merged /usr's /lib) is found and
+/// refused.
+#[test]
+fn gentoo_dracut_per_kernel() {
+    use crate::load::{commands::Cmd, Stage};
+    let k = GENTOO_KV;
+    let (k2, k3) = ("6.18.9-gentoo-dist-bin", "6.19.1-gentoo-dist-bin");
+    let no_modules = |kv: &str| format!("Gentoo: kernel {kv} has no /lib/modules/{kv}, so dracut can't remake its initramfs; the restored one stays");
+    let dracut = |b: &crate::load::commands::Built| b.stage(Stage::Boot).iter().map(Cmd::shell).collect::<String>().lines().filter(|l| l.contains(" dracut ")).map(|l| format!("{l}\n")).collect::<Vec<_>>();
+    let line = |kv: &str| format!("chroot /mnt/bko-target dracut --force /boot/initramfs-{kv}.img {kv}\n");
+
+    // Three kernels: k2 and k with modules, k3 without.
+    let (v, b) = gentoo_plan(|t| {
+        t.file(&format!("/boot/vmlinuz-{k2}"), "k").file(&format!("/boot/initramfs-{k2}.img"), "i").dir(&format!("/usr/lib/modules/{k2}/kernel"));
+        t.file(&format!("/boot/vmlinuz-{k3}"), "k").file(&format!("/boot/initramfs-{k3}.img"), "i");
+    });
+    let kernels: Vec<String> = arr(&v, &["boot", "kernels", "installed"]).iter().map(|x| s(x, &["version"]).to_string()).collect();
+    assert_eq!(kernels, vec![k2, k, k3]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    assert_eq!(dracut(&b), vec![line(k2), line(k)]);
+    assert!(b.notes.contains(&no_modules(k3)), "{:?}", b.notes);
+
+    // The only kernel has an initramfs but no modules: it keeps its image,
+    // and that isn't a refusal.
+    let (v, b) = gentoo_plan(|t| std::fs::remove_dir_all(t.p(&format!("/usr/lib/modules/{k}"))).unwrap());
+    assert_eq!(arr(&v, &["boot", "kernels", "installed"])[0].get("modules_installed"), Some(&Value::Bool(false)));
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    assert!(dracut(&b).is_empty());
+    assert!(b.notes.contains(&no_modules(k)), "{:?}", b.notes);
+
+    // install.conf says dracut, but no kernel has an initramfs.
+    let (v, b) = gentoo_plan(|t| {
+        for f in [format!("/boot/initramfs-{k}.img"), format!("/boot/initramfs-{k}.img.old")] {
+            std::fs::remove_file(t.p(&f)).unwrap();
+        }
+    });
+    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "dracut");
+    assert_eq!(b.problems, vec!["Gentoo: the initramfs generator is dracut, but no kernel in /boot has an initramfs to remake"]);
+
+    // /lib/modules/K/initrd, read through /lib -> usr/lib.
+    let (v, b) = gentoo_plan(|t| {
+        t.file(&format!("/usr/lib/modules/{k}/initrd"), "i");
+    });
+    let lmi: Vec<&str> = arr(&v, &["boot", "initramfs", "lib_modules_initrd"]).iter().filter_map(Value::as_str).collect();
+    assert_eq!(lmi, vec![k]);
+    assert_eq!(b.problems, vec![format!("Gentoo: kernel {k} has its initramfs at /lib/modules/{k}/initrd, where bko-holt load doesn't make one")]);
+}
+
 /// A Gentoo without installkernel's configuration: none when /boot has no
 /// initramfs, genkernel when it's installed, else dracut; and a hand-built
 /// kernel without an initramfs plans no initramfs step.
@@ -1465,6 +1527,16 @@ fn gentoo_generator_without_installkernel() {
     assert!(no_ik);
     assert_eq!(ev[0], "no installkernel configuration (/etc/kernel/install.conf, /usr/lib/kernel/install.conf)");
     assert_eq!(ev[1], "/boot has initramfs-* and genkernel isn't installed");
+    // An install.conf that names no initrd_generator: the /boot rules
+    // decide, and the file is kept as evidence.
+    t.file("/usr/lib/kernel/install.conf", "layout=grub\n");
+    let (g, ev, no_ik, v) = gen(&t);
+    assert_eq!(g, "dracut");
+    assert!(!no_ik);
+    assert_eq!(s(&v, &["boot", "initramfs", "installkernel", "layout"]), "grub");
+    assert!(v.at(&["boot", "initramfs", "installkernel", "initrd_generator"]).unwrap().is_null());
+    assert_eq!(ev[..2], ["/usr/lib/kernel/install.conf names no initrd_generator".to_string(), "/boot has initramfs-* and genkernel isn't installed".to_string()]);
+    std::fs::remove_file(t.p("/usr/lib/kernel/install.conf")).unwrap();
     t.file("/var/db/pkg/sys-kernel/genkernel-4.3.17/PF", "genkernel-4.3.17\n");
     assert_eq!(gen(&t).0, "genkernel");
     for f in [format!("/boot/initramfs-{k}.img"), format!("/boot/initramfs-{k}.img.old")] {

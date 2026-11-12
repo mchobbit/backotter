@@ -2568,20 +2568,22 @@ impl Builder<'_> {
         let generator = self.layout.str_at(&["boot", "initramfs", "generator"]).unwrap_or("unknown").to_string();
         match generator.as_str() {
             "dracut" => {
-                let mut made = 0;
+                // Kernels with an initramfs in /boot, remade or not: one whose
+                // modules are missing keeps its restored image, with a note.
+                let mut with_image = 0;
                 for k in self.layout.arr(&["boot", "kernels", "installed"]).to_vec() {
                     let Some(v) = s(&k, "version") else { continue };
                     if k.get("dir").is_some_and(|d| !d.is_null()) || k.get("initrd_bytes").is_none_or(Value::is_null) {
                         continue;
                     }
+                    with_image += 1;
                     if k.get("modules_installed").and_then(Value::as_bool) != Some(true) {
                         self.notes.push(format!("Gentoo: kernel {v} has no /lib/modules/{v}, so dracut can't remake its initramfs; the restored one stays"));
                         continue;
                     }
                     out.push(Cmd::new(&["chroot", t, "dracut", "--force", &format!("/boot/initramfs-{v}.img"), &v]).why(format!("kernel {v}'s initramfs, by the name installkernel gives it")));
-                    made += 1;
                 }
-                if made == 0 {
+                if with_image == 0 {
                     self.problems.push("Gentoo: the initramfs generator is dracut, but no kernel in /boot has an initramfs to remake".into());
                 }
             }

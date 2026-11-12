@@ -80,7 +80,12 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
 /// (crate::ostree): the initramfs comes with the image and bootupd's GRUB
 /// config is static, so load regenerates nothing there (load/ostree.rs).
 /// Their whole-machine test is `kinoite44`, Bazzite's Kinoite base, in
-/// HoltTest1F; BackShot1 runs Bazzite itself on real hardware.
+/// HoltTest1F; BackShot1 runs Bazzite itself on real hardware.  Gentoo
+/// Linux (OpenRC or systemd, Portage) boots the way its owner put it
+/// together: installkernel's install.conf names the initramfs generator,
+/// and only dracut's (or none) is supported, with GRUB and grub-mkconfig;
+/// its test is the `gentoo` guest, the Thinkpad's setup in small, and
+/// BackShot1 on the Thinkpad itself (docs/design/gentoo.md).
 pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("debian", "13", "Debian 13"),
     ("linuxmint", "22", "Linux Mint 22"),
@@ -115,6 +120,9 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     // names carry the snapshot's date).  "*" rather than "", as for
     // AerynOS: a snapshot that starts writing one is still Chimera.
     ("chimera", "*", "Chimera Linux"),
+    // Rolling: VERSION_ID is baselayout's version (2.18), not a release.
+    // Funtoo, Calculate and the other ID_LIKE=gentoo systems aren't it.
+    ("gentoo", "*", "Gentoo Linux"),
     // ostree-based, on Fedora's atomic desktops (Kinoite): ID=bazzite,
     // VERSION_ID the Fedora release.  Silverblue and Kinoite themselves say
     // fedora 44, so the Fedora row takes them; ostree is told by its own
@@ -223,7 +231,7 @@ mod tests {
         let ubuntu22 = parse("ID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"22.04\"\n");
         assert!(check_supported(Some(&ubuntu22)).unwrap_err().contains("ubuntu 22.04"));
         assert!(check_supported(Some(&parse("ID=zorin\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"18\"\n"))).is_ok());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, Chimera Linux, Bazzite 44, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, Chimera Linux, Gentoo Linux, Bazzite 44, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -268,6 +276,31 @@ mod tests {
         assert!(supported_names().contains("Chimera Linux"));
         // Not by its likeness: another musl/apk system isn't Chimera.
         assert!(check_supported(Some(&parse("ID=\"chimera-ish\"\nID_LIKE=\"chimera\"\n"))).is_err());
+    }
+
+    /// The gentoo guest's /etc/os-release (baselayout 2.18), the same as the
+    /// Thinkpad's: single quotes, VERSION_ID baselayout's, no ID_LIKE.
+    const GENTOO: &str = "NAME='Gentoo'\nID='gentoo'\nPRETTY_NAME='Gentoo Linux'\nVERSION='2.18'\nVERSION_ID='2.18'\nHOME_URL='https://www.gentoo.org/'\nSUPPORT_URL='https://www.gentoo.org/support/'\nBUG_REPORT_URL='https://bugs.gentoo.org/'\nANSI_COLOR='1;32'\n";
+
+    #[test]
+    fn gentoo() {
+        let o = parse(GENTOO);
+        assert_eq!(o.get("ID"), Some("gentoo"));
+        assert_eq!(o.get("NAME"), Some("Gentoo"));
+        assert_eq!(o.get("PRETTY_NAME"), Some("Gentoo Linux"));
+        assert_eq!(o.get("VERSION_ID"), Some("2.18"));
+        assert_eq!(o.get("ANSI_COLOR"), Some("1;32"));
+        assert_eq!(o.get("ID_LIKE"), None);
+        assert!(check_supported(Some(&o)).is_ok());
+        // Any baselayout: it isn't a release.
+        assert!(supported("gentoo", "2.17"));
+        assert!(supported("gentoo", ""));
+        assert!(supported_names().contains("Chimera Linux, Gentoo Linux, Bazzite 44"));
+        // Not by its likeness: Funtoo and Calculate say ID_LIKE=gentoo.
+        for t in ["ID=funtoo\nID_LIKE=gentoo\nVERSION_ID=2.4\n", "ID=calculate\nID_LIKE=gentoo\nVERSION_ID=\"25\"\nPRETTY_NAME=\"Calculate Linux 25\"\n"] {
+            let e = check_supported(Some(&parse(t))).unwrap_err();
+            assert!(e.contains("Gentoo Linux"), "{e}");
+        }
     }
 
     /// The Thinkpad's /usr/lib/os-release (Bazzite 44.20261012), and

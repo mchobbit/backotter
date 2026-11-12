@@ -1,5 +1,6 @@
 //! Whole-system tests: fake Debian 13 machines, two Chimera Linux (BIOS
-//! GRUB, UEFI systemd-boot) and one Fedora Kinoite on ostree (their /sys, /proc, /dev,
+//! GRUB, UEFI systemd-boot), one Fedora Kinoite on ostree and the
+//! Thinkpad's Gentoo (their /sys, /proc, /dev,
 //! /etc, /run, /boot and /var as a directory tree, the disks as image files
 //! under /dev) laid out the way Debian's installer and BackOtter's test
 //! guests lay real ones out, run through the full report.
@@ -1196,6 +1197,317 @@ fn ostree_unmatched_fstab_warns() {
     assert_eq!(w, vec!["ostree: /etc/fstab could not be read, so backup_sources has no `/`, storage.physical_root is null and boot.ostree read /sysroot"]);
 }
 
+/// An EFI boot entry as efivarfs gives it: its attributes, then the load
+/// option (active), the description, the ESP's hard-drive node, the file.
+fn efi_load_option(desc: &str, part: u32, start: u64, size: u64, partuuid: &str, file: &str) -> Vec<u8> {
+    let utf16 = |t: &str| -> Vec<u8> { t.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect() };
+    let mut path = vec![4u8, 1, 42, 0];
+    path.extend(part.to_le_bytes());
+    path.extend(start.to_le_bytes());
+    path.extend(size.to_le_bytes());
+    path.extend(crate::parttable::build::guid_bytes(partuuid));
+    path.extend([2u8, 2]);
+    let f = utf16(file);
+    path.extend([4u8, 4]);
+    path.extend(((4 + f.len()) as u16).to_le_bytes());
+    path.extend(f);
+    path.extend([0x7fu8, 0xff, 4, 0]);
+    let mut out = vec![7u8, 0, 0, 0];
+    out.extend(1u32.to_le_bytes());
+    out.extend((path.len() as u16).to_le_bytes());
+    out.extend(utf16(desc));
+    out.extend(path);
+    out
+}
+
+/// `x` at `path` (object keys only), in place.
+fn set_at(v: &mut Value, path: &[&str], x: Value) {
+    let Some((last, rest)) = path.split_last() else { return };
+    let mut cur = v;
+    for p in rest {
+        let Value::Obj(o) = cur else { panic!("no object at {p}") };
+        cur = &mut o.iter_mut().find(|(k, _)| k == p).unwrap_or_else(|| panic!("no {p}")).1;
+    }
+    let Value::Obj(o) = cur else { panic!("no object for {last}") };
+    match o.iter_mut().find(|(k, _)| k == last) {
+        Some(slot) => slot.1 = x,
+        None => o.push((last.to_string(), x)),
+    }
+}
+
+const GENTOO_KV: &str = "6.18.63-gentoo-dist-bin";
+const GENTOO_ESP: &str = "4e5f6a7b-1111-4222-8333-944455556666";
+
+/// The Thinkpad's Gentoo in small, as the gentoo guest copies it: UEFI,
+/// GPT with a 1 GiB ESP at /efi (here 35 MiB), a swap partition and an LVM
+/// PV holding vg0 (root ext4, home XFS); OpenRC, merged /usr, Portage's
+/// database, gentoo-kernel-bin installed by installkernel[dracut,grub]
+/// (its install.conf, the .old copies `emerge --config` left), GRUB as
+/// `gentoo` from NVRAM.
+fn gentoo_thinkpad() -> Tree {
+    use crate::efi::GLOBAL;
+    const LVM_PV: &str = "e6d6d379-f507-44c2-a23c-238f2a3df928";
+    const SWAP: &str = "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f";
+    let t = Tree::new("scn-gentoo");
+    let k = GENTOO_KV;
+    let mut img = vec![0u8; 48 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "6f1c2c3d-0000-4000-8000-00000000eeee",
+            parts: vec![(ESP, GENTOO_ESP, 2048, 73727, 0, ""), (SWAP, "4e5f6a7b-1111-4222-8333-944455557777", 73728, 81919, 0, ""), (LVM_PV, "4e5f6a7b-1111-4222-8333-944455558888", 81920, 90111, 0, "")],
+        },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(71680, 0x1234_abcd, ""));
+    put(&mut img, 73728, &misc::sample::swap(1024, ""));
+    let meta = lvm::sample::METADATA.replace("swap_1 {", "home {").replace("sw4p00-", "h0me00-").replace("\"debian\"", "\"thinkpad\"");
+    put(&mut img, 81920, &lvm::sample::pv_with(512, 1 << 20, &meta));
+    let vgid = "Yb3kFa0Pz1AbCdEfGhIjKlMnOpQrStUv";
+    let root_uuid = "10111213-1415-1617-1819-1a1b1c1d1e1f";
+    let home_uuid = "a0a1a2a3-a4a5-a6a7-a8a9-aaabacadaeaf";
+    let swap_uuid = "c0c1c2c3-c4c5-c6c7-c8c9-cacbcccdcecf";
+    let v_ = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    t.disk("nvme0n1", "259:0", &img, 512)
+        .partition("nvme0n1", "nvme0n1p1", "259:1", 1, 2048, 71680, &img)
+        .partition("nvme0n1", "nvme0n1p2", "259:2", 2, 73728, 8192, &img)
+        .partition("nvme0n1", "nvme0n1p3", "259:3", 3, 81920, 8192, &img)
+        .file("/sys/block/nvme0n1/nvme0n1p3/holders/dm-0", "")
+        .file("/sys/block/nvme0n1/nvme0n1p3/holders/dm-1", "")
+        .disk("dm-0", "253:0", &ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, ""), 512)
+        .file("/sys/block/dm-0/dm/name", "vg0-root\n")
+        .file("/sys/block/dm-0/dm/uuid", format!("LVM-{vgid}r00t00aaaabbbbccccddddeeeeffffff\n"))
+        .file("/sys/block/dm-0/slaves/nvme0n1p3", "")
+        .disk("dm-1", "253:1", &crate::probe::xfs::sample::image(""), 512)
+        .file("/sys/block/dm-1/dm/name", "vg0-home\n")
+        .file("/sys/block/dm-1/dm/uuid", format!("LVM-{vgid}h0me00aaaabbbbccccddddeeeeffffff\n"))
+        .file("/sys/block/dm-1/slaves/nvme0n1p3", "")
+        .symlink("/dev/mapper/vg0-root", "../dm-0")
+        .symlink("/dev/mapper/vg0-home", "../dm-1")
+        .symlink(&format!("/dev/disk/by-partuuid/{GENTOO_ESP}"), "../../nvme0n1p1")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&v_("Boot0001"), efi_load_option("gentoo", 1, 2048, 71680, GENTOO_ESP, "\\EFI\\gentoo\\grubx64.efi"))
+        .file(&v_("BootOrder"), [7u8, 0, 0, 0, 1, 0])
+        .file(&v_("BootCurrent"), [6u8, 0, 0, 0, 1, 0])
+        .file(&v_("SecureBoot"), [6u8, 0, 0, 0, 0])
+        .file(
+            "/proc/self/mountinfo",
+            "26 1 253:0 / / rw,noatime shared:1 - ext4 /dev/mapper/vg0-root rw\n27 26 259:1 / /efi rw,relatime shared:2 - vfat /dev/nvme0n1p1 rw,fmask=0077,dmask=0077\n28 26 253:1 / /home rw,noatime shared:3 - xfs /dev/mapper/vg0-home rw,attr2,inode64\n",
+        )
+        .file("/proc/swaps", "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/dev/nvme0n1p2                          partition\t4096\t\t0\t\t-2\n")
+        .file(
+            "/etc/fstab",
+            format!("UUID={root_uuid}  /      ext4  defaults,noatime  0 1\nUUID={home_uuid}  /home  xfs   defaults,noatime  0 2\nUUID=1234-ABCD  /efi   vfat  umask=0077        0 2\nUUID={swap_uuid}  none   swap  sw                0 0\n"),
+        )
+        .file("/etc/os-release", "NAME='Gentoo'\nID='gentoo'\nPRETTY_NAME='Gentoo Linux'\nVERSION='2.18'\nVERSION_ID='2.18'\nHOME_URL='https://www.gentoo.org/'\n")
+        .file("/etc/gentoo-release", "Gentoo Base System release 2.18\n")
+        .symlink("/lib", "usr/lib")
+        .file("/usr/lib/kernel/install.conf", "# This file is managed by sys-kernel/installkernel\nlayout=grub\ninitrd_generator=dracut\nuki_generator=none\n")
+        .dir("/etc/kernel/postinst.d")
+        .file(&format!("/boot/vmlinuz-{k}"), "k")
+        .file(&format!("/boot/initramfs-{k}.img"), "i")
+        .file(&format!("/boot/config-{k}"), "")
+        .file(&format!("/boot/System.map-{k}"), "")
+        .file(&format!("/boot/vmlinuz-{k}.old"), "k")
+        .file(&format!("/boot/initramfs-{k}.img.old"), "i")
+        .file(&format!("/boot/config-{k}.old"), "")
+        .file(&format!("/boot/System.map-{k}.old"), "")
+        .file("/boot/amd-uc.img", "u")
+        .file("/boot/intel-uc.img", "u")
+        .file("/boot/grub/x86_64-efi/normal.mod", "x")
+        .file(
+            "/boot/grub/grub.cfg",
+            format!("insmod part_gpt\ninsmod lvm\ninsmod ext2\nmenuentry 'Gentoo GNU/Linux' {{\n\tlinux\t/boot/vmlinuz-{k} root=UUID={root_uuid} ro\n\tinitrd\t/boot/intel-uc.img /boot/amd-uc.img /boot/initramfs-{k}.img\n}}\n"),
+        )
+        .file("/etc/default/grub", "GRUB_DISTRIBUTOR=\"Gentoo\"\n")
+        .dir(&format!("/usr/lib/modules/{k}/kernel"))
+        .symlink(&format!("/usr/lib/modules/{k}/vmlinuz"), &format!("../../../src/linux-{k}/arch/x86/boot/bzImage"))
+        .file("/efi/EFI/gentoo/grubx64.efi", vec![2u8; 400])
+        .file("/proc/sys/kernel/osrelease", format!("{k}\n"))
+        .file("/proc/sys/kernel/hostname", "thinkpad\n")
+        .file("/proc/cmdline", format!("BOOT_IMAGE=/boot/vmlinuz-{k} root=UUID={root_uuid} ro\n"));
+    for (cat, pf, use_) in [
+        ("sys-boot", "grub-2.16-r1", "device-mapper fonts nls"),
+        ("sys-boot", "grub-themes-gentoo-1.0-r2", ""),
+        ("sys-boot", "efibootmgr-18-r2", ""),
+        ("sys-kernel", "dracut-112", ""),
+        ("sys-kernel", "gentoo-kernel-bin-6.18.63", "abi_x86_64 amd64 elibc_glibc initramfs kernel_linux"),
+        ("sys-kernel", "installkernel-70-r1", "dracut grub"),
+        ("sys-kernel", "linux-firmware-20261019", ""),
+        ("sys-fs", "lvm2-2.03.39", "lvm"),
+        ("sys-fs", "xfsprogs-7.2.1", ""),
+        ("sys-fs", "e2fsprogs-1.47.4", ""),
+        ("sys-fs", "dosfstools-4.2", ""),
+        ("sys-apps", "systemd-utils-258.3", "udev"),
+        ("media-fonts", "font-adobe-100dpi-1.0.4", ""),
+        ("acct-group", "avahi-0-r3", ""),
+        ("net-dns", "avahi-0.8-r10", ""),
+    ] {
+        let d = format!("/var/db/pkg/{cat}/{pf}");
+        t.file(&format!("{d}/PF"), format!("{pf}\n")).file(&format!("{d}/CATEGORY"), format!("{cat}\n")).file(&format!("{d}/CHOST"), "x86_64-pc-linux-gnu\n").file(&format!("{d}/USE"), format!("{use_}\n"));
+    }
+    // A merge under way isn't installed.
+    t.file("/var/db/pkg/sys-kernel/-MERGING-gentoo-kernel-bin-6.18.64/PF", "gentoo-kernel-bin-6.18.64\n");
+    t
+}
+
+/// The Thinkpad's Gentoo read back and planned: Portage's packages by bare
+/// name, dracut from installkernel's install.conf, the .old copies apart
+/// from the kernels; load remakes the initramfs by its installkernel name,
+/// installs GRUB in /efi as `gentoo` and notes the .old copies.
+#[test]
+fn gentoo_thinkpad_guest() {
+    let k = GENTOO_KV;
+    let v = run(&gentoo_thinkpad(), true, FakeRunner::default());
+    assert_eq!(s(&v, &["os", "id"]), "gentoo");
+    assert_eq!(s(&v, &["os", "version_id"]), "2.18");
+    assert_eq!(s(&v, &["os", "pretty_name"]), "Gentoo Linux");
+    assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
+    assert_eq!(s(&v, &["boot", "packages", "grub"]), "2.16-r1");
+    assert_eq!(s(&v, &["boot", "packages", "dracut"]), "112");
+    assert_eq!(s(&v, &["boot", "packages", "gentoo-kernel-bin"]), "6.18.63");
+    assert_eq!(s(&v, &["boot", "packages", "installkernel"]), "70-r1");
+    assert_eq!(s(&v, &["boot", "packages", "lvm2"]), "2.03.39");
+    assert_eq!(s(&v, &["boot", "packages", "systemd-utils"]), "258.3");
+    assert!(v.at(&["boot", "packages", "grub-themes-gentoo"]).is_none());
+    let l = v.at(&["boot", "loader"]).unwrap();
+    assert_eq!(s(l, &["name"]), "grub");
+    assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)));
+    // Not in detect_loader's UEFI list, as on Arch: harmless.
+    assert!(l.get("package").unwrap().is_null());
+    assert!(l.get("evidence").unwrap().compact().contains("\\\\EFI\\\\gentoo\\\\grubx64.efi"), "{}", l.compact());
+    assert_eq!(s(&v, &["boot", "esps", "0", "mounted_at"]), "/efi");
+    assert_eq!(s(&v, &["boot", "esps", "0", "device"]), "nvme0n1p1");
+    let i = v.at(&["boot", "initramfs"]).unwrap();
+    assert_eq!(s(i, &["generator"]), "dracut");
+    assert_eq!(s(i, &["installkernel", "conf"]), "/usr/lib/kernel/install.conf");
+    assert_eq!(s(i, &["installkernel", "layout"]), "grub");
+    assert_eq!(s(i, &["installkernel", "uki_generator"]), "none");
+    let ev: Vec<&str> = arr(i, &["evidence"]).iter().filter_map(Value::as_str).collect();
+    assert_eq!(ev, vec!["/usr/lib/kernel/install.conf says initrd_generator=dracut", "gentoo-kernel-bin-6.18.63 is built with USE=initramfs"]);
+    assert!(arr(i, &["lib_modules_initrd"]).is_empty());
+    let kernels = arr(&v, &["boot", "kernels", "installed"]);
+    assert_eq!(kernels.len(), 1, "{}", v.at(&["boot", "kernels"]).unwrap().compact());
+    assert_eq!(s(&kernels[0], &["version"]), k);
+    assert_eq!(u(&kernels[0], &["initrd_bytes"]), 1);
+    assert_eq!(kernels[0].get("modules_installed"), Some(&Value::Bool(true)));
+    let old: Vec<&str> = arr(&v, &["boot", "kernels", "old_copies"]).iter().filter_map(Value::as_str).collect();
+    assert_eq!(old, vec![format!("System.map-{k}.old"), format!("config-{k}.old"), format!("initramfs-{k}.img.old"), format!("vmlinuz-{k}.old")]);
+    let vg = v.at(&["storage", "lvm", "volume_groups", "0"]).unwrap();
+    assert_eq!(s(vg, &["name"]), "vg0");
+    assert_eq!(s(vg, &["logical_volumes", "1", "name"]), "home");
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    let plan = |v: Value| {
+        let l = Layout::from_json(v).unwrap();
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+        commands::build(&l, &o, &Mapping { pairs: vec![("nvme0n1".into(), "vda".into())], ..Mapping::default() })
+    };
+    let b = plan(v.clone());
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
+    let dracut = bt.find(&format!("chroot /mnt/bko-target dracut --force /boot/initramfs-{k}.img {k}\n")).expect(&bt);
+    let install = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/efi --bootloader-id=gentoo --no-nvram\n").expect(&bt);
+    let cfg = bt.find("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n").expect(&bt);
+    let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vda --part 1 --label gentoo --loader '\\EFI\\gentoo\\grubx64.efi'\n").expect(&bt);
+    assert!(dracut < install && install < cfg && cfg < nvram, "{bt}");
+    assert!(!bt.contains("update-initramfs") && !bt.contains("update-grub") && !bt.contains("dracut --force --kver") && !bt.contains(".old"), "{bt}");
+    assert!(b.notes.iter().any(|n| n == &format!("Gentoo: installkernel's .old copies in /boot (System.map-{k}.old, config-{k}.old, initramfs-{k}.img.old, vmlinuz-{k}.old) came back as they were: grub-mkconfig lists them, and this stage doesn't remake them")), "{:?}", b.notes);
+    let mnt: String = b.stage(Stage::Mount).iter().map(commands::Cmd::shell).collect();
+    assert!(mnt.contains("/mnt/bko-target/efi\n"), "{mnt}");
+
+    // Each refusal names what it refuses.
+    let with = |path: &[&str], val: Value| {
+        let mut w = v.clone();
+        set_at(&mut w, path, val);
+        plan(w).problems
+    };
+    let p = with(&["boot", "initramfs", "generator"], "genkernel".into());
+    assert_eq!(p, vec!["Gentoo: the initramfs is genkernel's; bko-holt load remakes only dracut's (or none)"]);
+    assert!(with(&["boot", "initramfs", "generator"], "ugrd".into())[0].contains("ugrd's"));
+    assert!(with(&["boot", "initramfs", "generator"], "mkinitcpio".into())[0].contains("initramfs generator mkinitcpio isn't one"));
+    let p = with(&["boot", "initramfs", "installkernel", "uki_generator"], "ukify".into());
+    assert_eq!(p, vec!["Gentoo: /usr/lib/kernel/install.conf says uki_generator=ukify; bko-holt load doesn't make unified kernel images"]);
+    let p = with(&["boot", "initramfs", "installkernel", "layout"], "bls".into());
+    assert!(p.len() == 1 && p[0].contains("says layout=bls; bko-holt load supports only installkernel's grub and compat layouts"), "{p:?}");
+    assert!(with(&["boot", "initramfs", "installkernel", "layout"], "compat".into()).is_empty());
+    assert!(with(&["boot", "initramfs", "installkernel", "layout"], Value::Null)[0].contains("names no layout"));
+    let p = with(&["boot", "initramfs", "lib_modules_initrd"], vec![k].into());
+    assert_eq!(p, vec![format!("Gentoo: kernel {k} has its initramfs at /lib/modules/{k}/initrd, where bko-holt load doesn't make one")]);
+    let p = with(&["boot", "loader", "via_shim"], true.into());
+    assert!(p.len() == 1 && p[0].starts_with("Gentoo through shim (Secure Boot, grub)"), "{p:?}");
+    // none: nothing made, said.
+    let mut w = v.clone();
+    set_at(&mut w, &["boot", "initramfs", "generator"], "none".into());
+    let b = plan(w);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
+    assert!(!bt.contains("dracut"), "{bt}");
+    assert!(b.notes.iter().any(|n| n.starts_with("Gentoo: no initramfs generator")), "{:?}", b.notes);
+}
+
+/// A Gentoo without installkernel's configuration: none when /boot has no
+/// initramfs, genkernel when it's installed, else dracut; and a hand-built
+/// kernel without an initramfs plans no initramfs step.
+#[test]
+fn gentoo_generator_without_installkernel() {
+    let k = GENTOO_KV;
+    let t = gentoo_thinkpad();
+    std::fs::remove_file(t.p("/usr/lib/kernel/install.conf")).unwrap();
+    let gen = |t: &Tree| {
+        let v = run(t, true, FakeRunner::default());
+        let i = v.at(&["boot", "initramfs"]).unwrap().clone();
+        (s(&i, &["generator"]).to_string(), arr(&i, &["evidence"]).iter().filter_map(|x| x.as_str().map(str::to_string)).collect::<Vec<_>>(), i.get("installkernel").unwrap().is_null(), v)
+    };
+    let (g, ev, no_ik, _) = gen(&t);
+    assert_eq!(g, "dracut");
+    assert!(no_ik);
+    assert_eq!(ev[0], "no installkernel configuration (/etc/kernel/install.conf, /usr/lib/kernel/install.conf)");
+    assert_eq!(ev[1], "/boot has initramfs-* and genkernel isn't installed");
+    t.file("/var/db/pkg/sys-kernel/genkernel-4.3.17/PF", "genkernel-4.3.17\n");
+    assert_eq!(gen(&t).0, "genkernel");
+    for f in [format!("/boot/initramfs-{k}.img"), format!("/boot/initramfs-{k}.img.old")] {
+        std::fs::remove_file(t.p(&f)).unwrap();
+    }
+    std::fs::write(t.p("/var/db/pkg/sys-kernel/gentoo-kernel-bin-6.18.63/USE"), "abi_x86_64 amd64 elibc_glibc kernel_linux\n").unwrap();
+    let (g, ev, _, v) = gen(&t);
+    assert_eq!(g, "none");
+    assert_eq!(ev[1..], ["/boot has no initramfs-*".to_string(), "gentoo-kernel-bin-6.18.63 is built without USE=initramfs".to_string()]);
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    let l = Layout::from_json(v).unwrap();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+    let b = commands::build(&l, &o, &Mapping { pairs: vec![("nvme0n1".into(), "vda".into())], ..Mapping::default() });
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
+    assert!(!bt.contains("dracut") && !bt.contains("update-initramfs") && bt.contains("grub-install"), "{bt}");
+    // installkernel's install.conf in /etc wins over /usr/lib's.
+    t.file("/etc/kernel/install.conf", "layout=compat\ninitrd_generator=ugrd\nuki_generator=none\n");
+    let (g, ev, _, _) = gen(&t);
+    assert_eq!(g, "ugrd");
+    assert_eq!(ev[0], "/etc/kernel/install.conf says initrd_generator=ugrd");
+}
+
+/// fstab mounts the ESP at /efi, but this boot didn't: said, since the dump
+/// then has no ESP and a backup none of its files.
+#[test]
+fn unmounted_esp_warns() {
+    let t = gentoo_thinkpad();
+    let mi = std::fs::read_to_string(t.p("/proc/self/mountinfo")).unwrap();
+    std::fs::write(t.p("/proc/self/mountinfo"), mi.lines().filter(|l| !l.contains(" /efi ")).map(|l| format!("{l}\n")).collect::<String>()).unwrap();
+    let v = run(&t, true, FakeRunner::default());
+    let w: Vec<&str> = arr(&v, &["warnings"]).iter().filter_map(Value::as_str).collect();
+    assert_eq!(w, vec!["fstab mounts a vfat /efi (UUID=1234-ABCD), but nothing is mounted there: this dump has no ESP and a backup would have none of its files; mount /efi and dump again"]);
+    assert!(arr(&v, &["boot", "esps"]).is_empty());
+    // A /boot/efi too; a vfat mounted elsewhere, or not vfat, isn't one.
+    let fstab = std::fs::read_to_string(t.p("/etc/fstab")).unwrap();
+    std::fs::write(t.p("/etc/fstab"), fstab.replace(" /efi ", " /boot/efi ")).unwrap();
+    let v = run(&t, true, FakeRunner::default());
+    assert!(arr(&v, &["warnings"])[0].as_str().unwrap().starts_with("fstab mounts a vfat /boot/efi (UUID=1234-ABCD)"));
+    std::fs::write(t.p("/etc/fstab"), fstab.replace(" /efi ", " /mnt/stick ")).unwrap();
+    assert!(arr(&run(&t, true, FakeRunner::default()), &["warnings"]).is_empty());
+}
+
 /// Every scenario's dump, by name, for tests that must hold over all of
 /// them (load's fit.rs).
 pub fn dumps() -> Vec<(&'static str, Value)> {
@@ -1208,5 +1520,6 @@ pub fn dumps() -> Vec<(&'static str, Value)> {
         ("zfs_root", run(&zfs, true, runner)),
         ("whole_disk_fs", run(&misc_tree(), true, FakeRunner::default())),
         ("kinoite_ostree", run(&kinoite_ostree(), true, kinoite_runner())),
+        ("gentoo_thinkpad", run(&gentoo_thinkpad(), true, FakeRunner::default())),
     ]
 }

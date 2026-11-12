@@ -119,8 +119,74 @@ pub fn parse_xbps_pkgdb(text: &str) -> Vec<(String, String, String)> {
     out
 }
 
+/// Whether this is Gentoo: baselayout's /etc/gentoo-release.
+pub fn is_gentoo(sys: &Sys) -> bool {
+    sys.exists("/etc/gentoo-release")
+}
+
+/// Whether `v` is a Portage version without its revision: `N(.N)*[a-z]?`
+/// then any of `_alpha`, `_beta`, `_pre`, `_rc` and `_p`, each with an
+/// optional number ("1.0.4", "2.03.39", "1.2.3b_p20250101", "9999").
+/// Read from the end, as the suffixes come last.
+pub fn is_portage_version(v: &str) -> bool {
+    let mut core = v;
+    while let Some(i) = core.rfind('_') {
+        let word = core[i + 1..].trim_end_matches(|c: char| c.is_ascii_digit());
+        if !matches!(word, "alpha" | "beta" | "pre" | "rc" | "p") {
+            return false;
+        }
+        core = &core[..i];
+    }
+    let core = core.strip_suffix(|c: char| c.is_ascii_lowercase()).unwrap_or(core);
+    !core.is_empty() && core.split('.').all(|p| !p.is_empty() && p.bytes().all(|c| c.is_ascii_digit()))
+}
+
+/// A Portage PF ("font-adobe-100dpi-1.0.4", "grub-2.16-r1") split into the
+/// package's name and its version with any `-rN` revision ("grub",
+/// "2.16-r1").  The name can hold dashes and digits; the version is what
+/// follows its last dash once a revision is set aside.
+pub fn split_pf(pf: &str) -> Option<(&str, &str)> {
+    let base = match pf.rfind("-r") {
+        Some(i) if i + 2 < pf.len() && pf[i + 2..].bytes().all(|c| c.is_ascii_digit()) => &pf[..i],
+        _ => pf,
+    };
+    let j = base.rfind('-')?;
+    (j > 0 && is_portage_version(&base[j + 1..])).then(|| (&pf[..j], &pf[j + 1..]))
+}
+
+/// Installed packages from Portage's database (Gentoo): a directory per
+/// package, /var/db/pkg/CATEGORY/PF, whose files PF and CHOST hold its name
+/// and version and the system it was built for (the vdb has no
+/// architecture).  Names are bare, without the category, as everywhere
+/// here (docs/design/gentoo.md, decision 4).  A merge under way
+/// (`-MERGING-PF`) isn't installed yet.
+pub fn portage_packages(sys: &Sys) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for cat in sys.list("/var/db/pkg") {
+        let cdir = format!("/var/db/pkg/{cat}");
+        if cat.starts_with('.') || !sys.is_dir(&cdir) {
+            continue;
+        }
+        for d in sys.list(&cdir) {
+            let dir = format!("{cdir}/{d}");
+            if d.starts_with(['-', '.']) || !sys.is_dir(&dir) {
+                continue;
+            }
+            let pf = sys.read_trim(&format!("{dir}/PF")).unwrap_or(d);
+            let Some((n, v)) = split_pf(&pf) else { continue };
+            out.push((n.to_string(), v.to_string(), sys.read_trim(&format!("{dir}/CHOST")).unwrap_or_default()));
+        }
+    }
+    out.sort();
+    out
+}
+
 /// The installed packages, from whichever package manager the system has.
+/// Portage first: a Gentoo can have dpkg or rpm emerged as tools.
 pub fn installed_packages(sys: &Sys) -> Vec<(String, String, String)> {
+    if is_gentoo(sys) {
+        return portage_packages(sys);
+    }
     if let Some(t) = sys.read("/var/lib/dpkg/status") {
         return parse_dpkg_status(&t);
     }
@@ -166,6 +232,10 @@ pub const PACKAGES: &[&str] = &[
     // by ckms (zfs-ckms) or prebuilt (linux-*-zfs-bin).
     "grub-i386-pc", "grub-x86_64-efi", "linux-stable", "linux-lts-zfs-bin", "linux-stable-zfs-bin", "zfs", "zfs-ckms", "ckms",
     "cryptsetup-scripts",
+    // Gentoo's ("grub", "dracut", "lvm2" and the rest are above, by bare
+    // name): its kernels, installkernel and the initramfs generators it
+    // can call, systemd-utils (udev, and systemd-boot without systemd).
+    "gentoo-kernel-bin", "gentoo-kernel", "gentoo-sources", "installkernel", "genkernel", "ugrd", "systemd-utils", "zfs-kmod",
 ];
 
 /// debconf answers from /var/cache/debconf/config.dat whose names start with
@@ -532,7 +602,15 @@ pub fn systemd_boot_json(sys: &Sys, mount: &str) -> Option<Value> {
 pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
     let mut versions: Vec<String> = Vec::new();
     let files = sys.list("/boot");
+    // Gentoo's installkernel keeps the kernel's files it replaced as
+    // vmlinuz-V.old, initramfs-V.img.old, config-V.old and
+    // System.map-V.old: no kernel of their own, listed apart.
+    let mut old_copies: Vec<&str> = Vec::new();
     for f in &files {
+        if f.ends_with(".old") && ["vmlinuz-", "initrd.img-", "config-", "System.map-", "initramfs-"].iter().any(|p| f.starts_with(p)) {
+            old_copies.push(f);
+            continue;
+        }
         // Debian's initrd.img-V, Arch's and Fedora's initramfs-V.img.
         // Alpine's are vmlinuz-FLAVOR and initramfs-FLAVOR, with no .img.
         let initramfs = f.strip_prefix("initramfs-").map(|v| v.strip_suffix(".img").unwrap_or(v)).filter(|v| !v.ends_with("-fallback") && !v.ends_with("kdump"));
@@ -592,7 +670,11 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
             links.put(l, t);
         }
     }
-    Obj::new().set("installed", list).set("symlinks", links).build()
+    let mut o = Obj::new().set("installed", list).set("symlinks", links);
+    if !old_copies.is_empty() {
+        o.put("old_copies", old_copies);
+    }
+    o.build()
 }
 
 /// /proc/cmdline split into words, with the storage-related ones picked out.
@@ -613,14 +695,75 @@ pub fn cmdline_json(cmdline: &str) -> Value {
     Obj::new().set("raw", cmdline.trim()).set("words", words).set("storage", picked).build()
 }
 
+/// installkernel's configuration on Gentoo: the first of these that
+/// exists, as installkernel itself reads them.
+pub const INSTALL_CONF: &[&str] = &["/etc/kernel/install.conf", "/usr/lib/kernel/install.conf"];
+
+/// Gentoo's initramfs generator is the owner's choice, not the
+/// distribution's (docs/design/gentoo.md): installkernel's install.conf
+/// names it (initrd_generator: dracut, ugrd or none; uki_generator; layout,
+/// where the images go).  Without one: none if /boot has no initramfs-*,
+/// genkernel if it's installed, else dracut.  The generator, then the
+/// boot.initramfs fields only Gentoo's dumps have: installkernel (the file
+/// and its three keys, or null), evidence, and lib_modules_initrd (the
+/// kernels with an image at /lib/modules/K/initrd, which load refuses).
+fn gentoo_initramfs(sys: &Sys, packages: &[(String, String, String)]) -> (Option<String>, Vec<(&'static str, Value)>) {
+    let has = |p: &str| packages.iter().any(|(n, _, _)| n == p);
+    let mut why: Vec<String> = Vec::new();
+    let conf = INSTALL_CONF.iter().find(|p| sys.is_file(p)).map(|p| (*p, sys.read(p).map(|t| parse_shell_assignments(&t)).unwrap_or_default()));
+    let key = |k: &str| conf.as_ref().and_then(|(_, a)| a.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone()));
+    let installkernel = conf.as_ref().map(|(p, _)| {
+        Obj::new().set("conf", *p).set("layout", key("layout")).set("initrd_generator", key("initrd_generator")).set("uki_generator", key("uki_generator")).build()
+    });
+    let in_boot = sys.list("/boot").iter().any(|f| f.starts_with("initramfs-") && !f.ends_with(".old"));
+    let generator = match (&conf, key("initrd_generator").filter(|g| !g.is_empty())) {
+        (Some((p, _)), Some(g)) => {
+            why.push(format!("{p} says initrd_generator={g}"));
+            g
+        }
+        (c, _) => {
+            match c {
+                Some((p, _)) => why.push(format!("{p} names no initrd_generator")),
+                None => why.push(format!("no installkernel configuration ({})", INSTALL_CONF.join(", "))),
+            }
+            if !in_boot {
+                why.push("/boot has no initramfs-*".into());
+                "none".into()
+            } else if has("genkernel") {
+                why.push("genkernel is installed".into());
+                "genkernel".into()
+            } else {
+                why.push("/boot has initramfs-* and genkernel isn't installed".into());
+                "dracut".into()
+            }
+        }
+    };
+    // The distribution kernels' USE=initramfs: a second clue, said beside
+    // the first.
+    for cat_pf in sys.list("/var/db/pkg/sys-kernel") {
+        let Some((n, _)) = split_pf(&cat_pf) else { continue };
+        if !matches!(n, "gentoo-kernel-bin" | "gentoo-kernel") {
+            continue;
+        }
+        let use_ = sys.read(&format!("/var/db/pkg/sys-kernel/{cat_pf}/USE")).unwrap_or_default();
+        let on = use_.split_whitespace().any(|w| w == "initramfs");
+        why.push(format!("{cat_pf} is built {} USE=initramfs", if on { "with" } else { "without" }));
+    }
+    let lib_initrd: Vec<String> = sys.list("/lib/modules").into_iter().filter(|k| sys.is_file(&format!("/lib/modules/{k}/initrd"))).collect();
+    (Some(generator), vec![("installkernel", installkernel.into()), ("evidence", why.into()), ("lib_modules_initrd", lib_initrd.into())])
+}
+
 fn initramfs_json(sys: &Sys, packages: &[(String, String, String)], ostree: bool) -> Value {
     let has = |p: &str| packages.iter().any(|(n, _, _)| n == p);
+    let (gentoo_generator, gentoo) = if is_gentoo(sys) && !ostree { gentoo_initramfs(sys, packages) } else { (None, Vec::new()) };
     // AerynOS: each kernel package ships its initramfs (/usr/lib/kernel's
     // *.initrd), which blsforme copies to the ESP; nothing is generated.
     // ostree: the image's own, in /boot/ostree (its directory is named after
     // the kernel's and initramfs's checksum), though dracut is installed.
     let prebuilt = ostree || sys.list("/usr/lib/kernel").iter().any(|f| f.ends_with(".initrd"));
-    let generator = if prebuilt {
+    let generator = if let Some(g) = gentoo_generator.as_deref() {
+        Some(g)
+    } else if prebuilt {
         Some("prebuilt")
     } else if has("mkinitcpio") {
         Some("mkinitcpio")
@@ -640,13 +783,16 @@ fn initramfs_json(sys: &Sys, packages: &[(String, String, String)], ostree: bool
         .read("/etc/initramfs-tools/conf.d/resume")
         .and_then(|t| parse_shell_assignments(&t).into_iter().find(|(k, _)| k == "RESUME").map(|(_, v)| v));
     let pick = |k: &str| conf.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
-    Obj::new()
+    let mut o = Obj::new()
         .set("generator", generator)
         .set("modules", pick("MODULES"))
         .set("compress", pick("COMPRESS"))
         .set("resume", resume)
-        .set("crypttab_in_initramfs", sys.is_file("/etc/crypttab"))
-        .build()
+        .set("crypttab_in_initramfs", sys.is_file("/etc/crypttab"));
+    for (k, v) in gentoo {
+        o.put(k, v);
+    }
+    o.build()
 }
 
 // --- Which loader ------------------------------------------------------------------
@@ -1220,6 +1366,67 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         let b = boot_json(&s, &p, &[], Value::Null, vec![], None);
         assert_eq!(b.at(&["systemd_boot", "entries", "0", "file"]).and_then(Value::as_str), Some("ostree-1.conf"));
         assert!(b.get("ostree").is_none());
+    }
+
+    /// Portage's PF: the name keeps its dashes and digits; the version is
+    /// read from the end (revision, suffixes, then N(.N)*[a-z]?).
+    #[test]
+    fn portage_pf() {
+        for (pf, n, v) in [
+            ("font-adobe-100dpi-1.0.4", "font-adobe-100dpi", "1.0.4"),
+            ("grub-2.16-r1", "grub", "2.16-r1"),
+            ("gentoo-kernel-bin-6.18.63", "gentoo-kernel-bin", "6.18.63"),
+            ("installkernel-70-r1", "installkernel", "70-r1"),
+            ("dracut-112", "dracut", "112"),
+            ("linux-firmware-20261019", "linux-firmware", "20261019"),
+            ("openssl-3.5.4_p1", "openssl", "3.5.4_p1"),
+            ("python-3.14.0_rc3-r2", "python", "3.14.0_rc3-r2"),
+            ("foo-1.2b_beta2_p20250101-r10", "foo", "1.2b_beta2_p20250101-r10"),
+            ("xf86-video-r128-6.12.1", "xf86-video-r128", "6.12.1"),
+            ("avahi-0-r3", "avahi", "0-r3"),
+            ("libsigc++-2.12.1-r1", "libsigc++", "2.12.1-r1"),
+            ("vim-9999", "vim", "9999"),
+        ] {
+            assert_eq!(split_pf(pf), Some((n, v)), "{pf}");
+        }
+        for pf in ["grub", "grub-", "-1.0", "foo-r1", "foo-1.0_gamma", "foo-1..2", "foo-1.0ab", "foo-v1.0", "foo-1.0-rc"] {
+            assert_eq!(split_pf(pf), None, "{pf}");
+        }
+        assert!(is_portage_version("2.03.39") && is_portage_version("1.0a_pre") && !is_portage_version("") && !is_portage_version("_p1"));
+    }
+
+    /// /var/db/pkg read as Portage keeps it, before dpkg's (a Gentoo can
+    /// have dpkg emerged): bare names, PF's version, CHOST as the arch;
+    /// a merge under way and a stray file left out.
+    #[test]
+    fn portage_vdb() {
+        let t = Tree::new("portage-vdb");
+        t.file("/etc/gentoo-release", "Gentoo Base System release 2.18
+")
+            .file("/var/db/pkg/sys-boot/grub-2.16-r1/PF", "grub-2.16-r1
+")
+            .file("/var/db/pkg/sys-boot/grub-2.16-r1/CHOST", "x86_64-pc-linux-gnu
+")
+            .file("/var/db/pkg/sys-kernel/dracut-112/PF", "dracut-112
+")
+            .file("/var/db/pkg/sys-kernel/dracut-112/CHOST", "x86_64-pc-linux-gnu
+")
+            .file("/var/db/pkg/sys-kernel/-MERGING-dracut-113/PF", "dracut-113
+")
+            .dir("/var/db/pkg/virtual/dist-kernel-6.18.63")
+            .file("/var/db/pkg/sys-kernel/stray", "x")
+            .file("/var/lib/dpkg/status", "Package: dpkg\nStatus: install ok installed\nVersion: 1.22\n");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        assert_eq!(
+            installed_packages(&s),
+            vec![
+                ("dist-kernel".into(), "6.18.63".into(), String::new()),
+                ("dracut".into(), "112".into(), "x86_64-pc-linux-gnu".into()),
+                ("grub".into(), "2.16-r1".into(), "x86_64-pc-linux-gnu".into())
+            ]
+        );
+        std::fs::remove_file(t.p("/etc/gentoo-release")).unwrap();
+        assert_eq!(installed_packages(&s), vec![("dpkg".into(), "1.22".into(), String::new())]);
     }
 
     /// Shaped like the chimera guest (BIOS, GRUB in the MBR): apk-tools 3

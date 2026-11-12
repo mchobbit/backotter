@@ -2332,14 +2332,26 @@ impl Builder<'_> {
             out.push(Cmd::new(&["mount", "--rbind", "--make-rslave", &format!("/{d}"), &format!("{t}/{d}")]));
         }
         let nixos = self.layout.str_at(&["os", "id"]) == Some("nixos");
-        match self.initramfs(&t) {
-            _ if nixos => self.notes.push("NixOS: each generation's kernel and initrd are in /boot/kernels, restored with /boot; nothing to rebuild".into()),
-            Some(c) => out.push(c),
-            None => self.notes.push("the initramfs came prebuilt with the kernel and was restored with it; nothing to rebuild".into()),
+        let gentoo = self.layout.str_at(&["os", "id"]) == Some("gentoo");
+        if gentoo {
+            let cmds = self.gentoo_initramfs(&t);
+            out.extend(cmds);
+        } else {
+            match self.initramfs(&t) {
+                _ if nixos => self.notes.push("NixOS: each generation's kernel and initrd are in /boot/kernels, restored with /boot; nothing to rebuild".into()),
+                Some(c) => out.push(c),
+                None => self.notes.push("the initramfs came prebuilt with the kernel and was restored with it; nothing to rebuild".into()),
+            }
         }
         let loader = self.layout.str_at(&["boot", "loader", "name"]).unwrap_or("unknown").to_string();
         let uefi = self.layout.uefi();
+        let via_shim = self.layout.v.at(&["boot", "loader", "via_shim"]).and_then(Value::as_bool) == Some(true);
         match (loader.as_str(), uefi) {
+            // Gentoo through shim: grub-install would put an unsigned GRUB
+            // where the signed one is.
+            (_, true) if gentoo && via_shim => {
+                self.problems.push(format!("Gentoo through shim (Secure Boot, {loader}): bko-holt load would write an unsigned boot loader over the signed one, and doesn't support it"));
+            }
             // NixOS: GRUB is in the Nix store, and its grub.cfg is written
             // by switch-to-configuration, which would install GRUB on the
             // source's device names (here, the rescue system's disks).  The
@@ -2521,6 +2533,67 @@ impl Builder<'_> {
             Some("mkinitfs") => Cmd::new(&["chroot", t, "sh", "-c", "for k in /lib/modules/*; do mkinitfs \"${k##*/}\" || exit; done"]),
             _ => Cmd::new(&["chroot", t, "update-initramfs", "-u", "-k", "all"]),
         })
+    }
+
+    /// Gentoo's initramfs step (docs/design/gentoo.md, decisions 2, 3 and
+    /// 6): installkernel's generator as the dump read it, with bko-holt's
+    /// own commands and no Portage or Python in the chroot.  dracut makes
+    /// each kernel's image under the name installkernel gives it
+    /// (/boot/initramfs-K.img), named on the command line: left to itself,
+    /// dracut 112 could pick /efi/MACHINE-ID/K/initrd or
+    /// /lib/modules/K/initrd.  `none` makes nothing.  Everything else is
+    /// refused by name: genkernel, ugrd, a unified kernel image, an
+    /// installkernel layout other than grub or compat, an image at
+    /// /lib/modules/K/initrd.  installkernel's .old copies come back with
+    /// /boot as they were.
+    fn gentoo_initramfs(&mut self, t: &str) -> Vec<Cmd> {
+        let mut out = Vec::new();
+        let ik = self.layout.v.at(&["boot", "initramfs", "installkernel"]).filter(|v| !v.is_null()).cloned();
+        if let Some(ik) = &ik {
+            let conf = s(ik, "conf").unwrap_or_else(|| "install.conf".into());
+            match s(ik, "uki_generator").as_deref() {
+                None | Some("" | "none") => {}
+                Some(u) => self.problems.push(format!("Gentoo: {conf} says uki_generator={u}; bko-holt load doesn't make unified kernel images")),
+            }
+            match s(ik, "layout").as_deref() {
+                Some("grub" | "compat") => {}
+                Some(l) => self.problems.push(format!("Gentoo: {conf} says layout={l}; bko-holt load supports only installkernel's grub and compat layouts (the kernels and their images in /boot)")),
+                None => self.problems.push(format!("Gentoo: {conf} names no layout; bko-holt load supports only installkernel's grub and compat layouts (the kernels and their images in /boot)")),
+            }
+        }
+        for k in self.layout.arr(&["boot", "initramfs", "lib_modules_initrd"]).to_vec() {
+            let k = k.as_str().unwrap_or_default();
+            self.problems.push(format!("Gentoo: kernel {k} has its initramfs at /lib/modules/{k}/initrd, where bko-holt load doesn't make one"));
+        }
+        let generator = self.layout.str_at(&["boot", "initramfs", "generator"]).unwrap_or("unknown").to_string();
+        match generator.as_str() {
+            "dracut" => {
+                let mut made = 0;
+                for k in self.layout.arr(&["boot", "kernels", "installed"]).to_vec() {
+                    let Some(v) = s(&k, "version") else { continue };
+                    if k.get("dir").is_some_and(|d| !d.is_null()) || k.get("initrd_bytes").is_none_or(Value::is_null) {
+                        continue;
+                    }
+                    if k.get("modules_installed").and_then(Value::as_bool) != Some(true) {
+                        self.notes.push(format!("Gentoo: kernel {v} has no /lib/modules/{v}, so dracut can't remake its initramfs; the restored one stays"));
+                        continue;
+                    }
+                    out.push(Cmd::new(&["chroot", t, "dracut", "--force", &format!("/boot/initramfs-{v}.img"), &v]).why(format!("kernel {v}'s initramfs, by the name installkernel gives it")));
+                    made += 1;
+                }
+                if made == 0 {
+                    self.problems.push("Gentoo: the initramfs generator is dracut, but no kernel in /boot has an initramfs to remake".into());
+                }
+            }
+            "none" => self.notes.push("Gentoo: no initramfs generator (installkernel's initrd_generator=none, or no initramfs in /boot): nothing is made, and the kernels boot without one, as on the source".into()),
+            "genkernel" | "ugrd" => self.problems.push(format!("Gentoo: the initramfs is {generator}'s; bko-holt load remakes only dracut's (or none)")),
+            other => self.problems.push(format!("Gentoo: initramfs generator {other} isn't one bko-holt load can run (only dracut, or none)")),
+        }
+        let old: Vec<String> = self.layout.arr(&["boot", "kernels", "old_copies"]).iter().filter_map(|v| v.as_str().map(str::to_string)).collect();
+        if !old.is_empty() {
+            self.notes.push(format!("Gentoo: installkernel's .old copies in /boot ({}) came back as they were: grub-mkconfig lists them, and this stage doesn't remake them", old.join(", ")));
+        }
+        out
     }
 
     /// Chimera's systemd-boot entries, remade as its kernel hook

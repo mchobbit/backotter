@@ -439,6 +439,11 @@ creation_time = 1762300001	# Wed Nov  5 00:00:01 2025
     /// A PV with label in sector 1, one metadata area at 4096 (size 1 MiB)
     /// holding METADATA at `text_at` within the area (wrapping if needed).
     pub fn pv(text_at: u64, area_size: u64) -> Vec<u8> {
+        pv_with(text_at, area_size, METADATA)
+    }
+
+    /// As `pv`, with `metadata` in place of METADATA.
+    pub fn pv_with(text_at: u64, area_size: u64, metadata: &str) -> Vec<u8> {
         let mut img = vec![0u8; 4 << 20];
         let l = &mut img[512..1024];
         l[0..8].copy_from_slice(b"LABELONE");
@@ -452,7 +457,7 @@ creation_time = 1762300001	# Wed Nov  5 00:00:01 2025
         // (terminator at 56..72 left zero), then the metadata area:
         ph[72..80].copy_from_slice(&4096u64.to_le_bytes());
         ph[80..88].copy_from_slice(&area_size.to_le_bytes());
-        let text = METADATA.as_bytes();
+        let text = metadata.as_bytes();
         let h = &mut img[4096..4096 + 512];
         h[4..20].copy_from_slice(b" LVM2 x[5A%r0N*>");
         h[20..24].copy_from_slice(&1u32.to_le_bytes());

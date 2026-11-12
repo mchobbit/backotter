@@ -1209,6 +1209,17 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         Some(f) => Value::Arr(f.iter().map(|e| e.to_json(ctx.resolve(sys, &e.spec).as_deref())).collect()),
         None => Value::Null,
     };
+    // An ESP that fstab mounts but that isn't mounted (Gentoo's /efi, after
+    // a boot that didn't mount it): the dump would have no ESP, a backup
+    // none of its files, and load nowhere to put the loader.  Said now.
+    for e in fstab_entries.iter().flatten() {
+        if e.vfstype == "vfat" && matches!(e.file.as_str(), "/efi" | "/boot/efi") && !mountinfo.iter().any(|m| m.target == e.file) {
+            sys.warn(format!(
+                "fstab mounts a vfat {} ({}), but nothing is mounted there: this dump has no ESP and a backup would have none of its files; mount {} and dump again",
+                e.file, e.spec, e.file
+            ));
+        }
+    }
     let ostree = crate::ostree::detect(sys, &mountinfo);
     let fstab_resolved: Vec<(&mounts::FstabEntry, Option<String>)> = fstab_entries.iter().flatten().map(|e| (e, ctx.resolve(sys, &e.spec))).collect();
     let sources = backup_sources(&layout_mounts, &mount_dev, &fstab_resolved, ostree);

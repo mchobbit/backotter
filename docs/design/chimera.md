@@ -210,8 +210,8 @@ and the boot tools, 2026-11-11:
 - **The chroot's commands:** `grub-install`, `update-initramfs -u -k all`,
   `env LANG=C grub-mkconfig -o ...`, and the SELinux check (POSIX sh). None
   uses a GNU-only option.
-- **No golden plan yet:** it is made from a passing HoltTest1 run's dump of
-  `chimera` (C5), as the corpus's others were.
+- **The golden plan:** made in C2 (1ac2eb9) from passing HoltTest1 run
+  `chim2`'s dump of `chimera`, as the corpus's others were.
 
 ## What C3 found (load)
 
@@ -272,7 +272,10 @@ three guests:
 Each one gets: `rebuild-one.sh` lines, `stictest1/GUEST/check.sh` and
 `check-inner.sh`, `holttest1d/ram-sizes.tsv` rows, `classes.json` entries,
 the hosts split (one on Cinqcent, two on Chopin, or as the queue's sizes
-suggest), and a GuestTest1 grade.
+suggest), and a GuestTest1 grade. (C5: all three run on both hosts, each
+under 6 GiB of RAM disk, so the queue needs no split; the `ram-sizes.tsv`
+rows come from the runs' RAM-disk peaks, not left + 1.0, because a pass
+deletes its disks.)
 
 ## Pieces to build (ordered, est.)
 
@@ -282,7 +285,7 @@ suggest), and a GuestTest1 grade.
 | C2 | bko-holt: the `SUPPORTED` row, the package names, an apk v3 reader if C1 needs one; a golden plan from `chimera`'s dump, unit tests | 0.5 d |
 | C3 | `chimera-uefi` and `chimera-zfs`; `load` runs `gen-systemd-boot`; golden plans for both | 0.75 d |
 | C4 | SticTest1 entries and runs for the three guests (rustic-bko and restic) | 0.25 d |
-| C5 | HoltTest1 group and runs, on both hosts | 0.25 d |
+| C5 | HoltTest1 group and runs, on both hosts. **Done 2026-11-12:** the three guests joined 1Obscure; each passed first time on both hosts with bko-holt 24b1cfef0663 and rel4's rustic-bko: `chimera` runs `c5-1` (Cinqcent) and `c5-2` (Chopin), `chimera-uefi` `c5-3` (Cinqcent) and `c5-4` (Chopin), `chimera-zfs` `c5-5` (Chopin) and `c5-6` (Cinqcent); RAM-disk peaks 4.3, 5.1 and 5.8 GiB, so `ram-sizes.tsv` rows of D 6, 6 and 7 (the peak rule), MEM 4 | 0.25 d |
 | C6 | BackShot1: the fixes in the table; `bs1-qemu.py --virtio` rehearsals on `chimera-uefi`, then a run on the Thinkpad | 0.5 d |
 | C7 | Docs: README supported lists, HoltTest1's table, `osrel.rs`'s comment, memory | 0.1 d |
 | | *≈ 3 d in all* | |

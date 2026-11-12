@@ -46,11 +46,23 @@
 #
 # QEMU locks an image while the VM runs, so this refuses a running VM's disk.
 # Never write to a guest's filesystems while it runs.
+# A vm-store object (testvm/vm-store) is never written: it mounts only with --ro.
 
 set -euo pipefail
 
 STATE_DIR=/run/vm-mount
 die() { echo "vm-mount: $*" >&2; exit 1; }
+# Whether FILE is a vm-store object (as in vm-run): by path, not -w.
+in_store() {
+    local d
+    d=$(realpath -- "$1" 2>/dev/null) || return 1
+    d=${d%/*}
+    while [[ $d == /?* ]]; do
+        [[ ${d##*/} == objects && -f ${d%/*}/store.json ]] && return 0
+        d=${d%/*}
+    done
+    return 1
+}
 
 ro=no key="" images=()
 while [[ $# -gt 0 ]]; do
@@ -63,6 +75,11 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 [[ $# -eq 2 ]] || die "usage: $0 [--ro] [--disk IMAGE2]... [--key FILE] IMAGE MOUNTPOINT"
+if [[ $ro == no ]]; then
+    for i in "$1" "${images[@]}"; do
+        if in_store "$i"; then die "$(realpath -- "$i") is a vm-store object: mount it with --ro"; fi
+    done
+fi
 [[ $EUID -eq 0 ]] || die "must run as root"
 image=$(realpath "$1")
 images=("$image" "${images[@]}")

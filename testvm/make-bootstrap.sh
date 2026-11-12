@@ -17,6 +17,7 @@
 #   chimera       chimera         XFS        Chimera Linux's full ROOTFS tarball (dinit)
 #   chimera-uefi  chimera-uefi    ext4       the same, for UEFI, / on LVM on LUKS2 (below)
 #   gentoo        gentoo          ext4       Gentoo's OpenRC stage3 (glibc), for UEFI, / on LVM (below)
+#   gentoo-systemd gentoo-systemd ext4       Gentoo's systemd stage3, for UEFI, / on LVM on LUKS2 (below)
 #   artix-dinit   artix-dinit     JFS        Artix's repositories (dinit)
 #   artix-s6      artix-s6        ext4       Artix's repositories (s6)
 #   nixos         nixos2605       bcachefs   NixOS 26.05's nixpkgs
@@ -28,12 +29,13 @@
 # VM, is checked by the package manager doing it (apk, xbps, pacman, Nix).
 # Chimera's ROOTFS is fixed by its date, but apk then upgrades it from the
 # live repository, so a rebuild gets newer packages.  So is Gentoo's stage3
-# (GENTOO_STAGE3, checked with gpgv against the Release Engineering key);
+# (GENTOO_STAGE3, the OpenRC or the systemd one, checked with gpgv against
+# the Release Engineering key);
 # its tree is the newest snapshot emerge-webrsync finds (checked by
 # emerge-webrsync), whose timestamp.chk goes in WORK_DIR/portage-tree.json,
 # and its packages are the binhost's.  Gentoo prunes autobuilds after about
-# two months: /bkoscratch/rebuild-inputs/gentoo keeps the stage3 and its .asc
-# on both hosts, for rebuild-one.sh.
+# two months: /bkoscratch/rebuild-inputs/gentoo and gentoo-systemd keep the
+# stage3s and their .ascs on both hosts, for rebuild-one.sh.
 # bcachefs needs an Arch ISO whose kernel still has it (6.12), so NixOS's
 # install uses an older one.
 #
@@ -45,12 +47,13 @@
 #   id_ed25519, .pub      SSH key that logs in as root
 #   install-serial.log    the live system's serial console during the install
 #   vm-run-options        (UEFI guests) --uefi --no-secure-boot, for vm-run
-#   portage-tree.json     (gentoo) the stage3's date and the tree's
+#   portage-tree.json     (gentoo, gentoo-systemd) the stage3's date and the tree's
 #                         metadata/timestamp.chk
-#   luks-keyfile          (alpine-luks, chimera-uefi) the key that unlocks /
-#                         (mode 600, no newline), as the guest's
-#                         /crypto_keyfile.bin (Alpine) or
-#                         /etc/cryptsetup-keys.d/cryptroot.key (Chimera)
+#   luks-keyfile          (alpine-luks, chimera-uefi, gentoo-systemd) the
+#                         key that unlocks / (mode 600, no newline), as the
+#                         guest's /crypto_keyfile.bin (Alpine) or
+#                         /etc/cryptsetup-keys.d/cryptroot.key (Chimera,
+#                         Gentoo)
 #
 # The guest: BIOS + MBR, /boot (1 GiB ext4), swap (2 GiB), / (the rest), 2 GB
 # RAM, no desktop, console on the serial port too, DHCP and sshd.  The UEFI
@@ -63,7 +66,10 @@
 # (LAYOUT luks-esp), then the same LUKS2 and vg0 as alpine-luks.
 # gentoo: the BackShot1 Thinkpad's layout in small (LAYOUT efi-lvm): a
 # 1 GiB ESP at /efi, 2 GiB swap, vg0 with root (10 GiB ext4) and home
-# (3 GiB XFS), ~4 GiB free; GRUB under the id gentoo.
+# (3 GiB XFS), ~4 GiB free; GRUB under the id gentoo.  gentoo-systemd:
+# chimera-uefi's disk (LAYOUT luks-esp), with GRUB in the ESP that is
+# /boot, and systemd's dracut opening the LUKS2 with the key file in its
+# initramfs.
 # bootstrap/common.sh partitions the disk; bootstrap/DISTRO.sh installs.
 # Run it with vm-run, and look inside it while it's off with vm-mount.
 #
@@ -104,7 +110,7 @@ NIX_VERSION=2.31.2
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-bootstrap: $*" >&2; exit 1; }
 
-[[ $# -eq 2 ]] || die "usage: $0 alpine|alpine-uefi|alpine-lvm|alpine-luks|void|chimera|chimera-uefi|gentoo|artix-dinit|artix-s6|nixos WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 alpine|alpine-uefi|alpine-lvm|alpine-luks|void|chimera|chimera-uefi|gentoo|gentoo-systemd|artix-dinit|artix-s6|nixos WORK_DIR"
 distro=$1
 iso_release=$ARCH_ISO_CURRENT
 script=$distro
@@ -122,7 +128,10 @@ case $distro in
     chimera-uefi) name=chimera-uefi root_fs=ext4 script=chimera firmware=uefi layout=luks-esp ;;
     # 20G: efi-lvm's 1 GiB ESP, 2 GiB swap and a ~17 GiB PV for root 10G,
     # home 3G and ~4 GiB free (16G would leave a PV of ~12.99 GiB).
-    gentoo) name=gentoo root_fs=ext4 firmware=uefi layout=efi-lvm DISK_SIZE=20G stage3=openrc ;;
+    gentoo) name=gentoo root_fs=ext4 firmware=uefi layout=efi-lvm DISK_SIZE=20G stage3=openrc
+        extra=(GENTOO_INIT=openrc) ;;
+    gentoo-systemd) name=gentoo-systemd root_fs=ext4 script=gentoo firmware=uefi layout=luks-esp stage3=systemd
+        extra=(GENTOO_INIT=systemd) ;;
     artix-dinit) name=artix-dinit root_fs=jfs script=artix extra=(INIT=dinit) ;;
     artix-s6) name=artix-s6 root_fs=ext4 script=artix extra=(INIT=s6) ;;
     nixos) name=nixos2605 root_fs=bcachefs iso_release=$ARCH_ISO_LINUX_6_12

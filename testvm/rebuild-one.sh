@@ -65,6 +65,9 @@ chimera-zfs) cmd=($T/make-chimera-zfs.sh "$W" chimera-zfs) ;;
 # gentoo: its stage3 at the pinned date, from /bkoscratch/rebuild-inputs/gentoo
 # (Gentoo prunes autobuilds); the tree and packages as they are at the rebuild.
 gentoo)     cmd=(asm $T/make-bootstrap.sh gentoo "$W") ;;
+# gentoo-systemd: the same, with the systemd stage3 from
+# /bkoscratch/rebuild-inputs/gentoo-systemd.
+gentoo-systemd) cmd=(asm $T/make-bootstrap.sh gentoo-systemd "$W") ;;
 artix-dinit|artix-s6) cmd=(asm $T/make-bootstrap.sh $G "$W") ;;
 nixos2605)  cmd=(asm $T/make-bootstrap.sh nixos "$W") ;;
 arch)       cmd=(asm $T/make-arch.sh 2026.10.01 "$W") ;;

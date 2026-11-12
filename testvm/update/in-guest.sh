@@ -54,7 +54,7 @@ if [ -e /etc/NIXOS ]; then
 fi
 
 # t2-section: Linux.portage
-# Gentoo (testvm/bootstrap/gentoo.sh): Portage, with binary packages from
+# Gentoo (testvm/bootstrap/gentoo.sh: gentoo, gentoo-systemd): Portage, with binary packages from
 # the 23.0 binhost (make.conf's getbinpkg, signatures checked against
 # getuto's keyring).  Before the other Linux package managers, as NixOS is:
 # a Gentoo may have dpkg, rpm or dnf emerged as tools.
@@ -64,7 +64,7 @@ if [ "$(uname)" = Linux ] && [ -e /etc/gentoo-release ] && has emerge; then
     # (test2/tests/test_vm_update.py checks that the two agree).  Any other
     # "[ebuild" line in the plan stops the update, by name, before anything
     # is built.  make.conf's getbinpkg makes the plan's -puDN the -uDNg after.
-    SOURCE_OK="sys-fs/lvm2 sys-boot/grub sys-kernel/dracut sys-kernel/installkernel sys-kernel/gentoo-kernel-bin virtual/dist-kernel net-dns/avahi app-doc/info-manual"
+    SOURCE_OK="sys-fs/lvm2 sys-boot/grub sys-kernel/dracut sys-kernel/installkernel sys-kernel/gentoo-kernel-bin virtual/dist-kernel net-dns/avahi app-doc/info-manual sys-apps/systemd net-libs/nghttp2 net-misc/rsync"
     o="--color=n --nospinner"
     emerge --sync -q $o || exit 1
     plan=$(emerge -puDN $o @world) || { printf '%s\n' "$plan"; say "emerge -puDN @world failed"; exit 1; }

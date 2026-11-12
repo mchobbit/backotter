@@ -109,10 +109,13 @@
   "^HTTP request sent, awaiting response\\.\\.\\. N OK$",
   "^Length: (N|HEX) \\(N(\\.N)?[KMG]\\) \\[\\S+\\]$",
   "^Saving to: ‘/var/cache/binhost/\\S+’$",
-  "^NK( \\.{10})+ +N% ",
+  "^NK [ .]*N% ",
   "^TIME \\(N(\\.N)? [KMG]B/s\\) - ‘/var/cache/binhost/\\S+’ saved \\[\\S+\\]$",
   "^\\* Messages for package \\S+:$",
-  "^\\* (See the CONFIGURATION FILES and CONFIGURATION FILES UPDATE TOOLS|sections of the emerge man page to learn how to update config files\\.)$"
+  "^\\* (See the CONFIGURATION FILES and CONFIGURATION FILES UPDATE TOOLS|sections of the emerge man page to learn how to update config files\\.)$",
+  "^!!! The following binary packages have been ignored due to non matching USE:$",
+  "^=[a-z0-9]+(-[a-z0-9]+)*/\\S+( -?[a-z0-9_+-]+)*$",
+  "^(NOTE: The --binpkg-respect-use=n option will prevent emerge|from ignoring these binary packages if possible\\.|Using --binpkg-respect-use=y will silence this warning\\.)$"
  ],
  "apk": [
   "^\\( ?N/N\\) (Upgrading|Installing|Purging|Replacing|Downgrading)",

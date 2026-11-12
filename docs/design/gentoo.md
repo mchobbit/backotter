@@ -272,6 +272,55 @@ read again the same day:
   after `umount -R`, so `vgchange -a n` failed), but arch-chroot's file
   systems mounted once and a plain `chroot`.
 
+## What G3 found
+
+Settled on the `gentoo-systemd` guest (stage3
+`stage3-amd64-systemd-20261108T170107Z`, the same tree, systemd 261.2,
+dracut 112, `installkernel` 70-r1 with USE=systemd), 2026-11-12:
+
+- **The systemd stage3's `lvm2` and `cryptsetup`:** both from the binhost
+  (`lvm2` 2.03.39 with USE=lvm, `cryptsetup` 2.8.8). What isn't is
+  `sys-apps/systemd` itself: the binhost builds it without USE=cryptsetup,
+  so no `systemd-cryptsetup` for the initramfs. The build re-emerges it with
+  USE=cryptsetup from source (a few minutes), and `SOURCE_OK` (both copies)
+  gains `sys-apps/systemd`.
+- **Kernel names under systemd:** with USE=systemd, installkernel hands the
+  kernel to systemd's `kernel-install`, and its `90-compat.install` (layout
+  `grub`, read from the pinned `/etc/kernel/install.conf`) writes
+  `/boot/kernel-KV` and `/boot/initramfs-KV.img`, with no `config-KV` or
+  `System.map-KV`. grub-mkconfig finds `kernel-*` (its paths are the ESP's:
+  `/kernel-KV`). No `/boot/loader/entries` or `/boot/MACHINE-ID`. `dump`
+  now reads `kernel-KV` as a kernel (and `kernel-KV.old` as a copy); GuestTest2's
+  K-gentoo lists both names.
+- **The initramfs:** host-only, with dracut's `crypt`, `systemd` and `lvm`
+  modules, `/etc/crypttab` and `systemd-cryptsetup`; the key file comes in by
+  `install_items` (`/etc/dracut.conf.d/10-backotter-luks.conf`).
+  `rd.luks.uuid` is on GRUB's command line; crypttab names the volume
+  `cryptroot`. The guest boots alone, unlocks with the key file, and comes up
+  with no failed units.
+- **Build time and size:** the builder took 707 s on Chopin; the image is
+  6.7 GiB on disk.
+- **vm-update --try:** ok on the third run (372 s, overlay 566 MiB, 8
+  packages), after two stops that named their package, as the Risks section
+  has it: `net-libs/nghttp2` (curl's new USE=http2 pulled it in; the binhost
+  has it only with USE=-systemd) and `net-misc/rsync` (3.5.2-r1, which the
+  binhost lagged the tree on). Both joined `SOURCE_OK`. Every --try (both guests)
+  also re-emerges iputils with USE=filecaps newly on (`[binary Rg]
+  ... USE="filecaps*"`), so the first real update may give `ping` its
+  cap: unchecked.
+- **GuestTest1 grades** (2026-11-12): both solid on every column but
+  SticTest1's, which has no check until G4, so "not covered by SticTest1",
+  as debian13-stack and rocky10-lvm once were.
+  - `gentoo`: boots alone on both hosts, SSH; the same SHA-256 on both
+    (`25f2f32d...`); `vm-update --try` ok on Chopin (515 s, overlay 539 MiB,
+    7 packages). Two runs on Cinqcent stopped on the network: a mirror's
+    Manifest (`lastreplicate`) and the guest's DNS during a binpkg fetch.
+  - `gentoo-systemd`: boots alone on both hosts (systemd running, no failed
+    unit, / unlocked by its key file), SSH; the same SHA-256 on both
+    (`25552f4e...`); `vm-update --try` ok on Chopin.
+  - Neither has an image-state yet (never really updated), and `ping` is
+    setuid, with no file capability, as on the Thinkpad (G1's open item).
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Effort |

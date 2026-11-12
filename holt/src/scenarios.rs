@@ -1500,6 +1500,20 @@ fn gentoo_dracut_per_kernel() {
     assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "dracut");
     assert_eq!(b.problems, vec!["Gentoo: the initramfs generator is dracut, but no kernel in /boot has an initramfs to remake"]);
 
+    // systemd's kernel-install (installkernel[systemd], layout grub) names
+    // the kernel kernel-K: the same kernel, its .old copy apart.
+    let (v, b) = gentoo_plan(|t| {
+        for (from, to) in [(format!("/boot/vmlinuz-{k}"), format!("/boot/kernel-{k}")), (format!("/boot/vmlinuz-{k}.old"), format!("/boot/kernel-{k}.old"))] {
+            std::fs::rename(t.p(&from), t.p(&to)).unwrap();
+        }
+    });
+    let kernels = arr(&v, &["boot", "kernels", "installed"]);
+    assert_eq!(kernels.len(), 1);
+    assert_eq!(u(&kernels[0], &["vmlinuz_bytes"]), 1);
+    assert!(arr(&v, &["boot", "kernels", "old_copies"]).iter().any(|x| x.as_str() == Some(format!("kernel-{k}.old").as_str())));
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    assert_eq!(dracut(&b), vec![line(k)]);
+
     // /lib/modules/K/initrd, read through /lib -> usr/lib.
     let (v, b) = gentoo_plan(|t| {
         t.file(&format!("/usr/lib/modules/{k}/initrd"), "i");

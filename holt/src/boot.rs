@@ -604,17 +604,19 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
     let files = sys.list("/boot");
     // Gentoo's installkernel keeps the kernel's files it replaced as
     // vmlinuz-V.old, initramfs-V.img.old, config-V.old and
-    // System.map-V.old: no kernel of their own, listed apart.
+    // System.map-V.old: no kernel of their own, listed apart.  Under
+    // systemd's kernel-install, its plugin (90-compat.install, layout grub)
+    // names the kernel kernel-V.
     let mut old_copies: Vec<&str> = Vec::new();
     for f in &files {
-        if f.ends_with(".old") && ["vmlinuz-", "initrd.img-", "config-", "System.map-", "initramfs-"].iter().any(|p| f.starts_with(p)) {
+        if f.ends_with(".old") && ["vmlinuz-", "kernel-", "initrd.img-", "config-", "System.map-", "initramfs-"].iter().any(|p| f.starts_with(p)) {
             old_copies.push(f);
             continue;
         }
         // Debian's initrd.img-V, Arch's and Fedora's initramfs-V.img.
         // Alpine's are vmlinuz-FLAVOR and initramfs-FLAVOR, with no .img.
         let initramfs = f.strip_prefix("initramfs-").map(|v| v.strip_suffix(".img").unwrap_or(v)).filter(|v| !v.ends_with("-fallback") && !v.ends_with("kdump"));
-        for p in ["vmlinuz-", "initrd.img-", "config-", "System.map-", "initramfs-"] {
+        for p in ["vmlinuz-", "kernel-", "initrd.img-", "config-", "System.map-", "initramfs-"] {
             let v = if p == "initramfs-" { initramfs } else { f.strip_prefix(p) };
             if let Some(v) = v {
                 if !versions.iter().any(|x| x == v) {
@@ -629,7 +631,7 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
         .map(|v| {
             Obj::new()
                 .set("version", v.as_str())
-                .set("vmlinuz_bytes", sys.file_size(&format!("/boot/vmlinuz-{v}")))
+                .set("vmlinuz_bytes", sys.file_size(&format!("/boot/vmlinuz-{v}")).or_else(|| sys.file_size(&format!("/boot/kernel-{v}"))))
                 .set(
                     "initrd_bytes",
                     sys.file_size(&format!("/boot/initrd.img-{v}"))

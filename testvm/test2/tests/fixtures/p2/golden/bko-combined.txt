@@ -67,7 +67,7 @@ current: 0
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written
 HoltTest2 plan: bko-holt code 5db6749 (not built), rustic-bko bko-bin, base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 63 of 63 cells, est. 287.5 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+due: 64 of 64 cells, est. 291.5 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   holt:aerynos                  any      holt:new  no PASS yet  6.0 gm  tsv
   holt:alpine324                any      holt:new  no PASS yet  1.9 gm  tsv
   holt:alpinebsd                any      holt:new  no PASS yet  3.7 gm  tsv
@@ -93,6 +93,7 @@ due: 63 of 63 cells, est. 287.5 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   holt:freebsd15                any      holt:new  no PASS yet  4.1 gm  tsv
   holt:freebsd15-mirror         any      holt:new  no PASS yet  6.0 gm  tsv
   holt:gentoo                   any      holt:new  no PASS yet  4.0 gm  tsv
+  holt:gentoo-systemd           any      holt:new  no PASS yet  4.0 gm  tsv
   holt:ghostbsd26               any      holt:new  no PASS yet  4.0 gm  tsv
   holt:ghostbsd26-zfs           any      holt:new  no PASS yet  4.4 gm  tsv
   holt:haiku6                   any      holt:new  no PASS yet  3.4 gm  tsv
@@ -135,7 +136,7 @@ current: 0
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written
 GuestTest2 plan: base BASE, ledger 0 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 56 of 56 guests, est. 129.2 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+due: 57 of 57 guests, est. 135.7 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   guest:aerynos             any      new       no PASS yet  1.8 gm  tsv
   guest:alpine324           any      new       no PASS yet  1.8 gm  tsv
   guest:alpinebsd           any      new       no PASS yet  1.8 gm  tsv
@@ -163,6 +164,7 @@ due: 56 of 56 guests, est. 129.2 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   guest:freebsd15-mirror    any      new       no PASS yet  3.3 gm  tsv
   guest:freebsd15-ufs       any      new       no PASS yet  1.8 gm  tsv
   guest:gentoo              any      new       no PASS yet  6.5 gm  tsv
+  guest:gentoo-systemd      any      new       no PASS yet  6.5 gm  tsv
   guest:ghostbsd26          any      new       no PASS yet  1.8 gm  tsv
   guest:ghostbsd26-zfs      any      new       no PASS yet  1.8 gm  tsv
   guest:haiku6              any      new       no PASS yet  1.8 gm  tsv
@@ -204,4 +206,4 @@ not runnable: img:dragonfly (dragonfly/bko-holt 29a491194633: no PASS at its dig
 not runnable: img:illumos (illumos/bko-holt 9f334a07f8e8: no PASS at its digest; run t2 HoltTest2 omnios58; illumos/restic-bko 0d82a9690d13: no PASS at its digest; run t2 SticTest2 ROUND omnios58; illumos/rustic-bko 5a87834d6355: no PASS at its digest; run t2 SticTest2 ROUND omnios58)
 not runnable: img:haiku (haiku/bko-holt bb9e1e37dcbe: no PASS at its digest; run t2 HoltTest2 haiku6; haiku/rustic-bko f0ca9138481d: no PASS at its digest; run t2 SticTest2 ROUND haiku6)
 sweep: SweepTest2 never ran, due now
-combined: 177 due, 717.1 gm, 8462 s wall, 1.7 GB, ['gate:selftest'] left over
+combined: 179 due, 727.6 gm, 8590 s wall, 1.7 GB, ['gate:selftest'] left over

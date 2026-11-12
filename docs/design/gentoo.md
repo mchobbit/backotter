@@ -1,0 +1,318 @@
+# Gentoo Linux support
+
+2026-11-12. The user asked for Gentoo support once Gentoo was installed on
+the Thinkpad, the BackShot1 machine: GPT, a 1 GiB ESP at /efi, 4 GiB swap,
+LVM `vg0` with / on ext4 and /home on XFS, OpenRC, glibc, profile
+`default/linux/amd64/23.0`, binary packages, `gentoo-kernel-bin` with
+`installkernel[dracut,grub]`, and GRUB as `gentoo`. The user approved this spec on
+2026-11-12 with every recommended decision (the last section).
+
+**Conventions.** est. marks an estimate. *Check* marks a fact the docs don't
+state, to be settled on the first guest before the code that depends on it.
+Gentoo's facts come from the Thinkpad itself (read over BackShot1's pinned
+key, nothing written: its install.conf, emerge.log, /boot, NVRAM and
+`grubx64.efi`), the autobuilds directory of distfiles.gentoo.org, the 23.0
+x86-64 binhost's `Packages` index and the release key on the keyservers, all
+read 2026-11-12. Code references are to local `main` at 8f3398a (after
+Chimera C7 and the bsdtar rebuilds). This worktree (a8eb638) lacks Chimera
+C5-C7, so the work starts on main.
+
+## Summary
+
+- Gentoo Linux becomes a supported system for bko-holt and both archivers
+  (rustic-bko and restic), with two QEMU guests, a SticTest1 entry each, a
+  HoltTest1 group, and one BackShot1 run on the Thinkpad as it is now.
+- Most of it is already built for other systems: dracut (Fedora, Void),
+  UEFI GRUB with `grub-mkconfig` (Arch, Void), OpenRC (Alpine), LVM and
+  LUKS, an ESP at /efi (AerynOS, EndeavourOS), and Void's way of building a
+  guest from a tarball.
+- What's new is Portage: bko-holt has no reader for its package database
+  (`/var/db/pkg`), so a Gentoo dump has no boot packages and no initramfs
+  generator. The generator comes from installkernel's own config, not from
+  the distribution. The guests are built from a stage3 and binary packages.
+- Only dracut is supported, the Thinkpad's and both guests' generator;
+  genkernel, ugrd, UKIs and shim are refused by name.
+- ~4.75 d (est.), half of it the guests.
+
+## Why
+
+- **The Thinkpad runs it.** BackShot1 is the real-world test. Gentoo is what
+  the machine now has, so bko has to dump, restore and boot it.
+- **A system put together by its owner.** Every supported Linux so far has
+  a distribution-chosen boot stack. On Gentoo the owner chooses it through
+  USE flags and kernel choice. This is the first test where bko-holt has to
+  read how the system boots instead of inferring it from the distribution.
+- **A package database that isn't a package manager's file.** Portage keeps
+  one directory per installed package. That tests whether `dump` reads the
+  boot stack from evidence.
+
+## What Gentoo is (as far as bko cares)
+
+| | Gentoo | Nearest supported system |
+|---|---|---|
+| Release | Rolling; weekly stage3 autobuilds dated like `20261108T170107Z`, about two months kept | Arch, Void |
+| os-release | `ID=gentoo`, `NAME='Gentoo'`, `VERSION_ID='2.18'` (single quotes; the version is baselayout's, not a release); no ID_LIKE | AerynOS, Chimera (version `*`) |
+| libc, toolchain | glibc and GCC (the Thinkpad); musl profiles exist | Arch |
+| Userland | GNU coreutils; 23.0 is merged-usr (/bin, /sbin, /lib link into /usr); `/bin/sh` is bash | Arch |
+| Init | OpenRC 0.63 with sysvinit (the Thinkpad), or systemd; `rc-update add X RUNLEVEL` | Alpine |
+| Packages | Portage, `/var/db/pkg/CATEGORY/PF/` (files `PF`, `CATEGORY`, `USE`, `CHOST`...); binpkgs from the 23.0 binhost, gpkg signatures checked | none |
+| Kernels | `gentoo-kernel-bin` (prebuilt, installed by its ebuild), `gentoo-kernel`, `gentoo-sources` | |
+| Initramfs | installkernel's `initrd_generator` (`dracut` on the Thinkpad), or genkernel, ugrd, none; UKIs through `uki_generator` | Fedora, Void (dracut) |
+| installkernel | `/usr/lib/kernel/install.conf` (overridden by `/etc/kernel/install.conf`): `layout=grub`, `initrd_generator=dracut`, `uki_generator=none` on the Thinkpad | |
+| Kernel files | `/boot/vmlinuz-KV`, `initramfs-KV.img`, `config-KV`, `System.map-KV`, each with a `.old` copy after a reinstall; KV `6.18.63-gentoo-dist-bin` | Fedora |
+| GRUB | `sys-boot/grub` (`GRUB_PLATFORMS`); `grub-mkconfig -o /boot/grub/grub.cfg` run by installkernel's grub plugin; 2.16 defaults `GRUB_DISABLE_OS_PROBER=true` | Arch |
+| LUKS, LVM | `cryptsetup`; `lvm2[lvm]` for the `lvm` tools and the OpenRC `lvm` boot service | Void |
+| ZFS | `sys-fs/zfs` and `zfs-kmod`, built from source (not on the binhost) | `debian13-zfs` |
+| Install | unpack a stage3 (`--xattrs-include='*.*' --numeric-owner`), chroot, `emerge-webrsync`, emerge a kernel and loader | Void's ROOTFS tarball |
+| Images | `stage3-amd64-{openrc,systemd}-DATE.tar.xz` with a `.asc`, signed by the Release Engineering key `13EBBDBEDE7A12775DFDB1BABB572E0E2D182910` (subkey `534E4209AB49EEE1C19D96162C44695DB9F6043D`, expires 2028-07-01) | Alpine (gpgv) |
+
+## What already works, and what doesn't
+
+**bko-holt `dump`** (runs live on the source):
+
+- The OS check (`holt/src/osrel.rs` `SUPPORTED`) refuses it: there's no
+  `gentoo` row. It needs version `*`. The parser already takes single quotes.
+- `installed_packages()` (`holt/src/boot.rs`) reads dpkg, pacman, rpm, apk
+  and xbps, and returns nothing on Gentoo. A Portage reader is needed. It
+  walks `/var/db/pkg/*/*` and splits `PF` with a hand-written version-suffix
+  parser (holt has no dependencies, so no regex crate), scanning from the
+  end: `-rN`, then `_alpha|_beta|_pre|_rc|_p` suffixes, then the
+  `N(.N)*[a-z]?` version. Unit tests cover `font-adobe-100dpi-1.0.4`,
+  `_p`/`_rc` suffixes and `-rN`. The tuple's third field is the package's
+  `CHOST` file, empty when absent (the vdb has no arch). It runs first when
+  `/etc/gentoo-release` exists, because a Gentoo can have dpkg or rpm
+  emerged as tools.
+- `PACKAGES` lacks Gentoo's names: `gentoo-kernel-bin`, `gentoo-kernel`,
+  `gentoo-sources`, `installkernel`, `genkernel`, `ugrd`, `systemd-utils`,
+  `zfs-kmod`. `grub`, `dracut`, `lvm2`, `efibootmgr`, `cryptsetup`,
+  `xfsprogs`, `e2fsprogs` and `dosfstools` are there already, by bare name.
+  `testvm/update/fingerprint.py` mirrors the list, and a test enforces it.
+  `grub` isn't in `detect_loader`'s UEFI list, so `loader.package` is null,
+  as on Arch: harmless.
+- The initramfs generator is read, in this order:
+  1. installkernel's `install.conf` (`/etc/kernel`, then `/usr/lib/kernel`):
+     `uki_generator` other than `none` is recorded and refused by load;
+     `initrd_generator` gives `dracut`, `ugrd` or `none`; `layout` says
+     where the images are (`grub` or `compat` is /boot; anything else is
+     refused).
+  2. Without installkernel: `none` if /boot has no `initramfs-*`, else
+     `genkernel` if genkernel is installed, else `dracut`.
+     `gentoo-kernel-bin`'s `USE=initramfs` is a second clue.
+- `kernels_json()` already reads `vmlinuz-KV` and `initramfs-KV.img`, but it
+  takes installkernel's `.old` copies as kernels `KV.old` and `KV.img.old`.
+  They come out of the kernel list, and the plan notes them: grub-mkconfig
+  lists them, and the boot stage doesn't rebuild them.
+- The ESP at /efi is already an ESP, both by mount point and by type GUID
+  (`report.rs`). LVM comes from on-disk metadata and needs no tools.
+
+**bko-holt `load`:**
+
+- UEFI GRUB already does the right thing:
+  `grub-install --target=x86_64-efi --efi-directory=/efi --bootloader-id=gentoo --no-nvram`
+  (the id from BootCurrent `\EFI\gentoo\grubx64.efi`), then `grub-mkconfig
+  -o /boot/grub/grub.cfg` and `efi_entries()` for the NVRAM. The
+  grub-install matters: the Thinkpad's `grubx64.efi` has
+  `(lvmid/VG-UUID/LV-UUID)/boot/grub` built in, and this re-embeds it.
+- Initramfs: the generic dracut loop (`dracut --force --kver K`) runs in the
+  chroot, as for Fedora. Left to itself, dracut 112 writes
+  `/efi/MACHINE-ID/K/initrd` when both `/efi/loader/entries` and
+  `/efi/MACHINE-ID` exist (and likewise under /boot), else
+  `/lib/modules/K/initrd` if that exists, else `/boot/initramfs-K.img`. The
+  Thinkpad has none of the first two (`/lib/modules/K` has `vmlinuz`, no
+  `initrd`), but on Gentoo the loop names the file anyway:
+  `dracut --force /boot/initramfs-K.img K`. Images are host-only
+  (`01-gentoo.conf`), built with /dev, /proc, /sys and /run bound.
+- `initramfs()`'s fallback (`_ =>`, `update-initramfs -u -k all`) is a hard
+  failure on Gentoo. Gentoo gets its own arms: `dracut` as above; `none`
+  runs nothing and notes it (a unit test, no guest: untested on a real
+  boot); `genkernel`, `ugrd`, a UKI generator, a non-grub layout and a
+  kernel with `/lib/modules/K/initrd` are refused, each by name.
+- Secure Boot through shim: the UEFI GRUB arm would write an unsigned GRUB
+  over a signed one. On Gentoo with `via_shim`, it refuses.
+- `remake_grub_cfg()`'s os-prober bind of `/usr/bin/true` is fine on 23.0's
+  merged usr. BIOS GRUB's arm pushes a debconf note, but no Gentoo guest
+  uses BIOS GRUB.
+- Init system: `load` doesn't touch services. OpenRC's `lvm` service in the
+  boot runlevel comes back with `/etc/runlevels`.
+
+**BackShot1** (`testvm/realworld/backshot1`, on main):
+
+| Script | Line | Assumption | Fix |
+|---|---|---|---|
+| bs1-adopt | 50-74, 169-204 | `pkg_install` takes one argument per distro, eight of them | a ninth, GENTOO, tested before the others by os-release (`emerge --getbinpkg --noreplace`), and a GENTOO argument on each call: `net-misc/openssh` (169), `dev-lang/python` (174), `sys-apps/util-linux` (176), `"net-dns/avahi sys-apps/dbus"` (204) |
+| bs1-adopt | 180-182 | efibootmgr only on Chimera | the same test on Gentoo, `emerge --getbinpkg --noreplace sys-boot/efibootmgr` |
+| bs1-adopt | 39-44 | init detection | none: `/proc/1/comm` is `init` and `rc-service` exists, so `openrc`; `sshd` and `avahi-daemon` are the Thinkpad's names |
+| bs1-common | 183 | `package_list` knows no Portage | a branch first on `/etc/gentoo-release`: `/var/db/pkg/*/*` as `CAT/PF`, sorted |
+| bs1-backup, bs1-list | | df's options | none: GNU df |
+| bs1-manifest | 50 | expected changes | none: `efi/*`, `boot/initramfs-*` and `boot/grub/*` are expected already |
+| bs1-qemu.py | | the guest's layout | none: it boots the guest's own disk under OVMF, as for `chimera-uefi` |
+
+On the Thinkpad and the `gentoo` guest nothing is emerged: Portage needs
+Python, util-linux is in @system, and sshd and avahi are installed (the
+guest's build adds avahi, with the Thinkpad's
+`-gtk -qt5 -qt6 -python -mono -introspection`). An emerge would need the
+synced tree and the binhost, and would write `/var/db/pkg`,
+`/var/lib/portage/world`, `/var/cache/binpkgs` and `emerge.log`, all before
+phase1's backup, so bs1-manifest sees them as source state. The real test
+is `bs1-qemu.py --virtio` on the `gentoo` guest before the Thinkpad.
+
+**SticTest1:** the archivers are static binaries. Each guest gets
+`check.sh`, `fixture.sh`, `inner.sh` and `judge.py` from `rocky10-lvm`'s
+(glibc, GNU, bash, a scratch volume group made like the guest's), with
+`fatattr.py` from `chimera-uefi` for the ESP, adapted to ext4 / and XFS
+/home. `gentoo` adds the cross-filesystem case the 2026-11-10 rustic-bko
+leftovers record as missing: a backup of the ext4 fixture restored onto an
+XFS volume, judged without the ext4-only attributes.
+`test2/stic/check-manifests.py`'s count goes from 45 to 47.
+
+**The rescue image:** no change ([[one-kernel-rescue]]).
+
+## Guests
+
+Built by `make-bootstrap.sh`, as for Void and Chimera. From the Arch ISO's
+live system it unpacks a stage3 into the new root with
+`bsdtar -xpf - --numeric-owner`, as `void.sh` and `chimera.sh` now do, so the
+file capabilities stay. The build fails if iputils `ping` has no
+`cap_net_raw`, after the unpack and again before `finish`. In the chroot it
+runs `emerge-webrsync`, then emerges the kernel, the boot loader and the
+services. Every input is checked:
+
+- **Stage3:** pinned by date (`GENTOO_STAGE3=20261108T170107Z`) and checked
+  with `gpgv` against the Release Engineering key, pinned by fingerprint
+  (`GENTOO_KEY`), as Alpine's is. The tarballs and `.asc`s are also kept in
+  `/bkoscratch/rebuild-inputs/GUEST` on both hosts, since Gentoo prunes
+  autobuilds after about two months.
+- **The tree:** `emerge-webrsync` checks the snapshot's signature with the
+  key stage3 ships. It isn't pinned, because the binhost follows the live
+  tree; `metadata/timestamp.chk` is recorded in WORK_DIR.
+- **Binary packages:** `FEATURES="getbinpkg binpkg-request-signature"`,
+  checked against `getuto`'s keyring. The build runs `emerge -p` and fails
+  on any `[ebuild` line outside an allowlist of source builds. The
+  Thinkpad's emerge.log gives it: `lvm2` (USE=lvm, ~2 min), `grub`
+  (`GRUB_PLATFORMS="efi-64"`, ~90 s), `dracut`, `installkernel` and
+  `gentoo-kernel-bin` (its ebuild installs a prebuilt kernel). *Check* the
+  systemd stage3's `lvm2` and `cryptsetup`.
+- **Configuration:** the Thinkpad's `package.use`, `make.conf` features and
+  dracut defaults, plus a serial console (`GRUB_CMDLINE_LINUX`,
+  `agetty.ttyS0`). `/var/cache/binpkgs` and `distfiles` are emptied before
+  `finish`; the tree stays, as on the Thinkpad.
+- **A new layout** in `bootstrap/common.sh`: `LAYOUT=efi-lvm`, the
+  Thinkpad's in small. GPT, a 1 GiB ESP at **/efi**, 2 GiB swap, and a PV
+  with `vg0`: `root` 10G ext4 and `home` 3G XFS, ~4 GiB free. That needs
+  `DISK_SIZE=20G` in make-bootstrap's `case` (16G leaves a PV of ~12.99
+  GiB). `mount_boot` gets an /efi branch, and /home gets mounted.
+
+| Guest | Firmware, loader | Layout | What it covers |
+|---|---|---|---|
+| `gentoo` | UEFI, GRUB x86_64-efi, id `gentoo` | `efi-lvm` | the Thinkpad's setup: OpenRC, glibc, 23.0, `gentoo-kernel-bin`, `installkernel[dracut,grub]`, `lvm2[lvm]`; BackShot1's rehearsal guest |
+| `gentoo-systemd` | UEFI, GRUB x86_64-efi | `luks-esp`: ESP as /boot, / ext4 on LVM on LUKS2, keyfile in the initramfs as on `chimera-uefi` | systemd's dracut with its crypt module, `rd.luks` on the command line, a host-only image rebuilt in a chroot over LUKS; HoltTest1's oneshot candidate |
+
+Each one gets: `rebuild-one.sh` lines, the SticTest1 entry,
+`holttest1d/ram-sizes.tsv` rows (est. D 7, MEM 4 until a run measures it),
+`classes.json` entries, both hosts, vm-update and a GuestTest1 grade.
+vm-update's Portage branch: `in-guest.sh`'s `# t2-section: Linux.portage`
+(`emerge --sync`, then `emerge -puDN @world` through the same allowlist,
+then `emerge -uDNg @world`, `emerge --depclean`, caches emptied); a source
+build outside the allowlist fails the update and names the package, and an
+allowlisted one costs ~2-5 min. Also `pkgset.sh`'s `base pm portage`,
+`fingerprint.py`'s `LINUX_KINDS`, and the `vm-update` header. GuestTest2
+needs a `portage` section in `guest/known-lines.json`, plus `S-portage` and
+`K-gentoo` rules in `t2lib/guest_judge.py` (`SOURCE_RULES`, `KERNELS_MAX`).
+
+## Pieces to build (ordered, est.)
+
+| # | Piece | Effort |
+|---|---|---|
+| G1 | `make-bootstrap.sh gentoo` and `bootstrap/gentoo.sh`, `LAYOUT=efi-lvm` and its DISK_SIZE, the cap check, `rebuild-one.sh`, the rebuild inputs, vm-update's Portage branch. Settle every *check* on it: os-release, the vdb's files and `CHOST`, kernel names and `.old` copies, `install.conf`, no `/lib/modules/K/initrd`, dracut's version, the service names, the source builds and the build time. Done when it is built on Chopin, copied to Cinqcent with the same SHA-256, boots alone, ping has its cap, and `vm-update --try` is ok | 1.25 d |
+| G2 | bko-holt: the `SUPPORTED` row (doc comment, a unit test from the guest's os-release, an `ID_LIKE=gentoo` refusal, `supported_names()`); the Portage reader and its tests; `PACKAGES` and `fingerprint.py`; the `.old` note; generator detection; `initramfs()`'s Gentoo arms and refusals; the shim refusal; a dump warning when fstab names a vfat /efi or /boot/efi that isn't mounted, with a unit test; a Thinkpad-shaped fake tree in `holt/src/scenarios.rs`. Done when `cargo test` passes and the scenario's plan has `dracut --force /boot/initramfs-K.img K`, the /efi `grub-install` and the `.old` note | 1 d |
+| G2b | `gentoo`'s golden plan (`holt/tests/corpus/gentoo/`, `index.tsv`, the corpus README) from a `bko-holt dump` of the guest; the Test2 registrations (`classes.json` with `uefi`, `holt/spec.json`, `guest/spec.json`, `estimates.tsv`, `t2lib/plan.py`'s counts, `p2/world.py` and the re-blessed goldens); the GuestTest2 rules. Done when two corpus builds have the same sha256, leak scans are 0 on both hosts and the Mac, no other plan changes, and Test2's own tests pass | 0.5 d |
+| G3 | `gentoo-systemd`: the build (keyfile, `rd.luks`, installkernel's layout pinned to `grub`), its golden plan, Test2 registrations and re-blessed goldens, `rebuild-one.sh` lines. Done as G1 and G2b are, plus a GuestTest1 grade for both guests | 0.75 d |
+| G4 | SticTest1 entries and runs for both guests (rustic-bko and restic), the cross-filesystem case, `stic/manifests.json`, `limits.json` and check-manifests' 47. Done when PASS/LIMIT/FAIL counts on both hosts for both archivers show 0 FAIL | 0.35 d |
+| G5 | The HoltTest1 group (Decision 5) and its runs; judge.py rules for `efi/EFI/gentoo` and `boot/EFI/gentoo` (grub-install's loader), with judge-test.py cases, and any path G1's chroot runs show no rule covers. Done when every load stage passes on both hosts, the guest boots alone, there are 0 fsmeta differences, the embedded lvmid equals the restored `lvs -o vg_uuid,lv_uuid` of vg0/root, and the RAM-disk peaks are in `ram-sizes.tsv` | 0.35 d |
+| G6 | BackShot1: the fixes in the table; `bs1-qemu.py --virtio` rehearsals on `gentoo` on both hosts, with the same lvmid check; then a run on the Thinkpad. Done when phase1, plan, phase2 and verify PASS with 0 unexpected, the Thinkpad boots `gentoo` from NVRAM, and its `grubx64.efi`'s lvmid equals the restored vg0/root's UUIDs | 0.5 d |
+| G7 | Docs: holt/README.md's supported list and "tested by" guests, `osrel.rs`'s comment, the READMEs of HoltTest1 (its group table and HoltTest1All's members), BackShot1, SticTest1 and Test2, `docs/design/layload.md`'s boot stage (it still says only `update-initramfs`), and memory (the HoltTest1 index line and holttest1d.md, if 1G) | 0.1 d |
+| | *≈ 4.75 d in all* | |
+
+Each piece is committed on main when its tests pass. Nothing is pushed until
+the user says so.
+
+**Costs** (est.):
+
+| # | Host time | Disk | The user's time |
+|---|---|---|---|
+| G1 | a 15-22 min build on Chopin (WORK_DIR in /mnt/bko-ram, `--reserve 8 4`), the copy | qcow2 3.5-4.5 GiB a host; stage3 and `.asc` ~0.3 GiB a host in rebuild-inputs | none |
+| G3 | the same again, so both builds are 30-45 min on Chopin, plus the copy | the same; ~17 GiB in all for 2 guests x 2 hosts, with the inputs | none |
+| G4, G5 | ~1 h of queue a host; at D 7 a run fits a 30G RAM disk beside two others | an update overlay (~0.5-1.5 GiB, beside the image until V1) | none |
+| G6 | rehearsals ~30 min a host; the Thinkpad run ~45-75 min, mostly a 64G ext4 root's and 64G XFS /home's used data and the tree's ~150k files | the backup on `mybig512` | ~5 min: boot the stick if BootNext misses, click Done |
+
+## Risks
+
+- **Binary-package coverage moves.** A rebuild or update may need a source
+  build the allowlist doesn't have. It stops and names the package; it is
+  added to the allowlist, or its USE flags are changed to match a binpkg.
+  A rebuild gets newer packages than the last ([[images-take-os-updates]]).
+- **Stage3 pruning.** A guest whose rebuild inputs were lost can't be
+  rebuilt at its pinned date. The fallback is the newest stage3, with a new
+  pin.
+- **The LUKS keyfile under systemd's dracut.** If `gentoo-systemd`'s
+  host-only rebuild leaves the keyfile or the crypt module out, G3 finds it
+  first; `gentoo` and the Thinkpad don't wait on it.
+- **Build time.** `-smp 8` for the lvm2 and grub builds is the first remedy.
+
+## Out of scope
+
+- **genkernel, ugrd, UKIs** (`uki_generator`), **shim**, and installkernel
+  layouts other than `grub`/`compat` (systemd-boot's `bls` among them):
+  refused by `load` with a message naming them.
+- **Hand-built kernels without an initramfs:** generator `none`, no
+  initramfs step and a note, with a unit test and a scenario; no guest, so
+  untested on a real boot.
+- **musl profiles:** nothing in dump or load depends on libc, and Void and
+  Chimera cover musl, but there is no Gentoo musl guest.
+- **ZFS:** neither `zfs` nor `zfs-kmod` is on the binhost, and the Thinkpad
+  isn't on ZFS. A later `gentoo-zfs` is its own piece (est. +0.75 d).
+- **Split-usr profiles:** not claimed; load stops at the os-prober bind.
+- Funtoo, Calculate and other `ID_LIKE=gentoo` systems: refused.
+- BackShot2 cases on Gentoo: later, through BackShot2All. Changes to the
+  rescue image.
+
+## Decisions for the user
+
+Approved 2026-11-12: the user chose every recommendation below.
+
+1. **Guests:** `gentoo` plus a second that covers what the Thinkpad
+   doesn't. `gentoo-systemd` as UEFI with LVM on LUKS (recommended: systemd's
+   dracut, the crypt module and `rd.luks`, the riskiest untested path, for
+   0.75 d); or `gentoo-systemd` as BIOS + MBR, the generic path other guests
+   cover (and the debconf note would then need limiting to Debian's family,
+   which changes Arch's and others' plans); or a genkernel guest, which
+   turns genkernel's refusal into support (est. +0.25 d over the
+   recommendation); or only `gentoo`.
+2. **The boot stage on Gentoo:** bko-holt's own steps, first
+   `dracut --force /boot/initramfs-K.img K` for each kernel, then
+   `grub-install` and `grub-mkconfig` (recommended: the same steps as Fedora
+   and Void, with no Portage or Python in the chroot). Or run Gentoo's own
+   `installkernel KV ...` in the chroot. That also remakes the microcode
+   images, but it renames the restored images to `.old`, so every restore
+   adds a stale boot entry.
+3. **Initramfs setups other than dracut:** refused by name until a guest
+   tests them (recommended: only what a test runs is claimed); or genkernel
+   and ugrd keep the restored image with a note, untested.
+4. **Package names in the dump:** bare names (`grub`, `dracut`, `lvm2`;
+   recommended: `PACKAGES` and every `has()` work as they are, and no
+   boot-stack name repeats across categories); or `category/name`, which
+   needs a Gentoo-aware lookup.
+5. **HoltTest1's group:** a new **1G** (Gentoo) (recommended: it is the
+   Thinkpad's system, worth running by name after a Gentoo change); or join
+   **1Obscure**, as Chimera did.
+6. **The update-initramfs fallback:** replaced by Gentoo's arms on Gentoo
+   only (recommended: no other golden plan changes); or a refusal for every
+   system outside Debian's family, which is its own change and a check of
+   every plan.
+7. **The Thinkpad's install for BackShot1:** the one it has now
+   (recommended: the user's own install, which the `gentoo` guest copies;
+   `gentoo-systemd` covers LUKS); or a reinstall with LUKS or ZFS (est.
+   +0.5 d).
+8. **A supported system** in bko-holt's `SUPPORTED`, named in its messages
+   (recommended); or test guests only, with `dump` still refusing it outside
+   the tests.

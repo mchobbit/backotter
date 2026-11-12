@@ -9,9 +9,16 @@
 # stick.  Installs sshd, an mDNS responder and what the BackShot1 scripts use, if
 # the system lacks them, under whichever init system it has.
 
-# Alpine comes without bash, so this much has to be plain sh.
+# apk-tools 3 (Chimera's) asks before it changes anything when it has a tty;
+# --no-interactive stops that, and apk 2 may not know it.  Plain sh, for below.
+apk_add() {
+    if apk --version 2>/dev/null | grep -q '^apk-tools 3'; then apk --no-interactive add "$@"; else apk add "$@"; fi
+}
+
+# Alpine and Chimera come without bash, so this much has to be plain sh
+# (Chimera's is FreeBSD's).
 if [ -z "${BASH_VERSION:-}" ]; then
-    command -v bash >/dev/null || apk add bash || { echo "bs1-adopt: this needs bash" >&2; exit 2; }
+    command -v bash >/dev/null || apk_add bash || { echo "bs1-adopt: this needs bash" >&2; exit 2; }
     exec bash "$0" "$@"
 fi
 
@@ -40,7 +47,7 @@ echo "== $distro, under $init"
 # Artix packages each service's init script apart, per init system.
 with_script() { if [[ $distro == artix ]]; then echo "$1 $1-$init"; else echo "$1"; fi; }
 
-pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS, each one or more names
+pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS CHIMERA, each one or more names
     # An ostree system's /usr is its image's, read-only: nothing is installed
     # here.  Everything this installs is something BackShot1 needs, so it
     # stops and names it (Fedora's names: Bazzite, Silverblue and Kinoite
@@ -58,7 +65,9 @@ pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS, e
     elif command -v dnf >/dev/null; then dnf install -y $2
     elif command -v zypper >/dev/null; then zypper --non-interactive install $3
     elif command -v pacman >/dev/null; then pacman -Sy --noconfirm --needed $4
-    elif command -v apk >/dev/null; then apk add $5
+    # Chimera has apk too, with its own names.
+    elif [[ $distro == chimera ]]; then apk_add $8
+    elif command -v apk >/dev/null; then apk_add $5
     elif command -v xbps-install >/dev/null; then xbps-install -Sy $6
     elif command -v moss >/dev/null; then moss -y pkg add $7
     else echo "bs1-adopt: no package manager I know; install $1 by hand" >&2; return 1
@@ -77,8 +86,15 @@ start_runit() {     # start_runit NAME: a service just linked in takes runsvdir 
     return 1
 }
 
+# dinit_pid NAME: the PID of NAME's process, if dinit has one and it runs.
+dinit_pid() {
+    local pid
+    pid=$(dinitctl status "$1" 2>/dev/null | awk '$1 == "Process" && $2 == "ID:" { print $3; exit }') || true
+    [[ $pid =~ ^[0-9]+$ && -d /proc/$pid ]] && echo "$pid"
+}
+
 start_service() {   # start_service NAME...: the first name this system knows
-    local s rc
+    local s rc i pid
     [[ $init != systemd ]] || systemctl daemon-reload
     for s in "$@"; do
         case $init in
@@ -104,9 +120,21 @@ start_service() {   # start_service NAME...: the first name this system knows
             [[ $rc -eq 0 ]] && return 0
             ;;
         dinit)
-            [[ -e /etc/dinit.d/$s ]] || continue
+            # Chimera's services are in /usr/lib/dinit.d, Artix's in /etc.
+            [[ -e /etc/dinit.d/$s || -e /usr/lib/dinit.d/$s ]] || continue
             dinitctl enable "$s" >/dev/null 2>&1 || true
-            dinitctl restart "$s" >/dev/null 2>&1 || dinitctl start "$s" && return 0
+            # start returns once a process service is launched, so it says
+            # nothing of one that dies at once, and with smooth-recovery (as
+            # Chimera's avahi-daemon has) is-started says STARTED while dinit
+            # restarts a dead one.  Up means one live process, the same one
+            # 3 s later (not a restarted one).
+            for i in 1 2 3 4 5; do
+                dinitctl restart "$s" >/dev/null 2>&1 || dinitctl start "$s" >/dev/null 2>&1 || true
+                sleep 3
+                pid=$(dinit_pid "$s") || continue
+                sleep 3
+                [[ $(dinit_pid "$s") == "$pid" ]] && return 0
+            done
             ;;
         s6)
             [[ -d /etc/s6/sv/$s-srv ]] || continue
@@ -138,13 +166,19 @@ set_hostname() {
 
 install_tools() {
     command -v sshd >/dev/null || [[ -x /usr/sbin/sshd ]] ||
-        pkg_install openssh-server openssh-server openssh "$(with_script openssh)" openssh openssh openssh-server
+        pkg_install openssh-server openssh-server openssh "$(with_script openssh)" openssh openssh openssh-server openssh
     # BusyBox's df, umount and blkid lack options the scripts use, and it has no
-    # findmnt, lsblk or sfdisk.
-    if command -v apk >/dev/null; then apk add coreutils findmnt lsblk blkid sfdisk mount umount util-linux-misc; fi
-    command -v python3 >/dev/null || pkg_install python3 python3 python3 python python3 python3 python
+    # findmnt, lsblk or sfdisk.  Alpine's names; Chimera has no BusyBox.
+    if [[ $distro != chimera ]] && command -v apk >/dev/null; then apk_add coreutils findmnt lsblk blkid sfdisk mount umount util-linux-misc; fi
+    # Chimera's python package gives the python3 command; it has no python3 package.
+    command -v python3 >/dev/null || pkg_install python3 python3 python3 python python3 python3 python python
     if ! command -v findmnt >/dev/null || ! command -v lsblk >/dev/null; then
-        pkg_install util-linux util-linux util-linux util-linux util-linux-misc util-linux util-linux
+        pkg_install util-linux util-linux util-linux util-linux util-linux-misc util-linux util-linux util-linux
+    fi
+    # bs1-to-stick's BootNext needs it, and a Chimera install with systemd-boot
+    # (bootctl) can lack it.  The other systems' rehearsals all had it.
+    if [[ $distro == chimera && -d /sys/firmware/efi ]] && ! command -v efibootmgr >/dev/null; then
+        apk_add efibootmgr
     fi
 }
 
@@ -155,19 +189,29 @@ allow_root_key_login() {
         mkdir -p /etc/ssh/sshd_config.d
         echo 'PermitRootLogin prohibit-password' >/etc/ssh/sshd_config.d/00-backshot1.conf
     elif ! grep -q 'BackShot1' "$conf"; then
-        # sshd keeps the first value it reads.
-        sed -i '1i # BackShot1\nPermitRootLogin prohibit-password' "$conf"
+        # sshd keeps the first value it reads.  Not sed -i '1i': GNU's alone
+        # takes that, and FreeBSD's (Chimera's) -i wants a suffix.  Written
+        # back into the file itself, so its mode, owner and label stay.
+        # Three commands, not an && list, so set -e stops at a failing one.
+        { printf '# BackShot1\nPermitRootLogin prohibit-password\n'; cat "$conf"; } >"$conf.bs1"
+        cat "$conf.bs1" >"$conf"
+        rm -f "$conf.bs1"
     fi
 }
 
 start_mdns() {
     command -v avahi-daemon >/dev/null ||
-        pkg_install avahi-daemon avahi avahi "$(with_script avahi)" "avahi dbus" "avahi dbus" avahi
+        pkg_install avahi-daemon avahi avahi "$(with_script avahi)" "avahi dbus" "avahi dbus" avahi avahi
     if [[ $init == s6 ]]; then
         s6 repository sync
         s6 set enable dbus
     elif ! running 'dbus-(daemon|broker.*)'; then
         start_service dbus
+    fi
+    # A running dbus-daemon needn't read the policy avahi's install just added
+    # (Chimera's doesn't), and without it avahi-daemon may not own its name.
+    if running 'dbus-(daemon|broker.*)' && command -v dbus-send >/dev/null; then
+        dbus-send --system --print-reply --dest=org.freedesktop.DBus / org.freedesktop.DBus.ReloadConfig >/dev/null || true
     fi
     start_service avahi-daemon
 }

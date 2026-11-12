@@ -106,7 +106,9 @@ if is_ostree; then
 fi
 
 need=$(space_in_use "$disk" "$RUN/layout.json")
-free=$(df -B1 --output=avail "$RUN" | tail -n 1 | tr -dc 0-9)
+# df -Pk, not GNU's -B1 --output, which FreeBSD's df (Chimera's) lacks.
+free=$(df -Pk "$RUN" | awk 'NR == 2 { print $4 }')
+free=$((${free:-0} * 1024))
 say "in use: $((need / 1048576)) MiB; free on the drive: $((free / 1048576)) MiB"
 [[ $free -gt $need ]] || die "the backup drive hasn't enough room"
 

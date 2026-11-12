@@ -56,4 +56,4 @@ for r in $(good_runs); do
     n=$(ls -d "$RUNS/$r"/restores/*[0-9] 2>/dev/null | wc -l)
     printf '%-40s %8s %9s  %s\n' "$r" "$(du -sh "$RUNS/$r/repo" | cut -f1)" "$n" "$(last_result "$r")"
 done
-df -h --output=avail "$RUNS" | tail -n 1 | awk '{ print "\nfree on the drive: " $1 }'
+df -Ph "$RUNS" | awk 'NR == 2 { print "\nfree on the drive: " $4 }'

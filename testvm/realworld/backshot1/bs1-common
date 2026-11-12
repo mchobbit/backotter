@@ -129,12 +129,14 @@ PY
 }
 
 # What the tree's filesystems hold, in bytes, each filesystem counted once:
-# three mounts of one btrfs are one filesystem.
+# three mounts of one btrfs are one filesystem.  df -Pk, not GNU's -B1
+# --output, which FreeBSD's df (Chimera's) lacks: POSIX's columns, in KiB.
 space_in_use() {
-    local from fs
-    internal_mounts "$@" | while IFS=$'\t' read -r _ from fs; do
-        df -B1 --output=source,used "$from" | tail -n 1
-    done | awk '{ sub(/\[.*/, "", $1) } !seen[$1]++ { n += $2 } END { print n + 0 }'
+    local from fs kib
+    kib=$(internal_mounts "$@" | while IFS=$'\t' read -r _ from fs; do
+        df -Pk "$from" | awk 'NR == 2 { print $1, $3 }'
+    done | awk '{ sub(/\[.*/, "", $1) } !seen[$1]++ { n += $2 } END { print n + 0 }') || return
+    echo $((kib * 1024))
 }
 
 # Stops if DISK holds a filesystem the running system hasn't mounted: it would be

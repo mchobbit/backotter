@@ -251,6 +251,102 @@ Read on the `chimera` guest (`systemd-boot` 256.11-r5, `/usr/bin/gen-systemd-boo
   `/boot/initrd.img-V` exists. Hand edits to those entries are lost, as on the
   source's next kernel update.
 
+## What C6 found
+
+Every script that runs on the source or the restored system (bs1-adopt,
+bs1-backup, bs1-common, bs1-list, bs1-manifest, bs1-to-stick, bs1-verify;
+bs1-restore runs on the stick, bs1-ostree only on ostree) read for GNU- and
+bash-only forms, and the suspects run on the `chimera`, `chimera-uefi` and
+`chimera-zfs` guests (and bs1-adopt's dinit change on `artix-dinit`),
+2026-11-12. bs1-adopt starts in FreeBSD's sh and re-execs bash once it has
+installed it; the controller runs every other shell script with `bash`, and
+the Python ones with `python3`.
+
+- **The table's fixes stand,** with these differences:
+  - `--no-interactive` when `apk --version` says `apk-tools 3`, in an
+    `apk_add` that bs1-adopt's sh part and its `pkg_install` share. On a tty,
+    plain `apk add` stops at "Do you want to continue [Y/n]?" (tried).
+  - The `sed -i '1i'` rewrite writes the new text back into `sshd_config`
+    itself (`printf` and `cat` into `.bs1`, then `cat` back), not `mv`, so its
+    mode, owner and SELinux label stay. Chimera never takes that branch: it
+    has no `/etc/ssh/sshd_config`, only `sshd_config.d`, which bs1-adopt
+    already uses (as for AerynOS); `sshd -T` shows the drop-in's
+    `PermitRootLogin prohibit-password`.
+  - The `df` lines are three, not two: `space_in_use` in bs1-common
+    (`df -B1 --output=source,used`) and bs1-list's `df -h --output=avail` as
+    well as bs1-backup's. Now `df -Pk` (column 3 or 4, KiB, multiplied in bash)
+    and `df -Ph`. On the guests `space_in_use` matched `df -Pk`'s sum.
+- **Missed by the table:**
+  - bs1-adopt's Alpine-only `apk add coreutils findmnt lsblk blkid sfdisk
+    mount umount util-linux-misc` ran wherever apk is: not on Chimera now,
+    which has util-linux (`findmnt`, `lsblk`, `blkid`, `sfdisk`, `swapon`,
+    `mount`, `umount --recursive`) and no BusyBox.
+  - The dinit branch looked for the service in `/etc/dinit.d` only (Artix's
+    place); Chimera's are in `/usr/lib/dinit.d`, so `sshd` and `avahi-daemon`
+    were "unknown". Both now.
+  - Chimera's dbus-daemon never reads the policy `apk add avahi` puts in
+    `/usr/share/dbus-1/system.d` (no inotify, no trigger), so `avahi-daemon`
+    can't own `org.freedesktop.Avahi` and exits 255 at every start until a
+    reboot. bs1-adopt now sends dbus `org.freedesktop.DBus.ReloadConfig`
+    (`dbus-send --system --print-reply`) before it starts avahi-daemon,
+    wherever a dbus is running.
+  - `dinitctl start` returns once a process service is launched, and with
+    `smooth-recovery = true` (Chimera's avahi-daemon) `is-started` says
+    `STARTED` for some seconds while dinit restarts a dead process. So the
+    dinit branch counts a service as up only when `dinitctl status` names a
+    `Process ID` that is in /proc, the same one 3 s later (not one dinit
+    restarted in between), and tries five times
+    before it fails (and with it bs1-adopt). Checked on `artix-dinit` (dinit
+    0.22.1: up, stopped, unknown and restarted services all told right).
+  - `efibootmgr` isn't in `base-full`, and a systemd-boot install doesn't need
+    it, but bs1-to-stick does. bs1-adopt adds it on a UEFI Chimera that lacks
+    it (tried on `chimera-uefi` with it removed).
+- **Not needed on the guests:** `python3` was there already
+  (`/usr/bin/python3`, from `python`), so the eighth column's `python` is for
+  an install without it; bs1-adopt installed only `bash` and `avahi` (and
+  `efibootmgr` where removed). `openssh` and util-linux were there too.
+- **Checked and fine on Chimera:** `mktemp` and `mktemp -d` without a
+  template, `head -c`, `od -An -tx1`, `readlink -f`, `sed -E` and `sed -n
+  's/\(..\)/\1/p'`, `tr -c`, `comm -13`, `cmp -`, `seq`, `du -sh`, `find
+  -maxdepth -iname`, `grep -Eqx`/`-qxF`, `install -d -m`, `date -u +FMT`,
+  `sha256sum`, `printf %b`, awk sums past 2^32, `apk info -v`, `mount --bind`
+  and `-o remount,bind,ro`, `lsblk -dnro`/`-snlo`/`-lnpo`/`-no PKNAME`,
+  `findmnt -rno`, `swapon --show`, `cat /proc/1/comm` (`dinit`), dinit's
+  `boot` reading `/etc/dinit.d/boot.d` (`dinitctl enable` links there). No
+  script uses `stat -c`, `date -d`, `grep -P`, `xargs -r`, `sort -V`, `tac`,
+  `echo -e` or GNU `cp`/`mv` options on the source. bs1-common's
+  `internal_mounts`, `space_in_use`, `check_coverage`, `make_tree`/`drop_tree`,
+  `package_list`, `swap_names`, bs1-list (and `--resolve`) and a bs1-manifest
+  record and compare all ran on the three guests: XFS, ext4 on LVM on LUKS2
+  with the ESP as /boot, and ZFS root (`rpool/ROOT/chimera`).
+- **Left as it is:** `wc -l` and `du -sh` pad with spaces (only bs1-list's
+  columns show it). Chimera's `ssh-keygen` service runs `ssh-keygen -A` at
+  every boot, so the RSA, ECDSA and `mldsa44-ed25519` host keys bs1-adopt
+  removes (it doesn't name the last) come back; the controller's pinned
+  ed25519 key under `HostKeyAlias` still decides, as on other systems that
+  regenerate keys.
+- **The rehearsals** (`bs1-qemu.py --virtio`, the C5 bko-holt 24b1cfef0663
+  and rel4's rustic-bko) found three more:
+  - The two above: every first run stopped at "avahi-daemon is running".
+  - bs1-qemu.py gave a LUKS guest no `keys/disk-passphrase`, so bs1-backup
+    stopped at the layout. It now copies the guest's `luks-keyfile` there,
+    as ht1.sh passes it to load.
+  - bs1-verify on `chimera-uefi` saw two changes it didn't expect:
+    `boot/NvVars` (OVMF's variables on the ESP, outside `boot/efi` when the
+    ESP is /boot) and `etc/kernel/entry-token` (the restore's `bootctl
+    install` writes it again, same content, new mtime). bs1-manifest now
+    expects the first and counts the second as remade. It expects
+    `boot/EFI/*` too (from the review): with the ESP as /boot, as on the
+    Thinkpad, the restore's `bootctl install` puts the package's systemd-boot
+    there, which differs from the ESP's when the package was upgraded without
+    a `bootctl update` (Chimera's package has no trigger for that).
+
+  Then all passed, 2026-11-12: `chimera-uefi` runs `c6-f7` (Cinqcent, 174 s)
+  and `c6-f8` (Chopin, 186 s), `chimera-zfs` `c6-f3` (Cinqcent, 183 s) and `c6-f4`
+  (Chopin, 189 s); RAM-disk peaks 5.5 and 5.0 GiB.
+- **Not run:** bs1-to-stick (needs a stick), and no rehearsal of `chimera`
+  (BIOS; bs1-qemu's `--bios`).
+
 ## Guests
 
 Built by `make-bootstrap.sh`, as for Void: from the Arch ISO's live system,

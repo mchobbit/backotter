@@ -148,6 +148,22 @@ class Sources(unittest.TestCase):
         self.assertEqual(src("S-xbps", sec(("file /usr/share/xbps.d/00-repository-main.conf", "repository=https://repo-default.voidlinux.org/current/musl"))).v, "PASS")
         self.assertEqual(src("S-xbps", sec(("file /usr/share/xbps.d/x.conf", "# nothing"))).v, "FAIL")
 
+    def test_portage(self):
+        """gentoo.sh's guests: the binhost, make.conf's getbinpkg, the gentoo repository's sync-uri."""
+        bins = ("file /etc/portage/binrepos.conf/gentoo.conf",
+                "[gentoo]\npriority = 1\nsync-uri = https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64")
+        make = ("file /etc/portage/make.conf", 'COMMON_FLAGS="-O2 -pipe"\nFEATURES="${FEATURES} getbinpkg binpkg-request-signature"')
+        repo = ("file /usr/share/portage/config/repos.conf",
+                "[DEFAULT]\nmain-repo = gentoo\n\n[gentoo]\nlocation = /var/db/repos/gentoo\nsync-uri = rsync://rsync.gentoo.org/gentoo-portage")
+        self.assertEqual(src("S-portage", sec(bins, make, repo)).v, "PASS")
+        self.assertEqual(src("S-portage", sec(make, repo)).lines, ["no binary package host in /etc/portage/binrepos.conf"])
+        nobin = ("file /etc/portage/make.conf", 'FEATURES="${FEATURES} -getbinpkg binpkg-request-signature"')
+        self.assertEqual(src("S-portage", sec(bins, nobin, repo)).lines, ["make.conf's FEATURES has no getbinpkg"])
+        self.assertEqual(src("S-portage", sec(bins, make)).lines, ["no sync-uri for the gentoo repository"])
+        # /etc/portage/repos.conf over the default: a gentoo section there without a sync-uri
+        # leaves the default's.
+        self.assertEqual(src("S-portage", sec(bins, make, repo, ("file /etc/portage/repos.conf/gentoo.conf", "[gentoo]\nauto-sync = no"))).v, "PASS")
+
     def test_nix(self):
         self.assertEqual(src("S-nix", sec(("file /etc/nixos/configuration.nix", 'nix.nixPath = [ "nixpkgs=https://channels.nixos.org/nixos-26.05/nixexprs.tar.xz" ];'))).v, "PASS")
         self.assertEqual(src("S-nix", sec(("file /etc/nixos/configuration.nix", 'nix.nixPath = [ "nixpkgs=https://releases.nixos.org/x" ];'))).v, "FAIL")
@@ -511,6 +527,14 @@ class RealLogLines(unittest.TestCase):
         "freebsd": ["[ 7/120] Extracting FreeBSD-acct-15.1p1: .......... done", "[3/9] Upgrading curl-8.15.0...", "Fetching meta.conf: . done", "/rescue/zdb"],
         "dragonfly": ["[1/3] Deinstalling bind-tools-9.20.1...", "in-guest: base system: make buildworld (12:01:02)"],
         "moss": ["Installed systemd-libs", "ngtcp2 1.15.0-1 -> 1.16.0-1"],
+        # gentoo's (G1's vm-update --try, docs/design/gentoo.md)
+        "portage": [">>> Emerging binary (2 of 9) net-misc/curl-8.17.0-r1::gentoo", ">>> Installing (2 of 9) net-misc/curl-8.17.0-r1::gentoo",
+                    ">>> Jobs: 2 of 9 complete, 1 running                Load avg: 3.05, 2.10, 1.08",
+                    "[binary   U  ] net-misc/curl-8.17.0-r1-1 [8.16.0] USE=\"http2* http3* quic*\"", "[ebuild     U  ] sys-boot/grub-2.16-r1 [2.14-r5]",
+                    "Calculating dependencies  ... done!", "Packages installed:   312", "dev-build/meson-format-array",
+                    " * IMPORTANT: 23 news items need reading for repository 'gentoo'.",
+                    "--2026-11-12 11:52:01--  https://distfiles.gentoo.org/releases/amd64/binpackages/23.0/x86-64/sys-devel/gettext/gettext-0.26-1.gpkg.tar",
+                    "  3000K .......... .......... .......... .......... .......... 52% 1.21M 2s"],
         "nix": ["copying path '/nix/store/abc-foo-1.0' from 'https://cache.nixos.org'...", "building '/nix/store/abc-foo.drv'..."],
         "netbsd": ["Removed obsolete file /usr/lib/libunbound.so.8.1"],
         "openbsd": ["Installing patch 002_aesgmac", "Get/Verify syspatch78-002_aesgmac.tgz"],
@@ -536,6 +560,10 @@ class RealLogLines(unittest.TestCase):
         "freebsd": ["Fetching foo-1.0.pkg: size mismatch, cannot continue"],
         "pacman": ["error: failed to commit transaction (conflicting files)"],
         "dnf": ["Error: Transaction test error:"],
+        "portage": ["!!! Fetch failed for sys-devel/gettext-0.26-1, continuing...", ">>> Failed to emerge sys-boot/grub-2.16-r1",
+                    " * ERROR: sys-boot/grub-2.16-r1::gentoo failed (compile phase):",
+                    ">>> Jobs: 1 of 9 complete, 1 failed                Load avg: 3.05, 2.10, 1.08",
+                    " * IMPORTANT: config file '/etc/default/grub' needs updating."],
         "zypper": ["Retrieving: foo-1.0.rpm [Error: not found]"],
         "rpm-ostree": ["error: Creating importer: failed to invoke method OpenImage: reading manifest 44 in quay.io/fedora/fedora-kinoite: manifest unknown",
                        "[3/56] Fetching ostree chunk 7ef9932682b330f4496 (70.1 MB)...failed",
@@ -572,6 +600,12 @@ class RealLogLines(unittest.TestCase):
 class NewestKernel(unittest.TestCase):
     def k(self, rule, body):
         return J.newest_kernel_lines(body.splitlines(), rule, sec(("cmd beadm-after", body)))
+
+    def test_gentoo_is_debians_rule(self):
+        self.assertEqual(self.k("K-gentoo", "running 6.18.63-gentoo-dist-bin\ninstalled 6.18.63-gentoo-dist-bin"), [])
+        self.assertEqual(self.k("K-gentoo", "running 6.18.63-gentoo-dist-bin\ninstalled 6.18.63-gentoo-dist-bin\ninstalled 6.18.64-gentoo-dist-bin"),
+                         [J.NOT_NEWEST])
+        self.assertEqual(self.k("K-gentoo", "running 6.18.63-gentoo-dist-bin\ninstalled 6.18.64-gentoo-dist-bin"), [J.NO_MODULES])
 
     def test_version_sort(self):
         self.assertEqual(self.k("K-deb", RUN), [])

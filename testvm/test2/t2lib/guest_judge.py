@@ -25,7 +25,8 @@ IMAGE_NEEDS = ("image:sources", "image:loader", "image:zfs-cache", "image:free",
 AFTER_NEEDS = ("after:boot-state", "after:failed-units", "after:fstab", "after:shadow", "after:newest-kernel")
 NEW_NEEDS = ("new:firmware", "new:ssh", "new:restic", "new:rustic", "new:smoke")
 KERNELS_MAX = {"K-deb": 3, "K-fed": 5, "K-ostree": 2, "K-pac": 2, "K-apk": 3, "K-void": 2, "K-moss": 3, "K-nix": 3, "K-fbsd": 3,
-               "K-nbsd": 3, "K-obsd": 4, "K-dfly": 3, "K-ill": 4, "K-haiku": 2, "K-alpbsd": 3}
+               "K-nbsd": 3, "K-obsd": 4, "K-dfly": 3, "K-ill": 4, "K-haiku": 2, "K-alpbsd": 3,
+               "K-gentoo": 3}
 NO_RULE = "no rule for it"
 U0 = "not updated yet (u0): frozen by its builder"
 
@@ -305,6 +306,29 @@ def s_xbps(sec):
     return [] if n else ["no xbps repository"]
 
 
+def s_portage(sec):
+    """Gentoo: the binhost in binrepos.conf (gentoo.sh's guests take every package they can from it),
+    make.conf's getbinpkg, and the gentoo repository's sync-uri (/etc/portage/repos.conf over the
+    default in /usr/share/portage/config/repos.conf)."""
+    out = []
+    bins = [kv.get("sync-uri", "") for lines in list(sec.glob("/etc/portage/binrepos.conf/*").values())
+            + [sec.file("/etc/portage/binrepos.conf") or []] for _, kv in _ini(lines)]
+    if not any(u.startswith(("https://", "http://")) for u in bins):
+        out.append("no binary package host in /etc/portage/binrepos.conf")
+    feats = " ".join(x.split("=", 1)[1] for x in _active(sec.file("/etc/portage/make.conf")) if re.match(r"FEATURES\s*=", x))
+    if "getbinpkg" not in re.findall(r"[-\w]+", feats):
+        out.append("make.conf's FEATURES has no getbinpkg")
+    repo = None
+    for lines in [sec.file("/usr/share/portage/config/repos.conf") or []] + \
+            [v for _, v in sorted(sec.glob("/etc/portage/repos.conf/*").items())] + [sec.file("/etc/portage/repos.conf") or []]:
+        for name, kv in _ini(lines):
+            if name == "gentoo" and kv.get("sync-uri"):
+                repo = kv["sync-uri"]
+    if not repo:
+        out.append("no sync-uri for the gentoo repository")
+    return out
+
+
 def s_nix(sec):
     t = sec.text("/etc/nixos/configuration.nix")
     if t is None:
@@ -388,7 +412,8 @@ def s_haiku(sec):
 
 SOURCE_RULES = {"S-apt": s_apt, "S-dnf": s_dnf, "S-pac": s_pac, "S-zyp": s_zyp, "S-moss": s_moss, "S-apk": s_apk,
                 "S-xbps": s_xbps, "S-nix": s_nix, "S-fbsd": s_fbsd, "S-gbsd": s_gbsd, "S-hbsd": s_hbsd,
-                "S-nbsd": s_nbsd, "S-obsd": s_obsd, "S-dfly": s_dfly, "S-ips": s_ips, "S-haiku": s_haiku}
+                "S-nbsd": s_nbsd, "S-obsd": s_obsd, "S-dfly": s_dfly, "S-ips": s_ips, "S-haiku": s_haiku,
+                "S-portage": s_portage}
 
 
 # --- L-*: the loader's default entry (#18) -------------------------------------------------------
@@ -814,7 +839,7 @@ def newest_kernel_lines(lines, rule, sec=None, steps=None):
             kv[f[0]] = f[1].strip()
     if "unverified" in kv:
         return [f"kernel unverified: {kv['unverified']}"]
-    if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree"):
+    if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree", "K-gentoo"):
         run = kv.get("running")
         if not run or not installed:
             return ["kernel unverified: no running or installed kernel listed"]

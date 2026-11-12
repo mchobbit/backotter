@@ -4,7 +4,7 @@
     SticTest2 [ROUND] [GUEST...] [stale] [plan]      SticTest2All [ROUND] [plan]
     (WORD All is the same as WORDAll)
     HoltTest2 [GUEST[+VARIANT]...] [stale] [plan] [+bigger] [+oneshot] [+degraded] [+img]
-    HoltTest2X [X...] [...]  for X in D A M U Z F C V BSD H I Obscure      HoltTest2All [plan]
+    HoltTest2X [X...] [...]  for X in D A M U Z F C V BSD H I G Obscure      HoltTest2All [plan]
     GuestTest2 [GUEST...] [stale] [plan]             GuestTest2All [plan]
     GuestTest2 update [GUEST...] [plan]              the real update round
     ImgTest2 [PLAT...] [release] [stale] [plan]      ImgTest2All [release] [plan]
@@ -19,7 +19,7 @@ import re
 
 FAMILY_WORD = {"gate": "GateTest2", "stic": "SticTest2", "holt": "HoltTest2", "guest": "GuestTest2", "img": "ImgTest2"}
 COMPOSITE_WORD = {"bko": "BkoTest2", "sweep": "SweepTest2"}
-HOLT_LETTERS = ("D", "A", "M", "U", "Z", "F", "C", "V", "BSD", "H", "I", "Obscure")
+HOLT_LETTERS = ("D", "A", "M", "U", "Z", "F", "C", "V", "BSD", "H", "I", "G", "Obscure")
 VARIANTS = ("bigger", "oneshot", "degraded", "img")
 REFUSED_VARIANTS = {"close": "+close waits for H3 (throttled closes under load)"}
 PLATS = ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "illumos", "haiku")

@@ -735,6 +735,32 @@
     "established": true
    }
   },
+  "gentoo": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-bootstrap.sh",
+    "testvm/bootstrap/**",
+    "testvm/update/in-guest.sh#Linux.portage",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#portage"
+   ],
+   "checks": {
+    "pm": "portage",
+    "rules": {
+     "source": "S-portage",
+     "loader": "L-grub",
+     "kernel": "K-gentoo",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false
+   }
+  },
   "ghostbsd26": {
    "kind": "ssh",
    "plat": "freebsd",

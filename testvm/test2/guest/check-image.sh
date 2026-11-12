@@ -21,6 +21,8 @@ has_rule S-moss && emit /etc/moss/repo.d/*.kdl /etc/moss/system-model.kdl
 has_rule S-apk && emit /etc/apk/repositories
 has_rule S-xbps && emit /usr/share/xbps.d/* /etc/xbps.d/*
 has_rule S-nix && emit /etc/nixos/configuration.nix
+has_rule S-portage && emit /etc/portage/make.conf /etc/portage/binrepos.conf /etc/portage/binrepos.conf/* \
+    /etc/portage/repos.conf /etc/portage/repos.conf/* /usr/share/portage/config/repos.conf
 if has_rule S-fbsd || has_rule S-gbsd || has_rule S-dfly; then
     emit /etc/pkg/*.conf /usr/local/etc/pkg/repos/*.conf
 fi
@@ -80,6 +82,8 @@ if has_rule K-haiku; then df 2>&1 | qt; else df -Pk 2>&1 | qt; fi
 if ! has_rule K-none; then
     cmd kernels
     if has_rule K-deb || has_rule K-void; then ls -1 /boot/vmlinuz-* 2>/dev/null | grep -v '\.old$'; fi
+    # Gentoo: installkernel's vmlinuz-KV, or kernel-KV under systemd's kernel-install.
+    if has_rule K-gentoo; then ls -1 /boot/vmlinuz-* /boot/kernel-* 2>/dev/null | grep -v '\.old$'; fi
     if has_rule K-fed || has_rule K-ostree; then ls -1 /boot/loader/entries/*.conf 2>/dev/null | grep -v rescue; fi
     if has_rule K-pac; then
         for d in /usr/lib/modules/*/; do [ -e "${d}vmlinuz" ] && echo "$d"; done

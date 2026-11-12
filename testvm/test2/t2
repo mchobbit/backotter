@@ -5,7 +5,7 @@
         GateTest2 [ROUND] [LAYER...] [stale] [plan]       GateTest2All [ROUND] [plan]
         SticTest2 [ROUND] [GUEST...] [stale] [plan]       SticTest2All [ROUND] [plan]
         HoltTest2 [GUEST[+VARIANT]...] [stale] [plan] [+bigger] [+oneshot] [+degraded] [+img] [--holt-bin DIR]
-        HoltTest2X [X...] for X in D A M U Z F C V BSD H I Obscure      HoltTest2All [plan]
+        HoltTest2X [X...] for X in D A M U Z F C V BSD H I G Obscure      HoltTest2All [plan]
         GuestTest2 [GUEST...] [stale] [plan]              GuestTest2All [plan]
         GuestTest2 update [GUEST...] [plan]               the real update round
         ImgTest2 [PLAT...] [release] [stale] [plan]       ImgTest2All [release] [plan]

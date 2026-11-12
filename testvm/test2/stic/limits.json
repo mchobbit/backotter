@@ -49,6 +49,30 @@
   "flags_kept": "jfs doesn't keep nodump, notail, journal, topdir, nocow, compress; ext4 doesn't keep nocow (chattr took or refused them, lsattr doesn't show them)",
   "project_ids": "jfs has no project IDs (chattr -p refused) (inner.log:34) (+1 more)"
  },
+ "chimera": {
+  "birth-times": "XFS/ext4 keep birth times but Linux can't set them (BACKOTTER.md)",
+  "bsd-file-flags": "Linux guest: no BSD file flags",
+  "nfsv4-acls": "Linux XFS/ext4 have no NFSv4 ACLs",
+  "project-ids-ext4": "the guest's ext4 (/boot) has no project feature: chattr -p refused; project IDs are checked on XFS",
+  "selinux-labels": "no SELinux on Chimera (LSMs capability,landlock,yama)",
+  "xfs-rtinherit": "tool exclusion pending the user's ruling, not an OS or FS limit: the kernel takes rtinherit (t, 0x100) on a directory of an XFS with no realtime device and would take it back on a restored one, but BACKOTTER.md's linux.xfs_options leaves realtime and its inheritance out by design (its reason, a realtime device, holds for realtime on files only); none of the 4 directions restores it"
+ },
+ "chimera-uefi": {
+  "birth-times": "ext4 keeps birth times (FAT its creation time) but Linux can't set them (BACKOTTER.md)",
+  "bsd-file-flags": "Linux guest: no BSD file flags",
+  "nfsv4-acls": "Linux ext4 and vfat have no NFSv4 ACLs",
+  "project-ids-ext4": "the guest's ext4 (/) has no project feature: chattr -p refused; its only other file system is the ESP (vfat), which has none: not applicable",
+  "selinux-labels": "no SELinux on Chimera (LSMs capability,landlock,yama)"
+ },
+ "chimera-zfs": {
+  "birth-times": "ZFS crtime, ext4 btime and FAT creation times can't be set on Linux (BACKOTTER.md)",
+  "bsd-file-flags": "Linux guest: no BSD file flags",
+  "nfsv4-acls": "Linux ZFS (acltype=posix), ext4 and vfat have no NFSv4 ACLs",
+  "project-ids-ext4": "the guest's ext4 (/boot) has no project feature: chattr -p refused; project IDs are checked on ZFS",
+  "selinux-labels": "no SELinux on Chimera (LSMs capability,landlock,yama)",
+  "vfat-unix-metadata": "FAT keeps no owners, modes but read-only, xattrs, ACLs, links, devices, FIFOs or sockets (the mount's uid, gid, fmask, dmask): the ESP's fixture has the names, sizes, times and FAT attributes FAT keeps",
+  "zfs-inode-flags": "OpenZFS on Linux keeps only immutable, append-only, nodump and project inheritance (i a d P, checked in the fixture and every restore); chattr refuses A S c C s u t e F x m, and +D exits 0 but isn't kept"
+ },
  "debian12": {
   "Birth times": "ext4 keeps them, Linux can't set them (BACKOTTER.md)",
   "Project IDs, compression, nocow, casefold": "the guest's ext4 has no project/casefold feature; ext4 has no c/C (fs_roundtrip.py ext4 covers project and casefold)",

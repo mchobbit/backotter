@@ -87,7 +87,7 @@ def facts(host="chopin", holt_code=None, raw=None, pkgs=None):
                                          "~/backotter-work/bko-audit/stock/rustic_core-0.13.0/results.tsv": "sha256:" + H["d"],
                                          "~/backotter-work/bko-audit/stock/rustic-0.11.4/results.tsv": "sha256:" + H["e"],
                                          "~/.rustup/toolchains/1.94.1-x86_64-unknown-linux-gnu/bin/rustc": "sha256:" + H["f"],
-                                         "~/backotter-work/round6/arch-root/usr/bin/bcachefs": "absent"}}
+                                         "/bkoscratch/tools/arch-root/usr/bin/bcachefs": "absent"}}
     if holt_code:
         f["holt_bins"] = {holt_code: {"path": f"/bkoscratch/test2/holt-bin/{holt_code}",
                                       "sums": {"linux": H["1"], "freebsd": H["2"], "netbsd": H["3"]}}}

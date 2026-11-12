@@ -210,8 +210,8 @@ and the boot tools, 2026-11-11:
 - **The chroot's commands:** `grub-install`, `update-initramfs -u -k all`,
   `env LANG=C grub-mkconfig -o ...`, and the SELinux check (POSIX sh). None
   uses a GNU-only option.
-- **No golden plan yet:** it is made from a passing HoltTest1 run's dump of
-  `chimera` (C5), as the corpus's others were.
+- **The golden plan:** made in C2 (1ac2eb9) from passing HoltTest1 run
+  `chim2`'s dump of `chimera`, as the corpus's others were.
 
 ## What C3 found (load)
 
@@ -251,6 +251,121 @@ Read on the `chimera` guest (`systemd-boot` 256.11-r5, `/usr/bin/gen-systemd-boo
   `/boot/initrd.img-V` exists. Hand edits to those entries are lost, as on the
   source's next kernel update.
 
+## What C6 found
+
+Every script that runs on the source or the restored system (bs1-adopt,
+bs1-backup, bs1-common, bs1-list, bs1-manifest, bs1-to-stick, bs1-verify;
+bs1-restore runs on the stick, bs1-ostree only on ostree) read for GNU- and
+bash-only forms, and the suspects run on the `chimera`, `chimera-uefi` and
+`chimera-zfs` guests (and bs1-adopt's dinit change on `artix-dinit`),
+2026-11-12. bs1-adopt starts in FreeBSD's sh and re-execs bash once it has
+installed it; the controller runs every other shell script with `bash`, and
+the Python ones with `python3`.
+
+- **The table's fixes stand,** with these differences:
+  - `--no-interactive` when `apk --version` says `apk-tools 3`, in an
+    `apk_add` that bs1-adopt's sh part and its `pkg_install` share. On a tty,
+    plain `apk add` stops at "Do you want to continue [Y/n]?" (tried).
+  - The `sed -i '1i'` rewrite writes the new text back into `sshd_config`
+    itself (`printf` and `cat` into `.bs1`, then `cat` back), not `mv`, so its
+    mode, owner and SELinux label stay. Chimera never takes that branch: it
+    has no `/etc/ssh/sshd_config`, only `sshd_config.d`, which bs1-adopt
+    already uses (as for AerynOS); `sshd -T` shows the drop-in's
+    `PermitRootLogin prohibit-password`.
+  - The `df` lines are three, not two: `space_in_use` in bs1-common
+    (`df -B1 --output=source,used`) and bs1-list's `df -h --output=avail` as
+    well as bs1-backup's. Now `df -Pk` (column 3 or 4, KiB, multiplied in bash)
+    and `df -Ph`. On the guests `space_in_use` matched `df -Pk`'s sum.
+- **Missed by the table:**
+  - bs1-adopt's Alpine-only `apk add coreutils findmnt lsblk blkid sfdisk
+    mount umount util-linux-misc` ran wherever apk is: not on Chimera now,
+    which has util-linux (`findmnt`, `lsblk`, `blkid`, `sfdisk`, `swapon`,
+    `mount`, `umount --recursive`) and no BusyBox.
+  - The dinit branch looked for the service in `/etc/dinit.d` only (Artix's
+    place); Chimera's are in `/usr/lib/dinit.d`, so `sshd` and `avahi-daemon`
+    were "unknown". Both now.
+  - Chimera's dbus-daemon never reads the policy `apk add avahi` puts in
+    `/usr/share/dbus-1/system.d` (no inotify, no trigger), so `avahi-daemon`
+    can't own `org.freedesktop.Avahi` and exits 255 at every start until a
+    reboot. bs1-adopt now sends dbus `org.freedesktop.DBus.ReloadConfig`
+    (`dbus-send --system --print-reply`) before it starts avahi-daemon,
+    wherever a dbus is running.
+  - `dinitctl start` returns once a process service is launched, and with
+    `smooth-recovery = true` (Chimera's avahi-daemon) `is-started` says
+    `STARTED` for some seconds while dinit restarts a dead process. So the
+    dinit branch counts a service as up only when `dinitctl status` names a
+    `Process ID` that is in /proc, the same one 3 s later (not one dinit
+    restarted in between), and tries five times
+    before it fails (and with it bs1-adopt). Checked on `artix-dinit` (dinit
+    0.22.1: up, stopped, unknown and restarted services all told right).
+  - `efibootmgr` isn't in `base-full`, and a systemd-boot install doesn't need
+    it, but bs1-to-stick does. bs1-adopt adds it on a UEFI Chimera that lacks
+    it (tried on `chimera-uefi` with it removed).
+- **Not needed on the guests:** `python3` was there already
+  (`/usr/bin/python3`, from `python`), so the eighth column's `python` is for
+  an install without it; bs1-adopt installed only `bash` and `avahi` (and
+  `efibootmgr` where removed). `openssh` and util-linux were there too.
+- **Checked and fine on Chimera:** `mktemp` and `mktemp -d` without a
+  template, `head -c`, `od -An -tx1`, `readlink -f`, `sed -E` and `sed -n
+  's/\(..\)/\1/p'`, `tr -c`, `comm -13`, `cmp -`, `seq`, `du -sh`, `find
+  -maxdepth -iname`, `grep -Eqx`/`-qxF`, `install -d -m`, `date -u +FMT`,
+  `sha256sum`, `printf %b`, awk sums past 2^32, `apk info -v`, `mount --bind`
+  and `-o remount,bind,ro`, `lsblk -dnro`/`-snlo`/`-lnpo`/`-no PKNAME`,
+  `findmnt -rno`, `swapon --show`, `cat /proc/1/comm` (`dinit`), dinit's
+  `boot` reading `/etc/dinit.d/boot.d` (`dinitctl enable` links there). No
+  script uses `stat -c`, `date -d`, `grep -P`, `xargs -r`, `sort -V`, `tac`,
+  `echo -e` or GNU `cp`/`mv` options on the source. bs1-common's
+  `internal_mounts`, `space_in_use`, `check_coverage`, `make_tree`/`drop_tree`,
+  `package_list`, `swap_names`, bs1-list (and `--resolve`) and a bs1-manifest
+  record and compare all ran on the three guests: XFS, ext4 on LVM on LUKS2
+  with the ESP as /boot, and ZFS root (`rpool/ROOT/chimera`).
+- **Left as it is:** `wc -l` and `du -sh` pad with spaces (only bs1-list's
+  columns show it). Chimera's `ssh-keygen` service runs `ssh-keygen -A` at
+  every boot, so the RSA, ECDSA and `mldsa44-ed25519` host keys bs1-adopt
+  removes (it doesn't name the last) come back; the controller's pinned
+  ed25519 key under `HostKeyAlias` still decides, as on other systems that
+  regenerate keys.
+- **The rehearsals** (`bs1-qemu.py --virtio`, the C5 bko-holt 24b1cfef0663
+  and rel4's rustic-bko) found three more:
+  - The two above: every first run stopped at "avahi-daemon is running".
+  - bs1-qemu.py gave a LUKS guest no `keys/disk-passphrase`, so bs1-backup
+    stopped at the layout. It now copies the guest's `luks-keyfile` there,
+    as ht1.sh passes it to load.
+  - bs1-verify on `chimera-uefi` saw two changes it didn't expect:
+    `boot/NvVars` (OVMF's variables on the ESP, outside `boot/efi` when the
+    ESP is /boot) and `etc/kernel/entry-token` (the restore's `bootctl
+    install` writes it again, same content, new mtime). bs1-manifest now
+    expects the first and counts the second as remade. It expects
+    `boot/EFI/*` too (from the review): with the ESP as /boot, as on the
+    Thinkpad, the restore's `bootctl install` puts the package's systemd-boot
+    there, which differs from the ESP's when the package was upgraded without
+    a `bootctl update` (Chimera's package has no trigger for that).
+
+  Then all passed, 2026-11-12: `chimera-uefi` runs `c6-f7` (Cinqcent, 174 s)
+  and `c6-f8` (Chopin, 186 s), `chimera-zfs` `c6-f3` (Cinqcent, 183 s) and `c6-f4`
+  (Chopin, 189 s); RAM-disk peaks 5.5 and 5.0 GiB.
+- **Not run:** bs1-to-stick (needs a stick), and no rehearsal of `chimera`
+  (BIOS; bs1-qemu's `--bios`).
+
+## Fix after C7
+
+C4 found (in `testvm/stictest1/chimera/inner.sh` and
+`chimera-uefi/inner.sh`) that `chimera` and `chimera-uefi` had no file
+capabilities: `bootstrap/chimera.sh` unpacked the ROOTFS tarball with GNU
+`tar -xzp`, which drops its xattrs, so ping's `cap_net_raw=p` and
+clockdiff's `cap_net_raw,cap_sys_nice=ep` were lost (`chimera-zfs`, unpacked
+by `make-chimera-zfs.sh` with bsdtar, had them). Since 2026-11-12 it unpacks
+with `bsdtar -xpf - --numeric-owner` (libarchive is on the Arch ISO) and
+fails the build if `/usr/bin/ping` has no `cap_net_raw`, after the unpack
+and again at the end. Both guests were rebuilt with `rebuild-one.sh` on
+Chopin and copied to Cinqcent (byte-identical); `getcap -r /usr/bin` on each
+shows both capabilities, and each booted normally (`chimera-uefi` unlocking
+/ by its key file). Their SticTest1 and HoltTest runs before then were on
+the old images. Retested on the new ones, 2026-11-12, on both hosts:
+SticTest1 `chimera` 45 PASS / 6 LIMIT and `chimera-uefi` 47 / 5 (C4's
+counts), each fixture copying the guest's own two capabilities; HoltTest1
+PASS for both, fsmeta finding both capabilities restored.
+
 ## Guests
 
 Built by `make-bootstrap.sh`, as for Void: from the Arch ISO's live system,
@@ -272,7 +387,10 @@ three guests:
 Each one gets: `rebuild-one.sh` lines, `stictest1/GUEST/check.sh` and
 `check-inner.sh`, `holttest1d/ram-sizes.tsv` rows, `classes.json` entries,
 the hosts split (one on Cinqcent, two on Chopin, or as the queue's sizes
-suggest), and a GuestTest1 grade.
+suggest), and a GuestTest1 grade. (C5: all three run on both hosts, each
+under 6 GiB of RAM disk, so the queue needs no split; the `ram-sizes.tsv`
+rows come from the runs' RAM-disk peaks, not left + 1.0, because a pass
+deletes its disks.)
 
 ## Pieces to build (ordered, est.)
 
@@ -282,9 +400,9 @@ suggest), and a GuestTest1 grade.
 | C2 | bko-holt: the `SUPPORTED` row, the package names, an apk v3 reader if C1 needs one; a golden plan from `chimera`'s dump, unit tests | 0.5 d |
 | C3 | `chimera-uefi` and `chimera-zfs`; `load` runs `gen-systemd-boot`; golden plans for both | 0.75 d |
 | C4 | SticTest1 entries and runs for the three guests (rustic-bko and restic) | 0.25 d |
-| C5 | HoltTest1 group and runs, on both hosts | 0.25 d |
-| C6 | BackShot1: the fixes in the table; `bs1-qemu.py --virtio` rehearsals on `chimera-uefi`, then a run on the Thinkpad | 0.5 d |
-| C7 | Docs: README supported lists, HoltTest1's table, `osrel.rs`'s comment, memory | 0.1 d |
+| C5 | HoltTest1 group and runs, on both hosts. **Done 2026-11-12:** the three guests joined 1Obscure; each passed first time on both hosts with bko-holt 24b1cfef0663 and rel4's rustic-bko: `chimera` runs `c5-1` (Cinqcent) and `c5-2` (Chopin), `chimera-uefi` `c5-3` (Cinqcent) and `c5-4` (Chopin), `chimera-zfs` `c5-5` (Chopin) and `c5-6` (Cinqcent); RAM-disk peaks 4.3, 5.1 and 5.8 GiB, so `ram-sizes.tsv` rows of D 6, 6 and 7 (the peak rule), MEM 4 | 0.25 d |
+| C6 | BackShot1: the fixes in the table; `bs1-qemu.py --virtio` rehearsals on `chimera-uefi`, then a run on the Thinkpad. **Done 2026-11-12:** fixes c67ae63; rehearsals pass on `chimera-uefi` and `chimera-zfs` on both hosts; the Thinkpad, installed from Chimera's live ISO by Claude at the user's request (GPT: 1 GiB ESP as /boot, 4 GiB swap, ZFS `rpool` unencrypted with `rpool/ROOT/chimera` at / and `rpool/home`; `linux-lts` 6.18.62 + `linux-lts-zfs-bin`, systemd-boot with `root=` pinned), run `chimera-20261112-092235`: phase1, plan, phase2 and verify PASS first time (37,285 files compared, 0 unexpected), bko-holt 24b1cfef0663 and rustic-bko 0.11.4+backotter.9 | 0.5 d |
+| C7 | Docs: README supported lists, HoltTest1's table, `osrel.rs`'s comment, memory. **Done 2026-11-12:** holt/README.md's list and test note, `osrel.rs`'s comment, BackShot1's README (C6), HoltTest1's 1Obscure row (C5) | 0.1 d |
 | | *≈ 3 d in all* | |
 
 Each piece is committed on main when its tests pass. Nothing is pushed until the

@@ -67,6 +67,13 @@ EXPECTED = [
     "etc/.updated", "var/.updated",
     # Rewritten whenever the pool is imported.
     "etc/zfs/zpool.cache",
+    # OVMF keeps its variables there, on the ESP, when it has no flash for them;
+    # an ESP as /boot (chimera-uefi) puts it outside boot/efi.
+    "boot/NvVars",
+    # An ESP as /boot (Chimera's systemd-boot): the restore's bootctl install
+    # puts the package's systemd-boot there, newer than the ESP's own when
+    # the package was upgraded without a bootctl update.
+    "boot/EFI/*",
 ]
 
 # Rewritten at every boot, so with a new mtime, but they have to be the same
@@ -74,7 +81,9 @@ EXPECTED = [
 # line's systemd.machine_id= (EndeavourOS with systemd-boot); a different ID
 # would orphan the ESP's /MACHINE-ID/ directory and loader entries.
 # mimeinfo.cache: openSUSE rebuilds it at boot after the restore.
-REMADE = ["etc/machine-id", "usr/share/applications/mimeinfo.cache"]
+# entry-token: the restore's bootctl install writes it again (Chimera, with
+# systemd-boot), and the ESP's entries are under that name.
+REMADE = ["etc/machine-id", "usr/share/applications/mimeinfo.cache", "etc/kernel/entry-token"]
 
 # NixOS makes these again from its store at every boot.
 NIXOS_EXPECTED = ["etc/.clean", "etc/group", "etc/passwd", "etc/shadow", "etc/subgid", "etc/subuid", "nix/var/nix/temproots/*", "nix/var/nix/db/*"]

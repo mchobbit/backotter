@@ -12,11 +12,23 @@
 # Chimera's own tools are in /usr/bin (sbin and usr/sbin are links to it),
 # and its /bin/sh is FreeBSD's sh: everything below that runs inside the
 # chroot is called with a full PATH and no bash.
+#
+# The tarball is unpacked with bsdtar (libarchive, on the Arch ISO), as
+# make-chimera-zfs.sh does: it keeps the extended attributes, and with them
+# Chimera's file capabilities (ping's cap_net_raw, clockdiff's), which GNU
+# tar -xzp dropped.  --numeric-owner: Chimera's IDs, not the ISO's names for
+# them.  have_caps fails the build if ping has none, after the unpack and
+# again at the end (apk may have replaced it).
 
 mkfs_root "$ROOT_PART"
 mount -t "$ROOT_FS" "$ROOT_PART" /mnt
 mount_boot
-curl -fsS "$SERVER/rootfs.tar.gz" | tar -xzp -C /mnt
+curl -fsS "$SERVER/rootfs.tar.gz" | bsdtar -xpf - --numeric-owner -C /mnt
+have_caps() {
+    [[ $(getcap /mnt/usr/bin/ping) == *cap_net_raw* ]] ||
+        { echo "/usr/bin/ping has no file capabilities ($1)"; false; }
+}
+have_caps "after the unpack"
 grep -q '^ID="\?chimera"\?$' /mnt/etc/os-release || { echo "/etc/os-release doesn't say Chimera"; false; }
 rm -f /mnt/etc/resolv.conf
 cp /etc/resolv.conf /mnt/etc/resolv.conf
@@ -117,5 +129,6 @@ if [[ -n $LUKS_PART ]]; then
             { echo "${f#/mnt} has no key file"; false; }
     done
 fi
+have_caps "at the end"
 rm /mnt/etc/resolv.conf
 finish

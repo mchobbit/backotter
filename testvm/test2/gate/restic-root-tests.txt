@@ -22,7 +22,7 @@
 # Run as root on Chopin, these find mkfs.vfat, mkfs.xfs, xfs_io, mkfs.btrfs,
 # mkfs.ext4, chattr and lsattr in /usr/sbin and /usr/bin; bcachefs (format,
 # mkfs) comes from the Arch ISO's tools when the host has none
-# (~/backotter-work/round6/arch-root, as run-all.sh's BKO_MKFS_BCACHEFS).
+# (/bkoscratch/tools/arch-root, as run-all.sh's BKO_MKFS_BCACHEFS).
 
 run internal/fs TestBcachefsDirOptionsInherited      # formats a 256 MiB bcachefs image in its t.TempDir (BKO_MKFS_BCACHEFS or mkfs.bcachefs), mount -t bcachefs -o loop there; mkdir, files, project IDs and bcachefs xattrs only inside that mount; umount at cleanup
 run internal/fs TestClearRestrictingFlagsFile        # one file in its t.TempDir: sets append-only, immutable and nodump with FS_IOC_SETFLAGS (CAP_LINUX_IMMUTABLE), clears them through clearRestrictingFlags and rewrites the file; nothing is mounted

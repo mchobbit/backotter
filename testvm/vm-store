@@ -1,0 +1,34 @@
+#!/usr/bin/env python3
+"""Keep the test guests' disk images in a content-addressed store.
+
+Usage: vm-store init ROOT --role mirror|cache [--cap SIZE --floor SIZE]
+       vm-store init --bigfoot
+       vm-store publish GUEST... | --changed [--from DIR] [--expect-generation HEX] [--set-latest]
+                        [--note T] [--push] [--dry-run]
+       vm-store push [--now] [--dry-run]
+       vm-store ensure GUEST[@VID|@latest] [--offline] [--json]
+       vm-store fetch GUEST[@VID]...
+       vm-store gc [--dry-run] [--json]
+       vm-store list [GUEST] [--source NAME] [--json]
+       vm-store status [--json]
+       vm-store verify [--where local|bigfoot] [GUEST...] [--json]
+
+Chopin publishes vms/GUEST into its mirror (/bkoscratch/bko-store), weekly
+for changed guests, and pushes it to Bigfoot (/media/DantePool/bt/BkoStore),
+the copy of record, which only Chopin talks to; the other hosts' caches
+(/bkoscratch/bko-cache) fetch a version from Chopin with ensure (with Chopin
+down, they use what they hold, as --offline), which prints a guest
+folder made of it (disks as links to read-only objects: boot it with --ram or
+--snapshot).  testvm/store/README.md has the rest, and
+docs/design/image-store.md the contract.
+
+Exit status: 0 ok, 1 failure, 2 usage, 3 busy (try later), 4 no room.
+"""
+import sys
+from pathlib import Path
+
+sys.path.insert(0, str(Path(__file__).resolve().parent / "store"))
+import vmstore  # noqa: E402
+
+if __name__ == "__main__":
+    vmstore.cli()

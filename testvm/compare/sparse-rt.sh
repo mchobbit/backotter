@@ -15,11 +15,14 @@
 #     Both plus the metadata the restored file has beyond the source's
 #     (st_blocks less its data extents rounded out to B: XFS and ext4 count
 #     their extent-tree blocks in st_blocks, ZFS its indirect blocks), which
-#     is reported.  A file S3 doesn't mark must come back dense (S5): not
-#     sparse by S3's own rule (its st_blocks cover its size, or SEEK_HOLE
-#     finds no hole).  Without SEEK_DATA maps (OpenBSD, NetBSD, DragonFly)
-#     there is neither alignment nor metadata to go by: the bound with one
-#     block per blob alone;
+#     is reported.  On a ZFS that compresses, where that metadata can't be
+#     told from the data, one sector per copy of an indirect block more
+#     (zslack below: 8 KiB with ashift 12), reported where it is taken.  A
+#     file S3 doesn't mark must come back dense (S5): not sparse by S3's own
+#     rule (its st_blocks cover its size, or SEEK_HOLE finds no hole).
+#     Without SEEK_DATA maps (OpenBSD, NetBSD, DragonFly) there is neither
+#     alignment nor metadata to go by: the bound with one block per blob
+#     alone;
 #   - the SEEK_DATA/SEEK_HOLE extent maps of both (not a check), in full
 #     where they are short;
 # the wall time of each restore and of the sync after it (not a check); and
@@ -102,7 +105,7 @@
 
 set -u
 die() { echo "sparse-rt: $*" >&2; exit 2; }
-[ $# -eq 2 ] || [ $# -eq 4 ] || { sed -n '2,86p' "$0" >&2; exit 2; }
+[ $# -eq 2 ] || [ $# -eq 4 ] || { sed -n '2,89p' "$0" >&2; exit 2; }
 uid=$(id -u 2>/dev/null) || uid=$(/usr/xpg4/bin/id -u)   # illumos' id has no -u
 [ "$uid" = 0 ] || die "run it as root"
 abspath() { case $1 in /*) echo "$1" ;; *) echo "$(pwd)/$1" ;; esac; }
@@ -619,11 +622,42 @@ elif command -v zfs >/dev/null 2>&1; then settle_pool=$(zfs list -H -o name "$MP
 # measured sync after each restore.
 if [ "$os" = Linux ] && sync -f "$MP" 2>/dev/null; then syncmd="sync -f $MP"; else syncmd=sync; fi
 settle() { $syncmd; [ -z "$settle_pool" ] || zpool sync "$settle_pool"; }
+# ZFS with compression: zslack, one sector (2^ashift bytes; not B, which is
+# the recordsize there) of one indirect block in each copy ZFS keeps of it,
+# allowed over the bound below (not in it).  ZFS always compresses indirect
+# blocks (lz4, compression=off or not); an L1's
+# compressed size depends on its block pointers' DVA offsets and birth txgs,
+# so two files with the same contents and data blocks get an L1 of 4 KiB or
+# 8 KiB (round 2026-11-12: "mixed", 83 block pointers, about 4 KiB packed,
+# 10364 or 10372 KiB in st_blocks after zpool sync, for the source as for
+# a restore; zdb showed it to be the L1 alone, 1000P or 2000P, in 2 DVAs).
+# Without compression the metadata column takes it (st_blocks less the data
+# extents, which a record covers whole); with it a record's data takes less
+# than its extent, so that difference is below zero, says nothing, and the
+# same restore would fail one run in a few.  It hides no over-allocation:
+# with compression a record of zeros is a hole and identical records pack
+# the same, so data can't take more without the extents differing.
+zslack=0
+if [ "$FS" = zfs ]; then zds=$POOL
+elif [ -n "$settle_pool" ]; then zds=$(zfs list -H -o name "$MP" 2>/dev/null); else zds=""; fi
+if [ -n "$zds" ] && [ "$(zfs get -H -o value compression "$zds" 2>/dev/null)" != off ]; then
+    # Copies of an L1: copies=, one more with redundant_metadata=all (the
+    # default), at most 3.
+    zc=$(zfs get -H -o value copies "$zds" 2>/dev/null); case $zc in [123]) ;; *) zc=1 ;; esac
+    [ "$(zfs get -H -o value redundant_metadata "$zds" 2>/dev/null)" = most ] || zc=$((zc + 1))
+    [ $zc -le 3 ] || zc=3
+    # The sector: the pool's ashift (12 here), 4 KiB where it says 0 (auto).
+    zp=${settle_pool:-${zds%%/*}}
+    za=$(zpool get -H -o value ashift "$zp" 2>/dev/null)
+    case $za in 9|1[0-6]) zsec=$((1 << za)) ;; *) zsec=4096 ;; esac
+    zslack=$((zc * zsec))
+fi
 echo "== $os $(uname -r), $FS at $MP$( [ "$FS" = zfs ] && echo " (pool $POOL, compression $(zfs get -H -o value compression "$POOL"))")"
 echo "   restic: $RESTIC ($($RESTIC version 2>&1 | head -n 1))"
 echo "   rustic: $RUSTIC ($($RUSTIC --version 2>&1 | head -n 1))"
 [ -n "$OLD_RESTIC" ] && echo "   old restic: $OLD_RESTIC ($($OLD_RESTIC version 2>&1 | head -n 1))" &&
     echo "   old rustic: $OLD_RUSTIC ($($OLD_RUSTIC --version 2>&1 | head -n 1))"
+[ "$zslack" -eq 0 ] || echo "   ZFS $zds compresses: slack of $((zslack / 1024)) KiB over a restored file's bound (an indirect block's sector, in each of its $zc copies)"
 
 # The files.  put FILE BLOCK COUNT: COUNT 4 KiB blocks of random data at
 # block BLOCK.
@@ -826,8 +860,11 @@ for d in restic-restic rustic-rustic restic-rustic rustic-restic; do
         if [ $ex = yes ] || [ -n "${BY_CONTENT:-}" ]; then
             hard=$((as + nb * B + meta))
             if [ $al = yes ]; then bound=$((as + meta)); else bound=$hard; fi
+            zs=$zslack
             if [ $ad -le $bound ]; then
                 a=within
+            elif [ $ad -le $((bound + zs)) ]; then
+                a="within, +$(((ad - bound) / 1024)) KiB of the ZFS indirect-block slack ($((zs / 1024)) KiB)"
             elif [ $ad -le $hard ]; then
                 a="OVER the source by $(((ad - as - meta) / 1024)) KiB, its holes B-aligned"; ok=""
             else

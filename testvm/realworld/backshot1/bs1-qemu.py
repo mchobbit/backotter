@@ -247,6 +247,11 @@ def main():
     root.run("mkdir -m 700 /mnt/bs1-backup/backshot1/keys; chmod 755 /mnt/bs1-backup/backshot1/bs1-* /mnt/bs1-backup/backshot1/bin/*")
     subprocess.run([*scp, f"{client}.pub", "root@127.0.0.1:/mnt/bs1-backup/backshot1/keys/authorized_keys"], check=True)
     subprocess.run([*scp, host_key, f"{host_key}.pub", "root@127.0.0.1:/mnt/bs1-backup/backshot1/keys/"], check=True)
+    # A LUKS guest (chimera-uefi): its key is the passphrase load formats with,
+    # as the person puts theirs in keys/disk-passphrase.
+    luks_key = os.path.join(a.guest_dir, "luks-keyfile")
+    if os.path.isfile(luks_key):
+        subprocess.run([*scp, luks_key, "root@127.0.0.1:/mnt/bs1-backup/backshot1/keys/disk-passphrase"], check=True)
     rc, _ = root.show("sh /mnt/bs1-backup/backshot1/bs1-adopt")
     check(rc == 0, "bs1-adopt passes")
     check(host_key_is_pinned(), "the installed system presents the fixed host key")

@@ -2641,15 +2641,30 @@ impl Builder<'_> {
         // udevd, logind, timesyncd: PrivateMounts and the like) has its own
         // copy of those mounts, which umount here doesn't always reach, and
         // which keeps pools, LUKS and LVM volumes busy.  Unmount it there.
+        // So too in a namespace no process is in, kept by a bind mount of
+        // its nsfs file: snapd keeps each snap's at /run/snapd/ns/SNAP.mnt,
+        // and a snap refresh's hooks make one while load works.  The boot
+        // stage's rbind of /run puts snapd's private /run/snapd/ns under
+        // the target there, which umount's propagation can't take away.
+        // A snap's namespace has the target under /var/lib/snapd/hostfs as
+        // well: every mount point whose path ends in the target's goes.
         out.push(
             Cmd::new(&[
                 "sh",
                 "-c",
                 &format!(
-                    "me=$(readlink /proc/self/ns/mnt); seen=; for f in /proc/[0-9]*/mountinfo; do grep -q ' {t}[ /]' \"$f\" 2>/dev/null || continue; \
+                    "me=$(readlink /proc/self/ns/mnt); seen=\" $me \"; \
+                     at() {{ awk -v t={t} '{{ m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }}'; }}; \
+                     for f in /proc/[0-9]*/mountinfo; do grep -q '{t}[ /]' \"$f\" 2>/dev/null || continue; \
                      p=${{f#/proc/}}; p=${{p%/mountinfo}}; ns=$(readlink /proc/$p/ns/mnt) || continue; \
-                     case \"$me $seen \" in *\"$ns \"*) continue;; esac; seen=\"$seen $ns\"; \
-                     echo \"unmounting {t} in $ns (pid $p, $(cat /proc/$p/comm))\"; nsenter -t \"$p\" -m umount --recursive {t} || true; done"
+                     case $seen in *\" $ns \"*) continue;; esac; seen=\"$seen$ns \"; \
+                     echo \"unmounting {t} in $ns (pid $p, $(cat /proc/$p/comm))\"; \
+                     for m in $(at <\"$f\"); do nsenter -t \"$p\" -m umount --recursive \"$m\" || true; done; done; \
+                     awk '{{ for (i = 7; i < NF; i++) if ($i == \"-\") {{ if ($(i + 1) == \"nsfs\" && $4 ~ /^mnt:\\[/) print $4, $5; break }} }}' /proc/self/mountinfo | \
+                     while read -r ns b; do case $seen in *\" $ns \"*) continue;; esac; seen=\"$seen$ns \"; \
+                     ms=$(nsenter --mount=\"$b\" cat /proc/self/mountinfo | at); [ -n \"$ms\" ] || continue; \
+                     echo \"unmounting {t} in $ns (bound at $b)\"; \
+                     for m in $ms; do nsenter --mount=\"$b\" umount --recursive \"$m\" || true; done; done"
                 ),
             ])
             .why("other mount namespaces' copies of the target's mounts"),

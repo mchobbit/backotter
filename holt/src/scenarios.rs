@@ -686,6 +686,168 @@ fn zfs_root() {
     assert_eq!(s(&v, &["boot", "cmdline", "storage", "root"]), "ZFS=rpool/ROOT/debian");
 }
 
+/// The Thinkpad's planned Chimera install, which no test guest has: UEFI,
+/// systemd-boot with the ESP as /boot (vda1: kernels and initramfs on it),
+/// root on ZFS (vda2: pool rpool, rpool/ROOT/chimera at /, as chimera-zfs
+/// names them), the pool's own dataset an encryption root with a passphrase
+/// typed at boot (keylocation=prompt), /etc/hostid and zpool.cache.
+fn chimera_uefi_zfs() -> (Tree, FakeRunner) {
+    use crate::efi::{GLOBAL, LOADER};
+    let t = Tree::new("scn-chimera-uefi-zfs");
+    let v = "6.18.62-0-generic";
+    let mut img = vec![0u8; 96 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "6f1c2c3d-0000-4000-8000-00000000cccc",
+            parts: vec![
+                (ESP, "0b5f04ed-e731-4ac6-933e-83ff25657722", 2048, 73727, 0, ""),
+                ("6a898cc3-1dd2-11b2-99a6-080020c9b98d", "21112222-3333-4444-5555-666677778888", 73728, 190463, 0, ""),
+            ],
+        },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(71680, 0x1234_abcd, ""));
+    let cfg = crate::json::parse(
+        r#"{"version": 5000, "name": "rpool", "state": 0, "txg": 4, "pool_guid": 888, "hostname": "thinkpad", "hostid": 305419896, "top_guid": 1, "guid": 1,
+            "vdev_children": 1, "vdev_tree": {"type": "disk", "id": 0, "guid": 1, "path": "/dev/vda2", "whole_disk": 0, "ashift": 12},
+            "features_for_read": {"com.delphix:hole_birth": true}}"#,
+    )
+    .unwrap();
+    put(&mut img, 73728, &zfs::pack::vdev(116736 * 512, &cfg));
+    let mut loader_info = vec![6u8, 0, 0, 0];
+    for c in "systemd-boot 256.11".encode_utf16().chain([0]) {
+        loader_info.extend(c.to_le_bytes());
+    }
+    let opts = "root=ZFS=rpool/ROOT/chimera ro";
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 116736, &img)
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&format!("/sys/firmware/efi/efivars/SecureBoot-{GLOBAL}"), [6u8, 0, 0, 0, 0])
+        .file(&format!("/sys/firmware/efi/efivars/LoaderInfo-{LOADER}"), loader_info)
+        .symlink("/dev/disk/by-partuuid/0b5f04ed-e731-4ac6-933e-83ff25657722", "../../vda1")
+        .symlink("/dev/disk/by-partuuid/21112222-3333-4444-5555-666677778888", "../../vda2")
+        .file("/proc/self/mountinfo", "26 1 0:24 / / rw,relatime shared:1 - zfs rpool/ROOT/chimera rw,xattr,posixacl\n27 26 254:1 / /boot rw,relatime shared:2 - vfat /dev/vda1 rw,fmask=0022\n")
+        // Chimera's ZFS guide: no line for / (the pool mounts it), the ESP by UUID.
+        .file("/etc/fstab", "UUID=1234-ABCD /boot vfat defaults 0 2\n")
+        .file("/etc/os-release", "NAME=\"Chimera\"\nID=\"chimera\"\nPRETTY_NAME=\"Chimera Linux\"\n")
+        .file("/etc/hostid", [0x78u8, 0x56, 0x34, 0x12])
+        .file("/etc/zfs/zpool.cache", zfs::pack::packed(&crate::json::parse(r#"{"rpool": {"name": "rpool", "pool_guid": 888}}"#).unwrap()))
+        .symlink("/lib", "usr/lib")
+        .file(
+            "/usr/lib/apk/db/installed",
+            "C:Q1aaa=\nP:linux-lts\nV:6.18.62-r0\nA:x86_64\n\nC:Q1abb=\nP:linux-lts-zfs-bin\nV:2.4.4.6.18.62-r0\nA:x86_64\n\nC:Q1acc=\nP:zfs\nV:2.4.4-r0\nA:x86_64\n\n\
+             C:Q1bbb=\nP:systemd-boot\nV:256.11-r5\nA:x86_64\n\nC:Q1ccc=\nP:systemd-boot-efi\nV:256.11-r5\nA:x86_64\n\nC:Q1ddd=\nP:initramfs-tools\nV:0.148.3-r2\nA:noarch\n\n\
+             C:Q1eee=\nP:efibootmgr\nV:18-r0\nA:x86_64\n\n",
+        )
+        .file("/boot/EFI/systemd/systemd-bootx64.efi", vec![1u8; 300])
+        .file("/boot/EFI/BOOT/BOOTX64.EFI", vec![1u8; 300])
+        .file("/boot/loader/loader.conf", "timeout 3\n")
+        .file(&format!("/boot/loader/entries/chimera-{v}.conf"), format!("title Chimera Linux\nlinux /vmlinuz-{v}\ninitrd /initrd.img-{v}\noptions {opts} quiet\n"))
+        .file(&format!("/boot/loader/entries/chimera-{v}-recovery.conf"), format!("title Chimera Linux\nlinux /vmlinuz-{v}\ninitrd /initrd.img-{v}\noptions {opts} single\n"))
+        .file(&format!("/boot/vmlinuz-{v}"), "k")
+        .file(&format!("/boot/initrd.img-{v}"), "i")
+        .file(&format!("/boot/config-{v}"), "")
+        .dir(&format!("/usr/lib/modules/{v}/kernel"))
+        .file(&format!("/usr/lib/modules/{v}/extra/zfs.ko.zst"), "z")
+        .file("/etc/initramfs-tools/initramfs.conf", "MODULES=most\nCOMPRESS=zstd\n")
+        .file("/etc/default/systemd-boot", "SYSTEMD_BOOT_CMDLINE=\"root=ZFS=rpool/ROOT/chimera\"\n")
+        .file("/proc/sys/kernel/osrelease", format!("{v}\n"))
+        .file("/proc/sys/kernel/hostname", "thinkpad\n")
+        .file("/proc/cmdline", format!("initrd=\\initrd.img-{v} {opts} quiet\n"));
+    let runner = FakeRunner::default()
+        .with("zpool list -H -o name", "rpool\n")
+        .with(
+            "zpool get -H -p -o property,value,source all rpool",
+            "size\t62277025792\t-\nashift\t12\tlocal\ncachefile\t/etc/zfs/zpool.cache\tlocal\nfree\t1\t-\nfeature@encryption\tactive\tlocal\nfeature@async_destroy\tenabled\tlocal\n",
+        )
+        .with(
+            "zfs list -H -p -t filesystem,volume -o name,type,used,available,referenced,mountpoint,canmount,mounted,encryption,encryptionroot,keyformat,keylocation,keystatus,origin,compression,recordsize,volsize,volblocksize,acltype,xattr,dnodesize,normalization,utf8only,casesensitivity,atime,relatime,copies,com.sun:auto-snapshot",
+            "rpool\tfilesystem\t1000\t2000\t96\t/\toff\tno\taes-256-gcm\trpool\tpassphrase\tprompt\tavailable\t-\tlz4\t131072\t-\t-\tposix\tsa\tauto\tnone\toff\tsensitive\ton\ton\t1\t-\n\
+             rpool/ROOT\tfilesystem\t900\t2000\t96\tnone\toff\tno\taes-256-gcm\trpool\tpassphrase\tnone\tavailable\t-\tlz4\t131072\t-\t-\tposix\tsa\tauto\tnone\toff\tsensitive\ton\ton\t1\t-\n\
+             rpool/ROOT/chimera\tfilesystem\t900\t2000\t900\t/\tnoauto\tyes\taes-256-gcm\trpool\tpassphrase\tnone\tavailable\t-\tlz4\t131072\t-\t-\tposix\tsa\tauto\tnone\toff\tsensitive\ton\ton\t1\t-\n",
+        )
+        .with(
+            "zfs get -H -p -t filesystem,volume -s local,received -o name,property,value,source all",
+            "rpool\tcompression\tlz4\tlocal\nrpool\tkeylocation\tprompt\tlocal\nrpool\tcanmount\toff\tlocal\nrpool\tmountpoint\t/\tlocal\nrpool\tacltype\tposix\tlocal\nrpool\txattr\tsa\tlocal\n\
+             rpool/ROOT\tmountpoint\tnone\tlocal\nrpool/ROOT\tcanmount\toff\tlocal\nrpool/ROOT/chimera\tmountpoint\t/\tlocal\nrpool/ROOT/chimera\tcanmount\tnoauto\tlocal\n",
+        )
+        .with(
+            "zpool status -j --json-int -P rpool",
+            r#"{"output_version": {"command": "zpool status", "vers_major": 0, "vers_minor": 1}, "pools": {"rpool": {"name": "rpool", "state": "ONLINE",
+               "vdevs": {"rpool": {"name": "rpool", "vdev_type": "root", "vdevs": {"/dev/vda2": {"name": "/dev/vda2", "vdev_type": "disk", "path": "/dev/vda2"}}}}}}}"#,
+        );
+    (t, runner)
+}
+
+/// bko-holt's plan for the Thinkpad's Chimera install: the pool made with
+/// its features and the passphrase's encryption (the passphrase from
+/// --key-file, then keylocation=prompt again), / from the dataset before the
+/// ESP at /boot, zpool.cache before the initramfs, systemd-boot installed and
+/// gen-systemd-boot's entries made after the initramfs; no GRUB.
+#[test]
+fn chimera_uefi_zfs_thinkpad() {
+    let (t, runner) = chimera_uefi_zfs();
+    let v = run(&t, true, runner);
+    assert_eq!(s(&v, &["os", "id"]), "chimera");
+    assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
+    assert_eq!(s(&v, &["boot", "loader", "name"]), "systemd-boot");
+    assert_eq!(s(&v, &["boot", "packages", "systemd-boot"]), "256.11-r5");
+    assert_eq!(s(&v, &["boot", "esps", "0", "mounted_at"]), "/boot");
+    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "initramfs-tools");
+    assert_eq!(s(&v, &["boot", "cmdline", "storage", "root"]), "ZFS=rpool/ROOT/chimera");
+    assert_eq!(s(&v, &["storage", "mounts", "0", "source"]), "rpool/ROOT/chimera");
+    let tools = v.at(&["storage", "zfs", "tools"]).unwrap();
+    assert_eq!(s(tools, &["datasets", "0", "encryptionroot"]), "rpool");
+    assert_eq!(s(tools, &["datasets", "0", "keyformat"]), "passphrase");
+    assert_eq!(s(tools, &["datasets", "0", "keylocation"]), "prompt");
+    assert_eq!(u(&v, &["storage", "zfs", "zpool_cache", "rpool", "pool_guid"]), 888);
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    let l = Layout::from_json(v).unwrap();
+    let plan = |extra: &[&str]| {
+        let mut a = vec!["l.json".to_string()];
+        a.extend(extra.iter().map(|s| s.to_string()));
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
+        commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "nvme0n1".into())], ..Mapping::default() })
+    };
+    // A passphrase can't be made up: load asks for it (BackShot1's
+    // layout_keys passes keys/disk-passphrase as --key-file rpool=...).
+    let no_key = plan(&[]);
+    assert!(no_key.problems.iter().any(|p| p.contains("ZFS encryption root rpool: give its new key with --key-file rpool=FILE")), "{:?}", no_key.problems);
+    let b = plan(&["--key-file", "rpool=/run/bs1/disk-passphrase"]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let text = |st: Stage| -> String { b.stage(st).iter().map(commands::Cmd::shell).collect() };
+    let asm = text(Stage::Assemble);
+    let create = asm.lines().find(|l| l.starts_with("zpool create ")).expect(&asm);
+    for w in ["-o feature@encryption=enabled", "-o ashift=12", "-O encryption=aes-256-gcm", "-O keyformat=passphrase", "-O keylocation=file:///run/bs1/disk-passphrase", "-R /mnt/bko-target rpool /dev/nvme0n1p2"] {
+        assert!(create.contains(w), "{w}: {create}");
+    }
+    assert!(asm.contains("zpool reguid -g 888 rpool\n"), "{asm}");
+    // Encryption is inherited below the root, never set again.
+    let all: String = [Stage::Assemble, Stage::Format, Stage::Mount].into_iter().map(text).collect();
+    for l in all.lines().filter(|l| l.starts_with("zfs create ")) {
+        assert!(!l.contains("encryption") && !l.contains("keyformat") && !l.contains("keylocation"), "{l}");
+    }
+    assert!(all.contains("zfs create -u -o mountpoint=/ -o canmount=noauto rpool/ROOT/chimera\n"), "{all}");
+    let mnt = text(Stage::Mount);
+    let root = mnt.find("zfs mount rpool/ROOT/chimera\n").expect(&mnt);
+    let esp = mnt.find("mount -t vfat -o defaults /dev/nvme0n1p1 /mnt/bko-target/boot\n").expect(&mnt);
+    assert!(root < esp, "{mnt}");
+    let bt = text(Stage::Boot);
+    let prompt = bt.find("zfs set keylocation=prompt rpool\n").expect(&bt);
+    let cache = bt.find("zpool set cachefile=/mnt/bko-target/etc/zfs/zpool.cache rpool\n").expect(&bt);
+    let initramfs = bt.find("chroot /mnt/bko-target update-initramfs -u -k all\n").expect(&bt);
+    let bootctl = bt.find("chroot /mnt/bko-target bootctl install --no-variables\n").expect(&bt);
+    let made = bt.find("chroot /mnt/bko-target sh -c 'gen-systemd-boot; r=$?;").expect(&bt);
+    assert!(prompt < initramfs && cache < initramfs && initramfs < bootctl && bootctl < made, "{bt}");
+    assert!(!bt.contains("grub"), "{bt}");
+    let close = text(Stage::Close);
+    assert!(close.contains("zpool export rpool"), "{close}");
+}
+
 #[test]
 fn no_zfs_tools_no_section() {
     let t = Tree::new("scn-nozfs");

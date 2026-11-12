@@ -8,7 +8,7 @@
       "B4": ["netbsd11", "alpinebsd"]
     },
     "alone": ["freebsd14", "openbsd8", "dragonfly6", "omnios58", "haiku6"],
-    "linux": "every Linux guest and sculpt2610 run alone (decision 1): 28 checks plus sculpt2610",
+    "linux": "every Linux guest and sculpt2610 run alone (decision 1): 31 checks plus sculpt2610",
     "non_linux": ["freebsd15", "freebsd15-geli", "ghostbsd26-zfs", "freebsd15-ufs", "hardenedbsd15", "ghostbsd26",
                   "netbsd11", "alpinebsd", "freebsd14", "openbsd8", "dragonfly6", "omnios58", "haiku6"],
     "canaries": {
@@ -126,7 +126,7 @@
                         "testvm/compare/exact-rt.sh", "testvm/compare/exact-manifest.py", "testvm/holttest1d/prep/tumbleweed-snapper.sh",
                         "testvm/holttest1d/make-*.sh", "testvm/holttest1d/build-holt.sh",
                         "testvm/holttest1d/ht1-debug.sh", "testvm/holttest1d/ht1-lib-test.sh", "testvm/holttest1d/judge-test.py",
-                        "testvm/vm-update", "testvm/vm-chroot", "testvm/compare/wear-setup.sh",
+                        "testvm/vm-update", "testvm/vm-store", "testvm/vm-chroot", "testvm/compare/wear-setup.sh",
                         "testvm/compare/wear-smart.sh", "testvm/compare/compare-freebsd.sh",
                         "testvm/compare/freebsd/rescue.sh", "testvm/compare/openbsd/roundtrip.sh",
                         "testvm/omarchy/cidata.py", "testvm/redox/answer-passwords.py", "testvm/redox/bko.toml",

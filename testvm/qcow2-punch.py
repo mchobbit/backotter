@@ -15,8 +15,9 @@ so the disk a guest sees, and every snapshot of it, stay as they are; only
 the file's bytes in the freed clusters become zeros, so its SHA-256 changes
 (testvm/vm-update's image-state: update it after).
 
-It refuses an image that qemu-img check finds errors in (a refcount that is
-too low would mark a used cluster free), one marked dirty or corrupt, one
+It refuses a vm-store object (testvm/vm-store), an image that qemu-img
+check finds errors in (a refcount that is too low would mark a used cluster
+free), one marked dirty or corrupt, one
 with an external data file, and one that anything has open: qemu-img must be
 able to open it for writing, which a VM, an overlay's reader or another
 qemu-img prevents.  It reads the reference counts itself, while holding that
@@ -39,6 +40,18 @@ libc.fallocate.argtypes = [ctypes.c_int, ctypes.c_int, ctypes.c_long, ctypes.c_l
 
 def die(msg):
     sys.exit(f"qcow2-punch: {msg}")
+
+
+def in_store(path):
+    """Whether PATH is a vm-store object: its realpath lies in (or below) some
+    ROOT/objects/ whose ROOT holds store.json (by path, not by permission, so
+    root is refused too)."""
+    d = os.path.dirname(os.path.realpath(path))
+    while d not in ("/", ""):
+        if os.path.basename(d) == "objects" and os.path.isfile(os.path.join(os.path.dirname(d), "store.json")):
+            return True
+        d = os.path.dirname(d)
+    return False
 
 
 def stored(path):
@@ -119,6 +132,9 @@ def free_runs(path):
 
 
 def punch(path, dry):
+    # Before anything opens it for writing (qemu-io below, then O_WRONLY).
+    if in_store(path):
+        die(f"{path} is a vm-store object: it is never written")
     r = subprocess.run(["qemu-img", "check", "--output=json", path], capture_output=True, text=True)
     try:
         chk = json.loads(r.stdout)

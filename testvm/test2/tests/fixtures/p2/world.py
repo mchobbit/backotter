@@ -1,7 +1,7 @@
 """A synthetic world for P2's tests (U2.2-U2.6): a fixture checkout (git), BKO_GIT's three
 forks, both hosts' facts and a seeded ledger.  Nothing here touches a host or a default root.
 
-    w = World(tmpdir)            the checkout: 45 SticTest checks, 55 HoltTest sources and 9
+    w = World(tmpdir)            the checkout: 47 SticTest checks, 55 HoltTest sources and 9
                                  variants, 13 gate cells, 57 guests, 7 images, with the real classes.json,
                                  estimates.tsv, drive.py, affected.sh and ram-sizes.tsv
     w.facts()                    {host: facts}, as facts_host.py gives them

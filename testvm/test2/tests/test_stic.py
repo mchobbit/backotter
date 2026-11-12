@@ -50,12 +50,12 @@ def fixture(name):
 # --- U4.1: check-manifests.py --------------------------------------------------------------
 
 class TestManifests(unittest.TestCase):
-    def test_45_checks_have_complete_manifests(self):
+    def test_47_checks_have_complete_manifests(self):
         files = CM.repo_files()
         errs, reps, data = CM.check_stic(files)
         self.assertEqual(errs, [], "\n".join(errs[:20]))
         entries = CM.spec_entries(data)
-        self.assertEqual(len(entries), 45)
+        self.assertEqual(len(entries), 47)
         self.assertEqual(sorted(entries), DRIVE.all_guests())
 
     def test_entries_name_what_the_checks_share(self):
@@ -198,14 +198,14 @@ class TestLint(unittest.TestCase):
     def test_tree_clean(self):
         self.assertEqual(CM.lint(), [])
 
-    def test_47_files_take_bko_testvm(self):
+    def test_49_files_take_bko_testvm(self):
         n = 0
         base = os.path.join(REPO, "testvm", "stictest1")
         for g in os.listdir(base):
             for fn in (os.listdir(os.path.join(base, g)) if os.path.isdir(os.path.join(base, g)) else []):
                 with open(os.path.join(base, g, fn), errors="replace") as f:
                     n += "${BKO_TESTVM:-" in f.read()
-        self.assertEqual(n, 47)
+        self.assertEqual(n, 49)
 
     def test_planted_references(self):
         lines = ['. "$WORK/testvm/vm-lib.sh"', "C=$W/testvm/compare", 'source ~/backotter-work/testvm/compare/x.sh',

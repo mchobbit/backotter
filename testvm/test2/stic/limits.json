@@ -138,6 +138,16 @@
   "sujournal": "/.sujournal belongs to the file system (newfs -j); its flags are tested on a copy",
   "zfs-per-file-options": "no ZFS on freebsd15-ufs (freebsd15 covers it)"
  },
+ "gentoo": {
+  "backups on relatime (the kernel's default, the guest's ESP's) leave the source's atimes alone": "only symlinks' atimes move: readlink(2) has no O_NOATIME (both BACKOTTER.md)",
+  "birth times (statx btime on ext4 and XFS)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "whole-disk needs (GPT, ESP's loaders, PV/VG/LV metadata, boot loader)": "out of scope: whole-disk (HoltTest1 recreates the disk and the LVM stack, and checks GRUB's embedded lvmid); here the scratch stack is made like the guest's and only its file systems' contents are restored"
+ },
+ "gentoo-systemd": {
+  "backups on relatime (the kernel's default, the guest's ESP's) leave the source's atimes alone": "only symlinks' atimes move: readlink(2) has no O_NOATIME (both BACKOTTER.md)",
+  "birth times (statx btime on ext4)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "whole-disk needs (GPT, ESP's loaders, LUKS2, PV/VG/LV metadata, boot loader)": "out of scope: whole-disk (HoltTest1 recreates the disk and the LUKS and LVM stack); here the scratch stack is made like the guest's and only its file systems' contents are restored"
+ },
  "ghostbsd26": {
   "birth-time-exact": "no system call sets a birth time: min(birth, mtime) is what both keep (BACKOTTER.md)",
   "linux-only-attributes": "SELinux labels, Linux inode flags, capabilities, project IDs, security/trusted xattrs: not on FreeBSD UFS",

@@ -16,7 +16,7 @@ private copy of this checkout (never from the synced `~/backotter-work/testvm`).
 | `GateTest2 [ROUND] [LAYER...] [stale]` | the due gate layers (no VMs) | prints one line: nothing due |
 | `GateTest2All [ROUND]` | every layer, fresh | runs them all anyway |
 | `SticTest2 [ROUND] [GUEST...] [stale]` | the due SticTest checks on ROUND's binaries | one line |
-| `SticTest2All [ROUND]` | all 45 checks, fresh (SticTest1's scope) | runs them all anyway |
+| `SticTest2All [ROUND]` | all 47 checks, fresh (SticTest1's scope) | runs them all anyway |
 | `HoltTest2 [GUEST[+VARIANT]...] [stale] [+bigger] [+oneshot] [+degraded] [+img]` | the due HoltTest cells | one line |
 | `HoltTest2X [X...]`, X in D A M U Z F C V BSD H I G Obscure | that family's guests, fresh (HoltTest1's letters) | runs them anyway |
 | `HoltTest2All` | all 55 sources and their 9 variant cells, fresh (no `+img` cells) | runs them all anyway |

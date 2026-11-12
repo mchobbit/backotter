@@ -94,7 +94,7 @@ L=$STC_LOGS/$(date +%Y%m%d-%H%M%S)-$(basename "$(dirname "$(dirname "$BIN")")")
 mkdir -p "$L" /mnt/bko-ram/$PREFIX
 START=$(date +%s)
 . $C/guest-slot.sh
-case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
+slot_take 3 "$(slot_range_here)"
 HOT_C=90 $WORK/cmp-run.sh --reserve 3 6 timeout 1200 bash "$here/check.sh" --inner "$BIN" "$PORT" "$PREFIX" "$L"
 slot_give
 rm -rf /mnt/bko-ram/$PREFIX

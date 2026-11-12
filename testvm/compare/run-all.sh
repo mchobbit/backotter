@@ -3,14 +3,15 @@
 # every platform's round trips (the scripts here) at once within the
 # host's limits, and prints a verdict table.  Agents only read the failures.
 #
-# Usage: run-all.sh [--host chopin|cinqcent] [--platforms LIST] [--only REGEX]
+# Usage: run-all.sh [--host chopin|cinqcent|copland] [--platforms LIST] [--only REGEX]
 #                   [--dry-run] BIN_DIR LOG_DIR
 #   --host       whose platforms, ports and limits (default: this hostname)
 #   --platforms  comma- or space-separated, the other host's skipped (an
 #                empty list: nothing; default: all of the host's):
 #                  chopin:   linux sparse zfsguests dragonfly
 #                  cinqcent: linux sparse freebsd netbsd openbsd_illumos
-#                linux and sparse are both hosts', each with its share of
+#                  copland:  linux sparse (no guests there yet, no ZFS)
+#                linux and sparse are every host's, each with its share of
 #                the file systems (LINUX_FS, SPARSE_FS)
 #                linux      fs_roundtrip.py on zfs ext4 xfs btrfs f2fs bcachefs
 #                           tmpfs jfs, zfs --onto ext4; nonroot-rt.sh linux
@@ -46,19 +47,24 @@
 #                mismatch, a missing binary, commit file or rustic_core line,
 #                or a SHA256SUMS line that fails.
 #   PORT_BASE    ports are PORT_BASE + 10..19 (default 2700 on chopin, 2900
-#                on cinqcent; e.g. 2750 for 2760-2769)
-#   MAX_GUESTS   guests at once (default chopin 6, cinqcent 3); COUNT_OTHERS=1
-#                (cinqcent's default): host-wide, with guest-slot.sh's slots
-#                on GUEST_PORTS (ours: 2700-2799 chopin, 2900-2999
-#                cinqcent), which stick/build-round.sh's guests take too, and
-#                every QEMU of ours there without one
+#                on cinqcent, 2800 on copland; e.g. 2750 for 2760-2769)
+#   MAX_GUESTS   guests at once (default chopin 6, cinqcent and copland 3);
+#                COUNT_OTHERS=1 (cinqcent's and copland's default): host-wide,
+#                with guest-slot.sh's slots on GUEST_PORTS (ours: 2700-2799
+#                chopin, 2900-2999 cinqcent, 2800-2899 copland), which
+#                stick/build-round.sh's guests and the SticTest1 checks take
+#                too, and every QEMU of ours there without one
 #   LINUX_FS     the linux steps run here, of zfs zfs-onto-ext4 bcachefs f2fs
 #                ext4 xfs btrfs tmpfs jfs nonroot (default chopin: zfs
 #                zfs-onto-ext4 bcachefs xfs btrfs nonroot, the only bcachefs
-#                tools are Chopin's; cinqcent: ext4 f2fs tmpfs jfs); all: every one
+#                tools are Chopin's; cinqcent: ext4 f2fs tmpfs jfs; copland:
+#                ext4 xfs btrfs f2fs tmpfs jfs, what it has mkfs for, without
+#                ZFS (zfs, zfs-onto-ext4 and nonroot's pool) or bcachefs
+#                tools); all: every one
 #   SPARSE_FS    the sparse steps run here, of ext4 xfs btrfs zfs zfs-nocomp
-#                (default chopin: xfs btrfs; cinqcent: zfs zfs-nocomp ext4);
-#                all: every one.  ANY_HOST=1 makes both default to all
+#                (default chopin: xfs btrfs; cinqcent: zfs zfs-nocomp ext4;
+#                copland: ext4 xfs btrfs); all: every one.  ANY_HOST=1 makes
+#                both default to all (on copland too, ZFS's steps then fail)
 #   HOST_JOBS    fs_roundtrip.py and nonroot-rt.sh linux runs at once (4);
 #                SPARSE_JOBS sparse-rt.sh runs on the host at once (2)
 #   STEP_TIMEOUT seconds, every step (default by kind, 1.5-6 h: round 9's
@@ -106,7 +112,7 @@ set -uo pipefail
 
 here=$(cd "$(dirname "$0")" && pwd)
 die() { echo "run-all: $*" >&2; exit 2; }
-usage() { sed -n '6,33p' "$0" >&2; exit 2; }
+usage() { sed -n '6,34p' "$0" >&2; exit 2; }
 
 host="" plats="" pset="" only="" dry=""
 while [[ $# -gt 0 ]]; do
@@ -132,7 +138,12 @@ case $host in
     cinqcent*) host=cinqcent; all="linux sparse freebsd netbsd openbsd_illumos"
         lfs="ext4 f2fs tmpfs jfs" sfs="zfs zfs-nocomp ext4"
         : "${PORT_BASE:=2900}" "${MAX_GUESTS:=3}" "${COUNT_OTHERS:=1}" "${GUEST_PORTS:=2900-2999}" ;;
-    *) die "no such host: $host (--host chopin or cinqcent)" ;;
+    # Copland (Debian 13, no ZFS, no guests yet) is profiled like Cinqcent,
+    # on its own range; not a build host, not a default host anywhere yet.
+    copland*) host=copland; all="linux sparse"
+        lfs="ext4 xfs btrfs f2fs tmpfs jfs" sfs="ext4 xfs btrfs"
+        : "${PORT_BASE:=2800}" "${MAX_GUESTS:=3}" "${COUNT_OTHERS:=1}" "${GUEST_PORTS:=2800-2899}" ;;
+    *) die "no such host: $host (--host chopin, cinqcent or copland)" ;;
 esac
 ALL_LFS="zfs zfs-onto-ext4 bcachefs f2fs ext4 xfs btrfs tmpfs jfs nonroot" ALL_SFS="ext4 xfs btrfs zfs zfs-nocomp"
 [[ -n ${ANY_HOST:-} ]] && lfs=all sfs=all

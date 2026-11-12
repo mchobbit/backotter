@@ -7,11 +7,12 @@
 #
 # Usage: sync-hosts.sh [--delete] [--dry-run] [HOST ...]
 #
-# HOST is an ssh destination, [USER@]NAME; the default is m@chopin.local and
-# m@cinqcent.local.  Copied with rsync -rlp --checksum: what differs in
-# content is copied and gets the time of the copy, and nothing goes by file
-# times (never -t: Chopin's clock once ran two hours fast, which made
-# rsync's time check skip changed files).  Files there that the repository
+# HOST is an ssh destination, [USER@]NAME; the default is m@chopin.local,
+# m@cinqcent.local and m@copland.local (every KVM test host: this copies code
+# only, so copland gets it before it is a default host elsewhere).  Copied
+# with rsync -rlp --checksum: what differs in content is copied and gets the
+# time of the copy, and nothing goes by file times (never -t: Chopin's clock
+# once ran two hours fast, which made rsync's time check skip changed files).  Files there that the repository
 # doesn't have stay, unless --delete removes them (from testvm/ and stick/
 # only: the rest of ~/backotter-work, vms, results and binaries, is never
 # touched).  Each copy then gets a .backotter-commit: the commit it's of,
@@ -38,7 +39,7 @@ while [[ $# -gt 0 ]]; do
     esac
 done
 hosts=("$@")
-[[ $# -gt 0 ]] || hosts=(m@chopin.local m@cinqcent.local)
+[[ $# -gt 0 ]] || hosts=(m@chopin.local m@cinqcent.local m@copland.local)
 [[ -d $repo/testvm && -d $repo/stick ]] || die "$repo has no testvm/ and stick/"
 
 # The commit each copy is of, for what on the hosts names it (make-img*.sh's

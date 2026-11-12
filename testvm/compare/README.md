@@ -78,7 +78,10 @@ zfs onto ext4, bcachefs (only Chopin has its tools), xfs, btrfs and
 nonroot-rt.sh linux, sparse-rt.sh on xfs and btrfs; Cinqcent
 fs_roundtrip.py on ext4, f2fs, tmpfs, jfs, sparse-rt.sh on zfs, zfs-nocomp
 and ext4 (`LINUX_FS`, `SPARSE_FS` change them; `all`, or `ANY_HOST=1`,
-runs every one).  A file system or step that can't run
+runs every one).  Copland, not a round host yet (no ZFS, no guests), runs
+linux and sparse only: fs_roundtrip.py on ext4, xfs, btrfs, f2fs, tmpfs and
+jfs, sparse-rt.sh on ext4, xfs and btrfs, ports from 2800, at most three
+guests counted on 2800-2899 like Cinqcent's.  A file system or step that can't run
 is a FAIL unless `ALLOW_SKIP` names it.  A fix round runs only what its
 fixes touch, on both hosts (each skips the other's platforms); affected.sh
 runs on the Mac, where the forks' histories are:

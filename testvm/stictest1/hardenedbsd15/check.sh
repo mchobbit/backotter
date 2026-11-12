@@ -44,7 +44,7 @@ trap cleanup EXIT; trap 'exit 1' INT TERM
 admit() {  # NAME CMD...: slot + room, then CMD, output to LOGS/NAME.out
     local name=$1; shift
     ( source "$C/guest-slot.sh"
-      case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
+      slot_take 3 "$(slot_range_here)"
       HOT_C=90 "$W/cmp-run.sh" --reserve 3 6 "$@"; s=$?; slot_give; exit $s ) >"$LOGS/$name.out" 2>&1
 }
 start=$SECONDS

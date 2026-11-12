@@ -68,7 +68,7 @@ STC_LOGS=${STC_LOGS:-$WORK/stictest1/$G/logs}
 OUT=$STC_LOGS/run-$(date +%Y%m%d-%H%M%S)
 mkdir -p "$OUT"
 . "$C/guest-slot.sh"
-case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
+slot_take 3 "$(slot_range_here)"
 HOT_C=90 "$WORK/cmp-run.sh" --reserve 7 5 timeout 1560 "$HERE/$(basename "$0")" --inner "$BIN" "$PORT" "$PFX" "$OUT" >"$OUT/run.log" 2>&1
 rc=$?
 slot_give

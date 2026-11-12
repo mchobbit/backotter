@@ -48,6 +48,14 @@ SCOPE = ("testvm", "stick", "holt")
 EXCLUDE_NAMES = ("__pycache__", ".DS_Store")
 EXCLUDE_PREFIXES = ("holt/target/",)
 
+# The KVM test hosts.  KNOWN_HOSTS: what --hosts may name.  DEFAULT_HOSTS: the
+# hosts of a run without --hosts, of a sweep, of the per-host gate cells, the
+# fleet vm-update keeps alike.  A new host joins the defaults only after
+# HostTest2 and one representative per family pass on it
+# (docs/design/test2/design-classes.md): copland is known, not joined yet.
+KNOWN_HOSTS = ("chopin", "cinqcent", "copland")
+DEFAULT_HOSTS = ("chopin", "cinqcent")
+
 DEFAULT_MAC_ROOT = "~/backotter-work/test2"
 DEFAULT_HOST_ROOT = "/bkoscratch/test2"
 DEFAULT_COPY_ROOT = "~/backotter-work/t2/copy"

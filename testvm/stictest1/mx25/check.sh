@@ -36,10 +36,7 @@ if [[ ${STC_INNER:-} != "$PREFIX" ]]; then
     # Admission: a guest slot, then room (RAM disk, memory, temperature).
     # shellcheck source=/dev/null
     . "$C/guest-slot.sh"
-    case $(hostname -s) in
-        chopin) slot_take 3 2700-2799 ;;
-        *) slot_take 3 2900-2999 ;;
-    esac
+    slot_take 3 "$(slot_range_here)"
     STC_INNER=$PREFIX HOT_C=90 "$WORK/cmp-run.sh" --reserve 2 4 env STC_INNER="$PREFIX" "$HERE/$(basename "$0")" "$BIN" "$PORT" "$PREFIX" "$FILTER"
     rc=$?
     slot_give

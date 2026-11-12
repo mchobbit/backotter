@@ -16,8 +16,9 @@ runs at once).  The moment a place frees, a host starts the first guest that
 fits there now:
   - fewer than --slots checks of ours run there (freebsd15-ufs counts 3, its
     three VMs at once);
-  - a guest slot is free on the host's range (Chopin 2700-2799, others
-    2900-2999: the checks' slot_take 3), counting other sessions' slots and
+  - a guest slot is free on the host's range (Chopin 2700-2799, Copland
+    2800-2899, others 2900-2999: the checks' slot_take 3, on guest-slot.sh's
+    slot_range_here), counting other sessions' slots and
     slotless QEMU there; sculpt2610 boots nothing and takes none;
   - the room cmp-run.sh would offer after its waiting line (budget() and
     after_line() of the host's ~/backotter-work/cmp-run.sh) holds the
@@ -26,7 +27,8 @@ fits there now:
   - Tctl (k10temp) is at most --hot-c (or the lower HOT_C of someone in
     cmp-run.sh's line) and no NVMe is at 75 C (cmp-run.sh's NVME_C) or more;
   - the host has the guest's binaries and free ports of ours (Chopin
-    2780-2799, Cinqcent 2980-2999; freebsd15-ufs takes three in a row).
+    2780-2799, Copland 2880-2899, Cinqcent 2980-2999; freebsd15-ufs takes
+    three in a row).
 A guest that doesn't fit now is passed over for one that does.  Each check.sh
 still takes its own guest slot and cmp-run.sh --reserve; this only avoids
 starting one that would wait there.
@@ -51,7 +53,8 @@ and /mnt/bko-ram, /dev/shm and /bkoscratch entries named MARK-GUEST*.
 Options:
   --exclude G,G   leave these guests out (repeatable)
   --first G,G     start these before the rest (a recheck's failed guests)
-  --hosts H,H     chopin, cinqcent or both (default chopin,cinqcent)
+  --hosts H,H     of chopin, cinqcent, copland (default chopin,cinqcent:
+                  copland is known, not yet a default host)
   --slots N       checks of ours at once per host (default 3)
   --hot-c C       start nothing while Tctl is over C (default 90)
   --poll S        seconds between checks of the exit files (default 15)
@@ -125,7 +128,11 @@ REPO = os.path.dirname(os.path.dirname(HERE))
 HOSTS = {   # ssh destination, the checks' guest-slot range there, our ports
     "chopin": dict(ssh="m@chopin.local", slot_range="2700-2799", ports=(2780, 2799)),
     "cinqcent": dict(ssh="m@cinqcent.local", slot_range="2900-2999", ports=(2980, 2999)),
+    "copland": dict(ssh="m@copland.local", slot_range="2800-2899", ports=(2880, 2899)),
 }
+# --hosts' default: copland is known (selectable) but joins the defaults only
+# after HostTest2 and a representative per family pass there (design-classes.md).
+DEFAULT_HOSTS = ("chopin", "cinqcent")
 GUEST_SLOTS = 3          # every check.sh's slot_take 3
 NVME_C = 75              # cmp-run.sh's: it starts nothing over it
 DEFAULT_EST = 600        # README: "Most guests finish in 2 to 15 minutes"
@@ -1291,6 +1298,17 @@ def self_test():
         with open(os.path.join(HERE, g, "check.sh")) as f:
             nums |= set(re.findall(r'(?:slot_take |slots="|SLOTMAX=)(\d+)', f.read()))
     check(nums <= {str(GUEST_SLOTS)}, f"every check takes slot_take {GUEST_SLOTS} ({sorted(nums)})")
+    fixed = [g for g in guests if re.search(r"\b2\d00-2\d99\b", re.sub(r"(?m)^\s*#.*$", "", open(os.path.join(HERE, g, "check.sh")).read()))]
+    check(not fixed, f"the checks take their host's range from slot_range_here, none a fixed one ({fixed})")
+    gs = os.path.join(os.path.dirname(HERE), "compare", "guest-slot.sh")
+    here_ranges = {h: subprocess.run(["bash", "-c", '. "$1"; slot_range_here "$2"', "-", gs, h],
+                                     capture_output=True, text=True).stdout.strip() for h in HOSTS}
+    check(all(here_ranges[h] == HOSTS[h]["slot_range"] for h in HOSTS),
+          f"HOSTS' slot ranges are guest-slot.sh's slot_range_here ({here_ranges})")
+    check(all(int(HOSTS[h]["slot_range"].split("-")[0]) <= HOSTS[h]["ports"][0] <= HOSTS[h]["ports"][1]
+              <= int(HOSTS[h]["slot_range"].split("-")[1]) for h in HOSTS), "every host's ports are in its slot range")
+    check(set(DEFAULT_HOSTS) <= set(HOSTS) and "copland" in HOSTS and "copland" not in DEFAULT_HOSTS,
+          "copland is a known host, not a default one")
     rd = readme_estimates()
     check(all(g in rd for g in guests if g != "haiku6"), f"README.md estimates for {len(rd)} guests")
 
@@ -1490,7 +1508,8 @@ def main():
     ap.add_argument("guests", nargs="*", metavar="GUEST", help="default: every guest here but --exclude's")
     ap.add_argument("--exclude", action="append", default=[], metavar="G,G", help="leave these guests out")
     ap.add_argument("--first", default="", metavar="G,G", help="start these before the rest")
-    ap.add_argument("--hosts", default="chopin,cinqcent", metavar="H,H", help="default chopin,cinqcent")
+    ap.add_argument("--hosts", default=",".join(DEFAULT_HOSTS), metavar="H,H",
+                    help=f"of {', '.join(HOSTS)} (default {','.join(DEFAULT_HOSTS)})")
     ap.add_argument("--slots", type=int, default=3, metavar="N", help="checks of ours at once per host (3)")
     ap.add_argument("--hot-c", type=float, default=90, metavar="C", help="start nothing while Tctl is over C (90)")
     ap.add_argument("--poll", type=float, default=15, metavar="S", help="seconds between checks (15)")

@@ -19,7 +19,7 @@ WORK=$HOME/backotter-work
 if [[ -z ${CHECK_INNER:-} ]]; then
     # shellcheck source=/dev/null
     source "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
-    case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
+    slot_take 3 "$(slot_range_here)"
     CHECK_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 6 env CHECK_INNER=1 BKO_GUEST_SLOT="$BKO_GUEST_SLOT" "$HERE/$(basename "$0")" "$@"
     rc=$?; slot_give; exit $rc
 fi

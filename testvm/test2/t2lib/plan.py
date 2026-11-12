@@ -17,13 +17,12 @@ import os
 import re
 import time
 
-from . import HARD, canonical, parse_utc, sha256_hex, utc_now
+from . import DEFAULT_HOSTS, HARD, canonical, parse_utc, sha256_hex, utc_now
 from . import bko_git as default_bko_git
 from . import carry, copies, estimates, keys, words
 
 STATUSES = ("due", "current", "canary-verified", "awaiting-canaries", "soft-stale", "carried",
             "class-pending", "to-class", "not-runnable")
-HOSTS = ("chopin", "cinqcent")
 DECISIVE_KINDS = ("run", "carried", "class")
 DECISIVE_VERDICTS = ("PASS", "FAIL", "FLAKY-FAIL")
 WATCH_ROOTS = ("testvm", "stick", "holt")
@@ -100,7 +99,7 @@ class Ctx:
                    extra_due (cells or {cell: why}, rule canary:carried), identity_bad {guest: why}
     """
 
-    def __init__(self, checkout, head=None, hosts=HOSTS, facts=None, ledger=None, copy_preview=None, options=None):
+    def __init__(self, checkout, head=None, hosts=DEFAULT_HOSTS, facts=None, ledger=None, copy_preview=None, options=None):
         self.checkout = os.path.abspath(checkout)
         self.options = dict(options or {})
         self.git = carry.Git(self.checkout)
@@ -554,7 +553,7 @@ class Planner:
                 if "@" in n:
                     cells.append(f"gate:{n}")
                 elif self.gate_per_host(n, e):
-                    cells += [f"gate:{n}@{h}" for h in HOSTS]
+                    cells += [f"gate:{n}@{h}" for h in DEFAULT_HOSTS]
                 else:
                     cells.append(f"gate:{n}")
         if u:
@@ -2098,7 +2097,7 @@ def known_names(ctx):
         if "@" in n:
             gl.append(n)
         elif Planner.gate_per_host(n, e):
-            gl += [f"{n}@{x}" for x in HOSTS]
+            gl += [f"{n}@{x}" for x in DEFAULT_HOSTS]
         else:
             gl.append(n)
     try:

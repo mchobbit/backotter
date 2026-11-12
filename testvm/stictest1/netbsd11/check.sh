@@ -38,7 +38,7 @@ if [[ ${1:-} != --inner && -z ${CHECK_INNER:-} ]]; then
       echo "rustic-bko: $rustic"; cat "$(dirname "$rustic")/commit" "$BIN/rustic-commit" 2>/dev/null; } >"$LOGS/binaries.txt"
     # shellcheck source=/dev/null
     source "$CMP/guest-slot.sh"
-    case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
+    slot_take 3 "$(slot_range_here)"
     CHECK_INNER=1 CHECK_LOGS=$LOGS RUSTIC_BIN=$rustic HOT_C=90 \
         "$WORK/cmp-run.sh" --reserve 3 6 timeout 1500 "$self" "$@" >"$LOGS/run.log" 2>&1
     rc=$?

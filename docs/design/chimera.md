@@ -382,7 +382,7 @@ deletes its disks.)
 | C3 | `chimera-uefi` and `chimera-zfs`; `load` runs `gen-systemd-boot`; golden plans for both | 0.75 d |
 | C4 | SticTest1 entries and runs for the three guests (rustic-bko and restic) | 0.25 d |
 | C5 | HoltTest1 group and runs, on both hosts. **Done 2026-11-12:** the three guests joined 1Obscure; each passed first time on both hosts with bko-holt 24b1cfef0663 and rel4's rustic-bko: `chimera` runs `c5-1` (Cinqcent) and `c5-2` (Chopin), `chimera-uefi` `c5-3` (Cinqcent) and `c5-4` (Chopin), `chimera-zfs` `c5-5` (Chopin) and `c5-6` (Cinqcent); RAM-disk peaks 4.3, 5.1 and 5.8 GiB, so `ram-sizes.tsv` rows of D 6, 6 and 7 (the peak rule), MEM 4 | 0.25 d |
-| C6 | BackShot1: the fixes in the table; `bs1-qemu.py --virtio` rehearsals on `chimera-uefi`, then a run on the Thinkpad | 0.5 d |
+| C6 | BackShot1: the fixes in the table; `bs1-qemu.py --virtio` rehearsals on `chimera-uefi`, then a run on the Thinkpad. **Done 2026-11-12:** fixes c67ae63; rehearsals pass on `chimera-uefi` and `chimera-zfs` on both hosts; the Thinkpad, installed from Chimera's live ISO by Claude at the user's request (GPT: 1 GiB ESP as /boot, 4 GiB swap, ZFS `rpool` unencrypted with `rpool/ROOT/chimera` at / and `rpool/home`; `linux-lts` 6.18.62 + `linux-lts-zfs-bin`, systemd-boot with `root=` pinned), run `chimera-20261112-092235`: phase1, plan, phase2 and verify PASS first time (37,285 files compared, 0 unexpected), bko-holt 24b1cfef0663 and rustic-bko 0.11.4+backotter.9 | 0.5 d |
 | C7 | Docs: README supported lists, HoltTest1's table, `osrel.rs`'s comment, memory | 0.1 d |
 | | *≈ 3 d in all* | |
 

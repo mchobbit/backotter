@@ -219,7 +219,8 @@ that doesn't boot by UEFI, `--virtio` for one whose initramfs has no NVMe driver
 Passed on 2026-11-09: Ubuntu 26.04 and Fedora 44 (UEFI), Devuan 6 (OpenRC, and
 `bs1-adopt` alone on plain sysvinit), Alpine 3.24, Artix (dinit and s6), Void
 (musl), AerynOS and NixOS 26.05; on 2026-11-11, Kinoite 44 (ostree, on both
-hosts, with its rollback booted).  Artix's OpenRC and runit editions have no
+hosts, with its rollback booted); on 2026-11-12, Chimera (`chimera-uefi` and
+`chimera-zfs`, FreeBSD's userland, on both hosts).  Artix's OpenRC and runit editions have no
 guest.
 
 Every rehearsal also runs the preflight, and checks that the snapshot is named

@@ -18,7 +18,7 @@ trap 'echo "BACKOTTER-INSTALL-FAILED at line $LINENO"; sync; sleep 2; poweroff' 
 DISTRO='@DISTRO@'
 ROOT_FS='@ROOT_FS@'                    # what make-bootstrap.sh chose for /
 FIRMWARE='@FIRMWARE@'                  # bios (MBR) or uefi (GPT, ESP as /boot)
-LAYOUT='@LAYOUT@'                      # classic, or uefi, lvm, luks (UEFI, ESP at /boot/efi), luks-esp: below
+LAYOUT='@LAYOUT@'                      # classic, or uefi, lvm, luks (UEFI, ESP at /boot/efi), luks-esp, efi-lvm: below
 LUKS_KEY='@LUKS_KEY@'                  # luks, luks-esp: the key file's contents (no newline)
 GUEST_NAME='@HOSTNAME@'
 ROOT_PASSWORD='@ROOT_PASSWORD@'
@@ -47,7 +47,13 @@ until systemctl is-active -q pacman-init.service; do sleep 1; done
 #   luks-esp  an ESP of 1 GiB (ESP_PART) mounted at /boot, then LUKS2 for
 #         the rest, as luks has it: cryptroot holding vg0's PV, LVs root
 #         (10 GiB) and swap (1 GiB), the other extents free
-BOOT_PART="" ESP_PART="" LUKS_PART="" VG=""
+# and the BackShot1 Thinkpad's Gentoo layout in small (DISK_SIZE 20G), with
+# the ESP at /efi:
+#   efi-lvm  an ESP of 1 GiB (ESP_PART) mounted at /efi, a swap partition
+#         (2 GiB), then an LVM PV for the rest: VG vg0 with LVs root
+#         (10 GiB, ROOT_FS) and home (3 GiB, XFS at /home: HOME_PART), the
+#         other extents (~4 GiB) free
+BOOT_PART="" ESP_PART="" LUKS_PART="" VG="" HOME_PART=""
 wipefs -q -a "$DISK"
 case $LAYOUT in
 classic)
@@ -78,6 +84,22 @@ type=linux
 EOF
     udevadm settle
     ESP_PART=${DISK}1 SWAP_PART=${DISK}2 ROOT_PART=${DISK}3
+    ;;
+efi-lvm)
+    sfdisk -q "$DISK" <<'EOF'
+label: gpt
+size=1GiB, type=uefi
+size=2GiB, type=swap
+type=lvm
+EOF
+    udevadm settle
+    ESP_PART=${DISK}1 SWAP_PART=${DISK}2 VG=vg0
+    pvcreate -q -y "${DISK}3"
+    vgcreate -q -y "$VG" "${DISK}3"
+    lvcreate -q -y -L 10G -n root "$VG"
+    lvcreate -q -y -L 3G -n home "$VG"
+    udevadm settle
+    ROOT_PART=/dev/$VG/root HOME_PART=/dev/$VG/home
     ;;
 lvm|luks|luks-esp)
     if [[ $LAYOUT == lvm ]]; then
@@ -140,8 +162,14 @@ mkfs_root() {
     esac
 }
 # mount_boot: /boot (and the ESP at /boot/efi), once / is mounted at /mnt.
+# efi-lvm: the ESP at /efi, and /home (XFS) too.
 mount_boot() {
-    if [[ $LAYOUT == luks-esp ]]; then
+    if [[ $LAYOUT == efi-lvm ]]; then
+        mkfs.fat -F 32 -n EFI "$ESP_PART" >/dev/null
+        mount -t vfat --mkdir "$ESP_PART" /mnt/efi
+        mkfs.xfs -q -f "$HOME_PART"
+        mount -t xfs --mkdir "$HOME_PART" /mnt/home
+    elif [[ $LAYOUT == luks-esp ]]; then
         mkfs.fat -F 32 -n EFI "$ESP_PART" >/dev/null
         mount -t vfat --mkdir "$ESP_PART" /mnt/boot
     elif [[ $LAYOUT != classic ]]; then

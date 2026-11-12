@@ -62,6 +62,9 @@ void-musl)  cmd=(asm $T/make-bootstrap.sh void "$W") ;;
 chimera)    cmd=(asm $T/make-bootstrap.sh chimera "$W") ;;
 chimera-uefi) cmd=(asm $T/make-bootstrap.sh chimera-uefi "$W") ;;
 chimera-zfs) cmd=($T/make-chimera-zfs.sh "$W" chimera-zfs) ;;
+# gentoo: its stage3 at the pinned date, from /bkoscratch/rebuild-inputs/gentoo
+# (Gentoo prunes autobuilds); the tree and packages as they are at the rebuild.
+gentoo)     cmd=(asm $T/make-bootstrap.sh gentoo "$W") ;;
 artix-dinit|artix-s6) cmd=(asm $T/make-bootstrap.sh $G "$W") ;;
 nixos2605)  cmd=(asm $T/make-bootstrap.sh nixos "$W") ;;
 arch)       cmd=(asm $T/make-arch.sh 2026.10.01 "$W") ;;

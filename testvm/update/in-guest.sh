@@ -53,6 +53,34 @@ if [ -e /etc/NIXOS ]; then
     exit 0
 fi
 
+# t2-section: Linux.portage
+# Gentoo (testvm/bootstrap/gentoo.sh): Portage, with binary packages from
+# the 23.0 binhost (make.conf's getbinpkg, signatures checked against
+# getuto's keyring).  Before the other Linux package managers, as NixOS is:
+# a Gentoo may have dpkg, rpm or dnf emerged as tools.
+if [ "$(uname)" = Linux ] && [ -e /etc/gentoo-release ] && has emerge; then
+    # The only source builds allowed: what the binhost has no build of with
+    # the guest's USE flags, bootstrap/gentoo.sh's SOURCE_OK
+    # (test2/tests/test_vm_update.py checks that the two agree).  Any other
+    # "[ebuild" line in the plan stops the update, by name, before anything
+    # is built.  make.conf's getbinpkg makes the plan's -puDN the -uDNg after.
+    SOURCE_OK="sys-fs/lvm2 sys-boot/grub sys-kernel/dracut sys-kernel/installkernel sys-kernel/gentoo-kernel-bin virtual/dist-kernel net-dns/avahi app-doc/info-manual"
+    o="--color=n --nospinner"
+    emerge --sync -q $o || exit 1
+    plan=$(emerge -puDN $o @world) || { printf '%s\n' "$plan"; say "emerge -puDN @world failed"; exit 1; }
+    printf '%s\n' "$plan"
+    # CATEGORY/NAME of each "[ebuild" line: the version is the last
+    # -VERSION[-rN] of the name.
+    bad=$(printf '%s\n' "$plan" | sed -n 's/^\[ebuild[^]]*\] *\([^ ]*\).*/\1/p' |
+        sed -E 's/:.*//; s/-[0-9]+(\.[0-9]+)*[a-z]?(_(alpha|beta|pre|rc|p)[0-9]*)*(-r[0-9]+)?$//' |
+        grep -vxF "$(printf '%s\n' $SOURCE_OK)")
+    [ -z "$bad" ] || { say "source builds outside the allowlist:" $bad; exit 1; }
+    emerge -uDNg $o --quiet-build=y @world && emerge --depclean $o || exit 1
+    rm -rf /var/cache/binpkgs/* /var/cache/distfiles/*
+    say "updated"
+    exit 0
+fi
+
 # t2-section: Linux.common
 # --- Unfreeze -----------------------------------------------------------------------
 # Each pin is recognized by its own mark, so an unfrozen guest is left alone.

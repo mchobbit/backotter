@@ -140,7 +140,8 @@ class TestSteps(unittest.TestCase):
 
 class TestInGuest(unittest.TestCase):
     TEXT = (TESTVM / "update" / "in-guest.sh").read_text()
-    NAMES = {"prologue", "NixOS", "Linux.common", "Linux.apt", "Linux.ostree", "Linux.dnf", "Linux.pacman", "Linux.zypper",
+    NAMES = {"prologue", "NixOS", "Linux.portage", "Linux.common", "Linux.apt", "Linux.ostree", "Linux.dnf", "Linux.pacman",
+             "Linux.zypper",
              "Linux.xbps", "Linux.apk", "Linux.moss", "FreeBSD", "DragonFly", "OpenBSD", "NetBSD", "SunOS",
              "Haiku", "Redox"}
 
@@ -170,6 +171,9 @@ class TestInGuest(unittest.TestCase):
                              ("Linux.zypper", "history"), ("Linux.zypper", "install DVD"), ("Linux.zypper", "has zypper"),
                              ("Linux.moss", "unstable stream"), ("Linux.moss", "has moss"),
                              ("Linux.xbps", "has xbps-install"), ("Linux.apk", "apk upgrade"),
+                             ("Linux.portage", "/etc/gentoo-release"), ("Linux.portage", "emerge --sync"),
+                             ("Linux.portage", "emerge -puDN"), ("Linux.portage", "emerge -uDNg"),
+                             ("Linux.portage", "emerge --depclean"),
                              ("Linux.common", "/etc/os-release"), ("Linux.common", "no package manager found"),
                              ("prologue", "step() {"), ("prologue", 'say "updated"'), ("prologue", "no updater for"),
                              ("NixOS", "nixos-rebuild"), ("FreeBSD", "freebsd-update"), ("DragonFly", "buildworld"),
@@ -186,9 +190,41 @@ class TestInGuest(unittest.TestCase):
         self.assertNotIn("cleanup -r", code)
         self.assertNotIn("dnf", code)
 
+    def test_portage_first_and_its_allowlist_is_the_builds(self):
+        """Gentoo's section comes before every other Linux package manager's (a Gentoo may have
+        dpkg or rpm emerged), and allows the source builds bootstrap/gentoo.sh does."""
+        t = self.TEXT
+        self.assertLess(t.index("# t2-section: Linux.portage"), t.index("# t2-section: Linux.common"))
+        want = re.findall(r'^SOURCE_OK="([^"]*)"$', (TESTVM / "bootstrap" / "gentoo.sh").read_text(), re.M)
+        got = re.findall(r'^\s*SOURCE_OK="([^"]*)"$', self.sections()["Linux.portage"], re.M)
+        self.assertEqual(len(want), 1)
+        self.assertEqual(got, want)
+        sed = r"sed -E '([^']*)'"
+        self.assertEqual(re.findall(sed, self.sections()["Linux.portage"]),
+                         re.findall(sed, (TESTVM / "bootstrap" / "gentoo.sh").read_text()))
+
+    def test_portage_allowlist_names_what_it_should(self):
+        """The plan's "[ebuild" lines, as CATEGORY/NAME, run through the section's own sed and grep."""
+        sec = self.sections()["Linux.portage"]
+        m = re.search(r"bad=\$\(printf '%s\\n' \"\$plan\" \| (.*?)\)\n", sec, re.S)
+        self.assertIsNotNone(m)
+        ok = re.search(r'SOURCE_OK="([^"]*)"', sec)[1]
+        plan = textwrap.dedent("""\
+            [ebuild     U  ] sys-boot/grub-2.16-r2::gentoo [2.16-r1::gentoo] USE="nls" 0 KiB
+            [binary     U  ] sys-apps/openrc-0.63.4-1::gentoo [0.63.3::gentoo] 1,024 KiB
+            [ebuild  NS    ] sys-kernel/gentoo-kernel-bin-6.18.64:6.18.64::gentoo [6.18.63:6.18.63::gentoo] 0 KiB
+            [ebuild   R    ] net-dns/avahi-0.9_rc3::gentoo  USE="-gtk" 0 KiB
+            [ebuild     U  ] dev-libs/font-adobe-100dpi-1.0.4-r1::gentoo [1.0.3::gentoo] 0 KiB
+            [ebuild     U  ] dev-lang/rust-1.91.0_p1::gentoo 0 KiB
+            [ebuild  N     ] virtual/dist-kernel-6.18.64::gentoo 0 KiB
+            """)
+        script = f'SOURCE_OK="{ok}"\nplan=$(cat)\nprintf \'%s\\n\' "$plan" | {m[1]}\n'
+        r = subprocess.run(["sh", "-c", script], input=plan, capture_output=True, text=True)
+        self.assertEqual(r.stdout.split(), ["dev-libs/font-adobe-100dpi", "dev-lang/rust"], r.stderr)
+
     def test_linux_common_holds_no_package_manager(self):
         common = self.sections()["Linux.common"]
-        for word in ("apt-get", "dnf", "pacman", "zypper", "xbps", "moss"):
+        for word in ("apt-get", "dnf", "pacman", "zypper", "xbps", "moss", "emerge"):
             self.assertNotIn(word, common)
 
     def test_what_is_not_a_fix_is_no_step(self):
@@ -234,7 +270,7 @@ class TestPkgset(TempDir):
             (root / "etc/NIXOS").write_text("")
         script = (TESTVM / "update" / "pkgset.sh").read_text()
         script = re.sub(r"^PATH=.*$", "", script, count=1, flags=re.M)
-        for p in ("/etc/NIXOS", "/var/db/", "/boot/system/packages"):
+        for p in ("/etc/NIXOS", "/etc/gentoo-release", "/var/db/", "/boot/system/packages"):
             script = script.replace(p, str(root) + p)
         tools = self.tmp / "tools"                      # only these: a host's own apt-get would be found first
         tools.mkdir(exist_ok=True)
@@ -268,6 +304,37 @@ class TestPkgset(TempDir):
     def test_xbps(self):
         out = self.run_script("Linux", {"xbps-install": "true", "xbps-query": "echo 'ii xbps-triggers-0.128_1 Triggers'"})
         self.check(out, ["base pm xbps", "pkg xbps-triggers 0.128_1"])
+
+    def portage(self, *pkgs, gentoo=True):
+        """A Gentoo root: /var/db/pkg/CATEGORY/PF with a CHOST file each, and /etc/gentoo-release."""
+        files = [(f"/var/db/pkg/{p}/CHOST", "x86_64-pc-linux-gnu\n") for p in pkgs]
+        if gentoo:
+            files.append(("/etc/gentoo-release", "Gentoo Base System release 2.18\n"))
+        return files
+
+    def test_portage(self):
+        out = self.run_script("Linux", {"emerge": "true", "dpkg-query": "exit 2", "apt-get": "true"},
+                              files=self.portage("sys-boot/grub-2.16-r1", "sys-kernel/gentoo-kernel-bin-6.18.63",
+                                                 "media-fonts/font-adobe-100dpi-1.0.4", "net-dns/avahi-0.9_rc3",
+                                                 "sys-firmware/intel-microcode-20260925_p20260925", "sys-fs/lvm2-2.03.39"))
+        self.check(out, ["base pm portage", "pkg grub 2.16-r1 x86_64-pc-linux-gnu",
+                         "pkg gentoo-kernel-bin 6.18.63 x86_64-pc-linux-gnu",
+                         "pkg font-adobe-100dpi 1.0.4 x86_64-pc-linux-gnu", "pkg avahi 0.9_rc3 x86_64-pc-linux-gnu",
+                         "pkg intel-microcode 20260925_p20260925 x86_64-pc-linux-gnu",
+                         "pkg lvm2 2.03.39 x86_64-pc-linux-gnu"])
+        self.assertEqual(len(out.splitlines()), 7, out)
+        ls = FP.parse_pkgset(out)
+        self.assertEqual((ls.kind, ls.unknown, ls.version(["lvm2"])), ("portage", None, "2.03.39"))
+
+    def test_portage_merge_under_way_is_unknown_alone(self):
+        out = self.run_script("Linux", {"emerge": "true"},
+                              files=self.portage("sys-boot/grub-2.16-r1", "sys-boot/-MERGING-grub-2.16-r2"))
+        self.assertEqual(out, "unknown a merge under way: sys-boot/-MERGING-grub-2.16-r2\n")
+
+    def test_portage_needs_gentoo_release(self):
+        out = self.run_script("Linux", {"apt-get": "true", "dpkg-query": "echo 'ii  e2fsprogs 1.47.0-2 amd64'"},
+                              files=self.portage("sys-boot/grub-2.16-r1", gentoo=False))
+        self.check(out, ["base pm dpkg"])
 
     def test_apk(self):
         out = self.run_script("Linux", {"apk": "echo linux-lts-6.18.60-r0; echo musl-1.2.5-r9"})

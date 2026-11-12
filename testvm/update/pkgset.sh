@@ -3,7 +3,8 @@
 # update/in-guest.sh and again after the reboot: print what the guest has
 # installed, one typed line each.
 #
-#   pkg NAME VERSION [ARCH]    a package of its package manager
+#   pkg NAME VERSION [ARCH]    a package of its package manager (Portage:
+#                              the CHOST for ARCH)
 #   nix-pkg NAME VERSION       a store path in NixOS's system closure
 #   nix-system PATH            NixOS's system profile
 #   syspatch ID                an OpenBSD patch applied
@@ -35,6 +36,27 @@ pkg_apk() {
     x=$(apk info -v 2>/dev/null) || fail "apk info -v failed"
     lines "$x" | sed 's/^\(.*\)-\([^-]*-r[0-9]*\)$/pkg \1 \2/'
 }
+# Portage's database of what is installed: /var/db/pkg/CATEGORY/PF, PF
+# being NAME-VERSION[-rN], with its CHOST in a file of that name.  The bare
+# NAME, as bko-holt's dump has it (docs/design/gentoo.md, decision 4).  A
+# merge under way (CATEGORY/-MERGING-PF) is a listing that isn't whole.
+portage_dirs() {
+    for d in /var/db/pkg/*/*; do
+        [ -d "$d" ] || continue
+        case ${d##*/} in
+        -MERGING-*) echo "-MERGING- ${d#/var/db/pkg/}" ;;
+        *) echo "${d##*/} $(cat "$d/CHOST" 2>/dev/null)" ;;
+        esac
+    done
+}
+pkg_portage() {
+    x=$(portage_dirs)
+    [ -n "$x" ] || fail "/var/db/pkg lists nothing"
+    lines "$x" | awk '$1 == "-MERGING-" { print "unknown a merge under way:", $2; exit 1 }
+                      { i = match($1, /-[0-9]+(\.[0-9]+)*[a-z]?(_(alpha|beta|pre|rc|p)[0-9]*)*(-r[0-9]+)?$/)
+                        if (!i) { print "unknown a package name without a version:", $1; exit 1 }
+                        print "pkg", substr($1, 1, i - 1), substr($1, i + 1), $2 }'
+}
 pkg_query() {
     x=$(pkg query '%n %v') || fail "pkg query failed"
     lines "$x" | sed 's/^/pkg /'
@@ -54,7 +76,11 @@ listing() {
     fi
     case $(uname) in
     Linux)
-        if has apt-get; then
+        # Portage first, as in-guest.sh does: a Gentoo may have dpkg or rpm too.
+        if [ -e /etc/gentoo-release ] && [ -d /var/db/pkg ]; then
+            echo "base pm portage"
+            pkg_portage
+        elif has apt-get; then
             echo "base pm dpkg"
             x=$(dpkg-query -W -f '${db:Status-Abbrev} ${Package} ${Version} ${Architecture}\n') || fail "dpkg-query failed"
             lines "$x" | awk '$1 ~ /^.i/ { print "pkg", $2, $3, $4 }'

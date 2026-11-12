@@ -13,8 +13,9 @@ Gentoo's facts come from the Thinkpad itself (read over BackShot1's pinned
 key, nothing written: its install.conf, emerge.log, /boot, NVRAM and
 `grubx64.efi`), the autobuilds directory of distfiles.gentoo.org, the 23.0
 x86-64 binhost's `Packages` index and the release key on the keyservers, all
-read 2026-11-12. Code references are to local `main` at 8f3398a (after
-Chimera C7 and the bsdtar rebuilds). This worktree (a8eb638) lacks Chimera
+read 2026-11-12. G1 (the `gentoo` guest) was built the same day, and its
+*checks* are settled below: see "What G1 found". Code references are to
+local `main` at 8f3398a (after Chimera C7 and the bsdtar rebuilds). This worktree (a8eb638) lacks Chimera
 C5-C7, so the work starts on main.
 
 ## Summary
@@ -218,6 +219,58 @@ allowlisted one costs ~2-5 min. Also `pkgset.sh`'s `base pm portage`,
 `fingerprint.py`'s `LINUX_KINDS`, and the `vm-update` header. GuestTest2
 needs a `portage` section in `guest/known-lines.json`, plus `S-portage` and
 `K-gentoo` rules in `t2lib/guest_judge.py` (`SOURCE_RULES`, `KERNELS_MAX`).
+
+## What G1 found
+
+Settled on the `gentoo` guest (stage3 `20261108T170107Z`, the tree of
+`Thu, 12 Nov 2026 00:45:00 +0000` from emerge-webrsync's snapshot
+`gentoo-20261111`, Portage 3.0.83, OpenRC 0.63.3, dracut 112,
+`gentoo-kernel-bin` 6.18.63, GRUB 2.14-r5), 2026-11-12, and on the Thinkpad
+read again the same day:
+
+- **os-release:** as the table has it, the same on both: `ID='gentoo'`,
+  `VERSION_ID='2.18'`, single quotes, no `ID_LIKE`.
+- **The vdb:** `/var/db/pkg/CATEGORY/PF/` with `PF`, `CATEGORY`, `CHOST`
+  (`x86_64-pc-linux-gnu`), `SLOT`, `USE`, `BUILD_TIME` and the rest; no `PN`
+  or `PV` files, so the name/version split is needed. A package merged
+  from a binary package also has `BINPKGMD5` (and `BUILD_ID`); one built
+  from source has neither. Bare names do repeat outside the boot stack:
+  `acct-group/avahi`, `acct-user/avahi` and `net-dns/avahi` are all `avahi`.
+- **Kernel files:** `vmlinuz-KV`, `initramfs-KV.img`, `config-KV` and
+  `System.map-KV` in /boot, KV `6.18.63-gentoo-dist-bin`. A fresh install has
+  no `.old` copies; the Thinkpad's come from `emerge --config
+  gentoo-kernel-bin`, which reinstalled the same KV.
+- **installkernel:** only `/usr/lib/kernel/install.conf` (`layout=grub`,
+  `initrd_generator=dracut`, `uki_generator=none`), no
+  `/etc/kernel/install.conf`, on both.
+- **`/lib/modules/KV`:** `vmlinuz`, `System.map`, `config`, `build` and
+  `source` are links into `/usr/src/linux-KV`; no `initrd`, on both.
+- **dracut:** 112 on both, `01-gentoo.conf` host-only (`hostonly_mode=sloppy`);
+  the guest's image has the `lvm` module.
+- **Services:** `sshd`, `dhcpcd`, `dbus`, `avahi-daemon` in default, `lvm` in
+  boot (the Thinkpad's names); the guest adds `agetty.ttyS0`.
+- **Source builds:** on both, `lvm2`, `grub`, `dracut`, `installkernel`,
+  `gentoo-kernel-bin`, and also `net-dns/avahi` (the Thinkpad's USE flags)
+  and `virtual/dist-kernel`; the Thinkpad's firmware and microcode too,
+  which the guest leaves out. The first `vm-update --try` stopped on
+  `app-doc/info-manual-31.1`, which the binhost lagged the tree on (it had
+  30.2), and named it, as the Risks section has it; it joined the allowlist
+  (`SOURCE_OK`, 8 names). Its second run built `grub-2.16-r1` from source
+  (stable in the tree since the guest's snapshot: the Thinkpad has it).
+- **Build time:** the builder took 579 s on Chopin, and the update 283 s
+  with an overlay of 548 MiB. The image is 6.42 GiB on disk, more than the
+  estimate: the deleted downloads and build trees still hold clusters
+  until vm-update's first trim.
+- **File capabilities:** none. The stage3 has no extended attributes at
+  all, and its iputils (`USE=suid`, as the Thinkpad's binary package) makes
+  `ping` setuid root, 4755, with no `cap_net_raw`. Nothing on the Thinkpad
+  has a file capability. So the build's cap check, as the Guests section
+  has it, can't pass: it is left out of `bootstrap/gentoo.sh`, pending the
+  user's ruling.
+- **The chroot:** neither arch-chroot (getuto's `gpg --lsign-key` of a
+  subkey failed under it) nor the handbook's binds (vg0/root was still in use
+  after `umount -R`, so `vgchange -a n` failed), but arch-chroot's file
+  systems mounted once and a plain `chroot`.
 
 ## Pieces to build (ordered, est.)
 

@@ -1,0 +1,175 @@
+# Gentoo Linux: the stage3 make-bootstrap.sh checked against Gentoo's
+# Release Engineering key, made bootable the way the handbook does it and
+# the BackShot1 Thinkpad was (docs/design/gentoo.md): Portage's tree from
+# emerge-webrsync, binary packages from the 23.0 binhost, gentoo-kernel-bin
+# installed by installkernel[dracut,grub] (dracut makes the initramfs,
+# grub-mkconfig the menu), GRUB in the ESP at /efi under the id gentoo,
+# OpenRC services.  glibc, profile default/linux/amd64/23.0, merged usr.
+# LAYOUT efi-lvm (gentoo): UEFI, GPT, a 1 GiB ESP at /efi, a swap
+# partition, LVM vg0 with / on ext4 and /home on XFS.
+#
+# Every input is checked: the stage3 by make-bootstrap.sh (gpgv), the tree's
+# snapshot by emerge-webrsync (the gentoo-release key the stage3 ships), the
+# binary packages by Portage (binpkg-request-signature, against getuto's
+# keyring).  Only SOURCE_OK may be built from source: `emerge -p` first, and
+# any other "[ebuild" line stops the build, by name, before anything is
+# merged.  update/in-guest.sh's Linux.portage section has the same list
+# (test2/tests/test_vm_update.py checks that they agree).
+#
+# The stage3 is unpacked with bsdtar (libarchive, on the Arch ISO; it reads
+# the xz itself), as bootstrap/chimera.sh and void.sh do: it keeps any
+# extended attributes, as the handbook's tar --xattrs-include='*.*' does.
+# --numeric-owner: Gentoo's IDs, not the ISO's names for them.
+# No file capability check (docs/design/gentoo.md's, left out pending the
+# user's ruling): the stage3 has no extended attributes at all, and its
+# iputils (USE=suid, as the Thinkpad's binary package) makes ping setuid
+# root (4755), with no cap_net_raw; nothing on the Thinkpad has a file
+# capability either.
+#
+# The chroot: arch-chroot's file systems, mounted once for the whole
+# install (api_mounts: new proc, sysfs, devtmpfs, devpts and shm, and the
+# live system's /run bound private, whose udev database dracut's host-only
+# detection reads), and plain chroot.  Not arch-chroot itself: getuto's
+# gpg --lsign-key of a subkey failed under it.  Not the handbook's binds
+# (rslave /dev and /sys, a slave /run) either: with them, vg0/root was still
+# in use after umount -R, and vgchange -a n failed.  The initramfs is
+# checked for dracut's lvm module.
+
+# The packages Gentoo's binhost has no build of with this guest's USE
+# flags (and gentoo-kernel-bin's ebuild, which installs a prebuilt kernel,
+# and its virtual): the source builds the Thinkpad's install made.  And
+# app-doc/info-manual, whose 31.1 the binhost lagged behind the tree on
+# 2026-11-12 (vm-update --try's first run stopped on it).
+SOURCE_OK="sys-fs/lvm2 sys-boot/grub sys-kernel/dracut sys-kernel/installkernel sys-kernel/gentoo-kernel-bin virtual/dist-kernel net-dns/avahi app-doc/info-manual"
+# The Thinkpad's world set, less its firmware and microcode (a VM has
+# neither) and sudo; openssh comes with the stage3.
+PACKAGES="sys-fs/lvm2 sys-fs/xfsprogs sys-fs/dosfstools sys-boot/grub sys-boot/efibootmgr net-misc/dhcpcd net-dns/avahi sys-kernel/installkernel"
+KERNEL=sys-kernel/gentoo-kernel-bin
+
+mkfs_root "$ROOT_PART"
+mount -t "$ROOT_FS" "$ROOT_PART" /mnt
+mount_boot
+curl -fsS "$SERVER/rootfs.tar.xz" | bsdtar -xpf - --numeric-owner -C /mnt
+grep -q "^ID='\?gentoo'\?$" /mnt/etc/os-release || { echo "/etc/os-release doesn't say Gentoo"; false; }
+cp -L /etc/resolv.conf /mnt/etc/resolv.conf
+
+api_mounts() {
+    mount -t proc -o nosuid,noexec,nodev proc /mnt/proc
+    mount -t sysfs -o nosuid,noexec,nodev,ro sys /mnt/sys
+    mount -t devtmpfs -o mode=0755,nosuid udev /mnt/dev
+    mount -t devpts -o mode=0620,gid=5,nosuid,noexec devpts /mnt/dev/pts
+    mount -t tmpfs -o mode=1777,nosuid,nodev shm /mnt/dev/shm
+    mount --bind --make-private /run /mnt/run
+}
+api_mounts
+# The chroot's own environment, not the live system's.  EMERGE_DEFAULT_OPTS
+# only here: the guest's make.conf stays as the Thinkpad's.
+in_gentoo() {
+    chroot /mnt /usr/bin/env -i HOME=/root TERM=dumb LC_ALL=C.UTF-8 \
+        PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin \
+        EMERGE_DEFAULT_OPTS="--color=n --nospinner --quiet-build=y" "$@"
+}
+
+# The Thinkpad's make.conf additions (MAKEOPTS for this VM's 4 CPUs) and
+# package.use.
+cat >>/mnt/etc/portage/make.conf <<'EOF'
+
+# BackOtter's gentoo test guest (testvm/bootstrap/gentoo.sh), as the
+# BackShot1 Thinkpad: binary packages first, UEFI.
+MAKEOPTS="-j4 -l4"
+FEATURES="${FEATURES} getbinpkg binpkg-request-signature"
+ACCEPT_LICENSE="-* @FREE @BINARY-REDISTRIBUTABLE"
+GRUB_PLATFORMS="efi-64"
+EOF
+mkdir -p /mnt/etc/portage/package.use
+cat >/mnt/etc/portage/package.use/gentoo-guest <<'EOF'
+sys-kernel/installkernel dracut grub
+net-dns/avahi -gtk -qt5 -qt6 -python -mono -introspection
+sys-fs/lvm2 lvm
+EOF
+
+in_gentoo emerge-webrsync
+echo "BACKOTTER-GENTOO-TREE: $(cat /mnt/var/db/repos/gentoo/metadata/timestamp.chk)"
+in_gentoo getuto
+
+# source_builds: CATEGORY/NAME of each "[ebuild" line of emerge -p's plan on
+# stdin (the version is the last -VERSION[-rN] of the name).
+source_builds() {
+    sed -n 's/^\[ebuild[^]]*\] *\([^ ]*\).*/\1/p' | sed -E 's/:.*//; s/-[0-9]+(\.[0-9]+)*[a-z]?(_(alpha|beta|pre|rc|p)[0-9]*)*(-r[0-9]+)?$//'
+}
+in_gentoo emerge -p --noreplace $PACKAGES $KERNEL >/tmp/plan
+cat /tmp/plan
+grep -q '^\[binary' /tmp/plan || { echo "emerge -p plans no binary package: no binhost?"; false; }
+bad=$(source_builds </tmp/plan | grep -vxF -f <(printf '%s\n' $SOURCE_OK) || true)
+[[ -z $bad ]] || { echo "source builds outside SOURCE_OK:" $bad; false; }
+
+in_gentoo emerge --noreplace $PACKAGES
+
+# fstab as the Thinkpad's (by UUID, noatime, the ESP root's only).
+uuid() { blkid -s UUID -o value "$1"; }
+cat >/mnt/etc/fstab <<EOF
+UUID=$(uuid "$ESP_PART")  /efi   vfat  umask=0077          0 2
+UUID=$(uuid "$SWAP_PART")  none   swap  sw                  0 0
+UUID=$(uuid "$ROOT_PART")  /      $ROOT_FS  defaults,noatime    0 1
+UUID=$(uuid "$HOME_PART")  /home  xfs   defaults,noatime    0 2
+EOF
+echo "$GUEST_NAME" >/mnt/etc/hostname
+sed -i "s/^hostname=.*/hostname=\"$GUEST_NAME\"/" /mnt/etc/conf.d/hostname
+printf '127.0.0.1\tlocalhost\n::1\t\tlocalhost\n127.0.1.1\t%s\n' "$GUEST_NAME" >/mnt/etc/hosts
+ln -sf ../usr/share/zoneinfo/UTC /mnt/etc/localtime
+install_ssh_key /mnt
+printf 'root:%s\n' "$ROOT_PASSWORD_HASH" | in_gentoo chpasswd -e
+
+# OpenRC: the Thinkpad's services (lvm in boot, for lvm2[lvm]), and a getty
+# on the serial console.
+ln -sfn agetty /mnt/etc/init.d/agetty.ttyS0
+printf 'baud="115200"\nterm_type="vt100"\n' >/mnt/etc/conf.d/agetty.ttyS0
+in_gentoo rc-update add lvm boot
+for s in sshd dhcpcd dbus avahi-daemon agetty.ttyS0; do in_gentoo rc-update add $s default; done
+
+# GRUB, then the kernel: installkernel runs dracut (host-only, as
+# /usr/lib/dracut/dracut.conf.d/01-gentoo.conf has it) and grub-mkconfig.
+# The install VM boots by BIOS: no EFI variables to write.  So GRUB under
+# its own name, as the Thinkpad's, and again at the fallback path
+# (EFI/BOOT/BOOTX64.EFI) that the firmware boots with no boot entries, as
+# vm-run --uefi's does.
+cat >>/mnt/etc/default/grub <<EOF
+GRUB_CMDLINE_LINUX="$SERIAL_CMDLINE"
+GRUB_TIMEOUT=2
+EOF
+in_gentoo grub-install --target=x86_64-efi --efi-directory=/efi --bootloader-id=gentoo --no-nvram
+in_gentoo grub-install --target=x86_64-efi --efi-directory=/efi --removable
+in_gentoo emerge --noreplace $KERNEL
+mods=(/mnt/lib/modules/*)
+[[ ${#mods[@]} == 1 ]] || { echo "not one kernel: ${mods[*]}"; false; }
+check_root_module "${mods[0]}"
+kv=${mods[0]##*/}
+for f in vmlinuz-$kv initramfs-$kv.img; do [[ -s /mnt/boot/$f ]] || { echo "no /boot/$f"; false; }; done
+grep -q "^[[:space:]]*linux[[:space:]].*/boot/vmlinuz-$kv " /mnt/boot/grub/grub.cfg || { echo "grub.cfg has no $kv"; false; }
+# Not grep -q: lsinitrd, cut off by its exit, would fail the pipe.
+in_gentoo lsinitrd -m "/boot/initramfs-$kv.img" | grep -x lvm >/dev/null || { echo "initramfs-$kv.img has no lvm module"; false; }
+
+# What docs/design/gentoo.md's G1 settles, for the record.
+echo "== facts"
+cat /mnt/usr/lib/kernel/install.conf /mnt/etc/kernel/install.conf 2>/dev/null | grep -v '^#' | grep . || true
+ls -l /mnt/boot "/mnt/lib/modules/$kv" /mnt/efi/EFI/*
+in_gentoo dracut --version
+echo "source-built:"; for d in /mnt/var/db/pkg/*/*/; do [[ -e ${d}BINPKGMD5 ]] || echo "  ${d#/mnt/var/db/pkg/}"; done
+ls "$(ls -d /mnt/var/db/pkg/sys-boot/grub-[0-9]*/)"
+in_gentoo rc-update show
+echo "== end of facts"
+
+rm -rf /mnt/var/cache/binpkgs/* /mnt/var/cache/distfiles/*
+rm /mnt/etc/resolv.conf
+# Daemons the chroot left running (gpg's agents, from getuto and Portage's
+# signature checks) would hold / open: this is the install VM's own live
+# system, so they are stopped.
+for p in /proc/[0-9]*; do
+    if [[ $(readlink "$p/root" 2>/dev/null) == /mnt ]]; then
+        echo "stopping $(cat "$p/comm" 2>/dev/null) (pid ${p#/proc/}), left running in the chroot"
+        kill "${p#/proc/}" 2>/dev/null || true
+    fi
+done
+sleep 1
+umount /mnt/run /mnt/dev/shm /mnt/dev/pts /mnt/dev /mnt/sys /mnt/proc
+finish

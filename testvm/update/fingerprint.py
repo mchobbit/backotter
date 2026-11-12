@@ -79,7 +79,7 @@ FIXTURE_ALIASES = {"nilfs-utils": "nilfs-tools", "attr-progs": "attr", "acl-prog
 ZFS_NAMES = ("zfsutils-linux", "zfs-utils", "zfs", "zfs-user", "zfs-dkms")
 LSM_NAMES = ("selinux-policy-targeted", "selinux-policy", "apparmor")
 
-LINUX_KINDS = ("dpkg", "rpm", "pacman", "apk", "xbps", "moss", "nixos")
+LINUX_KINDS = ("dpkg", "rpm", "pacman", "apk", "xbps", "moss", "portage", "nixos")
 BASE_KINDS = ("freebsd", "hardenedbsd", "netbsd", "alpinebsd", "openbsd", "dragonfly", "illumos", "haiku")
 
 

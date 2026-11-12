@@ -16,6 +16,7 @@
 #   void          void-musl       btrfs      Void's musl ROOTFS tarball (runit)
 #   chimera       chimera         XFS        Chimera Linux's full ROOTFS tarball (dinit)
 #   chimera-uefi  chimera-uefi    ext4       the same, for UEFI, / on LVM on LUKS2 (below)
+#   gentoo        gentoo          ext4       Gentoo's OpenRC stage3 (glibc), for UEFI, / on LVM (below)
 #   artix-dinit   artix-dinit     JFS        Artix's repositories (dinit)
 #   artix-s6      artix-s6        ext4       Artix's repositories (s6)
 #   nixos         nixos2605       bcachefs   NixOS 26.05's nixpkgs
@@ -26,17 +27,26 @@
 # against their release keys before use; what is fetched later, inside the
 # VM, is checked by the package manager doing it (apk, xbps, pacman, Nix).
 # Chimera's ROOTFS is fixed by its date, but apk then upgrades it from the
-# live repository, so a rebuild gets newer packages.
+# live repository, so a rebuild gets newer packages.  So is Gentoo's stage3
+# (GENTOO_STAGE3, checked with gpgv against the Release Engineering key);
+# its tree is the newest snapshot emerge-webrsync finds (checked by
+# emerge-webrsync), whose timestamp.chk goes in WORK_DIR/portage-tree.json,
+# and its packages are the binhost's.  Gentoo prunes autobuilds after about
+# two months: /bkoscratch/rebuild-inputs/gentoo keeps the stage3 and its .asc
+# on both hosts, for rebuild-one.sh.
 # bcachefs needs an Arch ISO whose kernel still has it (6.12), so NixOS's
 # install uses an older one.
 #
 # Results, in WORK_DIR:
-#   NAME.qcow2            the guest's 16 GiB disk (sparse), with a qcow2
-#                         snapshot "fresh-install" of the finished install
+#   NAME.qcow2            the guest's 16 GiB disk (sparse; gentoo's 20 GiB),
+#                         with a qcow2 snapshot "fresh-install" of the
+#                         finished install
 #   root-password         root's password (mode 600)
 #   id_ed25519, .pub      SSH key that logs in as root
 #   install-serial.log    the live system's serial console during the install
 #   vm-run-options        (UEFI guests) --uefi --no-secure-boot, for vm-run
+#   portage-tree.json     (gentoo) the stage3's date and the tree's
+#                         metadata/timestamp.chk
 #   luks-keyfile          (alpine-luks, chimera-uefi) the key that unlocks /
 #                         (mode 600, no newline), as the guest's
 #                         /crypto_keyfile.bin (Alpine) or
@@ -51,6 +61,9 @@
 # and swap (1 GiB), opened at boot by the key file in the initramfs.
 # chimera-uefi: systemd-boot instead, in a 1 GiB ESP that is /boot itself
 # (LAYOUT luks-esp), then the same LUKS2 and vg0 as alpine-luks.
+# gentoo: the BackShot1 Thinkpad's layout in small (LAYOUT efi-lvm): a
+# 1 GiB ESP at /efi, 2 GiB swap, vg0 with root (10 GiB ext4) and home
+# (3 GiB XFS), ~4 GiB free; GRUB under the id gentoo.
 # bootstrap/common.sh partitions the disk; bootstrap/DISTRO.sh installs.
 # Run it with vm-run, and look inside it while it's off with vm-mount.
 #
@@ -79,6 +92,11 @@ CHIMERA_DATE=20261103
 # The key for that release batch: main/chimera-image-keys/files/20261103.pub
 # in chimera-linux/cports (key ID B7CC5D3A17688906).
 CHIMERA_KEY=RWQGiWgXOl3Mt/2GUL9HpuxyHyWBc29/lZ9wW6XZz29lx2YLwkKfXk52
+GENTOO_STAGE3=20261108T170107Z
+# Gentoo Linux Release Engineering (Automated Weekly Release Key), as
+# https://www.gentoo.org/downloads/signatures/ lists it; its signing subkey
+# is 534E4209AB49EEE1C19D96162C44695DB9F6043D (expires 2028-07-01).
+GENTOO_KEY=13EBBDBEDE7A12775DFDB1BABB572E0E2D182910
 NIXOS_RELEASE=26.05
 NIXPKGS=https://releases.nixos.org/nixos/26.05/nixos-26.05.13164.6f06d204d8f2/nixexprs.tar.xz
 NIX_VERSION=2.31.2
@@ -86,7 +104,7 @@ NIX_VERSION=2.31.2
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-bootstrap: $*" >&2; exit 1; }
 
-[[ $# -eq 2 ]] || die "usage: $0 alpine|alpine-uefi|alpine-lvm|alpine-luks|void|chimera|chimera-uefi|artix-dinit|artix-s6|nixos WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 alpine|alpine-uefi|alpine-lvm|alpine-luks|void|chimera|chimera-uefi|gentoo|artix-dinit|artix-s6|nixos WORK_DIR"
 distro=$1
 iso_release=$ARCH_ISO_CURRENT
 script=$distro
@@ -102,6 +120,9 @@ case $distro in
     void) name=void-musl root_fs=btrfs ;;
     chimera) name=chimera root_fs=xfs ;;
     chimera-uefi) name=chimera-uefi root_fs=ext4 script=chimera firmware=uefi layout=luks-esp ;;
+    # 20G: efi-lvm's 1 GiB ESP, 2 GiB swap and a ~17 GiB PV for root 10G,
+    # home 3G and ~4 GiB free (16G would leave a PV of ~12.99 GiB).
+    gentoo) name=gentoo root_fs=ext4 firmware=uefi layout=efi-lvm DISK_SIZE=20G stage3=openrc ;;
     artix-dinit) name=artix-dinit root_fs=jfs script=artix extra=(INIT=dinit) ;;
     artix-s6) name=artix-s6 root_fs=ext4 script=artix extra=(INIT=s6) ;;
     nixos) name=nixos2605 root_fs=bcachefs iso_release=$ARCH_ISO_LINUX_6_12
@@ -185,6 +206,17 @@ case $script in
         grep -F " $f" "chimera-sha256sums-$CHIMERA_DATE.txt" | sha256sum -c --quiet - || die "$f does not match Chimera's sha256sums.txt"
         ln -s "$PWD/$f" "$work/www/rootfs.tar.gz"
         ;;
+    gentoo)
+        f=stage3-amd64-$stage3-$GENTOO_STAGE3.tar.xz
+        url=https://distfiles.gentoo.org/releases/amd64/autobuilds/$GENTOO_STAGE3
+        fetch "$url/$f.asc"
+        fetch "$url/$f"
+        gpg_key "$GENTOO_KEY" gentoo-release-key.gpg
+        gpgv --keyring ./gentoo-release-key.gpg "$f.asc" "$f" 2>/dev/null ||
+            die "$f is not signed by Gentoo's Release Engineering key"
+        ln -s "$PWD/$f" "$work/www/rootfs.tar.xz"
+        stage3_file=$f
+        ;;
 esac
 
 # --- The live system's kernel, initramfs and boot options ---------------------------
@@ -251,5 +283,11 @@ grep -q BACKOTTER-INSTALL-OK install-serial.log || {
     die "the install did not finish; see install-serial.log"
 }
 
+if [[ $script == gentoo ]]; then
+    tree=$(sed -n 's/.*BACKOTTER-GENTOO-TREE: //p' install-serial.log | tr -d '\r' | tail -n 1)
+    [[ -n $tree ]] || die "install-serial.log has no BACKOTTER-GENTOO-TREE line"
+    python3 -c 'import json, sys; json.dump({"stage3": sys.argv[1], "timestamp.chk": sys.argv[2]}, open("portage-tree.json", "w"), indent=1)' \
+        "$stage3_file" "$tree"
+fi
 qemu-img snapshot -c fresh-install "$DISK"
 echo "Done: $2/$DISK ($(du -h "$DISK" | cut -f1) on disk), snapshot \"fresh-install\""

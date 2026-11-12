@@ -73,7 +73,9 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
 /// grub2-mkconfig; AerynOS's initramfs comes prebuilt with its kernel, and
 /// systemd-boot boots it.  Chimera Linux (musl, dinit, apk, FreeBSD's
 /// userland) has Debian's initramfs-tools (update-initramfs) but no debconf,
-/// and grub-mkconfig, or systemd-boot with gen-systemd-boot.  Bazzite, and
+/// and grub-mkconfig, or systemd-boot with gen-systemd-boot; its tests are
+/// `chimera`, `chimera-uefi` and `chimera-zfs` in HoltTest1Obscure, and
+/// BackShot1 on the Thinkpad (root on ZFS, the ESP as /boot).  Bazzite, and
 /// Fedora's atomic desktops under the Fedora row, are ostree systems
 /// (crate::ostree): the initramfs comes with the image and bootupd's GRUB
 /// config is static, so load regenerates nothing there (load/ostree.rs).

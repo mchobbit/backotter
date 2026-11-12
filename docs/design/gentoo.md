@@ -173,8 +173,9 @@ XFS volume, judged without the ext4-only attributes.
 Built by `make-bootstrap.sh`, as for Void and Chimera. From the Arch ISO's
 live system it unpacks a stage3 into the new root with
 `bsdtar -xpf - --numeric-owner`, as `void.sh` and `chimera.sh` now do, so the
-file capabilities stay. The build fails if iputils `ping` has no
-`cap_net_raw`, after the unpack and again before `finish`. In the chroot it
+file capabilities stay. The build fails if iputils `ping` has neither
+`cap_net_raw` nor setuid root (owner root, setuid bit), in its final
+checks (ruled 2026-11-12 by the user: cap_net_raw or setuid root). In the chroot it
 runs `emerge-webrsync`, then emerges the kernel, the boot loader and the
 services. Every input is checked:
 
@@ -264,9 +265,10 @@ read again the same day:
 - **File capabilities:** none. The stage3 has no extended attributes at
   all, and its iputils (`USE=suid`, as the Thinkpad's binary package) makes
   `ping` setuid root, 4755, with no `cap_net_raw`. Nothing on the Thinkpad
-  has a file capability. So the build's cap check, as the Guests section
-  has it, can't pass: it is left out of `bootstrap/gentoo.sh`, pending the
-  user's ruling.
+  has a file capability. So a cap-only check couldn't pass; ruled
+  2026-11-12 by the user: cap_net_raw or setuid root. `bootstrap/gentoo.sh`'s
+  `ping_privilege` checks that in the final checks and the facts say which
+  held (setuid root, on both guests).
 - **The chroot:** neither arch-chroot (getuto's `gpg --lsign-key` of a
   subkey failed under it) nor the handbook's binds (vg0/root was still in use
   after `umount -R`, so `vgchange -a n` failed), but arch-chroot's file
@@ -319,7 +321,9 @@ dracut 112, `installkernel` 70-r1 with USE=systemd), 2026-11-12:
     unit, / unlocked by its key file), SSH; the same SHA-256 on both
     (`25552f4e...`); `vm-update --try` ok on Chopin.
   - Neither has an image-state yet (never really updated), and `ping` is
-    setuid, with no file capability, as on the Thinkpad (G1's open item).
+    setuid root, with no file capability, as on the Thinkpad, which the
+    build's check accepts (ruled 2026-11-12 by the user: cap_net_raw or
+    setuid root).
 
 ## What G4 and G5 found
 
@@ -363,7 +367,8 @@ and bko-holt 7760c9e7c497 (395e643's holt/, built on Chopin):
   (vgcfgrestore keeps them). `gentoo-systemd`'s GRUB, on an ESP at /boot,
   embeds none. RAM-disk peaks 5.4 GiB for both: `ram-sizes.tsv` D 7, MEM 4.
 - **GuestTest1:** both guests are now covered by SticTest1 (0 FAIL on both
-  hosts); the open items are G1's (ping's cap, no image-state yet).
+  hosts); the open item is G1's (no image-state yet; ping's privilege
+  was ruled 2026-11-12 by the user: cap_net_raw or setuid root).
 
 ## What G6 found
 
@@ -407,7 +412,7 @@ the shipped rustic-bko, the pinned Test2 rescue image `rescuer.img`
 
 | # | Piece | Effort |
 |---|---|---|
-| G1 | `make-bootstrap.sh gentoo` and `bootstrap/gentoo.sh`, `LAYOUT=efi-lvm` and its DISK_SIZE, the cap check, `rebuild-one.sh`, the rebuild inputs, vm-update's Portage branch. Settle every *check* on it: os-release, the vdb's files and `CHOST`, kernel names and `.old` copies, `install.conf`, no `/lib/modules/K/initrd`, dracut's version, the service names, the source builds and the build time. Done when it is built on Chopin, copied to Cinqcent with the same SHA-256, boots alone, ping has its cap, and `vm-update --try` is ok. **Done 2026-11-12 except the ping cap:** built in 579 s, SHA-256 25f2f32d… on both hosts, boots alone on both, `--try` ok; ping is setuid root with no cap (Gentoo's USE=suid, as on the Thinkpad), the cap check waits on the user's ruling ("What G1 found") | 1.25 d |
+| G1 | `make-bootstrap.sh gentoo` and `bootstrap/gentoo.sh`, `LAYOUT=efi-lvm` and its DISK_SIZE, the cap check, `rebuild-one.sh`, the rebuild inputs, vm-update's Portage branch. Settle every *check* on it: os-release, the vdb's files and `CHOST`, kernel names and `.old` copies, `install.conf`, no `/lib/modules/K/initrd`, dracut's version, the service names, the source builds and the build time. Done when it is built on Chopin, copied to Cinqcent with the same SHA-256, boots alone, ping has cap_net_raw or is setuid root (ruled 2026-11-12 by the user: cap_net_raw or setuid root), and `vm-update --try` is ok. **Done 2026-11-12:** built in 579 s, SHA-256 25f2f32d… on both hosts, boots alone on both, `--try` ok; ping is setuid root with no cap (Gentoo's USE=suid, as on the Thinkpad), which the check accepts ("What G1 found") | 1.25 d |
 | G2 | bko-holt: the `SUPPORTED` row (doc comment, a unit test from the guest's os-release, an `ID_LIKE=gentoo` refusal, `supported_names()`); the Portage reader and its tests; `PACKAGES` and `fingerprint.py`; the `.old` note; generator detection; `initramfs()`'s Gentoo arms and refusals; the shim refusal; a dump warning when fstab names a vfat /efi or /boot/efi that isn't mounted, with a unit test; a Thinkpad-shaped fake tree in `holt/src/scenarios.rs`. Done when `cargo test` passes and the scenario's plan has `dracut --force /boot/initramfs-K.img K`, the /efi `grub-install` and the `.old` note. **Done 2026-11-12** (546c65e, review fix bbc8d6b) | 1 d |
 | G2b | `gentoo`'s golden plan (`holt/tests/corpus/gentoo/`, `index.tsv`, the corpus README) from a `bko-holt dump` of the guest; the Test2 registrations (`classes.json` with `uefi`, `holt/spec.json`, `guest/spec.json`, `estimates.tsv`, `t2lib/plan.py`'s counts, `p2/world.py` and the re-blessed goldens); the GuestTest2 rules. Done when two corpus builds have the same sha256, leak scans are 0 on both hosts and the Mac, no other plan changes, and Test2's own tests pass. **Done 2026-11-12** (642a0ed) | 0.5 d |
 | G3 | `gentoo-systemd`: the build (keyfile, `rd.luks`, installkernel's layout pinned to `grub`), its golden plan, Test2 registrations and re-blessed goldens, `rebuild-one.sh` lines. Done as G1 and G2b are, plus a GuestTest1 grade for both guests. **Done 2026-11-12** (395e643; "What G3 found") | 0.75 d |

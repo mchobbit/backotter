@@ -27,11 +27,11 @@
 # the xz itself), as bootstrap/chimera.sh and void.sh do: it keeps any
 # extended attributes, as the handbook's tar --xattrs-include='*.*' does.
 # --numeric-owner: Gentoo's IDs, not the ISO's names for them.
-# No file capability check (docs/design/gentoo.md's, left out pending the
-# user's ruling): the stage3 has no extended attributes at all, and its
-# iputils (USE=suid, as the Thinkpad's binary package) makes ping setuid
-# root (4755), with no cap_net_raw; nothing on the Thinkpad has a file
-# capability either.
+# ping's privilege (ruled 2026-11-12 by the user: cap_net_raw or setuid
+# root): Gentoo's iputils is USE=suid, as the Thinkpad's binary package, so
+# ping is setuid root (4755) with no file capability; a later update may
+# give it cap_net_raw instead (USE=filecaps).  ping_privilege fails the
+# build, in the final checks, if ping has neither, and the facts say which.
 #
 # The chroot: arch-chroot's file systems, mounted once for the whole
 # install (api_mounts: new proc, sysfs, devtmpfs, devpts and shm, and the
@@ -247,9 +247,22 @@ if [[ -n $LUKS_PART ]]; then
     [[ ! -e /mnt/boot/loader/entries && ! -e /mnt/boot/$(cat /mnt/etc/machine-id) ]] ||
         { echo "kernel-install made a BLS layout in /boot"; false; }
 fi
+# ping: cap_net_raw (getcap, the live system's: the Arch ISO has libcap),
+# or setuid root (owner uid 0, setuid bit).  Prints which held.
+ping_privilege() {
+    local caps='' uid
+    ! command -v getcap >/dev/null || caps=$(getcap "$1")
+    uid=$(stat -c %u "$1") || return
+    if [[ $caps == *cap_net_raw* ]]; then echo "cap_net_raw ($caps)"
+    elif [[ $uid == 0 && -u $1 ]]; then echo "setuid root ($(stat -c '%a %U' "$1"))"
+    else echo "$1 has neither cap_net_raw nor setuid root (${caps:-no file capability}; $(stat -c '%a uid %u' "$1"))" >&2; false
+    fi
+}
+ping_held=$(ping_privilege /mnt/usr/bin/ping)
 
 # What docs/design/gentoo.md's G1 settles, for the record.
 echo "== facts"
+echo "ping: $ping_held"
 cat /mnt/usr/lib/kernel/install.conf /mnt/etc/kernel/install.conf 2>/dev/null | grep -v '^#' | grep . || true
 ls -l /mnt/boot "/mnt/lib/modules/$kv" /mnt$efi/EFI/*
 in_gentoo dracut --version

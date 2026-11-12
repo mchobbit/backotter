@@ -41,7 +41,9 @@
 #   --keep        with --ram, keep the overlay when QEMU exits and print how to
 #                 merge it into IMAGE (qemu-img commit) or delete it.  Don't
 #                 change IMAGE while a kept overlay exists: it would no longer
-#                 match.  A kept overlay is gone when the host reboots.
+#                 match.  A kept overlay is gone when the host reboots.  On a
+#                 vm-store object it prints only how to delete it: an object
+#                 is never committed into.
 #   --discard     pass the guest's TRIM (fstrim, zpool trim) and its writes of
 #                 zeros on to the image or overlay (discard=unmap,
 #                 detect-zeroes=unmap): clusters that hold no data then, so
@@ -91,6 +93,8 @@
 # on; changing them changes the guest's PCI layout too.
 #
 # QEMU locks IMAGE while it runs, so vm-mount can't attach it meanwhile.
+# A vm-store object (testvm/vm-store) is never written: it boots only with
+# --ram or --snapshot.
 
 set -euo pipefail
 
@@ -102,6 +106,19 @@ elif [[ -z ${TMPDIR:-} ]] && mountpoint -q /bkoscratch 2>/dev/null && mkdir -p /
     export TMPDIR=/bkoscratch/tmp        # Chopin's cool scratch disk, not its root's /var/tmp
 fi
 die() { echo "vm-run: $*" >&2; exit 1; }
+# Whether FILE is a vm-store object: its realpath lies in (or below) some
+# ROOT/objects/ whose ROOT holds store.json.  By path, not -w, so root is
+# refused too; other files under a store root are not objects.
+in_store() {
+    local d
+    d=$(realpath -- "$1" 2>/dev/null) || return 1
+    d=${d%/*}
+    while [[ $d == /?* ]]; do
+        [[ ${d##*/} == objects && -f ${d%/*}/store.json ]] && return 0
+        d=${d%/*}
+    done
+    return 1
+}
 
 uefi_vars="" cdrom="" uefi=no q35=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic) vga=()
 bus=virtio extra=() serials=() slots=() nic=virtio-net-pci nic_global=() mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
@@ -159,6 +176,10 @@ trap cleanup EXIT
 drive_opts() {
     local image=$1 info format overlay
     [[ -f $image ]] || die "no such image: $image"
+    # A store object is never written: only an overlay or QEMU's temporary file is.
+    if [[ $ram == no && ${#snapshot[@]} -eq 0 ]] && in_store "$image"; then
+        die "$image is a vm-store object: boot it with --ram or --snapshot"
+    fi
     info=$(qemu-img info --output=json "$image" 2>&1) ||
         die "can't open $image (already running, or mounted by vm-mount?): $(head -n 1 <<<"$info")"
     format=$(python3 -c 'import json, sys; print(json.load(sys.stdin)["format"])' <<<"$info")
@@ -281,8 +302,14 @@ if [[ $keep == yes ]]; then
             continue
         fi
         echo "vm-run: kept this run's writes to ${images[$i]} in $overlay ($(du -h "$overlay" | cut -f1))." >&2
-        echo "  merge them into it:  qemu-img commit $overlay && rm $overlay" >&2
-        echo "  or throw them away:  rm $overlay" >&2
+        if in_store "${images[$i]}"; then
+            # Never qemu-img commit into a store object: every version and cache copy names it.
+            echo "  ${images[$i]} is a vm-store object, which is never written: boot the overlay itself to go on" >&2
+            echo "  throw them away:  rm $overlay" >&2
+        else
+            echo "  merge them into it:  qemu-img commit $overlay && rm $overlay" >&2
+            echo "  or throw them away:  rm $overlay" >&2
+        fi
     done
 fi
 exit "$status"

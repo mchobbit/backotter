@@ -191,7 +191,7 @@
     "pkg:util-linux"
    ],
    "host_inputs": [
-    "~/backotter-work/round6/arch-root/usr/bin/bcachefs"
+    "/bkoscratch/tools/arch-root/usr/bin/bcachefs"
    ]
   },
   "bin:abi": {
@@ -350,7 +350,7 @@
     "pkg:util-linux"
    ],
    "host_inputs": [
-    "~/backotter-work/round6/arch-root/usr/bin/bcachefs"
+    "/bkoscratch/tools/arch-root/usr/bin/bcachefs"
    ],
    "notes": "run-all.sh's own scripts and what they source, its guest platforms' too (the static checker reads run-all.sh whole; --platforms linux runs only the linux steps)"
   },

@@ -34,7 +34,8 @@
 # TMPDIR=RAM/tmp HOME=RAM/home PKG.test -test.run '^T$' -test.v -test.count=1`,
 # one process per test, the outputs in one log.
 # Without mkfs.bcachefs on the host, BKO_MKFS_BCACHEFS and a bcachefs
-# command (RAM/path/bcachefs) run the Arch ISO's tools, as run-all.sh does.
+# command (RAM/path/bcachefs) run the Arch ISO's tools, as run-all.sh does
+# (/bkoscratch/tools/arch-root, or $BKO_ARCH_ROOT).
 # Afterwards what the tests left mounted under the RAM directory is unmounted
 # and the loop devices whose backing file is there are detached, by path,
 # never by name; cleanup.txt and the output say what.  t2lib/gate.py judges
@@ -111,7 +112,7 @@ trap 'trap "" INT TERM HUP; exit 130' INT TERM HUP
 export GOTOOLCHAIN=local GOFLAGS=-modcacherw GOCACHE=$CACHE/gocache GOMODCACHE=$CACHE/gomod
 export PATH=$(dirname "$go"):$PATH LC_ALL=C.UTF-8 PYTHONDONTWRITEBYTECODE=1
 penv=()
-A=${BKO_WORK:-$HOME/backotter-work}/round6/arch-root
+A=${BKO_ARCH_ROOT:-/bkoscratch/tools/arch-root}
 if ! command -v mkfs.bcachefs >/dev/null && [[ -x $A/usr/bin/bcachefs ]]; then
     bc="env GLIBC_TUNABLES=glibc.malloc.tcache_count=0 $A/usr/lib/ld-linux-x86-64.so.2 --library-path $A/usr/lib $A/usr/bin/bcachefs"
     penv+=(BKO_MKFS_BCACHEFS="$bc format")

@@ -384,7 +384,7 @@ if [[ -n $roots && -n $SUDO && -z $dry ]]; then
     sudo -n true 2>/dev/null || die "the linux and sparse steps need root or sudo -n"
 fi
 : "${BKO_MKFS_BCACHEFS:=}"
-A=$SRCWORK/round6/arch-root
+A=${BKO_ARCH_ROOT:-/bkoscratch/tools/arch-root}
 if [[ -z $BKO_MKFS_BCACHEFS && -x $A/usr/bin/bcachefs ]]; then
     # Chopin has no mkfs.bcachefs: the Arch ISO's, with its own libraries.
     BKO_MKFS_BCACHEFS="env GLIBC_TUNABLES=glibc.malloc.tcache_count=0 $A/usr/lib/ld-linux-x86-64.so.2 --library-path $A/usr/lib $A/usr/bin/bcachefs format"

@@ -365,6 +365,44 @@ and bko-holt 7760c9e7c497 (395e643's holt/, built on Chopin):
 - **GuestTest1:** both guests are now covered by SticTest1 (0 FAIL on both
   hosts); the open items are G1's (ping's cap, no image-state yet).
 
+## What G6 found
+
+2026-11-12, `bs1-qemu.py --virtio` on `gentoo` (bko-holt 7760c9e7c497,
+the shipped rustic-bko, the pinned Test2 rescue image `rescuer.img`
+4fd4186a...):
+
+- **bs1-adopt** finds OpenRC (`/proc/1/comm` is `init`, `rc-service`
+  exists) and emerges nothing: sshd, Python, util-linux, avahi, dbus and
+  efibootmgr are all there, as on the Thinkpad (read the same day: the same
+  commands, no `EMERGE_DEFAULT_OPTS`, sshd_config's own
+  `PermitRootLogin prohibit-password`, `/etc/conf.d/hostname`).
+- **The first runs** (`g6-1` Chopin, `g6-2` Cinqcent) failed verify on one
+  file: `usr/libexec/rc/console/keymap`, the same content with a new mtime.
+  OpenRC's `save-keymaps` (in the boot runlevel, the Thinkpad's too) writes
+  the console keymap there at every boot. bs1-manifest's `REMADE` now has
+  `usr/libexec/rc/console/*` (content, owner and mode must stay; the mtime
+  may move), which covers `save-termencoding`'s `unicode` as well.
+- **The lvmid check** is BackShot1's own now: phase 1 writes the baseline's
+  `lvmid.txt` (each id an EFI binary on a mounted vfat embeds, and
+  /boot/grub's LV by `lvs -o vg_uuid,lv_uuid`), and verify checks the
+  restored system's (`lvmid-after.txt`) whenever either side has one, as
+  ht1.sh does. On `gentoo` both `EFI/gentoo/grubx64.efi` and
+  `EFI/BOOT/BOOTX64.EFI` embed vg0/root's, before and after.
+- **Then `g6-3` (Chopin, 311 s) and `g6-4` (Cinqcent, 338 s) PASS**: 25
+  checks each, 261,568 files compared, 0 unexpected, the lvmid check ok in
+  2 EFI binaries, the guest's image unchanged. The firmware booted OVMF's
+  entry for the disk (the run starts from blank variables, so the guest has
+  no `gentoo` entry): the Thinkpad's own NVRAM is the test of that. RAM-disk
+  peak 5.4 GiB.
+- **`gentoo-systemd` too** (not asked for: systemd, LUKS by key file): `g6-5`
+  (Chopin, 392 s) and `g6-6` (Cinqcent, 376 s) PASS, 264,576 files, 0
+  unexpected, no lvmid (its GRUB is on an ESP at /boot). That guest has no
+  avahi, so bs1-adopt emerged `net-dns/avahi` and `sys-apps/dbus`: avahi
+  built from source (the binhost's doesn't have the guest's USE flags),
+  about 80 s (est., from the run's length against `gentoo`'s). It wrote the
+  vdb before phase 1, so the manifest saw it as source state, as
+  "What already works" says of an emerge.
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Effort |
@@ -375,7 +413,7 @@ and bko-holt 7760c9e7c497 (395e643's holt/, built on Chopin):
 | G3 | `gentoo-systemd`: the build (keyfile, `rd.luks`, installkernel's layout pinned to `grub`), its golden plan, Test2 registrations and re-blessed goldens, `rebuild-one.sh` lines. Done as G1 and G2b are, plus a GuestTest1 grade for both guests | 0.75 d |
 | G4 | SticTest1 entries and runs for both guests (rustic-bko and restic), the cross-filesystem case, `stic/manifests.json`, `limits.json` and check-manifests' 47. Done when PASS/LIMIT/FAIL counts on both hosts for both archivers show 0 FAIL. **Done 2026-11-12:** runs `g4f`, `gentoo` 35/3/0 and `gentoo-systemd` 29/3/0 on both hosts ("What G4 and G5 found") | 0.35 d |
 | G5 | The HoltTest1 group (Decision 5) and its runs; judge.py rules for `efi/EFI/gentoo` and `boot/EFI/gentoo` (grub-install's loader), with judge-test.py cases, and any path G1's chroot runs show no rule covers. Done when every load stage passes on both hosts, the guest boots alone, there are 0 fsmeta differences, the embedded lvmid equals the restored `lvs -o vg_uuid,lv_uuid` of vg0/root, and the RAM-disk peaks are in `ram-sizes.tsv`. **Done 2026-11-12:** 1G; `gentoo` runs `g5-3` and `g5-4`, `gentoo-systemd` `g5-2` and `g5-5`, all PASS | 0.35 d |
-| G6 | BackShot1: the fixes in the table; `bs1-qemu.py --virtio` rehearsals on `gentoo` on both hosts, with the same lvmid check; then a run on the Thinkpad. Done when phase1, plan, phase2 and verify PASS with 0 unexpected, the Thinkpad boots `gentoo` from NVRAM, and its `grubx64.efi`'s lvmid equals the restored vg0/root's UUIDs | 0.5 d |
+| G6 | BackShot1: the fixes in the table; `bs1-qemu.py --virtio` rehearsals on `gentoo` on both hosts, with the same lvmid check; then a run on the Thinkpad. Done when phase1, plan, phase2 and verify PASS with 0 unexpected, the Thinkpad boots `gentoo` from NVRAM, and its `grubx64.efi`'s lvmid equals the restored vg0/root's UUIDs. **Fixes and rehearsals done 2026-11-12:** `g6-3` (Chopin) and `g6-4` (Cinqcent) PASS ("What G6 found"); the Thinkpad run is still to do | 0.5 d |
 | G7 | Docs: holt/README.md's supported list and "tested by" guests, `osrel.rs`'s comment, the READMEs of HoltTest1 (its group table and HoltTest1All's members), BackShot1, SticTest1 and Test2, `docs/design/layload.md`'s boot stage (it still says only `update-initramfs`), and memory (the HoltTest1 index line and holttest1d.md, if 1G) | 0.1 d |
 | | *≈ 4.75 d in all* | |
 

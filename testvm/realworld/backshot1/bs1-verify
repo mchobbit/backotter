@@ -154,6 +154,12 @@ if [[ -d /sys/firmware/efi ]]; then
     check "firmware booted the restored ESP's entry" booted_the_restored_esp
 fi
 check "the package list is unchanged" packages_same
+# Where GRUB names its LV by UUID, before or now: the restored LV's, in every
+# EFI binary that embeds one (a baseline older than this has no lvmid.txt).
+lvmid_record >"$ATTEMPT/lvmid-after.txt" 2>&1
+if grep -qs '^EMBED ' "$ATTEMPT/lvmid-after.txt" "$RUN/baseline/lvmid.txt"; then
+    check "GRUB's embedded lvmid is /boot/grub's restored LV, $(awk '$1 == "GRUBLV" { print $3 " " $2 }' "$ATTEMPT/lvmid-after.txt"), in $(grep -c '^EMBED ' "$ATTEMPT/lvmid-after.txt") EFI binaries" lvmid_ok "$ATTEMPT/lvmid-after.txt"
+fi
 
 step "the layout, as the restored system sees it"
 check "bko-holt dump works" sh -c "'$BIN/bko-holt' dump --only-disk '$disk' >'$ATTEMPT/after.json'"

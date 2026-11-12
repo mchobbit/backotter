@@ -45,7 +45,9 @@ caught at different moments; `bs1-manifest` tells those from real differences.
   (`sh`, because Alpine has no bash until this installs it, and as root without
   the `sudo` on systems that have none.)  It sets the hostname, installs the
   keys, and adds sshd, mDNS and the tools the scripts use if missing, under
-  systemd, OpenRC, sysvinit, runit, dinit or s6.  On NixOS it writes
+  systemd, OpenRC, sysvinit, runit, dinit or s6 (on Gentoo by `emerge
+  --getbinpkg --noreplace`, from the binhost; an install like the
+  Thinkpad's has them all, so nothing is emerged).  On NixOS it writes
   `/etc/nixos/backshot1.nix`, imports it from `configuration.nix` and rebuilds;
   a system built from a flake needs those settings added by hand.
 - The USB Ethernet adapter stays plugged in: the images are wired-only.
@@ -206,6 +208,16 @@ the time the backup took, and what `bko-holt` remakes on purpose (the initramfs,
 
 It compares each file's extended attributes as well as its content, owner, mode
 and mtime: SELinux labels, capabilities, POSIX ACLs and `user.*` attributes.
+A few files a boot writes again must keep their content (`REMADE`):
+`/etc/machine-id`, systemd-boot's `entry-token`, and OpenRC's saved console
+keymap and encoding (`/usr/libexec/rc/console/*`, Gentoo's `save-keymaps`).
+
+Where GRUB's core image names /boot/grub's LV by UUID,
+`(lvmid/VG-UUID/LV-UUID)` (Gentoo with / on LVM, as on the Thinkpad),
+phase 1 records each EFI binary's embedded ids in the baseline's
+`lvmid.txt`, and `verify` checks that every one is now the restored LV's
+`lvs -o vg_uuid,lv_uuid` (the restore's `lvmid-after.txt`), as HoltTest1's
+ht1.sh does.
 That's a check on the whole trip, `bko-holt`'s boot stage and the live backup
 included; SticTest1 is what tests `rustic-bko` itself, inode flags too.  A
 baseline taken before this has no attributes, and only the rest is compared.
@@ -220,7 +232,9 @@ Passed on 2026-11-09: Ubuntu 26.04 and Fedora 44 (UEFI), Devuan 6 (OpenRC, and
 `bs1-adopt` alone on plain sysvinit), Alpine 3.24, Artix (dinit and s6), Void
 (musl), AerynOS and NixOS 26.05; on 2026-11-11, Kinoite 44 (ostree, on both
 hosts, with its rollback booted); on 2026-11-12, Chimera (`chimera-uefi` and
-`chimera-zfs`, FreeBSD's userland, on both hosts).  Artix's OpenRC and runit editions have no
+`chimera-zfs`, FreeBSD's userland, on both hosts) and Gentoo (`gentoo`, the
+Thinkpad's OpenRC install in small, on both hosts, with GRUB's embedded
+lvmid that of the restored vg0/root).  Artix's OpenRC and runit editions have no
 guest.
 
 Every rehearsal also runs the preflight, and checks that the snapshot is named

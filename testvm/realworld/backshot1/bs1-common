@@ -183,7 +183,10 @@ distro_name() {
 }
 
 package_list() {
-    if command -v dpkg-query >/dev/null; then dpkg-query -W -f '${Package}\t${Version}\n'
+    # Gentoo first: Portage keeps no list but its database's directories, and
+    # dpkg or rpm may be emerged there as tools.  CATEGORY/PF, one a line.
+    if [[ -e /etc/gentoo-release ]]; then (cd /var/db/pkg && printf '%s\n' */*)
+    elif command -v dpkg-query >/dev/null; then dpkg-query -W -f '${Package}\t${Version}\n'
     elif command -v rpm >/dev/null; then rpm -qa
     elif command -v pacman >/dev/null; then pacman -Q
     elif command -v apk >/dev/null; then apk info -v
@@ -192,6 +195,39 @@ package_list() {
     elif command -v nix-store >/dev/null; then nix-store -qR /run/current-system
     else echo "no package manager known"
     fi 2>/dev/null | LC_ALL=C sort
+}
+
+# GRUB's core image names its prefix by (lvmid/VG-UUID/LV-UUID) when
+# /boot/grub is on an LV (Gentoo's, docs/design/gentoo.md), and bko-holt's
+# grub-install puts the restored LV's in.  One EMBED line per id per EFI
+# binary on a mounted vfat filesystem (not the tree's binds), then GRUBLV:
+# lvmid/VG-UUID/LV-UUID and VG/LV of the LV holding /boot/grub, or "-".
+# HoltTest1's ht1.sh checks the same.
+lvmid_record() {
+    local m f id d l
+    findmnt -rn -t vfat -o TARGET | while read -r m; do
+        m=$(printf '%b' "$m")
+        [[ $m == "$TREE" || $m == "$TREE"/* ]] && continue
+        find "$m" -xdev -type f -iname '*.efi'
+    done | LC_ALL=C sort -u | while read -r f; do
+        for id in $(grep -a -o 'lvmid/[0-9A-Za-z-]*/[0-9A-Za-z-]*' "$f" | LC_ALL=C sort -u); do echo "EMBED $f $id"; done
+    done
+    d=$(findmnt -n -o SOURCE --target /boot/grub 2>/dev/null)
+    l=
+    if [[ -n $d ]] && command -v lvs >/dev/null; then
+        l=$(lvs --noheadings -o vg_uuid,lv_uuid,vg_name,lv_name "$d" 2>/dev/null | awk 'NF == 4 { print "lvmid/" $1 "/" $2 " " $3 "/" $4 }')
+    fi
+    echo "GRUBLV ${l:--}"
+}
+
+# lvmid_ok RECORD: lvmid_record's lines name an LV for /boot/grub, and every
+# id an EFI binary embeds is that LV's.
+lvmid_ok() {
+    local want
+    cat "$1"
+    want=$(awk '$1 == "GRUBLV" { print $2 }' "$1")
+    grep -q '^EMBED ' "$1" && [[ -n $want && $want != - ]] &&
+        ! awk -v w="$want" '$1 == "EMBED" && $3 != w { bad = 1 } END { exit !bad }' "$1"
 }
 
 swap_names() { swapon --show=NAME --noheadings 2>/dev/null | { grep -v zram || true; } | LC_ALL=C sort; }

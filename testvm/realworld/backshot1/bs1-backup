@@ -124,6 +124,8 @@ lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL,UUID,PARTUUID,MOUNTPOINTS,MODEL,SERIAL
 sfdisk -d "/dev/$disk" >"$B/sfdisk.txt" 2>&1
 cp /etc/fstab "$B/fstab" 2>/dev/null
 swap_names >"$B/swap-names.txt"
+lvmid_record >"$B/lvmid.txt" 2>&1
+grep -q '^EMBED ' "$B/lvmid.txt" && say "GRUB embeds an lvmid: $(awk '$1 == "EMBED" { print $2 " " $3 }' "$B/lvmid.txt" | tr '\n' ' ')"
 failed_units >"$B/failed-units.txt"
 must python3 "$HERE/bs1-manifest" "$TREE" "$B/manifest.tsv"
 if is_ostree; then

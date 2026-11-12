@@ -47,7 +47,7 @@ echo "== $distro, under $init"
 # Artix packages each service's init script apart, per init system.
 with_script() { if [[ $distro == artix ]]; then echo "$1 $1-$init"; else echo "$1"; fi; }
 
-pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS CHIMERA, each one or more names
+pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS CHIMERA GENTOO, each one or more names
     # An ostree system's /usr is its image's, read-only: nothing is installed
     # here.  Everything this installs is something BackShot1 needs, so it
     # stops and names it (Fedora's names: Bazzite, Silverblue and Kinoite
@@ -58,8 +58,13 @@ pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS CH
         echo "bs1-adopt: layer it with \"rpm-ostree install $2\", reboot, and run bs1-adopt again." >&2
         return 1
     fi
+    # Gentoo first, by os-release: dpkg, rpm or apk may be emerged there as
+    # tools.  Binary packages from its binhost, as the install has them;
+    # --noreplace leaves one already installed alone, --ask=n stops an
+    # EMERGE_DEFAULT_OPTS --ask from waiting for an answer.
     # shellcheck disable=SC2086
-    if command -v apt-get >/dev/null; then
+    if [[ $distro == gentoo ]]; then emerge --ask=n --getbinpkg --noreplace $9
+    elif command -v apt-get >/dev/null; then
         export DEBIAN_FRONTEND=noninteractive
         apt-get install -y $1 || { apt-get update && apt-get install -y $1; }
     elif command -v dnf >/dev/null; then dnf install -y $2
@@ -166,19 +171,24 @@ set_hostname() {
 
 install_tools() {
     command -v sshd >/dev/null || [[ -x /usr/sbin/sshd ]] ||
-        pkg_install openssh-server openssh-server openssh "$(with_script openssh)" openssh openssh openssh-server openssh
+        pkg_install openssh-server openssh-server openssh "$(with_script openssh)" openssh openssh openssh-server openssh net-misc/openssh
     # BusyBox's df, umount and blkid lack options the scripts use, and it has no
-    # findmnt, lsblk or sfdisk.  Alpine's names; Chimera has no BusyBox.
-    if [[ $distro != chimera ]] && command -v apk >/dev/null; then apk_add coreutils findmnt lsblk blkid sfdisk mount umount util-linux-misc; fi
+    # findmnt, lsblk or sfdisk.  Alpine's names; Chimera has no BusyBox, and
+    # an apk on Gentoo is a tool, not its package manager.
+    if [[ $distro != chimera && $distro != gentoo ]] && command -v apk >/dev/null; then apk_add coreutils findmnt lsblk blkid sfdisk mount umount util-linux-misc; fi
     # Chimera's python package gives the python3 command; it has no python3 package.
-    command -v python3 >/dev/null || pkg_install python3 python3 python3 python python3 python3 python python
+    command -v python3 >/dev/null || pkg_install python3 python3 python3 python python3 python3 python python dev-lang/python
     if ! command -v findmnt >/dev/null || ! command -v lsblk >/dev/null; then
-        pkg_install util-linux util-linux util-linux util-linux util-linux-misc util-linux util-linux util-linux
+        pkg_install util-linux util-linux util-linux util-linux util-linux-misc util-linux util-linux util-linux sys-apps/util-linux
     fi
     # bs1-to-stick's BootNext needs it, and a Chimera install with systemd-boot
-    # (bootctl) can lack it.  The other systems' rehearsals all had it.
-    if [[ $distro == chimera && -d /sys/firmware/efi ]] && ! command -v efibootmgr >/dev/null; then
-        apk_add efibootmgr
+    # (bootctl) can lack it, as can a Gentoo one (it is no part of @system).
+    # The other systems' rehearsals all had it.
+    if [[ -d /sys/firmware/efi ]] && ! command -v efibootmgr >/dev/null; then
+        case $distro in
+            chimera) apk_add efibootmgr ;;
+            gentoo) emerge --ask=n --getbinpkg --noreplace sys-boot/efibootmgr ;;
+        esac
     fi
 }
 
@@ -201,7 +211,7 @@ allow_root_key_login() {
 
 start_mdns() {
     command -v avahi-daemon >/dev/null ||
-        pkg_install avahi-daemon avahi avahi "$(with_script avahi)" "avahi dbus" "avahi dbus" avahi avahi
+        pkg_install avahi-daemon avahi avahi "$(with_script avahi)" "avahi dbus" "avahi dbus" avahi avahi "net-dns/avahi sys-apps/dbus"
     if [[ $init == s6 ]]; then
         s6 repository sync
         s6 set enable dbus

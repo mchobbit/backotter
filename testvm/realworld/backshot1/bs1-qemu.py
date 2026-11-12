@@ -11,6 +11,7 @@ bko-holt and rustic-bko.  Three boots, all over SSH with the guest's key:
   rescue    the stick, its key added by add-ssh-key.sh: wrong serial refused,
             --plan-only changes nothing, then bs1-restore
   restored  the internal disk and the drive, with the NVRAM the run left: bs1-verify
+            (which checks GRUB's embedded lvmid where it has one: gentoo)
 
 The internal disk is the guest's own size.  The backup is checked to be named
 /mnt/bs1-src (the tree is mounted elsewhere: --as-path) and to keep a file's
@@ -379,7 +380,7 @@ def main():
             check(host_key_is_pinned(), "the restored system presents the fixed host key")
             # Started by its boot this time, so it's enabled, not just running.
             check(mdns_up(), "avahi-daemon comes up at boot")
-            rc, out = root.show(f"mkdir -p /mnt/bs1-backup && mount LABEL={LABEL} /mnt/bs1-backup && bash /mnt/bs1-backup/backshot1/bs1-verify {run}; rc=$?; head -n 40 $(ls -d {restores}/*[0-9] | tail -n 1)/compare.txt; exit $rc")
+            rc, out = root.show(f"mkdir -p /mnt/bs1-backup && mount LABEL={LABEL} /mnt/bs1-backup && bash /mnt/bs1-backup/backshot1/bs1-verify {run}; rc=$?; a=$(ls -d {restores}/*[0-9] | tail -n 1); head -n 40 $a/compare.txt; grep -h . $a/lvmid-after.txt 2>/dev/null; exit $rc")
             check(rc == 0, "bs1-verify passes")
             if rc != 0:
                 root.show(f"tail -n 60 $(ls -d {restores}/*[0-9] | tail -n 1)/verify.log")

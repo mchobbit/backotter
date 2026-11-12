@@ -10,6 +10,15 @@
 --- PASS: TestRestorerFATAttributes (0.08s)
 === RUN   TestRestorerXFSOptions
 --- PASS: TestRestorerXFSOptions (0.30s)
+=== RUN   TestRestorerXFSOptionsOverExisting
+--- PASS: TestRestorerXFSOptionsOverExisting (0.35s)
+=== RUN   TestRestorerXFSOptionsInterrupted
+--- PASS: TestRestorerXFSOptionsInterrupted (0.52s)
+=== RUN   TestRestorerXFSOptionsDeleteFails
+    restorer_linux_test.go:302: error /dir/extra: remove dst/dir/extra: operation not permitted
+--- PASS: TestRestorerXFSOptionsDeleteFails (0.33s)
+=== RUN   TestRestorerXFSOptionsTarget
+--- PASS: TestRestorerXFSOptionsTarget (0.31s)
 === RUN   TestRestorerTargetNodeMountedBelow
 === RUN   TestRestorerTargetNodeMountedBelow/ext4_lost+found
 === PAUSE TestRestorerTargetNodeMountedBelow/ext4_lost+found

@@ -1,5 +1,7 @@
 === RUN   TestBcachefsDirOptionsInherited
 --- PASS: TestBcachefsDirOptionsInherited (0.41s)
+=== RUN   TestClearDirXFSOptions
+--- PASS: TestClearDirXFSOptions (0.31s)
 === RUN   TestClearRestrictingFlagsFile
 --- PASS: TestClearRestrictingFlagsFile (0.00s)
 === RUN   TestFATAttributesOnVfat
@@ -17,4 +19,6 @@
 --- PASS: TestRestoreLeavesSELinuxLabel (0.00s)
 === RUN   TestXFSOptionsOnXFS
 --- PASS: TestXFSOptionsOnXFS (0.33s)
+=== RUN   TestXFSOptionsRtinheritRefused
+--- PASS: TestXFSOptionsRtinheritRefused (0.29s)
 PASS

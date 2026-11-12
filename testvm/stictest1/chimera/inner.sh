@@ -233,7 +233,7 @@ for fs in xfs ext4; do
     python3 $C/fsmeta.py record $P $W/src-$fs.json
     # Sockets are skipped by design (both tools): not expected back.
     python3 -c 'import json,sys; d=json.load(open(sys.argv[1])); d.pop("socket",None); json.dump(d,open(sys.argv[1],"w"))' $W/src-$fs.json
-    [ $fs = xfs ] && { xfsx $P >$W/src-$fs.xfsx; xfsx $P xfs-realtime-inherit >$W/src-$fs.rtx; rtkept= rtlost= rtback=; }
+    [ $fs = xfs ] && { xfsx $P >$W/src-$fs.xfsx; xfsx $P xfs-realtime-inherit >$W/src-$fs.rtx; rtkept= rtlost=; }
     anc_src=$(dirmeta /mnt/$S/anc1 /mnt/$S/anc1/anc2)
     for t in R U; do
         b=$R; [ $t = U ] && b=$U
@@ -310,25 +310,15 @@ for fs in xfs ext4; do
                 pass "restore-over-immutable-$fs-$d" "changed +i file (contents, a user xattr), +i dir (a new file), +i+d file (mode), +a file (a line more) back as backed up: $(echo "$cmpout" | oneline); exit 0"
             else fail "restore-over-immutable-$fs-$d" "rc=$rc; $(echo "$cmpout" | oneline); $(msgs $W/ov-$fs-$d.log)"; fi
         fi
-        if [ $fs = xfs ] && [ $d = RR ]; then
-            # Would the restored directory take rtinherit back?  (xfs-rtinherit)
-            xfs_io -c "chattr +t" /mnt/$D$P/xfs-realtime-inherit >$W/rtback.log 2>&1
-            rtback="chattr +t on the RR restore's directory: exit $?, $(xfsx /mnt/$D$P xfs-realtime-inherit | oneline) $(oneline 200 <$W/rtback.log)"
-        fi
         chattr -R -i -a /mnt/$D 2>/dev/null; rmimg $D
     done
     if [ $fs = xfs ]; then
         # rtinherit (t, 0x100) goes on a directory of an XFS with no realtime
-        # device, and would go back on a restored one: only realtime on a
-        # file needs the device.  Neither tool stores it: BACKOTTER.md's
-        # linux.xfs_options leaves out "realtime and its inheritance" by
-        # design (its reason, "which need a realtime device", holds for
-        # realtime only).  A tool exclusion, not an OS or FS limit: LIMIT
-        # until the user rules on keeping it.
+        # device: only realtime on a file needs the device.  Both tools keep
+        # it on directories since restic 0.19.1+backotter.6 and rustic_core
+        # 0.13.0+backotter.9 (the user's ruling, 2026-11-12).
         src_rt=$(oneline <$W/src-$fs.rtx)
         if [ -z "$rtlost" ]; then pass "xfs-rtinherit" "source: $src_rt; kept in$rtkept"
-        elif [ -z "$rtkept" ] && grep -q 'xflags=0x[0-9a-f]*[13579bdf][0-9a-f][0-9a-f] ' $W/src-$fs.rtx; then
-            limit "xfs-rtinherit" "tool exclusion pending the user's ruling, not an FS limit: the kernel sets rtinherit (t, 0x100) on a directory of an XFS with no realtime device (source: $src_rt) and would on a restored one, but BACKOTTER.md's linux.xfs_options leaves realtime and its inheritance out by design, so none of the 4 directions restores it:$rtlost; $rtback"
         else fail "xfs-rtinherit" "source: $src_rt; kept in:${rtkept:- none}; lost in$rtlost"; fi
     fi
     chattr -R -i -a /mnt/$S 2>/dev/null; rmimg $S

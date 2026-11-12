@@ -45,10 +45,6 @@ BIN=$(cd "$1" && pwd) PORT=$2 PREFIX=$3 FILTER=${4:-.}
 W=/mnt/bko-ram/$PREFIX/arch-check
 LOGS=${STC_LOGS:-$WORK/stictest1/$GUEST/logs}/$(date +%Y%m%d-%H%M%S)
 mkdir -p "$LOGS"; sudo rm -rf "$W"; mkdir -p "$W/m"
-case $(hostname -s) in
-    chopin) SLOTMAX=3 SLOTRANGE=2700-2799 ;;
-    *) SLOTMAX=3 SLOTRANGE=2900-2999 ;;
-esac
 cleanup() {
     for m in "$W"/m/*; do mountpoint -q "$m" && sudo umount "$m"; done
     sudo rm -rf "$W"; rmdir "$(dirname "$W")" 2>/dev/null
@@ -58,7 +54,7 @@ echo "check.sh $GUEST: bin $BIN ($(cat "$BIN/restic-commit" 2>/dev/null | head -
 
 # --- guest phase, under a slot and a reservation ---------------------------------------
 . "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
-slot_take $SLOTMAX $SLOTRANGE
+slot_take 3 "$(slot_range_here)"
 HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 6 "$here/check.sh" --guest-phase "$BIN" "$PORT" "$W" "$LOGS" \
     >"$LOGS/guest-phase.log" 2>&1
 gp=$?

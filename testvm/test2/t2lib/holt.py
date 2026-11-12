@@ -548,10 +548,10 @@ class Runner:
             pass
 
     def all_hosts(self):
-        """--hosts first, then the other test hosts (plan.HOSTS)."""
+        """--hosts first, then the other default test hosts (plan.DEFAULT_HOSTS)."""
         try:
             from . import plan as planmod
-            every = list(getattr(planmod, "HOSTS", ()) or ())
+            every = list(getattr(planmod, "DEFAULT_HOSTS", ()) or ())
         except ImportError:
             every = []
         return self.hosts + [h for h in every if h not in self.hosts]

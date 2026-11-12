@@ -26,7 +26,7 @@ import threading
 import time
 
 from . import guest_judge as J
-from . import hostjob, hostrun, mac_root, rows_guest, tool_guest, utc_now
+from . import DEFAULT_HOSTS, hostjob, hostrun, mac_root, rows_guest, tool_guest, utc_now
 
 POLL_S = 15
 MAX_ATTEMPTS = 3
@@ -1432,4 +1432,5 @@ def hostjob_checkout():
 
 
 def hostjob_hosts():
-    return ("chopin", "cinqcent")
+    """The fleet vm-update keeps alike (its ALL_HOSTS): the default hosts."""
+    return DEFAULT_HOSTS

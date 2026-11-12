@@ -63,7 +63,8 @@ update (NetBSD: a release's base sets) is reported and left alone.
                 be at one generation)
   --hosts HOST,...
                 the other hosts (default: chopin and cinqcent, but this
-                one); --hosts '' updates only this host's copy, after
+                one; copland.local only when named, as it has no guests
+                yet); --hosts '' updates only this host's copy, after
                 which the others no longer match it
   --jobs N      update N guests at once (default 3); each takes a 2 GB VM,
                 its overlay and a free SSH port, and waits for the memory it
@@ -176,6 +177,9 @@ WORK = Path(os.environ["BKO_WORK"]).expanduser() if os.environ.get("BKO_WORK") e
 VMS = WORK / "vms"
 # The other hosts' vms/, relative to their home.
 REMOTE_VMS = (os.environ.get("VM_UPDATE_REMOTE_VMS") or "backotter-work/vms").rstrip("/")
+# The fleet: every host here must hold every guest updated (step 1 fails on a
+# host without vms/GUEST), so copland, with no guests yet, is not in it; name
+# it with --hosts once it holds a copy.  ALL_HOSTS[0] holds the fleet lock.
 ALL_HOSTS = ["chopin.local", "cinqcent.local"]
 SNAPSHOT = "fresh-install"
 STATE_FILE = "image-state"

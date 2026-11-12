@@ -33,7 +33,7 @@ if [[ ${1:-} != --guest && -z ${CHECK_INNER:-} ]]; then
     # Run the whole check inside a guest slot and a reservation.
     # shellcheck source=/dev/null
     source "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
-    case $(hostname -s) in chopin) slot_take 3 2700-2799 ;; *) slot_take 3 2900-2999 ;; esac
+    slot_take 3 "$(slot_range_here)"
     cd "$WORK" && HOT_C=90 CHECK_INNER=1 CHECK_LOGS=$LOGS ./cmp-run.sh --reserve 3 6 \
         timeout 900 "$here/check.sh" "$BIN" "$PORT" "$PREFIX" "$FILTER" >"$LOGS/run.log" 2>&1
     st=$?

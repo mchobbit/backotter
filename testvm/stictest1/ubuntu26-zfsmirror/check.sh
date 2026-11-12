@@ -31,10 +31,10 @@
 #   BIN_DIR  holds restic-bko and rustic-bko for Linux (roundN/bin/linux)
 # Prints PASS/FAIL/LIMIT lines, writes results.json into the log dir
 # (~/backotter-work/stictest1/ubuntu26-zfsmirror/logs/PREFIX-TIME/), exit 0 if
-# nothing FAILs.  Takes a guest slot (Chopin 3 on 2700-2799, Cinqcent 3 on
-# 2900-2999) and cmp-run.sh --reserve 23 MEM itself (MEM: the guest's MEMORY,
-# MB, default 4096, in GiB + 0.5): 23 GiB of RAM disk for rpool's overlays and
-# the spare, an estimate; ramdisk-peak-kib in the log dir is the run's peak.
+# nothing FAILs.  Takes a guest slot (3 on slot_range_here: Chopin 2700-2799,
+# Copland 2800-2899, Cinqcent 2900-2999) and cmp-run.sh --reserve 23 MEM
+# itself (MEM: the guest's MEMORY, MB, default 4096, in GiB + 0.5): 23 GiB of
+# RAM disk for rpool's overlays and the spare, an estimate; ramdisk-peak-kib in the log dir is the run's peak.
 set -uo pipefail
 G=ubuntu26-zfsmirror self=$(realpath "$0")
 WORK=${BKO_WORK:-$HOME/backotter-work}
@@ -49,10 +49,7 @@ BIN=$(realpath "$1") PORT=$2 PREFIX=$3 FILTER=${4:-}
 if [[ -z ${STICK_INNER:-} ]]; then
     # shellcheck source=/dev/null
     source "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
-    case $(hostname -s) in
-        chopin) slot_take 3 2700-2799 ;;
-        *) slot_take 3 2900-2999 ;;
-    esac
+    slot_take 3 "$(slot_range_here)"
     STICK_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 23 "$(awk -v m="${MEMORY:-4096}" 'BEGIN { print m / 1024 + 0.5 }')" "$self" "$@"; rc=$?
     slot_give
     exit $rc

@@ -64,7 +64,7 @@ import sys
 import threading
 import time
 
-from . import utc_now
+from . import DEFAULT_HOSTS, gate_hosts, utc_now
 from .hostjob import (  # noqa: F401 - host_job and its helpers, as gate.X too
     CMP_RUN, FETCH_SCRIPT, POLL_S, UNKNOWN_MAX, HostIO, JobFailure, _q, guards_of, host_job, job_poll_cmd, job_times,
     layer_dir, tripped)
@@ -82,7 +82,6 @@ REPO = os.path.dirname(os.path.dirname(TEST2))
 LAYERS_PATH = "testvm/test2/gate/layers.json"
 BASELINE_PATH = "testvm/test2/gate/baseline.json"
 ROOT_LIST_PATH = "testvm/test2/gate/restic-root-tests.txt"
-HOSTS = ("chopin", "cinqcent")
 FORKS = ("restic", "rustic_core", "rustic")
 NOT_PASSED = ("FAIL", "FLAKY-FAIL", "HARNESS", "LOST")
 LOCK_POLL_S = 10
@@ -125,12 +124,13 @@ def per_host(entry):
     return bool(entry.get("per_host"))
 
 
-def universe(layers=None, hosts=HOSTS):
-    """Every gate cell: gate:LAYER, and gate:LAYER@HOST for the per-host layers."""
+def universe(layers=None, hosts=DEFAULT_HOSTS):
+    """Every gate cell: gate:LAYER, and gate:LAYER@HOST for the per-host layers, HOST each
+    of gate_hosts(HOSTS) (the plan's universe, plan.Planner.universe, does the same)."""
     layers = layers if layers is not None else load_layers()
     out = []
     for n, e in layer_entries(layers):
-        out += [f"gate:{n}@{h}" for h in hosts] if per_host(e) else [f"gate:{n}"]
+        out += [f"gate:{n}@{h}" for h in gate_hosts(hosts)] if per_host(e) else [f"gate:{n}"]
     return out
 
 
@@ -195,7 +195,7 @@ class RunEnv:
         w = w or (getattr(plan, "word", None) if plan is not None else None)
         self.word = getattr(w, "text", None) or (w if isinstance(w, str) else "GateTest2")
         self.family = getattr(self.rs, "family", None) or "gate"
-        self.hosts = list(getattr(ctx, "hosts", None) or HOSTS)
+        self.hosts = list(getattr(ctx, "hosts", None) or DEFAULT_HOSTS)
         self.facts = dict(getattr(ctx, "facts", None) or {})
         self.mac_root = getattr(self.rs, "mac_root", None) or mac_root()
         hr = getattr(self.rs, "host_root", None) or os.environ.get("T2_HOST_ROOT") or "/bkoscratch/test2"

@@ -18,10 +18,9 @@ WORK=$HOME/backotter-work
 [[ $# -ge 3 ]] || { echo "usage: check.sh BIN_DIR PORT PREFIX [NEED_FILTER]" >&2; exit 2; }
 BIN=$(realpath "$1") PORT=$2 PREFIX=$3 FILTER=${4:-}
 if [[ -z ${BKST_INNER:-} ]]; then
-    case $(hostname -s) in chopin) slots="3 2700-2799" ;; *) slots="3 2900-2999" ;; esac
     # shellcheck source=/dev/null
     . "${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh"
-    slot_take $slots
+    slot_take 3 "$(slot_range_here)"
     BKST_INNER=1 HOT_C=90 "$WORK/cmp-run.sh" --reserve 3 6 "$here/check.sh" "$@"
     rc=$?
     slot_give

@@ -70,8 +70,9 @@ unless `BKO_TESTVM` names another testvm/ (below).
 - `BIN_DIR` holds restic-bko and rustic-bko for the guest's OS, for example
   `~/backotter-work/round22/bin/linux` (or freebsd, netbsd, openbsd, omnios,
   dragonfly, haiku).
-- `PORT` is a free SSH port in your own range: Chopin 2700-2799, Cinqcent
-  2900-2999.
+- `PORT` is a free SSH port in your own range: Chopin 2700-2799, Copland
+  2800-2899, Cinqcent 2900-2999 (the guest slot's range, guest-slot.sh's
+  `slot_range_here`).
 - `PREFIX` names your scratch: `/mnt/bko-ram/PREFIX`. Make it a plain name:
   letters, digits, `.`, `_` and `-`, starting with a letter or digit.
 

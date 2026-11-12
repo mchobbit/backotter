@@ -1386,7 +1386,7 @@ class Conductor:
         return out
 
     def hosts_missing(self):
-        """A sweep is everything, fresh: on every host (plan.HOSTS), each with facts.  A --hosts
+        """A sweep is everything, fresh: on every default host (DEFAULT_HOSTS), each with facts.  A --hosts
         subset, or a host with no facts, leaves its pinned cells not runnable rather than due, so
         "every due cell has a decisive row" alone would call it complete.  Those cells, and every
         other cell a host's absence kept from running, are named too (a cell that is not runnable
@@ -1394,7 +1394,7 @@ class Conductor:
         lines' business, not the sweep's)."""
         out = []
         facts = getattr(self.ctx, "facts", None) or {}
-        absent = [h for h in planmod.HOSTS if h not in self.hosts]
+        absent = [h for h in planmod.DEFAULT_HOSTS if h not in self.hosts]
         if absent:
             out.append(f"ran on {', '.join(self.hosts)} only: {', '.join(absent)} not swept (--hosts)")
         blind = [h for h in self.hosts if h not in facts]

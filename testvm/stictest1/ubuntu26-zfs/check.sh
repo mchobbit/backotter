@@ -37,10 +37,7 @@ HERE=$(dirname "$SELF") STC_LOGS=${STC_LOGS:-$WORK/stictest1/$GUEST/logs}
 
 if [[ -z ${CHECK_RESERVED:-} ]]; then
     . ${BKO_TESTVM:-$WORK/testvm}/compare/guest-slot.sh
-    case $(hostname -s) in
-        chopin) slot_take 3 2700-2799 ;;
-        *) slot_take 3 2900-2999 ;;
-    esac
+    slot_take 3 "$(slot_range_here)"
     CHECK_RESERVED=1 HOT_C=90 $WORK/cmp-run.sh --reserve 13 6 "$SELF" "$BIN" "$PORT" "$PREFIX" "$FILTER"
     rc=$?
     slot_give

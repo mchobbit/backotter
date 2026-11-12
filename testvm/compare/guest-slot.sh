@@ -11,8 +11,19 @@
 #                         (QEMU's environment says it holds a slot)
 #   slot_give             let it go
 #   slot_count RANGE      held slots and slotless QEMU, now
+#   slot_range_here [H]   our guests' port range on host H (default this
+#                         one): chopin 2700-2799, copland 2800-2899, any
+#                         other (cinqcent) 2900-2999
 #
 # Needs: flock, pgrep, /proc.
+
+slot_range_here() {
+    case ${1:-$(hostname -s 2>/dev/null || hostname)} in
+        chopin*) echo 2700-2799 ;;
+        copland*) echo 2800-2899 ;;
+        *) echo 2900-2999 ;;
+    esac
+}
 
 # QEMU on RANGE (lo-hi) with no BKO_GUEST_SLOT: guests that took no slot.
 slot_others() {

@@ -347,6 +347,30 @@ else
     echo "unknown init"
 fi'
 bootstate() { sshk "$1" "$BOOTSTATE"; }
+# GRUB's core image names its prefix by (lvmid/VG-UUID/LV-UUID) when
+# /boot/grub is on an LV (Gentoo: grub-install re-embeds it on load).  One
+# EMBED line per EFI binary on a mounted vfat file system per id it embeds,
+# then GRUBLV: the VG and LV UUIDs of the LV holding /boot/grub (none: "-"),
+# and its VG/LV name.
+LVMID='for m in $(findmnt -rn -t vfat -o TARGET); do find "$m" -xdev -type f -iname "*.efi"; done | sort -u | while read -r f; do
+    for id in $(grep -a -o "lvmid/[0-9A-Za-z-]*/[0-9A-Za-z-]*" "$f" | sort -u); do echo "EMBED $f $id"; done
+done
+d=$(findmnt -n -o SOURCE --target /boot/grub 2>/dev/null)
+l=$(lvs --noheadings -o vg_uuid,lv_uuid,vg_name,lv_name "$d" 2>/dev/null | awk "NF == 4 {print \"lvmid/\" \$1 \"/\" \$2 \" \" \$3 \"/\" \$4}")
+echo "GRUBLV ${l:--}"'
+lvmid_check() {  # the restored guest's: every embedded lvmid is /boot/grub's LV
+    sshk "$1" "$LVMID" > "$R/logs/restored-lvmid.txt" 2>&1
+    grep -q '^EMBED ' "$R/logs/restored-lvmid.txt" || return 0
+    local want got bad
+    want=$(awk '/^GRUBLV / {print $2}' "$R/logs/restored-lvmid.txt")
+    got=$(awk '/^EMBED / {print $3}' "$R/logs/restored-lvmid.txt" | sort -u)
+    bad=$(awk -v w="$want" '/^EMBED / && $3 != w {print $2 " " $3}' "$R/logs/restored-lvmid.txt")
+    if [[ -z $bad && -n $want && $want != - ]]; then
+        ok "GRUB's embedded lvmid is /boot/grub's LV: $(awk '/^GRUBLV / {print $3 " " $2}' "$R/logs/restored-lvmid.txt"), in $(grep -c '^EMBED ' "$R/logs/restored-lvmid.txt") EFI binary(ies): $(awk '/^EMBED / {print $2}' "$R/logs/restored-lvmid.txt" | tr '\n' ' ')$(grep -qF -- "$want" "$R/logs/source-lvmid.txt" 2>/dev/null && echo '(the source'"'"'s UUIDs)')"
+    else
+        bad "GRUB's embedded lvmid: /boot/grub's LV is ${want:--}, embedded $(echo "$got" | tr '\n' ' ')(logs/restored-lvmid.txt)"
+    fi
+}
 # The degraded variant: the arrays may be degraded (and must be, see below).
 [[ $VARIANT == degraded ]] && HEALTH="DEGRADED=1; $HEALTH"
 # nearfull's fill, run in the source guest: random files under /var/tmp until
@@ -515,6 +539,7 @@ phase_source() {
         *) bad "source: no answer over SSH to whether it is ostree"; vm_down "$gkey"; return ;;
     esac
     bootstate "$gkey" > "$R/logs/source-bootstate.txt"
+    sshk "$gkey" "$LVMID" > "$R/logs/source-lvmid.txt" 2>&1
     sshk "$gkey" "$HEALTH" 2>&1 | grep -v 'bko-holt/load.log' > "$R/logs/source-health.txt"
     scpk "$gkey" "$S/bko-holt" root@127.0.0.1:/root/bko-holt
     if sshk "$gkey" /root/bko-holt dump > "$R/dumps/src.json" 2> "$R/logs/source-dump.err"; then
@@ -850,6 +875,7 @@ phase_verify() {
     else
         bad "boot state: source $(tr '\n' ' ' < "$R/logs/source-bootstate.txt"), restored $(tr '\n' ' ' < "$R/logs/restored-bootstate.txt")"
     fi
+    lvmid_check "$gkey"
     # A check that failed on the source too isn't the restore's doing.
     sshk "$gkey" "$HEALTH" > "$R/logs/restored-health.txt" 2>&1
     local worse; worse=$(comm -13 <(grep '^FAIL' "$R/logs/source-health.txt" 2>/dev/null | sort) <(grep '^FAIL' "$R/logs/restored-health.txt" | sort))

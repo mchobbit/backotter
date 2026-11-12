@@ -185,6 +185,9 @@ BOOT_STAGE = [
     (r"^boot/grub2?(/|$)", _WRITTEN | {"missing"}, "grub-install and update-grub rewrite /boot/grub (Fedora's /boot/grub2)"),
     (r"^boot/loader(/entries(/[^/]+)?)?$", _WRITTEN, "grub2-mkconfig rewrites Fedora's BLS entries' options lines"),
     (r"^boot/(initrd\.img-[^/]+|initramfs-[^/]+|initrd-[^/]+)$", _WRITTEN, "the boot stage rebuilds every initramfs (Alpine's have no .img; openSUSE's are initrd-VERSION)"),
+    # Gentoo: load runs dracut itself, whose images are 0600 (its umask
+    # 077); installkernel had left the source's 0644 (gentoo, G5's g5-1).
+    (r"^boot/initramfs-[^/]*-gentoo[^/]*\.img$", {"mode"}, "dracut makes Gentoo's initramfs 0600 where installkernel had left it 0644"),
     (r"^boot$", {"mtime (dirs)", "atime (dirs)"}, "update-initramfs replaces the initrds"),
     (r"^var/log/bko-holt(/|$)", _WRITTEN, "load's own log, copied in by the boot stage"),
     (r"^etc/zfs/zpool\.cache$", _WRITTEN, "the boot stage writes the new pool's zpool.cache"),
@@ -201,6 +204,8 @@ BOOT_STAGE = [
     (r"^etc/kernel/entry-token$", _WRITTEN, "bootctl install writes the entry token (all it writes in /etc/kernel; install.conf it only reads)"),
     (r"^etc/kernel$", {"mtime (dirs)", "atime (dirs)"}, "bootctl install replaces etc/kernel/entry-token"),
     (r"^efi/EFI/endeavouros(/|$)", _WRITTEN, "grub-install writes the loader in an ESP at /efi (EndeavourOS with GRUB)"),
+    (r"^efi/EFI/gentoo(/|$)", _WRITTEN, "grub-install writes the loader in an ESP at /efi (Gentoo)"),
+    (r"^boot/EFI/gentoo(/|$)", _WRITTEN, "grub-install writes the loader in an ESP at /boot (Gentoo with systemd)"),
     (r"^(boot/)?efi/[0-9a-f]{32}/[^/]+/initrd$", _WRITTEN, "dracut --regenerate-all rebuilds a Type 1 entry's initrd, on the ESP under the machine id (EndeavourOS)"),
     (r"^(boot/)?efi/[0-9a-f]{32}/[^/]+$", {"mtime (dirs)", "atime (dirs)"}, "dracut replaces the initrd in its directory"),
     (r"^(tmp|var/tmp)$", {"mtime (dirs)", "atime (dirs)"}, "update-initramfs and update-grub work in temporary directories"),

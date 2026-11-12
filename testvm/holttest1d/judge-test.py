@@ -916,5 +916,97 @@ class FsEspAtBoot(unittest.TestCase):
         self.assertNotIn("in an ESP at /boot", out)
 
 
+class FsGentoo(unittest.TestCase):
+    """judge.py fs over what load's boot stage does on Gentoo (G5):
+    grub-install writes EFI/gentoo/grubx64.efi in an ESP at /efi (gentoo)
+    or at /boot (gentoo-systemd), dracut rebuilds /boot/initramfs-K.img and
+    grub-mkconfig rewrites /boot/grub."""
+
+    K = "6.18.63-gentoo-dist-bin"
+    SRC = {"boot": meta("dir"), f"boot/initramfs-{K}.img": meta("file"), f"boot/vmlinuz-{K}": meta("file"),
+           f"boot/config-{K}": meta("file"), "boot/grub": meta("dir"), "boot/grub/grub.cfg": meta("file"),
+           "efi": meta("dir"), "efi/EFI": meta("dir"), "efi/EFI/gentoo": meta("dir"),
+           "efi/EFI/gentoo/grubx64.efi": meta("file"), "efi/EFI/BOOT": meta("dir"),
+           "efi/EFI/BOOT/BOOTX64.EFI": meta("file"), "efi/NvVars": meta("file"),
+           "etc/kernel": meta("dir"), "etc/kernel/install.conf": meta("file")}
+    ESP_AT_BOOT = {"boot": meta("dir"), "boot/EFI": meta("dir"), "boot/EFI/gentoo": meta("dir"),
+                   "boot/EFI/gentoo/grubx64.efi": meta("file"), "boot/EFI/BOOT": meta("dir"),
+                   "boot/EFI/BOOT/BOOTX64.EFI": meta("file"), f"boot/kernel-{K}": meta("file"),
+                   f"boot/initramfs-{K}.img": meta("file"), "boot/grub": meta("dir"),
+                   "boot/grub/grub.cfg": meta("file")}
+
+    judge = Fs.judge
+
+    def changed(self, src, changes):
+        a = copy.deepcopy(src)
+        for p, kw in changes.items():
+            a[p].update(kw)
+        return self.judge(src, a)
+
+    def test_the_boot_stage_at_efi(self):
+        rc, out = self.changed(self.SRC, {
+            "efi/EFI/gentoo/grubx64.efi": {"sha256": "cd", "mtime": 2}, "efi/EFI/gentoo": {"mtime": 2},
+            f"boot/initramfs-{self.K}.img": {"sha256": "cd", "mtime": 2}, "boot/grub/grub.cfg": {"sha256": "cd"},
+            "boot": {"mtime": 2}})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn("grub-install writes the loader in an ESP at /efi (Gentoo)): 3: efi/EFI/gentoo, efi/EFI/gentoo/grubx64.efi, efi/EFI/gentoo/grubx64.efi", out)
+
+    def test_the_boot_stage_with_the_esp_at_boot(self):
+        rc, out = self.changed(self.ESP_AT_BOOT, {
+            "boot/EFI/gentoo/grubx64.efi": {"sha256": "cd", "mtime": 2}, "boot/EFI/gentoo": {"mtime": 2},
+            f"boot/initramfs-{self.K}.img": {"sha256": "cd"}, "boot/grub/grub.cfg": {"sha256": "cd"}})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn("grub-install writes the loader in an ESP at /boot (Gentoo with systemd)): 3: boot/EFI/gentoo, boot/EFI/gentoo/grubx64.efi, boot/EFI/gentoo/grubx64.efi", out)
+
+    def test_the_rest_of_the_esp_and_boot_still_count(self):
+        """The kernel, its config, NvVars and install.conf aren't the boot
+        stage's.  (EFI/BOOT/BOOTX64.EFI, which load leaves alone without
+        --removable, is excused by bootctl's rules for AerynOS and Chimera,
+        whatever the system.)"""
+        rc, out = self.changed(self.SRC, {
+            f"boot/vmlinuz-{self.K}": {"sha256": "cd"}, f"boot/config-{self.K}": {"sha256": "cd"},
+            "efi/NvVars": {"sha256": "cd"}, "etc/kernel/install.conf": {"sha256": "cd"}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF content: 4: boot/config-{self.K}, boot/vmlinuz-{self.K}, efi/NvVars, etc/kernel/install.conf", out)
+        rc, out = self.changed(self.ESP_AT_BOOT, {f"boot/kernel-{self.K}": {"sha256": "cd"}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF content: 1: boot/kernel-{self.K}", out)
+
+    def test_dracut_makes_the_initramfs_0600(self):
+        """g5-1: load's dracut writes the image 0600, installkernel's was 0644."""
+        rc, out = self.changed(self.SRC, {f"boot/initramfs-{self.K}.img": {"sha256": "cd", "mode": 0o600}})
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"dracut makes Gentoo's initramfs 0600 where installkernel had left it 0644): 1: boot/initramfs-{self.K}.img", out)
+
+    def test_other_modes_still_count(self):
+        """Only a Gentoo kernel's initramfs; its kernel's mode, and another
+        distribution's initramfs, still count."""
+        src = dict(self.SRC, **{"boot/initramfs-linux.img": meta("file"), "boot/initramfs-6.17.1-300.fc44.x86_64.img": meta("file")})
+        rc, out = self.changed(src, {f"boot/vmlinuz-{self.K}": {"mode": 0o600}, "boot/initramfs-linux.img": {"mode": 0o600},
+                                     "boot/initramfs-6.17.1-300.fc44.x86_64.img": {"mode": 0o600}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF mode: 3: boot/initramfs-6.17.1-300.fc44.x86_64.img, boot/initramfs-linux.img, boot/vmlinuz-{self.K}", out)
+
+    def test_a_missing_loader_still_counts(self):
+        a = copy.deepcopy(self.SRC)
+        del a["efi/EFI/gentoo/grubx64.efi"]
+        rc, out = self.judge(self.SRC, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF missing: 1: efi/EFI/gentoo/grubx64.efi", out)
+
+    def test_other_distributions_loaders_get_no_gentoo_rule(self):
+        src = {"efi/EFI/gentoo-old": meta("dir"), "efi/EFI/gentoo-old/x": meta("file"),
+               "boot/EFI/gentoox": meta("dir")}
+        a = copy.deepcopy(src)
+        for p in a:
+            a[p].update(sha256="cd", mtime=2)
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF content: 1: efi/EFI/gentoo-old/x", out)
+        self.assertNotIn("(Gentoo", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

@@ -321,6 +321,50 @@ dracut 112, `installkernel` 70-r1 with USE=systemd), 2026-11-12:
   - Neither has an image-state yet (never really updated), and `ping` is
     setuid, with no file capability, as on the Thinkpad (G1's open item).
 
+## What G4 and G5 found
+
+2026-11-12, with rel6's restic-bko and rustic-bko (the shipped `bko-bin`)
+and bko-holt 7760c9e7c497 (395e643's holt/, built on Chopin):
+
+- **SticTest1** (`testvm/stictest1/gentoo`, `gentoo-systemd`): rocky10-lvm's
+  design, with chimera-uefi's `fatattr.py`; one `inner.sh`, `fixture.sh` and
+  `judge.py` for both, which read the layout from the guest (the ESP's mount
+  point, /home on XFS, LUKS under /). The scratch disk is laid out like the
+  guest's (GPT, ESPs of its size, gentoo's swap partition, the LVM PV,
+  gentoo-systemd's LUKS2 made with the guest's header parameters), with an
+  ext4 LV like /, gentoo's XFS LV like /home and an ESP like /efi or /boot
+  mounted inside the backed-up path. Runs `g4f` on both hosts: `gentoo` 35
+  PASS, 3 LIMIT, 0 FAIL (~270 s); `gentoo-systemd` 29, 3, 0 (~205 s). The
+  LIMITs (birth times, symlinks' atimes on relatime, whole-disk) are classed
+  in `limits.json`.
+- **The cross-file-system case** (`gentoo`): each tool's snapshot of the ext4
+  tree restored onto a stack whose / is XFS. Every need holds but what ext4
+  holds and XFS can't: the inode flags D, j and T (each tool warns "not
+  supported" and goes on); a character device 511:1048575, which XFS's
+  14/18-bit device numbers can't encode (restic says "ignoring error ...
+  mknod: invalid argument" and exits 1; rustic-bko a `[WARN]` and exits 0,
+  as without `--strict-exit`); and XFS's `trusted.SGI_ACL_*` twins of the
+  ACLs. The judge allows exactly those.
+- **Guest facts:** Gentoo's util-linux has no `setpriv` (USE=caps is off),
+  so the non-root run takes `setpriv.py`; `gentoo` has no
+  `/etc/lvm/backup` or `archive` until an LVM command runs on it (its VG was
+  made from the Arch ISO); `gentoo-systemd` has `/etc/runlevels` too, and no
+  xfsprogs (its work disk is ext4).
+- **HoltTest1 1G:** the first run, `g5-1` (Chopin), failed only fsmeta: the
+  boot stage's dracut writes `/boot/initramfs-K.img` 0600, where
+  installkernel had left it 0644. judge.py allows that mode on a Gentoo
+  kernel's initramfs (a name with `-gentoo`), with judge-test cases. Then
+  `gentoo` passed as `g5-3` (Cinqcent) and `g5-4` (Chopin), and
+  `gentoo-systemd` as `g5-2` (Cinqcent) and `g5-5` (Chopin): every load
+  stage, the boot alone, 0 fsmeta differences (393 and 391 paths from the
+  boot stage) and the dumps. ht1.sh now checks GRUB's embedded lvmid:
+  on `gentoo`, `EFI/gentoo/grubx64.efi` and `EFI/BOOT/BOOTX64.EFI` both name
+  the restored vg0/root by `lvs -o vg_uuid,lv_uuid`, which are the source's
+  (vgcfgrestore keeps them). `gentoo-systemd`'s GRUB, on an ESP at /boot,
+  embeds none. RAM-disk peaks 5.4 GiB for both: `ram-sizes.tsv` D 7, MEM 4.
+- **GuestTest1:** both guests are now covered by SticTest1 (0 FAIL on both
+  hosts); the open items are G1's (ping's cap, no image-state yet).
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Effort |
@@ -329,8 +373,8 @@ dracut 112, `installkernel` 70-r1 with USE=systemd), 2026-11-12:
 | G2 | bko-holt: the `SUPPORTED` row (doc comment, a unit test from the guest's os-release, an `ID_LIKE=gentoo` refusal, `supported_names()`); the Portage reader and its tests; `PACKAGES` and `fingerprint.py`; the `.old` note; generator detection; `initramfs()`'s Gentoo arms and refusals; the shim refusal; a dump warning when fstab names a vfat /efi or /boot/efi that isn't mounted, with a unit test; a Thinkpad-shaped fake tree in `holt/src/scenarios.rs`. Done when `cargo test` passes and the scenario's plan has `dracut --force /boot/initramfs-K.img K`, the /efi `grub-install` and the `.old` note | 1 d |
 | G2b | `gentoo`'s golden plan (`holt/tests/corpus/gentoo/`, `index.tsv`, the corpus README) from a `bko-holt dump` of the guest; the Test2 registrations (`classes.json` with `uefi`, `holt/spec.json`, `guest/spec.json`, `estimates.tsv`, `t2lib/plan.py`'s counts, `p2/world.py` and the re-blessed goldens); the GuestTest2 rules. Done when two corpus builds have the same sha256, leak scans are 0 on both hosts and the Mac, no other plan changes, and Test2's own tests pass | 0.5 d |
 | G3 | `gentoo-systemd`: the build (keyfile, `rd.luks`, installkernel's layout pinned to `grub`), its golden plan, Test2 registrations and re-blessed goldens, `rebuild-one.sh` lines. Done as G1 and G2b are, plus a GuestTest1 grade for both guests | 0.75 d |
-| G4 | SticTest1 entries and runs for both guests (rustic-bko and restic), the cross-filesystem case, `stic/manifests.json`, `limits.json` and check-manifests' 47. Done when PASS/LIMIT/FAIL counts on both hosts for both archivers show 0 FAIL | 0.35 d |
-| G5 | The HoltTest1 group (Decision 5) and its runs; judge.py rules for `efi/EFI/gentoo` and `boot/EFI/gentoo` (grub-install's loader), with judge-test.py cases, and any path G1's chroot runs show no rule covers. Done when every load stage passes on both hosts, the guest boots alone, there are 0 fsmeta differences, the embedded lvmid equals the restored `lvs -o vg_uuid,lv_uuid` of vg0/root, and the RAM-disk peaks are in `ram-sizes.tsv` | 0.35 d |
+| G4 | SticTest1 entries and runs for both guests (rustic-bko and restic), the cross-filesystem case, `stic/manifests.json`, `limits.json` and check-manifests' 47. Done when PASS/LIMIT/FAIL counts on both hosts for both archivers show 0 FAIL. **Done 2026-11-12:** runs `g4f`, `gentoo` 35/3/0 and `gentoo-systemd` 29/3/0 on both hosts ("What G4 and G5 found") | 0.35 d |
+| G5 | The HoltTest1 group (Decision 5) and its runs; judge.py rules for `efi/EFI/gentoo` and `boot/EFI/gentoo` (grub-install's loader), with judge-test.py cases, and any path G1's chroot runs show no rule covers. Done when every load stage passes on both hosts, the guest boots alone, there are 0 fsmeta differences, the embedded lvmid equals the restored `lvs -o vg_uuid,lv_uuid` of vg0/root, and the RAM-disk peaks are in `ram-sizes.tsv`. **Done 2026-11-12:** 1G; `gentoo` runs `g5-3` and `g5-4`, `gentoo-systemd` `g5-2` and `g5-5`, all PASS | 0.35 d |
 | G6 | BackShot1: the fixes in the table; `bs1-qemu.py --virtio` rehearsals on `gentoo` on both hosts, with the same lvmid check; then a run on the Thinkpad. Done when phase1, plan, phase2 and verify PASS with 0 unexpected, the Thinkpad boots `gentoo` from NVRAM, and its `grubx64.efi`'s lvmid equals the restored vg0/root's UUIDs | 0.5 d |
 | G7 | Docs: holt/README.md's supported list and "tested by" guests, `osrel.rs`'s comment, the READMEs of HoltTest1 (its group table and HoltTest1All's members), BackShot1, SticTest1 and Test2, `docs/design/layload.md`'s boot stage (it still says only `update-initramfs`), and memory (the HoltTest1 index line and holttest1d.md, if 1G) | 0.1 d |
 | | *≈ 4.75 d in all* | |

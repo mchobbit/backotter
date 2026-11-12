@@ -38,6 +38,7 @@ guests.  A guest passes only when every check passes.  Status is as of
 | 1C | CachyOS, MX Linux | `cachyos`, `mx25` | passes |
 | (1All only) | EndeavourOS, Manjaro | `endeavouros`, `endeavouros-grub`, `manjaro` (`make-arch.sh --live`: each one's own live ISO, with its installer's defaults) | passes on both hosts (runs `eosmj1` to `eosmj5`) |
 | 1V | Void Linux (musl) | `void-musl` | passes |
+| 1G | Gentoo Linux | `gentoo`, `gentoo-systemd` | passes on both hosts (2026-11-12, bko-holt 7760c9e7c497 and rel6's rustic-bko: `gentoo` runs `g5-3` Cinqcent and `g5-4` Chopin, with GRUB's embedded lvmid that of the restored vg0/root; `gentoo-systemd` `g5-2` Cinqcent and `g5-5` Chopin) |
 | 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12, Chimera Linux | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12`, `chimera`, `chimera-uefi`, `chimera-zfs` | passes (the Chimera guests on both hosts, 2026-11-12: `chimera` runs `c5-1` Cinqcent and `c5-2` Chopin, `chimera-uefi` `c5-3` Cinqcent and `c5-4` Chopin, `chimera-zfs` `c5-5` Chopin and `c5-6` Cinqcent) |
 | 1H | Haiku | `haiku6` | passes (run `haiku024`, rustic-bko 0.11.4+backotter.7, which restores the volume root's metadata: Tracker's empty `trash` had made a new BFS volume look used) |
 | 1I | illumos | `omnios58`, `omnios58-mirror` | both pass (`omnios58-mirror`: run `raid6`, the restored `rpool` ONLINE on both disks) |
@@ -355,6 +356,13 @@ Each run also checks, as the plan asks:
 - on an ostree source, its two deployments booted in turn, on the source
   first and then on the restored disk, which must show what the source's
   boots did ("The ostree guest" above).
+- GRUB's embedded LVM ids: every EFI binary on the restored machine's
+  mounted vfat file systems that names its prefix by
+  `(lvmid/VG-UUID/LV-UUID)` (GRUB's core image when /boot/grub is on an
+  LV, as on `gentoo`: load's grub-install re-embeds it) must name the LV
+  that holds /boot/grub, by `lvs -o vg_uuid,lv_uuid`; the report says
+  whether those are the source's UUIDs too.  A machine with no such
+  binary has no line (`logs/restored-lvmid.txt`, `source-lvmid.txt`).
 
 It differs from the plan above in these ways:
 

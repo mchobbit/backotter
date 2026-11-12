@@ -141,6 +141,9 @@ except that HoltTest1All targets every single guest OS we have": every guest
 in `vms/` on the test hosts, 39 as of 2026-11-05 (the same set on Chopin and
 Cinqcent), each with `ht1.sh`.  It is the union of the tests above plus the
 guests no other test names yet: `devuan6`, `ubuntu26-zfs` and `freebsd14`.
+A guest added since joins it with its group: among them 1G's `gentoo` and
+`gentoo-systemd` (2026-11-12, docs/design/gentoo.md), 1Obscure's three
+Chimera guests and 1F's `kinoite44`.
 Run `r1all` (2026-11-05): 16 pass, the 15 above plus `mx25` (MX 25 reports
 `ID=debian`, `VERSION_ID=13`).  The rest fail where expected: dump's OS gate
 (cachyos, devuan6, void-musl, nixos2605, tumbleweed, rocky10, rocky10-lvm,

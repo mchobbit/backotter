@@ -220,9 +220,24 @@ efivarfs bound in):
    temporary key get the restored key file added and the temporary key
    destroyed (see "Keys follow the original system").  If the restore didn't
    bring the key file back, `boot` stops here and says which one is missing.
-3. `update-initramfs -u -k all` when anything the initramfs embeds changed
-   (crypttab, mdadm.conf, the zpool cache, LVM or md identifiers), or when
-   asked to.
+3. The initramfs, remade by the source's own generator, as the dump's
+   `boot.initramfs.generator` names it (the restore changed identifiers the
+   image embeds: crypttab, mdadm.conf, the zpool cache, LVM and md UUIDs):
+   - Debian's family (and Chimera): `update-initramfs -u -k all`;
+   - dracut (Fedora, Rocky, Void, EndeavourOS, openSUSE): `dracut --force
+     --kver K` for each kernel in `/lib/modules` (EndeavourOS with GRUB:
+     `dracut-rebuild`);
+   - mkinitcpio (Arch and its family): `mkinitcpio -P`; mkinitfs (Alpine):
+     `mkinitfs K` for each kernel;
+   - Gentoo (docs/design/gentoo.md): installkernel's `install.conf` names
+     the generator.  dracut makes each kernel's image under installkernel's
+     name, `dracut --force /boot/initramfs-K.img K`, for each kernel that
+     had one; `none` makes nothing.  genkernel, ugrd, a unified kernel
+     image, an installkernel layout other than `grub` or `compat`, and an
+     image at `/lib/modules/K/initrd` are refused by name.
+     installkernel's `.old` copies come back as they were, with a note;
+   - nothing where the image is prebuilt with the kernel (AerynOS), comes
+     with the image (ostree) or is in the store (NixOS).
 4. The boot loader, as `boot.loader` recorded it:
    - GRUB on BIOS: `grub-install` on the target disks that map to debconf's
      `grub-pc/install_devices`, then `update-grub`.
@@ -230,7 +245,11 @@ efivarfs bound in):
      with the bootloader ID taken from the directory of the entry the firmware
      booted (`\EFI\DEBIAN\SHIMX64.EFI` gives `debian`), with shim when
      `boot.loader.via_shim` says the source booted through shim, then
-     `update-grub`.
+     `update-grub` on Debian's family, elsewhere `grub-mkconfig` (Fedora's
+     `grub2-mkconfig`) into the restored grub.cfg.  This also embeds the restored LV's
+     `(lvmid/VG-UUID/LV-UUID)` when /boot/grub is on LVM (Gentoo's
+     Thinkpad).  On Gentoo through shim it refuses: it would write an
+     unsigned GRUB over the signed one.
    - systemd-boot: `bootctl install`.
 5. UEFI boot entries (see "UEFI boot entries").
 

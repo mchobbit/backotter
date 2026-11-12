@@ -84,8 +84,9 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
 /// Linux (OpenRC or systemd, Portage) boots the way its owner put it
 /// together: installkernel's install.conf names the initramfs generator,
 /// and only dracut's (or none) is supported, with GRUB and grub-mkconfig;
-/// its test is the `gentoo` guest, the Thinkpad's setup in small, and
-/// BackShot1 on the Thinkpad itself (docs/design/gentoo.md).
+/// its tests are `gentoo` (OpenRC, the Thinkpad's setup in small) and
+/// `gentoo-systemd` (LVM on LUKS) in HoltTest1G, and BackShot1 on the
+/// Thinkpad itself (docs/design/gentoo.md).
 pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("debian", "13", "Debian 13"),
     ("linuxmint", "22", "Linux Mint 22"),

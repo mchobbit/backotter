@@ -30,7 +30,8 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
 - Linux: Debian 12 and 13, Devuan 6, Ubuntu 24.04 and 26.04, Linux Mint 22,
   Pop!_OS 24.04, Zorin OS 18, Arch Linux, CachyOS, Artix Linux, Omarchy,
   EndeavourOS, Manjaro, Alpine Linux 3, AerynOS, Void Linux, Chimera Linux,
-  Fedora 44, Bazzite 44, Rocky Linux 10, openSUSE Tumbleweed and NixOS 26.05;
+  Gentoo Linux, Fedora 44, Bazzite 44, Rocky Linux 10, openSUSE Tumbleweed
+  and NixOS 26.05;
 - ostree (image-mode) systems among them: Bazzite 44, and Fedora's atomic
   desktops (Silverblue and Kinoite 44, which say `fedora 44`), told apart
   by ostree's own markers (`src/ostree.rs`).  `load` version 1 refuses
@@ -47,7 +48,9 @@ HoltTest1All round-trips each whole machine (`testvm/holttest1d/README.md`
 has which pass; Bazzite's is `kinoite44`, its Kinoite base, and BackShot1
 is its test on real hardware; Chimera's are `chimera`, `chimera-uefi` and
 `chimera-zfs` in HoltTest1Obscure, and BackShot1 ran it on the Thinkpad with
-root on ZFS).  Build it static
+root on ZFS; Gentoo's are `gentoo`, the Thinkpad's OpenRC install in small,
+and `gentoo-systemd`, LVM on LUKS, in HoltTest1G, and BackShot1 is its test
+on the Thinkpad itself).  Build it static
 (`RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target
 x86_64-unknown-linux-gnu`) to run it on musl systems such as Alpine and Void
 too; on the other systems, build it there

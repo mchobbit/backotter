@@ -123,10 +123,10 @@ fixture() {  # DIR FS: the fixture in DIR, on a file system of type FS
         mkdir autofsck-dir; setfattr -n trusted.xfs:autofsck -v repair autofsck-dir
         echo "guest / trusted.xfs:autofsck=$(getfattr --absolute-names -n trusted.xfs:autofsck --only-values / 2>&1)"
     fi
-    # File capabilities: the guest's own, if it has any (Chimera's tarball
-    # gives ping and clockdiff theirs, but this image was unpacked by GNU tar
-    # without --xattrs, bootstrap/chimera.sh, which drops them), one set
-    # here, and a raw one.
+    # File capabilities: the guest's own (Chimera's tarball gives ping and
+    # clockdiff theirs; images built before the fix after C7 lost them to
+    # bootstrap/chimera.sh's GNU tar, so "if it has any"), one set here, and
+    # a raw one.
     mkdir real-caps
     getcap -r /usr/bin 2>/dev/null | while read -r f c; do
         cp -p "$f" real-caps/ && setcap "$c" "real-caps/$(basename "$f")" && echo "guest capability: $f $c"

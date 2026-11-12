@@ -347,6 +347,25 @@ the Python ones with `python3`.
 - **Not run:** bs1-to-stick (needs a stick), and no rehearsal of `chimera`
   (BIOS; bs1-qemu's `--bios`).
 
+## Fix after C7
+
+C4 found (in `testvm/stictest1/chimera/inner.sh` and
+`chimera-uefi/inner.sh`) that `chimera` and `chimera-uefi` had no file
+capabilities: `bootstrap/chimera.sh` unpacked the ROOTFS tarball with GNU
+`tar -xzp`, which drops its xattrs, so ping's `cap_net_raw=p` and
+clockdiff's `cap_net_raw,cap_sys_nice=ep` were lost (`chimera-zfs`, unpacked
+by `make-chimera-zfs.sh` with bsdtar, had them). Since 2026-11-12 it unpacks
+with `bsdtar -xpf - --numeric-owner` (libarchive is on the Arch ISO) and
+fails the build if `/usr/bin/ping` has no `cap_net_raw`, after the unpack
+and again at the end. Both guests were rebuilt with `rebuild-one.sh` on
+Chopin and copied to Cinqcent (byte-identical); `getcap -r /usr/bin` on each
+shows both capabilities, and each booted normally (`chimera-uefi` unlocking
+/ by its key file). Their SticTest1 and HoltTest runs before then were on
+the old images. Retested on the new ones, 2026-11-12, on both hosts:
+SticTest1 `chimera` 45 PASS / 6 LIMIT and `chimera-uefi` 47 / 5 (C4's
+counts), each fixture copying the guest's own two capabilities; HoltTest1
+PASS for both, fsmeta finding both capabilities restored.
+
 ## Guests
 
 Built by `make-bootstrap.sh`, as for Void: from the Arch ISO's live system,

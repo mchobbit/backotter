@@ -17,7 +17,7 @@ import os
 import re
 import time
 
-from . import DEFAULT_HOSTS, HARD, canonical, parse_utc, sha256_hex, utc_now
+from . import DEFAULT_HOSTS, HARD, canonical, gate_hosts, parse_utc, sha256_hex, utc_now
 from . import bko_git as default_bko_git
 from . import carry, copies, estimates, keys, words
 
@@ -553,7 +553,7 @@ class Planner:
                 if "@" in n:
                     cells.append(f"gate:{n}")
                 elif self.gate_per_host(n, e):
-                    cells += [f"gate:{n}@{h}" for h in DEFAULT_HOSTS]
+                    cells += [f"gate:{n}@{h}" for h in gate_hosts(self.ctx.hosts)]
                 else:
                     cells.append(f"gate:{n}")
         if u:
@@ -2097,7 +2097,7 @@ def known_names(ctx):
         if "@" in n:
             gl.append(n)
         elif Planner.gate_per_host(n, e):
-            gl += [f"{n}@{x}" for x in DEFAULT_HOSTS]
+            gl += [f"{n}@{x}" for x in gate_hosts(ctx.hosts)]
         else:
             gl.append(n)
     try:

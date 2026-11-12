@@ -64,7 +64,7 @@ import sys
 import threading
 import time
 
-from . import DEFAULT_HOSTS, utc_now
+from . import DEFAULT_HOSTS, gate_hosts, utc_now
 from .hostjob import (  # noqa: F401 - host_job and its helpers, as gate.X too
     CMP_RUN, FETCH_SCRIPT, POLL_S, UNKNOWN_MAX, HostIO, JobFailure, _q, guards_of, host_job, job_poll_cmd, job_times,
     layer_dir, tripped)
@@ -125,11 +125,12 @@ def per_host(entry):
 
 
 def universe(layers=None, hosts=DEFAULT_HOSTS):
-    """Every gate cell: gate:LAYER, and gate:LAYER@HOST for the per-host layers."""
+    """Every gate cell: gate:LAYER, and gate:LAYER@HOST for the per-host layers, HOST each
+    of gate_hosts(HOSTS) (the plan's universe, plan.Planner.universe, does the same)."""
     layers = layers if layers is not None else load_layers()
     out = []
     for n, e in layer_entries(layers):
-        out += [f"gate:{n}@{h}" for h in hosts] if per_host(e) else [f"gate:{n}"]
+        out += [f"gate:{n}@{h}" for h in gate_hosts(hosts)] if per_host(e) else [f"gate:{n}"]
     return out
 
 

@@ -9,6 +9,10 @@
 #   after DISK N:TYPE...           each partition N's signatures against TYPE:
 #                                  STALE, WRONG and AMBIVALENT lines
 #   restored DISK                  the restored system's view: SUMMARY line last
+#   release DISK                   (bs2-host leftovers --release) stop what the
+#                                  rescuer started on DISK: its VGs deactivated,
+#                                  md arrays stopped, pools exported; writes nothing
+#                                  to DISK's data, as a user would after load's refusal
 
 mode=$1 disk=$2
 shift 2
@@ -92,6 +96,24 @@ after)
             *) [ "$t" = nothing ] && [ -z "$got" ] || echo "WRONG ${p#/dev/}: blkid -p says '${got}', the layout's $t" ;;
         esac
     done ;;
+
+release)
+    n=0
+    if has pvs; then
+        for vg in $(pvs --noheadings -o pv_name,vg_name 2>/dev/null | awk -v d="$disk" 'index($1, d) == 1 && $2 != "" {print $2}' | sort -u); do
+            vgchange -an "$vg" && echo "RELEASED vg $vg" && n=$((n + 1))
+        done
+    fi
+    for h in /sys/block/"${disk#/dev/}"/*/holders/md*; do
+        [ -e "$h" ] || continue
+        md=$(basename "$h"); mdadm --stop "/dev/$md" && echo "RELEASED md $md" && n=$((n + 1))
+    done
+    if has zpool; then
+        for z in $(zpool list -H -o name 2>/dev/null); do
+            zpool status -P "$z" 2>/dev/null | grep -q "$disk" && zpool export "$z" && echo "RELEASED pool $z" && n=$((n + 1))
+        done
+    fi
+    echo "SUMMARY $n released" ;;
 
 *) echo "leftovers-probe: no mode $mode" >&2; exit 2 ;;
 esac

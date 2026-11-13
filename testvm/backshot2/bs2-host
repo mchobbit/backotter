@@ -9,7 +9,7 @@ never the shared ~/backotter-work/testvm.
   bs2-host tier0-cases CASE... [--run RUN]   given cases, through tier 0
   bs2-host tier1 CASE --tier 1|2 [--run RUN] [--port P]
                                          (root, under cmp-run.sh --reserve) one case through ht1.sh
-  bs2-host leftovers [SET] [--run RUN] [--port P] [--from N] [--plan]
+  bs2-host leftovers [SET] [--run RUN] [--port P] [--from N] [--release] [--plan]
                                          (as m) the leftovers set: its steps in order on one disk
   bs2-host gen SOURCE SEED              print the case SEED gives (no run)
   bs2-host caps                          what the bko-holt under test supports (--new-uuids)
@@ -476,7 +476,8 @@ def cmd_leftovers(a):
     for c in cases[a.start - 1:]:
         out = f"{chain}/{c['chain']['id']}.qcow2"
         p = f"{rd}/cases/{c['name']}.case"
-        env = dict(os.environ, BS2_CHAIN_IN=prev, BS2_CHAIN_OUT=out, WEAR_TAG=f"bs2:{a.run}:{c['chain']['id']}")
+        env = dict(os.environ, BS2_CHAIN_IN=prev, BS2_CHAIN_OUT=out, BS2_RELEASE="1" if a.release else "0",
+                   WEAR_TAG=f"bs2:{a.run}:{c['chain']['id']}")
         r = subprocess.run([f"{WORK}/cmp-run.sh", "--reserve", a.disk, a.mem, "sudo", "-E", os.path.join(HERE, "bs2-host"), "tier1", p,
                             "--tier", "1", "--run", a.run, "--port", str(a.port)], cwd=WORK, env=env, capture_output=True, text=True)
         try:
@@ -489,7 +490,7 @@ def cmd_leftovers(a):
                 notes = [l.rstrip() for l in f if l.startswith(("note: leftovers", "FAIL leftovers", "PASS leftovers"))]
         except (OSError, TypeError):
             pass
-        row = {"set": a.set, "step": c["chain"]["step"], "id": c["chain"]["id"], "case": c["name"], "verdict": line["verdict"],
+        row = {"set": a.set, "release": a.release, "step": c["chain"]["step"], "id": c["chain"]["id"], "case": c["name"], "verdict": line["verdict"],
                "check": line.get("check"), "why": line.get("why"), "aligned": c["chain"].get("aligned"), "seed": c.get("layer_seed"),
                "leftovers": notes, "dir": line.get("dir"), "holt": holt_bin(), "bins": bins(),
                "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
@@ -720,6 +721,8 @@ def main():
     x.add_argument("--mem", default="3")
     x.add_argument("--keep", action="store_true", help="keep every step's disk in RAM (else only the one the next step needs)")
     x.add_argument("--plan", action="store_true")
+    x.add_argument("--release", action="store_true",
+                   help="before load, stop what the rescuer started on the target (VGs, md, pools): past a busy-target refusal")
     x = s.add_parser("gen")
     x.add_argument("source")
     x.add_argument("seed", type=int)

@@ -178,6 +178,12 @@ bs2_before_load() {
     fi
     sshk "$rkey" "sh -s -- probe /dev/vdb" < "$BS2_PROBE" > "$R/logs/bs2-leftovers-rescuer.txt" 2>&1
     say "note: leftovers: the rescuer at boot:$(sed -n 's/^SUMMARY//p' "$R/logs/bs2-leftovers-rescuer.txt" | tail -1)"
+    # --release: what the rescuer started on the target, stopped (nothing
+    # written to it), as a user would after load refuses a busy target.
+    if [[ ${BS2_RELEASE:-0} == 1 ]]; then
+        sshk "$rkey" "sh -s -- release /dev/vdb" < "$BS2_PROBE" > "$R/logs/bs2-leftovers-release.txt" 2>&1
+        say "note: leftovers: --release: $(grep '^RELEASED' "$R/logs/bs2-leftovers-release.txt" | cut -d' ' -f2- | tr '\n' ';' | sed 's/;$//; s/;/; /g')$(sed -n 's/^SUMMARY / (/p' "$R/logs/bs2-leftovers-release.txt" | tail -1))"
+    fi
 }
 
 # In the rescuer, after load's close: every signature on each new partition

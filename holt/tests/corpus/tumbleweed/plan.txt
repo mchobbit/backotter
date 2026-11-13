@@ -94,7 +94,7 @@ mount -t btrfs -o subvol=/@/usr/local /dev/sdq3 /mnt/bko-target/usr/local
 # ---- restore ----
 mkdir -p /run/bko-holt
 # the archiver's restore --exact and --target-metadata, for the btrfs snapshots and aliases
-sh -c 'rustic-bko restore --help > /run/bko-holt/restore.help 2>&1; grep -q -- '\''--exact'\'' /run/bko-holt/restore.help && grep -q -- '\''--target-metadata'\'' /run/bko-holt/restore.help || { echo "rustic-bko has no restore --exact and --target-metadata, which this layout'\''s btrfs needs: use rustic-bko 0.11.4+backotter.9 or newer" >&2; exit 1; }'
+sh -c 'rustic-bko restore --help > /run/bko-holt/restore.help 2>&1; grep -q -- '\''--exact'\'' /run/bko-holt/restore.help && grep -q -- '\''--target-metadata'\'' /run/bko-holt/restore.help || { echo "rustic-bko has no restore --exact and --target-metadata, which this layout'\''s btrfs needs: use rustic-bko 0.11.4+backotter.11 or newer" >&2; exit 1; }'
 # left out of the restore: btrfs subvolumes mounted elsewhere, seen again (aliases), and the contents of the shared snapshots, made after it
 cat > /run/bko-holt/restore.globs <<'EOF'
 !/.snapshots/1/snapshot/**

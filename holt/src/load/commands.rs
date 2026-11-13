@@ -2246,7 +2246,10 @@ impl Builder<'_> {
         let aliases = self.btrfs.values().any(|p| !p.aliases.is_empty());
         let mut pre = Vec::new();
         // What the archiver must have: --exact for shared snapshots,
-        // --target-metadata where an alias is left out.
+        // --target-metadata where an alias is left out.  The message names
+        // 0.11.4+backotter.11: before it, --clone-from into a snapshot inside
+        // the subvolume cloned from (CachyOS's and Fedora's @/.snapshots/N)
+        // could empty a file there of the snapshot's size.
         let mut need = Vec::new();
         if self.btrfs.values().any(|p| !p.shared.is_empty()) {
             need.push("--exact");
@@ -2263,7 +2266,7 @@ impl Builder<'_> {
                     "sh",
                     "-c",
                     &format!(
-                        "{arch} restore --help > {RUN_DIR}/restore.help 2>&1; {} || {{ echo \"{arch} has no restore {}, which this layout's btrfs needs: use rustic-bko 0.11.4+backotter.9 or newer\" >&2; exit 1; }}",
+                        "{arch} restore --help > {RUN_DIR}/restore.help 2>&1; {} || {{ echo \"{arch} has no restore {}, which this layout's btrfs needs: use rustic-bko 0.11.4+backotter.11 or newer\" >&2; exit 1; }}",
                         checks.join(" && "),
                         need.join(" and ")
                     ),

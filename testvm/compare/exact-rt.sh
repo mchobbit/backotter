@@ -20,6 +20,19 @@
 #     (no inode's ctime moves);
 #   - no AlreadyExists in any restore's output.
 #
+# Then the CachyOS/Fedora layout, where the snapshot is inside the subvolume
+# cloned from: @ is the live root, its snapper snapshot @/.snapshots/1/snapshot
+# lies inside it, and bko-holt restores that snapshot, seeded from @, with
+# --clone-from /=<top>/@.  It checks that:
+#
+#   - @ and the snapshot are the source's, as above;
+#   - a seeded file of the snapshot's size and other contents gets the
+#     snapshot's contents, a small one and a 4 MiB one (rustic-bko before
+#     0.11.4+backotter.11 cloned it from itself: 0 bytes, the snapshot's
+#     mtime, exit 0; the Thinkpad's CachyOS BackShot1);
+#   - a file whose contents are elsewhere in @ (renamed there since) is
+#     cloned from there.
+#
 # Usage (root, on a test host): exact-rt.sh RUSTIC_BKO
 #   WORK      default /mnt/bko-ram/exact-rt-$$ (deleted on a pass)
 #   SLACK_MIB default 8
@@ -32,12 +45,13 @@ here=$(cd "$(dirname "$0")" && pwd)
 mkdir -p "$WORK"
 SRC_IMG=$WORK/src.img DST_IMG=$WORK/dst.img REPO=$WORK/repo
 S=$WORK/s T=$WORK/t ST=$WORK/stop DT=$WORK/dtop
+C_IMG=$WORK/c.img CD_IMG=$WORK/cd.img C_REPO=$WORK/crepo CT=$WORK/ctop CDT=$WORK/cdtop
 export RUSTIC_PASSWORD=exact-rt RUSTIC_NO_PROGRESS=true RUSTIC_NO_CACHE=true
 fail=0
 bad() { echo "FAIL: $*"; fail=1; }
 cleanup() {
-    for m in "$S/.snapshots" "$S" "$ST" "$T/.snapshots" "$T" "$DT"; do mountpoint -q "$m" 2>/dev/null && umount "$m"; done
-    for l in "${SRC_LOOP:-}" "${DST_LOOP:-}"; do [ -n "$l" ] && losetup -d "$l" 2>/dev/null; done
+    for m in "$S/.snapshots" "$S" "$ST" "$T/.snapshots" "$T" "$DT" "$CT" "$CDT"; do mountpoint -q "$m" 2>/dev/null && umount "$m"; done
+    for l in "${SRC_LOOP:-}" "${DST_LOOP:-}" "${C_LOOP:-}" "${CD_LOOP:-}"; do [ -n "$l" ] && losetup -d "$l" 2>/dev/null; done
     true
 }
 trap cleanup EXIT
@@ -169,6 +183,57 @@ for p in "2 $s2 $d2" "3 $s3 $d3"; do
     [ "$3" -le $(($2 + (SLACK_MIB << 20))) ] || bad "snapshot $1 has $3 bytes exclusive here, $2 on the source"
 done
 echo "sizes: $(grep -h 'cloning\|total restore size\|using' "$WORK"/restore-[23].log | tr '\n' ' ')"
+
+# ---- the CachyOS/Fedora layout: the snapshot inside the subvolume cloned from ----
+C_LOOP=$(mkfs "$C_IMG")
+mkdir -p "$CT"
+mount -o noatime "$C_LOOP" "$CT"
+btrfs -q subvolume create "$CT/@"
+C=$CT/@
+mkdir -p "$C/etc" "$C/usr/lib" "$C/.snapshots/1"
+# Snapshot 1's state
+echo "root:x:0:0::/root:/bin/sh # snapshot 1" >"$C/etc/passwd-"
+rnd "$C/usr/lib/tool" $((4 << 20))
+rnd "$C/usr/lib/moved.bin" $((1 << 20))
+echo same >"$C/etc/same"
+touch -d '2026-11-13 16:05:04' "$C/etc/passwd-" "$C/usr/lib/tool" "$C/usr/lib/moved.bin"
+echo "<snapshot/>" >"$C/.snapshots/1/info.xml"
+btrfs -q subvolume snapshot -r "$C" "$C/.snapshots/1/snapshot"
+# The live tree since: the same sizes, other contents and mtimes; moved.bin
+# renamed, and a new one of its size in its place.
+echo "root:x:0:0::/root:/bin/sh # the live @" >"$C/etc/passwd-"
+rnd "$C/usr/lib/tool" $((4 << 20))
+mv "$C/usr/lib/moved.bin" "$C/usr/lib/renamed.bin"
+rnd "$C/usr/lib/moved.bin" $((1 << 20))
+touch -d '2026-11-13 16:16:16' "$C/etc/passwd-" "$C/usr/lib/tool" "$C/usr/lib/moved.bin"
+sync
+"$R" -r "$C_REPO" init >/dev/null 2>&1
+"$R" -r "$C_REPO" backup --set-atime yes --as-path / "$C" >"$WORK/cbackup.log" 2>&1 || { cat "$WORK/cbackup.log"; exit 1; }
+CD_LOOP=$(mkfs "$CD_IMG")
+mkdir -p "$CDT"
+mount -o noatime "$CD_LOOP" "$CDT"
+btrfs -q subvolume create "$CDT/@"
+echo '!/.snapshots/1/snapshot/**' >"$WORK/cglobs"
+RUSTIC_STRICT_EXIT=true "$R" -r "$C_REPO" restore --numeric-id --glob-file "$WORK/cglobs" latest "$CDT/@" >"$WORK/crestore-main.log" 2>&1 ||
+    { cat "$WORK/crestore-main.log"; bad "CachyOS layout: the main restore failed"; }
+d=$CDT/@/.snapshots/1/snapshot
+[ -d "$d" ] && [ -z "$(ls -A "$d")" ] || bad "CachyOS layout: the main restore didn't leave 1/snapshot empty"
+touch -r "${d%/*}" "$WORK/times.ref"
+rmdir "$d"
+btrfs -q subvolume snapshot "$CDT/@" "$d"
+RUSTIC_STRICT_EXIT=true "$R" -r "$C_REPO" restore --numeric-id --exact --clone-from "/=$CDT/@" \
+    "latest:/.snapshots/1/snapshot" "$d" >"$WORK/crestore-1.log" 2>&1 || { cat "$WORK/crestore-1.log"; bad "CachyOS layout: snapshot 1's restore failed"; }
+touch -r "$WORK/times.ref" "${d%/*}"
+btrfs property set -ts "$d" ro true
+manifest "$C" >"$WORK/csrc.m"
+manifest "$CDT/@" >"$WORK/cdst.m"
+diff "$WORK/csrc.m" "$WORK/cdst.m" >"$WORK/cdiff" || { head -20 "$WORK/cdiff"; bad "CachyOS layout: @ or its snapshot differs"; }
+for f in etc/passwd- usr/lib/tool; do
+    cmp -s "$C/.snapshots/1/snapshot/$f" "$d/$f" || bad "CachyOS layout: snapshot 1's $f is $(stat -c %s "$d/$f") bytes of other contents (cloned from itself?)"
+done
+[ "$(phys "$d/usr/lib/moved.bin")" = "$(phys "$CDT/@/usr/lib/renamed.bin")" ] ||
+    bad "CachyOS layout: moved.bin in snapshot 1 isn't @'s renamed.bin (not cloned)"
+echo "CachyOS layout: $(grep -h "files' contents to clone" "$WORK/crestore-1.log")"
 if [ $fail = 0 ]; then
     echo "PASS"
     trap - EXIT

@@ -51,6 +51,8 @@ EXPECTED = [
     "boot/initrd.img-*", "boot/initramfs-*", "boot/initrd-*", "boot/grub/*", "boot/grub2/*", "boot/loader/*",
     # Limine's config, remade by limine-mkinitcpio-hook when the restore runs mkinitcpio.
     "boot/limine.conf", "boot/limine.conf.old",
+    # The initramfs that hook copies into the per-machine-id layout (/boot/<machine-id>/<kernel>/).
+    "boot/*/*/initramfs",
     "boot/efi/*", "efi/*",
     "etc/cups/*", "etc/NetworkManager/system-connections/*", "etc/mtab", "etc/resolv.conf",
     "usr/lib/sysimage/rpm/rpmdb.sqlite-shm", "usr/lib/sysimage/rpm/rpmdb.sqlite-wal",

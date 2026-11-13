@@ -265,7 +265,11 @@ adopt_nixos() {
 }
 EOF
     if ! grep -q 'backshot1\.nix' "$conf"; then
-        sed -i '0,/imports[[:space:]]*=[[:space:]]*\[/s//& .\/backshot1.nix/' "$conf"
+        # nixos-generate-config puts the [ on the line after "imports =", with
+        # a comment after it; spaces, newlines and # comments may come between.
+        # -z reads the whole file as one line, and s/// changes the first list.
+        # NixOS has GNU sed.
+        sed -z -E -i 's/imports([[:space:]]|#[^\n]*)*=([[:space:]]|#[^\n]*)*\[/& .\/backshot1.nix/' "$conf"
         grep -q 'backshot1\.nix' "$conf" || { echo "bs1-adopt: no imports list in $conf to add $module to" >&2; return 1; }
     fi
     nixos-rebuild switch

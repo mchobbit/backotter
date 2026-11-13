@@ -414,26 +414,40 @@ The tool erases disks.  So:
    check `--through` skips it by), and, on a disk named with `--erase`, a
    record that this rescue session's partition stage wrote that table:
    `RUN_DIR/partitioned/DISK` (`/run/bko-holt` on Linux), which the stage
-   writes once its commands have run, naming the layout (host and dump
-   time), the source disk, the target's identity (WWID, serial, size) and
-   the table and partitions written.  The source's own disk as found has
-   the source's table too (same disk, same table: the usual case), but no
-   record, so with `--erase` the stage runs on it: what the old system has
-   there (an active volume group, an LV mounted elsewhere) is let go of or
+   writes once its commands have run (and removes before they start),
+   naming the layout (host and dump time), the source disk, the target and
+   the table and partitions written.  A source disk with no table (its
+   content on the whole disk) has no table to check, but its target is
+   wiped and zeroed by the partition stage too: named with `--erase`, it
+   counts (in status, as one of the disks the stage is done on or not) only
+   by its record, which says the disk was wiped.  The target is named by
+   what sysfs says of it, which holds while the disk stays attached: its
+   kernel name, its size, and the serial and WWID its driver gives
+   (`device/serial`, `device/wwid`, empty when there are none); not by
+   udev's `ID_SERIAL_SHORT` or `ID_WWN`, which change with udev's database
+   and would make a rerun wipe a disk load had restored.  The source's own
+   disk as found has the source's table (or, with no table, the source's
+   filesystem) too, the usual case on a bare-metal restore, but no record,
+   so with `--erase` the stage runs on it: what the old system has there
+   (an active volume group, an LV mounted elsewhere) is let go of or
    refused, and the disk is wiped as asked; the plan says so ("the
-   partition stage runs: --erase and no record that load wrote this
-   table"), and status shows the stage not done.  A rerun after the stage,
-   in the same session, finds the record, so it lets go of nothing and
-   refuses nothing.  RUN_DIR is a tmpfs: a reboot forgets the record along
-   with the session's mounts, imports and activations, so after one the
-   disk counts as found again and `--erase` starts over.  Once the
-   partition stage runs, `--through` skips none of the stages after it:
-   before the wipe (and in a dry run), status would read the old system's
-   filesystems, `/etc/fstab` and `/etc/os-release` as done.  Load's own is
-   anything in the disk's stack mounted under `--target`, or a pool of the
-   layout's imported there, from an earlier partial run: never let go of;
-   when the partition stage won't run, nothing is refused either, and when
-   it will (`--only partition`, say), the plan refuses the disk ("load's
+   partition stage runs: --erase and no record that load wrote this table",
+   or "wiped this disk"), and status shows the stage not done (or partly,
+   for some of the disks).  A rerun after the stage, in the same session,
+   finds the records, so it lets go of nothing and refuses nothing.
+   RUN_DIR is a tmpfs: a reboot forgets the records along with the
+   session's mounts, imports and activations, so after one the disks count
+   as found again and `--erase` starts over; so does a disk that comes back
+   under another kernel name.  Once the partition stage runs with
+   `--erase`, `--through` skips no stage after it as done (a stage the
+   layout needs nothing from is still skipped): before the wipe (and in a
+   dry run), status would read the old system's filesystems, `/etc/fstab`
+   and `/etc/os-release` as done.  Without `--erase`, `--through` skips as
+   it always did.  Load's own is anything in the disk's stack mounted
+   under `--target`, or a pool of the layout's imported there, from an
+   earlier partial run: never let go of; when the partition stage won't
+   run, nothing is refused either, and when it will (`--only partition`,
+   say), the plan refuses a disk named with `--erase` that has it ("load's
    own is on it ... `--only close` first lets go of it"), rather than
    wipefs failing on it.  Without `--erase` such a target is taken as it
    is, with or without a record.  `plan` works the chain out from

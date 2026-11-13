@@ -84,15 +84,17 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
         log = std::fs::OpenOptions::new().create(true).append(true).open(format!("{RUN_DIR}/log/load.log")).ok();
         log_line(&mut log, &format!("==== bko-holt load {} {:?}", env!("CARGO_PKG_VERSION"), std::env::args().collect::<Vec<_>>()));
     }
-    // Once the partition stage runs, no later stage is skipped: what status
-    // would read before them is what was on the disks before the wipe (in a
-    // dry run, the old system's filesystems and files, still there).
+    // Once the partition stage runs on disks named with --erase, no later
+    // stage is skipped as done: what status would read before them is what
+    // was on the disks before the wipe (in a dry run, the old system's
+    // filesystems and files, still there).  A stage the layout needs
+    // nothing from is still skipped, and without --erase nothing changes.
     let mut wiped = false;
     for &s in stages {
         // --through skips what's done already; --only does what it's told.
-        if opts.through.is_some() && !wiped {
+        if opts.through.is_some() {
             let (st, _) = state_of(layout, opts, sys, s);
-            if matches!(st, State::Done | State::Nothing) {
+            if st == State::Nothing || (st == State::Done && !wiped) {
                 out += &format!("# ---- {}: {} already\n", s.name(), st_word(st));
                 continue;
             }
@@ -101,7 +103,7 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
         if s == Stage::Boot && !sys.exists(&format!("{}/{marker}", opts.target)) {
             return (EXIT_FAILED, out, format!("bko-holt load: boot: {}/{marker} isn't there; restore the system into {} first\n", opts.target, opts.target));
         }
-        wiped |= s == Stage::Partition;
+        wiped |= s == Stage::Partition && !opts.erase.is_empty();
         let cmds = p.built.stage(s);
         out += &format!("# ---- {} ----\n", s.name());
         if !opts.commit {
@@ -237,7 +239,8 @@ mod tests {
         assert_eq!(code, EXIT_OK, "{out}{err}");
         assert!(out.contains("# ---- partition ----\n# vda -> /dev/vdb: clear the old table and signatures\nwipefs --all /dev/vdb\n"), "{out}");
         assert!(out.contains("# ---- mount ----\n"), "{out}");
-        assert!(!out.contains("already"), "{out}");
+        assert!(!out.contains("done already"), "{out}");
+        assert!(out.contains("# ---- assemble: nothing to do already\n"), "{out}");
 
         // The record this session's partition stage writes.
         let p = target::prepare(&l, &o, &s);
@@ -249,5 +252,79 @@ mod tests {
         assert!(out.contains("# ---- partition: done already\n"), "{out}");
         assert!(out.contains("# ---- format ----\n"), "{out}");
         assert!(out.contains("# ---- mount: done already\n"), "{out}");
+    }
+
+    /// The test's rescue system: every tool the stages run, and TABLE on vdb.
+    fn rescue(name: &str, table: &[u8]) -> crate::testutil::Tree {
+        let t = crate::testutil::Tree::new(name);
+        t.disk("vdb", "253:16", table, 512).file("/sys/block/vdb/size", "33554432\n");
+        t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        for p in ["wipefs", "dd", "sfdisk", "udevadm", "mke2fs", "tune2fs", "mkswap", "mkfs.btrfs", "btrfs", "mkfs.xfs", "xfs_admin", "mkdir", "mount", "umount", "chroot", "cp", "sh", "bash"] {
+            t.file(&format!("/usr/sbin/{p}"), "");
+        }
+        t
+    }
+
+    fn opts_of(a: &[&str]) -> Options {
+        let mut v = vec!["l.json".to_string()];
+        v.extend(a.iter().map(|s| s.to_string()));
+        match crate::load::parse_args(&v).unwrap() {
+            crate::load::Parsed::Run(o) => o,
+            _ => unreachable!(),
+        }
+    }
+
+    /// Without --erase, a dry run --through mount on a blank disk skips
+    /// what it always skipped: the stages the layout needs nothing from.
+    #[test]
+    fn without_erase_through_skips_as_before() {
+        use crate::load::layout::sample;
+        use crate::sys::FakeRunner;
+        let t = rescue("load-exec-plain", &[]);
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let l = Layout::from_json(crate::json::parse(&sample::bios_mbr()).unwrap()).unwrap();
+        let (code, out, err) = run(&l, &opts_of(&["--map", "vda=vdb", "--through", "mount"]), &s, &[Stage::Partition, Stage::Assemble, Stage::Format, Stage::Mount]);
+        assert_eq!(code, EXIT_OK, "{out}{err}");
+        let heads: Vec<&str> = out.lines().filter(|l| l.starts_with("# ---- ")).collect();
+        assert_eq!(heads, vec!["# ---- partition ----", "# ---- assemble: nothing to do already", "# ---- format ----", "# ---- mount ----"], "{out}");
+    }
+
+    /// The whole-disk XFS layout onto the source's own disk, the old XFS
+    /// (the layout's UUID) on it, with --erase and no record: the
+    /// partition stage runs, and format with it, though status would take
+    /// the old filesystem for format's.
+    #[test]
+    fn through_wipes_a_disk_with_no_table_load_did_not_wipe() {
+        use crate::load::layout::sample;
+        use crate::sys::FakeRunner;
+        let t = rescue("load-exec-whole", &crate::probe::xfs::sample::image(""));
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let vdx = r#"{"name": "vdx", "kind": "disk", "size_bytes": 17179869184, "logical_sector_size": 512, "model": null, "serial": null, "wwid": null,
+          "partition_table": null, "partitions": [], "boot_code": {"kind": "grub2"},
+          "content": {"type": "xfs", "usage": "filesystem", "uuid": "a0a1a2a3-a4a5-a6a7-a8a9-aaabacadaeaf", "label": null}}"#;
+        let fstab = r#"{"spec": "UUID=a0a1a2a3-a4a5-a6a7-a8a9-aaabacadaeaf", "file": "/", "type": "xfs", "options": "defaults", "freq": 0, "passno": 0, "resolves_to": "vdx"}"#;
+        // The sample's disks, btrfs and fstab swapped for vdx's.
+        let swap = |j: &str, from: &str, to: &str, with: &str| {
+            let (a, rest) = j.split_at(j.find(from).unwrap());
+            format!("{a}{with},\n    {}", &rest[rest.find(to).unwrap()..])
+        };
+        let j = swap(&sample::bios_mbr(), "\"disks\": [", "\"md_arrays\"", &format!("\"disks\": [{vdx}]"));
+        let j = swap(&j, "\"btrfs\": [", "\"xfs_external_logs\"", "\"btrfs\": []");
+        let j = swap(&j, "\"fstab\": [", "\"crypttab\"", &format!("\"fstab\": [{fstab}]"));
+        let l = Layout::from_json(crate::json::parse(&j).unwrap()).unwrap();
+        let stages = [Stage::Partition, Stage::Assemble, Stage::Format];
+        let heads = |a: &[&str]| {
+            let (code, out, err) = run(&l, &opts_of(a), &s, &stages);
+            assert_eq!(code, EXIT_OK, "{a:?}: {out}{err}");
+            out.lines().filter(|l| l.starts_with("# ---- ")).map(str::to_string).collect::<Vec<_>>()
+        };
+        // Without --erase, as before: the old XFS is taken for format's.
+        assert_eq!(heads(&["--map", "vdx=vdb", "--through", "format"]), vec!["# ---- partition: nothing to do already", "# ---- assemble: nothing to do already", "# ---- format: done already"]);
+        let erase = ["--map", "vdx=vdb", "--erase", "/dev/vdb", "--through", "format"];
+        assert_eq!(heads(&erase), vec!["# ---- partition ----", "# ---- assemble: nothing to do already", "# ---- format ----"]);
+        let p = crate::load::target::prepare(&l, &opts_of(&erase), &s);
+        let (path, text) = &p.mapping.records[0];
+        t.file(path, text.as_str());
+        assert_eq!(heads(&erase), vec!["# ---- partition: done already", "# ---- assemble: nothing to do already", "# ---- format: done already"]);
     }
 }

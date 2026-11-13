@@ -72,7 +72,9 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     let (mut ok, mut total, mut why) = (0, 0, vec![]);
     for (src, tgt) in &mapping.pairs {
         let (Some(d), Some(t)) = (layout.disk(src), system.disk(tgt)) else { continue };
-        if d.table.is_none() {
+        // A disk with no table has nothing to check, unless it's named with
+        // --erase: then the stage that wipes it is done only by its record.
+        if d.table.is_none() && !target::is_erased(opts, t) {
             continue;
         }
         total += 1;
@@ -83,7 +85,11 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
         if target::partition_counts_done(layout, d, t, opts, sys) {
             ok += 1;
         } else if target::unrecorded(layout, d, t, opts, sys) {
-            why.push(format!("/dev/{tgt}: the source's table, but no record that load wrote it, and --erase wipes it"));
+            why.push(if d.table.is_some() {
+                format!("/dev/{tgt}: the source's table, but no record that load wrote it, and --erase wipes it")
+            } else {
+                format!("/dev/{tgt}: no record that load wiped it, and --erase wipes it")
+            });
         } else if t.table.is_none() {
             why.push(format!("/dev/{tgt}: no partition table"));
         } else {

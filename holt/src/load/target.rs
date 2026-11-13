@@ -4,7 +4,7 @@
 
 use super::fit::{self, Fit};
 use super::layout::{Disk, Layout};
-use super::{Options, Stage};
+use super::{Options, Stage, RUN_DIR};
 use crate::blockdev::{self, BlockDev, Kind};
 use crate::mounts::{self, Mount};
 use crate::parttable::{self, Table};
@@ -323,6 +323,11 @@ pub struct Mapping {
     /// release_holders tells them apart once the layout the stages build
     /// from is known.
     pub ours_busy: Vec<String>,
+    /// (path, text) of each target's table record (table_record), which the
+    /// partition stage writes once its commands have run: what lets a later
+    /// run with --erase tell the table load wrote from the source's own
+    /// disk as found.
+    pub records: Vec<(String, String)>,
 }
 
 /// The in-core name a layout's pool takes when the name is taken here.
@@ -351,6 +356,7 @@ fn same_identity(src: &Disk, t: &BlockDev) -> bool {
 pub fn map(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Mapping {
     let mut m = map_disks(layout, opts, system, sys);
     release_holders(layout, opts, system, sys, &mut m);
+    m.records = records(layout, system, &m);
     m
 }
 
@@ -457,6 +463,70 @@ pub fn partition_done(d: &Disk, t: &TargetDisk) -> bool {
     want.id.as_ref().is_none_or(|id| table_id(have).eq_ignore_ascii_case(id)) && d.parts.iter().all(|p| ext.iter().any(|&(n, s, len)| n == p.number && s == p.start_lba && len == p.sectors))
 }
 
+/// Where the partition stage records the table it wrote on target disk
+/// TGT (a kernel name).  RUN_DIR is the rescue system's tmpfs: a reboot
+/// forgets the record along with the session's mounts, imports and
+/// activations, so a record always speaks of what this session did.
+pub fn table_record(tgt: &str) -> String {
+    format!("{RUN_DIR}/partitioned/{tgt}")
+}
+
+/// What the record of D's table on T says: the layout (its host and dump
+/// time), the source disk, the target's identity, and the table and
+/// partitions written (with --fit-largest, the fitted ones).
+pub fn table_record_text(layout: &Layout, d: &Disk, t: &TargetDisk) -> String {
+    let o = |v: &Option<String>| v.clone().unwrap_or_default();
+    let mut s = format!(
+        "layout {} {}\nsource {}\ntarget {} wwid={} serial={} size={}\n",
+        layout.hostname(),
+        layout.str_at(&["generated"]).unwrap_or("-"),
+        d.name,
+        t.b.name,
+        o(&t.b.wwid),
+        o(&t.b.serial),
+        t.b.size_bytes
+    );
+    if let Some(tb) = &d.table {
+        s += &format!("table {}\n", tb.id.as_deref().unwrap_or("-"));
+    }
+    for p in &d.parts {
+        s += &format!("partition {} {} {}\n", p.number, p.start_lba, p.sectors);
+    }
+    s
+}
+
+/// The record of each target with a table, for the partition stage to write.
+fn records(layout: &Layout, system: &System, m: &Mapping) -> Vec<(String, String)> {
+    m.pairs
+        .iter()
+        .filter_map(|(s, t)| Some((layout.disk(s)?, system.disk(t)?)))
+        .filter(|(d, _)| d.table.is_some())
+        .map(|(d, t)| (table_record(&t.b.name), table_record_text(layout, d, t)))
+        .collect()
+}
+
+/// Whether this rescue session's partition stage wrote D's table on T.
+pub fn load_wrote(layout: &Layout, d: &Disk, t: &TargetDisk, sys: &Sys) -> bool {
+    sys.read(&table_record(&t.b.name)).is_some_and(|r| r == table_record_text(layout, d, t))
+}
+
+/// Whether the partition stage counts as done on T: partition_done, and,
+/// for a target named with --erase, a record that load wrote that table in
+/// this session.  The source's own disk as found carries the source's table
+/// too (same disk, same table: the usual bare-metal restore), and what the
+/// old system has on it (an active volume group, its filesystems, its
+/// /etc) isn't load's; --erase asked for it wiped (layload.md, "Safety",
+/// rule 4).
+pub fn partition_counts_done(layout: &Layout, d: &Disk, t: &TargetDisk, opts: &Options, sys: &Sys) -> bool {
+    partition_done(d, t) && (!is_erased(opts, t) || load_wrote(layout, d, t, sys))
+}
+
+/// A target named with --erase whose table is the source's, with no record
+/// that load wrote it: the partition stage runs.
+pub fn unrecorded(layout: &Layout, d: &Disk, t: &TargetDisk, opts: &Options, sys: &Sys) -> bool {
+    d.table.is_some() && partition_done(d, t) && is_erased(opts, t) && !load_wrote(layout, d, t, sys)
+}
+
 /// Whether this run's partition stage wipes the targets: --only partition
 /// does; --through (and the plan, which ends in the --through command to
 /// run) skips it once status shows it done on every target, as exec does.
@@ -465,7 +535,7 @@ fn partition_runs(layout: &Layout, opts: &Options, system: &System, sys: &Sys, m
         return s == Stage::Partition;
     }
     let done = m.pairs.iter().all(|(s, t)| match (layout.disk(s), system.disk(t)) {
-        (Some(d), Some(t)) => partition_done(d, t),
+        (Some(d), Some(t)) => partition_counts_done(layout, d, t, opts, sys),
         _ => true,
     });
     !(sys.privileged && done)
@@ -490,18 +560,39 @@ fn loads_own(sys: &Sys, system: &System, opts: &Options, pools: &[String], disk:
 /// What holds the targets named with --erase, let go of at the start of the
 /// partition stage (release.rs).  LAYOUT is the one the stages build from.
 /// A target that is_ours (an earlier stage's, or the source's own disk) goes
-/// the same way, with the same refusals, when the partition stage will run
-/// and what holds it isn't load's own; when the stage won't run (done
-/// already, under --through), nothing is let go and nothing refused.
+/// the same way, with the same refusals, when the partition stage will run;
+/// when the stage won't run (done already, under --through: the table
+/// load's by its record), nothing is let go and nothing refused.  Load's own
+/// in its stack, when the stage will run, is refused: wipefs couldn't open
+/// the disk under it.
 fn release_holders(layout: &Layout, opts: &Options, system: &System, sys: &Sys, m: &mut Mapping) {
-    if !m.ours_busy.is_empty() && partition_runs(layout, opts, system, sys, m) {
+    let runs = partition_runs(layout, opts, system, sys, m);
+    if runs {
+        for (src, tgt) in &m.pairs {
+            let (Some(d), Some(t)) = (layout.disk(src), system.disk(tgt)) else { continue };
+            if unrecorded(layout, d, t, opts, sys) {
+                m.notes.push(format!(
+                    "{src} -> {}: the partition stage runs: --erase and no record that load wrote this table (the source's table, as on the source's own disk as found; {}), so what's on it is let go of and wiped",
+                    t.path(),
+                    table_record(tgt)
+                ));
+            }
+        }
+    }
+    if !m.ours_busy.is_empty() && runs {
         let pools = layout_pools(layout);
         for name in m.ours_busy.clone() {
             let Some(t) = system.disk(&name) else { continue };
-            if !t.hard_use.is_empty() {
-                let src = m.pairs.iter().find(|(_, x)| *x == name).map(|(s, _)| s.clone()).unwrap_or_default();
+            let src = m.pairs.iter().find(|(_, x)| *x == name).map(|(s, _)| s.clone()).unwrap_or_default();
+            if loads_own(sys, system, opts, &pools, &name) {
+                m.problems.push(format!(
+                    "{src} -> {}: the partition stage would wipe it, but load's own is on it, from an earlier stage (mounted under {}, or a pool of the layout's imported there); `--only close` first lets go of it",
+                    t.path(),
+                    opts.target
+                ));
+            } else if !t.hard_use.is_empty() {
                 m.problems.push(format!("{src} -> {}: the target is in use ({}); refused even with --erase", t.path(), t.in_use.join("; ")));
-            } else if !loads_own(sys, system, opts, &pools, &name) && !m.held.contains(&name) {
+            } else if !m.held.contains(&name) {
                 m.held.push(name);
             }
         }
@@ -528,7 +619,7 @@ fn release_holders(layout: &Layout, opts: &Options, system: &System, sys: &Sys, 
     }
 }
 
-fn is_erased(opts: &Options, t: &TargetDisk) -> bool {
+pub fn is_erased(opts: &Options, t: &TargetDisk) -> bool {
     opts.erase.iter().any(|e| e == &t.path() || e == &t.b.name || resolve_tail(e) == t.b.name)
 }
 
@@ -653,6 +744,7 @@ pub fn prepare<'a>(layout: &'a Layout, opts: &Options, sys: &Sys) -> Prepared<'a
         mapping.problems.push(p);
     }
     release_holders(&out, opts, &system, sys, &mut mapping);
+    mapping.records = records(&out, &system, &mapping);
     Prepared { system, mapping, layout: out, fit }
 }
 
@@ -849,10 +941,6 @@ mod tests {
         assert!(!p.contains("volume group named"), "{p}");
     }
 
-    /// BackShot2's leftovers L3: the rescue system autoactivated the old
-    /// vg0 (root and swap LVs on vdb2) at boot.  Without --erase the target
-    /// is refused as before; with it, vg0 is deactivated (LVM seeing vdb2
-    /// only) before the partition stage's wipefs; a swap LV refuses it.
     /// The old vg0 on vdb2, its root (dm-0, 252:0) and swap (dm-1) LVs
     /// active: what the rescue system's LVM autoactivated at boot.
     fn old_vg0(t: &Tree) {
@@ -869,6 +957,10 @@ mod tests {
         }
     }
 
+    /// BackShot2's leftovers L3: the rescue system autoactivated the old
+    /// vg0 (root and swap LVs on vdb2) at boot.  Without --erase the target
+    /// is refused as before; with it, vg0 is deactivated (LVM seeing vdb2
+    /// only) before the partition stage's wipefs; a swap LV refuses it.
     #[test]
     fn a_held_target_is_let_go_of_with_erase_only() {
         let t = tree();
@@ -964,28 +1056,121 @@ mod tests {
         assert!(m.problems.is_empty() && m.release.is_empty(), "{:?}", m.problems);
 
         // An LV mounted under --target, from an earlier partial run: load's
-        // own, so nothing let go of and nothing refused, as before.
+        // own, so nothing is let go of; the partition stage runs (the table
+        // isn't the layout's), and wipefs couldn't open the disk under it,
+        // so with --erase the plan refuses it.  Without, taken as it is.
         t.file("/proc/self/mountinfo", "30 1 252:0 / /mnt/bko-target rw - ext4 /dev/mapper/vg0-root rw\n");
-        for a in [&["--map", "vda=vdb", "--erase", "/dev/vdb"][..], &["--map", "vda=vdb", "--erase", "/dev/vdb", "--through", "mount"], &["--map", "vda=vdb"]] {
+        for a in [&["--map", "vda=vdb", "--erase", "/dev/vdb"][..], &["--map", "vda=vdb", "--erase", "/dev/vdb", "--through", "mount"]] {
             let m = run(a);
-            assert!(m.problems.is_empty() && m.release.is_empty(), "{a:?}: {:?} {:?}", m.problems, m.release);
+            assert!(m.release.is_empty(), "{a:?}: {:?}", m.release);
+            let p = m.problems.join("\n");
+            assert!(p.contains("vda -> /dev/vdb: the partition stage would wipe it, but load's own is on it, from an earlier stage (mounted under /mnt/bko-target, or a pool of the layout's imported there); `--only close` first lets go of it"), "{a:?}: {p}");
         }
+        let m = run(&["--map", "vda=vdb"]);
+        assert!(m.problems.is_empty() && m.release.is_empty(), "{:?} {:?}", m.problems, m.release);
         t.file("/proc/self/mountinfo", "");
 
-        // The layout's own table there: --through skips the partition stage
-        // (status shows it done), so nothing is let go of; --only partition
-        // runs it, and lets go first.
-        t.file("/dev/vdb", mbr(&[(0, 2048, 1953792), (1, 1955840, 3905536), (2, 5861376, 27693056)]));
-        assert!(partition_done(l.disk("vda").unwrap(), scan(&s, &o, &[]).disk("vdb").unwrap()));
-        for a in [&["--map", "vda=vdb", "--erase", "/dev/vdb", "--through", "mount"][..], &["--map", "vda=vdb", "--erase", "/dev/vdb"]] {
+        // Another stage alone never reaches the partition stage.
+        let m = run(&["--map", "vda=vdb", "--erase", "/dev/vdb", "--only", "status"]);
+        assert!(m.problems.is_empty() && m.release.is_empty(), "{:?}", m.problems);
+    }
+
+    /// The sample layout's own table, every partition at its sectors.
+    fn own_table() -> Vec<u8> {
+        mbr(&[(0, 2048, 1953792), (1, 1955840, 3905536), (2, 5861376, 27693056)])
+    }
+
+    /// The source's own disk as found, its table unchanged (the usual
+    /// bare-metal restore: same disk, same table), the old vg0 active on it.
+    /// The table passes status's check, but with --erase that isn't enough:
+    /// only this session's record that load wrote it makes the partition
+    /// stage done.  Without the record, the stage runs, letting go of vg0
+    /// with the usual refusals; with it, a rerun skips the stage, as before.
+    #[test]
+    fn the_sources_own_table_as_found_is_wiped_with_erase() {
+        let t = tree();
+        old_vg0(&t);
+        t.file("/dev/vdb", own_table());
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let l = layout();
+        let run = |a: &[&str]| prepare(&l, &opts(a), &s).mapping;
+        let lvm = super::super::release::Action::Lvm { vg: "vg0".into(), pvs: vec!["/dev/vdb2".into()] };
+        let o = opts(&["--map", "vda=vdb"]);
+        let (d, system) = (l.disk("vda").unwrap(), scan(&s, &o, &[]));
+        let vdb = system.disk("vdb").unwrap();
+        assert!(partition_done(d, vdb));
+        let partition = |a: &[&str]| super::super::status::rows(&l, &opts(a), &s).0.into_iter().find(|r| r.0 == Stage::Partition).map(|r| (r.1, r.2)).unwrap();
+        use super::super::status::State;
+        let erase = ["--map", "vda=vdb", "--erase", "/dev/vdb"];
+        let through = ["--map", "vda=vdb", "--erase", "/dev/vdb", "--through", "mount"];
+        let note = "vda -> /dev/vdb: the partition stage runs: --erase and no record that load wrote this table";
+
+        // Without --erase: as before, the stage done and nothing let go of.
+        for a in [&["--map", "vda=vdb"][..], &["--map", "vda=vdb", "--through", "mount"]] {
+            let m = run(a);
+            assert!(m.problems.is_empty() && m.release.is_empty(), "{a:?}: {:?} {:?}", m.problems, m.release);
+            assert!(!m.notes.iter().any(|n| n.contains(note)), "{a:?}: {:?}", m.notes);
+        }
+        assert_eq!(partition(&["--map", "vda=vdb"]).0, State::Done);
+
+        // With it and no record: the stage runs, vg0 let go of, then wiped.
+        for a in [&erase[..], &through] {
+            let m = run(a);
+            assert!(m.problems.is_empty(), "{a:?}: {:?}", m.problems);
+            assert_eq!(m.release.iter().map(|x| &x.action).collect::<Vec<_>>(), vec![&lvm], "{a:?}");
+            assert!(m.notes.iter().any(|n| n.starts_with(note) && n.contains("/run/bko-holt/partitioned/vdb")), "{a:?}: {:?}", m.notes);
+            let b = super::super::commands::build(&l, &opts(a), &m);
+            let text: String = b.stage(Stage::Partition).iter().map(|c| c.shell()).collect();
+            let at = |x: &str| text.find(x).unwrap_or_else(|| panic!("no {x:?} in\n{text}"));
+            assert!(at("vgchange --devicesfile '' --devices /dev/vdb2 --activate n vg0") < at("wipefs --all /dev/vdb\n"), "{text}");
+            assert_eq!(m.records, vec![(table_record("vdb"), table_record_text(&l, d, vdb))]);
+        }
+        assert_eq!(partition(&erase), (State::NotDone, "/dev/vdb: the source's table, but no record that load wrote it, and --erase wipes it".to_string()));
+        // The same refusals: an LV mounted outside --target.
+        t.file("/proc/self/mountinfo", "30 1 252:0 / /mnt/old rw - ext4 /dev/mapper/vg0-root rw\n");
+        for a in [&erase[..], &through] {
+            let p = run(a).problems.join("\n");
+            assert!(p.contains("vda -> /dev/vdb: the target is held, and what holds it can't be let go: dm-0 (vg0-root) is mounted at /mnt/old; refused even with --erase"), "{a:?}: {p}");
+        }
+        assert!(run(&["--map", "vda=vdb"]).problems.is_empty());
+        t.file("/proc/self/mountinfo", "");
+
+        // A record of another layout's table (another dump) is no record.
+        t.file(&table_record("vdb"), table_record_text(&l, d, vdb).replace("layout deb13 ", "layout other "));
+        assert_eq!(run(&erase).release.len(), 1);
+        assert_eq!(partition(&erase).0, State::NotDone);
+
+        // With this session's record: load wrote the table, so --through
+        // (and the plan) skip the stage and let go of nothing; --only
+        // partition runs it, and lets go first.
+        t.file(&table_record("vdb"), table_record_text(&l, d, vdb));
+        for a in [&erase[..], &through] {
+            let m = run(a);
+            assert!(m.problems.is_empty() && m.release.is_empty(), "{a:?}: {:?} {:?}", m.problems, m.release);
+            assert!(!m.notes.iter().any(|n| n.contains(note)), "{a:?}: {:?}", m.notes);
+        }
+        assert_eq!(partition(&erase).0, State::Done);
+        let m = run(&["--map", "vda=vdb", "--erase", "/dev/vdb", "--only", "partition"]);
+        assert!(m.problems.is_empty(), "{:?}", m.problems);
+        assert_eq!(m.release.iter().map(|x| &x.action).collect::<Vec<_>>(), vec![&lvm]);
+
+        // Load's own under --target (the mount stage's, of this session):
+        // a rerun goes on from it, but --only partition would wipe the disk
+        // under it, so the plan refuses it rather than wipefs failing.
+        t.file("/proc/self/mountinfo", "30 1 252:0 / /mnt/bko-target rw - ext4 /dev/mapper/vg0-root rw\n");
+        for a in [&erase[..], &through] {
             let m = run(a);
             assert!(m.problems.is_empty() && m.release.is_empty(), "{a:?}: {:?} {:?}", m.problems, m.release);
         }
         let m = run(&["--map", "vda=vdb", "--erase", "/dev/vdb", "--only", "partition"]);
-        assert!(m.problems.is_empty(), "{:?}", m.problems);
-        assert_eq!(m.release.iter().map(|x| &x.action).collect::<Vec<_>>(), vec![&lvm]);
-        // Another stage alone never reaches the partition stage.
-        let m = run(&["--map", "vda=vdb", "--erase", "/dev/vdb", "--only", "status"]);
-        assert!(m.problems.is_empty() && m.release.is_empty(), "{:?}", m.problems);
+        assert!(m.release.is_empty(), "{:?}", m.release);
+        let p = m.problems.join("\n");
+        assert!(p.contains("vda -> /dev/vdb: the partition stage would wipe it, but load's own is on it, from an earlier stage (mounted under /mnt/bko-target"), "{p}");
+        assert!(p.contains("`--only close` first lets go of it"), "{p}");
+        // A partition mounted there, too: the same refusal, not wipefs's.
+        t.file("/proc/self/mountinfo", "30 1 253:18 / /mnt/bko-target rw - ext4 /dev/vdb2 rw\n");
+        let p = run(&["--map", "vda=vdb", "--erase", "/dev/vdb", "--only", "partition"]).problems.join("\n");
+        assert!(p.contains("vda -> /dev/vdb: the partition stage would wipe it, but load's own is on it, from an earlier stage (mounted under /mnt/bko-target"), "{p}");
+        assert!(!p.contains("refused even with --erase"), "{p}");
     }
 }

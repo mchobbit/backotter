@@ -77,9 +77,13 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
         }
         total += 1;
         // The same check decides whether --erase lets go of what holds a
-        // target (target::release_holders).
-        if target::partition_done(d, t) {
+        // target (target::release_holders).  With --erase, the source's
+        // table counts only when this session's partition stage wrote it:
+        // otherwise it's the source's own disk as found.
+        if target::partition_counts_done(layout, d, t, opts, sys) {
             ok += 1;
+        } else if target::unrecorded(layout, d, t, opts, sys) {
+            why.push(format!("/dev/{tgt}: the source's table, but no record that load wrote it, and --erase wipes it"));
         } else if t.table.is_none() {
             why.push(format!("/dev/{tgt}: no partition table"));
         } else {

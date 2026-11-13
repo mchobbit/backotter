@@ -84,9 +84,13 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
         log = std::fs::OpenOptions::new().create(true).append(true).open(format!("{RUN_DIR}/log/load.log")).ok();
         log_line(&mut log, &format!("==== bko-holt load {} {:?}", env!("CARGO_PKG_VERSION"), std::env::args().collect::<Vec<_>>()));
     }
+    // Once the partition stage runs, no later stage is skipped: what status
+    // would read before them is what was on the disks before the wipe (in a
+    // dry run, the old system's filesystems and files, still there).
+    let mut wiped = false;
     for &s in stages {
         // --through skips what's done already; --only does what it's told.
-        if opts.through.is_some() {
+        if opts.through.is_some() && !wiped {
             let (st, _) = state_of(layout, opts, sys, s);
             if matches!(st, State::Done | State::Nothing) {
                 out += &format!("# ---- {}: {} already\n", s.name(), st_word(st));
@@ -97,6 +101,7 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
         if s == Stage::Boot && !sys.exists(&format!("{}/{marker}", opts.target)) {
             return (EXIT_FAILED, out, format!("bko-holt load: boot: {}/{marker} isn't there; restore the system into {} first\n", opts.target, opts.target));
         }
+        wiped |= s == Stage::Partition;
         let cmds = p.built.stage(s);
         out += &format!("# ---- {} ----\n", s.name());
         if !opts.commit {
@@ -109,6 +114,13 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
         // A new tree needs its own boot stage.
         if s == Stage::Restore {
             let _ = std::fs::remove_file(status::boot_marker());
+        }
+        // A table load wrote is recorded only once the stage has run: until
+        // then, with --erase, a rerun takes the disk as it finds it.
+        if s == Stage::Partition {
+            for (path, _) in &p.mapping.records {
+                let _ = std::fs::remove_file(path);
+            }
         }
         for c in cmds {
             match run_cmd(c, &mut log) {
@@ -123,6 +135,12 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
                     err += &format!("bko-holt load: the log is {RUN_DIR}/log/load.log\n");
                     return (EXIT_FAILED, out, err);
                 }
+            }
+        }
+        if s == Stage::Partition {
+            if let Err(e) = write_records(&p.mapping.records) {
+                log_line(&mut log, &format!("FAILED: {e}"));
+                return (EXIT_FAILED, out, format!("bko-holt load: partition: {e}\n"));
             }
         }
         if s == Stage::Boot {
@@ -145,6 +163,17 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
         out += "\n# Nothing was written: add --commit to run these.\n";
     }
     (EXIT_OK, out, err)
+}
+
+/// The partition stage's record of each table it wrote (target::table_record).
+fn write_records(records: &[(String, String)]) -> Result<(), String> {
+    for (path, text) in records {
+        if let Some(dir) = std::path::Path::new(path).parent() {
+            std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+        }
+        std::fs::write(path, text).map_err(|e| format!("{path}: {e}"))?;
+    }
+    Ok(())
 }
 
 fn st_word(s: State) -> &'static str {
@@ -172,5 +201,53 @@ mod tests {
         assert_eq!(run_cmd(&c.clone().warns(), &mut None), Ok(vec!["x: warning: one".to_string(), "x: warning: two".to_string()]));
         let e = run_cmd(&Cmd::new(&["sh", "-c", &format!("{script}; echo 'x: 1 failed' >&2; exit 1")]).warns(), &mut None).unwrap_err();
         assert!(e.ends_with("x: warning: two\n    x: 1 failed"), "{e}");
+    }
+
+    /// --through on the source's own disk as found, its table the source's
+    /// and named with --erase: with no record that load wrote the table the
+    /// partition stage runs, and every stage after it (the mount stage too,
+    /// though something is mounted where it mounts); with the record, the
+    /// stages status shows done are skipped, as before.
+    #[test]
+    fn through_runs_the_partition_stage_on_a_table_load_did_not_write() {
+        use crate::load::layout::sample;
+        use crate::load::{parse_args, target, Parsed};
+        use crate::sys::FakeRunner;
+        use crate::testutil::Tree;
+        let t = Tree::new("load-exec-through");
+        let mut table = vec![0u8; 512];
+        table[440..444].copy_from_slice(&0x1f2e_3d4cu32.to_le_bytes());
+        for (slot, start, n) in [(0, 2048, 1953792), (1, 1955840, 3905536), (2, 5861376, 27693056)] {
+            crate::parttable::build::mbr_entry(&mut table, slot, 0, 0x83, start, n);
+        }
+        t.disk("vdb", "253:16", &table, 512).file("/sys/block/vdb/size", "33554432\n");
+        t.file("/proc/self/mountinfo", "36 35 0:50 / /mnt/bko-target rw - tmpfs tmpfs rw\n37 36 0:51 / /mnt/bko-target/boot rw - tmpfs tmpfs rw\n");
+        t.file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        for p in ["wipefs", "dd", "sfdisk", "udevadm", "mke2fs", "tune2fs", "mkswap", "mkfs.btrfs", "btrfs", "mkdir", "mount", "umount", "chroot", "cp", "sh", "bash"] {
+            t.file(&format!("/usr/sbin/{p}"), "");
+        }
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let l = Layout::from_json(crate::json::parse(&sample::bios_mbr()).unwrap()).unwrap();
+        let o = match parse_args(&["l.json".into(), "--map".into(), "vda=vdb".into(), "--erase".into(), "/dev/vdb".into(), "--through".into(), "mount".into()]).unwrap() {
+            Parsed::Run(o) => o,
+            _ => unreachable!(),
+        };
+        let stages = [Stage::Partition, Stage::Assemble, Stage::Format, Stage::Mount];
+        let (code, out, err) = run(&l, &o, &s, &stages);
+        assert_eq!(code, EXIT_OK, "{out}{err}");
+        assert!(out.contains("# ---- partition ----\n# vda -> /dev/vdb: clear the old table and signatures\nwipefs --all /dev/vdb\n"), "{out}");
+        assert!(out.contains("# ---- mount ----\n"), "{out}");
+        assert!(!out.contains("already"), "{out}");
+
+        // The record this session's partition stage writes.
+        let p = target::prepare(&l, &o, &s);
+        assert_eq!(p.mapping.records.len(), 1);
+        let (path, text) = &p.mapping.records[0];
+        t.file(path, text.as_str());
+        let (code, out, err) = run(&l, &o, &s, &stages);
+        assert_eq!(code, EXIT_OK, "{out}{err}");
+        assert!(out.contains("# ---- partition: done already\n"), "{out}");
+        assert!(out.contains("# ---- format ----\n"), "{out}");
+        assert!(out.contains("# ---- mount: done already\n"), "{out}");
     }
 }

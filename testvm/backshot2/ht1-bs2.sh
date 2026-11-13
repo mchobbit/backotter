@@ -139,3 +139,75 @@ bs2_after_dst_record() {
 bs2_target_size() {  # I: target disk I's bytes
     echo "${BS2_TARGETS[$1]}"
 }
+
+# ---- the leftovers set (bs2lib/leftovers.py; backshot2.md, "Leftovers") ----
+# Only when bs2-host leftovers runs the step: BS2_CHAIN_OUT names where this
+# step's restored disk goes, for the next step; BS2_CHAIN_IN the disk the
+# step before left (none: the set's first step, a blank disk).  Nothing here
+# wipes anything: what's on the disk when load starts is what the step
+# before (and this step's seed) left.
+BS2_SEED=() BS2_EXPECT=()
+BS2_PROBE=$(dirname "$BS2_HOST")/leftovers-probe.sh
+
+bs2_target_make() {  # I PATH: target disk I, new or the step before's
+    if (($1 == 0)) && [[ -n ${BS2_CHAIN_IN:-} ]]; then
+        [[ -f $BS2_CHAIN_IN ]] || { bad "leftovers: no disk $BS2_CHAIN_IN from the step before"; return 1; }
+        cp --sparse=always "$BS2_CHAIN_IN" "$2" || { bad "leftovers: copy $BS2_CHAIN_IN"; return 1; }
+        local have; have=$(size_of "$2")
+        [[ $have == "$(bs2_target_size 0)" ]] || { bad "leftovers: the step before's disk is $have bytes, this step's target $(bs2_target_size 0)"; return 1; }
+        say "note: leftovers: the target is the disk the step before left, as it left it"
+    else
+        qemu-img create -q -f qcow2 "$2" "$(bs2_target_size "$1")"
+    fi
+}
+
+# In the rescuer, before the refusals and load: this step's seed (a stale
+# layer, then a reboot, so the rescuer meets it as a booting machine), and
+# what the rescuer made of the disk at boot.
+bs2_before_load() {
+    [[ -n ${BS2_CHAIN_OUT:-} ]] || return 0
+    if ((${#BS2_SEED[@]})); then
+        if sshk "$rkey" "sh -s -- seed /dev/vdb ${BS2_SEED[*]}" < "$BS2_PROBE" > "$R/logs/bs2-seed.log" 2>&1; then
+            ok "leftovers: seeded ${BS2_SEED[0]} on /dev/vdb at sector ${BS2_SEED[1]} (${BS2_SEED[2]} sectors)"
+        else
+            bad "leftovers: seeding ${BS2_SEED[0]} (logs/bs2-seed.log): $(tail -1 "$R/logs/bs2-seed.log")"; return 1
+        fi
+        vm_reboot "$rkey" || { bad "rescuer boots again after the seed (logs/rescuer-serial.log)"; return 1; }
+        sshk "$rkey" 'mkdir -p /mnt/share && mount -t 9p -o trans=virtio,version=9p2000.L,ro bkoshare /mnt/share' >> "$R/logs/rescuer-setup.log" 2>&1 \
+            || { bad "rescuer setup (the share, after the seed's reboot)"; return 1; }
+    fi
+    sshk "$rkey" "sh -s -- probe /dev/vdb" < "$BS2_PROBE" > "$R/logs/bs2-leftovers-rescuer.txt" 2>&1
+    say "note: leftovers: the rescuer at boot:$(sed -n 's/^SUMMARY//p' "$R/logs/bs2-leftovers-rescuer.txt" | tail -1)"
+}
+
+# In the rescuer, after load's close: every signature on each new partition
+# (wipefs -n), and what blkid -p settles on.  A type other than the layout's,
+# or blkid unable to choose, is a problem (a FAIL, given in the verify phase
+# so that the restored disk's boot is still tried); any other old signature
+# is a note.
+bs2_after_load() {
+    [[ -n ${BS2_CHAIN_OUT:-} ]] || return 0
+    sshk "$rkey" "sh -s -- after /dev/vdb ${BS2_EXPECT[*]}" < "$BS2_PROBE" > "$R/logs/bs2-leftovers-after.txt" 2>&1
+    grep -E '^(WRONG|AMBIVALENT) ' "$R/logs/bs2-leftovers-after.txt" > "$R/bs2-leftover-problems.txt" || true
+    local stale; stale=$(sed -n 's/^STALE //p' "$R/logs/bs2-leftovers-after.txt" | tr '\n' ';' | sed 's/;$//; s/;/; /g')
+    say "note: leftovers: after load's close: ${stale:-no old signature on the new partitions}$( [[ -s $R/bs2-leftover-problems.txt ]] && echo "; problems: $(tr '\n' ';' < "$R/bs2-leftover-problems.txt")")"
+}
+
+# After the rescuer is down: the restored disk, as load left it, for the next step.
+bs2_chain_save() {
+    [[ -n ${BS2_CHAIN_OUT:-} ]] || return 0
+    cp --sparse=always "${dst[0]}" "$BS2_CHAIN_OUT.part" && mv -f "$BS2_CHAIN_OUT.part" "$BS2_CHAIN_OUT" \
+        || bad "leftovers: keep the restored disk for the next step ($BS2_CHAIN_OUT)"
+}
+
+bs2_verify_begin() {
+    [[ -s $R/bs2-leftover-problems.txt ]] || return 0
+    local l; while IFS= read -r l; do bad "leftovers: after load: $l"; done < "$R/bs2-leftover-problems.txt"
+}
+
+# The restored system, booted: what it made of the disk.
+bs2_restored_probe() {
+    [[ -n ${BS2_CHAIN_OUT:-} ]] || return 0
+    sshk "$1" "sh -s -- restored /dev/vda" < "$BS2_PROBE" > "$R/logs/bs2-leftovers-restored.txt" 2>&1
+    say "note: leftovers: the restored system at boot:$(sed -n 's/^SUMMARY//p' "$R/logs/bs2-leftovers-restored.txt" | tail -1)"
+}

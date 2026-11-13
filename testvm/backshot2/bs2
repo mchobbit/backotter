@@ -12,6 +12,10 @@ testvm/ and holt/ in ~/backotter-work/bs2-wt (never the shared testvm/).
   bs2 replay CASE [--tier N]        one case again, exactly
   bs2 shrink CASE [--tier N]        a failing case down to its smallest; saved in the corpus
   bs2 soak CASE N                   CASE N times at tier 1 (reported as K of N)
+  bs2 leftovers [SET] [plan]        the leftovers set (bs2lib/leftovers.py): its restores in order
+                                    onto one disk, on one host (chopin; --hosts H names another
+                                    that has all three UEFI sources), detached; log in
+                                    /bkoscratch/backshot2/logs/RUN.log, rows in RUN/leftovers.jsonl
   bs2 sync                          copy testvm/ and holt/ to the hosts' bs2-wt
   bs2 status RUN                    the run's verdicts so far, on each of its hosts
 
@@ -257,6 +261,17 @@ def main():
         run_words(sources, n, time.strftime("bs2a-%Y%m%d-%H%M"))
         if w == "BackShot2Alpine" or True:
             print("then: bs2 BackShot2 corpus (once the queues finish; bs2 status RUN shows them)")
+    elif w == "leftovers":
+        name = a[1] if len(a) > 1 else "leftovers"
+        h = next(iter(RUN_HOSTS)) if CHOSEN else "chopin"
+        sync()
+        run = time.strftime("lo-%Y%m%d-%H%M")
+        if plan:
+            ssh(h, f"cd ~/backotter-work && {HOST_BS2} leftovers {name} --plan --run {run}-plan")
+            return
+        log = f"/bkoscratch/backshot2/logs/{run}.log"
+        ssh(h, f"mkdir -p /bkoscratch/backshot2/logs && cd ~/backotter-work && PYTHONUNBUFFERED=1 setsid -f {HOST_BS2} leftovers {name} --run {run} --port 2949 > {log} 2>&1 < /dev/null")
+        print(f"{h}: started the {name} set as {run} (log {log}; rows /bkoscratch/backshot2/runs/{run}/leftovers.jsonl)")
     elif w in ("replay", "shrink", "soak"):
         path = a[1]
         with open(path) as f:

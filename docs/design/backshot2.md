@@ -288,6 +288,74 @@ that only bounds a race below ~15% (test2.md).
 - 30 cases pass tier 2 and 5 pass tier 3;
 - every FAIL found is shrunk and in the corpus.
 
+## Leftovers: ordered restores onto one disk
+
+**Why.** The user worries that what an old layout leaves on a disk (an LVM
+PV, a LUKS header, md or ZFS labels, another filesystem's superblock)
+confuses `load` or the restored system.  Today `load` runs `wipefs --all`
+on the whole disk before it partitions; wipefs erases only the magic bytes
+it recognizes on that device, not what's inside the old partitions.  A
+pending `load` change zeroes the disk's first 4 MiB and last 1 MiB and the
+first 4 MiB of each new partition before mkfs or pvcreate; this set shows
+whether that's needed, and what it misses.
+
+**What.** One disk, steps in a fixed order (`bs2lib/leftovers.py`'s
+`STEPS`).  Each step is a tier 1 run whose target is the disk the step before
+left, exactly: nothing wipes it between steps but `load` (and the step's
+seed).  The set stops at the first step that doesn't pass, since the steps
+after it would start on a disk it didn't mean.
+
+| Step | Restores | Onto (the disk holds) | Lined up |
+|---|---|---|---|
+| L1 | `alpine324-uefi` (plain: ESP, swap, ext4 root) | a blank disk | (none) |
+| L2 | `alpine324-lvm`, PV moved | L1's layout | the PV starts where L1's ext4 root started |
+| L3 | `alpine324-uefi` | L2's (VG vg0) | the root starts where L2's PV started |
+| L4 | `alpine324-luks`, LUKS moved | L3's | the LUKS2 header where L3's root started |
+| L5 | `alpine324-uefi` | L4's | the root starts on the old LUKS2 header (and its copy 16 KiB in) |
+| L6 | `alpine324-uefi` | seeded md RAID1, metadata 1.2, ext4 on it | the root starts at the md partition's start |
+| L7 | `alpine324-uefi` | seeded md RAID1, metadata 1.0 (superblock at the end) | start and end the same |
+| L8 | `alpine324-uefi` | a seeded ZFS pool, exported (labels at both ends) | start and end the same |
+| L9 | `alpine324-uefi` | seeded btrfs | ext4 at btrfs's start |
+
+L1-L3 are the user's trio: non-LVM, LVM, non-LVM, the same distro.
+
+**Lining up on purpose.** The moved PV and LUKS partitions are shrunk and
+moved (a `resize`, then a `gap_before`) to begin and end exactly where the
+plain layout's root does, sector 5244928 to the disk's last MiB.
+`leftovers.aligned()` checks every step against the disk it starts on, on the
+real dumps, when the set is generated: this step's partition N must begin at
+the sector where a layer holding the named signature begins (the step
+before's partition, or the seed's).  A drift (a source rebuilt with other
+sizes) refuses the set; it never runs misaligned.  Each case records
+`chain.aligned` (`partition`, `on`, `from`, `sector`).
+
+**Seeds.** No Alpine source has md, ZFS or btrfs.  For those, the rescuer
+writes a stale layer first (`leftovers-probe.sh seed`): a new GPT with one
+partition the size and place of the next root (the old partitions' content
+stays, as a reinstall's partitioner would leave it), the layer on it (mdadm
+`--create` RAID1 with one member missing and ext4 on it; `zpool create` then
+`export`; `mkfs.btrfs`), then the rescuer reboots, so it meets the layer the
+way a booting machine would (udev's md assembly, LVM autoactivation,
+zfs-import).
+
+**What each step records** (`note: leftovers:` lines in the report, the
+`leftovers` field of `RUN/leftovers.jsonl`):
+- the rescuer at boot, before load: active LVs, md arrays, open dm
+  devices, imported and importable pools, holders of the target's partitions;
+- after load's close: every signature `wipefs` finds on each new partition.
+  An old one is a note (STALE).  A `blkid -p` type other than the layout's
+  (WRONG), or blkid unable to choose (AMBIVALENT), is a FAIL.  The FAIL is
+  given in the verify phase, so the restored disk's boot is still tried;
+- the restored system at boot: md arrays, dm devices, each partition's type;
+- and HoltTest1's own checks: load refusing (a busy target), the boot, and
+  judge.py, whose dump comparison sees an assembled stale array or VG.
+
+**Not built.** ext4 under btrfs (btrfs restored over ext4): no Alpine source
+restores btrfs, and an edit never changes a filesystem's type (Alpine's own
+rule).  md or ZFS as the *restored* layout: no Alpine source has them.  The
+rescuer is HoltTest1's Debian 13 one (`zfsutils-linux`, `mdadm`, `lvm2`), not
+BackOtter's rescue image, whose udev and autoactivation may differ.
+
 ## Words
 
 Run by `testvm/backshot2/bs2` on the Mac, `bs2-host` on the hosts, the way t2 is:
@@ -299,6 +367,7 @@ Run by `testvm/backshot2/bs2` on the Mac, `bs2-host` on the hosts, the way t2 is
 | `BackShot2 corpus` | the corpus alone |
 | `BackShot2All` | reserved for all of BackShot2, fresh, later |
 | `bs2 replay CASE`, `bs2 shrink CASE`, `bs2 soak CASE N` | as above |
+| `bs2 leftovers` | the leftovers set, its steps in order on one disk (above) |
 | any form with `plan` | the cases it would draw, their tiers, est. time and GB; nothing runs |
 
 The results go into Test2's ledger (test2.md, L1), keyed by case hash, bko-holt

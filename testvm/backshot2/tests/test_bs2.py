@@ -20,7 +20,7 @@ sys.path.insert(0, BS2)
 CORPUS = os.path.join(BS2, "..", "..", "holt", "tests", "corpus")
 JUDGE = os.path.join(BS2, "..", "holttest1d", "judge.py")
 
-from bs2lib import case as C, content as CT, dumpx, edits as E, fitcalc, generate as G, geometry as GE, rules, shrink as S, sweep  # noqa: E402
+from bs2lib import case as C, content as CT, dumpx, edits as E, fitcalc, generate as G, geometry as GE, leftovers as LO, rules, shrink as S, sweep  # noqa: E402
 from bs2lib.geometry import Invalid  # noqa: E402
 
 
@@ -657,3 +657,64 @@ try_mount /dev/nbd9p3 /mnt/x "" && echo ok || echo "failed: $mount_err"
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestLeftovers(unittest.TestCase):
+    def test_every_step_after_the_first_is_aligned(self):
+        st = LO.steps("leftovers")
+        self.assertEqual([x["source"] for x in st[:3]], [LO.UEFI, LO.LVM, LO.UEFI])   # the user's trio, in order
+        self.assertNotIn("align", st[0])
+        for x in st[1:]:
+            number, against, what = x["align"]
+            self.assertIn(against, ("prev", "seed"))
+            self.assertEqual(against == "seed", "seed" in x)
+            if "seed" in x:
+                self.assertEqual(LO.SEEDS[x["seed"]]["what"], what)
+
+    def test_aligned_names_both_starts(self):
+        prev = [(2048, 1050624, 1, "vfat"), (5244928, 33552384, 2, "LVM2_member")]
+        mine = [(2048, 1050624, 1, "vfat"), (1050624, 5244928, 2, "swap"), (5244928, 33552384, 3, "ext4")]
+        self.assertEqual(LO.aligned(prev, mine, 3, "LVM2_member"), 5244928)
+        with self.assertRaisesRegex(Invalid, "not aligned"):
+            LO.aligned(prev, mine, 2, "LVM2_member")
+        with self.assertRaisesRegex(Invalid, "no crypto_LUKS"):
+            LO.aligned(prev, mine, 3, "crypto_LUKS")
+
+    def test_moved_keeps_the_end(self):
+        p = dumpx.part(dumpx.disk(ALPINE), 3)
+        d = E.apply(ALPINE, LO._moved(ALPINE, 3, p["start_lba"] + 4096))
+        q = dumpx.part(dumpx.disk(d), 3)
+        self.assertEqual((q["start_lba"], dumpx.end(q)), (p["start_lba"] + 4096, dumpx.end(p)))
+
+    def test_probe_after_sorts_stale_wrong_and_ambivalent(self):
+        wipefs = """#!/bin/sh
+case "$*" in
+  *TYPE,OFFSET*vdb3) printf 'ext4 0x438\\nzfs_member 0x3f000\\n' ;;
+  *TYPE*vdb1) echo vfat ;;
+  *TYPE*vdb3) printf 'ext4\\nzfs_member\\n' ;;
+  *TYPE*vdb4) echo xfs ;;
+  *TYPE*vdb6) echo swap ;;
+esac
+"""
+        blkid = """#!/bin/sh
+case "$*" in
+  *vdb1) echo vfat ;;
+  *vdb3) echo ext4 ;;
+  *vdb4) echo "blkid: ambivalent result (probably more filesystems on the device)" >&2; exit 8 ;;
+  *vdb6) echo btrfs ;;
+esac
+"""
+        with tempfile.TemporaryDirectory() as t:
+            for n, body in (("wipefs", wipefs), ("blkid", blkid)):
+                with open(os.path.join(t, n), "w") as f:
+                    f.write(body)
+                os.chmod(os.path.join(t, n), 0o755)
+            for n in (1, 3, 4, 6):
+                open(os.path.join(t, f"vdb{n}"), "w").close()
+            r = subprocess.run(["sh", os.path.join(BS2, "leftovers-probe.sh"), "after", os.path.join(t, "vdb"),
+                                "1:vfat", "3:ext4", "4:xfs", "5:swap", "6:swap"],
+                               env=dict(os.environ, PATH=t + ":" + os.environ["PATH"]), capture_output=True, text=True)
+        lines = [l.split(t + "/")[-1] if False else l for l in r.stdout.splitlines() if l.split(" ")[0] in ("STALE", "WRONG", "AMBIVALENT")]
+        kinds = sorted((l.split(" ")[0], l.split(" ")[1].rsplit("/", 1)[-1].rstrip(":")) for l in lines)
+        self.assertEqual(kinds, [("AMBIVALENT", "vdb4"), ("STALE", "vdb3"), ("WRONG", "vdb5"), ("WRONG", "vdb6")])
+        self.assertIn("zfs_member (the layout's ext4; 0x3f000 offset)", r.stdout)

@@ -28,6 +28,38 @@ shared `testvm/`) and runs `bs2-host` there.  Chopin runs
 - each source prepared: `sudo -E bs2-host source SOURCE` (its live dump and
   a copy of its root, for tier 0's dry runs; again after an image update).
 
+## The leftovers set
+
+    testvm/backshot2/bs2 leftovers [SET] [plan]
+    bs2-host leftovers [SET] --run RUN [--port P] [--from N] [--keep] [--plan]   # on a host, as m
+
+Restores in a fixed order onto ONE disk (spec: "Leftovers"): the user's
+trio first (alpine324-uefi, alpine324-lvm, alpine324-uefi), then LUKS,
+md 1.2, md 1.0, ZFS and btrfs, each followed by the plain layout.  It
+runs on one host that has all three UEFI sources (chopin by default), one
+step at a time, each a tier 1 (`bs2-host tier1`) under its own
+`cmp-run.sh --reserve 6 3`.  Each step's restored disk is copied, as load
+left it, to `/mnt/bko-ram/backshot2/leftovers-RUN/STEP.qcow2` and is the
+next step's target (`BS2_CHAIN_IN`, `BS2_CHAIN_OUT`, read by ht1-bs2.sh's
+`bs2_target_make` and `bs2_chain_save`); only the disk the next step needs
+is kept (`--keep`: all of them).  The set stops at the first step that
+doesn't pass and keeps that step's input, so `--run RUN --from N` reruns it.
+`BS2_HOLT` picks the bko-holt (as for every tier).
+
+- `bs2lib/leftovers.py`: the steps, the edits that line the PV and LUKS
+  partitions up with the plain root (sector 5244928), and `aligned()`, the
+  explicit check that each step's partition begins where the disk's old
+  layer begins; generation refuses a set that doesn't line up.
+- `leftovers-probe.sh`: the seeds (md12, md10, zfs, btrfs), and the probes
+  of the rescuer at boot, of the new partitions after load (wipefs, blkid
+  -p), and of the restored system.
+- ht1.sh's hooks for it (bs2 only): `bs2_target_make`, `bs2_before_load`,
+  `bs2_after_load`, `bs2_chain_save`, `bs2_verify_begin`,
+  `bs2_restored_probe`.  They do nothing unless `BS2_CHAIN_OUT` is set.
+- Results: `/bkoscratch/backshot2/runs/RUN/leftovers.jsonl`, a row per step
+  (verdict, the alignment, the seed, every `note: leftovers:` line); not in
+  Test2's ledger (`BS2_NO_LEDGER`), since these aren't the generator's draws.
+
 ## The pieces
 
 | Piece | Where |

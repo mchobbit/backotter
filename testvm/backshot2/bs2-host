@@ -9,6 +9,8 @@ never the shared ~/backotter-work/testvm.
   bs2-host tier0-cases CASE... [--run RUN]   given cases, through tier 0
   bs2-host tier1 CASE --tier 1|2 [--run RUN] [--port P]
                                          (root, under cmp-run.sh --reserve) one case through ht1.sh
+  bs2-host leftovers [SET] [--run RUN] [--port P] [--from N] [--plan]
+                                         (as m) the leftovers set: its steps in order on one disk
   bs2-host gen SOURCE SEED              print the case SEED gives (no run)
   bs2-host caps                          what the bko-holt under test supports (--new-uuids)
 
@@ -351,6 +353,11 @@ def cmd_apply(a):
     print(f"BS2_CONTENT={1 if c.get('content') else 0}")
     print("BS2_JUDGE=(" + " ".join(q(x) for x in judge) + ")")
     print("BS2_FSJUDGE=(" + (" --new-uuids" if ex["new_uuids"] else "") + ")")
+    # The leftovers set's: the stale layer to seed, and each partition's type.
+    from bs2lib import leftovers as LO
+    sd = c.get("layer_seed")
+    print("BS2_SEED=(" + (" ".join(q(sd[k]) for k in ("kind", "start_lba", "sectors")) if sd else "") + ")")
+    print("BS2_EXPECT=(" + " ".join(q(f"{n}:{t}") for n, t in sorted(LO.expected_types(drifted).items())) + ")")
 
 
 def _content_fs(root):
@@ -425,6 +432,85 @@ def cmd_tier1(a):
     gen, dump = load_source(src)
     rc = T1.run(c, name, src, gen, dump, a.tier, a.run, a.port, HERE, TESTVM, ROOT, holt_bin(), bins())
     sys.exit(rc)
+
+
+# ---- the leftovers set (bs2lib/leftovers.py) ----------------------------------------
+
+def leftovers_cases(name):
+    from bs2lib import leftovers as LO
+    dumps, gens = {}, {}
+    for s_ in LO.sources(name):
+        gens[s_], dumps[s_] = load_source(s_)
+    return LO.generate(name, dumps, gens), dumps, gens
+
+
+def cmd_leftovers(a):
+    """The set's steps in order on one disk (each step's restored disk is the
+    next step's target, in RAM), each a tier 1 under its own reservation, as
+    m.  Stops at the first step that doesn't pass: the steps after it would
+    start on a disk the set didn't mean.  The rows go to RUN/leftovers.jsonl."""
+    from bs2lib import leftovers as LO
+    cases, dumps, gens = leftovers_cases(a.set)
+    os.environ["BS2_NO_LEDGER"] = "1"   # (not the generator's draws: its own rows, leftovers.jsonl)
+    rd = run_dir(a.run)
+    for c in cases:
+        C.write(f"{rd}/cases/{c['name']}.case", c)
+        al = c["chain"].get("aligned")
+        print(f"{c['chain']['step']}/{c['chain']['of']} {c['name']}: {c['note']}" +
+              (f"; vda{al['partition']} starts at sector {al['sector']}, on the {al['from']}'s {al['on']}" if al else ""))
+    # Tier 0 first: a plan load refuses or gets wrong stops the set before a VM starts.
+    for c in cases:
+        src = C.source_name(c)
+        res = tier0_cases(src, gens[src], dumps[src], [(c["name"], c)], a.run + "-t0")
+        if res[0][1] != "PASS":
+            die(f"{c['name']}: tier 0 {res[0][1]}: {res[0][2][:2]}", 1)
+    if a.plan:
+        print(f"{len(cases)} steps, ~{len(cases) * 3} min at tier 1, one after another")
+        return
+    chain = f"{RAM}/leftovers-{a.run}"
+    os.makedirs(chain, exist_ok=True)
+    prev = f"{chain}/{cases[a.start - 2]['chain']['id']}.qcow2" if a.start > 1 else ""
+    if prev and not os.path.exists(prev):
+        die(f"--from {a.start}: no {prev} (the step before's disk)")
+    stop = None
+    for c in cases[a.start - 1:]:
+        out = f"{chain}/{c['chain']['id']}.qcow2"
+        p = f"{rd}/cases/{c['name']}.case"
+        env = dict(os.environ, BS2_CHAIN_IN=prev, BS2_CHAIN_OUT=out, WEAR_TAG=f"bs2:{a.run}:{c['chain']['id']}")
+        r = subprocess.run([f"{WORK}/cmp-run.sh", "--reserve", a.disk, a.mem, "sudo", "-E", os.path.join(HERE, "bs2-host"), "tier1", p,
+                            "--tier", "1", "--run", a.run, "--port", str(a.port)], cwd=WORK, env=env, capture_output=True, text=True)
+        try:
+            line = json.loads([l for l in r.stdout.splitlines() if l.startswith("{")][-1])
+        except (IndexError, ValueError):
+            line = {"verdict": "HARNESS", "check": "no result", "why": [r.stdout[-300:] + r.stderr[-300:]]}
+        notes = []
+        try:
+            with open(f"{line.get('dir')}/report.txt") as f:
+                notes = [l.rstrip() for l in f if "leftovers" in l]
+        except (OSError, TypeError):
+            pass
+        row = {"set": a.set, "step": c["chain"]["step"], "id": c["chain"]["id"], "case": c["name"], "verdict": line["verdict"],
+               "check": line.get("check"), "why": line.get("why"), "aligned": c["chain"].get("aligned"), "seed": c.get("layer_seed"),
+               "leftovers": notes, "dir": line.get("dir"), "holt": holt_bin(), "bins": bins(),
+               "t": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())}
+        with open(f"{rd}/leftovers.jsonl", "a") as f:
+            f.write(json.dumps(row) + "\n")
+        print(f"{c['chain']['id']}: {line['verdict']}{' (' + str(line.get('check')) + ')' if line['verdict'] != 'PASS' else ''}")
+        for n in notes:
+            print(f"   {n}")
+        if line["verdict"] != "PASS" or not os.path.exists(out):
+            # (The step's input disk stays, for --from: rerun from this step.)
+            stop = c["chain"]["step"], c["chain"]["id"]
+            break
+        if prev and not a.keep:
+            os.remove(prev)
+        prev = out
+    if not stop and prev and not a.keep:
+        os.remove(prev)
+    if stop:
+        print(f"stopped at {stop[1]}: the steps after it would start on a disk the set didn't mean (rerun it: --run {a.run} --from {stop[0]})")
+        sys.exit(1)
+    print("leftovers: every step passed")
 
 
 # ---- shrinking ---------------------------------------------------------------------------
@@ -625,6 +711,15 @@ def main():
     x.add_argument("--port", type=int, default=2949)
     x.add_argument("--budget", type=int, default=40)
     x.add_argument("--short", default="")
+    x = s.add_parser("leftovers")
+    x.add_argument("set", nargs="?", default="leftovers")
+    x.add_argument("--run", default=time.strftime("lo-%Y%m%d-%H%M"))
+    x.add_argument("--port", type=int, default=2949)
+    x.add_argument("--from", dest="start", type=int, default=1)
+    x.add_argument("--disk", default="6")
+    x.add_argument("--mem", default="3")
+    x.add_argument("--keep", action="store_true", help="keep every step's disk in RAM (else only the one the next step needs)")
+    x.add_argument("--plan", action="store_true")
     x = s.add_parser("gen")
     x.add_argument("source")
     x.add_argument("seed", type=int)
@@ -632,7 +727,7 @@ def main():
     x.add_argument("source", nargs="?", default="alpine324")
     a = p.parse_args()
     {"source": cmd_source, "tier0": cmd_tier0, "tier0-cases": cmd_tier0_cases, "gen": cmd_gen, "caps": cmd_caps,
-     "tier1": cmd_tier1, "apply": cmd_apply, "plant": cmd_plant, "change": cmd_change, "deep": cmd_deep, "enqueue": cmd_enqueue, "queue": cmd_queue, "shrink": cmd_shrink}[a.cmd](a)
+     "tier1": cmd_tier1, "leftovers": cmd_leftovers, "apply": cmd_apply, "plant": cmd_plant, "change": cmd_change, "deep": cmd_deep, "enqueue": cmd_enqueue, "queue": cmd_queue, "shrink": cmd_shrink}[a.cmd](a)
 
 
 if __name__ == "__main__":

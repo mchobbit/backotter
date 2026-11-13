@@ -695,7 +695,7 @@ phase_rebuild() {
     local disks=()
     for ((i = 0; i < n; i++)); do
         if [[ $VARIANT == bs2 ]]; then
-            qemu-img create -q -f qcow2 "${dst[i]}" "$(bs2_target_size "$i")"; disks+=(--disk "${dst[i]}")
+            bs2_target_make "$i" "${dst[i]}" || return; disks+=(--disk "${dst[i]}")
         else
             qemu-img create -q -f qcow2 "${dst[i]}" "$(($(size_of "${imgs[i]}") + DELTA))"; disks+=(--disk "${dst[i]}")
         fi
@@ -734,6 +734,8 @@ phase_rebuild() {
     fi
     sshk "$rkey" "mkfs.ext4 -q -F -L ht1decoy $decoy" >> "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup (the decoy's filesystem)"; vm_down "$rkey"; return; }
     ok "rescuer up, share mounted"
+    # (bs2's leftovers set: a seed, and what the rescuer found on the disk.)
+    [[ $VARIANT != bs2 ]] || bs2_before_load || { vm_down "$rkey"; return; }
     # The first and last MiB of every target and the decoy, before and after
     # the refusals and the dry run, which must write nothing.
     local edges="for d in ${erase[*]#--erase} $decoy; do s=\$(blockdev --getsz \$d); echo \$d \$(dd if=\$d bs=512 count=2048 status=none | md5sum | cut -c1-32) \$(dd if=\$d bs=512 skip=\$((s - 2048)) count=2048 status=none | md5sum | cut -c1-32); done"
@@ -841,8 +843,10 @@ PY
     # The decoy was never a target: it still holds its filesystem.
     [[ $(sshk "$rkey" "blkid -o value -s LABEL $decoy") == ht1decoy ]] || bad "the decoy lost its filesystem"
     sshk "$rkey" 'cat /run/bko-holt/log/load.log' > "$R/logs/rebuild-load.log"
+    [[ $VARIANT != bs2 ]] || bs2_after_load
     [[ ${HT_KEEP:-} == 1 ]] && { kept_or_down; return; }
     vm_down "$rkey"
+    [[ $VARIANT != bs2 ]] || bs2_chain_save
     rm -f "$R/rescuer.qcow2" "$R/img-key" "$R/img-key.pub"
 }
 # HT_KEEP=1: the rescuer stays up, as the stage left it; else it goes down.
@@ -856,6 +860,7 @@ kept_or_down() {
 
 phase_verify() {
     say "== verify"
+    [[ $VARIANT != bs2 ]] || bs2_verify_begin
     # A rescuer HT_KEEP left up has the targets open.
     [[ -z $(ht_qemus "$R") ]] || vm_down "$rkey"
     mkdir -p "$DST_MP"
@@ -894,6 +899,7 @@ phase_verify() {
         bad "boot state: source $(tr '\n' ' ' < "$R/logs/source-bootstate.txt"), restored $(tr '\n' ' ' < "$R/logs/restored-bootstate.txt")"
     fi
     lvmid_check "$gkey"
+    [[ $VARIANT != bs2 ]] || bs2_restored_probe "$gkey"
     # A check that failed on the source too isn't the restore's doing.
     sshk "$gkey" "$HEALTH" > "$R/logs/restored-health.txt" 2>&1
     local worse; worse=$(comm -13 <(grep '^FAIL' "$R/logs/source-health.txt" 2>/dev/null | sort) <(grep '^FAIL' "$R/logs/restored-health.txt" | sort))

@@ -4,6 +4,12 @@
 # (bko-holt for linux, PLATFORM/bko-holt for the others), to
 # BKO_WORK/holt-bin/PLATFORM/bko-holt by temp name and rename, and writes
 # holt-bin/PLATFORM/COMMIT: COMMIT's 40 hex.  Nothing else writes that file.
+# Then it writes holt-bin/SHA256SUMS anew, by temp name and rename: a
+# "SHA256  PLATFORM/bko-holt" line for every PLATFORM/bko-holt there, refreshed
+# or not (what promote-bins.sh's check and t2's --holt-bin read).  The old one
+# goes before the first copy, so a refresh cut short leaves none, not a wrong
+# one; the set's directory is flocked while it does, so two refreshes don't
+# cross.
 #
 # PLATFORMs default to all seven.  Every source is checked before anything is
 # written, against CODE/SHA256SUMS when that has its line.  Refused while a
@@ -46,6 +52,10 @@ for p; do
         flock -n "$lk" || die "a build of $p is under way ($I/.lock-$p is held)"
     fi
 done
+# The set's SHA256SUMS: held from here to the end (a second refresh waits), gone until rewritten.
+mkdir -p "$W/holt-bin" && exec {sl}<"$W/holt-bin" || die "can't open $W/holt-bin"
+flock -w 300 "$sl" || die "another refresh holds $W/holt-bin"
+rm -f "$W/holt-bin/SHA256SUMS" || die "can't remove $W/holt-bin/SHA256SUMS"
 ex=0
 for p; do
     d=$W/holt-bin/$p
@@ -58,4 +68,12 @@ for p; do
         echo "img-refresh-holt: $p: not refreshed" >&2; ex=1
     fi
 done
+t=$W/holt-bin/.SHA256SUMS.tmp.$$
+if (cd "$W/holt-bin" && for q in $(printf '%s\n' $ALL | LC_ALL=C sort); do
+        [[ ! -f $q/bko-holt ]] || sha256sum "$q/bko-holt" || exit 1
+    done) >"$t" && (cd "$W/holt-bin" && sha256sum -c --quiet --strict "${t##*/}") && mv -f "$t" "$W/holt-bin/SHA256SUMS"; then
+    echo "SHA256SUMS: $(wc -l <"$W/holt-bin/SHA256SUMS") platforms"
+else
+    rm -f "$t"; echo "img-refresh-holt: $W/holt-bin/SHA256SUMS not written" >&2; ex=1
+fi
 exit "$ex"

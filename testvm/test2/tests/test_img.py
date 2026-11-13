@@ -1408,6 +1408,38 @@ class Refresh(unittest.TestCase):
         self.assertEqual((rd(os.path.join(self.d, "bko-holt")), rd(os.path.join(self.d, "COMMIT"))), ("new\n", self.NEW + "\n"))
         self.assertEqual(sorted(os.listdir(self.d)), ["COMMIT", "bko-holt"])
 
+    def sums(self):
+        return rd(os.path.join(self.w, "holt-bin", "SHA256SUMS"))
+
+    def line(self, plat, text):
+        return "%s  %s/bko-holt\n" % (hashlib.sha256(text.encode()).hexdigest(), plat)
+
+    def test_a_refresh_writes_the_sets_sha256sums(self):
+        # Every PLATFORM/bko-holt there gets its line, refreshed or not; a stale file is replaced.
+        wr(os.path.join(self.w, "holt-bin", "freebsd", "bko-holt"), "fb\n", 0o755)
+        wr(os.path.join(self.w, "holt-bin", "SHA256SUMS"), "%s  netbsd/bko-holt\n" % ("0" * 64))
+        r = self.run_it()
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.sums(), self.line("freebsd", "fb\n") + self.line("netbsd", "new\n"))
+        self.assertEqual(sorted(os.listdir(os.path.join(self.w, "holt-bin"))), ["SHA256SUMS", "freebsd", "netbsd"])
+        c = subprocess.run(["sha256sum", "-c", "--strict", "--quiet", "SHA256SUMS"], cwd=os.path.join(self.w, "holt-bin"))
+        self.assertEqual(c.returncode, 0)
+
+    def test_a_failed_copy_still_leaves_true_sums(self):
+        wr(os.path.join(self.w, "holt-bin", "SHA256SUMS"), "%s  netbsd/bko-holt\n" % ("0" * 64))
+        self.fail_mv_on("/bko-holt")
+        self.assertEqual(self.run_it().returncode, 1)
+        self.assertEqual(self.sums(), self.line("netbsd", "old\n"))
+
+    def test_cut_short_at_the_sums_leaves_none(self):
+        wr(os.path.join(self.w, "holt-bin", "SHA256SUMS"), "%s  netbsd/bko-holt\n" % ("0" * 64))
+        self.fail_mv_on("/SHA256SUMS")
+        r = self.run_it()
+        self.assertEqual(r.returncode, 1, r.stderr)
+        self.assertIn("SHA256SUMS not written", r.stderr)
+        self.assertEqual(rd(os.path.join(self.d, "bko-holt")), "new\n")
+        self.assertEqual(sorted(os.listdir(os.path.join(self.w, "holt-bin"))), ["netbsd"])
+
     def fail_mv_on(self, what):
         real = shutil.which("mv")
         wr(os.path.join(self.stubs, "mv"), f'#!/bin/sh\nfor a; do case $a in *{what}) exit 1;; esac; done\nexec {real} "$@"\n', 0o755)

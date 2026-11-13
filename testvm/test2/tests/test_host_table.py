@@ -99,7 +99,7 @@ class Table(unittest.TestCase):
         self.assertEqual(H.names(cls="small"), ("copland", "cage"))
         self.assertEqual(H.names(cls="big"), ("chopin", "cinqcent"))
         self.assertEqual(H.with_role("build"), ("chopin", "cinqcent"))
-        self.assertEqual(H.with_role("fleet"), ("chopin", "cinqcent"))
+        self.assertEqual(H.with_role("fleet"), ("chopin",))
         self.assertEqual(H.with_role("store-mirror"), ("chopin",))
         self.assertEqual(H.with_role("bigfoot-link"), ("chopin",))
         self.assertEqual(H.with_role("cache"), ("cinqcent", "copland", "cage"))
@@ -195,7 +195,7 @@ class Table(unittest.TestCase):
         self.assertEqual(run("names"), (0, "chopin\ncinqcent\ncopland\ncage\n", ""))
         self.assertEqual(run("names", "--default"), (0, "chopin\ncinqcent\n", ""))
         self.assertEqual(run("names", "--all")[1].split(), ["chopin", "cinqcent", "copland", "cage", "czerny"])
-        self.assertEqual(run("names", "--role", "fleet", "--field", "ssh"), (0, "m@chopin.local\nm@cinqcent.local\n", ""))
+        self.assertEqual(run("names", "--role", "fleet", "--field", "ssh"), (0, "m@chopin.local\n", ""))
         self.assertEqual(run("names", "--class", "small", "--field", "slot_range"), (0, "2800-2899\n3000-3099\n", ""))
         self.assertEqual(run("get", "copland.local", "slot_range"), (0, "2800-2899\n", ""))
         self.assertEqual(run("get", "chopin", "roles"), (0, "build fleet store-mirror bigfoot-link\n", ""))
@@ -235,7 +235,7 @@ class DerivedEqualsBefore(unittest.TestCase):
 
     def test_vm_update(self):
         vmu = load("ht_vm_update", os.path.join(TESTVM, "vm-update"), {H.ENV: TABLE})
-        self.assertEqual(vmu.ALL_HOSTS, ["chopin.local", "cinqcent.local"])   # chopin first: the fleet lock
+        self.assertEqual(vmu.ALL_HOSTS, ["chopin.local"])   # chopin alone since 2026-11-13: the fleet lock
 
     def test_bs2(self):
         bs2 = load("ht_bs2", os.path.join(TESTVM, "backshot2", "bs2"), {H.ENV: TABLE})
@@ -367,6 +367,7 @@ class FollowsTheTable(unittest.TestCase):
         def two_fleets(t):
             row_of(t, "chopin")["roles"].remove("fleet")
             row_of(t, "cage")["roles"].append("fleet")
+            row_of(t, "cinqcent")["roles"].append("fleet")
             t["hosts"].insert(0, t["hosts"].pop(3))   # cage first: it would hold the lock
         alt = AltTable(two_fleets)
         try:

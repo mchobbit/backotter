@@ -84,6 +84,7 @@ The test scripts' host table, `testvm/hosts.json` (testvm/HOSTS.md), gives these
   - `cap` is the most the objects (plus `.incoming`) may use, counted as `st_blocks*512`.
   - `floor` is the free space the fs must keep after a fetch.
   - Defaults are cap 100G and floor 100G [A2]. Both are set in `store.json`, and `VM_STORE_CAP` / `VM_STORE_FLOOR` override them.
+  - Cinqcent's are cap 150G and floor 50G (2026-11-13, when it left the fleet role and its `vms/` became links, but for the guests whose disks back kept overlays).
 - **Copies:** manifests and `latest` copied from the source are kept forever. They are tiny, and they serve `--offline`.
 
 ### 1.4 Version ids

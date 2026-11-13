@@ -270,7 +270,7 @@ class Identity(unittest.TestCase):
 
     def test_may_lack_guests(self):
         self.assertEqual([h for h in ("chopin", "cinqcent", "copland", "cage") if guest.may_lack_guests(h)],
-                         ["copland", "cage"])
+                         ["cinqcent", "copland", "cage"])          # cinqcent a cache since 2026-11-13
         self.assertFalse(guest.may_lack_guests("nosuch"))        # unknown: a fleet host, as before
         self.assertFalse(guest.may_lack_guests("czerny"))        # reserved: not a host yet
 
@@ -285,9 +285,9 @@ class Identity(unittest.TestCase):
         per["copland"] = {"missing": True}
         r = guest.identity_compare(per)                        # no optional hosts: as before
         self.assertEqual((r["ok"], r["why"]), (False, "copland: no such guest"))
-        per["cinqcent"] = {"missing": True}                    # a fleet host without it still condemns
+        per["chopin"] = {"missing": True}                      # a fleet host without it still condemns
         r = guest.identity_compare(per, optional={"copland"})
-        self.assertEqual((r["ok"], r["why"]), (False, "cinqcent: no such guest"))
+        self.assertEqual((r["ok"], r["why"]), (False, "chopin: no such guest"))
         r = guest.identity_compare({"copland": {"missing": True, "dangling": True}, "cage": {"missing": True}},
                                    optional={"copland", "cage"})
         self.assertEqual((r["ok"], r["why"]), (False, "copland: no such guest (its vms/ link dangles); cage: no such guest"))
@@ -352,10 +352,10 @@ class Identity(unittest.TestCase):
 
     def test_fleet_hosts_as_before(self):
         io = TG.FakeIO()
-        io.identity = lambda host, g, args: {"missing": True} if host == "cinqcent" else TG.FakeIO.identity(io, host, g, args)
-        c = self.ctx(("chopin", "cinqcent"), {"chopin": ["g1"]})
+        io.identity = lambda host, g, args: {"missing": True} if host == "chopin" else TG.FakeIO.identity(io, host, g, args)
+        c = self.ctx(("chopin", "cinqcent"), {"cinqcent": ["g1"]})
         r = guest.identity_check(c, ["g1"], io=io)
-        self.assertEqual((r["g1"]["ok"], r["g1"]["why"]), (False, "cinqcent: no such guest"))
+        self.assertEqual((r["g1"]["ok"], r["g1"]["why"]), (False, "chopin: no such guest"))
 
     def test_tool_says_a_link_dangles(self):
         from t2lib import tool_guest

@@ -45,7 +45,7 @@
    "slot_range": "2900-2999",
    "stic_ports": [2980, 2999],
    "class": "big",
-   "roles": ["build", "fleet", "cache"],
+   "roles": ["build", "cache"],
    "default": true,
    "enabled": true
   },

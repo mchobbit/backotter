@@ -9,7 +9,7 @@ describes that table, what each class of host runs, and how a new host joins.
 | host | class | slot range | drive.py ports | roles | default |
 |---|---|---|---|---|---|
 | chopin | big | 2700-2799 | 2780-2799 | build, fleet, store-mirror, bigfoot-link | yes |
-| cinqcent | big | 2900-2999 | 2980-2999 | build, fleet, cache | yes |
+| cinqcent | big | 2900-2999 | 2980-2999 | build, cache | yes |
 | copland | small | 2800-2899 | 2880-2899 | cache | no |
 | cage | small | 3000-3099 | 3080-3099 | cache | no |
 | czerny | small | 3100-3199 | 3180-3199 | cache | no (row reserved: `enabled: false`) |
@@ -73,7 +73,14 @@ Two hosts.json changes re-key things:
 
 **Big hosts** (Chopin, Cinqcent): 62 GiB of memory and a 30G RAM disk. Their
 cmp-run.sh ceiling is about 29.0 23. They have host OpenZFS, and both have the
-build role.
+build role. Only Chopin has the fleet role (since 2026-11-13). Cinqcent is a
+cache host with every guest: most of its `vms/` entries are links into its
+vm-store cache (cap 150G, floor 50G), and the rest are full folders: the
+guests whose disks back kept qcow2 overlays outside `vms/`, the 21 versions
+published 2026-11-13 (relinked once Bigfoot has them), and
+freebsd15-builder (a link to imgbuild). A publish reaches its links by
+`vm-store link --all`, not by vm-update, so its full folders lag Chopin's
+after an update until they are relinked.
 
 **Small hosts** (Copland, Cage, and Czerny later): 27 GiB of memory and a 10G
 RAM disk. Their ceiling is 9.0 9.2. They have no host ZFS. Their `vms/` is a set
@@ -141,7 +148,7 @@ hosts:
 - the fork gates (`fork:*` pinned in `gate/layers.json`);
 - run-all.sh's guest platforms. On a small host run-all.sh runs only linux and
   sparse.
-- vm-update's fleet, the store mirror and the Bigfoot link.
+- vm-update's fleet, the store mirror and the Bigfoot link (all Chopin).
 
 ## Adding a host
 

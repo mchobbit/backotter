@@ -139,7 +139,7 @@ class Hosts(unittest.TestCase):
         self.assertIn("list=$(hosts_names --field ssh)", sync)
         self.assertEqual(t2lib.hosts_table.names(), ("chopin", "cinqcent", "copland", "cage"))   # test_host_table runs it
         vmu = load("vm_update_hosts", os.path.join(TESTVM, "vm-update"))
-        self.assertEqual(vmu.ALL_HOSTS, ["chopin.local", "cinqcent.local"])   # copland and cage have no guests yet
+        self.assertEqual(vmu.ALL_HOSTS, ["chopin.local"])   # cinqcent, copland and cage are caches (2026-11-13)
 
     def test_checks_take_their_hosts_range(self):
         d = os.path.join(TESTVM, "stictest1")

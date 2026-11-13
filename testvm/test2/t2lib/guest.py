@@ -1504,5 +1504,7 @@ def hostjob_checkout():
 
 
 def hostjob_hosts():
-    """The fleet vm-update keeps alike (its ALL_HOSTS): the default hosts."""
+    """The default hosts: the hosts whose ledgers a guest round pulls, and whose --hosts
+    (when a word names others) vm-update merges on.  vm-update's own fleet (its ALL_HOSTS)
+    is the hosts with the fleet role: chopin alone since 2026-11-13."""
     return DEFAULT_HOSTS

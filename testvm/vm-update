@@ -188,12 +188,13 @@ def _host_table():
     return m
 
 
-# The fleet: the hosts with the role fleet in testvm/hosts.json (chopin and
-# cinqcent), each by its ssh destination's host part.  Every host here must
-# hold every guest updated (step 1 fails on a host without vms/GUEST), so a
-# cache host (copland, cage), whose vms/ holds links into its vm-store cache
-# for the guests it has fetched only, is not in it; name one with --hosts once
-# it holds a copy of each guest updated.  ALL_HOSTS[0], the table's first
+# The fleet: the hosts with the role fleet in testvm/hosts.json (chopin alone
+# since 2026-11-13), each by its ssh destination's host part.  Every host here
+# must hold every guest updated (step 1 fails on a host without vms/GUEST), so
+# a cache host (cinqcent, copland, cage), whose vms/ holds links into its
+# vm-store cache for the guests it has fetched (cinqcent: and full folders for
+# some), is not in it; it takes a new generation by `vm-store link` after a
+# publish.  Name one with --hosts once it holds a copy of each guest updated.  ALL_HOSTS[0], the table's first
 # fleet host, holds the fleet lock.
 HOSTS_TABLE = _host_table()
 ALL_HOSTS = [HOSTS_TABLE.addr(h) for h in HOSTS_TABLE.with_role("fleet")]

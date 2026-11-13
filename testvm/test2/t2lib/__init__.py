@@ -50,8 +50,8 @@ EXCLUDE_PREFIXES = ("holt/target/",)
 
 # The KVM test hosts, from testvm/hosts.json (hosts.py, the one table).
 # KNOWN_HOSTS: what --hosts may name (the enabled rows).  DEFAULT_HOSTS: the
-# hosts of a run without --hosts, of a sweep, the fleet vm-update keeps alike
-# (the rows with default true).  A new host joins the defaults only after
+# hosts of a run without --hosts and of a sweep (the rows with default true);
+# vm-update's fleet is the rows with the fleet role (chopin alone).  A new host joins the defaults only after
 # HostTest2 and one representative per family pass on it
 # (docs/design/test2/design-classes.md); a small host (one whose ceiling,
 # facts.ceiling, some cell's reservation exceeds) after those among the cells

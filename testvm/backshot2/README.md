@@ -60,6 +60,11 @@ doesn't pass and keeps that step's input, so `--run RUN --from N` reruns it.
   (verdict, the alignment, the seed, every `note: leftovers:` line); not in
   Test2's ledger (`BS2_NO_LEDGER`), since these aren't the generator's draws.
 
+Runs so far (spec "Leftovers", Results): `lo-before-220c013` (strict:
+FAIL at L3, a VG the rescuer autoactivated holds the target) and
+`lo-before-220c013-rel` (`--release`: 9 of 9 PASS, no old signature after
+load), both on chopin, records in `/bkoscratch/backshot2/lo-before-*-t1/`.
+
 ## The pieces
 
 | Piece | Where |

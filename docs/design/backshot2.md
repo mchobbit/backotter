@@ -350,6 +350,34 @@ zfs-import).
 - and HoltTest1's own checks: load refusing (a busy target), the boot, and
   judge.py, whose dump comparison sees an assembled stale array or VG.
 
+**Results.**
+
+*Before the zeroing change* (bko-holt 220c013, 0.2.5; chopin, 2026-11-13):
+- Strict run `lo-before-220c013`: L1 and L2 PASS.  **L3 FAIL**: the
+  rescuer's LVM autoactivated the old `vg0` at boot (root and swap LVs
+  active on vdb2), and load refused, "the target is in use (vdb2 is held by
+  dm-0, dm-1); refused even with --erase".  The old PV's label was intact
+  at 0x218.  The set stopped there, as it should.
+- `--release` run `lo-before-220c013-rel`: all nine PASS.  At boot the
+  rescuer had activated vg0 (L3) and assembled the md array as md127 (L6,
+  L7, both metadata versions), holding the target's partition the same way.
+  The ZFS pool was importable but not imported (L8).  The LUKS header (L5)
+  and btrfs (L9) were left inert.  After load's close, `wipefs` found no
+  old signature on any new partition, `blkid -p` gave the layout's type on
+  each, and every restored system booted with the layout's types and no
+  stale md, dm or VG.
+- So without the change, mkfs, pvcreate and cryptsetup cleared the
+  leftovers they overwrote.  What broke was the *busy* target: a
+  stacked layer the rescue system started at boot.  Zeroing can't help
+  there, since load refuses before it writes.  Reported to the holt session
+  (side-session notes, bs2-leftovers.md), not fixed here.  L6 and L7 weren't
+  run strictly: md127 held vdb1 as vg0 held vdb2 at L3, and load's holder
+  check refuses that.
+
+*After the zeroing change*: not run yet; the change isn't on main
+(2026-11-13).  When it lands: `bs2-host leftovers --run lo-after-REV` with
+`BS2_HOLT` at a build of it, strict and with `--release`.
+
 **Not built.** ext4 under btrfs (btrfs restored over ext4): no Alpine source
 restores btrfs, and an edit never changes a filesystem's type (Alpine's own
 rule).  md or ZFS as the *restored* layout: no Alpine source has them.  The

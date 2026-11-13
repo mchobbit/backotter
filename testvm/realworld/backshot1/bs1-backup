@@ -18,6 +18,14 @@
 # isn't in the tree; holds the updaters off for this boot; records the
 # deployments in the baseline; and fails if they or /boot/loader moved while
 # it ran.
+#
+# Encrypted volumes: both the preflight and phase 1 check that the drive's
+# keys/disk-passphrase opens each one, and say how they unlock at boot,
+# UNLOCK=drive, own, attended or none (unlock_mode in bs1-common; drive
+# needs this boot to have been opened by the drive's key, so one reboot
+# after bs1-adopt).  Phase 1 writes it to baseline/unlock.txt, which
+# bs1-verify checks the restored boot against, and NEEDS_PASSPHRASE_AT_BOOT
+# for an attended run.
 
 # shellcheck disable=SC1091
 . "$(dirname "$(readlink -f "$0")")/bs1-common"
@@ -53,6 +61,22 @@ if is_ostree; then
         ! systemctl is-active -q "$u.service" || die "$u.service is running: an update may be under way; wait for it to finish"
     done
 fi
+# unlock_check LAYOUT: unlock_mode's lines, after checking the drive's key
+# against every LUKS volume and the record's initramfs generator against
+# the dump's; false with the reason if one fails.
+unlock_check() {
+    local key=$HERE/keys/disk-passphrase gen dumped
+    if [[ -n $(luks_devices "$disk") ]]; then
+        [[ -s $key ]] || { echo "encrypted volumes need the passphrase in $key"; return 1; }
+        luks_key_test "$disk" "$key" || return 1
+    fi
+    gen=$(luks_rec generator) || gen=
+    if [[ -n $gen && $(luks_rec family) =~ ^[SDE]$ ]]; then
+        dumped=$(python3 -c 'import json, sys; print(((json.load(open(sys.argv[1])).get("boot") or {}).get("initramfs") or {}).get("generator") or "")' "$1")
+        [[ $dumped == "$gen" ]] || { echo "$LUKS_REC was written for $gen's initramfs, but bko-holt dump says ${dumped:-none}: bs1-adopt again"; return 1; }
+    fi
+    unlock_mode "$disk" "$1"
+}
 
 if [[ ${1:-} == --preflight ]]; then
     say "internal: $disk (serial $INTERNAL_SERIAL), backup drive: $drive"
@@ -67,7 +91,11 @@ if [[ ${1:-} == --preflight ]]; then
     fi
     say "would back up (path in the backup, from):"
     internal_mounts "$disk" "$tmp" | awk -F'\t' '{ print "  " $1 "  <-  " $2 " (" $3 ")" }'
+    unlock=$(unlock_check "$tmp") || { rm -f "$tmp"; die "$unlock"; }
     rm -f "$tmp"
+    say "unlocking at boot: $(head -n 1 <<<"$unlock")"
+    tail -n +2 <<<"$unlock"
+    echo "UNLOCK=${unlock%%:*}"
     say "PREFLIGHT OK: nothing was changed"
     exit 0
 fi
@@ -99,6 +127,12 @@ keys=$(layout_keys "$RUN/layout.json" "$HERE/keys/disk-passphrase") || die "can'
 if [[ -n $keys ]]; then
     [[ -s $HERE/keys/disk-passphrase ]] ||
         die "encrypted volumes need the passphrase in $HERE/keys/disk-passphrase: $keys"
+fi
+unlock=$(unlock_check "$RUN/layout.json") || die "$unlock"
+printf '%s\n' "$unlock" >"$RUN/baseline/unlock.txt"
+say "unlocking at boot: $(head -n 1 <<<"$unlock")"
+tail -n +2 <<<"$unlock" | tee -a "$LOG"
+if [[ ${unlock%%:*} == attended ]]; then
     say "encrypted: someone has to type the passphrase at the restored system's first boot"
     touch "$RUN/NEEDS_PASSPHRASE_AT_BOOT"
 fi
@@ -157,4 +191,5 @@ must "${RUSTIC[@]}" check --read-data
 sha256sum "$RUN/layout.json" | cut -d' ' -f1 >"$RUN/PHASE1_OK"
 sync
 say "PHASE 1 OK: $RUN"
+echo "UNLOCK=${unlock%%:*}"
 echo "RUN=$(basename "$RUN")"

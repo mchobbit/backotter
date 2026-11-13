@@ -76,7 +76,7 @@ or later:
 | # | Distro (stack) | L: library run for A | Held besides sleep | Console | Extra checks | Est. A+B |
 |---|---|---|---|---|---|---|
 | 1 | NixOS 26.05 (btrfs top level, 7 subvols, systemd-boot) | nixos-20261113-105758 (was B only from the running restore (Q2), but the laptop has run Void since; see row 13) | nothing auto by default | none | in B, after verify: gen 2 by `systemctl reboot --boot-loader-entry=nixos-generation-2.conf`, `/run/booted-system` checked, then back to gen 3 | 40 min |
-| 2 | Debian 12 (LUKS2+LVM, XFS) | debian-12-20261110-141705 | apt-daily{,-upgrade}.timer, unattended-upgrades | passphrase twice | both halves: LUKS UUID (`cryptsetup luksUUID`) is the baseline's | 75 min + waits |
+| 2 | Debian 12 (LUKS2+LVM, XFS) | debian-12-20261110-141705 | apt-daily{,-upgrade}.timer, unattended-upgrades | passphrase once, at A's restored boot (L predates unlocking from the drive); then `backshot1 adopt` and a reboot, so B needs nobody (bs1-luks-unattended.md) | both halves: LUKS UUID (`cryptsetup luksUUID`) is the baseline's; B: `UNLOCK=drive`, and verify's unlock check | 75 min + one wait |
 | 3 | Bazzite 44 (ostree, composefs) | bazzite-44-20261111-173140 | uupd already held in the backup; rpm-ostreed-automatic and bootc-fetch-apply-updates (verify stops them too) | rollback once, in A (Q4) | A: rollback booted from the GRUB menu and checked by eye (its /etc has no sshd), then `check-boot L` on the default; B: `check-boot B` on the default | 150 min |
 | 4 | Ubuntu 26.10 | ubuntu-26.10-20261109-203214 | apt timers, unattended-upgrades, snapd.service and snapd.socket | none | none | 70 min |
 | 5 | Fedora 44 (btrfs, SELinux) | fedora-44-20261109-204845 | dnf-makecache.timer, any dnf-automatic timer, packagekit | none | SELinux labels, compared by the manifest when the baseline has xattrs | 70 min |
@@ -118,8 +118,12 @@ on a prompt later, and the rest can run overnight to the end.
    then, and now needs its A, in step 3), and it is the canary for the new
    binaries and the driver end to end.
 2. **User block, about 2.5 h (est.), straight after the canary:**
-   - Debian 12 A and B: you type the passphrase at about +20 min and +65 min
-     (est.).
+   - Debian 12 A: you type the passphrase once, at about +20 min (est.).
+     Its L was made before unlocking from the drive existed
+     (docs/design/bs1-luks-unattended.md), so A's restored boot asks. Then
+     `backshot1 adopt` sets the restored install up, a reboot with
+     mybig512 shows `backshot1 unlock` saying `UNLOCK=drive`, and B runs
+     with nobody typing.
    - Bazzite A, with the rollback at its end, at about +2.5 h (est.).
    - The block ends on Bazzite, which needs no passphrase, as the README
      asks. If a fix stops it, the block resumes there before anything
@@ -204,9 +208,12 @@ Copland and Cage for parallel rehearsals. On all three the default rustc is
    - Before each phase 1, it checks for at least 80 GB free on the drive and
      for `efibootmgr` (`to-stick` needs it on every UEFI system).
    - Timeouts:
-     - after a LUKS reboot, a push asks for the passphrase as soon as the
-       reboot is sent, and again if the laptop isn't back in 10 min;
-     - after any other reboot, it warns after 3 min and fails after 15;
+     - after the reboot of an `UNLOCK=attended` system (Debian 12's A, the
+       only one left), a push asks for the passphrase as soon as the reboot
+       is sent, and again if the laptop isn't back in 10 min;
+     - after any other reboot, `UNLOCK=drive` ones included, it warns after
+       3 min and fails after 15; a `drive` system not back after 5 min is
+       at its prompt (the drive's key failed), so a push goes out then;
      - for phase2, it fails after three times that distro's last restore
        time or 2 h, whichever is longer. `backshot1 phase2`'s own poll has no
        limit.
@@ -295,7 +302,8 @@ succeed."
   - Keep the Mac on power. The driver keeps it awake.
   - Confirm that `keys/disk-passphrase` is still right for Debian 12.
 - **During the user block:**
-  - Type Debian 12's passphrase twice, when the push asks.
+  - Type Debian 12's passphrase once, when the push asks (A's restored
+    boot; B unlocks from mybig512).
   - Boot Bazzite's rollback once: the second GRUB entry, ending
     `(ostree:1)` (hold Esc as GRUB starts if no menu shows). Read off
     `rpm-ostree status` (booted marker on `.0`) and `cat /proc/cmdline`,
@@ -351,7 +359,9 @@ succeed."
   - A full NVRAM store can make creating an entry fail, or worse on some
     firmware (Q8).
 - **LUKS.** A restored Debian 12 sitting at its prompt blocks the queue. The
-  driver waits and asks; it never goes on.
+  driver waits and asks; it never goes on. After A, Debian 12 unlocks from
+  mybig512, so a `drive` system at its prompt means the key failed: a FAIL
+  and a push, not a wait.
 - **Builds.** If Cinqcent can't fetch or build, Copland and Cage have the
   same two toolchains.
 

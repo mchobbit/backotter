@@ -1,0 +1,117 @@
+#!/bin/sh
+# BackShot1: the LUKS key from the backup drive, at boot.  TESTBED ONLY: with
+# the drive plugged in, anyone can unlock the disk (docs/design/bs1-luks-unattended.md).
+#
+# bs1-adopt installs it as /usr/local/lib/backshot1/unlock-key, and the
+# initramfs carries it with /etc/backshot1/luks-unlock, the record it reads
+# (label=, path=, fstype=, wait=, volumes="NAME:LUKS-UUID:HOW ...").  Two uses:
+#
+#   as a crypttab keyscript= (initramfs-tools: Debian, Ubuntu up to 25.04,
+#   Chimera): prints the key for $CRYPTTAB_NAME on stdout.  The first try
+#   ($CRYPTTAB_TRIED 0) waits up to wait= seconds for LABEL=label and reads
+#   path= on it; every other case asks, as the volume did before, with
+#   cryptsetup's askpass.  A wrong key costs one of crypttab's tries=.
+#
+#   unlock-key --to FILE (mkinitcpio's bs1key hook, before encrypt): writes
+#   the key to FILE (/crypto_keyfile.bin), which encrypt then tries before
+#   it asks.  Only a key that opens the record's volume is left there.
+#
+# Each use adds "NAME drive" or "NAME typed" to /run/backshot1-unlock,
+# which the initramfs hands on to the booted system; bs1-verify reads the
+# last line for each volume.  Plain POSIX sh: busybox or klibc's in the
+# initramfs.  Messages go to stderr; a keyscript's stdout is the key.
+
+label='' path='' fstype=ext4 wait=30 volumes=''
+# BS1_UNLOCK_ROOT: a directory standing in for /, for the unit tests only.
+R=${BS1_UNLOCK_ROOT:-}
+REC=$R/etc/backshot1/luks-unlock
+# shellcheck disable=SC1090
+[ -r "$REC" ] && . "$REC"
+MARK=$R/run/backshot1-unlock
+MNT=$R/run/backshot1-keydev
+
+mark() { mkdir -p "${MARK%/*}" 2>/dev/null; echo "$1 $2" >>"$MARK"; }
+# The drive's device is there (in a test, a file stands in for it).
+present() { [ -b "$1" ] || { [ -n "$R" ] && [ -f "$1" ]; }; }
+
+# fetch OUT: copies the key file from the drive to OUT; false if there's no
+# drive within wait= seconds or no key on it.
+fetch() {
+    [ -n "$label" ] && [ -n "$path" ] || return 1
+    dev=$R/dev/disk/by-label/$label
+    if ! present "$dev"; then
+        echo "BackShot1: waiting up to $wait s for the backup drive $label" >&2
+        i=0
+        while ! present "$dev" && [ "$i" -lt "$wait" ]; do
+            sleep 1
+            i=$((i + 1))
+        done
+    fi
+    present "$dev" || { echo "BackShot1: no backup drive $label; asking instead" >&2; return 1; }
+    for m in usb_storage uas sd_mod "$fstype"; do modprobe -q "$m" >/dev/null 2>&1; done
+    # noload: an unclean journal isn't replayed onto the drive.
+    opts=ro
+    case $fstype in ext3 | ext4) opts=ro,noload ;; esac
+    mkdir -p "$MNT" || return 1
+    mount -t "$fstype" -o "$opts" "$dev" "$MNT" 2>/dev/null || { rmdir "$MNT" 2>/dev/null; echo "BackShot1: can't mount $dev" >&2; return 1; }
+    rc=1
+    if [ -s "$MNT$path" ] && cat "$MNT$path" >"$1"; then rc=0; fi
+    umount "$MNT" 2>/dev/null
+    rmdir "$MNT" 2>/dev/null
+    [ $rc -eq 0 ] || echo "BackShot1: no key at $path on $label; asking instead" >&2
+    return $rc
+}
+
+askpass() {
+    for a in "$R/lib/cryptsetup/askpass" "$R/usr/lib/cryptsetup/askpass"; do
+        [ -x "$a" ] && exec "$a" "$1"
+    done
+    echo "BackShot1: no askpass" >&2
+    exit 1
+}
+
+umask 077
+if [ "${1:-}" = --to ]; then
+    out=${2:?usage: unlock-key --to FILE}
+    rm -f "$out"
+    tmp=$R/run/backshot1-key.$$
+    if fetch "$tmp"; then
+        for v in $volumes; do
+            name=${v%%:*} uuid=${v#*:}
+            uuid=${uuid%%:*}
+            [ "${v##*:}" = E ] || continue
+            # Exit 2 is "no key slot opened": the key is wrong, so encrypt
+            # gets no file and asks at once.  Any other failure leaves it to
+            # encrypt to try.
+            cryptsetup open --test-passphrase --key-file "$tmp" "/dev/disk/by-uuid/$uuid" >/dev/null 2>&1
+            rc=$?
+            if [ $rc -eq 0 ]; then
+                cat "$tmp" >"$out" && mark "$name" drive
+            elif [ $rc -eq 2 ]; then
+                echo "BackShot1: the drive's key doesn't open $name; asking instead" >&2
+                mark "$name" typed
+            else
+                cat "$tmp" >"$out" && mark "$name" fetched
+            fi
+            break
+        done
+    else
+        for v in $volumes; do [ "${v##*:}" = E ] && mark "${v%%:*}" typed && break; done
+    fi
+    rm -f "$tmp"
+    exit 0
+fi
+
+name=${CRYPTTAB_NAME:-unknown}
+if [ "${CRYPTTAB_TRIED:-0}" = 0 ]; then
+    tmp=$R/run/backshot1-key.$$
+    if fetch "$tmp"; then
+        cat "$tmp"
+        rc=$?
+        rm -f "$tmp"
+        [ $rc -eq 0 ] && mark "$name" drive && exit 0
+    fi
+    rm -f "$tmp"
+fi
+mark "$name" typed
+askpass "Please unlock disk $name: "

@@ -1,0 +1,623 @@
+# shellcheck shell=bash
+# BackShot1: bs1-adopt's LUKS step.  Sourced by bs1-adopt, after bs1-common,
+# whose `here` (its own directory, on the drive) and `init` it reads.
+# shellcheck disable=SC2154
+#
+# Sets this install's initramfs to read the passphrase from the backup drive
+# (keys/disk-passphrase beside bs1-adopt, on LABEL=$BACKUP_LABEL) and unlock
+# its typed LUKS volumes with it; without the drive, or with a key that
+# doesn't fit, the usual prompt follows after LUKS_WAIT seconds.  It's in the
+# installed system, so in the backup, and the restored system unlocks itself
+# too: bko-holt load's boot stage remakes the initramfs from these files.
+# docs/design/bs1-luks-unattended.md.
+#
+# TESTBED ONLY, like the fixed host key: whoever has the drive and the laptop
+# together can read the disk.  Never on a release image or a machine outside
+# the testbed.  `bs1-adopt --luks-off` puts it all back; BS1_LUKS=no skips it.
+#
+# How, by what opens the volume:
+#   S  systemd in the initramfs (dracut with its systemd module; mkinitcpio's
+#      sd-encrypt), and any volume the booted system opens under systemd:
+#      crypttab's key field PATH:LABEL=LABEL, option keyfile-timeout=WAITs.
+#   D  initramfs-tools' cryptroot: keyscript=/usr/local/lib/backshot1/unlock-key
+#      (bs1-unlock-key), the key field left as it was (none).
+#   E  mkinitcpio's busybox encrypt: the bs1key hook, before encrypt, writes
+#      /crypto_keyfile.bin (bs1-unlock-key --to).
+#   A  attended: anything else (non-systemd dracut, mkinitfs, ostree, NixOS
+#      for now).  Nothing changes; the record says why.
+# A volume that already unlocks with no one typing (a key file of its own,
+# TPM2, FIDO2) is left alone and recorded as own.
+#
+# Everything it writes starts with "# BackShot1"; each file it changes is
+# saved once in /etc/backshot1/orig/ (by its path, / as %), each it adds is
+# listed in /etc/backshot1/made.  A run that changes nothing remakes nothing.
+
+LUKS_DIR=/etc/backshot1
+LUKS_ORIG=$LUKS_DIR/orig
+LUKS_MADE=$LUKS_DIR/made
+UNLOCK_KEY=/usr/local/lib/backshot1/unlock-key
+LUKS_WAIT=${BS1_LUKS_WAIT:-30}
+# What reading a key from an ext4 USB drive takes, where the initramfs
+# doesn't add it by itself.
+LUKS_MODULES="usb_storage uas sd_mod xhci_pci ext4"
+
+lk_say() { echo "luks: $*"; }
+lk_err() { echo "bs1-adopt: $*" >&2; }
+
+# Shell-quotes for the record, which sh and bash read with `.`.
+lk_q() { local s=${1//\'/\'\\\'\'}; printf "'%s'" "$s"; }
+
+lk_orig_name() { local p=${1//\//%}; echo "$LUKS_ORIG/$p"; }
+
+# lk_save FILE: keeps FILE's original once, or notes that adopt made it.
+lk_save() {
+    local o
+    o=$(lk_orig_name "$1")
+    mkdir -p "$LUKS_ORIG" || return 1
+    [[ -e $o ]] && return 0
+    grep -qxF "$1" "$LUKS_MADE" 2>/dev/null && return 0
+    if [[ -e $1 ]]; then cp -p "$1" "$o"; else echo "$1" >>"$LUKS_MADE"; fi
+}
+
+# lk_put FILE MODE CONTENT: writes CONTENT to FILE (and a final newline)
+# unless it's there already; MODE is a new file's.  LK_CHANGED counts the
+# files changed.
+LK_CHANGED=0
+LK_EARLY_S=
+lk_put() {
+    local file=$1 mode=$2 content=$3 new=no
+    if [[ -f $file ]] && [[ $(cat "$file") == "$content" ]]; then return 0; fi
+    lk_save "$file" || return 1
+    mkdir -p "$(dirname "$file")" || return 1
+    [[ -e $file ]] || new=yes
+    # Into the file itself when it exists, so its mode, owner and label stay.
+    printf '%s\n' "$content" >"$file" || return 1
+    [[ $new == no ]] || chmod "$mode" "$file"
+    LK_CHANGED=$((LK_CHANGED + 1))
+    lk_say "wrote $file"
+}
+
+# The initramfs generator, in the order holt's initramfs_json (and so the
+# restore's boot stage) picks it.
+lk_generator() {
+    if [[ -e /run/ostree-booted ]] || compgen -G '/usr/lib/kernel/*.initrd' >/dev/null; then echo prebuilt
+    elif command -v mkinitcpio >/dev/null; then echo mkinitcpio
+    elif command -v dracut >/dev/null; then echo dracut
+    elif command -v update-initramfs >/dev/null; then echo initramfs-tools
+    elif command -v mkinitfs >/dev/null; then echo mkinitfs
+    else echo none
+    fi
+}
+
+# The initramfs remade as bko-holt load's boot stage does (initramfs() and
+# gentoo_initramfs() in holt/src/load/commands.rs).
+lk_remake() {
+    local k n=0
+    case $1 in
+    mkinitcpio) mkinitcpio -P ;;
+    dracut)
+        if [[ -e /etc/gentoo-release ]]; then
+            for k in /boot/initramfs-*.img; do
+                [[ -f $k ]] || continue
+                k=${k#/boot/initramfs-}; k=${k%.img}
+                [[ -d /lib/modules/$k ]] || continue
+                dracut --force "/boot/initramfs-$k.img" "$k" || return 1
+                n=$((n + 1))
+            done
+            [[ $n -gt 0 ]]
+        elif command -v dracut-rebuild >/dev/null; then dracut-rebuild
+        else
+            for k in /lib/modules/*; do
+                [[ -d $k/kernel ]] || continue
+                dracut --force --kver "${k##*/}" || return 1
+                n=$((n + 1))
+            done
+            [[ $n -gt 0 ]]
+        fi
+        ;;
+    initramfs-tools) update-initramfs -u -k all ;;
+    *) return 1 ;;
+    esac
+}
+
+# The images written since STAMP: initramfs* and initrd* in /boot, /efi and
+# the ESP (Limine's copies under /boot/MACHINE-ID too), and unified images.
+lk_images() {
+    local d
+    for d in /boot /efi /boot/efi; do
+        [[ -d $d ]] || continue
+        find "$d" -maxdepth 5 -xdev -type f -newer "$1" \( -name 'initramfs*' -o -name 'initrd*' -o -path '*/EFI/Linux/*.efi' \) \
+            ! -name '*.old' ! -name '*.bak' 2>/dev/null
+    done | while read -r d; do readlink -f "$d"; done | LC_ALL=C sort -u
+}
+
+# lk_list GENERATOR IMAGE: the image's paths, one a line, no leading ./
+lk_list() {
+    case $1 in
+    mkinitcpio) lsinitcpio "$2" ;;
+    dracut) lsinitrd "$2" | sed -E 's/ -> .*//; s/.* //' ;;
+    initramfs-tools) lsinitramfs "$2" ;;
+    esac 2>/dev/null | sed 's|^\./||'
+}
+
+# lk_crypttab_in GENERATOR IMAGE: the image's /etc/crypttab.
+lk_crypttab_in() {
+    local tmp rc=0
+    case $1 in
+    dracut) lsinitrd -f etc/crypttab "$2" 2>/dev/null ;;
+    mkinitcpio)
+        tmp=$(mktemp -d) || return 1
+        (cd "$tmp" && lsinitcpio -x "$2" >/dev/null 2>&1) && cat "$tmp/etc/crypttab" 2>/dev/null || rc=1
+        rm -rf "$tmp"
+        return $rc
+        ;;
+    esac
+}
+
+# The running kernel's image, for what the current one has in it.
+lk_current_image() {
+    local k f mid
+    k=$(uname -r)
+    mid=$(cat /etc/machine-id 2>/dev/null)
+    for f in "/boot/initramfs-$k.img" "/boot/initrd.img-$k" "/boot/initrd-$k" \
+             "/efi/$mid/$k/initrd" "/boot/efi/$mid/$k/initrd" "/boot/$mid/$k/initrd"; do
+        [[ -f $f ]] && { echo "$f"; return 0; }
+    done
+    return 1
+}
+
+# lk_luks_volumes DISK: "DEV UUID NAME" for each LUKS device on DISK, NAME its
+# open mapping or -.
+lk_luks_volumes() {
+    local dev name
+    lsblk -lnpo NAME "/dev/$1" | while read -r dev; do
+        [[ $(blkid -o value -s TYPE "$dev" 2>/dev/null) == crypto_LUKS ]] || continue
+        name=$(lsblk -lno NAME,TYPE "$dev" | awk '$2 == "crypt" { print $1; exit }')
+        echo "$dev $(blkid -o value -s UUID "$dev") ${name:--}"
+    done
+}
+
+# lk_early NAME: does the initramfs open it?  It's under /, /usr or a swap
+# device (resume).
+lk_early() {
+    local src
+    for src in $(findmnt -nro SOURCE /) $(findmnt -nro SOURCE /usr 2>/dev/null) $(swapon --show=NAME --noheadings 2>/dev/null); do
+        src=${src%%\[*}
+        [[ $src == /dev/* ]] || continue
+        lsblk -snlo NAME "$src" 2>/dev/null | grep -xF "$1" >/dev/null && return 0
+    done
+    return 1
+}
+
+# lk_resolve SPEC: a crypttab or command line device spec as a device path.
+lk_resolve() {
+    local s=$1
+    case $s in
+    UUID=*) s=/dev/disk/by-uuid/${s#UUID=} ;;
+    PARTUUID=*) s=/dev/disk/by-partuuid/${s#PARTUUID=} ;;
+    LABEL=*) s=/dev/disk/by-label/${s#LABEL=} ;;
+    PARTLABEL=*) s=/dev/disk/by-partlabel/${s#PARTLABEL=} ;;
+    esac
+    readlink -f "$s" 2>/dev/null
+}
+
+# lk_tab_line FILE NAME DEV UUID: crypttab FILE's line for the volume (by its
+# name, its UUID or its device), as "KEY OPTIONS", or false.
+lk_tab_line() {
+    local file=$1 name=$2 dev=$3 uuid=$4 n d k o
+    [[ -f $file ]] || return 1
+    while read -r n d k o; do
+        [[ -z $n || $n == \#* ]] && continue
+        if [[ $n == "$name" || $d == "UUID=$uuid" || $d == "/dev/disk/by-uuid/$uuid" || $(lk_resolve "$d") == "$(readlink -f "$dev")" ]]; then
+            echo "${k:-none} ${o:--}"
+            return 0
+        fi
+    done <"$file"
+    return 1
+}
+
+# lk_tab_edit FILE EDITS...: FILE's text with each EDIT applied, EDIT being
+# NAME|HOW|UUID|ADD|FIX: HOW S puts the drive's key and keyfile-timeout in,
+# D keyscript=; ADD 1 appends a line when there's none for NAME; FIX 1 names
+# the device UUID=, for the command line's rd.luks.uuid= or rd.luks.name= to
+# find the line by.  Edited lines are tab-separated, so a second run
+# reproduces them exactly.
+lk_tab_edit() {
+    local file=$1; shift
+    { [[ -f $file ]] && cat "$file"; true; } | awk -v edits="$*" -v key="$LK_KEYSPEC" -v wait="$LUKS_WAIT" -v ks="$UNLOCK_KEY" '
+        BEGIN { n = split(edits, e, " "); for (i = 1; i <= n; i++) { split(e[i], f, "|"); how[f[1]] = f[2]; uuid[f[1]] = f[3]; add[f[1]] = f[4]; fixdev[f[1]] = f[5] } }
+        function fix(name, dev, k, o,    a, m, i, out) {
+            m = split(o == "-" ? "" : o, a, ",")
+            out = ""
+            for (i = 1; i <= m; i++) {
+                if (a[i] == "") continue
+                if (how[name] == "S" && a[i] ~ /^keyfile-timeout=/) continue
+                if (how[name] == "D" && a[i] ~ /^keyscript=/) continue
+                out = out (out == "" ? "" : ",") a[i]
+            }
+            if (how[name] == "S") { k = key; out = out (out == "" ? "" : ",") "keyfile-timeout=" wait "s"; if (dev !~ /^(UUID=|\/dev\/disk\/by-uuid\/)/ && fixdev[name] == 1) dev = "UUID=" uuid[name] }
+            if (how[name] == "D") out = out (out == "" ? "" : ",") "keyscript=" ks
+            return name "\t" dev "\t" k "\t" out
+        }
+        /^[[:space:]]*(#|$)/ { print; next }
+        $1 in how { seen[$1] = 1; print fix($1, $2, NF >= 3 ? $3 : "none", NF >= 4 ? $4 : ""); next }
+        { print }
+        END { for (nm in how) if (!(nm in seen) && add[nm] == 1) print fix(nm, "UUID=" uuid[nm], "none", "") }'
+}
+
+# The mkinitcpio HOOKS and FILES, read as mkinitcpio reads its configuration.
+lk_mkinitcpio_conf() {
+    (
+        set +eu
+        # shellcheck disable=SC1091
+        . /etc/mkinitcpio.conf
+        for f in /etc/mkinitcpio.conf.d/*.conf; do
+            # shellcheck disable=SC1090
+            [[ -e $f ]] && . "$f"
+        done
+        # shellcheck disable=SC2153
+        echo "HOOKS ${HOOKS[*]}"
+        # shellcheck disable=SC2153
+        echo "FILES ${FILES[*]}"
+    )
+}
+
+# Does dracut put systemd in the initramfs?  The running kernel's image
+# says; without one, systemd as init and no omit of it.
+lk_dracut_systemd() {
+    local img
+    if img=$(lk_current_image); then
+        lsinitrd -m "$img" 2>/dev/null | grep -x systemd >/dev/null
+        return
+    fi
+    [[ $init == systemd ]] || return 1
+    ! cat /etc/dracut.conf /etc/dracut.conf.d/*.conf /usr/lib/dracut/dracut.conf.d/*.conf 2>/dev/null |
+        grep -E '^[^#]*omit_dracutmodules.*systemd' >/dev/null
+}
+
+# The modules of LUKS_MODULES this kernel has, as a module or built in.
+lk_modules() {
+    local m
+    for m in $LUKS_MODULES; do
+        modinfo "$m" >/dev/null 2>&1 && printf '%s ' "$m"
+    done
+}
+
+# luks_adopt: the step itself.  False, having changed nothing, if it can't.
+luks_adopt() {
+    local disk key mnt src lbl rel fstype gen family='' reason='' cmdline vols dev uuid name line k o how
+    local vol_list=() own_list=() edits_tab=() edits_ini=() unhandled=() early hooks='' files='' cd cdname fix
+    if [[ ${BS1_LUKS:-yes} == no ]]; then lk_say "skipped (BS1_LUKS=no)"; return 0; fi
+    disk=$(internal_disk) || { lk_err "no single disk has serial $INTERNAL_SERIAL"; return 1; }
+    vols=$(lk_luks_volumes "$disk")
+    if [[ -z $vols ]]; then
+        lk_say "no LUKS volume on $disk: nothing to do"
+        [[ ! -e $LUKS_REC ]] || lk_say "($LUKS_REC is from before; bs1-adopt --luks-off removes it)"
+        return 0
+    fi
+    [[ -s $here/bs1-unlock-key ]] || { lk_err "no $here/bs1-unlock-key: stage the scripts again"; return 1; }
+    key=$here/keys/disk-passphrase
+    [[ -s $key ]] || { lk_err "LUKS volumes need the passphrase in $key (printf '%s' PASSPHRASE, no final newline)"; return 1; }
+
+    # Where the key is: this script's drive, by its label.
+    if ! mnt=$(findmnt -no TARGET --target "$here") || ! src=$(findmnt -no SOURCE --target "$here"); then
+        lk_err "can't tell which drive $here is on"
+        return 1
+    fi
+    lbl=$(blkid -o value -s LABEL "$src" 2>/dev/null)
+    [[ $lbl == "$BACKUP_LABEL" ]] || { lk_err "run bs1-adopt from the backup drive, LABEL=$BACKUP_LABEL (this is ${lbl:-unlabelled} $src)"; return 1; }
+    [[ $BACKUP_LABEL =~ ^[A-Za-z0-9._-]+$ ]] || { lk_err "the backup drive's label $BACKUP_LABEL has characters crypttab and the initramfs can't take"; return 1; }
+    rel=${here#"$mnt"}
+    LK_PATH=${rel%/}/keys/disk-passphrase
+    [[ $LK_PATH =~ ^/[A-Za-z0-9._/-]+$ ]] || { lk_err "the key's path on the drive, $LK_PATH, has characters crypttab can't take"; return 1; }
+    fstype=$(findmnt -no FSTYPE --target "$here")
+    LK_KEYSPEC=$LK_PATH:LABEL=$BACKUP_LABEL
+
+    # The key first, before anything changes.
+    while read -r dev uuid name; do
+        if ! cryptsetup open --test-passphrase --key-file "$key" "$dev" >/dev/null 2>&1; then
+            lk_err "the drive's key ($key) doesn't open $dev ($name): is it the passphrase, with no final newline?"
+            return 1
+        fi
+    done <<<"$vols"
+    lk_say "the drive's key opens every LUKS volume on $disk"
+
+    gen=$(lk_generator)
+    cmdline=$(cat /proc/cmdline)
+    if [[ -e /run/ostree-booted ]]; then family=A reason="ostree (bko-holt load refuses LUKS there)"
+    elif [[ -e /etc/NIXOS ]]; then family=A reason="NixOS: its LUKS step (backshot1.nix) isn't built yet"
+    else
+        case $gen in
+        mkinitcpio)
+            hooks=$(lk_mkinitcpio_conf | sed -n 's/^HOOKS //p')
+            files=$(lk_mkinitcpio_conf | sed -n 's/^FILES //p')
+            if [[ " $hooks " == *" sd-encrypt "* ]]; then family=S
+            elif [[ " $hooks " == *" encrypt "* ]]; then family=E
+            elif [[ $init == systemd ]]; then family=S
+            else family=A reason="mkinitcpio without encrypt or sd-encrypt, and no systemd"
+            fi
+            ;;
+        dracut)
+            if lk_dracut_systemd; then family=S
+            else family=A reason="dracut without its systemd module (rd.luks.key needs the command line)"
+            fi
+            ;;
+        initramfs-tools) family=D ;;
+        *) family=A reason="the initramfs is ${gen}'s" ;;
+        esac
+    fi
+    if [[ $family == S && $cmdline =~ (^|[[:space:]])(rd\.)?luks\.(options|key|crypttab)= ]]; then
+        family=A reason="rd.luks.options, rd.luks.key or rd.luks.crypttab on the command line would override crypttab"
+    fi
+    LK_TAB=/etc/crypttab LK_INI=/etc/crypttab
+    [[ $gen == mkinitcpio && $family == S && " $hooks " == *" sd-encrypt "* ]] && LK_INI=/etc/crypttab.initramfs
+
+    local re_cryptkey='(^|[[:space:]])cryptkey(=|[[:space:]]|$)'
+    # Each volume: own, or typed and how it's handled.  Any typed volume
+    # that can't be makes the whole install attended (family A).
+    while read -r dev uuid name; do
+        if [[ $name == - ]]; then unhandled+=("$dev isn't open, so it isn't in the backup"); continue; fi
+        early=no
+        lk_early "$name" && early=yes
+        if [[ $early == yes ]]; then line=$(lk_tab_line "$LK_INI" "$name" "$dev" "$uuid"); else line=$(lk_tab_line "$LK_TAB" "$name" "$dev" "$uuid"); fi
+        k=${line%% *} o=${line#* }
+        # Own: a key file in crypttab (not ours), a token, or (busybox
+        # encrypt, Alpine's mkinitfs) a key file built into the initramfs.
+        if [[ -n $line && $k != none && $k != - && $k != "$LK_KEYSPEC" ]] ||
+           [[ -n $line && ($o == *tpm2-device=* || $o == *fido2-device=* || $o == *pkcs11-uri=*) ]] ||
+           { [[ $early == yes ]] && { [[ $cmdline =~ $re_cryptkey ]] || [[ " $files " == *" /crypto_keyfile.bin "* ]]; }; }; then
+            own_list+=("$name:$uuid")
+            continue
+        fi
+        how=
+        case $family:$early in
+        E:yes)
+            # The command line's cryptdevice=DEV:NAME is encrypt's volume.
+            cd=$(sed -n 's/.*\bcryptdevice=\([^ ]*\).*/\1/p' <<<"$cmdline")
+            cdname=$(cut -d: -f2 <<<"$cd")
+            if [[ -n $cd && $(lk_resolve "${cd%%:*}") == "$(readlink -f "$dev")" && $cdname == "$name" ]]; then how=E
+            else unhandled+=("$name opens early but isn't the command line's cryptdevice= (${cd:-none})")
+            fi
+            ;;
+        D:yes)
+            if [[ -z $line ]]; then unhandled+=("$name has no line in /etc/crypttab for cryptroot")
+            elif [[ $o == *keyscript=* && $o != *"keyscript=$UNLOCK_KEY"* ]]; then unhandled+=("$name has a keyscript of its own")
+            else how=D
+            fi
+            ;;
+        S:*) how=S ;;
+        A:*) unhandled+=("$reason") ;;
+        *:no)
+            # Opened by the booted system: systemd's crypttab takes the key form.
+            if [[ $init == systemd ]]; then how=S; else unhandled+=("$name is opened after the initramfs, without systemd"); fi
+            ;;
+        esac
+        [[ -n $how ]] || continue
+        vol_list+=("$name:$uuid:$how")
+        fix=0
+        [[ $cmdline == *"$uuid"* ]] && fix=1
+        case $how:$early in
+        S:yes) edits_ini+=("$name|S|$uuid|1|$fix"); LK_EARLY_S+=" $name" ;;
+        S:no) edits_tab+=("$name|S|$uuid|1|$fix") ;;
+        D:*) edits_tab+=("$name|D|$uuid|0|0") ;;
+        esac
+    done <<<"$vols"
+    if [[ ${#unhandled[@]} -gt 0 ]]; then
+        family=A reason=$(printf '%s\n' "${unhandled[@]}" | awk '!seen[$0]++' | paste -s -d ';' - | sed 's/;/; /g')
+    elif [[ ${#vol_list[@]} -eq 0 ]]; then
+        family=own
+    fi
+
+    mkdir -p "$LUKS_DIR"
+    if [[ $family == A || $family == own ]]; then
+        [[ $family == own ]] && reason="every LUKS volume unlocks with no one typing"
+        lk_say "$family: $reason; nothing else changes"
+        lk_put "$LUKS_REC" 644 "$(lk_record "$family" "$gen" "$fstype" "" "${own_list[*]}" "$reason")" || return 1
+        return 0
+    fi
+    lk_say "family $family (initramfs: $gen): ${vol_list[*]}${own_list:+; own: ${own_list[*]}}"
+
+    # The record first: D's and E's hooks copy it into the initramfs.
+    lk_put "$LUKS_REC" 644 "$(lk_record "$family" "$gen" "$fstype" "${vol_list[*]}" "${own_list[*]}" "")" || return 1
+    if [[ ${#edits_tab[@]} -gt 0 || ($LK_INI == "$LK_TAB" && ${#edits_ini[@]} -gt 0) ]]; then
+        if [[ $LK_INI == "$LK_TAB" ]]; then
+            lk_put "$LK_TAB" 644 "$(lk_tab_edit "$LK_TAB" "${edits_tab[@]}" "${edits_ini[@]}")" || return 1
+        else
+            lk_put "$LK_TAB" 644 "$(lk_tab_edit "$LK_TAB" "${edits_tab[@]}")" || return 1
+        fi
+    fi
+    if [[ $LK_INI != "$LK_TAB" && ${#edits_ini[@]} -gt 0 ]]; then
+        lk_put "$LK_INI" 600 "$(lk_tab_edit "$LK_INI" "${edits_ini[@]}")" || return 1
+    fi
+    # dracut puts crypttab in only when it's host-only; then by name.
+    [[ $family:$gen == S:dracut ]] && grep -qsx 'install_items+=" /etc/crypttab "' /etc/dracut.conf.d/90-backshot1.conf &&
+        LK_DRACUT_EXTRA='install_items+=" /etc/crypttab "'
+    lk_files "$family" "$gen" "$fstype" || return 1
+
+    if [[ $LK_CHANGED -eq 0 ]]; then
+        lk_say "unchanged; the initramfs isn't remade"
+        return 0
+    fi
+    lk_remake_checked "$family" "$gen" && return 0
+    if [[ ${LK_TAB_MISSING:-0} == 1 && $family:$gen == S:dracut && -z ${LK_DRACUT_EXTRA:-} ]]; then
+        lk_say "this dracut isn't host-only: crypttab goes in by name"
+        LK_DRACUT_EXTRA='install_items+=" /etc/crypttab "'
+        lk_files "$family" "$gen" "$fstype" && lk_remake_checked "$family" "$gen" && return 0
+    fi
+    lk_err "putting everything back"
+    luks_off
+    return 1
+}
+
+# lk_remake_checked FAMILY GENERATOR: the initramfs remade, and checked.
+lk_remake_checked() {
+    local stamp rc=0
+    stamp=$(mktemp) || return 1
+    # Past FAT's 2 s mtimes.
+    sleep 2
+    lk_say "remaking the initramfs ($2)"
+    if ! lk_remake "$2"; then
+        lk_err "remaking the initramfs failed"
+        rc=1
+    elif ! lk_check "$1" "$2" "$stamp"; then
+        lk_err "the remade initramfs lacks what unlocking from the drive needs"
+        rc=1
+    fi
+    rm -f "$stamp"
+    [[ $rc -eq 0 ]] || return 1
+    lk_say "done: reboot once with the drive plugged in, nothing typed, before the next backup (preflight wants a boot the drive unlocked)"
+}
+
+# lk_record FAMILY GENERATOR FSTYPE VOLUMES OWN REASON
+lk_record() {
+    cat <<EOF
+# BackShot1 (bs1-adopt): this install's LUKS volumes unlock with the key on
+# the backup drive.  TESTBED ONLY; bs1-adopt --luks-off undoes it.
+family=$1
+generator=$2
+label=$BACKUP_LABEL
+path=${LK_PATH:-}
+fstype=$3
+wait=$LUKS_WAIT
+volumes=$(lk_q "$4")
+own=$(lk_q "$5")
+reason=$(lk_q "$6")
+EOF
+}
+
+# lk_files FAMILY GENERATOR: the script, hooks and drop-ins.
+lk_files() {
+    local mods
+    mods=$(lk_modules)
+    case $1 in
+    D | E) lk_put "$UNLOCK_KEY" 755 "$(cat "$here/bs1-unlock-key")" || return 1 ;;
+    esac
+    case $1:$2 in
+    S:dracut)
+        lk_put /etc/dracut.conf.d/90-backshot1.conf 644 "# BackShot1 (bs1-adopt): what reading the LUKS key from the backup drive takes.
+# TESTBED ONLY; bs1-adopt --luks-off removes it.
+add_drivers+=\" ${mods% } \"
+filesystems+=\" ${3:-ext4} \"${LK_DRACUT_EXTRA:+
+$LK_DRACUT_EXTRA}" || return 1
+        ;;
+    S:mkinitcpio)
+        local m q=
+        for m in $mods; do q+="'$m?' "; done
+        lk_put /etc/mkinitcpio.conf.d/zz-backshot1.conf 644 "# BackShot1 (bs1-adopt): what reading the LUKS key from the backup drive takes.
+# TESTBED ONLY; bs1-adopt --luks-off removes it.
+MODULES+=(${q% })" || return 1
+        ;;
+    E:mkinitcpio)
+        lk_put /etc/initcpio/install/bs1key 644 "#!/bin/bash
+# BackShot1 (bs1-adopt): the LUKS key from the backup drive, for encrypt.
+# TESTBED ONLY; bs1-adopt --luks-off removes it.
+build() {
+    local m
+    for m in $mods; do add_module \"\$m?\"; done
+    add_file $LUKS_REC
+    add_file $UNLOCK_KEY $UNLOCK_KEY 755
+    add_runscript
+}
+help() {
+    echo 'BackShot1: writes /crypto_keyfile.bin from the backup drive, for encrypt (testbed only)'
+}" || return 1
+        lk_put /etc/initcpio/hooks/bs1key 644 "#!/usr/bin/ash
+# BackShot1 (bs1-adopt): the LUKS key from the backup drive, for encrypt.
+run_hook() {
+    $UNLOCK_KEY --to /crypto_keyfile.bin
+}" || return 1
+        # After every other drop-in (Omarchy's omarchy_hooks.conf sets HOOKS).
+        lk_put /etc/mkinitcpio.conf.d/zz-backshot1.conf 644 "# BackShot1 (bs1-adopt): bs1key reads the LUKS key from the backup drive
+# right before encrypt.  TESTBED ONLY; bs1-adopt --luks-off removes it.
+_bs1=()
+for _h in \"\${HOOKS[@]}\"; do
+    [[ \$_h == bs1key ]] && continue
+    [[ \$_h == encrypt ]] && _bs1+=(bs1key)
+    _bs1+=(\"\$_h\")
+done
+HOOKS=(\"\${_bs1[@]}\")
+unset _h _bs1" || return 1
+        ;;
+    D:initramfs-tools)
+        lk_put /etc/initramfs-tools/hooks/backshot1 755 "#!/bin/sh
+# BackShot1 (bs1-adopt): what the keyscript $UNLOCK_KEY reads, and the
+# modules for the drive.  cryptroot's hook copies the keyscript itself.
+# TESTBED ONLY; bs1-adopt --luks-off removes it.
+PREREQ=\"\"
+prereqs() { echo \"\$PREREQ\"; }
+case \$1 in prereqs) prereqs; exit 0 ;; esac
+. /usr/share/initramfs-tools/hook-functions
+mkdir -p \"\$DESTDIR$LUKS_DIR\"
+cp $LUKS_REC \"\$DESTDIR$LUKS_REC\"
+for m in $mods; do manual_add_modules \"\$m\"; done" || return 1
+        ;;
+    esac
+}
+
+# lk_check FAMILY GENERATOR STAMP: every image remade since STAMP has what
+# unlocking from the drive needs.
+lk_check() {
+    local family=$1 gen=$2 imgs img list tab n=0 bad=0 v want
+    LK_TAB_MISSING=0
+    imgs=$(lk_images "$3")
+    [[ -n $imgs ]] || { lk_err "can't find the remade initramfs in /boot, /efi or the ESP"; return 1; }
+    while read -r img; do
+        list=$(lk_list "$gen" "$img")
+        if [[ -z $list ]]; then lk_say "  $img: can't list it, skipped"; continue; fi
+        n=$((n + 1))
+        want=()
+        case $family:$gen in
+        D:*) want=("${UNLOCK_KEY#/}" "${LUKS_REC#/}") ;;
+        E:*) want=(hooks/bs1key "${UNLOCK_KEY#/}" "${LUKS_REC#/}") ;;
+        esac
+        for v in "${want[@]}"; do
+            grep -qxF "$v" <<<"$list" || { lk_err "$img has no $v"; bad=1; }
+        done
+        if [[ $family == S && -n ${LK_EARLY_S:-} ]]; then
+            [[ $gen != dracut ]] || lsinitrd -m "$img" 2>/dev/null | grep -x systemd >/dev/null ||
+                { lk_err "$img has no systemd in it"; bad=1; }
+            tab=$(lk_crypttab_in "$gen" "$img")
+            for v in $LK_EARLY_S; do
+                if ! awk -v n="$v" -v k="$LK_KEYSPEC" '$1 == n && $3 == k { f = 1 } END { exit !f }' <<<"$tab"; then
+                    lk_err "$img's crypttab doesn't give $v the drive's key"
+                    bad=1 LK_TAB_MISSING=1
+                fi
+            done
+        fi
+        grep -Eq '(^|/)usb-storage\.ko' <<<"$list" || grep -qs '/usb-storage\.ko' /lib/modules/*/modules.builtin ||
+            lk_say "  $img: no usb-storage module in it (warning)"
+        [[ $bad -eq 0 ]] && lk_say "  $img: ok"
+    done <<<"$imgs"
+    [[ $n -gt 0 ]] || { lk_err "couldn't list any remade initramfs"; return 1; }
+    [[ $bad -eq 0 ]]
+}
+
+# luks_off: everything luks_adopt wrote, put back, and the initramfs remade.
+luks_off() {
+    local o f gen changed=0
+    gen=$(lk_generator)
+    if [[ -d $LUKS_ORIG ]]; then
+        for o in "$LUKS_ORIG"/*; do
+            [[ -e $o ]] || continue
+            f=${o##*/}; f=${f//%//}
+            cat "$o" >"$f" && rm -f "$o" && lk_say "put back $f" && changed=1
+        done
+    fi
+    if [[ -f $LUKS_MADE ]]; then
+        while read -r f; do
+            [[ -n $f && -e $f ]] || continue
+            rm -f "$f" || continue
+            lk_say "removed $f"
+            # The record alone (family A or own) changes no initramfs.
+            [[ $f == "$LUKS_REC" ]] || changed=1
+        done <"$LUKS_MADE"
+    fi
+    rm -rf "$LUKS_ORIG" "$LUKS_MADE" "$LUKS_REC"
+    rmdir "$LUKS_DIR" "${UNLOCK_KEY%/*}" 2>/dev/null || true
+    if [[ $changed -eq 1 ]]; then
+        lk_say "remaking the initramfs ($gen)"
+        lk_remake "$gen" || { lk_err "remaking the initramfs failed: run it by hand before rebooting"; return 1; }
+    else
+        lk_say "nothing to put back"
+    fi
+}

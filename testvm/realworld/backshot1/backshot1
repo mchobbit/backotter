@@ -3,7 +3,8 @@
 # Run from the controlling machine; README.md has the whole procedure.
 #
 #   backshot1 stage TOOLS_DIR     put the scripts, tools and keys on the backup drive
-#   backshot1 adopt               run bs1-adopt on the machine, over the old login
+#   backshot1 adopt [--luks-off]  run bs1-adopt on the machine, over the old login
+#   backshot1 unlock              how this boot opened the LUKS volumes: UNLOCK=drive...
 #   backshot1 preflight           check everything phase1 needs; changes nothing
 #   backshot1 phase1              back up the running system; prints RUN=...
 #   backshot1 list                the backups on the drive, and how each last restored
@@ -63,7 +64,7 @@ stage)
     old_login_if_new
     d=$(on_host "$DRIVE; echo \"\$d\"")
     on_host "mkdir -p '$d/backshot1/bin' '$d/backshot1/runs' '$d/backshot1/keys'; chmod 700 '$d/backshot1/keys'"
-    scp -q "${OPTS[@]}" "$here"/bs1-{common,backup,restore,verify,manifest,ostree,adopt,list,to-stick} "root@$HOST:$d/backshot1/"
+    scp -q "${OPTS[@]}" "$here"/bs1-{common,backup,restore,verify,manifest,ostree,adopt,luks,unlock-key,list,to-stick} "root@$HOST:$d/backshot1/"
     scp -q "${OPTS[@]}" "$here/../../ostree_paths.py" "root@$HOST:$d/backshot1/"   # bs1-manifest's and bs1-ostree's
     scp -q "${OPTS[@]}" "$here/thinkpad.conf" "root@$HOST:$d/backshot1/bs1.conf"
     scp -q "${OPTS[@]}" "$tools/bko-holt" "$tools/rustic-bko" "root@$HOST:$d/backshot1/bin/"
@@ -73,7 +74,10 @@ stage)
     ;;
 adopt)
     old_login_if_new
-    on_host "$DRIVE; exec sh \"\$d/backshot1/bs1-adopt\""
+    on_host "$DRIVE; exec sh \"\$d/backshot1/bs1-adopt\" ${2:-}"
+    ;;
+unlock)
+    on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-verify\" --unlock"
     ;;
 phase1)
     on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-backup\""
@@ -136,7 +140,7 @@ check-boot)
     on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-verify\" --boot '$run'"
     ;;
 *)
-    sed -n '2,18p' "$0"
+    sed -n '2,19p' "$0"
     exit 2
     ;;
 esac

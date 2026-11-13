@@ -15,9 +15,11 @@ changing anything, if the disk holds a filesystem that isn't mounted.  Not
 covered: the BSDs, illumos and Haiku, which need their own rescue images, and
 btrfs subvolumes or ZFS datasets that aren't mounted.
 
-An encrypted install needs its passphrase, in plain text, in
-`backshot1/keys/disk-passphrase` on the backup drive, and someone to type it at
-the restored system's first boot.
+An encrypted install needs its passphrase, in plain text with no final
+newline (`printf '%s'`), in `backshot1/keys/disk-passphrase` on the backup
+drive.  `bs1-adopt` sets its initramfs to unlock with that file whenever the
+drive is plugged in, so nobody types it, not even at the restored system's
+first boot ("Unlocking from the drive" below).
 
 Unlike `bko-realworld-1a`, which does everything from the stick, the backup is
 of the running system.  ext4 has no snapshots, so files that change meanwhile are
@@ -49,7 +51,11 @@ caught at different moments; `bs1-manifest` tells those from real differences.
   --getbinpkg --noreplace`, from the binhost; an install like the
   Thinkpad's has them all, so nothing is emerged).  On NixOS it writes
   `/etc/nixos/backshot1.nix`, imports it from `configuration.nix` and rebuilds;
-  a system built from a flake needs those settings added by hand.
+  a system built from a flake needs those settings added by hand.  On an
+  install with LUKS it then sets up unlocking from the drive (below), and
+  stops if the drive's key doesn't open every volume.  Reboot once after
+  it, with the drive plugged in: the preflight wants a boot the drive
+  unlocked.
 - The USB Ethernet adapter stays plugged in: the images are wired-only.
 
 ## The run
@@ -169,25 +175,75 @@ An old backup tests the restore and the rescue image, not `dump` or the backup, 
 take a fresh one when those change.  The firmware's boot list is the one thing
 that carries over from one restore to the next.
 
-## Encrypted runs go first, in one block
+## Unlocking from the drive
 
-A run of an install whose LUKS asks for a typed passphrase needs the person
-once: at the restored system's first boot.  The backup is of the running,
-unlocked system, and the reboot into the stick asks for nothing.  So when a
-session has several runs to do:
+`bs1-adopt` makes a LUKS install unlock at boot with
+`backshot1/keys/disk-passphrase` from the drive labelled `BACKUP_LABEL`
+(`bs1-luks`; docs/design/bs1-luks-unattended.md).  If the drive isn't there
+within 30 s, or the key doesn't fit, the usual prompt follows.  The settings
+are in the installed system, so in the backup: the restore's boot stage
+remakes the initramfs from them, and the restored system unlocks itself too.
+How depends on what opens the volume:
 
-- Do every such run first, one after another, while the person is there; the
-  unattended runs follow.
-- End the block on a system without a passphrase: restore an unencrypted
-  backup from the library (or start the first unattended run) before the
-  person leaves.  A restored system left at its unlock prompt stops every
-  later run, since the next one starts from it.
-- When the restored system hasn't answered SSH a minute or two after its
-  reboot, send the person a push notification to type the passphrase, so
-  nobody has to watch the screen through the restore.
-- A LUKS install that unlocks without typing (a key file in its initramfs,
-  or SSH into the initramfs: dropbear-initramfs, dracut-sshd,
-  mkinitcpio-dropbear) needs nobody, and can run anywhere in the order.
+| Family | Who | How |
+|---|---|---|
+| S | systemd in the initramfs: dracut (Fedora, EndeavourOS, openSUSE, Gentoo systemd, Ubuntu 26.04), mkinitcpio's `sd-encrypt`; and any volume the booted system opens under systemd | crypttab's key field `/backshot1/keys/disk-passphrase:LABEL=mybig512`, option `keyfile-timeout=30s`; `/etc/crypttab.initramfs` for `sd-encrypt`; a dracut or mkinitcpio drop-in adds the USB and ext4 modules |
+| D | initramfs-tools: Debian, Ubuntu up to 25.04, Mint, Chimera | crypttab option `keyscript=/usr/local/lib/backshot1/unlock-key` (`bs1-unlock-key`), the key field left `none`; it asks with askpass when the drive's key can't be read |
+| E | mkinitcpio's busybox `encrypt`: Arch, Manjaro, Omarchy | a `bs1key` hook, put right before `encrypt` by `/etc/mkinitcpio.conf.d/zz-backshot1.conf`, writes `/crypto_keyfile.bin` only if that key opens the volume |
+| A | non-systemd dracut, Alpine's mkinitfs, ostree, NixOS (for now) | nothing: the run is attended |
+
+A volume that already opens with no one typing (a key file of its own in the
+initramfs, TPM2, FIDO2) is left alone (`own`).  The kernel command line and
+the boot loader are never touched.  Adopt checks the key with `cryptsetup
+--test-passphrase` before changing anything, saves each file it changes in
+`/etc/backshot1/orig/`, records what it did in `/etc/backshot1/luks-unlock`,
+remakes the initramfs as the restore does and checks the new one; if that
+fails, it puts everything back.  Run again, it changes nothing.
+
+**Testbed only,** like the fixed host key: with the drive and the laptop
+together, anyone can read the disk.  Never on a release image, nor a machine
+outside the testbed.  `backshot1 adopt --luks-off` (`bs1-adopt --luks-off`)
+puts the files back and remakes the initramfs; `BS1_LUKS=no` skips the step.
+
+The preflight and phase 1 check the drive's key against every volume, and
+say how the system unlocks, `UNLOCK=`:
+
+- `drive`: the drive's key opened every typed volume at this boot (the
+  journal's key-device mount for S, `/run/backshot1-unlock` for D and E;
+  `backshot1 unlock` shows it);
+- `own`: every volume opens by itself;
+- `attended`: someone types at boot (family A, a system adopted before
+  this, or one not rebooted since adopt);
+- `none`: nothing encrypted.
+
+Phase 1 writes it to the baseline's `unlock.txt`, and `verify` then checks
+that each volume the drive opened before the backup was opened by the drive
+at the restored system's boot too, not typed.  Boots without the drive wait
+30 s before the prompt.
+
+## Attended runs go first, in one block
+
+A run whose `UNLOCK=` is `attended` (family A, or a library backup made
+before unlocking from the drive existed, which has no `unlock.txt`) needs the
+person once: at the restored system's first boot.  So does an ostree run's
+rollback visit.  The backup is of the running, unlocked system, and the
+reboot into the stick asks for nothing.  So when a session has several runs
+to do:
+
+- Do every attended run first, one after another, while the person is there;
+  the unattended runs follow.
+- End the block on a system that needs nobody: restore an unattended backup
+  from the library (or start the first unattended run) before the person
+  leaves.  A restored system left at its unlock prompt stops every later run,
+  since the next one starts from it.
+- When an attended restored system hasn't answered SSH a minute or two after
+  its reboot, send the person a push notification to type the passphrase, so
+  nobody has to watch the screen through the restore.  An `UNLOCK=drive`
+  system reboots like any other; if it isn't back after 5 min, it is at its
+  prompt (the drive's key failed): push then.
+- To bring an old library backup of a LUKS install into the unattended
+  order: restore it (typed, once more), `backshot1 adopt`, reboot, and take a
+  new backup.
 
 The same order holds for BackShot2's runs on the Thinkpad (its tier 3).
 
@@ -228,6 +284,19 @@ baseline taken before this has no attributes, and only the rest is compared.
 test guest, as three boots: source, rescue, restored.  `--bios` is for a guest
 that doesn't boot by UEFI, `--virtio` for one whose initramfs has no NVMe driver.
 
+On a LUKS guest the harness's USB drive (`BKOBACKUPA`) stands in for
+`mybig512`, and the guest's passphrase goes into its
+`keys/disk-passphrase`.  When adopt sets up unlocking from the drive, the
+source also runs adopt a second time (nothing may change), boots with the
+drive and nothing typed (`UNLOCK=drive`), boots without it (the prompt must
+come, and is answered), then boots with it for the backup; the restored
+system boots with the drive and nothing typed, and once more without it.
+`--luks-typed` answers the guest's own first boot on the serial console
+(`--luks-monitor`: on the keyboard, for Omarchy's Plymouth),
+`--strip-embedded-key` first takes a guest's built-in key file away so it
+asks (`gentoo-systemd`, `chimera-uefi`), and `--luks-off` checks that
+`bs1-adopt --luks-off` puts every file back.
+
 Passed on 2026-11-09: Ubuntu 26.04 and Fedora 44 (UEFI), Devuan 6 (OpenRC, and
 `bs1-adopt` alone on plain sysvinit), Alpine 3.24, Artix (dinit and s6), Void
 (musl), AerynOS and NixOS 26.05; on 2026-11-11, Kinoite 44 (ostree, on both
@@ -235,7 +304,12 @@ hosts, with its rollback booted); on 2026-11-12, Chimera (`chimera-uefi` and
 `chimera-zfs`, FreeBSD's userland, on both hosts) and Gentoo (`gentoo`, the
 Thinkpad's OpenRC install in small, on both hosts, with GRUB's embedded
 lvmid that of the restored vg0/root).  Artix's OpenRC and runit editions have no
-guest.
+guest.  On 2026-11-13, unlocking from the drive, on Cinqcent: `ubuntu26-luks`
+(family S, Ubuntu's dracut; with `--luks-off`), `omarchy` (E, Limine and
+Plymouth), `chimera-uefi` (D, Chimera's port of initramfs-tools) and
+`gentoo-systemd` (S, `rd.luks.uuid` on the command line), the last two with
+`--strip-embedded-key`, and `alpine324-luks` (`own`: left alone).  Debian's
+own initramfs-tools has no LUKS guest yet.
 
 Every rehearsal also runs the preflight, and checks that the snapshot is named
 `/mnt/bs1-src` and keeps a file's real access time.  On an ostree guest

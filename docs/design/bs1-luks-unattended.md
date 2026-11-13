@@ -1,6 +1,8 @@
 # BackShot1: LUKS installs that unlock from the backup drive (draft)
 
-2026-11-13. Design only: nothing is built yet. The user asked for it
+2026-11-13. Built the same day (L1-L5: R1-R4 and R6 passed; "Built" at
+the end says where it differs from this design and what the rehearsals
+showed; L6, the Thinkpad, waits for its next LUKS run). The user asked for it
 ("I would love if we made the LUKS runs unattended"): BackShot1 runs on
 LUKS installs should need no typed passphrase. Then BackShot1All needs no
 attended LUKS block, and runs aren't split by LUKS any more. est. marks an
@@ -375,3 +377,63 @@ since a mistake there makes the system unbootable without a console.
    baseline on mybig512, read-only, once the run in progress there ends).
    If they have `sd-encrypt`, rehearse an `omarchy` variant switched to
    systemd hooks first. If they have `encrypt`, R2 covers it.
+
+## Built (2026-11-13)
+
+Where the code differs from the design above:
+
+- **Files.** `bs1-luks` (adopt's step, sourced by `bs1-adopt` after
+  `bs1-common`) and `bs1-unlock-key` (the keyscript and the `bs1key` hook's
+  helper), both staged by `backshot1 stage` and `bs1-qemu.py`. The evidence
+  (`unlock_how`, `unlock_mode`, `luks_key_test`) is in `bs1-common`.
+- **The record** lists each volume as `NAME:LUKS-UUID:HOW`, HOW being S, D
+  or E, so a late volume on a D or E system (opened by the booted system
+  under systemd) takes the S form and S's evidence.
+- **Own** also covers an early volume with `cryptkey` on the command line
+  or `/crypto_keyfile.bin` in mkinitcpio's FILES (Alpine's mkinitfs, a
+  busybox `encrypt` install with its key built in).
+- **Any typed volume adopt can't handle** makes the whole install family A,
+  with every reason in the record; nothing else changes.
+- **S on the command line:** `rd.luks.options=`, `rd.luks.key=` or
+  `rd.luks.crypttab=` there would override crypttab, so such an install is
+  family A rather than half set up. The device field becomes `UUID=` only
+  when the command line names the volume's UUID (`rd.luks.uuid`).
+- **E:** the hook tests the key with `cryptsetup open --test-passphrase`
+  before leaving `/crypto_keyfile.bin`; a wrong key (exit 2) leaves no file,
+  so `encrypt` asks at once. The drop-in is `zz-backshot1.conf`, after
+  Omarchy's `omarchy_hooks.conf`, which sets HOOKS too.
+- **No `*.bs1-old` initramfs.** Adopt checks the new image instead and puts
+  everything back (and remakes the initramfs) if the remake or the check
+  fails; the reboot preflight wants is the other guard.
+- **Driver:** `backshot1 adopt --luks-off` and `backshot1 unlock`. Phase 1
+  prints `UNLOCK=` before `RUN=`.
+
+**Rehearsals** (Cinqcent, bko-holt 0.2.5 from /bkoscratch/backshot2/bin,
+the 20261112 test image, `bs1-qemu.py --discard-on-pass` under
+`cmp-run.sh --reserve 12 6`). Each did steps (a) to (f) above, and all
+passed:
+- R1 `ubuntu26-luks`, `--luks-typed --luks-off`: family S. Ubuntu 26.04's
+  dracut is host-only with systemd, so crypttab's line goes in by itself; the
+  drive-unlocked boot showed the key-device mount in the journal, and
+  `--luks-off` put every file back as it was.
+- R2 `omarchy`, `--virtio --luks-typed --luks-monitor`: family E. The
+  `bs1key` hook ran before `encrypt` from the `zz-backshot1.conf` drop-in,
+  its `--test-passphrase` worked in the initramfs (`drive`, not `fetched`),
+  /run reached the booted system, and Limine's remade `limine.conf` was as
+  the manifest expects. Without the drive Plymouth asked after the wait.
+- R3 `chimera-uefi`, `--virtio --strip-embedded-key`: family D. Chimera's
+  cryptsetup-scripts port runs the keyscript; without the drive it waited
+  30 s and then asked "Please unlock disk cryptroot:".
+- R4 `gentoo-systemd`, `--virtio --strip-embedded-key`: family S with
+  `rd.luks.uuid` on the command line; the crypttab line (device made
+  `UUID=`) gave the key, and host-only dracut took it in.
+- R6 `alpine324-luks`, `--virtio`: `own` (its `cryptkey` key file in the
+  initramfs); adopt changed nothing but the record, the preflight said
+  `UNLOCK=own`. Its first try failed verify's swap check, which compared
+  `/dev/dm-N` names, and the restored system numbered its LVs differently;
+  `swap_names` now names a device-mapper swap by its `/dev/mapper` name
+  (baselines with `dm-N` names are compared as before), and the rerun passed.
+- R5 waits for a `debian13-luks` guest (Q3). Until then Debian's own
+  cryptroot (the Thinkpad's Debian 12) is covered by R3's port of it and
+  by the Thinkpad's next Debian 12 run (L6), where a failure costs one
+  typed boot.

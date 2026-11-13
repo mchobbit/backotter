@@ -8,6 +8,14 @@
 # fixed host key, so the controller sees one identity on every install and on the
 # stick.  Installs sshd, an mDNS responder and what the BackShot1 scripts use, if
 # the system lacks them, under whichever init system it has.
+#
+# Then, on an install with LUKS, sets its initramfs to unlock with the
+# passphrase in keys/disk-passphrase on this drive, falling back to the prompt
+# when the drive isn't there (bs1-luks; TESTBED ONLY).  BS1_LUKS=no skips that;
+#
+#   sudo sh /PATH/TO/mybig512/backshot1/bs1-adopt --luks-off
+#
+# undoes it, and does nothing else.
 
 # apk-tools 3 (Chimera's) asks before it changes anything when it has a tty;
 # --no-interactive stops that, and apk 2 may not know it.  Plain sh, for below.
@@ -30,6 +38,19 @@ here=$(cd "$(dirname "$(readlink -f "$0")")" && pwd)
 keys=$here/keys
 
 [[ $EUID -eq 0 ]] || { echo "bs1-adopt: run it as root" >&2; exit 2; }
+case ${1:-} in
+"") ;;
+--luks-off)
+    # shellcheck disable=SC1091
+    . "$here/bs1-common"
+    # shellcheck disable=SC1091
+    . "$here/bs1-luks"
+    # In an || list, so set -e leaves its checks to it.
+    luks_off || exit 1
+    exit 0
+    ;;
+*) echo "usage: bs1-adopt [--luks-off]" >&2; exit 2 ;;
+esac
 for f in authorized_keys ssh_host_ed25519_key ssh_host_ed25519_key.pub; do
     [[ -s $keys/$f ]] || { echo "bs1-adopt: no $keys/$f" >&2; exit 2; }
 done
@@ -319,6 +340,15 @@ else
     echo "== the firewall, if one is on"
     open_firewall
 fi
+
+echo "== LUKS: unlocking from the backup drive"
+# bs1-common's PATH, LC_ALL and internal_disk; bs1-luks's step.  set -e
+# doesn't reach into a function called with ||: it checks for itself.
+# shellcheck disable=SC1091
+. "$here/bs1-common"
+# shellcheck disable=SC1091
+. "$here/bs1-luks"
+luks_adopt || exit 1
 
 ssh-keygen -l -f /etc/ssh/ssh_host_ed25519_key.pub
 echo "bs1-adopt: done.  Tell Claude: \"Let's run BackShot1.\""

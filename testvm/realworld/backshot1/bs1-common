@@ -279,3 +279,133 @@ layout_is_uefi() {
 rustic_in() {       # rustic_in RUN_DIR: sets RUSTIC for that run's repository
     RUSTIC=("$BIN/rustic-bko" -r "$1/repo" --password-file "$1/repo-password" --no-progress --no-cache)
 }
+
+# Unlocking from the backup drive (bs1-luks, bs1-unlock-key,
+# docs/design/bs1-luks-unattended.md): the record bs1-adopt writes, in the
+# installed system and so in the backup, and what the initramfs leaves.
+LUKS_REC=/etc/backshot1/luks-unlock
+UNLOCK_MARK=/run/backshot1-unlock
+
+# luks_rec FIELD: a value from the record, or false without one.
+luks_rec() {
+    [[ -r $LUKS_REC ]] || return 1
+    (
+        # shellcheck disable=SC2034
+        family='' generator='' label='' path='' fstype='' wait='' volumes='' own='' reason=''
+        # shellcheck disable=SC1090
+        . "$LUKS_REC"
+        printf '%s' "${!1:-}"
+    )
+}
+
+# luks_devices DISK: the LUKS devices on DISK, by path.
+luks_devices() {
+    local dev
+    lsblk -lnpo NAME "/dev/$1" | while read -r dev; do
+        [[ $(blkid -o value -s TYPE "$dev" 2>/dev/null) == crypto_LUKS ]] && echo "$dev"
+    done
+    return 0
+}
+
+# luks_names DISK: the open mapping of each LUKS device on DISK (not a
+# plain dm-crypt swap's, which has no passphrase).
+luks_names() {
+    local dev
+    for dev in $(luks_devices "$1"); do
+        lsblk -lno NAME,TYPE "$dev" | awk '$2 == "crypt" { print $1; exit }'
+    done | LC_ALL=C sort -u
+}
+
+# unlock_how NAME HOW: how this boot opened the volume the record names, HOW
+# being the record's S, D or E: drive (the backup drive's key), typed, or
+# fetched (E: the key was copied, but couldn't be tested).
+unlock_how() {
+    local name=$1 j
+    case $2 in
+    S)
+        # systemd-cryptsetup-generator mounts the key's device at
+        # /run/systemd/cryptsetup/keydev-NAME; the initrd's journal is this boot's.
+        j=$(journalctl -b -o cat --no-pager 2>/dev/null | grep -F "/run/systemd/cryptsetup/keydev-$name")
+        if grep -Ei "keydev-$name/.*(fail|missing|incorrect)" <<<"$j" >/dev/null; then echo typed
+        elif grep -E "^Mounted .*/run/systemd/cryptsetup/keydev-$name([ .]|$)" <<<"$j" >/dev/null; then echo drive
+        else echo typed
+        fi
+        ;;
+    D | E)
+        if [[ -r $UNLOCK_MARK ]]; then
+            awk -v n="$name" '$1 == n { h = $2 } END { print (h == "" ? "typed" : h) }' "$UNLOCK_MARK"
+        else
+            echo typed
+        fi
+        ;;
+    *) echo unknown ;;
+    esac
+}
+
+# layout_zfs_passphrase LAYOUT: the ZFS encryption roots that ask.
+layout_zfs_passphrase() {
+    python3 - "$1" <<'PY'
+import json, sys
+s = json.load(open(sys.argv[1]))["storage"]
+for ds in ((s.get("zfs") or {}).get("tools") or {}).get("datasets") or []:
+    if ds.get("encryptionroot") == ds.get("name") and ds.get("keyformat") == "passphrase":
+        print(ds["name"])
+PY
+}
+
+# unlock_mode DISK [LAYOUT]: how this system's encrypted volumes unlock at
+# boot.  The first line is "MODE: why", MODE one of
+#   drive     every typed LUKS volume was opened at this boot by the drive's key
+#   own       every LUKS volume opens with no one typing, by itself
+#   attended  someone types a passphrase at boot
+#   none      nothing encrypted
+# then a line for each LUKS volume: "  NAME HOW".
+unlock_mode() {
+    local disk=$1 layout=${2:-} names n v how fam vols own mode=own why='' lines='' zfs=''
+    names=$(luks_names "$disk")
+    [[ -z $layout ]] || zfs=$(layout_zfs_passphrase "$layout" | tr '\n' ' ')
+    if [[ -z $names && -z $zfs ]]; then echo "none: nothing on $disk is encrypted"; return 0; fi
+    if [[ -n $zfs ]]; then echo "attended: ZFS native encryption asks for ${zfs% }"; return 0; fi
+    if ! fam=$(luks_rec family); then
+        echo "attended: not set up to unlock from the drive (no $LUKS_REC: bs1-adopt)"
+        for n in $names; do echo "  $n typed"; done
+        return 0
+    fi
+    if [[ $fam == A ]]; then
+        echo "attended: $(luks_rec reason)"
+        for n in $names; do echo "  $n typed"; done
+        return 0
+    fi
+    vols=" $(luks_rec volumes) " own=" $(luks_rec own) "
+    for n in $names; do
+        if [[ $own == *" $n:"* ]]; then lines+="  $n own"$'\n'; continue; fi
+        v=$(tr ' ' '\n' <<<"$vols" | awk -F: -v n="$n" '$1 == n { print $3; exit }')
+        if [[ -z $v ]]; then
+            mode=attended why="$n isn't in $LUKS_REC: bs1-adopt again"
+            lines+="  $n typed"$'\n'
+            continue
+        fi
+        how=$(unlock_how "$n" "$v")
+        lines+="  $n $how"$'\n'
+        if [[ $how == drive ]]; then
+            [[ $mode == attended ]] || mode=drive
+        else
+            mode=attended why="$n was $how at this boot, not opened by the drive's key: reboot once with the drive plugged in since bs1-adopt (family $fam)"
+        fi
+    done
+    case $mode in
+    drive) why="the backup drive's key opened every typed LUKS volume at this boot (family $fam)" ;;
+    own) why="every LUKS volume opens with no one typing" ;;
+    esac
+    echo "$mode: $why"
+    printf '%s' "$lines"
+}
+
+# luks_key_test DISK KEY: KEY opens every LUKS volume on DISK; else says which not.
+luks_key_test() {
+    local dev bad=0
+    for dev in $(luks_devices "$1"); do
+        cryptsetup open --test-passphrase --key-file "$2" "$dev" >/dev/null 2>&1 || { echo "the drive's key doesn't open $dev"; bad=1; }
+    done
+    return $bad
+}

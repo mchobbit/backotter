@@ -3,6 +3,7 @@
 #
 # Usage: bs1-verify RUN
 #        bs1-verify --boot RUN     ostree: check the deployment this boot started
+#        bs1-verify --unlock       how this boot opened the LUKS volumes: UNLOCK=...
 #
 # Checks the run's newest restore, which has to have succeeded: an older attempt's
 # success says nothing about what's on the disk now.  Exit 0 only if every check
@@ -17,10 +18,24 @@
 # again) against the baseline's record of that deployment: its kargs,
 # hostname and SELinux, and that the deployments haven't moved.  It writes
 # boot-STAMP.log and a line in BOOTS.
+#
+# When the baseline's unlock.txt says drive, each LUKS volume it lists as
+# opened by the backup drive's key must have been opened that way at this
+# boot too, not typed (unlock_mode in bs1-common).  --unlock prints that
+# alone, for the preflight and the rehearsal, with no run: exit 0 if the
+# mode is drive, own or none.
 
 # shellcheck disable=SC1091
 . "$(dirname "$(readlink -f "$0")")/bs1-common"
 
+if [[ ${1:-} == --unlock ]]; then
+    disk=$(internal_disk) || { echo "no single disk has serial $INTERNAL_SERIAL" >&2; exit 2; }
+    unlock=$(unlock_mode "$disk")
+    printf '%s\n' "$unlock"
+    echo "UNLOCK=${unlock%%:*}"
+    [[ ${unlock%%:*} =~ ^(drive|own|none)$ ]]
+    exit
+fi
 BOOT_CHECK=no
 if [[ ${1:-} == --boot ]]; then BOOT_CHECK=yes; shift; fi
 RUN=$RUNS/${1:?usage: bs1-verify [--boot] RUN}
@@ -155,6 +170,17 @@ if [[ -d /sys/firmware/efi ]]; then
     check "firmware booted the restored ESP's entry" booted_the_restored_esp
 fi
 check "the package list is unchanged" packages_same
+# The baseline's volumes the drive's key opened: so must it now, at the
+# restored system's boot, from its remade initramfs (a baseline older than
+# this has no unlock.txt).
+if [[ $(head -n 1 "$RUN/baseline/unlock.txt" 2>/dev/null) == drive:* ]]; then
+    unlock_now=$(unlock_mode "$disk")
+    printf '%s\n' "$unlock_now" >"$ATTEMPT/unlock-after.txt"
+    while read -r name how; do
+        [[ $how == drive ]] || continue
+        check "LUKS $name was opened by the backup drive's key, not typed" grep -qx "  $name drive" "$ATTEMPT/unlock-after.txt"
+    done < <(tail -n +2 "$RUN/baseline/unlock.txt")
+fi
 # Where GRUB names its LV by UUID, before or now: the restored LV's, in every
 # EFI binary that embeds one (a baseline older than this has no lvmid.txt).
 lvmid_record >"$ATTEMPT/lvmid-after.txt" 2>&1

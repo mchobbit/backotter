@@ -21,6 +21,28 @@ boots its restored rollback and its default again, each checked by
 grubenv, since bootupd's grub.cfg never reads next_entry (grub2-reboot), and
 grubenv is put back as it was.
 
+A LUKS guest's passphrase (the first of GUEST_DIR's luks-keyfile,
+console-passphrase and luks-passphrase, without a final newline) goes into
+keys/disk-passphrase.  When bs1-adopt sets the guest to unlock from the drive
+(docs/design/bs1-luks-unattended.md: families S, D and E), the source also:
+  (a) runs bs1-adopt again, which must change nothing and remake nothing;
+  (b) boots with the drive and nothing typed: "bs1-verify --unlock" must say
+      UNLOCK=drive;
+  (c) boots without the drive: the prompt must come (after the wait), and,
+      answered, --unlock must say typed;
+  (d) then boots with the drive again for the backup, whose preflight must say
+      UNLOCK=drive.
+The restored system boots with the drive and nothing typed, and bs1-verify
+checks the unlock too; after the last restore it boots once without the
+drive, which must again reach the prompt.  --luks-typed answers the source's
+own first boot (and an attended run's restored boots) on the serial console
+(console-boot.py), or with --luks-monitor through QEMU's monitor
+(omarchy/type-luks-passphrase.py: Plymouth asks on the screen).
+--strip-embedded-key first takes a guest's own key file out of crypttab and
+the initramfs (gentoo-systemd, chimera-uefi), so it asks like the Thinkpad.
+--luks-off runs "bs1-adopt --luks-off" once after (a): the files must be as
+before bs1-adopt, then it adopts again.
+
 Exits 0 if all of that held.  Nothing outside WORK_DIR is written.
 """
 
@@ -57,6 +79,43 @@ done
 [ "$n" = 1 ] || { echo "$n BLS entries lead to a deployment other than the booted $b" >&2; exit 1; }
 grub2-editenv /boot/grub2/grubenv set default="$id" && echo "$id"'''
 SSH = rw1a.SSH + ["-o", "ServerAliveInterval=30"]
+CONSOLE_BOOT = os.path.join(HERE, "..", "..", "console-boot.py")
+TYPE_LUKS = os.path.join(HERE, "..", "..", "omarchy", "type-luks-passphrase.py")
+# --strip-embedded-key: crypttab's key files become none, and leave the
+# initramfs (dracut's install_items, cryptsetup-initramfs's KEYFILE_PATTERN)
+# and the disk; the initramfs is remade as bko-holt load would.  Plain sh, and
+# no sed -i: Chimera's is FreeBSD's.
+STRIP_KEY = r'''set -e
+t=/etc/crypttab
+keys=$(awk '!/^[[:space:]]*#/ && NF >= 3 && $3 != "none" && $3 != "-" && $3 !~ /:/ { print $3 }' $t)
+[ -n "$keys" ] || { echo "no key file in $t"; exit 1; }
+awk 'BEGIN { OFS = "\t" } !/^[[:space:]]*#/ && NF >= 3 && $3 != "none" && $3 != "-" && $3 !~ /:/ { $3 = "none" } { print }' $t >$t.bs1
+cat $t.bs1 >$t; rm $t.bs1
+for k in $keys; do
+    for f in /etc/dracut.conf.d/*.conf; do
+        [ -f "$f" ] || continue
+        grep -v -F "$k" "$f" >"$f.bs1" || true
+        cat "$f.bs1" >"$f"; rm "$f.bs1"
+    done
+    rm -f "$k"
+done
+f=/etc/cryptsetup-initramfs/conf-hook
+if [ -f $f ]; then grep -v '^KEYFILE_PATTERN=' $f >$f.bs1 || true; cat $f.bs1 >$f; rm $f.bs1; fi
+if command -v mkinitcpio >/dev/null; then mkinitcpio -P
+elif command -v dracut >/dev/null; then
+    if [ -e /etc/gentoo-release ]; then
+        for i in /boot/initramfs-*.img; do k=${i#/boot/initramfs-}; k=${k%.img}; [ ! -d /lib/modules/$k ] || dracut --force $i $k; done
+    else
+        for k in /lib/modules/*; do [ ! -d $k/kernel ] || dracut --force --kver ${k##*/}; done
+    fi
+elif command -v update-initramfs >/dev/null; then update-initramfs -u -k all
+fi
+cat $t'''
+# What bs1-adopt's LUKS step writes, for "a second run changes nothing" and
+# "--luks-off puts it back".
+LUKS_FILES = ("find /etc/backshot1 /etc/crypttab /etc/crypttab.initramfs /etc/dracut.conf.d /etc/mkinitcpio.conf.d "
+              "/etc/initcpio /etc/initramfs-tools/hooks /usr/local/lib/backshot1 -type f 2>/dev/null | LC_ALL=C sort | "
+              "while read -r f; do echo \"$f $(sha256sum <\"$f\" | cut -c1-16)\"; done")
 fails = []
 
 
@@ -65,17 +124,31 @@ def check(ok, what):
 
 
 class Vm:
-    def __init__(self, cmd, log):
+    def __init__(self, cmd, log, typer=None):
         self.out = open(log, "ab")
         self.proc = subprocess.Popen(cmd, stdin=subprocess.DEVNULL, stdout=self.out, stderr=subprocess.STDOUT)
+        self.typer = subprocess.Popen(typer) if typer else None
+
+    def stop(self):
+        """TERM first: console-boot.py passes it on to its QEMU, which a KILL
+        of console-boot.py would leave running."""
+        if self.proc.poll() is None:
+            self.proc.terminate()
+            try:
+                self.proc.wait(timeout=90)
+            except subprocess.TimeoutExpired:
+                self.proc.kill()
+                self.proc.wait()
+        if self.typer and self.typer.poll() is None:
+            self.typer.kill()
+            self.typer.wait()
 
     def wait_off(self, timeout=180):
         try:
             self.proc.wait(timeout=timeout)
         except subprocess.TimeoutExpired:
-            print("  (had to kill QEMU)", flush=True)
-            self.proc.kill()
-            self.proc.wait()
+            print("  (had to stop QEMU)", flush=True)
+        self.stop()
         self.out.close()
 
 
@@ -169,6 +242,10 @@ def main():
     ap.add_argument("--discard-on-pass", action="store_true", help="delete the disk images if it passes")
     ap.add_argument("--restores", type=int, default=1, help="how many times to restore the one backup")
     ap.add_argument("--earlier-restore", action="store_true", help="back up a system that shows it was restored once before (its /var/log/bko-holt)")
+    ap.add_argument("--luks-typed", action="store_true", help="the guest asks for its LUKS passphrase at boot: answer its first boot")
+    ap.add_argument("--luks-monitor", action="store_true", help="with --luks-typed: type it on the keyboard through QEMU's monitor (Plymouth: omarchy)")
+    ap.add_argument("--strip-embedded-key", action="store_true", help="first take the guest's own LUKS key file out of crypttab and its initramfs, so it asks")
+    ap.add_argument("--luks-off", action="store_true", help="also check bs1-adopt --luks-off, once")
     a = ap.parse_args()
     os.makedirs(a.work, exist_ok=True)
     dev, parts = ("vda", "/dev/vda[0-9]*") if a.virtio else ("nvme0n1", "/dev/nvme0n1p*")
@@ -225,39 +302,154 @@ def main():
         r = subprocess.run(["ssh-keyscan", "-T", "10", "-t", "ed25519", "-p", str(a.port), "127.0.0.1"], capture_output=True, text=True)
         return host_blob in r.stdout
 
+    # The guest's LUKS passphrase, as the person writes theirs: no final newline.
+    passfile = None
+    for n in ("luks-keyfile", "console-passphrase", "luks-passphrase"):
+        src = os.path.join(a.guest_dir, n)
+        if os.path.isfile(src):
+            passfile = f"{w}/disk-passphrase"
+            with open(src, "rb") as f, open(passfile, "wb") as out:
+                out.write(f.read().rstrip(b"\n"))
+            os.chmod(passfile, 0o600)
+            break
+    if (a.luks_typed or a.strip_embedded_key) and not passfile:
+        sys.exit(f"{a.guest_dir} has no luks-keyfile, console-passphrase or luks-passphrase")
+    mount_drive = f"mkdir -p /mnt/bs1-backup; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do mount LABEL={LABEL} /mnt/bs1-backup 2>/dev/null && break; sleep 2; done; mountpoint -q /mnt/bs1-backup"
+
+    def boot(name, disks, typed=False, delays=(25, 50, 80)):
+        """A QEMU of the guest; typed: its LUKS prompt is answered, on the
+        serial console or (--luks-monitor) on the keyboard after DELAYS s."""
+        cmd, log = machine(name, disks), f"{w}/console-{name}.log"
+        if not typed:
+            return Vm(cmd, log)
+        print(f"  ({name}: the passphrase is typed when asked)", flush=True)
+        if a.luks_monitor:
+            sock = f"{w}/monitor-{name}.sock"
+            i = cmd.index("-monitor")
+            cmd[i + 1] = f"unix:{sock},server,nowait"
+            return Vm(cmd, log, [sys.executable, TYPE_LUKS, sock, passfile, *map(str, delays)])
+        return Vm([sys.executable, CONSOLE_BOOT, log, passfile, "--", *cmd], f"{w}/console-{name}.wrapper.log")
+
+    def off(vm, sh):
+        sh.run("umount /mnt/bs1-backup 2>/dev/null; poweroff", 60)
+        vm.wait_off()
+
+    def failed(vm):
+        vm.stop()
+        print("FAILED: " + "; ".join(fails), flush=True)
+        return 1
+
     print("== source: the running guest", flush=True)
-    vm = Vm(machine("source", [internal_disk(internal, True), usb_drive]), f"{w}/console-source.log")
+    vm = boot("source", [internal_disk(internal, True), usb_drive], a.luks_typed)
     root = Ssh(key, a.port, "root")
     if not root.up(vm.proc):
+        vm.stop()
         sys.exit("the source guest never answered")
+    if a.strip_embedded_key:
+        print("== the guest's own LUKS key file out, so it asks as the Thinkpad does", flush=True)
+        rc, _ = root.show(STRIP_KEY, 1800)
+        check(rc == 0, "the guest's key file is out of crypttab and the initramfs")
+        if fails:
+            return failed(vm)
+        off(vm, root)
+        vm = boot("source-typed", [internal_disk(internal, True), usb_drive], True)
+        if not root.up(vm.proc):
+            vm.stop()
+            sys.exit("the source guest, its key file out, never answered with the passphrase typed")
     _, host = root.run("cat /proc/sys/kernel/hostname")
     host = host.strip().splitlines()[-1]
-    rc, _ = root.show(f"mkdir -p /mnt/bs1-backup; for i in 1 2 3 4 5 6 7 8 9 10 11 12 13 14 15; do mount LABEL={LABEL} /mnt/bs1-backup 2>/dev/null && break; sleep 2; done; mkdir -p /mnt/bs1-backup/backshot1/bin /mnt/bs1-backup/backshot1/runs && mountpoint -q /mnt/bs1-backup; rc=$?; . /etc/os-release; echo $PRETTY_NAME; exit $rc")
+    rc, _ = root.show(f"{mount_drive} && mkdir -p /mnt/bs1-backup/backshot1/bin /mnt/bs1-backup/backshot1/runs; rc=$?; . /etc/os-release; echo $PRETTY_NAME; exit $rc")
     check(rc == 0, "the source guest mounts the backup drive")
     if fails:
-        vm.proc.kill()
-        return 1
+        return failed(vm)
     conf = f"{w}/bs1.conf"
     with open(conf, "w") as f:
         f.write(f"SOURCE_HOST={host}\nINTERNAL_SERIAL={SERIAL}\nBACKUP_LABEL={LABEL}\n")
     scp = ["scp", "-q", *SSH, "-i", key, "-P", str(a.port)]
-    names = [os.path.join(HERE, f"bs1-{n}") for n in ("common", "backup", "restore", "verify", "manifest", "ostree", "adopt", "list")]
+    names = [os.path.join(HERE, f"bs1-{n}") for n in ("common", "backup", "restore", "verify", "manifest", "ostree", "adopt", "luks", "unlock-key", "list")]
     names.append(os.path.join(HERE, "..", "..", "ostree_paths.py"))      # bs1-manifest's and bs1-ostree's
     subprocess.run([*scp, *names, conf, f"root@127.0.0.1:/mnt/bs1-backup/backshot1/"], check=True)
     subprocess.run([*scp, f"{a.tools}/bko-holt", f"{a.tools}/rustic-bko", "root@127.0.0.1:/mnt/bs1-backup/backshot1/bin/"], check=True)
     root.run("mkdir -m 700 /mnt/bs1-backup/backshot1/keys; chmod 755 /mnt/bs1-backup/backshot1/bs1-* /mnt/bs1-backup/backshot1/bin/*")
     subprocess.run([*scp, f"{client}.pub", "root@127.0.0.1:/mnt/bs1-backup/backshot1/keys/authorized_keys"], check=True)
     subprocess.run([*scp, host_key, f"{host_key}.pub", "root@127.0.0.1:/mnt/bs1-backup/backshot1/keys/"], check=True)
-    # A LUKS guest (chimera-uefi): its key is the passphrase load formats with,
-    # as the person puts theirs in keys/disk-passphrase.
-    luks_key = os.path.join(a.guest_dir, "luks-keyfile")
-    if os.path.isfile(luks_key):
-        subprocess.run([*scp, luks_key, "root@127.0.0.1:/mnt/bs1-backup/backshot1/keys/disk-passphrase"], check=True)
-    rc, _ = root.show("sh /mnt/bs1-backup/backshot1/bs1-adopt")
+    # A LUKS guest: its passphrase is what load formats with, and what the
+    # restored system unlocks with from the drive.
+    if passfile:
+        subprocess.run([*scp, passfile, "root@127.0.0.1:/mnt/bs1-backup/backshot1/keys/disk-passphrase"], check=True)
+    _, luks_before = root.run(LUKS_FILES, 60)
+    rc, _ = root.show("sh /mnt/bs1-backup/backshot1/bs1-adopt", 3600)
     check(rc == 0, "bs1-adopt passes")
     check(host_key_is_pinned(), "the installed system presents the fixed host key")
     root = Ssh(client, a.port, "root")
     check(root.run("true", 30)[0] == 0, "the BackShot1 key logs in as root")
+    _, family = root.run(". /etc/backshot1/luks-unlock 2>/dev/null && echo \"$family\"", 30)
+    family = family.strip()
+    print(f"  (LUKS: {family or 'not adopted, or no LUKS'})", flush=True)
+
+    def volumes(out):
+        """bs1-verify --unlock's volume lines: {NAME: HOW}."""
+        return dict(m.groups() for m in re.finditer(r"^  (\S+) (\S+)$", out, re.M))
+
+    def unlock(sh, local=False):
+        """bs1-verify --unlock's output; local: from a copy of the scripts in
+        /run, for a boot without the drive."""
+        if local:
+            sh.run("mkdir -p /run/bs1-check", 30)
+            subprocess.run(["scp", "-q", *SSH, "-i", client, "-P", str(a.port), *[os.path.join(HERE, f"bs1-{n}") for n in ("common", "verify")],
+                            conf, "root@127.0.0.1:/run/bs1-check/"], check=True)
+            return sh.show("bash /run/bs1-check/bs1-verify --unlock", 120)
+        return sh.show(f"{mount_drive} && bash /mnt/bs1-backup/backshot1/bs1-verify --unlock", 120)
+
+    if family in ("S", "D", "E"):
+        print("== LUKS (a): bs1-adopt again changes nothing", flush=True)
+        _, sums = root.run(LUKS_FILES, 60)
+        rc, out = root.show("sh /mnt/bs1-backup/backshot1/bs1-adopt", 3600)
+        _, sums2 = root.run(LUKS_FILES, 60)
+        check(rc == 0 and "unchanged; the initramfs isn't remade" in out and sums == sums2, "a second bs1-adopt changes nothing and remakes nothing")
+        if a.luks_off:
+            rc, _ = root.show("sh /mnt/bs1-backup/backshot1/bs1-adopt --luks-off", 3600)
+            _, now = root.run(LUKS_FILES, 60)
+            check(rc == 0 and now == luks_before, "bs1-adopt --luks-off puts back the files as they were before bs1-adopt")
+            if now != luks_before:
+                print(f"  before:\n{luks_before}\n  after --luks-off:\n{now}", flush=True)
+            rc, _ = root.show("sh /mnt/bs1-backup/backshot1/bs1-adopt", 3600)
+            check(rc == 0, "bs1-adopt again, after --luks-off")
+        if fails:
+            return failed(vm)
+        off(vm, root)
+        print("== LUKS (b): a boot with the drive, nothing typed", flush=True)
+        vm = boot("source-drive", [internal_disk(internal, True), usb_drive])
+        up = root.up(vm.proc, timeout=300)
+        check(up, "the source boots with the drive, unlocked by its key, and answers within 5 min")
+        if up:
+            rc, out = unlock(root)
+            check(rc == 0 and "UNLOCK=drive" in out, "bs1-verify --unlock: UNLOCK=drive")
+        if fails:
+            return failed(vm)
+        off(vm, root)
+        print("== LUKS (c): a boot without the drive asks, after the wait", flush=True)
+        vm = boot("source-nodrive", [internal_disk(internal, True)], True, (75, 105, 135))
+        up = root.up(vm.proc, timeout=600)
+        check(up, "the source boots without the drive, its passphrase typed at the prompt")
+        if up:
+            rc, out = unlock(root, local=True)
+            v = volumes(out)
+            check("UNLOCK=attended" in out and v and "drive" not in v.values(), f"bs1-verify --unlock: typed, not the drive: {v}")
+        if fails:
+            return failed(vm)
+        root.run("poweroff", 60)
+        vm.wait_off()
+        print("== LUKS (d): with the drive again, for the backup", flush=True)
+        vm = boot("source-backup", [internal_disk(internal, True), usb_drive])
+        up = root.up(vm.proc, timeout=300)
+        check(up, "the source boots with the drive again")
+        if up:
+            rc, _ = root.show(mount_drive, 60)
+            check(rc == 0, "the source guest mounts the backup drive again")
+        if fails:
+            return failed(vm)
+
     def mdns_up():
         end = time.monotonic() + 60
         while time.monotonic() < end:
@@ -269,9 +461,7 @@ def main():
 
     check(mdns_up(), "avahi-daemon is running")
     if fails:
-        vm.proc.kill()
-        print("FAILED: " + "; ".join(fails), flush=True)
-        return 1
+        return failed(vm)
     if a.earlier_restore:
         root.run("mkdir -p /var/log/bko-holt; echo '==== stage boot done' >/var/log/bko-holt/load.log")
     _, ostree = root.run("test -e /run/ostree-booted && echo ostree-booted", 30)
@@ -279,8 +469,15 @@ def main():
     # Not on a /var/tmp in RAM, which isn't in the backup.
     rc, _ = root.run(f"findmnt -no FSTYPE --target /var/tmp | grep -qvx tmpfs && echo probe >/{PROBE} && TZ=UTC touch -a -d '{PROBE_ATIME}' /{PROBE}", 30)
     probe = rc == 0
-    rc, _ = root.show("bash /mnt/bs1-backup/backshot1/bs1-backup --preflight")
+    rc, out = root.show("bash /mnt/bs1-backup/backshot1/bs1-backup --preflight")
     check(rc == 0, "bs1-backup --preflight passes")
+    mode = next((ln[7:].strip() for ln in out.splitlines() if ln.startswith("UNLOCK=")), None)
+    if family in ("S", "D", "E"):
+        check(mode == "drive", f"the preflight says UNLOCK=drive: {mode}")
+    elif family == "own":
+        check(mode == "own", f"the preflight says UNLOCK=own: {mode}")
+    # An attended run's restored boots need the passphrase typed.
+    typed_restore = mode == "attended" and a.luks_typed
     rc, out = root.show("bash /mnt/bs1-backup/backshot1/bs1-backup")
     check(rc == 0, "bs1-backup passes")
     run = next((ln[4:].strip() for ln in out.splitlines() if ln.startswith("RUN=")), None)
@@ -334,7 +531,7 @@ def main():
         up = rescue.up(vm.proc, "sudo -n true")
         check(up, "the stick starts SSH by itself and the key gets sudo")
         if not up:
-            vm.proc.kill()
+            vm.stop()
             return 1
         check(host_key_is_pinned(), "the stick presents the fixed host key")
         rescue.run(f"sudo -n sh -c 'mkdir -p /mnt/bs1-backup; mount LABEL={LABEL} /mnt/bs1-backup'")
@@ -371,7 +568,7 @@ def main():
 
         print(f"== restored {attempt}: the internal disk, by the NVRAM the run left", flush=True)
         # BIOS has no NVRAM to go by.
-        vm = Vm(machine(f"restored{attempt}", [internal_disk(internal, a.bios), usb_drive]), f"{w}/console-restored{attempt}.log")
+        vm = boot(f"restored{attempt}", [internal_disk(internal, a.bios), usb_drive], typed_restore)
         # A ZFS root is a dataset, which lsblk can't follow; bs1-verify checks its
         # pool.  On ostree / is a composefs overlay, and the disk is /sysroot's.
         up = root.up(vm.proc, f"r=/; [ -e /run/ostree-booted ] && r=/sysroot; findmnt -no FSTYPE $r | grep -qx zfs || lsblk -snlo NAME \"$(findmnt -n -o SOURCE $r | sed 's/\\[.*//')\" | grep -qx {dev}")
@@ -384,6 +581,9 @@ def main():
             check(rc == 0, "bs1-verify passes")
             if rc != 0:
                 root.show(f"tail -n 60 $(ls -d {restores}/*[0-9] | tail -n 1)/verify.log")
+            if mode == "drive":
+                rc, out = unlock(root)
+                check(rc == 0 and "UNLOCK=drive" in out, "the restored system was unlocked by the drive's key, nothing typed: UNLOCK=drive")
             if rc == 0 and ostree and attempt == a.restores:
                 up = rollback_boots(root, vm, run, restores, host_key_is_pinned)
             if up and attempt == a.restores:
@@ -398,6 +598,17 @@ def main():
         vm.wait_off()
         if fails:
             break
+        if mode == "drive" and attempt == a.restores:
+            print("== LUKS (f): the restored system without the drive asks, after the wait", flush=True)
+            vm = boot(f"restored{attempt}-nodrive", [internal_disk(internal, a.bios)], True, (75, 105, 135))
+            up = root.up(vm.proc, timeout=600)
+            check(up, "the restored system boots without the drive, its passphrase typed at the prompt")
+            if up:
+                rc, out = unlock(root, local=True)
+                v = volumes(out)
+                check("UNLOCK=attended" in out and v and "drive" not in v.values(), f"bs1-verify --unlock: typed, not the drive: {v}")
+                root.run("poweroff", 60)
+            vm.wait_off()
     print("FAILED: " + "; ".join(fails) if fails else "PASS", flush=True)
     if a.discard_on_pass and not fails:
         for f in (internal, drive, drive_raw, stick, stick_raw, vars_file):

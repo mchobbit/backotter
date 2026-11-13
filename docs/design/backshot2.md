@@ -374,9 +374,22 @@ zfs-import).
   run strictly: md127 held vdb1 as vg0 held vdb2 at L3, and load's holder
   check refuses that.
 
-*After the zeroing change*: not run yet; the change isn't on main
-(2026-11-13).  When it lands: `bs2-host leftovers --run lo-after-REV` with
-`BS2_HOLT` at a build of it, strict and with `--release`.
+*After the zeroing change* (bko-holt 8b7e177: each erased disk's first
+4 MiB and last 1 MiB, and each new partition's first 4 MiB and last 1 MiB,
+zeroed before sfdisk; chopin, 2026-11-13):
+- Strict run `lo-after-8b7e177`: the same as before.  L1 and L2 PASS, **L3
+  FAIL** with the same refusal: the rescuer autoactivated vg0 at boot, and
+  load refuses before it writes, so the zeroing never runs.
+- `--release` run `lo-after-8b7e177-rel`: all nine PASS, with the same notes
+  as before, line for line.
+
+*So:* in this set the zeroing change made no difference that could be seen.
+Without it, nothing stale survived load and no type was wrong, so it is
+defence in depth (on a disk or layer this set doesn't cover, it may matter).
+What did matter is unchanged by it: a layer the rescue system starts at
+boot (an LVM VG, an md array) keeps load from using the disk.  Whether
+load should release such holders with `--erase` is the user's call
+(layload.md's Safety rule).
 
 **Not built.** ext4 under btrfs (btrfs restored over ext4): no Alpine source
 restores btrfs, and an edit never changes a filesystem's type (Alpine's own

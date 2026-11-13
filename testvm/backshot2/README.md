@@ -63,7 +63,9 @@ doesn't pass and keeps that step's input, so `--run RUN --from N` reruns it.
 Runs so far (spec "Leftovers", Results): `lo-before-220c013` (strict:
 FAIL at L3, a VG the rescuer autoactivated holds the target) and
 `lo-before-220c013-rel` (`--release`: 9 of 9 PASS, no old signature after
-load), both on chopin, records in `/bkoscratch/backshot2/lo-before-*-t1/`.
+load), both on chopin, records in `/bkoscratch/backshot2/lo-before-*-t1/`;
+after the zeroing change (8b7e177), `lo-after-8b7e177` and
+`lo-after-8b7e177-rel`: the same results, step for step.
 
 ## The pieces
 

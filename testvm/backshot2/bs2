@@ -296,7 +296,9 @@ def prepare(can, run):
             mine.setdefault(h, []).append(s)
     cmds = {}
     for h, ss in mine.items():
-        c = [f"mkdir -p {ROOT}/logs {ROOT}/runs"]
+        # (The RAM disk's dir as m: made first by a root job after a reboot, it was
+        # root's, and tier 0, which runs as m, couldn't write there.)
+        c = [f"mkdir -p {ROOT}/logs {ROOT}/runs /mnt/bko-ram/backshot2"]
         c += [root(f"{HOST_BS2} source {s} --port 2949", "2 3", f"bs2:{run}:source-{s}") for s in ss]
         c += [f'echo "gen {s} $(cat {ROOT}/sources/{s}/gen)"' for s in ss]
         cmds[h] = " && ".join(c)

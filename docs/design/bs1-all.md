@@ -108,31 +108,31 @@ on 2026-11-13 after its first BackShot1 passed (the user's choice).
 
 ## Order
 
-The user block goes wherever you are at the laptop. Tooling plus NixOS take
-about 5-6 h from approval (est.), so I recommend running the unattended part
-overnight and the user block in the morning (Q10).
+The runs that need you at the laptop go first, right after a short canary,
+and everything unattended follows (the user's rule, 2026-11-13: front-load
+what needs a typed passphrase or a console visit). So the queue never stops
+on a prompt later, and the rest can run overnight to the end.
 
-1. **First, once the tooling is staged: Void B, unattended.** It is already
-   on the laptop (since 2026-11-13; NixOS was until then, and now needs its
-   A first, in step 2), and it is the canary for the new binaries and the driver end
-   to end.
-2. **Unattended, about 8 h (est.), overnight:**
-   - Ubuntu, Fedora and Manjaro go first. Theirs are the oldest backups,
-     made by the oldest dumps and rustic-bko builds, so fixes land early and
-     fewer distros have to be rerun.
-   - Then NixOS (A, then B with its generation check), EndeavourOS, Debian 13,
-     Tumbleweed, Alpine and Chimera.
-   - Consecutive A's wipe different stacks: btrfs under LUKS, LVM under ZFS,
-     and so on. That is extra coverage of the script's own wipe.
-3. **User block, about 2.5 h (est.):**
+1. **First, once the tooling is staged: Void B, unattended, about 25 min
+   (est.).** It is already on the laptop (since 2026-11-13; NixOS was until
+   then, and now needs its A, in step 3), and it is the canary for the new
+   binaries and the driver end to end.
+2. **User block, about 2.5 h (est.), straight after the canary:**
    - Debian 12 A and B: you type the passphrase at about +20 min and +65 min
      (est.).
    - Bazzite A, with the rollback at its end, at about +2.5 h (est.).
    - The block ends on Bazzite, which needs no passphrase, as the README
-     asks. If step 2 is stopped on a fix when you're ready, I pause it at the
-     next distro boundary and run the block first (`bs1-all --only`).
-4. **Unattended, about 2 h (est.):** Bazzite B, then Gentoo, which is last
-   and stays on the laptop (Q6).
+     asks. If a fix stops it, the block resumes there before anything
+     unattended starts (`bs1-all --only`).
+3. **Unattended, about 10 h (est.), overnight if need be:**
+   - Ubuntu, Fedora and Manjaro first. Theirs are the oldest backups,
+     made by the oldest dumps and rustic-bko builds, so fixes land early and
+     fewer distros have to be rerun.
+   - Then NixOS (A, then B with its generation check), EndeavourOS, Debian 13,
+     Tumbleweed, Alpine, Chimera and Bazzite B.
+   - Gentoo last; it stays on the laptop (Q6).
+   - Consecutive A's wipe different stacks: btrfs under LUKS, LVM under ZFS,
+     and so on. That is extra coverage of the script's own wipe.
 
 ## Tooling to build first (about 4-5 h, est.)
 
@@ -390,6 +390,6 @@ succeed."
    the final heads run during the tooling. The XFS restores (Debian 12,
    Gentoo) wait for its result. Or keep the build that passed NixOS today,
    whose version item 0 records.
-10. **When the user block runs:** in the morning, after the overnight part
-    (Order). Or tonight, right after NixOS B, if you'd rather be at the
-    laptop late in the evening (about 20:00-22:30, est.).
+10. **When the user block runs:** first, right after the Void canary (Order;
+    the user's front-loading rule). Start the queue when you can be at the
+    laptop for about 3 h (est.).

@@ -65,7 +65,10 @@ FAIL at L3, a VG the rescuer autoactivated holds the target) and
 `lo-before-220c013-rel` (`--release`: 9 of 9 PASS, no old signature after
 load), both on chopin, records in `/bkoscratch/backshot2/lo-before-*-t1/`;
 after the zeroing change (8b7e177), `lo-after-8b7e177` and
-`lo-after-8b7e177-rel`: the same results, step for step.
+`lo-after-8b7e177-rel`: the same results, step for step.  With load
+releasing holders under `--erase` (e452150), the strict `lo-strict-e452150`
+(on cinqcent): 9 of 9 PASS, the VG at L3 and md127 at L6/L7 let go of by
+load itself.
 
 ## The pieces
 

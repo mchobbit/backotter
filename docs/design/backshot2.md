@@ -390,9 +390,24 @@ What did matter is unchanged by it: a layer the rescue system starts at
 boot (an LVM VG, an md array) keeps load from using the disk.  Whether
 load should release such holders with `--erase` was the user's call
 (layload.md's Safety rule); the user said yes (2026-11-13), and load now
-lets go of them with `--erase` (layload.md, Safety, rule 4).  A strict run
-of the set at that bko-holt is what shows L3 and L6 passing without
-`--release`; not run yet.
+lets go of them with `--erase` (layload.md, Safety, rule 4).  
+
+*After load releases holders* (bko-holt e452150: 4b2b4d2 and e452150, with
+`--erase` load lets go of what the running system started on the erased
+disks, top down; cinqcent, since chopin was down, 2026-11-13).  Strict run
+`lo-strict-e452150`, no `--release`: **all nine PASS**.
+- L3: the rescuer had autoactivated vg0 (vg0/root, vg0/swap, holders dm-0
+  and dm-1 on vdb2).  Load deactivated it itself (`vgchange --devicesfile ''
+  --devices /dev/vdb2 --activate n vg0`), then wiped and restored.
+- L6 and L7: the rescuer had assembled md127 from the seeded member.  Load
+  stopped it (`mdadm --stop /dev/md127`).
+- L8: the pool was only importable, not imported, so there was nothing to
+  release.
+- Every step: no old signature on the new partitions after load, the
+  layout's types (vfat, swap, ext4) in the restored system, and every
+  restored system booted.  The notes match the `--release` runs'.
+
+Records: `cinqcent:/bkoscratch/backshot2/lo-strict-e452150-t1/`.
 
 **Not built.** ext4 under btrfs (btrfs restored over ext4): no Alpine source
 restores btrfs, and an edit never changes a filesystem's type (Alpine's own

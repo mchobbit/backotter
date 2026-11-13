@@ -387,14 +387,26 @@ def cmd_deep(a):
             json.dump(rec, f)
         print(f"{len(rec)} entries, the longest path {max((len(k) // 2 for k in rec), default=0)} bytes")
         return
+    # compare: exit 0 agrees, 1 differs, 3 the case plants no deep tree
+    # (nothing to compare), 4 the source's record lacks what was planted;
+    # ht1-bs2.sh's bs2_after_dst_record gives each its own check.
+    if not a.case:
+        die("deep compare needs --case: whether there is a deep tree to compare is the case's content's plan")
+    planned = CT.deep_planned(C.read(a.case).get("content"))
     with open(a.file) as f:
         before = json.load(f)
-    after = CT.deep_record(a.root)
-    diff = CT.deep_compare(before, after)
-    for l in diff[:20]:
+    after = CT.deep_record(a.root) if planned else {}
+    verdict, lines = CT.deep_verdict(planned, before, after)
+    for l in lines[:20]:
         print(l)
-    print(f"{len(diff)} differences in {len(before)} entries, the longest path {max((len(k) // 2 for k in before), default=0)} bytes")
-    sys.exit(1 if diff or not before else 0)
+    longest = max((len(k) // 2 for k in before), default=0)
+    if verdict == "none":
+        print(f"the case's content plants no deep tree ({len(before)} entries recorded): nothing to compare")
+    elif verdict == "missing":
+        print(f"{len(lines)} of {len(planned)} planned entries not in the source's record of {len(before)} entries, the longest path {longest} bytes")
+    else:
+        print(f"{len(lines)} differences in {len(before)} entries, the longest path {longest} bytes")
+    sys.exit({"agrees": 0, "differs": 1, "none": 3, "missing": 4}[verdict])
 
 
 def cmd_change(a):
@@ -594,6 +606,7 @@ def main():
     x.add_argument("what", choices=("record", "compare"))
     x.add_argument("root")
     x.add_argument("file")
+    x.add_argument("--case", help="compare: the case, whose content's plan says whether a deep tree was planted")
     x = s.add_parser("enqueue")
     x.add_argument("source")
     x.add_argument("n", type=int)

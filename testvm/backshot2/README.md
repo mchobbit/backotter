@@ -65,6 +65,11 @@ Unit tests: `python3 -m unittest discover -s testvm/backshot2/tests`.
    no `--no-nvram` unless the case has it.
 5. A FAIL is shrunk (`bs2-host shrink`) and copied into `cases/` as
    `fail-NNN-NAME.case`, with its check and excerpt; "finding" says whose.
+   Run the shrink itself without `cmp-run.sh --reserve`: each of its
+   tier-1 runs takes its own reservation, so an outer one can deadlock
+   it. The shrinker keeps a candidate that fails the same check, so a
+   check must name one cause: a case that plants no deep tree gets a
+   note, not "the deep tree differs".
 
 ## Decisions made inside the spec
 

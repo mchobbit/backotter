@@ -480,6 +480,78 @@ class TestContent(unittest.TestCase):
         self.assertEqual(b, [])
 
 
+class TestDeepTree(unittest.TestCase):
+    """The deep tree's compare (fail-001's shrink): whether there is a tree
+    to compare comes from the case's plan, not an empty source record."""
+
+    C1 = {"recipe": "alpine-small-1", "seed": 3}
+
+    def deep_ix(self, content):
+        return [e["i"] for e in CT.plan(content, "ext4") if bytes.fromhex(e["path"]).startswith(b"deep")]
+
+    def test_deep_planned_follows_only(self):
+        full = CT.deep_planned(self.C1)
+        self.assertGreater(max(len(bytes.fromhex(k)) for k in full), 4096)
+        self.assertEqual(full, [e["path"] for e in CT.plan(self.C1, "xfs") if bytes.fromhex(e["path"]).startswith(b"deep")])
+        self.assertEqual(CT.deep_planned(dict(self.C1, only=[])), [])
+        shallow = [e["i"] for e in CT.plan(self.C1, "ext4") if not bytes.fromhex(e["path"]).startswith(b"deep")]
+        self.assertEqual(CT.deep_planned(dict(self.C1, only=shallow)), [])
+        ix = self.deep_ix(self.C1)
+        self.assertEqual(len(CT.deep_planned(dict(self.C1, only=ix[:2]))), 2)
+        self.assertEqual(CT.deep_planned(None), [])
+        self.assertEqual(CT.deep_planned({}), [])
+
+    def test_verdict(self):
+        planned = CT.deep_planned(dict(self.C1, only=self.deep_ix(self.C1)[:2]))
+        rec = {k: {"mode": 0o40755} for k in planned}
+        # No deep tree planned: an empty record is what's expected, not a failure.
+        self.assertEqual(CT.deep_verdict([], {}, {}), ("none", []))
+        # Planned and recorded empty: missing, not "differs".
+        v, lines = CT.deep_verdict(planned, {}, {})
+        self.assertEqual(v, "missing")
+        self.assertEqual(len(lines), 2)
+        self.assertEqual(CT.deep_verdict(planned, {planned[0]: {}}, {planned[0]: {}})[0], "missing")
+        self.assertEqual(CT.deep_verdict(planned, rec, dict(rec)), ("agrees", []))
+        v, lines = CT.deep_verdict(planned, rec, {planned[0]: rec[planned[0]]})
+        self.assertEqual(v, "differs")
+        self.assertIn("-> None", lines[0])
+
+    def test_bs2_host_deep_compare_exit_codes(self):
+        host = os.path.join(BS2, "bs2-host")
+        with tempfile.TemporaryDirectory() as t:
+            src, empty = os.path.join(t, "src"), os.path.join(t, "empty")
+            os.makedirs(src)
+            os.makedirs(empty)
+            some = dict(self.C1, only=self.deep_ix(self.C1)[:3])
+            self.assertEqual(CT.plant(src, CT.plan(some, "ext4")), [])
+
+            def case(content):
+                p = os.path.join(t, f"c{len(os.listdir(t))}.case")
+                C.write(p, {"source": "alpine324", "edits": [], "content": content})
+                return p
+
+            def deep(*args):
+                return subprocess.run([sys.executable, host, "deep", *args], capture_output=True, text=True)
+            rec, rec0 = os.path.join(t, "src.json"), os.path.join(t, "empty.json")
+            self.assertEqual(deep("record", src, rec).returncode, 0)
+            self.assertEqual(deep("record", empty, rec0).returncode, 0)
+            with open(rec0) as f:
+                self.assertEqual(json.load(f), {})
+            with_some, with_none = case(some), case(dict(self.C1, only=[]))
+            self.assertEqual(deep("compare", src, rec, "--case", with_some).returncode, 0)
+            r = deep("compare", empty, rec, "--case", with_some)
+            self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+            # fail-001's shrink: "only": [] plants no deep tree, so nothing to compare.
+            r = deep("compare", empty, rec0, "--case", with_none)
+            self.assertEqual(r.returncode, 3, r.stdout + r.stderr)
+            self.assertIn("plants no deep tree", r.stdout)
+            # Planted, but the source's record is empty: its own check, not "differs".
+            r = deep("compare", empty, rec0, "--case", with_some)
+            self.assertEqual(r.returncode, 4, r.stdout + r.stderr)
+            self.assertIn("planned entries not in the source's record", r.stdout.splitlines()[-1])
+            self.assertEqual(deep("compare", src, rec).returncode, 2)   # --case is required
+
+
 class TestSweep(unittest.TestCase):
     def test_expected(self):
         c = {"load_options": ["--new-uuids", "--fit-largest", "10", "--snapshot", "@1", "--removable"]}

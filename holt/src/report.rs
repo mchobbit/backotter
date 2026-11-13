@@ -803,6 +803,10 @@ fn btrfs_json(sys: &Sys, ctx: &Ctx) -> Value {
                     })
                     .collect();
                 subvols = Value::Arr(list);
+            } else {
+                // Without its list, load can't make its subvolumes: say so
+                // (NixOS's btrfs is in /run/current-system/sw/bin).
+                sys.warn(format!("btrfs {uuid}: `btrfs subvolume list {}` failed or btrfs isn't installed: its subvolumes aren't listed", m.target));
             }
             if let Some(out) = sys.run("btrfs", &["subvolume", "get-default", &m.target]) {
                 default = parse_btrfs_subvol_line(out.trim()).unwrap_or(Value::from(out.trim()));

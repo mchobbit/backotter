@@ -1710,8 +1710,40 @@ impl Builder<'_> {
         }
     }
 
+    /// The subvolumes a btrfs's mounts name, for a layout that doesn't list
+    /// them (a dump that couldn't run btrfs: NixOS's, before its tools were
+    /// on the dump's path): fstab's subvol= and those mounted when it was
+    /// dumped, without the top level, parents first.
+    fn btrfs_named_subvolumes(&self, fs: &Value) -> Vec<String> {
+        let devs: Vec<String> = fs.get("devices").and_then(Value::as_array).into_iter().flatten().filter_map(|d| d.as_str().map(str::to_string)).collect();
+        let strip = |p: &str| p.trim_start_matches("<FS_TREE>/").trim_matches('/').to_string();
+        let mut names: Vec<String> = Vec::new();
+        for e in self.layout.arr(&["storage", "fstab"]) {
+            if s(e, "type").as_deref() != Some("btrfs") || !s(e, "resolves_to").is_some_and(|r| devs.contains(&r)) {
+                continue;
+            }
+            let o = s(e, "options").unwrap_or_default();
+            names.extend(o.split(',').filter_map(|x| x.strip_prefix("subvol=")).map(strip));
+        }
+        names.extend(fs.get("mounted_subvolumes").and_then(Value::as_array).into_iter().flatten().filter_map(|m| s(m, "subvol")).map(|p| strip(&p)));
+        names.retain(|p| !p.is_empty() && !p.split('/').any(|c| c.is_empty() || c == "." || c == ".."));
+        names.sort_by(|a, b| a.matches('/').count().cmp(&b.matches('/').count()).then(a.cmp(b)));
+        names.dedup();
+        names
+    }
+
     fn btrfs_inside(&mut self, uuid: &str, dev: &str, fs: &Value, out: &mut Vec<Cmd>) {
-        let subs = fs.get("subvolumes").and_then(Value::as_array).cloned().unwrap_or_default();
+        let mut subs = fs.get("subvolumes").and_then(Value::as_array).cloned().unwrap_or_default();
+        if fs.get("subvolumes").and_then(Value::as_array).is_none() {
+            let named = self.btrfs_named_subvolumes(fs);
+            if !named.is_empty() {
+                self.notes.push(format!(
+                    "btrfs {uuid}: the layout doesn't list its subvolumes (its dump couldn't run btrfs); made are those its mounts name, {}: any other comes back as a plain directory, without its properties",
+                    named.join(", ")
+                ));
+                subs = named.into_iter().map(|p| crate::json::Obj::new().set("path", p).build()).collect();
+            }
+        }
         let quota = fs.get("quota_enabled").and_then(Value::as_bool).unwrap_or(false);
         let default_id = fs.at(&["default_subvolume", "id"]).and_then(Value::as_u64).unwrap_or(5);
         if subs.is_empty() && !quota && default_id == 5 {
@@ -2988,6 +3020,97 @@ mod tests {
         assert!(t.contains("btrfs subvolume create /run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003/@rootfs"), "{t}");
         assert!(t.contains("btrfs property set /run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003/@rootfs compression zstd"), "{t}");
         assert!(b.problems.is_empty(), "{:?}", b.problems);
+    }
+
+    /// NixOS's graphical installer (BackShot1's Thinkpad, NixOS 26.05): /
+    /// is the btrfs's top level (subvolid=5), /home and /nix subvolumes
+    /// under it, and srv, var/lib/portables, var/lib/machines, tmp and
+    /// var/tmp subvolumes nested in its tree, mounted nowhere.
+    fn nixos_top_level(subvolumes: &str) -> String {
+        let fs = "b7b7b7b7-0000-4000-8000-000000000003";
+        sample::bios_mbr()
+            .replace(r#""id": "debian", "version_id": "13""#, r#""id": "nixos", "version_id": "26.05""#)
+            .replace(
+                r#""subvolumes": [{"id": 256, "top_level": 5, "path": "<FS_TREE>/@rootfs", "readonly": false, "properties": {"compression": "zstd"}}],"#,
+                &format!(r#""mounted_subvolumes": [{{"target": "/", "subvol": "/"}}, {{"target": "/home", "subvol": "/home"}}, {{"target": "/nix", "subvol": "/nix"}}], "subvolumes": {subvolumes},"#),
+            )
+            .replace(
+                &format!(r#"{{"spec": "UUID={fs}", "file": "/", "type": "btrfs", "options": "defaults,subvol=@rootfs", "freq": 0, "passno": 0, "resolves_to": "vda3"}},"#),
+                &format!(
+                    r#"{{"spec": "/dev/disk/by-uuid/{fs}", "file": "/", "type": "btrfs", "options": "defaults", "freq": 0, "passno": 0, "resolves_to": "vda3"}},
+                       {{"spec": "/dev/disk/by-uuid/{fs}", "file": "/home", "type": "btrfs", "options": "subvol=home", "freq": 0, "passno": 0, "resolves_to": "vda3"}},
+                       {{"spec": "/dev/disk/by-uuid/{fs}", "file": "/nix", "type": "btrfs", "options": "subvol=nix,noatime", "freq": 0, "passno": 0, "resolves_to": "vda3"}},"#
+                ),
+            )
+    }
+
+    #[test]
+    fn btrfs_top_level_root_makes_its_subvolumes() {
+        let subs = [(256, "home"), (257, "nix"), (258, "srv"), (259, "var/lib/portables"), (260, "var/lib/machines"), (261, "tmp"), (262, "var/tmp")];
+        let list: Vec<String> = subs
+            .iter()
+            .map(|(id, p)| format!(r#"{{"id": {id}, "gen": 9, "top_level": 5, "path": "{p}", "parent_uuid": null, "uuid": "u{id}", "readonly": false, "properties": {{"ro": "false"}}}}"#))
+            .collect();
+        let b = built_from(&nixos_top_level(&format!("[{}]", list.join(", "))), &["--repo", "/srv/repo", "--password-file", "/run/pw"]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let f = text(b.stage(Stage::Format));
+        let top = "/run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003";
+        let at = |l: &str| f.find(&format!("{l}\n")).unwrap_or_else(|| panic!("{l} not in\n{f}"));
+        let mut prev = at(&format!("mount -t btrfs -o subvolid=5 /dev/vdb3 {top}"));
+        assert!(at("mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U b7b7b7b7-0000-4000-8000-000000000003 --csum crc32c -n 16384 -s 4096 -d single -m dup /dev/vdb3") < prev);
+        // Each after the one before, in ID order, its parent directory made
+        // just before it.
+        for (_, p) in subs {
+            let after = |l: &str, from: usize| f[from..].find(&format!("{l}\n")).map(|i| i + from).unwrap_or_else(|| panic!("{l} not after {from} in\n{f}"));
+            if let Some((parent, _)) = p.rsplit_once('/') {
+                prev = after(&format!("mkdir -p {top}/{parent}"), prev);
+            }
+            prev = after(&format!("btrfs subvolume create {top}/{p}"), prev);
+        }
+        assert!(at(&format!("umount {top}")) > prev);
+        assert!(!f.contains("property set"), "{f}");
+        // The mount stage: the top level, then /boot, /home and /nix.
+        let m = text(b.stage(Stage::Mount));
+        let root = m.find("mount -t btrfs -o defaults /dev/vdb3 /mnt/bko-target\n").expect(&m);
+        let home = m.find("mount -t btrfs -o subvol=home /dev/vdb3 /mnt/bko-target/home\n").expect(&m);
+        let nix = m.find("mount -t btrfs -o subvol=nix,noatime /dev/vdb3 /mnt/bko-target/nix\n").expect(&m);
+        assert!(root < home && root < nix, "{m}");
+        // The restore fills the top level and both mounts, leaving nothing
+        // out: /home and /nix are covered by their own mounts, not aliases.
+        let r = text(b.stage(Stage::Restore));
+        assert!(r.contains("restore --numeric-id latest /mnt/bko-target\n"), "{r}");
+        assert!(!r.contains("--glob-file") && !r.contains("--target-metadata"), "{r}");
+    }
+
+    /// The Thinkpad's layout as dumped before NixOS's tools were on the
+    /// dump's path: no subvolume list.  The subvolumes its mounts name are
+    /// made, parents first; the rest come back as directories.
+    #[test]
+    fn btrfs_unlisted_subvolumes_from_its_mounts() {
+        let b = built_from(&nixos_top_level("null"), &[]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let f = text(b.stage(Stage::Format));
+        let top = "/run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003";
+        let mnt = f.find(&format!("mount -t btrfs -o subvolid=5 /dev/vdb3 {top}\n")).expect(&f);
+        let home = f.find(&format!("btrfs subvolume create {top}/home\n")).expect(&f);
+        let nix = f.find(&format!("btrfs subvolume create {top}/nix\n")).expect(&f);
+        assert!(mnt < home && home < nix && nix < f.find(&format!("umount {top}\n")).unwrap(), "{f}");
+        assert_eq!(f.matches("btrfs subvolume create").count(), 2, "{f}");
+        let n = b.notes.join("\n");
+        assert!(n.contains("doesn't list its subvolumes (its dump couldn't run btrfs); made are those its mounts name, home, nix"), "{n}");
+        // A layout that lists none (an empty list) makes none.
+        let b = built_from(&nixos_top_level("[]"), &[]);
+        assert!(!text(b.stage(Stage::Format)).contains("subvolume create"));
+    }
+
+    #[test]
+    fn named_subvolumes_parents_first() {
+        let j = nixos_top_level("null").replace(r#""options": "subvol=home""#, r#""options": "subvol=/@/home""#).replace(r#""options": "subvol=nix,noatime""#, r#""options": "subvol=<FS_TREE>/@,noatime""#);
+        let f = text(built_from(&j, &[]).stage(Stage::Format));
+        let top = "/run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003";
+        // fstab's and those mounted at the dump: a parent before what's in it.
+        let order: Vec<usize> = ["@", "@/home", "home", "nix"].iter().map(|p| f.find(&format!("btrfs subvolume create {top}/{p}\n")).expect(&f)).collect();
+        assert!(order.windows(2).all(|w| w[0] < w[1]), "{f}");
     }
 
     #[test]

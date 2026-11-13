@@ -112,6 +112,21 @@ fn bios_btrfs_runner() -> FakeRunner {
         .with("btrfs property get -t i /", "compression=zstd\n")
 }
 
+/// A btrfs whose tools the dump can't run (NixOS's, before its
+/// /run/current-system/sw was on the dump's path): no subvolume list, and
+/// a warning saying so.
+#[test]
+fn btrfs_without_its_tools_warns() {
+    let v = run(&bios_btrfs(), true, FakeRunner::default());
+    let b = v.at(&["storage", "btrfs", "0"]).unwrap();
+    assert!(b.get("subvolumes").unwrap().is_null());
+    assert_eq!(s(b, &["mounted_subvolumes", "0", "subvol"]), "/@rootfs");
+    let w: Vec<&str> = arr(&v, &["warnings"]).iter().filter_map(Value::as_str).collect();
+    assert!(w.contains(&"btrfs b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf: `btrfs subvolume list /` failed or btrfs isn't installed: its subvolumes aren't listed"), "{w:?}");
+    let v = run(&bios_btrfs(), true, bios_btrfs_runner());
+    assert!(!arr(&v, &["warnings"]).iter().any(|x| x.as_str().is_some_and(|x| x.contains("subvolume list"))));
+}
+
 #[test]
 fn bios_mbr_btrfs_guest() {
     let t = bios_btrfs();

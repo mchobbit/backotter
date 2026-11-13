@@ -30,13 +30,17 @@ pub trait Runner {
     }
 }
 
-/// Runs real commands, from the system directories only, in the C locale,
+/// Runs real commands, from the system directories only (NixOS's
+/// /run/current-system/sw among them), in the C locale,
 /// with a time limit (a hung `zpool` must not hang the dump).
 pub struct RealRunner {
     pub timeout: Duration,
 }
 
-const SYSTEM_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin";
+/// NixOS keeps its system's tools (btrfs, lvm, zfs, efibootmgr...) only in
+/// /run/current-system/sw: without it, a NixOS dump lists no btrfs
+/// subvolumes, and load makes none of those its fstab mounts.
+const SYSTEM_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin:/run/current-system/sw/sbin:/run/current-system/sw/bin";
 
 impl Runner for RealRunner {
     fn run(&self, prog: &str, args: &[&str]) -> Option<String> {

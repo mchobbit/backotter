@@ -1,0 +1,10 @@
+{
+ "name": "fail-001-paths-past-path-max",
+ "source": "alpine324@gen:d562e3effb42ec7ccce5b809e1bffdea71bfd91897b0fa2b9a9f52d04dd9fa4c",
+ "seed": 2,
+ "generator": "1",
+ "edits": [],
+ "load_options": [],
+ "content": {"only": [169], "recipe": "alpine-small-1", "seed": 2},
+ "failed": {"check": "the deep tree differs", "excerpt": ["FAIL the deep tree differs: b'deep0/yodteuyax8k7kndzkvl6leqbllnoxvfuts'...b'tju976hnbh71m9sk070lqsjkfdlm7rvrv4pvso2f' (4092 bytes): {'mode': 16877, 'uid': 0, 'gid': 0, 'mtime': 1794547296855309462} -> None b'deep0/yodteuyax8k7kndzkvl6leqbllnoxvfuts'...b'4xdfxpm4vu1eybtg7pqkchw424w1tzmvu1wj1fi4' (415"], "tier": 1},
+ "from": "alpine324-c98bcadfe30c30bf"}

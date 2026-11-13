@@ -6,7 +6,7 @@
 
 use super::commands;
 use super::layout::Layout;
-use super::target::{self, table_id};
+use super::target;
 use super::{Options, Stage, EXIT_OK, EXIT_PLAN_PROBLEMS, RUN_DIR};
 use crate::sys::Sys;
 
@@ -72,20 +72,18 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     let (mut ok, mut total, mut why) = (0, 0, vec![]);
     for (src, tgt) in &mapping.pairs {
         let (Some(d), Some(t)) = (layout.disk(src), system.disk(tgt)) else { continue };
-        let Some(want) = &d.table else { continue };
+        if d.table.is_none() {
+            continue;
+        }
         total += 1;
-        match &t.table {
-            None => why.push(format!("/dev/{tgt}: no partition table")),
-            Some(have) => {
-                let ext = have.extents();
-                let id_ok = want.id.as_ref().is_none_or(|id| table_id(have).eq_ignore_ascii_case(id));
-                let parts_ok = d.parts.iter().all(|p| ext.iter().any(|&(n, s, len)| n == p.number && s == p.start_lba && len == p.sectors));
-                if id_ok && parts_ok {
-                    ok += 1;
-                } else {
-                    why.push(format!("/dev/{tgt}: its table isn't the source's"));
-                }
-            }
+        // The same check decides whether --erase lets go of what holds a
+        // target (target::release_holders).
+        if target::partition_done(d, t) {
+            ok += 1;
+        } else if t.table.is_none() {
+            why.push(format!("/dev/{tgt}: no partition table"));
+        } else {
+            why.push(format!("/dev/{tgt}: its table isn't the source's"));
         }
     }
     let st = if !sys.privileged && total > 0 { State::Unknown } else { tally(ok, total) };

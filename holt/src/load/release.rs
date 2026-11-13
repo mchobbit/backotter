@@ -83,6 +83,24 @@ pub fn bases(all: &[BlockDev], name: &str) -> Vec<String> {
     out
 }
 
+/// DISK, its partitions, and everything stacked on them (their holders, all
+/// the way up).
+pub fn stack(all: &[BlockDev], disk: &str) -> Vec<String> {
+    let mut out: Vec<String> = std::iter::once(disk.to_string()).chain(all.iter().filter(|b| b.parent.as_deref() == Some(disk)).map(|b| b.name.clone())).collect();
+    let mut i = 0;
+    while i < out.len() {
+        if let Some(b) = all.iter().find(|b| b.name == out[i]) {
+            for h in &b.holders {
+                if !out.contains(h) {
+                    out.push(h.clone());
+                }
+            }
+        }
+        i += 1;
+    }
+    out
+}
+
 fn describe(b: &BlockDev) -> String {
     match &b.dm_name {
         Some(n) => format!("{} ({n})", b.name),

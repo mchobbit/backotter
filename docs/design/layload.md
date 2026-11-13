@@ -381,7 +381,8 @@ The tool erases disks.  So:
    - the disk the stick booted from (found the way `stick-config.md`'s
      "Finding the config at boot" finds it);
    - any disk with a mounted partition or active swap, unless load made
-     those itself in an earlier stage of this layout;
+     those itself in an earlier stage of this layout (mounted under
+     `--target`);
    - any disk holding the running system's `/`;
    - any disk whose holders (below) can't all be let go of.
    And the plan is refused when a volume group with a name or UUID the
@@ -402,7 +403,20 @@ The tool erases disks.  So:
    autoactivates an old volume group, md assembles an old array
    (BackShot2's leftovers set, L3 and L6; backshot2.md).  With `--erase`
    the partition stage lets go of them first, from the top of each stack
-   down, then wipes the disk as before.  `plan` works the chain out from
+   down, then wipes the disk as before.
+   A target that carries this layout's own identifiers (its partition
+   table's, as the source's own disk does on a bare-metal restore, or only
+   the layout's filesystem and container UUIDs) goes the same way, with the
+   same refusals, mounted partitions and swap included, when the partition
+   stage will run and nothing stacked on it is load's own.  The stage runs
+   under `--only partition`, and under `--through` (and the plan) unless
+   status shows it done on every target (each table the source's, every
+   partition at its sectors: the check `--through` skips it by), so a rerun
+   after the partition stage lets go of nothing and refuses nothing.  Load's
+   own is anything in the disk's stack mounted under `--target`, or a pool
+   of the layout's imported there, from an earlier partial run: neither let
+   go of nor refused, as before.  Without `--erase` such a target is taken
+   as it is.  `plan` works the chain out from
    `/sys/block/*/holders` and `slaves`, the mount table, the swaps, the PVs
    and `zpool status`, and prints each step; nothing runs without
    `--commit`.  The whole plan is refused, naming the device and the other

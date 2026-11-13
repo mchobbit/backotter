@@ -87,7 +87,11 @@ rpm_ostree_same() {
     diff <(grep '^rpm-ostree ' "$RUN/baseline/deployments.txt") <(python3 "$OSTREE_TOOL" rpm-ostree)
 }
 packages_same() { package_list | cmp - "$RUN/baseline/packages.txt"; }
-swap_same() { swap_names | cmp - "$RUN/baseline/swap-names.txt"; }
+swap_same() {
+    local how=
+    grep -qs '^/dev/dm-' "$RUN/baseline/swap-names.txt" && how=raw
+    swap_names ${how:+"$how"} | cmp - "$RUN/baseline/swap-names.txt"
+}
 # From the firmware's variables themselves: AerynOS has no efibootmgr to ask.
 booted_the_restored_esp() {
     local guids

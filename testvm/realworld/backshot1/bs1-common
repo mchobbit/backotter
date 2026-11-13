@@ -246,7 +246,16 @@ lvmid_ok() {
         ! awk -v w="$want" '$1 == "EMBED" && $3 != w { bad = 1 } END { exit !bad }' "$1"
 }
 
-swap_names() { swapon --show=NAME --noheadings 2>/dev/null | { grep -v zram || true; } | LC_ALL=C sort; }
+# swap_names [raw]: the swaps in use, a device-mapper one by its /dev/mapper
+# name, since dm-N's number can change from one boot to the next (Alpine's
+# LVM on LUKS); raw: dm-N as the kernel names it, as baselines before this have.
+swap_names() {
+    local n d
+    swapon --show=NAME --noheadings 2>/dev/null | { grep -v zram || true; } | while read -r n; do
+        d=/sys/block/${n#/dev/}/dm/name
+        if [[ ${1:-} != raw && $n == /dev/dm-* && -r $d ]]; then echo "/dev/mapper/$(cat "$d")"; else echo "$n"; fi
+    done | LC_ALL=C sort
+}
 
 failed_units() {
     command -v systemctl >/dev/null || return 0

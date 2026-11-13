@@ -183,7 +183,7 @@ install_tools() {
     fi
     # bs1-to-stick's BootNext needs it, and a Chimera install with systemd-boot
     # (bootctl) can lack it, as can a Gentoo one (it is no part of @system).
-    # The other systems' rehearsals all had it.
+    # The other systems' rehearsals all had it; NixOS gets it from adopt_nixos.
     if [[ -d /sys/firmware/efi ]] && ! command -v efibootmgr >/dev/null; then
         case $distro in
             chimera) apk_add efibootmgr ;;
@@ -261,7 +261,7 @@ adopt_nixos() {
   services.openssh.settings.PermitRootLogin = lib.mkForce "prohibit-password";
   users.users.root.openssh.authorizedKeys.keys = [ $lines];
   services.avahi = { enable = true; publish = { enable = true; addresses = true; }; };
-  environment.systemPackages = [ pkgs.python3 ];
+  environment.systemPackages = [ pkgs.python3 pkgs.efibootmgr ];
 }
 EOF
     if ! grep -q 'backshot1\.nix' "$conf"; then
@@ -297,7 +297,7 @@ install -m 644 "$keys/ssh_host_ed25519_key.pub" /etc/ssh/ssh_host_ed25519_key.pu
 if command -v restorecon >/dev/null; then restorecon -R /root/.ssh /etc/ssh; fi
 
 if [[ -e /etc/NIXOS ]]; then
-    echo "== NixOS: $SOURCE_HOST, sshd, mDNS and Python, in its configuration"
+    echo "== NixOS: $SOURCE_HOST, sshd, mDNS, Python and efibootmgr, in its configuration"
     adopt_nixos
     systemctl restart sshd.service
 else

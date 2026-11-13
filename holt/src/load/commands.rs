@@ -2338,6 +2338,7 @@ impl Builder<'_> {
             out.extend(cmds);
         } else {
             match self.initramfs(&t) {
+                _ if nixos && self.layout.uefi() => self.notes.push("NixOS: each generation's kernel and initrd came back with the restore, where its boot loader's entries name them; nothing to rebuild".into()),
                 _ if nixos => self.notes.push("NixOS: each generation's kernel and initrd are in /boot/kernels, restored with /boot; nothing to rebuild".into()),
                 Some(c) => out.push(c),
                 None => self.notes.push("the initramfs came prebuilt with the kernel and was restored with it; nothing to rebuild".into()),
@@ -2387,6 +2388,20 @@ impl Builder<'_> {
                 self.notes.push("UEFI GRUB on Fedora: the ESP's shim and GRUB are the restored ones; only grub.cfg is remade".into());
                 self.remake_grub_cfg(&t, &mut out);
             }
+            // NixOS on UEFI: nothing runs in the chroot.  Its tools are in
+            // the Nix store, found by PATH through /run/current-system,
+            // which the chroot doesn't have (its /run is the rescue
+            // system's).  Nor is anything needed: switch-to-configuration
+            // wrote the loader, its configuration and each generation's
+            // files, all files on the ESP and /boot, restored with them.
+            // GRUB's EFI image finds /boot by its filesystem's UUID, which
+            // the new one keeps (as BIOS GRUB's grub.cfg does, above).  Only
+            // the boot entry is made (efi_entries, below).
+            ("grub", true) if nixos => {
+                self.notes.push("NixOS: UEFI GRUB's EFI image and grub.cfg came back with the ESP and /boot; only the boot entry is made".into());
+                let img = self.esp_file("/grubx64.efi").unwrap_or_else(|| format!("EFI/{}/grubx64.efi", self.bootloader_id()));
+                out.extend(self.nixos_removable(&img));
+            }
             ("grub", true) => {
                 let esp = self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).unwrap_or("/boot/efi").to_string();
                 let id = self.bootloader_id();
@@ -2403,6 +2418,11 @@ impl Builder<'_> {
             // is the fallback, EFI/BOOT/BOOTX64.EFI.
             ("systemd-boot", true) if self.layout.v.at(&["boot", "loader", "via_shim"]).and_then(Value::as_bool) == Some(true) => {
                 self.notes.push("systemd-boot through shim: shim, systemd-boot and the loader entries are the restored ESP's; only the boot entries are made".into());
+            }
+            ("systemd-boot", true) if nixos => {
+                self.notes.push("NixOS: systemd-boot, its loader entries and every generation's kernel and initrd came back with the ESP; only the boot entry is made".into());
+                let img = self.esp_file("/systemd-bootx64.efi").unwrap_or_else(|| "EFI/systemd/systemd-bootx64.efi".into());
+                out.extend(self.nixos_removable(&img));
             }
             ("systemd-boot", true) => {
                 out.push(Cmd::new(&["chroot", &t, "bootctl", "install", "--no-variables"]));
@@ -2625,6 +2645,29 @@ impl Builder<'_> {
             .why("the boot entries, for the restored kernels and root (Chimera's gen-systemd-boot, as its kernel hook runs it)")
             .warns(),
         )
+    }
+
+    /// The path on the first ESP, as the dump listed it, of the file whose
+    /// name ends in `suffix` (any case), outside EFI/BOOT.
+    fn esp_file(&self, suffix: &str) -> Option<String> {
+        let files = self.layout.arr(&["boot", "esps", "0", "contents", "files"]).to_vec();
+        files
+            .iter()
+            .filter_map(|f| s(f, "path"))
+            .find(|p| p.to_ascii_lowercase().ends_with(suffix) && !p.to_ascii_lowercase().starts_with("efi/boot/"))
+    }
+
+    /// NixOS with --removable: the ESP's loader image `img` (a path on the
+    /// ESP) is copied to EFI/BOOT/BOOTX64.EFI, unless the restored ESP has
+    /// one (bootctl install, which NixOS runs, writes it).  Nothing runs in
+    /// the chroot.
+    fn nixos_removable(&self, img: &str) -> Vec<Cmd> {
+        if !self.opts.removable {
+            return Vec::new();
+        }
+        let esp = format!("{}{}", self.opts.target, self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).unwrap_or("/boot").trim_end_matches('/'));
+        let (src, dir) = (shell_quote(&format!("{esp}/{img}")), shell_quote(&format!("{esp}/EFI/BOOT")));
+        vec![Cmd::new(&["sh", "-c", &format!("[ -e {dir}/BOOTX64.EFI ] || {{ mkdir -p {dir} && cp {src} {dir}/BOOTX64.EFI; }}")]).why("--removable: the ESP's loader at the fallback path too")]
     }
 
     fn grub_bios_devices(&self) -> Vec<String> {
@@ -2869,6 +2912,55 @@ mod tests {
         assert!(t.contains("chroot /mnt/bko-target bootctl install --no-variables\n"), "{t}");
         // bootctl writes /etc/kernel/entry-token: relabelled, when it's there.
         assert!(t.contains(r#"[ ! -d /etc/kernel ] || set -- /etc/kernel; setfiles "$f" /boot /var/log/bko-holt "$@";"#), "{t}");
+    }
+
+    /// NixOS on UEFI (BackShot1's Thinkpad, NixOS 26.05): bootctl and
+    /// grub-install are only on PATH through /run/current-system, which the
+    /// chroot hasn't; the ESP came back with the loader, its entries and
+    /// every generation's files.  Only the NVRAM entry is made.
+    #[test]
+    fn nixos_uefi_runs_nothing_in_the_chroot() {
+        let plan = |loader: &str, file: &str, esp_files: &str, extra: &[&str]| {
+            let j = sample::bios_mbr()
+                .replace(r#""id": "debian", "version_id": "13""#, r#""id": "nixos", "version_id": "26.05""#)
+                .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+                .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, &format!(r#""loader": {{"name": "{loader}", "firmware": "uefi", "via_shim": false}}"#))
+                .replace(r#""grub": {"debconf": {"grub-pc/install_devices": "/dev/disk/by-id/virtio-x"}}"#, r#""grub": {"dir": "/boot/grub", "debconf": null}"#)
+                .replace(
+                    r#""efi": null,"#,
+                    &format!(
+                        r#""efi": {{"boot_current": "0001", "boot_order": ["0001"], "entries": [{{"number": "0001", "description": "Linux Boot Manager", "file": "{}", "partition": {{"device": "vda1"}}}}]}},
+                           "esps": [{{"device": "vda1", "mounted_at": "/boot", "contents": {{"files": [{esp_files}]}}}}],"#,
+                        file.replace('\\', "\\\\")
+                    ),
+                );
+            let b = built_from(&j, extra);
+            (text(b.stage(Stage::Boot)), b.notes.join("\n"), b.problems.clone())
+        };
+        let sd_files = r#"{"path": "EFI/systemd/systemd-bootx64.efi"}, {"path": "EFI/BOOT/BOOTX64.EFI"}, {"path": "loader/loader.conf"}, {"path": "loader/entries/nixos-generation-1.conf"}"#;
+        let (t, n, p) = plan("systemd-boot", r"\EFI\systemd\systemd-bootx64.efi", sd_files, &[]);
+        assert!(p.is_empty(), "{p:?}");
+        assert!(!t.contains("bootctl") && !t.contains("gen-systemd-boot") && !t.contains("kernel-install"), "{t}");
+        assert!(!t.lines().any(|l| l.starts_with("chroot ") || l.contains("; chroot ")), "{t}");
+        assert!(t.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'Linux Boot Manager' --loader '\\EFI\\systemd\\systemd-bootx64.efi'\n"), "{t}");
+        assert!(n.contains("NixOS: systemd-boot, its loader entries and every generation's kernel and initrd came back with the ESP; only the boot entry is made"), "{n}");
+        assert!(!n.contains("/boot/kernels"), "{n}");
+        assert!(!t.contains("BOOTX64"), "{t}");
+        // --removable: the fallback copy, made outside the chroot unless there.
+        let (t, _, _) = plan("systemd-boot", r"\EFI\systemd\systemd-bootx64.efi", sd_files, &["--removable"]);
+        assert!(t.contains("[ -e /mnt/bko-target/boot/EFI/BOOT/BOOTX64.EFI ] || { mkdir -p /mnt/bko-target/boot/EFI/BOOT && cp /mnt/bko-target/boot/EFI/systemd/systemd-bootx64.efi /mnt/bko-target/boot/EFI/BOOT/BOOTX64.EFI; }"), "{t}");
+        // --no-nvram: no entry either.
+        let (t, _, _) = plan("systemd-boot", r"\EFI\systemd\systemd-bootx64.efi", sd_files, &["--no-nvram"]);
+        assert!(!t.contains("efibootmgr"), "{t}");
+        // UEFI GRUB: neither grub-install nor grub-mkconfig.
+        let grub_files = r#"{"path": "EFI/NixOS-boot/grubx64.efi"}"#;
+        let (t, n, p) = plan("grub", r"\EFI\NixOS-boot\grubx64.efi", grub_files, &["--removable"]);
+        assert!(p.is_empty(), "{p:?}");
+        assert!(!t.contains("grub-install") && !t.contains("grub-mkconfig") && !t.contains("update-grub"), "{t}");
+        assert!(!t.lines().any(|l| l.starts_with("chroot ") || l.contains("; chroot ")), "{t}");
+        assert!(t.contains("--label 'Linux Boot Manager' --loader '\\EFI\\NixOS-boot\\grubx64.efi'\n"), "{t}");
+        assert!(t.contains("cp /mnt/bko-target/boot/EFI/NixOS-boot/grubx64.efi /mnt/bko-target/boot/EFI/BOOT/BOOTX64.EFI"), "{t}");
+        assert!(n.contains("NixOS: UEFI GRUB's EFI image and grub.cfg came back"), "{n}");
     }
 
     #[test]

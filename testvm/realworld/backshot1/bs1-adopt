@@ -73,10 +73,20 @@ pkg_install() {     # pkg_install DEBIAN FEDORA SUSE ARCH ALPINE VOID AERYNOS CH
     # Chimera has apk too, with its own names.
     elif [[ $distro == chimera ]]; then apk_add $8
     elif command -v apk >/dev/null; then apk_add $5
-    elif command -v xbps-install >/dev/null; then xbps-install -Sy $6
+    elif command -v xbps-install >/dev/null; then xbps_add $6
     elif command -v moss >/dev/null; then moss -y pkg add $7
     else echo "bs1-adopt: no package manager I know; install $1 by hand" >&2; return 1
     fi
+}
+
+# Void is rolling and refuses a partial update: on an install older than its
+# repo, "avahi dbus" pulls a new dbus-libs that "breaks installed pkg
+# dbus-x11", and the transaction aborts.  Then xbps first (it must update
+# itself before anything else), the whole system, and the packages.
+xbps_add() {
+    xbps-install -Sy "$@" && return 0
+    echo "bs1-adopt: xbps refused a partial update; updating the whole system first" >&2
+    xbps-install -Syu xbps && xbps-install -yu && xbps-install -y "$@"
 }
 
 start_runit() {     # start_runit NAME: a service just linked in takes runsvdir a few seconds to notice

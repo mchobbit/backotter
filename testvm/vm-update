@@ -40,7 +40,16 @@ GUEST, vm-update
      update/trim.sh in it (fstrim, zpool trim: vm-run --discard makes the room
      the guest frees, its old packages and downloads, zero clusters that hold
      no data in the overlay; the merge carries them into the image, where
-     retaking the snapshot frees them), then it is powered off;
+     retaking the snapshot frees them), then it is powered off.  Last, this
+     host mounts the updated disks (the overlay on top of the image)
+     read-only with vm-mount, as compare.py and the other tools on the hosts
+     do, and unmounts them again.  If it can't (an update that moved a file
+     system or pool past what the hosts' kernel and tools read: bcachefs's
+     on-disk version, a zpool upgrade, a new ext4, xfs or btrfs feature, a
+     LUKS or LVM change), the update fails and nothing merges.  A guest that
+     isn't Linux (the BSDs, illumos, Haiku) is passed by: vm-mount reads none
+     of their disks; so is a ZFS guest on a host with no OpenZFS (cage,
+     copland), which the fleet's hosts check;
   5. copies the overlay (only the blocks the update wrote) to every other
      host, checks step 1 again on every host, and then merges the overlay
      into the image (qemu-img commit) on one host at a time, this one last,
@@ -55,8 +64,9 @@ each host's own timestamps, hence image-state.)  A guest that nothing can
 update (NetBSD: a release's base sets) is reported and left alone.
 
   --try         stop after step 4 and throw the overlay away: test that the
-                guest updates and still boots, changing nothing.  No trim, no
-                dump; result.json says what would merge
+                guest updates and still boots, and that this host still
+                mounts it when there is something to merge, changing
+                nothing.  No trim, no dump; result.json says what would merge
   --probe       boot the guest and run its hooks only: no update, no reboot.
                 With --write-fingerprint also its listing and dump, which
                 make its image-fingerprint.json on every host (the hosts must
@@ -133,6 +143,8 @@ Environment:
                            default is the real fleet's
   VM_UPDATE_HOLT_BIN       the bko-holt set for the dump (default
                            /bkoscratch/holttest1d/bin)
+  VM_MOUNT_NBD="nbd14 ..." the nbd devices step 4's mount may take (default:
+                           any free one, as vm-mount picks them)
   VM_UPDATE_LIMIT_KIB, VM_UPDATE_FREE_KIB
                            tests only: the overrun limit and the RAM disk's
                            free room, in place of the real ones
@@ -220,6 +232,7 @@ HOOK_TIMEOUT = 1800
 PKGSET_TIMEOUT = 600
 DUMP_TIMEOUT = 900
 GATE_TIMEOUT = 600
+MOUNT_TIMEOUT = 600                     # vm-mount, and vm-umount, each
 
 print_lock = threading.Lock()
 running: set["VM"] = set()                     # VMs to stop when stopping
@@ -1671,6 +1684,136 @@ def run_gate(cmd: str, res_merge: dict, g: Guest) -> None:
     raise Failed(res_merge["why"])
 
 
+# --- Step 4's last check: this host still mounts it --------------------------------
+
+# Why vm-mount can't read a guest of each `uname -s` but Linux (as the
+# make-*.sh scripts say): the check passes these by.  HardenedBSD and GhostBSD
+# say FreeBSD.  Sculpt and Redox never get here: nothing updates them.
+NO_HOST_MOUNT = {
+    "FreeBSD": "Linux can't write UFS, and the ZFS pool would have to be imported on this host",
+    "NetBSD": "Linux's ufs driver reads FFSv2 at most, and not through a disklabel or NetBSD's wedges",
+    "OpenBSD": "Linux can't mount OpenBSD's disklabel partitions read-write",
+    "DragonFly": "Linux reads neither disklabel64 nor HAMMER2",
+    "SunOS": "Linux's OpenZFS may refuse an illumos pool, and importing it would mark it as this host's",
+    "Haiku": "Linux has no read-write BFS driver",
+}
+
+
+def key_file(g: Guest) -> Path | None:
+    """What vm-mount --key unlocks the guest's disks with, as holttest1d/ht1.sh
+    picks it: a passphrase typed at boot, or the key file its initramfs
+    unlocks / with (make-bootstrap.sh's LUKS guests)."""
+    names = ("console-passphrase", "zfs-passphrase", "luks-passphrase", "luks-keyfile")
+    return next((f for n in names if (f := g.dir / n).exists()), None)
+
+
+def as_root(*cmd: str) -> list[str]:
+    """CMD under sudo, within MOUNT_TIMEOUT, with what of vm-mount's environment sudo would drop."""
+    env = [f"{v}={os.environ[v]}" for v in ("VM_MOUNT_NBD", "TMPDIR") if os.environ.get(v)]
+    return ["sudo", "-n", "env", *env, "timeout", "-k", "10", str(MOUNT_TIMEOUT), *cmd]
+
+
+def host_umount(g: Guest, mp: Path) -> str | None:
+    """Undo whatever vm-mount set up at MP, all of it or the part it got to,
+    and remove MP; None, or why that failed."""
+    try:
+        r = run(as_root(str(TESTVM / "vm-umount"), str(mp)), stdin=subprocess.DEVNULL,
+                timeout=MOUNT_TIMEOUT + 30, start_new_session=True)
+        rc, text = r.returncode, (r.stdout + r.stderr).strip()
+    except subprocess.TimeoutExpired:
+        rc, text = 124, f"timed out after {MOUNT_TIMEOUT} s"
+    # "was not mounted by vm-mount": vm-mount undid itself, or never began.
+    if rc != 0 and "was not mounted by vm-mount" not in text:
+        g.log.write(text + "\n")
+        g.note(f"host mount: vm-umount exit status {rc}")
+        return (f"vm-umount {mp} failed ({(text.splitlines() or [f'exit status {rc}'])[-1]}): its nbd devices still"
+                f" hold the image; sudo {TESTVM}/vm-umount {mp} by hand")
+    try:
+        mp.rmdir()
+    except OSError:
+        pass
+    return None
+
+
+def host_mount(g: Guest, overlays: dict[str, str], uname: str) -> dict:
+    """Whether this host can mount the guest as the update left it: each disk
+    its overlay, or the image where nothing wrote, under vm-mount --ro, and
+    whatever was mounted there unmounted again.  {ok, why, mounts, warnings,
+    tail, left, by}: OK None when the check passes the guest by (WHY says
+    why, BY in a word or two), MOUNTS findmnt's TARGET SOURCE FSTYPE lines,
+    WARNINGS what vm-mount skipped (a file system fstab names that isn't on
+    these disks, a RAID it can't read), TAIL vm-mount's last lines when it
+    failed, LEFT why the unmount failed, if it did.  No tree walk: the mount
+    is the test."""
+    rec = {"ok": None, "why": None, "mounts": [], "warnings": [], "tail": [], "left": None, "by": None}
+    system = uname.split()[0] if uname else ""
+    if system != "Linux":
+        rec["why"] = NO_HOST_MOUNT.get(system, f"vm-mount reads only Linux guests' disks, and this is {system or 'unknown'}")
+        rec["by"] = system or "unknown"
+        return rec
+    disks = [overlays.get(g.path(img), g.path(img)) for img in g.images]
+    key = key_file(g)
+    mp = Path(tempfile.mkdtemp(prefix=f"vm-update-mount.{g.name}."))
+    cmd = [str(TESTVM / "vm-mount"), "--ro", *[a for d in disks[1:] for a in ("--disk", d)],
+           *(["--key", str(key)] if key else []), disks[0], str(mp)]
+    g.note(f"host mount: {shlex.join(cmd)}")
+    try:
+        # In a session of its own, as a merge: Ctrl-C lets the mount and
+        # unmount finish (seconds), then stops vm-update.
+        try:
+            r = run(as_root(*cmd), stdin=subprocess.DEVNULL, timeout=MOUNT_TIMEOUT + 30, start_new_session=True)
+            rc, out, err = r.returncode, r.stdout, r.stderr
+        except subprocess.TimeoutExpired:
+            rc, out, err = 124, "", f"timed out after {MOUNT_TIMEOUT} s\n"
+        g.log.write(out + err)
+        g.note(f"host mount: vm-mount exit status {rc}")
+        if rc == 0:
+            f = run(["findmnt", "-R", "-n", "-r", "-o", "TARGET,SOURCE,FSTYPE", str(mp)])
+            rec["mounts"] = [l for l in f.stdout.splitlines() if l.strip()]
+            if not rec["mounts"] or rec["mounts"][0].split()[0] != str(mp):
+                rc, err = 1, f"vm-mount exited 0, but nothing is mounted at {mp}\n"
+        rec["warnings"] = [l.strip() for l in err.splitlines() if l.startswith("vm-mount: ")] if rc == 0 else []
+        if rc != 0 and "but this host has no OpenZFS" in err:
+            # A host's gap, not the update's (cage and copland have none):
+            # the fleet's hosts, which have it, check this guest.
+            rec["why"], rec["by"] = "the guest's pool needs OpenZFS, which this host lacks", "no OpenZFS here"
+        elif rc != 0:
+            rec["ok"] = False
+            rec["tail"] = [l.strip() for l in (out + err).strip().splitlines()][-6:]
+            rec["why"] = f"vm-mount --ro exit status {rc}"
+        else:
+            rec["ok"] = True
+    finally:
+        rec["left"] = host_umount(g, mp)
+    return rec
+
+
+def check_host_mount(g: Guest, res: dict, overlays: dict[str, str], uname: str, try_: bool = False) -> str:
+    """Step 4's last check, with the guest off: the summary's words, or Failed
+    when this host can't mount the updated disks (and so nothing merges)."""
+    res["phase"] = "host-mount"
+    system = uname.split()[0] if uname else ""
+    if system == "Linux":
+        say(g.name, "mounting it here, read-only (vm-mount --ro)")
+    rec = res["host_mount"] = host_mount(g, overlays, uname)
+    if stopping.is_set():
+        raise Failed("stopped")
+    if rec["ok"] is None:
+        g.note(f"host mount: passed by ({rec['why']})")
+        return f"no host mount ({rec['by']})"
+    then = "a real update wouldn't merge it" if try_ else "nothing is merged, and the image stays as it was"
+    if not rec["ok"]:
+        raise Failed(f"this host can no longer mount the updated disk read-only ({rec['why']}): compare.py and the"
+                     f" other tools on the hosts couldn't read it; {then}.  vm-mount said:\n  "
+                     + "\n  ".join(rec["tail"] + ([rec["left"]] if rec["left"] else [])))
+    if rec["left"]:
+        raise Failed(f"this host mounted the updated disk, but not unmounted it: {rec['left']}; {then}")
+    for w in rec["warnings"]:
+        g.note(f"host mount: {w}")
+    g.note(f"host mount: ok, {len(rec['mounts'])} file system(s): " + "; ".join(rec["mounts"]))
+    return f"this host mounts it ({len(rec['mounts'])} file system(s))"
+
+
 # --- One guest, start to end -------------------------------------------------------
 
 def out_dir(name: str, args) -> Path:
@@ -1686,7 +1829,7 @@ def new_result(name: str, mode: str) -> dict:
             "merged": False, "overlay_mib": None, "overlay_dir": None, "ram_peak_kib": None,
             "reserved_gib": None, "overrun": False, "overrun_why": None, "generation_before": None,
             "generation_after": None, "trim_rc": None, "wall_s": None, "tail": [], "hooks": {},
-            "kept_failed": False, "fingerprint": None, "fingerprint_why": None}
+            "kept_failed": False, "fingerprint": None, "fingerprint_why": None, "host_mount": None}
 
 
 def write_result(out: Path, res: dict) -> None:
@@ -2037,8 +2180,11 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
             overlays = vm.poweroff()
             sizes = [os.path.getsize(o) for o in overlays.values()]
             res["overlay_mib"] = sum(sizes) >> 20
+            would = "nothing to merge"
+            if decision["decided"]:
+                # Only what a real update would merge: without, the image stays.
+                would = f"would merge: {decision['why']}; {check_host_mount(g, res, overlays, uname, try_=True)}"
             res["phase"] = "done"
-            would = f"would merge: {decision['why']}" if decision["decided"] else "nothing to merge"
             return (f"updated and rebooted ({uname}); {would}; overlay"
                     f" {', '.join(f'{s >> 20} MiB' for s in sizes)} thrown away (--try)")
 
@@ -2094,11 +2240,14 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
         if not overlays or not set(overlays) <= {g.path(img) for img in g.images}:
             raise Failed(f"vm-run didn't report the overlays: {overlays}")
         res["overlay_mib"] = sum(os.path.getsize(o) for o in overlays.values()) >> 20
+        # Before anything leaves this host: an update the hosts can't mount
+        # never reaches an image.
+        mounts = check_host_mount(g, res, overlays, uname)
         res["phase"] = "ship"
         generation = ship_and_commit(g, hosts, overlays, states, rec, dump, listing_after)
         res["merged"], res["generation_after"] = True, generation
         res["phase"] = "done"
-        return f"updated ({uname}), merged on {len(hosts)} host(s)"
+        return f"updated ({uname}), {mounts}, merged on {len(hosts)} host(s)"
     except BaseException as e:
         g.log.write(traceback.format_exc())
         if vm.overrun:

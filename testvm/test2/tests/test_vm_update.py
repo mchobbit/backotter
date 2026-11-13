@@ -1837,6 +1837,109 @@ class TestArguments(unittest.TestCase):
             self.assertIn("VM_UPDATE_RAM", self.refused("--probe", "a", "b"))
 
 
+# --- the host mount check, with stand-in commands -------------------------------------------------
+
+class TestHostMount(World):
+    def setUp(self):
+        super().setUp()
+        self.d = self.guest_dir()
+        self.cmds = []
+        self.answers = {}
+        for p in (mock.patch.object(VU, "run", self.fake_run), mock.patch.object(VU.tempfile, "tempdir", str(self.tmp))):
+            p.start()
+            self.addCleanup(p.stop)
+        os.environ.pop("VM_MOUNT_NBD", None)
+
+    def fake_run(self, cmd, **kw):
+        self.cmds.append(cmd)
+        name = next((Path(c).name for c in cmd if Path(c).name in ("vm-mount", "vm-umount", "findmnt")), "?")
+        rc, out, err = self.answers.get(name, (0, "", ""))
+        if name == "findmnt" and out == "MP":
+            out = f"{cmd[-1]} /dev/nbd14p2 bcachefs\n{cmd[-1]}/boot /dev/nbd14p1 vfat\n"
+        return subprocess.CompletedProcess(cmd, rc, out, err)
+
+    def named(self, name):
+        return [c for c in self.cmds if any(Path(x).name == name for x in c)]
+
+    def test_a_guest_not_linux_is_passed_by_with_no_command(self):
+        g = VU.Guest("g1")
+        for uname, said in (("FreeBSD 15.0-RELEASE", "UFS"), ("SunOS 5.11", "illumos"), ("Haiku 1", "BFS"),
+                            ("OpenBSD 7.8", "disklabel"), ("NetBSD 11.0", "FFSv2"), ("DragonFly 6.4", "HAMMER2"),
+                            ("Plan9 4", "only Linux")):
+            rec = VU.host_mount(g, {}, uname)
+            self.assertIsNone(rec["ok"])
+            self.assertIn(said, rec["why"])
+        self.assertEqual(self.cmds, [])
+
+    def test_mounts_the_overlay_read_only_then_unmounts(self):
+        (self.d / "g1-1.qcow2").write_text("image")
+        (self.d / "vm-run-options").write_text("--uefi --disk g1-1.qcow2\n")
+        (self.d / "luks-passphrase").write_text("pw\n")
+        g = VU.Guest("g1")
+        self.answers["findmnt"] = (0, "MP", "")
+        self.answers["vm-mount"] = (0, "Mounted\n", "vm-mount: skipping /data: UUID=x is not on this image\n")
+        with mock.patch.dict(os.environ, {"VM_MOUNT_NBD": "nbd14 nbd15"}):
+            rec = VU.host_mount(g, {g.path("g1.qcow2"): "/ram/o"}, "Linux 6.18.3")
+        self.assertTrue(rec["ok"])
+        self.assertEqual(len(rec["mounts"]), 2)
+        self.assertEqual(rec["warnings"], ["vm-mount: skipping /data: UUID=x is not on this image"])
+        self.assertIsNone(rec["left"])
+        mount = self.named("vm-mount")[0]
+        self.assertEqual(mount[:3], ["sudo", "-n", "env"])
+        self.assertIn("VM_MOUNT_NBD=nbd14 nbd15", mount)
+        at = mount.index(str(VU.TESTVM / "vm-mount"))
+        mp = mount[-1]
+        self.assertEqual(mount[at + 1:], ["--ro", "--disk", g.path("g1-1.qcow2"), "--key", str(self.d / "luks-passphrase"),
+                                          "/ram/o", mp])
+        umount = self.named("vm-umount")
+        self.assertEqual(len(umount), 1)
+        self.assertEqual(umount[0][-1], mp)
+        self.assertFalse(os.path.exists(mp))
+
+    def test_the_initramfs_key_file_unlocks_too(self):
+        (self.d / "luks-keyfile").write_text("k")
+        self.answers["findmnt"] = (0, "MP", "")
+        VU.host_mount(VU.Guest("g1"), {}, "Linux 6.18.3")
+        mount = self.named("vm-mount")[0]
+        self.assertEqual(mount[mount.index("--key") + 1], str(self.d / "luks-keyfile"))
+
+    def test_a_mount_that_fails_is_a_failure_and_still_unmounts(self):
+        g = VU.Guest("g1")
+        self.answers["vm-mount"] = (1, "", "mount: wrong fs type\nvm-mount: no partition holds /etc/fstab\n")
+        self.answers["vm-umount"] = (1, "", "vm-umount: /tmp/x was not mounted by vm-mount\n")
+        rec = VU.host_mount(g, {}, "Linux 6.18.3")
+        self.assertFalse(rec["ok"])
+        self.assertEqual(rec["why"], "vm-mount --ro exit status 1")
+        self.assertEqual(rec["tail"][-1], "vm-mount: no partition holds /etc/fstab")
+        self.assertIsNone(rec["left"])                  # vm-mount undid itself
+        self.assertEqual(len(self.named("vm-umount")), 1)
+        self.assertEqual(self.named("findmnt"), [])
+
+    def test_no_openzfs_here_passes_the_guest_by(self):
+        self.answers["vm-mount"] = (1, "", "vm-mount: /dev/nbd3p3 is ZFS, but this host has no OpenZFS\n"
+                                           "vm-mount: no partition holds /etc/fstab\n")
+        rec = VU.host_mount(VU.Guest("g1"), {}, "Linux 6.8.0")
+        self.assertIsNone(rec["ok"])
+        self.assertEqual(rec["by"], "no OpenZFS here")
+        self.assertEqual(len(self.named("vm-umount")), 1)
+
+    def test_nothing_mounted_after_success_is_a_failure(self):
+        g = VU.Guest("g1")
+        self.answers["findmnt"] = (1, "", "")
+        rec = VU.host_mount(g, {}, "Linux 6.18.3")
+        self.assertFalse(rec["ok"])
+        self.assertIn("nothing is mounted", rec["tail"][-1])
+
+    def test_an_unmount_that_fails_is_reported(self):
+        g = VU.Guest("g1")
+        self.answers["findmnt"] = (0, "MP", "")
+        self.answers["vm-umount"] = (1, "", "vm-umount: could not export ZFS pool vm-mount-7\n")
+        rec = VU.host_mount(g, {}, "Linux 6.18.3")
+        self.assertTrue(rec["ok"])
+        self.assertIn("could not export ZFS pool vm-mount-7", rec["left"])
+        self.assertIn("by hand", rec["left"])
+
+
 # --- the flow, with a stand-in VM ----------------------------------------------------------------
 
 BEFORE = "base pm dpkg\npkg a 1 amd64\n"
@@ -1914,12 +2017,14 @@ class TestFlow(World):
         (self.d / "image-state").write_text(json.dumps(self.state))
         FakeVM.in_guest, FakeVM.listings, FakeVM.hook_output, FakeVM.fail_in = "in-guest: updated\n", (BEFORE, AFTER), "=== end\n", None
         self.shipped = []
+        self.mount_rec = {"ok": True, "why": None, "mounts": ["/tmp/m / ext4"], "warnings": [], "tail": [], "left": None, "by": None}
         self.out = self.tmp / "out"
         ps = (FIX / "pkgset" / "debian12.txt").read_text()
         FakeVM.listing_after = ps
         p = [mock.patch.object(VU, "VM", FakeVM),
              mock.patch.object(VU, "check_hosts", lambda g, h, start, exclude=None: {None: self.state}),
              mock.patch.object(VU, "ship_and_commit", self.ship),
+             mock.patch.object(VU, "host_mount", self.mount),
              mock.patch.object(VU, "by_hand_row", lambda *a: None),
              mock.patch.object(VU, "fingerprint_mod", lambda: self.fp()),
              mock.patch.object(VU.os.path, "getsize", lambda p: 5 << 20)]
@@ -1932,6 +2037,11 @@ class TestFlow(World):
         m = types.SimpleNamespace(**{k: getattr(FP, k) for k in ("NoFingerprint", "sidecar")})
         m.build = lambda dump, listing: build("debian12")
         return m
+
+    def mount(self, g, overlays, uname):
+        FakeVM.last.calls.append("host-mount")
+        self.mounted = overlays
+        return dict(self.mount_rec)
 
     def ship(self, g, hosts, overlays, states, rec, dump, listing):
         self.shipped.append(rec)
@@ -1968,7 +2078,7 @@ class TestFlow(World):
         msg, res = self.run_update(hook=self.hook_files(before="before", after="after"), merge_gate="exit 0")
         c = self.calls()
         self.assertEqual([x for x in c if x not in ("uname", "ssh", "reboot-up", "up")],
-                         ["hook", "pkgset", "in-guest", "hook", "pkgset", "dump", "trim", "poweroff", "ship"])
+                         ["hook", "pkgset", "in-guest", "hook", "pkgset", "dump", "trim", "poweroff", "host-mount", "ship"])
         self.assertEqual(res["phase"], "done")
         self.assertEqual(res["rc"], 0)
         self.assertTrue(res["merged"])
@@ -2069,6 +2179,48 @@ class TestFlow(World):
         msg, res = self.run_update(try_=True)
         self.assertIn("nothing to merge", msg)
         self.assertFalse(res["merge"]["decided"])
+        self.assertNotIn("host-mount", self.calls())     # nothing would change the image
+        self.assertIsNone(res["host_mount"])
+
+    def test_the_host_mounts_the_overlays_before_the_ship(self):
+        msg, res = self.run_update()
+        self.assertEqual(self.mounted, {str(self.d / "g1.qcow2"): str(Path(FakeVM.last.ram_dir) / "o")})
+        self.assertTrue(res["host_mount"]["ok"])
+        self.assertIn("this host mounts it (1 file system(s))", msg)
+
+    def test_a_host_that_cant_mount_it_fails_the_update_and_nothing_merges(self):
+        self.mount_rec.update(ok=False, why="vm-mount --ro exit status 32", mounts=[],
+                              tail=["mount: /tmp/m: wrong fs type, bad option, bad superblock on /dev/nbd14p2"])
+        e, res = self.fails(VU.Failed)
+        self.assertIn("can no longer mount the updated disk", str(e).splitlines()[0])
+        self.assertIn("nothing is merged", str(e).splitlines()[0])
+        self.assertNotIn("ship", self.calls())
+        self.assertFalse(res["merged"])
+        self.assertEqual(res["rc"], 1)
+        self.assertEqual(res["phase"], "host-mount")
+        self.assertEqual(res["generation_after"], "a" * 64)
+        self.assertFalse(res["host_mount"]["ok"])
+        self.assertIn("mount: /tmp/m: wrong fs type, bad option, bad superblock on /dev/nbd14p2", res["tail"])
+        self.assertTrue(FakeVM.last.discarded)
+        self.assertFalse(FakeVM.last.kept)
+
+    def test_a_mount_left_behind_fails_the_update(self):
+        self.mount_rec["left"] = "vm-umount /tmp/m failed (could not export ZFS pool vm-mount-1)"
+        e, res = self.fails(VU.Failed)
+        self.assertIn("not unmounted it", str(e))
+        self.assertNotIn("ship", self.calls())
+
+    def test_try_that_cant_mount_fails_and_says_so(self):
+        self.mount_rec.update(ok=False, why="vm-mount --ro exit status 1", tail=["vm-mount: no partition holds /etc/fstab"])
+        e, res = self.fails(VU.Failed, try_=True)
+        self.assertIn("a real update wouldn't merge it", str(e))
+        self.assertEqual(res["phase"], "host-mount")
+
+    def test_a_guest_passed_by_still_merges(self):
+        self.mount_rec.update(ok=None, why="Linux can't write UFS", by="FreeBSD", mounts=[])
+        msg, res = self.run_update()
+        self.assertIn("ship", self.calls())
+        self.assertIn("no host mount (FreeBSD)", msg)
 
     def test_try_failure_keeps_its_folder(self):
         FakeVM.fail_in = 1

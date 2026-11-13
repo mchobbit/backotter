@@ -50,6 +50,9 @@ DEPLOY = "ostree/deploy"
 #   which on ostree is var/mnt/bs1-backup (/mnt links to var/mnt); phase 1
 #   had it at /tmp/a.  bs1-manifest's own "mnt/bs1-backup" is the others'.
 EXPECTED = ["etc/systemd/system.control/user-*.slice.d/50-*.conf", "var/mnt/bs1-backup"]
+# Expected only as added (bs1-manifest's ADDED): /mnt links to var/mnt, so
+# verify's "mkdir -p /mnt/bs1-backup" makes var/mnt where it wasn't.
+ADDED = ["var/mnt"]
 # Rewritten at every boot, the same but for the mtime: plasma-setup's
 # autologin setting, tuned's state, and systemd's per-slice settings of a
 # root login (SSH's; kinoite44, B1).  On the Thinkpad's Bazzite 44 (B9, run

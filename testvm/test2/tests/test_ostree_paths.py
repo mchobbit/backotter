@@ -289,6 +289,59 @@ class TestManifest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertIn("added: var/mnt/bs1-backup", out)
 
+    def test_var_mnt_added_on_ostree(self):
+        kinoite(self.root)
+        (self.root / "var").mkdir()
+        a = self.manifest("a.tsv")
+        (self.root / "var" / "mnt" / "bs1-backup").mkdir(parents=True)     # ADDED: /mnt -> var/mnt
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 0, out)
+
+    def test_bs1_mountpoint_where_there_was_no_mnt(self):
+        """NixOS (run nixos-26.05-20261113-095929): no /mnt at backup time,
+        and verify's DRIVE made /mnt/bs1-backup."""
+        (self.root / "etc").mkdir()
+        a = self.manifest("a.tsv")
+        (self.root / "mnt" / "bs1-backup").mkdir(parents=True)
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("added: 2, of which unexpected: 0", out)
+
+    def test_bs1_mountpoint_in_an_existing_mnt(self):
+        (self.root / "mnt").mkdir()
+        a = self.manifest("a.tsv")
+        (self.root / "mnt" / "bs1-backup").mkdir()
+        self.touch("mnt")
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 0, out)
+
+    def test_only_the_bs1_mountpoint_under_mnt(self):
+        a = self.manifest("a.tsv")
+        (self.root / "mnt" / "bs1-backup" / "x").mkdir(parents=True)
+        (self.root / "mnt" / "other").mkdir()
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 1)
+        self.assertIn("added: mnt/bs1-backup/x", out)
+        self.assertIn("added: mnt/other", out)
+        self.assertNotIn("added: mnt\n", out)
+
+    def test_mnt_missing_is_not_expected(self):
+        (self.root / "mnt").mkdir()
+        a = self.manifest("a.tsv")
+        (self.root / "mnt").rmdir()
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 1)
+        self.assertIn("missing: mnt", out)
+
+    def test_mnt_mode_change_is_not_expected(self):
+        (self.root / "mnt").mkdir(mode=0o755)
+        os.chmod(self.root / "mnt", 0o755)
+        a = self.manifest("a.tsv")
+        os.chmod(self.root / "mnt", 0o700)
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 1)
+        self.assertIn("changed: mnt", out)
+
     def test_old_manifest_without_the_row(self):
         kinoite(self.root)
         a = self.manifest("a.tsv")

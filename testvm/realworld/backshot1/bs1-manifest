@@ -87,6 +87,15 @@ EXPECTED = [
 # console's keymap and encoding in its libexec dir at every boot.
 REMADE = ["etc/machine-id", "usr/share/applications/mimeinfo.cache", "etc/kernel/entry-token", "usr/libexec/rc/console/*"]
 
+# Expected only as added: BackShot1's own mountpoint.  The dispatcher's
+# DRIVE mounts the backup drive with "mkdir -p /mnt/bs1-backup" when nothing
+# has it mounted already, so a system with no /mnt at backup time (NixOS,
+# whose udisks had the drive at /run/media/...: run
+# nixos-26.05-20261113-095929) comes back with mnt added.  Where /mnt was
+# there, the mkdir only moves its mtime, and a directory's mtime isn't
+# compared (same()).  mnt/bs1-backup itself is in EXPECTED.
+ADDED = ["mnt"]
+
 # NixOS makes these again from its store at every boot.
 NIXOS_EXPECTED = ["etc/.clean", "etc/group", "etc/passwd", "etc/shadow", "etc/subgid", "etc/subuid", "nix/var/nix/temproots/*", "nix/var/nix/db/*"]
 # And these, so their mtimes are new, but they have to be the same otherwise.
@@ -236,11 +245,14 @@ def xattr_diff(a, b):
     return "; ".join(f"{k}: {show(x.get(k))} -> {show(y.get(k))}" for k in sorted(set(x) | set(y)) if x.get(k) != y.get(k))
 
 
-def expected(rel, nixos, ostree=None):
+def expected(rel, nixos, ostree=None, added=False):
     """Whether a difference at REL is one a boot or the restore makes.  OSTREE:
     the default deployment (its etc is etc), or "-" (an ostree system's whose
-    default couldn't be told: no mapping, but its lists)."""
+    default couldn't be told: no mapping, but its lists).  ADDED: REL is
+    new, so the ADDED lists apply too."""
     pats = EXPECTED + (NIXOS_EXPECTED if nixos else []) + (ostree_paths.EXPECTED if ostree else [])
+    if added:
+        pats = pats + ADDED + (ostree_paths.ADDED if ostree else [])
     return any(fnmatch.fnmatch(ostree_paths.logical(rel, ostree), pat) for pat in pats)
 
 
@@ -285,7 +297,7 @@ def compare(old_path, new_path):
         print("xattrs: this baseline has none, so they weren't compared")
     bad = []
     for label, paths in (("missing", missing), ("added", added), ("changed", changed), ("xattrs", relabeled)):
-        unexpected = [p for p in paths if not expected(p, nixos, mapping[label]) and p not in snapper]
+        unexpected = [p for p in paths if not expected(p, nixos, mapping[label], label == "added") and p not in snapper]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")
         bad += [f"{label}: {p}" + (f" ({xattr_diff(old[p], new[p])})" if label == "xattrs" else "") for p in unexpected]
     linked = sum(1 for p in set(old) & set(new) if len(old[p]) > 8 and len(new[p]) > 8)

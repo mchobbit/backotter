@@ -68,15 +68,36 @@
 # work, leftovers) can't make one waiter hold up the host. The heat limit is
 # the lowest HOT_C of anyone before in line, so jobs behind a waiter that is
 # held back by heat don't keep the CPU hot.
+# The ledger's files are made by whoever needs them first, m or root, in the
+# sticky /mnt/bko-ram: m can't rename over root's (so no sed -i or mv on
+# them), and fs.protected_regular (2 on the hosts) keeps root from opening
+# m's with O_CREAT (so no >, >> or touch). So they are made 666 when missing,
+# then only opened without O_CREAT and rewritten in place (ledger_files, put,
+# rewrite, add). CMP_LEDGER_DIR (default /mnt/bko-ram) is for tests only
+# (cmp-run-test.sh): a ledger of its own, beside the real one.
 set -u
 HERE=$(dirname "$(realpath "${BASH_SOURCE[0]}")")   # before the cd: $0 may be relative
 cd ~/backotter-work
 # Jobs run under the iolog.sh beside this file (a private copy's own), or the
 # shared one when there is none there (a lone copy of cmp-run.sh).
 IOLOG=$HERE/iolog.sh; [ -x "$IOLOG" ] || IOLOG=$PWD/testvm/compare/iolog.sh
-RAM=/mnt/bko-ram LEDGER=/mnt/bko-ram/.reserve WAITS=/mnt/bko-ram/.reserve.wait
+RAM=/mnt/bko-ram LEDGER=${CMP_LEDGER_DIR:-/mnt/bko-ram}/.reserve WAITS=${CMP_LEDGER_DIR:-/mnt/bko-ram}/.reserve.wait
 mountpoint -q $RAM || { echo "no tmpfs at $RAM" >&2; exit 1; }
-touch $LEDGER $LEDGER.lock $WAITS 2>/dev/null; chmod 666 $LEDGER $LEDGER.lock $WAITS 2>/dev/null
+ledger_files() {  # make the ledger's files that are missing, 666 (noclobber: O_EXCL, never another's)
+    local f
+    for f in $LEDGER $LEDGER.lock $WAITS; do
+        [ -e $f ] || (umask 0; set -C; : >$f) 2>/dev/null
+    done
+}
+put() {  # FILE TEXT: FILE's content becomes TEXT, in place (the same inode, no O_CREAT)
+    printf '%s' "$2" | dd of="$1" conv=nocreat bs=1M iflag=fullblock status=none
+}
+rewrite() {  # FILE CMD...: FILE's content becomes CMD's output (CMD reads FILE), if CMD succeeds
+    local f=$1 c; shift
+    c=$("$@"; rc=$?; echo .; exit $rc) || return; put "$f" "${c%.}"
+}
+add() { printf '%s\n' "$2" | dd of="$1" conv=nocreat,notrunc oflag=append status=none; }   # FILE LINE
+ledger_files; chmod 666 $LEDGER $LEDGER.lock $WAITS 2>/dev/null
 H=$(hostname -s)
 DISKS_DIR=${DISKS_DIR:-/bkoscratch/compare-disks}
 
@@ -146,7 +167,7 @@ prune() {  # [PID]: drop rows (ledger and line) whose holder is gone, or PID's (
             # (A row that isn't PID first is junk: "." would pass as /proc/.)
             [[ $pid =~ ^[0-9]+$ ]] && [ -d /proc/$pid ] && [ "$pid" != "${1:-}" ] && keep+="$pid $rest"$'\n'
         done <$f
-        printf '%s' "$keep" >$f
+        put $f "$keep"
     done
 }
 after_line() {  # PID MAXDISK MAXMEM -> "DISK MEM AHEAD HOT_C": the room left once
@@ -166,14 +187,13 @@ after_line() {  # PID MAXDISK MAXMEM -> "DISK MEM AHEAD HOT_C": the room left on
 queue_up() {  # PID DISK MEM WHAT...: take a place in line, or change the needs at it (ledger locked)
     local pid=$1 d=$2 m=$3; shift 3
     if grep -q "^$pid " $WAITS; then
-        awk -v p="$pid" -v d="$d" -v m="$m" '$1 == p { $2 = d; $3 = m } { print }' $WAITS >$WAITS.new &&
-            cat $WAITS.new >$WAITS; rm -f $WAITS.new
+        rewrite $WAITS awk -v p="$pid" -v d="$d" -v m="$m" '$1 == p { $2 = d; $3 = m } { print }' $WAITS
     else
-        echo "$pid $d $m ${HOT_C:-95} $*" >>$WAITS
+        add $WAITS "$pid $d $m ${HOT_C:-95} $*"
     fi
 }
-leave_line() { sed -i "/^$1 /d" $WAITS; }   # PID (ledger locked)
-lock() { exec {lk}>>$LEDGER.lock && flock -w 600 $lk; }
+leave_line() { rewrite $WAITS sed "/^$1 /d" $WAITS; }   # PID (ledger locked)
+lock() { ledger_files; exec {lk}<$LEDGER.lock && flock -w 600 $lk; }
 unlock() { exec {lk}>&-; }
 hot() {  # [HOT_C]: true while the CPU or an NVMe is too hot to start more
     local h n t
@@ -218,7 +238,7 @@ if [ "${1:-}" = --reserve ]; then
         prune
         if read -r maxd maxm < <(budget) && read -r maxd maxm _ hotc < <(after_line $$ "$maxd" "$maxm") &&
                 ! hot "$hotc" && fits "$maxd" "$d" "$maxm" "$m"; then
-            echo "$$ $d $m - reserve $*" >>$LEDGER; leave_line $$; unlock; break
+            add $LEDGER "$$ $d $m - reserve $*"; leave_line $$; unlock; break
         fi
         queue_up $$ "$d" "$m" reserve "$@"
         unlock; sleep 30
@@ -311,7 +331,7 @@ worker() {  # SLOT
         if [ $rc = 0 ] && [ -n "$line" ]; then
             parse "$line"
             scope=bko-$tag-$slot-$(date +%s).scope
-            echo "$me $d $m $scope $tag $line" >>$LEDGER
+            add $LEDGER "$me $d $m $scope $tag $line"
             leave_line $me
         fi
         [ $rc = 3 ] && leave_line $me
@@ -352,7 +372,7 @@ worker() {  # SLOT
         jp=$!
         # The row belongs to the job (sudo lives as long as it), not to this
         # shell, so killing the worker doesn't free room the job still holds.
-        if lock; then sed -i "s/^$me /$jp /" $LEDGER; unlock; fi
+        if lock; then rewrite $LEDGER sed "s/^$me /$jp /" $LEDGER; unlock; fi
         wait $jp; rc=$?
         log "$g exit $rc"
         echo "$g $rc $H" >>cmp-logs/$tag/done

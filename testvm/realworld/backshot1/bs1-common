@@ -83,6 +83,22 @@ root_source() { findmnt -nro SOURCE "$(root_mount)"; }
 # they run in; the person disables them for longer (README.md).
 UPDATERS="uupd rpm-ostreed-automatic bootc-fetch-apply-updates"
 
+# Snapper's timers make and delete snapshots, and on CachyOS each run also
+# has limine-snapper-sync rewrite /boot/limine.conf and copy kernels into
+# /boot/<machine-id>/limine_history: snapper-cleanup.timer fires 10 min after
+# boot, which landed in the middle of a phase 1 (2026-11-13).  bs1-backup and
+# bs1-verify hold them for the boot they run in, on any system that has them.
+SNAPSHOTTERS="snapper-timeline snapper-cleanup"
+hold_snapshotters() {
+    local u
+    command -v systemctl >/dev/null || return 0
+    for u in $SNAPSHOTTERS; do
+        if systemctl is-active -q "$u.timer"; then systemctl stop "$u.timer"; say "stopped $u.timer for this boot"; fi
+        # A run already under way finishes first.
+        while systemctl is-active -q "$u.service"; do sleep 1; done
+    done
+}
+
 # on_disk SOURCE DISK: does this mount's source rest on DISK, through any stack
 # of partitions, md, LUKS and LVM, or a ZFS pool?
 on_disk() {

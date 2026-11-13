@@ -88,6 +88,7 @@ if is_ostree; then
     done
     ostree_moved >"$RUN/baseline/ostree-before.txt" 2>&1
 fi
+hold_snapshotters
 
 # Before the tree is mounted, so the layout doesn't list its binds.
 step "the layout"

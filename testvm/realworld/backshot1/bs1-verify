@@ -134,6 +134,7 @@ step "the checks"
 disk=$(internal_disk) || { say "no single disk has serial $INTERNAL_SERIAL"; exit 1; }
 # Mounts an ESP that's on an automount.
 ls /boot/efi /efi /boot >/dev/null 2>&1
+hold_snapshotters
 if is_ostree; then
     # First, so nothing stages a deployment while the rest is compared.
     hold_updates

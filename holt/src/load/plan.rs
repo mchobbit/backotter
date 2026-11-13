@@ -175,7 +175,7 @@ mod tests {
     use crate::sys::FakeRunner;
     use crate::testutil::Tree;
 
-    const TOOLS: [&str; 8] = ["wipefs", "sfdisk", "udevadm", "mke2fs", "tune2fs", "mkswap", "mkfs.btrfs", "btrfs"];
+    const TOOLS: [&str; 9] = ["wipefs", "dd", "sfdisk", "udevadm", "mke2fs", "tune2fs", "mkswap", "mkfs.btrfs", "btrfs"];
 
     #[test]
     fn lvm_versions() {

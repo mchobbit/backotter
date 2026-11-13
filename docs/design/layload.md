@@ -131,8 +131,18 @@ filled in.
 
 ### `partition`
 
-Per disk: `wipefs -a` on the disk and on every old partition, then the
-table:
+Per disk: `wipefs -a` on the disk (its O_EXCL open also refuses a disk
+something still holds, before anything else writes), then zeroes with `dd`
+through the disk's own node: its first 4 MiB and last 1 MiB, and the first
+4 MiB (all of it, when smaller) and last 1 MiB of each partition the new
+table will have.  wipefs erases only the magic it recognizes on the device
+it's given, and the old partitions' content is still there: a PV label, a
+LUKS header, an md superblock (1.0 and 0.90 at the end), ZFS labels (two at
+each end) or a filesystem's superblock at a new partition's start or end
+would be found by udev, LVM autoactivation, md's incremental assembly or a
+pool import as soon as the kernel showed the partition.  Zeroed before the
+table is written, the kernel never shows them.  Then `udevadm settle`, and
+the table:
 
 - GPT: written with `sfdisk` from a script built from the JSON, with the
   disk GUID (`label-id`), each partition's start, size, type GUID, partition

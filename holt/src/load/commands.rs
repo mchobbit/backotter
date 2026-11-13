@@ -383,6 +383,66 @@ pub fn sfdisk_script(d: &Disk, target: &str, same_size: bool) -> Result<String, 
     Ok(out)
 }
 
+/// How much of a disk's (and each new partition's) start and end the
+/// partition stage zeroes.  wipefs erases only the magic it recognizes, on
+/// the device it's given; these cover what sits around it: a GPT and its
+/// backup at the disk's end, the LVM label and metadata area, LUKS2's two
+/// headers, md 1.1/1.2 superblocks at the start and 0.90/1.0 ones at the
+/// end, ZFS's two labels at each end, filesystem superblocks.
+pub const ZERO_HEAD: u64 = 4 << 20;
+pub const ZERO_TAIL: u64 = 1 << 20;
+
+/// `dd` writing COUNT blocks of BS zero bytes to DEV, SEEK blocks in.
+fn zero(dev: &str, bs: u64, seek: u64, count: u64) -> Cmd {
+    let mut a = vec!["dd".to_string(), "if=/dev/zero".into(), format!("of={dev}"), format!("bs={bs}")];
+    if seek > 0 {
+        a.push(format!("seek={seek}"));
+    }
+    a.push(format!("count={count}"));
+    a.push("conv=fsync".into());
+    Cmd::new(&a)
+}
+
+/// A target disk's first 4 MiB and last 1 MiB, its size read when it runs
+/// (`blockdev --getsz`, in 512-byte sectors, whatever the disk's own).
+fn zero_disk(dev: &str) -> Vec<Cmd> {
+    let tail = ZERO_TAIL / 512;
+    let q = shell_quote(dev);
+    vec![
+        Cmd::new(&["dd", "if=/dev/zero", &format!("of={dev}"), "bs=1M", &format!("count={}", ZERO_HEAD >> 20), "conv=fsync"]).why(format!("{dev}: its first {} MiB zeroed, and its last {} MiB (a GPT's backup, md 0.90/1.0 superblocks, ZFS's end labels)", ZERO_HEAD >> 20, ZERO_TAIL >> 20)),
+        Cmd::new(&["sh", "-c", &format!("n=$(blockdev --getsz {q}) && dd if=/dev/zero of={q} bs=512 seek=$((n - {tail})) count={tail} conv=fsync")]),
+    ]
+}
+
+/// Each partition the table will have: its first 4 MiB (all of it when
+/// it's smaller) and its last 1 MiB, written through the disk before the
+/// table is, so neither udev nor LVM's autoactivation, md's incremental
+/// assembly or a ZFS import ever sees an old layer on a new partition (the
+/// old partitions' content is all still there; wipefs saw only the disk's).
+/// A partition inside the disk's first 4 MiB is zeroed already; the
+/// extended partition holds only the EBRs sfdisk writes.
+fn zero_parts(d: &Disk, dev: &str) -> Vec<Cmd> {
+    let ss = d.sector_size;
+    let (head, tail) = (ZERO_HEAD / ss, ZERO_TAIL / ss);
+    let mut parts: Vec<&Part> = d.parts.iter().filter(|p| !p.extended && p.sectors > 0 && p.start_lba + p.sectors > head).collect();
+    parts.sort_by_key(|p| p.number);
+    let mut out = Vec::new();
+    if !parts.is_empty() {
+        out.push(Cmd::note(format!("the new partitions' old content zeroed through {dev}, before its table names them (blocks of {ss} bytes, at their start= sectors)")));
+    }
+    for p in parts {
+        let h = p.sectors.min(head);
+        if h == p.sectors {
+            out.push(zero(dev, ss, p.start_lba, h).why(format!("{}: all of it", p.name)));
+            continue;
+        }
+        let t = (p.sectors - h).min(tail);
+        out.push(zero(dev, ss, p.start_lba, h).why(format!("{}: its first {} MiB and its last {} MiB", p.name, ZERO_HEAD >> 20, ZERO_TAIL >> 20)));
+        out.push(zero(dev, ss, p.start_lba + p.sectors - t, t));
+    }
+    out
+}
+
 impl Builder<'_> {
     fn partition(&mut self) -> Vec<Cmd> {
         if let Some(fam) = self.fam {
@@ -392,11 +452,17 @@ impl Builder<'_> {
         for (src, tgt) in self.names.mapping.pairs.clone() {
             let Some(d) = self.layout.disk(&src) else { continue };
             let dev = format!("/dev/{tgt}");
+            // wipefs first: it opens the disk O_EXCL, so a disk with a
+            // partition still mounted or held fails here, before dd (which
+            // takes no such lock) writes anything.
             out.push(Cmd::new(&["wipefs", "--all", &dev]).why(format!("{src} -> {dev}: clear the old table and signatures")));
+            out.extend(zero_disk(&dev));
             if d.table.is_none() {
                 out.push(Cmd::note(format!("{src} has no partition table: its content goes on {dev} itself")));
                 continue;
             }
+            out.extend(zero_parts(d, &dev));
+            out.push(Cmd::new(&["udevadm", "settle"]).why(format!("udev done with {dev} before sfdisk takes it")));
             let same_size = !self.names.mapping.bigger.contains(&src);
             match sfdisk_script(d, &tgt, same_size) {
                 Ok(script) => out.push(Cmd::new(&["sfdisk", "--wipe", "always", "--wipe-partitions", "always", &dev]).input(script)),
@@ -3004,6 +3070,88 @@ mod tests {
         assert!(t.contains("/dev/vdb1 : start=2048, size=1953792, type=83, bootable\n"), "{t}");
         assert!(t.contains("/dev/vdb3 : start=5861376, size=27693056, type=83\n"), "{t}");
         assert!(t.ends_with("udevadm settle\n"));
+    }
+
+    /// The (seek, count) in sectors of each dd of `dev` the commands make.
+    fn dds(cmds: &[Cmd], dev: &str) -> Vec<(u64, u64)> {
+        let arg = |c: &Cmd, k: &str| c.argv.iter().find_map(|a| a.strip_prefix(k)).map(|v| v.parse::<u64>().unwrap());
+        cmds.iter().filter(|c| c.argv.first().map(String::as_str) == Some("dd") && c.argv.contains(&format!("of={dev}"))).map(|c| (arg(c, "seek=").unwrap_or(0), arg(c, "count=").unwrap())).collect()
+    }
+
+    /// The disk's first 4 MiB and last 1 MiB, then each new partition's,
+    /// all after wipefs (whose O_EXCL open refuses a busy disk) and before
+    /// sfdisk writes the table, so nothing old is on a partition when the
+    /// kernel first shows it, let alone when assemble or format writes to it.
+    #[test]
+    fn partition_zeroes_the_disk_then_each_new_partition() {
+        let b = built(&[]);
+        let cmds = b.stage(Stage::Partition);
+        let t = text(cmds);
+        let at = |needle: &str| t.find(needle).unwrap_or_else(|| panic!("{needle:?} not in:\n{t}"));
+        let order = [
+            "wipefs --all /dev/vdb\n",
+            "dd if=/dev/zero of=/dev/vdb bs=1M count=4 conv=fsync\n",
+            "sh -c 'n=$(blockdev --getsz /dev/vdb) && dd if=/dev/zero of=/dev/vdb bs=512 seek=$((n - 2048)) count=2048 conv=fsync'\n",
+            "# vda1: its first 4 MiB and its last 1 MiB\ndd if=/dev/zero of=/dev/vdb bs=512 seek=2048 count=8192 conv=fsync\n",
+            "dd if=/dev/zero of=/dev/vdb bs=512 seek=1953792 count=2048 conv=fsync\n",
+            "dd if=/dev/zero of=/dev/vdb bs=512 seek=1955840 count=8192 conv=fsync\n",
+            "dd if=/dev/zero of=/dev/vdb bs=512 seek=5859328 count=2048 conv=fsync\n",
+            "dd if=/dev/zero of=/dev/vdb bs=512 seek=5861376 count=8192 conv=fsync\n",
+            "dd if=/dev/zero of=/dev/vdb bs=512 seek=33552384 count=2048 conv=fsync\n",
+            "udevadm settle\nsfdisk ",
+        ];
+        for w in order.windows(2) {
+            assert!(at(w[0]) < at(w[1]), "{:?} before {:?}:\n{t}", w[0], w[1]);
+        }
+        // Each partition's ranges lie inside it, on the disk's node (never
+        // a partition's, which the kernel may still have from the old table).
+        let l = Layout::from_json(crate::json::parse(&sample::bios_mbr()).unwrap()).unwrap();
+        let parts = &l.disks[0].parts;
+        let zs = dds(cmds, "/dev/vdb");
+        assert_eq!(zs.len(), 1 + 2 * parts.len(), "{zs:?}");
+        for &(seek, count) in &zs[1..] {
+            assert!(parts.iter().any(|p| seek >= p.start_lba && seek + count <= p.start_lba + p.sectors), "{seek}+{count} isn't inside a partition");
+        }
+        assert!(!cmds.iter().any(|c| c.argv.iter().any(|a| a.starts_with("of=/dev/vdb") && a != "of=/dev/vdb")), "{t}");
+        // Nothing later zeroes: assemble and format write to what's clean.
+        for s in [Stage::Assemble, Stage::Format, Stage::Mount, Stage::Boot] {
+            assert!(!text(b.stage(s)).contains("if=/dev/zero"), "{}", text(b.stage(s)));
+        }
+    }
+
+    /// A partition inside the disk's first 4 MiB (a 1 MiB BIOS boot) is
+    /// zeroed by the disk's own; one smaller than 5 MiB is zeroed whole; on
+    /// 4096-byte sectors the counts are the disk's sectors.
+    #[test]
+    fn partition_zeroes_small_partitions_whole() {
+        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/rocky10-lvm/src.json")).unwrap();
+        let b = built_from(&j, &[]);
+        let zs = dds(b.stage(Stage::Partition), "/dev/vdb");
+        // vda1 is sectors 2048-4095: no dd of its own.
+        assert!(!zs.iter().any(|&(s, _)| s == 2048), "{zs:?}");
+        assert!(zs.contains(&(4096, 8192)), "{zs:?}");
+        let l = Layout::from_json(crate::json::parse(&j).unwrap()).unwrap();
+        let d = l.disk("vda").unwrap();
+        let mut d4 = d.clone();
+        d4.sector_size = 4096;
+        d4.parts = vec![Part { start_lba: 256, sectors: 1024, ..d.parts[1].clone() }, Part { start_lba: 2048, sectors: 1280, ..d.parts[1].clone() }];
+        let z4 = dds(&zero_parts(&d4, "/dev/vdb"), "/dev/vdb");
+        // The first is 4 MiB (from 1 MiB in): all of it.  The second is 5 MiB:
+        // its first 4 and its last 1.
+        assert_eq!(z4, vec![(256, 1024), (2048, 1024), (3072, 256)]);
+    }
+
+    /// Only the disks the plan maps are zeroed: a layout's other disk,
+    /// mapped nowhere, is touched by nothing.
+    #[test]
+    fn partition_zeroes_only_mapped_disks() {
+        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/debian13-stack/src.json")).unwrap();
+        let b = built_from(&j, &[]);
+        let cmds = b.stage(Stage::Partition);
+        let zeroed: Vec<&String> = cmds.iter().filter(|c| c.argv.first().map(String::as_str) == Some("dd")).flat_map(|c| c.argv.iter().filter(|a| a.starts_with("of="))).collect();
+        assert!(!zeroed.is_empty() && zeroed.iter().all(|a| *a == "of=/dev/vdb"), "{zeroed:?}");
+        let t = text(cmds);
+        assert_eq!(t.matches("blockdev --getsz").count(), 1, "{t}");
     }
 
     #[test]

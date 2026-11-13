@@ -1,6 +1,6 @@
 """The hosts' limits in the host table (gaps P13, P14, P15): stic_slots, guest_slots, holt_jobs,
-base_gib and holt_disk_mode, each a row's field, else the table's class_limits, else the default
-(3, 3, 3, 6, false).  With the table as it is every host has the defaults, and the planners give
+base_gib, holt_disk_mode and bs2_slots, each a row's field, else the table's class_limits, else the
+default (3, 3, 3, 6, false, 3).  With the table as it is every host has the defaults, and the planners give
 the plans they gave before (estimates.pack and drive.simulate against the code of 602922f, the
 commit before the limits).  An alternative table (BKO_HOSTS_JSON) shows the consumers follow
 it: drive.py's --slots and guest slots, the big-first preference, pack's per-host slots,
@@ -39,7 +39,7 @@ QUEUE = os.path.join(TESTVM, "holttest1d", "ht1-queue.sh")
 DRIVE_PY = os.path.join(TESTVM, "stictest1", "drive.py")
 BEFORE = "602922f"   # the commit before the limits
 BASH = shutil.which("bash")
-DEFAULTS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False}
+DEFAULTS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False, "bs2_slots": 3}
 
 
 def load_module(name, path):
@@ -99,14 +99,17 @@ class AltTable(unittest.TestCase):
 class Limits(AltTable):
     def test_the_real_table(self):
         """The user's choice (2026-11-13): the small hosts run 2 stic slots and 1 holt job with a
-        BASE_GIB of 4; the big hosts keep the defaults. No row sets a limit of its own."""
-        small = dict(DEFAULTS, stic_slots=2, holt_jobs=1, base_gib=4)
+        BASE_GIB of 4; the big hosts keep the defaults. bs2 runs 5 cases at once on a big host,
+        2 on a small one. No row sets a limit of its own."""
+        small = dict(DEFAULTS, stic_slots=2, holt_jobs=1, base_gib=4, bs2_slots=2)
+        big = dict(DEFAULTS, bs2_slots=5)
         self.assertEqual(H.LIMITS, DEFAULTS)
         for r in H.rows(all_=True):
-            self.assertEqual(H.limits(r["name"]), small if r["class"] == "small" else DEFAULTS, r["name"])
+            self.assertEqual(H.limits(r["name"]), small if r["class"] == "small" else big, r["name"])
             self.assertFalse(set(H.LIMITS) & set(r), f"{r['name']}: a limit set in its row")
         self.assertEqual(H.limits("nosuch"), DEFAULTS)
-        self.assertEqual(H.load()["class_limits"], {"big": {}, "small": {"stic_slots": 2, "holt_jobs": 1, "base_gib": 4}})
+        self.assertEqual(H.load()["class_limits"], {"big": {"bs2_slots": 5},
+                                                    "small": {"stic_slots": 2, "holt_jobs": 1, "base_gib": 4, "bs2_slots": 2}})
         self.assertEqual(set(H.load()["limits"]), set(H.LIMITS), "hosts.json's limits describe each one")
 
     def test_row_then_class_then_default(self):
@@ -128,7 +131,8 @@ class Limits(AltTable):
                dict(cage={"base_gib": "6"}), dict(cage={"base_gib": True}), dict(cage={"holt_disk_mode": "yes"}),
                dict(cage={"holt_disk_mode": 1}), dict(class_limits={"tiny": {}}),
                dict(class_limits={"small": {"nope": 1}}), dict(class_limits={"small": {"holt_jobs": 0}}),
-               dict(class_limits={"small": 3}), dict(class_limits=[])]
+               dict(class_limits={"small": 3}), dict(class_limits=[]), dict(cage={"bs2_slots": 7}),
+               dict(cage={"bs2_slots": 0})]
         for i, e in enumerate(bad):
             with self.subTest(e=e):
                 with self.assertRaises(H.TableError):

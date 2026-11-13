@@ -13,20 +13,48 @@ From the Mac, in a checkout of this branch:
     testvm/backshot2/bs2 replay|shrink CASE [--tier N]
     testvm/backshot2/bs2 soak CASE N
     testvm/backshot2/bs2 status RUN
+    testvm/backshot2/bs2 bin FROM                     # FROM's /bkoscratch/backshot2/bin to the other hosts
 
-`bs2` rsyncs `testvm/` and `holt/` to `~/backotter-work/bs2-wt` on its two
-hosts, Chopin and Cinqcent (their ssh from testvm/hosts.json; never the
-shared `testvm/`) and runs `bs2-host` there.  Chopin runs
-`alpine324` and `alpine324-uefi`, Cinqcent `alpine324-lvm` and
-`alpine324-luks` (bs2's `HOME`; the small hosts' caches hold only
-`alpine324`, the other three aren't published).  It uses ports 2943-2949
-(`bs2-host --ports`) on each host it runs on.  Each host needs, once:
+`bs2` rsyncs `testvm/` and `holt/` to `~/backotter-work/bs2-wt` on the hosts
+it uses (their ssh from testvm/hosts.json; never the shared `testvm/`) and
+runs `bs2-host` there.  A BackShot2 run uses every enabled host that holds
+the sources (`--hosts` narrows it): chopin, cinqcent and copland hold all
+four, cage only `alpine324`.
+
+How a run spreads.  Each source has a lead: its `HOME` host (chopin for
+`alpine324` and `alpine324-uefi`, cinqcent for `alpine324-lvm` and
+`alpine324-luks`) when that is in the run, else the first that holds it.
+The lead draws the source's tier 1 and 2 cases (`bs2-host enqueue --to`),
+exactly as one host alone would, and runs its tier 0 sweep.  bs2 then
+spreads the cases (`split()`), not the sources: each goes to the host
+holding its source that would finish it soonest for its slots, so the
+hosts finish about together, and its case file is copied there from the
+lead.  Each host runs its own `queue.txt` on `bs2_slots` slots
+(testvm/hosts.json: big hosts 5, unmeasured; small hosts 2).  `bs2 status
+RUN` adds each host's rows up.  `plan` prints each host's share and hours.
+
+Before the cases are drawn, bs2 checks each host (the rescuers and their
+keys, ht1.sh's debs, rustic-bko, and `/bkoscratch/backshot2/bin/` alike on
+every host; it stops, naming what is missing) and has each prepare the
+sources it holds (`bs2-host source`, as root under `cmp-run.sh --reserve 2
+3`, port 2949; nothing to do when ready).  A host whose generation of a
+source differs from the lead's stops the run.
+
+Ports 2943-2949 on each host: the queue's slots 2943-2948 (at most 6), a
+source's preparing and a tier 1 by hand 2949.
+
+Each host needs, once:
 
 - `/bkoscratch/backshot2/bin/`: `bko-holt` (the build under test: a static
   build of this tree's holt, `build-holt.sh linux`), `bs2_plan` (`cargo test
   --release --no-run --test bs2_plan`'s binary) and `caps.json` (`bs2-host caps`);
-- each source prepared: `sudo -E bs2-host source SOURCE` (its live dump and
-  a copy of its root, for tier 0's dry runs; again after an image update).
+  the same on every host (`bs2 bin FROM` copies one host's to the others);
+- ht1.sh's (`/bkoscratch/holttest1d/bin/`'s debs, the rescuers).
+
+Times (`SECS` in bs2): tier 1 measured ~155 s a case (2026-11-11, cinqcent,
+400 cases on 3 slots: 6.1 h), ~50 s of it the rescuer's apt of the bcachefs
+debs and 5 s polls; ht1.sh now installs bcachefs only for a layout that has
+one, and polls every second, so ~110 s est.
 
 ## The leftovers set
 

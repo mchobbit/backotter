@@ -239,8 +239,9 @@ class DerivedEqualsBefore(unittest.TestCase):
 
     def test_bs2(self):
         bs2 = load("ht_bs2", os.path.join(TESTVM, "backshot2", "bs2"), {H.ENV: TABLE})
-        self.assertEqual(bs2.HOSTS, {"chopin": "m@chopin.local", "cinqcent": "m@cinqcent.local"})
-        self.assertEqual(list(bs2.HOSTS), ["chopin", "cinqcent"])
+        # (Since 2026-11-13 a run's hosts are every enabled one; HOME's leads stay chopin and cinqcent.)
+        self.assertEqual(bs2.RUN_HOSTS, {h: f"m@{h}.local" for h in ("chopin", "cinqcent", "copland", "cage")})
+        self.assertEqual(list(dict.fromkeys(bs2.HOME.values())), ["chopin", "cinqcent"])
 
     def test_guest_slot(self):
         got = {h: bash('. "$1"; slot_range_here "$2"', GUEST_SLOT, h).stdout.strip()

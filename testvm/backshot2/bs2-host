@@ -9,6 +9,10 @@ never the shared ~/backotter-work/testvm.
   bs2-host tier0-cases CASE... [--run RUN]   given cases, through tier 0
   bs2-host tier1 CASE --tier 1|2 [--run RUN] [--port P]
                                          (root, under cmp-run.sh --reserve) one case through ht1.sh
+  bs2-host enqueue SOURCE N --tier 1|2 --run RUN [--from SEED] [--to FILE]
+                                         (root) N cases that pass tier 0, for the queue (RUN/queue.txt,
+                                         or FILE: bs2 splits them over its hosts)
+  bs2-host queue RUN [--slots N]         (as m) N workers (1-6, ports 2943-2948) taking RUN/queue.txt
   bs2-host leftovers [SET] [--run RUN] [--port P] [--from N] [--release] [--plan]
                                          (as m) the leftovers set: its steps in order on one disk
   bs2-host gen SOURCE SEED              print the case SEED gives (no run)
@@ -63,8 +67,10 @@ def generation(source):
     d = f"{VMS}/{source}"
     try:
         with open(f"{d}/image-state") as f:
-            return "gen:" + json.load(f)["generation"]
-    except (OSError, ValueError, KeyError):
+            g = json.load(f)["generation"]
+        if g:   # (a store copy's image-state may have "generation": null: its image's sum, then)
+            return "gen:" + g
+    except (OSError, ValueError, KeyError, TypeError):
         pass
     img = f"{d}/{source}.qcow2"
     st = os.stat(img)
@@ -581,7 +587,8 @@ def cmd_shrink(a):
 def cmd_enqueue(a):
     """Cases for tier T: drawn from SEED on, kept when they pass tier 0 here
     (a tier 0 FAIL is a finding already), and for tier 2 only those that touch
-    an ESP or ask for --no-nvram or --removable."""
+    an ESP or ask for --no-nvram or --removable.  Their lines go on RUN/queue.txt,
+    or with --to in FILE (written anew), for bs2 to split over its hosts."""
     gen, dump = load_source(a.source)
     rd = run_dir(a.run)
     picked, seed, tried = [], a.start, 0
@@ -602,7 +609,7 @@ def cmd_enqueue(a):
                 p = f"{rd}/cases/{name}.case"
                 C.write(p, dict(c, name=name))
                 picked.append(p)
-    with open(f"{rd}/queue.txt", "a") as f:
+    with open(a.to or f"{rd}/queue.txt", "w" if a.to else "a") as f:
         for p in picked:
             f.write(f"{a.tier} {p}\n")
     print(json.dumps({"enqueued": len(picked), "tier": a.tier, "source": a.source, "next_seed": seed}))
@@ -610,11 +617,15 @@ def cmd_enqueue(a):
 
 def cmd_queue(a):
     """SLOTS workers taking the run's queue.txt in order (a flock'd counter), each case
-    under its own cmp-run.sh reservation, as m; RUN/stop stops new starts."""
+    under its own cmp-run.sh reservation, as m; RUN/stop stops new starts.  A worker
+    a port: SLOTS of PORTS at most (2943-2948: 2949 is a by-hand tier 1's)."""
     import fcntl
     rd = run_dir(a.run)
     lo, hi = (int(x) for x in a.ports.split("-"))
-    ports = list(range(lo, hi + 1))[: a.slots]
+    ports = list(range(lo, hi + 1))
+    if not 1 <= a.slots <= len(ports):
+        die(f"queue: --slots {a.slots}: 1 to {len(ports)}, a port each of {a.ports}")
+    ports = ports[: a.slots]
 
     def take():
         with open(f"{rd}/queue.next", "a+") as f:
@@ -700,10 +711,11 @@ def main():
     x.add_argument("--tier", type=int, default=1, choices=(1, 2))
     x.add_argument("--from", dest="start", type=int, default=100000)
     x.add_argument("--run", required=True)
+    x.add_argument("--to", help="write the picked cases' lines here (anew), not on RUN/queue.txt")
     x = s.add_parser("queue")
     x.add_argument("run")
     x.add_argument("--slots", type=int, default=3)
-    x.add_argument("--ports", default="2943-2949")
+    x.add_argument("--ports", default="2943-2948")
     x.add_argument("--disk", default="2")
     x.add_argument("--mem", default="3")
     x = s.add_parser("shrink")

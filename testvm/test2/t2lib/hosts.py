@@ -39,6 +39,9 @@ gets the defaults):
                            memory fits runs on /bkoscratch there (HT_RAM=0, --reserve 0 M:
                            ht1-queue.sh's DISK_OVER), and placement checks its memory only
                            (not a +img line: ht1.sh runs +img only in the RAM disk)
+    bs2_slots        3     BackShot2's tier 1 and 2 cases at once there (bs2-host queue
+                           --slots), 1-6: its queue's ports are 2943-2948 (2949 is a by-hand
+                           tier 1's)
 The defaults are what every host had before the table had limits.
 
 Command line (what hosts.sh wraps; exit 0 ok, 1 no such host, 2 usage or a bad table):
@@ -66,7 +69,7 @@ FIELDS = ("name", "ssh", "ip", "host_key_alias", "slot_range", "stic_ports", "cl
 REQUIRED = ("name", "ssh", "slot_range", "stic_ports", "class", "roles", "default", "enabled")
 # A host's limits and their defaults (the docstring): optional row fields, and the fields of
 # the table's class_limits {CLASS: {FIELD: VALUE}}.
-LIMITS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False}
+LIMITS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False, "bs2_slots": 3}
 FIELDS += tuple(LIMITS)
 NAME_RE = re.compile(r"[a-z][a-z0-9-]*\Z")
 SSH_RE = re.compile(r"[A-Za-z0-9._-]+@[A-Za-z0-9._-]+\Z")
@@ -104,6 +107,8 @@ def limit_error(k, v):
         return None if type(v) in (int, float) and 0 <= v <= 64 else "a number of GiB, 0 to 64"
     if k == "guest_slots":
         return None if type(v) is int and 1 <= v <= 3 else "1 to 3 (every check.sh's slot_take 3)"
+    if k == "bs2_slots":
+        return None if type(v) is int and 1 <= v <= 6 else "1 to 6 (bs2-host queue's ports 2943-2948)"
     return None if type(v) is int and 1 <= v <= 16 else "a whole number, 1 to 16"
 
 

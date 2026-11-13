@@ -500,14 +500,15 @@ class Bs2Hosts(unittest.TestCase):
     def setUp(self):
         self.bs2 = load("st_bs2", os.path.join(TESTVM, "backshot2", "bs2"), {})
 
-    def test_default_is_home(self):
+    def test_default_is_every_enabled_host(self):
+        """A run's hosts: every enabled one (its cases go where their source is, bs2's split());
+        replay and the corpus still go to the source's HOME host without --hosts."""
         b = self.bs2
-        self.assertEqual(b.RUN_HOSTS, {"chopin": "m@chopin.local", "cinqcent": "m@cinqcent.local"})
+        self.assertEqual(b.RUN_HOSTS, {h: f"m@{h}.local" for h in ("chopin", "cinqcent", "copland", "cage")})
         self.assertEqual(b.assign(b.ALPINE), b.HOME)
         self.assertEqual(b.assign(["alpine324", "alpine324-uefi"]), {"alpine324": "chopin", "alpine324-uefi": "chopin"})
         self.assertEqual(b.assign(["nosuch"]), {"nosuch": "chopin"})
-        self.assertIsNone(b.held(b.ALPINE))   # no ssh without --hosts
-        self.assertEqual((b.slots("chopin"), b.slots("cinqcent")), (3, 3))
+        self.assertEqual((b.slots("chopin"), b.slots("cinqcent")), (5, 5))   # hosts.json's bs2_slots
 
     def test_four_hosts_one_source_each(self):
         b = self.bs2

@@ -17,9 +17,11 @@
 # Needs /bkoscratch/holttest1d/bin/ with bko-holt, f2fs-tools_*.deb and
 # jfsutils_*.deb (installed in a rescuer that lacks them), and bcachefs
 # with bcachefs-deps-*.deb (make-bcachefs-tools.sh: Debian 13 has no
-# bcachefs-tools), and /bkoscratch/holttest1d/rescuer/rescuer.qcow2
-# (make-rescuer.sh): a run that would use the debs or the rescuer refuses
-# to start without them (exit 2).  rustic-bko is the shipped set's
+# bcachefs-tools; installed only for a layout with a bcachefs, and of the
+# debs only those the rescuer has no version of), and
+# /bkoscratch/holttest1d/rescuer/rescuer.qcow2 (make-rescuer.sh): a run
+# that would use the debs or the rescuer refuses to start without them
+# (exit 2).  rustic-bko is the shipped set's
 # (~/backotter-work/bko-bin/linux/, checked against its SHA256SUMS).
 #
 #   source   dump the live guest (a throwaway overlay; the guest's own
@@ -308,8 +310,11 @@ vm_up() { # IMAGE LOG [vm-run options...] [-- QEMU_ARGS...]
         setsid -f "$T/vm-run" --serial-log "$log" "${opts[@]}" "$image" "${qargs[@]}" </dev/null >"$log.vm-run" 2>&1 {HT_FD1}>&- {HT_FD2}>&-
     fi
 }
-vm_wait() { local key=$1
-    for _ in $(seq 72); do TMO=8 sshk "$key" true 2>/dev/null && return 0; sleep 5; done
+# (The waits below ask every second, for at least as long as they gave when
+# they asked every 5 s: a guest up in 11 s was seen at 15 then, about 2.5 s
+# lost a boot, and as much a shutdown.)
+vm_wait() { local key=$1 end=$((SECONDS + 600))
+    while ((SECONDS < end)); do TMO=8 sshk "$key" true 2>/dev/null && return 0; sleep 1; done
     return 1
 }
 # Reboot the guest over SSH and wait for its next boot (a new boot ID: its
@@ -317,9 +322,10 @@ vm_wait() { local key=$1
 vm_reboot() { local key=$1 id now
     id=$(TMO=20 sshk "$key" cat /proc/sys/kernel/random/boot_id) && [[ -n $id ]] || return 1
     TMO=20 sshk "$key" 'systemctl reboot' >/dev/null 2>&1
-    for _ in $(seq 72); do
+    local end=$((SECONDS + 600))
+    while ((SECONDS < end)); do
         now=$(TMO=8 sshk "$key" cat /proc/sys/kernel/random/boot_id 2>/dev/null) && [[ -n $now && $now != "$id" ]] && return 0
-        sleep 5
+        sleep 1
     done
     return 1
 }
@@ -329,7 +335,7 @@ vm_reboot() { local key=$1 id now
 vm_down() { local key=$1
     [[ -n $(ht_qemus "$R") ]] || return 0
     TMO=20 sshk "$key" poweroff >/dev/null 2>&1
-    for _ in $(seq 36); do [[ -n $(ht_qemus "$R") ]] || return 0; sleep 5; done
+    for _ in $(seq 180); do [[ -n $(ht_qemus "$R") ]] || return 0; sleep 1; done
     # shellcheck disable=SC2046  # PIDs
     kill $(ht_qemus "$R") 2>/dev/null; sleep 5
     # shellcheck disable=SC2046
@@ -675,6 +681,24 @@ load_step() { local want=$1 name=$2; shift 2
     return 1
 }
 
+# Whether LAYOUT (a dump) has a TYPE anywhere in its storage: exit 0 it has,
+# 1 it hasn't; a layout that can't be read counts as having it.
+layout_has() {
+    python3 -I -c 'import json, sys
+def has(v):
+    if isinstance(v, dict):
+        return any(has(x) for x in v.values())
+    if isinstance(v, list):
+        return any(has(x) for x in v)
+    return v == sys.argv[2]
+try:
+    with open(sys.argv[1]) as f:
+        d = json.load(f)
+except (OSError, ValueError):
+    sys.exit(0)
+sys.exit(0 if has(d.get("storage", d) if isinstance(d, dict) else d) else 1)' "$1" "$2"
+}
+
 phase_rebuild() {
     say "== rebuild"
     # A rescuer HT_KEEP left up from the last try.
@@ -729,8 +753,16 @@ phase_rebuild() {
         sshk "$rkey" 'mkdir -p /mnt/share && mount -t 9p -o trans=virtio,version=9p2000.L,ro bkoshare /mnt/share && for c in mkfs.ext4 mkfs.xfs mkfs.btrfs mkfs.vfat mkfs.f2fs mkfs.nilfs2 mkfs.jfs mkfs.bcachefs zpool zfs mdadm cryptsetup lvm sgdisk bko-holt rustic-bko; do command -v $c >/dev/null || { echo "missing: $c"; exit 1; }; done; uname -r' \
             > "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescue image: share and tools ($(tail -n 1 "$R/logs/rescuer-setup.log"))"; vm_down "$rkey"; return; }
     else
-    sshk "$rkey" 'mkdir -p /mnt/share && mount -t 9p -o trans=virtio,version=9p2000.L,ro bkoshare /mnt/share && inst() { apt-get install -y -q -o DPkg::Lock::Timeout=600 "$@" >/dev/null; } && { command -v mkfs.f2fs >/dev/null || inst /mnt/share/f2fs-tools_*.deb; } && { command -v mkfs.jfs >/dev/null || inst /mnt/share/jfsutils_*.deb; } && { [ ! -f /mnt/share/bcachefs ] || command -v bcachefs >/dev/null || { for d in /mnt/share/bcachefs-deps-*.deb; do [ ! -f "$d" ] || inst "$d"; done; install -m 755 /mnt/share/bcachefs /usr/local/sbin/bcachefs; }; }' \
-        > "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup (share, f2fs-tools, jfsutils)"; vm_down "$rkey"; return; }
+    # The share, and what the rescuer lacks: f2fs-tools and jfsutils (the
+    # rescuers have both), and bcachefs (make-bcachefs-tools.sh's, built on
+    # Debian 13) only when the layout has a bcachefs.  Its deps go in in one
+    # apt call, only those the rescuer has no version of (the Ubuntu 26
+    # rescuer's own libblkid1, libudev1 and the rest stay as they are), with
+    # needrestart held off (it restarted udev, journald and ssh mid-run), and
+    # bcachefs must then run, or the setup fails.
+    local bch=0; ! layout_has "$S/layout.json" bcachefs || bch=1
+    sshk "$rkey" "BCH=$bch"'; mkdir -p /mnt/share && mount -t 9p -o trans=virtio,version=9p2000.L,ro bkoshare /mnt/share && export DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 NEEDRESTART_MODE=l && inst() { apt-get install -y -q -o DPkg::Lock::Timeout=600 "$@" >/dev/null; } && { command -v mkfs.f2fs >/dev/null || inst /mnt/share/f2fs-tools_*.deb; } && { command -v mkfs.jfs >/dev/null || inst /mnt/share/jfsutils_*.deb; } && { [ "$BCH" = 0 ] || command -v bcachefs >/dev/null || { [ -f /mnt/share/bcachefs ] || { echo "the layout has a bcachefs, and neither the rescuer nor the share has bcachefs (make-bcachefs-tools.sh)"; exit 1; }; want=; for d in /mnt/share/bcachefs-deps-*.deb; do [ -f "$d" ] || continue; p=$(dpkg-deb -f "$d" Package) || exit 1; dpkg-query -W -f "\${Status}" "$p" 2>/dev/null | grep -q " installed$" || want="$want $d"; done; { [ -z "$want" ] || inst $want; } && install -m 755 /mnt/share/bcachefs /usr/local/sbin/bcachefs && LD_BIND_NOW=1 bcachefs version >/dev/null || { echo "bcachefs: its deps or the binary failed (deps:${want:- none})"; exit 1; }; echo "bcachefs installed (deps:${want:- none})"; }; }' \
+        > "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup (share, f2fs-tools, jfsutils$( ((bch)) && echo ", bcachefs")): $(tail -n 1 "$R/logs/rescuer-setup.log")"; vm_down "$rkey"; return; }
     fi
     sshk "$rkey" "mkfs.ext4 -q -F -L ht1decoy $decoy" >> "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup (the decoy's filesystem)"; vm_down "$rkey"; return; }
     ok "rescuer up, share mounted"

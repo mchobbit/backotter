@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """BackShot2 from the Mac (docs/design/backshot2.md, "Words"): runs bs2-host
-on Chopin and Cinqcent over SSH, from a private copy of this worktree's
-testvm/ and holt/ in ~/backotter-work/bs2-wt (never the shared testvm/).
+on the test hosts over SSH, from a private copy of this worktree's testvm/
+and holt/ in ~/backotter-work/bs2-wt (never the shared testvm/).
 
   bs2 BackShot2Alpine [N] [plan]    N new cases (default 200) from each Alpine source,
                                     through tier 0, then tier 1, then tier 2 for the UEFI
@@ -16,37 +16,46 @@ testvm/ and holt/ in ~/backotter-work/bs2-wt (never the shared testvm/).
                                     onto one disk, on one host (chopin; --hosts H names another
                                     that has all three UEFI sources), detached; log in
                                     /bkoscratch/backshot2/logs/RUN.log, rows in RUN/leftovers.jsonl
+  bs2 bin FROM                      copy FROM's /bkoscratch/backshot2/bin (the bko-holt, planner
+                                    and caps.json under test) to the other hosts (--hosts: those)
   bs2 sync                          copy testvm/ and holt/ to the hosts' bs2-wt
-  bs2 status RUN                    the run's verdicts so far, on each of its hosts
+  bs2 status RUN                    the run's verdicts so far, on each of its hosts and in all
 
   --hosts H,H|all (any word)        the hosts to use, of testvm/hosts.json's enabled ones
-                                    (all: every one).  Default: HOME's, chopin and
-                                    cinqcent, each source on its HOME host.  With --hosts
-                                    a source stays on its HOME host while that host has
-                                    no more than its share (sources / hosts, rounded up),
-                                    else goes to the host with the fewest so far, and
-                                    only to a host whose vms/SOURCE is there (one
-                                    read-only ls each: a cache host may lack a source)
+                                    (all: every one, the default).  Only a host whose
+                                    vms/SOURCE is there takes SOURCE's cases (one read-only
+                                    ls each: cage's cache has only alpine324)
+
+How a BackShot2 run spreads (split()): each source has a lead, its HOME host when that's
+in the run, else the first that holds it.  The lead runs the source's tier 0 sweep and
+draws its tier 1 and 2 cases (bs2-host enqueue --to), exactly as one host alone would;
+then bs2 spreads those cases over every host that holds the source, each to the one that
+would finish it soonest for its slots (hosts.json's bs2_slots: big 5, small 2), so the
+hosts finish about together, and copies each case file from the lead to its host.  Each
+host gets its own queue.txt and runs it.  Before that, every host is checked (bin/ alike
+everywhere, the rescuers, ht1.sh's debs), and each prepares the sources it holds (bs2-host
+source, as root under cmp-run.sh --reserve 2 3, port 2949; nothing to do when ready):
+a host whose generation of a source differs from the lead's stops the run.
 
 Results: each host's /bkoscratch/backshot2/runs/RUN/ and Test2's ledger
-(family bs2).  "plan" prints the cases, tiers, time and GB and runs nothing.
+(family bs2).  "plan" prints the cases, tiers, each host's share and time, and runs nothing.
 bs2-host takes ports 2943-2949 on whichever host runs it (the queue's slots the
-first SLOTS of them, a tier 1 by hand 2949): keep them free on every host.
-A small host (testvm/hosts.json's class small: cmp-run.sh's ceiling 9.0 9.2) runs
-SMALL_SLOTS queue slots at --reserve 2 3, not SLOTS: three would take its whole
-ceiling.
+first of 2943-2948, a source's preparing and a tier 1 by hand 2949): keep them free on
+every host.
 """
 
 import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
 import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-# Which host runs which source (split-chopin-cinqcent): two each.
+# Each source's lead (draws its cases, runs its tier 0) when it is in the run
+# (split-chopin-cinqcent: two each); replay, shrink and the corpus run there.
 HOME = {"alpine324": "chopin", "alpine324-uefi": "chopin", "alpine324-lvm": "cinqcent", "alpine324-luks": "cinqcent"}
 
 
@@ -59,18 +68,21 @@ def _host_table():
     return m
 
 
-# The hosts that run a source (HOME's, in its order), by their ssh in testvm/hosts.json.
 HOSTS_TABLE = _host_table()
-HOSTS = {h: HOSTS_TABLE.ssh(h) for h in dict.fromkeys(HOME.values())}
-# The hosts of this command: HOSTS, or --hosts' (use_hosts()).
-RUN_HOSTS = dict(HOSTS)
-CHOSEN = False   # --hosts given: sources go only where vms/SOURCE is
+# The hosts of this command: every enabled one, or --hosts' (use_hosts()).
+RUN_HOSTS = {h: HOSTS_TABLE.ssh(h) for h in HOSTS_TABLE.known()}
+CHOSEN = False   # --hosts given: replay and the corpus go only where vms/SOURCE is
 ALPINE = list(HOME)
+ROOT = "/bkoscratch/backshot2"
 HOST_BS2 = "~/backotter-work/bs2-wt/testvm/backshot2/bs2-host"
-# Measured on 2026-11-10 (est. elsewhere): seconds per case and GB written to the SSDs.
+# Seconds a case, per tier.  Tier 1 measured 2026-11-11 on cinqcent (400 cases, 3 slots,
+# phases.tsv): ~155 s, ~50 s of it the rescuer's apt of the bcachefs debs and 5 s polls;
+# 110 is est. after ht1.sh's fix (bcachefs only for a bcachefs layout, 1 s polls).
+# Tier 2 est. (tier 1 and its OVMF store); tier 0 measured 2026-11-10.
 SECS = {0: 0.3, 1: 110, 2: 140}
-SLOTS = 3
-SMALL_SLOTS = 2
+MAX_SLOTS = 6     # bs2-host queue's ports, 2943-2948 (2949: by hand)
+SWEEP = 5         # tier 0's sweep: N * SWEEP new cases a source, on its lead
+TIER2 = 30        # tier 2 cases in all, shared by the UEFI sources
 
 
 def use_hosts(arg):
@@ -86,28 +98,379 @@ def use_hosts(arg):
 
 
 def slots(h):
-    return SMALL_SLOTS if HOSTS_TABLE.host_class(h) == "small" else SLOTS
+    """H's queue slots: hosts.json's bs2_slots (big 5, small 2), at most MAX_SLOTS."""
+    return min(MAX_SLOTS, HOSTS_TABLE.limit(h, "bs2_slots"))
 
 
-def held(sources):
-    """{host: set of SOURCES whose vms/SOURCE is there} over RUN_HOSTS (an ls each), or
-    None when --hosts wasn't given (HOME's hosts hold every source)."""
-    if not CHOSEN:
-        return None
+def held(sources, hosts=None):
+    """{host: set of SOURCES whose vms/SOURCE is there} over HOSTS (default RUN_HOSTS), an ls
+    each; a host that doesn't answer holds none."""
     out = {}
-    for h in RUN_HOSTS:
+    for h in hosts or RUN_HOSTS:
         r = ssh(h, "cd ~/backotter-work/vms 2>/dev/null && for g in " + " ".join(sources) +
                 '; do [ -e "$g" ] && echo "$g"; done; true', check=False, capture=True)
+        if r.returncode:
+            print(f"bs2: {h} didn't answer: left out", file=sys.stderr)
         out[h] = set(r.stdout.split()) if r.returncode == 0 else set()
     return out
 
 
+def holders(sources, have, hosts=None):
+    """{source: [host...]}: the hosts (HOSTS' order, default RUN_HOSTS) that HAVE it; a
+    source no host has: sys.exit."""
+    hosts = list(hosts or RUN_HOSTS)
+    can = {s: [h for h in hosts if s in have.get(h, ())] for s in sources}
+    none = [s for s in sources if not can[s]]
+    if none:
+        sys.exit(f"bs2: no host of {', '.join(hosts)} has vms/{', vms/'.join(none)}")
+    return can
+
+
+def leads(can):
+    """{source: host}: its HOME host when that holds it here, else the first that does."""
+    return {s: HOME[s] if HOME.get(s) in hs else hs[0] for s, hs in can.items()}
+
+
+def tier2_each(sources):
+    """Tier 2 cases a source: TIER2 shared by the UEFI sources (every one but alpine324)."""
+    return max(1, TIER2 // max(1, len([s for s in sources if s != "alpine324"])))
+
+
+def jobs_of(sources, n):
+    """The run's cases as (source, tier, i), in the order the leads draw them."""
+    out = []
+    for s in sources:
+        out += [(s, 1, i) for i in range(n)]
+        if s != "alpine324":
+            out += [(s, 2, i) for i in range(tier2_each(sources))]
+    return out
+
+
+def sweep_secs(sources, n, lead):
+    """{host: seconds}: the tier 0 sweeps each lead runs before its queue."""
+    out = {}
+    for s in sources:
+        out[lead[s]] = out.get(lead[s], 0) + n * SWEEP * SECS[0]
+    return out
+
+
+def split(jobs, can, nslots, start=None):
+    """{host: [job...]}: JOBS ((source, tier, x), in the run's order) spread over the hosts
+    that hold each one's source (CAN: {source: [host...]}).  Each goes to the host that would
+    finish it soonest: (its START seconds, its slots busy, plus what it has so far, plus the
+    job) over its NSLOTS, NSLOTS' order on a tie; the sources on the fewest hosts first, and
+    the longer tier first, so the hosts finish about together and in proportion to their
+    slots where they hold the same sources.  Every job goes to exactly one host; each host's
+    keep JOBS' order.  A job whose source no host of NSLOTS holds: ValueError."""
+    hosts = list(nslots)
+    busy = {h: float((start or {}).get(h, 0)) * nslots[h] for h in hosts}   # slot-seconds
+    got = {h: [] for h in hosts}
+    order = sorted(range(len(jobs)), key=lambda i: (len(can[jobs[i][0]]), -SECS[jobs[i][1]], i))
+    for i in order:
+        s, t = jobs[i][0], jobs[i][1]
+        hs = [h for h in can.get(s, ()) if h in busy]
+        if not hs:
+            raise ValueError(f"no host of {', '.join(hosts)} holds {s}")
+        h = min(hs, key=lambda x: ((busy[x] + SECS[t]) / nslots[x], hosts.index(x)))
+        busy[h] += SECS[t]
+        got[h].append(i)
+    return {h: [jobs[i] for i in sorted(got[h])] for h in hosts}
+
+
+def wall(jobs, nslots, start=0):
+    """Seconds a host takes for JOBS on NSLOTS slots, after START (its sweeps)."""
+    return start + sum(SECS[t] for _, t, _ in jobs) / nslots
+
+
+def ssh(host, cmd, check=True, capture=False, input=None):
+    r = subprocess.run(["ssh", "-o", "ConnectTimeout=10", RUN_HOSTS.get(host) or HOSTS_TABLE.ssh(host), cmd], text=True,
+                       capture_output=capture, input=input)
+    if check and r.returncode:
+        sys.exit(f"bs2: {host}: {cmd[:80]}... exit {r.returncode}{(': ' + r.stderr[-400:]) if capture else ''}")
+    return r
+
+
+def par(cmds):
+    """{host: cmd} run at once, one ssh each; {host: (exit, stdout, stderr)}."""
+    import threading
+    out = {}
+
+    def one(h, c):
+        r = subprocess.run(["ssh", "-o", "ConnectTimeout=10", RUN_HOSTS.get(h) or HOSTS_TABLE.ssh(h), c], text=True,
+                           capture_output=True, stdin=subprocess.DEVNULL)
+        out[h] = (r.returncode, r.stdout, r.stderr)
+
+    ts = [threading.Thread(target=one, args=(h, c)) for h, c in cmds.items()]
+    for t in ts:
+        t.start()
+    for t in ts:
+        t.join()
+    return {h: out[h] for h in cmds}
+
+
+def sync(hosts=None):
+    for h in hosts or RUN_HOSTS:
+        subprocess.run(["rsync", "-a", "--delete", "--exclude", "target", "--exclude", "__pycache__",
+                        f"{REPO}/holt", f"{REPO}/testvm", f"{RUN_HOSTS.get(h) or HOSTS_TABLE.ssh(h)}:backotter-work/bs2-wt/"],
+                       check=True)
+
+
+def root(cmd, reserve="2 2", tag="bs2:mac"):
+    """CMD as root under a reservation, as m submits it (cmp-run.sh as m)."""
+    return f"cd ~/backotter-work && WEAR_TAG={tag} ./cmp-run.sh --reserve {reserve} sudo -E {cmd}"
+
+
+def placement(sources, n):
+    """What a run of N cases a source does where: (can, lead, {host: jobs}, {host: sweep s})."""
+    have = held(sources)
+    can = holders(sources, have)
+    lead = leads(can)
+    use = [h for h in RUN_HOSTS if any(h in hs for hs in can.values())]
+    start = sweep_secs(sources, n, lead)
+    parts = split(jobs_of(sources, n), can, {h: slots(h) for h in use}, start)
+    return can, lead, parts, start
+
+
+def plan_words(sources, n):
+    can, lead, parts, start = placement(sources, n)
+    t2 = {s: (tier2_each(sources) if s != "alpine324" else 0) for s in sources}
+    print(f"{'source':16} {'lead':9} {'tier0':>6} {'tier1':>6} {'tier2':>6}  hosts")
+    for s in sources:
+        print(f"{s:16} {lead[s]:9} {n * SWEEP:6} {n:6} {t2[s]:6}  {', '.join(can[s])}")
+    longest = 0
+    for h, js in parts.items():
+        if not js:
+            print(f"{h}: none of these sources' cases")
+            continue
+        by = []
+        for s in sources:
+            c1 = sum(1 for x in js if x[0] == s and x[1] == 1)
+            c2 = sum(1 for x in js if x[0] == s and x[1] == 2)
+            if c1 or c2:
+                by.append(f"{s} {c1}" + (f"+{c2}" if c2 else ""))
+        sec = wall(js, slots(h), start.get(h, 0))
+        longest = max(longest, sec)
+        sw = f", after its tier 0 sweeps (~{start[h] / 60:.0f} min)" if start.get(h) else ""
+        print(f"{h}: {slots(h)} slots, {len(js)} cases ({'; '.join(by)}), ~{sec / 3600:.1f} h est.{sw}")
+    print(f"the run: ~{longest / 3600:.1f} h est. (its slowest host; a case ~{SECS[1]} s at tier 1, ~{SECS[2]} s at tier 2,"
+          f" est.), after ~5-15 min of preparing what a host lacks and the leads drawing the cases")
+    print("in RAM: ~0 GB written to the SSDs (records only, ~5 MB a case)")
+
+
+def preflight(hosts):
+    """Each host has what a case needs, and the same bin/ as the others: else sys.exit, naming what."""
+    need = ["~/backotter-work/cmp-run.sh", "~/backotter-work/bko-bin/linux/rustic-bko",
+            "~/backotter-work/vms/debian13/id_ed25519", "~/backotter-work/vms/ubuntu26-uefi/id_ed25519",
+            "/bkoscratch/holttest1d/rescuer/rescuer.qcow2", "/bkoscratch/holttest1d/rescuer/rescuer-uefi.qcow2"]
+    cmd = ("for f in " + " ".join(need) + '; do [ -e "$f" ] || echo "missing $f"; done; '
+           "for p in f2fs-tools jfsutils; do ls /bkoscratch/holttest1d/bin/${p}_*.deb >/dev/null 2>&1 || "
+           'echo "missing /bkoscratch/holttest1d/bin/${p}_*.deb (ht1.sh refuses without it)"; done; '
+           f"for f in bko-holt bs2_plan caps.json; do echo \"bin $f $(sha256sum < {ROOT}/bin/$f 2>/dev/null | cut -c1-64)\"; done")
+    bins, bad = {}, []
+    for h, (rc, out, err) in par({h: cmd for h in hosts}).items():
+        if rc:
+            bad.append(f"{h}: no answer ({err.strip()[-200:]})")
+            continue
+        for line in out.splitlines():
+            if line.startswith("missing "):
+                bad.append(f"{h}: {line}")
+            elif line.startswith("bin "):
+                _, f, *sha = line.split()
+                if not sha:
+                    bad.append(f"{h}: missing {ROOT}/bin/{f}")
+                bins.setdefault(h, {})[f] = sha[0] if sha else None
+    kinds = {tuple(sorted(b.items())) for b in bins.values()}
+    if len(kinds) > 1:
+        bad.append("the hosts' " + ROOT + "/bin differ (" + "; ".join(
+            f"{h}: bko-holt {(b.get('bko-holt') or 'none')[:12]}" for h, b in bins.items()) + "): bs2 bin FROM copies one host's")
+    if bad:
+        sys.exit("bs2: not started:\n  " + "\n  ".join(bad))
+
+
+def prepare(can, run):
+    """Each host makes the run's directories and prepares the sources it holds (bs2-host
+    source: once per generation); {host: {source: generation}}."""
+    mine = {}
+    for s, hs in can.items():
+        for h in hs:
+            mine.setdefault(h, []).append(s)
+    cmds = {}
+    for h, ss in mine.items():
+        c = [f"mkdir -p {ROOT}/logs {ROOT}/runs"]
+        c += [root(f"{HOST_BS2} source {s} --port 2949", "2 3", f"bs2:{run}:source-{s}") for s in ss]
+        c += [f'echo "gen {s} $(cat {ROOT}/sources/{s}/gen)"' for s in ss]
+        cmds[h] = " && ".join(c)
+    print(f"preparing: {'; '.join(f'{h} {len(ss)} sources' for h, ss in mine.items())} (nothing to do where ready)")
+    gens, bad = {}, []
+    for h, (rc, out, err) in par(cmds).items():
+        if rc:
+            bad.append(f"{h}: preparing its sources: exit {rc}: {(out + err).strip()[-300:]}")
+        for line in out.splitlines():
+            if line.startswith("gen "):
+                _, s, *g = line.split()
+                gens.setdefault(h, {})[s] = g[0] if g else None
+    if bad:
+        sys.exit("bs2: not started:\n  " + "\n  ".join(bad))
+    return gens
+
+
+def picks_of(text, sources):
+    """The leads' pick lists (grep -H's "pick-SOURCE-tT.txt:T PATH" lines) as (source, tier,
+    path), in SOURCES' order, tier 1 before 2, each list in its own order."""
+    jobs = []
+    for line in text.splitlines():
+        m = re.match(r"pick-(.+)-t([12])\.txt:([12]) (\S+)$", line)
+        if m and m.group(1) in sources:
+            jobs.append((m.group(1), int(m.group(3)), m.group(4)))
+    order = {s: i for i, s in enumerate(sources)}
+    return sorted(jobs, key=lambda j: (order[j[0]], j[1]))
+
+
+def run_words(sources, n, run):
+    can, lead, parts, start = placement(sources, n)
+    use = [h for h, js in parts.items() if js or h in lead.values()]
+    preflight(use)
+    sync(use)
+    gens = prepare({s: [h for h in hs if h in use] for s, hs in can.items()}, run)
+    bad = [f"{h}'s {s} is at {gens.get(h, {}).get(s)}, its lead {lead[s]}'s at {gens.get(lead[s], {}).get(s)}"
+           for s, hs in can.items() for h in hs if h in use and gens.get(h, {}).get(s) != gens.get(lead[s], {}).get(s)]
+    if bad:
+        sys.exit("bs2: not started: a source's cases are drawn on its lead's generation, and these differ:\n  " +
+                 "\n  ".join(bad) + "\n(refresh those vms/SOURCE, or leave the hosts out with --hosts)")
+    # The leads draw every case, as one host alone would (enqueue --to), at once.
+    rd = f"{ROOT}/runs/{run}"
+    picks = {}
+    for s in sources:
+        c = [root(f"{HOST_BS2} enqueue {s} {n} --tier 1 --run {run} --to {rd}/pick-{s}-t1.txt", tag=f"bs2:{run}:pick")]
+        if s != "alpine324":
+            c.append(root(f"{HOST_BS2} enqueue {s} {tier2_each(sources)} --tier 2 --run {run} --from 500000 --to {rd}/pick-{s}-t2.txt",
+                          tag=f"bs2:{run}:pick"))
+        picks.setdefault(lead[s], []).extend(c)
+    print(f"drawing the cases: {'; '.join(f'{h} {len(c)} lists' for h, c in picks.items())}")
+    cmds = {h: " && ".join(c + [f"sudo mkdir -p {rd}-t0", f"sudo chown -R m: {rd} {rd}-t0",
+                                f"cd {rd} && {{ grep -H . pick-*-t[12].txt; true; }}"])
+            for h, c in picks.items()}
+    out = ""
+    for h, (rc, o, err) in par(cmds).items():
+        if rc:
+            sys.exit(f"bs2: {h}: drawing the cases: exit {rc}: {(o + err).strip()[-400:]}")
+        out += o
+    jobs = picks_of(out, sources)
+    parts = split(jobs, {s: [h for h in hs if h in use] for s, hs in can.items()}, {h: slots(h) for h in use},
+                  sweep_secs(sources, n, lead))
+    # Each case file from its lead to its host; then each host's queue.txt.
+    for h, js in parts.items():
+        for L in sorted({lead[s] for s, _, _ in js} - {h}):
+            names = sorted({os.path.basename(p) for s, _, p in js if lead[s] == L})
+            src = subprocess.Popen(["ssh", RUN_HOSTS[L], f"cd {rd}/cases && tar -cf - {' '.join(names)}"], stdout=subprocess.PIPE)
+            dst = subprocess.run(["ssh", RUN_HOSTS[h], f"mkdir -p {rd}/cases && tar -C {rd}/cases -xf -"], stdin=src.stdout)
+            src.stdout.close()
+            if src.wait() or dst.returncode:
+                sys.exit(f"bs2: copying {len(names)} cases from {L} to {h} failed")
+        if js:
+            ssh(h, f"mkdir -p {rd} && cat > {rd}/queue.txt", input="".join(f"{t} {p}\n" for _, t, p in js))
+    sweep = {}
+    for s in sources:
+        sweep.setdefault(lead[s], []).append(
+            root(f"{HOST_BS2} tier0 {s} {n * SWEEP} --run {run}-t0 --keep-passes 50", tag=f"bs2:{run}:tier0"))
+    log = f"{ROOT}/logs/{run}.log"
+    for h in use:
+        js = parts.get(h, [])
+        # (A sweep that fails is in the log; the host's cases run regardless.)
+        c = [f"{{ {x}; }}" for x in sweep.get(h, [])]
+        if sweep.get(h):
+            c.append(f"sudo chown -R m: {rd}-t0")
+        if js:
+            c.append(f"{HOST_BS2} queue {run} --slots {slots(h)}")
+        if not c:
+            continue
+        ssh(h, f"setsid -f bash -c {json.dumps('; '.join(c))} > {log} 2>&1 < /dev/null")
+        what = ", ".join(f"{s} {sum(1 for x in js if x[0] == s)}" for s in sources if any(x[0] == s for x in js))
+        print(f"{h}: started {len(js)} cases on {slots(h)} slots ({what or 'none'})"
+              f"{', after the tier 0 sweep of ' + ', '.join(s for s in sources if lead[s] == h) if sweep.get(h) else ''}"
+              f" (log {log})")
+    print(f"run {run}: bs2 status {run}")
+
+
+def status(run):
+    """Each host's verdicts and queue for RUN, then the run's in all."""
+    tot, started, queued = {}, 0, 0
+    for h in RUN_HOSTS:
+        r = ssh(h, f"cat {ROOT}/runs/{run}*/tier*.jsonl 2>/dev/null; echo \"@queue $(cat {ROOT}/runs/{run}/queue.next "
+                   f"2>/dev/null) $(grep -c . {ROOT}/runs/{run}/queue.txt 2>/dev/null)\"",
+                check=False, capture=True)
+        counts = {}
+        q = None
+        for line in r.stdout.splitlines():
+            if line.startswith("@queue "):
+                q = [int(x) if x.isdigit() else 0 for x in (line[len("@queue "):].split(" ") + ["", ""])[:2]]
+                continue
+            try:
+                j = json.loads(line)
+            except ValueError:
+                continue
+            k = (j["source"], j["tier"], j["verdict"])
+            counts[k] = counts.get(k, 0) + 1
+            tot[k] = tot.get(k, 0) + 1
+        for k in sorted(counts):
+            print(f"{h:9} {k[0]:18} tier {k[1]} {k[2]:8} {counts[k]}")
+        if q and q[1]:
+            print(f"{h:9} queue: {min(q[0], q[1])} of {q[1]} started")
+            started, queued = started + min(q[0], q[1]), queued + q[1]
+    for k in sorted(tot):
+        print(f"{'all':9} {k[0]:18} tier {k[1]} {k[2]:8} {tot[k]}")
+    if queued:
+        print(f"{'all':9} queue: {started} of {queued} started")
+
+
+def bin_words(frm):
+    """FROM's ROOT/bin (bko-holt, bs2_plan, caps.json) to the other hosts."""
+    frm = HOSTS_TABLE.short(frm)
+    if frm not in HOSTS_TABLE.known():
+        sys.exit(f"bs2: bin: no such host {frm}")
+    for h in RUN_HOSTS:
+        if h == frm:
+            continue
+        src = subprocess.Popen(["ssh", HOSTS_TABLE.ssh(frm), f"tar -C {ROOT}/bin -cf - bko-holt bs2_plan caps.json"],
+                               stdout=subprocess.PIPE)
+        dst = subprocess.run(["ssh", RUN_HOSTS[h], f"mkdir -p {ROOT}/bin && tar -C {ROOT}/bin -xf -"], stdin=src.stdout)
+        src.stdout.close()
+        if src.wait() or dst.returncode:
+            sys.exit(f"bs2: bin: from {frm} to {h} failed")
+        print(f"{h}: {ROOT}/bin as {frm}'s")
+
+
+def corpus(plan, tier):
+    cases = sorted(f for f in os.listdir(f"{HERE}/cases") if f.endswith(".case"))
+    if plan:
+        print(f"{len(cases)} corpus cases at tier {tier}")
+        return
+    srcs = {}
+    for f in cases:
+        with open(f"{HERE}/cases/{f}") as fh:
+            srcs[f] = json.load(fh)["source"].split("@")[0]
+    ss = sorted(set(srcs.values()))
+    where = assign(ss, have=held(ss) if CHOSEN else None)
+    sync(sorted(set(where.values())))
+    by = {}
+    for f in cases:
+        by.setdefault(where[srcs[f]], []).append(f"~/backotter-work/bs2-wt/testvm/backshot2/cases/{f}")
+    stamp = time.strftime("corpus-%Y%m%d-%H%M")
+    for h, fs in by.items():
+        if tier == 0:
+            ssh(h, root(f"{HOST_BS2} tier0-cases {' '.join(fs)} --run {stamp}"))
+        else:
+            for f in fs:
+                ssh(h, f"cd ~/backotter-work && ./cmp-run.sh --reserve 2 3 sudo -E {HOST_BS2} tier1 {f} --tier {tier} --run {stamp} --port 2949", check=False)
+
+
 def assign(sources, hosts=None, have=None):
-    """{source: host}: its HOME host while that host has no more than its share
-    (len(sources) / len(hosts), rounded up), else the host with the fewest sources so far
-    (hosts' order on a tie); HAVE ({host: sources there}, None: all) limits each source
-    to the hosts that have it, and the sources on the fewest hosts are placed first.  A source no host has: sys.exit.  Without --hosts (and no
-    HOSTS given): HOME's host, chopin for a source it doesn't name, as always."""
+    """{source: host}, one host a source (replay, shrink, soak, the corpus): its HOME host
+    while that host has no more than its share (len(sources) / len(hosts), rounded up), else
+    the host with the fewest sources so far (hosts' order on a tie); HAVE ({host: sources
+    there}, None: all) limits each source to the hosts that have it, and the sources on the
+    fewest hosts are placed first.  A source no host has: sys.exit.  Without --hosts (and
+    no HOSTS given): HOME's host, chopin for a source it doesn't name."""
     if hosts is None and not CHOSEN:
         return {s: HOME.get(s, "chopin") for s in sources}
     hosts = list(hosts or RUN_HOSTS)
@@ -132,99 +495,6 @@ def assign(sources, hosts=None, have=None):
     return {s: out[s] for s in sources}
 
 
-def ssh(host, cmd, check=True, capture=False):
-    r = subprocess.run(["ssh", RUN_HOSTS.get(host) or HOSTS_TABLE.ssh(host), cmd], text=True, capture_output=capture)
-    if check and r.returncode:
-        sys.exit(f"bs2: {host}: {cmd[:80]}... exit {r.returncode}{(': ' + r.stderr[-400:]) if capture else ''}")
-    return r
-
-
-def sync():
-    for h in RUN_HOSTS.values():
-        subprocess.run(["rsync", "-a", "--delete", "--exclude", "target", "--exclude", "__pycache__",
-                        f"{REPO}/holt", f"{REPO}/testvm", f"{h}:backotter-work/bs2-wt/"], check=True)
-
-
-def root(cmd):
-    """CMD as root under a small reservation, as m submits it (cmp-run.sh as m)."""
-    return f"cd ~/backotter-work && WEAR_TAG=bs2:mac ./cmp-run.sh --reserve 2 2 sudo -E {cmd}"
-
-
-def plan_words(sources, n, tier2=30):
-    rows = []
-    where = assign(sources, have=held(sources))
-    for s in sources:
-        rows.append((s, where[s], n, n, (tier2 // 2) if s != "alpine324" and s in ("alpine324-uefi", "alpine324-lvm", "alpine324-luks") else 0))
-    total = {h: 0 for h in RUN_HOSTS}
-    print(f"{'source':18} {'host':9} {'tier0':>6} {'tier1':>6} {'tier2':>6}")
-    for s, h, t0, t1, t2 in rows:
-        t2 = min(t2, tier2)
-        print(f"{s:18} {h:9} {t0:6} {t1:6} {t2:6}")
-        total[h] += t0 * SECS[0] + (t1 * SECS[1] + t2 * SECS[2]) / slots(h)
-    for h, sec in total.items():
-        print(f"{h}: ~{sec / 3600:.1f} h est., {slots(h)} slots, in RAM: ~0 GB written to the SSDs (records only, ~5 MB a case)")
-
-
-def run_words(sources, n, run):
-    where = assign(sources, have=held(sources))
-    sync()
-    by_host = {}
-    for s in sources:
-        by_host.setdefault(where[s], []).append(s)
-    tier2_each = max(1, 30 // max(1, len([s for s in sources if s != "alpine324"])))
-    for h, ss in by_host.items():
-        cmds = []
-        for s in ss:
-            cmds.append(root(f"{HOST_BS2} tier0 {s} {n * 5} --run {run}-t0 --keep-passes 50"))
-            cmds.append(root(f"{HOST_BS2} enqueue {s} {n} --tier 1 --run {run}"))
-            if s != "alpine324":
-                cmds.append(root(f"{HOST_BS2} enqueue {s} {tier2_each} --tier 2 --run {run} --from 500000"))
-        cmds.append(f"sudo chown -R m: /bkoscratch/backshot2/runs/{run}")
-        cmds.append(f"{HOST_BS2} queue {run} --slots {slots(h)}")
-        script = " && ".join(cmds)
-        log = f"/bkoscratch/backshot2/logs/{run}.log"
-        ssh(h, f"mkdir -p /bkoscratch/backshot2/logs && setsid -f bash -c {json.dumps(script)} > {log} 2>&1 < /dev/null")
-        print(f"{h}: started {', '.join(ss)} (log {log})")
-
-
-def status(run):
-    for h in RUN_HOSTS:
-        r = ssh(h, f"cat /bkoscratch/backshot2/runs/{run}*/tier*.jsonl 2>/dev/null", check=False, capture=True)
-        counts = {}
-        for line in r.stdout.splitlines():
-            try:
-                j = json.loads(line)
-            except ValueError:
-                continue
-            k = (j["source"], j["tier"], j["verdict"])
-            counts[k] = counts.get(k, 0) + 1
-        for k in sorted(counts):
-            print(f"{h:9} {k[0]:18} tier {k[1]} {k[2]:8} {counts[k]}")
-
-
-def corpus(plan, tier):
-    cases = sorted(f for f in os.listdir(f"{HERE}/cases") if f.endswith(".case"))
-    if plan:
-        print(f"{len(cases)} corpus cases at tier {tier}")
-        return
-    srcs = {}
-    for f in cases:
-        with open(f"{HERE}/cases/{f}") as fh:
-            srcs[f] = json.load(fh)["source"].split("@")[0]
-    where = assign(sorted(set(srcs.values())), have=held(sorted(set(srcs.values()))))
-    sync()
-    by = {}
-    for f in cases:
-        by.setdefault(where[srcs[f]], []).append(f"~/backotter-work/bs2-wt/testvm/backshot2/cases/{f}")
-    stamp = time.strftime("corpus-%Y%m%d-%H%M")
-    for h, fs in by.items():
-        if tier == 0:
-            ssh(h, root(f"{HOST_BS2} tier0-cases {' '.join(fs)} --run {stamp}"))
-        else:
-            for f in fs:
-                ssh(h, f"cd ~/backotter-work && ./cmp-run.sh --reserve 2 3 sudo -E {HOST_BS2} tier1 {f} --tier {tier} --run {stamp} --port 2949", check=False)
-
-
 def main():
     a = sys.argv[1:]
     if "--hosts" in a:
@@ -247,6 +517,10 @@ def main():
         sync()
     elif w == "status":
         status(a[1])
+    elif w == "bin":
+        if len(a) < 2:
+            sys.exit("bs2: bin FROM")
+        bin_words(a[1])
     elif w in ("BackShot2Alpine", "BackShot2"):
         rest = a[1:]
         if rest[:1] == ["corpus"]:
@@ -259,12 +533,11 @@ def main():
         if plan:
             return plan_words(sources, n)
         run_words(sources, n, time.strftime("bs2a-%Y%m%d-%H%M"))
-        if w == "BackShot2Alpine" or True:
-            print("then: bs2 BackShot2 corpus (once the queues finish; bs2 status RUN shows them)")
+        print("then: bs2 BackShot2 corpus (once the queues finish; bs2 status RUN shows them)")
     elif w == "leftovers":
         name = a[1] if len(a) > 1 else "leftovers"
         h = next(iter(RUN_HOSTS)) if CHOSEN else "chopin"
-        sync()
+        sync([h])
         run = time.strftime("lo-%Y%m%d-%H%M")
         if plan:
             ssh(h, f"cd ~/backotter-work && {HOST_BS2} leftovers {name} --plan --run {run}-plan")
@@ -277,14 +550,14 @@ def main():
         with open(path) as f:
             c = json.load(f)
         src = c["source"].split("@")[0]
-        h = assign([src], have=held([src]))[src]
-        sync()
+        h = assign([src], have=held([src]) if CHOSEN else None)[src]
         rp = f"~/backotter-work/bs2-wt/testvm/backshot2/{os.path.relpath(os.path.abspath(path), HERE)}"
         stamp = time.strftime(f"{w}-%Y%m%d-%H%M")
         if plan:
             n = int(a[2]) if w == "soak" else 1
             print(f"{w} {path} on {h}: tier {tier or 1 if w == 'soak' else tier}, ~{n * SECS[tier or 1] / 60:.0f} min est.")
             return
+        sync([h])
         if w == "replay" and tier == 0:
             ssh(h, root(f"{HOST_BS2} tier0-cases {rp} --run {stamp}"))
         elif w == "replay":

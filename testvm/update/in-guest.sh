@@ -347,6 +347,18 @@ Linux)
         # qcow2-punch.py hands back what the dropped deployment's objects
         # held.  A new deployment is a step: an image can change with no
         # package's version.
+        # mcelog decodes Intel machine checks only: on the hosts' AMD CPUs it
+        # fails at every boot, and the guest comes up "degraded".  The image
+        # has it, so mask it (in /etc, which the staged deployment takes on);
+        # ks-ostree.cfg now does at the install.  Nothing to do where the
+        # image has no mcelog.
+        case $(systemctl is-enabled mcelog.service 2>/dev/null) in
+        ""|not-found|masked) ;;
+        *)
+            step "mcelog masked"
+            systemctl mask mcelog.service || exit 1
+            ;;
+        esac
         booted() {
             rpm-ostree status --json | python3 -c 'import json, sys
 d = [x for x in json.load(sys.stdin)["deployments"] if x.get(sys.argv[1])]

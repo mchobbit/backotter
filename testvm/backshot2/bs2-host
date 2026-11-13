@@ -3,7 +3,12 @@
 runs over SSH.  Run from a private copy (~/backotter-work/bs2-wt/testvm/backshot2),
 never the shared ~/backotter-work/testvm.
 
-  bs2-host source SOURCE                 (root) the source's dump and tools, once per generation
+  bs2-host source SOURCE [--force]       (root) the source prepared for its cases, once per generation
+                                         (ht1.sh's source and backup phases, BS2_PREPARE) and its tools
+  bs2-host prepared SOURCE --holt FILE --tier T [--rustic-sha SHA]
+                                         (ht1-bs2.sh) what a case may take from the preparation, as shell
+  bs2-host rescuer-key --image IMG --memory M --rfw=... --extra=...
+                                         (ht1-bs2.sh) the key of the rescuer's saved state
   bs2-host tier0 SOURCE N [--from SEED] [--run RUN] [--keep-passes K]
                                          N new cases from SOURCE, through tier 0
   bs2-host tier0-cases CASE... [--run RUN]   given cases, through tier 0
@@ -21,7 +26,11 @@ never the shared ~/backotter-work/testvm.
 Paths (ROOT=/bkoscratch/backshot2, BS2_ROOT overrides):
   ROOT/sources/SOURCE/  gen (the generation), src.json (its live dump: holds
                         identifiers, never leaves the host), tools/ (a copy of
-                        its root, for tier 0's dry runs)
+                        its root, for tier 0's dry runs), prep (a symlink to the
+                        current preps/NAME: what tier 1 and 2's cases reuse,
+                        bs2lib/reuse.py, with its prep.json; the 3 newest kept)
+  ROOT/rescuer-state/HASH/  the rescuer's saved state (ht1-bs2.sh makes it in a
+                        case's rebuild, once per rescuer, firmware, QEMU and host)
   ROOT/runs/RUN/        tier0.jsonl and tier1.jsonl (a line per case), cases/
                         (each case run, as a .case file), logs/
   ROOT/bin/             the bko-holt and planner under test (BS2_HOLT, BS2_PLANNER override)
@@ -46,7 +55,7 @@ ROOT = os.environ.get("BS2_ROOT", "/bkoscratch/backshot2")
 RAM = os.environ.get("BS2_RAM", "/mnt/bko-ram/backshot2")
 TESTVM = os.path.dirname(HERE)
 WORK = os.path.expanduser("~m/backotter-work") if os.path.isdir(os.path.expanduser("~m/backotter-work")) else os.path.expanduser("~/backotter-work")
-VMS = f"{WORK}/vms"
+VMS = os.environ.get("BS2_VMS") or f"{WORK}/vms"   # (BS2_VMS: tests)
 
 
 def die(msg, code=2):
@@ -115,75 +124,142 @@ def holt_bin():
     return os.environ.get("BS2_HOLT") or f"{ROOT}/bin/bko-holt"
 
 
+def prep_dir(source):
+    """The source's current preparation (ROOT/sources/SOURCE/prep, a symlink into preps/), or None."""
+    p = f"{source_dir(source)}/prep"
+    return os.path.realpath(p) if os.path.isdir(p) else None
+
+
+def prep_reasons(source, holt_file, tier=1):
+    """(its dir, its prep.json, [why the current preparation can't stand in for a
+    case's source phase now]: [] when it can)."""
+    from bs2lib import reuse as RU
+    d = prep_dir(source)
+    saved = RU.load_prep(d) if d else None
+    try:
+        gen = generation(source)
+    except OSError as e:
+        return d, saved, [f"no generation of {source}: {e}"]
+    now = RU.fields_now(TESTVM, VMS, source, gen, RU.sha256_file(holt_file))
+    return d, saved, RU.source_stale(saved, now, tier, d)
+
+
+def prepare_with_ht1(src, port, d, gen):
+    """ht1.sh's own source and backup phases on SRC, as a case runs them (HT_VARIANT=bs2,
+    BS2_PREPARE=1: no case, no edits), on /bkoscratch in d/preps/NAME (HT_RAM=0,
+    HT_CLEAN=0: kept as it ends); then what cases don't need goes, prep.json is written
+    and d/prep points at it.  Returns its directory; dies when the run didn't pass."""
+    from bs2lib import reuse as RU
+    name = time.strftime("p-%Y%m%d-%H%M%S-") + str(os.getpid())
+    k = f"{d}/preps/{name}"
+    os.makedirs(f"{d}/preps", mode=0o755, exist_ok=True)
+    env = dict(os.environ, HT_VARIANT="bs2", BS2_PREPARE="1", BS2_NAME=name, BS2_TIER="1", BS2_HOST=os.path.join(HERE, "bs2-host"),
+               HT_RAM="0", HT_CLEAN="0", HT_RECORDS=d, HT_WORK=f"{RAM}/prep", HT_HOLT=holt_bin(), HT_PORT=str(port))
+    for v in ("BS2_CASE", "BS2_CHAIN_IN", "BS2_CHAIN_OUT", "HT_KEEP", "HT_QUICK", "HT_THROUGH", "HT_FAIL_AT", "HT_SOURCE_PREP",
+              "HT_RESCUER", "HT_RESCUER_IMG", "HT_RESERVE_PID", "HT_HOLT_BIN"):
+        env.pop(v, None)
+    log = f"{d}/preps/{name}.log"
+    with open(log, "w") as f:
+        r = subprocess.run([f"{TESTVM}/holttest1d/ht1.sh", src, "preps", "source", "backup"], env=env,
+                           stdin=subprocess.DEVNULL, stdout=f, stderr=subprocess.STDOUT)
+    try:
+        with open(f"{k}/report.txt") as f:
+            rep = f.read()
+    except OSError:
+        rep = ""
+    if r.returncode or not rep.rstrip().endswith("RESULT: PASS"):
+        fails = [l for l in rep.splitlines() if l.startswith("FAIL ")][:3]
+        die(f"preparing {src}: ht1.sh exit {r.returncode}: {'; '.join(fails) or 'no report'} (see {k} and {log})", 1)
+    # What the cases take: the overlays, dumps/, logs/, the report, the backup and its records.
+    rustic = ""
+    with open(f"{k}/logs/manifest.txt") as f:
+        for line in f:
+            w = line.split()
+            if len(w) >= 3 and w[0] == "rustic-bko":
+                rustic = w[2]
+    holt = RU.sha256_file(f"{k}/share/bko-holt")
+    os.makedirs(f"{k}/backup")
+    for x in ("repo", "repo-password"):
+        os.replace(f"{k}/share/{x}", f"{k}/backup/{x}")
+    for x in ("share", "tmp", ".ht"):
+        shutil.rmtree(f"{k}/{x}", ignore_errors=True)
+    if os.path.exists(f"{k}/rustic-bko"):
+        os.remove(f"{k}/rustic-bko")
+    saved = RU.fields_now(TESTVM, VMS, src, gen, holt)
+    saved.update(name=name, made=time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+                 backup={"snapshot_path": f"/mnt/ht1-src-{name}", "rustic": rustic})
+    with open(f"{k}/prep.json", "w") as f:
+        json.dump(saved, f, indent=1)
+    subprocess.run(["chmod", "-R", "a+rX", k])
+    tmp = f"{d}/prep.new"
+    if os.path.lexists(tmp):
+        os.remove(tmp)
+    os.symlink(f"preps/{name}", tmp)
+    os.replace(tmp, f"{d}/prep")
+    # The 3 newest stay: a case that began on the one before still reads its files.
+    old = sorted(x for x in os.listdir(f"{d}/preps") if x.startswith("p-") and os.path.isdir(f"{d}/preps/{x}"))[:-3]
+    for x in old:
+        shutil.rmtree(f"{d}/preps/{x}", ignore_errors=True)
+        if os.path.exists(f"{d}/preps/{x}.log"):
+            os.remove(f"{d}/preps/{x}.log")
+    return k
+
+
 def cmd_source(a):
-    """The source's live dump and a copy of its root (its tools), once per generation."""
+    """The source prepared for its cases, and its dump and tools for tier 0, once per
+    generation (and again when bko-holt or what made the preparation changed)."""
+    import fcntl
     src = a.source
     if os.geteuid() != 0:
         die("source: run as root (sudo -E)")
     if src.startswith("run:"):
         die("a BackShot1 run's source is copied in by bs2 on the Mac (layout.json and the run's tools)")
-    gen = generation(src)
-    if source_ready(src) == gen and os.path.isdir(f"{source_dir(src)}/tools/usr") and not a.force:
-        print(f"{src}: ready at {gen[:16]}")
-        return
     d = source_dir(src)
     # (Readable by m, who runs the queue and the shrinker: a test guest's
     # dump stays on the host, never the Mac or the repository.)
     os.makedirs(d, mode=0o755, exist_ok=True)
+    with open(f"{d}/.prep.lock", "a") as lk:
+        fcntl.flock(lk, fcntl.LOCK_EX)   # (one preparation of a source at a time; the second finds it ready)
+        gen = generation(src)
+        _, _, why = prep_reasons(src, holt_bin())
+        tools_ok = os.path.isdir(f"{d}/tools/usr") and source_ready(src) == gen
+        if not a.force and tools_ok and not why:
+            print(f"{src}: ready at {gen[:16]}")
+            return
+        k = prepare_with_ht1(src, a.port, d, gen) if why or a.force else prep_dir(src)
+        with open(f"{k}/dumps/src.json") as f:
+            dump = f.read()
+        json.loads(dump)
+        with open(f"{d}/src.json.part", "w") as f:
+            f.write(dump)
+        os.replace(f"{d}/src.json.part", f"{d}/src.json")
+        if not tools_ok or a.force:
+            copy_tools(src, k, d)
+        with open(f"{d}/gen", "w") as f:
+            f.write(gen + "\n")
+        print(f"{src}: {'prepared anew' if why or a.force else 'preparation kept'} ({os.path.basename(k)}"
+              f"{': ' + '; '.join(why[:2]) if why else ''}){', its tools copied' if not tools_ok or a.force else ''}, at {gen[:16]}")
+
+
+def copy_tools(src, k, d):
+    """The tools: the guest's root, copied out of a read-only mount of the preparation's overlay."""
     w = f"{RAM}/source-{src}"
     shutil.rmtree(w, ignore_errors=True)
     os.makedirs(w)
-    img = f"{VMS}/{src}/{src}.qcow2"
-    ov = f"{w}/src.qcow2"
-    sh(["qemu-img", "create", "-q", "-f", "qcow2", "-b", img, "-F", "qcow2", ov])
-    opts = []
-    try:
-        with open(f"{VMS}/{src}/vm-run-options") as f:
-            opts = f.read().split()
-    except OSError:
-        pass
-    port = str(a.port)
-    env = dict(os.environ, SSH_PORT=port, TMPDIR=w)
-    log = open(f"{w}/serial.vm-run", "w")
-    vm = subprocess.Popen([f"{TESTVM}/vm-run", "--serial-log", f"{w}/serial.log"] + opts + [ov], env=env,
-                          stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT, start_new_session=True)
-    key = f"{VMS}/{src}/id_ed25519"
-    ssh = ["ssh", "-q", "-i", key, "-p", port, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-           "-o", "ConnectTimeout=5", "root@127.0.0.1"]
-    try:
-        for _ in range(72):
-            if subprocess.run(["timeout", "10"] + ssh + ["true"], capture_output=True).returncode == 0:
-                break
-            time.sleep(5)
-        else:
-            die(f"{src} didn't answer SSH (see {w}/serial.log)", 1)
-        sh(["scp", "-q", "-i", key, "-P", port, "-o", "StrictHostKeyChecking=no", "-o", "UserKnownHostsFile=/dev/null",
-            holt_bin(), "root@127.0.0.1:/root/bko-holt"])
-        r = subprocess.run(["timeout", "300"] + ssh + ["/root/bko-holt dump; rc=$?; rm -f /root/bko-holt; exit $rc"], capture_output=True, text=True)
-        if r.returncode:
-            die(f"dump on {src}: {r.stderr[-500:]}", 1)
-        json.loads(r.stdout)
-        with open(f"{d}/src.json.part", "w") as f:
-            f.write(r.stdout)
-        os.replace(f"{d}/src.json.part", f"{d}/src.json")
-        subprocess.run(["timeout", "20"] + ssh + ["poweroff"], capture_output=True)
-        try:
-            vm.wait(120)
-        except subprocess.TimeoutExpired:
-            vm.terminate()
-            vm.wait(30)
-    finally:
-        if vm.poll() is None:
-            vm.terminate()
-    # The tools: the guest's root, copied out of a read-only mount of the overlay.
+    env = dict(os.environ, TMPDIR=w)
     mp = f"{w}/mnt"
     os.makedirs(mp)
+    from bs2lib import reuse as RU
+    _, imgs = RU.vm_options(VMS, src)
+    extra = []
+    for i in range(1, len(imgs)):
+        extra += ["--disk", f"{k}/src-{i}.qcow2"]
     key_args = []
-    for kf in ("luks-keyfile", "luks-passphrase", "console-passphrase"):
+    for kf in ("console-passphrase", "zfs-passphrase", "luks-passphrase", "luks-keyfile"):
         if os.path.exists(f"{VMS}/{src}/{kf}"):
             key_args = ["--key", f"{VMS}/{src}/{kf}"]
             break
-    sh([f"{TESTVM}/vm-mount", "--ro"] + key_args + [ov, mp], env=env, stdout=subprocess.DEVNULL)
+    sh([f"{TESTVM}/vm-mount", "--ro"] + extra + key_args + [f"{k}/src-0.qcow2", mp], env=env, stdout=subprocess.DEVNULL)
     try:
         tools = f"{d}/tools"
         shutil.rmtree(tools, ignore_errors=True)
@@ -192,10 +268,32 @@ def cmd_source(a):
             f"{mp}/", f"{tools}/"])
     finally:
         subprocess.run([f"{TESTVM}/vm-umount", mp], env=env, stdout=subprocess.DEVNULL)
-    with open(f"{d}/gen", "w") as f:
-        f.write(gen + "\n")
-    shutil.rmtree(w, ignore_errors=True)
-    print(f"{src}: dumped and its tools copied, at {gen[:16]}")
+        shutil.rmtree(w, ignore_errors=True)
+
+
+def cmd_prepared(a):
+    """What ht1-bs2.sh's case may take from its source's preparation, as shell
+    assignments (BS2_PREP_DIR, BS2_PREP_NAME, BS2_PREP_SNAP; BS2_PREP_BACKUP_WHY when its
+    backup can't serve).  Exit 1, with BS2_PREP_WHY, when the preparation can't stand in
+    for the case's source phase."""
+    from bs2lib import reuse as RU
+    d, saved, why = prep_reasons(a.source, a.holt, a.tier)
+    if why:
+        print(RU.shell_assign("BS2_PREP_WHY", "; ".join(why[:3]) + (f" (+{len(why) - 3} more)" if len(why) > 3 else "")))
+        sys.exit(1)
+    bwhy = RU.backup_stale(saved, a.rustic_sha, d) if a.rustic_sha else ["the case named no rustic-bko"]
+    print(RU.shell_assign("BS2_PREP_DIR", d))
+    print(RU.shell_assign("BS2_PREP_NAME", saved.get("name", os.path.basename(d))))
+    print(RU.shell_assign("BS2_PREP_SNAP", "" if bwhy else saved["backup"]["snapshot_path"]))
+    print(RU.shell_assign("BS2_PREP_BACKUP_WHY", "; ".join(bwhy[:2])))
+
+
+def cmd_rescuer_key(a):
+    """The saved rescuer's key: a line "HASH KIND", then the key text (bs2lib/reuse.py)."""
+    from bs2lib import reuse as RU
+    f = RU.rescuer_fields_now(TESTVM, a.image, a.rfw.split(), a.memory, a.extra.strip())
+    text = RU.rescuer_key(f)
+    sys.stdout.write(f"{RU.key_hash(text)} {RU.rescuer_kind(f)}\n{text}")
 
 
 def load_source(source):
@@ -357,6 +455,9 @@ def cmd_apply(a):
     print("BS2_FLAGS=(" + " ".join(q(x) for x in flags) + ")")
     print(f"BS2_SNAPS={snaps.get('count', 1)} BS2_RESTORE={snaps.get('restore', 0) if snaps else 0}")
     print(f"BS2_CONTENT={1 if c.get('content') else 0}")
+    # Whether the case's backup is the prepared one's tree (bs2lib/reuse.py: no content, one snapshot).
+    from bs2lib import reuse as RU
+    print(f"BS2_SHARE_BACKUP={1 if RU.backup_shareable(c)[0] else 0}")
     print("BS2_JUDGE=(" + " ".join(q(x) for x in judge) + ")")
     print("BS2_FSJUDGE=(" + (" --new-uuids" if ex["new_uuids"] else "") + ")")
     # The leftovers set's: the stale layer to seed, and each partition's type.
@@ -672,6 +773,16 @@ def main():
     x.add_argument("source")
     x.add_argument("--port", type=int, default=2680)
     x.add_argument("--force", action="store_true")
+    x = s.add_parser("prepared")
+    x.add_argument("source")
+    x.add_argument("--holt", required=True, help="the bko-holt the case dumps with (its copy in the share)")
+    x.add_argument("--tier", type=int, default=1, choices=(1, 2))
+    x.add_argument("--rustic-sha", default="", help="the case's rustic-bko's sha256 (ht1-lib.sh's HT_RUSTIC_SHA)")
+    x = s.add_parser("rescuer-key")
+    x.add_argument("--image", required=True)
+    x.add_argument("--memory", default="3072")
+    x.add_argument("--rfw", default="", help="the rescuer's vm-run firmware options, one word (--rfw='--uefi ...')")
+    x.add_argument("--extra", default="", help="its other QEMU args, with SHARE and QMP for their paths")
     x = s.add_parser("tier0")
     x.add_argument("source")
     x.add_argument("n", type=int)
@@ -741,7 +852,7 @@ def main():
     x = s.add_parser("caps")
     x.add_argument("source", nargs="?", default="alpine324")
     a = p.parse_args()
-    {"source": cmd_source, "tier0": cmd_tier0, "tier0-cases": cmd_tier0_cases, "gen": cmd_gen, "caps": cmd_caps,
+    {"source": cmd_source, "prepared": cmd_prepared, "rescuer-key": cmd_rescuer_key, "tier0": cmd_tier0, "tier0-cases": cmd_tier0_cases, "gen": cmd_gen, "caps": cmd_caps,
      "tier1": cmd_tier1, "leftovers": cmd_leftovers, "apply": cmd_apply, "plant": cmd_plant, "change": cmd_change, "deep": cmd_deep, "enqueue": cmd_enqueue, "queue": cmd_queue, "shrink": cmd_shrink}[a.cmd](a)
 
 

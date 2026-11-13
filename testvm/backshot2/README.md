@@ -52,9 +52,71 @@ Each host needs, once:
 - ht1.sh's (`/bkoscratch/holttest1d/bin/`'s debs, the rescuers).
 
 Times (`SECS` in bs2): tier 1 measured ~155 s a case (2026-11-11, cinqcent,
-400 cases on 3 slots: 6.1 h), ~50 s of it the rescuer's apt of the bcachefs
-debs and 5 s polls; ht1.sh now installs bcachefs only for a layout that has
-one, and polls every second, so ~110 s est.
+400 cases on 3 slots: 6.1 h; source 21 s, backup 4-14, rebuild ~95, verify
+~26), ~50 s of it the rescuer's apt of the bcachefs debs and 5 s polls;
+ht1.sh now installs bcachefs only for a layout that has one, and polls every
+second, so ~110 s est.; with what a case reuses (below) ~65 s est., tier 2
+~95 s est.  Neither is measured yet.
+
+## What a case reuses
+
+Work that is the same for every case of a source is done once
+(`bs2lib/reuse.py` has the rules, `ht1-bs2.sh` the hooks).  Each is on
+unless its variable is 0 (set on the Mac, `bs2` passes it on to the hosts),
+and a case that can't take it does its own, with a `note:` line saying why:
+
+| Variable | What | Saves (est.) |
+|---|---|---|
+| `BS2_REUSE_SOURCE` | the source phase takes the preparation: an overlay on its shut-down overlays, its dump, boot state, lvmid, health and serial log | ~19 s |
+| `BS2_REUSE_BACKUP` | a case with no content drift and one snapshot copies the preparation's backup (and fsmeta record) into its share | ~3.5 s on ~27% of cases |
+| `BS2_RESCUER_STATE` | the rescuer resumes from a saved state; targets and decoy hot-plugged | ~13 s |
+| `BS2_FAST_DOWN` | QEMU quits once synced, not a guest poweroff waited for (the rescuer, and the restored boot) | ~8 s + ~2.5 s |
+
+- **The preparation** (`bs2-host source`, which bs2 runs on every host
+  before a run): ht1.sh's own source and backup phases on the source, with
+  `BS2_PREPARE=1` (no case: no edits, no content, one snapshot), on
+  /bkoscratch in `sources/SOURCE/preps/NAME` (`prep` points at the current
+  one; the 3 newest stay).  Its `prep.json` keys it: the generation, the
+  bko-holt (the dump is bko-holt's), ht1.sh, ht1-lib.sh, ht1-bs2.sh, vm-run,
+  vm-mount and fsmeta.py, vm-run-options, the image files' size, mtime and
+  inode, and the backup's rustic-bko.  `bs2-host source` makes a new one
+  when any of them changed (and so redoes every older preparation); a case
+  that finds it stale boots the source itself.  Its dump is the generator's
+  `src.json` too, so cases are drawn from the dump tier 1 uses.  A tier 2
+  case takes it only when its source boots with `--no-secure-boot` already
+  (all of the Alpine sources do).
+- **The backup** is the same for every case that changes nothing backed
+  up: from the code, only `content` (planted read-write into the source
+  before the backup, `bs2-host plant`, from the case's seed and drifted
+  layout) and `snapshots` (N backups with `bs2-host change` between) do;
+  the edits, targets, load options, tier and leftovers chain reach load,
+  not the backup (`bs2-host apply` prints `BS2_SHARE_BACKUP`).  The copy is
+  the case's: the rescuer mounts the share read-only, and load restores
+  `latest:` the preparation's mount point (`bs2-snap-path`).
+- **The rescuer's state**: the first case on a host that finds none for its
+  key (`bs2-host rescuer-key`: rescuer image and its .sha256, firmware
+  options, memory, QEMU, OVMF, host kernel and CPU microcode, vm-run,
+  ht1-bs2.sh, bs2-qmp.py) boots the rescuer with no disk of a case's and a
+  vmgenid device (and on q35 six PCIe root ports), waits for its boot to
+  settle, stops its timers (a resume jumps its clock: they would fire
+  mid-load), and saves RAM and devices with QMP `migrate` to
+  `/bkoscratch/backshot2/rescuer-state/HASH/` (its disk as an overlay, its
+  NVRAM beside it); a newer state of the same rescuer and firmware replaces
+  the older.  Each case then resumes it (`-incoming`, an overlay on its
+  disk, a copy of its NVRAM: tier 2's `vars.fd`, which the restored boot
+  keeps), sets its clock, feeds its RNG the host's bytes and reseeds it,
+  hot-plugs each target then the decoy, waiting for each, and checks the
+  kernel named them vdb.. with the sizes a cold boot would show.  The share
+  isn't mounted when saved (9p blocks migration while mounted) and is
+  mounted by the setup as ever.  The leftovers set always boots cold.
+- **Quitting**: after load's close, if no target or the decoy has a holder,
+  mount, swap or imported pool, the guest syncs and QEMU gets TERM, its own
+  clean exit, which drains and flushes its disks (qcow2's metadata too)
+  before it exits; anything still holding a target: a poweroff as ever.
+
+A first run should compare: the same cases with all four at 0 and at 1
+(identical verdicts expected), the `note: rescuer:` and `note: source:`
+lines (how often each falls back), and phases.tsv's seconds.
 
 ## The leftovers set
 
@@ -106,7 +168,7 @@ load itself.
 | B2 generator and the three rules | `bs2lib/generate.py`, `bs2lib/rules.py`, `bs2lib/tables.py`, `bs2lib/geometry.py` |
 | B3 tier 0 | `bs2lib/tier0.py`, `holt/tests/bs2_plan.rs` (golden_plans.rs's invariants, now `holt/tests/common/invariants.rs`) |
 | B4 `judge.py --expect` | `testvm/holttest1d/judge.py` |
-| B5 tiers 1 and 2 | `bs2lib/tier1.py`, `ht1-bs2.sh` (ht1.sh's `HT_VARIANT=bs2` hooks), `vm-run --uefi-vars` |
+| B5 tiers 1 and 2 | `bs2lib/tier1.py`, `ht1-bs2.sh` (ht1.sh's `HT_VARIANT=bs2` hooks), `vm-run --uefi-vars`; what a case reuses: `bs2lib/reuse.py`, `bs2-qmp.py` |
 | B6 shrinker, corpus | `bs2lib/shrink.py`, `cases/` |
 | B7 the Alpine sources | `testvm/make-bootstrap.sh alpine-uefi|alpine-lvm|alpine-luks` |
 | B8 content drift | `bs2lib/content.py` |
@@ -129,9 +191,10 @@ Unit tests: `python3 -m unittest discover -s testvm/backshot2/tests`.
    same values: if that matches, load's command is wrong (FAIL); if not, the
    model is (INVALID).
 3. **Tier 1** (tier 0 passes only): HoltTest1's four phases through ht1.sh,
-   with the edits applied to the fresh dump, content planted read-write in
-   the source's overlay before the backup, targets of the case's sizes, its
-   load options, and `judge.py --expect` against the drifted layout.
+   with the edits applied to the source's dump (the preparation's: "What a
+   case reuses"), content planted read-write in an overlay of the source
+   before the backup, targets of the case's sizes, its load options, and
+   `judge.py --expect` against the drifted layout.
    `HT_QUICK=1`: HoltTest1's refusal checks are its own, not rerun here.
 4. **Tier 2** (UEFI sources, cases that touch an ESP or the NVRAM): tier 1
    with one OVMF variable store for the rescuer and the restored boot, and

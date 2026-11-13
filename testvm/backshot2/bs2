@@ -37,6 +37,11 @@ everywhere, the rescuers, ht1.sh's debs), and each prepares the sources it holds
 source, as root under cmp-run.sh --reserve 2 3, port 2949; nothing to do when ready):
 a host whose generation of a source differs from the lead's stops the run.
 
+What a case reuses (ht1-bs2.sh; README "What a case reuses"): the source's preparation
+(its boot, dump and backup, made by bs2-host source), a rescuer resumed from a saved
+state, and quits in place of poweroffs.  BS2_REUSE_SOURCE, BS2_REUSE_BACKUP,
+BS2_RESCUER_STATE and BS2_FAST_DOWN set to 0 here turn each off on the hosts.
+
 Results: each host's /bkoscratch/backshot2/runs/RUN/ and Test2's ledger
 (family bs2).  "plan" prints the cases, tiers, each host's share and time, and runs nothing.
 bs2-host takes ports 2943-2949 on whichever host runs it (the queue's slots the
@@ -48,6 +53,7 @@ import importlib.util
 import json
 import os
 import re
+import shlex
 import subprocess
 import sys
 import time
@@ -76,10 +82,15 @@ ALPINE = list(HOME)
 ROOT = "/bkoscratch/backshot2"
 HOST_BS2 = "~/backotter-work/bs2-wt/testvm/backshot2/bs2-host"
 # Seconds a case, per tier.  Tier 1 measured 2026-11-11 on cinqcent (400 cases, 3 slots,
-# phases.tsv): ~155 s, ~50 s of it the rescuer's apt of the bcachefs debs and 5 s polls;
-# 110 is est. after ht1.sh's fix (bcachefs only for a bcachefs layout, 1 s polls).
-# Tier 2 est. (tier 1 and its OVMF store); tier 0 measured 2026-11-10.
-SECS = {0: 0.3, 1: 110, 2: 140}
+# phases.tsv): ~155 s (source 21, backup 4-14, rebuild ~95, verify ~26), ~50 s of it the
+# rescuer's apt of the bcachefs debs and 5 s polls; ~110 s est. after ht1.sh's fix
+# (bcachefs only for a bcachefs layout, 1 s polls).  65 is est. with what a case reuses
+# (ht1-bs2.sh, README "What a case reuses"), not yet measured: the prepared source
+# (-19 s), the prepared backup (-3.5 s on the ~27% of cases with no content and one
+# snapshot: -1 s), the rescuer resumed (-13 s of its ~17 s boot), quit not powered off
+# (-8 s), the restored boot quit (-2.5 s).  Tier 2 est. likewise (140 before: its UEFI
+# boots are longer); tier 0 measured 2026-11-10.
+SECS = {0: 0.3, 1: 65, 2: 95}
 MAX_SLOTS = 6     # bs2-host queue's ports, 2943-2948 (2949: by hand)
 SWEEP = 5         # tier 0's sweep: N * SWEEP new cases a source, on its lead
 TIER2 = 30        # tier 2 cases in all, shared by the UEFI sources
@@ -215,9 +226,19 @@ def sync(hosts=None):
                        check=True)
 
 
+# What a case reuses (ht1-bs2.sh), each on unless set to 0: set here, passed on to the
+# hosts' cases (the queue, replay, soak, the corpus) so a run can compare.
+REUSE_VARS = ("BS2_REUSE_SOURCE", "BS2_REUSE_BACKUP", "BS2_RESCUER_STATE", "BS2_FAST_DOWN")
+
+
+def reuse_env():
+    """REUSE_VARS set in this environment, as "NAME=VALUE " words for a host's command."""
+    return "".join(f"{v}={shlex.quote(os.environ[v])} " for v in REUSE_VARS if v in os.environ)
+
+
 def root(cmd, reserve="2 2", tag="bs2:mac"):
     """CMD as root under a reservation, as m submits it (cmp-run.sh as m)."""
-    return f"cd ~/backotter-work && WEAR_TAG={tag} ./cmp-run.sh --reserve {reserve} sudo -E {cmd}"
+    return f"cd ~/backotter-work && WEAR_TAG={tag} {reuse_env()}./cmp-run.sh --reserve {reserve} sudo -E {cmd}"
 
 
 def placement(sources, n):
@@ -289,7 +310,8 @@ def preflight(hosts):
 
 def prepare(can, run):
     """Each host makes the run's directories and prepares the sources it holds (bs2-host
-    source: once per generation); {host: {source: generation}}."""
+    source: once per generation, and again when the bko-holt or the harness that made the
+    preparation changed: what its cases reuse); {host: {source: generation}}."""
     mine = {}
     for s, hs in can.items():
         for h in hs:
@@ -383,7 +405,7 @@ def run_words(sources, n, run):
         if sweep.get(h):
             c.append(f"sudo chown -R m: {rd}-t0")
         if js:
-            c.append(f"{HOST_BS2} queue {run} --slots {slots(h)}")
+            c.append(f"{reuse_env()}{HOST_BS2} queue {run} --slots {slots(h)}")
         if not c:
             continue
         ssh(h, f"setsid -f bash -c {json.dumps('; '.join(c))} > {log} 2>&1 < /dev/null")
@@ -463,7 +485,7 @@ def corpus(plan, tier):
             ssh(h, root(f"{HOST_BS2} tier0-cases {' '.join(fs)} --run {stamp}"))
         else:
             for f in fs:
-                ssh(h, f"cd ~/backotter-work && ./cmp-run.sh --reserve 2 3 sudo -E {HOST_BS2} tier1 {f} --tier {tier} --run {stamp} --port 2949", check=False)
+                ssh(h, f"cd ~/backotter-work && {reuse_env()}./cmp-run.sh --reserve 2 3 sudo -E {HOST_BS2} tier1 {f} --tier {tier} --run {stamp} --port 2949", check=False)
 
 
 def assign(sources, hosts=None, have=None):
@@ -563,7 +585,7 @@ def main():
         if w == "replay" and tier == 0:
             ssh(h, root(f"{HOST_BS2} tier0-cases {rp} --run {stamp}"))
         elif w == "replay":
-            ssh(h, f"cd ~/backotter-work && ./cmp-run.sh --reserve 2 3 sudo -E {HOST_BS2} tier1 {rp} --tier {tier} --run {stamp} --port 2949", check=False)
+            ssh(h, f"cd ~/backotter-work && {reuse_env()}./cmp-run.sh --reserve 2 3 sudo -E {HOST_BS2} tier1 {rp} --tier {tier} --run {stamp} --port 2949", check=False)
         elif w == "shrink":
             if tier == 0:
                 ssh(h, root(f"{HOST_BS2} shrink {rp} --tier 0"))
@@ -573,7 +595,7 @@ def main():
             n = int(a[2])
             ok = 0
             for i in range(n):
-                r = ssh(h, f"cd ~/backotter-work && ./cmp-run.sh --reserve 2 3 sudo -E {HOST_BS2} tier1 {rp} --tier 1 --run {stamp} --port 2949", check=False)
+                r = ssh(h, f"cd ~/backotter-work && {reuse_env()}./cmp-run.sh --reserve 2 3 sudo -E {HOST_BS2} tier1 {rp} --tier 1 --run {stamp} --port 2949", check=False)
                 ok += r.returncode == 0
             print(f"soak: {ok} of {n} passed (N of {n} bounds a race below ~{300 // max(1, n)}% only)")
     else:

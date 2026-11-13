@@ -203,6 +203,20 @@ the three rules after each one. A draw that breaks a rule is discarded, not run.
 - **Disks:** tiers 1 and 2 run in RAM under `cmp-run.sh --reserve`, with WEAR_TAG
   `bs2` (work-in-ram.md). Alpine's disks are ~1 GiB of data in a sparse image of
   the target's size, so its SSD writes stay at ~0.
+- **Done once, not per case** (2026-11-13, testvm/backshot2/README.md "What a
+  case reuses"; est., not yet measured): a case's phases are HoltTest1's
+  source, backup, rebuild and verify, and what is the same for every case of
+  a source is done once per host. The source's boot, dump, boot state and
+  health come from its preparation (ht1.sh's own source phase, run once per
+  generation, bko-holt and harness); a case with no content drift and one
+  snapshot copies the preparation's backup, since nothing else of a case
+  changes what is backed up; the rescuer resumes from a state saved once per
+  rescuer, firmware, QEMU and host, its targets hot-plugged with the names a
+  cold boot gives them; QEMU quits once the targets are synced and let go of.
+  The restored disk's boot stays a boot of its own. Tier 1 goes from ~110 s
+  a case to ~65 s (est.). Each is switchable (`BS2_REUSE_SOURCE`,
+  `BS2_REUSE_BACKUP`, `BS2_RESCUER_STATE`, `BS2_FAST_DOWN`), and falls back
+  to the case's own work, with a note, wherever it can't serve.
 - **Tier 3:** each Alpine cycle writes ~0.5 GB to the Thinkpad's NVMe.
 
 ## Replay, shrinking and the corpus

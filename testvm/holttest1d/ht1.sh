@@ -56,6 +56,11 @@
 # HT_HOLT_BIN=DIR takes bko-holt from DIR/bko-holt (DIR/PLATFORM/bko-holt in
 # ht1-bsd.sh) instead of bin/'s: a set laid out as bin/ is, HoltTest2's
 # builds (T2_HOST_ROOT/holt-bin/CODE); a run refuses when it lacks the file.
+# HT_VARIANT=bs2 (BackShot2's cases) may take the source's preparation for
+# the source phase and the backup, and resume the rescuer from a saved state
+# and quit it once synced (testvm/backshot2/ht1-bs2.sh; BS2_REUSE_SOURCE,
+# BS2_REUSE_BACKUP, BS2_RESCUER_STATE, BS2_FAST_DOWN =0 turn each off).
+#
 # For debugging (ht1-debug.sh drives these): HT_HOLT=FILE is the bko-holt
 # to test instead of bin/'s or HT_HOLT_BIN's (either is copied as the run
 # starts, and that copy serves the whole run); HT_QUICK=1 leaves out rebuild's refusals, dry
@@ -260,6 +265,7 @@ gpass=""; for f in console-passphrase zfs-passphrase luks-passphrase luks-keyfil
 ckey=$gpass; [[ $gpass != */luks-keyfile ]] || ckey=""
 # Where the run works and what a pass keeps (ht1-lib.sh; README "Where a run works, and what it keeps").
 HT_BULK=(share 'src-*.qcow2' 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 rustic-bko tmp img-key img-key.pub)
+[[ $VARIANT != bs2 ]] || HT_BULK+=(rescuer-vars.fd)   # (a resumed UEFI rescuer's NVRAM)
 HT_ZIP=(src-meta.json dst-meta.json)
 # Settings that change what a run checks, or its rescuer: its report names them.
 dbg=""; for v in HT_QUICK HT_THROUGH HT_KEEP HT_FAIL_AT HT_RESCUER HT_RESCUER_IMG HT_SOURCE_PREP; do [[ -z ${!v:-} ]] || dbg+=" $v=${!v}"; done
@@ -509,6 +515,8 @@ ostree_verify() {
 
 phase_source() {
     say "== source: $G"
+    # (bs2: the source's preparation stands in for its boot when it can.)
+    if [[ $VARIANT == bs2 ]] && bs2_source_reuse; then cp "$R/dumps/src.json" "$S/layout.json"; bs2_after_source; return; fi
     for ((i = 0; i < n; i++)); do
         rm -f "${src[i]}"; qemu-img create -q -f qcow2 -b "${imgs[i]}" -F qcow2 "${src[i]}"
     done
@@ -734,9 +742,12 @@ phase_rebuild() {
     # aren't the restored machine's (each vm-run --uefi starts fresh), so
     # the boot stage runs with --no-nvram, and the restored disk boots from
     # the ESP's removable path.
+    # (bs2: resumed from a saved state, its disks hot-plugged, when it can: ht1-bs2.sh.)
+    if [[ $VARIANT == bs2 ]] && bs2_rescuer_resume; then :; else
     IMG_BOOT=${IMG_PLAT:-} vm_up "$R/rescuer.qcow2" "$R/logs/rescuer-serial.log" "${rfw[@]}" --memory 3072 "${disks[@]}" -- \
         -virtfs "local,path=$S,mount_tag=bkoshare,security_model=none,readonly=on"
     vm_wait "$rkey" || { bad "rescuer boots"; vm_down "$rkey"; return; }
+    fi
     if [[ $VARIANT == img ]]; then
         # (After QEMU opened the image: the pin unchanged now means the
         # inode it booted is the one the run started with.)
@@ -877,7 +888,8 @@ PY
     sshk "$rkey" 'cat /run/bko-holt/log/load.log' > "$R/logs/rebuild-load.log"
     [[ $VARIANT != bs2 ]] || bs2_after_load
     [[ ${HT_KEEP:-} == 1 ]] && { kept_or_down; return; }
-    vm_down "$rkey"
+    # (bs2: QEMU quits once the targets are let go of and synced: ht1-bs2.sh.)
+    if [[ $VARIANT == bs2 ]]; then bs2_rescuer_down; else vm_down "$rkey"; fi
     [[ $VARIANT != bs2 ]] || bs2_chain_save
     rm -f "$R/rescuer.qcow2" "$R/img-key" "$R/img-key.pub"
 }
@@ -945,7 +957,7 @@ phase_verify() {
     # An ostree source's baseline (its source phase): the rollback boots too,
     # after the dump, which is of the default boot as the source's was.
     [[ ! -f $R/logs/source-ostree-rollback.txt ]] || ostree_verify
-    vm_down "$gkey"
+    if [[ $VARIANT == bs2 ]]; then bs2_restored_down; else vm_down "$gkey"; fi
     local how=(); [[ $VARIANT == bigger ]] && how=(--grow $((1 << 30)))
     [[ $VARIANT == degraded ]] && how=(--degraded)
     # The fitting variants: judge.py works the new geometry out as load did,

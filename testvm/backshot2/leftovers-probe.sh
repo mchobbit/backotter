@@ -68,7 +68,7 @@ probe|restored)
     h=$(for x in /sys/block/"${disk#/dev/}"/*/holders/*; do [ -e "$x" ] && echo "${x#/sys/block/}"; done | tr '\n' ' ')
     [ -n "$h" ] && s="$s holders: $h;"
     if [ "$mode" = restored ]; then
-        t=$(for p in $(parts); do echo "${p#/dev/}=$(blkid -o value -s TYPE "$p" 2>/dev/null || echo '?')"; done | tr '\n' ' ')
+        t=$(for p in $(parts); do echo "${p#/dev/}=$(blkid "$p" 2>/dev/null | sed -n 's/.* TYPE="\([^"]*\)".*/\1/p')"; done | tr '\n' ' ')
         s="$s types: $t;"
     fi
     echo "SUMMARY ${s:- nothing active, nothing importable}" ;;

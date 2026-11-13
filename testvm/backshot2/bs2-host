@@ -486,7 +486,7 @@ def cmd_leftovers(a):
         notes = []
         try:
             with open(f"{line.get('dir')}/report.txt") as f:
-                notes = [l.rstrip() for l in f if "leftovers" in l]
+                notes = [l.rstrip() for l in f if l.startswith(("note: leftovers", "FAIL leftovers", "PASS leftovers"))]
         except (OSError, TypeError):
             pass
         row = {"set": a.set, "step": c["chain"]["step"], "id": c["chain"]["id"], "case": c["name"], "verdict": line["verdict"],

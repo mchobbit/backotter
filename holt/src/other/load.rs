@@ -243,9 +243,11 @@ pub fn scan(sys: &Sys, fam: Family, opts: &Options, ours: &[String]) -> System {
         // The stick: its config partition's label, on every system (illumos'
         // root is a RAM disk, so nothing mounted names the stick there).
         let boot_medium = found.iter().chain(&inner[i]).flat_map(|f| f.contents.iter()).chain(whole[i].iter()).any(|c| c.label.as_deref() == Some(STICK_CONFIG_LABEL));
-        disks.push(TargetDisk { b, parts, table: tables[i].clone(), signatures, uuids, in_use, boot_medium, holds_root });
+        // Nothing here is let go of with --erase (release.rs is Linux's).
+        let hard_use = in_use.clone();
+        disks.push(TargetDisk { b, parts, table: tables[i].clone(), signatures, uuids, in_use, hard_use, boot_medium, holds_root });
     }
-    System { disks, mounts, pools, pvs: vec![] }
+    System { disks, mounts, pools, pvs: vec![], devs: vec![], swaps: vec![] }
 }
 
 impl Builder<'_> {

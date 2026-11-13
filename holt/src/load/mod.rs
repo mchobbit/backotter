@@ -18,6 +18,7 @@ pub mod fit;
 pub mod layout;
 pub mod ostree;
 pub mod plan;
+pub mod release;
 pub mod shared;
 pub mod status;
 pub mod target;

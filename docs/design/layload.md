@@ -380,10 +380,10 @@ The tool erases disks.  So:
 3. These are refused even with `--erase`:
    - the disk the stick booted from (found the way `stick-config.md`'s
      "Finding the config at boot" finds it);
-   - any disk with a mounted partition, active swap, holders in sysfs (md,
-     LVM, LUKS, device-mapper), or a vdev of an imported pool, unless
-     load made those itself in an earlier stage of this layout;
-   - any disk holding the running system's `/`.
+   - any disk with a mounted partition or active swap, unless load made
+     those itself in an earlier stage of this layout;
+   - any disk holding the running system's `/`;
+   - any disk whose holders (below) can't all be let go of.
    And the plan is refused when a volume group with a name or UUID the
    layout's has, or a PV with one of its PVs' UUIDs, is on a disk that
    isn't a target (most often the source's own disk, still attached):
@@ -394,12 +394,60 @@ The tool erases disks.  So:
    here is imported as NAME_bko).  The way out is to disconnect that disk,
    or `vgimportclone` its group (a new name and new UUIDs; `vgrename`
    keeps the UUIDs).
-4. A target disk smaller than its source is refused unless `--fit-largest
+4. Holders, with `--erase` only.  A disk whose partitions (or itself) are
+   held in sysfs (LVM, LUKS/dm-crypt, md, other device-mapper) or are vdevs
+   of an imported ZFS pool, none of which load made in an earlier stage of
+   this layout, is refused without `--erase` ("give --erase DISK to let go
+   of what holds it").  A rescue system's udev starts these at boot: LVM
+   autoactivates an old volume group, md assembles an old array
+   (BackShot2's leftovers set, L3 and L6; backshot2.md).  With `--erase`
+   the partition stage lets go of them first, from the top of each stack
+   down, then wipes the disk as before.  `plan` works the chain out from
+   `/sys/block/*/holders` and `slaves`, the mount table, the swaps, the PVs
+   and `zpool status`, and prints each step; nothing runs without
+   `--commit`.  The whole plan is refused, naming the device and the other
+   disk, if any device in the chain (every LV of a volume group in it, too):
+   - is mounted or in use as swap (a pool: any of its datasets mounted);
+   - is open beyond what's stacked on it (`dmsetup info`'s open count);
+   - also sits on a disk that isn't named with `--erase` (a volume group
+     with a PV elsewhere, an md array with a member elsewhere, a LUKS
+     mapping on an LV of such a group, a pool with a vdev elsewhere).
+   The stick and the backup drive are never reached: neither is ever a
+   target named with `--erase` (the stick is refused as a target, a local
+   backup drive is mounted while load restores from it), and no step
+   touches a device that sits on any other disk.  The steps, the commands load's own close stage runs
+   for what it makes (plain, so the plan reads as typed), after a `udevadm
+   settle`:
+   `zpool export POOL`; `cryptsetup close NAME`; `vgchange --devicesfile ""
+   --devices PVS --activate n VG` (LVM seeing that group's PVs only, so a
+   same-named group elsewhere is never the one stopped); `mdadm --stop
+   /dev/mdN`; `dmsetup remove NAME` (other device-mapper).  Then `udevadm
+   settle`, and the partition stage as before: `wipefs --all`, whose O_EXCL
+   open fails on a disk anything still holds, so if a step didn't take, or
+   something started it again, nothing is written.  Each command refuses a
+   device in use, and the stage stops there.
+   Autoactivation racing back: the old PV label (sector 1 of the old
+   partition) survives the release; nothing in it is erased.  `wipefs
+   --all` on the disk erases the old table and re-reads it, so the old
+   partitions leave the kernel and udev has no device that starts at the
+   label.  After that, LVM (and blkid) look for a label only in a device's
+   first four sectors.  A new partition that starts where an old PV did
+   would show it again, but the partition stage zeroes each new partition's
+   first 4 MiB, and the disk's own, through the disk before sfdisk writes
+   the table (8b7e177); anywhere else the old label is inside a new
+   partition, not at its start, and is never seen (a loop device on Chopin,
+   2026-11-13: `blkid -p` found LVM2_member on a new partition at the old
+   PV's start without the zeroing, nothing with it, and nothing on one
+   starting 1 MiB before).  The same holds for md 1.1/1.2 and LUKS headers
+   at a partition's start; md 0.90/1.0 superblocks at an old partition's
+   end are seen only by a new partition ending there, whose last 1 MiB is
+   zeroed too.
+5. A target disk smaller than its source is refused unless `--fit-largest
    PCT` says by how much the layout may be fitted to it (see "Fitting a disk
    of another size"); one with another logical sector size is always refused.
-5. `boot` refuses to run on a target root that doesn't hold the restored
+6. `boot` refuses to run on a target root that doesn't hold the restored
    system (see `boot`).
-6. Each stage reads the disks back before doing anything (see "Stages check
+7. Each stage reads the disks back before doing anything (see "Stages check
    the disks, not just a state file").
 
 In QEMU guests the same rules hold.  Test harnesses pass `--map` and

@@ -443,12 +443,53 @@ fn zero_parts(d: &Disk, dev: &str) -> Vec<Cmd> {
     out
 }
 
+/// What holds the targets named with --erase, let go of from the top of
+/// each stack down (target.rs and release.rs worked out that none of it is
+/// mounted, swap, open, or on a disk that isn't named with --erase), with
+/// udev let finish before and after, so wipefs's O_EXCL open finds the
+/// disks free.  Each command refuses a device still in use, and the stage
+/// stops there: nothing is written.  Plain commands, not `settled`'s retry
+/// loop, so the plan reads as what a person would type.
+fn release_cmds(steps: &[super::release::Step]) -> Vec<Cmd> {
+    use super::release::Action;
+    if steps.is_empty() {
+        return vec![];
+    }
+    let mut disks: Vec<String> = Vec::new();
+    for d in steps.iter().flat_map(|s| s.disks.iter()).map(|d| format!("/dev/{d}")) {
+        if !disks.contains(&d) {
+            disks.push(d);
+        }
+    }
+    let mut out = vec![Cmd::new(&["udevadm", "settle"]).why(format!(
+        "--erase {}: what this system started on it (at boot, most often) is let go of first, top of the stack down; none of it is mounted, swap, open, or on a disk not named with --erase",
+        disks.join(", ")
+    ))];
+    for st in steps {
+        let why = format!("{} ({})", st.what(), st.stops.join(", "));
+        let c = match &st.action {
+            Action::Pool(n) => Cmd::new(&["zpool", "export", n]),
+            Action::Crypt(n) => Cmd::new(&["cryptsetup", "close", n]),
+            Action::Lvm { vg, pvs } => {
+                let devices = pvs.join(",");
+                Cmd::new(&lvm_argv("vgchange", &devices, &["--activate", "n", vg]))
+            }
+            Action::Md(n) => Cmd::new(&["mdadm", "--stop", &format!("/dev/{n}")]),
+            Action::Dm(n) => Cmd::new(&["dmsetup", "remove", n]),
+        };
+        out.push(c.why(why));
+    }
+    out.push(Cmd::new(&["udevadm", "settle"]).why("udev done with what was let go of, before wipefs opens the disks O_EXCL"));
+    out
+}
+
 impl Builder<'_> {
     fn partition(&mut self) -> Vec<Cmd> {
+        let mut out = release_cmds(&self.names.mapping.release);
         if let Some(fam) = self.fam {
-            return self.other_partition(fam);
+            out.extend(self.other_partition(fam));
+            return out;
         }
-        let mut out = Vec::new();
         for (src, tgt) in self.names.mapping.pairs.clone() {
             let Some(d) = self.layout.disk(&src) else { continue };
             let dev = format!("/dev/{tgt}");

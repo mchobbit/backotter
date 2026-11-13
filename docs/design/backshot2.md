@@ -388,8 +388,11 @@ Without it, nothing stale survived load and no type was wrong, so it is
 defence in depth (on a disk or layer this set doesn't cover, it may matter).
 What did matter is unchanged by it: a layer the rescue system starts at
 boot (an LVM VG, an md array) keeps load from using the disk.  Whether
-load should release such holders with `--erase` is the user's call
-(layload.md's Safety rule).
+load should release such holders with `--erase` was the user's call
+(layload.md's Safety rule); the user said yes (2026-11-13), and load now
+lets go of them with `--erase` (layload.md, Safety, rule 4).  A strict run
+of the set at that bko-holt is what shows L3 and L6 passing without
+`--release`; not run yet.
 
 **Not built.** ext4 under btrfs (btrfs restored over ext4): no Alpine source
 restores btrfs, and an edit never changes a filesystem's type (Alpine's own

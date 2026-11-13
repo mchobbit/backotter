@@ -25,8 +25,11 @@ pub struct TargetDisk {
     pub signatures: Vec<String>,
     /// Filesystem and container UUIDs on the disk or its partitions.
     pub uuids: Vec<String>,
-    /// Why the disk is busy: mounts, swap, holders.
+    /// Why the disk is busy: mounts, swap, holders, pool vdevs.
     pub in_use: Vec<String>,
+    /// The part of it --erase can't let go of: mounts and swap (holders and
+    /// pools, release.rs works out).
+    pub hard_use: Vec<String>,
     pub boot_medium: bool,
     pub holds_root: bool,
 }
@@ -79,6 +82,10 @@ pub struct System {
     pub pools: Vec<ImportedPool>,
     /// The LVM physical volumes this system's block devices hold.
     pub pvs: Vec<HostPv>,
+    /// Every block device (Linux; empty elsewhere), for release.rs.
+    pub devs: Vec<BlockDev>,
+    /// The kernel names of the devices in use as swap.
+    pub swaps: Vec<String>,
 }
 
 /// An LVM physical volume on the system load runs on: its device's kernel
@@ -95,20 +102,6 @@ pub struct HostPv {
 
 /// The PVs among ALL, each with the whole disks it sits on.
 fn host_pvs(sys: &Sys, all: &[BlockDev]) -> Vec<HostPv> {
-    fn base(all: &[BlockDev], name: &str, depth: usize, out: &mut Vec<String>) {
-        let Some(b) = all.iter().find(|b| b.name == name) else { return };
-        if let Some(p) = &b.parent {
-            base(all, p, depth + 1, out);
-        } else if b.slaves.is_empty() || depth > 16 {
-            if !out.contains(&b.name) {
-                out.push(b.name.clone());
-            }
-        } else {
-            for s in &b.slaves {
-                base(all, s, depth + 1, out);
-            }
-        }
-    }
     let mut out = Vec::new();
     // Not optical, floppy, zram or RAM disks: no PV there, and opening an
     // empty drive is slow and warns.
@@ -117,8 +110,7 @@ fn host_pvs(sys: &Sys, all: &[BlockDev]) -> Vec<HostPv> {
         for c in crate::probe::probe_all(&src).into_iter().filter(|c| c.kind == "LVM2_member") {
             let vg = |k: &str| c.extra.as_ref().and_then(|v| v.get(k)).and_then(crate::json::Value::as_str).map(str::to_string);
             if let Some(name) = vg("name") {
-                let mut disks = Vec::new();
-                base(all, &b.name, 0, &mut disks);
+                let disks = super::release::bases(all, &b.name);
                 out.push(HostPv { dev: b.name.clone(), uuid: c.uuid.clone().unwrap_or_default(), vg: name, vg_uuid: vg("id").unwrap_or_default(), disks });
             }
         }
@@ -255,6 +247,7 @@ pub fn scan(sys: &Sys, opts: &Options, ours: &[String]) -> System {
             signatures_of(sys, p, &mut signatures, &mut uuids);
         }
         let mut in_use = Vec::new();
+        let mut hard_use = Vec::new();
         let mut boot_medium = false;
         let mut holds_root = false;
         for d in std::iter::once(b).chain(parts.iter()) {
@@ -267,11 +260,11 @@ pub fn scan(sys: &Sys, opts: &Options, ours: &[String]) -> System {
                 }
                 // Mounts under the target tree are load's own (mount stage).
                 if !(m.target == opts.target || m.target.starts_with(&format!("{}/", opts.target))) {
-                    in_use.push(format!("{} is mounted at {}", d.name, m.target));
+                    hard_use.push(format!("{} is mounted at {}", d.name, m.target));
                 }
             }
             if swaps.contains(&d.name) {
-                in_use.push(format!("{} is in use as swap", d.name));
+                hard_use.push(format!("{} is in use as swap", d.name));
             }
             if !d.holders.is_empty() {
                 in_use.push(format!("{} is held by {}", d.name, d.holders.join(", ")));
@@ -292,10 +285,11 @@ pub fn scan(sys: &Sys, opts: &Options, ours: &[String]) -> System {
         if signatures.iter().any(|s| s.contains(&format!("LABEL={STICK_CONFIG_LABEL}"))) {
             boot_medium = true;
         }
-        disks.push(TargetDisk { b: b.clone(), parts, table, signatures, uuids, in_use, boot_medium, holds_root });
+        in_use.splice(0..0, hard_use.iter().cloned());
+        disks.push(TargetDisk { b: b.clone(), parts, table, signatures, uuids, in_use, hard_use, boot_medium, holds_root });
     }
     let pvs = host_pvs(sys, &all);
-    System { disks, mounts, pools, pvs }
+    System { disks, mounts, pools, pvs, devs: all, swaps }
 }
 
 impl System {
@@ -318,6 +312,11 @@ pub struct Mapping {
     /// (the layout's pool name, its in-core name here) where a pool of the
     /// system load runs on has the layout's name.
     pub pool_names: Vec<(String, String)>,
+    /// Targets named with --erase that are busy only with holders and
+    /// imported pools: what holds them, let go of before the partition
+    /// stage's wipefs (release.rs), top of each stack first.
+    pub held: Vec<String>,
+    pub release: Vec<super::release::Step>,
 }
 
 /// The in-core name a layout's pool takes when the name is taken here.
@@ -430,7 +429,31 @@ pub fn map(layout: &Layout, opts: &Options, system: &System, sys: &Sys) -> Mappi
             m.problems.push(format!("--erase {e}: that isn't a target of this layout, so it isn't erased"));
         }
     }
+    if !m.held.is_empty() {
+        // Never the stick's disk or the running system's: check_target
+        // refuses those as targets, and they aren't let go of either.
+        let erased: Vec<String> = m
+            .pairs
+            .iter()
+            .filter_map(|(_, t)| system.disk(t))
+            .filter(|t| is_erased(opts, t) && !t.boot_medium && !t.holds_root)
+            .map(|t| t.b.name.clone())
+            .collect();
+        let r = super::release::plan(sys, system, &m.held, &erased);
+        for (disk, why) in r.problems {
+            let src = m.pairs.iter().find(|(_, t)| *t == disk).map(|(s, _)| s.clone()).unwrap_or_default();
+            m.problems.push(format!("{src} -> /dev/{disk}: the target is held, and what holds it can't be let go: {why}; refused even with --erase"));
+        }
+        for st in &r.steps {
+            m.notes.push(format!("--erase {}: {} ({}) before it's wiped", st.disks.iter().map(|d| format!("/dev/{d}")).collect::<Vec<_>>().join(", "), st.what(), st.stops.join(", ")));
+        }
+        m.release = r.steps;
+    }
     m
+}
+
+fn is_erased(opts: &Options, t: &TargetDisk) -> bool {
+    opts.erase.iter().any(|e| e == &t.path() || e == &t.b.name || resolve_tail(e) == t.b.name)
 }
 
 fn names(layout: &Layout) -> String {
@@ -482,11 +505,20 @@ fn check_target(src: &Disk, t: &TargetDisk, opts: &Options, ours: &[String], m: 
     // Busy or written on by an earlier stage of this same layout is fine:
     // that's what status and the later stages expect to find.
     let is_ours = t.is_ours(src, ours);
+    let erase = is_erased(opts, t);
     if !t.in_use.is_empty() && !is_ours {
-        m.problems.push(format!("{who}: the target is in use ({}); refused even with --erase", t.in_use.join("; ")));
-        return;
+        if !t.hard_use.is_empty() {
+            m.problems.push(format!("{who}: the target is in use ({}); refused even with --erase", t.in_use.join("; ")));
+            return;
+        }
+        if !erase {
+            m.problems.push(format!("{who}: the target is held ({}); give --erase {} to let go of what holds it and wipe it", t.in_use.join("; "), t.path()));
+            return;
+        }
+        // Held only: release.rs says whether it can be let go of, once every
+        // target is known (a stack may span several).
+        m.held.push(t.b.name.clone());
     }
-    let erase = opts.erase.iter().any(|e| e == &t.path() || e == &t.b.name || resolve_tail(e) == t.b.name);
     if !t.blank() && !is_ours && !erase {
         let what = if t.signatures.is_empty() { "a partition table".to_string() } else { t.signatures.join("; ") };
         m.problems.push(format!("{who}: the target isn't blank ({what}); give --erase {} to wipe it", t.path()));
@@ -551,7 +583,7 @@ fn fitted_already(src: &Layout, planned: &Layout, system: &System, opts: &Option
     for (name, tgt) in &m.pairs {
         let (Some(d), Some(plan), Some(t)) = (src.disk(name), planned.disk(name), system.disk(tgt)) else { continue };
         // --erase wipes the table, which is what the message below asks for.
-        if opts.erase.iter().any(|e| e == &t.path() || e == &t.b.name || resolve_tail(e) == t.b.name) {
+        if is_erased(opts, t) {
             continue;
         }
         let (Some(want), Some(have)) = (d.table.as_ref().and_then(|x| x.id.as_ref()), t.table.as_ref()) else { continue };
@@ -733,5 +765,57 @@ mod tests {
         let o = opts(&["--map", "vda=vdd", "--erase", "vdd"]);
         let p = map(&with("vg0"), &o, &scan(&s, &o, &[]), &s).problems.join("\n");
         assert!(!p.contains("volume group named"), "{p}");
+    }
+
+    /// BackShot2's leftovers L3: the rescue system autoactivated the old
+    /// vg0 (root and swap LVs on vdb2) at boot.  Without --erase the target
+    /// is refused as before; with it, vg0 is deactivated (LVM seeing vdb2
+    /// only) before the partition stage's wipefs; a swap LV refuses it.
+    #[test]
+    fn a_held_target_is_let_go_of_with_erase_only() {
+        let t = tree();
+        let vg = "Yb3kFa0Pz1AbCdEfGhIjKlMnOpQrStUv";
+        t.partition("vdb", "vdb2", "253:18", 2, 4096, 65536, &[]);
+        t.file("/dev/vdb2", crate::probe::lvm::sample::pv(512, 1 << 20));
+        for (i, lv) in ["root", "swap"].iter().enumerate() {
+            let dm = format!("dm-{i}");
+            t.file(&format!("/sys/block/vdb/vdb2/holders/{dm}"), "");
+            t.disk(&dm, &format!("252:{i}"), &vec![0u8; 65536], 512)
+                .file(&format!("/sys/block/{dm}/dm/name"), format!("vg0-{lv}\n"))
+                .file(&format!("/sys/block/{dm}/dm/uuid"), format!("LVM-{vg}{}\n", i.to_string().repeat(32)))
+                .file(&format!("/sys/block/{dm}/slaves/vdb2"), "");
+        }
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let o = opts(&["--map", "vda=vdb"]);
+        let m = map(&layout(), &o, &scan(&s, &o, &[]), &s);
+        let p = m.problems.join("\n");
+        assert!(p.contains("vda -> /dev/vdb: the target is held (vdb2 is held by dm-0, dm-1); give --erase /dev/vdb to let go of what holds it and wipe it"), "{p}");
+        assert!(m.release.is_empty());
+
+        let o = opts(&["--map", "vda=vdb", "--erase", "/dev/vdb"]);
+        let m = map(&layout(), &o, &scan(&s, &o, &[]), &s);
+        assert!(m.problems.is_empty(), "{:?}", m.problems);
+        assert_eq!(m.release.len(), 1);
+        assert_eq!(m.release[0].action, super::super::release::Action::Lvm { vg: "vg0".into(), pvs: vec!["/dev/vdb2".into()] });
+        assert!(m.notes.iter().any(|n| n == "--erase /dev/vdb: volume group vg0 deactivated (dm-0 (vg0-root), dm-1 (vg0-swap)) before it's wiped"), "{:?}", m.notes);
+        let b = super::super::commands::build(&layout(), &o, &m);
+        let text: String = b.stage(super::super::Stage::Partition).iter().map(|c| c.shell()).collect();
+        let at = |x: &str| text.find(x).unwrap_or_else(|| panic!("no {x:?} in\n{text}"));
+        assert!(at("# volume group vg0 deactivated (dm-0 (vg0-root), dm-1 (vg0-swap))\n") < at("vgchange --devicesfile '' --devices /dev/vdb2 --activate n vg0"), "{text}");
+        assert!(text.starts_with("# --erase /dev/vdb: what this system started on it"), "{text}");
+        assert!(at("vgchange --devicesfile") < at("O_EXCL\nudevadm settle\n"), "{text}");
+        assert!(at("O_EXCL\nudevadm settle\n") < at("wipefs --all /dev/vdb\n"), "{text}");
+
+        // The swap LV in use: refused even with --erase, and nothing let go.
+        t.file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n/dev/dm-1                               partition\t1048572\t0\t-2\n");
+        let m = map(&layout(), &o, &scan(&s, &o, &[]), &s);
+        let p = m.problems.join("\n");
+        assert!(p.contains("vda -> /dev/vdb: the target is held, and what holds it can't be let go: dm-1 (vg0-swap) is in use as swap; refused even with --erase"), "{p}");
+        assert!(m.release.is_empty());
+        // A partition mounted: refused as before, --erase or not.
+        t.file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+        t.file("/proc/self/mountinfo", "30 1 253:18 / /mnt/old rw - ext4 /dev/vdb2 rw\n");
+        let p = map(&layout(), &o, &scan(&s, &o, &[]), &s).problems.join("\n");
+        assert!(p.contains("the target is in use (vdb2 is mounted at /mnt/old; vdb2 is held by dm-0, dm-1); refused even with --erase"), "{p}");
     }
 }

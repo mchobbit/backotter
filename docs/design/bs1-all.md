@@ -8,7 +8,7 @@ L is a distro's library run (its backup on mybig512), B its fresh run.
 ## Goal
 
 Show that today's `bko-holt` and `rustic-bko` still do a full bare-metal
-round trip on the Thinkpad for all 12 distros that passed BackShot1 there,
+round trip on the Thinkpad for all 13 distros that passed BackShot1 there,
 without reinstalling any of them. Today's `bko-holt` means main at b3af94d
 or later:
 - the NixOS fixes, a8d84e1 and 220c013;
@@ -75,7 +75,7 @@ or later:
 
 | # | Distro (stack) | L: library run for A | Held besides sleep | Console | Extra checks | Est. A+B |
 |---|---|---|---|---|---|---|
-| 1 | NixOS 26.05 (btrfs top level, 7 subvols, systemd-boot) | none: B only, from the running restore of -105758 (Q2) | nothing auto by default | none | in B, after verify: gen 2 by `systemctl reboot --boot-loader-entry=nixos-generation-2.conf`, `/run/booted-system` checked, then back to gen 3 | 40 min |
+| 1 | NixOS 26.05 (btrfs top level, 7 subvols, systemd-boot) | nixos-20261113-105758 (was B only from the running restore (Q2), but the laptop has run Void since; see row 13) | nothing auto by default | none | in B, after verify: gen 2 by `systemctl reboot --boot-loader-entry=nixos-generation-2.conf`, `/run/booted-system` checked, then back to gen 3 | 40 min |
 | 2 | Debian 12 (LUKS2+LVM, XFS) | debian-12-20261110-141705 | apt-daily{,-upgrade}.timer, unattended-upgrades | passphrase twice | both halves: LUKS UUID (`cryptsetup luksUUID`) is the baseline's | 75 min + waits |
 | 3 | Bazzite 44 (ostree, composefs) | bazzite-44-20261111-173140 | uupd already held in the backup; rpm-ostreed-automatic and bootc-fetch-apply-updates (verify stops them too) | rollback once, in A (Q4) | A: rollback booted from the GRUB menu and checked by eye (its /etc has no sshd), then `check-boot L` on the default; B: `check-boot B` on the default | 150 min |
 | 4 | Ubuntu 26.10 | ubuntu-26.10-20261109-203214 | apt timers, unattended-upgrades, snapd.service and snapd.socket | none | none | 70 min |
@@ -87,6 +87,7 @@ or later:
 | 10 | Alpine 3.24 (ext4, GRUB by fallback) | alpine-3.24.4-20261110-184526 | none | none | BootCurrent is the baseline's kind (the firmware's NVMe0 fallback); before phase 1 B, `efibootmgr` is present (Chimera's `to-stick` needs it; Tooling 6) | 20 min |
 | 11 | Chimera (ZFS root, dinit) | chimera-20261112-092235 | none | none | `zpool status -x`; the pool is named rpool, not rpool_bko | 45 min |
 | 12 | Gentoo (OpenRC, LVM, GRUB lvmid) | gentoo-2.18-20261112-185749 | none | none | lvmid check (built into verify) | 50 min |
+| 13 | Void (musl, runit, btrfs top level, GRUB) | none: B only, from the running restore of void-20261113-152153, which passed on 2026-11-13 with main's static musl bko-holt (d965dc5) | none (no auto-updater by default) | none | the GRUB entry void_grub is the one booted; runit services sshd and avahi-daemon up | 25 min |
 
 Each L is the newest run whose own restore passed. EndeavourOS is the
 exception: it uses the one after the firewalld fix (row 7).
@@ -102,7 +103,8 @@ exception: it uses the one after the firewalld fix (row 7).
 before Gentoo's L was made. verify skips lvmid where the baseline has none,
 and xattrs where the manifest has none.
 
-Total about 13 h of machine time (est.), not counting fixes.
+Total about 13.5 h of machine time (est.), not counting fixes. Void was added
+on 2026-11-13 after its first BackShot1 passed (the user's choice).
 
 ## Order
 
@@ -110,14 +112,16 @@ The user block goes wherever you are at the laptop. Tooling plus NixOS take
 about 5-6 h from approval (est.), so I recommend running the unattended part
 overnight and the user block in the morning (Q10).
 
-1. **First, once the tooling is staged: NixOS B, unattended.** It is already
-   on the laptop, and it is the canary for the new binaries and the driver end
+1. **First, once the tooling is staged: Void B, unattended.** It is already
+   on the laptop (since 2026-11-13; NixOS was until then, and now needs its
+   A first, in step 2), and it is the canary for the new binaries and the driver end
    to end.
 2. **Unattended, about 8 h (est.), overnight:**
    - Ubuntu, Fedora and Manjaro go first. Theirs are the oldest backups,
      made by the oldest dumps and rustic-bko builds, so fixes land early and
      fewer distros have to be rerun.
-   - Then EndeavourOS, Debian 13, Tumbleweed, Alpine and Chimera.
+   - Then NixOS (A, then B with its generation check), EndeavourOS, Debian 13,
+     Tumbleweed, Alpine and Chimera.
    - Consecutive A's wipe different stacks: btrfs under LUKS, LVM under ZFS,
      and so on. That is extra coverage of the script's own wipe.
 3. **User block, about 2.5 h (est.):**
@@ -241,7 +245,7 @@ After that, `backshot1 stage TOOLS_DIR` runs once, from the running NixOS.
     - phase2's PASS, then `verify B`'s PASS;
     - the extra checks in the table.
 - **BackShot1All passes when:**
-  - all 12 distros pass;
+  - all 13 distros pass;
   - every restore log and every phase 1 log records the binaries' sha256:
     the staged ones, or, for a distro rerun after a fix, the final ones (Fix
     policy);

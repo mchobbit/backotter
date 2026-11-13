@@ -21,7 +21,9 @@ HoltTest1 records each source's dump as `/bkoscratch/holttest1d/RUN/GUEST/dumps/
 `testvm/test2/h1/collect-dumps.sh` took, for each source, the newest one on
 chopin or cinqcent whose report says `RESULT: PASS` (a guest without one
 would take the newest that passed its source phase, flagged
-`FAIL-after-source`).  On 2026-11-08, 45 of them came from r4all, the
+`FAIL-after-source`).  Cinqcent's runs named here (r4all, eosmj2, lk1,
+chim3) moved on 2026-11-13 to
+`chopin:/bkoscratch/archive/cinqcent-20261113/holttest1d/RUN`.  On 2026-11-08, 45 of them came from r4all, the
 HoltTest1All of that night, all PASS, all dumped by bko-holt 0.2.4: 21 from
 chopin, 24 from cinqcent.  The three guests built on 2026-11-09
 (endeavouros, endeavouros-grub, manjaro) were added on 2026-11-10, from

@@ -44,6 +44,17 @@ guests.  A guest passes only when every check passes.  Status is as of
 | 1I | illumos | `omnios58`, `omnios58-mirror` | both pass (`omnios58-mirror`: run `raid6`, the restored `rpool` ONLINE on both disks) |
 | 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `freebsd15-mirror`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6`, `alpinebsd` | passes |
 
+**Cinqcent's old runs.** On 2026-11-13 every run dir and run log in
+Cinqcent's `/bkoscratch/holttest1d` moved to
+`chopin:/bkoscratch/archive/cinqcent-20261113/holttest1d/`, among them
+`raid022`, `bzb6a`, `lk1`, `chim3`, `r4all` and the `t2h-*` runs. `bin/`,
+`rescuer/`, `queue/`, `ht1-queue.sh`, `peaks.tsv` and the `build-holt-*`
+and rescuer build logs stayed. Their qcow2 overlays were flattened first,
+so they don't need Cinqcent's guests. The omnios `rescuer.qcow2` and
+`rescuer-try.qcow2` overlays in `raid1-firsttry`, `raid3` and `raid5` were
+already unreadable, because their backing file
+`rescuer/omnios58-reguid.qcow2` had been deleted.
+
 **The RAID guests** (2026-11-07, run `raid1`; `fedora44-raid` and
 `rocky10-raid5` again in run `raid022` on Cinqcent, in RAM, with bko-holt
 0.2.2), each with a `fresh-install` snapshot on every disk:

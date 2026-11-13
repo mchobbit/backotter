@@ -20,6 +20,16 @@ settled on the first guest (B1) or on the Thinkpad before the code that depends
 on it. The facts come from reading holt/src, testvm/ and the rustic_core fork,
 and from read-only commands run on the Thinkpad over SSH on 2026-11-11.
 
+**Where the results are now.** The paths below that start `bazzite-wt/`
+were in `~/backotter-work/bazzite-wt` on each host. Chopin's copy was lost
+when Chopin was reinstalled on 2026-11-13, so its `b3-results` and
+`b4-upgrade-results` are gone.
+Cinqcent's copy, with `b2`, `b4f`, `b5`, `b5f` and `b8-results` and
+`compare/bzb4`, moved on 2026-11-13 to
+`chopin:/bkoscratch/archive/cinqcent-20261113/work/bazzite-wt`. Cinqcent's
+HoltTest1 run `bzb6a` moved to
+`chopin:/bkoscratch/archive/cinqcent-20261113/holttest1d/bzb6a`.
+
 ## Summary
 
 - bko-holt learns ostree systems: Bazzite 44 first, and Fedora's own atomic
@@ -943,7 +953,8 @@ in-guest.sh's section tests in test_vm_update.py.
   (none of their guests is ostree); classes.json's watch is unchanged (it
   would have moved the gate golden report's key). A whole-disk run on
   Cinqcent (`compare.py kinoite44 rustic-bko`, in RAM, results in
-  `bazzite-wt/compare/bzb4/kinoite44`): backup 64.5 s (4,159 MB), restore
+  `bazzite-wt/compare/bzb4/kinoite44`, since 2026-11-13 under
+  `chopin:/bkoscratch/archive/cinqcent-20261113/work/`): backup 64.5 s (4,159 MB), restore
   52.9 s, the restore boots with no new failed unit (both have
   `systemd-remount-fs`, as in B1). Differences, for B5 and B6 to judge:
   - missing 1: torture.sh's socket, as on every guest;
@@ -1178,7 +1189,9 @@ count and the peaks differ: 7,159 and 7,156 files; 11.8 and 11.5 GiB).
   - Each run left a Test2 ledger row, as every ht1.sh run does
     (`chopin-20261111T141551Z-c364c0a6`, `cinqcent-20261111T141550Z-4bba4b5f`).
     The corpus dump for B7 is `bzb6a/kinoite44/dumps/src.json`, kept on
-    both hosts.
+    both hosts until 2026-11-13. Chopin's copy went with its reinstall;
+    Cinqcent's is now in
+    `chopin:/bkoscratch/archive/cinqcent-20261113/holttest1d/bzb6a`.
   - Two failures were already there before B6:
     - `t2 self-test`'s `check-manifests.py --strict-watch` gives 5 errors
       at HEAD before B6 too (`compare/exact-*`,

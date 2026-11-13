@@ -21,7 +21,8 @@ they enter the repository; nothing found may stay.  Two parts:
                169.254/16, fe80::/10, fc00::/7
       email    an e-mail address
       key      a private key (BEGIN ... PRIVATE KEY) or an SSH public key
-      host     the test hosts' names, chopin, cinqcent and copland; allowed in index.tsv
+      host     the test hosts' names, chopin, cinqcent, copland and cage (cage as a
+               word only); allowed in index.tsv
                and README.md, and anywhere with --allow-hosts (fixtures)
 (b) Strings, with --strings FILE (JSON lines {"k": KIND, "v": VALUE}, made by
     `leakscan.py strings` on each host and never moved off it) and --git-email
@@ -74,7 +75,7 @@ import re
 import subprocess
 import sys
 
-HOSTS = ("chopin", "cinqcent", "copland")   # t2lib.KNOWN_HOSTS (this runs on its own too)
+HOSTS = ("chopin", "cinqcent", "copland", "cage")   # t2lib.KNOWN_HOSTS (this runs on its own too)
 # Files that may name the hosts (R6.3): the corpus's index and README.
 HOST_NAMES_OK = ("index.tsv", "README.md")
 SKIP_DIRS = ("__pycache__",)
@@ -93,7 +94,8 @@ _EMAIL = re.compile(r"[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}")
 # A bare build signature, user@host:/path (no dotted domain, so not _EMAIL's); host1 is a pseudonym.
 _BUILDSIG = re.compile(r"(?<![A-Za-z0-9._%+-])[A-Za-z0-9._%+-]+@(?!host\d+:)[A-Za-z0-9-]+:/")
 _KEY = re.compile(r"-----BEGIN [A-Z0-9 ]*PRIVATE KEY-----|(?:ssh-ed25519|ssh-rsa|ssh-dss|ecdsa-sha2-nistp\d+|sk-ssh-ed25519@openssh\.com|sk-ecdsa-sha2-nistp256@openssh\.com) AAAA")
-_HOSTRE = re.compile("|".join(HOSTS), re.IGNORECASE)
+WORD_HOSTS = ("cage",)   # English words inside others (cages, encaged): these count as words only
+_HOSTRE = re.compile("|".join(rf"\b{h}\b" if h in WORD_HOSTS else h for h in HOSTS), re.IGNORECASE)
 _PSEUDO_MAC = re.compile(r"^bc0{6,}[0-9a-f]{1,4}$")
 _NETS4 = [ipaddress.ip_network(n) for n in ("10.0.0.0/8", "172.16.0.0/12", "192.168.0.0/16", "169.254.0.0/16")]
 _NETS6 = [ipaddress.ip_network(n) for n in ("fe80::/10", "fc00::/7")]

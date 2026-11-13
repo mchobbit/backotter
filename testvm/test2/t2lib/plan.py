@@ -1,8 +1,9 @@
 """The Test2 planner: which cells a word runs, and why (contract 1.6-1.8; rulings R4-R6,
 R14, R15, R17, R21, R27).
 
-    make(word, ctx) -> Plan     pure given ctx: it reads the checkout, BKO_GIT and affected.sh,
-                                and writes nothing anywhere
+    make(word, ctx) -> Plan     pure given ctx: it reads the checkout, BKO_GIT and affected.sh
+                                (and runs the checkout's ram-size.sh, to size holt cells
+                                against the hosts' ceilings), and writes nothing anywhere
 
 Each cell of the word's universe gets a status: due, current, canary-verified,
 awaiting-canaries, soft-stale, carried, class-pending, to-class or not-runnable, with the selecting
@@ -15,17 +16,22 @@ import importlib.util
 import json
 import os
 import re
+import subprocess
 import time
 
 from . import DEFAULT_HOSTS, HARD, canonical, gate_hosts, parse_utc, sha256_hex, utc_now
 from . import bko_git as default_bko_git
 from . import carry, copies, estimates, keys, words
+from . import facts as factsmod
 
 STATUSES = ("due", "current", "canary-verified", "awaiting-canaries", "soft-stale", "carried",
             "class-pending", "to-class", "not-runnable")
 DECISIVE_KINDS = ("run", "carried", "class")
 DECISIVE_VERDICTS = ("PASS", "FAIL", "FLAKY-FAIL")
 WATCH_ROOTS = ("testvm", "stick", "holt")
+RAM_SIZE = "testvm/holttest1d/ram-size.sh"
+# ram-size.sh's GUEST[+VARIANT] (a name it refuses would fail the whole call)
+RAM_SIZE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse|img))?\Z")
 GATE_FALLBACK = ("holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic", "bin:abi",
                  "bin:static", "bin:version", "loop:linux@chopin", "loop:linux@cinqcent", "loop:sparse@chopin",
                  "loop:sparse@cinqcent", "selftest")
@@ -710,8 +716,10 @@ class Planner:
                     v.why_not = f"{pin} is unreachable"
                 else:
                     v.hosts = [pin]
+                    self.fit_ceilings(v, self.gate_need(v))
                 return
             v.hosts = reach
+            self.fit_ceilings(v, self.gate_need(v))
         elif v.family == "holt":
             pin = self.cls["holt"].get("pins", {}).get(v.name)
             if pin:
@@ -739,6 +747,8 @@ class Planner:
                     note = "BIOS rescuer for a UEFI source: no host has rescuer-uefi.qcow2"
                     if note not in self.notes:
                         self.notes.append(note)
+            if v.hosts and not v.why_not:
+                self.fit_ceilings(v, lambda h: self.holt_need(v, h))
         else:
             v.hosts = list(reach)
             if self.set_name and not self.pending:
@@ -749,6 +759,10 @@ class Planner:
                     v.why_not = (f"no {spec.os}/rustic-bko and {s}/restic-bko in {self.set_name}"
                                  if spec else f"no binaries in {self.set_name}")
                 v.hosts = ok
+            if v.hosts and self.any_ceiling():
+                spec = self.stic_spec(v.name)
+                if spec is not None:   # each VM's --reserve, as cmp-run.sh and drive.py's pick() see it
+                    self.fit_ceilings(v, (spec.d, spec.m))
         if not v.hosts and not v.why_not:
             v.why_not = "no host in --hosts is reachable"
 
@@ -771,6 +785,95 @@ class Planner:
         v.hosts = have
         if not have:
             v.why_not = f"{v.name} is on no reachable host"
+        elif self.any_ceiling():
+            from . import guest as guestmod
+            self.fit_ceilings(v, guestmod.reserve_for(self.ctx.ledger, v.cell, e, guestmod.run_policy(self.cls),
+                                                      bool(self.w.update)))
+
+    # --- room: a cell's reservation against each host's ceiling ---
+
+    def any_ceiling(self):
+        """True when some host's facts have a ceiling (old facts have none: nothing is checked)."""
+        if not hasattr(self, "_any_ceiling"):
+            self._any_ceiling = any(factsmod.ceiling(f) for f in self.ctx.facts.values())
+        return self._any_ceiling
+
+    def fit_ceilings(self, v, need):
+        """Keep V off each host whose ceiling (facts.ceiling: the most one cmp-run.sh --reserve can
+        ever get there) its reservation NEED exceeds: (DISK, MEM), or a function of the host
+        giving it (None: not known, not checked).  With no host left, V is not runnable and says
+        why ("over copland's ceiling 9.0 9.2: needs 13 6"); else its reasons name the hosts it
+        is kept off.  A host whose facts have no ceiling isn't checked."""
+        if not v.hosts or not self.any_ceiling():
+            return
+        over, needs = {}, {}
+        for h in v.hosts:
+            c = factsmod.ceiling(self.ctx.facts.get(h))
+            if c is None:
+                continue
+            n = need(h) if callable(need) else need
+            if factsmod.over_ceiling(n, c):
+                over[h], needs[h] = c, n
+        if not over:
+            return
+        v.hosts = [h for h in v.hosts if h not in over]
+        w = factsmod.too_big_words(needs, over, not v.hosts)
+        if v.hosts:
+            v.pc.reasons_extra = list(getattr(v.pc, "reasons_extra", None) or []) + [w]
+            if len(v.hosts) == 1 and v.pc.host == "any":
+                v.pc.host = v.hosts[0]
+        else:
+            v.why_not = w
+
+    def gate_need(self, v):
+        """A gate cell's cmp-run.sh --reserve (gate.reserve_for: the layer's host_reserve or
+        reserve, its own rows' peaks), or None for one that runs on the Mac."""
+        if v.chost == "mac" or v.name == "selftest" or not self.any_ceiling():
+            return None
+        from . import gate as gatemod
+        sf = self.ctx.specs.get("gate")
+        try:
+            e = sf.entry(v.name) if sf else {}
+        except KeyError:
+            return None
+        return gatemod.reserve_for(e, self.ctx.ledger, v.cell)
+
+    def holt_need(self, v, h):
+        """A holt cell's --reserve D M on host H, as ht1-queue.sh takes it: ram-size.sh with the
+        table's row for H (else the largest), without H's peaks.tsv, which stays on H (a host with
+        no runs logged sizes so too).  None: ram-size.sh can't say."""
+        name = v.name + (f"+{v.variant}" if v.variant else "")
+        cache = self.__dict__.setdefault("_holt_sizes", {})
+        if name not in cache.setdefault(h, {}):
+            names = {name}
+            if self.fam == "holt":
+                try:
+                    names |= {c[5:] for c in self.universe() if c.startswith("holt:")}
+                except PlanError:
+                    pass
+            cache[h].update(self.ram_sizes(h, sorted(n for n in names if n not in cache[h])))
+            cache[h].setdefault(name, None)
+        return cache[h][name]
+
+    def ram_sizes(self, h, names):
+        """{GUEST[+VARIANT]: (D, M)} from the checkout's ram-size.sh --host H --peaks /dev/null."""
+        script = os.path.join(self.ctx.checkout, RAM_SIZE)
+        names = [n for n in names if RAM_SIZE_NAME.match(n)]
+        if not names or not os.path.isfile(script):
+            return {}
+        try:
+            p = subprocess.run(["bash", script, "--host", h, "--peaks", "/dev/null"] + names, capture_output=True,
+                               text=True, timeout=60, stdin=subprocess.DEVNULL)
+        except (OSError, subprocess.TimeoutExpired):
+            return {}
+        out = {}
+        for line in p.stdout.splitlines() if p.returncode == 0 else ():
+            f = line.split()
+            try:
+                out[f[0]] = (float(f[1]), float(f[2]))
+            except (IndexError, ValueError):
+                continue
+        return out
 
     def place_img(self, v, reach):
         ims = {h: ((self.ctx.facts[h].get("images") or {}).get(v.name)) for h in reach}
@@ -2008,7 +2111,8 @@ class Planner:
                             for n in ("restic-bko", "rustic-bko")} for h in have}
             first = [c[5:] for c in self.canaries("stic")] if self.plumbing_changed else ()
             wall, place, left = estimates.stic_wall(ctx.drive, [v.name for v in due],
-                                                    {v.name: v.pc.est["wall_s"] for v in due}, have, first)
+                                                    {v.name: v.pc.est["wall_s"] for v in due}, have, first,
+                                                    ceils={h: factsmod.ceiling(ctx.facts.get(h)) for h in have})
             for v in due:
                 v.pc.placed = place.get(v.name)
         elif self.fam in ("guest", "img"):

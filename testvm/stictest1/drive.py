@@ -17,8 +17,8 @@ fits there now:
   - fewer than --slots checks of ours run there (freebsd15-ufs counts 3, its
     three VMs at once);
   - a guest slot is free on the host's range (Chopin 2700-2799, Copland
-    2800-2899, others 2900-2999: the checks' slot_take 3, on guest-slot.sh's
-    slot_range_here), counting other sessions' slots and
+    2800-2899, Cage 3000-3099, others 2900-2999: the checks' slot_take 3, on
+    guest-slot.sh's slot_range_here), counting other sessions' slots and
     slotless QEMU there; sculpt2610 boots nothing and takes none;
   - the room cmp-run.sh would offer after its waiting line (budget() and
     after_line() of the host's ~/backotter-work/cmp-run.sh) holds the
@@ -27,11 +27,16 @@ fits there now:
   - Tctl (k10temp) is at most --hot-c (or the lower HOT_C of someone in
     cmp-run.sh's line) and no NVMe is at 75 C (cmp-run.sh's NVME_C) or more;
   - the host has the guest's binaries and free ports of ours (Chopin
-    2780-2799, Copland 2880-2899, Cinqcent 2980-2999; freebsd15-ufs takes
-    three in a row).
+    2780-2799, Copland 2880-2899, Cage 3080-3099, Cinqcent 2980-2999;
+    freebsd15-ufs takes three in a row).
 A guest that doesn't fit now is passed over for one that does.  Each check.sh
 still takes its own guest slot and cmp-run.sh --reserve; this only avoids
-starting one that would wait there.
+starting one that would wait there.  A guest whose --reserve is over a host's
+ceiling (cmp-run.sh's ceiling(): the most one job can ever get there, a small
+host's 9.0 9.2) is never started there; one over the ceiling of every host of
+--hosts is never started at all: once every host's ceiling is read, it is
+named TOO BIG (its needs, each host's ceiling) in the log, the summary and
+state.json's too_big, and the round ends without it.
 
 Each start is detached on its host (ssh -n, setsid -f), so the checks run on
 if the driver or the Mac goes away.  On the host, MARK being --logs-mark:
@@ -53,8 +58,8 @@ and /mnt/bko-ram, /dev/shm and /bkoscratch entries named MARK-GUEST*.
 Options:
   --exclude G,G   leave these guests out (repeatable)
   --first G,G     start these before the rest (a recheck's failed guests)
-  --hosts H,H     of chopin, cinqcent, copland (default chopin,cinqcent:
-                  copland is known, not yet a default host)
+  --hosts H,H     of chopin, cinqcent, copland, cage (default chopin,cinqcent:
+                  copland and cage are known, not yet default hosts)
   --slots N       checks of ours at once per host (default 3)
   --hot-c C       start nothing while Tctl is over C (default 90)
   --poll S        seconds between checks of the exit files (default 15)
@@ -129,9 +134,11 @@ HOSTS = {   # ssh destination, the checks' guest-slot range there, our ports
     "chopin": dict(ssh="m@chopin.local", slot_range="2700-2799", ports=(2780, 2799)),
     "cinqcent": dict(ssh="m@cinqcent.local", slot_range="2900-2999", ports=(2980, 2999)),
     "copland": dict(ssh="m@copland.local", slot_range="2800-2899", ports=(2880, 2899)),
+    "cage": dict(ssh="m@cage.local", slot_range="3000-3099", ports=(3080, 3099)),
 }
-# --hosts' default: copland is known (selectable) but joins the defaults only
-# after HostTest2 and a representative per family pass there (design-classes.md).
+# --hosts' default: copland and cage are known (selectable) but join the
+# defaults only after HostTest2 and a representative per family pass there,
+# among the guests that fit them (design-classes.md: small hosts).
 DEFAULT_HOSTS = ("chopin", "cinqcent")
 GUEST_SLOTS = 3          # every check.sh's slot_take 3
 NVME_C = 75              # cmp-run.sh's: it starts nothing over it
@@ -258,6 +265,25 @@ def has_bins(s, have):
     return f"{s.os}/rustic-bko" in have and f"{RESTIC_FROM.get(s.os, s.os)}/restic-bko" in have
 
 
+def over_ceiling(s, ceil):
+    """True when a check's --reserve (each VM's) is over a host's ceiling (cmp-run.sh's
+    ceiling(): it refuses such a --reserve at once); never while the ceiling is unknown."""
+    return bool(ceil) and (s.d > ceil[0] + 1e-9 or s.m > ceil[1] + 1e-9)
+
+
+def too_big(guests, spec, ceils):
+    """{guest: {host: ceiling}} of the guests over the ceiling of every host of ceils
+    ({host: (DISK, MEM)}); none while a host's ceiling is unknown (it might fit there)."""
+    if not ceils or any(not c for c in ceils.values()):
+        return {}
+    return {g: dict(ceils) for g in guests if all(over_ceiling(spec[g], c) for c in ceils.values())}
+
+
+def too_big_words(s, ceils):
+    """"needs 13 6; copland 9.0 9.2, cage 9.0 9.2": a too-big guest's needs and the hosts' ceilings."""
+    return f"needs {s.d:g} {s.m:g}; " + ", ".join(f"{h} {c[0]:.1f} {c[1]:.1f}" for h, c in ceils.items())
+
+
 def pick(cands, spec, have, free_cap, free_slots, room, ceil, ports_fn=None):
     """The first of cands (in queue order) that fits a host now: (guest, ports,
     why-not list).  room/ceil None: not known, not checked."""
@@ -266,7 +292,7 @@ def pick(cands, spec, have, free_cap, free_slots, room, ceil, ports_fn=None):
         s = spec[g]
         if not has_bins(s, have):
             why.append(f"{g}:nobin")
-        elif ceil and (s.d > ceil[0] or s.m > ceil[1]):
+        elif over_ceiling(s, ceil):
             why.append(f"{g}:ceiling")
         elif s.load > free_cap:
             why.append(f"{g}:cap")
@@ -784,6 +810,8 @@ class Driver:
         self.state["mark"] = a.logs_mark
         for g in [g for g in self.state["jobs"] if g not in guests]:   # an earlier run's, with other guests
             del self.state["jobs"][g]
+        self.state["too_big"] = {}     # this run's hosts' ceilings decide it again
+        self.ceils = {}                # {host: cmp-run.sh's ceiling}, from the full status reads
         self.seen = set()   # hosts read at least once: nothing starts before all are (no run twice)
         self.stopped = False                        # --stop-file there (reread every poll)
         self.skipped = set()                        # --skip-file's guests (reread every poll)
@@ -838,7 +866,22 @@ class Driver:
         return self.state["jobs"]
 
     def remaining(self):
-        return [g for g in self.guests if g not in self.jobs() and g not in self.skipped]
+        return [g for g in self.guests if g not in self.jobs() and g not in self.skipped
+                and g not in self.state["too_big"]]
+
+    def mark_too_big(self):
+        """Once every host's ceiling is known: the guests not started yet whose --reserve is
+        over every host's ceiling never start (cmp-run.sh would refuse them anywhere, or a
+        guest left for a host it fits on would be waited for for ever)."""
+        if not set(self.hosts) <= set(self.ceils):
+            return
+        tb = too_big(self.remaining(), self.spec, {h: self.ceils[h] for h in self.hosts})
+        for g, cs in tb.items():
+            s = self.spec[g]
+            self.state["too_big"][g] = {"needs": [s.d, s.m], "ceilings": {h: list(c) for h, c in cs.items()}}
+            self.log("TOO BIG", g, "- over the ceiling of every host, never started:", too_big_words(s, cs))
+        if tb:
+            self.save()
 
     def running(self, host=None):
         return [g for g, j in self.jobs().items()
@@ -1039,6 +1082,9 @@ class Driver:
                 if snap is not None:
                     snaps[host] = snap
                     self.seen.add(host)
+                    if snap["ceil"]:
+                        self.ceils[host] = snap["ceil"]
+            self.mark_too_big()
             self.save()
             if not self.remaining() and not self.running():
                 break
@@ -1092,12 +1138,15 @@ class Driver:
     def summary(self, res):
         a = self.a
         bad = [r[0] for r in res if r[2] != "0" or r[4] != "0"]
-        held = [g for g in self.guests if g not in self.jobs()]   # never started: skip or stop file
-        missing = [g for g in self.guests if g not in {r[0] for r in res} and g not in held]
+        big = self.state.get("too_big") or {}
+        held = [g for g in self.guests if g not in self.jobs() and g not in big]   # never started: skip or stop file
+        missing = [g for g in self.guests if g not in {r[0] for r in res} and g not in held and g not in big]
         lines = [f"SticTest1 round {a.round}, mark {a.logs_mark}: {len(res)} guests ran, "
                  f"{len(res) - len(bad)} pass" + (f", {len(bad)} fail: {' '.join(bad)}" if bad else "")
                  + (f"; no result for {' '.join(missing)}" if missing else "")
-                 + (f"; not started (skip or stop file): {' '.join(held)}" if held else "")]
+                 + (f"; not started (skip or stop file): {' '.join(held)}" if held else "")
+                 + (f"; too big for every host, not started: " + ", ".join(
+                     f"{g} ({too_big_words(self.spec[g], big[g]['ceilings'])})" for g in sorted(big)) if big else "")]
         for host in self.hosts:
             js = {g: j for g, j in self.jobs().items() if j["host"] == host and j.get("end")}
             if not js:
@@ -1298,7 +1347,7 @@ def self_test():
         with open(os.path.join(HERE, g, "check.sh")) as f:
             nums |= set(re.findall(r'(?:slot_take |slots="|SLOTMAX=)(\d+)', f.read()))
     check(nums <= {str(GUEST_SLOTS)}, f"every check takes slot_take {GUEST_SLOTS} ({sorted(nums)})")
-    fixed = [g for g in guests if re.search(r"\b2\d00-2\d99\b", re.sub(r"(?m)^\s*#.*$", "", open(os.path.join(HERE, g, "check.sh")).read()))]
+    fixed = [g for g in guests if re.search(r"\b[23]\d00-[23]\d99\b", re.sub(r"(?m)^\s*#.*$", "", open(os.path.join(HERE, g, "check.sh")).read()))]
     check(not fixed, f"the checks take their host's range from slot_range_here, none a fixed one ({fixed})")
     gs = os.path.join(os.path.dirname(HERE), "compare", "guest-slot.sh")
     here_ranges = {h: subprocess.run(["bash", "-c", '. "$1"; slot_range_here "$2"', "-", gs, h],
@@ -1307,8 +1356,10 @@ def self_test():
           f"HOSTS' slot ranges are guest-slot.sh's slot_range_here ({here_ranges})")
     check(all(int(HOSTS[h]["slot_range"].split("-")[0]) <= HOSTS[h]["ports"][0] <= HOSTS[h]["ports"][1]
               <= int(HOSTS[h]["slot_range"].split("-")[1]) for h in HOSTS), "every host's ports are in its slot range")
-    check(set(DEFAULT_HOSTS) <= set(HOSTS) and "copland" in HOSTS and "copland" not in DEFAULT_HOSTS,
-          "copland is a known host, not a default one")
+    check(set(DEFAULT_HOSTS) <= set(HOSTS) and {"copland", "cage"} <= set(HOSTS)
+          and not {"copland", "cage"} & set(DEFAULT_HOSTS), "copland and cage are known hosts, not default ones")
+    check(HOSTS["cage"] == dict(ssh="m@cage.local", slot_range="3000-3099", ports=(3080, 3099)),
+          "cage: m@cage.local, slots 3000-3099, ports 3080-3099")
     rd = readme_estimates()
     check(all(g in rd for g in guests if g != "haiku6"), f"README.md estimates for {len(rd)} guests")
 
@@ -1330,6 +1381,14 @@ def self_test():
     check(g == "noslot", "no free guest slot: only a guest that takes none")
     g, _, why = pick(["big"], sp, have, 3, 3, (50, 50), (12, 40))
     check(g is None and why == ["big:ceiling"], "over cmp-run.sh's ceiling: never on that host")
+    small = (9.0, 9.2)
+    check(over_ceiling(sp["big"], small) and not over_ceiling(sp["long"], small) and not over_ceiling(sp["big"], None)
+          and not over_ceiling(Spec("linux", 9, 9.2), small), "over a ceiling: either figure over it; never unknown")
+    check(too_big(["big", "long"], sp, {"copland": small, "cage": small}) == {"big": {"copland": small, "cage": small}},
+          "too big: over the ceiling of every host")
+    check(too_big(["big"], sp, {"copland": small, "chopin": (29.0, 20.1)}) == {}, "too big: not while one host fits")
+    check(too_big(["big"], sp, {"copland": small, "cage": None}) == {}, "too big: not while a ceiling is unknown")
+    check(too_big_words(sp["big"], {"copland": small}) == "needs 13 6; copland 9.0 9.2", "too big: its words")
     g, p, why = pick(["long", "short"], sp, have, 3, 3, (50, 50), None, lambda g: None if g == "long" else [1])
     check(g == "short" and "long:port" in why, "no free port: the next one")
     check(ports_for(1, 2780, 2799, set(), set(), set()) == [2780], "first port")
@@ -1490,6 +1549,40 @@ def self_test():
             drv.write_row("chopin", "big")
             check(drv.jobs()["big"].get("row") == "chopin-20261108T040000Z-0000abcd",
                   "row writer: the row id, the tool's last line")
+            drv.logf.close()
+
+            # A guest over every host's ceiling (ubuntu24's 13 6 on copland and cage): never
+            # started, named, and the round ends when the rest has (it used to poll for ever).
+            polls["n"] = 0
+
+            def small_status(host, full, mark, guests):
+                polls["n"] += 1
+                done = polls["n"] >= 3   # the second poll's reads (two hosts a poll)
+                jobs = {"short": dict(start=1000, exit=0 if done else None, end=1100 if done else None, ports=[2880],
+                                      alive=not done)} if host == "copland" else {}
+                return dict(full=full, temp=50.0, nvme=[], budget=None, room=(9.0, 9.2, 0, 0), ceil=small,
+                            noram=False, ledger=[], waits=[], slots_other=0, slots_ours=[], qemu=[], listen=set(),
+                            jobs=jobs, slotwait=[])
+            globals().update(status=small_status)
+            answer.update(rc=0, out="NOTOOL\n")
+            a.stop_file, a.hosts = None, ["copland", "cage"]
+            with contextlib.suppress(FileNotFoundError):   # the last round's: other jobs
+                os.remove(os.path.join(tmp, "state.json"))
+            drv = quiet_driver()
+            said = []
+            drv.log = lambda *x: said.append(" ".join(str(y) for y in x))
+            drv.jobs()["short"] = drv.new_job("copland", [2880], time.time())
+            drv.loop()
+            check(polls["n"] == 4 and drv.remaining() == [] and not drv.running() and "big" not in drv.jobs(),
+                  f"too big for every host: never started, the round ends ({polls['n']} reads, jobs {sorted(drv.jobs())})")
+            check(drv.state["too_big"] == {"big": {"needs": [13, 6], "ceilings": {"copland": [9.0, 9.2], "cage": [9.0, 9.2]}}},
+                  f"too big: in state.json, its needs and each host's ceiling ({drv.state['too_big']})")
+            check(any(x.startswith("TOO BIG big") and x.endswith("needs 13 6; copland 9.0 9.2, cage 9.0 9.2") for x in said),
+                  "too big: the log names it, its needs and the ceilings")
+            ok_sum = drv.summary([["short", "copland", "0", "5", "0", "0", "100", "-"]])
+            check(ok_sum and any("too big for every host, not started: big (needs 13 6; copland 9.0 9.2, cage 9.0 9.2)"
+                                 in x for x in said) and not any("no result for" in x or "skip or stop" in x for x in said),
+                  "too big: the summary names it apart, no missing result, the exit SticTest1's")
             drv.logf.close()
         finally:
             globals().update(real)

@@ -72,7 +72,9 @@ against its last PASS, group by group), `t2 copy [--hosts H,H] [--gc]`,
 [GUEST...] [--reproject]` (probes guests with no fingerprint at their generation; never
 inside BkoTest2), `t2 self-test`, and the test-only `t2 ledger seed-current`
 (`--family guest` sets `extra.try_ran`, `--family img` seeds PASSes at the images' binaries' digests).  Options anywhere:
-`--hosts H,H` (default chopin,cinqcent; each host once), `--json` (the plan as
+`--hosts H,H` (of chopin, cinqcent, copland, cage; default chopin,cinqcent; each host
+once; a cell whose reservation is over a host's ceiling, its facts' `preflight.ram.ceiling`,
+is never placed there, and one over every host's is not runnable), `--json` (the plan as
 JSON), `--universe CELL,...` (test only: the word's cells cut down to these).  Every
 plan and run pulls the `--hosts` and every host with a mirror in `MAC_ROOT/ledger`,
 since the merged view reads them all; a mirror that wasn't refreshed is said so.

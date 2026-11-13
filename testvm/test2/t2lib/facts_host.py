@@ -19,6 +19,9 @@ from --work).  T2_FACTS_ROOT=DIR reads every system path (/proc, /sys, /etc,
 
 Fields: host, t, versions, preflight, sets, rounds, holt_bins, guests,
 rescuers, plumbing, host_inputs, synced, copies, errors, took_s, and images when asked.
+preflight.ram.ceiling is [DISK, MEM] GiB, the most one cmp-run.sh --reserve can ever get
+here (WORK/cmp-run.sh's ceiling(), run as it is), or null: placement leaves a cell off a
+host whose ceiling its reservation exceeds (facts.ceiling reads it).
 """
 
 import glob
@@ -218,7 +221,33 @@ def rows(path):
     return None if t is None else sum(1 for l in t.split("\n") if l.strip())
 
 
-def preflight(user):
+# cmp-run.sh's own ceiling() (the host's ~/backotter-work/cmp-run.sh, as drive.py's status
+# reads it): the most one job could ever get there, "DISK MEM" GiB.  One formula, the
+# script's: a --reserve over it exits 1 at once ("can never fit here").
+CEILING_SH = 'eval "$(sed -n "/^ceiling()/,/^}/p" "$1")" && RAM=$2 && ceiling'
+
+
+def ceiling(work, mounted):
+    """[DISK, MEM] GiB: cmp-run.sh's ceiling() on this host, or None (no RAM disk, no
+    cmp-run.sh, or no answer): not known, not checked."""
+    script = os.path.join(work, "cmp-run.sh")
+    if not mounted or not os.path.isfile(script):
+        return None
+    try:
+        p = subprocess.run(["bash", "-c", CEILING_SH, "-", script, R("/mnt/bko-ram")], capture_output=True,
+                           timeout=5, stdin=subprocess.DEVNULL)
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    f = p.stdout.decode("utf-8", "replace").split()
+    if p.returncode != 0 or len(f) != 2:
+        return None
+    try:
+        return [float(f[0]), float(f[1])]
+    except ValueError:
+        return None
+
+
+def preflight(user, work=None):
     p = {}
     tctl, nvme = None, {}
     for h in sorted(glob.glob(R("/sys/class/hwmon/hwmon*"))):
@@ -237,7 +266,8 @@ def preflight(user):
     mounted = any(l.split()[1:2] == ["/mnt/bko-ram"] for l in mounts.split("\n") if l.strip())
     size, free = statvfs(R("/mnt/bko-ram")) if mounted else (None, None)
     p["ram"] = {"mounted": mounted, "size": size, "free": free,
-                "reserve_rows": rows(R("/mnt/bko-ram/.reserve")), "wait_rows": rows(R("/mnt/bko-ram/.reserve.wait"))}
+                "reserve_rows": rows(R("/mnt/bko-ram/.reserve")), "wait_rows": rows(R("/mnt/bko-ram/.reserve.wait")),
+                "ceiling": ceiling(work, mounted) if work else None}
     mi = meminfo()
     p["mem_available_kib"] = mi.get("MemAvailable")
     p["swap_used_kib"] = (mi["SwapTotal"] - mi["SwapFree"]) if "SwapTotal" in mi and "SwapFree" in mi else None
@@ -648,7 +678,7 @@ def collect(want=None, work=None, host_root=None, copy_root=None, user=None, hom
             f["errors"].append(f"{name}: {type(e).__name__}: {e}")
 
     part("versions", versions, home)
-    part("preflight", preflight, user)
+    part("preflight", preflight, user, work)
     part("sets", lambda: {n: one_set(work, n) for n in (want.get("sets") or ["bko-bin"])})
     part("rounds", rounds, work)
     part("holt_bins", holt_bins, host_root, want.get("holt_bin_dirs"), home)

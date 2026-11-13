@@ -163,11 +163,22 @@ def full_run(row):
     return all(lp.get(k) in (None, "default") for k in ("linux_fs", "sparse_fs"))
 
 
+def base_reserve(entry, cell):
+    """[DISK_GIB, MEM_GIB] before any peak: the entry's "host_reserve" for the cell's host (a
+    small host's: its run-all.sh profile runs one job at a time, so less fits its ceiling),
+    else its "reserve", else 2 4."""
+    _, host = split_cell(cell)
+    r = (entry.get("host_reserve") or {}).get(host) if host else None
+    return (list(r or entry.get("reserve") or [2, 4]) + [4])[:2]
+
+
 def reserve_for(entry, rows, cell):
-    """(DISK_GIB, MEM_GIB) of a layer's cmp-run.sh --reserve: the entry's "reserve"; with
-    "peak_reserve", once its rows have RAM peaks, 1.1 x the largest of the last 3 plus 0.25
-    GiB (contract 2.1).  Only whole runs' peaks count (full_run)."""
-    d, m = (list(entry.get("reserve") or [2, 4]) + [4])[:2]
+    """(DISK_GIB, MEM_GIB) of a layer's cmp-run.sh --reserve: base_reserve's (the entry's
+    "host_reserve" for the cell's host, else its "reserve"); with "peak_reserve", once the
+    cell's rows have RAM peaks, 1.1 x the largest of the last 3 plus 0.25 GiB (contract 2.1).
+    Only whole runs' peaks count (full_run).  The plan keeps a cell off a host whose ceiling
+    (facts.ceiling) this exceeds."""
+    d, m = base_reserve(entry, cell)
     if entry.get("peak_reserve"):
         mine = sorted((r for r in rows if r.get("cell") == cell and r.get("kind") == "run" and full_run(r)
                        and isinstance(r.get("ram_peak_kib"), int) and r["ram_peak_kib"] > 0),
@@ -619,7 +630,7 @@ def run_loop(env, kind, host, attempt):
     cmd = (f"bash {_q(env.copy_path(host) + '/testvm/test2/gate/loop.sh')} {kind} --bin {_q(env.set_dir)} --out {_q(out)} --prefix {pfx} "
            f"--old {'none' if old == 'none' else _q(old)}")
     d, mem = reserve_for(e, env.rows, cell)
-    if kind == "sparse" and os.environ.get("IMG_GB") and d == float((e.get("reserve") or [20])[0]):
+    if kind == "sparse" and os.environ.get("IMG_GB") and d == float(base_reserve(e, cell)[0]):
         d = float(os.environ["IMG_GB"]) + 4   # contract 2.1: IMG_GB + 4 until a peak is logged
     tag = f"gate:{env.attempt_run(attempt)}:{name}@{host}"
     rc, out, t, why = host_job(env, host, name, attempt, cmd, (d, mem), tag, int(e.get("timeout_s", 6 * 3600)),

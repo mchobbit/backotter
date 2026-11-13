@@ -36,7 +36,8 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      golden plan changed, then the rest, each part biggest first
      (ht1-queue.sh --order); a runner on every host from the copy, as m,
      detached (BASEPORT 2600, MAXJOBS 3; the others with QHOST the first host),
-     ONLY_ELSEWHERE from the plan's per-host keys (pins, R17's UEFI rescuer), with
+     ONLY_ELSEWHERE from the plan's per-host keys (pins, R17's UEFI rescuer, the hosts
+     whose ceiling a cell's reservation fits: a cell no host fits isn't due at all), with
          HT_HOLT_BIN=HOST_ROOT/holt-bin/CODE HT_RAM=1 T2_RUN=RUN
          T2_CELLS=HOST_ROOT/runs/RUN/cells.json T2_HOST_ROOT=HOST_ROOT PYTHONDONTWRITEBYTECODE=1
      (and HT_WORK, HT_RECORDS when the Mac's environment has them: tests).
@@ -167,17 +168,27 @@ def order_groups(pcs):
 
 
 def only_elsewhere(pcs, hosts, pins=None):
-    """{host: [base guests]}: what a host's runner leaves in the todo for the others
-    (ht1-queue.sh's ONLY_ELSEWHERE, by base guest, variants with it).  From classes.json's
-    holt.pins (PINS: {guest: host}) and the plan's per-host keys: a cell has keys only for
-    the hosts that may run it (the pins again, R17's UEFI rescuer); one with none may run
-    anywhere its pin allows."""
+    """{host: [names]}: what a host's runner leaves in the todo for the others
+    (ht1-queue.sh's ONLY_ELSEWHERE, which skips a line by its name or its base guest).  From
+    classes.json's holt.pins (PINS: {guest: host}) and the plan's per-host keys: a cell has
+    keys only for the hosts that may run it (the pins again, R17's UEFI rescuer, the hosts
+    whose ceiling its ram-size.sh reservation fits); one with none may run anywhere its pin
+    allows.  A base guest none of whose cells may run on the host is named (its variants go
+    with it); else each of its cells that may not, as GUEST+VARIANT."""
     by_guest = {}
     for pc in pcs:
-        by_guest.setdefault(base_guest(pc.cell), []).append(dict(getattr(pc, "keys", None) or {}))
+        by_guest.setdefault(base_guest(pc.cell), []).append((todo_line(pc.cell), dict(getattr(pc, "keys", None) or {})))
     pins = pins or {}
-    return {h: sorted(g for g, kss in by_guest.items()
-                      if (g in pins and pins[g] != h) or all(ks and h not in ks for ks in kss)) for h in hosts}
+    out = {}
+    for h in hosts:
+        names = set()
+        for g, items in by_guest.items():
+            if (g in pins and pins[g] != h) or all(ks and h not in ks for _, ks in items):
+                names.add(g)
+            else:
+                names |= {n for n, ks in items if ks and h not in ks}
+        out[h] = sorted(names)
+    return out
 
 
 # --- bko-holt's builds ---------------------------------------------------------------------------

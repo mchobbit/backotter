@@ -232,6 +232,7 @@ A canary shows whether a stream has updates. If it does, each member still runs 
 **"Test2"** runs HostTest2, then whatever SticTest2, HoltTest2 and GuestTest2 select, in one queue across both hosts.
 - Everything runs as scripts. Agents only triage FAILs and new lines, and are never messaged mid-run.
 - A new host (cage, czerny, copland) joins after HostTest2 and one representative per family pass on it.
+- A **small host** is one whose ceiling some cell's reservation exceeds: the ceiling is the most one `cmp-run.sh --reserve` can ever get there (cmp-run.sh's `ceiling()`, in t2's host facts; copland's and cage's are 9.0 GiB of RAM disk and 9.2 GiB of memory). A small host joins after the HostTest2 layers and one representative per family pass on it, among the cells that fit it. The cells that don't fit it are placed only on the other hosts, also after it becomes a default host; a cell that fits no host of a run is not runnable there, never queued.
 
 **"Test2All"** is the weekly sweep: SticTest2All, HoltTest2All and GuestTest2All. It gives every guest its own pass and catches what rotation missed.
 - Cost: 282 + 220 + 79 ≈ **580 gm**, ~2 h overnight (est.).

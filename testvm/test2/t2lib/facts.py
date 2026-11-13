@@ -93,3 +93,49 @@ def load(host, root=None):
 def want_for(specs, sets=(), families=("stic", "holt", "gate")):
     from . import keys
     return keys.wants(specs, families, sets)
+
+
+def ceiling(f):
+    """(DISK, MEM) GiB: the most one cmp-run.sh --reserve can ever get on the host of facts F
+    (facts_host.py's preflight.ram.ceiling, the host's cmp-run.sh ceiling()), or None: not known
+    (old facts, no RAM disk), not checked."""
+    c = (((f or {}).get("preflight") or {}).get("ram") or {}).get("ceiling")
+    try:
+        d, m = float(c[0]), float(c[1])
+    except (TypeError, ValueError, IndexError, KeyError):
+        return None
+    return d, m
+
+
+def over_ceiling(need, ceil):
+    """True when NEED (DISK, MEM) exceeds CEIL (DISK, MEM); never when either is unknown."""
+    if not need or not ceil:
+        return False
+    return need[0] > ceil[0] + 1e-9 or need[1] > ceil[1] + 1e-9
+
+
+def gib(x):
+    """A GiB figure as the reasons print it: 13, 8.5."""
+    return f"{float(x):g}"
+
+
+def too_big_words(need, over, all_hosts):
+    """Why a cell is kept off the hosts OVER ({host: ceiling}): NEED is its (DISK, MEM), or
+    {host: (DISK, MEM)} where they differ by host.  ALL_HOSTS: no host of the run is left.
+        over copland's ceiling 9.0 9.2: needs 13 6
+        over the ceilings of copland 9.0 9.2, cage 9.0 9.2: needs 13 6
+        too big for copland (ceiling 9.0 9.2): needs 13 6        (other hosts take it)"""
+    def needs(n):
+        return f"needs {gib(n[0])} {gib(n[1])}"
+    per = {h: tuple(need[h]) if isinstance(need, dict) else tuple(need) for h in over}
+    same = len(set(per.values())) == 1
+    cs = {h: f"{c[0]:.1f} {c[1]:.1f}" for h, c in over.items()}
+    tail = f": {needs(next(iter(per.values())))}" if same else ""
+    if not all_hosts:
+        each = ", ".join(cs[h] + ("" if same else f" ({needs(per[h])})") for h in over)
+        return f"too big for {', '.join(over)} ({'ceiling' if len(over) == 1 else 'ceilings'} {each}){tail}"
+    if len(over) == 1:
+        h = next(iter(over))
+        return f"over {h}'s ceiling {cs[h]}{tail}"
+    return "over the ceilings of " + ", ".join(f"{h} {cs[h]}" + ("" if same else f" ({needs(per[h])})")
+                                               for h in over) + tail

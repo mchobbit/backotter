@@ -3,7 +3,7 @@
 # the RAM disk and M GiB of memory (README "Where a run works, and what it
 # keeps"; the queue's =D and %M override it: "Queues: ht1-queue.sh").
 #
-#   ram-size.sh [--table FILE] [--peaks FILE] GUEST[+VARIANT]...
+#   ram-size.sh [--table FILE] [--peaks FILE] [--host H] GUEST[+VARIANT]...
 #       a line "GUEST[+VARIANT] D M FROM" for each; FROM is where D came from:
 #       peaks:N        its last N (at most 3) whole passes in peaks.tsv (result
 #                      PASS, all four phases, not seeded), when it has 2 or
@@ -12,7 +12,8 @@
 #                      (3 for BSD, illumos and Haiku), M at least 4
 #       table+peaks:1  one such pass: the larger of its D and M and the table's
 #                      (the default's, without a row)
-#       table          its row in ram-sizes.tsv: this host's, else the largest;
+#       table          its row in ram-sizes.tsv: this host's (--host H: H's),
+#                      else the largest;
 #                      a variant without a row has its guest's
 #   +nearfull on the end: 4 GiB more D, for the free space that variant fills
 #   in the source overlay (no row of its own tells anyone how much)
@@ -24,17 +25,20 @@
 #
 # The FILEs default to ram-sizes.tsv beside this script and
 # /bkoscratch/holttest1d/peaks.tsv (ht1-lib.sh's, under HT_RECORDS when that
-# is set).  It writes nothing.  Exit 0, or 2 on bad usage.
+# is set).  --host H (default this host's short name) picks the table's rows:
+# Test2's planner sizes a host's cells so, with --peaks /dev/null, against its
+# cmp-run.sh ceiling.  It writes nothing.  Exit 0, or 2 on bad usage.
 set -uo pipefail
 
 HERE=$(dirname "$(realpath "$0")")
-TABLE=$HERE/ram-sizes.tsv PEAKS=${HT_RECORDS:-/bkoscratch/holttest1d}/peaks.tsv BIG=""
-usage() { echo "usage: ram-size.sh [--table FILE] [--peaks FILE] GUEST[+VARIANT]... | --big GIB" >&2; exit 2; }
+TABLE=$HERE/ram-sizes.tsv PEAKS=${HT_RECORDS:-/bkoscratch/holttest1d}/peaks.tsv BIG="" HOST=""
+usage() { echo "usage: ram-size.sh [--table FILE] [--peaks FILE] [--host H] GUEST[+VARIANT]... | --big GIB" >&2; exit 2; }
 while [[ ${1:-} == --* ]]; do
     [[ $# -ge 2 ]] || usage
     case $1 in
     --table) TABLE=$2 ;;
     --peaks) PEAKS=$2 ;;
+    --host) [[ $2 =~ ^[A-Za-z0-9][A-Za-z0-9.-]*$ ]] || usage; HOST=$2 ;;
     --big) [[ $2 =~ ^[0-9]+([.][0-9]+)?$ ]] || usage; BIG=$2 ;;
     *) usage ;;
     esac
@@ -50,7 +54,7 @@ for n; do [[ $n =~ $name ]] || { echo "ram-size.sh: not GUEST[+VARIANT]: $n" >&2
 # header).  peaks.tsv (ht1-lib.sh): end_utc host driver run gv phases seeded
 # rc result mode reserved_gib peak_disk_kib peak_anon_kib wall_s, a header
 # first; its columns are found by name, else taken in that order.
-awk -F'\t' -v host="$(hostname -s)" -v big="$BIG" -v names="$*" '
+awk -F'\t' -v host="${HOST:-$(hostname -s)}" -v big="$BIG" -v names="$*" '
     function fam(g) {   # as ht1.sh picks the driver: 1 ht1-bsd.sh, 2 ht1-offline.sh, 0 Linux
         if (g ~ /^(freebsd|hardenedbsd|ghostbsd|netbsd|alpinebsd|openbsd|dragonfly|omnios|haiku)/) return 1
         if (g == "redox" || g ~ /^sculpt/) return 2

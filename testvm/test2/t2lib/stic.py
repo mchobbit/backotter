@@ -77,6 +77,7 @@ import threading
 import time
 
 from . import mac_root, utc_now
+from . import facts as factsmod
 
 DRIVE = os.path.join("testvm", "stictest1", "drive.py")
 POLL = 30
@@ -947,9 +948,12 @@ class SticRun:
         landed = self.landed(mark)
         ds = (self._env("drive_state") or (lambda o: None))(out) or {}
         started = sorted(g for g, j in (ds.get("jobs") or {}).items() if g in guests)
+        big = {g: x for g, x in (ds.get("too_big") or {}).items() if g in guests}
         with self.mu:
             d = self.state["drives"][mark]
             d.update(exit=rc, rows=len(landed), started=started)
+            if big:   # over every host's ceiling: drive.py started none of them (the plan keeps them off)
+                d["too_big"] = big
             if rc != 0 and not landed and not started:
                 tail = (self._env("tail") or (lambda p, n=3: []))(os.path.join(out, "drive.out"))
                 d["refused"] = f"drive.py exit {rc}, nothing started, no row" + (f": {' | '.join(tail)}" if tail else "")
@@ -1169,6 +1173,16 @@ class SticRun:
         g = guest_of(cell)
         return any(g in (d.get("started") or []) for d in (self.state.get("drives") or {}).values())
 
+    def too_big(self, cell):
+        """Why drive.py never started CELL's guest: over every host's ceiling (its state.json's
+        too_big), in the plan's words; else None."""
+        g = guest_of(cell)
+        for d in (self.state.get("drives") or {}).values():
+            x = (d.get("too_big") or {}).get(g)
+            if x:
+                return factsmod.too_big_words(x.get("needs") or [0, 0], x.get("ceilings") or {}, True)
+        return None
+
     def result(self, rows1, rows2, derived=(), ids=(), notes=()):
         st = self.state
         want = set(st.get("due") or []) | set(st.get("reruns") or {})
@@ -1203,6 +1217,9 @@ class SticRun:
             d = by_cell.get(pc.cell) or []
             if d:
                 outcome = d[0][0]["kind"]
+            elif pc.cell in want and self.too_big(pc.cell):
+                outcome = "too-big"
+                bad.append(f"{pc.cell} too big: {self.too_big(pc.cell)}")
             elif pc.cell in want:
                 outcome = "no-row" if self.started(pc.cell) else "not-started"
                 bad.append(f"{pc.cell} {outcome}")
@@ -1211,14 +1228,18 @@ class SticRun:
             else:
                 outcome = "skipped"
             cells.append({"cell": pc.cell, "outcome": outcome, "attempt": 1, "rule": pc.rule,
-                          "reasons": list(pc.reasons or []), "rows": [rid for _, rid in d],
+                          "reasons": ([self.too_big(pc.cell)] if outcome == "too-big" else []) + list(pc.reasons or []),
+                          "rows": [rid for _, rid in d],
                           "final_row": d[0][1] if d else None,
                           "verdict": "PASS" if d else None, "gm": 0.0, "wall_s": 0, "gb": None,
                           "host": "mac" if d else None})
         for mark, d in sorted((st.get("drives") or {}).items()):
             notes.append(f"drive.py {mark}: exit {d.get('exit')}, {d.get('rows', 0)} row(s)"
                          + (f"; REFUSED: {d['refused']}" if d.get("refused") else "")
-                         + (f"; not started: {d['skipped']}" if d.get("skipped") else ""))
+                         + (f"; not started: {d['skipped']}" if d.get("skipped") else "")
+                         + ("; too big for every host, not started: " + ", ".join(
+                             f"{g} ({factsmod.too_big_words(x.get('needs') or [0, 0], x.get('ceilings') or {}, True)})"
+                             for g, x in sorted(d["too_big"].items())) if d.get("too_big") else ""))
         if st.get("imgsum"):
             notes.append(f"imgsum: {st['imgsum']}")
         if st.get("rekey"):

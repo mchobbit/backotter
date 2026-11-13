@@ -28,8 +28,11 @@
         [--round R] [--hosts H,H]        test only: synthetic PASS rows at the current keys
                                          (refused unless T2_MAC_ROOT is set and isn't the default)
 
---hosts H,H: of chopin, cinqcent, copland (default chopin,cinqcent; copland is known, not a
-default host until HostTest2 and a representative per family pass there).
+--hosts H,H: of chopin, cinqcent, copland, cage (default chopin,cinqcent).  A new host joins the
+defaults after HostTest2 and a representative per family pass there; a small host (copland, cage:
+some cell's reservation is over its cmp-run.sh ceiling) after the HostTest2 layers and one
+representative per family pass among the cells that fit it, and the cells that don't fit it are
+placed on the other hosts only, then too.
 Roots: T2_MAC_ROOT (~/backotter-work/test2), T2_HOST_ROOT (/bkoscratch/test2), T2_COPY_ROOT
 (~/backotter-work/t2/copy), BKO_GIT (~/git).  Exit 0: PASS, nothing due or a plan printed;
 1: a FAIL or FLAKY-FAIL, a to-class cell, or a stop rule stopped the run; 2: refused; 3: an internal error.

@@ -18,7 +18,8 @@
 #   --old DIR     OLD_BIN, the set before (SPEC3 2's identity), or none (default)
 #
 # What it sets: RT_RAM=1 (never 0), PYTHONDONTWRITEBYTECODE=1, RUN_PREFIX,
-# HOST_JOBS=2 (linux) or SPARSE_JOBS=1 (sparse), OLD_BIN, and
+# HOST_JOBS=2 (linux; run-all.sh's JOBS_CAP makes it 1 on a small host,
+# copland or cage) or SPARSE_JOBS=1 (sparse), OLD_BIN, and
 # EXPECT_RESTIC_COMMIT, EXPECT_RUSTIC_COMMIT, EXPECT_RUSTIC_CORE_COMMIT from
 # the set's linux commit files.  run-all.sh's LOG_DIR is /mnt/bko-ram/PFX-log,
 # inside the reservation, and goes to --out at the end.  LINUX_FS and

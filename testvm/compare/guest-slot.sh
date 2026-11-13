@@ -12,8 +12,8 @@
 #   slot_give             let it go
 #   slot_count RANGE      held slots and slotless QEMU, now
 #   slot_range_here [H]   our guests' port range on host H (default this
-#                         one): chopin 2700-2799, copland 2800-2899, any
-#                         other (cinqcent) 2900-2999
+#                         one): chopin 2700-2799, copland 2800-2899, cage
+#                         3000-3099, any other (cinqcent) 2900-2999
 #
 # Needs: flock, pgrep, /proc.
 
@@ -21,6 +21,7 @@ slot_range_here() {
     case ${1:-$(hostname -s 2>/dev/null || hostname)} in
         chopin*) echo 2700-2799 ;;
         copland*) echo 2800-2899 ;;
+        cage*) echo 3000-3099 ;;
         *) echo 2900-2999 ;;
     esac
 }

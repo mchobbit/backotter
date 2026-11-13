@@ -126,14 +126,16 @@ class Estimator:
 
 # --- wall time ---------------------------------------------------------------------------
 
-def stic_wall(drive, guests, est, have, first=(), slots=STIC_SLOTS):
+def stic_wall(drive, guests, est, have, first=(), slots=STIC_SLOTS, ceils=None):
     """drive: testvm/stictest1/drive.py as a module.  guests: names; est: {guest: seconds};
-    have: {host: {"OS/NAME", ...}} (the round's binaries there).  Returns (wall_s, {guest: host},
+    have: {host: {"OS/NAME", ...}} (the round's binaries there); ceils: {host: (DISK, MEM)},
+    cmp-run.sh's ceiling there (none: not checked).  Returns (wall_s, {guest: host},
     [guests no host can run])."""
     if not guests:
         return 0, {}, []
     spec = drive.load_specs(list(guests))
-    hosts = {h: dict(have=set(v), slots_free=drive.GUEST_SLOTS, room=None, ceil=None) for h, v in have.items()}
+    hosts = {h: dict(have=set(v), slots_free=drive.GUEST_SLOTS, room=None, ceil=(ceils or {}).get(h))
+             for h, v in have.items()}
     if not hosts:
         return 0, {}, list(guests)
     est_s = {g: max(int(est.get(g, DEFAULT_GM * 60)), 1) for g in guests}

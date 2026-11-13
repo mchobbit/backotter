@@ -71,7 +71,7 @@ unless `BKO_TESTVM` names another testvm/ (below).
   `~/backotter-work/round22/bin/linux` (or freebsd, netbsd, openbsd, omnios,
   dragonfly, haiku).
 - `PORT` is a free SSH port in your own range: Chopin 2700-2799, Copland
-  2800-2899, Cinqcent 2900-2999 (the guest slot's range, guest-slot.sh's
+  2800-2899, Cage 3000-3099, Cinqcent 2900-2999 (the guest slot's range, guest-slot.sh's
   `slot_range_here`).
 - `PREFIX` names your scratch: `/mnt/bko-ram/PREFIX`. Make it a plain name:
   letters, digits, `.`, `_` and `-`, starting with a letter or digit.
@@ -106,7 +106,11 @@ copies.
 from one queue for Chopin and Cinqcent: longest guest first, each started the
 moment a host has a place, a guest slot, the guest's --reserve room after
 cmp-run.sh's waiting line, our free ports (Chopin 2780-2799, Cinqcent
-2980-2999) and Tctl at most 90 C. Starts are detached on the host and
+2980-2999; Copland 2880-2899 and Cage 3080-3099 with `--hosts`) and Tctl at
+most 90 C. A guest whose --reserve is over a host's ceiling (cmp-run.sh's
+`ceiling()`: 9.0 9.2 on the small hosts, Copland and Cage) never starts
+there; one over every host's ceiling is named TOO BIG and never starts, and
+the round ends without it. Starts are detached on the host and
 watched through their exit files every 15 s; the results land in
 `~/backotter-work/stictest1/MARK/results.tsv` on the Mac. See `drive.py
 --help`.

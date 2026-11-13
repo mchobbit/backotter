@@ -429,11 +429,50 @@ def deep_record(root):
     return out
 
 
+def _deep_name(k):
+    name = bytes.fromhex(k)
+    return f"{name[:40]!r}...{name[-40:]!r} ({len(name)} bytes)"
+
+
 def deep_compare(a, b):
     """The differences between two deep_record()s, as lines."""
     out = []
     for k in sorted(set(a) | set(b)):
         if a.get(k) != b.get(k):
-            name = bytes.fromhex(k)
-            out.append(f"{name[:40]!r}...{name[-40:]!r} ({len(name)} bytes): {a.get(k)} -> {b.get(k)}")
+            out.append(f"{_deep_name(k)}: {a.get(k)} -> {b.get(k)}")
     return out
+
+
+def _is_deep(path_hex):
+    return bytes.fromhex(path_hex).split(b"/", 1)[0].startswith(b"deep")
+
+
+def deep_planned(content):
+    """The paths (hex, under DIR) of CONTENT's deep trees (deep*: what
+    deep_record() walks) that plant() is given, after its "only"; empty
+    where the case plants no deep tree.  The deep trees' entries and indexes
+    are the same on every filesystem, so ext4's plan stands for all."""
+    if not content or "recipe" not in content:
+        return []
+    return [e["path"] for e in plan(content, "ext4") if _is_deep(e["path"])]
+
+
+def deep_verdict(planned, before, after):
+    """(verdict, lines) for the deep tree restored, from deep_planned()'s
+    PLANNED and the deep_record()s of the source (BEFORE) and the restore
+    (AFTER).  The verdict:
+      "none"     the case plants no deep tree: nothing to compare (an empty
+                 BEFORE is then expected, not a failure)
+      "missing"  something planned isn't in BEFORE: the source never had the
+                 tree, so a compare would prove nothing; LINES name what's gone
+      "differs"  AFTER isn't BEFORE; LINES are deep_compare()'s
+      "agrees"   AFTER is BEFORE
+    The decision that there is a tree to compare comes from the plan, never
+    from BEFORE being empty, so neither failure stands in for the other."""
+    if not planned:
+        return "none", []
+    gone = [k for k in planned if k not in before]
+    if gone:
+        return "missing", [f"{_deep_name(k)}: planned, not in the source's record" for k in gone]
+    diff = deep_compare(before, after)
+    return ("differs" if diff else "agrees"), diff

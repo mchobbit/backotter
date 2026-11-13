@@ -121,13 +121,19 @@ PY
 }
 
 # In phase_verify, with the restored disk mounted: the deep tree compared.
+# Whether the case has one is its content's plan (an "only" may keep none),
+# not the source's record being empty; a tree planned but not recorded is a
+# check of its own, so the shrinker can't trade one failure for the other.
 bs2_after_dst_record() {
     [[ $BS2_CONTENT == 1 && -f $R/src-deep.json ]] || return 0
-    if python3 "$BS2_HOST" deep compare "$DST_MP" "$R/src-deep.json" > "$R/logs/bs2-deep.txt" 2>&1; then
-        ok "the deep tree (past PATH_MAX) agrees: $(tail -1 "$R/logs/bs2-deep.txt")"
-    else
-        bad "the deep tree differs: $(head -3 "$R/logs/bs2-deep.txt" | tr '\n' ' ')"
-    fi
+    local rc=0
+    python3 "$BS2_HOST" deep compare "$DST_MP" "$R/src-deep.json" --case "$BS2_CASE" > "$R/logs/bs2-deep.txt" 2>&1 || rc=$?
+    case $rc in
+        0) ok "the deep tree (past PATH_MAX) agrees: $(tail -1 "$R/logs/bs2-deep.txt")" ;;
+        3) say "note: no deep tree compare: $(tail -1 "$R/logs/bs2-deep.txt")" ;;
+        4) bad "the source's deep tree is missing: $(tail -1 "$R/logs/bs2-deep.txt"); $(head -2 "$R/logs/bs2-deep.txt" | tr '\n' ' ')" ;;
+        *) bad "the deep tree differs: $(head -3 "$R/logs/bs2-deep.txt" | tr '\n' ' ')" ;;
+    esac
 }
 
 bs2_target_size() {  # I: target disk I's bytes

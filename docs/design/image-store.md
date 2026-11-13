@@ -75,7 +75,9 @@ There is no catalog or index file: listing `guests/*/latest` is the catalog. The
 - **Cache:** Chopin's mirror is also Chopin's cache. `ensure` there never fetches; a missing object is reported as damage.
 - **Never hard-link `vms/` files into the store.** vm-update rewrites them in place.
 
-### 1.3 Caches (role `cache`): Cinqcent now, the M900s later
+### 1.3 Caches (role `cache`): Cinqcent, Copland and Cage (Czerny later)
+
+The test scripts' host table, `testvm/hosts.json` (testvm/HOSTS.md), gives these hosts the `cache` role; vm-store itself goes by each root's `store.json`.
 
 - **Root:** `/bkoscratch/bko-cache`.
 - **Limits:**
@@ -119,6 +121,7 @@ There is no catalog or index file: listing `guests/*/latest` is the catalog. The
 - New `g` over an `i` latest: move if the disk sha256s are equal. This is the first vm-update of a state-less guest. `parent` is the `i` VID.
 - New `i` over anything: never moves on its own. This is a rebuild.
 - Anything else records the version, leaves `latest` alone, and prints why. `--set-latest` forces the move.
+- A state-less guest opted in with `publish --changed --stateless G` (§3.0) follows `vms/G`, as with `--set-latest`.
 - `parent` is the VID `latest` named when it moved, or null.
 
 ### 1.7 The materialized dir `live/<G>/<VID>/<G>/`
@@ -173,6 +176,7 @@ The environment overrides `store.json`, which overrides the defaults.
 | `VM_STORE_BWLIMIT_BIGFOOT` | `40000` (KiB/s) |
 | `VM_STORE_WINDOW` | `00:30-07:30` (push only; `--now` overrides) |
 | `VM_STORE_COPY` | `auto` (try `--reflink=always`, else plain); `plain` forces a copy |
+| `VM_STORE_FLOOR_REFLINK` | `0`; `1` lets publish count a reflinked copy as no new space against the floor (§2.4) |
 | `VM_STORE_SCAN` | `/mnt/bko-ram /dev/shm /bkoscratch` |
 | `VM_STORE_MIN_AGE` | `24h` |
 | `BKO_WORK` | `~/backotter-work` (`vms/` = `$BKO_WORK/vms`) |
@@ -237,7 +241,7 @@ It works on one guest at a time. `--changed` means every `vms/G` with an `image-
    - The order is always objects, then manifest, then latest.
 10. **`--push`** runs §2.5 afterwards. A push failure does not undo the publish. `status` then shows the version as unpushed.
 
-**Free-space floor.** Publish refuses (exit 4) if Chopin's `/bkoscratch` free space minus the incoming file sizes would fall below the floor (default 200G on the mirror).
+**Free-space floor.** Publish refuses (exit 4) if Chopin's `/bkoscratch` free space minus the bytes the copies write now would fall below the floor (default 200G on the mirror). By default those bytes are each disk's allocated size, reflinked or not. With `VM_STORE_FLOOR_REFLINK=1` (opt-in) a reflinked copy (`VM_STORE_COPY=auto`, the disks on the store's file system, and a probe reflinking there) counts as none, so it passes even below the floor, with a warning; vm-update's next merge un-shares what it rewrites, unchecked. A reflink that fails at copy time is checked again at its allocated size before the plain copy.
 
 ### 2.5 `push`, Chopin to Bigfoot
 
@@ -296,8 +300,9 @@ It runs under `lock` EX, both from ensure and by hand. An object is **in use**, 
   - a relative name resolves against the file's dir, then **realpath**s to an object.
   This covers idle kept overlays (ht1 R dirs, compare work, backshot2, t2), which can last for days.
 - **(c) Its `used/` stamp is younger than `VM_STORE_MIN_AGE`** (24h). This covers the gap between ensure and QEMU opening the file, and `--snapshot` temp files that aren't named `*.qcow2`.
-- **(d) Blind scan.** If the scan met a directory or a `*.qcow2` (or a link of its backing chain) it can't read (root's mktemp dirs, a root vm-run's 0600 `--ram` overlay), the age in (c) rises to 7 days for this run, and those paths are reported.
+- **(d) Blind scan.** If the scan met a directory or a `*.qcow2` (or a link of its backing chain) it can't read (root's mktemp dirs, a root vm-run's 0600 `--ram` overlay), or rule (f)'s walk of `$BKO_WORK/vms/` met a directory it can't read (a sudo `compare.py`'s 0700 one, which may hold a link), the age in (c) rises to 7 days for this run, and those paths are reported.
 - **(e) The rest of its version.** Every object of a version that has any in-use object is in use too, along with all chain ancestors. This uses the cached manifests.
+- **(f) What `$BKO_WORK/vms/` links to (§3.0).** Every object of a version that a `vms/G` link resolves into (`live/G/VID`, dangling or not), and each object a link inside a real `vms/G` resolves to (that one before rule e, as an overlay's). The version rule applies after rule e, so a sidecar object shared with older versions keeps none of them. gc_live never removes a `live/G/VID` a link points into.
 
 **Eviction:**
 1. Delete the objects not in use, oldest `used/` stamp first, until use ≤ cap and free ≥ floor. The stamp mtime is read again just before each delete.
@@ -340,6 +345,17 @@ in_store() { local d; d=$(dirname "$(realpath -- "$1")")
 ## 3. Using the store (consumer wiring): M3, when the first M900 is racked
 
 Chopin and Cinqcent keep their full `vms/` in the first cut, so wiring consumers there now would only add version mismatches. This is the wiring for the M900s.
+
+### 3.0 Interim, before the pins: `link`
+
+The M900s (cage, copland) run the test scripts unchanged on a `vms/` of links: `$BKO_WORK/vms/G -> ROOT/live/G/VID/G` on the cache root. Until the pins below are built, `vm-store link` keeps those links current:
+
+- **`link GUEST[@VID]... | --all [--offline] [--dry-run]`**, on a cache root only. For each guest: ensure the version (default latest; fetching it, or `--offline`), then point `vms/G` at its leaf by one `rename` of a temp link, so `vms/G` is the old link or the new one, never absent. `--all` takes every `vms/G` that already links into this store's `live/G/` (hand-made, or dangling); it adds none.
+- **Refusals.** A real `vms/G` folder, or a link that points anywhere but this store's `live/G/`, is never replaced (exit 1, before any fetch). While a VM of G runs, link refuses (exit 3, after the fetch): a QEMU program holds one of the current version's disk objects (rule a's lock test), or a `compare.py` / `compare-freebsd.sh` of G runs (as vm-update's busy check). The re-point runs under `lock`, so gc sees the old link or the new one.
+- **gc** keeps whatever the links use (rule f, §2.7): a linked guest is never evicted, and the version a re-point leaves behind ages out by its stamps. A cache's cap must hold every linked guest plus one new version.
+- **After a publish** run `link --all` on each cache host. Nothing schedules it yet.
+- **State-less guests** reach the caches once published: by name, or weekly with `publish --changed --stateless G,...` (opt-in, §1.6).
+- When the pins land, `link` stays for the hosts whose test scripts read `vms/` directly.
 
 1. **Resolve once, prefetch outside the slot.**
    - The m-side driver (the caller of cmp-run.sh, ht1-queue.sh, mark/stic) runs `vm-store fetch G...` **before** `cmp-run.sh`. A fetch never holds a slot or a RAM reservation.

@@ -12,19 +12,25 @@ check.sh; the default is every one of them but those --exclude names.
 
 One queue for all hosts, longest guest first (by its newest earlier run that
 passed, else the estimates in README.md, else 10 min, weighted by the VMs it
-runs at once).  The moment a place frees, a host starts the first guest that
-fits there now:
+runs at once).  A host of a bigger class (testvm/hosts.json's classes: big
+before small) takes first, in that order, the guests no smaller host of
+--hosts could run (their binaries, image or --reserve within its ceiling), so
+they don't wait behind ones the small hosts could drain; with hosts of one
+class only (chopin,cinqcent) that changes nothing.  Hosts are offered places
+by how long their running checks still take, over their --slots.  The moment
+a place frees, a host starts the first guest that fits there now:
   - fewer than --slots checks of ours run there (freebsd15-ufs counts 3, its
     three VMs at once);
   - a guest slot is free on the host's range (Chopin 2700-2799, Copland
     2800-2899, Cage 3000-3099, others 2900-2999: the checks' slot_take 3, on
-    guest-slot.sh's slot_range_here), counting other sessions' slots and
-    slotless QEMU there; sculpt2610 boots nothing and takes none;
+    guest-slot.sh's slot_range_here; the host table's guest_slots, 1-3,
+    counts fewer), counting other sessions' slots and slotless QEMU there;
+    sculpt2610 boots nothing and takes none;
   - the room cmp-run.sh would offer after its waiting line (budget() and
     after_line() of the host's ~/backotter-work/cmp-run.sh) holds the
     guest's check.sh --reserve figures, less what our started checks have
     not reserved yet;
-  - Tctl (k10temp) is at most --hot-c (or the lower HOT_C of someone in
+  - Tctl (k10temp; coretemp's or zenpower's elsewhere) is at most --hot-c (or the lower HOT_C of someone in
     cmp-run.sh's line) and no NVMe is at 75 C (cmp-run.sh's NVME_C) or more;
   - the host has the guest's binaries and free ports of ours (Chopin
     2780-2799, Copland 2880-2899, Cage 3080-3099, Cinqcent 2980-2999;
@@ -36,7 +42,12 @@ ceiling (cmp-run.sh's ceiling(): the most one job can ever get there, a small
 host's 9.0 9.2) is never started there; one over the ceiling of every host of
 --hosts is never started at all: once every host's ceiling is read, it is
 named TOO BIG (its needs, each host's ceiling) in the log, the summary and
-state.json's too_big, and the round ends without it.
+state.json's too_big, and the round ends without it.  A guest is started only
+on a host that has its image (a ~/backotter-work/vms/GUEST/*.qcow2 that
+resolves: a small host's LRU cache holds only some guests); one that no host
+of --hosts with its binaries has is named NOVM (the hosts that lack it) in
+the log, the summary and state.json's novm, and the round ends without it,
+failed (TOO BIG doesn't fail it).  TOO BIG counts only the hosts with the guest's binaries and image.
 
 Each start is detached on its host (ssh -n, setsid -f), so the checks run on
 if the driver or the Mac goes away.  On the host, MARK being --logs-mark:
@@ -58,9 +69,12 @@ and /mnt/bko-ram, /dev/shm and /bkoscratch entries named MARK-GUEST*.
 Options:
   --exclude G,G   leave these guests out (repeatable)
   --first G,G     start these before the rest (a recheck's failed guests)
-  --hosts H,H     of chopin, cinqcent, copland, cage (default chopin,cinqcent:
-                  copland and cage are known, not yet default hosts)
-  --slots N       checks of ours at once per host (default 3)
+  --hosts H,H     of testvm/hosts.json's: chopin, cinqcent, copland, cage
+                  (default its default hosts, chopin,cinqcent: copland and
+                  cage are known, not yet default hosts)
+  --slots N|H=N   checks of ours at once: N on every host, H=N on H
+                  (repeatable, comma-separated, later ones win; default
+                  each host's stic_slots in testvm/hosts.json, else 3)
   --hot-c C       start nothing while Tctl is over C (default 90)
   --poll S        seconds between checks of the exit files (default 15)
   --logs-mark M   the logs' and scratch's mark (default st1-ROUND)
@@ -118,11 +132,13 @@ import argparse
 import contextlib
 import fcntl
 import hashlib
+import importlib.util
 import io
 import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -130,17 +146,82 @@ import time
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-HOSTS = {   # ssh destination, the checks' guest-slot range there, our ports
-    "chopin": dict(ssh="m@chopin.local", slot_range="2700-2799", ports=(2780, 2799)),
-    "cinqcent": dict(ssh="m@cinqcent.local", slot_range="2900-2999", ports=(2980, 2999)),
-    "copland": dict(ssh="m@copland.local", slot_range="2800-2899", ports=(2880, 2899)),
-    "cage": dict(ssh="m@cage.local", slot_range="3000-3099", ports=(3080, 3099)),
-}
-# --hosts' default: copland and cage are known (selectable) but join the
-# defaults only after HostTest2 and a representative per family pass there,
-# among the guests that fit them (design-classes.md: small hosts).
-DEFAULT_HOSTS = ("chopin", "cinqcent")
+
+
+def _host_table():
+    """testvm/test2/t2lib/hosts.py, the loader of the host table testvm/hosts.json, by its path."""
+    p = os.path.join(os.path.dirname(HERE), "test2", "t2lib", "hosts.py")
+    if not os.path.isfile(p):
+        raise ImportError(f"drive.py: no host table loader {p} (testvm/hosts.json's)")
+    spec = importlib.util.spec_from_file_location("st1_hosts_table", p)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+HOSTS_TABLE = _host_table()
+# The enabled hosts of testvm/hosts.json: ssh destination, the checks' guest-slot
+# range there, our ports (stic_ports).
+HOSTS = {r["name"]: dict(ssh=r["ssh"], slot_range=r["slot_range"], ports=tuple(r["stic_ports"]))
+         for r in HOSTS_TABLE.rows()}
+# --hosts' default, the table's default hosts: copland and cage are known
+# (selectable) but join the defaults only after HostTest2 and a representative
+# per family pass there, among the guests that fit them (design-classes.md:
+# small hosts).
+DEFAULT_HOSTS = HOSTS_TABLE.defaults()
 GUEST_SLOTS = 3          # every check.sh's slot_take 3
+
+
+def host_limit(h, field):
+    """One of host h's limits in the host table (its row's, else its class's, else the
+    default: stic_slots 3, guest_slots 3; a name not in the table: the default)."""
+    return HOSTS_TABLE.limit(h, field)
+
+
+def guest_slots(h):
+    """The guest slots counted as on h's range: its guest_slots (1-3), never more than
+    GUEST_SLOTS, which every check.sh's slot_take caps it at."""
+    return min(GUEST_SLOTS, int(host_limit(h, "guest_slots")))
+
+
+def host_rank(h):
+    """h's class's place in the host table's classes (0: the biggest; a name not in it: 0)."""
+    return HOSTS_TABLE.class_rank(h)
+
+
+def slots_of(cap, h):
+    """Checks of ours at once on h: CAP for every host, or CAP {host: N} (a host it lacks:
+    its stic_slots)."""
+    if isinstance(cap, dict):
+        return cap[h] if h in cap else int(host_limit(h, "stic_slots"))
+    return cap
+
+
+def parse_slots(words, hosts):
+    """--slots' words (each N or H=N, comma-separated; later ones win) -> {host: N} for each
+    of hosts: its stic_slots from the host table, a bare N for every host, H=N for H.
+    ValueError says what is wrong."""
+    out = {h: int(host_limit(h, "stic_slots")) for h in hosts}
+    for w in words or ():
+        for item in (x.strip() for x in str(w).split(",")):
+            if not item:
+                continue
+            h, eq, n = item.rpartition("=")
+            if not re.fullmatch(r"[0-9]+", n) or int(n) < 1:
+                raise ValueError(f"--slots {item}: N or HOST=N, N at least 1")
+            if eq and h not in hosts:
+                raise ValueError(f"--slots {item}: {h} is not one of --hosts ({', '.join(hosts)})")
+            for x in ([h] if eq else hosts):
+                out[x] = int(n)
+    return out
+
+
+def slots_words(cap, hosts):
+    """"3" when every one of hosts has the same, else "chopin 3, copland 1"."""
+    per = {h: slots_of(cap, h) for h in hosts}
+    if len(set(per.values())) > 1:
+        return ", ".join(f"{h} {n}" for h, n in per.items())
+    return str(next(iter(per.values()))) if per else str(cap)
 NVME_C = 75              # cmp-run.sh's: it starts nothing over it
 DEFAULT_EST = 600        # README: "Most guests finish in 2 to 15 minutes"
 OS_WORDS = {"Linux": "linux", "FreeBSD": "freebsd", "NetBSD": "netbsd", "OpenBSD": "openbsd",
@@ -265,6 +346,34 @@ def has_bins(s, have):
     return f"{s.os}/rustic-bko" in have and f"{RESTIC_FROM.get(s.os, s.os)}/restic-bko" in have
 
 
+def has_vm(g, vms):
+    """Whether a host has guest g's image (PROBE_SH's VM lines: vms/g/*.qcow2 there);
+    never false while unknown (vms None: a probe that didn't say)."""
+    return vms is None or g in vms
+
+
+def no_vm(guests, spec, probes):
+    """{guest: [hosts]} of the guests no host of probes ({host: probe}) can run for want of
+    their image: none of the hosts with the guest's binaries has it ([hosts]: those).  None
+    while a host's probe, or its images, is unknown; a guest no host has binaries for is
+    main()'s (it refuses the round)."""
+    if not probes or any(p is None or p.get("vms") is None for p in probes.values()):
+        return {}
+    out = {}
+    for g in guests:
+        withbins = [h for h, p in probes.items() if has_bins(spec[g], p["have"])]
+        if withbins and not any(g in probes[h]["vms"] for h in withbins):
+            out[g] = withbins
+    return out
+
+
+def able_hosts(g, s, hosts, probes):
+    """The hosts that could run guest g (spec s) at all: its binaries and its image there
+    (a host with no probe: not known, so counted)."""
+    return [h for h in hosts if probes.get(h) is None
+            or (has_bins(s, probes[h]["have"]) and has_vm(g, probes[h].get("vms")))]
+
+
 def over_ceiling(s, ceil):
     """True when a check's --reserve (each VM's) is over a host's ceiling (cmp-run.sh's
     ceiling(): it refuses such a --reserve at once); never while the ceiling is unknown."""
@@ -284,14 +393,28 @@ def too_big_words(s, ceils):
     return f"needs {s.d:g} {s.m:g}; " + ", ".join(f"{h} {c[0]:.1f} {c[1]:.1f}" for h, c in ceils.items())
 
 
-def pick(cands, spec, have, free_cap, free_slots, room, ceil, ports_fn=None):
+def prefer(cands, h, able, ranks, first=()):
+    """cands (in queue order) as host h takes them: first those no host of a later class
+    (ranks {host: host_rank}; a smaller host) could run (able(g): the hosts of the run that
+    could), so a big host starts the cells only big hosts can take before ones a small host
+    could, and the small hosts drain the rest; --first's still first, the queue's order
+    within each part.  With no host of a later class than h in ranks: cands as they are."""
+    r = ranks.get(h, 0)
+    if not any(x > r for x in ranks.values()):
+        return cands
+    return sorted(cands, key=lambda g: (g not in first, any(ranks.get(x, 0) > r for x in able(g))))
+
+
+def pick(cands, spec, have, free_cap, free_slots, room, ceil, ports_fn=None, vms=None):
     """The first of cands (in queue order) that fits a host now: (guest, ports,
-    why-not list).  room/ceil None: not known, not checked."""
+    why-not list).  room/ceil/vms None: not known, not checked."""
     why = []
     for g in cands:
         s = spec[g]
         if not has_bins(s, have):
             why.append(f"{g}:nobin")
+        elif not has_vm(g, vms):
+            why.append(f"{g}:novm")
         elif over_ceiling(s, ceil):
             why.append(f"{g}:ceiling")
         elif s.load > free_cap:
@@ -318,27 +441,38 @@ def ports_for(k, lo, hi, busy, listen, used):
     return (fresh or free or [None])[0]
 
 
-def simulate(guests, spec, est, hosts, cap, first=()):
-    """The plan: hosts {name: dict(have, slots_free, room, ceil)} as of now
-    (room None: unknown, not checked).  Returns rows (guest, host, start,
-    end, waited-for-room) and the guests no host can run."""
+def simulate(guests, spec, est, hosts, cap, first=(), ranks=None):
+    """The plan: hosts {name: dict(have, slots_free, room, ceil[, vms])} as of now
+    (room or vms None: unknown, not checked); cap: checks at once per host, N or {host: N}
+    (slots_of); ranks {host: host_rank} (default the host table's): prefer()'s.  Returns
+    rows (guest, host, start, end, waited-for-room) and the guests no host can run."""
     rem = order(guests, spec, est, first)
     run = {h: [] for h in hosts}        # (end, guest)
     rows, t = [], 0.0
+    caps = {h: slots_of(cap, h) for h in hosts}
+    ranks = {h: host_rank(h) for h in hosts} if ranks is None else ranks
+    ables = {}
+
+    def able(g):
+        if g not in ables:
+            ables[g] = [x for x, v in hosts.items() if has_bins(spec[g], v["have"]) and has_vm(g, v.get("vms"))
+                        and not over_ceiling(spec[g], v["ceil"])]
+        return ables[g]
 
     def busy_until(h):
-        return sum((e - t) * spec[g].load for e, g in run[h]) / cap
+        return sum((e - t) * spec[g].load for e, g in run[h]) / caps[h]
 
     def try_start(relax):
         for h in sorted(hosts, key=lambda h: (busy_until(h), h)):
             v = hosts[h]
-            free_cap = cap - sum(spec[g].load for _, g in run[h])
+            free_cap = caps[h] - sum(spec[g].load for _, g in run[h])
             free_slots = v["slots_free"] - sum(spec[g].slots for _, g in run[h])
             room = None
             if v["room"] is not None and not relax:
                 room = (v["room"][0] - sum(spec[g].n * spec[g].d for _, g in run[h]),
                         v["room"][1] - sum(spec[g].n * spec[g].m for _, g in run[h]))
-            g, _, _ = pick(rem, spec, v["have"], free_cap, free_slots, room, v["ceil"])
+            g, _, _ = pick(prefer(rem, h, able, ranks, first), spec, v["have"], free_cap, free_slots, room,
+                           v["ceil"], vms=v.get("vms"))
             if g:
                 rem.remove(g)
                 run[h].append((t + est[g], g))
@@ -435,11 +569,37 @@ def rq(p):
     return '"$HOME"/' + shlex.quote(p[2:] if p.startswith("~/") else p)
 
 
+# ssh's own failures to reach a host by its name (mDNS: HOST.local), after which the
+# host table's ip (with host_key_alias, the name known_hosts pins) is tried: the command
+# never ran, so trying it again can't run it twice.  Not a timeout, nor a command's own 255.
+UNREACHED = re.compile(r"Could not resolve hostname|Name or service not known|nodename nor servname|"
+                       r"Temporary failure in name resolution|No route to host|Network is unreachable|"
+                       r"Connection timed out|Connection refused|Operation timed out")
+VIA_IP = {}   # host -> ssh_fallback()'s arguments, once its name failed and its ip answered
+
+
+def ssh_dest(host):
+    """The ssh arguments that reach HOST: its ssh from the table, or its ip (VIA_IP)."""
+    return VIA_IP.get(host) or [HOSTS[host]["ssh"]]
+
+
 def ssh(host, cmd, script=None, t=90):
-    args = ["ssh", "-T" if script is not None else "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
-            "-o", "ServerAliveInterval=15", HOSTS[host]["ssh"], cmd]
+    base = ["ssh", "-T" if script is not None else "-n", "-o", "BatchMode=yes", "-o", "ConnectTimeout=15",
+            "-o", "ServerAliveInterval=15"]
     try:
-        r = subprocess.run(args, input=script, capture_output=True, text=True, timeout=t)
+        r = subprocess.run(base + ssh_dest(host) + [cmd], input=script, capture_output=True, text=True, timeout=t)
+        if r.returncode == 255 and host not in VIA_IP and UNREACHED.search(r.stderr or ""):
+            try:
+                alt = HOSTS_TABLE.ssh_fallback(host)
+            except HOSTS_TABLE.HostsError:
+                alt = None
+            if alt:
+                r2 = subprocess.run(base + alt + [cmd], input=script, capture_output=True, text=True, timeout=t)
+                if r2.returncode != 255 or not UNREACHED.search(r2.stderr or ""):
+                    VIA_IP[host] = alt
+                    print(f"drive.py: {host}: {HOSTS[host]['ssh']} unreachable ({r.stderr.strip()[:80]}); "
+                          f"by its ip from now on: {' '.join(alt)}", file=sys.stderr)
+                    return r2.returncode, r2.stdout, r2.stderr
         return r.returncode, r.stdout, r.stderr
     except subprocess.TimeoutExpired:
         return None, "", "timed out"
@@ -456,6 +616,12 @@ abs() { case $1 in /*) echo "$1" ;; "~/"*) echo "$HOME/${1#"~/"}" ;; *) echo "$H
 BIN=$(abs "$BIN") WT=$(abs "$WT") HIST=$(abs "$HIST")
 for o in linux freebsd netbsd openbsd dragonfly omnios haiku; do
     for f in restic-bko rustic-bko; do [ -x "$BIN/$o/$f" ] && echo "BIN $o/$f"; done
+done
+# The guests whose image is here (vm_boot's: vms/GUEST/*.qcow2, a link into the
+# LRU cache on a small host, followed); VMS first, so that none is "none here".
+echo VMS
+for g; do
+    for f in "$HOME/backotter-work/vms/$g/"*.qcow2; do [ -f "$f" ] && { echo "VM $g"; break; }; done
 done
 if [ -d "$WT" ]; then
     (cd "$WT" && for g; do [ -d "$g" ] || continue
@@ -512,9 +678,9 @@ guest_of_() {  # PID -> the guest of ours it (or an ancestor) belongs to, else f
     return 1
 }
 
-for h in /sys/class/hwmon/hwmon*; do
+for h in /sys/class/hwmon/hwmon*; do   # the CPU: k10temp (AMD), coretemp (Intel), zenpower
     case $(cat "$h/name" 2>/dev/null) in
-    k10temp) echo "TEMP $(cat "$h/temp1_input")" ;;
+    k10temp|coretemp|zenpower) echo "TEMP $(cat "$h/temp1_input")" ;;
     nvme) echo "NVME $(cat "$h/temp1_input")" ;;
     esac
 done
@@ -684,13 +850,23 @@ def probe(host, bin_dir, wt, hist, guests):
     rc, out, err = run_script(host, PROBE_SH, bin_dir, wt, hist, *guests, t=120)
     if rc != 0 or "END" not in out:
         return None
-    p = dict(have=set(), md5={}, nowt=False, busywt=False, hist=[])
+    return parse_probe(out)
+
+
+def parse_probe(out):
+    """PROBE_SH's output -> dict(have, vms, md5, nowt, busywt, hist); vms None when it
+    named no images (VMS missing: not known, not checked)."""
+    p = dict(have=set(), vms=None, md5={}, nowt=False, busywt=False, hist=[])
     for line in out.splitlines():
         f = line.split()
         if not f:
             continue
         if f[0] == "BIN":
             p["have"].add(f[1])
+        elif f[0] == "VMS":
+            p["vms"] = p["vms"] or set()
+        elif f[0] == "VM" and len(f) == 2 and p["vms"] is not None:
+            p["vms"].add(f[1])
         elif f[0] == "MD5" and len(f) >= 3:
             p["md5"][" ".join(f[2:])] = f[1]
         elif f[0] == "NOWT":
@@ -742,8 +918,8 @@ def status(host, full, mark, guests):
             continue
         k = f[0]
         try:
-            if k == "TEMP":
-                s["temp"] = int(f[1]) / 1000
+            if k == "TEMP":   # the hottest CPU sensor
+                s["temp"] = max(int(f[1]) / 1000, s["temp"] if s["temp"] is not None else -1e9)
             elif k == "NVME":
                 s["nvme"].append(int(f[1]) / 1000)
             elif k == "BUDGET":
@@ -811,6 +987,7 @@ class Driver:
         for g in [g for g in self.state["jobs"] if g not in guests]:   # an earlier run's, with other guests
             del self.state["jobs"][g]
         self.state["too_big"] = {}     # this run's hosts' ceilings decide it again
+        self.state["novm"] = {}        # and their images
         self.ceils = {}                # {host: cmp-run.sh's ceiling}, from the full status reads
         self.seen = set()   # hosts read at least once: nothing starts before all are (no run twice)
         self.stopped = False                        # --stop-file there (reread every poll)
@@ -867,15 +1044,32 @@ class Driver:
 
     def remaining(self):
         return [g for g in self.guests if g not in self.jobs() and g not in self.skipped
-                and g not in self.state["too_big"]]
+                and g not in self.state["too_big"] and g not in self.state["novm"]]
+
+    def mark_novm(self):
+        """The guests not started yet that no host with their binaries has the image of
+        never start (vm_boot would fail on every host, or a guest left for a host that
+        lacks it would be waited for for ever)."""
+        nv = no_vm(self.remaining(), self.spec, {h: self.probes.get(h) for h in self.hosts})
+        for g, hs in nv.items():
+            self.state["novm"][g] = {"hosts": hs}
+            self.log("NOVM", g, f"- no image ~/backotter-work/vms/{g}/*.qcow2 on any host with its binaries,"
+                     " never started:", ", ".join(hs))
+        if nv:
+            self.save()
 
     def mark_too_big(self):
         """Once every host's ceiling is known: the guests not started yet whose --reserve is
-        over every host's ceiling never start (cmp-run.sh would refuse them anywhere, or a
-        guest left for a host it fits on would be waited for for ever)."""
+        over the ceiling of every host that could run them (their binaries and image there)
+        never start (cmp-run.sh would refuse them anywhere, or a guest left for a host it
+        fits on would be waited for for ever)."""
         if not set(self.hosts) <= set(self.ceils):
             return
-        tb = too_big(self.remaining(), self.spec, {h: self.ceils[h] for h in self.hosts})
+        tb = {}
+        for g in self.remaining():
+            able = able_hosts(g, self.spec[g], self.hosts, self.probes)
+            if able:   # (none: mark_novm's, or main()'s)
+                tb.update(too_big([g], self.spec, {h: self.ceils[h] for h in able}))
         for g, cs in tb.items():
             s = self.spec[g]
             self.state["too_big"][g] = {"needs": [s.d, s.m], "ceilings": {h: list(c) for h, c in cs.items()}}
@@ -928,12 +1122,19 @@ class Driver:
     def busy_until(self, host, now):
         t = sum(max(self.est[g] - (now - self.jobs()[g]["launched"]), 30) * self.spec[g].load
                 for g in self.running(host))
-        return t / self.a.slots
+        return t / slots_of(self.a.slots, host)
+
+    def able(self, g):
+        """The hosts of the run that could run g: its binaries and image there, its --reserve
+        within the host's ceiling (one not read yet: not checked)."""
+        s = self.spec[g]
+        return [h for h in self.hosts if has_bins(s, self.probes[h]["have"]) and has_vm(g, self.probes[h].get("vms"))
+                and not over_ceiling(s, self.ceils.get(h))]
 
     def take_status(self, host, now, dt):
         a, spec = self.a, self.spec
         load = sum(spec[g].load for g in self.running(host))
-        full = bool(self.remaining()) and load < a.slots
+        full = bool(self.remaining()) and load < slots_of(a.slots, host)
         snap = status(host, full, a.logs_mark, self.guests)
         if snap is not None and not full and self.remaining() and any(
                 (snap["jobs"].get(g) or {}).get("exit") is not None for g in self.running(host)):
@@ -1016,6 +1217,7 @@ class Driver:
             return
         tried = set()
         progress = True
+        ranks = {h: host_rank(h) for h in self.hosts}
         while progress and self.remaining():
             progress = False
             for host in sorted(snaps, key=lambda h: (self.busy_until(h, now), h)):
@@ -1040,17 +1242,19 @@ class Driver:
                 if held.pop(host, None):
                     self.log(host, "pause over")
                 run = self.running(host)
-                free_cap = a.slots - sum(spec[g].load for g in run)
-                free_slots = GUEST_SLOTS - snap["slots_other"] - other_qemu(snap, host) - sum(spec[g].slots for g in run)
+                free_cap = slots_of(a.slots, host) - sum(spec[g].load for g in run)
+                free_slots = (guest_slots(host) - snap["slots_other"] - other_qemu(snap, host)
+                              - sum(spec[g].slots for g in run))
                 room_d, room_m = snap["room"][0], snap["room"][1]
                 for g in run:   # less what our checks will still reserve
                     k = spec[g].n - self.jobs()[g]["seen_ledger"]
                     if k > 0:
                         room_d -= k * spec[g].d
                         room_m -= k * spec[g].m
-                cands = order(self.remaining(), spec, self.est, a.first)
+                cands = prefer(order(self.remaining(), spec, self.est, a.first), host, self.able, ranks, a.first)
                 g, ports, why = pick(cands, spec, self.probes[host]["have"], free_cap, free_slots,
-                                     (room_d, room_m), snap["ceil"], lambda g: self.ports(host, g, snap))
+                                     (room_d, room_m), snap["ceil"], lambda g: self.ports(host, g, snap),
+                                     vms=self.probes[host].get("vms"))
                 if g is None:
                     if free_cap > 0:
                         key = str((free_cap, free_slots, round(room_d, 1), round(room_m, 1), why[:6]))
@@ -1084,6 +1288,7 @@ class Driver:
                     self.seen.add(host)
                     if snap["ceil"]:
                         self.ceils[host] = snap["ceil"]
+            self.mark_novm()
             self.mark_too_big()
             self.save()
             if not self.remaining() and not self.running():
@@ -1139,14 +1344,18 @@ class Driver:
         a = self.a
         bad = [r[0] for r in res if r[2] != "0" or r[4] != "0"]
         big = self.state.get("too_big") or {}
-        held = [g for g in self.guests if g not in self.jobs() and g not in big]   # never started: skip or stop file
-        missing = [g for g in self.guests if g not in {r[0] for r in res} and g not in held and g not in big]
+        nv = self.state.get("novm") or {}
+        held = [g for g in self.guests if g not in self.jobs() and g not in big and g not in nv]   # never started: skip or stop file
+        missing = [g for g in self.guests if g not in {r[0] for r in res} and g not in held and g not in big
+                   and g not in nv]
         lines = [f"SticTest1 round {a.round}, mark {a.logs_mark}: {len(res)} guests ran, "
                  f"{len(res) - len(bad)} pass" + (f", {len(bad)} fail: {' '.join(bad)}" if bad else "")
                  + (f"; no result for {' '.join(missing)}" if missing else "")
                  + (f"; not started (skip or stop file): {' '.join(held)}" if held else "")
                  + (f"; too big for every host, not started: " + ", ".join(
-                     f"{g} ({too_big_words(self.spec[g], big[g]['ceilings'])})" for g in sorted(big)) if big else "")]
+                     f"{g} ({too_big_words(self.spec[g], big[g]['ceilings'])})" for g in sorted(big)) if big else "")
+                 + (f"; no image on any host with its binaries, not started: " + ", ".join(
+                     f"{g} (not on {', '.join(nv[g]['hosts'])})" for g in sorted(nv)) if nv else "")]
         for host in self.hosts:
             js = {g: j for g, j in self.jobs().items() if j["host"] == host and j.get("end")}
             if not js:
@@ -1166,7 +1375,9 @@ class Driver:
         lines.append(f"  results: {os.path.join(a.out, 'results.tsv')}; FAIL lines: {os.path.join(a.out, 'fails.txt')}")
         for l in lines:
             self.log(l)
-        return not bad and not missing
+        # NOVM is a provisioning fault (no host of the round has the image), not a fixed
+        # property of a host as TOO BIG is: it fails the round, unnamed among the missing.
+        return not bad and not missing and not nv
 
     def cleanup(self):
         for host in self.hosts:
@@ -1253,9 +1464,14 @@ def dry_run(a, guests, spec, est, src, probes, wt, unrunnable):
                   f" ({snap['room'][2] if snap['room'] else '?'} waiting), ceiling {snap['ceil']}; "
                   f"ledger rows {len(snap['ledger'])} ({len(ours_ledger)} ours)")
         print(f"  guest slots on {HOSTS[h]['slot_range']}: {snap['slots_other']} held by others, {oq} slotless QEMU of "
-              f"others, {GUEST_SLOTS - snap['slots_other'] - oq} free of {GUEST_SLOTS}; ports {HOSTS[h]['ports'][0]}-"
+              f"others, {guest_slots(h) - snap['slots_other'] - oq} free of {guest_slots(h)}; checks of ours at once "
+              f"{slots_of(a.slots, h)}; ports {HOSTS[h]['ports'][0]}-"
               f"{HOSTS[h]['ports'][1]}: {len(snap['listen'])} listening")
         print(f"  binaries in {a.bin}: {' '.join(oses) or 'NONE'}")
+        if p.get("vms") is not None:
+            lack = [g for g in guests if g not in p["vms"]]
+            print(f"  guest images in ~/backotter-work/vms: {len(guests) - len(lack)} of {len(guests)}"
+                  + (f"; none of {', '.join(lack)}" if lack else ""))
         if p["nowt"]:
             print(f"  checks: {disp(wt)} is missing" + (" (--private-copy would make it)" if a.private_copy else ""))
         else:
@@ -1263,8 +1479,8 @@ def dry_run(a, guests, spec, est, src, probes, wt, unrunnable):
             print(f"  checks in {disp(wt)}: " + ("same as this checkout for every guest" if not diff else
                   "DIFFER from this checkout for " + ", ".join(f"{g} ({n} files)" for g, n in sorted(diff.items()))
                   + (" (--private-copy would replace them)" if a.private_copy else "")))
-        hosts_v[h] = dict(have=p["have"], slots_free=GUEST_SLOTS, room=snap["ceil"], ceil=snap["ceil"])
-        hosts_now[h] = dict(have=p["have"], slots_free=GUEST_SLOTS - snap["slots_other"] - oq,
+        hosts_v[h] = dict(have=p["have"], slots_free=guest_slots(h), room=snap["ceil"], ceil=snap["ceil"], vms=p.get("vms"))
+        hosts_now[h] = dict(have=p["have"], vms=p.get("vms"), slots_free=guest_slots(h) - snap["slots_other"] - oq,
                             room=snap["room"][:2] if snap["room"] else (0, 0), ceil=snap["ceil"],
                             hot=(snap["temp"] or 0) > lim or any(t >= NVME_C for t in snap["nvme"]))
     if a.private_copy:
@@ -1274,12 +1490,14 @@ def dry_run(a, guests, spec, est, src, probes, wt, unrunnable):
         k = "README" if src[g] == "README" else "default" if src[g] == "default" else "history"
         counts[k] = counts.get(k, 0) + 1
     print(f"estimates: " + ", ".join(f"{n} from {k}" for k, n in sorted(counts.items())))
-    todo = [g for g in guests if g not in marked and g not in unrunnable]
+    nv = no_vm([g for g in guests if g not in unrunnable], spec, {h: probes.get(h) for h in a.hosts})
+    todo = [g for g in guests if g not in marked and g not in unrunnable and g not in nv]
     if marked:
         print(f"already started under {a.logs_mark} (adopted, not run again): " + ", ".join(
             f"{g}@{h}{'' if jj['exit'] is None else ' exit ' + str(jj['exit'])}" for g, (h, jj) in sorted(marked.items())))
     rows, left = simulate(todo, spec, est, hosts_v, a.slots, a.first)
-    print(f"plan for {len(todo)} guests, {a.slots} at once per host, on idle hosts (room: cmp-run.sh's ceiling; "
+    print(f"plan for {len(todo)} guests, {slots_words(a.slots, list(hosts_v))} at once per host, on idle hosts"
+          f" (room: cmp-run.sh's ceiling; "
           f"w: over it; from: min:s after the first start):")
     print(f"  {'#':>2}  {'guest':<19} {'host':<9} {'bin':<10} {'reserve':<11} {'est':>5}  {'from':<6} {'source'}")
     for i, (g, h, t0, t1, w) in enumerate(sorted(rows, key=lambda r: (r[2], r[1])), 1):
@@ -1296,15 +1514,23 @@ def dry_run(a, guests, spec, est, src, probes, wt, unrunnable):
         print("  no host can run: " + ", ".join(left))
     for g, why in sorted(unrunnable.items()):
         print(f"  not runnable: {g} ({why})")
+    for g, hs in sorted(nv.items()):
+        print(f"  NOVM, never started: {g} (no ~/backotter-work/vms/{g} on {', '.join(hs)})")
     rem = order(todo, spec, est, a.first)
+    ranks = {h: host_rank(h) for h in hosts_now}
+
+    def able_now(g):
+        return [x for x, v in hosts_now.items() if has_bins(spec[g], v["have"]) and has_vm(g, v.get("vms"))
+                and not over_ceiling(spec[g], v["ceil"])]
     for h, v in hosts_now.items():   # what would start this minute
         started, why = [], []
         while not v["hot"]:
-            free_cap = a.slots - sum(spec[g].load for g in started)
+            free_cap = slots_of(a.slots, h) - sum(spec[g].load for g in started)
             free_slots = v["slots_free"] - sum(spec[g].slots for g in started)
             room = (v["room"][0] - sum(spec[g].n * spec[g].d for g in started),
                     v["room"][1] - sum(spec[g].n * spec[g].m for g in started))
-            g, _, why = pick(rem, spec, v["have"], free_cap, free_slots, room, v["ceil"])
+            g, _, why = pick(prefer(rem, h, able_now, ranks, a.first), spec, v["have"], free_cap, free_slots, room,
+                             v["ceil"], vms=v.get("vms"))
             if not g:
                 break
             started.append(g)
@@ -1418,6 +1644,103 @@ def self_test():
     check([r[0] for r in rows if r[4]] == ["big"] and not left, "plan: a guest over the room now waits (w), never lost")
     rows, left = simulate(["bsd"], sp, est, dict(b=hosts["b"]), 3)
     check(left == ["bsd"], "plan: no host with its binaries: left over")
+
+    # Per-host slots (--slots N, H=N; the host table's stic_slots, guest_slots) and the
+    # big-first preference (a big host takes the guests no small host could run first).
+    check(parse_slots([], ["chopin", "cinqcent"]) == {"chopin": 3, "cinqcent": 3},
+          "--slots: each host's stic_slots, 3 with the table as it is")
+    check(parse_slots(["2"], ["chopin", "cage"]) == {"chopin": 2, "cage": 2}, "--slots N: every host")
+    check(parse_slots(["4", "cage=1"], ["chopin", "cage"]) == {"chopin": 4, "cage": 1}
+          and parse_slots(["cage=1,2"], ["chopin", "cage"]) == {"chopin": 2, "cage": 2}, "--slots H=N: later ones win")
+    for bad in (["0"], ["x"], ["copland=2"], ["cage=-1"], ["cage="]):
+        try:
+            parse_slots(bad, ["chopin", "cage"])
+            check(False, f"--slots {bad} refused")
+        except ValueError:
+            pass
+    check(slots_of(3, "x") == 3 and slots_of({"a": 1}, "a") == 1 and slots_of({"a": 1}, "chopin") == 3,
+          "slots_of: N, {host: N}, a host it lacks its stic_slots")
+    check(slots_words({"a": 3, "b": 3}, ["a", "b"]) == "3" and slots_words({"a": 3, "b": 1}, ["a", "b"]) == "a 3, b 1"
+          and slots_words(3, []) == "3", "slots_words")
+    check(all(guest_slots(h) == GUEST_SLOTS for h in HOSTS) and guest_slots("nosuch") == GUEST_SLOTS,
+          "guest_slots: 3 on every host with the table as it is")
+    check([host_rank(h) for h in ("chopin", "cinqcent", "copland", "cage", "nosuch")] == [0, 0, 1, 1, 0],
+          "host_rank: big 0, small 1, a name in no row 0")
+    ranks2 = {"big1": 0, "small1": 1}
+    ab = {"big": ["big1"], "long": ["big1", "small1"], "short": ["big1", "small1"]}
+    check(prefer(["long", "short", "big"], "big1", ab.get, ranks2) == ["big", "long", "short"],
+          "prefer: on a big host, the guests only big hosts can run first, the queue's order otherwise")
+    check(prefer(["long", "short", "big"], "small1", ab.get, ranks2) == ["long", "short", "big"],
+          "prefer: on the smallest class, the queue as it is")
+    check(prefer(["long", "big"], "big1", ab.get, ranks2, {"long"}) == ["long", "big"], "prefer: --first stays first")
+    check(prefer(["long", "big"], "big1", ab.get, {"big1": 0, "big2": 0}) == ["long", "big"],
+          "prefer: hosts of one class: the queue as it is")
+    # big (13 6) fits only big1's ceiling; it is the shortest here, but big1 takes it first,
+    # and small1 (one check at once, its stic_slots) drains the others.
+    mix = dict(big1=dict(have=allhave, slots_free=3, room=None, ceil=(29.0, 23.0)),
+               small1=dict(have=allhave, slots_free=3, room=None, ceil=(9.0, 9.2)))
+    est3 = dict(big=100, long=800, short=700, bsd=600)
+    rows, left = simulate(["big", "long", "short", "bsd"], sp, est3, mix, {"big1": 1, "small1": 1}, ranks=ranks2)
+    first_big1 = min((r for r in rows if r[1] == "big1"), key=lambda r: r[2])
+    check(not left and first_big1[0] == "big" and first_big1[2] == 0,
+          f"plan: a big host starts the guest only it can run first ({[(r[0], r[1], int(r[2])) for r in rows]})")
+    rows0, _ = simulate(["big", "long", "short", "bsd"], sp, est3, mix, {"big1": 1, "small1": 1},
+                        ranks={"big1": 0, "small1": 0})
+    check(min((r for r in rows0 if r[1] == "big1"), key=lambda r: r[2])[0] == "long",
+          "plan: without classes, longest first as before")
+    rows, _ = simulate(["long", "short", "bsd"], sp, est3, mix, {"big1": 3, "small1": 1}, ranks=ranks2)
+    check(sum(1 for r in rows if r[1] == "small1" and r[2] == 0) == 1 and sum(1 for r in rows if r[1] == "big1") == 2,
+          f"plan: --slots per host ({[(r[0], r[1], int(r[2])) for r in rows]})")
+    rows3, _ = simulate(list(sp), sp, est, hosts, 3)
+    rowsd, _ = simulate(list(sp), sp, est, hosts, {"a": 3, "b": 3})
+    check(rows3 == rowsd, "plan: {host: 3} is the same plan as 3")
+
+    # Images: a guest goes only where ~/backotter-work/vms/GUEST is (a small host's LRU
+    # cache holds some guests only).
+    g, _, why = pick(["long", "short"], sp, have, 3, 3, (50, 50), None, vms={"short"})
+    check(g == "short" and why == ["long:novm"], f"no image of the guest here: passed over ({g} {why})")
+    g, _, why = pick(["bsd", "long"], sp, have, 3, 3, (50, 50), None, vms=set())
+    check(g is None and why == ["bsd:nobin", "long:novm"], f"no binaries comes before no image ({why})")
+    g, _, _ = pick(["long"], sp, have, 3, 3, (50, 50), None)
+    check(g == "long", "images not known (vms None): not checked, as before")
+    g, _, why = pick(["big", "long"], sp, have, 3, 3, (50, 50), (12, 40), vms={"big"})
+    check(g is None and why == ["big:ceiling", "long:novm"], f"image and ceiling each checked ({why})")
+    imgs = dict(a=dict(hosts["a"], vms={"short", "bsd"}), b=dict(hosts["b"], room=(26, 20), vms={"short", "long"}))
+    imgs["a"]["room"] = (26, 20)
+    rows, left = simulate(["long", "short", "bsd"], sp, est, imgs, 3)
+    check(not left and [r[1] for r in rows if r[0] == "long"] == ["b"] and [r[1] for r in rows if r[0] == "bsd"] == ["a"],
+          f"plan: a guest goes only where its image is ({[(r[0], r[1]) for r in rows]})")
+    rows, left = simulate(["long"], sp, est, dict(a=imgs["a"]), 3)
+    check(left == ["long"] and not rows, "plan: no host with its image: left over")
+    pa, pb = dict(have=have, vms={"short", "bsd"}), dict(have=allhave, vms={"short"})
+    check(no_vm(["long", "short", "bsd"], sp, {"a": pa, "b": pb}) == {"long": ["a", "b"], "bsd": ["b"]},
+          f"novm: no host with its binaries has its image ({no_vm(['long', 'short', 'bsd'], sp, {'a': pa, 'b': pb})})")
+    check(no_vm(["long"], sp, {"a": pa, "b": None}) == {} and no_vm(["long"], sp, {"a": pa, "b": dict(have=have)}) == {},
+          "novm: never while a host's probe or its images are unknown")
+    check(no_vm(["bsd"], sp, {"a": dict(have=have, vms=set())}) == {},
+          "novm: a guest no host has binaries for is not novm (main() refuses the round)")
+    check(able_hosts("long", sp["long"], ["a", "b", "c"], {"a": pa, "b": dict(have=have, vms={"long"})}) == ["b", "c"],
+          "able hosts: binaries and image there, or no probe of the host")
+    out = parse_probe("BIN linux/restic-bko\nVMS\nVM short\nVM long extra\nEND\n")
+    check(out["vms"] == {"short"} and out["have"] == {"linux/restic-bko"}, f"probe: VM lines ({out['vms']})")
+    check(parse_probe("BIN linux/restic-bko\nVM short\nEND\n")["vms"] is None,
+          "probe: no VMS line, no images known (a VM line alone counts for nothing)")
+    if shutil.which("bash"):
+        with tempfile.TemporaryDirectory(prefix="drive-probe-") as home:
+            vd = os.path.join(home, "backotter-work", "vms")
+            for d in ("short", "long", "sym", "gone", "other"):
+                os.makedirs(os.path.join(vd, d))
+            open(os.path.join(vd, "short", "short.qcow2"), "w").close()
+            open(os.path.join(home, "cache.qcow2"), "w").close()
+            os.symlink(os.path.join(home, "cache.qcow2"), os.path.join(vd, "sym", "sym.qcow2"))
+            os.symlink(os.path.join(home, "nowhere.qcow2"), os.path.join(vd, "gone", "gone.qcow2"))
+            open(os.path.join(vd, "other", "disk.qcow2"), "w").close()
+            r = subprocess.run(["bash", "-s", "bin", "nowt", "hist", "short", "long", "sym", "gone", "other", "absent"],
+                               input=PROBE_SH, capture_output=True, text=True, timeout=60,
+                               env=dict(os.environ, HOME=home))
+            got = parse_probe(r.stdout)
+            check(r.returncode == 0 and got["vms"] == {"short", "sym", "other"} and got["nowt"],
+                  f"PROBE_SH: an image that resolves, through a link too, by any *.qcow2 name ({got['vms']})")
 
     # The stop and skip files, and the commands to the hosts.
     with tempfile.TemporaryDirectory(prefix="drive-selftest-") as tmp:
@@ -1584,6 +1907,50 @@ def self_test():
                                  in x for x in said) and not any("no result for" in x or "skip or stop" in x for x in said),
                   "too big: the summary names it apart, no missing result, the exit SticTest1's")
             drv.logf.close()
+
+            # A guest no host has the image of (gentoo on the M900s' LRU cache): never
+            # started, named NOVM, and the round ends when the rest has.
+            polls["n"] = 0
+            os.remove(os.path.join(tmp, "state.json"))
+            two_l = dict(long=sp["long"], short=sp["short"])
+            nvp = {h: dict(have=have, vms={"short"}) for h in ("copland", "cage")}
+            with contextlib.redirect_stdout(io.StringIO()):
+                drv = Driver(a, ["long", "short"], two_l, dict(long=800, short=100), nvp, WT_SYNCED)
+            said = []
+            drv.log = lambda *x: said.append(" ".join(str(y) for y in x))
+            drv.jobs()["short"] = drv.new_job("copland", [2880], time.time())
+            drv.loop()
+            check(polls["n"] == 4 and drv.remaining() == [] and not drv.running() and "long" not in drv.jobs(),
+                  f"novm: never started, the round ends ({polls['n']} reads, jobs {sorted(drv.jobs())})")
+            check(drv.state["novm"] == {"long": {"hosts": ["copland", "cage"]}} and drv.state["too_big"] == {},
+                  f"novm: in state.json, the hosts that lack it ({drv.state['novm']})")
+            check(sum(x.startswith("NOVM long") and x.endswith("never started: copland, cage") for x in said) == 1,
+                  "novm: the log names it once, and the hosts")
+            ok_sum = drv.summary([["short", "copland", "0", "5", "0", "0", "100", "-"]])
+            check(not ok_sum and any("no image on any host with its binaries, not started: long (not on copland, cage)" in x
+                                 for x in said) and not any("no result for" in x or "skip or stop" in x for x in said),
+                  "novm: the summary names it apart, no missing result, and the round fails")
+            drv.logf.close()
+
+            # TOO BIG counts the hosts that could run it only: big fits chopin's ceiling, but
+            # chopin hasn't its image here, so it is too big for copland, the one with it.
+            os.remove(os.path.join(tmp, "state.json"))
+            a.hosts = ["copland", "chopin"]
+            tbp = {"copland": dict(have=have, vms={"big", "short"}), "chopin": dict(have=have, vms={"short"})}
+            with contextlib.redirect_stdout(io.StringIO()):
+                drv = Driver(a, ["big", "short"], two, dict(big=900, short=100), tbp, WT_SYNCED)
+            drv.log = lambda *x: None
+            drv.ceils = {"copland": small, "chopin": (29.0, 20.1)}
+            drv.mark_novm()
+            drv.mark_too_big()
+            check(drv.state["too_big"] == {"big": {"needs": [13, 6], "ceilings": {"copland": [9.0, 9.2]}}}
+                  and drv.state["novm"] == {} and drv.remaining() == ["short"],
+                  f"too big: over the ceiling of every host with its image ({drv.state['too_big']})")
+            drv.ceils = {"copland": small}
+            drv.state["too_big"] = {}
+            drv.mark_too_big()
+            check(drv.state["too_big"] == {}, "too big: not before every host's ceiling is known")
+            drv.logf.close()
         finally:
             globals().update(real)
     print("self-test:", "all ok" if ok else "FAILED")
@@ -1603,7 +1970,9 @@ def main():
     ap.add_argument("--first", default="", metavar="G,G", help="start these before the rest")
     ap.add_argument("--hosts", default=",".join(DEFAULT_HOSTS), metavar="H,H",
                     help=f"of {', '.join(HOSTS)} (default {','.join(DEFAULT_HOSTS)})")
-    ap.add_argument("--slots", type=int, default=3, metavar="N", help="checks of ours at once per host (3)")
+    ap.add_argument("--slots", action="append", default=[], metavar="N|H=N",
+                    help="checks of ours at once: N per host, H=N on H (repeatable, comma-separated;"
+                         " default each host's stic_slots in testvm/hosts.json, 3)")
     ap.add_argument("--hot-c", type=float, default=90, metavar="C", help="start nothing while Tctl is over C (90)")
     ap.add_argument("--poll", type=float, default=15, metavar="S", help="seconds between checks (15)")
     ap.add_argument("--logs-mark", metavar="MARK", help="default st1-ROUND")
@@ -1650,8 +2019,12 @@ def main():
     for h in a.hosts:
         if h not in HOSTS:
             ap.error(f"unknown host {h} (known: {', '.join(HOSTS)})")
-    if a.slots < 1 or a.poll < 1:
-        ap.error("--slots and --poll must be at least 1")
+    try:
+        a.slots = parse_slots(a.slots, a.hosts)
+    except ValueError as e:
+        ap.error(str(e))
+    if a.poll < 1:
+        ap.error("--poll must be at least 1")
     known = all_guests()
     excl = {g for e in a.exclude for g in e.split(",") if g}
     a.first = {g for g in a.first.split(",") if g}

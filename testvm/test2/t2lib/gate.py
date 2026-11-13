@@ -50,7 +50,13 @@ HOST_ROOT/runs/RUN/gate/LAYER/ (scratch only in reserved RAM directories), and i
 are measured there afterwards, from the copy, with the host's facts, through the copy's
 own t2lib (hostrun.HostCtx, as t2-host's row builders are).  A layer holds
 MAC_ROOT/runs/.lock-gate-LAYER while it runs, so that two runs never run one layer at
-once (R21).
+once (R21).  With T2_GATE_ADOPT=1 (opt-in; unset, a run that waited runs the layer itself,
+as before), a run that had to wait for that lock adopts the other run's row instead of
+running the layer again (adopt_after_wait), when that row is a valid PASS of the same cell
+(layer and host), written on that host since the wait began, by the same commit and tree
+(dirty files alike, and known on both sides), for the same set, its key this run's planned
+key; anything else (a FAIL, another commit or key, no planned key, a tree not known, the
+host not answering) runs it as before.
 """
 
 import fcntl
@@ -64,7 +70,7 @@ import sys
 import threading
 import time
 
-from . import DEFAULT_HOSTS, gate_hosts, utc_now
+from . import DEFAULT_HOSTS, gate_hosts, host_class, utc_now
 from .hostjob import (  # noqa: F401 - host_job and its helpers, as gate.X too
     CMP_RUN, FETCH_SCRIPT, POLL_S, UNKNOWN_MAX, HostIO, JobFailure, _q, guards_of, host_job, job_poll_cmd, job_times,
     layer_dir, tripped)
@@ -166,9 +172,11 @@ def full_run(row):
 def base_reserve(entry, cell):
     """[DISK_GIB, MEM_GIB] before any peak: the entry's "host_reserve" for the cell's host (a
     small host's: its run-all.sh profile runs one job at a time, so less fits its ceiling),
-    else its "reserve", else 2 4."""
+    keyed by the host's name or, failing that, its class in testvm/hosts.json (small), else
+    its "reserve", else 2 4."""
     _, host = split_cell(cell)
-    r = (entry.get("host_reserve") or {}).get(host) if host else None
+    hr = entry.get("host_reserve") or {}
+    r = (hr.get(host) or hr.get(host_class(host))) if host else None
     return (list(r or entry.get("reserve") or [2, 4]) + [4])[:2]
 
 
@@ -304,6 +312,11 @@ if d.get("measure"):
             out["measure"][c] = ctx.measure(c, opts=d.get("opts"), src=src, facts=facts)
         except Exception as e:
             out["measure"][c] = {"error": "%s: %s" % (type(e).__name__, e)}
+if d.get("rows_of"):
+    from t2lib import ledger
+    q = d["rows_of"]
+    out["rows_of"] = [r for r in ledger.read(ctx.ledger_path).rows
+                      if r.get("cell") == q["cell"] and str(r.get("t") or "") >= q["since"]]
 if d.get("append"):
     out["ids"] = []
     for r in d["append"]:
@@ -854,6 +867,7 @@ class LayerLock:
         os.makedirs(d, exist_ok=True)
         self.path = os.path.join(d, ".lock-gate-" + layer_dir(cell[5:]))
         self.fd = None
+        self.waited_from = None   # utc_now() when it found the lock held: another run had it
 
     def __enter__(self):
         self.fd = os.open(self.path, os.O_RDWR | os.O_CREAT, 0o644)
@@ -870,6 +884,7 @@ class LayerLock:
                         holder = "?"
                     self.env.log(f"{self.cell} is running in another run ({holder or '?'}): waiting for it")
                     said = True
+                    self.waited_from = utc_now()
                 time.sleep(LOCK_POLL_S)
         os.ftruncate(self.fd, 0)
         os.pwrite(self.fd, f"run {self.env.run}, pid {os.getpid()}, started {utc_now()}\n".encode(), 0)
@@ -996,9 +1011,95 @@ def not_started(env, cell):
             "plan_diff": None}
 
 
+ADOPT_ENV = "T2_GATE_ADOPT"
+
+
+def adopt_enabled():
+    """Adopt-after-wait is opt-in: T2_GATE_ADOPT=1.  Off, locked() is the lock alone."""
+    return os.environ.get(ADOPT_ENV) == "1"
+
+
 def locked(env, cell, fn):
-    with LayerLock(env, cell):
+    if not adopt_enabled():
+        with LayerLock(env, cell):
+            return fn()
+    with LayerLock(env, cell) as lk:
+        if lk.waited_from:
+            e = adopt_after_wait(env, cell, lk.waited_from)
+            if e is not None:
+                return e
         return fn()
+
+
+def adoptable(rows, cell, host, tree, planned, set_name, since, run=None):
+    """The newest of ROWS that a run which waited for CELL's lock since SINCE may take as its
+    own: a valid gate run row of CELL on HOST, verdict PASS, written since SINCE by another
+    run (not RUN), from the commit and dirty files of TREE (this run's copy there: tree_info),
+    for SET_NAME, its key PLANNED.  None when there is none (or no commit, no planned key, or
+    TREE's dirty files not known: tree_info's None for a copy whose stamps don't say it is
+    clean, which two unknown trees never count as alike)."""
+    commit = (tree or {}).get("commit")
+    dirty = (tree or {}).get("dirty")
+    if not commit or not planned or not isinstance(dirty, dict):
+        return None
+    ok = [r for r in rows or () if isinstance(r, dict) and r.get("cell") == cell and r.get("host") == host
+          and r.get("family") == "gate" and r.get("kind") == "run" and r.get("verdict") == "PASS"
+          and r.get("valid") is True and r.get("commit") == commit
+          and isinstance(r.get("dirty"), dict) and r.get("dirty") == dirty
+          and r.get("key") == planned and (r.get("meta") or {}).get("set") == set_name
+          and str(r.get("t") or "") >= since and (run is None or r.get("run") != run)]
+    return max(ok, key=lambda r: (str(r.get("t") or ""), str(r.get("id") or ""))) if ok else None
+
+
+def rows_since(env, host, cell, since):
+    """(rows of CELL in HOST's ledger written since SINCE, this run's tree there), read now
+    (the Mac's mac.jsonl and checkout for mac); (None, None) when they can't be read."""
+    if host == "mac":
+        from . import copies, ledger, mac_ledger_file
+        try:
+            pv = copies.preview(env.checkout)
+            rows = [r for r in ledger.read(mac_ledger_file()).rows
+                    if r.get("cell") == cell and str(r.get("t") or "") >= since]
+            return rows, {"commit": pv.commit, "dirty": dict(pv.dirty)}
+        except Exception:   # noqa: BLE001 - nothing adopted: the layer runs
+            return None, None
+    data = {"test2": env.copy_path(host).rstrip("/") + "/testvm/test2", "rows_of": {"cell": cell, "since": since},
+            "env": _host_env(env)}
+    try:
+        r = env.io.script(host, HOST_SCRIPT, data, timeout=120)
+    except Exception:   # noqa: BLE001 - nothing adopted: the layer runs
+        return None, None
+    return r.get("rows_of"), r.get("tree")
+
+
+def adopt_after_wait(env, cell, since):
+    """CELL's entry from the row another run wrote while this one waited for its lock
+    (adoptable()), outcome adopted; None: run it."""
+    host = env.host_for(cell)
+    pc = env.plan_cell(cell)
+    if pc is None:
+        return None
+    planned = (getattr(pc, "keys", None) or {}).get(host) or getattr(pc, "key", None)
+    if not planned:
+        return None
+    rows, tree = rows_since(env, host, cell, since)
+    r = adoptable(rows, cell, host, tree, planned, env.set_name, since, env.run)
+    if r is None:
+        env.log(f"{cell} on {host}: nothing to adopt from the run it waited for: it runs here")
+        return None
+    name, _ = split_cell(cell)
+    rule = getattr(pc, "rule", None) or "fresh:names"
+    reasons = [cut(f"adopted {r.get('id')}: run {r.get('run')} passed it on {host} while this run waited, "
+                   f"same commit and key")] + list(getattr(pc, "reasons", None) or [])
+    note = r.get("note")
+    if note and note.startswith(("plan diff not yet accepted", "unproven golden plans")):
+        reasons = [note] + reasons
+    env.log(f"{cell} on {host}: adopted {r.get('id')}, run {r.get('run')}'s PASS")
+    return {"cell": cell, "outcome": "adopted", "rule": rule, "reasons": reasons[:20], "rows": [r.get("id")],
+            "verdict": "PASS", "class": "pass", "unwritten": 0, "valid": True, "gm": 0.0, "wall_s": 0, "gb": None,
+            "host": host, "needs": r.get("needs") or {}, "fails": [], "note": note, "adopted_from": r.get("run"),
+            "part": "slow" if entry_or_empty(env.layers, name).get("part") == "slow" else "fast",
+            "plan_diff": (r.get("extra") or {}).get("plan_diff") if name == "holt" else None}
 
 
 def run_cell(env, cell, commits=None):

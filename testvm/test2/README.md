@@ -41,9 +41,16 @@ its rows count only where the binaries are equal (R14).
   soft-stale (or canary-verified) cells along beside it.
 - A variant word adds that variant's cell for each selected guest it applies to;
   alone it selects every cell of that variant, plus the bare word's due cells.
-- ROUND is `~/backotter-work/roundROUND/bin` on both hosts.  Without it, SticTest2
+- ROUND is `~/backotter-work/roundROUND/bin` on each host in use.  Without it, SticTest2
   takes the round at the fork heads (BKO_GIT's `backotter` HEADs), or builds it as
-  `t2r-R7-C7-U7`; GateTest2 takes that round, else bko-bin.
+  `t2r-R7-C7-U7`; GateTest2 takes that round, else bko-bin.  A round is always built on
+  the build hosts, chopin and cinqcent (the run's private copy is made there first when
+  `--hosts` leaves them out), and copied to the other `--hosts` with `build-round.sh
+  --dist-hosts`; a round already built that a `--hosts` host lacks is copied there
+  (`--dist-only`).  HoltTest2 builds bko-holt only on the build-role hosts among
+  `--hosts` (refused, with the reason, when there is something to build and none) and
+  ships it to every `--hosts` host; `T2_HOLT_SHIP=known` also ships it to every enabled
+  host.
 - Refused (exit 2): `+close` (waits for H3), `HoltTest2All +img` (the `+img` cells are
   `HoltTest2 +img`'s), names with an All form, BkoTest2 or SweepTest2, `stale` with an
   All form or SweepTest2, `GuestTest2 update` with `stale` or All, an image with a binary that has no PASS at
@@ -72,9 +79,11 @@ against its last PASS, group by group), `t2 copy [--hosts H,H] [--gc]`,
 [GUEST...] [--reproject]` (probes guests with no fingerprint at their generation; never
 inside BkoTest2), `t2 self-test`, and the test-only `t2 ledger seed-current`
 (`--family guest` sets `extra.try_ran`, `--family img` seeds PASSes at the images' binaries' digests).  Options anywhere:
-`--hosts H,H` (of chopin, cinqcent, copland, cage; default chopin,cinqcent; each host
-once; a cell whose reservation is over a host's ceiling, its facts' `preflight.ram.ceiling`,
-is never placed there, and one over every host's is not runnable), `--json` (the plan as
+`--hosts H,H` (of testvm/hosts.json's enabled hosts: chopin, cinqcent, copland, cage;
+default its default hosts, chopin,cinqcent; each host once; a cell whose reservation is
+over a host's ceiling, its facts' `preflight.ram.ceiling`, is never placed there, a cell is
+kept off a host its facts say can't run it (below), and one no host can take is not
+runnable; testvm/HOSTS.md has the table and how a host joins), `--json` (the plan as
 JSON), `--universe CELL,...` (test only: the word's cells cut down to these).  Every
 plan and run pulls the `--hosts` and every host with a mirror in `MAC_ROOT/ledger`,
 since the merged view reads them all; a mirror that wasn't refreshed is said so.
@@ -98,6 +107,16 @@ host-side checks, host versions.  Plumbing (the queue, vm-run, vm-lib.sh) and so
 host versions are digested beside the key but never in it.  The keys and their
 inputs come from the specs `stic/manifests.json`, `holt/spec.json`,
 `gate/layers.json`, `guest/spec.json` and `img/spec.json`, through `t2lib/keys.py`.
+
+Where a cell may run comes from each host's facts (`t2lib/facts_host.py`, probed from
+the Mac) beside the class table's pins (`holt.pins`, `holt.uefi`): its ceiling, its `guests` and its `caps` (`zfs`,
+`holt_rescuer`, `holt_debs`).  A stic or holt cell is kept off a host that isn't a fleet
+host (testvm/hosts.json's roles: an image cache) and lacks a guest the cell boots, off a
+host without OpenZFS for a `holt.needs_host_zfs` source (every variant), and off a host
+without HoltTest's rescuer or debs for a holt cell that needs them; the reasons say
+`kept off HOST: ...`, and a cell with no host left is not runnable (`no host of the run
+can run it: ...`).  Facts without `caps` check none of it.  The identity check asks each
+host only about the guests it should hold.
 
 For each cell, in order (`t2lib/plan.py`):
 

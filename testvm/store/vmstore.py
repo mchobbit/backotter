@@ -12,6 +12,7 @@ contract).  One tree shape serves every role:
     ROOT/guests/G/latest                "VID MANIFEST-SHA256"
     ROOT/live/G/VID/G/                  a version made into a guest folder
     ROOT/used/OBJECT                    a stamp: its mtime is the last ensure
+    $BKO_WORK/vms/G -> ROOT/live/G/VID/G   a cache host's guest, made by link (gc rule f)
     ROOT/lock                           fetch, materialize and gc, one at a time
 
 Chopin's root is the mirror, the only publisher; Bigfoot's is the master,
@@ -70,6 +71,7 @@ OBJ_RE = re.compile(r"sha256-([0-9a-f]{64})\.(qcow2|file)")
 VID_RE = re.compile(r"[gi][0-9a-f]{16}")
 GUEST_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._+-]*")
 HEX64 = re.compile(r"[0-9a-f]{64}")
+LINK_TMP_RE = re.compile(r"\.(.+)\.vm-store-link\.(\d+)")      # link's temp link in vms/
 # Sidecars not stored (section 1.8): logs, vm-update's working files, locks,
 # this host's records, install media.  Matched against each name in the path.
 SKIP_GLOBS = ["*.log", "build.exit", "*.png", ".vm-update*", "*.lock", "image-stat.json", "image-fingerprint.json",
@@ -249,9 +251,52 @@ def run_child(cmd: list[str], **kw) -> int:
         raise
 
 
+class ReflinkFailed(StoreError):
+    """copy_file(how="reflink") couldn't reflink: nothing is left at DST."""
+
+
+_REFLINK: dict[tuple[int, int], bool] = {}
+
+
+def reflink_ok(src: Path | str, dest_dir: Path) -> bool:
+    """Whether cp --reflink=always of SRC into DEST_DIR should work: GNU cp, one
+    file system, and a probe file in DEST_DIR reflinks (once per file system)."""
+    if not gnu("cp"):
+        return False
+    try:
+        a, b = os.stat(src).st_dev, os.stat(dest_dir).st_dev
+    except OSError:
+        return False
+    if a != b:
+        return False
+    if (a, b) not in _REFLINK:
+        tok = secrets.token_hex(8)
+        p, q = dest_dir / f"probe.{tok}", dest_dir / f"probe.{tok}.copy"
+        try:
+            p.write_bytes(b"vm-store reflink probe\n" * 200)
+            r = subprocess.run(["cp", "--reflink=always", "--", str(p), str(q)], capture_output=True, text=True)
+            _REFLINK[(a, b)] = r.returncode == 0
+        except OSError:
+            return False
+        finally:
+            for f in (p, q):
+                with contextlib.suppress(FileNotFoundError):
+                    f.unlink()
+    return _REFLINK[(a, b)]
+
+
 def copy_file(src: Path, dst: Path, how: str = "auto") -> str:
     """SRC to DST: cp --reflink=always, else cp --sparse=always ("plain").
-    Without GNU cp (the Mac) a sparse copy of our own."""
+    Without GNU cp (the Mac) a sparse copy of our own.  HOW "reflink" is a
+    reflink or ReflinkFailed, never a copy."""
+    if how == "reflink":
+        r = subprocess.run(["cp", "--reflink=always", "--", str(src), str(dst)], capture_output=True,
+                           text=True) if gnu("cp") else None
+        if r is not None and r.returncode == 0:
+            return "reflink"
+        with contextlib.suppress(FileNotFoundError):
+            dst.unlink()
+        raise ReflinkFailed(f"cp --reflink=always {src}: {r.stderr.strip() if r else 'no GNU cp here'}")
     if gnu("cp"):
         if how == "auto":
             r = subprocess.run(["cp", "--reflink=always", "--", str(src), str(dst)], capture_output=True, text=True)
@@ -492,6 +537,12 @@ class Config:
         self.copy = env.get("VM_STORE_COPY") or "auto"
         if self.copy not in ("auto", "plain"):
             raise Usage(f"VM_STORE_COPY is auto or plain, not {self.copy!r}")
+        # Opt-in: publish counts a reflinked copy as no new space, so it may go ahead
+        # below the floor.  Off by default, where every copy counts its allocated size.
+        fr = env.get("VM_STORE_FLOOR_REFLINK") or "0"
+        if fr not in ("0", "1"):
+            raise Usage(f"VM_STORE_FLOOR_REFLINK is 0 or 1, not {fr!r}")
+        self.floor_reflink = fr == "1"
         self.scan = (env.get("VM_STORE_SCAN") if env.get("VM_STORE_SCAN") is not None else DEFAULT_SCAN).split()
         self.min_age = parse_age(env.get("VM_STORE_MIN_AGE") or "24h")
         # D2: only Chopin talks to Bigfoot, so a cache's default source is Chopin alone, and
@@ -1058,7 +1109,23 @@ def relatest(store: Store, guest: str, vid: str, set_latest: bool) -> str:
     return f"latest is now {vid} ({why})"
 
 
-def publish_one(cfg: Config, store: Store, guest: str, gdir: Path, a) -> int:
+def publish_room(store: Store, guest: str, need: int, reflinked: bool = False) -> None:
+    """Section 2.4's floor: the copies (NEED bytes) may not take free space below the
+    floor.  REFLINKED (VM_STORE_FLOOR_REFLINK=1 and every disk reflinks): they write
+    nothing new, so they pass even when free is below it already, with a warning."""
+    free = store.free()
+    if reflinked:
+        if free < store.floor:
+            say(f"{guest}: {gib(free)} free on {store.root} is below the floor of {gib(store.floor)}; "
+                f"the reflinked copies take no new space (VM_STORE_FLOOR_REFLINK=1)")
+        return
+    if free - need < store.floor:
+        raise NoRoom(f"{guest}: {gib(need)} more would leave {gib(free - need)} free on {store.root}, "
+                     f"below the floor of {gib(store.floor)}")
+
+
+def publish_one(cfg: Config, store: Store, guest: str, gdir: Path, a, follow: bool = False) -> int:
+    """FOLLOW (publish --changed --stateless): latest follows vms/GUEST, as --set-latest."""
     if not GUEST_RE.fullmatch(guest):
         raise Usage(f"not a guest name: {guest!r}")
     if not gdir.is_dir():
@@ -1072,17 +1139,21 @@ def publish_one(cfg: Config, store: Store, guest: str, gdir: Path, a) -> int:
             say(f"{guest}: {vid} already published")
             return 0
         with flocked(store.root / ".publish.lock"):
-            say(f"{guest}: {vid} already published; {relatest(store, guest, vid, a.set_latest)}")
+            say(f"{guest}: {vid} already published; {relatest(store, guest, vid, a.set_latest or follow)}")
         print(f"{guest} {vid}")
         return 0
     disks = guest_disks(gdir)
-    need = sum(allocated(gdir / n) for n, _ in disks)
-    free = store.free()
-    if free - need < store.floor:
-        raise NoRoom(f"{guest}: {gib(need)} more would leave {gib(free - need)} free on {store.root}, "
-                     f"below the floor of {gib(store.floor)}")
+    full = sum(allocated(gdir / n) for n, _ in disks)
+    # Opt-in (VM_STORE_FLOOR_REFLINK=1): a reflinked copy shares the guest's blocks and
+    # writes none of its own, so it needs no new space now.  vm-update's next merge into
+    # vms/G unshares what it rewrites, and nothing checks that space against the floor.
+    reflink = (cfg.floor_reflink and cfg.copy == "auto"
+               and all(reflink_ok(os.path.realpath(gdir / n), store.incoming) for n, _ in disks))
+    need = 0 if reflink else full
+    publish_room(store, guest, need, reflinked=reflink)
     if a.dry_run:
-        say(f"{guest}: would publish {', '.join(n for n, _ in disks)} ({gib(need)} allocated)"
+        say(f"{guest}: would publish {', '.join(n for n, _ in disks)} ({gib(full)} allocated, {gib(need)} new"
+            + (", reflinked" if reflink else "") + ")"
             + (f" as {vid_of_generation(state['generation'])}" if state else ""))
         sidecar_files(gdir, {n for n, _ in disks})
         return 0
@@ -1127,7 +1198,16 @@ def publish_one(cfg: Config, store: Store, guest: str, gdir: Path, a) -> int:
                     before[name] = stat_key(src)
                     copies[name] = stage_tmp()
                     t = time.monotonic()
-                    how.add(copy_file(src, copies[name], cfg.copy))
+                    if reflink:
+                        try:
+                            how.add(copy_file(src, copies[name], "reflink"))
+                        except ReflinkFailed as e:
+                            # The room check counted it as no new space: a plain copy is checked again.
+                            say(f"{guest}: {e}; copying it instead")
+                            publish_room(store, guest, allocated(src))
+                            how.add(copy_file(src, copies[name], "plain"))
+                    else:
+                        how.add(copy_file(src, copies[name], cfg.copy))
                     say(f"{guest}: copied {name} ({'/'.join(sorted(how))}, {time.monotonic() - t:.1f} s)")
             finally:
                 for f in fences:
@@ -1164,7 +1244,7 @@ def publish_one(cfg: Config, store: Store, guest: str, gdir: Path, a) -> int:
                         "file_size": os.path.getsize(copies[n]), "chain": [f"sha256-{sums[n]}.qcow2"],
                         "snapshots": infos[n]["snapshots"]} for n, r in disks],
              "files": files}
-        done, what = commit_version(store, guest, vid, m, staged, a.set_latest)
+        done, what = commit_version(store, guest, vid, m, staged, a.set_latest or follow)
         tmps.clear()
         say(f"{guest}: {vid} {'published; ' + what if done else what}")
         print(f"{guest} {vid}")
@@ -1183,10 +1263,32 @@ def cmd_publish(cfg: Config, a) -> int:
         raise Usage("--changed takes no GUEST or --from")
     if a.from_dir and len(a.guests) > 1:
         raise Usage("--from takes one GUEST")
+    stateless = [g for v in a.stateless for g in v.replace(",", " ").split()]
+    if stateless and not a.changed:
+        raise Usage("--stateless goes with --changed (publish GUEST publishes a state-less guest by name)")
+    for g in stateless:
+        if not GUEST_RE.fullmatch(g):
+            raise Usage(f"not a guest name: {g!r}")
     rcs = []
     if a.changed:
-        todo = []
+        todo, extra = [], []
+        for g in sorted(set(stateless)):
+            if not (cfg.vms / g).is_dir():
+                say(f"{g}: --stateless names it, but there is no {cfg.vms / g}")
+                rcs.append(1)
         for gdir in sorted(cfg.vms.iterdir()) if cfg.vms.is_dir() else []:
+            if gdir.is_dir() and not (gdir / "image-state").exists() and gdir.name in stateless:
+                # Opted in: its i VID is known only once its disks are hashed, so it is
+                # always copied, and dropped at commit when that version is there already.
+                try:
+                    size = sum(allocated(gdir / n) for n, _ in guest_disks(gdir))
+                except StoreError as e:
+                    say(f"{gdir.name}: {e}")
+                    rcs.append(e.rc)
+                    continue
+                todo.append((size, gdir.name, gdir, True))
+                extra.append(gdir.name)
+                continue
             if not gdir.is_dir() or not (gdir / "image-state").exists():
                 continue
             try:
@@ -1199,19 +1301,21 @@ def cmd_publish(cfg: Config, a) -> int:
                 say(f"{gdir.name}: {e}")
                 rcs.append(e.rc)               # a guest that can't be judged is a failure, not "unchanged"
                 continue
-            todo.append((size, gdir.name, gdir))
-        jobs = [(g, d) for _, g, d in sorted(todo)]
-        say(f"{len(jobs)} guest(s) changed: {' '.join(g for g, _ in jobs) or 'none'}")
+            todo.append((size, gdir.name, gdir, False))
+        jobs = [(g, d, f) for _, g, d, f in sorted(todo)]
+        changed = [g for g, _, f in jobs if not f]
+        say(f"{len(changed)} guest(s) changed: {' '.join(changed) or 'none'}"
+            + (f"; state-less, to hash: {' '.join(sorted(extra))}" if extra else ""))
     elif a.from_dir:
         d = Path(a.from_dir)
-        jobs = [(a.guests[0] if a.guests else d.resolve().name, d)]
+        jobs = [(a.guests[0] if a.guests else d.resolve().name, d, False)]
     elif a.guests:
-        jobs = [(g, cfg.vms / g) for g in a.guests]
+        jobs = [(g, cfg.vms / g, False) for g in a.guests]
     else:
         raise Usage("publish GUEST... | --changed")
-    for guest, gdir in jobs:
+    for guest, gdir, follow in jobs:
         try:
-            rcs.append(publish_one(cfg, store, guest, gdir, a))
+            rcs.append(publish_one(cfg, store, guest, gdir, a, follow=follow))
         except StoreError as e:
             say(f"{guest}: {e}")
             rcs.append(e.rc)
@@ -1561,6 +1665,147 @@ def cmd_fetch(cfg: Config, a) -> int:
     return 0
 
 
+# --- link ----------------------------------------------------------------------------
+
+def link_into(store: Store, p: Path) -> tuple[str, str] | None:
+    """(G, VID) when the link P resolves into this store's live/G/VID (dangling or not), else None."""
+    rel = os.path.relpath(os.path.realpath(p), os.path.realpath(store.live)).split(os.sep)
+    if len(rel) >= 2 and rel[0] not in ("..", ".") and VID_RE.fullmatch(rel[1]):
+        return rel[0], rel[1]
+    return None
+
+
+def runs_on(guest: str, target: Path) -> list[str]:
+    """What runs on the guest folder TARGET: QEMU programs holding its disk objects (rule
+    a's lock test, vm-update's qemu_holds), and a comparison of GUEST (compare.py and
+    compare-freebsd.sh hold no lock between their mounts; Linux /proc only)."""
+    out = []
+    if target.is_dir():
+        for q in sorted(target.glob("**/*")):
+            if q.is_symlink() and in_store(q) and os.path.isfile(q) and qemu_holds(os.path.realpath(q)):
+                out.append(f"a QEMU program has {q.name} open ({os.path.realpath(q)})")
+    for d in glob_proc():
+        try:
+            args = Path(d, "cmdline").read_bytes().split(b"\0")
+        except OSError:
+            continue
+        if int(os.path.basename(d)) != os.getpid() and guest.encode() in args \
+                and any(re.search(rb"compare(\.py|-freebsd\.sh)$", x) for x in args[:3]):
+            out.append(f"a comparison of {guest} runs (pid {os.path.basename(d)})")
+    return out
+
+
+def glob_proc() -> list[str]:
+    try:
+        return [os.path.join("/proc", n) for n in os.listdir("/proc") if n.isdigit()]
+    except OSError:
+        return []
+
+
+def link_guests(cfg: Config, store: Store) -> list[str]:
+    """link --all: each vms/G that is a link into this store (made by link or by hand)."""
+    try:
+        return sorted(e.name for e in os.scandir(cfg.vms) if e.is_symlink() and not e.name.startswith(".")
+                      and (link_into(store, Path(e.path)) or ("", ""))[0] == e.name)
+    except (FileNotFoundError, NotADirectoryError):
+        return []
+
+
+def link_one(cfg: Config, store: Store, ref: str, offline: bool, dry: bool) -> str:
+    """vms/G -> ROOT/live/G/VID/G (ensure first), by one rename.  Returns the VID."""
+    guest, want = parse_ref(ref)
+    p = cfg.vms / guest
+
+    def current() -> tuple[str, str] | None:
+        if not p.is_symlink():
+            if os.path.lexists(p):
+                raise StoreError(f"{p} is not a link (a full guest folder): link never replaces it")
+            return None
+        cur = link_into(store, p)
+        if cur is None or cur[0] != guest:
+            raise StoreError(f"{p} links to {os.readlink(p)}, not into {store.live}/{guest}: "
+                             f"link replaces only its own kind of link (remove it by hand)")
+        return cur
+
+    def not_running() -> None:
+        busy = runs_on(guest, p) if p.is_symlink() and os.path.isdir(p) else []
+        if busy:
+            raise Busy(f"{guest}: {busy[0]}" + (f" (and {len(busy) - 1} more)" if len(busy) > 1 else "")
+                       + "; link it later")
+
+    cur = current()                            # before fetching anything
+    if dry:
+        if want is None:
+            srcs = [] if offline else [s for s in cfg.sources if not (s.host is None and os.path.realpath(s.path)
+                                                                       == os.path.realpath(store.root))]
+            want = resolve_latest(store, guest, srcs, offline)[0]
+        if cur and cur[1] == want and os.path.isdir(p):
+            say(f"{guest}: already links to {want}")
+        else:
+            not_running()
+            say(f"{guest}: would link it to {want}" + (f" (now {cur[1]})" if cur else ""))
+        return want
+    r = ensure(cfg, store, ref, offline)
+    vid, leaf = r["version"], Path(r["dir"])
+    if cur and cur[1] == vid and os.path.isdir(p):
+        say(f"{guest}: {p} already links to {vid}")
+        return vid
+    cfg.vms.mkdir(parents=True, exist_ok=True)
+    with store.lock():                         # gc waits: rule f sees the old link or the new one
+        cur = current()
+        not_running()
+        try:
+            ok = json.loads((leaf / ".vm-store.json").read_text()).get("version") == vid
+        except (OSError, ValueError):
+            ok = False
+        if not ok:
+            raise StoreError(f"{leaf} is not a whole {guest}@{vid} any more; run link again")
+        tmp = cfg.vms / f".{guest}.vm-store-link.{os.getpid()}"     # LINK_TMP_RE
+        with contextlib.suppress(FileNotFoundError):
+            tmp.unlink()
+        tmp.symlink_to(leaf)
+        try:
+            os.rename(tmp, p)                  # vms/G is the old link or the new one, never absent
+        except OSError as e:
+            with contextlib.suppress(FileNotFoundError):
+                tmp.unlink()
+            raise StoreError(f"{p}: {e.strerror}; left as it was")
+        fsync_dir(cfg.vms)
+    say(f"{guest}: {p} -> {leaf}" + (f" (was {cur[1]})" if cur else " (new)"))
+    return vid
+
+
+def cmd_link(cfg: Config, a) -> int:
+    store = Store(cfg.root, cfg)
+    if store.role != "cache":
+        raise StoreError(f"link runs on a cache (a host without a full vms/); {store.root} is a {store.role}")
+    if a.all == bool(a.refs):
+        raise Usage("link GUEST[@VID]... | --all")
+    for e in os.scandir(cfg.vms) if cfg.vms.is_dir() else []:
+        m = LINK_TMP_RE.fullmatch(e.name)
+        if m and e.is_symlink():               # a dead link's temp link
+            try:
+                os.kill(int(m[2]), 0)
+            except ProcessLookupError:
+                with contextlib.suppress(FileNotFoundError):
+                    os.unlink(e.path)
+            except PermissionError:
+                pass
+    refs = link_guests(cfg, store) if a.all else a.refs
+    if a.all and not refs:
+        say(f"no link in {cfg.vms} points into {store.live}")
+    rcs = []
+    for ref in refs:
+        try:
+            vid = link_one(cfg, store, ref, a.offline, a.dry_run)
+            print(f"{parse_ref(ref)[0]} {vid}")
+            rcs.append(0)
+        except StoreError as e:
+            say(f"{ref}: {e}")
+            rcs.append(e.rc)
+    return next((c for c in (1, 4, 3, 2) if c in rcs), 0)
+
+
 # --- gc ------------------------------------------------------------------------------
 
 def scan_overlays(cfg: Config, store: Store) -> tuple[dict[str, str], list[str]]:
@@ -1608,8 +1853,69 @@ def scan_overlays(cfg: Config, store: Store) -> tuple[dict[str, str], list[str]]
     return refs, blind
 
 
+def vms_links(cfg: Config, store: Store) -> tuple[dict[tuple[str, str], str], dict[str, str], list[str]]:
+    """Rule f: what $BKO_WORK/vms/ uses of this store.  ({(G, VID): the vms/ entry whose
+    link resolves into live/G/VID}, {object: the vms/ file whose link resolves to it},
+    the paths it couldn't read).  A vms/G link (link's, or made by hand) and links inside
+    a real vms/G both count; a dangling one too, so its version is never the one gc takes.
+    An unreadable dir (a sudo compare.py's 0700 one) may hide a link: rule d, as the scan's."""
+    live_real, objects_real = os.path.realpath(store.live), os.path.realpath(store.objects)
+    versions: dict[tuple[str, str], str] = {}
+    objs: dict[str, str] = {}
+    blind: list[str] = []
+
+    def note(p: str) -> None:
+        real = os.path.realpath(p)
+        if os.path.dirname(real) == objects_real and OBJ_RE.fullmatch(os.path.basename(real)):
+            objs.setdefault(os.path.basename(real), p)
+            return
+        rel = os.path.relpath(real, live_real).split(os.sep)
+        if len(rel) >= 2 and rel[0] not in ("..", ".") and VID_RE.fullmatch(rel[1]):
+            versions.setdefault((rel[0], rel[1]), p)
+
+    try:
+        entries = sorted(os.scandir(cfg.vms), key=lambda e: e.name)
+    except (FileNotFoundError, NotADirectoryError):
+        return versions, objs, blind
+    except OSError:
+        return versions, objs, [str(cfg.vms)]
+    for e in entries:
+        if LINK_TMP_RE.fullmatch(e.name):
+            continue                           # link's own, renamed over vms/G under lock or stale
+        try:
+            link, real_dir = e.is_symlink(), e.is_dir(follow_symlinks=False)
+        except OSError:
+            blind.append(e.path)
+            continue
+        if link:
+            note(e.path)
+        elif real_dir:
+            # Not into linked dirs, but each link counts.
+            for dp, dns, fns in os.walk(e.path, onerror=lambda err: blind.append(err.filename)):
+                for f in fns + dns:
+                    p = os.path.join(dp, f)
+                    try:
+                        if stat.S_ISLNK(os.lstat(p).st_mode):
+                            note(p)
+                    except FileNotFoundError:
+                        pass                   # gone meanwhile
+                    except OSError:
+                        blind.append(p)        # listed but not searchable (mode r--)
+    return versions, objs, blind
+
+
+def version_objects(store: Store, guest: str, vid: str) -> list[str]:
+    """The objects of GUEST@VID: by its manifest, else by live/G/VID's own links."""
+    got = store.manifest(guest, vid)
+    if got:
+        return manifest_objects(got[0])
+    leaf = store.live / guest / vid / guest
+    return [os.path.basename(os.readlink(p)) for p in leaf.glob("**/*") if p.is_symlink()]
+
+
 def in_use(cfg: Config, store: Store, protect: set[str] = frozenset()) -> tuple[dict[str, str], list[str]]:
-    """{object: why it is kept} by rules a-e, and the unreadable scan dirs."""
+    """{object: why it is kept} by rules a-f, and what the overlay scan or the vms/ walk
+    couldn't read (rule d)."""
     names = store.object_names()
     why: dict[str, str] = {}
     for n in names:
@@ -1618,6 +1924,12 @@ def in_use(cfg: Config, store: Store, protect: set[str] = frozenset()) -> tuple[
     refs, blind = scan_overlays(cfg, store)
     for n, p in refs.items():
         why.setdefault(n, f"overlay {p}")
+    present = set(names)
+    linked, linked_objs, vms_blind = vms_links(cfg, store)
+    blind = blind + vms_blind                  # rule d: a hidden link may use any object
+    for o, p in linked_objs.items():                   # rule f, a disk linked by hand: as an overlay's
+        if o in present:
+            why.setdefault(o, f"linked from {p}")
     age = BLIND_AGE if blind else cfg.min_age
     now = time.time()
     for n in names:
@@ -1637,6 +1949,12 @@ def in_use(cfg: Config, store: Store, protect: set[str] = frozenset()) -> tuple[
                     if o not in why:
                         why[o] = f"version {g}@{v} ({hit[:19]}…: {why[hit]})"
                         changed = True
+    # Rule f, a vms/G link (vm-store link): its whole version, chains and all, after rule e,
+    # so that a sidecar object it shares with older versions keeps none of them for good.
+    for (g, v), p in linked.items():
+        for o in version_objects(store, g, v):
+            if o in present:
+                why.setdefault(o, f"linked from {p}")
     return why, blind
 
 
@@ -1675,7 +1993,7 @@ def gc(cfg: Config, store: Store, need: int = 0, protect: set[str] = frozenset()
         plan["evicted"].append(n)
         say(f"gc: {'would evict' if dry else 'evicted'} {n} ({gib(size)})")
     if not dry:
-        gc_live(store)
+        gc_live(store, keep=set(vms_links(cfg, store)[0]))
         cutoff = time.time() - INCOMING_MAX_AGE
         for dp, _dns, fns in os.walk(store.incoming):
             for f in fns:
@@ -1691,10 +2009,13 @@ def gc(cfg: Config, store: Store, need: int = 0, protect: set[str] = frozenset()
     return plan
 
 
-def gc_live(store: Store) -> None:
-    """Each live/G/VID whose objects are gone, and dead ensures' tmp dirs."""
+def gc_live(store: Store, keep: set[tuple[str, str]] = frozenset()) -> None:
+    """Each live/G/VID whose objects are gone, and dead ensures' tmp dirs.  Never one
+    in KEEP (a vms/ link points into it: removing it would leave the link dangling)."""
     for gd in store.live.iterdir() if store.live.is_dir() else []:
         for vd in gd.iterdir():
+            if (gd.name, vd.name) in keep:
+                continue
             m = re.fullmatch(r"\.(.+)\.tmp\.(\d+)", vd.name)
             if m:
                 try:
@@ -1704,9 +2025,7 @@ def gc_live(store: Store) -> None:
                 except PermissionError:
                     pass
                 continue
-            got = store.manifest(gd.name, vd.name)
-            objs = manifest_objects(got[0]) if got else [
-                os.path.basename(os.readlink(p)) for p in (vd / gd.name).glob("**/*") if p.is_symlink()]
+            objs = version_objects(store, gd.name, vd.name)
             if any(not store.obj(o).is_file() for o in objs):
                 shutil.rmtree(vd, ignore_errors=True)
                 say(f"gc: removed {vd}")
@@ -1996,6 +2315,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--note")
     s.add_argument("--push", action="store_true")
     s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--stateless", action="append", default=[], metavar="GUEST[,GUEST...]")
     s = sub.add_parser("push", help="send Bigfoot what it lacks (Chopin)")
     s.add_argument("--now", action="store_true")
     s.add_argument("--dry-run", action="store_true")
@@ -2005,6 +2325,11 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--json", action="store_true")
     s = sub.add_parser("fetch", help="ensure, printing nothing (prefetch)")
     s.add_argument("refs", nargs="+", metavar="GUEST[@VID]")
+    s = sub.add_parser("link", help="point vms/GUEST at a version (a cache), fetching it first")
+    s.add_argument("refs", nargs="*", metavar="GUEST[@VID]")
+    s.add_argument("--all", action="store_true")
+    s.add_argument("--offline", action="store_true")
+    s.add_argument("--dry-run", action="store_true")
     s = sub.add_parser("gc", help="make room in a cache")
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--json", action="store_true")
@@ -2022,7 +2347,7 @@ def parser() -> argparse.ArgumentParser:
 
 
 COMMANDS = {"init": cmd_init, "publish": cmd_publish, "push": cmd_push, "ensure": cmd_ensure, "fetch": cmd_fetch,
-            "gc": cmd_gc, "list": cmd_list, "status": cmd_status, "verify": cmd_verify}
+            "link": cmd_link, "gc": cmd_gc, "list": cmd_list, "status": cmd_status, "verify": cmd_verify}
 
 
 def main(argv: list[str] | None = None) -> int:

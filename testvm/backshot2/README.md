@@ -14,10 +14,13 @@ From the Mac, in a checkout of this branch:
     testvm/backshot2/bs2 soak CASE N
     testvm/backshot2/bs2 status RUN
 
-`bs2` rsyncs `testvm/` and `holt/` to `~/backotter-work/bs2-wt` on both
-hosts (never the shared `testvm/`) and runs `bs2-host` there.  Chopin runs
+`bs2` rsyncs `testvm/` and `holt/` to `~/backotter-work/bs2-wt` on its two
+hosts, Chopin and Cinqcent (their ssh from testvm/hosts.json; never the
+shared `testvm/`) and runs `bs2-host` there.  Chopin runs
 `alpine324` and `alpine324-uefi`, Cinqcent `alpine324-lvm` and
-`alpine324-luks`.  Each host needs, once:
+`alpine324-luks` (bs2's `HOME`; the small hosts' caches hold only
+`alpine324`, the other three aren't published).  It uses ports 2943-2949
+(`bs2-host --ports`) on each host it runs on.  Each host needs, once:
 
 - `/bkoscratch/backshot2/bin/`: `bko-holt` (the build under test: a static
   build of this tree's holt, `build-holt.sh linux`), `bs2_plan` (`cargo test

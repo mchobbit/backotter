@@ -13,7 +13,11 @@
 #   QUEUE_HOST=chopin.local cmp-run.sh TAG SLOTS
 #       works on that host's queue (over ssh), so both hosts share one;
 #   cmp-run.sh --reserve DISK_GIB MEM_GIB CMD ...
-#       runs CMD once its room is free, holding the room meanwhile.
+#       runs CMD once its room is free, holding the room meanwhile;
+#   cmp-run.sh --ceiling
+#       prints "DISK MEM", the most one job could ever get on this host
+#       (ceiling(): a --reserve or a queue line over it is refused at once),
+#       and writes nothing: not even the ledger's files.
 # WEAR_TAG names the work in the wear log (FAMILY:RUN[:CELL], e.g.
 # ht1:r4all:pop24): a --reserve's CMD is logged with it as it is, a queue's
 # jobs with :GUEST added (default cmp:TAG:GUEST). Give it to the cmp-run.sh
@@ -22,6 +26,13 @@
 # A "!" puts the guest's restored disks on DISKS_DIR (default
 # /bkoscratch/compare-disks, a cool disk) instead of the RAM disk; its
 # DISK_GIB then counts only what stays in RAM (repositories, overlays).
+# A queue's cmp-run.sh makes DISKS_DIR when its parent is there and
+# writable (cage and copland had none); a worker still without one takes no
+# "!" line (cmp-pop.sh's nodisk) and leaves them to the hosts that can.
+# Should none of those ever ask the queue for a line (QUEUE.disks, cmp-pop.sh's
+# mark) while only "!" lines are left, unchanged, for NODISK_POLLS polls
+# (default 20, about 10 minutes), the worker gives up waiting and takes them
+# as before: a FAIL row each (exit 99 in done), never a silent hang.
 # touch cmp-logs/TAG/stop on a host: its workers start nothing more (with
 # QUEUE_HOST, on each host that runs workers). Lines taken from the queue
 # are in cmp-logs/TAG/queue.taken on the queue's host; cmp-pop.sh says how to
@@ -32,8 +43,10 @@
 #   RAM disk: the DISK_GIB (default 8) of everything running stays within
 #     the tmpfs, less 1 GiB;
 #   memory, static: the MEM_GIB (default 5) of everything running fits in
-#     MemTotal after the whole tmpfs, the ARC and BASE_GIB (default 6) for the
-#     system, as if the tmpfs were full;
+#     MemTotal after the whole tmpfs, the ARC and BASE_GIB for the system, as
+#     if the tmpfs were full.  BASE_GIB: the environment's, else this host's
+#     base_gib in the host table (testvm/hosts.json, by hostname -s; hosts.py
+#     limit, BKO_HOSTS_PY naming another hosts.py), else 6;
 #   memory, live (other sessions): MemAvailable, less the tmpfs's room to
 #     grow, the ARC's, swap in use, 2 GiB, and what running jobs have reserved
 #     but not touched yet (MEM_GIB less their cgroup's anon; for a --reserve,
@@ -41,13 +54,13 @@
 #     started with setsid -f, as HoltTest's are, has left that tree, so its
 #     memory counts twice, never too little), covers it.
 #   The ARC counts as its size now plus ARC_ROOM_GIB (default 1), within its
-#     cap: not the whole cap (zfs_arc_max, 8 GiB on the hosts), which only the
-#     host's small throwaway test pools ever use, and the ARC gives memory back
-#     under pressure.
+#     cap: not the whole cap (zfs_arc_max, 8 GiB on the big hosts), which only
+#     the host's small throwaway test pools ever use, and the ARC gives memory
+#     back under pressure.  A host without ZFS (the small ones) has no ARC: 0.
 # Each queue job runs in a systemd scope with MemoryHigh = DISK + MEM GiB
 # (its tmpfs pages count there too): past that it is slowed and reclaimed
 # into zram, never killed. A --reserve's scope has no MemoryHigh. zram
-# (16 GiB) is the cushion under all of it.
+# (16 GiB on the big hosts, 8 on the small ones) is the cushion under all of it.
 # Every job, a --reserve's CMD too, runs under iolog.sh, which logs what it
 # wrote to disk in /bkoscratch/wear/jobs.log, with WEAR_TAG (wear-report.py
 # sums it up).
@@ -97,8 +110,13 @@ rewrite() {  # FILE CMD...: FILE's content becomes CMD's output (CMD reads FILE)
     c=$("$@"; rc=$?; echo .; exit $rc) || return; put "$f" "${c%.}"
 }
 add() { printf '%s\n' "$2" | dd of="$1" conv=nocreat,notrunc oflag=append status=none; }   # FILE LINE
-ledger_files; chmod 666 $LEDGER $LEDGER.lock $WAITS 2>/dev/null
+[ "${1:-}" = --ceiling ] || { ledger_files; chmod 666 $LEDGER $LEDGER.lock $WAITS 2>/dev/null; }
 H=$(hostname -s)
+# BASE_GIB once for the script (ceiling() and budget() look it up themselves
+# when it is unset: facts_host.py and drive.py run them alone, by sed).
+BKO_HOSTS_PY=${BKO_HOSTS_PY:-$HERE/../test2/t2lib/hosts.py}
+[ -n "${BASE_GIB:-}" ] || BASE_GIB=$(python3 -I -B "$BKO_HOSTS_PY" limit "$H" base_gib 2>/dev/null)
+[[ $BASE_GIB =~ ^[0-9]+([.][0-9]+)?$ ]] || BASE_GIB=6
 DISKS_DIR=${DISKS_DIR:-/bkoscratch/compare-disks}
 
 # Ledger rows: PID DISK MEM SCOPE WHAT...   (SCOPE "-" when there is none)
@@ -117,7 +135,10 @@ tree_anon() {  # PID ... -> "PID BYTES" lines: the anon memory (RssAnon) of each
         }'
 }
 budget() {  # -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked)
-    local arc_max arc_size unused=0 pid d m scope rest anon trees
+    local arc_max arc_size unused=0 pid d m scope rest anon trees base=${BASE_GIB:-}
+    [ -n "$base" ] || base=$(python3 -I -B "${BKO_HOSTS_PY:-$HOME/backotter-work/testvm/test2/t2lib/hosts.py}" \
+                                limit "$(hostname -s)" base_gib 2>/dev/null)
+    [[ $base =~ ^[0-9]+([.][0-9]+)?$ ]] || base=6
     arc_max=$(awk '$1 == "c_max" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
     arc_size=$(awk '$1 == "size" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
     # shellcheck disable=SC2046  # the PIDs are meant to split
@@ -133,7 +154,7 @@ budget() {  # -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked)
         unused=$(awk -v u="$unused" -v m="$m" -v a="${anon:-0}" \
             'BEGIN { x = m - a / 1073741824; if (x < 0) x = 0; print u + x }')
     done <$LEDGER
-    df -Pk $RAM | awk -v arc_max="${arc_max:-0}" -v arc_size="${arc_size:-0}" -v base="${BASE_GIB:-6}" \
+    df -Pk $RAM | awk -v arc_max="${arc_max:-0}" -v arc_size="${arc_size:-0}" -v base="$base" \
                       -v arc_room="${ARC_ROOM_GIB:-1}" -v unused="$unused" -v ledger=$LEDGER '
         function fl(x) { return int(x * 10 + (x < 0 ? -1 : 0)) / 10 }   # round down
         NR == 2 { size = $2 / 1048576; avail = $4 / 1048576 }
@@ -217,17 +238,24 @@ parse() {  # LINE -> globals g stick grow ondisk d m (suffixes only at the end, 
     g=${s%%:*} stick=""; [ "$g" != "$s" ] && stick=${s#*:}
 }
 ceiling() {  # -> "DISK MEM": the most one job could ever get on this host
-    local arc_max arc_size
+    local arc_max arc_size base=${BASE_GIB:-}
+    [ -n "$base" ] || base=$(python3 -I -B "${BKO_HOSTS_PY:-$HOME/backotter-work/testvm/test2/t2lib/hosts.py}" \
+                                limit "$(hostname -s)" base_gib 2>/dev/null)
+    [[ $base =~ ^[0-9]+([.][0-9]+)?$ ]] || base=6
     arc_max=$(awk '$1 == "c_max" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
     arc_size=$(awk '$1 == "size" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
     df -Pk $RAM | awk -v arc_max="${arc_max:-0}" -v arc_size="${arc_size:-0}" -v arc_room="${ARC_ROOM_GIB:-1}" \
-                      -v base="${BASE_GIB:-6}" '
+                      -v base="$base" '
         NR == 2 { size = $2 / 1048576 }
         END { G = 1073741824
               arc = arc_size / G + arc_room; if (arc > arc_max / G) arc = arc_max / G   # as budget() counts it
               while ((getline l < "/proc/meminfo") > 0) { split(l, f, /[: ]+/); if (f[1] == "MemTotal") t = f[2] / 1048576 }
               printf "%.1f %.1f\n", size - 1, t - size - arc - base - 2 }'
 }
+if [ "${1:-}" = --ceiling ]; then
+    [ $# -eq 1 ] || { echo "usage: cmp-run.sh --ceiling" >&2; exit 2; }
+    ceiling; exit
+fi
 
 if [ "${1:-}" = --reserve ]; then
     d=$2 m=$3; shift 3
@@ -260,6 +288,7 @@ sb=${SLOT_BASE:-4}
     { echo "slots $((sb + 1))..$((sb + slots)): compare.py takes COMPARE_SLOT 0-9 only" >&2; exit 1; }
 mkdir -p cmp-logs/$tag
 Q=cmp-logs/$tag/queue
+[ -d "$DISKS_DIR" ] || { [ -d "$(dirname "$DISKS_DIR")" ] && [ -w "$(dirname "$DISKS_DIR")" ] && mkdir -p "$DISKS_DIR"; }
 if [ $# -gt 0 ]; then
     [ -z "${QUEUE_HOST:-}" ] || { echo "guests go in the queue on $QUEUE_HOST" >&2; exit 1; }
     read -r cd cm < <(ceiling)
@@ -272,6 +301,7 @@ if [ $# -gt 0 ]; then
         seen+="$g "
     done
     printf '%s\n' "$@" >$Q
+    rm -f $Q.disks   # cmp-pop.sh's mark is the new queue's, from its workers
 fi
 [ -n "${QUEUE_HOST:-}" ] || [ -e $Q ] || { echo "no $Q" >&2; exit 1; }
 touch cmp-logs/$tag/done
@@ -283,26 +313,37 @@ E="RESTIC_BKO=$PWD/cmp-bin/restic-bko RUSTIC_BKO=$PWD/cmp-bin/rustic-bko"
 
 pop() {  # MAXDISK MAXMEM -> a queue line that fits; rc 0 got, 1 none fits (or failed), 3 empty
     # (with 1, cmp-pop.sh prints the first line's "DISK MEM" when it got that far)
-    local rc
+    local rc nd=""
+    [ -d "$DISKS_DIR" ] || nd=nodisk   # no "!" line for a worker without DISKS_DIR
+    [ -z "${gaveup:-}" ] || nd=anydisk   # ... until it gave up waiting (nodisk_wait)
     if [ -n "${QUEUE_HOST:-}" ]; then
         timeout 90 ssh -n -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=10 \
             -o ServerAliveCountMax=3 -o ControlMaster=no -o ControlPath=none "$QUEUE_HOST" \
-            "cd ~/backotter-work && sh testvm/compare/cmp-pop.sh $Q $1 $2 $H" {lk}>&-
+            "cd ~/backotter-work && sh testvm/compare/cmp-pop.sh $Q $1 $2 $H $nd" {lk}>&-
         rc=$?
         case $rc in 0|1|3) return $rc ;; esac
         log "ssh pop failed ($rc): see $Q.taken on $QUEUE_HOST for a line taken but not run"
         return 1
     fi
-    sh testvm/compare/cmp-pop.sh $Q "$1" "$2" $H {lk}>&-
+    sh testvm/compare/cmp-pop.sh $Q "$1" "$2" $H $nd {lk}>&-
     rc=$?
     case $rc in 0|1|3) return $rc ;; esac
     log "cmp-pop.sh failed ($rc)"
     return 1
 }
 log() { echo "$(date -u +%T) $H slot $slot: $*" >>cmp-logs/$tag/progress; }
+nodisk_wait() {  # "! N K" (cmp-pop.sh nodisk, only "!" lines left) -> rc 1: give up waiting
+    # The caller's bangs (polls in a row with the same N and no mark) and bangn (that N).
+    local n k
+    read -r _ n k <<<"$1"
+    if [ "${k:-0}" = 1 ]; then bangs=0 bangn=""; return 0; fi   # a host with DISKS_DIR asked: theirs
+    if [ "$n" = "$bangn" ]; then bangs=$((bangs + 1)); else bangs=1 bangn=$n; fi
+    [ "$bangs" -lt "${NODISK_POLLS:-20}" ]
+}
 
 worker() {  # SLOT
     local slot=$1 line rc g stick grow ondisk d m lk maxd maxm ahead hotc jp scope args why hi dd wt waiting="" me=$BASHPID
+    local bangs=0 bangn="" gaveup=""
     while :; do
         if [ -e cmp-logs/$tag/stop ]; then
             if lock; then leave_line $me; unlock; fi
@@ -319,6 +360,13 @@ worker() {  # SLOT
             if [ $rc = 1 ]; then
                 why="nothing fits ${maxd}G RAM disk, ${maxm}G memory"
                 [ "$ahead" -gt 0 ] && why+=" after $ahead before it in line"
+                if [[ $line == '! '* ]]; then
+                    why="only \"!\" lines left ($(set -- $line; echo $2) of them), and no $DISKS_DIR here: they are for the other hosts"
+                    if ! nodisk_wait "$line"; then
+                        gaveup=1
+                        log "no host with $DISKS_DIR asked for the \"!\" lines in $bangs polls: taking them (a FAIL row each)"
+                    fi
+                fi
                 # In line with the first line's needs, if this host can ever meet
                 # them; out of it when it can't, or got no needs (ssh, lock).
                 if [[ $line =~ ^[0-9.]+\ [0-9.]+$ ]] && fits "$cd" "${line% *}" "$cm" "${line#* }"; then

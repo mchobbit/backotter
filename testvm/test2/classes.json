@@ -67,6 +67,8 @@
              "ubuntu26-uefi", "ubuntu26-zfs"],
     "uefi_why": "the Linux sources with --uefi in vm-run-options (both hosts, 2026-11-08); ht1.sh rebuilds them from rescuer-uefi.qcow2 when the host has it (ht1.sh:138-139, R17). alpinebsd is UEFI too, but netbsd11 rescues it",
     "canaries": ["debian13", "ubuntu26-uefi", "freebsd15", "redox"],
+    "needs_host_zfs": ["chimera-zfs", "debian13-zfs", "ubuntu24", "ubuntu26-zfs", "ubuntu26-zfsmirror"],
+    "needs_host_zfs_why": "the Linux sources with a ZFS pool on their disks: ht1.sh mounts the source (and the rebuilt copy) on the host with vm-mount --ro (ht1.sh:565, :846), and vm-mount's mount_zfs_root needs the host's zpool (vm-mount:562, 'this host has no OpenZFS'). plan.place keeps their cells, every variant, off a host whose facts' caps.zfs is false (copland and cage have no OpenZFS). The BSD and illumos ZFS sources (freebsd15, ghostbsd26-zfs, omnios58...) are read inside their own rescuers, not on the host",
     "rescuer_panel": {
       "bios": {"match": ["rescuer.qcow2"], "guests": ["debian12", "ubuntu24", "rocky10-raid5", "nixos2605"]},
       "uefi": {"match": ["rescuer-uefi.qcow2"], "guests": ["debian13-stack", "aerynos"]},

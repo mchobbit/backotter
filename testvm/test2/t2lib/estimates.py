@@ -5,9 +5,12 @@ A cell's estimate is, in order:
   tsv        its row in testvm/test2/estimates.tsv (seeded from docs/design/test2/data/);
   README     testvm/stictest1/README.md's "Estimates (seconds ...)" (stic only);
   default    5 gm.
-Wall time: SticTest2 by drive.py's simulate() (its queue, 3 checks per host); HoltTest2 by
-packing per host at 3 jobs, guests of D >= 13 GiB one at a time; GateTest2 the fast layers in
-sequence plus the longest slow layer per host.
+Wall time: SticTest2 by drive.py's simulate() (its queue, each host's stic_slots checks and
+guest_slots at once, 3 and 3 by default); HoltTest2 by packing per host at its holt_jobs (3 by
+default), guests of D >= 13 GiB one at a time; GateTest2 the fast layers in sequence plus the
+longest slow layer per host.  The per-host figures are the host table's (testvm/hosts.json's
+limits, t2lib/hosts.py); with hosts of more than one class, a host of a bigger class takes
+first the cells no smaller host of the run could (class_rank), as drive.py's queue does.
 """
 
 import os
@@ -126,45 +129,62 @@ class Estimator:
 
 # --- wall time ---------------------------------------------------------------------------
 
-def stic_wall(drive, guests, est, have, first=(), slots=STIC_SLOTS, ceils=None):
+def stic_wall(drive, guests, est, have, first=(), slots=STIC_SLOTS, ceils=None, guest_slots=None, ranks=None):
     """drive: testvm/stictest1/drive.py as a module.  guests: names; est: {guest: seconds};
     have: {host: {"OS/NAME", ...}} (the round's binaries there); ceils: {host: (DISK, MEM)},
-    cmp-run.sh's ceiling there (none: not checked).  Returns (wall_s, {guest: host},
-    [guests no host can run])."""
+    cmp-run.sh's ceiling there (none: not checked); slots: checks at once, N on every host
+    or {host: N}; guest_slots {host: N} (default drive.GUEST_SLOTS); ranks {host:
+    class_rank} for drive's prefer() (default none: one class).  Returns (wall_s,
+    {guest: host}, [guests no host can run])."""
     if not guests:
         return 0, {}, []
     spec = drive.load_specs(list(guests))
-    hosts = {h: dict(have=set(v), slots_free=drive.GUEST_SLOTS, room=None, ceil=(ceils or {}).get(h))
+    hosts = {h: dict(have=set(v), slots_free=(guest_slots or {}).get(h, drive.GUEST_SLOTS), room=None,
+                     ceil=(ceils or {}).get(h))
              for h, v in have.items()}
     if not hosts:
         return 0, {}, list(guests)
     est_s = {g: max(int(est.get(g, DEFAULT_GM * 60)), 1) for g in guests}
-    rows, left = drive.simulate(list(guests), spec, est_s, hosts, slots, set(first))
+    rows, left = drive.simulate(list(guests), spec, est_s, hosts, slots, set(first),
+                                ranks=ranks if ranks is not None else {h: 0 for h in hosts})
     wall = max((r[3] for r in rows), default=0)
     return int(round(wall)), {r[0]: r[1] for r in rows}, list(left)
 
 
-def pack(jobs, hosts, slots=HOLT_JOBS, big=BIG_GIB):
+def pack(jobs, hosts, slots=HOLT_JOBS, big=BIG_GIB, ranks=None):
     """jobs: [(name, seconds, d_gib, allowed_hosts or None)], longest first.  At most SLOTS
-    at once per host, and one job of D >= BIG at a time per host.  Returns (wall_s,
-    {name: host}, [names no host takes])."""
+    at once per host (N, or {host: N}: a host it lacks HOLT_JOBS), and one job of D >= BIG
+    at a time per host.  Each job goes to the least busy host it may run on, busy weighed by
+    the host's slots when they differ.  ranks {host: class_rank} (default: one class): the
+    jobs no host of a later (smaller) class may run start first, so they don't wait behind
+    ones the small hosts can drain.  Returns (wall_s, {name: host}, [names no host takes])."""
     hosts = list(hosts)
     if not hosts:
         return 0, {}, [j[0] for j in jobs]
+    cap = {h: (slots.get(h, HOLT_JOBS) if isinstance(slots, dict) else slots) for h in hosts}
+    weigh = len(set(cap.values())) > 1   # (one N: the plain sum, as before)
+    ranks = ranks or {}
     rem = sorted(jobs, key=lambda j: (-j[1], j[0]))
     left = [j[0] for j in rem if j[3] is not None and not (set(j[3]) & set(hosts))]
     rem = [j for j in rem if j[0] not in left]
+    if len({ranks.get(h, 0) for h in hosts}) > 1:
+        def smaller(j):   # whether a host of a later class than the job's biggest may run it
+            hs = [h for h in hosts if j[3] is None or h in j[3]]
+            top = min(ranks.get(h, 0) for h in hs)
+            return any(ranks.get(h, 0) > top for h in hs)
+        rem.sort(key=smaller)   # (stable: longest first within each part)
     run = {h: [] for h in hosts}          # (end, big)
     place, t = {}, 0.0
     while rem:
         started = False
         for j in list(rem):
             name, sec, d, allowed = j
-            cands = [h for h in hosts if (allowed is None or h in allowed) and len(run[h]) < slots
+            cands = [h for h in hosts if (allowed is None or h in allowed) and len(run[h]) < cap[h]
                      and not (d >= big and any(b for _, b in run[h]))]
             if not cands:
                 continue
-            h = min(cands, key=lambda h: (sum(e - t for e, _ in run[h]), len(run[h]), hosts.index(h)))
+            h = min(cands, key=lambda h: (sum(e - t for e, _ in run[h]) / (cap[h] if weigh else 1), len(run[h]),
+                                          hosts.index(h)))
             run[h].append((t + sec, d >= big))
             place[name] = h
             rem.remove(j)

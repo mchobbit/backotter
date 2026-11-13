@@ -13,6 +13,8 @@
 #       table+peaks:1  one such pass: the larger of its D and M and the table's
 #                      (the default's, without a row)
 #       table          its row in ram-sizes.tsv: this host's (--host H: H's),
+#                      else its class's (a row whose host is class:C, C the
+#                      class testvm/hosts.json gives the host: class:small),
 #                      else the largest;
 #                      a variant without a row has its guest's
 #   +nearfull on the end: 4 GiB more D, for the free space that variant fills
@@ -25,9 +27,12 @@
 #
 # The FILEs default to ram-sizes.tsv beside this script and
 # /bkoscratch/holttest1d/peaks.tsv (ht1-lib.sh's, under HT_RECORDS when that
-# is set).  --host H (default this host's short name) picks the table's rows:
-# Test2's planner sizes a host's cells so, with --peaks /dev/null, against its
-# cmp-run.sh ceiling.  It writes nothing.  Exit 0, or 2 on bad usage.
+# is set).  --host H (default this host's short name; H.DOMAIN is H) picks the
+# table's rows: Test2's planner sizes a host's cells so, with --peaks
+# /dev/null, against its cmp-run.sh ceiling; ht1-queue.sh passes its own.
+# The class comes from testvm/test2/t2lib/hosts.py beside this tree (none
+# without it, or for a host the table doesn't know: no class rows then).
+# It writes nothing.  Exit 0, or 2 on bad usage.
 set -uo pipefail
 
 HERE=$(dirname "$(realpath "$0")")
@@ -49,12 +54,19 @@ name='^[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded|smaller|fitbigger|
 for n; do [[ $n =~ $name ]] || { echo "ram-size.sh: not GUEST[+VARIANT]: $n" >&2; exit 2; }; done
 [[ -r $TABLE && ! -d $TABLE ]] || { echo "ram-size.sh: no table $TABLE" >&2; exit 2; }
 [[ -r $PEAKS && ! -d $PEAKS ]] || PEAKS=/dev/null   # no run logged yet
+HOST=${HOST:-$(hostname -s)} HOST=${HOST%%.*}
+# The host's class (testvm/hosts.json), for the class:C rows; looked up only
+# when the table has one.
+CLASS=""
+if grep -q $'^[^#][^\t]*\t[^\t]*\tclass:' "$TABLE" && [[ -f $HERE/../test2/t2lib/hosts.py ]]; then
+    CLASS=$(python3 -I -B "$HERE/../test2/t2lib/hosts.py" get "$HOST" class 2>/dev/null) || CLASS=""
+fi
 
 # ram-sizes.tsv: guest variant host left_bytes D MEM source ("#" comments, a
 # header).  peaks.tsv (ht1-lib.sh): end_utc host driver run gv phases seeded
 # rc result mode reserved_gib peak_disk_kib peak_anon_kib wall_s, a header
 # first; its columns are found by name, else taken in that order.
-awk -F'\t' -v host="${HOST:-$(hostname -s)}" -v big="$BIG" -v names="$*" '
+awk -F'\t' -v host="$HOST" -v cls="$CLASS" -v big="$BIG" -v names="$*" '
     function fam(g) {   # as ht1.sh picks the driver: 1 ht1-bsd.sh, 2 ht1-offline.sh, 0 Linux
         if (g ~ /^(freebsd|hardenedbsd|ghostbsd|netbsd|alpinebsd|openbsd|dragonfly|omnios|haiku)/) return 1
         if (g == "redox" || g ~ /^sculpt/) return 2
@@ -97,6 +109,7 @@ awk -F'\t' -v host="${HOST:-$(hostname -s)}" -v big="$BIG" -v names="$*" '
         n = $1 ($2 != "-" && $2 != "" ? "+" $2 : ""); d = $5 + 0; m = ($6 ~ /^[0-9]/) ? $6 + 0 : 4
         if (!(n in ad) || d > ad[n] || (d == ad[n] && m > am[n])) { ad[n] = d; am[n] = m }
         if ($3 == host && (!(n in hd) || d > hd[n] || (d == hd[n] && m > hm[n]))) { hd[n] = d; hm[n] = m }
+        if (cls != "" && $3 == "class:" cls && (!(n in cd_) || d > cd_[n] || (d == cd_[n] && m > cm_[n]))) { cd_[n] = d; cm_[n] = m }
         next
     }
     {   # the header (a field "gv"): where the columns are
@@ -118,7 +131,9 @@ awk -F'\t' -v host="${HOST:-$(hostname -s)}" -v big="$BIG" -v names="$*" '
         known[n] = 1
     }
     END {
-        for (n in ad) if (n in hd) { td[n] = hd[n]; tm[n] = hm[n] } else { td[n] = ad[n]; tm[n] = am[n] }
+        for (n in ad) if (n in hd) { td[n] = hd[n]; tm[n] = hm[n] }
+                      else if (n in cd_) { td[n] = cd_[n]; tm[n] = cm_[n] }
+                      else { td[n] = ad[n]; tm[n] = am[n] }
         if (big == "") { k = split(names, a, " "); for (i = 1; i <= k; i++) print a[i], size(a[i]); exit }
         for (n in td) known[n] = 1
         for (n in known) { g = n; sub(/[+].*/, "", g); base[g] = 1 }

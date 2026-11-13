@@ -3,11 +3,12 @@
 
 Usage: vm-store init ROOT --role mirror|cache [--cap SIZE --floor SIZE]
        vm-store init --bigfoot
-       vm-store publish GUEST... | --changed [--from DIR] [--expect-generation HEX] [--set-latest]
-                        [--note T] [--push] [--dry-run]
+       vm-store publish GUEST... | --changed [--stateless GUEST,...] [--from DIR]
+                        [--expect-generation HEX] [--set-latest] [--note T] [--push] [--dry-run]
        vm-store push [--now] [--dry-run]
        vm-store ensure GUEST[@VID|@latest] [--offline] [--json]
        vm-store fetch GUEST[@VID]...
+       vm-store link GUEST[@VID]... | --all [--offline] [--dry-run]
        vm-store gc [--dry-run] [--json]
        vm-store list [GUEST] [--source NAME] [--json]
        vm-store status [--json]
@@ -19,7 +20,8 @@ the copy of record, which only Chopin talks to; the other hosts' caches
 (/bkoscratch/bko-cache) fetch a version from Chopin with ensure (with Chopin
 down, they use what they hold, as --offline), which prints a guest
 folder made of it (disks as links to read-only objects: boot it with --ram or
---snapshot).  testvm/store/README.md has the rest, and
+--snapshot); on a cache host, link points vms/GUEST at it.
+testvm/store/README.md has the rest, and
 docs/design/image-store.md the contract.
 
 Exit status: 0 ok, 1 failure, 2 usage, 3 busy (try later), 4 no room.

@@ -127,7 +127,8 @@ def world_base(work, guest, name, path, q):
 def identity_of(work, guest, sha=False, backfill=False):
     gdir = os.path.join(work, "vms", guest)
     if not os.path.isdir(gdir):
-        return {"missing": True}
+        # an image cache's vms/GUEST is a link into the cache: one whose entry was evicted dangles
+        return {"missing": True, "dangling": True} if os.path.islink(gdir) else {"missing": True}
     out = {"image_state": _json(os.path.join(gdir, "image-state")), "stat": _json(os.path.join(gdir, "image-stat.json")),
            "disks": {}, "qemu": {}}
     names = guest_disks(gdir)

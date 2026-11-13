@@ -197,7 +197,8 @@ class StoreTest(unittest.TestCase):
                     "VM_STORE_SCAN": str(self.scan), "VM_STORE_FLOOR": "0", "VM_STORE_MIN_AGE": "24h",
                     "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}", "FAKE_RSYNC_LOG": str(self.log),
                     "FAKE_RSYNC_BYTES": str(self.bytes_log)}
-        for k in ("VM_STORE_CAP", "VM_STORE_WINDOW", "VM_STORE_COPY", "VM_STORE_TEST_CRASH", "FAKE_RSYNC_SLEEP",
+        for k in ("VM_STORE_CAP", "VM_STORE_WINDOW", "VM_STORE_COPY", "VM_STORE_FLOOR_REFLINK",
+                  "VM_STORE_TEST_CRASH", "FAKE_RSYNC_SLEEP",
                   "FAKE_RSYNC_STOP_ONCE", "FAKE_RSYNC_FAIL", "FAKE_RSYNC_SNOOP"):
             self.env[k] = ""
         p = mock.patch.dict(os.environ, self.env)
@@ -403,6 +404,49 @@ class TestPublish(StoreTest):
         self.assertIn("a2:", err)
         self.assertEqual([l.split()[0] for l in out.splitlines()], ["a1"])
 
+    def test_changed_stateless_is_opt_in_and_follows_vms(self):
+        self.guest("st")
+        g = self.guest("dev", state=False)
+        self.guest("other", state=False)
+        rc, out, err = self.run_vs("publish", "--changed")
+        self.assertEqual((rc, [l.split()[0] for l in out.splitlines()]), (0, ["st"]), err)
+        rc, out, err = self.run_vs("publish", "--changed", "--stateless", "dev")
+        self.assertEqual(rc, 0, err)
+        self.assertEqual([l.split()[0] for l in out.splitlines()], ["dev"])
+        v1 = out.split()[1]
+        self.assertTrue(v1.startswith("i"))
+        self.assertEqual(self.latest(self.mirror, "dev"), v1)
+        self.assertIsNone(self.latest(self.mirror, "other"))
+        n = len(vs.Store(self.mirror, vs.Config()).object_names())
+        rc, out, err = self.run_vs("publish", "--changed", "--stateless", "dev")   # unchanged: hashed, dropped
+        self.assertEqual((rc, out.split()), (0, ["dev", v1]), err)
+        self.assertIn("already published", err)
+        self.assertEqual(len(vs.Store(self.mirror, vs.Config()).object_names()), n)
+        # A rebuild: by name latest stays (section 1.6); opted in, latest follows vms/dev.
+        (g / "dev.qcow2").unlink()
+        make_disk(g / "dev.qcow2", 4242)
+        rc, out, err = self.run_vs("publish", "dev")
+        v2 = out.split()[1]
+        self.assertEqual((rc, self.latest(self.mirror, "dev")), (0, v1), err)
+        (g / "dev.qcow2").unlink()
+        make_disk(g / "dev.qcow2", 4343)
+        rc, out, err = self.run_vs("publish", "--changed", "--stateless", "dev,other")
+        self.assertEqual(rc, 0, err)
+        v3 = dict(l.split() for l in out.splitlines())["dev"]
+        self.assertNotIn(v3, (v1, v2))
+        self.assertEqual(self.latest(self.mirror, "dev"), v3)
+        self.assertIsNotNone(self.latest(self.mirror, "other"))
+        self.assertEqual(self.manifest(self.mirror, "dev", v3)["parent"], v1)
+
+    def test_stateless_refusals(self):
+        self.guest("ok")
+        self.assertEqual(self.run_vs("publish", "ok", "--stateless", "ok")[0], 2)
+        self.assertEqual(self.run_vs("publish", "--changed", "--stateless", "../x")[0], 2)
+        rc, out, err = self.run_vs("publish", "--changed", "--stateless", "missing")
+        self.assertEqual(rc, 1, err)                        # named but absent: a failure; the rest published
+        self.assertIn("no ", err)
+        self.assertEqual([l.split()[0] for l in out.splitlines()], ["ok"])
+
     def test_i_republish_after_a_sidecar_edit_installs_nothing(self):
         g = self.guest("q1", state=False)
         self.assertEqual(self.run_vs("publish", "q1")[0], 0, self.last_err)
@@ -543,6 +587,133 @@ class TestRefusals(StoreTest):
             rc, _, err = self.run_vs("publish", "g1")
         self.assertEqual(rc, 4)
         self.assertIn("floor", err)
+
+    def test_floor_by_default_even_where_reflink_works(self):
+        """The default (VM_STORE_FLOOR_REFLINK unset) counts every byte, reflink or not."""
+        self.guest("g1")
+        calls = []
+
+        def copy(src, dst, how):
+            calls.append(how)
+            shutil.copyfile(src, dst)
+            return "plain"
+        with mock.patch.object(vs, "reflink_ok", return_value=True), mock.patch.object(vs, "copy_file", copy), \
+                mock.patch.dict(os.environ, {"VM_STORE_FLOOR": "1000000G"}):
+            rc, _, err = self.run_vs("publish", "g1")
+            self.assertEqual(rc, 4, err)
+            self.assertIn("below the floor of", err)
+            self.assertNotIn("reflinked", err)
+            rc, _, err = self.run_vs("publish", "g1", "--dry-run")
+            self.assertEqual(rc, 4, err)
+        self.assertEqual(calls, [])
+        self.assert_nothing_stored()
+        with mock.patch.object(vs, "reflink_ok", return_value=True), mock.patch.object(vs, "copy_file", copy):
+            rc, _, err = self.run_vs("publish", "g1")       # floor 0: copied the way it always was
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(calls, ["auto"])
+
+    def test_floor_reflink_takes_0_or_1(self):
+        self.guest("g1")
+        with mock.patch.dict(os.environ, {"VM_STORE_FLOOR_REFLINK": "yes"}):
+            rc, _, err = self.run_vs("publish", "g1")
+        self.assertEqual(rc, 2, err)
+        self.assertIn("VM_STORE_FLOOR_REFLINK", err)
+
+
+class TestReflinkFloor(StoreTest):
+    """Section 2.4's floor, opted in with VM_STORE_FLOOR_REFLINK=1: it counts what the
+    copies write now, nothing for a reflink."""
+
+    def setUp(self):
+        super().setUp()
+        p = mock.patch.dict(os.environ, {"VM_STORE_FLOOR_REFLINK": "1"})
+        p.start()
+        self.addCleanup(p.stop)
+
+    def fake_copy(self, reflink_works=True):
+        calls = []
+
+        def copy(src, dst, how):
+            calls.append(how)
+            if how == "reflink":
+                if not reflink_works:
+                    raise vs.ReflinkFailed(f"cp --reflink=always {src}: not supported")
+                shutil.copyfile(src, dst)
+                return "reflink"
+            shutil.copyfile(src, dst)
+            return "plain"
+        return copy, calls
+
+    def test_reflink_needs_no_room_even_below_the_floor(self):
+        self.guest("g1")
+        copy, calls = self.fake_copy()
+        with mock.patch.object(vs, "reflink_ok", return_value=True), mock.patch.object(vs, "copy_file", copy), \
+                mock.patch.dict(os.environ, {"VM_STORE_FLOOR": "1000000G"}):
+            rc, out, err = self.run_vs("publish", "g1")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("below the floor", err)
+        self.assertEqual(calls, ["reflink"])
+        self.assertEqual(self.manifest(self.mirror, "g1")["publisher"]["copy"], "reflink")
+
+    def test_dry_run_reports_no_new_bytes(self):
+        self.guest("g1")
+        with mock.patch.object(vs, "reflink_ok", return_value=True), \
+                mock.patch.dict(os.environ, {"VM_STORE_FLOOR": "1000000G"}):
+            rc, _, err = self.run_vs("publish", "g1", "--dry-run")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("0.00 GiB new, reflinked", err)
+
+    def test_failed_reflink_is_checked_again_as_a_copy(self):
+        self.guest("g1")
+        copy, calls = self.fake_copy(reflink_works=False)
+        with mock.patch.object(vs, "reflink_ok", return_value=True), mock.patch.object(vs, "copy_file", copy), \
+                mock.patch.dict(os.environ, {"VM_STORE_FLOOR": "1000000G"}):
+            rc, _, err = self.run_vs("publish", "g1")
+        self.assertEqual(rc, 4, err)
+        self.assertEqual(calls, ["reflink"])                  # refused before any plain copy
+        self.assertEqual(vs.Store(self.mirror, vs.Config()).object_names(), [])
+        self.assertEqual(os.listdir(self.mirror / "objects" / ".incoming"), [])
+        with mock.patch.object(vs, "reflink_ok", return_value=True), mock.patch.object(vs, "copy_file", copy):
+            rc, _, err = self.run_vs("publish", "g1")       # floor 0: the copy goes ahead
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(calls[-2:], ["reflink", "plain"])
+        self.assertEqual(self.manifest(self.mirror, "g1")["publisher"]["copy"], "plain")
+
+    def test_copy_plain_or_no_reflink_counts_every_byte(self):
+        self.guest("g1")
+        for env, ok in (({"VM_STORE_COPY": "plain"}, True), ({}, False)):
+            with mock.patch.object(vs, "reflink_ok", return_value=ok), \
+                    mock.patch.dict(os.environ, dict(env, VM_STORE_FLOOR="1000000G")):
+                rc, _, err = self.run_vs("publish", "g1")
+            self.assertEqual(rc, 4, (env, err))
+
+    def test_reflink_ok_without_gnu_cp_or_across_file_systems(self):
+        self.guest("g1")
+        store = vs.Store(self.mirror, vs.Config())
+        with mock.patch.object(vs, "gnu", return_value=False):
+            self.assertFalse(vs.reflink_ok(self.vms / "g1" / "g1.qcow2", store.incoming))
+        src = self.vms / "g1" / "g1.qcow2"
+        cp = self.bin / "cp"                                 # a GNU cp whose --reflink=always works, or not
+        for works in (True, False):
+            cp.write_text("#!/bin/sh\n" + ("exec /bin/cp \"$3\" \"$4\"\n" if works else "exit 1\n"))
+            cp.chmod(0o755)
+            with mock.patch.object(vs, "gnu", return_value=True), mock.patch.dict(vs._REFLINK, clear=True):
+                self.assertEqual(vs.reflink_ok(src, store.incoming), works)
+                self.assertFalse(vs.reflink_ok(self.vms / "g1" / "nothing.qcow2", store.incoming))
+                real_stat = os.stat
+                with mock.patch.object(vs.os, "stat", lambda p, *a, **k: os.stat_result(
+                        (0,) * 2 + (12345 if str(p) == str(src) else real_stat(p).st_dev,) + (0,) * 7)):
+                    self.assertFalse(vs.reflink_ok(src, store.incoming))       # another file system
+            self.assertEqual([n for n in os.listdir(store.incoming) if n.startswith("probe.")], [])
+
+    def test_copy_file_reflink_never_copies(self):
+        src = self.tmp / "src"
+        src.write_bytes(b"x" * 4096)
+        dst = self.tmp / "dst"
+        with mock.patch.object(vs, "gnu", return_value=False):
+            with self.assertRaises(vs.ReflinkFailed):
+                vs.copy_file(src, dst, "reflink")
+        self.assertFalse(dst.exists())
 
 
 # --- 3: the latest rule ----------------------------------------------------------
@@ -1077,6 +1248,239 @@ class TestGc(StoreTest):
         rc, _, err = self.gc(MiB)
         self.assertEqual(rc, 4)
         self.assertIn("in use", err)
+
+
+    def link_version(self, guest, vid, objs, dangling=False):
+        """vms/GUEST -> live/GUEST/VID/GUEST, as link (or a hand-made link) leaves it."""
+        self.version(guest, vid, objs)
+        leaf = self.cache / "live" / guest / vid / guest
+        if not dangling:
+            leaf.mkdir(parents=True)
+            (leaf.parent / "objects").symlink_to("../../../objects")
+            for i, o in enumerate(objs):
+                (leaf / f"d{i}.qcow2").symlink_to(f"../objects/{o}")
+        (self.vms / guest).symlink_to(leaf)
+        return leaf
+
+    def test_rule_f_keeps_what_vms_links_to(self):
+        a, b, c, d = self.obj(100), self.obj(100), self.obj(100), self.obj(100)
+        leaf = self.link_version("lk", "g" + "3" * 16, [a, b])
+        (self.vms / "full").mkdir()                          # a real folder with a disk linked by hand
+        (self.vms / "full" / "full.qcow2").symlink_to(self.cache / "objects" / c)
+        e = self.obj(100)
+        sub = self.link_version("sv", "g" + "6" * 16, [e])
+        (self.vms / "sv").unlink()
+        (self.vms / "full" / "sub").symlink_to(sub)           # a folder linked inside a real one
+        rc, plan, err = self.gc(0)
+        self.assertEqual(rc, 4, err)
+        self.assertEqual(self.left(), {a, b, c, e})
+        why, _ = vs.in_use(vs.Config(), self.store)
+        self.assertEqual(why[a], f"linked from {self.vms / 'lk'}")
+        self.assertEqual(why[c], f"linked from {self.vms / 'full' / 'full.qcow2'}")
+        self.assertTrue(leaf.is_dir())
+        self.assertNotIn(d, self.left())
+        # Linked elsewhere (link re-pointed it): the old version goes like any other.
+        (self.vms / "lk").unlink()
+        (self.vms / "full" / "full.qcow2").unlink()
+        (self.vms / "full" / "sub").unlink()
+        rc, plan, err = self.gc(0)
+        self.assertEqual(rc, 0, err)
+        self.assertEqual(self.left(), set())
+        self.assertFalse(leaf.parent.exists())
+
+    @unittest.skipIf(IS_ROOT, "root reads every directory")
+    def test_unreadable_vms_dir_raises_the_age(self):
+        """A link in a vms/G dir gc can't read (a sudo compare.py's 0700 one): rule d."""
+        two_days, ten_days = self.obj(48), self.obj(240)
+        (self.vms / "full").mkdir()
+        for mode in (0, 0o400):                              # unlistable, then listed but not searchable
+            hidden = self.vms / "full" / "root-0700"
+            hidden.mkdir()
+            (hidden / "full.qcow2").symlink_to(self.cache / "objects" / two_days)
+            hidden.chmod(mode)
+            rc, plan, err = self.gc(0)
+            self.assertEqual(rc, 4, (mode, err))
+            self.assertIn("can't read", err)
+            self.assertIn(f"can't read {hidden}", err)
+            self.assertEqual(self.left(), {two_days}, mode)  # kept by the 7-day age
+            why, blind = vs.in_use(vs.Config(), self.store)
+            self.assertIn("7-day age", why[two_days])
+            hidden.chmod(0o755)
+            why, blind = vs.in_use(vs.Config(), self.store)  # readable: kept by rule f
+            self.assertEqual((why[two_days], blind), (f"linked from {hidden / 'full.qcow2'}", []))
+            shutil.rmtree(hidden)
+        self.assertNotIn(ten_days, self.left())
+        self.vms.chmod(0)                                    # vms/ itself
+        _, blind = vs.in_use(vs.Config(), self.store)
+        self.assertEqual(blind, [str(self.vms)])
+        self.vms.chmod(0o755)
+
+    def test_linked_live_dir_is_never_removed(self):
+        a, b = self.obj(100), self.obj(100)
+        leaf = self.link_version("lk", "g" + "4" * 16, [a, b])
+        (self.cache / "objects" / b).unlink()                 # half evicted before rule f existed
+        rc, plan, err = self.gc(10 ** 12)
+        self.assertEqual(rc, 0, err)
+        self.assertTrue(leaf.is_dir())                       # vms/lk doesn't dangle
+        self.assertEqual(self.left(), {a})
+        dl = self.obj(100)
+        self.link_version("gone", "g" + "5" * 16, [dl], dangling=True)
+        rc, plan, err = self.gc(0)
+        self.assertEqual(self.left(), {a, dl}, err)
+        why, _ = vs.in_use(vs.Config(), self.store)
+        self.assertEqual(why[dl], f"linked from {self.vms / 'gone'}")
+
+
+# --- 7b: link --------------------------------------------------------------------
+
+class TestLink(StoreTest):
+    """vm-store link on a cache host: its own BKO_WORK, whose vms/ holds links only."""
+
+    def setUp(self):
+        super().setUp()
+        self.init_cache()
+        self.cwork = self.tmp / "cwork"
+        self.cvms = self.cwork / "vms"
+        self.cvms.mkdir(parents=True)
+
+    def link(self, *argv, root=None):
+        with mock.patch.dict(os.environ, {"BKO_WORK": str(self.cwork)}):
+            return self.run_vs("link", *argv, root=root or self.cache)
+
+    def update(self, name, updates):
+        g = self.vms / name
+        (g / f"{name}.qcow2").unlink()
+        make_disk(g / f"{name}.qcow2", 900 + updates)
+        write_state(g, [f"{name}.qcow2"], updates=updates)
+        rc, out, err = self.run_vs("publish", name)
+        self.assertEqual(rc, 0, err)
+        return out.split()[1]
+
+    def test_link_and_relink(self):
+        self.guest("g1")
+        _, out, _ = self.run_vs("publish", "g1")
+        v1 = out.split()[1]
+        rc, out, err = self.link("g1")
+        self.assertEqual((rc, out), (0, f"g1 {v1}\n"), err)
+        p = self.cvms / "g1"
+        self.assertTrue(p.is_symlink())
+        self.assertEqual(os.readlink(p), str(self.cache / "live" / "g1" / v1 / "g1"))
+        self.assertEqual(json.loads((p / ".vm-store.json").read_text())["version"], v1)
+        self.assertEqual(sha(p / "g1.qcow2"), sha(self.vms / "g1" / "g1.qcow2"))
+        # Up to date: nothing changes, not even the link's inode.
+        ino = os.lstat(p).st_ino
+        self.assertEqual(self.link("g1")[:2], (0, f"g1 {v1}\n"))
+        self.assertEqual(os.lstat(p).st_ino, ino)
+        # A new version on the mirror: --all re-points every link of ours.
+        v2 = self.update("g1", 1)
+        rc, out, err = self.link("--all")
+        self.assertEqual((rc, out), (0, f"g1 {v2}\n"), err)
+        self.assertEqual(os.readlink(p), str(self.cache / "live" / "g1" / v2 / "g1"))
+        self.assertIn(f"(was {v1})", err)
+        self.assertEqual([n for n in os.listdir(self.cvms) if n.startswith(".")], [])
+        # An explicit version (a rollback) too.
+        rc, out, err = self.link(f"g1@{v1}")
+        self.assertEqual((rc, os.readlink(p)), (0, str(self.cache / "live" / "g1" / v1 / "g1")), err)
+
+    def test_gc_keeps_the_linked_version_only(self):
+        self.guest("g1")
+        self.run_vs("publish", "g1")
+        self.assertEqual(self.link("g1")[0], 0, self.last_err)
+        v2 = self.update("g1", 1)
+        self.assertEqual(self.link("g1")[0], 0, self.last_err)
+        for o in os.listdir(self.cache / "used"):          # all long unused
+            t = time.time() - 30 * 86400
+            os.utime(self.cache / "used" / o, (t, t))
+        with mock.patch.dict(os.environ, {"BKO_WORK": str(self.cwork), "VM_STORE_CAP": "0"}):
+            rc, out, err = self.run_vs("gc", root=self.cache)
+        self.assertEqual(rc, 4, err)                        # what is linked can't go
+        # ...and only that: v1 shares its sidecar objects with v2, yet its disk went (rule f after e).
+        m = self.manifest(self.cache, "g1", v2)
+        self.assertEqual(set(vs.Store(self.cache, vs.Config()).object_names()), set(vs.manifest_objects(m)))
+        self.assertTrue((self.cvms / "g1" / "g1.qcow2").is_file())
+
+    def test_hand_made_and_dangling_links_are_replaced(self):
+        self.guest("g1")
+        _, out, _ = self.run_vs("publish", "g1")
+        v1 = out.split()[1]
+        dead = subprocess.run([sys.executable, "-c", "import os; print(os.getpid())"], capture_output=True,
+                              text=True).stdout.strip()
+        stale = self.cvms / f".g1.vm-store-link.{dead}"     # a killed link's temp link
+        stale.symlink_to(self.cache / "live" / "g1" / v1 / "g1")
+        (self.cvms / "g1").symlink_to(self.cache / "live" / "g1" / ("g" + "0" * 16) / "g1")   # a VID long gone
+        self.assertEqual(self.link("--all"), (0, f"g1 {v1}\n", self.last_err))
+        self.assertTrue((self.cvms / "g1" / "g1.qcow2").is_file())
+        self.assertFalse(os.path.lexists(stale))
+
+    def test_refusals(self):
+        self.guest("g1")
+        self.guest("g2")
+        self.run_vs("publish", "g1")
+        self.run_vs("publish", "g2")
+        (self.cvms / "g1").mkdir()                            # a full guest folder
+        (self.cvms / "g1" / "g1.qcow2").write_bytes(b"mine")
+        (self.cvms / "g2").symlink_to(self.vms / "g2")        # a link of someone else's
+        n = len(self.rsync_calls())
+        rc, out, err = self.link("g1", "g2")
+        self.assertEqual((rc, out), (1, ""), err)
+        self.assertIn("not a link", err)
+        self.assertIn("remove it by hand", err)
+        self.assertEqual((self.cvms / "g1" / "g1.qcow2").read_bytes(), b"mine")
+        self.assertEqual(os.readlink(self.cvms / "g2"), str(self.vms / "g2"))
+        self.assertEqual(len(self.rsync_calls()), n)          # refused before fetching anything
+        self.assertEqual(self.link("--all")[:2], (0, ""))     # neither is one of ours
+        self.assertEqual(self.link()[0], 2)
+        self.assertEqual(self.link("g1", "--all")[0], 2)
+        rc, _, err = self.link("g1", root=self.mirror)
+        self.assertEqual(rc, 1)
+        self.assertIn("runs on a cache", err)
+
+    def test_refused_while_a_vm_of_it_runs(self):
+        self.guest("g1")
+        self.run_vs("publish", "g1")
+        self.assertEqual(self.link("g1")[0], 0, self.last_err)
+        p = self.cvms / "g1"
+        old = os.readlink(p)
+        v2 = self.update("g1", 1)
+        release = self.hold(os.path.realpath(p / "g1.qcow2"), 100)   # vm-run --ram on the old version
+        rc, out, err = self.link("g1")
+        self.assertEqual((rc, out), (3, ""), err)
+        self.assertIn("a QEMU program has g1.qcow2 open", err)
+        self.assertEqual(os.readlink(p), old)
+        self.assertTrue((self.cache / "live" / "g1" / v2 / "g1").is_dir())   # fetched all the same
+        release()
+        self.assertEqual(self.link("g1")[:2], (0, f"g1 {v2}\n"), self.last_err)
+
+    def test_refused_while_a_comparison_of_it_runs(self):
+        self.guest("g1")
+        self.run_vs("publish", "g1")
+        self.assertEqual(self.link("g1")[0], 0, self.last_err)
+        self.update("g1", 1)
+        proc = self.tmp / "proc" / "4242"
+        proc.mkdir(parents=True)
+        (proc / "cmdline").write_bytes(b"python3\0/x/testvm/compare/compare.py\0--keep\0g1\0")
+        with mock.patch.object(vs, "glob_proc", return_value=[str(proc)]):
+            rc, _, err = self.link("g1")
+        self.assertEqual(rc, 3, err)
+        self.assertIn("a comparison of g1 runs (pid 4242)", err)
+        (proc / "cmdline").write_bytes(b"python3\0/x/testvm/compare/compare.py\0g2\0")
+        with mock.patch.object(vs, "glob_proc", return_value=[str(proc)]):
+            self.assertEqual(self.link("g1")[0], 0, self.last_err)
+
+    def test_dry_run_and_offline(self):
+        self.guest("g1")
+        _, out, _ = self.run_vs("publish", "g1")
+        v1 = out.split()[1]
+        rc, out, err = self.link("g1", "--dry-run")
+        self.assertEqual((rc, out), (0, f"g1 {v1}\n"), err)
+        self.assertIn("would link it to", err)
+        self.assertFalse(os.path.lexists(self.cvms / "g1"))
+        self.assertEqual(os.listdir(self.cache / "live"), [])
+        rc, _, err = self.link("g1", "--offline")              # nothing cached yet
+        self.assertEqual(rc, 1, err)
+        self.assertFalse(os.path.lexists(self.cvms / "g1"))
+        self.assertEqual(self.link("g1")[0], 0)
+        self.assertEqual(self.link("g1", "--offline")[:2], (0, f"g1 {v1}\n"))
 
 
 # --- 8: concurrency --------------------------------------------------------------

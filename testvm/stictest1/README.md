@@ -58,6 +58,10 @@ A copy run from a worktree takes its own GUEST/ helpers, but testvm/compare,
 vm-run and cmp-run.sh still come from main's synced `~/backotter-work`,
 unless `BKO_TESTVM` names another testvm/ (below).
 
+SticTest1's split of the guests between the two big hosts, from before drive.py's
+queue, was this (drive.py places from one queue over the round's hosts, below;
+testvm/HOSTS.md has every host and what stays on the big ones):
+
 | Host | Guests |
 |---|---|
 | Chopin | nixos2605, chimera, gentoo, dragonfly6, ghostbsd26, ghostbsd26-zfs, hardenedbsd15, kinoite44, ubuntu26-zfs, ubuntu26-uefi, ubuntu26-zfsmirror, ubuntu24, debian12, devuan6, zorin18, mint22, debian13, pop24, mx25, sculpt2610 |
@@ -71,8 +75,8 @@ unless `BKO_TESTVM` names another testvm/ (below).
   `~/backotter-work/round22/bin/linux` (or freebsd, netbsd, openbsd, omnios,
   dragonfly, haiku).
 - `PORT` is a free SSH port in your own range: Chopin 2700-2799, Copland
-  2800-2899, Cage 3000-3099, Cinqcent 2900-2999 (the guest slot's range, guest-slot.sh's
-  `slot_range_here`).
+  2800-2899, Cinqcent 2900-2999, Cage 3000-3099, and Czerny 3100-3199 once enabled (the
+  host's `slot_range` in testvm/hosts.json, guest-slot.sh's `slot_range_here`).
 - `PREFIX` names your scratch: `/mnt/bko-ram/PREFIX`. Make it a plain name:
   letters, digits, `.`, `_` and `-`, starting with a letter or digit.
 
@@ -103,19 +107,26 @@ copies.
 ## Running a round
 
 `drive.py` (here, run on the Mac) runs every guest's check.sh as one round,
-from one queue for Chopin and Cinqcent: longest guest first, each started the
-moment a host has a place, a guest slot, the guest's --reserve room after
-cmp-run.sh's waiting line, our free ports (Chopin 2780-2799, Cinqcent
-2980-2999; Copland 2880-2899 and Cage 3080-3099 with `--hosts`) and Tctl at
+from one queue for the round's hosts (`--hosts`, of testvm/hosts.json's enabled
+hosts; default its default hosts, Chopin and Cinqcent): longest guest first, each
+started the moment a host has a place, a guest slot, the guest's --reserve room after
+cmp-run.sh's waiting line, our free ports (each host's `stic_ports`: Chopin 2780-2799,
+Cinqcent 2980-2999, Copland 2880-2899, Cage 3080-3099) and Tctl at
 most 90 C. A guest whose --reserve is over a host's ceiling (cmp-run.sh's
 `ceiling()`: 9.0 9.2 on the small hosts, Copland and Cage) never starts
 there; one over every host's ceiling is named TOO BIG and never starts, and
-the round ends without it. Starts are detached on the host and
+the round ends without it.  A guest never starts on a host without its image
+(`vms/GUEST/*.qcow2`, a cache host's link included: the small hosts' caches hold
+the published guests only); one that no host with its binaries has is named NOVM
+(log, summary, state.json's `novm`) and the round ends without it too.  TOO BIG
+counts only the hosts with both the guest's binaries and its image. Starts are
+detached on the host and
 watched through their exit files every 15 s; the results land in
 `~/backotter-work/stictest1/MARK/results.tsv` on the Mac. See `drive.py
 --help`.
 
-    stick/build-round.sh ROUND                          # roundROUND/bin on both hosts
+    stick/build-round.sh ROUND                          # roundROUND/bin on Chopin and Cinqcent
+    stick/build-round.sh --dist-only --dist-hosts copland,cage ROUND   # and on the small hosts
     testvm/stictest1/drive.py --dry-run --exclude haiku6 ROUND
     testvm/stictest1/drive.py --private-copy --exclude haiku6 ROUND
     testvm/stictest1/drive.py --logs-mark st1-ROUNDb --first GUEST ROUND GUEST ...   # a recheck

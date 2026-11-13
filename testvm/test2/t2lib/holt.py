@@ -8,7 +8,9 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      tests/ and *.md) names HOST_ROOT/holt-bin/CODE/, laid out as
      /bkoscratch/holttest1d/bin is (bko-holt, PLAT/bko-holt).  Each platform the
      due cells need that no test host has (any of them, not only --hosts: builds
-     aren't reproducible, R14) is built on a host of --hosts, as m, detached:
+     aren't reproducible, R14) is built on a build host of --hosts (the host
+     table's role build: chopin, cinqcent; else one holding the run's copy;
+     never a small host), as m, detached:
          build-holt.sh --reserved RUN PLAT    (from the copy; HOLT_SRC=COPY/holt)
      which reserves HOLT_RESERVE GiB of RAM disk (3, else 1.1 x the last builds'
      peak + 0.25), keeps cargo's target/ and the build guest's -snapshot file in
@@ -17,8 +19,10 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      copied to the hosts that lack it (scp, host to host; through the Mac if that
      fails) and checked by its sha256, never written over one that is there; then
      each host's CODE/SHA256SUMS, CODE/BUILD-INFO and CODE/build-PLAT.json are
-     written for the builds it holds.  ctx.options["holt_bin"] (--holt-bin DIR)
-     tests a ready set instead.
+     written for the builds it holds: on every host of --hosts, and best effort
+     on the other default hosts (ctx.options holt_ship or T2_HOLT_SHIP "known":
+     on every known host, the small ones too).  ctx.options["holt_bin"]
+     (--holt-bin DIR) tests a ready set instead.
   0. +img cells (ImgTest2's panel) run on the pinned rescue image's own binaries: no CODE
      build for them, and no fast gate when they are all there is.  The pin of their
      platforms (`t2-host tool img pin P...`) is made on each host before the image sums.
@@ -35,12 +39,14 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      /bkoscratch/holttest1d/queue/RUN/todo, canaries first, then the guests whose
      golden plan changed, then the rest, each part biggest first
      (ht1-queue.sh --order); a runner on every host from the copy, as m,
-     detached (BASEPORT 2600, MAXJOBS 3; the others with QHOST the first host),
+     detached (BASEPORT 2600, MAXJOBS the host's holt_jobs in testvm/hosts.json, 3 by
+     default; the others with QHOST the first host),
      ONLY_ELSEWHERE from the plan's per-host keys (pins, R17's UEFI rescuer, the hosts
      whose ceiling a cell's reservation fits: a cell no host fits isn't due at all), with
          HT_HOLT_BIN=HOST_ROOT/holt-bin/CODE HT_RAM=1 T2_RUN=RUN
          T2_CELLS=HOST_ROOT/runs/RUN/cells.json T2_HOST_ROOT=HOST_ROOT PYTHONDONTWRITEBYTECODE=1
-     (and HT_WORK, HT_RECORDS when the Mac's environment has them: tests).
+     (and HT_WORK, HT_RECORDS when the Mac's environment has them: tests; DISK_OVER=1 on a
+     host whose holt_disk_mode is on: a line over its RAM-disk ceiling runs on /bkoscratch).
   5. The wait: each host's queue/RUN/done, the runners' PIDs and logs.  A runner
      has ended when it reads as gone and its runner-HOST.log says queue done,
      stopped or aborted, or it reads as gone twice; an ssh that fails is never
@@ -71,6 +77,7 @@ import re
 import shlex
 import time
 
+from . import hosts as hosts_table
 from . import keys, utc_now
 from .rows_holt import backfill_row, cell_of, gv_of
 
@@ -78,7 +85,18 @@ _STAMP = re.compile(r"t2[a-z]-(\d{8}T\d{4}-[0-9a-f]{4})(?:-img)?(?:-r\d)?\Z")   
 
 QUEUE = "/bkoscratch/holttest1d/queue"
 HOLT_L = "/bkoscratch/holttest1d"
-BASEPORT, MAXJOBS = 2600, 3
+BASEPORT, MAXJOBS = 2600, 3     # MAXJOBS: a host's holt_jobs when the host table has none
+
+
+def max_jobs(host):
+    """ht1-queue.sh's MAXJOBS for HOST's runner: its holt_jobs in the host table (its row's,
+    else its class's, else MAXJOBS's 3)."""
+    return int(hosts_table.limit(host, "holt_jobs"))
+
+
+def disk_mode(host):
+    """Whether HOST's holt_disk_mode is on in the host table (ht1-queue.sh's DISK_OVER)."""
+    return hosts_table.limit(host, "holt_disk_mode") is True
 POLL_S = 20
 BUILD_TIMEOUT_S = 4 * 3600
 QUEUE_TIMEOUT_S = 16 * 3600
@@ -559,13 +577,32 @@ class Runner:
             pass
 
     def all_hosts(self):
-        """--hosts first, then the other default test hosts (plan.DEFAULT_HOSTS)."""
+        """--hosts first, then the other default test hosts (plan.DEFAULT_HOSTS); with
+        ctx.options holt_ship (or T2_HOLT_SHIP) "known", every known host (KNOWN_HOSTS: the
+        small ones too) instead: the hosts a build is looked for on and shipped to."""
         try:
             from . import plan as planmod
             every = list(getattr(planmod, "DEFAULT_HOSTS", ()) or ())
         except ImportError:
             every = []
+        if (self.opts.get("holt_ship") or os.environ.get("T2_HOLT_SHIP")) == "known":
+            from . import KNOWN_HOSTS
+            every += [h for h in KNOWN_HOSTS if h not in every]
         return self.hosts + [h for h in every if h not in self.hosts]
+
+    def build_hosts(self):
+        """Where a bko-holt build may run: the host table's build hosts (role build: chopin,
+        cinqcent, never a small M900) among --hosts, in --hosts' order; else the build hosts
+        that hold this run's copy (it builds from there).  [] when there are none."""
+        try:
+            from . import hosts as hosts_table
+            role = list(hosts_table.with_role("build"))
+        except Exception:   # noqa: BLE001 - a table that doesn't load builds nowhere (the reason says so)
+            return []
+        mine = [h for h in self.hosts if h in role]
+        if mine:
+            return mine
+        return [h for h in role if ((self.rs.copy or {}).get(h) or {}).get("path")]
 
     def started_pid(self, host, pid, pidfile, needle):
         """The PID a detached start returned, else the one its PID file holds once it runs
@@ -596,7 +633,9 @@ class Runner:
             miss = [f"{h}:{holt_rel(p)}" for h in self.hosts for p in plats
                     if not self.remote.exists(h, os.path.join(hd, holt_rel(p)))]
             return f"--holt-bin {hd} lacks {', '.join(miss)}" if miss else None
+        bh = self.build_hosts()
         every = self.all_hosts()
+        every += [h for h in bh if h not in every]   # (a build host outside --hosts holds what it builds)
         outside = [h for h in every if h not in self.hosts]
         infos = self.known_infos(hd, every)
         builds = self.state["builds"]
@@ -617,15 +656,22 @@ class Runner:
         if [p for p in todo if p in unsure]:
             return (f"can't tell whether {hd} holds {', '.join(holt_rel(p) for p in todo if p in unsure)} on "
                     f"{', '.join(self.hosts)} (ssh failed): nothing built over it")
-        # Builds not done yet: start each (round-robin over --hosts, linux on the first).
+        # Builds not done yet: start each (round-robin over the build hosts of --hosts,
+        # linux on the first; never on a host without the build role).
         order = sorted(todo, key=lambda p: (p != "linux", p))
+        start = [p for p in order if not (builds.get(p) and (builds[p].get("rc") == 0 or
+                                                              (builds[p].get("pid") and builds[p].get("rc") is None)))]
+        if start and not bh:
+            return (f"no build host (role build in testvm/hosts.json) in --hosts {', '.join(self.hosts)} to build "
+                    f"bko-holt {', '.join(start)} on, and none holds this run's copy: add one to --hosts, or give "
+                    f"--holt-bin")
         for i, p in enumerate(order):
             b = builds.get(p)
             if b and b.get("rc") == 0:
                 continue
             if b and b.get("pid") and b.get("rc") is None:
                 continue   # resume: still running (or ended: its exit file says)
-            host = self.hosts[i % len(self.hosts)]
+            host = bh[i % len(bh)]
             builds[p] = self.start_build(host, p)
             self.state.save()
         err = self.wait_builds(order)
@@ -634,7 +680,7 @@ class Runner:
         for p in order:
             b = builds[p]
             infos[p] = b["info"]
-            have[b["host"]].add(p)
+            have.setdefault(b["host"], set()).add(p)
         # Every host of --hosts gets every platform (checked by sha256).
         good = {}   # plat -> hosts whose binary is the build
         bad_out = set()
@@ -1040,6 +1086,8 @@ class Runner:
             v = os.environ.get(k)
             if v:
                 env[k] = v
+        if disk_mode(host):   # a line over this host's RAM-disk ceiling: on /bkoscratch (the plan's holt_need_here)
+            env["DISK_OVER"] = "1"
         return env
 
     def start_queue(self, qrun, pcs, cells_name):
@@ -1070,7 +1118,7 @@ class Runner:
             env = self.queue_env(h, cells_name)
             if oe.get(h):
                 env["ONLY_ELSEWHERE"] = " ".join(oe[h])
-            args = [qrun, str(BASEPORT), str(MAXJOBS)] + ([f"{self.qhost}.local"] if h != self.qhost else [])
+            args = [qrun, str(BASEPORT), str(max_jobs(h))] + ([f"{self.qhost}.local"] if h != self.qhost else [])
             cmd = ("env " + " ".join(f"{k}={hostrun.rq(v)}" for k, v in sorted(env.items())) + " "
                    + " ".join([hostrun.rq(self.tool(h, "ht1-queue.sh"))] + args))
             d = self.rs.host_run_dir(h)

@@ -232,7 +232,9 @@ bko-holt: Redox's sshd serves no logins, and Sculpt has no shell.  The
 dumps are `bko-holt dump --disk /dev/vdb`, in the Linux rescuer with the
 guest's disk attached; the backup and the file check mount the root
 filesystem on the host, from a raw throwaway copy (RedoxFS through its FUSE
-driver from `~/backotter-work/tools/redox`, so Redox runs on Cinqcent;
+driver from `~/backotter-work/tools/redox`, so Redox runs where those tools
+are: Cinqcent, Copland and Cage, not Chopin; Test2 pins it to Cinqcent,
+`classes.json` `holt.pins`;
 Sculpt's GENODE ext2 read-only); a boot is checked by logging in as root on
 Redox's serial console (`redox/console.py`), and by `sculpt-check.sh` for
 Sculpt.  The rebuild is `ht1.sh`'s, in the Linux rescuer.  It takes
@@ -273,9 +275,16 @@ RAM and ends up in `/bkoscratch/holttest1d/ht1m/mint22/` (see "Where a run
 works, and what it keeps"); for a queue of guests, see "Queues:
 ht1-queue.sh".
 
-It needs `/bkoscratch/holttest1d/bin/` with `bko-holt` and
-`f2fs-tools_*.deb` (installed in a rescuer that lacks the f2fs tools), and
-the rescuers that `make-rescuer.sh` builds (see below).  ht1.sh copies
+It needs `/bkoscratch/holttest1d/bin/` with `bko-holt` and the
+`f2fs-tools_*.deb` and `jfsutils_*.deb` (installed in a rescuer that lacks
+those tools), and the rescuers that `make-rescuer.sh` builds (see below).
+A run whose phases would use the debs (backup, rebuild) or the rescuer
+(rebuild) refuses to start without them (exit 2), saying how to get them:
+there is no fallback to the plain `vms/debian13` guest any more
+(`HT_RESCUER_IMG=~/backotter-work/vms/debian13/debian13.qcow2` asks for it);
+`+img` needs neither.  Chopin and Cinqcent have both; a new host gets them
+by the provisioning steps in testvm/HOSTS.md (Copland and Cage have
+neither yet).  ht1.sh copies
 bko-holt (or `HT_HOLT`'s) as the run starts, so its dumps and its load are
 one build's even if bin/'s is replaced while it runs; ht1-bsd.sh and
 ht1-offline.sh still take it from bin/ (or `HT_HOLT`) at each phase, so
@@ -785,6 +794,10 @@ MAXJOBS at once on this host, each under its own reservation:
     cd ~/backotter-work && setsid -f testvm/holttest1d/ht1-queue.sh r4all 2600 3 chopin.local \
       </dev/null >/bkoscratch/holttest1d/r4all-runner-cinqcent.out 2>&1              # Cinqcent
 
+Any other host of testvm/hosts.json runs a runner the same way, with the
+queue host's name (`chopin.local` here) as QHOST; it takes only the lines it
+can run ("What a host can't run", below).
+
 A runner started before its todo exists finds nothing to do and ends
 (`queue done`).  One that refuses to start (exit 2: an `HT_` setting, run
 as root, no RAM disk) says why in its `.out` file only: its log,
@@ -808,8 +821,9 @@ as root, no RAM disk) says why in its `.out` file only: its log,
   keeps its place.  Guests whose D is `BIG_GIB` (13) or more run one at a
   time per host.  `HT_RAM=0` on the runner reserves nothing and works on
   /bkoscratch.
-- **Ports.** The queue hands out 2600-2689 on both hosts, and by-hand runs
-  take 2690-2699; BASEPORT is always 2600 (the runner refuses another).  A
+- **Ports.** The queue hands out 2600-2689 on every host (below each host's
+  guest-slot range, testvm/HOSTS.md), and by-hand runs take 2690-2699;
+  BASEPORT is always 2600 (the runner refuses another).  A
   job gets the first free port from BASEPORT on, held by a lock in
   `/tmp/bko-ht1-ports/` for its life; a port another program listens on,
   or a QEMU forwards, is skipped.
@@ -839,7 +853,8 @@ as root, no RAM disk) says why in its `.out` file only: its log,
   from the run's private copy, with `HT_HOLT_BIN` its build, `HT_RAM=1`,
   `ONLY_ELSEWHERE` from the plan's pins and UEFI rescuers, and its log in
   `T2_HOST_ROOT/runs/RUN/runner-RUN.out`.  A stop rule touches `stop` on
-  both hosts, or takes one system's lines out of the todo (`todo.stopped`;
+  every host of the run, or takes one system's lines out of the todo
+  (`todo.stopped`;
   redox and sculpt2610 are systems of their own there).  Only a FAIL goes
   into `RUN-r2`: a refusal, a signal or a sweep says nothing of the guest,
   and no rerun starts after `stop`, `abort` or a stop rule.  A job whose
@@ -866,6 +881,29 @@ as root, no RAM disk) says why in its `.out` file only: its log,
   dragonfly6's on Cinqcent: give `ONLY_ELSEWHERE=dragonfly6` to Chopin's
   runner and `ONLY_ELSEWHERE=openbsd8` to Cinqcent's, or each host makes
   its own.
+- **What a host can't run.**  Before each take the runner reads the todo
+  again and leaves queued, for another host, every line this host can never
+  run: one whose D or M is over its ceiling (`cmp-run.sh --ceiling`); one
+  whose guest has no image here (`~/backotter-work/vms/GUEST/*.qcow2`; a
+  small host's cache holds the published guests only); a guest of
+  `NEEDS_ZFS` (default `classes.json` `holt.needs_host_zfs`: chimera-zfs,
+  debian13-zfs, ubuntu24, ubuntu26-zfs, ubuntu26-zfsmirror), every variant,
+  on a host without OpenZFS's `zpool`; a Linux line (not `+img`) without
+  the rescuer or bin/'s f2fs-tools and jfsutils debs; a Redox or Sculpt
+  line without the rescuer.  The runner logs that list when it changes,
+  and its start line records the ceiling, zpool, rescuer and debs.  These
+  are the checks Test2's placement makes from the host's facts
+  (testvm/HOSTS.md).  A line taken that turns out so anyway (the todo
+  changed, or cmp-run.sh refused its `--reserve` as one that can never fit
+  here) goes back on top of the todo instead of running, and never counts
+  toward the 3-quick-failures stop; such a refusal also keeps that line off
+  this host for the rest of the run.  `ht1-queue.sh --putback Q LINE HOST`
+  is that step by hand (the queue host's half): LINE goes back on top and
+  its `todo.taken` row goes, unless a Test2 stop took the guest's lines out
+  (`@STOPPED`).  The skip list the runner hands `--pop` holds
+  `ONLY_ELSEWHERE`'s guests as bare names (every line of the guest) and
+  these lines as `=LINE` (that line only; a missing image skips the whole
+  guest).  `NEEDS_ZFS` (space-separated) replaces the class table's list.
 
 ## Debugging bko-holt: ht1-debug.sh
 

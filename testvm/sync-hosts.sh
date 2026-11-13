@@ -7,10 +7,11 @@
 #
 # Usage: sync-hosts.sh [--delete] [--dry-run] [HOST ...]
 #
-# HOST is an ssh destination, [USER@]NAME; the default is m@chopin.local,
-# m@cinqcent.local, m@copland.local and m@cage.local (every KVM test host:
-# this copies code only, so copland and cage get it before they are default
-# hosts elsewhere).  Copied with rsync -rlp --checksum: what differs in
+# HOST is an ssh destination, [USER@]NAME; the default is every enabled
+# host's ssh in testvm/hosts.json: m@chopin.local, m@cinqcent.local,
+# m@copland.local and m@cage.local (every KVM test host: this copies code
+# only, so copland and cage get it before they are default hosts elsewhere).
+# Copied with rsync -rlp --checksum: what differs in
 # content is copied and gets the time of the copy, and nothing goes by file
 # times (never -t: Chopin's clock once ran two hours fast, which made rsync's
 # time check skip changed files).  Files there that the repository doesn't
@@ -39,9 +40,15 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
-hosts=("$@")
-[[ $# -gt 0 ]] || hosts=(m@chopin.local m@cinqcent.local m@copland.local m@cage.local)
 [[ -d $repo/testvm && -d $repo/stick ]] || die "$repo has no testvm/ and stick/"
+hosts=("$@")
+if [[ $# -eq 0 ]]; then
+    # shellcheck source=hosts.sh
+    . "$repo/testvm/hosts.sh"
+    list=$(hosts_names --field ssh) && [[ -n $list ]] || die "no hosts from testvm/hosts.json"
+    # shellcheck disable=SC2206  # ssh destinations: no spaces
+    hosts=($list)
+fi
 
 # The commit each copy is of, for what on the hosts names it (make-img*.sh's
 # dev.DATE.COMMIT image names), with .dirty when the directory has

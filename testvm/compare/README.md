@@ -72,21 +72,27 @@ aren't those commits or don't agree with each other, and without `OLD_BIN`
 and ports (`PORT_BASE` + 10-19): Chopin zfsguests, dragonfly; Cinqcent
 freebsd, netbsd, openbsd_illumos (where their rustic-bko is built), at most
 three guests there (`MAX_GUESTS`), in slots its builds take too, counting
-every other QEMU of ours on 2900-2999.  linux and sparse are both hosts',
+every other QEMU of ours on 2900-2999.  linux and sparse are both big hosts',
 each with its share of the file systems: Chopin fs_roundtrip.py on zfs,
 zfs onto ext4, bcachefs (only Chopin has its tools), xfs, btrfs and
 nonroot-rt.sh linux, sparse-rt.sh on xfs and btrfs; Cinqcent
 fs_roundtrip.py on ext4, f2fs, tmpfs, jfs, sparse-rt.sh on zfs, zfs-nocomp
 and ext4 (`LINUX_FS`, `SPARSE_FS` change them; `all`, or `ANY_HOST=1`,
-runs every one).  Copland and Cage, not round hosts yet (no ZFS, no guests),
-run linux and sparse only: fs_roundtrip.py on ext4, xfs, btrfs, f2fs, tmpfs
-and jfs, sparse-rt.sh on ext4, xfs and btrfs, ports from 2800 (Copland) and
-3000 (Cage), at most three guests counted on 2800-2899 and 3000-3099 like
-Cinqcent's.  They are small hosts (a 10 GiB RAM disk: cmp-run.sh's ceiling
-9.0 9.2), so one fs_roundtrip.py and one sparse-rt.sh run at a time there
+runs every one).  The host is looked up in testvm/hosts.json (`--host`, else
+`hostname -s`; an unknown host stops it): a big host has its own profile, as
+above, and a small host (Copland, Cage; Czerny once enabled) the small
+profile.  The small hosts have no host ZFS, and their `vms/` is only the
+published guests a vm-store cache links, so they run no guest platform:
+linux and sparse only, fs_roundtrip.py on ext4, xfs, btrfs, f2fs, tmpfs
+and jfs, sparse-rt.sh on ext4, xfs and btrfs, ports from the first of the
+host's `slot_range` (2800 Copland, 3000 Cage, 3100 Czerny), at most three
+guests counted on that range like Cinqcent's.  That profile duplicates part
+of the big hosts' file systems.  With a 10 GiB RAM disk (cmp-run.sh's
+ceiling, which `cmp-run.sh --ceiling` prints, is 9.0 9.2), one
+fs_roundtrip.py and one sparse-rt.sh run at a time there
 (`JOBS_CAP` 1): two fs_roundtrip.py peak at 12.2 GiB in RAM, one at about 6.1.
 A file system or step that can't run is a FAIL unless `ALLOW_SKIP` names it.  A fix round runs only what its
-fixes touch, on both hosts (each skips the other's platforms); affected.sh
+fixes touch, on each round host (each skips the others' platforms); affected.sh
 runs on the Mac, where the forks' histories are:
 
     P=$(testvm/compare/affected.sh --restic OLD..NEW --rustic-core OLD..NEW --rustic OLD..NEW)
@@ -99,15 +105,22 @@ runs on the Mac, where the forks' histories are:
 
 `stick/build-round.sh ROUND`, run on the Mac, builds a whole round with no
 agent: it checks that `~/git/restic`, `rustic_core` and `rustic` are clean,
-takes their HEADs and source digests, syncs them to `roundROUND/src` on both
-hosts and runs both shares below at once (Chopin: restic-bko for the six
+takes their HEADs and source digests, syncs them to `roundROUND/src` on the
+two build hosts (testvm/hosts.json's build role) and runs both shares below
+at once (Chopin: restic-bko for the six
 OSes, rustic-bko for Linux, DragonFly and Haiku; Cinqcent: the four native
 builds, two guests at a time).  A host builds nothing from a copy whose digests
-aren't the Mac's.  Both hosts end with the whole `roundROUND/bin` (illumos'
+aren't the Mac's.  Both build hosts end with the whole `roundROUND/bin` (illumos'
 also as `omnios`) and the same `SHA256SUMS`; it ends with a table, per
 binary: built, reused or FAILED, seconds, SHA-256 (logs in
 `roundROUND/logs/`).  It lives in `stick/` with the build scripts it drives;
 `--only`, `--hosts`, `--dry-run` and the variables are in its header.
+`--dist-hosts H,H|all` also copies the built round, whole, to hosts that
+build nothing (copland, cage; `all`: every enabled host `--hosts` doesn't
+name), checked there with `sha256sum -c` and against the source's
+`SHA256SUMS`; `--dist-only` copies a round built before.  The default is
+none.  The shared sets (bko-bin, cmp-bin, holt-bin) go to the hosts with
+`testvm/promote-bins.sh` (testvm/HOSTS.md).
 
     stick/build-round.sh 10                    # host builds release, guest builds FAST
     BKO_PROFILE=fast stick/build-round.sh 10b  # a fix round: no fat LTO on the host either
@@ -124,14 +137,17 @@ is for fix rounds: the last round of a batch is built release.
 ## On the hosts
 
 The hosts run these scripts from `~/backotter-work` (`BKO_WORK`), with the
-guests in `~/backotter-work/vms`.  `testvm/sync-hosts.sh`, run from the
-checkout, copies `testvm/` and `stick/` there on every host, so that both run
+guests in `~/backotter-work/vms` (on the small hosts, links into the
+vm-store cache: testvm/store/README.md).  The hosts, their ranges and
+roles are testvm/hosts.json's (testvm/HOSTS.md).  `testvm/sync-hosts.sh`,
+run from the checkout (main's, never a worktree's), copies `testvm/` and
+`stick/` there on every enabled host of testvm/hosts.json, so that all run
 the same scripts; the local restic, rustic and rustic_core trees go across
 the same way, for `SRC=` (without .git, `rustic-commit` names the commits
 "unknown" unless `RUSTIC_COMMIT` and `RUSTIC_CORE_COMMIT` give them):
 
-    testvm/sync-hosts.sh                  # chopin.local and cinqcent.local
-    for h in chopin.local cinqcent.local; do
+    testvm/sync-hosts.sh                  # every enabled host: chopin, cinqcent, copland, cage
+    for h in chopin.local cinqcent.local; do     # the build hosts
         rsync -rlp --checksum --exclude target --exclude .git \
             ~/git/restic ~/git/rustic ~/git/rustic_core m@$h:backotter-work/src/
     done
@@ -160,8 +176,9 @@ copy without .git).  Its source digest must match
 or the copy the build used was stale: round 7's Linux restic-bko was built
 from a copy synced before the commit it was meant to test.
 
-Build and test work is split between the two hosts (each takes a share of
-the slow steps, native guest builds and round trips):
+Build and test work is split between the two big hosts (each takes a share of
+the slow steps, native guest builds and round trips; the small hosts take
+linux and sparse only, above):
 
 | Chopin | Cinqcent |
 |---|---|
@@ -170,9 +187,10 @@ the slow steps, native guest builds and round trips):
 | `fs_roundtrip.py` on zfs, zfs onto ext4, bcachefs, xfs, btrfs; `nonroot-rt.sh linux`; `sparse-rt.sh` on xfs, btrfs (as root) | `fs_roundtrip.py` on ext4, f2fs, tmpfs, jfs; `sparse-rt.sh` on zfs, zfs-nocomp, ext4 (as root) |
 | round trips and `nonroot-rt.sh` on dragonfly6; `zfs-guest-rt.sh`; `compare.py` | `sparse-rt.sh` in freebsd15, freebsd15-ufs, netbsd11's build image, omnios58 |
 
-`stick/build-round.sh` leaves the whole set of binaries on both hosts.
-Bring the logs back to one place for the audit.  Both
-hosts are shared with other work: give every guest a port of its own, and
+`stick/build-round.sh` leaves the whole set of binaries on both build hosts
+(and on `--dist-hosts`).
+Bring the logs back to one place for the audit.  Every
+host is shared with other work: give every guest a port of its own, and
 keep off the ports others use (2400 is the long-lived freebsd15-builder's;
 the image builds use 24xx).  The scripts' default ports are 2710-2713 for
 the round trips (Chopin's share; 2713 is `zfs-guest-rt.sh`'s) and 2901-2904 for the native builds

@@ -84,7 +84,7 @@ A canary shows whether a stream has updates. If it does, each member still runs 
 
 **Purpose.** Catch everything a guest isn't needed for, minutes after a commit.
 
-**Trigger.** "HostTest2" runs everything that needs no guest, on both hosts, in /mnt/bko-ram. It also runs first inside every test below.
+**Trigger.** "HostTest2" runs everything that needs no guest, on each of the run's hosts (testvm/hosts.json; default chopin and cinqcent), in /mnt/bko-ram. It also runs first inside every test below.
 
 **Steps.**
 1. holt's 243 cargo tests.
@@ -180,7 +180,7 @@ A canary shows whether a stream has updates. If it does, each member still runs 
 
 ### 2.4 GuestTest2
 
-**Purpose.** Keep each guest healthy, current and identical on both hosts, and keep the fleet complete.
+**Purpose.** Keep each guest healthy, current and identical on every host that holds it (the fleet hosts' full `vms/`, and the cache hosts' links to published versions), and keep the fleet complete.
 
 **Trigger.**
 - "GuestTest2" checks the guests whose generation, harness files (vm-update, update/*, vm-run, boot-state.sh, the guest's own options) or upstream stamp changed. Each stream's canary runs first.
@@ -229,10 +229,11 @@ A canary shows whether a stream has updates. If it does, each member still runs 
 
 ### 2.6 Test2 and Test2All
 
-**"Test2"** runs HostTest2, then whatever SticTest2, HoltTest2 and GuestTest2 select, in one queue across both hosts.
+**"Test2"** runs HostTest2, then whatever SticTest2, HoltTest2 and GuestTest2 select, in one queue across the run's hosts.
 - Everything runs as scripts. Agents only triage FAILs and new lines, and are never messaged mid-run.
-- A new host (cage, czerny, copland) joins after HostTest2 and one representative per family pass on it.
+- The hosts are the rows of `testvm/hosts.json` (testvm/HOSTS.md): chopin and cinqcent are big; copland, cage and later czerny are small. A new host (cage, copland, czerny) joins after HostTest2 and one representative per family pass on it; joining is setting its `default` there, after the provisioning steps in testvm/HOSTS.md.
 - A **small host** is one whose ceiling some cell's reservation exceeds: the ceiling is the most one `cmp-run.sh --reserve` can ever get there (cmp-run.sh's `ceiling()`, in t2's host facts; copland's and cage's are 9.0 GiB of RAM disk and 9.2 GiB of memory). A small host joins after the HostTest2 layers and one representative per family pass on it, among the cells that fit it. The cells that don't fit it are placed only on the other hosts, also after it becomes a default host; a cell that fits no host of a run is not runnable there, never queued.
+- Placement also goes by each host's capabilities in its facts (`caps`, `guests`): a cell is kept off a host that lacks a guest it boots (a cache host), host OpenZFS for a `holt.needs_host_zfs` source, or HoltTest's rescuer and debs, and the plan names why; with no host left it is not runnable. What stays on the big hosts (unpublished guests, host-ZFS sources, builds, over-ceiling cells, pins) is listed in testvm/HOSTS.md.
 
 **"Test2All"** is the weekly sweep: SticTest2All, HoltTest2All and GuestTest2All. It gives every guest its own pass and catches what rotation missed.
 - Cost: 282 + 220 + 79 ≈ **580 gm**, ~2 h overnight (est.).

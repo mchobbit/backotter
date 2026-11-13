@@ -17,7 +17,9 @@
 # Needs /bkoscratch/holttest1d/bin/ with bko-holt, f2fs-tools_*.deb and
 # jfsutils_*.deb (installed in a rescuer that lacks them), and bcachefs
 # with bcachefs-deps-*.deb (make-bcachefs-tools.sh: Debian 13 has no
-# bcachefs-tools).  rustic-bko is the shipped set's
+# bcachefs-tools), and /bkoscratch/holttest1d/rescuer/rescuer.qcow2
+# (make-rescuer.sh): a run that would use the debs or the rescuer refuses
+# to start without them (exit 2).  rustic-bko is the shipped set's
 # (~/backotter-work/bko-bin/linux/, checked against its SHA256SUMS).
 #
 #   source   dump the live guest (a throwaway overlay; the guest's own
@@ -166,11 +168,27 @@ IMG_HARNESS=""   # a harness failure's why, for the RESULT line (rows_holt: HARN
 PORT=${HT_PORT:-2690}   # by-hand runs: 2690-2699 (ht1-queue.sh hands out 2600-2689)
 export SSH_PORT=$PORT   # vm-run's guest SSH port
 RESCUER=${HT_RESCUER:-debian13}
-# The rescuer: make-rescuer.sh's debian13 copy with ZFS and every mkfs, when
-# there is one; else the debian13 guest itself.
+# The rescuer: make-rescuer.sh's debian13 copy with ZFS and every mkfs, or
+# HT_RESCUER_IMG's image (the debian13 guest's own, say).  A rebuild without
+# it refuses to start: never a quiet fallback to a rescuer with no ZFS or
+# extra mkfs, and another rescuer than the other hosts'.  So do a backup and
+# a rebuild without bin/'s f2fs-tools and jfsutils debs (the share's, for a
+# rescuer that lacks them).  +img takes neither.
 RESCUER_IMG=${HT_RESCUER_IMG:-/bkoscratch/holttest1d/rescuer/rescuer.qcow2}
-[[ -f $RESCUER_IMG ]] || RESCUER_IMG=$W/vms/$RESCUER/$RESCUER.qcow2
-if [[ $VARIANT == img ]]; then RESCUER=img-pin RESCUER_IMG=$IMG_PIN/rescuer.img; fi
+if [[ $VARIANT == img ]]; then RESCUER=img-pin RESCUER_IMG=$IMG_PIN/rescuer.img
+else
+    if [[ " ${PHASES[*]} " == *" rebuild "* && ! -f $RESCUER_IMG ]]; then
+        echo "ht1: no rescuer $RESCUER_IMG on $(hostname -s)${HT_RESCUER_IMG:+ (HT_RESCUER_IMG)}: copy it and its .sha256 from a host" \
+             "that has it, or make it (make-rescuer.sh); HT_RESCUER_IMG=$W/vms/$RESCUER/$RESCUER.qcow2 takes the plain guest" >&2
+        exit 2
+    fi
+    if [[ " ${PHASES[*]} " == *" backup "* || " ${PHASES[*]} " == *" rebuild "* ]]; then
+        for p in f2fs-tools jfsutils; do
+            compgen -G "$BIN/${p}_*.deb" >/dev/null ||
+                { echo "ht1: no $BIN/${p}_*.deb on $(hostname -s): copy bin/ from a host that has it" >&2; exit 2; }
+        done
+    fi
+fi
 SRC_MP=/mnt/ht1-src-$GV
 DST_MP=/mnt/ht1-dst-$GV
 fails=0

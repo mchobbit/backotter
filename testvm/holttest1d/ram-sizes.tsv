@@ -12,6 +12,11 @@
 # how each row was made.
 # Two or more whole passes in /bkoscratch/holttest1d/peaks.tsv (PASS, all
 # four phases, not seeded) replace a row in ram-size.sh; one never lowers it.
+# host: the host that measured the row, or class:C, a row for every host of
+# class C in testvm/hosts.json (class:small: cage, copland) that has no row of
+# its own; a host with neither gets the largest of its rows.  No class:small
+# row is measured yet: the small hosts get the big hosts' largest until their
+# own peaks.tsv has 2 passes, or a row is added from them.
 guest	variant	host	left_bytes	proposed_D_GiB	proposed_MEM_GiB	source
 aerynos	-	chopin	2660667392	4	4	chopin:/bkoscratch/holttest1d/r3all/aerynos du -s -B1 (RESULT: PASS); D: left 2.48 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1
 alpine324	-	chopin	553926656	2	4	chopin:/bkoscratch/holttest1d/r3all/alpine324 du -s -B1 (RESULT: PASS); D: left 0.52 GiB + 1.0 GiB rescuer/snapshot allowance, x1.1

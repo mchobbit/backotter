@@ -90,6 +90,9 @@ class TestManifests(unittest.TestCase):
         os.makedirs(os.path.join(tmp, "testvm", "compare"))
         os.makedirs(os.path.join(tmp, "testvm", "test2", "stic"))
         shutil.copy(os.path.join(REPO, "testvm", "stictest1", "drive.py"), os.path.join(tmp, "testvm", "stictest1"))
+        os.makedirs(os.path.join(tmp, "testvm", "test2", "t2lib"))   # drive.py's host table
+        shutil.copy(os.path.join(REPO, "testvm", "hosts.json"), os.path.join(tmp, "testvm"))
+        shutil.copy(os.path.join(REPO, "testvm", "test2", "t2lib", "hosts.py"), os.path.join(tmp, "testvm", "test2", "t2lib"))
         for p, t in dict({"testvm/stictest1/g1/check.sh": check_sh, "testvm/compare/helper.sh": "#!/bin/sh\necho\n",
                           "testvm/compare/other.sh": "#!/bin/sh\n", "testvm/vm-lib.sh": "# lib\n",
                           "testvm/test2/stic/manifests.json": json.dumps(manifest),
@@ -236,7 +239,9 @@ class TestDriveSelfTest(unittest.TestCase):
     def test_signatures_kept(self):   # P2 imports these
         import inspect
         self.assertEqual(list(inspect.signature(DRIVE.load_specs).parameters), ["guests"])
-        self.assertEqual(list(inspect.signature(DRIVE.simulate).parameters), ["guests", "spec", "est", "hosts", "cap", "first"])
+        sim = inspect.signature(DRIVE.simulate).parameters
+        self.assertEqual(list(sim)[:6], ["guests", "spec", "est", "hosts", "cap", "first"])
+        self.assertTrue(all(p.default is not p.empty for p in list(sim.values())[6:]), "later ones optional (ranks)")
         self.assertEqual(list(inspect.signature(DRIVE.readme_estimates).parameters), [])
         self.assertEqual(list(inspect.signature(DRIVE.all_guests).parameters), [])
 
@@ -482,7 +487,7 @@ class TestRowsStic(unittest.TestCase):
         skip = shutil.ignore_patterns("__pycache__", "*.pyc", "logs")
         for d in ("stictest1", "test2", "compare"):
             shutil.copytree(os.path.join(REPO, "testvm", d), os.path.join(w.work, "testvm", d), symlinks=True, ignore=skip)
-        for f in ("vm-run", "vm-lib.sh", "console-boot.py"):
+        for f in ("vm-run", "vm-lib.sh", "console-boot.py", "hosts.sh", "hosts.json"):
             shutil.copy2(os.path.join(REPO, "testvm", f), os.path.join(w.work, "testvm", f))
         ctx = Ctx(w.work, tree={"commit": "6ad28d7", "committed": True, "dirty": {}, "copy": "synced"})
         argv = ["--mark", MARK, "--guest", "debian12", "--bin", w.bin, "--checks", os.path.join(w.work, "testvm", "stictest1"),
@@ -871,12 +876,14 @@ class TestSticRun(unittest.TestCase):
             c = ledger.complete({k: v for k, v in m.items() if k != "id"}, host="mac")
             self.assertEqual(ledger.validate(c), [], m["origin"])
 
-    def test_a_pending_round_needs_both_hosts(self):
+    def test_a_pending_round_needs_a_copy_on_both_build_hosts(self):
+        """--hosts chopin: the round is still built on both build hosts (tests/test_round_dist.py
+        has the rest); without a copy on cinqcent nothing is built."""
         old = Plan([PC("stic:debian12", "due", "changed:bin", key=H64("1"))])
         old.set = {"name": "roundt2r-x", "round": "t2r-x", "dir": "~/backotter-work/roundt2r-x/bin", "pending": "restic=x"}
         env = FakeEnv({MARK: []})
         env.run = lambda *a, **k: self.fail("build-round.sh started")
-        with self.assertRaisesRegex(stic.SticError, "needs both hosts: give ROUND or drop --hosts"):
+        with self.assertRaisesRegex(stic.SticError, "no private copy on cinqcent to build the round from"):
             stic.SticRun(self.ctx, old, env).go()
 
     def test_pending_round_is_built_then_rekeyed(self):

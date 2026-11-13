@@ -128,7 +128,8 @@ class World:
         r = self.repo
         git(r, "init", "-q", "-b", "main")
         for rel in ("testvm/stictest1/drive.py", "testvm/stictest1/README.md", "testvm/compare/affected.sh",
-                    "testvm/holttest1d/ram-sizes.tsv", "testvm/test2/classes.json", "testvm/test2/estimates.tsv"):
+                    "testvm/holttest1d/ram-sizes.tsv", "testvm/test2/classes.json", "testvm/test2/estimates.tsv",
+                    "testvm/hosts.json", "testvm/test2/t2lib/hosts.py"):   # the last two: drive.py's host table
             os.makedirs(os.path.dirname(os.path.join(r, rel)), exist_ok=True)
             shutil.copy(os.path.join(WT, rel), os.path.join(r, rel))
         for g in self.stic:

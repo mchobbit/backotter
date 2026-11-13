@@ -18,10 +18,14 @@ from --work).  T2_FACTS_ROOT=DIR reads every system path (/proc, /sys, /etc,
 /var/lib/dpkg, /bkoscratch, /mnt/bko-ram) under DIR instead: a fake root for tests.
 
 Fields: host, t, versions, preflight, sets, rounds, holt_bins, guests,
-rescuers, plumbing, host_inputs, synced, copies, errors, took_s, and images when asked.
+rescuers, caps, plumbing, host_inputs, synced, copies, errors, took_s, and images when asked.
 preflight.ram.ceiling is [DISK, MEM] GiB, the most one cmp-run.sh --reserve can ever get
 here (WORK/cmp-run.sh's ceiling(), run as it is), or null: placement leaves a cell off a
-host whose ceiling its reservation exceeds (facts.ceiling reads it).
+host whose ceiling its reservation exceeds (facts.ceiling reads it).  caps is what else
+placement checks (plan.Planner.fit_capabilities): zfs, OpenZFS's zpool is installed
+(vm-mount mounts a ZFS source with it); holt_rescuer, HoltTest's rescuer/rescuer.qcow2 is
+there; holt_debs, its bin/ has the debs ht1.sh copies into the rescuer.  Old facts have no
+caps: nothing of it is checked.
 """
 
 import glob
@@ -44,6 +48,8 @@ PKGS = ("e2fsprogs", "xfsprogs", "btrfs-progs", "f2fs-tools", "jfsutils", "nilfs
         "zfsutils-linux", "attr", "acl", "mdadm", "lvm2", "cryptsetup-bin", "util-linux", "binutils",
         "fdisk", "gdisk")
 DEFAULT_PLUMBING = ("shared:cmp-run.sh", "shared:testvm/compare/iolog.sh")
+HOLT_DIR = "/bkoscratch/holttest1d"
+ZPOOL = ("/usr/sbin/zpool", "/sbin/zpool", "/usr/local/sbin/zpool", "/usr/bin/zpool", "/bin/zpool")
 HEX64 = re.compile(r"[0-9a-f]{64}\Z")
 HEX40 = re.compile(r"[0-9a-f]{40}\Z")
 
@@ -580,6 +586,21 @@ def rescuers(host_root):
     return {"images": images, "bin": binf}
 
 
+def caps():
+    """What this host can do that a cell may need (plan.Planner.fit_capabilities reads it):
+    zfs, an OpenZFS zpool where root's PATH has it (vm-mount: "this host has no OpenZFS"
+    without one), zpool its path, zfs_module whether the module is loaded; holt_rescuer,
+    HOLT_DIR/rescuer/rescuer.qcow2 is a file (ht1.sh falls back to the debian13 guest
+    without it, ht1-offline.sh fails); holt_debs, HOLT_DIR/bin has a .deb (ht1.sh copies
+    them into the rescuer)."""
+    zp = next((p for p in ZPOOL if os.path.isfile(R(p)) and os.access(R(p), os.X_OK)), None)
+    if zp is None and not ROOT:
+        zp = shutil.which("zpool")
+    return {"zfs": zp is not None, "zpool": zp, "zfs_module": os.path.isdir(R("/sys/module/zfs")),
+            "holt_rescuer": os.path.isfile(R(HOLT_DIR + "/rescuer/rescuer.qcow2")),
+            "holt_debs": bool(glob.glob(os.path.join(R(HOLT_DIR + "/bin"), "*.deb")))}
+
+
 def one_image(d, plat, host_root):
     """images/PLAT's facts, or None with no current image (no test/*.img: a build moved it away)."""
     tests = sorted(glob.glob(os.path.join(d, "test", "*.img")))
@@ -684,6 +705,7 @@ def collect(want=None, work=None, host_root=None, copy_root=None, user=None, hom
     part("holt_bins", holt_bins, host_root, want.get("holt_bin_dirs"), home)
     part("guests", guests, work, host_root, set(want["guests"]) if want.get("guests") is not None else None)
     part("rescuers", rescuers, host_root)
+    part("caps", caps)
     if want.get("images"):
         part("images", images_part, images, host_root, f["errors"])
     part("plumbing", lambda: {n: sha_file(os.path.join(work, n[len("shared:"):]))

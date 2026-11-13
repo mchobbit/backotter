@@ -7,7 +7,9 @@
 # the same file runs on the Mac and on the hosts.
 #
 # Usage, on the Mac (no Go or Rust needed):
-#   build-round.sh [--dry-run] [--hosts chopin|cinqcent|both] [--only LIST] ROUND
+#   build-round.sh [--dry-run] [--hosts both|chopin|cinqcent|chopin,cinqcent] [--only LIST]
+#                  [--dist-hosts H,H|all] ROUND
+#   build-round.sh --dist-only [--dry-run] [--hosts chopin|cinqcent] --dist-hosts H,H|all ROUND
 # On a host (the Mac part runs these over ssh):
 #   build-round.sh --host chopin|cinqcent [--dry-run] [--only LIST] ROUND
 #   build-round.sh --pull ROUND      (Chopin: fetch Cinqcent's binaries, SHA256SUMS on both)
@@ -24,6 +26,19 @@
 # (BKO_ROUNDS: ~/backotter-work), logs to roundROUND/logs/.  Chopin then
 # pushes what it built to Cinqcent, and --pull brings Cinqcent's back, so
 # both hosts end with the whole set and the same SHA256SUMS.
+#
+# Distribution.  --dist-hosts names hosts of testvm/hosts.json that build
+# nothing this round (copland, cage; all: every enabled host --hosts doesn't
+# name) to get the round too.  Once the builds pass, the Mac copies
+# roundROUND/bin whole (both build-*.files and build-*.tsv, SHA256SUMS,
+# restic-commit) from Chopin, or from the one build host --hosts names, to
+# each: host to host by rsync, else through the Mac when the source can't
+# reach it.  Then it checks the copy there with sha256sum -c and its
+# SHA256SUMS against the source's (which is checked first, on the source).
+# Nothing there is deleted.  --dist-only does only that, for a round built
+# before (the Mac's checkouts aren't looked at); --dry-run says what it would
+# copy.  The default is none: a host that builds nothing gets a round only
+# when asked (SticTest2 asks for its --hosts).
 #
 # LIST (comma-separated): restic linux dragonfly haiku (Chopin's), freebsd
 # netbsd openbsd illumos (Cinqcent's).  Chopin builds Linux, DragonFly and
@@ -71,8 +86,9 @@
 #                      (FAST=1, as the rounds have built them), release for
 #                      binaries that ship in images.
 #
-# Mac environment: BKO_GIT (~/git), CHOPIN (m@chopin.local), CINQCENT
-# (m@cinqcent.local), BKO_REMOTE_DIR (the hosts' directory with stick/ and
+# Mac environment: BKO_GIT (~/git), CHOPIN and CINQCENT (their ssh in
+# testvm/hosts.json, m@chopin.local and m@cinqcent.local; each must have the
+# role build there), BKO_REMOTE_DIR (the hosts' directory with stick/ and
 # testvm/, relative to home: backotter-work).  Passed to the hosts: BKO_ROUNDS,
 # SRC (default ROUNDDIR/src), BKO_BUILD_CACHE, BKO_PROFILE, BKO_GUEST_PROFILE,
 # BKO_REUSE, BKO_GUEST_LANES, BKO_DFLY_PORT (2701), BKO_GUEST_PORTS ("2901
@@ -111,11 +127,13 @@ tree_digest() {
     } | $SHA | cut -d' ' -f1)
 }
 
-dry=no hosts=both only="" mode=mac
+dry=no hosts=both only="" mode=mac dist="" distonly=no
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run) dry=yes ;;
         --hosts) hosts=${2:-}; shift ;;
+        --dist-hosts) dist=${2:-}; shift ;;
+        --dist-only) distonly=yes ;;
         --only) only=${2:-}; shift ;;
         --host) mode=${2:-}; shift ;;
         --pull) mode=pull ;;
@@ -124,21 +142,107 @@ while [[ $# -gt 0 ]]; do
     esac
     shift
 done
-[[ $# -eq 1 ]] || { sed -n '8,13p' "$me" >&2; exit 2; }
+[[ $# -eq 1 ]] || { sed -n '8,15p' "$me" >&2; exit 2; }
 round=$1
 [[ $round =~ ^[A-Za-z0-9._-]+$ ]] || die "bad ROUND $round"
+[[ $mode == mac || ( -z $dist && $distonly == no ) ]] || die "--dist-hosts and --dist-only are the Mac part's"
 want() { [[ -z $only || ",$only," == *",$1,"* ]]; }
 
 # --- The Mac -------------------------------------------------------------------------
 if [[ $mode == mac ]]; then
     git_dir=${BKO_GIT:-$HOME/git}
-    chopin=${CHOPIN:-m@chopin.local} cinq=${CINQCENT:-m@cinqcent.local}
+    # shellcheck source=../testvm/hosts.sh
+    . "$here/../testvm/hosts.sh"
+    chopin=${CHOPIN:-$(hosts_get chopin ssh)} && cinq=${CINQCENT:-$(hosts_get cinqcent ssh)} ||
+        die "no ssh for chopin and cinqcent from testvm/hosts.json"
     rdir=${BKO_REMOTE_DIR:-backotter-work}
     rrounds=${BKO_ROUNDS:-backotter-work}
     rsrc=${SRC:-$rrounds/round$round/src}
-    case $hosts in
-        both) hl="chopin cinqcent" ;; chopin|cinqcent) hl=$hosts ;; *) die "--hosts: chopin, cinqcent or both" ;;
-    esac
+    # --hosts: both, or chopin and/or cinqcent (comma-separated): the build split
+    # knows those two.  hl: the build hosts, in that order.
+    [[ $hosts == both ]] && hosts=chopin,cinqcent
+    hl=""
+    for h in $(echo "$hosts" | tr ',' ' '); do
+        [[ $h == chopin || $h == cinqcent ]] || die "--hosts: both, chopin, cinqcent or chopin,cinqcent"
+    done
+    for h in chopin cinqcent; do [[ ",$hosts," == *",$h,"* ]] && hl+=" $h"; done
+    hl=${hl# }
+    [[ -n $hl ]] || die "--hosts: both, chopin, cinqcent or chopin,cinqcent"
+    pair=no; [[ $hl == "chopin cinqcent" ]] && pair=yes
+    builders=" $(hosts_names --role build | tr '\n' ' ')" || die "no build hosts from testvm/hosts.json"
+    for h in $hl; do
+        [[ $builders == *" $h "* ]] || die "$h is not a build host in testvm/hosts.json (build hosts:${builders% })"
+    done
+    hostof() {  # NAME: its ssh destination (CHOPIN and CINQCENT win for those two)
+        case $1 in chopin) echo "$chopin" ;; cinqcent) echo "$cinq" ;; *) hosts_get "$1" ssh ;; esac
+    }
+    # --dist-hosts: dl, NAME=SSH pairs of the hosts that get the round's bin.
+    dl=""
+    if [[ -n $dist ]]; then
+        if [[ $dist == all ]]; then
+            dnames=$(hosts_names) || die "no hosts from testvm/hosts.json"
+        else
+            dnames=$(echo "$dist" | tr ',' ' ')
+        fi
+        for d in $dnames; do
+            if [[ " $hl " == *" $d "* ]]; then
+                [[ $dist == all ]] && continue
+                die "--dist-hosts: $d builds this round (--hosts $hosts)"
+            fi
+            ds=$(hosts_get "$d" ssh) && [[ -n $ds ]] ||
+                die "--dist-hosts: $d isn't an enabled host of testvm/hosts.json ($(hosts_phrase))"
+            [[ " $dl " == *" $d="* ]] || dl+=" $d=$ds"
+        done
+        dl=${dl# }
+        [[ -n $dl ]] || die "--dist-hosts $dist: no host to copy to"
+    fi
+    [[ $distonly == no || -n $dl ]] || die "--dist-only needs --dist-hosts"
+    src_name=${hl%% *}   # the source of the copies: Chopin, else the one build host
+    src_ssh=$(hostof "$src_name")
+    rbin=$rrounds/round$round/bin
+    dssh="ssh -o BatchMode=yes -o ConnectTimeout=8"
+    # NAME SSH WANT: roundROUND/bin from the source to NAME, then checked there
+    # (WANT: the source's SHA256SUMS).
+    dist_one() {
+        local n=$1 t=$2 want=$3 tmp ok=no got
+        # shellcheck disable=SC2029  # the paths are meant to expand here
+        ssh -o BatchMode=yes "$t" "mkdir -p $rbin" || { log "$n: FAILED: can't reach $t"; return 1; }
+        # shellcheck disable=SC2029
+        if ssh -o BatchMode=yes -o ServerAliveInterval=60 "$src_ssh" \
+            "cd && rsync -rlp --checksum -e '$dssh' $rbin/ $t:$rbin/"; then
+            ok=yes
+        else
+            log "$n: $src_name can't copy to $t: through the Mac"
+            tmp=$(mktemp -d "${TMPDIR:-/tmp}/bko-dist.XXXXXX") || return 1
+            rsync -rlp -e "$dssh" "$src_ssh:$rbin/" "$tmp/" && rsync -rlp --checksum -e "$dssh" "$tmp/" "$t:$rbin/" &&
+                ok=yes
+            rm -rf "$tmp"
+        fi
+        [[ $ok == yes ]] || { log "$n: FAILED to copy $rbin from $src_name"; return 1; }
+        # shellcheck disable=SC2029
+        got=$(ssh -o BatchMode=yes "$t" "cd $rbin && sha256sum -c --quiet --strict SHA256SUMS >&2 && cat SHA256SUMS") ||
+            { log "$n: FAILED: $t:$rbin doesn't check against its SHA256SUMS"; return 1; }
+        [[ $got == "$want" ]] || { log "$n: FAILED: $t:$rbin/SHA256SUMS isn't $src_name's"; return 1; }
+        log "$n: $rbin copied from $src_name, $(echo "$want" | wc -l | tr -d ' ') sums checked there"
+    }
+    dist_all() {  # every --dist-hosts host; status 1 when one failed
+        local p want r=0
+        if [[ $dry == yes ]]; then
+            for p in $dl; do log "${p%%=*}: would copy $rbin from $src_name and check it there by SHA256SUMS"; done
+            return 0
+        fi
+        # shellcheck disable=SC2029
+        want=$(ssh -o BatchMode=yes "$src_ssh" "cd $rbin && sha256sum -c --quiet --strict SHA256SUMS >&2 && cat SHA256SUMS") &&
+            [[ -n $want ]] || { log "FAILED: $src_name:$rbin has no SHA256SUMS that checks: copied to no host"; return 1; }
+        for p in $dl; do dist_one "${p%%=*}" "${p#*=}" "$want" || r=1; done
+        return $r
+    }
+    if [[ $distonly == yes ]]; then
+        log "round$round: copying $rbin from $src_name to$(for p in $dl; do printf ' %s' "${p%%=*}"; done)$(
+            [[ $dry == yes ]] && echo " (dry run)")"
+        dist_all
+        exit $?
+    fi
     for r in restic rustic_core rustic; do
         [[ -d $git_dir/$r/.git ]] || die "no checkout $git_dir/$r"
         [[ -z $(git -C "$git_dir/$r" status --porcelain) ]] || die "$git_dir/$r has uncommitted changes"
@@ -165,7 +269,7 @@ if [[ $mode == mac ]]; then
         echo "$out"
     }
     peer=""
-    [[ $hosts == both ]] && peer="BKO_PEER=$cinq:$rrounds/round$round/bin"
+    [[ $pair == yes ]] && peer="BKO_PEER=$cinq:$rrounds/round$round/bin"
     flags=""
     [[ $dry == yes ]] && flags+=" --dry-run"
     [[ -n $only ]] && flags+=" --only $only"
@@ -187,7 +291,7 @@ if [[ $mode == mac ]]; then
         pids+=" $!"
     done
     for p in $pids; do wait "$p" || rc=1; done
-    if [[ $hosts == both && $dry == no ]]; then
+    if [[ $pair == yes && $dry == no ]]; then
         log "bringing Cinqcent's binaries to Chopin"
         ssh -o BatchMode=yes "$chopin" "cd && env BKO_ROUNDS=$rrounds BKO_PEER=$cinq:$rrounds/round$round/bin bash $rdir/stick/build-round.sh --pull $round" || rc=1
     fi
@@ -198,6 +302,14 @@ if [[ $mode == mac ]]; then
     printf 'HOST\tBINARY\tOS\tRESULT\tSECONDS\tSHA256\tDIGEST\n%s\n' "$table"
     case $table in *FAILED*) rc=1 ;; esac
     [[ $dry == yes || -n $table ]] || rc=1
+    if [[ -n $dl ]]; then
+        echo
+        if [[ $rc == 0 ]]; then
+            dist_all || rc=1
+        else
+            log "round$round not copied to $(for p in $dl; do printf '%s ' "${p%%=*}"; done)(the build failed)"
+        fi
+    fi
     echo
     echo "For run-all.sh on both hosts (OLD_BIN: the round before's bin):"
     echo "EXPECT_RESTIC_COMMIT=$RESTIC_COMMIT EXPECT_RESTIC_DIGEST=$RESTIC_DIGEST" \

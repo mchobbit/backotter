@@ -135,8 +135,9 @@ class Hosts(unittest.TestCase):
         self.assertIn("--host chopin, cinqcent, copland or cage", r.stderr)
 
     def test_sync_hosts_and_vm_update(self):
-        sync = read("testvm", "sync-hosts.sh")
-        self.assertIn("hosts=(m@chopin.local m@cinqcent.local m@copland.local m@cage.local)", sync)
+        sync = read("testvm", "sync-hosts.sh")   # its default: every enabled host of testvm/hosts.json
+        self.assertIn("list=$(hosts_names --field ssh)", sync)
+        self.assertEqual(t2lib.hosts_table.names(), ("chopin", "cinqcent", "copland", "cage"))   # test_host_table runs it
         vmu = load("vm_update_hosts", os.path.join(TESTVM, "vm-update"))
         self.assertEqual(vmu.ALL_HOSTS, ["chopin.local", "cinqcent.local"])   # copland and cage have no guests yet
 

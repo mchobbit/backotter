@@ -22,6 +22,7 @@ import time
 from . import DEFAULT_HOSTS, HARD, canonical, gate_hosts, parse_utc, sha256_hex, utc_now
 from . import bko_git as default_bko_git
 from . import carry, copies, estimates, keys, words
+from . import hosts as hosts_table
 from . import facts as factsmod
 
 STATUSES = ("due", "current", "canary-verified", "awaiting-canaries", "soft-stale", "carried",
@@ -32,9 +33,10 @@ WATCH_ROOTS = ("testvm", "stick", "holt")
 RAM_SIZE = "testvm/holttest1d/ram-size.sh"
 # ram-size.sh's GUEST[+VARIANT] (a name it refuses would fail the whole call)
 RAM_SIZE_NAME = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]*([+](bigger|oneshot|degraded|smaller|fitbigger|nearfull|refuse|img))?\Z")
-GATE_FALLBACK = ("holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic", "bin:abi",
-                 "bin:static", "bin:version", "loop:linux@chopin", "loop:linux@cinqcent", "loop:sparse@chopin",
-                 "loop:sparse@cinqcent", "selftest")
+# The gate layers when the gate spec is missing: the per-host loops on gate_hosts() (the default hosts).
+GATE_FALLBACK = (("holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic", "bin:abi",
+                  "bin:static", "bin:version")
+                 + tuple(f"loop:{n}@{h}" for n in ("linux", "sparse") for h in gate_hosts()) + ("selftest",))
 _HEX40 = re.compile(r"\b[0-9a-f]{40}\b")
 
 
@@ -733,13 +735,16 @@ class Planner:
                 v.hosts = [pin]
             else:
                 v.hosts = list(reach)
+            self.fit_capabilities(v)
             if v.variant == "img":
-                self.place_img_panel(v)
+                if not v.why_not:
+                    self.place_img_panel(v)
             elif self.holt_uefi(v.name) and v.hosts:
                 with_u = [h for h in v.hosts if self.has_uefi_rescuer(h)]
                 if with_u:
                     if len(with_u) < len(v.hosts):
-                        v.pc.reasons_extra = [f"UEFI source: only {', '.join(with_u)} have rescuer-uefi.qcow2"]
+                        v.pc.reasons_extra = list(getattr(v.pc, "reasons_extra", None) or []) + [
+                            f"UEFI source: only {', '.join(with_u)} have rescuer-uefi.qcow2"]
                     v.hosts = with_u
                     if len(with_u) == 1:
                         v.pc.host = with_u[0]
@@ -748,10 +753,11 @@ class Planner:
                     if note not in self.notes:
                         self.notes.append(note)
             if v.hosts and not v.why_not:
-                self.fit_ceilings(v, lambda h: self.holt_need(v, h))
+                self.fit_ceilings(v, lambda h: self.holt_need_here(v, h))
         else:
             v.hosts = list(reach)
-            if self.set_name and not self.pending:
+            self.fit_capabilities(v)
+            if v.hosts and self.set_name and not self.pending:
                 spec = self.stic_spec(v.name)
                 ok = [h for h in v.hosts if self.has_bins(h, spec)]
                 if not ok and v.hosts:
@@ -789,6 +795,91 @@ class Planner:
             from . import guest as guestmod
             self.fit_ceilings(v, guestmod.reserve_for(self.ctx.ledger, v.cell, e, guestmod.run_policy(self.cls),
                                                       bool(self.w.update)))
+
+    # --- what a host can do: its guests, OpenZFS, HoltTest's rescuer and debs ---
+
+    def cell_guests(self, v):
+        """The guests a stic or holt cell boots or reads on its host: its own, its spec entry's
+        guests, and (holt) the guests its rescuer items name (freebsd15-ufs, netbsd11...)."""
+        sf = self.ctx.specs.get(v.family)
+        try:
+            e = sf.entry(v.name, v.variant) if sf is not None else {}
+        except KeyError:
+            e = {}
+        out = [e.get("guest") or v.name]
+        out += [g for g in keys._list(e.get("guests")) if isinstance(g, str)]
+        if v.family == "holt":
+            for item in keys._list(e.get("rescuer")):
+                if (not isinstance(item, str) or "{" in item or item.startswith(("@", "bin/"))
+                        or item.endswith((".qcow2", ".img", ".raw"))):
+                    continue
+                out.append(item[len("guest:"):] if item.startswith("guest:") else item)
+        return list(dict.fromkeys(out))
+
+    def needs_host_zfs(self, v):
+        """classes.json's FAMILY.needs_host_zfs: a source the host mounts with vm-mount, on ZFS."""
+        return v.name in ((self.cls.get(v.family) or {}).get("needs_host_zfs") or ())
+
+    def holt_inputs(self, v, h):
+        """What of HoltTest's host inputs (facts' caps) holt cell V needs on H: the BIOS
+        rescuer (a Linux source, but a UEFI one on a host with rescuer-uefi.qcow2; an offline
+        one) and bin/'s debs (a Linux source).  None for +img (the image is both) and the BSDs."""
+        if v.family != "holt" or v.variant == "img":
+            return []
+        sf = self.ctx.specs.get("holt")
+        try:
+            kind = (sf.entry(v.name) if sf is not None else {}).get("kind")
+        except KeyError:
+            kind = None
+        out = []
+        if kind == "offline" or (kind == "linux" and not (self.holt_uefi(v.name) and self.has_uefi_rescuer(h))):
+            out.append(("holt_rescuer", "no /bkoscratch/holttest1d/rescuer/rescuer.qcow2"))
+        if kind == "linux":
+            out.append(("holt_debs", "no debs in /bkoscratch/holttest1d/bin"))
+        return out
+
+    def fit_capabilities(self, v):
+        """Keep stic or holt cell V off each host that can't run it, by the host's facts: a host
+        that isn't a fleet host (hosts.json: an image cache) whose vms/ lacks a guest the cell
+        boots; a host whose caps say it has no OpenZFS, for a needs_host_zfs source; a host
+        whose caps lack HoltTest's rescuer or debs, for a holt cell that needs them.  With no
+        host left, V is not runnable and says why ("copland: no ubuntu26-zfs in its vms/", with
+        "(gone since facts)" when the identity step found it gone, guest._gone_since_facts);
+        else its reasons name the hosts it is kept off.  Facts with no guests part or no caps
+        (old facts) check nothing of it; a fleet host holds every guest, so one that lacks it
+        keeps the cell, whose key says the guest is missing, as before."""
+        if not v.hosts:
+            return
+        from . import guest as guestmod
+        gs, zfs = self.cell_guests(v), self.needs_host_zfs(v)
+        lack = self.__dict__.setdefault("_may_lack", {})
+        off = {}
+        for h in v.hosts:
+            f = self.ctx.facts.get(h) or {}
+            why = []
+            have = f.get("guests")
+            if h not in lack:
+                lack[h] = guestmod.may_lack_guests(h)
+            if isinstance(have, dict) and lack[h]:
+                gone = f.get("guests_gone") if isinstance(f.get("guests_gone"), dict) else {}
+                why += [f"no {g} in its vms/" + (f" ({gone[g]})" if gone.get(g) else "") for g in gs if g not in have]
+            caps = f.get("caps")
+            if isinstance(caps, dict):
+                if zfs and caps.get("zfs") is False:
+                    why.append("no host OpenZFS (vm-mount reads the ZFS source on the host)")
+                why += [w for k, w in self.holt_inputs(v, h) if caps.get(k) is False]
+            if why:
+                off[h] = why
+        if not off:
+            return
+        v.hosts = [h for h in v.hosts if h not in off]
+        each = "; ".join(f"{h}: {', '.join(w)}" for h, w in off.items())
+        if v.hosts:
+            v.pc.reasons_extra = list(getattr(v.pc, "reasons_extra", None) or []) + [f"kept off {each}"]
+            if len(v.hosts) == 1 and v.pc.host == "any":
+                v.pc.host = v.hosts[0]
+        else:
+            v.why_not = f"no host of the run can run it: {each}"
 
     # --- room: a cell's reservation against each host's ceiling ---
 
@@ -854,6 +945,19 @@ class Planner:
             cache[h].update(self.ram_sizes(h, sorted(n for n in names if n not in cache[h])))
             cache[h].setdefault(name, None)
         return cache[h][name]
+
+    def holt_need_here(self, v, h):
+        """holt_need on H as H's runner reserves it: on a host whose holt_disk_mode is on (the
+        host table), a cell over H's RAM-disk ceiling (its D) runs on /bkoscratch there
+        (ht1-queue.sh's DISK_OVER: --reserve 0 M), so only its memory is held to the ceiling.
+        Not a +img cell: ht1.sh runs +img only in the RAM disk, so its D stays held to the ceiling."""
+        n = self.holt_need(v, h)
+        if n is None or v.variant == "img" or not hosts_table.limit(h, "holt_disk_mode"):
+            return n
+        c = factsmod.ceiling(self.ctx.facts.get(h))
+        if c is not None and n[0] > c[0] + 1e-9:
+            return (0.0, n[1])
+        return n
 
     def ram_sizes(self, h, names):
         """{GUEST[+VARIANT]: (D, M)} from the checkout's ram-size.sh --host H --peaks /dev/null."""
@@ -2110,9 +2214,14 @@ class Planner:
                 have = {h: {f"{o}/{n}" for o in ("linux", "freebsd", "netbsd", "openbsd", "dragonfly", "omnios", "haiku")
                             for n in ("restic-bko", "rustic-bko")} for h in have}
             first = [c[5:] for c in self.canaries("stic")] if self.plumbing_changed else ()
+            lim = {h: hosts_table.limits(h) for h in have}
             wall, place, left = estimates.stic_wall(ctx.drive, [v.name for v in due],
                                                     {v.name: v.pc.est["wall_s"] for v in due}, have, first,
-                                                    ceils={h: factsmod.ceiling(ctx.facts.get(h)) for h in have})
+                                                    slots={h: lim[h]["stic_slots"] for h in have},
+                                                    ceils={h: factsmod.ceiling(ctx.facts.get(h)) for h in have},
+                                                    guest_slots={h: min(lim[h]["guest_slots"], ctx.drive.GUEST_SLOTS)
+                                                                 for h in have},
+                                                    ranks={h: hosts_table.class_rank(h) for h in have})
             for v in due:
                 v.pc.placed = place.get(v.name)
         elif self.fam in ("guest", "img"):
@@ -2126,7 +2235,9 @@ class Planner:
             sizes = estimates.load_ram_sizes(os.path.join(ctx.checkout, "testvm", "holttest1d", "ram-sizes.tsv"))
             jobs = [(v.cell, v.pc.est["wall_s"], sizes.get(v.cell[5:], sizes.get(v.name, 6)),
                      v.hosts or None) for v in due]
-            wall, place, left = estimates.pack(jobs, [h for h in ctx.hosts if h in ctx.facts])
+            hs = [h for h in ctx.hosts if h in ctx.facts]
+            wall, place, left = estimates.pack(jobs, hs, slots={h: hosts_table.limit(h, "holt_jobs") for h in hs},
+                                               ranks={h: hosts_table.class_rank(h) for h in hs})
             for v in due:
                 v.pc.placed = place.get(v.cell)
         else:
@@ -2278,6 +2389,17 @@ def check_classes(ctx, holt_names=None, notes=None):
     for g in list(h.get("canaries", [])) + list(h.get("pins", {})) + list(h.get("uefi", [])):
         if g not in src:
             errs.append(f"holt: {g} (canary, pin or uefi) is no source")
+    hsf_ = ctx.specs.get("holt")
+    for g in h.get("needs_host_zfs", []):
+        if g not in src:
+            errs.append(f"holt: needs_host_zfs {g} is no source")
+            continue
+        try:
+            kind = hsf_.entry(g).get("kind") if hsf_ is not None else "linux"
+        except KeyError:
+            continue
+        if kind != "linux":
+            errs.append(f"holt: needs_host_zfs {g} is a {kind} source (only ht1.sh's Linux sources are mounted on the host)")
     for pk, p in h.get("rescuer_panel", {}).items():
         for g in list(p.get("guests", [])) + list(p.get("stalest_of", [])) + list(p.get("plus", [])):
             if g not in src:

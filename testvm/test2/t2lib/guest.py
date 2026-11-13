@@ -119,16 +119,46 @@ def _json_out(text):
         return None
 
 
-def identity_compare(per_host, hashed=False):
+def may_lack_guests(host):
+    """True when HOST is a known host that isn't a fleet host (hosts.json: no "fleet" role, an
+    image cache such as copland's or cage's): its vms/ holds the guests it has fetched, so a guest
+    it lacks is neither vouched for nor condemned there.  A fleet host holds every guest, and an
+    unknown name is taken for one (as before the table had roles)."""
+    from . import hosts as hosts_table
+    try:
+        r = hosts_table.find(host)
+    except hosts_table.HostsError:
+        return False
+    return r is not None and "fleet" not in (r.get("roles") or ())
+
+
+def identity_compare(per_host, hashed=False, optional=()):
     """Step 1 on what the hosts answered ({host: tool_guest.identity_of's dict}).
     {"ok": True|False|None, "why", "rehash": [hosts]}; ok None: hash on the hosts in rehash first.
     A host marked no_answer vouches for nothing and condemns nothing: ok False, harness True.
+    A host in OPTIONAL (may_lack_guests: an image cache) that has no such guest is left out
+    while another host has it: only the hosts that hold the guest are compared, and the result's
+    "dropped" ({host: "dangles"|"gone"}) names the hosts left out so.
     A disk with a backing file fails, but for a world's thin disk over the fleet's same disk
     (contract 4), whose backing disk passes the fleet's checks, at one generation on every host."""
+    dropped = {}
+    if optional:
+        lacks = {h for h, i in per_host.items() if h in optional and (not i or i.get("missing"))}
+        if lacks and any(i and not i.get("missing") for h, i in per_host.items() if h not in lacks):
+            dropped = {h: "dangles" if (per_host[h] or {}).get("dangling") else "gone" for h in sorted(lacks)}
+            per_host = {h: i for h, i in per_host.items() if h not in lacks}
+    res = _identity_compare(per_host, hashed)
+    if dropped:
+        res["dropped"] = dropped
+    return res
+
+
+def _identity_compare(per_host, hashed):
     silent = sorted(h for h, i in per_host.items() if i and i.get("no_answer"))
     if silent:
         return {"ok": False, "harness": True, "why": ", ".join(silent) + ": no answer to the identity step", "rehash": []}
-    bad = [f"{h}: no such guest" for h, i in per_host.items() if not i or i.get("missing")]
+    bad = [f"{h}: no such guest" + (" (its vms/ link dangles)" if (i or {}).get("dangling") else "")
+           for h, i in per_host.items() if not i or i.get("missing")]
     if bad:
         return {"ok": False, "why": "; ".join(bad), "rehash": []}
     gens = {h: (i.get("image_state") or {}).get("generation") for h, i in per_host.items()}
@@ -292,15 +322,30 @@ def identity_check(ctx, guests, sha256=False, run=None, io=None, log=None):
                 io.sleep(5)
         return None
 
+    optional = {h for h in hosts if may_lack_guests(h)}
+
+    def holders(g):
+        """The hosts asked about G: all but an image cache whose facts say it hasn't G (a cache
+        that fetches it later is checked then); every host when none has it (no such guest)."""
+        def has(h):
+            gs = (ctx.facts.get(h) or {}).get("guests")
+            return not isinstance(gs, dict) or g in gs     # facts with no guests part: asked, as before
+        return [h for h in hosts if h not in optional or has(h)] or hosts
+
+    asked = {g: holders(g) for g in guests}
     for h in hosts:
-        for g, v in (ask(h, guests, sha256, sha256) or {}).items():
+        names = [g for g in guests if h in asked[g]]
+        if not names:
+            continue
+        for g, v in (ask(h, names, sha256, sha256) or {}).items():
             info.setdefault(g, {})[h] = v
     out, rid = {}, None
     for g in guests:
         per = info.get(g) or {}
-        for h in hosts:
+        for h in asked[g]:
             per.setdefault(h, {"no_answer": True})
-        res = identity_compare(per, hashed=sha256)
+        res = identity_compare(per, hashed=sha256, optional=optional)
+        dropped = dict(res.get("dropped") or {})
         if res["ok"] is None:
             for h in res["rehash"]:
                 got = (ask(h, [g], True, True) or {}).get(g)
@@ -310,8 +355,9 @@ def identity_check(ctx, guests, sha256=False, run=None, io=None, log=None):
                         _patch_stat(ctx, h, g, got.get("stat"))
                 else:
                     per[h] = {"no_answer": True}
-            only = {h: per[h] for h in res["rehash"]} if len(res["rehash"]) < len(hosts) else per
-            res = identity_compare(only, hashed=True)
+            only = {h: per[h] for h in res["rehash"]} if len(res["rehash"]) < len(per) else per
+            res = identity_compare(only, hashed=True, optional=optional)
+            dropped.update(res.get("dropped") or {})
         if res.get("harness"):
             log(f"guest:{g}: identity unknown: {res.get('why')}")
             out[g] = {"ok": False, "why": res.get("why"), "harness": True, "host": hosts[0]}
@@ -326,7 +372,32 @@ def identity_check(ctx, guests, sha256=False, run=None, io=None, log=None):
             out[g] = {"ok": False, "why": why, "row": row_id, "host": hosts[0]}
             continue
         out[g] = {"ok": True, "why": res.get("why")}
+        gone = _gone_since_facts(ctx, g, dropped)
+        if gone:
+            out[g]["lacking"] = gone
+            for h, w in sorted(gone.items()):
+                log(f"guest:{g}: {h}: no {g} in its vms/ ({w}): its stic and holt cells stay off {h}")
     return out
+
+
+GONE_WORDS = {"dangles": "its vms/ link dangles, gone since facts", "gone": "gone since facts"}
+
+
+def _gone_since_facts(ctx, g, dropped):
+    """{host: why} for each image cache DROPPED (identity_compare) whose facts said it held G: G
+    leaves that host's facts' guests (so placement, Planner.fit_capabilities, keeps G's cells off
+    it, as the host's next facts would) and its facts' "guests_gone" says why.  A cache whose
+    facts have no guests part was asked without knowing: nothing to correct."""
+    gone = {}
+    for h, how in sorted((dropped or {}).items()):
+        f = (ctx.facts or {}).get(h)
+        gs = (f or {}).get("guests")
+        if not isinstance(gs, dict) or g not in gs:
+            continue
+        gs.pop(g, None)
+        gone[h] = GONE_WORDS.get(how, GONE_WORDS["gone"])
+        f.setdefault("guests_gone", {})[g] = gone[h]
+    return gone
 
 
 def _patch_stat(ctx, host, guest, stat):
@@ -418,9 +489,10 @@ def preflight(ctx, out=print, io=None):
 
 # --- the fleet lock an update round holds ----------------------------------------------------------
 
-# What an update round runs from the synced tree, and so must be this checkout's (contract 2.1 step 1).
+# What an update round runs from the synced tree, and so must be this checkout's (contract 2.1 step 1);
+# testvm/hosts.json: vm-update's fleet.
 TREE_PATHS = ("testvm/vm-update", "testvm/update", "testvm/test2/guest",
-              "testvm/test2/t2-host", "testvm/test2/t2lib", "testvm/test2/classes.json")
+              "testvm/test2/t2-host", "testvm/test2/t2lib", "testvm/test2/classes.json", "testvm/hosts.json")
 
 
 class FleetLock:

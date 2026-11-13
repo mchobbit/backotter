@@ -13,12 +13,27 @@ testvm/ and holt/ in ~/backotter-work/bs2-wt (never the shared testvm/).
   bs2 shrink CASE [--tier N]        a failing case down to its smallest; saved in the corpus
   bs2 soak CASE N                   CASE N times at tier 1 (reported as K of N)
   bs2 sync                          copy testvm/ and holt/ to the hosts' bs2-wt
-  bs2 status RUN                    the run's verdicts so far, on both hosts
+  bs2 status RUN                    the run's verdicts so far, on each of its hosts
+
+  --hosts H,H|all (any word)        the hosts to use, of testvm/hosts.json's enabled ones
+                                    (all: every one).  Default: HOME's, chopin and
+                                    cinqcent, each source on its HOME host.  With --hosts
+                                    a source stays on its HOME host while that host has
+                                    no more than its share (sources / hosts, rounded up),
+                                    else goes to the host with the fewest so far, and
+                                    only to a host whose vms/SOURCE is there (one
+                                    read-only ls each: a cache host may lack a source)
 
 Results: each host's /bkoscratch/backshot2/runs/RUN/ and Test2's ledger
 (family bs2).  "plan" prints the cases, tiers, time and GB and runs nothing.
+bs2-host takes ports 2943-2949 on whichever host runs it (the queue's slots the
+first SLOTS of them, a tier 1 by hand 2949): keep them free on every host.
+A small host (testvm/hosts.json's class small: cmp-run.sh's ceiling 9.0 9.2) runs
+SMALL_SLOTS queue slots at --reserve 2 3, not SLOTS: three would take its whole
+ceiling.
 """
 
+import importlib.util
 import json
 import os
 import subprocess
@@ -27,25 +42,101 @@ import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-HOSTS = {"chopin": "m@chopin.local", "cinqcent": "m@cinqcent.local"}
 # Which host runs which source (split-chopin-cinqcent): two each.
 HOME = {"alpine324": "chopin", "alpine324-uefi": "chopin", "alpine324-lvm": "cinqcent", "alpine324-luks": "cinqcent"}
+
+
+def _host_table():
+    """testvm/test2/t2lib/hosts.py, the loader of the host table testvm/hosts.json, by its path."""
+    spec = importlib.util.spec_from_file_location("bs2_hosts_table", os.path.join(REPO, "testvm", "test2", "t2lib",
+                                                                                   "hosts.py"))
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+# The hosts that run a source (HOME's, in its order), by their ssh in testvm/hosts.json.
+HOSTS_TABLE = _host_table()
+HOSTS = {h: HOSTS_TABLE.ssh(h) for h in dict.fromkeys(HOME.values())}
+# The hosts of this command: HOSTS, or --hosts' (use_hosts()).
+RUN_HOSTS = dict(HOSTS)
+CHOSEN = False   # --hosts given: sources go only where vms/SOURCE is
 ALPINE = list(HOME)
 HOST_BS2 = "~/backotter-work/bs2-wt/testvm/backshot2/bs2-host"
 # Measured on 2026-11-10 (est. elsewhere): seconds per case and GB written to the SSDs.
 SECS = {0: 0.3, 1: 110, 2: 140}
 SLOTS = 3
+SMALL_SLOTS = 2
+
+
+def use_hosts(arg):
+    """--hosts H,H|all: RUN_HOSTS becomes those hosts (testvm/hosts.json's, in its order)."""
+    global RUN_HOSTS, CHOSEN
+    known = HOSTS_TABLE.known()
+    ns = list(known) if arg == "all" else [HOSTS_TABLE.short(x) for x in arg.replace(",", " ").split()]
+    bad = [n for n in ns if n not in known]
+    if bad or not ns:
+        sys.exit(f"bs2: --hosts: no such host {' '.join(bad) or '(none named)'} (of {HOSTS_TABLE.phrase(known)}, or all)")
+    RUN_HOSTS = {n: HOSTS_TABLE.ssh(n) for n in known if n in ns}
+    CHOSEN = True
+
+
+def slots(h):
+    return SMALL_SLOTS if HOSTS_TABLE.host_class(h) == "small" else SLOTS
+
+
+def held(sources):
+    """{host: set of SOURCES whose vms/SOURCE is there} over RUN_HOSTS (an ls each), or
+    None when --hosts wasn't given (HOME's hosts hold every source)."""
+    if not CHOSEN:
+        return None
+    out = {}
+    for h in RUN_HOSTS:
+        r = ssh(h, "cd ~/backotter-work/vms 2>/dev/null && for g in " + " ".join(sources) +
+                '; do [ -e "$g" ] && echo "$g"; done; true', check=False, capture=True)
+        out[h] = set(r.stdout.split()) if r.returncode == 0 else set()
+    return out
+
+
+def assign(sources, hosts=None, have=None):
+    """{source: host}: its HOME host while that host has no more than its share
+    (len(sources) / len(hosts), rounded up), else the host with the fewest sources so far
+    (hosts' order on a tie); HAVE ({host: sources there}, None: all) limits each source
+    to the hosts that have it, and the sources on the fewest hosts are placed first.  A source no host has: sys.exit.  Without --hosts (and no
+    HOSTS given): HOME's host, chopin for a source it doesn't name, as always."""
+    if hosts is None and not CHOSEN:
+        return {s: HOME.get(s, "chopin") for s in sources}
+    hosts = list(hosts or RUN_HOSTS)
+    share = -(-len(sources) // len(hosts))
+    load, out = {h: 0 for h in hosts}, {}
+    can = {s: [h for h in hosts if have is None or s in have.get(h, ())] for s in sources}
+    for s in sources:
+        if not can[s]:
+            sys.exit(f"bs2: no host of {', '.join(hosts)} has vms/{s}")
+    for n in sorted({len(c) for c in can.values()}):   # the sources on the fewest hosts first
+        group = [s for s in sources if len(can[s]) == n]
+        for s in group:   # at home, while it has room
+            h = HOME.get(s)
+            if h in can[s] and load[h] < share:
+                out[s] = h
+                load[h] += 1
+        for s in group:   # else the least loaded
+            if s not in out:
+                h = min(can[s], key=lambda x: (load[x], hosts.index(x)))
+                out[s] = h
+                load[h] += 1
+    return {s: out[s] for s in sources}
 
 
 def ssh(host, cmd, check=True, capture=False):
-    r = subprocess.run(["ssh", HOSTS[host], cmd], text=True, capture_output=capture)
+    r = subprocess.run(["ssh", RUN_HOSTS.get(host) or HOSTS_TABLE.ssh(host), cmd], text=True, capture_output=capture)
     if check and r.returncode:
         sys.exit(f"bs2: {host}: {cmd[:80]}... exit {r.returncode}{(': ' + r.stderr[-400:]) if capture else ''}")
     return r
 
 
 def sync():
-    for h in HOSTS.values():
+    for h in RUN_HOSTS.values():
         subprocess.run(["rsync", "-a", "--delete", "--exclude", "target", "--exclude", "__pycache__",
                         f"{REPO}/holt", f"{REPO}/testvm", f"{h}:backotter-work/bs2-wt/"], check=True)
 
@@ -57,23 +148,25 @@ def root(cmd):
 
 def plan_words(sources, n, tier2=30):
     rows = []
+    where = assign(sources, have=held(sources))
     for s in sources:
-        rows.append((s, HOME[s], n, n, (tier2 // 2) if s != "alpine324" and s in ("alpine324-uefi", "alpine324-lvm", "alpine324-luks") else 0))
-    total = {h: 0 for h in HOSTS}
+        rows.append((s, where[s], n, n, (tier2 // 2) if s != "alpine324" and s in ("alpine324-uefi", "alpine324-lvm", "alpine324-luks") else 0))
+    total = {h: 0 for h in RUN_HOSTS}
     print(f"{'source':18} {'host':9} {'tier0':>6} {'tier1':>6} {'tier2':>6}")
     for s, h, t0, t1, t2 in rows:
         t2 = min(t2, tier2)
         print(f"{s:18} {h:9} {t0:6} {t1:6} {t2:6}")
-        total[h] += t0 * SECS[0] + (t1 * SECS[1] + t2 * SECS[2]) / SLOTS
+        total[h] += t0 * SECS[0] + (t1 * SECS[1] + t2 * SECS[2]) / slots(h)
     for h, sec in total.items():
-        print(f"{h}: ~{sec / 3600:.1f} h est., {SLOTS} slots, in RAM: ~0 GB written to the SSDs (records only, ~5 MB a case)")
+        print(f"{h}: ~{sec / 3600:.1f} h est., {slots(h)} slots, in RAM: ~0 GB written to the SSDs (records only, ~5 MB a case)")
 
 
 def run_words(sources, n, run):
+    where = assign(sources, have=held(sources))
     sync()
     by_host = {}
     for s in sources:
-        by_host.setdefault(HOME[s], []).append(s)
+        by_host.setdefault(where[s], []).append(s)
     tier2_each = max(1, 30 // max(1, len([s for s in sources if s != "alpine324"])))
     for h, ss in by_host.items():
         cmds = []
@@ -83,7 +176,7 @@ def run_words(sources, n, run):
             if s != "alpine324":
                 cmds.append(root(f"{HOST_BS2} enqueue {s} {tier2_each} --tier 2 --run {run} --from 500000"))
         cmds.append(f"sudo chown -R m: /bkoscratch/backshot2/runs/{run}")
-        cmds.append(f"{HOST_BS2} queue {run} --slots {SLOTS}")
+        cmds.append(f"{HOST_BS2} queue {run} --slots {slots(h)}")
         script = " && ".join(cmds)
         log = f"/bkoscratch/backshot2/logs/{run}.log"
         ssh(h, f"mkdir -p /bkoscratch/backshot2/logs && setsid -f bash -c {json.dumps(script)} > {log} 2>&1 < /dev/null")
@@ -91,7 +184,7 @@ def run_words(sources, n, run):
 
 
 def status(run):
-    for h in HOSTS:
+    for h in RUN_HOSTS:
         r = ssh(h, f"cat /bkoscratch/backshot2/runs/{run}*/tier*.jsonl 2>/dev/null", check=False, capture=True)
         counts = {}
         for line in r.stdout.splitlines():
@@ -110,12 +203,15 @@ def corpus(plan, tier):
     if plan:
         print(f"{len(cases)} corpus cases at tier {tier}")
         return
+    srcs = {}
+    for f in cases:
+        with open(f"{HERE}/cases/{f}") as fh:
+            srcs[f] = json.load(fh)["source"].split("@")[0]
+    where = assign(sorted(set(srcs.values())), have=held(sorted(set(srcs.values()))))
     sync()
     by = {}
     for f in cases:
-        with open(f"{HERE}/cases/{f}") as fh:
-            src = json.load(fh)["source"].split("@")[0]
-        by.setdefault(HOME.get(src, "chopin"), []).append(f"~/backotter-work/bs2-wt/testvm/backshot2/cases/{f}")
+        by.setdefault(where[srcs[f]], []).append(f"~/backotter-work/bs2-wt/testvm/backshot2/cases/{f}")
     stamp = time.strftime("corpus-%Y%m%d-%H%M")
     for h, fs in by.items():
         if tier == 0:
@@ -127,6 +223,12 @@ def corpus(plan, tier):
 
 def main():
     a = sys.argv[1:]
+    if "--hosts" in a:
+        i = a.index("--hosts")
+        if i + 1 >= len(a):
+            sys.exit("bs2: --hosts H,H or all")
+        use_hosts(a[i + 1])
+        del a[i:i + 2]
     if not a:
         sys.exit(__doc__)
     plan = "plan" in a
@@ -160,7 +262,7 @@ def main():
         with open(path) as f:
             c = json.load(f)
         src = c["source"].split("@")[0]
-        h = HOME.get(src, "chopin")
+        h = assign([src], have=held([src]))[src]
         sync()
         rp = f"~/backotter-work/bs2-wt/testvm/backshot2/{os.path.relpath(os.path.abspath(path), HERE)}"
         stamp = time.strftime(f"{w}-%Y%m%d-%H%M")

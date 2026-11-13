@@ -15,9 +15,11 @@ makes them), it takes MAC_ROOT/runs/.lock-stic, and it writes the derived rows.
 
 The flow (2.2):
   1. The round: built when the plan's set is pending (the fork heads' round,
-     stick/build-round.sh from the copy, release profiles); then every key again
-     from the real binaries (R1 5a): the cells that turned due are added, the
-     ones that turned current dropped unless a fresh form named them.
+     stick/build-round.sh from the copy, release profiles), on the host table's
+     build hosts whatever --hosts names, then copied to the --hosts hosts that
+     build nothing (--dist-hosts, checked there by sha256); then every key again
+     from the real binaries (R1 5a): the cells that turned due are added, the ones that
+     turned current dropped unless a fresh form named them.
   1b. The image sums the plan lacks (contract 1.4: the run's preflight makes
      them): a guest without image-state (sculpt2610) keys by the content sum of
      its disks, which the copy's t2-host imgsum makes on each host (read only,
@@ -343,6 +345,14 @@ class Env:
         from . import plan as plan_mod
         return plan_mod.make(word, ctx)
 
+    def make_copy(self, checkout, hosts):
+        """The run's private copy on HOSTS too (copies.make: made there, or reused once
+        verified): {host: its path, as a host reads it}.  For the build hosts --hosts
+        doesn't name: build-round.sh runs from the copy on both."""
+        from . import copies, hostrun
+        made = copies.make(checkout, hosts, log=self.log)
+        return {h: hostrun.host_path(r.path) for h, r in made.items()}
+
     def refresh_facts(self, ctx, sets):
         from . import facts, keys
         got = facts.probe_all(ctx.hosts, keys.wants(ctx.specs, ("stic", "holt", "gate"), sets))
@@ -602,19 +612,67 @@ class SticRun:
         self.log(f"rekeyed from {why}: {len(added)} more due ({', '.join(added) or 'none'}), "
                  f"{len(dropped)} no longer ({', '.join(dropped) or 'none'})")
 
+    def build_hosts(self):
+        """The host table's build hosts (role build, in its order: chopin, cinqcent), the
+        two stick/build-round.sh splits a round's builds between."""
+        from . import hosts as hosts_table
+        try:
+            return list(hosts_table.with_role("build"))
+        except hosts_table.HostsError as e:
+            raise SticError(f"no build hosts: {e}")
+
+    def builder_copies(self, builders):
+        """The run's copy on the build hosts --hosts doesn't name (build-round.sh runs from
+        it there): made, at the same path as on --hosts' (copies are by content)."""
+        from . import hostrun
+        missing = [h for h in builders if h not in self.info["hosts"]]
+        if not missing:
+            return
+        mk = self._env("make_copy")
+        if mk is None:
+            raise SticError(f"no private copy on {', '.join(missing)} to build the round from")
+        want = hostrun.host_path(self.info["copy"]["path"])
+        try:
+            got = mk(self.ctx.checkout, missing)
+        except Exception as e:   # noqa: BLE001 - copies.CopyError, ssh: the round can't be built
+            raise SticError(f"no private copy on {', '.join(missing)} to build the round from: {e}")
+        for h in missing:
+            if hostrun.host_path((got or {}).get(h)) != want:
+                raise SticError(f"the copy on {h} is at {(got or {}).get(h)}, not {want} "
+                                "(build-round.sh takes one BKO_REMOTE_DIR)")
+        self.log(f"the copy on {', '.join(missing)} too, to build the round from: {want}")
+
     def round_step(self):
+        """Step 1: the round.  A pending set is built on the host table's build hosts
+        (chopin and cinqcent), whatever --hosts names (their copy made first when it
+        doesn't name them), and its bin is then copied to the --hosts hosts that build
+        nothing, checked there by sha256 (build-round.sh --dist-hosts).  Then every key
+        again from the facts of --hosts (R1 5a).  With --hosts chopin,cinqcent:
+        build-round.sh ROUND, as ever.  A built round is left as it is: one that a --hosts
+        host lacks never reaches here (run.py refuses the plan's missing_on first), and
+        build-round.sh --dist-only --dist-hosts H ROUND copies it there by hand."""
         st = self.plan.set or {}
         if not st.get("pending"):
             return
         name = st.get("round")
-        if sorted(self.info["hosts"]) != ["chopin", "cinqcent"]:
-            raise SticError(f"round {name} isn't built and build-round.sh needs both hosts: give ROUND or drop --hosts")
-        self.log(f"building round {name} (stick/build-round.sh from the copy, release profiles)")
+        builders = self.build_hosts()
+        if not builders:
+            raise SticError(f"round {name} isn't built and testvm/hosts.json has no build host (role build)")
+        dist = [h for h in self.info["hosts"] if h not in builders]
+        self.builder_copies(builders)
+        argv = ["bash", os.path.join(self.ctx.checkout, "stick", "build-round.sh")]
+        if builders != ["chopin", "cinqcent"]:
+            argv += ["--hosts", ",".join(builders)]
+        if dist:
+            argv += ["--dist-hosts", ",".join(dist)]
+        argv.append(name)
+        self.log(f"building round {name} on {' and '.join(builders)} (stick/build-round.sh from the copy, "
+                 f"release profiles){', then its bin to ' + ', '.join(dist) if dist else ''}")
         rel = self.info["copy"]["path"]
         rel = rel[2:] if rel.startswith("~/") else rel
         env = dict(os.environ, BKO_REMOTE_DIR=rel, BKO_PROFILE="release", BKO_GUEST_PROFILE="release",
                    PYTHONDONTWRITEBYTECODE="1")
-        r = self.env.run(["bash", os.path.join(self.ctx.checkout, "stick", "build-round.sh"), name], env=env)
+        r = self.env.run(argv, env=env)
         if r.returncode != 0:
             raise SticError(f"build-round.sh {name} failed (exit {r.returncode})")
         facts = dict(self.ctx.facts)

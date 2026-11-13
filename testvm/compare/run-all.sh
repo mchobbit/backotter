@@ -3,15 +3,15 @@
 # every platform's round trips (the scripts here) at once within the
 # host's limits, and prints a verdict table.  Agents only read the failures.
 #
-# Usage: run-all.sh [--host chopin|cinqcent|copland|cage] [--platforms LIST] [--only REGEX]
+# Usage: run-all.sh [--host HOST] [--platforms LIST] [--only REGEX]
 #                   [--dry-run] BIN_DIR LOG_DIR
 #   --host       whose platforms, ports and limits (default: this hostname)
 #   --platforms  comma- or space-separated, the other host's skipped (an
 #                empty list: nothing; default: all of the host's):
 #                  chopin:   linux sparse zfsguests dragonfly
 #                  cinqcent: linux sparse freebsd netbsd openbsd_illumos
-#                  copland:  linux sparse (no guests there yet, no ZFS)
-#                  cage:     linux sparse (as copland)
+#                  a small host (copland, cage; testvm/hosts.json's class):
+#                            linux sparse (no host ZFS); SPLIT: a share
 #                linux and sparse are every host's, each with its share of
 #                the file systems (LINUX_FS, SPARSE_FS)
 #                linux      fs_roundtrip.py on zfs ext4 xfs btrfs f2fs bcachefs
@@ -47,14 +47,14 @@
 #                0.19.1+backotter.3): checked if set.  Refuses to run on a
 #                mismatch, a missing binary, commit file or rustic_core line,
 #                or a SHA256SUMS line that fails.
-#   PORT_BASE    ports are PORT_BASE + 10..19 (default 2700 on chopin, 2900
-#                on cinqcent, 2800 on copland, 3000 on cage; e.g. 2750 for
-#                2760-2769)
+#   PORT_BASE    ports are PORT_BASE + 10..19 (default the first port of the
+#                host's slot_range, testvm/hosts.json: 2700 chopin, 2900
+#                cinqcent, 2800 copland, 3000 cage; e.g. 2750 for 2760-2769)
 #   MAX_GUESTS   guests at once (default chopin 6, cinqcent, copland and cage
 #                3); COUNT_OTHERS=1 (every host's default but chopin's):
-#                host-wide, with guest-slot.sh's slots on GUEST_PORTS (ours:
-#                2700-2799 chopin, 2900-2999 cinqcent, 2800-2899 copland,
-#                3000-3099 cage), which
+#                host-wide, with guest-slot.sh's slots on GUEST_PORTS (the
+#                host's slot_range: 2700-2799 chopin, 2900-2999 cinqcent,
+#                2800-2899 copland, 3000-3099 cage), which
 #                stick/build-round.sh's guests and the SticTest1 checks take
 #                too, and every QEMU of ours there without one
 #   LINUX_FS     the linux steps run here, of zfs zfs-onto-ext4 bcachefs f2fs
@@ -97,6 +97,24 @@
 #                run-all.sh can't run (sparse-netbsd11); else a FAIL row
 #   KEEP_WORK=1  keep fs_roundtrip.py's repositories
 #   ANY_HOST=1   run another host's platforms here too
+#   SPLIT        H,H,... (testvm/hosts.json's names) or all (every enabled
+#                host): a round those hosts share, each step run by one of
+#                them only, in place of the profiles' shares (which overlap
+#                once copland or cage join chopin and cinqcent).  Every host
+#                deals the same: bcachefs stays on chopin and netbsd on
+#                cinqcent when they take part; ZFS's steps (zfs,
+#                zfs-onto-ext4, nonroot, sparse zfs and zfs-nocomp) go to big
+#                hosts; the other file systems and guest platforms to the
+#                host with the fewest of their kind so far (two guest
+#                platforms on one PORT_BASE offset never share a host).  The
+#                share and every step's command: --dry-run.  On a host
+#                without a guest's image (vms/GUEST: a cache host's may be
+#                evicted) that step is a FAIL row, as is, on the first host
+#                of the split, a step no host of it can run.  LINUX_FS,
+#                SPARSE_FS and --platforms still choose among the share,
+#                never past it (another host's steps are skipped, so ZFS's
+#                stay the big hosts' and no step runs twice); MAX_GUESTS, JOBS_CAP and the rest stay the host's.  Unset:
+#                the profiles, as before.  Not with ANY_HOST
 #   RT_RAM, PYTHONDONTWRITEBYTECODE
 #                passed on to the root steps when set (RT_RAM=0: their work
 #                on disk; unset, the scripts' default, RAM where
@@ -141,26 +159,120 @@ done
 BIN=$(cd "$1" && pwd) LOG=$2
 [[ $LOG == /* ]] || LOG=$PWD/$LOG
 [[ -n $host ]] || host=$(hostname -s 2>/dev/null || hostname)
-case $host in
-    chopin*) host=chopin; all="linux sparse zfsguests dragonfly"
+host=${host%%.*}
+# The host's row in testvm/hosts.json: its class picks the profile (a big
+# host's is its own), its slot_range the ports.
+# shellcheck source=../hosts.sh
+. "$here/../hosts.sh"
+hclass=$(hosts_get "$host" class) && grange=$(hosts_get "$host" slot_range) ||
+    die "no such host: $host (--host $(hosts_phrase))"
+[[ $hclass == small ]] && prof=small || prof=$host
+case $prof in
+    chopin) all="linux sparse zfsguests dragonfly"
         lfs="zfs zfs-onto-ext4 bcachefs xfs btrfs nonroot" sfs="xfs btrfs"
-        : "${PORT_BASE:=2700}" "${MAX_GUESTS:=6}" "${COUNT_OTHERS:=0}" "${GUEST_PORTS:=2700-2799}" ;;
-    cinqcent*) host=cinqcent; all="linux sparse freebsd netbsd openbsd_illumos"
+        : "${MAX_GUESTS:=6}" "${COUNT_OTHERS:=0}" ;;
+    cinqcent) all="linux sparse freebsd netbsd openbsd_illumos"
         lfs="ext4 f2fs tmpfs jfs" sfs="zfs zfs-nocomp ext4"
-        : "${PORT_BASE:=2900}" "${MAX_GUESTS:=3}" "${COUNT_OTHERS:=1}" "${GUEST_PORTS:=2900-2999}" ;;
-    # Copland and cage (27 GiB, a 10 GiB RAM disk, no ZFS, no guests yet)
-    # are the small hosts: profiled like Cinqcent, each on its own range, one
-    # job of a kind at a time (JOBS_CAP); not build hosts, not default hosts
-    # anywhere yet.
-    copland*) host=copland; all="linux sparse"
+        : "${MAX_GUESTS:=3}" "${COUNT_OTHERS:=1}" ;;
+    # The small hosts (copland, cage: 27 GiB, a 10 GiB RAM disk, no host
+    # ZFS, guests from the image cache): profiled like Cinqcent, each on its
+    # own range, one job of a kind at a time (JOBS_CAP); not build hosts, not
+    # default hosts anywhere yet.  Their profile's file systems overlap the
+    # big hosts' and each other's: SPLIT deals a round out without overlap.
+    small) all="linux sparse"
         lfs="ext4 xfs btrfs f2fs tmpfs jfs" sfs="ext4 xfs btrfs"
-        : "${PORT_BASE:=2800}" "${MAX_GUESTS:=3}" "${COUNT_OTHERS:=1}" "${GUEST_PORTS:=2800-2899}" "${JOBS_CAP:=1}" ;;
-    cage*) host=cage; all="linux sparse"
-        lfs="ext4 xfs btrfs f2fs tmpfs jfs" sfs="ext4 xfs btrfs"
-        : "${PORT_BASE:=3000}" "${MAX_GUESTS:=3}" "${COUNT_OTHERS:=1}" "${GUEST_PORTS:=3000-3099}" "${JOBS_CAP:=1}" ;;
-    *) die "no such host: $host (--host chopin, cinqcent, copland or cage)" ;;
+        : "${MAX_GUESTS:=3}" "${COUNT_OTHERS:=1}" "${JOBS_CAP:=1}" ;;
+    *) die "no run-all.sh profile for $host, a $hclass host (a big host's is its own: chopin or cinqcent)" ;;
 esac
+: "${PORT_BASE:=${grange%-*}}" "${GUEST_PORTS:=$grange}"
 ALL_LFS="zfs zfs-onto-ext4 bcachefs f2fs ext4 xfs btrfs tmpfs jfs nonroot" ALL_SFS="ext4 xfs btrfs zfs zfs-nocomp"
+# SPLIT: the round's steps dealt out over the hosts that share it, each one
+# to a single host (split_share; every host computes the same deal from the
+# same SPLIT and the table, whatever order SPLIT names them in).
+split="" split_lost=""
+split_share() {  # SPLIT HOST -> "hosts H...", "linux FS...", "sparse FS...", "plats P...", "lost KIND NAME WHY"...
+    python3 -I -B - "$BKO_HOSTS_PY" "$1" "$2" <<'EOF'
+import importlib.util, sys
+spec = importlib.util.spec_from_file_location("bko_hosts", sys.argv[1])
+H = importlib.util.module_from_spec(spec)
+spec.loader.exec_module(H)
+want, me = sys.argv[2], sys.argv[3]
+try:
+    known = H.known()
+    ns = list(known) if want == "all" else [H.short(x) for x in want.replace(",", " ").split()]
+    bad = [n for n in ns if n not in known]
+    if bad or not ns:
+        sys.exit(f"SPLIT: no such host: {' '.join(bad) or '(none named)'} (of {H.phrase(known)}, or all)")
+    hs = [n for n in known if n in ns]   # the table's order: the same deal on every host
+    cls = {h: H.host_class(h) for h in hs}
+except H.HostsError as e:
+    sys.exit(f"SPLIT: {e}")
+if me not in hs:
+    sys.exit(f"SPLIT: {me} is not one of its hosts ({' '.join(hs)})")
+# KIND NAME WEIGHT NEEDS HOME PORTS: NEEDS big, a big host (host ZFS: zfs, its
+# --onto, nonroot's pool, sparse's pools); HOME, the host it stays on when that
+# host shares the round (bcachefs: the only tools are Chopin's; netbsd:
+# vms-bko-build's netbsd11-rust.qcow2 is Cinqcent's), else any big host;
+# PORTS, the PORT_BASE offsets a guest platform takes (no two on one host).
+# WEIGHT is a rough size (a guest platform: its steps).
+UNITS = [("linux", "bcachefs", 1, "big", "chopin", ())] + \
+    [("linux", n, 1, "big", None, ()) for n in ("zfs", "zfs-onto-ext4", "nonroot")] + \
+    [("linux", n, 1, None, None, ()) for n in ("ext4", "xfs", "btrfs", "f2fs", "tmpfs", "jfs")] + \
+    [("sparse", n, 1, "big", None, ()) for n in ("zfs", "zfs-nocomp")] + \
+    [("sparse", n, 1, None, None, ()) for n in ("ext4", "xfs", "btrfs")] + \
+    [("plats", "netbsd", 5, "big", "cinqcent", (15, 16)), ("plats", "freebsd", 6, None, None, (10, 11)),
+     ("plats", "openbsd_illumos", 5, None, None, (12, 13)), ("plats", "dragonfly", 3, None, None, (10, 11)),
+     ("plats", "zfsguests", 2, None, None, (17, 18))]
+# Pinned ones first, then those only some hosts can run, the heavier first;
+# each to the host with the least of its kind so far (the table's order on a tie).
+first = sorted(range(len(UNITS)), key=lambda i: (UNITS[i][4] not in hs, UNITS[i][3] is None, -UNITS[i][2], i))
+load, ports, got, lost = {}, {h: set() for h in hs}, {}, []
+for i in first:
+    kind, name, w, need, home, pp = UNITS[i]
+    can = [home] if home in hs else [h for h in hs if need is None or cls[h] == need]
+    ok = [h for h in can if not ports[h] & set(pp)]
+    if not ok:
+        why = ("no host of SPLIT can run it" + (": it needs a big host (host ZFS or its tools)" if not can else
+                                                 ": its ports go to another guest platform on " + " ".join(can)))
+        lost.append(f"lost {kind} {name} {why}")
+        continue
+    h = min(ok, key=lambda x: (load.get((kind, x), 0), hs.index(x)))
+    load[(kind, h)] = load.get((kind, h), 0) + w
+    ports[h] |= set(pp)
+    got.setdefault((kind, h), []).append(i)
+print("hosts " + " ".join(hs))
+for kind in ("linux", "sparse", "plats"):
+    print(kind + "".join(" " + UNITS[i][1] for i in sorted(got.get((kind, me), []))))
+if me == hs[0]:   # the split's first host has the FAIL rows of what none runs
+    print("\n".join(lost))
+EOF
+}
+if [[ -n ${SPLIT:-} ]]; then
+    [[ -z ${ANY_HOST:-} ]] || die "SPLIT and ANY_HOST: one or the other"
+    share=$(split_share "$SPLIT" "$host") || die "can't split the round (SPLIT=$SPLIT)"
+    split=$(sed -n 's/^hosts //p' <<<"$share")
+    lfs=$(sed -n 's/^linux *//p' <<<"$share") sfs=$(sed -n 's/^sparse *//p' <<<"$share")
+    # LINUX_FS and SPARSE_FS choose among the share, never past it: another
+    # host's steps (or a big host's, ZFS's on a small one) are skipped here.
+    among() {  # VAR ALL SHARE: VAR's steps (all: ALL's) that SHARE has
+        local v=$1 want=${!1} x="" f
+        [[ $want == all ]] && want=$2
+        for f in $want; do
+            [[ " $2 " == *" $f "* ]] || die "$v: no such step: $f"
+            if [[ " $3 " == *" $f "* ]]; then x+=" $f"
+            else echo "run-all: $v $f is another host's share of SPLIT ($split): skipped"; fi
+        done
+        echo "=${x# }"
+    }
+    if [[ -n ${LINUX_FS:-} ]]; then x=$(among LINUX_FS "$ALL_LFS" "$lfs") || exit 2
+        grep -v '^=' <<<"$x" || :; lfs=$(sed -n 's/^=//p' <<<"$x"); fi
+    if [[ -n ${SPARSE_FS:-} ]]; then x=$(among SPARSE_FS "$ALL_SFS" "$sfs") || exit 2
+        grep -v '^=' <<<"$x" || :; sfs=$(sed -n 's/^=//p' <<<"$x"); fi
+    LINUX_FS="" SPARSE_FS=""   # the share's, chosen among: lfs and sfs
+    all=""; [[ -n $lfs ]] && all+=" linux"; [[ -n $sfs ]] && all+=" sparse"
+    all="${all# } $(sed -n 's/^plats *//p' <<<"$share")" all=${all# } all=${all% }
+    split_lost=$(grep '^lost ' <<<"$share")
+fi
 [[ -n ${ANY_HOST:-} ]] && lfs=all sfs=all
 LINUX_FS=${LINUX_FS:-$lfs} SPARSE_FS=${SPARSE_FS:-$sfs}
 [[ $LINUX_FS == all ]] && LINUX_FS=$ALL_LFS
@@ -174,10 +286,11 @@ for p in $plats; do
     case " linux sparse zfsguests dragonfly openbsd_illumos freebsd netbsd " in
         *" $p "*) ;; *) die "no such platform: $p" ;; esac
     if [[ " $all " == *" $p "* || -n ${ANY_HOST:-} ]]; then mine+=" $p"
+    elif [[ -n $split ]]; then echo "run-all: $p is another host's share of SPLIT ($split): skipped"
     else echo "run-all: $p is the other host's: skipped (ANY_HOST=1 runs it here)"; fi
 done
 plats=${mine# }
-[[ -n $plats ]] || { echo "run-all: nothing to run on $host"; exit 0; }
+[[ -n $plats || -n $split_lost ]] || { echo "run-all: nothing to run on $host${split:+ (its share of SPLIT: none)}"; exit 0; }
 HOST_JOBS=${HOST_JOBS:-4} SPARSE_JOBS=${SPARSE_JOBS:-2} JOBS_CAP=${JOBS_CAP:-0}
 [[ $HOST_JOBS =~ ^[1-9][0-9]*$ && $SPARSE_JOBS =~ ^[1-9][0-9]*$ && $JOBS_CAP =~ ^[0-9]+$ ]] ||
     die "HOST_JOBS and SPARSE_JOBS: 1 or more; JOBS_CAP: 0 or more"
@@ -201,6 +314,15 @@ lose() {  # PLATFORM STEP WHY: a check that won't run, a FAIL row unless allowed
     if allowed "$2"; then notes+=("$1/$2 not run (ALLOW_SKIP): $3"); else lost+=("$1"$'\t'"$2"$'\t'"$3"); fi
 }
 P() { echo $((PORT_BASE + $1)); }
+# What SPLIT gives no host: a FAIL row each, on the split's first host.
+while read -r _ k n why; do
+    [[ -n ${n:-} ]] || continue
+    case $k in linux) lose linux "$n" "$why" ;; sparse) lose sparse "sparse-$n" "$why" ;; *) lose "$n" all "$why" ;; esac
+done <<<"$split_lost"
+noguest() {  # PLATFORM STEP GUEST: under SPLIT, a guest with no image here is that step lost (true)
+    [[ -n $split && ! -e $SRCWORK/vms/$3 ]] || return 1
+    lose "$1" "$2" "no $SRCWORK/vms/$3 on $host (SPLIT gave this host $1; a cache host's image may have been evicted)"
+}
 
 # --- the binaries -------------------------------------------------------------
 need_os=""
@@ -309,11 +431,13 @@ rootenv() { echo "$SUDO env BKO_RUNALL_ID=$ID BKO_WORK=$W$renv"; }
 
 guest_rt() {  # PLATFORM CHAIN GUEST PORT OS
     local n=4 to=14400
+    noguest "$1" "rt-$3" "$3" && return
     [[ $3 == omnios* ]] && n=8 to=21600
     step "$1" "$2" "rt-$3" guest-rt 1 - $to "" "--expect $n" \
         "RT_LOGS=$(q "$LOG/$1/rt") $(q "$C/run-guest-rt.sh" "$3" "$4" "$BIN/$5/restic-bko" "$BIN/$5/rustic-bko")"
 }
 nonroot() {  # PLATFORM CHAIN GUEST PORT OS
+    noguest "$1" "nonroot-$3" "$3" && return
     step "$1" "$2" "nonroot-$3" nonroot 1 - 5400 "" "$(q --targets "$3" --full "$LOG/$1/nonroot/$3.log")$base" \
         "rm -f $(q "$LOG/$1/nonroot/$3.log")
         NONROOT_LOGS=$(q "$LOG/$1/nonroot") RESTIC=$(q "$BIN/$5/restic-bko") RUSTIC=$(q "$BIN/$5/rustic-bko") $(q "$C/nonroot-rt.sh" "$3" "$4")"
@@ -321,6 +445,7 @@ nonroot() {  # PLATFORM CHAIN GUEST PORT OS
 guest_sparse() {  # PLATFORM CHAIN GUEST PORT OS [ENV...]
     local p=$1 ch=$2 g=$3 port=$4 os=$5 files args="/root/restic-bko /root/rustic-bko"
     shift 5
+    noguest "$p" "sparse-$g" "$g" && return
     files=("$C/sparse-rt.sh" "$C/rt-common.sh" "$BIN/$os/restic-bko" "$BIN/$os/rustic-bko")
     if oldpair "$os"; then
         files+=("$W/old/$os/restic-bko-old" "$W/old/$os/rustic-bko-old")
@@ -370,6 +495,7 @@ for p in $plats; do
     zfsguests)
         i=17
         for g in ubuntu24 ubuntu26-zfsmirror; do
+            noguest zfsguests "zfs-$g" "$g" && { i=$((i + 1)); continue; }
             step zfsguests "$g" "zfs-$g" zfsguest 1 - 21600 "" "$(q --results "$LOG/zfsguests/zfs-$g")${OLD:+ --identity}" \
                 "BKO_BIN=$(q "$BIN") ${OLD:+OLD_RESTIC=$(q "$OLD/linux/restic-bko") OLD_RUSTIC=$(q "$OLD/linux/rustic-bko")} \
                     ZFS_GUEST_LOGS=$(q "$LOG/zfsguests/zfs-$g") $(q "$C/zfs-guest-rt.sh" "$g" "$(P $i)")"
@@ -409,7 +535,7 @@ for p in $plats; do
         nonroot netbsd b alpinebsd "$(P 16)" netbsd ;;
     esac
 done
-[[ ${#S_NAME[@]} -gt 0 ]] || die "no steps (--only $only)"
+[[ ${#S_NAME[@]} -gt 0 || ( -n $split && ${#lost[@]} -gt 0 ) ]] || die "no steps (--only $only)"
 roots=""
 for i in "${!S_NAME[@]}"; do [[ -n ${S_ROOT[$i]} ]] && roots=1; done
 if [[ -n $roots && -n $SUDO && -z $dry ]]; then
@@ -424,6 +550,7 @@ fi
 export BKO_MKFS_BCACHEFS
 
 if [[ -n $dry ]]; then
+    [[ -z $split ]] || echo "== SPLIT $split: $host's share: ${plats:-none}"
     echo "== $host: ports $PORT_BASE+, at most $MAX_GUESTS guests (others counted: $COUNT_OTHERS, $GUEST_PORTS)," \
         "$HOST_JOBS host jobs, $SPARSE_JOBS sparse jobs; prefix $PFX; OLD_BIN ${OLD:-none}; linux: $LINUX_FS; sparse: $SPARSE_FS"
     for i in "${!S_NAME[@]}"; do

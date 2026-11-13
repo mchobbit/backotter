@@ -1,0 +1,88 @@
+{
+ "v": 1,
+ "notes": "BackOtter's KVM test hosts, one row each: the one table the test scripts take their host names, ssh targets, slot and port ranges, classes, roles and defaults from (testvm/test2/t2lib/hosts.py reads it; testvm/hosts.sh is the shell's reader; the scripts find it relative to themselves, here on the Mac and in ~/backotter-work/testvm on the hosts). Order matters: lists keep it, and the first fleet host holds vm-update's fleet lock. enabled false: a row reserved for a host that does not exist yet (its name and ranges are taken), which no script treats as a host. default true: a host of every run without --hosts (t2, drive.py); a host joins the defaults only after HostTest2 and one representative per family pass on it (docs/design/test2/design-classes.md). slot_range: the host's guest-slot range (guest-slot.sh's slot_range_here; run-all.sh's PORT_BASE is its first port, GUEST_PORTS the range); stic_ports: drive.py's check ports, inside it. ip: an address for when mDNS fails, with host_key_alias the name known_hosts pins it under (null: none known). A host's limits (limits: what each is, and its default) are its row's fields of those names, else class_limits' for its class, else the defaults, the values every host had before; the small class sets stic_slots 2, holt_jobs 1 and base_gib 4 (the user's choice, 2026-11-13); the big hosts keep the defaults.",
+ "classes": {
+  "big": "62 GiB, a 30G RAM disk (cmp-run.sh ceiling about 23 GiB), host ZFS; build hosts",
+  "small": "27 GiB, a 10G RAM disk (cmp-run.sh ceiling 9.0 9.2), no host ZFS; guests from the image cache"
+ },
+ "roles": {
+  "build": "builds a round's binaries (stick/build-round.sh) and bko-holt",
+  "fleet": "holds every guest; vm-update keeps the fleet's copies alike",
+  "store-mirror": "vm-store's mirror (/bkoscratch/bko-store), which publishes",
+  "bigfoot-link": "the one host that talks to Bigfoot (vm-store push)",
+  "cache": "a vm-store cache (/bkoscratch/bko-cache)"
+ },
+ "limits": {
+  "stic_slots": "SticTest's checks at once on the host (drive.py --slots); default 3",
+  "guest_slots": "guest slots drive.py counts on the host's range, 1-3 (check.sh's slot_take 3); default 3",
+  "holt_jobs": "HoltTest jobs at once on the host (ht1-queue.sh's MAXJOBS); default 3",
+  "base_gib": "cmp-run.sh's BASE_GIB on the host, GiB kept for the system (BASE_GIB in the environment wins); default 6",
+  "holt_disk_mode": "true: a holt line over the host's RAM-disk ceiling whose memory fits runs on /bkoscratch (HT_RAM=0, --reserve 0 M; NVMe wear), and placement checks its memory only (not +img: ht1.sh runs it only in the RAM disk); default false"
+ },
+ "class_limits": {
+  "big": {},
+  "small": {"stic_slots": 2, "holt_jobs": 1, "base_gib": 4}
+ },
+ "hosts": [
+  {
+   "name": "chopin",
+   "ssh": "m@chopin.local",
+   "ip": null,
+   "host_key_alias": "chopin.local",
+   "slot_range": "2700-2799",
+   "stic_ports": [2780, 2799],
+   "class": "big",
+   "roles": ["build", "fleet", "store-mirror", "bigfoot-link"],
+   "default": true,
+   "enabled": true
+  },
+  {
+   "name": "cinqcent",
+   "ssh": "m@cinqcent.local",
+   "ip": null,
+   "host_key_alias": "cinqcent.local",
+   "slot_range": "2900-2999",
+   "stic_ports": [2980, 2999],
+   "class": "big",
+   "roles": ["build", "fleet", "cache"],
+   "default": true,
+   "enabled": true
+  },
+  {
+   "name": "copland",
+   "ssh": "m@copland.local",
+   "ip": null,
+   "host_key_alias": "copland.local",
+   "slot_range": "2800-2899",
+   "stic_ports": [2880, 2899],
+   "class": "small",
+   "roles": ["cache"],
+   "default": false,
+   "enabled": true
+  },
+  {
+   "name": "cage",
+   "ssh": "m@cage.local",
+   "ip": null,
+   "host_key_alias": "cage.local",
+   "slot_range": "3000-3099",
+   "stic_ports": [3080, 3099],
+   "class": "small",
+   "roles": ["cache"],
+   "default": false,
+   "enabled": true
+  },
+  {
+   "name": "czerny",
+   "ssh": "m@czerny.local",
+   "ip": null,
+   "host_key_alias": "czerny.local",
+   "slot_range": "3100-3199",
+   "stic_ports": [3180, 3199],
+   "class": "small",
+   "roles": ["cache"],
+   "default": false,
+   "enabled": false
+  }
+ ]
+}

@@ -12,18 +12,25 @@
 #   slot_give             let it go
 #   slot_count RANGE      held slots and slotless QEMU, now
 #   slot_range_here [H]   our guests' port range on host H (default this
-#                         one): chopin 2700-2799, copland 2800-2899, cage
-#                         3000-3099, any other (cinqcent) 2900-2999
+#                         one; H or H.DOMAIN): its slot_range in
+#                         testvm/hosts.json (chopin 2700-2799, copland
+#                         2800-2899, cinqcent 2900-2999, cage 3000-3099); a
+#                         host not in the table (or not enabled there) is an
+#                         error, status 1 and no output
 #
-# Needs: flock, pgrep, /proc.
+# slot_take refuses (exit 2) a RANGE that isn't LO-HI, as an empty one from
+# a slot_range_here that failed.
+#
+# Needs: flock, pgrep, /proc; python3 (testvm/hosts.sh).
+
+# shellcheck source=../hosts.sh
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/../hosts.sh"
 
 slot_range_here() {
-    case ${1:-$(hostname -s 2>/dev/null || hostname)} in
-        chopin*) echo 2700-2799 ;;
-        copland*) echo 2800-2899 ;;
-        cage*) echo 3000-3099 ;;
-        *) echo 2900-2999 ;;
-    esac
+    local h=${1:-$(hostname -s 2>/dev/null || hostname)} r
+    r=$(hosts_get "$h" slot_range) && [[ $r =~ ^[0-9]+-[0-9]+$ ]] ||
+        { echo "guest-slot: no slot range for host ${h%%.*} (testvm/hosts.json)" >&2; return 1; }
+    echo "$r"
 }
 
 # QEMU on RANGE (lo-hi) with no BKO_GUEST_SLOT: guests that took no slot.
@@ -50,6 +57,7 @@ slot_held() {  # DIR: slots someone holds
 slot_count() { echo $(($(slot_held "${BKO_SLOT_DIR:-/tmp/bko-guest-slots}-$1") + $(slot_others "$1"))); }
 slot_take() {
     local max=$1 d=${BKO_SLOT_DIR:-/tmp/bko-guest-slots}-$2 lk n fd got=""
+    [[ ${2:-} =~ ^[0-9]+-[0-9]+$ ]] || { echo "guest-slot: slot_take: no port range '${2:-}'" >&2; exit 2; }
     mkdir -p "$d" && chmod 1777 "$d" 2>/dev/null
     while :; do
         exec {lk}>>"$d/.lock"; flock "$lk"

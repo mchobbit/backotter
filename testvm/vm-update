@@ -62,10 +62,11 @@ update (NetBSD: a release's base sets) is reported and left alone.
                 make its image-fingerprint.json on every host (the hosts must
                 be at one generation)
   --hosts HOST,...
-                the other hosts (default: chopin and cinqcent, but this
-                one; copland.local only when named, as it has no guests
-                yet); --hosts '' updates only this host's copy, after
-                which the others no longer match it
+                the other hosts (default: the fleet, testvm/hosts.json's
+                hosts with the role fleet, chopin and cinqcent, but this
+                one; a cache host such as copland.local only when named);
+                --hosts '' updates only this host's copy, after which the
+                others no longer match it
   --jobs N      update N guests at once (default 3); each takes a 2 GB VM,
                 its overlay and a free SSH port, and waits for the memory it
                 needs
@@ -177,10 +178,25 @@ WORK = Path(os.environ["BKO_WORK"]).expanduser() if os.environ.get("BKO_WORK") e
 VMS = WORK / "vms"
 # The other hosts' vms/, relative to their home.
 REMOTE_VMS = (os.environ.get("VM_UPDATE_REMOTE_VMS") or "backotter-work/vms").rstrip("/")
-# The fleet: every host here must hold every guest updated (step 1 fails on a
-# host without vms/GUEST), so copland, with no guests yet, is not in it; name
-# it with --hosts once it holds a copy.  ALL_HOSTS[0] holds the fleet lock.
-ALL_HOSTS = ["chopin.local", "cinqcent.local"]
+
+
+def _host_table():
+    """testvm/test2/t2lib/hosts.py, the loader of the host table testvm/hosts.json, by its path."""
+    spec = importlib.util.spec_from_file_location("vm_update_hosts_table", TESTVM / "test2" / "t2lib" / "hosts.py")
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+# The fleet: the hosts with the role fleet in testvm/hosts.json (chopin and
+# cinqcent), each by its ssh destination's host part.  Every host here must
+# hold every guest updated (step 1 fails on a host without vms/GUEST), so a
+# cache host (copland, cage), whose vms/ holds links into its vm-store cache
+# for the guests it has fetched only, is not in it; name one with --hosts once
+# it holds a copy of each guest updated.  ALL_HOSTS[0], the table's first
+# fleet host, holds the fleet lock.
+HOSTS_TABLE = _host_table()
+ALL_HOSTS = [HOSTS_TABLE.addr(h) for h in HOSTS_TABLE.with_role("fleet")]
 SNAPSHOT = "fresh-install"
 STATE_FILE = "image-state"
 PENDING_FILE = ".vm-update.pending"     # a merge step 5 left undone, for --finish

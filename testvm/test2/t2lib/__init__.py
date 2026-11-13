@@ -48,16 +48,22 @@ SCOPE = ("testvm", "stick", "holt")
 EXCLUDE_NAMES = ("__pycache__", ".DS_Store")
 EXCLUDE_PREFIXES = ("holt/target/",)
 
-# The KVM test hosts.  KNOWN_HOSTS: what --hosts may name.  DEFAULT_HOSTS: the
-# hosts of a run without --hosts, of a sweep, the fleet vm-update keeps alike.
-# A new host joins the defaults only after HostTest2 and one representative per
-# family pass on it (docs/design/test2/design-classes.md); a small host (one
-# whose ceiling, facts.ceiling, some cell's reservation exceeds) after those
-# among the cells that fit it, and the cells that don't fit it are placed on
-# the other hosts only, then too.  copland and cage are known, small, not
-# joined yet.  The per-host gate cells are gate_hosts()'s.
-KNOWN_HOSTS = ("chopin", "cinqcent", "copland", "cage")
-DEFAULT_HOSTS = ("chopin", "cinqcent")
+# The KVM test hosts, from testvm/hosts.json (hosts.py, the one table).
+# KNOWN_HOSTS: what --hosts may name (the enabled rows).  DEFAULT_HOSTS: the
+# hosts of a run without --hosts, of a sweep, the fleet vm-update keeps alike
+# (the rows with default true).  A new host joins the defaults only after
+# HostTest2 and one representative per family pass on it
+# (docs/design/test2/design-classes.md); a small host (one whose ceiling,
+# facts.ceiling, some cell's reservation exceeds) after those among the cells
+# that fit it, and the cells that don't fit it are placed on the other hosts
+# only, then too.  copland and cage are known, small, not joined yet; czerny's
+# row is reserved (enabled false).  The per-host gate cells are gate_hosts()'s;
+# host_class(H) is H's class in the table (big, small; None: not a known host).
+from . import hosts as hosts_table  # noqa: E402 - self-contained, imports nothing of t2lib
+
+KNOWN_HOSTS = hosts_table.known()
+DEFAULT_HOSTS = hosts_table.defaults()
+host_class = hosts_table.host_class
 
 
 def gate_hosts(hosts=None):

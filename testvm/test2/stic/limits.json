@@ -54,8 +54,7 @@
   "bsd-file-flags": "Linux guest: no BSD file flags",
   "nfsv4-acls": "Linux XFS/ext4 have no NFSv4 ACLs",
   "project-ids-ext4": "the guest's ext4 (/boot) has no project feature: chattr -p refused; project IDs are checked on XFS",
-  "selinux-labels": "no SELinux on Chimera (LSMs capability,landlock,yama)",
-  "xfs-rtinherit": "tool exclusion pending the user's ruling, not an OS or FS limit: the kernel takes rtinherit (t, 0x100) on a directory of an XFS with no realtime device and would take it back on a restored one, but BACKOTTER.md's linux.xfs_options leaves realtime and its inheritance out by design (its reason, a realtime device, holds for realtime on files only); none of the 4 directions restores it"
+  "selinux-labels": "no SELinux on Chimera (LSMs capability,landlock,yama)"
  },
  "chimera-uefi": {
   "birth-times": "ext4 keeps birth times (FAT its creation time) but Linux can't set them (BACKOTTER.md)",

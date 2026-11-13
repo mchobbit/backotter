@@ -11,7 +11,11 @@
 #   out PACKAGE TEST   # why it stays out
 #
 # Reviewed against restic 5253b20 (branch backotter, 0.19.1+backotter.5) on
-# 2026-11-08: 14 tests.  Every temporary directory below is rtest.TempDir or
+# 2026-11-08: 14 tests; the three XFS tests of restic df6cc2597
+# (0.19.1+backotter.6, directory rtinherit and the existing directory's options)
+# on 2026-11-12: 17; the three of restic 58a695576 (the cleared options put back
+# after an interrupted restore, a failed --delete, and the target's) the same
+# day: 20.  Every temporary directory below is rtest.TempDir or
 # t.TempDir, both under TMPDIR, which fork-root.sh points at its reserved RAM
 # directory; every image is a sparse file there, mounted with mount -o loop
 # (the loop device mount sets up, freed again by umount) or a tmpfs mounted
@@ -25,6 +29,7 @@
 # (/bkoscratch/tools/arch-root, as run-all.sh's BKO_MKFS_BCACHEFS).
 
 run internal/fs TestBcachefsDirOptionsInherited      # formats a 256 MiB bcachefs image in its t.TempDir (BKO_MKFS_BCACHEFS or mkfs.bcachefs), mount -t bcachefs -o loop there; mkdir, files, project IDs and bcachefs xattrs only inside that mount; umount at cleanup
+run internal/fs TestClearDirXFSOptions               # mountLoop: a 320 MiB XFS image (mkfs.xfs -q -f), mount -o loop; xfs_io options on one directory inside it, cleared and put back; then a t.TempDir off XFS; umount at cleanup
 run internal/fs TestClearRestrictingFlagsFile        # one file in its t.TempDir: sets append-only, immutable and nodump with FS_IOC_SETFLAGS (CAP_LINUX_IMMUTABLE), clears them through clearRestrictingFlags and rewrites the file; nothing is mounted
 run internal/fs TestFATAttributesOnVfat              # mountLoop: a 64 MiB vfat image (mkfs.vfat) in its rtest.TempDir, mount -o loop; files, directories and FAT attribute ioctls only inside it; umount at cleanup
 run internal/fs TestFillHolesENOSPC                  # mountLoop: a 16 MiB ext4 image (mkfs.ext4 -q), mount -o loop; one sparse 64 MiB file filled there until ENOSPC; umount at cleanup
@@ -33,8 +38,13 @@ run internal/fs TestPreallocateBtrfs                 # mountLoop: a 256 MiB btrf
 run internal/fs TestRestoreFileFlagsBtrfsCompression # a 128 MiB btrfs image in its rtest.TempDir (mkfs.btrfs -q), mount -o loop; the btrfs.compression xattr and inode flags (immutable too, taken off again with chattr -i) on files inside it; umount (deferred)
 run internal/fs TestRestoreLeavesSELinuxLabel        # one file in its t.TempDir: user.old and security.selinux xattrs (root may set security.* on tmpfs; the hosts run no SELinux), then a restore of its xattrs; nothing is mounted
 run internal/fs TestXFSOptionsOnXFS                  # mountLoop: a 320 MiB XFS image (mkfs.xfs -q -f), mount -o loop; xfs_io extsize and chattr on files and directories inside it; umount at cleanup
+run internal/fs TestXFSOptionsRtinheritRefused       # mountLoop: a 320 MiB XFS image (mkfs.xfs -q -f -r extsize=64k, no realtime device), mount -o loop; XFS options on one directory inside it; umount at cleanup
 run internal/restorer TestRestorerExt4CasefoldProject # a 64 MiB ext4 image with casefold and project (mkfs.ext4 -O casefold,project) in its rtest.TempDir, mount -o loop; a test repository (TestRepository) and a restore into the mount, an immutable file there taken off again with chattr -i; umount (deferred)
 run internal/restorer TestRestorerFATAttributes      # mountLoopFS: a 64 MiB vfat image, mount -o loop; a test repository and a restore into it; FAT attribute ioctls on the restored files; umount at cleanup
 run internal/restorer TestRestorerOverRestrictingFlags # restores into its rtest.TempDir over four files it gives chattr +i or +a there (CAP_LINUX_IMMUTABLE), with a test repository; chattr -i -a on them again (deferred); nothing is mounted
 run internal/restorer TestRestorerTargetNodeMountedBelow # tmpfs mounts (size=1m) at directories it makes below its rtest.TempDir, and 32 MiB ext4 images (mountLoopFS, mount -o loop); restores into them from a test repository; unmounts (MNT_DETACH) and umounts at cleanup
 run internal/restorer TestRestorerXFSOptions         # mountLoopFS: a 320 MiB XFS image, mount -o loop; a restore into it from a test repository and xfs_io -r stat of what it restored; umount at cleanup
+run internal/restorer TestRestorerXFSOptionsOverExisting # mountLoopFS: a 320 MiB XFS image, mount -o loop; two restores into it from a test repository, xfs_io chattr +t on a restored directory between them, xfs_io -r stat of what it restored; umount at cleanup
+run internal/restorer TestRestorerXFSOptionsDeleteFails # mountLoopFS: a 320 MiB XFS image, mount -o loop; two restores into it from a test repository (the second with Delete), an extra file there given xfs_io chattr +i and chattr -i again at cleanup; xfs_io -r stat of a restored directory; umount at cleanup
+run internal/restorer TestRestorerXFSOptionsInterrupted # mountLoopFS: a 320 MiB XFS image, mount -o loop; three restores into it from a test repository (the second's context cancelled midway), xfs_io chattr +t on a restored directory, xfs_io -r stat of what it restored; umount at cleanup
+run internal/restorer TestRestorerXFSOptionsTarget  # mountLoopFS: a 320 MiB XFS image, mount -o loop; a target directory made in it with a file and XFS options (fs.RestoreXFSOptions), a restore into it from a test repository, xfs_io -r stat of what it restored; umount at cleanup

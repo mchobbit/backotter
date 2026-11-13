@@ -72,6 +72,9 @@ artix-dinit|artix-s6) cmd=(asm $T/make-bootstrap.sh $G "$W") ;;
 nixos2605)  cmd=(asm $T/make-bootstrap.sh nixos "$W") ;;
 arch)       cmd=(asm $T/make-arch.sh 2026.10.01 "$W") ;;
 cachyos)    cmd=(asm $T/make-arch.sh --cachyos --root-fs jfs 2026.10.01 "$W") ;;
+# cachyos-zfs: from CachyOS's live ISO in /bkoscratch/rebuild-inputs/cachyos-zfs
+# (or the guest's own dir); CachyOS's and Arch's packages as they are at the rebuild.
+cachyos-zfs) cmd=(asm $T/make-cachyos-zfs.sh --iso-dir "$SRC" 260809 "$W") ;;
 endeavouros) cmd=(asm $T/make-arch.sh --live endeavouros "$SRC/EndeavourOS_Titan-Nova-2026.08.15.iso" 2026.10.01 "$W") ;;
 endeavouros-grub) cmd=(asm $T/make-arch.sh --live endeavouros-grub /bkoscratch/rebuild-inputs/endeavouros/EndeavourOS_Titan-Nova-2026.08.15.iso 2026.10.01 "$W") ;;
 manjaro)    cmd=(asm $T/make-arch.sh --live manjaro "$SRC/manjaro-xfce-26.1.1-minimal-260825-linux71.iso" 2026.10.01 "$W") ;;

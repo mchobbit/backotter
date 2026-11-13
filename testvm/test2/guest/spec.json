@@ -244,6 +244,33 @@
     "established": true
    }
   },
+  "cachyos-zfs": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-cachyos-zfs.sh",
+    "testvm/arch/install-cachyos-zfs.sh",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.pacman",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#pacman"
+   ],
+   "checks": {
+    "pm": "pacman",
+    "rules": {
+     "source": "S-pac",
+     "loader": "L-limine",
+     "kernel": "K-pac",
+     "boot": "B-lin",
+     "mounts": "M-zfs"
+    },
+    "fw": "uefi",
+    "established": false
+   }
+  },
   "chimera": {
    "kind": "ssh",
    "plat": "linux",

@@ -1,0 +1,1208 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.5"
+  },
+  "generated": "2026-11-13T23:23:27Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host-1",
+    "machine_id": "bd000000000040008000000000000001",
+    "dmi": {
+      "sys_vendor": "QEMU",
+      "product_name": "Standard PC (Q35 + ICH9, 2009)",
+      "product_version": "pc-q35-10.0",
+      "board_vendor": null,
+      "board_name": null,
+      "bios_vendor": "Debian distribution of EDK II",
+      "bios_version": "2025.02-8+deb13u1",
+      "bios_date": "11/08/2025",
+      "product_uuid": null,
+      "chassis_type": "1"
+    },
+    "virtualization": "kvm"
+  },
+  "os": {
+    "id": "cachyos",
+    "version_id": null,
+    "version_codename": null,
+    "pretty_name": "CachyOS",
+    "debian_version": null,
+    "kernel_release": "7.3.4-1-cachyos",
+    "kernel_version": "#1 SMP PREEMPT_DYNAMIC Fri, 13 Nov 2026 19:45:18 +0000",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "uefi",
+    "platform_size": 64,
+    "secure_boot": null,
+    "setup_mode": null,
+    "efivars_readable": true
+  },
+  "storage": {
+    "topology": {
+      "vda (disk, 24 GiB, gpt)": {
+        "vda1 (partition, 4 GiB) vfat on /boot": {},
+        "vda2 (partition, 20 GiB) zfs_member \"zpcachyos\"": {}
+      }
+    },
+    "disks": [
+      {
+        "name": "vda",
+        "path": "/dev/vda",
+        "kind": "disk",
+        "devno": "254:0",
+        "size_bytes": 25769803776,
+        "size": "24 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/1",
+          "/dev/disk/by-path/pci-0000:00:03.0",
+          "/dev/disk/by-path/virtio-pci-0000:00:03.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "bc000000-0000-4000-8000-000000000001",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 2048,
+          "last_usable_lba": 50331614,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 50331647,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 50331647,
+                "start_bytes": 512,
+                "size_bytes": 25769803264,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vda1",
+            "path": "/dev/vda1",
+            "devno": "254:1",
+            "number": 1,
+            "start_lba": 2048,
+            "end_lba": 8390655,
+            "sectors": 8388608,
+            "start_bytes": 1048576,
+            "size_bytes": 4294967296,
+            "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "type_name": "EFI System",
+            "uuid": "bc000000-0000-4000-8000-000000000002",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part1",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000002",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partnum/1",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partuuid/bc000000-0000-4000-8000-000000000002",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-uuid/BC00-0001",
+              "/dev/disk/by-path/pci-0000:00:03.0-part1",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part1",
+              "/dev/disk/by-uuid/BC00-0001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "vfat",
+              "usage": "filesystem",
+              "uuid": "BC00-0001",
+              "label": null,
+              "version": "FAT32",
+              "fat_bits": 32,
+              "bytes_per_sector": 512,
+              "sectors_per_cluster": 8,
+              "cluster_size": 4096,
+              "reserved_sectors": 32,
+              "fats": 2,
+              "fat_sectors": 8176,
+              "total_sectors": 8388576,
+              "size_bytes": 4294950912,
+              "clusters": 1046524,
+              "hidden_sectors": 2048,
+              "media": "0xf8",
+              "oem_name": "mkfs.fat",
+              "root_cluster": 2,
+              "fsinfo_sector": 1,
+              "backup_boot_sector": 6,
+              "boot_sector_label": null
+            },
+            "mounted_at": ["/boot"]
+          },
+          {
+            "name": "vda2",
+            "path": "/dev/vda2",
+            "devno": "254:2",
+            "number": 2,
+            "start_lba": 8390656,
+            "end_lba": 50329599,
+            "sectors": 41938944,
+            "start_bytes": 4296015872,
+            "size_bytes": 21472739328,
+            "type": "6a898cc3-1dd2-11b2-99a6-080020736631",
+            "type_name": "Solaris /usr & Apple ZFS",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part2",
+              "/dev/disk/by-label/zpcachyos",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-label/zpcachyos",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partnum/2",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partuuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-uuid/1000000000000000001",
+              "/dev/disk/by-path/pci-0000:00:03.0-part2",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part2",
+              "/dev/disk/by-uuid/1000000000000000001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "zfs_member",
+              "usage": "filesystem",
+              "uuid": "1000000000000000001",
+              "label": "zpcachyos",
+              "version": "5000",
+              "labels_valid": 4,
+              "pool_name": "zpcachyos",
+              "pool_guid": "1000000000000000001",
+              "vdev_guid": "1000000000000000002",
+              "top_guid": "1000000000000000002",
+              "pool_state": "active",
+              "txg": 303,
+              "spa_version": 5000,
+              "hostname": "cachyos",
+              "hostid": 1000000003
+            },
+            "mounted_at": []
+          }
+        ],
+        "boot_code": {
+          "kind": "none",
+          "first_bytes": "00000000000000000000000000000000",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 2
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [],
+    "loop_devices": [],
+    "other_devices": [
+      {
+        "name": "sr0",
+        "path": "/dev/sr0",
+        "kind": "rom",
+        "devno": "11:0",
+        "size_bytes": 1073741312,
+        "size": "1024 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": false,
+        "links": [
+          "/dev/cdrom",
+          "/dev/disk/by-diskseq/3",
+          "/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1",
+          "/dev/disk/by-path/pci-0000:00:1f.2-ata-3",
+          "/dev/disk/by-path/pci-0000:00:1f.2-ata-3.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "zram0",
+        "path": "/dev/zram0",
+        "kind": "zram",
+        "devno": "253:0",
+        "size_bytes": 2045771776,
+        "size": "1.9 GiB",
+        "logical_sector_size": 4096,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/4",
+          "/dev/disk/by-label/zram0",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000004"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "swap",
+          "usage": "other",
+          "uuid": "bc000000-0000-4000-8000-000000000004",
+          "label": "zram0",
+          "version": "1",
+          "page_size": 4096,
+          "last_page": 499455,
+          "size_bytes": 2045771776,
+          "bad_pages": 0
+        },
+        "mounted_at": []
+      }
+    ],
+    "lvm": {
+      "volume_groups": []
+    },
+    "zfs": {
+      "pools_from_labels": [
+        {
+          "name": "zpcachyos",
+          "pool_guid": "1000000000000000001",
+          "state": 0,
+          "txg": 303,
+          "version": 5000,
+          "hostname": "cachyos",
+          "hostid": 1000000003,
+          "vdev_children": 1,
+          "top_level_vdevs": [
+            {
+              "type": "disk",
+              "id": 0,
+              "guid": 1000000000000000002,
+              "path": "/dev/vda2",
+              "whole_disk": 0,
+              "metaslab_array": 256,
+              "metaslab_shift": 29,
+              "ashift": 12,
+              "asize": 21468020736,
+              "min_alloc": 4096,
+              "is_log": 0,
+              "create_txg": 4
+            }
+          ],
+          "features_for_read": {
+            "com.delphix:hole_birth": true,
+            "com.delphix:embedded_data": true,
+            "com.klarasystems:vdev_zaps_v2": true
+          },
+          "member_devices": ["vda2"]
+        }
+      ],
+      "zpool_cache": {
+        "zpcachyos": {
+          "version": 5000,
+          "name": "zpcachyos",
+          "state": 0,
+          "txg": 34,
+          "pool_guid": 1000000000000000001,
+          "errata": 0,
+          "min_alloc": 4096,
+          "max_alloc": 4096,
+          "hostid": 1000000003,
+          "hostname": "CachyOS",
+          "com.delphix:has_per_vdev_zaps": true,
+          "vdev_children": 1,
+          "vdev_tree": {
+            "type": "root",
+            "id": 0,
+            "guid": 1000000000000000001,
+            "create_txg": 4,
+            "com.klarasystems:vdev_zap_root": 134,
+            "children": [
+              {
+                "type": "disk",
+                "id": 0,
+                "guid": 1000000000000000002,
+                "path": "/dev/vda2",
+                "whole_disk": 0,
+                "metaslab_array": 256,
+                "metaslab_shift": 29,
+                "ashift": 12,
+                "asize": 21468020736,
+                "min_alloc": 4096,
+                "is_log": 0,
+                "create_txg": 4,
+                "com.delphix:vdev_zap_leaf": 135,
+                "com.delphix:vdev_zap_top": 136
+              }
+            ]
+          },
+          "features_for_read": {
+            "com.delphix:hole_birth": true,
+            "com.delphix:embedded_data": true,
+            "com.klarasystems:vdev_zaps_v2": true
+          }
+        }
+      },
+      "tools": {
+        "imported_pools": [
+          {
+            "name": "zpcachyos",
+            "properties": {
+              "size": "20937965568",
+              "altroot": "-",
+              "health": "ONLINE",
+              "guid": "1000000000000000001",
+              "version": "-",
+              "bootfs": "-",
+              "delegation": "on",
+              "autoreplace": "off",
+              "cachefile": "-",
+              "failmode": "wait",
+              "listsnapshots": "off",
+              "autoexpand": "off",
+              "readonly": "off",
+              "ashift": "12",
+              "comment": "-",
+              "multihost": "off",
+              "autotrim": "on",
+              "compatibility": "off",
+              "dedup_table_quota": "auto",
+              "last_scrubbed_txg": "0"
+            },
+            "local_properties": {
+              "ashift": "12",
+              "autotrim": "on"
+            },
+            "features": {
+              "async_destroy": "enabled",
+              "empty_bpobj": "active",
+              "lz4_compress": "active",
+              "multi_vdev_crash_dump": "enabled",
+              "spacemap_histogram": "active",
+              "enabled_txg": "active",
+              "hole_birth": "active",
+              "extensible_dataset": "active",
+              "embedded_data": "active",
+              "bookmarks": "enabled",
+              "filesystem_limits": "enabled",
+              "large_blocks": "enabled",
+              "large_dnode": "enabled",
+              "sha512": "enabled",
+              "skein": "enabled",
+              "edonr": "enabled",
+              "userobj_accounting": "active",
+              "encryption": "enabled",
+              "project_quota": "active",
+              "device_removal": "enabled",
+              "obsolete_counts": "enabled",
+              "zpool_checkpoint": "enabled",
+              "spacemap_v2": "active",
+              "allocation_classes": "enabled",
+              "resilver_defer": "enabled",
+              "bookmark_v2": "enabled",
+              "redaction_bookmarks": "enabled",
+              "redacted_datasets": "enabled",
+              "bookmark_written": "enabled",
+              "log_spacemap": "active",
+              "livelist": "enabled",
+              "device_rebuild": "enabled",
+              "zstd_compress": "enabled",
+              "draid": "enabled",
+              "zilsaxattr": "active",
+              "head_errlog": "active",
+              "blake3": "enabled",
+              "block_cloning": "enabled",
+              "vdev_zaps_v2": "active",
+              "redaction_list_spill": "enabled",
+              "raidz_expansion": "enabled",
+              "fast_dedup": "enabled",
+              "longname": "enabled",
+              "large_microzap": "enabled",
+              "dynamic_gang_header": "enabled",
+              "block_cloning_endian": "enabled",
+              "physical_rewrite": "enabled"
+            },
+            "vdevs": {
+              "vdevs": {
+                "zpcachyos": {
+                  "name": "zpcachyos",
+                  "vdev_type": "root",
+                  "guid": 1000000000000000001,
+                  "class": "normal",
+                  "state": "ONLINE",
+                  "alloc_space": 2349817856,
+                  "total_space": 20937965568,
+                  "def_space": 20937965568,
+                  "read_errors": 0,
+                  "write_errors": 0,
+                  "checksum_errors": 0,
+                  "vdevs": {
+                    "/dev/vda2": {
+                      "name": "/dev/vda2",
+                      "vdev_type": "disk",
+                      "guid": 1000000000000000002,
+                      "path": "/dev/vda2",
+                      "class": "normal",
+                      "state": "ONLINE",
+                      "alloc_space": 2349817856,
+                      "total_space": 20937965568,
+                      "def_space": 20937965568,
+                      "rep_dev_size": 20942684160,
+                      "phys_space": 21472739328,
+                      "read_errors": 0,
+                      "write_errors": 0,
+                      "checksum_errors": 0,
+                      "slow_ios": 0
+                    }
+                  }
+                }
+              },
+              "logs": null,
+              "l2cache": null,
+              "spares": null,
+              "special": null,
+              "dedup": null
+            }
+          }
+        ],
+        "datasets": [
+          {
+            "name": "zpcachyos",
+            "type": "filesystem",
+            "used": 2348789760,
+            "available": 17934864384,
+            "referenced": 98304,
+            "mountpoint": "none",
+            "canmount": "on",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "off",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "none",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "xattr": {
+                "value": "sa",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "posix",
+                "source": "local"
+              },
+              "relatime": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zpcachyos/ROOT",
+            "type": "filesystem",
+            "used": 2347646976,
+            "available": 17934864384,
+            "referenced": 98304,
+            "mountpoint": "none",
+            "canmount": "off",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "off",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "none",
+                "source": "local"
+              },
+              "compression": {
+                "value": "lz4",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zpcachyos/ROOT/cos",
+            "type": "filesystem",
+            "used": 2347548672,
+            "available": 17934864384,
+            "referenced": 98304,
+            "mountpoint": "none",
+            "canmount": "off",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "off",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "none",
+                "source": "local"
+              },
+              "compression": {
+                "value": "lz4",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zpcachyos/ROOT/cos/home",
+            "type": "filesystem",
+            "used": 102400,
+            "available": 17934864384,
+            "referenced": 102400,
+            "mountpoint": "/home",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "off",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/home",
+                "source": "local"
+              },
+              "compression": {
+                "value": "lz4",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zpcachyos/ROOT/cos/root",
+            "type": "filesystem",
+            "used": 2347048960,
+            "available": 17934864384,
+            "referenced": 2347048960,
+            "mountpoint": "/",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "off",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/",
+                "source": "local"
+              },
+              "compression": {
+                "value": "lz4",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zpcachyos/ROOT/cos/varcache",
+            "type": "filesystem",
+            "used": 151552,
+            "available": 17934864384,
+            "referenced": 151552,
+            "mountpoint": "/var/cache",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "off",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/cache",
+                "source": "local"
+              },
+              "compression": {
+                "value": "lz4",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zpcachyos/ROOT/cos/varlog",
+            "type": "filesystem",
+            "used": 147456,
+            "available": 17934864384,
+            "referenced": 147456,
+            "mountpoint": "/var/log",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "lz4",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "off",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/log",
+                "source": "local"
+              },
+              "compression": {
+                "value": "lz4",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "btrfs": [],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "zpcachyos/ROOT/cos/root",
+        "fstype": "zfs",
+        "devno": "0:30",
+        "device": null,
+        "root": "/",
+        "options": "rw,noatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 20281950208,
+        "used_bytes": 2347106304,
+        "available_bytes": 17934843904
+      },
+      {
+        "target": "/home",
+        "source": "zpcachyos/ROOT/cos/home",
+        "fstype": "zfs",
+        "devno": "0:54",
+        "device": null,
+        "root": "/",
+        "options": "rw,noatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 17934974976,
+        "used_bytes": 131072,
+        "available_bytes": 17934843904
+      },
+      {
+        "target": "/var/cache",
+        "source": "zpcachyos/ROOT/cos/varcache",
+        "fstype": "zfs",
+        "devno": "0:55",
+        "device": null,
+        "root": "/",
+        "options": "rw,noatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 17935106048,
+        "used_bytes": 262144,
+        "available_bytes": 17934843904
+      },
+      {
+        "target": "/var/log",
+        "source": "zpcachyos/ROOT/cos/varlog",
+        "fstype": "zfs",
+        "devno": "0:56",
+        "device": null,
+        "root": "/",
+        "options": "rw,noatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 17935106048,
+        "used_bytes": 262144,
+        "available_bytes": 17934843904
+      },
+      {
+        "target": "/boot",
+        "source": "/dev/vda1",
+        "fstype": "vfat",
+        "devno": "254:1",
+        "device": "vda1",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,fmask=0077,dmask=0077,codepage=437,iocharset=ascii,shortname=mixed,utf8,errors=remount-ro",
+        "size_bytes": 4286562304,
+        "used_bytes": 149200896,
+        "available_bytes": 4137361408
+      }
+    ],
+    "physical_root": "/",
+    "backup_sources": [
+      {
+        "path": "/",
+        "from": "/",
+        "device": null,
+        "fstype": "zfs",
+        "source": "zpcachyos/ROOT/cos/root",
+        "subvol": null
+      },
+      {
+        "path": "/boot",
+        "from": "/boot",
+        "device": "vda1",
+        "fstype": "vfat",
+        "source": "/dev/vda1",
+        "subvol": null
+      },
+      {
+        "path": "/home",
+        "from": "/home",
+        "device": null,
+        "fstype": "zfs",
+        "source": "zpcachyos/ROOT/cos/home",
+        "subvol": null
+      },
+      {
+        "path": "/var/cache",
+        "from": "/var/cache",
+        "device": null,
+        "fstype": "zfs",
+        "source": "zpcachyos/ROOT/cos/varcache",
+        "subvol": null
+      },
+      {
+        "path": "/var/log",
+        "from": "/var/log",
+        "device": null,
+        "fstype": "zfs",
+        "source": "zpcachyos/ROOT/cos/varlog",
+        "subvol": null
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/zram0",
+        "type": "partition",
+        "size_bytes": 2045767680,
+        "used_bytes": 0,
+        "priority": 100,
+        "device": "zram0"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "UUID=BC00-0001",
+        "file": "/boot",
+        "type": "vfat",
+        "options": "defaults,umask=0077",
+        "freq": 0,
+        "passno": 2,
+        "resolves_to": "vda1"
+      },
+      {
+        "spec": "tmpfs",
+        "file": "/tmp",
+        "type": "tmpfs",
+        "options": "defaults,noatime,mode=1777",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      }
+    ],
+    "crypttab": [],
+    "mdadm_conf": {
+      "arrays": [],
+      "settings": {
+        "device": "partitions"
+      }
+    }
+  },
+  "boot": {
+    "loader": {
+      "name": "limine",
+      "firmware": "uefi",
+      "via_shim": false,
+      "package": "limine",
+      "evidence": [
+        "firmware booted \\EFI\\limine\\limine_x64.efi",
+        "LoaderInfo says \"Limine 12.9.6\"",
+        "package limine is installed"
+      ]
+    },
+    "efi": {
+      "boot_current": "0001",
+      "boot_next": null,
+      "boot_order": ["0001", "0000", "0002", "0003", "0004", "0005", "0006", "0007"],
+      "timeout_seconds": 0,
+      "entries": [
+        {
+          "number": "0000",
+          "load_option_hex": "090100002c0055006900410070007000000004071400000000bc00000040800000000000000504061400000000bc0000004080000000000000067fff0400",
+          "description": "UiApp",
+          "active": true,
+          "hidden": true,
+          "category": "app",
+          "in_boot_order": 1,
+          "device_path": ["Fv(bc000000-0000-4000-8000-000000000005)/FvFile(bc000000-0000-4000-8000-000000000006)"],
+          "file": null,
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0001",
+          "load_option_hex": "0100000068004c0069006d0069006e006500000004012a000100000000080000000000000000800000000000000000bc000000408000000000000002020204043a005c004500460049005c006c0069006d0069006e0065005c006c0069006d0069006e0065005f007800360034002e0065006600690000007fff0400",
+          "description": "Limine",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 0,
+          "device_path": [
+            "HD(1,GPT,bc000000-0000-4000-8000-000000000002,0x800,0x800000)/File(\\EFI\\limine\\limine_x64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000002",
+            "start_lba": 2048,
+            "sectors": 8388608,
+            "device": "vda1"
+          },
+          "file": "\\EFI\\limine\\limine_x64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0002",
+          "load_option_hex": "010000001600550045004600490020004d006900730063002000440065007600690063006500000002010c00d041030a000000000101060000037fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI Misc Device",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 2,
+          "device_path": ["PciRoot(0x0)/Pci(0x3,0x0)"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0003",
+          "load_option_hex": "0100000056005500450046004900200050005800450076003400200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030c1b0000000000000000000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv4 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 3,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0004",
+          "load_option_hex": "0100000077005500450046004900200050005800450076003600200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030d3c0000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv6 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 4,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0005",
+          "load_option_hex": "010000005a0055004500460049002000480054005400500076003400200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030c1b000000000000000000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv4 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 5,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0006",
+          "load_option_hex": "010000007b0055004500460049002000480054005400500076003600200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030d3c000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv6 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 6,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0007",
+          "load_option_hex": "010000002c00450046004900200049006e007400650072006e0061006c0020005300680065006c006c00000004071400000000bc00000040800000000000000504061400000000bc0000004080000000000000077fff0400",
+          "description": "EFI Internal Shell",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 7,
+          "device_path": ["Fv(bc000000-0000-4000-8000-000000000005)/FvFile(bc000000-0000-4000-8000-000000000007)"],
+          "file": null,
+          "optional_data_bytes": 0
+        }
+      ],
+      "loader_interface": {
+        "loader_info": "Limine 12.9.6",
+        "loader_device_partuuid": "bc000000-0000-4000-8000-000000000002",
+        "loader_image_identifier": null,
+        "loader_entry_selected": "CachyOS.linux-cachyos",
+        "loader_entry_default": null,
+        "stub_info": null
+      },
+      "shim_variables": []
+    },
+    "esps": [
+      {
+        "device": "vda1",
+        "mounted_at": "/boot",
+        "contents": {
+          "files": [
+            {
+              "path": "EFI/BOOT/BOOTX64.EFI",
+              "size": 389120,
+              "same_as": "EFI/limine/limine_x64.efi"
+            },
+            {
+              "path": "EFI/limine/limine_x64.bak",
+              "size": 399360
+            },
+            {
+              "path": "EFI/limine/limine_x64.efi",
+              "size": 389120,
+              "same_as": "EFI/BOOT/BOOTX64.EFI"
+            },
+            {
+              "path": "loader/random-seed",
+              "size": 32
+            }
+          ],
+          "debian_grub_stub": null
+        }
+      }
+    ],
+    "grub": {
+      "dir": "/boot/grub",
+      "installed_platforms": [],
+      "grub_cfg": null,
+      "grubenv": null,
+      "default_grub": {},
+      "debconf": null
+    },
+    "systemd_boot": null,
+    "kernels": {
+      "installed": [
+        {
+          "version": "linux-cachyos",
+          "vmlinuz_bytes": 17604608,
+          "initrd_bytes": 19098524,
+          "config": false,
+          "running": false,
+          "modules_installed": false
+        },
+        {
+          "version": "linux-cachyos-lts",
+          "vmlinuz_bytes": 17801728,
+          "initrd_bytes": 19323133,
+          "config": false,
+          "running": false,
+          "modules_installed": false
+        }
+      ],
+      "symlinks": {}
+    },
+    "cmdline": {
+      "raw": "quiet nowatchdog rw root=ZFS=zpcachyos/ROOT/cos/root console=tty0 console=ttyS0,115200n8",
+      "words": [
+        "quiet",
+        "nowatchdog",
+        "rw",
+        "root=ZFS=zpcachyos/ROOT/cos/root",
+        "console=tty0",
+        "console=ttyS0,115200n8\n"
+      ],
+      "storage": {
+        "rw": "",
+        "root": "ZFS=zpcachyos/ROOT/cos/root"
+      }
+    },
+    "kernel_cmdline_file": null,
+    "initramfs": {
+      "generator": "mkinitcpio",
+      "modules": null,
+      "compress": null,
+      "resume": null,
+      "crypttab_in_initramfs": true
+    },
+    "packages": {
+      "efibootmgr": "18-4.1",
+      "os-prober": "1.85-1.1",
+      "mdadm": "4.6-2",
+      "lvm2": "2.03.44-1.1",
+      "thin-provisioning-tools": "1.3.4-1.1",
+      "cryptsetup": "2.8.8-2.1",
+      "btrfs-progs": "7.3-1",
+      "xfsprogs": "7.2.1-1.1",
+      "e2fsprogs": "1.47.4-1.1",
+      "dosfstools": "4.2-5.1",
+      "exfatprogs": "1.4.4-1.1",
+      "jfsutils": "1.1.15-9.1",
+      "f2fs-tools": "1.17.0-1.1",
+      "mkinitcpio": "42.2-1",
+      "zfs-utils": "2.4.4-3",
+      "limine": "12.9.6-1",
+      "limine-mkinitcpio-hook": "1.40.0-1"
+    }
+  },
+  "warnings": []
+}

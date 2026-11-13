@@ -1,6 +1,6 @@
 # H1: the dump corpus and its golden plans
 
-One redacted `bko-holt dump` of each of HoltTest2's 55 sources, and the plan
+One redacted `bko-holt dump` of each of HoltTest2's 56 sources, and the plan
 `bko-holt load` makes of each (docs/design/test2.md, "Shared pieces to
 build", H1).  `holt/tests/golden_plans.rs` plans every dump again and fails
 when a plan changes or breaks an invariant, so a change to load shows here
@@ -58,7 +58,14 @@ written by hand (docs/design/gentoo.md's G2b), the build and scans as
 below.  gentoo-systemd (`make-bootstrap.sh gentoo-systemd`: UEFI, GRUB in
 the ESP that is /boot, LUKS2 holding LVM, systemd's dracut with the key
 file; G3), built on 2026-11-12, was added the same way from its G3 dump
-(run `g3`, chopin, the image's sha256 the same before and after).  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
+(run `g3`, chopin, the image's sha256 the same before and after).
+cachyos-zfs (`make-cachyos-zfs.sh`: CachyOS from its live ISO as its
+Calamares installs ZFS with Limine: UEFI, a 4 GiB ESP as /boot, the pool
+zpcachyos with ROOT/cos/{root,home,varcache,varlog}), built on 2026-11-13,
+was added the same way from a dump of the live guest on copland (run `cz1`,
+bko-holt 0.2.5 built from this tree; the guest booted on a plain q35 with
+its install's UEFI variables, so through Limine's NVRAM entry, under a
+throwaway overlay, the image's sha256 the same before and after).  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
 collection; `-` for the guests without one) say which, and `image` whether
@@ -103,13 +110,13 @@ raw dumps are), for each dump:
    blobs, 7.7 MB decoded, in 15 dumps).  EFI load options (`load_option_hex`) and
    `first_bytes` stay: they are data, and redact.rs has redacted them.
 5. The filled dump is planned against the unfilled one (`fill_plan`:
-   `same` for all 55) and passes check_plan itself (`check_plan`).
+   `same` for all 56) and passes check_plan itself (`check_plan`).
 
 Two builds of the same raw dumps give the same bytes.
 
 ### A raw dump that fails step 1
 
-All 55 raw dumps pass check_plan.  A dump that one day fails it is still put
+All 56 raw dumps pass check_plan.  A dump that one day fails it is still put
 in the corpus (step 2's leak checks, step 5 and leakscan below still apply);
 corpus_build then fails at its end, and so does `redact_dumps` over the raw
 dumps.  Nothing would show that dump's golden plan is its guest's own, so
@@ -157,7 +164,11 @@ disk: chopin with its 83 strings and the raw dump's identifiers, cinqcent
 with its 89, the Mac with the git e-mail, 0 findings, the same sha256 from
 both builds.  So did gentoo-systemd (2026-11-12, the same way): chopin
 with its 84 strings and the raw dump's identifiers, cinqcent with its 88,
-the Mac, 0 findings, the same sha256 from both builds.
+the Mac, 0 findings, the same sha256 from both builds.  So did cachyos-zfs
+(2026-11-13), built from a private directory in copland's RAM disk (Chopin
+was down): copland with its 76 strings and the raw dump's identifiers,
+cinqcent with its 77, the Mac with the git e-mail, 0 findings, the same
+sha256 from both builds.
 
 ## The golden plans
 
@@ -169,7 +180,7 @@ BackOtter's, every tool the plan asks for installed.  Unlike check_plan it
 maps no RAM disk or ZFS volume (alpine324's 16 RAM disks would each be a
 Problem), installs load's own binary where it runs from, and names it
 `bko-holt` in the plan, which would otherwise hold the test binary's path.
-All 58 plans exit 0, without Problems.  They are Linux's plans (load's
+All 59 plans exit 0, without Problems.  They are Linux's plans (load's
 run directory is /run/bko-holt there, /var/run/bko-holt elsewhere): run
 golden_plans.rs on a Linux host.
 
@@ -202,8 +213,8 @@ BKO_HOLT_GOLDEN=bless cargo test --test golden_plans -- --nocapture
                                                                    # rewrite the plans that differ, unless an invariant fails
 ```
 
-diff.json is `{"v":1, "corpus":55, "plans":58, "planned":[NAME...],
-"sources":55, "differ":{NAME:{"stages":[...], "lines_changed":N[, "new":true]
+diff.json is `{"v":1, "corpus":56, "plans":59, "planned":[NAME...],
+"sources":56, "differ":{NAME:{"stages":[...], "lines_changed":N[, "new":true]
 [, "unplanned":WHY][, "unverified":CHECK_PLAN_RAW]}}, "invariants":{NAME:[...]},
 "invariants_skipped":{NAME:[...]}}`; `stages` are the plan's sections that
 changed (header, partition, assemble, format, mount, restore, boot, close,
@@ -248,8 +259,8 @@ the Mac, outside the repository, and scan it there first:
 Only then copy them into holt/tests/corpus (corpus_build refuses an OUT
 that holds dumps it doesn't make, so build into an empty one), and bless
 the plans.  A corpus dump never enters the working tree with a finding, and
-a plan is never blessed with a broken invariant.  The corpus is 12.2 MB (55
-dumps of 3 KB to 3.3 MB, the 58 plans 0.4 MB); 15 MB is its budget.
+a plan is never blessed with a broken invariant.  The corpus is 12.2 MB (56
+dumps of 3 KB to 3.3 MB, the 59 plans 0.4 MB); 15 MB is its budget.
 
 ### Adding a source
 

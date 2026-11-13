@@ -19,10 +19,10 @@ private copy of this checkout (never from the synced `~/backotter-work/testvm`).
 | `SticTest2All [ROUND]` | all 47 checks, fresh (SticTest1's scope) | runs them all anyway |
 | `HoltTest2 [GUEST[+VARIANT]...] [stale] [+bigger] [+oneshot] [+degraded] [+img]` | the due HoltTest cells | one line |
 | `HoltTest2X [X...]`, X in D A M U Z F C V BSD H I G Obscure | that family's guests, fresh (HoltTest1's letters) | runs them anyway |
-| `HoltTest2All` | all 55 sources and their 9 variant cells, fresh (no `+img` cells) | runs them all anyway |
+| `HoltTest2All` | all 56 sources and their 9 variant cells, fresh (no `+img` cells) | runs them all anyway |
 | `HoltTest2 G+img`, `HoltTest2 +img` | those cells fresh, a real rescue image as rescuer; `+img` alone: all 12 | runs them anyway |
 | `GuestTest2 [GUEST...] [stale]` | the due guests, or those guests fresh: identity, image checks, a `--try` in RAM, the checks after it, the log sweep | the guests whose last `--try` is over 7 days old; else one line |
-| `GuestTest2All` | the graded audit: all 57 guests fresh, sha256 identity | runs them all anyway |
+| `GuestTest2All` | the graded audit: all 58 guests fresh, sha256 identity | runs them all anyway |
 | `GuestTest2 update [GUEST...]` | the real update round (merges); never with `stale` or All | a bare round needs a `--try` PASS within 7 days |
 | `ImgTest2 [PLAT...] [release] [stale]` | images built since their PASS and owed panels, or those platforms fresh; `release` requires the panel | one line |
 | `ImgTest2All [release]` | every current image, its panel included | runs them all anyway |
@@ -151,7 +151,7 @@ change is carried; a change only to `holt.plan_visible` (commands.rs) runs the
 guests whose golden plan changed, their variants when the diff touches partition,
 assemble or close, and the degraded cells, and carries the rest (`carry:plan-diff`);
 before the plan diff is known (no blessed plan change, no gate:holt row at the
-current holt key) all 55 run (`holt:code`), as for any other code change (the stand-in
+current holt key) all 56 run (`holt:code`), as for any other code change (the stand-in
 for M1's module map).  A rustic-bko-only change runs that platform's rustic panel and
 carries the rest; a rescuer change runs its rescuer panel; a guest's new generation
 runs it and its variants; a driver change runs that driver's guests; a judge change
@@ -282,7 +282,7 @@ with every cell, fixture forks for BKO_GIT, both hosts' facts and seeded rows).
 ## Stand-ins until later pieces
 
 Until M1 affected.sh v1 serves the carry rule and any holt code change outside
-`plan_visible` reaches all 55 sources; until G2 a judge change makes cells due
+`plan_visible` reaches all 56 sources; until G2 a judge change makes cells due
 (`policy.judge_change`); until H3 `+close` is refused, variants run as runs of their
 own and `+img` runs as its own job.  G3, H4, C1, S1 and R1 are later still.
 

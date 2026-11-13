@@ -107,7 +107,8 @@ plan says so. A cell is kept off a host for any of these reasons:
 - **The guest is missing.** A host without the fleet role lacks a guest the
   cell boots. A fleet host is assumed to hold every guest.
 - **No host ZFS.** The cell's source is in `classes.json` `holt.needs_host_zfs`:
-  chimera-zfs, debian13-zfs, ubuntu24, ubuntu26-zfs, ubuntu26-zfsmirror. This
+  cachyos-zfs, chimera-zfs, debian13-zfs, ubuntu24, ubuntu26-zfs,
+  ubuntu26-zfsmirror. This
   applies to every variant, `+img` included.
 - **No rescuer or debs.** A holt cell needs HoltTest's rescuer, its debs, or
   both, and the host lacks one it needs. A Linux source needs both, unless it

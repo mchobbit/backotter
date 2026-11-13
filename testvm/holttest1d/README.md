@@ -35,7 +35,7 @@ guests.  A guest passes only when every check passes.  Status is as of
 | 1Z | Zorin OS | `zorin18` | passes |
 | 1F | Fedora, Rocky Linux, Fedora Kinoite (ostree, Bazzite's base) | `fedora44`, `fedora44-uefi`, `fedora44-raid`, `rocky10`, `rocky10-lvm`, `rocky10-raid5`, `kinoite44` | passes (`fedora44-raid` and `rocky10-raid5`: run `raid022`; `kinoite44`: run `bzb6a`; both below) |
 | 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | passes |
-| 1C | CachyOS, MX Linux | `cachyos`, `mx25` | passes |
+| 1C | CachyOS, MX Linux | `cachyos`, `mx25`, `cachyos-zfs` | `cachyos` and `mx25` pass; `cachyos-zfs` (UEFI, Limine, / on ZFS; `make-cachyos-zfs.sh`, 2026-11-13) not run yet: it needs a host with OpenZFS (`needs_host_zfs`) |
 | (1All only) | EndeavourOS, Manjaro | `endeavouros`, `endeavouros-grub`, `manjaro` (`make-arch.sh --live`: each one's own live ISO, with its installer's defaults) | passes on both hosts (runs `eosmj1` to `eosmj5`) |
 | 1V | Void Linux (musl) | `void-musl` | passes |
 | 1G | Gentoo Linux | `gentoo`, `gentoo-systemd` | passes on both hosts (2026-11-12, bko-holt 7760c9e7c497 and rel6's rustic-bko: `gentoo` runs `g5-3` Cinqcent and `g5-4` Chopin, with GRUB's embedded lvmid that of the restored vg0/root; `gentoo-systemd` `g5-2` Cinqcent and `g5-5` Chopin) |
@@ -154,7 +154,7 @@ Cinqcent), each with `ht1.sh`.  It is the union of the tests above plus the
 guests no other test names yet: `devuan6`, `ubuntu26-zfs` and `freebsd14`.
 A guest added since joins it with its group: among them 1G's `gentoo` and
 `gentoo-systemd` (2026-11-12, docs/design/gentoo.md), 1Obscure's three
-Chimera guests and 1F's `kinoite44`.
+Chimera guests, 1F's `kinoite44` and 1C's `cachyos-zfs`.
 Run `r1all` (2026-11-05): 16 pass, the 15 above plus `mx25` (MX 25 reports
 `ID=debian`, `VERSION_ID=13`).  The rest fail where expected: dump's OS gate
 (cachyos, devuan6, void-musl, nixos2605, tumbleweed, rocky10, rocky10-lvm,

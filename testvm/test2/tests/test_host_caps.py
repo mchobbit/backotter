@@ -246,7 +246,7 @@ class Placement(unittest.TestCase):
     def test_needs_host_zfs_in_the_class_table(self):
         ctx = plan.Ctx(REPO, hosts=[], options={})
         self.assertEqual(sorted(ctx.classes["holt"]["needs_host_zfs"]),
-                         ["chimera-zfs", "debian13-zfs", "ubuntu24", "ubuntu26-zfs", "ubuntu26-zfsmirror"])
+                         ["cachyos-zfs", "chimera-zfs", "debian13-zfs", "ubuntu24", "ubuntu26-zfs", "ubuntu26-zfsmirror"])
         cl = json.loads(json.dumps(ctx.classes))
         cl["holt"]["needs_host_zfs"] += ["freebsd15", "nosuch"]
         errs = plan.check_classes(plan.Ctx(REPO, hosts=[], options={"classes": cl}), holt_names=world.GUESTS)

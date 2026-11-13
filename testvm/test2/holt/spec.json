@@ -98,6 +98,7 @@
     "artix-dinit": {"kind": "linux"},
     "artix-s6": {"kind": "linux"},
     "cachyos": {"kind": "linux"},
+    "cachyos-zfs": {"kind": "linux", "firmware": "uefi"},
     "omarchy": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/omarchy/type-luks-passphrase.py"]},
     "alpine324": {"kind": "linux"},
     "aerynos": {"kind": "linux", "firmware": "uefi"},

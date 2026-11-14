@@ -62,16 +62,17 @@ downloaded or installed. Code references are to local `main` at d5e8686.
 
   The volume key, every keyslot and every token come back. Each restore
   then makes one of two promises, by machine:
-  - **The same machine (the same TPM and firmware variables):** it boots
-    unattended, and the TPM unseals as before. The boot chain (shim,
-    GRUB, `kernel.efi`, the command line, the model) is byte-identical,
-    so the PCRs match.
-  - **A new machine (a new TPM):** the first boot asks for the recovery
-    key. Once the key is entered, Ubuntu Core will "restore the TPM from
-    the recovered key" (the recovery-mode docs). From the next boot it
-    is unattended again. *Check* in U1 that this re-provisioning also
-    happens for a **different** TPM, not only for a reinitialised one.
-    The test proves it either way (below).
+  - **The same machine (the same TPM and the same Secure Boot
+    variables, `dbx` included):** it boots unattended, and the TPM
+    unseals as before. The boot chain (shim, GRUB, `kernel.efi`, the
+    command line, the model) is byte-identical, so the PCRs match.
+  - **A new machine (a new TPM, or reset firmware variables): the
+    recover-mode limit** (the user's Decision 2b, 2026-11-14). Run mode
+    can't unlock and reboots in a loop without asking for the key. Recover
+    mode asks for the recovery key on the screen and unlocks the data, so
+    the user can reach or copy it. A normal boot there needs a reinstall
+    of Ubuntu Core: Ubuntu Core 24 doesn't re-provision onto a different
+    TPM (U1 tested it).
 - **The unencrypted guest** is restored file-exact and boots unattended
   on any machine.
 - **Two guests from the stock image:** `uc24`, installed with no TPM (so
@@ -146,8 +147,8 @@ Options considered:
 
 | | Same machine | New machine (new TPM) | Cost | Verdict |
 |---|---|---|---|---|
-| **A. Keep the LUKS2 header** (`luksHeaderBackup` at dump, `luksHeaderRestore` at load, opened by the recovery key) | Unattended boot | First boot asks for the recovery key once, then Ubuntu Core re-provisions the TPM (*check*); unattended after | New `keep_header` path in load, header blob in the backup, recovery-key converter | **Recommended** |
-| B. A new header whose passphrase is the recovery key (load's generic path, `--key-file` = the 16 converted bytes) | Recovery key at every boot until re-provisioned, because the sealed key opens no slot | Same | Little: the converter only | The fallback if A has a flaw. It also keeps a promise that A can't: a **new volume key** for a user whose old disk was stolen (Decision 2's option) |
+| **A. Keep the LUKS2 header** (`luksHeaderBackup` at dump, `luksHeaderRestore` at load, opened by the recovery key) | Unattended boot | Recover mode only, with the recovery key typed on the screen; run mode loops (U1) | New `keep_header` path in load, header blob in the backup, recovery-key converter | **Recommended** |
+| B. A new header whose passphrase is the recovery key (load's generic path, `--key-file` = the 16 converted bytes) | Run mode loops, because the sealed key opens no slot; recover mode only | Same | Little: the converter only | The fallback if A has a flaw. It also keeps a promise that A can't: a **new volume key** for a user whose old disk was stolen (Decision 2's option) |
 | C. bko reseals for the target's TPM itself (predicting the PCRs with secboot) | Unattended | Unattended | Re-implements snapd's security-critical sealing. It breaks on every snapd change | Rejected |
 | D. Factory-reset or reinstall from the seed, then restore data on top | Unattended | Unattended | Destroys what the restore is for (data is re-created). snapd's state no longer matches the restored files | Rejected |
 | E. Unencrypted only, refuse FDE | n/a | n/a | None | Rejected: FDE is the default on real hardware with a TPM |
@@ -157,22 +158,26 @@ holt/README.md and in the plan's notes:
 
 - **uc24 (unencrypted):** restored file-exact. It boots unattended on any
   machine with UEFI, or with BIOS through the gadget's core.img.
-- **uc24-fde onto the same machine** (same TPM, same firmware variables):
+- **uc24-fde onto the same machine** (same TPM, same Secure Boot
+  variables: PK, KEK, db, dbx, SbatLevel):
   restored file-exact, with both LUKS2 headers byte-identical. It boots
   unattended. Loading needs the recovery key (`--key-file`), as dumping
   does: the rescue system's boot chain is not the one the key is sealed
   to, so the TPM never unseals for bko-holt.
-- **uc24-fde onto a new machine:** the same restore. The first boot asks
-  for the recovery key once, on the console. After that, boots are
-  unattended (once U1 confirms the re-provisioning). If U1 finds that
-  Ubuntu Core doesn't re-provision onto a **different** TPM, this
-  promise becomes "the recovery key at every boot until the user
-  re-provisions the TPM with snapd's tools" (`snap-tpmctl` or snapd's
-  API, *check* which is in UC24). That is a LIMIT, written down, and not
-  something bko does itself.
-- **Secure Boot off on the target, or a different firmware with other
-  db/dbx:** the same as a new machine: the recovery key, then
-  re-provisioning.
+- **uc24-fde onto a new machine: the recover-mode limit** (Decision 2b).
+  The same restore. Run mode reboots in a loop, so `load --new-machine`
+  writes `snapd_recovery_mode=recover` into the restored seed's
+  `grubenv` for the newest good recovery system that asks for the key
+  (U1: the image's system did, the newer one didn't, *check* why in U3).
+  The first boot is then recover mode: it asks for the recovery key on
+  the screen, unlocks both volumes, and the data is readable. A normal
+  boot on that machine needs a reinstall of Ubuntu Core; bko doesn't
+  reseal. The plan's note and holt/README.md say so in those words. It is
+  a LIMIT in HoltTest1, not a FAIL.
+- **Secure Boot off on the target, reset firmware variables, or another
+  firmware with other db/dbx:** the same as a new machine. A dbx update
+  on the same machine has the same effect, for Ubuntu Core with or without
+  bko.
 - **The recovery key itself is never stored by bko.** The user keeps it,
   as Ubuntu Core tells them to. The backup holds only what the source
   disk held: the LUKS2 headers, with key material wrapped by the
@@ -400,7 +405,7 @@ cells:
 | a | `uc24` | fresh OVMF vars, no TPM | Run mode over SSH, with each of the following equal to the source's: `snap list --all` (every revision), `snap recovery` (both labels), the `modeenv` lines, and both `bko-mark`s. `snap revert hello` works offline. |
 | b | `uc24` | the same | A boot into the **second** recovery system in **recover** mode (`snap reboot --recover LABEL`, then `--run`) reaches SSH in recover mode, then run mode again |
 | c | `uc24-fde` | **the source's** swtpm state and OVMF vars, copied | Unattended boot: no recovery-key prompt on the serial log, SSH up, cell a's checks, and `snap recovery --show-keys` the source's key |
-| d | `uc24-fde` | a **new** swtpm dir and fresh OVMF vars | 1st boot: the prompt on serial, typed by `console-boot.py` from the host's key file, then SSH. 2nd boot: **unattended** (the re-provisioning). If U1 rules that out, the cell passes as a LIMIT with the prompt at each boot, and the README says so |
+| d | `uc24-fde` | a **new** swtpm dir and fresh OVMF vars, loaded with `--new-machine` | The LIMIT: the first boot is recover mode; the key is typed on tty1 through QMP (`qmp.py`) only once the prompt shows in a screen grab; then SSH in recover mode with `degraded.json` naming ubuntu-data unlocked and both marks readable. Then `snap reboot --run` must loop as U1 saw (recorded, not a FAIL) |
 | e | `uc24-fde` | the source's TPM | `vm-update`'s kernel refresh on the **restored** disk, then an unattended boot (snapd's reseal works on a restored system) |
 
 judge.py **requires** these to be byte-identical to the source's:
@@ -427,8 +432,8 @@ do. A `snapcore` scenario in `scenarios.rs` and `keep_header` unit tests
 come with U3.
 
 **BackShot1:** not proposed. It needs the Thinkpad reinstalled with
-Ubuntu Core, and its TPM is real. That would be the only test of
-re-provisioning on hardware (Decision 6 offers it as U9).
+Ubuntu Core, and its TPM is real. That would be the only test on a real
+TPM (Decision 6 offers it as U9).
 
 ## Shared lines (with the other new-distro sessions)
 
@@ -557,20 +562,41 @@ The *checks*:
 
   So **the spec's new-machine promise is wrong as written**: the first
   boot does not ask for the key. A restored `uc24-fde` on a new TPM boots
-  in a loop until someone picks "Recover using LABEL" on the seed GRUB's
-  menu (hidden, 3 s; Esc shows it, `r` is the recover entries' hotkey).
-  **Not settled yet:** whether recover mode then asks for the key (on
-  tty1), and whether a run-mode boot after it is unattended on the new
-  TPM (re-provisioning). `testvm/ubuntu-core/recover-new-tpm.sh` does
-  exactly that path (Esc and `r` by QMP, the key typed on the keyboard by
-  `qmp.py type`, `snap reboot --run`, two run-mode boots with screen
-  grabs). It is queued on Chopin (`cmp-run.sh --reserve 1 3`,
-  `/mnt/bko-ram/u1-ubuntu-core/hold.sh`) behind a reservation another
-  session holds (`sleep infinity`, 13 GiB). It runs by itself, then
-  `new-tpm-test.sh --same-tpm` (the same TPM, fresh variables), and keeps
-  its results in `/bkoscratch/u1-ubuntu-core/` (`rec.out`, `rec/`).
-  Cell d (U6) waits on that answer. Either way it can't use
-  console-boot.py: the prompt, if any, is on tty1.
+  in a loop until something boots recover mode instead.
+
+  **The new-machine tests, settled 2026-11-14** (`recover-new-tpm.sh`,
+  results in Chopin's `/bkoscratch/u1-ubuntu-core/rec2`, `rec3`). Keys at
+  the firmware splash land in OVMF's setup, so the script sets the
+  overlay's seed `grubenv` to `snapd_recovery_mode=recover` for a given
+  system (what `snap reboot --recover` writes) before the first boot.
+  In run mode `snapd_recovery_system` is empty, so it names one.
+  - **Recover mode of the image's system (`20240603`, snapd 2.63)
+    asks for the key and unlocks both volumes** with it on tty1. The
+    journal: the TPM load fails, then `successfully activated encrypted
+    device ... using` the recovery key, for ubuntu-data and ubuntu-save.
+    `degraded.json` says ubuntu-data is mounted. SSH answers as tester:
+    the data is reachable.
+  - **Run mode afterwards still loops.** After `snap reboot --run`, run
+    mode fails as before ("the TPM owner has changed", "no more ...
+    recovery key tries remaining"), 18 grabs over 180 s. **Ubuntu Core 24
+    does not re-provision onto a different TPM** after a recovery-key
+    boot. The docs' "restore the TPM from the recovered key" doesn't
+    cover a new TPM.
+  - **Recover mode of the newer system (`bko-20261114`, snapd 2.78)
+    never asks for the key.** It reaches a `localhost login:` prompt on
+    tty1 with ubuntu-data locked, so tester doesn't exist and SSH never
+    answers. The key the script typed blind went into the login field.
+    Those grabs were deleted, and the script must type only at a prompt
+    it has seen (U6).
+  - **Fresh firmware variables break the same TPM too**
+    (`new-tpm-test.sh --same-tpm`, `rec-sametpm`): every boot loops. The
+    guest's `dbx` is 17,912 bytes, and OVMF's stock `OVMF_VARS_4M.ms.fd`
+    has 76. `uc24`'s variables have the same updated `dbx`, so FDE didn't
+    cause it, and none of our scripts writes `dbx`. PCR 7 measures `dbx`,
+    so **"the same machine" means the same TPM and the same Secure Boot
+    variables** (PK, KEK, db, dbx, SbatLevel). With both copied, it boots
+    unattended (twice on Cinqcent, `/bkoscratch/u1-ubuntu-core/u1-cinq`).
+  - Cell d can't use console-boot.py either way: the prompt is on tty1.
 - **os-release** (core24 423 and 2307 alike): `NAME="Ubuntu Core"`,
   `VERSION="24"`, `ID=ubuntu-core`, `PRETTY_NAME="Ubuntu Core 24"`,
   `VERSION_ID="24"`. The spec's guess holds.
@@ -633,10 +659,13 @@ The *checks*:
 
 **What this changes in the design:**
 
-- **The new-machine promise** (Decision 2, cell d): no prompt in run
-  mode. It becomes "boot recover mode from the seed GRUB's menu and type
-  the recovery key there", then whatever the queued test shows. Cell d
-  drives GRUB and types on tty1 through QMP (`qmp.py`), not on serial.
+- **The new-machine promise** (Decision 2, cell d) can't be "the
+  recovery key once, then unattended". On a new TPM, or on the same TPM
+  with other Secure Boot variables, a restored `uc24-fde` reaches only
+  **recover mode, with the recovery key typed on tty1**: the data is
+  readable, but run mode never boots. Ubuntu Core 24 has no
+  re-provisioning that we found. **The user chose the recover-mode limit
+  (Decision 2b, 2026-11-14)**; the promises and cell d above say it.
 - **Every boot of `uc24-fde` needs copies of its `tpm/` and
   `uefi-vars.fd`.** `vm-run-options` holds only `--uefi --memory 2048`:
   its paths would not resolve, and a boot that reseals writes the TPM's
@@ -662,9 +691,9 @@ The *checks*:
 
 | # | Piece | Effort |
 |---|---|---|
-| U1 | Fetch the image with the user's OK, verify SHA256SUMS.gpg, then `make-ubuntu-core.sh` by Decision 3's path, both guests on Chopin, copied to the second host (the same sha256), with `rebuild-one.sh` lines. Settle every *check*: the labels, where the keys live, the recovery-key bytes as a LUKS key, re-provisioning onto a **different** swtpm, cloud-init under signed grade, the console-conf skip, `cmdline-append`, the NVRAM entry, the recovery-system API, os-release, room. Write "What U1 found" here. Done when both guests boot alone, SSH works, and `uc24-fde` boots unattended twice. **Fetched 2026-11-14** on Chopin, in `/bkoscratch/rebuild-inputs/ubuntu-core24/`: `ubuntu-core-24-amd64.img.xz` (470,060,012 bytes, SHA-256 `d82b5b9b...71622a0`), `SHA256SUMS` with a good `SHA256SUMS.gpg` signature from key `843938DF228D22F7B3742BC0D94AA3F0EFE21092` (Ubuntu CD Image Automatic Signing Key (2012), kept as `cdimage-keyring.gpg`), and the model assertion (canonical, grade signed, no storage-safety, timestamp 2024-04-19). The image is still the 2024-06-03 build. **Built 2026-11-14 on Chopin** ("What U1 found"): `uc24` and `uc24-fde` in `~/backotter-work/vms/`, each booted alone to SSH, `uc24-fde` unattended twice; `make-ubuntu-core.sh`, `testvm/ubuntu-core/`, the `rebuild-one.sh` lines; every *check* settled but one: on a new TPM, run mode boot-loops with no key prompt (settled), and whether recover mode then re-provisions is queued (`recover-new-tpm.sh`, results to `/bkoscratch/u1-ubuntu-core/`). Not copied to a second host (Cinqcent may be offline; not in this brief). Nothing committed | 1.5 d |
+| U1 | Fetch the image with the user's OK, verify SHA256SUMS.gpg, then `make-ubuntu-core.sh` by Decision 3's path, both guests on Chopin, copied to the second host (the same sha256), with `rebuild-one.sh` lines. Settle every *check*: the labels, where the keys live, the recovery-key bytes as a LUKS key, re-provisioning onto a **different** swtpm, cloud-init under signed grade, the console-conf skip, `cmdline-append`, the NVRAM entry, the recovery-system API, os-release, room. Write "What U1 found" here. Done when both guests boot alone, SSH works, and `uc24-fde` boots unattended twice. **Fetched 2026-11-14** on Chopin, in `/bkoscratch/rebuild-inputs/ubuntu-core24/`: `ubuntu-core-24-amd64.img.xz` (470,060,012 bytes, SHA-256 `d82b5b9b...71622a0`), `SHA256SUMS` with a good `SHA256SUMS.gpg` signature from key `843938DF228D22F7B3742BC0D94AA3F0EFE21092` (Ubuntu CD Image Automatic Signing Key (2012), kept as `cdimage-keyring.gpg`), and the model assertion (canonical, grade signed, no storage-safety, timestamp 2024-04-19). The image is still the 2024-06-03 build. **Built 2026-11-14 on Chopin** ("What U1 found"): `uc24` and `uc24-fde` in `~/backotter-work/vms/`, each booted alone to SSH, `uc24-fde` unattended twice; `make-ubuntu-core.sh`, `testvm/ubuntu-core/`, the `rebuild-one.sh` lines; every *check* settled: on a new TPM run mode boot-loops with no prompt, recover mode of the image's system takes the key and unlocks the data, and run mode never comes back (no re-provisioning; the user chose the recover-mode limit, Decision 2b); fresh firmware variables break the same TPM too (dbx). **Copied to Cinqcent** 2026-11-14 (guests, `tpm/`, vars, rebuild inputs and the 0600 key file, the same sha256), and `uc24-fde` booted unattended twice there on copies of its own TPM and variables. **Done** | 1.5 d |
 | U2 | dump (High subagent): `osrel` row; `snapcore.rs` (detection, modeenv, model, seed, revisions); `boot.snapcore`; `backup_sources` with mount hints; LUKS2 header capture; `recovery-key-file`; `redact.rs` labels and the key rule; scenario `snapcore_tree(fde)` | 1 d |
-| U3 | load (High): the gadget's partitions exact; `keep_header` (generic, with `--keep-luks-header`); `snapcore_boot` (check script, BIOS Boot, conditional NVRAM, log); v1 refusals; tests | 1 d |
+| U3 | load (High): the gadget's partitions exact; `keep_header` (generic, with `--keep-luks-header`); `snapcore_boot` (check script, BIOS Boot, no NVRAM entry, log); `--new-machine` (Decision 2b: the restored seed `grubenv` set to recover mode for a system that asks for the key; *check* why `bko-20261114` didn't ask); v1 refusals; tests | 1.1 d |
 | U4 | Guest tools: vm-mount's snapcore mode (with FDE), vm-update's snap branch, fingerprint/pkgset, `K-snapcore`, compare.py's four-root tree; tests | 0.75 d |
 | U5 | SticTest1 `uc24`, both archivers, two hosts, 0 FAIL | 0.4 d |
 | U6 | HoltTest1 1U: cells a-e in ht1.sh (the TPM copy or new TPM, the recover-mode boot, the prompt typed by `console-boot.py`, the post-restore refresh), judge.py rules, `ram-sizes.tsv`; runs on Chopin and a second host | 1 d |
@@ -685,11 +714,14 @@ the OKs.
 
 ## Risks
 
-- **Re-provisioning onto a different TPM.** The docs say a recovery-key
-  boot "restore[s] the TPM". If that covers only a reset TPM and not a
-  new one, the new-machine promise drops to "the recovery key until
-  re-provisioned" (cell d as a LIMIT). bko does not take over sealing
-  (option C).
+- **A new machine reaches recover mode only** (settled in U1, accepted by
+  the user as Decision 2b). Ubuntu Core 24 doesn't re-provision onto a
+  different TPM, and bko doesn't take over sealing (option C). A newer
+  snapd or UC26 may add re-provisioning: a later run of cell d would show
+  it, and the promise would then grow.
+- **A dbx update ends unattended boots** on the same machine too: PCR 7
+  measures dbx. That is Ubuntu Core's behaviour with or without bko,
+  and snapd reseals for the dbx updates it applies itself.
 - **snapd moves under us.** Newer snapd moves keys from files to LUKS2
   tokens and adds named keyslots and new FDE APIs. Keeping the whole
   header is robust to that, but the "recovery key as 16 bytes" converter
@@ -708,8 +740,8 @@ the OKs.
   print it, so the scripts pass it by file only.
 - **The same machine means the same firmware variables too.** Restoring
   onto the same box after a firmware update or a dbx update changes
-  PCR 7. That is the new-machine case: the recovery key once. The docs
-  say so.
+  PCR 7. That is the new-machine case: recover mode only (Decision 2b).
+  The docs say so.
 - **The swtpm state travels with the guest.** If vm-store can't carry a
   directory, the FDE guest's TPM is lost on a copy, and every copy is a
   "new machine". U1 settles it (a tarball sidecar at worst).
@@ -738,12 +770,21 @@ the OKs.
    SHA256SUMS); or **UC26** instead (the docs call it latest, *check*
    its image); or both (+0.5 d, two more guests and a row).
 2. **What an FDE restore promises:** **keep the LUKS2 header (option A):
-   unattended on the same machine, the recovery key once on a new one**
+   unattended on the same machine** (on a new one see 2b)
    (recommended: the only scheme that keeps the TPM-sealed keys working
    without bko sealing anything); or option B, a new header unlocked by
    the recovery key (a new volume key, the recovery key at every boot
    until the user re-provisions), offered as a load flag beside A; or
    A only, with no B flag.
+
+   2b. **(Asked after U1, 2026-11-14, when U1 found no re-provisioning.)
+   What an FDE restore promises on a new machine:** **the recover-mode
+   limit**: recover mode with the recovery key typed on the screen, the
+   data readable, a normal boot only after a reinstall; `load
+   --new-machine` makes the first boot recover mode (**chosen by the
+   user**); or research first (snapd 2.78's FDE API, UC26, ~0.5 d); or a
+   decrypting restore that boots unattended but unencrypted (~1 d,
+   unproven).
 3. **How the guests are built:** **the stock signed image with a NoCloud
    CIDATA drive** (recommended: Canonical's own image and model, no
    account needed); or our own dangerous-grade model built by
@@ -756,6 +797,6 @@ the OKs.
    **1Obscure** beside the other immutable systems.
 6. **BackShot1 on the Thinkpad:** **not now** (recommended: the guests
    cover the layout, and swtpm covers sealing); or U9, a reinstall with
-   Ubuntu Core, the only test of re-provisioning on a real TPM.
+   Ubuntu Core, the only test on a real TPM.
 7. **Secure Boot on both guests:** **on** (recommended: FDE requires it,
    and `uc24` then boots the same shim chain); or off on `uc24`.

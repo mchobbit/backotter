@@ -14,8 +14,9 @@
 #     rerun from a later phase a failure's state back from K.
 #
 # The driver sets G RUN GV VARIANT PHASES PORT W HERE T, fails=0, say ok bad,
-# imgs and HOLT (and PLAT, ht1-bsd.sh) before ht_paths, and HT_BULK (globs in
-# R a pass deletes) and HT_ZIP (files in R a pass compresses) before ht_begin.
+# imgs and HOLT (ht_holt_pick PLAT; and PLAT, ht1-bsd.sh) before ht_paths,
+# and HT_BULK (globs in R a pass deletes) and HT_ZIP (files in R a pass
+# compresses) before ht_begin.
 # It may define ht_release (its own mounts), which ht_end calls before the
 # lib releases the rest.  The calls, in order: ht_paths; the driver's own
 # refusals; ht_require; ht_seed PATTERN...; ht_begin; ht_rustic_take PLAT; the
@@ -531,6 +532,31 @@ ht_summary() {
         say "disk ($HT_RECORDS, HT_RAM=0): peak $(ht_gib "$HT_PEAK") GiB; $mem"
     fi
     HT_SUMMED=1   # (said: the next line is the RESULT)
+}
+
+# HOLT: the bko-holt a run tests for PLAT.  HT_HOLT's file, unchecked; else
+# HT_HOLT_BIN's set: DIR/bko-holt for linux when DIR has one (HoltTest2's
+# T2_HOST_ROOT/holt-bin/CODE), else DIR/PLAT/bko-holt; else the promoted
+# set, W/holt-bin/PLAT/bko-holt (testvm/promote-bins.sh's, on every host),
+# which must match its line in W/holt-bin/SHA256SUMS.  A missing file or a
+# mismatch refuses the run (exit 2); /bkoscratch/holttest1d/bin/bko-holt is
+# used only when HT_HOLT names it.
+ht_holt_pick() {  # PLAT
+    local plat=$1 set want got
+    if [[ -n ${HT_HOLT:-} ]]; then HOLT=$HT_HOLT; return 0; fi
+    set=${HT_HOLT_BIN:-$W/holt-bin}
+    HOLT=$set/$plat/bko-holt
+    if [[ -n ${HT_HOLT_BIN:-} ]]; then
+        [[ $plat != linux || ! -f $set/bko-holt ]] || HOLT=$set/bko-holt
+        [[ -f $HOLT ]] || ht_die "no $HOLT (HT_HOLT_BIN=$HT_HOLT_BIN)"
+        return 0
+    fi
+    [[ -f $HOLT ]] || ht_die "no $HOLT (the promoted holt-bin: testvm/promote-bins.sh --sets holt-bin; or set HT_HOLT or HT_HOLT_BIN)"
+    want=$(awk -v f="$plat/bko-holt" '{ n = $2; sub(/^\*/, "", n); sub(/^\.\//, "", n) } n == f { print $1; exit }' \
+        "$set/SHA256SUMS" 2>/dev/null)
+    [[ -n $want ]] || ht_die "no $plat/bko-holt in $set/SHA256SUMS: it doesn't vouch for $HOLT"
+    got=$(sha256sum "$HOLT" | cut -d' ' -f1)
+    [[ $got == "$want" ]] || ht_die "$HOLT is ${got:0:12}; $set/SHA256SUMS says ${want:0:12} (promote holt-bin again)"
 }
 
 # RUSTIC=R/rustic-bko: a copy of the set's PLAT/rustic-bko, checked against

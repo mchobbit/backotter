@@ -61,12 +61,16 @@
 # HT_RECORDS (tests: /mnt/bko-ram/NAME and /bkoscratch/NAME); any other HT_
 # one (HT_QUICK, HT_LIMIT_KIB and the like) refuses the start.  HoltTest2's
 # T2_RUN, T2_CELLS and T2_HOST_ROOT reach the jobs too (their ledger rows:
-# ht1-lib.sh).  If the binaries (rustic-bko's set, and HT_HOLT_BIN's
-# SHA256SUMS when it has one) change during the run, nothing more starts and a job of ours still in line
+# ht1-lib.sh).  bko-holt is HT_HOLT's, HT_HOLT_BIN's or, by default, the
+# promoted ~/backotter-work/holt-bin's (ht1.sh's header), whose SHA256SUMS
+# must vouch for its linux/bko-holt; the start says Linux's, path and
+# sha256, and the log's binaries: line too.  If the binaries (rustic-bko's
+# set, and HT_HOLT_BIN's SHA256SUMS when it has one, or holt-bin's) change
+# during the run, nothing more starts and a job of ours still in line
 # leaves it; nothing more starts either after 3 jobs in a row that
 # failed within 60 s, or a line ram-size.sh can't size.
 # (--pop is the queue host's half of taking a line, --putback of giving one
-# back.)
+# back; --holt prints the bko-holt a runner here would use, SHA12 PATH.)
 # Exit 0 when done, stopped or aborted; 2 on bad usage.
 set -uo pipefail
 
@@ -161,10 +165,46 @@ order() {  # LINE...: biggest D first (a line's own =D, else ram-size.sh's)
     done | sort -t $'\t' -k1,1gr -k2,2n | cut -f3
 }
 
+# The bko-holt the jobs test, as the drivers take it (ht1-lib.sh's
+# ht_holt_pick; Linux's said): HOLTP its path and HOLT12 its sha256's first
+# 12, and hsums the SHA256SUMS pinned with the binaries: HT_HOLT_BIN's when
+# it has one (HoltTest2's builds do); without HT_HOLT or HT_HOLT_BIN the
+# promoted holt-bin's, which must vouch for its linux/bko-holt, or every job
+# would refuse.  HT_HOLT and HT_HOLT_BIN are absolute by then.
+holt_pick() {
+    local want
+    hsums=""; [[ -z ${HT_HOLT_BIN:-} || ! -f $HT_HOLT_BIN/SHA256SUMS ]] || hsums=$HT_HOLT_BIN/SHA256SUMS
+    if [[ -n ${HT_HOLT:-} ]]; then HOLTP=$HT_HOLT
+    elif [[ -n ${HT_HOLT_BIN:-} ]]; then
+        HOLTP=$HT_HOLT_BIN/linux/bko-holt; [[ ! -f $HT_HOLT_BIN/bko-holt ]] || HOLTP=$HT_HOLT_BIN/bko-holt
+    else
+        HOLTP=$W/holt-bin/linux/bko-holt hsums=$W/holt-bin/SHA256SUMS
+        [[ -f $HOLTP ]] || die "no $HOLTP (the promoted holt-bin: testvm/promote-bins.sh --sets holt-bin; or set HT_HOLT or HT_HOLT_BIN)"
+        want=$(awk '{ n = $2; sub(/^\*/, "", n); sub(/^\.\//, "", n) } n == "linux/bko-holt" { print $1; exit }' "$hsums" 2>/dev/null)
+        [[ -n $want && $(sha256sum "$HOLTP" | cut -d' ' -f1) == "$want" ]] ||
+            die "$hsums doesn't vouch for $HOLTP (promote holt-bin again): every job would refuse"
+    fi
+    # (A set without Linux's, HoltTest2's for other systems' cells, is no
+    # reason to refuse: each driver checks its own PLATFORM/bko-holt.)
+    HOLT12=$(sha256sum "$HOLTP" 2>/dev/null | cut -c1-12); HOLT12=${HOLT12:-none}
+}
+# --holt: that bko-holt, "SHA12 PATH" (ht1-farm.sh asks each host), or exit 2.
+holt_show() {
+    local v p
+    for v in HT_HOLT HT_HOLT_BIN; do
+        [[ -n ${!v:-} ]] || continue
+        p=$(realpath -e -- "${!v}" 2>/dev/null) || die "$v=${!v}: no such file"
+        export "$v=$p"
+    done
+    holt_pick
+    echo "$HOLT12 $HOLTP"
+}
+
 case ${1:-} in
 --pop) shift; pop_here "$@"; exit ;;
 --putback) shift; putback_here "$@"; exit ;;
 --order) shift; order "$@"; exit ;;
+--holt) shift; holt_show; exit ;;
 esac
 [[ $# -eq 3 || $# -eq 4 ]] || usage
 RUN=$1 BASE=$2 MAX=$3 QHOST=${4:-}
@@ -219,8 +259,7 @@ else
     binfile=$bset/SHA256SUMS
     bins="$bset: $(head -1 "$bset/BUILD-INFO" 2>/dev/null || echo "${HT_ROUND:+round $HT_ROUND}")"
 fi
-# HT_HOLT_BIN's SHA256SUMS too, when it has one (HoltTest2's builds do).
-hsums=""; [[ -z ${HT_HOLT_BIN:-} || ! -f $HT_HOLT_BIN/SHA256SUMS ]] || hsums=$HT_HOLT_BIN/SHA256SUMS
+holt_pick
 binsum() { [[ -r $binfile ]] || return 0; cat -- "$binfile" ${hsums:+"$hsums"} 2>/dev/null | sha256sum | cut -c1-64; }
 BINSUM=$(binsum); [[ -n $BINSUM ]] || die "no $binfile: every job would refuse"
 bignames() { "$HERE/ram-size.sh" --host "$H" --big "$BIG_GIB" | paste -sd, -; }
@@ -444,7 +483,8 @@ where="in RAM"; ((RAM)) || where="on /bkoscratch (HT_RAM=0)"
 ((RAM && DISK_OVER)) && where+=", a line over this host's RAM-disk ceiling on /bkoscratch (DISK_OVER=1)"
 say "start: run $RUN, ports $BASE-$((BASE + 89)), at most $MAX, queue ${QHOST:-here}, $HERE/ht1.sh, $where"
 say "env: $(env | grep -E '^(HT_[A-Za-z0-9_]*|T2_[A-Za-z0-9_]*|BIG_GIB|MINFREE_GB|ONLY_ELSEWHERE|NEEDS_ZFS|CMP_RUN|DISK_OVER)=' | sort | tr '\n' ' ')"
-say "binaries: $bins (sha256 ${BINSUM:0:12} of $binfile${hsums:+ and $hsums}); bko-holt ${HT_HOLT:-${HT_HOLT_BIN:-$L/bin}}"
+say "binaries: $bins (sha256 ${BINSUM:0:12} of $binfile${hsums:+ and $hsums}); bko-holt $HOLT12 ($HOLTP)"
+echo "ht1-queue: bko-holt $HOLT12 ($HOLTP); log $LOG"
 say "big (D >= $BIG_GIB GiB; one at a time here): ${BIGNAMES//,/ }"
 ((${#skip[@]})) && say "left for other hosts: ${skip[*]}"
 ceil_now

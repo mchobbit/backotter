@@ -17,11 +17,12 @@
 #     Sculpt by sculpt-check.sh (its screen, and its GENODE partition used).
 #
 # The write path is ht1-lib.sh's, as ht1.sh's (README: "Where a run works,
-# and what it keeps").  HT_HOLT is the bko-holt to test instead of bin/'s,
-# HT_HOLT_BIN a set to take it from (ht1.sh's header).  HT_VARIANT takes
-# "bigger" and "oneshot" as ht1.sh does, and "refuse", which checks that a
-# smaller target is still refused for a layout of another family, --fit-largest
-# or no --fit-largest (README "The fitting variants"): source and rebuild only.
+# and what it keeps").  bko-holt is the promoted holt-bin's, HT_HOLT a file
+# to test instead, HT_HOLT_BIN a set to take it from (ht1.sh's header).
+# HT_VARIANT takes "bigger" and "oneshot" as ht1.sh does, and "refuse", which
+# checks that a smaller target is still refused for a layout of another
+# family, --fit-largest or no --fit-largest (README "The fitting variants"):
+# source and rebuild only.
 set -uo pipefail
 
 G=$1 RUN=$2; shift 2
@@ -29,14 +30,12 @@ PHASES=("$@")   # the default is the variant's (below): all four, or source and 
 W=/home/m/backotter-work
 HERE=$(dirname "$(realpath "$0")")
 T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, compare/, redox/, sculpt-check.sh), as ht1.sh's
-BIN=/bkoscratch/holttest1d/bin
-# bko-holt (Linux's, run in the rescuer): HT_HOLT's, else HT_HOLT_BIN's set's
-# (DIR/bko-holt: HoltTest2's builds), else bin/'s (ht1.sh's header).
-HOLT=${HT_HOLT:-${HT_HOLT_BIN:-$BIN}/bko-holt}
-[[ -n ${HT_HOLT:-} || -z ${HT_HOLT_BIN:-} || -f $HOLT ]] || { echo "ht1-offline: no $HOLT (HT_HOLT_BIN=$HT_HOLT_BIN)" >&2; exit 2; }
 [[ -r $HERE/ht1-lib.sh ]] || { echo "ht1-offline: no ht1-lib.sh beside $0" >&2; exit 2; }
 # shellcheck source=ht1-lib.sh
 . "$HERE/ht1-lib.sh"
+# bko-holt (Linux's, run in the rescuer): HT_HOLT's, else HT_HOLT_BIN's set's,
+# else the promoted holt-bin's, vouched for by its SHA256SUMS (ht_holt_pick).
+ht_holt_pick linux
 VARIANT=${HT_VARIANT:-}
 case $VARIANT in ""|bigger|oneshot|refuse) ;; *) echo "HT_VARIANT: bigger, oneshot or refuse" >&2; exit 2 ;; esac
 GV=$G${VARIANT:+-$VARIANT}

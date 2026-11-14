@@ -5,11 +5,12 @@
 #   ht1-bsd.sh GUEST RUN [PHASE...]    PHASEs: source backup rebuild verify
 #
 # The same round trip as ht1.sh, through bko-holt and rustic-bko built for
-# the guest's own system (bin/PLATFORM/bko-holt from build-holt.sh, or
-# HT_HOLT_BIN/PLATFORM/bko-holt, and
-# ~/backotter-work/bko-bin/PLATFORM/rustic-bko), with a rescuer of that
-# system: a throwaway copy of another of its guests, whose own disk is
-# first, so that no pool, label or volume name of its own is the source's.
+# the guest's own system (~/backotter-work/holt-bin/PLATFORM/bko-holt,
+# checked against its SHA256SUMS, or HT_HOLT_BIN/PLATFORM/bko-holt or
+# HT_HOLT, as in ht1.sh; and ~/backotter-work/bko-bin/PLATFORM/rustic-bko),
+# with a rescuer of that system: a throwaway copy of another of its guests,
+# whose own disk is first, so that no pool, label or volume name of its own
+# is the source's.
 # Linux can't read most of these filesystems, so the rescuer does the
 # offline backup too (the source's disks attached read-only), and keeps the
 # repository and the source's mtree(8) listing on its own disk
@@ -38,7 +39,6 @@ set -uo pipefail
 G=$1 RUN=$2; shift 2
 PHASES=("$@"); [[ ${#PHASES[@]} -gt 0 ]] || PHASES=(source backup rebuild verify)
 W=/home/m/backotter-work
-BIN=/bkoscratch/holttest1d/bin
 HERE=$(dirname "$(realpath "$0")")
 T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, vm-lib, compare/), as ht1.sh's
 [[ -r $HERE/ht1-lib.sh ]] || { echo "ht1-bsd: no ht1-lib.sh beside $0" >&2; exit 2; }
@@ -204,10 +204,9 @@ rraw() { case $PLAT in haiku) echo "$(rdev "$1")/raw" ;; illumos) echo "/dev/rds
 LISTMOUNTS='mount | sed -e "s/ type [^ ]* (.*//" -e "s/ (.*//" -e "s/^.* on //"'
 # A disk's sectors (the name, ld1), and a checksum of some of them.
 SECTORS='sectors() { case $(uname) in FreeBSD) diskinfo /dev/$1 | cut -f4 ;; DragonFly) echo $(( $(printf %d 0x$(diskinfo /dev/$1 | sed -n "s/.*size=0x\([0-9a-fA-F]*\).*/\1/p")) / 512 )) ;; *) disklabel $1 | awk "/^total sectors:/ {print \$3}" ;; esac; }'
-# bko-holt: HT_HOLT's, else HT_HOLT_BIN's set's (DIR/PLATFORM/bko-holt, as in
-# bin/: HoltTest2's builds), else bin/'s (ht1.sh's header).
-HOLT=${HT_HOLT:-${HT_HOLT_BIN:-$BIN}/$PLAT/bko-holt}
-[[ -n ${HT_HOLT:-} || -z ${HT_HOLT_BIN:-} || -f $HOLT ]] || { echo "ht1-bsd: no $HOLT (HT_HOLT_BIN=$HT_HOLT_BIN)" >&2; exit 2; }
+# bko-holt: HT_HOLT's, else HT_HOLT_BIN's set's DIR/PLATFORM/bko-holt, else
+# the promoted holt-bin's, vouched for by its SHA256SUMS (ht_holt_pick).
+HOLT=""; ht_holt_pick "$PLAT"
 gdir=$W/vms/$G gkey=$gdir/id_ed25519
 rdir=$W/vms/$RG rkey=$rdir/id_ed25519
 # GELI (docs/design/geli.md, freebsd15-geli): the loader asks for the

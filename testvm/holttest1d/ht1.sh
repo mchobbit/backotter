@@ -14,7 +14,7 @@
 # what it keeps").  Later phases reuse what earlier ones left, so after a
 # bko-holt fix only `rebuild verify` need running again: on a failure's
 # state, copied back into RAM from K, not on records only (a pass's).
-# Needs /bkoscratch/holttest1d/bin/ with bko-holt, f2fs-tools_*.deb and
+# Needs /bkoscratch/holttest1d/bin/ with f2fs-tools_*.deb and
 # jfsutils_*.deb (installed in a rescuer that lacks them), and bcachefs
 # with bcachefs-deps-*.deb (make-bcachefs-tools.sh: Debian 13 has no
 # bcachefs-tools; installed only for a layout with a bcachefs, and of the
@@ -22,7 +22,9 @@
 # /bkoscratch/holttest1d/rescuer/rescuer.qcow2 (make-rescuer.sh): a run
 # that would use the debs or the rescuer refuses to start without them
 # (exit 2).  rustic-bko is the shipped set's
-# (~/backotter-work/bko-bin/linux/, checked against its SHA256SUMS).
+# (~/backotter-work/bko-bin/linux/, checked against its SHA256SUMS), and
+# bko-holt the promoted one's (~/backotter-work/holt-bin/linux/bko-holt,
+# checked against holt-bin's SHA256SUMS; missing or unmatched, exit 2).
 #
 #   source   dump the live guest (a throwaway overlay; the guest's own
 #            image is never written), with its boot state as the baseline
@@ -74,17 +76,21 @@
 # what the change predicts; the source's btrfs read-only snapshots are then
 # left out by design, so one missing after the restore isn't a FAIL.
 #
-# HT_HOLT_BIN=DIR takes bko-holt from DIR/bko-holt (DIR/PLATFORM/bko-holt in
-# ht1-bsd.sh) instead of bin/'s: a set laid out as bin/ is, HoltTest2's
-# builds (T2_HOST_ROOT/holt-bin/CODE); a run refuses when it lacks the file.
+# HT_HOLT_BIN=DIR takes bko-holt from DIR/bko-holt, else DIR/linux/bko-holt
+# (DIR/PLATFORM/bko-holt in ht1-bsd.sh), instead of holt-bin's: HoltTest2's
+# builds (T2_HOST_ROOT/holt-bin/CODE) or a set laid out as holt-bin is; a
+# run refuses when it lacks the file (the ledger row holds a CODE set's to
+# its SHA256SUMS).
 # HT_VARIANT=bs2 (BackShot2's cases) may take the source's preparation for
 # the source phase and the backup, and resume the rescuer from a saved state
 # and quit it once synced (testvm/backshot2/ht1-bs2.sh; BS2_REUSE_SOURCE,
 # BS2_REUSE_BACKUP, BS2_RESCUER_STATE, BS2_FAST_DOWN =0 turn each off).
 #
 # For debugging (ht1-debug.sh drives these): HT_HOLT=FILE is the bko-holt
-# to test instead of bin/'s or HT_HOLT_BIN's (either is copied as the run
-# starts, and that copy serves the whole run); HT_QUICK=1 leaves out rebuild's refusals, dry
+# to test instead of holt-bin's or HT_HOLT_BIN's, unchecked (the old
+# /bkoscratch/holttest1d/bin/bko-holt is used only this way; whichever it is
+# is copied as the run starts, and that copy serves the whole run);
+# HT_QUICK=1 leaves out rebuild's refusals, dry
 # run and edge checks; HT_THROUGH=STAGE ends rebuild after that load stage;
 # HT_KEEP=1 leaves the rescuer running after rebuild, its disks and load's
 # state as they are, for a look inside.  A rebuild first stops a rescuer
@@ -119,12 +125,11 @@ T=$(dirname "$HERE")   # this copy's testvm/ (vm-run, vm-mount, compare/)
 [[ -r $HERE/ht1-lib.sh ]] || { echo "ht1: no ht1-lib.sh beside $0" >&2; exit 2; }
 # shellcheck source=ht1-lib.sh
 . "$HERE/ht1-lib.sh"
+# BIN: the debs and bcachefs.  bko-holt: HT_HOLT's file, else HT_HOLT_BIN's
+# set, else the promoted holt-bin's linux/bko-holt, vouched for by its
+# SHA256SUMS (ht_holt_pick); +img takes the pin's (below).
 BIN=/bkoscratch/holttest1d/bin
-# bko-holt: HT_HOLT's file, else HT_HOLT_BIN's set (a directory laid out as
-# bin/ is, DIR/bko-holt and DIR/PLATFORM/bko-holt: HoltTest2's builds in
-# T2_HOST_ROOT/holt-bin/CODE), else bin/'s.  bin/'s debs and bcachefs stay.
-HOLT=${HT_HOLT:-${HT_HOLT_BIN:-$BIN}/bko-holt}
-[[ ${HT_VARIANT:-} == img || -n ${HT_HOLT:-} || -z ${HT_HOLT_BIN:-} || -f $HOLT ]] || { echo "ht1: no $HOLT (HT_HOLT_BIN=$HT_HOLT_BIN)" >&2; exit 2; }
+HOLT=""; [[ ${HT_VARIANT:-} == img ]] || ht_holt_pick linux
 # HT_VARIANT (README's HoltTest1D plan): "bigger" rebuilds onto disks 1 GiB
 # bigger than the source's (GPT's backup header must move to the new end);
 # "oneshot" runs the whole rebuild as one `--through close` command, as an

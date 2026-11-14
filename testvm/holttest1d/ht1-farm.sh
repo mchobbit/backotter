@@ -9,6 +9,7 @@
 # so run testvm/sync-hosts.sh first):
 #   testvm/holttest1d/ht1-farm.sh RUN GUEST[+VARIANT][=D][%M] ...
 #   testvm/holttest1d/ht1-farm.sh RUN --hosts chopin,cage GUEST ...
+#   testvm/holttest1d/ht1-farm.sh RUN --queue-host cinqcent GUEST ...
 #   testvm/holttest1d/ht1-farm.sh --dry-run RUN GUEST ...
 #
 # RUN names the queue, as ht1-queue.sh takes it (a letter or digit, then
@@ -18,9 +19,14 @@
 #
 # The hosts are the host table's default, enabled amd64 hosts
 # (testvm/hosts.json, through testvm/hosts.sh: never a list of names here),
-# or those --hosts names, in the table's order.  The first of them is the
-# queue host: its /bkoscratch/holttest1d/queue/RUN/todo is the one todo, and
-# every other host's runner takes lines from it over ssh.  Each host gets
+# or those --hosts names.  The queue host is --queue-host's (one of those
+# hosts, else refused), else the first --hosts names, else the table's
+# first default host: its /bkoscratch/holttest1d/queue/RUN/todo is the one
+# todo, and every other host's runner takes lines from it over ssh.  Before
+# anything starts each host says which bko-holt its runner would use
+# (ht1-queue.sh --holt: path and sha256; by default the promoted holt-bin's,
+# vouched for by its SHA256SUMS); a host that can't is left out, as one
+# that doesn't answer is below, and the queue host ends the run.  Each host gets
 #   ht1-queue.sh RUN 2600 MAXJOBS [QHOST.local]
 # with MAXJOBS its holt_jobs in the table (hosts.py limit: 3 on a big host,
 # 1 on a small one), under setsid, so the runners live on after this script
@@ -88,14 +94,16 @@ rq() { printf '%q' "$1"; }   # one word for the remote shell
 # shellcheck source=../hosts.sh
 . "$TESTVM/hosts.sh" || die "no $TESTVM/hosts.sh"
 
-dry=no named="" RUN="" lines=()
+dry=no named="" qnamed="" RUN="" lines=()
 while [[ $# -gt 0 ]]; do
     case $1 in
     --dry-run) dry=yes; shift ;;
     --hosts) [[ $# -ge 2 ]] || die "--hosts needs a list"; named=$2; shift 2 ;;
     --hosts=*) named=${1#--hosts=}; shift ;;
+    --queue-host) [[ $# -ge 2 && -n $2 ]] || die "--queue-host needs a host"; qnamed=$2; shift 2 ;;
+    --queue-host=*) qnamed=${1#--queue-host=}; [[ -n $qnamed ]] || die "--queue-host needs a host"; shift ;;
     -h|--help) usage ;;
-    -*) die "no such option $1 (--hosts H,H, --dry-run)" ;;
+    -*) die "no such option $1 (--hosts H,H, --queue-host H, --dry-run)" ;;
     *) if [[ -z $RUN ]]; then RUN=$1; else lines+=("$1"); fi; shift ;;
     esac
 done
@@ -107,7 +115,8 @@ for l in "${lines[@]}"; do
     [[ $l =~ $LINE_RE ]] || die "not GUEST[+VARIANT][=D][%M]: $l"
 done
 
-# The farm: --hosts, else the table's default amd64 hosts, in the table's order.
+# The farm: --hosts, in its order, else the table's default amd64 hosts, in
+# the table's.  The queue host: --queue-host, else the first of them.
 all=$(hosts_names --default --arch amd64) || die "no hosts from the host table"
 hosts=()
 if [[ -n $named ]]; then
@@ -120,17 +129,16 @@ if [[ -n $named ]]; then
     # --hosts "," or "" names nothing: say so, rather than let the empty array
     # below be an unbound variable under set -u (bash 3.2).
     ((${#hosts[@]})) || die "--hosts $named names no host (--hosts H,H)"
-    # The table's order, whatever --hosts' is.
-    ordered=()
-    while IFS= read -r h; do
-        for x in "${hosts[@]}"; do [[ $x == "$h" ]] && ordered+=("$h"); done
-    done <<<"$known"
-    hosts=("${ordered[@]}")
 else
     while IFS= read -r h; do [[ -n $h ]] && hosts+=("$h"); done <<<"$all"
 fi
 ((${#hosts[@]})) || die "no host to run on"
 QHOST=${hosts[0]}
+if [[ -n $qnamed ]]; then
+    grep -qx "$qnamed" <<<"$(printf '%s\n' "${hosts[@]}")" ||
+        die "--queue-host $qnamed is not one of the hosts run on ($(printf '%s ' "${hosts[@]}" | sed 's/ $//'))"
+    QHOST=$qnamed
+fi
 QSSH=$(hosts_get "$QHOST" ssh) || die "no ssh destination for $QHOST"
 # What the other hosts' runners reach the queue host by (ht1-queue.sh's QHOST, which it
 # uses as m@QHOST): the row's host_key_alias, else the host part of its ssh.
@@ -208,6 +216,27 @@ for h in "${hosts[@]}"; do
     up+=("$h"); updest+=("$d")
 done
 
+# The bko-holt each runner's jobs would test (ht1-queue.sh --holt: SHA12 PATH,
+# Linux's; by default the promoted holt-bin's, which its SHA256SUMS must vouch
+# for).  A host without one is left out, as one that doesn't answer; the queue
+# host's todo is the run, so the run ends there.
+henv=""
+for v in HT_HOLT HT_HOLT_BIN; do [[ -z ${!v:-} ]] || henv+=" $v=$(rq "${!v}")"; done
+hup=() hupdest=() i=0
+for h in "${up[@]}"; do
+    d=${updest[$i]}; i=$((i + 1))
+    if hb=$(sshq "$d" "cd ~/$REMOTE && env$henv testvm/holttest1d/ht1-queue.sh --holt" 2>&1); then
+        echo "-- $h: bko-holt $(tail -n 1 <<<"$hb")"
+        hup+=("$h"); hupdest+=("$d")
+        continue
+    fi
+    hb=$(tail -n 1 <<<"$hb")
+    [[ $h != "$QHOST" ]] || die "the queue host $QHOST has no bko-holt for its runner: $hb"
+    echo "ht1-farm: $h has no bko-holt for its runner ($hb): left out of the farm" >&2
+    failed+=("$h")
+done
+up=("${hup[@]}") updest=("${hupdest[@]}")
+
 # The todo, biggest guest first (ht1-queue.sh --order, on the queue host, where
 # ram-size.sh knows that host's sizes).
 order_cmd="cd ~/$REMOTE && testvm/holttest1d/ht1-queue.sh --order"
@@ -260,7 +289,7 @@ done
 
 if [[ $dry == yes ]]; then
     echo "-- --dry-run: nothing was written and no runner started"
-    ((${#failed[@]} == 0)) || echo "-- left out of the farm, not reached: ${failed[*]}"
+    ((${#failed[@]} == 0)) || echo "-- left out of the farm: ${failed[*]}"
     exit 0
 fi
 cat <<EOF

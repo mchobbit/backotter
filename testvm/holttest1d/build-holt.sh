@@ -28,8 +28,10 @@
 # /usr/bin/cargo, say), used as it is.  The guests build with their own
 # packaged Rust.  The holt/ tree comes from
 # ~/backotter-work/holt-src (rsynced there by the caller).  The binary lands
-# in /bkoscratch/holttest1d/bin/PLATFORM/bko-holt (linux: bin/bko-holt); the
-# build's log in /bkoscratch/holttest1d/build-holt-PLATFORM/.  HOLT_SRC,
+# in /bkoscratch/holttest1d/bin/PLATFORM/bko-holt (linux: bin/bko-holt),
+# which HoltTest1 tests only when HT_HOLT names it (its default is
+# ~/backotter-work/holt-bin's); the build's log in
+# /bkoscratch/holttest1d/build-holt-PLATFORM/.  HOLT_SRC,
 # HOLT_OUT and HOLT_LOGS override where the tree comes from, the binary goes
 # (DIR/bko-holt) and the log goes; HOLT_INFO=FILE gets a JSON object about
 # the build (platform, sha256, rustc, host, time).  The guest's vm-run is

@@ -55,7 +55,6 @@ ST=/mnt/bko-ram/holttest1d/debug-state/$G
 # The run's VMs (the rescuer kept up): a QEMU with its disks in R, never
 # another's on the port.
 RPAT="^qemu-system.*$(sed 's/[][\.*^$]/\\&/g' <<<"$R")/"
-BIN=/bkoscratch/holttest1d/bin
 case $G in
     freebsd*|hardenedbsd*|ghostbsd*) PLAT=freebsd ;;
     netbsd*|alpinebsd*) PLAT=netbsd ;;
@@ -121,8 +120,9 @@ setup)
         echo "Reserved (pid $(cat "$ST/reserve.pid"))"
     fi
     if [[ ! -f $ST/bko-holt ]]; then
-        if [[ $PLAT == linux ]]; then cp "$BIN/bko-holt" "$ST/bko-holt"; else cp "$BIN/$PLAT/bko-holt" "$ST/bko-holt"; fi
-        echo "bko-holt: bin/'s for now ($(sha256sum "$ST/bko-holt" | cut -c1-12)); \`build\` replaces it"
+        # The promoted set's (ht1.sh's default) until the first build.
+        cp "$W/holt-bin/$PLAT/bko-holt" "$ST/bko-holt" || { echo "ht1-debug: no $W/holt-bin/$PLAT/bko-holt" >&2; exit 1; }
+        echo "bko-holt: holt-bin's for now ($(sha256sum "$ST/bko-holt" | cut -c1-12) $W/holt-bin/$PLAT/bko-holt); \`build\` replaces it"
     fi
     ht1 source backup; rc=$?
     grep '^RESULT' "$R/report.txt" > "$ST/setup.result"

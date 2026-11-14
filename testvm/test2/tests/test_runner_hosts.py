@@ -414,7 +414,7 @@ class Ht1Refuses(unittest.TestCase):
             text = text.replace(old, new)
         wr(os.path.join(d, "ht1.sh"), text, 0o755)
         # Past the checks, the run would make its paths: the fake library ends it there.
-        wr(os.path.join(d, "ht1-lib.sh"), "ht_paths() { echo PASSED; exit 0; }\n")
+        wr(os.path.join(d, "ht1-lib.sh"), "ht_holt_pick() { HOLT=/fake/bko-holt; }\nht_paths() { echo PASSED; exit 0; }\n")
         self.ht1 = os.path.join(d, "ht1.sh")
 
     def run_ht1(self, *phases, **env):
@@ -466,6 +466,99 @@ class Ht1Refuses(unittest.TestCase):
 
     def test_no_fallback_left(self):
         self.assertNotIn('RESCUER_IMG=$W/vms/$RESCUER/$RESCUER.qcow2\n', rd(os.path.join(HT, "ht1.sh")))
+
+
+def realpath_e():
+    """Whether this realpath has GNU's -e (the test hosts' does, macOS's doesn't)."""
+    return subprocess.run(["realpath", "-e", "/"], capture_output=True).returncode == 0
+
+
+@unittest.skipUnless(BASH and shutil.which("sha256sum"), "no bash or sha256sum")
+class HoltPick(unittest.TestCase):
+    """The bko-holt a HoltTest1 run tests (ht1-lib.sh's ht_holt_pick, and ht1-queue.sh
+    --holt, which ht1-farm.sh asks each host): HT_HOLT's file, else HT_HOLT_BIN's set
+    (DIR/bko-holt for linux when it has one, else DIR/PLAT/bko-holt), else the promoted
+    W/holt-bin/PLAT/bko-holt, which its SHA256SUMS must vouch for; never bin/'s by default."""
+
+    def setUp(self):
+        self.t = tempfile.mkdtemp(prefix="t2-holt-pick-")
+        self.addCleanup(shutil.rmtree, self.t, True)
+        self.w = os.path.join(self.t, "w")
+        self.hb = os.path.join(self.w, "holt-bin")
+        lines = []
+        for plat in ("linux", "freebsd"):
+            wr(os.path.join(self.hb, plat, "bko-holt"), plat + "\n")
+            lines.append(f"{self.sha(os.path.join(self.hb, plat, 'bko-holt'))}  {plat}/bko-holt")
+        wr(os.path.join(self.hb, "SHA256SUMS"), "\n".join(lines) + "\n")
+        self.code = os.path.join(self.t, "code")          # HoltTest2's layout: linux's on top
+        wr(os.path.join(self.code, "bko-holt"), "code linux\n")
+        wr(os.path.join(self.code, "freebsd", "bko-holt"), "code freebsd\n")
+        q = rd(QUEUE)
+        self.assertEqual(q.count("\nW=/home/m/backotter-work\n"), 1)
+        self.queue = os.path.join(self.t, "ht1-queue.sh")
+        wr(self.queue, q.replace("\nW=/home/m/backotter-work\n", f"\nW={self.w}\n"), 0o755)
+
+    @staticmethod
+    def sha(p):
+        return subprocess.run(["sha256sum", p], capture_output=True, text=True).stdout.split()[0]
+
+    def pick(self, plat, **env):
+        e = {"PATH": os.environ["PATH"], **env}
+        lib = os.path.join(HT, "ht1-lib.sh")
+        return subprocess.run([BASH, "-c", f'set -uo pipefail; W={self.w}; . {lib}; ht_holt_pick {plat}; echo "$HOLT"'],
+                              capture_output=True, text=True, env=e, timeout=60)
+
+    def test_the_default_is_the_promoted_set(self):
+        for plat in ("linux", "freebsd"):
+            p = self.pick(plat)
+            self.assertEqual((p.returncode, p.stdout.strip()), (0, os.path.join(self.hb, plat, "bko-holt")), p.stderr)
+        self.assertNotIn("holttest1d/bin", rd(os.path.join(HT, "ht1-lib.sh")).split("ht_holt_pick() {")[1].split("\n}")[0])
+
+    def test_a_default_it_cant_vouch_for_refuses(self):
+        p = self.pick("haiku")                            # no such file: no fall back to bin/
+        self.assertEqual(p.returncode, 2)
+        self.assertIn(f"no {self.hb}/haiku/bko-holt (the promoted holt-bin", p.stderr)
+        with open(os.path.join(self.hb, "linux", "bko-holt"), "a") as f:
+            f.write("changed\n")
+        p = self.pick("linux")
+        self.assertEqual(p.returncode, 2)
+        self.assertIn(f"{self.hb}/SHA256SUMS says", p.stderr)
+        wr(os.path.join(self.hb, "SHA256SUMS"), "")
+        p = self.pick("freebsd")
+        self.assertEqual(p.returncode, 2)
+        self.assertIn(f"no freebsd/bko-holt in {self.hb}/SHA256SUMS", p.stderr)
+
+    def test_ht_holt_bin_and_ht_holt(self):
+        for plat, d, want in (("linux", self.code, "bko-holt"), ("freebsd", self.code, "freebsd/bko-holt"),
+                              ("linux", self.hb, "linux/bko-holt")):
+            p = self.pick(plat, HT_HOLT_BIN=d)
+            self.assertEqual((p.returncode, p.stdout.strip()), (0, os.path.join(d, want)), p.stderr)
+        p = self.pick("netbsd", HT_HOLT_BIN=self.code)
+        self.assertEqual(p.returncode, 2)
+        self.assertIn(f"no {self.code}/netbsd/bko-holt (HT_HOLT_BIN={self.code})", p.stderr)
+        p = self.pick("linux", HT_HOLT="/bkoscratch/holttest1d/bin/bko-holt")   # only this way, and unchecked
+        self.assertEqual((p.returncode, p.stdout.strip()), (0, "/bkoscratch/holttest1d/bin/bko-holt"), p.stderr)
+
+    def queue_holt(self, **env):
+        return subprocess.run([BASH, self.queue, "--holt"], capture_output=True, text=True,
+                              env={"PATH": os.environ["PATH"], **env}, timeout=60)
+
+    def test_the_queue_says_and_checks_it(self):
+        lx = os.path.join(self.hb, "linux", "bko-holt")
+        p = self.queue_holt()
+        self.assertEqual((p.returncode, p.stdout), (0, f"{self.sha(lx)[:12]} {lx}\n"), p.stderr)
+        if realpath_e():                                  # (HT_HOLT_BIN is made absolute by realpath -e)
+            p = self.queue_holt(HT_HOLT_BIN=self.code)
+            top = os.path.join(self.code, "bko-holt")
+            self.assertEqual((p.returncode, p.stdout), (0, f"{self.sha(top)[:12]} {top}\n"), p.stderr)
+        wr(os.path.join(self.hb, "SHA256SUMS"), "")
+        p = self.queue_holt()
+        self.assertEqual(p.returncode, 2)
+        self.assertIn(f"{self.hb}/SHA256SUMS doesn't vouch for {lx}", p.stderr)
+        os.remove(lx)
+        p = self.queue_holt()
+        self.assertEqual(p.returncode, 2)
+        self.assertIn(f"no {lx} (the promoted holt-bin", p.stderr)
 
 
 class DriveSelfTest(unittest.TestCase):

@@ -151,9 +151,9 @@ ht1.sh boots both, on the source and on the restored disk:
   source's.  The RAM-disk peak was 11.8 GiB (Chopin; Cinqcent 11.5) in
   the rebuild phase, and the run took 645 s.  So ram-sizes.tsv's D is 14,
   one of ht1-queue.sh's big guests.
-- **bko-holt.**  bin/'s bko-holt (0.2.4 of 2026-11-07) has no ostree
-  support, so until bin/ is refreshed a run of `kinoite44` needs
-  `HT_HOLT` or `HT_HOLT_BIN` naming a build from main.
+- **bko-holt.**  The default, holt-bin's (built from 5b2fe9d of
+  2026-11-12), has ostree support; bin/'s (0.2.4 of 2026-11-07), which
+  only `HT_HOLT` takes now, has none.
 
 **The ABRoot guest** (2026-11-14, runs `v7-1` Chopin and `v7-2` Cinqcent,
 on /bkoscratch, a static bko-holt from main's tree, `HT_HOLT`): `vanilla3`
@@ -210,9 +210,10 @@ source and on the restored disk, each boot alone:
 
       cd ~/backotter-work && WEAR_TAG=ht1:RUN:vanilla3 HT_PORT=2690 HT_RAM=0 setsid -f ./cmp-run.sh --reserve 0 5 \
         sudo -E testvm/holttest1d/ht1.sh vanilla3 RUN >/bkoscratch/holttest1d/RUN-vanilla3.log 2>&1 </dev/null
-- **bko-holt.**  bin/'s bko-holt has no ABRoot support (docs/design/
-  vanillaos.md, V2-V4), so until bin/ is refreshed a run needs `HT_HOLT`
-  or `HT_HOLT_BIN` naming a build from main.
+- **bko-holt.**  holt-bin's bko-holt (5b2fe9d of 2026-11-12) has no
+  ABRoot support (docs/design/vanillaos.md, V2-V4), so until holt-bin is
+  promoted again a run needs `HT_HOLT` or `HT_HOLT_BIN` naming a build
+  from main.
 
 **The transactional-update guest** (2026-11-14, docs/design/aeon.md, M5):
 `microos` (`make-opensuse.sh microos`) is openSUSE MicroOS: UEFI with
@@ -222,7 +223,7 @@ each slot with its own writable `/etc` subvolume, GRUB with
 grub2-snapper-plugin's "Start bootloader from a read-only snapshot"
 submenu, and health-checker.  ht1.sh runs `prep/microos-tu.sh` on it by
 default (`HT_SOURCE_PREP`), checks it with `ht1-tu.sh`, and a bko-holt
-with the transactional arm (`HT_HOLT`, until bin/ is refreshed):
+with the transactional arm (`HT_HOLT`, until holt-bin is promoted again):
 
 - **The source's history** (`prep/microos-tu.sh`, 4 rounds, `AGAIN`
   between them): a chain of three `transactional-update run` transactions
@@ -324,12 +325,13 @@ verdicts are HoltTest1D's.
 
 **ht1-bsd.sh** (FreeBSD, HardenedBSD, GhostBSD, NetBSD, AlpineBSD, OpenBSD,
 DragonFly, illumos, Haiku) runs bko-holt built for the guest's own system
-(`build-holt.sh PLATFORM`: natively, in a throwaway copy of a guest of that
-system, into `bin/PLATFORM/bko-holt`) and the shipped set's rustic-bko for
-it (`~/backotter-work/bko-bin/PLATFORM/rustic-bko`, checked against the
-set's `SHA256SUMS`; `HT_BKO_BIN`, `HT_ROUND` or `HT_RUSTIC` picks another,
-as for Linux).  The rescuer is a throwaway copy of a guest of the same
-system, whose own disk comes first:
+(holt-bin's `PLATFORM/bko-holt` by default, as for Linux; `build-holt.sh
+PLATFORM` builds one natively, in a throwaway copy of a guest of that
+system, into `bin/PLATFORM/bko-holt`, for `HT_HOLT`) and the shipped
+set's rustic-bko for it (`~/backotter-work/bko-bin/PLATFORM/rustic-bko`,
+checked against the set's `SHA256SUMS`; `HT_BKO_BIN`, `HT_ROUND` or
+`HT_RUSTIC` picks another, as for Linux).  The rescuer is a throwaway
+copy of a guest of the same system, whose own disk comes first:
 
 | Systems | Rescuer | Notes |
 |---|---|---|
@@ -450,7 +452,7 @@ RAM and ends up in `/bkoscratch/holttest1d/ht1m/mint22/` (see "Where a run
 works, and what it keeps"); for a queue of guests, see "Queues:
 ht1-queue.sh".
 
-It needs `/bkoscratch/holttest1d/bin/` with `bko-holt` and the
+It needs `/bkoscratch/holttest1d/bin/` with the
 `f2fs-tools_*.deb` and `jfsutils_*.deb` (installed in a rescuer that lacks
 those tools), and the rescuers that `make-rescuer.sh` builds (see below).
 A run whose phases would use the debs (backup, rebuild) or the rescuer
@@ -459,16 +461,23 @@ there is no fallback to the plain `vms/debian13` guest any more
 (`HT_RESCUER_IMG=~/backotter-work/vms/debian13/debian13.qcow2` asks for it);
 `+img` needs neither.  Chopin and Cinqcent have both; a new host gets them
 by the provisioning steps in testvm/HOSTS.md (Copland and Cage have
-neither yet).  ht1.sh copies
-bko-holt (or `HT_HOLT`'s) as the run starts, so its dumps and its load are
-one build's even if bin/'s is replaced while it runs; ht1-bsd.sh and
-ht1-offline.sh still take it from bin/ (or `HT_HOLT`) at each phase, so
-leave bin/'s alone while one runs.  `HT_HOLT_BIN=DIR` takes bko-holt from
-another set laid out as bin/ is (`DIR/bko-holt`, `DIR/PLATFORM/bko-holt`):
-HoltTest2's builds, one directory per code digest in
-`/bkoscratch/test2/holt-bin/CODE/` (with its `SHA256SUMS` and `BUILD-INFO`),
-which never change once built; a run refuses when the set lacks its
-platform's binary.  bin/'s debs and bcachefs stay bin/'s.  `build-holt.sh
+neither yet).  bko-holt is, by default, the promoted set's
+(`~/backotter-work/holt-bin/PLATFORM/bko-holt`, `linux/bko-holt` for
+Linux: what `testvm/promote-bins.sh` ships to every host), checked
+against holt-bin's `SHA256SUMS`: a missing file, or one that line doesn't
+vouch for, refuses the run (exit 2), with no fall back to bin/.  The
+report's `binaries:` line names it, path and sha256.  `HT_HOLT=FILE`
+tests a file instead, unchecked (bin/'s `bko-holt`, of 2026-11-07, is used
+only this way now), and `HT_HOLT_BIN=DIR` a set: `DIR/bko-holt` for
+Linux when DIR has one, else `DIR/PLATFORM/bko-holt`, so HoltTest2's
+builds (one directory per code digest in `/bkoscratch/test2/holt-bin/CODE/`,
+with its `SHA256SUMS` and `BUILD-INFO`, which never change once built) and
+a set laid out as holt-bin is both work; a run refuses when the set lacks
+its platform's binary.  ht1.sh copies bko-holt as the run starts, so its
+dumps and its load are one build's even if the set is replaced while it
+runs; ht1-bsd.sh and ht1-offline.sh still take it from the set (or
+`HT_HOLT`) at each phase, so don't promote holt-bin while one runs.
+bin/'s debs and bcachefs stay bin/'s.  `build-holt.sh
 linux` builds the Linux one on the host (static glibc, as ht1-debug.sh
 does, cargo's target/ in `TMPDIR`), and `build-holt.sh --reserved RUN
 PLATFORM` any platform under a reservation of its own (HoltTest2's, its
@@ -1023,15 +1032,24 @@ can run ("What a host can't run", below).
 
     testvm/holttest1d/ht1-farm.sh r4all GUEST[+VARIANT][=D][%M] ...
     testvm/holttest1d/ht1-farm.sh --dry-run r4all GUEST...   # print, write nothing
+    testvm/holttest1d/ht1-farm.sh r4all --hosts cage,copland,chopin GUEST...   # cage holds the todo
+    testvm/holttest1d/ht1-farm.sh r4all --queue-host cinqcent GUEST...
 
-It writes the todo on the first default host (`--order`, biggest first) and
-starts a runner on each, with that host's `holt_jobs` as MAXJOBS and its
+It writes the todo on the queue host (`--order`, biggest first) and
+starts a runner on each host, with that host's `holt_jobs` as MAXJOBS and its
 `holt_disk_mode` as `DISK_OVER` (the host table's limits), leaving a guest
 pinned in `classes.json` (`holt.pins`) to its own host (`ONLY_ELSEWHERE`);
 then it prints how to watch and stop them. `--hosts a,b` names other hosts of
-the table. It refuses a RUN whose todo, `stop` or `abort` is already there,
-since a todo written again would rerun the lines a runner has taken. Which
-host has room for a run of your own: `testvm/pick-host` (testvm/HOSTS.md).
+the table, in its order: the first is the queue host. `--queue-host H`, one
+of the hosts run on (else it refuses), is the queue host instead; without
+either it is the table's first default host. Before anything starts, each
+host says the bko-holt its runner's jobs would use (`ht1-queue.sh --holt`:
+sha256 and path, Linux's), and a host that can't (holt-bin's `SHA256SUMS`
+doesn't vouch for it, say) is left out, as one that doesn't answer is; the
+queue host ends the run. It refuses a RUN whose todo, `stop` or `abort` is
+already there, since a todo written again would rerun the lines a runner
+has taken. Which host has room for a run of your own: `testvm/pick-host`
+(testvm/HOSTS.md).
 
 A runner started before its todo exists finds nothing to do and ends
 (`queue done`).  One that refuses to start (exit 2: an `HT_` setting, run
@@ -1068,10 +1086,14 @@ as root, no RAM disk) says why in its `.out` file only: its log,
   one NAME); the runner logs them at its start.  It refuses to start while
   any other `HT_` variable is set, a debugging or test setting that would
   change every job's run (`HT_QUICK`, `HT_THROUGH`, `HT_KEEP`, `HT_CLEAN`,
-  `HT_PORT`, `HT_LIMIT_KIB` and the like).  If rustic-bko's set changes
-  during the run (or `HT_HOLT_BIN`'s `SHA256SUMS`, when it has one), it
-  starts nothing more and a job still waiting in line leaves it: restart
-  the queue to go on.  HoltTest2's `T2_RUN`, `T2_CELLS` and `T2_HOST_ROOT`
+  `HT_PORT`, `HT_LIMIT_KIB` and the like).  Without `HT_HOLT` or
+  `HT_HOLT_BIN` the jobs take holt-bin's bko-holt (ht1.sh's default), and
+  the runner refuses to start unless holt-bin's `SHA256SUMS` vouches for
+  its `linux/bko-holt`; it says that bko-holt's sha256 and path at its
+  start (stdout, and the log's `binaries:` line).  If rustic-bko's set
+  changes during the run (or `HT_HOLT_BIN`'s `SHA256SUMS`, when it has one,
+  or holt-bin's), it starts nothing more and a job still waiting in line
+  leaves it: restart the queue to go on.  HoltTest2's `T2_RUN`, `T2_CELLS` and `T2_HOST_ROOT`
   reach the jobs too (their ledger rows), and the runner's `env:` line
   shows them.  It starts nothing more either
   after 3 jobs in a row that failed within 60 s, or a line `ram-size.sh`

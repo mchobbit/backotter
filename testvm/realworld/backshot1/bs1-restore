@@ -201,6 +201,21 @@ for r in ${REFORMAT[@]+"${REFORMAT[@]}"}; do
         say "${r%%=*}'s lost+found is mke2fs's (--reformat $r), not a difference"
     fi
 done
+# A reformatted btrfs's snapshots and aliases, which the restore left out (load's
+# restore.globs, !DIR/** each): the backup has their files, the new filesystem
+# can't hold them, so the diff lists each as removed.  Only under --reformat: a
+# btrfs load remakes has its shared snapshots and aliases back by now, so the
+# file names nothing the diff would list then.
+if [[ ${#REFORMAT[@]} -gt 0 && -s /run/bko-holt/restore.globs ]]; then
+    cp /run/bko-holt/restore.globs "$ATTEMPT/restore.globs"
+    left=$(awk 'NR == FNR { if (sub(/^!\//, "") && sub(/\/\*\*$/, "")) p[n++] = "-    \"" $0 "/"; next }
+                { for (i = 0; i < n; i++) if (index($0, p[i]) == 1) { c++; break } }
+                END { print c + 0 }' "$ATTEMPT/restore.globs" "$ATTEMPT/diff.txt")
+    if [[ $left -gt 0 ]]; then
+        changes=$((changes - left))
+        say "$left removed under what --reformat left out of the restore (restore.globs: btrfs snapshots and aliases), not differences"
+    fi
+fi
 say "differences: $changes (the list is in diff.txt)"
 [[ $changes -eq 0 ]] || die "$changes files differ from the backup after the restore"
 

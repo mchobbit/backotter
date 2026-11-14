@@ -77,6 +77,16 @@ pub fn fstab(text: &str, c: &Change) -> Result<String, String> {
         out += line;
     }
     if !kept {
+        // The boot stage run again (--only boot, or --through close after
+        // it stopped): this fstab was rewritten the first time, so its
+        // mount has the new type's line and none of the old type's is left.
+        let done = text.lines().any(|l| {
+            let f: Vec<&str> = l.split_whitespace().collect();
+            f.len() >= 3 && !f[0].starts_with('#') && f[1].replace("\\040", " ") == c.mount && f[2] == c.to
+        });
+        if done && gone.is_empty() {
+            return Ok(text.to_string());
+        }
         return Err(format!("no {} line for {} in it", c.from, c.mount));
     }
     if let Some(f) = c.folded.iter().find(|f| !gone.contains(f)) {
@@ -577,8 +587,11 @@ UUID=B9BB-8C26                            /efi           vfat    fmask=0137,dmas
 UUID=1b64a017-659b-4484-bf36-b97f639c3c35\t/\txfs\tnoatime\t0\t0\n\
 tmpfs                                     /tmp           tmpfs   defaults,noatime,mode=1777 0 0\n"
         );
-        // Already rewritten (a second boot stage): its line isn't btrfs any more.
-        assert!(fstab(&out, &change()).unwrap_err().contains("no btrfs line for /"));
+        // Already rewritten (the boot stage run again): left as it is.
+        assert_eq!(fstab(&out, &change()).unwrap(), out);
+        // Neither type's line for /: not the fstab the layout describes.
+        let none = EOS_FSTAB.lines().filter(|l| !l.contains(" /              ")).map(|l| format!("{l}\n")).collect::<String>();
+        assert!(fstab(&none, &change()).unwrap_err().contains("no btrfs line for /"));
     }
 
     #[test]
@@ -639,6 +652,10 @@ tmpfs                                     /tmp           tmpfs   defaults,noatim
         assert_eq!(std::fs::read_to_string(format!("{root}/etc/kernel/cmdline")).unwrap(), "nvme_load=YES rw root=UUID=1b64a017-659b-4484-bf36-b97f639c3c35\n");
         assert!(std::fs::read_to_string(format!("{root}/efi/loader/entries/0bb6-6.18.60-1-lts.conf")).unwrap().contains("options rw root=UUID="));
         assert!(run.log.contains("    - UUID=1b64a017-659b-4484-bf36-b97f639c3c35 /home"), "{}", run.log);
+        // The boot stage run again: nothing left to change, and no error.
+        run.log.clear();
+        run.rewrite(&change(), &layout, false);
+        assert!(run.errors.is_empty() && run.log.is_empty(), "{:?} {}", run.errors, run.log);
         run.log.clear();
         run.leftovers(&change(), &layout);
         assert!(run.errors.is_empty(), "{:?}", run.errors);

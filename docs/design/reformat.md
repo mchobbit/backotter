@@ -396,3 +396,15 @@ leftovers; and a QEMU or Thinkpad run of the ported code.
   hand-made manifests (rewritten fstab, lost btrfs.* xattrs, mke2fs's
   lost+found and a left-out snapper snapshot are expected; without the
   flag, each is unexpected).
+
+### Review fixes (2026-11-14)
+
+- `bko-holt rewrite` takes an fstab it rewrote already (the mount has the
+  new type's line, none of the old's) as done, so the boot stage can run
+  again (`--only boot`, or `--through close` after it stopped); before, it
+  stopped with "no btrfs line for / in it".
+- `bs1-restore --reformat`: the diff after the restore lists every file
+  under what the restore left out (load's `restore.globs`: a reformatted
+  btrfs's snapshots and aliases) as removed; those are taken off the count
+  of differences, and the globs kept in the attempt's directory.  Without
+  it, any snapper source (CachyOS, Tumbleweed) would have stopped there.

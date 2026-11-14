@@ -66,6 +66,10 @@ rocky10)    cmd=(asm $T/make-rocky.sh 10.0 "$W") ;;
 rocky10-lvm) cmd=(asm $T/make-rocky.sh --lvm 10.0 "$W") ;;
 rocky10-raid5) cmd=(asm $T/make-rocky.sh --raid5 10.0 "$W") ;;
 tumbleweed) cmd=(asm $T/make-opensuse.sh 20261030 "$W") ;;
+# microos: openSUSE's MicroOS VM image of snapshot 20261111, its .sha256 and
+# .sha256.asc, from /bkoscratch/rebuild-inputs/microos (only the current
+# snapshot's is served); the packages as in the image (vm-update updates it).
+microos)    cmd=(asm $T/make-opensuse.sh microos 20261111 "$W") ;;
 alpine324)  cmd=(asm $T/make-bootstrap.sh alpine "$W") ;;
 void-musl)  cmd=(asm $T/make-bootstrap.sh void "$W") ;;
 chimera)    cmd=(asm $T/make-bootstrap.sh chimera "$W") ;;
@@ -202,6 +206,7 @@ else
         [ -e "$f.part" ] && continue        # an unfinished download: the builder fetches it
         b=${f##*/}
         case $b in
+        openSUSE-MicroOS.*.qcow2) ;;          # microos's input image, not a guest's disk
         *.qcow2|root-password|id_ed25519*|*.log|*.log.*|*.exit|*.start|image-state|vm-run-options|\
         *-passphrase|*.verified|*.png|*.json|*.part|*.raw|update*|vmupdate*|install-media.*|*.try1|rebuild*) continue ;;
         esac

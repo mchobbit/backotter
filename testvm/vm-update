@@ -25,7 +25,9 @@ GUEST, vm-update
      it over SSH: the guest's own package manager (apt, dnf, pacman, zypper,
      xbps, apk, moss, emerge on Gentoo, building from source only what an
      allowlist names, abroot upgrade on Vanilla OS (into the other root,
-     which the reboot below boots), nixos-rebuild, pkg, syspatch and pkg_add, pkg on
+     which the reboot below boots), transactional-update dup on MicroOS
+     (into a new snapshot, which the reboot below must boot), nixos-rebuild,
+     pkg, syspatch and pkg_add, pkg on
      OmniOS, pkgman on Haiku, hbsd-update on HardenedBSD), unattended, after
      pointing a guest that its builder froze at its distribution's live
      repositories; as root, or as the user named in vms/GUEST/ssh-user
@@ -490,6 +492,9 @@ REBOOT = SBIN + ("(sleep 1; sync; if [ $(uname) = Haiku ]; then shutdown -r -q; 
 # How long init has run, as ps prints it: [[DD-]HH:]MM:SS.  (Haiku's ps
 # has no -o: no answer, and the reboot is taken from SSH going down and up.)
 UPTIME = SBIN + "ps -o etime= -p 1"
+# A transactional guest (MicroOS): the snapshot booted, and the btrfs default.
+TU_BOOTED = SBIN + ("echo \"booted=$(findmnt -no FSROOT / | sed 's|^/||')\";"
+                    " echo \"default=$(btrfs subvolume get-default / | sed 's/.* path //')\"")
 POWEROFF = SBIN + """case $(uname) in
     # Guix System has no poweroff: Shepherd's halt powers off.
     Linux|SunOS|Redox) if command -v poweroff >/dev/null; then poweroff; else halt; fi ;;
@@ -1654,6 +1659,8 @@ def reproject(g: Guest, hosts: list[str | None]) -> str:
 # --- The merge rule ----------------------------------------------------------------
 
 STEP = re.compile(r"^in-guest: step: (.*)$", re.M)
+# in-guest.sh's Linux.tukit: the snapshot transactional-update left the default.
+TU_DEFAULT = re.compile(r"^in-guest: tukit: default (\S+)$", re.M)
 LISTING_TYPES = ("pkg", "base", "nix-pkg", "nix-system", "syspatch")
 
 
@@ -2185,6 +2192,7 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
             raise Failed(f"the update failed (exit status {r.returncode}); see {g.log.name}:\n  "
                          + "\n  ".join(res["tail"]))
         steps = parse_steps(r.stdout)
+        tu_default = TU_DEFAULT.search(r.stdout)
         (out / "steps.txt").write_text("".join(f"{s}\n" for s in steps), encoding="utf-8")
         if stopping.is_set():
             raise Failed("stopped")
@@ -2210,6 +2218,17 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
             raise Failed(f"the guest didn't reboot (init has run {up_after} s)")
         res["uname"] = uname = vm.ssh_checked("uname -sr", 30).stdout.strip()
         say(name, f"booted again ({uname})")
+        if m := tu_default:
+            # The update's snapshot must be the one booted, and still the
+            # default: health-checker sets the default back to the last good
+            # one, and reboots into that, when a new snapshot fails its first
+            # boot.
+            tu = dict(l.split("=", 1) for l in vm.ssh_checked(TU_BOOTED, 30).stdout.split("\n") if "=" in l)
+            res["tukit"] = {"expected": m[1], **tu}
+            if tu.get("booted") != m[1] or tu.get("default") != m[1]:
+                vm.ssh(SBIN + "journalctl -u health-checker.service --no-pager | tail -n 40", timeout=30)
+                raise Failed(f"booted snapshot {tu.get('booted')} (default {tu.get('default')}), not the update's"
+                             f" {m[1]}: health-checker rolled back? Its journal is in {g.log.name}")
         run_hooks(vm, "after", hooks["after"], res, out)
         res["phase"] = "pkgset"
         listing_after = vm.listing()

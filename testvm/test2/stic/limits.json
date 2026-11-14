@@ -228,6 +228,14 @@
   "[vfat] metadata of the directories above the backed-up path": "both tools' snapshots, 4 directions: up1, up1/up2 and /mnt/src restored exactly (owner 1234:5678, 0710/1755, label, xattrs, ACL, times); FAT's root directory (.) has no times (0): restored as a dir...",
   "[vfat] security.selinux (the mount's label) on a FAT restore target": "not settable on FAT: warnings, exit 0, as documented: restic->restic 1 warnings (exit 0), rustic->rustic 1 warnings (exit 0), restic->rustic 1 warnings (exit 0), rustic->restic 1 warnings (exit 0)"
  },
+ "microos": {
+  "[btrfs] project IDs (and P inheritance)": "btrfs takes no project ID (chattr -p fails: btrfs has none): fixture: skipped: chattr -p 42 /mnt/btrfs-src/up1/up2/tree/projid-file",
+  "[btrfs] an inode without security.selinux (a new btrfs subvolume's root": "btrfs labels none): ['up1/up2/tree/subvol']: every restore labels it (the kernel labels each new inode under SELinux; removing security.selinux is refused, EACCES); judged under 'exit 0 without war...",
+  "[btrfs] birth times (statx btime on btrfs)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "[vfat] the top ancestor's SELinux label on a FAT (/mnt, restored as a directory on vfat)": "the snapshot's /mnt (a tmpfs, labelled mnt_t) carries security.selinux; vfat takes no xattr, so each restore warns for that one directory, and for nothing else (as kinoite44's)",
+  "[vfat] the source FAT root's times (none, shown as 1970-01-01) restored as a directory on FAT (earliest 1980-01-01)": "FAT's root directory has no times; a FAT directory can't take 1970-01-01, so the restore gets FAT's earliest, 1980-01-01 00:00:00, in 4 directions (as kinoite44's)",
+  "[vfat] birth times (FAT creation times, statx btime on vfat)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)"
+ },
  "mint22": {
   "backup leaves the source unchanged (atimes)": "f2fs: readlink(2) moves a symlink's atime (no O_NOATIME for it): atime (symlinks) 5 e.g. 'atime-symlink', 'symlink', 'symlink-abs' ; f2fs+: readlink(2) moves a symlink's atime (no O_NOATIME for it)...",
   "birth times": "ext4 /boot and f2fs inode_crtime keep one, Linux can't set it (BACKOTTER.md unix.birthtime: not on Linux)",

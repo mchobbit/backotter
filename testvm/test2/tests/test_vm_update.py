@@ -141,7 +141,7 @@ class TestSteps(unittest.TestCase):
 class TestInGuest(unittest.TestCase):
     TEXT = (TESTVM / "update" / "in-guest.sh").read_text()
     NAMES = {"prologue", "NixOS", "Guix", "Linux.portage", "Linux.abroot", "Linux.common", "Linux.apt", "Linux.ostree", "Linux.dnf", "Linux.pacman",
-             "Linux.zypper",
+             "Linux.tukit", "Linux.zypper",
              "Linux.xbps", "Linux.apk", "Linux.moss", "FreeBSD", "DragonFly", "OpenBSD", "NetBSD", "SunOS",
              "Haiku", "Redox"}
 

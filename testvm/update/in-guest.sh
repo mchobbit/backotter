@@ -559,6 +559,43 @@ print(d[0]["checksum"] if d else "")' "$1"
         keyrings=$(pacman -Qq archlinux-keyring artix-keyring biglinux-keyring cachyos-keyring chaotic-keyring endeavouros-keyring manjaro-keyring omarchy-keyring 2>/dev/null)
         pacman -Sy --noconfirm --needed $keyrings && pacman -Su --noconfirm || exit 1
         yes | pacman -Scc >/dev/null
+    # t2-section: Linux.tukit
+    # A transactional system (MicroOS: microos; docs/design/aeon.md): / is a
+    # read-only snapper snapshot (fstab's ro), the btrfs default, and only
+    # transactional-update changes it; zypper, there too, can't.  Its dup
+    # runs zypper in a new snapshot of the default and makes that the
+    # default (--drop-if-no-change: none is kept when nothing changed);
+    # vm-update's clean reboot boots it, and then checks that the snapshot
+    # booted is the one named on the "tukit: default" line: health-checker
+    # sets the default back to the last good one, and reboots into that,
+    # when a new snapshot fails its first boot.
+    # The snapshots stay bounded: `transactional-update cleanup` gives the
+    # ones before the booted snapshot snapper's number algorithm only while
+    # the booted one is the default, which is now (the image is always
+    # merged after the last update's reboot), and snapper's number cleanup
+    # then deletes what is over its NUMBER_LIMIT.  So it runs first, as the
+    # last update's after-reboot step, and a deletion is a step.
+    elif has transactional-update &&
+        awk '$1 !~ /^#/ && $2 == "/" && $4 ~ /(^|,)ro(=[^,]*)?(,|$)/ { f = 1 } END { exit !f }' /etc/fstab; then
+        dflt() { btrfs subvolume get-default / | sed 's/.* path //'; }
+        # snapper's list, not /.snapshots: a dropped snapshot leaves its empty directory.
+        snaps() { snapper --no-dbus --csvout list --columns number | sed '1d; /^0$/d' | tr '\n' ' '; }
+        booted=$(findmnt -no FSROOT / | sed 's|^/||') was=$(dflt)
+        [ -n "$was" ] && [ "$booted" = "$was" ] ||
+            { say "tukit: booted $booted, but the default is $was: an update is pending, or was rolled back"; exit 1; }
+        before=$(snaps)
+        transactional-update --non-interactive cleanup && snapper --no-dbus cleanup number || exit 1
+        after=$(snaps)
+        [ "$after" = "$before" ] || step "snapper: snapshots ${before% } cleaned up to ${after% }"
+        # zypper's exit codes stay inside: 0, 102 and 103 are its 0, else 1;
+        # "zypper: nothing to update" is a 0 that drops the snapshot.  (103,
+        # zypper updated itself, leaves the rest to the next update.)
+        transactional-update --non-interactive --drop-if-no-change dup || { say "transactional-update dup failed ($?)"; exit 1; }
+        now=$(dflt)
+        [ "$now" = "$was" ] || step "transactional-update: $now is the default, in place of $was"
+        say "tukit: default $now"
+        # The cache is in /var, which is writable.
+        zypper -n clean -a
     # t2-section: Linux.zypper
     elif has zypper; then
         # 103: zypper updated itself and wants to run again.  100-102: done,

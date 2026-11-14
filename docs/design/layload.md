@@ -887,7 +887,8 @@ states identical).  The plan check is unit-tested in `load/plan.rs`; given
 a ubuntu24 dump with two invented features and `compatibility=grub2,` plus
 a file no system has, a bko-holt from main names all three, and the
 unedited dump gets none.  Round trips with that bko-holt in the standard
-rescuers PASS too (ubuntu24 on both hosts, omnios58 on Cinqcent), and the images get the check with their next build
+rescuers PASS too (ubuntu24 on both hosts, omnios58 and freebsd14 on
+Cinqcent, the latter after the hosts' move to ZFS 2.4.4), and the images get the check with their next build
 (ImgTest2's panel has a ZFS root on each platform).
 
 ## Encryption

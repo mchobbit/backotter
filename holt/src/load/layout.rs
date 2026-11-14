@@ -216,9 +216,10 @@ impl Layout {
     }
 
     /// The source system as people name it: os-release's PRETTY_NAME, else
-    /// its ID and VERSION_ID.
+    /// its ID and VERSION_ID; a product built on it (os.product, Proxmox
+    /// VE's) first.
     pub fn os_name(&self) -> String {
-        match self.str_at(&["os", "pretty_name"]).map(str::trim) {
+        let base = match self.str_at(&["os", "pretty_name"]).map(str::trim) {
             Some(p) if !p.is_empty() => p.to_string(),
             _ => {
                 let id = self.str_at(&["os", "id"]).unwrap_or("?");
@@ -227,6 +228,10 @@ impl Layout {
                     _ => id.to_string(),
                 }
             }
+        };
+        match self.str_at(&["os", "product"]) {
+            Some(p) if !p.is_empty() => format!("{p} ({base})"),
+            _ => base,
         }
     }
 

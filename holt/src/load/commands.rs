@@ -2195,7 +2195,8 @@ impl Builder<'_> {
             let mut a = vec!["zfs".to_string(), "create".into()];
             if s(&ds, "type").as_deref() == Some("volume") {
                 a.extend(["-V".into(), num(&ds, "volsize").unwrap_or(0).to_string()]);
-                self.notes.push(format!("ZFS volume {name}: made empty; archivers back up files, not zvols"));
+                let pve = if self.layout.str_at(&["boot", "packages", "pve-manager"]).is_some() { "; Proxmox: VM disks are vzdump's or Proxmox Backup Server's to back up" } else { "" };
+                self.notes.push(format!("ZFS volume {name}: made empty; archivers back up files, not zvols{pve}"));
             } else if self.fam != Some(crate::other::Family::Illumos) {
                 a.push("-u".into());
             }
@@ -2646,6 +2647,13 @@ impl Builder<'_> {
         let uefi = self.layout.uefi();
         let via_shim = self.layout.v.at(&["boot", "loader", "via_shim"]).and_then(Value::as_bool) == Some(true);
         match (loader.as_str(), uefi) {
+            // Proxmox VE on ZFS root: proxmox-boot-tool owns the ESPs, which
+            // nothing mounts and the archive doesn't hold; it rebuilds them
+            // (docs/design/proxmox.md, decision 3), whatever the loader.
+            _ if self.proxmox_boot().is_some() => {
+                let cmds = self.proxmox_boot_cmds(&t, via_shim);
+                out.extend(cmds);
+            }
             // Gentoo through shim: grub-install would put an unsigned GRUB
             // where the signed one is.
             (_, true) if gentoo && via_shim => {
@@ -3000,6 +3008,97 @@ impl Builder<'_> {
         out
     }
 
+    /// boot.proxmox_boot, when the source's ESPs are proxmox-boot-tool's.
+    fn proxmox_boot(&self) -> Option<&Value> {
+        self.layout.v.at(&["boot", "proxmox_boot"]).filter(|v| !v.is_null())
+    }
+
+    /// The source devices of the ESPs that proxmox-boot-tool keeps in
+    /// systemd-boot mode: `init` runs bootctl install on each, which makes
+    /// its own boot entry for it.
+    fn proxmox_systemd_boot_esps(&self) -> Vec<String> {
+        let Some(pb) = self.proxmox_boot() else { return Vec::new() };
+        pb.get("esps").and_then(Value::as_array).into_iter().flatten().filter(|e| s(e, "mode").as_deref() == Some("systemd-boot")).filter_map(|e| s(e, "device")).collect()
+    }
+
+    /// Proxmox VE's ESPs, rebuilt by their owner (docs/design/proxmox.md,
+    /// decisions 3-5): format made each with its volume ID, so
+    /// /etc/kernel/proxmox-boot-uuids is still true; in the chroot,
+    /// `proxmox-boot-tool init` on each in the list's order, by the
+    /// source's mode (not by this machine's firmware, as `reinit` would),
+    /// then one `refresh` (every kernel, initrd and loader entry on every
+    /// ESP, the pin and manual kernels honoured), then the list written back
+    /// as it was.  Only Proxmox VE 9 and systemd-boot mode are supported:
+    /// GRUB's modes (BIOS, or EFI, through shim or not) are written but
+    /// refused, not tested.
+    fn proxmox_boot_cmds(&mut self, t: &str, via_shim: bool) -> Vec<Cmd> {
+        let pb = self.proxmox_boot().cloned().unwrap_or(Value::Null);
+        let mut out = Vec::new();
+        match self.layout.str_at(&["os", "product"]) {
+            Some(p) if p.strip_prefix("Proxmox VE ").and_then(|v| v.split('.').next()) == Some("9") => {}
+            Some(p) => self.problems.push(format!("Proxmox: the source is {p}; bko-holt load rebuilds proxmox-boot-tool's ESPs on Proxmox VE 9 only")),
+            None => self.problems.push("Proxmox: proxmox-boot-tool keeps the source's ESPs, but the dump names no Proxmox VE release (pve-manager isn't installed); bko-holt load rebuilds them on Proxmox VE 9 only".into()),
+        }
+        if via_shim {
+            self.problems.push("Proxmox through shim (Secure Boot, signed GRUB on each ESP): bko-holt load doesn't support it (not tested)".into());
+        }
+        let uuids: Vec<String> = pb.get("uuids").and_then(Value::as_array).into_iter().flatten().filter_map(|u| u.as_str().map(str::to_string)).collect();
+        if uuids.is_empty() {
+            self.problems.push(format!("Proxmox: {} lists no ESP, so proxmox-boot-tool has nothing to rebuild and the restored system wouldn't boot", crate::boot::PROXMOX_BOOT_UUIDS));
+        }
+        let esps = pb.get("esps").and_then(Value::as_array).cloned().unwrap_or_default();
+        let mut modes: Vec<String> = Vec::new();
+        for u in &uuids {
+            let e = esps.iter().find(|e| s(e, "uuid").as_deref() == Some(u.as_str()));
+            let Some(dev) = e.and_then(|e| s(e, "device")) else {
+                self.problems.push(format!("Proxmox: {} lists ESP {u}, which no partition on the source has; proxmox-boot-tool couldn't rebuild it", crate::boot::PROXMOX_BOOT_UUIDS));
+                continue;
+            };
+            if self.names.dev(&dev).is_none() {
+                self.problems.push(format!("Proxmox: ESP {u} is {dev}, which this layout doesn't make; proxmox-boot-tool couldn't rebuild it"));
+                continue;
+            }
+            let mode = e.and_then(|e| s(e, "mode"));
+            let mut a = vec!["proxmox-boot-tool".to_string(), "init".into(), format!("/dev/disk/by-uuid/{u}")];
+            match mode.as_deref() {
+                Some("systemd-boot") => {}
+                Some(m @ ("grub-efi" | "grub-bios")) => {
+                    a.push("grub".into());
+                    self.problems.push(format!("Proxmox: ESP {u} ({dev}) is in proxmox-boot-tool's GRUB mode ({m}); bko-holt load supports only its systemd-boot mode (GRUB's isn't tested)"));
+                }
+                _ => {
+                    self.problems.push(format!("Proxmox: the dump doesn't say ESP {u} ({dev})'s proxmox-boot-tool mode (its files couldn't be read)"));
+                    continue;
+                }
+            }
+            let m = mode.unwrap_or_default();
+            if !modes.contains(&m) {
+                modes.push(m.clone());
+            }
+            let why = format!("ESP {u} ({dev}): made again by proxmox-boot-tool, in its {m} mode as on the source");
+            // --no-nvram: bootctl install (in init) would make its boot
+            // entry; without efivarfs it can't.
+            out.push(if self.opts.no_nvram {
+                let cmd = format!("umount {}/sys/firmware/efi/efivars 2>/dev/null; exec chroot {} {}", shell_quote(t), shell_quote(t), a.iter().map(|x| shell_quote(x)).collect::<Vec<_>>().join(" "));
+                Cmd::new(&["unshare", "--mount", "--propagation", "private", "sh", "-c", &cmd]).why(format!("{why}; --no-nvram: without the EFI variables, in a mount namespace of its own"))
+            } else {
+                let mut argv = vec!["chroot".to_string(), t.to_string()];
+                argv.extend(a);
+                Cmd { argv, why: Some(why), ..Cmd::default() }
+            });
+        }
+        out.push(Cmd::new(&["chroot", t, "proxmox-boot-tool", "refresh"]).why("every kernel, initrd and loader entry onto every ESP, as a kernel update does"));
+        let list: String = uuids.iter().map(|u| format!("{u}\n")).collect();
+        out.push(Cmd::write_file(&format!("{t}{}", crate::boot::PROXMOX_BOOT_UUIDS), list).why("proxmox-boot-tool's list of ESPs as the source had it (init adds to it)"));
+        let n = out.len() - 2;
+        self.notes.push(format!(
+            "Proxmox: proxmox-boot-tool rebuilt {n} ESP{} ({}); their old content isn't in the archive",
+            if n == 1 { "" } else { "s" },
+            if modes.is_empty() { "none".to_string() } else { modes.join(", ") }
+        ));
+        out
+    }
+
     /// Chimera's systemd-boot entries, remade as its kernel hook
     /// (/usr/lib/kernel.d/99-gen-systemd-boot.sh) remakes them: one per
     /// kernel in /boot and a recovery one, named by /etc/kernel/entry-token.
@@ -3144,9 +3243,16 @@ impl Builder<'_> {
             }
         }
         let mut out = Vec::new();
+        let proxmox_sd = self.proxmox_systemd_boot_esps();
         for e in picked.into_iter().rev() {
             let desc = s(e, "description").unwrap_or_default();
             let (Some(file), Some(part)) = (s(e, "file"), e.at(&["partition", "device"]).and_then(Value::as_str)) else { continue };
+            // proxmox-boot-tool init's bootctl install makes this one (the
+            // same partition and file) itself: not made twice.
+            if proxmox_sd.iter().any(|d| d == part) && file.replace('/', "\\").trim_start_matches('\\').eq_ignore_ascii_case("EFI\\systemd\\systemd-bootx64.efi") {
+                self.notes.push(format!("UEFI entry {desc:?} ({part}, {file}): proxmox-boot-tool init's bootctl install makes it again; not recreated"));
+                continue;
+            }
             let Some((disk, num)) = self.layout.disks.iter().find_map(|d| d.parts.iter().find(|p| p.name == part).map(|p| (d.name.clone(), p.number))) else {
                 self.notes.push(format!("UEFI entry {desc:?} isn't on the layout's disks; not recreated"));
                 continue;

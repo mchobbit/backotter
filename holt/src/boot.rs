@@ -251,6 +251,10 @@ pub const PACKAGES: &[&str] = &[
     // shim repackaged, the toolkit that signs and deploys them, and its
     // Btrfs snapshot manager; names no other guest has.
     "anduinos-grub", "anduinos-shim-signed", "anduinos-secureboot-toolkit", "anduinos-btrfs-snapshots-manager",
+    // Proxmox VE's ("zfs-initramfs" is above): proxmox-boot-tool, its kernel
+    // by metapackage, and the product (pve-manager's version is the PVE
+    // release, os.product).
+    "proxmox-kernel-helper", "proxmox-default-kernel", "proxmox-ve", "pve-manager",
 ];
 
 /// debconf answers from /var/cache/debconf/config.dat whose names start with
@@ -610,6 +614,126 @@ pub fn systemd_boot_json(sys: &Sys, mount: &str) -> Option<Value> {
         })
         .collect();
     Some(Obj::new().set("loader_conf", conf.map(|t| kv(&t))).set("entries", entries).build())
+}
+
+// --- Proxmox VE's proxmox-boot-tool ------------------------------------------------
+
+/// proxmox-boot-tool's list of the ESPs it keeps, one vfat volume ID a line.
+pub const PROXMOX_BOOT_UUIDS: &str = "/etc/kernel/proxmox-boot-uuids";
+/// Where dump mounts each of those ESPs, read-only, while it reads it.
+pub const PROXMOX_ESP_MOUNTS: &str = "/run/bko-holt";
+
+/// One ESP proxmox-boot-tool keeps: its volume ID, the partition it is
+/// (None: nothing has that ID), and what a read of it found (`mode` is
+/// proxmox-boot-tool's: "systemd-boot", "grub-efi" or "grub-bios").
+pub struct ProxmoxEsp {
+    pub uuid: String,
+    pub device: Option<String>,
+    pub mode: Option<&'static str>,
+    pub contents: Value,
+    pub systemd_boot: Option<Value>,
+    /// Where it was already mounted, when it was (then boot.esps has it).
+    pub mounted_at: Option<String>,
+}
+
+/// boot.proxmox_boot, and its ESPs for boot.esps.
+pub struct ProxmoxBoot {
+    pub json: Value,
+    pub esps: Vec<ProxmoxEsp>,
+}
+
+/// "Proxmox VE 9.2" from pve-manager's version (9.2.3), when it is installed.
+pub fn proxmox_product(packages: &[(String, String, String)]) -> Option<String> {
+    let (_, v, _) = packages.iter().find(|(n, _, _)| n == "pve-manager")?;
+    let nums: Vec<&str> = v.split(|c: char| !c.is_ascii_digit()).filter(|n| !n.is_empty()).take(2).collect();
+    (!nums.is_empty()).then(|| format!("Proxmox VE {}", nums.join(".")))
+}
+
+/// The proxmox-boot-tool mode an ESP's files say: systemd-boot's loader,
+/// GRUB's EFI image as proxmox-boot-tool names it, or GRUB's BIOS modules.
+fn proxmox_mode(sys: &Sys, mount: &str, contents: &Value) -> Option<&'static str> {
+    let has = |want: &str| contents.get("files").and_then(Value::as_array).into_iter().flatten().any(|f| f.get("path").and_then(Value::as_str).is_some_and(|p| p.eq_ignore_ascii_case(want)));
+    if has("EFI/systemd/systemd-bootx64.efi") {
+        Some("systemd-boot")
+    } else if has("EFI/proxmox/grubx64.efi") {
+        Some("grub-efi")
+    } else if sys.is_dir(&format!("{mount}/grub/i386-pc")) {
+        Some("grub-bios")
+    } else {
+        None
+    }
+}
+
+/// boot.proxmox_boot (docs/design/proxmox.md): on Proxmox VE with
+/// proxmox-boot-tool (ZFS root), the ESPs aren't mounted, only listed by
+/// volume ID in /etc/kernel/proxmox-boot-uuids.  Each is found by that ID
+/// (`resolve`, "UUID=ID" to a kernel name) and read as a mounted ESP is,
+/// from a private read-only mount under /run/bko-holt, unmounted at once
+/// (as proxmox-boot-tool itself mounts them); one already mounted
+/// (`mounted`, device and mount point) is read where it is.  None when the
+/// list or proxmox-kernel-helper isn't there.
+pub fn proxmox_boot_json(sys: &Sys, packages: &[(String, String, String)], resolve: &dyn Fn(&str) -> Option<String>, mounted: &[(String, String)]) -> Option<ProxmoxBoot> {
+    if !packages.iter().any(|(n, _, _)| n == "proxmox-kernel-helper") {
+        return None;
+    }
+    let text = sys.read(PROXMOX_BOOT_UUIDS)?;
+    let uuids: Vec<String> = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(str::to_string).collect();
+    let mut esps = Vec::new();
+    for uuid in &uuids {
+        let device = resolve(&format!("UUID={uuid}"));
+        let mut e = ProxmoxEsp { uuid: uuid.clone(), device: device.clone(), mode: None, contents: Value::Null, systemd_boot: None, mounted_at: None };
+        let Some(dev) = device else {
+            sys.warn(format!("{PROXMOX_BOOT_UUIDS} lists ESP {uuid}, but no file system here has that volume ID (proxmox-boot-tool status says the same)"));
+            esps.push(e);
+            continue;
+        };
+        if let Some((_, m)) = mounted.iter().find(|(d, _)| *d == dev) {
+            e.contents = esp_inventory(sys, m);
+            e.mode = proxmox_mode(sys, m, &e.contents);
+            e.systemd_boot = systemd_boot_json(sys, m);
+            e.mounted_at = Some(m.clone());
+            esps.push(e);
+            continue;
+        }
+        // The ID names the mount point: only a volume ID's characters.
+        if !sys.privileged || uuid.is_empty() || !uuid.chars().all(|c| c.is_ascii_hexdigit() || c == '-') {
+            esps.push(e);
+            continue;
+        }
+        let at = format!("{PROXMOX_ESP_MOUNTS}/esp-{uuid}");
+        if let Err(err) = std::fs::create_dir_all(sys.p(&at)) {
+            sys.warn(format!("ESP {uuid} ({dev}): can't make {at} to read it: {err}"));
+            esps.push(e);
+            continue;
+        }
+        if sys.run("mount", &["-t", "vfat", "-o", "ro,noexec,nodev,nosuid", &format!("/dev/{dev}"), &at]).is_none() {
+            sys.warn(format!("ESP {uuid} ({dev}): a read-only mount at {at} failed, so its files and proxmox-boot-tool mode aren't in this dump"));
+            let _ = std::fs::remove_dir(sys.p(&at));
+            esps.push(e);
+            continue;
+        }
+        e.contents = esp_inventory(sys, &at);
+        e.mode = proxmox_mode(sys, &at, &e.contents);
+        e.systemd_boot = systemd_boot_json(sys, &at);
+        if sys.run("umount", &[&at]).is_some() {
+            let _ = std::fs::remove_dir(sys.p(&at));
+        } else {
+            sys.warn(format!("ESP {uuid} ({dev}): still mounted read-only at {at}; `umount {at}` when this dump is done"));
+        }
+        esps.push(e);
+    }
+    let manual: Option<Vec<String>> = sys.read("/etc/kernel/proxmox-boot-manual-kernels").map(|t| t.lines().map(str::trim).filter(|l| !l.is_empty()).map(str::to_string).collect());
+    let json = Obj::new()
+        .set("uuids", uuids.clone())
+        .set(
+            "esps",
+            esps.iter().map(|e| Obj::new().set("uuid", e.uuid.as_str()).set("device", e.device.clone()).set("mode", e.mode).set("contents", e.contents.clone()).build()).collect::<Vec<_>>(),
+        )
+        .set("cmdline", sys.read_trim("/etc/kernel/cmdline"))
+        .set("pin", sys.read_trim("/etc/kernel/proxmox-boot-pin"))
+        .set("manual_kernels", manual)
+        .build();
+    Some(ProxmoxBoot { json, esps })
 }
 
 // --- Kernels -----------------------------------------------------------------------
@@ -1016,15 +1140,23 @@ pub fn detect_loader(e: &Evidence) -> Value {
 
 /// Everything in this module, for the report's "boot" section.  `esps` are
 /// the mounted ESPs (device, mount point); `ostree` is boot.ostree on an
-/// ostree system (crate::ostree::json).
-pub fn boot_json(sys: &Sys, packages: &[(String, String, String)], esps: &[(String, String)], efi_boot: Value, mbr_codes: Vec<(String, String)>, ostree: Option<Value>) -> Value {
+/// ostree system (crate::ostree::json); `proxmox` is boot.proxmox_boot
+/// (proxmox_boot_json), whose ESPs that aren't mounted join boot.esps with
+/// `mounted_at` null.
+pub fn boot_json(sys: &Sys, packages: &[(String, String, String)], esps: &[(String, String)], efi_boot: Value, mbr_codes: Vec<(String, String)>, ostree: Option<Value>, proxmox: Option<ProxmoxBoot>) -> Value {
     let running = sys.read_trim("/proc/sys/kernel/osrelease");
     let mut esp_list = Vec::new();
     let mut esp_files = Vec::new();
     let mut fallback_copy_of = None;
     let mut sd_boot = None;
-    for (dev, mnt) in esps {
-        let inv = esp_inventory(sys, mnt);
+    // (device, mount point, contents, systemd-boot's files)
+    let mut read: Vec<(String, Option<String>, Value, Option<Value>)> = esps.iter().map(|(dev, mnt)| (dev.clone(), Some(mnt.clone()), esp_inventory(sys, mnt), systemd_boot_json(sys, mnt))).collect();
+    for e in proxmox.iter().flat_map(|p| &p.esps).filter(|e| e.mounted_at.is_none()) {
+        if let Some(dev) = &e.device {
+            read.push((dev.clone(), None, e.contents.clone(), e.systemd_boot.clone()));
+        }
+    }
+    for (dev, mnt, inv, sd) in read {
         if let Some(files) = inv.get("files").and_then(Value::as_array) {
             esp_files.extend(files.iter().filter_map(|f| f.get("path").and_then(Value::as_str)).map(str::to_string));
             fallback_copy_of = fallback_copy_of.or_else(|| {
@@ -1032,9 +1164,9 @@ pub fn boot_json(sys: &Sys, packages: &[(String, String, String)], esps: &[(Stri
             });
         }
         if sd_boot.is_none() {
-            sd_boot = systemd_boot_json(sys, mnt);
+            sd_boot = sd;
         }
-        esp_list.push(Obj::new().set("device", dev.as_str()).set("mounted_at", mnt.as_str()).set("contents", inv).build());
+        esp_list.push(Obj::new().set("device", dev).set("mounted_at", mnt).set("contents", inv).build());
     }
     if sd_boot.is_none() && ostree.is_none() {
         // systemd-boot can also keep its entries on an XBOOTLDR at /boot.
@@ -1084,6 +1216,7 @@ pub fn boot_json(sys: &Sys, packages: &[(String, String, String)], esps: &[(Stri
         .set("packages", pk);
     o.put_some("ostree", ostree);
     o.put_some("refind", refind_json(sys));
+    o.put_some("proxmox_boot", proxmox.map(|p| p.json));
     o.build()
 }
 
@@ -1593,11 +1726,11 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(list[0].get("modules_installed"), Some(&Value::Bool(true)));
         assert_eq!(initramfs_json(&s, &p, true).get("generator").and_then(Value::as_str), Some("prebuilt"));
         assert_eq!(initramfs_json(&s, &p, false).get("generator").and_then(Value::as_str), Some("dracut"));
-        let b = boot_json(&s, &p, &[], Value::Null, vec![], Some(Obj::new().set("booted", true).build()));
+        let b = boot_json(&s, &p, &[], Value::Null, vec![], Some(Obj::new().set("booted", true).build()), None);
         assert!(b.get("systemd_boot").unwrap().is_null(), "{}", b.compact());
         assert_eq!(b.at(&["ostree", "booted"]), Some(&Value::Bool(true)));
         // Without ostree, the same entries read as systemd-boot's on an XBOOTLDR.
-        let b = boot_json(&s, &p, &[], Value::Null, vec![], None);
+        let b = boot_json(&s, &p, &[], Value::Null, vec![], None, None);
         assert_eq!(b.at(&["systemd_boot", "entries", "0", "file"]).and_then(Value::as_str), Some("ostree-1.conf"));
         assert!(b.get("ostree").is_none());
     }
@@ -1686,7 +1819,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         let p = installed_packages(&s);
         let names: Vec<&str> = p.iter().map(|(n, _, _)| n.as_str()).collect();
         assert_eq!(names, vec!["grub", "grub-i386-pc", "initramfs-tools", "linux-lts"]);
-        let b = boot_json(&s, &p, &[], Value::Null, vec![("vda".into(), "grub2".into())], None);
+        let b = boot_json(&s, &p, &[], Value::Null, vec![("vda".into(), "grub2".into())], None, None);
         assert_eq!(b.at(&["loader", "name"]).and_then(Value::as_str), Some("grub"));
         assert_eq!(b.at(&["loader", "firmware"]).and_then(Value::as_str), Some("bios"));
         assert_eq!(b.at(&["loader", "package"]).and_then(Value::as_str), Some("grub-i386-pc"));

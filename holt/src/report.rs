@@ -1197,6 +1197,9 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     let other = section(&[Kind::Zram, Kind::Rom, Kind::Floppy], &|_| None);
 
     let layout_mounts: Vec<&Mount> = mountinfo.iter().filter(|m| mounts::is_layout_mount(m)).collect();
+    if mountinfo.iter().any(mounts::is_pmxcfs) {
+        sys.warn("/etc/pve is Proxmox VE's pmxcfs (FUSE), not a file system to back up: its data is /var/lib/pve-cluster/config.db, a file on /, and comes back with /");
+    }
     let mount_dev = |m: &Mount| ctx.by_devno(&m.devno).map(|d| d.b.name.clone()).or_else(|| ctx.resolve(sys, &m.source));
     let mounts_json: Vec<Value> = layout_mounts
         .iter()
@@ -1311,7 +1314,12 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         .set("crypttab", crypttab)
         .set("mdadm_conf", mdadm_conf);
     let ostree_json = ostree.then(|| crate::ostree::json(sys, physical_root.as_deref().unwrap_or(crate::ostree::SYSROOT)));
-    let boot = crate::boot::boot_json(sys, &packages, &esps, efi_boot, mbr_codes, ostree_json);
+    let proxmox = crate::boot::proxmox_boot_json(sys, &packages, &|spec: &str| ctx.resolve(sys, spec), &esps);
+    let boot = crate::boot::boot_json(sys, &packages, &esps, efi_boot, mbr_codes, ostree_json, proxmox);
+    let mut os_json = crate::osrel::to_json(sys, os);
+    if let (Some(p), Value::Obj(o)) = (crate::boot::proxmox_product(&packages), &mut os_json) {
+        o.push(("product".into(), Value::from(p)));
+    }
 
     let mut out = Obj::new()
         .set("format", FORMAT)
@@ -1320,7 +1328,7 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         .set("generated", generated)
         .set("privileged", sys.privileged)
         .set("host", host_json(sys))
-        .set("os", crate::osrel::to_json(sys, os))
+        .set("os", os_json)
         .set("firmware", crate::efi::firmware_json(sys))
         .set("storage", storage)
         .set("boot", boot);

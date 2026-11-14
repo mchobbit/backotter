@@ -2535,6 +2535,339 @@ fn kali_fallback_boot() {
     assert!(!bt.contains("grub-mkconfig"), "{bt}");
 }
 
+const PVE_KV: &str = "7.0.4-1-pve";
+/// Each disk's ESP: its PARTUUID and its vfat volume ID (as a serial).
+const PVE_ESPS: [(&str, u32, &str); 2] = [("e5e5e5e5-0000-4000-8000-000000000001", 0x1234_abcd, "1234-ABCD"), ("e5e5e5e5-0000-4000-8000-000000000002", 0x5678_ef01, "5678-EF01")];
+
+/// Proxmox VE 9.2 as its installer lays out ZFS root (docs/design/proxmox.md):
+/// Debian 13's os-release, on each disk a BIOS boot partition, a 32 MiB ESP
+/// that nothing mounts and a ZFS partition; `rpool` on one disk or a mirror
+/// of two; proxmox-boot-tool in systemd-boot mode with one ESP a disk in
+/// /etc/kernel/proxmox-boot-uuids, the kernels and loader entries on each;
+/// pmxcfs at /etc/pve; a zvol in rpool/data.  The ESPs' files are in the
+/// tree where dump mounts them (/run/bko-holt/esp-ID), the mount itself
+/// answered by the runner.
+fn proxmox(mirror: bool) -> (Tree, FakeRunner) {
+    use crate::efi::{GLOBAL, LOADER};
+    let t = Tree::new(if mirror { "scn-pve-mirror" } else { "scn-pve" });
+    t.debian13();
+    let k = PVE_KV;
+    let disks: Vec<(&str, &str)> = if mirror { vec![("vda", "254:0"), ("vdb", "254:16")] } else { vec![("vda", "254:0")] };
+    let leaf = |n: &str, i: u64| format!(r#"{{"type": "disk", "id": {i}, "guid": {}, "path": "/dev/{n}3", "whole_disk": 0}}"#, 11 + i);
+    let tree = if mirror {
+        format!(r#"{{"type": "mirror", "id": 0, "guid": 10, "ashift": 12, "children": [{}, {}]}}"#, leaf("vda", 0), leaf("vdb", 1))
+    } else {
+        r#"{"type": "disk", "id": 0, "guid": 11, "path": "/dev/vda3", "whole_disk": 0, "ashift": 12}"#.to_string()
+    };
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    let sd = vec![5u8; 300];
+    let entry = format!(
+        "title    Proxmox Virtual Environment\nversion  {k}\noptions  root=ZFS=rpool/ROOT/pve-1 boot=zfs\nlinux    /EFI/proxmox/{k}/vmlinuz-{k}\ninitrd   /EFI/proxmox/{k}/initrd.img-{k}\n"
+    );
+    let mut order = vec![7u8, 0, 0, 0];
+    for (i, (d, devno)) in disks.iter().enumerate() {
+        let (partuuid, serial, id) = PVE_ESPS[i];
+        let mut img = vec![0u8; 96 * MIB];
+        write_gpt(
+            &mut img,
+            512,
+            &GptSpec {
+                disk_guid: if i == 0 { "9e9e9e9e-0000-4000-8000-00000000000a" } else { "9e9e9e9e-0000-4000-8000-00000000000b" },
+                parts: vec![
+                    (BIOS_BOOT, if i == 0 { "9e9e9e9e-1111-4000-8000-00000000000a" } else { "9e9e9e9e-1111-4000-8000-00000000000b" }, 34, 2047, 0, ""),
+                    (ESP, partuuid, 2048, 67583, 0, ""),
+                    ("6a898cc3-1dd2-11b2-99a6-080020c9b98d", if i == 0 { "9e9e9e9e-3333-4000-8000-00000000000a" } else { "9e9e9e9e-3333-4000-8000-00000000000b" }, 67584, 184319, 0, ""),
+                ],
+            },
+        );
+        put(&mut img, 2048, &fat::sample::fat32(65536, serial, ""));
+        let cfg = format!(
+            r#"{{"version": 5000, "name": "rpool", "state": 0, "txg": 4, "pool_guid": 999, "hostname": "pve", "hostid": 305419896, "top_guid": {}, "guid": {},
+                "vdev_children": 1, "vdev_tree": {tree}, "features_for_read": {{"com.delphix:hole_birth": true}}}}"#,
+            if mirror { 10 } else { 11 },
+            11 + i
+        );
+        put(&mut img, 67584, &zfs::pack::vdev(116736 * 512, &crate::json::parse(&cfg).unwrap()));
+        let major = devno.split(':').next().unwrap();
+        let minor: u32 = devno.split(':').nth(1).unwrap().parse().unwrap();
+        t.disk(d, devno, &img, 512)
+            .partition(d, &format!("{d}1"), &format!("{major}:{}", minor + 1), 1, 34, 2014, &img)
+            .partition(d, &format!("{d}2"), &format!("{major}:{}", minor + 2), 2, 2048, 65536, &img)
+            .partition(d, &format!("{d}3"), &format!("{major}:{}", minor + 3), 3, 67584, 116736, &img)
+            .symlink(&format!("/dev/disk/by-partuuid/{partuuid}"), &format!("../../{d}2"))
+            .symlink(&format!("/dev/disk/by-uuid/{id}"), &format!("../../{d}2"))
+            .file(&var(&format!("Boot000{i}")), efi_load_option("Linux Boot Manager", 2, 2048, 65536, partuuid, "\\EFI\\systemd\\systemd-bootx64.efi"));
+        order.extend([i as u8, 0]);
+        let esp = format!("/run/bko-holt/esp-{id}");
+        t.file(&format!("{esp}/EFI/systemd/systemd-bootx64.efi"), &sd)
+            .file(&format!("{esp}/EFI/BOOT/BOOTX64.EFI"), &sd)
+            .file(&format!("{esp}/EFI/proxmox/{k}/vmlinuz-{k}"), "k")
+            .file(&format!("{esp}/EFI/proxmox/{k}/initrd.img-{k}"), "i")
+            .file(&format!("{esp}/loader/loader.conf"), "timeout 3\ndefault proxmox-*\n")
+            .file(&format!("{esp}/loader/entries/proxmox-{k}.conf"), &entry);
+    }
+    let mut loader_info = vec![6u8, 0, 0, 0];
+    for c in "systemd-boot 257.9-1~deb13u1".encode_utf16().chain([0]) {
+        loader_info.extend(c.to_le_bytes());
+    }
+    let ids: String = PVE_ESPS[..disks.len()].iter().map(|(_, _, id)| format!("{id}\n")).collect();
+    t.file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&var("BootOrder"), order)
+        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 0, 0])
+        .file(&var("SecureBoot"), [6u8, 0, 0, 0, 0])
+        .file(&format!("/sys/firmware/efi/efivars/LoaderInfo-{LOADER}"), loader_info)
+        .file(
+            "/proc/self/mountinfo",
+            "26 1 0:24 / / rw,relatime shared:1 - zfs rpool/ROOT/pve-1 rw,xattr,posixacl\n\
+             27 26 0:25 / /rpool rw,relatime shared:2 - zfs rpool rw,xattr,posixacl\n\
+             28 27 0:26 / /rpool/data rw,relatime shared:3 - zfs rpool/data rw,xattr,posixacl\n\
+             29 26 0:27 / /var/lib/vz rw,relatime shared:4 - zfs rpool/var-lib-vz rw,xattr,posixacl\n\
+             30 26 0:50 / /etc/pve rw,nosuid,nodev,relatime shared:5 - fuse /dev/fuse rw,user_id=0,group_id=0,default_permissions,allow_other\n\
+             31 26 0:51 / /var/lib/lxcfs rw,nosuid,nodev,relatime shared:6 - fuse.lxcfs lxcfs rw,user_id=0,group_id=0,allow_other\n",
+        )
+        .file("/etc/fstab", "# <file system> <mount point> <type> <options> <dump> <pass>\nproc /proc proc defaults 0 0\n")
+        .file("/etc/hostid", [0x78u8, 0x56, 0x34, 0x12])
+        .file("/etc/zfs/zpool.cache", zfs::pack::packed(&crate::json::parse(r#"{"rpool": {"name": "rpool", "pool_guid": 999}}"#).unwrap()))
+        .file("/etc/kernel/proxmox-boot-uuids", ids)
+        .file("/etc/kernel/cmdline", "root=ZFS=rpool/ROOT/pve-1 boot=zfs\n")
+        .file(&format!("/boot/vmlinuz-{k}"), "k")
+        .file(&format!("/boot/initrd.img-{k}"), "i")
+        .file(&format!("/boot/config-{k}"), "")
+        .file(&format!("/boot/System.map-{k}"), "")
+        .symlink("/lib", "usr/lib")
+        .dir(&format!("/usr/lib/modules/{k}/kernel"))
+        .file("/etc/initramfs-tools/initramfs.conf", "MODULES=most\nCOMPRESS=zstd\n")
+        .file("/proc/sys/kernel/osrelease", format!("{k}\n"))
+        .file("/proc/sys/kernel/hostname", "pve\n")
+        .file("/proc/cmdline", format!("initrd=\\EFI\\proxmox\\{k}\\initrd.img-{k} root=ZFS=rpool/ROOT/pve-1 boot=zfs\n"));
+    let pkgs = [
+        ("proxmox-ve", "9.2.0"),
+        ("pve-manager", "9.2.3"),
+        ("pve-cluster", "9.0.6"),
+        ("proxmox-kernel-helper", "9.0.4"),
+        ("proxmox-default-kernel", "2.0.0"),
+        ("proxmox-kernel-7.0.4-1-pve-signed", "7.0.4-1"),
+        ("zfsutils-linux", "2.4.1-pve1"),
+        ("zfs-initramfs", "2.4.1-pve1"),
+        ("initramfs-tools", "0.148.3"),
+        ("systemd-boot", "257.9-1~deb13u1"),
+        ("systemd-boot-efi", "257.9-1~deb13u1"),
+        ("efibootmgr", "18-2"),
+        ("dosfstools", "4.2-1.2"),
+    ];
+    let status: String = pkgs.iter().map(|(n, v)| format!("Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n")).collect();
+    t.file("/var/lib/dpkg/status", status);
+    let vdevs = if mirror {
+        r#"{"mirror-0": {"name": "mirror-0", "vdev_type": "mirror", "vdevs": {"/dev/vda3": {"name": "/dev/vda3", "vdev_type": "disk", "path": "/dev/vda3"}, "/dev/vdb3": {"name": "/dev/vdb3", "vdev_type": "disk", "path": "/dev/vdb3"}}}}"#
+    } else {
+        r#"{"/dev/vda3": {"name": "/dev/vda3", "vdev_type": "disk", "path": "/dev/vda3"}}"#
+    };
+    let fs = |name: &str, mp: &str, canmount: &str, mounted: &str| format!("{name}\tfilesystem\t900\t2000\t96\t{mp}\t{canmount}\t{mounted}\toff\t-\tnone\tnone\t-\t-\ton\t131072\t-\t-\tposix\tsa\tauto\tnone\toff\tsensitive\ton\ton\t1\t-\n");
+    let mut runner = FakeRunner::default()
+        .with("zpool list -H -o name", "rpool\n")
+        .with(
+            "zpool get -H -p -o property,value,source all rpool",
+            "size\t62277025792\t-\nashift\t12\tlocal\ncachefile\t-\tdefault\nfree\t1\t-\nfeature@encryption\tenabled\tlocal\nfeature@async_destroy\tenabled\tlocal\n",
+        )
+        .with(
+            "zfs list -H -p -t filesystem,volume -o name,type,used,available,referenced,mountpoint,canmount,mounted,encryption,encryptionroot,keyformat,keylocation,keystatus,origin,compression,recordsize,volsize,volblocksize,acltype,xattr,dnodesize,normalization,utf8only,casesensitivity,atime,relatime,copies,com.sun:auto-snapshot",
+            &[
+                fs("rpool", "/rpool", "on", "yes"),
+                fs("rpool/ROOT", "/rpool/ROOT", "on", "no"),
+                fs("rpool/ROOT/pve-1", "/", "on", "yes"),
+                fs("rpool/data", "/rpool/data", "on", "yes"),
+                "rpool/data/vm-100-disk-0\tvolume\t67108864\t2000\t56\t-\t-\t-\toff\t-\tnone\tnone\t-\t-\ton\t-\t67108864\t16384\toff\t-\t-\t-\t-\t-\t-\t-\t1\t-\n".to_string(),
+                fs("rpool/var-lib-vz", "/var/lib/vz", "on", "yes"),
+            ]
+            .concat(),
+        )
+        .with(
+            "zfs get -H -p -t filesystem,volume -s local,received -o name,property,value,source all",
+            "rpool\tcompression\ton\tlocal\nrpool\tacltype\tposix\tlocal\nrpool\txattr\tsa\tlocal\nrpool\tmountpoint\t/rpool\tlocal\nrpool/ROOT/pve-1\tmountpoint\t/\tlocal\nrpool/var-lib-vz\tmountpoint\t/var/lib/vz\tlocal\nrpool/data/vm-100-disk-0\tvolsize\t67108864\tlocal\n",
+        )
+        .with(
+            "zpool status -j --json-int -P rpool",
+            &format!(r#"{{"output_version": {{"command": "zpool status", "vers_major": 0, "vers_minor": 1}}, "pools": {{"rpool": {{"name": "rpool", "state": "ONLINE", "vdevs": {{"rpool": {{"name": "rpool", "vdev_type": "root", "vdevs": {vdevs}}}}}}}}}}}"#),
+        );
+    for (i, (d, _)) in disks.iter().enumerate() {
+        let at = format!("/run/bko-holt/esp-{}", PVE_ESPS[i].2);
+        runner = runner.with(&format!("mount -t vfat -o ro,noexec,nodev,nosuid /dev/{d}2 {at}"), "").with(&format!("umount {at}"), "");
+    }
+    (t, runner)
+}
+
+/// Proxmox VE's plan from a tree, the source disks vda (and vdb) going to
+/// sda (and sdb); `extra`, more of load's arguments.
+fn proxmox_plan(t: &Tree, runner: FakeRunner, mirror: bool, extra: &[&str]) -> (Value, crate::load::commands::Built) {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let v = run(t, true, runner);
+    let l = Layout::from_json(v.clone()).unwrap();
+    let mut a = vec!["l.json".to_string()];
+    a.extend(extra.iter().map(|s| s.to_string()));
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
+    let mut pairs = vec![("vda".to_string(), "sda".to_string())];
+    if mirror {
+        pairs.push(("vdb".into(), "sdb".into()));
+    }
+    (v, commands::build(&l, &o, &Mapping { pairs, ..Mapping::default() }))
+}
+
+/// Proxmox VE 9 on ZFS root, one disk: the unmounted ESP found from
+/// proxmox-boot-uuids and read through a private read-only mount, its mode,
+/// files and loader entries; pmxcfs not a backup source; os.product.
+#[test]
+fn proxmox_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let (t, runner) = proxmox(false);
+    let (v, b) = proxmox_plan(&t, runner, false, &[]);
+    assert_eq!(s(&v, &["os", "id"]), "debian");
+    assert_eq!(s(&v, &["os", "version_id"]), "13");
+    assert_eq!(s(&v, &["os", "product"]), "Proxmox VE 9.2");
+    for (p, ver) in [("proxmox-kernel-helper", "9.0.4"), ("proxmox-default-kernel", "2.0.0"), ("proxmox-ve", "9.2.0"), ("pve-manager", "9.2.3"), ("zfs-initramfs", "2.4.1-pve1")] {
+        assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
+    }
+    let pb = v.at(&["boot", "proxmox_boot"]).unwrap();
+    assert_eq!(pb.get("uuids").unwrap().compact(), r#"["1234-ABCD"]"#);
+    let e = &arr(pb, &["esps"])[0];
+    assert_eq!(s(e, &["uuid"]), "1234-ABCD");
+    assert_eq!(s(e, &["device"]), "vda2");
+    assert_eq!(s(e, &["mode"]), "systemd-boot");
+    let files: Vec<&str> = arr(e, &["contents", "files"]).iter().map(|f| s(f, &["path"])).collect();
+    for f in ["EFI/systemd/systemd-bootx64.efi", "EFI/BOOT/BOOTX64.EFI", &format!("EFI/proxmox/{PVE_KV}/vmlinuz-{PVE_KV}"), &format!("loader/entries/proxmox-{PVE_KV}.conf")] {
+        assert!(files.contains(&f), "{f}: {files:?}");
+    }
+    assert_eq!(s(pb, &["cmdline"]), "root=ZFS=rpool/ROOT/pve-1 boot=zfs");
+    assert!(pb.get("pin").unwrap().is_null() && pb.get("manual_kernels").unwrap().is_null());
+    // The same ESP in boot.esps, mounted nowhere; systemd-boot's entries from it.
+    let esps = arr(&v, &["boot", "esps"]);
+    assert_eq!(esps.len(), 1);
+    assert_eq!(s(&esps[0], &["device"]), "vda2");
+    assert!(esps[0].get("mounted_at").unwrap().is_null());
+    assert_eq!(s(&v, &["boot", "loader", "name"]), "systemd-boot");
+    assert_eq!(s(&v, &["boot", "systemd_boot", "entries", "0", "file"]), format!("proxmox-{PVE_KV}.conf"));
+    // pmxcfs isn't one of the layout's mounts, nor a backup source; lxcfs neither.
+    let paths: Vec<&str> = arr(&v, &["storage", "backup_sources"]).iter().map(|b| s(b, &["path"])).collect();
+    assert!(!paths.contains(&"/etc/pve") && !paths.contains(&"/var/lib/lxcfs") && paths.contains(&"/"), "{paths:?}");
+    assert!(!arr(&v, &["storage", "mounts"]).iter().any(|m| s(m, &["target"]) == "/etc/pve"));
+    let w: Vec<&str> = arr(&v, &["warnings"]).iter().filter_map(Value::as_str).collect();
+    assert_eq!(w, vec!["/etc/pve is Proxmox VE's pmxcfs (FUSE), not a file system to back up: its data is /var/lib/pve-cluster/config.db, a file on /, and comes back with /"]);
+
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let text = |st: Stage| -> String { b.stage(st).iter().map(Cmd::shell).collect() };
+    // The ESP, unmounted on the source, made again with its volume ID.
+    let fmt = text(Stage::Format);
+    assert_eq!(fmt.lines().filter(|l| l.starts_with("mkfs.fat ")).count(), 1, "{fmt}");
+    assert!(fmt.lines().any(|l| l.starts_with("mkfs.fat ") && l.contains("-i 1234ABCD") && l.ends_with("/dev/sda2")), "{fmt}");
+    let bt = text(Stage::Boot);
+    let initramfs = bt.find("chroot /mnt/bko-target update-initramfs -u -k all\n").expect(&bt);
+    let init = bt.find("chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/1234-ABCD\n").expect(&bt);
+    let refresh = bt.find("chroot /mnt/bko-target proxmox-boot-tool refresh\n").expect(&bt);
+    let list = bt.find("cat > /mnt/bko-target/etc/kernel/proxmox-boot-uuids <<'EOF'\n1234-ABCD\nEOF\n").expect(&bt);
+    assert!(initramfs < init && init < refresh && refresh < list, "{bt}");
+    assert_eq!(bt.matches("proxmox-boot-tool init").count(), 1, "{bt}");
+    assert_eq!(bt.matches("proxmox-boot-tool refresh").count(), 1, "{bt}");
+    assert!(!bt.contains("bootctl install") && !bt.contains("grub-install"), "{bt}");
+    // bootctl install (in init) makes "Linux Boot Manager" again.
+    assert!(!bt.contains("efibootmgr --quiet --create"), "{bt}");
+    assert!(b.notes.iter().any(|n| n == "UEFI entry \"Linux Boot Manager\" (vda2, \\EFI\\systemd\\systemd-bootx64.efi): proxmox-boot-tool init's bootctl install makes it again; not recreated"), "{:?}", b.notes);
+    assert!(b.notes.iter().any(|n| n == "Proxmox: proxmox-boot-tool rebuilt 1 ESP (systemd-boot); their old content isn't in the archive"), "{:?}", b.notes);
+    assert!(b.notes.iter().any(|n| n == "ZFS volume rpool/data/vm-100-disk-0: made empty; archivers back up files, not zvols; Proxmox: VM disks are vzdump's or Proxmox Backup Server's to back up"), "{:?}", b.notes);
+    assert!(text(Stage::Close).contains("zpool export rpool"));
+    // --no-nvram: init's bootctl without the EFI variables.
+    let (t, runner) = proxmox(false);
+    let (_, b) = proxmox_plan(&t, runner, false, &["--no-nvram"]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("unshare --mount --propagation private sh -c 'umount /mnt/bko-target/sys/firmware/efi/efivars 2>/dev/null; exec chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/1234-ABCD'\n"), "{bt}");
+    assert!(!bt.contains("efibootmgr"), "{bt}");
+}
+
+/// Proxmox VE 9 on a ZFS mirror: two unmounted ESPs, both formatted with
+/// their volume IDs, both initialised in proxmox-boot-uuids' order, one
+/// refresh.
+#[test]
+fn proxmox_mirror_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let (t, runner) = proxmox(true);
+    let (v, b) = proxmox_plan(&t, runner, true, &[]);
+    let pb = v.at(&["boot", "proxmox_boot"]).unwrap();
+    assert_eq!(pb.get("uuids").unwrap().compact(), r#"["1234-ABCD","5678-EF01"]"#);
+    let devs: Vec<&str> = arr(pb, &["esps"]).iter().map(|e| s(e, &["device"])).collect();
+    assert_eq!(devs, vec!["vda2", "vdb2"]);
+    assert!(arr(pb, &["esps"]).iter().all(|e| s(e, &["mode"]) == "systemd-boot"));
+    assert_eq!(arr(&v, &["boot", "esps"]).len(), 2);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let text = |st: Stage| -> String { b.stage(st).iter().map(Cmd::shell).collect() };
+    let asm = text(Stage::Assemble);
+    assert!(asm.lines().any(|l| l.starts_with("zpool create ") && l.contains("rpool mirror /dev/sda3 /dev/sdb3")), "{asm}");
+    let fmt = text(Stage::Format);
+    let fats: Vec<&str> = fmt.lines().filter(|l| l.starts_with("mkfs.fat ")).collect();
+    assert_eq!(fats.len(), 2, "{fmt}");
+    assert!(fats[0].contains("-i 1234ABCD") && fats[0].ends_with("/dev/sda2") && fats[1].contains("-i 5678EF01") && fats[1].ends_with("/dev/sdb2"), "{fats:?}");
+    let bt = text(Stage::Boot);
+    let a = bt.find("chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/1234-ABCD\n").expect(&bt);
+    let c = bt.find("chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/5678-EF01\n").expect(&bt);
+    let r = bt.find("chroot /mnt/bko-target proxmox-boot-tool refresh\n").expect(&bt);
+    assert!(a < c && c < r, "{bt}");
+    assert_eq!(bt.matches("proxmox-boot-tool refresh").count(), 1, "{bt}");
+    assert!(bt.contains("cat > /mnt/bko-target/etc/kernel/proxmox-boot-uuids <<'EOF'\n1234-ABCD\n5678-EF01\nEOF\n"), "{bt}");
+    assert!(!bt.contains("bootctl install") && !bt.contains("efibootmgr --quiet --create"), "{bt}");
+    assert!(b.notes.iter().any(|n| n == "Proxmox: proxmox-boot-tool rebuilt 2 ESPs (systemd-boot); their old content isn't in the archive"), "{:?}", b.notes);
+}
+
+/// What load refuses on Proxmox: GRUB's modes (and shim), an ESP in the list
+/// that no partition has, a release other than 9; unprivileged, dump mounts
+/// nothing and the mode is unknown.
+#[test]
+fn proxmox_refusals() {
+    // GRUB on BIOS: grub/i386-pc on the ESP, no systemd-boot.
+    let (t, runner) = proxmox(false);
+    let esp = "/run/bko-holt/esp-1234-ABCD";
+    std::fs::remove_dir_all(t.p(&format!("{esp}/EFI/systemd"))).unwrap();
+    std::fs::remove_dir_all(t.p(&format!("{esp}/loader"))).unwrap();
+    t.dir(&format!("{esp}/grub/i386-pc"));
+    let (v, b) = proxmox_plan(&t, runner, false, &[]);
+    assert_eq!(s(&v, &["boot", "proxmox_boot", "esps", "0", "mode"]), "grub-bios");
+    assert!(b.problems.iter().any(|p| p == "Proxmox: ESP 1234-ABCD (vda2) is in proxmox-boot-tool's GRUB mode (grub-bios); bko-holt load supports only its systemd-boot mode (GRUB's isn't tested)"), "{:?}", b.problems);
+    let bt: String = b.stage(crate::load::Stage::Boot).iter().map(crate::load::commands::Cmd::shell).collect();
+    assert!(bt.contains("chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/1234-ABCD grub\n"), "{bt}");
+    // GRUB on UEFI.
+    let (t, runner) = proxmox(false);
+    std::fs::remove_file(t.p(&format!("{esp}/EFI/systemd/systemd-bootx64.efi"))).unwrap();
+    t.file(&format!("{esp}/EFI/proxmox/grubx64.efi"), vec![6u8; 200]);
+    let (v, b) = proxmox_plan(&t, runner, false, &[]);
+    assert_eq!(s(&v, &["boot", "proxmox_boot", "esps", "0", "mode"]), "grub-efi");
+    assert!(b.problems.iter().any(|p| p.contains("GRUB mode (grub-efi)")), "{:?}", b.problems);
+    // An ID in the list that nothing has.
+    let (t, runner) = proxmox(false);
+    t.file("/etc/kernel/proxmox-boot-uuids", "1234-ABCD\nDEAD-BEEF\n");
+    let (v, b) = proxmox_plan(&t, runner, false, &[]);
+    assert!(v.at(&["boot", "proxmox_boot", "esps", "1", "device"]).unwrap().is_null());
+    assert!(arr(&v, &["warnings"]).iter().any(|w| w.as_str() == Some("/etc/kernel/proxmox-boot-uuids lists ESP DEAD-BEEF, but no file system here has that volume ID (proxmox-boot-tool status says the same)")));
+    assert_eq!(b.problems, vec!["Proxmox: /etc/kernel/proxmox-boot-uuids lists ESP DEAD-BEEF, which no partition on the source has; proxmox-boot-tool couldn't rebuild it".to_string()]);
+    // Proxmox VE 8.
+    let (t, runner) = proxmox(false);
+    let st = std::fs::read_to_string(t.p("/var/lib/dpkg/status")).unwrap();
+    t.file("/var/lib/dpkg/status", st.replace("Version: 9.2.3", "Version: 8.4.1"));
+    let (v, b) = proxmox_plan(&t, runner, false, &[]);
+    assert_eq!(s(&v, &["os", "product"]), "Proxmox VE 8.4");
+    assert_eq!(b.problems, vec!["Proxmox: the source is Proxmox VE 8.4; bko-holt load rebuilds proxmox-boot-tool's ESPs on Proxmox VE 9 only".to_string()]);
+    // Not root: no mount, so no mode; load says so.
+    let (t, runner) = proxmox(false);
+    let sys = Sys::new(t.root(), Box::new(runner), false);
+    let os = crate::osrel::read(&sys);
+    let v = crate::report::build(&sys, os.as_ref(), "2026-11-04T00:00:00Z");
+    let e = v.at(&["boot", "proxmox_boot", "esps", "0"]).unwrap();
+    assert!(e.get("mode").unwrap().is_null() && e.get("contents").unwrap().is_null(), "{}", e.compact());
+    // Without proxmox-kernel-helper the list is nobody's.
+    let (t, runner) = proxmox(false);
+    let st = std::fs::read_to_string(t.p("/var/lib/dpkg/status")).unwrap();
+    t.file("/var/lib/dpkg/status", st.replace("Package: proxmox-kernel-helper", "Package: proxmox-kernel-helper-gone"));
+    let v = run(&t, true, runner);
+    assert!(v.at(&["boot", "proxmox_boot"]).is_none());
+    assert!(arr(&v, &["boot", "esps"]).is_empty());
+}
+
 /// Every scenario's dump, by name, for tests that must hold over all of
 /// them (load's fit.rs).
 pub fn dumps() -> Vec<(&'static str, Value)> {
@@ -2552,5 +2885,7 @@ pub fn dumps() -> Vec<(&'static str, Value)> {
         ("biglinux", run(&biglinux(), true, biglinux_runner())),
         ("anduinos", run(&anduinos(), true, anduinos_runner())),
         ("kali", run(&kali(), true, FakeRunner::default())),
+        ("proxmox", { let (t, r) = proxmox(false); run(&t, true, r) }),
+        ("proxmox_mirror", { let (t, r) = proxmox(true); run(&t, true, r) }),
     ]
 }

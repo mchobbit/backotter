@@ -69,6 +69,7 @@ PACKAGES = (
     "gentoo-kernel-bin", "gentoo-kernel", "gentoo-sources", "installkernel", "genkernel", "ugrd", "systemd-utils", "zfs-kmod",
     "booster", "kernel-pika", "kernel-pika-runtime", "pika-refind-theme", "refind-btrfs", "zram-tools",
     "anduinos-grub", "anduinos-shim-signed", "anduinos-secureboot-toolkit", "anduinos-btrfs-snapshots-manager",
+    "proxmox-kernel-helper", "proxmox-default-kernel", "proxmox-ve", "pve-manager",
 )
 # Of those, what handles storage; the rest is boot.
 STORAGE = frozenset((

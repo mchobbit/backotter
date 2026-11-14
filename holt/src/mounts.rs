@@ -68,7 +68,15 @@ pub(crate) const PSEUDO: &[&str] = &[
 ];
 
 pub fn is_layout_mount(m: &Mount) -> bool {
-    !PSEUDO.contains(&m.fstype.as_str())
+    !PSEUDO.contains(&m.fstype.as_str()) && !is_pmxcfs(m)
+}
+
+/// Proxmox VE's cluster file system, pmxcfs: a FUSE view (`/dev/fuse on
+/// /etc/pve type fuse`) of /var/lib/pve-cluster/config.db, which is a file
+/// on `/` and comes back with it.  Only that mount: another plain `fuse`
+/// mount is taken as one of the layout's, as before.
+pub fn is_pmxcfs(m: &Mount) -> bool {
+    m.fstype == "fuse" && m.target == "/etc/pve"
 }
 
 /// Whether ROOT (a mount's FSROOT) is a strict subdirectory of ANC.

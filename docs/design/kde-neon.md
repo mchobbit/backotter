@@ -16,8 +16,8 @@ settings repository (`neon/neon/settings`), the neon-commits list, KDE
 Discuss and the KDE Linux alpha announcement, all read 2026-11-14. Code
 references are to local `main` at 6a78448. The user approved this spec on
 2026-11-14 with every recommended decision (the last section).
-Status 2026-11-14: N1-N7 done (uncommitted); N8, BackShot1 on the
-Thinkpad, not started.
+Status 2026-11-14: all done. N1-N7 in 1edb4b5; N8, BackShot1 on the
+Thinkpad, PASS first try ("What N8 found").
 
 ## Summary
 
@@ -326,6 +326,36 @@ row D 16, M 4.
 
 One guest. A BIOS one adds nothing Zorin's doesn't, and the LUKS layout is
 decision 3.
+
+## What N8 found (BackShot1 on the Thinkpad)
+
+- **Installing from the stick.** `testvm/realworld/neon-bootstrap.sh SERIAL
+  ISO KEYS_DIR HOSTNAME` installs neon from the rescue stick, as
+  `guix-bootstrap.sh` does for Guix. It uses make-from-live.sh's neon arms,
+  but the ISO and its squashfs are loop-mounted and copied with `cp -a`, and
+  grub-install writes the NVRAM entry (Calamares does on real hardware).
+  The user is `tester`, with the groups from
+  `/calamares/desktop/modules/users.conf` (the ISO has bigscreen, mobile and
+  OEM ones too). The desktop and graphical target stay as installed. On the
+  Thinkpad, PikaOS before it, the install took 5 min (a 45 s copy, 6.8 GiB)
+  and made Boot0029 "KDE neon User Edition" for `\EFI\neon\shimx64.efi`.
+- **Two bugs in the first try, fixed before the run.** The target was
+  mounted on /mnt, which hid the backup drive at /mnt/bs1-backup (and the
+  keys on it); it is now in the script's own directory under /run, which is
+  removed only when nothing below it is mounted. And `users.conf` was the
+  first match, bigscreen's; now the desktop one.
+- **The firmware has Secure Boot off** (as for every Thinkpad run), so
+  this was plain UEFI; Secure Boot is the neon24 guest's (N5).
+- **bs1-adopt** needed nothing new: its apt and systemd arms cover neon
+  ("neon, under systemd"). PREFLIGHT OK, nothing encrypted.
+- **BackShot1 PASS first try**, run neon-24.04-20261114-141609 (219,574
+  files, 7.2 GiB; backup 52 s, `check --read-data` 23 s), restore
+  20261114-142045. Its boot stage was the plan's: `update-initramfs -u -k
+  all`, `grub-install --bootloader-id=neon --no-nvram`, `update-grub`, then
+  efibootmgr making "KDE neon User Edition" for `\EFI\neon\shimx64.efi`.
+  The restored system booted that entry (BootCurrent 0029). Every check
+  passed, and against the manifest: 42 missing, 55 added, 341 changed, 1
+  xattr, none unexpected. No bs1-manifest or judge change.
 
 ## Steps (ordered, est.)
 

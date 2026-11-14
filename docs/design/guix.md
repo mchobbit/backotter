@@ -221,8 +221,14 @@ KEYS_DIR HOSTNAME`). CachyOS before it is in the library
   bootstrap store at the end. The stick has every tool it needs but `fuser`.
   The first try stopped at `guix system init` ("missing root file system":
   a `set -u` slip left `/` and `/home` out of `config.scm`); the fix is in
-  the script, and that run was resumed from the config step by hand, so the
-  script hasn't run end to end once.
+  the script, and that run was resumed from the config step by hand. Since
+  then the script also turns the swap off and unmounts the target at the
+  end, and `guix-bootstrap-qemu.sh TEST_IMG TARBALL WORK_DIR` rehearses it
+  end to end in QEMU: a `--test` rescue image and a blank 40 GiB NVMe disk
+  (serial `BKOGUIXTEST`), then that disk alone from its NVRAM entry. PASS
+  on Cinqcent 2026-11-14 (224 s; SSH with the fixed host key, `ID=guix`, no
+  Shepherd service stopped or failed, `/gnu` on `@gnu`, BootCurrent the
+  `\EFI\Guix\grubx64.efi` entry).
 - **Layout (the user's OK):** GPT, 1 GiB ESP (vfat `GUIXESP`) at
   `/boot/efi`, 8 GiB swap, the rest Btrfs `guixroot` with `@` (256) at `/`,
   `@home` (257) and `@gnu` (258) at `/gnu` (`needed-for-boot?`), all
@@ -290,8 +296,11 @@ KEYS_DIR HOSTNAME`). CachyOS before it is in the library
   the profile still on generation 2, no service stopped or failed), then
   generation 2 again, and a second verify passed. The firmware took
   `Boot000F` (the identical entry) both times.
-- **Not done:** the `bs1-qemu.py --virtio` rehearsal on `guix15` (no test
-  image built on either host); the real run went first.
+- **Rehearsal after the fact:** `bs1-qemu.py --virtio` on `guix15` PASS on
+  Cinqcent 2026-11-14 (run `guix-20261114-134825`, the pinned Test2
+  `--test` rescuer, static bko-holt 0.2.6): adopt, preflight, backup,
+  refusals, plan, restore, boot from NVRAM, avahi, and verify with 261,547
+  files and 0 unexpected. The real run went first.
 
 ## What already works, and what doesn't
 

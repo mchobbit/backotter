@@ -20,7 +20,9 @@
 #
 # The daemon's store for the bootstrap lives on the target, in
 # /mnt/var/tmp/bko-guix-bootstrap bound onto /gnu and /var/guix, not in the
-# stick's RAM, and is deleted at the end.  Prints BKO-GUIX-INSTALL-OK.
+# stick's RAM, and is deleted at the end; then the target is unmounted and
+# its swap turned off, ready to reboot.  Prints BKO-GUIX-INSTALL-OK.
+# guix-bootstrap-qemu.sh rehearses it in QEMU.
 
 set -euo pipefail
 SERIAL=${1:?usage: guix-bootstrap.sh SERIAL TARBALL KEYS_DIR HOSTNAME}
@@ -195,4 +197,7 @@ umount /var/guix /gnu
 rmdir /gnu /var/guix
 rm -rf "$BOOT"
 sync
+step "unmounting the target"
+swapoff "$(part 2)"
+umount -R /mnt
 echo BKO-GUIX-INSTALL-OK

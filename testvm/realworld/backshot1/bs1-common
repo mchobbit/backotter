@@ -88,7 +88,13 @@ UPDATERS="uupd rpm-ostreed-automatic bootc-fetch-apply-updates"
 # /boot/<machine-id>/limine_history: snapper-cleanup.timer fires 10 min after
 # boot, which landed in the middle of a phase 1 (2026-11-13).  bs1-backup and
 # bs1-verify hold them for the boot they run in, on any system that has them.
-SNAPSHOTTERS="snapper-timeline snapper-cleanup"
+# PikaOS's booster-reassert.timer (every 4 h) likewise rewrites
+# /usr/sbin/update-initramfs and, with no booster.img-* in /boot, remakes the
+# initramfs (docs/design/pikaos.md, P8).  AnduinOS's Disk Snapshots
+# Manager runs its scheduler hourly (System snapshots every 24 h, Home every
+# 2 h, and their pruning) and 2 min after each boot (docs/design/anduinos.md,
+# A7); its apt hook fires only when dpkg runs, which BackShot1 never does.
+SNAPSHOTTERS="snapper-timeline snapper-cleanup booster-reassert anduinos-btrfs-snapshots-manager-scheduler"
 hold_snapshotters() {
     local u
     command -v systemctl >/dev/null || return 0

@@ -7,8 +7,10 @@ topology bound, the platform probed, and installer_core.planning.build_plan,
 with the password already hashed (crypt SHA-512, as passwords.hash_password
 makes it).  anduinos-installer-executor reads that line on stdin.
 
-Usage: plan.py DISK HOSTNAME USERNAME PASSWORD_HASH_FILE >plan.json
-A summary goes to stderr; the plan (with the hash) only to stdout.
+Usage: plan.py DISK HOSTNAME USERNAME PASSWORD_HASH_FILE [TIMEZONE] >plan.json
+TIMEZONE defaults to America/New_York (the guest's); realworld/anduinos-bootstrap.sh
+gives the Thinkpad's.  A summary goes to stderr; the plan (with the hash) only
+to stdout.
 """
 
 import json
@@ -27,6 +29,7 @@ LOCALE = "en_US.UTF-8"
 
 def main() -> int:
     disk_path, hostname, username, hash_file = sys.argv[1:5]
+    timezone = sys.argv[5] if len(sys.argv) > 5 else "America/New_York"
     with open(hash_file, encoding="ascii") as f:
         password_hash = f.read().strip()
     language = language_for_locale(LOCALE)
@@ -39,7 +42,7 @@ def main() -> int:
         "filesystem": "btrfs",
         "btrfs_compression": "balanced",
         "locale": LOCALE,
-        "timezone": "America/New_York",
+        "timezone": timezone,
         "keyboard": "us",
         "keyboard_variant": "",
         "hostname": hostname,

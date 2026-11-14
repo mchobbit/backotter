@@ -55,6 +55,8 @@ EXPECTED = [
     "boot/limine.conf", "boot/limine.conf.old",
     # The initramfs that hook copies into the per-machine-id layout (/boot/<machine-id>/<kernel>/).
     "boot/*/*/initramfs",
+    # booster's (PikaOS), which the restore's boot stage builds anew.
+    "boot/booster.img-*",
     "boot/efi/*", "efi/*",
     "etc/cups/*", "etc/NetworkManager/system-connections/*", "etc/mtab", "etc/resolv.conf",
     "usr/lib/sysimage/rpm/rpmdb.sqlite-shm", "usr/lib/sysimage/rpm/rpmdb.sqlite-wal",
@@ -65,6 +67,10 @@ EXPECTED = [
     "root/.config/*", "root/.local/state/*", "root/.local/share/*",
     "tmp/*", "var/tmp/*", "var/cache/*", "var/crash/*", "var/log/*", "var/spool/*", "var/backups/*",
     "var/lib/*", "var/db/dhcpcd/*", "var/snap/*", "swap.img", "swapfile", "swap/*", "mnt/bs1-backup",
+    # systemd-swap's swapFC files (BigLinux: its own @swapfile subvolume,
+    # mounted at /swapfile), in use at backup time and written anew by
+    # systemd-swap at every boot (docs/design/biglinux.md, BL6).
+    "swapfile/*",
     "etc/lvm/archive/*", "etc/lvm/backup/*", "etc/lvm/devices/*", "etc/selinux/*/active/*", ".autorelabel",
     # bs1-adopt removes these, and some systems make them again at boot.  Not the
     # ed25519 key: that one has to stay what it was.
@@ -95,7 +101,42 @@ EXPECTED = [
 # first boot after anything touched /usr since etc/.updated, as bs1-adopt's
 # package install does (avahi on cachyos-zfs under bs1-qemu): the restored
 # copy's first boot runs it, and it has to come out the same.
-REMADE = ["etc/machine-id", "usr/share/applications/mimeinfo.cache", "etc/kernel/entry-token", "usr/libexec/rc/console/*", "etc/ld.so.cache"]
+# PikaOS's services write theirs at every start: tuned its profile files and
+# modprobe.d entry, supergfxd its config and modprobe.d entry, and
+# steam-repos-fix.service copies steamdeps into /usr/bin
+# (pika-4-20261114-134728: 8 files, each only a new mtime).
+REMADE = ["etc/machine-id", "usr/share/applications/mimeinfo.cache", "etc/kernel/entry-token", "usr/libexec/rc/console/*", "etc/ld.so.cache",
+          "etc/tuned/active_profile", "etc/tuned/post_loaded_profile", "etc/tuned/ppd_base_profile", "etc/tuned/profile_mode",
+          "etc/modprobe.d/tuned.conf", "etc/supergfxd.conf", "etc/modprobe.d/supergfxd.conf", "usr/bin/steamdeps"]
+
+# Kept, not remade, though EXPECTED has boot/efi/*: bko-holt load leaves
+# rEFInd as the ESP brought it back and installs nothing (PikaOS,
+# docs/design/pikaos.md, Decision 4), so every file must come back with its
+# content, none missing or added.  Content, size and file type only: the
+# rest is vfat's (2 s mtimes, modes from the mount options).
+KEPT = ["boot/efi/EFI/refind/*", "efi/EFI/refind/*"]
+
+# AnduinOS 2.0.5's shim, MokManager and GRUB, signed on the machine with its
+# own MOK, in EFI/AnduinOS and the fallback EFI/BOOT: load keeps them as the
+# ESP brought them back and runs no x86_64-efi grub-install
+# (docs/design/anduinos.md, Decision 3), so they must come back byte for
+# byte.  Held only when the baseline has EFI/AnduinOS's shim: elsewhere
+# EFI/BOOT is a boot loader's install's to rewrite.  The grub.cfg stubs and
+# BOOTX64.CSV stay under boot/efi/*.
+ANDUINOS_SOURCE = "boot/efi/EFI/AnduinOS/shimx64.efi"
+ANDUINOS_KEPT = ["boot/efi/EFI/AnduinOS/shimx64.efi", "boot/efi/EFI/AnduinOS/grubx64.efi", "boot/efi/EFI/AnduinOS/mmx64.efi",
+                 "boot/efi/EFI/BOOT/BOOTX64.EFI", "boot/efi/EFI/BOOT/grubx64.efi", "boot/efi/EFI/BOOT/mmx64.efi"]
+
+
+def kept(rel, extra=()):
+    return any(fnmatch.fnmatch(rel, pat) for pat in (*KEPT, *extra))
+
+
+def kept_same(a, b):
+    """A KEPT path's rows, before and after: the same file type, and for a
+    file the same size and content (or link target)."""
+    ta, tb = stat.S_IFMT(int(a[0], 8)), stat.S_IFMT(int(b[0], 8))
+    return ta == tb and (ta == stat.S_IFDIR or (a[3] == b[3] and a[5] == b[5]))
 
 # Expected only as added: BackShot1's own mountpoint.  The dispatcher's
 # DRIVE mounts the backup drive with "mkdir -p /mnt/bs1-backup" when nothing
@@ -295,6 +336,13 @@ def expected(rel, store, ostree=None, added=False):
 
 
 SNAPSHOT = re.compile(r"(.*?)\.snapshots/([0-9]+)(?:/|$)")
+# AnduinOS's Disk Snapshots Manager (not snapper): System snapshots under
+# deployments/ID/root, Home ones under personal/snapshots/ID/home, and its
+# records beside them.  Its scheduler (hourly, and 2 min after each boot)
+# makes and prunes them, so, as snapper's, a snapshot only one side has is
+# expected, and then so are the records' changes (docs/design/anduinos.md, A7).
+DSM_ROOT = ".snapshots/anduinos-btrfs-snapshots-manager/"
+DSM_SNAPSHOT = re.compile(r"(.*?)\.snapshots/anduinos-btrfs-snapshots-manager/(deployments/[^/]+|personal/snapshots/[^/]+)(?:/|$)")
 
 
 def relabeled_boot(rel, a, b):
@@ -309,9 +357,23 @@ def relabeled_boot(rel, a, b):
     return {k for k in set(x) | set(y) if x.get(k) != y.get(k)} == {"security.selinux"}
 
 
+def snapshot_of(rel):
+    """The snapper or Disk Snapshots Manager snapshot REL is in or is, as
+    (where its .snapshots is, number or the manager's KIND/ID), or None."""
+    m = SNAPSHOT.match(rel) or DSM_SNAPSHOT.match(rel)
+    return m.groups() if m else None
+
+
 def snapshots(rows):
-    """snapper's snapshots, as (where its .snapshots is, number)."""
-    return {m.groups() for rel in rows if (m := SNAPSHOT.fullmatch(rel + "/"))}
+    """snapper's snapshots, as (where its .snapshots is, number), and the
+    Disk Snapshots Manager's, as (where its .snapshots is, KIND/ID)."""
+    return {m.groups() for rel in rows if (m := SNAPSHOT.fullmatch(rel + "/") or DSM_SNAPSHOT.fullmatch(rel + "/"))}
+
+
+def dsm_record(rel):
+    """Whether REL is the Disk Snapshots Manager's own, outside its snapshots."""
+    i = rel.find(DSM_ROOT)
+    return (i == 0 or (i > 0 and rel[i - 1] == "/")) and not DSM_SNAPSHOT.match(rel)
 
 
 def unaliased(rows, aliases):
@@ -346,11 +408,23 @@ def compare(old_path, new_path, reformatted=False):
     mapping = {"missing": odef, "added": ndef, "changed": odef, "xattrs": odef}
     missing = sorted(set(old) - set(new))
     added = sorted(set(new) - set(old))
-    # A snapshot snapper took after the backup, or cleaned up since.
+    # A snapshot snapper or the Disk Snapshots Manager took after the backup,
+    # or cleaned up since.
     def own(paths, other):
         theirs = snapshots(other)
-        return {p for p in paths if (m := SNAPSHOT.match(p)) and m.groups() not in theirs}
+        return {p for p in paths if (s := snapshot_of(p)) and s not in theirs}
     snapper = own(missing, new) | own(added, old)
+    # The manager's records move with its snapshots, and only then.
+    dsm_moved = any(DSM_SNAPSHOT.match(p) for p in snapper)
+    if dsm_moved:
+        print("Disk Snapshots Manager: a snapshot came or went since the backup, so its records' changes are expected")
+        snapper |= {p for p in set(old) | set(new) if dsm_record(p)}
+    held = ANDUINOS_KEPT if ANDUINOS_SOURCE in old else []
+    if held:
+        print(f"AnduinOS: {len(held)} MOK-signed loaders held to the baseline's bytes: {' '.join(p for p in held if p in old)}")
+        missing_held = [p for p in held if p not in old]
+        if missing_held:
+            print(f"AnduinOS: the baseline lacks {' '.join(missing_held)}")
     changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], store, odef))
     both = [p for p in set(old) & set(new) if len(old[p]) > 6 and len(new[p]) > 6]
     relabeled = sorted(p for p in both if old[p][6] != new[p][6])
@@ -358,9 +432,10 @@ def compare(old_path, new_path, reformatted=False):
         print("xattrs: this baseline has none, so they weren't compared")
     bad = []
     for label, paths in (("missing", missing), ("added", added), ("changed", changed), ("xattrs", relabeled)):
-        unexpected = [p for p in paths if not expected(p, store, mapping[label], label == "added") and p not in snapper
-                      and not (reformatted and any(fnmatch.fnmatch(p, pat) for pat in REFORMAT_EXPECTED))
-                      and not (label == "xattrs" and relabeled_boot(p, old[p], new[p]))]
+        unexpected = [p for p in paths if kept(p, held) and (label != "changed" or not kept_same(old[p], new[p]))]
+        unexpected += [p for p in paths if not kept(p, held) and not expected(p, store, mapping[label], label == "added") and p not in snapper
+                       and not (reformatted and any(fnmatch.fnmatch(p, pat) for pat in REFORMAT_EXPECTED))
+                       and not (label == "xattrs" and relabeled_boot(p, old[p], new[p]))]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")
         bad += [f"{label}: {p}" + (f" ({xattr_diff(old[p], new[p])})" if label == "xattrs" else "") for p in unexpected]
     linked = sum(1 for p in set(old) & set(new) if len(old[p]) > 8 and len(new[p]) > 8)

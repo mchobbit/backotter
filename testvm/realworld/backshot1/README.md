@@ -235,6 +235,53 @@ are left out: their files are in the physical root already.
   check-boot NAME` must say so.  Each check adds a line to the restore's
   `BOOTS`.  Nothing on the laptop is written for this but by GRUB itself.
 
+## PikaOS: rEFInd and booster
+
+PikaOS 4 boots by rEFInd (files on the ESP, its options in
+`/boot/refind_linux.conf`) with a booster initramfs (docs/design/pikaos.md).
+It goes onto the Thinkpad from the stick, without the GUI:
+
+    sudo bash /mnt/bs1-backup/backshot1/pika/pika-bootstrap.sh SERIAL \
+        /mnt/bs1-backup/iso/pikaos4/PikaOS-Nest-GNOME-4.0-amd64-v3-26.08.20-4.iso \
+        /mnt/bs1-backup/backshot1/pika/install.sh /mnt/bs1-backup/backshot1/keys thinkpad
+
+(`testvm/realworld/pika-bootstrap.sh` and `testvm/pika/install.sh`, copied
+to the drive's `backshot1/pika/`).  It erases the disk with that serial
+and runs PikaOS's own installer (the GTK installer's automatic XFS layout
+and pikainstall) in a chroot of the ISO's live image: rEFInd gets its NVRAM
+entry, and the system its host name, the fixed host key and the
+controller's key, so `bs1-adopt` can run over SSH at once (it has nothing
+to install).  The restore builds booster's image anew in the rescue's
+chroot (host-only, for this machine) and installs no boot loader: it only
+makes rEFInd's NVRAM entry again.  So `verify` wants every file in
+`EFI/refind` back with its content (`bs1-manifest`'s `KEPT`, though the
+rest of the ESP may change) and `refind_linux.conf` unchanged, and
+`booster-reassert.timer` is held through phase 1 and `verify` as snapper's
+timers are.  Passed 2026-11-14, run `pika-4-20261114-134728`.
+
+## AnduinOS: the MOK-signed GRUB and its snapshots
+
+AnduinOS 2 signs its own GRUB with a MOK made on the machine, behind
+Ubuntu's shim, and keeps Btrfs snapshots with its Disk Snapshots Manager
+(docs/design/anduinos.md).  It goes onto the Thinkpad from the stick,
+without the GUI:
+
+    sudo bash /mnt/bs1-backup/backshot1/anduinos/anduinos-bootstrap.sh SERIAL \
+        /mnt/bs1-backup/iso/anduinos2/AnduinOS-2.0.5-amd64.iso /mnt/bs1-backup/backshot1/keys thinkpad
+
+(`testvm/realworld/anduinos-bootstrap.sh` and `testvm/anduinos/plan.py`,
+copied to the drive's `backshot1/anduinos/`).  It erases the disk with that
+serial and runs AnduinOS's own installer backend (its "erase disk, Btrfs"
+plan and `anduinos-installer-executor`) in a chroot of the ISO's live root,
+with the ISO's files copied once beside it (`.tree`: the installer wants its
+live media on a disk, not a loop device).  The installer makes the NVRAM
+entry; the script adds the controller's key and the fixed host key and
+enables sshd, so `bs1-adopt` has nothing to install.  The restore keeps
+shim, MokManager and GRUB as the ESP brings them back (`KEPT`), runs
+`grub-install --target=i386-pc` and `update-grub`, and makes the entry
+again.  The manager's scheduler is held through phase 1 and `verify`.
+Passed 2026-11-14, run `anduinos-2.0.5-20261114-153639`.
+
 ## Keeping a library of backups
 
 Each backup is a run of its own, named after the distro and the time:
@@ -343,6 +390,14 @@ and mtime: SELinux labels, capabilities, POSIX ACLs and `user.*` attributes.
 A few files a boot writes again must keep their content (`REMADE`):
 `/etc/machine-id`, systemd-boot's `entry-token`, and OpenRC's saved console
 keymap and encoding (`/usr/libexec/rc/console/*`, Gentoo's `save-keymaps`).
+Some of the ESP is held to its bytes although the rest of it may change
+(`KEPT`): on AnduinOS (a baseline with `EFI/AnduinOS/shimx64.efi`) shim,
+MokManager and the GRUB signed with the machine's own MOK, in
+`EFI/AnduinOS` and `EFI/BOOT`, which the restore keeps and never
+reinstalls.  A snapshot that only one side has is expected, snapper's or
+AnduinOS's Disk Snapshots Manager's (its scheduler runs 2 min after every
+boot), and with the manager's, its records' changes too; phase 1 and
+`verify` hold both schedulers for their boot.
 
 Where GRUB's core image names /boot/grub's LV by UUID,
 `(lvmid/VG-UUID/LV-UUID)` (Gentoo with / on LVM, as on the Thinkpad),

@@ -447,6 +447,117 @@ shipped rustic-bko, the guest's image `5003964c...` on both hosts.
   image-state; the image is still on 7.0.0-38, and `--try` would change 82
   packages).
 
+## What A7 found (BackShot1 on the Thinkpad)
+
+2026-11-14. The Thinkpad (X13, 8 GB, NVMe Micron 256 GB serial 214532A60C34,
+Secure Boot off) was reinstalled with AnduinOS 2.0.5 **without the user and
+without the GUI**: `testvm/realworld/anduinos-bootstrap.sh` (as root on the
+rescue stick: `SERIAL ISO KEYS_DIR [HOSTNAME [TIMEZONE]]`) runs A1's
+`plan.py` and `anduinos-installer-executor` in a chroot of the ISO's live
+root. KDE neon was on the Thinkpad before (its run `neon-24.04-20261114-141609`
+is in the library, untouched). Neither QEMU rehearsal ran (the
+bootstrap's, `anduinos-bootstrap-qemu.sh`, and `bs1-qemu.py --virtio` on
+`anduinos2`): every host's cmp-run.sh line was 20-50 jobs long and
+anduinos2 was under vm-update, so the real run went first, on the
+coordinator's word.
+
+- **The chroot the executor needs:** the live root (`LiveOS/rootfs.squashfs`)
+  under a tmpfs overlay; `/cdrom` and `/run/anduinos-live/rootfs.squashfs`
+  laid out as the live system's dracut module (`95anduinos-live-layers`)
+  lays them out; /dev, /proc, /sys (efivarfs) from the stick, a /run of its
+  own with the stick's udev database, the stick's resolv.conf. Two of the
+  installer's own checks shaped it: its preflight refuses to run unless the
+  live media's mount (`/cdrom`) traces to a **disk** (lsblk type disk or rom;
+  a loop device "fails closed"), and its media check hashes `/cdrom` by
+  `md5sum.txt` and wants the source image to be the same inode as
+  `/cdrom/LiveOS/rootfs.squashfs`. So the script copies the ISO's files once
+  to `iso/anduinos2/AnduinOS-2.0.5-amd64.tree/` on mybig512 and binds that.
+  Its `mount --make-rprivate /` (the executor's own mount namespace) works
+  in a chroot whose root is a mount point.
+- **The run:** the ISO (SHA-256 the pinned one) streamed to
+  `mybig512/iso/anduinos2/`; the bootstrap 2 min in all (the executor 106 s,
+  58 steps, every one `succeeded` or `skipped`), user `bko` (password in
+  `backshot1/keys/anduinos-password`), host `thinkpad`, Europe/Paris. The
+  installer saw `Secure Boot: disabled`, made the MOK and signed GRUB all the
+  same, enabled the legacy BIOS GRUB and the EFI/BOOT fallback, and made
+  **Boot002A "AnduinOS"** (`\EFI\AnduinOS\shimx64.efi`), first in BootOrder.
+  Layout: 2 MiB BIOS boot, 1 GiB ESP, **9 GiB swap** (RAM + 1 GiB), Btrfs
+  228 GiB with the six subvolumes and the two read-only baselines (262, 263);
+  zram 3.7 GiB. Then the script gave root BackShot1's key and the fixed host
+  key and enabled `ssh.service` (the installer had disabled it) and
+  avahi-daemon (already on). The first boot came from Boot002A by itself;
+  `thinkpad.local` answered at once.
+- **On the first boot**, `anduinos-dracut-migration.service` (its timer is
+  enabled on a fresh install) ran 30 s after boot: "legacy generator is
+  absent; validating", rebuilt the initramfs **host-only** (90.8 MB ->
+  41.8 MB), wrote `/var/lib/anduinos-dracut-migration/complete` and
+  disabled its own timer. It doesn't run again; the next boot's
+  `anduinos-dracut-confirm-boot` writes `boot-confirmed` there. Both under
+  `var/lib/*`, so nothing for the manifest.
+- **`bs1-adopt` installed nothing** (openssh-server, avahi-daemon, python3,
+  efibootmgr, btrfs-progs all there; ufw off). No reboot needed (no LUKS).
+- **BackShot1: PASS** (run `anduinos-2.0.5-20261114-153639`, restore
+  `20261114-154247`), bko-holt 0.2.6 static from main 66c4cd9 plus the
+  working tree (`/bkoscratch/holttest1d/a7-bin/bko-holt` on Chopin,
+  SHA-256 `8f5e153b...`), rustic-bko 0.11.4+backotter.11 (the drive's, as
+  neon's and Pika's runs used).
+  - Preflight OK, `UNLOCK=none`; seven mounts backed up (`/`, `/.snapshots`,
+    the ESP, `/home`, `/var/lib/containers`, `/var/lib/libvirt/images`,
+    `/var/log`).
+  - Phase 1: 2 min 41 s; "stopped
+    anduinos-btrfs-snapshots-manager-scheduler.timer for this boot";
+    558,218 files, 12.2 GiB (2.4 GiB added), `check --read-data` OK.
+  - Plan: as the golden plan (A3): the four partitions, the six subvolumes,
+    both baselines by `--clone-from` and set read-only again, the dracut
+    loop, `grub-install --target=i386-pc /dev/nvme0n1` (A2b), `update-grub`,
+    one `efibootmgr --create ... --label AnduinOS`, no x86_64-efi
+    grub-install; the MOK note (fingerprint `f4f05036...`, this machine's
+    MOK) and the Disk Snapshots Manager note.
+  - Phase 2: 4 min 17 s (restore 110 s, compare 93 s with 0 differences,
+    boot stage 24 s). The entry came back as Boot002A again (5744ff0 deleted
+    the old copy first), BootNext 002A; the firmware has 44 entries after the run.
+  - Verify: the restored system booted Boot002A by itself; every check ok;
+    592,941 files compared: missing 22, added 27, changed 394, xattrs 1,
+    **0 unexpected**. All a boot's or the boot stage's: `boot/grub`
+    (`i386-pc/` 310 files, locale, grub.cfg), the initramfs (rebuilt on the
+    stick: 41.8 -> 44.3 MB), `var/tmp/systemd-private-*`, `var/lib/*`,
+    `var/log/*`, and CUPS's files for a network printer it found on the LAN
+    (`etc/cups/*`). The six MOK-signed loaders were held to their bytes and
+    came back identical (shim `4c89145e...` and MokManager `5f9fc41d...` as
+    on the guest; this machine's GRUB `f392b0ba...`); the `grub.cfg` stubs
+    and `BOOTX64.CSV` unchanged too.
+  - No snapshot came or went between the backup and verify (the scheduler
+    was held in phase 1 and verify, and its 2-min-after-boot run on the
+    restored system made none), so the manifest's Disk Snapshots Manager rule
+    (below) didn't come into play.
+- **The Disk Snapshots Manager after the restore** (recorded, Decision 6):
+  `status --json` `available: true`, `issues` empty, one deployment, the
+  factory "New OS", `ready`, pinned; `list --json` the same. As on the guest
+  (A5), its records still name the source's subvolume UUIDs: 2
+  `snapshot_uuid` and 2 `snapshot_parent_uuid` in status, 1 and 1 in list,
+  **none of them on the restored file system** (the restored baselines are
+  `f305d10f...` and `31a5502e...`, parented on the restored `@root` and
+  `@home`). The file system's UUID is kept (`4ef90856...`).
+- **BackShot1's changes** (`testvm/realworld/backshot1`):
+  - `bs1-common`: `SNAPSHOTTERS` gains
+    `anduinos-btrfs-snapshots-manager-scheduler` (hourly, and 2 min after
+    each boot; System snapshots every 24 h, Home every 2 h, and pruning).
+    The apt hook needs no hold: BackShot1 never runs dpkg.
+  - `bs1-manifest`: with a baseline that has `EFI/AnduinOS/shimx64.efi`,
+    shim, MokManager and GRUB in EFI/AnduinOS and EFI/BOOT are `KEPT`
+    (byte-identical, none missing or added; the PikaOS session's mechanism);
+    a manager snapshot (`deployments/ID`, `personal/snapshots/ID`) only one
+    side has is expected, as snapper's, and the manager's records (`metadata/`,
+    `history/`, `personal/metadata/`, locks) then too, only then. The dracut
+    images were already expected (`boot/initrd.img-*`).
+  - `bs1-adopt`: nothing.
+- **Left on the Thinkpad:** the restored AnduinOS 2.0.5, booted from
+  Boot002A, the scheduler timer started again (verify stops it for its
+  boot), mybig512 mounted at `/mnt/bs1-backup`, the stick still in.
+- **Not done:** both QEMU rehearsals (the scripts are ready:
+  `anduinos-bootstrap-qemu.sh TEST_IMG ISO WORK_DIR [PORT]`, and
+  `bs1-qemu.py --virtio` on anduinos2).
+
 ## What already works, and what doesn't
 
 **bko-holt `dump`:**
@@ -613,7 +724,7 @@ snapper's; `bs1-manifest` EXPECTED gains the dracut images and
 | A4 | SticTest1 entry and runs, both archivers, both hosts, 0 FAIL. **Done 2026-11-14** (uncommitted): runs `a4q` (Cinqcent) and `a4c` (Chopin), 38 PASS, 6 LIMIT, 0 FAIL on each, ~385 s and ~425 s ("What A4 found") | 0.35 d |
 | A5 | HoltTest1 1U runs on both hosts with the judge rules, the byte-identical ESP check and the MOK signature check; the boot alone under Secure Boot; RAM peaks in `ram-sizes.tsv`. **Done 2026-11-14** (uncommitted; "What A5 found"): runs `a5-3` (Chopin) and `a5-4` (Cinqcent) PASS, 26 checks each: every load stage, the boot alone under Secure Boot (`mokutil --sb-state` enabled), 0 fsmeta and 0 dump differences, the six shim/MokManager/GRUB files byte-identical, both restored `grubx64.efi` verify against the MOK, the baselines read-only with shared extents; the snapshot manager's records still name the source's UUIDs (recorded). judge.py: the AnduinOS kept-ESP rule and dracut's `tmpkbd` file; RAM peak 8.3 GiB, D 10; GuestTest1 solid | 0.4 d |
 | A6 | Docs: holt/README.md's supported list, `osrel.rs`'s comment, HoltTest1's 1U row and HoltTest1All, SticTest1's and Test2's READMEs, `layload.md`'s boot stage (the kept-ESP arm), memory (holttest1d index, an anduinos-support note). **Done 2026-11-14** (uncommitted) | 0.1 d |
-| A7 | *Optional, later:* BackShot1 on the Thinkpad: the fixes above, the rehearsals, then the run. Done when phase1, plan, phase2 and verify PASS with 0 unexpected and the Thinkpad boots `AnduinOS` from NVRAM under its own Secure Boot setting | 0.5 d + ~1 h of the user's time |
+| A7 | BackShot1 on the Thinkpad: the fixes above, the rehearsals, then the run. Done when phase1, plan, phase2 and verify PASS with 0 unexpected and the Thinkpad boots `AnduinOS` from NVRAM under its own Secure Boot setting. **Done 2026-11-14** (uncommitted; "What A7 found"): installed from the stick by `realworld/anduinos-bootstrap.sh` (the installer's own executor in a chroot, no GUI, none of the user's time); run `anduinos-2.0.5-20261114-153639` PASS, 0 unexpected, booted Boot002A "AnduinOS" with Secure Boot off; the MOK-signed loaders byte-identical; the manager's records still name the source's UUIDs. Not done: the two QEMU rehearsals (queues full) | 0.5 d |
 | | *≈ 3.25 d without A7, ≈ 3.75 d with it* | |
 
 Each piece is committed on main when its tests pass and the user says to

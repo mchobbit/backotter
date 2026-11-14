@@ -1,7 +1,7 @@
-//! illumos' report (OmniOS): disks from diskinfo, the EFI label (GPT) or
-//! MBR read off each disk's p0 node, slices named cXtYdZsN, ZFS (the root
-//! pool and its boot environments), the mounts from /etc/mnttab and the
-//! boot setup.
+//! illumos' report (OmniOS, OpenIndiana): disks from diskinfo, the EFI
+//! label (GPT) or MBR read off each disk's p0 node, slices named cXtYdZsN,
+//! ZFS (the root pool and its boot environments), the mounts from
+//! /etc/mnttab and the boot setup.
 
 use super::{found_json, open, read_disk, Family, Found, RawDisk};
 use crate::json::{Obj, Value};

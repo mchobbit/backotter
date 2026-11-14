@@ -50,8 +50,12 @@ RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress rest
 # the boot code (MBR, freebsd-boot) was written with the partition table
 # the restored system's zpool.cache names the new pool
 sh -c 'for c in /etc/zfs/zpool.cache /boot/zfs/zpool.cache; do [ -f /mnt/bko-target$c ] && zpool set cachefile=/mnt/bko-target$c rpool; done; true'
+# etc/versions/build as a fragment of itself, so OmniOS' bootadm remakes it rather than deleting it
+sh -c '[ -f /mnt/bko-target/etc/versions/build ] && [ ! -h /mnt/bko-target/etc/versions/build ] || exit 0; for f in /mnt/bko-target/etc/versions/build.*; do if [ -e "$f" ] || [ -h "$f" ]; then exit 0; fi; done; touch -r /mnt/bko-target/etc/versions /run/bko-holt/versref && cp -p /mnt/bko-target/etc/versions/build /mnt/bko-target/etc/versions/build.bko-holt && s=$(/usr/gnu/bin/stat -c %.9Y /mnt/bko-target/etc/versions/build) && case $s in *.000000000) /usr/gnu/bin/touch -m -d @${s%.*}.000000001 /mnt/bko-target/etc/versions/build;; esac'
 # the boot archive, with the new pool's zpool.cache
 bootadm update-archive -R /mnt/bko-target
+# etc/versions/build's fragment gone again, and its mtime back
+sh -c '[ ! -f /run/bko-holt/versref ] || { /usr/gnu/bin/touch -m -r /mnt/bko-target/etc/versions/build.bko-holt /mnt/bko-target/etc/versions/build && rm -f /mnt/bko-target/etc/versions/build.bko-holt && touch -r /run/bko-holt/versref /mnt/bko-target/etc/versions && rm -f /run/bko-holt/versref; }'
 # illumos' gptzfsboot, in the pool's boot area
 installboot -f -b /mnt/bko-target/boot /dev/rdsk/sdqs1
 # illumos' gptzfsboot, in the pool's boot area

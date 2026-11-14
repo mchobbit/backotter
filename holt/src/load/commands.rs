@@ -2631,6 +2631,14 @@ impl Builder<'_> {
             // A root dataset is canmount=noauto, mounted by the initramfs
             // (root=ZFS=...); it was mounted when the dump was made.
             let was_mounted = s(&ds, "mounted").as_deref() == Some("yes");
+            // An illumos boot environment (POOL/ROOT/NAME, beadm's) that
+            // isn't the pool's bootfs and wasn't mounted: not in the backup,
+            // so made but not filled (docs/design/openindiana.md, decision 3).
+            if self.fam == Some(crate::other::Family::Illumos) && !bootfs.contains(&name) && !was_mounted && s(&ds, "type").as_deref() != Some("volume") {
+                if let [_, "ROOT", be] = name.split('/').collect::<Vec<_>>()[..] {
+                    self.notes.push(format!("boot environment {be} ({name}) isn't the booted one: it comes back as an empty plain dataset (only the booted BE is restored)"));
+                }
+            }
             if !mp.starts_with('/') || canmount == "off" || (canmount == "noauto" && !bootfs.contains(&name) && !was_mounted) {
                 continue;
             }

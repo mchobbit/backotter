@@ -87,10 +87,11 @@ case $G in
         BOOTSTATE='i=0; while pgrep -f "^(/bin/)?sh /etc/rc( |\$)" >/dev/null && [ $i -lt 150 ]; do sleep 2; i=$((i + 1)); done; rcctl ls failed | sed "s/^/down /" | sort'
         # installboot -r puts the rescue system's /boot (the same release's).
         EXTRA_BOOT_RE='^(extra: |missing: )?(\./)?boot( |:|$)' ;;
-    omnios*)
-        # The rescuer is a copy of the guest: its own pool is rpool too, so
-        # load makes the target's under another name until close, and this
-        # script imports the source's and target's as ht1src.
+    omnios*|oi*)
+        # The rescuer is a copy of the guest (of omnios58 for OpenIndiana's
+        # too, as the illumos image is OmniOS-based): its own pool is rpool
+        # too, so load makes the target's under another name until close,
+        # and this script imports the source's and target's as ht1src.
         PLAT=illumos RG=omnios58 DISK= RAWSFX=
         GPATH=/usr/gnu/bin:/usr/sbin:/usr/bin:/sbin:/opt/ooce/bin
         BOOTSTATE='i=0; while svcs -H -o state | grep -q "\*" && [ $i -lt 60 ]; do sleep 2; i=$((i + 1)); done; svcs -H -o state,fmri | awk "\$1 != \"online\" && \$1 != \"disabled\" {print \"down \" \$2}" | sort'
@@ -666,6 +667,16 @@ for p in zfs.get("imported_pools") or []:
         if alias:
             bootfs = alias + bootfs[len(p["name"]):]
         out.append(f"mount {'-F' if plat == 'illumos' else '-t'} zfs {bootfs} {mp}" if legacy else f"zfs mount {bootfs}")
+        # The boot environment's own children (OpenIndiana's /var:
+        # canmount=noauto, mounted with it at boot), as load mounts them:
+        # those mounted when the dump was made.  zfs mount -a skips them.
+        kids = sorted((ds for ds in zfs.get("datasets") or []
+                       if (ds.get("name") or "").startswith(p["properties"]["bootfs"] + "/") and ds.get("canmount") == "noauto"
+                       and ds.get("mounted") == "yes" and (ds.get("mountpoint") or "").startswith("/")),
+                      key=lambda ds: (ds["mountpoint"].count("/"), ds["mountpoint"]))
+        for ds in kids:
+            n = (alias + ds["name"][len(p["name"]):]) if alias else ds["name"]
+            out.append(f"zfs mount {'-O ' if plat == 'illumos' else ''}{n}")
     if alias:
         out.append(f"zfs mount -O {alias} || true")
 if zfs.get("imported_pools"):

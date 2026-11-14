@@ -57,7 +57,7 @@ case $guest in
     openbsd*) os=openbsd ;;
     netbsd*|alpinebsd) os=netbsd ;;
     dragonfly*) os=dragonfly ;;
-    omnios*) os=illumos ;;
+    omnios*|oi*) os=illumos ;;
     *) die "no round trip for $guest" ;;
 esac
 files=("$here/$os/roundtrip.sh" "$here/rt-common.sh")

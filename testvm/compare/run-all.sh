@@ -440,7 +440,7 @@ rootenv() { echo "$SUDO env BKO_RUNALL_ID=$ID BKO_WORK=$W$renv"; }
 guest_rt() {  # PLATFORM CHAIN GUEST PORT OS
     local n=4 to=14400
     noguest "$1" "rt-$3" "$3" && return
-    [[ $3 == omnios* ]] && n=8 to=21600
+    [[ $3 == omnios* || $3 == oi* ]] && n=8 to=21600
     step "$1" "$2" "rt-$3" guest-rt 1 - $to "" "--expect $n" \
         "RT_LOGS=$(q "$LOG/$1/rt") $(q "$C/run-guest-rt.sh" "$3" "$4" "$BIN/$5/restic-bko" "$BIN/$5/rustic-bko")"
 }

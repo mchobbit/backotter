@@ -258,7 +258,7 @@ fits_ceil() { awk -v c="$CEIL" -v d="$1" -v m="$2" 'BEGIN { split(c, x, " "); ex
 cant_why() {  # NM GUEST VARIANT D M [OVER]
     local g=$2 v=$3 drv=linux rg="" ri
     case $g in
-    freebsd*|hardenedbsd*|ghostbsd*|netbsd*|alpinebsd*|openbsd*|dragonfly*|omnios*|haiku*) drv=bsd ;;   # ht1.sh's drivers
+    freebsd*|hardenedbsd*|ghostbsd*|netbsd*|alpinebsd*|openbsd*|dragonfly*|omnios*|oi*|haiku*) drv=bsd ;;   # ht1.sh's drivers
     redox|sculpt*) drv=offline ;;
     esac
     # ht1-bsd.sh's rescuer guest (its RG), booted from the same vms/ (+img's backup and verify too)
@@ -267,7 +267,7 @@ cant_why() {  # NM GUEST VARIANT D M [OVER]
     netbsd*|alpinebsd*) rg=netbsd11 ;;
     dragonfly*) rg=dragonfly6 ;;
     openbsd*) rg=openbsd8 ;;
-    omnios*) rg=omnios58 ;;
+    omnios*|oi*) rg=omnios58 ;;
     haiku*) rg=haiku6 ;;
     esac
     ri=${HT_RESCUER_IMG:-$L/rescuer/rescuer.qcow2}   # ht1.sh's and ht1-offline.sh's rescuer

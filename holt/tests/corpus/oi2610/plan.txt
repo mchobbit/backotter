@@ -1,0 +1,87 @@
+# bko-holt load plan for layout.json
+# Source: host1, OpenIndiana Hipster 2026.10, UEFI boot with illumos, dumped 2026-11-14T07:12:28Z
+#
+# Disks:
+#   c2t0d0 (16 GiB, Virtio Block Device) -> /dev/sdq
+#
+# Notes:
+#   - ZFS pool rpool: illumos can't set a pool's GUID; it gets a new one
+#   - c2t0d0s0: the ESP, written as the source's with the partition table
+#   - ZFS volume rpool/dump: made empty; archivers back up files, not zvols
+#   - ZFS volume rpool/swap: made empty; archivers back up files, not zvols
+
+# ---- partition ----
+# c2t0d0 -> /dev/sdq: the source's table, GUIDs and boot code exactly
+sh -c 'bko-holt write-table layout.json c2t0d0 /dev/rdsk/sdqp0 auto'
+
+# ---- assemble ----
+# ZFS pool rpool, with the source's feature flags only; its vdevs' ashift 9, as the source's
+sh -c 'old=$(cat /sys/module/zfs/parameters/zfs_vdev_min_auto_ashift); echo 9 > /sys/module/zfs/parameters/zfs_vdev_min_auto_ashift; zpool create -f -d -o cachefile=none -o feature@async_destroy=enabled -o feature@empty_bpobj=enabled -o feature@lz4_compress=enabled -o feature@multi_vdev_crash_dump=enabled -o feature@spacemap_histogram=enabled -o feature@enabled_txg=enabled -o feature@hole_birth=enabled -o feature@extensible_dataset=enabled -o feature@embedded_data=enabled -o feature@bookmarks=enabled -o feature@filesystem_limits=enabled -o feature@large_blocks=enabled -o feature@large_dnode=enabled -o feature@sha512=enabled -o feature@skein=enabled -o feature@edonr=enabled -o feature@device_removal=enabled -o feature@obsolete_counts=enabled -o feature@zpool_checkpoint=enabled -o feature@spacemap_v2=enabled -o feature@allocation_classes=enabled -o feature@resilver_defer=enabled -o feature@encryption=enabled -o feature@bookmark_v2=enabled -o feature@userobj_accounting=enabled -o feature@project_quota=enabled -o feature@log_spacemap=enabled -O org.openindiana.caiman:install=ready -R /mnt/bko-target rpool /dev/dsk/sdqs1; s=$?; echo $old > /sys/module/zfs/parameters/zfs_vdev_min_auto_ashift; exit $s'
+# mount mounts every dataset in order
+sh -c '[ "$(zfs get -H -o value mounted rpool)" != yes ] || zfs unmount rpool'
+
+# ---- format ----
+zfs create -o mountpoint=legacy -o canmount=off rpool/ROOT
+sh -c '[ "$(zfs get -H -o value mounted rpool/ROOT)" != yes ] || zfs unmount rpool/ROOT'
+zfs create -o mountpoint=/ -o canmount=noauto -o org.opensolaris.libbe:uuid=bc000000-0000-4000-8000-000000000005 rpool/ROOT/openindiana
+sh -c '[ "$(zfs get -H -o value mounted rpool/ROOT/openindiana)" != yes ] || zfs unmount rpool/ROOT/openindiana'
+zfs create -o canmount=noauto rpool/ROOT/openindiana/var
+sh -c '[ "$(zfs get -H -o value mounted rpool/ROOT/openindiana/var)" != yes ] || zfs unmount rpool/ROOT/openindiana/var'
+zfs create -V 1607467008 -o checksum=off -o compression=off -o refreservation=0 -o dedup=off -o volblocksize=131072 rpool/dump
+zfs create -o mountpoint=/export rpool/export
+sh -c '[ "$(zfs get -H -o value mounted rpool/export)" != yes ] || zfs unmount rpool/export'
+zfs create -o mountpoint=/export/home rpool/export/home
+sh -c '[ "$(zfs get -H -o value mounted rpool/export/home)" != yes ] || zfs unmount rpool/export/home'
+zfs create -o mountpoint=/export/home/tester rpool/export/home/tester
+sh -c '[ "$(zfs get -H -o value mounted rpool/export/home/tester)" != yes ] || zfs unmount rpool/export/home/tester'
+zfs create -V 1607467008 -o refreservation=1710227456 -o volblocksize=4096 rpool/swap
+zpool set bootfs=rpool/ROOT/openindiana rpool
+
+# ---- mount ----
+zfs mount -O rpool/ROOT/openindiana
+zfs mount -O rpool/export
+zfs mount -O rpool
+zfs mount -O rpool/ROOT/openindiana/var
+zfs mount -O rpool/export/home
+zfs mount -O rpool/export/home/tester
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+
+# ---- boot ----
+# the boot code (MBR, freebsd-boot) was written with the partition table
+# the restored system's zpool.cache names the new pool
+sh -c 'for c in /etc/zfs/zpool.cache /boot/zfs/zpool.cache; do [ -f /mnt/bko-target$c ] && zpool set cachefile=/mnt/bko-target$c rpool; done; true'
+# etc/versions/build as a fragment of itself, so OmniOS' bootadm remakes it rather than deleting it
+sh -c '[ -f /mnt/bko-target/etc/versions/build ] && [ ! -h /mnt/bko-target/etc/versions/build ] || exit 0; for f in /mnt/bko-target/etc/versions/build.*; do if [ -e "$f" ] || [ -h "$f" ]; then exit 0; fi; done; touch -r /mnt/bko-target/etc/versions /run/bko-holt/versref && cp -p /mnt/bko-target/etc/versions/build /mnt/bko-target/etc/versions/build.bko-holt && s=$(/usr/gnu/bin/stat -c %.9Y /mnt/bko-target/etc/versions/build) && case $s in *.000000000) /usr/gnu/bin/touch -m -d @${s%.*}.000000001 /mnt/bko-target/etc/versions/build;; esac'
+# the boot archive, with the new pool's zpool.cache
+bootadm update-archive -R /mnt/bko-target
+# etc/versions/build's fragment gone again, and its mtime back
+sh -c '[ ! -f /run/bko-holt/versref ] || { /usr/gnu/bin/touch -m -r /mnt/bko-target/etc/versions/build.bko-holt /mnt/bko-target/etc/versions/build && rm -f /mnt/bko-target/etc/versions/build.bko-holt && touch -r /run/bko-holt/versref /mnt/bko-target/etc/versions && rm -f /run/bko-holt/versref; }'
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -Rp /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+
+# ---- close ----
+# everything under the target, deepest first
+sh -c 'awk '\''{ print $2 }'\'' /etc/mnttab | awk '\''$0 == "/mnt/bko-target" || index($0, "/mnt/bko-target/") == 1'\'' | sort -r | while read -r m; do umount "$m" || exit; done'
+zpool export rpool
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status pool rpool
+# golden_plans.rs: status dataset rpool/ROOT
+# golden_plans.rs: status dataset rpool/ROOT/openindiana
+# golden_plans.rs: status dataset rpool/ROOT/openindiana/var
+# golden_plans.rs: status dataset rpool/dump
+# golden_plans.rs: status dataset rpool/export
+# golden_plans.rs: status dataset rpool/export/home
+# golden_plans.rs: status dataset rpool/export/home/tester
+# golden_plans.rs: status dataset rpool/swap
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: status mount /mnt/bko-target/export
+# golden_plans.rs: status mount /mnt/bko-target/rpool
+# golden_plans.rs: status mount /mnt/bko-target/var
+# golden_plans.rs: status mount /mnt/bko-target/export/home
+# golden_plans.rs: status mount /mnt/bko-target/export/home/tester
+# golden_plans.rs: exit 0, nothing on stderr

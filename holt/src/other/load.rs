@@ -496,7 +496,24 @@ impl Builder<'_> {
     /// the partition table.
     fn illumos_boot(&mut self) -> Vec<Cmd> {
         let t = self.opts.target.clone();
-        let mut out = vec![Cmd::new(&["bootadm", "update-archive", "-R", &t]).why("the boot archive, with the new pool's zpool.cache")];
+        // OmniOS' bootadm (the rescue system's; not upstream illumos-gate's)
+        // remakes etc/versions/build in update-archive from the
+        // etc/versions/build.* fragments (assemble_files), and deletes it
+        // when etc/versions holds none, as OpenIndiana's does.  So a build
+        // with no fragment gets one, a copy of it, for the run, and the
+        // fragment goes again after (etc/versions' times kept).
+        // assemble_files puts the old mtime back only when its nanoseconds
+        // aren't 0 (a packaged build's are), so such a build gets 1 ns for
+        // the run (the second, all bootadm's filestat compares, kept) and
+        // the fragment's exact mtime (cp -p) back after.
+        let v = format!("{t}/etc/versions");
+        let r = format!("{RUN_DIR}/versref");
+        let mut out = vec![
+            Cmd::new(&["sh", "-c", &format!("[ -f {v}/build ] && [ ! -h {v}/build ] || exit 0; for f in {v}/build.*; do if [ -e \"$f\" ] || [ -h \"$f\" ]; then exit 0; fi; done; touch -r {v} {r} && cp -p {v}/build {v}/build.bko-holt && s=$(/usr/gnu/bin/stat -c %.9Y {v}/build) && case $s in *.000000000) /usr/gnu/bin/touch -m -d @${{s%.*}}.000000001 {v}/build;; esac")])
+                .why("etc/versions/build as a fragment of itself, so OmniOS' bootadm remakes it rather than deleting it"),
+            Cmd::new(&["bootadm", "update-archive", "-R", &t]).why("the boot archive, with the new pool's zpool.cache"),
+            Cmd::new(&["sh", "-c", &format!("[ ! -f {r} ] || {{ /usr/gnu/bin/touch -m -r {v}/build.bko-holt {v}/build && rm -f {v}/build.bko-holt && touch -r {r} {v} && rm -f {r}; }}")]).why("etc/versions/build's fragment gone again, and its mtime back"),
+        ];
         if !self.layout.uefi() {
             for (src, tgt) in self.names.mapping.pairs.clone() {
                 let Some(d) = self.layout.disk(&src).cloned() else { continue };

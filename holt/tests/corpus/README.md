@@ -174,7 +174,27 @@ core.img in /boot/grub/i386-pc; no GRUB in either store).  guix15's golden
 plan runs nothing in the chroot: its boot stage makes only the NVRAM entry
 for `\EFI\Guix\grubx64.efi`.  guix15-bios's makes the three subvolumes and
 the swap (fstab doesn't name it), and its boot stage writes the source's
-own boot.img and core.img with the rescue's `grub-bios-setup`.
+own boot.img and core.img with the rescue's `grub-bios-setup`.  oi2610
+(`make-openindiana.sh oi2610`: OpenIndiana Hipster 2026.10 from its text
+ISO by its own text installer, driven over the console; UEFI, the whole
+disk from `zpool create -B`: a 256 MiB ESP nothing mounts, rpool with the
+boot environment `openindiana` and its own /var, the dump and swap
+volumes; illumos' loader as EFI/BOOT/BOOTX64.EFI, no NVRAM entry;
+docs/design/openindiana.md) and oi2610-bios (`make-openindiana.sh --cloud`:
+OpenIndiana's supplemental cloud image of 2026-11-07; BIOS, its boot
+environment `b5afac2a` with mountpoint=legacy as OmniOS's cloud image's,
+swap but no dump volume), built on 2026-11-14, were added the same day
+from dumps of the live guests on copland (run `o1`, Chopin's queue full,
+the illumos bko-holt 0.2.6 built from this tree with O2's /etc/release
+fallback, OpenIndiana having no os-release; their own vm-run-options, so
+oi2610 through the fallback path on a fresh variable store, both disks
+under `vm-run --snapshot`, the images' sha256 the same before and after;
+their provenance.tsv written by hand).  They are in the corpus before they
+are classes.json's HoltTest2 sources, so golden_plans.rs notes them until
+they are.  oi2610's golden plan makes the dump volume empty, mounts
+/var after /, and runs only `bootadm update-archive` at boot (the ESP came
+back with the table); oi2610-bios's mounts its legacy boot environment
+with `mount -F zfs` and puts back gptzfsboot with `installboot`.
 proxmox9 (`make-proxmox.sh proxmox9`: Proxmox VE 9.2 from
 `proxmox-ve_9.2-1.iso` by its automated installer, ZFS `raid0`; UEFI with
 Secure Boot off, GPT with a BIOS boot partition, a 512 MiB ESP that nothing

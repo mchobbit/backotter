@@ -325,8 +325,9 @@ rustic-bko is 0.11.4+backotter.9.
 - That is the `--clone-from` bug found on the CachyOS Thinkpad. It is fixed
   in 0.11.4+backotter.11 (rustic_core 3f2f3b2, rustic a1ec9bf).
 - Later runs use `HT_ROUND=t2r-58a6955-3bb01f1-99b9b56`, whose rustic-bko is
-  .12. Until a shipped set has the fix, a snapper source needs that round.
-  This is in HoltTest1's README row.
+  .12. Since rel8 (bko-bin, promoted 2026-11-14 13:11 UTC: rustic-bko
+  0.11.4+backotter.13) the shipped set has the fix, and no `HT_ROUND` is
+  needed. This is in HoltTest1's README row.
 
 **Two runs failed for reasons outside Garuda:**
 

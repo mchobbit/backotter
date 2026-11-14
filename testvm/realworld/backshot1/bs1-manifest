@@ -105,7 +105,11 @@ EXPECTED = [
 # modprobe.d entry, supergfxd its config and modprobe.d entry, and
 # steam-repos-fix.service copies steamdeps into /usr/bin
 # (pika-4-20261114-134728: 8 files, each only a new mtime).
+# vmlinuz: Garuda's dracut-rebuild (dracut-install-garuda), which the
+# restore's boot stage runs, copies each kernel to /boot again with dd
+# (garuda-20261114-154812: only a new mtime; docs/design/garuda.md, GA7).
 REMADE = ["etc/machine-id", "usr/share/applications/mimeinfo.cache", "etc/kernel/entry-token", "usr/libexec/rc/console/*", "etc/ld.so.cache",
+          "boot/vmlinuz-*",
           "etc/tuned/active_profile", "etc/tuned/post_loaded_profile", "etc/tuned/ppd_base_profile", "etc/tuned/profile_mode",
           "etc/modprobe.d/tuned.conf", "etc/supergfxd.conf", "etc/modprobe.d/supergfxd.conf", "usr/bin/steamdeps"]
 

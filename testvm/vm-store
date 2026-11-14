@@ -4,14 +4,15 @@
 Usage: vm-store init ROOT --role mirror|cache [--cap SIZE --floor SIZE]
        vm-store init --bigfoot
        vm-store publish GUEST... | --changed [--stateless GUEST,...] [--from DIR]
-                        [--expect-generation HEX] [--set-latest] [--note T] [--push] [--dry-run]
+                        [--expect-generation HEX] [--set-latest] [--note T] [--push] [--no-relink] [--dry-run]
        vm-store push [--now] [--dry-run]
        vm-store ensure GUEST[@VID|@latest] [--offline] [--json]
        vm-store fetch GUEST[@VID]...
        vm-store link GUEST[@VID]... | --all [--offline] [--dry-run]
+       vm-store relink-caches [GUEST...] [--hosts NAME,...] [--existing] [--offline] [--dry-run] [--json]
        vm-store gc [--dry-run] [--json]
        vm-store list [GUEST] [--source NAME] [--json]
-       vm-store status [--json]
+       vm-store status [--farm] [--json]
        vm-store verify [--where local|bigfoot] [GUEST...] [--json]
 
 Chopin publishes vms/GUEST into its mirror (/bkoscratch/bko-store), weekly

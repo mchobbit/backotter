@@ -20,6 +20,14 @@ written only by push (rsync into its staging, then mv), and only Chopin
 talks to it; the other hosts' are caches, filled from Chopin by ensure and
 emptied by gc.  stdout carries only the
 result; everything else goes to stderr.
+
+From Chopin, over ssh to each cache host (VM_STORE_CACHE_HOSTS, else hosts.json's
+enabled amd64 rows with the cache role; never Bigfoot):
+
+    vm-store relink-caches [GUEST...] [--hosts NAME,...] [--existing] [--offline] [--dry-run] [--json]
+        each host's own `vm-store link G` (publish does it for what it moved, unless --no-relink)
+    vm-store status --farm [--json]
+        each host's vms/G against latest; `skew: N` (exit 0 none, 1 some, 3 a host down)
 """
 
 from __future__ import annotations
@@ -66,6 +74,9 @@ FLEET_LOCK = ".vm-update.fleet.lock"                       # vm-update's, in vms
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=15"]
 SSH_E = "ssh " + " ".join(SSH_OPTS)
 REMOTE_TIMEOUT = 120
+DEFAULT_RELINK_TIMEOUT = 7200              # VM_STORE_RELINK_TIMEOUT: one cache host's relink, in all
+HOSTS_JSON = TESTVM / "hosts.json"         # the cache hosts, unless VM_STORE_CACHE_HOSTS names them
+REMOTE_VM_STORE = "~/backotter-work/testvm/vm-store"       # each cache host's own, run by relink-caches
 DEFAULT_RSYNC_TIMEOUT = 300                # VM_STORE_RSYNC_TIMEOUT: rsync --timeout to and from Bigfoot
 # Bigfoot's health probe (bigfoot_health): the whole ssh round trip, and each step on
 # Bigfoot (4 steps of STEP + timeout's 2 s grace, plus ssh's connect, fit in the whole).
@@ -628,6 +639,12 @@ class Config:
             raise Usage(f"VM_STORE_SUDO is 0 or auto, not {self.sudo!r}")
         self.priv = Priv(self)
         self.min_age = parse_age(env.get("VM_STORE_MIN_AGE") or "24h")
+        # relink-caches (and publish's relink): each cache host's whole `vm-store link`, which
+        # may fetch tens of GiB, under one ssh.
+        rt = env.get("VM_STORE_RELINK_TIMEOUT") or str(DEFAULT_RELINK_TIMEOUT)
+        if not rt.isdigit() or int(rt) == 0:
+            raise Usage(f"VM_STORE_RELINK_TIMEOUT is seconds (> 0), not {rt!r}")
+        self.relink_timeout = int(rt)
         # D2: only Chopin talks to Bigfoot, so a cache's default source is Chopin alone, and
         # with Chopin down ensure uses what is cached (as --offline).  On Chopin, where the
         # mirror needs no source, VM_STORE_SOURCES may name bigfoot=... (a test cache root).
@@ -1397,6 +1414,8 @@ def cmd_publish(cfg: Config, a) -> int:
         jobs = [(g, cfg.vms / g, False) for g in a.guests]
     else:
         raise Usage("publish GUEST... | --changed")
+    names = [g for g in dict.fromkeys(g for g, _, _ in jobs) if GUEST_RE.fullmatch(g)]
+    before = {g: latest_vid(store, g) for g in names}
     for guest, gdir, follow in jobs:
         try:
             rcs.append(publish_one(cfg, store, guest, gdir, a, follow=follow))
@@ -1404,14 +1423,44 @@ def cmd_publish(cfg: Config, a) -> int:
             say(f"{guest}: {e}")
             rcs.append(e.rc)
     rc = next((c for c in (1, 4, 3, 2) if c in rcs), 0)
-    if a.push and not a.dry_run:
-        try:
-            push(cfg, store, now=False, dry=False)
-        except Busy as e:
-            say(f"push not done: {e}")
-        except StoreError as e:
-            say(f"push failed (the publish stands; status shows what is unpushed): {e}")
-            rc = rc or e.rc
+    # The caches follow: each cache host links the guests whose latest moved, while push
+    # (if asked) runs; publish's own locks are released by now.
+    moved = [g for g in names if latest_vid(store, g) not in (None, before[g])]
+    remotes, box, bg = Remotes(), {}, None
+    if moved and not a.no_relink and not a.dry_run:
+        def relink_bg() -> None:
+            try:
+                box["results"] = relink(cfg, store, moved, cache_hosts(cfg), remotes=remotes)
+            except Exception as e:             # reported below; the publish stands
+                box["error"] = e
+        say(f"relinking the cache hosts to {len(moved)} guest(s): {' '.join(moved)}")
+        bg = threading.Thread(target=relink_bg, daemon=True)
+        bg.start()
+    try:
+        if a.push and not a.dry_run:
+            try:
+                push(cfg, store, now=False, dry=False)
+            except Busy as e:
+                say(f"push not done: {e}")
+            except StoreError as e:
+                say(f"push failed (the publish stands; status shows what is unpushed): {e}")
+                rc = rc or e.rc
+        if bg:
+            bg.join()
+    finally:
+        remotes.stop()                         # an interrupt: no ssh is left behind
+    if bg:
+        if "error" in box:
+            say(f"relink failed (the publish stands): {box['error']}")
+            rr = 1
+        else:
+            for line in relink_report(box["results"]):
+                say(f"relink: {line}")
+            rr = relink_rc(box["results"])
+        if rr == 3:
+            rc = rc or 3                       # busy or down hosts: they catch up at the next relink
+        elif rr:
+            rc = rc if rc in (1, 2, 4) else 1
     return rc
 
 
@@ -2182,6 +2231,522 @@ def cmd_link(cfg: Config, a) -> int:
     return next((c for c in (1, 4, 3, 2) if c in rcs), 0)
 
 
+# --- the farm: every cache host's vms/, from the mirror ------------------------------
+
+def latest_vid(store: Store, guest: str) -> str | None:
+    try:
+        return (store.latest(guest) or (None,))[0]
+    except StoreError:
+        return None
+
+
+def published(store: Store) -> dict[str, str]:
+    """{GUEST: its latest VID} of every guest with a latest here."""
+    out = {}
+    for p in sorted(store.guests.iterdir()):
+        if (p / "latest").is_file():
+            vid = latest_vid(store, p.name)
+            if vid:
+                out[p.name] = vid
+            else:
+                say(f"warning: {p / 'latest'} is not a latest line; {p.name} left out")
+    return out
+
+
+def cache_hosts(cfg: Config) -> list[tuple[str, str]]:
+    """The cache hosts relink-caches and status --farm reach, as (NAME, SSH): VM_STORE_CACHE_HOSTS
+    (NAME=SSH tokens; "" is none), else hosts.json's enabled amd64 hosts with the cache role.
+    store.json still says what a root is: link refuses on any other root.  Never Bigfoot, by
+    name or by its ssh target, whatever the table says: only push talks to it (D2)."""
+    spec = cfg.env.get("VM_STORE_CACHE_HOSTS")
+    rows = []
+    if spec is not None:
+        for tok in spec.split():
+            name, eq, ssh = tok.partition("=")
+            if not eq or not ssh or not GUEST_RE.fullmatch(name):
+                raise Usage(f"VM_STORE_CACHE_HOSTS takes NAME=SSH tokens (cage=m@cage.local), not {tok!r}")
+            rows.append((name, ssh))
+    else:
+        try:
+            table = json.loads(HOSTS_JSON.read_text())
+        except FileNotFoundError:
+            raise StoreError(f"no {HOSTS_JSON} to take the cache hosts from (or set VM_STORE_CACHE_HOSTS)")
+        except (OSError, ValueError) as e:
+            raise StoreError(f"{HOSTS_JSON}: can't read the cache hosts from it ({e}); "
+                             f"fix it or set VM_STORE_CACHE_HOSTS")
+        hosts = table.get("hosts") if isinstance(table, dict) else None
+        if not isinstance(hosts, list):
+            raise StoreError(f"{HOSTS_JSON} has no hosts list (or set VM_STORE_CACHE_HOSTS)")
+        for h in hosts:
+            if not isinstance(h, dict) or h.get("enabled") is not True or (h.get("arch") or "amd64") != "amd64" \
+                    or "cache" not in (h.get("roles") or []):
+                continue
+            name, ssh = h.get("name"), h.get("ssh")
+            if not isinstance(name, str) or not GUEST_RE.fullmatch(name) or not isinstance(ssh, str) or not ssh:
+                raise StoreError(f"{HOSTS_JSON}: a cache host's row lacks a name or ssh target: {h}")
+            rows.append((name, ssh))
+    bf = {t.rpartition("@")[2] for t in (cfg.bf_host, DEFAULT_BF_HOST) if t}
+    out: list[tuple[str, str]] = []
+    for name, ssh in rows:
+        if name.lower() == "bigfoot" or ssh in (cfg.bf_host, DEFAULT_BF_HOST) or ssh.rpartition("@")[2] in bf:
+            say(f"warning: {name}={ssh} is Bigfoot, which only push talks to; left out")
+        elif name not in dict(out):
+            out.append((name, ssh))
+    return out
+
+
+def pick_hosts(cfg: Config, want: list[str]) -> list[tuple[str, str]]:
+    """cache_hosts, only those --hosts names (repeatable, or comma-separated)."""
+    hosts = cache_hosts(cfg)
+    names = [n for v in want for n in v.replace(",", " ").split()]
+    if not names:
+        return hosts
+    unknown = [n for n in names if n not in dict(hosts)]
+    if unknown:
+        raise Usage(f"not a cache host: {' '.join(unknown)} (the cache hosts: {' '.join(dict(hosts)) or 'none'})")
+    return [(n, s) for n, s in hosts if n in names]
+
+
+class Remotes:
+    """A farm run's ssh children, so that an interrupt stops every one of them."""
+
+    def __init__(self):
+        self.procs: list[subprocess.Popen] = []
+        self.mu = threading.Lock()
+
+    def add(self, p: subprocess.Popen) -> None:
+        with self.mu:
+            self.procs.append(p)
+
+    def stop(self) -> None:
+        with self.mu:
+            live = [p for p in self.procs if p.poll() is None]
+        for p in live:
+            p.terminate()
+        for p in live:
+            try:
+                p.wait(10)
+            except subprocess.TimeoutExpired:
+                p.kill()
+
+
+def run_lines(host: str | None, script: str, args: dict, timeout: int, label: str,
+              remotes: Remotes | None = None, env: dict | None = None) -> tuple[int | None, list[str]]:
+    """SCRIPT with python3 on HOST (None or "": here), ARGS as its ARGS, as remote_py runs it,
+    but line by line: each line of its output (ssh's own messages too) as it comes, echoed to
+    stderr as `[LABEL] ...` (all but the @@ markers).  Returns (exit status, the lines), or
+    (None, the lines) once TIMEOUT seconds went by first: it is stopped then."""
+    text = f"ARGS = {json.dumps(args)!r}\nimport json as _j\nARGS = _j.loads(ARGS)\n{script}"
+    cmd = ["ssh", *SSH_OPTS, host, "python3 -"] if host else [sys.executable, "-"]
+    try:
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.STDOUT,
+                             text=True, errors="replace", env=env)
+    except OSError as e:
+        raise StoreError(f"{cmd[0]}: {e}")
+    if remotes:
+        remotes.add(p)
+    lines: list[str] = []
+
+    def read() -> None:
+        for line in p.stdout:
+            line = line.rstrip("\n")
+            lines.append(line)
+            if not line.startswith("@@"):
+                say(f"[{label}] {line.removeprefix('vm-store: ')}")
+
+    reader = threading.Thread(target=read, daemon=True)
+    reader.start()
+    try:
+        p.stdin.write(text)
+        p.stdin.close()
+    except OSError:                            # it died at once (ssh couldn't connect): its exit says why
+        pass
+    try:
+        rc = p.wait(timeout)
+    except subprocess.TimeoutExpired:
+        rc = None
+        p.terminate()
+        try:
+            p.wait(10)
+        except subprocess.TimeoutExpired:
+            p.kill()
+            p.wait()
+    finally:
+        if p.poll() is None:                   # an interrupt
+            p.kill()
+    reader.join(10)
+    return rc, list(lines)
+
+
+# A cache host's side of relink-caches: its own `vm-store link` (ARGS vm_store, ~ expanded
+# there) for each guest, one at a time, under one ssh.  Each guest's output (link's stdout
+# and stderr) comes between "@@begin G" and "@@rc G N".  EXISTING: only a vms/G that is a
+# link into a store's live/G/VID (link --all's kind); any other is "@@skip G".
+RELINK_PY = r"""
+import os, re, subprocess, sys
+vs = os.path.expanduser(ARGS["vm_store"])
+vms = os.path.join(os.environ.get("BKO_WORK") or os.path.expanduser("~/backotter-work"), "vms")
+vid_re = re.compile(r"[gi][0-9a-f]{16}")
+def out(s):
+    sys.stdout.write(s + "\n")
+    sys.stdout.flush()
+def ours(g):
+    p = os.path.join(vms, g)
+    if not os.path.islink(p):
+        return False
+    seg = os.path.realpath(p).split(os.sep)
+    return any(seg[i] == "live" and seg[i + 1] == g and vid_re.fullmatch(seg[i + 2]) for i in range(len(seg) - 2))
+if not os.access(vs, os.X_OK):
+    out("@@host there is no " + vs)
+    sys.exit(0)
+def folder_vid(g):
+    p = os.path.join(vms, g)
+    if os.path.islink(p) or not os.path.isdir(p):
+        return None
+    try:
+        import json
+        gen = str(json.load(open(os.path.join(p, "image-state"))).get("generation") or "")
+    except (OSError, ValueError):
+        return None
+    return "g" + gen[:16] if re.fullmatch(r"[0-9a-f]{64}", gen) else None
+for g in ARGS["guests"]:
+    fv = folder_vid(g)
+    if fv is not None and fv == ARGS.get("latest", {}).get(g):
+        out("@@folder %s %s" % (g, fv))       # a full folder already at the latest: link would refuse it
+        continue
+    if ARGS["existing"] and not ours(g):
+        out("@@skip " + g)
+        continue
+    out("@@begin " + g)
+    p = subprocess.Popen([vs, "link"] + ARGS["flags"] + [g], stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                         stderr=subprocess.STDOUT)
+    for line in p.stdout:
+        out(line.decode("utf-8", "replace").rstrip("\n"))
+    out("@@rc %s %d" % (g, p.wait()))
+out("@@end")
+"""
+
+# A guest's relink, by what it ended as: its exit status's share of relink-caches' own.
+RELINK_RC = {"linked": 0, "already": 0, "would-link": 0, "skipped": 0, "busy": 3, "down": 3, "no-room": 4,
+             "refused": 1, "failed": 1}
+RELINK_ORDER = ["linked", "would-link", "already", "skipped", "busy", "down", "old", "no-room", "refused", "failed"]
+
+
+def link_result(guest: str, rc: int, seg: list[str], latest: str | None, offline: bool, dry: bool) -> dict:
+    """What one remote `vm-store link GUEST` came to, from its exit status and its output."""
+    msgs = [x.removeprefix("vm-store: ") for x in seg if x.startswith("vm-store: ")]
+    reason = msgs[-1] if msgs else f"exit status {rc}"
+    while reason.startswith(guest + ": "):     # cmd_link's "REF: ", and Busy's own "G: "
+        reason = reason[len(guest) + 2:]
+    vid = next((w[1] for w in map(str.split, seg) if len(w) == 2 and w[0] == guest and VID_RE.fullmatch(w[1])), None)
+    if rc == 0 and vid:
+        if latest and vid != latest:
+            # It used a version it holds: Chopin didn't answer it, or --offline said so.
+            return {"status": "old", "rc": 3 if offline else 1, "vid": vid,
+                    "reason": f"links {vid}, not the latest {latest}" + (" (--offline)" if offline else
+                                                                         f" ({reason})" if msgs else "")}
+        if any("already links to" in m for m in msgs):
+            return {"status": "already", "rc": 0, "vid": vid}
+        return {"status": "would-link" if dry else "linked", "rc": 0, "vid": vid}
+    if rc == 3:
+        status = "busy"
+    elif rc == 4:
+        status = "no-room"
+    elif rc == 1 and any("is not a link (a full guest folder)" in m for m in msgs):
+        status, reason = "refused", f"a full folder ({reason})"
+    elif rc == 1 and any("link replaces only its own kind of link" in m for m in msgs):
+        status, reason = "refused", f"a foreign link ({reason})"
+    elif rc == 1 and any("link runs on a cache" in m for m in msgs):
+        status = "refused"
+    else:
+        status = "failed"
+    return {"status": status, "rc": RELINK_RC[status], "vid": None, "reason": reason}
+
+
+def parse_relink(guests: list[str], rc: int | None, lines: list[str], latest: dict[str, str | None],
+                 offline: bool, dry: bool, timeout: int) -> dict:
+    """One host's RELINK_PY output: {"state": ok|down|failed, "reason", "guests": {G: result}}.
+    A guest it didn't finish is down when ssh was (exit 255, or the timeout), else failed."""
+    res: dict[str, dict] = {}
+    cur, seg, pre, host_err = None, [], [], None
+    for line in lines:
+        if line.startswith("@@begin "):
+            cur, seg = line[8:], []
+        elif line.startswith("@@rc ") and len(line.split()) == 3:
+            _, g, n = line.split()
+            if g in latest:
+                res[g] = link_result(g, int(n), seg, latest[g], offline, dry)
+            cur = None
+        elif line.startswith("@@skip "):
+            res[line[7:]] = {"status": "skipped", "rc": 0, "vid": None, "reason": "not a store link there"}
+        elif line.startswith("@@folder ") and len(line.split()) == 3:
+            _, g, v = line.split()
+            res[g] = {"status": "already", "rc": 0, "vid": v, "reason": "a full folder at the latest"}
+        elif line.startswith("@@host "):
+            host_err = line[7:]
+        elif line.startswith("@@"):
+            pass
+        elif cur is not None:
+            seg.append(line)
+        else:
+            pre.append(line)
+    down = rc is None or rc == 255
+    last = (seg if cur is not None else []) + pre
+    if rc is None:
+        reason = f"no answer in {timeout} s (VM_STORE_RELINK_TIMEOUT); stopped"
+    elif host_err:
+        reason = host_err
+    else:
+        reason = (last[-1].removeprefix("vm-store: ") if last else f"exit status {rc}")
+    state = "down" if down else "ok"
+    for g in guests:
+        if g not in res:
+            res[g] = {"status": "down" if down else "failed", "rc": 3 if down else 1, "vid": None, "reason": reason}
+            if not down:
+                state = "failed"
+    return {"state": state, "reason": None if state == "ok" and not down else reason, "guests": res}
+
+
+def relink(cfg: Config, store: Store, guests: list[str], hosts: list[tuple[str, str]], existing: bool = False,
+           offline: bool = False, dry: bool = False, remotes: Remotes | None = None) -> list[dict]:
+    """Each cache host's own `vm-store link` of GUESTS (EXISTING: only its store links), one
+    ssh per host, the hosts at once.  A host's result: {"host", "ssh", "state", "reason",
+    "guests": {G: {"status", "rc", "vid", "reason"}}} (parse_relink)."""
+    latest = {g: latest_vid(store, g) for g in guests}
+    flags = (["--offline"] if offline else []) + (["--dry-run"] if dry else [])
+    args = {"guests": guests, "existing": existing, "flags": flags, "vm_store": REMOTE_VM_STORE,
+            "latest": {g: v for g, v in latest.items() if v}}
+    results: list[dict] = [{} for _ in hosts]
+    remotes = remotes or Remotes()
+
+    def one(i: int, name: str, ssh: str) -> None:
+        try:
+            rc, lines = run_lines(ssh, RELINK_PY, args, cfg.relink_timeout, name, remotes)
+            got = parse_relink(guests, rc, lines, latest, offline, dry, cfg.relink_timeout)
+        except Exception as e:                 # this host's: the others go on
+            got = {"state": "failed", "reason": str(e),
+                   "guests": {g: {"status": "failed", "rc": 1, "vid": None, "reason": str(e)} for g in guests}}
+        results[i] = {"host": name, "ssh": ssh, **got}
+
+    threads = [threading.Thread(target=one, args=(i, n, s), daemon=True) for i, (n, s) in enumerate(hosts)]
+    try:
+        for t in threads:
+            t.start()
+        for t in threads:
+            t.join()
+    finally:
+        remotes.stop()
+    return results
+
+
+def relink_rc(results: list[dict]) -> int:
+    rcs = [r["rc"] for h in results for r in h["guests"].values()]
+    return next((c for c in (1, 4, 3, 2) if c in rcs), 0)
+
+
+def relink_report(results: list[dict]) -> list[str]:
+    """A line per host (its guests counted by how they ended), then a line per guest of it
+    that isn't on the latest; a host down for all its guests is one line."""
+    if not results:
+        return ["no cache hosts"]
+    out = []
+    for h in results:
+        rs = h["guests"]
+        n = {s: sum(1 for r in rs.values() if r["status"] == s) for s in RELINK_ORDER}
+        if h["state"] == "down" and n["down"] == len(rs):
+            out.append(f"{h['host']}: down, {len(rs)} guest(s) not linked ({h['reason']})")
+            continue
+        out.append(f"{h['host']}: " + (", ".join(f"{n[s]} {s}" for s in RELINK_ORDER if n[s]) or "no guests")
+                   + (f" ({h['state']}: {h['reason']})" if h["state"] != "ok" else ""))
+        for g in sorted(rs):
+            r = rs[g]
+            if r["rc"]:
+                out.append(f"  {g}: {r['status']}: {r['reason']}")
+    return out
+
+
+def cmd_relink_caches(cfg: Config, a) -> int:
+    store = Store(cfg.root, cfg)
+    if store.role != "mirror":
+        raise StoreError(f"relink-caches runs on the mirror (Chopin); {store.root} is a {store.role}")
+    for g in a.guests:
+        if not GUEST_RE.fullmatch(g):
+            raise Usage(f"not a guest name: {g!r}")
+    hosts = pick_hosts(cfg, a.hosts)
+    pub = published(store)
+    missing = [g for g in a.guests if g not in pub]
+    if missing:
+        raise StoreError(f"not published here: {' '.join(missing)}")
+    guests = list(dict.fromkeys(a.guests)) or sorted(pub)
+    if not hosts or not guests:
+        say("no cache hosts" if not hosts else "no guest is published here")
+        if a.json:
+            print(json.dumps({"hosts": [], "rc": 0}, indent=1))
+        return 0
+    say(f"relinking {len(guests)} guest(s) on {' '.join(n for n, _ in hosts)}"
+        + (" (only their store links)" if a.existing else ""))
+    results = relink(cfg, store, guests, hosts, a.existing, a.offline, a.dry_run)
+    rc = relink_rc(results)
+    if a.json:
+        print(json.dumps({"hosts": results, "rc": rc}, indent=1))
+    else:
+        for line in relink_report(results):
+            print(line)
+    return rc
+
+
+# status --farm's look at a host's vms/ (ARGS vms, or $BKO_WORK/vms there, as its link): for each
+# of ARGS guests, a link's target, realpath and its version's .vm-store.json; a folder's
+# image-state generation.
+FARM_PY = r"""
+import os, sys
+vms = ARGS["vms"] or os.path.join(os.environ.get("BKO_WORK") or os.path.expanduser("~/backotter-work"), "vms")
+out = {"vms": vms, "entries": {}}
+for g in ARGS["guests"]:
+    p = os.path.join(vms, g)
+    try:
+        if os.path.islink(p):
+            e = {"kind": "link", "target": os.readlink(p), "real": os.path.realpath(p), "exists": os.path.isdir(p),
+                 "version": None}
+            try:
+                e["version"] = _j.load(open(os.path.join(p, ".vm-store.json"))).get("version")
+            except (FileNotFoundError, NotADirectoryError):
+                pass
+            except (OSError, ValueError, AttributeError) as x:
+                e["error"] = str(x)
+        elif os.path.isdir(p):
+            e = {"kind": "dir", "generation": None}
+            try:
+                e["generation"] = _j.load(open(os.path.join(p, "image-state"))).get("generation")
+            except FileNotFoundError:
+                pass
+            except (OSError, ValueError, AttributeError) as x:
+                e = {"kind": "unreadable", "error": "image-state: " + str(x)}
+        elif os.path.lexists(p):
+            e = {"kind": "other"}
+        else:
+            e = {"kind": "missing"}
+    except OSError as x:
+        e = {"kind": "unreadable", "error": str(x)}
+    out["entries"][g] = e
+_j.dump(out, sys.stdout)
+"""
+
+FARM_OK = ("current", "unknown")               # not skew: on the latest, or a folder that can't say
+
+
+def farm_cell(guest: str, e: dict, latest: str) -> tuple[str, str, str | None]:
+    """A cache host's vms/GUEST (FARM_PY's entry) against LATEST: (state, label, VID).  A link
+    by its realpath's live/GUEST/VID shape, as link_into reads it; a full folder by its
+    image-state generation."""
+    k = e.get("kind")
+    if k == "missing":
+        return "missing", "missing", None
+    if k == "link":
+        seg = str(e.get("real") or "").split("/")
+        vid = next((seg[i + 2] for i in range(len(seg) - 2)
+                    if seg[i] == "live" and seg[i + 1] == guest and VID_RE.fullmatch(seg[i + 2])), None)
+        if vid is None:
+            return "foreign", "foreign link", None
+        if not e.get("exists"):
+            return "dangling", f"dangling {vid}", vid
+        if e.get("error"):
+            return "unreadable", "unreadable", vid
+        if e.get("version") != vid:
+            return "broken", f"broken {vid}", vid       # no whole version there (.vm-store.json)
+        return ("current", "ok", vid) if vid == latest else ("stale", vid, vid)
+    if k == "dir":
+        gen = e.get("generation")
+        if not gen:
+            return "unknown", "folder ?", None          # no image-state: its version is in its disks' sums
+        vid = vid_of_generation(str(gen))
+        return ("current", "ok folder", vid) if vid == latest else ("stale", f"folder {vid}", vid)
+    if k == "unreadable":
+        return "unreadable", "unreadable", None
+    return "other", "not a folder", None
+
+
+def mirror_cell(e: dict, latest: str) -> str:
+    """The mirror's own vms/G against latest: informational (a guest updated since its publish)."""
+    if e.get("kind") == "dir":
+        gen = e.get("generation")
+        if not gen:
+            return "folder ?"
+        vid = vid_of_generation(str(gen))
+        return "ok" if vid == latest else f"unpublished {vid}"
+    return {"missing": "missing", "link": "link", "unreadable": "unreadable"}.get(e.get("kind"), "not a folder")
+
+
+def farm(cfg: Config, store: Store, hosts: list[tuple[str, str]]) -> dict:
+    pub = published(store)
+    guests = sorted(pub)
+    looks: dict[str, dict] = {}
+
+    def one(name: str, ssh: str | None, vms: str | None) -> None:
+        try:
+            looks[name] = {"state": "ok", **remote_py(ssh, FARM_PY, {"vms": vms, "guests": guests})}
+        except Unreachable as e:
+            looks[name] = {"state": "down", "reason": str(e)}
+        except (StoreError, ValueError) as e:
+            looks[name] = {"state": "error", "reason": str(e)}
+
+    threads = [threading.Thread(target=one, args=(n, s, None), daemon=True) for n, s in hosts]
+    for t in threads:
+        t.start()
+    one("\0mirror", None, str(cfg.vms))
+    for t in threads:
+        t.join()
+    me = looks.pop("\0mirror")
+    out = {"latest": pub, "mirror": {"host": os.uname().nodename.split(".")[0], "vms": str(cfg.vms),
+                                     "guests": {}}, "hosts": {}, "skew": 0, "skewed": {}, "down": {}}
+    for g in guests:
+        e = (me.get("entries") or {}).get(g) or {"kind": "unreadable"}
+        out["mirror"]["guests"][g] = mirror_cell(e, pub[g]) if me["state"] == "ok" else me["state"]
+    for name, _ssh in hosts:
+        lk = looks[name]
+        h = {"state": lk["state"], "reason": lk.get("reason"), "vms": lk.get("vms"), "guests": {}}
+        if lk["state"] == "ok":
+            for g in guests:
+                state, label, vid = farm_cell(g, lk["entries"].get(g) or {"kind": "unreadable"}, pub[g])
+                h["guests"][g] = {"state": state, "label": label, "vid": vid}
+                if state not in FARM_OK:
+                    out["skewed"].setdefault(name, []).append(g)
+                    out["skew"] += 1
+        else:
+            out["down"][name] = f"{lk['state']}: {lk['reason']}"
+        out["hosts"][name] = h
+    return out
+
+
+def cmd_status_farm(cfg: Config, a) -> int:
+    store = Store(cfg.root, cfg)
+    if store.role != "mirror":
+        raise StoreError(f"status --farm runs on the mirror (Chopin); {store.root} is a {store.role}")
+    hosts = cache_hosts(cfg)
+    f = farm(cfg, store, hosts)
+    errors = any(h["state"] == "error" for h in f["hosts"].values())
+    rc = 1 if f["skew"] or errors else 3 if f["down"] else 0
+    if a.json:
+        print(json.dumps({**f, "rc": rc}, indent=1))
+        return rc
+    me = f["mirror"]["host"]
+    head = ["guest", "latest", me] + [n for n, _ in hosts]
+    rows = [head]
+    for g, vid in f["latest"].items():
+        rows.append([g, vid, f["mirror"]["guests"][g]]
+                    + [f["hosts"][n]["guests"][g]["label"] if f["hosts"][n]["state"] == "ok"
+                       else f["hosts"][n]["state"] for n, _ in hosts])
+    widths = [max(len(r[i]) for r in rows) for i in range(len(head))]
+    for r in rows:
+        print("  ".join(c.ljust(w) for c, w in zip(r, widths)).rstrip())
+    for n, why in f["down"].items():
+        print(f"down: {n} ({why})")
+    parts = [f"{n}: " + ", ".join(f"{g} ({f['hosts'][n]['guests'][g]['label']})" for g in gs)
+             for n, gs in f["skewed"].items()]
+    print(f"skew: {f['skew']}" + (f"; {'; '.join(parts)}" if parts else ""))
+    return rc
+
+
 # --- gc ------------------------------------------------------------------------------
 
 # Priv's look as root, run by `sudo -n python3 -I -c` with MODE PATH SKIP-JSON; read only.
@@ -2676,6 +3241,8 @@ def cmd_list(cfg: Config, a) -> int:
 
 
 def cmd_status(cfg: Config, a) -> int:
+    if a.farm:
+        return cmd_status_farm(cfg, a)
     store = Store(cfg.root, cfg)
     names = store.object_names()
     st = {"root": str(store.root), "role": store.role, "objects": len(names), "use": store.use(),
@@ -2898,6 +3465,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--push", action="store_true")
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--stateless", action="append", default=[], metavar="GUEST[,GUEST...]")
+    s.add_argument("--no-relink", action="store_true", help="don't relink the cache hosts to what moved")
     s = sub.add_parser("push", help="send Bigfoot what it lacks (Chopin)")
     s.add_argument("--now", action="store_true")
     s.add_argument("--dry-run", action="store_true")
@@ -2912,6 +3480,13 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--all", action="store_true")
     s.add_argument("--offline", action="store_true")
     s.add_argument("--dry-run", action="store_true")
+    s = sub.add_parser("relink-caches", help="run link on every cache host (Chopin)")
+    s.add_argument("guests", nargs="*", metavar="GUEST")
+    s.add_argument("--hosts", action="append", default=[], metavar="NAME[,NAME...]")
+    s.add_argument("--existing", action="store_true", help="only the guests a host links already")
+    s.add_argument("--offline", action="store_true")
+    s.add_argument("--dry-run", action="store_true")
+    s.add_argument("--json", action="store_true")
     s = sub.add_parser("gc", help="make room in a cache")
     s.add_argument("--dry-run", action="store_true")
     s.add_argument("--json", action="store_true")
@@ -2920,6 +3495,7 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--source")
     s.add_argument("--json", action="store_true")
     s = sub.add_parser("status", help="use, room, what is in use, what is unpushed")
+    s.add_argument("--farm", action="store_true", help="each cache host's vms/ against latest (Chopin)")
     s.add_argument("--json", action="store_true")
     s = sub.add_parser("verify", help="check the store here, or Bigfoot's against it")
     s.add_argument("--where", choices=["local", "bigfoot"], default="local")
@@ -2932,7 +3508,7 @@ def parser() -> argparse.ArgumentParser:
 
 
 COMMANDS = {"init": cmd_init, "publish": cmd_publish, "push": cmd_push, "ensure": cmd_ensure, "fetch": cmd_fetch,
-            "link": cmd_link, "gc": cmd_gc, "list": cmd_list, "status": cmd_status, "verify": cmd_verify,
+            "link": cmd_link, "relink-caches": cmd_relink_caches, "gc": cmd_gc, "list": cmd_list, "status": cmd_status, "verify": cmd_verify,
             "bigfoot-health": cmd_bigfoot_health}
 
 

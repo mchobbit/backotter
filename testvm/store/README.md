@@ -15,8 +15,11 @@ this is how to use it.  The logic is `vmstore.py`; the tests are in `tests/`.
 
 A root's role is its `store.json`'s, set by `init`.  `testvm/hosts.json`
 records the same split as host roles (`store-mirror` on Chopin, `cache` on
-the others; testvm/HOSTS.md), for the test scripts; vm-store itself goes by
-`store.json` only.
+the others; testvm/HOSTS.md), for the test scripts.  vm-store goes by
+`store.json` for what a root is.  It reads hosts.json only to find the cache
+hosts that `relink-caches`, publish's relink and `status --farm` reach from
+Chopin (or takes them from `VM_STORE_CACHE_HOSTS`), and `link` there still
+refuses on any root that isn't a cache.
 
 Only Chopin talks to Bigfoot: push, `init --bigfoot` and `verify --where
 bigfoot` run there, and no other host has a key on Bigfoot.  With Chopin
@@ -34,10 +37,13 @@ vm-store init /bkoscratch/bko-store --role mirror        # once, on Chopin
 vm-store init --bigfoot                                  # once, from Chopin (after S0)
 vm-store init /bkoscratch/bko-cache --role cache [--cap 100G --floor 100G]
 
-vm-store publish GUEST...            # Chopin: store vms/GUEST's current state
+vm-store publish GUEST...            # Chopin: store vms/GUEST's current state, then relink the caches
 vm-store publish --changed --push    # weekly (by hand; there is no scheduler)
 vm-store publish --changed --stateless G1,G2   # and these state-less guests too (opt-in)
+vm-store publish ... --no-relink     # leave the cache hosts' vms/ alone
 vm-store push [--now]                # Chopin to Bigfoot, in VM_STORE_WINDOW unless --now
+vm-store relink-caches [GUEST...] [--hosts NAME,...] [--existing] [--offline] [--dry-run] [--json]
+                                     # Chopin: run link on every cache host
 
 vm-store ensure GUEST[@VID]          # prints the guest folder made of that version
 vm-store fetch GUEST...              # the same, printing nothing (prefetch)
@@ -45,6 +51,7 @@ vm-store link GUEST[@VID]... | --all # caches: point vms/GUEST at that version (
 vm-store gc [--dry-run]              # caches: make room, least recently ensured first
 vm-store list [GUEST] [--source chopin]
 vm-store status
+vm-store status --farm [--json]      # Chopin: each cache host's vms/ against latest
 vm-store verify [--where local|bigfoot]
 vm-store bigfoot-health [--pool-only] [--json]   # Chopin: is Bigfoot fit to write to? exit 0 yes, 1 no
 ```
@@ -178,7 +185,7 @@ from Chopin) and re-points `vms/G` at it with one rename (`--offline`: only
 what is cached; `G@VID`: that version, a rollback; `--dry-run`: say what it
 would do).  `link --all` re-points every `vms/` link that already points
 into this store, hand-made ones and dangling ones included; it adds none.
-Run it on each cache host after a publish.  Link:
+Link:
 
 - runs on a cache root only (exit 1 on the mirror);
 - never replaces a real `vms/G` folder, nor a link that points anywhere
@@ -187,6 +194,68 @@ Run it on each cache host after a publish.  Link:
   holding one of the current version's disk objects (rule a's lock test),
   or a `compare.py` / `compare-freebsd.sh` of G (Linux `/proc`);
 - does nothing to a link that already names the version.
+
+### Publish relinks the caches
+
+After a publish, Chopin runs `link` on every cache host for each guest
+whose `latest` moved (or that was published for the first time): one ssh
+per host, the hosts at once, while `--push` runs.  `--no-relink` skips it,
+and `--dry-run` never does it.  The same is `vm-store relink-caches` by hand:
+
+- GUESTs default to every guest with a `latest` on Chopin. A guest a host
+  doesn't have yet gets a new link there; with `--existing`, only a guest
+  whose `vms/G` is already a link into a store is relinked (what `link
+  --all` takes), and the others are "skipped".
+- On each host it runs that host's own `~/backotter-work/testvm/vm-store
+  link [--offline] [--dry-run] G`, one guest at a time, so the host's own
+  rules hold: a running QEMU or compare of G leaves it alone (busy), and a
+  full folder or a link of someone else's is refused.  A full folder whose
+  `image-state` is already the latest generation counts as "already" (link
+  isn't run on it), so a current folder never fails a publish.
+- `--hosts cage,copland` takes only those (an unknown name is a usage error).
+  A host's run may last `VM_STORE_RELINK_TIMEOUT` (2 h) in all; one that
+  doesn't answer ssh, or runs out of time, is "down", and the others go on.
+
+The cache hosts are `VM_STORE_CACHE_HOSTS` (`name=ssh` tokens, `cage=m@cage.local`;
+empty: none), or else hosts.json's rows that are enabled, amd64 (no `arch`
+is amd64) and have the `cache` role.  Whatever the source, a host named
+`bigfoot`, or whose ssh target is `VM_STORE_BIGFOOT_HOST`'s host or
+`m@bigfoot.local`, is left out with a warning: only push talks to Bigfoot.
+
+The report is a line per host, counting its guests by how they ended, and a
+line for each guest not on the latest:
+
+```
+cage: 18 linked, 2 already, 1 busy
+  void-musl: busy: a QEMU program has void-musl.qcow2 open (...); link it later
+copland: down, 21 guest(s) not linked (ssh: connect to host copland.local port 22: No route to host)
+cinqcent: 19 already, 2 refused
+  alpine324: refused: a full folder (...)
+```
+
+A guest ends as linked, already (it was current), would-link (`--dry-run`),
+skipped, busy, down, old (the host linked a version it held, not Chopin's
+latest: Chopin didn't answer it, or `--offline`), no-room, refused or
+failed.  relink-caches exits 0 when every host it reached is on the latest
+for every guest asked, 3 when only busy or down ones are left, 4 for no
+room, 1 for any refusal or failure.  Publish prints the same report on
+stderr; a relink problem never undoes a publish, but it shows in publish's
+exit: 3 for busy or down hosts (when publish was otherwise fine), 1 for
+anything worse.
+
+`vm-store status --farm` checks the result without changing anything: for
+each guest with a `latest` on Chopin, what each cache host's `vms/G` is
+(one ssh per host, at once): `ok` (a link to the latest), an older VID,
+`missing`, `ok folder` or `folder gXXXX` (a full folder, by its
+`image-state` generation), `folder ?` (no `image-state`: not counted),
+`foreign link`, `dangling VID`, `broken VID` (no whole version there),
+`unreadable`, or `down` for a host that didn't answer.  Chopin's own column
+is for information: `unpublished gXXXX` is a guest updated since its
+publish.  The last line is `skew: N`, then the stale and missing guests per
+host.  It exits 0 with no skew, 1 with skew, 3 when a host was down and
+nothing else was wrong.
+
+### What gc keeps
 
 gc keeps whatever `vms/` uses (rule f): every object of a version a `vms/G`
 link resolves into, and every object a link inside a real `vms/G` resolves
@@ -234,6 +303,8 @@ per-job pins (`VM_STORE_PIN`, `vm_store_dir`) are not built.
 | `VM_STORE_SCAN_SKIP` | `/bkoscratch/tools` (trees that search never walks: tool trees and chroots with no overlays) |
 | `VM_STORE_SUDO` | `auto` (gc reads what it can't read with `sudo -n`, when that works); `0` never runs sudo |
 | `VM_STORE_MIN_AGE` | `24h` (gc keeps what was ensured more recently) |
+| `VM_STORE_CACHE_HOSTS` | unset: hosts.json's enabled amd64 hosts with the `cache` role; else `name=ssh` tokens (`cage=m@cage.local copland=m@copland.local`; empty: none); never Bigfoot |
+| `VM_STORE_RELINK_TIMEOUT` | `7200` (seconds; one cache host's whole relink, fetches included) |
 | `VM_STORE_CAP`, `VM_STORE_FLOOR` | the root's `store.json` |
 | `BKO_WORK` | `~/backotter-work` (`vms/` is under it: link's links, gc's rule f) |
 

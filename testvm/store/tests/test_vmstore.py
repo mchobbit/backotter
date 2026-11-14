@@ -13,6 +13,7 @@ import importlib.util
 import io
 import json
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -205,8 +206,9 @@ class StoreTest(unittest.TestCase):
                     "FAKE_RSYNC_BYTES": str(self.bytes_log)}
         for k in ("VM_STORE_CAP", "VM_STORE_WINDOW", "VM_STORE_COPY", "VM_STORE_FLOOR_REFLINK",
                   "VM_STORE_TEST_CRASH", "FAKE_RSYNC_SLEEP",
-                  "FAKE_RSYNC_STOP_ONCE", "FAKE_RSYNC_FAIL", "FAKE_RSYNC_SNOOP", *FAKE_BF_ENV):
-            self.env[k] = ""
+                  "FAKE_RSYNC_STOP_ONCE", "FAKE_RSYNC_FAIL", "FAKE_RSYNC_SNOOP", "VM_STORE_RELINK_TIMEOUT",
+                  "VM_STORE_CACHE_HOSTS", *FAKE_BF_ENV):
+            self.env[k] = ""                       # VM_STORE_CACHE_HOSTS "": publish relinks no host
         p = mock.patch.dict(os.environ, self.env)
         p.start()
         self.addCleanup(p.stop)
@@ -1648,6 +1650,470 @@ class TestLink(StoreTest):
         self.assertFalse(os.path.lexists(self.cvms / "g1"))
         self.assertEqual(self.link("g1")[0], 0)
         self.assertEqual(self.link("g1", "--offline")[:2], (0, f"g1 {v1}\n"))
+
+
+# --- 7c: the farm: relink-caches, publish's relink, status --farm --------------------
+
+HOSTS_ROWS = [
+    {"name": "chopin", "ssh": "m@chopin.local", "roles": ["build", "fleet", "store-mirror"], "enabled": True},
+    {"name": "cinqcent", "ssh": "m@cinqcent.local", "roles": ["build", "cache"], "enabled": True, "arch": "amd64"},
+    {"name": "copland", "ssh": "m@copland.local", "roles": ["cache"], "enabled": True},
+    {"name": "czerny", "ssh": "m@czerny.local", "roles": ["cache"], "enabled": False},
+    {"name": "armbox", "ssh": "m@armbox.local", "roles": ["cache"], "enabled": True, "arch": "arm64"},
+    {"name": "bigfoot", "ssh": "m@elsewhere.local", "roles": ["cache"], "enabled": True},
+    {"name": "sneaky", "ssh": "m@bigfoot.local", "roles": ["cache"], "enabled": True},
+    {"name": "sneaky2", "ssh": "bigfoot.local", "roles": ["cache"], "enabled": True},
+]
+
+
+class TestCacheHosts(StoreTest):
+    """Where relink-caches and status --farm take the cache hosts from."""
+
+    def hosts(self, rows=HOSTS_ROWS, text=None, env=None):
+        path = self.tmp / "hosts.json"
+        path.write_text(text if text is not None else json.dumps({"v": 1, "hosts": rows}))
+        with mock.patch.object(vs, "HOSTS_JSON", path), mock.patch.dict(os.environ, env or {}), \
+                contextlib.redirect_stderr(io.StringIO()) as err:
+            if env is None:
+                os.environ.pop("VM_STORE_CACHE_HOSTS", None)
+            got = vs.cache_hosts(vs.Config())
+        self.last_err = err.getvalue()
+        return got
+
+    def test_hosts_json_rows(self):
+        self.assertEqual(self.hosts(), [("cinqcent", "m@cinqcent.local"), ("copland", "m@copland.local")])
+        for n in ("bigfoot", "sneaky", "sneaky2"):            # by name, by ssh target, by its host
+            self.assertIn(f"warning: {n}=", self.last_err)
+        self.assertNotIn("czerny", self.last_err)
+
+    def test_bigfoot_guard_takes_the_configured_host_too(self):
+        rows = [{"name": "odd", "ssh": "m@nas.local", "roles": ["cache"], "enabled": True}]
+        with mock.patch.dict(os.environ, {"VM_STORE_BIGFOOT_HOST": "m@nas.local"}):
+            self.assertEqual(self.hosts(rows), [])
+        self.assertIn("is Bigfoot", self.last_err)
+
+    def test_environment_wins(self):
+        env = {"VM_STORE_CACHE_HOSTS": "cage=m@cage.local bigfoot=m@x.local nas=m@bigfoot.local cage=m@other"}
+        self.assertEqual(self.hosts(text="not json", env=env), [("cage", "m@cage.local")])
+        self.assertEqual(self.hosts(text="not json", env={"VM_STORE_CACHE_HOSTS": ""}), [])
+        with self.assertRaises(vs.Usage):
+            self.hosts(env={"VM_STORE_CACHE_HOSTS": "cage"})
+
+    def test_missing_or_broken_hosts_json(self):
+        for text in ("{not json", '{"v": 1}'):
+            with self.assertRaises(vs.StoreError) as cm:
+                self.hosts(text=text)
+            self.assertIn("hosts.json", str(cm.exception))
+        with mock.patch.object(vs, "HOSTS_JSON", self.tmp / "none.json"), self.assertRaises(vs.StoreError) as cm:
+            os.environ.pop("VM_STORE_CACHE_HOSTS", None)
+            vs.cache_hosts(vs.Config())
+        self.assertIn("VM_STORE_CACHE_HOSTS", str(cm.exception))
+        with mock.patch.object(vs, "HOSTS_JSON", self.tmp / "none.json"):
+            os.environ.pop("VM_STORE_CACHE_HOSTS", None)
+            self.assertEqual(self.run_vs("relink-caches")[0], 1)
+
+    def test_hosts_filter(self):
+        with mock.patch.dict(os.environ, {"VM_STORE_CACHE_HOSTS": "cage=m@cage.local copland=m@copland.local "
+                                          "bigfoot=m@bigfoot.local"}):
+            cfg = vs.Config()
+            with contextlib.redirect_stderr(io.StringIO()):
+                self.assertEqual(vs.pick_hosts(cfg, ["copland"]), [("copland", "m@copland.local")])
+                self.assertEqual(vs.pick_hosts(cfg, ["cage,copland"]), vs.pick_hosts(cfg, []))
+                for bad in (["nope"], ["bigfoot"]):
+                    with self.assertRaises(vs.Usage):
+                        vs.pick_hosts(cfg, bad)
+            rc, _, err = self.run_vs("relink-caches", "--hosts", "cage,nope")
+        self.assertEqual(rc, 2, err)
+        self.assertIn("not a cache host: nope", err)
+
+
+def seg(guest, rc, *lines):
+    return [f"@@begin {guest}", *lines, f"@@rc {guest} {rc}"]
+
+
+class FakeFarm:
+    """run_lines' stand-in: canned (exit status, lines) by ssh target, each call recorded."""
+
+    def __init__(self, answers):
+        self.answers, self.calls = answers, []
+
+    def __call__(self, host, script, args, timeout, label, remotes=None, env=None):
+        self.calls.append({"host": host, "args": args, "timeout": timeout, "label": label})
+        got = self.answers[host]
+        return got(args) if callable(got) else got
+
+
+def all_ok(args, already=()):
+    """A host that links every guest it is asked (to the VID the test put in VIDS)."""
+    out = []
+    for g in args["guests"]:
+        v = FakeFarm.vids[g]
+        out += seg(g, 0, f"vm-store: {g}: /h/vms/{g} already links to {v}" if g in already
+                   else f"vm-store: {g}: /h/vms/{g} -> /c/live/{g}/{v}/{g} (new)", f"{g} {v}")
+    return 0, out + ["@@end"]
+
+
+class TestRelink(StoreTest):
+    """relink-caches on the mirror, each host's ssh faked (run_lines)."""
+
+    HOSTS = "cage=m@cage.local copland=m@copland.local cinq=m@cinq.local slow=m@slow.local"
+
+    def setUp(self):
+        super().setUp()
+        FakeFarm.vids = {}
+        for g in ("g1", "g2", "g3"):
+            self.guest(g)
+            rc, out, err = self.run_vs("publish", g)
+            self.assertEqual(rc, 0, err)
+            FakeFarm.vids[g] = out.split()[1]
+        self.v = FakeFarm.vids
+
+    def relink(self, *argv, answers, hosts=HOSTS, cmd="relink-caches"):
+        fake = FakeFarm(answers)
+        with mock.patch.object(vs, "run_lines", fake), mock.patch.dict(os.environ, {"VM_STORE_CACHE_HOSTS": hosts}):
+            rc, out, err = self.run_vs(cmd, *argv)
+        return rc, out, err, fake.calls
+
+    def test_each_outcome_of_a_host(self):
+        v = self.v
+        answers = {
+            "m@cage.local": (0, seg("g1", 0, f"vm-store: g1: /h/vms/g1 -> /c/live/g1/{v['g1']}/g1 (new)", f"g1 {v['g1']}")
+                             + seg("g2", 0, f"vm-store: g2: /h/vms/g2 already links to {v['g2']}", f"g2 {v['g2']}")
+                             + seg("g3", 3, "vm-store: g3: g3: a QEMU program has g3.qcow2 open (/c/objects/x); "
+                                            "link it later") + ["@@end"]),
+            "m@copland.local": (255, ["ssh: connect to host copland.local port 22: Connection refused"]),
+            "m@cinq.local": (0, seg("g1", 1, "vm-store: g1: /h/vms/g1 is not a link (a full guest folder): link "
+                                             "never replaces it")
+                             + seg("g2", 1, "vm-store: g2: /h/vms/g2 links to /x/g2, not into /c/live/g2: link "
+                                            "replaces only its own kind of link (remove it by hand)")
+                             + seg("g3", 4, "vm-store: fetching sha256-abc… from chopin",
+                                   "vm-store: g3: 9.00 GiB in use against a cap of 10.00 GiB") + ["@@end"]),
+            "m@slow.local": (None, ["@@begin g1", "vm-store: fetching sha256-abc… from chopin"]),
+        }
+        rc, out, err, calls = self.relink(answers=answers)
+        self.assertEqual(rc, 1, err)
+        self.assertEqual(sorted(c["host"] for c in calls), sorted(answers))
+        for c in calls:
+            self.assertEqual(c["args"], {"guests": ["g1", "g2", "g3"], "existing": False, "flags": [],
+                                         "vm_store": vs.REMOTE_VM_STORE,
+                                         "latest": {g: self.latest(self.mirror, g) for g in ("g1", "g2", "g3")}})
+            self.assertEqual(c["timeout"], vs.DEFAULT_RELINK_TIMEOUT)
+        lines = out.splitlines()
+        self.assertIn("cage: 1 linked, 1 already, 1 busy", lines)
+        self.assertIn("  g3: busy: a QEMU program has g3.qcow2 open (/c/objects/x); link it later", lines)
+        self.assertIn("copland: down, 3 guest(s) not linked (ssh: connect to host copland.local port 22: "
+                      "Connection refused)", lines)
+        self.assertIn("cinq: 1 no-room, 2 refused", lines)
+        self.assertTrue(any(x.startswith("  g1: refused: a full folder (") for x in lines), out)
+        self.assertTrue(any(x.startswith("  g2: refused: a foreign link (") for x in lines), out)
+        self.assertIn("  g3: no-room: 9.00 GiB in use against a cap of 10.00 GiB", lines)
+        self.assertTrue(any(x.startswith("slow: down, 3 guest(s) not linked (no answer in 7200 s") for x in lines), out)
+        rc, out, _, _ = self.relink("--json", answers=answers)
+        got = {h["host"]: h for h in json.loads(out)["hosts"]}
+        self.assertEqual(json.loads(out)["rc"], 1)
+        self.assertEqual({g: r["status"] for g, r in got["cage"]["guests"].items()},
+                         {"g1": "linked", "g2": "already", "g3": "busy"})
+        self.assertEqual(got["cage"]["guests"]["g1"]["vid"], v["g1"])
+        self.assertEqual((got["copland"]["state"], got["slow"]["state"], got["cinq"]["state"]), ("down", "down", "ok"))
+
+    def test_exit_status(self):
+        ok = {"m@cage.local": all_ok, "m@copland.local": lambda a: all_ok(a, already=("g1", "g2", "g3"))}
+        hosts = "cage=m@cage.local copland=m@copland.local"
+        rc, out, err, _ = self.relink(answers=ok, hosts=hosts)
+        self.assertEqual((rc, out.splitlines()), (0, ["cage: 3 linked", "copland: 3 already"]), err)
+        busy = dict(ok, **{"m@copland.local": (0, seg("g1", 3, "vm-store: g1: g1: a comparison of g1 runs (pid 7); "
+                                                                "link it later") + ["@@end"])})
+        self.assertEqual(self.relink("g1", answers=busy, hosts=hosts)[0], 3)          # only busy left
+        down = dict(ok, **{"m@copland.local": (255, ["ssh: Could not resolve hostname copland.local"])})
+        self.assertEqual(self.relink(answers=down, hosts=hosts)[0], 3)               # only down left
+        # A host that linked an older version than the mirror's latest (Chopin didn't answer it).
+        old = dict(ok, **{"m@copland.local": (0, seg("g1", 0, "vm-store: warning: no source answered for g1; using "
+                                                              "the cached latest g0000000000000000",
+                                                     "g1 g0000000000000000") + ["@@end"])})
+        rc, out, _, _ = self.relink("g1", answers=old, hosts=hosts)
+        self.assertEqual(rc, 1)
+        self.assertIn("  g1: old: links g0000000000000000, not the latest", out)
+        self.assertEqual(self.relink("g1", "--offline", answers=old, hosts=hosts)[0], 3)
+        # A host without vm-store, or whose remote dies part way: failed, not down.
+        gone = dict(ok, **{"m@copland.local": (0, ["@@host there is no /home/m/backotter-work/testvm/vm-store"])})
+        rc, out, _, _ = self.relink(answers=gone, hosts=hosts)
+        self.assertEqual(rc, 1)
+        self.assertIn("copland: 3 failed (failed: there is no /home/m/backotter-work/testvm/vm-store)", out)
+        died = dict(ok, **{"m@copland.local": (1, seg("g1", 0, f"g1 {self.v['g1']}")
+                                                + ["@@begin g2", "Traceback (most recent call last):", "MemoryError"])})
+        rc, out, _, _ = self.relink(answers=died, hosts=hosts)
+        self.assertEqual(rc, 1)
+        self.assertIn("  g2: failed: MemoryError", out)
+        # Precedence: a failure outranks no room, which outranks busy.
+        self.assertEqual(vs.relink_rc([{"guests": {"a": {"rc": 3}, "b": {"rc": 4}}}]), 4)
+        self.assertEqual(vs.relink_rc([{"guests": {"a": {"rc": 3}}}, {"guests": {"b": {"rc": 1}, "c": {"rc": 4}}}]), 1)
+
+    def test_flags_existing_and_guests(self):
+        def skip_g2(a):
+            out = []
+            for g in a["guests"]:
+                out += ["@@skip g2"] if g == "g2" else seg(g, 0, f"vm-store: {g}: /h/vms/{g} already links to "
+                                                                  f"{self.v[g]}", f"{g} {self.v[g]}")
+            return 0, out + ["@@end"]
+        rc, out, err, calls = self.relink("--existing", "--offline", "--dry-run", answers={"m@cage.local": skip_g2},
+                                          hosts="cage=m@cage.local")
+        self.assertEqual((rc, out), (0, "cage: 2 already, 1 skipped\n"), err)
+        self.assertEqual(calls[0]["args"]["flags"], ["--offline", "--dry-run"])
+        self.assertTrue(calls[0]["args"]["existing"])
+        rc, out, _, calls = self.relink("g2", "g1", "g2", answers={"m@cage.local": all_ok}, hosts="cage=m@cage.local")
+        self.assertEqual(calls[0]["args"]["guests"], ["g2", "g1"])
+        self.assertEqual(self.relink("nope", answers={}, hosts="cage=m@cage.local")[0], 1)    # not published
+        rc, out, err, calls = self.relink(answers={}, hosts="")
+        self.assertEqual((rc, calls), (0, []))
+        self.assertIn("no cache hosts", err)
+
+    def test_mirror_only(self):
+        self.init_cache()
+        rc, _, err = self.run_vs("relink-caches", root=self.cache)
+        self.assertEqual(rc, 1)
+        self.assertIn("runs on the mirror", err)
+        rc, _, err = self.run_vs("status", "--farm", root=self.cache)
+        self.assertEqual(rc, 1)
+        self.assertIn("runs on the mirror", err)
+
+    def test_publish_relinks_what_moved(self):
+        hosts = "cage=m@cage.local"
+        rc, out, err, calls = self.relink("g1", "g2", answers={"m@cage.local": all_ok}, hosts=hosts, cmd="publish")
+        self.assertEqual((rc, calls), (0, []), err)           # already published: nothing moved
+        g = self.vms / "g1"
+        (g / "g1.qcow2").unlink()
+        make_disk(g / "g1.qcow2", 901)
+        write_state(g, ["g1.qcow2"], updates=1)
+        self.guest("g4")
+        for argv in (["g1", "g4", "--dry-run"], ["g1", "g4", "--no-relink"]):
+            rc, out, err, calls = self.relink(*argv, answers={}, hosts=hosts, cmd="publish")
+            self.assertEqual((rc, calls), (0, []), err)
+        # --no-relink published them: publish g1 g2 g4 again moves nothing.  A new update of g1 does.
+        (g / "g1.qcow2").unlink()
+        make_disk(g / "g1.qcow2", 902)
+        write_state(g, ["g1.qcow2"], updates=2)
+        self.guest("g5")
+        rc, out, err, calls = self.relink("g1", "g2", "g4", "g5", answers={"m@cage.local": (0, [])}, hosts=hosts,
+                                          cmd="publish")
+        self.assertEqual([c["args"]["guests"] for c in calls], [["g1", "g5"]])
+        self.assertEqual(calls[0]["args"]["existing"], False)
+        self.assertEqual(rc, 1, err)                          # the host said nothing: both failed
+        self.assertIn("relink: cage: 2 failed", err)
+        self.assertEqual(len(out.splitlines()), 4)            # publish's own result stands
+        # --changed with nothing changed relinks nothing.
+        rc, out, err, calls = self.relink("--changed", answers={}, hosts=hosts, cmd="publish")
+        self.assertEqual((rc, calls), (0, []), err)
+
+    def test_publish_exit_with_busy_or_down_hosts(self):
+        g = self.vms / "g1"
+        for i, (answer, want) in enumerate((
+                ((255, ["ssh: connect to host cage.local port 22: No route to host"]), 3),
+                (lambda a: (0, seg("g1", 3, "vm-store: g1: g1: a QEMU program has g1.qcow2 open (x); link it later")), 3),
+                (all_ok, 0))):
+            (g / "g1.qcow2").unlink()
+            make_disk(g / "g1.qcow2", 910 + i)
+            write_state(g, ["g1.qcow2"], updates=10 + i)
+            FakeFarm.vids["g1"] = "g" + json.loads((g / "image-state").read_text())["generation"][:16]
+            rc, out, err, calls = self.relink("g1", answers={"m@cage.local": answer}, hosts="cage=m@cage.local",
+                                              cmd="publish")
+            self.assertEqual((rc, len(calls), out.split()[0]), (want, 1, "g1"), err)
+        # A host table that can't be read: the publish stands, its exit is 1.
+        (g / "g1.qcow2").unlink()
+        make_disk(g / "g1.qcow2", 920)
+        write_state(g, ["g1.qcow2"], updates=20)
+        with mock.patch.object(vs, "HOSTS_JSON", self.tmp / "none.json"):
+            os.environ.pop("VM_STORE_CACHE_HOSTS", None)
+            rc, out, err = self.run_vs("publish", "g1")
+        self.assertEqual(rc, 1, err)
+        self.assertIn("relink failed (the publish stands)", err)
+        self.assertEqual(self.latest(self.mirror, "g1"), out.split()[1])
+
+
+class TestRelinkScript(StoreTest):
+    """RELINK_PY for real, run here (run_lines with no host) against a local cache, as a
+    cache host's own vm-store link."""
+
+    def setUp(self):
+        super().setUp()
+        self.init_cache()
+        self.cwork = self.tmp / "cwork"
+        self.cvms = self.cwork / "vms"
+        self.cvms.mkdir(parents=True)
+        orig = vs.run_lines
+        env = dict(os.environ, VM_STORE_ROOT=str(self.cache), BKO_WORK=str(self.cwork))
+
+        def here(host, script, args, timeout, label, remotes=None, env_=None):
+            self.hosts_seen.append(host)
+            return orig(None, script, args, timeout, label, remotes, env=env)
+        self.hosts_seen = []
+        for p in (mock.patch.object(vs, "run_lines", here), mock.patch.object(vs, "REMOTE_VM_STORE", str(TESTVM / "vm-store")),
+                  mock.patch.dict(os.environ, {"VM_STORE_CACHE_HOSTS": "box=m@box.invalid"})):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def test_link_existing_refused_and_publish(self):
+        for g in ("g1", "g2", "g3"):
+            self.guest(g)
+            self.assertEqual(self.run_vs("publish", g)[0], 0, self.last_err)   # relinks box each time
+        v1 = self.latest(self.mirror, "g1")
+        self.assertEqual(os.readlink(self.cvms / "g1"), str(self.cache / "live" / "g1" / v1 / "g1"))
+        self.assertEqual(self.hosts_seen, ["m@box.invalid"] * 3)
+        rc, out, err = self.run_vs("relink-caches")
+        self.assertEqual((rc, out), (0, "box: 3 already\n"), err)
+        self.assertIn("[box] g1: ", err)                      # the host's progress, as it comes
+        os.unlink(self.cvms / "g2")
+        (self.cvms / "g2").mkdir()                            # a full folder
+        os.unlink(self.cvms / "g3")
+        rc, out, err = self.run_vs("relink-caches", "--existing")
+        self.assertEqual((rc, out), (0, "box: 1 already, 2 skipped\n"), err)
+        self.assertFalse(os.path.lexists(self.cvms / "g3"))
+        rc, out, err = self.run_vs("relink-caches", "--dry-run")
+        self.assertEqual(rc, 1, err)
+        self.assertIn("box: 1 would-link, 1 already, 1 refused", out)
+        self.assertIn("  g2: refused: a full folder (", out)
+        self.assertFalse(os.path.lexists(self.cvms / "g3"))
+        shutil.copy(self.vms / "g2" / "image-state", self.cvms / "g2")   # a full folder at the latest
+        rc, out, err = self.run_vs("relink-caches", "g2")
+        self.assertEqual((rc, out), (0, "box: 1 already\n"), err)
+        (self.cvms / "g2" / "image-state").unlink()
+        rc, out, err = self.run_vs("relink-caches", "g3")
+        self.assertEqual((rc, out), (0, "box: 1 linked\n"), err)
+        self.assertTrue((self.cvms / "g3" / "g3.qcow2").is_file())
+        # A new version on the mirror: its publish moves box's link.
+        g = self.vms / "g1"
+        (g / "g1.qcow2").unlink()
+        make_disk(g / "g1.qcow2", 903)
+        write_state(g, ["g1.qcow2"], updates=1)
+        rc, out, err = self.run_vs("publish", "g1")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("relink: box: 1 linked", err)
+        v2 = out.split()[1]
+        self.assertEqual(os.readlink(self.cvms / "g1"), str(self.cache / "live" / "g1" / v2 / "g1"))
+
+    def test_no_vm_store_there(self):
+        self.guest("g1")
+        self.assertEqual(self.run_vs("publish", "g1", "--no-relink")[0], 0)
+        with mock.patch.object(vs, "REMOTE_VM_STORE", str(self.tmp / "nope" / "vm-store")):
+            rc, out, err = self.run_vs("relink-caches")
+        self.assertEqual(rc, 1, err)
+        self.assertIn("box: 1 failed (failed: there is no ", out)
+
+    def test_timeout_stops_it(self):
+        self.guest("g1")
+        self.assertEqual(self.run_vs("publish", "g1", "--no-relink")[0], 0)
+        slow = self.tmp / "slow-vm-store"
+        slow.write_text("#!/bin/sh\nsleep 30\n")
+        slow.chmod(0o755)
+        t = time.monotonic()
+        with mock.patch.object(vs, "REMOTE_VM_STORE", str(slow)), \
+                mock.patch.dict(os.environ, {"VM_STORE_RELINK_TIMEOUT": "1"}):
+            rc, out, err = self.run_vs("relink-caches")
+        self.assertLess(time.monotonic() - t, 20)
+        self.assertEqual(rc, 3, err)
+        self.assertIn("box: down, 1 guest(s) not linked (no answer in 1 s", out)
+
+
+class TestStatusFarm(StoreTest):
+    """status --farm: FARM_PY for real against local vms/ dirs, one per host (remote_py's ssh faked)."""
+
+    GEN = {g: hashlib.sha256(g.encode()).hexdigest() for g in ("g1", "g2", "g3", "g4", "g5", "g6", "g7", "g8", "g9")}
+
+    def setUp(self):
+        super().setUp()
+        self.latest_of = {}
+        for g, gen in self.GEN.items():                # what status reads: each latest line
+            d = self.mirror / "guests" / g
+            d.mkdir(parents=True)
+            vid = vs.vid_of_generation(gen)
+            (d / "latest").write_text(f"{vid} {'0' * 64}\n")
+            self.latest_of[g] = vid
+        self.croot = self.tmp / "croot"
+        self.hvms = {h: self.tmp / h / "vms" for h in ("cage", "cinq")}
+        for d in self.hvms.values():
+            d.mkdir(parents=True)
+        self.down = set()
+        orig = vs.remote_py
+        self.calls = []
+
+        def fake(host, script, args, timeout=vs.REMOTE_TIMEOUT):
+            self.calls.append(host)
+            if host is None:
+                return orig(None, script, args, timeout)
+            name = host.split("@")[1].split(".")[0]
+            if name in self.down:
+                raise vs.Unreachable(f"{host}: timed out")
+            return orig(None, script, dict(args, vms=str(self.hvms[name])), timeout)
+        for p in (mock.patch.object(vs, "remote_py", fake), mock.patch.dict(os.environ, {
+                "VM_STORE_CACHE_HOSTS": "cage=m@cage.local cinq=m@cinq.local bigfoot=m@bigfoot.local"})):
+            p.start()
+            self.addCleanup(p.stop)
+
+    def link(self, host, g, vid, whole=True, real=True):
+        leaf = self.croot / host / "live" / g / vid / g
+        if real:
+            leaf.mkdir(parents=True)
+            if whole:
+                (leaf / ".vm-store.json").write_text(json.dumps({"version": vid}))
+        (self.hvms[host] / g).symlink_to(leaf)
+
+    def folder(self, vms, g, gen):
+        (vms / g).mkdir()
+        if gen:
+            (vms / g / "image-state").write_text(json.dumps({"generation": gen, "updates": 1, "sha256": {}}))
+
+    def test_states_and_skew(self):
+        L, old = self.latest_of, "g" + "1" * 16
+        for g in L:
+            self.link("cinq", g, L[g])                          # cinq: every guest on the latest
+        self.link("cage", "g1", L["g1"])                        # current
+        self.link("cage", "g2", old)                            # an older version
+        # g3: missing
+        self.folder(self.hvms["cage"], "g4", self.GEN["g4"])    # a full folder, current
+        self.folder(self.hvms["cage"], "g5", "2" * 64)          # a full folder, another generation
+        (self.hvms["cage"] / "g6").symlink_to(self.tmp / "elsewhere" / "g6")      # someone else's link
+        self.link("cage", "g7", old, real=False)                # dangling
+        self.folder(self.hvms["cage"], "g8", None)              # no image-state: can't say
+        self.link("cage", "g9", L["g9"], whole=False)           # no .vm-store.json: not a whole version
+        self.folder(self.vms, "g1", self.GEN["g1"])             # the mirror's own vms/
+        self.folder(self.vms, "g2", "3" * 64)
+        rc, out, err = self.run_vs("status", "--farm")
+        self.assertEqual(rc, 1, err)
+        self.assertNotIn("m@bigfoot.local", self.calls)
+        self.assertIn("is Bigfoot", err)
+        rows = {r.split()[0]: r.split(None, 2)[2] for r in out.splitlines()[1:] if r.startswith("g")}
+        me = os.uname().nodename.split(".")[0]
+        self.assertEqual(out.splitlines()[0].split(), ["guest", "latest", me, "cage", "cinq"])
+        cells = {g: re.split(r"\s{2,}", rows[g].strip()) for g in rows}
+        self.assertEqual(cells["g1"], ["ok", "ok", "ok"])
+        self.assertEqual(cells["g2"], [f"unpublished g{'3' * 16}", old, "ok"])
+        self.assertEqual(cells["g3"], ["missing", "missing", "ok"])
+        self.assertEqual(cells["g4"][1:], ["ok folder", "ok"])
+        self.assertEqual(cells["g5"][1:], [f"folder g{'2' * 16}", "ok"])
+        self.assertEqual(cells["g6"][1:], ["foreign link", "ok"])
+        self.assertEqual(cells["g7"][1:], [f"dangling {old}", "ok"])
+        self.assertEqual(cells["g8"][1:], ["folder ?", "ok"])
+        self.assertEqual(cells["g9"][1:], [f"broken {L['g9']}", "ok"])
+        last = out.splitlines()[-1]
+        self.assertTrue(last.startswith("skew: 6; cage: g2 (" + old + "), g3 (missing), g5 (folder g"), last)
+        f = json.loads(self.run_vs("status", "--farm", "--json")[1])
+        self.assertEqual((f["skew"], f["rc"], f["skewed"]), (6, 1, {"cage": ["g2", "g3", "g5", "g6", "g7", "g9"]}))
+        self.assertEqual(f["hosts"]["cage"]["guests"]["g4"], {"state": "current", "label": "ok folder",
+                                                             "vid": L["g4"]})
+        self.assertEqual(f["mirror"]["guests"]["g2"], f"unpublished g{'3' * 16}")
+
+    def test_no_skew_and_down_hosts(self):
+        for g, vid in self.latest_of.items():
+            self.link("cinq", g, vid)
+            self.link("cage", g, vid)
+        rc, out, err = self.run_vs("status", "--farm")
+        self.assertEqual((rc, out.splitlines()[-1]), (0, "skew: 0"), err)
+        self.down.add("cage")
+        rc, out, err = self.run_vs("status", "--farm")
+        self.assertEqual(rc, 3, err)
+        self.assertIn("down: cage (down: m@cage.local: timed out)", out)
+        self.assertTrue(all(r.split()[3] == "down" for r in out.splitlines()[1:10]), out)
+        os.unlink(self.hvms["cinq"] / "g1")
+        self.assertEqual(self.run_vs("status", "--farm")[0], 1)            # skew outranks down
 
 
 # --- 8: concurrency --------------------------------------------------------------

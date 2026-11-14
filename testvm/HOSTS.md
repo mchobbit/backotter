@@ -118,9 +118,11 @@ cache host with every guest: most of its `vms/` entries are links into its
 vm-store cache (cap 150G, floor 50G), and the rest are full folders: the
 guests whose disks back kept qcow2 overlays outside `vms/`, the 21 versions
 published 2026-11-13 (relinked once Bigfoot has them), and
-freebsd15-builder (a link to imgbuild). A publish reaches its links by
-`vm-store link --all`, not by vm-update, so its full folders lag Chopin's
-after an update until they are relinked.
+freebsd15-builder (a link to imgbuild). A publish reaches its links itself:
+Chopin's `vm-store publish` runs `vm-store link` on each cache host for the
+guests it moved, and `vm-store status --farm` on Chopin shows any host left
+behind. vm-update doesn't reach them, and link never replaces a full
+folder, so those lag Chopin's after an update until they are made links.
 
 vm-update updates every guest it can reach over SSH. Sculpt OS
 (`sculpt2610`) has no sshd: its `no-ssh` makes vm-update refuse it, and
@@ -129,9 +131,9 @@ Sculpt's own System Update writes (the newest point build of its release
 from Genode Labs' signed image index). It keeps `image-state` in
 vm-update's format, so the new generation reaches the cache hosts the same
 way: `vm-store publish sculpt2610` on Chopin (`sculpt-update --publish`
-does it), then `vm-store link sculpt2610` on each cache host whose
-`vms/sculpt2610` is a link. `sculpt-update --check vms/sculpt2610` says,
-on any host, whether a newer image or release is out.
+does it), which then runs `vm-store link sculpt2610` on each cache host.
+`sculpt-update --check vms/sculpt2610` says, on any host, whether a newer
+image or release is out.
 
 **Small hosts** (Copland, Cage, and Czerny later): 27 GiB of memory and a 10G
 RAM disk. Their ceiling is 9.0 11.2 (9.0 9.2 before their `base_gib` became 4), and
@@ -333,9 +335,11 @@ other sessions' runs.
      version. For comparison, Cage's and Copland's 160G caps are 143G full.
    - Link each guest the host should have: `vm-store link GUEST...`. This
      fetches from Chopin and creates `vms/GUEST`.
-   - After every publish, run `vm-store link --all` on each cache host. Nothing
-     runs it automatically yet. See `testvm/store/README.md`, "Cache hosts'
-     vms/: link".
+   - After this, every publish on Chopin relinks the host itself (it is
+     found by its `cache` role here). `vm-store status --farm` on Chopin
+     shows a host that is behind, and `vm-store relink-caches --hosts NAME`
+     catches it up. See `testvm/store/README.md`, "Publish relinks the
+     caches".
 5. **HoltTest inputs.** Copy `/bkoscratch/holttest1d/bin/` from Chopin:
    bko-holt, the f2fs-tools and jfsutils debs, and bcachefs. Copy
    `rescuer/rescuer.qcow2` and its `.sha256` from Chopin or Cinqcent. Copy

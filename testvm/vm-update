@@ -1688,7 +1688,8 @@ def run_gate(cmd: str, res_merge: dict, g: Guest) -> None:
 
 # Why vm-mount can't read a guest of each `uname -s` but Linux (as the
 # make-*.sh scripts say): the check passes these by.  HardenedBSD and GhostBSD
-# say FreeBSD.  Sculpt and Redox never get here: nothing updates them.
+# say FreeBSD.  Sculpt and Redox never get here: their no-ssh refuses them
+# first (testvm/sculpt-update updates Sculpt, offline; nothing updates Redox).
 NO_HOST_MOUNT = {
     "FreeBSD": "Linux can't write UFS, and the ZFS pool would have to be imported on this host",
     "NetBSD": "Linux's ufs driver reads FFSv2 at most, and not through a disklabel or NetBSD's wedges",
@@ -2086,8 +2087,9 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
     hold.append(g)
     mode = "--try" if args.try_ else "--probe" if args.probe else ""
     g.note(f"vm-update {mode} on {socket.gethostname()}, hosts {[where(h) for h in hosts]}")
-    # A guest whose sshd serves no logins (Redox today) can't be updated
-    # over SSH: refused at once, rather than after a boot's timeout.
+    # A guest whose sshd serves no logins (Redox today), or that has no sshd
+    # (Sculpt: sculpt-update updates it), can't be updated over SSH: refused
+    # at once, rather than after a boot's timeout.
     no_ssh = g.dir / "no-ssh"
     if no_ssh.exists():
         raise Failed(f"no SSH to update it over: {no_ssh.read_text().strip()}")

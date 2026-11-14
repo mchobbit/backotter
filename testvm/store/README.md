@@ -72,6 +72,12 @@ then; an unchanged one is dropped at commit ("already published").  Its
 development becomes its latest (by name, without `--stateless`, a rebuild
 leaves `latest` alone).  Which guests to opt in is the user's call.
 
+`sculpt2610` gets an `image-state` from `testvm/sculpt-update` (vm-update
+refuses it: it has no sshd), on its first real run, in vm-update's format;
+from then on it is a `g` guest like the others, and a Sculpt update is a new
+generation that `publish sculpt2610` (or `sculpt-update --publish`) stores
+and `link` brings to the caches.
+
 **The floor** (default 200G on the mirror): by default every copy needs
 its allocated size, reflinked or not, and publish refuses (exit 4) when that
 would take free space below the floor.  Opt in with

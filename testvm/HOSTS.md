@@ -82,6 +82,17 @@ freebsd15-builder (a link to imgbuild). A publish reaches its links by
 `vm-store link --all`, not by vm-update, so its full folders lag Chopin's
 after an update until they are relinked.
 
+vm-update updates every guest it can reach over SSH. Sculpt OS
+(`sculpt2610`) has no sshd: its `no-ssh` makes vm-update refuse it, and
+`testvm/sculpt-update` updates it on Chopin instead, offline, writing what
+Sculpt's own System Update writes (the newest point build of its release
+from Genode Labs' signed image index). It keeps `image-state` in
+vm-update's format, so the new generation reaches the cache hosts the same
+way: `vm-store publish sculpt2610` on Chopin (`sculpt-update --publish`
+does it), then `vm-store link sculpt2610` on each cache host whose
+`vms/sculpt2610` is a link. `sculpt-update --check vms/sculpt2610` says,
+on any host, whether a newer image or release is out.
+
 **Small hosts** (Copland, Cage, and Czerny later): 27 GiB of memory and a 10G
 RAM disk. Their ceiling is 9.0 9.2. They have no host ZFS. Their `vms/` is a set
 of links into the vm-store cache, which holds only the published guests (21

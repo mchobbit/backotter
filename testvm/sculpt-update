@@ -1,0 +1,1069 @@
+#!/usr/bin/env python3
+"""Update a Sculpt OS test guest (make-sculpt.sh) the way Sculpt updates itself.
+
+Usage: sculpt-update [--check | --try] [--image VERSION] [--cache DIR] [--offline]
+                     [--publish] WORK_DIR
+  e.g. sculpt-update --check vms/sculpt2610
+       sculpt-update vms/sculpt2610
+
+Sculpt has no sshd and no package manager vm-update could drive: it updates
+itself in its Leitzentrale, System > Update.  There, for a depot user
+(genodelabs), "Check for updates" fetches the user's image index, the list of
+the system images Genode Labs publishes; picking an image downloads it, and
+"Install" copies it into /boot, which the next boot runs.  What that leaves
+on the GENODE* partition, from Sculpt 26.10's own code (Genode's
+sculpt-26.10 tag: repos/gems/src/app/sculpt_manager/main.cc
+install_boot_image and view/software_update_widget.h, the
+depot_download_manager's gen_fetchurl.cc and gen_extract.cc, fs_tool's
+copy-all-files):
+
+  /public/genodelabs/image/index.xz, index.xz.sig
+                    the image index as downloaded (fetchurl), kept
+  /depot/genodelabs/image/index
+                    the index, unpacked (extract name="index" into
+                    image/extract/, then renamed over the old one)
+  /public/genodelabs/image/sculpt-pc-VERSION.tar.xz, .tar.xz.sig
+                    the image as downloaded, kept: nothing removes /public's
+                    downloads
+  /depot/genodelabs/image/sculpt-pc-VERSION/
+                    the archive unpacked (bender, image-hw.elf.gz, boot.png,
+                    font.pf2, grub/grub.cfg): extracted into image/extract/
+                    and renamed into place
+  /boot/*, /boot/grub/*
+                    install: every regular file of that folder copied into
+                    /boot over what is there (the same file, truncated and
+                    written anew: its inode, owner and mode stay), and on the
+                    pc board those of its grub/ into /boot/grub.  Nothing else
+                    in /boot is removed or touched: from a 26.04 image (NOVA:
+                    image.elf.gz and hypervisor) to a 26.10 one (base-hw:
+                    image-hw.elf.gz), the old two stay, and the new grub.cfg
+                    no longer boots them.
+
+Nothing under /config changes: the update and install keep no state of
+their own (the dialog's "reboot to activate" is in memory only), and the
+installed image says what it is itself: its build_info ROM, inside the
+image grub.cfg boots (/boot/image-hw.elf.gz on 26.10, /boot/image.elf.gz on
+26.04: genode_version sculpt-26.10, date 2026-10-30, board pc, ...), is what
+Sculpt's own dialog reads.  sculpt-update reads the same.
+
+sculpt-update writes exactly those files and folders, with Sculpt's
+contents, names and layout, but it can't be Sculpt's file system driver:
+  - new files and folders get what every inode Sculpt wrote on its first
+    boot has (debugfs on a make-sculpt.sh guest): owner 0:0, mode 0777, no
+    i_extra_isize, a, c and mtime 0 for folders, and mtime 2018-01-01
+    00:01:00 UTC with a and ctime 0 for files.  A file /boot already had
+    keeps its owner, mode, atime and ctime, and takes that mtime.  Inferred
+    from what the first boot left, not from Sculpt's driver itself;
+  - inode numbers and block placement are debugfs's (Sculpt's driver spreads
+    new folders over the block groups; a /boot file rewritten here is freed
+    and written again, and usually gets its old inode back);
+  - any block the update frees is zeroed where a whole qcow2 cluster of
+    them is free, so the image doesn't keep it (Sculpt leaves free blocks
+    as they are; nothing reads them).  In practice debugfs writes a /boot
+    file anew into the blocks it just freed, so little is freed, and each
+    update adds about its archive's size three times to the image (the
+    download kept in /public, the depot copy, /boot): some 100 MiB, as on
+    Sculpt itself.
+
+It does all that offline, on a qcow2 overlay over the guest's image, which
+is only read:
+  1. a real update first checks, as vm-update's step 1, that nothing uses the
+     image (a QEMU program, a qcow2 overlay on top of it, a merge left
+     undone) and that it is still what vms/GUEST/image-state says; a guest
+     with no image-state gets one there, generation and all, as vm-update
+     starts one (so a no-op run on a state-less guest starts its state).  It
+     holds vm-update's fleet lock (vms/.vm-update.fleet.lock) until it is
+     done, so no vm-store publish or vm-update round runs meanwhile;
+  2. fetches the image index and checks its signature (gpgv with only the
+     Genode Labs depot key, WORK_DIR/genodelabs.pub, fingerprint pinned
+     below, as make-sculpt.sh checks the release's image), reads the
+     installed image's build_info from the disk, and picks the newest pc
+     image of the guest's own release (the release its name says:
+     sculpt2610 is 26.10, so 26.10.1 and later point releases, never 27.04:
+     a new release is a new guest), or --image's.  Nothing newer: nothing
+     more is done;
+  3. downloads it (sculpt-pc-VERSION.tar.xz and its .sig, kept in the
+     cache) and checks it with the same key, and that the image inside (the one
+     its grub.cfg boots) is that version for the pc board;
+  4. makes a raw copy of the disk in the scratch folder (the RAM disk:
+     sparse, about what the disk holds), writes Sculpt's files there with
+     debugfs -w, checks them (each file read back against its source, and
+     e2fsck -fn), and then writes into the overlay only the 64 KiB clusters
+     that differ from the image, through a FUSE export of the overlay
+     (qemu-storage-daemon): the overlay holds the update and nothing else.
+     qemu-img compare then checks that the overlay on the image reads as the
+     raw copy, and the image's SHA-256 that it wasn't written;
+  5. boots the overlay with sculpt-check.sh --disk, which also checks that
+     the image grub.cfg boots is the new one.  --try stops here and throws
+     the overlay away;
+  6. merges it into the image as vm-update's step 5 does on one host (its
+     own code: qemu-img commit, the "fresh-install" snapshot retaken,
+     qcow2-punch.py), and records the new generation in image-state (the
+     old one and the overlay's SHA-256, chained) and image-stat.json, and
+     what is installed in WORK_DIR/sculpt-image.json;
+  7. with --publish, runs `vm-store publish GUEST` (Chopin: the store's
+     only publisher).  Without it, it says to.  Then each cache host takes
+     the new version with `vm-store link GUEST`.  No image is copied host to
+     host by hand.
+
+It also writes WORK_DIR/no-ssh (as make-sculpt.sh does), which makes
+vm-update and compare.py refuse the guest at once.  Never pass a Sculpt
+guest to vm-update.
+
+Real updates and starts run on the fleet's first host only (Chopin, for the
+real vms/), or in a tree of their own (BKO_WORK).  Like vm-update, it takes
+the guest's vms/GUEST/.vm-update.lock, and logs to vms/GUEST/update.log.
+
+Options:
+  --check        only say what is installed and what the index offers, and
+                 exit: 0 the newest image of the guest's release is
+                 installed, 10 a newer one of its release is there (what a
+                 plain sculpt-update installs), 11 none of its release but a
+                 newer release is out (a new guest's job; 10 wins when both
+                 hold, and the text says both), 1 an error.  It downloads the
+                 index into a scratch folder and writes nothing else (not
+                 even update.log), so it runs on a cache host's vm-store
+                 folder too
+  --try          steps 1-5 (no state started, no lock), then throw it away
+  --image VERSION
+                 install the pc image VERSION (YYYY-MM-DD) whether or not it
+                 is newer or of the guest's release (it says so when not); it
+                 need not be in the index (the index lists only the latest
+                 few), only on depot.genode.org
+  --cache DIR    downloads go in DIR/genodelabs/image/ (default
+                 $SCULPT_UPDATE_CACHE, else /bkoscratch/sculpt-update, else
+                 ~/.cache/sculpt-update).  The images are kept; the index is
+                 fetched anew each run
+  --offline      use only what the cache holds, the index too (tests)
+  --publish      after a merge or a start, run vm-store publish GUEST
+
+Environment: BKO_WORK (the tree whose vms/ holds the guest; default the
+folder above WORK_DIR's vms/), SCULPT_UPDATE_SCRATCH (the scratch folder's
+parent; default /mnt/bko-ram if it is there, else TMPDIR), WEAR_TAG.  Run
+heavy work under `cmp-run.sh --reserve 2 4 ...` (the raw copy and the boot
+check's VM: about 2 GiB of RAM disk and 4 GiB of memory).
+
+Needs: python3, qemu-img, qemu-storage-daemon and fusermount3 (/dev/fuse), e2fsprogs
+(debugfs, e2fsck, dumpe2fs), gpg and gpgv, curl, and what sculpt-check.sh
+needs.
+"""
+
+from __future__ import annotations
+
+import argparse
+import bisect
+import fcntl
+import gzip
+import hashlib
+import importlib.machinery
+import importlib.util
+import json
+import lzma
+import os
+import re
+import shutil
+import signal
+import subprocess
+import sys
+import tarfile
+import tempfile
+import time
+from pathlib import Path
+
+TESTVM = Path(__file__).resolve().parent
+SIGNING_KEY = "6566131D7AD813BA544BA91BDA439C67842B4F25"   # Genode Labs Depot 17.05 <depot@genode.org>, as make-sculpt.sh
+DEPOT_URL = "https://depot.genode.org"
+USER = "genodelabs"
+BOARD = "pc"
+SCULPT_MTIME = 1514764860               # 2018-01-01 00:01:00 UTC: every file Sculpt's first boot wrote has it
+CLUSTER = 65536                         # the guest's qcow2 cluster size, and the overlay's
+RECORD = "sculpt-image.json"
+NO_SSH = "no-ssh"
+NO_SSH_TEXT = ("Sculpt OS has no sshd and no package manager: testvm/sculpt-update updates it "
+               "(Sculpt's own System Update, offline), never vm-update")
+EXIT_CURRENT, EXIT_UPDATE, EXIT_RELEASE, EXIT_ERROR = 0, 10, 11, 1
+VERSION_RE = re.compile(r"\d{4}-\d\d-\d\d\Z")
+os.environ["PATH"] = os.environ.get("PATH", "/usr/bin:/bin") + ":/sbin:/usr/sbin"
+
+
+class Failed(Exception):
+    pass
+
+
+# Stopping (TERM, HUP, Ctrl-C) raises Stopped, so the finally clauses stop
+# the FUSE exports and delete the scratch folder; but not during the merge,
+# which vm-update's code lets finish (it then stops).
+MERGING = False
+STOP_ASKED = False
+EXPORTS: list["Export"] = []
+
+
+class Stopped(Failed):
+    pass
+
+
+def on_signal(signum, frame):
+    global STOP_ASKED
+    STOP_ASKED = True
+    if not MERGING:
+        raise Stopped(f"stopped by signal {signum}")
+
+
+def say(msg: str) -> None:
+    print(f"sculpt-update: {msg}", flush=True)
+
+
+def run(cmd: list[str], check: bool = True, **kw) -> subprocess.CompletedProcess:
+    r = subprocess.run(cmd, capture_output=True, text=True, errors="replace", **kw)
+    if check and r.returncode != 0:
+        raise Failed(f"{Path(cmd[0]).name} failed (exit {r.returncode}): {(r.stderr or r.stdout).strip()[-2000:]}")
+    return r
+
+
+def sha256(path: str | os.PathLike) -> str:
+    h = hashlib.sha256()
+    with open(path, "rb") as f:
+        for b in iter(lambda: f.read(1 << 20), b""):
+            h.update(b)
+    return h.hexdigest()
+
+
+def utc_now() -> str:
+    return time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime())
+
+
+# --- vm-update's own code, for step 1 and the merge --------------------------------
+# Loaded once BKO_WORK is set (vm-update reads it at import): the same checks,
+# the same image-state and the same merge as vm-update, not a copy of them.
+
+def load_vm_update():
+    loader = importlib.machinery.SourceFileLoader("vm_update", str(TESTVM / "vm-update"))
+    spec = importlib.util.spec_from_loader("vm_update", loader)
+    mod = importlib.util.module_from_spec(spec)
+    sys.modules["vm_update"] = mod
+    loader.exec_module(mod)
+    return mod
+
+
+# --- Signatures and the index -------------------------------------------------------
+
+class Keyring:
+    """gpgv with only the pinned key: a signature must be good and made by
+    exactly it.  The key is WORK_DIR/genodelabs.pub (make-sculpt.sh's, from
+    Genode's own tree), its fingerprint checked."""
+
+    def __init__(self, pub: Path, scratch: Path):
+        if not pub.is_file():
+            raise Failed(f"no {pub}: the Genode Labs depot key make-sculpt.sh fetched")
+        home = scratch / "gnupg"
+        home.mkdir(mode=0o700)
+        env = dict(os.environ, GNUPGHOME=str(home))
+        out = run(["gpg", "--batch", "--show-keys", "--with-colons", str(pub)], env=env).stdout
+        fprs = [line.split(":")[9] for line in out.splitlines() if line.startswith("fpr:")]
+        if not fprs or fprs[0] != SIGNING_KEY:
+            raise Failed(f"{pub} isn't the key {SIGNING_KEY}")
+        self.path = scratch / "keyring.gpg"
+        with open(pub, "rb") as src, open(self.path, "wb") as dst:
+            subprocess.run(["gpg", "--batch", "--dearmor"], stdin=src, stdout=dst, env=env, check=True)
+        self.env = env
+
+    def check(self, data: Path, sig: Path) -> None:
+        r = run(["gpgv", "--keyring", str(self.path), "--status-fd", "1", str(sig), str(data)], check=False, env=self.env)
+        if not re.search(rf"^\[GNUPG:\] VALIDSIG {SIGNING_KEY} ", r.stdout, re.M):
+            raise Failed(f"{data.name} does not match its signature {sig.name} by {SIGNING_KEY}")
+
+
+def fetch(url: str, dest: Path, offline: bool, again: bool = False) -> None:
+    """URL to DEST (atomically: a .part beside it until done).  A file already
+    there is kept unless AGAIN; OFFLINE only takes what is there."""
+    if dest.is_file() and not (again and not offline):
+        return
+    if offline:
+        raise Failed(f"--offline, and the cache has no {dest}")
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    part = dest.with_name(dest.name + ".part")
+    r = run(["curl", "-fsSL", "--retry", "3", "-o", str(part), url], check=False)
+    if r.returncode != 0:
+        part.unlink(missing_ok=True)
+        raise Failed(f"could not download {url}: {r.stderr.strip()}")
+    os.replace(part, dest)
+
+
+def parse_index(text: str) -> list[dict]:
+    """The image index (HID): `+ image | os: sculpt | board: pc | version:
+    2026-10-30` with `+ info | text: release 26.10` under it."""
+    images = []
+    for line in text.splitlines():
+        s = line.strip()
+        if s.startswith("+ image"):
+            attrs = {}
+            for part in s.split("|")[1:]:
+                k, _, v = part.partition(":")
+                attrs[k.strip()] = v.strip()
+            attrs["info"] = []
+            images.append(attrs)
+        elif s.startswith("+ info") and images:
+            for part in s.split("|")[1:]:
+                k, _, v = part.partition(":")
+                if k.strip() == "text":
+                    images[-1]["info"].append(v.strip())
+    for im in images:
+        m = next((re.search(r"\brelease (\d\d\.\d\d)((?:\.\d+)?)\b", t) for t in im["info"]
+                  if re.search(r"\brelease \d\d\.\d\d", t)), None)
+        im["release"] = m.group(1) if m else None          # 26.04 for "release 26.04.2"
+        im["release_text"] = (m.group(1) + m.group(2)) if m else None
+    return [im for im in images if im.get("os") == "sculpt" and VERSION_RE.match(im.get("version", ""))]
+
+
+def get_index(cache: Path, keys: Keyring, offline: bool) -> tuple[list[dict], Path, Path]:
+    d = cache / USER / "image"
+    xz, sig = d / "index.xz", d / "index.xz.sig"
+    fetch(f"{DEPOT_URL}/{USER}/image/index.xz.sig", sig, offline, again=True)
+    fetch(f"{DEPOT_URL}/{USER}/image/index.xz", xz, offline, again=True)
+    keys.check(xz, sig)
+    return parse_index(lzma.decompress(xz.read_bytes()).decode("utf-8", "replace")), xz, sig
+
+
+# --- The disk, read and written through a FUSE export ---------------------------------
+
+class Export:
+    """IMAGE (a qcow2, with its backing chain) as a raw file at MOUNT, by
+    qemu-storage-daemon's FUSE export: read-only, or writable with writes of
+    zeros made zero clusters (detect-zeroes=unmap)."""
+
+    def __init__(self, image: Path, mount: Path, writable: bool):
+        self.mount = mount
+        mount.touch()
+        pid = mount.with_suffix(".pid")
+        blockdev = {"driver": "qcow2", "node-name": "disk", "read-only": not writable,
+                    "file": {"driver": "file", "filename": str(image)}}
+        if writable:
+            blockdev.update({"detect-zeroes": "unmap", "discard": "unmap"})
+        export = {"type": "fuse", "id": "fuse", "node-name": "disk", "mountpoint": str(mount),
+                  "writable": writable, "allow-other": "off"}
+        run(["qemu-storage-daemon", "--blockdev", json.dumps(blockdev), "--export", json.dumps(export),
+             "--pidfile", str(pid), "--daemonize"])
+        self.pid = int(pid.read_text())
+        EXPORTS.append(self)
+
+    def mounted(self) -> bool:
+        try:
+            return any(line.split()[4] == str(self.mount) for line in open("/proc/self/mountinfo"))
+        except OSError:
+            return False
+
+    def close(self) -> None:
+        if self.pid:
+            try:
+                os.kill(self.pid, signal.SIGTERM)
+            except ProcessLookupError:
+                pass
+            for _ in range(300):
+                if not Path(f"/proc/{self.pid}").exists():
+                    break
+                time.sleep(0.1)
+            else:
+                raise Failed(f"qemu-storage-daemon {self.pid} didn't stop")
+            self.pid = 0
+        if self.mounted():
+            run(["fusermount3", "-u", "-z", str(self.mount)], check=False)
+        if self in EXPORTS:
+            EXPORTS.remove(self)
+
+
+def genode_offset(raw: Path) -> int:
+    """GENODE*'s first byte, from the primary GPT (as sculpt-check.sh)."""
+    return genode_extent(raw)[0]
+
+
+def genode_extent(raw: Path) -> tuple[int, int]:
+    """GENODE*'s first byte and its length, from the primary GPT."""
+    import struct
+    with open(raw, "rb") as f:
+        d = f.read(34 * 512)
+    if d[512:520] != b"EFI PART":
+        raise Failed("the disk has no GPT")
+    table, count, size = struct.unpack_from("<QII", d, 512 + 72)
+    for n in range(count):
+        e = d[table * 512 + n * size:table * 512 + (n + 1) * size]
+        if e[56:128].decode("utf-16-le", "replace").rstrip("\0") in ("GENODE*", "GENODE"):
+            first, last = struct.unpack_from("<QQ", e, 32)
+            return first * 512, (last - first + 1) * 512
+    raise Failed("the disk has no GENODE* partition")
+
+
+def debugfs(fs: str, *cmds: str, write: bool = False, scratch: Path | None = None) -> str:
+    """Run debugfs commands on FS (FILE?offset=BYTES); fails on anything it
+    says on stderr but its banner (debugfs exits 0 after a failed command)."""
+    if write:
+        script = Path(tempfile.mkstemp(prefix="debugfs.", dir=scratch)[1])
+        script.write_text("\n".join(cmds) + "\n")
+        r = run(["debugfs", "-w", "-f", str(script), fs], check=False)
+        script.unlink()
+    else:
+        r = run(["debugfs", "-c", "-R", cmds[0], fs], check=False)
+    errs = [line for line in r.stderr.splitlines()
+            if line.strip() and not line.startswith("debugfs 1.") and "catastrophic mode" not in line]
+    if r.returncode != 0 or errs:
+        raise Failed(f"debugfs: {'; '.join(errs) or f'exit {r.returncode}'}")
+    return r.stdout
+
+
+def inode_of(fs: str, path: str) -> dict | None:
+    """PATH's inode fields (debugfs stat), or None if there is no PATH."""
+    r = run(["debugfs", "-c", "-R", f"stat {path}", fs], check=False)
+    if "File not found" in r.stderr or not r.stdout.strip():
+        return None
+    out = r.stdout
+    m = re.search(r"Inode: (\d+)\s+Type: (\S+)\s+Mode:\s+(\d+)", out)
+    u = re.search(r"User:\s+(\d+)\s+Group:\s+(\d+)", out)
+    if not m or not u:
+        raise Failed(f"can't read debugfs stat of {path}: {out[:300]}")
+    times = {k: int(v, 16) for k, v in re.findall(r"\b(ctime|atime|mtime): 0x([0-9a-f]+)", out)}
+    return {"ino": int(m.group(1)), "type": m.group(2), "perm": int(m.group(3), 8),
+            "uid": int(u.group(1)), "gid": int(u.group(2)), **times}
+
+
+def read_build_info(gz: Path) -> dict:
+    """The build_info ROM in a Genode boot image (image-hw.elf.gz): what the image is (HID:
+    `build_info` then `  genode_version: sculpt-26.10`, `  date: ...`)."""
+    tail = b""
+    mark = b"build_info\n  genode_version:"
+    with gzip.open(gz, "rb") as f:
+        while True:
+            chunk = f.read(1 << 20)
+            if not chunk:
+                break
+            buf = tail + chunk
+            i = buf.find(mark)
+            if i >= 0:
+                rest = buf[i:] + f.read(4096)
+                info = {}
+                for line in rest.split(b"\n")[1:]:
+                    m = re.match(rb"  (\w+):\s*(\S+)\s*$", line)
+                    if not m:
+                        break
+                    info[m.group(1).decode()] = m.group(2).decode()
+                return info
+            tail = buf[-len(mark):]
+    raise Failed(f"{gz.name} holds no build_info")
+
+
+def boot_image_of(grub_cfg: str) -> str:
+    """The Genode image GRUB boots: grub.cfg's module2 that is an .elf.gz
+    (/boot/image-hw.elf.gz on base-hw, 26.10; /boot/image.elf.gz on NOVA,
+    26.04, beside its /boot/hypervisor)."""
+    for line in grub_cfg.splitlines():
+        f = line.split()
+        if len(f) >= 2 and f[0] == "module2" and f[1].startswith("/boot/") and f[1].endswith(".elf.gz"):
+            return f[1]
+    raise Failed("grub.cfg boots no /boot/*.elf.gz")
+
+
+def info_release(info: dict) -> str | None:
+    m = re.fullmatch(r"sculpt-(\d\d\.\d\d)(?:\.\d+)?", info.get("genode_version", ""))
+    return m.group(1) if m else None
+
+
+def installed(image: Path, scratch: Path) -> dict:
+    """What GENODE*'s boot image (grub.cfg's) is: its build_info, path and SHA-256."""
+    d = scratch / "read"
+    d.mkdir()
+    ex = Export(image, d / "disk.raw", writable=False)
+    try:
+        fs = f"{d / 'disk.raw'}?offset={genode_offset(d / 'disk.raw')}"
+        debugfs(fs, f"dump /boot/grub/grub.cfg {d / 'grub.cfg'}")
+        boot = boot_image_of((d / "grub.cfg").read_text(errors="replace"))
+        debugfs(fs, f"dump {boot} {d / 'boot.elf.gz'}")
+    finally:
+        ex.close()
+    gz = d / "boot.elf.gz"
+    if not gz.is_file() or gz.stat().st_size == 0:
+        raise Failed(f"{image} has no {boot}, which its grub.cfg boots")
+    info = read_build_info(gz)
+    info["sha256"] = sha256(gz)
+    info["boot_image"] = boot
+    shutil.rmtree(d)
+    return info
+
+
+# --- The update, in the raw copy --------------------------------------------------------
+
+def free_ranges(raw: Path, off: int, length: int, scratch: Path) -> tuple[list[tuple[int, int]], int, int]:
+    """The file system at OFF in RAW: its free blocks as sorted (first, last)
+    runs, its block size and its block count, from dumpe2fs's group listing.
+    dumpe2fs can't open FILE?offset= (it looks the name up as a device and
+    fails: exit 1, nothing on stdout), so it reads a sparse copy of the
+    partition alone.  Its listing must add up to the superblock's counts:
+    one entry per group, and as many free blocks as the superblock says."""
+    part = scratch / "partition.raw"
+    with open(raw, "rb") as src, open(part, "wb") as dst:
+        dst.truncate(length)
+        pos, end = off, off + length
+        while pos < end:
+            try:
+                d = os.lseek(src.fileno(), pos, os.SEEK_DATA)
+            except OSError:
+                break
+            if d >= end:
+                break
+            h = min(os.lseek(src.fileno(), d, os.SEEK_HOLE), end)
+            src.seek(d)
+            dst.seek(d - off)
+            left = h - d
+            while left:
+                b = src.read(min(left, 1 << 20))
+                if not b:
+                    raise Failed(f"{raw} ended inside its GENODE* partition")
+                dst.write(b)
+                left -= len(b)
+            pos = h
+    try:
+        out = run(["dumpe2fs", str(part)], check=False)
+    finally:
+        part.unlink()
+    if out.returncode != 0:
+        raise Failed(f"dumpe2fs: exit {out.returncode}: {out.stderr.strip()}")
+    head = {k: int(v) for k, v in re.findall(r"^(Block size|Block count|Free blocks|Blocks per group|First block):\s+(\d+)$",
+                                            out.stdout, re.M)}
+    if len(head) != 5:
+        raise Failed(f"dumpe2fs printed no superblock: {out.stdout[:300]}")
+    runs, in_groups, groups = [], False, 0
+    for line in out.stdout.splitlines():
+        # The superblock's "Free blocks:" is a count; the groups' (after the
+        # first "Group N:") list block numbers.
+        if line.startswith("Group "):
+            in_groups, groups = True, groups + 1
+        line = line.strip()
+        if in_groups and line.startswith("Free blocks:"):
+            for p in filter(None, (p.strip() for p in line[len("Free blocks:"):].split(","))):
+                a, _, b = p.partition("-")
+                runs.append((int(a), int(b or a)))
+    runs.sort()
+    want_groups = -(-(head["Block count"] - head["First block"]) // head["Blocks per group"])
+    free = sum(e - s + 1 for s, e in runs)
+    if groups != want_groups or free != head["Free blocks"]:
+        raise Failed(f"dumpe2fs's listing doesn't add up: {groups} groups of {want_groups}, "
+                     f"{free} free blocks of the superblock's {head['Free blocks']}")
+    return runs, head["Block size"], head["Block count"]
+
+
+def subtract(a: list[tuple[int, int]], b: list[tuple[int, int]]) -> list[tuple[int, int]]:
+    """The blocks in runs A but not in runs B (both sorted, each disjoint)."""
+    out, j = [], 0
+    for s, e in a:
+        while j < len(b) and b[j][1] < s:
+            j += 1
+        cur, k = s, j
+        while k < len(b) and b[k][0] <= e:
+            if b[k][0] > cur:
+                out.append((cur, b[k][0] - 1))
+            cur = max(cur, b[k][1] + 1)
+            k += 1
+        if cur <= e:
+            out.append((cur, e))
+    return out
+
+
+def all_free(runs: list[tuple[int, int]], first: int, last: int) -> bool:
+    i = bisect.bisect_right(runs, (first, float("inf"))) - 1
+    return i >= 0 and runs[i][0] <= first and runs[i][1] >= last
+
+
+def safe_extract(tar_path: Path, dest: Path, top: str) -> list[str]:
+    """Unpack the image archive (untrusted until its signature passed; even
+    then only folders and regular files under TOP/ are taken); the paths
+    under TOP, folders with a trailing /."""
+    names = []
+    with tarfile.open(tar_path, "r:xz") as t:
+        members = t.getmembers()
+        for m in members:
+            name = m.name.rstrip("/")
+            parts = name.split("/")
+            if parts[0] != top or any(p in ("", ".", "..") for p in parts) or name.startswith("/"):
+                raise Failed(f"{tar_path.name}: unexpected member {m.name!r}")
+            if not (m.isdir() or m.isreg()):
+                raise Failed(f"{tar_path.name}: {m.name!r} is neither a folder nor a file")
+            if len(parts) > 1:
+                names.append("/".join(parts[1:]) + ("/" if m.isdir() else ""))
+        t.extractall(dest, members=members, filter="data")
+    return sorted(names)
+
+
+def build_writes(fs: str, image_dir: Path, names: list[str], version: str, index: Path, index_xz: Path,
+                 index_sig: Path, tar_xz: Path, tar_sig: Path) -> tuple[list[str], dict[str, Path], dict]:
+    """debugfs commands that write what Sculpt's update and install write,
+    and {path in the file system: its source} to check them by."""
+    cmds: list[str] = []
+    sources: dict[str, Path] = {}
+    new_dirs: list[str] = []
+    new_files: list[str] = []
+    rewritten: dict[str, dict] = {}        # path: the old inode, its fields kept
+    touched_dirs: dict[str, dict] = {"/": inode_of(fs, "/")}   # folders that were there: their times put back
+
+    def have(path):
+        return inode_of(fs, path)
+
+    def mkdirs(path):
+        parts = path.strip("/").split("/")
+        for n in range(1, len(parts) + 1):
+            p = "/" + "/".join(parts[:n])
+            if p in new_dirs:
+                continue
+            old = have(p)
+            if old is None:
+                cmds.append(f"mkdir {p}")
+                new_dirs.append(p)
+            elif old["type"] != "directory":
+                raise Failed(f"{p} is there and isn't a folder")
+            else:
+                touched_dirs.setdefault(p, old)
+
+    def put(src: Path, dest: str):
+        parent, name = dest.rsplit("/", 1)
+        parent = parent or "/"
+        mkdirs(parent)
+        old = None if parent in new_dirs else have(dest)
+        if old is not None:
+            if old["type"] != "regular":
+                raise Failed(f"{dest} is there and isn't a file")
+            cmds.append(f"rm {dest}")
+            rewritten[dest] = old
+        else:
+            new_files.append(dest)
+        cmds.append(f"cd {parent}")
+        cmds.append(f"write {src} {name}")
+        sources[dest] = src
+
+    pub, dep = f"/public/{USER}/image", f"/depot/{USER}/image"
+    # "Check for updates": the index downloaded and unpacked.
+    put(index_xz, f"{pub}/index.xz")
+    put(index_sig, f"{pub}/index.xz.sig")
+    put(index, f"{dep}/index")
+    # The image: downloaded, unpacked into the depot.
+    top = f"sculpt-{BOARD}-{version}"
+    put(tar_xz, f"{pub}/{top}.tar.xz")
+    put(tar_sig, f"{pub}/{top}.tar.xz.sig")
+    mkdirs(f"{dep}/{top}")
+    for n in names:
+        if n.endswith("/"):
+            mkdirs(f"{dep}/{top}/{n.rstrip('/')}")
+        else:
+            put(image_dir / n, f"{dep}/{top}/{n}")
+    # "Install": the folder's files into /boot, its grub/'s into /boot/grub.
+    for n in names:
+        if not n.endswith("/") and (n.count("/") == 0 or (n.count("/") == 1 and n.startswith("grub/"))):
+            put(image_dir / n, f"/boot/{n}")
+    cmds.append("cd /")
+    for p in new_dirs:
+        cmds += [f"sif {p} uid 0", f"sif {p} gid 0", f"sif {p} mode 040777", f"sif {p} extra_isize 0",
+                 f"sif {p} atime @0", f"sif {p} ctime @0", f"sif {p} mtime @0"]
+    for p in new_files:
+        cmds += [f"sif {p} uid 0", f"sif {p} gid 0", f"sif {p} mode 0100777", f"sif {p} extra_isize 0",
+                 f"sif {p} atime @0", f"sif {p} ctime @0", f"sif {p} mtime @{SCULPT_MTIME}"]
+    for p, old in rewritten.items():
+        cmds += [f"sif {p} uid {old['uid']}", f"sif {p} gid {old['gid']}", f"sif {p} mode 0{0o100000 | old['perm']:o}",
+                 f"sif {p} extra_isize 0", f"sif {p} atime @{old.get('atime', 0)}",
+                 f"sif {p} ctime @{old.get('ctime', 0)}", f"sif {p} mtime @{SCULPT_MTIME}"]
+    for p, old in touched_dirs.items():
+        cmds += [f"sif {p} {k} @{old[k]}" for k in ("atime", "ctime", "mtime") if k in old]
+    return cmds, sources, {"new_dirs": new_dirs, "new_files": new_files,
+                           "rewritten": {p: o["ino"] for p, o in rewritten.items()}}
+
+
+def write_overlay(raw: Path, fuse: Path, base: Path) -> tuple[int, int]:
+    """Write into FUSE (the overlay, reading as the image until written) every
+    64 KiB cluster of RAW that differs from it: those RAW holds data in, and
+    those the image holds data in.  (clusters looked at, clusters written)"""
+    cands = set()
+    fd = os.open(raw, os.O_RDONLY)
+    size = os.fstat(fd).st_size
+    off = 0
+    while off < size:
+        try:
+            d = os.lseek(fd, off, os.SEEK_DATA)
+        except OSError:
+            break
+        h = os.lseek(fd, d, os.SEEK_HOLE)
+        cands.update(range(d // CLUSTER, (h + CLUSTER - 1) // CLUSTER))
+        off = h
+    for e in json.loads(run(["qemu-img", "map", "-U", "--output=json", str(base)]).stdout):
+        if e.get("data"):
+            cands.update(range(e["start"] // CLUSTER, (e["start"] + e["length"] + CLUSTER - 1) // CLUSTER))
+    out = os.open(fuse, os.O_RDWR)
+    written = 0
+    try:
+        for c in sorted(cands):
+            a = os.pread(fd, CLUSTER, c * CLUSTER)
+            b = os.pread(out, CLUSTER, c * CLUSTER)
+            if a != b:
+                if os.pwrite(out, a, c * CLUSTER) != len(a):
+                    raise Failed(f"short write at cluster {c}")
+                written += 1
+        os.fsync(out)
+    finally:
+        os.close(out)
+        os.close(fd)
+    return len(cands), written
+
+
+def make_update(image: Path, scratch: Path, version: str, tar_xz: Path, tar_sig: Path,
+                index_xz: Path, index_sig: Path, log) -> tuple[Path, str, dict]:
+    """Steps 4: the overlay holding the update.  (overlay, the new
+    boot image's SHA-256, the new image's build_info)"""
+    top = f"sculpt-{BOARD}-{version}"
+    unpacked = scratch / "unpacked"
+    unpacked.mkdir()
+    names = safe_extract(tar_xz, unpacked, top)
+    image_dir = unpacked / top
+    if not (image_dir / "grub" / "grub.cfg").is_file():
+        raise Failed(f"{tar_xz.name} lacks grub/grub.cfg")
+    boot = boot_image_of((image_dir / "grub" / "grub.cfg").read_text(errors="replace"))
+    gz = image_dir / boot[len("/boot/"):]
+    if "/" in boot[len("/boot/"):] or not gz.is_file():
+        raise Failed(f"{tar_xz.name}'s grub.cfg boots {boot}, which it doesn't hold")
+    info = read_build_info(gz)
+    if info.get("date") != version or info.get("board") != BOARD:
+        raise Failed(f"{tar_xz.name}'s image says date {info.get('date')}, board {info.get('board')}")
+    boot_sha = sha256(gz)
+    info["boot_image"] = boot
+    index = scratch / "index"
+    index.write_bytes(lzma.decompress(index_xz.read_bytes()))
+
+    base_sum = sha256(image)
+    raw = scratch / "disk.raw"
+    run(["qemu-img", "convert", "-U", "-f", "qcow2", "-O", "raw", str(image), str(raw)])
+    off, length = genode_extent(raw)
+    fs = f"{raw}?offset={off}"
+    run(["e2fsck", "-fn", fs])
+    before, bs, nblocks = free_ranges(raw, off, length, scratch)
+    cmds, sources, what = build_writes(fs, image_dir, names, version, index, index_xz, index_sig,
+                                       tar_xz, tar_sig)
+    debugfs(fs, *cmds, write=True, scratch=scratch)
+    log(f"wrote {len(sources)} files ({len(what['new_files'])} new, {len(what['rewritten'])} over old ones), "
+        f"{len(what['new_dirs'])} new folders")
+    for p, src in sources.items():
+        got = scratch / "readback"
+        got.unlink(missing_ok=True)
+        debugfs(fs, f"dump {p} {got}")
+        if not got.is_file() or sha256(got) != sha256(src):
+            raise Failed(f"{p} doesn't read back as {src.name}")
+        got.unlink()
+    for p, ino in what["rewritten"].items():
+        new = inode_of(fs, p)
+        if new["ino"] != ino:
+            log(f"{p}: inode {ino} is now {new['ino']}")
+    r = run(["e2fsck", "-fn", fs], check=False)
+    if r.returncode != 0:
+        raise Failed(f"e2fsck -fn after the writes: exit {r.returncode}: {r.stdout.strip()[-1500:]}")
+    # The blocks the update freed (an old image the install wrote over): a
+    # cluster wholly free now and in use before is zeroed, so the overlay
+    # holds a zero cluster there and the merge gives it back.
+    after, _, _ = free_ranges(raw, off, length, scratch)
+    freed = subtract(after, before)
+    zero = set()
+    fs_bytes = nblocks * bs
+    for s, e in freed:
+        for c in range((off + s * bs) // CLUSTER, (off + (e + 1) * bs - 1) // CLUSTER + 1):
+            lo, hi = c * CLUSTER - off, (c + 1) * CLUSTER - off
+            if lo < 0 or hi > fs_bytes:
+                continue
+            if all_free(after, lo // bs, (hi - 1) // bs):
+                zero.add(c)
+    if zero:
+        with open(raw, "r+b") as f:
+            for c in sorted(zero):
+                f.seek(c * CLUSTER)
+                f.write(bytes(CLUSTER))
+        r = run(["e2fsck", "-fn", fs], check=False)
+        if r.returncode != 0:
+            raise Failed(f"e2fsck -fn after zeroing freed blocks: exit {r.returncode}")
+    log(f"{sum(e - s + 1 for s, e in freed)} blocks freed; {len(zero)} clusters of them zeroed")
+
+    overlay = scratch / "update.qcow2"
+    run(["qemu-img", "create", "-q", "-f", "qcow2", "-o", f"cluster_size={CLUSTER}",
+         "-b", str(image), "-F", "qcow2", str(overlay)])
+    ex = Export(overlay, scratch / "overlay.raw", writable=True)
+    try:
+        looked, written = write_overlay(raw, scratch / "overlay.raw", image)
+    finally:
+        ex.close()
+    r = run(["qemu-img", "compare", "-q", "-f", "raw", "-F", "qcow2", str(raw), str(overlay)], check=False)
+    if r.returncode != 0:
+        raise Failed(f"the overlay on the image doesn't read as the raw copy (qemu-img compare exit {r.returncode})")
+    if sha256(image) != base_sum:
+        raise Failed(f"{image} changed while the update was made")
+    raw.unlink()
+    shutil.rmtree(unpacked)
+    log(f"overlay: {written} of {looked} clusters written ({written * CLUSTER >> 20} MiB), "
+        f"{overlay.stat().st_size >> 20} MiB on disk; the image unchanged")
+    return overlay, boot_sha, info
+
+
+# --- The guest ------------------------------------------------------------------------
+
+def guest_release(name: str, record: dict | None, info: dict) -> str:
+    m = re.fullmatch(r"sculpt(\d\d)(\d\d)", name)
+    if m:
+        return f"{m.group(1)}.{m.group(2)}"
+    if record and record.get("release"):
+        return record["release"]
+    r = info_release(info)
+    if r:
+        return r
+    raise Failed(f"can't tell {name}'s release: its name isn't sculptYYMM and the image says {info.get('genode_version')}")
+
+
+def pick(images: list[dict], release: str, have: str) -> tuple[dict | None, dict | None, dict | None]:
+    """(the newest pc image of RELEASE, the newer one to install or None, the
+    newest pc image of a newer release or None)."""
+    pc = [im for im in images if im.get("board") == BOARD and im.get("release")]
+    mine = sorted((im for im in pc if im["release"] == release), key=lambda im: im["version"])
+    newest = mine[-1] if mine else None
+    newer = newest if newest and newest["version"] > have else None
+    later = sorted((im for im in pc if im["release"] > release), key=lambda im: (im["release"], im["version"]))
+    return newest, newer, (later[-1] if later else None)
+
+
+def default_cache() -> Path:
+    if os.environ.get("SCULPT_UPDATE_CACHE"):
+        return Path(os.environ["SCULPT_UPDATE_CACHE"])
+    if os.access("/bkoscratch", os.W_OK):
+        return Path("/bkoscratch/sculpt-update")
+    return Path.home() / ".cache" / "sculpt-update"
+
+
+def scratch_parent() -> str | None:
+    if os.environ.get("SCULPT_UPDATE_SCRATCH"):
+        return os.environ["SCULPT_UPDATE_SCRATCH"]
+    if os.path.ismount("/mnt/bko-ram") and os.access("/mnt/bko-ram", os.W_OK):
+        return "/mnt/bko-ram"
+    return None
+
+
+def write_record(gdir: Path, info: dict, release: str, generation: str | None, by: str) -> None:
+    rec = {"release": release, "board": info.get("board"), "version": info.get("date"),
+           "genode_version": info.get("genode_version"), "boot_image": info.get("boot_image"),
+           "boot_image_sha256": info.get("sha256"),
+           "generation": generation, "recorded": utc_now(), "by": by}
+    tmp = gdir / (RECORD + ".tmp")
+    tmp.write_text(json.dumps(rec, indent=1) + "\n")
+    os.replace(tmp, gdir / RECORD)
+
+
+def write_no_ssh(gdir: Path) -> None:
+    p = gdir / NO_SSH
+    if not p.exists() or p.read_text().strip() != NO_SSH_TEXT:
+        p.write_text(NO_SSH_TEXT + "\n")
+
+
+def main() -> int:
+    global MERGING
+    ap = argparse.ArgumentParser(prog="sculpt-update", description=__doc__.split("\n\n")[0])
+    mode = ap.add_mutually_exclusive_group()
+    mode.add_argument("--check", action="store_true")
+    mode.add_argument("--try", dest="try_", action="store_true")
+    ap.add_argument("--image", metavar="VERSION")
+    ap.add_argument("--cache", type=Path)
+    ap.add_argument("--offline", action="store_true")
+    ap.add_argument("--publish", action="store_true")
+    ap.add_argument("work_dir", type=Path)
+    a = ap.parse_args()
+    for sig in (signal.SIGTERM, signal.SIGHUP, signal.SIGINT):
+        signal.signal(sig, on_signal)
+    if a.image and not VERSION_RE.match(a.image):
+        ap.error(f"--image takes YYYY-MM-DD, not {a.image!r}")
+    if a.publish and (a.check or a.try_):
+        ap.error("--publish goes with a real run")
+
+    gdir = Path(os.path.abspath(a.work_dir))
+    if not gdir.is_dir():
+        raise Failed(f"no such guest folder: {gdir}")
+    name = gdir.name
+    # vm-update finds the guest as BKO_WORK/vms/NAME.
+    if not os.environ.get("BKO_WORK"):
+        if gdir.parent.name != "vms":
+            raise Failed(f"{gdir} isn't in a vms/ folder: set BKO_WORK to the tree holding it")
+        os.environ["BKO_WORK"] = str(gdir.parent.parent)
+    vu = load_vm_update()
+    if not vu.same_path(vu.VMS / name, gdir):
+        raise Failed(f"{gdir} isn't BKO_WORK's vms/{name} ({vu.VMS / name})")
+    store_folder = (gdir / ".vm-store.json").exists()
+    disks = sorted(p for p in gdir.glob("sculpt*.qcow2") if not p.name.startswith("."))
+    if len(disks) != 1:
+        raise Failed(f"{gdir} has no single sculpt*.qcow2")
+    image = Path(os.path.realpath(disks[0]))
+    record = None
+    if (gdir / RECORD).is_file():
+        try:
+            record = json.loads((gdir / RECORD).read_text())
+        except ValueError:
+            raise Failed(f"{gdir / RECORD} isn't valid JSON")
+    cache = a.cache or default_cache()
+
+    real = not (a.check or a.try_)
+    if not a.check:
+        if store_folder:
+            raise Failed(f"{gdir} is a vm-store folder (a cache host's): update on Chopin, then vm-store link here")
+        if real:
+            if vu.VMS.is_symlink():
+                raise Failed(f"{vu.VMS} is a link: a real update runs only on a tree of its own")
+            vu.refuse_on_real_tree()
+            if vu.real_tree(vu.WORK) and not vu.on_first_host():
+                raise Failed(f"the fleet's guests are updated on {vu.ALL_HOSTS[0]}, and the other hosts take them "
+                             f"by vm-store link: not here")
+
+    scratch = Path(tempfile.mkdtemp(prefix=f"sculpt-update.{name}.", dir=scratch_parent()))
+    g = None
+    fleet = None
+    try:
+        if not a.check:
+            g = vu.Guest(name)              # its lock, its update.log
+        log = (lambda m: (say(m), g.note(m))) if g else say
+        if g:
+            g.note(f"sculpt-update {'--try ' if a.try_ else ''}{'--image ' + a.image + ' ' if a.image else ''}"
+                   f"on {os.uname().nodename}")
+        # Step 1.
+        states = None
+        if real:
+            lock = vu.VMS / vu.FLEET_LOCK
+            fleet = open(lock, "a")
+            try:
+                fcntl.flock(fleet, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                raise Failed(f"the fleet lock ({lock}) is held: a vm-update round or update, or a vm-store publish")
+            states = vu.check_hosts(g, [None], start=True)
+            if not (gdir / vu.STAT_FILE).exists():
+                vu.write_stat(None, g, states[None]["generation"])
+        elif a.try_:
+            vu.check_hosts(g, [None], start=False)
+        # Step 2.
+        keys = Keyring(gdir / "genodelabs.pub", scratch)
+        # --check writes nothing: its index goes in the scratch folder (or,
+        # --offline, is the cache's).
+        index_cache = scratch / "cache" if a.check and not a.offline else cache
+        images, index_xz, index_sig = get_index(index_cache, keys, a.offline)
+        have = installed(image, scratch)
+        release = guest_release(name, record, have)
+        newest, newer, later = pick(images, release, have.get("date", ""))
+        hv = have.get("date", "?")
+        log(f"{name}: release {release}; installed: pc image {hv} ({have.get('genode_version')}), "
+            f"{have['boot_image']} {have['sha256'][:12]}")
+        if record and record.get("version") != hv:
+            log(f"{RECORD} says {record.get('version')}, but the disk holds {hv}: the disk is what counts")
+        log(f"the index: newest pc image of {release}: "
+            f"{newest['version'] + ' (' + newest['release_text'] + ')' if newest else 'none'}"
+            f"{'; a newer release is out: ' + later['release_text'] + ' (' + later['version'] + '), a new guest' if later else ''}")
+        if a.check:
+            if newer:
+                log(f"UPDATE AVAILABLE: {newer['version']} ({newer['release_text']}); sculpt-update {gdir} installs it")
+                return EXIT_UPDATE
+            if later:
+                mine = info_release(have)
+                log(f"CURRENT for {release}, but release {later['release']} is out"
+                    + (f" (the installed image is of {mine} already)" if mine and mine != release else ""))
+                return EXIT_RELEASE
+            log(f"CURRENT: {hv}")
+            return EXIT_CURRENT
+
+        target = a.image or (newer["version"] if newer else None)
+        if target == hv:
+            target = None
+            log(f"{hv} is installed already")
+        if target is None:
+            log("nothing newer to install: nothing changed" + ("" if not real else
+                f"; image-state generation {states[None]['generation'][:12]} (update {states[None]['updates']})"))
+            if real:
+                write_no_ssh(gdir)
+                if not record or record.get("version") != hv or record.get("generation") != states[None]["generation"]:
+                    write_record(gdir, have, release, states[None]["generation"], "sculpt-update (no change)")
+                if fleet:
+                    fleet.close()
+                    fleet = None
+                if a.publish:
+                    publish(name)
+            return 0
+        if a.image:
+            if target < hv:
+                log(f"--image {target} is older than the installed {hv}: installing it anyway")
+            entry = next((im for im in images if im.get("board") == BOARD and im["version"] == target), None)
+            if entry and entry.get("release") and entry["release"] != release:
+                log(f"--image {target} is of release {entry['release']}, not the guest's {release}")
+        # Step 3.
+        d = cache / USER / "image"
+        top = f"sculpt-{BOARD}-{target}"
+        tar_xz, tar_sig = d / f"{top}.tar.xz", d / f"{top}.tar.xz.sig"
+        fetch(f"{DEPOT_URL}/{USER}/image/{top}.tar.xz.sig", tar_sig, a.offline)
+        fetch(f"{DEPOT_URL}/{USER}/image/{top}.tar.xz", tar_xz, a.offline)
+        keys.check(tar_xz, tar_sig)
+        log(f"{top}.tar.xz ({tar_xz.stat().st_size >> 20} MiB) matches its signature")
+        # The index as fetched, into the scratch folder: the cache's can change under a long run.
+        ix, isig = scratch / "index.xz", scratch / "index.xz.sig"
+        shutil.copyfile(index_xz, ix)
+        shutil.copyfile(index_sig, isig)
+        # Step 4.
+        overlay, boot_sha, info = make_update(image, scratch, target, tar_xz, tar_sig, ix, isig, log)
+        if info_release(info) != release:
+            log(f"the new image is {info.get('genode_version')}: release {info_release(info)}, the guest's name says {release}")
+        # Step 5.
+        log(f"booting the update (sculpt-check.sh --disk), expecting {info['boot_image']} {boot_sha[:12]}")
+        r = subprocess.run([str(TESTVM / "sculpt-check.sh"), "--disk", str(overlay), "--boot-sha256", boot_sha,
+                            "--screen", str(gdir / "check-screen.png" if real else scratch / "check-screen.png"),
+                            str(gdir)], capture_output=True, text=True, errors="replace",
+                           env=dict(os.environ, TMPDIR=str(scratch)))
+        for line in (r.stdout + r.stderr).splitlines():
+            g.note(f"sculpt-check: {line}")
+        if r.returncode != 0:
+            raise Failed(f"the updated guest failed sculpt-check.sh (exit {r.returncode}): "
+                         f"{(r.stderr or r.stdout).strip().splitlines()[-1:]}")
+        log("sculpt-check.sh: " + (r.stdout.strip().splitlines() or ["OK"])[-1])
+        if a.try_:
+            log(f"--try: {target} installs and boots; the overlay is thrown away, nothing changed")
+            return 0
+        # Step 6: vm-update's merge on this one host.
+        MERGING = True
+        generation = vu.ship_and_commit(g, [None], {g.path(g.images[0]): str(overlay)}, states)
+        MERGING = False
+        new_state = vu.read_json(None, name, vu.STATE_FILE)
+        info["sha256"] = boot_sha
+        write_record(gdir, info, release, generation, f"sculpt-update {target}")
+        write_no_ssh(gdir)
+        log(f"merged: pc image {target} installed; image-state update {new_state['updates']}, "
+            f"generation {generation[:12]} (was {states[None]['generation'][:12]})")
+        fleet.close()
+        fleet = None
+        if STOP_ASKED:
+            raise Stopped("stopped (after the merge, which finished)")
+        if a.publish:
+            publish(name)
+        else:
+            log(f"next: vm-store publish {name} on Chopin, then vm-store link {name} on each cache host")
+        return 0
+    finally:
+        if fleet:
+            fleet.close()
+        # A FUSE export left by a failure would keep the scratch folder busy.
+        for ex in list(EXPORTS):
+            try:
+                ex.close()
+            except Failed as e:
+                say(f"{e}; stop it by hand")
+        shutil.rmtree(scratch, ignore_errors=True)
+
+
+def publish(name: str) -> None:
+    say(f"vm-store publish {name}")
+    r = subprocess.run([str(TESTVM / "vm-store"), "publish", name])
+    if r.returncode != 0:
+        raise Failed(f"vm-store publish {name} failed (exit {r.returncode})")
+    say(f"published: each cache host takes it with vm-store link {name}")
+
+
+if __name__ == "__main__":
+    try:
+        sys.exit(main())
+    except Exception as e:
+        if type(e).__name__ not in ("Failed", "Stopped", "OverlayLost", "Blocked"):     # ours, or vm-update's
+            raise
+        print(f"sculpt-update: {e}", file=sys.stderr)
+        sys.exit(EXIT_ERROR)

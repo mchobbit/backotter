@@ -23,6 +23,8 @@
 #   first-boot-screen.png the screen at the end of the first boot
 #   vm-run-options        "--q35 --disk-bus sata --nic e1000", how vm-run
 #                         must boot it
+#   no-ssh                that it has no sshd (sculpt-update's words), so
+#                         that vm-update and compare.py refuse it at once
 #
 # The guest: the image's GPT, its last partition grown to the end of the
 # disk: 1, "BIOSBOOT" (50 KiB, no file system: GRUB's BIOS core), 2, "GRUB2",
@@ -35,8 +37,10 @@
 # GRUB's splash screen.  The disk is on AHCI and the NIC an e1000: Sculpt has
 # no virtio drivers.  2 GB RAM (it needs 1 GB).  Sculpt is graphical only: no
 # login on the serial port, no sshd, no host name and no root, so there's no
-# id_ed25519 or ssh-user, and vm-update can't update it (a new release is a
-# new guest; don't pass it to vm-update).
+# id_ed25519 or ssh-user, and vm-update can't update it: don't pass it to
+# vm-update.  testvm/sculpt-update updates it offline, writing what Sculpt's
+# own System Update writes, to the newest point build of its release (a new
+# release is a new guest).
 # To see and use it, give vm-run a display after "--", e.g.
 #   vm-run $(<WORK_DIR/vm-run-options) --serial-log /dev/null WORK_DIR/sculpt2610.qcow2 -- -vnc 127.0.0.1:1
 # vm-mount can't open it (it looks for /etc/fstab); e2fsprogs and debugfs
@@ -160,6 +164,8 @@ echo "Disk: $(sgdisk -p "$raw" | grep -c '^ *[0-9]') partitions, GENODE* is $((s
 # crash ends QEMU instead of booting again.  The monitor is for the
 # screenshot.
 echo "--q35 --disk-bus sata --nic e1000" >vm-run-options
+# sculpt-update's NO_SSH_TEXT, word for word: it rewrites a different one.
+echo "Sculpt OS has no sshd and no package manager: testvm/sculpt-update updates it (Sculpt's own System Update, offline), never vm-update" >no-ssh
 depot_users() {
     debugfs "$@" -R "ls -p /depot" "$fs" 2>/dev/null |
         awk -F/ '$6 != "." && $6 != ".." && $6 != "" { print $6 }' | tr '\n' ' '

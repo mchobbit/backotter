@@ -9,11 +9,21 @@
 #     never found the partition leaves it clean, as make-sculpt.sh did;
 #   - QEMU still running then (-no-reboot: a crash ends it), and e2fsck
 #     finding no errors it can't fix in what it left after being stopped.
-# The guest's own disk isn't written.
+# The disk itself isn't written.
 #
-# Usage: ./sculpt-check.sh WORK_DIR
+# Usage: ./sculpt-check.sh [--disk DISK] [--boot-sha256 HEX] [--screen PNG] WORK_DIR
 #   e.g. ./sculpt-check.sh vms/sculpt2610
-# Exits 0 if all of it holds.  The last screendump is WORK_DIR/check-screen.png.
+#   --disk DISK         boot DISK (a qcow2, an overlay on top of the guest's
+#                       image too: sculpt-update's) instead of WORK_DIR's one
+#                       sculpt*.qcow2; WORK_DIR still gives vm-run-options
+#   --boot-sha256 HEX   and before the boot, check that the Genode image
+#                       GENODE*'s /boot/grub/grub.cfg boots (its module2
+#                       *.elf.gz: /boot/image-hw.elf.gz on 26.10,
+#                       /boot/image.elf.gz on 26.04) has SHA-256 HEX: the
+#                       image an update installed is the one booted
+#   --screen PNG        the last screendump goes in PNG instead of
+#                       WORK_DIR/check-screen.png
+# Exits 0 if all of it holds.
 #
 # Needs: qemu-system-x86_64 with KVM, qemu-img, e2fsprogs, python3.
 
@@ -26,12 +36,28 @@ here=$(dirname "$(realpath "$0")")
 PATH=$PATH:/sbin:/usr/sbin
 die() { echo "sculpt-check: $*" >&2; exit 1; }
 
-[[ $# -eq 1 ]] || die "usage: $0 WORK_DIR"
+usage="usage: $0 [--disk DISK] [--boot-sha256 HEX] [--screen PNG] WORK_DIR"
+disk="" boot_sha256="" shot=""
+while [[ $# -gt 1 ]]; do
+    case $1 in
+    --disk) disk=$(realpath "$2") ;;
+    --boot-sha256) boot_sha256=$2 ;;
+    --screen) shot=$(realpath -m "$2") ;;
+    *) die "$usage" ;;
+    esac
+    shift 2 || die "$usage"
+done
+[[ $# -eq 1 && $1 != -* ]] || die "$usage"
+[[ -z $boot_sha256 || $boot_sha256 =~ ^[0-9a-f]{64}$ ]] || die "--boot-sha256 takes 64 hex digits, not '$boot_sha256'"
 dir=$(realpath "$1")
-disks=("$dir"/sculpt*.qcow2)
-[[ ${#disks[@]} -eq 1 && -f ${disks[0]} ]] || die "$dir has no single sculpt*.qcow2"
-disk=${disks[0]}
+if [[ -z $disk ]]; then
+    disks=("$dir"/sculpt*.qcow2)
+    [[ ${#disks[@]} -eq 1 && -f ${disks[0]} ]] || die "$dir has no single sculpt*.qcow2"
+    disk=${disks[0]}
+fi
+[[ -f $disk ]] || die "no disk $disk"
 [[ -f $dir/vm-run-options ]] || die "$dir has no vm-run-options"
+shot=${shot:-$dir/check-screen.png}
 
 work=$(mktemp -d)
 qemu_pid=""
@@ -70,6 +96,23 @@ print("not-ext2" if magic != 0xEF53 else "clean" if state & 1 else "not-clean")'
 }
 [[ $(fs_state "$disk") == clean ]] || die "GENODE* isn't clean on $disk itself; was the guest stopped while running?"
 
+# The image GRUB boots (grub.cfg's module2 *.elf.gz), read from a raw copy of
+# the disk in the scratch folder: qemu-img writes it sparse, so it takes about
+# what the disk holds.  (debugfs exits 0 when a file isn't there: the empty
+# dump then fails the sum.)
+if [[ -n $boot_sha256 ]]; then
+    qemu-img convert -f qcow2 -O raw "$disk" "$work/disk.raw"
+    fs="$work/disk.raw?offset=$((start * 512))"
+    boot=$(debugfs -R "cat /boot/grub/grub.cfg" "$fs" 2>/dev/null |
+        awk '$1 == "module2" && $2 ~ /^\/boot\/.*\.elf\.gz$/ { print $2; exit }')
+    [[ -n $boot ]] || die "$disk's /boot/grub/grub.cfg boots no /boot/*.elf.gz"
+    debugfs -R "dump $boot $work/boot.elf.gz" "$fs" >/dev/null 2>&1
+    got=$(sha256sum "$work/boot.elf.gz" | cut -d' ' -f1)
+    rm -f "$work/disk.raw" "$work/boot.elf.gz"
+    [[ $got == "$boot_sha256" ]] || die "$boot on $disk is $got, not $boot_sha256"
+    echo "$boot is $boot_sha256"
+fi
+
 qemu-img create -q -f qcow2 -b "$disk" -F qcow2 "$work/overlay.qcow2"
 port=$(python3 -c 'import socket; s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1])')
 echo "Booting $(basename "$disk") on an overlay, until the Leitzentrale is up (at most $BOOT_TIMEOUT s)"
@@ -77,7 +120,6 @@ echo "Booting $(basename "$disk") on an overlay, until the Leitzentrale is up (a
 SSH_PORT=$port "$here/vm-run" $(<"$dir/vm-run-options") --serial-log /dev/null "$work/overlay.qcow2" -- \
     -monitor "unix:$work/mon.sock,server,nowait" -no-reboot >"$work/qemu.log" 2>&1 &
 qemu_pid=$!
-shot="$dir/check-screen.png"
 # The Leitzentrale: its background, (34, 41, 61), near the left edge below
 # the top bar and halfway down (its Diagnostics box can cover the bottom-left
 # corner), and its top bar's yellow tab ("Components" or "Files", whichever

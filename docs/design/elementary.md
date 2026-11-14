@@ -244,6 +244,25 @@ Settled on `elementary8` (built 2026-11-14 on Chopin, 180 s) and
 - **Kernel:** 6.17 from the ISO. `vm-update --try` passes: 543 packages,
   rebooted into Linux 7.0.0-43-generic (24.04's newer HWE kernel), and the
   PPAs answer.
+- **os-prober leaked the build host into grub.cfg** (found by E6's first
+  HoltTest1U, `elem6c2`/`elem6q2`). In the chroot, update-grub,
+  grub-mkconfig and the GRUB and kernel postinsts ran os-prober over
+  Chopin's disks. Both of elementary8's grub.cfg files listed 12 foreign
+  entries (Chopin's Debian 13, another job's Gentoo LV), and the restore,
+  correctly, didn't. So the dumps differed in `boot.grub.grub_cfg`, while
+  every load stage, fsmeta (0 differences), the lone boot and health
+  passed. The environment can't turn it off: Ubuntu's grub-mkconfig sets
+  `GRUB_DISABLE_OS_PROBER=auto` itself before it reads the config. So the
+  build writes `GRUB_DISABLE_OS_PROBER=true` in a build-only
+  `/etc/default/grub.d/zz-bko-build-no-os-prober.cfg` and removes it at
+  the end, leaving the guest's /etc/default/grub as installed. The build
+  also dies if a grub.cfg has an `(on /dev/...)` entry. It also affects the other
+  make-from-live guests until a vm-update rewrites their grub.cfg in the VM.
+- **`elementary8-luks` needs a 20G disk:** at 16G its root LV is ~10.7
+  GiB, since /boot takes 1 GiB. `vm-update --try`'s eleventh apt pass then
+  found no room for its 863 MB of archives (linux-firmware and the new HWE
+  kernel). `--luks` builds a 20G disk. `elementary8` stays 16G: its update
+  passes.
 - **The image:** 8.3 GiB (`elementary8`) and 8.6 GiB (`-luks`) on disk.
   Cinqcent's copies have the same SHA-256 (`elementary8` d0754dad…).
 

@@ -108,6 +108,10 @@ case $distro in
 esac
 # neon's desktop takes about 10 GiB installed (Check, N3), so a bigger disk.
 case $distro in neon) DISK_SIZE=24G ;; esac
+# elementary's encrypted layout gives 1 GiB to /boot, so its root LV is ~10.7
+# GiB on 16G, too small for vm-update's last apt pass (863 MB of archives,
+# linux-firmware and the new HWE kernel; elementary E3): a bigger disk.
+if [[ $distro == elementary && $luks == yes ]]; then DISK_SIZE=20G; fi
 if [[ -z $layout ]]; then
     layout=plain
     if [[ $distro == elementary ]]; then layout=distinst; fi
@@ -372,6 +376,17 @@ fi
 cp -L /etc/resolv.conf "$root/etc/resolv.conf"
 printf '#!/bin/sh\nexit 101\n' >"$root/usr/sbin/policy-rc.d"
 chmod 755 "$root/usr/sbin/policy-rc.d"
+# No os-prober while building: in the chroot, os-prober (run by update-grub
+# and grub-mkconfig, and so by the kernel and GRUB packages' postinsts) would
+# scan this host's disks and put the host's and other builds' systems in the
+# guest's grub.cfg (elementary E6 found Chopin's Debian and a Gentoo LV in
+# elementary8's).  Ubuntu's grub-mkconfig sets GRUB_DISABLE_OS_PROBER=auto
+# itself before it reads the config, so the environment can't say it: a
+# grub.d file does, removed with policy-rc.d below, so the guest's own
+# /etc/default/grub is as installed.
+nogrubprobe=$root/etc/default/grub.d/zz-bko-build-no-os-prober.cfg
+made_grubd=no; [[ -d ${nogrubprobe%/*} ]] || { mkdir -p "${nogrubprobe%/*}"; made_grubd=yes; }
+echo "GRUB_DISABLE_OS_PROBER=true" >"$nogrubprobe"
 in_root() { chroot "$root" env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 "$@"; }
 
 # neon's remove list, from its Calamares: the packages module's (packages.conf:
@@ -672,7 +687,15 @@ EOF
     grep -qE '^[[:space:]]*default[[:space:]]' "$l" || echo "default Pop_OS-current" >>"$l"
 fi
 
-rm -f "$root/usr/sbin/policy-rc.d" "$root/etc/resolv.conf"
+# No other system in any grub.cfg: os-prober's entries say "(on /dev/...)".
+for f in "$root/boot/grub/grub.cfg" "$root/boot/efi/EFI/ubuntu/grub/grub.cfg"; do
+    [[ -f $f ]] || continue
+    ! grep -qE "^[[:space:]]*(menuentry|submenu) .*\(on /dev/" "$f" ||
+        die "${f#"$root"} names another system (os-prober ran on this host's disks)"
+done
+
+rm -f "$root/usr/sbin/policy-rc.d" "$root/etc/resolv.conf" "$nogrubprobe"
+if [[ $made_grubd == yes ]]; then rmdir --ignore-fail-on-non-empty "${nogrubprobe%/*}"; fi
 [[ -e $tmp/resolv.conf.image || -L $tmp/resolv.conf.image ]] && mv "$tmp/resolv.conf.image" "$root/etc/resolv.conf"
 in_root apt-get clean
 sync

@@ -329,6 +329,48 @@
    ],
    "notes": "run-guest-rt.sh lists freebsd/torture.sh and fsmeta.sh for FreeBSD only; they stay listed (the checker reads no OS branch)"
   },
+  "elementary8": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/elementary8/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/elementary8/judge.py",
+    "entry:testvm/test2/stic/limits.json#elementary8"
+   ],
+   "host": [
+    "pkg:dosfstools"
+   ],
+   "notes": "the ESP's FAT32 is made on the host (mkfs.vfat, as kali's) with the geometry read from the guest's ESP"
+  },
+  "elementary8-luks": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/elementary8-luks/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/elementary8-luks/judge.py",
+    "entry:testvm/test2/stic/limits.json#elementary8-luks"
+   ],
+   "host": [
+    "pkg:dosfstools"
+   ],
+   "notes": "the ESP's FAT32 is made on the host (mkfs.vfat, as kali's) with the geometry read from the guest's ESP"
+  },
   "fedora44": {
    "os": "linux",
    "bins": [

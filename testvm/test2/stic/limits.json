@@ -113,6 +113,18 @@
   "Device numbers": "outside devfs a device's number shows as NOUDEV: the type is compared",
   "Whole-system restore": "out of scope: whole-disk (the harness can't mount disklabel64/HAMMER2)"
  },
+ "elementary8": {
+  "Birth times": "ext4 and vfat keep them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
+  "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
+  "SELinux labels": "not applicable; the guest runs AppArmor, which keeps no labels on disk",
+  "Whole-disk needs (GPT, PV/VG/LV metadata, shim and GRUB's NVRAM entry under Secure Boot, the initramfs, the swap LV)": "out of scope: whole-disk (HoltTest1 1U recreates the disk and the data VG with its UUIDs, boots it alone from its NVRAM entry); here the scratch disk is laid out like the guest's and only its file systems' contents are restored"
+ },
+ "elementary8-luks": {
+  "Birth times": "ext4 and vfat keep them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
+  "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
+  "SELinux labels": "not applicable; the guest runs AppArmor, which keeps no labels on disk",
+  "Whole-disk needs (GPT, LUKS2, PV/VG/LV metadata, shim and GRUB's NVRAM entry under Secure Boot, the initramfs, the swap LV)": "out of scope: whole-disk (HoltTest1 1U recreates the disk, LUKS2 and the data VG with its UUIDs, boots it alone from its NVRAM entry); here the scratch disk is laid out like the guest's and only its file systems' contents are restored"
+ },
  "fedora44": {
   "[btrfs] birth times (statx btime on btrfs)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
   "[btrfs] project IDs (and P inheritance)": "btrfs here takes no project ID (chattr -p refused: btrfs has none); not applicable",

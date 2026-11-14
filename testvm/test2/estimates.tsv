@@ -121,6 +121,8 @@ holt	holt:gentoo-systemd	4.00	240	0.00	-	gentoo.md G3: as holt:gentoo (chimera-u
 holt	holt:anduinos2	5.63	338	0.00	-	anduinos.md A3: as holt:ubuntu26-uefi (r3all chopin: UEFI, Secure Boot), until A5's first run (est.)
 holt	holt:neon24	6.32	379	0.00	-	chopin ht1u PASS 2026-11-14, 02:07:09Z to 02:13:28Z (ht1.sh, in RAM; cinqcent's ht1u PASS in 436 s)
 holt	holt:vanilla3	27.13	1628	28.94	28.94	chopin v7-1 PASS 2026-11-14, its passing phases 1628 s (source 313, backup 169, rebuild 618, verify 528; cinqcent's v7-2 1276 s), ht1.sh on /bkoscratch only (HT_RAM=0, D 30 over every RAM-disk ceiling): gb and gb_disk its disk peak, 28,259,052 KiB (vanillaos.md V7)
+holt	holt:pikaos4	6.18	371	0.00	-	chopin p6-4 PASS 2026-11-14, its phases 371 s (source 53, backup 56, rebuild 165, verify 97; cinqcent's p6-5 390 s), ht1.sh in RAM (pikaos.md P6)
+holt	holt:pikaos4-luks	6.27	376	0.00	-	chopin p6-6 PASS 2026-11-14, its phases 376 s (source 47, backup 57, rebuild 177, verify 95; cinqcent's p6-7 341 s), ht1.sh in RAM (pikaos.md P6)
 holt	holt:debian13-stack+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
 holt	holt:aerynos+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
 holt	holt:mint22+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
@@ -208,6 +210,8 @@ guest	guest:ubuntu26-uefi	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 
 guest	guest:ubuntu26-zfs	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ubuntu26-zfsmirror	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:vanilla3	3.32	199	0.00	-	vanillaos.md V5: vm-update --try 79 s on chopin (1.32) + 0.5 for checks + 1.5 for a new guest's smoke backup (est.)
+guest	guest:pikaos4	14.05	843	0.00	-	pikaos.md P1: vm-update --try 723 s on chopin (12.05, 637 packages) + 0.5 for checks + 1.5 for a new guest's smoke backup (est.)
+guest	guest:pikaos4-luks	13.98	839	0.00	-	pikaos.md P4: vm-update --try 719 s on chopin (11.98, 637 packages) + 0.5 for checks + 1.5 for a new guest's smoke backup (est.)
 guest	guest:void-musl	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:zorin18	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 img	img:linux	3.00	180	0.00	-	11-07 boot logs: the --test image's boot tests (the files' times)

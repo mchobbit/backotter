@@ -92,6 +92,14 @@ if ! has_rule K-none; then
             if [ -e "/boot/initrd.img-${k#/boot/vmlinuz-}" ]; then echo "$k"; else echo "$k no-initrd"; fi
         done
     fi
+    # PikaOS (pikaos.md): Debian's vmlinuz-K, each with booster's booster.img-K beside it (names
+    # only, by test -e; .bak and .dpkg-bak copies aren't kernels).
+    if has_rule K-pika; then
+        for k in /boot/vmlinuz-*; do
+            case $k in *.old | *.bak | *.dpkg-bak | '/boot/vmlinuz-*') continue ;; esac
+            if [ -e "/boot/booster.img-${k#/boot/vmlinuz-}" ]; then echo "$k"; else echo "$k no-booster"; fi
+        done
+    fi
     if has_rule K-fed || has_rule K-ostree; then ls -1 /boot/loader/entries/*.conf 2>/dev/null | grep -v rescue; fi
     # ABRoot (Vanilla OS): each root's kernels in the init LV (label vos-init), one directory a
     # root, which only ABRoot mounts: read through a read-only mount of it here (noload: no

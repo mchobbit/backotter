@@ -16,5 +16,17 @@
    "lines": ["findmnt --verify failed", "findmnt: [E] wrong order: /var/home specified before /var"],
    "why": "Anaconda's ostree fstab lists /home (a link to var/home) before /var; findmnt resolves the link, systemd orders the mounts itself, and HoltTest1 sees the same on source and restore (bazzite.md, What B6 found)"
   }
+ },
+ "pikaos4": {
+  "image:sources": {
+   "lines": ["no -security suite in apt's sources"],
+   "why": "PikaOS is Debian sid rebuilt: its one apt source is ppa.pika-os.com's rolling suite pika (system.sources), which carries the security fixes too; there is no -security suite to point at (docs/design/pikaos.md, P1's --try)"
+  }
+ },
+ "pikaos4-luks": {
+  "image:sources": {
+   "lines": ["no -security suite in apt's sources"],
+   "why": "PikaOS is Debian sid rebuilt: its one apt source is ppa.pika-os.com's rolling suite pika (system.sources), which carries the security fixes too; there is no -security suite to point at (docs/design/pikaos.md, P1's --try)"
+  }
  }
 }

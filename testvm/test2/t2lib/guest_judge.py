@@ -26,7 +26,7 @@ AFTER_NEEDS = ("after:boot-state", "after:failed-units", "after:fstab", "after:s
 NEW_NEEDS = ("new:firmware", "new:ssh", "new:restic", "new:rustic", "new:smoke")
 KERNELS_MAX = {"K-deb": 3, "K-fed": 5, "K-ostree": 2, "K-pac": 2, "K-apk": 3, "K-void": 2, "K-moss": 3, "K-nix": 3, "K-fbsd": 3,
                "K-nbsd": 3, "K-obsd": 4, "K-dfly": 3, "K-ill": 4, "K-haiku": 2, "K-alpbsd": 3,
-               "K-gentoo": 3, "K-anduinos": 3}
+               "K-gentoo": 3, "K-anduinos": 3, "K-pika": 3}
 NO_RULE = "no rule for it"
 # K-abroot (Vanilla OS, vanillaos.md V5): check-image.sh lists "LABEL vmlinuz-K" for each kernel
 # in the init LV's LABEL/ (one directory a root), "LABEL none" for a root with none.  Both roots
@@ -38,6 +38,10 @@ ABROOT_NOT_DEFAULT = "the booted root isn't the one the master grub.cfg's defaul
 # name Debian's dracut.conf.d gives it, which GRUB's 10_linux looks for).
 NO_INITRD_MARK = "no-initrd"
 NO_INITRD = "a kernel without its dracut image /boot/initrd.img-K"
+# K-pika (PikaOS, pikaos.md): Debian's /boot/vmlinuz-K (kernel-pika), each with booster's
+# /boot/booster.img-K; check-image.sh marks one without it.  The update keeps the newest two.
+NO_BOOSTER_MARK = "no-booster"
+NO_BOOSTER = "a kernel without its booster image /boot/booster.img-K"
 U0 = "not updated yet (u0): frozen by its builder"
 
 
@@ -665,6 +669,8 @@ def judge_kernels(sec, checks):
         return Need("FAIL", None, ["more kernels than the updater keeps"])
     if rule == "K-anduinos" and any(x.endswith(" " + NO_INITRD_MARK) for x in ks):
         return Need("FAIL", None, [NO_INITRD])
+    if rule == "K-pika" and any(x.endswith(" " + NO_BOOSTER_MARK) for x in ks):
+        return Need("FAIL", None, [NO_BOOSTER])
     return Need("PASS", f"{len(ks)} kernel{'s' if len(ks) != 1 else ''}")
 
 
@@ -871,7 +877,7 @@ def newest_kernel_lines(lines, rule, sec=None, steps=None):
             kv[f[0]] = f[1].strip()
     if "unverified" in kv:
         return [f"kernel unverified: {kv['unverified']}"]
-    if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree", "K-gentoo", "K-anduinos", "K-abroot"):
+    if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree", "K-gentoo", "K-anduinos", "K-abroot", "K-pika"):
         run = kv.get("running")
         if not run or not installed:
             return ["kernel unverified: no running or installed kernel listed"]

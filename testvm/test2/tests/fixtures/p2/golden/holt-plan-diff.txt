@@ -1,12 +1,12 @@
-HoltTest2 plan: bko-holt code 18b730e (not built), rustic-bko bko-bin, base BASE, ledger 87 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 6 of 75 cells, est. 6.0 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+HoltTest2 plan: bko-holt code 18b730e (not built), rustic-bko bko-bin, base BASE, ledger 89 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
+due: 6 of 77 cells, est. 6.0 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   holt:arch                     any      holt:plan-diff  golden plan changed (format)  1.0 gm  history:1
   holt:mint22                   any      holt:plan-diff  golden plan changed (partition)  1.0 gm  history:1
   holt:mint22+bigger            any      holt:variants   mint22's golden plan changed in partition  1.0 gm  history:1
   holt:mint22+oneshot           any      holt:variants   mint22's golden plan changed in partition  1.0 gm  history:1
   holt:debian13-stack+degraded  any      holt:variants   plan-visible change; its degraded source dump isn't in the corpus  1.0 gm  history:1
   holt:ubuntu26-raid+degraded   any      holt:variants   plan-visible change; its degraded source dump isn't in the corpus  1.0 gm  history:1
-carried: holt:aerynos, holt:alpine324, holt:alpinebsd, holt:anduinos2, holt:artix-dinit, holt:artix-s6, holt:biglinux, holt:cachyos and 59 more (carry:plan-diff: plan-visible change; its golden plans are unchanged)
+carried: holt:aerynos, holt:alpine324, holt:alpinebsd, holt:anduinos2, holt:artix-dinit, holt:artix-s6, holt:biglinux, holt:cachyos and 61 more (carry:plan-diff: plan-visible change; its golden plans are unchanged)
 current: 0   not runnable: holt:ubuntu24-luks (kept off cinqcent: no ubuntu24-luks in its vms/; no inputs: 'testvm/..); holt:ubuntu24-uefi (no inputs: 'testvm/test2/holt/spec.json: no entry ubuntu24-uefi')
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written

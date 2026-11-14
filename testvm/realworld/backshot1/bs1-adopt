@@ -215,10 +215,13 @@ install_tools() {
     # bs1-to-stick's BootNext needs it, and a Chimera install with systemd-boot
     # (bootctl) can lack it, as can a Gentoo one (it is no part of @system).
     # The other systems' rehearsals all had it; NixOS gets it from adopt_nixos.
+    # PikaOS's installer leaves it (rEFInd's refind-mkdefault uses it), but
+    # it isn't held by anything there: apt's, if it was removed.
     if [[ -d /sys/firmware/efi ]] && ! command -v efibootmgr >/dev/null; then
         case $distro in
             chimera) apk_add efibootmgr ;;
             gentoo) emerge --ask=n --getbinpkg --noreplace sys-boot/efibootmgr ;;
+            pika) DEBIAN_FRONTEND=noninteractive apt-get install -y efibootmgr ;;
         esac
     fi
 }

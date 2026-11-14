@@ -1323,6 +1323,62 @@
     "established": true
    }
   },
+  "pikaos4": {
+   "kind": "ssh",
+   "plat": "linux",
+   "ram_gib": 10,
+   "harness": [
+    "testvm/make-pikaos.sh",
+    "testvm/pika/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-none",
+     "kernel": "K-pika",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false
+   }
+  },
+  "pikaos4-luks": {
+   "kind": "ssh",
+   "plat": "linux",
+   "ram_gib": 10,
+   "harness": [
+    "testvm/make-pikaos.sh",
+    "testvm/pika/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-none",
+     "kernel": "K-pika",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false
+   }
+  },
   "pop24": {
    "kind": "ssh",
    "plat": "linux",

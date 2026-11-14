@@ -54,8 +54,8 @@ class Spec(unittest.TestCase):
     def setUp(self):
         self.sf = rows_guest.load_spec(REPO)
 
-    def test_sixty_seven_guests_and_the_exclusion(self):
-        self.assertEqual(len(self.sf.names()), 67)
+    def test_sixty_nine_guests_and_the_exclusion(self):
+        self.assertEqual(len(self.sf.names()), 69)
         self.assertNotIn("freebsd15-builder", self.sf.names())
         self.assertEqual(self.sf.data["excluded"], {"freebsd15-builder": "a build helper"})
 
@@ -77,7 +77,7 @@ class Spec(unittest.TestCase):
         self.assertEqual(new, sorted(["endeavouros", "endeavouros-grub", "manjaro", "fedora44-raid", "ubuntu26-raid", "rocky10-raid5",
                                       "freebsd15-mirror", "omnios58-mirror", "ubuntu26-luks", "chimera", "kinoite44",
                                       "chimera-uefi", "chimera-zfs", "gentoo", "gentoo-systemd", "cachyos-zfs", "anduinos2", "neon24", "garuda", "biglinux",
-                                      "oi2610", "oi2610-bios", "vanilla3"]))
+                                      "oi2610", "oi2610-bios", "vanilla3", "pikaos4", "pikaos4-luks"]))
         for n in new:
             self.assertIn("testvm/test2/guest/new-guest.sh", self.sf.entry(n)["harness"], n)
 
@@ -115,12 +115,17 @@ class Spec(unittest.TestCase):
         from t2lib import guest_judge as J
         with open(os.path.join(REPO, "testvm/test2/guest/limits.json"), encoding="utf-8") as f:
             d = json.load(f)
-        self.assertEqual(sorted(d), ["kinoite44"])
+        self.assertEqual(sorted(d), ["kinoite44", "pikaos4", "pikaos4-luks"])
         self.assertEqual(sorted(d["kinoite44"]), ["after:boot-state", "after:failed-units", "after:fstab", "image:free"])
-        for n, e in d["kinoite44"].items():
-            self.assertIn(n, J.IMAGE_NEEDS + J.AFTER_NEEDS)
-            self.assertTrue(e["lines"] and all(isinstance(x, str) and x for x in e["lines"]), n)
-            self.assertTrue(e.get("why"), n)
+        # PikaOS (pikaos.md): its one apt suite, pika, is rolling (sid's), with no -security suite
+        for g in ("pikaos4", "pikaos4-luks"):
+            self.assertEqual(d[g]["image:sources"]["lines"], ["no -security suite in apt's sources"])
+            self.assertEqual(sorted(d[g]), ["image:sources"])
+        for g in d:
+            for n, e in d[g].items():
+                self.assertIn(n, J.IMAGE_NEEDS + J.AFTER_NEEDS)
+                self.assertTrue(e["lines"] and all(isinstance(x, str) and x for x in e["lines"]), n)
+                self.assertTrue(e.get("why"), n)
 
 
 class CheckAfterKernelString(unittest.TestCase):

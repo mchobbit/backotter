@@ -353,11 +353,12 @@ class TestManifest(unittest.TestCase):
 
     def test_not_ostree_unchanged(self):
         (self.root / "etc").mkdir()
-        (self.root / "etc" / "tuned").mkdir()
-        (self.root / "etc" / "tuned" / "active_profile").write_text("x\n")
+        (self.root / "etc" / "motd.d").mkdir()
+        (self.root / "etc" / "motd.d" / "boot-status").write_text("x\n")
         a = self.manifest("a.tsv")
         self.assertFalse(a.read_text().startswith("/ostree-default"))
-        self.touch("etc/tuned/active_profile")    # ostree's REMADE only: unexpected here
+        # ostree's REMADE only: unexpected here (etc/tuned's files are every Linux's REMADE, PikaOS's)
+        self.touch("etc/motd.d/boot-status")
         rc, out = self.compare(a, self.manifest("b.tsv"))
         self.assertEqual(rc, 1)
         self.assertNotIn("ostree", out)

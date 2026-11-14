@@ -767,7 +767,7 @@ class Derived(unittest.TestCase):
         self.assertEqual(run.lifecycle(self.w.word("GuestTest2 update", ctx), ctx, mac_root=self.mac, out=out.append), 2)
         text = "\n".join(out)
         self.assertIn("refused: guest:arch: no --try PASS within 7 days: run t2 GuestTest2 arch first", text)
-        self.assertEqual(text.count("refused: guest:"), 62)
+        self.assertEqual(text.count("refused: guest:"), 64)
 
     def test_a_refused_image_exits_2_after_the_due_ones_finish(self):
         import types

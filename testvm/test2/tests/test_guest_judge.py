@@ -377,6 +377,14 @@ class Kernels(unittest.TestCase):
         # the mark is K-anduinos's alone
         self.assertEqual(self.k("K-deb", "/boot/vmlinuz-7.0.0-43-generic no-initrd").v, "PASS")
 
+    def test_pika_needs_each_kernels_booster_image(self):
+        """PikaOS (pikaos.md): check-image.sh marks a vmlinuz-K without booster's booster.img-K."""
+        two = "/boot/vmlinuz-7.1.8-pikaos\n/boot/vmlinuz-7.3.3-pikaos"
+        self.assertEqual(self.k("K-pika", two).v, "PASS")
+        bad = self.k("K-pika", "/boot/vmlinuz-7.1.8-pikaos\n/boot/vmlinuz-7.3.3-pikaos no-booster")
+        self.assertEqual((bad.v, bad.lines), ("FAIL", [J.NO_BOOSTER]))
+        self.assertEqual(self.k("K-anduinos", "/boot/vmlinuz-7.3.3-pikaos no-booster").v, "PASS")
+
     def test_abroot_needs_a_kernel_in_each_root(self):
         """Vanilla OS (vanillaos.md V5): "LABEL vmlinuz-K" per kernel in the init LV, "LABEL none"."""
         two = "vos-a vmlinuz-7.3.3+deb14-amd64\nvos-b vmlinuz-7.3.3+deb14-amd64"
@@ -644,6 +652,11 @@ class NewestKernel(unittest.TestCase):
         self.assertEqual(self.k("K-anduinos", "running 7.0.0-38-generic\ninstalled 7.0.0-38-generic\ninstalled 7.0.0-43-generic"),
                          [J.NOT_NEWEST])
         self.assertEqual(self.k("K-anduinos", "running 7.0.0-38-generic\ninstalled 7.0.0-43-generic"), [J.NO_MODULES])
+
+    def test_pika_is_debians_rule(self):
+        self.assertEqual(self.k("K-pika", "running 7.3.3-pikaos\ninstalled 7.1.8-pikaos\ninstalled 7.3.3-pikaos"), [])
+        self.assertEqual(self.k("K-pika", "running 7.1.8-pikaos\ninstalled 7.1.8-pikaos\ninstalled 7.3.3-pikaos"), [J.NOT_NEWEST])
+        self.assertEqual(self.k("K-pika", "running 7.1.8-pikaos\ninstalled 7.3.3-pikaos"), [J.NO_MODULES])
 
     def test_abroot_the_default_root_must_boot(self):
         body = "running 7.3.3+deb14-amd64\ninstalled 7.3.3+deb14-amd64\npresent vos-b\ndefault vos-b"

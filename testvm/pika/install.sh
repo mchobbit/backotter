@@ -52,6 +52,14 @@
 # difference from a real install, outside BOOTX64 mode: a copy of EFI/refind
 # as the fallback loader EFI/BOOT/BOOTX64.EFI (below: vm-run's fresh UEFI
 # variables boot nothing else).  In BOOTX64 mode the installer made it.
+#
+# On a real machine (realworld/pika-bootstrap.sh, BackShot1's Thinkpad: run
+# in a chroot of the live image from another Linux), two settings from the
+# environment: PIKA_DISK, the disk's kernel name (vda without it), and
+# PIKA_METAL=1, which leaves out what only a test guest gets: the serial
+# console, text-mode boot, the "tester" user, the EFI/BOOT copy, and root's
+# password when ROOT_PASSWORD_HASH is empty (root logs in by key only).  The
+# installer's own steps are the same.
 
 set -euo pipefail
 trap 'echo "BACKOTTER-INSTALL-FAILED at line $LINENO"' ERR
@@ -62,7 +70,11 @@ AUTHORIZED_KEY='@AUTHORIZED_KEY@'
 LAYOUT='@LAYOUT@'
 REFIND_BOOTX64='@REFIND_BOOTX64@'
 LUKS_PASSPHRASE='@LUKS_PASSPHRASE@'   # (btrfs-luks only; letters and digits)
-DISK=vda
+DISK=${PIKA_DISK:-vda}
+METAL=${PIKA_METAL:-}
+[[ $DISK =~ ^[a-z0-9]+$ ]] || { echo "PIKA_DISK must be a disk's kernel name (vda, nvme0n1), not \"$DISK\""; false; }
+# The disk's partition N, as the GTK script names it: nvme0n1p3, vda3.
+part() { case $DISK in *nvme*) echo "/dev/${DISK}p$1" ;; *) echo "/dev/$DISK$1" ;; esac; }
 CONSOLE='console=tty0 console=ttyS0,115200n8'
 T=/media/pikaos/installation
 
@@ -298,11 +310,14 @@ id_pikaos=$(chroot "$T" id -u pikaos) && [[ $id_pikaos == 1001 ]] || { echo "no 
 # from its own directory), its binary as BOOTX64.EFI, as refind-install
 # --usedefault names it.  The NVRAM entry stays the first boot's way in.
 # In BOOTX64 mode the installer made EFI/BOOT itself: nothing is added.
-if [[ $REFIND_BOOTX64 == false && ! -e $T/boot/efi/EFI/BOOT ]]; then
-    cp -a "$T/boot/efi/EFI/refind" "$T/boot/efi/EFI/BOOT"
-    mv "$T/boot/efi/EFI/BOOT/refind_x64.efi" "$T/boot/efi/EFI/BOOT/BOOTX64.EFI"
+# A real machine keeps its NVRAM: no copy there, as the installer leaves it.
+if [[ -z $METAL ]]; then
+    if [[ $REFIND_BOOTX64 == false && ! -e $T/boot/efi/EFI/BOOT ]]; then
+        cp -a "$T/boot/efi/EFI/refind" "$T/boot/efi/EFI/BOOT"
+        mv "$T/boot/efi/EFI/BOOT/refind_x64.efi" "$T/boot/efi/EFI/BOOT/BOOTX64.EFI"
+    fi
+    [[ -s $T/boot/efi/EFI/BOOT/BOOTX64.EFI ]] || { echo "no fallback loader EFI/BOOT/BOOTX64.EFI"; false; }
 fi
-[[ -s $T/boot/efi/EFI/BOOT/BOOTX64.EFI ]] || { echo "no fallback loader EFI/BOOT/BOOTX64.EFI"; false; }
 
 # --- This guest's additions ----------------------------------------------------------
 mount --bind /dev "$T/dev"
@@ -312,19 +327,23 @@ mount -t tmpfs tmpfs "$T/run"
 in_t() { chroot "$T" "$@"; }
 echo "$GUEST_NAME" >"$T/etc/hostname"
 sed -i -E "s/^(127\\.0\\.1\\.1[[:space:]]+)pikaos\$/\\1$GUEST_NAME/" "$T/etc/hosts"
-printf 'root:%s\n' "$ROOT_PASSWORD_HASH" | in_t chpasswd -e
+[[ -z $ROOT_PASSWORD_HASH ]] || printf 'root:%s\n' "$ROOT_PASSWORD_HASH" | in_t chpasswd -e
 install -d -m 700 "$T/root/.ssh"
 echo "$AUTHORIZED_KEY" >"$T/root/.ssh/authorized_keys"
 chmod 600 "$T/root/.ssh/authorized_keys"
-in_t useradd -m -s /bin/bash -c "Test user" -G sudo tester
-printf 'tester:%s\n' "$ROOT_PASSWORD_HASH" | in_t chpasswd -e
+if [[ -z $METAL ]]; then
+    in_t useradd -m -s /bin/bash -c "Test user" -G sudo tester
+    printf 'tester:%s\n' "$ROOT_PASSWORD_HASH" | in_t chpasswd -e
+fi
 in_t systemctl enable ssh.service
-in_t systemctl set-default multi-user.target
-# The serial console on each of rEFInd's lines ("TITLE"  "OPTIONS ---"),
-# before the closing --- (its separator), the rest kept.
-sed -i -E "/^\"/ s/( ---)?\"[[:space:]]*\$/ $CONSOLE\\1\"/" "$T/boot/refind_linux.conf"
-[[ $(grep -c . "$T/boot/refind_linux.conf") == $(grep -c " $CONSOLE" "$T/boot/refind_linux.conf") ]] ||
-    { echo "not every refind_linux.conf line has the serial console"; false; }
+if [[ -z $METAL ]]; then
+    in_t systemctl set-default multi-user.target
+    # The serial console on each of rEFInd's lines ("TITLE"  "OPTIONS ---"),
+    # before the closing --- (its separator), the rest kept.
+    sed -i -E "/^\"/ s/( ---)?\"[[:space:]]*\$/ $CONSOLE\\1\"/" "$T/boot/refind_linux.conf"
+    [[ $(grep -c . "$T/boot/refind_linux.conf") == $(grep -c " $CONSOLE" "$T/boot/refind_linux.conf") ]] ||
+        { echo "not every refind_linux.conf line has the serial console"; false; }
+fi
 
 # --- checks -------------------------------------------------------------------------
 grep -qx 'ID=pika' "$T/etc/os-release" || { echo "the target's os-release doesn't say PikaOS"; false; }
@@ -337,7 +356,7 @@ echo "--- ESP"; find "$T/boot/efi" -maxdepth 3 | sort
 echo "--- refind.conf (set lines)"; grep -vE '^[[:space:]]*(#|$)' "$T/$rd/refind.conf"
 if [[ $LAYOUT == btrfs-luks ]]; then
     echo "--- crypttab"; cat "$T/etc/crypttab"
-    echo "--- LUKS"; cryptsetup luksDump "/dev/${DISK}3" | grep -E '^(Version|UUID|Cipher|Keyslots|  [0-9]+: luks2|	(Cipher|Key|PBKDF):)' || true
+    echo "--- LUKS"; cryptsetup luksDump "$(part 3)" | grep -E '^(Version|UUID|Cipher|Keyslots|  [0-9]+: luks2|	(Cipher|Key|PBKDF):)' || true
     echo "--- Btrfs subvolumes"; btrfs subvolume list "$T"
 fi
 echo "--- efibootmgr"; efibootmgr -v

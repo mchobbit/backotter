@@ -25,8 +25,8 @@ downloaded or installed yet. Code references are to local `main` at 1b980cd.
   archivers, with two QEMU guests, a SticTest1 entry each, a place in
   HoltTest1 and the Test2 registrations; BackShot1 on the Thinkpad is an
   optional later step. **P1-P7 done 2026-11-14** (uncommitted); the Test2
-  registrations wait for the sibling sessions' batched pass, and P8
-  (BackShot1) is not done.
+  registrations done 2026-11-14 (both guests alone, as vanilla3's). **P8
+  (BackShot1) done 2026-11-14:** PASS on the Thinkpad ("What P8 found").
 - It is **not** Debian's boot stack, and not Ubuntu's: it is Debian sid
   with its own kernel (`kernel-pika`, 7.3), **rEFInd** as the only boot
   loader, and **booster** as the initramfs generator. bko-holt has neither:
@@ -200,7 +200,7 @@ How they are built (Decision 1):
 
 Each guest gets: `rebuild-one.sh` lines (and its ISO check), the rebuild
 inputs on both hosts, `holttest1d/ram-sizes.tsv` rows (measured in P6: `pikaos4` D 17,
-`pikaos4-luks` D 16, MEM 4; peaks ~14 GiB, not the D 8 first estimated), `classes.json` entries (deferred to the batched Test2 pass), both hosts by `vm-store` publish,
+`pikaos4-luks` D 16, MEM 4; peaks ~14 GiB, not the D 8 first estimated), `classes.json` entries (done 2026-11-14), both hosts by `vm-store` publish,
 a GuestTest1 grade.
 
 **vm-update:** `in-guest.sh`'s `# t2-section: Linux.apt` works as on Debian
@@ -248,9 +248,19 @@ two corpus builds have the same sha256, leak scans are 0 on both hosts and
 the Mac, no other plan changes, and Test2's own tests pass. The Test2 files
 carry uncommitted cachyos-zfs work today; this waits until it is committed.
 **As built (2026-11-14):** the corpus entries (`holt/tests/corpus/pikaos4`,
-`pikaos4-luks`, their `index.tsv` rows) are made; the registrations
-(`classes.json` and the rest) are deferred to the sibling sessions' one
-batched Test2 pass, which includes PikaOS's.
+`pikaos4-luks`, their `index.tsv` rows) are made, and the registrations are
+done (2026-11-14, both guests alone, as vanilla3's, ahead of the batched
+pass): `classes.json` (`holt.families.Obscure`, `holt.uefi`),
+`holt/spec.json` (UEFI; `pikaos4-luks` with `console-boot.py`),
+`guest/spec.json` (pm apt, `S-apt`, `L-none`, `K-pika`, `B-lin`, `M-lin`,
+fw uefi, `ram_gib` 10 from the --try's 8.7 GiB peak), `guest/limits.json`
+(`image:sources`' "no -security suite": Pika's one suite `pika` is
+rolling), the `K-pika` rule (`guest_judge.py`, `check-image.sh`'s
+`no-booster` mark, `check-after.sh`), 14 apt/dpkg patterns in
+`guest/known-lines.json` from the two --try logs, `estimates.tsv` (holt
+from P6's `p6-4`/`p6-6` phases, guest from the --try), `t2lib/plan.py`'s
+and the README's counts, `world.py`, the tests' counts and the re-blessed
+p2 goldens.
 
 **BackShot1** (optional, P8): the Thinkpad reinstalled with PikaOS from the
 GUI installer, defaults (XFS), *check* first that its CPU is x86-64-v3.
@@ -369,18 +379,95 @@ took 20 min.
   16, MEM 4 (peaks ~14 GiB). The plan's `efibootmgr` rEFInd line was
   checked on its own on a rescuer boot (Cinqcent).
 
+## What P8 found
+
+2026-11-14, BackShot1 on the Thinkpad (i5-10210U: AVX2, so x86-64-v3;
+Secure Boot off), from Guix System (its backup `guix-20261114-114854` is
+in the library). Nothing committed.
+
+- **The install, from the rescue stick:** `testvm/realworld/pika-bootstrap.sh
+  SERIAL ISO INSTALL_SH KEYS_DIR HOSTNAME` (modelled on
+  `guix-bootstrap.sh`), with the ISO on `mybig512` in `iso/pikaos4/` (its
+  SHA-256 checked against the pin) and the scripts in `backshot1/pika/`.
+  It erases the disk by serial only, loop-mounts the ISO and its
+  `live/filesystem.squashfs` under a tmpfs overlay, binds `live/` at
+  `/live` (where pikainstall unsquashes from; the squashfs carries
+  `/cdrom/pool` itself), and `/dev`, `/proc`, `/sys` with efivarfs and the
+  rescue's udev database, then runs `testvm/pika/install.sh` in that chroot
+  with `PIKA_DISK=nvme0n1 PIKA_METAL=1`. install.sh is the guest's, with
+  those two settings from the environment (the guest build is unchanged):
+  `PIKA_METAL` leaves out the serial console, text-mode boot, the `tester`
+  user, the `EFI/BOOT` copy and root's password. Then the fixed host key
+  and BackShot1's `authorized_keys` go in. install.sh took 43 s; the whole
+  bootstrap about 1.5 min.
+- **What the installer made, as on `pikaos4`:** GPT `linux-efi` (vfat,
+  ESP flag), `linux-boot` (ext4 `PikaOS`, `bls_boot`), `linux-root` XFS
+  (exchange, parent pointers; the rescue's 7.0 kernel mounts it); zram;
+  booster's image; rEFInd in `EFI/refind` with Pika's theme and its NVRAM
+  entry, Boot0028 "rEFInd Boot Manager", first in BootOrder (by
+  refind-install: `refind-mkdefault` in the target's chroot says "EFI
+  variables are not supported", as in the guest build). rEFInd also keeps
+  `EFI/refind/vars/PreviousBoot` and an `EFI/tools` directory on the ESP.
+  The first boot came up from that entry (BootCurrent 0028), as
+  `thinkpad` with sshd, avahi, python3 and efibootmgr already there:
+  `bs1-adopt` installed nothing. `booster-reassert.timer` is installed but
+  disabled. The ISO ships one set of SSH host keys for every install
+  (`bs1-adopt` replaces them, as everywhere).
+- **The first bootstrap's teardown failed** (the install itself was
+  fine): `/run` is shared, so the chroot's mounts were copied into
+  udevd's, logind's, resolved's, networkd's and chronyd's own namespaces,
+  and stayed there, keeping the ISO busy. The script now makes its work
+  directory private before mounting anything under it; the second run
+  (the install the backup is of) tore down cleanly.
+- **BackShot1 changes:** `bs1-common`'s held timers gain
+  `booster-reassert`; `bs1-manifest`'s `EXPECTED` gains
+  `boot/booster.img-*`, and a new `KEPT` list (`boot/efi/EFI/refind/*`)
+  overrides `boot/efi/*`: each rEFInd file must come back with its size and
+  content, none missing or added; `bs1-adopt` installs efibootmgr by apt
+  on PikaOS if it is missing. `refind_linux.conf` on /boot was already
+  compared in full.
+- **bko-holt:** a static-pie glibc build of the working tree (main a435027
+  plus the uncommitted P2 work), 0.2.6, SHA-256 `6ed95fe1...afdda`, staged
+  in `backshot1/bin/` (the earlier one in `bin.prev-20261114-pika`);
+  rustic-bko 0.11.4+backotter.11 unchanged. No source change was needed.
+- **The run: PASS,** `pika-4-20261114-134728`, restore `20261114-135316`.
+  Preflight OK, `UNLOCK=none`, three sources (`/` XFS, `/boot` ext4,
+  `/boot/efi`). Phase 1: 264,307 files, 9.1 GiB (4.0 GiB stored), backup
+  88 s, `check --read-data` 37 s, 3 min in all. Plan PASS: XFS and ext4 made
+  with the source's features and UUIDs, one `booster build` per kernel in
+  the chroot, the rEFInd note ("nothing to install"), `efi-dedupe` and one
+  `efibootmgr --create` for rEFInd. Phase 2 PASS in about 4 min. The
+  restored system booted from Boot0028 (the old entry deleted, the new one
+  took its number and its place at the front of BootOrder), with the
+  host-only booster image built in the rescue's chroot, and again from
+  BootOrder alone after a plain reboot.
+- **The first verify failed** on 8 files with only a new mtime, written at
+  every boot by PikaOS's services: tuned's `etc/tuned/{active_profile,
+  post_loaded_profile,ppd_base_profile,profile_mode}` and
+  `etc/modprobe.d/tuned.conf`, supergfxd's `etc/supergfxd.conf` and
+  `etc/modprobe.d/supergfxd.conf`, and `usr/bin/steamdeps`
+  (`steam-repos-fix.service` copies it there). They joined `REMADE` (all
+  but the mtime compared); then **verify PASS**, 275,688 files compared, 0
+  unexpected. `refind_linux.conf`, `refind.conf` and `refind_x64.efi`
+  came back with the same content and mtime, and every file in
+  `EFI/refind` passed `KEPT`.
+- **Not done:** the QEMU rehearsal of the bootstrap (a rescuer and a blank
+  NVMe on Chopin) waited 27 min for room and was cancelled once the real
+  install had worked; the `bs1-qemu.py --virtio` rehearsal on `pikaos4`
+  wasn't run either. The real run went first, as Guix's did.
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Effort |
 |---|---|---|
 | P1 | Fetch the GNOME ISO (size *check*, ~3-4 GB) and `.md5` into rebuild-inputs on Chopin (the user's OK first; if bunny.net's check refuses a plain download, the user fetches it in a browser), pin its SHA-256. Read the live system offline: os-release, the kernel and booster packages, `/etc/booster.yaml`, `pikainstall`'s CLI and answers schema, whether initramfs-tools is installed, the hostname, the ISO label. Then `make-pikaos.sh pikaos4` by Decision 1's path, `rebuild-one.sh`, copy to Cinqcent (the same SHA-256), vm-update's guards. Settle every *check* and write "What P1 found" here. Done when it boots alone on both hosts, SSH works, and `vm-update --try` is ok. **Done 2026-11-14:** `testvm/make-pikaos.sh FLAVOR` and `testvm/pika/install.sh`, the ISO's GTK 2.0.5 partition script and `pikainstall` 2.0.5 over SSH; ~3 min build; qcow2 SHA-256 77cca138... on both hosts; boots alone on both; `vm-update --try` ok on both ("What P1 found", "What P2-P6 found") | 1.25 d (+0.5 d on path 2) |
 | P2 | bko-holt (High-effort subagent): the `SUPPORTED` row and tests (`pika` 4 accepted, another `ID_LIKE=debian` refused); `PACKAGES` and `fingerprint.py`; booster detection and `booster.yaml`'s keys; `booster.img-K` in `kernels_json` with the `.dpkg-bak`/`.bak` copies set aside; rEFInd from the ESP's files; `refind_linux.conf` recorded; load's booster arm and `("refind", true)` arm (the via_shim refusal, the UUID check of `refind_linux.conf`); `redact.rs`'s words; a PikaOS fake tree in `holt/src/scenarios.rs`. Done when `cargo test` passes and the scenario's plan has one `booster build` per kernel, no `refind-install`, no `update-initramfs`, the rEFInd note and the NVRAM entry. **Done 2026-11-14** (uncommitted): `SUPPORTED`'s row, booster's detection and load arm, `booster.img-K`, rEFInd from BootCurrent or the ESP's files, the kept-rEFInd arm and its refusals, `redact.rs`'s words | 0.75 d |
-| P3 | `pikaos4`'s golden plan and Test2 registrations (as Gentoo's G2b). **Done 2026-11-14** for the golden plan (`holt/tests/corpus/pikaos4`, its `index.tsv` row); the Test2 registrations are deferred to the batched pass | 0.4 d |
-| P4 | `pikaos4-luks`: the build (Btrfs, LUKS2, BOOTX64 mode), the typed passphrase, its golden plan and Test2 lines, `rebuild-one.sh`. Done as P1 and P3 are. **Done 2026-11-14:** ~5 min install, qcow2 6a083b8c... on both hosts, the passphrase typed by `console-boot.py`, golden plan `pikaos4-luks` and its `index.tsv` row; Test2 lines deferred as P3's | 0.5 d |
+| P3 | `pikaos4`'s golden plan and Test2 registrations (as Gentoo's G2b). **Done 2026-11-14** for the golden plan (`holt/tests/corpus/pikaos4`, its `index.tsv` row); the Test2 registrations done 2026-11-14 (with `pikaos4-luks`'s, as vanilla3's) | 0.4 d |
+| P4 | `pikaos4-luks`: the build (Btrfs, LUKS2, BOOTX64 mode), the typed passphrase, its golden plan and Test2 lines, `rebuild-one.sh`. Done as P1 and P3 are. **Done 2026-11-14:** ~5 min install, qcow2 6a083b8c... on both hosts, the passphrase typed by `console-boot.py`, golden plan `pikaos4-luks` and its `index.tsv` row; Test2 lines done 2026-11-14, as P3's | 0.5 d |
 | P5 | SticTest1 entries and runs, both guests, both archivers, both hosts, 0 FAIL. **Done 2026-11-14:** `pikaos4` 33 PASS/3 LIMIT/0 FAIL (`pk5d`), `pikaos4-luks` 34/4/0 (`pk5c`), both hosts and archivers; check-manifests' count 51 | 0.35 d |
 | P6 | HoltTest1 runs (1Obscure) on both hosts with the judge rules and the byte-identical rEFInd check; the boot alone; RAM peaks in `ram-sizes.tsv`. **Done 2026-11-14:** 1Obscure; `pikaos4` `p6-4` (Chopin) and `p6-5` (Cinqcent), `pikaos4-luks` `p6-6` (Chopin) and `p6-7` (Cinqcent), all PASS | 0.4 d |
-| P7 | Docs: holt/README.md's supported list, `osrel.rs`'s comment, HoltTest1's 1Obscure row and HoltTest1All, SticTest1's and Test2's READMEs, `layload.md`'s boot stage (booster, the kept rEFInd), memory (holttest1d index, a pikaos-support note). **Done 2026-11-14:** holt/README.md's list and tests, HoltTest1's 1Obscure row and HoltTest1All's members, SticTest1's README, layload.md's boot stage (booster, the kept rEFInd); `osrel.rs`'s comment was P2's; Test2's READMEs wait for the batched pass; memory is the session's | 0.1 d |
-| P8 | *Optional, later:* BackShot1 on the Thinkpad: the fixes above, the rehearsals, then the run. Done when phase1, plan, phase2 and verify PASS with 0 unexpected and the Thinkpad boots rEFInd from NVRAM. **Not done.** | 0.5 d + ~1 h of the user's time |
+| P7 | Docs: holt/README.md's supported list, `osrel.rs`'s comment, HoltTest1's 1Obscure row and HoltTest1All, SticTest1's and Test2's READMEs, `layload.md`'s boot stage (booster, the kept rEFInd), memory (holttest1d index, a pikaos-support note). **Done 2026-11-14:** holt/README.md's list and tests, HoltTest1's 1Obscure row and HoltTest1All's members, SticTest1's README, layload.md's boot stage (booster, the kept rEFInd); `osrel.rs`'s comment was P2's; Test2's README counts done 2026-11-14 with the registrations; memory is the session's | 0.1 d |
+| P8 | *Optional, later:* BackShot1 on the Thinkpad: the fixes above, the rehearsals, then the run. Done when phase1, plan, phase2 and verify PASS with 0 unexpected and the Thinkpad boots rEFInd from NVRAM. **Done 2026-11-14** (uncommitted): PikaOS installed from the rescue stick by `testvm/realworld/pika-bootstrap.sh`, run `pika-4-20261114-134728` PASS in every phase, 0 unexpected, rEFInd booted from its recreated NVRAM entry; no bko-holt change; the QEMU rehearsals not run ("What P8 found") | 0.5 d + ~1 h of the user's time (none taken) |
 | | *≈ 3.75 d without P8, ≈ 4.25 d with it* | |
 
 P2 can start beside P1 from the source facts above, but its golden plan

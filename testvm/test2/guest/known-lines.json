@@ -33,7 +33,21 @@
   "^Del ",
   "^\\S+ is already the newest version \\(",
   "^Found (linux|initrd) image: ",
-  "^update-initramfs: Generating "
+  "^update-initramfs: Generating ",
+  "^Solving dependencies\\.\\.\\.( Done)?$",
+  "^Preconfiguring packages \\.\\.\\.$",
+  "^Use 'apt autoremove' to remove (it|them)\\.$",
+  "^Installing new version of config file \\S+(…|\\.\\.\\. ?)$",
+  "^De-configuring \\S+ \\([^)]*\\), to allow configuration of \\S+ \\([^)]*\\)(…|\\.\\.\\. ?)$",
+  "^Replacing files in old package \\S+ \\([^)]*\\)(…|\\.\\.\\. ?)$",
+  "^Adding “diversion of \\S+ to \\S+ by \\S+”$",
+  "^update-initramfs: deferring update \\(trigger activated\\)$",
+  "^(Running hooks in /etc/ca-certificates/update\\.d|Updating certificates in /etc/ssl/certs)\\.\\.\\.$",
+  "^N added, N removed; done\\.$",
+  "^\\S+\\.(service|socket|target|mount|timer|path) is a disabled or a static unit not running, not starting it\\.$",
+  "^update-alternatives: using \\S+ to provide \\S+ \\(\\S+\\) in auto mode$",
+  "^Created symlink '/etc/systemd/\\S+' → '\\S+'\\.$",
+  "^Removed '/etc/systemd/\\S+'\\.$"
  ],
  "dnf": [
   "^(Upgrading|Installing|Reinstalling|Downgrading|Cleanup|Verifying|Erasing|Obsoleting|Running scriptlet|Preparing) ?: .*N/N$",

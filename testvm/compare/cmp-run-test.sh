@@ -14,9 +14,10 @@
 # a minute (cmp-run.sh waits 30 s between tries), except case 0, which is
 # a moment:
 #   0 --ceiling and --free with no ledger there at all: each prints its
-#     "DISK MEM" (--free also "waiting N", and never more than the
-#     ceiling), and neither makes a file, not even the ledger's; then 0b,
-#     --free against a ledger and a line that hold rows, and 0c, which
+#     "DISK MEM" (--free also "waiting N" and "after DISK MEM", and never
+#     more than the ceiling), and neither makes a file, not even the
+#     ledger's; then 0b, --free against a ledger and a line that hold rows
+#     (one an older cmp-run.sh's, with no SINCE), and 0c, which
 #     pins the one thing a huge row cannot: that a row within the 2 GiB of
 #     headroom ceiling() holds back and budget() doesn't comes off the
 #     memory once, not twice;
@@ -25,7 +26,23 @@
 #     (prune), takes a row and leaves the line (leave_line);
 #   2 m's files, root's --reserve: the same;
 #   3 root's files, m's queue worker: its row goes to the job's sudo (the
-#     rename of the row), and is pruned once the job ends.
+#     rename of the row), and is pruned once the job ends;
+#   4-6 backfill, on m's files, with a ledger row that leaves about 1 GiB of
+#     RAM disk (its size less 2.05 GiB: the tmpfs's size is fixed, so the room
+#     is exactly known; skipped where its free space or the memory can't give
+#     that) and figures of 0 memory (BASE_GIB=0, HOT_C and NVME_C out of
+#     reach, so other sessions' memory and heat stay out of it):
+#   4 a young head in line that needs 2 GiB, more than the room: --free's
+#     "after" is the room all the same, and a 0.1 GiB --reserve passes it and
+#     runs at once;
+#   5 the same head having waited past BACKFILL_MAX (its SINCE an hour ago; a
+#     row with no SINCE, and BACKFILL_MAX=0 with a young one, the same):
+#     "after" is 0, the 0.1 GiB --reserve waits in line, and starts once the
+#     ledger row is gone and the head's 2 GiB is off the room;
+#   6 a real head: a 2 GiB --reserve waits, the ledger row is swapped for one
+#     that leaves it just 2 GiB, and a 0.5 GiB --reserve that comes then
+#     (first, as a waiter polling before the head would) waits; the head runs
+#     first, and the small one only once the head has ended.
 # Each case also checks that nothing went to stderr, the files are the same
 # inodes with the same owner, and no temporary file was left. One ok or FAIL
 # line per check; exit 1 if any FAILs.
@@ -63,7 +80,9 @@ until_true() {  # SECS CMD...: true once CMD is, within SECS
     while ((n-- > 0)); do "$@" && return 0; sleep 1; done
     return 1
 }
-waiter() { awk '$2 == "0.1" && $3 == "0.1" && $5 == "reserve" && $6 == "sh" { f = 1 } END { exit !f }' "$D/.reserve.wait"; }
+# A row in line (PID DISK MEM HOT_C SINCE WHAT...) for a --reserve DISK MEM sh ...
+waiter() { inline "${1:-0.1}" "${2:-0.1}"; }
+inline() { awk -v d="$1" -v m="$2" '$2 == d && $3 == m && $5 ~ /^[0-9]+$/ && $6 == "reserve" && $7 == "sh" { f = 1 } END { exit !f }' "$D/.reserve.wait"; }
 alive() { kill -0 "$1" 2>/dev/null || sudo kill -0 "$1" 2>/dev/null; }
 gone() { ! alive "$1"; }
 
@@ -73,9 +92,12 @@ sudo find "$D" -mindepth 1 -delete
 cf=$(CMP_LEDGER_DIR="$D" "$CMP_RUN" --ceiling 2>"$T/err.0")
 ff=$(CMP_LEDGER_DIR="$D" "$CMP_RUN" --free 2>>"$T/err.0")
 check "0: --ceiling prints DISK MEM" grep -Eqx '[0-9]+[.][0-9] -?[0-9]+[.][0-9]' <<<"$cf"
-check "0: --free prints DISK MEM, then waiting N" \
+check "0: --free prints DISK MEM, then waiting N, then after DISK MEM" \
     awk 'NR == 1 && /^[0-9]+[.][0-9] [0-9]+[.][0-9]$/ { f = 1 } NR == 2 && /^waiting [0-9]+$/ { w = 1 }
-        END { exit !(NR == 2 && f && w) }' <<<"$ff"
+        NR == 3 && /^after [0-9]+[.][0-9] [0-9]+[.][0-9]$/ { a = 1 }
+        END { exit !(NR == 3 && f && w && a) }' <<<"$ff"
+check "0: with nobody in line, after is the free room" \
+    awk 'NR == 1 { r = $0 } NR == 3 { exit !("after " r == $0) }' <<<"$ff"
 check "0: --free is within the ceiling" \
     awk -v c="$cf" 'NR == 1 { split(c, x, " "); exit !($1 + 0 <= x[1] + 0 && $2 + 0 <= x[2] + 0) }' <<<"$ff"
 check "0: neither made a file" test -z "$(sudo find "$D" -mindepth 1)"
@@ -89,14 +111,16 @@ fresh m
 sleep 600 & hold0=$! pids+=("$hold0")
 printf '%s 1000000 1000000 - reserve held by the test\n' "$hold0" |
     dd of="$D/.reserve" conv=nocreat,notrunc oflag=append status=none
+# (The line's row has no SINCE, as an older cmp-run.sh's: read all the same.)
 printf '%s 0.1 0.1 95 reserve held by the test\nnotapid 1 1 95 junk, as a torn write leaves\n' "$hold0" |
     dd of="$D/.reserve.wait" conv=nocreat,notrunc oflag=append status=none
 f0b=$(CMP_LEDGER_DIR="$D" "$CMP_RUN" --free 2>"$T/err.0b")
 # (END and NR, not "NR == 1" alone: a --free that printed nothing at all would
 # pass an exit taken in a rule that never ran.)
 check "0: --free takes off what the ledger's live rows hold" \
-    awk 'NR == 1 { ok = ($1 + 0 == 0 && $2 + 0 == 0) } END { exit !(NR == 2 && ok) }' <<<"$f0b"
+    awk 'NR == 1 { ok = ($1 + 0 == 0 && $2 + 0 == 0) } END { exit !(NR == 3 && ok) }' <<<"$f0b"
 check "0: --free counts the line's live rows only" grep -qx "waiting 1" <<<"$f0b"
+check "0: --free's after is none either" grep -qx "after 0.0 0.0" <<<"$f0b"
 kill "$hold0"
 if awk 'NR == 1 { exit !($1 + 0 == 0 && $2 + 0 == 0) }' <<<"$ff"; then
     ok "0: (this host has no room of its own: the gone-holder check is skipped)"
@@ -158,7 +182,7 @@ check "0: no temporary files left" no_leftovers
 
 # A --reserve behind a row whose holder lives: in line, then (holder gone) reserved.
 reserve_case() {  # N OWNER RUNNER (m: as m; root: with sudo)
-    local n=$1 owner=$2 runner=$3 hold rp cmd
+    local n=$1 owner=$2 runner=$3 hold rp cmd since
     fresh "$owner"
     sleep 600 & hold=$! pids+=("$hold")
     printf '%s 9999 0 - reserve held by the test\n' "$hold" | dd of="$D/.reserve" conv=nocreat,notrunc oflag=append status=none
@@ -173,11 +197,15 @@ reserve_case() {  # N OWNER RUNNER (m: as m; root: with sudo)
     pids+=($!)
     # cmp-run.sh's PID (its row's in line; as root, past sudo and timeout).
     check "$n: $runner's --reserve waits in line on $owner's files" until_true 20 waiter
-    rp=$(awk '$2 == "0.1" && $3 == "0.1" && $5 == "reserve" && $6 == "sh" { print $1; exit }' "$D/.reserve.wait")
+    rp=$(awk '$2 == "0.1" && $3 == "0.1" && $6 == "reserve" && $7 == "sh" { print $1; exit }' "$D/.reserve.wait")
     [[ -n $rp ]] || { bad "$n: no row in line: the rest of the case is skipped"; return; }
     if ((n == 1)); then   # its next try (30 s on) changes its row in line, not adds one
+        since=$(awk -v p="$rp" '$1 == p { print $5 }' "$D/.reserve.wait")
+        check "$n: its row in line has a SINCE, about now" \
+            awk -v s="$since" -v now="$(date +%s)" 'BEGIN { exit !(s ~ /^[0-9]+$/ && now - s >= 0 && now - s < 60) }'
         sleep 35
         check "$n: one row in line after its second try" test "$(grep -c "^$rp " "$D/.reserve.wait")" = 1
+        check "$n: its row kept its SINCE" awk -v p="$rp" -v s="$since" '$1 == p { exit !($5 == s) }' "$D/.reserve.wait"
     fi
     kill "$hold"
     check "$n: reserved and done once the holder is gone" until_true 70 gone "$rp"
@@ -208,5 +236,85 @@ check "3: the row pruned once the job ended" test ! -s "$D/.reserve"
 check "3: nothing on stderr" quiet "$T/err.3"
 check "3: the same files, still root's" same_files
 check "3: no temporary files left" no_leftovers
+
+# 4-6: backfill.  The ledger is ours alone, but budget() reads the real tmpfs and
+# memory: the RAM disk's room is size - 1 - what the ledger holds (or its free
+# space - 1, when less), so a ledger row of size - 1 - R leaves exactly R while the
+# tmpfs has R + 1 GiB free; the memory is kept out of it with 0-memory figures and
+# BASE_GIB=0, and the heat with HOT_C and NVME_C out of reach.
+B4=(env BASE_GIB=0 HOT_C=200 NVME_C=200 CMP_LEDGER_DIR="$D" WEAR_LOG=off)
+read -r size_k avail_k < <(df -Pk /mnt/bko-ram | awk 'NR == 2 { print $2, $4 }')
+S=$(awk -v k="$size_k" 'BEGIN { printf "%.3f", k / 1048576 - 1 }')   # budget()'s disk, no rows
+fresh m
+mem4=$("${B4[@]}" "$CMP_RUN" --free 2>/dev/null | awk 'NR == 1 { print $2 + 0 }')
+if ! awk -v a="$avail_k" -v s="$S" -v m="${mem4:-0}" 'BEGIN { exit !(a / 1048576 - 1 >= 3.5 && s >= 3.5 && m >= 0.1) }'; then
+    ok "4-6: (this host's RAM disk has under 4.5 GiB free, or no memory room even with BASE_GIB=0: backfill cases skipped)"
+else
+    lrow() { awk -v s="$S" -v r="$1" 'BEGIN { printf "%.3f", s - r }'; }   # R -> a ledger row's DISK leaving R
+    hold() {  # DISK: a ledger row held by a sleep of ours: its PID in $held
+        sleep 600 & held=$! pids+=("$held")
+        printf '%s %s 0 - reserve held by the test\n' "$held" "$1" | dd of="$D/.reserve" conv=nocreat,notrunc oflag=append status=none
+    }
+    head_row() {  # SINCE: a 2 GiB waiter in line, of a sleep of ours ("-": no SINCE): its PID in $hp
+        sleep 600 & hp=$! pids+=("$hp")
+        printf '%s 2.0 0 200 %s\n' "$hp" "$([[ $1 == - ]] && echo "reserve the test's head" || echo "$1 reserve the test's head")" |
+            dd of="$D/.reserve.wait" conv=nocreat,notrunc oflag=append status=none
+    }
+    after() { "${B4[@]}" "$@" "$CMP_RUN" --free 2>>"$T/err.$n" | awk '$1 == "after" { print $2 + 0 }'; }
+    small() {  # DISK FILE: a --reserve DISK 0 that writes the time it ran to FILE
+        "${B4[@]}" timeout 150 "$CMP_RUN" --reserve "$1" 0 sh -c 'date +%s.%N >"$1"' sh "$2" 2>>"$T/err.$n" &
+        pids+=($!)
+    }
+
+    n=4; : >"$T/err.$n"
+    fresh m; hold "$(lrow 1.05)"; head_row "$(date +%s)"
+    check "4: --free's after passes the young head that needs more than the room" \
+        awk -v a="$(after)" 'BEGIN { exit !(a >= 0.9 && a <= 1.1) }'
+    small 0.1 "$T/ran.4"
+    check "4: a 0.1 GiB --reserve passes it and runs at once" until_true 15 test -s "$T/ran.4"
+    check "4: the head is still in line, first" awk -v p="$hp" 'NR == 1 { exit !($1 == p && $2 == "2.0") }' "$D/.reserve.wait"
+    check "4: nothing on stderr" quiet "$T/err.4"
+    check "4: the same files, still m's" same_files
+    kill "$hp" "$held"
+
+    n=5; : >"$T/err.$n"
+    fresh m; hold "$(lrow 1.05)"; head_row "$(( $(date +%s) - 3600 ))"
+    check "5: --free's after holds back for the head that has waited past BACKFILL_MAX" test "$(after)" = 0
+    check "5: and for a young one with BACKFILL_MAX=0" test "$(after BACKFILL_MAX=0)" = 0
+    check "5: a young one is passed with BACKFILL_MAX=10000 (its own figure)" \
+        awk -v a="$(after BACKFILL_MAX=10000)" 'BEGIN { exit !(a >= 0.9) }'
+    small 0.1 "$T/ran.5"
+    check "5: a 0.1 GiB --reserve waits in line behind it" until_true 20 inline 0.1 0
+    check "5: and doesn't run" test ! -e "$T/ran.5"
+    kill "$held"                       # the room frees: the head's 2 GiB comes off it first
+    check "5: it runs once the ledger row is gone, beside the head's room" until_true 70 test -s "$T/ran.5"
+    kill "$hp"
+    fresh m; head_row -                # an older cmp-run.sh's row: waited forever
+    hold "$(lrow 1.05)"
+    check "5: a row with no SINCE is held back for" test "$(after)" = 0
+    kill "$hp" "$held"
+    check "5: nothing on stderr" quiet "$T/err.5"
+    check "5: the same files, still m's" same_files
+
+    n=6; : >"$T/err.$n"
+    fresh m; hold "$(lrow 1.05)"; a6=$held
+    "${B4[@]}" timeout 200 "$CMP_RUN" --reserve 2.0 0 \
+        sh -c 'date +%s.%N >"$1.start"; sleep 8; date +%s.%N >"$1.end"' sh "$T/head.6" 2>>"$T/err.6" &
+    pids+=($!)
+    check "6: a 2 GiB --reserve waits in line (1 GiB of room)" until_true 20 inline 2.0 0
+    hold "$(lrow 2.05)"                # the room it fits exactly, once the first row is gone
+    kill "$a6"; wait "$a6" 2>/dev/null
+    small 0.5 "$T/ran.6"               # comes now, likely before the head's next try
+    check "6: a 0.5 GiB --reserve that comes then waits: the head fits, and has its room first" \
+        until_true 10 inline 0.5 0
+    check "6: the head runs" until_true 45 test -s "$T/head.6.start"
+    check "6: the small one runs after it" until_true 90 test -s "$T/ran.6"
+    check "6: only once the head had ended" \
+        awk -v e="$(cat "$T/head.6.end" 2>/dev/null)" -v s="$(cat "$T/ran.6" 2>/dev/null)" 'BEGIN { exit !(e != "" && s + 0 >= e + 0) }'
+    kill "$held"
+    check "6: nothing on stderr" quiet "$T/err.6"
+    check "6: the same files, still m's" same_files
+    check "6: no temporary files left" no_leftovers
+fi
 ((fails == 0)) && echo "cmp-run-test: all passed" || echo "cmp-run-test: $fails FAILed"
 ((fails == 0))

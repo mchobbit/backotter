@@ -50,6 +50,7 @@ ceiling 9.0 11.2
 free_rc 0
 free 8.9 10.4
 waiting 0
+line_room 8.9 10.4
 nproc 16
 load 2.44
 memavail_kib 23000684
@@ -63,12 +64,18 @@ end
 
 
 def probe(host="cage", free=(9.0, 9.0), ceiling=(9.0, 11.2), load=1.0, nproc=16, caps=(), vms=(),
-          waiting=0, **kw):
-    """A parsed probe, as parse_probe() returns one."""
+          waiting=0, line_room="free", **kw):
+    """A parsed probe, as parse_probe() returns one.  line_room (--free's "after" line)
+    defaults to the free room, as a cmp-run.sh whose line holds nobody back says; None
+    leaves it out, as a --free older than that line does."""
     out = {"ok": True, "host": host, "machine": "x86_64", "nproc": nproc, "load": load,
            "waiting": waiting, "caps": list(caps), "vms": list(vms)}
     if free is not None:
         out["free"] = free
+    if line_room == "free":
+        line_room = free
+    if line_room is not None:
+        out["line_room"] = line_room
     if ceiling is not None:
         out["ceiling"] = ceiling
     out.update(kw)
@@ -85,6 +92,7 @@ class ReadingTheProbe(unittest.TestCase):
         got = ph.parse_probe(FULL)
         self.assertEqual(got["host"], "cage")
         self.assertEqual((got["free"], got["ceiling"], got["waiting"]), ((8.9, 10.4), (9.0, 11.2), 0))
+        self.assertEqual(got["line_room"], (8.9, 10.4))
         self.assertEqual((got["nproc"], got["load"], got["memavail_gib"]), (16, 2.44, 21.9))
         self.assertEqual(got["caps"], ["rescuer", "rescuer-uefi", "debs"])
         self.assertEqual(got["vms"], ["debian13", "alpine324"])
@@ -108,8 +116,9 @@ class ReadingTheProbe(unittest.TestCase):
 
     def test_what_is_missing_is_left_out_and_junk_is_ignored(self):
         got = ph.parse_probe("host cage\nceiling 9.0 11.2\nno-cmp-run /home/m/x/cmp-run.sh\n"
-                             "free lots\nwaiting many\ncap nosuchcap\nvm\nmumble\nend\n")
+                             "free lots\nwaiting many\nline_room 1\ncap nosuchcap\nvm\nmumble\nend\n")
         self.assertNotIn("free", got)
+        self.assertNotIn("line_room", got)
         self.assertNotIn("waiting", got)
         self.assertEqual((got["caps"], got["vms"]), ([], []))
         self.assertEqual(got["no_cmp_run"], "/home/m/x/cmp-run.sh")
@@ -176,7 +185,7 @@ class Ranking(unittest.TestCase):
     def test_then_the_roomiest_then_the_least_loaded(self):
         ps = {"cage": probe(free=(9.0, 9.0), load=8.0), "copland": probe(host="copland", free=(16.0, 9.0), load=8.0)}
         self.assertEqual([x["host"] for x in ph.rank(ps, reserve=(8, 5))[0]], ["copland", "cage"])
-        ps["copland"]["free"] = (9.0, 9.0)                      # the same room: the quieter host
+        ps["copland"]["free"] = ps["copland"]["line_room"] = (9.0, 9.0)   # the same room: the quieter host
         ps["copland"]["load"] = 1.0
         self.assertEqual([x["host"] for x in ph.rank(ps, reserve=(8, 5))[0]], ["copland", "cage"])
         ps["copland"]["nproc"] = 4                              # load a core, not load
@@ -190,7 +199,7 @@ class Ranking(unittest.TestCase):
         self.assertEqual([x["host"] for x in ph.rank(ps, reserve=(8, 5), rows=rs)[0]], ["cage", "chopin"])
         self.assertAlmostEqual(ph.load_per_core(ps["chopin"], rs["chopin"]), (3.0 + ph.LOAD_PENALTY) / 12)
         self.assertAlmostEqual(ph.load_per_core(ps["cage"], rs["cage"]), 3.0 / 12)
-        ps["chopin"]["free"] = (29.0, 20.0)                     # room still wins over the penalty
+        ps["chopin"]["free"] = ps["chopin"]["line_room"] = (29.0, 20.0)   # room still wins over the penalty
         self.assertEqual([x["host"] for x in ph.rank(ps, reserve=(8, 5), rows=rs)[0]], ["chopin", "cage"])
 
     def test_without_a_reserve_the_roomiest_host_wins_and_a_full_one_does_not_fit(self):
@@ -223,9 +232,56 @@ class Ranking(unittest.TestCase):
 
     def test_the_figures_it_reports(self):
         ranked, _ = ph.rank({"cage": probe(free=(9.0, 10.0), waiting=3)}, reserve=(3, 5))
-        self.assertEqual(ranked[0], {"host": "cage", "free": (9.0, 10.0), "ceiling": (9.0, 11.2),
+        self.assertEqual(ranked[0], {"host": "cage", "free": (9.0, 10.0), "line_room": (9.0, 10.0),
+                                     "ceiling": (9.0, 11.2),
                                      "waiting": 3, "load": 1.0, "nproc": 16, "fits_now": True,
                                      "score": 2.0, "load_per_core": 0.06, "note": None})
+
+    def test_a_host_whose_line_would_hold_the_job_back_does_not_fit_now(self):
+        """Cage's free room holds the reserve, but a waiter it may not pass (one that has
+        waited its BACKFILL_MAX) leaves a newcomer nothing: copland, with less free room
+        and no such line, is the one where it starts now."""
+        ps = {"cage": probe(free=(6.8, 5.5), line_room=(0.0, 0.0), waiting=3, load=0.1),
+              "copland": probe(host="copland", free=(5.0, 5.0), load=4.0)}
+        ranked, _ = ph.rank(ps, reserve=(4, 4))
+        self.assertEqual([(x["host"], x["fits_now"]) for x in ranked], [("copland", True), ("cage", False)])
+        self.assertEqual(ranked[1]["score"], 0.0)                 # the room after the line
+        self.assertEqual((ranked[1]["free"], ranked[1]["line_room"]), ((6.8, 5.5), (0.0, 0.0)))
+
+    def test_a_young_head_that_does_not_fit_is_passed(self):
+        """A waiter that can't start yet and hasn't waited long is passed: the room after
+        the line is the free room, and the job fits now although someone waits."""
+        ps = {"cage": probe(free=(6.8, 5.5), line_room=(6.8, 5.5), waiting=1)}
+        ranked, _ = ph.rank(ps, reserve=(4, 4))
+        self.assertTrue(ranked[0]["fits_now"])
+        self.assertEqual(ranked[0]["score"], 1.38)
+        # a waiter ahead that fits now takes its room first
+        ps["cage"]["line_room"] = (2.8, 1.5)
+        self.assertFalse(ph.rank(ps, reserve=(4, 4))[0][0]["fits_now"])
+        self.assertTrue(ph.rank(ps, reserve=(2, 1))[0][0]["fits_now"])
+
+    def test_the_room_after_the_line_is_never_more_than_the_free_room(self):
+        self.assertEqual(ph.room_of(probe(free=(3.0, 3.0), line_room=(5.0, 2.0))), ((3.0, 2.0), False))
+        self.assertEqual(ph.room_of(probe(free=None, line_room=(5.0, 2.0))), ((5.0, 2.0), False))
+
+    def test_an_older_free_without_the_line_is_judged_conservatively(self):
+        """A --free older than its "after" line: that cmp-run.sh serves its line strictly
+        in order, so the host fits now only with nobody in line, by its free room, and
+        its note says to sync testvm/ there."""
+        ps = {"cage": probe(free=(9.0, 9.0), line_room=None, waiting=0)}
+        ranked, _ = ph.rank(ps, reserve=(4, 4))
+        self.assertTrue(ranked[0]["fits_now"])
+        self.assertIsNone(ranked[0]["line_room"])
+        self.assertIn("no \"after\" line (sync testvm/ there)", ranked[0]["note"])
+        ps["cage"]["waiting"] = 2
+        ranked, _ = ph.rank(ps, reserve=(4, 4))
+        self.assertFalse(ranked[0]["fits_now"])
+        self.assertEqual(ranked[0]["score"], 2.25)                # still ranked by its free room
+        del ps["cage"]["waiting"]                                 # not known: not "nobody"
+        self.assertFalse(ph.rank(ps, reserve=(4, 4))[0][0]["fits_now"])
+        ps = {"cage": probe(free=(9.0, 9.0), line_room=None, waiting=2, load=0.1),
+              "copland": probe(host="copland", free=(4.0, 4.0), load=8.0)}
+        self.assertEqual([x["host"] for x in ph.rank(ps, reserve=(4, 4))[0]], ["copland", "cage"])
 
 
 class Figures(unittest.TestCase):
@@ -291,7 +347,7 @@ class TheProbeScript(unittest.TestCase):
 echo 'bash: warning: setlocale: LC_CTYPE: cannot change locale (UTF-8)' >&2
 case ${1:-} in
 --ceiling) echo '9.0 11.2' ;;
---free) echo '8.9 10.4'; echo 'waiting 2' ;;
+--free) echo '8.9 10.4'; echo 'waiting 2'; echo 'after 1.5 0.0' ;;
 esac
 """
 
@@ -303,8 +359,20 @@ esac
         self.assertTrue(got["ok"], r.stdout + r.stderr)
         self.assertEqual((got["ceiling_rc"], got["ceiling"]), (0, (9.0, 11.2)))
         self.assertEqual((got["free_rc"], got["free"], got["waiting"]), (0, (8.9, 10.4), 2))
+        self.assertEqual(got["line_room"], (1.5, 0.0))
         # and it is not dropped for want of figures (machine: this is run wherever)
         self.assertEqual(ph.rank({"cage": dict(got, machine="x86_64")})[1], {})
+
+    def test_an_older_free_without_the_after_line(self):
+        """A host whose cmp-run.sh --free predates its "after" line: no line_room, and the
+        host is judged by its free room with nobody in line (room_of)."""
+        got, r = self.run_probe_sh("#!/bin/sh\ncase ${1:-} in\n--ceiling) echo '9.0 11.2' ;;\n"
+                                   "--free) echo '8.9 10.4'; echo 'waiting 1' ;;\nesac\n")
+        self.assertTrue(got["ok"], r.stdout + r.stderr)
+        self.assertEqual((got["free"], got["waiting"]), ((8.9, 10.4), 1))
+        self.assertNotIn("line_room", got)
+        ranked, _ = ph.rank({"cage": dict(got, machine="x86_64")}, reserve=(1, 1))
+        self.assertFalse(ranked[0]["fits_now"])
 
     def test_what_a_failing_cmp_run_said_is_its_last_line_not_the_warning(self):
         """A host with no tmpfs: the reason is cmp-run.sh's own, which it says last, not
@@ -507,6 +575,8 @@ class TheHoltFarm(unittest.TestCase):
                            (("r1", "not a guest"), "not GUEST[+VARIANT]"),
                            (("r1", "debian13", "--hosts", "nosuch"), "no such host nosuch"),
                            (("r1", "debian13", "--hosts", ","), "names no host"),
+                           (("r1", "debian13", "--queue-host", "nosuch"), "is not one of the hosts run on"),
+                           (("r1", "debian13", "--queue-host"), "--queue-host needs a host"),
                            (("--frobnicate", "r1"), "no such option")):
             r = self.run_farm(*args)
             self.assertEqual(r.returncode, 2, (args, r.stdout, r.stderr))
@@ -543,14 +613,21 @@ printf '%s\t%s\n' "${args[0]}" "${args[1]:-}" >>"$FAKE_LOG"
 [[ -z ${FAKE_DOWN:-} || ${args[0]} != "$FAKE_DOWN" ]] || exit 255
 case ${args[1]:-} in
 *"ht1-queue.sh --order"*) printf 'debian13\nalpine324\n' ;;
+*"ht1-queue.sh --holt"*)
+    # FAKE_NOHOLT: that destination's holt-bin doesn't vouch for its bko-holt.
+    if [[ -n ${FAKE_NOHOLT:-} && ${args[0]} == "$FAKE_NOHOLT" ]]; then
+        echo "ht1-queue: SUMS doesn't vouch for HOLT (promote holt-bin again): every job would refuse" >&2; exit 2
+    fi
+    echo "0123456789ab /home/m/backotter-work/holt-bin/linux/bko-holt" ;;
 *"cat >"*) cat >"$FAKE_TODO"; wc -l <"$FAKE_TODO" ;;
 esac
 exit 0
 '''
 
-    def run_fake_farm(self, *args, down=None):
+    def run_fake_farm(self, *args, down=None, noholt=None):
         """The farm with that ssh in its PATH: (result, the ssh calls, the todo that
-        arrived on the queue host).  DOWN is an ssh destination that answers nothing."""
+        arrived on the queue host).  DOWN is an ssh destination that answers nothing,
+        NOHOLT one whose ht1-queue.sh --holt refuses."""
         with tempfile.TemporaryDirectory() as d:
             ssh = os.path.join(d, "ssh")
             with open(ssh, "w", encoding="utf-8") as f:
@@ -558,7 +635,7 @@ exit 0
             os.chmod(ssh, 0o755)
             env = dict(os.environ, PATH=d + os.pathsep + os.environ["PATH"],
                        FAKE_LOG=os.path.join(d, "log"), FAKE_TODO=os.path.join(d, "todo"),
-                       FAKE_DOWN=down or "")
+                       FAKE_DOWN=down or "", FAKE_NOHOLT=noholt or "")
             r = subprocess.run(["bash", self.FARM, *args], capture_output=True, text=True,
                                timeout=120, cwd=os.path.dirname(TESTVM), env=env)
             calls = []
@@ -628,6 +705,72 @@ exit 0
         self.assertIn(f"can't reach the queue host {down}", r.stderr)
         self.assertEqual(todo, "")
         self.assertEqual([c for c in calls if "setsid" in c[1]], [])
+
+    def queue_of(self, calls):
+        """The ssh destination asked for the todo (the queue host's), and those the
+        runners were started on, each with the queue host it was given (None: its own)."""
+        q = [c[0] for c in calls if "todo stop abort" in c[1]]
+        runners = {}
+        for c in calls:
+            m = re.search(r"ht1-queue\.sh r1 2600 \d+( \S+)? <", c[1])
+            if m:
+                runners[c[0]] = (m.group(1) or "").strip() or None
+        return q, runners
+
+    def test_the_first_host_named_is_the_queue_host(self):
+        """--hosts in the order given: the first is the queue host, not the table's first."""
+        table = ph._host_table()
+        hosts = list(table.names(default=True, arch="amd64"))
+        self.assertGreater(len(hosts), 1, hosts)
+        named = list(reversed(hosts))
+        r, calls, _ = self.run_fake_farm("r1", "debian13", "--hosts", ",".join(named))
+        self.assertEqual(r.returncode, 0, (r.stdout, r.stderr))
+        self.assertIn(f"== queue r1 on {named[0]} ({' '.join(named)})", r.stdout)
+        q, runners = self.queue_of(calls)
+        self.assertEqual(q, [table.ssh(named[0])])
+        self.assertEqual(sorted(runners), sorted(table.ssh(h) for h in hosts))
+        self.assertIsNone(runners[table.ssh(named[0])])
+        for h in named[1:]:
+            self.assertIsNotNone(runners[table.ssh(h)], h)    # each takes from the queue host
+        self.assertNotIn(table.ssh(hosts[0]), q)
+
+    def test_queue_host_overrides_the_first(self):
+        table = ph._host_table()
+        hosts = list(table.names(default=True, arch="amd64"))
+        for args in (("--queue-host", hosts[-1]), ("--hosts", ",".join(hosts), "--queue-host", hosts[-1])):
+            r, calls, _ = self.run_fake_farm("r1", "debian13", *args)
+            self.assertEqual(r.returncode, 0, (args, r.stdout, r.stderr))
+            self.assertIn(f"== queue r1 on {hosts[-1]} ", r.stdout)
+            q, runners = self.queue_of(calls)
+            self.assertEqual(q, [table.ssh(hosts[-1])], args)
+            self.assertIsNone(runners[table.ssh(hosts[-1])])
+            self.assertIsNotNone(runners[table.ssh(hosts[0])])
+        # One of the hosts run on, not merely a host of the table: refused before any ssh.
+        r, calls, _ = self.run_fake_farm("r1", "debian13", "--hosts", hosts[0], "--queue-host", hosts[-1])
+        self.assertEqual(r.returncode, 2, (r.stdout, r.stderr))
+        self.assertIn(f"--queue-host {hosts[-1]} is not one of the hosts run on ({hosts[0]})", r.stderr)
+        self.assertEqual(calls, [])
+
+    def test_each_host_says_its_bko_holt(self):
+        """Each runner's bko-holt (ht1-queue.sh --holt) is asked for and said before any
+        runner starts; a host whose set doesn't vouch for it is left out, the queue host
+        ends the run."""
+        table = ph._host_table()
+        hosts = list(table.names(default=True, arch="amd64"))
+        r, calls, _ = self.run_fake_farm("--dry-run", "r1", "debian13")
+        self.assertEqual(r.returncode, 0, (r.stdout, r.stderr))
+        for h in hosts:
+            self.assertIn(f"-- {h}: bko-holt 0123456789ab /home/m/backotter-work/holt-bin/linux/bko-holt", r.stdout)
+        asked = [i for i, c in enumerate(calls) if "ht1-queue.sh --holt" in c[1]]
+        self.assertEqual(len(asked), len(hosts), calls)
+        r, calls, _ = self.run_fake_farm("r1", "debian13", noholt=table.ssh(hosts[-1]))
+        self.assertEqual(r.returncode, 1, (r.stdout, r.stderr))
+        self.assertIn(f"{hosts[-1]} has no bko-holt for its runner (ht1-queue: SUMS doesn't vouch", r.stderr)
+        self.assertNotIn(table.ssh(hosts[-1]), [c[0] for c in calls if "setsid" in c[1]])
+        r, calls, todo = self.run_fake_farm("r1", "debian13", noholt=table.ssh(hosts[0]))
+        self.assertEqual(r.returncode, 2, (r.stdout, r.stderr))
+        self.assertIn(f"the queue host {hosts[0]} has no bko-holt for its runner", r.stderr)
+        self.assertEqual((todo, [c for c in calls if "setsid" in c[1]]), ("", []))
 
 
 if __name__ == "__main__":

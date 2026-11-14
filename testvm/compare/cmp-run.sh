@@ -24,7 +24,11 @@
 #       which is just what admission tests a --reserve against, so its live
 #       MemAvailable and tmpfs checks and the ledger's rows all count),
 #       floored at 0; then "waiting N", how many jobs are in line (the WAITS
-#       file).  It writes nothing either, not even the ledger's files, so
+#       file); then "after DISK MEM", the room a new --reserve would be offered
+#       after the line (after_line(), on the same figures and the line's live
+#       rows, within the ceiling and floored at 0: a --reserve within it starts
+#       at once, one over it waits; with nobody in line it is the first line's
+#       figures).  It writes nothing either, not even the ledger's files, so
 #       anyone may ask a host where there is room (testvm/pick-host does,
 #       over ssh).  The figures are what the host had a moment ago: a job
 #       that starts meanwhile takes its room, and only a --reserve of its own
@@ -87,19 +91,38 @@
 # the host. Nothing new starts while the CPU is over HOT_C (default 95) or an
 # NVMe over NVME_C (default 75).
 #
-# First come, first served: a --reserve, or a worker whose queue's first line
-# doesn't fit, that has to wait takes a place in line (/mnt/bko-ram/.reserve.wait,
-# PID DISK MEM HOT_C WHAT...), and room is offered to it only after what everyone
-# before it in line asks for. So a big job isn't starved by small ones that
-# keep taking the room it waits for; it costs the small ones a wait. A worker
-# waits with its queue's first line's needs, updated as the queue changes (it
-# leaves the line when it can't get them: no queue host, needs this host never
-# meets), and takes any line that fits beside the ones before it. Only needs
-# that the room could meet once every job in the ledger has ended are held
-# back for: room taken outside the ledger (vm-update, another session's RAM
-# work, leftovers) can't make one waiter hold up the host. The heat limit is
-# the lowest HOT_C of anyone before in line, so jobs behind a waiter that is
-# held back by heat don't keep the CPU hot.
+# First come, first served, with backfill: a --reserve, or a worker whose
+# queue's first line doesn't fit, that has to wait takes a place in line
+# (/mnt/bko-ram/.reserve.wait, PID DISK MEM HOT_C SINCE WHAT..., SINCE the
+# epoch second it took its place, kept when its needs change), and room is
+# offered to it after what those before it in line are to have first:
+#   - one whose needs fit the room left now has it first (it will take it on
+#     its next try, within 30 s), so nobody behind it takes room it fits into;
+#   - one whose needs don't fit now may be passed: a job behind it that fits
+#     the room left starts now, while the one passed has waited less than
+#     BACKFILL_MAX seconds (default 1800; 0: never passed, strictly first
+#     come, first served);
+#   - once it has waited BACKFILL_MAX, it is held back for: its needs come
+#     off the room even though they don't fit, so nothing behind it starts
+#     until the jobs running have ended and it can. So a big job isn't
+#     starved by small ones that keep taking the room it waits for, and the
+#     small ones don't sit idle behind it while it can't start anyway; what
+#     it costs the big one is at most BACKFILL_MAX, plus the run of the last
+#     job that passed it. 30 minutes is about one small host's job (a
+#     HoltTest round, a SticTest check), so the big one waits at most about
+#     that much longer, and the room it waits for is used meanwhile.
+#   A row without SINCE (an older cmp-run.sh's) has waited BACKFILL_MAX
+#   already: held back for, as that cmp-run.sh holds back for everyone.
+# A worker waits with its queue's first line's needs, updated as the queue
+# changes (it leaves the line when it can't get them: no queue host, needs
+# this host never meets), and takes any line that fits beside the ones before
+# it. Only needs that the room could meet once every job in the ledger has
+# ended are held back for, or had first: room taken outside the ledger
+# (vm-update, another session's RAM work, leftovers) can't make one waiter
+# hold up the host. The heat limit is the lowest HOT_C of anyone before in
+# line, passed or not, so jobs behind a waiter that is held back by heat
+# don't keep the CPU hot: one passed for room needs the CPU cool as much
+# when its room comes, and the ones that passed it shouldn't heat it for it.
 # The ledger's files are made by whoever needs them first, m or root, in the
 # sticky /mnt/bko-ram: m can't rename over root's (so no sed -i or mv on
 # them), and fs.protected_regular (2 on the hosts) keeps root from opening
@@ -233,26 +256,40 @@ prune() {  # [PID]: drop rows (ledger and line) whose holder is gone, or PID's (
         put $f "$keep"
     done
 }
-after_line() {  # PID MAXDISK MAXMEM -> "DISK MEM AHEAD HOT_C": the room left once
-    # everyone before PID in line (everyone, if PID isn't in it) has had theirs,
-    # how many they are, and the heat limit (ledger locked). A need held back
-    # for must fit in MAXDISK/MAXMEM plus what the ledger's jobs hold.
+after_line() {  # PID MAXDISK MAXMEM [LEDGER_ROWS WAIT_ROWS] -> "DISK MEM AHEAD HOT_C":
+    # the room left for PID once those before it in line (everyone, if PID isn't in
+    # it) who are to have theirs first have had it, how many are before it, and the
+    # heat limit (ledger locked; --free passes the live rows instead, and locks
+    # nothing). Before PID, in order: a waiter whose needs fit the room left now has
+    # it; one whose needs don't is passed while it has waited (now - SINCE) less
+    # than BACKFILL_MAX seconds, and held back for once it has (its needs come off
+    # all the same); a row with no SINCE has waited forever. Only needs that fit in
+    # MAXDISK/MAXMEM plus what the ledger's jobs hold are held back for. The figures
+    # don't depend on PID's own needs: PID starts if they fit them. BACKFILL_MAX=0
+    # holds back for everyone, as strict first come, first served does.
     # (In tenths of a GiB: the figures come rounded to them.)
-    awk -v me="$1" -v d="$2" -v m="$3" -v hot="${HOT_C:-95}" -v ledger=$LEDGER '
+    awk -v me="$1" -v d="$2" -v m="$3" -v hot="${HOT_C:-95}" -v now="$(date +%s)" \
+        -v max="${BACKFILL_MAX:-1800}" '
         function t(x) { return int(x * 10 + (x < 0 ? -0.5 : 0.5)) }
-        BEGIN { d = t(d); m = t(m); pd = d; pm = m
-                while ((getline l < ledger) > 0) { split(l, f, " "); pd += t(f[2]); pm += t(f[3]) } }
+        BEGIN { d = t(d); m = t(m); pd = d; pm = m; max += 0 }
+        FILENAME == ARGV[1] { pd += t($2); pm += t($3); next }   # the ledger
+        NF == 0 { next }
         $1 == me { exit }
         { n++; if ($4 + 0 > 0 && $4 + 0 < hot + 0) hot = $4 + 0
-          if (t($2) <= pd && t($3) <= pm) { d -= t($2); m -= t($3) } }
-        END { printf "%.1f %.1f %d %d\n", d / 10, m / 10, n, hot }' $WAITS
+          since = ($5 ~ /^[0-9]+$/) ? $5 + 0 : 0
+          if ((t($2) <= d && t($3) <= m) || (t($2) <= pd && t($3) <= pm && now - since >= max)) {
+              d -= t($2); m -= t($3) } }
+        END { printf "%.1f %.1f %d %d\n", d / 10, m / 10, n, hot }' \
+        <(if [ $# -ge 5 ]; then printf '%s\n' "$4"; else cat $LEDGER 2>/dev/null; fi) \
+        <(if [ $# -ge 5 ]; then printf '%s\n' "$5"; else cat $WAITS 2>/dev/null; fi)
 }
 queue_up() {  # PID DISK MEM WHAT...: take a place in line, or change the needs at it (ledger locked)
+    # (A new row's SINCE is now; a changed row keeps its SINCE, and so its age.)
     local pid=$1 d=$2 m=$3; shift 3
     if grep -q "^$pid " $WAITS; then
         rewrite $WAITS awk -v p="$pid" -v d="$d" -v m="$m" '$1 == p { $2 = d; $3 = m } { print }' $WAITS
     else
-        add $WAITS "$pid $d $m ${HOT_C:-95} $*"
+        add $WAITS "$pid $d $m ${HOT_C:-95} $(date +%s) $*"
     fi
 }
 leave_line() { rewrite $WAITS sed "/^$1 /d" $WAITS; }   # PID (ledger locked)
@@ -310,17 +347,25 @@ free_now() {  # -> "DISK MEM": the room a new --reserve could get on this host n
     # headroom that ceiling() holds back and budget() doesn't: a --reserve this said was
     # too big for the host was admitted at once.)  It doesn't count who is in line
     # (after_line): the waiters are reported beside it, since room is offered to them
-    # first.
-    local cd cm bd bm
+    # first.  It sets FREE_WAITING, how many are in line (the WAITS file's live rows),
+    # and FREE_AFTER, "DISK MEM" a new --reserve would be offered after them: the same
+    # min(ceiling, ...) of after_line() on the same budget() figures and the same rows,
+    # floored at 0, which is what admission tests a --reserve against once it is in
+    # line (after_line's PID 0 is nobody's: everyone in line is before it).
+    local cd cm bd bm ad am rows waits out
     read -r cd cm < <(ceiling) && [ -n "$cm" ] || return 1
-    read -r bd bm < <(budget "$(live_rows)") && [ -n "$bm" ] || return 1
-    awk -v cd="$cd" -v cm="$cm" -v bd="$bd" -v bm="$bm" '
+    rows=$(live_rows) waits=$(live_rows $WAITS)
+    read -r bd bm < <(budget "$rows") && [ -n "$bm" ] || return 1
+    read -r ad am _ < <(after_line 0 "$bd" "$bm" "$rows" "$waits") && [ -n "$am" ] || return 1
+    out=$(awk -v cd="$cd" -v cm="$cm" -v bd="$bd" -v bm="$bm" -v ad="$ad" -v am="$am" '
         function fl(x) { x = int(x * 10 + (x < 0 ? -1 : 0)) / 10; return x < 0 ? 0 : x }   # down, then 0
-        BEGIN { d = cd + 0; if (bd + 0 < d) d = bd + 0
-                m = cm + 0; if (bm + 0 < m) m = bm + 0
-                printf "%.1f %.1f\n", fl(d), fl(m) }'
+        function lo(a, b) { return a + 0 < b + 0 ? a + 0 : b + 0 }
+        BEGIN { printf "%.1f %.1f\n%.1f %.1f\n", fl(lo(cd, bd)), fl(lo(cm, bm)), fl(lo(cd, ad)), fl(lo(cm, am)) }') &&
+        [ -n "$out" ] || return 1
+    FREE_AFTER=${out#*$'\n'}
+    FREE_WAITING=$(awk 'NF { n++ } END { print n + 0 }' <<<"$waits")
+    printf '%s\n' "${out%%$'\n'*}"
 }
-waiting_now() { live_rows $WAITS | awk 'END { print NR + 0 }'; }   # jobs in line (the WAITS file)
 if [ "${1:-}" = --ceiling ]; then
     [ $# -eq 1 ] || { echo "usage: cmp-run.sh --ceiling" >&2; exit 2; }
     ceiling; exit
@@ -328,7 +373,8 @@ fi
 if [ "${1:-}" = --free ]; then
     [ $# -eq 1 ] || { echo "usage: cmp-run.sh --free" >&2; exit 2; }
     free_now || { echo "cmp-run.sh --free: can't tell what room there is here" >&2; exit 1; }
-    echo "waiting $(waiting_now)"
+    echo "waiting $FREE_WAITING"
+    echo "after $FREE_AFTER"
     exit 0
 fi
 

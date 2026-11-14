@@ -42,10 +42,16 @@ dropped, with a reason, when it
   - has a ceiling under --reserve, so the job can never fit there, however
     long one waits (cmp-run.sh refuses such a --reserve at once).
 
-The rest are ranked: the hosts where --reserve fits in their free room now
-come first, so a job that can start starts; then by capacity (how many times
-over the reserve fits, min(free disk / D, free memory / M)), then by the
-lowest load per core.  A host with the fleet or store-mirror role (Chopin) is
+The rest are ranked: the hosts where --reserve fits now come first, so a job
+that can start starts; then by capacity (how many times over the reserve
+fits, min(room disk / D, room memory / M)), then by the lowest load per core.
+"Fits now" and the capacity go by the room the job would be offered after the
+host's cmp-run.sh line (--free's "after DISK MEM": the waiters it may not
+pass come off first, so a host whose line would hold the job back doesn't
+fit now, however much free room it has).  A host whose cmp-run.sh --free is
+older than that line is judged conservatively: it fits now only when its
+free room holds the reserve and nobody is in line there (that cmp-run.sh
+serves its line strictly in order), and its note says to sync testvm/ there.  A host with the fleet or store-mirror role (Chopin) is
 ranked as if its load were LOAD_PENALTY higher: it holds the fleet, talks to
 Bigfoot and the store, every session reaches for it by habit, and its cooler
 is the weakest of the four.  A host that answers but whose cmp-run.sh is too
@@ -169,6 +175,7 @@ if [ -x "$W/testvm/compare/cmp-run.sh" ]; then
             printf '%s\n' "$out" | while read -r a b; do
                 case $a in
                 waiting) echo "waiting $b" ;;
+                after) echo "line_room $b" ;;
                 [0-9]*) echo "free $a $b" ;;
                 esac
             done
@@ -203,13 +210,15 @@ echo end
 
 def parse_probe(text):
     """The probe's output -> its facts, whatever is missing left out:
-        {"host", "machine", "free": (D, M), "ceiling": (D, M), "waiting": N, "nproc": N,
+        {"host", "machine", "free": (D, M), "ceiling": (D, M), "waiting": N,
+         "line_room": (D, M), "nproc": N,
          "load": F, "memavail_gib": F, "caps": [...], "vms": [...], "ok": bool,
          "ceiling_rc": N, "ceiling_err": "...", "free_rc": N, "free_err": "..."}
     The _rc of each cmp-run.sh call and, when it failed, the line it died on: a host
     whose --ceiling failed can hold no job at all (no tmpfs at /mnt/bko-ram, say), which
     is not the same as having no room.  An older probe sends neither, and then the ceiling
-    and the free room are simply missing, as before.
+    and the free room are simply missing, as before; a cmp-run.sh --free older than its
+    "after" line sends no line_room (the room a newcomer is offered after the line).
     ok is False unless the probe finished (its "end" line).  A line that doesn't parse is
     ignored: an older probe's extra output never makes a host look capable."""
     out = {"caps": [], "vms": [], "ok": False}
@@ -223,7 +232,7 @@ def parse_probe(text):
                 out["ok"] = True
             elif k in ("host", "machine") and len(rest) == 1:
                 out[k] = rest[0]
-            elif k in ("free", "ceiling") and len(rest) == 2:
+            elif k in ("free", "ceiling", "line_room") and len(rest) == 2:
                 out[k] = (float(rest[0]), float(rest[1]))
             elif k in ("waiting", "nproc", "ceiling_rc", "free_rc") and len(rest) == 1:
                 out[k] = int(rest[0])
@@ -325,8 +334,9 @@ def rank(probes, reserve=None, guests=(), needs=(), rows=None):
     PROBES is {host: parse_probe()'s facts}; ROWS {host: its table row} gives each host's
     roles and arch (left out: no role counts, and the architecture is not checked).
     RESERVE is the job's (D, M) or None.  RANKED is a list of {host, fits_now, score,
-    load_per_core, free, ceiling, waiting, load, nproc, note} best first (note_of: what is
-    to be said about a host with no free room to rank by); DROPPED is {host: [reasons]}.
+    load_per_core, free, line_room, ceiling, waiting, load, nproc, note} best first
+    (room_of: what fits_now and score go by; note_of: what is to be said about a host
+    with no free room to rank by, or none after its line); DROPPED is {host: [reasons]}.
     This is the whole decision, and it touches nothing: tests call it with plain dicts."""
     rows = rows or {}
     res = tuple(reserve) if reserve else (SCORE_FLOOR, SCORE_FLOOR)
@@ -373,21 +383,48 @@ def rank(probes, reserve=None, guests=(), needs=(), rows=None):
             dropped[host] = why
             continue
         free = p.get("free")
-        ranked.append({"host": host, "free": free, "ceiling": p.get("ceiling"),
+        room, ahead = room_of(p)
+        ranked.append({"host": host, "free": free, "line_room": p.get("line_room"),
+                       "ceiling": p.get("ceiling"),
                        "waiting": p.get("waiting"), "load": p.get("load"), "nproc": p.get("nproc"),
-                       "fits_now": fits(free, res), "score": round(score_of(free, res), 2),
+                       "fits_now": fits(room, res) and not ahead, "score": round(score_of(room, res), 2),
                        "load_per_core": round(load_per_core(p, rows.get(host) or {}), 2),
                        "note": note_of(p)})
     ranked.sort(key=lambda x: (not x["fits_now"], -x["score"], x["load_per_core"], x["host"]))
     return ranked, dropped
 
 
+def room_of(p):
+    """(ROOM, AHEAD): the room a new --reserve would be offered on the probed host, and
+    whether a line it can't be judged against stands before it.
+
+    With --free's "after" line (line_room), ROOM is that: the room left once the waiters
+    cmp-run.sh doesn't let a newcomer pass have theirs (one that fits now, or one that
+    has waited its BACKFILL_MAX), within the free room.  A --free older than that line
+    gives only the free room, and its cmp-run.sh serves the line strictly in order, so a
+    job there waits behind anyone in line who could ever be met: AHEAD is then true
+    unless the line is known to be empty (waiting 0), and the host never fits now while
+    it is.  That is conservative: such a line may hold only waiters that can never start,
+    and a job would start there at once."""
+    line = p.get("line_room")
+    if line is not None:
+        free = p.get("free")
+        if free is not None:
+            line = (min(line[0], free[0]), min(line[1], free[1]))
+        return line, False
+    return p.get("free"), p.get("waiting") != 0
+
+
 def note_of(p):
     """A kept host's note, or None: what is to be said about one that answered but has no
-    free room to rank by.  Its ceiling worked (one whose didn't is dropped), so this is
-    either a cmp-run.sh too old to know --free (sync testvm/ there) or a --free that
-    failed, which is said in its own words."""
+    free room to rank by, or no room after its line.  Its ceiling worked (one whose didn't
+    is dropped), so this is a cmp-run.sh too old to know --free, or to say what is left
+    after its line (sync testvm/ there either way), or a --free that failed, which is
+    said in its own words."""
     if p.get("free"):
+        if p.get("line_room") is None:
+            return ("its cmp-run.sh --free has no \"after\" line (sync testvm/ there): "
+                    "it fits now only with nobody in line")
         return None
     if p.get("free_err"):
         return f"its cmp-run.sh --free failed: {p['free_err']}"

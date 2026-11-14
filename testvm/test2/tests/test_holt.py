@@ -356,6 +356,38 @@ class U51RowsHolt(RecordsMixin, unittest.TestCase):
         row = self.build(k, "debian13", run="t2h-20261108T0300-abcd-r2")
         self.assertEqual((row["verdict"], row["class"]), ("PASS", "known-flake"))
 
+    def test_a_run_that_made_its_rescuer(self):
+        # (ht1-bsd.sh's note names the copy; holt.run reruns the cell at its sum, and that
+        # attempt 2's pass is a PASS, not a FLAKY-FAIL.)
+        made = "/bkoscratch/holttest1d/rescuer/dragonfly6-newfsid.qcow2"
+        k = self.k("bsd-pass")
+        with open(os.path.join(k, "report.txt"), "a", encoding="utf-8") as f:
+            f.write(f"note: made the one-time rescuer {made} (980M on /bkoscratch)\n")
+        row = self.build(k, "freebsd15", driver="ht1-bsd.sh")
+        self.assertEqual(row["extra"]["rescuer_made"], [made])
+        self.assertEqual(row["verdict"], "PASS")
+        row = self.build(self.k("bsd-pass"), "freebsd15", driver="ht1-bsd.sh")
+        self.assertNotIn("rescuer_made", row["extra"])
+        p = self.cells("freebsd15", attempt=2)
+        doc = jload(p)
+        doc["cells"]["freebsd15"]["rerun_why"] = "rescuer-made"
+        jdump(doc, p)
+        row = self.build(k, "freebsd15", driver="ht1-bsd.sh", run="t2h-20261108T0300-abcd-r2")
+        self.complete_ok(row)
+        self.assertEqual((row["verdict"], row["class"], row["attempt"]), ("PASS", "pass", 2))
+        self.assertIn("attempt 1 made the one-time rescuer", row["note"])
+        self.assertEqual(row["extra"]["rerun_why"], "rescuer-made")
+
+    def test_classify_attempt_two(self):
+        rep = {"result": "RESULT: PASS"}
+        self.assertEqual(rows_holt.classify(rep, None, 0, 0, 2)[:2], ("FLAKY-FAIL", "fail"))
+        self.assertEqual(rows_holt.classify(rep, None, 0, 0, 2, flake=True)[:2], ("PASS", "known-flake"))
+        self.assertEqual(rows_holt.classify(rep, None, 0, 0, 2, rerun_why="rescuer-made"),
+                         ("PASS", "pass", "attempt 1 made the one-time rescuer"))
+        self.assertEqual(rows_holt.classify(rep, None, 0, 0, 1, rerun_why="rescuer-made")[:2], ("PASS", "pass"))
+        self.assertEqual(rows_holt.classify({"result": "RESULT: FAIL (2 of 30)"}, None, 1, 1, 2,
+                                            rerun_why="rescuer-made")[:2], ("FAIL", "fail"))
+
     def test_the_pins_image_line_is_checked_under_its_key_name(self):
         # (+img keys the pin as rescuer/img-PLAT, keys.py's @image: a re-pin during the run is seen)
         self.assertEqual(rows_holt.rescuer_name("/bkoscratch/test2/img-pin/netbsd/rescuer.img"), "rescuer/img-netbsd")
@@ -694,7 +726,8 @@ class FakeRS:
                 rr = (reruns or {}).get(pc.cell) or {}
                 doc["cells"][rows_holt.gv_of(pc.cell)] = {"cell": pc.cell, "rule": pc.rule, "reasons": pc.reasons,
                                                           "planned_key": pc.keys.get(h), "attempt": rr.get("attempt", attempt),
-                                                          "rerun_of": rr.get("rerun_of"), "flake": rr.get("flake")}
+                                                          "rerun_of": rr.get("rerun_of"), "flake": rr.get("flake"),
+                                                          "rerun_why": rr.get("rerun_why")}
             jdump(doc, os.path.join(self.mac_dir, f"{name[:-5]}-{h}.json"))
             out[h] = f"{self.host_run_dir(h)}/{name}"
         return out
@@ -717,6 +750,7 @@ class FakeRemote:
         self.valid = None        # the ledger rows' valid (None: not set)
         self.imgsums = []        # (host, paths) asked of t2-host imgsum
         self.from_k = []         # (host, args) of t2-host row holt runs
+        self.made = {}           # gv -> the one-time rescuer copies its attempt 1 makes
 
     def _new(self, host, info):
         self.pid += 1
@@ -862,6 +896,8 @@ class FakeRemote:
                            "run": "t2h-20261108T0300-abcd", "gm": 5.0, "wall_s": 300}
                     if self.valid is not None:
                         row.update(valid=self.valid, note=None if self.valid else "not measured: guest/x:generation")
+                    if att == 1 and self.made.get(gv):
+                        row.update(valid=False, note="key differs from the plan's", extra={"rescuer_made": self.made[gv]})
                     self.ledger[host].append(row)
 
 
@@ -1056,6 +1092,102 @@ class U53HoltRun(unittest.TestCase):
         self.assertEqual(res["exit"], 1)
         self.assertTrue(all(c["verdict"] == "PASS" and c["valid"] is False for c in res["cells"]))
         self.assertTrue(any("doesn't count (valid false" in n for n in res["notes"]), res["notes"])
+        # (No rerun: attempt 1 made no one-time rescuer, so nothing would change for attempt 2.)
+        self.assertEqual([a for a, _ in self.rs.cells_written], [1])
+        self.assertFalse(self.r2_starts())
+
+    DF = "/bkoscratch/holttest1d/rescuer/dragonfly6-newfsid.qcow2"
+
+    def made_rescuer(self, remote=None):
+        """dragonfly6 on cinqcent, whose attempt 1 makes its one-time rescuer (the facts have
+        none of it); the re-plan keys it by the facts' sum, as keys.py would."""
+        self.cells.append(self.PC("holt:dragonfly6", "holt:code", keys_={"cinqcent": "4" * 64}))
+        self.ctx.facts = {h: {"guests": {}, "rescuers": {"images": {"rescuer.qcow2": {"sha256": RESCUER, "imgsum": None}}}}
+                          for h in ("chopin", "cinqcent")}
+
+        def replan(facts=None, ledger_rows=None):
+            self.rs.replans = getattr(self.rs, "replans", 0) + 1
+            im = (((facts or {}).get("cinqcent") or {}).get("rescuers") or {}).get("images", {}).get(
+                "dragonfly6-newfsid.qcow2") or {}
+            if im.get("imgsum"):
+                k = hashlib.sha256(im["imgsum"].encode()).hexdigest()
+                self.rs.plan = FakePlan([self.PC(pc.cell, pc.rule, pc.reasons, {"cinqcent": k}
+                                                 if pc.cell == "holt:dragonfly6" else pc.keys) for pc in self.rs.plan.cells])
+            return self.rs.plan, [], []
+        self.rs.replan = replan
+        r = remote or FakeRemote({})
+        r.made = {"dragonfly6": [self.DF]}
+        return r
+
+    def r2_starts(self):
+        return [c for _, op, *c in self.remote.calls if op == "start" and "-r2 2600" in c[0]]
+
+    def test_a_pass_that_made_its_rescuer_reruns_at_its_sum(self):
+        r = self.made_rescuer()
+        res = self.go({}, r)
+        self.assertEqual(r.imgsums, [("cinqcent", [self.DF])])
+        im = self.ctx.facts["cinqcent"]["rescuers"]["images"]["dragonfly6-newfsid.qcow2"]
+        self.assertEqual((im["sha256"], im["imgsum"]), (None, "img:" + hashlib.sha256(self.DF.encode()).hexdigest()))
+        self.assertEqual([a for a, _ in self.rs.cells_written], [1, 2])
+        rr = self.rs.cells_written[1][1]
+        self.assertEqual(set(rr), {"holt:dragonfly6"})
+        self.assertEqual((rr["holt:dragonfly6"]["attempt"], rr["holt:dragonfly6"]["rerun_why"]), (2, "rescuer-made"))
+        self.assertTrue(rr["holt:dragonfly6"]["rerun_of"])
+        c2 = jload(os.path.join(self.tmp, "cells-r2-cinqcent.json"))["cells"]["dragonfly6"]
+        self.assertEqual(c2["planned_key"], hashlib.sha256(im["imgsum"].encode()).hexdigest())
+        self.assertEqual(c2["rerun_why"], "rescuer-made")
+        self.assertEqual(jload(os.path.join(self.tmp, "cells-cinqcent.json"))["cells"]["dragonfly6"]["planned_key"],
+                         "4" * 64)
+        self.assertEqual(len(self.r2_starts()), 2)
+        self.assertTrue(any(n.startswith("rerun (attempt 1 made its one-time rescuer") and "holt:dragonfly6" in n
+                            for n in res["notes"]), res["notes"])
+        by = {c["cell"]: c for c in res["cells"]}
+        self.assertEqual((by["holt:dragonfly6"]["verdict"], by["holt:dragonfly6"]["attempts"]), ("PASS", 2))
+        self.assertEqual(res["exit"], 0, res)
+
+    def test_a_fail_that_made_its_rescuer_reruns_as_a_fail_at_its_sum(self):
+        r = self.made_rescuer(FakeRemote({"dragonfly6": (1, "FAIL")}))
+        res = self.go({}, r)
+        self.assertEqual(r.imgsums, [("cinqcent", [self.DF])])
+        rr = self.rs.cells_written[1][1]
+        self.assertNotIn("rerun_why", rr["holt:dragonfly6"])
+        self.assertFalse(any(n.startswith("rerun (attempt 1 made") for n in res["notes"]), res["notes"])
+
+    def test_a_made_rescuer_with_no_sum_isnt_rerun(self):
+        class NoSum(FakeRemote):
+            def imgsum(self, host, tool, paths, env):
+                self.imgsums.append((host, list(paths)))
+                return {}
+        r = self.made_rescuer(NoSum({}))
+        res = self.go({}, r)
+        self.assertEqual([a for a, _ in self.rs.cells_written], [1])
+        self.assertFalse(self.r2_starts())
+        self.assertTrue(any(n.startswith("no sum of the one-time rescuer attempt 1 made") and "holt:dragonfly6" in n
+                            for n in res["notes"]), res["notes"])
+        self.assertEqual(res["exit"], 1)
+
+    def test_no_rerun_of_a_made_rescuer_after_a_stop(self):
+        class Stops(FakeStops):
+            def feed_host(self, host, swap_out_bytes=None, ours_bytes=None):
+                if not self.stop_starts:
+                    self.stop_starts = True
+                    return "stop-starts"
+                return "ok"
+        self.rs.stops = Stops()
+        r = self.made_rescuer()
+        res = self.go({}, r)
+        self.assertFalse(self.r2_starts())
+        self.assertEqual(r.imgsums, [])
+        self.assertTrue(any("no rerun of holt:dragonfly6: stop-starts" in n for n in res["notes"]), res["notes"])
+
+    def test_no_rerun_of_a_made_rescuer_on_a_stopped_os(self):
+        class Stops(FakeStops):
+            stopped_os = {"dragonfly"}
+        self.rs.stops = Stops()
+        r = self.made_rescuer()
+        res = self.go({}, r)
+        self.assertFalse(self.rs.cells_written[1:], self.rs.cells_written)
+        self.assertTrue(any("stopped by stop-os): holt:dragonfly6" in n for n in res["notes"]), res["notes"])
 
     def test_no_rerun_after_stop_starts(self):
         class Stops(FakeStops):

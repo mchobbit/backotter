@@ -763,6 +763,8 @@ class RunState:
                 ent["prev_needs"] = prev_needs_of(pc, host, rows)
             if rr and rr.get("rule"):
                 ent["rule"] = rr["rule"]
+            if rr and rr.get("rerun_why"):   # (HoltTest2's rescuer-made: not after a FAIL)
+                ent["rerun_why"] = rr["rerun_why"]
             out["cells"][driver_id(pc.cell)] = ent
         return out
 
@@ -788,7 +790,7 @@ class RunState:
         return new, added, dropped
 
     def write_cells(self, plan, attempt=1, name=None, reruns=None):
-        """cells.json (attempt 1) or cells-r2.json (reruns: {cell: {rerun_of, flake, rule}}) to
+        """cells.json (attempt 1) or cells-r2.json (reruns: {cell: {rerun_of, flake, rule, rerun_why}}) to
         HOST_ROOT/runs/RUN/ on every host, atomically (tmp, then rename).  Returns {host: path}."""
         name = name or ("cells.json" if attempt == 1 else "cells-r2.json")
         out = {}

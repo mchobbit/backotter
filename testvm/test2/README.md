@@ -240,7 +240,10 @@ cells-r2.json on every host, atomically, with each host's planned keys),
 cells added and dropped), `host_run_dir(host)`, `record_made(host, path, pid)` and
 `log(text)`.  `run.rerun_map()` and `run.fanout_due()` make the r2 round's cells (a
 FAIL reruns once as attempt 2; a known flake's PASS then fails nothing, any other
-PASS is a FLAKY-FAIL; a failed representative fans out to its class).
+PASS is a FLAKY-FAIL; a failed representative fans out to its class).  HoltTest2 also
+reruns once a PASS that couldn't count because its run made the one-time rescuer copy
+(dragonfly6's, openbsd8's, omnios58's) the plan keyed missing, at the copy's new sum
+(`rerun_why` `rescuer-made` in cells-r2.json); a pass then is a PASS.
 
 The stop rules: a failed fast gate starts no guest of its family; a failed slow
 gate starts nothing new; one need failing on 2 guests of an OS stops that OS; 2

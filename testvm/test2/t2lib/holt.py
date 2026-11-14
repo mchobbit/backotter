@@ -61,7 +61,10 @@ the copy on each host, write_cells(), replan(), the StopEngine).  In order:
      says nothing of the cell) go into queue RUN-r2 with cells-r2.json (attempt 2,
      rerun_of the first row), T2_RUN=RUN, unless stop-run, stop-family or
      stop-starts fired, queue/RUN/stop or abort is there, or stop-os stopped the
-     cell's OS.
+     cell's OS.  So does a PASS that doesn't count because its run made the
+     one-time rescuer copy the plan keyed missing (extra.rescuer_made): the copy
+     goes into ctx.facts, is summed (1a) and the plan made again first, and its
+     cells-r2.json entry says rerun_why rescuer-made, under which a pass is a PASS.
   7. The result (contract 1.9's RunResult) for run.py's report.  It fails (exit 1)
      on a stop, a cell that isn't a PASS, a due cell no runner ran, a job with no
      row, or a PASS whose row doesn't count (valid false).
@@ -1458,8 +1461,11 @@ class Runner:
         q1 = self.run_id
         self.start_queue(q1, pcs, "cells.json")
         self.wait_queue(q1, 1)
-        # attempt 2: the FAILs (contract 1.9: a FAIL reruns once), unless a stop rule says no
+        # attempt 2: the FAILs (contract 1.9: a FAIL reruns once), and the PASSes that couldn't
+        # count because their run made the one-time rescuer, unless a stop rule says no
         failed = self.failed(q1)
+        made = self.made(q1)
+        failed.update(made)
         if failed:
             why = self.no_rerun(q1)
             st = self.rs.stops
@@ -1472,17 +1478,68 @@ class Runner:
                 self.notes.append(f"not rerun ({', '.join(sorted({os_of(self.sf, c) for c in off}))} stopped by "
                                   f"stop-os): {', '.join(off)}")
                 failed = {c: v for c, v in failed.items() if c not in off}
+        q2 = f"{self.run_id}-r2"
+        if failed and not (self.state["queues"].get(q2) or {}).get("todo_written"):
+            for c in self.sum_made(q1, failed):
+                if c in made:
+                    del failed[c]
         if failed:
-            q2 = f"{self.run_id}-r2"
             reruns = {}
             for cell, (host, gv) in failed.items():
                 r1 = self.rows.get(f"ht1:{q1}:{gv}:1") or {}
                 reruns[cell] = {"attempt": 2, "rerun_of": r1.get("id"), "flake": None}
+                if cell in made:
+                    reruns[cell]["rerun_why"] = "rescuer-made"
+            if made.keys() & reruns.keys():
+                self.notes.append("rerun (attempt 1 made its one-time rescuer, so its row couldn't count): "
+                                  + ", ".join(sorted(made.keys() & reruns.keys())))
             if not (self.state["queues"].get(q2) or {}).get("todo_written"):
                 self.rs.write_cells(self.plan, attempt=2, reruns=reruns)
-            self.start_queue(q2, [pc for pc in pcs if pc.cell in reruns], "cells-r2.json")
+            self.start_queue(q2, [pc for pc in self.due() if pc.cell in reruns], "cells-r2.json")
             self.wait_queue(q2, 2)
         return self.result(start, pcs)
+
+    def made(self, qrun):
+        """{cell: (host, gv)} of the jobs whose row is a PASS that doesn't count and whose run
+        made its one-time rescuer copy (extra.rescuer_made): the plan keyed the copy missing,
+        so the cell's first row that can count is a rerun at the copy's sum."""
+        out = {}
+        for (h, gv), d in sorted((self.done.get(qrun) or {}).items()):
+            r = self.rows.get(f"ht1:{qrun}:{gv}:1") or {}
+            if r.get("verdict") == "PASS" and r.get("valid") is False and (r.get("extra") or {}).get("rescuer_made"):
+                out[self.cell_of_gv(gv)] = (h, gv)
+        return out
+
+    def sum_made(self, qrun, cells):
+        """The one-time rescuer copies attempt 1 of CELLS made, put in ctx.facts as
+        facts_host.rescuers would show them and summed (ensure_imgsums), then the plan made
+        again, so cells-r2.json's planned keys carry their img: sums.  Returns the cells
+        whose copies got no sum (their rows still couldn't count)."""
+        facts = getattr(self.ctx, "facts", None)
+        want = {}
+        for cell, (h, gv) in cells.items():
+            r = self.rows.get(f"ht1:{qrun}:{gv}:1") or {}
+            for p in (r.get("extra") or {}).get("rescuer_made") or []:
+                f = facts.get(h) if isinstance(facts, dict) else None
+                if isinstance(f, dict):
+                    resc = f["rescuers"] = f.get("rescuers") or {}
+                    imgs = resc["images"] = resc.get("images") or {}
+                    imgs.setdefault(os.path.basename(p), {"sha256": None, "size": None, "mtime": None, "imgsum": None})
+                want.setdefault(cell, []).append((h, os.path.basename(p)))
+        if not want:
+            return []
+        if self.ensure_imgsums([pc for pc in self.due() if pc.cell in want]):
+            self.replan(pull=False)
+
+        def summed(h, n):
+            f = facts.get(h) if isinstance(facts, dict) else None
+            im = (((f or {}).get("rescuers") or {}).get("images") or {}).get(n) or {}
+            return bool(im.get("sha256") or im.get("imgsum"))
+        bad = sorted(c for c, hn in want.items() if not all(summed(h, n) for h, n in hn))
+        if bad:
+            self.notes.append("no sum of the one-time rescuer attempt 1 made, so no rerun of it can count: "
+                              + ", ".join(bad))
+        return bad
 
     def failed(self, qrun):
         """{cell: (host, gv)} of the jobs whose row is a FAIL.  A HARNESS or LOST result

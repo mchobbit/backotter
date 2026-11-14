@@ -24,6 +24,8 @@ Verdicts and classes (for the stop rules):
     PASS, pass         RESULT: PASS, exit 0
     FLAKY-FAIL, fail   the same on attempt 2 (the rerun after a FAIL)
     PASS, known-flake  the same on attempt 2 when T2_CELLS marks the first's FAILs a known flake
+    PASS, pass         the same on attempt 2 when T2_CELLS says attempt 1 made its one-time
+                       rescuer (rerun_why rescuer-made: a PASS that couldn't count, not a FAIL)
     FAIL, fail         a check failed
     HARNESS, harness   refused (exit 2), stopped over its reservation before its RESULT line, no RESULT line
     LOST, lost         swept (the run died), ended by a signal, its records not copied to K
@@ -272,7 +274,7 @@ def parse_report(text):
             "notes": notes, "header": header, "phases": phases}
 
 
-def classify(rep, kept, rc, code, attempt=1, flake=False, refused=False, lost=False):
+def classify(rep, kept, rc, code, attempt=1, flake=False, refused=False, lost=False, rerun_why=None):
     """(verdict, class, why) of a run (see the module's docstring)."""
     if refused:
         return "HARNESS", "harness", "refused before any phase"
@@ -288,6 +290,8 @@ def classify(rep, kept, rc, code, attempt=1, flake=False, refused=False, lost=Fa
         late = ("overran its reservation after its RESULT line: " + _cut(kept.partition("harness: ")[2], 120)) \
             if kept.startswith("overrun:") else None
         if attempt >= 2:
+            if rerun_why == "rescuer-made":
+                return "PASS", "pass", "; ".join(x for x in ("attempt 1 made the one-time rescuer", late) if x)
             if flake:
                 return "PASS", "known-flake", "; ".join(x for x in ("attempt 2 passed; attempt 1's FAILs are a known flake", late) if x)
             return "FLAKY-FAIL", "fail", "; ".join(x for x in ("attempt 2 passed after attempt 1 failed", late) if x)
@@ -797,7 +801,10 @@ def build(argv, hostctx=None):
 
     # Verdict, needs.
     verdict, klass, why = classify(rep, kept, a.rc, a.code, attempt, bool((ce or {}).get("flake")),
-                                   a.refused, a.lost)
+                                   a.refused, a.lost, (ce or {}).get("rerun_why"))
+    # The one-time rescuer copies this run made (ht1-bsd.sh's note): the plan keyed them
+    # missing, so holt.run reruns the cell at their sums.
+    made = [m.group(1) for m in (re.match(r"made the one-time rescuer (/\S+)", n) for n in rep["notes"]) if m]
     needs = {} if (a.refused or a.lost) else rep["needs"]
     if verdict in ("HARNESS", "LOST") and not a.refused and not a.lost:
         needs = dict(needs, harness="FAIL")
@@ -929,6 +936,10 @@ def build(argv, hostctx=None):
     }
     if ce and ce.get("rerun_of"):
         row["extra"]["rerun_of"] = ce["rerun_of"]
+    if ce and ce.get("rerun_why"):
+        row["extra"]["rerun_why"] = ce["rerun_why"]
+    if made:
+        row["extra"]["rescuer_made"] = made
     return row
 
 

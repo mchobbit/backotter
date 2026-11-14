@@ -518,6 +518,10 @@ class Runs(unittest.TestCase):
         r2 = rs.cells_doc(p, "chopin", attempt=2, reruns={"holt:debian13": {"rerun_of": "chopin-x", "flake": None}})
         self.assertEqual(list(r2["cells"]), ["debian13"])
         self.assertEqual((r2["cells"]["debian13"]["attempt"], r2["cells"]["debian13"]["rerun_of"]), (2, "chopin-x"))
+        self.assertNotIn("rerun_why", r2["cells"]["debian13"])
+        r2 = rs.cells_doc(p, "chopin", attempt=2, reruns={"holt:debian13": {"rerun_of": "chopin-x", "flake": None,
+                                                                          "rerun_why": "rescuer-made"}})
+        self.assertEqual(r2["cells"]["debian13"]["rerun_why"], "rescuer-made")
         self.assertEqual(run.driver_id("gate:loop:linux@chopin"), "loop:linux")
         sp = self.w.plan("SticTest2 rel4 debian12 plan")
         sd = run.RunState("t2s-20261108T0500-abcd", self.w.word("SticTest2 rel4 debian12", ctx), sp, ctx,

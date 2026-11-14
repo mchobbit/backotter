@@ -13,6 +13,12 @@ bko-holt and rustic-bko.  Three boots, all over SSH with the guest's key:
   restored  the internal disk and the drive, with the NVRAM the run left: bs1-verify
             (which checks GRUB's embedded lvmid where it has one: gentoo)
 
+The three share one NVRAM, as a laptop's: WORK_DIR/vars.fd, a fresh store, or a
+copy of GUEST_DIR/uefi-vars.fd when the guest has one and boots with Secure Boot
+off (its install's: cachyos-zfs's has Limine's entry).  The source then boots
+through its boot loader's own entry, as the Thinkpad does, and bs1-restore's
+load recreates that entry for the restored boot.
+
 The internal disk is the guest's own size.  The backup is checked to be named
 /mnt/bs1-src (the tree is mounted elsewhere: --as-path) and to keep a file's
 real access time.  An ostree guest (kinoite44: docs/design/bazzite.md) then
@@ -229,6 +235,19 @@ def rollback_boots(root, vm, run, restores, host_key_is_pinned):
     return True
 
 
+def own_nvram(guest_dir):
+    """The store the source starts on: the guest's own (uefi-vars.fd) when it
+    has one and boots with Secure Boot off (vm-run-options' --no-secure-boot:
+    the store is OVMF_CODE_4M.fd's, as this one boots), else a fresh one."""
+    own, opts = os.path.join(guest_dir, "uefi-vars.fd"), os.path.join(guest_dir, "vm-run-options")
+    try:
+        with open(opts) as f:
+            insecure = "--no-secure-boot" in f.read().split()
+    except OSError:
+        insecure = False
+    return own if insecure and os.path.isfile(own) else f"{rw1a.OVMF}/{rw1a.VARS}"
+
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     ap.add_argument("img")
@@ -275,7 +294,7 @@ def main():
     key = os.path.join(a.guest_dir, "id_ed25519")
     w = a.work
     internal, drive_raw, drive, stick_raw, stick, vars_file = (f"{w}/internal.qcow2", f"{w}/drive.raw", f"{w}/drive.qcow2", f"{w}/stick.img", f"{w}/stick.qcow2", f"{w}/vars.fd")
-    shutil.copy(f"{rw1a.OVMF}/{rw1a.VARS}", vars_file)
+    shutil.copy(own_nvram(a.guest_dir) if not a.bios else f"{rw1a.OVMF}/{rw1a.VARS}", vars_file)
     # The source's real size: the dump and the restore see the disk the guest
     # has (and with --smaller, losing 1 GiB takes more than slack).
     guest_size = json.loads(subprocess.run(["qemu-img", "info", "--output=json", guest[0]], capture_output=True, text=True, check=True).stdout)["virtual-size"]

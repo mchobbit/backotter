@@ -48,8 +48,10 @@
 #                         snapshot "fresh-install" taken after the first boot
 #   uefi-vars.fd          the OVMF variables of the install, with rEFInd's
 #                         NVRAM entry, for OVMF_CODE_4M.fd on a plain q35
-#                         machine (as below; vm-run --uefi-vars can't read it:
-#                         see uefi=); vm-run boots the fallback loader
+#                         machine (as below, and vm-run --no-secure-boot's):
+#                         ht1.sh and bs1-qemu.py boot a copy of it (vm-run
+#                         --uefi-vars), vm-run alone a fresh store, so the
+#                         fallback loader
 #   root-password         the password of root and of "tester" (mode 600)
 #   console-passphrase    pikaos4-luks: crypt_root's LUKS passphrase (mode
 #                         600, letters and digits, new each build), which
@@ -253,9 +255,9 @@ stop_guest() {
     wait "$qemu_pid" 2>/dev/null || true
     qemu_pid=""
 }
-# Plain q35, not vm-run's machine: vm-run marks the flash secure (SMM only)
-# even for OVMF_CODE_4M.fd, which has no SMM, so under --no-secure-boot the
-# firmware can neither read nor write the variable store and keeps its
+# Plain q35, as vm-run's --no-secure-boot machine: OVMF_CODE_4M.fd has no
+# SMM, and on flash marked secure (SMM only, which vm-run gave it until
+# 2026-11-14) it can neither read nor write the variable store and keeps its
 # variables in RAM: rEFInd's entry would never reach uefi-vars.fd.
 uefi=(-machine q35 -drive "if=pflash,format=raw,unit=0,readonly=on,file=$OVMF_CODE"
     -drive "if=pflash,format=raw,unit=1,file=uefi-vars.fd")

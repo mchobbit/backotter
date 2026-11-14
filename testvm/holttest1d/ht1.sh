@@ -244,6 +244,23 @@ elif ((uefi)) && [[ -z ${HT_RESCUER_IMG:-} && -f /bkoscratch/holttest1d/rescuer/
     rkey=$W/vms/$RESCUER/id_ed25519
 fi
 [[ $VARIANT != bs2 ]] || bs2_setup
+# A guest with an NVRAM of its own (uefi-vars.fd beside its disk: its
+# install's, with its boot loader's entry, e.g. cachyos-zfs's Limine) boots
+# the source and the restored disk each on a fresh copy of it, as the machine
+# it was installed on: through that entry, as the Thinkpad boots, not the
+# ESP's removable path.  With Secure Boot off only (the store is
+# OVMF_CODE_4M.fd's), and not for BackShot2, whose NVRAM is its own (tier 2's
+# shared store, judge.py's --nvram-kept and --new-uuids); otherwise each boot
+# has a fresh store, as ever.  GV_ENTRY: the store has an entry on a disk.
+GVARS=$W/vms/$G/uefi-vars.fd GV_ENTRY=0
+((uefi)) && [[ $VARIANT != bs2 && -f $GVARS && " ${fw[*]} " == *" --no-secure-boot "* ]] || GVARS=""
+[[ -n $GVARS ]] && command -v virt-fw-vars >/dev/null &&
+    virt-fw-vars -i "$GVARS" --print 2>/dev/null | grep -qE '^Boot[0-9A-F]{4} .*devpath=Partition\(' && GV_ENTRY=1
+# NAME: VFW, vm-run's options for a boot on R/NAME-vars.fd, made a fresh copy of it (none without).
+gvars() { VFW=(); [[ -n $GVARS ]] || return 0; cp "$GVARS" "$R/$1-vars.fd" && VFW=(--uefi-vars "$R/$1-vars.fd"); }
+# The entry the guest booted through: its efibootmgr -v line (HD(...): on a disk).
+NVBOOT='command -v efibootmgr >/dev/null || { echo "no efibootmgr"; exit 0; }
+c=$(efibootmgr | sed -n "s/^BootCurrent: *//p"); efibootmgr -v | grep -E "^Boot$c\\*? " || echo "BootCurrent ${c:-none}, no such entry"'
 # What the load runs in the rescuer (+img: the image's own, as a user's would).
 RHOLT=/mnt/share/bko-holt RARCH=/mnt/share/rustic-bko
 if [[ $VARIANT == img ]]; then RHOLT=/usr/local/bin/bko-holt RARCH=/usr/local/bin/rustic-bko; fi
@@ -264,7 +281,7 @@ size_of() { qemu-img info --output=json "$1" | python3 -c 'import json,sys; prin
 gpass=""; for f in console-passphrase zfs-passphrase luks-passphrase luks-keyfile; do [[ -f $W/vms/$G/$f ]] && gpass=$W/vms/$G/$f && break; done
 ckey=$gpass; [[ $gpass != */luks-keyfile ]] || ckey=""
 # Where the run works and what a pass keeps (ht1-lib.sh; README "Where a run works, and what it keeps").
-HT_BULK=(share 'src-*.qcow2' 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 rustic-bko tmp img-key img-key.pub)
+HT_BULK=(share 'src-*.qcow2' 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 rustic-bko tmp img-key img-key.pub source-vars.fd restored-vars.fd)
 [[ $VARIANT != bs2 ]] || HT_BULK+=(rescuer-vars.fd)   # (a resumed UEFI rescuer's NVRAM)
 HT_ZIP=(src-meta.json dst-meta.json)
 # Settings that change what a run checks, or its rescuer: its report names them.
@@ -668,12 +685,23 @@ phase_source() {
     for ((i = 0; i < n; i++)); do
         rm -f "${src[i]}"; qemu-img create -q -f qcow2 -b "${imgs[i]}" -F qcow2 "${src[i]}"
     done
-    CONSOLE_KEY=$ckey vm_up "${src[0]}" "$R/logs/source-serial.log" "${fw[@]}" "${extra_src[@]}"
+    gvars source; local svfw=("${VFW[@]}")
+    CONSOLE_KEY=$ckey vm_up "${src[0]}" "$R/logs/source-serial.log" "${fw[@]}" "${svfw[@]}" "${extra_src[@]}"
     vm_wait "$gkey" || { bad "source boots (no SSH)"; vm_down "$gkey"; return; }
     ok "source boots${detached:+, with ${detached##*/} detached}"
     if [[ -n $detached ]]; then
         sshk "$gkey" "$MDSTAT" > "$R/logs/source-mdstat.txt"
         if grep -q '_' "$R/logs/source-mdstat.txt"; then
+    if [[ -n $GVARS ]]; then
+        sshk "$gkey" "$NVBOOT" > "$R/logs/source-nvram-boot.txt" 2>&1
+        if grep -q 'HD(' "$R/logs/source-nvram-boot.txt"; then
+            ok "source booted through its own NVRAM entry (a copy of uefi-vars.fd): $(head -1 "$R/logs/source-nvram-boot.txt")"
+        elif ((GV_ENTRY)); then
+            bad "source didn't boot through the entry in its uefi-vars.fd: $(head -1 "$R/logs/source-nvram-boot.txt") (logs/source-nvram-boot.txt)"
+        else
+            say "note: source: on a copy of uefi-vars.fd, with no entry on a disk: $(head -1 "$R/logs/source-nvram-boot.txt")"
+        fi
+    fi
             ok "source's arrays degraded: $(grep '_' "$R/logs/source-mdstat.txt" | tr '\n' ';' | sed 's/;$//; s/;/; /g')"
         else
             bad "no array of the source is degraded with ${detached##*/} detached (logs/source-mdstat.txt)"
@@ -705,7 +733,7 @@ phase_source() {
         fi
         if [[ $(tail -1 "$R/logs/source-prep.txt") == REBOOT ]]; then
             vm_down "$gkey"
-            CONSOLE_KEY=$gpass vm_up "${src[0]}" "$R/logs/source-serial-2.log" "${fw[@]}" "${extra_src[@]}"
+            CONSOLE_KEY=$gpass vm_up "${src[0]}" "$R/logs/source-serial-2.log" "${fw[@]}" "${svfw[@]}" "${extra_src[@]}"
             vm_wait "$gkey" || { bad "source boots again after ${HT_SOURCE_PREP##*/} (no SSH)"; vm_down "$gkey"; return; }
             ok "source rebooted after ${HT_SOURCE_PREP##*/}"
         fi
@@ -892,7 +920,7 @@ phase_rebuild() {
     # The rescuer boots in the source's firmware mode.  Its UEFI variables
     # aren't the restored machine's (each vm-run --uefi starts fresh), so
     # the boot stage runs with --no-nvram, and the restored disk boots from
-    # the ESP's removable path.
+    # the ESP's removable path (GVARS: through the entries of its own store).
     # (bs2: resumed from a saved state, its disks hot-plugged, when it can: ht1-bs2.sh.)
     if [[ $VARIANT == bs2 ]] && bs2_rescuer_resume; then :; else
     IMG_BOOT=${IMG_PLAT:-} vm_up "$R/rescuer.qcow2" "$R/logs/rescuer-serial.log" "${rfw[@]}" --memory 3072 "${disks[@]}" -- \
@@ -1076,13 +1104,22 @@ phase_verify() {
     else
         bad "mount the restored disk"
     fi
-    CONSOLE_KEY=$ckey vm_up "${dst[0]}" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${BS2_VFW[@]}" "${extra_dst[@]}"
+    gvars restored; local dvfw=("${VFW[@]}")
+    CONSOLE_KEY=$ckey vm_up "${dst[0]}" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${dvfw[@]}" "${BS2_VFW[@]}" "${extra_dst[@]}"
     if ! vm_wait "$gkey"; then bad "the restored disk boots by itself (no SSH; logs/restored-serial.log)"; vm_down "$gkey"; return; fi
     ok "the restored disk boots by itself, SSH with the guest's key"
     if [[ -n $detached ]]; then
         sshk "$gkey" "$MDSTAT" > "$R/logs/restored-mdstat.txt"
         if cmp -s "$R/logs/source-mdstat.txt" "$R/logs/restored-mdstat.txt"; then
             ok "restored arrays degraded as the source's: $(grep '_' "$R/logs/restored-mdstat.txt" | tr '\n' ';' | sed 's/;$//; s/;/; /g')"
+    if grep -qs 'HD(' "$R/logs/source-nvram-boot.txt" && [[ -n $GVARS ]]; then
+        sshk "$gkey" "$NVBOOT" > "$R/logs/restored-nvram-boot.txt" 2>&1
+        if cmp -s "$R/logs/source-nvram-boot.txt" "$R/logs/restored-nvram-boot.txt"; then
+            ok "the restored disk booted through the source's NVRAM entry: $(head -1 "$R/logs/restored-nvram-boot.txt")"
+        else
+            bad "the restored disk booted through $(head -1 "$R/logs/restored-nvram-boot.txt"), the source through $(head -1 "$R/logs/source-nvram-boot.txt")"
+        fi
+    fi
         else
             bad "restored arrays: $(tr '\n' ' ' < "$R/logs/restored-mdstat.txt"), source's $(tr '\n' ' ' < "$R/logs/source-mdstat.txt")"
         fi

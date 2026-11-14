@@ -43,9 +43,11 @@ BackShot2's option sweep (B9) adds what each of load's flags changes on purpose:
 --removable    load also installed the ESP's removable-media loader: EFI/BOOT/
                files on the ESP may be new or rewritten
 --nvram-kept   tier 2's boots shared one NVRAM with the rescuer: the firmware's
-               own boot entries (no HD() path: its disks, network, shell) and
-               the boot order and current entry are the rescue session's; the
-               entries on a disk (HD()) are compared, as a set
+               own boot entries (no HD() path: its disks, network, shell), the
+               entries on a disk the machine doesn't have (the rescuer's own:
+               its shim's fallback adds one), and the boot order and current
+               entry are the rescue session's; the entries on the machine's
+               disks (HD(), a partition the dump found) are compared, as a set
 
 IGNORED lists what may differ between two boots of the same machine, or can't
 be kept by a restore, each with why.  judge.py prints which of them did differ,
@@ -162,11 +164,12 @@ def drop_removable(d):
 
 
 def nvram_kept(d):
-    """--nvram-kept: only the boot entries on a disk, as a set; the rest is the rescue session's."""
+    """--nvram-kept: only the boot entries on the machine's disks, as a set; the rest is the rescue session's."""
     efi = (d.get("boot") or {}).get("efi")
     if not isinstance(efi, dict):
         return
-    ents = [e for e in efi.get("entries") or [] if any("HD(" in str(p) for p in e.get("device_path") or [])]
+    ents = [e for e in efi.get("entries") or [] if any("HD(" in str(p) for p in e.get("device_path") or [])
+            and ((e.get("partition") or {}).get("device") or not isinstance(e.get("partition"), dict))]
     efi["entries"] = sorted(({k: v for k, v in e.items() if k not in ("number", "in_boot_order")} for e in ents),
                             key=lambda e: json.dumps(e, sort_keys=True))
     for k in ("boot_order", "boot_current", "boot_next"):

@@ -122,8 +122,9 @@ def overlay(path: str, backing: str | None, size: str, fmt: str = "qcow2") -> No
 def qemu(work: str, name: str, vars_file: str, disks: list[list[str]], port: int | None = None) -> list[str]:
     cmd = ["qemu-system-x86_64", "-enable-kvm", "-cpu", "host", "-smp", "4", "-m", "6144",
            "-display", "none", "-serial", "stdio", "-monitor", "none",
-           "-machine", "q35,smm=on",
-           "-global", "driver=cfi.pflash01,property=secure,value=on",
+           # Plain q35: OVMF_CODE_4M.fd has no SMM, and on flash marked
+           # secure (SMM's only) it kept its variables in RAM, never in vars_file.
+           "-machine", "q35",
            "-drive", f"if=pflash,format=raw,unit=0,readonly=on,file={OVMF}/{CODE}",
            "-drive", f"if=pflash,format=raw,unit=1,file={vars_file}",
            "-device", "qemu-xhci,id=usb"]

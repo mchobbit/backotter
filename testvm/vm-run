@@ -18,12 +18,20 @@
 #   --uefi        boot with OVMF (UEFI) instead of SeaBIOS (BIOS), with Secure
 #                 Boot on and Microsoft's keys enrolled, like a stock PC
 #   --no-secure-boot
-#                 with --uefi: Secure Boot off (Pop!_OS, for one, needs that)
+#                 with --uefi: Secure Boot off (Pop!_OS, for one, needs that):
+#                 OVMF_CODE_4M.fd, built without SMM, on a plain q35 machine
+#                 (Secure Boot's firmware needs SMM and flash only SMM may
+#                 write; given those, this one could neither read nor write
+#                 its variable store and kept its variables in RAM)
 #   --uefi-vars FILE
 #                 with --uefi: keep OVMF's variable store in FILE instead of a
 #                 fresh copy per run (made from the template when FILE doesn't
 #                 exist), so boot entries outlive the VM: BackShot2's tier 2
-#                 boots a rescuer and then the restored disk on one NVRAM
+#                 boots a rescuer and then the restored disk on one NVRAM.
+#                 FILE is read and written in place, so give a copy of a
+#                 guest's own (its install's uefi-vars.fd: cachyos-zfs's has
+#                 Limine's entry) to boot through its entries; --snapshot
+#                 keeps FILE's writes in its temporary file too
 #   --mok CERT    with --uefi: enroll CERT in shim's MokList (virt-fw-vars
 #                 --add-mok, owner shim's GUID) in this run's variable store
 #                 before the boot, as MokManager would, so that a GRUB signed
@@ -299,8 +307,14 @@ if [[ $uefi == yes ]]; then
         virt-fw-vars -l error --inplace "$vfile" --add-mok 605dab50-e046-4300-abb6-3dd810dd8b23 "$pem" >/dev/null ||
             die "--mok: virt-fw-vars could not add the key to $vfile"
     done
-    args+=(-machine q35,smm=on -global driver=cfi.pflash01,property=secure,value=on
-        -drive "if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/$code"
+    # SMM, and flash only SMM may write, for Secure Boot's firmware alone:
+    # OVMF_CODE_4M.fd has no SMM, so it couldn't use a secure flash at all.
+    if [[ $secure_boot == yes ]]; then
+        args+=(-machine q35,smm=on -global driver=cfi.pflash01,property=secure,value=on)
+    else
+        args+=(-machine q35)
+    fi
+    args+=(-drive "if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/$code"
         -drive "if=pflash,format=raw,unit=1,file=$vfile")
 elif [[ $q35 == yes ]]; then
     args+=(-machine q35)

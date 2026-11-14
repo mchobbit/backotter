@@ -617,6 +617,18 @@ class TestJudgeExpect(unittest.TestCase):
             self.assertEqual(self.judge("--expect", a, b).returncode, 1)
             r = self.judge("--expect", "--grow", "0", "--removable", "--nvram-kept", a, b)
             self.assertEqual(r.returncode, 0, r.stdout)
+            # The rescuer's own entry, which its shim's fallback adds to the shared
+            # NVRAM: on a disk the restored machine doesn't have.
+            dst["boot"]["efi"]["entries"].append({"number": "000A", "description": "Ubuntu", "device_path": [
+                "HD(1,GPT,cebf8e5c-9c20-4dba-851a-4b02ca96db85,0x800,0x17d800)/File(\\EFI\\ubuntu\\shimx64.efi)"],
+                "partition": {"number": 1, "table": "gpt", "uuid": "cebf8e5c-9c20-4dba-851a-4b02ca96db85", "device": None}})
+            dump(dst, b)
+            r = self.judge("--expect", "--grow", "0", "--removable", "--nvram-kept", a, b)
+            self.assertEqual(r.returncode, 0, r.stdout)
+            # One on the machine's disks is compared.
+            dst["boot"]["efi"]["entries"][-1]["partition"]["device"] = "vda1"
+            dump(dst, b)
+            self.assertEqual(self.judge("--expect", "--grow", "0", "--removable", "--nvram-kept", a, b).returncode, 1)
 
 
 VM_MOUNT = os.path.join(BS2, "..", "vm-mount")

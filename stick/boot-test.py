@@ -157,9 +157,13 @@ def qemu_command(img: str, platform: str, mode: str, media: str, tmp: str) -> li
     code, vars_template = FIRMWARE[mode]
     vars_copy = os.path.join(tmp, "OVMF_VARS.fd")
     shutil.copy(os.path.join(OVMF, vars_template), vars_copy)
+    # SMM, and flash only SMM may write, for Secure Boot's firmware alone:
+    # OVMF_CODE_4M.fd has no SMM, and given them it keeps its variables in RAM.
+    if mode == "uefi-secureboot":
+        cmd += ["-machine", f"{machine},smm=on", "-global", "driver=cfi.pflash01,property=secure,value=on"]
+    else:
+        cmd += ["-machine", machine]
     cmd += [
-        "-machine", f"{machine},smm=on",
-        "-global", "driver=cfi.pflash01,property=secure,value=on",
         "-drive", f"if=pflash,format=raw,unit=0,readonly=on,file={os.path.join(OVMF, code)}",
         "-drive", f"if=pflash,format=raw,unit=1,file={vars_copy}",
     ]

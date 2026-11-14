@@ -438,7 +438,7 @@ Run by `testvm/backshot2/bs2` on the Mac, `bs2-host` on the hosts, the way t2 is
 | `BackShot2Alpine [N]` | N new cases (default 200) from the Alpine sources, through the tiers each needs, then the corpus |
 | `BackShot2 [SOURCE...] [N]` | the same over the named, or all, Linux sources |
 | `BackShot2 corpus` | the corpus alone |
-| `BackShot2All` | reserved for all of BackShot2, fresh, later |
+| `BackShot2All` | all of BackShot2, every OS family, fresh: planned in `docs/design/bs2-all.md` (2026-11-14), not built |
 | `bs2 replay CASE`, `bs2 shrink CASE`, `bs2 soak CASE N` | as above |
 | `bs2 leftovers` | the leftovers set, its steps in order on one disk (above) |
 | any form with `plan` | the cases it would draw, their tiers, est. time and GB; nothing runs |

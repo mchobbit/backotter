@@ -94,6 +94,8 @@ mount --rbind --make-rslave /proc /mnt/bko-target/proc
 mount --rbind --make-rslave /sys /mnt/bko-target/sys
 mount --rbind --make-rslave /run /mnt/bko-target/run
 chroot /mnt/bko-target mkinitcpio -P
+# NVRAM's entries for this partition and loader, from an earlier restore here, deleted
+bko-holt efi-dedupe /dev/sdq 1 '\EFI\limine\limine_x64.efi'
 efibootmgr --quiet --create --disk /dev/sdq --part 1 --label Limine --loader '\EFI\limine\limine_x64.efi'
 mkdir -p /mnt/bko-target/var/log/bko-holt
 # this restore's log, on the restored system

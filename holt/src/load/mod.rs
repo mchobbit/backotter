@@ -14,6 +14,7 @@
 
 pub mod abroot;
 pub mod commands;
+pub mod efidedupe;
 pub mod exec;
 pub mod fit;
 pub mod layout;

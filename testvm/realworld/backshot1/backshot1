@@ -272,9 +272,10 @@ EOF
             "$0" "$step" ${args[@]+"${args[@]}"} </dev/null || die "round $i of $count failed at $step"
         done
         echo "=== round $i of $count: PASS in $(( ($(date +%s) - start) / 60 )) min"
-        # The restore's boot stage makes the source's entries again (efibootmgr
-        # --create) and leaves last round's, so each round adds a copy of each:
-        # stop before they fill the firmware's variable store.
+        # The restore's boot stage deletes an entry for the same partition and
+        # loader before it makes the source's again, so the count should hold
+        # steady; this is a safety net, should copies pile up anyway, to stop
+        # before they fill the firmware's variable store.
         n=$(on_host 'efibootmgr | grep -c "^Boot[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]" || true' </dev/null) ||
             die "can't count the firmware's boot entries after round $i"
         first=${first:-$n}

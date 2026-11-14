@@ -120,6 +120,8 @@ done
 [ -z "$errs" ] || { printf %s "$errs" >&2; echo "ostree: $nbad of $found loader entries inconsistent with the restored tree (a backup taken across a deploy?)" >&2; exit 1; }
 echo "ostree: $found loader entries, each with its kernel, initramfs and deployment"
 '
+# NVRAM's entries for this partition and loader, from an earlier restore here, deleted
+bko-holt efi-dedupe /dev/sdq 1 '\EFI\fedora\shimx64.efi'
 efibootmgr --quiet --create --disk /dev/sdq --part 1 --label Fedora --loader '\EFI\fedora\shimx64.efi'
 mkdir -p /mnt/bko-target/var/log/bko-holt
 # this restore's log, on the restored system

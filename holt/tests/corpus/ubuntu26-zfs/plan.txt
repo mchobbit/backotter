@@ -132,6 +132,8 @@ chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/ef
 sh -c '[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober'
 chroot /mnt/bko-target env LANG=en_US.UTF-8 update-grub
 sh -c '! grep -q '\'' /mnt/bko-target/usr/bin/os-prober '\'' /proc/self/mountinfo || umount /mnt/bko-target/usr/bin/os-prober'
+# NVRAM's entries for this partition and loader, from an earlier restore here, deleted
+bko-holt efi-dedupe /dev/sdq 1 '\EFI\ubuntu\shimx64.efi'
 efibootmgr --quiet --create --disk /dev/sdq --part 1 --label Ubuntu --loader '\EFI\ubuntu\shimx64.efi'
 mkdir -p /mnt/bko-target/var/log/bko-holt
 # this restore's log, on the restored system

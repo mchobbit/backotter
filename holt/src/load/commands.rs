@@ -3674,6 +3674,10 @@ impl Builder<'_> {
         }
         let mut out = Vec::new();
         let proxmox_sd = self.proxmox_systemd_boot_esps();
+        // The (disk, partition, loader)s NVRAM's old copies were deleted for
+        // already: a second source entry for the same loader (another
+        // kernel command line) mustn't delete the first one made.
+        let mut deduped: Vec<(String, u32, String)> = Vec::new();
         for e in picked.into_iter().rev() {
             let desc = s(e, "description").unwrap_or_default();
             let (Some(file), Some(part)) = (s(e, "file"), e.at(&["partition", "device"]).and_then(Value::as_str)) else { continue };
@@ -3688,6 +3692,11 @@ impl Builder<'_> {
                 continue;
             };
             let Some(t) = self.names.mapping.target_of(&disk) else { continue };
+            let key = (t.to_string(), num, crate::load::efidedupe::norm_path(&file));
+            if !deduped.contains(&key) {
+                out.push(efi_dedupe(&format!("/dev/{t}"), num, &file));
+                deduped.push(key);
+            }
             out.push(Cmd::new(&["efibootmgr", "--quiet", "--create", "--disk", &format!("/dev/{t}"), "--part", &num.to_string(), "--label", &desc, "--loader", &file]));
         }
         out
@@ -3868,6 +3877,15 @@ impl Builder<'_> {
         }
         out
     }
+}
+
+/// `bko-holt efi-dedupe DEV PART LOADER` (efidedupe.rs), just before
+/// `efibootmgr --create` makes that entry: NVRAM's entries for the same
+/// partition and loader, which an earlier restore onto this machine made,
+/// deleted, so that each restore doesn't add another copy.
+pub(crate) fn efi_dedupe(dev: &str, part: u32, loader: &str) -> Cmd {
+    let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
+    Cmd::new(&[exe.as_str(), "efi-dedupe", dev, &part.to_string(), loader]).why("NVRAM's entries for this partition and loader, from an earlier restore here, deleted").warns()
 }
 
 #[cfg(test)]

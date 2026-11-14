@@ -80,6 +80,8 @@ mount --rbind --make-rslave /proc /mnt/bko-target/proc
 mount --rbind --make-rslave /sys /mnt/bko-target/sys
 mount --rbind --make-rslave /run /mnt/bko-target/run
 chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d "$k/kernel" ] || continue; k=${k##*/}; booster build --force --kernel-version "$k" "/boot/booster.img-$k" || exit; n=$((n + 1)); done; [ "$n" -gt 0 ]'
+# NVRAM's entries for this partition and loader, from an earlier restore here, deleted
+bko-holt efi-dedupe /dev/sdq 1 '\EFI\refind\refind_x64.efi'
 efibootmgr --quiet --create --disk /dev/sdq --part 1 --label 'rEFInd Boot Manager' --loader '\EFI\refind\refind_x64.efi'
 mkdir -p /mnt/bko-target/var/log/bko-holt
 # this restore's log, on the restored system

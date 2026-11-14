@@ -136,12 +136,11 @@ clicking Done gives by hand: this erases that disk, COUNT times.  The boot
 entry is `bs1-to-stick`'s "BKO rescue", made again each round (it deletes
 the last one), and the restore leaves BootNext on the restored system.  But
 the restore's boot stage makes the source's own entries again (`efibootmgr
---create`, at the front of `BootOrder`) and doesn't delete last round's, so
-each round adds one copy of each to the firmware's variables.  The cycle
-counts the entries after every round and stops once there are more than
-`BS1_ENTRY_GROWTH` (8) more than after round 1; delete the copies
-(`efibootmgr -b XXXX -B`) before the next cycle.  Until `bko-holt load`
-replaces an entry instead of adding one, a long cycle hits this.
+--create`, at the front of `BootOrder`), first deleting any entry for the
+same partition and loader, so the count stays the same from round to round.
+As a safety net the cycle still counts the entries after every round and
+stops once there are more than `BS1_ENTRY_GROWTH` (8) more than after round
+1; then delete the copies (`efibootmgr -b XXXX -B`) before the next cycle.
 
 Before anything changes, the cycle refuses a run that needs a person each
 round: one whose baseline's `unlock.txt` says `attended`, or that has no

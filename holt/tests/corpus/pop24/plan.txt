@@ -76,6 +76,8 @@ mount --rbind --make-rslave /sys /mnt/bko-target/sys
 mount --rbind --make-rslave /run /mnt/bko-target/run
 chroot /mnt/bko-target update-initramfs -u -k all
 chroot /mnt/bko-target bootctl install --no-variables
+# NVRAM's entries for this partition and loader, from an earlier restore here, deleted
+bko-holt efi-dedupe /dev/sdq 1 '\EFI\systemd\systemd-bootx64.efi'
 efibootmgr --quiet --create --disk /dev/sdq --part 1 --label 'Linux Boot Manager' --loader '\EFI\systemd\systemd-bootx64.efi'
 mkdir -p /mnt/bko-target/var/log/bko-holt
 # this restore's log, on the restored system

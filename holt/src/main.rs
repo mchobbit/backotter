@@ -69,6 +69,7 @@ fn main() -> ExitCode {
         Some("report-bug") => bko_holt::bugreport::main(&args[1..]),
         // Not in the usage: run by load's close, partition and boot stages.
         Some("md-lbs") => ExitCode::from(bko_holt::mdsb::main(&args[1..])),
+        Some("efi-dedupe") => ExitCode::from(bko_holt::load::efidedupe::main(&args[1..])),
         Some("write-table") => ExitCode::from(bko_holt::load::writetable::main(&args[1..])),
         Some("rewrite") => ExitCode::from(bko_holt::load::rewrite::main(&args[1..])),
         Some("-h" | "--help") => {

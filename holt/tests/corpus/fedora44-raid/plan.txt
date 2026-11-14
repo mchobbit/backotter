@@ -127,6 +127,8 @@ chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d "$k/kernel" 
 sh -c '[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober'
 chroot /mnt/bko-target env LANG=C grub2-mkconfig -o /boot/grub2/grub.cfg
 sh -c '! grep -q '\'' /mnt/bko-target/usr/bin/os-prober '\'' /proc/self/mountinfo || umount /mnt/bko-target/usr/bin/os-prober'
+# NVRAM's entries for this partition and loader, from an earlier restore here, deleted
+bko-holt efi-dedupe /dev/sdq 2 '\EFI\fedora\shimx64.efi'
 efibootmgr --quiet --create --disk /dev/sdq --part 2 --label Fedora --loader '\EFI\fedora\shimx64.efi'
 mkdir -p /mnt/bko-target/var/log/bko-holt
 # this restore's log, on the restored system

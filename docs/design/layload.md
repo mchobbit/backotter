@@ -689,6 +689,63 @@ Never the stick's defaults: every feature on or off as the source had it.
 The read-back after each write is the real guarantee: dump's parser lists
 the new filesystem's features, and they must be exactly the recorded ones.
 
+### ZFS on every rescue image (checked 2026-11-14)
+
+One image per platform, with that platform's newest ZFS, restores every
+distro on it, and no distro needs an image of its own (OpenIndiana's was the
+one considered).  Two things make that hold, on every platform alike:
+
+1. **The image's ZFS knows every feature the source's has.**  Newer ZFS
+   reads older pools, so the image is the newest release.  `plan` checks it
+   (item 4 above): `zpool upgrade -v` on the rescue system must list every
+   feature a source pool has enabled or active, and every file its
+   `compatibility` property names must be in the rescue system's
+   `compatibility.d`.  If not, the plan has a problem naming them: the image
+   is older than the source, and a newer one is needed.
+2. **The pool gets the source's feature set, no more.**  `zpool create -d`
+   (every feature off), then `-o feature@F=enabled` for each feature the
+   source had enabled or active, its `compatibility` and other local
+   properties as `-o`, and `ashift` (from the vdev labels when the property
+   is 0).  A feature the image knows and the source didn't stays off, so the
+   source's own ZFS imports the pool, and its boot loader reads it.  A
+   legacy pool (its `version` a number other than 5000, such as 28) is made
+   at that version with `-o version=N` and no feature flags, since zpool
+   create would otherwise make it 5000.  The
+   boot code is the source's own: on FreeBSD, the freebsd-boot partition's
+   bytes go back with the partition table; on illumos, `installboot` runs
+   from the restored `/boot`; on Linux, GRUB, ZFSBootMenu or a kernel on the
+   ESP come back with the restore.
+
+Per platform:
+
+- **Linux**: OpenZFS 2.4.1 on the image.  ubuntu24 (OpenZFS 2.2.2, the
+  oldest ZFS guest) gets exactly its 39 features; ubuntu26-zfs's `bpool`,
+  the pool GRUB reads, gets its 11 and none of the 36 it has disabled.
+- **illumos**: OmniOS r151058.  illumos-gate master, illumos-joyent
+  (SmartOS) and OmniOS r151058 have the same `zfeature_common.c` (27
+  features, last changed 2025-01-13), and OpenIndiana Hipster builds from
+  gate master, so an OpenIndiana pool's features are all the image's.  The
+  illumos loader's `features_for_read` covers all 27, so a pool load makes
+  boots on OpenIndiana too.  OpenIndiana isn't a supported source yet
+  (`osrel.rs`): that's distro support (its installer's layout, boot
+  environments, `bootadm`), which an OpenIndiana guest would test, not an
+  image.  When illumos gets a feature the image lacks, the plan check says
+  so and the image moves to the OmniOS release that has it.
+- **FreeBSD**: 15.1-RELEASE (OpenZFS 2.4).  FreeBSD 14 is older; FreeBSD
+  15.1 and GhostBSD 26.2 are on 15.1-RELEASE.  HardenedBSD 15 follows
+  15-STABLE, which could take a newer OpenZFS than 15.1-RELEASE: then the
+  plan check refuses, and the image moves to the next FreeBSD release.
+- NetBSD, OpenBSD and DragonFly have no ZFS root to restore (DragonFly's is
+  HAMMER2; NetBSD's ZFS isn't a root in any guest).
+
+Proof (2026-11-14): HoltTest1 `+img` round trips from the shipped rescue
+images (gen 20261112, bko-holt 0.2.4), on Chopin and on Cinqcent:
+ubuntu24, freebsd14 and omnios58 each PASS on both, the restored disk
+booting by itself, its dump agreeing with the source's, and each pool's
+enabled-and-active feature set the source's exactly (rpool 39, zroot 39,
+rpool 27), none newly active.  The plan check is unit-tested in
+`load/plan.rs` and reaches the images with their next build.
+
 ## Encryption
 
 The JSON records how each container was made but never a key.

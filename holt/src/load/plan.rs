@@ -64,6 +64,89 @@ fn lvm_version(out: &str) -> Option<(u32, u32, u32)> {
     Some((n.next()??, n.next()??, n.next()??))
 }
 
+/// Where a pool's `compatibility=` names its feature-set files: OpenZFS's own
+/// two, and the FreeBSD port's third.
+const COMPAT_DIRS: [&str; 3] = ["/etc/zfs/compatibility.d", "/usr/share/zfs/compatibility.d", "/usr/local/share/zfs/compatibility.d"];
+
+/// load's `zpool create` passes every feature the source pool had enabled or
+/// active as `-o feature@F=enabled`, and the pool's local properties
+/// (`compatibility=` among them) as `-o` (commands.rs).  A rescue system whose
+/// ZFS doesn't know one of those features, or which hasn't the file a
+/// `compatibility=` names, fails the create partway through the run: said here
+/// instead, before anything is written.
+fn zfs_problems(sys: &Sys, layout: &Layout) -> Vec<String> {
+    let mut out: Vec<String> = Vec::new();
+    // Every imported pool: commands.rs makes one `zpool create` for each
+    // (its items(), Item::Pool).
+    let pools = layout.arr(&["storage", "zfs", "tools", "imported_pools"]);
+    if pools.is_empty() {
+        return out;
+    }
+    // No zpool here, or one that won't list its features: nothing can be
+    // said about them.  A missing zpool is missing_tools' to report, and a
+    // `zpool upgrade -v` we can't parse is no reason to refuse a layout.
+    let known = sys.run("zpool", &["upgrade", "-v"]).map(|o| zpool_features(&o)).filter(|f| !f.is_empty());
+    for p in pools {
+        let name = p.get("name").and_then(crate::json::Value::as_str).unwrap_or("(unnamed)");
+        if let Some(known) = &known {
+            let unknown: Vec<&str> = p
+                .get("features")
+                .and_then(crate::json::Value::as_object)
+                .into_iter()
+                .flatten()
+                .filter(|(_, state)| matches!(state.as_str(), Some("enabled" | "active")))
+                .map(|(f, _)| f.as_str())
+                .filter(|f| !known.iter().any(|k| k == f))
+                .collect();
+            if !unknown.is_empty() {
+                out.push(format!(
+                    "ZFS pool {name}: this system's ZFS doesn't know the source's feature(s) {}, which zpool create would be asked to enable; the rescue image's ZFS is older than the source's, so a newer image is needed",
+                    unknown.join(", ")
+                ));
+            }
+        }
+        // off and legacy name no file; anything else is a comma-separated
+        // list of file names, or of absolute paths.
+        let value = p.at(&["local_properties", "compatibility"]).and_then(crate::json::Value::as_str).unwrap_or("off");
+        if value == "off" || value == "legacy" {
+            continue;
+        }
+        for f in value.split(',').map(str::trim).filter(|f| !f.is_empty()) {
+            if f.starts_with('/') {
+                if !sys.is_file(f) {
+                    out.push(format!("ZFS pool {name}: its compatibility={value} names {f}, which isn't on this system; a rescue image that has it is needed"));
+                }
+            } else if !COMPAT_DIRS.iter().any(|d| sys.is_file(&format!("{d}/{f}"))) {
+                out.push(format!("ZFS pool {name}: its compatibility={value} names {f}, which is in none of {}; a rescue image that has it is needed", COMPAT_DIRS.join(", ")));
+            }
+        }
+    }
+    out
+}
+
+/// The feature short names `zpool upgrade -v` lists: its table, up to the
+/// legacy versions printed after it (the parse stick/illumos/build.sh's
+/// `info` uses; OpenZFS and illumos print the same kind of table, a dashed
+/// rule then a line per feature whose first word is the name, its
+/// description indented under it).
+fn zpool_features(out: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut in_table = false;
+    for l in out.lines() {
+        if l.starts_with("The following legacy") {
+            break;
+        }
+        if !l.is_empty() && l.chars().all(|c| c == '-') {
+            in_table = true;
+        } else if in_table && l.starts_with(|c: char| c.is_ascii_lowercase()) {
+            if let Some(w) = l.split_whitespace().next() {
+                names.push(w.to_string());
+            }
+        }
+    }
+    names
+}
+
 /// The archiver must be BackOtter's, as the rescue stick's build checks.
 fn archiver_problem(sys: &Sys, opts: &Options) -> Option<String> {
     opts.repo.as_ref()?;
@@ -96,6 +179,7 @@ pub fn check(layout: &Layout, opts: &Options, sys: &Sys) -> Planned {
     problems.extend(archiver_problem(sys, opts));
     problems.extend(missing_tools(sys, &built));
     problems.extend(lvm_problem(sys, layout));
+    problems.extend(zfs_problems(sys, layout));
     if super::has_omitted(&layout.v) {
         problems.push("this layout comes from a bug report (`bko-holt report-bug`), which leaves boot-area and ESP images out: restore from the dump itself".into());
     }
@@ -253,6 +337,182 @@ mod tests {
         let (code, out, _) = run(&l, &opts(&["--map", "vda=vdb", "--repo", "/srv/r", "--fit-largest", "2"]), &s);
         assert_eq!(code, EXIT_PLAN_PROBLEMS);
         assert!(out.contains("more than 2%"), "{out}");
+    }
+
+    /// What `zpool upgrade -v` prints: the feature table, a rule, then the
+    /// legacy versions.  Only async_destroy, empty_bpobj and encryption are
+    /// known here.
+    const UPGRADE_V: &str = "This system supports ZFS pool feature flags.\n\nThe following features are supported:\n\nFEAT DESCRIPTION\n\
+         -------------------------------------------------------------\n\
+         async_destroy                         (read-only compatible)\n     Destroy filesystems asynchronously.\n\n\
+         empty_bpobj                           (read-only compatible)\n     Snapshots use less space.\n\n\
+         encryption\n     Support for dataset level encryption\n\n\
+         -------------------------------------------------------------\n\n\
+         The following legacy versions are also supported:\n\nVER  DESCRIPTION\n---  -----------------------------------------------------\n \
+         1   Initial ZFS version\n 2   Ditto blocks (replicated metadata)\n";
+
+    #[test]
+    fn zpool_feature_table() {
+        assert_eq!(zpool_features(UPGRADE_V), vec!["async_destroy", "empty_bpobj", "encryption"]);
+        // Nothing to go on: no features, so zfs_problems says nothing.
+        assert!(zpool_features("zpool: command not found\n").is_empty());
+        assert!(zpool_features("").is_empty());
+    }
+
+    /// A dump with one pool, rpool, carrying FEATURES and LOCAL: all
+    /// zfs_problems looks at.
+    fn zfs_dump(features: &str, local: &str) -> Layout {
+        let pool = format!("{{\"name\": \"rpool\", \"features\": {features}, \"local_properties\": {local}, \"vdevs\": {{}}}}");
+        let text = sample::bios_mbr().replace(
+            "\"zfs\": {\"pools_from_labels\": [], \"tools\": null}",
+            &format!("\"zfs\": {{\"pools_from_labels\": [], \"tools\": {{\"imported_pools\": [{pool}], \"datasets\": []}}}}"),
+        );
+        Layout::from_json(crate::json::parse(&text).unwrap()).unwrap()
+    }
+
+    /// A rescue system whose `zpool upgrade -v` answers, and which has the
+    /// grub2 compatibility file but no mycustom.
+    fn zfs_sys(t: &Tree) -> Sys {
+        t.file("/usr/share/zfs/compatibility.d/grub2", "async_destroy\nempty_bpobj\n");
+        Sys::new(t.root(), Box::new(FakeRunner::default().with("zpool upgrade -v", UPGRADE_V)), true)
+    }
+
+    #[test]
+    fn zfs_features_the_rescue_system_lacks() {
+        let t = tree();
+        let s = zfs_sys(&t);
+        // Every enabled or active feature known here: nothing to say.
+        let known = zfs_dump("{\"async_destroy\": \"enabled\", \"empty_bpobj\": \"active\", \"encryption\": \"disabled\"}", "{}");
+        assert!(zfs_problems(&s, &known).is_empty());
+        // One unknown active and one unknown enabled: both in one problem.
+        let older = zfs_dump("{\"blake3\": \"active\", \"async_destroy\": \"enabled\", \"fast_dedup\": \"enabled\", \"large_dnode\": \"disabled\"}", "{}");
+        let p = zfs_problems(&s, &older);
+        assert_eq!(p.len(), 1, "{p:?}");
+        assert!(p[0].starts_with("ZFS pool rpool: this system's ZFS doesn't know the source's feature(s) blake3, fast_dedup,"), "{}", p[0]);
+        assert!(p[0].contains("older than the source's, so a newer image is needed"), "{}", p[0]);
+        // A feature the source had disabled is never passed to zpool create.
+        let off = zfs_dump("{\"blake3\": \"disabled\", \"fast_dedup\": \"disabled\"}", "{}");
+        assert!(zfs_problems(&s, &off).is_empty());
+        // No answer from zpool (none installed, or a table we can't read):
+        // missing_tools has the first, and neither is a reason to refuse.
+        let mute = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        assert!(zfs_problems(&mute, &older).is_empty());
+        // A layout without pools doesn't even run zpool.
+        let runner = FakeRunner::default().with("zpool upgrade -v", UPGRADE_V);
+        let plain = Sys::new(t.root(), Box::new(runner), true);
+        assert!(zfs_problems(&plain, &layout()).is_empty());
+    }
+
+    #[test]
+    fn zfs_compatibility_files() {
+        let t = tree();
+        let s = zfs_sys(&t);
+        let dump = |local: &str| zfs_dump("{}", local);
+        // off and legacy name no file, and a file that's there is fine.
+        for local in ["{}", "{\"compatibility\": \"off\"}", "{\"compatibility\": \"legacy\"}", "{\"compatibility\": \"grub2\"}"] {
+            assert!(zfs_problems(&s, &dump(local)).is_empty(), "{local}");
+        }
+        let p = zfs_problems(&s, &dump("{\"compatibility\": \"mycustom\"}"));
+        assert_eq!(p.len(), 1, "{p:?}");
+        assert!(p[0].starts_with("ZFS pool rpool: its compatibility=mycustom names mycustom, which is in none of /etc/zfs/compatibility.d,"), "{}", p[0]);
+        // A list: only the missing one is named.
+        let p = zfs_problems(&s, &dump("{\"compatibility\": \"grub2,mycustom\"}"));
+        assert_eq!(p.len(), 1, "{p:?}");
+        assert!(p[0].contains("names mycustom"), "{}", p[0]);
+        // An absolute path is looked for where it says.
+        let p = zfs_problems(&s, &dump("{\"compatibility\": \"/etc/zfs/mine\"}"));
+        assert_eq!(p.len(), 1, "{p:?}");
+        assert!(p[0].contains("names /etc/zfs/mine, which isn't on this system"), "{}", p[0]);
+        t.file("/etc/zfs/mine", "async_destroy\n");
+        assert!(zfs_problems(&s, &dump("{\"compatibility\": \"/etc/zfs/mine\"}")).is_empty());
+    }
+
+    /// The whole plan says so, as check() makes it.
+    #[test]
+    fn zfs_problems_reach_the_plan() {
+        let t = tree();
+        let s = zfs_sys(&t);
+        let l = zfs_dump("{\"blake3\": \"active\"}", "{\"compatibility\": \"mycustom\"}");
+        let (code, out, _) = run(&l, &opts(&["--map", "vda=vdb", "--repo", "/srv/r"]), &s);
+        assert_eq!(code, EXIT_PLAN_PROBLEMS);
+        assert!(out.contains("doesn't know the source's feature(s) blake3"), "{out}");
+        assert!(out.contains("names mycustom"), "{out}");
+    }
+
+    /// A pool shaped like Ubuntu's ZFS install boot pool: most features
+    /// disabled, a few enabled or active, and `compatibility` set locally
+    /// (the ZFS-on-root guides set it for the boot pool so GRUB can read
+    /// it).  Modelled on tests/corpus/ubuntu26-zfs/src.json's bpool.
+    fn bpool_dump() -> String {
+        r#"{
+  "format": "bko-holt", "schema": 1, "privileged": true,
+  "host": {"hostname": "ubu26zfs"},
+  "os": {"id": "debian", "version_id": "13"},
+  "firmware": {"mode": "bios"},
+  "storage": {
+    "disks": [{
+      "name": "vda", "kind": "disk", "size_bytes": 17179869184, "logical_sector_size": 512,
+      "model": null, "serial": null, "wwid": null,
+      "partition_table": {"type": "dos", "sector_size": 512, "disk_signature": "1f2e3d4c"},
+      "partitions": [
+        {"name": "vda1", "number": 1, "start_lba": 2048, "sectors": 3407872, "type": "0xbf", "bootable": false,
+         "content": {"type": "zfs_member", "usage": "other", "label": "bpool"}}
+      ],
+      "content": null, "boot_code": {"kind": "grub2"}
+    }],
+    "md_arrays": [], "dm_devices": [],
+    "lvm": {"volume_groups": []},
+    "zfs": {"pools_from_labels": [], "tools": {
+      "imported_pools": [{
+        "name": "bpool",
+        "properties": {"ashift": "12", "health": "ONLINE", "compatibility": "grub2"},
+        "local_properties": {"ashift": "12", "autotrim": "on", "compatibility": "grub2", "cachefile": "/etc/zfs/zpool.cache"},
+        "features": {"async_destroy": "enabled", "empty_bpobj": "active", "lz4_compress": "active",
+                     "multi_vdev_crash_dump": "disabled", "extensible_dataset": "enabled",
+                     "large_dnode": "disabled", "encryption": "disabled"},
+        "vdevs": {"vdevs": {"bpool": {"name": "bpool", "vdev_type": "root",
+                   "vdevs": {"/dev/vda1": {"name": "/dev/vda1", "vdev_type": "disk", "path": "/dev/vda1"}}}},
+                  "logs": null, "l2cache": null, "spares": null, "special": null, "dedup": null}
+      }],
+      "datasets": []
+    }},
+    "btrfs": [], "xfs_external_logs": [],
+    "fstab": [], "crypttab": null, "mounts": [], "swaps": []
+  },
+  "boot": {
+    "loader": {"name": "grub", "firmware": "bios", "via_shim": false},
+    "efi": null, "grub": null,
+    "kernels": {"installed": []}
+  }
+}"#
+        .to_string()
+    }
+
+    /// What load's `zpool create` passes for such a pool: the source's
+    /// feature flags only (-d), each enabled or active one enabled, no
+    /// disabled one, and the pool's local properties.
+    #[test]
+    fn zpool_create_carries_the_sources_features() {
+        let l = Layout::from_json(crate::json::parse(&bpool_dump()).unwrap()).unwrap();
+        let b = commands::build(&l, &opts(&["--map", "vda=vdb"]), &target::Mapping { pairs: vec![("vda".into(), "vdb".into())], ..target::Mapping::default() });
+        let create = b
+            .stage(Stage::Assemble)
+            .iter()
+            .map(commands::Cmd::shell)
+            .find(|c| c.contains("zpool create"))
+            .unwrap_or_else(|| panic!("no zpool create in {:?}", b.stage(Stage::Assemble).iter().map(commands::Cmd::shell).collect::<Vec<_>>()));
+        assert!(create.contains(" -d "), "{create}");
+        for f in ["async_destroy", "empty_bpobj", "lz4_compress", "extensible_dataset"] {
+            assert!(create.contains(&format!("-o feature@{f}=enabled")), "{f}: {create}");
+        }
+        for f in ["multi_vdev_crash_dump", "large_dnode", "encryption"] {
+            assert!(!create.contains(&format!("feature@{f}")), "{f}: {create}");
+        }
+        assert!(create.contains("-o compatibility=grub2"), "{create}");
+        assert!(create.contains("-o ashift=12") && create.contains("-o autotrim=on"), "{create}");
+        // cachefile is load's own (POOL_PROPS_SKIP), not the source's.
+        assert!(create.contains("-o cachefile=none") && !create.contains("/etc/zfs/zpool.cache"), "{create}");
+        assert!(create.contains("bpool /dev/vdb1"), "{create}");
     }
 
     #[test]

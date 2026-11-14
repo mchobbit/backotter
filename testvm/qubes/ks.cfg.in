@@ -1,0 +1,56 @@
+# Qubes OS 4.3: the kickstart of BackOtter's test guest qubes43
+# (docs/design/qubes.md).  make-qubes.sh fills the @...@ words per build and
+# puts the result, as ks.cfg, on a small FAT disk labelled QUBES_OEM, which
+# the installer's inst.ks=hd:LABEL=QUBES_OEM reads.  No secrets here: the
+# LUKS passphrase and tester's password hash come from make-qubes.sh.
+#
+# The installer's default layout (autopart: LVM thin on LUKS2, VG
+# qubes_dom0 with root-pool, swap and, at initial setup, vm-pool), the user
+# tester (wheel and qubes), root locked.  The %addon only says what we want:
+# Qubes's initial-setup spoke ignores it (docs/design/qubes.md, "What Q0
+# found"), and make-qubes.sh sets the same choices with the keyboard.
+text
+lang en_US.UTF-8
+keyboard us
+timezone UTC --utc
+user --name=tester --groups=wheel,qubes --iscrypted --password=@PASSWORD_HASH@
+rootpw --lock
+zerombr
+clearpart --all --initlabel --disklabel=gpt
+autopart --type=thinp --encrypted --passphrase=@PASSPHRASE@
+bootloader --location=mbr
+poweroff
+
+%packages
+@^qubes-xfce
+%end
+
+%addon org_qubes_os_initial_setup
+templates_to_install fedora-44-xfce debian-13-xfce
+default_template fedora-44-xfce
+system_vms true
+default_vms true
+usbvm false
+whonix_vms false
+%end
+
+%post --nochroot --log=/mnt/sysimage/root/ks-post.log
+set -x
+# Serial consoles for every later boot: Xen on com1, dom0 on hvc0 (Xen's
+# console, so on com1 too).  dom0 needs initcall_blacklist=... on the
+# farm's AMD Zen CPUs (an FCH MMIO read QEMU's q35 doesn't back faults
+# under Xen PV).  Anaconda copies the installer's own console=hvc0 and
+# blacklist into GRUB_CMDLINE_LINUX already: add each only if missing.
+f=/mnt/sysimage/etc/default/grub
+cp "$f" /mnt/sysimage/root/default-grub.orig
+# Qubes's Xen line has console=none, and Xen takes the last console=:
+# replace it.
+sed -i -e '/^GRUB_CMDLINE_XEN_DEFAULT=/{s/console=none//g; s/="/="console=com1 com1=115200,8n1 /}' \
+       -e '/^GRUB_CMDLINE_LINUX=/{s/ rhgb//g; s/ quiet//g; s/"rhgb /"/; s/"quiet /"/}' "$f"
+for w in console=hvc0 initcall_blacklist=print_s5_reset_status_mmio; do
+    grep -Eq "^GRUB_CMDLINE_LINUX=\"(.* )?$w( |\")" "$f" || sed -i "s/^GRUB_CMDLINE_LINUX=\"/&$w /" "$f"
+done
+grep -q '^GRUB_TERMINAL' "$f" || printf 'GRUB_TERMINAL="serial console"\nGRUB_SERIAL_COMMAND="serial --unit=0 --speed=115200"\n' >>"$f"
+chroot /mnt/sysimage grub2-mkconfig -o /boot/grub2/grub.cfg
+cp /proc/cmdline /mnt/sysimage/root/installer-cmdline
+%end

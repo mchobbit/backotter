@@ -1,0 +1,16 @@
+# BackOtter's boot check of the Qubes OS test guest qubes43: test-only, in
+# dom0 (testvm/qubes/bko-qubes-check.sh says what it does).  Installed by
+# make-qubes.sh's revisions.sh as /etc/systemd/system/bko-qubes-check.service.
+[Unit]
+Description=BackOtter test check: start the stock qubes, report on the serial console
+Requires=qubesd.service
+After=qubesd.service qubes-qmemman.service qubes-vm@sys-net.service qubes-vm@sys-firewall.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/sbin/bko-qubes-check.sh
+TimeoutStartSec=3600
+
+[Install]
+WantedBy=multi-user.target

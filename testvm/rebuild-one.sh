@@ -94,6 +94,12 @@ pikaos4-luks) cmd=(asm $T/make-pikaos.sh --iso-dir /bkoscratch/rebuild-inputs/pi
 # .asc, the release key and the assistant's .deb in /bkoscratch/rebuild-inputs/proxmox9
 # (all pinned in the builder; the prepared ISO is made there per first-boot.sh).
 proxmox9|proxmox9-mirror) cmd=(asm $T/make-proxmox.sh --iso-dir /bkoscratch/rebuild-inputs/proxmox9 $G "$W") ;;
+# qubes43: Qubes OS's installer from the R4.3.2 ISO in /bkoscratch/rebuild-inputs/qubes43,
+# with its .DIGESTS(.asc) and the release and master keys (all pinned in the builder;
+# the prepared ISO is made there per qubes/install-grub.cfg), driven by a kickstart and
+# keys; the ISO's templates only (no updates: dom0 has no network). Needs nested SVM
+# and ~11 GiB of memory; its boot check is the builder's own check boot (below).
+qubes43)    cmd=(asm $T/make-qubes.sh --iso-dir /bkoscratch/rebuild-inputs/qubes43 $G "$W") ;;
 # vanilla3: from Vanilla OS's live ISO in /bkoscratch/rebuild-inputs/vanilla3 (or
 # the guest's own dir), its SHA-256 pinned in the builder; the system image
 # ghcr.io/vanilla-os/gnome:latest as it is at the rebuild (pulled by albius;
@@ -160,6 +166,9 @@ case $G in mx25|mint22|pop24|zorin18|neon24|elementary8|elementary8-luks|anduino
 proxmox9|proxmox9-mirror)
     ISO=/bkoscratch/rebuild-inputs/proxmox9/proxmox-ve_9.2-1.iso
     [ -f "$ISO" ] || { echo "no ISO $ISO" >&2; exit 2; } ;;
+qubes43)
+    ISO=/bkoscratch/rebuild-inputs/qubes43/Qubes-R4.3.2-x86_64.iso
+    [ -f "$ISO" ] || { echo "no ISO $ISO" >&2; exit 2; } ;;
 esac
 leftovers() {  # what a failed root builder may leave: this build's loop devices; mounts, pools, arrays, VGs and LUKS volumes of any build on the host
     { losetup -a | grep -F "$W"; findmnt -rno TARGET | grep -E '^/mnt/(bko-debian-zfs|bko-debian-stack|bko-chimera-zfs|live-)'
@@ -220,6 +229,10 @@ rm -f $W/rebuild-boot.json $W/vm-run.*.qcow2 $W/rebuild-boot-console.log.monitor
 if [ $G = sculpt2610 ]; then
     asm $T/sculpt-check.sh $W >$W/rebuild-boot.log 2>&1; brc=$?
     printf '{"guest": "%s", "boot": {"sculpt_check_exit": %d}}\n' $G $brc >$W/rebuild-boot.json
+elif [ $G = qubes43 ]; then
+    # No network in dom0, so no SSH: bko-qubes-check.service's serial lines.
+    asm $T/make-qubes.sh --check-only $G $W >$W/rebuild-boot.log 2>&1; brc=$?
+    printf '{"guest": "%s", "boot": {"qubes_check_exit": %d}}\n' $G $brc >$W/rebuild-boot.json
 else
     python3 -I - "$T/compare" "$W" "$IMG" "${note[@]+"${note[@]}"}" >$W/rebuild-boot.log 2>&1 <<'EOF'
 import json, shlex, sys

@@ -12,6 +12,7 @@
 //! bko-holt never copies file data itself.  Without --repo it's left to the
 //! administrator: `--through mount`, restore by hand, then `--only boot`.
 
+pub mod abroot;
 pub mod commands;
 pub mod exec;
 pub mod fit;

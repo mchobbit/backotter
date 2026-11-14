@@ -340,6 +340,13 @@
   "Fixture items the guest/fs can't set (ext4)": "setfattr -n btrfs.compression -v zstd /mnt/bko-fsrt/ext4/src/root/bko-torture/compress-zstd; setfattr -n btrfs.compression -v zstd /mnt/bko-fsrt/ext4/src/root/bko-torture/compress-dir; chattr +C /m...",
   "Fixture items the guest/fs can't set (zfs-ds)": "chattr +F /mnt/bko-fsrt/zfs-ds/src/root/bko-torture/casefold-dir; setfattr -n btrfs.compression -v zstd /mnt/bko-fsrt/zfs-ds/src/root/bko-torture/compress-zstd; setfattr -n btrfs.compression -v zst..."
  },
+ "vanilla3": {
+  "backups on relatime (the guest's /, /var and ESP) leave the source's atimes alone": "only symlinks' atimes move: readlink(2) has no O_NOATIME (both BACKOTTER.md)",
+  "birth times (statx btime on btrfs and ext4)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "hard-linked whiteouts (overlayfs links each whiteout it makes to its workdir's one)": "both tools restore hard links of regular files only (restic's restorer, rustic_core's hardlink_key, as upstream): each whiteout comes back a char 0:0 node of its own, which overlayfs treats the same (the merged views pass); both snapshots record the links",
+  "project IDs (and P inheritance)": "Btrfs has no project IDs, and the guest's /boot and init ext4 have no project feature: none is made",
+  "whole-disk needs (GPT, the LVM stack and its thin pool, file system UUIDs and labels, shim and GRUB with the NVRAM entry)": "out of scope: whole-disk (HoltTest1 recreates the disk, both VGs, the thin pool and its thin LVs, every file system with its UUID and label, and boots both roots); here the scratch stack is made like the guest's and only its file systems' contents are restored"
+ },
  "void-musl": {
   "Birth times": "btrfs/ext4 keep them but Linux can't set them (BACKOTTER.md)",
   "Project IDs": "btrfs has no project IDs; the guest's ext4 has no project feature",

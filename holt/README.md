@@ -28,7 +28,7 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
 `VERSION_ID`, or uname's where there's no os-release) is:
 
 - Linux: Debian 12 and 13 (Proxmox VE 9 on it, ZFS root), Devuan 6, Ubuntu 24.04 and 26.04, Linux Mint 22,
-  Pop!_OS 24.04, Zorin OS 18, KDE neon 24.04, AnduinOS 2, Arch Linux, CachyOS, Artix Linux, Omarchy,
+  Pop!_OS 24.04, Vanilla OS 3, Zorin OS 18, KDE neon 24.04, AnduinOS 2, Arch Linux, CachyOS, Artix Linux, Omarchy,
   EndeavourOS, Manjaro, Garuda Linux, BigLinux, Alpine Linux 3, AerynOS, Void Linux, Chimera Linux,
   Gentoo Linux, PikaOS 4, Kali Linux, Fedora 44, Bazzite 44, Rocky Linux 10, openSUSE
   Tumbleweed, NixOS 26.05 and Guix System (no VERSION_ID; its store GRUB-less, docs/design/guix.md);
@@ -37,6 +37,14 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
   by ostree's own markers (`src/ostree.rs`).  `load` version 1 refuses
   some of their layouts: BIOS boot, LUKS, LVM, no separate /boot, composefs
   `verity` or `signed` ("What load does" below);
+- ABRoot v2 (Vanilla OS 3, `src/abroot.rs`): two read-only roots on LVM
+  thin LVs, the init LV with both roots' kernels, /var and /etc's overlay.
+  `dump` reads the root that isn't running and the init LV through its own
+  read-only mounts and lists them in `storage.backup_sources` with the
+  mount the backup must make (`from: null`); `load` makes the thin pool by
+  `lvcreate` and regenerates nothing at boot.  It refuses ABRoot v1, layouts
+  without thin provisioning, BIOS boot and a dump taken during an upgrade
+  (docs/design/vanillaos.md);
 - FreeBSD 14 and 15, HardenedBSD 15, GhostBSD 26 (`src/other/freebsd.rs`),
   NetBSD 11, AlpineBSD 1 and OpenBSD 8 (`labelled.rs`), DragonFly 6
   (`dfly.rs`), OmniOS (illumos, `illumos.rs`) and Haiku (`haiku.rs`): built
@@ -60,7 +68,10 @@ garuda-dracut-support, whose `dracut-rebuild` `load` runs, and snap-pac's
 snapper snapshots restored as shared ones; BigLinux's is `biglinux`, beside
 them too, GRUB under its own `EFI/BigLinux` id on btrfs, whose Timeshift
 snapshots at the top level are outside the backup and not made, and whose
-/boot `load` leaves uncompressed, as BigLinux's installer does).  Build it static
+/boot `load` leaves uncompressed, as BigLinux's installer does; Vanilla
+OS's is `vanilla3` in HoltTest1Obscure, ABRoot on a thin pool under Secure
+Boot, whose restored disk boots root B by default and A from GRUB's
+"Previous State (A)", each as the source did).  Build it static
 (`RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target
 x86_64-unknown-linux-gnu`) to run it on musl systems such as Alpine and Void
 too; on the other systems, build it there

@@ -134,7 +134,7 @@ const WELL_KNOWN: [&str; 7] = [
     "ffffffff-ffff-ffff-ffff-ffffffffffff",
 ];
 /// Hostnames installers give and live systems use: they identify no one.
-const GENERIC_HOSTS: [&str; 35] = [
+const GENERIC_HOSTS: [&str; 36] = [
     "", "(none)", "localhost", "localhost.localdomain", "localdomain", "<system>", "any", "debian", "ubuntu", "ubuntu-server", "fedora",
     "archlinux", "archiso", "alpine", "nixos", "freebsd", "openbsd", "netbsd", "dragonfly", "omnios", "openindiana", "haiku", "void",
     "voidlinux", "mint", "zorin", "pop-os", "rocky", "backotter", "rescue",
@@ -146,10 +146,13 @@ const GENERIC_HOSTS: [&str; 35] = [
     "pve",
     // Guix System: its installer's and `guix system image`'s hostnames.
     "gnu", "guix",
+    // Vanilla OS's installer names every install so (the first-setup
+    // renames it), and LVM records it as each VG's creation_host.
+    "vanilla",
 ];
 /// Labels (lower case, trailing digits and '*' dropped) that installers
 /// and partitioners write: kept, because they help and identify no one.
-const GENERIC_LABELS: [&str; 70] = [
+const GENERIC_LABELS: [&str; 77] = [
     "", "efi", "esp", "efi system partition", "efi system", "efi-system", "efiboot", "bios", "biosboot", "bios boot partition",
     // Hybrid ISO images (xorriso: EFISYS, Gap1, Appended2...) and BackOtter's
     // and Haiku's own images.
@@ -161,6 +164,10 @@ const GENERIC_LABELS: [&str; 70] = [
     // PikaOS's installers: GPT names, and pikainstall's file system labels
     // (the 2.0.5 GTK installer's auto_xfs labels /boot's ext4 "PikaOS").
     "linux-efi", "linux-boot", "linux-root", "linux-home", "pikaboot", "pikaroot", "pikahome", "pikaos",
+    // Vanilla OS's installer (ABRoot): the GPT names it gives and copies
+    // to the file system labels, the VG names, and the roots' and init
+    // LV's labels, the same on every install (crate::abroot).
+    "vos-a", "vos-b", "vos-var", "vos-boot", "vos-init", "vos-efi", "vos-root",
 ];
 /// Ubuntu names the datasets for /home and /root USERDATA/home_ID and
 /// USERDATA/root_ID.
@@ -398,6 +405,13 @@ impl Collector {
         }
         self.scan(s);
         let t = s.trim();
+        // An LVM UUID as the whole value of its own key, whatever its
+        // letters: scan's lvm_spans wants a digit and a letter so that words
+        // don't pass, and vanilla3's lvol0_pmspare had a UUID of letters only
+        // (V8, docs/design/vanillaos.md).
+        if (key == "id" || key.ends_with("uuid")) && pattern_spans(t, &[6, 4, 4, 4, 4, 4, 6], b'-', is_alnum) == [(0, t.len())] {
+            self.add(Ident::Lvm(t.replace('-', "")));
+        }
         if HOST_KEYS.contains(&key) && !t.is_empty() {
             self.add(Ident::Name(Kind::Hostname, t.to_string()));
             if let Some((short, _)) = t.split_once('.') {
@@ -900,9 +914,15 @@ impl Sealer {
         if self.r.entries.iter().any(|e| e.original.replace('-', "") == s) {
             return;
         }
-        let forms = self.next("lvm", |n| vec![format!("bkoLVM{n:026}")]);
-        let p = forms[0].clone();
         let dashed = |x: &str| format!("{}-{}-{}-{}-{}-{}-{}", &x[0..6], &x[6..10], &x[10..14], &x[14..18], &x[18..22], &x[22..26], &x[26..32]);
+        // Both forms checked against the dump: a redacted dump redacted
+        // again (check_plan on a corpus dump) has pseudonyms that appear only
+        // dashed (a PV's UUID), which a new one mustn't take.
+        let forms = self.next("lvm", |n| {
+            let p = format!("bkoLVM{n:026}");
+            vec![dashed(&p), p]
+        });
+        let p = forms[1].clone();
         self.entry(Kind::Uuid, dashed(s), dashed(&p));
         self.sub(dashed(s), dashed(&p), Edge::Any);
         self.sub(s, &p, Edge::Any);
@@ -1712,4 +1732,42 @@ mod tests {
         assert!(!release_label("guix-home"));
     }
 
+    /// Vanilla OS: ABRoot's fixed labels, partition names and VG names,
+    /// and the installer's hostname, kept on another system's dump too.
+    #[test]
+    fn vanilla_labels_and_host_are_kept() {
+        let d = parse(r#"{"os": {"id": "debian"}, "host": {"hostname": "vanilla"}, "storage": {"disks": [{"name": "vda", "serial": "1", "partitions": [{"partlabel": "vos-boot", "content": {"type": "ext4", "label": "vos-boot"}}, {"partlabel": "vos-efi", "content": {"type": "vfat", "label": "vos-efi"}}, {"partlabel": "vos-root"}, {"partlabel": "vos-var"}]}], "dm_devices": [{"name": "dm-4", "content": {"type": "btrfs", "label": "vos-a"}}, {"name": "dm-5", "content": {"type": "btrfs", "label": "vos-b"}}, {"name": "dm-0", "content": {"type": "ext4", "label": "vos-init"}}, {"name": "dm-7", "content": {"type": "btrfs", "label": "vos-var"}}], "lvm": {"volume_groups": [{"name": "vos-root", "creation_host": "vanilla"}]}}}"#).unwrap();
+        let (r, red) = redact(&d);
+        assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
+    }
+
+    /// An LVM pseudonym is never one the dump already has in its dashed
+    /// form only (a PV's UUID in a redacted dump, redacted again by
+    /// check_plan: vanilla3's corpus dump, V8), and a redacted dump
+    /// redacted again leaves nothing.
+    #[test]
+    fn lvm_pseudonym_not_taken_dashed() {
+        let d = parse(r#"{"os": {"id": "debian"}, "storage": {"lvm": {"volume_groups": [{"name": "vg0", "uuid": "Abc123-DEFg-4h5I-J6kl-7MN8-op9Q-R0st1u"}, {"name": "vg1", "physical_volumes": [{"id": "bkoLVM-0000-0000-0000-0000-0000-000001"}]}]}}}"#).unwrap();
+        let (r, red) = redact(&d);
+        let t = r.pretty();
+        assert!(red.leaks(&t).is_empty(), "{:?}\n{t}", red.leaks(&t));
+        let vg = r.at(&["storage", "lvm", "volume_groups", "0", "uuid"]).and_then(Value::as_str).unwrap().to_string();
+        assert_ne!(vg, "bkoLVM-0000-0000-0000-0000-0000-000001");
+        let (r2, red2) = redact(&r);
+        let t2 = r2.pretty();
+        assert!(red2.leaks(&t2).is_empty(), "{:?}\n{t2}", red2.leaks(&t2));
+    }
+
+    /// An LVM UUID of letters only (vanilla3's lvol0_pmspare, V8) is
+    /// redacted as its key's value, and wherever else it appears.
+    #[test]
+    fn lvm_uuid_without_digits() {
+        let id = "Abcdef-GHIJ-klmn-OPQR-stuv-WXYZ-abcdef";
+        let d = parse(&format!(r#"{{"os": {{"id": "debian"}}, "storage": {{"lvm": {{"volume_groups": [{{"name": "vg0", "logical_volumes": [{{"name": "lvol0_pmspare", "id": "{id}"}}]}}]}}, "dm_devices": [{{"dm_uuid": "LVM-{}"}}]}}}}"#, id.replace('-', ""))).unwrap();
+        let (r, red) = redact(&d);
+        let t = r.pretty();
+        assert!(!t.contains(id) && !t.contains(&id.replace('-', "")), "{t}");
+        assert!(r.at(&["storage", "lvm", "volume_groups", "0", "logical_volumes", "0", "id"]).and_then(Value::as_str).unwrap().starts_with("bkoLVM-"));
+        assert!(red.leaks(&t).is_empty(), "{:?}", red.leaks(&t));
+    }
 }

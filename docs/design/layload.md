@@ -187,6 +187,26 @@ live on.
   runs sees the group's own PVs only (`--devicesfile "" --devices PV,...`),
   so a group elsewhere on the machine, or a PV with one of the group's
   UUIDs on another disk, is never what it acts on.
+  Thin pools (Vanilla OS's `vos-root`, Proxmox's `pve/data`:
+  docs/design/vanillaos.md, Decision 3) are left out of that metadata
+  file: the pool, its `_tdata`/`_tmeta`, `lvol0_pmspare` and its thin LVs.
+  After `vgchange -ay`, `lvcreate --type thin-pool` makes each pool again by
+  name, empty, with the dump's data and metadata sizes (exact, in `m`/`k`/`s`
+  units), chunk size, discards, `--zero` and `--poolmetadataspare` (a
+  striped data LV with `-i`/`-I`), then `lvcreate --type thin -V` each thin
+  LV by name and virtual size, in the source's `device_id` order.  lvm2
+  2.03's lvcreate refuses `--errorwhenfull` with `--type thin-pool`, so a
+  source pool with ERROR_WHEN_FULL gets `lvchange --errorwhenfull y` right
+  after its lvcreate, and the others nothing (a new pool queues when full,
+  and `lvchange --errorwhenfull n` on it fails as "already unset").  Tags go
+  on as `--addtag`; activation skip and read-only are set by `lvchange` in
+  close, before the group's `vgchange -an`.  The PVs', the group's and its
+  other LVs' UUIDs are kept; the pool's, its sub-LVs' and the thin LVs'
+  UUIDs and device ids are new (nothing on Vanilla or Proxmox names them).
+  Thin snapshots, external origins, a pool on RAID or cache, a striped
+  metadata LV, a pool of more than one segment and a pool LV on a PV that
+  isn't allocatable are refused; so is a rescue system without the
+  `thin-pool` segment type, `thin_check` or dm-thin-pool.
 - ZFS: `zpool create -d` with exactly the recorded features, the
   `compatibility` property, `ashift`, the vdev tree (mirrors, raidz, log,
   cache and spare vdevs) and the other locally set pool properties.  It's
@@ -318,6 +338,28 @@ efivarfs bound in):
      through shim, and makes it a problem when `refind_linux.conf` names a
      `root=UUID=` or `rd.luks.name=` UUID the layout doesn't have.
 5. UEFI boot entries (see "UEFI boot entries").
+
+On ABRoot (Vanilla OS 3, `boot.abroot`: docs/design/vanillaos.md) the
+stage runs none of 1 to 4 and no chroot.  The master grub.cfg on /boot,
+each root's `abroot.cfg`, kernels and initramfs in the init LV, shim and
+GRUB on the ESP all come back with the restore, every UUID, label and LV
+name they hold kept; Vanilla's `update-grub` is a stub that fails, its
+initramfs is ABRoot's own, and the roots are read-only images.  The mount
+stage has already mounted ABRoot's tree beyond fstab's (the init LV at
+`boot/init`, the other root at `part-future`, and /var, which mount-sys
+mounts by label).  The gate is the present root's `/abimage.abr` (else
+`var/lib/abroot`).  Then: the atimes; a check script that the master
+grub.cfg's default entry leads to the root the dump's grub.cfg booted next
+and each root's `abroot.cfg` to its own kernel, initramfs and filesystem
+in the restored tree (a backup taken across an upgrade's grub.cfg swap
+fails here); the UEFI entries the dump recorded (Vanilla's own is
+`\EFI\vanilla\shimx64.efi`; none for a source booted by the fallback
+path); the log in
+/var/log/bko-holt; and the tail every Linux boot stage ends with.  The
+plan refuses an ABRoot dump with `operation.lock` (an upgrade was
+running), BIOS boot, ABRoot v1's `/.system` or a layout without thin
+provisioning and two roots, no grub.cfg default, a default leading to an
+empty root, and `--new-uuids`.
 
 ### UEFI boot entries
 
@@ -914,8 +956,9 @@ btrfs geometry and features.
 
 - a different number of disks, or a different logical sector size; a disk
   smaller than the source, unless `--fit-largest PCT` fits the layout to it;
-- LVM thin pools, cache volumes, RAID LVs and snapshots (version 1 builds
-  linear and striped LVs);
+- LVM cache volumes, RAID LVs and snapshots, and thin snapshots, external
+  origins and thin pools on RAID or cache (version 1 builds linear and
+  striped LVs, and thin pools on them by lvcreate: `assemble`);
 - ZFS dRAID and special/dedup vdevs;
 - filesystems load can't make: on Linux it makes ext2/3/4, XFS, btrfs,
   f2fs, nilfs2, JFS (not with an external log), bcachefs (on one device,

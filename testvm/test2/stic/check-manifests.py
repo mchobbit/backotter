@@ -4,7 +4,7 @@
 Usage: check-manifests.py [--spec FILE]... [--lint] [--suggest GUEST] [--json] [-q]
 
 With no --spec it checks SticTest's testvm/test2/stic/manifests.json against
-the 57 checks in testvm/stictest1 (contract R4.1, rulings R5 (b)-(d)):
+the 58 checks in testvm/stictest1 (contract R4.1, rulings R5 (b)-(d)):
   - every repo path a check's scripts reference is in its manifest: the
     references of check.sh and of every repo script it reaches, by
     $HERE/, $here/, $H/, $C/, $CMP/, ${BKO_TESTVM...}/ and the like, ../GUEST/,

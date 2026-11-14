@@ -56,6 +56,42 @@ fn lvm_problem(sys: &Sys, layout: &Layout) -> Option<String> {
     (v < (2, 3, 12)).then(|| format!("lvm2 {}.{:02}.{:02} is older than 2.03.12, which load's LVM commands need (--devices)", v.0, v.1, v.2))
 }
 
+/// A layout with a thin pool (commands.rs makes it with lvcreate) needs an
+/// lvm2 with thin support (`lvm segtypes` lists thin-pool), thin_check
+/// (thin-provisioning-tools: lvm2 runs it on a pool's metadata when it
+/// activates the pool) and the kernel's dm-thin-pool.  What can't be asked
+/// (no lvm, no kernel release) is left to missing_tools.
+fn thin_problems(sys: &Sys, layout: &Layout) -> Vec<String> {
+    use crate::json::Value;
+    let thin = layout.arr(&["storage", "lvm", "volume_groups"]).iter().any(|vg| {
+        vg.get("logical_volumes").and_then(Value::as_array).into_iter().flatten().any(|lv| {
+            lv.get("segments").and_then(Value::as_array).into_iter().flatten().any(|g| g.get("type").and_then(Value::as_str) == Some("thin-pool"))
+        })
+    });
+    let mut out = Vec::new();
+    if !thin {
+        return out;
+    }
+    if let Some(t) = sys.run("lvm", &["segtypes"]) {
+        if !t.lines().any(|l| l.trim() == "thin-pool") {
+            out.push("this system's lvm2 has no thin-pool segment type (lvm segtypes), which the layout's thin pools need".into());
+        }
+    }
+    if !on_path(sys, "thin_check") {
+        out.push("thin_check isn't installed here (thin-provisioning-tools): lvm2 checks a thin pool's metadata with it when it activates the pool".into());
+    }
+    if let Some(k) = sys.read_trim("/proc/sys/kernel/osrelease") {
+        let builtin = ["/lib", "/usr/lib"].iter().any(|d| sys.read(&format!("{d}/modules/{k}/modules.builtin")).is_some_and(|b| b.contains("/dm-thin-pool.ko")));
+        let module = ["/lib", "/usr/lib"]
+            .iter()
+            .any(|d| ["", ".zst", ".xz", ".gz"].iter().any(|z| sys.is_file(&format!("{d}/modules/{k}/kernel/drivers/md/dm-thin-pool.ko{z}"))));
+        if !builtin && !module && !sys.exists("/sys/module/dm_thin_pool") {
+            out.push(format!("the kernel here ({k}) has no dm-thin-pool module, which the layout's thin pools need"));
+        }
+    }
+    out
+}
+
 /// "  LVM version:     2.03.31(2) (2025-02-27)" -> (2, 3, 31).
 fn lvm_version(out: &str) -> Option<(u32, u32, u32)> {
     let l = out.lines().find(|l| l.trim_start().starts_with("LVM version:"))?;
@@ -179,6 +215,7 @@ pub fn check(layout: &Layout, opts: &Options, sys: &Sys) -> Planned {
     problems.extend(archiver_problem(sys, opts));
     problems.extend(missing_tools(sys, &built));
     problems.extend(lvm_problem(sys, layout));
+    problems.extend(thin_problems(sys, layout));
     problems.extend(zfs_problems(sys, layout));
     if super::has_omitted(&layout.v) {
         problems.push("this layout comes from a bug report (`bko-holt report-bug`), which leaves boot-area and ESP images out: restore from the dump itself".into());
@@ -268,6 +305,29 @@ mod tests {
         assert_eq!(lvm_version("  LVM version:     2.03.11(2) (2021-01-08)\n"), Some((2, 3, 11)));
         assert!(lvm_version("  LVM version:     2.03.11(2) (2021-01-08)\n").unwrap() < (2, 3, 12));
         assert_eq!(lvm_version("nothing"), None);
+    }
+
+    /// A thin pool needs lvm2's thin-pool, thin_check and dm-thin-pool; a
+    /// layout without one asks for none of them.
+    #[test]
+    fn thin_tools() {
+        let vgs = format!(r#""lvm": {{"volume_groups": [{}]}}"#, crate::probe::lvm::sample::thin_vg().compact());
+        let thin = Layout::from_json(crate::json::parse(&sample::bios_mbr().replace(r#""lvm": {"volume_groups": []}"#, &vgs)).unwrap()).unwrap();
+        let t = Tree::new("load-plan-thin");
+        t.file("/proc/sys/kernel/osrelease", "7.0.0-43-generic\n");
+        let lacking = Sys::new(t.root(), Box::new(FakeRunner::default().with("lvm segtypes", "striped\nlinear\n")), true);
+        assert_eq!(
+            thin_problems(&lacking, &thin),
+            vec![
+                "this system's lvm2 has no thin-pool segment type (lvm segtypes), which the layout's thin pools need",
+                "thin_check isn't installed here (thin-provisioning-tools): lvm2 checks a thin pool's metadata with it when it activates the pool",
+                "the kernel here (7.0.0-43-generic) has no dm-thin-pool module, which the layout's thin pools need",
+            ]
+        );
+        assert!(thin_problems(&lacking, &layout()).is_empty());
+        t.file("/usr/sbin/thin_check", "").file("/usr/lib/modules/7.0.0-43-generic/kernel/drivers/md/dm-thin-pool.ko.zst", "");
+        let ok = Sys::new(t.root(), Box::new(FakeRunner::default().with("lvm segtypes", "striped\nthin-pool\nthin\n")), true);
+        assert!(thin_problems(&ok, &thin).is_empty());
     }
 
     fn opts(a: &[&str]) -> Options {

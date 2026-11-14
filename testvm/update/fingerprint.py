@@ -87,7 +87,8 @@ FIXTURE_ALIASES = {"nilfs-utils": "nilfs-tools", "attr-progs": "attr", "acl-prog
 ZFS_NAMES = ("zfsutils-linux", "zfs-utils", "zfs", "zfs-user", "zfs-dkms")
 LSM_NAMES = ("selinux-policy-targeted", "selinux-policy", "apparmor")
 
-LINUX_KINDS = ("dpkg", "rpm", "pacman", "apk", "xbps", "moss", "portage", "nixos", "guix")
+# abroot: Vanilla OS, the present root's dpkg database (pkgset.sh), and its image's digest.
+LINUX_KINDS = ("dpkg", "rpm", "pacman", "apk", "xbps", "moss", "portage", "nixos", "guix", "abroot")
 BASE_KINDS = ("freebsd", "hardenedbsd", "netbsd", "alpinebsd", "openbsd", "dragonfly", "illumos", "haiku")
 
 
@@ -234,6 +235,9 @@ def read_facts(dump, ls):
             if v is not None:
                 f["storage" if name in STORAGE else "boot"][name] = v
         need(f["boot"] or f["storage"], "the boot and storage packages")
+        if kind == "abroot":
+            # The image both its kernel and its packages come from.
+            f["boot"]["abimage"] = need(ls.base.get("abimage"), "the ABRoot image (/abimage.abr's digest)")
         f["zfs"] = ls.version(ZFS_NAMES)
         f["bcachefs"] = ls.version(["bcachefs-tools"])
         f["lsm"] = {n: ls.version([n]) for n in LSM_NAMES if ls.version([n]) is not None}

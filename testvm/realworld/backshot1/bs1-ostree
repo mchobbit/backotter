@@ -124,7 +124,9 @@ def uncovered_subvolumes(layout, listing=None):
         sources = json.load(f)["storage"].get("backup_sources") or []
     by_dev = collections.defaultdict(list)
     for s in sources:
-        if s.get("fstype") == "btrfs":
+        # Only mounted ones can be listed (ABRoot's unmounted sources have
+        # no "from"; every ostree source has one).
+        if s.get("fstype") == "btrfs" and s.get("from") is not None:
             by_dev[s.get("device") or s.get("source")].append(s)
     paths = [os.path.normpath(s["path"]) for s in sources]
 

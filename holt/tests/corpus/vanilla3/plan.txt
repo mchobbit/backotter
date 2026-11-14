@@ -1,0 +1,297 @@
+# bko-holt load plan for layout.json
+# Source: host2, Vanilla OS 3.0, UEFI boot with grub, dumped 2026-11-14T07:26:40Z
+#
+# Disks:
+#   vda (64 GiB) -> /dev/sdq
+#
+# Notes:
+#   - ABRoot finds its roots, init and /var by label, the first match: boot the restored disk with the source's disk (or any other Vanilla OS disk) detached
+#   - ABRoot: /boot (the master grub.cfg), the ESP, the init LV and both roots are restored as they were; no initramfs, no grub-install, no update-grub (a failing stub on Vanilla OS), no chroot
+
+# ---- partition ----
+# vda -> /dev/sdq: clear the old table and signatures
+wipefs --all /dev/sdq
+# /dev/sdq: its first 4 MiB zeroed, and its last 1 MiB (a GPT's backup, md 0.90/1.0 superblocks, ZFS's end labels)
+dd if=/dev/zero of=/dev/sdq bs=1M count=4 conv=fsync
+sh -c 'n=$(blockdev --getsz /dev/sdq) && dd if=/dev/zero of=/dev/sdq bs=512 seek=$((n - 2048)) count=2048 conv=fsync'
+# the new partitions' old content zeroed through /dev/sdq, before its table names them (blocks of 512 bytes, at their start= sectors)
+# vda1: its first 4 MiB and its last 1 MiB
+dd if=/dev/zero of=/dev/sdq bs=512 seek=2048 count=8192 conv=fsync
+dd if=/dev/zero of=/dev/sdq bs=512 seek=2097152 count=2048 conv=fsync
+# vda2: its first 4 MiB and its last 1 MiB
+dd if=/dev/zero of=/dev/sdq bs=512 seek=2099200 count=8192 conv=fsync
+dd if=/dev/zero of=/dev/sdq bs=512 seek=3145728 count=2048 conv=fsync
+# vda3: its first 4 MiB and its last 1 MiB
+dd if=/dev/zero of=/dev/sdq bs=512 seek=3147776 count=8192 conv=fsync
+dd if=/dev/zero of=/dev/sdq bs=512 seek=49494016 count=2048 conv=fsync
+# vda4: its first 4 MiB and its last 1 MiB
+dd if=/dev/zero of=/dev/sdq bs=512 seek=49496064 count=8192 conv=fsync
+dd if=/dev/zero of=/dev/sdq bs=512 seek=134213632 count=2048 conv=fsync
+# udev done with /dev/sdq before sfdisk takes it
+udevadm settle
+sfdisk --wipe always --wipe-partitions always /dev/sdq <<'EOF'
+label: gpt
+label-id: bc000000-0000-4000-8000-000000000001
+unit: sectors
+sector-size: 512
+table-length: 128
+first-lba: 34
+last-lba: 134217694
+
+/dev/sdq1 : start=2048, size=2097152, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=BC000000-0000-4000-8000-000000000002, name="vos-boot"
+/dev/sdq2 : start=2099200, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=BC000000-0000-4000-8000-000000000005, name="vos-efi"
+/dev/sdq3 : start=3147776, size=46348288, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=BC000000-0000-4000-8000-000000000006, name="vos-root"
+/dev/sdq4 : start=49496064, size=84719616, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=BC000000-0000-4000-8000-000000000007, name="vos-var"
+EOF
+udevadm settle
+
+# ---- assemble ----
+mkdir -p /run/bko-holt/lvm
+# volume group vos-root: its metadata, for pvcreate and vgcfgrestore
+cat > /run/bko-holt/lvm/vos-root.vg <<'EOF'
+vos-root {
+	id = "bkoLVM-0000-0000-0000-0000-0000-000002"
+	seqno = 10
+	format = "lvm2"
+	status = ["RESIZEABLE", "READ", "WRITE"]
+	flags = []
+	extent_size = 8192
+	max_lv = 0
+	max_pv = 0
+	metadata_copies = 0
+	physical_volumes {
+		pv0 {
+			id = "bkoLVM-0000-0000-0000-0000-0000-000001"
+			device = "/dev/vda3"
+			status = ["ALLOCATABLE"]
+			flags = []
+			dev_size = 46348288
+			pe_start = 2048
+			pe_count = 5657
+		}
+	}
+	logical_volumes {
+		init {
+			id = "bkoLVM-0000-0000-0000-0000-0000-000005"
+			status = ["READ", "WRITE", "VISIBLE"]
+			flags = []
+			creation_host = "host1"
+			creation_time = 1794636129
+			segment_count = 1
+			segment1 {
+				start_extent = 0
+				extent_count = 256
+				type = "striped"
+				stripe_count = 1
+				stripes = ["pv0", 0]
+			}
+		}
+	}
+}
+contents = "Text Format Volume Group"
+version = 1
+description = "made by bko-holt load from a bko-holt dump"
+creation_host = "host1"
+creation_time = 1794636131
+EOF
+pvcreate --devicesfile '' --devices /dev/sdq3 --uuid bkoLVM-0000-0000-0000-0000-0000-000001 --restorefile /run/bko-holt/lvm/vos-root.vg /dev/sdq3
+vgcfgrestore --devicesfile '' --devices /dev/sdq3 --file /run/bko-holt/lvm/vos-root.vg vos-root
+vgchange --devicesfile '' --devices /dev/sdq3 --activate y vos-root
+# volume group vos-root: thin pool root (data 19 GiB, metadata 1 GiB) made again by lvcreate, empty; its LV UUID, its data and metadata LVs', those of its thin LVs (vos-root/root-a, vos-root/root-b) and their device ids are new (vgcfgrestore keeps the PVs', the group's and its other LVs' UUIDs); tags, activation skip and read-only are set as on the source, a profile and crop_metadata aren't carried over
+lvcreate --devicesfile '' --devices /dev/sdq3 --yes --type thin-pool -n root -L 19456m --poolmetadatasize 1024m --chunksize 64k --discards passdown --zero y --poolmetadataspare y vos-root
+# thin LV vos-root/root-a: 19 GiB virtual, device id 1 on the source
+lvcreate --devicesfile '' --devices /dev/sdq3 --type thin -V 19456m -n root-a --thinpool root vos-root
+# thin LV vos-root/root-b: 19 GiB virtual, device id 2 on the source
+lvcreate --devicesfile '' --devices /dev/sdq3 --type thin -V 19456m -n root-b --thinpool root vos-root
+mkdir -p /run/bko-holt/lvm
+# volume group vos-var: its metadata, for pvcreate and vgcfgrestore
+cat > /run/bko-holt/lvm/vos-var.vg <<'EOF'
+vos-var {
+	id = "bkoLVM-0000-0000-0000-0000-0000-000004"
+	seqno = 2
+	format = "lvm2"
+	status = ["RESIZEABLE", "READ", "WRITE"]
+	flags = []
+	extent_size = 8192
+	max_lv = 0
+	max_pv = 0
+	metadata_copies = 0
+	physical_volumes {
+		pv0 {
+			id = "bkoLVM-0000-0000-0000-0000-0000-000003"
+			device = "/dev/vda4"
+			status = ["ALLOCATABLE"]
+			flags = []
+			dev_size = 84719616
+			pe_start = 2048
+			pe_count = 10341
+		}
+	}
+	logical_volumes {
+		var {
+			id = "bkoLVM-0000-0000-0000-0000-0000-000006"
+			status = ["READ", "WRITE", "VISIBLE"]
+			flags = []
+			creation_host = "host1"
+			creation_time = 1794636133
+			segment_count = 1
+			segment1 {
+				start_extent = 0
+				extent_count = 10341
+				type = "striped"
+				stripe_count = 1
+				stripes = ["pv0", 0]
+			}
+		}
+	}
+}
+contents = "Text Format Volume Group"
+version = 1
+description = "made by bko-holt load from a bko-holt dump"
+creation_host = "host1"
+creation_time = 1794636133
+EOF
+pvcreate --devicesfile '' --devices /dev/sdq4 --uuid bkoLVM-0000-0000-0000-0000-0000-000003 --restorefile /run/bko-holt/lvm/vos-var.vg /dev/sdq4
+vgcfgrestore --devicesfile '' --devices /dev/sdq4 --file /run/bko-holt/lvm/vos-var.vg vos-var
+vgchange --devicesfile '' --devices /dev/sdq4 --activate y vos-var
+
+# ---- format ----
+# vda1: ext4 "vos-boot"
+mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000003 -L vos-boot -b 4096 -I 256 -N 65536 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000004,desc_size=64,resize=268435456 /dev/sdq1 1048576k
+tune2fs -r 13107 /dev/sdq1
+# check: /dev/sdq1 is ext4 with the source's features (read back by bko-holt's own probe)
+# vda2: vfat "vos-efi"
+mkfs.fat -F 32 -i BC000001 -n vos-efi -S 512 -s 8 -f 2 -R 32 -h 2099200 /dev/sdq2
+# check: /dev/sdq2 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
+# dm-0: ext4 "vos-init"
+mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000008 -L vos-init -b 4096 -I 256 -N 65536 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000009,desc_size=64,resize=268435456 /dev/mapper/vos--root-init 1048576k
+tune2fs -r 13107 /dev/mapper/vos--root-init
+# check: /dev/mapper/vos--root-init is ext4 with the source's features (read back by bko-holt's own probe)
+# dm-1: btrfs "vos-var"
+mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U bc000000-0000-4000-8000-00000000000a -L vos-var --csum crc32c -n 16384 -s 4096 -d single -m dup --device-uuid bc000000-0000-4000-8000-00000000000b /dev/mapper/vos--var-var
+# check: /dev/mapper/vos--var-var is btrfs with the source's features (read back by bko-holt's own probe)
+# dm-6: btrfs "vos-a"
+mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U bc000000-0000-4000-8000-00000000000c -L vos-a --csum crc32c -n 16384 -s 4096 -d single -m dup --device-uuid bc000000-0000-4000-8000-00000000000d /dev/mapper/vos--root-root--a
+# check: /dev/mapper/vos--root-root--a is btrfs with the source's features (read back by bko-holt's own probe)
+# dm-7: btrfs "vos-b"
+mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U bc000000-0000-4000-8000-00000000000e -L vos-b --csum crc32c -n 16384 -s 4096 -d single -m dup --device-uuid bc000000-0000-4000-8000-00000000000f /dev/mapper/vos--root-root--b
+# check: /dev/mapper/vos--root-root--b is btrfs with the source's features (read back by bko-holt's own probe)
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+mount -t btrfs -o defaults /dev/mapper/vos--root-root--b /mnt/bko-target
+mkdir -p /mnt/bko-target/boot
+mount -t ext4 -o noatime,errors=remount-ro /dev/sdq1 /mnt/bko-target/boot
+mkdir -p /mnt/bko-target/part-future
+# ABRoot: the other root (vos-a), where ABRoot mounts it (not in fstab)
+mount -t btrfs -o defaults /dev/mapper/vos--root-root--a /mnt/bko-target/part-future
+mkdir -p /mnt/bko-target/var
+# ABRoot: /var, which ABRoot's mount-sys mounts by label (not in fstab)
+mount -t btrfs -o defaults /dev/mapper/vos--var-var /mnt/bko-target/var
+mkdir -p /mnt/bko-target/boot/efi
+mount -t vfat -o umask=0077 /dev/sdq2 /mnt/bko-target/boot/efi
+mkdir -p /mnt/bko-target/boot/init
+# ABRoot: the init LV (both roots' kernels, initramfs and abroot.cfg), where ABRoot mounts it (not in fstab)
+mount -t ext4 -o defaults /dev/mapper/vos--root-init /mnt/bko-target/boot/init
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+# the atimes the restore set, for boot to put back after its reads
+sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
+
+# ---- boot ----
+# refuses to start unless /mnt/bko-target/abimage.abr is there: the restored present root
+# the restored atimes (the restore stage lists them), to put back after this stage's reads
+sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
+# ABRoot: /boot (the master grub.cfg), the ESP, the init LV and both roots are restored as they were; no initramfs, no grub-install, no update-grub (a failing stub on Vanilla OS), no chroot
+# the master grub.cfg's default entry leads to the dump's root, and each root's abroot.cfg to its kernel, initramfs and filesystem, in the restored tree
+sh -c 't=$(readlink -f /mnt/bko-target) || exit 1; want=vos-b; ilv=vos--root-init; iuuid=bc000000-0000-4000-8000-000000000008; errs=; nbad=0
+err() { errs="${errs}abroot: $*
+"; nbad=$((nbad + 1)); }
+g=$t/boot/grub/grub.cfg
+[ -f "$g" ] || { echo "abroot: boot/grub/grub.cfg isn'\''t on the restored /boot" >&2; exit 1; }
+d=$(sed -n '\''s/^[[:space:]]*set[[:space:]][[:space:]]*default=\([0-9][0-9]*\)[[:space:]]*$/\1/p'\'' "$g" | head -n 1)
+set -- $(awk '\''$1 == "configfile" { p = $2; gsub(/"/, "", p); sub(/^\([^)]*\)/, "", p); sub(/^\//, "", p); sub(/\/.*$/, "", p); print p }'\'' "$g")
+[ $# -eq 2 ] || err "grub.cfg has $# configfile lines, not 2"
+case $d in 0) dl=${1:-} ;; 1) dl=${2:-} ;; *) dl=; err "grub.cfg has no set default=0 or 1${d:+ (it has default=$d)}" ;; esac
+[ -z "$dl" ] || [ "$dl" = "$want" ] || err "grub.cfg'\''s default entry ($d) leads to $dl, the dump'\''s to $want (a backup taken across an upgrade'\''s grub.cfg swap?)"
+for r in $(awk '\''$1 == "set" && $2 ~ /^root=\(lvm\// { sub(/^root=/, "", $2); print $2 }'\'' "$g"); do
+  [ "$r" = "(lvm/$ilv)" ] || err "grub.cfg sets root=$r, not (lvm/$ilv), the init LV"
+done
+chk() {
+  L=$1; c=$t/boot/init/$L/abroot.cfg
+  if [ ! -f "$c" ]; then
+    if [ "$2" = 1 ]; then
+      echo "abroot: warning: $L was empty on the source (no usr/, no init/$L/abroot.cfg): restored empty, its grub.cfg entry boots nothing, as on the source" >&2
+      [ "$L" != "$dl" ] || err "grub.cfg'\''s default entry leads to $L, which is empty"
+    else
+      err "$L: init/$L/abroot.cfg isn'\''t on the restored init LV"
+    fi
+    return 0
+  fi
+  # The first linux line whose kernel is in /$L/, its root=, the first
+  # initrd after it, and the last search --fs-uuid before it in its block
+  # (an upgrade'\''s abroot.cfg is a whole generated GRUB config: its
+  # 00_header can search for the font'\''s filesystem first).
+  v=$(awk -v L="$L" '\''
+    $1 == "menuentry" || $1 == "submenu" || $1 == "}" { s = "" }
+    $1 == "search" { s = ""; for (j = 2; j < NF; j++) if ($j == "--fs-uuid" || $j == "-u") s = $NF }
+    k == "" && $1 == "linux" { p = $2; sub(/^\([^)]*\)/, "", p); if (index(p, "/" L "/") == 1) { k = $2; u = s; for (j = 3; j <= NF; j++) if ($j ~ /^root=/) { r = $j; sub(/^root=/, "", r); break } }; next }
+    k != "" && i == "" && $1 == "initrd" { i = $2 }
+    END { print k; print i; print r; print u }'\'' "$c")
+  k=$(printf '\''%s\n'\'' "$v" | sed -n 1p); i=$(printf '\''%s\n'\'' "$v" | sed -n 2p); r=$(printf '\''%s\n'\'' "$v" | sed -n 3p); u=$(printf '\''%s\n'\'' "$v" | sed -n 4p)
+  [ -n "$k" ] || { err "$L: abroot.cfg has no linux line with a kernel in init/$L/"; return 0; }
+  [ -n "$i" ] || err "$L: abroot.cfg has no initrd line after its linux line"
+  for p in $k $i; do
+    f=${p#\(*\)}
+    case $f in "/$L/"*) [ -f "$t/boot/init$f" ] || err "$L: abroot.cfg'\''s $p isn'\''t on the restored init LV" ;; *) err "$L: abroot.cfg'\''s $p isn'\''t in init/$L/" ;; esac
+  done
+  case $r in
+    "") err "$L: abroot.cfg'\''s linux line has no root=" ;;
+    "UUID=$3"|"/dev/mapper/$4"|"$5") ;;
+    *) err "$L: abroot.cfg'\''s root=$r isn'\''t $L'\''s filesystem (UUID=$3, /dev/mapper/$4 or $5)" ;;
+  esac
+  [ -z "$u" ] || [ "$u" = "$iuuid" ] || err "$L: abroot.cfg searches for the filesystem $u, not the init LV'\''s ($iuuid)"
+}
+chk vos-a 0 bc000000-0000-4000-8000-00000000000c vos--root-root--a /dev/vos-root/root-a
+chk vos-b 0 bc000000-0000-4000-8000-00000000000e vos--root-root--b /dev/vos-root/root-b
+[ -z "$errs" ] || { printf %s "$errs" >&2; echo "abroot: $nbad mismatches between grub.cfg, the init LV and the roots in the restored tree (a backup taken across an upgrade?)" >&2; exit 1; }
+echo "abroot: grub.cfg boots $dl by default; each root'\''s abroot.cfg leads to its kernel, initramfs and filesystem"
+'
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system (/var is the vos-var filesystem)
+cp -a /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+# the atimes this stage's reads changed, put back
+bash -c 'find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.after && LC_ALL=C comm -z -23 /run/bko-holt/atimes.before /run/bko-holt/atimes.after | \
+             while IFS=$'\''\t'\'' read -r -d '\'''\'' a p; do [ -L "$p" ] || [ -e "$p" ] || continue; touch -a -h -d "@$a" -- "$p" 2>/dev/null || { [ ! -L "$p" ] && lsattr -d -- "$p" 2>/dev/null | cut -d'\'' '\'' -f1 | grep -q i && { chattr -i -- "$p"; touch -a -h -d "@$a" -- "$p"; chattr +i -- "$p"; }; }; done'
+
+# ---- close ----
+umount --recursive /mnt/bko-target
+# other mount namespaces' copies of the target's mounts
+sh -c 'me=$(readlink /proc/self/ns/mnt); seen=" $me "; at() { awk -v t=/mnt/bko-target '\''{ m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }'\''; }; for f in /proc/[0-9]*/mountinfo; do grep -q '\''/mnt/bko-target[ /]'\'' "$f" 2>/dev/null || continue; p=${f#/proc/}; p=${p%/mountinfo}; ns=$(readlink /proc/$p/ns/mnt) || continue; case $seen in *" $ns "*) continue;; esac; seen="$seen$ns "; echo "unmounting /mnt/bko-target in $ns (pid $p, $(cat /proc/$p/comm))"; for m in $(at <"$f"); do nsenter -t "$p" -m umount --recursive "$m" || true; done; done; awk '\''{ for (i = 7; i < NF; i++) if ($i == "-") { if ($(i + 1) == "nsfs" && $4 ~ /^mnt:\[/) print $4, $5; break } }'\'' /proc/self/mountinfo | while read -r ns b; do case $seen in *" $ns "*) continue;; esac; seen="$seen$ns "; ms=$(nsenter --mount="$b" cat /proc/self/mountinfo | at); [ -n "$ms" ] || continue; echo "unmounting /mnt/bko-target in $ns (bound at $b)"; for m in $ms; do nsenter --mount="$b" umount --recursive "$m" || true; done; done'
+sh -c 'i=0; until udevadm settle; vgchange --devicesfile '\'''\'' --devices /dev/sdq4 --activate n vos-var; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done'
+sh -c 'i=0; until udevadm settle; vgchange --devicesfile '\'''\'' --devices /dev/sdq3 --activate n vos-root; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done'
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status made dm-0 /dev/mapper/vos--root-init
+# golden_plans.rs: status made dm-1 /dev/mapper/vos--var-var
+# golden_plans.rs: status made dm-2 /dev/mapper/vos--root-root_tmeta
+# golden_plans.rs: status made dm-3 /dev/mapper/vos--root-root_tdata
+# golden_plans.rs: status made dm-4 /dev/mapper/vos--root-root-tpool
+# golden_plans.rs: status made dm-5 /dev/mapper/vos--root-root
+# golden_plans.rs: status made dm-6 /dev/mapper/vos--root-root--a
+# golden_plans.rs: status made dm-7 /dev/mapper/vos--root-root--b
+# golden_plans.rs: status filesystem /dev/sdq1 ext4 bc000000-0000-4000-8000-000000000003
+# golden_plans.rs: status filesystem /dev/sdq2 vfat BC00-0001
+# golden_plans.rs: status filesystem /dev/mapper/vos--root-init ext4 bc000000-0000-4000-8000-000000000008
+# golden_plans.rs: status filesystem /dev/mapper/vos--var-var btrfs bc000000-0000-4000-8000-00000000000a
+# golden_plans.rs: status filesystem /dev/mapper/vos--root-root--a btrfs bc000000-0000-4000-8000-00000000000c
+# golden_plans.rs: status filesystem /dev/mapper/vos--root-root--b btrfs bc000000-0000-4000-8000-00000000000e
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: status mount /mnt/bko-target/boot
+# golden_plans.rs: status mount /mnt/bko-target/part-future
+# golden_plans.rs: status mount /mnt/bko-target/var
+# golden_plans.rs: status mount /mnt/bko-target/boot/efi
+# golden_plans.rs: status mount /mnt/bko-target/boot/init
+# golden_plans.rs: exit 0, nothing on stderr

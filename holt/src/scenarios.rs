@@ -630,6 +630,690 @@ fn luks_lvm() {
     assert_eq!(v.at(&["storage", "topology"]).unwrap().as_object().unwrap().len(), 1);
 }
 
+/// The VG UUID of lvm::sample::THIN, as device-mapper writes it.
+const THIN_VG: &str = "VoSr00tAAABBBBCCCCDDDDEEEEFFFFFF";
+const THIN_ESP: &str = "7a05e5e5-0000-4000-8000-000000000002";
+
+/// Vanilla OS 3's disk on Debian 13 (docs/design/vanillaos.md; its ABRoot
+/// isn't what this is about): GPT with vos-boot (ext4, /boot), vos-efi (the
+/// ESP) and vos-root, the PV of lvm::sample::THIN's VG: `init` (ext4
+/// vos-init), the thin pool `root` and its thin LVs `root-a` (btrfs vos-a,
+/// /) and `root-b` (btrfs vos-b, at /part-future), each pool layer a
+/// device-mapper device of its own (`-tdata`, `-tmeta`, `-tpool`, `-pool`
+/// UUID suffixes).  shim and GRUB in EFI/vanilla.
+fn thin_lvm_tree() -> Tree {
+    use crate::efi::GLOBAL;
+    let t = Tree::new("scn-thin-lvm");
+    t.debian13();
+    let mut img = vec![0u8; 64 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "7a05e5e5-0000-4000-8000-00000000d15c",
+            parts: vec![
+                (LINUX, "7a05e5e5-0000-4000-8000-000000000001", 2048, 18431, 0, "vos-boot"),
+                (ESP, THIN_ESP, 18432, 90111, 0, "vos-efi"),
+                (LINUX, "7a05e5e5-0000-4000-8000-000000000003", 90112, 131038, 0, "vos-root"),
+            ],
+        },
+    );
+    put(&mut img, 2048, &ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, "vos-boot"));
+    put(&mut img, 18432, &fat::sample::fat32(71680, 0x7a05_e5e5, "vos-efi"));
+    put(&mut img, 90112, &lvm::sample::pv_with(512, 1 << 20, lvm::sample::THIN));
+    let mut init = ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, "vos-init");
+    init[1024 + 104] = 0x20;
+    let root_a = btrfs::sample::image("vos-a", 0x1 | 0x2 | 0x40 | 0x100 | 0x200);
+    let mut root_b = root_a.clone();
+    root_b[0x10020] = 0xc0;
+    root_b[0x1012b..0x10130].copy_from_slice(b"vos-b");
+    let lv = |id: &str| format!("LVM-{THIN_VG}{id}aaaabbbbccccddddeeeeffffff");
+    let v_ = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    let zero = vec![0u8; 0x20000];
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 16384, &img)
+        .partition("vda", "vda2", "254:2", 2, 18432, 71680, &img)
+        .partition("vda", "vda3", "254:3", 3, 90112, 40927, &img)
+        .file("/sys/block/vda/device/model", "")
+        .file("/sys/block/vda/vda3/holders/dm-0", "")
+        .file("/sys/block/vda/vda3/holders/dm-1", "")
+        .file("/sys/block/vda/vda3/holders/dm-2", "");
+    for (dm, devno, name, uuid, image, slaves) in [
+        ("dm-0", "253:0", "vos--root-init", lv("1n1t00"), &init, vec!["vda3"]),
+        ("dm-1", "253:1", "vos--root-root_tmeta", lv("tm3ta0") + "-tmeta", &zero, vec!["vda3"]),
+        ("dm-2", "253:2", "vos--root-root_tdata", lv("td4ta0") + "-tdata", &zero, vec!["vda3"]),
+        ("dm-3", "253:3", "vos--root-root-tpool", lv("p00l00") + "-tpool", &zero, vec!["dm-1", "dm-2"]),
+        ("dm-4", "253:4", "vos--root-root--a", lv("r00ta0"), &root_a, vec!["dm-3"]),
+        ("dm-5", "253:5", "vos--root-root--b", lv("r00tb0"), &root_b, vec!["dm-3"]),
+        ("dm-6", "253:6", "vos--root-root", lv("p00l00") + "-pool", &zero, vec!["dm-3"]),
+    ] {
+        t.disk(dm, devno, image, 512).file(&format!("/sys/block/{dm}/dm/name"), format!("{name}\n")).file(&format!("/sys/block/{dm}/dm/uuid"), format!("{uuid}\n")).symlink(&format!("/dev/mapper/{name}"), &format!("../{dm}"));
+        for s in slaves {
+            t.file(&format!("/sys/block/{dm}/slaves/{s}"), "");
+            if s.starts_with("dm-") {
+                t.file(&format!("/sys/block/{s}/holders/{dm}"), "");
+            }
+        }
+    }
+    let (boot, a, b) = ("10111213-1415-1617-1819-1a1b1c1d1e1f", "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf", "c0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf");
+    t.symlink(&format!("/dev/disk/by-partuuid/{THIN_ESP}"), "../../vda2")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&v_("Boot0001"), efi_load_option("vanilla", 2, 18432, 71680, THIN_ESP, "\\EFI\\vanilla\\shimx64.efi"))
+        .file(&v_("BootOrder"), [7u8, 0, 0, 0, 1, 0])
+        .file(&v_("BootCurrent"), [6u8, 0, 0, 0, 1, 0])
+        .file(&v_("SecureBoot"), [6u8, 0, 0, 0, 0])
+        .file(
+            "/proc/self/mountinfo",
+            "26 1 253:4 / / ro,relatime shared:1 - btrfs /dev/mapper/vos--root-root--a ro,space_cache=v2,subvolid=5,subvol=/\n27 26 254:1 / /boot rw,relatime shared:2 - ext4 /dev/vda1 rw\n28 27 254:2 / /boot/efi rw,relatime shared:3 - vfat /dev/vda2 rw,fmask=0077,dmask=0077\n29 26 253:5 / /part-future rw,relatime shared:4 - btrfs /dev/mapper/vos--root-root--b rw,space_cache=v2,subvolid=5,subvol=/\n",
+        )
+        .file("/etc/fstab", format!("UUID={a} / btrfs defaults 0 0\nUUID={boot} /boot ext4 defaults 0 0\nUUID=7A05-E5E5 /boot/efi vfat umask=0077 0 2\nUUID={b} /part-future btrfs defaults 0 0\n"))
+        .file("/boot/efi/EFI/vanilla/shimx64.efi", vec![1u8; 300])
+        .file("/boot/efi/EFI/vanilla/grubx64.efi", vec![2u8; 400])
+        .file("/boot/efi/EFI/vanilla/mmx64.efi", vec![3u8; 200])
+        .file("/boot/efi/EFI/vanilla/grub.cfg", format!("search.fs_uuid {boot} root \nset prefix=($root)'/grub'\nconfigfile $prefix/grub.cfg\n"))
+        .file("/var/lib/dpkg/status", "Package: grub-efi-amd64-signed\nStatus: install ok installed\nArchitecture: amd64\nVersion: 1+2.12+9+deb13u2\n\nPackage: shim-signed\nStatus: install ok installed\nArchitecture: amd64\nVersion: 1.47+15.8-1\n\nPackage: lvm2\nStatus: install ok installed\nArchitecture: amd64\nVersion: 2.03.31-2\n\nPackage: thin-provisioning-tools\nStatus: install ok installed\nArchitecture: amd64\nVersion: 1.1.0-4\n")
+        .file("/boot/grub/x86_64-efi/normal.mod", "x");
+    t
+}
+
+/// What btrfs answers for the two roots: no subvolumes.
+fn thin_lvm_runner() -> FakeRunner {
+    let mut r = FakeRunner::default();
+    for m in ["/", "/part-future"] {
+        r = r
+            .with(&format!("btrfs subvolume list -a -p -u -q {m}"), "")
+            .with(&format!("btrfs subvolume get-default {m}"), "ID 5 (FS_TREE)\n")
+            .with(&format!("btrfs subvolume list -a -r {m}"), "")
+            .with(&format!("btrfs property get -t s {m}"), "ro=false\n")
+            .with(&format!("btrfs property get -t i {m}"), "");
+    }
+    r
+}
+
+/// The thin LVM disk planned, vda going to vdb: vgcfgrestore makes the PV,
+/// the group and `init` with their UUIDs; lvcreate then makes the pool at
+/// the dump's sizes and chunk size, with a spare as the source had, and
+/// root-a and root-b in device-id order, by their names; the format stage
+/// formats init and both thin LVs at their /dev/mapper names, with the
+/// dump's UUIDs and labels, and nothing on the pool's own devices.
+#[test]
+fn thin_lvm() {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    let v = run(&thin_lvm_tree(), true, thin_lvm_runner());
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+    let vg = v.at(&["storage", "lvm", "volume_groups", "0"]).unwrap();
+    assert_eq!(s(vg, &["name"]), "vos-root");
+    assert_eq!(s(vg, &["physical_volumes", "0", "device"]), "vda3");
+    assert_eq!(s(vg, &["logical_volumes", "2", "name"]), "root-a");
+    assert_eq!(s(vg, &["logical_volumes", "2", "active_device"]), "dm-4");
+    assert_eq!(s(vg, &["logical_volumes", "2", "segments", "0", "type"]), "thin");
+    let dms = arr(&v, &["storage", "dm_devices"]);
+    let tdata = dms.iter().position(|d| d.at(&["dm", "lv_layer"]).and_then(Value::as_str) == Some("tdata")).unwrap();
+    let plan = |v: Value| {
+        let l = Layout::from_json(v).unwrap();
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+        commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() })
+    };
+    let b = plan(v.clone());
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let asm: String = b.stage(Stage::Assemble).iter().map(commands::Cmd::shell).collect();
+    let lvm = |rest: &str| format!("--devicesfile '' --devices /dev/vdb3 {rest}\n");
+    let lines = [
+        format!("pvcreate {}", lvm("--uuid Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff --restorefile /run/bko-holt/lvm/vos-root.vg /dev/vdb3")),
+        format!("vgcfgrestore {}", lvm("--file /run/bko-holt/lvm/vos-root.vg vos-root")),
+        format!("vgchange {}", lvm("--activate y vos-root")),
+        format!("lvcreate {}", lvm("--yes --type thin-pool -n root -L 19456m --poolmetadatasize 1024m --chunksize 64k --discards passdown --zero y --poolmetadataspare y vos-root")),
+        format!("lvcreate {}", lvm("--type thin -V 19456m -n root-a --thinpool root vos-root")),
+        format!("lvcreate {}", lvm("--type thin -V 19456m -n root-b --thinpool root vos-root")),
+    ];
+    let mut at = 0;
+    for l in &lines {
+        let i = asm[at..].find(l.as_str()).unwrap_or_else(|| panic!("{l} not after {at}: {asm}")) + at;
+        at = i + l.len();
+    }
+    assert_eq!(asm.lines().filter(|l| l.starts_with("lvcreate ")).count(), 3, "{asm}");
+    // A pool that queues writes when full, as a new one does: no --errorwhenfull anywhere.
+    assert!(!asm.contains("--errorwhenfull"), "{asm}");
+    assert!(asm.contains("# volume group vos-root: thin pool root (data 19 GiB, metadata 1 GiB) made again by lvcreate, empty; its LV UUID, its data and metadata LVs', those of its thin LVs (vos-root/root-a, vos-root/root-b) and their device ids are new"), "{asm}");
+    assert!(asm.contains("# thin LV vos-root/root-b: 19 GiB virtual, device id 2 on the source\n"), "{asm}");
+    let vgfile = b.stage(Stage::Assemble).iter().find_map(|c| c.write.as_ref().and(c.stdin.clone())).unwrap();
+    assert!(vgfile.contains("\t\tinit {\n") && !vgfile.contains("root-a") && !vgfile.contains("pmspare") && !vgfile.contains("thin"), "{vgfile}");
+    let fmt: String = b.stage(Stage::Format).iter().map(commands::Cmd::shell).collect();
+    assert!(fmt.contains("-L vos-init") && fmt.contains("-U 20111213-1415-1617-1819-1a1b1c1d1e1f") && fmt.contains("/dev/mapper/vos--root-init\n"), "{fmt}");
+    for (label, uuid, dev) in [("vos-a", "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf", "vos--root-root--a"), ("vos-b", "c0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf", "vos--root-root--b")] {
+        let l = fmt.lines().find(|l| l.starts_with("mkfs.btrfs") && l.ends_with(&format!("/dev/mapper/{dev}"))).unwrap_or_else(|| panic!("{dev}: {fmt}"));
+        assert!(l.contains(&format!("-L {label}")) && l.contains(&format!("-U {uuid}")), "{l}");
+    }
+    assert!(!fmt.contains("tdata") && !fmt.contains("tmeta") && !fmt.contains("tpool"), "{fmt}");
+    let mnt: String = b.stage(Stage::Mount).iter().map(commands::Cmd::shell).collect();
+    assert!(mnt.contains("/dev/mapper/vos--root-root--a /mnt/bko-target\n"), "{mnt}");
+
+    // A probe that found root-a's filesystem on the pool's data device
+    // (where its blocks are): still formatted once, on root-a.
+    let mut w = v.clone();
+    let c = dms.iter().find(|d| s(d, &["name"]) == "dm-4").unwrap().get("content").cloned().unwrap();
+    let Some(Value::Arr(all)) = w.get("storage").and_then(|s| s.get("dm_devices")).cloned() else { panic!() };
+    let mut all = all;
+    let Value::Obj(o) = &mut all[tdata] else { panic!() };
+    o.iter_mut().find(|(k, _)| k == "content").unwrap().1 = c;
+    set_at(&mut w, &["storage", "dm_devices"], Value::Arr(all));
+    let fmt: String = plan(w).stage(Stage::Format).iter().map(commands::Cmd::shell).collect();
+    assert_eq!(fmt.matches("mkfs.btrfs").count(), 2, "{fmt}");
+
+    // Refused: a thin snapshot.
+    let text = v.compact().replacen("\"device_id\":2", "\"device_id\":2,\"origin\":\"root-a\"", 1);
+    let w = crate::json::parse(&text).unwrap();
+    assert_ne!(w.compact(), v.compact());
+    assert_eq!(plan(w).problems, vec!["volume group vos-root: thin LV vos-root/root-b is a thin snapshot of root-a; version 1 doesn't make thin snapshots"]);
+
+    // A pool without zeroing, full-error on, its data striped; root-b
+    // read-only, tagged, with ACTIVATION_SKIP: the flags go on at close,
+    // before the group is deactivated.
+    let c = v.compact();
+    let at = c.find("\"name\":\"root_tdata\"").unwrap();
+    let text = format!("{}{}", &c[..at], c[at..].replacen("\"stripe_count\":1", "\"stripe_count\":2,\"stripe_size\":128", 1))
+        .replacen(",\"zero_new_blocks\":1", "", 1)
+        .replacen("\"name\":\"root\",\"id\":\"p00l00-aaaa-bbbb-cccc-dddd-eeee-ffffff\",\"status\":[\"READ\",\"WRITE\",\"VISIBLE\"]", "\"name\":\"root\",\"id\":\"p00l00-aaaa-bbbb-cccc-dddd-eeee-ffffff\",\"status\":[\"READ\",\"WRITE\",\"VISIBLE\",\"ERROR_WHEN_FULL\"]", 1)
+        .replacen("\"id\":\"r00tb0-aaaa-bbbb-cccc-dddd-eeee-ffffff\",\"status\":[\"READ\",\"WRITE\",\"VISIBLE\"],\"flags\":[]", "\"id\":\"r00tb0-aaaa-bbbb-cccc-dddd-eeee-ffffff\",\"status\":[\"READ\",\"VISIBLE\"],\"flags\":[\"ACTIVATION_SKIP\"],\"tags\":[\"keep\"]", 1);
+    let b = plan(crate::json::parse(&text).unwrap());
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let asm: String = b.stage(Stage::Assemble).iter().map(commands::Cmd::shell).collect();
+    assert!(asm.contains(&format!("lvcreate {}", lvm("--yes --type thin-pool -n root -L 19456m --poolmetadatasize 1024m -i 2 -I 64k --chunksize 64k --discards passdown --zero n --poolmetadataspare y vos-root"))), "{asm}");
+    assert!(asm.contains(&format!("lvchange {}", lvm("--errorwhenfull y vos-root/root"))), "{asm}");
+    // (lvm2 2.03's lvcreate refuses --errorwhenfull with --type thin-pool;
+    // lvchange fails setting it to what it is already, so a pool queueing
+    // writes, as the first plan's, gets no lvchange.)
+    assert!(!asm.lines().any(|l| l.contains("--type thin-pool") && l.contains("--errorwhenfull")), "{asm}");
+    assert!(asm.contains(&format!("lvcreate {}", lvm("--type thin -V 19456m -n root-b --thinpool root --addtag keep vos-root"))), "{asm}");
+    let close: String = b.stage(Stage::Close).iter().map(commands::Cmd::shell).collect();
+    let (skip, ro) = (close.find(&format!("lvchange {}", lvm("--setactivationskip y vos-root/root-b"))).expect(&close), close.find(&format!("lvchange {}", lvm("--permission r vos-root/root-b"))).expect(&close));
+    let off = close.find("--activate n vos-root").expect(&close);
+    assert!(skip < off && ro < off && !close.contains("root-a"), "{close}");
+}
+
+/// Vanilla OS's VG `vos-var` on vda4: one linear LV `var` (btrfs vos-var).
+const VOS_VAR_VG: &str = r#"vos-var {
+id = "VaRvg0-AAAA-BBBB-CCCC-DDDD-EEEE-FFFFFF"
+seqno = 2
+format = "lvm2"			# informational
+status = ["RESIZEABLE", "READ", "WRITE"]
+flags = []
+extent_size = 8192		# 4 Megabytes
+max_lv = 0
+max_pv = 0
+metadata_copies = 0
+
+physical_volumes {
+
+pv0 {
+id = "VaRpv0-aaaa-bbbb-cccc-dddd-eeee-ffffff"
+device = "/dev/vda4"	# Hint only
+
+status = ["ALLOCATABLE"]
+flags = []
+dev_size = 49152000	# 23.4375 Gigabytes
+pe_start = 2048
+pe_count = 5999	# 23.4336 Gigabytes
+}
+}
+
+logical_volumes {
+
+var {
+id = "v4r000-aaaa-bbbb-cccc-dddd-eeee-ffffff"
+status = ["READ", "WRITE", "VISIBLE"]
+flags = []
+creation_time = 1762300004
+creation_host = "vanilla"
+segment_count = 1
+
+segment1 {
+start_extent = 0
+extent_count = 5999	# 23.4336 Gigabytes
+
+type = "striped"
+stripe_count = 1	# linear
+
+stripes = [
+"pv0", 0
+]
+}
+}
+}
+
+}
+# Generated by LVM2 version 2.03.31(2) (2025-02-27): Wed Nov  5 00:00:04 2025
+
+contents = "Text Format Volume Group"
+version = 1
+
+description = "Created *after* executing 'lvcreate -l 100%FREE -n var vos-var'"
+
+creation_host = "vanilla"	# Linux vanilla 6.17.8-amd64 x86_64
+creation_time = 1762300004	# Wed Nov  5 00:00:04 2025
+"#;
+
+const VANILLA_K: &str = "6.17.8-amd64";
+const VANILLA_KB: &str = "6.18.1-amd64";
+const VANILLA_A: &str = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
+const VANILLA_B: &str = "c0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
+const VANILLA_INIT: &str = "20111213-1415-1617-1819-1a1b1c1d1e1f";
+
+/// Vanilla OS 3 as its installer lays it out (docs/design/vanillaos.md):
+/// GPT vos-boot (ext4 /boot), vos-efi (the ESP), vos-root (PV of VG
+/// vos-root: the init LV, ext4 vos-init, and the thin pool `root` with
+/// root-a and root-b, btrfs vos-a and vos-b) and vos-var (PV of VG
+/// vos-var: btrfs vos-var at /var).  Running from vos-a, read-only, with
+/// ABRoot's /etc overlay; fstab as mount-sys leaves it (/ prepended, /var
+/// dropped); the installer's master grub.cfg and vos-a's abroot.cfg in
+/// the init LV, which isn't mounted: dump reads it, and vos-b, through
+/// read-only mounts of its own in /run/bko-holt (here, the trees already
+/// there).  B_USED: vos-b filled by an `abroot upgrade` (its kernel and
+/// an upgrade's abroot.cfg in init/vos-b), else a fresh install's empty B.
+fn vanilla_tree(b_used: bool) -> Tree {
+    use crate::efi::GLOBAL;
+    let t = Tree::new("scn-vanilla");
+    let mut img = vec![0u8; 80 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "7a05e5e5-0000-4000-8000-00000000d15d",
+            parts: vec![
+                (LINUX, "7a05e5e5-0000-4000-8000-000000000001", 2048, 18431, 0, "vos-boot"),
+                (ESP, THIN_ESP, 18432, 90111, 0, "vos-efi"),
+                (LINUX, "7a05e5e5-0000-4000-8000-000000000003", 90112, 131071, 0, "vos-root"),
+                (LINUX, "7a05e5e5-0000-4000-8000-000000000004", 131072, 163806, 0, "vos-var"),
+            ],
+        },
+    );
+    put(&mut img, 2048, &ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, "vos-boot"));
+    put(&mut img, 18432, &fat::sample::fat32(71680, 0x7a05_e5e5, "vos-efi"));
+    put(&mut img, 90112, &lvm::sample::pv_with(512, 1 << 20, lvm::sample::THIN));
+    let mut var_pv = lvm::sample::pv_with(512, 1 << 20, VOS_VAR_VG);
+    var_pv[544..576].copy_from_slice(b"VaRpv0aaaabbbbccccddddeeeeffffff");
+    put(&mut img, 131072, &var_pv);
+    let mut init = ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, "vos-init");
+    init[1024 + 104] = 0x20;
+    let root_a = btrfs::sample::image("vos-a", 0x1 | 0x2 | 0x40 | 0x100 | 0x200);
+    let mut root_b = root_a.clone();
+    root_b[0x10020] = 0xc0;
+    root_b[0x1012b..0x10130].copy_from_slice(b"vos-b");
+    let mut var = btrfs::sample::image("vos-var", 0x1 | 0x2 | 0x40 | 0x100 | 0x200);
+    var[0x10020] = 0xd0;
+    let lv = |id: &str| format!("LVM-{THIN_VG}{id}aaaabbbbccccddddeeeeffffff");
+    let v_ = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    let zero = vec![0u8; 0x20000];
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 16384, &img)
+        .partition("vda", "vda2", "254:2", 2, 18432, 71680, &img)
+        .partition("vda", "vda3", "254:3", 3, 90112, 40960, &img)
+        .partition("vda", "vda4", "254:4", 4, 131072, 32735, &img)
+        .file("/sys/block/vda/device/model", "")
+        .file("/sys/block/vda/vda3/holders/dm-0", "")
+        .file("/sys/block/vda/vda3/holders/dm-1", "")
+        .file("/sys/block/vda/vda3/holders/dm-2", "")
+        .file("/sys/block/vda/vda4/holders/dm-7", "");
+    for (dm, devno, name, uuid, image, slaves) in [
+        ("dm-0", "253:0", "vos--root-init", lv("1n1t00"), &init, vec!["vda3"]),
+        ("dm-1", "253:1", "vos--root-root_tmeta", lv("tm3ta0") + "-tmeta", &zero, vec!["vda3"]),
+        ("dm-2", "253:2", "vos--root-root_tdata", lv("td4ta0") + "-tdata", &zero, vec!["vda3"]),
+        ("dm-3", "253:3", "vos--root-root-tpool", lv("p00l00") + "-tpool", &zero, vec!["dm-1", "dm-2"]),
+        ("dm-4", "253:4", "vos--root-root--a", lv("r00ta0"), &root_a, vec!["dm-3"]),
+        ("dm-5", "253:5", "vos--root-root--b", lv("r00tb0"), &root_b, vec!["dm-3"]),
+        ("dm-6", "253:6", "vos--root-root", lv("p00l00") + "-pool", &zero, vec!["dm-3"]),
+        ("dm-7", "253:7", "vos--var-var", "LVM-VaRvg0AAAABBBBCCCCDDDDEEEEFFFFFFv4r000aaaabbbbccccddddeeeeffffff".to_string(), &var, vec!["vda4"]),
+    ] {
+        t.disk(dm, devno, image, 512).file(&format!("/sys/block/{dm}/dm/name"), format!("{name}\n")).file(&format!("/sys/block/{dm}/dm/uuid"), format!("{uuid}\n")).symlink(&format!("/dev/mapper/{name}"), &format!("../{dm}"));
+        for s in slaves {
+            t.file(&format!("/sys/block/{dm}/slaves/{s}"), "");
+            if s.starts_with("dm-") {
+                t.file(&format!("/sys/block/{s}/holders/{dm}"), "");
+            }
+        }
+    }
+    let boot = "10111213-1415-1617-1819-1a1b1c1d1e1f";
+    let base_cfg = "{\n    \"maxParallelDownloads\": 2,\n    \"registry\": \"ghcr.io\",\n    \"name\": \"vanilla-os/gnome\",\n    \"tag\": \"main\",\n    \"updateInitramfsCmd\": \"lpkg --unlock && /usr/sbin/update-initramfs -u && lpkg --lock\",\n    \"partLabelVar\": \"vos-var\",\n    \"partLabelA\": \"vos-a\",\n    \"partLabelB\": \"vos-b\",\n    \"partLabelBoot\": \"vos-boot\",\n    \"partLabelEfi\": \"vos-efi\",\n    \"PartCryptVar\": \"/dev/mapper/vos--var-var\",\n\n    \"thinProvisioning\": false,\n    \"thinInitVolume\": \"\"\n}\n";
+    // The installer's: the image's with its last line cut, keys appended.
+    let cut: Vec<&str> = base_cfg.lines().collect();
+    let etc_cfg = format!("{},\n  \"PartCryptVar\": \"/dev/mapper/vos--var-var\",\n  \"thinProvisioning\": true,\n    \"thinInitVolume\": \"vos-init\"\n}}\n", cut[..cut.len() - 1].join("\n"));
+    let os = "PRETTY_NAME=\"Vanilla OS 3.0\"\nNAME=\"Vanilla OS\"\nVERSION_ID=\"3.0\"\nVERSION=\"3.0 Reunion\"\nVERSION_CODENAME=reunion\nID=vanilla\nID_LIKE=debian\nHOME_URL=\"https://vanillaos.org/\"\n";
+    let init_at = "/run/bko-holt/abroot-vos-init";
+    t.file("/etc/os-release", os)
+        .file("/usr/lib/os-release", os)
+        .file("/usr/share/abroot/abroot.json", base_cfg)
+        .file("/etc/abroot/abroot.json", etc_cfg)
+        .file("/etc/abroot/kargs", "quiet splash bgrt_disable $vt_handoff lsm=integrity\n")
+        .file("/abimage.abr", "{\n    \"digest\":\"sha256:a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1a1\",\n    \"timestamp\":\"2026-11-06T10:00:00Z\",\n    \"image\":\"ghcr.io/vanilla-os/gnome:main\"\n}\n")
+        .file(&format!("/usr/lib/modules/{VANILLA_K}/modules.dep"), "")
+        .file("/proc/sys/kernel/osrelease", format!("{VANILLA_K}\n"))
+        .file("/proc/cmdline", format!("BOOT_IMAGE=(lvm/vos--root-init)/vos-a/vmlinuz-{VANILLA_K} root=UUID={VANILLA_A} quiet splash bgrt_disable lsm=integrity\n"))
+        .dir("/boot/init")
+        .dir("/part-future")
+        .file("/boot/grub/grub.cfg", crate::abroot::tests_master())
+        .file("/boot/grub/x86_64-efi/normal.mod", "x")
+        .file(&format!("{init_at}/vos-a/vmlinuz-{VANILLA_K}"), vec![7u8; 300])
+        .file(&format!("{init_at}/vos-a/initrd.img-{VANILLA_K}"), vec![8u8; 500])
+        .file(&format!("{init_at}/vos-a/config-{VANILLA_K}"), "CONFIG_X=y\n")
+        .file(&format!("{init_at}/vos-a/System.map-{VANILLA_K}"), "0 T x\n")
+        .file(
+            &format!("{init_at}/vos-a/abroot.cfg"),
+            format!("insmod gzio\ninsmod part_gpt\ninsmod ext2\nlinux   (lvm/vos--root-init)/vos-a/vmlinuz-{VANILLA_K} root=UUID={VANILLA_A} quiet splash bgrt_disable $vt_handoff lsm=integrity\ninitrd  (lvm/vos--root-init)/vos-a/initrd.img-{VANILLA_K}\n"),
+        )
+        .dir(&format!("{init_at}/vos-b"))
+        .dir("/run/bko-holt/abroot-vos-b");
+    if b_used {
+        t.file(&format!("{init_at}/vos-b/vmlinuz-{VANILLA_KB}"), vec![7u8; 310])
+            .file(&format!("{init_at}/vos-b/initrd.img-{VANILLA_KB}"), vec![8u8; 510])
+            .file(&format!("{init_at}/vos-b/config-{VANILLA_KB}"), "CONFIG_X=y\n")
+            .file(
+                &format!("{init_at}/vos-b/abroot.cfg"),
+                // An upgrade's: grub-mkconfig's whole output, its 00_header's
+                // font search (of vos-b's own UUID) first.
+                format!(
+                    "{}### BEGIN /etc/grub.d/10_linux ###\n  search --no-floppy --fs-uuid --set=root {VANILLA_INIT}\n  linux   /vos-b/vmlinuz-{VANILLA_KB} root=/dev/mapper/vos--root-root--b quiet splash bgrt_disable $vt_handoff lsm=integrity\n  initrd  /vos-b/initrd.img-{VANILLA_KB}\n### END /etc/grub.d/10_linux ###\n",
+                    crate::abroot::tests_upgrade_header()
+                ),
+            )
+            .file("/run/bko-holt/abroot-vos-b/abimage.abr", "{\"digest\":\"sha256:b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2b2\",\"timestamp\":\"2026-11-10T10:00:00Z\",\"image\":\"ghcr.io/vanilla-os/gnome:main\"}")
+            .file(&format!("/run/bko-holt/abroot-vos-b/usr/lib/modules/{VANILLA_KB}/modules.dep"), "");
+    }
+    t.symlink(&format!("/dev/disk/by-partuuid/{THIN_ESP}"), "../../vda2")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&v_("Boot0001"), efi_load_option("vanilla", 2, 18432, 71680, THIN_ESP, "\\EFI\\vanilla\\shimx64.efi"))
+        .file(&v_("BootOrder"), [7u8, 0, 0, 0, 1, 0])
+        .file(&v_("BootCurrent"), [6u8, 0, 0, 0, 1, 0])
+        .file(&v_("SecureBoot"), [6u8, 0, 0, 0, 1])
+        .file(
+            "/proc/self/mountinfo",
+            "26 1 253:4 / / ro,relatime shared:1 - btrfs /dev/mapper/vos--root-root--a ro,space_cache=v2,subvolid=5,subvol=/\n27 26 0:36 / /var rw,relatime shared:2 - btrfs /dev/mapper/vos--var-var rw,space_cache=v2,subvolid=5,subvol=/\n28 26 0:37 / /etc rw,relatime shared:3 - overlay overlay rw,lowerdir=/etc,upperdir=/var/lib/abroot/etc/vos-a,workdir=/var/lib/abroot/etc/vos-a-work\n29 26 254:1 / /boot rw,relatime shared:4 - ext4 /dev/vda1 rw\n30 29 254:2 / /boot/efi rw,relatime shared:5 - vfat /dev/vda2 rw,fmask=0077,dmask=0077\n",
+        )
+        .file("/etc/fstab", format!("UUID={VANILLA_A} / btrfs ro,defaults 0 0\nUUID={boot} /boot ext4 defaults 0 2\nUUID=7A05-E5E5 /boot/efi vfat umask=0077 0 2\n"))
+        .file("/boot/efi/EFI/vanilla/shimx64.efi", vec![1u8; 300])
+        .file("/boot/efi/EFI/vanilla/grubx64.efi", vec![2u8; 400])
+        .file("/boot/efi/EFI/vanilla/mmx64.efi", vec![3u8; 200])
+        .file("/boot/efi/EFI/vanilla/grub.cfg", format!("search.fs_uuid {boot} root \nset prefix=($root)'/grub'\nconfigfile $prefix/grub.cfg\n"))
+        .file("/var/lib/dpkg/status", "Package: grub-efi-amd64-signed\nStatus: install ok installed\nArchitecture: amd64\nVersion: 1+2.12+9+deb13u2\n\nPackage: shim-signed\nStatus: install ok installed\nArchitecture: amd64\nVersion: 1.47+15.8-1\n\nPackage: initramfs-tools\nStatus: install ok installed\nArchitecture: all\nVersion: 0.148.3\n\nPackage: lvm2\nStatus: install ok installed\nArchitecture: amd64\nVersion: 2.03.31-2\n\nPackage: thin-provisioning-tools\nStatus: install ok installed\nArchitecture: amd64\nVersion: 1.1.0-4\n\nPackage: abroot\nStatus: install ok installed\nArchitecture: amd64\nVersion: 2.6.0\n");
+    t
+}
+
+/// What btrfs answers for / and /var (no subvolumes), and the read-only
+/// mounts dump makes of the init LV and vos-b.
+fn vanilla_runner() -> FakeRunner {
+    let mut r = FakeRunner::default();
+    for m in ["/", "/var"] {
+        r = r
+            .with(&format!("btrfs subvolume list -a -p -u -q {m}"), "")
+            .with(&format!("btrfs subvolume get-default {m}"), "ID 5 (FS_TREE)\n")
+            .with(&format!("btrfs subvolume list -a -r {m}"), "")
+            .with(&format!("btrfs property get -t s {m}"), "ro=false\n")
+            .with(&format!("btrfs property get -t i {m}"), "");
+    }
+    for (ty, node, label) in [("ext4", "vos--root-init", "vos-init"), ("btrfs", "vos--root-root--b", "vos-b")] {
+        let at = format!("/run/bko-holt/abroot-{label}");
+        r = r.with(&format!("mount -t {ty} -o {} /dev/mapper/{node} {at}", crate::abroot::ro_options(ty)), "").with(&format!("umount {at}"), "");
+    }
+    r
+}
+
+fn vanilla_plan(v: &Value, extra: &[&str]) -> crate::load::commands::Built {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let l = Layout::from_json(v.clone()).unwrap();
+    let mut a = vec!["l.json".to_string()];
+    a.extend(extra.iter().map(|s| s.to_string()));
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
+    commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() })
+}
+
+/// Vanilla OS 3 with both roots used, running from vos-a: boot.abroot
+/// (docs/design/vanillaos.md, V2) from abroot.json's merged keys, the
+/// master grub.cfg, the init LV and vos-b read through dump's read-only
+/// mounts; backup_sources in ABRoot's tree with the two unmounted
+/// filesystems' mounts; the init LV's kernels.  Planned (V4): both VGs (the
+/// thin pool by lvcreate), every filesystem with its label and UUID, the
+/// tree mounted with boot/init, part-future and /var, and a boot stage
+/// that regenerates nothing: the consistency check, the NVRAM entry, the
+/// log.
+#[test]
+fn vanilla_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let v = run(&vanilla_tree(true), true, vanilla_runner());
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+    assert_eq!(s(&v, &["os", "id"]), "vanilla");
+    let a = v.at(&["boot", "abroot"]).expect("boot.abroot");
+    assert_eq!(s(a, &["present"]), "vos-a");
+    assert_eq!(s(a, &["future"]), "vos-b");
+    assert_eq!(a.get("thin_two_roots"), Some(&Value::Bool(true)));
+    assert_eq!(a.get("operation_lock"), Some(&Value::Bool(false)));
+    assert_eq!(a.at(&["config", "thinProvisioning"]), Some(&Value::Bool(true)));
+    assert_eq!(s(a, &["config", "thinInitVolume"]), "vos-init");
+    assert_eq!(s(a, &["config", "PartCryptVar"]), "/dev/mapper/vos--var-var");
+    assert_eq!(arr(a, &["config", "files"]).len(), 2);
+    assert_eq!(s(a, &["grub", "default"]), "0");
+    assert_eq!(s(a, &["grub", "default_label"]), "vos-a");
+    assert_eq!(s(a, &["grub", "entries", "1", "title"]), "Previous State (B)");
+    assert_eq!(s(a, &["grub", "entries", "1", "configfile"]), "/vos-b/abroot.cfg");
+    assert_eq!(a.at(&["grub", "future_cfg"]), Some(&Value::Bool(false)));
+    assert_eq!(s(a, &["init", "device"]), "dm-0");
+    assert_eq!(s(a, &["init", "uuid"]), VANILLA_INIT);
+    assert_eq!(a.at(&["init", "read"]), Some(&Value::Bool(true)));
+    assert_eq!(s(a, &["var", "dm_name"]), "vos--var-var");
+    assert_eq!(s(a, &["kargs"]), "quiet splash bgrt_disable $vt_handoff lsm=integrity");
+    let (ra, rb) = (a.at(&["roots", "0"]).unwrap(), a.at(&["roots", "1"]).unwrap());
+    assert_eq!((s(ra, &["label"]), s(ra, &["device"]), s(ra, &["uuid"])), ("vos-a", "dm-4", VANILLA_A));
+    assert_eq!(ra.get("present"), Some(&Value::Bool(true)));
+    assert!(s(ra, &["abimage", "digest"]).starts_with("sha256:a1a1"));
+    assert_eq!(s(ra, &["init", "abroot_cfg", "root"]), format!("UUID={VANILLA_A}"));
+    assert_eq!(arr(ra, &["init", "kernels"]), &vec![Value::from(VANILLA_K)]);
+    assert_eq!((s(rb, &["label"]), s(rb, &["device"])), ("vos-b", "dm-5"));
+    assert_eq!((rb.get("read"), rb.get("empty")), (Some(&Value::Bool(true)), Some(&Value::Bool(false))));
+    assert!(s(rb, &["abimage", "digest"]).starts_with("sha256:b2b2"));
+    assert_eq!(s(rb, &["init", "abroot_cfg", "search_uuid"]), VANILLA_INIT);
+    assert_eq!(s(rb, &["init", "abroot_cfg", "root"]), "/dev/mapper/vos--root-root--b");
+    // The init LV's kernels, each marked with its root; nothing in /boot.
+    let ks = arr(&v, &["boot", "kernels", "installed"]);
+    assert_eq!(ks.len(), 2, "{ks:?}");
+    assert_eq!((s(&ks[0], &["version"]), s(&ks[0], &["dir"]), s(&ks[0], &["root_label"])), (VANILLA_K, "/boot/init/vos-a", "vos-a"));
+    assert_eq!((ks[0].get("running"), ks[0].get("modules_installed")), (Some(&Value::Bool(true)), Some(&Value::Bool(true))));
+    assert_eq!((s(&ks[1], &["version"]), s(&ks[1], &["root_label"])), (VANILLA_KB, "vos-b"));
+    assert_eq!(u(&ks[1], &["vmlinuz_bytes"]), 310);
+    // GRUB through shim, as for any Debian.
+    assert_eq!(s(&v, &["boot", "loader", "name"]), "grub");
+    assert_eq!(v.at(&["boot", "loader", "via_shim"]), Some(&Value::Bool(true)));
+    // backup_sources: ABRoot's tree; the two unmounted ones with no `from`
+    // and the mount a backup makes; `/` with the overlay's note.
+    let bs = arr(&v, &["storage", "backup_sources"]);
+    let paths: Vec<&str> = bs.iter().map(|b| b.get("path").and_then(Value::as_str).unwrap()).collect();
+    assert_eq!(paths, vec!["/", "/boot", "/boot/efi", "/boot/init", "/part-future", "/var"]);
+    assert!(s(&bs[0], &["note"]).contains("mount --bind / DIR"));
+    for (i, node, ty, o) in [(3, "/dev/mapper/vos--root-init", "ext4", "ro,noload,nodev,nosuid,noexec"), (4, "/dev/mapper/vos--root-root--b", "btrfs", "ro,rescue=nologreplay,nodev,nosuid,noexec")] {
+        assert!(bs[i].get("from").is_some_and(Value::is_null), "{:?}", bs[i]);
+        assert_eq!((s(&bs[i], &["mount", "device"]), s(&bs[i], &["mount", "fstype"]), s(&bs[i], &["mount", "options"])), (node, ty, o));
+        assert!(s(&bs[i], &["note"]).starts_with("not mounted on the running system"));
+    }
+    assert!(bs[5].get("mount").is_none() && s(&bs[5], &["from"]) == "/var");
+
+    let b = vanilla_plan(&v, &[]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    assert_eq!(crate::other::restored_marker(&v), "abimage.abr");
+    assert!(b.notes.iter().any(|n| n.contains("restored as they were; no initramfs, no grub-install, no update-grub")), "{:?}", b.notes);
+    assert!(b.notes.iter().any(|n| n.contains("detached")), "{:?}", b.notes);
+    assert!(!b.notes.iter().any(|n| n.contains("was empty")), "{:?}", b.notes);
+    let text = |st: Stage| b.stage(st).iter().map(Cmd::shell).collect::<String>();
+    // Assemble: both VGs, the thin pool and its thin LVs by lvcreate.
+    let asm = text(Stage::Assemble);
+    for l in [
+        "vgcfgrestore --devicesfile '' --devices /dev/vdb3 --file /run/bko-holt/lvm/vos-root.vg vos-root\n",
+        "lvcreate --devicesfile '' --devices /dev/vdb3 --yes --type thin-pool -n root -L 19456m --poolmetadatasize 1024m --chunksize 64k --discards passdown --zero y --poolmetadataspare y vos-root\n",
+        "lvcreate --devicesfile '' --devices /dev/vdb3 --type thin -V 19456m -n root-a --thinpool root vos-root\n",
+        "lvcreate --devicesfile '' --devices /dev/vdb3 --type thin -V 19456m -n root-b --thinpool root vos-root\n",
+        "pvcreate --devicesfile '' --devices /dev/vdb4 --uuid VaRpv0-aaaa-bbbb-cccc-dddd-eeee-ffffff --restorefile /run/bko-holt/lvm/vos-var.vg /dev/vdb4\n",
+        "vgcfgrestore --devicesfile '' --devices /dev/vdb4 --file /run/bko-holt/lvm/vos-var.vg vos-var\n",
+    ] {
+        assert!(asm.contains(l), "{l}: {asm}");
+    }
+    // Format: every filesystem with its label and UUID.
+    let fmt = text(Stage::Format);
+    let line = |end: &str| fmt.lines().find(|l| l.starts_with("mk") && l.split_whitespace().any(|w| w == end)).unwrap_or_else(|| panic!("{end}: {fmt}")).to_string();
+    for (end, label, uuid) in [
+        ("/dev/mapper/vos--root-root--a", "vos-a", VANILLA_A),
+        ("/dev/mapper/vos--root-root--b", "vos-b", VANILLA_B),
+        ("/dev/mapper/vos--root-init", "vos-init", VANILLA_INIT),
+        ("/dev/mapper/vos--var-var", "vos-var", "d0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf"),
+        ("/dev/vdb1", "vos-boot", "10111213-1415-1617-1819-1a1b1c1d1e1f"),
+    ] {
+        let l = line(end);
+        assert!(l.contains(&format!("-L {label}")) && l.contains(&format!("-U {uuid}")), "{l}");
+    }
+    let esp = line("/dev/vdb2");
+    assert!(esp.starts_with("mkfs.fat") && esp.contains("vos-efi") && esp.contains("7A05E5E5"), "{esp}");
+    assert!(!fmt.contains("tdata") && !fmt.contains("tmeta") && !fmt.contains("tpool"), "{fmt}");
+    // Mount: fstab's tree, then ABRoot's three, each made first.
+    let m = text(Stage::Mount);
+    let order = [
+        "mount -t btrfs -o defaults /dev/mapper/vos--root-root--a /mnt/bko-target\n",
+        "mount -t ext4 -o defaults /dev/vdb1 /mnt/bko-target/boot\n",
+        "mkdir -p /mnt/bko-target/part-future\n# ABRoot: the other root (vos-b), where ABRoot mounts it (not in fstab)\nmount -t btrfs -o defaults /dev/mapper/vos--root-root--b /mnt/bko-target/part-future\n",
+        "mkdir -p /mnt/bko-target/var\n# ABRoot: /var, which ABRoot's mount-sys mounts by label (not in fstab)\nmount -t btrfs -o defaults /dev/mapper/vos--var-var /mnt/bko-target/var\n",
+        "/dev/vdb2 /mnt/bko-target/boot/efi\n",
+        "mkdir -p /mnt/bko-target/boot/init\n# ABRoot: the init LV (both roots' kernels, initramfs and abroot.cfg), where ABRoot mounts it (not in fstab)\nmount -t ext4 -o defaults /dev/mapper/vos--root-init /mnt/bko-target/boot/init\n",
+    ];
+    let mut at = 0;
+    for l in order {
+        let i = m[at..].find(l).unwrap_or_else(|| panic!("{l} not after {at}: {m}")) + at;
+        at = i + l.len();
+    }
+    assert!(b.mount_points.iter().any(|p| p == "/mnt/bko-target/boot/init") && b.mount_points.iter().any(|p| p == "/mnt/bko-target/part-future"), "{:?}", b.mount_points);
+    // Boot: nothing regenerated, nothing chrooted.
+    let bt = text(Stage::Boot);
+    let run: String = bt.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n");
+    for no in ["chroot", "update-initramfs", "grub-install", "update-grub", "grub-mkconfig", "--rbind", "dracut", "lvm-devices", "os-prober"] {
+        assert!(!run.contains(no), "{no}: {bt}");
+    }
+    let pos = |x: &str| bt.find(x).unwrap_or_else(|| panic!("{x}: {bt}"));
+    let listed = pos("atimes.before");
+    let check = pos("t=$(readlink -f /mnt/bko-target) || exit 1; want=vos-a; ilv=vos--root-init; iuuid=20111213-1415-1617-1819-1a1b1c1d1e1f;");
+    assert!(bt.contains(&format!("chk vos-a 0 {VANILLA_A} vos--root-root--a /dev/vos-root/root-a\nchk vos-b 0 {VANILLA_B} vos--root-root--b /dev/vos-root/root-b\n")), "{bt}");
+    let nvram = pos("efibootmgr --quiet --create --disk /dev/vdb --part 2 --label vanilla --loader '\\EFI\\vanilla\\shimx64.efi'\n");
+    let log = pos("mkdir -p /mnt/bko-target/var/log/bko-holt\n");
+    let back = pos("atimes.after");
+    assert!(listed < check && check < nvram && nvram < log && log < back, "{bt}");
+    assert!(b.stage(Stage::Boot).iter().any(|c| c.warns && c.argv.get(2).is_some_and(|x| x.contains("chk vos-b"))));
+    // --no-nvram: no UEFI entry.
+    assert!(!vanilla_plan(&v, &["--no-nvram"]).stage(Stage::Boot).iter().map(Cmd::shell).collect::<String>().contains("efibootmgr"));
+}
+
+/// The future root's btrfs allocation profiles (V5's open finding): sysfs
+/// has /sys/fs/btrfs/UUID only while it's mounted, so abroot::read records
+/// them during its own read-only mount, storage.btrfs takes them, and
+/// load's mkfs.btrfs gets -d/-m for vos-b as for the mounted vos-a.  This
+/// runner makes vos-b's sysfs directory on dump's mount and removes it on
+/// the umount, as the kernel does.
+#[test]
+fn vanilla_future_root_btrfs_profiles() {
+    use crate::load::{commands::Cmd, Stage};
+    struct SysfsMounts {
+        inner: FakeRunner,
+        sysfs: std::path::PathBuf,
+    }
+    impl crate::sys::Runner for SysfsMounts {
+        fn run(&self, prog: &str, args: &[&str]) -> Option<String> {
+            let out = self.inner.run(prog, args);
+            if out.is_some() && args.last() == Some(&"/run/bko-holt/abroot-vos-b") {
+                if prog == "mount" {
+                    for (k, p) in [("data", "single"), ("metadata", "dup"), ("system", "dup")] {
+                        std::fs::create_dir_all(self.sysfs.join(format!("allocation/{k}/{p}"))).unwrap();
+                    }
+                } else if prog == "umount" {
+                    std::fs::remove_dir_all(&self.sysfs).unwrap();
+                }
+            }
+            out
+        }
+    }
+    let t = vanilla_tree(true);
+    for k in ["data/single", "metadata/dup", "system/dup"] {
+        t.dir(&format!("/sys/fs/btrfs/{VANILLA_A}/allocation/{k}"));
+    }
+    let profiles = |v: &Value, uuid: &str| {
+        arr(v, &["storage", "btrfs"]).iter().find(|b| b.get("uuid").and_then(Value::as_str) == Some(uuid)).and_then(|b| b.get("allocation_profiles")).cloned().unwrap()
+    };
+    // Without the record (sysfs never had vos-b): null, mkfs.btrfs's defaults.
+    let v0 = run(&t, true, vanilla_runner());
+    assert!(profiles(&v0, VANILLA_B).is_null());
+    let sys = Sys::new(t.root(), Box::new(SysfsMounts { inner: vanilla_runner(), sysfs: t.p(&format!("/sys/fs/btrfs/{VANILLA_B}")) }), true);
+    let v = crate::report::build(&sys, crate::osrel::read(&sys).as_ref(), "2026-11-04T00:00:00Z");
+    assert!(sys.warnings().is_empty(), "{:?}", sys.warnings());
+    assert!(!t.p(&format!("/sys/fs/btrfs/{VANILLA_B}")).exists(), "dump's mount of vos-b is gone, and its sysfs with it");
+    for uuid in [VANILLA_A, VANILLA_B] {
+        let p = profiles(&v, uuid);
+        assert_eq!((s(&p, &["data", "0"]), s(&p, &["metadata", "0"]), s(&p, &["system", "0"])), ("single", "dup", "dup"), "{uuid}: {p:?}");
+    }
+    let b = vanilla_plan(&v, &[]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let fmt = b.stage(Stage::Format).iter().map(Cmd::shell).collect::<String>();
+    for end in ["/dev/mapper/vos--root-root--a", "/dev/mapper/vos--root-root--b"] {
+        let l = fmt.lines().find(|l| l.starts_with("mkfs.btrfs") && l.split_whitespace().any(|w| w == end)).unwrap_or_else(|| panic!("{end}: {fmt}"));
+        assert!(l.contains(" -d single -m dup "), "{l}");
+    }
+}
+
+/// A fresh install: vos-b formatted but empty, init/vos-b empty.  The dump
+/// says so (`empty`), the plan notes it, and the check passes it as a
+/// warning; the refusals of version 1 (an upgrade running, BIOS, not the
+/// thin two-root scheme, ABRoot v1's /.system, --new-uuids).
+#[test]
+fn vanilla_fresh_install_and_refusals() {
+    let t = vanilla_tree(false);
+    let v = run(&t, true, vanilla_runner());
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+    let rb = v.at(&["boot", "abroot", "roots", "1"]).unwrap();
+    assert_eq!((rb.get("empty"), rb.get("abimage")), (Some(&Value::Bool(true)), Some(&Value::Null)));
+    assert_eq!(arr(rb, &["init", "kernels"]).len(), 0);
+    assert_eq!(arr(&v, &["boot", "kernels", "installed"]).len(), 1);
+    let b = vanilla_plan(&v, &[]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    assert!(b.notes.iter().any(|n| n.starts_with("ABRoot: vos-b was empty on the source")), "{:?}", b.notes);
+    let bt: String = b.stage(crate::load::Stage::Boot).iter().map(crate::load::commands::Cmd::shell).collect();
+    assert!(bt.contains(&format!("chk vos-b 1 {VANILLA_B} ")), "{bt}");
+
+    // Refusals.
+    let has = |v: &Value, extra: &[&str], want: &str| {
+        let p = vanilla_plan(v, extra).problems;
+        assert!(p.iter().any(|x| x.contains(want)), "{want}: {p:?}");
+    };
+    let mut w = v.clone();
+    set_at(&mut w, &["boot", "abroot", "operation_lock"], Value::Bool(true));
+    has(&w, &[], "operation.lock was there when the dump was made");
+    let mut w = v.clone();
+    set_at(&mut w, &["boot", "abroot", "thin_two_roots"], Value::Bool(false));
+    has(&w, &[], "ABRoot: not the layout version 1 restores");
+    let mut w = v.clone();
+    set_at(&mut w, &["boot", "abroot", "v1_system"], Value::Bool(true));
+    has(&w, &[], "ABRoot v1's /.system");
+    let mut w = v.clone();
+    set_at(&mut w, &["boot", "loader", "firmware"], Value::Str("bios".into()));
+    set_at(&mut w, &["firmware", "mode"], Value::Str("bios".into()));
+    has(&w, &[], "ABRoot with BIOS boot isn't restored");
+    let mut w = v.clone();
+    set_at(&mut w, &["boot", "abroot", "grub", "default_label"], Value::Null);
+    has(&w, &[], "the dump has no default entry of the master /boot/grub/grub.cfg");
+    has(&v, &["--new-uuids"], "--new-uuids isn't built yet");
+    // The source's grub.cfg after an upgrade, before the reboot into it.
+    let mut w = v.clone();
+    set_at(&mut w, &["boot", "abroot", "grub", "default_label"], Value::Str("vos-b".into()));
+    let b = vanilla_plan(&w, &[]);
+    assert!(b.notes.iter().any(|n| n.contains("grub.cfg boots vos-b next, not vos-a")), "{:?}", b.notes);
+    // ...and here vos-b is empty: refused before anything is written.
+    assert!(b.problems.iter().any(|p| p.contains("grub.cfg boots vos-b by default, and vos-b was empty")), "{:?}", b.problems);
+    // Without the present root's abimage.abr, the gate is ABRoot's /var state.
+    let c = v.compact();
+    let at = c.find("\"abimage\":{\"digest\":\"sha256:a1a1").unwrap();
+    let end = at + c[at..].find('}').unwrap() + 1;
+    let w = crate::json::parse(&format!("{}\"abimage\":null{}", &c[..at], &c[end..])).unwrap();
+    assert_eq!(crate::other::restored_marker(&w), "var/lib/abroot");
+}
+
 /// Cinqcent-style md RAID1 over two disks' partitions, ext4 on md0.
 fn md_raid1_tree() -> Tree {
     let t = Tree::new("scn-md");
@@ -3223,6 +3907,9 @@ pub fn dumps() -> Vec<(&'static str, Value)> {
         ("bios_btrfs", run(&bios_btrfs(), true, bios_btrfs_runner())),
         ("uefi_shim", run(&uefi_shim(), true, FakeRunner::default())),
         ("luks_lvm", run(&luks_lvm_tree(), true, FakeRunner::default())),
+        ("thin_lvm", run(&thin_lvm_tree(), true, thin_lvm_runner())),
+        ("vanilla", run(&vanilla_tree(true), true, vanilla_runner())),
+        ("vanilla_fresh", run(&vanilla_tree(false), true, vanilla_runner())),
         ("md_raid1", run(&md_raid1_tree(), true, FakeRunner::default())),
         ("zfs_root", run(&zfs, true, runner)),
         ("whole_disk_fs", run(&misc_tree(), true, FakeRunner::default())),

@@ -35,6 +35,14 @@
 # the system holds; the composefs / it boots from is made from it at boot.
 # vm-chroot runs commands in the default deployment, with /usr read-only.
 #
+# ABRoot (Vanilla OS): MOUNTPOINT gets the present root (the one the master
+# grub.cfg's default boots), with /var, /boot, /boot/efi, the init LV at
+# /boot/init and the other root at /part-future beneath it: the tree
+# bko-holt's dump lists (mount_abroot below).  / is read raw (its /etc is
+# the lower); vm-chroot runs commands with /etc as the guest's overlay.
+# The roots are thin LVs, so vos-root is activated by LVM: refused while a
+# group of that name is active here (another Vanilla OS disk's).
+#
 # / may be a partition, a logical volume, a btrfs subvolume, or a ZFS dataset.  A ZFS pool is
 # imported from the image's partition only, under a temporary name (so it
 # can't clash with a pool of the host's, and the guest's own name is kept),
@@ -258,17 +266,23 @@ for u in "${!raids[@]}"; do
 done
 
 # LUKS partitions, opened with --key; the opened devices count as partitions.
-for p in "${parts[@]}"; do
-    [[ $(blkid -s TYPE -o value "$p" || true) == crypto_LUKS ]] || continue
-    [[ -n $key ]] || { echo "vm-mount: $p is LUKS-encrypted; skipped (no --key)" >&2; continue; }
-    name=vm-mount-$$-${p##*/}
-    # The passphrase without the file's final newline, as typed at boot.
-    tr -d '\n' <"$key" | cryptsetup open $([[ $ro == yes ]] && echo --readonly) --key-file - "$p" "$name" ||
-        { undo; die "could not unlock $p with $key"; }
-    echo "luks $name" >>"$state"
-    udevadm settle
-    parts+=("/dev/mapper/$name")
-done
+# open_luks FROM: those from parts[FROM] on.  Called again after LVM below,
+# for LUKS on a logical volume (ABRoot's encrypted /var, on vos-var/var).
+open_luks() {
+    local p name
+    for p in "${parts[@]:$1}"; do
+        [[ $(blkid -s TYPE -o value "$p" || true) == crypto_LUKS ]] || continue
+        [[ -n $key ]] || { echo "vm-mount: $p is LUKS-encrypted; skipped (no --key)" >&2; continue; }
+        name=vm-mount-$$-${p##*/}
+        # The passphrase without the file's final newline, as typed at boot.
+        tr -d '\n' <"$key" | cryptsetup open $([[ $ro == yes ]] && echo --readonly) --key-file - "$p" "$name" ||
+            { undo; die "could not unlock $p with $key"; }
+        echo "luks $name" >>"$state"
+        udevadm settle || true
+        parts+=("/dev/mapper/$name")
+    done
+}
+open_luks 0
 
 # LVM physical volumes: each volume group's logical volumes set up as
 # device-mapper devices under names of this mount's own (TAG-VG-LV, TAG from
@@ -283,16 +297,37 @@ done
 # here already.
 declare -A lvdev=()
 pvs=()
+before_lvm=${#parts[@]}
 for p in "${parts[@]}"; do
     [[ $(blkid -s TYPE -o value "$p" || true) == LVM2_member ]] && pvs+=("$(realpath "$p")")
 done
 if [[ ${#pvs[@]} -gt 0 ]]; then
     pvlist=$(IFS=,; echo "${pvs[*]}")
     lvm_opts=(--devicesfile "" --devices "$pvlist")
+    # (The process substitutions' descriptors, which LVM would warn of.)
+    export LVM_SUPPRESS_FD_WARNINGS=1
     tag=vmm-${devs[0]##*/}
-    # The PVs' device numbers, as dmsetup deps prints them: "(MAJOR, MINOR)".
-    ours=$(for p in "${pvs[@]}"; do stat -L -c '%t %T' "$p"; done | while read -r ma mi; do
-        printf '(%d, %d)\n' "0x$ma" "0x$mi"; done)
+    # The PVs' kernel names (nbd0p3), as dm_leaves prints them.
+    ours=$(for p in "${pvs[@]}"; do echo "${p##*/}"; done)
+    # dm_leaves NAME: the block devices below device-mapper device NAME,
+    # through any devices stacked between (a thin LV's pool and its data and
+    # metadata LVs), one kernel name a line; one of the PVs (a LUKS volume's
+    # dm-N) is as far as it goes.
+    dm_leaves() {
+        local d
+        d=$(realpath "/dev/mapper/$1" 2>/dev/null) || return 0
+        leaves_of "${d##*/}"
+    }
+    leaves_of() {
+        local s below=no
+        grep -qxF "$1" <<<"$ours" && { echo "$1"; return 0; }
+        for s in "/sys/class/block/$1/slaves/"*; do
+            [[ -e $s ]] || continue
+            below=yes
+            leaves_of "${s##*/}"
+        done
+        [[ $below == yes ]] || echo "$1"
+    }
     declare -A pestart=()
     while IFS='|' read -r pv start; do
         pv=${pv// /}; [[ -n $pv ]] && pestart[$(realpath "$pv")]=${start// /}
@@ -306,7 +341,9 @@ if [[ ${#pvs[@]} -gt 0 ]]; then
         active=$(dmsetup ls 2>/dev/null | awk '{ print $1 }' | grep "^${vg//-/--}-[^-]" || true)
         mine=no others=no
         for lv in $active; do
-            if dmsetup deps -o devno "$lv" | grep -o '([0-9]*, [0-9]*)' | grep -qvxF "$ours"; then others=yes; else mine=yes; fi
+            # Down any stack of device-mapper devices (a thin LV's pool) to the disks.
+            # (All read: grep -q's early exit would break dm_leaves' pipe, under pipefail.)
+            if [[ -n $(dm_leaves "$lv" | grep -vxF "$ours") ]]; then others=yes; else mine=yes; fi
         done
         [[ $mine == yes ]] && { vgchange "${lvm_opts[@]}" -a n "$vg" >/dev/null || { undo; die "could not deactivate $vg"; }; }
         types=$(lvs "${lvm_opts[@]}" --noheadings --segments -o segtype "$vg" 2>/dev/null | tr -d ' ' | sort -u)
@@ -354,20 +391,49 @@ if [[ ${#pvs[@]} -gt 0 ]]; then
                 { vgchange "${lvm_opts[@]}" -a n "$vg" >/dev/null 2>&1 || true; }
             continue
         fi
-        # LVM's own activation, under the guest's names.
-        [[ $others == yes ]] && { undo; die "a volume group named $vg is already active on this host"; }
+        # LVM's own activation, under the guest's names.  (ABRoot's vos-root,
+        # whose roots are thin: every Vanilla OS disk has one.)
+        [[ $others == yes ]] && { undo; die "a volume group named $vg is already active on this host (another guest's or disk's of that name, or another mount of this one): vm-umount or deactivate it first"; }
         # A VG's name in read_only_volume_list covers all of its LVs ("*"
         # there would match only a VG named "*").
         ro_cfg=()
         [[ $ro == yes ]] && ro_cfg=(--config "activation { read_only_volume_list = [ \"$vg\" ] }")
-        vgchange "${lvm_opts[@]}" "${ro_cfg[@]}" -a y "$vg" >/dev/null || { undo; die "could not activate volume group $vg"; }
-        echo "vg $vg $pvlist" >>"$state"
+        act_pvs=$pvlist
+        if [[ $ro == yes ]] && grep -qx thin-pool <<<"$types"; then
+            # A thin pool is never a read-only table ("thin-pool: target type
+            # may not be included in a read-only table"), and its data and
+            # metadata need writable devices.  So with --ro LVM activates the
+            # group from throwaway snapshots of its PVs (device-mapper's
+            # snapshot target, which reads its origin only, the read-only
+            # nbd device), their copy-on-write space a sparse file vm-umount
+            # deletes: what the pool writes at activation never reaches the
+            # image, and the filesystems are mounted read-only as ever.
+            ro_cfg=() cows=()
+            for pv in $(pvs "${lvm_opts[@]}" --noheadings --separator '|' -o pv_name,vg_name 2>/dev/null |
+                        awk -F'|' -v vg="$vg" '{ gsub(/ /, ""); } $2 == vg { print $1 }'); do
+                pv=$(realpath "$pv")
+                f=$(mktemp -p "${TMPDIR:-/tmp}" vm-mount-cow.XXXXXX)
+                truncate -s 1G "$f"
+                l=$(losetup --find --show "$f")
+                c=vm-mount-$$-cow-${pv##*/}
+                dmsetup create "$c" --table "0 $(blockdev --getsz "$pv") snapshot $pv $l N 8" ||
+                    { losetup -d "$l"; rm -f "$f"; undo; die "could not make a throwaway snapshot of $pv"; }
+                echo "cow $c $l $f" >>"$state"
+                cows+=("$(realpath "/dev/mapper/$c")")
+            done
+            act_pvs=$(IFS=,; echo "${cows[*]}")
+            udevadm settle
+        fi
+        # Recorded first: vm-umount deactivates what a failed activation left.
+        echo "vg $vg $act_pvs" >>"$state"
+        vgchange --devicesfile "" --devices "$act_pvs" "${ro_cfg[@]}" -a y "$vg" >/dev/null || { undo; die "could not activate volume group $vg"; }
         udevadm settle
         while read -r lv; do
             [[ -n $lv && -b $lv ]] && parts+=("$(realpath "$lv")")
-        done < <(lvs "${lvm_opts[@]}" --noheadings -o lv_dm_path "$vg" 2>/dev/null | tr -d ' ')
+        done < <(lvs --devicesfile "" --devices "$act_pvs" --noheadings -o lv_dm_path "$vg" 2>/dev/null | tr -d ' ')
     done
 fi
+open_luks "$before_lvm"
 
 # Resolve fstab's device names against this image's partitions only, never
 # the host's disks (a cloned image may share UUIDs with something else).
@@ -546,6 +612,182 @@ mount_ostree() {
     fi
 }
 
+# ABRoot (Vanilla OS; docs/design/vanillaos.md): two root filesystems on
+# thin LVs (labels vos-a and vos-b: abroot.json's partLabelA and
+# partLabelB), an LV `init` (label vos-init: thinInitVolume) with both
+# roots' kernels and GRUB configs, /boot (vos-boot: partLabelBoot), whose
+# master grub.cfg's `set default=` entry leads to the root that boots
+# (`configfile "/vos-b/abroot.cfg"`), and /var (vos-var: partLabelVar; on
+# LUKS with the installer's encryption, which --key opens).  No fstab holds
+# the tree: a root's lower /etc/fstab lists both roots at /, and its live
+# one, in its /etc overlay's upper on /var, only itself, /boot and
+# /boot/efi.  So MOUNTPOINT gets the tree bko-holt's dump and load use, at
+# ABRoot's own mount points: / the present root (the one the master
+# grub.cfg's default leads to), /var, the live fstab's /boot and /boot/efi
+# (the lower fstab's without one), /boot/init the init LV and /part-future
+# the other root.  / is read raw: its /etc is the lower, and both roots'
+# /etc uppers are in /var/lib/abroot/etc/; vm-chroot puts the overlay
+# together.  abroot.json is the root's /usr/share/abroot/abroot.json, then
+# its /etc/abroot/abroot.json (the upper's if there is one), merged as
+# ABRoot's viper does (keys whatever their case, the later value winning).
+# Recognised by an LV named init and a root holding
+# /usr/share/abroot/abroot.json (the init LV first, so no other guest's
+# filesystems are mounted to look); then the whole tree is mounted or
+# vm-mount fails.  Sets abroot_present and abroot_future (labels) and
+# abroot_root (the present root's device).
+abroot_present="" abroot_future="" abroot_root=""
+# abroot_py config FILE...: abroot.json's labels from FILEs merged, as
+# KEY=VALUE lines (keys in lower case, ABRoot's defaults for those missing).
+# abroot_py present GRUBCFG: the label the master grub.cfg's default entry
+# leads to, as bko-holt's abroot::parse_master reads it.
+abroot_py() {
+    python3 -I - "$@" <<'PY'
+import json, re, sys
+cmd, args = sys.argv[1], sys.argv[2:]
+if cmd == "config":
+    keys = {}
+    for f in args:
+        try:
+            with open(f) as fh:
+                pairs = json.load(fh, object_pairs_hook=lambda kv: kv)
+        except (OSError, ValueError):
+            continue
+        for k, v in pairs if isinstance(pairs, list) else ():
+            keys[k.lower()] = v
+    for k, d in (("partlabela", "vos-a"), ("partlabelb", "vos-b"), ("partlabelvar", "vos-var"),
+                 ("partlabelboot", "vos-boot"), ("thininitvolume", "vos-init")):
+        v = keys.get(k)
+        v = v if isinstance(v, str) and v else d
+        if not re.fullmatch(r"[A-Za-z0-9._-]+", v):
+            sys.exit(f"abroot.json's {k} is {v!r}")
+        print(f"{k}={v}")
+elif cmd == "present":
+    default, entries, inside = None, [], False
+    with open(args[0], errors="replace") as fh:
+        for line in fh:
+            l = line.strip()
+            if l.startswith("#"):
+                continue
+            if l.startswith("menuentry "):
+                m = re.match(r"""menuentry\s+(?:"([^"]*)"|'([^']*)'|(\S+))""", l)
+                title = next((g for g in m.groups() if g is not None), "") if m else ""
+                entries.append({"title": title, "cfg": None})
+                inside = True
+            elif l.startswith("}"):
+                inside = False
+            elif not inside:
+                if default is None and l.startswith("set default="):
+                    default = l[len("set default="):].strip().strip("\"'")
+            elif l.startswith("configfile "):
+                entries[-1]["cfg"] = l.split(None, 1)[1].strip().strip("\"'")
+    e = None
+    if default is not None and default.isdigit():
+        e = entries[int(default)] if int(default) < len(entries) else None
+    elif default is not None:
+        e = next((x for x in entries if x["title"] == default), None)
+    if e is None or not e["cfg"]:
+        sys.exit(f"{args[0]}: no default entry ({default!r}) with a configfile among its {len(entries)}")
+    # "/vos-b/abroot.cfg", or with a (device) in front
+    print(re.sub(r"^\([^)]*\)", "", e["cfg"]).strip("/").split("/")[0])
+PY
+}
+# part_label LABEL: the first of the image's partitions and volumes whose
+# filesystem is labelled LABEL (ABRoot's own search: the first match).
+part_label() {
+    local p t
+    for p in "${parts[@]}"; do
+        t=$(blkid -s TYPE -o value "$p" 2>/dev/null || true)
+        [[ $t == crypto_LUKS || $t == LVM2_member || $t == linux_raid_member ]] && continue
+        [[ $(blkid -s LABEL -o value "$p" 2>/dev/null || true) == "$1" ]] && { echo "$p"; return 0; }
+    done
+    return 1
+}
+mount_abroot() {
+    local p n init=no tmp cfgroot="" conf l0 up A B V BOOT I dI dA dB dV dB0 dP dF present
+    local spec target type options q
+    for p in "${parts[@]}"; do
+        n=$(cat "/sys/class/block/${p##*/}/dm/name" 2>/dev/null) || continue
+        # VG-init, the VG's dashes doubled (vmm-nbdN-VG-init by hand)
+        [[ $n == *-init && $n != *--init ]] && { init=yes; break; }
+    done
+    [[ $init == yes ]] || return 1
+    tmp=$(mktemp -d "${TMPDIR:-/tmp}/vm-mount-abroot.XXXXXX")
+    for p in "${parts[@]}"; do
+        case $(blkid -s TYPE -o value "$p" 2>/dev/null || true) in btrfs|ext4|xfs) ;; *) continue ;; esac
+        ro=yes try_mount "$p" "$tmp" "" || continue
+        [[ -f $tmp/usr/share/abroot/abroot.json ]] && { cfgroot=$p; break; }
+        umount "$tmp"
+    done
+    [[ -n $cfgroot ]] || { rmdir "$tmp"; return 1; }
+    abroot_fail() { umount "$tmp" 2>/dev/null; rmdir "$tmp" 2>/dev/null; undo; die "ABRoot: $*"; }
+    conf=$(abroot_py config "$tmp/usr/share/abroot/abroot.json" "$tmp/etc/abroot/abroot.json") || abroot_fail "$conf"
+    V=$(sed -n 's/^partlabelvar=//p' <<<"$conf")
+    # This root's /etc upper on /var: its abroot.json, if it has one, is
+    # the /etc one ABRoot reads (a whiteout there: none).
+    l0=$(blkid -s LABEL -o value "$cfgroot" || true)
+    if [[ -n $l0 ]] && dV=$(part_label "$V"); then
+        up=$(mktemp -d "${TMPDIR:-/tmp}/vm-mount-abroot-var.XXXXXX")
+        if ro=yes try_mount "$dV" "$up" ""; then
+            q=$up/lib/abroot/etc/$l0/abroot/abroot.json
+            if [[ -f $q ]]; then
+                conf=$(abroot_py config "$tmp/usr/share/abroot/abroot.json" "$q") || { umount "$up"; rmdir "$up"; abroot_fail "$conf"; }
+            elif [[ -c $q ]]; then
+                conf=$(abroot_py config "$tmp/usr/share/abroot/abroot.json") || { umount "$up"; rmdir "$up"; abroot_fail "$conf"; }
+            fi
+            umount "$up"
+        fi
+        rmdir "$up"
+    fi
+    umount "$tmp"
+    A=$(sed -n 's/^partlabela=//p' <<<"$conf") B=$(sed -n 's/^partlabelb=//p' <<<"$conf")
+    V=$(sed -n 's/^partlabelvar=//p' <<<"$conf") BOOT=$(sed -n 's/^partlabelboot=//p' <<<"$conf")
+    I=$(sed -n 's/^thininitvolume=//p' <<<"$conf")
+    dA=$(part_label "$A") || abroot_fail "no filesystem labelled $A (partLabelA) on this image"
+    dB=$(part_label "$B") || abroot_fail "no filesystem labelled $B (partLabelB) on this image"
+    dI=$(part_label "$I") || abroot_fail "no filesystem labelled $I (thinInitVolume) on this image"
+    if ! dV=$(part_label "$V"); then
+        for p in "${parts[@]}"; do
+            [[ -z $key && $(blkid -s TYPE -o value "$p" 2>/dev/null || true) == crypto_LUKS ]] &&
+                abroot_fail "no filesystem labelled $V (partLabelVar): is it in the LUKS volume $p? (give --key)"
+        done
+        abroot_fail "no filesystem labelled $V (partLabelVar) on this image"
+    fi
+    dB0=$(part_label "$BOOT") || abroot_fail "no filesystem labelled $BOOT (partLabelBoot) on this image"
+    # The master grub.cfg's default: the present root.
+    ro=yes try_mount "$dB0" "$tmp" "" || abroot_fail "could not mount /boot ($dB0) to read its grub.cfg: $mount_err"
+    present=$(abroot_py present "$tmp/grub/grub.cfg" 2>&1) || abroot_fail "$present"
+    umount "$tmp"
+    rmdir "$tmp"
+    if [[ $present == "$A" ]]; then dP=$dA dF=$dB abroot_future=$B
+    elif [[ $present == "$B" ]]; then dP=$dB dF=$dA abroot_future=$A
+    else abroot_fail "the master grub.cfg's default boots $present, neither $A nor $B"
+    fi
+    abroot_present=$present abroot_root=$dP
+    # The tree, parents first.
+    mount_fs "$dP" "$mp" "" || { undo; die "ABRoot: could not mount the present root $present ($dP)"; }
+    mount_fs "$dV" "$mp/var" "" || { undo; die "ABRoot: could not mount /var ($dV)"; }
+    q=$mp/var/lib/abroot/etc/$present/fstab
+    [[ -f $q ]] || q=$mp/etc/fstab
+    while read -r spec target type options; do
+        # / (in the lower fstab both roots), and what ABRoot mounts itself
+        case $target in /|/var|/boot/init|/part-future) continue ;; esac
+        [[ $type == swap || $target != /* || ,$options, == *,noauto,* ]] && continue
+        p=$(resolve "$spec") || { echo "vm-mount: skipping $target: $spec is not on this image" >&2; continue; }
+        mount_fs "$p" "$mp$target" "$(subvol_opts <<<"$options")" || { undo; die "ABRoot: could not mount $target ($p)"; }
+    done < <([[ -f $q ]] && awk '!/^[[:space:]]*(#|$)/ { print $1, $2, $3, $4 }' "$q" |
+                 awk '{ print gsub("/", "/", $2), $0 }' | sort -n | cut -d' ' -f2-)
+    mountpoint -q "$mp/boot" || mount_fs "$dB0" "$mp/boot" "" || { undo; die "ABRoot: could not mount /boot ($dB0)"; }
+    for q in boot/init:"$dI" part-future:"$dF"; do
+        if [[ ! -d $mp/${q%%:*} ]]; then
+            # ABRoot's own empty directories; made only on a read-write mount
+            [[ $ro == no ]] && mkdir "$mp/${q%%:*}" ||
+                { undo; die "ABRoot: there is no /${q%%:*} to mount ${q#*:} at (and --ro makes none)"; }
+        fi
+        mount_fs "${q#*:}" "$mp/${q%%:*}" "" || { undo; die "ABRoot: could not mount /${q%%:*} (${q#*:})"; }
+    done
+    return 0
+}
+
 # Find /: the filesystem whose /etc/fstab this is.  On btrfs it is usually
 # in a subvolume: one level down from the top level (Debian's installer uses
 # @rootfs, Fedora's root), in which case mount the subvolume fstab names for
@@ -643,7 +885,10 @@ mount_zfs_root() {
 }
 
 root=""
+# (Not under the ERR trap: mount_abroot fails by itself, through undo and die.)
+mount_abroot && root=$abroot_root
 for p in "${parts[@]}"; do
+    [[ -z $root ]] || break
     type=$(blkid -s TYPE -o value "$p" || true)
     [[ -z $type || $type == swap ]] && continue
     if [[ $type == zfs_member ]]; then
@@ -722,7 +967,8 @@ if command -v zpool >/dev/null; then
 fi
 
 # The guest's other filesystems, parents before children.
-[[ -n $ostree_dep ]] || fstab_file=${fstab_copy:-$(guest_file "$mp" /etc/fstab)}
+[[ -n $ostree_dep || -n $abroot_present ]] || fstab_file=${fstab_copy:-$(guest_file "$mp" /etc/fstab)}
+[[ -z $abroot_present ]] || fstab_file=/dev/null     # mount_abroot mounted the tree
 while read -r spec target type options; do
     [[ $target == / || $type == swap || $target != /* || ,$options, == *,noauto,* ]] && continue
     p=$(resolve "$spec") || { echo "vm-mount: skipping $target: $spec is not on this image" >&2; continue; }
@@ -737,3 +983,4 @@ how=read-write
 echo "Mounted $image ($dev, $how) at $mp:"
 findmnt -R -n -o TARGET,SOURCE,FSTYPE "$mp" | sed 's/^/  /'
 [[ -z $ostree_dep ]] || echo "ostree: the default deployment is $ostree_dep (its etc/fstab mounted the rest)"
+[[ -z $abroot_present ]] || echo "ABRoot: the present root (the master grub.cfg's default) is $abroot_present, at /; the future root $abroot_future is at /part-future"

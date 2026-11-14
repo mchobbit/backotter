@@ -107,6 +107,48 @@ if [ "$(uname)" = Linux ] && [ -e /etc/gentoo-release ] && has emerge; then
     exit 0
 fi
 
+# t2-section: Linux.abroot
+# ABRoot (Vanilla OS: vanilla3; docs/design/vanillaos.md): two roots, the
+# present one read-only, with no apt or dpkg on it (lpkg locks them away).
+# `abroot upgrade` pulls the image abroot.json names (vanilla-os/gnome:latest)
+# and, when it has moved, writes it into the other root, its kernel and
+# initramfs into init/LABEL/, merges /etc into that root's upper and swaps the
+# master grub.cfg: vm-update's clean reboot then boots the new root, and the
+# one booted now is the previous.  With nothing newer it says "No update
+# available", exits 1 and changes nothing: an update with nothing to merge.
+# No --force: that rewrites the other root from the same image, a change no
+# listing shows.  vanilla-updates.timer (vso's hourly upgrade) stays masked,
+# as make-vanilla.sh left it: an upgrade of its own would race this one, and
+# change a guest between updates.  abroot reads its prompts from stdin, which
+# is this script (sh -s): /dev/null, or it eats the rest.
+if [ "$(uname)" = Linux ] && { [ -f /usr/share/abroot/abroot.json ] || has abroot; }; then
+    has abroot || { say "ABRoot's abroot.json, and no abroot"; exit 1; }
+    case $(systemctl is-enabled vanilla-updates.timer 2>/dev/null) in
+    ""|masked|not-found) ;;
+    *)
+        step "vanilla-updates.timer masked"
+        systemctl mask --now vanilla-updates.timer || exit 1
+        ;;
+    esac
+    # The master grub.cfg's default, which only an upgrade's swap changes.
+    dflt() { sed -n 's/^set default=//p' /boot/grub/grub.cfg 2>/dev/null | head -n 1; }
+    was=$(dflt)
+    out=$(abroot upgrade </dev/null 2>&1); rc=$?
+    printf '%s\n' "$out" | sed 's/\x1b\[[0-9;]*m//g'
+    if [ $rc -ne 0 ]; then
+        if printf '%s\n' "$out" | grep -q 'No update available'; then
+            say "ABRoot: no newer image, nothing changed"
+            exit 0
+        fi
+        say "abroot upgrade failed ($rc)"
+        exit 1
+    fi
+    now=$(dflt)
+    [ "$now" = "$was" ] || step "ABRoot: upgraded the other root; grub.cfg's default is $now, was $was"
+    say "updated"
+    exit 0
+fi
+
 # t2-section: Linux.common
 # --- Unfreeze -----------------------------------------------------------------------
 # Each pin is recognized by its own mark, so an unfrozen guest is left alone.

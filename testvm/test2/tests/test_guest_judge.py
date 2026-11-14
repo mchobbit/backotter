@@ -377,6 +377,19 @@ class Kernels(unittest.TestCase):
         # the mark is K-anduinos's alone
         self.assertEqual(self.k("K-deb", "/boot/vmlinuz-7.0.0-43-generic no-initrd").v, "PASS")
 
+    def test_abroot_needs_a_kernel_in_each_root(self):
+        """Vanilla OS (vanillaos.md V5): "LABEL vmlinuz-K" per kernel in the init LV, "LABEL none"."""
+        two = "vos-a vmlinuz-7.3.3+deb14-amd64\nvos-b vmlinuz-7.3.3+deb14-amd64"
+        self.assertEqual(self.k("K-abroot", two).v, "PASS")
+        bad = self.k("K-abroot", "vos-a vmlinuz-7.3.3+deb14-amd64\nvos-b none")
+        self.assertEqual((bad.v, bad.lines), ("FAIL", ["no kernel in init/vos-b/"]))
+        one = self.k("K-abroot", "vos-a vmlinuz-7.3.3+deb14-amd64")
+        self.assertEqual((one.v, one.lines), ("FAIL", [J.ABROOT_ROOTS]))
+        many = "\n".join(f"vos-{r} vmlinuz-7.{i}" for r in "ab" for i in range(J.ABROOT_KERNELS_PER_ROOT + 1))
+        self.assertEqual(self.k("K-abroot", many).lines, ["more kernels than the updater keeps"])
+        self.assertEqual(self.k("K-abroot", many, kernels_max=3).v, "PASS")
+        self.assertEqual(self.k("K-abroot", "").v, "FAIL")
+
 
 class ZfsCache(unittest.TestCase):
     FS = "UUID=x /boot/efi vfat umask=0 0 1\n"
@@ -631,6 +644,15 @@ class NewestKernel(unittest.TestCase):
         self.assertEqual(self.k("K-anduinos", "running 7.0.0-38-generic\ninstalled 7.0.0-38-generic\ninstalled 7.0.0-43-generic"),
                          [J.NOT_NEWEST])
         self.assertEqual(self.k("K-anduinos", "running 7.0.0-38-generic\ninstalled 7.0.0-43-generic"), [J.NO_MODULES])
+
+    def test_abroot_the_default_root_must_boot(self):
+        body = "running 7.3.3+deb14-amd64\ninstalled 7.3.3+deb14-amd64\npresent vos-b\ndefault vos-b"
+        self.assertEqual(self.k("K-abroot", body), [])
+        # an upgrade swapped grub.cfg, and the old root booted all the same
+        self.assertEqual(self.k("K-abroot", body.replace("default vos-b", "default vos-a")), [J.ABROOT_NOT_DEFAULT])
+        self.assertEqual(self.k("K-abroot", body.replace("installed 7.3.3", "installed 7.3.4")), [J.NO_MODULES])
+        self.assertEqual(self.k("K-abroot", body.replace("\ndefault vos-b", "")),
+                         ["kernel unverified: no present or default root"])
 
     def test_version_sort(self):
         self.assertEqual(self.k("K-deb", RUN), [])

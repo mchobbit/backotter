@@ -750,7 +750,31 @@ pub fn zfs_section(sys: &Sys, members: &[(String, &Content)], caches: &[&str]) -
     Obj::new().set("pools_from_labels", label_pools).set("zpool_cache", cache).set("tools", zfs_tools_json(sys)).build()
 }
 
-fn btrfs_json(sys: &Sys, ctx: &Ctx) -> Value {
+/// A btrfs's allocation profiles ({"data": [...], "metadata": [...],
+/// "system": [...]}) from /sys/fs/btrfs/UUID/allocation, which is there
+/// only while the filesystem is mounted: None when it isn't.
+pub(crate) fn btrfs_allocation(sys: &Sys, uuid: &str) -> Option<Value> {
+    let sysfs = format!("/sys/fs/btrfs/{uuid}");
+    if !sys.is_dir(&sysfs) {
+        return None;
+    }
+    let mut alloc = Obj::new();
+    for kind in ["data", "metadata", "system"] {
+        let profiles: Vec<String> = sys
+            .list(&format!("{sysfs}/allocation/{kind}"))
+            .into_iter()
+            .filter(|p| sys.is_dir(&format!("{sysfs}/allocation/{kind}/{p}")))
+            .collect();
+        alloc.put(kind, profiles);
+    }
+    Some(alloc.build())
+}
+
+/// storage.btrfs.  KNOWN: (UUID, allocation profiles) read earlier while
+/// a mount of dump's own was there (ABRoot's future root,
+/// crate::abroot::Dump::btrfs_profiles), for a filesystem sysfs no longer
+/// shows.
+fn btrfs_json(sys: &Sys, ctx: &Ctx, known: &[(String, Value)]) -> Value {
     let mut fss: BTreeMap<String, Vec<&Dev>> = BTreeMap::new();
     for d in ctx.devs {
         if d.fs_type().as_deref() == Some("btrfs") {
@@ -762,15 +786,7 @@ fn btrfs_json(sys: &Sys, ctx: &Ctx) -> Value {
     let mut out = Vec::new();
     for (uuid, devs) in fss {
         let sysfs = format!("/sys/fs/btrfs/{uuid}");
-        let mut alloc = Obj::new();
-        for kind in ["data", "metadata", "system"] {
-            let profiles: Vec<String> = sys
-                .list(&format!("{sysfs}/allocation/{kind}"))
-                .into_iter()
-                .filter(|p| sys.is_dir(&format!("{sysfs}/allocation/{kind}/{p}")))
-                .collect();
-            alloc.put(kind, profiles);
-        }
+        let alloc = btrfs_allocation(sys, &uuid).or_else(|| known.iter().find(|(u, _)| *u == uuid).map(|(_, v)| v.clone()));
         let all: Vec<&Mount> = ctx.mounts.iter().filter(|m| m.fstype == "btrfs" && devs.iter().any(|d| ctx.resolve(sys, &m.source).as_deref() == Some(d.b.name.as_str()))).collect();
         // The mounts of a subvolume's own root: not binds of a directory in
         // one (ostree's /etc, its FSROOT /root/ostree/deploy/.../etc, carries
@@ -827,7 +843,7 @@ fn btrfs_json(sys: &Sys, ctx: &Ctx) -> Value {
                 .set("devices", devs.iter().map(|d| d.b.name.clone()).collect::<Vec<_>>())
                 .set("mounted", !all.is_empty())
                 .set("features", sys.is_dir(&sysfs).then(|| sys.list(&format!("{sysfs}/features"))))
-                .set("allocation_profiles", if sys.is_dir(&sysfs) { alloc.build() } else { Value::Null })
+                .set("allocation_profiles", alloc.unwrap_or(Value::Null))
                 .set(
                     "mounted_subvolumes",
                     {
@@ -985,26 +1001,42 @@ pub fn parse_btrfs_subvol_line(l: &str) -> Option<Value> {
 
 /// One filesystem a whole-system backup reads: the tree it's mounted in
 /// (`path`, fstab's mount point), where the running system has it (`from`),
-/// and what it is.
+/// and what it is.  A filesystem the running system doesn't mount (ABRoot's
+/// `init` and other root, crate::abroot) has no `from`: its `mount` says
+/// how a backup mounts it at `path` (read-only) for the backup, and `note`
+/// says so in words.  `mount` and `note` are in the JSON only when set.
 #[derive(Debug, Clone, PartialEq)]
 pub struct BackupSource {
     pub path: String,
-    pub from: String,
+    pub from: Option<String>,
     pub device: Option<String>,
     pub fstype: String,
     pub source: String,
     pub subvol: Option<String>,
+    pub mount: Option<MountHint>,
+    pub note: Option<String>,
+}
+
+/// The mount a backup makes for a BackupSource without a `from`:
+/// `mount -t FSTYPE -o OPTIONS DEVICE PATH`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct MountHint {
+    pub device: String,
+    pub fstype: String,
+    pub options: String,
 }
 
 impl BackupSource {
     pub fn to_json(&self) -> Value {
         Obj::new()
             .set("path", self.path.as_str())
-            .set("from", self.from.as_str())
+            .set("from", self.from.clone())
             .set("device", self.device.clone())
             .set("fstype", self.fstype.as_str())
             .set("source", self.source.as_str())
             .set("subvol", self.subvol.clone())
+            .set_some("mount", self.mount.as_ref().map(|m| Obj::new().set("device", m.device.as_str()).set("fstype", m.fstype.as_str()).set("options", m.options.as_str()).build()))
+            .set_some("note", self.note.clone())
             .build()
     }
 }
@@ -1050,7 +1082,7 @@ pub fn backup_sources(mounts: &[&Mount], device: &dyn Fn(&Mount) -> Option<Strin
             found.map(|(e, _)| e.file.clone()).unwrap_or_else(|| m.target.clone())
         };
         let path = if path.len() > 1 { path.trim_end_matches('/').to_string() } else { path };
-        out.insert(path.clone(), BackupSource { path, from: m.target.clone(), device: dev, fstype: m.fstype.clone(), source: m.source.clone(), subvol });
+        out.insert(path.clone(), BackupSource { path, from: Some(m.target.clone()), device: dev, fstype: m.fstype.clone(), source: m.source.clone(), subvol, mount: None, note: None });
     }
     out.into_values().collect()
 }
@@ -1230,8 +1262,32 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     }
     let ostree = crate::ostree::detect(sys, &mountinfo);
     let fstab_resolved: Vec<(&mounts::FstabEntry, Option<String>)> = fstab_entries.iter().flatten().map(|e| (e, ctx.resolve(sys, &e.spec))).collect();
-    let sources = backup_sources(&layout_mounts, &mount_dev, &fstab_resolved, ostree);
-    let physical_root = sources.iter().find(|s| s.path == "/").map(|s| s.from.clone());
+    let mut sources = backup_sources(&layout_mounts, &mount_dev, &fstab_resolved, ostree);
+    // ABRoot (crate::abroot): its filesystems by label, as ABRoot finds
+    // them (an LV's pool layers, which can show a thin LV's superblock,
+    // left out); its init LV and other root join backup_sources.
+    let abroot = crate::abroot::config(sys).map(|cfg| {
+        let fss: Vec<crate::abroot::Fs> = devs
+            .iter()
+            .filter(|d| !d.b.dm_uuid.as_deref().and_then(|u| u.strip_prefix("LVM-")).is_some_and(|r| r.len() > 64))
+            .filter_map(|d| {
+                let label = d.fs_label()?;
+                let at: Vec<String> = ctx.mounts_of(sys, d).iter().map(|m| m.target.clone()).collect();
+                let mounted_at = at.iter().find(|t| *t == "/").or(at.first()).cloned();
+                Some(crate::abroot::Fs { dev: d.b.name.clone(), label, uuid: d.fs_uuid(), fstype: d.fs_type(), dm_name: d.b.dm_name.clone(), mounted_at })
+            })
+            .collect();
+        crate::abroot::read(sys, &cfg, &fss)
+    });
+    if let Some(a) = &abroot {
+        for s in sources.iter_mut().filter(|s| s.path == "/") {
+            s.note = Some(a.root_note.clone());
+        }
+        let more: Vec<BackupSource> = a.sources.iter().filter(|x| !sources.iter().any(|s| s.path == x.path)).cloned().collect();
+        sources.extend(more);
+        sources.sort_by(|a, b| a.path.cmp(&b.path));
+    }
+    let physical_root = sources.iter().find(|s| s.path == "/").and_then(|s| s.from.clone());
     if ostree {
         // The backup tree is fstab's only where every mount matched its entry
         // (docs/design/bazzite.md, "One tree convention"); say where not, now
@@ -1305,7 +1361,7 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         .set("other_devices", other)
         .set("lvm", lvm_json(&ctx))
         .set("zfs", zfs_json(sys, &ctx))
-        .set("btrfs", btrfs_json(sys, &ctx))
+        .set("btrfs", btrfs_json(sys, &ctx, abroot.as_ref().map(|a| a.btrfs_profiles.as_slice()).unwrap_or(&[])))
         .set("xfs_external_logs", xfs_external_logs(sys, &ctx))
         .set("mounts", mounts_json)
         .set("physical_root", physical_root.clone())
@@ -1321,6 +1377,7 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     if let (Some(p), Value::Obj(o)) = (crate::boot::proxmox_product(&packages), &mut os_json) {
         o.push(("product".into(), Value::from(p)));
     }
+    let boot = crate::abroot::add_to_boot(boot, abroot.as_ref());
 
     let mut out = Obj::new()
         .set("format", FORMAT)
@@ -1473,7 +1530,7 @@ mod tests {
         let dev = |m: &Mount| Some(m.source.trim_start_matches("/dev/").to_string());
         let res = |e: &crate::mounts::FstabEntry| Some(match e.spec.as_str() { "UUID=b" => "vda3", "UUID=x" => "vda2", _ => "vda1" }.to_string());
         let f: Vec<(&crate::mounts::FstabEntry, Option<String>)> = fstab.iter().map(|e| (e, res(e))).collect();
-        let pairs = |v: Vec<BackupSource>| v.into_iter().map(|s| (s.path, s.from)).collect::<Vec<_>>();
+        let pairs = |v: Vec<BackupSource>| v.into_iter().map(|s| (s.path, s.from.unwrap_or_default())).collect::<Vec<_>>();
         let p = |a: &str, b: &str| (a.to_string(), b.to_string());
         let ostree = backup_sources(&all, &dev, &f, true);
         assert_eq!(ostree[0].subvol.as_deref(), Some("/root"));
@@ -1484,7 +1541,7 @@ mod tests {
         // subvolid= in fstab matches too.
         let fstab = crate::mounts::parse_fstab("UUID=b / btrfs subvolid=258 0 0\n");
         let f: Vec<(&crate::mounts::FstabEntry, Option<String>)> = fstab.iter().map(|e| (e, res(e))).collect();
-        assert_eq!(backup_sources(&all, &dev, &f, true)[0].from, "/sysroot");
+        assert_eq!(backup_sources(&all, &dev, &f, true)[0].from.as_deref(), Some("/sysroot"));
     }
 
     #[test]

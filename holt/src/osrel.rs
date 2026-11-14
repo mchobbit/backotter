@@ -104,7 +104,11 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
 /// items that GRUB reads from /, so nothing is rebuilt, and on BIOS the
 /// source's own boot.img and core.img are written to the new disk by the
 /// rescue's grub-bios-setup (docs/design/guix.md); its tests
-/// are `guix15` (UEFI) and `guix15-bios` in HoltTest1Obscure.
+/// are `guix15` (UEFI) and `guix15-bios` in HoltTest1Obscure.  Vanilla OS 3
+/// (Debian sid) runs ABRoot v2 (crate::abroot): two roots on LVM thin LVs
+/// and an init LV with their kernels, all restored as they were, with no
+/// initramfs, grub-install or update-grub (docs/design/vanillaos.md); its
+/// test is `vanilla3` in HoltTest1Obscure.
 pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("debian", "13", "Debian 13"),
     ("linuxmint", "22", "Linux Mint 22"),
@@ -123,6 +127,9 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("debian", "12", "Debian 12"),
     ("devuan", "6", "Devuan 6"),
     ("pop", "24", "Pop!_OS 24.04"),
+    // Debian sid underneath, ABRoot v2 (crate::abroot): VERSION_ID="3.0",
+    // taken by its major.  Not 2 (Orchid) until a guest shows it.
+    ("vanilla", "3", "Vanilla OS 3"),
     // Rolling, Arch-based.
     ("cachyos", "", "CachyOS"),
     ("void", "", "Void Linux"),
@@ -278,7 +285,7 @@ mod tests {
         assert!(check_supported(Some(&parse(neon))).is_ok());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -468,6 +475,28 @@ mod tests {
         assert!(e.contains("(ID=guix, VERSION_ID=1.5.0)"), "{e}");
         // Guix the package manager on another system is that system.
         assert!(check_supported(Some(&parse("ID=guixish\n"))).is_err());
+    }
+
+    /// Vanilla OS 3's os-release (base-files v1.1.0: docs/design/vanillaos.md;
+    /// V1 checks the installed one).
+    pub(crate) const VANILLA: &str = "PRETTY_NAME=\"Vanilla OS 3.0\"\nNAME=\"Vanilla OS\"\nVERSION_ID=\"3.0\"\nVERSION=\"3.0 Reunion\"\nVERSION_CODENAME=reunion\nID=vanilla\nID_LIKE=debian\nHOME_URL=\"https://vanillaos.org/\"\n";
+
+    #[test]
+    fn vanilla() {
+        let o = parse(VANILLA);
+        assert_eq!(o.get("ID"), Some("vanilla"));
+        assert_eq!(o.get("VERSION_ID"), Some("3.0"));
+        assert!(check_supported(Some(&o)).is_ok());
+        // 3.0 is taken by its major, as Alpine's 3.22 is; 3.1 too.
+        assert!(supported("vanilla", "3.1"));
+        assert!(supported_names().contains("Pop!_OS 24.04, Vanilla OS 3, "));
+        // Not Orchid (2.0) until a guest shows it, nor a 4.
+        for v in ["2.0", "4.0"] {
+            let e = check_supported(Some(&parse(&VANILLA.replace("3.0", v)))).unwrap_err();
+            assert!(e.contains(&format!("(ID=vanilla, VERSION_ID={v})")) && e.contains("Vanilla OS 3,"), "{e}");
+        }
+        // Not by its likeness: ID_LIKE=debian alone isn't Debian 13.
+        assert!(check_supported(Some(&parse("ID=vanillish\nID_LIKE=debian\nVERSION_ID=\"3.0\"\n"))).is_err());
     }
 
     #[test]

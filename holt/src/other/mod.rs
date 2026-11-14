@@ -198,10 +198,14 @@ pub fn node_path(sys: &Sys, node: &str) -> String {
 
 /// What a restored tree has once the restore is done: /etc/fstab, or
 /// Haiku's system directory (Haiku has no fstab), illumos' vfstab, or on
-/// ostree the repository's config (the physical root has no etc).
+/// ostree the repository's config (the physical root has no etc), or on
+/// ABRoot the present root's abimage.abr (load/abroot.rs).
 pub fn restored_marker(layout: &Value) -> &'static str {
     if crate::load::ostree::of(layout).is_some() {
         return crate::load::ostree::MARKER;
+    }
+    if crate::load::abroot::of(layout).is_some() {
+        return crate::load::abroot::marker(layout);
     }
     match Family::of_layout(layout) {
         Some(Family::Haiku) => "system",

@@ -1402,6 +1402,87 @@ class FsAnduinos(unittest.TestCase):
             self.assertNotIn("AnduinOS", out)
 
 
+VANILLA_K = "7.3.3+deb14-amd64"
+
+
+class FsAbroot(unittest.TestCase):
+    """judge.py fs over a Vanilla OS 3 restore (V7): load's boot stage
+    regenerates nothing, so the master grub.cfg and grub.cfg.future, both
+    roots' abroot.cfg, kernels and initramfs in the init LV, and the ESP's
+    EFI/vanilla and EFI/BOOT must be the source's; var/log/bko-holt is
+    load's."""
+
+    K = VANILLA_K
+    BOOT = ["boot/grub/grub.cfg", "boot/grub/grub.cfg.future",
+            *[f"boot/init/{r}/{f}" for r in ("vos-a", "vos-b") for f in ("abroot.cfg", f"vmlinuz-{VANILLA_K}", f"initrd.img-{VANILLA_K}", f"config-{VANILLA_K}", f"System.map-{VANILLA_K}")],
+            *[f"boot/efi/EFI/vanilla/{f}" for f in ("shimx64.efi", "grubx64.efi", "mmx64.efi", "fbx64.efi", "BOOTX64.CSV", "grub.cfg")],
+            *[f"boot/efi/EFI/BOOT/{f}" for f in ("BOOTX64.EFI", "grubx64.efi", "mmx64.efi", "grub.cfg")]]
+    SRC = {"boot": meta("dir"), "boot/grub": meta("dir"), "boot/grub/grubenv": meta("file"), "boot/init": meta("dir"),
+           "boot/init/vos-a": meta("dir"), "boot/init/vos-b": meta("dir"), "boot/efi": meta("dir"), "boot/efi/EFI": meta("dir"),
+           "boot/efi/EFI/vanilla": meta("dir"), "boot/efi/EFI/BOOT": meta("dir"), "var": meta("dir"), "var/log": meta("dir"),
+           **{p: meta("file") for p in BOOT}}
+
+    judge = Fs.judge
+
+    def changed(self, src, changes):
+        a = copy.deepcopy(src)
+        for p, kw in changes.items():
+            a[p].update(kw)
+        return self.judge(src, a)
+
+    def test_the_boot_stages_log_only(self):
+        a = copy.deepcopy(self.SRC)
+        a["var/log/bko-holt"] = meta("dir")
+        a["var/log/bko-holt/load.log"] = meta("file")
+        a["var/log"]["mtime"] = 2
+        rc, out = self.judge(self.SRC, a)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn("load's own log, copied in by the boot stage", out)
+        self.assertIn(f"ABRoot kept: {len(self.BOOT) + 2} paths", out)
+
+    def test_every_boot_file_must_be_the_sources(self):
+        """A grub-install, update-grub, update-initramfs or a rewritten
+        abroot.cfg on any of them: no ESP or /boot rule excuses it."""
+        for p in self.BOOT:
+            rc, out = self.changed(self.SRC, {p: {"sha256": "cd", "mtime": 2}})
+            self.assertEqual(rc, 1, f"{p}: {out}")
+            self.assertIn(f"DIFF content: 1: {p}", out)
+            self.assertIn(" 0 from the boot stage", out)
+        rc, out = self.changed(self.SRC, {"boot/efi/EFI/vanilla": {"mtime": 2}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF mtime (dirs): 1: boot/efi/EFI/vanilla", out)
+
+    def test_a_missing_or_extra_file_counts(self):
+        a = copy.deepcopy(self.SRC)
+        del a["boot/grub/grub.cfg.future"]
+        a["boot/efi/EFI/BOOT/fbx64.efi"] = meta("file")
+        a[f"boot/init/vos-a/initrd.img-{self.K}.bak"] = meta("file")
+        rc, out = self.judge(self.SRC, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF missing: 1: boot/grub/grub.cfg.future", out)
+        self.assertIn("DIFF extra: 2:", out)
+
+    def test_the_boot_files_must_be_in_the_sources_record(self):
+        src = {p: m for p, m in self.SRC.items() if p not in ("boot/grub/grub.cfg", f"boot/init/vos-b/vmlinuz-{self.K}")}
+        rc, out = self.judge(src, copy.deepcopy(src))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF not in the source's record (ABRoot's boot files): 2: boot/grub/grub.cfg, boot/init/vos-b/vmlinuz-*", out)
+
+    def test_grubenv_and_other_systems_keep_their_rules(self):
+        """grubenv isn't held (GRUB writes it at boot, as on any Debian): it
+        keeps /boot/grub's rule; without an abroot.cfg in boot/init/ the ESP
+        is grub-install's to rewrite, as before."""
+        rc, out = self.changed(self.SRC, {"boot/grub/grubenv": {"sha256": "cd"}})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("rewrite /boot/grub", out)
+        src = {p: m for p, m in self.SRC.items() if not p.startswith("boot/init/")}
+        rc, out = self.changed(src, {"boot/efi/EFI/vanilla/grubx64.efi": {"sha256": "cd"}})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("ABRoot", out)
+        self.assertIn("grub-install writes the ESPs' loaders", out)
+
+
 class TimeshiftLeftOut(unittest.TestCase):
     """biglinux (bl4-1): Timeshift's snapshots under the top level's
     timeshift-btrfs/snapshots/ aren't in the backup, and load doesn't make
@@ -1588,6 +1669,101 @@ class EspProxmox(unittest.TestCase):
             return x
         rc, out = Geli.judge(self, d(1), d(2))
         self.assertEqual(rc, 0, out)
+
+
+def renumbered(d, ren):
+    """D with its dm-N renamed by REN ({old: new}) everywhere, as a boot that
+    activates the groups in another order numbers them."""
+    w = re.compile(r"\b(" + "|".join(map(re.escape, ren)) + r")\b")
+
+    def walk(v):
+        if isinstance(v, dict):
+            return {k: walk(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [walk(x) for x in v]
+        return w.sub(lambda m: ren[m.group(1)], v) if isinstance(v, str) else v
+    return walk(d)
+
+
+class DmByName(unittest.TestCase):
+    """vanilla3 (V7): the restored machine activated its volume groups in
+    another order, so the same LVs have other dm-N: compared by their
+    device-mapper names instead; a device renamed or gone still counts."""
+
+    judge = Geli.judge
+
+    def test_renumbered_devices_compare_by_name(self):
+        src = lvm_guest()
+        dst = renumbered(copy.deepcopy(src), {"dm-0": "dm-1", "dm-1": "dm-0"})
+        dst["storage"]["dm_devices"].reverse()
+        rc, out = self.judge(src, dst)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("device-mapper devices compared by name: their dm-N differ (vg0-root dm-0, vg0-swap dm-1 on the source)", out)
+
+    def test_same_numbers_change_nothing(self):
+        src = lvm_guest()
+        rc, out = self.judge(src, copy.deepcopy(src))
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("compared by name", out)
+
+    def test_a_renamed_device_still_counts(self):
+        src = lvm_guest()
+        dst = renumbered(copy.deepcopy(src), {"dm-0": "dm-1", "dm-1": "dm-0"})
+        dst["storage"]["dm_devices"][1]["dm"]["dm_name"] = "vg0-swap2"
+        rc, out = self.judge(src, dst)
+        self.assertEqual(rc, 1, out)
+        self.assertNotIn("compared by name", out)
+
+
+class ThinPoolMade(unittest.TestCase):
+    """vanilla3 (V7): load makes a thin pool, its data and metadata LVs, the
+    spare and the thin LVs anew by lvcreate, so their LV UUIDs, host and
+    time, their order in the group's metadata and where lvcreate put the
+    pool's hidden LVs are its own; their sizes, segments and the thin LVs'
+    device ids, and every other LV, still count."""
+
+    judge = Geli.judge
+
+    @staticmethod
+    def thin(order=("init", "root", "root-a", "root_tmeta", "lvol0_pmspare", "root_tdata"), at=(5120, 5376, 256), host="vanillaos", ids="s"):
+        def seg(n, pe):
+            return [{"start_extent": 0, "extent_count": n, "type": "striped", "stripe_count": 1, "stripes": ["pv0", pe]}]
+        lvs = {
+            "init": {"name": "init", "id": "lvinit", "creation_host": "vanillaos", "segments": seg(256, 0), "active_device": "dm-0"},
+            "root": {"name": "root", "id": f"{ids}pool", "creation_host": host,
+                     "segments": [{"start_extent": 0, "extent_count": 4864, "type": "thin-pool", "metadata": "root_tmeta", "pool": "root_tdata", "transaction_id": 2, "chunk_size": 128}]},
+            "root-a": {"name": "root-a", "id": f"{ids}thina", "creation_host": host, "active_device": "dm-1",
+                       "segments": [{"start_extent": 0, "extent_count": 4864, "type": "thin", "thin_pool": "root", "transaction_id": 0, "device_id": 1}]},
+            "root_tmeta": {"name": "root_tmeta", "id": f"{ids}tmeta", "creation_host": host, "segments": seg(256, at[0])},
+            "lvol0_pmspare": {"name": "lvol0_pmspare", "id": f"{ids}spare", "creation_host": host, "segments": seg(256, at[1])},
+            "root_tdata": {"name": "root_tdata", "id": f"{ids}tdata", "creation_host": host, "segments": seg(4864, at[2])},
+        }
+        lvm = {"volume_groups": [{"name": "vos-root", "id": "vg1", "physical_volumes": [{"name": "pv0", "id": "pv1"}],
+                                  "logical_volumes": [copy.deepcopy(lvs[n]) for n in order]}]}
+        dms = [{"name": "dm-0", "dm": {"dm_name": "vos--root-init", "lv_uuid": "lvinit", "dm_uuid": "LVM-vg1lvinit"}, "links": ["/dev/disk/by-id/dm-uuid-LVM-vg1lvinit"]},
+               {"name": "dm-1", "dm": {"dm_name": "vos--root-root--a", "lv_uuid": f"{ids}thina", "dm_uuid": f"LVM-vg1{ids}thina"}, "links": [f"/dev/disk/by-id/dm-uuid-LVM-vg1{ids}thina"]}]
+        return dump([disk("vda", 16 * GIB, [])], lvm=lvm, dm_devices=dms)
+
+    def test_made_anew(self):
+        dst = self.thin(order=("init", "root", "root-a", "lvol0_pmspare", "root_tmeta", "root_tdata"), at=(5376, 256, 512), host="ubuntu26-uefi", ids="d")
+        rc, out = self.judge(self.thin(), dst)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("made anew by lvcreate: new LV UUIDs, the rescuer's host and time): 10:", out)
+        self.assertIn("where lvcreate puts a thin pool's data, metadata and spare LVs on the PV is its own): 3:", out)
+        self.assertIn("device-mapper UUID holds its LV UUID, new from lvcreate): 3:", out)
+
+    def test_sizes_device_ids_and_other_lvs_count(self):
+        src = self.thin()
+        # (Sorted by name: init, lvol0_pmspare, root, root-a, root_tdata, root_tmeta.)
+        for change in (lambda lvs: lvs["root_tdata"]["segments"][0].update(extent_count=4000),
+                       lambda lvs: lvs["root-a"]["segments"][0].update(device_id=3),
+                       lambda lvs: lvs["init"].update(id="lvinit2"),
+                       lambda lvs: lvs["init"]["segments"][0]["stripes"].__setitem__(1, 8)):
+            dst = self.thin(ids="d")
+            change({lv["name"]: lv for lv in dst["storage"]["lvm"]["volume_groups"][0]["logical_volumes"]})
+            rc, out = self.judge(src, dst)
+            self.assertEqual(rc, 1, out)
+            self.assertEqual(out.count("DIFF "), 1, out)
 
 
 if __name__ == "__main__":

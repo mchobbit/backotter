@@ -24,6 +24,14 @@
 # reading does, and `ostree admin --sysroot=/sysroot status`, which only
 # reads.
 #
+# ABRoot (Vanilla OS: vm-mount put the present root at MOUNTPOINT, its /etc
+# the raw lower): /etc is the overlay the guest boots with (ABRoot's
+# mount-sys), lowerdir MOUNTPOINT/etc, upperdir
+# MOUNTPOINT/var/lib/abroot/etc/LABEL and its LABEL-work beside it, LABEL
+# the present root's; on a read-only mount, the same two as lower layers
+# only (upper over lower), which overlayfs makes read-only.  So commands see
+# the guest's own configuration (its live fstab, users, SSH keys).
+#
 # For more isolation (its own /proc, hostname and process tree), use instead:
 #   sudo systemd-nspawn -D MOUNTPOINT
 
@@ -44,6 +52,12 @@ if [[ ! -e $mp/etc/fstab && ! -L $mp/etc/fstab && -d $mp/ostree/deploy ]]; then
     root=$mp/$ostree
 fi
 [[ -e $root/etc/fstab || -L $root/etc/fstab ]] || die "$mp does not look like a mounted guest (run vm-mount first)"
+abroot=""
+if [[ -z $ostree && -f $mp/usr/share/abroot/abroot.json ]]; then
+    abroot=$(blkid -s LABEL -o value "$(findmnt -n -o SOURCE --mountpoint "$mp")" 2>/dev/null || true)
+    [[ -n $abroot && -d $mp/var/lib/abroot/etc/$abroot ]] ||
+        die "$mp is an ABRoot root, but its /etc upper (var/lib/abroot/etc/${abroot:-LABEL}) isn't there: is /var mounted?"
+fi
 [[ $# -gt 0 ]] || set -- /bin/bash --login
 
 mounted=()
@@ -91,6 +105,16 @@ r = o.resolve(sys.argv[2], sys.argv[3]); print(r if r is not None else "")' "$he
     mount --bind "$mp" "$root/sysroot"
     mounted+=("$root/sysroot")
     mount -o remount,bind,ro "$root/sysroot"
+fi
+if [[ -n $abroot ]]; then
+    upper=$mp/var/lib/abroot/etc/$abroot
+    if [[ ,$(findmnt -n -o OPTIONS --mountpoint "$mp/var"), == *,ro,* ]]; then
+        mount -t overlay overlay -o "ro,lowerdir=$upper:$mp/etc" "$mp/etc"
+    else
+        [[ -d $upper-work ]] || mkdir "$upper-work"
+        mount -t overlay overlay -o "lowerdir=$mp/etc,upperdir=$upper,workdir=$upper-work" "$mp/etc"
+    fi
+    mounted+=("$mp/etc")
 fi
 for m in proc sys dev dev/pts; do
     mount --bind "/$m" "$root/$m"

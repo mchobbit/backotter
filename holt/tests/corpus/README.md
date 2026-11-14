@@ -200,7 +200,34 @@ its volume ID, make no zpool.cache (the sources have none), and at boot run
 `update-initramfs -u -k all`, `proxmox-boot-tool init` on each ESP in the
 list's order, one `proxmox-boot-tool refresh`, and write the ESP list back;
 they make no NVRAM entry, each source entry being one that `init`'s
-`bootctl install` makes again.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
+`bootctl install` makes again.
+vanilla3 (`make-vanilla.sh`: Vanilla OS 3.0 by Albius from its live ISO
+with the installer's own recipe; UEFI with Secure Boot, a 1 GiB ext4
+`vos-boot` at /boot with the master grub.cfg, a 512 MiB ESP, the VG
+`vos-root` with the `init` LV and the thin pool `root` holding the btrfs
+roots `root-a` and `root-b`, and the VG `vos-var` with /var; ABRoot v2,
+root B booted; docs/design/vanillaos.md), built on 2026-11-14, was added
+the same day from its HoltTest1 run `v7-1` on chopin, PASS (cinqcent's
+`v7-2` passed too), dumped by the bko-holt 0.2.6 built from this tree
+for that run (`323e4069...`, with V2's ABRoot code), the image the same
+as the run recorded.  It is in the corpus before it is one of
+classes.json's HoltTest2 sources, so golden_plans.rs notes it until it is.
+Its dump is the first with `boot.abroot` and with a thin pool, and its
+`storage.backup_sources` has `/boot/init` and `/part-future` with `from:
+null` and their read-only mount hints.  Its golden plan vgcfgrestores
+both groups without the thin part, makes the pool with `lvcreate --type
+thin-pool` (64k chunks, passdown, zero) and the two thin LVs by name,
+gives `vos-a` and `vos-b` the source's `-d single -m dup`, mounts the
+init LV at `boot/init`, root A at `part-future` and /var beside fstab's
+tree, and at boot runs nothing in a chroot: the atimes, ABRoot's
+consistency check of grub.cfg and both `abroot.cfg`, the log and the
+tail, and no NVRAM entry (the source booted the fallback path).  Building
+it found two redaction bugs, fixed in redact.rs before it entered the
+tree: the LV UUID of `lvol0_pmspare`, all letters, wasn't taken for an
+LVM UUID (scan's pattern wants a digit; an `id` or `*uuid` key's whole
+value now counts), and the redacted dump redacted again by check_plan gave
+a VG the pseudonym a PV had in dashed form only (the LVM pseudonym now
+avoids both forms).  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
 collection; `-` for the guests without one) say which, and `image` whether
@@ -349,7 +376,14 @@ and proxmox9-mirror (2026-11-14), built from a private directory on chopin
 (/bkoscratch, its warm holt build at /bkoscratch/holt-warm/proxmox): chopin
 with its 98 strings and the raw dumps' identifiers, cinqcent with its 99,
 the Mac with the git e-mail, 0 findings (their plans scanned too), the same
-sha256 from both builds (src.json `8efb9b6c...` and `d0b597ea...`).
+sha256 from both builds (src.json `8efb9b6c...` and `d0b597ea...`).  So did
+vanilla3 (2026-11-14), built from a private directory on chopin
+(/bkoscratch, its warm holt build at /bkoscratch/holt-warm/vanilla): chopin
+with its 98 strings and the raw dump's identifiers, cinqcent with its 99,
+the Mac with the git e-mail, 0 findings (its plan scanned too), the same
+sha256 from both builds (src.json `a95eef1e...`).  Its first build had
+one finding in (b), the raw `lvol0_pmspare` UUID that redact.rs had left
+(above); it never left chopin, and the build after the fix had none.
 
 ## The golden plans
 

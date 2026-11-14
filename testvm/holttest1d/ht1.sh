@@ -37,7 +37,9 @@
 #            judge.py compares the dumps.  An ostree source (kinoite44) has
 #            its rollback deployment booted too, on the source before its
 #            dump and on the restored disk after its dump, each boot held
-#            to the source's (README "The ostree guest").  A Proxmox
+#            to the source's (README "The ostree guest"); so does an ABRoot
+#            source (vanilla3) its other root, GRUB's other entry picked on
+#            the serial console (README "The ABRoot guest").  A Proxmox
 #            source's ESPs (proxmox-boot-tool's, mounted by nothing) are
 #            recorded on their own and judged by content (judge.py esp);
 #            with one on each disk (proxmox9-mirror), each restored disk
@@ -336,6 +338,14 @@ vm_up() { # IMAGE LOG [vm-run options...] [-- QEMU_ARGS...]
         [[ ${#qargs[@]} -gt 0 ]] || qargs=(--)
         setsid -f "$T/vm-run" --serial-log "$log" "${opts[@]}" "$image" "${qargs[@]}" -monitor "unix:$log.monitor,server,nowait" </dev/null >"$log.vm-run" 2>&1 {HT_FD1}>&- {HT_FD2}>&-
         setsid -f python3 "$T/omarchy/type-luks-passphrase.py" "$log.monitor" "$CONSOLE_KEY" $(seq 25 30 295) </dev/null >/dev/null 2>&1 {HT_FD1}>&- {HT_FD2}>&-
+    elif [[ -n ${GRUB_PICK:-} ]]; then
+        # A GRUB menu entry picked on the serial console (an ABRoot guest's
+        # other root: its master grub.cfg reads `default` literally, so
+        # grub-reboot can't): console-keys.py logs the console and types
+        # GRUB_KEYS once GRUB_PICK (a regular expression) shows.  It types
+        # no passphrase.
+        setsid -f python3 "$T/vanilla/console-keys.py" "$log" "$GRUB_PICK" "$GRUB_KEYS" -- \
+            "$T/vm-run" "${opts[@]}" "$image" "${qargs[@]}" </dev/null 2>"$log.vm-run" {HT_FD1}>&- {HT_FD2}>&-
     elif [[ -n ${CONSOLE_KEY:-} ]]; then
         # The guest asks for its disk passphrase on the serial console:
         # console-boot.py logs the console and types it at each prompt.
@@ -412,7 +422,23 @@ elif command -v herd >/dev/null; then
 else
     echo "unknown init"
 fi'
-bootstate() { sshk "$1" "$BOOTSTATE"; }
+# FLAKY_UNITS (space-separated): units known to fail on some boots of this
+# guest and not others, whatever the restore did: left out of its boot
+# state, and "degraded" read as "running" when they were all that failed.
+# Each boot's state as it was is in logs/bootstate-raw.txt.
+FLAKY_UNITS=""
+case $G in
+    # V1 of docs/design/vanillaos.md: networkd's wait-online fails on some
+    # boots of the guest (QEMU's user network), on the source as well.
+    vanilla3*) FLAKY_UNITS="systemd-networkd-wait-online.service" ;;
+esac
+bootstate() {
+    local o; o=$(sshk "$1" "$BOOTSTATE")
+    [[ -n $FLAKY_UNITS ]] || { printf '%s\n' "$o"; return; }
+    { echo "== $(date -u +%FT%TZ)"; printf '%s\n' "$o"; } >> "$R/logs/bootstate-raw.txt"
+    printf '%s\n' "$o" | awk -v f=" $FLAKY_UNITS " 'NR == 1 { first = $0; next } index(f, " " $1 " ") { d = 1; next } { rest[++n] = $0 }
+        END { if (first == "degraded" && n == 0 && d) first = "running"; print first; for (i = 1; i <= n; i++) print rest[i] }'
+}
 # GRUB's core image names its prefix by (lvmid/VG-UUID/LV-UUID) when
 # /boot/grub is on an LV (Gentoo: grub-install re-embeds it on load).  One
 # EMBED line per EFI binary on a mounted vfat file system per id it embeds,
@@ -774,6 +800,123 @@ guix_verify() {
         bad "guix: generation $p's boot state: source $(tr '\n' ' ' < "$L/source-prev-bootstate.txt"), restored $(tr '\n' ' ' < "$L/restored-prev-bootstate.txt")"
     fi
 }
+# An ABRoot guest (vanilla3; docs/design/vanillaos.md, V7) has two roots,
+# each with its kernel and initramfs in the init LV, its abroot.cfg and its
+# /etc upper; the master grub.cfg's literal `set default=N` picks one (B,
+# "Current State (B)", after the guest's upgrade), and its other entry
+# ("Previous State (A)") boots the other.  grub-reboot would do nothing, so
+# that entry is picked on GRUB's serial menu (console-keys.py, vm_up's
+# GRUB_PICK).  The source boots its default, the other root, and its
+# default again, for the baseline; the restored disk boots each the same
+# way, alone, and must show what the source did.  ABROOT_STATE is what a
+# boot shows: the root `abroot status` calls present, and the one it marks
+# ✓ (the root GRUB's default boots: it never says "previous", V1), the
+# booted root's label, its /abimage.abr digest, /etc/bko-root, the
+# kernel's command line, and the master grub.cfg's and grub.cfg.future's
+# sha256 (only an upgrade or a rollback writes them, never a boot).
+ABROOT_STATE='echo "present $(abroot status --json 2>/dev/null | sed -n "s/.*\"present\": *\"\([^\"]*\)\".*/\1/p")"
+echo "checked $(abroot status 2>/dev/null | sed "s/\x1b\[[0-9;]*m//g" | sed -n "s/.*\(Present\|Future\): \([^ ]*\) ✓.*/\2/p" | tr "\n" " ")"
+echo "root $(lsblk -dno LABEL "$(findmnt -vno SOURCE /)")"
+echo "abimage $(tr -d " \n\t" </abimage.abr 2>/dev/null | sed -n "s/.*\"digest\":\"\([^\"]*\)\".*/\1/p")"
+echo "bko-root $(cat /etc/bko-root 2>/dev/null || echo none)"
+echo "cmdline $(cat /proc/cmdline)"
+for f in /boot/grub/grub.cfg /boot/grub/grub.cfg.future; do echo "sha256 $f $(sha256sum <"$f" 2>/dev/null | cut -d" " -f1)"; done'
+# The master grub.cfg's default and its entries' titles, one a line.
+ABROOT_MENU='sed -n "s/^set default=//p" /boot/grub/grub.cfg | head -1; sed -n "s/^menuentry \"\([^\"]*\)\".*/\1/p" /boot/grub/grub.cfg'
+# The lines this boot's journal has of an ABRoot repair.
+ABROOT_REPAIRS='journalctl -b --no-pager 2>/dev/null | grep -i abroot | grep -iE "repair|integrity check"'
+# PICK_RE and PICK_KEYS, vm_up's GRUB_PICK and GRUB_KEYS for the master
+# grub.cfg's other entry (logs/source-abroot-menu.txt): its title as a
+# regular expression, and the arrow toward it twice (two entries: the
+# second press stays there), then Enter.  ABROOT_OTHER: its title.
+abroot_pick() {
+    local m=$R/logs/source-abroot-menu.txt d o t=()
+    mapfile -t t < <(tail -n +2 "$m")
+    d=$(head -1 "$m")
+    [[ ${#t[@]} == 2 && $d =~ ^[01]$ ]] || return 1
+    o=$((1 - d)) ABROOT_OTHER=${t[o]}
+    PICK_RE=$(sed 's/[][\.*^$()+?{}|]/\\&/g' <<<"${t[o]}")
+    if ((o < d)); then PICK_KEYS='\x1b[A|\x1b[A|\r'; else PICK_KEYS='\x1b[B|\x1b[B|\r'; fi
+}
+# WHO LOG KEY: ABRoot's mount-sys (its init hook, before systemd: on the
+# console only, never in the journal; it mounts /var and /etc's overlay,
+# and repairs the root's links and paths, RepairRootIntegrity, when they're
+# broken) must end in its success line in this boot's console log, and
+# print nothing of a repair; nor may the journal (ABROOT_REPAIRS).
+mountsys_check() {
+    local who=$1 log=$2 key=$3 seg rep
+    seg=$(sed 's/\x1b\[[0-9;]*[A-Za-z]//g' "$log" 2>/dev/null | tr -d '\r' |
+        awk '/Running hook: \/usr\/share\/init\.d\/100-abroot-mount-sys\.sh/ {on = 1} on {print} on && /Successfully ran hook: \/usr\/share\/init\.d\/100-abroot-mount-sys\.sh/ {exit}')
+    rep=$(sshk "$key" "$ABROOT_REPAIRS" 2>/dev/null)
+    printf '== %s\n%s\n== journal\n%s\n' "${log##*/}" "$seg" "$rep" > "$R/logs/$who-mountsys.txt"
+    if grep -q 'The system mounts have been performed successfully' <<<"$seg" && ! grep -qiE 'repair|integrity check' <<<"$seg" && [[ -z $rep ]]; then
+        ok "abroot: $who: mount-sys mounted the system, no integrity repair (console, journal)"
+    else
+        bad "abroot: $who: mount-sys: $(grep -iE 'repair|integrity check|error|fail' <<<"$seg$rep" | head -3 | tr '\n' ' ')$(grep -q 'performed successfully' <<<"$seg" || echo "no success line ")(logs/$who-mountsys.txt)"
+    fi
+}
+# The source's baseline: its default boot (up already), the other root, and
+# its default again for the dump.  Exit 1 when the run can go no further.
+abroot_source() {
+    local L=$R/logs a o
+    sshk "$gkey" "$ABROOT_MENU" > "$L/source-abroot-menu.txt" 2>&1
+    abroot_pick || { bad "abroot: the source's master grub.cfg hasn't a default of 0 or 1 and two entries: $(tr '\n' ' ' < "$L/source-abroot-menu.txt")"; return 1; }
+    sshk "$gkey" "$ABROOT_STATE" > "$L/source-abroot-first.txt" 2>&1
+    mountsys_check source "$L/source-serial.log" "$gkey"
+    vm_down "$gkey"
+    GRUB_PICK=$PICK_RE GRUB_KEYS=$PICK_KEYS vm_up "${src[0]}" "$L/source-serial-other.log" "${fw[@]}" "${svfw[@]}" "${extra_src[@]}"
+    vm_wait "$gkey" || { bad "abroot: the source's \"$ABROOT_OTHER\" boots (no SSH; logs/source-serial-other.log)"; return 1; }
+    grep -q 'console-keys.py: typed' "$L/source-serial-other.log" || { bad "abroot: GRUB's menu never showed \"$ABROOT_OTHER\" on the source's serial console"; return 1; }
+    sshk "$gkey" "$ABROOT_STATE" > "$L/source-abroot-other.txt" 2>&1
+    bootstate "$gkey" > "$L/source-other-bootstate.txt"
+    mountsys_check source-other "$L/source-serial-other.log" "$gkey"
+    vm_down "$gkey"
+    vm_up "${src[0]}" "$L/source-serial-3.log" "${fw[@]}" "${svfw[@]}" "${extra_src[@]}"
+    vm_wait "$gkey" || { bad "abroot: the source boots its default entry again (no SSH; logs/source-serial-3.log)"; return 1; }
+    sshk "$gkey" "$ABROOT_STATE" > "$L/source-abroot.txt" 2>&1
+    a=$(sed -n 's/^root //p' "$L/source-abroot.txt") o=$(sed -n 's/^root //p' "$L/source-abroot-other.txt")
+    if [[ -z $a || -z $o || $a == "$o" ]] || ! grep -qx "present $a" "$L/source-abroot.txt" || ! grep -qx "present $o" "$L/source-abroot-other.txt"; then
+        bad "abroot: the source's \"$ABROOT_OTHER\" booted ${o:-nothing}, its default ${a:-nothing} ($(grep '^present' "$L/source-abroot-other.txt"), $(grep '^present' "$L/source-abroot.txt"))"; return 1
+    fi
+    cmp -s "$L/source-abroot-first.txt" "$L/source-abroot.txt" ||
+        { bad "abroot: the source's default boot after its other root isn't its first: $(diff "$L/source-abroot-first.txt" "$L/source-abroot.txt" | grep '^[<>]' | head -2 | tr '\n' ' ')"; return 1; }
+    [[ $(sed -n 's/^sha256 //p' "$L/source-abroot-other.txt") == "$(sed -n 's/^sha256 //p' "$L/source-abroot.txt")" ]] ||
+        { bad "abroot: the source's boot of \"$ABROOT_OTHER\" changed grub.cfg or grub.cfg.future"; return 1; }
+    ok "abroot: the source booted its default $a ($(sed -n 's/^bko-root //p' "$L/source-abroot.txt")) and \"$ABROOT_OTHER\" $o ($(sed -n 's/^bko-root //p' "$L/source-abroot-other.txt")) picked on GRUB's serial menu; grub.cfg as it was"
+}
+# The restored disk's two boots against the baseline: the default (booted
+# already, and dumped), then the other root, the restored disk alone again
+# (a fresh --snapshot boot).  The other's boot state may have no line the
+# source's lacked.
+abroot_verify() {
+    local L=$R/logs
+    sshk "$gkey" "$ABROOT_STATE" > "$L/restored-abroot.txt" 2>&1
+    if cmp -s "$L/source-abroot.txt" "$L/restored-abroot.txt"; then
+        ok "abroot: the restored default boot is the source's ($(sed -n 's/^root //p' "$L/restored-abroot.txt"): abroot status, /abimage.abr, /etc/bko-root, the command line, grub.cfg and grub.cfg.future unwritten)"
+    else
+        bad "abroot: the restored default boot isn't the source's: $(diff "$L/source-abroot.txt" "$L/restored-abroot.txt" | grep '^[<>]' | head -4 | tr '\n' ' ')"
+    fi
+    mountsys_check restored "$L/restored-serial.log" "$gkey"
+    vm_down "$gkey"
+    abroot_pick || { bad "abroot: no other entry in the source's logs/source-abroot-menu.txt"; return; }
+    GRUB_PICK=$PICK_RE GRUB_KEYS=$PICK_KEYS vm_up "${dst[0]}" "$L/restored-serial-other.log" --snapshot "${fw[@]}" "${dvfw[@]}" "${BS2_VFW[@]}" "${extra_dst[@]}"
+    vm_wait "$gkey" || { bad "abroot: the restored \"$ABROOT_OTHER\" boots (no SSH; logs/restored-serial-other.log)"; return; }
+    grep -q 'console-keys.py: typed' "$L/restored-serial-other.log" || bad "abroot: GRUB's menu never showed \"$ABROOT_OTHER\" on the restored disk's serial console"
+    sshk "$gkey" "$ABROOT_STATE" > "$L/restored-abroot-other.txt" 2>&1
+    if cmp -s "$L/source-abroot-other.txt" "$L/restored-abroot-other.txt"; then
+        ok "abroot: the restored \"$ABROOT_OTHER\" boot is the source's ($(sed -n 's/^root //p' "$L/restored-abroot-other.txt"): abroot status, /abimage.abr, /etc/bko-root, the command line, grub.cfg and grub.cfg.future unwritten)"
+    else
+        bad "abroot: the restored \"$ABROOT_OTHER\" boot isn't the source's: $(diff "$L/source-abroot-other.txt" "$L/restored-abroot-other.txt" | grep '^[<>]' | head -4 | tr '\n' ' ')"
+    fi
+    mountsys_check restored-other "$L/restored-serial-other.log" "$gkey"
+    bootstate "$gkey" > "$L/restored-other-bootstate.txt"
+    if diff -q <(head -1 "$L/source-other-bootstate.txt") <(head -1 "$L/restored-other-bootstate.txt") >/dev/null \
+        && [[ -z $(comm -13 <(tail -n +2 "$L/source-other-bootstate.txt") <(tail -n +2 "$L/restored-other-bootstate.txt")) ]]; then
+        ok "abroot: \"$ABROOT_OTHER\"'s boot state as the source's ($(head -1 "$L/restored-other-bootstate.txt"))"
+    else
+        bad "abroot: \"$ABROOT_OTHER\"'s boot state: source $(tr '\n' ' ' < "$L/source-other-bootstate.txt"), restored $(tr '\n' ' ' < "$L/restored-other-bootstate.txt")"
+    fi
+}
 
 # Proxmox (docs/design/proxmox.md): proxmox-boot-tool's ESPs, listed by volume
 # ID in /etc/kernel/proxmox-boot-uuids, are mounted by nothing, so neither the
@@ -899,10 +1042,13 @@ phase_source() {
     # An ostree source boots its rollback and its default again first: the
     # baseline the restored disk's two boots are held to.
     rm -f "$R/logs/source-ostree"*.txt "$R/logs/source-rollback-bootstate.txt"
+    # So does an ABRoot source its other root, then its default again.
+    rm -f "$R/logs/source-abroot"*.txt "$R/logs/source-other-bootstate.txt"
     # So does a Guix System source its previous generation, then its current one.
     rm -f "$R/logs/source-guix"*.txt "$R/logs/source-prev-bootstate.txt"
-    case $(sshk "$gkey" 'if [ -e /run/ostree-booted ]; then echo ostree; elif [ -d /var/guix/profiles ] && command -v guix >/dev/null; then echo guix; else echo plain; fi') in
+    case $(sshk "$gkey" 'if [ -e /run/ostree-booted ]; then echo ostree; elif [ -f /usr/share/abroot/abroot.json ] && command -v abroot >/dev/null; then echo abroot; elif [ -d /var/guix/profiles ] && command -v guix >/dev/null; then echo guix; else echo plain; fi') in
         ostree) ostree_source || { vm_down "$gkey"; return; } ;;
+        abroot) abroot_source || { vm_down "$gkey"; return; } ;;
         guix) guix_source || { vm_down "$gkey"; return; } ;;
         plain) ;;
         *) bad "source: no answer over SSH to whether it is ostree"; vm_down "$gkey"; return ;;
@@ -1320,6 +1466,8 @@ phase_verify() {
     # An ostree source's baseline (its source phase): the rollback boots too,
     # after the dump, which is of the default boot as the source's was.
     [[ ! -f $R/logs/source-ostree-rollback.txt ]] || ostree_verify
+    # So does an ABRoot source's other root.
+    [[ ! -f $R/logs/source-abroot-other.txt ]] || abroot_verify
     # So does a Guix System source's previous generation.
     [[ ! -f $R/logs/source-guix-gens.txt ]] || guix_verify
     if [[ $VARIANT == bs2 ]]; then bs2_restored_down; else vm_down "$gkey"; fi

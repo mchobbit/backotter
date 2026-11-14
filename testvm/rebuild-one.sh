@@ -94,6 +94,11 @@ pikaos4-luks) cmd=(asm $T/make-pikaos.sh --iso-dir /bkoscratch/rebuild-inputs/pi
 # .asc, the release key and the assistant's .deb in /bkoscratch/rebuild-inputs/proxmox9
 # (all pinned in the builder; the prepared ISO is made there per first-boot.sh).
 proxmox9|proxmox9-mirror) cmd=(asm $T/make-proxmox.sh --iso-dir /bkoscratch/rebuild-inputs/proxmox9 $G "$W") ;;
+# vanilla3: from Vanilla OS's live ISO in /bkoscratch/rebuild-inputs/vanilla3 (or
+# the guest's own dir), its SHA-256 pinned in the builder; the system image
+# ghcr.io/vanilla-os/gnome:latest as it is at the rebuild (pulled by albius;
+# the builder's abroot upgrade --force fills root B from it). ~22 GiB at its peak.
+vanilla3)   cmd=(asm $T/make-vanilla.sh --iso-dir "$SRC" vanilla3 "$W") ;;
 # anduinos2: from AnduinOS's live ISO in /bkoscratch/rebuild-inputs/anduinos2 (or
 # the guest's own dir), its SHA-256 pinned in the builder; the ISO's packages only.
 anduinos2)  cmd=(asm $T/make-anduinos.sh "$SRC/AnduinOS-2.0.5-amd64.iso" "$W" anduinos2) ;;

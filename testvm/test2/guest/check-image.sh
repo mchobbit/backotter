@@ -93,6 +93,23 @@ if ! has_rule K-none; then
         done
     fi
     if has_rule K-fed || has_rule K-ostree; then ls -1 /boot/loader/entries/*.conf 2>/dev/null | grep -v rescue; fi
+    # ABRoot (Vanilla OS): each root's kernels in the init LV (label vos-init), one directory a
+    # root, which only ABRoot mounts: read through a read-only mount of it here (noload: no
+    # journal replay), or where it is mounted.  "LABEL vmlinuz-K"; "LABEL none" for a root with none.
+    if has_rule K-abroot; then
+        m=$(findmnt -n -o TARGET -S LABEL=vos-init 2>/dev/null | head -n 1) d=
+        if [ -z "$m" ] && dev=$(blkid -L vos-init 2>/dev/null) && d=$(mktemp -d) &&
+            mount -o ro,noload,nodev,nosuid,noexec "$dev" "$d" 2>/dev/null; then m=$d; fi
+        if [ -n "$m" ]; then
+            for r in "$m"/*/; do
+                l=$(basename "$r")
+                [ "$l" = lost+found ] || [ "$l" = '*' ] && continue
+                ks=$(ls -1 "$r" 2>/dev/null | grep '^vmlinuz-')
+                if [ -n "$ks" ]; then printf '%s\n' "$ks" | sed "s|^|$l |"; else echo "$l none"; fi
+            done
+        fi
+        if [ -n "$d" ]; then umount "$d" 2>/dev/null; rmdir "$d"; fi
+    fi
     if has_rule K-pac; then
         for d in /usr/lib/modules/*/; do [ -e "${d}vmlinuz" ] && echo "$d"; done
     fi

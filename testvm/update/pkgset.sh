@@ -58,6 +58,41 @@ pkg_portage() {
                         if (!i) { print "unknown a package name without a version:", $1; exit 1 }
                         print "pkg", substr($1, 1, i - 1), substr($1, i + 1), $2 }'
 }
+# ABRoot (Vanilla OS; docs/design/vanillaos.md): the present root's own dpkg
+# database, its var/lib/dpkg/status, which /var (vos-var, shared by both
+# roots) hides: read through a bind mount of / alone, read-only like /.  A
+# root `abroot upgrade` wrote has one (the image's); the installer's root
+# has none, only the install's copy on /var, which is read then.  Then the
+# image the root was made from, /abimage.abr's digest: an image can change
+# with no package's version.
+pkg_abroot() {
+    f=/var/lib/dpkg/status
+    if d=$(mktemp -d 2>/dev/null); then
+        if mount --bind -o ro / "$d" 2>/dev/null; then
+            [ ! -f "$d/var/lib/dpkg/status" ] || f=$d/var/lib/dpkg/status
+        else
+            rmdir "$d"; d=
+        fi
+    else
+        d=
+    fi
+    x=$(awk -v RS= -F'\n' '{ p = v = a = s = ""
+            for (i = 1; i <= NF; i++) {
+                if ($i ~ /^Package: /) p = substr($i, 10)
+                else if ($i ~ /^Version: /) v = substr($i, 10)
+                else if ($i ~ /^Architecture: /) a = substr($i, 15)
+                else if ($i ~ /^Status: /) s = substr($i, 9)
+            }
+            n = split(s, w, " ")
+            if (p != "" && n == 3 && w[3] == "installed") print "pkg", p, v, a }' "$f")
+    rc=$?
+    if [ -n "$d" ]; then umount "$d"; rmdir "$d"; fi
+    [ $rc -eq 0 ] && [ -n "$x" ] || fail "no installed package in the root's dpkg status"
+    lines "$x"
+    x=$(sed -n 's/.*"digest" *: *"\([^"]*\)".*/\1/p' /abimage.abr 2>/dev/null)
+    [ -n "$x" ] || fail "no image digest in /abimage.abr"
+    echo "base abimage $x"
+}
 pkg_query() {
     x=$(pkg query '%n %v') || fail "pkg query failed"
     lines "$x" | sed 's/^/pkg /'
@@ -93,6 +128,11 @@ listing() {
         if [ -e /etc/gentoo-release ] && [ -d /var/db/pkg ]; then
             echo "base pm portage"
             pkg_portage
+        # ABRoot (Vanilla OS) before dpkg: no apt or dpkg on the root (lpkg
+        # locks them away), and the image's digest besides.
+        elif [ -f /usr/share/abroot/abroot.json ] || has abroot; then
+            echo "base pm abroot"
+            pkg_abroot
         elif has apt-get && has dpkg; then
             # (BigLinux's apt-get and dnf are scripts that only exec pamac;
             # its rpm is real, with an empty database.)

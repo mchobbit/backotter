@@ -6,6 +6,7 @@
 //! parsers: `load` checks every stage by reading the disks back with them.
 
 
+pub mod abroot;
 pub mod blockdev;
 pub mod boot;
 pub mod bootcode;

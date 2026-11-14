@@ -259,6 +259,29 @@ REFIND_KEPT = r"(?i)^boot/(refind_linux\.conf|efi/EFI/(refind|BOOT)(/.*)?)$"
 ANDUINOS_SOURCE = r"^boot/efi/EFI/AnduinOS/shimx64\.efi$"
 ANDUINOS_KEPT = r"^boot/efi/EFI/(AnduinOS/(shimx64|grubx64|mmx64)\.efi|BOOT/(BOOTX64\.EFI|grubx64\.efi|mmx64\.efi))$"
 ANDUINOS_REQUIRED = ("boot/efi/EFI/AnduinOS/shimx64.efi", "boot/efi/EFI/AnduinOS/grubx64.efi", "boot/efi/EFI/AnduinOS/mmx64.efi")
+# An ABRoot source (Vanilla OS 3: docs/design/vanillaos.md, V4 and V7): load
+# regenerates nothing (no initramfs, grub-install, update-grub or chroot), so
+# the master grub.cfg and grub.cfg.future, each root's abroot.cfg, kernel,
+# initramfs, config and System.map in the init LV (boot/init/LABEL/), and the
+# ESP's EFI/vanilla and EFI/BOOT (the guest's fallback copy) must be byte for
+# byte the source's: no ESP or /boot rule excuses them.  The master
+# grub.cfg, shim and GRUB in EFI/vanilla, and a kernel and an initramfs
+# beside each abroot.cfg must be in the source's record.
+ABROOT_SOURCE = r"^boot/init/[^/]+/abroot\.cfg$"
+ABROOT_KEPT = r"^boot/(grub/grub\.cfg(\.future)?|init/[^/]+/(abroot\.cfg|(vmlinuz|initrd\.img|config|System\.map)-[^/]+)|efi/EFI/(vanilla|BOOT)(/[^/]+)?)$"
+ABROOT_REQUIRED = ("boot/grub/grub.cfg", "boot/efi/EFI/vanilla/shimx64.efi", "boot/efi/EFI/vanilla/grubx64.efi")
+
+
+def abroot_missing(before):
+    """What an ABRoot source's record lacks of ABROOT_REQUIRED, and of a
+    kernel and an initramfs in each init/LABEL/ that has an abroot.cfg."""
+    out = [p for p in ABROOT_REQUIRED if before.get(p, {}).get("type") != "file"]
+    for cfg in sorted(p for p in before if re.search(ABROOT_SOURCE, p)):
+        d = cfg.rsplit("/", 1)[0]
+        for kind in ("vmlinuz", "initrd.img"):
+            if not any(p.startswith(f"{d}/{kind}-") and before[p].get("type") == "file" for p in before):
+                out.append(f"{d}/{kind}-*")
+    return out
 
 
 def illumos_normalise(d):
@@ -394,6 +417,67 @@ def md_by_name(d):
     return d
 
 
+def dm_names(d):
+    """{dm-N: its device-mapper name} of the dump's dm_devices."""
+    return {x.get("name"): (x.get("dm") or {}).get("dm_name") for x in (d.get("storage") or {}).get("dm_devices") or []
+            if (x.get("dm") or {}).get("dm_name")}
+
+
+def dm_by_name(d):
+    """A device-mapper device's kernel number (dm-N) is the order the
+    volume groups came up at boot, which needn't be the source's (vanilla3:
+    vos-var before vos-root after the restore): each dm-N is called
+    dm:NAME (its device-mapper name) throughout the dump instead, its device
+    number 253:<dm:NAME>, and dm_devices are sorted by those names.  main
+    does it only when the two dumps number the same devices differently."""
+    ren = {k: f"dm:{v}" for k, v in dm_names(d).items()}
+    if not ren:
+        return d
+    word = re.compile(r"\b(" + "|".join(map(re.escape, sorted(ren, key=len, reverse=True))) + r")\b")
+
+    def walk(v):
+        if isinstance(v, dict):
+            return {(word.sub(lambda m: ren[m.group(1)], k) if isinstance(k, str) else k): walk(x) for k, x in v.items()}
+        if isinstance(v, list):
+            return [walk(x) for x in v]
+        return word.sub(lambda m: ren[m.group(1)], v) if isinstance(v, str) else v
+
+    d = walk(d)
+    devs = d["storage"]["dm_devices"]
+    for x in devs:
+        if x.get("name") in ren.values():
+            x["devno"] = f"253:<{x['name']}>"
+    devs.sort(key=lambda x: x.get("name") or "")
+    return d
+
+
+def lvcreate_made(d):
+    """The LVs load makes anew by lvcreate, which vgcfgrestore can't
+    (docs/design/vanillaos.md, V3): each thin pool, its data and metadata
+    LVs, the group's pool metadata spare and the thin LVs, as {(VG, LV)},
+    with their LV UUIDs; their groups' LV lists sorted by name (lvcreate
+    writes them in its own order).  Returns (names, uuids)."""
+    names, uuids = set(), set()
+    for vg in ((d.get("storage") or {}).get("lvm") or {}).get("volume_groups") or []:
+        lvs = vg.get("logical_volumes") or []
+        made = set()
+        for lv in lvs:
+            for s in lv.get("segments") or []:
+                if s.get("type") == "thin-pool":
+                    made |= {lv.get("name"), s.get("metadata"), s.get("pool")}
+                elif s.get("type") == "thin":
+                    made.add(lv.get("name"))
+        if not made:
+            continue
+        made |= {lv.get("name") for lv in lvs if re.fullmatch(r"lvol\d+_pmspare", lv.get("name") or "")}
+        lvs.sort(key=lambda lv: lv.get("name") or "")
+        for lv in lvs:
+            if lv.get("name") in made:
+                names.add((vg.get("name"), lv.get("name")))
+                uuids.add(lv.get("id"))
+    return names, uuids
+
+
 def geli_records(d):
     """GELI providers (docs/design/geli.md) in dump D: (holder, record), the
     flattened paths of the disk or partition that holds one and of its geli
@@ -468,14 +552,18 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False):
     # ESP files and refind_linux.conf get no boot-stage excuse.
     refind = any(re.search(REFIND_SOURCE, p) for p in before)
     anduin = any(re.search(ANDUINOS_SOURCE, p) for p in before)
+    abroot = any(re.search(ABROOT_SOURCE, p) for p in before)
     real, allowed = {}, {}
     if anduin:
         for p in ANDUINOS_REQUIRED:
             if before.get(p, {}).get("type") != "file":
                 real.setdefault("not in the source's record (AnduinOS's MOK-signed loaders)", []).append(p)
+    if abroot:
+        for p in abroot_missing(before):
+            real.setdefault("not in the source's record (ABRoot's boot files)", []).append(p)
     for kind, paths in diff.items():
         for p in paths:
-            kept = (refind and re.search(REFIND_KEPT, p)) or (anduin and re.search(ANDUINOS_KEPT, p))
+            kept = (refind and re.search(REFIND_KEPT, p)) or (anduin and re.search(ANDUINOS_KEPT, p)) or (abroot and re.search(ABROOT_KEPT, p))
             why = None if kept else \
                 next((w for r, kinds, w in BOOT_STAGE if kind in kinds and re.search(r, p)), None)
             if not why and kind == "missing" and before.get(p, {}).get("type") == "socket":
@@ -510,6 +598,9 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False):
     if anduin:
         held = sorted(p for p in before if re.search(ANDUINOS_KEPT, p))
         print(f"AnduinOS's MOK-signed loaders kept: {len(held)} paths held to the source's bytes: {', '.join(p.removeprefix('boot/efi/EFI/') for p in held)}")
+    if abroot:
+        held = [p for p in before if re.search(ABROOT_KEPT, p)]
+        print(f"ABRoot kept: {len(held)} paths of the master grub.cfg, init's abroot.cfgs, kernels and initramfs, and EFI/vanilla and EFI/BOOT held to the source's")
     n = sum(len(v) for v in real.values())
     print(f"{n} differences, {sum(len(v) for v in allowed.values())} from the boot stage")
     sys.exit(1 if n else 0)
@@ -1098,6 +1189,13 @@ def main():
         del sys.argv[1]
     src = btrfs_by_path(md_by_name(illumos_normalise(load_json(sys.argv[1]))))
     dst = btrfs_by_path(md_by_name(illumos_normalise(load_json(sys.argv[2]))))
+    # The same device-mapper devices numbered in another order: by name.
+    ns, nd = dm_names(src), dm_names(dst)
+    if ns != nd and sorted(ns.values()) == sorted(nd.values()):
+        src, dst = dm_by_name(src), dm_by_name(dst)
+        print(f"device-mapper devices compared by name: their dm-N differ ({', '.join(f'{v} {k}' for k, v in sorted(ns.items()) if nd.get(k) != v)} on the source)")
+    made_src, made_uuid_src = lvcreate_made(src)
+    made_dst, made_uuid_dst = lvcreate_made(dst)
     timeshift = timeshift_left_out(src)
     for d in (src, dst):
         if "--removable" in flags:
@@ -1183,6 +1281,20 @@ def main():
             why = "a ZFS clone (a boot environment) comes back as a plain dataset: its origin snapshot isn't in the backup"
         if not why and all(isinstance(v, str) and v.startswith("/dev/disk/by-diskseq/") for v in (va, vb)):
             why = "by-diskseq links count the disks the kernel has seen since it booted"
+        # Thin pools and their LVs, made anew by lvcreate (lvcreate_made).
+        m = re.match(r"^(storage\.lvm\.volume_groups\.\d+)\.logical_volumes\.(\d+)\.(.+)$", k)
+        if not why and m:
+            lvk = f"{m.group(1)}.logical_volumes.{m.group(2)}"
+            who = (a.get(m.group(1) + ".name"), a.get(lvk + ".name"))
+            if who in made_src and who == (b.get(m.group(1) + ".name"), b.get(lvk + ".name")) and who in made_dst:
+                if m.group(3) in ("id", "creation_host", "creation_time"):
+                    why = "a thin pool, its data and metadata LVs, the pool metadata spare and the thin LVs are made anew by lvcreate: new LV UUIDs, the rescuer's host and time"
+                elif re.fullmatch(r"segments\.\d+\.stripes\.\d+", m.group(3)) and isinstance(va, int) and isinstance(vb, int):
+                    why = "where lvcreate puts a thin pool's data, metadata and spare LVs on the PV is its own"
+        m = re.match(r"^(storage\.dm_devices\.\d+)\.(dm\.dm_uuid|dm\.lv_uuid|links\.\d+)$", k)
+        if not why and m and a.get(m.group(1) + ".dm.lv_uuid") in made_uuid_src and b.get(m.group(1) + ".dm.lv_uuid") in made_uuid_dst \
+                and (not m.group(2).startswith("links") or all(isinstance(v, str) and v.startswith("/dev/disk/by-id/dm-uuid-LVM-") for v in (va, vb))):
+            why = "a thin pool's or thin LV's device-mapper UUID holds its LV UUID, new from lvcreate"
         if why:
             ignored.setdefault(why, []).append(k)
         else:

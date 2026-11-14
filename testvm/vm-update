@@ -24,7 +24,8 @@ GUEST, vm-update
   3. lists its packages (update/pkgset.sh), then runs update/in-guest.sh in
      it over SSH: the guest's own package manager (apt, dnf, pacman, zypper,
      xbps, apk, moss, emerge on Gentoo, building from source only what an
-     allowlist names, nixos-rebuild, pkg, syspatch and pkg_add, pkg on
+     allowlist names, abroot upgrade on Vanilla OS (into the other root,
+     which the reboot below boots), nixos-rebuild, pkg, syspatch and pkg_add, pkg on
      OmniOS, pkgman on Haiku, hbsd-update on HardenedBSD), unattended, after
      pointing a guest that its builder froze at its distribution's live
      repositories; as root, or as the user named in vms/GUEST/ssh-user

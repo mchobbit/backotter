@@ -28,6 +28,12 @@ KERNELS_MAX = {"K-deb": 3, "K-fed": 5, "K-ostree": 2, "K-pac": 2, "K-apk": 3, "K
                "K-nbsd": 3, "K-obsd": 4, "K-dfly": 3, "K-ill": 4, "K-haiku": 2, "K-alpbsd": 3,
                "K-gentoo": 3, "K-anduinos": 3}
 NO_RULE = "no rule for it"
+# K-abroot (Vanilla OS, vanillaos.md V5): check-image.sh lists "LABEL vmlinuz-K" for each kernel
+# in the init LV's LABEL/ (one directory a root), "LABEL none" for a root with none.  Both roots
+# boot, so each needs one; an upgrade writes the other root's afresh, so a root holds a few at most.
+ABROOT_KERNELS_PER_ROOT = 2
+ABROOT_ROOTS = "the init LV holds no directory for one of the two roots"
+ABROOT_NOT_DEFAULT = "the booted root isn't the one the master grub.cfg's default boots"
 # K-anduinos: check-image.sh marks a /boot/vmlinuz-K without dracut's /boot/initrd.img-K (the
 # name Debian's dracut.conf.d gives it, which GRUB's 10_linux looks for).
 NO_INITRD_MARK = "no-initrd"
@@ -653,11 +659,29 @@ def judge_kernels(sec, checks):
     ks = [x.strip() for x in sec.cmd("kernels") or () if x.strip()]
     if not ks:
         return Need("FAIL", None, ["no kernel found"])
+    if rule == "K-abroot":
+        return _abroot_kernels(ks, (checks or {}).get("kernels_max") or ABROOT_KERNELS_PER_ROOT)
     if limit and len(ks) > int(limit):
         return Need("FAIL", None, ["more kernels than the updater keeps"])
     if rule == "K-anduinos" and any(x.endswith(" " + NO_INITRD_MARK) for x in ks):
         return Need("FAIL", None, [NO_INITRD])
     return Need("PASS", f"{len(ks)} kernel{'s' if len(ks) != 1 else ''}")
+
+
+def _abroot_kernels(ks, per_root):
+    roots = {}
+    for x in ks:
+        f = x.split()
+        if len(f) == 2:
+            roots.setdefault(f[0], [])
+            if f[1] != "none":
+                roots[f[0]].append(f[1])
+    lines = [ABROOT_ROOTS] if len(roots) < 2 else []
+    lines += [f"no kernel in init/{r}/" for r in sorted(roots) if not roots[r]]
+    if any(len(k) > int(per_root) for k in roots.values()):
+        lines.append("more kernels than the updater keeps")
+    n = sum(len(k) for k in roots.values())
+    return Need("FAIL", None, lines) if lines else Need("PASS", f"{n} kernels in {len(roots)} roots")
 
 
 def judge_zfs_cache(sec):
@@ -847,12 +871,19 @@ def newest_kernel_lines(lines, rule, sec=None, steps=None):
             kv[f[0]] = f[1].strip()
     if "unverified" in kv:
         return [f"kernel unverified: {kv['unverified']}"]
-    if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree", "K-gentoo", "K-anduinos"):
+    if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree", "K-gentoo", "K-anduinos", "K-abroot"):
         run = kv.get("running")
         if not run or not installed:
             return ["kernel unverified: no running or installed kernel listed"]
         if rule == "K-ostree":
             return _ostree_lines(kv, run, installed, keys, steps)
+        if rule == "K-abroot":
+            # The present root's own modules; what boots is the root the master grub.cfg's
+            # default leads to (after an upgrade the new one), and that one has to be running.
+            out = [] if run in installed else [NO_MODULES]
+            if not kv.get("present") or not kv.get("default"):
+                return out + ["kernel unverified: no present or default root"]
+            return out + ([] if kv["present"] == kv["default"] else [ABROOT_NOT_DEFAULT])
         if run not in installed:
             return [NO_MODULES]
         return [] if version_key(run) == version_key(newest(installed)) else [NOT_NEWEST]

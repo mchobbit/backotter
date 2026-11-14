@@ -126,6 +126,11 @@ internal_mounts() {
         python3 - "$layout" <<'PY' | while IFS=$'\t' read -r target root fs src; do
 import json, sys
 for s in json.load(open(sys.argv[1]))["storage"].get("backup_sources") or []:
+    # A source the running system doesn't mount (ABRoot's init LV and other
+    # root) has no "from", only the read-only "mount" a backup makes there:
+    # BackShot1 doesn't make it yet.
+    if s.get("from") is None:
+        sys.exit(f"internal_mounts: backup_sources' {s['path']} isn't mounted (from null; its mount hint: {s.get('mount')}), which BackShot1 doesn't mount yet")
     print("\t".join([s["path"], s["from"], s["fstype"], s.get("source") or "-"]))
 PY
             [[ $fs =~ ^($REAL_FS)$ ]] || continue

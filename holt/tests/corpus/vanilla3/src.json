@@ -1,0 +1,1703 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.6"
+  },
+  "generated": "2026-11-14T07:26:40Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host2",
+    "machine_id": "bd000000000040008000000000000001",
+    "dmi": {
+      "sys_vendor": "QEMU",
+      "product_name": "Standard PC (Q35 + ICH9, 2009)",
+      "product_version": "pc-q35-10.0",
+      "board_vendor": null,
+      "board_name": null,
+      "bios_vendor": "Debian distribution of EDK II",
+      "bios_version": "2025.02-8+deb13u1",
+      "bios_date": "11/08/2025",
+      "product_uuid": null,
+      "chassis_type": "1"
+    },
+    "virtualization": "kvm"
+  },
+  "os": {
+    "id": "vanilla",
+    "version_id": "3.0",
+    "version_codename": "reunion",
+    "pretty_name": "Vanilla OS 3.0",
+    "debian_version": "trixie/sid",
+    "kernel_release": "7.3.3+deb14-amd64",
+    "kernel_version": "#1 SMP PREEMPT_DYNAMIC Debian 7.3.3-1 (2026-11-07)",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "uefi",
+    "platform_size": 64,
+    "secure_boot": true,
+    "setup_mode": false,
+    "efivars_readable": true
+  },
+  "storage": {
+    "topology": {
+      "vda (disk, 64 GiB, gpt)": {
+        "vda1 (partition, 1 GiB) ext4 \"vos-boot\" on /boot": {},
+        "vda2 (partition, 512 MiB) vfat \"vos-efi\" on /boot/efi": {},
+        "vda3 (partition, 22.1 GiB) LVM2_member": {
+          "dm-0 (dm, 1 GiB, vos--root-init) ext4 \"vos-init\"": {},
+          "dm-2 (dm, 1 GiB, vos--root-root_tmeta)": {
+            "dm-4 (dm, 19 GiB, vos--root-root-tpool)": {
+              "dm-5 (dm, 19 GiB, vos--root-root)": {},
+              "dm-6 (dm, 19 GiB, vos--root-root--a) btrfs \"vos-a\"": {},
+              "dm-7 (dm, 19 GiB, vos--root-root--b) btrfs \"vos-b\" on /": {}
+            }
+          },
+          "dm-3 (dm, 19 GiB, vos--root-root_tdata)": {
+            "dm-4 (dm, 19 GiB, vos--root-root-tpool)": {
+              "dm-5 (dm, 19 GiB, vos--root-root)": {},
+              "dm-6 (dm, 19 GiB, vos--root-root--a) btrfs \"vos-a\"": {},
+              "dm-7 (dm, 19 GiB, vos--root-root--b) btrfs \"vos-b\" on /": {}
+            }
+          }
+        },
+        "vda4 (partition, 40.4 GiB) LVM2_member": {
+          "dm-1 (dm, 40.4 GiB, vos--var-var) btrfs \"vos-var\" on /var, /var/lib/abroot/storage/graph/overlay": {}
+        }
+      }
+    },
+    "disks": [
+      {
+        "name": "vda",
+        "path": "/dev/vda",
+        "kind": "disk",
+        "devno": "254:0",
+        "size_bytes": 68719476736,
+        "size": "64 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/1",
+          "/dev/disk/by-path/pci-0000:00:03.0",
+          "/dev/disk/by-path/virtio-pci-0000:00:03.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "bc000000-0000-4000-8000-000000000001",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 34,
+          "last_usable_lba": 134217694,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 134217727,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 134217727,
+                "start_bytes": 512,
+                "size_bytes": 68719476224,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vda1",
+            "path": "/dev/vda1",
+            "devno": "254:1",
+            "number": 1,
+            "start_lba": 2048,
+            "end_lba": 2099199,
+            "sectors": 2097152,
+            "start_bytes": 1048576,
+            "size_bytes": 1073741824,
+            "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+            "type_name": "Linux filesystem",
+            "uuid": "bc000000-0000-4000-8000-000000000002",
+            "partlabel": "vos-boot",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part1",
+              "/dev/disk/by-label/vos-boot",
+              "/dev/disk/by-partlabel/vos-boot",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000002",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-label/vos-boot",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partlabel/vos-boot",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partnum/1",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partuuid/bc000000-0000-4000-8000-000000000002",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-uuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:00:03.0-part1",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part1",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000003"
+            ],
+            "holders": [],
+            "content": {
+              "type": "ext4",
+              "usage": "filesystem",
+              "uuid": "bc000000-0000-4000-8000-000000000003",
+              "label": "vos-boot",
+              "version": "1.0",
+              "block_size": 4096,
+              "blocks": 262144,
+              "size_bytes": 1073741824,
+              "free_blocks": 245398,
+              "reserved_blocks": 13107,
+              "inodes": 65536,
+              "free_inodes": 65165,
+              "inode_size": 256,
+              "inodes_per_group": 8192,
+              "blocks_per_group": 32768,
+              "first_data_block": 0,
+              "revision": 1,
+              "features": [
+                "has_journal",
+                "ext_attr",
+                "resize_inode",
+                "dir_index",
+                "orphan_file",
+                "filetype",
+                "needs_recovery",
+                "extent",
+                "64bit",
+                "flex_bg",
+                "metadata_csum_seed",
+                "sparse_super",
+                "large_file",
+                "huge_file",
+                "dir_nlink",
+                "extra_isize",
+                "metadata_csum",
+                "orphan_present"
+              ],
+              "state": "clean",
+              "has_errors": false,
+              "errors_behavior": "continue",
+              "creator_os": "Linux",
+              "reserved_gdt_blocks": 127,
+              "default_hash": "half_md4",
+              "hash_seed": "bc000000-0000-4000-8000-000000000004",
+              "mkfs_time": 1794636128,
+              "last_mounted_on": "/boot",
+              "flex_bg_size": 16,
+              "descriptor_size": 64,
+              "min_extra_isize": 32,
+              "want_extra_isize": 32,
+              "journal_inode": 8
+            },
+            "mounted_at": ["/boot"]
+          },
+          {
+            "name": "vda2",
+            "path": "/dev/vda2",
+            "devno": "254:2",
+            "number": 2,
+            "start_lba": 2099200,
+            "end_lba": 3147775,
+            "sectors": 1048576,
+            "start_bytes": 1074790400,
+            "size_bytes": 536870912,
+            "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "type_name": "EFI System",
+            "uuid": "bc000000-0000-4000-8000-000000000005",
+            "partlabel": "vos-efi",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part2",
+              "/dev/disk/by-label/vos-efi",
+              "/dev/disk/by-partlabel/vos-efi",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000005",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-label/vos-efi",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partlabel/vos-efi",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partnum/2",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partuuid/bc000000-0000-4000-8000-000000000005",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-uuid/BC00-0001",
+              "/dev/disk/by-path/pci-0000:00:03.0-part2",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part2",
+              "/dev/disk/by-uuid/BC00-0001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "vfat",
+              "usage": "filesystem",
+              "uuid": "BC00-0001",
+              "label": "vos-efi",
+              "version": "FAT32",
+              "fat_bits": 32,
+              "bytes_per_sector": 512,
+              "sectors_per_cluster": 8,
+              "cluster_size": 4096,
+              "reserved_sectors": 32,
+              "fats": 2,
+              "fat_sectors": 1024,
+              "total_sectors": 1048572,
+              "size_bytes": 536868864,
+              "clusters": 130811,
+              "hidden_sectors": 2099200,
+              "media": "0xf8",
+              "oem_name": "mkfs.fat",
+              "root_cluster": 2,
+              "fsinfo_sector": 1,
+              "backup_boot_sector": 6,
+              "boot_sector_label": "vos-efi"
+            },
+            "mounted_at": ["/boot/efi"]
+          },
+          {
+            "name": "vda3",
+            "path": "/dev/vda3",
+            "devno": "254:3",
+            "number": 3,
+            "start_lba": 3147776,
+            "end_lba": 49496063,
+            "sectors": 46348288,
+            "start_bytes": 1611661312,
+            "size_bytes": 23730323456,
+            "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+            "type_name": "Linux filesystem",
+            "uuid": "bc000000-0000-4000-8000-000000000006",
+            "partlabel": "vos-root",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part3",
+              "/dev/disk/by-id/lvm-pv-uuid-bkoLVM-0000-0000-0000-0000-0000-000001",
+              "/dev/disk/by-partlabel/vos-root",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000006",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partlabel/vos-root",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partnum/3",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partuuid/bc000000-0000-4000-8000-000000000006",
+              "/dev/disk/by-path/pci-0000:00:03.0-part3",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part3"
+            ],
+            "holders": ["dm-0", "dm-2", "dm-3"],
+            "content": {
+              "type": "LVM2_member",
+              "usage": "raid",
+              "uuid": "bkoLVM-0000-0000-0000-0000-0000-000001",
+              "label": null,
+              "version": "LVM2 001",
+              "label_sector": 1,
+              "device_size": 23730323456,
+              "data_area_offset": 1048576,
+              "metadata_areas": [
+                {
+                  "offset": 4096,
+                  "size": 1044480
+                }
+              ],
+              "vg_name": "vos-root",
+              "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000002"
+            },
+            "mounted_at": []
+          },
+          {
+            "name": "vda4",
+            "path": "/dev/vda4",
+            "devno": "254:4",
+            "number": 4,
+            "start_lba": 49496064,
+            "end_lba": 134215679,
+            "sectors": 84719616,
+            "start_bytes": 25341984768,
+            "size_bytes": 43376443392,
+            "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+            "type_name": "Linux filesystem",
+            "uuid": "bc000000-0000-4000-8000-000000000007",
+            "partlabel": "vos-var",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part4",
+              "/dev/disk/by-id/lvm-pv-uuid-bkoLVM-0000-0000-0000-0000-0000-000003",
+              "/dev/disk/by-partlabel/vos-var",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000007",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partlabel/vos-var",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partnum/4",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partuuid/bc000000-0000-4000-8000-000000000007",
+              "/dev/disk/by-path/pci-0000:00:03.0-part4",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part4"
+            ],
+            "holders": ["dm-1"],
+            "content": {
+              "type": "LVM2_member",
+              "usage": "raid",
+              "uuid": "bkoLVM-0000-0000-0000-0000-0000-000003",
+              "label": null,
+              "version": "LVM2 001",
+              "label_sector": 1,
+              "device_size": 43376443392,
+              "data_area_offset": 1048576,
+              "metadata_areas": [
+                {
+                  "offset": 4096,
+                  "size": 1044480
+                }
+              ],
+              "vg_name": "vos-var",
+              "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000004"
+            },
+            "mounted_at": []
+          }
+        ],
+        "boot_code": {
+          "kind": "none",
+          "first_bytes": "00000000000000000000000000000000",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 2
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [
+      {
+        "name": "dm-0",
+        "path": "/dev/dm-0",
+        "kind": "dm",
+        "devno": "253:0",
+        "size_bytes": 1073741824,
+        "size": "1 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/2",
+          "/dev/disk/by-id/dm-name-vos--root-init",
+          "/dev/disk/by-id/dm-uuid-LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000005",
+          "/dev/disk/by-label/vos-init",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000008",
+          "/dev/mapper/vos--root-init",
+          "/dev/vos-root/init"
+        ],
+        "holders": [],
+        "slaves": ["vda3"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "ext4",
+          "usage": "filesystem",
+          "uuid": "bc000000-0000-4000-8000-000000000008",
+          "label": "vos-init",
+          "version": "1.0",
+          "block_size": 4096,
+          "blocks": 262144,
+          "size_bytes": 1073741824,
+          "free_blocks": 133534,
+          "reserved_blocks": 13107,
+          "inodes": 65536,
+          "free_inodes": 65512,
+          "inode_size": 256,
+          "inodes_per_group": 8192,
+          "blocks_per_group": 32768,
+          "first_data_block": 0,
+          "revision": 1,
+          "features": [
+            "has_journal",
+            "ext_attr",
+            "resize_inode",
+            "dir_index",
+            "orphan_file",
+            "filetype",
+            "extent",
+            "64bit",
+            "flex_bg",
+            "metadata_csum_seed",
+            "sparse_super",
+            "large_file",
+            "huge_file",
+            "dir_nlink",
+            "extra_isize",
+            "metadata_csum"
+          ],
+          "state": "clean",
+          "has_errors": false,
+          "errors_behavior": "continue",
+          "creator_os": "Linux",
+          "reserved_gdt_blocks": 127,
+          "default_hash": "half_md4",
+          "hash_seed": "bc000000-0000-4000-8000-000000000009",
+          "mkfs_time": 1794636129,
+          "last_mounted_on": "/part-future/boot/init",
+          "flex_bg_size": 16,
+          "descriptor_size": 64,
+          "min_extra_isize": 32,
+          "want_extra_isize": 32,
+          "journal_inode": 8
+        },
+        "mounted_at": [],
+        "dm": {
+          "dm_name": "vos--root-init",
+          "dm_uuid": "LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000005",
+          "mapper_path": "/dev/mapper/vos--root-init",
+          "target": "lvm",
+          "vg": "vos-root",
+          "lv": "init",
+          "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000002",
+          "lv_uuid": "bkoLVM-0000-0000-0000-0000-0000-000005"
+        }
+      },
+      {
+        "name": "dm-1",
+        "path": "/dev/dm-1",
+        "kind": "dm",
+        "devno": "253:1",
+        "size_bytes": 43373297664,
+        "size": "40.4 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/3",
+          "/dev/disk/by-id/dm-name-vos--var-var",
+          "/dev/disk/by-id/dm-uuid-LVM-bkoLVM00000000000000000000000004bkoLVM00000000000000000000000006",
+          "/dev/disk/by-label/vos-var",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-00000000000a",
+          "/dev/mapper/vos--var-var",
+          "/dev/vos-var/var"
+        ],
+        "holders": [],
+        "slaves": ["vda4"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "btrfs",
+          "usage": "filesystem",
+          "uuid": "bc000000-0000-4000-8000-00000000000a",
+          "label": "vos-var",
+          "version": null,
+          "total_bytes": 43373297664,
+          "bytes_used": 8172580864,
+          "num_devices": 1,
+          "sector_size": 4096,
+          "node_size": 16384,
+          "stripe_size": 4096,
+          "checksum": "crc32c",
+          "generation": 92,
+          "features": ["mixed_backref", "big_metadata", "extended_iref", "skinny_metadata", "no_holes"],
+          "compat_ro_features": ["free_space_tree", "free_space_tree_valid", "block_group_tree"],
+          "device": {
+            "devid": 1,
+            "uuid": "bc000000-0000-4000-8000-00000000000b",
+            "total_bytes": 43373297664,
+            "bytes_used": 13446938624
+          }
+        },
+        "mounted_at": ["/var", "/var/lib/abroot/storage/graph/overlay"],
+        "dm": {
+          "dm_name": "vos--var-var",
+          "dm_uuid": "LVM-bkoLVM00000000000000000000000004bkoLVM00000000000000000000000006",
+          "mapper_path": "/dev/mapper/vos--var-var",
+          "target": "lvm",
+          "vg": "vos-var",
+          "lv": "var",
+          "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000004",
+          "lv_uuid": "bkoLVM-0000-0000-0000-0000-0000-000006"
+        }
+      },
+      {
+        "name": "dm-2",
+        "path": "/dev/dm-2",
+        "kind": "dm",
+        "devno": "253:2",
+        "size_bytes": 1073741824,
+        "size": "1 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": true,
+        "links": ["/dev/mapper/vos--root-root_tmeta"],
+        "holders": ["dm-4"],
+        "slaves": ["vda3"],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "dm": {
+          "dm_name": "vos--root-root_tmeta",
+          "dm_uuid": "LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000007-tmeta",
+          "mapper_path": "/dev/mapper/vos--root-root_tmeta",
+          "target": "lvm",
+          "vg": "vos-root",
+          "lv": "root_tmeta",
+          "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000002",
+          "lv_uuid": "bkoLVM-0000-0000-0000-0000-0000-000007",
+          "lv_layer": "tmeta"
+        }
+      },
+      {
+        "name": "dm-3",
+        "path": "/dev/dm-3",
+        "kind": "dm",
+        "devno": "253:3",
+        "size_bytes": 20401094656,
+        "size": "19 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": true,
+        "links": ["/dev/mapper/vos--root-root_tdata"],
+        "holders": ["dm-4"],
+        "slaves": ["vda3"],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "dm": {
+          "dm_name": "vos--root-root_tdata",
+          "dm_uuid": "LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000008-tdata",
+          "mapper_path": "/dev/mapper/vos--root-root_tdata",
+          "target": "lvm",
+          "vg": "vos-root",
+          "lv": "root_tdata",
+          "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000002",
+          "lv_uuid": "bkoLVM-0000-0000-0000-0000-0000-000008",
+          "lv_layer": "tdata"
+        }
+      },
+      {
+        "name": "dm-4",
+        "path": "/dev/dm-4",
+        "kind": "dm",
+        "devno": "253:4",
+        "size_bytes": 20401094656,
+        "size": "19 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": true,
+        "links": ["/dev/mapper/vos--root-root-tpool"],
+        "holders": ["dm-5", "dm-6", "dm-7"],
+        "slaves": ["dm-2", "dm-3"],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "dm": {
+          "dm_name": "vos--root-root-tpool",
+          "dm_uuid": "LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000009-tpool",
+          "mapper_path": "/dev/mapper/vos--root-root-tpool",
+          "target": "lvm",
+          "vg": "vos-root",
+          "lv": "root-tpool",
+          "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000002",
+          "lv_uuid": "bkoLVM-0000-0000-0000-0000-0000-000009",
+          "lv_layer": "tpool"
+        }
+      },
+      {
+        "name": "dm-5",
+        "path": "/dev/dm-5",
+        "kind": "dm",
+        "devno": "253:5",
+        "size_bytes": 20401094656,
+        "size": "19 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": true,
+        "links": ["/dev/mapper/vos--root-root"],
+        "holders": [],
+        "slaves": ["dm-4"],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": [],
+        "dm": {
+          "dm_name": "vos--root-root",
+          "dm_uuid": "LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000009-pool",
+          "mapper_path": "/dev/mapper/vos--root-root",
+          "target": "lvm",
+          "vg": "vos-root",
+          "lv": "root",
+          "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000002",
+          "lv_uuid": "bkoLVM-0000-0000-0000-0000-0000-000009",
+          "lv_layer": "pool"
+        }
+      },
+      {
+        "name": "dm-6",
+        "path": "/dev/dm-6",
+        "kind": "dm",
+        "devno": "253:6",
+        "size_bytes": 20401094656,
+        "size": "19 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/10",
+          "/dev/disk/by-id/dm-name-vos--root-root--a",
+          "/dev/disk/by-id/dm-uuid-LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000010",
+          "/dev/disk/by-label/vos-a",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-00000000000c",
+          "/dev/mapper/vos--root-root--a",
+          "/dev/vos-root/root-a"
+        ],
+        "holders": [],
+        "slaves": ["dm-4"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "btrfs",
+          "usage": "filesystem",
+          "uuid": "bc000000-0000-4000-8000-00000000000c",
+          "label": "vos-a",
+          "version": null,
+          "total_bytes": 20401094656,
+          "bytes_used": 6098235392,
+          "num_devices": 1,
+          "sector_size": 4096,
+          "node_size": 16384,
+          "stripe_size": 4096,
+          "checksum": "crc32c",
+          "generation": 18,
+          "features": ["mixed_backref", "big_metadata", "extended_iref", "skinny_metadata", "no_holes"],
+          "compat_ro_features": ["free_space_tree", "free_space_tree_valid", "block_group_tree"],
+          "device": {
+            "devid": 1,
+            "uuid": "bc000000-0000-4000-8000-00000000000d",
+            "total_bytes": 20401094656,
+            "bytes_used": 8078229504
+          }
+        },
+        "mounted_at": [],
+        "dm": {
+          "dm_name": "vos--root-root--a",
+          "dm_uuid": "LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000010",
+          "mapper_path": "/dev/mapper/vos--root-root--a",
+          "target": "lvm",
+          "vg": "vos-root",
+          "lv": "root-a",
+          "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000002",
+          "lv_uuid": "bkoLVM-0000-0000-0000-0000-0000-000010"
+        }
+      },
+      {
+        "name": "dm-7",
+        "path": "/dev/dm-7",
+        "kind": "dm",
+        "devno": "253:7",
+        "size_bytes": 20401094656,
+        "size": "19 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/11",
+          "/dev/disk/by-id/dm-name-vos--root-root--b",
+          "/dev/disk/by-id/dm-uuid-LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000011",
+          "/dev/disk/by-label/vos-b",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-00000000000e",
+          "/dev/mapper/vos--root-root--b",
+          "/dev/vos-root/root-b"
+        ],
+        "holders": [],
+        "slaves": ["dm-4"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "btrfs",
+          "usage": "filesystem",
+          "uuid": "bc000000-0000-4000-8000-00000000000e",
+          "label": "vos-b",
+          "version": null,
+          "total_bytes": 20401094656,
+          "bytes_used": 6266232832,
+          "num_devices": 1,
+          "sector_size": 4096,
+          "node_size": 16384,
+          "stripe_size": 4096,
+          "checksum": "crc32c",
+          "generation": 21,
+          "features": ["mixed_backref", "big_metadata", "extended_iref", "skinny_metadata", "no_holes"],
+          "compat_ro_features": ["free_space_tree", "free_space_tree_valid", "block_group_tree"],
+          "device": {
+            "devid": 1,
+            "uuid": "bc000000-0000-4000-8000-00000000000f",
+            "total_bytes": 20401094656,
+            "bytes_used": 9151971328
+          }
+        },
+        "mounted_at": ["/"],
+        "dm": {
+          "dm_name": "vos--root-root--b",
+          "dm_uuid": "LVM-bkoLVM00000000000000000000000002bkoLVM00000000000000000000000011",
+          "mapper_path": "/dev/mapper/vos--root-root--b",
+          "target": "lvm",
+          "vg": "vos-root",
+          "lv": "root-b",
+          "vg_uuid": "bkoLVM-0000-0000-0000-0000-0000-000002",
+          "lv_uuid": "bkoLVM-0000-0000-0000-0000-0000-000011"
+        }
+      }
+    ],
+    "loop_devices": [],
+    "other_devices": [
+      {
+        "name": "sr0",
+        "path": "/dev/sr0",
+        "kind": "rom",
+        "devno": "11:0",
+        "size_bytes": 1073741312,
+        "size": "1024 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": false,
+        "links": [
+          "/dev/cdrom",
+          "/dev/disk/by-diskseq/7",
+          "/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1",
+          "/dev/disk/by-path/pci-0000:00:1f.2-ata-3",
+          "/dev/disk/by-path/pci-0000:00:1f.2-ata-3.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "zram0",
+        "path": "/dev/zram0",
+        "kind": "zram",
+        "devno": "252:0",
+        "size_bytes": 2033926144,
+        "size": "1.9 GiB",
+        "logical_sector_size": 4096,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": ["/dev/disk/by-diskseq/12"],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "swap",
+          "usage": "other",
+          "uuid": "bc000000-0000-4000-8000-000000000010",
+          "label": null,
+          "version": "1",
+          "page_size": 4096,
+          "last_page": 496563,
+          "size_bytes": 2033926144,
+          "bad_pages": 0
+        },
+        "mounted_at": []
+      }
+    ],
+    "lvm": {
+      "volume_groups": [
+        {
+          "name": "vos-root",
+          "id": "bkoLVM-0000-0000-0000-0000-0000-000002",
+          "seqno": 10,
+          "format": "lvm2",
+          "status": ["RESIZEABLE", "READ", "WRITE"],
+          "flags": [],
+          "extent_size_bytes": 4194304,
+          "max_lv": 0,
+          "max_pv": 0,
+          "metadata_copies": 0,
+          "physical_volumes": [
+            {
+              "name": "pv0",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000001",
+              "device_hint": "/dev/vda3",
+              "dev_size_bytes": 23730323456,
+              "pe_start_bytes": 1048576,
+              "pe_count": 5657,
+              "status": ["ALLOCATABLE"],
+              "device": "vda3"
+            }
+          ],
+          "logical_volumes": [
+            {
+              "name": "init",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000005",
+              "status": ["READ", "WRITE", "VISIBLE"],
+              "flags": [],
+              "size_bytes": 1073741824,
+              "creation_host": "host1",
+              "creation_time": 1794636129,
+              "segments": [
+                {
+                  "start_extent": 0,
+                  "extent_count": 256,
+                  "type": "striped",
+                  "stripe_count": 1,
+                  "stripes": ["pv0", 0]
+                }
+              ],
+              "active_device": "dm-0"
+            },
+            {
+              "name": "root",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000009",
+              "status": ["READ", "WRITE", "VISIBLE"],
+              "flags": [],
+              "size_bytes": 20401094656,
+              "creation_host": "host1",
+              "creation_time": 1794636129,
+              "segments": [
+                {
+                  "start_extent": 0,
+                  "extent_count": 4864,
+                  "type": "thin-pool",
+                  "metadata": "root_tmeta",
+                  "pool": "root_tdata",
+                  "transaction_id": 2,
+                  "chunk_size": 128,
+                  "discards": "passdown",
+                  "zero_new_blocks": 1
+                }
+              ],
+              "active_device": null
+            },
+            {
+              "name": "root-a",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000010",
+              "status": ["READ", "WRITE", "VISIBLE"],
+              "flags": [],
+              "size_bytes": 20401094656,
+              "creation_host": "host1",
+              "creation_time": 1794636131,
+              "segments": [
+                {
+                  "start_extent": 0,
+                  "extent_count": 4864,
+                  "type": "thin",
+                  "thin_pool": "root",
+                  "transaction_id": 0,
+                  "device_id": 1
+                }
+              ],
+              "active_device": "dm-6"
+            },
+            {
+              "name": "root-b",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000011",
+              "status": ["READ", "WRITE", "VISIBLE"],
+              "flags": [],
+              "size_bytes": 20401094656,
+              "creation_host": "host1",
+              "creation_time": 1794636131,
+              "segments": [
+                {
+                  "start_extent": 0,
+                  "extent_count": 4864,
+                  "type": "thin",
+                  "thin_pool": "root",
+                  "transaction_id": 1,
+                  "device_id": 2
+                }
+              ],
+              "active_device": "dm-7"
+            },
+            {
+              "name": "root_tmeta",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000007",
+              "status": ["READ", "WRITE"],
+              "flags": [],
+              "size_bytes": 1073741824,
+              "creation_host": "host1",
+              "creation_time": 1794636129,
+              "segments": [
+                {
+                  "start_extent": 0,
+                  "extent_count": 256,
+                  "type": "striped",
+                  "stripe_count": 1,
+                  "stripes": ["pv0", 5120]
+                }
+              ],
+              "active_device": null
+            },
+            {
+              "name": "lvol0_pmspare",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000012",
+              "status": ["READ", "WRITE"],
+              "flags": [],
+              "size_bytes": 1073741824,
+              "creation_host": "host1",
+              "creation_time": 1794636130,
+              "segments": [
+                {
+                  "start_extent": 0,
+                  "extent_count": 256,
+                  "type": "striped",
+                  "stripe_count": 1,
+                  "stripes": ["pv0", 5376]
+                }
+              ],
+              "active_device": null
+            },
+            {
+              "name": "root_tdata",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000008",
+              "status": ["READ", "WRITE"],
+              "flags": [],
+              "size_bytes": 20401094656,
+              "creation_host": "host1",
+              "creation_time": 1794636130,
+              "segments": [
+                {
+                  "start_extent": 0,
+                  "extent_count": 4864,
+                  "type": "striped",
+                  "stripe_count": 1,
+                  "stripes": ["pv0", 256]
+                }
+              ],
+              "active_device": null
+            }
+          ],
+          "creation_host": "host1",
+          "creation_time": 1794636131
+        },
+        {
+          "name": "vos-var",
+          "id": "bkoLVM-0000-0000-0000-0000-0000-000004",
+          "seqno": 2,
+          "format": "lvm2",
+          "status": ["RESIZEABLE", "READ", "WRITE"],
+          "flags": [],
+          "extent_size_bytes": 4194304,
+          "max_lv": 0,
+          "max_pv": 0,
+          "metadata_copies": 0,
+          "physical_volumes": [
+            {
+              "name": "pv0",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000003",
+              "device_hint": "/dev/vda4",
+              "dev_size_bytes": 43376443392,
+              "pe_start_bytes": 1048576,
+              "pe_count": 10341,
+              "status": ["ALLOCATABLE"],
+              "device": "vda4"
+            }
+          ],
+          "logical_volumes": [
+            {
+              "name": "var",
+              "id": "bkoLVM-0000-0000-0000-0000-0000-000006",
+              "status": ["READ", "WRITE", "VISIBLE"],
+              "flags": [],
+              "size_bytes": 43373297664,
+              "creation_host": "host1",
+              "creation_time": 1794636133,
+              "segments": [
+                {
+                  "start_extent": 0,
+                  "extent_count": 10341,
+                  "type": "striped",
+                  "stripe_count": 1,
+                  "stripes": ["pv0", 0]
+                }
+              ],
+              "active_device": "dm-1"
+            }
+          ],
+          "creation_host": "host1",
+          "creation_time": 1794636133
+        }
+      ]
+    },
+    "zfs": {
+      "pools_from_labels": [],
+      "zpool_cache": null,
+      "tools": null
+    },
+    "btrfs": [
+      {
+        "uuid": "bc000000-0000-4000-8000-00000000000c",
+        "label": "vos-a",
+        "devices": ["dm-6"],
+        "mounted": false,
+        "features": null,
+        "allocation_profiles": {
+          "data": ["single"],
+          "metadata": ["dup"],
+          "system": ["dup"]
+        },
+        "mounted_subvolumes": [],
+        "subvolumes": null,
+        "default_subvolume": null,
+        "quota_enabled": null,
+        "qgroups": null
+      },
+      {
+        "uuid": "bc000000-0000-4000-8000-00000000000e",
+        "label": "vos-b",
+        "devices": ["dm-7"],
+        "mounted": true,
+        "features": ["block_group_tree", "extended_iref", "free_space_tree", "no_holes", "skinny_metadata"],
+        "allocation_profiles": {
+          "data": ["single"],
+          "metadata": ["dup"],
+          "system": ["dup"]
+        },
+        "mounted_subvolumes": [
+          {
+            "target": "/",
+            "subvol": "/"
+          }
+        ],
+        "subvolumes": [],
+        "default_subvolume": {
+          "id": 5
+        },
+        "quota_enabled": false,
+        "qgroups": null
+      },
+      {
+        "uuid": "bc000000-0000-4000-8000-00000000000a",
+        "label": "vos-var",
+        "devices": ["dm-1"],
+        "mounted": true,
+        "features": ["block_group_tree", "extended_iref", "free_space_tree", "no_holes", "skinny_metadata"],
+        "allocation_profiles": {
+          "data": ["single"],
+          "metadata": ["dup"],
+          "system": ["dup"]
+        },
+        "mounted_subvolumes": [
+          {
+            "target": "/var",
+            "subvol": "/"
+          }
+        ],
+        "subvolumes": [],
+        "default_subvolume": {
+          "id": 5
+        },
+        "quota_enabled": false,
+        "qgroups": null
+      }
+    ],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "/dev/mapper/vos--root-root--b",
+        "fstype": "btrfs",
+        "devno": "0:30",
+        "device": "dm-7",
+        "root": "/",
+        "options": "ro,relatime",
+        "super_options": "ro,discard=async,space_cache=v2,subvolid=5,subvol=/",
+        "size_bytes": 20401094656,
+        "used_bytes": 6425239552,
+        "available_bytes": 13725589504
+      },
+      {
+        "target": "/var",
+        "source": "/dev/mapper/vos--var-var",
+        "fstype": "btrfs",
+        "devno": "0:33",
+        "device": "dm-1",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,discard=async,space_cache=v2,subvolid=5,subvol=/",
+        "size_bytes": 43373297664,
+        "used_bytes": 8405016576,
+        "available_bytes": 34848890880
+      },
+      {
+        "target": "/boot",
+        "source": "/dev/vda1",
+        "fstype": "ext4",
+        "devno": "254:1",
+        "device": "vda1",
+        "root": "/",
+        "options": "rw,noatime",
+        "super_options": "rw,errors=remount-ro",
+        "size_bytes": 1020702720,
+        "used_bytes": 15552512,
+        "available_bytes": 934686720
+      },
+      {
+        "target": "/boot/efi",
+        "source": "/dev/vda2",
+        "fstype": "vfat",
+        "devno": "254:2",
+        "device": "vda2",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,fmask=0077,dmask=0077,codepage=437,iocharset=ascii,shortname=mixed,utf8,errors=remount-ro",
+        "size_bytes": 535801856,
+        "used_bytes": 9977856,
+        "available_bytes": 525824000
+      },
+      {
+        "target": "/var/lib/abroot/storage/graph/overlay",
+        "source": "/dev/mapper/vos--var-var",
+        "fstype": "btrfs",
+        "devno": "0:33",
+        "device": "dm-1",
+        "root": "/lib/abroot/storage/graph/overlay",
+        "options": "rw,relatime",
+        "super_options": "rw,discard=async,space_cache=v2,subvolid=5,subvol=/",
+        "size_bytes": 43373297664,
+        "used_bytes": 8405016576,
+        "available_bytes": 34848890880,
+        "alias_of": "/var"
+      }
+    ],
+    "physical_root": "/",
+    "backup_sources": [
+      {
+        "path": "/",
+        "from": "/",
+        "device": "dm-7",
+        "fstype": "btrfs",
+        "source": "/dev/mapper/vos--root-root--b",
+        "subvol": "/",
+        "note": "ABRoot's present root: its /etc is an overlay (upper /var/lib/abroot/etc/LABEL), so read / through a non-recursive bind mount (mount --bind / DIR) to back up the raw lower /etc, the tree load restores"
+      },
+      {
+        "path": "/boot",
+        "from": "/boot",
+        "device": "vda1",
+        "fstype": "ext4",
+        "source": "/dev/vda1",
+        "subvol": null
+      },
+      {
+        "path": "/boot/efi",
+        "from": "/boot/efi",
+        "device": "vda2",
+        "fstype": "vfat",
+        "source": "/dev/vda2",
+        "subvol": null
+      },
+      {
+        "path": "/boot/init",
+        "from": null,
+        "device": "dm-0",
+        "fstype": "ext4",
+        "source": "/dev/mapper/vos--root-init",
+        "subvol": null,
+        "mount": {
+          "device": "/dev/mapper/vos--root-init",
+          "fstype": "ext4",
+          "options": "ro,noload,nodev,nosuid,noexec"
+        },
+        "note": "not mounted on the running system: a backup mounts it read-only here as `mount` says, reads it, and unmounts it"
+      },
+      {
+        "path": "/part-future",
+        "from": null,
+        "device": "dm-6",
+        "fstype": "btrfs",
+        "source": "/dev/mapper/vos--root-root--a",
+        "subvol": null,
+        "mount": {
+          "device": "/dev/mapper/vos--root-root--a",
+          "fstype": "btrfs",
+          "options": "ro,rescue=nologreplay,nodev,nosuid,noexec"
+        },
+        "note": "not mounted on the running system: a backup mounts it read-only here as `mount` says, reads it, and unmounts it"
+      },
+      {
+        "path": "/var",
+        "from": "/var",
+        "device": "dm-1",
+        "fstype": "btrfs",
+        "source": "/dev/mapper/vos--var-var",
+        "subvol": "/"
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/zram0",
+        "type": "partition",
+        "size_bytes": 2033922048,
+        "used_bytes": 0,
+        "priority": 100,
+        "device": "zram0"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-00000000000e",
+        "file": "/",
+        "type": "btrfs",
+        "options": "ro,defaults",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "dm-7"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000003",
+        "file": "/boot",
+        "type": "ext4",
+        "options": "noatime,errors=remount-ro",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda1"
+      },
+      {
+        "spec": "UUID=BC00-0001",
+        "file": "/boot/efi",
+        "type": "vfat",
+        "options": "umask=0077",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda2"
+      }
+    ],
+    "crypttab": [],
+    "mdadm_conf": null
+  },
+  "boot": {
+    "loader": {
+      "name": "grub",
+      "firmware": "uefi",
+      "via_shim": true,
+      "package": "grub-efi-amd64-signed",
+      "shim_package": "shim-signed",
+      "evidence": [
+        "LoaderInfo says \"GRUB 2.14-5\"",
+        "shim's MOK variables are set",
+        "package grub-efi-amd64-signed is installed"
+      ]
+    },
+    "efi": {
+      "boot_current": "0001",
+      "boot_next": null,
+      "boot_order": ["0000", "0001", "0002", "0003", "0004", "0005"],
+      "timeout_seconds": 0,
+      "entries": [
+        {
+          "number": "0000",
+          "load_option_hex": "090100002c0055006900410070007000000004071400000000bc00000040800000000000001104061400000000bc0000004080000000000000127fff0400",
+          "description": "UiApp",
+          "active": true,
+          "hidden": true,
+          "category": "app",
+          "in_boot_order": 0,
+          "device_path": ["Fv(bc000000-0000-4000-8000-000000000011)/FvFile(bc000000-0000-4000-8000-000000000012)"],
+          "file": null,
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0001",
+          "load_option_hex": "010000001600550045004600490020004d006900730063002000440065007600690063006500000002010c00d041030a000000000101060000037fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI Misc Device",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 1,
+          "device_path": ["PciRoot(0x0)/Pci(0x3,0x0)"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0002",
+          "load_option_hex": "0100000056005500450046004900200050005800450076003400200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030c1b0000000000000000000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv4 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 2,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0003",
+          "load_option_hex": "0100000077005500450046004900200050005800450076003600200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030d3c0000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv6 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 3,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0004",
+          "load_option_hex": "010000005a0055004500460049002000480054005400500076003400200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030c1b000000000000000000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv4 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 4,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0005",
+          "load_option_hex": "010000007b0055004500460049002000480054005400500076003600200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030d3c000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv6 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 5,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        }
+      ],
+      "loader_interface": {
+        "loader_info": "GRUB 2.14-5",
+        "loader_device_partuuid": "bc000000-0000-4000-8000-000000000005",
+        "loader_image_identifier": null,
+        "loader_entry_selected": null,
+        "loader_entry_default": null,
+        "stub_info": null
+      },
+      "shim_variables": ["MokListRT", "MokListTrustedRT", "MokListXRT", "SbatLevelRT"]
+    },
+    "esps": [
+      {
+        "device": "vda2",
+        "mounted_at": "/boot/efi",
+        "contents": {
+          "files": [
+            {
+              "path": "EFI/BOOT/BOOTX64.EFI",
+              "size": 1088816,
+              "same_as": "EFI/vanilla/shimx64.efi"
+            },
+            {
+              "path": "EFI/BOOT/grub.cfg",
+              "size": 112
+            },
+            {
+              "path": "EFI/BOOT/grubx64.efi",
+              "size": 2897344,
+              "same_as": "EFI/vanilla/grubx64.efi"
+            },
+            {
+              "path": "EFI/BOOT/mmx64.efi",
+              "size": 919296,
+              "same_as": "EFI/vanilla/mmx64.efi"
+            },
+            {
+              "path": "EFI/vanilla/BOOTX64.CSV",
+              "size": 108
+            },
+            {
+              "path": "EFI/vanilla/fbx64.efi",
+              "size": 123552
+            },
+            {
+              "path": "EFI/vanilla/grub.cfg",
+              "size": 112
+            },
+            {
+              "path": "EFI/vanilla/grubx64.efi",
+              "size": 2897344,
+              "same_as": "EFI/BOOT/grubx64.efi"
+            },
+            {
+              "path": "EFI/vanilla/mmx64.efi",
+              "size": 919296,
+              "same_as": "EFI/BOOT/mmx64.efi"
+            },
+            {
+              "path": "EFI/vanilla/shimx64.efi",
+              "size": 1088816,
+              "same_as": "EFI/BOOT/BOOTX64.EFI"
+            }
+          ],
+          "debian_grub_stub": null
+        }
+      }
+    ],
+    "grub": {
+      "dir": "/boot/grub",
+      "installed_platforms": ["x86_64-efi"],
+      "grub_cfg": {
+        "entries": ["Previous State (A)", "Current State (B)"],
+        "search_uuids": [],
+        "modules": [
+          "all_video",
+          "efi_gop",
+          "efi_uga",
+          "ieee1275_fb",
+          "vbe",
+          "vga",
+          "video_bochs",
+          "video_cirrus",
+          "gfxterm",
+          "gettext"
+        ],
+        "default_linux": null,
+        "default_initrd": null,
+        "lang": "en_US"
+      },
+      "grubenv": {},
+      "default_grub": {
+        "GRUB_DEFAULT": "0",
+        "GRUB_TIMEOUT": "0",
+        "GRUB_DISTRIBUTOR": "`lsb_release -i -s 2> /dev/null || echo Debian`",
+        "GRUB_CMDLINE_LINUX_DEFAULT": "quiet",
+        "GRUB_CMDLINE_LINUX": ""
+      },
+      "debconf": null
+    },
+    "systemd_boot": null,
+    "kernels": {
+      "installed": [
+        {
+          "version": "7.3.3+deb14-amd64",
+          "dir": "/boot/init/vos-a",
+          "root_label": "vos-a",
+          "vmlinuz_bytes": 14735296,
+          "initrd_bytes": 221701320,
+          "config": true,
+          "running": false,
+          "modules_installed": null
+        },
+        {
+          "version": "7.3.3+deb14-amd64",
+          "dir": "/boot/init/vos-b",
+          "root_label": "vos-b",
+          "vmlinuz_bytes": 14735296,
+          "initrd_bytes": 221655577,
+          "config": true,
+          "running": true,
+          "modules_installed": true
+        }
+      ],
+      "symlinks": {
+        "/vmlinuz": "boot/vmlinuz-7.3.3+deb14-amd64",
+        "/vmlinuz.old": "boot/vmlinuz-7.3.3+deb14-amd64",
+        "/initrd.img": "boot/initrd.img-7.3.3+deb14-amd64",
+        "/initrd.img.old": "boot/initrd.img-7.3.3+deb14-amd64"
+      }
+    },
+    "cmdline": {
+      "raw": "BOOT_IMAGE=/vos-b/vmlinuz-7.3.3+deb14-amd64 root=/dev/mapper/vos--root-root--b console=tty0 console=ttyS0,115200n8 bgrt_disable",
+      "words": [
+        "BOOT_IMAGE=/vos-b/vmlinuz-7.3.3+deb14-amd64",
+        "root=/dev/mapper/vos--root-root--b",
+        "console=tty0",
+        "console=ttyS0,115200n8",
+        "bgrt_disable\n"
+      ],
+      "storage": {
+        "BOOT_IMAGE": "/vos-b/vmlinuz-7.3.3+deb14-amd64",
+        "root": "/dev/mapper/vos--root-root--b"
+      }
+    },
+    "kernel_cmdline_file": null,
+    "initramfs": {
+      "generator": "initramfs-tools",
+      "modules": "most",
+      "compress": "zstd",
+      "resume": null,
+      "crypttab_in_initramfs": true
+    },
+    "packages": {
+      "grub-efi-amd64": "2.14-5",
+      "grub-efi-amd64-bin": "2.14-5",
+      "grub-efi-amd64-signed": "1+2.14+5",
+      "grub2-common": "2.14-5",
+      "shim-signed": "1.51+16.1-2",
+      "shim-unsigned": "16.1-2",
+      "shim-helpers-amd64-signed": "1+16.1+2",
+      "mokutil": "0.7.2-2",
+      "efibootmgr": "18-4.1",
+      "os-prober": "1.85",
+      "linux-image-amd64": "7.3.3-1",
+      "initramfs-tools": "0.151",
+      "lvm2": "2.03.31-2+b2",
+      "thin-provisioning-tools": "1.1.0-5.1",
+      "cryptsetup": "2:2.8.8-1",
+      "cryptsetup-initramfs": "2:2.8.8-1",
+      "cryptsetup-bin": "2:2.8.8-1",
+      "systemd-cryptsetup": "262.2-1",
+      "btrfs-progs": "7.3-1",
+      "e2fsprogs": "1.47.4-1+b3",
+      "dosfstools": "4.2-1.2",
+      "exfatprogs": "1.4.3-1",
+      "ntfs-3g": "1:2026.9.28-2",
+      "grub-efi": "2.14-5",
+      "linux-base": "4.17",
+      "zram-tools": "0.3.7-1"
+    },
+    "abroot": {
+      "config": {
+        "partLabelA": "vos-a",
+        "partLabelB": "vos-b",
+        "partLabelVar": "vos-var",
+        "partLabelBoot": "vos-boot",
+        "partLabelEfi": "vos-efi",
+        "PartCryptVar": "/dev/mapper/vos--var-var",
+        "thinInitVolume": "vos-init",
+        "thinProvisioning": true,
+        "files": ["/usr/share/abroot/abroot.json", "/etc/abroot/abroot.json"]
+      },
+      "thin_two_roots": true,
+      "v1_system": false,
+      "present": "vos-b",
+      "future": "vos-a",
+      "grub": {
+        "file": "/boot/grub/grub.cfg",
+        "default": "1",
+        "default_label": "vos-b",
+        "entries": [
+          {
+            "title": "Previous State (A)",
+            "class": "abroot-a",
+            "root": "(lvm/vos--root-init)",
+            "configfile": "/vos-a/abroot.cfg",
+            "label": "vos-a"
+          },
+          {
+            "title": "Current State (B)",
+            "class": "abroot-b",
+            "root": "(lvm/vos--root-init)",
+            "configfile": "/vos-b/abroot.cfg",
+            "label": "vos-b"
+          }
+        ],
+        "future_cfg": true
+      },
+      "init": {
+        "label": "vos-init",
+        "device": "dm-0",
+        "uuid": "bc000000-0000-4000-8000-000000000008",
+        "fstype": "ext4",
+        "dm_name": "vos--root-init",
+        "mounted_at": null,
+        "read": true
+      },
+      "var": {
+        "label": "vos-var",
+        "device": "dm-1",
+        "uuid": "bc000000-0000-4000-8000-00000000000a",
+        "fstype": "btrfs",
+        "dm_name": "vos--var-var",
+        "mounted_at": "/var"
+      },
+      "roots": [
+        {
+          "label": "vos-a",
+          "device": "dm-6",
+          "uuid": "bc000000-0000-4000-8000-00000000000c",
+          "fstype": "btrfs",
+          "dm_name": "vos--root-root--a",
+          "mounted_at": null,
+          "present": false,
+          "read": true,
+          "abimage": {
+            "digest": "sha256:f1be77e7c9e939d8d3a08a1682e797b60cd134b07217a001ae369067726e414c",
+            "timestamp": "2026-11-14T06:02:06.792372+00:00",
+            "image": "ghcr.io/vanilla-os/gnome:latest"
+          },
+          "empty": false,
+          "init": {
+            "exists": true,
+            "files": [
+              "System.map-7.3.3+deb14-amd64",
+              "abroot.cfg",
+              "config-7.3.3+deb14-amd64",
+              "initrd.img-7.3.3+deb14-amd64",
+              "vmlinuz-7.3.3+deb14-amd64"
+            ],
+            "kernels": ["7.3.3+deb14-amd64"],
+            "abroot_cfg": {
+              "linux": "linux   (lvm/vos--root-init)/vos-a/vmlinuz-7.3.3+deb14-amd64 root=UUID=bc000000-0000-4000-8000-00000000000c console=tty0 console=ttyS0,115200n8 bgrt_disable $vt_handoff lsm=integrity",
+              "kernel": "(lvm/vos--root-init)/vos-a/vmlinuz-7.3.3+deb14-amd64",
+              "initrd": "(lvm/vos--root-init)/vos-a/initrd.img-7.3.3+deb14-amd64",
+              "root": "UUID=bc000000-0000-4000-8000-00000000000c",
+              "search_uuid": null
+            }
+          }
+        },
+        {
+          "label": "vos-b",
+          "device": "dm-7",
+          "uuid": "bc000000-0000-4000-8000-00000000000e",
+          "fstype": "btrfs",
+          "dm_name": "vos--root-root--b",
+          "mounted_at": "/",
+          "present": true,
+          "read": true,
+          "abimage": {
+            "digest": "sha256:f1be77e7c9e939d8d3a08a1682e797b60cd134b07217a001ae369067726e414c",
+            "timestamp": "2026-11-14T06:13:52.739141734Z",
+            "image": "ghcr.io/vanilla-os/gnome:latest"
+          },
+          "empty": false,
+          "init": {
+            "exists": true,
+            "files": [
+              "System.map-7.3.3+deb14-amd64",
+              "abroot.cfg",
+              "config-7.3.3+deb14-amd64",
+              "initrd.img-7.3.3+deb14-amd64",
+              "vmlinuz-7.3.3+deb14-amd64"
+            ],
+            "kernels": ["7.3.3+deb14-amd64"],
+            "abroot_cfg": {
+              "linux": "linux   /vos-b/vmlinuz-7.3.3+deb14-amd64 root=/dev/mapper/vos--root-root--b console=tty0 console=ttyS0,115200n8 bgrt_disable $vt_handoff",
+              "kernel": "/vos-b/vmlinuz-7.3.3+deb14-amd64",
+              "initrd": "/vos-b/initrd.img-7.3.3+deb14-amd64",
+              "root": "/dev/mapper/vos--root-root--b",
+              "search_uuid": "bc000000-0000-4000-8000-000000000008"
+            }
+          }
+        }
+      ],
+      "kargs": "console=tty0 console=ttyS0,115200n8 bgrt_disable $vt_handoff",
+      "operation_lock": false,
+      "mounts_skipped": false
+    }
+  },
+  "warnings": []
+}

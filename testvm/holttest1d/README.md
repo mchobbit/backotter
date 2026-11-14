@@ -39,7 +39,7 @@ guests.  A guest passes only when every check passes.  Status is as of
 | (1All only) | EndeavourOS, Manjaro, Garuda Linux, BigLinux | `endeavouros`, `endeavouros-grub`, `manjaro`, `garuda`, `biglinux` (`make-arch.sh --live`: each one's own live ISO, with its installer's defaults) | passes on both hosts (runs `eosmj1` to `eosmj5`; `garuda`: `ga4-4` Chopin and `ga4-5` Cinqcent, 2026-11-14, with snap-pac's 4 snapshots restored as shared ones; it needs rustic-bko 0.11.4+backotter.11 or later, since rel6's .9 restores the first shared snapshot wrong: `HT_ROUND=t2r-58a6955-3bb01f1-99b9b56` until a shipped set has it; `biglinux`: `bl4-2` Chopin and `bl4-3` Cinqcent, 2026-11-14, with `HT_SOURCE_PREP=prep/biglinux-timeshift.sh`'s 3 Timeshift snapshots left out) |
 | 1V | Void Linux (musl) | `void-musl` | passes |
 | 1G | Gentoo Linux | `gentoo`, `gentoo-systemd` | passes on both hosts (2026-11-12, bko-holt 7760c9e7c497 and rel6's rustic-bko: `gentoo` runs `g5-3` Cinqcent and `g5-4` Chopin, with GRUB's embedded lvmid that of the restored vg0/root; `gentoo-systemd` `g5-2` Cinqcent and `g5-5` Chopin) |
-| 1Obscure | Pop!_OS, NixOS, Guix System, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12, Chimera Linux, PikaOS, Kali Linux | `pop24`, `nixos2605`, `guix15`, `guix15-bios`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12`, `chimera`, `chimera-uefi`, `chimera-zfs`, `pikaos4`, `pikaos4-luks`, `kali` | passes (the Chimera guests on both hosts, 2026-11-12: `chimera` runs `c5-1` Cinqcent and `c5-2` Chopin, `chimera-uefi` `c5-3` Cinqcent and `c5-4` Chopin, `chimera-zfs` `c5-5` Chopin and `c5-6` Cinqcent; the PikaOS guests on both hosts, 2026-11-14: `pikaos4` runs `p6-4` Chopin and `p6-5` Cinqcent, `pikaos4-luks` `p6-6` Chopin and `p6-7` Cinqcent, booted alone from the EFI/BOOT fallback, `pikaos4-luks` with its passphrase typed by `console-boot.py`; rEFInd's ESP files and `refind_linux.conf` byte-identical, docs/design/pikaos.md; `kali` on both hosts, 2026-11-14: runs `k5-1` Chopin and `k5-2` Cinqcent, booted alone from the EFI/BOOT fallback with fresh OVMF variables, docs/design/kali.md); the Guix guests on both hosts, 2026-11-14: `guix15` runs `gx6-2` Chopin and `gx6-4` Cinqcent (UEFI, booted alone through Guix's NVRAM entry, read from efivarfs by `nvboot-efivars.sh`: Guix has no efibootmgr; `gx6-3` Cinqcent FAILed once on one 4 KiB hole rustic-bko didn't keep in a hard-linked store file, not seen again), `guix15-bios` `gx6-5` Chopin and `gx6-6` Cinqcent (BIOS, GRUB written by `grub-bios-setup` from the source's own images), docs/design/guix.md) |
+| 1Obscure | Pop!_OS, NixOS, Guix System, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12, Chimera Linux, PikaOS, Kali Linux, Vanilla OS | `pop24`, `nixos2605`, `guix15`, `guix15-bios`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12`, `chimera`, `chimera-uefi`, `chimera-zfs`, `pikaos4`, `pikaos4-luks`, `kali`, `vanilla3` | passes (the Chimera guests on both hosts, 2026-11-12: `chimera` runs `c5-1` Cinqcent and `c5-2` Chopin, `chimera-uefi` `c5-3` Cinqcent and `c5-4` Chopin, `chimera-zfs` `c5-5` Chopin and `c5-6` Cinqcent; the PikaOS guests on both hosts, 2026-11-14: `pikaos4` runs `p6-4` Chopin and `p6-5` Cinqcent, `pikaos4-luks` `p6-6` Chopin and `p6-7` Cinqcent, booted alone from the EFI/BOOT fallback, `pikaos4-luks` with its passphrase typed by `console-boot.py`; rEFInd's ESP files and `refind_linux.conf` byte-identical, docs/design/pikaos.md; `kali` on both hosts, 2026-11-14: runs `k5-1` Chopin and `k5-2` Cinqcent, booted alone from the EFI/BOOT fallback with fresh OVMF variables, docs/design/kali.md; `vanilla3` on both hosts, 2026-11-14: runs `v7-1` Chopin and `v7-2` Cinqcent, on /bkoscratch ("The ABRoot guest" below), both roots booted alone, the other picked on GRUB's serial menu by `console-keys.py`, docs/design/vanillaos.md; the Guix guests on both hosts, 2026-11-14: `guix15` runs `gx6-2` Chopin and `gx6-4` Cinqcent (UEFI, booted alone through Guix's NVRAM entry, read from efivarfs by `nvboot-efivars.sh`: Guix has no efibootmgr; `gx6-3` Cinqcent FAILed once on one 4 KiB hole rustic-bko didn't keep in a hard-linked store file, not seen again), `guix15-bios` `gx6-5` Chopin and `gx6-6` Cinqcent (BIOS, GRUB written by `grub-bios-setup` from the source's own images), docs/design/guix.md) |
 | 1H | Haiku | `haiku6` | passes (run `haiku024`, rustic-bko 0.11.4+backotter.7, which restores the volume root's metadata: Tracker's empty `trash` had made a new BFS volume look used) |
 | 1I | illumos | `omnios58`, `omnios58-mirror` | both pass (`omnios58-mirror`: run `raid6`, the restored `rpool` ONLINE on both disks) |
 | 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `freebsd15-mirror`, `freebsd15-geli`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6`, `alpinebsd` | passes; `freebsd15-geli` (root pool on GELI, docs/design/geli.md) not run yet: it waits for bko-holt's GELI support (G2, G3) |
@@ -147,6 +147,62 @@ ht1.sh boots both, on the source and on the restored disk:
   support, so until bin/ is refreshed a run of `kinoite44` needs
   `HT_HOLT` or `HT_HOLT_BIN` naming a build from main.
 
+**The ABRoot guest** (2026-11-14, runs `v7-1` Chopin and `v7-2` Cinqcent,
+on /bkoscratch, a static bko-holt from main's tree, `HT_HOLT`): `vanilla3`
+(`make-vanilla.sh`; docs/design/vanillaos.md) is Vanilla OS 3: UEFI with
+Secure Boot on, two btrfs roots `vos-a` and `vos-b` on LVM thin LVs, an
+`init` LV with each root's kernel, initramfs and `abroot.cfg`, and a master
+grub.cfg whose literal `set default=1` boots B ("Current State (B)"); its
+entry 0, "Previous State (A)", boots A.  ht1.sh boots both roots, on the
+source and on the restored disk, each boot alone:
+
+- **The source's baseline.**  On a source with
+  `/usr/share/abroot/abroot.json` and `abroot`, the source phase boots its
+  default, then the other entry, then its default again, and only then
+  dumps.  Each boot records the root `abroot status` calls present and
+  the one it marks ✓ (it never says "previous"), the booted root's label,
+  its `/abimage.abr` digest, `/etc/bko-root`, `/proc/cmdline` and the
+  master grub.cfg's and grub.cfg.future's sha256 (`logs/source-abroot.txt`,
+  `source-abroot-other.txt`); the other boot's boot state too.  The other
+  entry must boot the other root, the default must show the same as its
+  first boot, and no boot may change grub.cfg.
+- **How the other root is picked.**  The master grub.cfg reads `default`
+  literally, so `grub-reboot` would do nothing: vm_up's `GRUB_PICK` runs the
+  guest under `testvm/vanilla/console-keys.py`, which types the arrow
+  toward the other entry twice and Enter once its title shows on GRUB's
+  serial menu.
+- **mount-sys.**  ABRoot's init hook mounts /var and /etc's overlay and
+  repairs the root's integrity when it finds it broken; it prints to the
+  console only (before systemd).  Each boot's console log must have its
+  success line and no repair, and its journal no ABRoot repair.
+- **The restored disk's two boots.**  After the default boot's checks and
+  its dump, the other entry boots in a fresh `--snapshot` QEMU.  Each must
+  show exactly what the source's did (so grub.cfg unwritten), and its boot
+  state may have no line the source's lacked.  `FLAKY_UNITS` leaves out
+  `systemd-networkd-wait-online.service`, which fails on some boots of the
+  guest and not others (`logs/bootstate-raw.txt` has each boot as it was).
+- **What the file check holds.**  `judge.py fs` gives no boot-stage excuse
+  to the master grub.cfg and grub.cfg.future, init's `abroot.cfg`s,
+  kernels, initramfs, configs and System.maps, or EFI/vanilla and EFI/BOOT
+  (24 paths), and wants them in the source's record: load regenerates
+  nothing on ABRoot.  The dump check compares device-mapper devices by
+  name when the restored machine numbers them otherwise (it activated
+  vos-var first on Cinqcent), and lets the thin pool's LVs, made anew by
+  lvcreate, have new UUIDs, the rescuer's host and their own place on
+  the PV.
+- **Results.**  Both pass: 0 file differences, 0 dump differences, all of
+  load's stages, both restored boots the source's.  The run's peak was
+  27.0 GiB on /bkoscratch (`HT_RAM=0` under `cmp-run.sh --reserve 0 5`),
+  in rebuild, so ram-sizes.tsv's D is 30, over every host's RAM-disk
+  ceiling: ht1-queue.sh runs it on /bkoscratch with `DISK_OVER=1` and
+  leaves it queued without.  By hand:
+
+      cd ~/backotter-work && WEAR_TAG=ht1:RUN:vanilla3 HT_PORT=2690 HT_RAM=0 setsid -f ./cmp-run.sh --reserve 0 5 \
+        sudo -E testvm/holttest1d/ht1.sh vanilla3 RUN >/bkoscratch/holttest1d/RUN-vanilla3.log 2>&1 </dev/null
+- **bko-holt.**  bin/'s bko-holt has no ABRoot support (docs/design/
+  vanillaos.md, V2-V4), so until bin/ is refreshed a run needs `HT_HOLT`
+  or `HT_HOLT_BIN` naming a build from main.
+
 **HoltTest1All** (the user's definition, 2026-11-05): "like HoltTest1D
 except that HoltTest1All targets every single guest OS we have": every guest
 in `vms/` on the test hosts, 39 as of 2026-11-05 (the same set on Chopin and
@@ -156,7 +212,7 @@ A guest added since joins it with its group: among them 1G's `gentoo` and
 `gentoo-systemd` (2026-11-12, docs/design/gentoo.md), 1Obscure's three
 Chimera guests, 1F's `kinoite44`, 1C's `cachyos-zfs` and 1U's `neon24` and
 `anduinos2` (docs/design/anduinos.md), and 1Obscure's `pikaos4` and
-`pikaos4-luks` (2026-11-14, docs/design/pikaos.md), 1D's `proxmox9` and `proxmox9-mirror` (2026-11-14, docs/design/proxmox.md) and `kali` (2026-11-14, docs/design/kali.md), and 1Obscure's `guix15` and `guix15-bios` (2026-11-14, docs/design/guix.md), and `garuda` and
+`pikaos4-luks` (2026-11-14, docs/design/pikaos.md), 1D's `proxmox9` and `proxmox9-mirror` (2026-11-14, docs/design/proxmox.md) and `kali` (2026-11-14, docs/design/kali.md) and `vanilla3` (2026-11-14, docs/design/vanillaos.md; on /bkoscratch: a queue needs `DISK_OVER=1`), and 1Obscure's `guix15` and `guix15-bios` (2026-11-14, docs/design/guix.md), and `garuda` and
 `biglinux` beside EndeavourOS and Manjaro (2026-11-14, docs/design/garuda.md
 and docs/design/biglinux.md).
 Run `r1all` (2026-11-05): 16 pass, the 15 above plus `mx25` (MX 25 reports
@@ -408,6 +464,10 @@ Each run also checks, as the plan asks:
 - on an ostree source, its two deployments booted in turn, on the source
   first and then on the restored disk, which must show what the source's
   boots did ("The ostree guest" above).
+- on an ABRoot source, its two roots booted in turn, the other picked on
+  GRUB's serial menu, on the source first and then on the restored disk,
+  which must show what the source's boots did, grub.cfg unwritten and no
+  integrity repair by mount-sys ("The ABRoot guest" above).
 - GRUB's embedded LVM ids: every EFI binary on the restored machine's
   mounted vfat file systems that names its prefix by
   `(lvmid/VG-UUID/LV-UUID)` (GRUB's core image when /boot/grub is on an

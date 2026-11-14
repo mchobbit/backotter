@@ -1048,6 +1048,26 @@
     "entry:testvm/test2/stic/limits.json#ubuntu26-zfsmirror"
    ]
   },
+  "vanilla3": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/vanilla3/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/vanilla3/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#vanilla3"
+   ],
+   "notes": "the guest's own /var/lib/abroot (its /etc uppers whole, its containers storage's whiteouts by nodecopy.py) is copied into the fixture: a guest image change re-keys the cell through the guest's generation"
+  },
   "void-musl": {
    "os": "linux",
    "bins": [

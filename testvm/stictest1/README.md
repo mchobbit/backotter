@@ -65,7 +65,7 @@ testvm/HOSTS.md has every host and what stays on the big ones):
 | Host | Guests |
 |---|---|
 | Chopin | anduinos2, nixos2605, chimera, garuda, gentoo, guix15, kali, pikaos4, proxmox9, dragonfly6, ghostbsd26, ghostbsd26-zfs, hardenedbsd15, kinoite44, ubuntu26-zfs, ubuntu26-uefi, ubuntu26-zfsmirror, ubuntu24, ubuntu24-uefi, debian12, devuan6, zorin18, mint22, debian13, pop24, mx25, sculpt2610 |
-| Cinqcent | aerynos, alpine324, alpinebsd, freebsd14, freebsd15-geli, arch, artix-dinit, artix-s6, cachyos, chimera-uefi, chimera-zfs, debian13-stack, debian13-zfs, fedora44, fedora44-uefi, freebsd15, freebsd15-ufs, garuda, gentoo-systemd, haiku6, netbsd11, omarchy, omnios58, openbsd8, openbsd8-crypt, guix15-bios, pikaos4-luks, proxmox9-mirror, rocky10, rocky10-lvm, tumbleweed, void-musl |
+| Cinqcent | aerynos, alpine324, alpinebsd, freebsd14, freebsd15-geli, arch, artix-dinit, artix-s6, cachyos, chimera-uefi, chimera-zfs, debian13-stack, debian13-zfs, fedora44, fedora44-uefi, freebsd15, freebsd15-ufs, garuda, gentoo-systemd, haiku6, netbsd11, omarchy, omnios58, openbsd8, openbsd8-crypt, guix15-bios, pikaos4-luks, proxmox9-mirror, rocky10, rocky10-lvm, tumbleweed, vanilla3, void-musl |
 
 ## Running one
 
@@ -153,7 +153,7 @@ watched through their exit files every 15 s; the results land in
 
 The queue times guests by their newest passing run on the hosts, else by these.
 
-Estimates (seconds; round st2a's, GuestTest1's for the guests it added, Bazzite B5's for kinoite44, Chimera C4's for chimera, chimera-uefi and chimera-zfs, Gentoo G4's for gentoo and gentoo-systemd, AnduinOS A4's for anduinos2, PikaOS P5's for pikaos4 and pikaos4-luks, Guix GX5's for guix15 and guix15-bios, Proxmox P5's for proxmox9 and proxmox9-mirror, an estimate for garuda until Garuda GA5's run):
+Estimates (seconds; round st2a's, GuestTest1's for the guests it added, Bazzite B5's for kinoite44, Chimera C4's for chimera, chimera-uefi and chimera-zfs, Gentoo G4's for gentoo and gentoo-systemd, AnduinOS A4's for anduinos2, PikaOS P5's for pikaos4 and pikaos4-luks, Guix GX5's for guix15 and guix15-bios, Proxmox P5's for proxmox9 and proxmox9-mirror, Vanilla OS V6's for vanilla3, an estimate for garuda until Garuda GA5's run):
 aerynos 150, alpine324 153, alpinebsd 401, anduinos2 400, arch 137, artix-dinit 170,
 artix-s6 367, cachyos 300, chimera 215, chimera-uefi 200, chimera-zfs 290,
 debian12 117, debian13 477, debian13-stack 547, debian13-zfs 856,
@@ -163,7 +163,7 @@ garuda 300, gentoo 270, gentoo-systemd 230, ghostbsd26-zfs 751, guix15 470, guix
 nixos2605 236, omarchy 302, omnios58 370, openbsd8 338, pikaos4 300,
 pikaos4-luks 400, pop24 622, proxmox9 460, proxmox9-mirror 560,
 rocky10 113, rocky10-lvm 151, sculpt2610 49, tumbleweed 186, ubuntu24 957, ubuntu26-uefi 374,
-ubuntu26-zfs 957, ubuntu26-zfsmirror 623, void-musl 115, zorin18 586.
+ubuntu26-zfs 957, ubuntu26-zfsmirror 623, vanilla3 1400, void-musl 115, zorin18 586.
 
 ## BKO_TESTVM: checks from another testvm/
 

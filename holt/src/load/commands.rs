@@ -682,11 +682,244 @@ fn lvm_scalar(v: &Value) -> String {
     }
 }
 
-/// The volume group as `vgcfgrestore` reads it, from the dump's view of it.
+/// A thin pool of a volume group's, as load makes it again with lvcreate
+/// once vgcfgrestore has restored the rest of the group
+/// (docs/design/vanillaos.md, "Thin pools in `load`").
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThinPool {
+    pub name: String,
+    /// The pool's data and metadata LVs (POOL_tdata, POOL_tmeta), in bytes.
+    pub data_bytes: u64,
+    pub meta_bytes: u64,
+    /// The data LV's stripes (count, stripe size in bytes) when it is
+    /// striped across more than one PV.
+    pub data_stripes: Option<(u64, u64)>,
+    /// The segment's chunk_size and discards, where the dump has them;
+    /// zero_new_blocks, which lvm2 writes only when it is on; the pool LV's
+    /// ERROR_WHEN_FULL flag.
+    pub chunk_bytes: Option<u64>,
+    pub discards: Option<String>,
+    pub zero: bool,
+    pub error_when_full: bool,
+    pub attrs: LvAttrs,
+    /// Its thin LVs in the source's device_id order.
+    pub thins: Vec<ThinLv>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ThinLv {
+    pub name: String,
+    /// Its virtual size.
+    pub bytes: u64,
+    pub device_id: u64,
+    pub attrs: LvAttrs,
+}
+
+/// What of an LV's own lvcreate doesn't set from its sizes: its tags, its
+/// ACTIVATION_SKIP flag and read-only permission (no WRITE in its status).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct LvAttrs {
+    pub tags: Vec<String>,
+    pub activation_skip: bool,
+    pub read_only: bool,
+}
+
+impl LvAttrs {
+    fn of(lv: &Value) -> LvAttrs {
+        let list = |k: &str| lv.get(k).and_then(Value::as_array).cloned().unwrap_or_default();
+        let has = |f: &str| list("status").iter().chain(list("flags").iter()).any(|x| x.as_str() == Some(f));
+        LvAttrs {
+            tags: list("tags").iter().filter_map(|x| x.as_str().map(str::to_string)).collect(),
+            activation_skip: has("ACTIVATION_SKIP"),
+            read_only: lv.get("status").is_some() && !has("WRITE"),
+        }
+    }
+}
+
+/// A volume group's thin provisioning: its pools, whether lvcreate makes a
+/// pool metadata spare (as the source had an lvolN_pmspare), why not when
+/// the source's was too small to make again, and every LV vg_metadata
+/// leaves out (the pools, their data and metadata LVs, their thin LVs and
+/// the spare).
+#[derive(Debug, Clone, PartialEq, Default)]
+pub struct Thin {
+    pub pools: Vec<ThinPool>,
+    pub spare: bool,
+    pub spare_note: Option<String>,
+    pub dropped: Vec<String>,
+}
+
+fn lv_segments(lv: &Value) -> Vec<Value> {
+    lv.get("segments").and_then(Value::as_array).cloned().unwrap_or_default()
+}
+
+/// The volume group's thin pools and thin LVs.  Refused in version 1: a
+/// thin LV that is a snapshot (origin, external_origin), a pool whose data
+/// or metadata LV isn't linear or striped (RAID, cache), a striped metadata
+/// LV, data stripes that differ between segments, a pool LV on a PV that
+/// isn't allocatable, a pool or thin LV that isn't one segment, and a thin
+/// LV whose pool isn't in the group.
+pub fn thin_of(vg: &Value) -> Result<Thin, String> {
+    let name = s(vg, "name").unwrap_or_default();
+    let ext = num(vg, "extent_size_bytes").unwrap_or(0);
+    let lvs = vg.get("logical_volumes").and_then(Value::as_array).cloned().unwrap_or_default();
+    let pvs = vg.get("physical_volumes").and_then(Value::as_array).cloned().unwrap_or_default();
+    let by_name = |n: &str| lvs.iter().find(|l| s(l, "name").as_deref() == Some(n));
+    let ty_of = |seg: &Value| seg.get("type").and_then(Value::as_str).unwrap_or("?").to_string();
+    // The PVs a striped segment sits on that lvcreate can't allocate on.
+    let unallocatable = |seg: &Value| -> Vec<String> {
+        let on = seg.get("stripes").and_then(Value::as_array).cloned().unwrap_or_default();
+        on.iter()
+            .step_by(2)
+            .filter_map(|x| x.as_str())
+            .filter(|pv| !pvs.iter().any(|p| s(p, "name").as_deref() == Some(pv) && p.get("status").and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x.as_str() == Some("ALLOCATABLE")))))
+            .map(str::to_string)
+            .collect()
+    };
+    let mut t = Thin::default();
+    for lv in &lvs {
+        let ln = s(lv, "name").unwrap_or_default();
+        let segs = lv_segments(lv);
+        if !segs.iter().any(|g| ty_of(g) == "thin-pool") {
+            continue;
+        }
+        if segs.len() != 1 {
+            return Err(format!("thin pool {name}/{ln} has {} segments; version 1 makes a pool of one", segs.len()));
+        }
+        let seg = &segs[0];
+        // A sub-LV's size, and its stripes (count, stripe size) when more
+        // than one.
+        let mut size = |key: &str, what: &str| -> Result<(u64, Option<(u64, u64)>), String> {
+            let sub = s(seg, key).ok_or_else(|| format!("thin pool {name}/{ln} doesn't name its {what} LV"))?;
+            let l = by_name(&sub).ok_or_else(|| format!("thin pool {name}/{ln}'s {what} LV {sub} isn't in the group"))?;
+            let mut extents = 0;
+            let mut stripes: Vec<(u64, u64)> = vec![];
+            for g in lv_segments(l) {
+                let ty = ty_of(&g);
+                if ty != "striped" {
+                    return Err(format!("thin pool {name}/{ln}'s {what} LV {sub} has a {ty} segment; version 1 makes thin pools on linear and striped LVs only (not RAID or cache)"));
+                }
+                if let Some(pv) = unallocatable(&g).first() {
+                    return Err(format!("thin pool {name}/{ln}'s {what} LV {sub} is on {pv}, which isn't allocatable (pvchange -x n): lvcreate can't make it there again"));
+                }
+                extents += num(&g, "extent_count").unwrap_or(0);
+                stripes.push((num(&g, "stripe_count").unwrap_or(1).max(1), num(&g, "stripe_size").unwrap_or(0) * 512));
+            }
+            stripes.dedup();
+            let striped = match stripes.as_slice() {
+                [] | [(1, _)] => None,
+                [one] => Some(*one),
+                _ => return Err(format!("thin pool {name}/{ln}'s {what} LV {sub} has segments of different stripes; version 1 makes a pool's data LV with one stripe count and size")),
+            };
+            t.dropped.push(sub);
+            Ok((extents * ext, striped))
+        };
+        let (data_bytes, data_stripes) = size("pool", "data")?;
+        let (meta_bytes, meta_stripes) = size("metadata", "metadata")?;
+        if let Some((n, _)) = meta_stripes {
+            return Err(format!("thin pool {name}/{ln}'s metadata LV is striped across {n} PVs; version 1 makes a pool's metadata LV linear only"));
+        }
+        t.dropped.push(ln.clone());
+        t.pools.push(ThinPool {
+            name: ln,
+            data_bytes,
+            meta_bytes,
+            data_stripes,
+            chunk_bytes: num(seg, "chunk_size").map(|c| c * 512),
+            discards: s(seg, "discards"),
+            zero: num(seg, "zero_new_blocks").is_some_and(|z| z != 0),
+            error_when_full: [lv.get("status"), lv.get("flags")].into_iter().flatten().filter_map(Value::as_array).flatten().any(|x| x.as_str() == Some("ERROR_WHEN_FULL")),
+            attrs: LvAttrs::of(lv),
+            thins: vec![],
+        });
+    }
+    for lv in &lvs {
+        let ln = s(lv, "name").unwrap_or_default();
+        let segs = lv_segments(lv);
+        if !segs.iter().any(|g| ty_of(g) == "thin") {
+            continue;
+        }
+        if segs.len() != 1 {
+            return Err(format!("thin LV {name}/{ln} has {} segments; version 1 makes a thin LV of one", segs.len()));
+        }
+        let seg = &segs[0];
+        if let Some(o) = s(seg, "origin") {
+            return Err(format!("thin LV {name}/{ln} is a thin snapshot of {o}; version 1 doesn't make thin snapshots"));
+        }
+        if let Some(o) = s(seg, "external_origin") {
+            return Err(format!("thin LV {name}/{ln} has the external origin {o}; version 1 doesn't make thin LVs with one"));
+        }
+        let pool = s(seg, "thin_pool").unwrap_or_default();
+        let Some(p) = t.pools.iter_mut().find(|p| p.name == pool) else {
+            return Err(format!("thin LV {name}/{ln}'s pool {pool} isn't a thin pool in the group"));
+        };
+        p.thins.push(ThinLv { name: ln.clone(), bytes: num(seg, "extent_count").unwrap_or(0) * ext, device_id: num(seg, "device_id").unwrap_or(0), attrs: LvAttrs::of(lv) });
+        t.dropped.push(ln);
+    }
+    for p in &mut t.pools {
+        p.thins.sort_by_key(|l| l.device_id);
+    }
+    // The spare: lvcreate makes its own for a pool (with
+    // --poolmetadataspare y), sized for the largest pool's metadata.  One
+    // the source had smaller than that (the metadata grown since) gave
+    // back fewer extents than the new one takes: it is made only where the
+    // group's free extents cover the difference.
+    if !t.pools.is_empty() {
+        let mut spare_bytes = 0;
+        for lv in &lvs {
+            let ln = s(lv, "name").unwrap_or_default();
+            let visible = lv.get("status").and_then(Value::as_array).is_some_and(|a| a.iter().any(|x| x.as_str() == Some("VISIBLE")));
+            if ln.ends_with("_pmspare") && !visible {
+                for g in lv_segments(lv) {
+                    if let Some(pv) = unallocatable(&g).first() {
+                        return Err(format!("the pool metadata spare {name}/{ln} is on {pv}, which isn't allocatable (pvchange -x n): lvcreate can't make it there again"));
+                    }
+                    spare_bytes += num(&g, "extent_count").unwrap_or(0) * ext;
+                }
+                t.spare = true;
+                t.dropped.push(ln);
+            }
+        }
+        let meta = t.pools.iter().map(|p| p.meta_bytes).max().unwrap_or(0);
+        if t.spare && spare_bytes < meta {
+            let total: u64 = pvs.iter().filter_map(|p| num(p, "pe_count")).sum::<u64>() * ext;
+            let used: u64 = lvs.iter().flat_map(lv_segments).filter(|g| ty_of(g) == "striped").filter_map(|g| num(&g, "extent_count")).sum::<u64>() * ext;
+            let free = total.saturating_sub(used);
+            if free < meta - spare_bytes {
+                t.spare = false;
+                t.spare_note = Some(format!(
+                    "volume group {name}: its pool metadata spare ({}) is smaller than the largest pool's metadata ({}), and the group's {} free can't make up the {} a new one takes: the pools are made without a spare (--poolmetadataspare n); `lvconvert --repair` needs one, which `lvconvert --poolmetadataspare y` makes once there is room",
+                    crate::report::human(spare_bytes),
+                    crate::report::human(meta),
+                    crate::report::human(free),
+                    crate::report::human(meta - spare_bytes),
+                ));
+            }
+        }
+    }
+    Ok(t)
+}
+
+/// A size for an LVM command, exact: MiB where it is a whole number of
+/// them, else KiB, else 512-byte sectors.
+fn lvm_size(bytes: u64) -> String {
+    if bytes % (1 << 20) == 0 {
+        format!("{}m", bytes >> 20)
+    } else if bytes % 1024 == 0 {
+        format!("{}k", bytes >> 10)
+    } else {
+        format!("{}s", bytes / 512)
+    }
+}
+
+/// The volume group as `vgcfgrestore` reads it, from the dump's view of it:
+/// without its thin pools and thin LVs (thin_of's `dropped`), which
+/// lvcreate makes after it.
 pub fn vg_metadata(vg: &Value) -> Result<String, String> {
     use crate::json::Obj;
     let name = s(vg, "name").ok_or("a volume group without a name")?;
     let ext = num(vg, "extent_size_bytes").ok_or("no extent size")? / 512;
+    let thin = thin_of(vg)?;
     let mut pvs = Obj::new();
     for pv in vg.get("physical_volumes").and_then(Value::as_array).into_iter().flatten() {
         let pn = s(pv, "name").ok_or("a PV without a name")?;
@@ -706,6 +939,9 @@ pub fn vg_metadata(vg: &Value) -> Result<String, String> {
     let mut lvs = Obj::new();
     for lv in vg.get("logical_volumes").and_then(Value::as_array).into_iter().flatten() {
         let ln = s(lv, "name").ok_or("an LV without a name")?;
+        if thin.dropped.contains(&ln) {
+            continue;
+        }
         let segs = lv.get("segments").and_then(Value::as_array).cloned().unwrap_or_default();
         for seg in &segs {
             let ty = seg.get("type").and_then(Value::as_str).unwrap_or("?");
@@ -1034,7 +1270,79 @@ impl Builder<'_> {
         }
         out.push(Cmd::new(&lvm_argv("vgcfgrestore", &devices, &["--file", &file, &name])));
         out.push(Cmd::new(&lvm_argv("vgchange", &devices, &["--activate", "y", &name])));
+        // Thin pools and their thin LVs, which vgcfgrestore left out: made
+        // empty by lvcreate, at the dump's sizes and names, before the
+        // format stage formats the thin LVs.
+        let thin = thin_of(vg).unwrap_or_default();
+        self.notes.extend(thin.spare_note.clone());
+        // Flags set once the stages that write are done (close runs its
+        // closers last first, so these before the group's vgchange -an): a
+        // read-only LV can't be formatted or restored into, and lvcreate
+        // doesn't activate an LV it makes with ACTIVATION_SKIP.
+        let mut later: Vec<Cmd> = vec![];
+        let attrs = |lv: &str, at: &LvAttrs, a: &mut Vec<String>, later: &mut Vec<Cmd>| {
+            for tag in &at.tags {
+                a.extend(["--addtag".into(), tag.clone()]);
+            }
+            let full = format!("{name}/{lv}");
+            if at.activation_skip {
+                later.push(Cmd::new(&lvm_argv("lvchange", &devices, &["--setactivationskip", "y", &full])).why(format!("{full}: ACTIVATION_SKIP, as on the source")));
+            }
+            if at.read_only {
+                later.push(Cmd::new(&lvm_argv("lvchange", &devices, &["--permission", "r", &full])).why(format!("{full}: read-only, as on the source")));
+            }
+        };
+        for p in &thin.pools {
+            let (data, meta) = (lvm_size(p.data_bytes), lvm_size(p.meta_bytes));
+            let mut a: Vec<String> = ["--yes", "--type", "thin-pool", "-n", &p.name, "-L", &data, "--poolmetadatasize", &meta].iter().map(|x| x.to_string()).collect();
+            if let Some((n, size)) = p.data_stripes {
+                a.extend(["-i".into(), n.to_string(), "-I".into(), lvm_size(size)]);
+            }
+            if let Some(c) = p.chunk_bytes {
+                a.extend(["--chunksize".into(), lvm_size(c)]);
+            }
+            if let Some(d) = &p.discards {
+                a.extend(["--discards".into(), d.clone()]);
+            }
+            a.extend(["--zero".into(), if p.zero { "y" } else { "n" }.into()]);
+            // (Not --errorwhenfull: lvm2 2.03's lvcreate refuses it with
+            // --type thin-pool, "unsupported with thin pools" (HoltTest1's
+            // vanilla3, V7); a new pool queues writes when full, and
+            // lvchange sets error-when-full just after, below, where the
+            // source's had it.)
+            a.extend(["--poolmetadataspare".into(), if thin.spare { "y" } else { "n" }.into()]);
+            // A read-only pool stays as lvcreate makes it: its thin LVs are
+            // what format and restore write to.
+            let pool_attrs = LvAttrs { read_only: false, ..p.attrs.clone() };
+            attrs(&p.name, &pool_attrs, &mut a, &mut later);
+            a.push(name.clone());
+            let rest: Vec<&str> = a.iter().map(String::as_str).collect();
+            let thins = p.thins.iter().map(|l| format!("{name}/{}", l.name)).collect::<Vec<_>>().join(", ");
+            out.push(Cmd::new(&lvm_argv("lvcreate", &devices, &rest)).why(format!(
+                "volume group {name}: thin pool {} (data {}, metadata {}) made again by lvcreate, empty; its LV UUID, its data and metadata LVs', {} and their device ids are new (vgcfgrestore keeps the PVs', the group's and its other LVs' UUIDs); tags, activation skip and read-only are set as on the source, a profile and crop_metadata aren't carried over{}",
+                p.name,
+                crate::report::human(p.data_bytes),
+                crate::report::human(p.meta_bytes),
+                if thins.is_empty() { "its thin LVs' (it has none)".to_string() } else { format!("those of its thin LVs ({thins})") },
+                if p.attrs.read_only { "; the pool itself was read-only, and is made read-write" } else { "" },
+            )));
+            // (Only then: lvchange fails when the flag is already as asked,
+            // "Error when full is already unset".)
+            if p.error_when_full {
+                let full = format!("{name}/{}", p.name);
+                out.push(Cmd::new(&lvm_argv("lvchange", &devices, &["--errorwhenfull", "y", &full])).why(format!("{full}: errors at once when its data space is full, as on the source")));
+            }
+            for l in &p.thins {
+                let v = lvm_size(l.bytes);
+                let mut a: Vec<String> = ["--type", "thin", "-V", &v, "-n", &l.name, "--thinpool", &p.name].iter().map(|x| x.to_string()).collect();
+                attrs(&l.name, &l.attrs, &mut a, &mut later);
+                a.push(name.clone());
+                let rest: Vec<&str> = a.iter().map(String::as_str).collect();
+                out.push(Cmd::new(&lvm_argv("lvcreate", &devices, &rest)).why(format!("thin LV {name}/{}: {} virtual, device id {} on the source", l.name, crate::report::human(l.bytes), l.device_id)));
+            }
+        }
         self.closers.push(settled(&lvm_argv("vgchange", &devices, &["--activate", "n", &name])));
+        self.closers.extend(later);
     }
 
     fn pool(&mut self, p: &Value, out: &mut Vec<Cmd>) {
@@ -1693,6 +2001,12 @@ impl Builder<'_> {
         }
         for sect in ["md_arrays", "dm_devices"] {
             for x in self.layout.arr(&["storage", sect]) {
+                // A thin pool's own devices (its data and metadata LVs, the
+                // pool): what a probe found on them is a thin LV's, or
+                // nothing.  lvcreate makes them (vg).
+                if matches!(x.at(&["dm", "lv_layer"]).and_then(Value::as_str), Some("tdata" | "tmeta" | "tpool" | "pool")) {
+                    continue;
+                }
                 if let (Some(n), Some(c)) = (s(x, "name"), x.get("content").filter(|c| !c.is_null())) {
                     out.push((n, c.clone()));
                 }
@@ -2331,6 +2645,13 @@ impl Builder<'_> {
                 ms.push(("/".into(), Cmd::new(&["mount", fs_flag, "zfs", &self.zname(&name), &target])));
             }
         }
+        // ABRoot (load/abroot.rs): the init LV, the other root and /var,
+        // which no fstab line mounts.
+        if let Some(a) = super::abroot::of(&self.layout.v) {
+            let have: Vec<String> = ms.iter().map(|(p, _)| p.clone()).collect();
+            let extra = self.abroot_mounts(&a.clone(), &have);
+            ms.extend(extra);
+        }
         ms.sort_by(|a, b| {
             let depth = |p: &str| if p == "/" { 0 } else { p.matches('/').count() };
             depth(&a.0).cmp(&depth(&b.0)).then(a.0.cmp(&b.0))
@@ -2586,6 +2907,9 @@ impl Builder<'_> {
         }
         if let Some(o) = super::ostree::of(&self.layout.v) {
             return self.ostree_boot(&o.clone());
+        }
+        if let Some(a) = super::abroot::of(&self.layout.v) {
+            return self.abroot_boot(&a.clone());
         }
         let t = self.opts.target.clone();
         let mut out = Vec::new();
@@ -4584,5 +4908,111 @@ mod tests {
         assert!(t.contains("\t\t\tsegment_count = 1\n\t\t\tsegment1 {\n\t\t\t\tstart_extent = 0\n"), "{t}");
         assert!(t.contains("stripes = [\"pv0\", 0]"), "{t}");
         assert!(t.contains("contents = \"Text Format Volume Group\"\nversion = 1\n"), "{t}");
+    }
+
+    /// Vanilla OS's vos-root: vgcfgrestore's file has the PV, the group and
+    /// `init` only; thin_of has the pool at the dump's sizes, its thin LVs
+    /// in device_id order, and the spare.
+    #[test]
+    fn thin_pool_left_to_lvcreate() {
+        let vg = crate::probe::lvm::sample::thin_vg();
+        let t = vg_metadata(&vg).unwrap();
+        assert!(t.starts_with("vos-root {\n\tid = \"VoSr00-tAAA-BBBB-CCCC-DDDD-EEEE-FFFFFF\"\n"), "{t}");
+        assert!(t.contains("\t\tpv0 {\n\t\t\tid = \"Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff\"\n"), "{t}");
+        assert!(t.contains("\t\tinit {\n\t\t\tid = \"1n1t00-aaaa-bbbb-cccc-dddd-eeee-ffffff\"\n"), "{t}");
+        for gone in ["\troot {", "root-a", "root-b", "pmspare", "root_tmeta", "root_tdata", "thin", "p00l00"] {
+            assert!(!t.contains(gone), "{gone}: {t}");
+        }
+        let th = thin_of(&vg).unwrap();
+        assert!(th.spare);
+        assert_eq!(th.dropped, vec!["root_tdata", "root_tmeta", "root", "root-a", "root-b", "lvol0_pmspare"]);
+        assert_eq!(
+            th.pools,
+            vec![ThinPool {
+                name: "root".into(),
+                data_bytes: 19 << 30,
+                meta_bytes: 1 << 30,
+                data_stripes: None,
+                chunk_bytes: Some(64 << 10),
+                discards: Some("passdown".into()),
+                zero: true,
+                error_when_full: false,
+                attrs: LvAttrs::default(),
+                thins: vec![
+                    ThinLv { name: "root-a".into(), bytes: 19 << 30, device_id: 1, attrs: LvAttrs::default() },
+                    ThinLv { name: "root-b".into(), bytes: 19 << 30, device_id: 2, attrs: LvAttrs::default() }
+                ],
+            }]
+        );
+        assert_eq!(th.spare_note, None);
+        let c = vg.compact();
+        let with = |from: &str, to: &str| {
+            let changed = c.replacen(from, to, 1);
+            assert_ne!(changed, c, "{from}");
+            thin_of(&crate::json::parse(&changed).unwrap()).unwrap()
+        };
+        // device_id order, not the metadata's.
+        assert_eq!(with("\"device_id\":1", "\"device_id\":7").pools[0].thins.iter().map(|t| t.name.as_str()).collect::<Vec<_>>(), vec!["root-b", "root-a"]);
+        // lvm2 writes zero_new_blocks only when it is on.
+        assert!(!with(",\"zero_new_blocks\":1", "").pools[0].zero);
+        // ERROR_WHEN_FULL is the pool LV's flag; ACTIVATION_SKIP, tags and
+        // read-only (no WRITE) a thin LV's.
+        assert!(with("\"name\":\"root\",\"id\":\"p00l00-aaaa-bbbb-cccc-dddd-eeee-ffffff\",\"status\":[\"READ\",\"WRITE\",\"VISIBLE\"]", "\"name\":\"root\",\"id\":\"p00l00-aaaa-bbbb-cccc-dddd-eeee-ffffff\",\"status\":[\"READ\",\"WRITE\",\"VISIBLE\",\"ERROR_WHEN_FULL\"]").pools[0].error_when_full);
+        let b = with("\"status\":[\"READ\",\"WRITE\",\"VISIBLE\"],\"flags\":[],\"size_bytes\":20401094656,\"creation_host\":\"vanilla\",\"creation_time\":1762300003", "\"status\":[\"READ\",\"VISIBLE\"],\"flags\":[\"ACTIVATION_SKIP\"],\"size_bytes\":20401094656,\"creation_host\":\"vanilla\",\"creation_time\":1762300003,\"tags\":[\"keep\"]");
+        assert_eq!(b.pools[0].thins[1].attrs, LvAttrs { tags: vec!["keep".into()], activation_skip: true, read_only: true });
+        assert_eq!(b.pools[0].thins[0].attrs, LvAttrs::default());
+        // A data LV striped over two PVs keeps its stripes.
+        let at = c.find("\"name\":\"root_tdata\"").unwrap();
+        let striped = format!("{}{}", &c[..at], c[at..].replacen("\"stripe_count\":1", "\"stripe_count\":2,\"stripe_size\":128", 1));
+        assert_eq!(thin_of(&crate::json::parse(&striped).unwrap()).unwrap().pools[0].data_stripes, Some((2, 64 << 10)));
+        // A spare smaller than the metadata: made again where the free
+        // extents cover the difference, else left out with a note.
+        let at = c.find("\"name\":\"lvol0_pmspare\"").unwrap();
+        let small = format!("{}{}", &c[..at], c[at..].replacen("\"extent_count\":256", "\"extent_count\":128", 1));
+        let roomy = thin_of(&crate::json::parse(&small).unwrap()).unwrap();
+        assert!(roomy.spare && roomy.spare_note.is_none(), "{roomy:?}");
+        let full = thin_of(&crate::json::parse(&small.replacen("\"pe_count\":5657", "\"pe_count\":5600", 1)).unwrap()).unwrap();
+        assert!(!full.spare);
+        assert_eq!(full.spare_note.as_deref(), Some("volume group vos-root: its pool metadata spare (512 MiB) is smaller than the largest pool's metadata (1 GiB), and the group's 384 MiB free can't make up the 512 MiB a new one takes: the pools are made without a spare (--poolmetadataspare n); `lvconvert --repair` needs one, which `lvconvert --poolmetadataspare y` makes once there is room"));
+        // No thin pool: nothing dropped, the spare (a cache pool's) stays.
+        let plain = crate::json::parse(&vg.compact().replace("\"thin-pool\"", "\"striped\"").replace("\"thin\"", "\"striped\"")).unwrap();
+        assert_eq!(thin_of(&plain).unwrap(), Thin::default());
+        assert_eq!(lvm_size(19 << 30), "19456m");
+        assert_eq!(lvm_size(64 << 10), "64k");
+        assert_eq!(lvm_size(1536), "3s");
+    }
+
+    /// Refused in version 1, each by name: thin snapshots, external
+    /// origins, a pool on RAID or cached, a thin LV of no pool.
+    #[test]
+    fn thin_refusals() {
+        let vg = crate::probe::lvm::sample::thin_vg().compact();
+        let err = |from: &str, to: &str| {
+            let changed = vg.replacen(from, to, 1);
+            assert_ne!(changed, vg, "{from}");
+            vg_metadata(&crate::json::parse(&changed).unwrap()).unwrap_err()
+        };
+        let snap = err("\"device_id\":2", "\"device_id\":2,\"origin\":\"root-a\"");
+        assert_eq!(snap, "thin LV vos-root/root-b is a thin snapshot of root-a; version 1 doesn't make thin snapshots");
+        let ext = err("\"device_id\":2", "\"device_id\":2,\"external_origin\":\"init\"");
+        assert_eq!(ext, "thin LV vos-root/root-b has the external origin init; version 1 doesn't make thin LVs with one");
+        // root_tdata as RAID1 (its one segment's type).
+        let at = vg.find("\"name\":\"root_tdata\"").unwrap();
+        let raid = format!("{}{}", &vg[..at], vg[at..].replacen("\"type\":\"striped\"", "\"type\":\"raid1\"", 1));
+        let e = vg_metadata(&crate::json::parse(&raid).unwrap()).unwrap_err();
+        assert_eq!(e, "thin pool vos-root/root's data LV root_tdata has a raid1 segment; version 1 makes thin pools on linear and striped LVs only (not RAID or cache)");
+        let at = vg.find("\"name\":\"root_tmeta\"").unwrap();
+        let cached = format!("{}{}", &vg[..at], vg[at..].replacen("\"type\":\"striped\"", "\"type\":\"cache\"", 1));
+        assert!(vg_metadata(&crate::json::parse(&cached).unwrap()).unwrap_err().starts_with("thin pool vos-root/root's metadata LV root_tmeta has a cache segment"));
+        let orphan = err("\"thin_pool\":\"root\"", "\"thin_pool\":\"other\"");
+        assert_eq!(orphan, "thin LV vos-root/root-a's pool other isn't a thin pool in the group");
+        let meta_striped = format!("{}{}", &vg[..at], vg[at..].replacen("\"stripe_count\":1", "\"stripe_count\":2,\"stripe_size\":128", 1));
+        assert_eq!(vg_metadata(&crate::json::parse(&meta_striped).unwrap()).unwrap_err(), "thin pool vos-root/root's metadata LV is striped across 2 PVs; version 1 makes a pool's metadata LV linear only");
+        let at = vg.find("\"name\":\"root_tdata\"").unwrap();
+        let mixed = vg[at..].replacen("\"segments\":[{", "\"segments\":[{\"start_extent\":0,\"extent_count\":1,\"type\":\"striped\",\"stripe_count\":2,\"stripe_size\":128,\"stripes\":[\"pv0\",0,\"pv0\",1]},{", 1);
+        let e = vg_metadata(&crate::json::parse(&format!("{}{mixed}", &vg[..at])).unwrap()).unwrap_err();
+        assert_eq!(e, "thin pool vos-root/root's data LV root_tdata has segments of different stripes; version 1 makes a pool's data LV with one stripe count and size");
+        let e = err("\"status\":[\"ALLOCATABLE\"]", "\"status\":[]");
+        assert_eq!(e, "thin pool vos-root/root's data LV root_tdata is on pv0, which isn't allocatable (pvchange -x n): lvcreate can't make it there again");
     }
 }

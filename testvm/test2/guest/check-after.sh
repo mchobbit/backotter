@@ -143,6 +143,23 @@ if d: print("default", i(d[0]))'
             sed -n -e 's/^default=.*/grubenv-key default/p' -e 's/^next_entry=.*/grubenv-key next_entry/p' "$f"
             break
         done
+    elif has_rule K-abroot; then
+        # ABRoot (Vanilla OS): the present root's own modules, the root booted (its label), and
+        # the root the master grub.cfg's default entry leads to (`configfile "/LABEL/abroot.cfg"`).
+        echo "running $r"
+        for d in /usr/lib/modules/*/; do
+            [ -e "${d}modules.dep" ] || [ -e "${d}kernel" ] || continue
+            d=${d%/}
+            echo "installed ${d##*/}"
+        done | sort -u
+        p=$(blkid -s LABEL -o value "$(findmnt -n -o SOURCE /)" 2>/dev/null)
+        [ -z "$p" ] || echo "present $p"
+        awk '/^[[:space:]]*#/ { next }
+             /^[[:space:]]*menuentry / { n++; inside = 1; next }
+             /^[[:space:]]*}/ { inside = 0; next }
+             !inside && !seen && /^[[:space:]]*set default=/ { seen = 1; v = $0; sub(/.*set default=/, "", v); gsub(/"/, "", v) }
+             inside && /^[[:space:]]*configfile / { c = $2; gsub(/"/, "", c); sub(/^\([^)]*\)/, "", c); split(c, a, "/"); cfg[n - 1] = a[2] }
+             END { if (v ~ /^[0-9]+$/ && (v in cfg)) print "default", cfg[v] }' /boot/grub/grub.cfg 2>/dev/null
     elif has_rule K-pac || has_rule K-apk; then
         echo "running $r"
         if [ -e "/usr/lib/modules/$r/vmlinuz" ] || [ -e "/usr/lib/modules/$r/modules.dep" ] ||

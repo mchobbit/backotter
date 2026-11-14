@@ -140,7 +140,7 @@ class TestSteps(unittest.TestCase):
 
 class TestInGuest(unittest.TestCase):
     TEXT = (TESTVM / "update" / "in-guest.sh").read_text()
-    NAMES = {"prologue", "NixOS", "Guix", "Linux.portage", "Linux.common", "Linux.apt", "Linux.ostree", "Linux.dnf", "Linux.pacman",
+    NAMES = {"prologue", "NixOS", "Guix", "Linux.portage", "Linux.abroot", "Linux.common", "Linux.apt", "Linux.ostree", "Linux.dnf", "Linux.pacman",
              "Linux.zypper",
              "Linux.xbps", "Linux.apk", "Linux.moss", "FreeBSD", "DragonFly", "OpenBSD", "NetBSD", "SunOS",
              "Haiku", "Redox"}
@@ -174,12 +174,23 @@ class TestInGuest(unittest.TestCase):
                              ("Linux.portage", "/etc/gentoo-release"), ("Linux.portage", "emerge --sync"),
                              ("Linux.portage", "emerge -puDN"), ("Linux.portage", "emerge -uDNg"),
                              ("Linux.portage", "emerge --depclean"),
+                             ("Linux.abroot", "/usr/share/abroot/abroot.json"), ("Linux.abroot", "abroot upgrade </dev/null"),
+                             ("Linux.abroot", "No update available"), ("Linux.abroot", "vanilla-updates.timer"),
                              ("Linux.common", "/etc/os-release"), ("Linux.common", "no package manager found"),
                              ("prologue", "step() {"), ("prologue", 'say "updated"'), ("prologue", "no updater for"),
                              ("NixOS", "nixos-rebuild"), ("FreeBSD", "freebsd-update"), ("DragonFly", "buildworld"),
                              ("OpenBSD", "syspatch"), ("NetBSD", "sysupgrade"), ("SunOS", "pkg update"),
                              ("Haiku", "pkgman"), ("Redox", "pkg --yes update")):
             self.assertIn(needle, s[name], name)
+
+    def test_abroot_before_apt(self):
+        """Vanilla OS: its read-only root has no apt or dpkg (and its image may have apt
+        again some day), so ABRoot's branch comes before Linux.common's; never --force."""
+        t = self.TEXT
+        self.assertLess(t.index("# t2-section: Linux.abroot"), t.index("# t2-section: Linux.common"))
+        code = "\n".join(l for l in self.sections()["Linux.abroot"].splitlines() if not l.lstrip().startswith("#"))
+        self.assertNotIn("--force", code)
+        self.assertNotIn("apt", code)
 
     def test_ostree_before_dnf(self):
         """An image-mode system has dnf too, which can't change its /usr: the
@@ -270,7 +281,8 @@ class TestPkgset(TempDir):
             (root / "etc/NIXOS").write_text("")
         script = (TESTVM / "update" / "pkgset.sh").read_text()
         script = re.sub(r"^PATH=.*$", "", script, count=1, flags=re.M)
-        for p in ("/etc/NIXOS", "/etc/gentoo-release", "/var/db/", "/boot/system/packages"):
+        for p in ("/etc/NIXOS", "/etc/gentoo-release", "/var/db/", "/boot/system/packages", "/usr/share/abroot/", "/var/lib/dpkg/",
+                  "/abimage.abr"):
             script = script.replace(p, str(root) + p)
         tools = self.tmp / "tools"                      # only these: a host's own apt-get would be found first
         tools.mkdir(exist_ok=True)
@@ -335,6 +347,21 @@ class TestPkgset(TempDir):
         out = self.run_script("Linux", {"apt-get": "true", "dpkg-query": "echo 'ii  e2fsprogs 1.47.0-2 amd64'"},
                               files=self.portage("sys-boot/grub-2.16-r1", gentoo=False))
         self.check(out, ["base pm dpkg"])
+
+    def test_abroot(self):
+        """Vanilla OS: the root's dpkg status read as a file (no dpkg-query on the root), only
+        what is installed, and the image's digest; before dpkg (an image with apt-get)."""
+        st = ("Package: e2fsprogs\nStatus: install ok installed\nArchitecture: amd64\nVersion: 1.47.2-3\n\n"
+              "Package: gone\nStatus: deinstall ok config-files\nArchitecture: amd64\nVersion: 1.0\n\n"
+              "Package: linux-image-amd64\nStatus: install ok installed\nVersion: 7.3.3-1\nArchitecture: amd64\n")
+        files = [("/usr/share/abroot/abroot.json", "{}\n"), ("/var/lib/dpkg/status", st),
+                 ("/abimage.abr", '{"digest":"sha256:f1be","timestamp":"2026-11-14T06:13:52Z","image":"x"}')]
+        out = self.run_script("Linux", {"apt-get": "true", "dpkg": "true", "dpkg-query": "echo 'ii  wrong 1 amd64'"},
+                              files=files)
+        self.check(out, ["base pm abroot", "pkg e2fsprogs 1.47.2-3 amd64", "pkg linux-image-amd64 7.3.3-1 amd64",
+                         "base abimage sha256:f1be"])
+        self.assertNotIn("gone", out)
+        self.assertNotIn("wrong", out)
 
     def test_apk(self):
         out = self.run_script("Linux", {"apk": "echo linux-lts-6.18.60-r0; echo musl-1.2.5-r9"})

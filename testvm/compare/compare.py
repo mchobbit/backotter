@@ -466,9 +466,25 @@ def bind_point(root: Path) -> str:
     raise SystemExit(f"no /mnt or /sysroot directory in {root}")
 
 
+def abroot_upper(root: Path) -> Path | None:
+    """On ABRoot (Vanilla OS), where vm-mount mounted the present root at
+    root with its raw lower /etc: that root's /etc overlay upper on /var,
+    var/lib/abroot/etc/LABEL, which holds the live fstab (mount-sys's)."""
+    if not (root / "usr/share/abroot/abroot.json").is_file():
+        return None
+    src = out(["findmnt", "-n", "-o", "SOURCE", "--mountpoint", str(root)]).strip()
+    label = blkid(src).get("LABEL") if src else None
+    up = root / "var/lib/abroot/etc" / label if label else None
+    return up if up and up.is_dir() else None
+
+
 def fstab_options(root: Path) -> dict[str, list[str]]:
-    """The guest's fstab: each mount point's options."""
+    """The guest's fstab: each mount point's options (on ABRoot the live
+    one, in the present root's /etc upper: the lower lists both roots at /)."""
     f = guest_path(tools_root(root), "/etc/fstab")
+    up = abroot_upper(root)
+    if up is not None and (up / "fstab").is_file():
+        f = up / "fstab"
     opts = {}
     for line in f.read_text().splitlines() if f else []:
         fields = line.split()

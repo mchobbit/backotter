@@ -4,7 +4,7 @@
 distributions added in parallel sessions (Proxmox, Guix, openSUSE Leap 16,
 Vanilla OS, Slackware, Solus, OpenIndiana, Kali), the way AnduinOS, KDE
 neon, elementary, PikaOS, BigLinux and Garuda were added. **Status: approved 2026-11-14 by the user with every recommended decision
-(the last section). GX1-GX5 done 2026-11-14 (uncommitted); BIOS GRUB is
+(the last section). GX1-GX7 done 2026-11-14 (4b193b8, the generation check after it); BIOS GRUB is
 written by `grub-bios-setup` from the source's own images, not from the
 store ("What GX1-GX5 found").**
 
@@ -171,6 +171,25 @@ copy of the real store came back with every link count, inode grouping,
 mtime and mode, with restic-bko too. Guix has no python3, getfattr,
 setfacl, setcap, setpriv or runuser: sockets are made by guile, the
 non-root run is `chroot --userspec`.
+
+**GX6 (HoltTest1, 1Obscure):** `guix15` PASS `gx6-2` (Chopin) and
+`gx6-4` (Cinqcent), `guix15-bios` PASS `gx6-5` (Chopin) and `gx6-6`
+(Cinqcent); RAM-disk peaks 5.6 and 4.7 GiB (`ram-sizes.tsv` D 7 and 6, MEM
+4). Found on the way: Guix has no efibootmgr, so ht1.sh reads the booted
+NVRAM entry from efivarfs (`nvboot-efivars.sh`); `herd status` is the boot
+state (Shepherd arm); `gx6-3` (Cinqcent) once lost one 4 KiB hole in a
+hard-linked store file in rustic-bko's restore, not seen again in `gx6-4`
+(a rustic-bko follow-up). **The previous generation boots too:** the
+source, then the restored disk alone, boot the generation before the
+current one, picked on GRUB's serial menu ("GNU system, old
+configurations...", Down, Enter, Enter) and compared by GUIX_STATE (booted
+and current store system, the profile's link, root= and where gnu.system=
+leads): `guix15` `gx6-14` (Chopin) and `gx6-16` (Cinqcent), `guix15-bios` `gx6-15`
+(Chopin) and `gx6-17` (Cinqcent), PASS.
+`guix system switch-generation` was tried first and dropped: it rebuilds
+the boot loader's files from substitutes (gx6-11/12 waited past 10 min),
+writes the profile link relative and grub.cfg's `gnu.system=` by the
+profile's link.
 
 ## What already works, and what doesn't
 

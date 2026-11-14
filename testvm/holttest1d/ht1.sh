@@ -723,11 +723,14 @@ ostree_verify() {
     fi
 }
 # A Guix System guest (guix15, guix15-bios; docs/design/guix.md, GX6) keeps
-# its system generations, each a GRUB entry: the source boots the one before
-# its current one (`guix system switch-generation`, which points the
-# profile and grub.cfg's default at it) and its current one again, for the
-# baseline; the restored disk does the same and must show what the source
-# did.  GUIX_STATE is what a boot shows: the booted and current system (store
+# its system generations, each a GRUB entry: the current one first, the
+# others in the submenu "GNU system, old configurations...", newest first.
+# The source boots the one before its current one (picked on GRUB's serial
+# menu by console-keys.py: Down, Enter, Enter) and its current one again, for
+# the baseline; the restored disk does the same, alone, and must show what
+# the source did.  Nothing is switched (switch-generation rebuilds the boot
+# loader's files, from substitutes: GX6's gx6-11 waited on them past 10 min).
+# GUIX_STATE is what a boot shows: the booted and current system (store
 # paths), the system profile's link (by name: a reconfigure writes it whole,
 # switch-generation relative) and the kernel's root= and gnu.system= (where
 # it leads: switch-generation's grub.cfg names the profile's link, a
@@ -737,55 +740,58 @@ echo "current $(readlink -f /run/current-system)"
 echo "profile $(basename "$(readlink /var/guix/profiles/system)")"
 s=$(tr " " "\n" </proc/cmdline | sed -n "s/^gnu\.system=//p"); echo "gnu.system $(readlink -f "$s")"
 tr " " "\n" </proc/cmdline | grep "^root="'
-# GUIX_PREV switches to the generation before the current one and prints
-# "CURRENT PREVIOUS" (the numbers); switch-generation's own output to stderr.
-# The profile's link is system-N-link, or that by its whole path once a
-# reconfigure has made it.
-GUIX_PREV='n=$(readlink /var/guix/profiles/system | sed -n "s/^.*system-\([0-9]*\)-link\$/\1/p")
+# GUIX_GENS prints "CURRENT PREVIOUS PREVIOUS-SYSTEM": the profile's
+# generation numbers (its link is system-N-link, or that by its whole path
+# once a reconfigure has made it) and where the previous one leads.
+GUIX_GENS='n=$(readlink /var/guix/profiles/system | sed -n "s/^.*system-\([0-9]*\)-link\$/\1/p")
 p=$(ls /var/guix/profiles | sed -n "s/^system-\([0-9]*\)-link\$/\1/p" | sort -n | awk -v n="$n" "\$1 < n" | tail -n 1)
 [ -n "$n" ] && [ -n "$p" ] || { echo "no generation before ${n:-the current one}" >&2; exit 1; }
-guix system switch-generation "$p" >&2 && echo "$n $p"'
+echo "$n $p $(readlink -f /var/guix/profiles/system-$p-link)"'
+GUIX_PICK_RE='GNU system, old configurations' GUIX_PICK_KEYS='\x1b[B|\r|\r'
 # The source's baseline: its previous generation booted, then its current
 # one again, with every GUIX_STATE line as at first.  Exit 1 when the run
 # can go no further.
 guix_source() {
-    local L=$R/logs np n p
+    local L=$R/logs n p ps
     sshk "$gkey" "$GUIX_STATE" > "$L/source-guix-first.txt" 2>&1
-    np=$(TMO=600 sshk "$gkey" "$GUIX_PREV" 2>"$L/source-guix-switch.err") ||
-        { bad "guix: switch-generation to the previous generation on the source: $(tail -1 "$L/source-guix-switch.err")"; return 1; }
-    read -r n p <<<"$np"
-    vm_reboot "$gkey" || { bad "guix: the source's generation $p boots (no SSH; logs/source-serial.log)"; return 1; }
+    read -r n p ps < <(sshk "$gkey" "$GUIX_GENS" 2>"$L/source-guix-gens.err") ||
+        { bad "guix: the source's generations: $(tail -1 "$L/source-guix-gens.err")"; return 1; }
+    vm_down "$gkey"
+    GRUB_PICK=$GUIX_PICK_RE GRUB_KEYS=$GUIX_PICK_KEYS vm_up "${src[0]}" "$L/source-serial-prev.log" "${fw[@]}" "${svfw[@]}" "${extra_src[@]}"
+    vm_wait "$gkey" || { bad "guix: the source's generation $p boots (no SSH; logs/source-serial-prev.log)"; return 1; }
+    grep -q 'console-keys.py: typed' "$L/source-serial-prev.log" || { bad "guix: GRUB's menu never showed \"$GUIX_PICK_RE\" on the source's serial console"; return 1; }
     sshk "$gkey" "$GUIX_STATE" > "$L/source-guix-prev.txt" 2>&1
     bootstate "$gkey" > "$L/source-prev-bootstate.txt"
-    TMO=600 sshk "$gkey" "guix system switch-generation $n" >>"$L/source-guix-switch.err" 2>&1 ||
-        { bad "guix: switch-generation back to $n on the source"; return 1; }
-    vm_reboot "$gkey" || { bad "guix: the source boots its generation $n again (no SSH; logs/source-serial.log)"; return 1; }
+    vm_down "$gkey"
+    vm_up "${src[0]}" "$L/source-serial-3.log" "${fw[@]}" "${svfw[@]}" "${extra_src[@]}"
+    vm_wait "$gkey" || { bad "guix: the source boots its generation $n again (no SSH; logs/source-serial-3.log)"; return 1; }
     sshk "$gkey" "$GUIX_STATE" > "$L/source-guix.txt" 2>&1
     if ! cmp -s "$L/source-guix-first.txt" "$L/source-guix.txt"; then
         bad "guix: the source's generation $n doesn't boot as at first: $(diff "$L/source-guix-first.txt" "$L/source-guix.txt" | grep '^[<>]' | head -3 | tr '\n' ' ')"; return 1
     fi
-    if [[ $(sed -n 's/^booted //p' "$L/source-guix-prev.txt") == "$(sed -n 's/^booted //p' "$L/source-guix.txt")" ]]; then
-        bad "guix: the source's generation $p booted the same system as $n"; return 1
+    if [[ $(sed -n 's/^booted //p' "$L/source-guix-prev.txt") != "$ps" ]]; then
+        bad "guix: the source's pick of \"$GUIX_PICK_RE\" booted $(sed -n 's/^booted //p' "$L/source-guix-prev.txt"), not generation $p ($ps)"; return 1
     fi
-    echo "$n $p" > "$L/source-guix-gens.txt"
-    ok "guix: the source boots its generation $p, then $n again"
+    echo "$n $p $ps" > "$L/source-guix-gens.txt"
+    ok "guix: the source boots its generation $p ($ps), picked on GRUB's serial menu, then $n again"
 }
 # The restored disk: its current generation (booted already, and dumped),
-# then the previous one, each as the source's; its bootstate may have no
-# line the source's previous-generation boot lacked.
+# then the previous one, the restored disk alone again (a fresh --snapshot
+# boot), each as the source's; its boot state may have no line the source's
+# previous-generation boot lacked.
 guix_verify() {
-    local L=$R/logs n p np
-    read -r n p < "$L/source-guix-gens.txt"
+    local L=$R/logs n p ps
+    read -r n p ps < "$L/source-guix-gens.txt"
     sshk "$gkey" "$GUIX_STATE" > "$L/restored-guix.txt" 2>&1
     if cmp -s "$L/source-guix.txt" "$L/restored-guix.txt"; then
         ok "guix: the restored disk boots generation $n as the source did ($(sed -n 's/^booted //p' "$L/restored-guix.txt"))"
     else
         bad "guix: the restored generation $n boot isn't the source's: $(diff "$L/source-guix.txt" "$L/restored-guix.txt" | grep '^[<>]' | head -4 | tr '\n' ' ')"
     fi
-    np=$(TMO=600 sshk "$gkey" "$GUIX_PREV" 2>"$L/restored-guix-switch.err") ||
-        { bad "guix: switch-generation to the previous generation on the restored disk: $(tail -1 "$L/restored-guix-switch.err")"; return; }
-    [[ $np == "$n $p" ]] || bad "guix: the restored disk's generations are $np, the source's $n $p"
-    vm_reboot "$gkey" || { bad "guix: the restored generation $p boots (no SSH; logs/restored-serial.log)"; return; }
+    vm_down "$gkey"
+    GRUB_PICK=$GUIX_PICK_RE GRUB_KEYS=$GUIX_PICK_KEYS vm_up "${dst[0]}" "$L/restored-serial-prev.log" --snapshot "${fw[@]}" "${dvfw[@]}" "${BS2_VFW[@]}" "${extra_dst[@]}"
+    vm_wait "$gkey" || { bad "guix: the restored generation $p boots (no SSH; logs/restored-serial-prev.log)"; return; }
+    grep -q 'console-keys.py: typed' "$L/restored-serial-prev.log" || bad "guix: GRUB's menu never showed \"$GUIX_PICK_RE\" on the restored disk's serial console"
     sshk "$gkey" "$GUIX_STATE" > "$L/restored-guix-prev.txt" 2>&1
     if cmp -s "$L/source-guix-prev.txt" "$L/restored-guix-prev.txt"; then
         ok "guix: the restored disk boots generation $p as the source did ($(sed -n 's/^booted //p' "$L/restored-guix-prev.txt"))"

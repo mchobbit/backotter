@@ -367,6 +367,42 @@ judge-test cases).
   - Prep runs peaked at 17.7 and 19.0 GiB, with D 19-20 reserved. A prep run
     wants `--reserve 22`.
 
+## What GA5 found
+
+2026-11-14, `testvm/stictest1/garuda`, run with the shipped rel6 archivers
+(`~/backotter-work/bko-bin/linux`).
+
+**What it adds to tumbleweed's design:**
+
+- gentoo's guest-like scratch disk and ESP;
+- every scratch btrfs mounted `compress=zstd`, as on Garuda, with FIEMAP's
+  view of which files are stored compressed (`btrfsx.py`);
+- a nested, unmounted read-only snapshot of `@` at
+  `tree/.snapshots/1/snapshot`;
+- atimes judged on noatime mounts.
+
+**The first runs (`ga5`)** failed 5 checks on one thing: the two empty
+directories btrfs shows inside a snapshot where a nested subvolume sits.
+btrfs stores nothing for them. It makes them in memory (`new_simple_dir()`,
+inode 2) with the current time, so their times move between reads, and no
+archiver can keep them.
+
+**The fix:** `inner.sh` lists them on the source (`btrfsx.py
+placeholders`). The judge leaves out only their times and records one
+LIMIT; their type, mode and owner, and everything else in the snapshot,
+are still judged.
+
+**The reruns (`ga5b`):** 34 PASS, 5 LIMIT, 0 FAIL on both Chopin and
+Cinqcent. The LIMITs, classed in `limits.json#garuda`, are:
+
+- project IDs;
+- birth times;
+- whole-disk;
+- `nocompress`'s data restored compressed on a `compress=zstd` target (its
+  `m` flag is set after the data is written, and its contents and flag
+  match);
+- the placeholders' times.
+
 ## SticTest1 / SticTest2
 
 The archivers are static binaries, and EndeavourOS and Manjaro have no
@@ -457,12 +493,12 @@ The Thinkpad runs CachyOS now.
 
 | # | Piece | Effort |
 |---|---|---|
-| GA1 | The guest: `install-live.sh`'s `garuda` arm, `make-arch.sh --live garuda` with `DISK_SIZE=32G`, the rebuild inputs on Chopin and Cinqcent with the pinned sha256, the `rebuild-one.sh` line, `chaotic-keyring` in `in-guest.sh`, the `ram-sizes.tsv` row. Settle every *check*: the ESP size, keyring names, `dracut-rebuild` and both images, the ESP's directory names, the rotational disk and /tmp, postcfg's other steps, no mkinitcpio, the first snapshots. Done when it is built on Chopin, copied to Cinqcent with the same SHA-256, boots alone on both, and `vm-update --try` is ok (it shows a snap-pac pair) | 0.75 d |
-| GA2 | bko-holt, by a High-effort subagent: the `SUPPORTED` row and its tests, `PACKAGES` and `fingerprint.py`, the `dracut-rebuild` arm for `garuda-dracut-support` and its unit test, and grub-btrfs's way out if GA1 shows one is needed. Done when `cargo test` passes and the guest's dump plans `dracut-rebuild`, `--bootloader-id=Garuda` and a shared snapshot for each snap-pac snapshot | 0.25 d |
-| GA3 | The golden plan and the Test2 entries (above), and GuestTest2's chaotic-mirrorlist rule. Done as Gentoo's G2b was | 0.35 d |
-| GA4 | HoltTest1: the plain runs and `prep/garuda-snapper.sh` runs on both hosts, the judge rules the runs show (with judge-test.py cases), the README row, and the measured `ram-sizes.tsv`. Done when all four runs PASS with the snapshot checks above | 0.5 d |
-| GA5 | SticTest1 `garuda` (Decision 6) with both archivers on both hosts. Done at 0 FAIL, the LIMITs classed | 0.35 d |
-| GA6 | Docs: holt/README.md's list and tested-by, `osrel.rs`'s comment, the HoltTest1, SticTest1 and Test2 READMEs, `layload.md`'s boot stage (the `dracut-rebuild` condition), memory | 0.1 d |
+| GA1 | The guest: `install-live.sh`'s `garuda` arm, `make-arch.sh --live garuda` with `DISK_SIZE=32G`, the rebuild inputs on Chopin and Cinqcent with the pinned sha256, the `rebuild-one.sh` line, `chaotic-keyring` in `in-guest.sh`, the `ram-sizes.tsv` row. Settle every *check*: the ESP size, keyring names, `dracut-rebuild` and both images, the ESP's directory names, the rotational disk and /tmp, postcfg's other steps, no mkinitcpio, the first snapshots. Done when it is built on Chopin, copied to Cinqcent with the same SHA-256, boots alone on both, and `vm-update --try` is ok (it shows a snap-pac pair) **Done 2026-11-14** ("What GA1 found"). | 0.75 d |
+| GA2 | bko-holt, by a High-effort subagent: the `SUPPORTED` row and its tests, `PACKAGES` and `fingerprint.py`, the `dracut-rebuild` arm for `garuda-dracut-support` and its unit test, and grub-btrfs's way out if GA1 shows one is needed. Done when `cargo test` passes and the guest's dump plans `dracut-rebuild`, `--bootloader-id=Garuda` and a shared snapshot for each snap-pac snapshot **Done 2026-11-14:** cargo test passes (404 lib tests); the guest's plan has all three. | 0.25 d |
+| GA3 | The golden plan and the Test2 entries (above), and GuestTest2's chaotic-mirrorlist rule. Done as Gentoo's G2b was **Done 2026-11-14:** corpus from `ga4-4`, two builds a69abe3c…, leak scans 0. The p2 goldens are not re-blessed: other sessions' uncommitted work already makes them stale, so the next bless picks garuda up. | 0.35 d |
+| GA4 | HoltTest1: the plain runs and `prep/garuda-snapper.sh` runs on both hosts, the judge rules the runs show (with judge-test.py cases), the README row, and the measured `ram-sizes.tsv`. Done when all four runs PASS with the snapshot checks above **Done 2026-11-14** ("What GA4 found"). | 0.5 d |
+| GA5 | SticTest1 `garuda` (Decision 6) with both archivers on both hosts. Done at 0 FAIL, the LIMITs classed **Done 2026-11-14** ("What GA5 found"). | 0.35 d |
+| GA6 | Docs: holt/README.md's list and tested-by, `osrel.rs`'s comment, the HoltTest1, SticTest1 and Test2 READMEs, `layload.md`'s boot stage (the `dracut-rebuild` condition), memory **Done 2026-11-14**, memory included. | 0.1 d |
 | | *≈ 2.3 d in all* | |
 | GA7 | Optional: BackShot1 rehearsals on `garuda` on both hosts (0.25 d); a Thinkpad run if the user installs Garuda there (+0.5 d) | (0.75 d) |
 
@@ -473,8 +509,8 @@ only when the user asks, and hold only this work's files.
 
 | # | Host time | Disk | The user's time |
 |---|---|---|---|
-| GA1 | a 20-30 min build on Chopin (WORK_DIR in /mnt/bko-ram, `--reserve 14 5`: 3.3 GB of squashfs unpacked, dracut twice), the copy to Cinqcent | ISO 3.3 GB a host in rebuild-inputs; qcow2 ~8-11 GiB a host | none |
-| GA4 | ~1-1.5 h of queue a host for two runs at D ~22: one run per big host at a time beside small jobs | update overlays ~1-2 GiB (snapshots keep old packages) | none |
+| GA1 | a 20-30 min build on Chopin (WORK_DIR in /mnt/bko-ram, `--reserve 14 5`: 3.3 GB of squashfs unpacked, dracut twice), the copy to Cinqcent | ISO 3.3 GB a host in rebuild-inputs; qcow2 ~8-11 GiB a host| none |
+| GA4 | ~1-1.5 h of queue a host for two runs at D ~22: one run per big host at a time beside small jobs | update overlays ~1-2 GiB (snapshots keep old packages)| none |
 | GA5 | ~10 min a host | small | none |
 | GA7 | ~40 min a host for the rehearsal | — | the Thinkpad's reinstall, if chosen |
 

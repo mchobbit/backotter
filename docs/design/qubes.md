@@ -495,6 +495,19 @@ at a time; check-manifests.py count; classes.json in the batched pass.
   used reach chains of 3. Every boot of the guest runs the check unit,
   which stops qubes and so adds revisions (bounded by the setting): the
   chains a dump sees depend on how many boots the guest has had.
+- **Full build PASS on Chopin (run 5, 2026-11-14 21:31)**, from the
+  committed scripts (24a3c78), picked by `testvm/pick-host`: install 750 s,
+  first boot 1347 s (initial-setup ~17 min on the busier host), check boot
+  168 s with 15 BKO-QUBES-CHECK items PASS, none FAIL (lvm: 26 thin,
+  14 with origin, work's chain 3); qcow2 18 GiB on disk with the snapshot
+  `fresh-install`; `vm-run-options` `--uefi --no-secure-boot --cpus 4
+  --memory 10240`, `qemu-options` `-machine q35,accel=kvm,kernel-irqchip=split
+  -device amd-iommu,intremap=on -global ICH9-LPC.disable_s3=1 -nic none`.
+  The guest is `/bkoscratch/qubes-q1/qubes43` on Chopin (not yet in
+  vm-store). An earlier Chopin run was cut short by the 18:13 host reboot
+  for the backports upgrade. Queueing note: on Cage and Copland (ceiling
+  10.2 GiB) a 10 GiB reservation sits first in line for hours while
+  smaller jobs pass it; Chopin holds its turn.
 - **The ram-sizes.tsv row moves to Q7**: its numbers are ht1.sh's measured
   peak, which only a HoltTest1 run gives.
 - **vm-run can't boot qubes43 yet**: it has no word for `amd-iommu`,

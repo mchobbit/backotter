@@ -76,7 +76,10 @@ The restores boot with the vm-run options the guest's builder left in
 vms/GUEST/vm-run-options (e.g. --uefi, with Secure Boot), its --disk ones
 replaced by the restored disks; without that file, by BIOS, or by UEFI
 without Secure Boot if the guest has an EFI system partition.  Each boot
-gets a fresh UEFI variable store, as a new machine's.
+gets a fresh UEFI variable store, as a new machine's; the original's alone
+boots on (a copy of) the guest's own when vm-run-options names one with
+--guest-vars, as void-zbm's (ZFSBootMenu: no EFI/BOOT fallback), so a
+restore that needs its NVRAM entries can't borrow the source's.
 
 COMPARE_SLOT=N (0-9, default 0) gives a run its own mount points, pool
 name and SSH port (2230 + N), so that runs on different guests can go at
@@ -223,9 +226,10 @@ def out(cmd: list[str] | str, **kw) -> str:
 
 class GuestConfig:
     """What vms/GUEST says of how to boot the guest: vm-run's options for its
-    hardware (vm-run-options without its --disk ones, or None without that
-    file), its other disks (those --disk ones), and the file holding its
-    disks' key, with how a boot is given it ("luks": typed on the keyboard,
+    hardware (vm-run-options without its --disk and --guest-vars ones, or
+    None without that file), its other disks (those --disk ones), its own
+    UEFI variable store (--guest-vars', for the original's boots: vars), and
+    the file holding its disks' key, with how a boot is given it ("luks": typed on the keyboard,
     "zfs" or "console": typed on the serial console, "keyfile": not at all,
     as the guest's initramfs unlocks / with its own copy of it)."""
 
@@ -242,10 +246,13 @@ class GuestConfig:
         opts = shlex.split(f.read_text()) if f.exists() else None
         self.options: list[str] | None = None if opts is None else []
         self.disks: list[Path] = []
+        self.vars: Path | None = None
         while opts:
             o = opts.pop(0)
             if o == "--disk" and opts:
                 self.disks.append(guest_dir / opts.pop(0))
+            elif o == "--guest-vars" and opts:
+                self.vars = guest_dir / opts.pop(0)
             else:
                 self.options.append(o)
         # In holttest1d/ht1.sh's and vm-update's order, should there be more
@@ -269,6 +276,11 @@ class GuestConfig:
         if self.options is not None:
             return self.options
         return ["--uefi", "--no-secure-boot"] if "vfat" in layout.values() else []
+
+    def source_hardware(self, hardware: list[str]) -> list[str]:
+        """HARDWARE for a boot of the guest's own disks (an overlay on them): on
+        its own variable store too, if it has one.  Never a restore's."""
+        return hardware + (["--guest-vars", str(self.vars)] if self.vars else [])
 
 
 def disk_images(stem: Path, n: int) -> list[Path]:
@@ -1610,7 +1622,7 @@ def compare_guest(guest: str, tools: list[str]) -> dict:
         vm_umount(SRC_MP)
         print(f"== {guest}: this host can't mount it read-write; torture.sh in the guest", flush=True)
         # Without vm-run-options, by BIOS: the layout isn't known yet.
-        t = torture_in_guest(srcs, cfg, cfg.hardware({}), work / "torture-serial.log")
+        t = torture_in_guest(srcs, cfg, cfg.source_hardware(cfg.hardware({})), work / "torture-serial.log")
         results["torture_skipped"], results["torture_in_guest"] = t["skipped"], True
         guest_features = t["zfs_features"]
     else:
@@ -1645,7 +1657,7 @@ def compare_guest(guest: str, tools: list[str]) -> dict:
     run(["udevadm", "settle"], quiet=True)
     time.sleep(2)
     print(f"== {guest}: booting the original (src)", flush=True)
-    results["original_boot"] = boot(srcs, cfg, hardware, work / "boot-original.log")
+    results["original_boot"] = boot(srcs, cfg, cfg.source_hardware(hardware), work / "boot-original.log")
     print(f"   {results['original_boot']}", flush=True)
 
     state = vm_mount(srcs, SRC_MP, ro=True, key=cfg.key)
@@ -1741,7 +1753,8 @@ def boot_only(guest: str, tools: list[str]) -> dict:
     tools = tools or list(r["tools"])
     if "original_boot" not in r or "src" in tools:
         print(f"== {guest}: booting the original (src)", flush=True)
-        r["original_boot"] = boot(disk_images(work / "src", n), cfg, hardware, work / "boot-original.log")
+        r["original_boot"] = boot(disk_images(work / "src", n), cfg, cfg.source_hardware(hardware),
+                                  work / "boot-original.log")
         print(f"   {r['original_boot']}", flush=True)
     for tool in tools:
         if tool == "src":

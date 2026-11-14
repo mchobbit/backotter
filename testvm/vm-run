@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Boot a BackOtter test VM from its disk image.
 #
-# Usage: vm-run [--uefi [--no-secure-boot] [--uefi-vars FILE] [--mok CERT]... | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]]
+# Usage: vm-run [--uefi [--no-secure-boot] [--uefi-vars FILE | --guest-vars FILE] [--mok CERT]... | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]]
 #               [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--disk-ports LIST] [--nic MODEL]
 #               [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga]
 #               IMAGE [-- QEMU_ARGS...]
@@ -31,7 +31,27 @@
 #                 FILE is read and written in place, so give a copy of a
 #                 guest's own (its install's uefi-vars.fd: cachyos-zfs's has
 #                 Limine's entry) to boot through its entries; --snapshot
-#                 keeps FILE's writes in its temporary file too
+#                 keeps FILE's writes in its temporary file too.  It wins
+#                 over --guest-vars, wherever either comes: a caller that
+#                 brings a store of its own (a restored disk's boot) boots on
+#                 that, not on what vm-run-options names
+#   --guest-vars FILE
+#                 with --uefi: boot on the guest's own variable store (its
+#                 install's uefi-vars.fd), for vm-run-options to name when
+#                 the guest boots only through its NVRAM entries (void-zbm:
+#                 no EFI/BOOT fallback for a fresh store to find).  With
+#                 --ram or --snapshot, on a copy of FILE in this run's
+#                 temporary directory, gone when QEMU exits (--keep keeps
+#                 the disks' writes only): FILE is only read, as IMAGE is,
+#                 so several VMs can share it.  Without them, on FILE
+#                 itself when it is beside IMAGE, written in place as IMAGE
+#                 is (refused for a vm-store object); on a copy when it isn't
+#                 (IMAGE an overlay of the guest's disk, written, the
+#                 guest's store not).  A relative FILE is the one in the
+#                 working directory, else beside IMAGE (as named, before
+#                 links are followed), else beside the first image of
+#                 IMAGE's backing chain that has one: an overlay on the
+#                 guest's disk boots on the guest's store
 #   --mok CERT    with --uefi: enroll CERT in shim's MokList (virt-fw-vars
 #                 --add-mok, owner shim's GUID) in this run's variable store
 #                 before the boot, as MokManager would, so that a GRUB signed
@@ -40,7 +60,8 @@
 #                 file, or the DER itself in base64 (PEM's body, no spaces), as
 #                 vm-run-options carries it: that holds wherever the guest's
 #                 disk is booted from.  With --uefi-vars, only into a FILE
-#                 this run makes: a kept one has its MokList already
+#                 this run makes: a kept one has its MokList already, as a
+#                 --guest-vars store has
 #   --q35         SeaBIOS on QEMU's q35 machine (ICH9, PCIe; --uefi has it
 #                 too) instead of its PC machine (i440FX, from 1996), for a
 #                 guest that needs newer hardware but can't boot with OVMF
@@ -175,7 +196,7 @@ in_store() {
     return 1
 }
 
-uefi_vars="" moks=() cdrom="" uefi=no q35=no bios=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic) vga=()
+uefi_vars="" guest_vars="" moks=() cdrom="" uefi=no q35=no bios=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic) vga=()
 bus=virtio extra=() serials=() slots=() ports=() nic=virtio-net-pci nic_global=() mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -183,6 +204,7 @@ while [[ $# -gt 0 ]]; do
         --uefi) uefi=yes; shift ;;
         --no-secure-boot) secure_boot=no; shift ;;
         --uefi-vars) uefi_vars=$2; shift 2 ;;
+        --guest-vars) guest_vars=$2; shift 2 ;;
         --mok) moks+=("$2"); shift 2 ;;
         --q35) q35=yes; shift ;;
         --bios) bios=yes; shift ;;
@@ -217,8 +239,8 @@ if [[ $aarch64 == yes ]]; then
 else
     [[ $bios == no ]] || die "unknown option --bios"
 fi
-[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] [--uefi-vars FILE] [--mok CERT]... | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--disk-ports LIST] [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga] IMAGE [-- QEMU_ARGS...]"
-image=$(realpath "$1")
+[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] [--uefi-vars FILE | --guest-vars FILE] [--mok CERT]... | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--disk-ports LIST] [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga] IMAGE [-- QEMU_ARGS...]"
+image_arg=$1 image=$(realpath "$1")
 shift
 [[ ${1:-} == -- ]] && shift
 [[ $ram == yes && ${#snapshot[@]} -gt 0 ]] && die "--ram and --snapshot don't combine"
@@ -226,6 +248,8 @@ shift
 [[ $uefi == yes && $q35 == yes ]] && die "--uefi is on q35 already; --q35 is for SeaBIOS"
 [[ $uefi == yes && $aarch64 == no ]] && q35=yes
 [[ ${#moks[@]} -eq 0 || $uefi == yes ]] || die "--mok needs --uefi"
+[[ -z $guest_vars || $uefi == yes ]] || die "--guest-vars needs --uefi"
+[[ -z $uefi_vars ]] || guest_vars=""   # --uefi-vars wins (above)
 case $bus in virtio|scsi|nvme|sata) ;; *) die "--disk-bus must be virtio, scsi, nvme or sata" ;; esac
 [[ $cpus =~ ^[1-9][0-9]*$ && $memory =~ ^[1-9][0-9]*$ ]] || die "--cpus and --memory take whole numbers"
 if [[ ${#ports[@]} -gt 0 ]]; then
@@ -401,7 +425,8 @@ elif [[ -n $cdrom ]]; then
     args+=(-drive "file=$cdrom,media=cdrom,readonly=on" -boot order=dc)
 fi
 if [[ $uefi == yes ]]; then
-    # A fresh copy of OVMF's variable store per run: no leftover boot entries.
+    # A fresh copy of OVMF's variable store per run: no leftover boot entries
+    # (unless --uefi-vars or --guest-vars names a store).
     fw=/usr/share/OVMF
     if [[ $aarch64 == yes ]]; then
         fw=/usr/share/AAVMF
@@ -420,6 +445,27 @@ if [[ $uefi == yes ]]; then
     if [[ -n $uefi_vars ]]; then
         vfile=$uefi_vars
         if [[ -f $vfile ]]; then fresh=no; else cp "$fw/$vars" "$vfile"; fi
+    elif [[ -n $guest_vars ]]; then
+        gv=$guest_vars
+        if [[ $gv != /* && ! -f $gv ]]; then
+            # Beside IMAGE as named, then beside each image of its backing chain.
+            mapfile -t dirs < <(qemu-img info -U --backing-chain --output=json "$image" 2>/dev/null |
+                python3 -c 'import json, os, sys; [print(os.path.dirname(i["filename"])) for i in json.load(sys.stdin)]' 2>/dev/null)
+            for d in "$(dirname -- "$image_arg")" "${dirs[@]}"; do
+                [[ -f $d/$gv ]] && { gv=$d/$gv; break; }
+            done
+        fi
+        [[ -f $gv ]] || die "--guest-vars: no $guest_vars here, beside $image_arg or its backing images"
+        fresh=no
+        # In place only beside the IMAGE this boot writes: not under an
+        # overlay of the guest's disk, nor in a throwaway boot.
+        if [[ $ram == no && ${#snapshot[@]} -eq 0 &&
+              $(realpath -- "$(dirname -- "$gv")") == "$(realpath -- "$(dirname -- "$image_arg")")" ]]; then
+            in_store "$gv" && die "$gv is a vm-store object: boot it with --ram or --snapshot"
+            vfile=$gv
+        else
+            cp -- "$gv" "$vfile"
+        fi
     else
         cp "$fw/$vars" "$vfile"
     fi

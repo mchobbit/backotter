@@ -207,7 +207,7 @@ else
         b=${f##*/}
         case $b in
         openSUSE-MicroOS.*.qcow2) ;;          # microos's input image, not a guest's disk
-        *.qcow2|root-password|id_ed25519*|*.log|*.log.*|*.exit|*.start|image-state|vm-run-options|\
+        *.qcow2|root-password|id_ed25519*|*.log|*.log.*|*.exit|*.start|image-state|vm-run-options|uefi-vars.fd|\
         *-passphrase|*.verified|*.png|*.json|*.part|*.raw|update*|vmupdate*|install-media.*|*.try1|rebuild*) continue ;;
         esac
         if [ "$(stat -Lc %s "$f")" -gt $((64 << 20)) ]; then ln -s "$(readlink -f "$f")" $W/$b
@@ -270,9 +270,11 @@ try:
             o = opts.pop(0)
             if o == "--disk" and opts:
                 cfg.disks.append(w / opts.pop(0))
+            elif o == "--guest-vars" and opts:
+                cfg.vars = w / opts.pop(0)
             else:
                 cfg.options.append(o)
-    b = c.boot([cfg.base] + cfg.disks, cfg, cfg.hardware({}), w / "rebuild-boot-console.log")
+    b = c.boot([cfg.base] + cfg.disks, cfg, cfg.source_hardware(cfg.hardware({})), w / "rebuild-boot-console.log")
 except BaseException as e:
     b = {"ssh": False, "error": repr(e)}
 json.dump({"guest": w.name, "boot": b, "notes": notes}, open(w / "rebuild-boot.json", "w"), indent=1)

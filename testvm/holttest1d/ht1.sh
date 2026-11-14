@@ -234,12 +234,14 @@ gkey=$W/vms/$G/id_ed25519
 rkey=$W/vms/$RESCUER/id_ed25519
 # The guest's disks (vm-run-options' --disk, after its own image) and
 # firmware options (--uefi and the like, for the source and restored boots).
-imgs=("$W/vms/$G/$G.qcow2") fw=()
+# Its --guest-vars store (GVFROM) is the source's alone (gvars).
+imgs=("$W/vms/$G/$G.qcow2") fw=() GVFROM=""
 if [[ -f $W/vms/$G/vm-run-options ]]; then
     read -ra o < "$W/vms/$G/vm-run-options"
     for ((i = 0; i < ${#o[@]}; i++)); do
         case ${o[i]} in
         --disk) d=${o[++i]}; [[ $d == /* ]] || d=$W/vms/$G/$d; imgs+=("$d") ;;
+        --guest-vars) d=${o[++i]}; [[ $d == /* ]] || d=$W/vms/$G/$d; GVFROM=$d ;;
         *) fw+=("${o[i]}") ;;
         esac
     done
@@ -279,12 +281,19 @@ fi
 # OVMF_CODE_4M.fd's), and not for BackShot2, whose NVRAM is its own (tier 2's
 # shared store, judge.py's --nvram-kept and --new-uuids); otherwise each boot
 # has a fresh store, as ever.  GV_ENTRY: the store has an entry on a disk.
-GVARS=$W/vms/$G/uefi-vars.fd GV_ENTRY=0
+GVARS=${GVFROM:-$W/vms/$G/uefi-vars.fd} GV_ENTRY=0
 ((uefi)) && [[ $VARIANT != bs2 && -f $GVARS && " ${fw[*]} " == *" --no-secure-boot "* ]] || GVARS=""
 [[ -n $GVARS ]] && command -v virt-fw-vars >/dev/null &&
     virt-fw-vars -i "$GVARS" --print 2>/dev/null | grep -qE '^Boot[0-9A-F]{4} .*devpath=Partition\(' && GV_ENTRY=1
 # NAME: VFW, vm-run's options for a boot on R/NAME-vars.fd, made a fresh copy of it (none without).
-gvars() { VFW=(); [[ -n $GVARS ]] || return 0; cp "$GVARS" "$R/$1-vars.fd" && VFW=(--uefi-vars "$R/$1-vars.fd"); }
+# Without GVARS (BackShot2), the source alone boots on a copy of the store
+# vm-run-options names (--guest-vars: void-zbm, which has no EFI/BOOT
+# fallback), and a restored disk on the NVRAM its run gives it, never on that.
+gvars() {
+    VFW=()
+    if [[ -z $GVARS ]]; then [[ $1 != source || -z $GVFROM ]] || VFW=(--guest-vars "$GVFROM"); return 0; fi
+    cp "$GVARS" "$R/$1-vars.fd" && VFW=(--uefi-vars "$R/$1-vars.fd")
+}
 # The entry the guest booted through: its efibootmgr -v line (HD(...): on a disk).
 # Without efibootmgr (Guix System), nvboot-efivars.sh reads it from efivarfs.
 NVBOOT="command -v efibootmgr >/dev/null || {

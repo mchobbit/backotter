@@ -65,10 +65,11 @@ vm_boot() {
         return 1
     fi
     if [[ -f $dir/vm-run-options ]]; then read -ra opts <"$dir/vm-run-options" || true; fi
-    # Its --disk images are named relative to the guest's directory.
+    # Its --disk images (and --guest-vars store) are named relative to the guest's directory.
     local i
     for i in "${!opts[@]}"; do
-        [[ ${opts[$i]} == --disk && -n ${opts[$((i + 1))]:-} && ${opts[$((i + 1))]} != /* ]] &&
+        [[ ${opts[$i]} == --disk || ${opts[$i]} == --guest-vars ]] &&
+            [[ -n ${opts[$((i + 1))]:-} && ${opts[$((i + 1))]} != /* ]] &&
             opts[$((i + 1))]=$dir/${opts[$((i + 1))]}
     done
     # illumos' vioif can't map the modern virtio-net's registers: without

@@ -160,7 +160,9 @@ step "comparing the restored files with the backup"
 # Content and existence only.  --metadata also compares ctime, inode and link
 # count, which no restored file can match; bs1-verify's manifest checks modes,
 # owners and mtimes.  Rustic can't compare device nodes, so calls them all M;
-# and it counts the top directory as added.
+# and some versions count the top directory as added, with no line of its own
+# (0.11.4+backotter.11 doesn't): an added entry without a "+ NAME" line is
+# taken for it, once.  (Symlinks went uncounted before: no space before its colon.)
 #
 # It reads every file, which would change nearly every atime; the boot stage
 # would then put each one back with a touch of its own, for a quarter of an hour.
@@ -184,12 +186,13 @@ tail -n 20 "$ATTEMPT/diff.txt" | tee -a "$LOG"
 [[ $rc -eq 0 ]] || die "rustic-bko diff failed (exit $rc)"
 changes=$(awk '
     /^(Files|Dirs|Symlinks|Others) *:/ {
-        n += $7
-        if ($1 == "Dirs") { n += ($5 > 1 ? $5 - 1 : 0) } else { n += $5 }
+        sub(/:/, " :")   # "Symlinks: N" has no space before its colon: one field fewer
+        n += $7; add += $5
         if ($1 != "Others") { n += $9 }
     }
+    /^\+ +"[^"]/ { named++ }
     /^T[[:space:]]/ { n++ }
-    END { print n + 0 }' "$ATTEMPT/diff.txt")
+    END { print n + add - (add > named ? 1 : 0) }' "$ATTEMPT/diff.txt")
 grep -qE '^(Files|Dirs|Symlinks|Others) *:' "$ATTEMPT/diff.txt" || die "rustic-bko diff printed no totals"
 # A filesystem reformatted onto ext4 has mke2fs's lost+found, which the backup
 # of another type can't have.

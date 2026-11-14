@@ -372,10 +372,10 @@ fitted to main's load.  What had to change, and why:
   (`boot/efi/*`, `efi/*`), as judge.py's `BOOT_STAGE` excuses it
   (`^boot/efi[^/]*/EFI`).
 
-Not done in the port: HoltTest round trips with `--reformat` (an ht1.sh
-variant, and judge.py's layout and fs forms taught the type change and the
-rewritten files, as `--new-uuids` is); the space check; `status` showing the
-leftovers; and a QEMU or Thinkpad run of the ported code.
+Not done in the port: judge.py's layout and fs forms taught the type change
+and the rewritten files, as `--new-uuids` is (ht1.sh's `HT_REFORMAT` runs
+the round trips, below, but judges them by hand); the space check; `status`
+showing the leftovers; and a Thinkpad run of the ported code.
 
 ### Port test results (2026-11-14, on cinqcent)
 
@@ -408,3 +408,49 @@ leftovers; and a QEMU or Thinkpad run of the ported code.
   btrfs's snapshots and aliases) as removed; those are taken off the count
   of differences, and the globs kept in the attempt's directory.  Without
   it, any snapper source (CachyOS, Tumbleweed) would have stopped there.
+
+### Round trips of the ported code (2026-11-14)
+
+main 9718f04's static musl bko-holt, rustic-bko 0.11.4+backotter.11,
+`ht1.sh` with `HT_REFORMAT` (testvm/holttest1d/README.md), run `rfmt1`, in
+RAM on Cinqcent, Copland and Cage.  Each restored disk booted by itself,
+with the source's boot state and health; every refusal, the dry run and
+each stage passed.  RESULT is FAIL in each, as judge.py isn't taught the
+change, and every DIFF is the change's:
+
+| Source | Onto | Boot | What differs, all of it expected |
+|---|---|---|---|
+| `debian13` (btrfs `@rootfs`) | `/=ext4` | GRUB BIOS, initramfs-tools | fstab and the kernel command line (`rootflags=subvol=` gone); the fs probe; mke2fs's `lost+found`; NOCOW (`C`) gone from the journal, ext4's `htree` index flag on big directories.  Both initrds have `ext4.ko` |
+| `fedora44` (btrfs `root`, `home`) | `/=xfs` | GRUB BIOS, BLS, dracut | fstab (`/home` folded), `/etc/kernel/cmdline` and the four BLS entries; NOCOW and btrfs's no-compress flag gone; XFS's `trusted.SGI_ACL_*` beside the same POSIX ACLs.  Four initramfs images with `xfs.ko` |
+| `tumbleweed` (btrfs, 8 subvolumes, snapper: 7 snapshots after `prep/tumbleweed-snapper.sh`'s rollback) | `/=ext4` | GRUB BIOS, dracut | the snapshots and the root's alias `.snapshots/8/snapshot` left out (290,964 files, all under `.snapshots/`; the hard-link groups differ only by those paths), so GRUB's snapshot menu is gone; NOCOW gone from `/var`; `lost+found`.  snapper's configs and timers listed as left over |
+| `endeavouros` (ext4) | `/=xfs` | systemd-boot, dracut via kernel-install, UEFI | fstab (pass 0), the fs probe, `trusted.SGI_ACL_*`.  Both initrds have `xfs.ko` |
+
+The same build without `--reformat` (`debian13`, run `rfmt-plain`, Cage):
+PASS, 0 differences.
+
+BackShot1 in QEMU (bs1-qemu.py, the 20261112 `--test` image, on Copland):
+
+- bs1-restore's count of differences after the restore was wrong twice,
+  both fixed now.  rustic-bko .11 doesn't count the top directory as added,
+  so the one added directory the count took for it was mke2fs's
+  `lost+found`, which `--reformat` then took off again: Manjaro `/=ext4`
+  stopped on "-1 files differ".  And the `Symlinks:` totals line has no
+  space before its colon, so its fields were off by one and symlinks were
+  never counted: Tumbleweed's 1,303 left-out snapshot symlinks came off the
+  count without having been on it ("-1303").  bs1-restore now takes an
+  added entry for the top directory only when the diff names fewer than it
+  counts, and reads the symlink totals too.
+- Tumbleweed (BIOS, `--bios --virtio`) `/=ext4`: restore PASS (67,318
+  left-out snapshot entries and `lost+found` taken off, 0 differences), the
+  restored system boots and answers, / is ext4, the package list and units
+  as before.  bs1-verify fails on one check only: four `/boot` files'
+  SELinux labels, which the boot stage's `setfiles` sets to the policy's
+  (tumbleweed's update left them `modules_object_t` and `usr_t`); this
+  happens without `--reformat` too, and judge.py excuses it, but
+  bs1-manifest's comparison doesn't yet.  Every reformat difference
+  (30,293 missing snapshot files, 18 added, 362 changed) was expected.
+- Manjaro `/=ext4`: restore PASS, but the restored boot reaches OVMF's
+  shell; so does the same run without `--reformat`.  The guest has no NVRAM
+  of its own: the source boots from OVMF's automatic NVMe entry, which is
+  gone once the rescue boot is over, and the restore has no entry to make.
+  A harness matter, not this feature's.

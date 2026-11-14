@@ -417,6 +417,13 @@ snapper snapshots of a changing root and a `snapper rollback`, for load's
 shared btrfs snapshots (docs/design/btrfs-snapshots.md; run `bkoexact` on
 cinqcent, 2026-11-10: PASS).
 
+`HT_REFORMAT="MOUNT=TYPE ..."` restores onto another filesystem type: every
+load call from the dry run on gets `--reformat MOUNT=TYPE` for each
+(docs/design/reformat.md).  judge.py isn't taught the type change yet, so
+fsmeta, health and the dump comparison list it, the rewritten files and the
+folded subvolume mounts as DIFFs, and the RESULT is FAIL; the boot, boot
+state and every other check hold as for any run.
+
 The plan's variants are chosen with `HT_VARIANT`, each in a directory of
 its own (`RUN/GUEST-VARIANT`): `oneshot` runs the rebuild as one
 `--through close --commit`, and `bigger` rebuilds onto disks 1 GiB bigger

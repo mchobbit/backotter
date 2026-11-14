@@ -63,6 +63,9 @@
 # after that phase (a test hook).  HT_SOURCE_PREP=FILE is a script run as
 # root in the source before its dump (its overlay only), rebooted after it
 # when its last line is REBOOT: prep/tumbleweed-snapper.sh.
+# HT_REFORMAT="MOUNT=TYPE ..." gives every load call from the dry run on a
+# --reformat MOUNT=TYPE for each (docs/design/reformat.md); judge.py isn't
+# taught the change, so its fs, health and dump checks list it as DIFFs.
 #
 # HT_HOLT_BIN=DIR takes bko-holt from DIR/bko-holt (DIR/PLATFORM/bko-holt in
 # ht1-bsd.sh) instead of bin/'s: a set laid out as bin/ is, HoltTest2's
@@ -134,6 +137,12 @@ VARIANT=${HT_VARIANT:-}
 case $VARIANT in ""|bigger|oneshot|degraded|img|smaller|fitbigger|nearfull|refuse|bs2) ;;
     *) echo "HT_VARIANT: bigger, oneshot, degraded, img, smaller, fitbigger, nearfull, refuse or bs2" >&2; exit 2 ;;
 esac
+# HT_REFORMAT: load's --reformat, one per MOUNT=TYPE.
+REFORMAT=()
+for f in ${HT_REFORMAT:-}; do
+    [[ $f == /*=* ]] || { echo "HT_REFORMAT: MOUNT=TYPE ..., not $f" >&2; exit 2; }
+    REFORMAT+=(--reformat "$f")
+done
 # DELTA: how far the targets are from the source's disks.  FIT: load is given
 # --fit-largest FIT_PCT, so it fits the layout to them.  FITONLY: the run is a
 # refusal, and stops after plan.
@@ -299,7 +308,7 @@ HT_BULK=(share 'src-*.qcow2' 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 rustic-bko 
 [[ $VARIANT != bs2 ]] || HT_BULK+=(rescuer-vars.fd)   # (a resumed UEFI rescuer's NVRAM)
 HT_ZIP=(src-meta.json dst-meta.json)
 # Settings that change what a run checks, or its rescuer: its report names them.
-dbg=""; for v in HT_QUICK HT_THROUGH HT_KEEP HT_FAIL_AT HT_RESCUER HT_RESCUER_IMG HT_SOURCE_PREP HT_BOOT_EACH_DISK HT_NVRAM; do [[ -z ${!v:-} ]] || dbg+=" $v=${!v}"; done
+dbg=""; for v in HT_QUICK HT_THROUGH HT_KEEP HT_FAIL_AT HT_RESCUER HT_RESCUER_IMG HT_SOURCE_PREP HT_BOOT_EACH_DISK HT_NVRAM HT_REFORMAT; do [[ -z ${!v:-} ]] || dbg+=" $v=${!v}"; done
 [[ -z $dbg ]] || ht_note "set for debugging or tests:$dbg"
 ht_require
 # A rerun from a later phase goes on from K's state (a failure's): all of it
@@ -1283,6 +1292,7 @@ phase_rebuild() {
     # keeps one, and the case's own options say.)
     ((uefi)) && [[ $VARIANT != bs2 || $BS2_TIER == 1 ]] && [[ ${HT_NVRAM:-} != 1 ]] && flags+=(--no-nvram)
     [[ $VARIANT != bs2 ]] || flags+=("${BS2_FLAGS[@]}")
+    flags+=("${REFORMAT[@]}")
     # (A refusal variant always takes these: they are what it runs for.)
     if [[ ${HT_QUICK:-} != 1 || -n $FITONLY ]]; then
     sshk "$rkey" "$edges" > "$R/logs/edges-before.txt" 2>&1

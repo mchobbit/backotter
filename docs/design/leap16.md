@@ -185,6 +185,58 @@ name Leap. GuestTest2: tumbleweed's rules (`S-zyp`, `L-grub`, the kernel
 and boot rules) and `known-lines.json#zypper`; Leap's repository lines may
 need adding.
 
+## What L1 found (2026-11-14)
+
+The guest built on the first try on Cinqcent, in 307 s, and is in
+`vms/leap16` on Cinqcent and Chopin (`leap16.qcow2` SHA-256 `a1595e51...`,
+the same on both; `image-state` comes with the first real update), and
+boots on Chopin too (`vm-update --probe`, SSH up).  It
+settles these *checks*:
+
+- **The ISO:** `Leap-16.1-offline-installer-x86_64-Build60.2.install.iso`,
+  4,516,216,832 bytes, in `download.opensuse.org/distribution/leap/16.1/offline/`
+  with a `.sha512` (not `.sha256`) and `.sha512.asc`, signed by the openSUSE
+  Project Signing Key; the key is on the ISO at
+  `/install/gpg-pubkey-29b700a4-*.asc`, not its root.  Kept in
+  `/bkoscratch/rebuild-inputs/leap16` on both hosts.  The build pins Build60.2.
+- **os-release:** `ID="opensuse-leap"`, `ID_LIKE="suse opensuse"`,
+  `VERSION_ID="16.1"`, as assumed.  Kernel `kernel-default` 6.12.0-160100.8
+  (160100.9 after an update); shim 16.1, grub2-x86_64-efi 2.14, snapper
+  0.12.1, selinux-policy-targeted 20260826, dracut 059.
+- **The install:** not `-kernel` (QEMU's direct boot would put the
+  SUSE-signed kernel past Secure Boot's check): `vm-run --uefi` boots the
+  ISO's own shim and GRUB, whose default entry starts after 60 s, and Agama
+  finds `autoinst.json` on a second CD labelled `OEMDRV`.  `product.id` is
+  `openSUSE_Leap`, mode `standard`.  Agama's own reboot at the end ends QEMU
+  (`-no-reboot`); no `inst.finish` is needed.  The live system has no serial
+  console, so `leap-post-live.sh` writes the facts to `/dev/ttyS0` itself.
+- **The layout:** GPT, a 512 MiB ESP at `/boot/efi`, one Btrfs `/`
+  (21.5 GiB), a 2 GiB swap partition, no separate `/home`.  Subvolumes `@`,
+  `@/boot/grub2/x86_64-efi`, `@/boot/grub2/i386-pc`, `@/var`, `@/usr/local`,
+  `@/srv`, `@/root`, `@/opt`, `@/home`, `@/.snapshots`; the default (and the
+  booted root) is `@/.snapshots/1/snapshot`, mounted with no `subvol=`, as
+  Tumbleweed's is.  snapper's `root` config, one snapshot.
+- **The boot loader:** GRUB 2 through shim; the ESP holds `EFI/opensuse/`
+  (shim.efi, grub.efi, grubx64.efi, MokManager.efi, grub.cfg, boot.csv) and
+  `EFI/boot/` (bootx64.efi, fallback.efi, MokManager.efi).  Agama writes an
+  `opensuse-secureboot` entry for `\EFI\opensuse\shim.efi`; with vm-run's
+  fresh vars each boot, shim's fallback makes it again (`boot-current=0001`),
+  so the guest needs no `uefi-vars.fd`.  `GRUB_TERMINAL="gfxterm"`: GRUB's
+  menu stays off the serial console, the kernel's (`extraKernelParams`) is
+  on it.  No systemd-boot or grub2-bls offered by the default profile.
+- **SELinux:** enforcing, targeted; Agama leaves
+  `/etc/selinux/.autorelabel`, so the relabel boot runs, as Tumbleweed's.
+  After it, one file is mislabelled, `/var/log/plymouth-debug.log`
+  (written during that boot), which the check boot reports and allows.
+- **Secure Boot:** `mokutil --sb-state` says enabled on the check boot.
+- **firewalld:** on; the post script's `--add-service=ssh` keeps SSH open.
+- **vm-update --try:** ok on Cinqcent, 137 s: `zypper up` changed 3
+  packages, a new kernel booted, the host mounts its 11 file systems, and
+  in-guest.sh dropped the install DVD's repository (`Installation.repo`,
+  which Agama leaves).
+- **Usage:** `make-opensuse.sh leap 16.1 WORK_DIR` (the spec said `leap16`);
+  `rebuild-one.sh leap16` runs it.
+
 ## Tests
 
 **SticTest1** (`testvm/stictest1/leap16`): from `tumbleweed`'s (Btrfs

@@ -37,7 +37,8 @@
       },
       "per_guest": {
         "testvm/console-boot.py": "guests whose first passphrase file is console-passphrase or zfs-passphrase",
-        "testvm/omarchy/type-luks-passphrase.py": "guests whose first passphrase file is luks-passphrase"
+        "testvm/omarchy/type-luks-passphrase.py": "guests whose first passphrase file is luks-passphrase",
+        "testvm/vanilla/console-keys.py": "guests whose restored disk boots a second GRUB entry, picked on the serial menu (vm_up's GRUB_PICK: vanilla3's other root)"
       }
     },
     "bsd": {
@@ -115,6 +116,8 @@
     "gentoo": {"kind": "linux", "firmware": "uefi"},
     "gentoo-systemd": {"kind": "linux", "firmware": "uefi"},
     "nixos2605": {"kind": "linux"},
+    "vanilla3": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/vanilla/console-keys.py"],
+                 "notes": "ABRoot's two roots: ht1.sh boots the restored disk twice, the other root picked on GRUB's serial menu by console-keys.py (vm_up's GRUB_PICK); D 30 is over every RAM-disk ceiling, so it runs only on /bkoscratch, on a host whose holt_disk_mode is on (docs/design/vanillaos.md V7)"},
     "freebsd15": {"kind": "bsd", "plat": "freebsd", "rescuer": ["freebsd15-ufs"]},
     "freebsd15-mirror": {"kind": "bsd", "plat": "freebsd", "rescuer": ["freebsd15-ufs"]},
     "freebsd15-geli": {"kind": "bsd", "plat": "freebsd", "firmware": "uefi", "rescuer": ["freebsd15-ufs"], "harness": ["testvm/console-boot.py"],

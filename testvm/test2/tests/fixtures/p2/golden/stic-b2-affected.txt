@@ -1,12 +1,12 @@
-SticTest2 plan: round rel4 (~/backotter-work/roundrel4/bin), base BASE, ledger 47 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 4 of 47 checks, est. 4.0 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+SticTest2 plan: round rel4 (~/backotter-work/roundrel4/bin), base BASE, ledger 60 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
+due: 4 of 60 checks, est. 4.0 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   stic:freebsd14      any      changed:bin  bin:freebsd/restic-bko ca73..->b4d3.. (restic 1c0ad47->0755dcf); bin:freebsd/rustic-bko 1a8e..->c55e.. (rust..  1.0 gm  history:1
   stic:freebsd15      any      class:B2     bin:freebsd/restic-bko ca73..->b4d3.. (restic 1c0ad47->0755dcf); bin:freebsd/rustic-bko 1a8e..->c55e.. (rust..  1.0 gm  history:1
   stic:freebsd15-ufs  any      class:B3     bin:freebsd/restic-bko ca73..->b4d3.. (restic 1c0ad47->0755dcf); bin:freebsd/rustic-bko 1a8e..->c55e.. (rust..  1.0 gm  history:1
   stic:haiku6         any      changed:bin  bin:haiku/rustic-bko 887a..->13fd.. (rustic 8a58531->054ac7a, rustic_core f237baf->7506f78); bin:linux/resti..  1.0 gm  history:1
 class-pending: stic:freebsd15-geli, stic:ghostbsd26-zfs (B2, covered if stic:freebsd15 passes)
 class-pending: stic:ghostbsd26, stic:hardenedbsd15 (B3, covered if stic:freebsd15-ufs passes)
-carried: stic:aerynos, stic:alpine324, stic:alpinebsd, stic:arch, stic:artix-dinit, stic:artix-s6, stic:cachyos, stic:chimera and 31 more (carry:affected-v1: affected.sh says freebsd)
+carried: stic:aerynos, stic:alpine324, stic:alpinebsd, stic:anduinos2, stic:arch, stic:artix-dinit, stic:artix-s6, stic:cachyos and 44 more (carry:affected-v1: affected.sh says freebsd)
 current: 0
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written

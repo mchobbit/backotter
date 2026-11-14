@@ -64,11 +64,14 @@ def before(path):
 
 
 def table(**edit):
-    """The real table with no class limits (every host at the defaults) and EDIT applied:
-    class_limits=..., or HOST={field: value} merged into that host's row."""
+    """The real table with no class limits and no row limits (every host at the defaults) and
+    EDIT applied: class_limits=..., or HOST={field: value} merged into that host's row."""
     with open(TABLE) as f:
         t = json.load(f)
     t["class_limits"] = {"big": {}, "small": {}}
+    for r in t["hosts"]:
+        for k in H.LIMITS:
+            r.pop(k, None)
     for k, v in edit.items():
         if k == "class_limits":
             t["class_limits"] = v
@@ -100,13 +103,15 @@ class Limits(AltTable):
     def test_the_real_table(self):
         """The user's choice (2026-11-13): the small hosts run 2 stic slots and 1 holt job with a
         BASE_GIB of 4; the big hosts keep the defaults. bs2 runs 5 cases at once on a big host,
-        2 on a small one. No row sets a limit of its own."""
+        2 on a small one. No row sets a limit of its own but chopin's and cinqcent's
+        holt_disk_mode (the user's choice, 2026-11-14, for vanilla3's 30 GiB disk)."""
         small = dict(DEFAULTS, stic_slots=2, holt_jobs=1, base_gib=4, bs2_slots=2)
-        big = dict(DEFAULTS, bs2_slots=5)
+        big = dict(DEFAULTS, bs2_slots=5, holt_disk_mode=True)
         self.assertEqual(H.LIMITS, DEFAULTS)
         for r in H.rows(all_=True):
             self.assertEqual(H.limits(r["name"]), small if r["class"] == "small" else big, r["name"])
-            self.assertFalse(set(H.LIMITS) & set(r), f"{r['name']}: a limit set in its row")
+            self.assertEqual(set(H.LIMITS) & set(r), {"holt_disk_mode"} if r["name"] in ("chopin", "cinqcent") else set(),
+                             f"{r['name']}: a limit set in its row")
         self.assertEqual(H.limits("nosuch"), DEFAULTS)
         self.assertEqual(H.load()["class_limits"], {"big": {"bs2_slots": 5},
                                                     "small": {"stic_slots": 2, "holt_jobs": 1, "base_gib": 4, "bs2_slots": 2}})

@@ -120,6 +120,7 @@ holt	holt:cachyos-zfs	3.50	210	0.00	-	as holt:chimera-zfs (cinqcent chim3: UEFI,
 holt	holt:gentoo-systemd	4.00	240	0.00	-	gentoo.md G3: as holt:gentoo (chimera-uefi's chim4, UEFI, LVM on LUKS, rounded up), until G5's first run (est.)
 holt	holt:anduinos2	5.63	338	0.00	-	anduinos.md A3: as holt:ubuntu26-uefi (r3all chopin: UEFI, Secure Boot), until A5's first run (est.)
 holt	holt:neon24	6.32	379	0.00	-	chopin ht1u PASS 2026-11-14, 02:07:09Z to 02:13:28Z (ht1.sh, in RAM; cinqcent's ht1u PASS in 436 s)
+holt	holt:vanilla3	27.13	1628	28.94	28.94	chopin v7-1 PASS 2026-11-14, its passing phases 1628 s (source 313, backup 169, rebuild 618, verify 528; cinqcent's v7-2 1276 s), ht1.sh on /bkoscratch only (HT_RAM=0, D 30 over every RAM-disk ceiling): gb and gb_disk its disk peak, 28,259,052 KiB (vanillaos.md V7)
 holt	holt:debian13-stack+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
 holt	holt:aerynos+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
 holt	holt:mint22+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
@@ -206,6 +207,7 @@ guest	guest:ubuntu24-luks	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's s
 guest	guest:ubuntu26-uefi	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ubuntu26-zfs	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ubuntu26-zfsmirror	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:vanilla3	3.32	199	0.00	-	vanillaos.md V5: vm-update --try 79 s on chopin (1.32) + 0.5 for checks + 1.5 for a new guest's smoke backup (est.)
 guest	guest:void-musl	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:zorin18	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 img	img:linux	3.00	180	0.00	-	11-07 boot logs: the --test image's boot tests (the files' times)

@@ -54,14 +54,14 @@ class Spec(unittest.TestCase):
     def setUp(self):
         self.sf = rows_guest.load_spec(REPO)
 
-    def test_sixty_two_guests_and_the_exclusion(self):
-        self.assertEqual(len(self.sf.names()), 62)
+    def test_sixty_seven_guests_and_the_exclusion(self):
+        self.assertEqual(len(self.sf.names()), 67)
         self.assertNotIn("freebsd15-builder", self.sf.names())
         self.assertEqual(self.sf.data["excluded"], {"freebsd15-builder": "a build helper"})
 
     def test_every_rule_is_the_judges(self):
         loaders, sources = set(J.LOADER_RULES) | {"L-none"}, set(J.SOURCE_RULES) | {"S-none"}
-        kernels = set(J.KERNELS_MAX) | {"K-none"}
+        kernels = set(J.KERNELS_MAX) | {"K-none", "K-abroot"}     # (K-abroot's limit is per root: ABROOT_KERNELS_PER_ROOT)
         boots = {"B-lin", "B-bsd", "B-obsd", "B-ill", "B-alpbsd", "B-none"}
         mounts = {"M-lin", "M-zfs", "M-alp", "M-bsd", "M-ill", "M-haiku", "M-none"}
         for n in self.sf.names():
@@ -77,7 +77,7 @@ class Spec(unittest.TestCase):
         self.assertEqual(new, sorted(["endeavouros", "endeavouros-grub", "manjaro", "fedora44-raid", "ubuntu26-raid", "rocky10-raid5",
                                       "freebsd15-mirror", "omnios58-mirror", "ubuntu26-luks", "chimera", "kinoite44",
                                       "chimera-uefi", "chimera-zfs", "gentoo", "gentoo-systemd", "cachyos-zfs", "anduinos2", "neon24", "garuda", "biglinux",
-                                      "oi2610", "oi2610-bios"]))
+                                      "oi2610", "oi2610-bios", "vanilla3"]))
         for n in new:
             self.assertIn("testvm/test2/guest/new-guest.sh", self.sf.entry(n)["harness"], n)
 

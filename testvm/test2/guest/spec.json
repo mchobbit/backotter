@@ -1718,6 +1718,33 @@
     "established": true
    }
   },
+  "vanilla3": {
+   "kind": "ssh",
+   "plat": "linux",
+   "memory": 4096,
+   "harness": [
+    "testvm/make-vanilla.sh",
+    "testvm/vanilla/**",
+    "testvm/update/in-guest.sh#Linux.abroot",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#abroot"
+   ],
+   "checks": {
+    "pm": "abroot",
+    "rules": {
+     "source": "S-none",
+     "loader": "L-none",
+     "kernel": "K-abroot",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": false
+   }
+  },
   "void-musl": {
    "kind": "ssh",
    "plat": "linux",

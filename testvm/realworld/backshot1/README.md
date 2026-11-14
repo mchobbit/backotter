@@ -258,6 +258,10 @@ makes rEFInd's NVRAM entry again.  So `verify` wants every file in
 rest of the ESP may change) and `refind_linux.conf` unchanged, and
 `booster-reassert.timer` is held through phase 1 and `verify` as snapper's
 timers are.  Passed 2026-11-14, run `pika-4-20261114-134728`.
+`testvm/realworld/pika-bootstrap-qemu.sh TEST_IMG ISO WORK_DIR` rehearses the
+bootstrap in QEMU: a blank NVMe, the ISO on a USB drive, then the disk alone
+by rEFInd's NVRAM entry.  It passed 2026-11-14, as did `bs1-qemu.py --virtio`
+on `pikaos4`.
 
 ## AnduinOS: the MOK-signed GRUB and its snapshots
 

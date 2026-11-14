@@ -455,6 +455,39 @@ in the library). Nothing committed.
   NVMe on Chopin) waited 27 min for room and was cancelled once the real
   install had worked; the `bs1-qemu.py --virtio` rehearsal on `pikaos4`
   wasn't run either. The real run went first, as Guix's did.
+- **Rehearsals (2026-11-14), after the fact:** both done, with no change to
+  `pika-bootstrap.sh`, BackShot1 or bko-holt.
+  `testvm/realworld/pika-bootstrap-qemu.sh TEST_IMG ISO WORK_DIR [PORT]`
+  (modelled on `anduinos-bootstrap-qemu.sh`) boots the pinned `--test`
+  rescuer under OVMF (no Secure Boot, `-cpu host`, 8 GiB) with a blank
+  40 GiB NVMe (serial `BKOPIKATEST`) and a USB drive holding the ISO,
+  the scripts and the keys where mybig512 has them. It runs
+  `pika-bootstrap.sh` there, checks the teardown, then boots the disk
+  alone. The teardown checks: nothing of the disk or `/run/bko-pika`
+  mounted in any process's mount namespace, no loop device left, and the
+  drive unmounts. The boot checks: SSH with the fixed host key, `ID=pika`,
+  no failed unit, / XFS, `/boot` ext4 `PikaOS`, booster's image, no
+  `EFI/BOOT` copy, and BootCurrent the `\EFI\refind\refind_x64.efi` entry.
+  `DISK_DIR` puts the NVMe image on a cool disk, for a small host. **PASS
+  on Copland** in 145 s (install.sh 52 s, SSH 26 s after power-on, RAM-disk
+  peak 5.9 GiB, the install 8.3 GiB in `/bkoscratch/compare-disks`), run
+  twice. A control run with the `mount --make-private` line taken out of a
+  copy of the script failed as the first Thinkpad bootstrap had
+  (`umount: /run/bko-pika/iso: target is busy`, the chroot in every
+  namespace, the drive busy), so the checks catch that bug.
+  `bs1-qemu.py --virtio` on `pikaos4`: **PASS on Chopin**, run
+  `pika-4-20261114-193750`, 468 s, RAM-disk peak 12.7 GiB. It used bko-holt
+  0.2.6 built static from main 3f401e9's `holt/` (SHA-256
+  `a7720680...616f3`), rustic-bko 0.11.4+backotter.13 and the pinned
+  `--test` rescuer. The source booted by the guest's rEFInd entry (Boot0001).
+  Backup: 249,930 files, 7.5 GiB, repository 3.3 GiB. The plan had one
+  `booster build` per kernel, `efi-dedupe` and one `efibootmgr --create`
+  for rEFInd. The restored system booted from NVRAM, and verify compared
+  261,531 files with 0 unexpected. The default NVMe run (Cinqcent) can't
+  work on this guest: its source never booted. rEFInd started the kernel,
+  but the guest's host-only booster image was built on virtio and has no
+  NVMe driver, which is why `--virtio` exists. The Thinkpad run covered
+  NVMe, with an image built for it in the rescue's chroot.
 
 ## Pieces to build (ordered, est.)
 
@@ -467,7 +500,7 @@ in the library). Nothing committed.
 | P5 | SticTest1 entries and runs, both guests, both archivers, both hosts, 0 FAIL. **Done 2026-11-14:** `pikaos4` 33 PASS/3 LIMIT/0 FAIL (`pk5d`), `pikaos4-luks` 34/4/0 (`pk5c`), both hosts and archivers; check-manifests' count 51 | 0.35 d |
 | P6 | HoltTest1 runs (1Obscure) on both hosts with the judge rules and the byte-identical rEFInd check; the boot alone; RAM peaks in `ram-sizes.tsv`. **Done 2026-11-14:** 1Obscure; `pikaos4` `p6-4` (Chopin) and `p6-5` (Cinqcent), `pikaos4-luks` `p6-6` (Chopin) and `p6-7` (Cinqcent), all PASS | 0.4 d |
 | P7 | Docs: holt/README.md's supported list, `osrel.rs`'s comment, HoltTest1's 1Obscure row and HoltTest1All, SticTest1's and Test2's READMEs, `layload.md`'s boot stage (booster, the kept rEFInd), memory (holttest1d index, a pikaos-support note). **Done 2026-11-14:** holt/README.md's list and tests, HoltTest1's 1Obscure row and HoltTest1All's members, SticTest1's README, layload.md's boot stage (booster, the kept rEFInd); `osrel.rs`'s comment was P2's; Test2's README counts done 2026-11-14 with the registrations; memory is the session's | 0.1 d |
-| P8 | *Optional, later:* BackShot1 on the Thinkpad: the fixes above, the rehearsals, then the run. Done when phase1, plan, phase2 and verify PASS with 0 unexpected and the Thinkpad boots rEFInd from NVRAM. **Done 2026-11-14** (uncommitted): PikaOS installed from the rescue stick by `testvm/realworld/pika-bootstrap.sh`, run `pika-4-20261114-134728` PASS in every phase, 0 unexpected, rEFInd booted from its recreated NVRAM entry; no bko-holt change; the QEMU rehearsals not run ("What P8 found") | 0.5 d + ~1 h of the user's time (none taken) |
+| P8 | *Optional, later:* BackShot1 on the Thinkpad: the fixes above, the rehearsals, then the run. Done when phase1, plan, phase2 and verify PASS with 0 unexpected and the Thinkpad boots rEFInd from NVRAM. **Done 2026-11-14** (uncommitted): PikaOS installed from the rescue stick by `testvm/realworld/pika-bootstrap.sh`, run `pika-4-20261114-134728` PASS in every phase, 0 unexpected, rEFInd booted from its recreated NVRAM entry; no bko-holt change; the QEMU rehearsals PASS afterwards, 2026-11-14 ("What P8 found") | 0.5 d + ~1 h of the user's time (none taken) |
 | | *≈ 3.75 d without P8, ≈ 4.25 d with it* | |
 
 P2 can start beside P1 from the source facts above, but its golden plan

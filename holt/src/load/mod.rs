@@ -20,7 +20,9 @@ pub mod layout;
 pub mod ostree;
 pub mod plan;
 pub mod readback;
+pub mod reformat;
 pub mod release;
+pub mod rewrite;
 pub mod shared;
 pub mod status;
 pub mod target;
@@ -107,6 +109,9 @@ pub struct Options {
     /// this many percent (fit.rs).
     pub fit_largest: Option<u64>,
     pub new_uuids: bool,
+    /// --reformat MOUNT=TYPE: the filesystem mounted at MOUNT is made as
+    /// TYPE instead of its own (reformat.rs).
+    pub reformats: Vec<(String, String)>,
     /// --key-file NAME=FILE: a LUKS container (by its crypttab name), a
     /// ZFS encryption root (by dataset) or a GELI provider (by partition or
     /// GPT label path; NAME:1 for its key slot 1).
@@ -138,6 +143,7 @@ impl Options {
             target: DEFAULT_TARGET.to_string(),
             fit_largest: None,
             new_uuids: false,
+            reformats: vec![],
             key_files: vec![],
             no_nvram: false,
             removable: false,
@@ -169,7 +175,7 @@ impl Options {
 pub const USAGE: &str = "Usage: bko-holt load LAYOUT.json [--through STAGE | --only STAGE] [--commit]
                      [--map SRC=DST]... [--erase DEV]... [--fit-largest PCT]
                      [--target DIR] [--new-uuids] [--key-file NAME=FILE]...
-                     [--no-nvram] [--removable]
+                     [--reformat MOUNT=TYPE]... [--no-nvram] [--removable]
                      [--repo REPO [--password-file FILE] [--snapshot ID]
                       [--archiver PROGRAM]] [--btrfs-snapshots shared|copy]
 
@@ -201,6 +207,11 @@ Rebuilds the disks LAYOUT.json (from `bko-holt dump`) describes, in stages:
                     only; plan prints what changes
   --target DIR      where mount builds the tree (default /mnt/bko-target)
   --new-uuids       new identifiers everywhere instead of the original ones
+  --reformat MOUNT=TYPE
+                    make the filesystem mounted at MOUNT as TYPE (ext4, xfs
+                    or btrfs) instead of its own, on the same partition;
+                    boot rewrites what names it (fstab, kernel command
+                    lines).  Linux layouts only; plan says what changes
   --key-file NAME=FILE
                     a LUKS container's (crypttab name) or ZFS encryption
                     root's (dataset) key or passphrase, instead of a prompt;
@@ -293,6 +304,21 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
                 o.fit_largest = Some(n);
             }
             "--new-uuids" => o.new_uuids = true,
+            "--reformat" => {
+                let v = value(&mut it, a)?;
+                let (m, ty) = pair(a, &v)?;
+                if !m.starts_with('/') {
+                    return Err(format!("--reformat {v}: MOUNT is a mount point, such as /"));
+                }
+                if !reformat::TYPES.contains(&ty.as_str()) {
+                    return Err(format!("--reformat {v}: TYPE is one of {}", reformat::TYPES.join(", ")));
+                }
+                let m = if m == "/" { m } else { m.trim_end_matches('/').to_string() };
+                if o.reformats.iter().any(|(x, _)| *x == m) {
+                    return Err(format!("--reformat {m}=...: {m} is given twice"));
+                }
+                o.reformats.push((m, ty));
+            }
             "--key-file" => {
                 let v = value(&mut it, a)?;
                 o.key_files.push(pair(a, &v)?);
@@ -378,6 +404,8 @@ pub fn run(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
         Ok(v) => v,
         Err(e) => return (EXIT_UNSUPPORTED, String::new(), format!("bko-holt load: {}: not JSON ({} at byte {})\n", opts.layout, e.message, e.offset)),
     };
+    // --reformat: every stage works from the edited layout (reformat.rs).
+    let json = if opts.reformats.is_empty() { json } else { reformat::apply(json.clone(), &reformat::work_out(&json, &opts.reformats)) };
     let layout = match layout::Layout::from_json(json) {
         Ok(l) => l,
         Err(e) => return (EXIT_UNSUPPORTED, String::new(), format!("bko-holt load: {}: {e}\n", opts.layout)),
@@ -516,6 +544,18 @@ mod tests {
             assert!(err(&["a", "--fit-largest", v]).contains("whole percentage, 1 to 50"), "{v:?}");
         }
         assert_eq!(parse_args(&args(&["--help"])).unwrap(), Parsed::Help);
+    }
+
+    #[test]
+    fn reformat_arguments() {
+        let o = opts(&["l", "--reformat", "/=xfs", "--reformat", "/srv/=ext4"]);
+        assert_eq!(o.reformats, vec![("/".to_string(), "xfs".to_string()), ("/srv".to_string(), "ext4".to_string())]);
+        assert!(opts(&["l"]).reformats.is_empty());
+        let err = |a: &[&str]| parse_args(&args(a)).unwrap_err();
+        assert!(err(&["l", "--reformat", "root=xfs"]).contains("MOUNT is a mount point"));
+        assert!(err(&["l", "--reformat", "/=zfs"]).contains("TYPE is one of ext4, xfs, btrfs"));
+        assert!(err(&["l", "--reformat", "/="]).contains("NAME=VALUE"));
+        assert!(err(&["l", "--reformat", "/=xfs", "--reformat", "/=ext4"]).contains("/ is given twice"));
     }
 
     #[test]

@@ -83,6 +83,8 @@ pub fn line(dev: &str, content: &Value) -> String {
         "swap" => "with the source's UUID, label and page size",
         "jfs" => "with the source's UUID, label and version",
         "bcachefs" => "with the source's UUID, label and on-disk version",
+        // --reformat (reformat.rs): a new type, with the features it chose.
+        _ if content.get("reformatted_from").is_some() => "with the source's UUID and the features --reformat chose",
         _ => "with the source's features",
     };
     format!("# check: {dev} is {ty} {what} (read back by bko-holt's own probe)\n")

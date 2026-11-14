@@ -140,7 +140,7 @@ pub fn aliases(mounts: &[Mount]) -> Vec<String> {
 }
 
 /// snapper's slot: `(X/.snapshots, N)` for `X/.snapshots/N/snapshot`.
-fn snapper_slot(path: &str) -> Option<(&str, u64)> {
+pub(crate) fn snapper_slot(path: &str) -> Option<(&str, u64)> {
     let rest = path.strip_suffix("/snapshot")?;
     let (dir, n) = rest.rsplit_once('/')?;
     let n: u64 = n.parse().ok()?;

@@ -207,6 +207,9 @@ pub struct Planned {
 
 /// Every check `plan` makes; the writing stages make them again first.
 pub fn check(layout: &Layout, opts: &Options, sys: &Sys) -> Planned {
+    // A layout not yet edited for --reformat (a caller other than load::run).
+    let edited = super::reformat::edited(layout, &opts.reformats);
+    let layout = edited.as_ref().unwrap_or(layout);
     let target::Prepared { mapping, layout, fit, .. } = target::prepare(layout, opts, sys);
     let layout = &*layout;
     let built = commands::build(layout, opts, &mapping);

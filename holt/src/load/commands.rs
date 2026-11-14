@@ -273,6 +273,13 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
         timeshift: BTreeMap::new(),
     };
     b.btrfs_plans();
+    // --reformat's findings (reformat.rs), carried in the edited layout.
+    for (k, list) in [("problems", &mut b.problems), ("notes", &mut b.notes)] {
+        list.extend(layout.arr(&["load_reformat", k]).iter().filter_map(Value::as_str).map(str::to_string));
+    }
+    if !opts.reformats.is_empty() && opts.fit_largest.is_some() {
+        b.problems.push("--reformat and --fit-largest don't go together: a reformatted filesystem fills its partition as it is, and --fit-largest would resize it from figures the new type doesn't have".into());
+    }
     if opts.new_uuids {
         b.problems.push("--new-uuids isn't built yet: it also has to rewrite the restored fstab, crypttab and boot configuration".into());
     }
@@ -2685,8 +2692,12 @@ impl Builder<'_> {
         a.push("--no-progress".into());
         let prefix = a.clone();
         a.extend(["restore".into(), "--numeric-id".into()]);
-        // Aliases and shared snapshots left out of the main restore.
-        let globs: Vec<String> = self.btrfs.values().flat_map(|p| p.globs()).collect();
+        // Aliases and shared snapshots left out of the main restore; with
+        // --reformat, a reformatted btrfs's aliases and snapshots too.
+        let mut globs: Vec<String> = self.btrfs.values().flat_map(|p| p.globs()).collect();
+        let reformat_globs: Vec<String> = self.layout.arr(&["load_reformat", "restore_globs"]).iter().filter_map(Value::as_str).map(str::to_string).collect();
+        let only_reformat = globs.is_empty();
+        globs.extend(reformat_globs);
         let aliases = self.btrfs.values().any(|p| !p.aliases.is_empty());
         let mut pre = Vec::new();
         // What the archiver must have: --exact for shared snapshots,
@@ -2726,7 +2737,12 @@ impl Builder<'_> {
             if need.is_empty() {
                 pre.push(Cmd::new(&["mkdir", "-p", RUN_DIR]));
             }
-            pre.push(Cmd::write_file(&file, globs.iter().map(|g| format!("{g}\n")).collect()).why("left out of the restore: btrfs subvolumes mounted elsewhere, seen again (aliases), and the contents of the shared snapshots, made after it"));
+            let why = if only_reformat {
+                "left out of the restore (--reformat): btrfs subvolumes mounted elsewhere, seen again (aliases), and btrfs snapshots, which the new type can't hold as snapshots"
+            } else {
+                "left out of the restore: btrfs subvolumes mounted elsewhere, seen again (aliases), and the contents of the shared snapshots, made after it"
+            };
+            pre.push(Cmd::write_file(&file, globs.iter().map(|g| format!("{g}\n")).collect()).why(why));
             a.extend(["--glob-file".into(), file]);
         }
         a.extend([self.opts.snapshot.clone(), self.opts.target.clone()]);
@@ -2951,6 +2967,7 @@ impl Builder<'_> {
         // reads gets its atime bumped: each file's atime, as the restore
         // set it, is kept here and put back at the end.
         out.push(Cmd::new(&["sh", "-c", &atimes_cmd(&t, "if-missing", &self.ro_shared())]).why("the restored atimes (the restore stage lists them), to put back after this stage's reads"));
+        out.extend(self.rewrite_cmd(false));
         // LVM's devices file (RHEL, Fedora): LVM run in the chroot (by dracut)
         // would record the rescue system's names for the PVs in it; it's
         // put back as restored when the chroot's work is done.
@@ -3106,7 +3123,19 @@ impl Builder<'_> {
                 if self.opts.removable {
                     a.push("--force-extra-removable".into());
                 }
+                // --reformat: a fallback loader that's a copy of this GRUB
+                // (Calamares's installEFIFallback) reads only the old type,
+                // so firmware that falls back to it would stop in grub rescue.
+                // It's renewed with GRUB.  (FAT finds EFI/BOOT in any case.)
+                let (fallback, loader) = (format!("{t}{esp}/EFI/BOOT/BOOTX64.EFI"), format!("{t}{esp}/EFI/{id}/grubx64.efi"));
+                let renew = !self.opts.reformats.is_empty() && !self.opts.removable;
+                if renew {
+                    out.push(Cmd::new(&["sh", "-c", &format!("rm -f {RUN_DIR}/fallback-is-grub; [ ! -f {fallback} ] || ! cmp -s {fallback} {loader} || touch {RUN_DIR}/fallback-is-grub")]).why("--reformat: is the fallback loader a copy of GRUB?"));
+                }
                 out.push(Cmd { argv: a, ..Cmd::default() });
+                if renew {
+                    out.push(Cmd::new(&["sh", "-c", &format!("[ ! -e {RUN_DIR}/fallback-is-grub ] || cp {loader} {fallback}")]).why("--reformat: the fallback loader, a copy of GRUB, renewed with it"));
+                }
                 self.remake_grub_cfg(&t, &mut out);
             }
             // Through shim (openSUSE's sdbootutil): the ESP's shim, its
@@ -3160,6 +3189,7 @@ impl Builder<'_> {
         if uefi && !self.opts.no_nvram {
             out.extend(self.efi_entries());
         }
+        out.extend(self.rewrite_cmd(true));
         out.push(Cmd::new(&["mkdir", "-p", &format!("{t}/var/log/bko-holt")]));
         out.push(Cmd::new(&["cp", "-a", &format!("{RUN_DIR}/log/."), &format!("{t}/var/log/bko-holt/")]).why("this restore's log, on the restored system"));
         if store.is_none() {
@@ -3183,6 +3213,27 @@ impl Builder<'_> {
         out.push(lvm_devices_back);
         out.extend(self.boot_tail(&t));
         out
+    }
+
+    /// `bko-holt rewrite` for --reformat (rewrite.rs): first the restored
+    /// files that name the old filesystems, before the initramfs and the
+    /// loader are made from them; with CHECK, at the end, the initramfs read
+    /// back for the new type's module, and what's left of the old type listed.
+    fn rewrite_cmd(&self, check: bool) -> Option<Cmd> {
+        if self.opts.reformats.is_empty() {
+            return None;
+        }
+        let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
+        let mut a = vec![exe, "rewrite".into(), self.opts.layout.clone(), self.opts.target.clone()];
+        if check {
+            a.push("--check".into());
+        }
+        for (m, ty) in &self.opts.reformats {
+            a.push("--reformat".into());
+            a.push(format!("{m}={ty}"));
+        }
+        let why = if check { "--reformat: the initramfs has the new type's module; what's left of the old type, listed" } else { "--reformat: fstab and the kernel command lines for the new filesystem" };
+        Some(Cmd { argv: a, why: Some(why.into()), ..Cmd::default() })
     }
 
     /// How every Linux boot stage ends (ostree's too, load/ostree.rs): the

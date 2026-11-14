@@ -50,6 +50,19 @@ half the disk writes."
   leaves the other 55 on 0.2.4, which is still mixed. It also leaves the 16 commits
   since 5b2fe9d untested on the other guests.
 
+## Outcome (2026-11-14 01:00 UTC)
+
+- **The user approved (a), all 65 cells.** It didn't start, because another session's
+  HoltTest2 held t2's lock. That run was `t2h-20261113T2347-923b`, in "Bump bko-holt and
+  rebuild the rescue images", on 0.2.6 from a dirty copy `1b980cd.d273c7c80`.
+- **That run stopped early.** Chopin swapped 1.01 GiB, which tripped a stop rule, so only
+  3 cells ran: omarchy, pop24 and ubuntu26-uefi, all PASS. All 7 bko-holt builds
+  succeeded.
+- **The user then chose to wait for the fs-features fixes** ("Load recreates each file
+  system's source features"), which change every golden plan.
+- **The image-bump session will run HoltTest2 at that commit.** That run is the one-build
+  confirmation. The pass table will be built from its rows and added here.
+
 ## Recommendation: (a) under HoltTest2, not ht1-queue.sh
 
 ```

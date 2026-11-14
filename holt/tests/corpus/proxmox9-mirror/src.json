@@ -1,0 +1,1759 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.6"
+  },
+  "generated": "2026-11-14T07:29:26Z",
+  "privileged": true,
+  "host": {
+    "hostname": "pve",
+    "machine_id": "bd000000000040008000000000000001",
+    "dmi": {
+      "sys_vendor": "QEMU",
+      "product_name": "Standard PC (Q35 + ICH9, 2009)",
+      "product_version": "pc-q35-10.0",
+      "board_vendor": null,
+      "board_name": null,
+      "bios_vendor": "Debian distribution of EDK II",
+      "bios_version": "2025.02-8+deb13u1",
+      "bios_date": "11/08/2025",
+      "product_uuid": null,
+      "chassis_type": "1"
+    },
+    "virtualization": "kvm"
+  },
+  "os": {
+    "id": "debian",
+    "version_id": "13",
+    "version_codename": "trixie",
+    "pretty_name": "Debian GNU/Linux 13 (trixie)",
+    "debian_version": "13.7",
+    "kernel_release": "7.0.14-28-pve",
+    "kernel_version": "#2 SMP PREEMPT_DYNAMIC PMX 7.0.14-28 (2026-11-02T11:54Z)",
+    "architecture": "x86_64",
+    "product": "Proxmox VE 9.2"
+  },
+  "firmware": {
+    "mode": "uefi",
+    "platform_size": 64,
+    "secure_boot": null,
+    "setup_mode": null,
+    "efivars_readable": true
+  },
+  "storage": {
+    "topology": {
+      "vda (disk, 24 GiB, gpt)": {
+        "vda1 (partition, 1007 KiB)": {},
+        "vda2 (partition, 512 MiB) vfat": {},
+        "vda3 (partition, 23.5 GiB) zfs_member \"rpool\"": {}
+      },
+      "vdb (disk, 24 GiB, gpt)": {
+        "vdb1 (partition, 1007 KiB)": {},
+        "vdb2 (partition, 512 MiB) vfat": {},
+        "vdb3 (partition, 23.5 GiB) zfs_member \"rpool\"": {}
+      },
+      "zd0 (disk, 64 MiB)": {}
+    },
+    "disks": [
+      {
+        "name": "vda",
+        "path": "/dev/vda",
+        "kind": "disk",
+        "devno": "253:0",
+        "size_bytes": 25769803776,
+        "size": "24 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/9",
+          "/dev/disk/by-path/pci-0000:00:03.0",
+          "/dev/disk/by-path/virtio-pci-0000:00:03.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "bc000000-0000-4000-8000-000000000001",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 34,
+          "last_usable_lba": 50331614,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 50331647,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 50331647,
+                "start_bytes": 512,
+                "size_bytes": 25769803264,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vda1",
+            "path": "/dev/vda1",
+            "devno": "253:1",
+            "number": 1,
+            "start_lba": 34,
+            "end_lba": 2047,
+            "sectors": 2014,
+            "start_bytes": 17408,
+            "size_bytes": 1031168,
+            "type": "21686148-6449-6e6f-744e-656564454649",
+            "type_name": "BIOS boot",
+            "uuid": "bc000000-0000-4000-8000-000000000002",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part1",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000002",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partnum/1",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partuuid/bc000000-0000-4000-8000-000000000002",
+              "/dev/disk/by-path/pci-0000:00:03.0-part1",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part1"
+            ],
+            "holders": [],
+            "content": null,
+            "mounted_at": []
+          },
+          {
+            "name": "vda2",
+            "path": "/dev/vda2",
+            "devno": "253:2",
+            "number": 2,
+            "start_lba": 2048,
+            "end_lba": 1050623,
+            "sectors": 1048576,
+            "start_bytes": 1048576,
+            "size_bytes": 536870912,
+            "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "type_name": "EFI System",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part2",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partnum/2",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partuuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-uuid/BC00-0001",
+              "/dev/disk/by-path/pci-0000:00:03.0-part2",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part2",
+              "/dev/disk/by-uuid/BC00-0001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "vfat",
+              "usage": "filesystem",
+              "uuid": "BC00-0001",
+              "label": null,
+              "version": "FAT32",
+              "fat_bits": 32,
+              "bytes_per_sector": 512,
+              "sectors_per_cluster": 8,
+              "cluster_size": 4096,
+              "reserved_sectors": 32,
+              "fats": 2,
+              "fat_sectors": 1024,
+              "total_sectors": 1048572,
+              "size_bytes": 536868864,
+              "clusters": 130811,
+              "hidden_sectors": 2048,
+              "media": "0xf8",
+              "oem_name": "mkfs.fat",
+              "root_cluster": 2,
+              "fsinfo_sector": 1,
+              "backup_boot_sector": 6,
+              "boot_sector_label": null
+            },
+            "mounted_at": []
+          },
+          {
+            "name": "vda3",
+            "path": "/dev/vda3",
+            "devno": "253:3",
+            "number": 3,
+            "start_lba": 1050624,
+            "end_lba": 50331614,
+            "sectors": 49280991,
+            "start_bytes": 537919488,
+            "size_bytes": 25231867392,
+            "type": "6a898cc3-1dd2-11b2-99a6-080020736631",
+            "type_name": "Solaris /usr & Apple ZFS",
+            "uuid": "bc000000-0000-4000-8000-000000000004",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/9-part3",
+              "/dev/disk/by-label/rpool",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000004",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-label/rpool",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partnum/3",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partuuid/bc000000-0000-4000-8000-000000000004",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-uuid/1000000000000000001",
+              "/dev/disk/by-path/pci-0000:00:03.0-part3",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part3",
+              "/dev/disk/by-uuid/1000000000000000001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "zfs_member",
+              "usage": "filesystem",
+              "uuid": "1000000000000000001",
+              "label": "rpool",
+              "version": "5000",
+              "labels_valid": 4,
+              "pool_name": "rpool",
+              "pool_guid": "1000000000000000001",
+              "vdev_guid": "1000000000000000002",
+              "top_guid": "10000000000000000003",
+              "pool_state": "active",
+              "txg": 567,
+              "spa_version": 5000,
+              "hostname": "(none)",
+              "hostid": 1000000004
+            },
+            "mounted_at": []
+          }
+        ],
+        "boot_code": {
+          "kind": "none",
+          "first_bytes": "00000000000000000000000000000000",
+          "post_mbr_gap": {
+            "sectors": 33,
+            "nonzero_sectors_in_first_mib": 2
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "vdb",
+        "path": "/dev/vdb",
+        "kind": "disk",
+        "devno": "253:16",
+        "size_bytes": 25769803776,
+        "size": "24 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/10",
+          "/dev/disk/by-path/pci-0000:00:04.0",
+          "/dev/disk/by-path/virtio-pci-0000:00:04.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "bc000000-0000-4000-8000-000000000005",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 34,
+          "last_usable_lba": 50331614,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 50331647,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 50331647,
+                "start_bytes": 512,
+                "size_bytes": 25769803264,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vdb1",
+            "path": "/dev/vdb1",
+            "devno": "253:17",
+            "number": 1,
+            "start_lba": 34,
+            "end_lba": 2047,
+            "sectors": 2014,
+            "start_bytes": 17408,
+            "size_bytes": 1031168,
+            "type": "21686148-6449-6e6f-744e-656564454649",
+            "type_name": "BIOS boot",
+            "uuid": "bc000000-0000-4000-8000-000000000006",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/10-part1",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000006",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partnum/1",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partuuid/bc000000-0000-4000-8000-000000000006",
+              "/dev/disk/by-path/pci-0000:00:04.0-part1",
+              "/dev/disk/by-path/virtio-pci-0000:00:04.0-part1"
+            ],
+            "holders": [],
+            "content": null,
+            "mounted_at": []
+          },
+          {
+            "name": "vdb2",
+            "path": "/dev/vdb2",
+            "devno": "253:18",
+            "number": 2,
+            "start_lba": 2048,
+            "end_lba": 1050623,
+            "sectors": 1048576,
+            "start_bytes": 1048576,
+            "size_bytes": 536870912,
+            "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "type_name": "EFI System",
+            "uuid": "bc000000-0000-4000-8000-000000000007",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/10-part2",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000007",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partnum/2",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partuuid/bc000000-0000-4000-8000-000000000007",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-uuid/BC00-0002",
+              "/dev/disk/by-path/pci-0000:00:04.0-part2",
+              "/dev/disk/by-path/virtio-pci-0000:00:04.0-part2",
+              "/dev/disk/by-uuid/BC00-0002"
+            ],
+            "holders": [],
+            "content": {
+              "type": "vfat",
+              "usage": "filesystem",
+              "uuid": "BC00-0002",
+              "label": null,
+              "version": "FAT32",
+              "fat_bits": 32,
+              "bytes_per_sector": 512,
+              "sectors_per_cluster": 8,
+              "cluster_size": 4096,
+              "reserved_sectors": 32,
+              "fats": 2,
+              "fat_sectors": 1024,
+              "total_sectors": 1048572,
+              "size_bytes": 536868864,
+              "clusters": 130811,
+              "hidden_sectors": 2048,
+              "media": "0xf8",
+              "oem_name": "mkfs.fat",
+              "root_cluster": 2,
+              "fsinfo_sector": 1,
+              "backup_boot_sector": 6,
+              "boot_sector_label": null
+            },
+            "mounted_at": []
+          },
+          {
+            "name": "vdb3",
+            "path": "/dev/vdb3",
+            "devno": "253:19",
+            "number": 3,
+            "start_lba": 1050624,
+            "end_lba": 50331614,
+            "sectors": 49280991,
+            "start_bytes": 537919488,
+            "size_bytes": 25231867392,
+            "type": "6a898cc3-1dd2-11b2-99a6-080020736631",
+            "type_name": "Solaris /usr & Apple ZFS",
+            "uuid": "bc000000-0000-4000-8000-000000000008",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/10-part3",
+              "/dev/disk/by-label/rpool",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000008",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-label/rpool",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partnum/3",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-partuuid/bc000000-0000-4000-8000-000000000008",
+              "/dev/disk/by-path/pci-0000:00:04.0-part/by-uuid/1000000000000000001",
+              "/dev/disk/by-path/pci-0000:00:04.0-part3",
+              "/dev/disk/by-path/virtio-pci-0000:00:04.0-part3",
+              "/dev/disk/by-uuid/1000000000000000001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "zfs_member",
+              "usage": "filesystem",
+              "uuid": "1000000000000000001",
+              "label": "rpool",
+              "version": "5000",
+              "labels_valid": 4,
+              "pool_name": "rpool",
+              "pool_guid": "1000000000000000001",
+              "vdev_guid": "1000000000000000005",
+              "top_guid": "10000000000000000003",
+              "pool_state": "active",
+              "txg": 567,
+              "spa_version": 5000,
+              "hostname": "(none)",
+              "hostid": 1000000004
+            },
+            "mounted_at": []
+          }
+        ],
+        "boot_code": {
+          "kind": "none",
+          "first_bytes": "00000000000000000000000000000000",
+          "post_mbr_gap": {
+            "sectors": 33,
+            "nonzero_sectors_in_first_mib": 2
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "zd0",
+        "path": "/dev/zd0",
+        "kind": "disk",
+        "devno": "230:0",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 16384,
+        "model": null,
+        "vendor": null,
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": null,
+        "rotational": false,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": ["/dev/disk/by-diskseq/13", "/dev/zvol/rpool/data/vm-100-disk-0"],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "boot_code": {
+          "kind": "unknown",
+          "first_bytes": "4261636b4f7474657220746573742056"
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [],
+    "loop_devices": [],
+    "other_devices": [
+      {
+        "name": "sr0",
+        "path": "/dev/sr0",
+        "kind": "rom",
+        "devno": "11:0",
+        "size_bytes": 1073741312,
+        "size": "1024 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": false,
+        "links": [
+          "/dev/cdrom",
+          "/dev/disk/by-diskseq/12",
+          "/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1",
+          "/dev/disk/by-path/pci-0000:00:1f.2-ata-3",
+          "/dev/disk/by-path/pci-0000:00:1f.2-ata-3.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "lvm": {
+      "volume_groups": []
+    },
+    "zfs": {
+      "pools_from_labels": [
+        {
+          "name": "rpool",
+          "pool_guid": "1000000000000000001",
+          "state": 0,
+          "txg": 567,
+          "version": 5000,
+          "hostname": "(none)",
+          "hostid": 1000000004,
+          "vdev_children": 1,
+          "top_level_vdevs": [
+            {
+              "type": "mirror",
+              "id": 0,
+              "guid": 10000000000000000003,
+              "metaslab_array": 133,
+              "metaslab_shift": 29,
+              "ashift": 12,
+              "asize": 25226903552,
+              "min_alloc": 4096,
+              "is_log": 0,
+              "create_txg": 4,
+              "children": [
+                {
+                  "type": "disk",
+                  "id": 0,
+                  "guid": 1000000000000000002,
+                  "path": "/dev/vda3",
+                  "whole_disk": 0,
+                  "create_txg": 4
+                },
+                {
+                  "type": "disk",
+                  "id": 1,
+                  "guid": 1000000000000000005,
+                  "path": "/dev/vdb3",
+                  "whole_disk": 0,
+                  "create_txg": 4
+                }
+              ]
+            }
+          ],
+          "features_for_read": {
+            "com.delphix:hole_birth": true,
+            "com.delphix:embedded_data": true,
+            "com.klarasystems:vdev_zaps_v2": true
+          },
+          "member_devices": ["vda3", "vdb3"]
+        }
+      ],
+      "zpool_cache": null,
+      "tools": {
+        "imported_pools": [
+          {
+            "name": "rpool",
+            "properties": {
+              "size": "24696061952",
+              "altroot": "-",
+              "health": "ONLINE",
+              "guid": "1000000000000000001",
+              "version": "-",
+              "bootfs": "rpool/ROOT/pve-1",
+              "delegation": "on",
+              "autoreplace": "off",
+              "cachefile": "-",
+              "failmode": "wait",
+              "listsnapshots": "off",
+              "autoexpand": "off",
+              "readonly": "off",
+              "ashift": "12",
+              "comment": "-",
+              "multihost": "off",
+              "autotrim": "off",
+              "compatibility": "off",
+              "dedup_table_quota": "auto",
+              "last_scrubbed_txg": "0"
+            },
+            "local_properties": {
+              "bootfs": "rpool/ROOT/pve-1",
+              "ashift": "12"
+            },
+            "features": {
+              "async_destroy": "enabled",
+              "empty_bpobj": "active",
+              "lz4_compress": "active",
+              "multi_vdev_crash_dump": "enabled",
+              "spacemap_histogram": "active",
+              "enabled_txg": "active",
+              "hole_birth": "active",
+              "extensible_dataset": "active",
+              "embedded_data": "active",
+              "bookmarks": "enabled",
+              "filesystem_limits": "enabled",
+              "large_blocks": "enabled",
+              "large_dnode": "enabled",
+              "sha512": "enabled",
+              "skein": "enabled",
+              "edonr": "enabled",
+              "userobj_accounting": "active",
+              "encryption": "enabled",
+              "project_quota": "active",
+              "device_removal": "enabled",
+              "obsolete_counts": "enabled",
+              "zpool_checkpoint": "enabled",
+              "spacemap_v2": "active",
+              "allocation_classes": "enabled",
+              "resilver_defer": "enabled",
+              "bookmark_v2": "enabled",
+              "redaction_bookmarks": "enabled",
+              "redacted_datasets": "enabled",
+              "bookmark_written": "enabled",
+              "log_spacemap": "active",
+              "livelist": "enabled",
+              "device_rebuild": "enabled",
+              "zstd_compress": "enabled",
+              "draid": "enabled",
+              "zilsaxattr": "active",
+              "head_errlog": "active",
+              "blake3": "enabled",
+              "block_cloning": "active",
+              "vdev_zaps_v2": "active",
+              "redaction_list_spill": "enabled",
+              "raidz_expansion": "enabled",
+              "fast_dedup": "enabled",
+              "longname": "enabled",
+              "large_microzap": "enabled",
+              "dynamic_gang_header": "enabled",
+              "block_cloning_endian": "active",
+              "physical_rewrite": "enabled"
+            },
+            "vdevs": {
+              "vdevs": {
+                "rpool": {
+                  "name": "rpool",
+                  "vdev_type": "root",
+                  "guid": 1000000000000000001,
+                  "class": "normal",
+                  "state": "ONLINE",
+                  "alloc_space": 2861707264,
+                  "total_space": 24696061952,
+                  "def_space": 24696061952,
+                  "read_errors": 0,
+                  "write_errors": 0,
+                  "checksum_errors": 0,
+                  "vdevs": {
+                    "mirror-0": {
+                      "name": "mirror-0",
+                      "vdev_type": "mirror",
+                      "guid": 10000000000000000003,
+                      "class": "normal",
+                      "state": "ONLINE",
+                      "alloc_space": 2861707264,
+                      "total_space": 24696061952,
+                      "def_space": 24696061952,
+                      "rep_dev_size": 24696061952,
+                      "read_errors": 0,
+                      "write_errors": 0,
+                      "checksum_errors": 0,
+                      "vdevs": {
+                        "/dev/vda3": {
+                          "name": "/dev/vda3",
+                          "vdev_type": "disk",
+                          "guid": 1000000000000000002,
+                          "path": "/dev/vda3",
+                          "class": "normal",
+                          "state": "ONLINE",
+                          "rep_dev_size": 24700780544,
+                          "phys_space": 25231622144,
+                          "read_errors": 0,
+                          "write_errors": 0,
+                          "checksum_errors": 0,
+                          "slow_ios": 0
+                        },
+                        "/dev/vdb3": {
+                          "name": "/dev/vdb3",
+                          "vdev_type": "disk",
+                          "guid": 1000000000000000005,
+                          "path": "/dev/vdb3",
+                          "class": "normal",
+                          "state": "ONLINE",
+                          "rep_dev_size": 24700780544,
+                          "phys_space": 25231622144,
+                          "read_errors": 0,
+                          "write_errors": 0,
+                          "checksum_errors": 0,
+                          "slow_ios": 0
+                        }
+                      }
+                    }
+                  }
+                }
+              },
+              "logs": null,
+              "l2cache": null,
+              "spares": null,
+              "special": null,
+              "dedup": null
+            }
+          }
+        ],
+        "datasets": [
+          {
+            "name": "rpool",
+            "type": "filesystem",
+            "used": 2960830464,
+            "available": 20993769472,
+            "referenced": 98304,
+            "mountpoint": "/rpool",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "compression": {
+                "value": "on",
+                "source": "local"
+              },
+              "atime": {
+                "value": "on",
+                "source": "local"
+              },
+              "sync": {
+                "value": "standard",
+                "source": "local"
+              },
+              "relatime": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/ROOT",
+            "type": "filesystem",
+            "used": 2886991872,
+            "available": 20993769472,
+            "referenced": 98304,
+            "mountpoint": "/rpool/ROOT",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {}
+          },
+          {
+            "name": "rpool/ROOT/pve-1",
+            "type": "filesystem",
+            "used": 2886893568,
+            "available": 20993769472,
+            "referenced": 2886893568,
+            "mountpoint": "/",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "posix",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/data",
+            "type": "filesystem",
+            "used": 71516160,
+            "available": 20993769472,
+            "referenced": 98304,
+            "mountpoint": "/rpool/data",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {}
+          },
+          {
+            "name": "rpool/data/subvol-101-disk-0",
+            "type": "filesystem",
+            "used": 1163264,
+            "available": 1072578560,
+            "referenced": 1163264,
+            "mountpoint": "/rpool/data/subvol-101-disk-0",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "xattr": {
+                "value": "sa",
+                "source": "local"
+              },
+              "refquota": {
+                "value": "1073741824",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "posix",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/data/vm-100-disk-0",
+            "type": "volume",
+            "used": 70254592,
+            "available": 21063966720,
+            "referenced": 57344,
+            "mountpoint": null,
+            "canmount": null,
+            "mounted": null,
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": null,
+            "volsize": 67108864,
+            "volblocksize": 16384,
+            "acltype": null,
+            "xattr": null,
+            "dnodesize": null,
+            "normalization": null,
+            "utf8only": null,
+            "casesensitivity": null,
+            "atime": null,
+            "relatime": null,
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "volsize": {
+                "value": "67108864",
+                "source": "local"
+              },
+              "refreservation": {
+                "value": "70254592",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "rpool/var-lib-vz",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 20993769472,
+            "referenced": 98304,
+            "mountpoint": "/var/lib/vz",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/lib/vz",
+                "source": "local"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "btrfs": [],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "rpool/ROOT/pve-1",
+        "fstype": "zfs",
+        "devno": "0:29",
+        "device": null,
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 23880663040,
+        "used_bytes": 2886991872,
+        "available_bytes": 20993671168
+      },
+      {
+        "target": "/var/lib/vz",
+        "source": "rpool/var-lib-vz",
+        "fstype": "zfs",
+        "devno": "0:43",
+        "device": null,
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 20993802240,
+        "used_bytes": 131072,
+        "available_bytes": 20993671168
+      },
+      {
+        "target": "/rpool",
+        "source": "rpool",
+        "fstype": "zfs",
+        "devno": "0:42",
+        "device": null,
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 20993802240,
+        "used_bytes": 131072,
+        "available_bytes": 20993671168
+      },
+      {
+        "target": "/rpool/ROOT",
+        "source": "rpool/ROOT",
+        "fstype": "zfs",
+        "devno": "0:44",
+        "device": null,
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 20993802240,
+        "used_bytes": 131072,
+        "available_bytes": 20993671168
+      },
+      {
+        "target": "/rpool/data",
+        "source": "rpool/data",
+        "fstype": "zfs",
+        "devno": "0:45",
+        "device": null,
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 20993802240,
+        "used_bytes": 131072,
+        "available_bytes": 20993671168
+      },
+      {
+        "target": "/rpool/data/subvol-101-disk-0",
+        "source": "rpool/data/subvol-101-disk-0",
+        "fstype": "zfs",
+        "devno": "0:46",
+        "device": null,
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 1073741824,
+        "used_bytes": 1179648,
+        "available_bytes": 1072562176
+      }
+    ],
+    "physical_root": "/",
+    "backup_sources": [
+      {
+        "path": "/",
+        "from": "/",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT/pve-1",
+        "subvol": null
+      },
+      {
+        "path": "/rpool",
+        "from": "/rpool",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool",
+        "subvol": null
+      },
+      {
+        "path": "/rpool/ROOT",
+        "from": "/rpool/ROOT",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/ROOT",
+        "subvol": null
+      },
+      {
+        "path": "/rpool/data",
+        "from": "/rpool/data",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/data",
+        "subvol": null
+      },
+      {
+        "path": "/rpool/data/subvol-101-disk-0",
+        "from": "/rpool/data/subvol-101-disk-0",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/data/subvol-101-disk-0",
+        "subvol": null
+      },
+      {
+        "path": "/var/lib/vz",
+        "from": "/var/lib/vz",
+        "device": null,
+        "fstype": "zfs",
+        "source": "rpool/var-lib-vz",
+        "subvol": null
+      }
+    ],
+    "swaps": [],
+    "fstab": [
+      {
+        "spec": "proc",
+        "file": "/proc",
+        "type": "proc",
+        "options": "defaults",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      }
+    ],
+    "crypttab": null,
+    "mdadm_conf": null
+  },
+  "boot": {
+    "loader": {
+      "name": "systemd-boot",
+      "firmware": "uefi",
+      "via_shim": false,
+      "package": null,
+      "evidence": [
+        "firmware booted \\EFI\\systemd\\systemd-bootx64.efi",
+        "LoaderInfo says \"systemd-boot 257.13-1~deb13u1\""
+      ]
+    },
+    "efi": {
+      "boot_current": "0002",
+      "boot_next": null,
+      "boot_order": ["0002", "0001", "0000", "0003", "0004", "0005", "0006", "0007", "0008", "0009"],
+      "timeout_seconds": 0,
+      "entries": [
+        {
+          "number": "0000",
+          "load_option_hex": "090100002c0055006900410070007000000004071400000000bc00000040800000000000000904061400000000bc00000040800000000000000a7fff0400",
+          "description": "UiApp",
+          "active": true,
+          "hidden": true,
+          "category": "app",
+          "in_boot_order": 2,
+          "device_path": ["Fv(bc000000-0000-4000-8000-000000000009)/FvFile(bc000000-0000-4000-8000-00000000000a)"],
+          "file": null,
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0001",
+          "load_option_hex": "0100000074004c0069006e0075007800200042006f006f00740020004d0061006e006100670065007200000004012a000200000000080000000000000000100000000000000000bc0000004080000000000000030202040446005c004500460049005c00730079007300740065006d0064005c00730079007300740065006d0064002d0062006f006f0074007800360034002e0065006600690000007fff0400",
+          "description": "Linux Boot Manager",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 1,
+          "device_path": [
+            "HD(2,GPT,bc000000-0000-4000-8000-000000000003,0x800,0x100000)/File(\\EFI\\systemd\\systemd-bootx64.efi)"
+          ],
+          "partition": {
+            "number": 2,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "start_lba": 2048,
+            "sectors": 1048576,
+            "device": "vda2"
+          },
+          "file": "\\EFI\\systemd\\systemd-bootx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0002",
+          "load_option_hex": "0100000074004c0069006e0075007800200042006f006f00740020004d0061006e006100670065007200000004012a000200000000080000000000000000100000000000000000bc0000004080000000000000070202040446005c004500460049005c00730079007300740065006d0064005c00730079007300740065006d0064002d0062006f006f0074007800360034002e0065006600690000007fff0400",
+          "description": "Linux Boot Manager",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 0,
+          "device_path": [
+            "HD(2,GPT,bc000000-0000-4000-8000-000000000007,0x800,0x100000)/File(\\EFI\\systemd\\systemd-bootx64.efi)"
+          ],
+          "partition": {
+            "number": 2,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000007",
+            "start_lba": 2048,
+            "sectors": 1048576,
+            "device": "vdb2"
+          },
+          "file": "\\EFI\\systemd\\systemd-bootx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0003",
+          "load_option_hex": "010000001600550045004600490020004d006900730063002000440065007600690063006500000002010c00d041030a000000000101060000037fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI Misc Device",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 3,
+          "device_path": ["PciRoot(0x0)/Pci(0x3,0x0)"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0004",
+          "load_option_hex": "010000001600550045004600490020004d00690073006300200044006500760069006300650020003200000002010c00d041030a000000000101060000047fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI Misc Device 2",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 4,
+          "device_path": ["PciRoot(0x0)/Pci(0x4,0x0)"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0005",
+          "load_option_hex": "0100000056005500450046004900200050005800450076003400200028004d00410043003a006200630030003000300030003000300030003000300033002900000002010c00d041030a00000000010106000002030b2500bc0000000003000000000000000000000000000000000000000000000000000001030c1b0000000000000000000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv4 (MAC:bc0000000003)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 5,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0006",
+          "load_option_hex": "0100000077005500450046004900200050005800450076003600200028004d00410043003a006200630030003000300030003000300030003000300033002900000002010c00d041030a00000000010106000002030b2500bc0000000003000000000000000000000000000000000000000000000000000001030d3c0000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv6 (MAC:bc0000000003)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 6,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0007",
+          "load_option_hex": "010000005a0055004500460049002000480054005400500076003400200028004d00410043003a006200630030003000300030003000300030003000300033002900000002010c00d041030a00000000010106000002030b2500bc0000000003000000000000000000000000000000000000000000000000000001030c1b000000000000000000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv4 (MAC:bc0000000003)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 7,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0008",
+          "load_option_hex": "010000007b0055004500460049002000480054005400500076003600200028004d00410043003a006200630030003000300030003000300030003000300033002900000002010c00d041030a00000000010106000002030b2500bc0000000003000000000000000000000000000000000000000000000000000001030d3c000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv6 (MAC:bc0000000003)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 8,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0009",
+          "load_option_hex": "010000002c00450046004900200049006e007400650072006e0061006c0020005300680065006c006c00000004071400000000bc00000040800000000000000904061400000000bc00000040800000000000000b7fff0400",
+          "description": "EFI Internal Shell",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 9,
+          "device_path": ["Fv(bc000000-0000-4000-8000-000000000009)/FvFile(bc000000-0000-4000-8000-00000000000b)"],
+          "file": null,
+          "optional_data_bytes": 0
+        }
+      ],
+      "loader_interface": {
+        "loader_info": "systemd-boot 257.13-1~deb13u1",
+        "loader_device_partuuid": "bc000000-0000-4000-8000-000000000007",
+        "loader_image_identifier": "\\EFI\\systemd\\systemd-bootx64.efi",
+        "loader_entry_selected": "proxmox-7.0.14-28-pve.conf",
+        "loader_entry_default": null,
+        "stub_info": null
+      },
+      "shim_variables": ["ShimRetainProtocol"]
+    },
+    "esps": [
+      {
+        "device": "vda2",
+        "mounted_at": null,
+        "contents": {
+          "files": [
+            {
+              "path": "EFI/BOOT/BOOTX64.EFI",
+              "size": 124416,
+              "same_as": "EFI/systemd/systemd-bootx64.efi"
+            },
+            {
+              "path": "EFI/memtest86+x64.efi",
+              "size": 157184
+            },
+            {
+              "path": "EFI/proxmox/7.0.2-6-pve/initrd.img-7.0.2-6-pve",
+              "size": 72891778
+            },
+            {
+              "path": "EFI/proxmox/7.0.2-6-pve/vmlinuz-7.0.2-6-pve",
+              "size": 16227432
+            },
+            {
+              "path": "EFI/proxmox/7.0.14-28-pve/initrd.img-7.0.14-28-pve",
+              "size": 73248503
+            },
+            {
+              "path": "EFI/proxmox/7.0.14-28-pve/vmlinuz-7.0.14-28-pve",
+              "size": 16280680
+            },
+            {
+              "path": "EFI/systemd/systemd-bootx64.efi",
+              "size": 124416,
+              "same_as": "EFI/BOOT/BOOTX64.EFI"
+            },
+            {
+              "path": "loader/entries/memtest86+x64.efi.conf",
+              "size": 67
+            },
+            {
+              "path": "loader/entries/proxmox-7.0.2-6-pve.conf",
+              "size": 249
+            },
+            {
+              "path": "loader/entries/proxmox-7.0.14-28-pve.conf",
+              "size": 259
+            },
+            {
+              "path": "loader/entries.srel",
+              "size": 6
+            },
+            {
+              "path": "loader/loader.conf",
+              "size": 28
+            },
+            {
+              "path": "loader/random-seed",
+              "size": 32
+            }
+          ],
+          "debian_grub_stub": null
+        }
+      },
+      {
+        "device": "vdb2",
+        "mounted_at": null,
+        "contents": {
+          "files": [
+            {
+              "path": "EFI/BOOT/BOOTX64.EFI",
+              "size": 124416,
+              "same_as": "EFI/systemd/systemd-bootx64.efi"
+            },
+            {
+              "path": "EFI/memtest86+x64.efi",
+              "size": 157184
+            },
+            {
+              "path": "EFI/proxmox/7.0.2-6-pve/initrd.img-7.0.2-6-pve",
+              "size": 72891778
+            },
+            {
+              "path": "EFI/proxmox/7.0.2-6-pve/vmlinuz-7.0.2-6-pve",
+              "size": 16227432
+            },
+            {
+              "path": "EFI/proxmox/7.0.14-28-pve/initrd.img-7.0.14-28-pve",
+              "size": 73248503
+            },
+            {
+              "path": "EFI/proxmox/7.0.14-28-pve/vmlinuz-7.0.14-28-pve",
+              "size": 16280680
+            },
+            {
+              "path": "EFI/systemd/systemd-bootx64.efi",
+              "size": 124416,
+              "same_as": "EFI/BOOT/BOOTX64.EFI"
+            },
+            {
+              "path": "loader/entries/memtest86+x64.efi.conf",
+              "size": 67
+            },
+            {
+              "path": "loader/entries/proxmox-7.0.2-6-pve.conf",
+              "size": 249
+            },
+            {
+              "path": "loader/entries/proxmox-7.0.14-28-pve.conf",
+              "size": 259
+            },
+            {
+              "path": "loader/entries.srel",
+              "size": 6
+            },
+            {
+              "path": "loader/loader.conf",
+              "size": 28
+            },
+            {
+              "path": "loader/random-seed",
+              "size": 32
+            }
+          ],
+          "debian_grub_stub": null
+        }
+      }
+    ],
+    "grub": {
+      "dir": "/boot/grub",
+      "installed_platforms": [],
+      "grub_cfg": {
+        "entries": [
+          "Proxmox VE GNU/Linux",
+          "Advanced options for Proxmox VE GNU/Linux>Proxmox VE GNU/Linux, with Linux 7.0.14-28-pve",
+          "Advanced options for Proxmox VE GNU/Linux>Proxmox VE GNU/Linux, with Linux 7.0.14-28-pve (recovery mode)",
+          "Advanced options for Proxmox VE GNU/Linux>Proxmox VE GNU/Linux, with Linux 7.0.2-6-pve",
+          "Advanced options for Proxmox VE GNU/Linux>Proxmox VE GNU/Linux, with Linux 7.0.2-6-pve (recovery mode)",
+          "Memory test (memtest86+x64.efi)",
+          "Memory test (memtest86+x64.efi, serial console)",
+          "Memory test (memtest86+ia32.efi)",
+          "Memory test (memtest86+ia32.efi, serial console)",
+          "Memory test (memtest86+x64.bin)",
+          "Memory test (memtest86+x64.bin, serial console)",
+          "Memory test (memtest86+ia32.bin)",
+          "Memory test (memtest86+ia32.bin, serial console)",
+          "UEFI Firmware Settings"
+        ],
+        "search_uuids": [],
+        "modules": [
+          "all_video",
+          "efi_gop",
+          "efi_uga",
+          "ieee1275_fb",
+          "vbe",
+          "vga",
+          "video_bochs",
+          "video_cirrus",
+          "gfxterm",
+          "gzio",
+          "part_gpt",
+          "bli"
+        ],
+        "default_linux": "/ROOT/pve-1@/boot/vmlinuz-7.0.14-28-pve root=ZFS=rpool/ROOT/pve-1 ro console=tty0 console=ttyS0,115200n8 initrd=initrd root=ZFS=rpool/ROOT/pve-1 boot=zfs quiet",
+        "default_initrd": "/ROOT/pve-1@/boot/initrd.img-7.0.14-28-pve",
+        "lang": null
+      },
+      "grubenv": {},
+      "default_grub": {
+        "GRUB_DEFAULT": "0",
+        "GRUB_TIMEOUT": "5",
+        "GRUB_CMDLINE_LINUX_DEFAULT": "quiet",
+        "GRUB_TERMINAL_INPUT": "console serial",
+        "GRUB_TERMINAL_OUTPUT": "gfxterm serial",
+        "GRUB_SERIAL_COMMAND": "serial --unit=0 --speed=115200",
+        "GRUB_DISTRIBUTOR": "Proxmox VE",
+        "GRUB_DISABLE_OS_PROBER": "true",
+        "GRUB_CMDLINE_LINUX": "$GRUB_CMDLINE_LINUX root=ZFS=rpool/ROOT/pve-1 boot=zfs"
+      },
+      "debconf": {
+        "grub-pc/install_devices": "/dev/vda, /dev/vdb",
+        "grub2/enable_os_prober": "false",
+        "grub2/force_efi_extra_removable": "true",
+        "grub2/linux_cmdline": "",
+        "grub2/linux_cmdline_default": "quiet",
+        "grub2/update_nvram": "true"
+      }
+    },
+    "systemd_boot": {
+      "loader_conf": {
+        "timeout": "3",
+        "default": "proxmox-*"
+      },
+      "entries": [
+        {
+          "file": "memtest86+x64.efi.conf",
+          "title": "Memory test (memtest86+x64.efi)",
+          "efi": "/EFI/memtest86+x64.efi"
+        },
+        {
+          "file": "proxmox-7.0.2-6-pve.conf",
+          "title": "Proxmox Virtual Environment",
+          "version": "7.0.2-6-pve",
+          "options": "root=ZFS=rpool/ROOT/pve-1 boot=zfs console=tty0 console=ttyS0,115200n8",
+          "linux": "/EFI/proxmox/7.0.2-6-pve/vmlinuz-7.0.2-6-pve",
+          "initrd": "/EFI/proxmox/7.0.2-6-pve/initrd.img-7.0.2-6-pve"
+        },
+        {
+          "file": "proxmox-7.0.14-28-pve.conf",
+          "title": "Proxmox Virtual Environment",
+          "version": "7.0.14-28-pve",
+          "options": "root=ZFS=rpool/ROOT/pve-1 boot=zfs console=tty0 console=ttyS0,115200n8",
+          "linux": "/EFI/proxmox/7.0.14-28-pve/vmlinuz-7.0.14-28-pve",
+          "initrd": "/EFI/proxmox/7.0.14-28-pve/initrd.img-7.0.14-28-pve"
+        }
+      ]
+    },
+    "kernels": {
+      "installed": [
+        {
+          "version": "7.0.2-6-pve",
+          "vmlinuz_bytes": 16227432,
+          "initrd_bytes": 72891778,
+          "config": true,
+          "running": false,
+          "modules_installed": true
+        },
+        {
+          "version": "7.0.14-28-pve",
+          "vmlinuz_bytes": 16280680,
+          "initrd_bytes": 73248503,
+          "config": true,
+          "running": true,
+          "modules_installed": true
+        }
+      ],
+      "symlinks": {}
+    },
+    "cmdline": {
+      "raw": "initrd=\\EFI\\proxmox\\7.0.14-28-pve\\initrd.img-7.0.14-28-pve root=ZFS=rpool/ROOT/pve-1 boot=zfs console=tty0 console=ttyS0,115200n8",
+      "words": [
+        "initrd=EFIproxmox7.0.14-28-pveinitrd.img-7.0.14-28-pve",
+        "root=ZFS=rpool/ROOT/pve-1",
+        "boot=zfs",
+        "console=tty0",
+        "console=ttyS0,115200n8\n"
+      ],
+      "storage": {
+        "root": "ZFS=rpool/ROOT/pve-1",
+        "boot": "zfs"
+      }
+    },
+    "kernel_cmdline_file": "root=ZFS=rpool/ROOT/pve-1 boot=zfs console=tty0 console=ttyS0,115200n8",
+    "initramfs": {
+      "generator": "initramfs-tools",
+      "modules": "most",
+      "compress": "zstd",
+      "resume": null,
+      "crypttab_in_initramfs": false
+    },
+    "packages": {
+      "grub-pc-bin": "2.12-9+pmx4",
+      "grub-efi-amd64": "2.12-9+pmx4",
+      "grub-efi-amd64-bin": "2.12-9+pmx4",
+      "grub-efi-amd64-signed": "1+2.12+9+pmx4",
+      "grub2-common": "2.12-9+pmx4",
+      "grub-common": "2.12-9+pmx4",
+      "shim-signed": "1.51+pmx1+16.1-2+pmx1",
+      "shim-unsigned": "16.1-2+pmx1",
+      "shim-helpers-amd64-signed": "1+16.1+2+pmx1",
+      "mokutil": "0.7.2-1",
+      "efibootmgr": "18-2",
+      "systemd-boot-efi": "257.13-1~deb13u1",
+      "initramfs-tools": "0.148.4",
+      "lvm2": "2.03.31-2+pmx1",
+      "thin-provisioning-tools": "1.1.0-4+b1",
+      "zfsutils-linux": "2.4.4-pve1",
+      "zfs-initramfs": "2.4.4-pve1",
+      "btrfs-progs": "6.14-1",
+      "xfsprogs": "6.13.0-2+deb13u1",
+      "e2fsprogs": "1.47.2-3+b12",
+      "dosfstools": "4.2-1.2",
+      "linux-base": "4.12.1",
+      "open-iscsi": "2.1.11-1+deb13u2",
+      "proxmox-kernel-helper": "9.2.1",
+      "proxmox-default-kernel": "2.1.0",
+      "proxmox-ve": "9.2.0",
+      "pve-manager": "9.2.26"
+    },
+    "proxmox_boot": {
+      "uuids": ["BC00-0001", "BC00-0002"],
+      "esps": [
+        {
+          "uuid": "BC00-0001",
+          "device": "vda2",
+          "mode": "systemd-boot",
+          "contents": {
+            "files": [
+              {
+                "path": "EFI/BOOT/BOOTX64.EFI",
+                "size": 124416,
+                "same_as": "EFI/systemd/systemd-bootx64.efi"
+              },
+              {
+                "path": "EFI/memtest86+x64.efi",
+                "size": 157184
+              },
+              {
+                "path": "EFI/proxmox/7.0.2-6-pve/initrd.img-7.0.2-6-pve",
+                "size": 72891778
+              },
+              {
+                "path": "EFI/proxmox/7.0.2-6-pve/vmlinuz-7.0.2-6-pve",
+                "size": 16227432
+              },
+              {
+                "path": "EFI/proxmox/7.0.14-28-pve/initrd.img-7.0.14-28-pve",
+                "size": 73248503
+              },
+              {
+                "path": "EFI/proxmox/7.0.14-28-pve/vmlinuz-7.0.14-28-pve",
+                "size": 16280680
+              },
+              {
+                "path": "EFI/systemd/systemd-bootx64.efi",
+                "size": 124416,
+                "same_as": "EFI/BOOT/BOOTX64.EFI"
+              },
+              {
+                "path": "loader/entries/memtest86+x64.efi.conf",
+                "size": 67
+              },
+              {
+                "path": "loader/entries/proxmox-7.0.2-6-pve.conf",
+                "size": 249
+              },
+              {
+                "path": "loader/entries/proxmox-7.0.14-28-pve.conf",
+                "size": 259
+              },
+              {
+                "path": "loader/entries.srel",
+                "size": 6
+              },
+              {
+                "path": "loader/loader.conf",
+                "size": 28
+              },
+              {
+                "path": "loader/random-seed",
+                "size": 32
+              }
+            ],
+            "debian_grub_stub": null
+          }
+        },
+        {
+          "uuid": "BC00-0002",
+          "device": "vdb2",
+          "mode": "systemd-boot",
+          "contents": {
+            "files": [
+              {
+                "path": "EFI/BOOT/BOOTX64.EFI",
+                "size": 124416,
+                "same_as": "EFI/systemd/systemd-bootx64.efi"
+              },
+              {
+                "path": "EFI/memtest86+x64.efi",
+                "size": 157184
+              },
+              {
+                "path": "EFI/proxmox/7.0.2-6-pve/initrd.img-7.0.2-6-pve",
+                "size": 72891778
+              },
+              {
+                "path": "EFI/proxmox/7.0.2-6-pve/vmlinuz-7.0.2-6-pve",
+                "size": 16227432
+              },
+              {
+                "path": "EFI/proxmox/7.0.14-28-pve/initrd.img-7.0.14-28-pve",
+                "size": 73248503
+              },
+              {
+                "path": "EFI/proxmox/7.0.14-28-pve/vmlinuz-7.0.14-28-pve",
+                "size": 16280680
+              },
+              {
+                "path": "EFI/systemd/systemd-bootx64.efi",
+                "size": 124416,
+                "same_as": "EFI/BOOT/BOOTX64.EFI"
+              },
+              {
+                "path": "loader/entries/memtest86+x64.efi.conf",
+                "size": 67
+              },
+              {
+                "path": "loader/entries/proxmox-7.0.2-6-pve.conf",
+                "size": 249
+              },
+              {
+                "path": "loader/entries/proxmox-7.0.14-28-pve.conf",
+                "size": 259
+              },
+              {
+                "path": "loader/entries.srel",
+                "size": 6
+              },
+              {
+                "path": "loader/loader.conf",
+                "size": 28
+              },
+              {
+                "path": "loader/random-seed",
+                "size": 32
+              }
+            ],
+            "debian_grub_stub": null
+          }
+        }
+      ],
+      "cmdline": "root=ZFS=rpool/ROOT/pve-1 boot=zfs console=tty0 console=ttyS0,115200n8",
+      "pin": null,
+      "manual_kernels": null
+    }
+  },
+  "warnings": [
+    "/etc/pve is Proxmox VE's pmxcfs (FUSE), not a file system to back up: its data is /var/lib/pve-cluster/config.db, a file on /, and comes back with /"
+  ]
+}

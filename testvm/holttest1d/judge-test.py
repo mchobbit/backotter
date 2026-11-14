@@ -1449,5 +1449,146 @@ class TimeshiftLeftOut(unittest.TestCase):
             self.assertNotIn("left out", out)
 
 
+class EspProxmox(unittest.TestCase):
+    """judge.py esp over proxmox9 and proxmox9-mirror's ESPs (P6): rebuilt by
+    proxmox-boot-tool, judged by content under their volume IDs."""
+
+    K = "7.0.14-28-pve"
+
+    def esp(self, **change):
+        """One ESP's fsmeta record, as proxmox-boot-tool leaves it; CHANGE
+        maps a path to its new sha256, or None to leave it out."""
+        files = {"EFI/BOOT/BOOTX64.EFI": "sd", "EFI/systemd/systemd-bootx64.efi": "sd", "EFI/memtest86+x64.efi": "mt",
+                 f"EFI/proxmox/{self.K}/vmlinuz-{self.K}": "vm", f"EFI/proxmox/{self.K}/initrd.img-{self.K}": "in",
+                 "loader/loader.conf": "lc", f"loader/entries/proxmox-{self.K}.conf": "en",
+                 "loader/entries/memtest86+x64.efi.conf": "me", "loader/entries.srel": "sr", "loader/random-seed": "rs"}
+        rec = {".": meta("dir")}
+        for d in ("EFI", "EFI/BOOT", "EFI/systemd", "EFI/proxmox", f"EFI/proxmox/{self.K}", "loader", "loader/entries"):
+            rec[d] = meta("dir")
+        for p, h in files.items():
+            h = change.get(p, h)
+            if h is not None:
+                rec[p] = meta("file", sha256=h, mtime=7 if change else 1)
+        return rec
+
+    def judge(self, ids, src, dst, su=None, du=None):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, text in (("src-uuids", su), ("dst-uuids", du)):
+                with open(os.path.join(tmp, name), "w") as f:
+                    f.write(text if text is not None else "".join(i + "\n" for i in ids))
+            for who, recs in (("src", src), ("dst", dst)):
+                for i, rec in recs.items():
+                    with open(os.path.join(tmp, f"{who}-{i}.json"), "w") as f:
+                        json.dump(rec, f)
+            r = subprocess.run([sys.executable, "-I", JUDGE, "esp", tmp], capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    REBUILT = {f"EFI/proxmox/{K}/initrd.img-{K}": "in2", "loader/random-seed": "rs2"}
+
+    def test_a_rebuilt_esp_passes(self):
+        rc, out = self.judge(["06D4-31B8"], {"06D4-31B8": self.esp()}, {"06D4-31B8": self.esp(**self.REBUILT)})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("1 kernels and 1 proxmox entries byte for byte", out)
+        self.assertIn("update-initramfs rebuilt it in the boot stage, and refresh copied it: 1", out)
+
+    def test_the_mirrors_two_pass_when_equal(self):
+        ids = ["2D89-C7E2", "2D8B-1862"]
+        dst = {ids[0]: self.esp(**self.REBUILT), ids[1]: self.esp(**dict(self.REBUILT, **{"loader/random-seed": "rs3"}))}
+        rc, out = self.judge(ids, {i: self.esp() for i in ids}, dst)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("the 2 restored ESPs are equal but for their random seeds", out)
+
+    def test_the_mirrors_two_must_hold_the_same_initrd(self):
+        ids = ["2D89-C7E2", "2D8B-1862"]
+        dst = {ids[0]: self.esp(**self.REBUILT), ids[1]: self.esp(**dict(self.REBUILT, **{f"EFI/proxmox/{self.K}/initrd.img-{self.K}": "in3"}))}
+        rc, out = self.judge(ids, {i: self.esp() for i in ids}, dst)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF ESPs 2D89-C7E2 and 2D8B-1862 (restored): content: 1: EFI/proxmox/{self.K}/initrd.img-{self.K}", out)
+
+    def test_a_kernel_must_be_the_sources(self):
+        rc, out = self.judge(["A"], {"A": self.esp()}, {"A": self.esp(**{f"EFI/proxmox/{self.K}/vmlinuz-{self.K}": "vm2"})})
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF ESP A: content: 1: EFI/proxmox/{self.K}/vmlinuz-{self.K}", out)
+
+    def test_whatever_is_gone_counts(self):
+        """memtest86+'s file and entry, a loader, an entry, a kernel's initrd."""
+        for p in ("EFI/memtest86+x64.efi", "loader/entries/memtest86+x64.efi.conf", "EFI/BOOT/BOOTX64.EFI",
+                  f"loader/entries/proxmox-{self.K}.conf", f"EFI/proxmox/{self.K}/initrd.img-{self.K}"):
+            rc, out = self.judge(["A"], {"A": self.esp()}, {"A": self.esp(**{p: None})})
+            self.assertEqual(rc, 1, f"{p}: {out}")
+            self.assertIn(f"DIFF ESP A: missing: 1: {p}", out)
+
+    def test_a_new_file_counts(self):
+        dst = self.esp()
+        dst["EFI/proxmox/7.0.2-6-pve/vmlinuz-7.0.2-6-pve"] = meta("file", sha256="x")
+        rc, out = self.judge(["A"], {"A": self.esp()}, {"A": dst})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF ESP A: extra: 1", out)
+
+    def test_the_uuid_list_is_byte_for_byte(self):
+        rc, out = self.judge(["A", "B"], {"A": self.esp(), "B": self.esp()}, {"A": self.esp(), "B": self.esp()}, du="A\nB\nA\n")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF etc/kernel/proxmox-boot-uuids", out)
+
+    def test_an_esp_not_restored_counts(self):
+        rc, out = self.judge(["A", "B"], {"A": self.esp(), "B": self.esp()}, {"A": self.esp()})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF ESP B: no record", out)
+
+    def test_fs_lets_the_uuid_list_be_rewritten_not_changed(self):
+        before = {"etc/kernel/proxmox-boot-uuids": meta("file", sha256="u")}
+        rc, out = Fs.judge(self, before, {"etc/kernel/proxmox-boot-uuids": meta("file", sha256="u", mtime=9)})
+        self.assertEqual(rc, 0, out)
+        rc, out = Fs.judge(self, before, {"etc/kernel/proxmox-boot-uuids": meta("file", sha256="v", size=4, mtime=9)})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF content: 1: etc/kernel/proxmox-boot-uuids", out)
+
+    def test_fs_lets_proxmox_boot_tool_rewrite_76pveconf_not_change_it(self):
+        """pve6-5: proxmox-auto-removal writes apt's list of kept kernels
+        again, the same bytes; and proxmox-boot-tool's mount directory."""
+        before = {"etc/apt/apt.conf.d": meta("dir"), "etc/apt/apt.conf.d/76pveconf": meta("file", sha256="k"), "var/tmp/espmounts": meta("dir")}
+        after = {"etc/apt/apt.conf.d": meta("dir", mtime=9), "etc/apt/apt.conf.d/76pveconf": meta("file", sha256="k", mtime=9),
+                 "var/tmp/espmounts": meta("dir", mtime=9)}
+        rc, out = Fs.judge(self, before, after)
+        self.assertEqual(rc, 0, out)
+        after["etc/apt/apt.conf.d/76pveconf"] = meta("file", sha256="k2", mtime=9)
+        rc, out = Fs.judge(self, before, after)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF content: 1: etc/apt/apt.conf.d/76pveconf", out)
+
+    @staticmethod
+    def zvol(first, kind):
+        d = disk("zd0", 64 * MIB, [])
+        d.update(partition_table=None, links=["/dev/zvol/rpool/data/vm-100-disk-0"], boot_code={"kind": kind, "first_bytes": first})
+        return d
+
+    def test_a_zvol_made_empty(self):
+        """pve6-5: the source's zvol held bytes ("unknown" boot code); load
+        makes it empty.  A copy that isn't empty, or a disk that isn't a
+        zvol, still counts."""
+        src = dump([gpt_guest()["storage"]["disks"][0], self.zvol("4261636b", "unknown")])
+        rc, out = Geli.judge(self, src, dump([src["storage"]["disks"][0], self.zvol("00000000", "none")]))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("a zvol's bytes: load makes it empty", out)
+        rc, out = Geli.judge(self, src, dump([src["storage"]["disks"][0], self.zvol("eb63", "grub")]))
+        self.assertEqual(rc, 1, out)
+        plain = copy.deepcopy(src)
+        plain["storage"]["disks"][1]["links"] = []
+        dst = copy.deepcopy(plain)
+        dst["storage"]["disks"][1]["boot_code"] = {"kind": "none", "first_bytes": "00000000"}
+        rc, out = Geli.judge(self, plain, dst)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF storage.disks.1.boot_code.kind", out)
+
+    def test_proxmox_boot_esp_sizes(self):
+        """The initrds' sizes in boot.proxmox_boot's own ESP list, as in boot.esps."""
+        def d(size):
+            x = dump([])
+            x["boot"] = {"proxmox_boot": {"uuids": ["A"], "esps": [{"uuid": "A", "contents": {"files": [{"path": "EFI/proxmox/K/initrd.img-K", "size": size}]}}]}}
+            return x
+        rc, out = Geli.judge(self, d(1), d(2))
+        self.assertEqual(rc, 0, out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

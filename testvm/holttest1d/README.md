@@ -29,7 +29,7 @@ guests.  A guest passes only when every check passes.  Status is as of
 
 | Test | Systems | Guests | Status |
 |---|---|---|---|
-| 1D | Debian 13 | `debian13`, `debian13-zfs`, `debian13-stack` | passes |
+| 1D | Debian 13, Proxmox VE 9 | `debian13`, `debian13-zfs`, `debian13-stack`, `proxmox9`, `proxmox9-mirror` | passes (the Proxmox guests on Chopin and Cinqcent only, 2026-11-14: `proxmox9` runs `pve6-10` Chopin and `pve6-12` Cinqcent, `proxmox9-mirror` `pve6-11` Chopin and `pve6-13` Cinqcent, the mirror's disks also booted alone; the ESPs judged by content, `judge.py esp`; docs/design/proxmox.md) |
 | 1M | Linux Mint | `mint22` | passes |
 | 1U | Ubuntu, KDE neon, AnduinOS | `ubuntu24`, `ubuntu24-uefi`, `ubuntu24-luks`, `ubuntu26-uefi`, `ubuntu26-zfsmirror`, `ubuntu26-raid` (and `degraded`), `ubuntu26-luks`, `neon24`, `anduinos2` | passes (`neon24`: run `ht1u` on both hosts, 2026-11-14; `anduinos2`: runs `a5-3` Chopin and `a5-4` Cinqcent, 2026-11-14, under Secure Boot with its MOK-signed GRUB kept) |
 | 1Z | Zorin OS | `zorin18` | passes |
@@ -156,7 +156,7 @@ A guest added since joins it with its group: among them 1G's `gentoo` and
 `gentoo-systemd` (2026-11-12, docs/design/gentoo.md), 1Obscure's three
 Chimera guests, 1F's `kinoite44`, 1C's `cachyos-zfs` and 1U's `neon24` and
 `anduinos2` (docs/design/anduinos.md), and 1Obscure's `pikaos4` and
-`pikaos4-luks` (2026-11-14, docs/design/pikaos.md) and `kali` (2026-11-14, docs/design/kali.md), and 1Obscure's `guix15` and `guix15-bios` (2026-11-14, docs/design/guix.md), and `garuda` and
+`pikaos4-luks` (2026-11-14, docs/design/pikaos.md), 1D's `proxmox9` and `proxmox9-mirror` (2026-11-14, docs/design/proxmox.md) and `kali` (2026-11-14, docs/design/kali.md), and 1Obscure's `guix15` and `guix15-bios` (2026-11-14, docs/design/guix.md), and `garuda` and
 `biglinux` beside EndeavourOS and Manjaro (2026-11-14, docs/design/garuda.md
 and docs/design/biglinux.md).
 Run `r1all` (2026-11-05): 16 pass, the 15 above plus `mx25` (MX 25 reports
@@ -379,7 +379,8 @@ empty (`/proc/mdstat`'s `[UU_]`), judged with `judge.py --degraded`.  It
 runs on the guests whose arrays survive the loss of their last disk:
 `debian13-stack` and `ubuntu26-raid`.  A full HoltTest1D is six runs:
 `debian13`, `debian13-zfs` and `debian13-stack`, `debian13-stack` with
-`bigger`, and `debian13` with `oneshot` on each host.  Guests whose
+`bigger`, and `debian13` with `oneshot` on each host, and since 2026-11-14
+`proxmox9` and `proxmox9-mirror` on each ZFS host (ten in all).  Guests whose
 volume groups share a name (`ubuntu26-raid`, `ubuntu26-luks` and `ubuntu24-luks`, all
 `ubuntu-vg` as Ubuntu's installer names it) may run on one host at once:
 `vm-mount` sets their logical volumes up under names of its own, not LVM's

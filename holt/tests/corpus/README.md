@@ -174,7 +174,33 @@ core.img in /boot/grub/i386-pc; no GRUB in either store).  guix15's golden
 plan runs nothing in the chroot: its boot stage makes only the NVRAM entry
 for `\EFI\Guix\grubx64.efi`.  guix15-bios's makes the three subvolumes and
 the swap (fstab doesn't name it), and its boot stage writes the source's
-own boot.img and core.img with the rescue's `grub-bios-setup`.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
+own boot.img and core.img with the rescue's `grub-bios-setup`.
+proxmox9 (`make-proxmox.sh proxmox9`: Proxmox VE 9.2 from
+`proxmox-ve_9.2-1.iso` by its automated installer, ZFS `raid0`; UEFI with
+Secure Boot off, GPT with a BIOS boot partition, a 512 MiB ESP that nothing
+mounts and `rpool` with `ROOT/pve-1`, `data` (a 64 MiB zvol and a CT-style
+subvol dataset) and `var-lib-vz`; systemd-boot kept by `proxmox-boot-tool`;
+pmxcfs at /etc/pve; docs/design/proxmox.md) and proxmox9-mirror (the same,
+`raid1` on two disks: `rpool` a mirror, an ESP on each disk, two NVRAM
+entries), built on 2026-11-14 and updated by vm-update (kernel
+7.0.14-28-pve beside 7.0.2-6-pve), were added the same day from dumps of
+the live guests on chopin (runs `p3` and `p4`, the static bko-holt 0.2.6
+built from this tree with P2's Proxmox code, `323e4069...`; their own
+vm-run-options with a copy of each install's UEFI variables, so through
+systemd-boot's NVRAM entries, the disks under `vm-run --snapshot`, the
+images' sha256 the same before and after; their provenance.tsv written by
+hand, with each guest's image-state generation).  They are in the corpus
+before they are classes.json's HoltTest2 sources, so golden_plans.rs notes
+them until they are.  Their dumps are the first with `boot.proxmox_boot`
+(the ESP list of `/etc/kernel/proxmox-boot-uuids`, each ESP's mode and
+contents read by a private read-only mount, the kernel command line) and
+`os.product`, the ESPs in `boot.esps` with no mount point; pmxcfs is a
+dump warning, not a backup source.  Their golden plans make each ESP with
+its volume ID, make no zpool.cache (the sources have none), and at boot run
+`update-initramfs -u -k all`, `proxmox-boot-tool init` on each ESP in the
+list's order, one `proxmox-boot-tool refresh`, and write the ESP list back;
+they make no NVRAM entry, each source entry being one that `init`'s
+`bootctl install` makes again.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
 collection; `-` for the guests without one) say which, and `image` whether
@@ -318,7 +344,12 @@ private directory on chopin (/bkoscratch, its warm holt build at
 of the raw dumps: chopin with its 94 strings and the raw dumps'
 identifiers, cinqcent with its 95, the Mac with the git e-mail, 0 findings
 (their plans scanned too), the same sha256 from all three builds (src.json
-`1936101...` and `c504094...`, the rows `9a3227c...`).
+`1936101...` and `c504094...`, the rows `9a3227c...`).  So did proxmox9
+and proxmox9-mirror (2026-11-14), built from a private directory on chopin
+(/bkoscratch, its warm holt build at /bkoscratch/holt-warm/proxmox): chopin
+with its 98 strings and the raw dumps' identifiers, cinqcent with its 99,
+the Mac with the git e-mail, 0 findings (their plans scanned too), the same
+sha256 from both builds (src.json `8efb9b6c...` and `d0b597ea...`).
 
 ## The golden plans
 

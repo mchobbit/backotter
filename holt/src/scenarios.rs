@@ -2773,12 +2773,14 @@ fn proxmox_guest() {
     assert!(b.notes.iter().any(|n| n == "Proxmox: proxmox-boot-tool rebuilt 1 ESP (systemd-boot); their old content isn't in the archive"), "{:?}", b.notes);
     assert!(b.notes.iter().any(|n| n == "ZFS volume rpool/data/vm-100-disk-0: made empty; archivers back up files, not zvols; Proxmox: VM disks are vzdump's or Proxmox Backup Server's to back up"), "{:?}", b.notes);
     assert!(text(Stage::Close).contains("zpool export rpool"));
-    // --no-nvram: init's bootctl without the EFI variables.
+    // --no-nvram: init's bootctl over an empty tmpfs in efivarfs' place
+    // (unmounting it made bootctl fail: pve6-1..4).
     let (t, runner) = proxmox(false);
     let (_, b) = proxmox_plan(&t, runner, false, &["--no-nvram"]);
     assert!(b.problems.is_empty(), "{:?}", b.problems);
     let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    assert!(bt.contains("unshare --mount --propagation private sh -c 'umount /mnt/bko-target/sys/firmware/efi/efivars 2>/dev/null; exec chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/1234-ABCD'\n"), "{bt}");
+    assert!(bt.contains("unshare --mount --propagation private sh -c 'mount -t tmpfs -o mode=0755 bko-novars /mnt/bko-target/sys/firmware/efi/efivars && exec chroot /mnt/bko-target proxmox-boot-tool init /dev/disk/by-uuid/1234-ABCD'\n"), "{bt}");
+    assert!(!bt.contains("umount /mnt/bko-target/sys/firmware/efi/efivars"), "{bt}");
     assert!(!bt.contains("efibootmgr"), "{bt}");
 }
 

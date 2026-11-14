@@ -40,6 +40,10 @@
 # can't clash with a pool of the host's, and the guest's own name is kept),
 # with MOUNTPOINT as its altroot; vm-umount exports it again, so the guest
 # imports it normally at its next boot.  That needs OpenZFS on the host.
+# A dataset whose mount point is ZFS's default, made of the pool's name
+# (Proxmox's rpool at /rpool, rpool/data at /rpool/data), is mounted at that
+# path under the guest's own pool name, not the temporary one; one whose
+# mount point directory isn't in its parent is skipped (nothing is made).
 #
 # VM_MOUNT_NBD="nbd40 nbd41 ..." limits the nbd devices it may take to those
 # (compare.py's COMPARE_NBD sets it).
@@ -572,16 +576,40 @@ load_zfs_keys() {
         cryptsetup close "vm-mount-$$-keystore"
     fi
 }
+# mount_renamed NAME ORIG: pool NAME (the guest's ORIG, imported under a
+# temporary name) has datasets whose mount point is ZFS's default, made of
+# the pool's name: with the altroot, $mp/NAME/..., not the guest's path.
+# Mount them at $mp/ORIG/... instead, parents first (the canmount=on ones,
+# as ZFS would), skipping one whose mount point directory isn't there.
+# The mount loops below leave them out (in_tmp_name).
+mount_renamed() {
+    local name=$1 orig=$2 at ds opts=zfsutil
+    [[ -n $orig && $orig != "$name" ]] || return 0
+    [[ $ro == yes ]] && opts+=,ro
+    zfs list -H -o mountpoint,canmount,name -t filesystem -r "$name" |
+        awk -F'\t' -v t="$mp/$name" '$2 == "on" && ($1 == t || index($1, t "/") == 1) { print $1 "\t" $3 }' |
+        LC_ALL=C sort |
+        while IFS=$'\t' read -r at ds; do
+            at=$mp/$orig${at#"$mp/$name"}
+            mountpoint -q "$at" && continue
+            [[ -d $at ]] || { echo "vm-mount: skipping $ds: no directory ${at#"$mp"} to mount it on" >&2; continue; }
+            mount -t zfs -o "$opts" "$ds" "$at" || echo "vm-mount: could not mount $ds at ${at#"$mp"}" >&2
+        done
+}
+# in_tmp_name NAME: awk's filter for the datasets mount_renamed mounts.
+in_tmp_name() { printf '($3 == "%s" || index($3, "%s/") == 1)' "$mp/$1" "$mp/$1"; }
 # mount_zfs_root PARTITION: import the pool on it and mount its / dataset at
 # $mp; fails (leaving nothing imported) if there is no such dataset.
 mount_zfs_root() {
-    local p=$1 id name rootds q search=()
+    local p=$1 id name orig rootds q search=() listing
     command -v zpool >/dev/null || { echo "vm-mount: $p is ZFS, but this host has no OpenZFS" >&2; return 1; }
     # Every ZFS partition of the guest's disks, so a mirror's halves are found.
     for q in "${parts[@]}"; do
         [[ $(blkid -s TYPE -o value "$q" || true) == zfs_member ]] && search+=(-d "$q")
     done
-    id=$(zpool import -d "$p" 2>/dev/null | awk '$1 == "id:" { print $2; exit }')
+    listing=$(zpool import -d "$p" 2>/dev/null || true)
+    id=$(awk '$1 == "id:" { print $2; exit }' <<<"$listing")
+    orig=$(awk '$1 == "pool:" { print $2; exit }' <<<"$listing")
     [[ -n $id ]] || return 1
     name=vm-mount-$$
     local opts=(-N -f "${search[@]}" -R "$mp")
@@ -609,8 +637,9 @@ mount_zfs_root() {
     # pool's datasets that mount by themselves.
     zfs mount "$rootds"
     zfs list -H -o name,canmount,mountpoint -r "$name" |
-        awk '$2 == "on" && $3 != "none" && $3 != "legacy" { print $1 }' |
+        awk '$2 == "on" && $3 != "none" && $3 != "legacy" && !'"$(in_tmp_name "$name")"' { print $1 }' |
         while read -r ds; do zfs mount "$ds" 2>/dev/null || true; done
+    mount_renamed "$name" "$orig"
 }
 
 root=""
@@ -665,7 +694,7 @@ done
 if command -v zpool >/dev/null; then
     rootsuffix=$(zfs list -H -o name,mountpoint 2>/dev/null | awk -v root="$mp" '$2 == root { n = $1; sub(/.*\//, "", n); print n; exit }')
     n=0
-    while read -r id; do
+    while read -r id orig; do
         [[ -n $id ]] || continue
         n=$((n + 1))
         name=vm-mount-$$-$n
@@ -679,15 +708,16 @@ if command -v zpool >/dev/null; then
         echo "pool $name" >>"$state"
         load_zfs_keys "$name"
         zfs list -H -o name,canmount,mountpoint -r "$name" |
-            awk -v sfx="$rootsuffix" '$3 != "none" && $3 != "legacy" { n = $1; sub(/.*\//, "", n); if ($2 == "on" || ($2 == "noauto" && n == sfx)) print $1 }' |
+            awk -v sfx="$rootsuffix" '$3 != "none" && $3 != "legacy" && !'"$(in_tmp_name "$name")"' { n = $1; sub(/.*\//, "", n); if ($2 == "on" || ($2 == "noauto" && n == sfx)) print $1 }' |
             while read -r ds; do zfs mount "$ds" 2>/dev/null || true; done
+        mount_renamed "$name" "$orig"
     done < <(
-        # Pools on the guest's partitions that aren't imported yet.
+        # Pools on the guest's partitions that aren't imported yet: "ID NAME".
         imported=$(zpool list -H -o guid 2>/dev/null)
         for q in "${parts[@]}"; do
             [[ $(blkid -s TYPE -o value "$q" || true) == zfs_member ]] || continue
-            zpool import -d "$q" 2>/dev/null | awk '$1 == "id:" { print $2 }'
-        done | sort -u | grep -vxF "${imported:-none}" || true
+            zpool import -d "$q" 2>/dev/null | awk '$1 == "pool:" { n = $2 } $1 == "id:" { print $2, n }'
+        done | sort -u | awk -v imp="${imported:-none}" 'BEGIN { k = split(imp, g, "\n"); for (i = 1; i <= k; i++) skip[g[i]] = 1 } !($1 in skip)' || true
     )
 fi
 

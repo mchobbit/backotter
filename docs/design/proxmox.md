@@ -23,6 +23,11 @@ Nothing has been downloaded or installed yet. Code references are to local
   `proxmox9-mirror`, a two-disk mirror with an ESP on each disk), a SticTest1
   entry each, a place in HoltTest1 (**1D**, Decision 6) and the Test2
   registrations.
+- **P1-P7 done 2026-11-14:** both guests on Chopin and Cinqcent, the
+  bko-holt support (8c344b6, plus load's `--no-nvram` fix, uncommitted),
+  golden plans, SticTest1 32/6/0 and HoltTest1 1D PASS on both hosts. The
+  Test2 registrations (classes.json and the rest, `rows_holt.py`'s
+  `HT_NVRAM`, GuestTest2's ESP-sync check) wait for the batched Test2 pass.
 - It **is** Debian 13 to `osrel.rs`: Proxmox ships Debian's `base-files`, so
   `/etc/os-release` says `ID=debian`, `VERSION_ID="13"` (*check*). dump
   already accepts it. What it isn't is Debian's boot stack: its own kernel
@@ -399,17 +404,154 @@ installed.
   `Enabled: no` on the enterprise ones and writes `proxmox.sources`
   (`pve-no-subscription`); `apt-get update` is clean.
 
+- **The rebuild** (with `first-boot.sh`'s `initrd=initrd` fix; prepared
+  ISO `proxmox-ve_9.2-1-auto-part-9b4c3adcf10f.iso`): `proxmox9` 431 s
+  (235 s install), `/etc/kernel/cmdline` `root=ZFS=rpool/ROOT/pve-1
+  boot=zfs console=tty0 console=ttyS0,115200n8`, ESP ID `06D4-31B8`;
+  `proxmox9-mirror` 570 s (265 s install), `rpool` a `mirror-0` of both
+  disks' p3, **two ESPs** `2D89-C7E2` and `2D8B-1862` in
+  `proxmox-boot-uuids`, and **two NVRAM entries**, both "Linux Boot
+  Manager" (one per ESP's partition, the second disk's first in
+  BootOrder). It boots from each disk alone through its fallback, the pool
+  DEGRADED (those boots run under `-snapshot`, so neither disk changes).
+  qcow2 SHA-256 `proxmox9` `75f5dd35...`, `proxmox9-mirror` `81bb368e...`
+  and `-b` `e225f31a...`, the same on Chopin and Cinqcent (in
+  `~/backotter-work/vms`; the inputs and build logs in
+  `/bkoscratch/rebuild-inputs/proxmox9` on both).
+- **vm-update:** `--try` ok on both guests (217 packages, kernel 7.0.2-6
+  to `7.0.14-28-pve`, the reboot through each ESP's new kernel, the host
+  mount after). The real update merged on Chopin only ("copying the update
+  to no other host": vm-update doesn't know Cinqcent holds them), so the
+  updated folders were copied to Cinqcent by rsync. Since then: qcow2
+  SHA-256 `proxmox9` `a4a48e98...`, `proxmox9-mirror` `81717f0e...`, `-b`
+  `70dcfe9c...`, on both hosts.
+- **Host ZFS:** `vm-mount --ro` imports both guests' 2.4 pools on Chopin's
+  and Cinqcent's OpenZFS 2.3.9 (read-only), the mirror ONLINE. It mounts
+  `/` (`ROOT/pve-1`) and `/var/lib/vz`, **not** `/rpool`, `/rpool/data`
+  or `subvol-101-disk-0` (their mount points aren't below a mounted
+  dataset's); HoltTest1's tree comparison must reach them (P6).
+
+## What P3 found (the corpus entries)
+
+- **bko-holt** 0.2.6 from this tree with P2 (static glibc, Rust 1.94.1,
+  SHA-256 `323e4069...`), at `/bkoscratch/holttest1d/pve-bin/bko-holt` on
+  Chopin and Cinqcent.
+- **The dumps** (Chopin, runs `p3` and `p4`, 2026-11-14 07:28Z and 07:29Z)
+  of the updated live guests (kernel `7.0.14-28-pve`, `7.0.2-6-pve` kept),
+  each on a copy of its install's UEFI variables, so through systemd-boot's
+  NVRAM entry (the mirror's Boot0002, vdb2's, first in BootOrder), the disks
+  under `--snapshot`, the images' SHA-256 the same before and after. The
+  only warning is pmxcfs's.
+- **What they hold:** `os.product` "Proxmox VE 9.2" (`pve-manager`
+  9.2.26); `boot.loader` systemd-boot 257.13-1~deb13u1; `boot.proxmox_boot`
+  with the UUIDs in file order and the cmdline, no pin, no manual kernels;
+  each ESP mode `systemd-boot` with the same 13 files (both kernels,
+  memtest86+, three entries), in `boot.esps` with `mounted_at: null`, no
+  vfat left mounted. **No `/etc/zfs/zpool.cache`** (the installer makes
+  none; zfs-initramfs imports `rpool` by name), so the plans set no
+  cachefile. `backup_sources`: `/`, `/rpool`, `/rpool/ROOT`, `/rpool/data`,
+  `/rpool/data/subvol-101-disk-0`, `/var/lib/vz`; no ESP, no `/etc/pve`.
+- **The entries** `holt/tests/corpus/proxmox9/` and `proxmox9-mirror/`
+  (`src.json`, `plan.txt`, `index.tsv` rows in guest order with each
+  image-state generation, a README paragraph): `check_plan` ok on the raw
+  dumps (`ok:14:120`, `ok:21:155`) and the corpus dumps; nothing scrubbed;
+  two builds the same bytes (src.json `8efb9b6c...`, `d0b597ea...`); leak
+  scans 0 on Chopin, Cinqcent and the Mac; `golden_plans` the two new (133
+  and 169 lines), nothing else changed (its only failures the old
+  ubuntu24-luks and ubuntu24-uefi misses); noted until the batched Test2
+  pass makes them classes.json sources.
+- **The plans:** a GPT per disk with the source's GUIDs; `zpool create`
+  with every feature to `physical_rewrite` (the mirror `mirror sdq3 sdr3`),
+  `zpool reguid -g`; the zvol made empty with the Proxmox note; each ESP
+  `mkfs.fat -F 32 -i ID`; the datasets with their local properties, then a
+  plain restore. Boot stage in the chroot: `update-initramfs -u -k all`,
+  `proxmox-boot-tool init /dev/disk/by-uuid/ID` per ESP in the list's
+  order, one `refresh`, `/etc/kernel/proxmox-boot-uuids` written back. No
+  `efibootmgr`: each source "Linux Boot Manager" entry is noted as remade
+  by `init`'s `bootctl install`. Both exit 0, no problems.
+- **Open for P6:** whether `update-initramfs`'s `zz-proxmox-boot` hook fails
+  soft on the not-yet-initialised ESPs; whether `init`/`refresh` put back
+  memtest86+'s file and entry; whether the mirror ends with vdb2's entry
+  first, as the source.
+
+## What P5 found (SticTest1)
+
+`testvm/stictest1/proxmox9` and `proxmox9-mirror` share one `inner.sh`,
+`fixture.sh` and `judge.py` (pikaos4's design, with debian13-zfs's
+datasets and properties and ubuntu26-zfsmirror's pool on scratch disks),
+reading the layout from the guest. Each tree (the source, four restore
+targets, the non-root run) gets its own scratch pool made like `rpool`: its
+vdev layout (one disk, or a mirror over two scratch disks) on partitions of
+the guest's pool type, ashift 12, all 47 features the guest's OpenZFS
+**2.4.4** (after vm-update) has enabled or active (`zpool create -d`), its
+datasets in order with their local properties, each mounted where the
+guest mounts it. `zpool create` mounts the root dataset despite
+`canmount=noauto`, so the check unmounts it and mounts it in order. The
+fixture covers ZFS's DOS attributes, project IDs and i/a/d on every
+dataset, and the guest's own files (set-id programs, `/etc/kernel`'s
+`proxmox-boot-uuids` and `cmdline`, pmxcfs's `config.db` with its WAL, the
+CT's files owned by 100000). Proxmox has neither `attr` nor `acl`, so
+`bkoshim.py` stands in for setfattr and setfacl. Results, both archivers,
+both hosts (`px5a`): `proxmox9` 32 PASS, 6 LIMIT, 0 FAIL (~460 s);
+`proxmox9-mirror` 32, 6, 0 (~460-670 s); 975 snapshot nodes the same
+between the tools. The LIMITs: ZFS crtime; S and A refused by OpenZFS on
+Linux; no ACLs on the acltype-off datasets (`/rpool`, `/rpool/ROOT`,
+`/rpool/data`, `/var/lib/vz`); the zvol; symlink atimes on relatime;
+whole-disk needs. `check-manifests.py`'s count 58. The images' SHA-256 the
+same after.
+
+## What P6 found (HoltTest1 1D)
+
+2026-11-14, rel6's rustic-bko, under `cmp-run.sh --reserve` in /mnt/bko-ram.
+
+- **vm-mount** mounted only `/` and `/var/lib/vz`: its temporary pool name
+  moved the datasets with ZFS's default mount point (`rpool`, `ROOT`,
+  `data`, `subvol-101-disk-0`) to `MP/vm-mount-PID/...`, which can't be
+  made read-only. It now mounts them at their own paths (`mount_renamed`);
+  debian13-zfs, ubuntu26-zfs, ubuntu26-zfsmirror, chimera-zfs and
+  cachyos-zfs mount as before.
+- **The judge:** ht1.sh records each proxmox-boot-tool ESP on its own
+  (`esp_record`), and `judge.py esp` compares them by content. Both ESPs
+  come back with the source's 24 paths: kernels, loaders and entries byte
+  for byte, memtest86+'s file and entry put back by `init`; only the
+  initrds and random seeds differ, and the mirror's two copies are equal
+  but for their seeds. `proxmox-boot-uuids` byte-identical. The boot stage
+  also rewrites `76pveconf` (same bytes) and `/var/tmp/espmounts`; the zvol
+  comes back empty, as the plan's note says.
+- **The boot stage:** `update-initramfs`'s `zz-proxmox-boot` hook skips the
+  empty ESPs ("contains no loader.conf - skipping") and exits 0. `init`
+  runs vda2 then vdb2, which leaves vdb2's "Linux Boot Manager" first, as
+  on the source.
+- **The bug it found:** under `--no-nvram` (which ht1.sh always passes on
+  UEFI) load ran `init` with efivarfs unmounted; systemd 257's `bootctl
+  --graceful install` then failed ("Failed to create EFI Boot variable
+  entry"), so `load boot` failed (`pve6-1`..`pve6-4`, both guests, both
+  hosts). load now runs `init` over an empty tmpfs in efivarfs' place, in a
+  mount namespace of its own (bko-holt `8ce8d568...`); no golden plan
+  changed.
+- **The result:** all four cells PASS under `--no-nvram`: `proxmox9`
+  `pve6-10` (Chopin) and `pve6-12` (Cinqcent), `proxmox9-mirror` `pve6-11`
+  (Chopin) and `pve6-13` (Cinqcent). The copy boots through the source's
+  NVRAM entry; each mirror disk boots alone (ht1.sh's `boot_each_disk`, on
+  by itself for more than one ESP), rpool DEGRADED. 0 fsmeta, ESP and dump
+  differences. 5-7 min a run. `ram-sizes.tsv`: `proxmox9` D 9,
+  `proxmox9-mirror` D 13, MEM 4.
+- **For the batched Test2 pass:** `t2lib/rows_holt.py`'s `DEBUG_ENV` lacks
+  `HT_NVRAM` (P6's diagnostic runs `pve6-6`..`pve6-9` wrote rows that look
+  valid); `classes.json`'s `needs_host_zfs` must name both guests so
+  ht1-queue.sh keeps them off Cage and Copland.
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Effort |
 |---|---|---|
-| P1 | Fetch `proxmox-ve_9.2-1.iso` (or the newest 9.x then) into rebuild-inputs on Chopin (the user's OK first), check and pin its SHA-256; the assistant in a throwaway chroot, the prepared ISO pinned. `make-proxmox.sh proxmox9` by Decision 1, `rebuild-one.sh`, copy to Cinqcent (the same SHA-256), `vm-update --try`, `vm-mount --ro`. Settle every *check* (os-release, kernel names, partition sizes, datasets, NVRAM entries, pmxcfs's mount line, `init`'s UUID handling) and write "What P1 found" here. Done when it boots alone on both hosts, SSH works, `proxmox-boot-tool status` is clean and `vm-update --try` is ok | 1.25 d (+0.5 d on path 2) |
+| P1 | Fetch `proxmox-ve_9.2-1.iso` (or the newest 9.x then) into rebuild-inputs on Chopin (the user's OK first), check and pin its SHA-256; the assistant in a throwaway chroot, the prepared ISO pinned. `make-proxmox.sh proxmox9` by Decision 1, `rebuild-one.sh`, copy to Cinqcent (the same SHA-256), `vm-update --try`, `vm-mount --ro`. Settle every *check* (os-release, kernel names, partition sizes, datasets, NVRAM entries, pmxcfs's mount line, `init`'s UUID handling) and write "What P1 found" here. Done when it boots alone on both hosts, SSH works, `proxmox-boot-tool status` is clean and `vm-update --try` is ok. **Done 2026-11-14:** `testvm/make-proxmox.sh`, `testvm/proxmox/first-boot.sh`, both guests on both hosts, `vm-update` merged ("What P1 found") | 1.25 d (+0.5 d on path 2) |
 | P2 | bko-holt (High-effort subagent): `boot.proxmox_boot` (the UUID list, the read-only ESP mounts, modes, contents, cmdline), the ESPs in `boot.esps` with `mounted_at: null`, `os.product`, `PACKAGES` and `fingerprint.py`, pmxcfs skipped with its note; load's proxmox arm (format with volume IDs, `init` per ESP by mode, `refresh`, the UUID file, the NVRAM de-duplication), the PVE-9 gate, the GRUB/Secure Boot refusal, the zvol note; `redact.rs`'s words; a Proxmox fake tree (one and two ESPs) in `holt/src/scenarios.rs`. Done when `cargo test` passes and the scenario's plan has one `mkfs.fat -i` and one `proxmox-boot-tool init` per ESP, one `refresh`, no `bootctl install --no-variables`. **Done 2026-11-14** (uncommitted): `boot.rs` `proxmox_boot_json` (ESPs read by a private ro mount through `Sys`, modes, contents, `os.product`), `mounts.rs` `is_pmxcfs`, `commands.rs` `proxmox_boot_cmds` as the first loader arm (init per ESP, refresh, the UUID file written back, the refusals, `--no-nvram` through a private mount namespace, `efi_entries` skipping bootctl's own entry), `layout.rs` names the product, `redact.rs` words, `scenarios.rs` `proxmox(mirror)` and three tests; holt's tests pass but `golden_plans`' one pre-existing miss (ubuntu24-luks/-uefi cells without dumps) | 1 d |
-| P3 | `proxmox9`'s golden plan (`holt/tests/corpus/proxmox9`, its `index.tsv` row); Test2 registrations to the batched pass | 0.3 d |
-| P4 | `proxmox9-mirror`: the build (`raid1`, two disks), its golden plan and `index.tsv` row, `rebuild-one.sh`. Done as P1 and P3 | 0.4 d |
-| P5 | SticTest1 entries and runs, both guests, both archivers, both hosts, 0 FAIL | 0.35 d |
-| P6 | HoltTest1 runs (1D) on Chopin and Cinqcent with the judge rules above, ht1.sh's `--boot-each-disk`, the boot alone and per disk; RAM peaks in `ram-sizes.tsv`. Done when all four runs PASS with 0 fsmeta and 0 dump differences | 0.5 d |
-| P7 | Docs: holt/README.md's supported list ("Debian 13, and Proxmox VE 9 on it") and its tests, `layload.md`'s boot stage (the proxmox-boot-tool arm), HoltTest1's 1D row and HoltTest1All, SticTest1's README, GuestTest's ESP-sync check; memory (holttest1d index, a proxmox-support note) | 0.1 d |
+| P3 | `proxmox9`'s golden plan (`holt/tests/corpus/proxmox9`, its `index.tsv` row); Test2 registrations to the batched pass. **Done 2026-11-14** (uncommitted; "What P3 found") | 0.3 d |
+| P4 | `proxmox9-mirror`: the build (`raid1`, two disks), its golden plan and `index.tsv` row, `rebuild-one.sh`. Done as P1 and P3. **Done 2026-11-14** ("What P1 found", "What P3 found") | 0.4 d |
+| P5 | SticTest1 entries and runs, both guests, both archivers, both hosts, 0 FAIL. **Done 2026-11-14** (uncommitted): 32/6/0 each, `px5a` ("What P5 found") | 0.35 d |
+| P6 | HoltTest1 runs (1D) on Chopin and Cinqcent with the judge rules above, ht1.sh's `--boot-each-disk`, the boot alone and per disk; RAM peaks in `ram-sizes.tsv`. Done when all four runs PASS with 0 fsmeta and 0 dump differences. **Done 2026-11-14** (uncommitted): `pve6-10`..`pve6-13` PASS, after load's `--no-nvram` fix ("What P6 found") | 0.5 d |
+| P7 | Docs: holt/README.md's supported list ("Debian 13, and Proxmox VE 9 on it") and its tests, `layload.md`'s boot stage (the proxmox-boot-tool arm), HoltTest1's 1D row and HoltTest1All, SticTest1's README, GuestTest's ESP-sync check; memory (holttest1d index, a proxmox-support note). **Done 2026-11-14** (uncommitted): holt/README.md, layload.md, HoltTest1's 1D row and HoltTest1All, SticTest1's README (P5's), memory; the GuestTest2 ESP-sync check and Test2's READMEs wait for the batched Test2 pass | 0.1 d |
 | | *≈ 3.9 d* | |
 
 P2 can start beside P1 from the facts above, but its golden plan (P3) waits

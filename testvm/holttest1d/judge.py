@@ -6,10 +6,13 @@ exits 1 if any field outside IGNORED differs.
 Usage: judge.py [--expect] [--new-uuids] [--removable] [--nvram-kept]
                 [--grow BYTES | --fit BYTES [--fit-pct PCT] | --degraded] SRC.json DST.json
        judge.py fs FSMETA.py SRC-META.json DST-META.json [--no-atime] [--new-uuids]
+       judge.py esp DIR
        judge.py --fit-plan BYTES [--fit-pct PCT] LAYOUT.json
 
 The fs form judges fsmeta.py's records of the source and the restored disk:
 every path must match but what load's boot stage writes by design (BOOT_STAGE).
+The esp form judges a Proxmox source's ESPs, which proxmox-boot-tool rebuilds
+(judge_esp).
 
 --grow BYTES is for a restore onto disks BYTES bigger than the source's: a
 disk's size, GPT's last usable LBA and backup header, and the protective MBR's
@@ -87,6 +90,7 @@ IGNORED = [
     (r"^storage\.btrfs\.\d+\.subvolumes\.\d+\.parent_uuid:set$", "a snapshot's origin's UUID is new too (whether it is a snapshot is compared)"),
     (r"^storage\.(disks\.\d+\.partitions\.\d+\.content|zfs\.pools_from_labels\.\d+)\.hostname$", "a ZFS label names the host that last wrote it (in an initramfs that hasn't set the hostname yet, localhost)"),
     (r"^boot\.esps\.\d+\.contents\.files\.\d+\.size$", "the boot stage rebuilds the initramfs images, and Pop!_OS's kernelstub copies them and the kernels to the ESP"),
+    (r"^boot\.proxmox_boot\.esps\.\d+\.contents\.files\.\d+\.size$", "the boot stage rebuilds the initramfs images, and proxmox-boot-tool refresh copies them to each ESP (judge.py esp holds every file's bytes to the source's)"),
     (r"^storage\.disks\.\d+\.boot_code\.first_bytes$", "grub-install keeps the MBR's BPB area (bytes 3-89) from whatever was there before; the kind and core.img fields are compared"),
     (r"(^|\.)state$", "a mounted filesystem's clean flag"),
     (r"(^|\.)(last_mounted_on)$", "ext4 records where it was last mounted; the restore mounted it under /mnt/bko-target"),
@@ -222,6 +226,12 @@ BOOT_STAGE = [
     (r"^boot/loader/random-seed$", _WRITTEN, "bootctl install writes a new random seed in an ESP at /boot"),
     (r"^etc/kernel/entry-token$", _WRITTEN, "bootctl install writes the entry token (all it writes in /etc/kernel; install.conf it only reads)"),
     (r"^etc/kernel$", {"mtime (dirs)", "atime (dirs)"}, "bootctl install replaces etc/kernel/entry-token"),
+    # Proxmox: `proxmox-boot-tool init` adds each ESP's line, and load writes
+    # the file back as dumped; its bytes still count.
+    (r"^etc/kernel/proxmox-boot-uuids$", {"mtime", "atime"}, "load writes proxmox-boot-uuids back as dumped after proxmox-boot-tool init"),
+    (r"^etc/apt/apt\.conf\.d/76pveconf$", {"mtime", "atime"}, "Proxmox's kernel postinst hook (proxmox-auto-removal), run by proxmox-boot-tool, writes its list of kernels apt keeps again"),
+    (r"^etc/apt/apt\.conf\.d$", {"mtime (dirs)", "atime (dirs)"}, "proxmox-auto-removal replaces 76pveconf"),
+    (r"^var/tmp/espmounts$", {"mtime (dirs)", "atime (dirs)"}, "proxmox-boot-tool mounts each ESP under /var/tmp/espmounts/ID while it works"),
     (r"^efi/EFI/endeavouros(/|$)", _WRITTEN, "grub-install writes the loader in an ESP at /efi (EndeavourOS with GRUB)"),
     (r"^efi/EFI/gentoo(/|$)", _WRITTEN, "grub-install writes the loader in an ESP at /efi (Gentoo)"),
     (r"^boot/EFI/gentoo(/|$)", _WRITTEN, "grub-install writes the loader in an ESP at /boot (Gentoo with systemd)"),
@@ -961,7 +971,105 @@ def fit_may_differ(k, vb, plan, flat, want):
     return None
 
 
+# Proxmox's proxmox-boot-tool ESPs (docs/design/proxmox.md): no backup source,
+# rebuilt by load's `proxmox-boot-tool init` and `refresh`, so judged by
+# content, ESP by ESP of the same volume ID.  What each may show (any other
+# path must be on both with the same type and bytes; times, which every
+# rebuilt file has new, aren't compared):
+ESP_REBUILT = [
+    (r"^EFI/proxmox/[^/]+/initrd\.img-[^/]+$", {"content"}, "update-initramfs rebuilt it in the boot stage, and refresh copied it"),
+    (r"^loader/random-seed$", {"content", "missing", "extra"}, "bootctl install writes a new random seed"),
+    (r"^loader/entries\.srel$", {"content", "missing", "extra"}, "bootctl install's entry-layout stamp"),
+]
+
+
+def esp_files(rec):
+    """A record's paths (fsmeta.py's, of one ESP mounted alone) by type and,
+    for files, their bytes; its root '.' left out."""
+    return {p: (e.get("type"), e.get("sha256") if e.get("type") == "file" else None) for p, e in rec.items() if p != "."}
+
+
+def esp_compare(a, b, rules):
+    """{kind: [paths]} that differ between esp_files A and B, and
+    {why: [paths]} of those RULES allow."""
+    real, allowed = {}, {}
+    for p in sorted(set(a) | set(b)):
+        if p not in b:
+            kind = "missing"
+        elif p not in a:
+            kind = "extra"
+        elif a[p][0] != b[p][0]:
+            kind = "type"
+        elif a[p][1] != b[p][1]:
+            kind = "content"
+        else:
+            continue
+        why = next((w for r, kinds, w in rules if kind in kinds and re.search(r, p)), None)
+        (allowed.setdefault(why, []) if why else real.setdefault(kind, [])).append(p)
+    return real, allowed
+
+
+def judge_esp(esp_dir):
+    """`judge.py esp DIR`: ht1.sh's records of a proxmox-boot-tool source's
+    ESPs (DIR/src-uuids and dst-uuids, the two /etc/kernel/proxmox-boot-uuids;
+    DIR/src-ID.json and dst-ID.json, fsmeta.py's record of each ESP): the
+    UUID files byte-identical, every source ESP restored under its ID with
+    the same files, the kernels byte for byte (ESP_REBUILT names what may
+    differ), and with more than one, the restored ESPs equal to each other
+    but for their random seeds."""
+    import os
+    out, n = [], 0
+
+    def read(name):
+        try:
+            with open(os.path.join(esp_dir, name), "rb") as f:
+                return f.read()
+        except OSError:
+            return None
+    su, du = read("src-uuids"), read("dst-uuids")
+    if su is None:
+        print(f"DIFF no src-uuids in {esp_dir}: nothing to judge")
+        sys.exit(1)
+    if su != du:
+        out.append(f"DIFF etc/kernel/proxmox-boot-uuids: source {su!r}, restored {du!r}")
+        n += 1
+    ids = [l.strip() for l in su.decode(errors="replace").splitlines() if l.strip()]
+    restored = {}
+    for i in ids:
+        try:
+            s, d = esp_files(load_json(os.path.join(esp_dir, f"src-{i}.json"))), esp_files(load_json(os.path.join(esp_dir, f"dst-{i}.json")))
+        except OSError as e:
+            out.append(f"DIFF ESP {i}: no record ({e.filename})")
+            n += 1
+            continue
+        restored[i] = d
+        real, allowed = esp_compare(s, d, ESP_REBUILT)
+        for kind, paths in real.items():
+            out.append(f"DIFF ESP {i}: {kind}: {len(paths)}: {', '.join(paths)}")
+            n += len(paths)
+        kernels = sorted(p for p in d if re.search(r"^EFI/proxmox/[^/]+/vmlinuz-[^/]+$", p) and s.get(p) == d[p])
+        entries = sorted(p for p in d if re.search(r"^loader/entries/proxmox-[^/]+\.conf$", p) and s.get(p) == d[p])
+        out.append(f"ESP {i}: {len(d)} paths, {len(s)} on the source's; {len(kernels)} kernels and {len(entries)} proxmox entries byte for byte"
+                   + "".join(f"; {why}: {len(paths)}" for why, paths in allowed.items()))
+    if len(restored) > 1:
+        first, *rest = restored
+        m = 0
+        for i in rest:
+            real, _ = esp_compare(restored[first], restored[i], ESP_REBUILT[1:2])
+            for kind, paths in real.items():
+                out.append(f"DIFF ESPs {first} and {i} (restored): {kind}: {len(paths)}: {', '.join(paths)}")
+                m += len(paths)
+        n += m
+        if m == 0:
+            out.append(f"the {len(restored)} restored ESPs are equal but for their random seeds")
+    print("\n".join(out))
+    print(f"{n} differences in {len(ids)} ESPs")
+    sys.exit(1 if n else 0)
+
+
 def main():
+    if sys.argv[1] == "esp":
+        judge_esp(sys.argv[2])
     if sys.argv[1] == "fs":
         judge_fs(*sys.argv[2:5], no_atime="--no-atime" in sys.argv[5:], new_uuids="--new-uuids" in sys.argv[5:])
     grow, fit, pct, plan_only = 0, None, None, None
@@ -1061,6 +1169,11 @@ def main():
         m = re.match(r"^(storage\.other_devices\.\d+)\.", k)
         if not why and m and a.get(m.group(1) + ".kind") == "zram":
             why = "zram is made anew at each boot"
+        # A zvol (Proxmox's VM disk) load makes empty: its bytes aren't in the backup.
+        m = re.match(r"^(storage\.disks\.\d+)\.boot_code\.(kind|first_bytes)$", k)
+        if not why and m and b.get(m.group(1) + ".boot_code.kind") == "none" \
+                and any(str(v).startswith("/dev/zvol/") for x, v in a.items() if x.startswith(m.group(1) + ".links.")):
+            why = "a zvol's bytes: load makes it empty (archivers back up files, not zvols: the plan's note)"
         m = re.match(r"^(storage\.swaps\.\d+)\.size_bytes$", k)
         if not why and m and str(a.get(m.group(1) + ".device") or "").startswith("zram"):
             why = "a swap on zram is made anew at each boot, sized from MemTotal (zram-tools' PERCENT), which moves with the initramfs's size (pikaos4)"

@@ -829,6 +829,44 @@
     "entry:testvm/test2/stic/limits.json#pop24"
    ]
   },
+  "proxmox9": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/proxmox9/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/proxmox9/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#proxmox9"
+   ]
+  },
+  "proxmox9-mirror": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/proxmox9-mirror/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/proxmox9-mirror/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#proxmox9-mirror"
+   ]
+  },
   "rocky10": {
    "os": "linux",
    "bins": [

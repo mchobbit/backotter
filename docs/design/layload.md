@@ -300,6 +300,17 @@ efivarfs bound in):
      `grub-install --target=i386-pc` on each disk whose BIOS boot partition
      held GRUB's core in the dump, before `update-grub`.
    - systemd-boot: `bootctl install`.
+   - proxmox-boot-tool (Proxmox VE, docs/design/proxmox.md;
+     `boot.proxmox_boot`, before any loader arm): the ESPs listed in
+     `/etc/kernel/proxmox-boot-uuids` aren't mounted or backed up; format
+     made each with its volume ID, and the chroot runs `proxmox-boot-tool
+     init /dev/disk/by-uuid/ID` for each in the list's order (`bootctl
+     install`, which makes its NVRAM entry; `efi_entries` doesn't make it
+     again), then one `proxmox-boot-tool refresh`, then writes the list back
+     as dumped.  With `--no-nvram`, `init` runs in a mount namespace of its
+     own over an empty tmpfs in efivarfs' place (systemd 257's `bootctl
+     --graceful` fails with efivarfs only unmounted).  GRUB modes, shim, an
+     ID with no device and a Proxmox other than 9 are problems in the plan.
    - rEFInd (PikaOS): nothing installed.  Its binaries, drivers, theme and
      `refind.conf` (in `EFI/refind` and `EFI/BOOT`) come back with the ESP,
      and `refind_linux.conf` with /boot; only the NVRAM entry is made, when

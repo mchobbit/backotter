@@ -279,6 +279,22 @@
   "fs limits recorded": "ext4 refuses: projid; tmpfs refuses: projid",
   "security labels": "AppArmor (enforcing, 36 profiles) keeps no on-disk labels; no SELinux on Pop!_OS 24.04"
  },
+ "proxmox9": {
+  "POSIX ACLs on the datasets without them (acltype off)": "/rpool, /rpool/ROOT, /rpool/data, /var/lib/vz have acltype off as the guest's (only rpool/ROOT/pve-1 and the CT subvols have acltype=posix): no ACL made there, none restored",
+  "backups on relatime (the guest's datasets mount relatime) leave the source's atimes alone": "only symlinks' atimes move: readlink(2) has no O_NOATIME (both BACKOTTER.md), source and its mounts on relatime",
+  "birth times (ZFS crtime)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "inode flags OpenZFS on Linux refuses (S, A)": "OpenZFS on Linux keeps only immutable, append-only, nodump and project inheritance (zpl_ioctl_setflags: i a d P, in the fixture and every restore); chattr refuses S and A",
+  "whole-disk needs (GPT, the BIOS boot partition, proxmox-boot-tool's unmounted ESPs, pmxcfs at /etc/pve, the pool's bootfs and host id)": "out of scope: whole-disk (HoltTest1 recreates the disks and the pool, has proxmox-boot-tool rebuild the ESPs, which aren't backup sources, and skips pmxcfs: its data is config.db, here among the real examples); here the scratch pools are made like the guest's and only its datasets' contents are restored",
+  "zvols (VM disks in rpool/data)": "rpool/data/vm-100-disk-0: a block device, no files: neither tool backs it up (vzdump's or Proxmox Backup Server's); HoltTest1's load makes it empty with a note"
+ },
+ "proxmox9-mirror": {
+  "POSIX ACLs on the datasets without them (acltype off)": "/rpool, /rpool/ROOT, /rpool/data, /var/lib/vz have acltype off as the guest's (only rpool/ROOT/pve-1 and the CT subvols have acltype=posix): no ACL made there, none restored",
+  "backups on relatime (the guest's datasets mount relatime) leave the source's atimes alone": "only symlinks' atimes move: readlink(2) has no O_NOATIME (both BACKOTTER.md), source and its mounts on relatime",
+  "birth times (ZFS crtime)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "inode flags OpenZFS on Linux refuses (S, A)": "OpenZFS on Linux keeps only immutable, append-only, nodump and project inheritance (zpl_ioctl_setflags: i a d P, in the fixture and every restore); chattr refuses S and A",
+  "whole-disk needs (GPT, the BIOS boot partition, proxmox-boot-tool's unmounted ESPs, pmxcfs at /etc/pve, the pool's bootfs and host id)": "out of scope: whole-disk (HoltTest1 recreates the disks and the pool, has proxmox-boot-tool rebuild the ESPs, which aren't backup sources, and skips pmxcfs: its data is config.db, here among the real examples); here the scratch pools are made like the guest's and only its datasets' contents are restored",
+  "zvols (VM disks in rpool/data)": "rpool/data/vm-100-disk-0: a block device, no files: neither tool backs it up (vzdump's or Proxmox Backup Server's); HoltTest1's load makes it empty with a note"
+ },
  "rocky10": {
   "birth times (statx btime on XFS)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)"
  },

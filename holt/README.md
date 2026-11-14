@@ -27,7 +27,7 @@ bko-holt load layout.json --map vda=/dev/sdb --fit-largest 5   # onto a smaller 
 refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
 `VERSION_ID`, or uname's where there's no os-release) is:
 
-- Linux: Debian 12 and 13, Devuan 6, Ubuntu 24.04 and 26.04, Linux Mint 22,
+- Linux: Debian 12 and 13 (Proxmox VE 9 on it, ZFS root), Devuan 6, Ubuntu 24.04 and 26.04, Linux Mint 22,
   Pop!_OS 24.04, Zorin OS 18, KDE neon 24.04, AnduinOS 2, Arch Linux, CachyOS, Artix Linux, Omarchy,
   EndeavourOS, Manjaro, Garuda Linux, BigLinux, Alpine Linux 3, AerynOS, Void Linux, Chimera Linux,
   Gentoo Linux, PikaOS 4, Kali Linux, Fedora 44, Bazzite 44, Rocky Linux 10, openSUSE
@@ -54,7 +54,7 @@ on the Thinkpad itself; AnduinOS's is `anduinos2` in HoltTest1U, Btrfs
 under Secure Boot, whose MOK-signed GRUB `load` keeps from the restored ESP;
 PikaOS's are `pikaos4`, XFS with rEFInd's NVRAM entry, and `pikaos4-luks`,
 Btrfs on LUKS2 booted from the fallback path, in HoltTest1Obscure: `load`
-rebuilds booster's initramfs and keeps rEFInd's files; Kali's is `kali` in HoltTest1Obscure, UEFI GRUB with no shim on ext4, which `load` reinstalls as Debian's; Garuda's is `garuda`,
+rebuilds booster's initramfs and keeps rEFInd's files; Kali's is `kali` in HoltTest1Obscure, UEFI GRUB with no shim on ext4, which `load` reinstalls as Debian's; Proxmox VE's are `proxmox9`, ZFS root on one disk, and `proxmox9-mirror`, a mirror with an ESP on each disk, in HoltTest1D: `dump` reads proxmox-boot-tool's unmounted ESPs, `load` formats them with their volume IDs and has `proxmox-boot-tool init` and `refresh` rebuild them; Garuda's is `garuda`,
 beside EndeavourOS and Manjaro, GRUB on btrfs with dracut through
 garuda-dracut-support, whose `dracut-rebuild` `load` runs, and snap-pac's
 snapper snapshots restored as shared ones; BigLinux's is `biglinux`, beside

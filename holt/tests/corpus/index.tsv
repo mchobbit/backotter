@@ -51,6 +51,8 @@ openbsd8	chopin	r4all	PASS	2026-11-08T02:36:00Z	2026-11-08T02:30:50Z	0.2.4	2fbe8
 pikaos4	cinqcent	pk3	dump	-	2026-11-14T01:43:22Z	0.2.6	-	same	16	ok:16:104	0	0	0	same	ok:16	-
 pikaos4-luks	cinqcent	pk4	dump	-	2026-11-14T03:35:09Z	0.2.6	-	same	20	ok:20:114	0	0	0	same	ok:20	-
 pop24	cinqcent	r4all	PASS	2026-11-08T02:17:08Z	2026-11-08T02:10:07Z	0.2.4	75b2064e8ca9961bd2d21a961a82d13fe07d5a3286a88d436209832405aab3af	changed	16	ok:16:82	0	0	0	same	ok:16	-
+proxmox9	chopin	p3	dump	-	2026-11-14T07:28:27Z	0.2.6	4082963e72beace5e48f4df0b0f76ae18de0f513d0a69156fc328df97fecb6ae	same	14	ok:14:120	0	0	0	same	ok:14	-
+proxmox9-mirror	chopin	p4	dump	-	2026-11-14T07:29:26Z	0.2.6	76812342dc9e2189f78999b683a49df6546f2e74a8f263cf68114502e81e849f	same	21	ok:21:155	0	0	0	same	ok:21	-
 redox	cinqcent	r4all	PASS	2026-11-08T02:55:31Z	2026-11-08T02:53:51Z	0.2.4	-	same	8	ok:8:46	0	6	471992	same	ok:8	storage.disks.0.partitions.0.boot_code.image_b64=282624/d468669f storage.disks.0.partitions.1.esp_image.0.b64=1536/294bf19e storage.disks.0.partitions.1.esp_image.1.b64=1536/1dc4c201 storage.disks.0.partitions.1.esp_image.2.b64=1024/ee5c1acd storage.disks.0.partitions.1.esp_image.3.b64=184832/b0bb298a storage.disks.0.boot_code.code_b64=440/8d5e5c07
 rocky10	cinqcent	r4all	PASS	2026-11-08T02:33:33Z	2026-11-08T02:30:13Z	0.2.4	6ff123ee49446958d58d7854f6fc7587e6d9f2fed8269fab972c642e6cd55309	changed	7	ok:7:84	0	0	0	same	ok:7	-
 rocky10-lvm	cinqcent	r4all	PASS	2026-11-08T02:37:09Z	2026-11-08T02:34:16Z	0.2.4	05fa7f14183853daad65a8c9ca533d95cfd724647ad79d4a7e59e29374a7a4e8	same	14	ok:14:155	0	0	0	same	ok:14	-

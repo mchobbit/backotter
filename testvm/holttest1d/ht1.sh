@@ -37,7 +37,13 @@
 #            judge.py compares the dumps.  An ostree source (kinoite44) has
 #            its rollback deployment booted too, on the source before its
 #            dump and on the restored disk after its dump, each boot held
-#            to the source's (README "The ostree guest")
+#            to the source's (README "The ostree guest").  A Proxmox
+#            source's ESPs (proxmox-boot-tool's, mounted by nothing) are
+#            recorded on their own and judged by content (judge.py esp);
+#            with one on each disk (proxmox9-mirror), each restored disk
+#            boots alone too, the others detached (the spec's
+#            --boot-each-disk: HT_BOOT_EACH_DISK=1 asks for it on any
+#            source of more than one disk, =0 never)
 #
 # Where it works (ht1-lib.sh): with HT_RAM unset, in RAM when the run holds
 # a reservation of at least 1 GiB, else on /bkoscratch (a note: line says
@@ -48,7 +54,10 @@
 # reservation that outlives the run (ht1-debug.sh's); in RAM, HT_CLEAN=0
 # and HT_KEEP=1 need it.  For rustic-bko, HT_BKO_BIN=DIR takes another set,
 # HT_ROUND=NAME round NAME's (~/backotter-work/roundNAME/bin), and
-# HT_RUSTIC=FILE a file, unchecked.  HT_FAIL_AT=PHASE adds a FAIL line
+# HT_RUSTIC=FILE a file, unchecked.  HT_NVRAM=1 runs a UEFI load without
+# --no-nvram, so it writes the rescuer's own (throwaway) NVRAM, which is
+# recorded after the load (logs/rescuer-nvram.txt): for debugging.
+# HT_FAIL_AT=PHASE adds a FAIL line
 # after that phase (a test hook).  HT_SOURCE_PREP=FILE is a script run as
 # root in the source before its dump (its overlay only), rebooted after it
 # when its last line is REBOOT: prep/tumbleweed-snapper.sh.
@@ -284,11 +293,11 @@ size_of() { qemu-img info --output=json "$1" | python3 -c 'import json,sys; prin
 gpass=""; for f in console-passphrase zfs-passphrase luks-passphrase luks-keyfile; do [[ -f $W/vms/$G/$f ]] && gpass=$W/vms/$G/$f && break; done
 ckey=$gpass; [[ $gpass != */luks-keyfile ]] || ckey=""
 # Where the run works and what a pass keeps (ht1-lib.sh; README "Where a run works, and what it keeps").
-HT_BULK=(share 'src-*.qcow2' 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 rustic-bko tmp img-key img-key.pub source-vars.fd restored-vars.fd)
+HT_BULK=(share 'src-*.qcow2' 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 rustic-bko tmp img-key img-key.pub source-vars.fd restored-vars.fd 'restored-disk*-vars.fd')
 [[ $VARIANT != bs2 ]] || HT_BULK+=(rescuer-vars.fd)   # (a resumed UEFI rescuer's NVRAM)
 HT_ZIP=(src-meta.json dst-meta.json)
 # Settings that change what a run checks, or its rescuer: its report names them.
-dbg=""; for v in HT_QUICK HT_THROUGH HT_KEEP HT_FAIL_AT HT_RESCUER HT_RESCUER_IMG HT_SOURCE_PREP; do [[ -z ${!v:-} ]] || dbg+=" $v=${!v}"; done
+dbg=""; for v in HT_QUICK HT_THROUGH HT_KEEP HT_FAIL_AT HT_RESCUER HT_RESCUER_IMG HT_SOURCE_PREP HT_BOOT_EACH_DISK HT_NVRAM; do [[ -z ${!v:-} ]] || dbg+=" $v=${!v}"; done
 [[ -z $dbg ]] || ht_note "set for debugging or tests:$dbg"
 ht_require
 # A rerun from a later phase goes on from K's state (a failure's): all of it
@@ -766,6 +775,67 @@ guix_verify() {
     fi
 }
 
+# Proxmox (docs/design/proxmox.md): proxmox-boot-tool's ESPs, listed by volume
+# ID in /etc/kernel/proxmox-boot-uuids, are mounted by nothing, so neither the
+# backup nor fsmeta's record of MP holds them.  Each one on the disks vm-mount
+# attached for MP is mounted read-only by itself and recorded by fsmeta.py as
+# esp/WHO-ID.json, beside the list as esp/WHO-uuids, for judge.py esp.  A tree
+# without the list has none.  Exit 1 when an ESP couldn't be found or read.
+esp_record() { local mp=$1 who=$2 st u p q at f=0 devs=()
+    [[ -f $mp/etc/kernel/proxmox-boot-uuids ]] || return 0
+    mkdir -p "$R/esp" "$R/tmp"; rm -f "$R/esp/$who-"*
+    cp "$mp/etc/kernel/proxmox-boot-uuids" "$R/esp/$who-uuids"
+    st=/run/vm-mount/$(systemd-escape --path "$(realpath "$mp")")
+    mapfile -t devs < <(awk 'NR == 1 { print; next } $1 == "nbd" { print $2 }' "$st")
+    for u in $(cat "$R/esp/$who-uuids"); do
+        p=""
+        for q in $(for d in "${devs[@]}"; do compgen -G "${d}p*"; done); do
+            [[ $(blkid -s TYPE -o value "$q" 2>/dev/null) == vfat && $(blkid -s UUID -o value "$q" 2>/dev/null) == "$u" ]] && { p=$q; break; }
+        done
+        [[ -n $p ]] || { echo "$who: no vfat partition with the ID $u on ${devs[*]}"; f=1; continue; }
+        at=$R/tmp/esp-$who-$u; mkdir -p "$at"
+        if mount -t vfat -o ro,nodev,nosuid,noexec "$p" "$at"; then
+            python3 "$T/compare/fsmeta.py" record "$at" "$R/esp/$who-$u.json" || f=1
+            echo "$who: ESP $u on $p: $(find "$at" -type f | wc -l) files"
+            umount "$at"
+        else
+            echo "$who: can't mount $p (ESP $u) read-only"; f=1
+        fi
+        rmdir "$at"
+    done
+    return $f
+}
+# Whether the source's proxmox-boot-tool keeps more than one ESP.
+multi_esp() { python3 -I -c 'import json, sys
+d = json.load(open(sys.argv[1]))
+sys.exit(0 if len(((d.get("boot") or {}).get("proxmox_boot") or {}).get("uuids") or []) > 1 else 1)' "$R/dumps/src.json" 2>/dev/null; }
+# Each restored disk booted by itself, the others detached (the spec's
+# --boot-each-disk): firmware that finds one disk of the pair must still boot
+# from its ESP.  The pool comes up DEGRADED, and no worse (no vdev FAULTED,
+# no data errors); the boot state must be the source's, as for the restored
+# disks' boot together.  A fresh copy of the guest's NVRAM each, as that boot.
+boot_each_disk() { local i vfw pools
+    for ((i = 0; i < n; i++)); do
+        gvars "restored-disk$i"; vfw=("${VFW[@]}")
+        CONSOLE_KEY=$ckey vm_up "${dst[i]}" "$R/logs/restored-disk$i-serial.log" --snapshot "${fw[@]}" "${vfw[@]}"
+        if ! vm_wait "$gkey"; then bad "restored disk $i boots alone, the others detached (no SSH; logs/restored-disk$i-serial.log)"; vm_down "$gkey"; continue; fi
+        if [[ -n $GVARS ]]; then sshk "$gkey" "$NVBOOT" > "$R/logs/restored-disk$i-nvram-boot.txt" 2>&1; else echo "no NVRAM of its own: a fresh store" > "$R/logs/restored-disk$i-nvram-boot.txt"; fi
+        sshk "$gkey" 'zpool list -H -o name,health; echo; zpool status -v' > "$R/logs/restored-disk$i-zpool.txt" 2>&1
+        bootstate "$gkey" > "$R/logs/restored-disk$i-bootstate.txt"
+        vm_down "$gkey"
+        pools=$(awk -F'\t' '/^$/ { exit } NF == 2 { print $1 " " $2 }' "$R/logs/restored-disk$i-zpool.txt" | tr '\n' ',' | sed 's/,$//; s/,/, /g')
+        if ! grep -qP '^\S+\tDEGRADED$' "$R/logs/restored-disk$i-zpool.txt" || grep -qP '^\S+\t(FAULTED|UNAVAIL|SUSPENDED|OFFLINE)$' "$R/logs/restored-disk$i-zpool.txt" \
+            || grep -qE '^ +(errors: [1-9]|.*(FAULTED|corrupted))' "$R/logs/restored-disk$i-zpool.txt" || ! grep -q '^errors: No known data errors' "$R/logs/restored-disk$i-zpool.txt"; then
+            bad "restored disk $i alone: its pool isn't just DEGRADED: ${pools:-none} (logs/restored-disk$i-zpool.txt)"
+        elif ! diff -q <(head -1 "$R/logs/source-bootstate.txt") <(head -1 "$R/logs/restored-disk$i-bootstate.txt") >/dev/null \
+            || [[ -n $(comm -13 <(tail -n +2 "$R/logs/source-bootstate.txt") <(tail -n +2 "$R/logs/restored-disk$i-bootstate.txt")) ]]; then
+            bad "restored disk $i alone: boot state: source $(tr '\n' ' ' < "$R/logs/source-bootstate.txt"), restored $(tr '\n' ' ' < "$R/logs/restored-disk$i-bootstate.txt")"
+        else
+            ok "restored disk $i boots alone, the others detached: ${pools}, boot state as the source's ($(head -1 "$R/logs/restored-disk$i-bootstate.txt")), through $(head -1 "$R/logs/restored-disk$i-nvram-boot.txt")"
+        fi
+    done
+}
+
 phase_source() {
     say "== source: $G"
     # (bs2: the source's preparation stands in for its boot when it can.)
@@ -873,6 +943,7 @@ phase_backup() {
         bad "rustic-bko backup (logs/backup.log)"
     fi
     python3 "$T/compare/fsmeta.py" record "$SRC_MP" "$R/src-meta.json" > "$R/logs/fsmeta-src.log" 2>&1 || bad "fsmeta record of the source"
+    esp_record "$SRC_MP" src >> "$R/logs/esp-record.log" 2>&1 || bad "record the source's proxmox-boot-tool ESPs (logs/esp-record.log)"
     (trap '' TERM INT HUP; exec "$T/vm-umount" "$SRC_MP") >> "$R/logs/backup-mount.log" 2>&1; HT_MOUNTED=
     cp "$RUSTIC" "$S/rustic-bko"; cp "$BIN"/*.deb "$S/"   # (bko-holt is there from the run's start)
     [[ ! -f $BIN/bcachefs ]] || cp "$BIN/bcachefs" "$S/"   # make-bcachefs-tools.sh's
@@ -1055,7 +1126,7 @@ phase_rebuild() {
     local flags=()
     # (bs2: tier 1 boots with a fresh NVRAM, so --no-nvram as ever; tier 2
     # keeps one, and the case's own options say.)
-    ((uefi)) && [[ $VARIANT != bs2 || $BS2_TIER == 1 ]] && flags+=(--no-nvram)
+    ((uefi)) && [[ $VARIANT != bs2 || $BS2_TIER == 1 ]] && [[ ${HT_NVRAM:-} != 1 ]] && flags+=(--no-nvram)
     [[ $VARIANT != bs2 ]] || flags+=("${BS2_FLAGS[@]}")
     # (A refusal variant always takes these: they are what it runs for.)
     if [[ ${HT_QUICK:-} != 1 || -n $FITONLY ]]; then
@@ -1156,6 +1227,7 @@ PY
     # The decoy was never a target: it still holds its filesystem.
     [[ $(sshk "$rkey" "blkid -o value -s LABEL $decoy") == ht1decoy ]] || bad "the decoy lost its filesystem"
     sshk "$rkey" 'cat /run/bko-holt/log/load.log' > "$R/logs/rebuild-load.log"
+    [[ ${HT_NVRAM:-} != 1 ]] || sshk "$rkey" 'efibootmgr -v' > "$R/logs/rescuer-nvram.txt" 2>&1
     [[ $VARIANT != bs2 ]] || bs2_after_load
     [[ ${HT_KEEP:-} == 1 ]] && { kept_or_down; return; }
     # (bs2: QEMU quits once the targets are let go of and synced: ht1-bs2.sh.)
@@ -1184,6 +1256,7 @@ phase_verify() {
         HT_MOUNTED=$DST_MP
         python3 "$T/compare/fsmeta.py" record "$DST_MP" "$R/dst-meta.json" "${BS2_FSMETA[@]}" > "$R/logs/fsmeta-dst.log" 2>&1
         [[ $VARIANT != bs2 ]] || bs2_after_dst_record
+        esp_record "$DST_MP" dst >> "$R/logs/esp-record.log" 2>&1 || bad "record the restored proxmox-boot-tool ESPs (logs/esp-record.log)"
         mok_check "$DST_MP"
         (trap '' TERM INT HUP; exec "$T/vm-umount" "$DST_MP") >> "$R/logs/verify-mount.log" 2>&1; HT_MOUNTED=
         python3 "$T/compare/fsmeta.py" compare "$R/src-meta.json" "$R/dst-meta.json" > "$R/logs/fsmeta-compare.txt" 2>&1
@@ -1191,6 +1264,13 @@ phase_verify() {
             ok "fsmeta: the files agree but for the boot stage's ($(tail -1 "$R/logs/fsjudge.txt"))"
         else
             bad "fsmeta: $(grep '^DIFF' "$R/logs/fsjudge.txt" | head -5 | tr '\n' ' ')"
+        fi
+        if [[ -f $R/esp/src-uuids ]]; then
+            if python3 "$HERE/judge.py" esp "$R/esp" > "$R/logs/espjudge.txt" 2>&1; then
+                ok "proxmox-boot-tool's ESPs: the source's by content ($(tail -1 "$R/logs/espjudge.txt"); logs/espjudge.txt)"
+            else
+                bad "proxmox-boot-tool's ESPs: $(grep '^DIFF' "$R/logs/espjudge.txt" | head -3 | tr '\n' ' ')"
+            fi
         fi
     else
         bad "mount the restored disk"
@@ -1243,6 +1323,11 @@ phase_verify() {
     # So does a Guix System source's previous generation.
     [[ ! -f $R/logs/source-guix-gens.txt ]] || guix_verify
     if [[ $VARIANT == bs2 ]]; then bs2_restored_down; else vm_down "$gkey"; fi
+    # Each disk alone (the spec's --boot-each-disk): a source with an ESP on each disk, or asked for.
+    case ${HT_BOOT_EACH_DISK:-auto} in
+        1) ((n > 1)) && boot_each_disk ;;
+        auto) ((n > 1)) && multi_esp && boot_each_disk ;;
+    esac
     local how=(); [[ $VARIANT == bigger ]] && how=(--grow $((1 << 30)))
     [[ $VARIANT == degraded ]] && how=(--degraded)
     # The fitting variants: judge.py works the new geometry out as load did,

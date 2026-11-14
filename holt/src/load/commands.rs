@@ -3126,10 +3126,16 @@ impl Builder<'_> {
             }
             let why = format!("ESP {u} ({dev}): made again by proxmox-boot-tool, in its {m} mode as on the source");
             // --no-nvram: bootctl install (in init) would make its boot
-            // entry; without efivarfs it can't.
+            // entry.  With efivarfs merely unmounted, systemd 257's bootctl
+            // --graceful still fails ("Failed to create EFI Boot variable
+            // entry: No such file or directory", HoltTest1 pve6-1..4), so
+            // init runs over an empty tmpfs in efivarfs' place, in a mount
+            // namespace of its own: its writes land there and are thrown
+            // away, the machine's NVRAM untouched.  If the tmpfs can't be
+            // mounted, init doesn't run (it would write the real NVRAM).
             out.push(if self.opts.no_nvram {
-                let cmd = format!("umount {}/sys/firmware/efi/efivars 2>/dev/null; exec chroot {} {}", shell_quote(t), shell_quote(t), a.iter().map(|x| shell_quote(x)).collect::<Vec<_>>().join(" "));
-                Cmd::new(&["unshare", "--mount", "--propagation", "private", "sh", "-c", &cmd]).why(format!("{why}; --no-nvram: without the EFI variables, in a mount namespace of its own"))
+                let cmd = format!("mount -t tmpfs -o mode=0755 bko-novars {}/sys/firmware/efi/efivars && exec chroot {} {}", shell_quote(t), shell_quote(t), a.iter().map(|x| shell_quote(x)).collect::<Vec<_>>().join(" "));
+                Cmd::new(&["unshare", "--mount", "--propagation", "private", "sh", "-c", &cmd]).why(format!("{why}; --no-nvram: over an empty tmpfs in place of the EFI variables, in a mount namespace of its own"))
             } else {
                 let mut argv = vec!["chroot".to_string(), t.to_string()];
                 argv.extend(a);

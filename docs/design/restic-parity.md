@@ -129,8 +129,8 @@ version closed. The user stopped the rounds after .12 ("Stop there").
 
 Every one of these passed. Cage and Copland rebooted for the kernel 7.2.12 upgrade during the round, so the runs that were cut off were rerun on the new kernel.
 
-State: the fork's `backotter` branch is at .12, 14 commits ahead of origin
-(still .7, aa72d65cc). Nothing after .7 is pushed. .11 is the newest version with
+State: the fork's `backotter` branch is at .12 (12a275f62), pushed to origin
+2026-11-14 at the user's go-ahead. .11 is the newest version with
 a full farm round; .12's changes are narrow (`--delete` of a replaced file's other
 names) and passed unit and guest unit tests and exact-rt only.
 
@@ -169,5 +169,5 @@ Not done:
   check) still names only rustic-bko. It could accept restic-bko .11 or newer, mapping
   `--exact`/`--clone-from`/`--target-metadata`. Waiting: another session has large
   uncommitted edits to `restore()` and `shared_snapshots()` there.
-- **Pushes:** the restic fork past .7, and this repo's commits.
+- **Pushes:** this repo's commits (the fork is pushed at .12).
 - **Harness:** `cmp-run.sh --free` fails with "$2: unbound variable" on all four hosts.

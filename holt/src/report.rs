@@ -1017,7 +1017,8 @@ pub fn parse_btrfs_subvol_line(l: &str) -> Option<Value> {
 /// One filesystem a whole-system backup reads: the tree it's mounted in
 /// (`path`, fstab's mount point), where the running system has it (`from`),
 /// and what it is.  A filesystem the running system doesn't mount (ABRoot's
-/// `init` and other root, crate::abroot) has no `from`: its `mount` says
+/// `init` and other root, crate::abroot; an inactive ZFS boot environment's
+/// datasets, crate::zfs_be) has no `from`: its `mount` says
 /// how a backup mounts it at `path` (read-only) for the backup, and `note`
 /// says so in words.  `mount` and `note` are in the JSON only when set.
 #[derive(Debug, Clone, PartialEq)]
@@ -1121,6 +1122,61 @@ pub fn unmatched_fstab(sources: &[BackupSource], fstab: &[(&mounts::FstabEntry, 
         })
         .map(|(e, r)| format!("{} ({} -> {})", e.file, e.spec, r.as_deref().unwrap_or("unresolved")))
         .collect()
+}
+
+/// A ZFS dataset mounted at more than one path, its whole tree each time
+/// (TrueNAS's boot-pool/.system/cores, at /var/db/system/cores and
+/// /var/lib/systemd/coredump): backed up once, at its first path, whose
+/// note names the others; load mounts it there only (the restored system
+/// mounts it again where it wants it).
+pub fn zfs_mounted_twice(sources: &mut Vec<BackupSource>) {
+    let mut i = 0;
+    while i < sources.len() {
+        let s = &sources[i];
+        if s.fstype != "zfs" || s.from.is_none() {
+            i += 1;
+            continue;
+        }
+        let ds = s.source.clone();
+        let others: Vec<String> = sources[i + 1..].iter().filter(|o| o.fstype == "zfs" && o.from.is_some() && o.source == ds).map(|o| o.path.clone()).collect();
+        if !others.is_empty() {
+            sources.retain(|o| !(o.fstype == "zfs" && o.source == ds && others.contains(&o.path)));
+            sources[i].note = Some(format!("ZFS dataset {ds} is also mounted at {}: backed up here only, once", others.join(", ")));
+        }
+        i += 1;
+    }
+}
+
+/// The ESPs of the disks that hold a vdev of TrueNAS's boot-pool (a
+/// partition of GPT type EF00 on such a disk: TrueNAS's installer makes it
+/// partition 2), as (partition, disk, volume ID, label), disk by disk.
+fn truenas_esps(ctx: &Ctx) -> Vec<(String, String, Option<String>, Option<String>)> {
+    let mut disks: Vec<String> = Vec::new();
+    for d in ctx.devs.iter().filter(|d| d.b.kind == Kind::Partition && d.fs_type().as_deref() == Some("zfs_member") && d.fs_label().as_deref() == Some(crate::zfs_be::TRUENAS_POOL)) {
+        if let Some(p) = &d.b.parent {
+            if !disks.contains(p) {
+                disks.push(p.clone());
+            }
+        }
+    }
+    disks.sort();
+    let mut out = Vec::new();
+    for disk in &disks {
+        let table = ctx.dev(disk).and_then(|p| p.table.as_ref());
+        let mut parts: Vec<&Dev> = ctx.devs.iter().filter(|p| p.b.parent.as_deref() == Some(disk.as_str()) && p.b.kind == Kind::Partition).collect();
+        parts.sort_by_key(|p| p.b.partition_number.unwrap_or(0));
+        for p in parts {
+            let n = p.b.partition_number.unwrap_or(0);
+            let esp = match table {
+                Some(Table::Gpt { gpt, .. }) => gpt.parts.iter().any(|x| x.number == n && x.type_guid == parttable::ESP),
+                _ => p.b.udev.get("ID_PART_ENTRY_TYPE") == Some(parttable::ESP),
+            };
+            if esp {
+                out.push((p.b.name.clone(), disk.clone(), p.fs_uuid(), p.fs_label()));
+            }
+        }
+    }
+    out
 }
 
 /// The stacking of devices as a tree, for a person to read: keys describe a
@@ -1278,6 +1334,21 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     let ostree = crate::ostree::detect(sys, &mountinfo);
     let fstab_resolved: Vec<(&mounts::FstabEntry, Option<String>)> = fstab_entries.iter().flatten().map(|e| (e, ctx.resolve(sys, &e.spec))).collect();
     let mut sources = backup_sources(&layout_mounts, &mount_dev, &fstab_resolved, ostree);
+    zfs_mounted_twice(&mut sources);
+    // ZFS boot environments the running system doesn't mount
+    // (crate::zfs_be: ZFSBootMenu's, TrueNAS's): each joins backup_sources
+    // with the read-only mount a backup makes for it.  On Linux only.
+    let zfs = zfs_json(sys, &ctx);
+    let zfs_tools = zfs.get("tools").cloned().unwrap_or(Value::Null);
+    let (bes, be_sources, be_warnings) = crate::zfs_be::dump_sources(crate::other::Family::current(), &zfs_tools);
+    for w in be_warnings {
+        sys.warn(w);
+    }
+    let be_sources: Vec<BackupSource> = be_sources.into_iter().filter(|x| !sources.iter().any(|s| s.path == x.path)).collect();
+    if !be_sources.is_empty() {
+        sources.extend(be_sources);
+        sources.sort_by(|a, b| a.path.cmp(&b.path));
+    }
     // ABRoot (crate::abroot): its filesystems by label, as ABRoot finds
     // them (an LV's pool layers, which can show a thin LV's superblock,
     // left out); its init LV and other root join backup_sources.
@@ -1379,7 +1450,7 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         .set("loop_devices", loops)
         .set("other_devices", other)
         .set("lvm", lvm_json(&ctx))
-        .set("zfs", zfs_json(sys, &ctx))
+        .set("zfs", zfs)
         .set("btrfs", btrfs)
         .set("xfs_external_logs", xfs_external_logs(sys, &ctx))
         .set("mounts", mounts_json)
@@ -1391,12 +1462,29 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         .set("mdadm_conf", mdadm_conf);
     let ostree_json = ostree.then(|| crate::ostree::json(sys, physical_root.as_deref().unwrap_or(crate::ostree::SYSROOT)));
     let proxmox = crate::boot::proxmox_boot_json(sys, &packages, &|spec: &str| ctx.resolve(sys, spec), &esps);
-    let boot = crate::boot::boot_json(sys, &packages, &esps, efi_boot, mbr_codes, ostree_json, proxmox);
+    // TrueNAS (crate::truenas): its BEs and the ESPs of its boot-pool
+    // disks, which nothing mounts, each read as Proxmox's are.
+    let truenas = crate::truenas::detect(sys).then(|| {
+        let read_esp = |dev: &str| -> Option<Value> {
+            if !sys.privileged || dev.is_empty() || !dev.bytes().all(|b| b.is_ascii_alphanumeric()) {
+                return None;
+            }
+            crate::boot::read_unmounted_esp(sys, dev, dev, &format!("{}/esp-{dev}", crate::boot::UNMOUNTED_ESP_MOUNTS), "its files", |at| crate::boot::esp_inventory(sys, at))
+        };
+        crate::truenas::read(sys, &zfs_tools, &bes, truenas_esps(&ctx), &read_esp)
+    });
+    let unmounted: Vec<(String, Value)> = truenas.iter().flat_map(|t| &t.esps).map(|e| (e.device.clone(), e.contents.clone())).collect();
+    let boot = crate::boot::boot_json(sys, &packages, &esps, efi_boot, mbr_codes, ostree_json, proxmox, &unmounted);
     let mut os_json = crate::osrel::to_json(sys, os);
     if let (Some(p), Value::Obj(o)) = (crate::boot::proxmox_product(&packages), &mut os_json) {
         o.push(("product".into(), Value::from(p)));
     }
+    if let (Some(p), Value::Obj(o)) = (truenas.as_ref().and_then(|_| crate::truenas::product(sys)), &mut os_json) {
+        o.retain(|(k, _)| k != "product");
+        o.push(("product".into(), Value::from(p)));
+    }
     let boot = crate::abroot::add_to_boot(boot, abroot.as_ref());
+    let boot = crate::truenas::add_to_boot(boot, truenas.as_ref());
     let boot = crate::transactional::add_to_boot(boot, transactional);
 
     let mut out = Obj::new()

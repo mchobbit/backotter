@@ -271,7 +271,13 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
         fam: crate::other::Family::of_layout(&layout.v),
         btrfs: BTreeMap::new(),
         timeshift: BTreeMap::new(),
+        readonly_later: vec![],
+        be_mounts: vec![],
+        be_restored: vec![],
     };
+    b.be_mounts = b.find_be_mounts();
+    b.be_restored = b.find_restored_bes();
+    b.be_problems();
     // What the dump couldn't find out because a tool it runs was missing or
     // failed (report::zfs_tools_json, other::firmware_unknown): it would
     // have been a wrong answer, so it is said and refused instead.
@@ -338,6 +344,13 @@ pub(crate) struct Builder<'a> {
     /// Each btrfs's Timeshift snapshots (their subvolumes' paths), by UUID:
     /// not in the backup, so not made (timeshift_snapshot).
     pub(crate) timeshift: BTreeMap<String, BTreeSet<String>>,
+    /// The datasets (names here) whose readonly=on ds_props held back: set
+    /// at the end of the boot stage (load/zfs_be.rs).
+    pub(crate) readonly_later: Vec<String>,
+    /// The inactive ZFS boot environments' datasets the dump has backup
+    /// sources for, and those BEs (load/zfs_be.rs), worked out once.
+    pub(crate) be_mounts: Vec<super::zfs_be::BeMount>,
+    pub(crate) be_restored: Vec<crate::zfs_be::BootEnv>,
 }
 
 // ---- partition ----------------------------------------------------------
@@ -1404,6 +1417,7 @@ impl Builder<'_> {
         if here != name {
             a.extend(["-t".into(), here.clone()]);
         }
+        self.truenas_pool_name(&name, &here);
         for (k, v) in p.get("local_properties").and_then(Value::as_object).into_iter().flatten() {
             if POOL_PROPS_SKIP.contains(&k.as_str()) {
                 continue;
@@ -1562,6 +1576,15 @@ impl Builder<'_> {
                 continue;
             }
             if matches!(k.as_str(), "encryption" | "keyformat" | "pbkdf2iters") && !is_enc_root {
+                continue;
+            }
+            // A read-only dataset can't be restored into: made writable,
+            // and read-only again at the end of the boot stage.
+            if k == "readonly" && val == "on" {
+                let here = self.zname(&name);
+                if !self.readonly_later.contains(&here) {
+                    self.readonly_later.push(here);
+                }
                 continue;
             }
             out.push((k.clone(), val));
@@ -2564,6 +2587,7 @@ impl Builder<'_> {
                 out.push(Cmd::new(&["zpool", "set", &format!("bootfs={}", self.zname(b)), &self.zname(&n)]));
             }
         }
+        self.clone_notes();
     }
 
     fn make_dataset(&mut self, ds: &Value, out: &mut Vec<Cmd>) {
@@ -2645,7 +2669,13 @@ impl Builder<'_> {
                 continue;
             }
             let Some(src) = s(e, "resolves_to") else {
-                self.notes.push(format!("fstab's {file} ({ty}) isn't on the layout's disks; not mounted"));
+                // A legacy ZFS dataset fstab mounts (TrueNAS's boot-pool/grub,
+                // perhaps): load/zfs_be.rs's legacy mounts mount it, as the
+                // source had it mounted there.
+                let legacy_source = ty == "zfs" && self.layout.arr(&["storage", "backup_sources"]).iter().any(|b| s(b, "path").as_deref() == Some(file.as_str()) && s(b, "source") == s(e, "spec"));
+                if !legacy_source {
+                    self.notes.push(format!("fstab's {file} ({ty}) isn't on the layout's disks; not mounted"));
+                }
                 continue;
             };
             let src = crate::other::geli::fstab_src(self.layout, e, src);
@@ -2701,6 +2731,11 @@ impl Builder<'_> {
                     self.notes.push(format!("boot environment {be} ({name}) isn't the booted one: it comes back as an empty plain dataset (only the booted BE is restored)"));
                 }
             }
+            // An inactive boot environment the dump has backup sources for
+            // (crate::zfs_be, Linux only): mounted below, at its sources' paths.
+            if self.in_restored_be(&name) {
+                continue;
+            }
             if !mp.starts_with('/') || canmount == "off" || (canmount == "noauto" && !bootfs.contains(&name) && !was_mounted) {
                 continue;
             }
@@ -2722,6 +2757,14 @@ impl Builder<'_> {
                 ms.push(("/".into(), Cmd::new(&["mount", fs_flag, "zfs", &self.zname(&name), &target])));
             }
         }
+        // Legacy datasets mounted at a backup source's path on the source
+        // (TrueNAS's /boot/grub), and the inactive boot environments at
+        // their sources' paths (load/zfs_be.rs).
+        let have: Vec<String> = ms.iter().map(|(p, _)| p.clone()).collect();
+        let extra = self.legacy_mounts(&have);
+        ms.extend(extra);
+        let extra = self.be_mount_cmds();
+        ms.extend(extra);
         // ABRoot (load/abroot.rs): the init LV, the other root and /var,
         // which no fstab line mounts.
         if let Some(a) = super::abroot::of(&self.layout.v) {
@@ -2762,11 +2805,15 @@ impl Builder<'_> {
         a.push("--no-progress".into());
         let prefix = a.clone();
         a.extend(["restore".into(), "--numeric-id".into()]);
-        // Aliases and shared snapshots left out of the main restore; with
-        // --reformat, a reformatted btrfs's aliases and snapshots too.
+        // Aliases and shared snapshots left out of the main restore, the
+        // pools --pools leaves untouched, and with --reformat, a reformatted
+        // btrfs's aliases and snapshots.
         let mut globs: Vec<String> = self.btrfs.values().flat_map(|p| p.globs()).collect();
+        let pool_globs = self.left_out_pool_globs();
         let reformat_globs: Vec<String> = self.layout.arr(&["load_reformat", "restore_globs"]).iter().filter_map(Value::as_str).map(str::to_string).collect();
-        let only_reformat = globs.is_empty();
+        let only_pools = globs.is_empty() && !pool_globs.is_empty() && reformat_globs.is_empty();
+        let only_reformat = globs.is_empty() && pool_globs.is_empty();
+        globs.extend(pool_globs);
         globs.extend(reformat_globs);
         let aliases = self.btrfs.values().any(|p| !p.aliases.is_empty());
         let mut pre = Vec::new();
@@ -2807,7 +2854,9 @@ impl Builder<'_> {
             if need.is_empty() {
                 pre.push(Cmd::new(&["mkdir", "-p", RUN_DIR]));
             }
-            let why = if only_reformat {
+            let why = if only_pools {
+                "left out of the restore: the files of the pools --pools leaves untouched"
+            } else if only_reformat {
                 "left out of the restore (--reformat): btrfs subvolumes mounted elsewhere, seen again (aliases), and btrfs snapshots, which the new type can't hold as snapshots"
             } else {
                 "left out of the restore: btrfs subvolumes mounted elsewhere, seen again (aliases), and the contents of the shared snapshots, made after it"
@@ -2825,8 +2874,11 @@ impl Builder<'_> {
         let env = vec![("RUSTIC_STRICT_EXIT".to_string(), "true".to_string())];
         let why = Some(format!("snapshot {} of {repo}, with BackOtter's restore flags", self.opts.snapshot));
         if self.fam.is_some() {
-            // The boot stage there reads nothing of the restored tree.
-            return self.msdosfs_roots_spared(Cmd { argv: a, why, env, ..Cmd::default() });
+            // The boot stage there reads nothing of the restored tree.  The
+            // glob file (--pools) is written first there too.
+            let mut out = pre;
+            out.extend(self.msdosfs_roots_spared(Cmd { argv: a, why, env, ..Cmd::default() }));
+            return out;
         }
         let mut out = pre;
         out.push(Cmd { argv: a, why, env, ..Cmd::default() });
@@ -3026,7 +3078,19 @@ pub(crate) fn atimes_cmd(t: &str, what: &str, prune: &[String]) -> String {
 }
 
 impl Builder<'_> {
+    /// The boot stage: the inactive boot environments the restore filled
+    /// unmounted first (load/zfs_be.rs), and the held-back readonly=on set
+    /// last, whatever the system.
     fn boot(&mut self) -> Vec<Cmd> {
+        let mut out = self.boot_stage();
+        let at = usize::from(out.first().is_some_and(Cmd::is_note));
+        let unmounts = self.be_unmount_cmds();
+        out.splice(at..at, unmounts);
+        out.extend(self.readonly_sets());
+        out
+    }
+
+    fn boot_stage(&mut self) -> Vec<Cmd> {
         if let Some(fam) = self.fam {
             return self.other_boot(fam);
         }
@@ -3076,7 +3140,11 @@ impl Builder<'_> {
         // NixOS and Guix System (crate::store): their notes and paths.
         let store = crate::store::system(self.layout.str_at(&["os", "id"]));
         let gentoo = self.layout.str_at(&["os", "id"]) == Some("gentoo");
-        if gentoo {
+        let truenas = self.truenas().is_some();
+        if truenas {
+            // Each boot environment's initrd came back with it (the truenas
+            // arm's note says so).
+        } else if gentoo {
             let cmds = self.gentoo_initramfs(&t);
             out.extend(cmds);
         } else {
@@ -3094,6 +3162,12 @@ impl Builder<'_> {
             // Proxmox VE on ZFS root: proxmox-boot-tool owns the ESPs, which
             // nothing mounts and the archive doesn't hold; it rebuilds them
             // (docs/design/proxmox.md, decision 3), whatever the loader.
+            // TrueNAS (load/truenas.rs): GRUB on every boot-pool disk, both
+            // firmwares, each ESP, and the menu of every boot environment.
+            _ if truenas => {
+                let cmds = self.truenas_boot_cmds(&t);
+                out.extend(cmds);
+            }
             _ if self.proxmox_boot().is_some() => {
                 let cmds = self.proxmox_boot_cmds(&t, via_shim);
                 out.extend(cmds);
@@ -3410,7 +3484,7 @@ impl Builder<'_> {
 
     /// grub.cfg remade with os-prober out of the way: in the rescue system
     /// it would find the rescue system's own disks and list them.
-    fn remake_grub_cfg(&self, t: &str, out: &mut Vec<Cmd>) {
+    pub(crate) fn remake_grub_cfg(&self, t: &str, out: &mut Vec<Cmd>) {
         let p = format!("{t}/usr/bin/os-prober");
         out.push(Cmd::new(&["sh", "-c", &format!("[ ! -e {p} ] || mount --bind {t}/usr/bin/true {p}")]).why("os-prober off: it would list the rescue system's disks"));
         out.push(self.update_grub(t));
@@ -4728,6 +4802,9 @@ mod tests {
             fam: None,
             btrfs: BTreeMap::new(),
             timeshift: BTreeMap::new(),
+            readonly_later: vec![],
+            be_mounts: vec![],
+            be_restored: vec![],
         };
         assert_eq!(b.bootloader_id(), "opensuse");
         assert_eq!((b.grub_tool("install"), b.grub_tool("mkconfig")), ("grub2-install", "grub2-mkconfig"));
@@ -5084,6 +5161,9 @@ mod tests {
             fam: None,
             btrfs: BTreeMap::new(),
             timeshift: BTreeMap::new(),
+            readonly_later: vec![],
+            be_mounts: vec![],
+            be_restored: vec![],
         };
         let props = b.ds_props(&ds, false);
         assert!(props.contains(&("normalization".into(), "formD".into())), "{props:?}");

@@ -1,0 +1,477 @@
+# bko-holt load plan for layout.json
+# Source: truenas, TrueNAS 25.10.8 (Debian GNU/Linux 12 (bookworm)), UEFI boot with grub, dumped 2026-11-14T15:01:15Z
+#
+# Disks:
+#   vda (32 GiB) -> /dev/sdq
+#
+# Notes:
+#   - ZFS: 25.10.6's datasets audit, data, home, root, var/log were clones of 25.10.8's snapshots; they come back as full copies (no snapshot is remade)
+#   - ZFS: 25.10.7's datasets audit, data, home, root, var/log were clones of 25.10.8's snapshots; they come back as full copies (no snapshot is remade)
+#   - fstab's /run/lock (tmpfs) isn't on the layout's disks; not mounted
+#   - ZFS dataset boot-pool/.system/cores was also mounted at /var/lib/systemd/coredump on the source: mounted at /var/db/system/cores only here (its files are restored once; the restored system mounts it again)
+#   - TrueNAS: 3 boot environments restored (active 25.10.8); GRUB reinstalled on 1 disk and 1 ESP, its menu rebuilt
+#   - TrueNAS: each boot environment's initrd came back with it; none is rebuilt
+
+# ---- partition ----
+# vda -> /dev/sdq: clear the old table and signatures
+wipefs --all /dev/sdq
+# /dev/sdq: its first 4 MiB zeroed, and its last 1 MiB (a GPT's backup, md 0.90/1.0 superblocks, ZFS's end labels)
+dd if=/dev/zero of=/dev/sdq bs=1M count=4 conv=fsync
+sh -c 'n=$(blockdev --getsz /dev/sdq) && dd if=/dev/zero of=/dev/sdq bs=512 seek=$((n - 2048)) count=2048 conv=fsync'
+# the new partitions' old content zeroed through /dev/sdq, before its table names them (blocks of 512 bytes, at their start= sectors)
+# vda2: its first 4 MiB and its last 1 MiB
+dd if=/dev/zero of=/dev/sdq bs=512 seek=6144 count=8192 conv=fsync
+dd if=/dev/zero of=/dev/sdq bs=512 seek=1052672 count=2048 conv=fsync
+# vda3: its first 4 MiB and its last 1 MiB
+dd if=/dev/zero of=/dev/sdq bs=512 seek=1054720 count=8192 conv=fsync
+dd if=/dev/zero of=/dev/sdq bs=512 seek=67106783 count=2048 conv=fsync
+# udev done with /dev/sdq before sfdisk takes it
+udevadm settle
+sfdisk --wipe always --wipe-partitions always /dev/sdq <<'EOF'
+label: gpt
+label-id: bc000000-0000-4000-8000-000000000001
+unit: sectors
+sector-size: 512
+table-length: 128
+first-lba: 34
+last-lba: 67108830
+
+/dev/sdq1 : start=4096, size=2048, type=21686148-6449-6E6F-744E-656564454649, uuid=BC000000-0000-4000-8000-000000000002, attrs="LegacyBIOSBootable"
+/dev/sdq2 : start=6144, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=BC000000-0000-4000-8000-000000000003
+/dev/sdq3 : start=1054720, size=66054111, type=6A898CC3-1DD2-11B2-99A6-080020736631, uuid=BC000000-0000-4000-8000-000000000004
+EOF
+udevadm settle
+
+# ---- assemble ----
+# ZFS pool boot-pool, with the source's feature flags only
+zpool create -f -d -o cachefile=none -o ashift=12 -o compatibility=grub2 -o feature@async_destroy=enabled -o feature@empty_bpobj=enabled -o feature@lz4_compress=enabled -o feature@spacemap_histogram=enabled -o feature@enabled_txg=enabled -o feature@hole_birth=enabled -o feature@extensible_dataset=enabled -o feature@embedded_data=enabled -o feature@bookmarks=enabled -o feature@filesystem_limits=enabled -o feature@large_blocks=enabled -o feature@userobj_accounting=enabled -o feature@project_quota=enabled -o feature@zpool_checkpoint=enabled -o feature@spacemap_v2=enabled -o feature@allocation_classes=enabled -o feature@resilver_defer=enabled -o feature@log_spacemap=enabled -o feature@livelist=enabled -o feature@device_rebuild=enabled -o feature@zilsaxattr=enabled -o feature@block_cloning=enabled -O mountpoint=none -O compression=on -O devices=off -O canmount=off -O xattr=on -O acltype=off -O relatime=on -O normalization=formD -O utf8only=on -R /mnt/bko-target boot-pool /dev/sdq3
+# the source pool's GUID (vdev GUIDs can't be kept)
+zpool reguid -g 1000000000000000001 boot-pool
+# mount mounts every dataset in order
+sh -c '[ "$(zfs get -H -o value mounted boot-pool)" != yes ] || zfs unmount boot-pool'
+
+# ---- format ----
+# vda2: vfat "EFI"
+mkfs.fat -F 32 -i BC000001 -n EFI -S 512 -s 1 -f 2 -R 32 -h 6144 /dev/sdq2
+# check: /dev/sdq2 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
+zfs create -u -o mountpoint=legacy -o readonly=off -o snapdir=hidden -o xattr=on -o normalization=formD -o utf8only=on boot-pool/.system
+zfs create -u -o mountpoint=legacy -o readonly=off -o snapdir=hidden -o xattr=on -o normalization=formD -o utf8only=on boot-pool/.system/configs-ae32c386e13840b2bf9c0083275e7941
+zfs create -u -o quota=1073741824 -o mountpoint=legacy -o readonly=off -o snapdir=hidden -o xattr=on -o normalization=formD -o utf8only=on boot-pool/.system/cores
+zfs create -u -o mountpoint=legacy -o readonly=off -o snapdir=hidden -o canmount=noauto -o xattr=on -o normalization=formD -o utf8only=on boot-pool/.system/netdata-ae32c386e13840b2bf9c0083275e7941
+zfs create -u -o mountpoint=legacy -o readonly=off -o snapdir=hidden -o xattr=on -o normalization=formD -o utf8only=on boot-pool/.system/nfs
+zfs create -u -o mountpoint=legacy -o readonly=off -o snapdir=hidden -o xattr=on -o normalization=formD -o utf8only=on boot-pool/.system/samba4
+zfs create -u -o mountpoint=legacy -o readonly=off -o snapdir=hidden -o xattr=on -o normalization=formD -o utf8only=on boot-pool/.system/vm
+zfs create -u -o canmount=off -o org.zectl:bootloader=grub -o normalization=formD -o utf8only=on boot-pool/ROOT
+zfs create -u -o mountpoint=legacy -o truenas:kernel_version=6.12.99-production+truenas -o zectl:keep=True -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6
+zfs create -u -o mountpoint=/audit -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o org.freenas:refquota_warning=75 -o org.freenas:refquota_critical=95 -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/audit
+zfs create -u -o mountpoint=/conf -o devices=off -o exec=off -o setuid=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/conf
+zfs create -u -o mountpoint=/data -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/data
+zfs create -u -o mountpoint=/etc -o devices=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/etc
+zfs create -u -o mountpoint=/home -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/home
+zfs create -u -o mountpoint=/mnt -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/mnt
+zfs create -u -o mountpoint=/opt -o devices=off -o setuid=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/opt
+zfs create -u -o mountpoint=/root -o devices=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/root
+zfs create -u -o mountpoint=/usr -o atime=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/usr
+zfs create -u -o mountpoint=/var -o atime=off -o devices=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/var
+zfs create -u -o mountpoint=/var/local/ca-certificates -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/var/ca-certificates
+zfs create -u -o mountpoint=/var/lib -o atime=off -o devices=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/var/lib
+zfs create -u -o mountpoint=/var/lib/incus -o atime=off -o devices=on -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/var/lib/incus
+zfs create -u -o mountpoint=/var/log -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/var/log
+zfs create -u -o mountpoint=/var/log/journal -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=posix -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.6/var/log/journal
+zfs create -u -o mountpoint=legacy -o truenas:kernel_version=6.12.105-production+truenas -o zectl:keep=False -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7
+zfs create -u -o mountpoint=/audit -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o org.freenas:refquota_warning=75 -o org.freenas:refquota_critical=95 -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/audit
+zfs create -u -o mountpoint=/conf -o devices=off -o exec=off -o setuid=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/conf
+zfs create -u -o mountpoint=/data -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/data
+zfs create -u -o mountpoint=/etc -o devices=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/etc
+zfs create -u -o mountpoint=/home -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/home
+zfs create -u -o mountpoint=/mnt -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/mnt
+zfs create -u -o mountpoint=/opt -o devices=off -o setuid=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/opt
+zfs create -u -o mountpoint=/root -o devices=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/root
+zfs create -u -o mountpoint=/usr -o atime=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/usr
+zfs create -u -o mountpoint=/var -o atime=off -o devices=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/var
+zfs create -u -o mountpoint=/var/local/ca-certificates -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/var/ca-certificates
+zfs create -u -o mountpoint=/var/lib -o atime=off -o devices=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/var/lib
+zfs create -u -o mountpoint=/var/lib/incus -o atime=off -o devices=on -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/var/lib/incus
+zfs create -u -o mountpoint=/var/log -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/var/log
+zfs create -u -o mountpoint=/var/log/journal -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=posix -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.7/var/log/journal
+zfs create -u -o mountpoint=legacy -o truenas:kernel_version=6.12.113-production+truenas -o zectl:keep=False -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8
+zfs create -u -o mountpoint=/audit -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o org.freenas:refquota_warning=75 -o org.freenas:refquota_critical=95 -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/audit
+zfs create -u -o mountpoint=/conf -o devices=off -o exec=off -o setuid=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/conf
+zfs create -u -o mountpoint=/data -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/data
+zfs create -u -o mountpoint=/etc -o devices=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/etc
+zfs create -u -o mountpoint=/home -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/home
+zfs create -u -o mountpoint=/mnt -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/mnt
+zfs create -u -o mountpoint=/opt -o devices=off -o setuid=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/opt
+zfs create -u -o mountpoint=/root -o devices=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/root
+zfs create -u -o mountpoint=/usr -o atime=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/usr
+zfs create -u -o mountpoint=/var -o atime=off -o devices=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/var
+zfs create -u -o mountpoint=/var/local/ca-certificates -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/var/ca-certificates
+zfs create -u -o mountpoint=/var/lib -o atime=off -o devices=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/var/lib
+zfs create -u -o mountpoint=/var/lib/incus -o atime=off -o devices=on -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/var/lib/incus
+zfs create -u -o mountpoint=/var/log -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=off -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/var/log
+zfs create -u -o mountpoint=/var/log/journal -o atime=off -o devices=off -o exec=off -o setuid=off -o readonly=off -o aclmode=discard -o canmount=noauto -o acltype=posix -o 'org.zectl:bootloader=""' -o normalization=formD -o utf8only=on boot-pool/ROOT/25.10.8/var/log/journal
+zfs create -u -o mountpoint=legacy -o canmount=off -o normalization=formD -o utf8only=on boot-pool/grub
+zpool set bootfs=boot-pool/ROOT/25.10.8 boot-pool
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+mount -t zfs boot-pool/ROOT/25.10.8 /mnt/bko-target
+zfs mount boot-pool/ROOT/25.10.8/audit
+zfs mount boot-pool/ROOT/25.10.8/conf
+zfs mount boot-pool/ROOT/25.10.8/data
+zfs mount boot-pool/ROOT/25.10.8/etc
+zfs mount boot-pool/ROOT/25.10.8/home
+zfs mount boot-pool/ROOT/25.10.8/mnt
+zfs mount boot-pool/ROOT/25.10.8/opt
+zfs mount boot-pool/ROOT/25.10.8/root
+zfs mount boot-pool/ROOT/25.10.8/usr
+zfs mount boot-pool/ROOT/25.10.8/var
+mkdir -p /mnt/bko-target/boot/grub
+# boot-pool/grub: mountpoint=legacy, mounted at /boot/grub on the source
+mount -t zfs boot-pool/grub /mnt/bko-target/boot/grub
+zfs mount boot-pool/ROOT/25.10.8/var/lib
+zfs mount boot-pool/ROOT/25.10.8/var/log
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6
+# boot-pool/ROOT/25.10.6: an inactive boot environment's, restored from its backup source here
+mount -t zfs boot-pool/ROOT/25.10.6 /mnt/bko-target/run/bko-be/25.10.6
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7
+# boot-pool/ROOT/25.10.7: an inactive boot environment's, restored from its backup source here
+mount -t zfs boot-pool/ROOT/25.10.7 /mnt/bko-target/run/bko-be/25.10.7
+mkdir -p /mnt/bko-target/var/db/system
+# boot-pool/.system: mountpoint=legacy, mounted at /var/db/system on the source
+mount -t zfs boot-pool/.system /mnt/bko-target/var/db/system
+zfs mount boot-pool/ROOT/25.10.8/var/lib/incus
+zfs mount boot-pool/ROOT/25.10.8/var/ca-certificates
+zfs mount boot-pool/ROOT/25.10.8/var/log/journal
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/audit
+# boot-pool/ROOT/25.10.6/audit: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/audit /mnt/bko-target/run/bko-be/25.10.6/audit
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/conf
+# boot-pool/ROOT/25.10.6/conf: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/conf /mnt/bko-target/run/bko-be/25.10.6/conf
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/data
+# boot-pool/ROOT/25.10.6/data: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/data /mnt/bko-target/run/bko-be/25.10.6/data
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/etc
+# boot-pool/ROOT/25.10.6/etc: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/etc /mnt/bko-target/run/bko-be/25.10.6/etc
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/home
+# boot-pool/ROOT/25.10.6/home: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/home /mnt/bko-target/run/bko-be/25.10.6/home
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/mnt
+# boot-pool/ROOT/25.10.6/mnt: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/mnt /mnt/bko-target/run/bko-be/25.10.6/mnt
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/opt
+# boot-pool/ROOT/25.10.6/opt: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/opt /mnt/bko-target/run/bko-be/25.10.6/opt
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/root
+# boot-pool/ROOT/25.10.6/root: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/root /mnt/bko-target/run/bko-be/25.10.6/root
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/usr
+# boot-pool/ROOT/25.10.6/usr: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/usr /mnt/bko-target/run/bko-be/25.10.6/usr
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/var
+# boot-pool/ROOT/25.10.6/var: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/var /mnt/bko-target/run/bko-be/25.10.6/var
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/audit
+# boot-pool/ROOT/25.10.7/audit: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/audit /mnt/bko-target/run/bko-be/25.10.7/audit
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/conf
+# boot-pool/ROOT/25.10.7/conf: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/conf /mnt/bko-target/run/bko-be/25.10.7/conf
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/data
+# boot-pool/ROOT/25.10.7/data: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/data /mnt/bko-target/run/bko-be/25.10.7/data
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/etc
+# boot-pool/ROOT/25.10.7/etc: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/etc /mnt/bko-target/run/bko-be/25.10.7/etc
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/home
+# boot-pool/ROOT/25.10.7/home: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/home /mnt/bko-target/run/bko-be/25.10.7/home
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/mnt
+# boot-pool/ROOT/25.10.7/mnt: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/mnt /mnt/bko-target/run/bko-be/25.10.7/mnt
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/opt
+# boot-pool/ROOT/25.10.7/opt: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/opt /mnt/bko-target/run/bko-be/25.10.7/opt
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/root
+# boot-pool/ROOT/25.10.7/root: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/root /mnt/bko-target/run/bko-be/25.10.7/root
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/usr
+# boot-pool/ROOT/25.10.7/usr: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/usr /mnt/bko-target/run/bko-be/25.10.7/usr
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/var
+# boot-pool/ROOT/25.10.7/var: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/var /mnt/bko-target/run/bko-be/25.10.7/var
+mkdir -p /mnt/bko-target/var/db/system/configs-ae32c386e13840b2bf9c0083275e7941
+# boot-pool/.system/configs-ae32c386e13840b2bf9c0083275e7941: mountpoint=legacy, mounted at /var/db/system/configs-ae32c386e13840b2bf9c0083275e7941 on the source
+mount -t zfs boot-pool/.system/configs-ae32c386e13840b2bf9c0083275e7941 /mnt/bko-target/var/db/system/configs-ae32c386e13840b2bf9c0083275e7941
+mkdir -p /mnt/bko-target/var/db/system/cores
+# boot-pool/.system/cores: mountpoint=legacy, mounted at /var/db/system/cores on the source
+mount -t zfs boot-pool/.system/cores /mnt/bko-target/var/db/system/cores
+mkdir -p /mnt/bko-target/var/db/system/netdata
+# boot-pool/.system/netdata-ae32c386e13840b2bf9c0083275e7941: mountpoint=legacy, mounted at /var/db/system/netdata on the source
+mount -t zfs boot-pool/.system/netdata-ae32c386e13840b2bf9c0083275e7941 /mnt/bko-target/var/db/system/netdata
+mkdir -p /mnt/bko-target/var/db/system/nfs
+# boot-pool/.system/nfs: mountpoint=legacy, mounted at /var/db/system/nfs on the source
+mount -t zfs boot-pool/.system/nfs /mnt/bko-target/var/db/system/nfs
+mkdir -p /mnt/bko-target/var/db/system/samba4
+# boot-pool/.system/samba4: mountpoint=legacy, mounted at /var/db/system/samba4 on the source
+mount -t zfs boot-pool/.system/samba4 /mnt/bko-target/var/db/system/samba4
+mkdir -p /mnt/bko-target/var/db/system/vm
+# boot-pool/.system/vm: mountpoint=legacy, mounted at /var/db/system/vm on the source
+mount -t zfs boot-pool/.system/vm /mnt/bko-target/var/db/system/vm
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/var/lib
+# boot-pool/ROOT/25.10.6/var/lib: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/var/lib /mnt/bko-target/run/bko-be/25.10.6/var/lib
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/var/log
+# boot-pool/ROOT/25.10.6/var/log: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/var/log /mnt/bko-target/run/bko-be/25.10.6/var/log
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/var/lib
+# boot-pool/ROOT/25.10.7/var/lib: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/var/lib /mnt/bko-target/run/bko-be/25.10.7/var/lib
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/var/log
+# boot-pool/ROOT/25.10.7/var/log: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/var/log /mnt/bko-target/run/bko-be/25.10.7/var/log
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/var/lib/incus
+# boot-pool/ROOT/25.10.6/var/lib/incus: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/var/lib/incus /mnt/bko-target/run/bko-be/25.10.6/var/lib/incus
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/var/local/ca-certificates
+# boot-pool/ROOT/25.10.6/var/ca-certificates: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/var/ca-certificates /mnt/bko-target/run/bko-be/25.10.6/var/local/ca-certificates
+mkdir -p /mnt/bko-target/run/bko-be/25.10.6/var/log/journal
+# boot-pool/ROOT/25.10.6/var/log/journal: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.6/var/log/journal /mnt/bko-target/run/bko-be/25.10.6/var/log/journal
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/var/lib/incus
+# boot-pool/ROOT/25.10.7/var/lib/incus: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/var/lib/incus /mnt/bko-target/run/bko-be/25.10.7/var/lib/incus
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/var/local/ca-certificates
+# boot-pool/ROOT/25.10.7/var/ca-certificates: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/var/ca-certificates /mnt/bko-target/run/bko-be/25.10.7/var/local/ca-certificates
+mkdir -p /mnt/bko-target/run/bko-be/25.10.7/var/log/journal
+# boot-pool/ROOT/25.10.7/var/log/journal: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil boot-pool/ROOT/25.10.7/var/log/journal /mnt/bko-target/run/bko-be/25.10.7/var/log/journal
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+# the atimes the restore set, for boot to put back after its reads
+sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
+
+# ---- boot ----
+# refuses to start unless /mnt/bko-target/etc/fstab is the restored system's (its / matches the layout's)
+# the inactive boot environments, restored: unmounted, and /mnt/bko-target/run/bko-be removed
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/var/log/journal || umount /mnt/bko-target/run/bko-be/25.10.7/var/log/journal'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/var/log || umount /mnt/bko-target/run/bko-be/25.10.7/var/log'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/var/local/ca-certificates || umount /mnt/bko-target/run/bko-be/25.10.7/var/local/ca-certificates'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/var/lib/incus || umount /mnt/bko-target/run/bko-be/25.10.7/var/lib/incus'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/var/lib || umount /mnt/bko-target/run/bko-be/25.10.7/var/lib'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/var || umount /mnt/bko-target/run/bko-be/25.10.7/var'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/usr || umount /mnt/bko-target/run/bko-be/25.10.7/usr'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/root || umount /mnt/bko-target/run/bko-be/25.10.7/root'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/opt || umount /mnt/bko-target/run/bko-be/25.10.7/opt'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/mnt || umount /mnt/bko-target/run/bko-be/25.10.7/mnt'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/home || umount /mnt/bko-target/run/bko-be/25.10.7/home'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/etc || umount /mnt/bko-target/run/bko-be/25.10.7/etc'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/data || umount /mnt/bko-target/run/bko-be/25.10.7/data'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/conf || umount /mnt/bko-target/run/bko-be/25.10.7/conf'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7/audit || umount /mnt/bko-target/run/bko-be/25.10.7/audit'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.7 || umount /mnt/bko-target/run/bko-be/25.10.7'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/var/log/journal || umount /mnt/bko-target/run/bko-be/25.10.6/var/log/journal'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/var/log || umount /mnt/bko-target/run/bko-be/25.10.6/var/log'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/var/local/ca-certificates || umount /mnt/bko-target/run/bko-be/25.10.6/var/local/ca-certificates'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/var/lib/incus || umount /mnt/bko-target/run/bko-be/25.10.6/var/lib/incus'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/var/lib || umount /mnt/bko-target/run/bko-be/25.10.6/var/lib'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/var || umount /mnt/bko-target/run/bko-be/25.10.6/var'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/usr || umount /mnt/bko-target/run/bko-be/25.10.6/usr'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/root || umount /mnt/bko-target/run/bko-be/25.10.6/root'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/opt || umount /mnt/bko-target/run/bko-be/25.10.6/opt'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/mnt || umount /mnt/bko-target/run/bko-be/25.10.6/mnt'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/home || umount /mnt/bko-target/run/bko-be/25.10.6/home'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/etc || umount /mnt/bko-target/run/bko-be/25.10.6/etc'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/data || umount /mnt/bko-target/run/bko-be/25.10.6/data'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/conf || umount /mnt/bko-target/run/bko-be/25.10.6/conf'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6/audit || umount /mnt/bko-target/run/bko-be/25.10.6/audit'
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/25.10.6 || umount /mnt/bko-target/run/bko-be/25.10.6'
+sh -c '[ ! -d /mnt/bko-target/run/bko-be/25.10.7 ] || rmdir /mnt/bko-target/run/bko-be/25.10.7'
+sh -c '[ ! -d /mnt/bko-target/run/bko-be/25.10.6 ] || rmdir /mnt/bko-target/run/bko-be/25.10.6'
+sh -c '[ ! -d /mnt/bko-target/run/bko-be ] || rmdir /mnt/bko-target/run/bko-be'
+# the restored atimes (the restore stage lists them), to put back after this stage's reads
+sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
+# the restored LVM devices file, kept
+sh -c 'rm -rf /run/bko-holt/lvm-devices; [ ! -d /mnt/bko-target/etc/lvm/devices ] || { cp -a /mnt/bko-target/etc/lvm/devices /run/bko-holt/lvm-devices && touch -r /mnt/bko-target/etc/lvm /run/bko-holt/lvm-devices.parent; }'
+mount --rbind --make-rslave /dev /mnt/bko-target/dev
+mount --rbind --make-rslave /proc /mnt/bko-target/proc
+mount --rbind --make-rslave /sys /mnt/bko-target/sys
+mount --rbind --make-rslave /run /mnt/bko-target/run
+# vda: GRUB's BIOS core in its BIOS boot partition, as TrueNAS installs it on every boot disk
+chroot /mnt/bko-target grub-install --target=i386-pc /dev/sdq
+# its mount point, made only if the BE hasn't one (TrueNAS's haven't)
+sh -c '[ -d /mnt/bko-target/boot/efi ] || { mkdir /mnt/bko-target/boot/efi && : > /run/bko-holt/truenas-boot-efi-made; }'
+# vda2: the ESP, mounted only while GRUB is installed to it (as truenas_install does)
+mount -t vfat /dev/sdq2 /mnt/bko-target/boot/efi
+chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck --no-floppy --no-nvram
+mkdir -p /mnt/bko-target/boot/efi/EFI/boot
+# the removable-media path too, as TrueNAS installs it
+cp /mnt/bko-target/boot/efi/EFI/debian/grubx64.efi /mnt/bko-target/boot/efi/EFI/boot/bootx64.efi
+umount /mnt/bko-target/boot/efi
+# the mount point taken away again when this stage made it
+sh -c '[ ! -f /run/bko-holt/truenas-boot-efi-made ] || { rmdir /mnt/bko-target/boot/efi && rm /run/bko-holt/truenas-boot-efi-made; }'
+# os-prober off: it would list the rescue system's disks
+sh -c '[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober'
+chroot /mnt/bko-target env LANG=C update-grub
+sh -c '! grep -q '\'' /mnt/bko-target/usr/bin/os-prober '\'' /proc/self/mountinfo || umount /mnt/bko-target/usr/bin/os-prober'
+# NVRAM's entries for this partition and loader, from an earlier restore here, deleted
+bko-holt efi-dedupe /dev/sdq 2 '\EFI\debian\grubx64.efi'
+efibootmgr --quiet --create --disk /dev/sdq --part 2 --label TrueNAS-0 --loader '\EFI\debian\grubx64.efi'
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -a /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+# SELinux labels for the files the boot stage wrote
+chroot /mnt/bko-target sh -c '[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ "${SELINUX:-disabled}" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ ! -f "$f" ] || ! command -v setfiles >/dev/null || { [ ! -d /etc/kernel ] || set -- /etc/kernel; setfiles "$f" /boot /var/log/bko-holt "$@"; }'
+umount --recursive /mnt/bko-target/run
+umount --recursive /mnt/bko-target/sys
+umount --recursive /mnt/bko-target/proc
+umount --recursive /mnt/bko-target/dev
+# the restored LVM devices file, put back
+sh -c '[ ! -d /run/bko-holt/lvm-devices ] || { rm -rf /mnt/bko-target/etc/lvm/devices && cp -a /run/bko-holt/lvm-devices /mnt/bko-target/etc/lvm/devices && touch -r /run/bko-holt/lvm-devices.parent /mnt/bko-target/etc/lvm; }'
+# the atimes this stage's reads changed, put back
+bash -c 'find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.after && LC_ALL=C comm -z -23 /run/bko-holt/atimes.before /run/bko-holt/atimes.after | \
+             while IFS=$'\''\t'\'' read -r -d '\'''\'' a p; do [ -L "$p" ] || [ -e "$p" ] || continue; touch -a -h -d "@$a" -- "$p" 2>/dev/null || { [ ! -L "$p" ] && lsattr -d -- "$p" 2>/dev/null | cut -d'\'' '\'' -f1 | grep -q i && { chattr -i -- "$p"; touch -a -h -d "@$a" -- "$p"; chattr +i -- "$p"; }; }; done'
+# readonly=on as on the source, held back until now so that the restore and this stage could write
+zfs set readonly=on boot-pool/ROOT/25.10.6
+zfs set readonly=on boot-pool/ROOT/25.10.6/conf
+zfs set readonly=on boot-pool/ROOT/25.10.6/opt
+zfs set readonly=on boot-pool/ROOT/25.10.6/usr
+zfs set readonly=on boot-pool/ROOT/25.10.7
+zfs set readonly=on boot-pool/ROOT/25.10.7/conf
+zfs set readonly=on boot-pool/ROOT/25.10.7/opt
+zfs set readonly=on boot-pool/ROOT/25.10.7/usr
+zfs set readonly=on boot-pool/ROOT/25.10.8
+zfs set readonly=on boot-pool/ROOT/25.10.8/conf
+zfs set readonly=on boot-pool/ROOT/25.10.8/opt
+zfs set readonly=on boot-pool/ROOT/25.10.8/usr
+
+# ---- close ----
+umount --recursive /mnt/bko-target
+# other mount namespaces' copies of the target's mounts
+sh -c 'me=$(readlink /proc/self/ns/mnt); seen=" $me "; at() { awk -v t=/mnt/bko-target '\''{ m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }'\''; }; for f in /proc/[0-9]*/mountinfo; do grep -q '\''/mnt/bko-target[ /]'\'' "$f" 2>/dev/null || continue; p=${f#/proc/}; p=${p%/mountinfo}; ns=$(readlink /proc/$p/ns/mnt) || continue; case $seen in *" $ns "*) continue;; esac; seen="$seen$ns "; echo "unmounting /mnt/bko-target in $ns (pid $p, $(cat /proc/$p/comm))"; for m in $(at <"$f"); do nsenter -t "$p" -m umount --recursive "$m" || true; done; done; awk '\''{ for (i = 7; i < NF; i++) if ($i == "-") { if ($(i + 1) == "nsfs" && $4 ~ /^mnt:\[/) print $4, $5; break } }'\'' /proc/self/mountinfo | while read -r ns b; do case $seen in *" $ns "*) continue;; esac; seen="$seen$ns "; ms=$(nsenter --mount="$b" cat /proc/self/mountinfo | at); [ -n "$ms" ] || continue; echo "unmounting /mnt/bko-target in $ns (bound at $b)"; for m in $ms; do nsenter --mount="$b" umount --recursive "$m" || true; done; done'
+sh -c 'i=0; until udevadm settle; zpool export boot-pool; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done'
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status pool boot-pool
+# golden_plans.rs: status filesystem /dev/sdq2 vfat BC00-0001
+# golden_plans.rs: status dataset boot-pool/.system
+# golden_plans.rs: status dataset boot-pool/.system/configs-ae32c386e13840b2bf9c0083275e7941
+# golden_plans.rs: status dataset boot-pool/.system/cores
+# golden_plans.rs: status dataset boot-pool/.system/netdata-ae32c386e13840b2bf9c0083275e7941
+# golden_plans.rs: status dataset boot-pool/.system/nfs
+# golden_plans.rs: status dataset boot-pool/.system/samba4
+# golden_plans.rs: status dataset boot-pool/.system/vm
+# golden_plans.rs: status dataset boot-pool/ROOT
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/audit
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/conf
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/data
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/etc
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/home
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/mnt
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/opt
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/root
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/usr
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/var
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/var/ca-certificates
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/var/lib
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/var/lib/incus
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/var/log
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.6/var/log/journal
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/audit
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/conf
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/data
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/etc
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/home
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/mnt
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/opt
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/root
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/usr
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/var
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/var/ca-certificates
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/var/lib
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/var/lib/incus
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/var/log
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.7/var/log/journal
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/audit
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/conf
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/data
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/etc
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/home
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/mnt
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/opt
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/root
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/usr
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/var
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/var/ca-certificates
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/var/lib
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/var/lib/incus
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/var/log
+# golden_plans.rs: status dataset boot-pool/ROOT/25.10.8/var/log/journal
+# golden_plans.rs: status dataset boot-pool/grub
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: status mount /mnt/bko-target/audit
+# golden_plans.rs: status mount /mnt/bko-target/conf
+# golden_plans.rs: status mount /mnt/bko-target/data
+# golden_plans.rs: status mount /mnt/bko-target/etc
+# golden_plans.rs: status mount /mnt/bko-target/home
+# golden_plans.rs: status mount /mnt/bko-target/mnt
+# golden_plans.rs: status mount /mnt/bko-target/opt
+# golden_plans.rs: status mount /mnt/bko-target/root
+# golden_plans.rs: status mount /mnt/bko-target/usr
+# golden_plans.rs: status mount /mnt/bko-target/var
+# golden_plans.rs: status mount /mnt/bko-target/boot/grub
+# golden_plans.rs: status mount /mnt/bko-target/var/lib
+# golden_plans.rs: status mount /mnt/bko-target/var/log
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7
+# golden_plans.rs: status mount /mnt/bko-target/var/db/system
+# golden_plans.rs: status mount /mnt/bko-target/var/lib/incus
+# golden_plans.rs: status mount /mnt/bko-target/var/local/ca-certificates
+# golden_plans.rs: status mount /mnt/bko-target/var/log/journal
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/audit
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/conf
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/data
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/etc
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/home
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/mnt
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/opt
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/root
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/usr
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/var
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/audit
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/conf
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/data
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/etc
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/home
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/mnt
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/opt
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/root
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/usr
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/var
+# golden_plans.rs: status mount /mnt/bko-target/var/db/system/configs-ae32c386e13840b2bf9c0083275e7941
+# golden_plans.rs: status mount /mnt/bko-target/var/db/system/cores
+# golden_plans.rs: status mount /mnt/bko-target/var/db/system/netdata
+# golden_plans.rs: status mount /mnt/bko-target/var/db/system/nfs
+# golden_plans.rs: status mount /mnt/bko-target/var/db/system/samba4
+# golden_plans.rs: status mount /mnt/bko-target/var/db/system/vm
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/var/lib
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/var/log
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/var/lib
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/var/log
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/var/lib/incus
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/var/local/ca-certificates
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.6/var/log/journal
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/var/lib/incus
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/var/local/ca-certificates
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/25.10.7/var/log/journal
+# golden_plans.rs: exit 0, nothing on stderr

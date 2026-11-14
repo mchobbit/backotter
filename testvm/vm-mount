@@ -823,25 +823,56 @@ load_zfs_keys() {
 # the pool's name: with the altroot, $mp/NAME/..., not the guest's path.
 # Mount them at $mp/ORIG/... instead, parents first (the canmount=on ones,
 # as ZFS would), skipping one whose mount point directory isn't there.
-# The mount loops below leave them out (in_tmp_name).
+# The mount loops below leave them out (in_tmp_name).  BASE (default $mp)
+# is the altroot, when it isn't $mp (TrueNAS's data pools: $mp/mnt).
 mount_renamed() {
-    local name=$1 orig=$2 at ds opts=zfsutil
+    local name=$1 orig=$2 base=${3:-$mp} at ds opts=zfsutil
     [[ -n $orig && $orig != "$name" ]] || return 0
     [[ $ro == yes ]] && opts+=,ro
     zfs list -H -o mountpoint,canmount,name -t filesystem -r "$name" |
-        awk -F'\t' -v t="$mp/$name" '$2 == "on" && ($1 == t || index($1, t "/") == 1) { print $1 "\t" $3 }' |
+        awk -F'\t' -v t="$base/$name" '$2 == "on" && ($1 == t || index($1, t "/") == 1) { print $1 "\t" $3 }' |
         LC_ALL=C sort |
         while IFS=$'\t' read -r at ds; do
-            at=$mp/$orig${at#"$mp/$name"}
+            at=$base/$orig${at#"$base/$name"}
             mountpoint -q "$at" && continue
             [[ -d $at ]] || { echo "vm-mount: skipping $ds: no directory ${at#"$mp"} to mount it on" >&2; continue; }
             mount -t zfs -o "$opts" "$ds" "$at" || echo "vm-mount: could not mount $ds at ${at#"$mp"}" >&2
         done
 }
-# in_tmp_name NAME: awk's filter for the datasets mount_renamed mounts.
-in_tmp_name() { printf '($3 == "%s" || index($3, "%s/") == 1)' "$mp/$1" "$mp/$1"; }
+# in_tmp_name NAME [BASE]: awk's filter for the datasets mount_renamed mounts.
+in_tmp_name() { printf '($3 == "%s" || index($3, "%s/") == 1)' "${2:-$mp}/$1" "${2:-$mp}/$1"; }
+# A legacy root (TrueNAS's bootfs; mount_zfs_root), its pool's temporary
+# name, and the guest's pool names to the temporary ones (fstab's zfs lines).
+legacy_root="" legacy_pool=""
+declare -A tmpname=()
+# mount_be_children DATASET PREFIX: DATASET's descendant filesystems at
+# $mp/PREFIX plus their own mount points (a legacy one at its path below
+# DATASET's), parents first, read-only with --ro: one boot environment's
+# children, where bko-holt dump's backup sources have them
+# (holt/src/zfs_be.rs).  zfsutil, since their mount point isn't legacy;
+# one with canmount=off or no mount point holds no files and is skipped,
+# as is one whose directory isn't there.
+mount_be_children() {
+    local be=$1 prefix=$2 ds m at o
+    zfs list -H -o name,canmount,mountpoint -t filesystem -r "$be" |
+        awk -F'\t' -v be="$be" -v mp="$mp" '$1 != be && $2 != "off" && $3 != "none" && $3 != "-" {
+            m = $3
+            if (m == "legacy") m = "/" substr($1, length(be) + 2)
+            else if (index(m, mp "/") == 1) m = substr(m, length(mp) + 1)
+            else next
+            print m "\t" $1 "\t" ($3 == "legacy") }' |
+        LC_ALL=C sort |
+        while IFS=$'\t' read -r m ds o; do
+            at=$mp$prefix$m
+            [[ -d $at ]] || { echo "vm-mount: skipping $ds: no directory ${at#"$mp"} to mount it on" >&2; continue; }
+            if [[ $o == 1 ]]; then o=""; else o=zfsutil; fi
+            [[ $ro == yes ]] && o=${o:+$o,}ro
+            mount -t zfs ${o:+-o "$o"} "$ds" "$at" || echo "vm-mount: could not mount $ds at ${at#"$mp"}" >&2
+        done
+}
 # mount_zfs_root PARTITION: import the pool on it and mount its / dataset at
-# $mp; fails (leaving nothing imported) if there is no such dataset.
+# $mp (or its legacy bootfs, TrueNAS's); fails (leaving nothing imported)
+# if there is no such dataset.
 mount_zfs_root() {
     local p=$1 id name orig rootds q search=() listing
     command -v zpool >/dev/null || { echo "vm-mount: $p is ZFS, but this host has no OpenZFS" >&2; return 1; }
@@ -865,6 +896,21 @@ mount_zfs_root() {
     rootds=$(zfs list -H -o name,canmount,mountpoint -r "$name" |
         awk -v root="$mp" '$2 != "off" && $3 == root { print $1; exit }')
     if [[ -z $rootds ]]; then
+        # TrueNAS: / is the pool's bootfs, a mountpoint=legacy boot
+        # environment, and every BE's children claim the same mount points
+        # (/usr, /etc, ...) with canmount=noauto: the bootfs and its own
+        # children only (mount_be_children), the rest after fstab's.
+        local bfs mo=(); [[ $ro == yes ]] && mo=(-o ro)
+        bfs=$(zpool get -H -o value bootfs "$name" 2>/dev/null || true)
+        if [[ $bfs == "$name"/* && $(zfs get -H -o value mountpoint "$bfs" 2>/dev/null) == legacy &&
+              $(zfs get -H -o value keystatus "$bfs" 2>/dev/null) != unavailable ]] &&
+                mount -t zfs "${mo[@]}" "$bfs" "$mp"; then
+            legacy_root=$bfs legacy_pool=$name
+            tmpname[$orig]=$name
+            mount_be_children "$bfs" ""
+            mount_renamed "$name" "$orig"
+            return 0
+        fi
         zpool export "$name"
         sed -i '$d' "$state"
         return 1
@@ -946,8 +992,10 @@ fi
 # The guest's other ZFS pools (Ubuntu's bpool, /boot): those with a dataset
 # that mounts somewhere ZFS itself mounts it, not through fstab.  A
 # canmount=noauto dataset (Ubuntu's bpool/BOOT/ubuntu_X) is mounted when its
-# last name part is the root dataset's.
+# last name part is the root dataset's.  Under a legacy root (TrueNAS) they
+# are data pools, which its middleware imports under the altroot /mnt.
 if command -v zpool >/dev/null; then
+    zalt=$mp; [[ -z $legacy_root ]] || zalt=$mp/mnt
     rootsuffix=$(zfs list -H -o name,mountpoint 2>/dev/null | awk -v root="$mp" '$2 == root { n = $1; sub(/.*\//, "", n); print n; exit }')
     n=0
     while read -r id orig; do
@@ -958,15 +1006,16 @@ if command -v zpool >/dev/null; then
         for q in "${parts[@]}"; do
             [[ $(blkid -s TYPE -o value "$q" || true) == zfs_member ]] && search+=(-d "$q")
         done
-        opts=(-N -f "${search[@]}" -R "$mp")
+        opts=(-N -f "${search[@]}" -R "$zalt")
         [[ $ro == yes ]] && opts+=(-o readonly=on)
         zpool import "${opts[@]}" -t "$id" "$name" || continue
         echo "pool $name" >>"$state"
+        tmpname[$orig]=$name
         load_zfs_keys "$name"
         zfs list -H -o name,canmount,mountpoint -r "$name" |
-            awk -v sfx="$rootsuffix" '$3 != "none" && $3 != "legacy" && !'"$(in_tmp_name "$name")"' { n = $1; sub(/.*\//, "", n); if ($2 == "on" || ($2 == "noauto" && n == sfx)) print $1 }' |
+            awk -v sfx="$rootsuffix" '$3 != "none" && $3 != "legacy" && !'"$(in_tmp_name "$name" "$zalt")"' { n = $1; sub(/.*\//, "", n); if ($2 == "on" || ($2 == "noauto" && n == sfx)) print $1 }' |
             while read -r ds; do zfs mount "$ds" 2>/dev/null || true; done
-        mount_renamed "$name" "$orig"
+        mount_renamed "$name" "$orig" "$zalt"
     done < <(
         # Pools on the guest's partitions that aren't imported yet: "ID NAME".
         imported=$(zpool list -H -o guid 2>/dev/null)
@@ -982,10 +1031,70 @@ fi
 [[ -z $abroot_present ]] || fstab_file=/dev/null     # mount_abroot mounted the tree
 while read -r spec target type options; do
     [[ $target == / || $type == swap || $target != /* || ,$options, == *,noauto,* ]] && continue
+    if [[ -n $legacy_root && $type == zfs ]]; then
+        # TrueNAS's boot-pool/grub at /boot/grub: the guest's pool name is
+        # the temporary one here.
+        ds=${tmpname[${spec%%/*}]:-}${spec#"${spec%%/*}"}
+        if [[ $ds == /* || $(zfs get -H -o value mountpoint "$ds" 2>/dev/null) != legacy ]]; then
+            echo "vm-mount: skipping $target: $spec is no legacy dataset of a pool here" >&2; continue
+        fi
+        if [[ $ro == yes ]]; then mount -t zfs -o ro "$ds" "$mp$target"; else mount -t zfs "$ds" "$mp$target"; fi
+        continue
+    fi
     p=$(resolve "$spec") || { echo "vm-mount: skipping $target: $spec is not on this image" >&2; continue; }
     mount_fs "$p" "$mp$target" "$(subvol_opts <<<"$options")"
 done < <(awk '!/^[[:space:]]*(#|$)/ { print $1, $2, $3, $4 }' "$fstab_file" |
     awk '{ print gsub("/", "/", $2), $0 }' | sort -n | cut -d' ' -f2-)
+
+# TrueNAS (docs/design/truenas.md): what its middleware and a backup of the
+# running system mount besides fstab's, where bko-holt dump's backup sources
+# have them.  The system dataset .system at /var/db/system, its children
+# beneath it (netdata-UUID at netdata; cores is also the running system's
+# /var/lib/systemd/coredump, which dump backs up once, here): a data pool's
+# when one holds it, the middleware's choice once there is one, else the boot
+# pool's.  Then the inactive boot environments (the bootfs's siblings), each
+# read-only at /run/bko-be/NAME with its children (holt/src/zfs_be.rs), on a
+# tmpfs at /run as on the running system (/ is read-only), whose directories
+# are dated 1970 so that two mounts of one tree record the same.
+if [[ -n $legacy_root ]]; then
+    tro=(); [[ $ro == yes ]] && tro=(-o ro)
+    sysds=""
+    for o in "${!tmpname[@]}"; do
+        n=${tmpname[$o]}
+        zfs list -H -o name "$n/.system" >/dev/null 2>&1 || continue
+        [[ -z $sysds || $n != "$legacy_pool" ]] && sysds=$n/.system
+    done
+    if [[ -n $sysds ]]; then
+        if [[ ! -d $mp/var/db/system ]]; then
+            echo "vm-mount: TrueNAS: no /var/db/system to mount $sysds on" >&2
+        elif mount -t zfs "${tro[@]}" "$sysds" "$mp/var/db/system"; then
+            while read -r ds; do
+                rel=${ds#"$sysds"/} first=${ds#"$sysds"/}; first=${first%%/*}
+                [[ $first != netdata-* ]] || rel=netdata${rel#"$first"}
+                [[ -d $mp/var/db/system/$rel ]] || { echo "vm-mount: TrueNAS: no /var/db/system/$rel to mount $ds on" >&2; continue; }
+                mount -t zfs "${tro[@]}" "$ds" "$mp/var/db/system/$rel" || echo "vm-mount: could not mount $ds at /var/db/system/$rel" >&2
+            done < <(zfs list -H -o name -t filesystem -r "$sysds" | awk -v s="$sysds" '$1 != s' | LC_ALL=C sort)
+        fi
+    fi
+    bes=$(zfs list -H -o name -t filesystem -d 1 "${legacy_root%/*}" | awk -v p="${legacy_root%/*}" -v b="$legacy_root" '$1 != p && $1 != b')
+    if [[ -n $bes ]]; then
+        mountpoint -q "$mp/run" || mount -t tmpfs -o mode=0755,size=16m vm-mount-run "$mp/run"
+        for be in $bes; do mkdir -p "$mp/run/bko-be/${be##*/}"; done
+        touch -d @0 "$mp/run/bko-be" "$mp/run/bko-be"/* "$mp/run"
+        for be in $bes; do
+            at=$mp/run/bko-be/${be##*/}
+            if [[ $(zfs get -H -o value keystatus "$be") == unavailable ]]; then
+                echo "vm-mount: TrueNAS: boot environment $be is locked: not mounted" >&2; continue
+            fi
+            if [[ $(zfs get -H -o value mountpoint "$be") == legacy ]]; then
+                mount -t zfs "${tro[@]}" "$be" "$at" || { echo "vm-mount: could not mount $be at ${at#"$mp"}" >&2; continue; }
+            else
+                mount -t zfs -o "zfsutil${tro[1]:+,ro}" "$be" "$at" || { echo "vm-mount: could not mount $be at ${at#"$mp"}" >&2; continue; }
+            fi
+            mount_be_children "$be" "${at#"$mp"}"
+        done
+    fi
+fi
 
 trap - ERR
 [[ -z $fstab_copy ]] || rm -f "$fstab_copy"

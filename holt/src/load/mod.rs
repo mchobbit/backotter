@@ -28,7 +28,9 @@ pub mod shared;
 pub mod status;
 pub mod target;
 pub mod transactional;
+pub mod truenas;
 pub mod writetable;
+pub mod zfs_be;
 
 use crate::sys::{FakeRunner, Sys};
 
@@ -128,6 +130,10 @@ pub struct Options {
     /// --btrfs-snapshots copy: btrfs snapshots restored as full copies, as
     /// before shared snapshots (docs/design/btrfs-snapshots.md).
     pub btrfs_copy: bool,
+    /// --pools NAME[,NAME]: only these ZFS pools and their disks are
+    /// planned; the layout's other pools are left untouched
+    /// (layout.rs only_pools).  Empty: every pool.
+    pub pools: Vec<String>,
     /// For tests: read the system load runs on from this tree, running no
     /// commands.
     pub sysroot: Option<String>,
@@ -154,6 +160,7 @@ impl Options {
             snapshot: DEFAULT_SNAPSHOT.to_string(),
             archiver: DEFAULT_ARCHIVER.to_string(),
             btrfs_copy: false,
+            pools: vec![],
             sysroot: None,
         }
     }
@@ -177,7 +184,8 @@ impl Options {
 pub const USAGE: &str = "Usage: bko-holt load LAYOUT.json [--through STAGE | --only STAGE] [--commit]
                      [--map SRC=DST]... [--erase DEV]... [--fit-largest PCT]
                      [--target DIR] [--new-uuids] [--key-file NAME=FILE]...
-                     [--reformat MOUNT=TYPE]... [--no-nvram] [--removable]
+                     [--reformat MOUNT=TYPE]...
+                     [--no-nvram] [--removable] [--pools NAME[,NAME]]
                      [--repo REPO [--password-file FILE] [--snapshot ID]
                       [--archiver PROGRAM]] [--btrfs-snapshots shared|copy]
 
@@ -228,6 +236,10 @@ Rebuilds the disks LAYOUT.json (from `bko-holt dump`) describes, in stages:
                     (load adds the final newline bioctl wants, if missing)
   --no-nvram        boot writes no UEFI variables
   --removable       boot also installs the loader to EFI/BOOT/BOOTX64.EFI
+  --pools NAME[,NAME]
+                    restore only these ZFS pools (TrueNAS: boot-pool): the
+                    layout's other pools and the disks they're on are left
+                    untouched, and a target holding one is refused
   --repo REPO       restore from this repository (rustic-bko's -r)
   --password-file FILE
                     the repository's password; without it rustic-bko asks
@@ -336,6 +348,17 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
                     "shared" => false,
                     "copy" => true,
                     v => return Err(format!("--btrfs-snapshots {v}: give shared or copy")),
+                }
+            }
+            "--pools" => {
+                let v = value(&mut it, a)?;
+                for n in v.split(',').map(str::trim) {
+                    if n.is_empty() {
+                        return Err(format!("--pools {v:?}: give pool names, comma-separated"));
+                    }
+                    if !o.pools.iter().any(|p| p == n) {
+                        o.pools.push(n.to_string());
+                    }
                 }
             }
             "--sysroot" => o.sysroot = Some(value(&mut it, a)?),

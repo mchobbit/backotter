@@ -94,6 +94,9 @@ pub fn plan_onto(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, extra: &
         Err(e) => return Err(format!("load's arguments {args:?}: {e}")),
     };
     t.file("/usr/sbin/rustic-bko", "");
+    // The rescue image carries OpenZFS's feature sets (zpool create -o
+    // compatibility=grub2, e.g. TrueNAS's boot-pool).
+    t.file("/usr/share/zfs/compatibility.d/grub2", "");
     // load runs itself (write-table, md-lbs) as std::env::current_exe(),
     // which is this test's binary: installed where it is, as a rescue
     // system has bko-holt, and named `bko-holt` in the plan, which would

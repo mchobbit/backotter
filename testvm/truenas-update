@@ -1,0 +1,89 @@
+#!/usr/bin/env python3
+"""Whether a TrueNAS test guest (make-truenas.sh) is behind TrueNAS's newest
+release of its line (docs/design/truenas.md, T7).
+
+Usage: truenas-update --check [--line 25.10] [--page FILE] WORK_DIR...
+  e.g. truenas-update --check vms/truenas25 vms/truenas25-mirror
+
+TrueNAS turns apt off: an update is a new boot environment, made by
+TrueNAS's own updater from an offline .update file.  So vm-update refuses
+these guests (their no-vm-update file), and they take a newer release by a
+rebuild: fetch the new .update (the user's OK first), pin its SHA-256 in
+make-truenas.sh's SHA256 table and its UPDATES lists (the newest three
+releases: the oldest the ISO's), then testvm/rebuild-one.sh GUEST.
+
+--check reads the guest's version from WORK_DIR/first-boot.txt (make-truenas.sh
+writes /etc/version there) and the newest LINE.N named on TrueNAS's
+Community Edition download page (or --page FILE, a saved copy), and says
+which is newer.  It writes nothing.  Exit status: 0 up to date, 1 behind,
+2 can't tell.
+"""
+
+import argparse
+import re
+import sys
+import urllib.request
+from pathlib import Path
+
+PAGE = "https://www.truenas.com/download-truenas-community-edition/"
+
+
+def version_key(v):
+    return tuple(int(x) for x in v.split("."))
+
+
+def guest_version(work):
+    f = Path(work) / "first-boot.txt"
+    try:
+        text = f.read_text(errors="replace")
+    except OSError:
+        return None
+    # make-truenas.sh's trace: the line after "+... cat /etc/version ...".
+    lines = text.splitlines()
+    for i, line in enumerate(lines):
+        if re.search(r"cat /etc/version", line) and i + 1 < len(lines):
+            m = re.match(r"(\d+\.\d+(?:\.\d+)*)", lines[i + 1])
+            if m:
+                return m.group(1)
+    return None
+
+
+def newest(line, html):
+    pat = re.compile(r"TrueNAS-SCALE-(" + re.escape(line) + r"(?:\.\d+)+)\.(?:iso|update)\b")
+    found = {m.group(1) for m in pat.finditer(html)}
+    return max(found, key=version_key) if found else None
+
+
+def main():
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--check", action="store_true", required=True)
+    ap.add_argument("--line", default="25.10")
+    ap.add_argument("--page")
+    ap.add_argument("work", nargs="+")
+    a = ap.parse_args()
+    if a.page:
+        html = Path(a.page).read_text(errors="replace")
+    else:
+        req = urllib.request.Request(PAGE, headers={"User-Agent": "truenas-update-check"})
+        with urllib.request.urlopen(req, timeout=60) as r:
+            html = r.read().decode(errors="replace")
+    top = newest(a.line, html)
+    if top is None:
+        print(f"truenas-update: no {a.line}.N release named on the download page", file=sys.stderr)
+        return 2
+    status = 0
+    for w in a.work:
+        have = guest_version(w)
+        if have is None:
+            print(f"{w}: can't tell (no /etc/version in {w}/first-boot.txt); newest {top}")
+            status = max(status, 2)
+        elif version_key(have) < version_key(top):
+            print(f"{w}: {have}, behind {top}: rebuild with TrueNAS-SCALE-{top}.update (see this script's header)")
+            status = max(status, 1)
+        else:
+            print(f"{w}: {have}, up to date (newest {top})")
+    return status
+
+
+if __name__ == "__main__":
+    sys.exit(main())

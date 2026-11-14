@@ -31,6 +31,8 @@ pub mod sys;
 #[doc(hidden)]
 pub mod testutil;
 pub mod transactional;
+pub mod truenas;
+pub mod zfs_be;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

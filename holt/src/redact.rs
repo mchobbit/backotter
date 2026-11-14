@@ -134,7 +134,7 @@ const WELL_KNOWN: [&str; 7] = [
     "ffffffff-ffff-ffff-ffff-ffffffffffff",
 ];
 /// Hostnames installers give and live systems use: they identify no one.
-const GENERIC_HOSTS: [&str; 36] = [
+const GENERIC_HOSTS: [&str; 37] = [
     "", "(none)", "localhost", "localhost.localdomain", "localdomain", "<system>", "any", "debian", "ubuntu", "ubuntu-server", "fedora",
     "archlinux", "archiso", "alpine", "nixos", "freebsd", "openbsd", "netbsd", "dragonfly", "omnios", "openindiana", "haiku", "void",
     "voidlinux", "mint", "zorin", "pop-os", "rocky", "backotter", "rescue",
@@ -149,6 +149,8 @@ const GENERIC_HOSTS: [&str; 36] = [
     // Vanilla OS's installer names every install so (the first-setup
     // renames it), and LVM records it as each VG's creation_host.
     "vanilla",
+    // TrueNAS's installer's default hostname.
+    "truenas",
 ];
 /// Labels (lower case, trailing digits and '*' dropped) that installers
 /// and partitioners write: kept, because they help and identify no one.
@@ -197,7 +199,7 @@ pub struct Collector {
 /// A release medium's volume label: a system's name, its version and an
 /// architecture ("Ubuntu-Server 26.04.1 LTS amd64", "Fedora-S-dvd-x86_64-44").
 fn release_label(low: &str) -> bool {
-    const SYSTEMS: [&str; 18] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos", "pikaos", "kali", "proxmox", "guix", "elementary", "elementaryos"];
+    const SYSTEMS: [&str; 19] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos", "pikaos", "kali", "proxmox", "guix", "truenas", "elementary", "elementaryos"];
     const ARCHES: [&str; 5] = ["amd64", "x86_64", "x86-64", "arm64", "aarch64"];
     let first = low.split(|c: char| !c.is_ascii_alphanumeric()).next().unwrap_or("");
     SYSTEMS.contains(&first) && ARCHES.iter().any(|a| low.contains(a)) && low.bytes().any(|c| c.is_ascii_digit())

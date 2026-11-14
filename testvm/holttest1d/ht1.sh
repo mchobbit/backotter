@@ -313,6 +313,32 @@ for ((i = 0; i < n; i++)); do
     map+=(--map "vd${letters[i]}=vd${letters[i+1]}"); erase+=(--erase "/dev/vd${letters[i+1]}")
 done
 size_of() { qemu-img info --output=json "$1" | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])'; }
+# HT_POOLS=NAME[,NAME]: load's --pools, so only those ZFS pools are restored
+# (TrueNAS's boot-pool: the spec's Decision 6).  A disk that holds another
+# pool and none of them (TrueNAS's data pool's) is no target: the rescuer
+# and every restored boot get it as the backup read it, dst-I.qcow2 an
+# overlay of src-I.qcow2 (the guest's own image is never written), attached
+# unchanged and never mapped or erased, as a machine whose boot disks are
+# replaced keeps its data disks.  pools_keep sets KEEP[I]=1 for each, from
+# the source's dump.
+KEEP=()
+pools_keep() {
+    KEEP=()
+    [[ -n ${HT_POOLS:-} ]] || return 0
+    local i
+    for i in $(python3 -I - "$R/dumps/src.json" "$HT_POOLS" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+want = set(sys.argv[2].split(","))
+for disk in (d.get("storage") or {}).get("disks") or []:
+    name = str(disk.get("name") or "")
+    cs = [disk.get("content") or {}] + [p.get("content") or {} for p in disk.get("partitions") or []]
+    pools = {c.get("label") or "" for c in cs if c.get("type") == "zfs_member"}
+    if len(name) == 3 and name.startswith("vd") and pools and not pools & want:
+        print(ord(name[2]) - ord("a"))
+PY
+    ); do KEEP[i]=1; done
+}
 # A LUKS or ZFS passphrase the guest's disks need (vm-mount --key, and load's
 # --key-file for the volumes it makes).
 # A luks-keyfile (make-bootstrap.sh's alpine-luks) unlocks the guest at boot
@@ -324,7 +350,7 @@ HT_BULK=(share 'src-*.qcow2' 'dst-*.qcow2' decoy.qcow2 rescuer.qcow2 rustic-bko 
 [[ $VARIANT != bs2 ]] || HT_BULK+=(rescuer-vars.fd)   # (a resumed UEFI rescuer's NVRAM)
 HT_ZIP=(src-meta.json dst-meta.json)
 # Settings that change what a run checks, or its rescuer: its report names them.
-dbg=""; for v in HT_QUICK HT_THROUGH HT_KEEP HT_FAIL_AT HT_RESCUER HT_RESCUER_IMG HT_SOURCE_PREP HT_BOOT_EACH_DISK HT_NVRAM HT_REFORMAT; do [[ -z ${!v:-} ]] || dbg+=" $v=${!v}"; done
+dbg=""; for v in HT_QUICK HT_THROUGH HT_KEEP HT_FAIL_AT HT_RESCUER HT_RESCUER_IMG HT_SOURCE_PREP HT_BOOT_EACH_DISK HT_NVRAM HT_REFORMAT HT_POOLS; do [[ -z ${!v:-} ]] || dbg+=" $v=${!v}"; done
 [[ -z $dbg ]] || ht_note "set for debugging or tests:$dbg"
 # A transactional-update guest's own history of slots (docs/design/aeon.md, M5).
 case $G in microos*|aeon*) [[ -n ${HT_SOURCE_PREP+set} ]] || HT_SOURCE_PREP=$HERE/prep/microos-tu.sh ;; esac
@@ -471,6 +497,12 @@ case $G in
     # boots of the guest (QEMU's user network), on the source as well.
     vanilla3*) FLAKY_UNITS="systemd-networkd-wait-online.service" ;;
 esac
+# TrueNAS (docs/design/truenas.md): its middleware wants more than vm-run's
+# 2 GiB, so the source's and the restored boots get 4 GiB (the spec's T6;
+# the rescuer has its own --memory); and the mirror guest's data pool is
+# left out of the restore (HT_POOLS, below).
+case $G in truenas*) export MEMORY=${MEMORY:-4096} ;; esac
+case $G in truenas*-mirror) [[ -n ${HT_POOLS+set} ]] || HT_POOLS=boot-pool ;; esac
 bootstate() {
     local o; o=$(sshk "$1" "$BOOTSTATE")
     [[ -n $FLAKY_UNITS ]] || { printf '%s\n' "$o"; return; }
@@ -975,12 +1007,28 @@ abroot_verify() {
 # attached for MP is mounted read-only by itself and recorded by fsmeta.py as
 # esp/WHO-ID.json, beside the list as esp/WHO-uuids, for judge.py esp.  A tree
 # without the list has none.  Exit 1 when an ESP couldn't be found or read.
+# TrueNAS's ESPs (docs/design/truenas.md) are mounted by nothing too: each
+# vfat partition of GPT type EF00 on those disks (its installer's p2), listed
+# by volume ID in disk order in esp/WHO-uuids, with esp/WHO-kind "truenas"
+# for judge.py esp's rules.
+is_truenas() { [[ -f $1/data/freenas-v1.db && -f $1/usr/local/bin/truenas-grub.py ]]; }   # MP: a TrueNAS tree
 esp_record() { local mp=$1 who=$2 st u p q at f=0 devs=()
-    [[ -f $mp/etc/kernel/proxmox-boot-uuids ]] || return 0
-    mkdir -p "$R/esp" "$R/tmp"; rm -f "$R/esp/$who-"*
-    cp "$mp/etc/kernel/proxmox-boot-uuids" "$R/esp/$who-uuids"
     st=/run/vm-mount/$(systemd-escape --path "$(realpath "$mp")")
     mapfile -t devs < <(awk 'NR == 1 { print; next } $1 == "nbd" { print $2 }' "$st")
+    if [[ -f $mp/etc/kernel/proxmox-boot-uuids ]]; then
+        mkdir -p "$R/esp" "$R/tmp"; rm -f "$R/esp/$who-"*
+        cp "$mp/etc/kernel/proxmox-boot-uuids" "$R/esp/$who-uuids"
+    elif is_truenas "$mp"; then
+        mkdir -p "$R/esp" "$R/tmp"; rm -f "$R/esp/$who-"*
+        echo truenas > "$R/esp/$who-kind"
+        for q in $(for d in "${devs[@]}"; do compgen -G "${d}p*"; done); do
+            [[ $(lsblk -dno PARTTYPE "$q" 2>/dev/null) == c12a7328-f81f-11d2-ba4b-00a0c93ec93b && $(blkid -s TYPE -o value "$q" 2>/dev/null) == vfat ]] &&
+                blkid -s UUID -o value "$q"
+        done > "$R/esp/$who-uuids"
+        [[ -s $R/esp/$who-uuids ]] || { echo "$who: TrueNAS, and no vfat ESP on ${devs[*]}"; rm -f "$R/esp/$who-"*; return 0; }
+    else
+        return 0
+    fi
     for u in $(cat "$R/esp/$who-uuids"); do
         p=""
         for q in $(for d in "${devs[@]}"; do compgen -G "${d}p*"; done); do
@@ -999,21 +1047,30 @@ esp_record() { local mp=$1 who=$2 st u p q at f=0 devs=()
     done
     return $f
 }
-# Whether the source's proxmox-boot-tool keeps more than one ESP.
+# Whether the source's proxmox-boot-tool keeps more than one ESP, or its
+# TrueNAS boot-pool is on more than one disk (a mirror: GRUB on each).
 multi_esp() { python3 -I -c 'import json, sys
 d = json.load(open(sys.argv[1]))
-sys.exit(0 if len(((d.get("boot") or {}).get("proxmox_boot") or {}).get("uuids") or []) > 1 else 1)' "$R/dumps/src.json" 2>/dev/null; }
+tn = (d.get("boot") or {}).get("truenas") and sum(1 for k in (d.get("storage") or {}).get("disks") or []
+    if any((p.get("content") or {}).get("type") == "zfs_member" and (p.get("content") or {}).get("label") == "boot-pool" for p in k.get("partitions") or []))
+sys.exit(0 if len(((d.get("boot") or {}).get("proxmox_boot") or {}).get("uuids") or []) > 1 or (tn or 0) > 1 else 1)' "$R/dumps/src.json" 2>/dev/null; }
 # Each restored disk booted by itself, the others detached (the spec's
 # --boot-each-disk): firmware that finds one disk of the pair must still boot
 # from its ESP.  The pool comes up DEGRADED, and no worse (no vdev FAULTED,
 # no data errors); the boot state must be the source's, as for the restored
 # disks' boot together.  A fresh copy of the guest's NVRAM each, as that boot.
-boot_each_disk() { local i vfw pools
+# A disk HT_POOLS keeps (a data pool's) stays attached to each, and isn't
+# booted alone; on TrueNAS its middleware must import that pool and list
+# the source's shares (truenas_disk_check).
+boot_each_disk() { local i k vfw pools keep=()
+    for ((k = 0; k < n; k++)); do [[ -z ${KEEP[k]:-} ]] || keep+=(--disk "${dst[k]}"); done
     for ((i = 0; i < n; i++)); do
+        [[ -z ${KEEP[i]:-} ]] || continue
         gvars "restored-disk$i"; vfw=("${VFW[@]}")
-        CONSOLE_KEY=$ckey vm_up "${dst[i]}" "$R/logs/restored-disk$i-serial.log" --snapshot "${fw[@]}" "${vfw[@]}"
+        CONSOLE_KEY=$ckey vm_up "${dst[i]}" "$R/logs/restored-disk$i-serial.log" --snapshot "${fw[@]}" "${vfw[@]}" "${keep[@]}"
         if ! vm_wait "$gkey"; then bad "restored disk $i boots alone, the others detached (no SSH; logs/restored-disk$i-serial.log)"; vm_down "$gkey"; continue; fi
         if [[ -n $GVARS ]]; then sshk "$gkey" "$NVBOOT" > "$R/logs/restored-disk$i-nvram-boot.txt" 2>&1; else echo "no NVRAM of its own: a fresh store" > "$R/logs/restored-disk$i-nvram-boot.txt"; fi
+        [[ ! -f $R/logs/source-truenas.txt ]] || truenas_disk_check "$i"
         sshk "$gkey" 'zpool list -H -o name,health; echo; zpool status -v' > "$R/logs/restored-disk$i-zpool.txt" 2>&1
         bootstate "$gkey" > "$R/logs/restored-disk$i-bootstate.txt"
         vm_down "$gkey"
@@ -1028,6 +1085,99 @@ boot_each_disk() { local i vfw pools
             ok "restored disk $i boots alone, the others detached: ${pools}, boot state as the source's ($(head -1 "$R/logs/restored-disk$i-bootstate.txt")), through $(head -1 "$R/logs/restored-disk$i-nvram-boot.txt")"
         fi
     done
+}
+
+# TrueNAS (docs/design/truenas.md, T6): the middleware's view of a boot, as
+# midclt (root's, over SSH) gives it once system.ready says so: the
+# version, each boot environment (by ID, active, activated, keep,
+# can_activate: not its dataset's size or creation time, which a restore
+# makes anew), the pools and their health and the SMB shares.  TN_READY
+# waits up to 10 min for the middleware (2-4 min after a boot).
+TN_READY='for i in $(seq 120); do case $(midclt call system.ready 2>/dev/null) in True|true) exit 0 ;; esac; sleep 5; done; echo "system.ready not true after 10 min" >&2; exit 1'
+TN_STATE='echo "version $(midclt call system.version 2>/dev/null)"
+midclt call boot.environment.query 2>/dev/null | python3 -c "import json, sys
+for b in sorted(json.load(sys.stdin), key=lambda b: b[\"id\"]):
+    print(\"be\", b[\"id\"], *(k + \"=\" + str(b.get(k)).lower() for k in (\"active\", \"activated\", \"keep\", \"can_activate\")))"
+zpool list -H -o name,health | sort | sed "s/^/pool /; s/\t/ /"
+midclt call sharing.smb.query 2>/dev/null | python3 -c "import json, sys
+for x in sorted(json.load(sys.stdin), key=lambda x: x[\"name\"]):
+    print(\"share\", x[\"name\"], x[\"path\"], \"enabled=\" + str(x.get(\"enabled\")).lower())"'
+# The config database's own check, on the running system (read-only).
+TN_DBCHECK='python3 -c "import sqlite3; print(sqlite3.connect(\"file:/data/freenas-v1.db?mode=ro\", uri=True).execute(\"PRAGMA integrity_check\").fetchone()[0])"'
+# The source's baseline: its middleware's view (logs/source-truenas.txt).
+# Exit 1 when the run can go no further.
+truenas_source() {
+    TMO=700 sshk "$gkey" "$TN_READY" 2> "$R/logs/source-truenas.err" || { bad "TrueNAS: the source's middleware: $(tail -1 "$R/logs/source-truenas.err")"; return 1; }
+    sshk "$gkey" "$TN_STATE" > "$R/logs/source-truenas.txt" 2>> "$R/logs/source-truenas.err"
+    grep -q '^be .* active=true' "$R/logs/source-truenas.txt" || { bad "TrueNAS: the source's boot.environment.query shows no active BE (logs/source-truenas.txt)"; return 1; }
+    ok "TrueNAS: the source's middleware ready: $(grep -c '^be ' "$R/logs/source-truenas.txt") BEs, $(head -1 "$R/logs/source-truenas.txt")"
+}
+# From a tree vm-mount mounted at MP (WHO: src, dst): grub.cfg's menu, each
+# menuentry's and submenu's title and each linux line's root=ZFS=, in order
+# (logs/WHO-grubmenu.txt), and the sha256 of each BE's config database and
+# its key, the inactive BEs' under run/bko-be (logs/WHO-db.txt).
+truenas_record() { local mp=$1 who=$2 f
+    is_truenas "$mp" || return 0
+    sed -nE "s/^[[:space:]]*(menuentry|submenu) '([^']*)'.*/\1 \2/p; s/^[[:space:]]*linux[[:space:]].*(root=ZFS=[^[:space:]]+).*/  \1/p" "$mp/boot/grub/grub.cfg" > "$R/logs/$who-grubmenu.txt" 2>&1
+    for f in data/freenas-v1.db data/pwenc_secret "$mp"/run/bko-be/*/data/freenas-v1.db "$mp"/run/bko-be/*/data/pwenc_secret; do
+        f=${f#"$mp/"}; [[ -f $mp/$f ]] && echo "$(sha256sum < "$mp/$f" | cut -d' ' -f1) $f"
+    done > "$R/logs/$who-db.txt"
+}
+# The restored tree's records against the source's (verify, before boot).
+truenas_judge_tree() {
+    [[ -f $R/logs/src-db.txt ]] || return 0
+    if [[ -s $R/logs/src-db.txt ]] && cmp -s "$R/logs/src-db.txt" "$R/logs/dst-db.txt"; then
+        ok "TrueNAS: every BE's config database and key byte for byte before boot: $(awk '{print $2}' "$R/logs/dst-db.txt" | tr '\n' ' ')"
+    else
+        bad "TrueNAS: config databases and keys: $(diff "$R/logs/src-db.txt" "$R/logs/dst-db.txt" | grep '^[<>]' | head -4 | tr '\n' ' ') (logs/src-db.txt, dst-db.txt)"
+    fi
+    if grep -q '^menuentry ' "$R/logs/src-grubmenu.txt" 2>/dev/null && cmp -s "$R/logs/src-grubmenu.txt" "$R/logs/dst-grubmenu.txt"; then
+        ok "TrueNAS: grub.cfg's menu as the source's, in order: $(grep -c '^menuentry ' "$R/logs/dst-grubmenu.txt") entries and $(grep -c '^submenu ' "$R/logs/dst-grubmenu.txt") submenus, $(grep -c 'root=ZFS=' "$R/logs/dst-grubmenu.txt") root=ZFS= lines ($(grep -o 'root=ZFS=[^ ]*' "$R/logs/dst-grubmenu.txt" | uniq | sed 's/root=ZFS=//' | tr '\n' ' ')in order)"
+    else
+        bad "TrueNAS: grub.cfg's menu: $(diff "$R/logs/src-grubmenu.txt" "$R/logs/dst-grubmenu.txt" 2>&1 | grep '^[<>]' | head -4 | tr '\n' ' ') (logs/src-grubmenu.txt, dst-grubmenu.txt)"
+    fi
+}
+# The restored boot against the baseline (after its dump): the middleware's
+# view the source's, the config database's integrity check, then the oldest
+# BE activated (boot.environment.activate) and booted: its /etc/version, its
+# root, and the middleware naming it active.  The boot is the restored
+# disk's --snapshot one, so the copy isn't changed.
+truenas_verify() {
+    local L=$R/logs old v
+    if ! TMO=700 sshk "$gkey" "$TN_READY" 2> "$L/restored-truenas.err"; then bad "TrueNAS: the restored middleware: $(tail -1 "$L/restored-truenas.err")"; return; fi
+    sshk "$gkey" "$TN_STATE" > "$L/restored-truenas.txt" 2>> "$L/restored-truenas.err"
+    if cmp -s "$L/source-truenas.txt" "$L/restored-truenas.txt"; then
+        ok "TrueNAS: the restored middleware's view is the source's: $(head -1 "$L/restored-truenas.txt"), $(grep '^be ' "$L/restored-truenas.txt" | awk '{print $2 ($3 == "active=true" ? " (active)" : "")}' | tr '\n' ' ')$(grep '^pool \|^share ' "$L/restored-truenas.txt" | tr '\n' ' ')"
+    else
+        bad "TrueNAS: the restored middleware's view: $(diff "$L/source-truenas.txt" "$L/restored-truenas.txt" | grep '^[<>]' | head -4 | tr '\n' ' ') (logs/source-truenas.txt, restored-truenas.txt)"
+    fi
+    v=$(sshk "$gkey" "$TN_DBCHECK" 2>&1)
+    if [[ $v == ok ]]; then ok "TrueNAS: /data/freenas-v1.db's PRAGMA integrity_check after boot: ok"; else bad "TrueNAS: /data/freenas-v1.db's PRAGMA integrity_check after boot: ${v:0:200}"; fi
+    old=$(awk '$1 == "be" {print $2}' "$L/source-truenas.txt" | sort -V | head -1)
+    if grep -q "^be $old active=true" "$L/source-truenas.txt"; then say "note: TrueNAS: the oldest BE $old is the active one: no other to activate"; return; fi
+    sshk "$gkey" "midclt call boot.environment.activate '{\"id\": \"$old\"}'" > "$L/restored-activate.txt" 2>&1 ||
+        { bad "TrueNAS: boot.environment.activate $old: $(tail -1 "$L/restored-activate.txt")"; return; }
+    sshk "$gkey" 'zpool get -H -o value bootfs boot-pool' >> "$L/restored-activate.txt" 2>&1
+    vm_reboot "$gkey" || { bad "TrueNAS: the restored disk boots its oldest BE $old once activated (no SSH; logs/restored-serial.log)"; return; }
+    TMO=700 sshk "$gkey" "$TN_READY" 2>> "$L/restored-truenas.err" || bad "TrueNAS: the middleware on BE $old: $(tail -1 "$L/restored-truenas.err")"
+    sshk "$gkey" 'echo "version $(cat /etc/version)"; echo "root $(findmnt -no SOURCE /)"; echo "bootfs $(zpool get -H -o value bootfs boot-pool)"' > "$L/restored-oldest.txt" 2>&1
+    sshk "$gkey" "$TN_STATE" >> "$L/restored-oldest.txt" 2>&1
+    if grep -qx "version $old" "$L/restored-oldest.txt" && grep -qx "root boot-pool/ROOT/$old" "$L/restored-oldest.txt" && grep -q "^be $old active=true" "$L/restored-oldest.txt"; then
+        ok "TrueNAS: the oldest BE activated and booted: /etc/version $old, / boot-pool/ROOT/$old, the middleware names it active"
+    else
+        bad "TrueNAS: the oldest BE $old activated and booted: $(grep -E '^(version|root|bootfs) |active=true' "$L/restored-oldest.txt" | tr '\n' ' ')(logs/restored-oldest.txt)"
+    fi
+}
+# Restored disk I booted alone (boot_each_disk): the middleware imports the
+# kept data pools and lists the source's shares.
+truenas_disk_check() { local i=$1 L=$R/logs
+    TMO=700 sshk "$gkey" "$TN_READY" 2> "$L/restored-disk$i-truenas.err" || { bad "TrueNAS: restored disk $i alone: the middleware: $(tail -1 "$L/restored-disk$i-truenas.err")"; return; }
+    sshk "$gkey" "$TN_STATE" > "$L/restored-disk$i-truenas.txt" 2>> "$L/restored-disk$i-truenas.err"
+    if diff -q <(grep -E '^(pool|share) ' "$L/source-truenas.txt" | grep -v '^pool boot-pool ') <(grep -E '^(pool|share) ' "$L/restored-disk$i-truenas.txt" | grep -v '^pool boot-pool ') >/dev/null; then
+        ok "TrueNAS: restored disk $i alone: $(grep -E '^(pool|share) ' "$L/restored-disk$i-truenas.txt" | tr '\n' ' ')"
+    else
+        bad "TrueNAS: restored disk $i alone: data pools and shares: $(grep -E '^(pool|share) ' "$L/restored-disk$i-truenas.txt" | tr '\n' ' '), the source's $(grep -E '^(pool|share) ' "$L/source-truenas.txt" | tr '\n' ' ')"
+    fi
 }
 
 phase_source() {
@@ -1114,11 +1264,14 @@ phase_source() {
     rm -f "$R/logs/source-guix"*.txt "$R/logs/source-prev-bootstate.txt"
     # And a transactional-update source records its slots (ht1-tu.sh).
     rm -f "$R/logs/source-tu"*.txt "$R/logs/source-hcstate.txt"
-    case $(sshk "$gkey" 'if [ -e /run/ostree-booted ]; then echo ostree; elif [ -f /usr/share/abroot/abroot.json ] && command -v abroot >/dev/null; then echo abroot; elif [ -d /var/guix/profiles ] && command -v guix >/dev/null; then echo guix; elif command -v tukit >/dev/null && findmnt -no OPTIONS / | tr , "\n" | grep -qx ro; then echo tu; else echo plain; fi') in
+    # And a TrueNAS source its middleware's view.
+    rm -f "$R/logs/source-truenas.txt"
+    case $(sshk "$gkey" 'if [ -e /run/ostree-booted ]; then echo ostree; elif [ -f /usr/share/abroot/abroot.json ] && command -v abroot >/dev/null; then echo abroot; elif [ -d /var/guix/profiles ] && command -v guix >/dev/null; then echo guix; elif command -v tukit >/dev/null && findmnt -no OPTIONS / | tr , "\n" | grep -qx ro; then echo tu; elif [ -f /data/freenas-v1.db ] && command -v midclt >/dev/null; then echo truenas; else echo plain; fi') in
         ostree) ostree_source || { vm_down "$gkey"; return; } ;;
         abroot) abroot_source || { vm_down "$gkey"; return; } ;;
         guix) guix_source || { vm_down "$gkey"; return; } ;;
         tu) tu_source || { vm_down "$gkey"; return; } ;;
+        truenas) truenas_source || { vm_down "$gkey"; return; } ;;
         plain) ;;
         *) bad "source: no answer over SSH to whether it is ostree"; vm_down "$gkey"; return ;;
     esac
@@ -1160,7 +1313,8 @@ phase_backup() {
         bad "rustic-bko backup (logs/backup.log)"
     fi
     python3 "$T/compare/fsmeta.py" record "$SRC_MP" "$R/src-meta.json" > "$R/logs/fsmeta-src.log" 2>&1 || bad "fsmeta record of the source"
-    esp_record "$SRC_MP" src >> "$R/logs/esp-record.log" 2>&1 || bad "record the source's proxmox-boot-tool ESPs (logs/esp-record.log)"
+    esp_record "$SRC_MP" src >> "$R/logs/esp-record.log" 2>&1 || bad "record the source's ESPs that nothing mounts (logs/esp-record.log)"
+    truenas_record "$SRC_MP" src
     (trap '' TERM INT HUP; exec "$T/vm-umount" "$SRC_MP") >> "$R/logs/backup-mount.log" 2>&1; HT_MOUNTED=
     cp "$RUSTIC" "$S/rustic-bko"; cp "$BIN"/*.deb "$S/"   # (bko-holt is there from the run's start)
     [[ ! -f $BIN/bcachefs ]] || cp "$BIN/bcachefs" "$S/"   # make-bcachefs-tools.sh's
@@ -1282,10 +1436,21 @@ phase_rebuild() {
     else
         qemu-img create -q -f qcow2 -b "$RESCUER_IMG" -F qcow2 "$R/rescuer.qcow2"
     fi
+    # HT_POOLS: the disks of the pools it leaves out are kept, not targets.
+    pools_keep
+    map=() erase=()
+    for ((i = 0; i < n; i++)); do
+        [[ -z ${KEEP[i]:-} ]] || continue
+        map+=(--map "vd${letters[i]}=vd${letters[i+1]}"); erase+=(--erase "/dev/vd${letters[i+1]}")
+    done
+    ((${#KEEP[@]} == 0)) || say "note: HT_POOLS=$HT_POOLS: disk(s) $(for i in "${!KEEP[@]}"; do echo -n "vd${letters[i]} "; done)kept as the source's (an overlay of each), not rebuilt"
     local disks=()
     for ((i = 0; i < n; i++)); do
         if [[ $VARIANT == bs2 ]]; then
             bs2_target_make "$i" "${dst[i]}" || return; disks+=(--disk "${dst[i]}")
+        elif [[ -n ${KEEP[i]:-} ]]; then
+            (cd "$R" && qemu-img create -q -f qcow2 -b "src-$i.qcow2" -F qcow2 "dst-$i.qcow2") || { bad "an overlay of src-$i.qcow2 for the kept disk vd${letters[i]}"; return; }
+            disks+=(--disk "${dst[i]}")
         else
             qemu-img create -q -f qcow2 "${dst[i]}" "$(($(size_of "${imgs[i]}") + DELTA))"; disks+=(--disk "${dst[i]}")
         fi
@@ -1346,6 +1511,7 @@ phase_rebuild() {
     ((uefi)) && [[ $VARIANT != bs2 || $BS2_TIER == 1 ]] && [[ ${HT_NVRAM:-} != 1 ]] && flags+=(--no-nvram)
     [[ $VARIANT != bs2 ]] || flags+=("${BS2_FLAGS[@]}")
     flags+=("${REFORMAT[@]}")
+    [[ -z ${HT_POOLS:-} ]] || flags+=(--pools "$HT_POOLS")
     # (A refusal variant always takes these: they are what it runs for.)
     if [[ ${HT_QUICK:-} != 1 || -n $FITONLY ]]; then
     sshk "$rkey" "$edges" > "$R/logs/edges-before.txt" 2>&1
@@ -1465,6 +1631,7 @@ kept_or_down() {
 
 phase_verify() {
     say "== verify"
+    pools_keep   # (HT_POOLS's kept disks: boot_each_disk)
     [[ $VARIANT != bs2 ]] || bs2_verify_begin
     # A rescuer HT_KEEP left up has the targets open.
     [[ -z $(ht_qemus "$R") ]] || vm_down "$rkey"
@@ -1476,7 +1643,8 @@ phase_verify() {
         HT_MOUNTED=$DST_MP
         python3 "$T/compare/fsmeta.py" record "$DST_MP" "$R/dst-meta.json" "${BS2_FSMETA[@]}" > "$R/logs/fsmeta-dst.log" 2>&1
         [[ $VARIANT != bs2 ]] || bs2_after_dst_record
-        esp_record "$DST_MP" dst >> "$R/logs/esp-record.log" 2>&1 || bad "record the restored proxmox-boot-tool ESPs (logs/esp-record.log)"
+        esp_record "$DST_MP" dst >> "$R/logs/esp-record.log" 2>&1 || bad "record the restored ESPs that nothing mounts (logs/esp-record.log)"
+        truenas_record "$DST_MP" dst
         mok_check "$DST_MP"
         tu_record_dst "$DST_MP"
         (trap '' TERM INT HUP; exec "$T/vm-umount" "$DST_MP") >> "$R/logs/verify-mount.log" 2>&1; HT_MOUNTED=
@@ -1487,12 +1655,14 @@ phase_verify() {
             bad "fsmeta: $(grep '^DIFF' "$R/logs/fsjudge.txt" | head -5 | tr '\n' ' ')"
         fi
         if [[ -f $R/esp/src-uuids ]]; then
+            local whose="proxmox-boot-tool's ESPs"; [[ ! -f $R/esp/src-kind ]] || whose="TrueNAS's ESPs"
             if python3 "$HERE/judge.py" esp "$R/esp" > "$R/logs/espjudge.txt" 2>&1; then
-                ok "proxmox-boot-tool's ESPs: the source's by content ($(tail -1 "$R/logs/espjudge.txt"); logs/espjudge.txt)"
+                ok "$whose: the source's by content ($(tail -1 "$R/logs/espjudge.txt"); logs/espjudge.txt)"
             else
-                bad "proxmox-boot-tool's ESPs: $(grep '^DIFF' "$R/logs/espjudge.txt" | head -3 | tr '\n' ' ')"
+                bad "$whose: $(grep '^DIFF' "$R/logs/espjudge.txt" | head -3 | tr '\n' ' ')"
             fi
         fi
+        truenas_judge_tree
     else
         bad "mount the restored disk"
     fi
@@ -1548,11 +1718,14 @@ phase_verify() {
     [[ ! -f $R/logs/source-guix-gens.txt ]] || guix_verify
     # And a transactional-update source's slots and health-checker (ht1-tu.sh).
     [[ ! -f $R/logs/source-tu.txt ]] || tu_verify
+    # And a TrueNAS source's middleware, and its oldest BE activated and booted.
+    [[ ! -f $R/logs/source-truenas.txt ]] || truenas_verify
     if [[ $VARIANT == bs2 ]]; then bs2_restored_down; else vm_down "$gkey"; fi
     # Each disk alone (the spec's --boot-each-disk): a source with an ESP on each disk, or asked for.
+    local nb=$((n - ${#KEEP[@]}))   # (HT_POOLS's kept disks aren't booted alone)
     case ${HT_BOOT_EACH_DISK:-auto} in
-        1) ((n > 1)) && boot_each_disk ;;
-        auto) ((n > 1)) && multi_esp && boot_each_disk ;;
+        1) ((nb > 1)) && boot_each_disk ;;
+        auto) ((nb > 1)) && multi_esp && boot_each_disk ;;
     esac
     local how=(); [[ $VARIANT == bigger ]] && how=(--grow $((1 << 30)))
     [[ $VARIANT == degraded ]] && how=(--degraded)
@@ -1567,6 +1740,14 @@ phase_verify() {
         ok "the dumps agree ($(tail -1 "$R/logs/judge.txt"))"
     else
         bad "the dumps differ: $(grep -c '^DIFF' "$R/logs/judge.txt") fields (logs/judge.txt)"
+    fi
+    # TrueNAS: its boot-pool's datasets, properties and bootfs on their own.
+    if [[ -f $R/logs/source-truenas.txt ]]; then
+        if python3 "$HERE/judge.py" bes "$jsrc" "$R/dumps/dst.json" > "$R/logs/bejudge.txt" 2>&1; then
+            ok "TrueNAS: boot-pool's datasets, local and user properties and bootfs as the source's: $(head -1 "$R/logs/bejudge.txt")"
+        else
+            bad "TrueNAS: boot-pool: $(grep '^DIFF' "$R/logs/bejudge.txt" | head -4 | tr '\n' ' ')(logs/bejudge.txt)"
+        fi
     fi
 }
 

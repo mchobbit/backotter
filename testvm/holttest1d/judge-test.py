@@ -2222,5 +2222,106 @@ class Transactional(unittest.TestCase):
         self.assertIn("booted = default = the source's default @/.snapshots/5/snapshot, health-checker's", out)
 
 
+class TrueNas(unittest.TestCase):
+    """judge.py esp over TrueNAS's ESPs and judge.py bes over its boot-pool
+    (docs/design/truenas.md, T6)."""
+
+    def esp(self, **change):
+        """truenas25's ESP as its installer leaves it: shim's files, GRUB and
+        its copy in the fallback path.  CHANGE maps a path to its new
+        sha256, or None to leave it out."""
+        files = {"EFI/debian/shimx64.efi": "sh", "EFI/debian/grubx64.efi": "gr", "EFI/debian/mmx64.efi": "mm",
+                 "EFI/debian/fbx64.efi": "fb", "EFI/debian/BOOTX64.CSV": "cs", "EFI/debian/grub.cfg": "cf", "EFI/boot/bootx64.efi": "gr"}
+        rec = {".": meta("dir"), "EFI": meta("dir"), "EFI/debian": meta("dir"), "EFI/boot": meta("dir")}
+        for p, h in files.items():
+            h = change.get(p, h)
+            if h is not None:
+                rec[p] = meta("file", sha256=h)
+        return rec
+
+    def judge(self, ids, src, dst):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name in ("src", "dst"):
+                with open(os.path.join(tmp, f"{name}-uuids"), "w") as f:
+                    f.write("".join(i + "\n" for i in ids))
+                with open(os.path.join(tmp, f"{name}-kind"), "w") as f:
+                    f.write("truenas\n")
+            for who, recs in (("src", src), ("dst", dst)):
+                for i, rec in recs.items():
+                    with open(os.path.join(tmp, f"{who}-{i}.json"), "w") as f:
+                        json.dump(rec, f)
+            r = subprocess.run([sys.executable, "-I", JUDGE, "esp", tmp], capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_the_same_esp_passes(self):
+        rc, out = self.judge(["AD14-E6D9"], {"AD14-E6D9": self.esp()}, {"AD14-E6D9": self.esp()})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("7 of its 7 files byte for byte, EFI/boot/bootx64.efi its EFI/debian/grubx64.efi", out)
+
+    def test_a_rebuilt_grub_passes_with_its_copy(self):
+        rc, out = self.judge(["A"], {"A": self.esp()}, {"A": self.esp(**{"EFI/debian/grubx64.efi": "g2", "EFI/boot/bootx64.efi": "g2"})})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("grub-install rebuilt it in the boot stage", out)
+
+    def test_the_fallback_must_be_grub(self):
+        rc, out = self.judge(["A"], {"A": self.esp()}, {"A": self.esp(**{"EFI/debian/grubx64.efi": "g2"})})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF ESP A: EFI/boot/bootx64.efi isn't EFI/debian/grubx64.efi", out)
+
+    def test_a_missing_loader_counts(self):
+        rc, out = self.judge(["A"], {"A": self.esp()}, {"A": self.esp(**{"EFI/debian/shimx64.efi": None})})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF ESP A: missing: 1: EFI/debian/shimx64.efi", out)
+
+    def test_two_restored_esps_must_be_equal(self):
+        ids = ["A", "B"]
+        rc, out = self.judge(ids, {i: self.esp() for i in ids}, {"A": self.esp(), "B": self.esp(**{"EFI/debian/grub.cfg": "c2"})})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF ESPs A and B (restored): content: 1: EFI/debian/grub.cfg", out)
+
+    def pool(self, restored=False, **props):
+        """A dump of a boot-pool with two BEs, the older's data a clone (none
+        restored), PROPS (name -> {prop: value}) changing local properties."""
+        def ds(name, mp, local, origin=None):
+            p = {k: {"value": v, "source": "local"} for k, v in dict(local, **props.get(name, {})).items() if v is not None}
+            return {"name": name, "type": "filesystem", "mountpoint": mp, "canmount": "noauto" if "/ROOT/" in name and name.count("/") > 2 else "on",
+                    "origin": None if restored else origin, "used": 7 if restored else 1, "properties": p}
+        dss = [ds("boot-pool", "none", {"compression": "on"}), ds("boot-pool/ROOT", "none", {"canmount": "off"}), ds("boot-pool/grub", "legacy", {"mountpoint": "legacy"})]
+        for v in ("25.10.7", "25.10.8"):
+            dss.append(ds(f"boot-pool/ROOT/{v}", "legacy", {"readonly": "on", "truenas:kernel_version": f"6.12-{v}", "zectl:keep": "False"}))
+            dss.append(ds(f"boot-pool/ROOT/{v}/data", "/data", {}, origin="boot-pool/ROOT/25.10.8/data@install" if v == "25.10.7" else None))
+            dss.append(ds(f"boot-pool/ROOT/{v}/usr", "/usr", {"readonly": "on"}))
+        return {"storage": {"zfs": {"tools": {"imported_pools": [{"name": "boot-pool", "properties": {"bootfs": "boot-pool/ROOT/25.10.8"}}], "datasets": dss}}}}
+
+    def bes(self, src, dst):
+        with tempfile.TemporaryDirectory() as tmp:
+            for name, d in (("src.json", src), ("dst.json", dst)):
+                with open(os.path.join(tmp, name), "w") as f:
+                    json.dump(d, f)
+            r = subprocess.run([sys.executable, "-I", JUDGE, "bes", os.path.join(tmp, "src.json"), os.path.join(tmp, "dst.json")], capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_bes_pass_with_clones_flattened(self):
+        rc, out = self.bes(self.pool(), self.pool(restored=True))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("2 boot environments (25.10.7, 25.10.8), bootfs boot-pool/ROOT/25.10.8", out)
+        self.assertIn("1 clones on the source, 0 restored as clones", out)
+
+    def test_bes_hold_readonly_and_user_properties(self):
+        for change in ({"boot-pool/ROOT/25.10.7/usr": {"readonly": None}}, {"boot-pool/ROOT/25.10.7": {"zectl:keep": "True"}}):
+            rc, out = self.bes(self.pool(), self.pool(restored=True, **change))
+            self.assertEqual(rc, 1, f"{change}: {out}")
+            self.assertIn("DIFF boot-pool/ROOT/25.10.7", out)
+
+    def test_bes_hold_bootfs_and_the_list(self):
+        dst = self.pool(restored=True)
+        dst["storage"]["zfs"]["tools"]["imported_pools"][0]["properties"]["bootfs"] = "boot-pool/ROOT/25.10.7"
+        dst["storage"]["zfs"]["tools"]["datasets"] = [d for d in dst["storage"]["zfs"]["tools"]["datasets"] if d["name"] != "boot-pool/ROOT/25.10.7/data"]
+        rc, out = self.bes(self.pool(), dst)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF bootfs: boot-pool/ROOT/25.10.8 -> boot-pool/ROOT/25.10.7", out)
+        self.assertIn("DIFF boot-pool/ROOT/25.10.7/data: missing", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

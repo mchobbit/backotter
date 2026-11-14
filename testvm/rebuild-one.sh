@@ -108,6 +108,11 @@ pikaos4-luks) cmd=(asm $T/make-pikaos.sh --iso-dir /bkoscratch/rebuild-inputs/pi
 # .asc, the release key and the assistant's .deb in /bkoscratch/rebuild-inputs/proxmox9
 # (all pinned in the builder; the prepared ISO is made there per first-boot.sh).
 proxmox9|proxmox9-mirror) cmd=(asm $T/make-proxmox.sh --iso-dir /bkoscratch/rebuild-inputs/proxmox9 $G "$W") ;;
+# truenas25, truenas25-mirror: TrueNAS's installer (its JSON-RPC API) from the
+# 25.10.6 ISO, then the 25.10.7 and 25.10.8 .update files (truenas25-mirror: 25.10.8
+# only), each a new boot environment, in /bkoscratch/rebuild-inputs/truenas25
+# (SHA-256 pinned in the builder).
+truenas25|truenas25-mirror) cmd=(asm $T/make-truenas.sh --iso-dir /bkoscratch/rebuild-inputs/truenas25 $G "$W") ;;
 # qubes43: Qubes OS's installer from the R4.3.2 ISO in /bkoscratch/rebuild-inputs/qubes43,
 # with its .DIGESTS(.asc) and the release and master keys (all pinned in the builder;
 # the prepared ISO is made there per qubes/install-grub.cfg), driven by a kickstart and
@@ -186,6 +191,9 @@ case $G in mx25|mint22|pop24|zorin18|neon24|elementary8|elementary8-luks|anduino
     [ -f "$ISO" ] || { echo "no ISO $ISO" >&2; exit 2; } ;;
 proxmox9|proxmox9-mirror)
     ISO=/bkoscratch/rebuild-inputs/proxmox9/proxmox-ve_9.2-1.iso
+    [ -f "$ISO" ] || { echo "no ISO $ISO" >&2; exit 2; } ;;
+truenas25|truenas25-mirror)
+    ISO=/bkoscratch/rebuild-inputs/truenas25/TrueNAS-SCALE-25.10.6.iso
     [ -f "$ISO" ] || { echo "no ISO $ISO" >&2; exit 2; } ;;
 qubes43)
     ISO=/bkoscratch/rebuild-inputs/qubes43/Qubes-R4.3.2-x86_64.iso

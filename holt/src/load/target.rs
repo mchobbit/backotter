@@ -730,8 +730,21 @@ pub struct Prepared<'a> {
 /// Scans the disks here, maps the source disks onto them and, with
 /// --fit-largest, fits the layout to their sizes.
 pub fn prepare<'a>(layout: &'a Layout, opts: &Options, sys: &Sys) -> Prepared<'a> {
-    let system = scan(sys, opts, &layout_pools(layout));
-    let mut mapping = map_disks(layout, opts, &system, sys);
+    // --pools: the layout without the pools it leaves untouched, and their
+    // disks; a --map of one of those, or a target holding one, refused.
+    let only = (!opts.pools.is_empty()).then(|| layout.only_pools(&opts.pools));
+    let src: &Layout = only.as_ref().map_or(layout, |o| &o.layout);
+    let mut o2 = opts.clone();
+    if let Some(o) = &only {
+        o2.maps.retain(|(s, _)| !o.disks.contains(s));
+    }
+    let system = scan(sys, &o2, &layout_pools(src));
+    let mut mapping = map_disks(src, &o2, &system, sys);
+    if let Some(o) = &only {
+        mapping.problems.extend(o.problems.iter().cloned());
+        mapping.notes.extend(o.notes.iter().cloned());
+        mapping.problems.extend(left_out_pool_problems(opts, o, &mapping, &system));
+    }
     let mut fit = Fit::default();
     if let Some(pct) = opts.fit_largest {
         let targets: Vec<fit::Target> = mapping
@@ -739,7 +752,7 @@ pub fn prepare<'a>(layout: &'a Layout, opts: &Options, sys: &Sys) -> Prepared<'a
             .iter()
             .filter_map(|(src, t)| system.disk(t).map(|t| fit::Target { disk: src.clone(), path: t.path(), size_bytes: t.b.size_bytes }))
             .collect();
-        fit = fit::fit(&layout.v, &targets, pct);
+        fit = fit::fit(&src.v, &targets, pct);
         mapping.problems.extend(fit.problems.iter().cloned());
         mapping.notes.extend(fit.notes.iter().cloned());
         for d in &fit.new_end {
@@ -748,19 +761,43 @@ pub fn prepare<'a>(layout: &'a Layout, opts: &Options, sys: &Sys) -> Prepared<'a
             }
         }
     }
-    let mut out = Cow::Borrowed(layout);
+    let mut out: Cow<'a, Layout> = match &only {
+        Some(o) => Cow::Owned(o.layout.clone()),
+        None => Cow::Borrowed(layout),
+    };
     if let Some(v) = fit.v.clone() {
         match Layout::from_json(v) {
             Ok(l) => out = Cow::Owned(l),
             Err(e) => mapping.problems.push(format!("--fit-largest: the layout it fits isn't one load can read back: {e}")),
         }
     }
-    for p in fitted_already(layout, &out, &system, opts, &mapping) {
+    for p in fitted_already(src, &out, &system, &o2, &mapping) {
         mapping.problems.push(p);
     }
-    release_holders(&out, opts, &system, sys, &mut mapping);
+    release_holders(&out, &o2, &system, sys, &mut mapping);
     mapping.records = records(&out, &system, &mapping, sys);
     Prepared { system, mapping, layout: out, fit }
+}
+
+/// --pools' refusals: a --map of a disk of a pool it leaves untouched, and
+/// a target disk here that holds one of those pools (its vdev's label has
+/// the pool's GUID): load would write over a pool it was told to leave.
+pub fn left_out_pool_problems(opts: &Options, only: &crate::load::layout::OnlyPools, m: &Mapping, system: &System) -> Vec<String> {
+    let mut out = Vec::new();
+    for (src, dst) in &opts.maps {
+        if only.disks.contains(src) {
+            out.push(format!("--map {src}={dst}: {src} holds a pool --pools leaves untouched, so it has no target"));
+        }
+    }
+    for (src, tgt) in &m.pairs {
+        let Some(t) = system.disk(tgt) else { continue };
+        for (pool, guid) in &only.guids {
+            if t.uuids.iter().any(|u| u == guid) {
+                out.push(format!("{src} -> {}: the target holds pool {pool}, which --pools leaves untouched; refused", t.path()));
+            }
+        }
+    }
+    out
 }
 
 /// A table an earlier stage wrote with another --fit-largest: without the

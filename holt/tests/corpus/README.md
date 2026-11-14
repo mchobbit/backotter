@@ -221,6 +221,35 @@ its volume ID, make no zpool.cache (the sources have none), and at boot run
 list's order, one `proxmox-boot-tool refresh`, and write the ESP list back;
 they make no NVRAM entry, each source entry being one that `init`'s
 `bootctl install` makes again.
+truenas25 (`make-truenas.sh truenas25`: TrueNAS CE 25.10.6 from its ISO by
+its own installer, then updated to 25.10.7 and 25.10.8 by its offline
+update files; UEFI with Secure Boot off, GPT with a BIOS boot partition, a
+512 MiB ESP that nothing mounts and `boot-pool` (`compatibility=grub2`)
+with the boot environments `ROOT/25.10.6` (kept), `ROOT/25.10.7` and
+`ROOT/25.10.8` (booted), 15 children each, `grub` at /boot/grub and
+`.system` at /var/db/system; GRUB for both firmwares; docs/design/truenas.md),
+built on 2026-11-14, was added the same day from a dump of the live guest
+on chopin (run `t3`, the static bko-holt 0.2.6 built from this tree with
+T2's TrueNAS code, `464fe4a7...`; its own vm-run-options with a copy of its
+install's UEFI variables, so through GRUB's TrueNAS-0 NVRAM entry, 8 GiB,
+the disk under `vm-run --snapshot`, the image's sha256 the same before and
+after; its provenance.tsv written by hand).  It is in the corpus before it
+is one of classes.json's HoltTest2 sources, so golden_plans.rs notes it
+until it is.  Its dump is the first with `boot.truenas` (each BE's version,
+kernel, keep flag and clones, the ESPs found as each `boot-pool` disk's
+EF00 partition) and the first whose `storage.backup_sources` hold
+inactive ZFS boot environments: each at `/run/bko-be/V` with its children,
+no `from`, and a read-only `zfs` mount hint.  Its golden plan makes every
+BE and child with its local properties but `readonly`, notes the inactive
+BEs' clones as full copies, mounts `boot-pool/grub` and `.system`'s
+datasets at their dumped paths and the inactive BEs under
+`run/bko-be` for the one restore, then unmounts them and removes the
+directory; at boot it runs `grub-install --target=i386-pc` on the disk,
+`grub-install --target=x86_64-efi --bootloader-id=debian --no-nvram` into
+the ESP mounted only for it, copies it to `EFI/boot/bootx64.efi`, runs one
+`update-grub` and no `update-initramfs`, makes the TrueNAS-0 NVRAM entry,
+and sets `readonly=on` back on the twelve datasets that had it before the
+pool is exported.
 vanilla3 (`make-vanilla.sh`: Vanilla OS 3.0 by Albius from its live ISO
 with the installer's own recipe; UEFI with Secure Boot, a 1 GiB ext4
 `vos-boot` at /boot with the master grub.cfg, a 512 MiB ESP, the VG
@@ -446,7 +475,14 @@ with its 98 strings and the raw dump's identifiers, cinqcent with its 99,
 the Mac with the git e-mail, 0 findings (its plan scanned too), the same
 sha256 from both builds (src.json `a95eef1e...`).  Its first build had
 one finding in (b), the raw `lvol0_pmspare` UUID that redact.rs had left
-(above); it never left chopin, and the build after the fix had none.  So did leap16
+(above); it never left chopin, and the build after the fix had none.  So
+did truenas25 (2026-11-14), built from a private directory on chopin
+(/bkoscratch, its warm holt build at /bkoscratch/holt-warm/truenas):
+chopin with 98 of its 103 strings and the raw dump's identifiers, cinqcent
+with 100 of its 106, the Mac with the git e-mail, 0 findings (its plan
+scanned too), and a check of the src.json and index row for its
+admin-password's bytes (as is and as UTF-16LE): none; the same sha256 from
+both builds (src.json `0b5f0b6f...`).  So did leap16
 (2026-11-14), built from a private directory on chopin (/bkoscratch, its
 warm holt build at /bkoscratch/holt-warm/l16-opensuse): chopin with its
 101 strings and the raw dump's identifiers, cinqcent with its 106, the Mac

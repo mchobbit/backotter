@@ -288,6 +288,144 @@ impl Layout {
     }
 }
 
+/// The value at PATH in V, for writing (objects only).
+fn at_mut<'a>(v: &'a mut Value, path: &[&str]) -> Option<&'a mut Value> {
+    let mut cur = v;
+    for k in path {
+        let Value::Obj(kv) = cur else { return None };
+        cur = &mut kv.iter_mut().find(|(n, _)| n == k)?.1;
+    }
+    Some(cur)
+}
+
+/// What `--pools` makes of a layout (Layout::only_pools).
+pub struct OnlyPools {
+    /// The layout without the pools left out and the disks they're on.
+    pub layout: Layout,
+    pub notes: Vec<String>,
+    pub problems: Vec<String>,
+    /// The source disks left out.
+    pub disks: Vec<String>,
+    /// The left-out pools' GUIDs (lower case): a target holding one is
+    /// one of their disks here.
+    pub guids: Vec<(String, String)>,
+}
+
+impl Layout {
+    /// The layout `--pools KEEP` plans (docs/design/truenas.md, decision
+    /// 6): the ZFS pools not in KEEP are left untouched, with the disks
+    /// that hold their vdevs.  Those disks aren't partitioned, the pools
+    /// and datasets aren't made, and the files of their backup sources
+    /// aren't restored (storage.zfs.left_out_pools, the restore's globs).
+    /// A disk that holds a vdev of a kept pool too is a problem, as is a
+    /// name in KEEP that isn't one of the layout's pools.
+    pub fn only_pools(&self, keep: &[String]) -> OnlyPools {
+        let mut v = self.v.clone();
+        let mut notes = Vec::new();
+        let mut problems = Vec::new();
+        let mut names: Vec<String> = self.arr(&["storage", "zfs", "tools", "imported_pools"]).iter().filter_map(|p| s(p, "name")).collect();
+        for p in self.arr(&["storage", "zfs", "pools_from_labels"]) {
+            if let Some(n) = s(p, "name").filter(|n| !names.contains(n)) {
+                names.push(n);
+            }
+        }
+        for k in keep.iter().filter(|k| !names.contains(k)) {
+            problems.push(format!("--pools {k}: the layout has no ZFS pool {k} (it has {})", if names.is_empty() { "none".to_string() } else { names.join(", ") }));
+        }
+        let left: Vec<String> = names.iter().filter(|n| !keep.contains(n)).cloned().collect();
+        let pool_of = |c: &Value| (s(c, "type").as_deref() == Some("zfs_member")).then(|| s(c, "pool_name").or_else(|| s(c, "label"))).flatten();
+        let mut out_disks: Vec<String> = Vec::new();
+        let mut on: Vec<(String, Vec<String>)> = left.iter().map(|n| (n.clone(), Vec::new())).collect();
+        for d in &self.disks {
+            let pools: Vec<String> = std::iter::once(&d.content).chain(d.parts.iter().map(|p| &p.content)).filter_map(pool_of).collect();
+            let gone: Vec<&String> = pools.iter().filter(|p| left.contains(p)).collect();
+            if gone.is_empty() {
+                continue;
+            }
+            if let Some(k) = pools.iter().find(|p| !left.contains(p)) {
+                problems.push(format!("--pools: {} holds a vdev of pool {k}, which is restored, and of pool {}, which --pools leaves untouched; bko-holt load can't do half a disk", d.name, gone[0]));
+                continue;
+            }
+            out_disks.push(d.name.clone());
+            for g in gone {
+                if let Some((_, ds)) = on.iter_mut().find(|(n, _)| n == g) {
+                    if !ds.contains(&d.name) {
+                        ds.push(d.name.clone());
+                    }
+                }
+            }
+        }
+        let pool_part = |ds: &str| ds.split('/').next().unwrap_or(ds).to_string();
+        // A device on a disk left out: a partition of one, or what sits on
+        // one (md, device-mapper: its slaves).
+        fn on_disks(l: &Layout, dev: &str, disks: &[String], depth: usize) -> bool {
+            if disks.iter().any(|d| d == dev) || l.disks.iter().filter(|d| disks.contains(&d.name)).any(|d| d.parts.iter().any(|p| p.name == dev)) {
+                return true;
+            }
+            depth < 8 && l.slaves(dev).iter().any(|s| on_disks(l, s, disks, depth + 1))
+        }
+        let mut left_json = Vec::new();
+        let mut all_paths: Vec<String> = Vec::new();
+        for (n, ds) in &on {
+            let paths: Vec<String> = self
+                .arr(&["storage", "backup_sources"])
+                .iter()
+                .filter(|b| s(b, "fstype").as_deref() == Some("zfs") && s(b, "source").is_some_and(|x| pool_part(&x) == *n))
+                .filter_map(|b| s(b, "path"))
+                .collect();
+            let guid = self.arr(&["storage", "zfs", "pools_from_labels"]).iter().find(|l| s(l, "name").as_deref() == Some(n.as_str())).and_then(|l| l.get("pool_guid")).and_then(|g| g.as_str().map(str::to_string).or_else(|| g.as_u64().map(|x| x.to_string())));
+            if ds.is_empty() {
+                problems.push(format!("--pools: pool {n} is to be left untouched, but no disk of the layout holds a vdev of it (its label wasn't read, or it's inside GELI or LUKS), so bko-holt load can't tell which disks to leave alone"));
+            }
+            if guid.is_none() {
+                problems.push(format!("--pools: pool {n} has no GUID in the dump (storage.zfs.pools_from_labels), so a target disk holding it couldn't be recognised and refused"));
+            }
+            let files = if paths.is_empty() { String::new() } else { format!("; its files under {} aren't restored", paths.join(", ")) };
+            notes.push(format!("--pools: pool {n} on {} left untouched (not partitioned, made or restored){files}", if ds.is_empty() { "no disk of the layout".to_string() } else { ds.join(", ") }));
+            all_paths.extend(paths.iter().cloned());
+            left_json.push(crate::json::Obj::new().set("name", n.as_str()).set("guid", guid).set("disks", ds.clone()).set("paths", paths).build());
+        }
+        // Whatever else those disks hold (an ext4 /srv beside the pool's
+        // partition) isn't made either: its files aren't restored.
+        let mut others: Vec<String> = Vec::new();
+        for b in self.arr(&["storage", "backup_sources"]) {
+            let (Some(path), Some(dev)) = (s(b, "path"), s(b, "device")) else { continue };
+            if !all_paths.contains(&path) && on_disks(self, &dev, &out_disks, 0) {
+                others.push(format!("{path} ({dev})"));
+                all_paths.push(path);
+            }
+        }
+        if !others.is_empty() {
+            notes.push(format!("--pools: the left-out disks also hold {}, which aren't made or restored either", others.join(", ")));
+        }
+        let guids: Vec<(String, String)> = left_json.iter().filter_map(|p| Some((s(p, "name")?, s(p, "guid")?.to_ascii_lowercase()))).collect();
+        if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "disks"]) {
+            a.retain(|d| !s(d, "name").is_some_and(|n| out_disks.contains(&n)));
+        }
+        for path in [&["storage", "zfs", "tools", "imported_pools"][..], &["storage", "zfs", "pools_from_labels"][..]] {
+            if let Some(Value::Arr(a)) = at_mut(&mut v, path) {
+                a.retain(|p| !s(p, "name").is_some_and(|n| left.contains(&n)));
+            }
+        }
+        if let Some(Value::Arr(a)) = at_mut(&mut v, &["storage", "zfs", "tools", "datasets"]) {
+            a.retain(|d| !s(d, "name").is_some_and(|n| left.contains(&pool_part(&n))));
+        }
+        if let Some(Value::Obj(z)) = at_mut(&mut v, &["storage", "zfs"]) {
+            z.retain(|(k, _)| k != "left_out_pools" && k != "left_out_paths");
+            z.push(("left_out_pools".into(), Value::Arr(left_json)));
+            z.push(("left_out_paths".into(), Value::Arr(all_paths.into_iter().map(Value::from).collect())));
+        }
+        let layout = match Layout::from_json(v) {
+            Ok(l) => l,
+            Err(e) => {
+                problems.push(format!("--pools: the layout without the pools it leaves untouched isn't one load can read back ({e}), so --pools can't be honoured"));
+                self.clone()
+            }
+        };
+        OnlyPools { layout, notes, problems, disks: out_disks, guids }
+    }
+}
+
 #[cfg(test)]
 pub mod sample {
     /// The same dump with the figures --fit-largest needs: the root

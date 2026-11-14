@@ -1,0 +1,5569 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.6"
+  },
+  "generated": "2026-11-14T15:01:15Z",
+  "privileged": true,
+  "host": {
+    "hostname": "truenas",
+    "machine_id": "bd000000000040008000000000000001",
+    "dmi": {
+      "sys_vendor": "QEMU",
+      "product_name": "Standard PC (Q35 + ICH9, 2009)",
+      "product_version": "pc-q35-10.0",
+      "board_vendor": null,
+      "board_name": null,
+      "bios_vendor": "Debian distribution of EDK II",
+      "bios_version": "2025.02-8+deb13u1",
+      "bios_date": "11/08/2025",
+      "product_uuid": null,
+      "chassis_type": "1"
+    },
+    "virtualization": "kvm"
+  },
+  "os": {
+    "id": "debian",
+    "version_id": "12",
+    "version_codename": "bookworm",
+    "pretty_name": "Debian GNU/Linux 12 (bookworm)",
+    "debian_version": "12.11",
+    "kernel_release": "6.12.113-production+truenas",
+    "kernel_version": "#1 SMP PREEMPT_DYNAMIC Tue Nov  3 20:40:38 UTC 2026",
+    "architecture": "x86_64",
+    "product": "TrueNAS 25.10.8"
+  },
+  "firmware": {
+    "mode": "uefi",
+    "platform_size": 64,
+    "secure_boot": null,
+    "setup_mode": null,
+    "efivars_readable": true
+  },
+  "storage": {
+    "topology": {
+      "vda (disk, 32 GiB, gpt)": {
+        "vda1 (partition, 1 MiB)": {},
+        "vda2 (partition, 512 MiB) vfat \"EFI\"": {},
+        "vda3 (partition, 31.5 GiB) zfs_member \"boot-pool\"": {}
+      }
+    },
+    "disks": [
+      {
+        "name": "vda",
+        "path": "/dev/vda",
+        "kind": "disk",
+        "devno": "254:0",
+        "size_bytes": 34359738368,
+        "size": "32 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/1",
+          "/dev/disk/by-path/pci-0000:00:03.0",
+          "/dev/disk/by-path/virtio-pci-0000:00:03.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "bc000000-0000-4000-8000-000000000001",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 34,
+          "last_usable_lba": 67108830,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 67108863,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 67108863,
+                "start_bytes": 512,
+                "size_bytes": 34359737856,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vda1",
+            "path": "/dev/vda1",
+            "devno": "254:1",
+            "number": 1,
+            "start_lba": 4096,
+            "end_lba": 6143,
+            "sectors": 2048,
+            "start_bytes": 2097152,
+            "size_bytes": 1048576,
+            "type": "21686148-6449-6e6f-744e-656564454649",
+            "type_name": "BIOS boot",
+            "uuid": "bc000000-0000-4000-8000-000000000002",
+            "partlabel": "",
+            "attributes": "0x0000000000000004",
+            "attribute_flags": ["legacy_bios_bootable"],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part1",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000002",
+              "/dev/disk/by-path/pci-0000:00:03.0-part1",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part1"
+            ],
+            "holders": [],
+            "content": null,
+            "mounted_at": []
+          },
+          {
+            "name": "vda2",
+            "path": "/dev/vda2",
+            "devno": "254:2",
+            "number": 2,
+            "start_lba": 6144,
+            "end_lba": 1054719,
+            "sectors": 1048576,
+            "start_bytes": 3145728,
+            "size_bytes": 536870912,
+            "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "type_name": "EFI System",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part2",
+              "/dev/disk/by-label/EFI",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:00:03.0-part2",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part2",
+              "/dev/disk/by-uuid/BC00-0001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "vfat",
+              "usage": "filesystem",
+              "uuid": "BC00-0001",
+              "label": "EFI",
+              "version": "FAT32",
+              "fat_bits": 32,
+              "bytes_per_sector": 512,
+              "sectors_per_cluster": 1,
+              "cluster_size": 512,
+              "reserved_sectors": 32,
+              "fats": 2,
+              "fat_sectors": 8066,
+              "total_sectors": 1048572,
+              "size_bytes": 536868864,
+              "clusters": 1032408,
+              "hidden_sectors": 6144,
+              "media": "0xf8",
+              "oem_name": "mkfs.fat",
+              "root_cluster": 2,
+              "fsinfo_sector": 1,
+              "backup_boot_sector": 6,
+              "boot_sector_label": "EFI"
+            },
+            "mounted_at": []
+          },
+          {
+            "name": "vda3",
+            "path": "/dev/vda3",
+            "devno": "254:3",
+            "number": 3,
+            "start_lba": 1054720,
+            "end_lba": 67108830,
+            "sectors": 66054111,
+            "start_bytes": 540016640,
+            "size_bytes": 33819704832,
+            "type": "6a898cc3-1dd2-11b2-99a6-080020736631",
+            "type_name": "Solaris /usr & Apple ZFS",
+            "uuid": "bc000000-0000-4000-8000-000000000004",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part3",
+              "/dev/disk/by-label/boot-pool",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000004",
+              "/dev/disk/by-path/pci-0000:00:03.0-part3",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part3",
+              "/dev/disk/by-uuid/1000000000000000001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "zfs_member",
+              "usage": "filesystem",
+              "uuid": "1000000000000000001",
+              "label": "boot-pool",
+              "version": "5000",
+              "labels_valid": 4,
+              "pool_name": "boot-pool",
+              "pool_guid": "1000000000000000001",
+              "vdev_guid": "10000000000000000002",
+              "top_guid": "10000000000000000002",
+              "pool_state": "active",
+              "txg": 1651,
+              "spa_version": 5000,
+              "hostname": "(none)",
+              "hostid": null
+            },
+            "mounted_at": []
+          }
+        ],
+        "boot_code": {
+          "kind": "grub2",
+          "first_bytes": "eb639000000000000000000000000000",
+          "grub_core_lba": 4096,
+          "grub_boot_drive": "0xff",
+          "grub_core_present": true,
+          "grub_core_in": "partition",
+          "post_mbr_gap": {
+            "sectors": 4095,
+            "nonzero_sectors_in_first_mib": 2
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [],
+    "loop_devices": [],
+    "other_devices": [
+      {
+        "name": "sr0",
+        "path": "/dev/sr0",
+        "kind": "rom",
+        "devno": "11:0",
+        "size_bytes": 1073741312,
+        "size": "1024 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": false,
+        "links": [
+          "/dev/cdrom",
+          "/dev/disk/by-diskseq/3",
+          "/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1",
+          "/dev/disk/by-path/pci-0000:00:1f.2-ata-3",
+          "/dev/disk/by-path/pci-0000:00:1f.2-ata-3.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "lvm": {
+      "volume_groups": []
+    },
+    "zfs": {
+      "pools_from_labels": [
+        {
+          "name": "boot-pool",
+          "pool_guid": "1000000000000000001",
+          "state": 0,
+          "txg": 1651,
+          "version": 5000,
+          "hostname": "(none)",
+          "hostid": null,
+          "vdev_children": 1,
+          "top_level_vdevs": [
+            {
+              "type": "disk",
+              "id": 0,
+              "guid": 10000000000000000002,
+              "path": "/dev/vda3",
+              "whole_disk": 0,
+              "metaslab_array": 131,
+              "metaslab_shift": 29,
+              "ashift": 12,
+              "asize": 33814740992,
+              "min_alloc": 4096,
+              "is_log": 0,
+              "create_txg": 4
+            }
+          ],
+          "features_for_read": {
+            "com.delphix:hole_birth": true,
+            "com.delphix:embedded_data": true
+          },
+          "member_devices": ["vda3"]
+        }
+      ],
+      "zpool_cache": null,
+      "tools": {
+        "imported_pools": [
+          {
+            "name": "boot-pool",
+            "properties": {
+              "size": "33285996544",
+              "altroot": "-",
+              "health": "ONLINE",
+              "guid": "1000000000000000001",
+              "version": "-",
+              "bootfs": "boot-pool/ROOT/25.10.8",
+              "delegation": "on",
+              "autoreplace": "off",
+              "cachefile": "-",
+              "failmode": "wait",
+              "listsnapshots": "off",
+              "autoexpand": "off",
+              "readonly": "off",
+              "ashift": "12",
+              "comment": "-",
+              "multihost": "off",
+              "autotrim": "off",
+              "compatibility": "grub2",
+              "dedup_table_quota": "auto",
+              "last_scrubbed_txg": "0"
+            },
+            "local_properties": {
+              "bootfs": "boot-pool/ROOT/25.10.8",
+              "ashift": "12",
+              "compatibility": "grub2"
+            },
+            "features": {
+              "async_destroy": "enabled",
+              "empty_bpobj": "active",
+              "lz4_compress": "active",
+              "multi_vdev_crash_dump": "disabled",
+              "spacemap_histogram": "active",
+              "enabled_txg": "active",
+              "hole_birth": "active",
+              "extensible_dataset": "active",
+              "embedded_data": "active",
+              "bookmarks": "enabled",
+              "filesystem_limits": "enabled",
+              "large_blocks": "enabled",
+              "large_dnode": "disabled",
+              "sha512": "disabled",
+              "skein": "disabled",
+              "edonr": "disabled",
+              "userobj_accounting": "active",
+              "encryption": "disabled",
+              "project_quota": "active",
+              "device_removal": "disabled",
+              "obsolete_counts": "disabled",
+              "zpool_checkpoint": "enabled",
+              "spacemap_v2": "active",
+              "allocation_classes": "enabled",
+              "resilver_defer": "enabled",
+              "bookmark_v2": "disabled",
+              "redaction_bookmarks": "disabled",
+              "redacted_datasets": "disabled",
+              "bookmark_written": "disabled",
+              "log_spacemap": "active",
+              "livelist": "enabled",
+              "device_rebuild": "enabled",
+              "zstd_compress": "disabled",
+              "draid": "disabled",
+              "zilsaxattr": "active",
+              "head_errlog": "disabled",
+              "blake3": "disabled",
+              "block_cloning": "active",
+              "vdev_zaps_v2": "disabled",
+              "redaction_list_spill": "disabled",
+              "raidz_expansion": "disabled",
+              "fast_dedup": "disabled",
+              "longname": "disabled",
+              "large_microzap": "disabled"
+            },
+            "vdevs": {
+              "vdevs": {
+                "boot-pool": {
+                  "name": "boot-pool",
+                  "vdev_type": "root",
+                  "guid": 1000000000000000001,
+                  "class": "normal",
+                  "state": "ONLINE",
+                  "alloc_space": 14792835072,
+                  "total_space": 33285996544,
+                  "def_space": 33285996544,
+                  "read_errors": 0,
+                  "write_errors": 0,
+                  "checksum_errors": 0,
+                  "vdevs": {
+                    "/dev/vda3": {
+                      "name": "/dev/vda3",
+                      "vdev_type": "disk",
+                      "guid": 10000000000000000002,
+                      "path": "/dev/vda3",
+                      "class": "normal",
+                      "state": "ONLINE",
+                      "alloc_space": 14792835072,
+                      "total_space": 33285996544,
+                      "def_space": 33285996544,
+                      "rep_dev_size": 33290715136,
+                      "phys_space": 33819459584,
+                      "read_errors": 0,
+                      "write_errors": 0,
+                      "checksum_errors": 0,
+                      "slow_ios": 0
+                    }
+                  }
+                }
+              },
+              "logs": null,
+              "l2cache": null,
+              "spares": null,
+              "special": null,
+              "dedup": null
+            }
+          }
+        ],
+        "datasets": [
+          {
+            "name": "boot-pool",
+            "type": "filesystem",
+            "used": 14790221824,
+            "available": 17455607808,
+            "referenced": 98304,
+            "mountpoint": "none",
+            "canmount": "off",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "none",
+                "source": "local"
+              },
+              "compression": {
+                "value": "on",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "off",
+                "source": "local"
+              },
+              "xattr": {
+                "value": "on",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "relatime": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/.system",
+            "type": "filesystem",
+            "used": 2031616,
+            "available": 17452470272,
+            "referenced": 114688,
+            "mountpoint": "legacy",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "legacy",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "snapdir": {
+                "value": "hidden",
+                "source": "local"
+              },
+              "xattr": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/.system/configs-ae32c386e13840b2bf9c0083275e7941",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 17452470272,
+            "referenced": 98304,
+            "mountpoint": "legacy",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "legacy",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "snapdir": {
+                "value": "hidden",
+                "source": "local"
+              },
+              "xattr": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/.system/cores",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 1073643520,
+            "referenced": 98304,
+            "mountpoint": "legacy",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "quota": {
+                "value": "1073741824",
+                "source": "local"
+              },
+              "mountpoint": {
+                "value": "legacy",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "snapdir": {
+                "value": "hidden",
+                "source": "local"
+              },
+              "xattr": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/.system/netdata-ae32c386e13840b2bf9c0083275e7941",
+            "type": "filesystem",
+            "used": 1363968,
+            "available": 17452470272,
+            "referenced": 1363968,
+            "mountpoint": "legacy",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "legacy",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "snapdir": {
+                "value": "hidden",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "xattr": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/.system/nfs",
+            "type": "filesystem",
+            "used": 106496,
+            "available": 17452470272,
+            "referenced": 106496,
+            "mountpoint": "legacy",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "legacy",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "snapdir": {
+                "value": "hidden",
+                "source": "local"
+              },
+              "xattr": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/.system/samba4",
+            "type": "filesystem",
+            "used": 151552,
+            "available": 17452470272,
+            "referenced": 151552,
+            "mountpoint": "legacy",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "legacy",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "snapdir": {
+                "value": "hidden",
+                "source": "local"
+              },
+              "xattr": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/.system/vm",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 17452470272,
+            "referenced": 98304,
+            "mountpoint": "legacy",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "legacy",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "snapdir": {
+                "value": "hidden",
+                "source": "local"
+              },
+              "xattr": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT",
+            "type": "filesystem",
+            "used": 14772781056,
+            "available": 17455607808,
+            "referenced": 98304,
+            "mountpoint": "none",
+            "canmount": "off",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "canmount": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "grub",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6",
+            "type": "filesystem",
+            "used": 3585646592,
+            "available": 17455607808,
+            "referenced": 113254400,
+            "mountpoint": "legacy",
+            "canmount": "on",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "legacy",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "on",
+                "source": "local"
+              },
+              "truenas:kernel_version": {
+                "value": "6.12.99-production+truenas",
+                "source": "local"
+              },
+              "zectl:keep": {
+                "value": "True",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/audit",
+            "type": "filesystem",
+            "used": 118784,
+            "available": 17455607808,
+            "referenced": 167936,
+            "mountpoint": "/audit",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": "boot-pool/ROOT/25.10.8/audit@install-2026-11-14-11-52-48",
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/audit",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              },
+              "org.freenas:refquota_warning": {
+                "value": "75",
+                "source": "local"
+              },
+              "org.freenas:refquota_critical": {
+                "value": "95",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/conf",
+            "type": "filesystem",
+            "used": 8675328,
+            "available": 17455607808,
+            "referenced": 8675328,
+            "mountpoint": "/conf",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/conf",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "on",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/data",
+            "type": "filesystem",
+            "used": 90112,
+            "available": 17455607808,
+            "referenced": 274432,
+            "mountpoint": "/data",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": "boot-pool/ROOT/25.10.8/data@install-2026-11-14-11-52-48",
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/data",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/etc",
+            "type": "filesystem",
+            "used": 7774208,
+            "available": 17455607808,
+            "referenced": 6713344,
+            "mountpoint": "/etc",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/etc",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/home",
+            "type": "filesystem",
+            "used": 0,
+            "available": 17455607808,
+            "referenced": 110592,
+            "mountpoint": "/home",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": "boot-pool/ROOT/25.10.8/home@install-2026-11-14-11-52-48",
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/home",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/mnt",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 17455607808,
+            "referenced": 98304,
+            "mountpoint": "/mnt",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/mnt",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/opt",
+            "type": "filesystem",
+            "used": 4878336,
+            "available": 17455607808,
+            "referenced": 4878336,
+            "mountpoint": "/opt",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/opt",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "on",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/root",
+            "type": "filesystem",
+            "used": 73728,
+            "available": 17455607808,
+            "referenced": 139264,
+            "mountpoint": "/root",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": "boot-pool/ROOT/25.10.8/root@install-2026-11-14-11-52-48",
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/root",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/usr",
+            "type": "filesystem",
+            "used": 3414990848,
+            "available": 17455607808,
+            "referenced": 3414990848,
+            "mountpoint": "/usr",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/usr",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "on",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/var",
+            "type": "filesystem",
+            "used": 35692544,
+            "available": 17455607808,
+            "referenced": 4542464,
+            "mountpoint": "/var",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/var/ca-certificates",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 17455607808,
+            "referenced": 98304,
+            "mountpoint": "/var/local/ca-certificates",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/local/ca-certificates",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/var/lib",
+            "type": "filesystem",
+            "used": 30195712,
+            "available": 17455607808,
+            "referenced": 29847552,
+            "mountpoint": "/var/lib",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/lib",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/var/lib/incus",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 17455607808,
+            "referenced": 98304,
+            "mountpoint": "/var/lib/incus",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/lib/incus",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "on",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/var/log",
+            "type": "filesystem",
+            "used": 724992,
+            "available": 17455607808,
+            "referenced": 528384,
+            "mountpoint": "/var/log",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": "boot-pool/ROOT/25.10.8/var/log@install-2026-11-14-11-52-48",
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/log",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.6/var/log/journal",
+            "type": "filesystem",
+            "used": 495616,
+            "available": 17455607808,
+            "referenced": 495616,
+            "mountpoint": "/var/log/journal",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/log/journal",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "posix",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7",
+            "type": "filesystem",
+            "used": 3586416640,
+            "available": 17455607808,
+            "referenced": 113385472,
+            "mountpoint": "legacy",
+            "canmount": "on",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "legacy",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "on",
+                "source": "local"
+              },
+              "truenas:kernel_version": {
+                "value": "6.12.105-production+truenas",
+                "source": "local"
+              },
+              "zectl:keep": {
+                "value": "False",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/audit",
+            "type": "filesystem",
+            "used": 114688,
+            "available": 17455607808,
+            "referenced": 192512,
+            "mountpoint": "/audit",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": "boot-pool/ROOT/25.10.8/audit@install-2026-11-14-12-05-55",
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/audit",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              },
+              "org.freenas:refquota_warning": {
+                "value": "75",
+                "source": "local"
+              },
+              "org.freenas:refquota_critical": {
+                "value": "95",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/conf",
+            "type": "filesystem",
+            "used": 8679424,
+            "available": 17452470272,
+            "referenced": 8679424,
+            "mountpoint": "/conf",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/conf",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "on",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/data",
+            "type": "filesystem",
+            "used": 90112,
+            "available": 17452470272,
+            "referenced": 270336,
+            "mountpoint": "/data",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": "boot-pool/ROOT/25.10.8/data@install-2026-11-14-12-05-56",
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/data",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/etc",
+            "type": "filesystem",
+            "used": 7700480,
+            "available": 17455607808,
+            "referenced": 6746112,
+            "mountpoint": "/etc",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/etc",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/home",
+            "type": "filesystem",
+            "used": 0,
+            "available": 17453805568,
+            "referenced": 110592,
+            "mountpoint": "/home",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": "boot-pool/ROOT/25.10.8/home@install-2026-11-14-12-05-56",
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/home",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/mnt",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 17452486656,
+            "referenced": 98304,
+            "mountpoint": "/mnt",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/mnt",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/opt",
+            "type": "filesystem",
+            "used": 4878336,
+            "available": 17455431680,
+            "referenced": 4878336,
+            "mountpoint": "/opt",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/opt",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "on",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/root",
+            "type": "filesystem",
+            "used": 73728,
+            "available": 17455607808,
+            "referenced": 2003144704,
+            "mountpoint": "/root",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": "boot-pool/ROOT/25.10.8/root@install-2026-11-14-12-05-56",
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/root",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/usr",
+            "type": "filesystem",
+            "used": 3415662592,
+            "available": 17455607808,
+            "referenced": 3415662592,
+            "mountpoint": "/usr",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/usr",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "on",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/var",
+            "type": "filesystem",
+            "used": 35725312,
+            "available": 17452470272,
+            "referenced": 4542464,
+            "mountpoint": "/var",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/var/ca-certificates",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 17452470272,
+            "referenced": 98304,
+            "mountpoint": "/var/local/ca-certificates",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/local/ca-certificates",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/var/lib",
+            "type": "filesystem",
+            "used": 30216192,
+            "available": 17452470272,
+            "referenced": 29855744,
+            "mountpoint": "/var/lib",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/lib",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/var/lib/incus",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 17452470272,
+            "referenced": 98304,
+            "mountpoint": "/var/lib/incus",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/lib/incus",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "on",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/var/log",
+            "type": "filesystem",
+            "used": 737280,
+            "available": 17452470272,
+            "referenced": 610304,
+            "mountpoint": "/var/log",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": "boot-pool/ROOT/25.10.8/var/log@install-2026-11-14-12-05-56",
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/log",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.7/var/log/journal",
+            "type": "filesystem",
+            "used": 483328,
+            "available": 17452470272,
+            "referenced": 483328,
+            "mountpoint": "/var/log/journal",
+            "canmount": "noauto",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/log/journal",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "posix",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8",
+            "type": "filesystem",
+            "used": 7600619520,
+            "available": 17455607808,
+            "referenced": 113541120,
+            "mountpoint": "legacy",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "legacy",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "on",
+                "source": "local"
+              },
+              "truenas:kernel_version": {
+                "value": "6.12.113-production+truenas",
+                "source": "local"
+              },
+              "zectl:keep": {
+                "value": "False",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/audit",
+            "type": "filesystem",
+            "used": 524288,
+            "available": 17455607808,
+            "referenced": 270336,
+            "mountpoint": "/audit",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/audit",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              },
+              "org.freenas:refquota_warning": {
+                "value": "75",
+                "source": "local"
+              },
+              "org.freenas:refquota_critical": {
+                "value": "95",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/conf",
+            "type": "filesystem",
+            "used": 8687616,
+            "available": 17455607808,
+            "referenced": 8687616,
+            "mountpoint": "/conf",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/conf",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "on",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/data",
+            "type": "filesystem",
+            "used": 741376,
+            "available": 17455607808,
+            "referenced": 270336,
+            "mountpoint": "/data",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/data",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/etc",
+            "type": "filesystem",
+            "used": 7720960,
+            "available": 17455607808,
+            "referenced": 6770688,
+            "mountpoint": "/etc",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/etc",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/home",
+            "type": "filesystem",
+            "used": 241664,
+            "available": 17455607808,
+            "referenced": 110592,
+            "mountpoint": "/home",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/home",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/mnt",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 17455607808,
+            "referenced": 98304,
+            "mountpoint": "/mnt",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/mnt",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/opt",
+            "type": "filesystem",
+            "used": 4829184,
+            "available": 17455607808,
+            "referenced": 4829184,
+            "mountpoint": "/opt",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/opt",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "on",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/root",
+            "type": "filesystem",
+            "used": 4008079360,
+            "available": 17455607808,
+            "referenced": 4007915520,
+            "mountpoint": "/root",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/root",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/usr",
+            "type": "filesystem",
+            "used": 3418374144,
+            "available": 17455607808,
+            "referenced": 3418374144,
+            "mountpoint": "/usr",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/usr",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "on",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/var",
+            "type": "filesystem",
+            "used": 37773312,
+            "available": 17455607808,
+            "referenced": 4546560,
+            "mountpoint": "/var",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/var/ca-certificates",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 17455607808,
+            "referenced": 98304,
+            "mountpoint": "/var/local/ca-certificates",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/local/ca-certificates",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/var/lib",
+            "type": "filesystem",
+            "used": 30216192,
+            "available": 17455607808,
+            "referenced": 29863936,
+            "mountpoint": "/var/lib",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/lib",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/var/lib/incus",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 17455607808,
+            "referenced": 98304,
+            "mountpoint": "/var/lib/incus",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/lib/incus",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "on",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/var/log",
+            "type": "filesystem",
+            "used": 2781184,
+            "available": 17455607808,
+            "referenced": 933888,
+            "mountpoint": "/var/log",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/log",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "off",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/ROOT/25.10.8/var/log/journal",
+            "type": "filesystem",
+            "used": 1306624,
+            "available": 17455607808,
+            "referenced": 1306624,
+            "mountpoint": "/var/log/journal",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "posix",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var/log/journal",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              },
+              "devices": {
+                "value": "off",
+                "source": "local"
+              },
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              },
+              "readonly": {
+                "value": "off",
+                "source": "local"
+              },
+              "aclmode": {
+                "value": "discard",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              },
+              "acltype": {
+                "value": "posix",
+                "source": "local"
+              },
+              "org.zectl:bootloader": {
+                "value": "\"\"",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "boot-pool/grub",
+            "type": "filesystem",
+            "used": 9461760,
+            "available": 17455607808,
+            "referenced": 9461760,
+            "mountpoint": "legacy",
+            "canmount": "off",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "off",
+            "xattr": "on",
+            "dnodesize": "legacy",
+            "normalization": "formD",
+            "utf8only": "on",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "legacy",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "btrfs": [],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "boot-pool/ROOT/25.10.8",
+        "fstype": "zfs",
+        "devno": "0:26",
+        "device": null,
+        "root": "/",
+        "options": "ro,nodev,relatime",
+        "super_options": "ro,xattr,noacl,casesensitive",
+        "size_bytes": 17569153024,
+        "used_bytes": 113639424,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/audit",
+        "source": "boot-pool/ROOT/25.10.8/audit",
+        "fstype": "zfs",
+        "devno": "0:27",
+        "device": null,
+        "root": "/",
+        "options": "rw,nosuid,nodev,noexec,noatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17455906816,
+        "used_bytes": 393216,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/conf",
+        "source": "boot-pool/ROOT/25.10.8/conf",
+        "fstype": "zfs",
+        "devno": "0:28",
+        "device": null,
+        "root": "/",
+        "options": "ro,nosuid,nodev,noexec,relatime",
+        "super_options": "ro,xattr,noacl,casesensitive",
+        "size_bytes": 17464295424,
+        "used_bytes": 8781824,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/data",
+        "source": "boot-pool/ROOT/25.10.8/data",
+        "fstype": "zfs",
+        "devno": "0:29",
+        "device": null,
+        "root": "/",
+        "options": "rw,nosuid,nodev,noexec,noatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17455906816,
+        "used_bytes": 393216,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/etc",
+        "source": "boot-pool/ROOT/25.10.8/etc",
+        "fstype": "zfs",
+        "devno": "0:30",
+        "device": null,
+        "root": "/",
+        "options": "rw,nosuid,nodev,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17462329344,
+        "used_bytes": 6815744,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/home",
+        "source": "boot-pool/ROOT/25.10.8/home",
+        "fstype": "zfs",
+        "devno": "0:31",
+        "device": null,
+        "root": "/",
+        "options": "rw,nosuid,nodev,noexec,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17455644672,
+        "used_bytes": 131072,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/mnt",
+        "source": "boot-pool/ROOT/25.10.8/mnt",
+        "fstype": "zfs",
+        "devno": "0:32",
+        "device": null,
+        "root": "/",
+        "options": "rw,nosuid,nodev,noexec,noatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17455644672,
+        "used_bytes": 131072,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/opt",
+        "source": "boot-pool/ROOT/25.10.8/opt",
+        "fstype": "zfs",
+        "devno": "0:33",
+        "device": null,
+        "root": "/",
+        "options": "ro,nosuid,nodev,relatime",
+        "super_options": "ro,xattr,noacl,casesensitive",
+        "size_bytes": 17460363264,
+        "used_bytes": 4849664,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/root",
+        "source": "boot-pool/ROOT/25.10.8/root",
+        "fstype": "zfs",
+        "devno": "0:34",
+        "device": null,
+        "root": "/",
+        "options": "rw,nosuid,nodev,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 21463433216,
+        "used_bytes": 4007919616,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/usr",
+        "source": "boot-pool/ROOT/25.10.8/usr",
+        "fstype": "zfs",
+        "devno": "0:35",
+        "device": null,
+        "root": "/",
+        "options": "ro,nodev,noatime",
+        "super_options": "ro,xattr,noacl,casesensitive",
+        "size_bytes": 20874002432,
+        "used_bytes": 3418488832,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/var",
+        "source": "boot-pool/ROOT/25.10.8/var",
+        "fstype": "zfs",
+        "devno": "0:36",
+        "device": null,
+        "root": "/",
+        "options": "rw,nosuid,nodev,noatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17460101120,
+        "used_bytes": 4587520,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/var/local/ca-certificates",
+        "source": "boot-pool/ROOT/25.10.8/var/ca-certificates",
+        "fstype": "zfs",
+        "devno": "0:37",
+        "device": null,
+        "root": "/",
+        "options": "rw,nosuid,nodev,noexec,noatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17455644672,
+        "used_bytes": 131072,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/var/lib",
+        "source": "boot-pool/ROOT/25.10.8/var/lib",
+        "fstype": "zfs",
+        "devno": "0:38",
+        "device": null,
+        "root": "/",
+        "options": "rw,nosuid,nodev,noatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17485398016,
+        "used_bytes": 29884416,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/var/lib/incus",
+        "source": "boot-pool/ROOT/25.10.8/var/lib/incus",
+        "fstype": "zfs",
+        "devno": "0:39",
+        "device": null,
+        "root": "/",
+        "options": "rw,nosuid,noatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17455644672,
+        "used_bytes": 131072,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/var/log",
+        "source": "boot-pool/ROOT/25.10.8/var/log",
+        "fstype": "zfs",
+        "devno": "0:40",
+        "device": null,
+        "root": "/",
+        "options": "rw,nosuid,nodev,noexec,noatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17456562176,
+        "used_bytes": 1048576,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/var/log/journal",
+        "source": "boot-pool/ROOT/25.10.8/var/log/journal",
+        "fstype": "zfs",
+        "devno": "0:41",
+        "device": null,
+        "root": "/",
+        "options": "rw,nosuid,nodev,noexec,noatime",
+        "super_options": "rw,xattr,posixacl,casesensitive",
+        "size_bytes": 17456824320,
+        "used_bytes": 1310720,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/boot/grub",
+        "source": "boot-pool/grub",
+        "fstype": "zfs",
+        "devno": "0:53",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17465081856,
+        "used_bytes": 9568256,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/var/db/system",
+        "source": "boot-pool/.system",
+        "fstype": "zfs",
+        "devno": "0:55",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17455644672,
+        "used_bytes": 131072,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/var/db/system/cores",
+        "source": "boot-pool/.system/cores",
+        "fstype": "zfs",
+        "devno": "0:56",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 1073741824,
+        "used_bytes": 131072,
+        "available_bytes": 1073610752
+      },
+      {
+        "target": "/var/db/system/nfs",
+        "source": "boot-pool/.system/nfs",
+        "fstype": "zfs",
+        "devno": "0:57",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17455644672,
+        "used_bytes": 131072,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/var/db/system/samba4",
+        "source": "boot-pool/.system/samba4",
+        "fstype": "zfs",
+        "devno": "0:58",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17455775744,
+        "used_bytes": 262144,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/var/db/system/vm",
+        "source": "boot-pool/.system/vm",
+        "fstype": "zfs",
+        "devno": "0:59",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17455644672,
+        "used_bytes": 131072,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/var/db/system/configs-ae32c386e13840b2bf9c0083275e7941",
+        "source": "boot-pool/.system/configs-ae32c386e13840b2bf9c0083275e7941",
+        "fstype": "zfs",
+        "devno": "0:60",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17455644672,
+        "used_bytes": 131072,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/var/db/system/netdata",
+        "source": "boot-pool/.system/netdata-ae32c386e13840b2bf9c0083275e7941",
+        "fstype": "zfs",
+        "devno": "0:61",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 17456955392,
+        "used_bytes": 1441792,
+        "available_bytes": 17455513600
+      },
+      {
+        "target": "/var/lib/systemd/coredump",
+        "source": "boot-pool/.system/cores",
+        "fstype": "zfs",
+        "devno": "0:56",
+        "device": null,
+        "root": "/",
+        "options": "rw,nodev,relatime",
+        "super_options": "rw,xattr,noacl,casesensitive",
+        "size_bytes": 1073741824,
+        "used_bytes": 131072,
+        "available_bytes": 1073610752
+      }
+    ],
+    "physical_root": "/",
+    "backup_sources": [
+      {
+        "path": "/",
+        "from": "/",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8",
+        "subvol": null
+      },
+      {
+        "path": "/audit",
+        "from": "/audit",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/audit",
+        "subvol": null
+      },
+      {
+        "path": "/boot/grub",
+        "from": "/boot/grub",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/grub",
+        "subvol": null
+      },
+      {
+        "path": "/conf",
+        "from": "/conf",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/conf",
+        "subvol": null
+      },
+      {
+        "path": "/data",
+        "from": "/data",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/data",
+        "subvol": null
+      },
+      {
+        "path": "/etc",
+        "from": "/etc",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/etc",
+        "subvol": null
+      },
+      {
+        "path": "/home",
+        "from": "/home",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/home",
+        "subvol": null
+      },
+      {
+        "path": "/mnt",
+        "from": "/mnt",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/mnt",
+        "subvol": null
+      },
+      {
+        "path": "/opt",
+        "from": "/opt",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/opt",
+        "subvol": null
+      },
+      {
+        "path": "/root",
+        "from": "/root",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/root",
+        "subvol": null
+      },
+      {
+        "path": "/run/bko-be/25.10.6",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6",
+          "fstype": "zfs",
+          "options": "ro,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/audit",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/audit",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/audit",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/conf",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/conf",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/conf",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/data",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/data",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/data",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/etc",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/etc",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/etc",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/home",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/home",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/home",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/mnt",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/mnt",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/mnt",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/opt",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/opt",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/opt",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/root",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/root",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/root",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/usr",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/usr",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/usr",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/var",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/var",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/var",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/var/lib",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/var/lib",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/var/lib",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/var/lib/incus",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/var/lib/incus",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/var/lib/incus",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/var/local/ca-certificates",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/var/ca-certificates",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/var/ca-certificates",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/var/log",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/var/log",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/var/log",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.6/var/log/journal",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.6/var/log/journal",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.6/var/log/journal",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7",
+          "fstype": "zfs",
+          "options": "ro,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/audit",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/audit",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/audit",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/conf",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/conf",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/conf",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/data",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/data",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/data",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/etc",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/etc",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/etc",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/home",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/home",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/home",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/mnt",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/mnt",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/mnt",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/opt",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/opt",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/opt",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/root",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/root",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/root",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/usr",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/usr",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/usr",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/var",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/var",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/var",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/var/lib",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/var/lib",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/var/lib",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/var/lib/incus",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/var/lib/incus",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/var/lib/incus",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/var/local/ca-certificates",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/var/ca-certificates",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/var/ca-certificates",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/var/log",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/var/log",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/var/log",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/run/bko-be/25.10.7/var/log/journal",
+        "from": null,
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.7/var/log/journal",
+        "subvol": null,
+        "mount": {
+          "device": "boot-pool/ROOT/25.10.7/var/log/journal",
+          "fstype": "zfs",
+          "options": "ro,zfsutil,nodev,nosuid,noexec"
+        },
+        "note": "ZFS boot environment 25.10.7 (not booted): a backup mounts it read-only here"
+      },
+      {
+        "path": "/usr",
+        "from": "/usr",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/usr",
+        "subvol": null
+      },
+      {
+        "path": "/var",
+        "from": "/var",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/var",
+        "subvol": null
+      },
+      {
+        "path": "/var/db/system",
+        "from": "/var/db/system",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/.system",
+        "subvol": null
+      },
+      {
+        "path": "/var/db/system/configs-ae32c386e13840b2bf9c0083275e7941",
+        "from": "/var/db/system/configs-ae32c386e13840b2bf9c0083275e7941",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/.system/configs-ae32c386e13840b2bf9c0083275e7941",
+        "subvol": null
+      },
+      {
+        "path": "/var/db/system/cores",
+        "from": "/var/db/system/cores",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/.system/cores",
+        "subvol": null,
+        "note": "ZFS dataset boot-pool/.system/cores is also mounted at /var/lib/systemd/coredump: backed up here only, once"
+      },
+      {
+        "path": "/var/db/system/netdata",
+        "from": "/var/db/system/netdata",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/.system/netdata-ae32c386e13840b2bf9c0083275e7941",
+        "subvol": null
+      },
+      {
+        "path": "/var/db/system/nfs",
+        "from": "/var/db/system/nfs",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/.system/nfs",
+        "subvol": null
+      },
+      {
+        "path": "/var/db/system/samba4",
+        "from": "/var/db/system/samba4",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/.system/samba4",
+        "subvol": null
+      },
+      {
+        "path": "/var/db/system/vm",
+        "from": "/var/db/system/vm",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/.system/vm",
+        "subvol": null
+      },
+      {
+        "path": "/var/lib",
+        "from": "/var/lib",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/var/lib",
+        "subvol": null
+      },
+      {
+        "path": "/var/lib/incus",
+        "from": "/var/lib/incus",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/var/lib/incus",
+        "subvol": null
+      },
+      {
+        "path": "/var/local/ca-certificates",
+        "from": "/var/local/ca-certificates",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/var/ca-certificates",
+        "subvol": null
+      },
+      {
+        "path": "/var/log",
+        "from": "/var/log",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/var/log",
+        "subvol": null
+      },
+      {
+        "path": "/var/log/journal",
+        "from": "/var/log/journal",
+        "device": null,
+        "fstype": "zfs",
+        "source": "boot-pool/ROOT/25.10.8/var/log/journal",
+        "subvol": null
+      }
+    ],
+    "swaps": [],
+    "fstab": [
+      {
+        "spec": "boot-pool/grub",
+        "file": "/boot/grub",
+        "type": "zfs",
+        "options": "relatime,defaults",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      },
+      {
+        "spec": "tmpfs",
+        "file": "/run/lock",
+        "type": "tmpfs",
+        "options": "rw,nosuid,nodev,noexec,relatime,size=100m",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": null
+      }
+    ],
+    "crypttab": [],
+    "mdadm_conf": {
+      "arrays": [],
+      "settings": {
+        "homehost": "<system>",
+        "mailaddr": "root"
+      }
+    }
+  },
+  "boot": {
+    "loader": {
+      "name": "grub",
+      "firmware": "uefi",
+      "via_shim": false,
+      "package": "grub-efi-amd64-signed",
+      "evidence": [
+        "firmware booted \\EFI\\debian\\grubx64.efi",
+        "LoaderInfo says \"GRUB 2.12-1~bpo12+1\"",
+        "package grub-efi-amd64-signed is installed"
+      ]
+    },
+    "efi": {
+      "boot_current": "0001",
+      "boot_next": null,
+      "boot_order": ["0001", "0000", "0002", "0003", "0004", "0005", "0006", "0007"],
+      "timeout_seconds": 0,
+      "entries": [
+        {
+          "number": "0000",
+          "load_option_hex": "090100002c0055006900410070007000000004071400000000bc00000040800000000000000504061400000000bc0000004080000000000000067fff0400",
+          "description": "UiApp",
+          "active": true,
+          "hidden": true,
+          "category": "app",
+          "in_boot_order": 1,
+          "device_path": ["Fv(bc000000-0000-4000-8000-000000000005)/FvFile(bc000000-0000-4000-8000-000000000006)"],
+          "file": null,
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0001",
+          "load_option_hex": "01000000620054007200750065004e00410053002d003000000004012a000200000000180000000000000000100000000000000000bc0000004080000000000000030202040434005c004500460049005c00640065006200690061006e005c0067007200750062007800360034002e0065006600690000007fff0400",
+          "description": "TrueNAS-0",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 0,
+          "device_path": [
+            "HD(2,GPT,bc000000-0000-4000-8000-000000000003,0x1800,0x100000)/File(\\EFI\\debian\\grubx64.efi)"
+          ],
+          "partition": {
+            "number": 2,
+            "table": "gpt",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "start_lba": 6144,
+            "sectors": 1048576,
+            "device": "vda2"
+          },
+          "file": "\\EFI\\debian\\grubx64.efi",
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0002",
+          "load_option_hex": "010000001600550045004600490020004d006900730063002000440065007600690063006500000002010c00d041030a000000000101060000037fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI Misc Device",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 2,
+          "device_path": ["PciRoot(0x0)/Pci(0x3,0x0)"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0003",
+          "load_option_hex": "0100000056005500450046004900200050005800450076003400200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030c1b0000000000000000000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv4 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 3,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0004",
+          "load_option_hex": "0100000077005500450046004900200050005800450076003600200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030d3c0000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv6 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 4,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0005",
+          "load_option_hex": "010000005a0055004500460049002000480054005400500076003400200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030c1b000000000000000000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv4 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 5,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0006",
+          "load_option_hex": "010000007b0055004500460049002000480054005400500076003600200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030d3c000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv6 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 6,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0007",
+          "load_option_hex": "010000002c00450046004900200049006e007400650072006e0061006c0020005300680065006c006c00000004071400000000bc00000040800000000000000504061400000000bc0000004080000000000000077fff0400",
+          "description": "EFI Internal Shell",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 7,
+          "device_path": ["Fv(bc000000-0000-4000-8000-000000000005)/FvFile(bc000000-0000-4000-8000-000000000007)"],
+          "file": null,
+          "optional_data_bytes": 0
+        }
+      ],
+      "loader_interface": {
+        "loader_info": "GRUB 2.12-1~bpo12+1",
+        "loader_device_partuuid": "bc000000-0000-4000-8000-000000000003",
+        "loader_image_identifier": null,
+        "loader_entry_selected": null,
+        "loader_entry_default": null,
+        "stub_info": null
+      },
+      "shim_variables": []
+    },
+    "esps": [
+      {
+        "device": "vda2",
+        "mounted_at": null,
+        "contents": {
+          "files": [
+            {
+              "path": "EFI/boot/bootx64.efi",
+              "size": 2688448,
+              "same_as": "EFI/debian/grubx64.efi"
+            },
+            {
+              "path": "EFI/debian/BOOTX64.CSV",
+              "size": 108
+            },
+            {
+              "path": "EFI/debian/fbx64.efi",
+              "size": 87376
+            },
+            {
+              "path": "EFI/debian/grub.cfg",
+              "size": 93
+            },
+            {
+              "path": "EFI/debian/grubx64.efi",
+              "size": 2688448,
+              "same_as": "EFI/boot/bootx64.efi"
+            },
+            {
+              "path": "EFI/debian/mmx64.efi",
+              "size": 850176
+            },
+            {
+              "path": "EFI/debian/shimx64.efi",
+              "size": 960080
+            }
+          ],
+          "debian_grub_stub": {
+            "search_uuids": ["0de0b6b3a7640001"],
+            "prefix": "($root)/grub@",
+            "configfile": "$prefix/grub.cfg"
+          }
+        }
+      }
+    ],
+    "grub": {
+      "dir": "/boot/grub",
+      "installed_platforms": ["i386-pc", "x86_64-efi"],
+      "grub_cfg": {
+        "entries": [
+          "TrueNAS Scale GNU/Linux 25.10.8",
+          "Advanced options for TrueNAS Scale GNU/Linux 25.10.8>TrueNAS Scale GNU/Linux 25.10.8, with Linux 6.12.113-debug+truenas",
+          "TrueNAS Scale GNU/Linux 25.10.7",
+          "Advanced options for TrueNAS Scale GNU/Linux 25.10.7>TrueNAS Scale GNU/Linux 25.10.7, with Linux 6.12.105-debug+truenas",
+          "TrueNAS Scale GNU/Linux 25.10.6",
+          "Advanced options for TrueNAS Scale GNU/Linux 25.10.6>TrueNAS Scale GNU/Linux 25.10.6, with Linux 6.12.99-debug+truenas",
+          "UEFI Firmware Settings"
+        ],
+        "search_uuids": ["0de0b6b3a7640001"],
+        "modules": [
+          "all_video",
+          "efi_gop",
+          "efi_uga",
+          "ieee1275_fb",
+          "vbe",
+          "vga",
+          "video_bochs",
+          "video_cirrus",
+          "part_gpt",
+          "zfs",
+          "gfxterm",
+          "gzio",
+          "bli"
+        ],
+        "default_linux": "/ROOT/25.10.8@/boot/vmlinuz-6.12.113-production+truenas root=ZFS=boot-pool/ROOT/25.10.8 ro console=tty1 console=ttyS0,115200 libata.allow_tpm=1 amd_iommu=on iommu=pt kvm_amd.npt=1 kvm_amd.avic=1 intel_iommu=on zfsforce=1 nvme_core.multipath=N",
+        "default_initrd": "/ROOT/25.10.8@/boot/initrd.img-6.12.113-production+truenas",
+        "lang": null
+      },
+      "grubenv": {},
+      "default_grub": {
+        "GRUB_DISTRIBUTOR": "TrueNAS Scale",
+        "GRUB_TIMEOUT": "10",
+        "GRUB_DISABLE_RECOVERY": "true",
+        "GRUB_CMDLINE_LINUX_DEFAULT": "libata.allow_tpm=1 amd_iommu=on iommu=pt kvm_amd.npt=1 kvm_amd.avic=1 intel_iommu=on zfsforce=1 nvme_core.multipath=N",
+        "GRUB_SERIAL_COMMAND": "serial --unit=0 --speed=115200 --word=8 --parity=no --stop=1",
+        "GRUB_TERMINAL_INPUT": "console serial",
+        "GRUB_TERMINAL_OUTPUT": "gfxterm serial",
+        "GRUB_CMDLINE_LINUX": "console=tty1 console=ttyS0,115200"
+      },
+      "debconf": {}
+    },
+    "systemd_boot": null,
+    "kernels": {
+      "installed": [
+        {
+          "version": "6.12.113-debug+truenas",
+          "vmlinuz_bytes": 11809280,
+          "initrd_bytes": null,
+          "config": true,
+          "running": false,
+          "modules_installed": true
+        },
+        {
+          "version": "6.12.113-production+truenas",
+          "vmlinuz_bytes": 12059136,
+          "initrd_bytes": 84970345,
+          "config": true,
+          "running": true,
+          "modules_installed": true
+        }
+      ],
+      "symlinks": {
+        "/vmlinuz": "boot/vmlinuz-6.12.113-production+truenas",
+        "/vmlinuz.old": "boot/vmlinuz-6.12.113-debug+truenas",
+        "/initrd.img": "boot/initrd.img-6.12.113-production+truenas",
+        "/initrd.img.old": "boot/initrd.img-6.12.113-debug+truenas"
+      }
+    },
+    "cmdline": {
+      "raw": "BOOT_IMAGE=/ROOT/25.10.8@/boot/vmlinuz-6.12.113-production+truenas root=ZFS=boot-pool/ROOT/25.10.8 ro console=tty1 console=ttyS0,115200 libata.allow_tpm=1 amd_iommu=on iommu=pt kvm_amd.npt=1 kvm_amd.avic=1 intel_iommu=on zfsforce=1 nvme_core.multipath=N",
+      "words": [
+        "BOOT_IMAGE=/ROOT/25.10.8@/boot/vmlinuz-6.12.113-production+truenas",
+        "root=ZFS=boot-pool/ROOT/25.10.8",
+        "ro",
+        "console=tty1",
+        "console=ttyS0,115200",
+        "libata.allow_tpm=1",
+        "amd_iommu=on",
+        "iommu=pt",
+        "kvm_amd.npt=1",
+        "kvm_amd.avic=1",
+        "intel_iommu=on",
+        "zfsforce=1",
+        "nvme_core.multipath=N\n"
+      ],
+      "storage": {
+        "BOOT_IMAGE": "/ROOT/25.10.8@/boot/vmlinuz-6.12.113-production+truenas",
+        "root": "ZFS=boot-pool/ROOT/25.10.8",
+        "ro": "",
+        "zfsforce": "1"
+      }
+    },
+    "kernel_cmdline_file": null,
+    "initramfs": {
+      "generator": "initramfs-tools",
+      "modules": "most",
+      "compress": "zstd",
+      "resume": null,
+      "crypttab_in_initramfs": true
+    },
+    "packages": {
+      "grub-pc-bin": "2.12-1~bpo12+1",
+      "grub-efi-amd64-bin": "2.12-1~bpo12+1",
+      "grub-efi-amd64-signed": "1+2.12+1~bpo12+1",
+      "grub2-common": "2.12-1~bpo12+1",
+      "grub-common": "2.12-1~bpo12+1",
+      "shim-signed": "1.44~1+deb12u1+15.8-1~deb12u1",
+      "shim-unsigned": "15.8-1~deb12u1",
+      "shim-helpers-amd64-signed": "1+15.8+1~deb12u1",
+      "mokutil": "0.6.0-2",
+      "efibootmgr": "17-2",
+      "os-prober": "1.81",
+      "initramfs-tools": "0.142+deb12u3",
+      "mdadm": "4.2-5",
+      "cryptsetup": "2:2.6.1-4~deb12u2",
+      "cryptsetup-bin": "2:2.6.1-4~deb12u2",
+      "e2fsprogs": "1.47.2-3~bpo12+1",
+      "dosfstools": "4.2-1",
+      "linux-base": "4.12~bpo12+1",
+      "nvme-cli": "2.4+really2.3-3",
+      "open-iscsi": "2.1.8-1",
+      "truenas": "20261103134547~truenas+1",
+      "middlewared": "20261103130803~truenas+1"
+    },
+    "truenas": {
+      "pool": "boot-pool",
+      "version": "25.10.8",
+      "bes": [
+        {
+          "name": "25.10.6",
+          "dataset": "boot-pool/ROOT/25.10.6",
+          "version": "25.10.6",
+          "kernel": "6.12.99-production+truenas",
+          "keep": "True",
+          "active": false,
+          "bootfs": false,
+          "origin": null,
+          "clones": [
+            {
+              "dataset": "boot-pool/ROOT/25.10.6/audit",
+              "origin": "boot-pool/ROOT/25.10.8/audit@install-2026-11-14-11-52-48"
+            },
+            {
+              "dataset": "boot-pool/ROOT/25.10.6/data",
+              "origin": "boot-pool/ROOT/25.10.8/data@install-2026-11-14-11-52-48"
+            },
+            {
+              "dataset": "boot-pool/ROOT/25.10.6/home",
+              "origin": "boot-pool/ROOT/25.10.8/home@install-2026-11-14-11-52-48"
+            },
+            {
+              "dataset": "boot-pool/ROOT/25.10.6/root",
+              "origin": "boot-pool/ROOT/25.10.8/root@install-2026-11-14-11-52-48"
+            },
+            {
+              "dataset": "boot-pool/ROOT/25.10.6/var/log",
+              "origin": "boot-pool/ROOT/25.10.8/var/log@install-2026-11-14-11-52-48"
+            }
+          ],
+          "locked": false
+        },
+        {
+          "name": "25.10.7",
+          "dataset": "boot-pool/ROOT/25.10.7",
+          "version": "25.10.7",
+          "kernel": "6.12.105-production+truenas",
+          "keep": "False",
+          "active": false,
+          "bootfs": false,
+          "origin": null,
+          "clones": [
+            {
+              "dataset": "boot-pool/ROOT/25.10.7/audit",
+              "origin": "boot-pool/ROOT/25.10.8/audit@install-2026-11-14-12-05-55"
+            },
+            {
+              "dataset": "boot-pool/ROOT/25.10.7/data",
+              "origin": "boot-pool/ROOT/25.10.8/data@install-2026-11-14-12-05-56"
+            },
+            {
+              "dataset": "boot-pool/ROOT/25.10.7/home",
+              "origin": "boot-pool/ROOT/25.10.8/home@install-2026-11-14-12-05-56"
+            },
+            {
+              "dataset": "boot-pool/ROOT/25.10.7/root",
+              "origin": "boot-pool/ROOT/25.10.8/root@install-2026-11-14-12-05-56"
+            },
+            {
+              "dataset": "boot-pool/ROOT/25.10.7/var/log",
+              "origin": "boot-pool/ROOT/25.10.8/var/log@install-2026-11-14-12-05-56"
+            }
+          ],
+          "locked": false
+        },
+        {
+          "name": "25.10.8",
+          "dataset": "boot-pool/ROOT/25.10.8",
+          "version": "25.10.8",
+          "kernel": "6.12.113-production+truenas",
+          "keep": "False",
+          "active": true,
+          "bootfs": true,
+          "origin": null,
+          "clones": [],
+          "locked": false
+        }
+      ],
+      "esps": [
+        {
+          "device": "vda2",
+          "disk": "vda",
+          "uuid": "BC00-0001",
+          "label": "EFI",
+          "read": true
+        }
+      ]
+    }
+  },
+  "warnings": []
+}

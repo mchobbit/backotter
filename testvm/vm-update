@@ -2140,6 +2140,12 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
     no_ssh = g.dir / "no-ssh"
     if no_ssh.exists():
         raise Failed(f"no SSH to update it over: {no_ssh.read_text().strip()}")
+    # A guest whose package manager is off by design (TrueNAS: a new boot
+    # environment per update, made by its rebuild; docs/design/truenas.md)
+    # says how it is updated instead.
+    no_update = g.dir / "no-vm-update"
+    if no_update.exists():
+        raise Failed(f"not updated by vm-update: {no_update.read_text().strip()}")
     states = None
     state_now = None
     if args.try_:

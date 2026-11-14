@@ -124,6 +124,7 @@ IGNORED = [
     (r"^storage\.zfs\.zpool_cache\.[^.]+\.vdev_tree\.", "the boot stage writes zpool.cache for the new pool (the source's may be stale); the pool's vdev tree is compared from zpool status"),
     (r"^storage\.zfs\.zpool_cache\.[^.]+\.(hostid|hostname|txg|vdev_tree\..*\.(guid|path|metaslab_array))$", "the rescue system wrote zpool.cache: its host, its names for the vdevs, and their new GUIDs (ZFS finds vdevs by GUID)"),
     (r"^boot\.kernels\.installed\.\d+\.initrd_bytes$", "load's boot stage rebuilds every initramfs (update-initramfs -k all)"),
+    (r"^boot\.truenas\.bes\.\d+\.(origin|clones)(\.|$)", "TrueNAS: a boot environment's clones come back as plain datasets, their origin snapshots not being backed up (the spec's Decision 4; judge.py bes holds the rest)"),
 ]
 
 # With --expect (BackShot2): what a drifted layout can't predict.
@@ -1229,6 +1230,18 @@ ESP_REBUILT = [
 ]
 
 
+# TrueNAS's ESPs (docs/design/truenas.md): mounted by nothing, so judged by
+# content too, under their volume IDs (load's mkfs.fat -i keeps them);
+# load's boot stage runs grub-install --target=x86_64-efi on each and copies
+# EFI/debian/grubx64.efi to EFI/boot/bootx64.efi, so their loaders may
+# differ in bytes, but not the set of paths, and in each restored ESP the
+# fallback must be grubx64.efi.
+ESP_REBUILT_TRUENAS = [
+    (r"^EFI/(debian/[^/]+|boot/bootx64\.efi)$", {"content"}, "grub-install rebuilt it in the boot stage (EFI/boot/bootx64.efi: its copy of grubx64.efi)"),
+]
+TRUENAS_FALLBACK = ("EFI/boot/bootx64.efi", "EFI/debian/grubx64.efi")
+
+
 def esp_files(rec):
     """A record's paths (fsmeta.py's, of one ESP mounted alone) by type and,
     for files, their bytes; its root '.' left out."""
@@ -1262,7 +1275,11 @@ def judge_esp(esp_dir):
     UUID files byte-identical, every source ESP restored under its ID with
     the same files, the kernels byte for byte (ESP_REBUILT names what may
     differ), and with more than one, the restored ESPs equal to each other
-    but for their random seeds."""
+    but for their random seeds.  With DIR/src-kind "truenas" (TrueNAS's
+    ESPs, the uuids files ht1.sh's lists of their volume IDs):
+    ESP_REBUILT_TRUENAS's rules, each restored ESP's EFI/boot/bootx64.efi
+    equal to its EFI/debian/grubx64.efi, and the restored ESPs equal to
+    each other."""
     import os
     out, n = [], 0
 
@@ -1273,11 +1290,12 @@ def judge_esp(esp_dir):
         except OSError:
             return None
     su, du = read("src-uuids"), read("dst-uuids")
+    truenas = (read("src-kind") or b"").strip() == b"truenas"
     if su is None:
         print(f"DIFF no src-uuids in {esp_dir}: nothing to judge")
         sys.exit(1)
     if su != du:
-        out.append(f"DIFF etc/kernel/proxmox-boot-uuids: source {su!r}, restored {du!r}")
+        out.append(f"DIFF {'the ESPs (volume IDs)' if truenas else 'etc/kernel/proxmox-boot-uuids'}: source {su!r}, restored {du!r}")
         n += 1
     ids = [l.strip() for l in su.decode(errors="replace").splitlines() if l.strip()]
     restored = {}
@@ -1289,10 +1307,19 @@ def judge_esp(esp_dir):
             n += 1
             continue
         restored[i] = d
-        real, allowed = esp_compare(s, d, ESP_REBUILT)
+        real, allowed = esp_compare(s, d, ESP_REBUILT_TRUENAS if truenas else ESP_REBUILT)
         for kind, paths in real.items():
             out.append(f"DIFF ESP {i}: {kind}: {len(paths)}: {', '.join(paths)}")
             n += len(paths)
+        if truenas:
+            fb, grub = (d.get(p) for p in TRUENAS_FALLBACK)
+            if not fb or not grub or fb[0] != "file" or fb != grub:
+                out.append(f"DIFF ESP {i}: {TRUENAS_FALLBACK[0]} isn't {TRUENAS_FALLBACK[1]}: {fb} and {grub}")
+                n += 1
+            same = sum(1 for p in d if p in s and s[p] == d[p] and d[p][0] == "file")
+            out.append(f"ESP {i}: {len(d)} paths, {len(s)} on the source's; {same} of its {sum(1 for p in d if d[p][0] == 'file')} files byte for byte, "
+                       f"{TRUENAS_FALLBACK[0]} its {TRUENAS_FALLBACK[1]}" + "".join(f"; {why}: {len(paths)}" for why, paths in allowed.items()))
+            continue
         kernels = sorted(p for p in d if re.search(r"^EFI/proxmox/[^/]+/vmlinuz-[^/]+$", p) and s.get(p) == d[p])
         entries = sorted(p for p in d if re.search(r"^loader/entries/proxmox-[^/]+\.conf$", p) and s.get(p) == d[p])
         out.append(f"ESP {i}: {len(d)} paths, {len(s)} on the source's; {len(kernels)} kernels and {len(entries)} proxmox entries byte for byte"
@@ -1301,13 +1328,13 @@ def judge_esp(esp_dir):
         first, *rest = restored
         m = 0
         for i in rest:
-            real, _ = esp_compare(restored[first], restored[i], ESP_REBUILT[1:2])
+            real, _ = esp_compare(restored[first], restored[i], [] if truenas else ESP_REBUILT[1:2])
             for kind, paths in real.items():
                 out.append(f"DIFF ESPs {first} and {i} (restored): {kind}: {len(paths)}: {', '.join(paths)}")
                 m += len(paths)
         n += m
         if m == 0:
-            out.append(f"the {len(restored)} restored ESPs are equal but for their random seeds")
+            out.append(f"the {len(restored)} restored ESPs are equal" + ("" if truenas else " but for their random seeds"))
     print("\n".join(out))
     print(f"{n} differences in {len(ids)} ESPs")
     sys.exit(1 if n else 0)
@@ -1542,9 +1569,61 @@ def reformat_why(kind, p, before, after, reforms):
     return None
 
 
+# TrueNAS's boot pool (docs/design/truenas.md): what judge.py bes compares.
+TRUENAS_POOL = "boot-pool"
+
+
+def judge_bes(src_path, dst_path):
+    """`judge.py bes SRC DST`: a TrueNAS source's boot-pool in the two
+    dumps: the same datasets (every boot environment, its children, grub,
+    .system), each with the source's mountpoint, canmount and local and
+    user properties (readonly, truenas:kernel_version, zectl:keep, ...),
+    and the source's bootfs; a clone's origin (and so whether it is one)
+    and the snapshots may differ (the spec's Decision 4)."""
+    src, dst = load_json(src_path), load_json(dst_path)
+
+    def pool(d):
+        t = ((d.get("storage") or {}).get("zfs") or {}).get("tools") or {}
+        bootfs = next((((p.get("properties") or {}).get("bootfs")) for p in t.get("imported_pools") or [] if p.get("name") == TRUENAS_POOL), None)
+        ds = {x.get("name"): x for x in t.get("datasets") or [] if str(x.get("name", "")).split("/")[0] == TRUENAS_POOL}
+        return bootfs, ds
+    sb, sd = pool(src)
+    db, dd = pool(dst)
+    bad = []
+    if not sd:
+        print(f"DIFF the source's dump has no {TRUENAS_POOL} datasets")
+        sys.exit(1)
+    if sb != db:
+        bad.append(f"bootfs: {sb} -> {db}")
+    for name in sorted(set(sd) - set(dd)):
+        bad.append(f"{name}: missing")
+    for name in sorted(set(dd) - set(sd)):
+        bad.append(f"{name}: extra")
+    for name in sorted(set(sd) & set(dd)):
+        a, b = sd[name], dd[name]
+        for k in ("type", "mountpoint", "canmount"):
+            if a.get(k) != b.get(k):
+                bad.append(f"{name}: {k} {a.get(k)} -> {b.get(k)}")
+        pa, pb = a.get("properties") or {}, b.get("properties") or {}
+        for k in sorted(set(pa) | set(pb)):
+            if pa.get(k) != pb.get(k):
+                bad.append(f"{name}: property {k} {json.dumps(pa.get(k))} -> {json.dumps(pb.get(k))}")
+    for x in bad:
+        print(f"DIFF {x}")
+    bes = sorted(n.split("/")[2] for n in sd if n.count("/") == 2 and n.startswith(TRUENAS_POOL + "/ROOT/"))
+    clones = sorted(n for n, x in sd.items() if x.get("origin"))
+    ro = sorted(n for n, x in sd.items() if ((x.get("properties") or {}).get("readonly") or {}).get("value") == "on")
+    print(f"{len(bes)} boot environments ({', '.join(bes)}), bootfs {sb}; {len(sd)} datasets of {TRUENAS_POOL}, {len(ro)} readonly=on; "
+          f"{len(clones)} clones on the source, {sum(1 for n in clones if n in dd and dd[n].get('origin'))} restored as clones")
+    print(f"{len(bad)} differences")
+    sys.exit(1 if bad else 0)
+
+
 def main():
     if sys.argv[1] == "esp":
         judge_esp(sys.argv[2])
+    if sys.argv[1] == "bes":
+        judge_bes(sys.argv[2], sys.argv[3])
     if sys.argv[1] == "fs":
         judge_fs(*sys.argv[2:5], no_atime="--no-atime" in sys.argv[5:], new_uuids="--new-uuids" in sys.argv[5:],
                  reforms=reformat_args(sys.argv[5:]))

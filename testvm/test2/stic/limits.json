@@ -337,6 +337,15 @@
   "[btrfs] project IDs (and P inheritance)": "btrfs takes no project ID here (chattr -p fails: btrfs has none; /boot's ext4 has no project feature): fixture: skipped: chattr -p 42 /mnt/btrfs-src/up1/up2/tree/projid-file",
   "[ext4] project IDs (and P inheritance)": "ext4 takes no project ID here (chattr -p fails: btrfs has none; /boot's ext4 has no project feature): fixture: skipped: chattr -p 42 /mnt/ext4-src/up1/up2/tree/projid-file"
  },
+ "truenas25": {
+  "POSIX ACLs on the datasets without them (acltype off)": "boot-pool and every dataset but var/log/journal have acltype off as the guest's (/, /audit, /boot/grub, /conf, /data, /etc, /home, /mnt, /opt, /root, /usr, /var, /var/lib, /var/lib/incus, /var/local/ca-certificates, /var/log, /var/db/system and its children): no ACL made there, none restored; only boot-pool/ROOT/25.10.N/var/log/journal has acltype=posix",
+  "backups on relatime (as the guest mounts /, /etc, /conf, /home, /opt, /root, grub and .system) leave the source's atimes alone": "only symlinks' atimes move: readlink(2) has no O_NOATIME (both BACKOTTER.md), source and its mounts on relatime",
+  "birth times (ZFS crtime)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "inode flags OpenZFS on Linux refuses (S, A)": "OpenZFS on Linux keeps only immutable, append-only, nodump and project inheritance (zpl_ioctl_setflags: i a d P, in the fixture and every restore); chattr refuses S and A",
+  "names of ids without a name (rustic-bko's musl asks TrueNAS's nscd)": "rustic-bko (static musl) backups warn 'error getting user/group from uid/gid N: EIO' for the fixture's ids without a name: after /etc/passwd and /etc/group miss, musl's getpwuid_r/getgrgid_r query nscd, and TrueNAS's nscd (passwd and group caches off) answers with what musl takes for an I/O error; exit 0, the nodes have no name as restic's (node-identical), BackOtter restores by number (--numeric-id); no warning with nscd stopped. An archiver build behaviour, not in BACKOTTER.md: classed here until rustic-bko treats it as no name",
+  "non-UTF-8 names (utf8only=on)": "boot-pool is made with normalization=formD utf8only=on (TrueNAS's installer; the scratch pools likewise): ZFS refuses a name that isn't UTF-8 (EILSEQ), so none is made or restored there; UTF-8 names composed and decomposed are",
+  "whole-disk needs (GPT, the BIOS boot partition, the unmounted ESP, GRUB, the pool's bootfs and host id, the inactive boot environments)": "out of scope: whole-disk (HoltTest1 recreates the disks and the pool, reinstalls GRUB on the ESP and the BIOS boot partition with update-grub, and restores the inactive boot environments from their own read-only mounts); here the scratch pools are made like the guest's and only its datasets' contents are restored"
+ },
  "ubuntu24": {
   "SELinux labels, NFSv4 ACLs, BSD file flags, system.* other than ACLs": "not on Ubuntu 24.04 with ZFS acltype=posix (AppArmor has no on-disk labels)",
   "birth times": "ZFS crtime and ext4 btime can't be set on Linux (BACKOTTER.md)",

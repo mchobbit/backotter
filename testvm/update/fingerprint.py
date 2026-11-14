@@ -71,6 +71,7 @@ PACKAGES = (
     "anduinos-grub", "anduinos-shim-signed", "anduinos-secureboot-toolkit", "anduinos-btrfs-snapshots-manager",
     "proxmox-kernel-helper", "proxmox-default-kernel", "proxmox-ve", "pve-manager",
     "linux-libre", "shepherd",
+    "truenas", "middlewared",
 )
 # Of those, what handles storage; the rest is boot.
 STORAGE = frozenset((

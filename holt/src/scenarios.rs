@@ -4241,6 +4241,8 @@ pub fn dumps() -> Vec<(&'static str, Value)> {
         ("proxmox_mirror", { let (t, r) = proxmox(true); run(&t, true, r) }),
         ("guix_uefi", run(&guix_uefi(), true, FakeRunner::default())),
         ("guix_bios", run(&guix_bios(), true, guix_bios_runner())),
+        ("truenas", { let (t, r) = truenas(false); run(&t, true, r) }),
+        ("truenas_mirror", { let (t, r) = truenas(true); run(&t, true, r) }),
     ]
 }
 
@@ -4491,3 +4493,608 @@ fn openindiana_without_zpool_is_refused() {
     assert!(b.problems.contains(&format!("ZFS: {e}")), "{:?}", b.problems);
 }
 
+// ---- TrueNAS Community Edition 25.10 --------------------------------------
+
+/// TrueNAS's kernel, as each BE's truenas:kernel_version names it.
+const TN_KV: &str = "6.12.33-production+truenas";
+/// The children of every TrueNAS boot environment (scale-build's fhs.py),
+/// with their mountpoints.
+const TN_CHILDREN: [(&str, &str); 15] = [
+    ("audit", "/audit"),
+    ("conf", "/conf"),
+    ("data", "/data"),
+    ("etc", "/etc"),
+    ("home", "/home"),
+    ("mnt", "/mnt"),
+    ("opt", "/opt"),
+    ("root", "/root"),
+    ("usr", "/usr"),
+    ("var", "/var"),
+    ("var/ca-certificates", "/var/local/ca-certificates"),
+    ("var/lib", "/var/lib"),
+    ("var/lib/incus", "/var/lib/incus"),
+    ("var/log", "/var/log"),
+    ("var/log/journal", "/var/log/journal"),
+];
+/// The UUID in .system's netdata dataset's name.
+const TN_UUID: &str = "0f1e2d3c4b5a69788796a5b4c3d2e1f0";
+/// The datasets an update clones from the BE before it.
+const TN_CLONED: [&str; 5] = ["audit", "data", "home", "root", "var/log"];
+/// The datasets of a BE that are readonly=on (its root among them, "").
+const TN_RO: [&str; 4] = ["", "conf", "opt", "usr"];
+
+/// TrueNAS CE 25.10 as its installer and two updates leave it
+/// (docs/design/truenas.md): Debian 12's os-release, /etc/version, the
+/// middleware's marks; on each boot disk a BIOS boot partition, an ESP
+/// (mkdosfs -F 32 -s 1 -n EFI) nothing mounts, and boot-pool's vdev.
+/// `mirror` false: the truenas25 guest, UEFI, one disk, three BEs
+/// (25.10.6 kept, 25.10.7, 25.10.8 booted and bootfs), .system on
+/// boot-pool.  `mirror` true: truenas25-mirror, BIOS, boot-pool a mirror
+/// of vda and vdb, two BEs (25.10.7, 25.10.8), and the data pool tank on
+/// vdc holding .system.  Each update's audit, data, home, root and var/log
+/// are clones of the BE before's.  The ESPs' files are where dump mounts
+/// them (/run/bko-holt/esp-DEV), the inactive BEs' /etc/version where it
+/// mounts their etc datasets; the runner answers those mounts.
+fn truenas(mirror: bool) -> (Tree, FakeRunner) {
+    use crate::efi::GLOBAL;
+    const BF01: &str = "6a898cc3-1dd2-11b2-99a6-080020c9b98d";
+    let t = Tree::new(if mirror { "scn-tn-mirror" } else { "scn-tn" });
+    let bes: Vec<&str> = if mirror { vec!["25.10.7", "25.10.8"] } else { vec!["25.10.6", "25.10.7", "25.10.8"] };
+    let active = "25.10.8";
+    let disks: Vec<(&str, &str)> = if mirror { vec![("vda", "254:0"), ("vdb", "254:16")] } else { vec![("vda", "254:0")] };
+    let leaf = |n: &str, i: u64| format!(r#"{{"type": "disk", "id": {i}, "guid": {}, "path": "/dev/{n}3", "whole_disk": 0}}"#, 21 + i);
+    let tree = if mirror {
+        format!(r#"{{"type": "mirror", "id": 0, "guid": 20, "ashift": 12, "children": [{}, {}]}}"#, leaf("vda", 0), leaf("vdb", 1))
+    } else {
+        r#"{"type": "disk", "id": 0, "guid": 21, "path": "/dev/vda3", "whole_disk": 0, "ashift": 12}"#.to_string()
+    };
+    let serials = [0x7e57_0001u32, 0x7e57_0002];
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    let grubx64 = vec![7u8; 300];
+    let mut order = vec![7u8, 0, 0, 0];
+    for (i, (d, devno)) in disks.iter().enumerate() {
+        let partuuid = format!("7e7e7e7e-2222-4000-8000-00000000000{i}");
+        let mut img = vec![0u8; 96 * MIB];
+        write_gpt(
+            &mut img,
+            512,
+            &GptSpec {
+                disk_guid: if i == 0 { "7e7e7e7e-0000-4000-8000-00000000000a" } else { "7e7e7e7e-0000-4000-8000-00000000000b" },
+                parts: vec![
+                    (BIOS_BOOT, if i == 0 { "7e7e7e7e-1111-4000-8000-00000000000a" } else { "7e7e7e7e-1111-4000-8000-00000000000b" }, 34, 2047, 0, ""),
+                    (ESP, &partuuid, 2048, 67583, 0, ""),
+                    (BF01, if i == 0 { "7e7e7e7e-3333-4000-8000-00000000000a" } else { "7e7e7e7e-3333-4000-8000-00000000000b" }, 67584, 184319, 0, ""),
+                ],
+            },
+        );
+        put(&mut img, 2048, &fat::sample::fat32(65536, serials[i], "EFI"));
+        let cfg = format!(
+            r#"{{"version": 5000, "name": "boot-pool", "state": 0, "txg": 4, "pool_guid": 777, "hostname": "truenas", "hostid": 305419896, "top_guid": {}, "guid": {},
+                "vdev_children": 1, "vdev_tree": {tree}, "features_for_read": {{"com.delphix:hole_birth": true}}}}"#,
+            if mirror { 20 } else { 21 },
+            21 + i
+        );
+        put(&mut img, 67584, &zfs::pack::vdev(116736 * 512, &crate::json::parse(&cfg).unwrap()));
+        let major = devno.split(':').next().unwrap();
+        let minor: u32 = devno.split(':').nth(1).unwrap().parse().unwrap();
+        t.disk(d, devno, &img, 512)
+            .partition(d, &format!("{d}1"), &format!("{major}:{}", minor + 1), 1, 34, 2014, &img)
+            .partition(d, &format!("{d}2"), &format!("{major}:{}", minor + 2), 2, 2048, 65536, &img)
+            .partition(d, &format!("{d}3"), &format!("{major}:{}", minor + 3), 3, 67584, 116736, &img)
+            .symlink(&format!("/dev/disk/by-partuuid/{partuuid}"), &format!("../../{d}2"));
+        if !mirror {
+            t.file(&var(&format!("Boot000{i}")), efi_load_option(&format!("TrueNAS-{i}"), 2, 2048, 65536, &partuuid, "\\EFI\\debian\\grubx64.efi"));
+            order.extend([i as u8, 0]);
+        }
+        let esp = format!("/run/bko-holt/esp-{d}2");
+        t.file(&format!("{esp}/EFI/debian/grubx64.efi"), &grubx64).file(&format!("{esp}/EFI/boot/bootx64.efi"), &grubx64);
+    }
+    if mirror {
+        // The data pool: one GPT partition on vdc.
+        let mut img = vec![0u8; 96 * MIB];
+        write_gpt(&mut img, 512, &GptSpec { disk_guid: "7e7e7e7e-0000-4000-8000-00000000000c", parts: vec![(BF01, "7e7e7e7e-3333-4000-8000-00000000000c", 2048, 194559, 0, "")] });
+        let cfg = r#"{"version": 5000, "name": "tank", "state": 0, "txg": 4, "pool_guid": 888, "hostname": "truenas", "hostid": 305419896, "top_guid": 31, "guid": 31,
+            "vdev_children": 1, "vdev_tree": {"type": "disk", "id": 0, "guid": 31, "path": "/dev/vdc1", "whole_disk": 0, "ashift": 12}, "features_for_read": {"com.delphix:hole_birth": true}}"#;
+        put(&mut img, 2048, &zfs::pack::vdev(192512 * 512, &crate::json::parse(cfg).unwrap()));
+        t.disk("vdc", "254:32", &img, 512).partition("vdc", "vdc1", "254:33", 1, 2048, 192512, &img);
+    } else {
+        t.file("/sys/firmware/efi/fw_platform_size", "64\n").file(&var("BootOrder"), order).file(&var("BootCurrent"), [6u8, 0, 0, 0, 0, 0]).file(&var("SecureBoot"), [6u8, 0, 0, 0, 0]);
+    }
+    // Mounts: the booted BE at / and its children, boot-pool/grub, .system.
+    let mut mi = format!("26 1 0:30 / / ro,relatime shared:1 - zfs boot-pool/ROOT/{active} ro,xattr,noacl\n");
+    let mut n = 31;
+    for (c, mp) in TN_CHILDREN {
+        mi += &format!("{n} 26 0:{n} / {mp} rw,relatime shared:{n} - zfs boot-pool/ROOT/{active}/{c} rw,xattr,noacl\n");
+        n += 1;
+    }
+    let sys_pool = if mirror { "tank" } else { "boot-pool" };
+    mi += &format!("{n} 26 0:{n} / /boot/grub rw,relatime shared:{n} - zfs boot-pool/grub rw,xattr,noacl\n");
+    n += 1;
+    if mirror {
+        mi += &format!("{n} 26 0:{n} / /mnt/tank rw,relatime shared:{n} - zfs tank rw,xattr,posixacl\n");
+        n += 1;
+        mi += &format!("{n} 26 0:{n} / /mnt/tank/share rw,relatime shared:{n} - zfs tank/share rw,xattr,posixacl\n");
+        n += 1;
+    }
+    mi += &format!("{n} 26 0:{n} / /var/db/system rw,relatime shared:{n} - zfs {sys_pool}/.system rw,xattr,noacl\n");
+    n += 1;
+    let cores = n;
+    mi += &format!("{n} 26 0:{n} / /var/db/system/cores rw,relatime shared:{n} - zfs {sys_pool}/.system/cores rw,xattr,noacl\n");
+    n += 1;
+    // The netdata dataset at a path that isn't its name; cores again at
+    // systemd's coredump directory (the same dataset, twice: the 25.10.6
+    // guest's).
+    mi += &format!("{n} 26 0:{n} / /var/db/system/netdata rw,relatime shared:{n} - zfs {sys_pool}/.system/netdata-{TN_UUID} rw,xattr,noacl\n");
+    n += 1;
+    mi += &format!("{n} 26 0:{cores} / /var/lib/systemd/coredump rw,relatime shared:{n} - zfs {sys_pool}/.system/cores rw,xattr,noacl\n");
+    t.file("/etc/os-release", "PRETTY_NAME=\"Debian GNU/Linux 12 (bookworm)\"\nNAME=\"Debian GNU/Linux\"\nVERSION_ID=\"12\"\nVERSION=\"12 (bookworm)\"\nVERSION_CODENAME=bookworm\nID=debian\n")
+        .file("/etc/debian_version", "12.11\n")
+        .file("/etc/version", format!("{active}\n"))
+        .file("/data/freenas-v1.db", "SQLite format 3\0")
+        .file("/usr/local/bin/truenas-grub.py", "#!/usr/bin/python3\n")
+        .file("/proc/self/mountinfo", mi)
+        .file("/etc/fstab", "boot-pool/grub\t/boot/grub\tzfs\trelatime,defaults\t0\t0\ntmpfs\t/run/lock\ttmpfs\tdefaults\t0\t0\n")
+        .file("/etc/hostid", [0x78u8, 0x56, 0x34, 0x12])
+        .file(&format!("/boot/vmlinuz-{TN_KV}"), "k")
+        .file(&format!("/boot/initrd.img-{TN_KV}"), "i")
+        .file(&format!("/boot/config-{TN_KV}"), "")
+        .dir(&format!("/usr/lib/modules/{TN_KV}/kernel"))
+        .symlink("/lib", "usr/lib")
+        .file("/etc/initramfs-tools/initramfs.conf", "MODULES=most\n")
+        .file("/boot/grub/grub.cfg", format!("set default=0\nmenuentry \"TrueNAS Scale GNU/Linux {active}\" {{\n  linux /ROOT/{active}@/boot/vmlinuz-{TN_KV} root=ZFS=boot-pool/ROOT/{active} ro\n}}\n"))
+        .file("/proc/sys/kernel/osrelease", format!("{TN_KV}\n"))
+        .file("/proc/sys/kernel/hostname", "truenas\n")
+        .file("/proc/cmdline", format!("BOOT_IMAGE=/ROOT/{active}@/boot/vmlinuz-{TN_KV} root=ZFS=boot-pool/ROOT/{active} ro libata.allow_tpm=1\n"));
+    let pkgs = [
+        ("grub-pc", "2.06-13+deb12u1"),
+        ("grub-efi-amd64-bin", "2.06-13+deb12u1"),
+        ("grub-common", "2.06-13+deb12u1"),
+        ("zfsutils-linux", "2.3.4-1"),
+        ("zfs-initramfs", "2.3.4-1"),
+        ("initramfs-tools", "0.142"),
+        ("efibootmgr", "17-2"),
+        ("dosfstools", "4.2-1"),
+        ("middlewared", "25.10.8"),
+        ("truenas", "25.10.8"),
+    ];
+    let status: String = pkgs.iter().map(|(n, v)| format!("Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n")).collect();
+    t.file("/var/lib/dpkg/status", status);
+    // zfs list's columns: name type used available referenced mountpoint
+    // canmount mounted encryption encryptionroot keyformat keylocation
+    // keystatus origin compression ... (report::zfs_tools_json).
+    let fs = |name: &str, mp: &str, canmount: &str, mounted: &str, origin: &str| {
+        format!("{name}\tfilesystem\t900\t2000\t96\t{mp}\t{canmount}\t{mounted}\toff\t-\tnone\tnone\t-\t{origin}\ton\t131072\t-\t-\toff\tsa\tauto\tformD\ton\tsensitive\ton\ton\t1\t-\n")
+    };
+    let mut list = fs("boot-pool", "none", "off", "no", "-") + &fs("boot-pool/ROOT", "none", "off", "no", "-") + &fs("boot-pool/grub", "legacy", "off", "yes", "-");
+    let mut props = String::from("boot-pool\tcanmount\toff\tlocal\nboot-pool\tmountpoint\tnone\tlocal\nboot-pool\tcompression\ton\tlocal\nboot-pool\tacltype\toff\tlocal\nboot-pool\txattr\tsa\tlocal\nboot-pool\trelatime\ton\tlocal\nboot-pool\tdevices\toff\tlocal\nboot-pool/ROOT\tcanmount\toff\tlocal\nboot-pool/ROOT\torg.zectl:bootloader\tgrub\tlocal\nboot-pool/grub\tmountpoint\tlegacy\tlocal\nboot-pool/grub\tcanmount\toff\tlocal\n");
+    for (bi, be) in bes.iter().enumerate() {
+        let on = if *be == active { "yes" } else { "no" };
+        let root = format!("boot-pool/ROOT/{be}");
+        list += &fs(&root, "legacy", "on", on, "-");
+        props += &format!("{root}\tmountpoint\tlegacy\tlocal\n{root}\treadonly\ton\tlocal\n{root}\t{}\t{TN_KV}\tlocal\n{root}\tzectl:keep\t{}\tlocal\n", crate::truenas::KERNEL_PROP, if bi == 0 && !mirror { "True" } else { "False" });
+        for (c, mp) in TN_CHILDREN {
+            let ds = format!("{root}/{c}");
+            let origin = if bi > 0 && TN_CLONED.contains(&c) { format!("boot-pool/ROOT/{}/{c}@install-2026-09-0{bi}", bes[bi - 1]) } else { "-".to_string() };
+            list += &fs(&ds, mp, "noauto", on, &origin);
+            props += &format!("{ds}\tmountpoint\t{mp}\tlocal\n{ds}\tcanmount\tnoauto\tlocal\n{ds}\torg.zectl:bootloader\t\tlocal\n");
+            if TN_RO.contains(&c) {
+                props += &format!("{ds}\treadonly\ton\tlocal\n");
+            }
+        }
+        if *be != active {
+            t.file(&format!("/run/bko-holt/truenas-be-{be}/version"), format!("{be}\n"));
+        }
+    }
+    for (ds, canmount) in [(format!("{sys_pool}/.system"), "on"), (format!("{sys_pool}/.system/cores"), "on"), (format!("{sys_pool}/.system/netdata-{TN_UUID}"), "noauto")] {
+        list += &fs(&ds, "legacy", canmount, "yes", "-");
+        props += &format!("{ds}\tmountpoint\tlegacy\tlocal\n");
+        if canmount != "on" {
+            props += &format!("{ds}\tcanmount\t{canmount}\tlocal\n");
+        }
+    }
+    let mut pools = "boot-pool\n".to_string();
+    if mirror {
+        pools += "tank\n";
+        list = fs("tank", "/mnt/tank", "on", "yes", "-") + &fs("tank/share", "/mnt/tank/share", "on", "yes", "-") + &list;
+        props += "tank\tmountpoint\t/tank\tlocal\ntank/share\tmountpoint\t/tank/share\tinherited\n";
+    }
+    let vdevs = if mirror {
+        r#"{"mirror-0": {"name": "mirror-0", "vdev_type": "mirror", "vdevs": {"/dev/vda3": {"name": "/dev/vda3", "vdev_type": "disk", "path": "/dev/vda3"}, "/dev/vdb3": {"name": "/dev/vdb3", "vdev_type": "disk", "path": "/dev/vdb3"}}}}"#
+    } else {
+        r#"{"/dev/vda3": {"name": "/dev/vda3", "vdev_type": "disk", "path": "/dev/vda3"}}"#
+    };
+    let status_of = |pool: &str, vdevs: &str| format!(r#"{{"output_version": {{"command": "zpool status", "vers_major": 0, "vers_minor": 1}}, "pools": {{"{pool}": {{"name": "{pool}", "state": "ONLINE", "vdevs": {{"{pool}": {{"name": "{pool}", "vdev_type": "root", "vdevs": {vdevs}}}}}}}}}}}"#);
+    let mut runner = FakeRunner::default()
+        .with("zpool list -H -o name", &pools)
+        .with(
+            "zpool get -H -p -o property,value,source all boot-pool",
+            &format!("size\t31138512896\t-\nashift\t12\tlocal\ncachefile\tnone\tlocal\ncompatibility\tgrub2\tlocal\nbootfs\tboot-pool/ROOT/{active}\tlocal\nfree\t1\t-\nfeature@async_destroy\tenabled\tlocal\nfeature@lz4_compress\tactive\tlocal\n"),
+        )
+        .with(
+            "zfs list -H -p -t filesystem,volume -o name,type,used,available,referenced,mountpoint,canmount,mounted,encryption,encryptionroot,keyformat,keylocation,keystatus,origin,compression,recordsize,volsize,volblocksize,acltype,xattr,dnodesize,normalization,utf8only,casesensitivity,atime,relatime,copies,com.sun:auto-snapshot",
+            &list,
+        )
+        .with("zfs get -H -p -t filesystem,volume -s local,received -o name,property,value,source all", &props)
+        .with("zpool status -j --json-int -P boot-pool", &status_of("boot-pool", vdevs));
+    if mirror {
+        runner = runner
+            .with("zpool get -H -p -o property,value,source all tank", "size\t98784247808\t-\nashift\t12\tlocal\nfeature@async_destroy\tenabled\tlocal\n")
+            .with("zpool status -j --json-int -P tank", &status_of("tank", r#"{"/dev/vdc1": {"name": "/dev/vdc1", "vdev_type": "disk", "path": "/dev/vdc1"}}"#));
+    }
+    for (d, _) in &disks {
+        let at = format!("/run/bko-holt/esp-{d}2");
+        runner = runner.with(&format!("mount -t vfat -o ro,noexec,nodev,nosuid /dev/{d}2 {at}"), "").with(&format!("umount {at}"), "");
+    }
+    for be in bes.iter().filter(|b| **b != active) {
+        let at = format!("/run/bko-holt/truenas-be-{be}");
+        runner = runner.with(&format!("mount -t zfs -o ro,zfsutil,nodev,nosuid,noexec boot-pool/ROOT/{be}/etc {at}"), "").with(&format!("umount {at}"), "");
+    }
+    (t, runner)
+}
+
+/// TrueNAS's dump and plan: the source disks going to sda (sdb, sdc);
+/// `extra`, more of load's arguments; `pool_names`, the mapping's renames.
+fn truenas_plan(mirror: bool, extra: &[&str], pool_names: &[(&str, &str)]) -> (Value, crate::load::commands::Built) {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let (t, runner) = truenas(mirror);
+    let v = run(&t, true, runner);
+    let l = Layout::from_json(v.clone()).unwrap();
+    let mut a = vec!["l.json".to_string()];
+    a.extend(extra.iter().map(|s| s.to_string()));
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
+    let only = (!o.pools.is_empty()).then(|| l.only_pools(&o.pools));
+    let l = only.map_or(l, |x| x.layout);
+    let mut pairs: Vec<(String, String)> = vec![("vda".into(), "sda".into())];
+    if mirror {
+        pairs.push(("vdb".into(), "sdb".into()));
+        if l.disk("vdc").is_some() {
+            pairs.push(("vdc".into(), "sdc".into()));
+        }
+    }
+    let m = Mapping { pairs, pool_names: pool_names.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(), ..Mapping::default() };
+    (v, commands::build(&l, &o, &m))
+}
+
+/// TrueNAS 25.10, one UEFI disk, three BEs: the inactive BEs in
+/// backup_sources with their read-only mounts, boot.truenas, the ESP read
+/// though nothing mounts it, os.product; the plan makes every BE's
+/// datasets writable, mounts each inactive BE under run/bko-be and takes
+/// it away again, holds readonly=on until the boot stage's end, and
+/// reinstalls GRUB both ways with one update-grub and no initramfs.
+#[test]
+fn truenas_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let (v, b) = truenas_plan(false, &[], &[]);
+    assert_eq!(s(&v, &["os", "id"]), "debian");
+    assert_eq!(s(&v, &["os", "version_id"]), "12");
+    assert_eq!(s(&v, &["os", "product"]), "TrueNAS 25.10.8");
+    for (p, ver) in [("grub-pc", "2.06-13+deb12u1"), ("grub-efi-amd64-bin", "2.06-13+deb12u1"), ("middlewared", "25.10.8"), ("truenas", "25.10.8")] {
+        assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
+    }
+    // The inactive BEs' sources: no `from`, their read-only mount.
+    let src = arr(&v, &["storage", "backup_sources"]);
+    let hinted: Vec<(&str, &str, &str)> = src.iter().filter(|b| b.get("from").unwrap().is_null()).map(|b| (s(b, &["path"]), s(b, &["mount", "device"]), s(b, &["mount", "options"]))).collect();
+    assert_eq!(hinted.len(), 2 * 16, "{hinted:?}");
+    assert!(hinted.contains(&("/run/bko-be/25.10.6", "boot-pool/ROOT/25.10.6", "ro,nodev,nosuid,noexec")), "{hinted:?}");
+    assert!(hinted.contains(&("/run/bko-be/25.10.6/usr", "boot-pool/ROOT/25.10.6/usr", "ro,zfsutil,nodev,nosuid,noexec")), "{hinted:?}");
+    assert!(hinted.contains(&("/run/bko-be/25.10.7/var/local/ca-certificates", "boot-pool/ROOT/25.10.7/var/ca-certificates", "ro,zfsutil,nodev,nosuid,noexec")), "{hinted:?}");
+    assert!(!hinted.iter().any(|h| h.0.contains("25.10.8")), "{hinted:?}");
+    let first = src.iter().find(|b| s(b, &["path"]) == "/run/bko-be/25.10.6").unwrap();
+    assert_eq!(s(first, &["note"]), "ZFS boot environment 25.10.6 (not booted): a backup mounts it read-only here");
+    assert_eq!(s(first, &["fstype"]), "zfs");
+    // The legacy datasets mounted on the source: sources at their paths.
+    let netdata = format!("boot-pool/.system/netdata-{TN_UUID}");
+    for (p, ds) in [("/boot/grub", "boot-pool/grub"), ("/var/db/system", "boot-pool/.system"), ("/var/db/system/cores", "boot-pool/.system/cores"), ("/var/db/system/netdata", netdata.as_str()), ("/", "boot-pool/ROOT/25.10.8"), ("/usr", "boot-pool/ROOT/25.10.8/usr")] {
+        assert!(src.iter().any(|b| s(b, &["path"]) == p && s(b, &["source"]) == ds && s(b, &["from"]) == p), "{p}");
+    }
+    // .system/cores, mounted twice: backed up once, at its first path.
+    assert_eq!(src.iter().filter(|b| s(b, &["source"]) == "boot-pool/.system/cores").count(), 1);
+    assert!(!src.iter().any(|b| s(b, &["path"]) == "/var/lib/systemd/coredump"));
+    let cores = src.iter().find(|b| s(b, &["path"]) == "/var/db/system/cores").unwrap();
+    assert_eq!(s(cores, &["note"]), "ZFS dataset boot-pool/.system/cores is also mounted at /var/lib/systemd/coredump: backed up here only, once");
+    // boot.truenas: every BE, its version (read from its own etc), kernel,
+    // keep and clones.
+    let tn = v.at(&["boot", "truenas"]).unwrap();
+    let bes = arr(tn, &["bes"]);
+    let got: Vec<(&str, &str, &str, bool)> = bes.iter().map(|b| (s(b, &["name"]), s(b, &["version"]), s(b, &["keep"]), b.get("active").unwrap().as_bool().unwrap())).collect();
+    assert_eq!(got, vec![("25.10.6", "25.10.6", "True", false), ("25.10.7", "25.10.7", "False", false), ("25.10.8", "25.10.8", "False", true)]);
+    assert!(bes.iter().all(|b| s(b, &["kernel"]) == TN_KV));
+    assert_eq!(arr(&bes[2], &["clones"]).len(), 5);
+    assert_eq!(s(&bes[2], &["clones", "1", "origin"]), "boot-pool/ROOT/25.10.7/data@install-2026-09-02");
+    assert_eq!(s(tn, &["esps", "0", "device"]), "vda2");
+    assert_eq!(s(tn, &["esps", "0", "label"]), "EFI");
+    // The ESP in boot.esps, mounted nowhere, with its files.
+    let esps = arr(&v, &["boot", "esps"]);
+    assert_eq!(esps.len(), 1);
+    assert_eq!(s(&esps[0], &["device"]), "vda2");
+    assert!(esps[0].get("mounted_at").unwrap().is_null());
+    let files: Vec<&str> = arr(&esps[0], &["contents", "files"]).iter().map(|f| s(f, &["path"])).collect();
+    assert!(files.contains(&"EFI/debian/grubx64.efi") && files.contains(&"EFI/boot/bootx64.efi"), "{files:?}");
+    let w: Vec<&str> = arr(&v, &["warnings"]).iter().filter_map(Value::as_str).collect();
+    assert!(w.is_empty(), "{w:?}");
+
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let text = |st: Stage| -> String { b.stage(st).iter().map(Cmd::shell).collect() };
+    // readonly=on nowhere before the boot stage; there, once for each of
+    // the 4 read-only datasets of each BE, after everything else.
+    for st in [Stage::Partition, Stage::Assemble, Stage::Format, Stage::Mount, Stage::Restore] {
+        assert!(!text(st).contains("readonly=on"), "{st:?}: {}", text(st));
+    }
+    let fmt = text(Stage::Format);
+    assert!(!fmt.contains(" -t ") || !fmt.contains("zpool create -f -d -o cachefile=none -t"), "{fmt}");
+    let asm = text(Stage::Assemble);
+    assert!(asm.lines().any(|l| l.starts_with("zpool create ") && l.contains("-o compatibility=grub2") && l.contains(" boot-pool /dev/sda3") && !l.contains(" -t ")), "{asm}");
+    for be in ["25.10.6", "25.10.7", "25.10.8"] {
+        assert!(fmt.lines().any(|l| l.starts_with("zfs create -u ") && l.ends_with(&format!(" boot-pool/ROOT/{be}")) && l.contains("truenas:kernel_version=") && l.contains("zectl:keep=")), "{be}: {fmt}");
+        for (c, _) in TN_CHILDREN {
+            assert!(fmt.lines().any(|l| l.starts_with("zfs create -u ") && l.ends_with(&format!(" boot-pool/ROOT/{be}/{c}"))), "{be}/{c}: {fmt}");
+        }
+    }
+    assert!(fmt.contains("zpool set bootfs=boot-pool/ROOT/25.10.8 boot-pool\n"), "{fmt}");
+    assert!(fmt.lines().any(|l| l.starts_with("mkfs.fat ") && l.contains("-i 7E570001") && l.contains("-n EFI") && l.ends_with("/dev/sda2")), "{fmt}");
+    let bt = text(Stage::Boot);
+    let ro: Vec<&str> = bt.lines().filter(|l| l.starts_with("zfs set readonly=on ")).collect();
+    assert_eq!(ro.len(), 3 * 4, "{bt}");
+    assert!(ro.contains(&"zfs set readonly=on boot-pool/ROOT/25.10.6") && ro.contains(&"zfs set readonly=on boot-pool/ROOT/25.10.8/usr"), "{ro:?}");
+    let last_ro = bt.rfind("zfs set readonly=on").unwrap();
+    assert!(bt[last_ro..].lines().count() == 1, "readonly=on comes last: {bt}");
+    assert!(bt.find("zfs set readonly=on").unwrap() > bt.find("update-grub").unwrap() && bt.find("zfs set readonly=on").unwrap() > bt.find("efibootmgr").unwrap(), "{bt}");
+    // Mounts: the booted BE at /, its children by zfs mount, the legacy
+    // datasets by mount, each inactive BE at run/bko-be.
+    let mt = text(Stage::Mount);
+    assert!(mt.contains("mount -t zfs boot-pool/ROOT/25.10.8 /mnt/bko-target\n"), "{mt}");
+    assert!(mt.contains("zfs mount boot-pool/ROOT/25.10.8/usr\n"), "{mt}");
+    assert!(mt.contains("mount -t zfs boot-pool/grub /mnt/bko-target/boot/grub\n") && mt.contains("mount -t zfs boot-pool/.system /mnt/bko-target/var/db/system\n") && mt.contains("mount -t zfs boot-pool/.system/cores /mnt/bko-target/var/db/system/cores\n"), "{mt}");
+    assert!(mt.contains(&format!("mount -t zfs {netdata} /mnt/bko-target/var/db/system/netdata\n")), "{mt}");
+    assert_eq!(mt.matches("boot-pool/grub /mnt").count(), 1, "{mt}");
+    assert_eq!(mt.matches("mount -t zfs boot-pool/.system/cores ").count(), 1, "{mt}");
+    assert!(!mt.contains("coredump"), "{mt}");
+    assert!(b.notes.iter().any(|n| n == "ZFS dataset boot-pool/.system/cores was also mounted at /var/lib/systemd/coredump on the source: mounted at /var/db/system/cores only here (its files are restored once; the restored system mounts it again)"), "{:?}", b.notes);
+    assert!(!b.notes.iter().any(|n| n.contains("/boot/grub")), "{:?}", b.notes);
+    for be in ["25.10.6", "25.10.7"] {
+        let root = mt.find(&format!("mount -t zfs boot-pool/ROOT/{be} /mnt/bko-target/run/bko-be/{be}\n")).expect(&mt);
+        let usr = mt.find(&format!("mount -t zfs -o zfsutil boot-pool/ROOT/{be}/usr /mnt/bko-target/run/bko-be/{be}/usr\n")).expect(&mt);
+        let ca = mt.find(&format!("mount -t zfs -o zfsutil boot-pool/ROOT/{be}/var/ca-certificates /mnt/bko-target/run/bko-be/{be}/var/local/ca-certificates\n")).expect(&mt);
+        assert!(mt.find(&format!("mkdir -p /mnt/bko-target/run/bko-be/{be}\n")).unwrap() < root && root < usr && usr < ca, "{mt}");
+        assert!(!mt.contains(&format!("zfs mount boot-pool/ROOT/{be}")), "{mt}");
+        // Unmounted at the boot stage's start, deepest first, then rmdir.
+        let u_ca = bt.find(&format!("umount /mnt/bko-target/run/bko-be/{be}/var/local/ca-certificates'\n")).expect(&bt);
+        let u_root = bt.find(&format!("umount /mnt/bko-target/run/bko-be/{be}'\n")).expect(&bt);
+        let rm = bt.find(&format!("rmdir /mnt/bko-target/run/bko-be/{be}'\n")).expect(&bt);
+        assert!(u_ca < u_root && u_root < rm, "{bt}");
+    }
+    let rm_all = bt.find("sh -c '[ ! -d /mnt/bko-target/run/bko-be ] || rmdir /mnt/bko-target/run/bko-be'\n").expect(&bt);
+    assert!(rm_all < bt.find("mount --rbind --make-rslave /run /mnt/bko-target/run").unwrap(), "{bt}");
+    assert!(!bt.contains("rm -rf /mnt/bko-target/run"), "{bt}");
+    // The truenas arm: no initramfs, i386-pc on the disk, x86_64-efi on
+    // its ESP with the fallback copy, one update-grub, the NVRAM entry.
+    assert!(!bt.contains("update-initramfs") && !bt.contains("truenas-initrd"), "{bt}");
+    assert_eq!(bt.matches("grub-install --target=i386-pc /dev/sda\n").count(), 1, "{bt}");
+    assert_eq!(bt.matches("grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=debian --recheck --no-floppy --no-nvram\n").count(), 1, "{bt}");
+    let m = bt.find("mount -t vfat /dev/sda2 /mnt/bko-target/boot/efi\n").expect(&bt);
+    let cp = bt.find("cp /mnt/bko-target/boot/efi/EFI/debian/grubx64.efi /mnt/bko-target/boot/efi/EFI/boot/bootx64.efi\n").expect(&bt);
+    let um = bt.find("umount /mnt/bko-target/boot/efi\n").expect(&bt);
+    assert!(m < cp && cp < um && um < bt.find("update-grub").unwrap(), "{bt}");
+    assert_eq!(bt.matches("update-grub").count(), 1, "{bt}");
+    assert!(bt.contains("efibootmgr --quiet --create --disk /dev/sda --part 2 --label TrueNAS-0 --loader '\\EFI\\debian\\grubx64.efi'\n"), "{bt}");
+    assert!(b.notes.iter().any(|n| n == "TrueNAS: 3 boot environments restored (active 25.10.8); GRUB reinstalled on 1 disk and 1 ESP, its menu rebuilt"), "{:?}", b.notes);
+    assert!(b.notes.iter().any(|n| n == "ZFS: 25.10.8's datasets audit, data, home, root, var/log were clones of 25.10.7's snapshots; they come back as full copies (no snapshot is remade)"), "{:?}", b.notes);
+    assert!(b.notes.iter().any(|n| n.starts_with("ZFS: 25.10.7's datasets audit, data")), "{:?}", b.notes);
+    assert!(!b.notes.iter().any(|n| n.starts_with("ZFS: 25.10.6's")), "{:?}", b.notes);
+    assert!(!text(Stage::Format).contains("@"), "no snapshot or clone is made");
+    assert!(text(Stage::Close).contains("zpool export boot-pool"));
+    // --no-nvram: no entry.
+    let (_, b) = truenas_plan(false, &["--no-nvram"], &[]);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(!bt.contains("efibootmgr") && bt.contains("--target=x86_64-efi"), "{bt}");
+}
+
+/// What load refuses on TrueNAS: a release other than 25.10, and
+/// boot-pool under another name here.
+#[test]
+fn truenas_refusals() {
+    let (_, b) = truenas_plan(false, &[], &[("boot-pool", "boot-pool_bko")]);
+    assert!(b.problems.iter().any(|p| p.starts_with("TrueNAS: boot-pool can't be renamed (its GRUB script names it)")), "{:?}", b.problems);
+    let (t, runner) = truenas(false);
+    t.file("/etc/version", "24.10.2\n");
+    let v = run(&t, true, runner);
+    assert_eq!(s(&v, &["os", "product"]), "TrueNAS 24.10.2");
+    let l = crate::load::layout::Layout::from_json(v).unwrap();
+    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+    let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vda".into(), "sda".into())], ..Default::default() });
+    assert_eq!(b.problems, vec!["TrueNAS: the source is TrueNAS 24.10.2; bko-holt load supports TrueNAS 25.10 only".to_string()]);
+    // Without the middleware's marks it's plain Debian 12: no boot.truenas,
+    // no product; its inactive BEs are still sources (crate::zfs_be).
+    let (t, runner) = truenas(false);
+    std::fs::remove_file(t.p("/data/freenas-v1.db")).unwrap();
+    let v = run(&t, true, runner);
+    assert!(v.at(&["boot", "truenas"]).is_none() && v.at(&["os", "product"]).is_none());
+    assert!(arr(&v, &["storage", "backup_sources"]).iter().any(|b| s(b, &["path"]) == "/run/bko-be/25.10.6"));
+    // boot-pool/grub in fstab: mounted once, as the source had it, and
+    // no note that it isn't on the layout's disks.
+    let (t, runner) = truenas(false);
+    t.file("/etc/fstab", "boot-pool/grub	/boot/grub	zfs	relatime,defaults	0	0
+");
+    let l = crate::load::layout::Layout::from_json(run(&t, true, runner)).unwrap();
+    let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vda".into(), "sda".into())], ..Default::default() });
+    let mt: String = b.stage(crate::load::Stage::Mount).iter().map(crate::load::commands::Cmd::shell).collect();
+    assert_eq!(mt.matches("mount -t zfs boot-pool/grub /mnt/bko-target/boot/grub\n").count(), 1, "{mt}");
+    assert!(!b.notes.iter().any(|n| n.contains("/boot/grub")), "{:?}", b.notes);
+}
+
+/// TrueNAS on a BIOS boot mirror with the data pool tank on vdc: GRUB on
+/// both disks both ways, no NVRAM; tank restored as any pool by default,
+/// left alone with --pools boot-pool, and a --map of its disk refused.
+#[test]
+fn truenas_mirror_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let (v, b) = truenas_plan(true, &[], &[]);
+    assert_eq!(s(&v, &["firmware", "mode"]), "bios");
+    let bes = arr(&v, &["boot", "truenas", "bes"]);
+    assert_eq!(bes.len(), 2);
+    assert_eq!(arr(&v, &["boot", "esps"]).len(), 2);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let text = |b: &crate::load::commands::Built, st: Stage| -> String { b.stage(st).iter().map(Cmd::shell).collect() };
+    let asm = text(&b, Stage::Assemble);
+    assert!(asm.lines().any(|l| l.starts_with("zpool create ") && l.contains("boot-pool mirror /dev/sda3 /dev/sdb3")), "{asm}");
+    assert!(asm.lines().any(|l| l.starts_with("zpool create ") && l.contains(" tank /dev/sdc1")), "{asm}");
+    let bt = text(&b, Stage::Boot);
+    for d in ["sda", "sdb"] {
+        assert_eq!(bt.matches(&format!("grub-install --target=i386-pc /dev/{d}\n")).count(), 1, "{bt}");
+        assert!(bt.contains(&format!("mount -t vfat /dev/{d}2 /mnt/bko-target/boot/efi\n")), "{bt}");
+    }
+    assert_eq!(bt.matches("--target=x86_64-efi").count(), 2, "{bt}");
+    assert_eq!(bt.matches("update-grub").count(), 1, "{bt}");
+    assert!(!bt.contains("efibootmgr") && !bt.contains("update-initramfs"), "{bt}");
+    assert!(b.notes.iter().any(|n| n == "TrueNAS: 2 boot environments restored (active 25.10.8); GRUB reinstalled on 2 disks and 2 ESPs, its menu rebuilt"), "{:?}", b.notes);
+    assert!(text(&b, Stage::Mount).contains("mount -t zfs tank/.system /mnt/bko-target/var/db/system\n"));
+    // --pools boot-pool: nothing touches vdc's target, tank isn't made,
+    // its files aren't restored.
+    let (_, b) = truenas_plan(true, &["--pools", "boot-pool", "--repo", "/r"], &[]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let all: String = b.stages.iter().flat_map(|(_, c)| c.iter().map(Cmd::shell)).collect();
+    assert!(!all.contains("sdc") && !all.contains("zpool create -f -d -o cachefile=none -o ashift=12 -o feature@async_destroy=enabled -R /mnt/bko-target tank"), "{all}");
+    assert!(!all.lines().any(|l| l.starts_with("zfs create") && l.contains(" tank")), "{all}");
+    assert!(!all.contains("mount -t zfs tank/.system"), "{all}");
+    let rs = text(&b, Stage::Restore);
+    assert!(rs.contains("!/mnt/tank/**\n") && rs.contains("!/var/db/system/**\n") && rs.contains("--glob-file /run/bko-holt/restore.globs"), "{rs}");
+    let (tr, runner) = truenas(true);
+    let l = crate::load::layout::Layout::from_json(run(&tr, true, runner)).unwrap();
+    let only = l.only_pools(&["boot-pool".to_string()]);
+    assert_eq!(only.disks, vec!["vdc".to_string()]);
+    assert!(only.layout.disk("vdc").is_none() && only.problems.is_empty());
+    assert_eq!(only.notes, vec!["--pools: pool tank on vdc left untouched (not partitioned, made or restored); its files under /mnt/tank, /mnt/tank/share, /var/db/system, /var/db/system/cores, /var/db/system/netdata aren't restored".to_string()]);
+    assert_eq!(only.guids, vec![("tank".to_string(), "888".to_string())]);
+    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json", "--pools", "boot-pool", "--map", "vdc=/dev/sdc"].map(String::from)) else { unreachable!() };
+    let sys = crate::load::target::System { disks: vec![], mounts: vec![], pools: vec![], pvs: vec![], devs: vec![], swaps: vec![] };
+    let p = crate::load::target::left_out_pool_problems(&o, &only, &crate::load::target::Mapping::default(), &sys);
+    assert_eq!(p, vec!["--map vdc=/dev/sdc: vdc holds a pool --pools leaves untouched, so it has no target".to_string()]);
+    // A name the layout hasn't.
+    assert_eq!(l.only_pools(&["boot".to_string()]).problems[0], "--pools boot: the layout has no ZFS pool boot (it has boot-pool, tank)");
+}
+
+/// A dump's JSON object member K, for writing (tests that reshape a dump).
+fn member<'a>(v: &'a mut Value, k: &str) -> &'a mut Value {
+    let Value::Obj(o) = v else { panic!("no object for {k}") };
+    &mut o.iter_mut().find(|(n, _)| n == k).unwrap_or_else(|| panic!("no {k}")).1
+}
+
+fn corpus_dump(name: &str) -> Value {
+    crate::json::parse(&std::fs::read_to_string(format!("{}/tests/corpus/{name}/src.json", env!("CARGO_MANIFEST_DIR"))).unwrap()).unwrap()
+}
+
+/// Off Linux nothing of crate::zfs_be applies: FreeBSD's inactive bectl
+/// BE (freebsd14's) gets no backup source at dump, and load, even given
+/// one, mounts nothing under run/bko-be and leaves no /run behind.
+#[test]
+fn freebsd_bes_stay_empty() {
+    use crate::load::{commands::Cmd, Stage};
+    let mut v = corpus_dump("freebsd14");
+    let tools = v.at(&["storage", "zfs", "tools"]).unwrap().clone();
+    let (bes, src, w) = crate::zfs_be::dump_sources(Some(crate::other::Family::FreeBsd), &tools);
+    assert!(bes.is_empty() && src.is_empty() && w.is_empty());
+    // (On Linux the same pool would have one: the gate is what keeps it out.)
+    let (_, src, _) = crate::zfs_be::dump_sources(None, &tools);
+    assert_eq!(src.len(), 1);
+    assert_eq!(src[0].path, "/run/bko-be/14.5-RELEASE_2026-11-06_085140");
+    let hinted = src[0].to_json();
+    let Value::Obj(st) = member(&mut v, "storage") else { unreachable!() };
+    st.retain(|(k, _)| k != "backup_sources");
+    st.push(("backup_sources".into(), Value::Arr(vec![hinted])));
+    let l = crate::load::layout::Layout::from_json(v).unwrap();
+    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+    let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vtbd0".into(), "vtbd0".into())], ..Default::default() });
+    let all: String = b.stages.iter().flat_map(|(_, c)| c.iter().map(Cmd::shell)).collect();
+    assert!(!all.contains("bko-be"), "{all}");
+    assert!(b.stage(Stage::Mount).iter().all(|c| !c.argv.iter().any(|a| a.contains("14.5-RELEASE"))));
+}
+
+/// --pools on a family other than Linux: the glob file the restore names
+/// is written there too.
+#[test]
+fn freebsd_pools_glob_file() {
+    use crate::load::{commands::Cmd, Stage};
+    let mut v = corpus_dump("freebsd14");
+    let z = member(member(&mut v, "storage"), "zfs");
+    let Value::Obj(o) = z else { unreachable!() };
+    o.push(("left_out_paths".into(), Value::Arr(vec![Value::from("/data")])));
+    let l = crate::load::layout::Layout::from_json(v).unwrap();
+    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string(), "--repo".into(), "/r".into()]) else { unreachable!() };
+    let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vtbd0".into(), "vtbd0".into())], ..Default::default() });
+    let rs = b.stage(Stage::Restore);
+    let w = rs.iter().position(|c| c.write.as_deref() == Some("/run/bko-holt/restore.globs")).expect("the glob file is written");
+    assert_eq!(rs[w].stdin.as_deref(), Some("!/data/**\n"));
+    let r = rs.iter().position(|c| c.argv.iter().any(|a| a.ends_with("restore.globs")) && c.write.is_none()).expect("the restore names it");
+    assert!(w < r, "{}", rs.iter().map(Cmd::shell).collect::<String>());
+}
+
+/// --pools with more on a left-out disk than the pool (an ext4 /srv), a
+/// left-out pool on no disk of the layout, one with no GUID.
+#[test]
+fn truenas_pools_refusals() {
+    use crate::load::{commands::Cmd, Stage};
+    let (t, runner) = truenas(true);
+    let v = run(&t, true, runner);
+    let keep = ["boot-pool".to_string()];
+    // vdc2, ext4 at /srv, beside tank's vdc1.
+    let mut w = v.clone();
+    {
+        let st = member(&mut w, "storage");
+        let Value::Arr(disks) = member(st, "disks") else { unreachable!() };
+        let vdc = disks.iter_mut().find(|d| d.get("name").and_then(Value::as_str) == Some("vdc")).unwrap();
+        let Value::Arr(parts) = member(vdc, "partitions") else { unreachable!() };
+        parts.push(crate::json::parse(&format!(r#"{{"name": "vdc2", "number": 2, "start_lba": 194560, "sectors": 1024, "type": "{LINUX}", "content": {{"type": "ext4", "uuid": "5e5e0000-0000-4000-8000-000000000099"}}}}"#)).unwrap());
+        let Value::Arr(src) = member(st, "backup_sources") else { unreachable!() };
+        src.push(crate::json::parse(r#"{"path": "/srv", "from": "/srv", "device": "vdc2", "fstype": "ext4", "source": "/dev/vdc2", "subvol": null}"#).unwrap());
+    }
+    let l = crate::load::layout::Layout::from_json(w).unwrap();
+    let only = l.only_pools(&keep);
+    assert!(only.problems.is_empty(), "{:?}", only.problems);
+    assert!(only.notes.iter().any(|n| n == "--pools: the left-out disks also hold /srv (vdc2), which aren't made or restored either"), "{:?}", only.notes);
+    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json", "--pools", "boot-pool", "--repo", "/r"].map(String::from)) else { unreachable!() };
+    let b = crate::load::commands::build(&only.layout, &o, &crate::load::target::Mapping { pairs: vec![("vda".into(), "sda".into()), ("vdb".into(), "sdb".into())], ..Default::default() });
+    let rs: String = b.stage(Stage::Restore).iter().map(Cmd::shell).collect();
+    assert!(rs.contains("!/srv/**\n") && rs.contains("!/mnt/tank/**\n"), "{rs}");
+    assert!(!b.stage(Stage::Format).iter().map(Cmd::shell).collect::<String>().contains("5e5e0000"));
+    // tank on no disk of the layout (its label unread).
+    let mut w = v.clone();
+    {
+        let Value::Arr(disks) = member(member(&mut w, "storage"), "disks") else { unreachable!() };
+        disks.retain(|d| d.get("name").and_then(Value::as_str) != Some("vdc"));
+    }
+    let only = crate::load::layout::Layout::from_json(w).unwrap().only_pools(&keep);
+    assert!(only.problems.iter().any(|p| p.starts_with("--pools: pool tank is to be left untouched, but no disk of the layout holds a vdev of it")), "{:?}", only.problems);
+    // tank with no GUID in the dump.
+    let mut w = v.clone();
+    {
+        let Value::Arr(labels) = member(member(member(&mut w, "storage"), "zfs"), "pools_from_labels") else { unreachable!() };
+        labels.retain(|p| p.get("name").and_then(Value::as_str) != Some("tank"));
+    }
+    let only = crate::load::layout::Layout::from_json(w).unwrap().only_pools(&keep);
+    assert!(only.problems.iter().any(|p| p.starts_with("--pools: pool tank has no GUID in the dump")), "{:?}", only.problems);
+    assert!(only.guids.is_empty());
+}
+
+/// A TrueNAS bootfs that isn't the booted BE: dump warns, load refuses,
+/// naming both; a boot-pool disk with no target is refused too.
+#[test]
+fn truenas_bootfs_and_targets() {
+    let (t, runner) = truenas(false);
+    let runner = runner.with(
+        "zpool get -H -p -o property,value,source all boot-pool",
+        "size\t31138512896\t-\nashift\t12\tlocal\ncachefile\tnone\tlocal\ncompatibility\tgrub2\tlocal\nbootfs\tboot-pool/ROOT/25.10.7\tlocal\nfeature@async_destroy\tenabled\tlocal\n",
+    );
+    let v = run(&t, true, runner);
+    let w: Vec<&str> = arr(&v, &["warnings"]).iter().filter_map(Value::as_str).collect();
+    assert!(w.iter().any(|x| x.starts_with("ZFS pool boot-pool: its bootfs is boot-pool/ROOT/25.10.7, but the booted boot environment is boot-pool/ROOT/25.10.8")), "{w:?}");
+    assert!(!arr(&v, &["storage", "backup_sources"]).iter().any(|b| s(b, &["path"]).starts_with("/run/bko-be/25.10.7")));
+    let l = crate::load::layout::Layout::from_json(v).unwrap();
+    let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+    let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vda".into(), "sda".into())], ..Default::default() });
+    assert!(b.problems.iter().any(|p| p.starts_with("ZFS: the pool's bootfs is boot-pool/ROOT/25.10.7, but the dump was made on boot environment boot-pool/ROOT/25.10.8")), "{:?}", b.problems);
+    // The mirror with vdb unmapped.
+    let (t, runner) = truenas(true);
+    let l = crate::load::layout::Layout::from_json(run(&t, true, runner)).unwrap();
+    let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vda".into(), "sda".into()), ("vdc".into(), "sdc".into())], ..Default::default() });
+    assert!(b.problems.iter().any(|p| p == "TrueNAS: vdb holds a boot-pool vdev but has no target, so GRUB can't be installed on it"), "{:?}", b.problems);
+}

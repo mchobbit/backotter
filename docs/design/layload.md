@@ -332,6 +332,16 @@ efivarfs bound in):
      own over an empty tmpfs in efivarfs' place (systemd 257's `bootctl
      --graceful` fails with efivarfs only unmounted).  GRUB modes, shim, an
      ID with no device and a Proxmox other than 9 are problems in the plan.
+   - TrueNAS (docs/design/truenas.md; `boot.truenas`, before any loader
+     arm): every boot environment under `boot-pool/ROOT` is recreated with its
+     user properties and `bootfs`, filled from the archive (the inactive ones
+     through their `/run/bko-be/V` backup sources, unmounted first), and
+     `readonly=on` is held back until the end of this stage.  The chroot runs
+     `grub-install --target=i386-pc` on each boot disk, and with each
+     unmounted ESP (formatted with its volume ID) mounted only for it
+     `grub-install --target=x86_64-efi --bootloader-id=debian --no-nvram`
+     and a copy to `EFI/boot/bootx64.efi`; then one `update-grub` (os-prober
+     off) and no initramfs rebuild.  `efi_entries` makes `TrueNAS-N`.
    - rEFInd (PikaOS): nothing installed.  Its binaries, drivers, theme and
      `refind.conf` (in `EFI/refind` and `EFI/BOOT`) come back with the ESP,
      and `refind_linux.conf` with /boot; only the NVRAM entry is made, when

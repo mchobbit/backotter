@@ -82,6 +82,15 @@ fn on_target_disks(disks: &[target::TargetDisk], targets: &[&str], dev: &str) ->
     disks.iter().any(|d| targets.contains(&d.b.name.as_str()) && (d.b.name == dev || d.parts.iter().any(|p| p.name == dev)))
 }
 
+/// The mount points of the tree still to mount, of UNMOUNTED (those not
+/// mounted now): the inactive boot environments' under T/run/bko-be
+/// (load/zfs_be.rs) are the restore's only, and the boot stage unmounts
+/// them first, so once it has run (BOOT_RAN) they count as done.
+fn tree_unmounted(unmounted: &[String], target: &str, boot_ran: bool) -> Vec<String> {
+    let be_dir = format!("{target}{}", crate::zfs_be::BE_DIR);
+    unmounted.iter().filter(|p| !(boot_ran && (**p == be_dir || p.starts_with(&format!("{be_dir}/"))))).cloned().collect()
+}
+
 pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, String)>, Vec<String>) {
     // The disks hold what --fit-largest made of the layout, so that's the
     // one every row is read against (target::prepare, fit.rs).
@@ -159,7 +168,8 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
 
     // mount: the tree under --target.
     let mounted: Vec<&str> = system.mounts.iter().map(|m| m.target.as_str()).collect();
-    let unmounted: Vec<String> = built.mount_points.iter().filter(|p| !mounted.contains(&p.as_str())).cloned().collect();
+    let unmounted_all: Vec<String> = built.mount_points.iter().filter(|p| !mounted.contains(&p.as_str())).cloned().collect();
+    let unmounted = tree_unmounted(&unmounted_all, &opts.target, sys.exists(&boot_marker()));
     let total = built.mount_points.len();
     out.push((Stage::Mount, tally(total - unmounted.len(), total), if unmounted.is_empty() { String::new() } else { format!("not mounted: {}", unmounted.join(", ")) }));
     let tree_up = total > 0 && unmounted.is_empty();
@@ -193,7 +203,7 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     // carrying the source's UUID.
     // (An OpenBSD softraid volume stays attached after close, as
     // other/softraid.rs says: its partitions don't count as open.)
-    let open = unmounted.len() < total
+    let open = unmounted_all.len() < total
         || built.made.iter().any(|(_, n)| !crate::other::softraid::is_volume_node(n) && sys.exists(&crate::other::node_path(sys, n)))
         || built.pools.iter().any(|p| imported.contains(p));
     let mut unsigned = vec![];
@@ -423,6 +433,17 @@ mod tests {
         for (dev, want) in [("vtbd1p3.eli", true), ("vtbd1p3", true), ("vtbd1", true), ("vtbd1p2.eli", false), ("vtbd0p3.eli", false), ("vtbd0", false)] {
             assert_eq!(on_target_disks(&disks, &["vtbd1"], dev), want, "{dev}");
         }
+    }
+
+    /// tn6-3: the boot stage unmounts the inactive BEs it restored; after
+    /// it they don't make the tree look unmounted (before, they do).
+    #[test]
+    fn restored_bes_unmounted_by_the_boot_stage() {
+        let t = "/mnt/bko-target";
+        let gone = vec![format!("{t}/run/bko-be/25.10.6"), format!("{t}/run/bko-be/25.10.6/usr"), format!("{t}/run/bko-bed")];
+        assert_eq!(tree_unmounted(&gone, t, false), gone);
+        assert_eq!(tree_unmounted(&gone, t, true), vec![format!("{t}/run/bko-bed")]);
+        assert_eq!(tree_unmounted(&[format!("{t}/usr")], t, true), vec![format!("{t}/usr")]);
     }
 
     #[test]

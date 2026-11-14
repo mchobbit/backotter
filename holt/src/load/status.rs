@@ -8,6 +8,7 @@ use super::commands;
 use super::layout::Layout;
 use super::target;
 use super::{Options, Stage, EXIT_OK, EXIT_PLAN_PROBLEMS, RUN_DIR};
+use crate::other::Family;
 use crate::sys::Sys;
 
 /// Exists once the boot stage has run for the tree restored in this RUN_DIR.
@@ -48,15 +49,28 @@ fn tally(ok: usize, total: usize) -> State {
     }
 }
 
+/// The device to read what's on a node from, for a layout of family FAM.
+/// OpenBSD won't open the block device of a mounted filesystem (EBUSY):
+/// once mount had run, format read as not done, /dev/sd1a or a softraid
+/// volume's 739d98841b65e745.a (/dev/sd3a) unreadable.  There it's the raw
+/// device (/dev/rsd3a), which reads the same; open_dev sizes it.
+fn read_path(sys: &Sys, fam: Option<Family>, node: &str) -> String {
+    let p = crate::other::node_path(sys, node);
+    match fam {
+        Some(Family::OpenBsd) if p.starts_with("/dev/") => p.replacen("/dev/", "/dev/r", 1),
+        _ => p,
+    }
+}
+
 /// What's on a device node (its blkid TYPE), read from the device.
-fn kind_at(sys: &Sys, node: &str) -> Option<String> {
-    let src = sys.open_dev(&crate::other::node_path(sys, node))?;
+pub(crate) fn kind_at(sys: &Sys, fam: Option<Family>, node: &str) -> Option<String> {
+    let src = sys.open_dev(&read_path(sys, fam, node))?;
     crate::probe::probe_all(&src).into_iter().next().map(|c| c.kind)
 }
 
 /// The UUID of what's on a device node, read from the device.
-fn uuid_at(sys: &Sys, node: &str) -> Option<String> {
-    let src = sys.open_dev(&crate::other::node_path(sys, node))?;
+fn uuid_at(sys: &Sys, fam: Option<Family>, node: &str) -> Option<String> {
+    let src = sys.open_dev(&read_path(sys, fam, node))?;
     crate::probe::probe_all(&src).into_iter().find_map(|c| c.uuid).map(|u| u.to_ascii_lowercase())
 }
 
@@ -123,17 +137,18 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
         .run("zfs", &["list", "-H", "-o", "name"])
         .map(|o| o.lines().map(|l| l.trim().to_string()).filter(|d| imported.iter().any(|p| d == p || d.starts_with(&format!("{p}/")))).collect())
         .unwrap_or_default();
+    let fam = Family::of_layout(&layout.v);
     let mut bad = vec![];
     for (node, ty, uuid) in &built.filesystems {
         // UFS and HAMMER2 can't be given the source's UUID: the type shows it.
         if matches!(ty.as_str(), "ufs" | "hammer2" | "befs" | "redoxfs") {
-            if kind_at(sys, node).as_deref() != Some(ty.as_str()) {
+            if kind_at(sys, fam, node).as_deref() != Some(ty.as_str()) {
                 bad.push(format!("{node} ({ty})"));
             }
             continue;
         }
         let want = uuid.as_ref().map(|u| u.to_ascii_lowercase());
-        if uuid_at(sys, node) != want || want.is_none() {
+        if uuid_at(sys, fam, node) != want || want.is_none() {
             bad.push(format!("{node} ({ty})"));
         }
     }
@@ -193,7 +208,7 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
             }
             let Some(want) = layout.content(&p.name).and_then(|c| c.get("uuid")).and_then(|u| u.as_str().map(str::to_string).or_else(|| u.as_u64().map(|n| n.to_string()))) else { continue };
             let node = commands::part_node(layout, d, tgt, p.number);
-            if uuid_at(sys, &node) != Some(want.to_ascii_lowercase()) {
+            if uuid_at(sys, fam, &node) != Some(want.to_ascii_lowercase()) {
                 unsigned.push(node);
             }
         }

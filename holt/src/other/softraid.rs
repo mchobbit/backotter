@@ -882,4 +882,22 @@ mod tests {
             assert!(!is_volume_node(n), "{n}");
         }
     }
+
+    /// obc3, o6c: once mount had run, status read the root as not made,
+    /// as OpenBSD won't open a mounted filesystem's block device.  It reads
+    /// the volume's raw one.
+    #[test]
+    fn status_reads_the_mounted_volume_raw() {
+        use crate::load::status::kind_at;
+        let b = plan(dump(), &[]);
+        let t = Tree::new("softraid-status-raw");
+        // /dev/sd3a reads as nothing, as when it's mounted.
+        t.file("/dev/sd3a", "").file("/dev/rsd3a", crate::probe::ufs::sample::image(""));
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default().with("sysctl -n hw.disknames", "sd0:a1,sd2:f036e7e3534d6f8b,sd3:739d98841b65e745")), true);
+        let ufs: Vec<&str> = b.filesystems.iter().filter(|f| f.1 == "ufs").map(|f| f.0.as_str()).collect();
+        assert_eq!(ufs, ["739d98841b65e745.a"], "{:?}", b.filesystems);
+        assert_eq!(kind_at(&s, Some(Family::OpenBsd), ufs[0]).as_deref(), Some("ufs"));
+        // Elsewhere the block device is the one read.
+        assert_eq!(kind_at(&s, None, ufs[0]), None);
+    }
 }

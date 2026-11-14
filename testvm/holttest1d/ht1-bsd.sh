@@ -999,7 +999,7 @@ phase_rebuild() {
         [[ $s == oneshot ]] && how=(--through close)
         TMO=7200 load_step 0 "$s" "${map[@]}" "${extra[@]}" "${how[@]}" --commit || {
             sshk "$rkey" "cat /var/run/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
-            sshk "$rkey" "set -x; mount; df; fstat -f /mnt/bko-target; gpart show; disklabel ${RN[1]}; dkctl ${RN[1]} listwedges; zpool status; zpool list -v; zfs list -o name,mounted,mountpoint,canmount; glabel status; swapctl -l" > "$R/logs/rebuild-failed-state.txt" 2>&1
+            sshk "$rkey" "set -x; mount; df; fstat | awk -v m=/mnt/bko-target 'NR == 1 { print; next } { for (i = 5; i <= NF; i++) if (\$i == m) { print; next } }'; gpart show; disklabel ${RN[1]}; dkctl ${RN[1]} listwedges; zpool status; zpool list -v; zfs list -o name,mounted,mountpoint,canmount; glabel status; swapctl -l" > "$R/logs/rebuild-failed-state.txt" 2>&1
             kept_or_down; return; }
         [[ $PLAT == haiku ]] && sshk "$rkey" "echo $s \$(stat -c %Y.%y /mnt/bko-target 2>&1)" >> "$R/logs/haiku-root-mtime.txt" 2>&1
         # Haiku publishes a new table's partitions only at boot.

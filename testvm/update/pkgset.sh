@@ -5,8 +5,9 @@
 #
 #   pkg NAME VERSION [ARCH]    a package of its package manager (Portage:
 #                              the CHOST for ARCH)
-#   nix-pkg NAME VERSION       a store path in NixOS's system closure
-#   nix-system PATH            NixOS's system profile
+#   nix-pkg NAME VERSION       a store path in NixOS's (or Guix System's)
+#                              system closure
+#   nix-system PATH            NixOS's (or Guix System's) system profile
 #   syspatch ID                an OpenBSD patch applied
 #   base NAME VALUE            what no package manager lists: the base system
 #                              of a BSD (a kernel's or libc's sha256, a release
@@ -19,7 +20,7 @@
 # Each listing only reads; pkg -N first, as any other pkg command installs
 # pkg on a guest that has none.
 
-PATH=/usr/local/sbin:/usr/local/bin:/usr/pkg/sbin:/usr/pkg/bin:/usr/sbin:/usr/bin:/sbin:/bin:/run/current-system/sw/bin:$PATH
+PATH=/usr/local/sbin:/usr/local/bin:/usr/pkg/sbin:/usr/pkg/bin:/usr/sbin:/usr/bin:/sbin:/bin:/run/current-system/sw/bin:/run/current-system/profile/bin:/run/current-system/profile/sbin:$PATH
 LC_ALL=C
 export PATH LC_ALL
 has() { command -v "$1" >/dev/null 2>&1; }
@@ -71,6 +72,18 @@ listing() {
         x=$(nix-store -qR "$sys") || fail "nix-store -qR failed"
         # /nix/store/HASH-NAME-VERSION[-OUTPUT]
         lines "$x" | awk '{ s = $0; sub(/^\/nix\/store\/[^-]*-/, "", s); i = match(s, /-[0-9]/)
+                            if (i) { v = substr(s, i + 1); sub(/-.*/, "", v); print "nix-pkg", substr(s, 1, i - 1), v } }' | sort -u
+        return
+    fi
+    # Guix System: the same kinds of line as NixOS's, from its store.
+    if [ -d /gnu/store ] && [ -d /var/guix/profiles ] && has guix; then
+        echo "base pm guix"
+        sys=$(readlink -f /var/guix/profiles/system)
+        [ -n "$sys" ] || fail "no Guix system profile"
+        echo "nix-system $sys"
+        x=$(guix gc -R "$sys") || fail "guix gc -R failed"
+        # /gnu/store/HASH-NAME-VERSION[-OUTPUT]
+        lines "$x" | awk '{ s = $0; sub(/^\/gnu\/store\/[^-]*-/, "", s); i = match(s, /-[0-9]/)
                             if (i) { v = substr(s, i + 1); sub(/-.*/, "", v); print "nix-pkg", substr(s, 1, i - 1), v } }' | sort -u
         return
     fi

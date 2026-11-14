@@ -146,9 +146,11 @@ vm_halt() {
     local pid=$VM_PID q
     VM_PID=""
     # Full paths: NetBSD root's PATH has no /sbin.  OpenBSD has no poweroff,
-    # illumos has its shutdown in /usr/sbin.
+    # illumos has its shutdown in /usr/sbin.  Guix has no poweroff at all,
+    # only Shepherd's halt (which powers off) on its PATH: by /bin/sh, since
+    # root's shell may be csh (DragonFly).
     if VM_PID=$pid vm_owns_port; then
-        T=30 vm_ssh '/sbin/poweroff || /sbin/shutdown -p now || /usr/sbin/shutdown -y -i5 -g0' \
+        T=30 vm_ssh '/sbin/poweroff || /sbin/shutdown -p now || /usr/sbin/shutdown -y -i5 -g0 || /bin/sh -c "command -v poweroff >/dev/null 2>&1 || halt"' \
             >/dev/null 2>&1 || true
     fi
     for _ in $(seq 30); do kill -0 "$pid" 2>/dev/null || break; sleep 2; done

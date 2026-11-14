@@ -554,6 +554,38 @@
    ],
    "notes": "freebsd15/extra.sh, freebsd15's checklist"
   },
+  "guix15": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/guix15/**",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#guix15"
+   ]
+  },
+  "guix15-bios": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/guix15-bios/**",
+    "testvm/stictest1/guix15/inner.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/stic/limits.json#guix15-bios"
+   ],
+   "notes": "guix15/inner.sh, shared with guix15 (its check.sh is the same file)"
+  },
   "haiku6": {
    "os": "haiku",
    "bins": [

@@ -1,0 +1,56 @@
+#!/usr/bin/env bash
+# SticTest1: guix15's and guix15-bios's targeted fixture test (Guix System 1.5.0: ext4 like guix15's root, Btrfs @, @home, @gnu like guix15-bios's; a store-like tree and a copy of the guest's /gnu/store; no python3 in the guest: manifests from find, lsattr, sha256sum).
+# Usage: check.sh BIN_DIR PORT PREFIX [NEED_FILTER]
+#   BIN_DIR: holds restic-bko and rustic-bko for Linux (roundN/bin/linux)
+# Boots a throwaway overlay (vm-run --snapshot, TMPDIR in /mnt/bko-ram/PREFIX)
+# through guest-slot.sh and cmp-run.sh --reserve, runs guix15/inner.sh there
+# (one for both guests: fixture on fresh loop file systems like the guest's
+# root, four directions, restore over immutable files, a non-root run,
+# snapshot node identity, the stores' hard links, mtime 1 and modes), prints
+# PASS/FAIL/LIMIT lines, writes results.json; exit 0 if nothing FAILs.
+# Logs: $STC_LOGS/run-TIME/ (STC_LOGS: ~/backotter-work/stictest1/GUEST/logs
+# by default).  guix15/check.sh and guix15-bios/check.sh are the same file.
+set -uo pipefail
+HERE=$(cd "$(dirname "$0")" && pwd)
+G=$(basename "$HERE")
+WORK=$HOME/backotter-work
+C=${BKO_TESTVM:-$WORK/testvm}/compare
+if [[ ${1:-} == --inner ]]; then
+    shift; BIN=$1 PORT=$2 PFX=$3 OUT=$4
+    . "${BKO_TESTVM:-$WORK/testvm}/vm-lib.sh"
+    R=/mnt/bko-ram/$PFX/$G.$$
+    mkdir -p "$R"
+    trap 'vm_halt; rm -rf "$R"' EXIT
+    TMPDIR=$R VM_BOOT_TIMEOUT=300 vm_boot $G "$PORT" "$OUT/vm" --snapshot --memory 4096 || { echo "FAIL boot: $G didn't come up"; exit 1; }
+    for f in "$BIN/restic-bko" "$BIN/rustic-bko" "$C/torture.sh" "$C/rt-common.sh" "$HERE/../guix15/inner.sh"; do
+        vm_put "$f" "/root/$(basename "$f")" || { echo "FAIL copy: $f"; exit 1; }
+    done
+    T=1800 vm_sh "bash /root/inner.sh" >"$OUT/guest.out" 2>"$OUT/guest.err"
+    echo "inner exit $?" >>"$OUT/guest.err"
+    T=60 vm_ssh "cat /root/st1.tgz" >"$OUT/st1.tgz" 2>/dev/null && tar -C "$OUT" -xzf "$OUT/st1.tgz"
+    exit 0
+fi
+[[ $# -ge 3 ]] || { sed -n 2,9p "$0" >&2; exit 2; }
+BIN=$(realpath "$1") PORT=$2 PFX=$3 FILTER=${4:-}
+STC_LOGS=${STC_LOGS:-$WORK/stictest1/$G/logs}
+OUT=$STC_LOGS/run-$(date +%Y%m%d-%H%M%S)
+mkdir -p "$OUT"
+. "$C/guest-slot.sh"
+slot_take 3 "$(slot_range_here)"
+HOT_C=90 "$WORK/cmp-run.sh" --reserve 4 6 timeout 2400 "$HERE/check.sh" --inner "$BIN" "$PORT" "$PFX" "$OUT" >"$OUT/run.log" 2>&1
+slot_give
+lines=$(grep -E '^(PASS|FAIL|LIMIT) ' "$OUT/guest.out" 2>/dev/null)
+[[ -n $lines ]] || lines="FAIL check ran: no results (see $OUT/run.log, guest.err)"
+[[ -n $FILTER ]] && lines=$(grep -E -- "$FILTER" <<<"$lines")
+echo "$lines"
+printf '%s\n' "$lines" >"$OUT/lines.txt"
+python3 -c '
+import json, sys
+rows = []
+for l in open(sys.argv[1]).read().splitlines():
+    v, rest = l.split(" ", 1); need, _, det = rest.partition(": ")
+    rows.append({"verdict": v, "need": need, "detail": det})
+json.dump({"guest": sys.argv[3], "results": rows}, open(sys.argv[2], "w"), indent=1)' "$OUT/lines.txt" "$OUT/results.json" "$G"
+cp "$OUT/results.json" "$STC_LOGS/results.json" 2>/dev/null
+echo "logs: $OUT"
+! grep -q '^FAIL ' <<<"$lines"

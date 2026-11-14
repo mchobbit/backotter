@@ -204,6 +204,12 @@ pub fn installed_packages(sys: &Sys) -> Vec<(String, String, String)> {
             return parse_xbps_pkgdb(&t);
         }
     }
+    // Guix System has no database: the current generation's profile
+    // manifest lists its packages (last: Guix on another system is that
+    // system's packages).
+    if crate::store::is_guix(sys) {
+        return crate::store::guix_packages(sys);
+    }
     Vec::new()
 }
 
@@ -255,6 +261,10 @@ pub const PACKAGES: &[&str] = &[
     // by metapackage, and the product (pve-manager's version is the PVE
     // release, os.product).
     "proxmox-kernel-helper", "proxmox-default-kernel", "proxmox-ve", "pve-manager",
+    // Guix System's, from its system profile's manifest ("grub", "grub-efi",
+    // "cryptsetup", "btrfs-progs", "e2fsprogs" and "efibootmgr" are above):
+    // its kernel and its init.
+    "linux-libre", "shepherd",
 ];
 
 /// debconf answers from /var/cache/debconf/config.dat whose names start with
@@ -1216,6 +1226,7 @@ pub fn boot_json(sys: &Sys, packages: &[(String, String, String)], esps: &[(Stri
         .set("packages", pk);
     o.put_some("ostree", ostree);
     o.put_some("refind", refind_json(sys));
+    o.put_some("store", crate::store::guix_json(sys));
     o.put_some("proxmox_boot", proxmox.map(|p| p.json));
     o.build()
 }

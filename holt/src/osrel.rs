@@ -99,7 +99,12 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
 /// `anduinos2` in HoltTest1U.  Kali Linux (Debian testing with its own
 /// archive) boots as Debian 13 does on UEFI without shim: initramfs-tools,
 /// GRUB in EFI/kali and update-grub (docs/design/kali.md); its test is
-/// `kali` in HoltTest1Obscure.
+/// `kali` in HoltTest1Obscure.  GNU Guix System is a store system, as
+/// NixOS is (crate::store): each generation's kernel and initrd are store
+/// items that GRUB reads from /, so nothing is rebuilt, and on BIOS the
+/// source's own boot.img and core.img are written to the new disk by the
+/// rescue's grub-bios-setup (docs/design/guix.md); its tests
+/// are `guix15` (UEFI) and `guix15-bios` in HoltTest1Obscure.
 pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("debian", "13", "Debian 13"),
     ("linuxmint", "22", "Linux Mint 22"),
@@ -122,6 +127,10 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("cachyos", "", "CachyOS"),
     ("void", "", "Void Linux"),
     ("nixos", "26", "NixOS 26.05"),
+    // A store system as NixOS is (crate::store), rolling between releases
+    // (guix pull): os-release has no VERSION_ID (docs/design/guix.md,
+    // decision 5), so one that starts writing it is checked before it's claimed.
+    ("guix", "", "Guix System"),
     // Rolling: VERSION_ID is the snapshot's date.
     ("opensuse-tumbleweed", "*", "openSUSE Tumbleweed"),
     ("rocky", "10", "Rocky Linux 10"),
@@ -269,7 +278,7 @@ mod tests {
         assert!(check_supported(Some(&parse(neon))).is_ok());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -438,6 +447,27 @@ mod tests {
         assert!(check_supported(Some(&parse("ID=pentestos\nID_LIKE=\"kali debian\"\nVERSION_ID=\"2026.3\"\nVERSION_CODENAME=kali-rolling\n"))).is_err());
         // Debian testing itself (no VERSION_ID), even on Kali's codename.
         assert!(check_supported(Some(&parse("ID=debian\nVERSION_CODENAME=kali-rolling\nPRETTY_NAME=\"Debian GNU/Linux forky/sid\"\n"))).is_err());
+    }
+
+    /// Guix System's /etc/os-release, as gnu/system.scm writes it (a link
+    /// into the store): ID=guix, no VERSION_ID (docs/design/guix.md; GX1
+    /// checks it on the guest).
+    const GUIX: &str = "NAME=\"Guix System\"\nID=guix\nPRETTY_NAME=\"Guix System\"\nLOGO=guix-icon\nHOME_URL=\"https://guix.gnu.org\"\nDOCUMENTATION_URL=\"https://guix.gnu.org/en/manual\"\nSUPPORT_URL=\"https://guix.gnu.org/en/help\"\nBUG_REPORT_URL=\"https://lists.gnu.org/mailman/listinfo/bug-guix\"\n";
+
+    #[test]
+    fn guix() {
+        let o = parse(GUIX);
+        assert_eq!(o.get("ID"), Some("guix"));
+        assert_eq!(o.get("VERSION_ID"), None);
+        assert_eq!(o.get("PRETTY_NAME"), Some("Guix System"));
+        assert!(check_supported(Some(&o)).is_ok());
+        assert!(check_supported(Some(&parse("ID=guix\n"))).is_ok());
+        assert!(supported_names().contains("NixOS 26.05, Guix System, "));
+        // A VERSION_ID (a release that starts writing one) is checked first.
+        let e = check_supported(Some(&parse(&format!("{GUIX}VERSION_ID=1.5.0\n")))).unwrap_err();
+        assert!(e.contains("(ID=guix, VERSION_ID=1.5.0)"), "{e}");
+        // Guix the package manager on another system is that system.
+        assert!(check_supported(Some(&parse("ID=guixish\n"))).is_err());
     }
 
     #[test]

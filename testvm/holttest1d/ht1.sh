@@ -259,8 +259,11 @@ GVARS=$W/vms/$G/uefi-vars.fd GV_ENTRY=0
 # NAME: VFW, vm-run's options for a boot on R/NAME-vars.fd, made a fresh copy of it (none without).
 gvars() { VFW=(); [[ -n $GVARS ]] || return 0; cp "$GVARS" "$R/$1-vars.fd" && VFW=(--uefi-vars "$R/$1-vars.fd"); }
 # The entry the guest booted through: its efibootmgr -v line (HD(...): on a disk).
-NVBOOT='command -v efibootmgr >/dev/null || { echo "no efibootmgr"; exit 0; }
-c=$(efibootmgr | sed -n "s/^BootCurrent: *//p"); efibootmgr -v | grep -E "^Boot$c\\*? " || echo "BootCurrent ${c:-none}, no such entry"'
+# Without efibootmgr (Guix System), nvboot-efivars.sh reads it from efivarfs.
+NVBOOT="command -v efibootmgr >/dev/null || {
+$(<"$HERE/nvboot-efivars.sh")
+}
+"'c=$(efibootmgr | sed -n "s/^BootCurrent: *//p"); efibootmgr -v | grep -E "^Boot$c\\*? " || echo "BootCurrent ${c:-none}, no such entry"'
 # What the load runs in the rescuer (+img: the image's own, as a user's would).
 RHOLT=/mnt/share/bko-holt RARCH=/mnt/share/rustic-bko
 if [[ $VARIANT == img ]]; then RHOLT=/usr/local/bin/bko-holt RARCH=/usr/local/bin/rustic-bko; fi
@@ -344,7 +347,8 @@ vm_wait() { local key=$1 end=$((SECONDS + 600))
 # SSH answers for a while after `systemctl reboot`, so vm_wait can't tell).
 vm_reboot() { local key=$1 id now
     id=$(TMO=20 sshk "$key" cat /proc/sys/kernel/random/boot_id) && [[ -n $id ]] || return 1
-    TMO=20 sshk "$key" 'systemctl reboot' >/dev/null 2>&1
+    # Guix System (Shepherd) has no systemctl: its own reboot.
+    TMO=20 sshk "$key" 'if command -v systemctl >/dev/null; then systemctl reboot; else reboot; fi' >/dev/null 2>&1
     local end=$((SECONDS + 600))
     while ((SECONDS < end)); do
         now=$(TMO=8 sshk "$key" cat /proc/sys/kernel/random/boot_id 2>/dev/null) && [[ -n $now && $now != "$id" ]] && return 0
@@ -357,7 +361,8 @@ vm_reboot() { local key=$1 id now
 # this run's was up, nor one started by hand on R's (K's) disks.
 vm_down() { local key=$1
     [[ -n $(ht_qemus "$R") ]] || return 0
-    TMO=20 sshk "$key" poweroff >/dev/null 2>&1
+    # Guix System has no poweroff: Shepherd's halt powers off.
+    TMO=20 sshk "$key" 'if command -v poweroff >/dev/null; then poweroff; else halt; fi' >/dev/null 2>&1
     for _ in $(seq 180); do [[ -n $(ht_qemus "$R") ]] || return 0; sleep 1; done
     # shellcheck disable=SC2046  # PIDs
     kill $(ht_qemus "$R") 2>/dev/null; sleep 5
@@ -390,6 +395,11 @@ elif command -v dinitctl >/dev/null; then
 elif command -v s6-rc >/dev/null; then
     echo s6
     s6-rc -da list | sed "s/^/down /" | sort
+elif command -v herd >/dev/null; then
+    # Guix System: herd status lists its services under Started:, Stopped:
+    # and Failed: (then Running timers: and One-shot:), one " X NAME" each.
+    echo shepherd
+    herd status | awk "/^[A-Z][^:]*:\$/ {sec=\$0; next} sec == \"Stopped:\" {print \"down \" \$2} sec == \"Failed:\" {print \"failed \" \$2}" | sort
 else
     echo "unknown init"
 fi'
@@ -677,6 +687,84 @@ ostree_verify() {
         bad "ostree: the rollback's boot state: source $(tr '\n' ' ' < "$L/source-rollback-bootstate.txt"), restored $(tr '\n' ' ' < "$L/restored-rollback-bootstate.txt")"
     fi
 }
+# A Guix System guest (guix15, guix15-bios; docs/design/guix.md, GX6) keeps
+# its system generations, each a GRUB entry: the source boots the one before
+# its current one (`guix system switch-generation`, which points the
+# profile and grub.cfg's default at it) and its current one again, for the
+# baseline; the restored disk does the same and must show what the source
+# did.  GUIX_STATE is what a boot shows: the booted and current system (store
+# paths), the system profile's link (by name: a reconfigure writes it whole,
+# switch-generation relative) and the kernel's root= and gnu.system= (where
+# it leads: switch-generation's grub.cfg names the profile's link, a
+# reconfigure's the store path).
+GUIX_STATE='echo "booted $(readlink -f /run/booted-system)"
+echo "current $(readlink -f /run/current-system)"
+echo "profile $(basename "$(readlink /var/guix/profiles/system)")"
+s=$(tr " " "\n" </proc/cmdline | sed -n "s/^gnu\.system=//p"); echo "gnu.system $(readlink -f "$s")"
+tr " " "\n" </proc/cmdline | grep "^root="'
+# GUIX_PREV switches to the generation before the current one and prints
+# "CURRENT PREVIOUS" (the numbers); switch-generation's own output to stderr.
+# The profile's link is system-N-link, or that by its whole path once a
+# reconfigure has made it.
+GUIX_PREV='n=$(readlink /var/guix/profiles/system | sed -n "s/^.*system-\([0-9]*\)-link\$/\1/p")
+p=$(ls /var/guix/profiles | sed -n "s/^system-\([0-9]*\)-link\$/\1/p" | sort -n | awk -v n="$n" "\$1 < n" | tail -n 1)
+[ -n "$n" ] && [ -n "$p" ] || { echo "no generation before ${n:-the current one}" >&2; exit 1; }
+guix system switch-generation "$p" >&2 && echo "$n $p"'
+# The source's baseline: its previous generation booted, then its current
+# one again, with every GUIX_STATE line as at first.  Exit 1 when the run
+# can go no further.
+guix_source() {
+    local L=$R/logs np n p
+    sshk "$gkey" "$GUIX_STATE" > "$L/source-guix-first.txt" 2>&1
+    np=$(TMO=600 sshk "$gkey" "$GUIX_PREV" 2>"$L/source-guix-switch.err") ||
+        { bad "guix: switch-generation to the previous generation on the source: $(tail -1 "$L/source-guix-switch.err")"; return 1; }
+    read -r n p <<<"$np"
+    vm_reboot "$gkey" || { bad "guix: the source's generation $p boots (no SSH; logs/source-serial.log)"; return 1; }
+    sshk "$gkey" "$GUIX_STATE" > "$L/source-guix-prev.txt" 2>&1
+    bootstate "$gkey" > "$L/source-prev-bootstate.txt"
+    TMO=600 sshk "$gkey" "guix system switch-generation $n" >>"$L/source-guix-switch.err" 2>&1 ||
+        { bad "guix: switch-generation back to $n on the source"; return 1; }
+    vm_reboot "$gkey" || { bad "guix: the source boots its generation $n again (no SSH; logs/source-serial.log)"; return 1; }
+    sshk "$gkey" "$GUIX_STATE" > "$L/source-guix.txt" 2>&1
+    if ! cmp -s "$L/source-guix-first.txt" "$L/source-guix.txt"; then
+        bad "guix: the source's generation $n doesn't boot as at first: $(diff "$L/source-guix-first.txt" "$L/source-guix.txt" | grep '^[<>]' | head -3 | tr '\n' ' ')"; return 1
+    fi
+    if [[ $(sed -n 's/^booted //p' "$L/source-guix-prev.txt") == "$(sed -n 's/^booted //p' "$L/source-guix.txt")" ]]; then
+        bad "guix: the source's generation $p booted the same system as $n"; return 1
+    fi
+    echo "$n $p" > "$L/source-guix-gens.txt"
+    ok "guix: the source boots its generation $p, then $n again"
+}
+# The restored disk: its current generation (booted already, and dumped),
+# then the previous one, each as the source's; its bootstate may have no
+# line the source's previous-generation boot lacked.
+guix_verify() {
+    local L=$R/logs n p np
+    read -r n p < "$L/source-guix-gens.txt"
+    sshk "$gkey" "$GUIX_STATE" > "$L/restored-guix.txt" 2>&1
+    if cmp -s "$L/source-guix.txt" "$L/restored-guix.txt"; then
+        ok "guix: the restored disk boots generation $n as the source did ($(sed -n 's/^booted //p' "$L/restored-guix.txt"))"
+    else
+        bad "guix: the restored generation $n boot isn't the source's: $(diff "$L/source-guix.txt" "$L/restored-guix.txt" | grep '^[<>]' | head -4 | tr '\n' ' ')"
+    fi
+    np=$(TMO=600 sshk "$gkey" "$GUIX_PREV" 2>"$L/restored-guix-switch.err") ||
+        { bad "guix: switch-generation to the previous generation on the restored disk: $(tail -1 "$L/restored-guix-switch.err")"; return; }
+    [[ $np == "$n $p" ]] || bad "guix: the restored disk's generations are $np, the source's $n $p"
+    vm_reboot "$gkey" || { bad "guix: the restored generation $p boots (no SSH; logs/restored-serial.log)"; return; }
+    sshk "$gkey" "$GUIX_STATE" > "$L/restored-guix-prev.txt" 2>&1
+    if cmp -s "$L/source-guix-prev.txt" "$L/restored-guix-prev.txt"; then
+        ok "guix: the restored disk boots generation $p as the source did ($(sed -n 's/^booted //p' "$L/restored-guix-prev.txt"))"
+    else
+        bad "guix: the restored generation $p boot isn't the source's: $(diff "$L/source-guix-prev.txt" "$L/restored-guix-prev.txt" | grep '^[<>]' | head -4 | tr '\n' ' ')"
+    fi
+    bootstate "$gkey" > "$L/restored-prev-bootstate.txt"
+    if diff -q <(head -1 "$L/source-prev-bootstate.txt") <(head -1 "$L/restored-prev-bootstate.txt") >/dev/null \
+        && [[ -z $(comm -13 <(tail -n +2 "$L/source-prev-bootstate.txt") <(tail -n +2 "$L/restored-prev-bootstate.txt")) ]]; then
+        ok "guix: generation $p's boot state as the source's ($(head -1 "$L/restored-prev-bootstate.txt"))"
+    else
+        bad "guix: generation $p's boot state: source $(tr '\n' ' ' < "$L/source-prev-bootstate.txt"), restored $(tr '\n' ' ' < "$L/restored-prev-bootstate.txt")"
+    fi
+}
 
 phase_source() {
     say "== source: $G"
@@ -741,8 +829,11 @@ phase_source() {
     # An ostree source boots its rollback and its default again first: the
     # baseline the restored disk's two boots are held to.
     rm -f "$R/logs/source-ostree"*.txt "$R/logs/source-rollback-bootstate.txt"
-    case $(sshk "$gkey" 'if [ -e /run/ostree-booted ]; then echo ostree; else echo plain; fi') in
+    # So does a Guix System source its previous generation, then its current one.
+    rm -f "$R/logs/source-guix"*.txt "$R/logs/source-prev-bootstate.txt"
+    case $(sshk "$gkey" 'if [ -e /run/ostree-booted ]; then echo ostree; elif [ -d /var/guix/profiles ] && command -v guix >/dev/null; then echo guix; else echo plain; fi') in
         ostree) ostree_source || { vm_down "$gkey"; return; } ;;
+        guix) guix_source || { vm_down "$gkey"; return; } ;;
         plain) ;;
         *) bad "source: no answer over SSH to whether it is ostree"; vm_down "$gkey"; return ;;
     esac
@@ -1149,6 +1240,8 @@ phase_verify() {
     # An ostree source's baseline (its source phase): the rollback boots too,
     # after the dump, which is of the default boot as the source's was.
     [[ ! -f $R/logs/source-ostree-rollback.txt ]] || ostree_verify
+    # So does a Guix System source's previous generation.
+    [[ ! -f $R/logs/source-guix-gens.txt ]] || guix_verify
     if [[ $VARIANT == bs2 ]]; then bs2_restored_down; else vm_down "$gkey"; fi
     local how=(); [[ $VARIANT == bigger ]] && how=(--grow $((1 << 30)))
     [[ $VARIANT == degraded ]] && how=(--degraded)

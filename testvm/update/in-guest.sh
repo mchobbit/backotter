@@ -53,6 +53,32 @@ if [ -e /etc/NIXOS ]; then
     exit 0
 fi
 
+# t2-section: Guix
+# Guix System (make-guix.sh: guix15, guix15-bios): built from the 1.5.0
+# installation image's Guix; root's `guix pull` follows the channel's head
+# (docs/design/guix.md, decision 6), and the system is rebuilt from the
+# guest's own /etc/config.scm.  Its tools are only in the profiles.
+if [ "$(uname)" = Linux ] && [ -d /gnu/store ] && [ -d /var/guix/profiles ] && [ -f /etc/config.scm ]; then
+    PATH=/root/.config/guix/current/bin:/run/current-system/profile/bin:/run/current-system/profile/sbin:$PATH
+    export PATH
+    guix pull || exit 1
+    say "$(guix describe | head -5 | tr '\n' ' ')"
+    # --allow-downgrades: 1.5.0's commit (d58da8a, the installed system's)
+    # is on its release branch, not an ancestor of master's, so the first
+    # reconfigure would abort as a "downgrade" (2026-11-14).  The pull above
+    # just took the channel's head, so nothing older can come in this way.
+    guix system reconfigure --allow-downgrades /etc/config.scm || exit 1
+    # Every generation is a GC root: keep this one and the one before
+    # (delete-generations rewrites grub.cfg's menu), drop the older Guix
+    # builds of root's pulls, then what only those held.
+    old=$(ls /var/guix/profiles | sed -n 's/^system-\([0-9][0-9]*\)-link$/\1/p' | sort -n | head -n -2 | paste -sd, -)
+    if [ -n "$old" ]; then guix system delete-generations "$old" || exit 1; fi
+    guix package -p /var/guix/profiles/per-user/root/current-guix --delete-generations || exit 1
+    guix gc || exit 1
+    say "updated"
+    exit 0
+fi
+
 # t2-section: Linux.portage
 # Gentoo (testvm/bootstrap/gentoo.sh: gentoo, gentoo-systemd): Portage, with binary packages from
 # the 23.0 binhost (make.conf's getbinpkg, signatures checked against

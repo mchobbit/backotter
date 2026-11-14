@@ -172,6 +172,22 @@
   "Linux-only metadata (SELinux, capabilities, inode flags, POSIX ACL default on ZFS)": "not on FreeBSD/ZFS: NFSv4 ACLs instead, no security.* namespace (MAC labels off: security.mac.labeled=0)",
   "Whole-disk needs (zpool.cache, boot)": "out of scope: whole-disk"
  },
+ "guix15": {
+  "Birth times": "ext4 keeps them, Linux can't set them (BACKOTTER.md)",
+  "Extended attributes, POSIX ACLs and file capabilities": "Guix System 1.5.0's base system has no attr, acl or libcap tools (no getfattr, setfattr, setfacl, setcap), so the fixture sets none and the manifest reads none; the store has none",
+  "Linux project IDs": "the guest's ext4 root has no project feature (tune2fs -l), nor has the scratch disk made like it: chattr -p refused",
+  "SELinux labels": "Guix System 1.5.0 here has no SELinux or AppArmor labels on disk",
+  "Store hard links kept in restic-bko's directions (restic-restic, restic-rustic, rustic-restic)": "LIMIT only when rustic-rustic keeps them: a restic-bko backup or restore that breaks the store's hard links still boots (a larger store); cross-tool fidelity is a courtesy and bko-holt uses rustic-bko (docs/design/guix.md, Risks; cross-tool-compat-courtesy). Kept so far (GX5)",
+  "Whole-system restore (UEFI GRUB, vfat ESP, ext4 /, swap)": "out of scope: whole-disk"
+ },
+ "guix15-bios": {
+  "Birth times": "btrfs keeps them, Linux can't set them (BACKOTTER.md)",
+  "Extended attributes, POSIX ACLs and file capabilities": "Guix System 1.5.0's base system has no attr, acl or libcap tools (no getfattr, setfattr, setfacl, setcap), so the fixture sets none and the manifest reads none; the store has none",
+  "Linux project IDs": "btrfs has no project IDs: chattr -p refused",
+  "SELinux labels": "Guix System 1.5.0 here has no SELinux or AppArmor labels on disk",
+  "Store hard links kept in restic-bko's directions (restic-restic, restic-rustic, rustic-restic)": "LIMIT only when rustic-rustic keeps them: a restic-bko backup or restore that breaks the store's hard links still boots (a larger store); cross-tool fidelity is a courtesy and bko-holt uses rustic-bko (docs/design/guix.md, Risks; cross-tool-compat-courtesy). Kept so far (GX5)",
+  "Whole-system restore (BIOS GRUB on GPT, Btrfs / with @, @home, @gnu, swap)": "out of scope: whole-disk"
+ },
  "haiku6": {
   "BSD/Linux file flags, immutable/append-only": "Haiku/BFS has no file flags; restore over a 0444 file with attributes is covered instead",
   "FIFO times": "Haiku's utimensat leaves a FIFO's times as they are (no error), as testvm/haiku/attrs.py notes",

@@ -490,7 +490,8 @@ REBOOT = SBIN + ("(sleep 1; sync; if [ $(uname) = Haiku ]; then shutdown -r -q; 
 # has no -o: no answer, and the reboot is taken from SSH going down and up.)
 UPTIME = SBIN + "ps -o etime= -p 1"
 POWEROFF = SBIN + """case $(uname) in
-    Linux|SunOS|Redox) poweroff ;;
+    # Guix System has no poweroff: Shepherd's halt powers off.
+    Linux|SunOS|Redox) if command -v poweroff >/dev/null; then poweroff; else halt; fi ;;
     Haiku) shutdown -q ;;
     # DragonFly's init ignores shutdown -p's request here; halt -p works.
     DragonFly) halt -p ;;

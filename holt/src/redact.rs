@@ -134,7 +134,7 @@ const WELL_KNOWN: [&str; 7] = [
     "ffffffff-ffff-ffff-ffff-ffffffffffff",
 ];
 /// Hostnames installers give and live systems use: they identify no one.
-const GENERIC_HOSTS: [&str; 33] = [
+const GENERIC_HOSTS: [&str; 35] = [
     "", "(none)", "localhost", "localhost.localdomain", "localdomain", "<system>", "any", "debian", "ubuntu", "ubuntu-server", "fedora",
     "archlinux", "archiso", "alpine", "nixos", "freebsd", "openbsd", "netbsd", "dragonfly", "omnios", "openindiana", "haiku", "void",
     "voidlinux", "mint", "zorin", "pop-os", "rocky", "backotter", "rescue",
@@ -144,6 +144,8 @@ const GENERIC_HOSTS: [&str; 33] = [
     "kali",
     // Proxmox VE's installer's default hostname.
     "pve",
+    // Guix System: its installer's and `guix system image`'s hostnames.
+    "gnu", "guix",
 ];
 /// Labels (lower case, trailing digits and '*' dropped) that installers
 /// and partitioners write: kept, because they help and identify no one.
@@ -185,7 +187,7 @@ pub struct Collector {
 /// A release medium's volume label: a system's name, its version and an
 /// architecture ("Ubuntu-Server 26.04.1 LTS amd64", "Fedora-S-dvd-x86_64-44").
 fn release_label(low: &str) -> bool {
-    const SYSTEMS: [&str; 15] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos", "pikaos", "kali", "proxmox"];
+    const SYSTEMS: [&str; 16] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos", "pikaos", "kali", "proxmox", "guix"];
     const ARCHES: [&str; 5] = ["amd64", "x86_64", "x86-64", "arm64", "aarch64"];
     let first = low.split(|c: char| !c.is_ascii_alphanumeric()).next().unwrap_or("");
     SYSTEMS.contains(&first) && ARCHES.iter().any(|a| low.contains(a)) && low.bytes().any(|c| c.is_ascii_digit())
@@ -1694,6 +1696,20 @@ mod tests {
         assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
         assert!(release_label("proxmox-ve_9.2-1-amd64"));
         assert!(!release_label("proxmox-backup"));
+    }
+
+    /// Guix System: "gnu" and "guix" kept as hostnames on another system's
+    /// dump too, and the installer's names as release labels.  Store paths
+    /// (base32 hashes) aren't identifiers.
+    #[test]
+    fn guix_hosts_and_release_are_kept() {
+        for h in ["gnu", "guix"] {
+            let d = parse(&format!(r#"{{"os": {{"id": "debian"}}, "host": {{"hostname": "{h}"}}, "boot": {{"store": {{"grub": "/gnu/store/0123456789abcdfghijklmnpqrsvwxyz-grub-2.12"}}}}, "storage": {{"disks": [{{"name": "vda", "serial": "1", "partitions": [{{"content": {{"type": "iso9660", "label": "guix-system-install-1.5.0.x86_64-linux"}}}}]}}]}}}}"#)).unwrap();
+            let (r, red) = redact(&d);
+            assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
+        }
+        assert!(release_label("guix-system-install-1.5.0.x86_64-linux"));
+        assert!(!release_label("guix-home"));
     }
 
 }

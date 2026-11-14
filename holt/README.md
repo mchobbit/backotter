@@ -31,7 +31,7 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
   Pop!_OS 24.04, Zorin OS 18, KDE neon 24.04, AnduinOS 2, Arch Linux, CachyOS, Artix Linux, Omarchy,
   EndeavourOS, Manjaro, Garuda Linux, BigLinux, Alpine Linux 3, AerynOS, Void Linux, Chimera Linux,
   Gentoo Linux, PikaOS 4, Kali Linux, Fedora 44, Bazzite 44, Rocky Linux 10, openSUSE
-  Tumbleweed and NixOS 26.05;
+  Tumbleweed, NixOS 26.05 and Guix System (no VERSION_ID; its store GRUB-less, docs/design/guix.md);
 - ostree (image-mode) systems among them: Bazzite 44, and Fedora's atomic
   desktops (Silverblue and Kinoite 44, which say `fedora 44`), told apart
   by ostree's own markers (`src/ostree.rs`).  `load` version 1 refuses

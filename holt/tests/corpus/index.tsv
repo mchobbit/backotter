@@ -32,6 +32,8 @@ gentoo	chopin	g2	dump	-	2026-11-12T12:45:28Z	0.2.4	-	same	19	ok:19:156	0	0	0	sam
 gentoo-systemd	chopin	g3	dump	-	2026-11-12T13:40:16Z	0.2.4	-	same	20	ok:20:161	0	0	0	same	ok:20	-
 ghostbsd26	chopin	r4all	PASS	2026-11-08T02:50:28Z	2026-11-08T02:46:48Z	0.2.4	3a57cceca3fb17a99688eab2e03b36aa8d03c9dab720cb97bcb431a8252ae458	changed	6	ok:6:50	0	2	62392	same	ok:6	storage.disks.0.partitions.0.boot_code.image_b64=61952/d63e4c63 storage.disks.0.boot_code.code_b64=440/0d5e38c2
 ghostbsd26-zfs	cinqcent	r4all	PASS	2026-11-08T02:50:57Z	2026-11-08T02:46:54Z	0.2.4	f9859fa36daa6ed35e006992ff6a95622338c90c93585ec7234a037bf1a710fb	changed	7	ok:7:70	0	2	178104	same	ok:7	storage.disks.0.partitions.0.boot_code.image_b64=177664/aaaca4d3 storage.disks.0.boot_code.code_b64=440/0d5e38c2
+guix15	chopin	gx3	dump	-	2026-11-14T06:32:55Z	0.2.6	-	same	14	ok:14:118	0	0	0	same	ok:14	-
+guix15-bios	chopin	gx3	dump	-	2026-11-14T06:32:58Z	0.2.6	-	same	13	ok:13:121	0	0	0	same	ok:13	-
 haiku6	chopin	r4all	PASS	2026-11-08T02:40:14Z	2026-11-08T02:36:25Z	0.2.4	bc28f52db6818f232180e9f62384ce3a1b346eae229ad4497004add0d31c99a2	changed	1	ok:1:39	0	1	440	same	ok:1	storage.disks.0.boot_code.code_b64=440/14ed669c
 hardenedbsd15	cinqcent	r4all	PASS	2026-11-08T02:42:17Z	2026-11-08T02:37:19Z	0.2.4	abe8ce85847f09c92649c293290d38091568eb75b139c3325ac86f1e18071445	same	6	ok:6:37	0	2	62392	same	ok:6	storage.disks.0.partitions.1.boot_code.image_b64=61952/225ac46d storage.disks.0.boot_code.code_b64=440/0d5e38c2
 kali	cinqcent	k3	dump	-	2026-11-14T05:45:51Z	0.2.6	-	same	14	ok:14:107	0	0	0	same	ok:14	-

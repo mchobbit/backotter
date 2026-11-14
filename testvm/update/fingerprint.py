@@ -70,6 +70,7 @@ PACKAGES = (
     "booster", "kernel-pika", "kernel-pika-runtime", "pika-refind-theme", "refind-btrfs", "zram-tools",
     "anduinos-grub", "anduinos-shim-signed", "anduinos-secureboot-toolkit", "anduinos-btrfs-snapshots-manager",
     "proxmox-kernel-helper", "proxmox-default-kernel", "proxmox-ve", "pve-manager",
+    "linux-libre", "shepherd",
 )
 # Of those, what handles storage; the rest is boot.
 STORAGE = frozenset((
@@ -86,7 +87,7 @@ FIXTURE_ALIASES = {"nilfs-utils": "nilfs-tools", "attr-progs": "attr", "acl-prog
 ZFS_NAMES = ("zfsutils-linux", "zfs-utils", "zfs", "zfs-user", "zfs-dkms")
 LSM_NAMES = ("selinux-policy-targeted", "selinux-policy", "apparmor")
 
-LINUX_KINDS = ("dpkg", "rpm", "pacman", "apk", "xbps", "moss", "portage", "nixos")
+LINUX_KINDS = ("dpkg", "rpm", "pacman", "apk", "xbps", "moss", "portage", "nixos", "guix")
 BASE_KINDS = ("freebsd", "hardenedbsd", "netbsd", "alpinebsd", "openbsd", "dragonfly", "illumos", "haiku")
 
 
@@ -142,7 +143,7 @@ class Listing:
 
     @property
     def all(self):
-        return self.nix if self.kind == "nixos" else self.pkgs
+        return self.nix if self.kind in ("nixos", "guix") else self.pkgs
 
     @property
     def kind(self):

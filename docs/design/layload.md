@@ -267,10 +267,16 @@ efivarfs bound in):
      source's were, without Pika's `update-initramfs` wrapper; the
      `.dpkg-bak` and `.bak` copies come back as they were;
    - nothing where the image is prebuilt with the kernel (AerynOS), comes
-     with the image (ostree) or is in the store (NixOS).
+     with the image (ostree) or is in the store (NixOS, Guix System: each
+     generation's kernel and initrd are store items, named by grub.cfg).
 4. The boot loader, as `boot.loader` recorded it:
    - GRUB on BIOS: `grub-install` on the target disks that map to debconf's
-     `grub-pc/install_devices`, then `update-grub`.
+     `grub-pc/install_devices`, then `update-grub`.  NixOS: the store's own
+     GRUB's `grub-install`, grub.cfg kept.  Guix System, whose store holds
+     no GRUB: the rescue's `grub-bios-setup --directory` on the source's own
+     `boot.img` and `core.img`, restored in `/boot/grub/i386-pc`, grub.cfg
+     kept; on UEFI nothing runs in the chroot (the ESP's
+     `EFI/Guix/grubx64.efi` comes back; only the NVRAM entry is made).
    - GRUB on UEFI: `grub-install --target=x86_64-efi` into the mounted ESP,
      with the bootloader ID taken from the directory of the entry the firmware
      booted (`\EFI\DEBIAN\SHIMX64.EFI` gives `debian`), with shim when

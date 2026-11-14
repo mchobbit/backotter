@@ -2637,15 +2637,16 @@ impl Builder<'_> {
         for d in ["dev", "proc", "sys", "run"] {
             out.push(Cmd::new(&["mount", "--rbind", "--make-rslave", &format!("/{d}"), &format!("{t}/{d}")]));
         }
-        let nixos = self.layout.str_at(&["os", "id"]) == Some("nixos");
+        // NixOS and Guix System (crate::store): their notes and paths.
+        let store = crate::store::system(self.layout.str_at(&["os", "id"]));
         let gentoo = self.layout.str_at(&["os", "id"]) == Some("gentoo");
         if gentoo {
             let cmds = self.gentoo_initramfs(&t);
             out.extend(cmds);
         } else {
             match self.initramfs(&t) {
-                _ if nixos && self.layout.uefi() => self.notes.push("NixOS: each generation's kernel and initrd came back with the restore, where its boot loader's entries name them; nothing to rebuild".into()),
-                _ if nixos => self.notes.push("NixOS: each generation's kernel and initrd are in /boot/kernels, restored with /boot; nothing to rebuild".into()),
+                _ if store.is_some() && self.layout.uefi() => self.notes.push(store.map_or("", |s| s.initramfs_uefi).into()),
+                _ if store.is_some() => self.notes.push(store.map_or("", |s| s.initramfs_bios).into()),
                 Some(c) => out.push(c),
                 None => self.notes.push("the initramfs came prebuilt with the kernel and was restored with it; nothing to rebuild".into()),
             }
@@ -2666,23 +2667,60 @@ impl Builder<'_> {
             (_, true) if gentoo && via_shim => {
                 self.problems.push(format!("Gentoo through shim (Secure Boot, {loader}): bko-holt load would write an unsigned boot loader over the signed one, and doesn't support it"));
             }
-            // NixOS: GRUB is in the Nix store, and its grub.cfg is written
-            // by switch-to-configuration, which would install GRUB on the
-            // source's device names (here, the rescue system's disks).  The
-            // restored grub.cfg names the filesystems by UUID, which the
-            // new ones keep: only the boot code is installed, by the newest
-            // GRUB in the store.
-            ("grub", false) if nixos => {
+            // NixOS and Guix System: grub.cfg is written by
+            // switch-to-configuration (guix system reconfigure), which would
+            // install GRUB on the source's device names (here, the rescue
+            // system's disks).  The restored grub.cfg names the filesystems
+            // by UUID (or label), which the new ones keep: only the boot
+            // code is installed.  NixOS's store keeps its GRUB, whose
+            // grub-install does it, the newest in the store.  Guix's has
+            // none (guix system init ran the installer's, and a
+            // reconfigure's is garbage-collectable): the source's own
+            // boot.img and core.img, which grub-install left in
+            // /boot/grub/i386-pc and the restore brought back, are written
+            // to each disk by the rescue system's grub-bios-setup, outside
+            // the chroot, which patches their sector addresses for it.
+            ("grub", false) if store.is_some() => {
+                let st = store.expect("a store system");
                 let devs = self.grub_bios_devices();
                 if devs.is_empty() {
                     self.problems.push("BIOS GRUB: no disk's MBR holds GRUB".into());
                 }
-                let pick = format!(
-                    "g=$(for d in {t}/nix/store/*-grub-2.*/lib/grub/i386-pc; do d=${{d%/lib/grub/i386-pc}}; echo \"${{d#*-}} ${{d#{t}}}\"; done | sort -V | tail -n 1 | cut -d' ' -f2); [ -n \"$g\" ] || {{ echo 'no BIOS GRUB in the Nix store' >&2; exit 1; }}"
-                );
-                for d in devs {
-                    out.push(Cmd::new(&["sh", "-c", &format!("{pick}; chroot {t} \"$g/bin/grub-install\" --target=i386-pc --boot-directory=/boot {d}")]).why("the Nix store's GRUB; the restored grub.cfg stays"));
+                match st.grub_install {
+                    Some(install) => {
+                        let pick = st.bios_grub_pick(&t);
+                        for d in devs {
+                            out.push(Cmd::new(&["sh", "-c", &format!("{pick}; chroot {t} \"$g/{install}\" --target=i386-pc --boot-directory=/boot {d}")]).why(format!("{}'s GRUB; the restored grub.cfg stays", st.store_name)));
+                        }
+                    }
+                    None => {
+                        let dir = format!("{t}{}/i386-pc", self.grub_dir());
+                        let missing: Vec<&str> = ["boot_img", "core_img"].into_iter().filter(|k| self.layout.v.at(&["boot", "store", k]).and_then(Value::as_bool) == Some(false)).collect();
+                        if !missing.is_empty() {
+                            self.problems.push(format!(
+                                "{}: the source's {}/i386-pc has no {}, which grub-install leaves there and bko-holt load writes to the new disk's MBR and BIOS boot partition (its store has no GRUB to install with)",
+                                st.name,
+                                self.grub_dir(),
+                                missing.iter().map(|k| k.replace('_', ".")).collect::<Vec<_>>().join(" or ")
+                            ));
+                        }
+                        let q = shell_quote(&dir);
+                        for d in devs {
+                            out.push(
+                                Cmd::new(&[
+                                    "sh",
+                                    "-c",
+                                    &format!("d={q}; [ -f \"$d/boot.img\" ] && [ -f \"$d/core.img\" ] || {{ echo \"$d: no boot.img or core.img (the source's, restored with /boot/grub) to write to {d}\" >&2; exit 1; }}; grub-bios-setup --directory=\"$d\" {d}"),
+                                ])
+                                .why(format!("{}'s own boot.img and core.img, restored in {}/i386-pc; the rescue's grub-bios-setup writes them to the new disk", st.name, self.grub_dir())),
+                            );
+                        }
+                    }
                 }
+                if let Some(n) = st.bios_grub {
+                    self.notes.push(n.into());
+                }
+                self.check_store_grub_cfg(st);
             }
             ("grub", false) => {
                 let devs = self.grub_bios_devices();
@@ -2719,19 +2757,23 @@ impl Builder<'_> {
                 self.notes.push("UEFI GRUB on Fedora: the ESP's shim and GRUB are the restored ones; only grub.cfg is remade".into());
                 self.remake_grub_cfg(&t, &mut out);
             }
-            // NixOS on UEFI: nothing runs in the chroot.  Its tools are in
-            // the Nix store, found by PATH through /run/current-system,
-            // which the chroot doesn't have (its /run is the rescue
-            // system's).  Nor is anything needed: switch-to-configuration
-            // wrote the loader, its configuration and each generation's
-            // files, all files on the ESP and /boot, restored with them.
-            // GRUB's EFI image finds /boot by its filesystem's UUID, which
-            // the new one keeps (as BIOS GRUB's grub.cfg does, above).  Only
-            // the boot entry is made (efi_entries, below).
-            ("grub", true) if nixos => {
-                self.notes.push("NixOS: UEFI GRUB's EFI image and grub.cfg came back with the ESP and /boot; only the boot entry is made".into());
+            // NixOS and Guix System on UEFI: nothing runs in the chroot.
+            // Their tools are in the store, found by PATH through
+            // /run/current-system, which the chroot doesn't have (its /run
+            // is the rescue system's).  Nor is anything needed:
+            // switch-to-configuration (guix system reconfigure) wrote the
+            // loader, its configuration and each generation's files, all
+            // files on the ESP, /boot and (Guix's kernels) the store,
+            // restored with them.  GRUB's EFI image finds /boot by its
+            // filesystem's UUID, which the new one keeps (as BIOS GRUB's
+            // grub.cfg does, above).  Only the boot entry is made
+            // (efi_entries, below).
+            ("grub", true) if store.is_some() => {
+                let st = store.expect("a store system");
+                self.notes.push(st.uefi_grub.into());
                 let img = self.esp_file("/grubx64.efi").unwrap_or_else(|| format!("EFI/{}/grubx64.efi", self.bootloader_id()));
-                out.extend(self.nixos_removable(&img));
+                out.extend(self.store_removable(&img));
+                self.check_store_grub_cfg(st);
             }
             ("grub", true) => {
                 let esp = self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).unwrap_or("/boot/efi").to_string();
@@ -2750,10 +2792,10 @@ impl Builder<'_> {
             ("systemd-boot", true) if self.layout.v.at(&["boot", "loader", "via_shim"]).and_then(Value::as_bool) == Some(true) => {
                 self.notes.push("systemd-boot through shim: shim, systemd-boot and the loader entries are the restored ESP's; only the boot entries are made".into());
             }
-            ("systemd-boot", true) if nixos => {
-                self.notes.push("NixOS: systemd-boot, its loader entries and every generation's kernel and initrd came back with the ESP; only the boot entry is made".into());
+            ("systemd-boot", true) if store.is_some_and(|s| s.systemd_boot.is_some()) => {
+                self.notes.push(store.and_then(|s| s.systemd_boot).unwrap_or_default().into());
                 let img = self.esp_file("/systemd-bootx64.efi").unwrap_or_else(|| "EFI/systemd/systemd-bootx64.efi".into());
-                out.extend(self.nixos_removable(&img));
+                out.extend(self.store_removable(&img));
             }
             ("systemd-boot", true) => {
                 out.push(Cmd::new(&["chroot", &t, "bootctl", "install", "--no-variables"]));
@@ -2796,7 +2838,7 @@ impl Builder<'_> {
         }
         out.push(Cmd::new(&["mkdir", "-p", &format!("{t}/var/log/bko-holt")]));
         out.push(Cmd::new(&["cp", "-a", &format!("{RUN_DIR}/log/."), &format!("{t}/var/log/bko-holt/")]).why("this restore's log, on the restored system"));
-        if self.layout.str_at(&["os", "id"]) != Some("nixos") {
+        if store.is_none() {
             // The restore kept every file's SELinux label; what this stage
             // wrote (initramfs images, grub.cfg, the log, bootctl's
             // /etc/kernel/entry-token) gets the policy's.
@@ -3145,11 +3187,11 @@ impl Builder<'_> {
             .find(|p| p.to_ascii_lowercase().ends_with(suffix) && !p.to_ascii_lowercase().starts_with("efi/boot/"))
     }
 
-    /// NixOS with --removable: the ESP's loader image `img` (a path on the
-    /// ESP) is copied to EFI/BOOT/BOOTX64.EFI, unless the restored ESP has
-    /// one (bootctl install, which NixOS runs, writes it).  Nothing runs in
-    /// the chroot.
-    fn nixos_removable(&self, img: &str) -> Vec<Cmd> {
+    /// A store system (NixOS, Guix System) with --removable: the ESP's
+    /// loader image `img` (a path on the ESP) is copied to
+    /// EFI/BOOT/BOOTX64.EFI, unless the restored ESP has one (bootctl
+    /// install, which NixOS runs, writes it).  Nothing runs in the chroot.
+    fn store_removable(&self, img: &str) -> Vec<Cmd> {
         if !self.opts.removable {
             return Vec::new();
         }
@@ -3306,6 +3348,85 @@ impl Builder<'_> {
         }
         for m in missing {
             self.problems.push(format!("rEFInd: {conf} has {m}, which no filesystem or LUKS container in the layout has; the restored system couldn't find it at boot"));
+        }
+    }
+
+    /// A store system's grub.cfg (Guix's boot.store) is kept as restored,
+    /// with every generation's kernel and initrd in the store: each `search
+    /// --fs-uuid` and `--label` in it, the root each `linux` line names
+    /// (1.5.0's root=, older Guix's --root=), each generation's root device
+    /// (its boot parameters' root-device) and any root= or --root= in its
+    /// kernel arguments must name a file system (or LUKS container) the
+    /// layout makes with that UUID or label.  One that doesn't is a problem
+    /// now, not a GRUB or initrd that can't find its root at boot.  `search
+    /// --file` and a /dev path are fine.  A dump without boot.store
+    /// (NixOS's) has nothing to check.
+    fn check_store_grub_cfg(&mut self, st: &crate::store::StoreSystem) {
+        let Some(store) = self.layout.v.at(&["boot", "store"]).filter(|v| !v.is_null()).cloned() else { return };
+        let (mut uuids, mut labels): (Vec<String>, Vec<String>) = (Vec::new(), Vec::new());
+        for sect in ["disks", "md_arrays", "dm_devices"] {
+            for d in self.layout.arr(&["storage", sect]) {
+                let mut all = vec![d];
+                all.extend(d.get("partitions").and_then(Value::as_array).into_iter().flatten());
+                for c in all.iter().filter_map(|x| x.get("content")) {
+                    uuids.extend(s(c, "uuid").map(|u| u.to_ascii_lowercase()));
+                    labels.extend(s(c, "label"));
+                }
+            }
+        }
+        let name = st.name;
+        let cfg = store.at(&["grub_cfg", "path"]).and_then(Value::as_str).unwrap_or("/boot/grub/grub.cfg").to_string();
+        let mut missing: Vec<String> = Vec::new();
+        let mut miss = |m: String| {
+            if !missing.contains(&m) {
+                missing.push(m);
+            }
+        };
+        for x in store.at(&["grub_cfg", "searches"]).and_then(Value::as_array).into_iter().flatten() {
+            let (Some(k), Some(v)) = (s(x, "kind"), s(x, "value")) else { continue };
+            let found = match k.as_str() {
+                "fs-uuid" => uuids.contains(&v.to_ascii_lowercase()),
+                "label" => labels.contains(&v),
+                _ => true,
+            };
+            if !found {
+                miss(format!("{cfg} searches --{} {v}, which no file system in the layout has; the restored GRUB couldn't find it", if k == "fs-uuid" { "fs-uuid" } else { "label" }));
+            }
+        }
+        let root_ok = |r: &str| r.starts_with('/') || uuids.contains(&r.to_ascii_lowercase()) || labels.iter().any(|l| l == r);
+        for r in store.at(&["grub_cfg", "roots"]).and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+            if !root_ok(r) {
+                miss(format!("{cfg} boots with root {r}, which no file system in the layout has as its UUID or label; the restored initrd couldn't find its root"));
+            }
+        }
+        for g in store.get("generations").and_then(Value::as_array).into_iter().flatten() {
+            let n = g.get("number").and_then(Value::as_u64).unwrap_or(0);
+            for a in g.get("kernel_arguments").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+                if let Some(r) = crate::store::root_arg(a).filter(|r| !root_ok(r)) {
+                    miss(format!("generation {n} boots with root {r}, which no file system in the layout has as its UUID or label; its initrd couldn't find its root"));
+                }
+            }
+            // Its root device (1.5.0's only word on the root: grub.cfg's
+            // root= is made from it).
+            let (k, v) = (g.at(&["root_device", "kind"]).and_then(Value::as_str), g.at(&["root_device", "value"]).and_then(Value::as_str));
+            if let (Some(k), Some(v)) = (k, v) {
+                let ok = match k {
+                    "uuid" => uuids.contains(&v.to_ascii_lowercase()),
+                    "label" => labels.iter().any(|l| l == v),
+                    _ => root_ok(v),
+                };
+                if !ok {
+                    let what = match k {
+                        "label" => format!("the label {v}"),
+                        "uuid" => format!("UUID {v}"),
+                        _ => v.to_string(),
+                    };
+                    miss(format!("generation {n}'s root device is {what}, which no file system in the layout has; its initrd couldn't find its root"));
+                }
+            }
+        }
+        for m in missing {
+            self.problems.push(format!("{name}: {m}"));
         }
     }
 

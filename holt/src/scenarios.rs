@@ -2868,6 +2868,351 @@ fn proxmox_refusals() {
     assert!(arr(&v, &["boot", "esps"]).is_empty());
 }
 
+const GUIX_OS_RELEASE: &str = "NAME=\"Guix System\"\nID=guix\nPRETTY_NAME=\"Guix System\"\nLOGO=guix-icon\nHOME_URL=\"https://guix.gnu.org\"\n";
+/// The ext4 root (ext::sample::image's UUID) and the btrfs root's label.
+const GUIX_ROOT: &str = "10111213-1415-1617-1819-1a1b1c1d1e1f";
+const GUIX_LABEL: &str = "guixroot";
+const GUIX_ESP: &str = "9a1c0000-0000-4000-8000-000000000001";
+
+/// A Guix System's store and boot files in `t`, as `guix system init` and
+/// one `reconfigure` leave them (docs/design/guix.md): two generations,
+/// system-1-link and system-2-link (the current one), each a store item
+/// with its boot parameters (`root` its root device: `(uuid ext4
+/// #vu8(...))` or `(file-system-label "L")`) and a profile whose manifest
+/// lists `pkgs`; each generation's kernel and initrd in the store;
+/// grub.cfg as 1.5.0 writes it (the installation ISO's, read on Chopin): a
+/// top-level `search`, the serial terminal, a commented-out search for the locales, entries
+/// that `search` again and boot with root=`arg`, gnu.system= and gnu.load=
+/// (the store's paths under `prefix`, a btrfs subvolume's); `loader` the
+/// parameters' bootloader-name.  Generation 2's parameters are 1.5.0's
+/// (version 1, only the configuration's kernel arguments); generation 1's
+/// an older Guix's (version 0, with --root=, --system= and --load=).
+fn guix_store(t: &Tree, root: &str, arg: &str, search: &str, prefix: &str, loader: &str, pkgs: &[(&str, &str, &str)]) {
+    let h = |c: char| c.to_string().repeat(32);
+    let manifest: String = pkgs.iter().map(|(n, v, p)| format!("     (\"{n}\" \"{v}\" \"out\" \"{p}\" (propagated-inputs ()) (search-paths ()))\n")).collect();
+    let mut cfg = format!("# This file was generated from your Guix configuration.  Any changes\n# will be lost upon reboot or reconfiguration.\n\n{search}\nserial --unit=0 --speed=115200\nterminal_input console serial\nterminal_output console serial\n# search --file --set /gnu/store/{}-grub-locales/en@quot.mo\n", h('l'));
+    for (n, k, c) in [(2u32, "6.17.9", 't'), (1, "6.17.7", 's')] {
+        let sys = format!("/gnu/store/{}-system", h(c));
+        let kernel = format!("/gnu/store/{}-linux-libre-{k}/bzImage", h(if n == 2 { 'k' } else { 'j' }));
+        let initrd = format!("/gnu/store/{}-raw-initrd/initrd.cpio.gz", h(if n == 2 { 'i' } else { 'h' }));
+        let prof = format!("/gnu/store/{}-profile", h(if n == 2 { 'p' } else { 'q' }));
+        let (version, args) = if n == 2 { (1, "\"console=tty0\" \"console=ttyS0,115200n8\"".to_string()) } else { (0, format!("\"--root={arg}\" \"--system={sys}\" \"--load={sys}/boot\" \"console=ttyS0,115200n8\"")) };
+        t.file(&kernel, "k")
+            .file(&initrd, "i")
+            .file(&format!("{prof}/manifest"), format!(";; This file was automatically generated.\n(manifest\n  (version 4)\n  (packages\n    (\n{manifest}    )))\n"))
+            .file(
+                &format!("{sys}/parameters"),
+                format!("(boot-parameters (version {version}) (label \"GNU with Linux-Libre {k}\") (root-device {root}) (kernel \"{kernel}\") (kernel-arguments ({args})) (initrd \"{initrd}\") (multiboot-modules ()) (locale \"en_US.utf8\") (store (device {root}) (mount-point \"/\") (directory-prefix #f) (crypto-devices ())) (bootloader-name {loader}) (bootloader-menu-entries ()))\n"),
+            )
+            .symlink(&format!("{sys}/profile"), &prof)
+            .symlink(&format!("{sys}/kernel"), kernel.trim_end_matches("/bzImage"))
+            .symlink(&format!("/var/guix/profiles/system-{n}-link"), &sys);
+        let entry = format!("  {search}\n  linux {prefix}{kernel} root={arg} gnu.system={sys} gnu.load={sys}/boot console=tty0 console=ttyS0,115200n8\n  initrd {prefix}{initrd}\n}}\n");
+        if n == 2 {
+            cfg.push_str(&format!("menuentry \"GNU with Linux-Libre {k}\" {{\n{entry}submenu \"GNU system, old configurations...\" {{\n"));
+        } else {
+            cfg.push_str(&format!("menuentry \"GNU with Linux-Libre {k} (#1, 2026-11-14 10:00)\" {{\n{entry}}}\n"));
+        }
+    }
+    t.symlink("/var/guix/profiles/system", "system-2-link")
+        .file("/var/guix/db/db.sqlite", "SQLite format 3")
+        .file("/etc/os-release", GUIX_OS_RELEASE)
+        .file("/boot/grub/grub.cfg", cfg)
+        .file("/proc/sys/kernel/osrelease", "6.17.9-gnu\n")
+        .file("/proc/cmdline", format!("BOOT_IMAGE={prefix}/gnu/store/{}-linux-libre-6.17.9/bzImage root={arg} gnu.system=/gnu/store/{}-system gnu.load=/gnu/store/{}-system/boot console=ttyS0,115200n8\n", h('k'), h('t'), h('t')));
+}
+
+/// guix15 in small: UEFI, GPT with the ESP at /boot/efi and / ext4 by
+/// UUID; grub-efi-bootloader's EFI/Guix/grubx64.efi from NVRAM; the
+/// store's read-only bind mount over /gnu/store.
+fn guix_uefi() -> Tree {
+    use crate::efi::GLOBAL;
+    let t = Tree::new("scn-guix-uefi");
+    let mut img = vec![0u8; 64 * MIB];
+    write_gpt(&mut img, 512, &GptSpec { disk_guid: "9a1c0000-0000-4000-8000-00000000d15c", parts: vec![(ESP, GUIX_ESP, 2048, 73727, 0, ""), (LINUX, "9a1c0000-0000-4000-8000-000000000002", 73728, 131038, 0, "")] });
+    put(&mut img, 2048, &fat::sample::fat32(71680, 0x1234_abcd, ""));
+    put(&mut img, 73728, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 57311, &img)
+        .symlink(&format!("/dev/disk/by-partuuid/{GUIX_ESP}"), "../../vda1")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&var("Boot0001"), efi_load_option("Guix", 1, 2048, 71680, GUIX_ESP, "\\EFI\\Guix\\grubx64.efi"))
+        .file(&var("BootOrder"), [7u8, 0, 0, 0, 1, 0])
+        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 1, 0])
+        .file(&var("SecureBoot"), [6u8, 0, 0, 0, 0])
+        .file(
+            "/proc/self/mountinfo",
+            "26 1 254:2 / / rw,relatime shared:1 - ext4 /dev/vda2 rw\n27 26 254:1 / /boot/efi rw,relatime shared:2 - vfat /dev/vda1 rw,fmask=0022\n28 26 254:2 /gnu/store /gnu/store ro,relatime shared:3 - ext4 /dev/vda2 rw\n",
+        )
+        .file("/etc/fstab", format!("# This file was generated from your Guix configuration.  Any changes\n# will be lost upon reboot or reconfiguration.\n\nUUID={GUIX_ROOT}\t/\text4\tdefaults\t0\t1\nUUID=1234-ABCD\t/boot/efi\tvfat\tdefaults\t0\t2\n"))
+        .file("/boot/grub/x86_64-efi/normal.mod", "x")
+        .file("/boot/efi/EFI/Guix/grubx64.efi", vec![2u8; 400])
+        .dir("/gnu/store/gggggggggggggggggggggggggggggggg-grub-efi-2.12/lib/grub/x86_64-efi")
+        .file("/proc/sys/kernel/hostname", "guix15\n");
+    guix_store(
+        &t,
+        "(uuid ext4 #vu8(16 17 18 19 20 21 22 23 24 25 26 27 28 29 30 31))",
+        GUIX_ROOT,
+        &format!("search --fs-uuid --set {GUIX_ROOT}"),
+        "",
+        "grub-efi",
+        &[("e2fsprogs", "1.47.2", "/gnu/store/eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee-e2fsprogs-1.47.2"), ("shepherd", "1.0.9", "/gnu/store/dddddddddddddddddddddddddddddddd-shepherd-1.0.9")],
+    );
+    t
+}
+
+/// guix15-bios in small, as the real guest is (Guix 1.5.0): BIOS, GPT with
+/// a BIOS boot partition (GRUB's core; boot.img in the protective MBR), a
+/// swap partition (by UUID in config.scm only, not in fstab) and one btrfs
+/// by label, subvolumes @ (/), @gnu (/gnu, compressed; the store's
+/// read-only bind mount over /gnu/store) and @home; no GRUB in the store
+/// (guix system init ran the installer's), grub-install's boot.img and
+/// core.img in /boot/grub/i386-pc; grub.cfg by label with a serial
+/// terminal, its store paths under /@gnu, root= the bare label.
+fn guix_bios() -> Tree {
+    const SWAP: &str = "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f";
+    let t = Tree::new("scn-guix-bios");
+    let mut img = vec![0u8; 64 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "9a1c0000-0000-4000-8000-00000000b105",
+            parts: vec![(BIOS_BOOT, "9a1c0000-0000-4000-8000-000000000011", 2048, 6143, 0, ""), (SWAP, "9a1c0000-0000-4000-8000-000000000013", 6144, 14335, 0, "swap"), (LINUX, "9a1c0000-0000-4000-8000-000000000012", 14336, 131038, 0, "")],
+        },
+    );
+    img[..440].copy_from_slice(&grub::grub2_boot_img(2048)[..440]);
+    put(&mut img, 2048, &grub::grub2_diskboot_img());
+    put(&mut img, 6144, &misc::sample::swap(1024, "swap"));
+    put(&mut img, 14336, &btrfs::sample::image(GUIX_LABEL, 0x1 | 0x20 | 0x40 | 0x100 | 0x200));
+    let mut mountinfo = String::new();
+    let mut fstab = String::from("# This file was generated from your Guix configuration.  Any changes\n# will be lost upon reboot or reconfiguration.\n\n");
+    for (i, (sv, at, opt)) in GUIX_SUBVOLS.iter().enumerate() {
+        let parent = if *at == "/" { 1 } else { 26 };
+        let kopt = if opt.is_empty() { String::new() } else { format!("{opt}:3,") };
+        mountinfo.push_str(&format!("{} {parent} 0:25 /{sv} {at} rw,noatime shared:{} - btrfs /dev/vda3 rw,{kopt}space_cache=v2,subvolid={},subvol=/{sv}\n", 26 + i, i + 1, 256 + i));
+        fstab.push_str(&format!("LABEL={GUIX_LABEL}\t{at}\tbtrfs\tsubvol={sv}{}\t\n", if opt.is_empty() { String::new() } else { format!(",{opt}") }));
+    }
+    mountinfo.push_str("29 27 0:25 /@gnu/store /gnu/store ro,noatime shared:4 - btrfs /dev/vda3 rw,compress=zstd:3,space_cache=v2,subvolid=257,subvol=/@gnu\n");
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 4096, &img)
+        .partition("vda", "vda2", "254:2", 2, 6144, 8192, &img)
+        .partition("vda", "vda3", "254:3", 3, 14336, 116703, &img)
+        .file("/proc/self/mountinfo", mountinfo)
+        .file("/proc/swaps", "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/dev/vda2                               partition\t4096\t\t0\t\t-2\n")
+        .file("/etc/fstab", fstab)
+        .file("/boot/grub/i386-pc/normal.mod", "x")
+        .file("/boot/grub/i386-pc/boot.img", vec![0u8; 512])
+        .file("/boot/grub/i386-pc/core.img", vec![0u8; 73151])
+        .dir("/gnu/store/llllllllllllllllllllllllllllllll-grub-locales")
+        .file("/gnu/store/gggggggggggggggggggggggggggggggg-grub-image.png", "png")
+        .file("/proc/sys/kernel/hostname", "guix15-bios\n");
+    guix_store(
+        &t,
+        &format!("(file-system-label \"{GUIX_LABEL}\")"),
+        GUIX_LABEL,
+        &format!("search --label --set {GUIX_LABEL}"),
+        "/@gnu",
+        "grub",
+        &[("btrfs-progs", "6.17", "/gnu/store/cccccccccccccccccccccccccccccccc-btrfs-progs-6.17"), ("shepherd", "1.0.9", "/gnu/store/dddddddddddddddddddddddddddddddd-shepherd-1.0.9")],
+    );
+    t
+}
+
+/// guix15-bios's subvolumes in fstab's order, where it mounts them, and
+/// their options.
+const GUIX_SUBVOLS: [(&str, &str, &str); 3] = [("@", "/", ""), ("@gnu", "/gnu", "compress=zstd"), ("@home", "/home", "")];
+
+/// What btrfs answers on guix15-bios (from /run/current-system/profile/sbin).
+fn guix_bios_runner() -> FakeRunner {
+    let mut list = String::new();
+    for (i, (sv, _, _)) in GUIX_SUBVOLS.iter().enumerate() {
+        list.push_str(&format!("ID {} gen 90 parent 5 top level 5 parent_uuid - uuid 9a1cb7f5-0000-4000-8000-00000000025{i} path <FS_TREE>/{sv}\n", 256 + i));
+    }
+    let mut r = FakeRunner::default().with("btrfs subvolume list -a -p -u -q /", &list).with("btrfs subvolume get-default /", "ID 5 (FS_TREE)\n").with("btrfs subvolume list -a -r /", "");
+    for (_, at, opt) in GUIX_SUBVOLS {
+        r = r.with(&format!("btrfs property get -t s {at}"), "ro=false\n").with(&format!("btrfs property get -t i {at}"), if opt.is_empty() { "" } else { "compression=zstd:3\n" });
+    }
+    r
+}
+
+/// A Guix dump planned, vda going to vdb, with load's `args`.
+fn guix_plan(v: &Value, args: &[&str]) -> crate::load::commands::Built {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let l = Layout::from_json(v.clone()).unwrap();
+    let mut a = vec!["l.json".to_string()];
+    a.extend(args.iter().map(|x| x.to_string()));
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
+    commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() })
+}
+
+/// guix15 read back and planned (docs/design/guix.md, GX2): supported by
+/// ID=guix alone; the packages from the system profile's manifest; both
+/// generations' boot parameters and grub.cfg's searches in boot.store.
+/// load rebuilds nothing, runs nothing in the chroot, makes the NVRAM
+/// entry (and, with --removable, the fallback copy), and says why.
+#[test]
+fn guix_uefi_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let v = run(&guix_uefi(), true, FakeRunner::default());
+    assert_eq!(s(&v, &["os", "id"]), "guix");
+    assert!(v.at(&["os", "version_id"]).unwrap().is_null());
+    assert_eq!(s(&v, &["os", "pretty_name"]), "Guix System");
+    assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
+    assert_eq!(s(&v, &["boot", "loader", "name"]), "grub");
+    assert_eq!(s(&v, &["boot", "packages", "shepherd"]), "1.0.9");
+    assert_eq!(s(&v, &["boot", "packages", "e2fsprogs"]), "1.47.2");
+    assert!(arr(&v, &["boot", "kernels", "installed"]).is_empty());
+    let st = v.at(&["boot", "store"]).unwrap();
+    assert_eq!(s(st, &["system"]), "guix");
+    assert_eq!(u(st, &["current"]), 2);
+    let g = arr(st, &["generations"]);
+    assert_eq!(g.iter().map(|x| u(x, &["number"])).collect::<Vec<_>>(), vec![1, 2]);
+    assert_eq!(s(&g[1], &["root_device", "kind"]), "uuid");
+    assert_eq!(s(&g[1], &["root_device", "value"]), GUIX_ROOT);
+    assert_eq!(s(&g[1], &["bootloader_name"]), "grub-efi");
+    assert_eq!(s(&g[1], &["title"]), "GNU with Linux-Libre 6.17.9");
+    assert!(s(&g[0], &["kernel"]).ends_with("-linux-libre-6.17.7/bzImage"));
+    // 1.5.0's: only the configuration's arguments; the older one's --root=.
+    assert_eq!(arr(&g[1], &["kernel_arguments"]).iter().filter_map(Value::as_str).collect::<Vec<_>>(), vec!["console=tty0", "console=ttyS0,115200n8"]);
+    assert_eq!(s(&g[1], &["version"]), "1");
+    assert_eq!(s(&g[0], &["kernel_arguments", "0"]), format!("--root={GUIX_ROOT}"));
+    assert_eq!(s(&g[1], &["store_device", "value"]), GUIX_ROOT);
+    assert!(st.get("grub").unwrap().is_null());
+    assert_eq!(s(st, &["grub_cfg", "searches", "0", "kind"]), "fs-uuid");
+    assert_eq!(s(st, &["grub_cfg", "searches", "0", "value"]), GUIX_ROOT);
+    assert_eq!(arr(st, &["grub_cfg", "searches"]).len(), 1);
+    assert_eq!(s(st, &["grub_cfg", "roots", "0"]), GUIX_ROOT);
+    // The read-only store bind mount is an alias of /, not a file system
+    // of its own or a backup source.
+    let m = arr(&v, &["storage", "mounts"]);
+    assert!(m.iter().filter(|m| s(m, &["target"]) == "/gnu/store").all(|m| m.get("alias_of").and_then(Value::as_str) == Some("/")), "{}", v.at(&["storage", "mounts"]).unwrap().compact());
+    assert!(!arr(&v, &["storage", "backup_sources"]).iter().any(|x| s(x, &["path"]) == "/gnu/store"));
+
+    let b = guix_plan(&v, &[]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    for no in ["grub-install", "grub-mkconfig", "update-grub", "update-initramfs", "dracut", "mkinitcpio", "setfiles", "BOOTX64.EFI"] {
+        assert!(!bt.contains(no), "{no}: {bt}");
+    }
+    assert!(!b.stage(Stage::Boot).iter().any(|c| c.argv.first().map(String::as_str) == Some("chroot") && c.argv.get(2).is_some_and(|x| x.contains("grub"))), "{bt}");
+    assert!(bt.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label Guix --loader '\\EFI\\Guix\\grubx64.efi'\n"), "{bt}");
+    assert!(b.notes.iter().any(|n| n == "Guix System: each generation's kernel and initrd are store items, restored with /, where grub.cfg names them; nothing to rebuild"), "{:?}", b.notes);
+    assert!(b.notes.iter().any(|n| n.starts_with("Guix System: UEFI GRUB's EFI image came back with the ESP")), "{:?}", b.notes);
+    assert!(!b.notes.iter().any(|n| n.starts_with("NixOS")), "{:?}", b.notes);
+    // --removable: the ESP's GRUB at the fallback path too, outside the chroot.
+    let bt: String = guix_plan(&v, &["--removable"]).stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("cp /mnt/bko-target/boot/efi/EFI/Guix/grubx64.efi /mnt/bko-target/boot/efi/EFI/BOOT/BOOTX64.EFI"), "{bt}");
+    assert!(!bt.contains("grub-install"), "{bt}");
+
+    // grub.cfg searching for a file system the layout doesn't make, and a
+    // generation booting a root it doesn't have, are problems.
+    let mut w = v.clone();
+    set_at(&mut w, &["boot", "store", "grub_cfg", "searches"], crate::json::parse(r#"[{"kind": "fs-uuid", "value": "deadbeef-0000-4000-8000-000000000000"}, {"kind": "file", "value": "/gnu/store/x/bzImage"}]"#).unwrap());
+    let p = guix_plan(&w, &[]).problems;
+    assert_eq!(p, vec!["Guix System: /boot/grub/grub.cfg searches --fs-uuid deadbeef-0000-4000-8000-000000000000, which no file system in the layout has; the restored GRUB couldn't find it"], "{p:?}");
+    let mut w = v.clone();
+    set_at(&mut w, &["boot", "store", "grub_cfg", "roots"], vec!["no-such-label", "/dev/vda2"].into());
+    let Some(Value::Arr(gens)) = w.at(&["boot", "store", "generations"]).cloned() else { panic!() };
+    let mut g0 = gens[0].clone();
+    set_at(&mut g0, &["kernel_arguments"], vec!["--root=other-label", "--system=/gnu/store/x"].into());
+    set_at(&mut w, &["boot", "store", "generations"], Value::Arr(vec![g0, gens[1].clone()]));
+    let p = guix_plan(&w, &[]).problems;
+    assert_eq!(
+        p,
+        vec![
+            "Guix System: /boot/grub/grub.cfg boots with root no-such-label, which no file system in the layout has as its UUID or label; the restored initrd couldn't find its root",
+            "Guix System: generation 1 boots with root other-label, which no file system in the layout has as its UUID or label; its initrd couldn't find its root",
+        ],
+        "{p:?}"
+    );
+    // 1.5.0's root: the generation's root device.
+    let mut w = v.clone();
+    let Some(Value::Arr(gens)) = w.at(&["boot", "store", "generations"]).cloned() else { panic!() };
+    let mut g1 = gens[1].clone();
+    set_at(&mut g1, &["root_device", "value"], "deadbeef-0000-4000-8000-000000000001".into());
+    set_at(&mut w, &["boot", "store", "generations"], Value::Arr(vec![gens[0].clone(), g1]));
+    assert_eq!(guix_plan(&w, &[]).problems, vec!["Guix System: generation 2's root device is UUID deadbeef-0000-4000-8000-000000000001, which no file system in the layout has; its initrd couldn't find its root"]);
+}
+
+/// guix15-bios read back and planned: the subvolume list (btrfs from the
+/// profile), no GRUB in the store but grub-install's images in
+/// /boot/grub/i386-pc, the swap partition fstab doesn't name; load makes
+/// the three subvolumes and the swap, and writes the source's own boot.img
+/// and core.img once per MBR with the rescue's grub-bios-setup, keeps
+/// grub.cfg, and says why.  Without the images, a problem.
+#[test]
+fn guix_bios_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let v = run(&guix_bios(), true, guix_bios_runner());
+    assert_eq!(s(&v, &["os", "id"]), "guix");
+    assert_eq!(s(&v, &["firmware", "mode"]), "bios");
+    assert_eq!(s(&v, &["boot", "loader", "name"]), "grub");
+    assert_eq!(s(&v, &["boot", "packages", "btrfs-progs"]), "6.17");
+    assert_eq!(s(&v, &["storage", "disks", "0", "boot_code", "kind"]), "grub2");
+    let st = v.at(&["boot", "store"]).unwrap();
+    assert!(st.get("grub").unwrap().is_null());
+    assert_eq!(st.get("boot_img"), Some(&Value::Bool(true)));
+    assert_eq!(st.get("core_img"), Some(&Value::Bool(true)));
+    for g in 0..2 {
+        let g = &arr(st, &["generations"])[g];
+        assert_eq!(s(g, &["root_device", "kind"]), "label");
+        assert_eq!(s(g, &["root_device", "value"]), GUIX_LABEL);
+        assert_eq!(s(g, &["bootloader_name"]), "grub");
+    }
+    assert_eq!(s(st, &["grub_cfg", "searches", "0", "kind"]), "label");
+    assert_eq!(arr(st, &["grub_cfg", "searches"]).len(), 1);
+    assert_eq!(s(st, &["grub_cfg", "roots", "0"]), GUIX_LABEL);
+    assert_eq!(arr(&v, &["storage", "btrfs", "0", "subvolumes"]).len(), 3);
+    assert!(arr(&v, &["warnings"]).iter().all(|w| !w.as_str().unwrap_or("").contains("subvolume list")), "{:?}", v.get("warnings"));
+    let m = arr(&v, &["storage", "mounts"]);
+    assert!(m.iter().filter(|m| s(m, &["target"]) == "/gnu/store").all(|m| m.get("alias_of").is_some()), "{}", v.at(&["storage", "mounts"]).unwrap().compact());
+
+    let b = guix_plan(&v, &[]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
+    for sv in ["@", "@home", "@gnu"] {
+        assert!(f.contains(&format!("btrfs subvolume create /run/bko-holt/btrfs/b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf/{sv}\n")), "{sv}: {f}");
+    }
+    assert_eq!(f.matches("btrfs subvolume create").count(), 3, "{f}");
+    assert!(f.contains(&format!("mkfs.btrfs")) && f.contains(&format!("-L {GUIX_LABEL}")), "{f}");
+    // The swap partition fstab doesn't name: made from its partition.
+    assert!(f.lines().any(|l| l.starts_with("mkswap ") && l.contains("-L swap") && l.ends_with(" /dev/vdb2")), "{f}");
+    let mnt: String = b.stage(Stage::Mount).iter().map(Cmd::shell).collect();
+    assert!(mnt.contains("/mnt/bko-target/gnu\n") && !mnt.contains("/mnt/bko-target/gnu/store"), "{mnt}");
+    let boot = b.stage(Stage::Boot);
+    let setups: Vec<&Cmd> = boot.iter().filter(|c| c.argv.iter().any(|a| a.contains("grub-bios-setup"))).collect();
+    assert_eq!(setups.len(), 1, "{}", boot.iter().map(Cmd::shell).collect::<String>());
+    assert_eq!(
+        setups[0].argv,
+        vec![
+            "sh".to_string(),
+            "-c".into(),
+            "d=/mnt/bko-target/boot/grub/i386-pc; [ -f \"$d/boot.img\" ] && [ -f \"$d/core.img\" ] || { echo \"$d: no boot.img or core.img (the source's, restored with /boot/grub) to write to /dev/vdb\" >&2; exit 1; }; grub-bios-setup --directory=\"$d\" /dev/vdb".into()
+        ]
+    );
+    assert_eq!(setups[0].why.as_deref(), Some("Guix System's own boot.img and core.img, restored in /boot/grub/i386-pc; the rescue's grub-bios-setup writes them to the new disk"));
+    let bt: String = boot.iter().map(Cmd::shell).collect();
+    for no in ["grub-install", "gnu/store", "grub-mkconfig", "update-grub", "update-initramfs", "dracut", "efibootmgr", "setfiles"] {
+        assert!(!bt.contains(no), "{no}: {bt}");
+    }
+    assert!(b.notes.iter().any(|n| n == "Guix System: each generation's kernel and initrd are store items, restored with /, where grub.cfg names them; nothing to rebuild"), "{:?}", b.notes);
+    assert!(b.notes.iter().any(|n| n.starts_with("Guix System: its store holds no GRUB to install with")), "{:?}", b.notes);
+    // A source without grub-install's images: a problem.
+    let mut w = v.clone();
+    set_at(&mut w, &["boot", "store", "core_img"], false.into());
+    assert_eq!(
+        guix_plan(&w, &[]).problems,
+        vec!["Guix System: the source's /boot/grub/i386-pc has no core.img, which grub-install leaves there and bko-holt load writes to the new disk's MBR and BIOS boot partition (its store has no GRUB to install with)"]
+    );
+    // A label no file system has: a problem.
+    let mut w = v.clone();
+    set_at(&mut w, &["boot", "store", "grub_cfg", "searches"], crate::json::parse(r#"[{"kind": "label", "value": "other-root"}]"#).unwrap());
+    assert_eq!(guix_plan(&w, &[]).problems, vec!["Guix System: /boot/grub/grub.cfg searches --label other-root, which no file system in the layout has; the restored GRUB couldn't find it"]);
+}
+
 /// Every scenario's dump, by name, for tests that must hold over all of
 /// them (load's fit.rs).
 pub fn dumps() -> Vec<(&'static str, Value)> {
@@ -2887,5 +3232,7 @@ pub fn dumps() -> Vec<(&'static str, Value)> {
         ("kali", run(&kali(), true, FakeRunner::default())),
         ("proxmox", { let (t, r) = proxmox(false); run(&t, true, r) }),
         ("proxmox_mirror", { let (t, r) = proxmox(true); run(&t, true, r) }),
+        ("guix_uefi", run(&guix_uefi(), true, FakeRunner::default())),
+        ("guix_bios", run(&guix_bios(), true, guix_bios_runner())),
     ]
 }

@@ -25,6 +25,7 @@ pub mod redact;
 pub mod report;
 #[cfg(test)]
 mod scenarios;
+pub mod store;
 pub mod sys;
 #[doc(hidden)]
 pub mod testutil;

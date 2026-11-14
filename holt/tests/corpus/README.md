@@ -154,7 +154,27 @@ of classes.json's HoltTest2 sources, so golden_plans.rs notes it until it
 is.  Its golden plan runs `update-initramfs -u -k all`, `grub-install
 --target=x86_64-efi --bootloader-id=kali --no-nvram` and `update-grub`
 with os-prober off, and makes no NVRAM entry (the source booted the
-fallback path).  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
+fallback path).  guix15 (`make-guix.sh guix15`: GNU Guix System 1.5.0 from
+its installation ISO by `guix system init`; UEFI, GPT with a 512 MiB ESP at
+/boot/efi, swap, / ext4 by UUID, grub-efi-bootloader in EFI/Guix, one
+generation; docs/design/guix.md) and guix15-bios (`make-guix.sh
+guix15-bios`: the same, BIOS: a BIOS
+boot partition, swap, one btrfs by label with `@`, `@gnu` and `@home`,
+grub-bootloader on the MBR), built on 2026-11-14, were added the same day
+from dumps of the live guests on chopin (run `gx3`, the static bko-holt
+0.2.6 built from this tree with GX2's store-system code, `b1119c11...`;
+guix15 on a plain q35 with a copy of its install's UEFI variables, so
+through GRUB's NVRAM entry, both disks under `vm-run --snapshot`, the
+images' sha256 the same before and after; their provenance.tsv written by
+hand, as gentoo's).  They are in the corpus before they are classes.json's
+HoltTest2 sources, so golden_plans.rs notes them until they are.  Their
+dumps have `boot.store` (each generation's boot parameters, grub.cfg's
+searches and roots, and on guix15-bios grub-install's boot.img and
+core.img in /boot/grub/i386-pc; no GRUB in either store).  guix15's golden
+plan runs nothing in the chroot: its boot stage makes only the NVRAM entry
+for `\EFI\Guix\grubx64.efi`.  guix15-bios's makes the three subvolumes and
+the swap (fstab doesn't name it), and its boot stage writes the source's
+own boot.img and core.img with the rescue's `grub-bios-setup`.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
 collection; `-` for the guests without one) say which, and `image` whether
@@ -292,7 +312,13 @@ UTF-16LE): none; the same sha256 from both builds.  So did kali
 warm holt build at /bkoscratch/holt-warm/kali): cinqcent with its 92
 strings and the raw dump's identifiers, chopin with its 91, the Mac with
 the git e-mail, 0 findings (its plan scanned too), the same sha256 from
-both builds.
+both builds.  So did guix15 and guix15-bios (2026-11-14), built from a
+private directory on chopin (/bkoscratch, its warm holt build at
+/bkoscratch/holt-warm/guix) and again on cinqcent from a host-to-host copy
+of the raw dumps: chopin with its 94 strings and the raw dumps'
+identifiers, cinqcent with its 95, the Mac with the git e-mail, 0 findings
+(their plans scanned too), the same sha256 from all three builds (src.json
+`1936101...` and `c504094...`, the rows `9a3227c...`).
 
 ## The golden plans
 

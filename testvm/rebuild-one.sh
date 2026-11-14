@@ -97,6 +97,10 @@ proxmox9|proxmox9-mirror) cmd=(asm $T/make-proxmox.sh --iso-dir /bkoscratch/rebu
 # anduinos2: from AnduinOS's live ISO in /bkoscratch/rebuild-inputs/anduinos2 (or
 # the guest's own dir), its SHA-256 pinned in the builder; the ISO's packages only.
 anduinos2)  cmd=(asm $T/make-anduinos.sh "$SRC/AnduinOS-2.0.5-amd64.iso" "$W" anduinos2) ;;
+# guix15, guix15-bios: from Guix's 1.5.0 installation ISO in
+# /bkoscratch/rebuild-inputs/guix15 (its SHA-256 pinned in the builder, its
+# .sig checked on download), with 1.5.0's substitutes at the rebuild.
+guix15|guix15-bios) cmd=(asm $T/make-guix.sh --iso-dir /bkoscratch/rebuild-inputs/guix15 $G "$W") ;;
 endeavouros) cmd=(asm $T/make-arch.sh --live endeavouros "$SRC/EndeavourOS_Titan-Nova-2026.08.15.iso" 2026.10.01 "$W") ;;
 endeavouros-grub) cmd=(asm $T/make-arch.sh --live endeavouros-grub /bkoscratch/rebuild-inputs/endeavouros/EndeavourOS_Titan-Nova-2026.08.15.iso 2026.10.01 "$W") ;;
 manjaro)    cmd=(asm $T/make-arch.sh --live manjaro "$SRC/manjaro-xfce-26.1.1-minimal-260825-linux71.iso" 2026.10.01 "$W") ;;

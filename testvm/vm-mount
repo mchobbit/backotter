@@ -469,6 +469,23 @@ if not os.path.isfile(host):
 print(host)
 PY
 }
+# store_link_copy MP TARGET: for a link to TARGET (/gnu/store/NAME) that the
+# btrfs top level mounted at MP can't follow, the file from the top-level
+# subvolume that holds it as store/NAME (the one mounted at /gnu), copied to
+# a temporary file whose name it prints; fails if none holds it.
+fstab_copy=""
+store_link_copy() {
+    local d f c rest=${2#/}
+    rest=${rest#*/}
+    [[ $2 == /* && -n $rest && $rest != "${2#/}" ]] || return 1
+    for d in "$1"/*/; do
+        f=$d$rest
+        [[ -f $f && ! -L $f ]] || continue
+        c=$(mktemp "${TMPDIR:-/tmp}/vm-mount-fstab.XXXXXX")
+        cp "$f" "$c" && { echo "$c"; return 0; }
+    done
+    return 1
+}
 # The btrfs subvolume options (subvol=, subvolid=) from fstab options on stdin.
 subvol_opts() { tr ',' '\n' | grep -E '^subvol(id)?=' | paste -sd, - || true; }
 # fstab_line FSTAB TARGET: TARGET's line in FSTAB, as SPEC TYPE OPTIONS.
@@ -616,6 +633,13 @@ for p in "${parts[@]}"; do
     if [[ -z $fstab && $type == btrfs ]]; then
         # One level down: the subvolume's fstab.
         fstab=$(compgen -G "$mp/*/etc/fstab" | head -n 1 || true)
+        # Guix: @/etc/fstab is a link into /gnu/store, and /gnu may be a
+        # subvolume of its own (guix15-bios's @gnu), so from the top level
+        # the link leads nowhere: read the file from the subvolume that
+        # holds it (one with store/NAME for /gnu/store/NAME), and keep a copy.
+        if [[ -n $fstab && -L $fstab && ! -e $fstab ]]; then
+            fstab_copy=$(store_link_copy "$mp" "$(readlink "$fstab")") || fstab_copy=""
+        fi
         if [[ -z $fstab ]]; then
             umount "$mp"
             try_mount "$p" "$mp" "" || continue
@@ -625,7 +649,7 @@ for p in "${parts[@]}"; do
     if [[ -z $fstab ]]; then umount "$mp"; continue; fi
     root=$p
     if [[ $fstab == "$mp"/*/etc/fstab && ! -e $mp/etc ]]; then
-        sub=$(awk '!/^[[:space:]]*#/ && $2 == "/" { print $4 }' "$fstab" | subvol_opts)
+        sub=$(awk '!/^[[:space:]]*#/ && $2 == "/" { print $4 }' "${fstab_copy:-$fstab}" | subvol_opts)
         [[ -n $sub ]] || sub=subvol=$(basename "$(dirname "$(dirname "$fstab")")")
         umount "$mp"
         mount_fs "$p" "$mp" "$sub"
@@ -668,7 +692,7 @@ if command -v zpool >/dev/null; then
 fi
 
 # The guest's other filesystems, parents before children.
-[[ -n $ostree_dep ]] || fstab_file=$(guest_file "$mp" /etc/fstab)
+[[ -n $ostree_dep ]] || fstab_file=${fstab_copy:-$(guest_file "$mp" /etc/fstab)}
 while read -r spec target type options; do
     [[ $target == / || $type == swap || $target != /* || ,$options, == *,noauto,* ]] && continue
     p=$(resolve "$spec") || { echo "vm-mount: skipping $target: $spec is not on this image" >&2; continue; }
@@ -677,6 +701,7 @@ done < <(awk '!/^[[:space:]]*(#|$)/ { print $1, $2, $3, $4 }' "$fstab_file" |
     awk '{ print gsub("/", "/", $2), $0 }' | sort -n | cut -d' ' -f2-)
 
 trap - ERR
+[[ -z $fstab_copy ]] || rm -f "$fstab_copy"
 how=read-write
 [[ $ro == yes ]] && how=read-only
 echo "Mounted $image ($dev, $how) at $mp:"

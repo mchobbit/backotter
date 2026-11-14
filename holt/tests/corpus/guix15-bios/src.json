@@ -1,0 +1,907 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.6"
+  },
+  "generated": "2026-11-14T06:32:58Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host-1",
+    "machine_id": null,
+    "dmi": {
+      "sys_vendor": "QEMU",
+      "product_name": "Standard PC (i440FX + PIIX, 1996)",
+      "product_version": "pc-i440fx-10.0",
+      "board_vendor": null,
+      "board_name": null,
+      "bios_vendor": "SeaBIOS",
+      "bios_version": "1.16.3-debian-1.16.3-2",
+      "bios_date": "04/01/2014",
+      "product_uuid": null,
+      "chassis_type": "1"
+    },
+    "virtualization": null
+  },
+  "os": {
+    "id": "guix",
+    "version_id": null,
+    "version_codename": null,
+    "pretty_name": "Guix System",
+    "debian_version": null,
+    "kernel_release": "6.17.12-gnu",
+    "kernel_version": "#1 SMP PREEMPT_DYNAMIC 1",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "bios"
+  },
+  "storage": {
+    "topology": {
+      "ram0 (ram, 64 MiB)": {},
+      "ram1 (ram, 64 MiB)": {},
+      "ram2 (ram, 64 MiB)": {},
+      "ram3 (ram, 64 MiB)": {},
+      "ram4 (ram, 64 MiB)": {},
+      "ram5 (ram, 64 MiB)": {},
+      "ram6 (ram, 64 MiB)": {},
+      "ram7 (ram, 64 MiB)": {},
+      "ram8 (ram, 64 MiB)": {},
+      "ram9 (ram, 64 MiB)": {},
+      "ram10 (ram, 64 MiB)": {},
+      "ram11 (ram, 64 MiB)": {},
+      "ram12 (ram, 64 MiB)": {},
+      "ram13 (ram, 64 MiB)": {},
+      "ram14 (ram, 64 MiB)": {},
+      "ram15 (ram, 64 MiB)": {},
+      "vda (disk, 20 GiB, gpt)": {
+        "vda1 (partition, 1 MiB)": {},
+        "vda2 (partition, 2 GiB) swap \"swap\"": {},
+        "vda3 (partition, 18 GiB) btrfs \"label1\" on /, /gnu, /home, /gnu/store": {}
+      }
+    },
+    "disks": [
+      {
+        "name": "ram0",
+        "path": "/dev/ram0",
+        "kind": "ram",
+        "devno": "1:0",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram1",
+        "path": "/dev/ram1",
+        "kind": "ram",
+        "devno": "1:1",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram2",
+        "path": "/dev/ram2",
+        "kind": "ram",
+        "devno": "1:2",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram3",
+        "path": "/dev/ram3",
+        "kind": "ram",
+        "devno": "1:3",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram4",
+        "path": "/dev/ram4",
+        "kind": "ram",
+        "devno": "1:4",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram5",
+        "path": "/dev/ram5",
+        "kind": "ram",
+        "devno": "1:5",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram6",
+        "path": "/dev/ram6",
+        "kind": "ram",
+        "devno": "1:6",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram7",
+        "path": "/dev/ram7",
+        "kind": "ram",
+        "devno": "1:7",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram8",
+        "path": "/dev/ram8",
+        "kind": "ram",
+        "devno": "1:8",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram9",
+        "path": "/dev/ram9",
+        "kind": "ram",
+        "devno": "1:9",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram10",
+        "path": "/dev/ram10",
+        "kind": "ram",
+        "devno": "1:10",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram11",
+        "path": "/dev/ram11",
+        "kind": "ram",
+        "devno": "1:11",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram12",
+        "path": "/dev/ram12",
+        "kind": "ram",
+        "devno": "1:12",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram13",
+        "path": "/dev/ram13",
+        "kind": "ram",
+        "devno": "1:13",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram14",
+        "path": "/dev/ram14",
+        "kind": "ram",
+        "devno": "1:14",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "ram15",
+        "path": "/dev/ram15",
+        "kind": "ram",
+        "devno": "1:15",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "vda",
+        "path": "/dev/vda",
+        "kind": "disk",
+        "devno": "252:0",
+        "size_bytes": 21474836480,
+        "size": "20 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": ["/dev/disk/by-diskseq/27"],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "bc000000-0000-4000-8000-000000000001",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 2048,
+          "last_usable_lba": 41943006,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 41943039,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 41943039,
+                "start_bytes": 512,
+                "size_bytes": 21474835968,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vda1",
+            "path": "/dev/vda1",
+            "devno": "252:1",
+            "number": 1,
+            "start_lba": 2048,
+            "end_lba": 4095,
+            "sectors": 2048,
+            "start_bytes": 1048576,
+            "size_bytes": 1048576,
+            "type": "21686148-6449-6e6f-744e-656564454649",
+            "type_name": "BIOS boot",
+            "uuid": "bc000000-0000-4000-8000-000000000002",
+            "partlabel": "bios",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-partlabel/bios",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000002"
+            ],
+            "holders": [],
+            "content": null,
+            "mounted_at": []
+          },
+          {
+            "name": "vda2",
+            "path": "/dev/vda2",
+            "devno": "252:2",
+            "number": 2,
+            "start_lba": 4096,
+            "end_lba": 4198399,
+            "sectors": 4194304,
+            "start_bytes": 2097152,
+            "size_bytes": 2147483648,
+            "type": "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f",
+            "type_name": "Linux swap",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "partlabel": "swap",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-label/swap",
+              "/dev/disk/by-partlabel/swap",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000004"
+            ],
+            "holders": [],
+            "content": {
+              "type": "swap",
+              "usage": "other",
+              "uuid": "bc000000-0000-4000-8000-000000000004",
+              "label": "swap",
+              "version": "1",
+              "page_size": 4096,
+              "last_page": 524287,
+              "size_bytes": 2147483648,
+              "bad_pages": 0
+            },
+            "mounted_at": []
+          },
+          {
+            "name": "vda3",
+            "path": "/dev/vda3",
+            "devno": "252:3",
+            "number": 3,
+            "start_lba": 4198400,
+            "end_lba": 41940991,
+            "sectors": 37742592,
+            "start_bytes": 2149580800,
+            "size_bytes": 19324207104,
+            "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+            "type_name": "Linux filesystem",
+            "uuid": "bc000000-0000-4000-8000-000000000005",
+            "partlabel": "root",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-label/label1",
+              "/dev/disk/by-partlabel/root",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000005",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000006"
+            ],
+            "holders": [],
+            "content": {
+              "type": "btrfs",
+              "usage": "filesystem",
+              "uuid": "bc000000-0000-4000-8000-000000000006",
+              "label": "label1",
+              "version": null,
+              "total_bytes": 19324207104,
+              "bytes_used": 1383505920,
+              "num_devices": 1,
+              "sector_size": 4096,
+              "node_size": 16384,
+              "stripe_size": 4096,
+              "checksum": "crc32c",
+              "generation": 23,
+              "features": ["mixed_backref", "big_metadata", "extended_iref", "skinny_metadata", "no_holes"],
+              "compat_ro_features": ["free_space_tree", "free_space_tree_valid"],
+              "device": {
+                "devid": 1,
+                "uuid": "bc000000-0000-4000-8000-000000000007",
+                "total_bytes": 19324207104,
+                "bytes_used": 3783262208
+              }
+            },
+            "mounted_at": ["/", "/gnu", "/gnu/store", "/home"]
+          }
+        ],
+        "boot_code": {
+          "kind": "grub2",
+          "first_bytes": "eb639000000000000000000000000000",
+          "grub_core_lba": 2048,
+          "grub_boot_drive": "0xff",
+          "grub_core_present": true,
+          "grub_core_in": "partition",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 2
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [],
+    "loop_devices": [],
+    "other_devices": [
+      {
+        "name": "fd0",
+        "path": "/dev/fd0",
+        "kind": "floppy",
+        "devno": "2:0",
+        "size_bytes": 4096,
+        "size": "4 KiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": false,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "sr0",
+        "path": "/dev/sr0",
+        "kind": "rom",
+        "devno": "11:0",
+        "size_bytes": 1073741312,
+        "size": "1024 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": false,
+        "links": ["/dev/cdrom", "/dev/disk/by-diskseq/26", "/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1"],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "lvm": {
+      "volume_groups": []
+    },
+    "zfs": {
+      "pools_from_labels": [],
+      "zpool_cache": null,
+      "tools": null
+    },
+    "btrfs": [
+      {
+        "uuid": "bc000000-0000-4000-8000-000000000006",
+        "label": "label1",
+        "devices": ["vda3"],
+        "mounted": true,
+        "features": ["extended_iref", "free_space_tree", "no_holes", "skinny_metadata"],
+        "allocation_profiles": {
+          "data": ["single"],
+          "metadata": ["dup"],
+          "system": ["dup"]
+        },
+        "mounted_subvolumes": [
+          {
+            "target": "/",
+            "subvol": "/@"
+          },
+          {
+            "target": "/gnu",
+            "subvol": "/@gnu"
+          },
+          {
+            "target": "/home",
+            "subvol": "/@home"
+          }
+        ],
+        "subvolumes": [
+          {
+            "id": 256,
+            "gen": 23,
+            "parent": 5,
+            "top_level": 5,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-000000000008",
+            "path": "<FS_TREE>/@",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          },
+          {
+            "id": 257,
+            "gen": 22,
+            "parent": 5,
+            "top_level": 5,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-000000000009",
+            "path": "<FS_TREE>/@home",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          },
+          {
+            "id": 258,
+            "gen": 22,
+            "parent": 5,
+            "top_level": 5,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-00000000000a",
+            "path": "<FS_TREE>/@gnu",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          }
+        ],
+        "default_subvolume": {
+          "id": 5
+        },
+        "quota_enabled": false,
+        "qgroups": null
+      }
+    ],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "/dev/vda3",
+        "fstype": "btrfs",
+        "devno": "0:24",
+        "device": "vda3",
+        "root": "/@",
+        "options": "rw,relatime",
+        "super_options": "rw,discard=async,space_cache=v2,subvolid=256,subvol=/@",
+        "size_bytes": 19324207104,
+        "used_bytes": 1443684352,
+        "available_bytes": 17440415744
+      },
+      {
+        "target": "/gnu",
+        "source": "/dev/vda3",
+        "fstype": "btrfs",
+        "devno": "0:24",
+        "device": "vda3",
+        "root": "/@gnu",
+        "options": "rw,relatime",
+        "super_options": "rw,discard=async,space_cache=v2,subvolid=258,subvol=/@gnu",
+        "size_bytes": 19324207104,
+        "used_bytes": 1443684352,
+        "available_bytes": 17440415744
+      },
+      {
+        "target": "/home",
+        "source": "/dev/vda3",
+        "fstype": "btrfs",
+        "devno": "0:24",
+        "device": "vda3",
+        "root": "/@home",
+        "options": "rw,relatime",
+        "super_options": "rw,discard=async,space_cache=v2,subvolid=257,subvol=/@home",
+        "size_bytes": 19324207104,
+        "used_bytes": 1443684352,
+        "available_bytes": 17440415744
+      },
+      {
+        "target": "/gnu/store",
+        "source": "/dev/vda3",
+        "fstype": "btrfs",
+        "devno": "0:24",
+        "device": "vda3",
+        "root": "/@gnu/store",
+        "options": "ro,noatime",
+        "super_options": "rw,discard=async,space_cache=v2,subvolid=258,subvol=/@gnu",
+        "size_bytes": 19324207104,
+        "used_bytes": 1443684352,
+        "available_bytes": 17440415744,
+        "alias_of": "/gnu"
+      }
+    ],
+    "physical_root": "/",
+    "backup_sources": [
+      {
+        "path": "/",
+        "from": "/",
+        "device": "vda3",
+        "fstype": "btrfs",
+        "source": "/dev/vda3",
+        "subvol": "/@"
+      },
+      {
+        "path": "/gnu",
+        "from": "/gnu",
+        "device": "vda3",
+        "fstype": "btrfs",
+        "source": "/dev/vda3",
+        "subvol": "/@gnu"
+      },
+      {
+        "path": "/home",
+        "from": "/home",
+        "device": "vda3",
+        "fstype": "btrfs",
+        "source": "/dev/vda3",
+        "subvol": "/@home"
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/vda2",
+        "type": "partition",
+        "size_bytes": 2147479552,
+        "used_bytes": 0,
+        "priority": -2,
+        "device": "vda2"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "LABEL=label1",
+        "file": "/",
+        "type": "btrfs",
+        "options": "subvol=@",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda3"
+      },
+      {
+        "spec": "LABEL=label1",
+        "file": "/gnu",
+        "type": "btrfs",
+        "options": "subvol=@gnu,compress=zstd",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda3"
+      },
+      {
+        "spec": "LABEL=label1",
+        "file": "/home",
+        "type": "btrfs",
+        "options": "subvol=@home",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vda3"
+      }
+    ],
+    "crypttab": null,
+    "mdadm_conf": null
+  },
+  "boot": {
+    "loader": {
+      "name": "grub",
+      "firmware": "bios",
+      "via_shim": false,
+      "package": null,
+      "evidence": ["vda's MBR holds GRUB 2's boot.img"]
+    },
+    "efi": null,
+    "esps": [],
+    "grub": {
+      "dir": "/boot/grub",
+      "installed_platforms": ["i386-pc"],
+      "grub_cfg": {
+        "entries": ["GNU with Linux-Libre 6.17.12", "Firmware setup"],
+        "search_uuids": [],
+        "modules": ["png"],
+        "default_linux": "/@gnu/store/pbpfl2ll5qz36bqfnl3g3vvag764714h-linux-libre-6.17.12/bzImage root=label1 gnu.system=/gnu/store/cq69aizfjv00kj78fhz5m01ipycmxsly-system gnu.load=/gnu/store/cq69aizfjv00kj78fhz5m01ipycmxsly-system/boot console=tty0 console=ttyS0,115200n8",
+        "default_initrd": "/@gnu/store/0yxarn6gxsi2q9f7qwdyl9p8likvd69z-raw-initrd/initrd.cpio.gz",
+        "lang": "en_US"
+      },
+      "grubenv": {},
+      "default_grub": {},
+      "debconf": null
+    },
+    "systemd_boot": null,
+    "kernels": {
+      "installed": [],
+      "symlinks": {}
+    },
+    "cmdline": {
+      "raw": "BOOT_IMAGE=/@gnu/store/pbpfl2ll5qz36bqfnl3g3vvag764714h-linux-libre-6.17.12/bzImage root=label1 gnu.system=/gnu/store/cq69aizfjv00kj78fhz5m01ipycmxsly-system gnu.load=/gnu/store/cq69aizfjv00kj78fhz5m01ipycmxsly-system/boot console=tty0 console=ttyS0,115200n8",
+      "words": [
+        "BOOT_IMAGE=/@gnu/store/pbpfl2ll5qz36bqfnl3g3vvag764714h-linux-libre-6.17.12/bzImage",
+        "root=label1",
+        "gnu.system=/gnu/store/cq69aizfjv00kj78fhz5m01ipycmxsly-system",
+        "gnu.load=/gnu/store/cq69aizfjv00kj78fhz5m01ipycmxsly-system/boot",
+        "console=tty0",
+        "console=ttyS0,115200n8\n"
+      ],
+      "storage": {
+        "BOOT_IMAGE": "/@gnu/store/pbpfl2ll5qz36bqfnl3g3vvag764714h-linux-libre-6.17.12/bzImage",
+        "root": "label1"
+      }
+    },
+    "kernel_cmdline_file": null,
+    "initramfs": {
+      "generator": null,
+      "modules": null,
+      "compress": null,
+      "resume": null,
+      "crypttab_in_initramfs": false
+    },
+    "packages": {
+      "btrfs-progs": "6.16",
+      "e2fsprogs": "1.47.2",
+      "shepherd": "1.0.9"
+    },
+    "store": {
+      "system": "guix",
+      "store": "/gnu/store",
+      "profile": "/var/guix/profiles/system",
+      "current": 1,
+      "generations": [
+        {
+          "number": 1,
+          "system": "/gnu/store/cq69aizfjv00kj78fhz5m01ipycmxsly-system",
+          "version": "1",
+          "title": "GNU with Linux-Libre 6.17.12",
+          "root_device": {
+            "kind": "label",
+            "value": "label1"
+          },
+          "kernel": "/gnu/store/pbpfl2ll5qz36bqfnl3g3vvag764714h-linux-libre-6.17.12/bzImage",
+          "kernel_arguments": ["console=tty0", "console=ttyS0,115200n8"],
+          "initrd": "/gnu/store/0yxarn6gxsi2q9f7qwdyl9p8likvd69z-raw-initrd/initrd.cpio.gz",
+          "bootloader_name": "grub",
+          "store_device": {
+            "kind": "label",
+            "value": "label1"
+          },
+          "store_mount_point": "/gnu",
+          "store_directory_prefix": "/@gnu"
+        }
+      ],
+      "grub": null,
+      "boot_img": true,
+      "core_img": true,
+      "grub_cfg": {
+        "path": "/boot/grub/grub.cfg",
+        "searches": [
+          {
+            "kind": "label",
+            "value": "label1"
+          }
+        ],
+        "roots": ["label1"]
+      }
+    }
+  },
+  "warnings": []
+}

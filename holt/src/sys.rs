@@ -31,7 +31,8 @@ pub trait Runner {
 }
 
 /// Runs real commands, from the system directories only (NixOS's
-/// /run/current-system/sw among them), in the C locale,
+/// /run/current-system/sw and Guix's /run/current-system/profile among
+/// them), in the C locale,
 /// with a time limit (a hung `zpool` must not hang the dump).
 pub struct RealRunner {
     pub timeout: Duration,
@@ -39,8 +40,10 @@ pub struct RealRunner {
 
 /// NixOS keeps its system's tools (btrfs, lvm, zfs, efibootmgr...) only in
 /// /run/current-system/sw: without it, a NixOS dump lists no btrfs
-/// subvolumes, and load makes none of those its fstab mounts.
-const SYSTEM_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin:/run/current-system/sw/sbin:/run/current-system/sw/bin";
+/// subvolumes, and load makes none of those its fstab mounts.  Guix System
+/// keeps them in /run/current-system/profile (crate::store::SYSTEMS names
+/// both, and its test holds this list to them).
+pub(crate) const SYSTEM_PATH: &str = "/usr/sbin:/usr/bin:/sbin:/bin:/run/current-system/sw/sbin:/run/current-system/sw/bin:/run/current-system/profile/sbin:/run/current-system/profile/bin";
 
 impl Runner for RealRunner {
     fn run(&self, prog: &str, args: &[&str]) -> Option<String> {

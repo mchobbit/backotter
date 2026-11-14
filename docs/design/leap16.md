@@ -237,6 +237,18 @@ settles these *checks*:
 - **Usage:** `make-opensuse.sh leap 16.1 WORK_DIR` (the spec said `leap16`);
   `rebuild-one.sh leap16` runs it.
 
+**L3 (2026-11-14):** the corpus entry `holt/tests/corpus/leap16` is a dump
+of the live guest on Chopin under its own vm-run options (run `l3`, the
+image's sha256 the same before and after): 25 identifiers redacted, a
+164-line plan, two builds the same (src.json `23a09f8e...`), leak scans 0
+on both hosts and the Mac, no other golden plan changed.  Its plan keeps
+the ESP's shim and GRUB and runs dracut, `grub2-mkconfig`, the
+`opensuse-secureboot` entry and `setfiles` on what the boot stage wrote.
+The Test2 registrations (classes.json's `uefi` and `H.Obscure`, the holt
+and guest specs, estimates, plan.py's counts, world.py, the goldens) go in
+with the other distribution sessions' batched pass, as Kali's, PikaOS's and
+Guix's do.
+
 ## Tests
 
 **SticTest1** (`testvm/stictest1/leap16`): from `tumbleweed`'s (Btrfs

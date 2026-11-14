@@ -247,7 +247,21 @@ tree: the LV UUID of `lvol0_pmspare`, all letters, wasn't taken for an
 LVM UUID (scan's pattern wants a digit; an `id` or `*uuid` key's whole
 value now counts), and the redacted dump redacted again by check_plan gave
 a VG the pseudonym a PV had in dashed form only (the LVM pseudonym now
-avoids both forms).  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
+avoids both forms).  leap16 (`make-opensuse.sh leap 16.1`: openSUSE Leap
+16.1 from its offline ISO by Agama, unattended; UEFI with Secure Boot on,
+GPT with a 512 MiB ESP at /boot/efi, one btrfs with openSUSE's subvolumes
+and snapper's `@/.snapshots`, the root `@/.snapshots/1/snapshot`, a swap
+partition; GRUB 2 through shim in EFI/opensuse, dracut, SELinux enforcing;
+docs/design/leap16.md), built on 2026-11-14, was added the same day from a
+dump of the live guest on chopin (run `l3`, the static bko-holt 0.2.6
+built from this tree with Leap's osrel.rs row; its own vm-run-options, so
+under Secure Boot through shim's fallback on a fresh variable store, the
+disk under `vm-run --snapshot`, the image's sha256 the same before and
+after).  It is in the corpus before it is one of classes.json's HoltTest2
+sources, so golden_plans.rs notes it until it is.  Its golden plan keeps
+the restored shim and GRUB, runs dracut and `grub2-mkconfig` with os-prober
+off, makes the `opensuse-secureboot` entry for `\EFI\opensuse\shim.efi`
+and relabels what the boot stage wrote with `setfiles`.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
 collection; `-` for the guests without one) say which, and `image` whether
@@ -403,7 +417,15 @@ with its 98 strings and the raw dump's identifiers, cinqcent with its 99,
 the Mac with the git e-mail, 0 findings (its plan scanned too), the same
 sha256 from both builds (src.json `a95eef1e...`).  Its first build had
 one finding in (b), the raw `lvol0_pmspare` UUID that redact.rs had left
-(above); it never left chopin, and the build after the fix had none.
+(above); it never left chopin, and the build after the fix had none.  So did leap16
+(2026-11-14), built from a private directory on chopin (/bkoscratch, its
+warm holt build at /bkoscratch/holt-warm/l16-opensuse): chopin with its
+101 strings and the raw dump's identifiers, cinqcent with its 106, the Mac
+with the git e-mail, 0 findings (its plan scanned too), the same sha256
+from both builds (src.json `23a09f8e...`).  Its first build stopped at check_plan's leak
+check, which isn't a leak: the warm build's directory was named after the
+guest, whose host name is `leap16`, and check_plan's plan holds the test
+binary's path (golden_plans.rs names it `bko-holt`; check_plan doesn't).
 
 ## The golden plans
 

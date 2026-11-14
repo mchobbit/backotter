@@ -469,7 +469,9 @@ if command -v zpool >/dev/null && [ -n "$(zpool list -H -o name 2>/dev/null)" ];
 [ -f /etc/crypttab ] && command -v cryptsetup >/dev/null && for c in $(awk "\$1 !~ /^#/ && NF {print \$1}" /etc/crypttab); do cryptsetup status "$c" 2>/dev/null | grep -q "is active" && echo "$c open" || no "LUKS $c not open"; done
 ls /var/log/bko-holt/load.log >/dev/null 2>&1 && echo "load log kept" || no "/var/log/bko-holt/load.log missing"
 exit $f'
-# Boot state: line 1 systemd's overall state (or the init system's name),
+# Boot state: line 1 systemd's overall state (or the init system's name;
+# Slackware's BSD-style rc with its runlevel), then for Slackware each rc
+# script that is executable (on) whose daemon isn't running,
 # then one line per failed unit or service that isn't up, sorted.  A
 # restored machine may have no line its source lacked.
 BOOTSTATE='if [ -d /run/systemd/system ]; then
@@ -489,6 +491,11 @@ elif command -v herd >/dev/null; then
     # and Failed: (then Running timers: and One-shot:), one " X NAME" each.
     echo shepherd
     herd status | awk "/^[A-Z][^:]*:\$/ {sec=\$0; next} sec == \"Stopped:\" {print \"down \" \$2} sec == \"Failed:\" {print \"failed \" \$2}" | sort
+elif [ -f /etc/rc.d/rc.M ] && [ -f /etc/slackware-version ]; then
+    echo "slackware-rc runlevel $(runlevel | cut -d " " -f 2)"
+    for p in rc.sshd:sshd rc.syslog:syslogd rc.crond:crond rc.atd:atd rc.acpid:acpid rc.udev:udevd rc.elogind:elogind-daemon rc.messagebus:dbus-daemon rc.inet1:dhcpcd rc.ntpd:ntpd rc.cups:cupsd; do
+        [ -x "/etc/rc.d/${p%%:*}" ] || continue; pgrep -x "${p#*:}" >/dev/null || echo "down ${p%%:*}"
+    done | sort
 else
     echo "unknown init"
 fi'
@@ -544,15 +551,65 @@ lvmid_check() {  # the restored guest's: every embedded lvmid is /boot/grub's LV
 # the restored disk alike (both take the guest's options).  Its MOK
 # certificate is vms/GUEST/GUEST-mok.der (the source's MOK.der).
 mok=0; [[ " ${fw[*]} " == *" --mok "* ]] && mok=1
+# openSUSE Leap 16 (leap16: --uefi, SUSE's Microsoft-signed shim, no MOK of
+# its own; docs/design/leap16.md, L5) must boot under Secure Boot too, the
+# source and the restored disk alike: sb_check wants "SecureBoot enabled".
+sbreq=0; case $G in leap16*) [[ $uefi == 1 && " ${fw[*]} " != *" --no-secure-boot "* ]] && sbreq=1 ;; esac
 MOKCERT=$W/vms/$G/$G-mok.der
 SBSTATE='mokutil --sb-state 2>&1; [ -f /var/lib/shim-signed/mok/MOK.der ] && mokutil --test-key /var/lib/shim-signed/mok/MOK.der 2>&1; true'
 sb_check() {  # the restored guest's Secure Boot state, against the source's
-    ((mok)) || return 0
+    ((mok || sbreq)) || return 0
     sshk "$1" "$SBSTATE" > "$R/logs/restored-sbstate.txt" 2>&1
     if grep -q '^SecureBoot enabled' "$R/logs/restored-sbstate.txt"; then
-        ok "the restored disk booted under Secure Boot with the MOK enrolled by vm-run --mok: $(tr '\n' ' ' < "$R/logs/restored-sbstate.txt")"
+        ok "the restored disk booted under Secure Boot$( ((mok)) && echo " with the MOK enrolled by vm-run --mok"): $(tr '\n' ' ' < "$R/logs/restored-sbstate.txt")"
     else
         bad "mokutil --sb-state on the restored guest: $(tr '\n' ' ' < "$R/logs/restored-sbstate.txt") (the source's: $(tr '\n' ' ' < "$R/logs/source-sbstate.txt" 2>/dev/null))"
+    fi
+}
+# SELinux (docs/design/leap16.md, L5): a label the restore wrote wrongly, or
+# one the boot stage made, shows only as a denial.  SELINUX_STATE prints
+# getenforce's word, "relabel pending FILE" for a relabel left for the next
+# boot, and "avc N KEY" for each kind of AVC denial since boot (KEY: the
+# permissions, comm, name, scontext, tcontext, tclass and permissive; pids,
+# inodes and devices left out), from auditd's log when it runs, else the
+# journal.  leap16 must come up Enforcing with no relabel pending and no
+# denial beyond SELINUX_KNOWN; tumbleweed, fedora* and rocky* get the same
+# line as a note, no FAIL, until each has passed with it once.  Other
+# guests: nothing.
+selinux=none; case $G in leap16*) selinux=check ;; tumbleweed*|fedora*|rocky*) selinux=note ;; esac
+# Denials expected on a restored boot: "ERE<TAB>reason", matched against KEY.
+SELINUX_KNOWN=()
+SELINUX_STATE='command -v getenforce >/dev/null 2>&1 || { echo "selinux none"; exit 0; }
+echo "selinux $(getenforce 2>/dev/null)"
+for f in /.autorelabel /etc/selinux/.autorelabel; do [ -e "$f" ] && echo "relabel pending $f"; done
+if command -v ausearch >/dev/null 2>&1 && systemctl -q is-active auditd 2>/dev/null; then l=auditd; else l=journal; fi
+echo "avc-log $l"
+{ if [ $l = auditd ]; then ausearch -m AVC,USER_AVC -ts boot -r 2>/dev/null; else journalctl -b -o cat 2>/dev/null; fi; } |
+    grep "avc: *denied" | awk "{ k = \$0; sub(/.*denied *\\{ */, \"\", k); sub(/ *\\}.*/, \"\", k); k = \"{ \" k \" }\"
+        for (i = 1; i <= NF; i++) if (\$i ~ /^(comm|name|scontext|tcontext|tclass|permissive)=/) k = k \" \" \$i; print k }" |
+    sort | uniq -c | awk "{ n = \$1; \$1 = \"\"; print \"avc \" n \$0 }"
+true'
+selinux_record() {  # WHO KEY
+    [[ $selinux != none ]] || return 0
+    sshk "$2" "$SELINUX_STATE" > "$R/logs/$1-selinux.txt" 2>&1
+}
+selinux_check() {  # KEY: the restored guest's SELinux mode, relabel and denials
+    [[ $selinux != none ]] || return 0
+    selinux_record restored "$1"
+    local f=$R/logs/restored-selinux.txt s=$R/logs/source-selinux.txt mode n k e known line unk=() why=()
+    mode=$(sed -n 's/^selinux //p' "$f")
+    while read -r _ _ k; do
+        known=""
+        for e in "${SELINUX_KNOWN[@]}"; do [[ $k =~ ${e%%$'\t'*} ]] && { known=${e#*$'\t'}; break; }; done
+        if [[ -n $known ]]; then why+=("$known"); else unk+=("$k"); fi
+    done < <(grep '^avc ' "$f")
+    n=$(awk '/^avc / {s += $2} END {print s + 0}' "$f")
+    line="SELinux on the restored guest: ${mode:-no answer}, $n AVC denial(s) since boot (in $(sed -n 's/^avc-log //p' "$f")), ${#unk[@]} kind(s) beyond the known list${why:+ (known: ${why[*]})}, $(grep -q '^relabel pending' "$f" && grep '^relabel pending' "$f" | tr '\n' ' ' || echo "no relabel pending"); the source's: $(sed -n 's/^selinux //p' "$s" 2>/dev/null), $(awk '/^avc / {s += $2} END {print s + 0}' "$s" 2>/dev/null) denial(s) (logs/restored-selinux.txt)"
+    if [[ $selinux == note ]]; then say "note: $line"; return 0; fi
+    if [[ $mode == Enforcing && ${#unk[@]} == 0 ]] && ! grep -q '^relabel pending' "$f"; then
+        ok "$line"
+    else
+        bad "$line${unk:+: ${unk[*]:0:3}}"
     fi
 }
 mok_check() {  # MNT: the restored tree, mounted: every grubx64.efi on its vfat file systems is signed by the source's MOK
@@ -1324,7 +1381,8 @@ phase_source() {
     esac
     bootstate "$gkey" > "$R/logs/source-bootstate.txt"
     sshk "$gkey" "$LVMID" > "$R/logs/source-lvmid.txt" 2>&1
-    ((mok)) && sshk "$gkey" "$SBSTATE" > "$R/logs/source-sbstate.txt" 2>&1
+    ((mok || sbreq)) && sshk "$gkey" "$SBSTATE" > "$R/logs/source-sbstate.txt" 2>&1
+    selinux_record source "$gkey"
     ((solus)) && sshk "$gkey" "$SOLUS_LOADER" > "$R/logs/source-loader.txt" 2>&1
     TMO=1800 sshk "$gkey" "$SNAPS" > "$R/logs/source-snaps.txt" 2>&1
     snapmgr_record source "$gkey"
@@ -1744,6 +1802,7 @@ phase_verify() {
     fi
     lvmid_check "$gkey"
     sb_check "$gkey"
+    selinux_check "$gkey"
     solus_loader_check "$gkey"
     snaps_check "$gkey"
     snapmgr_record restored "$gkey"

@@ -21,6 +21,8 @@
 #   artix-dinit   artix-dinit     JFS        Artix's repositories (dinit)
 #   artix-s6      artix-s6        ext4       Artix's repositories (s6)
 #   nixos         nixos2605       bcachefs   NixOS 26.05's nixpkgs
+#   slackware     slackware15     ext4       Slackware 15.0's series a, ap, d, l, n (BSD-style rc), LILO, no initrd
+#   slackware-uefi slackware15-uefi XFS      the same, for UEFI, ELILO, mkinitrd (below)
 #
 # The versions are fixed below.  The Arch ISO (with its .sig and
 # sha256sums.txt) and the distribution's root file system tarball, if it has
@@ -36,6 +38,12 @@
 # and its packages are the binhost's.  Gentoo prunes autobuilds after about
 # two months: /bkoscratch/rebuild-inputs/gentoo and gentoo-systemd keep the
 # stage3s and their .ascs on both hosts, for rebuild-one.sh.
+# Slackware's tree (slackware64-15.0: CHECKSUMS.md5 and its .asc, and the
+# five series' packages with their .ascs) is read from SLACKWARE_TREE if set
+# (rebuild-one.sh: /bkoscratch/rebuild-inputs/slackware15), else downloaded
+# into WORK_DIR/slackware64-15.0; either way CHECKSUMS.md5 is checked with
+# gpgv against Slackware's key, each package against its MD5 there and its
+# own .asc.  Its 15.0 tree is frozen; the patches come later, by vm-update.
 # bcachefs needs an Arch ISO whose kernel still has it (6.12), so NixOS's
 # install uses an older one.
 #
@@ -55,6 +63,11 @@
 #                         /etc/cryptsetup-keys.d/cryptroot.key (Chimera,
 #                         Gentoo)
 #
+# slackware: MBR, swap (2 GiB) and / (LAYOUT swap-root), the huge kernel
+# with no initrd, LILO in the MBR.  slackware-uefi: LAYOUT uefi, the generic
+# kernel with mkinitrd's initrd, ELILO in EFI/Slackware and EFI/BOOT.  Both
+# 20 GiB, fstab and root= by device name, as Slackware's setup writes them
+# (docs/design/slackware.md).
 # The guest: BIOS + MBR, /boot (1 GiB ext4), swap (2 GiB), / (the rest), 2 GB
 # RAM, no desktop, console on the serial port too, DHCP and sshd.  The UEFI
 # ones, GPT with GRUB in a 512 MiB ESP at /boot/efi (bootstrap/common.sh's
@@ -106,11 +119,16 @@ GENTOO_KEY=13EBBDBEDE7A12775DFDB1BABB572E0E2D182910
 NIXOS_RELEASE=26.05
 NIXPKGS=https://releases.nixos.org/nixos/26.05/nixos-26.05.13164.6f06d204d8f2/nixexprs.tar.xz
 NIX_VERSION=2.31.2
+SLACKWARE_MIRROR=https://slackware.osuosl.org/slackware64-15.0
+# Slackware Linux Project <security@slackware.com>, the key in the tree's
+# GPG-KEY (https://www.slackware.com/gpg-key)
+SLACKWARE_KEY=EC5649DA401E22ABFA6736EF6A4463C040102233
+SLACKWARE_SERIES="a ap d l n"
 
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-bootstrap: $*" >&2; exit 1; }
 
-[[ $# -eq 2 ]] || die "usage: $0 alpine|alpine-uefi|alpine-lvm|alpine-luks|void|chimera|chimera-uefi|gentoo|gentoo-systemd|artix-dinit|artix-s6|nixos WORK_DIR"
+[[ $# -eq 2 ]] || die "usage: $0 alpine|alpine-uefi|alpine-lvm|alpine-luks|void|chimera|chimera-uefi|gentoo|gentoo-systemd|artix-dinit|artix-s6|nixos|slackware|slackware-uefi WORK_DIR"
 distro=$1
 iso_release=$ARCH_ISO_CURRENT
 script=$distro
@@ -137,6 +155,11 @@ case $distro in
     nixos) name=nixos2605 root_fs=bcachefs iso_release=$ARCH_ISO_LINUX_6_12
         INSTALL_MEMORY=8192
         extra=("NIXPKGS=$NIXPKGS" "NIX_VERSION=$NIX_VERSION" "STATE_VERSION=$NIXOS_RELEASE") ;;
+    # The packages setup installs for these series, less the other kernel.
+    slackware) name=slackware15 root_fs=ext4 layout=swap-root DISK_SIZE=20G
+        extra=(KERNEL=huge) ;;
+    slackware-uefi) name=slackware15-uefi root_fs=xfs script=slackware firmware=uefi layout=uefi DISK_SIZE=20G
+        extra=(KERNEL=generic) ;;
     *) die "unknown DISTRO $distro" ;;
 esac
 DISK=$name.qcow2
@@ -225,6 +248,39 @@ case $script in
             die "$f is not signed by Gentoo's Release Engineering key"
         ln -s "$PWD/$f" "$work/www/rootfs.tar.xz"
         stage3_file=$f
+        ;;
+    slackware)
+        tree=${SLACKWARE_TREE:-$PWD/slackware64-15.0}
+        mkdir -p "$tree"
+        tree=$(realpath "$tree")
+        gpg_key "$SLACKWARE_KEY" slackware-key.gpg
+        if [[ ! -f $tree/CHECKSUMS.md5.asc ]]; then
+            (cd "$tree" && fetch "$SLACKWARE_MIRROR/CHECKSUMS.md5" && fetch "$SLACKWARE_MIRROR/CHECKSUMS.md5.asc")
+        fi
+        gpgv --keyring ./slackware-key.gpg "$tree/CHECKSUMS.md5.asc" "$tree/CHECKSUMS.md5" 2>/dev/null ||
+            die "$tree/CHECKSUMS.md5 is not signed by Slackware's key"
+        series_re=$(tr ' ' '|' <<<"$SLACKWARE_SERIES")
+        other=generic; [[ ${extra[0]} == KERNEL=generic ]] && other=huge
+        # setup's order: by series as listed, by name within one.
+        grep -E "  \./slackware64/($series_re)/[^/]+\.txz\$" "$tree/CHECKSUMS.md5" | sed 's|  \./|  |' >"$work/sums"
+        [[ -s $work/sums ]] || die "CHECKSUMS.md5 lists no packages in series $SLACKWARE_SERIES"
+        for sr in $SLACKWARE_SERIES; do
+            awk -v s="slackware64/$sr/" 'index($2, s) == 1 { print $2 }' "$work/sums" | sort
+        done | grep -v "/kernel-$other-[^/]*\.txz\$" >"$work/www/pkglist.txt"
+        missing=$(cd "$tree" && while read -r p; do [[ -f $p && -f $p.asc ]] || echo "$p"; done <"$work/www/pkglist.txt")
+        if [[ -n $missing ]]; then
+            echo "Downloading $(wc -l <<<"$missing") Slackware packages into $tree"
+            (cd "$tree" && sed "s|^|$SLACKWARE_MIRROR/|; p; s|\$|.asc|" <<<"$missing" |
+                wget -q -nc -x -nH --cut-dirs=1 -i -) || die "could not download Slackware's packages"
+        fi
+        (cd "$tree" && grep -F -f "$work/www/pkglist.txt" "$work/sums" | md5sum -c --quiet -) ||
+            die "Slackware's packages don't match CHECKSUMS.md5"
+        while read -r p; do
+            gpgv --keyring ./slackware-key.gpg "$tree/$p.asc" "$tree/$p" 2>/dev/null ||
+                die "$p is not signed by Slackware's key"
+        done <"$work/www/pkglist.txt"
+        echo "Slackware: $(wc -l <"$work/www/pkglist.txt") packages checked"
+        ln -s "$tree" "$work/www/tree"
         ;;
 esac
 

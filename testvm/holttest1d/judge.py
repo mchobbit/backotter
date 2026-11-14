@@ -299,6 +299,19 @@ SOLUS_REQUIRED = ("boot/EFI/com.solus-project/bootloaderx64.efi", "boot/EFI/com.
 SOLUS_GLOBS = ((r"^boot/EFI/com\.solus-project/kernel-com\.solus-project\.[^/]+$", "boot/EFI/com.solus-project/kernel-com.solus-project.*"),
                (r"^boot/EFI/com\.solus-project/initrd-com\.solus-project\.[^/]+$", "boot/EFI/com.solus-project/initrd-com.solus-project.*"),
                (r"^boot/loader/entries/Solus-[^/]+\.conf$", "boot/loader/entries/Solus-*.conf"))
+# An openSUSE source booting GRUB 2 through shim from its ESP at /boot/efi
+# (Leap 16: docs/design/leap16.md, L5): load's /boot/grub2 UEFI arm (the
+# Fedora arm: no grub2-install, no shim-install) keeps the restored ESP and
+# remakes only /boot/grub2/grub.cfg, then the NVRAM entry.  So every file in
+# EFI/opensuse (SUSE's signed shim, GRUB and MokManager, the grub.cfg stub,
+# boot.csv) and in the fallback EFI/boot must be byte for byte the source's:
+# no ESP rule excuses them.  EFI/opensuse's shim, GRUB and MokManager and
+# EFI/boot/bootx64.efi must be in the source's record.  (A transactional
+# source, MicroOS, has its own rules: TU_STAGE excuses nothing there.)
+OPENSUSE_SOURCE = r"^boot/efi/EFI/opensuse/shim\.efi$"
+OPENSUSE_KEPT = r"^boot/efi/EFI/(opensuse|boot)/[^/]+$"
+OPENSUSE_REQUIRED = ("boot/efi/EFI/opensuse/shim.efi", "boot/efi/EFI/opensuse/grub.efi", "boot/efi/EFI/opensuse/MokManager.efi",
+                     "boot/efi/EFI/boot/bootx64.efi")
 
 
 # A transactional-update source (openSUSE MicroOS; docs/design/aeon.md, the
@@ -714,6 +727,7 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     abroot = any(re.search(ABROOT_SOURCE, p) for p in before)
     solus = any(re.search(SOLUS_SOURCE, p) for p in before)
     tu = any(re.search(TU_SOURCE, p) for p in before)
+    opensuse = not tu and any(re.search(OPENSUSE_SOURCE, p) for p in before)
     real, allowed = {}, {}
     # A transactional source's slot at / (the booted one) is in the backup
     # through / only, where @/var and the other subvolumes fstab mounts hide
@@ -739,10 +753,14 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     if solus:
         for p in solus_missing(before):
             real.setdefault("not in the source's record (Solus's ESP at /boot)", []).append(p)
+    if opensuse:
+        for p in OPENSUSE_REQUIRED:
+            if before.get(p, {}).get("type") != "file":
+                real.setdefault("not in the source's record (openSUSE's shim and signed GRUB)", []).append(p)
     for kind, paths in diff.items():
         for p in paths:
             kept = (refind and re.search(REFIND_KEPT, p)) or (anduin and re.search(ANDUINOS_KEPT, p)) or (abroot and re.search(ABROOT_KEPT, p)) \
-                or (solus and re.search(SOLUS_KEPT, p))
+                or (solus and re.search(SOLUS_KEPT, p)) or (opensuse and re.search(OPENSUSE_KEPT, p))
             why = None if kept else \
                 next((w for r, kinds, w in (TU_STAGE if tu else BOOT_STAGE) if kind in kinds and re.search(r, p)), None)
             if not why and kind == "missing" and before.get(p, {}).get("type") == "socket":
@@ -789,6 +807,9 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     if solus:
         held = [p for p in before if re.search(SOLUS_KEPT, p)]
         print(f"Solus's ESP at /boot kept: {len(held)} paths of EFI/com.solus-project, EFI/BOOT, loader/ and solus-enroll-me.cer held to the source's bytes")
+    if opensuse:
+        held = sorted(p for p in before if re.search(OPENSUSE_KEPT, p))
+        print(f"openSUSE's shim and signed GRUB kept: {len(held)} paths of EFI/opensuse and EFI/boot held to the source's bytes: {', '.join(p.removeprefix('boot/efi/EFI/') for p in held)}")
     if tu:
         held = [p for p in before if re.search(TU_HELD, p)]
         print(f"transactional-update: no boot-stage excuse but load's log and health-check.state: {len(held)} paths of the ESP and every slot's /boot and /usr held to the source's")

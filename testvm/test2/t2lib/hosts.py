@@ -110,6 +110,8 @@ SSH_RE = re.compile(r"[A-Za-z0-9._-]+@[A-Za-z0-9._-]+\Z")
 RANGE_RE = re.compile(r"(\d+)-(\d+)\Z")
 
 _cache = {}
+_good = {}           # path -> the last table read there that checked (load keeps it on a bad re-read)
+stale_errors = {}    # path -> why load kept that table instead of the file as it is now
 
 
 class HostsError(Exception):
@@ -247,7 +249,10 @@ def check_table(t):
 
 
 def load(p=None):
-    """The checked table at P (default path()), read once per path and mtime."""
+    """The checked table at P (default path()), read once per path and mtime.  A re-read that
+    fails (the file edited under a long run, e.g. a field this process's check doesn't know yet)
+    keeps the last table this process read there; only a first read raises (stale_errors says
+    why it was kept)."""
     p = p or path()
     try:
         st = os.stat(p)
@@ -257,11 +262,18 @@ def load(p=None):
         with open(p, encoding="utf-8") as f:
             t = json.load(f)
     except (OSError, ValueError) as e:
+        if p in _good:
+            stale_errors[p] = str(e)
+            return _good[p]
         raise TableError(f"the host table {p}: {e}") from None
     errs = check_table(t)
     if errs:
+        if p in _good:
+            stale_errors[p] = "; ".join(errs)
+            return _good[p]
         raise TableError(f"the host table {p}: " + "; ".join(errs))
-    _cache[key] = t
+    _cache[key] = _good[p] = t
+    stale_errors.pop(p, None)
     return t
 
 

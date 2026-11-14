@@ -3233,6 +3233,7 @@ impl Builder<'_> {
         // NixOS and Guix System (crate::store): their notes and paths.
         let store = crate::store::system(self.layout.str_at(&["os", "id"]));
         let gentoo = self.layout.str_at(&["os", "id"]) == Some("gentoo");
+        let slackware = self.layout.str_at(&["os", "id"]) == Some("slackware");
         let solus = self.solus_cbm();
         let truenas = self.truenas().is_some();
         if truenas {
@@ -3246,6 +3247,10 @@ impl Builder<'_> {
             // clr-boot-manager's copies came back with the ESP; one rebuilt
             // here would be host-only, and CBM would never copy it.
             self.notes.push("Solus: each kernel's initrd came prebuilt in its package (/usr/lib64/kernel/initrd-com.solus-project.*), and clr-boot-manager's copies of them came back with the ESP; nothing to rebuild".into());
+        } else if slackware {
+            self.slackware_device_names();
+            let cmds = self.slackware_initramfs(&t);
+            out.extend(cmds);
         } else {
             match self.initramfs(&t) {
                 _ if store.is_some() && self.layout.uefi() => self.notes.push(store.map_or("", |s| s.initramfs_uefi).into()),
@@ -3470,6 +3475,23 @@ impl Builder<'_> {
                 self.notes.push("rEFInd: its EFI files, drivers, theme and refind.conf came back with the ESP, and refind_linux.conf with /boot; nothing to install".into());
                 self.check_refind_uuids();
             }
+            // Slackware's LILO (docs/design/slackware.md): lilo writes the
+            // MBR and its map file of the kernels' sectors, which the
+            // restore moved, so it runs again after the initrd step;
+            // `lilo -t` first, so a lilo.conf it can't use stops the stage
+            // before the MBR is written.
+            ("lilo", false) => {
+                let cmds = self.lilo_cmds(&t);
+                out.extend(cmds);
+            }
+            // Slackware's ELILO: elilo.efi, elilo.conf, the kernel and the
+            // initrd are files on the ESP, restored with it; nothing is
+            // installed.  A remade initrd is copied over the ESP's, as
+            // eliloconfig copies it.
+            ("elilo", true) => {
+                let cmds = self.elilo_cmds(&t);
+                out.extend(cmds);
+            }
             (other, _) => self.problems.push(format!("boot loader {other} ({}) isn't one bko-holt load can install", if uefi { "UEFI" } else { "BIOS" })),
         }
         // BigLinux's installer ends with btrfs-fix: /boot and GRUB's files
@@ -3486,6 +3508,9 @@ impl Builder<'_> {
         }
         if uefi && !self.opts.no_nvram {
             out.extend(self.efi_entries());
+            if slackware && loader == "elilo" {
+                out.extend(self.elilo_entry());
+            }
             if solus {
                 out.extend(self.solus_entry());
             }
@@ -4319,6 +4344,450 @@ pub(crate) fn efi_optional_data(e: &Value) -> Option<OptionalData> {
         }
     }
     Some(OptionalData::Bytes(b))
+}
+
+// ---- boot: Slackware ----------------------------------------------------
+
+/// A plain kernel device path (/dev/vda2, /dev/nvme0n1p2, /dev/md0): what
+/// Slackware's lilo.conf, elilo.conf and fstab name, and what changes with
+/// the hardware.  Not /dev/mapper/, /dev/disk/by-*/ or /dev/VG/LV.
+fn kernel_dev_path(p: &str) -> bool {
+    let p = md_name(p);
+    p.strip_prefix("/dev/").is_some_and(|t| !t.is_empty() && !t.contains('/'))
+}
+
+/// /dev/md/N as /dev/mdN: the same array, by mdadm's name or the
+/// kernel's (load assembles it as /dev/md/N; it boots as /dev/mdN).
+fn md_name(p: &str) -> String {
+    match p.strip_prefix("/dev/md/") {
+        Some(n) if !n.is_empty() && n.bytes().all(|c| c.is_ascii_digit()) => format!("/dev/md{n}"),
+        _ => p.to_string(),
+    }
+}
+
+/// The name of the lilo.conf copy lilo_cmds runs lilo on: the config's
+/// own name with this added, beside it.
+const LILO_COPY_SUFFIX: &str = ".bko-holt";
+
+/// lilo 24.2's longest kernel command line (lilo.h's COMMAND_LINE_SIZE
+/// 512, less its NUL): a longer append= it refuses, a longer line it cuts.
+const LILO_CMDLINE_MAX: usize = 511;
+
+/// Whether lilo writes this root= as a device number (bsect.c's
+/// bsect_common): any but `current`, /dev/mapper/..., LABEL= and UUID=,
+/// which go through as text.  Only /dev/ paths are rewritten here.
+fn lilo_numbers_root(root: &str) -> bool {
+    root.starts_with("/dev/") && !root.starts_with("/dev/mapper/")
+}
+
+/// boot.lilo's items as written (lilo_list's `key` or `key=value`) back
+/// into lilo.conf items.
+fn lilo_dump_items(v: &Value) -> Option<Vec<crate::boot::LiloItem>> {
+    let a = v.get("options").and_then(Value::as_array)?;
+    Some(
+        a.iter()
+            .filter_map(Value::as_str)
+            .map(|o| match o.split_once('=') {
+                Some((k, v)) => (k.to_string(), Some(v.to_string())),
+                None => (o.to_string(), None),
+            })
+            .collect(),
+    )
+}
+
+/// lilo.conf as boot.lilo recorded it (its global items, then each image=
+/// or other= with its items, in order), written out again for lilo -C,
+/// with `root=DEV` at the end of the append= of each image whose root=
+/// (its own, else the global one) lilo would turn into a device number.
+/// lilo writes such a root= as the device's major:minor under the rescue
+/// kernel, and virtio_blk's major is dynamic (254 under the rescue kernel,
+/// 253 under Slackware 15's huge kernel), so a kernel with no initrd would
+/// look for another device; the kernel takes the last root= it sees and
+/// finds /dev/NAME by itself.  The image gets its own append= with it: the
+/// one it has, else the global one it inherits (an image's append= replaces
+/// the global one in lilo), so other images, which may have other roots,
+/// keep theirs.  Images with literal=, or a root= already in append= or
+/// addappend=, are left as they are.  Ok(None) when no image needs it, else
+/// the copy's text and each `LABEL: root=DEV` added; Err when the copy
+/// couldn't say what the user's file says, or lilo would refuse it.
+fn lilo_root_copy(lilo: &Value) -> Result<Option<(String, Vec<String>)>, String> {
+    use crate::boot::lilo_get;
+    let conf = s(lilo, "conf").unwrap_or_else(|| crate::boot::LILO_CONF.into());
+    let Some(global) = lilo_dump_items(lilo) else {
+        return Err(format!("the dump's boot.lilo doesn't keep {conf}'s items (options), so bko-holt can't write the copy of it lilo runs on"));
+    };
+    let g = |k: &str| lilo_get(&global, k).map(str::to_string);
+    let flag = |its: &[crate::boot::LiloItem], k: &str| its.iter().chain(global.iter()).any(|(x, _)| x == k);
+    let mut sections: Vec<(String, String, Vec<crate::boot::LiloItem>)> = Vec::new();
+    let mut added: Vec<String> = Vec::new();
+    for img in lilo.get("images").and_then(Value::as_array).into_iter().flatten() {
+        let kind = s(img, "kind").unwrap_or_else(|| "image".into());
+        let path = s(img, "path").unwrap_or_default();
+        let Some(mut its) = lilo_dump_items(img) else {
+            return Err(format!("the dump's boot.lilo doesn't keep the items of {conf}'s {kind}={path} (options), so bko-holt can't write the copy of it lilo runs on"));
+        };
+        let root = lilo_get(&its, "root").map(str::to_string).or_else(|| g("root"));
+        let has_root = |t: Option<&str>| t.unwrap_or("").split_whitespace().any(|w| w.starts_with("root="));
+        if let Some(root) = root.filter(|r| kind == "image" && lilo_numbers_root(r) && lilo_get(&its, "literal").is_none()) {
+            let own = its.iter().rposition(|(k, _)| k == "append");
+            let append = match own {
+                Some(i) => its[i].1.clone(),
+                None => g("append"),
+            };
+            if !has_root(append.as_deref()) && !has_root(lilo_get(&its, "addappend")) {
+                let dev = md_name(&root);
+                let new = match append.as_deref() {
+                    Some(a) if !a.trim().is_empty() => format!("{a} root={dev}"),
+                    _ => format!("root={dev}"),
+                };
+                // The line lilo makes (bsect_common): [ro ][rw ]root=HEX
+                // [ramdisk=N ]APPEND [ADDAPPEND], less a last space; the
+                // device number at its longest, 8 hex digits.
+                let mut line = String::new();
+                if flag(&its, "read-only") {
+                    line += "ro ";
+                }
+                if flag(&its, "read-write") {
+                    line += "rw ";
+                }
+                line += "root=ffffffff ";
+                if let Some(r) = lilo_get(&its, "ramdisk").map(str::to_string).or_else(|| g("ramdisk")) {
+                    line += &format!("ramdisk={r} ");
+                }
+                line += &new;
+                line.push(' ');
+                line += lilo_get(&its, "addappend").unwrap_or("");
+                let n = line.strip_suffix(' ').unwrap_or(&line).len();
+                let label = lilo_get(&its, "label").unwrap_or(&path).to_string();
+                if n > LILO_CMDLINE_MAX {
+                    return Err(format!(
+                        "{conf}'s image {label} would have a kernel command line of up to {n} characters with root={dev} added to its append=, over lilo's {LILO_CMDLINE_MAX}; bko-holt adds it because lilo writes root={root} as the device's number under the rescue kernel, which the restored kernel may number otherwise"
+                    ));
+                }
+                match own {
+                    Some(i) => its[i].1 = Some(new),
+                    None => its.push(("append".into(), Some(new))),
+                }
+                added.push(format!("{label}: root={dev}"));
+            }
+        }
+        sections.push((kind, path, its));
+    }
+    if added.is_empty() {
+        return Ok(None);
+    }
+    // lilo_items reads no escapes or variables, so an item with a quote, a
+    // backslash or a $ (lilo expands $VAR) may not be what lilo read; and
+    // password="" keeps the passwords in CONF.shs, named after the config
+    // lilo runs on, which the copy's name would miss.
+    let all = global.iter().chain(sections.iter().flat_map(|(_, _, its)| its.iter()));
+    for (k, v) in all {
+        if k == "password" && v.as_deref() == Some("") {
+            return Err(format!("{conf} has password=\"\", whose passwords lilo keeps in {conf}.shs, beside the config it runs on; bko-holt runs lilo on a copy of {conf} (to give the kernel root= by name) and doesn't support that"));
+        }
+    }
+    let odd = |t: &str| t.contains(['"', '\\', '$']);
+    let mut bad = global.iter().chain(sections.iter().flat_map(|(_, _, its)| its.iter())).map(|(k, v)| (k.as_str(), v.as_deref())).chain(sections.iter().map(|(k, p, _)| (k.as_str(), Some(p.as_str()))));
+    if let Some((k, v)) = bad.find(|(k, v)| odd(k) || v.is_some_and(odd)) {
+        return Err(format!(
+            "{conf}'s {k}{} has a quote, backslash or $, which bko-holt can't write into the copy of {conf} it runs lilo on (to give the kernel root= by name) as lilo reads it",
+            v.map(|v| format!("={v}")).unwrap_or_default()
+        ));
+    }
+    let item = |(k, v): &crate::boot::LiloItem| match v {
+        Some(v) => format!("{k}=\"{v}\"\n"),
+        None => format!("{k}\n"),
+    };
+    let mut text = format!("# bko-holt load: {conf} with root= by name added to append= ({}); lilo is run on this copy, then it is removed\n", added.join(", "));
+    text.extend(global.iter().map(item));
+    for (kind, path, its) in &sections {
+        text += &format!("{kind}=\"{path}\"\n");
+        text.extend(its.iter().map(|i| format!("  {}", item(i))));
+    }
+    Ok(Some((text, added)))
+}
+
+impl Builder<'_> {
+    /// Slackware's mkinitrd step, as the dump read it
+    /// (boot.initramfs.mkinitrd): the source's own command
+    /// (/boot/initrd-tree/command_line) with -k for its kernels, else
+    /// `mkinitrd -F` from /etc/mkinitrd.conf; Err with why neither can run.
+    fn mkinitrd_cmd(&self, t: &str) -> Result<Cmd, String> {
+        let m = self.layout.v.at(&["boot", "initramfs", "mkinitrd"]).cloned().unwrap_or(Value::Null);
+        let kernels: Vec<String> = m.get("kernels").and_then(Value::as_array).into_iter().flatten().filter_map(|k| k.as_str().map(str::to_string)).collect();
+        let output = s(&m, "output").unwrap_or_else(|| crate::boot::MKINITRD_OUTPUT.into());
+        if kernels.is_empty() {
+            return Err(format!("no kernel in /lib/modules to make it for, so the restored {output} stays"));
+        }
+        let k = kernels.join(", ");
+        let mut argv = vec!["chroot".to_string(), t.to_string()];
+        if let Some(r) = s(&m, "command_line").and_then(|c| crate::boot::mkinitrd_replay(&c, &kernels, &output)) {
+            argv.extend(r);
+            return Ok(Cmd { argv, ..Cmd::default() }.why(format!("the initrd, by the source's own mkinitrd command ({}), for kernel {k}", crate::boot::MKINITRD_COMMAND_LINE)));
+        }
+        if s(&m, "conf").is_some() {
+            argv.extend(["mkinitrd".to_string(), "-F".into(), "-k".into(), kernels.join(":")]);
+            return Ok(Cmd { argv, ..Cmd::default() }.why(format!("the initrd, as {} says (mkinitrd -F), for kernel {k}", crate::boot::MKINITRD_CONF)));
+        }
+        Err(format!("mkinitrd's command can't be found (no {} or {}), so the restored {output} stays", crate::boot::MKINITRD_COMMAND_LINE, crate::boot::MKINITRD_CONF))
+    }
+
+    /// Slackware's initrd step (docs/design/slackware.md): mkinitrd's image
+    /// remade (mkinitrd_cmd), or nothing when there is none (the huge
+    /// kernel); any other generator is refused.
+    fn slackware_initramfs(&mut self, t: &str) -> Vec<Cmd> {
+        let generator = self.layout.str_at(&["boot", "initramfs", "generator"]).unwrap_or("unknown").to_string();
+        match generator.as_str() {
+            "none" => self.notes.push("Slackware: no initrd (no loader configuration names one, and there is no /boot/initrd.gz): nothing is made, and the kernel boots without one, as on the source".into()),
+            // LUKS (mkinitrd -C, or a root on /dev/mapper) is out of
+            // scope (docs/design/slackware.md): refused, not replayed.
+            "mkinitrd" if self.layout.str_at(&["boot", "initramfs", "mkinitrd", "luksdev"]).is_some() || self.layout.str_at(&["boot", "initramfs", "mkinitrd", "rootdev"]).is_some_and(|r| r.starts_with("/dev/mapper/")) => {
+                let m = |k: &str| self.layout.str_at(&["boot", "initramfs", "mkinitrd", k]).unwrap_or("").to_string();
+                self.problems.push(format!("Slackware: mkinitrd's initrd unlocks LUKS (-C {}, root {}); bko-holt load doesn't support Slackware on LUKS in this release", m("luksdev"), m("rootdev")));
+            }
+            "mkinitrd" => match self.mkinitrd_cmd(t) {
+                Ok(c) => return vec![c],
+                Err(why) => self.notes.push(format!("Slackware: {why}")),
+            },
+            other => self.problems.push(format!("Slackware: initramfs generator {other} isn't one bko-holt load can run (only mkinitrd, or none)")),
+        }
+        Vec::new()
+    }
+
+    /// Decision 5: Slackware's kernel finds / by the root= its loader gives
+    /// it (no initrd to resolve a UUID), and fstab names its filesystems by
+    /// device name.  Every /dev/NAME in lilo.conf (boot=, disk=, root=,
+    /// root= in append=), in each elilo.conf, in mkinitrd's -r and in fstab
+    /// (those on the layout's disks) must be the same name here: a note when it is, a
+    /// problem when the target's disk is named otherwise, since load
+    /// doesn't rewrite them.
+    fn slackware_device_names(&mut self) {
+        let mut refs: Vec<(String, String)> = Vec::new();
+        let mut push = |what: String, p: &str| {
+            if kernel_dev_path(p) && !refs.iter().any(|(w, q)| q == p && *w == what) {
+                refs.push((what, p.to_string()));
+            }
+        };
+        let mut confs: Vec<(String, Value)> = Vec::new();
+        if let Some(l) = self.layout.v.at(&["boot", "lilo"]).filter(|v| !v.is_null()) {
+            confs.push((s(l, "conf").unwrap_or_else(|| crate::boot::LILO_CONF.into()), l.clone()));
+        }
+        for c in self.layout.arr(&["boot", "elilo", "configs"]) {
+            confs.push((s(c, "conf").unwrap_or_default(), c.clone()));
+        }
+        for (conf, c) in &confs {
+            let mut words = |v: &Value| {
+                for k in ["boot", "root"] {
+                    if let Some(p) = s(v, k) {
+                        push(format!("{conf}'s {k}="), &p);
+                    }
+                }
+                for k in ["append", "addappend"] {
+                    for w in s(v, k).unwrap_or_default().split_whitespace() {
+                        if let Some(p) = w.strip_prefix("root=") {
+                            push(format!("{conf}'s root= in {k}="), p);
+                        }
+                    }
+                }
+            };
+            words(c);
+            for img in c.get("images").and_then(Value::as_array).into_iter().flatten() {
+                words(img);
+            }
+            for o in c.get("options").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str) {
+                if let Some(p) = o.strip_prefix("disk=") {
+                    push(format!("{conf}'s disk="), p);
+                }
+            }
+        }
+        // The root the initrd mounts (mkinitrd's -r) and the swap it
+        // resumes from (-h): made again with them.
+        if let Some(p) = self.layout.str_at(&["boot", "initramfs", "mkinitrd", "rootdev"]) {
+            push("mkinitrd's -r (the initrd's root)".into(), p);
+        }
+        if let Some(p) = self.layout.str_at(&["boot", "initramfs", "mkinitrd", "resumedev"]) {
+            push("mkinitrd's -h (the initrd's resume device)".into(), p);
+        }
+        for e in self.layout.arr(&["storage", "fstab"]) {
+            if let (Some(spec), Some(_)) = (s(e, "spec"), s(e, "resolves_to")) {
+                push(format!("fstab's {}", s(e, "file").unwrap_or_default()), &spec);
+            }
+        }
+        let mut same: Vec<String> = Vec::new();
+        for (what, p) in refs {
+            let src = self.names.src_of_path(&md_name(&p)).or_else(|| self.names.src_of_path(&p));
+            match src.as_deref().and_then(|x| self.names.dev(x)) {
+                Some(t) if md_name(&t) == md_name(&p) => {
+                    if !same.contains(&p) {
+                        same.push(p);
+                    }
+                }
+                Some(t) => self.problems.push(format!(
+                    "Slackware: {what} names {p}, which is {t} here; the restored kernel finds / by that name (it has no initrd to find a UUID) and fstab mounts by device names, and bko-holt load doesn't rewrite them: restore onto disks that keep the source's names"
+                )),
+                None => self.problems.push(format!("Slackware: {what} names {p}, which isn't on the layout's disks, so the restored system couldn't find it at boot")),
+            }
+        }
+        if !same.is_empty() {
+            self.notes.push(format!(
+                "Slackware: lilo.conf, elilo.conf and fstab name devices by their kernel names ({}), which the target's disks keep; on disks named otherwise they would need rewriting",
+                same.join(", ")
+            ));
+        }
+    }
+
+    /// LILO (BIOS): `lilo -t -v` (a check that writes nothing), then
+    /// `lilo -v`, which writes the MBR of boot= and /boot/map.  Only boot=
+    /// a whole disk: LILO in a partition's boot sector is refused by name.
+    /// When an image's root= is a /dev/ name lilo would write as a device
+    /// number (lilo_root_copy), both run with -C on a copy of lilo.conf
+    /// that gives the kernel root= by name too, removed after; the user's
+    /// lilo.conf stays as restored.
+    fn lilo_cmds(&mut self, t: &str) -> Vec<Cmd> {
+        let Some(lilo) = self.layout.v.at(&["boot", "lilo"]).filter(|v| !v.is_null()).cloned() else {
+            self.problems.push(format!("LILO: the dump has no {} (boot.lilo), so lilo has nothing to install from", crate::boot::LILO_CONF));
+            return Vec::new();
+        };
+        let conf = s(&lilo, "conf").unwrap_or_else(|| crate::boot::LILO_CONF.into());
+        match s(&lilo, "boot") {
+            None => self.problems.push(format!("LILO: {conf} has no boot=, so lilo would write to the root partition's boot sector; bko-holt load supports LILO in a disk's MBR only (boot=/dev/DISK)")),
+            Some(b) => match self.names.src_of_path(&b) {
+                Some(n) if self.layout.disks.iter().any(|d| d.name == n) => {}
+                Some(n) => self.problems.push(format!(
+                    "LILO: {conf} has boot={b}, partition {n}: LILO in a partition's boot sector (with another loader in the MBR) isn't supported in this release, only boot= a whole disk"
+                )),
+                None => self.problems.push(format!("LILO: {conf} has boot={b}, which isn't one of the layout's disks")),
+            },
+        }
+        // lilo resolves boot= and disk= on this machine: a link
+        // (/dev/disk/by-id/...) could name the source's disk, still
+        // attached, and lilo would write its MBR.  Only kernel names, which
+        // slackware_device_names checks against the target.
+        let mut named: Vec<String> = s(&lilo, "boot").into_iter().map(|b| format!("boot={b}")).collect();
+        named.extend(lilo.get("options").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).filter(|o| o.starts_with("disk=")).map(str::to_string));
+        for n in named {
+            let p = n.split_once('=').map_or("", |(_, p)| p);
+            if !kernel_dev_path(p) {
+                self.problems.push(format!("LILO: {conf} has {n}, not a kernel device name: lilo would resolve it on this machine, where it may name another disk than the target (the source's, still attached); bko-holt load supports only names like /dev/vda there"));
+            }
+        }
+        match lilo_root_copy(&lilo) {
+            Err(p) => {
+                self.problems.push(format!("LILO: {p}"));
+                Vec::new()
+            }
+            Ok(None) => vec![
+                Cmd::new(&["chroot", t, "lilo", "-t", "-v"]).why(format!("LILO: {conf} checked against the restored kernels; nothing is written (-t)")),
+                Cmd::new(&["chroot", t, "lilo", "-v"]).why("LILO: the MBR and /boot/map (the restored kernels' sectors), as lilo writes them"),
+            ],
+            Ok(Some((text, added))) => {
+                let copy = format!("{conf}{LILO_COPY_SUFFIX}");
+                vec![
+                    Cmd::write_file(&format!("{t}{copy}"), text).why(format!(
+                        "LILO: {conf} copied with root= by name at the end of append= ({}): lilo writes root=/dev/... as the major:minor the rescue kernel gives it, and virtio_blk's major is dynamic, so the restored kernel would look for another device; {conf} stays as restored",
+                        added.join(", ")
+                    )),
+                    Cmd::new(&["chroot", t, "lilo", "-C", &copy, "-t", "-v"]).why(format!("LILO: {copy} checked against the restored kernels; nothing is written (-t)")),
+                    Cmd::new(&["chroot", t, "lilo", "-C", &copy, "-v"]).why(format!("LILO: the MBR and /boot/map (the restored kernels' sectors), as lilo writes them from {copy}")),
+                    Cmd::new(&["rm", "-f", &format!("{t}{copy}")]).why(format!("LILO: {copy} removed; the map is written")),
+                ]
+            }
+        }
+    }
+
+    /// ELILO (UEFI): nothing installed.  After the mkinitrd step, the new
+    /// image is copied over each ESP initrd that was a copy of it on the
+    /// source (EFI/Slackware's, and EFI/BOOT's), beside a kernel that is a
+    /// /boot kernel's copy; an ESP kernel that is no /boot kernel's copy
+    /// gets a note.  --removable copies the ESP's ELILO directory to
+    /// EFI/BOOT, elilo.efi as BOOTX64.EFI, unless the fallback is there.
+    fn elilo_cmds(&mut self, t: &str) -> Vec<Cmd> {
+        let confs = self.layout.arr(&["boot", "elilo", "configs"]).to_vec();
+        if confs.is_empty() {
+            self.problems.push("ELILO: the dump found no elilo.conf on an ESP (boot.elilo), so there is nothing to boot".into());
+            return Vec::new();
+        }
+        self.notes.push("ELILO: elilo.efi, elilo.conf, the kernel and the initrd came back with the ESP; nothing to install".into());
+        // The image the initrd step remade, if it did.
+        let remade = (self.layout.str_at(&["boot", "initramfs", "generator"]) == Some("mkinitrd") && self.mkinitrd_cmd(t).is_ok())
+            .then(|| self.layout.str_at(&["boot", "initramfs", "mkinitrd", "output"]).unwrap_or(crate::boot::MKINITRD_OUTPUT).to_string());
+        let mut out = Vec::new();
+        for c in &confs {
+            let mnt = s(c, "mounted_at").unwrap_or_else(|| "/boot/efi".into());
+            let conf = s(c, "conf").unwrap_or_default();
+            for img in c.get("images").and_then(Value::as_array).into_iter().flatten() {
+                let file = s(img, "file").unwrap_or_default();
+                let kernel = s(img, "same_as");
+                if kernel.is_none() {
+                    self.notes.push(format!(
+                        "ELILO: {conf}'s image {file} is a copy of no /boot kernel (the source was upgraded and eliloconfig not run): the restored machine boots the same old kernel the source did, with the ESP's initrd as restored"
+                    ));
+                    continue;
+                }
+                let (Some(ifile), Some(new)) = (s(img, "initrd_file"), remade.as_deref()) else { continue };
+                if s(img, "initrd_same_as").as_deref() != Some(new) {
+                    self.notes.push(format!("ELILO: {ifile} on the ESP wasn't a copy of {new} on the source; it stays as restored"));
+                    continue;
+                }
+                let (src, dst) = (format!("{t}{new}"), format!("{t}{}/{ifile}", mnt.trim_end_matches('/')));
+                out.push(Cmd::new(&["cp", &src, &dst]).why(format!("ELILO: the remade {new} over the ESP's {ifile}, as eliloconfig copies it")));
+                out.push(Cmd::new(&["touch", "-r", &src, &dst]));
+            }
+        }
+        if self.opts.removable {
+            let main = confs.iter().find(|c| s(c, "dir").is_some_and(|d| !d.eq_ignore_ascii_case("EFI/BOOT")) && s(c, "loader").is_some());
+            match main {
+                Some(c) => {
+                    let mnt = s(c, "mounted_at").unwrap_or_else(|| "/boot/efi".into());
+                    let esp = format!("{t}{}", mnt.trim_end_matches('/'));
+                    let dir = s(c, "dir").unwrap_or_default();
+                    let loader = s(c, "loader").unwrap_or_default();
+                    let name = loader.rsplit('/').next().unwrap_or("elilo.efi").to_string();
+                    let (from, to) = (shell_quote(&format!("{esp}/{dir}")), shell_quote(&format!("{esp}/EFI/BOOT")));
+                    out.push(
+                        Cmd::new(&["sh", "-c", &format!("[ -e {to}/BOOTX64.EFI ] || {{ mkdir -p {to} && cp -r {from}/. {to}/ && mv {to}/{} {to}/BOOTX64.EFI; }}", shell_quote(&name))])
+                            .why(format!("--removable: {dir} at the fallback path too, {name} as BOOTX64.EFI (ELILO reads the elilo.conf beside itself)")),
+                    );
+                }
+                None => self.notes.push("--removable: ELILO is at the fallback path (EFI/BOOT) only already".into()),
+            }
+        }
+        out
+    }
+
+    /// ELILO's boot entry, as eliloconfig makes it (label Slackware, the
+    /// loader EFI/Slackware/elilo.efi), when efi_entries made none for an
+    /// elilo.efi: the test guests' NVRAM is blank, and they boot the
+    /// fallback path.  Last, so that it comes first in BootOrder.
+    fn elilo_entry(&mut self) -> Vec<Cmd> {
+        let order: Vec<String> = self.layout.v.at(&["boot", "efi", "boot_order"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
+        let on_layout = |part: &str| self.layout.disks.iter().any(|d| d.parts.iter().any(|p| p.name == part));
+        let made = self.layout.arr(&["boot", "efi", "entries"]).iter().any(|e| {
+            s(e, "number").is_some_and(|n| order.contains(&n))
+                && s(e, "file").is_some_and(|f| f.replace('/', "\\").to_ascii_lowercase().ends_with("\\elilo.efi"))
+                && e.at(&["partition", "device"]).and_then(Value::as_str).is_some_and(on_layout)
+        });
+        if made {
+            return Vec::new();
+        }
+        let confs = self.layout.arr(&["boot", "elilo", "configs"]).to_vec();
+        let Some(c) = confs.iter().find(|c| s(c, "dir").is_some_and(|d| !d.eq_ignore_ascii_case("EFI/BOOT")) && s(c, "loader").is_some()) else {
+            self.notes.push("ELILO: only at the fallback path (EFI/BOOT), so no boot entry is made: the firmware boots it as removable media".into());
+            return Vec::new();
+        };
+        let part = s(c, "device").unwrap_or_default();
+        let Some((disk, num)) = self.layout.disks.iter().find_map(|d| d.parts.iter().find(|p| p.name == part).map(|p| (d.name.clone(), p.number))) else {
+            self.notes.push(format!("ELILO: its ESP {part} isn't on the layout's disks; no boot entry made"));
+            return Vec::new();
+        };
+        let Some(tgt) = self.names.mapping.target_of(&disk) else { return Vec::new() };
+        let loader = format!("\\{}", s(c, "loader").unwrap_or_default().replace('/', "\\"));
+        vec![
+            efi_dedupe(&format!("/dev/{tgt}"), num, &loader),
+            Cmd::new(&["efibootmgr", "--quiet", "--create", "--disk", &format!("/dev/{tgt}"), "--part", &num.to_string(), "--label", "Slackware", "--loader", &loader])
+                .why("ELILO: the boot entry eliloconfig makes (the source's NVRAM had none for it)"),
+        ]
+    }
 }
 
 #[cfg(test)]
@@ -5607,5 +6076,105 @@ mod tests {
         assert_eq!(e, "thin pool vos-root/root's data LV root_tdata has segments of different stripes; version 1 makes a pool's data LV with one stripe count and size");
         let e = err("\"status\":[\"ALLOCATABLE\"]", "\"status\":[]");
         assert_eq!(e, "thin pool vos-root/root's data LV root_tdata is on pv0, which isn't allocatable (pvchange -x n): lvcreate can't make it there again");
+    }
+
+    /// Slackware's device names: /dev/md/N is /dev/mdN (load assembles
+    /// /dev/md/0, the kernel boots it as /dev/md0); links aren't names.
+    #[test]
+    fn slackware_md_names() {
+        assert_eq!(md_name("/dev/md/0"), "/dev/md0");
+        assert_eq!(md_name("/dev/md/127"), "/dev/md127");
+        assert_eq!(md_name("/dev/md/root"), "/dev/md/root");
+        assert_eq!(md_name("/dev/md0"), "/dev/md0");
+        assert!(kernel_dev_path("/dev/md0") && kernel_dev_path("/dev/md/0") && kernel_dev_path("/dev/vda2"));
+        assert!(!kernel_dev_path("/dev/disk/by-id/virtio-x") && !kernel_dev_path("/dev/mapper/root") && !kernel_dev_path("/dev/md/root") && !kernel_dev_path("UUID=x"));
+    }
+
+    /// boot.lilo as the dump keeps a lilo.conf's items (lilo_conf_json's
+    /// options, and each section's kind, path and options).
+    fn lilo_dump(text: &str) -> Value {
+        use crate::json::Obj;
+        let c = crate::boot::LiloConf::parse(text);
+        let list = |its: &[crate::boot::LiloItem]| -> Vec<String> { its.iter().map(|(k, v)| v.as_ref().map_or_else(|| k.clone(), |v| format!("{k}={v}"))).collect() };
+        let images: Vec<Value> = c.sections.iter().map(|(k, p, its)| Obj::new().set("kind", k.as_str()).set("path", p.as_str()).set("options", list(its)).build()).collect();
+        Obj::new().set("conf", "/etc/lilo.conf").set("options", list(&c.global)).set("images", images).build()
+    }
+
+    /// The copy's sections, parsed as the dump parses lilo.conf.
+    fn lilo_copy(text: &str) -> (String, crate::boot::LiloConf) {
+        let (copy, _) = lilo_root_copy(&lilo_dump(text)).unwrap().expect(text);
+        let c = crate::boot::LiloConf::parse(&copy);
+        (copy, c)
+    }
+
+    /// lilo_root_copy: root=/dev/NAME by name at the end of the image's
+    /// effective append= (the global one it inherits made its own; its own;
+    /// a new one), nothing for root=UUID= or a root= already in append=,
+    /// /dev/md/N as the kernel's /dev/mdN, and every other item kept.
+    #[test]
+    fn lilo_root_copies() {
+        use crate::boot::lilo_get;
+        // The global append=, inherited: the image's own copy of it.  A
+        // second image on another root keeps the global one unchanged.
+        let conf = "append=\" vt.default_utf8=0\"\nboot = /dev/vda\nprompt\ntimeout = 50\nchange-rules\n  reset\nvga = normal\nimage = /boot/vmlinuz\n  root = /dev/vda2\n  label = Linux\n  read-only\nimage = /boot/vmlinuz-old\n  root = UUID=1234\n  label = Old\nother = /dev/vda3\n  label = Other\n";
+        let (copy, c) = lilo_copy(conf);
+        assert_eq!(lilo_get(&c.global, "append"), Some(" vt.default_utf8=0"), "{copy}");
+        assert_eq!(c.global, crate::boot::LiloConf::parse(conf).global, "{copy}");
+        assert_eq!(lilo_get(&c.sections[0].2, "append"), Some(" vt.default_utf8=0 root=/dev/vda2"), "{copy}");
+        assert_eq!(lilo_get(&c.sections[0].2, "root"), Some("/dev/vda2"));
+        assert!(c.sections[0].2.iter().any(|(k, v)| k == "read-only" && v.is_none()));
+        // root=UUID= goes through as text: left alone.
+        assert_eq!(lilo_get(&c.sections[1].2, "append"), None, "{copy}");
+        assert_eq!((c.sections[2].0.as_str(), c.sections[2].1.as_str()), ("other", "/dev/vda3"));
+        assert_eq!(c.sections.len(), 3);
+
+        // The image's own append=: there.
+        let (copy, c) = lilo_copy("boot=/dev/vda\nappend=\"quiet\"\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  append=\"vga=normal ro\"\n");
+        assert_eq!(lilo_get(&c.global, "append"), Some("quiet"), "{copy}");
+        assert_eq!(lilo_get(&c.sections[0].2, "append"), Some("vga=normal ro root=/dev/vda2"), "{copy}");
+        assert_eq!(c.sections[0].2.iter().filter(|(k, _)| k == "append").count(), 1);
+
+        // No append= at all, the root= global: a new append= on the image.
+        let (copy, c) = lilo_copy("boot=/dev/vda\nroot=/dev/vda2\nimage=/boot/vmlinuz\n  label=Linux\n");
+        assert_eq!(lilo_get(&c.sections[0].2, "append"), Some("root=/dev/vda2"), "{copy}");
+        assert_eq!(lilo_get(&c.global, "append"), None);
+        assert!(copy.starts_with("# bko-holt load: /etc/lilo.conf with root= by name added to append= (Linux: root=/dev/vda2)"), "{copy}");
+
+        // A /dev/md/N root, by the kernel's name.
+        let (copy, c) = lilo_copy("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/md/0\n  label=Linux\n");
+        assert_eq!(lilo_get(&c.sections[0].2, "append"), Some("root=/dev/md0"), "{copy}");
+
+        // Nothing to add: root=UUID=, LABEL=, current, /dev/mapper/, no
+        // root=, literal=, or a root= already in append= or addappend=.
+        for conf in [
+            "boot=/dev/vda\nimage=/boot/vmlinuz\n  root=UUID=1234\n",
+            "boot=/dev/vda\nroot=LABEL=root\nimage=/boot/vmlinuz\n",
+            "boot=/dev/vda\nimage=/boot/vmlinuz\n  root=current\n",
+            "boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/mapper/root\n",
+            "boot=/dev/vda\nimage=/boot/vmlinuz\n",
+            "boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  literal=\"root=/dev/vda2 ro\"\n",
+            "boot=/dev/vda\nappend=\"root=/dev/vda2 ro\"\nimage=/boot/vmlinuz\n  root=/dev/vda2\n",
+            "boot=/dev/vda\nappend=\"ro\"\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  addappend=\"root=/dev/vda3\"\n",
+        ] {
+            assert_eq!(lilo_root_copy(&lilo_dump(conf)), Ok(None), "{conf}");
+        }
+    }
+
+    /// lilo_root_copy refuses what lilo would refuse (a command line over
+    /// 511 characters) and what the copy couldn't say as lilo reads it.
+    #[test]
+    fn lilo_root_copy_refusals() {
+        let long = "x".repeat(490);
+        let e = lilo_root_copy(&lilo_dump(&format!("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  label=Linux\n  read-only\n  append=\"{long}\"\n"))).unwrap_err();
+        assert!(e.starts_with("/etc/lilo.conf's image Linux would have a kernel command line of up to 522 characters with root=/dev/vda2 added to its append=, over lilo's 511"), "{e}");
+        // Just under: ro (3) root=ffffffff (14) the append, less its space.
+        let fits = "x".repeat(511 - 3 - 14 - " root=/dev/vda2".len());
+        assert!(lilo_root_copy(&lilo_dump(&format!("boot=/dev/vda\nimage=/boot/vmlinuz\n  root=/dev/vda2\n  read-only\n  append=\"{fits}\"\n"))).unwrap().is_some());
+        let e = lilo_root_copy(&lilo_dump("boot=/dev/vda\npassword=\"\"\nimage=/boot/vmlinuz\n  root=/dev/vda2\n")).unwrap_err();
+        assert!(e.starts_with("/etc/lilo.conf has password=\"\""), "{e}");
+        let e = lilo_root_copy(&lilo_dump("boot=/dev/vda\nmessage=$HOME/m\nimage=/boot/vmlinuz\n  root=/dev/vda2\n")).unwrap_err();
+        assert!(e.starts_with("/etc/lilo.conf's message=$HOME/m has a quote, backslash or $"), "{e}");
+        let e = lilo_root_copy(&crate::json::Obj::new().set("conf", "/etc/lilo.conf").build()).unwrap_err();
+        assert!(e.starts_with("the dump's boot.lilo doesn't keep /etc/lilo.conf's items"), "{e}");
     }
 }

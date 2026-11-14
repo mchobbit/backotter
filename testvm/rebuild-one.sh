@@ -36,6 +36,9 @@ SRC=$HOME_M/backotter-work/vms/$G
 # void-zbm-enc is built from void-zbm's inputs.
 [ $G = void-zbm-enc ] && [ ! -d /bkoscratch/rebuild-inputs/$G ] && [ -d /bkoscratch/rebuild-inputs/void-zbm ] &&
     SRC=/bkoscratch/rebuild-inputs/void-zbm
+# slackware15-uefi is built from slackware15's tree.
+[ $G = slackware15-uefi ] && [ ! -d /bkoscratch/rebuild-inputs/$G ] && [ -d /bkoscratch/rebuild-inputs/slackware15 ] &&
+    SRC=/bkoscratch/rebuild-inputs/slackware15
 [ -d $T ] || { echo "no $T" >&2; exit 2; }
 [ -d "$SRC" ] || { echo "no $SRC" >&2; exit 2; }
 asm() { runuser -u m -- env TMPDIR="$RAMTMP" PATH="$PATH:/usr/sbin:/sbin" "$@"; }
@@ -69,10 +72,18 @@ rocky10)    cmd=(asm $T/make-rocky.sh 10.0 "$W") ;;
 rocky10-lvm) cmd=(asm $T/make-rocky.sh --lvm 10.0 "$W") ;;
 rocky10-raid5) cmd=(asm $T/make-rocky.sh --raid5 10.0 "$W") ;;
 tumbleweed) cmd=(asm $T/make-opensuse.sh 20261030 "$W") ;;
+# leap16: Agama from Leap 16.1's offline ISO (Build60.2, pinned in
+# make-opensuse.sh), its .sha512(.asc) in /bkoscratch/rebuild-inputs/leap16;
+# the packages as on the ISO.
+leap16)     cmd=(asm $T/make-opensuse.sh leap 16.1 "$W") ;;
 # microos: openSUSE's MicroOS VM image of snapshot 20261111, its .sha256 and
 # .sha256.asc, from /bkoscratch/rebuild-inputs/microos (only the current
 # snapshot's is served); the packages as in the image (vm-update updates it).
 microos)    cmd=(asm $T/make-opensuse.sh microos 20261111 "$W") ;;
+# aeon: tik from openSUSE's Aeon installer of snapshot 20261111 (Aeon-Installer...raw.xz,
+# its .sha256 and .sha256.asc), from /bkoscratch/rebuild-inputs/aeon (only the
+# current snapshot's is served), on a new swtpm TPM; the packages as on the stick.
+aeon)       cmd=(asm $T/make-opensuse.sh aeon 20261111 "$W") ;;
 alpine324)  cmd=(asm $T/make-bootstrap.sh alpine "$W") ;;
 void-musl)  cmd=(asm $T/make-bootstrap.sh void "$W") ;;
 # void-zbm: glibc Void on ZFS, booted by ZFSBootMenu; a root builder, its inputs
@@ -93,6 +104,12 @@ gentoo)     cmd=(asm $T/make-bootstrap.sh gentoo "$W") ;;
 gentoo-systemd) cmd=(asm $T/make-bootstrap.sh gentoo-systemd "$W") ;;
 artix-dinit|artix-s6) cmd=(asm $T/make-bootstrap.sh $G "$W") ;;
 nixos2605)  cmd=(asm $T/make-bootstrap.sh nixos "$W") ;;
+# slackware15, slackware15-uefi: Slackware 15.0's frozen tree (series a, ap,
+# d, l, n), in /bkoscratch/rebuild-inputs/slackware15 (slackware64/ and
+# CHECKSUMS.md5 with its .asc), checked by make-bootstrap.sh against
+# Slackware's key; the 15.0 patches come later, by vm-update.
+slackware15) cmd=(asm env SLACKWARE_TREE=/bkoscratch/rebuild-inputs/slackware15 $T/make-bootstrap.sh slackware "$W") ;;
+slackware15-uefi) cmd=(asm env SLACKWARE_TREE=/bkoscratch/rebuild-inputs/slackware15 $T/make-bootstrap.sh slackware-uefi "$W") ;;
 arch)       cmd=(asm $T/make-arch.sh 2026.10.01 "$W") ;;
 cachyos)    cmd=(asm $T/make-arch.sh --cachyos --root-fs jfs 2026.10.01 "$W") ;;
 # cachyos-zfs: from CachyOS's live ISO in /bkoscratch/rebuild-inputs/cachyos-zfs

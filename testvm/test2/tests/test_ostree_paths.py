@@ -363,6 +363,27 @@ class TestManifest(unittest.TestCase):
         self.assertEqual(rc, 1)
         self.assertNotIn("ostree", out)
 
+    def test_systemd_swap_files_are_boot_churn(self):
+        """BigLinux (BL6, biglinux-20261114-153025): systemd-swap writes its
+        swapFC file and zram writeback file in /swapfile (the @swapfile
+        subvolume) anew at every boot.  Only under swapfile/: a file beside
+        it still counts."""
+        (self.root / "swapfile").mkdir()
+        (self.root / "swapfile" / "1").write_text("old swap\n")
+        (self.root / "swapfile" / "zram-writeback-1").write_text("old\n")
+        (self.root / "swapfiles").mkdir()
+        (self.root / "swapfiles" / "x").write_text("x\n")
+        a = self.manifest("a.tsv")
+        self.touch("swapfile/1", "new swap\n")
+        self.touch("swapfile/zram-writeback-1", "new\n")
+        rc, out = self.compare(a, self.manifest("b.tsv"))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("changed: 2, of which unexpected: 0", out)
+        self.touch("swapfiles/x", "y\n")
+        rc, out = self.compare(a, self.manifest("c.tsv"))
+        self.assertEqual(rc, 1)
+        self.assertIn("changed: swapfiles/x", out)
+
     def objects(self):
         """A repository object hardlinked into both deployments (nlink 3), as
         a bare repository has them, and a file outside ostree/."""

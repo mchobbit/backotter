@@ -454,7 +454,8 @@ def fork_root_outcome(listing, files):
                 unreviewed[f"{p[0]} {p[1]}"] = cut(p[2], 120)
         needs["root-list"] = "FAIL" if unreviewed else "PASS"
         if unreviewed:
-            fails.append("not reviewed for root (a run or out line in restic-root-tests.txt): " +
+            # First: Outcome keeps 20 fails, and a package that didn't compile gives one per test.
+            fails.insert(0, "not reviewed for root (a run or out line in restic-root-tests.txt): " +
                          ", ".join(sorted(unreviewed)[:8]))
             extra["unreviewed"] = unreviewed
     else:

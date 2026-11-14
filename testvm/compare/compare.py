@@ -247,12 +247,16 @@ class GuestConfig:
         self.options: list[str] | None = None if opts is None else []
         self.disks: list[Path] = []
         self.vars: Path | None = None
+        # Its own TPM (--guest-tpm: aeon's), likewise the original's alone.
+        self.tpm: Path | None = None
         while opts:
             o = opts.pop(0)
             if o == "--disk" and opts:
                 self.disks.append(guest_dir / opts.pop(0))
             elif o == "--guest-vars" and opts:
                 self.vars = guest_dir / opts.pop(0)
+            elif o == "--guest-tpm" and opts:
+                self.tpm = guest_dir / opts.pop(0)
             else:
                 self.options.append(o)
         # In holttest1d/ht1.sh's and vm-update's order, should there be more
@@ -279,8 +283,9 @@ class GuestConfig:
 
     def source_hardware(self, hardware: list[str]) -> list[str]:
         """HARDWARE for a boot of the guest's own disks (an overlay on them): on
-        its own variable store too, if it has one.  Never a restore's."""
-        return hardware + (["--guest-vars", str(self.vars)] if self.vars else [])
+        its own variable store and TPM too, if it has them.  Never a restore's."""
+        return (hardware + (["--guest-vars", str(self.vars)] if self.vars else [])
+                + (["--guest-tpm", str(self.tpm)] if self.tpm else []))
 
 
 def disk_images(stem: Path, n: int) -> list[Path]:

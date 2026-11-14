@@ -7,9 +7,11 @@
 # Usage: ./make-opensuse.sh SNAPSHOT WORK_DIR
 #        ./make-opensuse.sh microos SNAPSHOT WORK_DIR
 #        ./make-opensuse.sh leap VERSION WORK_DIR
+#        ./make-opensuse.sh aeon SNAPSHOT WORK_DIR
 #   e.g. ./make-opensuse.sh 20261030 vms/tumbleweed
 #        ./make-opensuse.sh microos 20261111 vms/microos
 #        ./make-opensuse.sh leap 16.1 vms/leap16
+#        ./make-opensuse.sh aeon 20261111 vms/aeon
 #
 # SNAPSHOT is a Tumbleweed snapshot (YYYYMMDD).  openSUSE serves only the
 # current snapshot's ISO, as openSUSE-Tumbleweed-DVD-x86_64-Current.iso: it is
@@ -38,6 +40,29 @@
 # the transactional root: / mounted ro, the booted snapshot the btrfs
 # default, health-checker's state, the timer and rebootmgr disabled, Secure
 # Boot's state.  See docs/design/aeon.md.
+#
+# aeon: openSUSE Aeon by tik, its installer, from
+# Aeon-Installer.x86_64-0.1.0-SnapshotSNAPSHOT.raw.xz (tumbleweed/appliances/),
+# with its .sha256 and .sha256.asc, in WORK_DIR/inputs/ as microos's image
+# (rebuild-one.sh links them in from /bkoscratch/rebuild-inputs/aeon) and
+# checked by the same key.  The stick is unpacked into the build's
+# temporary directory (7.1 GiB, sparse) and attached as a USB disk, booted
+# first, beside the guest's empty 48 GiB disk, under vm-run --uefi (Secure
+# Boot on) with a new TPM 2.0 (swtpm, its state in WORK_DIR/aeon.tpm) and
+# opensuse/combustion-aeon.sh in fw_cfg.  The installer is an Aeon system,
+# and tik copies its running root to the disk, so that script's settings
+# (root's key, sshd, multi-user.target, the updates off) are the guest's
+# too.  Then tik runs over SSH, answered by opensuse/drive-tik.py: it finds
+# the TPM (PolicyAuthorizeNV), so the root is LUKS2 unlocked by the TPM
+# (systemd-pcrlock, PCRs 4, 5, 7 and 9) with a recovery key, which goes to
+# WORK_DIR/recovery-key and nowhere else.  tik reboots, which ends QEMU
+# (-no-reboot).  The guest's first boot must unlock by itself; over SSH,
+# opensuse/aeon-setup.sh adds the user bko, puts the system console on the
+# serial line (/etc/kernel/cmdline and sdbootutil), and keeps the updates
+# off.  Then the relabel and check boots of microos, which also check the
+# TPM's unlock, systemd-bless-boot's verdict and the LUKS key slots.  Every
+# build boot writes aeon.tpm and uefi-vars.fd themselves; every later boot
+# (vm-run-options' --guest-tpm and --guest-vars) boots on copies of them.
 #
 # leap: openSUSE Leap VERSION (16.1) by an unattended Agama install from
 # the offline installer ISO, Leap-VERSION-offline-installer-x86_64-BuildB.install.iso
@@ -72,8 +97,20 @@
 #                         mode, relabel triggers and units, failed units,
 #                         files whose label isn't the policy's; microos: the
 #                         transactional root's state too)
-#   vm-run-options        microos: "--uefi", how vm-run must boot it
-#   inputs/               microos: openSUSE's image, its .sha256 and .asc
+#   vm-run-options        microos: "--uefi", how vm-run must boot it (aeon:
+#                         "--uefi --disk-serials aeon --guest-vars uefi-vars.fd
+#                         --guest-tpm aeon.tpm")
+#   inputs/               microos, aeon: openSUSE's image, its .sha256 and .asc
+#   uefi-vars.fd          aeon: the guest's OVMF variables (tik's boot entry,
+#                         sdbootutil's LoaderEntryDefault); vm-run
+#                         --guest-vars boots a copy of it
+#   aeon.tpm/             aeon: the guest's TPM (swtpm's state), which its
+#                         disk's key is sealed to: part of the guest, as the
+#                         disk is.  vm-run --guest-tpm boots a copy of it
+#   recovery-key          aeon: the LUKS recovery key tik made (mode 600; a
+#                         testbed secret: never in the repository)
+#   tik.log, setup.txt    aeon: tik's terminal (the key and its QR code left
+#                         out), and what aeon-setup.sh did
 #
 # SELinux: the install leaves the guest enforcing with a full relabel
 # pending (/etc/selinux/.autorelabel, or /.autorelabel), which its first
@@ -115,8 +152,8 @@ here=$(dirname "$(realpath "$0")")
 die() { echo "make-opensuse: $*" >&2; exit 1; }
 
 mode=tumbleweed
-[[ ${1:-} == microos || ${1:-} == leap ]] && { mode=$1; shift; }
-[[ $# -eq 2 ]] || die "usage: $0 [microos] SNAPSHOT WORK_DIR, or $0 leap VERSION WORK_DIR"
+[[ ${1:-} == microos || ${1:-} == leap || ${1:-} == aeon ]] && { mode=$1; shift; }
+[[ $# -eq 2 ]] || die "usage: $0 [microos|aeon] SNAPSHOT WORK_DIR, or $0 leap VERSION WORK_DIR"
 snapshot=$1
 if [[ $mode == leap ]]; then
     [[ $snapshot =~ ^16\.[0-9]+$ ]] || die "VERSION looks like 16.1, not '$snapshot'"
@@ -130,6 +167,12 @@ tumbleweed)
 microos)
     DISK_SIZE=24G GUEST_NAME=microos
     IMAGE=openSUSE-MicroOS.x86_64-16.0.0-kvm-and-xen-Snapshot$snapshot.qcow2 ;;
+aeon)
+    # 48 GiB: the spec's (Aeon asks for no minimum of its own: tik takes any
+    # disk, and the repart root has none); the installer's boot 3 GiB, the
+    # guest's 2 (no GNOME: multi-user.target).
+    DISK_SIZE=48G INSTALL_MEMORY=3072 GUEST_NAME=aeon
+    IMAGE=Aeon-Installer.x86_64-0.1.0-Snapshot$snapshot.raw.xz ;;
 leap)
     # Each version's ISO build, pinned: the build a rebuild installs.
     case $snapshot in
@@ -296,6 +339,111 @@ journalctl -b -o cat -t combustion 2>/dev/null | tail -n 20 | sed "s/^/combustio
     stop_guest
 }
 
+# --- Aeon: fetch and verify the installer, then tik over SSH ------------------------
+install_aeon() {
+    local f _
+    mkdir -p inputs
+    for f in "$IMAGE" "$IMAGE.sha256" "$IMAGE.sha256.asc"; do
+        if [[ -e $f || -L $f ]] && [[ ! -e inputs/$f ]]; then mv "$f" inputs/; fi
+    done
+    fetch https://download.opensuse.org/tumbleweed/appliances inputs "$IMAGE.sha256" "$IMAGE.sha256.asc" "$IMAGE"
+    [[ $(awk '{ print $2 }' "inputs/$IMAGE.sha256") == "$IMAGE" ]] || die "$IMAGE.sha256 names another file"
+    if [[ ! -s opensuse-key.gpg ]]; then
+        wget -q -O "$work/repomd.xml.key" https://download.opensuse.org/tumbleweed/repo/oss/repodata/repomd.xml.key ||
+            die "could not download the repository's repomd.xml.key"
+        import_key "$work/repomd.xml.key"
+    fi
+    verify "inputs/$IMAGE"
+
+    credentials
+    fill "$here/opensuse/combustion-aeon.sh" >"$work/combustion"
+    if grep -n '@[A-Z_]\+@' "$work/combustion"; then die "combustion-aeon.sh placeholders left unfilled"; fi
+    bash -n "$work/combustion" || die "opensuse/combustion-aeon.sh doesn't parse"
+
+    # The stick: a copy of the image, which its own boot writes to (combustion's
+    # snapshot), in the temporary directory and gone with it.
+    echo "Unpacking $IMAGE"
+    xz -dc "inputs/$IMAGE" | dd of="$work/stick.raw" bs=1M conv=sparse status=none || die "could not unpack $IMAGE"
+    qemu-img create -q -f qcow2 "$DISK" "$DISK_SIZE"
+    rm -rf aeon.tpm recovery-key uefi-vars.fd
+    mkdir -m 700 aeon.tpm
+    # The disk's serial, as at the install: tik needs a /dev/disk/by-id name.
+    # The guest's own variable store: tik's "Aeon Boot Manager" entry is in
+    # it, and sdbootutil keeps the default entry in LoaderEntryDefault (a
+    # fresh store forgets a rollback's default, and boots the newest entry).
+    echo "--uefi --disk-serials aeon --guest-vars uefi-vars.fd --guest-tpm aeon.tpm" >vm-run-options
+
+    # The installer: the stick on USB (tik leaves USB disks out), booted first
+    # (bootindex; the empty disk has none), on the guest's own TPM, which tik
+    # seals the disk's key to.  -no-reboot: tik's reboot at the end ends QEMU.
+    echo "Booting the installer (combustion); its console goes to $wdir/install-serial.log"
+    SSH_PORT=$sshport MEMORY=$INSTALL_MEMORY "$here/vm-run" --uefi --uefi-vars uefi-vars.fd --disk-serials aeon --tpm aeon.tpm --cpus 4 \
+        --serial-log install-serial.log "$DISK" -- \
+        -device qemu-xhci,id=xhci -drive "if=none,id=stick,format=raw,file=$work/stick.raw" \
+        -device usb-storage,bus=xhci.0,drive=stick,bootindex=0 \
+        -fw_cfg "name=opt/org.opensuse.combustion/script,file=$work/combustion" -no-reboot \
+        </dev/null >install-serial.vm-run.log 2>&1 &
+    qemu_pid=$!
+    for _ in $(seq $((BOOT_TIMEOUT / 5))); do
+        kill -0 "$qemu_pid" 2>/dev/null || die "QEMU exited before the installer answered on SSH; see $wdir/install-serial.log"
+        timeout 30 "${ssh_root[@]}" true </dev/null 2>/dev/null && break
+        sleep 5
+    done
+    grep -aq BACKOTTER-INSTALLER-READY install-serial.log ||
+        die "the installer's combustion script did not finish (or SSH never came up); see install-serial.log"
+    # shellcheck disable=SC2016  # expanded in the guest
+    "${ssh_root[@]}" '
+echo "booted=$(findmnt -no FSROOT /)"
+echo "tpm=$(ls /dev/tpmrm0 2>&1)"
+tpm2_getcap commands 2>&1 | grep -c "commandIndex: 0x192" | sed "s/^/policyauthorizenv=/"
+echo "sb=$(mokutil --sb-state 2>&1 | head -n 1)"
+lsblk -o NAME,SIZE,TYPE,TRAN,FSTYPE,LABEL 2>&1 | sed "s/^/lsblk: /"
+grep "^TIK_" /etc/tik/config | sed "s/^/tik-config: /"
+ls /dev/disk/by-id | sed "s/^/by-id: /"' </dev/null >installer.txt 2>&1 || true
+    sed "s/^/  installer: /" installer.txt
+    grep -qx 'policyauthorizenv=1' installer.txt || die "the TPM lacks PolicyAuthorizeNV: tik would use Fallback mode; see $wdir/installer.txt"
+    grep -qx 'tik-config: TIK_INSTALL_DEVICE="/dev/disk/by-id/virtio-aeon"' installer.txt || die "/etc/tik/config doesn't name the disk; see $wdir/installer.txt"
+
+    echo "Running tik over SSH; its terminal goes to $wdir/tik.log"
+    python3 "$here/opensuse/drive-tik.py" tik.log recovery-key "$INSTALL_TIMEOUT" -- \
+        ssh -tt -i id_ed25519 -p "$sshport" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null \
+        -o BatchMode=yes -o ServerAliveInterval=30 -o LogLevel=ERROR root@127.0.0.1 tik ||
+        die "tik did not finish; see $wdir/tik.log"
+    for _ in $(seq 60); do kill -0 "$qemu_pid" 2>/dev/null || break; sleep 5; done
+    kill "$qemu_pid" 2>/dev/null && die "the installer did not reboot after tik"
+    wait "$qemu_pid" 2>/dev/null || true
+    qemu_pid=""
+    rm -f "$work/stick.raw"
+
+    # The first boot: on the TPM alone, nothing typed (a prompt for the key
+    # would wait until BOOT_TIMEOUT).
+    echo "Booting the guest the first time; its console goes to $wdir/first-boot-serial.log"
+    boot_guest first-boot-serial.log
+    # shellcheck disable=SC2016  # expanded in the guest
+    "${ssh_root[@]}" '
+echo "machine-id=$(cat /etc/machine-id)"
+echo "combustion=$(journalctl -b -o cat -t combustion 2>/dev/null | wc -l) lines"
+echo "default=$(btrfs subvolume get-default /)"
+echo "booted=$(findmnt -no FSROOT /)"
+echo "cmdline=$(cat /proc/cmdline)"
+echo "kernel-cmdline=$(cat /etc/kernel/cmdline)"
+echo "bless-boot=$(/usr/lib/systemd/systemd-bless-boot status 2>&1)"
+lsblk -o NAME,SIZE,TYPE,FSTYPE,MOUNTPOINTS 2>&1 | sed "s/^/lsblk: /"
+sed "s/^/crypttab: /" /etc/crypttab
+sed "s/^/fde-tools: /" /etc/sysconfig/fde-tools 2>&1
+for d in $(blkid -t TYPE=crypto_LUKS -o device); do systemd-cryptenroll "$d" 2>&1 | sed "s|^|cryptenroll $d: |"; done
+journalctl -b -o cat _COMM=systemd-cryptse 2>/dev/null | sed "s/^/cryptsetup: /"
+efibootmgr 2>&1 | sed "s/^/efibootmgr: /"
+find /boot/efi -type f | sort | sed "s/^/esp: /"
+sdbootutil list-entries 2>&1 | sed "s/^/entries: /"
+snapper --no-dbus list 2>&1 | sed "s/^/snapper: /"' </dev/null >install.txt 2>&1 || true
+    sed "s/^/  install: /" install.txt
+    "${ssh_root[@]}" bash -s <"$here/opensuse/aeon-setup.sh" >setup.txt 2>&1 || true
+    sed "s/^/  setup: /" setup.txt
+    grep -qx BACKOTTER-SETUP-OK setup.txt || die "opensuse/aeon-setup.sh failed; see $wdir/setup.txt"
+    stop_guest
+}
+
 # --- Leap: fetch and verify the ISO, then Agama ---------------------------------------
 install_leap() {
     fetch "https://download.opensuse.org/distribution/leap/$snapshot/offline" . "$ISO.sha512" "$ISO.sha512.asc" "$ISO"
@@ -404,8 +552,9 @@ grep "Would relabel" /run/mislabelled | head -n 20 | sed "s/^/mislabel=/"; rm -f
 # default (health-checker sets that back to the last good one when a new
 # snapshot fails its first boot), health-checker's verdict and state, the
 # automatic updates off, Secure Boot's state, the root's size.
+# Aeon's too (its rebootmgr line says there is none).
 # shellcheck disable=SC2016  # expanded in the guest
-[[ $mode == microos ]] && check_cmd+='
+[[ $mode == microos || $mode == aeon ]] && check_cmd+='
 echo "root-options=$(findmnt -no OPTIONS /)"
 d=$(btrfs subvolume get-default /); echo "default=$d"
 b=$(findmnt -no FSROOT /); echo "booted=$b"
@@ -417,6 +566,25 @@ echo "rebootmgr=$(systemctl is-enabled rebootmgr.service 2>&1)"
 echo "sb=$(mokutil --sb-state 2>&1 | head -n 1)"
 echo "root-size=$(findmnt -bno SIZE /) bytes; disk $(lsblk -bndo SIZE /dev/vda) bytes"
 snapper --no-dbus list 2>&1 | sed "s/^/snapper: /"
+'
+# Aeon: the root's LUKS opened by the TPM (systemd-cryptsetup's journal; a
+# boot that got this far typed nothing), the key slots, systemd-boot's boot
+# counting (bless-boot marks a counted entry good once boot-complete.target
+# is reached: waited for; an entry with no counter left is clean), the
+# entries and NVRAM's, the TPM's predictions, Flatpak's updates.
+# shellcheck disable=SC2016  # expanded in the guest
+[[ $mode == aeon ]] && check_cmd+='
+journalctl -b -o cat _COMM=systemd-cryptse 2>/dev/null | sed "s/^/cryptsetup: /"
+for d in $(blkid -t TYPE=crypto_LUKS -o device); do systemd-cryptenroll "$d" 2>&1 | sed "s|^|cryptenroll $d: |"; done
+for i in $(seq 30); do b=$(/usr/lib/systemd/systemd-bless-boot status 2>&1); [ "$b" = good ] || [ "$b" = clean ] && break; sleep 2; done
+echo "bless-boot=$b"
+echo "boot-entry=$(bootctl status 2>/dev/null | sed -n "s/^ *Current Entry: //p")"
+echo "entry-default=$(bootctl status 2>/dev/null | sed -n "s/^ *Default Entry: //p")"
+efibootmgr 2>&1 | grep -E "^Boot(Current|Order)|Aeon" | sed "s/^/efibootmgr: /"
+echo "predictions=$(systemctl is-active sdbootutil-update-predictions.service 2>&1) $(systemctl show -P Result sdbootutil-update-predictions.service)"
+echo "flatpak-timer=$(systemctl is-enabled update-system-flatpaks.timer 2>&1)"
+echo "default-target=$(systemctl get-default)"
+sdbootutil list-entries 2>&1 | sed "s/^/entries: /"
 '
 # Leap: Secure Boot's state (it must be on: the guest boots through
 # shim), the root snapshot booted and the btrfs default, snapper's
@@ -446,6 +614,18 @@ check_boot() {  # NAME: boot, check, power off; the findings in NAME.txt
         grep -qx 'booted-is-default=yes' "$1.txt" || bad+=" the booted snapshot is not the default;"
         grep -qx 'tu-timer=disabled' "$1.txt" || bad+=" transactional-update.timer is not disabled;"
         grep -qx 'rebootmgr=disabled' "$1.txt" || bad+=" rebootmgr is not disabled;"
+    fi
+    if [[ $mode == aeon ]]; then
+        grep -qE '^root-options=(.*,)?ro(,|$)' "$1.txt" || bad+=" / is not mounted ro;"
+        grep -qx 'booted-is-default=yes' "$1.txt" || bad+=" the booted snapshot is not the default;"
+        grep -qx 'tu-timer=disabled' "$1.txt" || bad+=" transactional-update.timer is not disabled;"
+        grep -qx 'flatpak-timer=disabled' "$1.txt" || bad+=" update-system-flatpaks.timer is not disabled;"
+        grep -qx 'sb=SecureBoot enabled' "$1.txt" || bad+=" Secure Boot is not on;"
+        grep -qi '^cryptsetup: .*tpm2' "$1.txt" || bad+=" the root was not opened by the TPM;"
+        # good: a counted entry blessed in this boot; clean: one with no
+        # counter left, as every boot after an entry's first.
+        grep -qxE 'bless-boot=(good|clean)' "$1.txt" || bad+=" systemd-bless-boot says the boot is neither good nor clean;"
+        grep -qx 'entry-default=' "$1.txt" || bad+=" NVRAM names a default entry (LoaderEntryDefault);"
     fi
     if [[ $mode == leap ]]; then
         grep -qx 'sb=SecureBoot enabled' "$1.txt" || bad+=" Secure Boot is not on;"

@@ -15,6 +15,8 @@
 --- PASS: TestPreallocateBtrfs (0.12s)
 === RUN   TestRestoreFileFlagsBtrfsCompression
 --- PASS: TestRestoreFileFlagsBtrfsCompression (0.10s)
+=== RUN   TestRemoveSELinuxLabel
+--- PASS: TestRemoveSELinuxLabel (0.00s)
 === RUN   TestRestoreLeavesSELinuxLabel
 --- PASS: TestRestoreLeavesSELinuxLabel (0.00s)
 === RUN   TestXFSOptionsOnXFS

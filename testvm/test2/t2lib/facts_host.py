@@ -372,6 +372,93 @@ def one_set(work, name):
     return s
 
 
+ROUND_BUILDERS = ("chopin", "cinqcent")   # the builders of a round with no build-hosts file
+
+# What a round's bin holds when it is whole, by architecture: each platform's
+# directory and the binaries in it (stick/build-round.sh's units).  Haiku has only
+# rustic-bko, there being no restic for it; bin/omnios is bin/illumos' copy and isn't
+# asked for.  An arm64 directory also carries a SHA256SUMS of its own, by which the
+# copy an arm64 host gets is checked (docs/design/arm64.md, A2), so its binaries must
+# be in that one too.
+BOTH_TOOLS = ("restic-bko", "rustic-bko")
+ROUND_PLATS = {
+    "amd64": (("linux", BOTH_TOOLS), ("freebsd", BOTH_TOOLS), ("netbsd", BOTH_TOOLS),
+              ("openbsd", BOTH_TOOLS), ("dragonfly", BOTH_TOOLS), ("illumos", BOTH_TOOLS),
+              ("haiku", ("rustic-bko",))),
+    "arm64": (("linux-arm64", BOTH_TOOLS),),
+}
+
+
+def round_builders(d):
+    """Who built this round: its build-hosts file, one host a line, which build-round.sh
+    writes on the collector before the builds start.  A round built before that file
+    existed (or a copy of one that reached a host before it) has none: then it is the two
+    hosts that built every round until 2026-11-14."""
+    t = text(os.path.join(d, "build-hosts"))
+    names = [l.strip() for l in (t or "").split("\n") if l.strip()]
+    return tuple(names) or ROUND_BUILDERS
+
+
+def round_arches(d, sums=None):
+    """The architectures a round in D was built for, from the files its SHA256SUMS names
+    (the round's own list of what it ships, which the gather writes on the collector and
+    the distribution copies whole): arm64 when the sums name a file of an arm64 platform,
+    amd64 when they name one of an amd64 platform or no arm64 one at all (every round
+    before --arch was amd64).  A directory the sums don't name counts for nothing: the
+    distribution deletes nothing (rsync --checksum, no --delete), so a bin can still hold
+    the bin/linux-arm64 a failed --arch arm64 attempt left behind, and that leftover is no
+    architecture of the round that was then built and summed."""
+    sums = sums_file(os.path.join(d, "SHA256SUMS")) if sums is None else sums
+    arm = any(n.startswith(p + "/") for n in sums for p, _ in ROUND_PLATS["arm64"])
+    amd = any(n.startswith(p + "/") for n in sums for p, _ in ROUND_PLATS["amd64"])
+    return tuple((["amd64"] if amd or not arm else []) + (["arm64"] if arm else []))
+
+
+def round_missing(d):
+    """What a round in D lacks of the binaries its architectures require (ROUND_PLATS):
+    a list of "PLAT: why" strings, in the platforms' order, empty when it has them all.
+    A binary counts only when the file is there and the round's SHA256SUMS names it (an
+    arm64 directory's SHA256SUMS too).  So a round built with --only, or over hosts that
+    couldn't take every unit, is short of platforms and says which."""
+    sums = sums_file(os.path.join(d, "SHA256SUMS"))
+    out = []
+    for arch in round_arches(d, sums):
+        for plat, bins in ROUND_PLATS[arch]:
+            own = sums_file(os.path.join(d, plat, "SHA256SUMS")) if arch == "arm64" else None
+            why = []
+            for b in bins:
+                if not os.path.isfile(os.path.join(d, plat, b)):
+                    why.append(f"no {b}")
+                elif f"{plat}/{b}" not in sums:
+                    why.append(f"{b} not in SHA256SUMS")
+                elif own is not None and b not in own:
+                    why.append(f"{b} not in {plat}/SHA256SUMS")
+            if why:
+                out.append(f"{plat}: {', '.join(why)}")
+    return out
+
+
+def round_complete(d):
+    """A round's build has ended here and left a whole round: every builder's
+    build-HOST.tsv and .files, a SHA256SUMS naming every file they list (build-round.sh
+    has the collector write it last, once it has gathered them all), and every binary the
+    round's architectures require (round_missing: the named builders having finished says
+    nothing about the platforms a --only or a short --hosts left out).  A round whose
+    linux commit files are there while the other platforms still build is not complete.
+    A round with no build-hosts file is read as it was before that file: its two builders
+    alone, whatever platforms it holds."""
+    sums = sums_file(os.path.join(d, "SHA256SUMS"))
+    if not sums:
+        return False
+    for m in round_builders(d):
+        files = text(os.path.join(d, f"build-{m}.files"))
+        if files is None or not os.path.isfile(os.path.join(d, f"build-{m}.tsv")):
+            return False
+        if any(n.strip() and n.strip() not in sums for n in files.split("\n")):
+            return False
+    return not (os.path.isfile(os.path.join(d, "build-hosts")) and round_missing(d))
+
+
 def rounds(work):
     out = {}
     for d in sorted(glob.glob(os.path.join(work, "round*", "bin"))):
@@ -379,7 +466,10 @@ def rounds(work):
         rc, _ = commit_of(os.path.join(d, "linux", "restic-commit"))
         uc, core = commit_of(os.path.join(d, "linux", "rustic-commit"))
         out[name] = {"path": d, "restic": rc, "rustic": uc, "rustic_core": core,
-                     "sums": os.path.isfile(os.path.join(d, "SHA256SUMS"))}
+                     "sums": os.path.isfile(os.path.join(d, "SHA256SUMS")), "complete": round_complete(d),
+                     # which platforms it is short of, for the plan's message (a round
+                     # with no build-hosts file isn't held to them: round_complete)
+                     "missing": round_missing(d) if os.path.isfile(os.path.join(d, "build-hosts")) else []}
     return out
 
 

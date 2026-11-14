@@ -8,6 +8,18 @@
     --- PASS: TestRestorerOverRestrictingFlags/stock (0.03s)
 === RUN   TestRestorerFATAttributes
 --- PASS: TestRestorerFATAttributes (0.08s)
+=== RUN   TestRestoreExactBtrfs
+=== RUN   TestRestoreExactBtrfs/CloneFrom
+=== RUN   TestRestoreExactBtrfs/OverAMatchingTree
+=== RUN   TestRestoreExactBtrfs/HardLinks
+=== RUN   TestRestoreExactBtrfs/Label
+--- PASS: TestRestoreExactBtrfs (0.61s)
+    --- PASS: TestRestoreExactBtrfs/CloneFrom (0.05s)
+    --- PASS: TestRestoreExactBtrfs/OverAMatchingTree (0.09s)
+    --- PASS: TestRestoreExactBtrfs/HardLinks (0.04s)
+    --- PASS: TestRestoreExactBtrfs/Label (0.03s)
+=== RUN   TestRestoreExactLabel
+--- PASS: TestRestoreExactLabel (0.03s)
 === RUN   TestRestorerXFSOptions
 --- PASS: TestRestorerXFSOptions (0.30s)
 === RUN   TestRestorerXFSOptionsOverExisting

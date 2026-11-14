@@ -203,6 +203,12 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     // Arch-based, rolling, no VERSION_ID: GRUB on btrfs, with dracut through
     // garuda-dracut-support, and snapper's snapshots nested in @.
     ("garuda", "", "Garuda Linux"),
+    // Slackware 15.0 (VERSION_ID=15.0, unquoted; no ID_LIKE): LILO or
+    // ELILO, the huge kernel or generic with mkinitrd, pkgtools
+    // (docs/design/slackware.md).  By the major, so a 15.1 would pass: it's
+    // checked before it's claimed.  -current says 15.0 too, and is refused
+    // by its VERSION_CODENAME (check_supported, decision 7).
+    ("slackware", "15", "Slackware 15"),
     // Rolling: Chimera's os-release has no VERSION_ID at all (only its image
     // names carry the snapshot's date).  "*" rather than "", as for
     // AerynOS: a snapshot that starts writing one is still Chimera.
@@ -272,6 +278,16 @@ pub fn check_supported(os: Option<&OsRelease>) -> Result<(), String> {
     };
     let id = os.get("ID").unwrap_or("");
     let ver = os.get("VERSION_ID").unwrap_or("");
+    // Slackware -current keeps the last release's VERSION_ID (15.0) and says
+    // what it is by VERSION_CODENAME=current (and VERSION="15.0+"): a
+    // rolling tree whose loader and initrd tools are changing, refused by
+    // name (docs/design/slackware.md, decision 7).
+    if id == "slackware" && (os.get("VERSION_CODENAME") == Some("current") || os.get("VERSION").is_some_and(|v| v.ends_with('+'))) {
+        return Err(format!(
+            "this is Slackware -current (ID=slackware, VERSION_ID={ver}, VERSION_CODENAME={}), and bko-holt dump supports only the Slackware 15.0 release, not -current",
+            os.get("VERSION_CODENAME").unwrap_or("")
+        ));
+    }
     if supported(id, ver) {
         return Ok(());
     }
@@ -341,7 +357,7 @@ pub(crate) mod tests {
         assert!(check_supported(Some(&parse(neon))).is_ok());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Solus 4, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, openSUSE Leap 16, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox, Sculpt OS or Ubuntu Core 24"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Solus 4, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, openSUSE Leap 16, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Slackware 15, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox, Sculpt OS or Ubuntu Core 24"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -558,6 +574,36 @@ pub(crate) mod tests {
         assert!(e.contains("(ID=guix, VERSION_ID=1.5.0)"), "{e}");
         // Guix the package manager on another system is that system.
         assert!(check_supported(Some(&parse("ID=guixish\n"))).is_err());
+    }
+
+    /// Slackware 15.0's /etc/os-release (aaa_base-15.0): VERSION_ID bare,
+    /// no ID_LIKE, VERSION_CODENAME=stable.
+    const SLACKWARE: &str = "NAME=Slackware\nVERSION=\"15.0\"\nID=slackware\nVERSION_ID=15.0\nPRETTY_NAME=\"Slackware 15.0 x86_64\"\nANSI_COLOR=\"0;34\"\nCPE_NAME=\"cpe:/o:slackware:slackware_linux:15.0\"\nHOME_URL=\"http://slackware.com/\"\nSUPPORT_URL=\"http://www.linuxquestions.org/questions/slackware-14/\"\nBUG_REPORT_URL=\"http://www.linuxquestions.org/questions/slackware-14/\"\nVERSION_CODENAME=stable\n";
+
+    #[test]
+    fn slackware() {
+        let o = parse(SLACKWARE);
+        assert_eq!(o.get("ID"), Some("slackware"));
+        assert_eq!(o.get("VERSION_ID"), Some("15.0"));
+        assert_eq!(o.get("VERSION_CODENAME"), Some("stable"));
+        assert_eq!(o.get("PRETTY_NAME"), Some("Slackware 15.0 x86_64"));
+        assert_eq!(o.get("ID_LIKE"), None);
+        assert!(check_supported(Some(&o)).is_ok());
+        assert!(supported_names().contains("Garuda Linux, Slackware 15, Chimera Linux"));
+        // 14.2 isn't 15.
+        let e = check_supported(Some(&parse(&SLACKWARE.replace("15.0", "14.2")))).unwrap_err();
+        assert!(e.contains("(ID=slackware, VERSION_ID=14.2)") && e.contains("Slackware 15,"), "{e}");
+        // -current: the same VERSION_ID, refused by its codename, or by
+        // VERSION's "+" alone.
+        let current = SLACKWARE.replace("VERSION=\"15.0\"", "VERSION=\"15.0+\"").replace("VERSION_CODENAME=stable", "VERSION_CODENAME=current");
+        let e = check_supported(Some(&parse(&current))).unwrap_err();
+        assert!(e.contains("Slackware -current") && e.contains("VERSION_CODENAME=current"), "{e}");
+        assert!(check_supported(Some(&parse(&SLACKWARE.replace("VERSION_CODENAME=stable", "VERSION_CODENAME=current")))).is_err());
+        assert!(check_supported(Some(&parse(&SLACKWARE.replace("VERSION=\"15.0\"", "VERSION=\"15.0+\"")))).is_err());
+        // A 15.1 passes by the major (the row's comment).
+        assert!(supported("slackware", "15.1"));
+        // Not by its likeness: a derivative claiming 15.0 isn't Slackware.
+        assert!(check_supported(Some(&parse("ID=salix\nID_LIKE=slackware\nVERSION_ID=15.0\n"))).is_err());
     }
 
     /// Vanilla OS 3's os-release (base-files v1.1.0: docs/design/vanillaos.md;

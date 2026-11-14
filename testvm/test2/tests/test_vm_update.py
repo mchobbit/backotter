@@ -140,7 +140,8 @@ class TestSteps(unittest.TestCase):
 
 class TestInGuest(unittest.TestCase):
     TEXT = (TESTVM / "update" / "in-guest.sh").read_text()
-    NAMES = {"prologue", "NixOS", "Guix", "Linux.portage", "Linux.abroot", "Linux.common", "Linux.apt", "Linux.ostree", "Linux.dnf", "Linux.pacman",
+    NAMES = {"prologue", "NixOS", "Guix", "Linux.portage", "Linux.slackpkg", "Linux.abroot", "Linux.common", "Linux.apt", "Linux.ostree",
+             "Linux.dnf", "Linux.pacman",
              "Linux.tukit", "Linux.zypper",
              "Linux.xbps", "Linux.apk", "Linux.eopkg", "Linux.moss", "FreeBSD", "DragonFly", "OpenBSD", "NetBSD", "SunOS",
              "Haiku", "Redox"}
@@ -175,6 +176,8 @@ class TestInGuest(unittest.TestCase):
                              ("Linux.portage", "/etc/gentoo-release"), ("Linux.portage", "emerge --sync"),
                              ("Linux.portage", "emerge -puDN"), ("Linux.portage", "emerge -uDNg"),
                              ("Linux.portage", "emerge --depclean"),
+                             ("Linux.slackpkg", "/etc/slackware-version"), ("Linux.slackpkg", "upgrade-all"),
+                             ("Linux.slackpkg", "lilo"), ("Linux.slackpkg", "EFI/Slackware"),
                              ("Linux.abroot", "/usr/share/abroot/abroot.json"), ("Linux.abroot", "abroot upgrade </dev/null"),
                              ("Linux.abroot", "No update available"), ("Linux.abroot", "vanilla-updates.timer"),
                              ("Linux.common", "/etc/os-release"), ("Linux.common", "no package manager found"),
@@ -183,6 +186,13 @@ class TestInGuest(unittest.TestCase):
                              ("OpenBSD", "syspatch"), ("NetBSD", "sysupgrade"), ("SunOS", "pkg update"),
                              ("Haiku", "pkgman"), ("Redox", "pkg --yes update")):
             self.assertIn(needle, s[name], name)
+
+    def test_slackpkg_before_the_others(self):
+        """A full Slackware has rpm (series ap): its branch comes before
+        Linux.common's package managers, as Portage's does."""
+        t = self.TEXT
+        self.assertLess(t.index("# t2-section: Linux.portage"), t.index("# t2-section: Linux.slackpkg"))
+        self.assertLess(t.index("# t2-section: Linux.slackpkg"), t.index("# t2-section: Linux.common"))
 
     def test_abroot_before_apt(self):
         """Vanilla OS: its read-only root has no apt or dpkg (and its image may have apt
@@ -282,8 +292,8 @@ class TestPkgset(TempDir):
             (root / "etc/NIXOS").write_text("")
         script = (TESTVM / "update" / "pkgset.sh").read_text()
         script = re.sub(r"^PATH=.*$", "", script, count=1, flags=re.M)
-        for p in ("/etc/NIXOS", "/etc/gentoo-release", "/var/db/", "/boot/system/packages", "/usr/share/abroot/", "/var/lib/dpkg/",
-                  "/var/lib/eopkg/", "/abimage.abr"):
+        for p in ("/etc/NIXOS", "/etc/gentoo-release", "/etc/slackware-version", "/var/db/", "/var/lib/pkgtools/",
+                  "/boot/system/packages", "/usr/share/abroot/", "/var/lib/dpkg/", "/var/lib/eopkg/", "/abimage.abr"):
             script = script.replace(p, str(root) + p)
         tools = self.tmp / "tools"                      # only these: a host's own apt-get would be found first
         tools.mkdir(exist_ok=True)
@@ -363,6 +373,17 @@ class TestPkgset(TempDir):
                          "base abimage sha256:f1be"])
         self.assertNotIn("gone", out)
         self.assertNotIn("wrong", out)
+
+    def test_pkgtools(self):
+        """Slackware: NAME-VERSION-ARCH-BUILD, split at the last three dashes,
+        before rpm (a full Slackware has it)."""
+        pk = [("/etc/slackware-version", "Slackware 15.0\n")] + [
+            (f"/var/lib/pkgtools/packages/{n}", "PACKAGE NAME:  " + n + "\n")
+            for n in ("aaa_base-15.0-x86_64-3", "kernel-huge-5.15.161-x86_64-1", "glibc-zoneinfo-2025b-noarch-1_slack15.0")]
+        out = self.run_script("Linux", {"rpm": "echo 'e2fsprogs 0:1.47-1.x86_64'", "zypper": "true"}, files=pk)
+        self.check(out, ["base pm pkgtools", "pkg aaa_base 15.0-3 x86_64", "pkg kernel-huge 5.15.161-1 x86_64",
+                         "pkg glibc-zoneinfo 2025b-1_slack15.0 noarch"])
+        self.assertNotIn("rpm", out)
 
     def test_apk(self):
         out = self.run_script("Linux", {"apk": "echo linux-lts-6.18.60-r0; echo musl-1.2.5-r9"})

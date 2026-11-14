@@ -15,11 +15,15 @@
 # (0.19.1+backotter.6, directory rtinherit and the existing directory's options)
 # on 2026-11-12: 17; the three of restic 58a695576 (the cleared options put back
 # after an interrupted restore, a failed --delete, and the target's) the same
-# day: 20.  Every temporary directory below is rtest.TempDir or
-# t.TempDir, both under TMPDIR, which fork-root.sh points at its reserved RAM
-# directory; every image is a sparse file there, mounted with mount -o loop
-# (the loop device mount sets up, freed again by umount) or a tmpfs mounted
-# below that directory; every one is unmounted by the test's cleanup, and
+# day: 20; the three of restic aa72d65cc (0.19.1+backotter.7: restore --exact,
+# --clone-from, the SELinux label an exact restore removes) on 2026-11-14:
+# 23; the seven immutable-flag tests of restic 12a275f62 (exact and --delete
+# restores over immutable files and directories) the same day: 30.  Every
+# temporary directory below is rtest.TempDir or t.TempDir, both under
+# TMPDIR, which fork-root.sh points at its reserved RAM directory; every
+# image is a sparse file there, mounted with mount -o loop (the loop device
+# mount sets up, freed again by umount) or a tmpfs mounted below that
+# directory; every one is unmounted by the test's cleanup, and
 # fork-root.sh unmounts and detaches by path what is left under that
 # directory.  None needs a network, a pool, a guest or a device of the host.
 #
@@ -35,10 +39,20 @@ run internal/fs TestFATAttributesOnVfat              # mountLoop: a 64 MiB vfat 
 run internal/fs TestFillHolesENOSPC                  # mountLoop: a 16 MiB ext4 image (mkfs.ext4 -q), mount -o loop; one sparse 64 MiB file filled there until ENOSPC; umount at cleanup
 run internal/fs TestNodeProjectIDBcachefs            # a 256 MiB bcachefs image in its rtest.TempDir (bcachefs format), mount -t bcachefs -o loop; chattr -p and the bcachefs.project xattr on two files inside it; umount (deferred)
 run internal/fs TestPreallocateBtrfs                 # mountLoop: a 256 MiB btrfs image (mkfs.btrfs -q), mount -o loop; three 4 MiB files there, chattr +C on two; files closed, then umount at cleanup
+run internal/fs TestRemoveSELinuxLabel             # one file in its rtest.TempDir given security.selinux and user.color xattrs (root may set security.* on tmpfs; the hosts run no SELinux), another without; RemoveSELinuxLabel on both; nothing is mounted
 run internal/fs TestRestoreFileFlagsBtrfsCompression # a 128 MiB btrfs image in its rtest.TempDir (mkfs.btrfs -q), mount -o loop; the btrfs.compression xattr and inode flags (immutable too, taken off again with chattr -i) on files inside it; umount (deferred)
 run internal/fs TestRestoreLeavesSELinuxLabel        # one file in its t.TempDir: user.old and security.selinux xattrs (root may set security.* on tmpfs; the hosts run no SELinux), then a restore of its xattrs; nothing is mounted
 run internal/fs TestXFSOptionsOnXFS                  # mountLoop: a 320 MiB XFS image (mkfs.xfs -q -f), mount -o loop; xfs_io extsize and chattr on files and directories inside it; umount at cleanup
 run internal/fs TestXFSOptionsRtinheritRefused       # mountLoop: a 320 MiB XFS image (mkfs.xfs -q -f -r extsize=64k, no realtime device), mount -o loop; XFS options on one directory inside it; umount at cleanup
+run internal/restorer TestRestoreDeletePartlyRemoved # a --delete restore into its rtest.TempDir, where one file of a directory it made there is immutable (chattr +i, CAP_LINUX_IMMUTABLE), with a test repository; the cleanup clears the flag on everything below that directory; nothing is mounted
+run internal/restorer TestRestoreExactBtrfs         # mountLoopFS: a 512 MiB btrfs image (mkfs.btrfs -q), mount -o loop; rtest.TestTempDir pointed into the mount for its subtests (CloneFrom, OverAMatchingTree, HardLinks, Label), whose test repositories, clones, hard links and exact restores stay inside it; umount at cleanup
+run internal/restorer TestRestoreExactDeleteImmutableDir # exact --delete restores into its rtest.TempDir over a directory and a file in it that it makes immutable there (chattr +i), with a test repository; the cleanup clears the flag on everything below that directory; nothing is mounted
+run internal/restorer TestRestoreExactDeleteReplacedLink # an exact restore into its rtest.TempDir over a hard link to a file beside the target, both in that directory, that it makes immutable (chattr +i), with a test repository; the cleanup clears the flag on everything below that directory; nothing is mounted
+run internal/restorer TestRestoreExactDeleteReplacedSiblings # exact --delete restores into its rtest.TempDir over files and directories it makes immutable there (chattr +i), with a test repository; the cleanup clears the flag on everything below that directory; nothing is mounted
+run internal/restorer TestRestoreExactEntriesInImmutableDir # exact restores that add entries to a directory in its rtest.TempDir that it makes immutable (chattr +i), with a test repository; the cleanup clears the flag on everything below that directory; nothing is mounted
+run internal/restorer TestRestoreExactKeptImmutable # exact restores into its rtest.TempDir over files and a directory it makes immutable there (chattr +i), with a test repository; the cleanup clears the flag on each of those names; nothing is mounted
+run internal/restorer TestRestoreExactLabel         # a test repository and two restores (plain, then --exact) into its rtest.TempDir over a file given a security.selinux xattr (root may set security.* on tmpfs); nothing is mounted
+run internal/restorer TestRestoreExactUnbrokenLinkKeepsFlags # an exact restore into its rtest.TempDir over a hard link to a file beside the target, in that directory, that it makes immutable (chattr +i), the link break faked to fail, with a test repository; the cleanup clears that file's flag; nothing is mounted
 run internal/restorer TestRestorerExt4CasefoldProject # a 64 MiB ext4 image with casefold and project (mkfs.ext4 -O casefold,project) in its rtest.TempDir, mount -o loop; a test repository (TestRepository) and a restore into the mount, an immutable file there taken off again with chattr -i; umount (deferred)
 run internal/restorer TestRestorerFATAttributes      # mountLoopFS: a 64 MiB vfat image, mount -o loop; a test repository and a restore into it; FAT attribute ioctls on the restored files; umount at cleanup
 run internal/restorer TestRestorerOverRestrictingFlags # restores into its rtest.TempDir over four files it gives chattr +i or +a there (CAP_LINUX_IMMUTABLE), with a test repository; chattr -i -a on them again (deferred); nothing is mounted

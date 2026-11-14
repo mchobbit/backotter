@@ -107,6 +107,64 @@ if [ "$(uname)" = Linux ] && [ -e /etc/gentoo-release ] && has emerge; then
     exit 0
 fi
 
+# t2-section: Linux.slackpkg
+# Slackware 15.0 (testvm/bootstrap/slackware.sh: slackware15, slackware15-uefi;
+# docs/design/slackware.md): slackpkg from the one mirror in
+# /etc/slackpkg/mirrors, which brings the 15.0 tree's patches/.  Before the
+# other Linux package managers: a full Slackware has rpm (series ap) as a tool.
+# slackpkg's batch mode skips its own "run lilo?" questions, so a kernel
+# upgrade is finished here as Slackware's UPGRADE.TXT says: the initrd again
+# (generic kernels), then lilo, or the kernel and initrd copied to ELILO's
+# ESP directories.  upgradepkg replaces a kernel in place (the running one's
+# modules go with it), so this can't wait: vm-update reboots next.  .new
+# config files stay as slackpkg leaves them in batch mode, listed.
+if [ "$(uname)" = Linux ] && [ -e /etc/slackware-version ] && has slackpkg; then
+    kernels() { ls /var/lib/pkgtools/packages | grep '^kernel-\(huge\|generic\)-' | sort; }
+    before=$(kernels)
+    sp() { slackpkg -batch=on -default_answer=y "$@"; }
+    sp update || exit 1
+    # 20: nothing to upgrade.  50: slackpkg upgraded itself, and is run again.
+    for i in 1 2; do
+        sp upgrade-all; rc=$?
+        [ $rc -eq 50 ] || break
+    done
+    [ $rc -eq 0 ] || [ $rc -eq 20 ] || { say "slackpkg upgrade-all failed ($rc)"; exit 1; }
+    after=$(kernels)
+    if [ "$before" != "$after" ]; then
+        say "kernel packages now: $(echo $after)"
+        k=$(ls -t /lib/modules | head -n 1)
+        [ -d "/lib/modules/$k/kernel" ] || { say "no modules for the new kernel ($k)"; exit 1; }
+        if [ -e /boot/initrd.gz ]; then
+            # The command the initrd was made with, for the new kernel; else
+            # the command generator's for this root.
+            cmd=""
+            [ -s /boot/initrd-tree/command_line ] && cmd=$(sed 's/ -k [^ ]*//' /boot/initrd-tree/command_line)
+            [ -n "$cmd" ] || cmd=$(/usr/share/mkinitrd/mkinitrd_command_generator.sh -r -k "$k" | grep '^mkinitrd ')
+            case $cmd in mkinitrd\ *) ;; *) say "no mkinitrd command for kernel $k"; exit 1 ;; esac
+            sh -c "$cmd -k $k" || { say "mkinitrd failed for kernel $k"; exit 1; }
+        fi
+        if [ -e /boot/efi/EFI/Slackware/elilo.conf ]; then
+            v=$(ls /boot/vmlinuz-generic-"$k" /boot/vmlinuz-huge-"$k" 2>/dev/null | head -n 1)
+            [ -n "$v" ] || { say "no /boot/vmlinuz-*-$k for ELILO"; exit 1; }
+            for d in /boot/efi/EFI/Slackware /boot/efi/EFI/BOOT; do
+                [ -e "$d/elilo.conf" ] || continue
+                cp "$v" "$d/vmlinuz" || exit 1
+                if grep -q '^[[:space:]]*initrd=initrd.gz' "$d/elilo.conf"; then cp /boot/initrd.gz "$d/initrd.gz" || exit 1; fi
+            done
+            say "ELILO: $v copied to the ESP"
+        elif [ -e /etc/lilo.conf ]; then
+            lilo || { say "lilo failed"; exit 1; }
+        else
+            say "a new kernel, and neither ELILO's nor LILO's configuration"; exit 1
+        fi
+    fi
+    new=$(find /etc -name '*.new' 2>/dev/null | sort)
+    [ -z "$new" ] || say "config files left as .new: $(echo $new)"
+    rm -rf /var/cache/packages/*
+    say "updated"
+    exit 0
+fi
+
 # t2-section: Linux.abroot
 # ABRoot (Vanilla OS: vanilla3; docs/design/vanillaos.md): two roots, the
 # present one read-only, with no apt or dpkg on it (lpkg locks them away).

@@ -541,7 +541,7 @@ class Parsers(unittest.TestCase):
     def test_root_list_is_reviewed(self):
         text = read_file(os.path.join(REPO, gate.ROOT_LIST_PATH))
         runs, outs = gate.parse_root_list(text)
-        self.assertEqual(len(runs), 20)
+        self.assertEqual(len(runs), 23)
         self.assertEqual(sorted({p for p, _ in runs}), ["internal/fs", "internal/restorer"])
         for line in text.splitlines():
             if line.startswith("run "):
@@ -559,7 +559,7 @@ class Parsers(unittest.TestCase):
         self.assertEqual(o.needs["TestNodeProjectIDBcachefs"], "PASS")
         self.assertEqual(o.needs["TestRestorerOverRestrictingFlags"], "PASS")
         self.assertEqual(o.needs["root-list"], "PASS")
-        self.assertEqual(len(o.needs), 21)
+        self.assertEqual(len(o.needs), 24)
         self.assertEqual(o.verdict, "PASS")
         self.assertEqual(o.extra["cleanup"], "nothing was left mounted or attached")
         self.assertIsNone(o.note)

@@ -6,8 +6,8 @@ use crate::json::{Obj, Value};
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct BootCode {
-    /// "none", "grub2", "grub-legacy", "syslinux", "isohybrid", "windows",
-    /// "unknown".
+    /// "none", "grub2", "grub-legacy", "syslinux", "lilo", "isohybrid",
+    /// "windows", "unknown".
     pub kind: &'static str,
     /// GRUB 2: the LBA boot.img loads core.img's first sector from.
     pub grub_core_lba: Option<u64>,
@@ -24,6 +24,13 @@ pub fn identify(sector: &[u8]) -> BootCode {
     let none = |kind| BootCode { kind, grub_core_lba: None, grub_boot_drive: None, first_bytes: first_bytes.clone() };
     if code.is_empty() || is_zero(code) {
         return none("none");
+    }
+    // LILO's first stage (first.S): cli, a short jump over its header, the
+    // header's size word, then "LILO" at offset 6 and its version (24.2 is
+    // 0x18 0x02).  Read from the two first stages Slackware 15.0's
+    // /sbin/lilo (24.2) carries; it has no strings to go by.
+    if sub(code, 6, 4) == b"LILO" {
+        return none("lilo");
     }
     if contains(code, b"GRUB ") && contains(code, b"Geom") {
         // GRUB Legacy's stage1 keeps its version (3.2) right after the BPB;
@@ -118,6 +125,17 @@ pub mod samples {
         s
     }
 
+    /// The start of LILO 24.2's first stage as Slackware 15.0's /sbin/lilo
+    /// writes it to the MBR: cli, jmp, size, "LILO", version 24.2.
+    pub fn lilo_first_stage() -> Vec<u8> {
+        let mut s = vec![0u8; 512];
+        s[..16].copy_from_slice(&[0xfa, 0xeb, 0x31, 0x13, 0, 0, b'L', b'I', b'L', b'O', 0x18, 0x02, 0x10, 0, 0x01, 0]);
+        s[0x1c..0x20].copy_from_slice(&[0x5e, 0xac, 0x08, 0xc0]);
+        s[510] = 0x55;
+        s[511] = 0xaa;
+        s
+    }
+
     pub fn grub2_diskboot_img() -> Vec<u8> {
         let mut s = vec![0u8; 512];
         s[0] = 0x52;
@@ -186,6 +204,18 @@ mod tests {
         let mut s = vec![0u8; 512];
         s[0] = 1;
         s[446..446 + 5].copy_from_slice(b"GRUB ");
+        assert_eq!(identify(&s).kind, "unknown");
+    }
+
+    #[test]
+    fn lilo() {
+        let b = identify(&lilo_first_stage());
+        assert_eq!(b.kind, "lilo");
+        assert!(b.first_bytes.starts_with("faeb3113"), "{}", b.first_bytes);
+        // Not "LILO" elsewhere in the code.
+        let mut s = vec![0u8; 512];
+        s[0] = 0xfa;
+        s[0x100..0x104].copy_from_slice(b"LILO");
         assert_eq!(identify(&s).kind, "unknown");
     }
 

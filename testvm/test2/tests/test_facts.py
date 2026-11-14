@@ -457,5 +457,33 @@ class Wear(unittest.TestCase):
         self.assertIn({"host": "hostA", "disk": "nvme1n1", "model": "FAKE_NVME_2TB", "bytes": 27200000000}, today)
 
 
+class RoundComplete(unittest.TestCase):
+    """A round whose build still runs (Chopin's half done, Cinqcent's not pulled) isn't complete."""
+
+    def test_round_complete(self):
+        from t2lib import facts_host as fh
+        d = tempfile.mkdtemp(dir=_tmp)
+        os.makedirs(os.path.join(d, "linux"))
+        os.makedirs(os.path.join(d, "freebsd"))
+
+        def put(n, t):
+            with open(os.path.join(d, n), "w") as f:
+                f.write(t)
+
+        def sums(*names):
+            put("SHA256SUMS", "".join(f"{'a' * 64}  ./{n}\n" for n in names))
+
+        self.assertFalse(fh.round_complete(d))                          # nothing yet
+        put("build-chopin.files", "linux/rustic-bko\nrestic-commit\n")
+        put("build-chopin.tsv", "")
+        sums("linux/rustic-bko", "restic-commit")
+        self.assertFalse(fh.round_complete(d))                          # Chopin's half only
+        put("build-cinqcent.files", "freebsd/rustic-bko\n")
+        put("build-cinqcent.tsv", "")
+        self.assertFalse(fh.round_complete(d))                          # pulled, SHA256SUMS not yet
+        sums("freebsd/rustic-bko", "linux/rustic-bko", "restic-commit")
+        self.assertTrue(fh.round_complete(d))
+
+
 if __name__ == "__main__":
     unittest.main()

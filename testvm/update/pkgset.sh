@@ -58,6 +58,17 @@ pkg_portage() {
                         if (!i) { print "unknown a package name without a version:", $1; exit 1 }
                         print "pkg", substr($1, 1, i - 1), substr($1, i + 1), $2 }'
 }
+# Slackware's pkgtools: one file a package in /var/lib/pkgtools/packages,
+# named NAME-VERSION-ARCH-BUILD (no dash in the last three), as bko-holt's
+# dump splits it (docs/design/slackware.md).  The version is VERSION-BUILD,
+# so a rebuild (the same VERSION, a new BUILD) is a change.
+pkg_pkgtools() {
+    x=$(ls /var/lib/pkgtools/packages) || fail "/var/lib/pkgtools/packages can't be listed"
+    [ -n "$x" ] || fail "/var/lib/pkgtools/packages lists nothing"
+    lines "$x" | awk '{ n = split($0, a, "-"); if (n < 4) { print "unknown a package name without version, arch and build:", $0; exit 1 }
+                        name = a[1]; for (i = 2; i <= n - 3; i++) name = name "-" a[i]
+                        print "pkg", name, a[n - 2] "-" a[n], a[n - 1] }'
+}
 # ABRoot (Vanilla OS; docs/design/vanillaos.md): the present root's own dpkg
 # database, its var/lib/dpkg/status, which /var (vos-var, shared by both
 # roots) hides: read through a bind mount of / alone, read-only like /.  A
@@ -128,6 +139,10 @@ listing() {
         if [ -e /etc/gentoo-release ] && [ -d /var/db/pkg ]; then
             echo "base pm portage"
             pkg_portage
+        # Slackware before the rest too: a full install has rpm (series ap).
+        elif [ -e /etc/slackware-version ] && [ -d /var/lib/pkgtools/packages ]; then
+            echo "base pm pkgtools"
+            pkg_pkgtools
         # ABRoot (Vanilla OS) before dpkg: no apt or dpkg on the root (lpkg
         # locks them away), and the image's digest besides.
         elif [ -f /usr/share/abroot/abroot.json ] || has abroot; then

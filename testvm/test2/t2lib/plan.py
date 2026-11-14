@@ -489,14 +489,30 @@ class Planner:
             heads = self.fork_heads()
             found = None
             if reach and len(heads) == 3:
-                per = []
+                per, building, short = [], {}, {}
                 for h in reach:
                     rs = (self.ctx.facts[h].get("rounds") or {})
                     items = rs.items() if isinstance(rs, dict) else ((x.get("name"), x) for x in rs if isinstance(x, dict))
-                    per.append({n for n, e in items if n and round_commits(e) == heads})
+                    at = {n: e for n, e in items if n and round_commits(e) == heads}
+                    # a round still being built (facts' `complete` false) isn't taken: its other
+                    # platforms' binaries and SHA256SUMS land later (facts without the field: complete)
+                    for n, e in at.items():
+                        if isinstance(e, dict) and e.get("complete") is False:
+                            building.setdefault(n, []).append(h)
+                            # the platforms its bin is short of, when the facts name them
+                            short.setdefault(n, set()).update(e.get("missing") or [])
+                    per.append({n for n, e in at.items() if not (isinstance(e, dict) and e.get("complete") is False)})
                 both = set.intersection(*per) if per else set()
                 if both:
                     found = sorted(both)[-1]
+                elif building:
+                    n = sorted(building)[-1]
+                    why = ("its build may still run: a builder of its build-hosts without a "
+                           "build-HOST.tsv, or a SHA256SUMS short of their files")
+                    if short.get(n):
+                        why = "it is short of " + "; ".join(sorted(short[n]))
+                    raise PlanError(f"round{n} at the fork heads isn't complete on {', '.join(building[n])} "
+                                    f"({why}): wait for it, or give ROUND")
             if found:
                 nm = found if found.startswith("round") else "round" + found
                 self.set_name = nm

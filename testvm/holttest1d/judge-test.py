@@ -1402,7 +1402,96 @@ class FsAnduinos(unittest.TestCase):
             self.assertNotIn("AnduinOS", out)
 
 
-SOLUS_V = ("current.7.3.4-373", "lts.6.18.63-322")
+class FsOpensuseShim(unittest.TestCase):
+    """judge.py fs over what load's boot stage does on openSUSE Leap 16 (L5,
+    docs/design/leap16.md): dracut rebuilds /boot/initrd-K, grub2-mkconfig
+    remakes /boot/grub2/grub.cfg, setfiles relabels /boot, and the ESP is
+    kept: every file of EFI/opensuse and EFI/boot must be the source's."""
+
+    K = "6.12.0-160100.9-default"
+    LOADERS = ["boot/efi/EFI/opensuse/shim.efi", "boot/efi/EFI/opensuse/grub.efi", "boot/efi/EFI/opensuse/grubx64.efi",
+               "boot/efi/EFI/opensuse/MokManager.efi", "boot/efi/EFI/opensuse/grub.cfg", "boot/efi/EFI/opensuse/boot.csv",
+               "boot/efi/EFI/boot/bootx64.efi", "boot/efi/EFI/boot/fallback.efi", "boot/efi/EFI/boot/MokManager.efi"]
+    SRC = {"boot": meta("dir"), f"boot/initrd-{K}": meta("file", mode=0o600), f"boot/vmlinuz-{K}": meta("file"),
+           f"boot/System.map-{K}": meta("file"), "boot/grub2": meta("dir"), "boot/grub2/grub.cfg": meta("file", mode=0o600),
+           "boot/grub2/grubenv": meta("file"), "boot/grub2/x86_64-efi": meta("dir"), "boot/grub2/x86_64-efi/normal.mod": meta("file"),
+           "boot/efi": meta("dir"), "boot/efi/EFI": meta("dir"), "boot/efi/EFI/opensuse": meta("dir"), "boot/efi/EFI/boot": meta("dir"),
+           "var/lib/dracut": meta("dir"),
+           **{p: meta("file", xattrs={}) for p in LOADERS}}
+
+    judge = Fs.judge
+
+    def changed(self, src, changes):
+        a = copy.deepcopy(src)
+        for p, kw in changes.items():
+            a[p].update(kw)
+        return self.judge(src, a)
+
+    def test_the_boot_stage_and_the_kept_esp(self):
+        rc, out = self.changed(self.SRC, {
+            f"boot/initrd-{self.K}": {"sha256": "cd", "mtime": 2}, "boot": {"mtime": 2},
+            "boot/grub2/grub.cfg": {"sha256": "cd", "mtime": 2}, "boot/grub2": {"mtime": 2},
+            "boot/grub2/grubenv": {"xattrs": {"security.selinux": "00"}}, "var/lib/dracut": {"mtime": 2}})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn("openSUSE's shim and signed GRUB kept: 9 paths of EFI/opensuse and EFI/boot held to the source's bytes: "
+                      "boot/MokManager.efi, boot/bootx64.efi, boot/fallback.efi, opensuse/MokManager.efi", out)
+
+    def test_every_esp_file_must_be_the_sources(self):
+        """grub2-install or shim-install (an unsigned or another GRUB, a
+        rewritten stub) on any of them: no ESP rule excuses it here."""
+        for p in self.LOADERS:
+            rc, out = self.changed(self.SRC, {p: {"sha256": "cd", "mtime": 2}})
+            self.assertEqual(rc, 1, f"{p}: {out}")
+            self.assertIn(f"DIFF content: 1: {p}", out)
+            self.assertIn(" 0 from the boot stage", out)
+
+    def test_a_missing_or_extra_esp_file_counts(self):
+        a = copy.deepcopy(self.SRC)
+        del a["boot/efi/EFI/boot/fallback.efi"]
+        a["boot/efi/EFI/opensuse/shimx64.efi"] = meta("file", xattrs={})
+        rc, out = self.judge(self.SRC, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF missing: 1: boot/efi/EFI/boot/fallback.efi", out)
+        self.assertIn("DIFF extra: 1: boot/efi/EFI/opensuse/shimx64.efi", out)
+
+    def test_the_signed_loaders_must_be_in_the_sources_record(self):
+        src = {p: m for p, m in self.SRC.items() if p not in ("boot/efi/EFI/opensuse/MokManager.efi", "boot/efi/EFI/boot/bootx64.efi")}
+        rc, out = self.judge(src, copy.deepcopy(src))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF not in the source's record (openSUSE's shim and signed GRUB): 2: "
+                      "boot/efi/EFI/opensuse/MokManager.efi, boot/efi/EFI/boot/bootx64.efi", out)
+
+    def test_the_esp_dirs_keep_their_rule(self):
+        rc, out = self.changed(self.SRC, {"boot/efi/EFI/opensuse": {"mtime": 2}, "boot/efi/EFI": {"mtime": 2}})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("grub-install writes the ESPs' loaders", out)
+
+    def test_the_kernel_still_counts(self):
+        rc, out = self.changed(self.SRC, {f"boot/vmlinuz-{self.K}": {"sha256": "cd"}, f"boot/initrd-{self.K}": {"mode": 0o644}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF content: 1: boot/vmlinuz-{self.K}", out)
+        self.assertIn(f"DIFF mode: 1: boot/initrd-{self.K}", out)
+
+    def test_other_systems_esp_rules_are_unchanged(self):
+        """No openSUSE shim at EFI/opensuse (Fedora's EFI/fedora, or MicroOS's
+        transactional source): the ESP rule or TU_STAGE as before."""
+        src = {"boot/efi/EFI": meta("dir"), "boot/efi/EFI/BOOT": meta("dir"), "boot/efi/EFI/BOOT/BOOTX64.EFI": meta("file"),
+               "boot/efi/EFI/fedora": meta("dir"), "boot/efi/EFI/fedora/shimx64.efi": meta("file"),
+               "boot/efi/EFI/fedora/grubx64.efi": meta("file")}
+        a = copy.deepcopy(src)
+        for p in a:
+            a[p].update(sha256="cd", mtime=2)
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("openSUSE", out)
+        tu = dict(self.SRC, **{"usr": meta("dir"), "usr/sbin": meta("dir"), "usr/sbin/tukit": meta("file")})
+        rc, out = self.judge(tu, copy.deepcopy(tu))
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("openSUSE", out)
+
+
+SOLUS_V =("current.7.3.4-373", "lts.6.18.63-322")
 SOLUS_CBM = "boot/EFI/com.solus-project"
 
 

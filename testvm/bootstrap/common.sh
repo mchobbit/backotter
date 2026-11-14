@@ -18,7 +18,7 @@ trap 'echo "BACKOTTER-INSTALL-FAILED at line $LINENO"; sync; sleep 2; poweroff' 
 DISTRO='@DISTRO@'
 ROOT_FS='@ROOT_FS@'                    # what make-bootstrap.sh chose for /
 FIRMWARE='@FIRMWARE@'                  # bios (MBR) or uefi (GPT, ESP as /boot)
-LAYOUT='@LAYOUT@'                      # classic, or uefi, lvm, luks (UEFI, ESP at /boot/efi), luks-esp, efi-lvm: below
+LAYOUT='@LAYOUT@'                      # classic, or uefi, lvm, luks (UEFI, ESP at /boot/efi), luks-esp, efi-lvm, swap-root: below
 LUKS_KEY='@LUKS_KEY@'                  # luks, luks-esp: the key file's contents (no newline)
 GUEST_NAME='@HOSTNAME@'
 ROOT_PASSWORD='@ROOT_PASSWORD@'
@@ -53,6 +53,8 @@ until systemctl is-active -q pacman-init.service; do sleep 1; done
 #         (2 GiB), then an LVM PV for the rest: VG vg0 with LVs root
 #         (10 GiB, ROOT_FS) and home (3 GiB, XFS at /home: HOME_PART), the
 #         other extents (~4 GiB) free
+# and Slackware's setup's plainest BIOS disk, no /boot partition:
+#   swap-root  MBR, swap (2 GiB), then / (bootable) for the rest
 BOOT_PART="" ESP_PART="" LUKS_PART="" VG="" HOME_PART=""
 wipefs -q -a "$DISK"
 case $LAYOUT in
@@ -74,6 +76,15 @@ EOF
     fi
     udevadm settle
     BOOT_PART=${DISK}1 SWAP_PART=${DISK}2 ROOT_PART=${DISK}3
+    ;;
+swap-root)
+    sfdisk -q "$DISK" <<'EOF'
+label: dos
+size=2GiB, type=82
+type=83, bootable
+EOF
+    udevadm settle
+    SWAP_PART=${DISK}1 ROOT_PART=${DISK}2
     ;;
 uefi)
     sfdisk -q "$DISK" <<'EOF'
@@ -164,7 +175,9 @@ mkfs_root() {
 # mount_boot: /boot (and the ESP at /boot/efi), once / is mounted at /mnt.
 # efi-lvm: the ESP at /efi, and /home (XFS) too.
 mount_boot() {
-    if [[ $LAYOUT == efi-lvm ]]; then
+    if [[ $LAYOUT == swap-root ]]; then
+        :
+    elif [[ $LAYOUT == efi-lvm ]]; then
         mkfs.fat -F 32 -n EFI "$ESP_PART" >/dev/null
         mount -t vfat --mkdir "$ESP_PART" /mnt/efi
         mkfs.xfs -q -f "$HOME_PART"

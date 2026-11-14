@@ -194,6 +194,26 @@ class Table(unittest.TestCase):
         finally:
             alt.close()
 
+    def test_a_bad_reread_keeps_the_last_good_table(self):
+        """Another session edits hosts.json under a long run (a field this process's check
+        doesn't know): load keeps the table it read, and says why in stale_errors."""
+        alt = AltTable(lambda t: None)
+        try:
+            good = H.known(H.load(alt.path))
+            row_of(alt.t, "cage")["no_such_field_yet"] = 1
+            with open(alt.path, "w") as f:
+                json.dump(alt.t, f, indent=2)
+            self.assertEqual(H.known(H.load(alt.path)), good)
+            self.assertIn("no such field 'no_such_field_yet'", H.stale_errors[alt.path])
+            del row_of(alt.t, "cage")["no_such_field_yet"]
+            enable_czerny(alt.t)
+            with open(alt.path, "w") as f:
+                json.dump(alt.t, f)
+            self.assertIn("czerny", H.known(H.load(alt.path)))
+            self.assertNotIn(alt.path, H.stale_errors)
+        finally:
+            alt.close()
+
     def test_command_line(self):
         py = os.path.join(T2, "t2lib", "hosts.py")
 

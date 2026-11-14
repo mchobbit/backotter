@@ -936,8 +936,10 @@ def gate_plan(ctx):
             w.all = w.sweep = True
         c = copy.copy(ctx)   # the caller's --universe names its own family's cells
         c.options = {k: v for k, v in (getattr(ctx, "options", None) or {}).items() if k != "universe"}
+        gate_plan.error = None
         return planmod.make(w, c)
-    except Exception:   # noqa: BLE001 - the rows then have no planned key
+    except Exception as e:   # noqa: BLE001 - the rows then have no planned key
+        gate_plan.error = f"{type(e).__name__}: {e}"   # (stic.py's gate_step names it)
         return None
 
 

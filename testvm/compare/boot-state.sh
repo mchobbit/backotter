@@ -4,7 +4,8 @@
 # guest and in the original, and compares the two.
 #
 # Prints, one item a line:
-#   init NAME           systemd, openrc, runit, dinit, s6-rc, sysv-rc or
+#   init NAME           systemd, openrc, runit, dinit, s6-rc, sysv-rc,
+#                       slackware-rc (Slackware's BSD-style /etc/rc.d) or
 #                       unknown (by PID 1, and the tools beside it: Devuan's
 #                       and Alpine's PID 1 is a plain init running OpenRC)
 #   state STATE         running, or degraded if the init reports a service
@@ -20,7 +21,10 @@
 # down), or "restarting" for a supervised one up for less than 10 s in a
 # system up for a minute, and, under sysv-rc, which has no record of its
 # services, "status=N", the exit status of the service's own status action
-# (0 running, 3 not running, 4 unknown: the LSB's).
+# (0 running, 3 not running, 4 unknown: the LSB's), and, under
+# slackware-rc, where a service is on when its /etc/rc.d/rc.NAME is
+# executable, "up" or "down" by whether its daemon is running, for the rc
+# scripts whose daemon is known (SLACK_DAEMONS).
 #
 # POSIX sh, busybox included.
 
@@ -35,6 +39,7 @@ case $pid1 in
     s6-svscan) init=s6-rc ;;
     *)  if command -v rc-status >/dev/null 2>&1 && [ -d /run/openrc ]; then init=openrc
         elif [ -d /etc/rcS.d ] && command -v runlevel >/dev/null 2>&1; then init=sysv-rc
+        elif [ -f /etc/rc.d/rc.M ] && [ -f /etc/slackware-version ]; then init=slackware-rc
         else init=unknown; fi ;;
 esac
 echo "init $init"
@@ -48,6 +53,8 @@ if [ $init = systemd ]; then
 fi
 
 uptime_s() { cut -d. -f1 /proc/uptime; }
+# Slackware's rc scripts and the daemon each starts.
+SLACK_DAEMONS="rc.sshd:sshd rc.syslog:syslogd rc.crond:crond rc.atd:atd rc.acpid:acpid rc.udev:udevd rc.elogind:elogind-daemon rc.messagebus:dbus-daemon rc.inet1:dhcpcd rc.ntpd:ntpd rc.cups:cupsd"
 
 # Every service, "NAME STATE", sorted.
 services() {
@@ -105,6 +112,11 @@ services() {
             timeout 20 "/etc/init.d/$n" status >/dev/null 2>&1 </dev/null
             echo "$n status=$?"
         done ;;
+    slackware-rc)
+        for p in $SLACK_DAEMONS; do
+            [ -x "/etc/rc.d/${p%%:*}" ] || continue
+            if pgrep -x "${p#*:}" >/dev/null 2>&1; then echo "${p%%:*} up"; else echo "${p%%:*} down"; fi
+        done ;;
     esac | sort -u
 }
 
@@ -114,6 +126,7 @@ failed() {
     openrc) awk '$2 == "crashed" || $2 == "failed" || $2 == "stopped" { print $1 }' ;;
     runit) awk '$2 != "run" { print $1 }' ;;
     dinit) awk '$2 == "failed" { print $1 }' ;;
+    slackware-rc) awk '$2 == "down" { print $1 }' ;;
     # Down while the default bundle wants it, or restarting.
     s6-rc)
         want=$(s6-rc-db all-dependencies default 2>/dev/null)
@@ -133,6 +146,9 @@ settling() {
     sysv-rc) case $(runlevel 2>/dev/null) in *unknown*) return 0 ;; esac
              ps -e -o args= 2>/dev/null | grep -q '^/bin/sh /etc/init\.d/rc ' ;;
     dinit) grep -q ' changing$' "$1" ;;
+    # rc.M (and rc.local from it) still running: not settled.
+    slackware-rc) case $(runlevel 2>/dev/null) in *unknown*) return 0 ;; esac
+                  ps -e -o args= 2>/dev/null | grep -q '^/bin/sh /etc/rc\.d/rc\.M' ;;
     *) return 1 ;;
     esac
 }

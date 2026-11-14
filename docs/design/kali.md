@@ -239,6 +239,37 @@ on both hosts.
   - It's a bug in the rustic fork, not in Kali's support, so the judge
     isn't told to accept it. K4 stays open until the fork is fixed (a
     follow-up of its own).
+- **The cause, found 2026-11-14 (an instrumented rustic-bko, then a
+  replay in the Kali guest):**
+  - The hole was never lost. The plan was right: fresh, sparse, and no
+    write touched the tail. `SEEK_HOLE` found the hole after every write.
+  - The extra 8 sectors are an ext4 extent-tree block. The source is 1
+    extent. The restore came back in 5 or more, and ext4 keeps only 4 in
+    the inode. With that block, st_blocks × 512 is past the size, and
+    `fsmeta.py` (holes only if st_blocks × 512 < size) sees no hole.
+  - The fragmentation is rustic_core's: it opened and closed the file for
+    every blob. ext4 drops an inode's preallocation at the last writer's
+    close, so writeback during a big parallel restore scattered the file.
+    restic-bko keeps one handle per file.
+  - Minimal reproduction: the Kali kernel's ext4, 8 copies of vmlinuz
+    written with restic's blob ranges and a sync every 3–20 ms.
+    Open/write/close per blob gave 43 of 320 files past their size
+    (up to 8 extents). One handle per file gave 0 of 320 (at most 2).
+  - Only restic->rustic failed because restic's chunks for this file gave
+    more, smaller writes out of order.
+- **The fix** (rustic_core, uncommitted on `backotter` over 3bb01f1): the
+  restore writes each file through one handle while it has writes to come
+  (`commands/restore/files_writer.rs`, restic-bko's `fileswriter.go`
+  design, at most threads + 50 idle handles). It has unit tests.
+  rustic-bko 0.11.4+backotter.12 was built from it (sha256 08d4ffce…).
+  - With it, `kfix1` and `kfix2` on Chopin: **35 PASS, 4 LIMIT, 0 FAIL**
+    each. vmlinuz has 28,408 blocks, with its hole, in all four
+    directions.
+  - `kfixq2` on Cinqcent: **35 PASS, 4 LIMIT, 0 FAIL**. An earlier run,
+    `kfixq`, was stopped for the host's disk swap and doesn't count.
+  - Still exposed: `fsmeta.py`'s st_blocks test hides a sub-block hole
+    in any file with an extent-tree block. Measuring holes with
+    `SEEK_HOLE` alone would be robust (a follow-up).
 - **Registered:** `stic/manifests.json` (`host: ["pkg:dosfstools"]`),
   `limits.json`, `check-manifests.py`'s count 53, `tests/test_stic.py`'s
   counts, and the README's Chopin row and estimate (kali 330 s).

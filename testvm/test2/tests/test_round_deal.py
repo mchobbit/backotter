@@ -410,6 +410,138 @@ class GuestSlots(unittest.TestCase):
         self.assertIn('grange=${BKO_GUEST_RANGE:-$(hosts_get "$mode" slot_range)}', body)
 
 
+# What a whole amd64 round holds, binary by binary: restic-bko for every OS but Haiku
+# (which has no restic), rustic-bko for all of them.  facts_host.py holds the same table;
+# a round short of any of it isn't complete, whoever its builders were.
+AMD64_PLATS = {"linux": ("restic-bko", "rustic-bko"), "freebsd": ("restic-bko", "rustic-bko"),
+               "netbsd": ("restic-bko", "rustic-bko"), "openbsd": ("restic-bko", "rustic-bko"),
+               "dragonfly": ("restic-bko", "rustic-bko"), "illumos": ("restic-bko", "rustic-bko"),
+               "haiku": ("rustic-bko",)}
+ARM64_PLATS = {"linux-arm64": ("restic-bko", "rustic-bko")}
+AMD64_NAMES = [f"{p}/{b}" for p, bs in AMD64_PLATS.items() for b in bs]
+
+
+class RoundComplete(unittest.TestCase):
+    """facts_host.py: a round is complete once every builder of its build-hosts file has its
+    build-HOST.files and .tsv in a SHA256SUMS that names them AND the round holds every binary
+    its architectures require, whatever its builders did; a round with no build-hosts file is
+    read as before, the two hosts that built every round until 2026-11-14 and no platform rule."""
+
+    def setUp(self):
+        self.d = tempfile.mkdtemp(prefix="t2-rc-")
+        self.addCleanup(shutil.rmtree, self.d, True)
+
+    def put(self, name, text):
+        p = os.path.join(self.d, name)
+        os.makedirs(os.path.dirname(p), exist_ok=True)
+        with open(p, "w", encoding="utf-8") as f:
+            f.write(text)
+
+    def sums(self, names, where="SHA256SUMS"):
+        self.put(where, "".join(f"{'a' * 64}  ./{n}\n" for n in names))
+
+    def build(self, builders, plats, share=None, sums=None):
+        """A round of PLATS ({dir: binaries}), built by BUILDERS (None: no build-hosts file,
+        so the old pair).  Each builder gets a build-HOST pair; SHARE says which files each
+        one's .files lists (default: the first builder's lists them all), SUMS what the round's
+        SHA256SUMS names (default: every binary).  An arm64 directory gets its own SHA256SUMS."""
+        names = []
+        for plat, bins in plats.items():
+            for b in bins:
+                self.put(f"{plat}/{b}", f"{b} {plat}\n")
+                names.append(f"{plat}/{b}")
+            if plat.endswith("-arm64"):
+                self.sums(bins, f"{plat}/SHA256SUMS")
+        who = list(builders) if builders is not None else list(facts_host.ROUND_BUILDERS)
+        if builders is not None:
+            self.put("build-hosts", "".join(h + "\n" for h in who))
+        for i, h in enumerate(who):
+            got = share[h] if share is not None else (names if i == 0 else [])
+            self.put(f"build-{h}.files", "".join(n + "\n" for n in got))
+            self.put(f"build-{h}.tsv", "x\n")
+        self.sums(names if sums is None else sums)
+
+    def test_a_whole_round_over_four_builders(self):
+        names = ["chopin", "cinqcent", "copland", "cage"]
+        self.build(names, AMD64_PLATS)
+        self.assertEqual(facts_host.round_builders(self.d), tuple(names))
+        self.assertEqual(facts_host.round_arches(self.d), ("amd64",))
+        self.assertEqual(facts_host.round_missing(self.d), [])
+        self.assertTrue(facts_host.round_complete(self.d))
+
+    def test_a_builder_that_hasnt_finished(self):
+        self.build(["chopin", "cinqcent", "cage"], AMD64_PLATS)
+        os.unlink(os.path.join(self.d, "build-cage.tsv"))
+        self.assertFalse(facts_host.round_complete(self.d))
+
+    def test_a_round_short_of_platforms_says_which(self):
+        """What --only, or a --hosts whose hosts can't take every unit, leaves behind: the
+        builders have finished, and the round is still not one to test with."""
+        self.build(["chopin"], {"linux": ("restic-bko", "rustic-bko"), "freebsd": ("restic-bko",)})
+        self.assertEqual(facts_host.round_missing(self.d),
+                         ["freebsd: no rustic-bko", "netbsd: no restic-bko, no rustic-bko",
+                          "openbsd: no restic-bko, no rustic-bko",
+                          "dragonfly: no restic-bko, no rustic-bko",
+                          "illumos: no restic-bko, no rustic-bko", "haiku: no rustic-bko"])
+        self.assertFalse(facts_host.round_complete(self.d))
+
+    def test_haiku_is_asked_for_rustic_bko_alone(self):
+        self.build(["chopin"], AMD64_PLATS)
+        self.assertFalse(os.path.exists(os.path.join(self.d, "haiku", "restic-bko")))
+        self.assertTrue(facts_host.round_complete(self.d))
+        os.unlink(os.path.join(self.d, "haiku", "rustic-bko"))
+        self.assertEqual(facts_host.round_missing(self.d), ["haiku: no rustic-bko"])
+
+    def test_a_binary_the_sums_dont_name(self):
+        """A file in the bin that the round's SHA256SUMS doesn't name isn't a shipped binary:
+        the gather hadn't summed it (here the builders' own files are all accounted for)."""
+        less = [n for n in AMD64_NAMES if n != "openbsd/rustic-bko"]
+        self.build(["chopin"], AMD64_PLATS, share={"chopin": less}, sums=less)
+        self.assertEqual(facts_host.round_missing(self.d), ["openbsd: rustic-bko not in SHA256SUMS"])
+        self.assertFalse(facts_host.round_complete(self.d))
+
+    def test_an_arm64_round_wants_its_own_sums_too(self):
+        self.build(["chopin", "cinqcent"], dict(AMD64_PLATS, **ARM64_PLATS))
+        self.assertEqual(facts_host.round_arches(self.d), ("amd64", "arm64"))
+        self.assertTrue(facts_host.round_complete(self.d))
+        self.sums(["restic-bko"], "linux-arm64/SHA256SUMS")   # rustic-bko's line lost
+        self.assertEqual(facts_host.round_missing(self.d),
+                         ["linux-arm64: rustic-bko not in linux-arm64/SHA256SUMS"])
+        self.assertFalse(facts_host.round_complete(self.d))
+
+    def test_an_arm64_directory_the_sums_dont_name_is_a_leftover(self):
+        """What a failed --arch arm64 attempt leaves in a build host's bin (the distribution
+        deletes nothing): the amd64 round built and summed afterwards is whole, and the
+        leftover doesn't ask the round for arm64 binaries for ever."""
+        self.build(["chopin", "cinqcent"], AMD64_PLATS)
+        self.put("linux-arm64/restic-bko", "a half-built arm64 attempt\n")
+        self.assertEqual(facts_host.round_arches(self.d), ("amd64",))
+        self.assertEqual(facts_host.round_missing(self.d), [])
+        self.assertTrue(facts_host.round_complete(self.d))
+        # once the round really is an arm64 one, its sums name it and it is asked for
+        self.build(["chopin", "cinqcent"], dict(AMD64_PLATS, **ARM64_PLATS))
+        self.assertEqual(facts_host.round_arches(self.d), ("amd64", "arm64"))
+
+    def test_an_arm64_only_round_is_asked_for_arm64_alone(self):
+        """--arch arm64 builds no amd64 binary, and its round is whole without one."""
+        self.build(["chopin", "cinqcent"], ARM64_PLATS)
+        self.assertEqual(facts_host.round_arches(self.d), ("arm64",))
+        self.assertTrue(facts_host.round_complete(self.d))
+
+    def test_a_round_with_no_build_hosts_file_is_the_old_pair(self):
+        """An older round, or a copy that reached a host before build-round.sh wrote the file:
+        the two builders, and no platform asked for (the fix rounds among them had few)."""
+        self.build(None, {"linux": ("rustic-bko",), "freebsd": ("rustic-bko",)},
+                   share={"chopin": ["linux/rustic-bko"], "cinqcent": ["freebsd/rustic-bko"]})
+        self.assertEqual(facts_host.round_builders(self.d), ("chopin", "cinqcent"))
+        self.assertTrue(facts_host.round_complete(self.d))
+        os.unlink(os.path.join(self.d, "build-cinqcent.files"))
+        self.assertFalse(facts_host.round_complete(self.d))
+
+    def test_a_sums_short_of_a_builders_file(self):
+        self.build(["chopin"], {"linux": ("restic-bko",)}, sums=["linux/rustic-bko"])
+        self.assertFalse(facts_host.round_complete(self.d))
+
 
 if __name__ == "__main__":
     unittest.main()

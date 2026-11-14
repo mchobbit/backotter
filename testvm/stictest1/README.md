@@ -153,7 +153,7 @@ watched through their exit files every 15 s; the results land in
 
 The queue times guests by their newest passing run on the hosts, else by these.
 
-Estimates (seconds; round st2a's, GuestTest1's for the guests it added, Bazzite B5's for kinoite44, Chimera C4's for chimera, chimera-uefi and chimera-zfs, Gentoo G4's for gentoo and gentoo-systemd, AnduinOS A4's for anduinos2, PikaOS P5's for pikaos4 and pikaos4-luks, Guix GX5's for guix15 and guix15-bios, Proxmox P5's for proxmox9 and proxmox9-mirror, TrueNAS T5's for truenas25, Vanilla OS V6's for vanilla3, MicroOS M4's for microos, Leap 16 L4's for leap16, elementary E5's for elementary8 and elementary8-luks, an estimate for garuda until Garuda GA5's run, Solus S4's for solus49):
+Estimates (seconds; round st2a's, GuestTest1's for the guests it added, Bazzite B5's for kinoite44, Chimera C4's for chimera, chimera-uefi and chimera-zfs, Gentoo G4's for gentoo and gentoo-systemd, AnduinOS A4's for anduinos2, PikaOS P5's for pikaos4 and pikaos4-luks, Kali K4's for kali, Guix GX5's for guix15 and guix15-bios, Proxmox P5's for proxmox9 and proxmox9-mirror, TrueNAS T5's for truenas25, Vanilla OS V6's for vanilla3, MicroOS M4's for microos, Leap 16 L4's for leap16, elementary E5's for elementary8 and elementary8-luks, an estimate for garuda until Garuda GA5's run, Solus S4's for solus49):
 aerynos 150, alpine324 153, alpinebsd 401, anduinos2 400, arch 137, artix-dinit 170,
 artix-s6 367, cachyos 300, chimera 215, chimera-uefi 200, chimera-zfs 290,
 debian12 117, debian13 477, debian13-stack 547, debian13-zfs 856,

@@ -2,7 +2,9 @@
 
 2026-11-14. The user approved this spec on 2026-11-14 with every
 recommended decision (the last section). BL1-BL5 are done (2026-11-14;
-HoltTest1 PASS on Chopin `bl4-2` and Cinqcent `bl4-3`); BL6 waits.
+HoltTest1 PASS on Chopin `bl4-2` and Cinqcent `bl4-3`). BL6's rehearsals
+are done ("What BL6's rehearsals found"); its Thinkpad run waits for the
+user.
 BigLinux is a Brazilian
 desktop distribution built on Manjaro's stable branch. The task is to support
 it the way EndeavourOS and Manjaro were supported (commit 6715f43), following
@@ -405,6 +407,73 @@ Timeshift snapshots.
 - **Boot:** `EFI/BigLinux/grubx64.efi` and the fallback are the same
   bytes; the restored disk boots through the fallback (fresh NVRAM), and
   through `\EFI\BigLinux\grubx64.efi` when given as BootNext.
+
+## What BL6's rehearsals found
+
+`bs1-qemu.py --virtio` on `biglinux` (generation c830df23, image
+45447f2a…7a85), 2026-11-14: bko-holt 0fc656c1 (built from a435027's
+`holt/`), rustic-bko 0.11.4+backotter.12, the pinned `--test` image. The
+source gets the NVRAM a Calamares install leaves: a private GUEST_DIR
+whose `uefi-vars.fd` has `BigLinux` (`\EFI\BigLinux\grubx64.efi`) first
+in BootOrder, so the source boots by it (BootCurrent 0003), as the
+Thinkpad will.
+
+- **Results:** `r1-cinqcent` passed every check but verify's manifest
+  (652 s, RAM-disk peak 12.4 GiB). `r1-chopin`, with the fix below:
+  **PASS** (710 s, 12.6 GiB). After the hosts moved to kernel 7.2.12, ZFS
+  2.4.4 and QEMU 11.1.2, both ran again with the fix: **`r2-chopin` PASS**
+  (654 s, 12.4 GiB) and **`r2-cinqcent` PASS** (645 s, 12.4 GiB). Each
+  had 0 unexpected differences in 581,846 files.
+- **One fix:** verify found `swapfile/1` and `swapfile/zram-writeback-1`
+  changed. They are systemd-swap's swap files in the `@swapfile`
+  subvolume at `/swapfile`, in use at backup time and written anew at every
+  boot. `bs1-manifest`'s EXPECTED gained `swapfile/*` (a test in
+  `test_ostree_paths.py`).
+- **Phase 1** took ~3.5 min, the restore ~4 min (read-back 36 s, restore
+  108 s, compare 71 s, boot stage 20 s). bs1-adopt installed nothing:
+  BigLinux has sshd and avahi. `UNLOCK=none`.
+- **Boot:** the restored system booted `BigLinux` (0003) from NVRAM, and
+  again by BootOrder on a later boot. load's efi-dedupe left one
+  `BigLinux` entry, not two.
+- **Timeshift:** the plan's note names the source's snapshot
+  (`2026-11-14_04-34-40`). After the restore, `timeshift --list` says "No
+  snapshots found", and there is no `timeshift-btrfs` and no
+  `grub-btrfs.cfg`. The hourly `timeshift --check` cron is in place and
+  cronie is active, so the first check after the restore takes a new
+  daily snapshot of the restored system: a new, complete one, not a stale
+  one.
+- **As BL4 found:** `/boot` and `/usr/share/grub` are 100% `none` by
+  `compsize`. Swap is zram1 plus `/swapfile/1`, both NOCOW and active. The
+  default subvolume is 5, as on the source, with the `default_subvol` flag
+  (load's note, then `set-default`). No unit failed.
+
+**For the real run on the Thinkpad** (needs the user; the Thinkpad runs
+Guix now, which this replaces: Guix's library backup
+`guix-20261114-114854` can come back later):
+
+1. Install from `biglinux_2026-10-03_k618.iso` (SHA-256 `1d12186a…e90`)
+   with Calamares's defaults on the internal NVMe: btrfs, UEFI, **no
+   encryption** (LUKS isn't rehearsed and is out of scope here), no swap
+   partition (systemd-swap makes its own). Keep Secure Boot off: the
+   guest and the rehearsals boot without it (`--no-secure-boot`).
+2. Let it run a day, online, so `big-first-boot` finishes (it runs once,
+   takes the first Timeshift snapshot, then removes itself) and the hourly
+   check takes a daily one. Neither gets in the way afterwards. Snapshots
+   with `info.json` stay. Snapshots aren't mounted, so they're outside the
+   backup, and the restore leaves them out with a note. If the hourly
+   check fires during phase 1, it only adds one more snapshot, and
+   grub-btrfsd's `/boot/grub` rewrite is expected churn.
+3. Then `sudo sh /PATH/TO/mybig512/backshot1/bs1-adopt`. It should install
+   nothing. Reboot once.
+4. Stage tools from main at or after a435027 plus this fix
+   (`bs1-manifest`'s `swapfile/*`). Use a bko-holt that knows BigLinux
+   (0fc656c1 or newer, not `/bkoscratch/holttest1d/bin`'s 0.2.4) and
+   rustic-bko ≥ 0.11.4+backotter.11 (.12 rehearsed). Then phase1, Done,
+   to-stick, plan, phase2, reboot, verify. The run is unattended: no LUKS,
+   no ostree.
+5. On the real NVMe, Calamares picks SSD mount options, not virtio's
+   `autodefrag`. load copies the source's fstab, so nothing differs for
+   the restore.
 
 ## Pieces to build (ordered, est.)
 

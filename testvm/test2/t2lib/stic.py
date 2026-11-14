@@ -771,7 +771,8 @@ class SticRun:
         except Exception as e:   # noqa: BLE001 - a gate that can't be planned refuses the run
             return False, f"the {part} archiver gate can't be planned: {type(e).__name__}: {cut(e, 200)}"
         if gp is None:
-            return False, f"the {part} archiver gate can't be planned"
+            why = getattr(getattr(gate, "gate_plan", None), "error", None)
+            return False, f"the {part} archiver gate can't be planned" + (f": {cut(why, 200)}" if why else "")
         due = [c.cell for c in gp.due() if c.cell[len("gate:"):].split("@")[0] in names]
         opts = getattr(self.ctx, "options", None) or {}
         if opts.get("gate_universe") is not None:   # (--universe, test only: a composite's gate cells)

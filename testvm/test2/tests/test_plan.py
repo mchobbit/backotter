@@ -62,7 +62,7 @@ class Scenarios(WorldCase):
     """The contract's U2.2 rows, one test each."""
 
     def test_nothing_changed(self):
-        for word, rows, n in (("SticTest2 rel4", self.r_stic, 47), ("HoltTest2", self.r_holt, 77),
+        for word, rows, n in (("SticTest2 rel4", self.r_stic, 48), ("HoltTest2", self.r_holt, 79),
                               ("GateTest2", self.r_gate, 13)):
             p = self.w.plan(word + " plan", rows)
             self.assertEqual(p.totals["due"], 0, word)
@@ -79,7 +79,7 @@ class Scenarios(WorldCase):
             f[h]["sets"]["roundrel4"] = self.w.binset("rel4", rc, only={"linux/rustic-bko": "rel4b"})
         p = self.w.plan("SticTest2 rel4 plan", self.r_stic, facts=f)
         due = {c.cell for c in p.due()}
-        self.assertEqual(len(due), 34)   # 33 Linux checks and sculpt2610
+        self.assertEqual(len(due), 35)   # 34 Linux checks and sculpt2610
         self.assertTrue(all(st(p, c) == ("due", "changed:bin") for c in due))
         self.assertEqual(st(p, "stic:freebsd15"), ("current", None))
         self.assertIn("(rustic", "; ".join(p.cell("stic:debian13").reasons))
@@ -87,7 +87,7 @@ class Scenarios(WorldCase):
     def test_version_only(self):
         f = self.w.facts(round_commits=self.w.forks["c1"], round_tag="rel5")
         p = self.w.plan("SticTest2 rel4 plan", self.r_stic, facts=f)
-        self.assertEqual(by(p), {("carried", "carry:version-only"): 47})
+        self.assertEqual(by(p), {("carried", "carry:version-only"): 48})
         self.assertEqual(p.cell("stic:debian13").via, self.r_stic[[r["cell"] for r in self.r_stic].index("stic:debian13")]["id"])
 
     def test_affected_v1_and_b2_representative(self):
@@ -137,11 +137,11 @@ class Scenarios(WorldCase):
                                                           "omnios58", "haiku6", "sculpt2610", "debian13-stack",
                                                           "omarchy")))
         self.assertTrue(all(c.rule == "canary:plumbing" for c in p.due()))
-        self.assertEqual(len(p.by_status("awaiting-canaries")), 38)
+        self.assertEqual(len(p.by_status("awaiting-canaries")), 39)
         rows = self.r_stic + [self.w.row(p.cell(c), "chopin", plan_=p) for c in can]
         p2 = self.w.plan("SticTest2 rel4 plan", rows, facts=f)
         self.assertEqual(p2.totals["due"], 0)
-        self.assertEqual(len(p2.by_status("canary-verified")), 38)
+        self.assertEqual(len(p2.by_status("canary-verified")), 39)
         # R27: a canary-verified cell may ride along beside a bare run
         f3 = self.w.facts(plumb="p2", gens={"debian13": 2})
         p3 = self.w.plan("SticTest2 rel4 plan", rows, facts=f3)
@@ -153,15 +153,15 @@ class Scenarios(WorldCase):
         p = self.w.plan("SticTest2 rel4 plan", self.r_stic, facts=f)
         self.assertEqual(sum(1 for c in p.due() if c.rule == "canary:host"), 9)
         self.assertEqual(sum(1 for c in p.due() if c.rule == "stale:beside"), 2)
-        self.assertEqual(len(p.by_status("soft-stale")), 36)
+        self.assertEqual(len(p.by_status("soft-stale")), 37)
         self.assertIn("6.12.115->6.12.116", "; ".join(p.by_status("soft-stale")[0].reasons))
         p = self.w.plan("SticTest2 rel4 stale plan", self.r_stic, facts=f)
-        self.assertEqual(sum(1 for c in p.due() if c.rule == "stale"), 38)
+        self.assertEqual(sum(1 for c in p.due() if c.rule == "stale"), 39)
 
     def test_stale_with_names_adds_the_soft_stale_cells(self):
         f = self.w.facts(kernel="6.12.116")
         p = self.w.plan("SticTest2 rel4 debian13 stale plan", self.r_stic, facts=f)
-        self.assertEqual(by(p), {("due", "fresh:names"): 1, ("due", "stale"): 37})
+        self.assertEqual(by(p), {("due", "fresh:names"): 1, ("due", "stale"): 38})
         p = self.w.plan("SticTest2 rel4 debian13 plan", self.r_stic, facts=f)
         self.assertEqual(by(p), {("due", "fresh:names"): 1})
 
@@ -198,7 +198,7 @@ class Scenarios(WorldCase):
         p = self.w.plan("SticTest2 rel4 plan", self.r_stic, facts=fa)
         rows = self.r_stic + [self.w.row(c, "chopin", age_h=-2, plan_=p) for c in p.due()]
         got = self.w.plan("SticTest2 rel4 plan", rows, facts=fa)
-        self.assertEqual(sum(1 for c in got.cells if c.status == "canary-verified"), 38)
+        self.assertEqual(sum(1 for c in got.cells if c.status == "canary-verified"), 39)
         bad = self.w.row(p.cell("stic:debian12"), "chopin", verdict="FAIL", age_h=-3, plan_=p)
         got = self.w.plan("SticTest2 rel4 plan", rows + [bad], facts=fa)
         self.assertEqual(st(got, "stic:debian12"), ("due", "failed"))
@@ -259,7 +259,7 @@ class Scenarios(WorldCase):
     def test_unmapped_path(self):
         self.w.edit("testvm/compare/newhelper.sh", "# no spec names it\n", commit=True)
         p = self.w.plan("SticTest2 rel4 plan", self.r_stic)
-        self.assertEqual(by(p), {("due", "changed:unmapped"): 47})
+        self.assertEqual(by(p), {("due", "changed:unmapped"): 48})
         self.assertEqual(p.unmapped, ["testvm/compare/newhelper.sh"])
         self.assertIn("unmapped: name them in a spec", p.render())
         # not under holt's watch: holt is unaffected; an ignored path is unmapped for nobody
@@ -275,7 +275,7 @@ class Scenarios(WorldCase):
         cl = json.loads(self.w.read("testvm/test2/classes.json"))
         cl["policy"]["judge_change"] = "soft-stale"
         p = self.w.plan("SticTest2 rel4 plan", self.r_stic, classes=cl)
-        self.assertEqual(by(p), {("soft-stale", None): 47})
+        self.assertEqual(by(p), {("soft-stale", None): 48})
         self.w.edit("testvm/holttest1d/judge.py", "# holt judge changed\n")
         p = self.w.plan("HoltTest2 plan", self.r_holt)
         self.assertEqual(st(p, "holt:debian13"), ("due", "holt:judge"))
@@ -343,20 +343,20 @@ class Holt(WorldCase):
         with self.assertRaises(plan.PlanError):
             self.w.plan("HoltTest2 plan", self.r_holt, holt_bin="~/nowhere")
 
-    def test_version_only_bump_carries_all_77(self):
+    def test_version_only_bump_carries_all_79(self):
         self.w.edit("holt/Cargo.toml", self.w.read("holt/Cargo.toml").replace("0.2.4", "0.2.5"))
         self.w.edit("holt/Cargo.lock", self.w.read("holt/Cargo.lock").replace("0.2.4", "0.2.5"), commit=True)
         p = self.w.plan("HoltTest2 plan", self.r_holt)
-        self.assertEqual(by(p), {("carried", "carry:version-only"): 77})
+        self.assertEqual(by(p), {("carried", "carry:version-only"): 79})
         res = p.cell("holt:debian13").res["chopin"]
         self.assertTrue(res.inputs["bin"]["linux/bko-holt"].startswith("code:"))   # R14
         g = self.w.plan("GateTest2 plan", self.r_gate)
         self.assertEqual(st(g, "gate:holt"), ("due", "changed:harness"))
 
-    def test_code_no_plan_shows_all_69(self):
+    def test_code_no_plan_shows_all_71(self):
         self.w.edit("holt/src/load/exec.rs", "// runs the plan, changed\n", commit=True)
         p = self.w.plan("HoltTest2 plan", self.r_holt)
-        self.assertEqual(sum(1 for c in p.cells if c.rule == "holt:code"), 69)
+        self.assertEqual(sum(1 for c in p.cells if c.rule == "holt:code"), 71)
         self.assertEqual(st(p, "holt:debian13+oneshot")[0] in ("soft-stale", "due"), True)
         self.assertNotEqual(st(p, "holt:debian13+oneshot")[1], "holt:variants")
         # the variants of a guest whose golden plan changed in partition, assemble or close run
@@ -372,7 +372,7 @@ class Holt(WorldCase):
     def test_commands_rs_with_and_without_the_gate_row(self):
         self.w.edit("holt/src/load/commands.rs", "// prints the plan, changed\n", commit=True)
         p = self.w.plan("HoltTest2 plan", self.r_holt + self.r_gate)
-        self.assertEqual(sum(1 for c in p.cells if c.rule == "holt:code"), 69)
+        self.assertEqual(sum(1 for c in p.cells if c.rule == "holt:code"), 71)
         self.assertIn("plan diff not known", "; ".join(p.cell("holt:arch").reasons))
         g = self.w.plan("GateTest2 plan", self.r_gate)
         gh = self.w.row(g.cell("gate:holt"), "chopin", plan_=g, extra={"plan_diff": {
@@ -385,7 +385,7 @@ class Holt(WorldCase):
                                "holt:mint22+bigger": "holt:variants", "holt:mint22+oneshot": "holt:variants",
                                "holt:debian13-stack+degraded": "holt:variants",
                                "holt:ubuntu26-raid+degraded": "holt:variants"})
-        self.assertEqual(by(p)[("carried", "carry:plan-diff")], 72)
+        self.assertEqual(by(p)[("carried", "carry:plan-diff")], 74)
 
     def test_rustic_only_change_panel_and_carried(self):
         f = self.w.facts(rustic_tag="bko2")
@@ -393,7 +393,7 @@ class Holt(WorldCase):
         self.assertEqual({c.cell for c in p.due()},
                          {f"holt:{g}" for g in ("omarchy", "nixos2605", "freebsd15", "netbsd11", "openbsd8",
                                                 "dragonfly6", "omnios58", "haiku6")})
-        self.assertEqual(by(p)[("carried", "carry:rustic-panel")], 70)
+        self.assertEqual(by(p)[("carried", "carry:rustic-panel")], 72)
 
     def test_rescuer_panel_and_soft_stale(self):
         f = self.w.facts(rescuer="r2")
@@ -460,7 +460,7 @@ class Holt(WorldCase):
                            ("HoltTest2 debian13+oneshot +oneshot plan", {"holt:debian13+oneshot"})):
             self.assertEqual({c.cell for c in self.w.plan(text, self.r_holt).due()}, want, text)
         p = self.w.plan("HoltTest2All plan", self.r_holt)
-        self.assertEqual(by(p), {("due", "fresh:All"): 77})
+        self.assertEqual(by(p), {("due", "fresh:All"): 79})
 
 
 class Classes(WorldCase):
@@ -493,9 +493,9 @@ class Classes(WorldCase):
             ctx = w.ctx(self.r_stic, fa)
             wd = w.word("SticTest2 rel4", ctx)
             p = plan.make(wd, ctx)
-            self.assertEqual(len(p.by_status("carried")), 47)
+            self.assertEqual(len(p.by_status("carried")), 48)
             rows = run.derived_rows(p, "t2s-20261109T0000-abcd", wd, ctx, {"cells": [], "stops": []}, self.r_stic)
-            self.assertEqual(len(rows), 47)
+            self.assertEqual(len(rows), 48)
             now = w.plan("SticTest2 rel4 plan", self.r_stic + rows, facts=fa)
             self.assertEqual(sum(1 for c in now.due() if c.rule == rule), 9, rule)
 
@@ -524,7 +524,7 @@ class Classes(WorldCase):
         self.assertTrue(any("the panel didn't pass (holt:omarchy)" in n for n in notes), notes)
         rows["holt:omarchy"] = w.row(om, next(iter(om.res)), plan_=p)
         got, _ = derive(rows)
-        self.assertEqual(len(got), 70)
+        self.assertEqual(len(got), 72)
 
     def test_shared_helper_one_representative(self):
         self.w.edit("testvm/stictest1/freebsd15/extra.sh", "# shared, changed\n")
@@ -594,7 +594,7 @@ class Unbuilt(WorldCase):
         self.assertTrue(p.set["round"].startswith("t2r-"))
         self.assertTrue(any("isn't built" in n for n in p.notes))
         # rel4's PASSes ran c0; the heads are a version bump: carried, by source diff
-        self.assertEqual(by(p), {("carried", "carry:version-only"): 47})
+        self.assertEqual(by(p), {("carried", "carry:version-only"): 48})
         # heads equal to the last PASS's commits: the binaries are predicted unchanged
         self.w.set_heads("c0")
         f = self.w.facts()
@@ -602,7 +602,7 @@ class Unbuilt(WorldCase):
             f[h]["rounds"] = {}
         p = self.w.plan("SticTest2 plan", self.r_stic, facts=f)
         self.assertTrue(p.set["pending"])
-        self.assertEqual(by(p), {("current", None): 47})
+        self.assertEqual(by(p), {("current", None): 48})
         self.assertIn("not built: assumed reused", "; ".join(p.cell("stic:debian13").reasons))
 
 
@@ -644,11 +644,12 @@ class Estimates(unittest.TestCase):
                                                    "holt:chimera-uefi", "holt:chimera-zfs", "holt:gentoo", "holt:gentoo-systemd",
                                                    "holt:cachyos-zfs", "holt:anduinos2", "holt:neon24", "holt:garuda", "holt:biglinux", "holt:proxmox9", "holt:proxmox9-mirror",
                                                    "holt:oi2610", "holt:oi2610-bios", "stic:oi2610", "holt:vanilla3",
-                                                   "holt:pikaos4", "holt:pikaos4-luks", "holt:freebsd15-geli"):
+                                                   "holt:pikaos4", "holt:pikaos4-luks", "holt:freebsd15-geli",
+                                                   "holt:ubuntu24-uefi", "holt:ubuntu24-luks", "stic:ubuntu24-uefi"):
                 fam[c.split(":")[0]] += e["gm"]     # (test2.md's figures are of the 45 sources)
         self.assertAlmostEqual(fam["stic"], 281.9, delta=0.1)     # test2.md: SticTest2All 282 gm
         self.assertAlmostEqual(fam["holt"], 246.7, delta=0.5)     # test2.md: HoltTest2All ~247 gm
-        self.assertEqual(sum(1 for c in tsv if c.startswith("holt:") and not c.endswith("+img")), 79)
+        self.assertEqual(sum(1 for c in tsv if c.startswith("holt:") and not c.endswith("+img")), 81)
         self.assertEqual(sum(1 for c in tsv if c.startswith("gate:")), 13)
 
     def test_pack_and_gate_wall(self):
@@ -665,7 +666,7 @@ class Estimates(unittest.TestCase):
 
 
 class Performance(unittest.TestCase):
-    """U2.6: a plan over every cell (47 stic, 66 holt with 9 variants, 13 gate) and 10,000 rows
+    """U2.6: a plan over every cell (48 stic, 68 holt with 9 variants, 13 gate) and 10,000 rows
     in under 2 s, without ssh."""
 
     @classmethod
@@ -682,7 +683,7 @@ class Performance(unittest.TestCase):
         for word in ("SticTest2 rel4 plan", "HoltTest2 plan", "GateTest2 plan"):
             rows += self.w.seed(self.w.plan(word))
         cells = sorted({r["cell"] for r in rows})
-        self.assertEqual(len(cells), 47 + 77 + 13)
+        self.assertEqual(len(cells), 48 + 79 + 13)
         filler = []
         i = 0
         while len(rows) + len(filler) < 10000:
@@ -752,15 +753,15 @@ class Guests(GuestCase):
         return out + self.w.seed(_only(self.p_guest, cell), age={cell: (days - 1) * 24}, extra={"try_ran": True},
                                  needs={"identity": "PASS"})
 
-    def test_new_guests_seventy_cells(self):
-        self.assertEqual(self.p_guest.totals["cells"], 70)
-        self.assertEqual(by(self.p_guest), {("due", "new"): 70})
+    def test_new_guests_seventy_two_cells(self):
+        self.assertEqual(self.p_guest.totals["cells"], 72)
+        self.assertEqual(by(self.p_guest), {("due", "new"): 72})
         self.assertNotIn("freebsd15-builder", {c.cell[6:] for c in self.p_guest.cells})
 
     def test_nothing_due_after_a_pass(self):
         p = self.plan()
         self.assertEqual(p.totals["due"], 0)
-        self.assertEqual(p.totals["counts"]["current"], 70)
+        self.assertEqual(p.totals["counts"]["current"], 72)
 
     def test_not_in_any_spec(self):
         f = self.w.facts()
@@ -815,7 +816,7 @@ class Guests(GuestCase):
         pc = p.cell("guest:debian13")
         self.assertEqual((pc.status, pc.rule), ("due", "changed:host"))
         self.assertEqual(pc.host, "chopin")
-        self.assertEqual(p.totals["due"], 70)
+        self.assertEqual(p.totals["due"], 72)
 
     def test_one_section_selects_only_its_guests(self):
         text = self.w.read("testvm/update/in-guest.sh").replace("update with moss", "update with moss, changed")
@@ -938,14 +939,14 @@ class Guests(GuestCase):
         self.assertEqual(st(p, "guest:arch"), ("due", "fresh:names"))
         self.assertEqual(len(p.cells), 1)
         p = self.plan(text="GuestTest2All plan")
-        self.assertEqual(by(p), {("due", "fresh:All"): 70})
+        self.assertEqual(by(p), {("due", "fresh:All"): 72})
 
     def test_sweep_child(self):
         ctx = self.w.ctx(self.r_guest)
         w = self.w.word("GuestTest2All plan", ctx)
         w.sweep = True
         p = plan.make(w, ctx)
-        self.assertEqual(by(p), {("due", "fresh:Sweep"): 70})
+        self.assertEqual(by(p), {("due", "fresh:Sweep"): 72})
 
     def test_a_disk_changed_behind_its_generation(self):
         f = self.w.facts()
@@ -1467,7 +1468,7 @@ class ClassTable(unittest.TestCase):
         self.assertEqual(plan.check_classes(ctx, holt_names=world.GUESTS), [])
         h = ctx.classes["holt"]
         src = {g for f in h["families"].values() for g in f} | set(h["no_family"])
-        self.assertEqual(len(src), 70)
+        self.assertEqual(len(src), 72)
         self.assertEqual(sum(len(v) for v in h["variants"].values()), 9)
         self.assertEqual(sorted(set(world.GUESTS) - src), ["freebsd15-builder", "freebsd15-ufs"])
 

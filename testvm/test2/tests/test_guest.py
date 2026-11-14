@@ -76,9 +76,9 @@ class Spec(unittest.TestCase):
         new = sorted(n for n in self.sf.names() if not self.sf.entry(n)["checks"]["established"])
         self.assertEqual(new, sorted(["endeavouros", "endeavouros-grub", "manjaro", "fedora44-raid", "ubuntu26-raid", "rocky10-raid5",
                                       "freebsd15-mirror", "omnios58-mirror", "ubuntu26-luks", "chimera", "kinoite44",
-                                      "chimera-uefi", "chimera-zfs", "gentoo", "gentoo-systemd", "cachyos-zfs", "anduinos2", "neon24", "garuda", "biglinux",
-                                      "oi2610", "oi2610-bios", "vanilla3", "pikaos4", "pikaos4-luks", "proxmox9", "proxmox9-mirror",
-                                      "microos"]))
+                                      "chimera-uefi", "chimera-zfs", "gentoo", "gentoo-systemd", "cachyos-zfs", "anduinos2", "neon24", "garuda", "biglinux", "vanilla3",
+                                      "oi2610", "oi2610-bios", "pikaos4", "pikaos4-luks", "proxmox9", "proxmox9-mirror",
+                                      "microos", "ubuntu24-uefi", "ubuntu24-luks"]))
         for n in new:
             self.assertIn("testvm/test2/guest/new-guest.sh", self.sf.entry(n)["harness"], n)
 

@@ -70,6 +70,7 @@ PACKAGES = (
     "booster", "kernel-pika", "kernel-pika-runtime", "pika-refind-theme", "refind-btrfs", "zram-tools",
     "anduinos-grub", "anduinos-shim-signed", "anduinos-secureboot-toolkit", "anduinos-btrfs-snapshots-manager",
     "proxmox-kernel-helper", "proxmox-default-kernel", "proxmox-ve", "pve-manager",
+    "lilo", "elilo", "mkinitrd", "kernel-huge", "kernel-generic", "kernel-modules", "slackpkg",
     "linux-libre", "shepherd",
     "truenas", "middlewared",
     "zfsbootmenu", "linux-mainline",
@@ -91,7 +92,7 @@ ZFS_NAMES = ("zfsutils-linux", "zfs-utils", "zfs", "zfs-user", "zfs-dkms")
 LSM_NAMES = ("selinux-policy-targeted", "selinux-policy", "apparmor")
 
 # abroot: Vanilla OS, the present root's dpkg database (pkgset.sh), and its image's digest.
-LINUX_KINDS = ("dpkg", "rpm", "pacman", "apk", "xbps", "eopkg", "moss", "portage", "nixos", "guix", "abroot")
+LINUX_KINDS = ("dpkg", "rpm", "pacman", "apk", "xbps", "eopkg", "moss", "portage", "pkgtools", "nixos", "guix", "abroot")
 BASE_KINDS = ("freebsd", "hardenedbsd", "netbsd", "alpinebsd", "openbsd", "dragonfly", "illumos", "haiku")
 
 

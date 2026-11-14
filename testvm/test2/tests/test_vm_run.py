@@ -221,6 +221,35 @@ class VmRun(unittest.TestCase):
         r, q = self.run_vm("a.qcow2", m="x86_64")   # never on x86
         self.assertIsNone(self.get("taskset"))
 
+    def test_guest_tpm(self):
+        """--guest-tpm DIR: DIR itself beside the IMAGE a boot writes, a copy in a throwaway boot (--ram,
+        --snapshot), found beside IMAGE as named; --tpm wins; no DIR, refused."""
+        # swtpm records the state directory it was given, and what was in it.
+        self.put("stub/swtpm", '#!/bin/bash\nwhile [[ $# -gt 0 ]]; do case $1 in --tpmstate) d=${2#dir=}; '
+                 'echo "$d" >"$W/swtpm.dir"; ls "$d" >"$W/swtpm.ls"; shift ;; --pid) sleep 30 </dev/null >/dev/null 2>&1 & '
+                 'echo $! >"${2#file=}"; shift ;; esac; shift; done\n')
+        os.makedirs(os.path.join(self.w, "imgs", "sub", "t.tpm"))
+        self.put("imgs/sub/b.qcow2", "")
+        self.put("imgs/sub/t.tpm/tpm2-00.permall", "state\n")
+        master = os.path.join(self.w, "imgs", "sub", "t.tpm")
+        r, q = self.run_vm("--uefi", "--guest-tpm", "t.tpm", "sub/b.qcow2", m="x86_64")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.get("swtpm.dir"), master + "\n")
+        self.assertIn("tpm-tis,tpmdev=tpm0", self.opt(q, "-device"))
+        for throwaway in ("--ram", "--snapshot"):
+            os.remove(os.path.join(self.w, "swtpm.dir"))
+            r, _ = self.run_vm("--uefi", throwaway, "--guest-tpm", "t.tpm", "sub/b.qcow2", m="x86_64")
+            self.assertEqual(r.returncode, 0, r.stderr)
+            self.assertNotEqual(self.get("swtpm.dir"), master + "\n")
+            self.assertTrue(self.get("swtpm.dir").rstrip().endswith("/guest-tpm"), self.get("swtpm.dir"))
+            self.assertEqual(self.get("swtpm.ls"), "tpm2-00.permall\n")
+        r, _ = self.run_vm("--uefi", "--tpm", "own", "--guest-tpm", "t.tpm", "sub/b.qcow2", m="x86_64")
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(self.get("swtpm.dir"), os.path.join(self.w, "imgs", "own") + "\n")
+        r, _ = self.run_vm("--uefi", "--guest-tpm", "none.tpm", "sub/b.qcow2", m="x86_64")
+        self.assertEqual(r.returncode, 1)
+        self.assertIn("--guest-tpm: no none.tpm here", r.stderr)
+
     def test_job_slice(self):
         row = next(r for r in self.table["hosts"] if r["name"] == "bigfoot")
         self.assertEqual(row["job_slice"], "bko.slice")

@@ -245,7 +245,12 @@ def parse_cargo(out):
                 continue
             m = TESTLINE.match(line)
             if m and suite is not None:
-                name = m.group(1)
+                # A test that re-runs itself in a child process with
+                # inherited stdout can leave "test OTHER ... " without its
+                # result just before this line's "test NAME ... ok": the row
+                # is NAME's (OTHER's own result line comes later).
+                raw = m.group(1).rsplit(" ... test ", 1)[-1]
+                name = raw
                 if doc:
                     name = re.sub(r" \(line \d+\)", "", name)
                     dup[name] += 1
@@ -254,8 +259,8 @@ def parse_cargo(out):
                 st = {"ok": "pass", "FAILED": "fail"}.get(m.group(2), "skip")
                 rows[(suite, name)] = st
                 if st == "fail":
-                    failout[m.group(1)] = (suite, name)
-                    suitefailed.add(m.group(1))
+                    failout[raw] = (suite, name)
+                    suitefailed.add(raw)
                     nfail += 1
         close()
         # The step as a build: every crate it needed compiled, or not; and a

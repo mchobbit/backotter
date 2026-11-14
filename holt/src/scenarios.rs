@@ -4185,3 +4185,48 @@ fn openindiana_bios() {
     assert_eq!(bt.matches("installboot").count(), 1, "{bt}");
 }
 
+
+/// OpenIndiana's report with RUNNER's answers, and its plan onto c4t0d0.
+fn openindiana_with(t: &Tree, runner: FakeRunner) -> (Value, crate::load::commands::Built) {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let sys = Sys::new(t.root(), Box::new(runner), true);
+    let os = crate::other::os_release(&sys);
+    let v = crate::other::illumos::report(&sys, crate::other::Family::Illumos, os.as_ref(), "2026-11-14T00:00:00Z");
+    let l = Layout::from_json(v.clone()).unwrap();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+    (v, commands::build(&l, &o, &Mapping { pairs: vec![("c3t0d0".into(), "c4t0d0".into())], ..Mapping::default() }))
+}
+
+/// No prtconf to tell UEFI from BIOS: the firmware is unknown, not bios,
+/// with a warning saying why, and load refuses the dump rather than put
+/// BIOS boot blocks on a UEFI machine.  The same for a prtconf that fails.
+#[test]
+fn openindiana_without_prtconf_is_refused() {
+    let (t, runner) = openindiana(true);
+    let (v, b) = openindiana_with(&t, runner.without("prtconf"));
+    assert_eq!(s(&v, &["firmware", "mode"]), "unknown");
+    assert_eq!(s(&v, &["boot", "loader", "firmware"]), "unknown");
+    let w = arr(&v, &["warnings"]);
+    assert!(w.contains(&Value::from("the firmware mode (UEFI or BIOS) can't be told: prtconf isn't installed; the dump says unknown, and bko-holt load refuses it")), "{w:?}");
+    let refused = "the dump couldn't tell UEFI from BIOS (its firmware mode is unknown; its warnings say why), so load can't choose the boot code to install: dump again once that tool works";
+    assert!(b.problems.iter().any(|p| p == refused), "{:?}", b.problems);
+
+    let (t, mut runner) = openindiana(true);
+    runner.answers.remove("prtconf -v");
+    let (v, b) = openindiana_with(&t, runner);
+    assert_eq!(s(&v, &["firmware", "mode"]), "unknown");
+    assert!(arr(&v, &["warnings"]).contains(&Value::from("the firmware mode (UEFI or BIOS) can't be told: `prtconf -v` failed; the dump says unknown, and bko-holt load refuses it")));
+    assert!(b.problems.iter().any(|p| p == refused), "{:?}", b.problems);
+}
+
+/// illumos with its root pool mounted (mnttab) and no zpool: the dump
+/// says so, and load refuses it.
+#[test]
+fn openindiana_without_zpool_is_refused() {
+    let (t, runner) = openindiana(true);
+    let (v, b) = openindiana_with(&t, runner.without("zpool"));
+    let e = s(&v, &["storage", "zfs", "tools", "error"]);
+    assert!(e.starts_with("ZFS file systems are mounted, but zpool isn't installed, "), "{e}");
+    assert!(b.problems.contains(&format!("ZFS: {e}")), "{:?}", b.problems);
+}
+

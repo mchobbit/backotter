@@ -33,6 +33,7 @@ pub mod testutil;
 pub mod transactional;
 pub mod truenas;
 pub mod zfs_be;
+pub mod zfsbootmenu;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

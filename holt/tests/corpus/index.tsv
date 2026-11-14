@@ -72,4 +72,5 @@ ubuntu26-zfs	chopin	r4all	PASS	2026-11-08T02:17:44Z	2026-11-08T02:11:02Z	0.2.4	7
 ubuntu26-zfsmirror	chopin	r4all	PASS	2026-11-08T02:24:19Z	2026-11-08T02:19:34Z	0.2.4	e64791228fdb5271eab326a1c573556084b1914690caa062345deba7deaaeb4e	changed	21	ok:21:139	0	0	0	same	ok:21	-
 vanilla3	chopin	v7-1	PASS	2026-11-14T08:05:37Z	2026-11-14T07:26:40Z	0.2.6	-	same	36	ok:36:276	0	0	0	same	ok:36	-
 void-musl	chopin	r4all	PASS	2026-11-08T02:28:37Z	2026-11-08T02:26:35Z	0.2.4	2aaa1c9e3ba07ccd1d9e973b1766015f0f4b67e07ef8356cf2f95cc734b5cd81	changed	8	ok:8:85	0	0	0	same	ok:8	-
+void-zbm	chopin	z4	dump	-	2026-11-14T16:58:15Z	0.2.6	-	same	12	ok:12:122	0	0	0	same	ok:12	-
 zorin18	cinqcent	r4all	PASS	2026-11-08T02:29:30Z	2026-11-08T02:24:57Z	0.2.4	9c5063fb8a54a6b77bde6063dda36fe77ce1ee130f41bd4955d6f14b96fff127	changed	8	ok:8:87	0	0	0	same	ok:8	-

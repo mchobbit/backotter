@@ -265,6 +265,9 @@ efivarfs bound in):
    temporary key get the restored key file added and the temporary key
    destroyed (see "Keys follow the original system").  If the restore didn't
    bring the key file back, `boot` stops here and says which one is missing.
+   A ZFS key file inside the restored tree (`keylocation=file://` on the
+   pool's own datasets, ZFSBootMenu's `/etc/zfs/zroot.key`) must be the
+   `--key-file` the pool was made with, byte for byte, or `boot` stops.
 3. The initramfs, remade by the source's own generator, as the dump's
    `boot.initramfs.generator` names it (the restore changed identifiers the
    image embeds: crypttab, mdadm.conf, the zpool cache, LVM and md UUIDs):
@@ -348,6 +351,18 @@ efivarfs bound in):
      the source had one (not in "BOOTX64 mode").  The plan refuses rEFInd
      through shim, and makes it a problem when `refind_linux.conf` names a
      `root=UUID=` or `rd.luks.name=` UUID the layout doesn't have.
+   - ZFSBootMenu (Void, docs/design/zfsbootmenu.md; `boot.zfsbootmenu`):
+     nothing installed.  Its EFI images (unified kernel images, the
+     release's in `EFI/ZBM`) come back with the ESP, with a note giving
+     each one's SHA-256 as dumped.  Step 3 remade the booted boot
+     environment's initramfs; the other boot environments, restored
+     through their own backup sources under `/run/bko-be` and unmounted
+     when the stage starts, keep their `/boot` as restored.  Only the NVRAM
+     entries are made.  The plan refuses a boot environment pool missing
+     from the layout, a bootfs missing from its datasets, and no image on
+     an ESP that fstab mounts; with `--no-nvram` or `--removable` and no
+     image at `EFI/BOOT/BOOTX64.EFI`, a note says the copy won't boot by
+     itself.
 5. UEFI boot entries (see "UEFI boot entries").
 
 On ABRoot (Vanilla OS 3, `boot.abroot`: docs/design/vanillaos.md) the
@@ -381,7 +396,8 @@ and keep working.  So `boot` changes NVRAM as little as it can:
 1. For each recorded entry whose partition GUID belongs to a restored
    partition: if an entry with the same description, partition GUID and file
    still exists, leave it; if not, create it (`efibootmgr --create` with the
-   recorded description, disk, partition and file).
+   recorded description, disk, partition and file, and its optional data:
+   UCS-2 text as `--unicode`, anything else by `--append-binary-args`).
 2. Restore the recorded `BootOrder` for these entries, keeping every other
    entry where the firmware has it.
 3. Never delete or change entries that don't point at a restored partition:

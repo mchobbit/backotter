@@ -270,6 +270,10 @@ pub const PACKAGES: &[&str] = &[
     // (docs/design/truenas.md; none on another system, so no fingerprint
     // changes).
     "truenas", "middlewared",
+    // ZFSBootMenu's ("zfs", "dracut" and "linux" are above): its package
+    // (generate-zbm's images; the release EFI has none), and Void's
+    // mainline kernel series (docs/design/zfsbootmenu.md).
+    "zfsbootmenu", "linux-mainline",
 ];
 
 /// debconf answers from /var/cache/debconf/config.dat whose names start with
@@ -1044,6 +1048,9 @@ pub struct Evidence<'a> {
     /// The ESP file EFI/BOOT/BOOTX64.EFI is a byte copy of, if any
     /// (esp_inventory's same_as): shim's, when the fallback path is shim.
     pub fallback_copy_of: Option<String>,
+    /// The ESP paths of the ZFSBootMenu images on mounted ESPs
+    /// (crate::zfsbootmenu::find_images), `EFI/ZBM/VMLINUZ.EFI`.
+    pub zbm_images: Vec<String>,
 }
 
 pub fn detect_loader(e: &Evidence) -> Value {
@@ -1055,7 +1062,13 @@ pub fn detect_loader(e: &Evidence) -> Value {
         if let Some(f) = &e.current_file {
             let u = f.to_ascii_uppercase().replace('/', "\\");
             why.push(format!("firmware booted {f}"));
-            if u.contains("SHIM") {
+            let zbm = e.zbm_images.iter().find(|p| u.trim_start_matches('\\') == p.to_ascii_uppercase().replace('/', "\\"));
+            if let Some(p) = zbm {
+                // ZFSBootMenu (crate::zfsbootmenu): a unified kernel image
+                // whose name says nothing a loader's would.
+                name = Some("zfsbootmenu");
+                why.push(format!("that is a ZFSBootMenu image ({p})"));
+            } else if u.contains("SHIM") {
                 shim = true;
                 name = Some("grub");
             } else if u.contains("GRUB") {
@@ -1096,7 +1109,10 @@ pub fn detect_loader(e: &Evidence) -> Value {
         }
         if name.is_none() {
             let lc: Vec<String> = e.esp_files.iter().map(|f| f.to_ascii_lowercase()).collect();
-            if lc.iter().any(|f| f.ends_with("/grubx64.efi")) {
+            if let Some(p) = e.zbm_images.first() {
+                name = Some("zfsbootmenu");
+                why.push(format!("an ESP holds a ZFSBootMenu image ({p})"));
+            } else if lc.iter().any(|f| f.ends_with("/grubx64.efi")) {
                 name = Some("grub");
                 why.push("an ESP holds grubx64.efi".into());
             } else if lc.iter().any(|f| f.ends_with("/systemd-bootx64.efi")) {
@@ -1144,6 +1160,7 @@ pub fn detect_loader(e: &Evidence) -> Value {
         (Some("refind"), _) => ["refind"].into_iter().find(|p| has(p)),
         (Some("limine"), _) => ["limine"].into_iter().find(|p| has(p)),
         (Some("syslinux"), _) => ["extlinux", "syslinux"].into_iter().find(|p| has(p)),
+        (Some("zfsbootmenu"), _) => ["zfsbootmenu"].into_iter().find(|p| has(p)),
         _ => None,
     };
     if let Some(p) = package {
@@ -1175,7 +1192,9 @@ pub fn detect_loader(e: &Evidence) -> Value {
 /// (proxmox_boot_json), whose ESPs that aren't mounted join boot.esps with
 /// `mounted_at` null; `unmounted` are other ESPs nothing mounts, read
 /// elsewhere (device, contents: TrueNAS's, crate::truenas), which join it
-/// the same way after them.
+/// the same way after them; `zfs_tools` is storage.zfs.tools, whose boot
+/// environments boot.zfsbootmenu lists when a mounted ESP holds a
+/// ZFSBootMenu image (crate::zfsbootmenu).
 #[allow(clippy::too_many_arguments)]
 pub fn boot_json(
     sys: &Sys,
@@ -1186,6 +1205,7 @@ pub fn boot_json(
     ostree: Option<Value>,
     proxmox: Option<ProxmoxBoot>,
     unmounted: &[(String, Value)],
+    zfs_tools: &Value,
 ) -> Value {
     let running = sys.read_trim("/proc/sys/kernel/osrelease");
     let mut esp_list = Vec::new();
@@ -1200,6 +1220,9 @@ pub fn boot_json(
         }
     }
     read.extend(unmounted.iter().map(|(dev, inv)| (dev.clone(), None, inv.clone(), None)));
+    // ZFSBootMenu's images, on the mounted ESPs.
+    let mounted_esps: Vec<(String, String, Value)> = read.iter().filter_map(|(d, m, inv, _)| m.as_ref().map(|m| (d.clone(), m.clone(), inv.clone()))).collect();
+    let zbm_images = crate::zfsbootmenu::find_images(sys, &mounted_esps, crate::zfsbootmenu::root_is_be(&crate::zfs_be::list(zfs_tools)));
     for (dev, mnt, inv, sd) in read {
         if let Some(files) = inv.get("files").and_then(Value::as_array) {
             esp_files.extend(files.iter().filter_map(|f| f.get("path").and_then(Value::as_str)).map(str::to_string));
@@ -1235,6 +1258,7 @@ pub fn boot_json(
         packages,
         esp_files,
         fallback_copy_of,
+        zbm_images: zbm_images.iter().map(|i| i.path.clone()).collect(),
     };
     let mut loader = detect_loader(&ev);
     if let (Some(m), Value::Obj(o)) = (mok_json(sys, packages), &mut loader) {
@@ -1262,6 +1286,9 @@ pub fn boot_json(
     o.put_some("refind", refind_json(sys));
     o.put_some("store", crate::store::guix_json(sys));
     o.put_some("proxmox_boot", proxmox.map(|p| p.json));
+    if !zbm_images.is_empty() {
+        o.put("zfsbootmenu", crate::zfsbootmenu::json(sys, &zbm_images, zfs_tools));
+    }
     o.build()
 }
 
@@ -1493,6 +1520,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             packages: &p,
             esp_files: vec![],
             fallback_copy_of: None,
+            zbm_images: vec![],
         });
         assert_eq!(v.get("name").and_then(Value::as_str), Some("grub"));
         assert_eq!(v.get("via_shim"), Some(&Value::Bool(true)));
@@ -1503,7 +1531,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
     #[test]
     fn loader_other_cases() {
         let none: Vec<(String, String, String)> = vec![];
-        let base = |uefi: bool| Evidence { uefi, current_file: None, loader_info: None, shim_variables: false, mbr_codes: vec![], packages: &none, esp_files: vec![], fallback_copy_of: None };
+        let base = |uefi: bool| Evidence { uefi, current_file: None, loader_info: None, shim_variables: false, mbr_codes: vec![], packages: &none, esp_files: vec![], fallback_copy_of: None, zbm_images: vec![] };
         // systemd-boot by its path, then by LoaderInfo.
         let mut e = base(true);
         e.current_file = Some("\\EFI\\systemd\\systemd-bootx64.efi".into());
@@ -1581,6 +1609,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             packages: &p,
             esp_files: files.iter().map(|f| f.to_string()).collect(),
             fallback_copy_of: None,
+            zbm_images: vec![],
         };
         let v = detect_loader(&e(&["EFI/BOOT/bootx64.efi", "EFI/refind/refind_x64.efi", "EFI/refind/drivers_x64/ext4_x64.efi"]));
         assert_eq!(v.get("name").and_then(Value::as_str), Some("refind"));
@@ -1740,13 +1769,14 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             packages: &p,
             esp_files: vec![],
             fallback_copy_of: None,
+            zbm_images: vec![],
         });
         assert_eq!(l.get("name").and_then(Value::as_str), Some("grub"));
         assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
         assert_eq!(l.get("package").and_then(Value::as_str), Some("grub2-efi-x64"));
         assert_eq!(l.get("shim_package").and_then(Value::as_str), Some("shim-x64"));
         // No shim, no shim_package.
-        let l = detect_loader(&Evidence { uefi: true, current_file: Some("\\EFI\\fedora\\grubx64.efi".into()), loader_info: None, shim_variables: false, mbr_codes: vec![], packages: &p, esp_files: vec![], fallback_copy_of: None });
+        let l = detect_loader(&Evidence { uefi: true, current_file: Some("\\EFI\\fedora\\grubx64.efi".into()), loader_info: None, shim_variables: false, mbr_codes: vec![], packages: &p, esp_files: vec![], fallback_copy_of: None, zbm_images: vec![] });
         assert!(l.get("shim_package").is_none());
         let v = "7.3.3-200.fc44.x86_64";
         let d = "/boot/ostree/default-1cc099369334fad8952283b3221e6d78fd79263e6dedc35ce40302458681d413";
@@ -1771,11 +1801,11 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(list[0].get("modules_installed"), Some(&Value::Bool(true)));
         assert_eq!(initramfs_json(&s, &p, true).get("generator").and_then(Value::as_str), Some("prebuilt"));
         assert_eq!(initramfs_json(&s, &p, false).get("generator").and_then(Value::as_str), Some("dracut"));
-        let b = boot_json(&s, &p, &[], Value::Null, vec![], Some(Obj::new().set("booted", true).build()), None, &[]);
+        let b = boot_json(&s, &p, &[], Value::Null, vec![], Some(Obj::new().set("booted", true).build()), None, &[], &Value::Null);
         assert!(b.get("systemd_boot").unwrap().is_null(), "{}", b.compact());
         assert_eq!(b.at(&["ostree", "booted"]), Some(&Value::Bool(true)));
         // Without ostree, the same entries read as systemd-boot's on an XBOOTLDR.
-        let b = boot_json(&s, &p, &[], Value::Null, vec![], None, None, &[]);
+        let b = boot_json(&s, &p, &[], Value::Null, vec![], None, None, &[], &Value::Null);
         assert_eq!(b.at(&["systemd_boot", "entries", "0", "file"]).and_then(Value::as_str), Some("ostree-1.conf"));
         assert!(b.get("ostree").is_none());
     }
@@ -1864,7 +1894,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         let p = installed_packages(&s);
         let names: Vec<&str> = p.iter().map(|(n, _, _)| n.as_str()).collect();
         assert_eq!(names, vec!["grub", "grub-i386-pc", "initramfs-tools", "linux-lts"]);
-        let b = boot_json(&s, &p, &[], Value::Null, vec![("vda".into(), "grub2".into())], None, None, &[]);
+        let b = boot_json(&s, &p, &[], Value::Null, vec![("vda".into(), "grub2".into())], None, None, &[], &Value::Null);
         assert_eq!(b.at(&["loader", "name"]).and_then(Value::as_str), Some("grub"));
         assert_eq!(b.at(&["loader", "firmware"]).and_then(Value::as_str), Some("bios"));
         assert_eq!(b.at(&["loader", "package"]).and_then(Value::as_str), Some("grub-i386-pc"));
@@ -1895,6 +1925,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             packages: &p,
             esp_files: vec!["EFI/chimera/grubx64.efi".into()],
             fallback_copy_of: None,
+            zbm_images: vec![],
         });
         assert_eq!(l.get("name").and_then(Value::as_str), Some("grub"));
         assert_eq!(l.get("package").and_then(Value::as_str), Some("grub-x86_64-efi"));
@@ -1918,6 +1949,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             packages: &p,
             esp_files: files(),
             fallback_copy_of: copy.map(str::to_string),
+            zbm_images: vec![],
         };
         let l = detect_loader(&ev("\\EFI\\AnduinOS\\shimx64.efi", None));
         assert_eq!(l.get("name").and_then(Value::as_str), Some("grub"));

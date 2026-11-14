@@ -1,0 +1,129 @@
+# bko-holt load plan for layout.json
+# Source: void-zbm, Void Linux, UEFI boot with zfsbootmenu, dumped 2026-11-14T16:58:15Z
+#
+# Disks:
+#   vda (16 GiB) -> /dev/sdq
+#
+# Notes:
+#   - ZFS: void-6.18 (zroot/ROOT/void-6.18) was a clone of void's snapshots; it comes back as a full copy (no snapshot is remade)
+#   - fstab's /tmp (tmpfs) isn't on the layout's disks; not mounted
+#   - ZFSBootMenu: its image EFI/ZBM/VMLINUZ-BACKUP.EFI on the ESP at /boot/efi (version not recorded (its .osrel is its build system's, Void Linux), kernel 6.12.63_1, SHA-256 d4c2af93db661730e74d923c712a699c3d9f05681329c4db4d3ca2bfb6cdf84b) comes back with the ESP; nothing is installed
+#   - ZFSBootMenu: its image EFI/ZBM/VMLINUZ.EFI on the ESP at /boot/efi (version not recorded (its .osrel is its build system's, Void Linux), kernel 6.12.63_1, SHA-256 d4c2af93db661730e74d923c712a699c3d9f05681329c4db4d3ca2bfb6cdf84b) comes back with the ESP; nothing is installed
+#   - ZFSBootMenu: only the booted boot environment's initramfs is remade; void-6.18's /boot stay as restored (each holds the same /etc/hostid, and ZFSBootMenu imports the pool by name)
+
+# ---- partition ----
+# vda -> /dev/sdq: clear the old table and signatures
+wipefs --all /dev/sdq
+# /dev/sdq: its first 4 MiB zeroed, and its last 1 MiB (a GPT's backup, md 0.90/1.0 superblocks, ZFS's end labels)
+dd if=/dev/zero of=/dev/sdq bs=1M count=4 conv=fsync
+sh -c 'n=$(blockdev --getsz /dev/sdq) && dd if=/dev/zero of=/dev/sdq bs=512 seek=$((n - 2048)) count=2048 conv=fsync'
+# the new partitions' old content zeroed through /dev/sdq, before its table names them (blocks of 512 bytes, at their start= sectors)
+# vda1: its first 4 MiB and its last 1 MiB
+dd if=/dev/zero of=/dev/sdq bs=512 seek=2048 count=8192 conv=fsync
+dd if=/dev/zero of=/dev/sdq bs=512 seek=1048576 count=2048 conv=fsync
+# vda2: its first 4 MiB and its last 1 MiB
+dd if=/dev/zero of=/dev/sdq bs=512 seek=1050624 count=8192 conv=fsync
+dd if=/dev/zero of=/dev/sdq bs=512 seek=33531871 count=2048 conv=fsync
+# udev done with /dev/sdq before sfdisk takes it
+udevadm settle
+sfdisk --wipe always --wipe-partitions always /dev/sdq <<'EOF'
+label: gpt
+label-id: bc000000-0000-4000-8000-000000000001
+unit: sectors
+sector-size: 512
+table-length: 128
+first-lba: 34
+last-lba: 33554398
+
+/dev/sdq1 : start=2048, size=1048576, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=BC000000-0000-4000-8000-000000000002
+/dev/sdq2 : start=1050624, size=32483295, type=6A85CF4D-1DD2-11B2-99A6-080020736631, uuid=BC000000-0000-4000-8000-000000000003
+EOF
+udevadm settle
+
+# ---- assemble ----
+# ZFS pool zroot, with the source's feature flags only
+zpool create -f -d -o cachefile=none -o ashift=12 -o autotrim=on -o compatibility=openzfs-2.3-linux -o feature@async_destroy=enabled -o feature@empty_bpobj=enabled -o feature@lz4_compress=enabled -o feature@multi_vdev_crash_dump=enabled -o feature@spacemap_histogram=enabled -o feature@enabled_txg=enabled -o feature@hole_birth=enabled -o feature@extensible_dataset=enabled -o feature@embedded_data=enabled -o feature@bookmarks=enabled -o feature@filesystem_limits=enabled -o feature@large_blocks=enabled -o feature@large_dnode=enabled -o feature@sha512=enabled -o feature@skein=enabled -o feature@edonr=enabled -o feature@userobj_accounting=enabled -o feature@encryption=enabled -o feature@project_quota=enabled -o feature@device_removal=enabled -o feature@obsolete_counts=enabled -o feature@zpool_checkpoint=enabled -o feature@spacemap_v2=enabled -o feature@allocation_classes=enabled -o feature@resilver_defer=enabled -o feature@bookmark_v2=enabled -o feature@redaction_bookmarks=enabled -o feature@redacted_datasets=enabled -o feature@bookmark_written=enabled -o feature@log_spacemap=enabled -o feature@livelist=enabled -o feature@device_rebuild=enabled -o feature@zstd_compress=enabled -o feature@draid=enabled -o feature@zilsaxattr=enabled -o feature@head_errlog=enabled -o feature@blake3=enabled -o feature@block_cloning=enabled -o feature@vdev_zaps_v2=enabled -o feature@redaction_list_spill=enabled -o feature@raidz_expansion=enabled -o feature@fast_dedup=enabled -o feature@longname=enabled -o feature@large_microzap=enabled -O mountpoint=none -O compression=lz4 -O xattr=sa -O acltype=posix -O relatime=on -R /mnt/bko-target zroot /dev/sdq2
+# the source pool's GUID (vdev GUIDs can't be kept)
+zpool reguid -g 1000000000000000001 zroot
+# mount mounts every dataset in order
+sh -c '[ "$(zfs get -H -o value mounted zroot)" != yes ] || zfs unmount zroot'
+
+# ---- format ----
+# vda1: vfat
+mkfs.fat -F 32 -i BC000001 -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdq1
+# check: /dev/sdq1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
+zfs create -u -o mountpoint=none -o 'org.zfsbootmenu:commandline=loglevel=4 console=tty0 console=ttyS0,115200n8' zroot/ROOT
+zfs create -u -o mountpoint=/ -o canmount=noauto zroot/ROOT/void
+zfs create -u -o mountpoint=/ -o canmount=noauto -o 'org.zfsbootmenu:commandline=%{parent} bko.be=void-6.18' zroot/ROOT/void-6.18
+zfs create -u -o mountpoint=/home zroot/home
+zpool set bootfs=zroot/ROOT/void zroot
+
+# ---- mount ----
+zfs mount zroot/ROOT/void
+zfs mount zroot/home
+mkdir -p /mnt/bko-target/boot/efi
+mount -t vfat -o defaults /dev/sdq1 /mnt/bko-target/boot/efi
+mkdir -p /mnt/bko-target/run/bko-be/void-6.18
+# zroot/ROOT/void-6.18: an inactive boot environment's, restored from its backup source here
+mount -t zfs -o zfsutil zroot/ROOT/void-6.18 /mnt/bko-target/run/bko-be/void-6.18
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+# the atimes the restore set, for boot to put back after its reads
+sh -c 'mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before'
+
+# ---- boot ----
+# refuses to start unless /mnt/bko-target/etc/fstab is the restored system's (its / matches the layout's)
+# the inactive boot environments, restored: unmounted, and /mnt/bko-target/run/bko-be removed
+sh -c '! mountpoint -q /mnt/bko-target/run/bko-be/void-6.18 || umount /mnt/bko-target/run/bko-be/void-6.18'
+sh -c '[ ! -d /mnt/bko-target/run/bko-be/void-6.18 ] || rmdir /mnt/bko-target/run/bko-be/void-6.18'
+sh -c '[ ! -d /mnt/bko-target/run/bko-be ] || rmdir /mnt/bko-target/run/bko-be'
+# the restored atimes (the restore stage lists them), to put back after this stage's reads
+sh -c '[ -s /run/bko-holt/atimes.before ] || { mkdir -p /run/bko-holt && find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.before; }'
+# the restored LVM devices file, kept
+sh -c 'rm -rf /run/bko-holt/lvm-devices; [ ! -d /mnt/bko-target/etc/lvm/devices ] || { cp -a /mnt/bko-target/etc/lvm/devices /run/bko-holt/lvm-devices && touch -r /mnt/bko-target/etc/lvm /run/bko-holt/lvm-devices.parent; }'
+mount --rbind --make-rslave /dev /mnt/bko-target/dev
+mount --rbind --make-rslave /proc /mnt/bko-target/proc
+mount --rbind --make-rslave /sys /mnt/bko-target/sys
+mount --rbind --make-rslave /run /mnt/bko-target/run
+chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d "$k/kernel" ] || continue; dracut --force --kver "${k##*/}" || exit; n=$((n + 1)); done; [ "$n" -gt 0 ]'
+# NVRAM's entries for this partition and loader, from an earlier restore here, deleted
+bko-holt efi-dedupe /dev/sdq 1 '\EFI\ZBM\VMLINUZ-BACKUP.EFI'
+efibootmgr --quiet --create --disk /dev/sdq --part 1 --label 'ZFSBootMenu (Backup)' --loader '\EFI\ZBM\VMLINUZ-BACKUP.EFI'
+# NVRAM's entries for this partition and loader, from an earlier restore here, deleted
+bko-holt efi-dedupe /dev/sdq 1 '\EFI\ZBM\VMLINUZ.EFI'
+efibootmgr --quiet --create --disk /dev/sdq --part 1 --label ZFSBootMenu --loader '\EFI\ZBM\VMLINUZ.EFI'
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -a /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+# SELinux labels for the files the boot stage wrote
+chroot /mnt/bko-target sh -c '[ -f /etc/selinux/config ] || exit 0; . /etc/selinux/config; [ "${SELINUX:-disabled}" != disabled ] || exit 0; f=/etc/selinux/${SELINUXTYPE:-targeted}/contexts/files/file_contexts; [ ! -f "$f" ] || ! command -v setfiles >/dev/null || { [ ! -d /etc/kernel ] || set -- /etc/kernel; setfiles "$f" /boot /var/log/bko-holt "$@"; }'
+umount --recursive /mnt/bko-target/run
+umount --recursive /mnt/bko-target/sys
+umount --recursive /mnt/bko-target/proc
+umount --recursive /mnt/bko-target/dev
+# the restored LVM devices file, put back
+sh -c '[ ! -d /run/bko-holt/lvm-devices ] || { rm -rf /mnt/bko-target/etc/lvm/devices && cp -a /run/bko-holt/lvm-devices /mnt/bko-target/etc/lvm/devices && touch -r /run/bko-holt/lvm-devices.parent /mnt/bko-target/etc/lvm; }'
+# the atimes this stage's reads changed, put back
+bash -c 'find /mnt/bko-target \( -path /mnt/bko-target/dev -o -path /mnt/bko-target/proc -o -path /mnt/bko-target/sys -o -path /mnt/bko-target/run \) -prune -o -printf '\''%A@\t%p\0'\'' | LC_ALL=C sort -z > /run/bko-holt/atimes.after && LC_ALL=C comm -z -23 /run/bko-holt/atimes.before /run/bko-holt/atimes.after | \
+             while IFS=$'\''\t'\'' read -r -d '\'''\'' a p; do [ -L "$p" ] || [ -e "$p" ] || continue; touch -a -h -d "@$a" -- "$p" 2>/dev/null || { [ ! -L "$p" ] && lsattr -d -- "$p" 2>/dev/null | cut -d'\'' '\'' -f1 | grep -q i && { chattr -i -- "$p"; touch -a -h -d "@$a" -- "$p"; chattr +i -- "$p"; }; }; done'
+
+# ---- close ----
+umount --recursive /mnt/bko-target
+# other mount namespaces' copies of the target's mounts
+sh -c 'me=$(readlink /proc/self/ns/mnt); seen=" $me "; at() { awk -v t=/mnt/bko-target '\''{ m = $5; if (m == t || length(m) > length(t) && substr(m, length(m) - length(t) + 1) == t) print m }'\''; }; for f in /proc/[0-9]*/mountinfo; do grep -q '\''/mnt/bko-target[ /]'\'' "$f" 2>/dev/null || continue; p=${f#/proc/}; p=${p%/mountinfo}; ns=$(readlink /proc/$p/ns/mnt) || continue; case $seen in *" $ns "*) continue;; esac; seen="$seen$ns "; echo "unmounting /mnt/bko-target in $ns (pid $p, $(cat /proc/$p/comm))"; for m in $(at <"$f"); do nsenter -t "$p" -m umount --recursive "$m" || true; done; done; awk '\''{ for (i = 7; i < NF; i++) if ($i == "-") { if ($(i + 1) == "nsfs" && $4 ~ /^mnt:\[/) print $4, $5; break } }'\'' /proc/self/mountinfo | while read -r ns b; do case $seen in *" $ns "*) continue;; esac; seen="$seen$ns "; ms=$(nsenter --mount="$b" cat /proc/self/mountinfo | at); [ -n "$ms" ] || continue; echo "unmounting /mnt/bko-target in $ns (bound at $b)"; for m in $ms; do nsenter --mount="$b" umount --recursive "$m" || true; done; done'
+sh -c 'i=0; until udevadm settle; zpool export zroot; do i=$((i + 1)); [ $i -lt 5 ] || exit 1; sleep 1; done'
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status pool zroot
+# golden_plans.rs: status filesystem /dev/sdq1 vfat BC00-0001
+# golden_plans.rs: status dataset zroot/ROOT
+# golden_plans.rs: status dataset zroot/ROOT/void
+# golden_plans.rs: status dataset zroot/ROOT/void-6.18
+# golden_plans.rs: status dataset zroot/home
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: status mount /mnt/bko-target/home
+# golden_plans.rs: status mount /mnt/bko-target/boot/efi
+# golden_plans.rs: status mount /mnt/bko-target/run/bko-be/void-6.18
+# golden_plans.rs: exit 0, nothing on stderr

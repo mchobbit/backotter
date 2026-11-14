@@ -250,6 +250,42 @@ the ESP mounted only for it, copies it to `EFI/boot/bootx64.efi`, runs one
 `update-grub` and no `update-initramfs`, makes the TrueNAS-0 NVRAM entry,
 and sets `readonly=on` back on the twelve datasets that had it before the
 pool is exported.
+void-zbm (`make-void-zfs.sh`: glibc Void Linux on a ZFS root booted by
+ZFSBootMenu, built as ZFSBootMenu's Void UEFI guide does it; GPT with a
+512 MiB ESP at /boot/efi holding only ZFSBootMenu's v3.1.0 release image
+as `EFI/ZBM/VMLINUZ.EFI` and `VMLINUZ-BACKUP.EFI`, and `zroot`
+(`compatibility=openzfs-2.3-linux`) with the boot environments
+`ROOT/void` (the bootfs, kernels 6.18 and 7.2) and `ROOT/void-6.18` (a
+clone, its own `org.zfsbootmenu:commandline`) and `home`; two NVRAM
+entries; docs/design/zfsbootmenu.md), built on 2026-11-14, was added the
+same day from a dump of the live guest on chopin (run `z4`, the static
+bko-holt 0.2.6 built from this tree with Z2's ZFSBootMenu code,
+`8f5e153b...`; its own vm-run-options, whose `--guest-vars` boots a copy
+of its UEFI variables under `--snapshot`, so through ZFSBootMenu's NVRAM
+entry, the disk under `vm-run --snapshot`, the image's and the variable
+store's sha256 the same before and after; its provenance.tsv written by
+hand, generation `-`: the guest has no image-state yet).  It is in the
+corpus before it is one of classes.json's HoltTest2 sources, so
+golden_plans.rs notes it until it is.  Its dump is the first with
+`boot.zfsbootmenu` (each image's ESP path, SHA-256, kernel, stub and
+embedded command line; the pool and its bootfs; each boot environment's
+kernels and initramfs files, the inactive one's read by a private
+read-only mount) and the loader `zfsbootmenu`, and its
+`storage.backup_sources` hold the inactive boot environment at
+`/run/bko-be/void-6.18` with its read-only `zfs` mount hint.  Building it
+found a redaction bug, fixed in redact.rs before it entered the tree: the
+pool's hostid, ZFSBootMenu's 0x00bab10c, got a pseudonym whose hex form
+had no letters, so the kernel command line's `spl.spl_hostid=0x00bab10c`
+mapped back upper-case (an 8-digit hostid's pseudonym now has a letter in
+its hex form).  The fake rescue system has the `openzfs-2.3-linux`
+feature set beside `grub2` (holt/tests/common/mod.rs).  Its golden plan
+makes the pool with the source's features, `compatibility` and no
+zpool.cache, the datasets with their `org.zfsbootmenu:commandline`, sets
+`bootfs`, notes the clone as a full copy, mounts the inactive boot
+environment under `run/bko-be` for the one restore, then unmounts it and
+removes the directory; at boot it installs no loader (notes give both
+images' SHA-256), runs dracut for the booted boot environment's kernels
+only, and makes the two NVRAM entries again in the source's order.
 vanilla3 (`make-vanilla.sh`: Vanilla OS 3.0 by Albius from its live ISO
 with the installer's own recipe; UEFI with Secure Boot, a 1 GiB ext4
 `vos-boot` at /boot with the master grub.cfg, a 512 MiB ESP, the VG
@@ -482,7 +518,13 @@ chopin with 98 of its 103 strings and the raw dump's identifiers, cinqcent
 with 100 of its 106, the Mac with the git e-mail, 0 findings (its plan
 scanned too), and a check of the src.json and index row for its
 admin-password's bytes (as is and as UTF-16LE): none; the same sha256 from
-both builds (src.json `0b5f0b6f...`).  So did leap16
+both builds (src.json `0b5f0b6f...`).  So did void-zbm (2026-11-14), built
+from a private directory on chopin (/bkoscratch, its warm holt build at
+/bkoscratch/holt-warm/zbm): chopin with 101 of its 106 strings and the raw
+dump's identifiers, the Mac with the git e-mail, 0 findings (its plan
+scanned too), the same sha256 from both builds (src.json `7c1de82a...`).
+Cinqcent's scan with its own strings is owed: cinqcent was down for
+another session's work.  So did leap16
 (2026-11-14), built from a private directory on chopin (/bkoscratch, its
 warm holt build at /bkoscratch/holt-warm/l16-opensuse): chopin with its
 101 strings and the raw dump's identifiers, cinqcent with its 106, the Mac

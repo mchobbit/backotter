@@ -1474,7 +1474,7 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         crate::truenas::read(sys, &zfs_tools, &bes, truenas_esps(&ctx), &read_esp)
     });
     let unmounted: Vec<(String, Value)> = truenas.iter().flat_map(|t| &t.esps).map(|e| (e.device.clone(), e.contents.clone())).collect();
-    let boot = crate::boot::boot_json(sys, &packages, &esps, efi_boot, mbr_codes, ostree_json, proxmox, &unmounted);
+    let boot = crate::boot::boot_json(sys, &packages, &esps, efi_boot, mbr_codes, ostree_json, proxmox, &unmounted, &zfs_tools);
     let mut os_json = crate::osrel::to_json(sys, os);
     if let (Some(p), Value::Obj(o)) = (crate::boot::proxmox_product(&packages), &mut os_json) {
         o.push(("product".into(), Value::from(p)));

@@ -4243,6 +4243,8 @@ pub fn dumps() -> Vec<(&'static str, Value)> {
         ("guix_bios", run(&guix_bios(), true, guix_bios_runner())),
         ("truenas", { let (t, r) = truenas(false); run(&t, true, r) }),
         ("truenas_mirror", { let (t, r) = truenas(true); run(&t, true, r) }),
+        ("zfsbootmenu", { let (t, r) = zfsbootmenu(false); run(&t, true, r) }),
+        ("zfsbootmenu_enc", { let (t, r) = zfsbootmenu(true); run(&t, true, r) }),
     ]
 }
 
@@ -4971,6 +4973,342 @@ fn truenas_mirror_guest() {
     assert_eq!(p, vec!["--map vdc=/dev/sdc: vdc holds a pool --pools leaves untouched, so it has no target".to_string()]);
     // A name the layout hasn't.
     assert_eq!(l.only_pools(&["boot".to_string()]).problems[0], "--pools boot: the layout has no ZFS pool boot (it has boot-pool, tank)");
+}
+
+// ---- ZFSBootMenu on Void ----------------------------------------------------
+
+/// Void's kernels in the void-zbm guest: the default series in both BEs,
+/// mainline in the default BE only.
+const ZBM_LTS: &str = "6.12.63_1";
+const ZBM_MAINLINE: &str = "6.18.9_1";
+
+/// The void-zbm guest (docs/design/zfsbootmenu.md) as ZFSBootMenu's Void
+/// UEFI guide leaves it, with the second BE its builder makes: GPT, the ESP
+/// (vda1) at /boot/efi holding only ZFSBootMenu's release image at
+/// EFI/ZBM/VMLINUZ.EFI and its copy VMLINUZ-BACKUP.EFI, the pool zroot
+/// (vda2, compatibility=openzfs-2.3-linux) with zroot/ROOT (the shared
+/// org.zfsbootmenu:commandline), the BEs zroot/ROOT/void (bootfs, booted,
+/// both kernel series) and zroot/ROOT/void-6.12 (a clone of
+/// void@pre-mainline, not mounted, its own commandline with %{parent}),
+/// zroot/home; NVRAM "ZFSBootMenu (Backup)" and "ZFSBootMenu", the latter
+/// first and booted.  `enc`: void-zbm-enc, zroot an encryption root with a
+/// passphrase read from /etc/zfs/zroot.key inside the BE, and
+/// org.zfsbootmenu:keysource on zroot.  The inactive BE's /boot is where
+/// dump mounts it (/run/bko-holt/zbm-be-void-6.12); the runner answers
+/// that mount.
+fn zfsbootmenu(enc: bool) -> (Tree, FakeRunner) {
+    use crate::efi::GLOBAL;
+    use crate::zfsbootmenu::sample;
+    const BF00: &str = "6a898cc3-1dd2-11b2-99a6-080020c9b98d";
+    const ESP_UUID: &str = "2bb0e0e1-1111-4000-8000-00000000000a";
+    let t = Tree::new(if enc { "scn-zbm-enc" } else { "scn-zbm" });
+    let mut img = vec![0u8; 96 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec { disk_guid: "2bb0e0e1-0000-4000-8000-00000000000a", parts: vec![(ESP, ESP_UUID, 2048, 73727, 0, ""), (BF00, "2bb0e0e1-2222-4000-8000-00000000000a", 73728, 190463, 0, "")] },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(71680, 0x2bb0_e0e1, ""));
+    let cfg = crate::json::parse(
+        r#"{"version": 5000, "name": "zroot", "state": 0, "txg": 4, "pool_guid": 999, "hostname": "void-zbm", "hostid": 305419896, "top_guid": 1, "guid": 1,
+            "vdev_children": 1, "vdev_tree": {"type": "disk", "id": 0, "guid": 1, "path": "/dev/vda2", "whole_disk": 0, "ashift": 12},
+            "features_for_read": {"com.delphix:hole_birth": true}}"#,
+    )
+    .unwrap();
+    put(&mut img, 73728, &zfs::pack::vdev(116736 * 512, &cfg));
+    let zbm = sample::uki(sample::RELEASE_OSREL, sample::RELEASE_CMDLINE, sample::RELEASE_KERNEL, true);
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    let pkgs = [("base-system", "0.114_2"), ("dracut", "106_1"), ("efibootmgr", "18_2"), ("linux", "6.12_1"), ("linux6.12", ZBM_LTS), ("linux-mainline", "6.18_1"), ("linux6.18", ZBM_MAINLINE), ("zfs", "2.4.0_1"), ("dosfstools", "4.2_1")];
+    let db: String = pkgs.iter().map(|(n, v)| format!("\t<key>{n}</key>\n\t<dict>\n\t\t<key>architecture</key>\n\t\t<string>x86_64</string>\n\t\t<key>pkgver</key>\n\t\t<string>{n}-{v}</string>\n\t</dict>\n")).collect();
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 116736, &img)
+        .symlink(&format!("/dev/disk/by-partuuid/{ESP_UUID}"), "../../vda1")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&var("Boot0000"), efi_load_option("ZFSBootMenu (Backup)", 1, 2048, 71680, ESP_UUID, "\\EFI\\ZBM\\VMLINUZ-BACKUP.EFI"))
+        .file(&var("Boot0001"), efi_load_option("ZFSBootMenu", 1, 2048, 71680, ESP_UUID, "\\EFI\\ZBM\\VMLINUZ.EFI"))
+        .file(&var("BootOrder"), [7u8, 0, 0, 0, 1, 0, 0, 0])
+        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 1, 0])
+        .file(&var("SecureBoot"), [6u8, 0, 0, 0, 0])
+        .file("/proc/self/mountinfo", "26 1 0:24 / / rw,relatime shared:1 - zfs zroot/ROOT/void rw,xattr,posixacl\n27 26 0:25 / /home rw,relatime shared:2 - zfs zroot/home rw,xattr,posixacl\n28 26 254:1 / /boot/efi rw,relatime shared:3 - vfat /dev/vda1 rw,fmask=0022\n")
+        .file("/etc/fstab", "UUID=2BB0-E0E1 /boot/efi vfat defaults 0 0\n")
+        .file("/etc/os-release", "NAME=\"Void\"\nID=\"void\"\nPRETTY_NAME=\"Void Linux\"\nHOME_URL=\"https://voidlinux.org/\"\n")
+        .file("/etc/hostid", [0x78u8, 0x56, 0x34, 0x12])
+        .file("/etc/dracut.conf.d/zol.conf", "nofsck=\"yes\"\nadd_dracutmodules+=\" zfs \"\nomit_dracutmodules+=\" btrfs \"\n")
+        .file("/var/db/xbps/pkgdb-0.38.plist", format!("<?xml version=\"1.0\"?>\n<plist version=\"1.0\">\n<dict>\n{db}</dict>\n</plist>\n"))
+        .symlink("/lib", "usr/lib")
+        .file("/boot/efi/EFI/ZBM/VMLINUZ.EFI", &zbm)
+        .file("/boot/efi/EFI/ZBM/VMLINUZ-BACKUP.EFI", &zbm)
+        .file("/etc/bko-be", "void\n")
+        .file("/proc/sys/kernel/osrelease", format!("{ZBM_MAINLINE}\n"))
+        .file("/proc/sys/kernel/hostname", "void-zbm\n")
+        .file("/proc/cmdline", "root=zfs:zroot/ROOT/void loglevel=4 console=tty0 console=ttyS0,115200n8\n");
+    for k in [ZBM_LTS, ZBM_MAINLINE] {
+        t.file(&format!("/boot/vmlinuz-{k}"), "k").file(&format!("/boot/initramfs-{k}.img"), "i").file(&format!("/boot/config-{k}"), "").dir(&format!("/usr/lib/modules/{k}/kernel"));
+    }
+    // The inactive BE's /boot, where dump mounts it.
+    let at = "/run/bko-holt/zbm-be-void-6.12";
+    t.file(&format!("{at}/boot/vmlinuz-{ZBM_LTS}"), "k").file(&format!("{at}/boot/initramfs-{ZBM_LTS}.img"), "i").file(&format!("{at}/boot/config-{ZBM_LTS}"), "");
+    if enc {
+        t.file("/etc/zfs/zroot.key", "not-the-real-passphrase");
+    }
+    // zfs list's columns (report::zfs_tools_json): name type used available
+    // referenced mountpoint canmount mounted encryption encryptionroot
+    // keyformat keylocation keystatus origin compression ...
+    let (e, er, kf) = if enc { ("aes-256-gcm", "zroot", "passphrase") } else { ("off", "-", "none") };
+    let fs = |name: &str, mp: &str, canmount: &str, mounted: &str, keyloc: &str, origin: &str| {
+        let ks = if enc { "available" } else { "-" };
+        format!("{name}\tfilesystem\t900\t2000\t96\t{mp}\t{canmount}\t{mounted}\t{e}\t{er}\t{kf}\t{keyloc}\t{ks}\t{origin}\tlz4\t131072\t-\t-\tposix\tsa\tauto\tnone\toff\tsensitive\ton\ton\t1\t-\n")
+    };
+    let rootloc = if enc { "file:///etc/zfs/zroot.key" } else { "none" };
+    let list = fs("zroot", "none", "on", "no", rootloc, "-")
+        + &fs("zroot/ROOT", "none", "on", "no", "none", "-")
+        + &fs("zroot/ROOT/void", "/", "noauto", "yes", "none", "-")
+        + &fs("zroot/ROOT/void-6.12", "/", "noauto", "no", "none", "zroot/ROOT/void@pre-mainline")
+        + &fs("zroot/home", "/home", "on", "yes", "none", "-");
+    let mut props = String::from(
+        "zroot\tmountpoint\tnone\tlocal\nzroot\tcompression\tlz4\tlocal\nzroot\tacltype\tposix\tlocal\nzroot\txattr\tsa\tlocal\nzroot\trelatime\ton\tlocal\n\
+         zroot/ROOT\tmountpoint\tnone\tlocal\nzroot/ROOT\torg.zfsbootmenu:commandline\tloglevel=4 console=tty0 console=ttyS0,115200n8\tlocal\n\
+         zroot/ROOT/void\tmountpoint\t/\tlocal\nzroot/ROOT/void\tcanmount\tnoauto\tlocal\n\
+         zroot/ROOT/void-6.12\tmountpoint\t/\tlocal\nzroot/ROOT/void-6.12\tcanmount\tnoauto\tlocal\nzroot/ROOT/void-6.12\torg.zfsbootmenu:commandline\t%{parent} bko.be=void-6.12\tlocal\n\
+         zroot/home\tmountpoint\t/home\tlocal\n",
+    );
+    if enc {
+        props += "zroot\tkeylocation\tfile:///etc/zfs/zroot.key\tlocal\nzroot\torg.zfsbootmenu:keysource\tzroot/ROOT/void\tlocal\n";
+    }
+    let runner = FakeRunner::default()
+        .with("zpool list -H -o name", "zroot\n")
+        .with(
+            "zpool get -H -p -o property,value,source all zroot",
+            &format!(
+                "size\t59055800320\t-\nashift\t12\tlocal\nautotrim\ton\tlocal\ncompatibility\topenzfs-2.3-linux\tlocal\nbootfs\tzroot/ROOT/void\tlocal\nfree\t1\t-\nfeature@async_destroy\tenabled\tlocal\nfeature@lz4_compress\tactive\tlocal\n{}",
+                if enc { "feature@encryption\tactive\tlocal\n" } else { "" }
+            ),
+        )
+        .with(
+            "zfs list -H -p -t filesystem,volume -o name,type,used,available,referenced,mountpoint,canmount,mounted,encryption,encryptionroot,keyformat,keylocation,keystatus,origin,compression,recordsize,volsize,volblocksize,acltype,xattr,dnodesize,normalization,utf8only,casesensitivity,atime,relatime,copies,com.sun:auto-snapshot",
+            &list,
+        )
+        .with("zfs get -H -p -t filesystem,volume -s local,received -o name,property,value,source all", &props)
+        .with(
+            "zpool status -j --json-int -P zroot",
+            r#"{"output_version": {"command": "zpool status", "vers_major": 0, "vers_minor": 1}, "pools": {"zroot": {"name": "zroot", "state": "ONLINE",
+               "vdevs": {"zroot": {"name": "zroot", "vdev_type": "root", "vdevs": {"/dev/vda2": {"name": "/dev/vda2", "vdev_type": "disk", "path": "/dev/vda2"}}}}}}}"#,
+        )
+        .with(&format!("mount -t zfs -o ro,zfsutil,nodev,nosuid,noexec zroot/ROOT/void-6.12 {at}"), "")
+        .with(&format!("umount {at}"), "");
+    (t, runner)
+}
+
+/// ZFSBootMenu's dump (`v`, changed by `change` first) planned onto sda
+/// with load's arguments `extra`.
+fn zbm_plan(enc: bool, extra: &[&str], change: impl Fn(&mut Value)) -> (Value, crate::load::commands::Built) {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let (t, runner) = zfsbootmenu(enc);
+    let mut v = run(&t, true, runner);
+    change(&mut v);
+    let l = Layout::from_json(v.clone()).unwrap();
+    let mut a = vec!["l.json".to_string()];
+    a.extend(extra.iter().map(|s| s.to_string()));
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
+    (v, commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "sda".into())], ..Mapping::default() }))
+}
+
+/// void-zbm read back and planned: the loader named zfsbootmenu from
+/// BootCurrent's image; boot.zfsbootmenu with both images (version, kernel,
+/// SHA-256, embedded command line), the pool and both BEs with their /boot;
+/// one hinted source for the inactive BE.  The plan makes every dataset
+/// with its user properties intact, mounts void-6.12 under run/bko-be and
+/// takes it away at the boot stage's start, remakes only the booted BE's
+/// initramfs, installs no loader, and remakes both NVRAM entries in the
+/// source's order.
+#[test]
+fn zfsbootmenu_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    use crate::zfsbootmenu::sample;
+    let (v, b) = zbm_plan(false, &[], |_| {});
+    assert_eq!(s(&v, &["os", "id"]), "void");
+    let w: Vec<&str> = arr(&v, &["warnings"]).iter().filter_map(Value::as_str).collect();
+    assert!(w.is_empty(), "{w:?}");
+    // The loader, from BootCurrent's file.
+    let l = v.at(&["boot", "loader"]).unwrap();
+    assert_eq!(s(l, &["name"]), "zfsbootmenu");
+    assert!(l.get("package").unwrap().is_null());
+    let why: Vec<&str> = arr(l, &["evidence"]).iter().filter_map(Value::as_str).collect();
+    assert_eq!(why, ["firmware booted \\EFI\\ZBM\\VMLINUZ.EFI", "that is a ZFSBootMenu image (EFI/ZBM/VMLINUZ.EFI)"]);
+    for (p, ver) in [("linux-mainline", "6.18_1"), ("zfs", "2.4.0_1"), ("dracut", "106_1")] {
+        assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
+    }
+    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "dracut");
+    // boot.zfsbootmenu.
+    let z = v.at(&["boot", "zfsbootmenu"]).unwrap();
+    let images = arr(z, &["images"]);
+    let paths: Vec<(&str, &str)> = images.iter().map(|i| (s(i, &["path"]), s(i, &["why"]))).collect();
+    assert_eq!(paths, [("EFI/ZBM/VMLINUZ-BACKUP.EFI", "it is in a zbm directory"), ("EFI/ZBM/VMLINUZ.EFI", "it is in a zbm directory")]);
+    let i = &images[1];
+    let zbm = sample::uki(sample::RELEASE_OSREL, sample::RELEASE_CMDLINE, sample::RELEASE_KERNEL, true);
+    assert_eq!(s(i, &["sha256"]), crate::bytes::sha256_hex(&zbm));
+    assert_eq!(u(i, &["size"]), zbm.len() as u64);
+    assert_eq!((s(i, &["esp_device"]), s(i, &["esp_mount"])), ("vda1", "/boot/efi"));
+    assert!(i.get("version").unwrap().is_null());
+    assert_eq!(s(i, &["osrel"]), "Void Linux");
+    assert_eq!(s(i, &["kernel"]), sample::RELEASE_KERNEL);
+    assert_eq!(s(i, &["stub"]), "systemd-stub 256.6");
+    assert_eq!(s(i, &["cmdline"]), sample::RELEASE_CMDLINE);
+    assert_eq!(s(z, &["pools", "0", "name"]), "zroot");
+    assert_eq!(s(z, &["pools", "0", "bootfs"]), "zroot/ROOT/void");
+    let bes = arr(z, &["bes"]);
+    let got: Vec<(&str, bool, bool, bool)> = bes.iter().map(|b| (s(b, &["dataset"]), b.get("bootfs").unwrap().as_bool().unwrap(), b.get("mounted").unwrap().as_bool().unwrap(), b.get("read").unwrap().as_bool().unwrap())).collect();
+    assert_eq!(got, [("zroot/ROOT/void", true, true, true), ("zroot/ROOT/void-6.12", false, false, true)]);
+    let names = |b: &Value, k: &str| -> Vec<String> { arr(b, &[k]).iter().filter_map(Value::as_str).map(str::to_string).collect() };
+    assert_eq!(names(&bes[0], "kernels"), [format!("vmlinuz-{ZBM_LTS}"), format!("vmlinuz-{ZBM_MAINLINE}")]);
+    assert_eq!(names(&bes[0], "initramfs"), [format!("initramfs-{ZBM_LTS}.img"), format!("initramfs-{ZBM_MAINLINE}.img")]);
+    assert_eq!(names(&bes[1], "kernels"), [format!("vmlinuz-{ZBM_LTS}")]);
+    assert_eq!(names(&bes[1], "initramfs"), [format!("initramfs-{ZBM_LTS}.img")]);
+    assert!(bes[0].get("origin").unwrap().is_null());
+    assert_eq!(s(&bes[1], &["origin"]), "zroot/ROOT/void@pre-mainline");
+    assert_eq!(s(&bes[0], &["commandline"]), "loglevel=4 console=tty0 console=ttyS0,115200n8");
+    assert_eq!(s(&bes[0], &["commandline_from"]), "zroot/ROOT");
+    assert_eq!(s(&bes[1], &["commandline"]), "%{parent} bko.be=void-6.12");
+    assert_eq!(s(&bes[1], &["commandline_from"]), "zroot/ROOT/void-6.12");
+    // One hinted source: the inactive BE, read-only.
+    let src = arr(&v, &["storage", "backup_sources"]);
+    let hinted: Vec<(&str, &str, &str)> = src.iter().filter(|b| b.get("from").unwrap().is_null()).map(|b| (s(b, &["path"]), s(b, &["mount", "device"]), s(b, &["mount", "options"]))).collect();
+    assert_eq!(hinted, [("/run/bko-be/void-6.12", "zroot/ROOT/void-6.12", "ro,zfsutil,nodev,nosuid,noexec")]);
+
+    // The plan.
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let text = |st: Stage| -> String { b.stage(st).iter().map(Cmd::shell).collect() };
+    let asm = text(Stage::Assemble);
+    let create = asm.lines().find(|l| l.starts_with("zpool create ")).expect(&asm);
+    for w in ["-o compatibility=openzfs-2.3-linux", "-o autotrim=on", "-O mountpoint=none", "-R /mnt/bko-target zroot /dev/sda2"] {
+        assert!(create.contains(w), "{w}: {create}");
+    }
+    assert!(!create.contains("bootfs"), "{create}");
+    assert!(asm.contains("zpool reguid -g 999 zroot\n"), "{asm}");
+    // The user properties, ':' in the name, spaces and %{parent} in the
+    // value, quoted for the shell but otherwise as the source had them.
+    let fmt = text(Stage::Format);
+    assert!(fmt.contains("zfs create -u -o mountpoint=none -o 'org.zfsbootmenu:commandline=loglevel=4 console=tty0 console=ttyS0,115200n8' zroot/ROOT\n"), "{fmt}");
+    assert!(fmt.contains("zfs create -u -o mountpoint=/ -o canmount=noauto -o 'org.zfsbootmenu:commandline=%{parent} bko.be=void-6.12' zroot/ROOT/void-6.12\n"), "{fmt}");
+    let mk = b.stage(Stage::Format).iter().find(|c| c.argv.last().map(String::as_str) == Some("zroot/ROOT/void-6.12")).unwrap();
+    assert!(mk.argv.contains(&"org.zfsbootmenu:commandline=%{parent} bko.be=void-6.12".to_string()), "{:?}", mk.argv);
+    assert!(fmt.contains("zpool set bootfs=zroot/ROOT/void zroot\n"), "{fmt}");
+    assert!(!fmt.contains('@'), "no snapshot or clone is made: {fmt}");
+    assert!(b.notes.iter().any(|n| n == "ZFS: void-6.12 (zroot/ROOT/void-6.12) was a clone of void's snapshots; it comes back as a full copy (no snapshot is remade)"), "{:?}", b.notes);
+    // Mounts: the booted BE at /, then the inactive one at run/bko-be.
+    let mt = text(Stage::Mount);
+    let root = mt.find("zfs mount zroot/ROOT/void\n").expect(&mt);
+    let be = mt.find("mount -t zfs -o zfsutil zroot/ROOT/void-6.12 /mnt/bko-target/run/bko-be/void-6.12\n").expect(&mt);
+    let esp = mt.find("mount -t vfat -o defaults /dev/sda1 /mnt/bko-target/boot/efi\n").expect(&mt);
+    assert!(root < be && root < esp, "{mt}");
+    assert!(!mt.contains("zfs mount zroot/ROOT/void-6.12"), "{mt}");
+    // The boot stage: the BE taken away first, the booted BE's initramfs,
+    // no loader install, both entries in the source's order.
+    let bt = text(Stage::Boot);
+    let um = bt.find("umount /mnt/bko-target/run/bko-be/void-6.12'\n").expect(&bt);
+    let rm = bt.find("rmdir /mnt/bko-target/run/bko-be'\n").expect(&bt);
+    let dracut = bt.find("dracut --force --kver").expect(&bt);
+    assert!(um < rm && rm < dracut, "{bt}");
+    assert_eq!(bt.matches("dracut --force").count(), 1, "{bt}");
+    for no in ["grub", "bootctl", "refind", "xbps-reconfigure", "BOOTX64"] {
+        assert!(!bt.contains(no), "{no}: {bt}");
+    }
+    let backup = bt.find("efibootmgr --quiet --create --disk /dev/sda --part 1 --label 'ZFSBootMenu (Backup)' --loader '\\EFI\\ZBM\\VMLINUZ-BACKUP.EFI'\n").expect(&bt);
+    let main = bt.find("efibootmgr --quiet --create --disk /dev/sda --part 1 --label ZFSBootMenu --loader '\\EFI\\ZBM\\VMLINUZ.EFI'\n").expect(&bt);
+    assert!(dracut < backup && backup < main, "{bt}");
+    assert_eq!(bt.matches("efibootmgr").count(), 2, "{bt}");
+    let sha = crate::bytes::sha256_hex(&zbm);
+    assert!(
+        b.notes.iter().any(|n| *n == format!("ZFSBootMenu: its image EFI/ZBM/VMLINUZ.EFI on the ESP at /boot/efi (version not recorded (its .osrel is its build system's, Void Linux), kernel {}, SHA-256 {sha}) comes back with the ESP; nothing is installed", sample::RELEASE_KERNEL)),
+        "{:?}",
+        b.notes
+    );
+    assert!(b.notes.iter().any(|n| n.starts_with("ZFSBootMenu: its image EFI/ZBM/VMLINUZ-BACKUP.EFI ")), "{:?}", b.notes);
+    assert!(b.notes.iter().any(|n| n.starts_with("ZFSBootMenu: only the booted boot environment's initramfs is remade; void-6.12's /boot stay as restored")), "{:?}", b.notes);
+    assert!(!b.notes.iter().any(|n| n.contains("BOOTX64.EFI")), "{:?}", b.notes);
+    assert!(!bt.contains("cmp -s"), "no key file: {bt}");
+    // --no-nvram: no entry, and a note that the copy can't boot alone.
+    let (_, b) = zbm_plan(false, &["--no-nvram"], |_| {});
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(!bt.contains("efibootmgr"), "{bt}");
+    assert!(b.notes.iter().any(|n| n.starts_with("ZFSBootMenu: --no-nvram: no NVRAM entry is made, and the ESP has no ZFSBootMenu image at EFI/BOOT/BOOTX64.EFI")), "{:?}", b.notes);
+    // An entry with optional data (a source made with efibootmgr -u):
+    // passed again as UCS-2 text; binary data from a file.
+    let with_data = |extra: &[u8]| {
+        let extra = extra.to_vec();
+        move |v: &mut Value| {
+            let Some(Value::Arr(es)) = v.at(&["boot", "efi", "entries"]).cloned() else { panic!() };
+            let mut es = es;
+            let Value::Obj(o) = &mut es[0] else { panic!() };
+            for (k, x) in o.iter_mut() {
+                match k.as_str() {
+                    "load_option_hex" => *x = Value::from(format!("{}{}", x.as_str().unwrap(), extra.iter().map(|b| format!("{b:02x}")).collect::<String>())),
+                    "optional_data_bytes" => *x = Value::from(extra.len() as u64),
+                    _ => {}
+                }
+            }
+            set_at(v, &["boot", "efi", "entries"], Value::Arr(es));
+        }
+    };
+    let text_arg: Vec<u8> = "zbm.prefer=zroot/ROOT/void-6.12!".encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
+    let (_, b) = zbm_plan(false, &[], with_data(&text_arg));
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("--label 'ZFSBootMenu (Backup)' --loader '\\EFI\\ZBM\\VMLINUZ-BACKUP.EFI' --unicode 'zbm.prefer=zroot/ROOT/void-6.12!'\n"), "{bt}");
+    assert!(bt.contains("--label ZFSBootMenu --loader '\\EFI\\ZBM\\VMLINUZ.EFI'\n"), "{bt}");
+    let (_, b) = zbm_plan(false, &[], with_data(&[1, 2, 0xff]));
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    let f = format!("{}/efi-optional-data-0000", crate::load::RUN_DIR);
+    assert!(bt.contains(&format!("sh -c 'printf '\\''\\001\\002\\377'\\'' > {f}'\n")), "{bt}");
+    assert!(bt.contains(&format!("--loader '\\EFI\\ZBM\\VMLINUZ-BACKUP.EFI' --append-binary-args {f}\n")), "{bt}");
+}
+
+/// What load refuses for ZFSBootMenu: the BEs' pool not in the layout, a
+/// bootfs not among the datasets, no image on an ESP fstab mounts.
+#[test]
+fn zfsbootmenu_refusals() {
+    let (_, b) = zbm_plan(false, &[], |v| set_at(v, &["boot", "zfsbootmenu", "pools"], crate::json::parse(r#"[{"name": "tank", "bootfs": null}]"#).unwrap()));
+    assert!(b.problems.iter().any(|p| p == "ZFSBootMenu: its boot environments' pool tank isn't in the layout, so nothing it boots would be restored"), "{:?}", b.problems);
+    let (_, b) = zbm_plan(false, &[], |v| set_at(v, &["boot", "zfsbootmenu", "pools"], crate::json::parse(r#"[{"name": "zroot", "bootfs": "zroot/ROOT/gone"}]"#).unwrap()));
+    assert!(b.problems.iter().any(|p| p == "ZFSBootMenu: pool zroot's bootfs zroot/ROOT/gone isn't among the layout's datasets, so ZFSBootMenu would have no default boot environment"), "{:?}", b.problems);
+    let (_, b) = zbm_plan(false, &[], |v| set_at(v, &["storage", "fstab"], Value::Arr(vec![])));
+    assert!(
+        b.problems.iter().any(|p| p == "ZFSBootMenu: no image of it is on an ESP that fstab mounts and this layout makes (EFI/ZBM/VMLINUZ-BACKUP.EFI on /boot/efi, EFI/ZBM/VMLINUZ.EFI on /boot/efi), so the restore wouldn't bring it back"),
+        "{:?}",
+        b.problems
+    );
+}
+
+/// void-zbm-enc: the passphrase lives in /etc/zfs/zroot.key inside the
+/// encrypted BE.  Without --key-file the plan says which file holds it;
+/// with it, the pool is made with the given file, the restored key file is
+/// checked against it, and keylocation and keysource come back as the
+/// source's.
+#[test]
+fn zfsbootmenu_encrypted() {
+    use crate::load::{commands::Cmd, Stage};
+    let (v, b) = zbm_plan(true, &[], |_| {});
+    assert_eq!(s(&v, &["boot", "loader", "name"]), "zfsbootmenu");
+    assert_eq!(s(&v, &["storage", "zfs", "tools", "datasets", "0", "keylocation"]), "file:///etc/zfs/zroot.key");
+    assert!(
+        b.problems.iter().any(|p| p == "ZFS encryption root zroot: give its new key with --key-file zroot=FILE (the source keeps its passphrase in /etc/zfs/zroot.key, inside the encrypted datasets: give that passphrase)"),
+        "{:?}",
+        b.problems
+    );
+    let (_, b) = zbm_plan(true, &["--key-file", "zroot=/root/zroot-passphrase"], |_| {});
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let text = |st: Stage| -> String { b.stage(st).iter().map(Cmd::shell).collect() };
+    let asm = text(Stage::Assemble);
+    let create = asm.lines().find(|l| l.starts_with("zpool create ")).expect(&asm);
+    for w in ["-O encryption=aes-256-gcm", "-O keyformat=passphrase", "-O keylocation=file:///root/zroot-passphrase", "-O org.zfsbootmenu:keysource=zroot/ROOT/void"] {
+        assert!(create.contains(w), "{w}: {create}");
+    }
+    let bt = text(Stage::Boot);
+    let check = bt.find("sh -c 'cmp -s /root/zroot-passphrase /mnt/bko-target/etc/zfs/zroot.key || { echo '\\''ZFS encryption root zroot: the restored /etc/zfs/zroot.key is not the key --key-file zroot=/root/zroot-passphrase gave").expect(&bt);
+    let loc = bt.find("zfs set keylocation=file:///etc/zfs/zroot.key zroot\n").expect(&bt);
+    let dracut = bt.find("dracut --force --kver").expect(&bt);
+    assert!(bt.find("umount /mnt/bko-target/run/bko-be/void-6.12'\n").unwrap() < check && check < loc && loc < dracut, "{bt}");
+    assert_eq!(bt.matches("cmp -s").count(), 1, "{bt}");
 }
 
 /// A dump's JSON object member K, for writing (tests that reshape a dump).

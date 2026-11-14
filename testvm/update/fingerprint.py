@@ -72,6 +72,7 @@ PACKAGES = (
     "proxmox-kernel-helper", "proxmox-default-kernel", "proxmox-ve", "pve-manager",
     "linux-libre", "shepherd",
     "truenas", "middlewared",
+    "zfsbootmenu", "linux-mainline",
 )
 # Of those, what handles storage; the rest is boot.
 STORAGE = frozenset((

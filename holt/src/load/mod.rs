@@ -31,6 +31,7 @@ pub mod transactional;
 pub mod truenas;
 pub mod writetable;
 pub mod zfs_be;
+pub mod zfsbootmenu;
 
 use crate::sys::{FakeRunner, Sys};
 

@@ -1631,7 +1631,11 @@ impl Builder<'_> {
                 Some(f) => f.to_string(),
                 None => {
                     if !matches!(fmt.as_str(), "raw" | "hex") {
-                        self.problems.push(format!("ZFS encryption root {name}: give its new key with --key-file {name}=FILE"));
+                        // A passphrase kept in a file inside the encrypted
+                        // datasets (ZFSBootMenu's /etc/zfs/zroot.key) can't
+                        // be read before they exist.
+                        let kept = self.key_file_in_tree(ds).map(|p| format!(" (the source keeps its passphrase in {p}, inside the encrypted datasets: give that passphrase)")).unwrap_or_default();
+                        self.problems.push(format!("ZFS encryption root {name}: give its new key with --key-file {name}=FILE{kept}"));
                     }
                     format!("{RUN_DIR}/keys/{}", name.replace('/', "_"))
                 }
@@ -3107,6 +3111,9 @@ impl Builder<'_> {
         let mut out = Vec::new();
         out.push(Cmd::note(format!("refuses to start unless {t}/etc/fstab is the restored system's (its / matches the layout's)")));
         out.extend(self.restored_key_files(&t));
+        // A key file inside the restored tree must be the key the pool was
+        // made with (load/zfsbootmenu.rs).
+        out.extend(self.zfs_key_file_checks(&t));
         for ds in self.layout.v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).cloned().unwrap_or_default() {
             let name = s(&ds, "name").unwrap_or_default();
             if s(&ds, "encryptionroot").as_deref() != Some(name.as_str()) {
@@ -3170,6 +3177,13 @@ impl Builder<'_> {
             }
             _ if self.proxmox_boot().is_some() => {
                 let cmds = self.proxmox_boot_cmds(&t, via_shim);
+                out.extend(cmds);
+            }
+            // ZFSBootMenu (load/zfsbootmenu.rs): no loader installed, its
+            // images came back with the ESP; the initramfs step above and
+            // efi_entries below are all it needs.
+            ("zfsbootmenu", true) => {
+                let cmds = self.zfsbootmenu_boot_cmds();
                 out.extend(cmds);
             }
             // Gentoo through shim: grub-install would put an unsigned GRUB
@@ -3858,7 +3872,7 @@ impl Builder<'_> {
 
     /// The source's boot entries on the restored disks, created in reverse
     /// BootOrder so that the first ends up first (efibootmgr puts each new
-    /// one at the front).
+    /// one at the front), each with its optional data.
     pub(crate) fn efi_entries(&mut self) -> Vec<Cmd> {
         let entries = self.layout.arr(&["boot", "efi", "entries"]).to_vec();
         let order: Vec<String> = self.layout.v.at(&["boot", "efi", "boot_order"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
@@ -3893,7 +3907,21 @@ impl Builder<'_> {
                 out.push(efi_dedupe(&format!("/dev/{t}"), num, &file));
                 deduped.push(key);
             }
-            out.push(Cmd::new(&["efibootmgr", "--quiet", "--create", "--disk", &format!("/dev/{t}"), "--part", &num.to_string(), "--label", &desc, "--loader", &file]));
+            let mut a: Vec<String> = ["efibootmgr", "--quiet", "--create", "--disk", &format!("/dev/{t}"), "--part", &num.to_string(), "--label", &desc, "--loader", &file].iter().map(|x| x.to_string()).collect();
+            // The entry's optional data (the loader's arguments), as the
+            // source had it: UCS-2 text as efibootmgr's --unicode argument,
+            // anything else from a file.
+            match efi_optional_data(e) {
+                Some(OptionalData::Text(text)) => a.extend(["--unicode".to_string(), text]),
+                Some(OptionalData::Bytes(b)) => {
+                    let f = format!("{RUN_DIR}/efi-optional-data-{}", s(e, "number").unwrap_or_default());
+                    let octal: String = b.iter().map(|c| format!("\\{c:03o}")).collect();
+                    out.push(Cmd::new(&["sh", "-c", &format!("printf '{octal}' > {f}")]).why(format!("UEFI entry {desc:?}: its optional data, {} bytes, as the source had it", b.len())));
+                    a.extend(["--append-binary-args".to_string(), f]);
+                }
+                None => {}
+            }
+            out.push(Cmd { argv: a, ..Cmd::default() });
         }
         out
     }
@@ -4082,6 +4110,35 @@ impl Builder<'_> {
 pub(crate) fn efi_dedupe(dev: &str, part: u32, loader: &str) -> Cmd {
     let exe = std::env::current_exe().map(|p| p.to_string_lossy().into_owned()).unwrap_or_else(|_| "bko-holt".into());
     Cmd::new(&[exe.as_str(), "efi-dedupe", dev, &part.to_string(), loader]).why("NVRAM's entries for this partition and loader, from an earlier restore here, deleted").warns()
+}
+
+/// A UEFI entry's optional data (the bytes after its device path).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) enum OptionalData {
+    /// UCS-2 text, as `efibootmgr --unicode` writes it (no final NUL).
+    Text(String),
+    Bytes(Vec<u8>),
+}
+
+/// The dumped entry E's optional data, from the tail of its load option
+/// (optional_data_bytes of load_option_hex): None when it has none.
+pub(crate) fn efi_optional_data(e: &Value) -> Option<OptionalData> {
+    let n = num(e, "optional_data_bytes").filter(|&n| n > 0)? as usize;
+    let hex = s(e, "load_option_hex")?;
+    let raw: Vec<u8> = (0..hex.len() / 2).filter_map(|i| u8::from_str_radix(hex.get(2 * i..2 * i + 2)?, 16).ok()).collect();
+    let b = raw.get(raw.len().checked_sub(n)?..)?.to_vec();
+    if b.len() % 2 == 0 {
+        let mut units: Vec<u16> = b.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+        while units.last() == Some(&0) {
+            units.pop();
+        }
+        if let Ok(t) = String::from_utf16(&units) {
+            if !t.is_empty() && t.chars().all(|c| !c.is_control()) {
+                return Some(OptionalData::Text(t));
+            }
+        }
+    }
+    Some(OptionalData::Bytes(b))
 }
 
 #[cfg(test)]

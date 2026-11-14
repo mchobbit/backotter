@@ -134,7 +134,7 @@ const WELL_KNOWN: [&str; 7] = [
     "ffffffff-ffff-ffff-ffff-ffffffffffff",
 ];
 /// Hostnames installers give and live systems use: they identify no one.
-const GENERIC_HOSTS: [&str; 37] = [
+const GENERIC_HOSTS: [&str; 39] = [
     "", "(none)", "localhost", "localhost.localdomain", "localdomain", "<system>", "any", "debian", "ubuntu", "ubuntu-server", "fedora",
     "archlinux", "archiso", "alpine", "nixos", "freebsd", "openbsd", "netbsd", "dragonfly", "omnios", "openindiana", "haiku", "void",
     "voidlinux", "mint", "zorin", "pop-os", "rocky", "backotter", "rescue",
@@ -151,6 +151,8 @@ const GENERIC_HOSTS: [&str; 37] = [
     "vanilla",
     // TrueNAS's installer's default hostname.
     "truenas",
+    // The ZFSBootMenu Void guests' hostnames (testvm/make-void-zfs.sh).
+    "void-zbm", "void-zbm-enc",
 ];
 /// Labels (lower case, trailing digits and '*' dropped) that installers
 /// and partitioners write: kept, because they help and identify no one.
@@ -1028,7 +1030,17 @@ impl Sealer {
         let l = digits.len();
         let p = if l >= 2 {
             let base = 10u64.pow((l - 1) as u32);
-            let forms = self.next("dec", |k| vec![(base + k).to_string(), format!("{:0w$x}", base + k)]);
+            // A hex form without letters (10000001 is 00989681) would be
+            // both case forms' pseudonym, and unredact couldn't tell which
+            // the original was (void-zbm's 0x00bab10c): skip those.
+            let letters = |s: &str| s.bytes().any(|c| c.is_ascii_alphabetic());
+            let needs = { let oh = format!("{n:0w$x}"); oh.len() >= 8 && letters(&oh) };
+            let forms = loop {
+                let f = self.next("dec", |k| vec![(base + k).to_string(), format!("{:0w$x}", base + k)]);
+                if !needs || letters(&f[1]) {
+                    break f;
+                }
+            };
             forms[0].parse::<u64>().unwrap()
         } else {
             n
@@ -1531,6 +1543,19 @@ mod tests {
         let line = "mkfs.ext4 -L Photos -U 6c3e5f0e-6b0a-4d6c-9a2e-8f7e1d2c3b4a /dev/mapper/alice--laptop--vg-root  # alice-laptop";
         assert_eq!(red.unredact(&red.text(line)), line);
         assert!(!red.text(line).contains("alice"));
+    }
+
+    #[test]
+    fn hostid_hex_maps_back_in_its_case() {
+        // ZFSBootMenu's 0x00bab10c: an 8-digit hostid, whose first
+        // pseudonyms' hex forms have no letters.
+        for (cmd, other) in [("spl.spl_hostid=0x00bab10c", "00BAB10C"), ("spl.spl_hostid=0x00BAB10C", "00bab10c")] {
+            let d = parse(&format!(r#"{{"storage": {{"zfs": {{"pools": [{{"hostid": 12235020}}]}}}}, "boot": {{"cmdline": "{cmd}", "x": "{other}"}}}}"#)).unwrap();
+            let (r, red) = redact(&d);
+            let s = r.pretty();
+            assert!(!s.to_ascii_lowercase().contains("bab10c") && !s.contains("12235020"), "{s}");
+            assert_eq!(red.unredact_value(&r).pretty(), d.pretty());
+        }
     }
 
     #[test]

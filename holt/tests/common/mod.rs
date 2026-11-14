@@ -5,7 +5,8 @@
 //! fake rescue system (testutil::Tree) with a blank disk sd{q+i} of each
 //! dumped disk's size (GROW bytes more for the `+bigger` variant, as
 //! ht1.sh's bigger rebuilds onto disks 1 GiB bigger), `--map NAME=TARGET`,
-//! `--repo /srv/bko-repo`, a rustic-bko whose `--version` says it's
+//! `--repo /srv/bko-repo`, `--key-file NAME=/srv/bko-keys/NAME` for each
+//! ZFS encryption root with a passphrase, a rustic-bko whose `--version` says it's
 //! BackOtter's, and every tool the plan asks for installed.  Three things
 //! differ from check_plan, for plans that read the same on every build:
 //! RAM disks and ZFS volumes get no target (load leaves them out, and a
@@ -28,6 +29,8 @@ use bko_holt::testutil::Tree;
 pub const RUSTIC_VERSION: &str = "rustic 0.11.4+backotter.4\n";
 /// The repository every golden plan restores from.
 pub const REPO: &str = "/srv/bko-repo";
+/// Where a golden plan's --key-file keys are (a ZFS passphrase root's).
+pub const KEYS: &str = "/srv/bko-keys";
 /// The layout's name in the plan's first line and its "To run it" line.
 pub const LAYOUT: &str = "layout.json";
 /// The +bigger variant's targets: this much bigger than the source's disks.
@@ -87,6 +90,19 @@ pub fn plan_onto(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, extra: &
         maps.push((name, tgt, bytes));
     }
     args.extend(["--repo".to_string(), REPO.to_string()]);
+    // A ZFS encryption root with a passphrase (void-zbm-enc's zroot) gets
+    // its key from --key-file, as HoltTest1 gives the guest's: a fixed test
+    // path, KEYS/NAME, never a real key.  Raw and hex keys (Ubuntu's
+    // keystore) plan without one, as before.
+    let mut keys = Vec::new();
+    for ds in v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).into_iter().flatten() {
+        let (Some(name), Some(root)) = (ds.get("name").and_then(Value::as_str), ds.get("encryptionroot").and_then(Value::as_str)) else { continue };
+        if name == root && ds.get("keyformat").and_then(Value::as_str) == Some("passphrase") {
+            let f = format!("{KEYS}/{}", name.replace('/', "_"));
+            args.extend(["--key-file".to_string(), format!("{name}={f}")]);
+            keys.push(f);
+        }
+    }
     args.extend(extra.iter().cloned());
     let opts = match parse_args(&args) {
         Ok(Parsed::Run(o)) => o,
@@ -94,9 +110,14 @@ pub fn plan_onto(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, extra: &
         Err(e) => return Err(format!("load's arguments {args:?}: {e}")),
     };
     t.file("/usr/sbin/rustic-bko", "");
+    for f in &keys {
+        t.file(f, "golden-plan test key\n");
+    }
     // The rescue image carries OpenZFS's feature sets (zpool create -o
     // compatibility=grub2, e.g. TrueNAS's boot-pool).
     t.file("/usr/share/zfs/compatibility.d/grub2", "");
+    // ZFSBootMenu's guide's pool (void-zbm): OpenZFS 2.3 and later ship it.
+    t.file("/usr/share/zfs/compatibility.d/openzfs-2.3-linux", "");
     // load runs itself (write-table, md-lbs) as std::env::current_exe(),
     // which is this test's binary: installed where it is, as a rescue
     // system has bko-holt, and named `bko-holt` in the plan, which would

@@ -97,8 +97,10 @@ and a case that can't take it does its own, with a `note:` line saying why:
   key (`bs2-host rescuer-key`: rescuer image and its .sha256, firmware
   options, memory, QEMU, OVMF, host kernel and CPU microcode, vm-run,
   ht1-bs2.sh, bs2-qmp.py) boots the rescuer with no disk of a case's and a
-  vmgenid device (and on q35 six PCIe root ports), waits for its boot to
-  settle, stops its timers (a resume jumps its clock: they would fire
+  vmgenid device (and on q35 six PCIe root ports, in tier 2's slots 3-8,
+  a blank stand-in behind each at the boot, so that the firmware makes the
+  options a cold boot makes for the targets there, unplugged once it is
+  up), waits for its boot to settle, stops its timers (a resume jumps its clock: they would fire
   mid-load), and saves RAM and devices with QMP `migrate` to
   `/bkoscratch/backshot2/rescuer-state/HASH/` (its disk as an overlay, its
   NVRAM beside it); a newer state of the same rescuer and firmware replaces
@@ -226,7 +228,21 @@ family's golden is rewritten only with a new `GENERATOR`.
    preparation's run (`bs2-host source`) is held to the same.
 4. **Tier 2** (UEFI sources, cases that touch an ESP or the NVRAM): tier 1
    with one OVMF variable store for the rescuer and the restored boot, and
-   no `--no-nvram` unless the case has it.
+   no `--no-nvram` unless the case has it.  It is one machine: each target
+   sits behind a PCIe root port of its own from pcie.0's slot 3 on (`vm-run
+   --disk-ports`), the decoy behind the next, in the rescuer's boot and
+   (the targets alone) the restored boot, and the rescuer's own disk on
+   pcie.0 after the ports (still vda).  OVMF's option for a disk is its
+   device path and "UEFI Misc Device", " N" after it for the Nth disk it
+   finds; an option no disk matches is deleted, and a new one goes after
+   "EFI Internal Shell", which never returns.  So a source that boots from
+   its ESP's removable path (no entry of its own: load writes none) boots
+   through the option the rescuer's boot made for its disk, as a real
+   machine's internal disk keeps its own, only with the same path and rank
+   in both boots: the firmware walks a port's bus at the port, before the
+   rescuer's disk, which Linux probes first (bs2a-20261114-0655: with the
+   target on pcie.0 after the rescuer's disk, the restored boot ended in
+   the shell).
 5. A FAIL is shrunk (`bs2-host shrink`) and copied into `cases/` as
    `fail-NNN-NAME.case`, with its check and excerpt; "finding" says whose.
    Run the shrink itself without `cmp-run.sh --reserve`: each of its

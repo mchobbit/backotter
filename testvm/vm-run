@@ -2,7 +2,7 @@
 # Boot a BackOtter test VM from its disk image.
 #
 # Usage: vm-run [--uefi [--no-secure-boot] [--uefi-vars FILE] [--mok CERT]... | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]]
-#               [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--nic MODEL]
+#               [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--disk-ports LIST] [--nic MODEL]
 #               [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga]
 #               IMAGE [-- QEMU_ARGS...]
 #
@@ -92,6 +92,17 @@
 #                 first; IMAGE then boots first whatever slot it has.  A
 #                 rescuer's own disk out of the way, so that the disks it
 #                 works on have the slots they have in the machine itself
+#   --disk-ports N0,N1,...
+#                 with --uefi or --q35: put each virtio disk (IMAGE first)
+#                 behind a PCIe root port of its own in pcie.0's slot N
+#                 (decimal), or with "-" on pcie.0 as ever; no bootindex.
+#                 The ports take their slots before any disk does, so a disk
+#                 left on pcie.0 comes after them.  OVMF's boot option for a
+#                 disk is its device path and a description ("UEFI Misc
+#                 Device N", N its rank among the disks): a disk behind the
+#                 same port in a rescuer's boot (its disk on pcie.0, after
+#                 the ports, and still vda) and in the restored boot has the
+#                 same option in both, as a real machine's disk keeps its own
 #   --nic MODEL   the network card's QEMU model instead of virtio-net-pci, e.g.
 #                 e1000e, e1000 or rtl8139: another driver.  It keeps the PCI
 #                 slot, so names by slot (ens3) stay the same.
@@ -138,7 +149,7 @@ in_store() {
 }
 
 uefi_vars="" moks=() cdrom="" uefi=no q35=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic) vga=()
-bus=virtio extra=() serials=() slots=() nic=virtio-net-pci nic_global=() mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
+bus=virtio extra=() serials=() slots=() ports=() nic=virtio-net-pci nic_global=() mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
 while [[ $# -gt 0 ]]; do
     case $1 in
         --cdrom) cdrom=$(realpath "$2"); shift 2 ;;
@@ -157,6 +168,7 @@ while [[ $# -gt 0 ]]; do
         --disk) extra+=("$(realpath "$2")"); shift 2 ;;
         --disk-serials) IFS=, read -ra serials <<<"$2"; shift 2 ;;
         --disk-slots) IFS=, read -ra slots <<<"$2"; shift 2 ;;
+        --disk-ports) IFS=, read -ra ports <<<"$2"; shift 2 ;;
         --nic) nic=$2; shift 2 ;;
         --legacy-virtio-net) nic_global=(-global virtio-net-pci.disable-modern=on); shift ;;
         --mac) mac=,mac=$2; shift 2 ;;
@@ -168,7 +180,7 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
-[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] [--uefi-vars FILE] [--mok CERT]... | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga] IMAGE [-- QEMU_ARGS...]"
+[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] [--uefi-vars FILE] [--mok CERT]... | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--disk-ports LIST] [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga] IMAGE [-- QEMU_ARGS...]"
 image=$(realpath "$1")
 shift
 [[ ${1:-} == -- ]] && shift
@@ -179,6 +191,10 @@ shift
 [[ ${#moks[@]} -eq 0 || $uefi == yes ]] || die "--mok needs --uefi"
 case $bus in virtio|scsi|nvme|sata) ;; *) die "--disk-bus must be virtio, scsi, nvme or sata" ;; esac
 [[ $cpus =~ ^[1-9][0-9]*$ && $memory =~ ^[1-9][0-9]*$ ]] || die "--cpus and --memory take whole numbers"
+if [[ ${#ports[@]} -gt 0 ]]; then
+    [[ $q35 == yes && $bus == virtio && ${#slots[@]} -eq 0 ]] || die "--disk-ports needs --uefi or --q35 and virtio disks, without --disk-slots"
+    for p in "${ports[@]}"; do [[ $p == - || ( $p =~ ^[1-9][0-9]?$ && $p -ge 3 && $p -le 30 ) ]] || die "--disk-ports: '$p' is not - or a slot from 3 to 30"; done
+fi
 
 tmp=$(mktemp -d)
 overlays=() swtpm_pid="" started=no
@@ -216,6 +232,10 @@ drive_opts() {
 
 disk_args=()
 images=("$image" "${extra[@]}")
+[[ ${#ports[@]} -le ${#images[@]} ]] || die "--disk-ports: ${#ports[@]} ports for ${#images[@]} disks"
+for i in "${!ports[@]}"; do
+    [[ ${ports[$i]} == - ]] || disk_args+=(-device "pcie-root-port,id=vmrp$i,bus=pcie.0,chassis=$((20 + i)),addr=$(printf '0x%x' "${ports[$i]}"),io-reserve=0")
+done
 case $bus in
     scsi) disk_args+=(-device virtio-scsi-pci,id=scsi0) ;;
     # q35 has an AHCI controller of its own; the PC machine needs one added.
@@ -225,7 +245,7 @@ for i in "${!images[@]}"; do
     # Not $(drive_opts): a subshell would lose the overlays it records.
     drive_opts "${images[$i]}" >"$tmp/drive"
     opts=$(<"$tmp/drive")
-    if [[ $bus == virtio && ( -n ${serials[$i]:-} || ${#slots[@]} -gt 0 ) ]]; then
+    if [[ $bus == virtio && ( -n ${serials[$i]:-} || ${#slots[@]} -gt 0 || ${#ports[@]} -gt 0 ) ]]; then
         # A virtio-blk device of its own, for the serial or the slot: added
         # in the same order, it takes the same PCI slot if=virtio would.
         dev="virtio-blk-pci,drive=disk$i"
@@ -234,6 +254,7 @@ for i in "${!images[@]}"; do
             dev+=",addr=$(printf '0x%x' "${slots[$i]}")"
             ((i == 0)) && dev+=",bootindex=0"
         fi
+        [[ ${ports[$i]:--} == - ]] || dev+=",bus=vmrp$i"
         disk_args+=(-drive "$opts,if=none,id=disk$i" -device "$dev")
         continue
     elif [[ $bus == virtio ]]; then

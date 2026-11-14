@@ -9,7 +9,8 @@
 #            with seeded changes between; fsmeta records the one restored
 #   rebuild  targets of the case's sizes, its load options, and on tier 2
 #            one NVRAM (vm-run --uefi-vars) for the rescuer and the restored
-#            boot, with no --no-nvram unless the case has it
+#            boot, with no --no-nvram unless the case has it, and each
+#            target behind the same PCIe root port in both (bs2_setup)
 #   verify   judge.py --expect against the drifted layout, with the flags
 #            the case's options call for (bs2-host apply works them out)
 #
@@ -62,12 +63,36 @@ BS2_SHARE_BACKUP=0
 BS2_PREP_DIR="" BS2_PREP_NAME="" BS2_PREP_SNAP="" BS2_PREP_WHY="" BS2_PREP_BACKUP_WHY=""
 BS2_QMP_PY=$(dirname "$BS2_HOST")/bs2-qmp.py
 
-# After ht1.sh has its firmware options (fw, rfw): tier 2's shared NVRAM.
+# Tier 2's machine: one NVRAM, and each disk where the rescuer had it.  OVMF
+# makes a boot option of its own for every disk it sees (EDK II's
+# EfiBootManagerRefreshAllBootOption): the disk's device path and "UEFI Misc
+# Device", " N" after it for the Nth (in the order it finds them), deleted
+# when no disk matches both, and a new one goes at the end of BootOrder, after
+# "EFI Internal Shell", which never returns.  A source that boots from its
+# ESP's removable path (load writes no entry: --no-nvram's rule) boots, as a
+# real machine's disk does, through the option the rescuer's boot made for
+# it, only if the disk has the same path and rank in both boots: so each
+# target sits behind a PCIe root port of its own from pcie.0's slot
+# BS2_SLOT0 on (vm-run --disk-ports), the decoy behind the next, in the
+# rescuer's boot and (the targets alone) the restored boot; the rescuer's own
+# disk on pcie.0 after the ports, which the firmware finds after the targets
+# (it walks each port's bus at the port) and Linux before them (pcie.0's
+# devices first): still vda, the targets vdb.. as ever.  A resumed rescuer's
+# ports are the same slots, and its saved state's NVRAM was made with a blank
+# stand-in behind each (bs2_rs_build).
+BS2_SLOT0=3
+bs2_slots() {  # COUNT: COUNT pcie.0 slots from BS2_SLOT0 on, comma-separated
+    local i a=()
+    for ((i = 0; i < $1; i++)); do a+=($((BS2_SLOT0 + i))); done
+    local IFS=,; echo "${a[*]}"
+}
+# After ht1.sh has its firmware options (fw, rfw): tier 2's machine.
 bs2_setup() {
     if ((BS2_TIER == 2)); then
         ((uefi)) || { echo "ht1: tier 2 is for UEFI sources" >&2; exit 2; }
-        rfw=(--uefi --no-secure-boot --uefi-vars "$R/vars.fd")
-        BS2_VFW=(--uefi-vars "$R/vars.fd")
+        # The rescuer's disk (-), the targets and the decoy; the restored boot's targets.
+        rfw=(--uefi --no-secure-boot --uefi-vars "$R/vars.fd" --disk-ports "-,$(bs2_slots $((${#imgs[@]} + 1)))")
+        BS2_VFW=(--uefi-vars "$R/vars.fd" --disk-ports "$(bs2_slots ${#imgs[@]})")
         [[ " ${fw[*]} " == *" --no-secure-boot "* ]] || fw+=(--no-secure-boot)
     fi
 }
@@ -362,21 +387,25 @@ bs2_rs_sectors() {  # IMAGE
 }
 # QEMU's args besides vm-run's, the same at the save and every resume but for
 # the share's and the QMP socket's paths (SHARE and QMP in the key).
+# (q35: the ports first, at tier 2's slots (bs2_setup), so that they have them
+# before the share's device and the rescuer's disk take the next free ones.)
 bs2_rs_extra() {  # SHARE QMP
-    local a=(-virtfs "local,path=$1,mount_tag=bkoshare,security_model=none,readonly=on" -device vmgenid,guid=auto) i
+    local a=() i
     if bs2_rs_uefi; then
         for ((i = 0; i < BS2_RS_PORTS; i++)); do
-            a+=(-device "pcie-root-port,id=bs2rp$i,bus=pcie.0,chassis=$((40 + i)),addr=$(printf '0x%x' $((16 + i))),io-reserve=0")
+            a+=(-device "pcie-root-port,id=bs2rp$i,bus=pcie.0,chassis=$((40 + i)),addr=$(printf '0x%x' $((BS2_SLOT0 + i))),io-reserve=0")
         done
     fi
+    a+=(-virtfs "local,path=$1,mount_tag=bkoshare,security_model=none,readonly=on" -device vmgenid,guid=auto)
     a+=(-qmp "unix:$2,server=on,wait=off")
     printf '%s\n' "${a[@]}"
 }
-# rfw with VARS as its NVRAM (a UEFI rescuer's: the state's, or the case's copy).
+# rfw with VARS as its NVRAM (a UEFI rescuer's: the state's, or the case's
+# copy), and no --disk-ports: a cold boot's (its disks are on bs2_rs_extra's ports).
 bs2_rs_rfw() {  # VARS
     local a=() i
     for ((i = 0; i < ${#rfw[@]}; i++)); do
-        [[ ${rfw[i]} == --uefi-vars ]] && { i=$((i + 1)); continue; }
+        [[ ${rfw[i]} == --uefi-vars || ${rfw[i]} == --disk-ports ]] && { i=$((i + 1)); continue; }
         a+=("${rfw[i]}")
     done
     bs2_rs_uefi && a+=(--uefi-vars "$1")
@@ -412,7 +441,7 @@ bs2_rs_kill() {
 # Boot the rescuer with no disk of a case's and save its state in DIR (under a
 # lock; another run saving it now: exit 1 at once, this case boots cold).
 bs2_rs_build() {  # DIR KEYTEXT KIND
-    local sd=$1 key=$2 kind=$3 part=$1.part lk o fwb=() ex=()
+    local sd=$1 key=$2 kind=$3 part=$1.part lk o i fwb=() ex=() st=() sdev=()
     mkdir -p "$BS2_RS_ROOT" && exec {lk}>>"$sd.lock" || { BS2_RS_WHY="can't make $BS2_RS_ROOT"; return 1; }
     if ! flock -n "$lk"; then exec {lk}>&-; BS2_RS_WHY="another run is saving it now"; return 1; fi
     if [[ -f $sd/ready ]] && cmp -s <(printf '%s\n' "$key") "$sd/key.txt"; then exec {lk}>&-; return 0; fi
@@ -422,11 +451,25 @@ bs2_rs_build() {  # DIR KEYTEXT KIND
     fi
     mapfile -t fwb < <(bs2_rs_rfw "$part/vars.fd")
     mapfile -t ex < <(bs2_rs_extra "$part/share" "$BS2_QMP")
+    # q35: a blank stand-in behind each port at the boot, so that the firmware
+    # makes the boot options a cold boot makes for the targets there (bs2_setup),
+    # unplugged before the save: each case hot-plugs its own disks there.
+    if bs2_rs_uefi; then
+        for ((i = 0; i < BS2_RS_PORTS; i++)); do
+            qemu-img create -q -f qcow2 "$part/standin-$i.qcow2" 1G || { rm -rf "$part"; exec {lk}>&-; BS2_RS_WHY="can't make $part/standin-$i.qcow2"; return 1; }
+            st+=(-drive "file=$part/standin-$i.qcow2,format=qcow2,if=none,id=bs2s$i" -device "virtio-blk-pci,drive=bs2s$i,bus=bs2rp$i,id=bs2sd$i")
+            sdev+=("bs2sd$i")
+        done
+    fi
     rm -f "$BS2_QMP"
-    vm_up "$part/rescuer.qcow2" "$R/logs/rescuer-state-serial.log" "${fwb[@]}" --memory "$BS2_RS_MEM" -- "${ex[@]}"
+    vm_up "$part/rescuer.qcow2" "$R/logs/rescuer-state-serial.log" "${fwb[@]}" --memory "$BS2_RS_MEM" -- "${ex[@]}" "${st[@]}"
+    : >"$R/logs/rescuer-state-save.log"
     if ! bs2_rs_wait 600; then
         BS2_RS_WHY="the rescuer didn't boot to be saved (logs/rescuer-state-serial.log, its .vm-run)"
-    elif ! TMO=300 sshk "$rkey" "$BS2_RS_QUIET" >"$R/logs/rescuer-state-save.log" 2>&1; then
+    elif ((${#sdev[@]})) && ! { python3 "$BS2_QMP_PY" "$BS2_QMP" unplug 120 "${sdev[@]}" >>"$R/logs/rescuer-state-save.log" 2>&1 &&
+        TMO=60 sshk "$rkey" 'v() { ls /sys/block | grep "^vd" | tr "\n" " "; }; i=0; while [ "$(v)" != "vda " ] && [ $i -lt 300 ]; do sleep 0.1; i=$((i + 1)); done; echo "the rescuer sees: $(v)"; [ "$(v)" = "vda " ]' >>"$R/logs/rescuer-state-save.log" 2>&1; }; then
+        BS2_RS_WHY="unplugging the stand-ins (logs/rescuer-state-save.log): $(tail -n 1 "$R/logs/rescuer-state-save.log")"
+    elif ! TMO=300 sshk "$rkey" "$BS2_RS_QUIET" >>"$R/logs/rescuer-state-save.log" 2>&1; then
         BS2_RS_WHY="quietening it (logs/rescuer-state-save.log)"
     elif ! python3 "$BS2_QMP_PY" "$BS2_QMP" save "$part/state" 300 >>"$R/logs/rescuer-state-save.log" 2>&1; then
         BS2_RS_WHY="saving it: $(tail -n 1 "$R/logs/rescuer-state-save.log")"
@@ -436,6 +479,7 @@ bs2_rs_build() {  # DIR KEYTEXT KIND
     # (Once migrated, QEMU has flushed and let go of its disk: a kill can't hurt it.)
     [[ -n $BS2_RS_WHY ]] || python3 "$BS2_QMP_PY" "$BS2_QMP" quit >>"$R/logs/rescuer-state-save.log" 2>&1
     bs2_rs_kill
+    rm -f "$part"/standin-*.qcow2
     if [[ -n $BS2_RS_WHY ]]; then rm -rf "$part"; exec {lk}>&-; return 1; fi
     printf '%s\n' "$key" >"$part/key.txt"; echo "$kind" >"$part/kind"
     cp "$R/logs/rescuer-state-serial.log" "$part/boot-serial.log"

@@ -8,6 +8,8 @@
                                             FILE (qcow2) as block node NODE, then a
                                             virtio-blk-pci DEV on it (on BUS, a PCIe root
                                             port; none: the PC machine's bus)
+  bs2-qmp.py SOCK unplug TIMEOUT DEV...     device_del each DEV, waiting till QEMU
+                                            reports each gone (the guest let go)
   bs2-qmp.py SOCK quit
 
 Exit 0 done, 1 not (why on stderr).  SOCK: QEMU's -qmp unix:SOCK,server=on,wait=off.
@@ -107,6 +109,21 @@ def hotplug(q, node, path, dev, bus=None):
     print(f"{dev}: {path}{' on ' + bus if bus else ''}")
 
 
+def unplug(q, timeout, devs):
+    for d in devs:
+        q.cmd("device_del", id=d)
+    # (A device QEMU let go of is no longer among its peripherals.)
+    end = time.time() + timeout
+    while True:
+        left = set(devs) & {p["name"] for p in q.cmd("qom-list", path="/machine/peripheral")}
+        if not left:
+            break
+        if time.time() > end:
+            raise Fail(f"not gone in {timeout:g} s: {' '.join(sorted(left))}")
+        time.sleep(0.2)
+    print(f"unplugged: {' '.join(devs)}")
+
+
 def main(argv):
     if len(argv) < 2:
         print(__doc__, file=sys.stderr)
@@ -120,6 +137,8 @@ def main(argv):
             resume(q, float(rest[0]) if rest else 120)
         elif what == "hotplug" and len(rest) in (3, 4):
             hotplug(q, rest[0], rest[1], rest[2], rest[3] if len(rest) == 4 else None)
+        elif what == "unplug" and len(rest) >= 2:
+            unplug(q, float(rest[0]), rest[1:])
         elif what == "quit":
             try:
                 q.cmd("quit")

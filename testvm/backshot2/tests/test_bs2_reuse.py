@@ -119,6 +119,9 @@ class TestRescuerKey(unittest.TestCase):
     def test_the_cases_nvram_file_isnt_part_of_it(self):
         self.assertEqual(RU.normalize_rfw(["--uefi", "--uefi-vars", "/a", "--no-secure-boot"]),
                          ["--uefi", "--uefi-vars", "(the case's copy)", "--no-secure-boot"])
+        # A cold boot's --disk-ports (one per disk: it varies with the case) isn't the state's.
+        self.assertEqual(RU.normalize_rfw(["--uefi", "--uefi-vars", "/a", "--disk-ports", "-,3,4"]),
+                         ["--uefi", "--uefi-vars", "(the case's copy)"])
         other = dict(self.F, rfw=["--uefi", "--no-secure-boot", "--uefi-vars", "/mnt/bko-ram/y/vars.fd"])
         self.assertEqual(RU.rescuer_key(self.F), RU.rescuer_key(other))
         self.assertEqual(RU.rescuer_kind(self.F), RU.rescuer_kind(other))
@@ -275,15 +278,32 @@ class TestHt1Bs2(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stderr)
         uefi, bios = r.stdout.split("==\n")
         u = uefi.split("\n")
-        self.assertEqual(u[:4], ["-virtfs", "local,path=SHARE,mount_tag=bkoshare,security_model=none,readonly=on",
-                                 "-device", "vmgenid,guid=auto"])
+        # The ports first, in tier 2's slots (3..8), so they have them before the share's device.
         ports = [x for x in u if x.startswith("pcie-root-port")]
         self.assertEqual(len(ports), 6)
-        self.assertIn("id=bs2rp0,bus=pcie.0,chassis=40,addr=0x10", ports[0])
-        self.assertIn("id=bs2rp5,bus=pcie.0,chassis=45,addr=0x15", ports[5])
+        self.assertEqual(u[:12:2], ["-device"] * 6)
+        self.assertEqual(u[1:12:2], ports)
+        self.assertIn("id=bs2rp0,bus=pcie.0,chassis=40,addr=0x3,", ports[0])
+        self.assertIn("id=bs2rp5,bus=pcie.0,chassis=45,addr=0x8,", ports[5])
+        self.assertEqual(u[12:16], ["-virtfs", "local,path=SHARE,mount_tag=bkoshare,security_model=none,readonly=on",
+                                    "-device", "vmgenid,guid=auto"])
         self.assertEqual(u[-3:], ["-qmp", "unix:QMP,server=on,wait=off", ""])
         self.assertNotIn("pcie-root-port", bios)
         self.assertIn("local,path=/s/share,", bios)
+
+    def test_tier2_puts_each_disk_behind_a_port(self):
+        # The rescuer's disk on pcie.0 (-), each target then the decoy behind a port from
+        # slot 3 on, as the resumed rescuer's ports; the restored boot the targets alone.
+        r = bash('R=/w; uefi=1; fw=(--uefi); rfw=(--uefi); imgs=(a b); BS2_TIER=2; bs2_setup; '
+                 'echo "${rfw[*]}"; echo "${BS2_VFW[*]}"; echo "${fw[*]}"; bs2_rs_rfw /w/vars.fd | tr "\\n" " "')
+        self.assertEqual(r.returncode, 0, r.stderr)
+        self.assertEqual(r.stdout.split("\n")[:4], [
+            "--uefi --no-secure-boot --uefi-vars /w/vars.fd --disk-ports -,3,4,5",
+            "--uefi-vars /w/vars.fd --disk-ports 3,4",
+            "--uefi --no-secure-boot",
+            "--uefi --no-secure-boot --uefi-vars /w/vars.fd "])
+        r = bash('R=/w; uefi=1; fw=(--uefi); rfw=(--uefi); imgs=(a); BS2_TIER=1; bs2_setup; echo "${rfw[*]}|${BS2_VFW[*]}"')
+        self.assertEqual(r.stdout.strip(), "--uefi|")
 
     def test_nvram(self):
         # Tier 2's NVRAM is rfw's (the restored boot keeps it); tier 1's UEFI rescuer gets its own copy.

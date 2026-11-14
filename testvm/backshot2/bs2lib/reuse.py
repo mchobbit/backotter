@@ -159,11 +159,16 @@ def shell_assign(name, value):
 
 def normalize_rfw(rfw):
     """The rescuer's vm-run firmware options with --uefi-vars' file left out: each case
-    has its own NVRAM file, a copy of the state's (the state is the same)."""
+    has its own NVRAM file, a copy of the state's (the state is the same); and
+    without --disk-ports, which places a cold boot's disks (a resumed rescuer's
+    are hot-plugged on its own ports, the same for every case)."""
     out, i = [], 0
     while i < len(rfw):
         if rfw[i] == "--uefi-vars":
             out += ["--uefi-vars", "(the case's copy)"]
+            i += 2
+            continue
+        if rfw[i] == "--disk-ports":
             i += 2
             continue
         out.append(rfw[i])

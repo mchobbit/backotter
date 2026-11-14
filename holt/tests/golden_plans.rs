@@ -154,6 +154,15 @@ struct Entry {
     dump: PathBuf,
     plan: PathBuf,
     grow: u64,
+    /// The variant's own arguments to load (+reformat-TYPE's --reformat /=TYPE).
+    extra: Vec<String>,
+}
+
+impl Entry {
+    /// A guest's own plan (plan.txt), not a variant's.
+    fn is_guest(&self) -> bool {
+        !self.name.contains('+')
+    }
 }
 
 /// The corpus's plans: each GUEST/src.json, then variants.txt's lines.  A
@@ -197,7 +206,7 @@ fn entries(corpus: &Path) -> Result<Vec<Entry>, String> {
         guests.push(name);
     }
     guests.sort();
-    let mut out: Vec<Entry> = guests.iter().map(|g| Entry { name: g.clone(), dump: corpus.join(g).join("src.json"), plan: corpus.join(g).join("plan.txt"), grow: 0 }).collect();
+    let mut out: Vec<Entry> = guests.iter().map(|g| Entry { name: g.clone(), dump: corpus.join(g).join("src.json"), plan: corpus.join(g).join("plan.txt"), grow: 0, extra: vec![] }).collect();
     let listed = match std::fs::read_to_string(corpus.join("variants.txt")) {
         Ok(text) => text.lines().map(|l| l.split('#').next().unwrap_or("").trim().to_string()).filter(|l| !l.is_empty()).collect(),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
@@ -213,10 +222,17 @@ fn entries(corpus: &Path) -> Result<Vec<Entry>, String> {
             bad.push(format!("variants.txt: {l:?} isn't GUEST+VARIANT"));
             continue;
         };
-        let grow = match v {
-            "bigger" => BIGGER,
+        let (grow, extra) = match v {
+            "bigger" => (BIGGER, vec![]),
+            // A tree whose load has no --reformat (the #16 replay's older
+            // ones) can't plan these: they're skipped, not failed.
+            "reformat-xfs" | "reformat-ext4" | "reformat-btrfs" if !bko_holt::load::USAGE.contains("--reformat") => {
+                println!("SKIP  {l}: needs --reformat, which this tree's bko-holt load doesn't have");
+                continue;
+            }
+            "reformat-xfs" | "reformat-ext4" | "reformat-btrfs" => (0, vec!["--reformat".to_string(), format!("/={}", &v["reformat-".len()..])]),
             _ => {
-                bad.push(format!("variants.txt: {l}: only +bigger has a golden plan (+oneshot plans as its guest does)"));
+                bad.push(format!("variants.txt: {l}: only +bigger and +reformat-TYPE have golden plans (+oneshot plans as its guest does)"));
                 continue;
             }
         };
@@ -225,7 +241,7 @@ fn entries(corpus: &Path) -> Result<Vec<Entry>, String> {
             continue;
         }
         let d = corpus.join(g);
-        out.push(Entry { name: l.clone(), dump: d.join("src.json"), plan: d.join(format!("plan+{v}.txt")), grow });
+        out.push(Entry { name: l.clone(), dump: d.join("src.json"), plan: d.join(format!("plan+{v}.txt")), grow, extra });
     }
     for k in kept.iter().filter(|k| !listed.contains(k)) {
         let (g, v) = k.split_once('+').unwrap_or((k, ""));
@@ -242,7 +258,7 @@ fn entries(corpus: &Path) -> Result<Vec<Entry>, String> {
 fn plan_entry(e: &Entry) -> Result<(String, Check), String> {
     let text = std::fs::read_to_string(&e.dump).map_err(|x| format!("{}: {x}", e.dump.display()))?;
     let dump = json::parse(&text).map_err(|x| format!("{}: not JSON: {}", e.dump.display(), x.message))?;
-    let p = common::plan(&text, e.grow)?;
+    let p = if e.extra.is_empty() { common::plan(&text, e.grow)? } else { common::plan_onto(&text, &|_, size| size + e.grow, &e.extra)? };
     Ok((common::golden_text(&p), invariants(&dump, &p)))
 }
 
@@ -372,7 +388,7 @@ fn unplanned(s: &mut Summary, list: &[Entry], x: &Expected) {
         }
     }
     for e in list {
-        if e.grow == 0 && !x.sources.contains(&e.name) {
+        if e.is_guest() && !x.sources.contains(&e.name) {
             s.log.push(format!("note  {}: in the corpus, but not one of HoltTest2's sources in classes.json", e.name));
         }
         if let Some(g) = e.name.strip_suffix("+bigger") {
@@ -393,7 +409,7 @@ fn run_golden(corpus: &Path, mode: Mode, out: Option<&Path>, expect: Option<&Exp
         Mode::Report => Some(out.ok_or("BKO_HOLT_GOLDEN=report needs BKO_HOLT_PLANS_OUT, the directory for the plans that differ and diff.json")?),
         _ => None,
     };
-    let mut s = Summary { dumps: list.iter().filter(|e| e.grow == 0).count(), plans: list.len(), ..Summary::default() };
+    let mut s = Summary { dumps: list.iter().filter(|e| e.is_guest()).count(), plans: list.len(), ..Summary::default() };
     // Everything is planned before anything is written: an entry that can't
     // be planned stops the run with the files as they were.
     let mut todo: Vec<(&Entry, String)> = Vec::new();
@@ -930,7 +946,7 @@ fn golden_backup_sources_are_loads_mounts() {
     let corpus = corpus_dir();
     let list = entries(&corpus).unwrap_or_else(|e| panic!("{e}"));
     let (mut checked, mut bad) = (Vec::new(), Vec::new());
-    for e in list.iter().filter(|e| e.grow == 0) {
+    for e in list.iter().filter(|e| e.is_guest()) {
         let text = std::fs::read_to_string(&e.dump).unwrap();
         let dump = json::parse(&text).unwrap();
         if dump.at(&["storage", "backup_sources"]).is_none() {

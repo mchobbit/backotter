@@ -299,6 +299,10 @@ onto XFS or ext4 (a `--reformat`) can't keep snapshots.  Its plan must say
 plainly that it drops them, name them, and leave them out of the restore,
 rather than restore them as directories.
 
+Built with `--reformat MOUNT=TYPE` (`reformat.md`, 2026-11-14): its plan
+names each snapshot and alias of the reformatted btrfs, and the restore's
+`--glob-file` leaves them out.
+
 ## Tests
 
 - **Unit tests** (`commands.rs`): aliases, backup paths, which subvolumes

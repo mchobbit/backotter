@@ -285,13 +285,13 @@ a module the source's list lacks. That keeps the third rule.
   - `--fit-largest PCT`, with a target size that needs it;
   - `--snapshot` of an older backup (the source then has two or three, with
     changes between them);
-  - `--reformat MOUNT=TYPE`, once that branch is merged.
+  - `--reformat MOUNT=TYPE` (on main since 2026-11-14).
 - **Verify must know each flag's intended effect:**
   - with `--new-uuids`, fstab, crypttab and the swap UUIDs change, and the
     judge compares identifiers by mapping, not equality;
   - with `--no-nvram`, the firmware boots the fallback, as AerynOS's does;
   - with `--reformat`, the filesystem type and its options change, as
-    `reformat.md` lists (on `claude/holt-reformat`, not yet on main).
+    `reformat.md` lists (ported onto main 2026-11-14).
 
 **Repetition.** `bs2 soak CASE N` runs one case N times at tier 1, for races:
 20 of 20, as HoltTest2's `+close` does. It's reported as N of 20, since

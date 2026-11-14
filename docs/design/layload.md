@@ -38,7 +38,8 @@ Non-goals for version 1:
   partition per disk (see "Fitting a disk of another size").  Resizing
   anything else is version 2's, carefully.
 - Changing the layout: another filesystem, another RAID level, dropping
-  encryption.
+  encryption.  (Another filesystem type on the same partition is
+  `--reformat MOUNT=TYPE`: `reformat.md`.)
 - Key material.  LUKS and ZFS keys are never in the JSON, and TPM2/FIDO2
   enrollments can't be restored at all (see "Encryption").
 - A source system bko-holt doesn't support: dump and load share one list

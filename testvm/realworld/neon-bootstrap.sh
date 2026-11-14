@@ -177,10 +177,18 @@ fi
 cp -L /etc/resolv.conf $T/etc/resolv.conf
 printf '#!/bin/sh\nexit 101\n' >$T/usr/sbin/policy-rc.d
 chmod 755 $T/usr/sbin/policy-rc.d
-# GRUB_DISABLE_OS_PROBER: update-grub and the GRUB and kernel postinsts
-# would otherwise run os-prober over this machine's other disks (the stick,
-# mybig512) and list them in the new grub.cfg; /etc/default/grub is untouched.
-in_root() { chroot $T env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 GRUB_DISABLE_OS_PROBER=true "$@"; }
+# No os-prober while building: update-grub and the GRUB and kernel
+# postinsts would otherwise scan this machine's other disks (the stick,
+# mybig512) and list them in the new grub.cfg.  It has to be a grub.d
+# drop-in: Ubuntu's grub-mkconfig sets GRUB_DISABLE_OS_PROBER=auto before it
+# reads the config files, so an environment value is lost.  "zz-" sorts after
+# neon's 99_breeze-grub.cfg; the drop-in goes again in "tidying the chroot",
+# so the installed system's own settings are the image's.
+no_prober_dir=$T/etc/default/grub.d made_grub_d=
+[[ -d $no_prober_dir ]] || { mkdir "$no_prober_dir"; made_grub_d=1; }
+no_prober=$no_prober_dir/zz-bko-build-no-os-prober.cfg
+echo 'GRUB_DISABLE_OS_PROBER=true' >"$no_prober"
+in_root() { chroot $T env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 "$@"; }
 
 step "removing the live session's packages"
 # neon's remove list, from its Calamares: the packages module's (packages.conf:
@@ -369,7 +377,8 @@ echo "EFI/ubuntu/grub.cfg: copied from EFI/$EFI_ID"
 
 step "tidying the chroot"
 in_root apt-get clean
-rm -f $T/usr/sbin/policy-rc.d $T/etc/resolv.conf
+rm -f $T/usr/sbin/policy-rc.d $T/etc/resolv.conf "$no_prober"
+[[ -z $made_grub_d ]] || rmdir "$no_prober_dir"
 if [[ -e $tmp/resolv.conf.image || -L $tmp/resolv.conf.image ]]; then mv "$tmp/resolv.conf.image" $T/etc/resolv.conf; fi
 cmp -s "$KEYS/ssh_host_ed25519_key" $T/etc/ssh/ssh_host_ed25519_key &&
     cmp -s "$KEYS/ssh_host_ed25519_key.pub" $T/etc/ssh/ssh_host_ed25519_key.pub ||

@@ -29,16 +29,27 @@ DIR = "/srv/bs2"
 CHUNK = 1 << 20
 CHUNK_MIN = 512 << 10
 
-RECIPES = {
-    # A few hundred entries, ~40 MiB of data: small enough for every Alpine source.
-    "alpine-small-1": {"files": 60, "large": 24 << 20, "deep": 1, "deep_bytes": 4300, "links": 8, "symlinks": 12, "names": 10, "nodes": 4},
-    # The same, with the deep tree kept under PATH_MAX (3,800 bytes below
-    # /srv/bs2, so under 4,096 with any mount point ht1.sh uses): rustic-bko's
-    # backup skips what's past it with a warning and exits 0 (BackShot2
-    # finding fail-001, testvm/backshot2/cases/), which would otherwise fail
-    # every case with content.  The generator draws this one until that's fixed.
-    "alpine-small-2": {"files": 60, "large": 24 << 20, "deep": 1, "deep_bytes": 3800, "links": 8, "symlinks": 12, "names": 10, "nodes": 4},
-}
+# The generic recipes; each family adds its own (families/*.py `recipes`:
+# Alpine's alpine-small-1 and alpine-small-2), found by recipe_of().
+RECIPES = {}
+
+
+def recipe_of(name):
+    """The recipe NAME: generic, or a family's."""
+    if name in RECIPES:
+        return RECIPES[name]
+    from . import families
+    r = families.recipe(name)
+    if r is None:
+        raise KeyError(f"no content recipe {name!r}")
+    return r
+
+
+def fs_can_of(fs_type):
+    """What a filesystem of FS_TYPE holds: FS_CAN's, and what the families add."""
+    from . import families
+    return set(FS_CAN.get(fs_type, set())) | set(families.fs_can(fs_type) or ())
+
 
 # What each filesystem holds: xattrs (user.* and security.capability), POSIX
 # ACLs, chattr +i/+a, times before 1970, after 2038, device nodes, FIFOs.
@@ -124,9 +135,9 @@ def plan(content, fs_type, ext4_big_inodes=True, xfs_bigtime=True, symlink_max=N
     ([[offset, length]]) and "fill" (the seed of their bytes), links "to",
     and any may have "mode", "uid", "gid", "mtime_ns", "xattrs" ({name:
     hex}) and "flags" ("i" or "a")."""
-    recipe = RECIPES[content["recipe"]]
+    recipe = recipe_of(content["recipe"])
     rng = random.Random(f"bs2-content:{content['recipe']}:{content['seed']}")
-    can = set(FS_CAN.get(fs_type, set()))
+    can = fs_can_of(fs_type)
     if fs_type in ("ext4", "ext3", "ext2") and not ext4_big_inodes:
         can.discard("post2038")
     if fs_type == "xfs" and not xfs_bigtime:

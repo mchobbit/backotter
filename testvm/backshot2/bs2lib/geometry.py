@@ -165,10 +165,11 @@ def ext4_resized(c, new_bytes):
                 c.get("features") or [], c.get("descriptor_size") or 64, c.get("flex_bg_size"), rb)
 
 
-def ext4_overhead(blocks, block_size, inodes, inode_size):
+def ext4_overhead(blocks, block_size, inodes, inode_size, journal=True):
     """Rule 1's estimate of what ext4's own metadata takes, in bytes: inode
-    tables, a journal, bitmaps and descriptors, the superblock backups."""
-    journal = 64 * MIB if blocks * block_size > 1 << 30 else 16 * MIB
+    tables, a journal (JOURNAL: whether it has one), bitmaps and
+    descriptors, the superblock backups."""
+    journal = 0 if not journal else 64 * MIB if blocks * block_size > 1 << 30 else 16 * MIB
     groups = cdiv(blocks, 8 * block_size)
     return inodes * inode_size + journal + groups * 3 * block_size + 64 * block_size
 

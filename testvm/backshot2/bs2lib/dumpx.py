@@ -260,12 +260,20 @@ def all_strings(v):
             yield from all_strings(x)
 
 
-def config_texts(d):
+def _hooks(d, hooks):
+    if hooks is None:
+        from .families import hooks as of
+        hooks = of(None, d)
+    return hooks
+
+
+def config_texts(d, hooks=None):
     """The texts of the source's own configuration the dump records: what
     names devices on the restored system (rule 3).  fstab and crypttab
     specs and options, the kernel command line, /etc/kernel/cmdline,
-    GRUB's settings and its configuration's linux line, resume=, the
-    loader entries."""
+    GRUB's settings and its configuration's linux line, resume=, mdadm.conf;
+    then what the source's family and traits add (HOOKS, families.hooks):
+    loader entries (systemd_boot.py, ostree.py), refind_linux.conf, ..."""
     st, boot = storage(d), d.get("boot") or {}
     out = []
     for e in st.get("fstab") or []:
@@ -279,17 +287,16 @@ def config_texts(d):
     cfg = grub.get("grub_cfg") or {}
     out += [str(cfg.get("default_linux") or "")]
     out.append(json.dumps((boot.get("initramfs") or {}).get("resume")))
-    sd = boot.get("systemd_boot") or {}
-    out += list(all_strings(sd.get("entries") or []))
     out.append(json.dumps(st.get("mdadm_conf")))
-    return out
+    return out + _hooks(d, hooks).config_texts(d)
 
 
-def names_by_number(d, dk, p):
+def names_by_number(d, dk, p, hooks=None):
     """Where the source's configuration names partition P by its number or
-    device path (rule 3), as a list of what was found."""
+    device path (rule 3), as a list of what was found.  HOOKS (the
+    source's, families.hooks) add texts, patterns and finders of their own."""
+    hooks = _hooks(d, hooks)
     num = p["number"]
-    dname = dk["name"]
     pname = p["name"]
     pats = [
         rf"(?<![A-Za-z0-9]){re.escape(pname)}(?![0-9])",
@@ -298,20 +305,23 @@ def names_by_number(d, dk, p):
     if table(dk).get("type") == "dos" and p.get("uuid"):
         # An MBR partition's PARTUUID is the disk signature and its number.
         pats.append(re.escape(str(p["uuid"])))
+    pats += hooks.number_patterns(d, dk, p)
     found = []
-    for t in config_texts(d):
+    for t in config_texts(d, hooks):
         for pat in pats:
             if re.search(pat, t):
                 found.append(f"{pat!s} in {t[:80]!r}")
-    # GRUB that finds /boot (or /) by number: no search UUIDs at all.
+    # GRUB that finds /boot (or /) by number: no search UUIDs at all.  (Only
+    # a GRUB source's: a dump records boot.grub, empty, for every loader.)
     grub = (d.get("boot") or {}).get("grub") or {}
     cfg = grub.get("grub_cfg") or {}
-    if grub and not cfg.get("search_uuids"):
+    is_grub = (((d.get("boot") or {}).get("loader") or {}).get("name") or "grub") == "grub" or bool(cfg)
+    if grub and is_grub and not cfg.get("search_uuids"):
         ms = {m.get("target"): m.get("device") for m in storage(d).get("mounts") or []}
         where = ms.get("/boot") or ms.get("/")
         if where and (pname == where or pname in holders_down(d, where)):
             found.append("GRUB has no search UUIDs: it finds /boot by its partition number")
-    return found
+    return found + hooks.names_by_number(d, dk, p)
 
 
 def holders_down(d, name):

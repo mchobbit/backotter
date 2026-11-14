@@ -47,6 +47,9 @@ def apply_one(d, e):
     """Applies edit E to D in place."""
     op = OPS.get(e.get("op"))
     if op is None:
+        from . import families   # a family's own edit (families/*.py `edits`)
+        op = families.edit_op(e.get("op"))
+    if op is None:
         raise ValueError(f"no edit {e.get('op')!r}")
     op.apply(d, e)
     apply_sets(d, e.get("sets") or {})
@@ -777,6 +780,10 @@ OPS = {o.name: o for o in (GapBefore(), Align(), Renumber(), Resize(), SwapOrder
 
 
 def build(d, op, params):
+    if op not in OPS:
+        from . import families
+        if families.edit_op(op):
+            return families.edit_op(op).build(d, params)
     return OPS[op].build(d, params)
 
 

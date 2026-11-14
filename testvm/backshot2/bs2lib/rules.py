@@ -10,7 +10,12 @@ layout and the source it came from:
   3. nothing needs editing: no identifier changed, and no partition the
      source names by number or path was renumbered or reordered.
 
-check() returns [(RULE, WHY)]; empty is a valid case.
+After the three, the source's own rules: its family's and traits' quirks
+(bs2lib/families; Alpine's mkinitfs rule is one).
+
+check() returns [(RULE, WHY)]; empty is a valid case.  It takes the
+source's HOOKS (families.hooks), made once per case by the generator, and
+works them out from the source dump when not given.
 """
 
 import re
@@ -32,7 +37,10 @@ def fs_bytes(c):
 def overhead(c):
     t = c.get("type")
     if t in ("ext2", "ext3", "ext4"):
-        return geometry.ext4_overhead(c["blocks"], c["block_size"], c.get("inodes") or 0, c.get("inode_size") or 256)
+        # No journal where the features say so (a 4 MiB ext4, as
+        # ubuntu26-zfsmirror's ZFS keystore, has none).
+        journal = not c.get("features") or "has_journal" in c["features"]
+        return geometry.ext4_overhead(c["blocks"], c["block_size"], c.get("inodes") or 0, c.get("inode_size") or 256, journal)
     if t == "xfs":
         return geometry.xfs_overhead(c["blocks"], c["block_size"], c.get("ag_count") or 4, c.get("log_blocks") or 0)
     return 0
@@ -98,8 +106,16 @@ def rule1(drifted, planted=None):
     return out
 
 
-def rule2(source, edits):
+def _hooks(source, hooks):
+    if hooks is None:
+        from .families import hooks as of
+        hooks = of(None, source)
+    return hooks
+
+
+def rule2(source, edits, hooks=None):
     """The edits' drawn values against the source's tables."""
+    hooks = _hooks(source, hooks)
     out = []
     for e in edits:
         op = e.get("op")
@@ -114,8 +130,10 @@ def rule2(source, edits):
             pairs = [("cryptsetup", "header_size", e["header_size"]), ("cryptsetup", "sector_size", e["sector_size"])]
         elif op in ("lv_split", "lv_resize"):
             pairs = [("lvm2", "segments_per_lv", len(E.linear_segments(e["segments"])))]
+        elif op in hooks.edits and hasattr(hooks.edits[op], "rule2_pairs"):
+            pairs = hooks.edits[op].rule2_pairs(e)
         for tool, field, value in pairs:
-            why = tables.check(source, tool, field, value)
+            why = tables.check(source, tool, field, value, hooks)
             if why:
                 out.append((2, why))
     return out
@@ -162,7 +180,8 @@ def _uuids(d):
     return out
 
 
-def rule3(source, drifted, edits):
+def rule3(source, drifted, edits, hooks=None):
+    hooks = _hooks(source, hooks)
     out = []
     if _uuids(source) != _uuids(drifted):
         out.append((3, f"filesystem UUIDs changed: {sorted(_uuids(source) ^ _uuids(drifted))[:4]}"))
@@ -181,7 +200,7 @@ def rule3(source, drifted, edits):
                 p = dumpx.part(dk, n)
                 if p is None:
                     continue
-                found = dumpx.names_by_number(cur, dk, p)
+                found = dumpx.names_by_number(cur, dk, p, hooks)
                 if found:
                     out.append((3, f"{e['op']} {p['name']}: the source names it by number ({found[0]})"))
                 if dumpx.boot_on_lv(cur) and e["op"] == "renumber":
@@ -193,5 +212,7 @@ def rule3(source, drifted, edits):
     return out
 
 
-def check(source, drifted, edits, planted=None):
-    return rule1(drifted, planted) + rule2(source, edits) + rule3(source, drifted, edits)
+def check(source, drifted, edits, planted=None, hooks=None):
+    hooks = _hooks(source, hooks)
+    return (rule1(drifted, planted) + rule2(source, edits, hooks) + rule3(source, drifted, edits, hooks)
+            + hooks.quirk_check(source, drifted, edits))

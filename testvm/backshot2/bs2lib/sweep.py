@@ -13,14 +13,18 @@
   which the tier 1 runner turns into that snapshot's ID;
 - --reformat waits for claude/holt-reformat to merge into main (decision 4).
 
+A source's family and traits (bs2lib/families) may take options out
+(their `sweep`); those a known finding rules out are the generator's steer.
+
 What each flag changes on purpose, for the judges (B9): expected(case) below.
 """
 
 from . import dumpx, fitcalc
 
 
-def draw(rng, source, drifted, targets, caps):
-    """(load_options, snapshots or None) for a case."""
+def draw(rng, source, drifted, targets, caps, hooks=None):
+    """(load_options, snapshots or None) for a case.  HOOKS (the source's,
+    families.hooks) may narrow the options to what the source can take."""
     opts = []
     uefi = dumpx.firmware(source) == "uefi"
     if caps.get("new_uuids") and rng.random() < 0.15:
@@ -44,6 +48,8 @@ def draw(rng, source, drifted, targets, caps):
         n = rng.choice([2, 3])
         snaps = {"count": n, "restore": rng.randrange(0, n - 1)}
         opts += ["--snapshot", f"@{snaps['restore']}"]
+    if hooks is not None:
+        opts = hooks.sweep(source, opts)
     return opts, snaps
 
 

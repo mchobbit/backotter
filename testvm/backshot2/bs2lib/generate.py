@@ -12,19 +12,21 @@ disk's size, then load's options (sweep.py) and the content drift.  Each
 kind is drawn by weight among those the layout has a place for; a draw may
 bring a helper edit with it (room made at the disk's end for a gap, a PV
 grown for a split), and both must pass.
+
+What is the source's own comes from its family and traits (bs2lib/families,
+docs/design/bs2-all.md "The family interface"): families.hooks(source,
+dump), made once per case, gives the tables, the quirks the rules run, the
+ops it takes and draws of its own, the content recipe, the sweep's options
+and the steer around its known findings.  Everything here is generic.
 """
 
 import random
 
-from . import GENERATOR, content as C, dumpx, edits as E, fitcalc, rules, sweep
+from . import GENERATOR, content as C, dumpx, edits as E, families as F, fitcalc, rules, sweep, tables
 from .geometry import Invalid, cdiv, lcm
 
 MIB = 1 << 20
 SECT_MIB = 2048
-
-# The content recipe drawn (content.py): alpine-small-2 until rustic-bko keeps
-# paths past PATH_MAX (fail-001).
-RECIPE = "alpine-small-2"
 
 PARTITION_OPS = {"gap_before": 3, "align": 2, "renumber": 2, "resize": 4, "swap_order": 2}
 STACK_OPS = {"lv_split": 3, "lv_resize": 3, "luks_geometry": 3}
@@ -56,7 +58,7 @@ def _movable_parts(d, dk):
     return [p for p in dk["partitions"] if E.movable(d, dk, p) is None]
 
 
-def draw_gap_before(rng, d):
+def draw_gap_before(rng, d, h=None):
     dk = dumpx.disk(d)
     ps = _movable_parts(d, dk)
     p = _pick(rng, ps)
@@ -72,7 +74,7 @@ def draw_gap_before(rng, d):
     return steps
 
 
-def draw_align(rng, d):
+def draw_align(rng, d, h=None):
     dk = dumpx.disk(d)
     ps = [p for p in _movable_parts(d, dk) if (p.get("content") or {}).get("type") != "vfat"]
     p = _pick(rng, ps)
@@ -85,7 +87,7 @@ def draw_align(rng, d):
     return [("align", {"disk": dk["name"], "partition": p["number"], "sectors": k})]
 
 
-def draw_renumber(rng, d):
+def draw_renumber(rng, d, h=None):
     dk = dumpx.disk(d)
     ps = _movable_parts(d, dk)
     if "fail-002" in KNOWN and boots_from_fallback(d):
@@ -102,7 +104,7 @@ def draw_renumber(rng, d):
     return [("renumber", {"disk": dk["name"], "from": p["number"], "to": to})]
 
 
-def draw_resize(rng, d):
+def draw_resize(rng, d, h=None):
     dk = dumpx.disk(d)
     ps = [p for p in dk["partitions"] if not p.get("extended") and (p.get("content") or {}).get("type") != "vfat"]
     p = _pick(rng, ps)
@@ -120,7 +122,7 @@ def draw_resize(rng, d):
     return [("resize", {"disk": dk["name"], "partition": p["number"], "by_sectors": by, "grow_fs": rng.random() < 0.7})]
 
 
-def draw_swap_order(rng, d):
+def draw_swap_order(rng, d, h=None):
     dk = dumpx.disk(d)
     order = [p for p in dumpx.parts(dk) if not p.get("extended")]
     pairs = [(a, b) for a, b in zip(order, order[1:]) if E.movable(d, dk, a) is None and E.movable(d, dk, b) is None]
@@ -139,7 +141,7 @@ def _linear_lvs(d):
     return out
 
 
-def draw_lv_split(rng, d):
+def draw_lv_split(rng, d, h=None):
     lvs = _linear_lvs(d)
     if not lvs:
         return None
@@ -169,7 +171,7 @@ def draw_lv_split(rng, d):
     return [("lv_split", {"vg": v["name"], "lv": x["name"], "segments": pieces})]
 
 
-def draw_lv_resize(rng, d):
+def draw_lv_resize(rng, d, h=None):
     lvs = _linear_lvs(d)
     if not lvs:
         return None
@@ -188,7 +190,7 @@ def draw_lv_resize(rng, d):
     return [("lv_resize", {"vg": v["name"], "lv": x["name"], "segments": pieces, "grow_fs": rng.random() < 0.7})]
 
 
-def draw_luks_geometry(rng, d):
+def draw_luks_geometry(rng, d, h=None):
     devs = [x for x in dumpx.devices(d).values() if (x.get("content") or {}).get("type") == "crypto_LUKS"
             and str(x["content"].get("version")) == "2"]
     dev = _pick(rng, devs)
@@ -198,15 +200,14 @@ def draw_luks_geometry(rng, d):
     f = E.luks_fields(c)
     keyslots = len(c.get("keyslots") or [])
     from .geometry import LUKS2_HEADER_SIZES, luks2_keyslot_bytes
-    from . import tables
-    hs = rng.choice(tables.allowed(d, "cryptsetup", "header_size") or list(LUKS2_HEADER_SIZES)) if rng.random() < 0.6 else f["header_size"]
+    hs = rng.choice(tables.allowed(d, "cryptsetup", "header_size", h) or list(LUKS2_HEADER_SIZES)) if rng.random() < 0.6 else f["header_size"]
     need = max(1, keyslots) * luks2_keyslot_bytes(((c.get("keyslots") or [{}])[0]).get("key_bits") or 512)
     ks = f["keyslots_size"]
     if rng.random() < 0.6:
         ks = cdiv(logu(rng, need, 128 * MIB), 4096) * 4096
     ss = f["sector_size"]
     if rng.random() < 0.3:
-        ss = rng.choice(tables.allowed(d, "cryptsetup", "sector_size") or [512])
+        ss = rng.choice(tables.allowed(d, "cryptsetup", "sector_size", h) or [512])
     lo = cdiv(2 * hs + ks, 4096) * 4096
     off = f["offset"] if f["offset"] >= lo and rng.random() < 0.3 else lo + 4096 * logu(rng, 0, 16384)
     off = cdiv(off, max(4096, ss)) * max(4096, ss)
@@ -217,22 +218,21 @@ def _fs_devs(d, types):
     return [x for x in dumpx.devices(d).values() if (x.get("content") or {}).get("type") in types]
 
 
-def draw_ext4_geometry(rng, d):
+def draw_ext4_geometry(rng, d, h=None):
     dev = _pick(rng, _fs_devs(d, ("ext2", "ext3", "ext4")))
     if not dev:
         return None
     c = dev["content"]
-    from . import tables
     p = {"fs": dumpx.locator(d, dev)}
     which = rng.sample(["block_size", "inode_size", "inodes_per_group", "flex_bg_size", "reserved_gdt_blocks"], rng.randint(1, 3))
     bs = c["block_size"]
     if "block_size" in which:
-        bs = rng.choice([b for b in tables.allowed(d, "e2fsprogs", "block_size") or [4096]
+        bs = rng.choice([b for b in tables.allowed(d, "e2fsprogs", "block_size", h) or [4096]
                          if b != c["block_size"] and not ("fail-004" in KNOWN and b == 1024)] or [bs])
         p["block_size"] = bs
     isz = c["inode_size"]
     if "inode_size" in which:
-        opts = [i for i in tables.allowed(d, "e2fsprogs", "inode_size") or [256] if i <= bs and (i > 128 or "extra_isize" not in (c.get("features") or []))]
+        opts = [i for i in tables.allowed(d, "e2fsprogs", "inode_size", h) or [256] if i <= bs and (i > 128 or "extra_isize" not in (c.get("features") or []))]
         isz = rng.choice(opts) if opts else isz
         p["inode_size"] = isz
     if bs != c["block_size"] or isz != c["inode_size"] or "inodes_per_group" in which:
@@ -248,7 +248,7 @@ def draw_ext4_geometry(rng, d):
             rng.randrange(lo, hi + 1, step) if rng.random() < 0.5 else min(hi, max(lo, c["inodes_per_group"] // step * step))
         p["inodes_per_group"] = ipg
     if "flex_bg_size" in which and "flex_bg" in (c.get("features") or []):
-        p["flex_bg_size"] = rng.choice([g for g in tables.allowed(d, "e2fsprogs", "flex_bg_size") or [16] if g <= 64])
+        p["flex_bg_size"] = rng.choice([g for g in tables.allowed(d, "e2fsprogs", "flex_bg_size", h) or [16] if g <= 64])
     if "reserved_gdt_blocks" in which and "resize_inode" in (c.get("features") or []):
         p["reserved_gdt_blocks"] = rng.randint(1, bs // 4)
     elif "resize_inode" in (c.get("features") or []) and c.get("reserved_gdt_blocks", 0) > bs // 4:
@@ -256,18 +256,17 @@ def draw_ext4_geometry(rng, d):
     return [("ext4_geometry", p)]
 
 
-def draw_xfs_geometry(rng, d):
+def draw_xfs_geometry(rng, d, h=None):
     dev = _pick(rng, _fs_devs(d, ("xfs",)))
     if not dev:
         return None
     c = dev["content"]
-    from . import tables
     p = {"fs": dumpx.locator(d, dev)}
     which = rng.sample(["ag_count", "log_blocks", "inode_size", "sector_size"], rng.randint(1, 3))
     bs = c["block_size"]
     if "ag_count" in which:
         hi = min(64, c["blocks"] * bs // (64 * MIB))
-        opts = [n for n in tables.allowed(d, "xfsprogs", "ag_count") or range(2, 33) if n <= hi]
+        opts = [n for n in tables.allowed(d, "xfsprogs", "ag_count", h) or range(2, 33) if n <= hi]
         if opts:
             p["ag_count"] = rng.choice(opts)
     agb = cdiv(c["blocks"], p.get("ag_count", c["ag_count"]))
@@ -276,20 +275,19 @@ def draw_xfs_geometry(rng, d):
         if lo <= hi:
             p["log_blocks"] = logu(rng, lo, hi)
     if "inode_size" in which:
-        p["inode_size"] = rng.choice(tables.allowed(d, "xfsprogs", "inode_size") or [512])
+        p["inode_size"] = rng.choice(tables.allowed(d, "xfsprogs", "inode_size", h) or [512])
     if "sector_size" in which:
-        p["sector_size"] = rng.choice(tables.allowed(d, "xfsprogs", "sector_size") or [512])
+        p["sector_size"] = rng.choice(tables.allowed(d, "xfsprogs", "sector_size", h) or [512])
     if len(p) == 1:
         return None
     return [("xfs_geometry", p)]
 
 
-def draw_btrfs_geometry(rng, d):
+def draw_btrfs_geometry(rng, d, h=None):
     dev = _pick(rng, _fs_devs(d, ("btrfs",)))
     if not dev:
         return None
-    from . import tables
-    return [("btrfs_geometry", {"fs": dumpx.locator(d, dev), "node_size": rng.choice(tables.allowed(d, "btrfs-progs", "node_size") or [16384])})]
+    return [("btrfs_geometry", {"fs": dumpx.locator(d, dev), "node_size": rng.choice(tables.allowed(d, "btrfs-progs", "node_size", h) or [16384])})]
 
 
 DRAWS = {
@@ -327,19 +325,20 @@ class Stats:
         self.discarded[k] = self.discarded.get(k, 0) + 1
 
 
-def try_steps(source, d, edits, steps, planted, stats):
-    """D after STEPS, with their edits, or None when one breaks a rule."""
+def try_steps(source, d, edits, steps, planted, stats, h=None):
+    """D after STEPS, with their edits, or None when one breaks a rule
+    (the three, then the source's quirks: H, its hooks)."""
     new = []
     cur = d
     for op, params in steps:
         try:
-            e = E.build(cur, op, params)
+            e = (h.edits[op].build(cur, params) if h and op in h.edits else E.build(cur, op, params))
         except Invalid as x:
             stats.discard(op, str(x))
             return None, None
         cur = E.apply(cur, [e])
         new.append(e)
-    bad = rules.check(source, cur, edits + new, planted)
+    bad = rules.check(source, cur, edits + new, planted, h)
     if bad:
         stats.discard(steps[-1][0], f"rule {bad[0][0]}: {bad[0][1]}")
         return None, None
@@ -371,20 +370,21 @@ def boots_from_fallback(dump):
 
 # Known findings the generator steers around, so that the cases it draws can
 # find new ones (each has its own case in testvm/backshot2/cases/, run with
-# the corpus, and comes back into the draws once it's fixed):
+# the corpus, and comes back into the draws once it's fixed).  These are
+# bko-holt load's, for any source; a family's or trait's own are its
+# `known` and `steer` (fail-003, upstream GRUB's missing
+# --force-extra-removable: families/alpine.py and grub_upstream.py):
 #   fail-002  load leaves the source's fallback loader (EFI/BOOT/BOOTX64.EFI)
 #             as restored, its embedded prefix naming /boot's old partition
 #             number: no renumbering of /boot's partition on a UEFI source
 #             that boots from it
-#   fail-003  --removable runs grub-install --force-extra-removable, Debian's
-#             own option, which Alpine's GRUB refuses: no --removable
 #   fail-004  ext4 with 1 KiB blocks: load's -E resize= gives one reserved GDT
 #             block more than the layout's: no 1 KiB blocks
 #   fail-005  --fit-largest shrinking an ext filesystem keeps its inode count,
 #             so where that count no longer fits the fewer groups at 8 x
 #             block size each, mke2fs cuts blocks per group: no target that
 #             shrinks one that far (fitcalc.ext_inodes_past_groups)
-KNOWN = ("fail-002", "fail-003", "fail-004", "fail-005")
+KNOWN = ("fail-002", "fail-004", "fail-005")
 
 
 def boot_parts(d):
@@ -393,16 +393,20 @@ def boot_parts(d):
     return {where} | dumpx.holders_down(d, where or "")
 
 
-def avoid_known(source, drifted, edits, opts):
-    return [o for o in opts if not ("fail-003" in KNOWN and o == "--removable")]
+def avoid_known(source, drifted, edits, opts, h=None):
+    """OPTS steered around the source's own known findings (its hooks' steer)."""
+    h = h or F.hooks(None, source)
+    return h.steer(source, drifted, edits, opts)
 
 
 def generate(source_name, source_gen, dump, seed, caps=None, n_edits=None, with_content=True, with_options=True, stats=None):
     """A case for SOURCE_NAME's DUMP, from SEED."""
     caps = caps or {}
     stats = stats or Stats()
+    h = F.hooks(source_name, dump)
     rng = random.Random(f"{source_name}:{seed}")
-    content = {"recipe": RECIPE, "seed": seed} if with_content and rng.random() < 0.7 else None
+    recipe = h.recipe(dump)
+    content = {"recipe": recipe, "seed": seed} if with_content and rng.random() < 0.7 and recipe else None
     planted = planted_of(dump, content)
     budget = n_edits if n_edits is not None else rng.randint(1, 6)
     d, edits = dump, []
@@ -412,19 +416,22 @@ def generate(source_name, source_gen, dump, seed, caps=None, n_edits=None, with_
         tries += 1
         stats.tried += 1
         ok = applicable(d)
+        for op, (_, w, _g) in h.draws.items():
+            ok[op] = w
         # Partition edits first, then the stacks and the filesystems, as the
         # spec orders them: a draw goes to the first group that still has budget.
         share = [sum(1 for e in edits if e["op"] in g) for g in groups]
-        weights = {op: w for op, w in ok.items()}
+        weights = {op: w for op, w in h.weights(d, ok).items() if w}
         if not weights:
             break
         ops, ws = zip(*sorted(weights.items()))
         op = rng.choices(ops, ws)[0]
-        steps = DRAWS[op](rng, d)
+        draw = DRAWS.get(op) or h.draws[op][0]
+        steps = draw(rng, d, h)
         if not steps:
             stats.discard(op, "nothing to draw")
             continue
-        nd, new = try_steps(dump, d, edits, steps, planted, stats)
+        nd, new = try_steps(dump, d, edits, steps, planted, stats, h)
         if nd is None:
             continue
         d, edits = nd, edits + new
@@ -448,16 +455,16 @@ def generate(source_name, source_gen, dump, seed, caps=None, n_edits=None, with_
             targets = t2
     opts, snaps = ([], None)
     if with_options:
-        opts, snaps = sweep.draw(rng, dump, d, targets, caps)
+        opts, snaps = sweep.draw(rng, dump, d, targets, caps, h)
         if opts is None:
             # The target can't be fitted: drop it, keep the rest.
             edits = [e for e in edits if e["op"] != "target_size"]
             targets = {dk["name"]: dk["size_bytes"] for dk in dumpx.disks(d)}
-            opts, snaps = sweep.draw(rng, dump, d, targets, caps)
+            opts, snaps = sweep.draw(rng, dump, d, targets, caps, h)
             opts = opts or []
     elif any(targets[k] < v["size_bytes"] for k, v in ((dk["name"], dk) for dk in dumpx.disks(d))):
         opts = ["--fit-largest", str(fitcalc.pct_needed(d, targets))]
-    opts = avoid_known(dump, d, edits, opts)
+    opts = avoid_known(dump, d, edits, opts, h)
     if "--fit-largest" in opts:
         pct = int(opts[opts.index("--fit-largest") + 1])
         bad = [f"rule 1: {w}" for _, w in fitcalc.fits_after(d, targets, pct, planted)]

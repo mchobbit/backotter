@@ -4,9 +4,16 @@ only from these; tier 0's dry runs then check each case in the source's own
 tools, and a value they refuse makes the case INVALID: a table to fix.
 
 A table row is (TOOL, LOWEST_VERSION, {FIELD: allowed}).  The dump records
-the source's versions in boot.packages (Alpine's apk names; dpkg's and rpm's
-the same, where the dump has them).  The newest row at or below the source's
-version applies; a source whose version isn't recorded gets the oldest row.
+the source's versions in boot.packages (Alpine's apk names; dpkg's, rpm's,
+pacman's, portage's and xbps's the same, where the dump has them).  The
+newest row at or below the source's version applies; a source whose version
+isn't recorded gets the oldest row.
+
+These are the generic tables.  A source's family and traits
+(bs2lib/families) may replace a tool's rows, add package names and give
+versions the packages don't (NixOS): every function here takes the
+source's HOOKS (families.hooks), and works them out from the dump when
+not given.
 """
 
 import re
@@ -47,7 +54,7 @@ TABLES = [
     }),
 ]
 
-# The dump's package names for each tool (Alpine, Debian, Fedora).
+# The dump's package names for each tool (Alpine, Debian, Fedora, Arch, Gentoo, Void).
 PACKAGES = {
     "e2fsprogs": ("e2fsprogs",),
     "xfsprogs": ("xfsprogs",),
@@ -65,18 +72,29 @@ def vkey(v):
     return tuple(int(x) for x in re.findall(r"\d+", v)[:4])
 
 
-def version(dump, tool):
+def _hooks(dump, hooks):
+    if hooks is None:
+        from .families import hooks as of
+        hooks = of(None, dump)
+    return hooks
+
+
+def version(dump, tool, hooks=None):
+    hooks = _hooks(dump, hooks)
+    if hooks.versions.get(tool):
+        return hooks.versions[tool]
     pk = ((dump.get("boot") or {}).get("packages")) or {}
-    for name in PACKAGES.get(tool, (tool,)):
+    for name in hooks.packages.get(tool, (tool,)):
         if pk.get(name):
             return pk[name]
     return None
 
 
-def allowed(dump, tool, field):
+def allowed(dump, tool, field, hooks=None):
     """The values the source's TOOL allows for FIELD."""
-    ver = version(dump, tool)
-    rows = [r for r in TABLES if r[0] == tool]
+    hooks = _hooks(dump, hooks)
+    ver = version(dump, tool, hooks)
+    rows = [r for r in hooks.tables if r[0] == tool]
     if not rows:
         return None
     pick = rows[0]
@@ -87,9 +105,10 @@ def allowed(dump, tool, field):
     return pick[2].get(field)
 
 
-def check(dump, tool, field, value):
+def check(dump, tool, field, value, hooks=None):
     """None when VALUE is allowed, else why not."""
-    a = allowed(dump, tool, field)
+    hooks = _hooks(dump, hooks)
+    a = allowed(dump, tool, field, hooks)
     if a is None or value in a:
         return None
-    return f"{tool} {version(dump, tool) or '(version unknown)'} allows {field} {a!r:.80}, not {value}"
+    return f"{tool} {version(dump, tool, hooks) or '(version unknown)'} allows {field} {a!r:.80}, not {value}"

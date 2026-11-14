@@ -155,6 +155,70 @@ Each family can also run under `BackShot2 SOURCE...` as soon as it's built.
 **Re-estimate after A0 and A1:** their measured time sets the rate for the
 rest (recent specs of this size ran well under their estimates).
 
+## The family interface (A1)
+
+Fixed by A1, 2026-11-14. Each later lane is briefed from this section: a
+lane adds a family by adding files under `testvm/backshot2/bs2lib/families/`
+and its tests, never by editing the generator, the rules or the tables.
+
+**Two kinds of module**, both in `bs2lib/families/`, one file each:
+- a **family** (`Family`): exactly one per source. It is the OS and distro:
+  Alpine, NixOS, Gentoo, Chimera, generic Linux (the rest of Linux), later
+  FreeBSD, OpenBSD, illumos, Haiku and the others.
+- a **trait** (`Trait`): any number per source, matched from what the dump
+  records. Traits are shared across families: an initramfs generator
+  (dracut, mkinitcpio, booster), a loader (systemd-boot, shim, Limine), a
+  snapshot tool (snapper), ostree, and A3's storage layers (ZFS, md,
+  multi-disk), which Linux, BSD and illumos share.
+
+**The registry** (`families/__init__.py`) is the one table. It imports every
+module in the package (pkgutil, sorted by file name), collects each module's
+`FAMILY` and `TRAITS`, and refuses at import two modules of the same name,
+or two families that both match one corpus dump (a unit test checks the
+latter over every `holt/tests/corpus/*/src.json`). Adding a module adds it to
+the table: there is no list to edit.
+- `family_of(source, dump)`: the matching family with the highest `priority`
+  (generic Linux has the lowest), else None.
+- `hooks(source, dump)`: a `Hooks`, the family's hooks merged with those of
+  every trait that matches. The generator, the rules, tier 0 and the sweep
+  call only this; `generate()` makes it once per case.
+- `PLANNED`: what isn't built, by the dump's OS (`freebsd: A4`, ...): a
+  source with no family is SKIPPED, naming that piece (A9 reads it). A lane
+  that adds its family drops its row in the same commit.
+
+**What a module holds** (each optional; the default does nothing):
+
+| Field | What it is | Merged |
+|---|---|---|
+| `name`, `piece` | its name, and the piece that built it (`A1`) | |
+| `matches(source, dump)` | whether it applies | |
+| `priority` | families only: the most specific wins | |
+| `tables` | rule 2 rows, as `tables.TABLES`: `(TOOL, LOWEST_VERSION, {FIELD: allowed})` | a module's rows for a tool replace the generic rows for that tool; two modules with rows for one tool is an error |
+| `packages` | `{TOOL: (package names in this family's dump)}` | added to `tables.PACKAGES` |
+| `versions(dump)` | `{TOOL: version}` where the dump's packages don't say (NixOS, AerynOS) | the family's |
+| `quirks` | `Quirk(name, why, check)`: `check(source, drifted, edits)` returns `[(RULE, WHY)]`, run after the three rules on every draw; a quirk is the source's own rule, as Alpine's mkinitfs rule is | all, in order |
+| `ops(dump, weights)` | the op weights it allows (drops an op the source can't take) | in turn |
+| `draws`, `edits` | new edit ops: `{op: (draw, weight, group)}` and `{op: EditOp}` (as `edits.OPS`), with `rule2_pairs(edit)` | added; an op name taken twice is an error |
+| `config_texts(dump)` | rule 3: more of the source's configuration that names devices (Limine's `limine.conf`, NixOS's generated `grub.cfg`, BLS entries) | added to `dumpx.config_texts` |
+| `number_patterns(dump, dk, p)` | rule 3: regexes that name partition P by number or path (`hdd(1:2)`, `/dev/ada0p2`, `c0t0d0s0`) | added |
+| `names_by_number(dump, dk, p)` | rule 3, for what a regex can't say | added |
+| `recipes`, `fs_can`, `content(dump, fstype)` | content drift: recipes added to `content.RECIPES`, what each filesystem can hold, and the recipe this source draws (None: no content drift) | the family's `content`; recipes and `fs_can` added |
+| `known`, `steer(dump, drifted, edits, opts)` | its known findings (`{"fail-NNN": why}`) and how its draws steer around them (as `generate.KNOWN`) | all |
+| `sweep(dump, opts)` | load's options this source can take (`--removable` where its loader has it) | in turn |
+| `tier0` | `chroot` (dry runs in a chroot of the source's root), `guest` (in one booted source guest, batched: A4-A6), `plan` (load plan and invariants only) | the family's |
+
+**Rules for lanes.**
+- A lane owns its modules and their tests (`tests/test_family_NAME.py`). The
+  shared files (the registry, `generate.KNOWN`, the README, this plan) are
+  edited by one lane at a time, in small commits on main.
+- Cases stay reproducible: a module draws only from the generator's `rng`,
+  and never changes what an existing family draws. Each family has a golden
+  test: the case hashes of seeds 0-199 over its corpus dumps, kept in
+  `tests/golden/FAMILY.json`, rewritten only on purpose (a new
+  `GENERATOR` version).
+- Alpine is the first family (`families/alpine.py`); its cases are
+  byte-identical to the ones drawn before the interface.
+
 ## Decisions (the user, 2026-11-14)
 
 1. **Scope: every OS family** (Linux, BSD, illumos, Haiku, Redox, Sculpt OS).

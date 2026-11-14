@@ -459,7 +459,13 @@ def judge_one(name, case, drifted, targets, res, tools, caps):
 
 
 def run(source_dump, cases, work, planner, tools_root=None, caps=None):
-    """[(name, verdict, reasons)] for CASES ([(name, case)]) of one source."""
+    """[(name, verdict, reasons)] for CASES ([(name, case)]) of one source.
+    The dry runs run only for a source whose family says tier0 "chroot"
+    (bs2lib/families: "plan" is the plan and invariants only, "guest" the
+    dry runs in a booted source guest, A4-A6, not built)."""
+    from . import families
+    if tools_root and families.hooks(None, source_dump).tier0 != "chroot":
+        tools_root = None
     prepared = []
     for name, case in cases:
         drifted = C.replay(case, source_dump)

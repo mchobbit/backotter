@@ -174,8 +174,30 @@ load itself.
 | B8 content drift | `bs2lib/content.py` |
 | B9 option sweep | `bs2lib/sweep.py`; judge.py `--new-uuids`, `--removable`, `--nvram-kept`; bs1-restore and bs1-verify (below) |
 | ledger | `bs2lib/ledger.py`: Test2's ledger, family `bs2` |
+| A1 the family interface (BackShot2All) | `bs2lib/families/` (registry `__init__.py`, `base.py`, one module per family or trait); `tests/test_families.py` (registry, goldens `tests/golden/FAMILY.json`, smoke over every Linux corpus dump), `tests/test_family_*.py` |
 
-Unit tests: `python3 -m unittest discover -s testvm/backshot2/tests`.
+Unit tests: `python3 -m unittest discover -s testvm/backshot2/tests`
+(~80 s: the smoke test draws 300 cases from each Linux corpus dump).
+
+## Families
+
+What is a source's own, not generic, comes from its family and traits in
+`bs2lib/families/` (`docs/design/bs2-all.md`, "The family interface (A1)",
+is the contract every lane builds to).  A **family** is the OS and distro,
+one per source, the most specific match winning (`alpine`, `nixos`, and
+`linux` for the rest of Linux); a **trait** is something the dump records
+that sources share (`dracut`, `mkinitcpio`, `booster`, `initramfs-tools`,
+`systemd-boot` with BLS entries, `limine`, `refind`, `ostree`, `snapper`,
+`grub_upstream`).  Each module's docstring says what it refuses and why.
+`families.hooks(source, dump)` merges them, once per case: rule 2's tables
+and versions, the quirks run after the three rules, rule 3's texts and
+patterns, the content recipe (Alpine's alone until A7), the sweep, the
+steer around known findings (`fail-003` for Alpine and every upstream UEFI
+GRUB), and tier 0's mode (`chroot`; NixOS `plan`).  A source with no
+family (the BSDs, illumos, Haiku, Redox, Sculpt OS) is `families.skipped()`:
+`PLANNED` names the piece that builds it.  Alpine's cases are byte-identical
+to those drawn before the interface (`tests/golden/alpine.json`); each
+family's golden is rewritten only with a new `GENERATOR`.
 
 ## A case's life
 
@@ -213,8 +235,9 @@ Unit tests: `python3 -m unittest discover -s testvm/backshot2/tests`.
   find new ones; each stays in `cases/`, and comes back into the draws once
   fixed.
 - **The deep tree** of the content drift is planted just under PATH_MAX
-  (recipe `alpine-small-2`) until rustic-bko keeps paths past it (fail-001);
-  `alpine-small-1`, past it, is the corpus case.  fsmeta.py walks by path, so
+  (recipe `alpine-small-2`, `bs2lib/families/alpine.py`) until rustic-bko
+  keeps paths past it (fail-001); `alpine-small-1`, past it, is the corpus
+  case.  fsmeta.py walks by path, so
   it skips `srv/bs2/deep0` and `bs2-host deep` compares that subtree by
   directory fds.
 - **`--new-uuids`** is drawn only when the build plans it (`caps.json`):
@@ -231,7 +254,8 @@ Unit tests: `python3 -m unittest discover -s testvm/backshot2/tests`.
   number), so rule 3 refuses it wherever the source names that PARTUUID.
 - **Logical and extended partitions** aren't moved, renumbered or resized.
 - **Alpine's own rule** holds by construction: no edit changes a
-  filesystem's type or adds a stack layer, so mkinitfs's features still fit.
+  filesystem's type or adds a stack layer, so mkinitfs's features still fit
+  (the `mkinitfs-layers` quirk checks it, as each initramfs trait does).
 - **Tier 1's "second backup and restore, sometimes"** isn't built yet.
 - **The Thinkpad's run** (`run:alpine-3.24.4-20261110-184526`) needs its
   layout.json and repository copied from mybig512 to a host; not done in

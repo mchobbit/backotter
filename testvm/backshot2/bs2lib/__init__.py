@@ -16,6 +16,9 @@ test hosts.  Stdlib only; Python 3.9 or newer.
 - sweep.py     the option sweep: load's flags per case (B9)
 - shrink.py    the shrinker (B6)
 - tier0.py     the tier 0 runner (B3), run on a host
+- families/    what is a source's own: its family and traits, merged by
+               families.hooks() (docs/design/bs2-all.md, "The family
+               interface (A1)")
 """
 
 # The generator's version, recorded in every case it makes.  2 (2026-11-11):

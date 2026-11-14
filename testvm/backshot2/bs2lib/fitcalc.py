@@ -79,7 +79,35 @@ def fits_after(drifted, targets, pct, planted=None):
                 need = int(used * rules.MARGIN) + rules.overhead(c) + extra
                 if need > size:
                     out.append((1, f"after --fit-largest, {dev['name']} has {size} bytes for {need}"))
+            elif c.get("type") in judge().FIT_FS:
+                # The rest (f2fs, btrfs, jfs, nilfs2) by load's own rule
+                # (holt/src/load/fit.rs data_fits): a shrink needs it free,
+                # and 1 GiB or 5% of what's used to spare.
+                why = shrink_room(drifted, dev, c, -dd["amount"])
+                if why:
+                    out.append((1, why))
     return out
+
+
+SPARE_BYTES = 1 << 30
+SPARE_PCT = 5
+
+
+def shrink_room(d, dev, c, shrink):
+    """Why load refuses to shrink DEV's filesystem by SHRINK bytes (None: it doesn't)."""
+    used = free = None
+    for m in dumpx.mount_of(d, dev):
+        if m.get("size_bytes") is not None and m.get("used_bytes") is not None:
+            used, free = m["used_bytes"], max(0, m["size_bytes"] - m["used_bytes"])
+            break
+    if used is None:
+        if None in (c.get("free_blocks"), c.get("block_size"), c.get("blocks")):
+            return f"--fit-largest would shrink {dev['name']} ({c.get('type')}), whose use the dump doesn't say"
+        used, free = (c["blocks"] - c["free_blocks"]) * c["block_size"], c["free_blocks"] * c["block_size"]
+    need = shrink + max(SPARE_BYTES, used * SPARE_PCT // 100)
+    if free < need:
+        return f"after --fit-largest, {dev['name']} ({c.get('type')}) has {free} bytes free for a {shrink}-byte shrink and its spare"
+    return None
 
 
 def fs_blocks(drifted, targets, pct):

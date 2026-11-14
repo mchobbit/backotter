@@ -11,13 +11,20 @@
 # or linux, built here on the host (ht1-debug.sh's build too: static glibc,
 # +crt-static, so that one binary dumps glibc and musl systems alike), with
 # cargo's target/ in TMPDIR, which must name a directory: one in the RAM
-# disk, under a reservation.  Linux builds with rustup's HOLT_RUST_TOOLCHAIN
+# disk, under a reservation.  linux-arm64 is linux's twin for ARM64
+# (docs/design/arm64.md, A2): aarch64-unknown-linux-gnu, +crt-static, built
+# the same way, natively, on an arm64 host (testvm/hosts.json's arch:
+# bigfoot), in its job_slice (bko.slice) when it has one, with RUSTUP_HOME
+# and CARGO_HOME from its row when unset (rustup_home, cargo_home); on an
+# x86_64 host it is refused.  It lands in /bkoscratch/holttest1d/bin/
+# linux-arm64/bko-holt, beside the BSDs' PLATFORM directories (linux's
+# bin/bko-holt is unchanged).  Linux builds with rustup's HOLT_RUST_TOOLCHAIN
 # (default 1.94.1: the release holt-bin's shipped builds have used), named in
 # RUSTUP_TOOLCHAIN, never the host's rustup default, which a reinstall can
 # change unseen (Chopin's went from 1.94.1 to 1.85.1), so that every build
 # uses the same Rust.  It needs that toolchain and its
-# x86_64-unknown-linux-gnu std; missing, it says which rustup command adds
-# it and installs nothing.  CARGO names another cargo (Debian's
+# x86_64-unknown-linux-gnu std (linux-arm64: aarch64-unknown-linux-gnu);
+# missing, it says which rustup command adds it and installs nothing.  CARGO names another cargo (Debian's
 # /usr/bin/cargo, say), used as it is.  The guests build with their own
 # packaged Rust.  The holt/ tree comes from
 # ~/backotter-work/holt-src (rsynced there by the caller).  The binary lands
@@ -57,7 +64,7 @@ set -euo pipefail
 
 WORK=/home/m/backotter-work
 HERE=$(dirname "$(realpath "$0")")
-PLATFORMS="linux, freebsd, netbsd, openbsd, dragonfly, illumos or haiku"
+PLATFORMS="linux, linux-arm64, freebsd, netbsd, openbsd, dragonfly, illumos or haiku"
 
 # A test's build (T2_HOST_ROOT set, and not HoltTest2's own /bkoscratch/test2)
 # never lands in the shipped sets, WORK/holt-bin and WORK/bko-bin (the images
@@ -106,7 +113,7 @@ if [[ ${1:-} == --reserved ]]; then
     refuse_shipped
     RUN=$2 PLATFORM=$3
     [[ $RUN =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || { echo "build-holt: RUN '$RUN': a plain name" >&2; exit 2; }
-    case $PLATFORM in linux|freebsd|netbsd|openbsd|dragonfly|illumos|haiku) ;;
+    case $PLATFORM in linux|linux-arm64|freebsd|netbsd|openbsd|dragonfly|illumos|haiku) ;;
         *) echo "build-holt: PLATFORM: $PLATFORMS" >&2; exit 2 ;; esac
     LOGS=${HOLT_LOGS:-/bkoscratch/holttest1d/build-holt-$PLATFORM}
     mkdir -p "$LOGS"; rm -f "$LOGS/exit" "$LOGS/peak-kib"
@@ -114,7 +121,7 @@ if [[ ${1:-} == --reserved ]]; then
     finish() { rm -rf --one-file-system "$tmp"; echo "$1" >"$LOGS/exit"; exit "$1"; }
     trap 'finish 143' TERM; trap 'finish 130' INT; trap 'finish 129' HUP
     mountpoint -q /mnt/bko-ram || { echo "build-holt: no RAM disk at /mnt/bko-ram" >&2; finish 2; }
-    if [[ $PLATFORM != linux ]]; then
+    if [[ $PLATFORM != linux && $PLATFORM != linux-arm64 ]]; then
         mkdir -p /tmp/bko-ht1-ports
         for p in $(seq 2600 2689); do
             [[ -z $(ss -Hltn "sport = :$p" 2>/dev/null) ]] || continue
@@ -154,7 +161,7 @@ LOGS=${HOLT_LOGS:-/bkoscratch/holttest1d/build-holt-$PLATFORM}
 refuse_shipped
 GUEST_PATH=/sbin:/usr/sbin:/bin:/usr/bin:/usr/local/sbin:/usr/local/bin:/usr/pkg/sbin:/usr/pkg/bin:/opt/ooce/bin:/usr/gnu/bin
 case $PLATFORM in
-    linux) ;;
+    linux|linux-arm64) ;;
     freebsd) VM=freebsd14 RUST='env ASSUME_ALWAYS_YES=yes pkg install -y rust' ;;
     netbsd) VM=netbsd11 RUST='pkg_info -e rust >/dev/null || pkgin -y install rust' ;;
     openbsd) VM=openbsd8 RUST='pkg_add -I rust' ;;
@@ -183,10 +190,25 @@ print(json.dumps({"platform": p, "sha256": sha, "rustc": rustc, "host": socket.g
         "$1" "$2" "$3" "$SRC" "$OUT/bko-holt" >"$HOLT_INFO.part" && mv -f "$HOLT_INFO.part" "$HOLT_INFO"
 }
 
-if [[ $PLATFORM == linux ]]; then
+if [[ $PLATFORM == linux || $PLATFORM == linux-arm64 ]]; then
     [[ -n ${TMPDIR:-} && -d $TMPDIR ]] ||
-        { echo "build-holt: linux: TMPDIR must name a directory for cargo's target/ (one in the RAM disk, under cmp-run.sh --reserve)" >&2; exit 2; }
-    t=x86_64-unknown-linux-gnu
+        { echo "build-holt: $PLATFORM: TMPDIR must name a directory for cargo's target/ (one in the RAM disk, under cmp-run.sh --reserve)" >&2; exit 2; }
+    t=x86_64-unknown-linux-gnu job=()
+    if [[ $PLATFORM == linux-arm64 ]]; then
+        # Natively, on an arm64 host: its toolchain homes, its job_slice.
+        t=aarch64-unknown-linux-gnu
+        [[ $(uname -m) == aarch64 ]] ||
+            { echo "build-holt: linux-arm64 builds natively on an arm64 host (testvm/hosts.json's arch: bigfoot), not on this $(uname -m) one" >&2; exit 2; }
+        HOSTS_SH=$(dirname "$HERE")/hosts.sh; [[ -f $HOSTS_SH ]] || HOSTS_SH=$WORK/testvm/hosts.sh
+        # shellcheck source=../hosts.sh
+        . "$HOSTS_SH"
+        hosts_rust_env || { echo "build-holt: no toolchain homes from testvm/hosts.json" >&2; exit 1; }
+        # Its job_slice, unless this runs in it already (cmp-run.sh --reserve's scope is there).
+        slice=$(hosts_get "$(uname -n)" job_slice 2>/dev/null || true)
+        if [[ -n $slice ]] && ! grep -q "/$slice/" /proc/self/cgroup 2>/dev/null; then
+            mapfile -t job < <(hosts_job_prefix "$(uname -n)")
+        fi
+    fi
     if [[ -n ${CARGO:-} ]]; then
         cargo=$CARGO
         [[ -x $cargo ]] || { echo "build-holt: no $cargo" >&2; exit 1; }
@@ -208,7 +230,12 @@ if [[ $PLATFORM == linux ]]; then
     tar -C "$SRC" -cf - Cargo.toml Cargo.lock LICENSE src tests | tar -C "$tree" -xf -
     rv=$("$(dirname "$cargo")/rustc" --version 2>/dev/null || echo unknown)
     echo "$rv"
-    if ! (cd "$tree" && RUSTFLAGS="-C target-feature=+crt-static" CARGO_TARGET_DIR=$TMPDIR/holt-target \
+    # In the host's job_slice (none: as it is), with the environment the
+    # build needs (the prefix's setpriv --reset-env clears it).
+    ((${#job[@]} == 0)) || job+=(env HOME="$HOME" PATH="$PATH"
+        ${RUSTUP_HOME:+RUSTUP_HOME="$RUSTUP_HOME"} ${CARGO_HOME:+CARGO_HOME="$CARGO_HOME"}
+        ${RUSTUP_TOOLCHAIN:+RUSTUP_TOOLCHAIN="$RUSTUP_TOOLCHAIN"} ${RUSTUP_AUTO_INSTALL:+RUSTUP_AUTO_INSTALL="$RUSTUP_AUTO_INSTALL"})
+    if ! (cd "$tree" && ${job[@]+"${job[@]}"} env RUSTFLAGS="-C target-feature=+crt-static" CARGO_TARGET_DIR="$TMPDIR/holt-target" \
             "$cargo" build --release --offline --target $t) >"$LOGS/build.log" 2>&1; then
         grep -E "^(error|warning)" -A 6 "$LOGS/build.log" | head -80 >&2
         exit 1
@@ -218,7 +245,7 @@ if [[ $PLATFORM == linux ]]; then
     cp "$b" "$OUT/bko-holt.part"
     chmod 755 "$OUT/bko-holt.part"
     mv "$OUT/bko-holt.part" "$OUT/bko-holt"
-    info linux "$(sha256sum "$OUT/bko-holt" | cut -d' ' -f1)" "$rv"
+    info "$PLATFORM" "$(sha256sum "$OUT/bko-holt" | cut -d' ' -f1)" "$rv"
     ls -l "$OUT/bko-holt"
     exit 0
 fi

@@ -1,0 +1,13 @@
+#!/bin/sh
+# cargo, for build-round.sh's arm64 rustic-bko builds (its build_linux
+# linux-arm64; docs/design/arm64.md, A2): rustic's build-backotter.sh runs
+# "cargo build", which here is "cargo zigbuild" (cargo-zigbuild: zig the C
+# compiler and linker), and any other cargo command is cargo's.  BKO_CARGO
+# is the cargo this stands in for (rustup's proxy); cargo-zigbuild runs the
+# cargo cargo names in CARGO for its subcommands, never this one.
+[ -n "${BKO_CARGO:-}" ] && [ -x "$BKO_CARGO" ] || { echo "zigbuild/cargo: BKO_CARGO names no cargo" >&2; exit 2; }
+if [ "${1:-}" = build ]; then
+    shift
+    exec "$BKO_CARGO" zigbuild "$@"
+fi
+exec "$BKO_CARGO" "$@"

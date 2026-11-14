@@ -67,10 +67,11 @@ class Table(unittest.TestCase):
         r = H.row("bigfoot")
         self.assertEqual((r["ssh"], r["host_key_alias"], r["slot_range"], r["stic_ports"], r["class"], r["roles"],
                           r["default"], r["enabled"], r["arch"], r["job_slice"]),
-                         ("m@bigfoot.local", "bigfoot.local", "3200-3299", [3280, 3299], "small", [], False, True,
-                          "arm64", "bko.slice"))
+                         ("m@bigfoot.local", "bigfoot.local", "3200-3299", [3280, 3299], "small", ["build-arm64"],
+                          False, True, "arm64", "bko.slice"))
         for role in ("build", "fleet", "cache", "store-mirror", "bigfoot-link"):
             self.assertNotIn("bigfoot", H.with_role(role), role)
+        self.assertEqual(H.with_role("build-arm64"), ("bigfoot",))   # A2: its one role
         self.assertNotIn("bigfoot", H.defaults())
         self.assertEqual(H.limits("bigfoot"), dict(H.LIMITS, stic_slots=2, holt_jobs=1, base_gib=4, bs2_slots=2))
 

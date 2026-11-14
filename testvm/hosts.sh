@@ -28,6 +28,10 @@
 #                         none: read them into an array and put CMD after them
 #                         (--reset-env: env NAME=VALUE... first, for the
 #                         environment CMD needs)
+#   hosts_rust_env [NAME] export NAME's (default this host's, uname -n) toolchain
+#                         homes from its row, RUSTUP_HOME and CARGO_HOME (hosts.py
+#                         rust-env: rustup_home, cargo_home), each one only when
+#                         it is unset; none in the row, or NAME in no row: nothing
 #
 # Each returns hosts.py's status: 0, 1 no such host (or a reserved row,
 # enabled false), 2 a bad table or usage; the reason goes to stderr.
@@ -43,3 +47,11 @@ hosts_limit() { python3 -I -B "$BKO_HOSTS_PY" limit "$@"; }
 hosts_arch() { python3 -I -B "$BKO_HOSTS_PY" arch "$@"; }
 hosts_guest_arch() { python3 -I -B "$BKO_HOSTS_PY" guest-arch "$@"; }
 hosts_job_prefix() { python3 -I -B "$BKO_HOSTS_PY" job-prefix "$@"; }
+hosts_rust_env() {
+    local l k v
+    l=$(python3 -I -B "$BKO_HOSTS_PY" rust-env "${1:-$(uname -n)}") || return $?
+    while IFS='=' read -r k v; do
+        [[ $k == RUSTUP_HOME || $k == CARGO_HOME ]] || continue
+        [[ -n ${!k:-} ]] || export "$k=$v"
+    done <<<"$l"
+}

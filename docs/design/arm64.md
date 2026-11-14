@@ -262,6 +262,154 @@ folder's `README` lists every change outside it and how to undo each one.
   take the rest up where an ARM64 guest needs them. bko-bin, cmp-bin,
   holt-bin and the rounds are amd64, so Bigfoot gets none of them until A2.
 
+## What A2 built (2026-11-14)
+
+- **Layout (Decision 4).** Linux's ARM64 binaries live in `linux-arm64/`
+  beside the unchanged `linux/`, in a round's `bin/`, `bko-bin`, `holt-bin`
+  and `/bkoscratch/holttest1d/bin`. Each `linux-arm64/` has its own
+  `SHA256SUMS` (paths `./NAME`). A round's top `SHA256SUMS` still lists every
+  file, `linux-arm64/`'s too, so t2's `round_complete` reads it as before.
+- **The table.** Bigfoot's row has one role, `build-arm64`: it builds a
+  round's arm64 rustic-bko and arm64 bko-holt. It isn't `build`, so every
+  amd64 build loop (promote-bins `--from`, t2's round step, `holt_ship`)
+  still leaves it out, and `all` still means the amd64 hosts wherever A1 made
+  it so. Rows gain optional `rustup_home` and `cargo_home` (hosts.py
+  `rust_env`; hosts.sh `hosts_rust_env [NAME]` exports each one that is
+  unset). Bigfoot's are `/home/m/bko-arm64/toolchains/{rustup,cargo}`, so no
+  bko build uses `~/.rustup` or `~/.cargo`'s registry there.
+- **build-round.sh `--arch amd64|arm64|amd64,arm64|all`** (default amd64,
+  which builds what every round built before):
+
+  | binary | shipped build | check build |
+  |---|---|---|
+  | restic-bko `linux-arm64` | Chopin, Go 1.25.10's cross build (`linux/arm64`) | Cinqcent, the same Go |
+  | rustic-bko `linux-arm64` | Bigfoot, natively, in `bko.slice` | Chopin, a cross build |
+
+  - Bigfoot's part runs whole in its `job_slice`, through
+    `hosts_job_prefix`. The Mac brings what Bigfoot built (its
+    `build-bigfoot.files`) to Chopin and Cinqcent by tar, then sends
+    `bin/linux-arm64/` back to Bigfoot from Chopin, checked there by its
+    `SHA256SUMS`. Bigfoot's round has no other directory and no top
+    `SHA256SUMS`.
+  - A check build lands in `roundROUND/check/OS/`, never in `bin/`, and its
+    row's RESULT is `check-built` or `check-reused`. "Cross-checks", after the
+    table, compares it with the shipped build by SHA-256. A difference fails
+    the round, except the explained one below.
+  - `--dist-hosts` may name an arm64 host, which gets only the round's
+    `*-arm64/` directories. `--sums ROUND` makes a host's `SHA256SUMS` again,
+    and `--pull` copies the arm64 directories' ones too.
+  - `--arch arm64` needs chopin in `--hosts`. Without cinqcent, the restic
+    row says "not cross-checked".
+- **Both rustic-bko builds go through cargo-zigbuild**, with zig as the C
+  compiler and linker. Bigfoot has no musl C compiler: cc-rs looks for
+  `aarch64-linux-musl-gcc`, and a plain native build fails in zstd-sys.
+  Installing `musl-tools` would be a system change.
+  - `stick/zig-tools.sh --install` puts zig 0.15.2 and cargo-zigbuild 0.24.1
+    in `~/backotter-work/tools`, for user m, on Chopin and on Bigfoot. Zig's
+    tarball sha256 is pinned per machine, and both tarballs' minisign
+    signatures were checked against Zig's key on Chopin. cargo install
+    `--locked` checks crates.io's checksums.
+  - `stick/zigbuild/cargo` turns build-backotter.sh's `cargo build` into
+    `cargo zigbuild`, so the fork's script runs unchanged.
+  - The tree's, `CARGO_HOME`'s and zig's paths are remapped
+    (`--remap-path-prefix`, `-ffile-prefix-map`). Without that, about 1,200
+    panic messages carry the absolute registry and tree paths.
+  - C's `__DATE__` and `__TIME__` are fixed, because mimalloc prints its
+    build time.
+  - zig's and cargo-zigbuild's caches live in `build-cache`
+    (`ZIG_*_CACHE_DIR`, `XDG_CACHE_HOME`), never in `~/.cache`.
+- **Set up for it.** Chopin's rustup 1.94.1 got the
+  `aarch64-unknown-linux-musl` target. Cinqcent got Go 1.25.10 in `~/sdk`,
+  copied from Chopin's, with the same tree digest (`58af9f27...`). On Bigfoot
+  the only change was inside the staging folder (README updated): the tools,
+  `toolchains/cargo`, `work/build-cache`, and the `cmp-run.sh` link.
+- **bko-holt `linux-arm64`.** `build-holt.sh linux-arm64`, and
+  `--reserved RUN linux-arm64`, are the twin of its linux build:
+  `aarch64-unknown-linux-gnu`, `+crt-static`, `HOLT_RUST_TOOLCHAIN` (1.94.1
+  by default, as for amd64). It builds natively on the host, as linux's build
+  does, and not in a build guest: the guests exist only for the systems that
+  can't build on the host. It refuses an x86_64 host. It takes the row's
+  toolchain homes and runs cargo in the host's `job_slice`, unless it is
+  there already (cmp-run.sh's scope is). Its output goes to
+  `/bkoscratch/holttest1d/bin/linux-arm64/`.
+- **Readers.**
+  - promote-bins.sh: an arm64 host, when named, gets only each set's
+    `*-arm64/` directories, and cmp-bin, which has none, is left alone there.
+    An amd64 host gets each set whole, as before.
+  - drive.py: an `-arm64` guest's binaries are `bin/linux-arm64`'s.
+  - build-backotter-layer.sh: `BKO_ARCH=arm64` takes `linux-arm64/`. Each of
+    the three binaries, and the base's `/usr/bin/dash`, must be an ELF of
+    `BKO_ARCH`'s machine. A4 does the rest of the arm64 layer.
+
+### The builds
+
+Round `a2arm64-3` was built from the forks' HEADs: restic `aa72d65cceea`,
+rustic `a63bf7b4aed1`, rustic_core `fd7062d01f0f`, which are bko-bin rel8's
+commits. It was built from clean clones, with the scripts copied to each
+host's `~/backotter-work/a2-scratch`. Release profile, Rust 1.94.1.
+
+| binary | host | toolchain | SHA-256 | input digest |
+|---|---|---|---|---|
+| restic-bko linux-arm64 | chopin | go1.25.10, `CGO_ENABLED=0 -trimpath` | `b79fe55a8896d8dd3d50181804aa8b8fc04be93df038e9068d4bfb2f2fb50ff7` | `c44bab8efb23...` |
+| restic-bko linux-arm64 (check) | cinqcent | the same | the same | the same |
+| rustic-bko linux-arm64 | bigfoot | rustc 1.94.1 aarch64 host, zig 0.15.2, cargo-zigbuild 0.24.1 | `bdfbda6dc234ff010fb3bb742aef8f1f20076548eb09229b903119c354b95ab0` | `1361e236ecb0...` |
+| rustic-bko linux-arm64 (check) | chopin | rustc 1.94.1 x86_64 host, the same zig and cargo-zigbuild | `f6d8207cf91c4444c0c0da0c1b5a63bd60f286964e6289f39389339c4a47c7e3` | `63af0f66f494...` |
+| bko-holt linux-arm64 | bigfoot | rustc 1.94.1, holt `5b2fe9de` (holt-bin linux's commit), `+crt-static` | `908ea6ea88e32b5051bdba7a0fba72d3a3639af3ec61e7048712cf4c1ca34bb6` | none |
+
+What the builds showed:
+
+- All three are static aarch64 ELFs, and all three run on Bigfoot.
+- Each host built the same rustic bytes in two rounds.
+- Two builds of bko-holt, one under cmp-run.sh and one direct, are the same
+  bytes.
+- On Bigfoot, restic-bko and rustic-bko each backed up and restored a small
+  tree with `diff -r` clean. Chopin's cross-built rustic-bko restored
+  Bigfoot's repository the same way.
+
+**Why the two rustic-bko builds differ.** It is neither the linker nor the
+paths, and it can't be fixed by flags:
+
+- **C.** Once zig's directory was remapped and `__DATE__`/`__TIME__` fixed,
+  all 435 C objects and the 5 C archives (aws-lc, ring, zstd, mimalloc) are
+  the same bytes on both hosts.
+- **Rust.** Of the 478 rlibs, 192 have the same name (crate hash) on both
+  hosts, and all 192 have the same object code. Only their `lib.rmeta`
+  differs, and that never reaches the binary. The other 286 have different
+  crate hashes. cargo hashes `rustc -vV`, host line included, into every
+  unit built for the host: build scripts and proc-macros. Those hashes then
+  pass into the `-C metadata` of each crate that depends on one (for example
+  `abscissa_core`, through `abscissa_derive`). A different crate hash means
+  different symbol hashes, so code and data are laid out in another order in
+  the LTO'd binary: the strings are the same, their order isn't.
+
+A build on an x86_64 host and one on an aarch64 host can't be the same
+bytes. So build-round says so in its Cross-checks line ("differs, as builds
+on an arm64 and an amd64 host must") and fails nothing for that case. A
+difference between two hosts of one architecture, such as restic's, still
+fails the round. A second ARM64 host (Decision 11's O6N) would give
+rustic-bko a byte-for-byte check.
+
+**Bigfoot's bins.**
+
+- `~/backotter-work/bko-bin/linux-arm64` holds restic-bko, rustic-bko, their
+  commit files, a `BUILD-INFO` and a `SHA256SUMS`.
+- `~/backotter-work/holt-bin/linux-arm64` holds bko-holt, `COMMIT` and a
+  `SHA256SUMS`.
+- Bigfoot has no amd64 binary.
+- Chopin's master sets were left unchanged. Adding `linux-arm64/` there
+  (then `promote-bins.sh bigfoot`) is the user's promotion to make. It would
+  change the sets every amd64 host and t2 read.
+
+**Tests.**
+
+- `testvm/test2/tests/test_arm64_builds.py` (28 tests) covers `rust_env`,
+  zig-tools.sh and the cargo shim, `--sums` and `--pull`, the Mac part with
+  `--arch arm64` against fake hosts (the slice, the copies, the
+  cross-checks, refusals, the dry run, amd64 by default), `--dist-hosts` and
+  promote-bins.sh to an arm64 host, and build-holt.sh's `linux-arm64`.
+- drive.py's self-test covers its new checks.
+- test_arch.py and test_round_dist.py were updated.
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Est. |

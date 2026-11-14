@@ -2,7 +2,7 @@
 # Build BackOtter's own squashfs layer, stacked on the slimmed base layer from
 # slim-base-layer.sh: casper/ubuntu-server-minimal.backotter.squashfs.
 #
-# Usage: sudo [BKO_BIN=DIR] [BKO_HOLT_BIN=DIR] ./build-backotter-layer.sh SOURCE_ISO SLIM_DIR OUT_DIR
+# Usage: sudo [BKO_BIN=DIR] [BKO_HOLT_BIN=DIR] [BKO_ARCH=amd64|arm64] ./build-backotter-layer.sh SOURCE_ISO SLIM_DIR OUT_DIR
 #
 # SOURCE_ISO must be the ISO SLIM_DIR was built from: the packages come from
 # its pool/, which pins them to exactly the base layer's release.  The few the
@@ -13,7 +13,10 @@
 # BKO_BIN/PLATFORM/ for make-img-bsd.sh; BKO_BIN defaults to
 # ~/backotter-work/bko-bin in the home of the user who ran sudo.  bko-holt
 # (static) comes from BKO_HOLT_BIN/linux/, by default ~/backotter-work/holt-bin
-# there, as for make-img-bsd.sh.
+# there, as for make-img-bsd.sh.  BKO_ARCH=arm64 takes the three from the
+# sets' linux-arm64/ instead (docs/design/arm64.md, A2: linux/ is amd64's;
+# A4 builds the arm64 image); either way each must be an ELF of BKO_ARCH's
+# machine, and so must the base's /usr/bin/dash.
 # OUT_DIR receives:
 #   ubuntu-server-minimal.backotter.squashfs   the layer
 #   ubuntu-server-minimal.backotter.manifest   package list of base + layer
@@ -99,6 +102,13 @@ die() { echo "build-backotter-layer: $*" >&2; exit 1; }
 # Under sudo, $HOME is root's: the default is the invoking user's.
 BKO_BIN=${BKO_BIN:-$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/backotter-work/bko-bin}
 BKO_HOLT_BIN=${BKO_HOLT_BIN:-$(getent passwd "${SUDO_USER:-root}" | cut -d: -f6)/backotter-work/holt-bin}
+# The bin directory of BKO_ARCH, and its ELF e_machine (bytes 18-19, little-endian).
+case ${BKO_ARCH:=amd64} in
+    amd64) BIN_OS=linux ELF_MACHINE=3e00 ;;
+    arm64) BIN_OS=linux-arm64 ELF_MACHINE=b700 ;;
+    *) die "BKO_ARCH: amd64 or arm64, not $BKO_ARCH" ;;
+esac
+elf_machine() { od -An -tx1 -j18 -N2 "$1" 2>/dev/null | tr -d ' \n'; }
 
 [[ $# -eq 3 ]] || die "usage: $0 SOURCE_ISO SLIM_DIR OUT_DIR"
 SOURCE_ISO=$(realpath "$1")
@@ -110,10 +120,12 @@ OUT=$3
 [[ -d $here/layer ]] || die "missing $here/layer"
 [[ -f $here/$BCACHEFS_KEY ]] || die "missing $here/$BCACHEFS_KEY"
 command -v mksquashfs >/dev/null || die "missing mksquashfs"
-for a in "${ARCHIVERS[@]}"; do
-    [[ -x $BKO_BIN/linux/$a ]] || die "no $BKO_BIN/linux/$a"
+for f in "${ARCHIVERS[@]/#/$BKO_BIN/$BIN_OS/}" "$BKO_HOLT_BIN/$BIN_OS/bko-holt"; do
+    [[ -x $f ]] || die "no $f"
+    [[ $(elf_machine "$f") == "$ELF_MACHINE" ]] || die "$f is no $BKO_ARCH binary (BKO_ARCH=$BKO_ARCH)"
 done
-[[ -x $BKO_HOLT_BIN/linux/bko-holt ]] || die "no $BKO_HOLT_BIN/linux/bko-holt"
+[[ ! -f $SLIM/rootfs/usr/bin/dash || $(elf_machine "$SLIM/rootfs/usr/bin/dash") == "$ELF_MACHINE" ]] ||
+    die "$SLIM's base is not $BKO_ARCH's (its /usr/bin/dash: BKO_ARCH=$BKO_ARCH)"
 # The image's one kernel, which the bcachefs module is built for (in a chroot
 # uname -r is the build host's).
 kernels=("$SLIM"/rootfs/lib/modules/*/)
@@ -324,9 +336,9 @@ while IFS= read -r -d '' f; do
     install -D -o root -g root -m "$mode" "$f" "$root/$rel"
 done < <(find "$here/layer" -type f -print0)
 for a in "${ARCHIVERS[@]}"; do
-    install -D -o root -g root -m 755 "$BKO_BIN/linux/$a" "$root/usr/local/bin/$a"
+    install -D -o root -g root -m 755 "$BKO_BIN/$BIN_OS/$a" "$root/usr/local/bin/$a"
 done
-install -D -o root -g root -m 755 "$BKO_HOLT_BIN/linux/bko-holt" "$root/usr/local/bin/bko-holt"
+install -D -o root -g root -m 755 "$BKO_HOLT_BIN/$BIN_OS/bko-holt" "$root/usr/local/bin/bko-holt"
 chmod 600 "$root/etc/netplan/50-backotter-wired.yaml"   # netplan warns otherwise
 chmod 440 "$root/etc/sudoers.d/backotter"
 in_root visudo -cq -f /etc/sudoers.d/backotter || die "sudoers file rejected"

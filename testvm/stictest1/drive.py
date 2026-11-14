@@ -258,7 +258,7 @@ def parse_check(text):
     head = lines[:40]
     os_ = None
     for i, l in enumerate(head):
-        m = re.search(r"roundN/bin/([a-z]+)", l)
+        m = re.search(r"roundN/bin/([a-z]+(?:-arm64)?)", l)
         if m:
             os_ = m.group(1)
             break
@@ -290,6 +290,14 @@ def all_guests():
     return sorted(g for g in os.listdir(HERE) if os.path.isfile(os.path.join(HERE, g, "check.sh")))
 
 
+def arch_bin_os(g, os_):
+    """The bin directory guest g's check takes: its check.sh's OS, and for a guest of another
+    architecture than amd64 (hosts.guest_arch: debian13-arm64) that OS's directory of it,
+    linux-arm64 (docs/design/arm64.md A2: bin/linux/ stays amd64's)."""
+    a = HOSTS_TABLE.guest_arch(g)
+    return os_ if a == "amd64" or os_.endswith("-" + a) else f"{os_}-{a}"
+
+
 def load_specs(guests):
     spec = {}
     for g in guests:
@@ -298,6 +306,7 @@ def load_specs(guests):
                 spec[g] = parse_check(f.read())
             except ValueError as e:
                 raise SystemExit(f"drive.py: {g}/check.sh: {e}")
+        spec[g].os = arch_bin_os(g, spec[g].os)
     return spec
 
 
@@ -616,7 +625,7 @@ set -u
 BIN=$1 WT=$2 HIST=$3; shift 3
 abs() { case $1 in /*) echo "$1" ;; "~/"*) echo "$HOME/${1#"~/"}" ;; *) echo "$HOME/$1" ;; esac; }
 BIN=$(abs "$BIN") WT=$(abs "$WT") HIST=$(abs "$HIST")
-for o in linux freebsd netbsd openbsd dragonfly omnios haiku; do
+for o in linux linux-arm64 freebsd netbsd openbsd dragonfly omnios haiku; do
     for f in restic-bko rustic-bko; do [ -x "$BIN/$o/$f" ] && echo "BIN $o/$f"; done
 done
 # The guests whose image is here (vm_boot's: vms/GUEST/*.qcow2, a link into the
@@ -1746,6 +1755,17 @@ def self_test():
     check(out["vms"] == {"short"} and out["have"] == {"linux/restic-bko"}, f"probe: VM lines ({out['vms']})")
     check(parse_probe("BIN linux/restic-bko\nVM short\nEND\n")["vms"] is None,
           "probe: no VMS line, no images known (a VM line alone counts for nothing)")
+    check(arch_bin_os("debian13", "linux") == "linux" and arch_bin_os("debian13-arm64", "linux") == "linux-arm64"
+          and arch_bin_os("debian13-arm64", "linux-arm64") == "linux-arm64" and arch_bin_os("freebsd15", "freebsd") == "freebsd",
+          "an arm64 guest's binaries are bin/linux-arm64's, an amd64 guest's bin/linux's, as ever")
+    check(parse_check("# BIN_DIR is roundN/bin/linux-arm64\ncmp-run.sh --reserve 2 2\n").os == "linux-arm64"
+          and parse_check("# BIN_DIR is roundN/bin/linux (restic-bko)\ncmp-run.sh --reserve 2 2\n").os == "linux",
+          "BIN_DIR roundN/bin/linux-arm64 is linux-arm64, roundN/bin/linux linux")
+    arm = Spec("linux-arm64", 2, 2)
+    check(has_bins(arm, {"linux-arm64/rustic-bko", "linux-arm64/restic-bko"})
+          and not has_bins(arm, {"linux/rustic-bko", "linux/restic-bko"})
+          and not has_bins(Spec("linux", 2, 2), {"linux-arm64/rustic-bko", "linux-arm64/restic-bko"}),
+          "an arm64 guest needs bin/linux-arm64's binaries, and an amd64 one bin/linux's: neither takes the other's")
     both = "VMS\nVM debian13\nVM debian13-arm64\nEND\n"
     check(arch_only("chopin", parse_probe(both))["vms"] == {"debian13"}
           and arch_only("bigfoot", parse_probe(both))["vms"] == {"debian13-arm64"}

@@ -144,8 +144,8 @@ binary: built, reused or FAILED, seconds, SHA-256 (logs in
 `roundROUND/logs/`).  It lives in `stick/` with the build scripts it drives;
 `--only`, `--hosts`, `--dry-run` and the variables are in its header.
 `--dist-hosts H,H|all` also copies the built round, whole, to hosts that
-build nothing (copland, cage; `all`: every enabled host `--hosts` doesn't
-name), checked there with `sha256sum -c` and against the source's
+build nothing (copland, cage; `all`: every enabled amd64 host `--hosts`
+doesn't name; an arm64 host named gets only `bin/linux-arm64/`), checked there with `sha256sum -c` and against the source's
 `SHA256SUMS`; `--dist-only` copies a round built before.  The default is
 none.  The shared sets (bko-bin, cmp-bin, holt-bin) go to the hosts with
 `testvm/promote-bins.sh` (testvm/HOSTS.md).
@@ -170,6 +170,37 @@ dependencies).  A host without it, or Chopin without its
 `x86_64-unknown-linux-musl` target, fails with the `rustup` command that
 adds it.  DragonFly's cross build takes its pinned nightly
 (stick/dragonfly/build-rustic.sh); the native builds take the guests' Rust.
+
+`--arch arm64` (or `all`, with amd64) adds Linux's ARM64 binaries
+(docs/design/arm64.md, A2), in `bin/linux-arm64/` beside the unchanged
+`bin/linux/`, with a `SHA256SUMS` of its own:
+
+| binary | built | checked by |
+|---|---|---|
+| restic-bko `linux-arm64` | Chopin, Go's cross build (`linux/arm64`) | Cinqcent, the same Go (1.25.10 in `~/sdk`) |
+| rustic-bko `linux-arm64` | Bigfoot (the `build-arm64` role), natively, in `bko.slice`, `aarch64-unknown-linux-musl` | Chopin, a cross build |
+
+Both rustic builds go through cargo-zigbuild, zig the C compiler and
+linker: Bigfoot has no musl C compiler, and installing one would change its
+system.  `stick/zig-tools.sh --install` puts the pinned zig (sha256 pinned,
+minisign-checked) and cargo-zigbuild in `~/backotter-work/tools` on Chopin
+and Bigfoot, and `stick/zigbuild/cargo` turns build-backotter.sh's
+`cargo build` into `cargo zigbuild`.  The tree's, `CARGO_HOME`'s and zig's
+paths are remapped (`--remap-path-prefix`, `-ffile-prefix-map`; without that
+the panic messages carry about 1,200 absolute paths), and C's `__DATE__` and
+`__TIME__` are fixed (mimalloc prints them).  A check build lands in
+`roundROUND/check/`, never in `bin/`, and its row says `check-built`; after
+the table, "Cross-checks" compares it with the shipped build, and a
+difference fails the round.  rustic-bko's two can't match, and that is said
+and fails nothing: cargo hashes the host's `rustc -vV` into build scripts
+and proc-macros, and so into the crate hash of every crate that uses one,
+which reorders the binary (docs/design/arm64.md, "What A2 built": every C
+object, and the other crates' object code, is the same bytes on both).
+Bigfoot's builds reach Chopin and Cinqcent through the Mac (tar), and
+`bin/linux-arm64/` goes back to Bigfoot alone, checked there.  An arm64
+host in `--dist-hosts` gets only the arm64 directories.
+
+    stick/build-round.sh --arch arm64 r12a     # restic-bko and rustic-bko linux-arm64, both checked
 
 ## On the hosts
 

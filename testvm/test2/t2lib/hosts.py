@@ -21,7 +21,8 @@ A row (hosts.json's notes say more):
     slot_range       "LO-HI", guest-slot.sh's range (run-all.sh: PORT_BASE LO, GUEST_PORTS)
     stic_ports       [LO, HI], drive.py's check ports, inside slot_range
     class            one of the table's classes (big, small)
-    roles            of the table's roles (build, fleet, store-mirror, bigfoot-link, cache)
+    roles            of the table's roles (build, build-arm64, fleet, store-mirror,
+                     bigfoot-link, cache)
     default          a host of a run without --hosts
     enabled          false: a reserved row (a host to come); no list or lookup has it
                      unless asked for every row (all_=True, --all)
@@ -35,6 +36,10 @@ A row (hosts.json's notes say more):
                      (a guest's QEMU, cmp-run.sh's work) runs in it, started by job_prefix()'s
                      sudo -n systemd-run --scope --slice=SLICE -- setpriv ... -- CMD (vm-run
                      and cmp-run.sh do it themselves)
+    rustup_home, cargo_home
+                     optional, an absolute path or null: the RUSTUP_HOME and CARGO_HOME of
+                     the host's Rust builds (rust_env), for a host whose pinned toolchains
+                     live apart from ~/.rustup and ~/.cargo (bigfoot's, in its staging folder)
 
 A host's limits (LIMITS: each optional, in its row, else the table's class_limits for its
 class, else the default; limits() and limit() resolve them, and a name not in the table
@@ -66,6 +71,8 @@ Command line (what hosts.sh wraps; exit 0 ok, 1 no such host, 2 usage or a bad t
     hosts.py job-prefix NAME [USER]
                               NAME's job_prefix, one word a line (nothing: no job_slice, or
                               a name in no row); USER default the row's ssh user
+    hosts.py rust-env NAME    NAME's rust_env, VAR=VALUE a line (nothing: none, or a name in
+                              no row)
     hosts.py limit NAME FIELD  NAME's limit FIELD (limits above; a name not in the table: the
                               default), for cmp-run.sh's BASE_GIB
     hosts.py check            the table checks: prints its path
@@ -80,7 +87,7 @@ ENV = "BKO_HOSTS_JSON"
 TESTVM = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TABLE = os.path.join(TESTVM, "hosts.json")
 FIELDS = ("name", "ssh", "ip", "host_key_alias", "slot_range", "stic_ports", "class", "roles", "default",
-          "enabled", "arch", "job_slice")
+          "enabled", "arch", "job_slice", "rustup_home", "cargo_home")
 REQUIRED = ("name", "ssh", "slot_range", "stic_ports", "class", "roles", "default", "enabled")
 # A host's limits and their defaults (the docstring): optional row fields, and the fields of
 # the table's class_limits {CLASS: {FIELD: VALUE}}.
@@ -95,6 +102,9 @@ GUEST_ARCH_SUFFIXES = {"-arm64": "arm64"}
 # Optional fields' values when a row leaves them out (get, names --field).
 FIELD_DEFAULTS = {"arch": DEFAULT_ARCH}
 SLICE_RE = re.compile(r"[A-Za-z0-9_.:-]+\.slice\Z")
+# The toolchain homes a row may name (rust_env): field -> environment variable.
+RUST_HOMES = {"rustup_home": "RUSTUP_HOME", "cargo_home": "CARGO_HOME"}
+HOME_RE = re.compile(r"/[A-Za-z0-9_.@+/-]*\Z")
 NAME_RE = re.compile(r"[a-z][a-z0-9-]*\Z")
 SSH_RE = re.compile(r"[A-Za-z0-9._-]+@[A-Za-z0-9._-]+\Z")
 RANGE_RE = re.compile(r"(\d+)-(\d+)\Z")
@@ -222,6 +232,10 @@ def check_table(t):
             errs.append(f"{at}: arch {r['arch']!r}: one of {', '.join(ARCHES)}")
         if r.get("job_slice") is not None and not (isinstance(r["job_slice"], str) and SLICE_RE.match(r["job_slice"])):
             errs.append(f"{at}: job_slice {r['job_slice']!r}: a systemd slice's name (NAME.slice) or null")
+        for k in RUST_HOMES:
+            v = r.get(k)
+            if v is not None and not (isinstance(v, str) and HOME_RE.match(v) and "/../" not in v + "/"):
+                errs.append(f"{at}: {k} {v!r}: an absolute path (no spaces, no ..) or null")
         for k in LIMITS:
             if k in r and limit_error(k, r[k]):
                 errs.append(f"{at}: {k} {r[k]!r}: {limit_error(k, r[k])}")
@@ -397,6 +411,15 @@ def job_prefix(name, user=None, table=None):
             "setpriv", f"--reuid={u}", f"--regid={u}", "--init-groups", "--reset-env", "--"]
 
 
+def rust_env(name, table=None):
+    """{VAR: PATH} of NAME's toolchain homes (RUST_HOMES: RUSTUP_HOME, CARGO_HOME) its row
+    names; {} for none, or NAME in no enabled row.  A build there exports each one the
+    caller hasn't set (build-round.sh, build-holt.sh, zig-tools.sh: hosts.sh's
+    hosts_rust_env)."""
+    r = find(name, table=table) or {}
+    return {var: r[k] for k, var in RUST_HOMES.items() if r.get(k)}
+
+
 def ssh(name, table=None):
     return row(name, table=table)["ssh"]
 
@@ -442,7 +465,7 @@ def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
     usage = ("usage: hosts.py names [--all] [--default] [--role R] [--class C] [--arch A] [--field F] | "
              "get NAME FIELD [--all] | limit NAME FIELD | phrase [--all] | arch NAME | guest-arch GUEST | "
-             "job-prefix NAME [USER] | check")
+             "job-prefix NAME [USER] | rust-env NAME | check")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -494,6 +517,10 @@ def main(argv=None):
         if word == "job-prefix" and len(pos) in (1, 2) and not opts:
             for w in job_prefix(pos[0], pos[1] if len(pos) == 2 else None, t):
                 print(w)
+            return 0
+        if word == "rust-env" and len(pos) == 1 and not opts:
+            for k, v in rust_env(pos[0], t).items():
+                print(f"{k}={v}")
             return 0
         if word == "limit" and len(pos) == 2 and not opts:
             if pos[1] not in LIMITS:

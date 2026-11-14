@@ -8,8 +8,11 @@
 # Usage: promote-bins.sh [--dry-run] [--delete] [--from HOST] [--sets LIST] HOST... | all
 #
 # HOST: a host of testvm/hosts.json (all: every enabled amd64 host but the
-# source).  An arm64 host (hosts.json's arch: bigfoot) is refused: the sets'
-# binaries are amd64 ones.
+# source).  An arm64 host (hosts.json's arch: bigfoot), named, gets only each
+# set's arm64 directories (*-arm64/: linux-arm64/, docs/design/arm64.md A2,
+# each with its own SHA256SUMS), never an amd64 binary; a set with none
+# (cmp-bin) is left alone there, and said.  An amd64 host gets each set
+# whole, as ever.
 # --from: the source, a host with the build role there (default chopin, the
 # table's first).  --sets: comma-separated, of bko-bin cmp-bin holt-bin
 # (default all three).
@@ -41,7 +44,7 @@ set -uo pipefail
 here=$(cd "$(dirname "$0")" && pwd)
 W=${BKO_WORK_REMOTE:-backotter-work}
 ALL_SETS="bko-bin cmp-bin holt-bin"
-PLATFORMS="linux freebsd netbsd openbsd dragonfly illumos haiku"
+PLATFORMS="linux linux-arm64 freebsd netbsd openbsd dragonfly illumos haiku"
 die() { echo "promote-bins: $*" >&2; exit 2; }
 log() { echo "$(date '+%H:%M:%S') $*"; }
 usage() { sed -n '8p' "$0" | sed 's/^# //' >&2; exit 2; }
@@ -78,7 +81,7 @@ else
     for h; do
         [[ $h == "$from" ]] && die "$h is the source (--from)"
         hosts_get "$h" ssh >/dev/null || die "no such enabled host $h ($(hosts_phrase))"
-        a=$(hosts_arch "$h") && [[ $a == amd64 ]] || die "$h is an ${a:-unknown} host (testvm/hosts.json's arch): the sets are amd64"
+        a=$(hosts_arch "$h") && [[ $a == amd64 || $a == arm64 ]] || die "$h is an ${a:-unknown} host (testvm/hosts.json's arch)"
         [[ " $targets " == *" $h "* ]] || targets+=" $h"
     done
 fi
@@ -167,6 +170,10 @@ remote() {
     } | ssh -o BatchMode=yes -o ServerAliveInterval=60 "$h" "bash -s -- $op $W ${a[*]+${a[*]}}"
 }
 paths() { sed -E 's/^link  //; s/^[0-9a-f]{64}  //; s/ -> .*$//'; }
+# A manifest's lines of the arm64 directories (./*-arm64/...): an arm64 host's share.
+arm_only() { grep -E '^(link  |[0-9a-f]{64}  )\./[^/]+-arm64/' || true; }
+# The top directories of a manifest's paths, one a line.
+top_dirs() { paths | sed -E 's|^\./([^/]+)/.*$|\1|' | LC_ALL=C sort -u; }
 some() {  # the first lines of stdin, on one line
     awk -v n="${1:-8}" 'NR <= n { printf "%s%s", (NR > 1 ? ", " : ""), $0 } END { if (NR > n) printf ", ... (%d in all)", NR }'
 }
@@ -185,10 +192,18 @@ for set in $sets; do
     fi
     man=$(remote "$src" sums "$set") && [[ -n $man ]] ||
         { log "$set: FAILED: no manifest of $from:$W/$set"; failed+=" $set@$from"; continue; }
-    nfiles=$(printf '%s\n' "$man" | wc -l | tr -d ' ')
+    full=$man
     relayed=""
     for h in $targets; do
         t=$(hosts_get "$h" ssh)
+        # An arm64 host's share: the set's arm64 directories (arm, their names).
+        man=$full arm=""
+        if [[ $(hosts_arch "$h") == arm64 ]]; then
+            man=$(printf '%s\n' "$full" | arm_only)
+            [[ -n $man ]] || { log "$h $set: nothing for an arm64 host ($from:$W/$set has no *-arm64/): left alone"; continue; }
+            arm=$(printf '%s\n' "$man" | top_dirs | tr '\n' ' ')
+        fi
+        nfiles=$(printf '%s\n' "$man" | wc -l | tr -d ' ')
         tman=$(remote "$t" sums "$set" 2>/dev/null)
         trc=$?
         if [[ $trc != 0 && $trc != 3 ]]; then
@@ -214,15 +229,19 @@ for set in $sets; do
         if ! remote "$t" stage "$stage"; then
             log "$h $set: FAILED: can't make $t:$W/$stage"; failed+=" $set@$h"; continue
         fi
+        # What goes: the set whole, or an arm64 host's directories of it.
+        what="$W/$set/"
+        if [[ -n $arm ]]; then what=""; for d in $arm; do what+=" $W/$set/$d"; done; fi
         # shellcheck disable=SC2029  # the paths are meant to expand here
         if ! ssh -o BatchMode=yes -o ServerAliveInterval=60 "$src" \
-            "cd && rsync -rlp -e '$dssh' $W/$set/ $t:$W/$stage/" >/dev/null 2>&1; then
+            "cd && rsync -rlp -e '$dssh' $what $t:$W/$stage/" >/dev/null 2>&1; then
             log "$h $set: $from can't copy to $t: through the Mac"
-            if [[ -z $relayed ]]; then
+            if [[ $relayed != "$set" ]]; then
                 [[ -n $tmp ]] || tmp=$(mktemp -d "${TMPDIR:-/tmp}/bko-promote.XXXXXX") || die "no temporary directory"
-                rsync -rlp -e "$dssh" "$src:$W/$set/" "$tmp/$set/" && relayed=yes || relayed=no
+                rsync -rlp -e "$dssh" "$src:$W/$set/" "$tmp/$set/" && relayed=$set || relayed=no
             fi
-            if [[ $relayed != yes ]] || ! rsync -rlp -e "$dssh" "$tmp/$set/" "$t:$W/$stage/"; then
+            if [[ -n $arm ]]; then mwhat=(); for d in $arm; do mwhat+=("$tmp/$set/$d"); done; else mwhat=("$tmp/$set/"); fi
+            if [[ $relayed != "$set" ]] || ! rsync -rlp -e "$dssh" "${mwhat[@]}" "$t:$W/$stage/"; then
                 log "$h $set: FAILED to copy"; remote "$t" drop "$stage"; failed+=" $set@$h"; continue
             fi
         fi
@@ -236,7 +255,7 @@ for set in $sets; do
         if ! remote "$t" verify "$set" -- "$man"; then
             log "$h $set: FAILED: $t:$W/$set isn't $from's after the copy"; failed+=" $set@$h"; continue
         fi
-        log "$h $set: $ntodo of $nfiles files copied from $from, all $nfiles checked by sha256$xnote"
+        log "$h $set: $ntodo of $nfiles files copied from $from${arm:+ (its arm64 directories: ${arm% })}, all $nfiles checked by sha256$xnote"
     done
 done
 [[ -z $failed ]] || { log "FAILED:$failed"; exit 1; }

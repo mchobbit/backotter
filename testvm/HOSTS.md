@@ -15,7 +15,7 @@ describes that table, what each class of host runs, and how a new host joins.
 | copland | small | 2800-2899 | 2880-2899 | cache | yes |
 | cage | small | 3000-3099 | 3080-3099 | cache | yes |
 | czerny | small | 3100-3199 | 3180-3199 | cache | no (row reserved: `enabled: false`) |
-| bigfoot | small, arm64 | 3200-3299 | 3280-3299 | none | no |
+| bigfoot | small, arm64 | 3200-3299 | 3280-3299 | build-arm64 | no |
 
 ## The table: testvm/hosts.json
 
@@ -30,10 +30,11 @@ host with the fleet role (Chopin) holds vm-update's fleet lock.
 | `slot_range` | `LO-HI`, the host's guest-slot range (`slot_range_here` in guest-slot.sh). run-all.sh's `PORT_BASE` is LO and its `GUEST_PORTS` is the whole range. Ranges must not overlap. |
 | `stic_ports` | `[LO, HI]`, drive.py's ports for the checks. They must lie inside `slot_range`. |
 | `class` | `big` or `small` (see below). The gate's `host_reserve` in `gate/layers.json` and run-all.sh's profile are chosen by class. |
-| `roles` | `build`: builds round binaries (stick/build-round.sh) and bko-holt. `fleet`: holds every guest in a full `vms/`, kept alike by vm-update. `store-mirror`: vm-store's mirror, the only publisher. `bigfoot-link`: the one host that talks to Bigfoot. `cache`: has a vm-store cache. |
+| `roles` | `build`: builds round binaries (stick/build-round.sh) and bko-holt. `build-arm64`: builds a round's arm64 rustic-bko natively (`build-round.sh --arch arm64`) and arm64 bko-holt (`build-holt.sh linux-arm64`); only an arm64 host has it, and it is not `build`, so every amd64 build loop leaves the host out. `fleet`: holds every guest in a full `vms/`, kept alike by vm-update. `store-mirror`: vm-store's mirror, the only publisher. `bigfoot-link`: the one host that talks to Bigfoot. `cache`: has a vm-store cache. |
 | `default` | a host of every run without `--hosts` (t2, drive.py). A default host must be enabled. |
 | `enabled` | `false` marks a reserved row: the name and ranges are taken, but no script treats it as a host. |
 | `arch` | optional: `amd64` or `arm64`, the architecture of the host's guests and binaries. A row without it is `amd64`, as every host was before 2026-11-14. A guest has one too, by its name: `arm64` for a guest named `*-arm64`, else `amd64` (hosts.py `guest_arch`). A guest runs only on a host of its own architecture (see below). |
+| `rustup_home`, `cargo_home` | optional: absolute paths, or null. The `RUSTUP_HOME` and `CARGO_HOME` of the host's Rust builds, for a host whose pinned toolchains live apart from `~/.rustup` and `~/.cargo` (bigfoot's, in its staging folder). hosts.py `rust_env`, and hosts.sh's `hosts_rust_env [NAME]`, which exports each one that is unset; build-round.sh, build-holt.sh and stick/zig-tools.sh call it. |
 | `job_slice` | optional: a systemd slice (`bko.slice`) that every heavy job on the host runs in, or null for none. hosts.py `job_prefix` builds the words that start one: `sudo -n systemd-run --scope --quiet --slice=SLICE -- setpriv --reuid=USER --regid=USER --init-groups --reset-env -- CMD`. vm-run starts itself again that way when it isn't in the slice, with its own environment and working directory. cmp-run.sh puts each job's scope in the slice (`systemd-run --slice`). |
 
 Readers:
@@ -73,8 +74,13 @@ architectures, each takes only the hosts it can use:
   included, since it copies code only. A bare table name (`sync-hosts.sh
   bigfoot`) means that row's ssh.
 - build-round.sh's ssh targets and its build-role check. `--dist-hosts all`
-  means every amd64 host, and naming an arm64 host is refused: a round's
-  binaries are amd64. promote-bins.sh is the same.
+  means every amd64 host. An arm64 host named in `--dist-hosts` gets only the
+  round's arm64 directories (`bin/linux-arm64/`, with its own SHA256SUMS),
+  never an amd64 binary. `--arch arm64` adds the first host with the
+  `build-arm64` role (bigfoot) as the round's native arm64 rustic-bko
+  builder (docs/design/arm64.md, A2). promote-bins.sh is the same: `all`
+  means the amd64 hosts, and an arm64 host named gets only each set's
+  `*-arm64/` directories.
 - vm-update's fleet (`ALL_HOSTS`, the hosts with the fleet role). A guest's
   copies are merged only on hosts of its architecture.
 - bs2's ssh targets: the amd64 hosts. `--hosts bigfoot` is refused, because
@@ -233,7 +239,8 @@ each of these is decided per cell, from the host's facts, not from its name:
 
 Bigfoot (`m@bigfoot.local`, 192.168.68.197 as its `ip`) is the user's daily
 machine: a desktop session, Plex and deluge run there. Its row is small class,
-`arch: arm64`, `job_slice: bko.slice`, with no roles and `default: false`. It
+`arch: arm64`, `job_slice: bko.slice`, with the one role `build-arm64` (A2)
+and `default: false`. It
 stays out of default runs until HostTest2 passes on it
 (docs/design/arm64.md, A6).
 
@@ -252,6 +259,15 @@ stays out of default runs until HostTest2 passes on it
   numerous kind (see the vm-run header).
 - **Sync.** `testvm/sync-hosts.sh bigfoot` copies testvm/ and stick/ there,
   and the default run includes it.
+- **Builds (A2).** Its Rust is rustup's, with `RUSTUP_HOME` and `CARGO_HOME`
+  in `/home/m/bko-arm64/toolchains` (the row's `rustup_home` and
+  `cargo_home`; `~/.rustup` and `~/.cargo`'s registry are the user's own and
+  are never used). `build-round.sh --arch arm64` builds the round's
+  rustic-bko `linux-arm64` there, natively, in `bko.slice`, through
+  cargo-zigbuild (stick/zig-tools.sh's zig and cargo-zigbuild in
+  `~/backotter-work/tools`), and `build-holt.sh linux-arm64` builds
+  bko-holt there. Its sets hold only arm64 directories: `bko-bin/linux-arm64`,
+  `holt-bin/linux-arm64` and a round's `bin/linux-arm64`.
 
 ## Adding a host
 

@@ -1,0 +1,21 @@
+#cloud-config
+# Ubuntu Core 24 test guest for BackOtter (make-ubuntu-core.sh): the user
+# tester, made by cloud-init in run mode's first boot from a NoCloud drive
+# labelled CIDATA (with an empty-ish meta-data).  The builder fills in the
+# @...@ settings.  No password here: cloud-init's chpasswd -e writes
+# /etc/passwd, which is read-only on Ubuntu Core (users live in
+# /var/lib/extrausers), and its failure ends the users module before sudo
+# is set up; the builder sets tester's password itself, over SSH.
+hostname: @HOSTNAME@
+users:
+  - name: tester
+    gecos: BackOtter tester
+    sudo: "ALL=(ALL) NOPASSWD:ALL"
+    shell: /bin/bash
+    ssh_authorized_keys:
+      - @AUTHORIZED_KEY@
+# The same key for root: the farm's tools log in as root.
+disable_root: false
+ssh_authorized_keys:
+  - @AUTHORIZED_KEY@
+ssh_pwauth: false

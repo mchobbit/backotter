@@ -112,6 +112,13 @@ anduinos2)  cmd=(asm $T/make-anduinos.sh "$SRC/AnduinOS-2.0.5-amd64.iso" "$W" an
 # /bkoscratch/rebuild-inputs/guix15 (its SHA-256 pinned in the builder, its
 # .sig checked on download), with 1.5.0's substitutes at the rebuild.
 guix15|guix15-bios) cmd=(asm $T/make-guix.sh --iso-dir /bkoscratch/rebuild-inputs/guix15 $G "$W") ;;
+# uc24, uc24-fde: Ubuntu Core 24's stock signed image in
+# /bkoscratch/rebuild-inputs/ubuntu-core24 (its SHA-256 pinned in the builder,
+# SHA256SUMS beside it), every snap refreshed from the store at the rebuild.
+# uc24-fde's recovery key goes beside W (W.recovery), never over the guest's own
+# in rebuild-inputs. Its boot check below has no TPM, so it can't unlock.
+uc24)       cmd=(asm $T/make-ubuntu-core.sh uc24 /bkoscratch/rebuild-inputs/ubuntu-core24/ubuntu-core-24-amd64.img.xz "$W") ;;
+uc24-fde)   cmd=(asm $T/make-ubuntu-core.sh --recovery-key-file "$W.recovery" uc24-fde /bkoscratch/rebuild-inputs/ubuntu-core24/ubuntu-core-24-amd64.img.xz "$W") ;;
 endeavouros) cmd=(asm $T/make-arch.sh --live endeavouros "$SRC/EndeavourOS_Titan-Nova-2026.08.15.iso" 2026.10.01 "$W") ;;
 endeavouros-grub) cmd=(asm $T/make-arch.sh --live endeavouros-grub /bkoscratch/rebuild-inputs/endeavouros/EndeavourOS_Titan-Nova-2026.08.15.iso 2026.10.01 "$W") ;;
 manjaro)    cmd=(asm $T/make-arch.sh --live manjaro "$SRC/manjaro-xfce-26.1.1-minimal-260825-linux71.iso" 2026.10.01 "$W") ;;
@@ -169,6 +176,9 @@ proxmox9|proxmox9-mirror)
 qubes43)
     ISO=/bkoscratch/rebuild-inputs/qubes43/Qubes-R4.3.2-x86_64.iso
     [ -f "$ISO" ] || { echo "no ISO $ISO" >&2; exit 2; } ;;
+uc24|uc24-fde)
+    ISO=/bkoscratch/rebuild-inputs/ubuntu-core24/ubuntu-core-24-amd64.img.xz
+    [ -f "$ISO" ] || { echo "no image $ISO" >&2; exit 2; } ;;
 esac
 leftovers() {  # what a failed root builder may leave: this build's loop devices; mounts, pools, arrays, VGs and LUKS volumes of any build on the host
     { losetup -a | grep -F "$W"; findmnt -rno TARGET | grep -E '^/mnt/(bko-debian-zfs|bko-debian-stack|bko-chimera-zfs|live-)'

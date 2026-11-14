@@ -109,11 +109,14 @@ vgchange --devicesfile '' --devices /dev/sdq3 --activate y rl_host-1
 
 # ---- format ----
 # vda2: xfs
-mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=bc000000-0000-4000-8000-000000000004 -i sparse=1,nrext64=1,size=512 -n ftype=1,size=4096 -b size=4096 -s size=512 -d size=1073741824,agsize=268435456 -l lazy-count=1,size=67108864 /dev/sdq2
+mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=bc000000-0000-4000-8000-000000000004,metadir=0 -i sparse=1,nrext64=1,size=512,exchange=0,maxpct=25 -n ftype=1,size=4096,parent=0 -b size=4096 -s size=512 -d size=1073741824,agsize=268435456 -l lazy-count=1,size=67108864 /dev/sdq2
+# check: /dev/sdq2 is xfs with the source's features (read back by bko-holt's own probe)
 # dm-0: xfs
-mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=bc000000-0000-4000-8000-000000000006 -i sparse=1,nrext64=1,size=512 -n ftype=1,size=4096 -b size=4096 -s size=512 -d size=14382268416,agsize=3595567104 -l lazy-count=1,size=67108864 /dev/mapper/rl_host--1-root
+mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=bc000000-0000-4000-8000-000000000006,metadir=0 -i sparse=1,nrext64=1,size=512,exchange=0,maxpct=25 -n ftype=1,size=4096,parent=0 -b size=4096 -s size=512 -d size=14382268416,agsize=3595567104 -l lazy-count=1,size=67108864 /dev/mapper/rl_host--1-root
+# check: /dev/mapper/rl_host--1-root is xfs with the source's features (read back by bko-holt's own probe)
 # dm-1: swap
 mkswap -U bc000000-0000-4000-8000-000000000007 --pagesize 4096 /dev/mapper/rl_host--1-swap
+# check: /dev/mapper/rl_host--1-swap is swap with the source's UUID, label and page size (read back by bko-holt's own probe)
 
 # ---- mount ----
 mkdir -p /mnt/bko-target

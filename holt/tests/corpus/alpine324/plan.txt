@@ -44,10 +44,13 @@ udevadm settle
 # vda1: ext4
 mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000001 -b 4096 -I 256 -N 65536 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000002,desc_size=64,resize=268435456 /dev/sdq1 1048576k
 tune2fs -r 13107 /dev/sdq1
+# check: /dev/sdq1 is ext4 with the source's features (read back by bko-holt's own probe)
 # vda2: swap
 mkswap -U bc000000-0000-4000-8000-000000000003 --pagesize 4096 /dev/sdq2
+# check: /dev/sdq2 is swap with the source's UUID, label and page size (read back by bko-holt's own probe)
 # vda3: xfs
-mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=bc000000-0000-4000-8000-000000000004 -i sparse=1,nrext64=1,size=512,exchange=1 -n ftype=1,size=4096,parent=1 -b size=4096 -s size=512 -d size=13957595136,agsize=3489398784 -l lazy-count=1,size=67108864 /dev/sdq3
+mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=bc000000-0000-4000-8000-000000000004,metadir=0 -i sparse=1,nrext64=1,size=512,exchange=1,maxpct=25 -n ftype=1,size=4096,parent=1 -b size=4096 -s size=512 -d size=13957595136,agsize=3489398784 -l lazy-count=1,size=67108864 /dev/sdq3
+# check: /dev/sdq3 is xfs with the source's features (read back by bko-holt's own probe)
 
 # ---- mount ----
 mkdir -p /mnt/bko-target

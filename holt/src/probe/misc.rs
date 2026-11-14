@@ -106,6 +106,25 @@ pub mod sample {
         img[4086..4096].copy_from_slice(b"SWAPSPACE2");
         img
     }
+
+    /// A JFS superblock at 32 KiB, as mkfs.jfs -L LABEL leaves it (4 KiB
+    /// blocks, inline log) and, for version 2, jfs_tune -U after it.
+    pub fn jfs(version: u32, label: &str) -> Vec<u8> {
+        let mut img = vec![0u8; 0x10000];
+        let b = &mut img[0x8000..0x8100];
+        b[0..4].copy_from_slice(b"JFS1");
+        b[4..8].copy_from_slice(&version.to_le_bytes());
+        b[8..16].copy_from_slice(&262144u64.to_le_bytes());
+        b[16..20].copy_from_slice(&4096u32.to_le_bytes());
+        b[24..28].copy_from_slice(&512u32.to_le_bytes());
+        b[36..40].copy_from_slice(&0x0000_0800u32.to_le_bytes());
+        b[101..101 + label.len().min(11)].copy_from_slice(&label.as_bytes()[..label.len().min(11)]);
+        for (i, x) in b[136..152].iter_mut().enumerate() {
+            *x = 0x50 + i as u8;
+        }
+        b[152..152 + label.len().min(16)].copy_from_slice(&label.as_bytes()[..label.len().min(16)]);
+        img
+    }
 }
 
 #[cfg(test)]

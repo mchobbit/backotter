@@ -187,17 +187,23 @@ vgchange --devicesfile '' --devices /dev/md/0 --activate y ubuntu-vg
 # ---- format ----
 # vda1: vfat
 mkfs.fat -F 32 -i BC000001 -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdq1
+# check: /dev/sdq1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # vdb1: vfat
 mkfs.fat -F 32 -i BC000002 -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdr1
+# check: /dev/sdr1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # vdc1: vfat
 mkfs.fat -F 32 -i BC000003 -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sds1
+# check: /dev/sds1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # vdd1: vfat
 mkfs.fat -F 32 -i BC000004 -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdt1
+# check: /dev/sdt1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # dm-0: ext4
 mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000012 -b 4096 -I 256 -N 1835008 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000013,stride=128,stripe_width=256,desc_size=64,resize=2155872256 /dev/mapper/ubuntu--vg-ubuntu--lv 29335552k
 tune2fs -r 366694 /dev/mapper/ubuntu--vg-ubuntu--lv
+# check: /dev/mapper/ubuntu--vg-ubuntu--lv is ext4 with the source's features (read back by bko-holt's own probe)
 # dm-1: swap
 mkswap -U bc000000-0000-4000-8000-000000000014 --pagesize 4096 /dev/mapper/ubuntu--vg-swap
+# check: /dev/mapper/ubuntu--vg-swap is swap with the source's UUID, label and page size (read back by bko-holt's own probe)
 
 # ---- mount ----
 mkdir -p /mnt/bko-target

@@ -44,14 +44,17 @@ udevadm settle
 # vda1: ext4
 mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000001 -b 4096 -I 256 -N 65536 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000002,desc_size=64,resize=268435456 /dev/sdq1 1048576k
 tune2fs -r 13107 /dev/sdq1
+# check: /dev/sdq1 is ext4 with the source's features (read back by bko-holt's own probe)
 # vda2: swap
 mkswap -U bc000000-0000-4000-8000-000000000003 --pagesize 4096 /dev/sdq2
+# check: /dev/sdq2 is swap with the source's UUID, label and page size (read back by bko-holt's own probe)
 # vda3: jfs
 mkfs.jfs -q /dev/sdq3
 # the source's UUID (mkfs.jfs can't set one)
 jfs_tune -U bc000000-0000-4000-8000-000000000004 /dev/sdq3
 # jfs_tune -U makes the superblock version 2; mkfs.jfs's, and the source's, is 1
 sh -c 'printf '\''\001'\'' | dd of=/dev/sdq3 bs=1 seek=32772 count=1 conv=notrunc status=none && printf '\''\001'\'' | dd of=/dev/sdq3 bs=1 seek=61444 count=1 conv=notrunc status=none'
+# check: /dev/sdq3 is jfs with the source's UUID, label and version (read back by bko-holt's own probe)
 
 # ---- mount ----
 mkdir -p /mnt/bko-target

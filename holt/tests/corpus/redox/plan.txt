@@ -24,6 +24,7 @@ udevadm settle
 redoxfs-mkfs /dev/sdq3
 # vdb4: swap "swap"
 mkswap -U bc000000-0000-4000-8000-000000000007 -L swap --pagesize 4096 /dev/sdq4
+# check: /dev/sdq4 is swap with the source's UUID, label and page size (read back by bko-holt's own probe)
 
 # ---- mount ----
 mkdir -p /mnt/bko-target

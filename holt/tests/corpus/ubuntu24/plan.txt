@@ -49,8 +49,10 @@ sh -c '[ "$(zfs get -H -o value mounted rpool)" != yes ] || zfs unmount rpool'
 # vda1: ext4
 mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,filetype,extent,64bit,flex_bg,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000001 -b 4096 -I 256 -N 65536 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000002,desc_size=64,resize=268435456 /dev/sdq1 1048576k
 tune2fs -r 13107 /dev/sdq1
+# check: /dev/sdq1 is ext4 with the source's features (read back by bko-holt's own probe)
 # vda2: swap
 mkswap -U bc000000-0000-4000-8000-000000000003 --pagesize 4096 /dev/sdq2
+# check: /dev/sdq2 is swap with the source's UUID, label and page size (read back by bko-holt's own probe)
 zfs create -u -o mountpoint=none -o canmount=off -o normalization=formD -o utf8only=on rpool/ROOT
 zfs create -u -o mountpoint=/ -o canmount=on -o normalization=formD -o utf8only=on rpool/ROOT/ubuntu
 

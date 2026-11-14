@@ -66,10 +66,12 @@ those the source didn't have, as "A stick newer than the machine" in
 `stick-config.md` already requires for ZFS pools.  The details per layer are
 under "Feature sets" below.
 
-It also checks every one of its writes by reading the result back with
-bko-holt dump's own parsers and comparing it with the JSON.  If the stick's
-mkfs turned on something the source didn't have (a default added since this
-was written), that check catches it and the stage stops.
+It also reads back each filesystem and swap area it makes, with bko-holt
+dump's own probe, and compares it with the JSON (see "Feature sets").  If the
+stick's mkfs turned on something the source didn't have (a default added
+since this was written), that check catches it and the format stage stops.
+The audit of each layer against the Linux image's real tools is
+`docs/design/fs-features.md`.
 
 ## Stages
 
@@ -119,7 +121,11 @@ Checks, in this order, and reports all failures at once:
 4. The stick's tools can recreate every feature the source had: ext4, XFS
    and btrfs feature names, LUKS ciphers and KDFs, md metadata versions,
    ZFS pool features (the check `stick-config.md`'s "Is this stick good
-   enough?" makes at backup time, made again here).
+   enough?" makes at backup time, made again here).  Built so far for
+   filesystems: a recorded feature bko-holt's probes can't name (ext's
+   `FEATURE_I19`, XFS's `incompat_bit15`, btrfs's `compat_ro_bit9`, F2FS's
+   `feature_bit20`, NILFS2's `compat_bit3`) is a problem, since load can't
+   ask mkfs for it or read it back.
 5. Everything in the layout is something version 1 can build (see "Out of
    scope").
 6. Each mounted filesystem's recorded used space fits in its new size.  With
@@ -190,8 +196,10 @@ live on.
 ### `format`
 
 - Filesystems and swap: see "Feature sets" and "Identity".  Each one is read
-  back with bko-holt dump's parser right away, and its UUID, label, version and
-  feature list compared with the JSON.
+  back with bko-holt dump's probe right away, after its mkfs and the
+  commands that finish it (tune2fs, nilfs-tune, jfs_tune), and compared
+  with the JSON (see "Feature sets").  The plan shows it as a `# check:`
+  line.
 - btrfs: subvolumes created with their recorded paths and IDs where btrfs
   allows it, read-only flags and properties set, and the default subvolume.
   With `--repo`, snapshots the backup holds below a mounted subvolume
@@ -670,24 +678,55 @@ Never the stick's defaults: every feature on or off as the source had it.
   size (`-G`), reserved blocks (`-m`/`-r`), casefold encoding (`-E
   encoding=`), and the hash seed and default hash (`-E hash_seed=`, through
   `tune2fs` if mke2fs can't).
-- **XFS**: every feature named on the command line, on or off:
-  `-m crc=,finobt=,rmapbt=,reflink=,bigtime=,inobtcount=`, `-i sparse=,nrext64=`,
-  `-n ftype=` (and the same for any feature the stick's mkfs.xfs knows that
-  the JSON doesn't list: off).  Plus block, sector and inode size, AG count,
-  stripe unit and width, internal or external log and its size, directory
-  block size and `imax_pct`.  xfsprogs' `-c options=` profiles
-  (`lts_6.12.conf`, for example) are a fallback when a feature can't be named
-  on the command line.
-- **btrfs**: `mkfs.btrfs -O` with every incompat and compat-ro feature, on
-  (`F`) or off (`^F`); `--csum`; node and sector size; data and metadata
-  profiles from `allocation_profiles`.
+- **XFS**: every feature xfsprogs 6.18 can choose is named, `0` or `1`:
+  `-m crc=,finobt=,rmapbt=,reflink=,inobtcount=,bigtime=,metadir=`,
+  `-i sparse=,nrext64=,exchange=`, `-n ftype=,parent=` and `-l
+  lazy-count=`.  exchange and parent matter most: 6.18 turns them on by
+  default (by the running kernel), and Rocky 10's XFS, /boot included, has
+  neither.  The Debian 13 rescuer's mkfs.xfs 6.13.0 and the Linux image's
+  6.18.0 both take all three, off or on (tried 2026-11-14); an xfsprogs
+  older than 6.13 would refuse metadir.  Plus block, sector and inode size,
+  data size and AG size (AG count without them), stripe unit and width,
+  internal or external log, its size, version and stripe unit, directory
+  block size, and imaxpct (`-i maxpct=`, dump's `imax_pct`).
+- **btrfs**: `mkfs.btrfs -O` with each of the nine features mkfs.btrfs can
+  choose, on (`F`) or off (`^F`); `--mixed` if the source had mixed block
+  groups; `--csum`; node and sector size; data and metadata profiles from
+  `allocation_profiles`.
+- **F2FS**: `mkfs.f2fs -O` with the source's features mkfs.f2fs can set.
+  It can't be asked to leave one off (`-O` has no `^`), so a later
+  f2fs-tools default would slip through: the read-back is its only guard.
+- **NILFS2**: every feature `F` or `^F`; block size, blocks per segment,
+  reserved percentage.
+- **JFS**: nothing to choose (mkfs.jfs makes 4 KiB blocks only).  The
+  journal size isn't recorded, so it's mkfs.jfs's; JFS's format hasn't
+  changed since jfsutils 1.1.  After jfs_tune sets the UUID, the superblock
+  version goes back to the source's 1.
+- **bcachefs**: `--version=` the source's version_min (its version without
+  one), and its options as recorded.
 - **FAT**: FAT size, sector size, cluster size, reserved sectors, FAT count,
   hidden sectors.
 - **swap**: page size (`--pagesize`).
 - **md, LUKS, LVM, ZFS**: as in `assemble` and "Encryption".
 
-The read-back after each write is the real guarantee: dump's parser lists
-the new filesystem's features, and they must be exactly the recorded ones.
+The read-back after each one is the real guarantee.  format reads the new
+device with bko-holt dump's own probe (`holt/src/load/readback.rs`) and
+compares it with the source's content in the JSON: its type, UUID (in any
+case), label, block size (btrfs's sector size; FAT's FAT size, sector and
+cluster size; swap's page size), JFS's superblock version and bcachefs's
+version_min against the version format was asked for.  Features are
+compared within the set mkfs can choose: ext's settable features, every
+named XFS feature, the nine btrfs ones and mixed_groups, F2FS's settable
+ones, every NILFS2 one, and in all of them any bit the probe can't name.
+Bits that record state are left out (ext's `needs_recovery` and
+`orphan_present`, XFS's `needsrepair`), and so are XFS's `meta_uuid` (the
+UUID changed after mkfs; the UUID itself is compared), F2FS's version (the
+f2fs-tools release that made it) and bcachefs's version and superblock
+size, which grow once a newer kernel mounts it.  A difference stops the
+stage with a message naming the device and the feature, and saying the
+rescue image's mkfs turned it on (or off).  The plan prints the check as a
+`# check: DEVICE is TYPE ...` line after the commands that make the device;
+with `--commit` bko-holt makes it itself.
 
 ### ZFS on every rescue image (checked 2026-11-14)
 

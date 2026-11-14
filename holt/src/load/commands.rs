@@ -30,13 +30,17 @@ fn lvm_argv<'a>(cmd: &'a str, devices: &'a str, rest: &[&'a str]) -> Vec<&'a str
     v
 }
 
-/// One step: a command, or a file to write (`write` set), or only a note.
+/// One step: a command, or a file to write (`write` set), or a read-back
+/// (`check` set), or only a note.
 #[derive(Debug, Clone, PartialEq, Default)]
 pub struct Cmd {
     pub argv: Vec<String>,
     pub stdin: Option<String>,
     /// For a file to write: its path; the contents are `stdin`.
     pub write: Option<String>,
+    /// For a read-back: the device format just made, and the source's
+    /// content it must match (readback.rs).  It runs in-process.
+    pub check: Option<(String, Value)>,
     pub why: Option<String>,
     /// Environment variables the command runs with (shown before it).
     pub env: Vec<(String, String)>,
@@ -58,6 +62,11 @@ impl Cmd {
         Cmd { write: Some(path.to_string()), stdin: Some(contents), ..Cmd::default() }
     }
 
+    /// The read-back of DEV, just made from the source's CONTENT.
+    pub fn read_back(dev: &str, content: &Value) -> Cmd {
+        Cmd { check: Some((dev.to_string(), content.clone())), ..Cmd::default() }
+    }
+
     pub fn why(mut self, w: impl Into<String>) -> Cmd {
         self.why = Some(w.into());
         self
@@ -76,16 +85,20 @@ impl Cmd {
     }
 
     pub fn is_note(&self) -> bool {
-        self.argv.is_empty() && self.write.is_none()
+        self.argv.is_empty() && self.write.is_none() && self.check.is_none()
     }
 
-    /// The step as a person would type it in a shell.
+    /// The step as a person would type it in a shell (a read-back, which
+    /// bko-holt makes itself, as a comment).
     pub fn shell(&self) -> String {
         let mut out = String::new();
         if let Some(w) = &self.why {
             for l in w.lines() {
                 out += &format!("# {l}\n");
             }
+        }
+        if let Some((dev, content)) = &self.check {
+            return out + &super::readback::line(dev, content);
         }
         if self.is_note() {
             return out;
@@ -609,6 +622,15 @@ fn leaf(names: &Names, v: &Value, name: &str, words: &mut Vec<String>, leaves: &
 /// (bootsize: illumos' zpool create -B, whose ESP the partition stage
 /// writes as the source's instead.)
 const POOL_PROPS_SKIP: [&str; 10] = ["cachefile", "altroot", "readonly", "bootfs", "guid", "load_guid", "name", "version", "health", "bootsize"];
+
+/// A legacy pool's version (28, say): its `version` property when that's a
+/// number other than 5000.  A feature-flags pool's is 5000, or `-` as
+/// `zpool get -p` gives it.
+fn legacy_pool_version(p: &Value) -> Option<u64> {
+    let v = p.at(&["local_properties", "version"]).or_else(|| p.at(&["properties", "version"]))?;
+    let n = v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse().ok()))?;
+    (n != 5000).then_some(n)
+}
 /// Dataset properties `zfs create -o` can't take.
 const DS_PROPS_SKIP: [&str; 7] = ["pbkdf2salt", "objsetid", "guid", "createtxg", "keystatus", "encryptionroot", "mounted"];
 
@@ -1046,8 +1068,18 @@ impl Builder<'_> {
             // system picks, so that the pool's own property stays 0.
             min_ashift = label_ashift;
         }
+        // A legacy pool (version 28, no feature flags) is made at its own
+        // version, which takes no feature@ properties; left alone, zpool
+        // create would make it 5000, which the source's older ZFS or boot
+        // loader may not read.  (POOL_PROPS_SKIP keeps the local-property
+        // loop from naming the version again.)
+        let legacy = legacy_pool_version(p);
+        if let Some(v) = legacy {
+            a.push("-o".into());
+            a.push(format!("version={v}"));
+        }
         for (f, state) in p.get("features").and_then(Value::as_object).into_iter().flatten() {
-            if matches!(state.as_str(), Some("enabled" | "active")) {
+            if legacy.is_none() && matches!(state.as_str(), Some("enabled" | "active")) {
                 a.push("-o".into());
                 a.push(format!("feature@{f}=enabled"));
             }
@@ -1063,7 +1095,10 @@ impl Builder<'_> {
         a.push(self.opts.target.clone());
         a.push(name.clone());
         a.extend(words);
-        let why = format!("ZFS pool {name}, with the source's feature flags only");
+        let why = match legacy {
+            Some(v) => format!("ZFS pool {name}, at the source's version {v} (no feature flags)"),
+            None => format!("ZFS pool {name}, with the source's feature flags only"),
+        };
         match min_ashift {
             Some(n) => {
                 let create = a.iter().map(|w| crate::load::shell_quote(w)).collect::<Vec<_>>().join(" ");
@@ -1230,7 +1265,7 @@ impl Builder<'_> {
 
 /// e2fsprogs feature names mke2fs can set; anything else in a superblock
 /// (needs_recovery, orphan_present, ...) is state, not a choice.
-const EXT_SETTABLE: [&str; 30] = [
+pub(crate) const EXT_SETTABLE: [&str; 30] = [
     "has_journal", "ext_attr", "resize_inode", "dir_index", "sparse_super2", "fast_commit", "stable_inodes", "orphan_file", "filetype", "meta_bg", "extent", "64bit",
     "mmp", "flex_bg", "ea_inode", "metadata_csum_seed", "large_dir", "inline_data", "encrypt", "casefold", "sparse_super", "large_file", "huge_file",
     "dir_nlink", "extra_isize", "quota", "bigalloc", "metadata_csum", "project", "verity",
@@ -1309,25 +1344,29 @@ pub fn mkfs_xfs(dev: &str, c: &Value, logdev: Option<&str>) -> Vec<String> {
     if let Some(u) = s(c, "uuid") {
         m.push(format!("uuid={u}"));
     }
-    // Newer features: only named when on, so an older mkfs.xfs isn't asked
-    // about options it doesn't know.
-    if f.contains(&"metadir") {
-        m.push("metadir=1".into());
-    }
+    // exchange, parent and metadir are named off too: xfsprogs 6.18's
+    // defaults turn exchange and parent on (by the running kernel), and an
+    // older distro's kernel or GRUB may not know them.  Every rescuer's
+    // mkfs.xfs takes all three, off or on: the Debian 13 one's 6.13.0 and
+    // the Linux image's 6.18.0 (both tried, 2026-11-14).  An xfsprogs older
+    // than 6.13 would refuse metadir, and one older than 6.10 the other two.
+    m.push(format!("metadir={}", on("metadir")));
     let mut i = vec![format!("sparse={}", on("sparse")), format!("nrext64={}", on("nrext64"))];
     if let Some(sz) = num(c, "inode_size") {
         i.push(format!("size={sz}"));
     }
-    if f.contains(&"exchange") {
-        i.push("exchange=1".into());
+    i.push(format!("exchange={}", on("exchange")));
+    // The most of the space inodes may take: mkfs.xfs's default depends on
+    // the size, which --fit-largest changes.  It's an inode option (-d
+    // maxpct is refused).
+    if let Some(p) = num(c, "imax_pct") {
+        i.push(format!("maxpct={p}"));
     }
     let mut n = vec![format!("ftype={}", on("ftype"))];
     if let Some(d) = num(c, "dir_block_size") {
         n.push(format!("size={d}"));
     }
-    if f.contains(&"parent") {
-        n.push("parent=1".into());
-    }
+    n.push(format!("parent={}", on("parent")));
     let mut a = vec!["mkfs.xfs".to_string(), "-f".into(), "-m".into(), m.join(","), "-i".into(), i.join(","), "-n".into(), n.join(",")];
     if let Some(b) = num(c, "block_size") {
         a.extend(["-b".into(), format!("size={b}")]);
@@ -1385,7 +1424,7 @@ pub fn mkfs_xfs(dev: &str, c: &Value, logdev: Option<&str>) -> Vec<String> {
 
 /// btrfs's superblock names to mkfs.btrfs -O names, for the features
 /// mkfs.btrfs can choose.
-const BTRFS_FEATURES: [(&str, &str); 9] = [
+pub(crate) const BTRFS_FEATURES: [(&str, &str); 9] = [
     ("extended_iref", "extref"),
     ("skinny_metadata", "skinny-metadata"),
     ("no_holes", "no-holes"),
@@ -1459,7 +1498,7 @@ pub fn mkfs_fat(dev: &str, c: &Value) -> Vec<String> {
 
 /// F2FS features mkfs.f2fs -O can set; the rest of the superblock's bits
 /// (atomic_write, blkzoned) aren't chosen there.
-const F2FS_SETTABLE: [&str; 13] = [
+pub(crate) const F2FS_SETTABLE: [&str; 13] = [
     "encrypt", "extra_attr", "project_quota", "inode_checksum", "flexible_inline_xattr", "quota", "inode_crtime", "lost_found", "verity", "sb_checksum",
     "casefold", "compression", "ro",
 ];
@@ -1490,7 +1529,7 @@ pub fn mkfs_f2fs(dev: &str, c: &Value) -> Vec<String> {
 }
 
 /// BCH_VERSION(major, minor) = major << 10 | minor, from "1.13".
-fn bcachefs_version(v: &str) -> Option<u32> {
+pub(crate) fn bcachefs_version(v: &str) -> Option<u32> {
     let (major, minor) = v.split_once('.')?;
     let (major, minor): (u32, u32) = (major.parse().ok()?, minor.parse().ok()?);
     (major < 64 && minor < 1024).then_some(major << 10 | minor)
@@ -1660,6 +1699,12 @@ impl Builder<'_> {
             if !imaged && matches!(ty.as_str(), "ext2" | "ext3" | "ext4" | "xfs" | "btrfs" | "f2fs" | "nilfs2" | "jfs" | "vfat" | "msdos" | "swap") {
                 self.filesystems.push((dev.clone(), ty.clone(), s(&c, "uuid")));
             }
+            // plan's check 4: a feature the probes can't name is one load
+            // can't ask for, nor read back.
+            let unnamed = super::readback::unnamed(&c);
+            if !imaged && super::readback::reads_back(&ty) && !unnamed.is_empty() {
+                self.problems.push(format!("{src}: its {ty} has features bko-holt can't name ({}), so load can't promise to make them again", unnamed.join(", ")));
+            }
             match ty.as_str() {
                 "ext2" | "ext3" | "ext4" => {
                     out.push(Cmd { argv: mke2fs(&dev, &c), why: Some(why), ..Cmd::default() });
@@ -1668,6 +1713,7 @@ impl Builder<'_> {
                     if let Some(r) = num(&c, "reserved_blocks") {
                         out.push(Cmd::new(&["tune2fs", "-r", &r.to_string(), &dev]));
                     }
+                    out.push(Cmd::read_back(&dev, &c));
                 }
                 "xfs" => {
                     let uuid = s(&c, "uuid").unwrap_or_default();
@@ -1679,6 +1725,7 @@ impl Builder<'_> {
                         .and_then(|l| s(l, "log_device"))
                         .and_then(|ld| self.names.dev(&ld));
                     out.push(Cmd { argv: mkfs_xfs(&dev, &c, logdev.as_deref()), why: Some(why), ..Cmd::default() });
+                    out.push(Cmd::read_back(&dev, &c));
                 }
                 "btrfs" => {
                     let uuid = s(&c, "uuid").unwrap_or_default();
@@ -1698,12 +1745,17 @@ impl Builder<'_> {
                     members.sort();
                     let devs: Vec<String> = members.into_iter().map(|m| m.1).collect();
                     out.push(Cmd { argv: mkfs_btrfs(&devs, &c, &fs), why: Some(why), ..Cmd::default() });
+                    out.push(Cmd::read_back(&dev, &c));
                     self.btrfs_inside(&uuid, &devs[0], &fs, &mut out);
                 }
                 "vfat" | "msdos" if self.fam.is_none_or(|f| f.on_linux()) && self.layout.device(&src).is_none_or(|v| v.get("esp_image").is_none()) => {
-                    out.push(Cmd { argv: mkfs_fat(&dev, &c), why: Some(why), ..Cmd::default() })
+                    out.push(Cmd { argv: mkfs_fat(&dev, &c), why: Some(why), ..Cmd::default() });
+                    out.push(Cmd::read_back(&dev, &c));
                 }
-                "f2fs" => out.push(Cmd { argv: mkfs_f2fs(&dev, &c), why: Some(why), ..Cmd::default() }),
+                "f2fs" => {
+                    out.push(Cmd { argv: mkfs_f2fs(&dev, &c), why: Some(why), ..Cmd::default() });
+                    out.push(Cmd::read_back(&dev, &c));
+                }
                 "bcachefs" => {
                     if c.get("encrypted").and_then(Value::as_bool) == Some(true) {
                         self.problems.push(format!("{src}: encrypted bcachefs isn't one bko-holt load can make"));
@@ -1714,12 +1766,14 @@ impl Builder<'_> {
                         continue;
                     }
                     out.push(Cmd { argv: mkfs_bcachefs(&dev, &c), why: Some(why), ..Cmd::default() });
+                    out.push(Cmd::read_back(&dev, &c));
                 }
                 "nilfs2" => {
                     out.push(Cmd { argv: mkfs_nilfs2(&dev, &c), why: Some(why), ..Cmd::default() });
                     if let Some(t) = nilfs_tune(&dev, &c) {
                         out.push(Cmd { argv: t, why: Some("the source's UUID (mkfs.nilfs2 can't set one)".into()), ..Cmd::default() });
                     }
+                    out.push(Cmd::read_back(&dev, &c));
                 }
                 "jfs" => {
                     if c.get("external_log").and_then(Value::as_bool) == Some(true) {
@@ -1733,6 +1787,7 @@ impl Builder<'_> {
                             out.push(Cmd { argv: jfs_version1(&dev), why: Some("jfs_tune -U makes the superblock version 2; mkfs.jfs's, and the source's, is 1".into()), ..Cmd::default() });
                         }
                     }
+                    out.push(Cmd::read_back(&dev, &c));
                 }
                 "swap" if self.fam.is_some_and(|f| !f.on_linux()) => self.notes.push(format!("{src}: swap needs no format here")),
                 "swap" => {
@@ -1740,6 +1795,7 @@ impl Builder<'_> {
                         self.notes.push(format!("{src}: the source's swap held a hibernation image; the new swap doesn't"));
                     }
                     out.push(Cmd { argv: mkswap(&dev, &c), why: Some(why), ..Cmd::default() });
+                    out.push(Cmd::read_back(&dev, &c));
                 }
                 "ntfs" | "exfat" => self.notes.push(format!("{src}: {ty} isn't restored by BackOtter; the partition is left empty")),
                 "vfat" | "msdos" if self.layout.device(&src).is_some_and(|v| v.get("esp_image").is_some()) => {
@@ -3010,6 +3066,75 @@ mod tests {
         // Without the sizes, the AG count as before.
         let c = crate::json::parse(r#"{"block_size":4096,"ag_count":8}"#).unwrap();
         assert!(mkfs_xfs("/dev/x", &c, None).join(" ").contains("-d agcount=8"));
+    }
+
+    /// Every feature xfsprogs 6.18 knows is named, on or off: Rocky 10's XFS
+    /// has no exchange or parent, which 6.18 turns on by default; and the
+    /// source's imaxpct, as an inode option.
+    #[test]
+    fn mkfs_xfs_names_every_feature() {
+        let rocky = r#"{"type":"xfs","uuid":"u1","block_size":4096,"inode_size":512,"dir_block_size":4096,"imax_pct":25,
+            "features":["lazysbcount","attr2","projid32bit","crc","finobt","rmapbt","reflink","inobtcount","ftype","sparse","bigtime","nrext64"]}"#;
+        let a = mkfs_xfs("/dev/sdq3", &crate::json::parse(rocky).unwrap(), None).join(" ");
+        assert_eq!(
+            a,
+            "mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=u1,metadir=0 -i sparse=1,nrext64=1,size=512,exchange=0,maxpct=25 -n ftype=1,size=4096,parent=0 -b size=4096 -l lazy-count=1 /dev/sdq3"
+        );
+        // Fedora 44's has both; a metadir one, and no imaxpct recorded.
+        let fedora = r#"{"features":["crc","ftype","exchange","parent","metadir"]}"#;
+        let a = mkfs_xfs("/dev/x", &crate::json::parse(fedora).unwrap(), None).join(" ");
+        assert!(a.contains("bigtime=0,metadir=1 -i sparse=0,nrext64=0,exchange=1 -n ftype=1,parent=1 "), "{a}");
+        assert!(!a.contains("maxpct"), "{a}");
+    }
+
+    /// A legacy pool (version 28) is made at its version, with no feature@
+    /// words; a feature-flags pool's command is as before, its version (`-`
+    /// or 5000) never named.
+    #[test]
+    fn legacy_pool_keeps_its_version() {
+        fn set(v: &mut Value, path: &[&str], to: Value) {
+            let Some((k, rest)) = path.split_first() else {
+                *v = to;
+                return;
+            };
+            match v {
+                Value::Arr(a) => set(&mut a[k.parse::<usize>().unwrap()], rest, to),
+                Value::Obj(o) => match o.iter_mut().find(|(n, _)| n == k) {
+                    Some((_, x)) => set(x, rest, to),
+                    None => {
+                        o.push((k.to_string(), Value::Null));
+                        set(&mut o.last_mut().unwrap().1, rest, to);
+                    }
+                },
+                _ => panic!("no {k}"),
+            }
+        }
+        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/debian13-zfs/src.json")).unwrap();
+        let create = |v: &Value| {
+            let t = text(built_from(&v.compact(), &[]).stage(Stage::Assemble));
+            t.lines().find(|l| l.starts_with("zpool create ")).unwrap_or_else(|| panic!("no zpool create in\n{t}")).to_string()
+        };
+        let src = crate::json::parse(&j).unwrap();
+        let pool = ["storage", "zfs", "tools", "imported_pools", "0"];
+        let at = |k: &[&'static str]| -> Vec<&'static str> { pool.iter().chain(k).copied().collect() };
+        let before = create(&src);
+        assert!(before.contains("-o feature@async_destroy=enabled ") && !before.contains("version="), "{before}");
+        let mut v5000 = src.clone();
+        set(&mut v5000, &at(&["properties", "version"]), "5000".into());
+        assert_eq!(create(&v5000), before);
+        // v28, its features listed (as zpool get lists them) and the version
+        // set locally too: named once.
+        for path in [&["properties", "version"][..], &["local_properties", "version"]] {
+            let mut v28 = src.clone();
+            set(&mut v28, &at(path), "28".into());
+            let a = create(&v28);
+            assert_eq!(a.matches("version=").count(), 1, "{a}");
+            assert!(a.contains(" -o version=28 ") && !a.contains("feature@"), "{a}");
+            assert_eq!(a.replace(" -o version=28", ""), before.split(" -o feature@").next().unwrap().to_string() + &before[before.find(" -O ").unwrap()..]);
+        }
+        let mut v28 = src.clone();
+        set(&mut v28, &at(&["properties", "version"]), 28u64.into());
+        assert!(create(&v28).contains(" -o version=28 "));
     }
 
     #[test]

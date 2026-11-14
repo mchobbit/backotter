@@ -24,6 +24,7 @@ udevadm settle
 # vdb3: ext2 "GENODE"
 mke2fs -F -q -t ext2 -O none,ext_attr,resize_inode,dir_index,filetype,sparse_super,large_file -U bc000000-0000-4000-8000-000000000005 -L GENODE -b 4096 -I 256 -N 446464 -g 32768 -E hash_seed=bc000000-0000-4000-8000-000000000006,resize=16777216 /dev/sdq3 16774420k
 tune2fs -r 209196 /dev/sdq3
+# check: /dev/sdq3 is ext2 with the source's features (read back by bko-holt's own probe)
 
 # ---- mount ----
 mkdir -p /mnt/bko-target

@@ -694,6 +694,47 @@ fn mkfs_cmds(dev: &str, c: &Value) -> Vec<Vec<String>> {
     out
 }
 
+/// format's read-back against Debian 13's own tools: a filesystem (or swap)
+/// made with their defaults is the source, load's mkfs commands make it
+/// again, and the read-back finds no difference.  So load's options and
+/// the read-back agree with what these tools really make.
+#[test]
+fn load_remakes_what_the_tools_made_and_reads_it_back() {
+    use bko_holt::load::{commands as cmd, readback};
+    let dir = TempDir::new("rt-readback");
+    let cases: &[(&str, &[&str])] = &[
+        ("mkfs.ext4", &["-q", "-F", "-L", "root"]),
+        ("mkfs.ext2", &["-q", "-F"]),
+        ("mkfs.xfs", &["-q", "-f", "-L", "srv"]),
+        ("mkfs.btrfs", &["-q", "-f", "-L", "data"]),
+        ("mkfs.f2fs", &["-q", "-f", "-l", "f2"]),
+        ("mkfs.nilfs2", &["-q", "-f", "-L", "nil"]),
+        ("mkfs.jfs", &["-q", "-L", "jfs"]),
+        ("mkfs.fat", &["-F", "32", "-n", "EFI"]),
+        ("mkswap", &["-L", "swap0"]),
+    ];
+    for (i, (tool, opts)) in cases.iter().enumerate() {
+        if need(tool).is_none() {
+            continue;
+        }
+        let src = image(&dir, &format!("src{i}"), 512);
+        let mut args = opts.to_vec();
+        args.push(s(&src));
+        run(tool, &args);
+        let want = probe_file(&src).first().unwrap_or_else(|| panic!("{tool}: nothing made")).to_json();
+        let new = image(&dir, &format!("new{i}"), 512);
+        let dev = s(&new);
+        let cmds = match want.get("type").and_then(Value::as_str).unwrap_or("") {
+            "vfat" => vec![cmd::mkfs_fat(dev, &want)],
+            "swap" => vec![cmd::mkswap(dev, &want)],
+            _ => mkfs_cmds(dev, &want),
+        };
+        run_cmds(&cmds);
+        let got = probe_file(&new).first().unwrap_or_else(|| panic!("{tool}: load's commands made nothing")).to_json();
+        assert_eq!(readback::differences(dev, &want, &got), Vec::<String>::new(), "{tool}: {cmds:?}");
+    }
+}
+
 /// Runs them, as the format stage would (an `sh -c` step through a shell).
 fn run_cmds(cmds: &[Vec<String>]) {
     for c in cmds {

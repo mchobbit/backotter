@@ -110,11 +110,14 @@ vgchange --devicesfile '' --devices /dev/mapper/cryptroot --activate y vg0
 # ---- format ----
 # vda1: vfat "EFI"
 mkfs.fat -F 32 -i BC000001 -n EFI -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdq1
+# check: /dev/sdq1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # dm-1: ext4
 mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000005 -b 4096 -I 256 -N 655360 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000006,desc_size=64,resize=2151677952 /dev/mapper/vg0-root 10485760k
 tune2fs -r 131072 /dev/mapper/vg0-root
+# check: /dev/mapper/vg0-root is ext4 with the source's features (read back by bko-holt's own probe)
 # dm-2: swap
 mkswap -U bc000000-0000-4000-8000-000000000007 --pagesize 4096 /dev/mapper/vg0-swap
+# check: /dev/mapper/vg0-swap is swap with the source's UUID, label and page size (read back by bko-holt's own probe)
 
 # ---- mount ----
 mkdir -p /mnt/bko-target

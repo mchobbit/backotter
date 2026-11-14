@@ -48,6 +48,7 @@ sh -c '[ "$(zfs get -H -o value mounted zpcachyos)" != yes ] || zfs unmount zpca
 # ---- format ----
 # vda1: vfat
 mkfs.fat -F 32 -i BC000001 -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdq1
+# check: /dev/sdq1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 zfs create -u -o mountpoint=none -o compression=lz4 -o canmount=off -o normalization=formD -o utf8only=on zpcachyos/ROOT
 zfs create -u -o mountpoint=none -o compression=lz4 -o canmount=off -o normalization=formD -o utf8only=on zpcachyos/ROOT/cos
 zfs create -u -o mountpoint=/home -o compression=lz4 -o canmount=on -o normalization=formD -o utf8only=on zpcachyos/ROOT/cos/home

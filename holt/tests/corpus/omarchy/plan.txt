@@ -44,8 +44,10 @@ cryptsetup open /dev/sdq2 root
 # ---- format ----
 # vda1: vfat
 mkfs.fat -F 32 -i BC000001 -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdq1
+# check: /dev/sdq1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # dm-0: btrfs
 mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U bc000000-0000-4000-8000-000000000005 --csum crc32c -n 16384 -s 4096 -d single -m dup --device-uuid bc000000-0000-4000-8000-000000000006 /dev/mapper/root
+# check: /dev/mapper/root is btrfs with the source's features (read back by bko-holt's own probe)
 mkdir -p /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000005
 # btrfs bc000000-0000-4000-8000-000000000005: its subvolumes
 mount -t btrfs -o subvolid=5 /dev/mapper/root /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000005

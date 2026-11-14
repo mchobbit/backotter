@@ -46,10 +46,13 @@ udevadm settle
 # ---- format ----
 # vda1: vfat "ESP"
 mkfs.fat -F 32 -i BC000001 -n ESP -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdq1
+# check: /dev/sdq1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # vda2: swap "swap"
 mkswap -U bc000000-0000-4000-8000-000000000004 -L swap --pagesize 4096 /dev/sdq2
+# check: /dev/sdq2 is swap with the source's UUID, label and page size (read back by bko-holt's own probe)
 # vda3: f2fs "ROOT"
 mkfs.f2fs -f -q -U bc000000-0000-4000-8000-000000000006 -l ROOT /dev/sdq3
+# check: /dev/sdq3 is f2fs with the source's features (read back by bko-holt's own probe)
 
 # ---- mount ----
 mkdir -p /mnt/bko-target

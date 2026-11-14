@@ -25,10 +25,15 @@ fn log_line(log: &mut Option<std::fs::File>, text: &str) {
 /// Runs one step for real.  A command's output goes to the log (and, for
 /// the restore's archiver, the terminal sees nothing until it's done).  It
 /// gives back, for a command that `warns`, its stderr's `warning:` lines,
-/// for the terminal.
-fn run_cmd(c: &Cmd, log: &mut Option<std::fs::File>) -> Result<Vec<String>, String> {
+/// for the terminal.  A read-back runs here, with SYS's probe.
+fn run_cmd(c: &Cmd, log: &mut Option<std::fs::File>, sys: &Sys) -> Result<Vec<String>, String> {
     log_line(log, &c.shell());
     if c.is_note() {
+        return Ok(Vec::new());
+    }
+    if let Some((dev, content)) = &c.check {
+        super::readback::check(sys, dev, content)?;
+        log_line(log, &format!("{dev}: read back as the source's"));
         return Ok(Vec::new());
     }
     if let Some(path) = &c.write {
@@ -125,7 +130,7 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys, stages: &[Stage]) -> (u8,
             }
         }
         for c in cmds {
-            match run_cmd(c, &mut log) {
+            match run_cmd(c, &mut log, sys) {
                 Ok(warnings) => {
                     for w in warnings {
                         err += &format!("bko-holt load: {}: {w}\n", s.name());
@@ -197,12 +202,32 @@ mod tests {
     /// its stderr's last lines.
     #[test]
     fn run_cmd_warnings() {
+        let s = Sys::host();
         let script = "echo 'x: warning: one' >&2; echo other >&2; echo 'x: warning: two' >&2";
         let c = Cmd::new(&["sh", "-c", script]);
-        assert_eq!(run_cmd(&c, &mut None), Ok(Vec::new()));
-        assert_eq!(run_cmd(&c.clone().warns(), &mut None), Ok(vec!["x: warning: one".to_string(), "x: warning: two".to_string()]));
-        let e = run_cmd(&Cmd::new(&["sh", "-c", &format!("{script}; echo 'x: 1 failed' >&2; exit 1")]).warns(), &mut None).unwrap_err();
+        assert_eq!(run_cmd(&c, &mut None, &s), Ok(Vec::new()));
+        assert_eq!(run_cmd(&c.clone().warns(), &mut None, &s), Ok(vec!["x: warning: one".to_string(), "x: warning: two".to_string()]));
+        let e = run_cmd(&Cmd::new(&["sh", "-c", &format!("{script}; echo 'x: 1 failed' >&2; exit 1")]).warns(), &mut None, &s).unwrap_err();
         assert!(e.ends_with("x: warning: two\n    x: 1 failed"), "{e}");
+    }
+
+    /// A read-back runs in-process: the device as the source's passes, and
+    /// a feature the source didn't have stops it, by name.
+    #[test]
+    fn run_cmd_reads_back() {
+        use crate::sys::FakeRunner;
+        let t = crate::testutil::Tree::new("load-exec-readback");
+        let img = crate::probe::ext::sample::image(0x0004, 0x0002 | 0x0040, 0x0001, "root");
+        t.file("/dev/vdb1", &img);
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+        let src = crate::probe::probe_all(&crate::bytes::MemSource(img)).remove(0).to_json();
+        let c = Cmd::read_back("/dev/vdb1", &src);
+        assert_eq!(run_cmd(&c, &mut None, &s), Ok(Vec::new()));
+        t.file("/dev/vdb1", crate::probe::ext::sample::image(0x0004 | 0x1000, 0x0002 | 0x0040, 0x0001, "root"));
+        assert_eq!(
+            run_cmd(&c, &mut None, &s),
+            Err("/dev/vdb1: made with orphan_file, which the source's ext4 didn't have: the rescue image's mkfs turned it on".to_string())
+        );
     }
 
     /// --through on the source's own disk as found, its table the source's

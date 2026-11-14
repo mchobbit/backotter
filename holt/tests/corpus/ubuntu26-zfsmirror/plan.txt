@@ -86,14 +86,18 @@ cryptsetup open /dev/zvol/rpool/keystore keystore-rpool
 # ---- format ----
 # vda2: swap
 mkswap -U bc000000-0000-4000-8000-000000000003 --pagesize 4096 /dev/sdq2
+# check: /dev/sdq2 is swap with the source's UUID, label and page size (read back by bko-holt's own probe)
 # vdb2: swap
 mkswap -U bc000000-0000-4000-8000-000000000005 --pagesize 4096 /dev/sdr2
+# check: /dev/sdr2 is swap with the source's UUID, label and page size (read back by bko-holt's own probe)
 # md0: ext4
 mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000007 -b 4096 -I 256 -N 65408 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000008,desc_size=64,resize=268435456 /dev/md/0 1046528k
 tune2fs -r 13081 /dev/md/0
+# check: /dev/md/0 is ext4 with the source's features (read back by bko-holt's own probe)
 # dm-0: ext4 "keystore-rpool"
 mke2fs -F -q -t ext4 -O none,ext_attr,resize_inode,dir_index,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000009 -L keystore-rpool -b 4096 -I 256 -N 1024 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-00000000000a,stride=4,stripe_width=8192,desc_size=64,resize=2097152 /dev/mapper/keystore-rpool 4096k
 tune2fs -r 51 /dev/mapper/keystore-rpool
+# check: /dev/mapper/keystore-rpool is ext4 with the source's features (read back by bko-holt's own probe)
 zfs create -u -o mountpoint=none -o canmount=off -o normalization=formD -o utf8only=on rpool/ROOT
 zfs create -u -o mountpoint=/ -o canmount=on -o normalization=formD -o utf8only=on rpool/ROOT/ubuntu
 mkdir -p /run/bko-holt/keystore

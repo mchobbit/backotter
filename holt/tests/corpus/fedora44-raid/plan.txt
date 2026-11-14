@@ -80,6 +80,7 @@ mdadm --create /dev/md/boot --run --assume-clean --metadata=1.2 --level=raid1 --
 # ---- format ----
 # vda3: btrfs "fedora"
 mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U bc000000-0000-4000-8000-000000000009 -L fedora --csum crc32c -n 16384 -s 4096 -d raid1 -m raid1 /dev/sdq3 /dev/sdr3
+# check: /dev/sdq3 is btrfs with the source's features (read back by bko-holt's own probe)
 mkdir -p /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000009
 # btrfs bc000000-0000-4000-8000-000000000009: its subvolumes
 mount -t btrfs -o subvolid=5 /dev/sdq3 /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000009
@@ -90,8 +91,10 @@ btrfs subvolume create /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000009/
 umount /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000009
 # md126: vfat
 mkfs.fat -F 32 -i BC000001 -S 512 -s 8 -f 2 -R 32 -h 0 /dev/md/label1
+# check: /dev/md/label1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # md127: xfs
-mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=bc000000-0000-4000-8000-000000000012 -i sparse=1,nrext64=1,size=512,exchange=1 -n ftype=1,size=4096,parent=1 -b size=4096 -s size=512 -d size=2144337920,agsize=536084480 -l lazy-count=1,size=67108864 /dev/md/boot
+mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=bc000000-0000-4000-8000-000000000012,metadir=0 -i sparse=1,nrext64=1,size=512,exchange=1,maxpct=25 -n ftype=1,size=4096,parent=1 -b size=4096 -s size=512 -d size=2144337920,agsize=536084480 -l lazy-count=1,size=67108864 /dev/md/boot
+# check: /dev/md/boot is xfs with the source's features (read back by bko-holt's own probe)
 
 # ---- mount ----
 mkdir -p /mnt/bko-target

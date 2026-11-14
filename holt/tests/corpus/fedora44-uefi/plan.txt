@@ -46,10 +46,13 @@ udevadm settle
 # ---- format ----
 # vda1: vfat
 mkfs.fat -F 32 -i BC000001 -S 512 -s 8 -f 2 -R 32 -h 2048 /dev/sdq1
+# check: /dev/sdq1 is vfat with the source's FAT size, sector and cluster size (read back by bko-holt's own probe)
 # vda2: xfs
-mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=bc000000-0000-4000-8000-000000000004 -i sparse=1,nrext64=1,size=512,exchange=1 -n ftype=1,size=4096,parent=1 -b size=4096 -s size=512 -d size=2147483648,agsize=536870912 -l lazy-count=1,size=67108864 /dev/sdq2
+mkfs.xfs -f -m crc=1,finobt=1,rmapbt=1,reflink=1,inobtcount=1,bigtime=1,uuid=bc000000-0000-4000-8000-000000000004,metadir=0 -i sparse=1,nrext64=1,size=512,exchange=1,maxpct=25 -n ftype=1,size=4096,parent=1 -b size=4096 -s size=512 -d size=2147483648,agsize=536870912 -l lazy-count=1,size=67108864 /dev/sdq2
+# check: /dev/sdq2 is xfs with the source's features (read back by bko-holt's own probe)
 # vda3: btrfs "fedora_host-1"
 mkfs.btrfs -f -O extref,skinny-metadata,no-holes,^raid56,^raid1c34,^zoned,^squota,free-space-tree,block-group-tree -U bc000000-0000-4000-8000-000000000006 -L fedora_host-1 --csum crc32c -n 16384 -s 4096 -d single -m dup --device-uuid bc000000-0000-4000-8000-000000000007 /dev/sdq3
+# check: /dev/sdq3 is btrfs with the source's features (read back by bko-holt's own probe)
 mkdir -p /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000006
 # btrfs bc000000-0000-4000-8000-000000000006: its subvolumes
 mount -t btrfs -o subvolid=5 /dev/sdq3 /run/bko-holt/btrfs/bc000000-0000-4000-8000-000000000006

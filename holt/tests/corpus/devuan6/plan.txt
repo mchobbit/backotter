@@ -46,11 +46,14 @@ udevadm settle
 # vda1: ext4
 mke2fs -F -q -t ext4 -O none,has_journal,ext_attr,resize_inode,dir_index,orphan_file,filetype,extent,64bit,flex_bg,metadata_csum_seed,sparse_super,large_file,huge_file,dir_nlink,extra_isize,metadata_csum -U bc000000-0000-4000-8000-000000000001 -b 4096 -I 256 -N 62464 -g 32768 -G 16 -E hash_seed=bc000000-0000-4000-8000-000000000002,desc_size=64,resize=255852544 /dev/sdq1 999424k
 tune2fs -r 12492 /dev/sdq1
+# check: /dev/sdq1 is ext4 with the source's features (read back by bko-holt's own probe)
 # vda2: swap
 mkswap -U bc000000-0000-4000-8000-000000000003 --pagesize 4096 /dev/sdq2
+# check: /dev/sdq2 is swap with the source's UUID, label and page size (read back by bko-holt's own probe)
 # vda3: ext3
 mke2fs -F -q -t ext3 -O none,has_journal,ext_attr,resize_inode,dir_index,filetype,sparse_super,large_file -U bc000000-0000-4000-8000-000000000004 -b 4096 -I 256 -N 861568 -g 32768 -E hash_seed=bc000000-0000-4000-8000-000000000005,resize=3527409664 /dev/sdq3 13775872k
 tune2fs -r 172198 /dev/sdq3
+# check: /dev/sdq3 is ext3 with the source's features (read back by bko-holt's own probe)
 
 # ---- mount ----
 mkdir -p /mnt/bko-target

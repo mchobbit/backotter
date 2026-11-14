@@ -170,6 +170,11 @@ def prepare_with_ht1(src, port, d, gen):
     if r.returncode or not rep.rstrip().endswith("RESULT: PASS"):
         fails = [l for l in rep.splitlines() if l.startswith("FAIL ")][:3]
         die(f"preparing {src}: ht1.sh exit {r.returncode}: {'; '.join(fails) or 'no report'} (see {k} and {log})", 1)
+    # (A RESULT: PASS for phases that never ran or ended is no preparation: bs2lib/tier1.py.)
+    from bs2lib import tier1 as T1
+    gap = T1.phase_gaps(rep, T1.read_or(f"{k}/logs/phases.tsv"), T1.read_or(log))
+    if gap:
+        die(f"preparing {src}: ht1.sh said RESULT: PASS, but {gap} (see {k} and {log})", 1)
     # What the cases take: the overlays, dumps/, logs/, the report, the backup and its records.
     rustic = ""
     with open(f"{k}/logs/manifest.txt") as f:

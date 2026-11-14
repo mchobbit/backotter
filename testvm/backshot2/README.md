@@ -218,6 +218,12 @@ family's golden is rewritten only with a new `GENERATOR`.
    before the backup, targets of the case's sizes, its load options, and
    `judge.py --expect` against the drifted layout.
    `HT_QUICK=1`: HoltTest1's refusal checks are its own, not rerun here.
+   ht1.sh's `RESULT: PASS` is a PASS only when every phase its header
+   names began (`== P`) and ended (its row in `logs/phases.tsv`); short of
+   that the case is HARNESS, "phase P never ran (log ends: ...)": bash
+   abandons ht1.sh's whole phase loop on an expansion error in a hook, and
+   ht1.sh then says PASS for phases it never ran (bs2a-20261114-0655).  A
+   preparation's run (`bs2-host source`) is held to the same.
 4. **Tier 2** (UEFI sources, cases that touch an ESP or the NVRAM): tier 1
    with one OVMF variable store for the rescuer and the restored boot, and
    no `--no-nvram` unless the case has it.

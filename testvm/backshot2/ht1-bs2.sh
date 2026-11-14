@@ -48,6 +48,9 @@ else
     [[ -n ${BS2_CASE:-} && -n ${BS2_NAME:-} && -n ${BS2_HOST:-} ]] || { echo "ht1: HT_VARIANT=bs2 needs BS2_CASE, BS2_NAME and BS2_HOST" >&2; exit 2; }
 fi
 BS2_TIER=${BS2_TIER:-1}
+# (Every number here is checked before (( )) or $(( )) sees it: bash abandons
+# ht1.sh's whole phase loop, not just the hook, on a malformed expression.)
+[[ $BS2_TIER == [12] ]] || { echo "ht1: BS2_TIER is 1 or 2, not '$BS2_TIER'" >&2; exit 2; }
 GV=$BS2_NAME
 # fsmeta.py walks by path, and the content drift's deep tree is past PATH_MAX:
 # it leaves srv/bs2/deep* to bs2-host deep, which walks by directory fds.
@@ -107,6 +110,7 @@ bs2_after_source() {
         > "$R/bs2-info.sh" 2> "$R/logs/bs2-apply.err"; then
         # shellcheck disable=SC1091
         . "$R/bs2-info.sh"
+        [[ $BS2_SNAPS =~ ^[1-9][0-9]*$ && $BS2_RESTORE =~ ^[0-9]+$ ]] || { bad "bs2-host apply: BS2_SNAPS '$BS2_SNAPS', BS2_RESTORE '$BS2_RESTORE' (logs/bs2-info.sh)"; return; }
         cp "$R/dumps/drifted.json" "$S/layout.json"
         ok "the case's ${BS2_EDITS:-0} edits applied to the fresh dump (targets ${BS2_TARGETS[*]}, options ${BS2_FLAGS[*]:-none})"
     else
@@ -349,6 +353,13 @@ echo "quiet: timers stopped: $(echo $t)"'
 BS2_RS_FRESH='cat >/dev/urandom && perl -e '"'"'open(my $f, ">", "/dev/urandom") or die "urandom: $!\n"; ioctl($f, 0x5207, 0) or die "RNDRESEEDCRNG: $!\n"'"'"' && date -u -s "@$T" >/dev/null && echo "clock $(date -u +%FT%TZ), RNG reseeded"'
 
 bs2_rs_uefi() { [[ " ${rfw[*]} " == *" --uefi "* ]]; }
+# An image's virtual size in 512-byte sectors (-U: never a lock, and so never
+# a running QEMU's refusal); exit 1, nothing printed, when it has none.
+bs2_rs_sectors() {  # IMAGE
+    local b; b=$(qemu-img info -U --output=json "$1" 2>/dev/null | python3 -c 'import json,sys; print(json.load(sys.stdin)["virtual-size"])' 2>/dev/null)
+    [[ $b =~ ^[0-9]+$ ]] && ((b % 512 == 0)) || return 1
+    echo $((b / 512))
+}
 # QEMU's args besides vm-run's, the same at the save and every resume but for
 # the share's and the QMP socket's paths (SHARE and QMP in the key).
 bs2_rs_extra() {  # SHARE QMP
@@ -448,9 +459,11 @@ bs2_rs_fallback() {  # WHY
     rm -f "$R/rescuer.qcow2" "$R/rescuer-vars.fd" "$BS2_QMP"
     ((BS2_TIER == 2)) && rm -f "$R/vars.fd"
     qemu-img create -q -f qcow2 -b "$RESCUER_IMG" -F qcow2 "$R/rescuer.qcow2"
-    local i
+    local i b
     for ((i = 0; i < n; i++)); do rm -f "${dst[i]}"; bs2_target_make "$i" "${dst[i]}" || return 1; done
-    rm -f "$R/decoy.qcow2"; qemu-img create -q -f qcow2 "$R/decoy.qcow2" "$(size_of "${imgs[0]}")"
+    rm -f "$R/decoy.qcow2"
+    b=$(bs2_rs_sectors "${imgs[0]}") && qemu-img create -q -f qcow2 "$R/decoy.qcow2" "$((b * 512))" ||
+        say "note: rescuer: no decoy made anew (no size for ${imgs[0]##*/}): the cold boot can't start"
     return 1
 }
 
@@ -464,7 +477,13 @@ bs2_rescuer_resume() {
     [[ -z ${BS2_CHAIN_OUT:-} ]] || { say "note: rescuer: a cold boot (the leftovers set: the rescuer meets its disk at boot)"; return 1; }
     ! bs2_rs_uefi || ((n + 1 <= BS2_RS_PORTS)) || { say "note: rescuer: a cold boot ($((n + 1)) disks to hot-plug, $BS2_RS_PORTS root ports)"; return 1; }
     mkdir -p /run/bs2 && BS2_QMP=/run/bs2/qmp-$PORT.sock || return 1
-    local out hash kind key sd vars i dev bus devs want got fwr=() ex=() L=$R/logs/rescuer-resume.log
+    local out hash kind key sd vars i dev bus devs want got secs=() fwr=() ex=() L=$R/logs/rescuer-resume.log
+    # The targets', then the decoy's sizes, as a cold boot would see them,
+    # taken while nothing has them open (a hot-plugged disk is QEMU's, write-locked).
+    devs=("${dst[@]}" "$R/decoy.qcow2")
+    for ((i = 0; i < ${#devs[@]}; i++)); do
+        secs[i]=$(bs2_rs_sectors "${devs[i]}") || { say "note: rescuer: a cold boot (no size for ${devs[i]##*/})"; return 1; }
+    done
     out=$(python3 "$BS2_HOST" rescuer-key --image "$RESCUER_IMG" --memory "$BS2_RS_MEM" --rfw="${rfw[*]}" \
         --extra="$(bs2_rs_extra SHARE QMP | tr '\n' ' ')" 2>&1) || { say "note: rescuer: a cold boot (rescuer-key: $(tail -n 1 <<<"$out"))"; return 1; }
     read -r hash kind <<<"$(head -n 1 <<<"$out")"; key=$(tail -n +2 <<<"$out")
@@ -488,7 +507,7 @@ bs2_rescuer_resume() {
     head -c 64 /dev/urandom | TMO=30 sshk "$rkey" "T=$(date -u +%s); $BS2_RS_FRESH" >>"$L" 2>&1 ||
         { bs2_rs_fallback "setting its clock and RNG: $(tail -n 1 "$L")"; return 1; }
     # The targets, then the decoy, each seen by the kernel before the next.
-    devs=("${dst[@]}" "$R/decoy.qcow2") want="vda"
+    want="vda"
     for ((i = 0; i < ${#devs[@]}; i++)); do
         dev=vd${letters[i + 1]} bus=()
         bs2_rs_uefi && bus=("bs2rp$i")
@@ -496,7 +515,7 @@ bs2_rescuer_resume() {
             { bs2_rs_fallback "hot-plugging ${devs[i]##*/}: $(tail -n 1 "$L")"; return 1; }
         TMO=30 sshk "$rkey" "i=0; while [ ! -e /sys/block/$dev ] && [ \$i -lt 200 ]; do sleep 0.05; i=\$((i + 1)); done; [ -e /sys/block/$dev ]" ||
             { bs2_rs_fallback "${devs[i]##*/} didn't appear as /dev/$dev in 10 s"; return 1; }
-        want+=" $dev:$(($(size_of "${devs[i]}") / 512))"
+        want+=" $dev:${secs[i]}"
     done
     got=$(TMO=60 sshk "$rkey" 'udevadm settle -t 30; for b in /sys/block/vd*; do d=${b##*/}; if [ "$d" = vda ]; then printf "vda"; else printf " %s:%s" "$d" "$(cat "$b/size")"; fi; done' 2>>"$L")
     [[ $got == "$want" ]] || { bs2_rs_fallback "the rescuer sees ${got:-nothing}, a cold boot would $want"; return 1; }

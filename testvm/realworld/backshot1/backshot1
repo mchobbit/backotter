@@ -8,7 +8,8 @@
 #   backshot1 preflight           check everything phase1 needs; changes nothing
 #   backshot1 phase1              back up the running system; prints RUN=...
 #   backshot1 list                the backups on the drive, and how each last restored
-#   backshot1 to-stick            reboot the machine into the rescue stick, once
+#   backshot1 to-stick            reboot the machine into the rescue stick, once,
+#                                 then wait for it and find-rescue
 #   backshot1 find-rescue         find the booted rescue stick; prints its address
 #   backshot1 plan NAME [--reformat MOUNT=TYPE]...
 #                                 on the stick: read the backup, plan the restore
@@ -16,8 +17,16 @@
 #                                 on the stick: WIPE the internal disk, restore
 #                                 (--reformat: that filesystem comes back as TYPE)
 #   backshot1 reboot              on the stick: boot the restored system
+#   backshot1 wait-host           wait for the restored system to answer SSH
 #   backshot1 verify NAME         on the restored system: check it
 #   backshot1 check-boot NAME     ostree: check the deployment this boot started
+#
+# Hands-free (README.md, "The hands-free cycle"):
+#
+#   backshot1 cycle NAME COUNT --erase-serial SERIAL [--reformat MOUNT=TYPE]...
+#                                 COUNT rounds of to-stick, plan, phase2, reboot,
+#                                 wait-host, verify: WIPES the internal disk each
+#                                 round; stops at the first failure
 #
 # NAME is a run, or a distro for its newest backup: ubuntu-26.10, debian-13.
 
@@ -27,7 +36,7 @@ here=$(cd "$(dirname "$0")" && pwd)
 . "$here/thinkpad.conf"
 
 HOST=${BS1_HOST:-thinkpad.local}
-MACS=(c8:a3:62:50:99:10 84:a9:38:9f:66:52)      # the USB Ethernet adapter, the onboard port
+MACS=(00:e0:4c:68:23:c3 c8:a3:62:50:99:10 84:a9:38:9f:66:52)    # two USB Ethernet adapters, the onboard port
 STATE=${BS1_STATE:-${TMPDIR:-/tmp}/backshot1-state}
 mkdir -p "$STATE"
 KEYS=${BS1_KEYS:-$HOME/.ssh/backshot1}
@@ -60,6 +69,51 @@ run_on_drive() {
 }
 resolve_run() { run_on_drive bs1-list --resolve "$1" || die "can't choose a backup for \"$1\""; }
 
+# The laptop's wired network as ADDRESS/LENGTH: from the installed system while
+# it is up, on the interface with one of MACS (not docker0, Wi-Fi or a VPN), else
+# BS1_PREFIX (three octets, a /24), else as it was when the installed system last
+# answered.
+net_cidr() {
+    local c
+    c=$(on_host "for m in ${MACS[*]}; do
+            dev=\$(ip -o link | awk -v m=\"\$m\" 'index(tolower(\$0), m) { sub(/:\$/, \"\", \$2); sub(/@.*/, \"\", \$2); print \$2; exit }')
+            [ -n \"\$dev\" ] || continue
+            a=\$(ip -4 -o addr show dev \"\$dev\" scope global | awk '{ print \$4; exit }')
+            [ -n \"\$a\" ] && { echo \"\$a\"; exit 0; }
+        done; exit 1" 2>/dev/null </dev/null || true)
+    if [[ $c =~ ^[0-9]+\.[0-9]+\.[0-9]+\.[0-9]+/[0-9]+$ ]]; then echo "$c" >"$STATE/net"; echo "$c"; return; fi
+    if [[ -n ${BS1_PREFIX:-} ]]; then echo "$BS1_PREFIX.0/24"; return; fi
+    c=$(cat "$STATE/net" 2>/dev/null || true)
+    echo "${c:-192.168.68.0/22}"
+}
+# The /24s to sweep for the stick: the whole subnet down to a /22 (a TP-Link
+# Deco's 192.168.68.0/22, say), else only the address's own /24.
+net_sweeps() {
+    local addr=${1%/*} len=${1#*/} a b c d n i
+    IFS=. read -r a b c d <<<"$addr"
+    if (( len >= 24 || len < 22 )); then echo "$a.$b.$c"; return; fi
+    n=$(( 1 << (24 - len) ))
+    c=$(( c & ~(n - 1) ))
+    for ((i = 0; i < n; i++)); do echo "$a.$b.$((c + i))"; done
+}
+
+# wait_for WHAT SECONDS HINT COMMAND...: retry COMMAND until it succeeds; when
+# the time is up, say COMMAND's last complaint too.
+wait_for() {
+    local what=$1 limit=$2 hint=$3 end err
+    shift 3
+    end=$(( $(date +%s) + limit ))
+    err="$STATE/wait-for.err"
+    until "$@" 2>"$err"; do
+        [[ $(date +%s) -lt $end ]] ||
+            die "$what didn't answer within $limit seconds${hint:+: $hint}$( [[ -s $err ]] && printf '\n  last: %s' "$(tail -n 1 "$err")")"
+        sleep 10
+    done
+}
+# The installed system, not the stick: both present the same host key.
+host_up() { on_host 'test ! -e /cdrom/.disk/backotter.json' </dev/null; }
+rescue_up() { "$0" find-rescue </dev/null; }
+
 case ${1:-} in
 stage)
     tools=${2:?usage: backshot1 stage TOOLS_DIR}
@@ -89,24 +143,46 @@ preflight)
     on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-backup\" --preflight"
     ;;
 to-stick)
+    net_cidr >/dev/null    # remembered for find-rescue, which runs once this is down
     on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-to-stick\""
+    sleep 30
+    wait_for "the stick" 420 "if the laptop came back up as it was, boot the stick by hand (F12), then find-rescue" rescue_up
     ;;
 find-rescue)
     command -v arp >/dev/null || die "needs arp"
-    prefix=$(on_host 'ip -4 -o addr show scope global | awk "{print \$4; exit}"' 2>/dev/null | cut -d. -f1-3 || true)
-    prefix=${prefix:-${BS1_PREFIX:-192.168.68}}
-    for i in $(seq 1 254); do ping -c 1 -W 700 -t 1 "$prefix.$i" >/dev/null 2>&1 & done
-    wait
-    ip=
+    # Only an address that passes the checks below is ever written here.
+    rm -f "$STATE/rescue-ip"
+    net=$(net_cidr)
+    while read -r prefix; do
+        for i in $(seq 1 254); do ping -c 1 -W 700 -t 1 "$prefix.$i" >/dev/null 2>&1 & done
+        wait
+    done < <(net_sweeps "$net")
+    # Every address ARP has for each MAC: stale entries for the same MAC stay in
+    # the cache.  macOS's arp prints 00:e0:... as 0:e0:...
+    ips=()
     for m in "${MACS[@]}"; do
-        ip=$(arp -an | awk -v m="$m" 'index($0, m) { gsub(/[()]/, "", $2); print $2; exit }')
-        [[ -z $ip ]] || break
+        short=$(sed -E 's/(^|:)0([0-9a-f])/\1\2/g' <<<"$m")
+        while read -r a; do
+            if [[ -n $a && " ${ips[*]-} " != *" $a "* ]]; then ips+=("$a"); fi
+        done < <(arp -an | awk -v m="$m" -v s=" $short " 'index($0, m) || index($0, s) { gsub(/[()]/, "", $2); print $2 }')
     done
-    [[ -n $ip ]] || die "no answer from the laptop's wired adapters on $prefix.0/24"
-    echo "$ip" >"$STATE/rescue-ip"
-    on_rescue 'sudo -n true && test -f /cdrom/.disk/backotter.json && hostname' || die "$ip isn't an unlocked rescue stick"
-    on_rescue "lsblk -dno SERIAL | grep -qx $INTERNAL_SERIAL" || die "$ip doesn't have disk $INTERNAL_SERIAL"
-    echo "RESCUE=$ip"
+    [[ ${#ips[@]} -gt 0 ]] || die "no answer from the laptop's wired adapters on $net (swept: $(net_sweeps "$net" | sed 's/$/.0\/24/' | paste -sd ' ' -))"
+    # Only the stick passes these.
+    why=
+    for ip in "${ips[@]}"; do
+        if ! ssh "${OPTS[@]}" "backotter@$ip" 'sudo -n true && test -f /cdrom/.disk/backotter.json && hostname' 2>/dev/null </dev/null; then
+            why+=" $ip (not an unlocked rescue stick)"
+            continue
+        fi
+        if ! ssh "${OPTS[@]}" "backotter@$ip" "lsblk -dno SERIAL | grep -qx $INTERNAL_SERIAL" </dev/null; then
+            why+=" $ip (a rescue stick without disk $INTERNAL_SERIAL)"
+            continue
+        fi
+        echo "$ip" >"$STATE/rescue-ip"
+        echo "RESCUE=$ip"
+        exit 0
+    done
+    die "no rescue stick among the laptop's addresses:$why"
     ;;
 list)
     run_on_drive bs1-list
@@ -121,16 +197,92 @@ phase2)
     echo "backup: $run"
     # Detached: a dropped connection must not stop a restore halfway.
     run_on_drive bs1-restore --erase-serial "$INTERNAL_SERIAL" --detach "${@:3}" "$run"
-    status=
+    # Bounded, so that a stick that hangs, loses its network or reboots
+    # doesn't keep a cycle waiting for ever.
+    limit=${BS1_RESTORE_LIMIT:-300}    # minutes
+    [[ $limit =~ ^[1-9][0-9]*$ ]] || die "BS1_RESTORE_LIMIT is minutes, not \"$limit\""
+    end=$(( $(date +%s) + limit * 60 ))
+    status= misses=0
     until [[ -n $status ]]; do
         sleep 20
-        status=$(on_rescue 'sudo -n cat /run/backotter/restore.exit' 2>/dev/null || true)
+        # The remote side always succeeds, so a failure here is ssh's.
+        if out=$(on_rescue 'sudo -n cat /run/backotter/restore.exit 2>/dev/null; true' 2>/dev/null </dev/null); then
+            status=$out misses=0
+        elif (( ++misses >= 30 )); then
+            die "the stick stopped answering (30 tries, 10 min) during the restore"
+        fi
+        [[ -n $status || $(date +%s) -lt $end ]] || die "no restore.exit from the stick within $limit min (BS1_RESTORE_LIMIT)"
     done
     on_rescue 'sudo -n tail -n 30 /run/backotter/restore.out'
     exit "$status"
     ;;
 reboot)
     on_rescue 'sudo -n systemctl reboot' || true
+    ;;
+wait-host)
+    sleep 30
+    wait_for "the restored system" 600 "it may be at an unlock prompt, or hung; it needs a person" host_up
+    on_host 'hostname; sed -n "s/^PRETTY_NAME=//p" /etc/os-release | tr -d "\""; if command -v efibootmgr >/dev/null; then efibootmgr | head -n 1; fi' </dev/null
+    ;;
+cycle)
+    usage="usage: backshot1 cycle NAME COUNT --erase-serial SERIAL [--reformat MOUNT=TYPE]..."
+    name=${2:?$usage}
+    count=${3:?$usage}
+    shift 3
+    erase= extra=() first=
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --erase-serial) erase=${2:-}; shift 2 || die "$usage" ;;
+            --reformat) [[ ${2:-} == /*=* ]] || die "--reformat wants MOUNT=TYPE"; extra+=("$1" "$2"); shift 2 ;;
+            *) die "$usage" ;;
+        esac
+    done
+    # What clicking Done authorizes by hand: erasing that disk, COUNT times.
+    [[ $erase == "$INTERNAL_SERIAL" ]] || die "cycle wipes the internal disk each round: name it, --erase-serial $INTERNAL_SERIAL"
+    [[ $count =~ ^[1-9][0-9]*$ ]] || die "COUNT must be a positive integer, not \"$count\""
+    host_up || die "the installed system ($HOST) doesn't answer: the cycle starts from it"
+    run=$(resolve_run "$name")
+    # Refuse, before anything changes, what needs a person each round.
+    info=$(on_host 'bash -s' <<EOF
+$DRIVE
+r="\$d/backshot1/runs/$run"
+if [ -s "\$r/baseline/unlock.txt" ]; then echo "unlock \$(head -n 1 "\$r/baseline/unlock.txt" | cut -d: -f1)"; else echo "unlock missing"; fi
+if [ -e "\$r/baseline/deployments.txt" ]; then echo "ostree yes"; fi
+python3 -c 'import json, sys; print("firmware", json.load(open(sys.argv[1])).get("firmware", {}).get("mode"))' "\$r/layout.json"
+EOF
+    ) || die "can't read $run's baseline and layout"
+    case $(awk '$1 == "unlock" { print $2 }' <<<"$info") in
+        drive|own|none) ;;
+        attended) die "$run is attended (someone types a passphrase at the restored system's boot): restore it by hand (README, \"Attended runs go first\")" ;;
+        *) die "$run has no baseline/unlock.txt (a backup older than unlocking from the drive): restore it by hand, or take a new backup" ;;
+    esac
+    ! grep -q '^ostree yes' <<<"$info" || die "$run is an ostree system: its rollback visit needs the console; restore it by hand (README, ostree)"
+    [[ $(awk '$1 == "firmware" { print $2 }' <<<"$info") == uefi ]] ||
+        die "$run is of a system not booted by UEFI: to-stick and the restore's BootNext need UEFI"
+    for ((i = 1; i <= count; i++)); do
+        echo "=== round $i of $count: $run"
+        start=$(date +%s)
+        for step in to-stick plan phase2 reboot wait-host verify; do
+            case $step in
+                plan|phase2) args=("$run" ${extra[@]+"${extra[@]}"}) ;;
+                verify) args=("$run") ;;
+                *) args=() ;;
+            esac
+            echo "--- round $i: $step"
+            "$0" "$step" ${args[@]+"${args[@]}"} </dev/null || die "round $i of $count failed at $step"
+        done
+        echo "=== round $i of $count: PASS in $(( ($(date +%s) - start) / 60 )) min"
+        # The restore's boot stage makes the source's entries again (efibootmgr
+        # --create) and leaves last round's, so each round adds a copy of each:
+        # stop before they fill the firmware's variable store.
+        n=$(on_host 'efibootmgr | grep -c "^Boot[0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f][0-9A-Fa-f]" || true' </dev/null) ||
+            die "can't count the firmware's boot entries after round $i"
+        first=${first:-$n}
+        echo "=== round $i of $count: $n firmware boot entries (round 1: $first)"
+        (( n - first <= ${BS1_ENTRY_GROWTH:-8} )) ||
+            die "the firmware has $(( n - first )) more boot entries than after round 1 (BS1_ENTRY_GROWTH ${BS1_ENTRY_GROWTH:-8}): delete the copies (efibootmgr -b XXXX -B) and carry on with a new cycle"
+    done
+    echo "=== $count of $count rounds passed: $run"
     ;;
 verify)
     run=$(resolve_run "${2:?usage: backshot1 verify NAME}")
@@ -143,7 +295,7 @@ check-boot)
     on_host "$DRIVE; exec bash \"\$d/backshot1/bs1-verify\" --boot '$run'"
     ;;
 *)
-    sed -n '2,22p' "$0"
+    sed -n '2,31p' "$0"
     exit 2
     ;;
 esac

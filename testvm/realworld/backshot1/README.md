@@ -66,15 +66,19 @@ caught at different moments; `bs1-manifest` tells those from real differences.
 The person clicks Done, which authorizes erasing the internal disk.  The stick and
 the backup drive stay plugged in.
 
-    backshot1 to-stick            reboots into the stick, once, by BootNext
+    backshot1 to-stick            reboots into the stick, once, by BootNext,
+                                  waits for it (7 min) and runs find-rescue
 
 If that doesn't work, the laptop comes back up as it was, and the person boots the
-stick by hand.  It needs a UEFI system with `efibootmgr`, so not AerynOS.
+stick by hand, then runs `find-rescue`.  It needs a UEFI system with
+`efibootmgr`, so not AerynOS.
 
     backshot1 find-rescue         by the laptop's MAC addresses; hostname is backotter
     backshot1 plan NAME           reads the whole backup, plans; erases nothing
     backshot1 phase2 NAME         wipes, restores, compares, redoes the boot loader
     backshot1 reboot              BootNext is the restored system
+    backshot1 wait-host           until `thinkpad.local` answers (10 min); its
+                                  hostname and PRETTY_NAME
 
 Once `thinkpad.local` answers again:
 
@@ -86,6 +90,73 @@ On an ostree system, then the rollback, as below:
 
 The tree is mounted at `/run/bs1-src` and backed up as `/mnt/bs1-src`
 (`--as-path`), so every snapshot is `latest:/mnt/bs1-src`, older backups' too.
+
+`find-rescue` tries every address the controller's ARP cache has for each of
+the laptop's MACs (two USB Ethernet adapters and the onboard port), since
+stale entries for the same MAC stay there, and macOS's `arp` writes
+`00:e0:...` as `0:e0:...`.  Only the address that is an unlocked rescue stick
+with the internal disk's serial wins, and only that one is saved for `plan`
+and `phase2`.  It pings the network of the installed system's wired adapter
+(the one with one of those MACs), as `to-stick` saw it: the whole subnet down
+to a /22 (a TP-Link Deco's 192.168.68.0/22), only the address's own /24 on a
+wider one.  `BS1_PREFIX=192.168.1` says which /24 instead.
+
+## The hands-free cycle
+
+Repeated restores of one backup need nobody at the laptop, once the firmware
+is set up:
+
+- The stick must be in one of the laptop's own USB ports, not on a hub.  On
+  the X13, behind an external hub, a boot aimed at the stick by BootNext
+  reached it 1 time in 5 and otherwise fell through to the internal disk; in
+  a laptop port it reached it 5 times in 5.
+- The firmware's `BootMode` is `Diagnostics`; those 5 boots were all in that
+  mode, and `Quick` hasn't been tried with the stick in a laptop port.  It
+  can be set over SSH, as root, with no visit to the firmware's setup:
+
+      echo Diagnostics > /sys/class/firmware-attributes/thinklmi/attributes/BootMode/current_value
+
+- The stick and the backup drive stay plugged in, and the installed system
+  (the one to start from) answers SSH.
+
+Then:
+
+    backshot1 cycle NAME COUNT --erase-serial SERIAL [--reformat MOUNT=TYPE]...
+
+does COUNT rounds of `to-stick`, `plan`, `phase2`, `reboot`, `wait-host` and
+`verify`, and stops at the first failure.  `--erase-serial`, the internal
+disk's serial number from `thinkpad.conf`, is the authorization that
+clicking Done gives by hand: this erases that disk, COUNT times.  The boot
+entry is `bs1-to-stick`'s "BKO rescue", made again each round (it deletes
+the last one), and the restore leaves BootNext on the restored system.  But
+the restore's boot stage makes the source's own entries again (`efibootmgr
+--create`, at the front of `BootOrder`) and doesn't delete last round's, so
+each round adds one copy of each to the firmware's variables.  The cycle
+counts the entries after every round and stops once there are more than
+`BS1_ENTRY_GROWTH` (8) more than after round 1; delete the copies
+(`efibootmgr -b XXXX -B`) before the next cycle.  Until `bko-holt load`
+replaces an entry instead of adding one, a long cycle hits this.
+
+Before anything changes, the cycle refuses a run that needs a person each
+round: one whose baseline's `unlock.txt` says `attended`, or that has no
+`unlock.txt` (made before unlocking from the drive: restore it by hand, or
+take a new backup); an ostree run (its rollback visit is at the console);
+and a backup of a system not booted by UEFI.
+
+Still needs a person:
+
+- a restored system that doesn't come up: `wait-host` gives up after 10 min,
+  and the cycle with it.  The next boot goes to the internal disk again, so
+  getting back to the stick takes F12, and a hang takes the power button (a
+  battery defeats a smart plug);
+- a reboot into the stick that falls through to the installed system
+  (`to-stick` gives up after 7 min, and says why the last `find-rescue`
+  failed): boot the stick by hand, then carry on from `find-rescue`;
+- a stick that hangs, loses its network or reboots during the restore:
+  `phase2` gives up once the stick hasn't answered for 10 min, or once the
+  restore has run for `BS1_RESTORE_LIMIT` minutes (300);
+- the firmware's boot entries, once the cycle stops for them (above);
+- an attended run's passphrase, and an ostree run's rollback visit.
 
 ## ostree: Bazzite, Silverblue, Kinoite
 

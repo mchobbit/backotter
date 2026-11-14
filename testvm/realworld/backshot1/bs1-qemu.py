@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Rehearse BackShot1 in QEMU: the real scripts, the way the laptop will run them.
 
-Usage: bs1-qemu.py TEST_IMG GUEST_DIR TOOLS_DIR WORK_DIR [--port N]
+Usage: bs1-qemu.py TEST_IMG GUEST_DIR TOOLS_DIR WORK_DIR [--port N] [--reformat MOUNT=TYPE]...
 
 TEST_IMG is an image from "make-img.sh --test".  GUEST_DIR is a UEFI test guest
 (vms/ubuntu26-uefi), attached as NVMe with its writes in WORK_DIR.  TOOLS_DIR has
@@ -48,6 +48,9 @@ own first boot (and an attended run's restored boots) on the serial console
 the initramfs (gentoo-systemd, chimera-uefi), so it asks like the Thinkpad.
 --luks-off runs "bs1-adopt --luks-off" once after (a): the files must be as
 before bs1-adopt, then it adopts again.
+
+--reformat goes to bs1-restore, and so to bko-holt load: the restore makes
+that filesystem as TYPE, and bs1-verify checks it is.
 
 Exits 0 if all of that held.  Nothing outside WORK_DIR is written.
 """
@@ -265,6 +268,7 @@ def main():
     ap.add_argument("--luks-monitor", action="store_true", help="with --luks-typed: type it on the keyboard through QEMU's monitor (Plymouth: omarchy)")
     ap.add_argument("--strip-embedded-key", action="store_true", help="first take the guest's own LUKS key file out of crypttab and its initramfs, so it asks")
     ap.add_argument("--luks-off", action="store_true", help="also check bs1-adopt --luks-off, once")
+    ap.add_argument("--reformat", action="append", default=[], metavar="MOUNT=TYPE", help="restore the filesystem at MOUNT as TYPE (bko-holt load --reformat)")
     a = ap.parse_args()
     os.makedirs(a.work, exist_ok=True)
     dev, parts = ("vda", "/dev/vda[0-9]*") if a.virtio else ("nvme0n1", "/dev/nvme0n1p*")
@@ -538,7 +542,8 @@ def main():
     bs1 = "sudo -n bash /mnt/bs1-backup/backshot1/"
     restores = f"/mnt/bs1-backup/backshot1/runs/{run}/restores"
     distro = run.rsplit("-", 2)[0]
-    fit = " --fit-largest 10" if a.smaller else ""
+    # bs1-restore's own options: --fit-largest for --smaller, and --reformat.
+    restore_opts = (" --fit-largest 10" if a.smaller else "") + "".join(f" --reformat {r}" for r in a.reformat)
     if a.smaller:
         print("== the internal disk is replaced by a blank one 1 GiB smaller", flush=True)
         os.remove(internal)
@@ -562,10 +567,10 @@ def main():
             _, before = rescue.run(fp)
             rc, out = rescue.run(f"{bs1}bs1-restore --erase-serial WRONGSERIAL {run}")
             check(rc != 0 and "isn't this machine's internal disk" in out, "a wrong serial is refused")
-            rc, out = rescue.show(f"{bs1}bs1-restore --erase-serial {SERIAL} --plan-only{fit} {run}")
+            rc, out = rescue.show(f"{bs1}bs1-restore --erase-serial {SERIAL} --plan-only{restore_opts} {run}")
             check(rc == 0, "--plan-only passes")
             check(rescue.run(fp)[1] == before, "--plan-only changes nothing")
-        rc, _ = rescue.show(f"{bs1}bs1-restore --erase-serial {SERIAL} --detach{fit} {run}")
+        rc, _ = rescue.show(f"{bs1}bs1-restore --erase-serial {SERIAL} --detach{restore_opts} {run}")
         check(rc == 0, "the detached restore starts")
         status = ""
         end = time.monotonic() + 3000

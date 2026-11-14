@@ -2,7 +2,9 @@
 """BackShot1's file manifest.
 
 bs1-manifest ROOT OUT.tsv            every file under ROOT, with a checksum
-bs1-manifest --compare OLD NEW       differences; exit 1 if any isn't expected
+bs1-manifest --compare OLD NEW [--reformatted]
+                                     differences; exit 1 if any isn't expected
+                                     (--reformatted: after bs1-restore --reformat)
 
 The comparison is between the system before its backup and after its restore and
 first boot, so booting's own changes are expected, as are the files bko-holt
@@ -103,6 +105,17 @@ REMADE = ["etc/machine-id", "usr/share/applications/mimeinfo.cache", "etc/kernel
 # there, the mkdir only moves its mtime, and a directory's mtime isn't
 # compared (same()).  mnt/bs1-backup itself is in EXPECTED.
 ADDED = ["mnt"]
+
+# After bko-holt load --reformat (bs1-restore --reformat,
+# docs/design/reformat.md): what its boot stage rewrites for the new type;
+# mke2fs's lost+found on a filesystem reformatted onto ext4; and a btrfs's
+# snapshots, which the restore leaves out (their .snapshots/N directories
+# stay).
+REFORMAT_EXPECTED = [
+    "etc/fstab", "etc/kernel/cmdline", "etc/cmdline.d/*", "etc/default/grub", "etc/default/limine",
+    "etc/mkinitcpio.conf", "etc/mkinitcpio.conf.d/*", "etc/systemd/system/*.mount", "boot/refind_linux.conf",
+    "lost+found", "*/lost+found", ".snapshots/*/snapshot/*", "*/.snapshots/*/snapshot/*",
+]
 
 # NixOS makes these again from its store at every boot.
 NIXOS_EXPECTED = ["etc/.clean", "etc/group", "etc/passwd", "etc/shadow", "etc/subgid", "etc/subuid", "nix/var/nix/temproots/*", "nix/var/nix/db/*"]
@@ -278,8 +291,19 @@ def unaliased(rows, aliases):
     return {rel: r for rel, r in rows.items() if not any(rel.startswith(a + "/") for a in aliases)}
 
 
-def compare(old_path, new_path):
+def without_btrfs_xattrs(row):
+    """ROW with its btrfs.* extended attributes taken out: no other filesystem
+    holds them, so they don't survive a reformat (rustic-bko warns)."""
+    if len(row) <= 6 or row[6] == "-" or row[6].startswith("unreadable:"):
+        return row
+    kept = [p for p in row[6].split(",") if not p.startswith("btrfs.")]
+    return row[:6] + [",".join(kept) or "-"] + row[7:]
+
+
+def compare(old_path, new_path, reformatted=False):
     (old, odef), (new, ndef) = read(old_path), read(new_path)
+    if reformatted:
+        old = {p: without_btrfs_xattrs(r) for p, r in old.items()}
     aliases = sorted({rel for rows in (old, new) for rel, r in rows.items() if len(r) > 5 and r[5].startswith("alias:")})
     if aliases:
         old, new = unaliased(old, aliases), unaliased(new, aliases)
@@ -305,7 +329,8 @@ def compare(old_path, new_path):
         print("xattrs: this baseline has none, so they weren't compared")
     bad = []
     for label, paths in (("missing", missing), ("added", added), ("changed", changed), ("xattrs", relabeled)):
-        unexpected = [p for p in paths if not expected(p, nixos, mapping[label], label == "added") and p not in snapper]
+        unexpected = [p for p in paths if not expected(p, nixos, mapping[label], label == "added") and p not in snapper
+                      and not (reformatted and any(fnmatch.fnmatch(p, pat) for pat in REFORMAT_EXPECTED))]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")
         bad += [f"{label}: {p}" + (f" ({xattr_diff(old[p], new[p])})" if label == "xattrs" else "") for p in unexpected]
     linked = sum(1 for p in set(old) & set(new) if len(old[p]) > 8 and len(new[p]) > 8)
@@ -319,8 +344,8 @@ def compare(old_path, new_path):
 
 def main():
     a = sys.argv[1:]
-    if len(a) == 3 and a[0] == "--compare":
-        return compare(a[1], a[2])
+    if len(a) in (3, 4) and a[0] == "--compare" and a[3:] in ([], ["--reformatted"]):
+        return compare(a[1], a[2], reformatted=a[3:] == ["--reformatted"])
     if len(a) == 2:
         write(a[0], a[1])
         return 0

@@ -4,8 +4,8 @@
 # BACKUP_LABEL.  Everything acts on the disk with that serial, never a /dev name.
 
 set -uo pipefail
-# The last two are NixOS's, which has none of the others.
-export LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/run/current-system/sw/bin:/run/wrappers/bin
+# Then NixOS's two, and Guix System's three: neither has any of the others.
+export LC_ALL=C PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/run/current-system/sw/bin:/run/wrappers/bin:/run/current-system/profile/sbin:/run/current-system/profile/bin:/run/privileged/bin
 # Our Python must leave no __pycache__ behind: on a fresh install (Debian 13)
 # the firmware check's imports were the first, and the manifest counted the
 # .pyc files they wrote into the restored system as added.
@@ -214,6 +214,8 @@ package_list() {
     elif command -v xbps-query >/dev/null; then xbps-query -l
     elif command -v moss >/dev/null; then moss pkg list --installed
     elif command -v nix-store >/dev/null; then nix-store -qR /run/current-system
+    # Guix System: the system generation's whole closure, as NixOS's.
+    elif [[ -d /gnu/store ]] && command -v guix >/dev/null; then guix gc --requisites /run/current-system
     else echo "no package manager known"
     fi 2>/dev/null | LC_ALL=C sort
 }
@@ -263,8 +265,13 @@ swap_names() {
 }
 
 failed_units() {
-    command -v systemctl >/dev/null || return 0
-    systemctl --failed --no-legend --no-pager --plain 2>/dev/null | awk '{ print $1 }' | LC_ALL=C sort
+    if command -v systemctl >/dev/null; then
+        systemctl --failed --no-legend --no-pager --plain 2>/dev/null | awk '{ print $1 }' | LC_ALL=C sort
+    elif command -v herd >/dev/null; then
+        # Shepherd (Guix System): herd status lists them under Failed:, one
+        # " X NAME" a line, as HoltTest1's ht1.sh reads it.
+        herd status 2>/dev/null | awk '/^[A-Z][^:]*:$/ { sec = $0; next } sec == "Failed:" { print $2 }' | LC_ALL=C sort
+    fi
 }
 
 # layout_keys LAYOUT PASSPHRASE_FILE: load's --key-file values, one a line: every

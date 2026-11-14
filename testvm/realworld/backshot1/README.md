@@ -51,7 +51,13 @@ caught at different moments; `bs1-manifest` tells those from real differences.
   --getbinpkg --noreplace`, from the binhost; an install like the
   Thinkpad's has them all, so nothing is emerged).  On NixOS it writes
   `/etc/nixos/backshot1.nix`, imports it from `configuration.nix` and rebuilds;
-  a system built from a flake needs those settings added by hand.  On an
+  a system built from a flake needs those settings added by hand.  On Guix
+  System it writes `/etc/backshot1/system.scm`, which loads
+  `/etc/config.scm` and adds BackShot1's settings, and reconfigures from it
+  (the first time ~17 min: Guix clones its own repository); reconfigure from
+  that file afterwards, not `/etc/config.scm`, or they're gone
+  (docs/design/guix.md, "What GX8 found").  BackShot1's bko-holt must be
+  static there, as on NixOS.  On an
   install with LUKS it then sets up unlocking from the drive (below), and
   stops if the drive's key doesn't open every volume.  Reboot once after
   it, with the drive plugged in: the preflight wants a boot the drive

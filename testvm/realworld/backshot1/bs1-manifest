@@ -122,6 +122,22 @@ NIXOS_EXPECTED = ["etc/.clean", "etc/group", "etc/passwd", "etc/shadow", "etc/su
 # And these, so their mtimes are new, but they have to be the same otherwise.
 NIXOS_REMADE = ["etc/*", "bin/sh", "usr/bin/env"]
 
+# Guix System's activation, at every boot, as NixOS's: the account files
+# from the configuration's accounts (keeping the hashes), and /etc's links
+# into /etc/static (its generation's etc in the store) made again; the
+# daemon's database and roots move as it runs (docs/design/guix.md, GX8).
+# Guix mounts no tmpfs on /run or /var/run: the boot's
+# runtime state (udev's database, the setuid and privileged program links,
+# current-system, PID files) is on the root filesystem, so in the backup,
+# and each boot writes it again; nscd's caches too (guix-20261114-114854).
+GUIX_EXPECTED = ["etc/group", "etc/passwd", "etc/shadow", "etc/.pwd.lock", "var/guix/db/*", "var/guix/gcroots/*", "var/guix/temproots/*",
+                 "run/*", "var/run/*", "var/db/nscd/*"]
+GUIX_REMADE = ["etc/*", "bin/sh", "usr/bin/env"]
+
+# A store system's lists, by what compare() finds in the baseline.
+STORE_EXPECTED = {"nixos": NIXOS_EXPECTED, "guix": GUIX_EXPECTED}
+STORE_REMADE = {"nixos": NIXOS_REMADE, "guix": GUIX_REMADE}
+
 
 FS_IOC_GETFLAGS = 0x80086601
 FS_NOCOMP_FL = 0x400
@@ -238,12 +254,12 @@ def links_same(a, b, flags=True):
     return a[7] == b[7] and (not flags or flags_same(a[8], b[8]))
 
 
-def same(rel, a, b, nixos, ostree=None):
+def same(rel, a, b, store, ostree=None):
     # A directory's size only says how big it has ever been, and its mtime
     # moves whenever something inside it does.
     if stat.S_ISDIR(int(a[0], 8)) and stat.S_ISDIR(int(b[0], 8)):
         return a[:3] == b[:3]
-    remade = REMADE + (NIXOS_REMADE if nixos else []) + (ostree_paths.REMADE if ostree else [])
+    remade = REMADE + STORE_REMADE.get(store, []) + (ostree_paths.REMADE if ostree else [])
     if any(fnmatch.fnmatch(ostree_paths.logical(rel, ostree), pat) for pat in remade):
         # Written again by the running system, so its flags are its kernel's.
         return a[:4] + a[5:6] == b[:4] + b[5:6] and links_same(a, b, flags=False)
@@ -266,12 +282,13 @@ def xattr_diff(a, b):
     return "; ".join(f"{k}: {show(x.get(k))} -> {show(y.get(k))}" for k in sorted(set(x) | set(y)) if x.get(k) != y.get(k))
 
 
-def expected(rel, nixos, ostree=None, added=False):
-    """Whether a difference at REL is one a boot or the restore makes.  OSTREE:
+def expected(rel, store, ostree=None, added=False):
+    """Whether a difference at REL is one a boot or the restore makes.  STORE:
+    "nixos" or "guix" for a store system, else None.  OSTREE:
     the default deployment (its etc is etc), or "-" (an ostree system's whose
     default couldn't be told: no mapping, but its lists).  ADDED: REL is
     new, so the ADDED lists apply too."""
-    pats = EXPECTED + (NIXOS_EXPECTED if nixos else []) + (ostree_paths.EXPECTED if ostree else [])
+    pats = EXPECTED + STORE_EXPECTED.get(store, []) + (ostree_paths.EXPECTED if ostree else [])
     if added:
         pats = pats + ADDED + (ostree_paths.ADDED if ostree else [])
     return any(fnmatch.fnmatch(ostree_paths.logical(rel, ostree), pat) for pat in pats)
@@ -308,7 +325,7 @@ def compare(old_path, new_path, reformatted=False):
     if aliases:
         old, new = unaliased(old, aliases), unaliased(new, aliases)
         print(f"aliases, compared once: {' '.join(aliases)}")
-    nixos = "etc/NIXOS" in old
+    store = "nixos" if "etc/NIXOS" in old else "guix" if "var/guix/profiles/system" in old else None
     if odef or ndef:
         print(f"ostree: default deployment {odef or '(none)'}, after {ndef or '(none)'}; its etc is matched as etc/")
         if odef != ndef:
@@ -322,14 +339,14 @@ def compare(old_path, new_path, reformatted=False):
         theirs = snapshots(other)
         return {p for p in paths if (m := SNAPSHOT.match(p)) and m.groups() not in theirs}
     snapper = own(missing, new) | own(added, old)
-    changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], nixos, odef))
+    changed = sorted(p for p in set(old) & set(new) if not same(p, old[p], new[p], store, odef))
     both = [p for p in set(old) & set(new) if len(old[p]) > 6 and len(new[p]) > 6]
     relabeled = sorted(p for p in both if old[p][6] != new[p][6])
     if not both:
         print("xattrs: this baseline has none, so they weren't compared")
     bad = []
     for label, paths in (("missing", missing), ("added", added), ("changed", changed), ("xattrs", relabeled)):
-        unexpected = [p for p in paths if not expected(p, nixos, mapping[label], label == "added") and p not in snapper
+        unexpected = [p for p in paths if not expected(p, store, mapping[label], label == "added") and p not in snapper
                       and not (reformatted and any(fnmatch.fnmatch(p, pat) for pat in REFORMAT_EXPECTED))]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")
         bad += [f"{label}: {p}" + (f" ({xattr_diff(old[p], new[p])})" if label == "xattrs" else "") for p in unexpected]

@@ -306,7 +306,60 @@ EOF
     nixos-rebuild switch
 }
 
-if [[ ! -e /etc/NIXOS ]]; then
+# Guix System builds /etc, sshd_config and the system profile from its
+# configuration too (docs/design/guix.md, GX8).  A configuration file is one
+# operating-system expression, with no imports list to add to, so this writes
+# /etc/backshot1/system.scm, which loads /etc/config.scm and adds BackShot1's
+# settings to what it returns: the hostname, openssh (root by key only, the
+# drive's keys), avahi, and python, efibootmgr and btrfs-progs.  An openssh or
+# avahi service in /etc/config.scm gives way to these.  Then it reconfigures
+# from that file; a reconfigure from /etc/config.scm alone takes them away
+# again.  --allow-downgrades: after a `guix pull`, 1.5.0's own commit is not
+# an ancestor of the pulled one (What GX1-GX5 found).
+adopt_guix() {
+    local conf=/etc/config.scm sys=/etc/backshot1/system.scm keys_scm= line
+    [[ -s $conf ]] || { echo "bs1-adopt: no $conf: write this system's configuration there" >&2; return 1; }
+    # The keys as one Scheme string: backslashes and quotes escaped, \n between.
+    while read -r line; do
+        [[ -n $line ]] || continue
+        line=${line//\\/\\\\}
+        keys_scm+="${line//\"/\\\"}\\n"
+    done <"$keys/authorized_keys"
+    install -d -m 755 /etc/backshot1
+    cat >"$sys" <<EOF
+;; Written by BackShot1's bs1-adopt: $conf plus what BackShot1 needs.
+;;   guix system reconfigure --allow-downgrades $sys
+(use-modules (gnu) (srfi srfi-1))
+(use-service-modules avahi ssh)
+
+(define %base (load "$conf"))
+
+(operating-system
+  (inherit %base)
+  (host-name "$SOURCE_HOST")
+  (packages (delete-duplicates
+              (append (map specification->package
+                           '("python" "efibootmgr" "btrfs-progs"))
+                      (operating-system-packages %base))
+              eq?))
+  (services
+    (append (list (service openssh-service-type
+                    (openssh-configuration
+                      (permit-root-login 'prohibit-password)
+                      (password-authentication? #f)
+                      (authorized-keys
+                        \`(("root" ,(plain-file "backshot1-root.pub" "$keys_scm"))))))
+                  (service avahi-service-type))
+            (remove (lambda (s)
+                      (memq (service-kind s) (list openssh-service-type avahi-service-type)))
+                    (operating-system-user-services %base)))))
+EOF
+    guix system reconfigure --allow-downgrades "$sys"
+}
+
+if [[ $distro == guix ]]; then
+    :   # adopt_guix, below: the hostname and the tools are in the configuration
+elif [[ ! -e /etc/NIXOS ]]; then
     echo "== hostname: $SOURCE_HOST"
     set_hostname
     echo "== what's missing"
@@ -331,6 +384,14 @@ if [[ -e /etc/NIXOS ]]; then
     echo "== NixOS: $SOURCE_HOST, sshd, mDNS, Python and efibootmgr, in its configuration"
     adopt_nixos
     systemctl restart sshd.service
+elif [[ $distro == guix ]]; then
+    echo "== Guix System: $SOURCE_HOST, sshd, mDNS, Python, efibootmgr and btrfs-progs, in /etc/backshot1/system.scm"
+    adopt_guix
+    # A reconfigure starts the services that are new and leaves running ones
+    # alone: sshd takes the host key and its new configuration at a restart
+    # (the sessions it has open stay).
+    herd restart ssh-daemon
+    herd start avahi-daemon
 else
     allow_root_key_login
     "$(command -v sshd || echo /usr/sbin/sshd)" -t

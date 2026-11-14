@@ -73,6 +73,10 @@ rw1a = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(rw1a)
 
 SERIAL, LABEL = "BKOINTERNAL", "BKOBACKUPA"
+# Guix System (Shepherd) has neither systemctl nor poweroff: its own reboot,
+# and halt, which powers off.
+REBOOT = "if command -v systemctl >/dev/null; then systemctl reboot; else reboot; fi"
+POWEROFF = "if command -v poweroff >/dev/null; then poweroff; else halt; fi"
 # A file whose access time the backup must keep (rustic-bko's --set-atime yes,
 # with --as-path): written before bs1-backup, found in the snapshot after.
 PROBE, PROBE_ATIME = "var/tmp/bs1-atime-probe", "2001-02-03 04:05:06"     # UTC
@@ -192,7 +196,7 @@ class Ssh:
         rc, old = self.run("cat /proc/sys/kernel/random/boot_id", 30)
         if rc != 0:
             return False
-        self.run("systemctl reboot", 30)
+        self.run(REBOOT, 30)
         end = time.monotonic() + timeout
         while time.monotonic() < end:
             if proc.poll() is not None:
@@ -354,7 +358,7 @@ def main():
         return Vm([sys.executable, CONSOLE_BOOT, log, passfile, "--", *cmd], f"{w}/console-{name}.wrapper.log")
 
     def off(vm, sh):
-        sh.run("umount /mnt/bs1-backup 2>/dev/null; poweroff", 60)
+        sh.run("umount /mnt/bs1-backup 2>/dev/null; " + POWEROFF, 60)
         vm.wait_off()
 
     def failed(vm):
@@ -461,7 +465,7 @@ def main():
             check("UNLOCK=attended" in out and v and "drive" not in v.values(), f"bs1-verify --unlock: typed, not the drive: {v}")
         if fails:
             return failed(vm)
-        root.run("poweroff", 60)
+        root.run(POWEROFF, 60)
         vm.wait_off()
         print("== LUKS (d): with the drive again, for the backup", flush=True)
         vm = boot("source-backup", [internal_disk(internal, True), usb_drive])
@@ -532,7 +536,7 @@ def main():
             check(kept, f"the backup keeps a file's real access time (--set-atime yes): {atime}")
         else:
             print("  (no access-time probe: /var/tmp is in RAM)", flush=True)
-    root.run("umount /mnt/bs1-backup; poweroff")
+    root.run("umount /mnt/bs1-backup; " + POWEROFF)
     vm.wait_off()
     if fails:
         print("FAILED: " + "; ".join(fails), flush=True)
@@ -618,7 +622,7 @@ def main():
                 check(rc == 2 and "didn't finish" in out, "bs1-verify refuses when the newest restore didn't finish")
                 root.run(f"rmdir {restores}/99990101-000000")
                 root.show("bash /mnt/bs1-backup/backshot1/bs1-list")
-            root.run("umount /mnt/bs1-backup; poweroff")
+            root.run("umount /mnt/bs1-backup; " + POWEROFF)
         vm.wait_off()
         if fails:
             break
@@ -631,7 +635,7 @@ def main():
                 rc, out = unlock(root, local=True)
                 v = volumes(out)
                 check("UNLOCK=attended" in out and v and "drive" not in v.values(), f"bs1-verify --unlock: typed, not the drive: {v}")
-                root.run("poweroff", 60)
+                root.run(POWEROFF, 60)
             vm.wait_off()
     print("FAILED: " + "; ".join(fails) if fails else "PASS", flush=True)
     if a.discard_on_pass and not fails:

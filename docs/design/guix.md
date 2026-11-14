@@ -4,7 +4,8 @@
 distributions added in parallel sessions (Proxmox, Guix, openSUSE Leap 16,
 Vanilla OS, Slackware, Solus, OpenIndiana, Kali), the way AnduinOS, KDE
 neon, elementary, PikaOS, BigLinux and Garuda were added. **Status: approved 2026-11-14 by the user with every recommended decision
-(the last section). GX1-GX7 done 2026-11-14 (4b193b8, the generation check after it); BIOS GRUB is
+(the last section). GX1-GX7 done 2026-11-14 (4b193b8, the generation check after it); GX8
+done 2026-11-14: BackShot1 PASS on the Thinkpad, both generations booted ("What GX8 found"); BIOS GRUB is
 written by `grub-bios-setup` from the source's own images, not from the
 store ("What GX1-GX5 found").**
 
@@ -190,6 +191,107 @@ leads): `guix15` `gx6-14` (Chopin) and `gx6-16` (Cinqcent), `guix15-bios` `gx6-1
 the boot loader's files from substitutes (gx6-11/12 waited past 10 min),
 writes the profile link relative and grub.cfg's `gnu.system=` by the
 profile's link.
+
+## What GX8 found (2026-11-14): Guix on the Thinkpad, by bootstrap
+
+The Thinkpad runs Guix System 1.5.0, installed the manual's foreign-distro way
+(Decision 1's path 2) from the BackOtter rescue stick, not from Guix's ISO:
+`testvm/realworld/guix-bootstrap.sh` (as root on the stick: `SERIAL TARBALL
+KEYS_DIR HOSTNAME`). CachyOS before it is in the library
+(`cachyos-20261113-223735`, PASS).
+
+- **Hardware under linux-libre:** both wired NICs need no firmware: the
+  onboard Intel I219 (`8086:0d4f`, e1000e) and the USB ASIX AX88179
+  (`0b95:1790`, cdc_ncm, the one plugged in). Wi-Fi (AX201, iwlwifi) and
+  Bluetooth have no firmware and don't work; the images are wired-only
+  anyway. Secure Boot is off on the laptop (Guix's GRUB is unsigned).
+- **The tarball:** `guix-binary-1.5.0.x86_64-linux.tar.xz`, 135,985,908
+  bytes, SHA-256 `aa41025489c5061543e9c48873eaa829b900b2da75d40f9648913622f5f47817`,
+  a good signature by the ISO's signer (`A28BF40C...8351`, GNU's keyring);
+  in `/bkoscratch/rebuild-inputs/guix15/` on Chopin and
+  `backshot1/guix/` on mybig512. Its Guix calls itself `1.5.0rc1` (`guix
+  --version` on the installed system too).
+- **The bootstrap:** the tarball unpacks into
+  `/mnt/var/tmp/bko-guix-bootstrap` on the target, bound onto `/gnu` and
+  `/var/guix`, so the daemon's store is on the NVMe, not the stick's 3.8 GiB
+  RAM overlay (it peaked at 1.4 GiB); ten `guixbuilder` users, the daemon
+  backgrounded, the `ci` and `bordeaux` keys from the tarball's
+  `share/guix/`. `guix system init` took 779 s (524 MB of substitutes;
+  `ci.guix.gnu.org` "somewhat slow" at times). The script deletes the
+  bootstrap store at the end. The stick has every tool it needs but `fuser`.
+  The first try stopped at `guix system init` ("missing root file system":
+  a `set -u` slip left `/` and `/home` out of `config.scm`); the fix is in
+  the script, and that run was resumed from the config step by hand, so the
+  script hasn't run end to end once.
+- **Layout (the user's OK):** GPT, 1 GiB ESP (vfat `GUIXESP`) at
+  `/boot/efi`, 8 GiB swap, the rest Btrfs `guixroot` with `@` (256) at `/`,
+  `@home` (257) and `@gnu` (258) at `/gnu` (`needed-for-boot?`), all
+  `compress=zstd` and by UUID; no encryption, no desktop. GRUB
+  (`grub-efi-bootloader`) wrote `EFI/Guix/grubx64.efi` and NVRAM `Boot000F
+  "Guix"`, first in BootOrder, with the stick's own grub-install. The boot
+  entry reads the kernel and initrd at `/@gnu/store/...` (the top level's
+  path), `root=` the Btrfs UUID; `/gnu/store` is the `ro,noatime` bind of
+  `@gnu`'s `/store`. This is the one combination the guests don't have: UEFI
+  with the `@gnu` subvolume.
+- **The configuration:** `/etc/config.scm` (dhcpcd, avahi, openssh with root
+  by the BackShot1 key only, python, efibootmgr, btrfs-progs; Europe/Paris,
+  `us`); the fixed host key put in `/mnt/etc/ssh` before the first boot, so
+  the controller's pinned `bs1-thinkpad` key matched at once. First boot from
+  NVRAM by itself; `thinkpad.local` resolved over mDNS; `herd status` has no
+  stopped or failed service. Guix 1.5's sshd is inetd-style (`sshd -i` per
+  connection).
+- **`bs1-adopt`'s Guix arm** (by `os-release` `ID=guix`): writes
+  `/etc/backshot1/system.scm`, which `load`s `/etc/config.scm` and returns
+  it with the hostname, openssh, avahi and the three packages (any openssh or
+  avahi service of its own gives way), and runs `guix system reconfigure
+  --allow-downgrades` on it, then restarts `ssh-daemon`. That made
+  generation 2, which booted by itself from the same NVRAM entry. **The first
+  reconfigure took 17 min:** even with `--allow-downgrades` it checks the
+  channel's history, which clones Guix's repository into
+  `~root/.cache/guix/checkouts` (a 464 MB pack, then libgit2 indexing it,
+  CPU-bound); later ones reuse it. A reconfigure from `/etc/config.scm` alone
+  would drop BackShot1's settings.
+- **BackShot1's scripts on Guix:** `bs1-common`'s PATH adds
+  `/run/current-system/profile/{sbin,bin}` and `/run/privileged/bin`;
+  `package_list` is the system generation's closure (`guix gc --requisites
+  /run/current-system`, 387 items), as NixOS's; `failed_units` reads `herd
+  status`'s `Failed:` section; `bs1-manifest` has Guix's own lists (the
+  account files and `/etc`'s links remade at each activation, the daemon's
+  `var/guix/db`, gcroots and temproots), picked when the baseline has
+  `var/guix/profiles/system` (and `/run`'s state, below); `bs1-qemu.py` reboots with `reboot` and powers
+  off with `halt` where there is no systemctl or poweroff. `preflight` is
+  OK, `UNLOCK=none`; it lists `/gnu/store` beside `/gnu` (the bind, since
+  every Btrfs FSROOT counts), a redundant mount in the tree, as NixOS's
+  `/nix/store`. The runs will be named `guix-STAMP` (no `VERSION_ID`).
+- **bko-holt for BackShot1:** a static-pie glibc build (`RUSTFLAGS="-C
+  target-feature=+crt-static"`, `--target x86_64-unknown-linux-gnu`) of main
+  9718f04, 0.2.6, SHA-256 `80ee6a4d...9161`, staged in `backshot1/bin/`
+  (the old one in `bin.prev-20261114`); its `dump --only-disk nvme0n1` on the
+  Thinkpad reads the GRUB on UEFI, both generations' entries and the ESP.
+  rustic-bko 0.11.4+backotter.11 is unchanged. Rebuild from main before the
+  run if holt has moved.
+- **BackShot1: PASS** (run `guix-20261114-114854`, restore
+  `20261114-115247`). Phase 1: 111,534 files, 5.3 GiB (1.3 GiB added to the
+  repository), `check --read-data` OK, 57 s in all. Plan: three subvolumes,
+  nothing run in the chroot, one `efibootmgr --create` ("Guix", which
+  became `Boot0028` beside the old identical `Boot000F`: cosmetic, as on
+  CachyOS). Phase 2 about 2 min. Verify: every check ok, 124,651 files
+  compared. **The first verify failed** on 547 paths, all a boot's runtime
+  state: Guix mounts no tmpfs on `/run` or `/var/run`, so udev's database,
+  `/run/setuid-programs`, `/run/privileged`, `current-system`, PID files and
+  nscd's caches are on `/` and in the backup, and the restored boot rewrote
+  them. `GUIX_EXPECTED` gained `run/*`, `var/run/*`, `var/db/nscd/*`; then
+  0 unexpected.
+- **Both generations boot from the restored disk.** Guix's `grub.cfg` reads
+  no grubenv and the system has no `grub-reboot`, so as the ostree check
+  does, the default was pointed at the submenu's entry for one boot (`set
+  default="1>0"`), and the file put back byte for byte (SHA-256 and mtime)
+  afterwards: generation 1 booted (`/run/booted-system` its store system,
+  the profile still on generation 2, no service stopped or failed), then
+  generation 2 again, and a second verify passed. The firmware took
+  `Boot000F` (the identical entry) both times.
+- **Not done:** the `bs1-qemu.py --virtio` rehearsal on `guix15` (no test
+  image built on either host); the real run went first.
 
 ## What already works, and what doesn't
 

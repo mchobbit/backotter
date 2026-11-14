@@ -249,6 +249,19 @@ and guest specs, estimates, plan.py's counts, world.py, the goldens) go in
 with the other distribution sessions' batched pass, as Kali's, PikaOS's and
 Guix's do.
 
+**L4 (2026-11-14):** `testvm/stictest1/leap16`, from `microos`'s with the
+transactional parts left out: the scratch disk takes the guest's own
+`sfdisk -d`, the btrfs its subvolumes in the guest's order (C, owner, mode,
+label, the default and quota as the guest's), the FAT the ESP's geometry
+and mount options.  The guest has python3, attr and acl; bkoshim.py stands
+in only for setcap.  Round `roundrel8`, mark `l4b`: chopin and cinqcent
+**47 PASS, 7 LIMIT, 0 FAIL** each, about 250 s a run.  The LIMITs are
+tumbleweed's and microos's (project IDs, birth times, a new subvolume's
+root labelled by the kernel, subvolumes restored as directories, the FAT
+root's times and the top ancestor's label on FAT).  No tool bug.  Chopin's
+first run (`l4a`) failed one harness check, the subvolumes made in another
+order, fixed.
+
 ## Tests
 
 **SticTest1** (`testvm/stictest1/leap16`): from `tumbleweed`'s (Btrfs

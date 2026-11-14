@@ -82,6 +82,8 @@ USB_RESET_ERE = r"usb [0-9]+-[0-9.]+: .*(reset .*USB device|USB disconnect|devic
 BIG_SIDECAR = 64 << 20
 INCOMING_MAX_AGE = 7 * 86400
 BLIND_AGE = 7 * 86400
+PRIV_PROBE_TIMEOUT = 10                    # gc's `sudo -n true`, once per run (Priv)
+PRIV_TIMEOUT = 60                          # each privileged look at one unreadable path
 DEFAULTS = {"cache": {"cap": "100G", "floor": "100G"}, "mirror": {"cap": None, "floor": "200G"},
             "master": {"cap": None, "floor": None}}
 OBJ_RE = re.compile(r"sha256-([0-9a-f]{64})\.(qcow2|file)")
@@ -619,6 +621,12 @@ class Config:
         self.scan = (env.get("VM_STORE_SCAN") if env.get("VM_STORE_SCAN") is not None else DEFAULT_SCAN).split()
         self.scan_skip = (env.get("VM_STORE_SCAN_SKIP") if env.get("VM_STORE_SCAN_SKIP") is not None
                           else DEFAULT_SCAN_SKIP).split()
+        # gc's read-only look, with sudo -n, at what the scan or the vms/ walk can't read
+        # (Priv): auto tries it once per run; 0 never runs sudo, and such paths stay blind.
+        self.sudo = env.get("VM_STORE_SUDO") or "auto"
+        if self.sudo not in ("0", "auto"):
+            raise Usage(f"VM_STORE_SUDO is 0 or auto, not {self.sudo!r}")
+        self.priv = Priv(self)
         self.min_age = parse_age(env.get("VM_STORE_MIN_AGE") or "24h")
         # D2: only Chopin talks to Bigfoot, so a cache's default source is Chopin alone, and
         # with Chopin down ensure uses what is cached (as --offline).  On Chopin, where the
@@ -2176,6 +2184,133 @@ def cmd_link(cfg: Config, a) -> int:
 
 # --- gc ------------------------------------------------------------------------------
 
+# Priv's look as root, run by `sudo -n python3 -I -c` with MODE PATH SKIP-JSON; read only.
+# scan: walk PATH as the scan does (into mounts, not into linked dirs, not SKIP's trees or a
+# store root's objects/) and follow each regular *.qcow2's backing chain; chain: PATH's
+# chain alone; links: PATH's links, as the vms/ walk sees them.  Prints {"tops": [[top,
+# [each backing, realpathed]]], "links": [[link, realpath]], "errors": [what root couldn't
+# read either]}.  SIGALRM ends it after LIMIT seconds (sudo's child isn't ours to kill).
+PRIV_HELPER = r'''
+import json, os, signal, stat, struct, sys
+mode, top, skip, limit = sys.argv[1], sys.argv[2], set(json.loads(sys.argv[3])), int(sys.argv[4])
+signal.alarm(limit)
+errors = []
+def backing(p):
+    with open(p, "rb") as f:
+        h = f.read(104)
+        if len(h) < 72 or h[:4] != b"QFI\xfb":
+            return None
+        _, off, n = struct.unpack(">IQI", h[4:20])
+        if not (off and n):
+            return None
+        f.seek(off)
+        return f.read(n).decode("utf-8", "replace")
+def chain(cur):
+    out, seen = [], set()
+    for _ in range(32):
+        try:
+            b = backing(cur)
+        except FileNotFoundError:
+            break
+        except OSError:
+            errors.append(cur)
+            break
+        if not b or "://" in b or b.startswith("json:"):
+            break
+        nxt = os.path.realpath(os.path.join(os.path.dirname(cur), b))
+        if nxt in seen:
+            break
+        seen.add(nxt)
+        out.append(nxt)
+        cur = nxt
+    return out
+def regular(p):
+    try:
+        return stat.S_ISREG(os.lstat(p).st_mode)
+    except OSError:
+        return False
+res = {"tops": [], "links": [], "errors": errors}
+if mode == "chain":
+    res["tops"].append([top, chain(os.path.realpath(top))])
+elif mode == "links" and os.path.islink(top):
+    res["links"].append([top, os.path.realpath(top)])
+else:
+    for dp, dns, fns in os.walk(top, onerror=lambda e: errors.append(e.filename)):
+        if mode == "scan":
+            dns[:] = [d for d in dns if os.path.realpath(os.path.join(dp, d)) not in skip]
+            if os.path.isfile(os.path.join(dp, "store.json")) and "objects" in dns:
+                dns.remove("objects")
+            for f in fns:
+                p = os.path.join(dp, f)
+                if f.endswith(".qcow2") and regular(p):
+                    res["tops"].append([p, chain(p)])
+        else:
+            for f in fns + dns:
+                p = os.path.join(dp, f)
+                if os.path.islink(p):
+                    res["links"].append([p, os.path.realpath(p)])
+json.dump(res, sys.stdout)
+'''
+
+
+class Priv:
+    """gc's read-only look as root at a path the overlay scan or the vms/ walk can't read
+    (rule d): `sudo -n`, probed once per run (`sudo -n true`).  look() is None when that
+    can't be done (VM_STORE_SUDO=0, root already, no sudo, a password needed, a timeout,
+    a failed helper), and the path stays blind.  READ: the paths read this way."""
+
+    def __init__(self, cfg: Config):
+        self.on = cfg.sudo != "0"
+        self.ok: bool | None = None
+        self.read: set[str] = set()
+        self.why = ""                          # why the last try didn't work
+
+    def available(self) -> bool:
+        if self.ok is None:
+            self.ok = False
+            if not self.on:
+                self.why = "VM_STORE_SUDO=0"
+            elif os.geteuid() == 0:
+                self.why = "already root"
+            elif not shutil.which("sudo"):
+                self.why = "no sudo"
+            else:
+                try:
+                    r = subprocess.run(["sudo", "-n", "true"], stdin=subprocess.DEVNULL, capture_output=True,
+                                       text=True, timeout=PRIV_PROBE_TIMEOUT)
+                    self.ok = r.returncode == 0
+                    self.why = "" if self.ok else (r.stderr.strip().splitlines() or [f"exit {r.returncode}"])[-1]
+                except subprocess.TimeoutExpired:
+                    self.why = f"sudo -n true took over {PRIV_PROBE_TIMEOUT}s"
+                except OSError as e:
+                    self.why = f"sudo: {e.strerror}"
+        return self.ok
+
+    def look(self, mode: str, path: str, skip=()) -> dict | None:
+        if not self.available():
+            return None
+        try:
+            r = subprocess.run(["sudo", "-n", sys.executable, "-I", "-c", PRIV_HELPER, mode, path,
+                                json.dumps(sorted(skip)), str(PRIV_TIMEOUT)],
+                               stdin=subprocess.DEVNULL, capture_output=True, text=True, timeout=PRIV_TIMEOUT + 5)
+        except subprocess.TimeoutExpired:
+            self.why = f"sudo -n look at {path} took over {PRIV_TIMEOUT}s"
+            return None
+        except OSError as e:
+            self.why = f"sudo: {e.strerror}"
+            return None
+        try:
+            got = json.loads(r.stdout) if r.returncode == 0 else None
+        except ValueError:
+            got = None
+        if not isinstance(got, dict) or not all(isinstance(got.get(k), list) for k in ("tops", "links", "errors")):
+            self.why = (r.stderr.strip().splitlines() or [f"sudo -n look at {path}: exit {r.returncode}"])[-1]
+            return None
+        if path not in got["errors"]:
+            self.read.add(path)
+        return got
+
+
 def os_tree(d: str) -> bool:
     """D is the root of an installed OS tree (a chroot, an unpacked image): etc/os-release
     (or usr/lib/os-release) and a usr/ dir."""
@@ -2188,7 +2323,8 @@ def scan_overlays(cfg: Config, store: Store, os_dirs: list[str] | None = None) -
     images the scan couldn't read (rule d).  VM_STORE_SCAN_SKIP's trees are not walked.  A
     dir it can't read inside an OS tree (os_tree: a chroot's root-owned 0700 dirs) is the
     OS's own, not a place an overlay is made, so it is not blind: it goes to OS_DIRS
-    instead.  An unreadable *.qcow2 is blind wherever it is."""
+    instead.  An unreadable *.qcow2 is blind wherever it is.  What it would call blind it
+    first reads as root (cfg.priv: sudo -n), when it can; what that finds counts as rule b."""
     objects_real = os.path.realpath(store.objects)
     skip = {os.path.realpath(d) for d in cfg.scan_skip}
     refs: dict[str, str] = {}
@@ -2198,11 +2334,26 @@ def scan_overlays(cfg: Config, store: Store, os_dirs: list[str] | None = None) -
     def in_os_tree(p: str) -> bool:
         return any(p.startswith(r + os.sep) for r in roots)
 
+    def found(top: str, chain: list[str]) -> None:
+        for nxt in chain:
+            if os.path.dirname(nxt) == objects_real and OBJ_RE.fullmatch(os.path.basename(nxt)):
+                refs.setdefault(os.path.basename(nxt), top)
+
+    def priv_look(mode: str, path: str, top: str | None = None) -> bool:
+        """PATH (a dir, or one link of TOP's chain) read as root; False: still blind."""
+        got = cfg.priv.look(mode, path, skip)
+        if got is None:
+            return False
+        for t, chain in got["tops"]:
+            found(top or t, chain)
+        blind.extend(got["errors"])
+        return True
+
     def unreadable(e: OSError) -> None:
         if in_os_tree(e.filename):
             if os_dirs is not None:
                 os_dirs.append(e.filename)
-        else:
+        elif not priv_look("scan", e.filename):
             blind.append(e.filename)
 
     for top in cfg.scan:
@@ -2230,8 +2381,10 @@ def scan_overlays(cfg: Config, store: Store, os_dirs: list[str] | None = None) -
                         break                  # gone meanwhile, or a dangling backing: not ours
                     except OSError:
                         # Unreadable (a root vm-run's 0600 mktemp overlay): it may sit on any
-                        # object, so this scan is blind (rule d), not "no backing".
-                        blind.append(cur)
+                        # object, so this scan is blind (rule d), not "no backing", unless
+                        # root can read the rest of the chain.
+                        if not priv_look("chain", cur, p):
+                            blind.append(cur)
                         break
                     b = h["backing"] if h else None
                     if not b:
@@ -2242,8 +2395,7 @@ def scan_overlays(cfg: Config, store: Store, os_dirs: list[str] | None = None) -
                     if nxt in seen:
                         break
                     seen.add(nxt)
-                    if os.path.dirname(nxt) == objects_real and OBJ_RE.fullmatch(os.path.basename(nxt)):
-                        refs.setdefault(os.path.basename(nxt), p)
+                    found(p, [nxt])
                     cur = nxt
     return refs, blind
 
@@ -2253,14 +2405,15 @@ def vms_links(cfg: Config, store: Store) -> tuple[dict[tuple[str, str], str], di
     link resolves into live/G/VID}, {object: the vms/ file whose link resolves to it},
     the paths it couldn't read).  A vms/G link (link's, or made by hand) and links inside
     a real vms/G both count; a dangling one too, so its version is never the one gc takes.
-    An unreadable dir (a sudo compare.py's 0700 one) may hide a link: rule d, as the scan's."""
+    An unreadable dir (a sudo compare.py's 0700 one) may hide a link: rule d, as the scan's,
+    unless root can read it (cfg.priv: sudo -n)."""
     live_real, objects_real = os.path.realpath(store.live), os.path.realpath(store.objects)
     versions: dict[tuple[str, str], str] = {}
     objs: dict[str, str] = {}
     blind: list[str] = []
 
-    def note(p: str) -> None:
-        real = os.path.realpath(p)
+    def note(p: str, real: str | None = None) -> None:
+        real = real or os.path.realpath(p)
         if os.path.dirname(real) == objects_real and OBJ_RE.fullmatch(os.path.basename(real)):
             objs.setdefault(os.path.basename(real), p)
             return
@@ -2268,25 +2421,38 @@ def vms_links(cfg: Config, store: Store) -> tuple[dict[tuple[str, str], str], di
         if len(rel) >= 2 and rel[0] not in ("..", ".") and VID_RE.fullmatch(rel[1]):
             versions.setdefault((rel[0], rel[1]), p)
 
+    vms = str(cfg.vms)
+
+    def unreadable(path: str) -> None:
+        got = cfg.priv.look("links", path)
+        if got is None:
+            blind.append(path)
+            return
+        for p, real in got["links"]:
+            if not (os.path.dirname(p) == vms and LINK_TMP_RE.fullmatch(os.path.basename(p))):
+                note(p, real)
+        blind.extend(got["errors"])
+
     try:
         entries = sorted(os.scandir(cfg.vms), key=lambda e: e.name)
     except (FileNotFoundError, NotADirectoryError):
         return versions, objs, blind
     except OSError:
-        return versions, objs, [str(cfg.vms)]
+        unreadable(vms)
+        return versions, objs, blind
     for e in entries:
         if LINK_TMP_RE.fullmatch(e.name):
             continue                           # link's own, renamed over vms/G under lock or stale
         try:
             link, real_dir = e.is_symlink(), e.is_dir(follow_symlinks=False)
         except OSError:
-            blind.append(e.path)
+            unreadable(e.path)
             continue
         if link:
             note(e.path)
         elif real_dir:
             # Not into linked dirs, but each link counts.
-            for dp, dns, fns in os.walk(e.path, onerror=lambda err: blind.append(err.filename)):
+            for dp, dns, fns in os.walk(e.path, onerror=lambda err: unreadable(err.filename)):
                 for f in fns + dns:
                     p = os.path.join(dp, f)
                     try:
@@ -2295,7 +2461,13 @@ def vms_links(cfg: Config, store: Store) -> tuple[dict[tuple[str, str], str], di
                     except FileNotFoundError:
                         pass                   # gone meanwhile
                     except OSError:
-                        blind.append(p)        # listed but not searchable (mode r--)
+                        # Listed but not searchable (mode r--): root reads DP as a whole, once.
+                        if not cfg.priv.available():
+                            blind.append(p)
+                            continue
+                        unreadable(dp)
+                        dns[:] = []
+                        break
     return versions, objs, blind
 
 
@@ -2361,6 +2533,10 @@ def gc(cfg: Config, store: Store, need: int = 0, protect: set[str] = frozenset()
         raise StoreError(f"gc runs on caches only in this version; {store.root} is a {store.role}")
     os_dirs: list[str] = []
     why, blind = in_use(cfg, store, protect, os_dirs)
+    if cfg.priv.read:
+        say(f"gc: read {len(cfg.priv.read)} unreadable paths with sudo -n")
+    if blind and cfg.priv.on and cfg.priv.why:
+        say(f"gc: no sudo -n look ({cfg.priv.why}): what it can't read stays blind")
     for d in blind:
         say(f"gc: can't read {d}: objects stamped in the last 7 days are kept")
     if os_dirs:

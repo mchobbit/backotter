@@ -184,6 +184,7 @@ The environment overrides `store.json`, which overrides the defaults.
 | `VM_STORE_FLOOR_REFLINK` | `0`; `1` lets publish count a reflinked copy as no new space against the floor (§2.4) |
 | `VM_STORE_SCAN` | `/mnt/bko-ram /dev/shm /bkoscratch` |
 | `VM_STORE_SCAN_SKIP` | `/bkoscratch/tools` (trees the scan never walks: tool trees and chroots, such as the Test2 gate's `/bkoscratch/tools/arch-root`, that hold no overlay of an object) |
+| `VM_STORE_SUDO` | `auto` (gc's read-only `sudo -n` look at what it can't read, rule d); `0` never runs sudo |
 | `VM_STORE_MIN_AGE` | `24h` |
 | `BKO_WORK` | `~/backotter-work` (`vms/` = `$BKO_WORK/vms`) |
 
@@ -310,6 +311,11 @@ It runs under `lock` EX, both from ensure and by hand. An object is **in use**, 
   This covers idle kept overlays (ht1 R dirs, compare work, backshot2, t2), which can last for days.
 - **(c) Its `used/` stamp is younger than `VM_STORE_MIN_AGE`** (24h). This covers the gap between ensure and QEMU opening the file, and `--snapshot` temp files that aren't named `*.qcow2`.
 - **(d) Blind scan.** If the scan met a directory or a `*.qcow2` (or a link of its backing chain) it can't read (root's mktemp dirs, a root vm-run's 0600 `--ram` overlay), or rule (f)'s walk of `$BKO_WORK/vms/` met a directory it can't read (a sudo `compare.py`'s 0700 one, which may hold a link), the age in (c) rises to 7 days for this run, and those paths are reported.
+  - First, a read-only look as root. Before it calls a path blind, gc reads it with `sudo -n` (`VM_STORE_SUDO=auto`; probed once per run with `sudo -n true`). A small Python helper (`sudo -n python3 -I -c`, ended by its own 60 s alarm) does it:
+    - an unreadable scan dir: it walks the dir as the scan does (into mount points, as `os.walk`; not into linked dirs, `VM_STORE_SCAN_SKIP`'s trees or a store root's `objects/`), and follows each regular `*.qcow2`'s chain as in (b), realpaths taken as root. What it finds counts as rule (b), "overlay PATH".
+    - an unreadable `*.qcow2`, or a link of a chain: it follows the rest of that chain.
+    - an unreadable `vms/` dir: it lists the dir's links and their realpaths, for rule (f).
+    gc says "read N unreadable paths with sudo -n". Only where that fails (no passwordless sudo, a timeout, root can't read it either, `VM_STORE_SUDO=0`) does the path stay blind. This keeps root-made leftovers (a test's 0700 `/bkoscratch/tmp/holebug/repo-restic`) from blinding every gc on the test hosts, which run gc as `m` with passwordless `sudo -n`.
   - Not blind: a directory it can't read inside an OS tree (a walked dir with `usr/` and `etc/os-release` or `usr/lib/os-release`: a chroot, an unpacked image). Its root-owned 0700 dirs (`root/`, polkit's, private state) are the OS's own, and no overlay is made there (root's mktemp dirs and `--ram` overlays are in `/tmp`, `/mnt/bko-ram`, `/dev/shm`). gc reports how many it met, in one line. The rest of the tree is still walked, and an unreadable `*.qcow2` inside it is still blind.
   - A permanent unreadable tree outside any OS tree would make every gc blind; such a tree goes in `VM_STORE_SCAN_SKIP` once it is known to hold no overlay.
 - **(e) The rest of its version.** Every object of a version that has any in-use object is in use too, along with all chain ancestors. This uses the cached manifests.
@@ -501,6 +507,7 @@ Cases:
    - kept: a fresh stamp, a QEMU-style lock, an overlay found by scan (both relative and absolute backing, and a backing through a `live/` symlink, realpathed);
    - an unreadable scan dir raises the age to 7 days;
    - one in a `VM_STORE_SCAN_SKIP` tree, or inside an OS tree, does not (an unreadable `*.qcow2` in an OS tree still does), and a readable overlay inside an OS tree still keeps its object;
+   - with `sudo -n` (a fake `sudo` on PATH that runs the helper as the test user, the dirs made readable meanwhile; `VM_STORE_SUDO=0` everywhere else, so no test runs the real sudo): an overlay in an unreadable dir, an unreadable overlay, a chain through an unreadable dir, and a link in an unreadable `vms/` dir keep their objects, with no 7-day age; `sudo -n` failing, or its helper failing, leaves them blind as before; the probe runs once per run;
    - all objects of a version are protected together;
    - the floor counts;
    - refuses on mirror and master roles;

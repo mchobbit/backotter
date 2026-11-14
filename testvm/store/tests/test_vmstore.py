@@ -172,6 +172,10 @@ def write_state(gdir, disks, updates=0, gen=None):
     return gen
 
 
+def stat_mode(p):
+    return os.lstat(p).st_mode & 0o7777
+
+
 class StoreTest(unittest.TestCase):
     def setUp(self):
         self.tmp = Path(os.path.realpath(tempfile.mkdtemp(prefix="vmstore-")))
@@ -196,6 +200,7 @@ class StoreTest(unittest.TestCase):
                     "VM_STORE_SOURCES": f"chopin={self.mirror}", "VM_STORE_BIGFOOT": str(self.bf_root),
                     "VM_STORE_BIGFOOT_STAGE": str(self.bf_stage), "VM_STORE_BIGFOOT_HOST": "",
                     "VM_STORE_SCAN": str(self.scan), "VM_STORE_SCAN_SKIP": "", "VM_STORE_FLOOR": "0", "VM_STORE_MIN_AGE": "24h",
+                    "VM_STORE_SUDO": "0",                  # gc's sudo -n look: only as a test asks
                     "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}", "FAKE_RSYNC_LOG": str(self.log),
                     "FAKE_RSYNC_BYTES": str(self.bytes_log)}
         for k in ("VM_STORE_CAP", "VM_STORE_WINDOW", "VM_STORE_COPY", "VM_STORE_FLOOR_REFLINK",
@@ -1253,6 +1258,86 @@ class TestGc(StoreTest):
         _, blind = vs.in_use(vs.Config(), self.store)
         self.assertEqual(sorted(blind), sorted([str(bad), str(root / "root"), str(root / "etc/polkit-1/rules.d")]))
 
+    def sudo_env(self, *unlock, **extra):
+        """gc's sudo -n look on, through the fake sudo, which reads UNLOCK as root would."""
+        self.sudo_log = self.tmp / "sudo.log"
+        return mock.patch.dict(os.environ, {"VM_STORE_SUDO": "auto", "FAKE_SUDO_LOG": str(self.sudo_log),
+                                            "FAKE_SUDO_UNLOCK": " ".join(map(str, unlock)), **extra})
+
+    @unittest.skipIf(IS_ROOT, "root reads every directory")
+    def test_unreadable_scan_dir_read_with_sudo(self):
+        two_days, three_days, four_days, ten_days = self.obj(48), self.obj(72), self.obj(96), self.obj(240)
+        hidden = self.scan / "tmp" / "holebug" / "repo-restic"   # a test's root-made 0700 leftover
+        (hidden / "sub").mkdir(parents=True)
+        (hidden / "data").mkdir()
+        (hidden / "data" / "pack").write_bytes(b"x" * 100)
+        abs_ov, rel_ov = hidden / "abs.qcow2", hidden / "sub" / "rel.qcow2"
+        make_qcow2(abs_ov, backing=str(self.cache / "objects" / two_days))
+        make_qcow2(rel_ov, backing=os.path.relpath(self.cache / "objects" / three_days, hidden / "sub"))
+        (hidden / "link.qcow2").symlink_to(self.cache / "objects" / four_days)  # a link: not an overlay
+        hidden.chmod(0o700)
+        (hidden / "sub").chmod(0)
+        hidden.chmod(0)
+        # sudo -n fails (a password needed): blind as before, the 7-day age.
+        with self.sudo_env(hidden, hidden / "sub", FAKE_SUDO_FAIL="1"):
+            rc, plan, err = self.gc(0)
+        self.assertEqual(rc, 4, err)
+        self.assertIn(f"can't read {hidden}", err)
+        self.assertIn("no sudo -n look (sudo: a password is required)", err)
+        self.assertNotIn("with sudo -n", err)
+        self.assertEqual(self.left(), {two_days, three_days, four_days})
+        # The helper fails: blind too.
+        with self.sudo_env(hidden, hidden / "sub", FAKE_SUDO_HELPER_FAIL="1"):
+            rc, plan, err = self.gc(0)
+        self.assertIn(f"can't read {hidden}", err)
+        self.assertIn("no sudo -n look (fake sudo: helper failed)", err)
+        self.assertEqual(self.left(), {two_days, three_days, four_days})
+        # VM_STORE_SUDO=0 (the test default): sudo never runs.
+        off_log = self.tmp / "sudo-off.log"
+        with mock.patch.dict(os.environ, {"FAKE_SUDO_LOG": str(off_log)}):
+            rc, plan, err = self.gc(0)
+        self.assertIn(f"can't read {hidden}", err)
+        self.assertNotIn("sudo", err)
+        self.assertFalse(off_log.exists())
+        self.sudo_log.unlink()
+        # sudo -n reads it: both overlays keep their objects (rule b), no 7-day age.
+        with self.sudo_env(hidden, hidden / "sub"):
+            rc, plan, err = self.gc(0)
+            why, blind = vs.in_use(vs.Config(), self.store)
+        self.assertEqual(rc, 4, err)
+        self.assertNotIn("can't read", err)
+        self.assertIn("gc: read 1 unreadable paths with sudo -n", err)
+        self.assertEqual(self.left(), {two_days, three_days})
+        self.assertEqual((why[two_days], why[three_days], blind), (f"overlay {abs_ov}", f"overlay {rel_ov}", []))
+        calls = self.sudo_log.read_text().splitlines()
+        self.assertEqual(calls.count("-n true"), 2)              # probed once per run (gc, in_use)
+        self.assertEqual(len(calls), 4)
+        self.assertEqual(stat_mode(hidden), 0)                   # the fake left it as it was
+
+    @unittest.skipIf(IS_ROOT, "root reads every file")
+    def test_unreadable_overlay_read_with_sudo(self):
+        two_days, three_days, four_days = self.obj(48), self.obj(72), self.obj(96)
+        ov = self.scan / "vm-run.x.qcow2"                   # a root vm-run's 0600 mktemp overlay
+        make_qcow2(ov, backing=str(self.cache / "objects" / two_days))
+        ov.chmod(0)
+        self.addCleanup(ov.chmod, 0o644)
+        elsewhere = self.tmp / "root-only"                  # a readable overlay on an unreadable link
+        elsewhere.mkdir()
+        mid = elsewhere / "mid.qcow2"
+        make_qcow2(mid, backing="../cache/objects/" + three_days)
+        (elsewhere / "alias.qcow2").symlink_to("mid.qcow2")  # realpathed as root
+        top = self.scan / "top.qcow2"
+        make_qcow2(top, backing=str(elsewhere / "alias.qcow2"))
+        elsewhere.chmod(0)
+        with self.sudo_env(ov, elsewhere):
+            rc, plan, err = self.gc(0)
+            why, blind = vs.in_use(vs.Config(), self.store)
+        self.assertEqual(rc, 4, err)
+        self.assertNotIn("can't read", err)
+        self.assertIn("gc: read 2 unreadable paths with sudo -n", err)
+        self.assertEqual(self.left(), {two_days, three_days})
+        self.assertEqual((why[two_days], why[three_days], blind), (f"overlay {ov}", f"overlay {top}", []))
+
     def test_version_kept_whole(self):
         a, b, c = self.obj(1), self.obj(100, kind="file"), self.obj(100)
         other = self.obj(100)
@@ -1361,6 +1446,41 @@ class TestGc(StoreTest):
         _, blind = vs.in_use(vs.Config(), self.store)
         self.assertEqual(blind, [str(self.vms)])
         self.vms.chmod(0o755)
+
+    @unittest.skipIf(IS_ROOT, "root reads every directory")
+    def test_unreadable_vms_dir_read_with_sudo(self):
+        """A link in a vms/G dir gc can't read, found by its sudo -n look: rule f, no 7-day age."""
+        two_days, four_days, ten_days = self.obj(48), self.obj(96), self.obj(240)
+        (self.vms / "full").mkdir()
+        sudo_log = self.tmp / "sudo.log"
+        for mode in (0, 0o400):                              # unlistable, then listed but not searchable
+            hidden = self.vms / "full" / "root-0700"
+            (hidden / "deep").mkdir(parents=True)
+            (hidden / "deep" / "full.qcow2").symlink_to(self.cache / "objects" / two_days)
+            (hidden / "deep").chmod(mode)
+            hidden.chmod(mode)
+            with mock.patch.dict(os.environ, {"VM_STORE_SUDO": "auto", "FAKE_SUDO_FAIL": "1"}):
+                _, blind = vs.in_use(vs.Config(), self.store)
+            self.assertTrue(blind, mode)                     # sudo fails: blind as before
+            with mock.patch.dict(os.environ, {"VM_STORE_SUDO": "auto", "FAKE_SUDO_LOG": str(sudo_log),
+                                              "FAKE_SUDO_UNLOCK": f"{hidden} {hidden / 'deep'}"}):
+                rc, plan, err = self.gc(0)
+                why, blind = vs.in_use(vs.Config(), self.store)
+            self.assertEqual(rc, 4, (mode, err))
+            self.assertNotIn("can't read", err)
+            self.assertIn("gc: read 1 unreadable paths with sudo -n", err)
+            self.assertEqual((why[two_days], blind), (f"linked from {hidden / 'deep' / 'full.qcow2'}", []), mode)
+            self.assertNotIn(four_days, self.left())         # no 7-day age
+            hidden.chmod(0o755)
+            (hidden / "deep").chmod(0o755)
+            shutil.rmtree(hidden)
+        self.assertEqual(self.left(), {two_days})
+        (self.vms / "lk").symlink_to(self.cache / "objects" / two_days)
+        self.vms.chmod(0)                                    # vms/ itself
+        with mock.patch.dict(os.environ, {"VM_STORE_SUDO": "auto", "FAKE_SUDO_UNLOCK": str(self.vms)}):
+            why, blind = vs.in_use(vs.Config(), self.store)
+        self.vms.chmod(0o755)
+        self.assertEqual((why[two_days], blind), (f"linked from {self.vms / 'lk'}", []))
 
     def test_linked_live_dir_is_never_removed(self):
         a, b = self.obj(100), self.obj(100)
@@ -1624,7 +1744,10 @@ class TestQcow2(StoreTest):
 # zpool answers FAKE_ZPOOL_HEALTH (ONLINE) and FAKE_ZPOOL_SCAN, or no pool
 # (FAKE_ZPOOL_MISSING), after FAKE_ZPOOL_SLEEP (status: also FAKE_ZPOOL_STATUS_SLEEP);
 # sudo runs only journalctl, which prints the file FAKE_JOURNAL and logs its args to
-# FAKE_JOURNAL_ARGS, or fails as without a password (FAKE_SUDO_FAIL); flock finds the
+# FAKE_JOURNAL_ARGS, `true` (gc's probe) and gc's Priv helper, which it runs as this user
+# with the paths FAKE_SUDO_UNLOCK names made readable meanwhile (as root would read them),
+# or fails (FAKE_SUDO_HELPER_FAIL); or it fails as without a password (FAKE_SUDO_FAIL).
+# FAKE_SUDO_LOG logs each call's first two args.  flock finds the
 # lock free, or busy (FAKE_FLOCK_BUSY).  Never this host's own zpool, log or flock.
 FAKE_ZPOOL = r'''#!/bin/sh
 [ -n "$FAKE_ZPOOL_SLEEP" ] && sleep "$FAKE_ZPOOL_SLEEP"
@@ -1639,13 +1762,39 @@ status)
 *) exit 2 ;;
 esac
 '''
-FAKE_SUDO = r'''#!/bin/sh
-if [ -n "$FAKE_SUDO_FAIL" ]; then echo "sudo: a password is required" >&2; exit 1; fi
-[ "$1" = -n ] && shift
-[ "$1" = journalctl ] || { echo "fake sudo: journalctl only" >&2; exit 1; }
-[ -n "$FAKE_JOURNAL_ARGS" ] && echo "$*" > "$FAKE_JOURNAL_ARGS"
-[ -n "$FAKE_JOURNAL" ] && cat "$FAKE_JOURNAL"
-exit 0
+FAKE_SUDO = r'''#!/usr/bin/env python3
+import os, subprocess, sys
+env, args = os.environ, sys.argv[1:]
+if env.get("FAKE_SUDO_LOG"):
+    with open(env["FAKE_SUDO_LOG"], "a") as f:
+        f.write(" ".join(args[:2]) + "\n")
+if env.get("FAKE_SUDO_FAIL"):
+    sys.exit("sudo: a password is required")
+if args[:1] == ["-n"]:
+    args = args[1:]
+if args == ["true"]:
+    sys.exit(0)
+if args[:1] == ["journalctl"]:
+    if env.get("FAKE_JOURNAL_ARGS"):
+        with open(env["FAKE_JOURNAL_ARGS"], "w") as f:
+            f.write(" ".join(args) + "\n")
+    if env.get("FAKE_JOURNAL"):
+        with open(env["FAKE_JOURNAL"]) as f:
+            sys.stdout.write(f.read())
+    sys.exit(0)
+if args[1:3] == ["-I", "-c"] and len(args) == 8:      # vm-store's Priv helper, as root
+    if env.get("FAKE_SUDO_HELPER_FAIL"):
+        sys.exit("fake sudo: helper failed")
+    modes = {}
+    try:
+        for q in env.get("FAKE_SUDO_UNLOCK", "").split():
+            modes[q] = os.lstat(q).st_mode & 0o7777
+            os.chmod(q, 0o755 if os.path.isdir(q) else 0o644)
+        sys.exit(subprocess.run(args).returncode)
+    finally:
+        for q, m in reversed(list(modes.items())):
+            os.chmod(q, m)
+sys.exit("fake sudo: true, journalctl and vm-store's helper only")
 '''
 FAKE_FLOCK = r'''#!/bin/sh
 [ -n "$FAKE_FLOCK_BUSY" ] && exit 99
@@ -1653,6 +1802,7 @@ exit 0
 '''
 FAKE_BF_ENV = ("FAKE_ZPOOL_HEALTH", "FAKE_ZPOOL_SCAN", "FAKE_ZPOOL_MISSING", "FAKE_ZPOOL_SLEEP",
                "FAKE_ZPOOL_STATUS_SLEEP", "FAKE_JOURNAL", "FAKE_JOURNAL_ARGS", "FAKE_SUDO_FAIL", "FAKE_FLOCK_BUSY",
+               "FAKE_SUDO_UNLOCK", "FAKE_SUDO_LOG", "FAKE_SUDO_HELPER_FAIL",
                "VM_STORE_BF_POOL", "VM_STORE_BF_RESET_WINDOW", "VM_STORE_BF_GATE", "VM_STORE_RSYNC_TIMEOUT",
                "VM_STORE_BWLIMIT_BIGFOOT")
 

@@ -198,7 +198,18 @@ a link: gc says "can't read" and keeps what was ensured in the last 7 days,
 as for an unreadable overlay scan dir.  The overlay scan doesn't walk
 `VM_STORE_SCAN_SKIP`'s trees.  It doesn't count a dir it can't read inside an OS
 tree (a chroot: `usr/` plus `etc/os-release`) as blind either; it reports how many
-in one line.  An unreadable `*.qcow2` stays blind wherever it is.  Size a cache's cap for every linked guest plus room for one new version.
+in one line.  An unreadable `*.qcow2` stays blind wherever it is.
+
+Before it calls a path blind, gc reads it as root, read only, with
+`sudo -n` (probed once per run with `sudo -n true`): a small Python helper
+walks the dir as the scan does (into mounts, not into linked dirs), follows
+each regular `*.qcow2`'s backing chain, and lists a `vms/` dir's links.
+What it finds counts as usual (an overlay keeps its objects, a link keeps
+its version), and gc says "read N unreadable paths with sudo -n".  Only
+where `sudo -n` can't (a password needed, a 60 s timeout, `VM_STORE_SUDO=0`)
+does the path stay blind.  So a root-made leftover (a test's 0700
+`/bkoscratch/tmp/holebug/repo-restic`) no longer blinds every gc on the test
+hosts.  Size a cache's cap for every linked guest plus room for one new version.
 
 This is an interim step of M3 (`docs/design/image-store.md` section 3): the
 per-job pins (`VM_STORE_PIN`, `vm_store_dir`) are not built.
@@ -221,6 +232,7 @@ per-job pins (`VM_STORE_PIN`, `vm_store_dir`) are not built.
 | `VM_STORE_FLOOR_REFLINK` | `0` (publish counts every copy's allocated size against the floor); `1` counts a reflinked copy as no new space |
 | `VM_STORE_SCAN` | `/mnt/bko-ram /dev/shm /bkoscratch` (gc's search for overlays) |
 | `VM_STORE_SCAN_SKIP` | `/bkoscratch/tools` (trees that search never walks: tool trees and chroots with no overlays) |
+| `VM_STORE_SUDO` | `auto` (gc reads what it can't read with `sudo -n`, when that works); `0` never runs sudo |
 | `VM_STORE_MIN_AGE` | `24h` (gc keeps what was ensured more recently) |
 | `VM_STORE_CAP`, `VM_STORE_FLOOR` | the root's `store.json` |
 | `BKO_WORK` | `~/backotter-work` (`vms/` is under it: link's links, gc's rule f) |

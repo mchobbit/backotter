@@ -245,6 +245,34 @@
     "established": true
    }
   },
+  "biglinux": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-arch.sh",
+    "testvm/arch/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.pacman",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#pacman"
+   ],
+   "checks": {
+    "pm": "pacman",
+    "rules": {
+     "source": "S-pac",
+     "loader": "L-grub",
+     "kernel": "K-pac",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false,
+    "kernels_max": 3
+   }
+  },
   "cachyos": {
    "kind": "ssh",
    "plat": "linux",

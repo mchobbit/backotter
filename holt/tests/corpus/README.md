@@ -1,6 +1,6 @@
 # H1: the dump corpus and its golden plans
 
-One redacted `bko-holt dump` of each of HoltTest2's 60 sources, and the plan
+One redacted `bko-holt dump` of each of HoltTest2's 61 sources, and the plan
 `bko-holt load` makes of each (docs/design/test2.md, "Shared pieces to
 build", H1).  `holt/tests/golden_plans.rs` plans every dump again and fails
 when a plan changes or breaks an invariant, so a change to load shows here
@@ -113,6 +113,19 @@ update, so its golden plan makes the four shared snapshots
 `@/.snapshots/1..4/snapshot` in the restore stage (restore `--exact
 --clone-from`), then `dracut-rebuild` and `grub-install
 --bootloader-id=Garuda --no-nvram` in the chroot.
+biglinux (`make-arch.sh --live biglinux`: BigLinux 2026-10-03 k618 from
+its live ISO as its Calamares installs offline; UEFI, a 300 MiB ESP at
+/boot/efi, one btrfs with `@`, `@home` and systemd-swap's `@swapfile`,
+mkinitcpio, GRUB in EFI/BigLinux; docs/design/biglinux.md), built on
+2026-11-14, was added the same day from its HoltTest1 run `bl4-3` on
+cinqcent, PASS, dumped by the bko-holt 0.2.6 built from this tree for that
+run (with BigLinux's osrel.rs row and the default_subvol fix), the image
+the same as the run recorded.  Its source had three Timeshift snapshots
+at the top level (big-first-boot's and `prep/biglinux-timeshift.sh`'s two),
+so its golden plan notes them as not made, runs `set-default` of the top
+level for the superblock's default_subvol flag, and after `grub-install
+--bootloader-id=BigLinux --no-nvram` defragments /boot and /usr/share/grub
+`--nocomp`.
 kali (`make-debian.sh --kali 2026.3 ext4`: Kali Linux 2026.3 by d-i with
 Kali's preseed; UEFI with Secure Boot off, GPT with an 883 MiB ESP at
 /boot/efi, ext4 /, swap; GRUB in EFI/kali and the same file as
@@ -172,13 +185,13 @@ raw dumps are), for each dump:
    blobs, 7.7 MB decoded, in 15 dumps).  EFI load options (`load_option_hex`) and
    `first_bytes` stay: they are data, and redact.rs has redacted them.
 5. The filled dump is planned against the unfilled one (`fill_plan`:
-   `same` for all 60) and passes check_plan itself (`check_plan`).
+   `same` for all 61) and passes check_plan itself (`check_plan`).
 
 Two builds of the same raw dumps give the same bytes.
 
 ### A raw dump that fails step 1
 
-All 60 raw dumps pass check_plan.  A dump that one day fails it is still put
+All 61 raw dumps pass check_plan.  A dump that one day fails it is still put
 in the corpus (step 2's leak checks, step 5 and leakscan below still apply);
 corpus_build then fails at its end, and so does `redact_dumps` over the raw
 dumps.  Nothing would show that dump's golden plan is its guest's own, so
@@ -250,7 +263,11 @@ the same sha256 from both builds.  So did garuda (2026-11-14), built from
 a private directory on chopin (/bkoscratch, its warm holt build): chopin
 with its 90 strings and the raw dump's identifiers, cinqcent with its 89,
 the Mac with the git e-mail, 0 findings (its plan scanned too), the same
-sha256 from both builds.  So did kali
+sha256 from both builds.  So did biglinux (2026-11-14), built from a
+private directory on cinqcent (/bkoscratch/holt-warm/bl3, deleted after):
+chopin with 91 of its 96 strings, cinqcent with 93 of its 97 and the raw
+dump's identifiers, the Mac with the git e-mail, 0 findings (its plan
+scanned too), the same sha256 from both builds.  So did kali
 (2026-11-14), built from a private directory in cinqcent's RAM disk (its
 warm holt build at /bkoscratch/holt-warm/kali): cinqcent with its 92
 strings and the raw dump's identifiers, chopin with its 91, the Mac with
@@ -267,7 +284,7 @@ BackOtter's, every tool the plan asks for installed.  Unlike check_plan it
 maps no RAM disk or ZFS volume (alpine324's 16 RAM disks would each be a
 Problem), installs load's own binary where it runs from, and names it
 `bko-holt` in the plan, which would otherwise hold the test binary's path.
-All 63 plans exit 0, without Problems.  They are Linux's plans (load's
+All 64 plans exit 0, without Problems.  They are Linux's plans (load's
 run directory is /run/bko-holt there, /var/run/bko-holt elsewhere): run
 golden_plans.rs on a Linux host.
 
@@ -300,8 +317,8 @@ BKO_HOLT_GOLDEN=bless cargo test --test golden_plans -- --nocapture
                                                                    # rewrite the plans that differ, unless an invariant fails
 ```
 
-diff.json is `{"v":1, "corpus":60, "plans":63, "planned":[NAME...],
-"sources":61, "differ":{NAME:{"stages":[...], "lines_changed":N[, "new":true]
+diff.json is `{"v":1, "corpus":61, "plans":64, "planned":[NAME...],
+"sources":62, "differ":{NAME:{"stages":[...], "lines_changed":N[, "new":true]
 [, "unplanned":WHY][, "unverified":CHECK_PLAN_RAW]}}, "invariants":{NAME:[...]},
 "invariants_skipped":{NAME:[...]}}`; `stages` are the plan's sections that
 changed (header, partition, assemble, format, mount, restore, boot, close,
@@ -346,8 +363,8 @@ the Mac, outside the repository, and scan it there first:
 Only then copy them into holt/tests/corpus (corpus_build refuses an OUT
 that holds dumps it doesn't make, so build into an empty one), and bless
 the plans.  A corpus dump never enters the working tree with a finding, and
-a plan is never blessed with a broken invariant.  The corpus is 12.5 MB (60
-dumps of 3 KB to 3.3 MB, the 63 plans 0.5 MB); 15 MB is its budget.
+a plan is never blessed with a broken invariant.  The corpus is 12.5 MB (61
+dumps of 3 KB to 3.3 MB, the 64 plans 0.5 MB); 15 MB is its budget.
 
 ### Adding a source
 

@@ -6,6 +6,7 @@ anduinos2	cinqcent	a3	dump	-	2026-11-14T01:58:14Z	0.2.6	-	same	29	ok:29:144	0	0	
 arch	cinqcent	r4all	PASS	2026-11-08T02:42:15Z	2026-11-08T02:40:20Z	0.2.4	d1c588284a1dd8a584bdbff74f6866414962fc3cc791c0bb8c2c5d71f097fb16	changed	8	ok:8:86	0	0	0	same	ok:8	-
 artix-dinit	chopin	r4all	PASS	2026-11-08T02:52:57Z	2026-11-08T02:51:06Z	0.2.4	24a2d685da1c4333cae7c69ad05e6440a151dd377476496d20dc14288c1b1e66	changed	8	ok:8:89	0	0	0	same	ok:8	-
 artix-s6	cinqcent	r4all	PASS	2026-11-08T02:53:00Z	2026-11-08T02:51:10Z	0.2.4	83c31d471dad98577d4995fe798615dcc64c7503d5e9f0ac02ca6c3bc3ae9b1f	changed	8	ok:8:86	0	0	0	same	ok:8	-
+biglinux	cinqcent	bl4-3	PASS	2026-11-14T06:31:36Z	2026-11-14T06:24:06Z	0.2.6	c830df23fddb0e5b21773978535d6a53e027855f0f8dbaeba7beeb8162ede956	same	19	ok:19:115	0	0	0	same	ok:19	-
 cachyos	chopin	r4all	PASS	2026-11-08T02:42:30Z	2026-11-08T02:40:28Z	0.2.4	912733658b2ec6f7fe6c63aa621bcca18fa3f78d803568c256789f6b1f8ee122	changed	8	ok:8:89	0	0	0	same	ok:8	-
 cachyos-zfs	copland	cz1	dump	-	2026-11-13T23:23:27Z	0.2.5	-	same	15	ok:15:107	0	0	0	same	ok:15	-
 chimera	chopin	chim2	PASS	2026-11-11T06:44:55Z	2026-11-11T06:42:52Z	0.2.4	-	same	7	ok:7:85	0	0	0	same	ok:7	-

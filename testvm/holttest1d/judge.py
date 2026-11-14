@@ -326,6 +326,33 @@ def btrfs_by_path(d):
     return d
 
 
+# A Timeshift snapshot in btrfs mode: TOP/timeshift-btrfs/snapshots/NAME/@...
+# (load's timeshift_snapshot()).
+TIMESHIFT_SNAPSHOT = re.compile(r"^(<FS_TREE>/)?timeshift-btrfs/snapshots/[^/]+/@[^/]*$")
+
+
+def timeshift_left_out(src):
+    """Timeshift's snapshots (BigLinux's; docs/design/biglinux.md, decision
+    3) aren't in the backup, so load leaves them out with a note ("N
+    Timeshift snapshots (NAMES) are not in the backup; not made"): they
+    come off the source's subvolume list, and their level-0 qgroups with
+    them, where nothing mounts them, as load decides.  One the restored
+    dump has all the same is a DIFF.  The paths it took off."""
+    out = []
+    for fs in (src.get("storage") or {}).get("btrfs") or []:
+        mounted = {str(m.get("subvol") or "").lstrip("/") for m in fs.get("mounted_subvolumes") or []}
+        gone = [v for v in fs.get("subvolumes") or []
+                if TIMESHIFT_SNAPSHOT.search(str(v.get("path") or "")) and str(v.get("path")).removeprefix("<FS_TREE>/") not in mounted]
+        if not gone:
+            continue
+        ids = {f"0/{v.get('id')}" for v in gone}
+        fs["subvolumes"] = [v for v in fs["subvolumes"] if not any(v is g for g in gone)]
+        if isinstance(fs.get("qgroups"), list):
+            fs["qgroups"] = [q for q in fs["qgroups"] if str(q.get("qgroupid")) not in ids]
+        out += [str(v.get("path")).removeprefix("<FS_TREE>/") for v in gone]
+    return out
+
+
 def md_by_name(d):
     """A named md array (Anaconda's /dev/md/boot, /dev/md/pv00) gets its
     kernel number, md127 downwards, in the order the arrays come up at boot,
@@ -963,6 +990,7 @@ def main():
         del sys.argv[1]
     src = btrfs_by_path(md_by_name(illumos_normalise(load_json(sys.argv[1]))))
     dst = btrfs_by_path(md_by_name(illumos_normalise(load_json(sys.argv[2]))))
+    timeshift = timeshift_left_out(src)
     for d in (src, dst):
         if "--removable" in flags:
             drop_removable(d)
@@ -1089,6 +1117,8 @@ def main():
                 print(f"fitted as --fit asks: {d['disk']} by {plan['delta']} bytes, {what}")
     for why, keys in ignored.items():
         print(f"ignored ({why}): {len(keys)}: {', '.join(keys[:6])}{' ...' if len(keys) > 6 else ''}")
+    if timeshift:
+        print(f"left out (Timeshift's snapshots aren't in the backup, and load doesn't make them): {len(timeshift)}: {', '.join(timeshift)}")
     if dst.get("warnings"):
         print(f"restored dump's warnings: {dst['warnings']}")
     print(f"{len(real)} differences, {sum(len(v) for v in ignored.values())} ignored, of {len(set(a) | set(b))} fields")

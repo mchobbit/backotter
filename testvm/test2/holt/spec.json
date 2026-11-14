@@ -100,6 +100,7 @@
     "endeavouros-grub": {"kind": "linux", "firmware": "uefi"},
     "manjaro": {"kind": "linux", "firmware": "uefi"},
     "garuda": {"kind": "linux", "firmware": "uefi"},
+    "biglinux": {"kind": "linux", "firmware": "uefi"},
     "artix-dinit": {"kind": "linux"},
     "artix-s6": {"kind": "linux"},
     "cachyos": {"kind": "linux"},

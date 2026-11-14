@@ -584,7 +584,7 @@ class SpecJson(unittest.TestCase):
 
     def test_entries_and_kinds(self):
         names = self.sf.names()
-        self.assertEqual(len(names), 62)
+        self.assertEqual(len(names), 63)
         text = rd(os.path.join(WT, "testvm", "holttest1d", "ht1.sh"))
         m = re.search(r'case \$G in\n(.*?)\nesac', text, re.S)
         bsd = re.search(r"^\s*(\S+)\)\s*\n\s*exec .*ht1-bsd\.sh", m.group(1), re.M).group(1).split("|")

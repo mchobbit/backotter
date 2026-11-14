@@ -207,7 +207,13 @@ live on.
   one a snapshot of the one before it and restores only its changes, so they
   share their extents; quotas go on after them
   (docs/design/btrfs-snapshots.md; `--btrfs-snapshots copy` restores each in
-  full instead).
+  full instead).  Timeshift's snapshots (`timeshift-btrfs/snapshots/NAME/@*`
+  at the top level, where no mount reaches them: BigLinux,
+  docs/design/biglinux.md) are outside the backup, so they are not made
+  (an empty one would only be deleted by Timeshift as incomplete); the
+  plan says so in a note.  A source whose default is the top level but
+  whose superblock has the `default_subvol` flag gets `set-default` of the
+  top level, so the flag comes back too.
 - ZFS: datasets and volumes created top-down with every locally set
   property, encryption roots with their key format and location, and
   `canmount`/`mountpoint` exactly as recorded.
@@ -274,6 +280,10 @@ efivarfs bound in):
      `(lvmid/VG-UUID/LV-UUID)` when /boot/grub is on LVM (Gentoo's
      Thinkpad).  On Gentoo through shim it refuses: it would write an
      unsigned GRUB over the signed one.
+     The ID keeps its case (BigLinux's `\EFI\BigLinux`).  On BigLinux with
+     /boot on btrfs, `btrfs filesystem defragment --nocomp -r` of /boot
+     and /usr/share/grub follows, as its installer's `btrfs-fix` does, so
+     GRUB reads its files uncompressed.
      On AnduinOS (`boot.loader.mok` recorded, or shim and `anduinos-grub`) it runs no
      `--target=x86_64-efi` install: the restored ESP already holds shim and
      the GRUB signed by the machine's own MOK, which a fresh `grub-install`

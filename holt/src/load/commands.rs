@@ -1939,7 +1939,12 @@ impl Builder<'_> {
         subs.retain(|v| !self.is_timeshift(fs, v));
         let quota = fs.get("quota_enabled").and_then(Value::as_bool).unwrap_or(false);
         let default_id = fs.at(&["default_subvolume", "id"]).and_then(Value::as_u64).unwrap_or(5);
-        if subs.is_empty() && !quota && default_id == 5 {
+        // `btrfs subvolume set-default` sets the incompat flag DEFAULT_SUBVOL
+        // whatever the ID it names, and nothing else sets it: a source on
+        // which it was run for ID 5 (BigLinux's big-btrfs-fix-to-timeshift,
+        // at every boot) has the flag with the top level as its default.
+        let flag_only = default_id == 5 && fs.get("features").and_then(Value::as_array).is_some_and(|f| f.iter().any(|x| x.as_str() == Some("default_subvol")));
+        if subs.is_empty() && !quota && default_id == 5 && !flag_only {
             return;
         }
         let top = format!("{RUN_DIR}/btrfs/{uuid}");
@@ -2011,6 +2016,8 @@ impl Builder<'_> {
                 None if ts_ids.contains(&default_id) => self.problems.push(format!("btrfs {uuid}: the default subvolume (ID {default_id}) is a Timeshift snapshot, which isn't in the backup")),
                 None => self.problems.push(format!("btrfs {uuid}: the default subvolume (ID {default_id}) isn't in its subvolume list")),
             }
+        } else if flag_only {
+            out.push(Cmd::new(&["btrfs", "subvolume", "set-default", &top]).why(format!("btrfs {uuid}: the default stays the top level (ID 5), set as on the source, whose superblock has the default_subvol flag that only set-default sets")));
         }
         // With shared snapshots, quotas go on after the restore, which they
         // would slow down, with the IDs those got.
@@ -3945,6 +3952,29 @@ mod tests {
         assert!(b.stage(Stage::Boot).iter().any(|c| c.why.as_deref() == Some("/boot uncompressed, as BigLinux's installer leaves it (its btrfs-fix)")));
         let deb = sample::bios_mbr().replace(boot_line, "");
         assert!(!text(built_from(&deb, &[]).stage(Stage::Boot)).contains("defragment"));
+    }
+
+    /// A btrfs whose superblock has default_subvol with the top level as
+    /// its default (BigLinux's set-default to ID 5, run at every boot): one
+    /// `set-default` of the top level sets the flag again.  Without the
+    /// flag, nothing; with another default, only that subvolume's.
+    #[test]
+    fn default_subvol_flag_kept() {
+        let top = "/run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003";
+        let plain = r#""default_subvolume": {"id": 5}, "quota_enabled": false"#;
+        let flagged = sample::bios_mbr().replace(plain, &format!(r#""features": ["mixed_backref", "default_subvol", "extended_iref"], {plain}"#));
+        assert_ne!(flagged, sample::bios_mbr());
+        let b = built_from(&flagged, &[]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let f = text(b.stage(Stage::Format));
+        assert_eq!(f.matches("btrfs subvolume set-default").count(), 1, "{f}");
+        let set = f.find(&format!("btrfs subvolume set-default {top}\n")).expect(&f);
+        assert!(f.find(&format!("btrfs subvolume create {top}/@rootfs\n")).expect(&f) < set && set < f.find(&format!("umount {top}\n")).expect(&f), "{f}");
+        assert!(!text(built_from(&sample::bios_mbr(), &[]).stage(Stage::Format)).contains("set-default"));
+        let other = flagged.replace(r#""default_subvolume": {"id": 5}"#, r#""default_subvolume": {"id": 256}"#);
+        let f = text(built_from(&other, &[]).stage(Stage::Format));
+        assert_eq!(f.matches("btrfs subvolume set-default").count(), 1, "{f}");
+        assert!(f.contains(&format!("btrfs subvolume set-default {top}/@rootfs\n")), "{f}");
     }
 
     #[test]

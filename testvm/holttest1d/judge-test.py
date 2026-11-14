@@ -1402,5 +1402,52 @@ class FsAnduinos(unittest.TestCase):
             self.assertNotIn("AnduinOS", out)
 
 
+class TimeshiftLeftOut(unittest.TestCase):
+    """biglinux (bl4-1): Timeshift's snapshots under the top level's
+    timeshift-btrfs/snapshots/ aren't in the backup, and load doesn't make
+    them; they, and their qgroups, come off the source's dump.  Anything else
+    missing still counts."""
+
+    judge = Geli.judge
+    TS = ["timeshift-btrfs/snapshots/2026-11-14_04-34-40/@", "timeshift-btrfs/snapshots/2026-11-14_04-57-19/@"]
+
+    def biglinux(self, paths, mounted=("@", "@home"), qgroups=None):
+        subs = [{"id": 256 + i, "gen": 10, "parent": 5, "top_level": 5, "uuid": f"u{i}",
+                 "parent_uuid": "u0" if "timeshift" in p else None, "path": f"<FS_TREE>/{p}", "readonly": False, "properties": None}
+                for i, p in enumerate(paths)]
+        fs = {"uuid": "ac84b05f-63a3-4f7d-bafa-1c337613895c", "devices": ["vda2"], "mounted": True,
+              "mounted_subvolumes": [{"target": "/" + m.lstrip("@"), "subvol": "/" + m} for m in mounted],
+              "subvolumes": subs, "default_subvolume": {"id": 5}, "quota_enabled": qgroups is not None, "qgroups": qgroups}
+        return dump([disk("vda", 24 * GIB, [part("vda2", 2, 616448, 49711104, btrfs(49711104 * 512), gpt=True)], gpt=True)], btrfs=[fs])
+
+    def test_timeshifts_snapshots_are_left_out(self):
+        rc, out = self.judge(self.biglinux(["@", "@home", "@swapfile", *self.TS]), self.biglinux(["@", "@home", "@swapfile"]))
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"left out (Timeshift's snapshots aren't in the backup, and load doesn't make them): 2: {', '.join(self.TS)}", out)
+
+    def test_their_qgroups_go_with_them(self):
+        q = lambda *ids: [{"qgroupid": f"0/{i}", "referenced": 1, "exclusive": 1} for i in ids]
+        rc, out = self.judge(self.biglinux(["@", "@home", *self.TS], qgroups=q(256, 257, 258, 259)), self.biglinux(["@", "@home"], qgroups=q(256, 257)))
+        self.assertEqual(rc, 0, out)
+        rc, out = self.judge(self.biglinux(["@", "@home", *self.TS], qgroups=q(256, 257, 258, 259)), self.biglinux(["@", "@home"], qgroups=q(256)))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF storage.btrfs.0.qgroups.1.qgroupid", out)
+
+    def test_one_made_after_all_is_a_difference(self):
+        rc, out = self.judge(self.biglinux(["@", "@home", *self.TS]), self.biglinux(["@", "@home", *self.TS]))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF storage.btrfs.0.subvolumes.2.path", out)
+
+    def test_other_subvolumes_still_count(self):
+        """An unmounted subvolume that isn't Timeshift's, one a mount reaches
+        under timeshift-btrfs, and a Timeshift path below the top level."""
+        for gone in ("@snapshots", "timeshift-btrfs/snapshots/X/@", "@/timeshift-btrfs/snapshots/X/@", "timeshift-btrfs/X/@"):
+            mounted = ("@", "@home", gone) if gone == "timeshift-btrfs/snapshots/X/@" else ("@", "@home")
+            rc, out = self.judge(self.biglinux(["@", "@home", gone], mounted), self.biglinux(["@", "@home"], mounted))
+            self.assertEqual(rc, 1, f"{gone}: {out}")
+            self.assertIn("DIFF storage.btrfs.0.subvolumes.2.path", out)
+            self.assertNotIn("left out", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

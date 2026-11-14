@@ -1,7 +1,9 @@
 # BigLinux support
 
 2026-11-14. The user approved this spec on 2026-11-14 with every
-recommended decision (the last section). BigLinux is a Brazilian
+recommended decision (the last section). BL1-BL5 are done (2026-11-14;
+HoltTest1 PASS on Chopin `bl4-2` and Cinqcent `bl4-3`); BL6 waits.
+BigLinux is a Brazilian
 desktop distribution built on Manjaro's stable branch. The task is to support
 it the way EndeavourOS and Manjaro were supported (commit 6715f43), following
 the shape of `chimera.md`, `gentoo.md` and `bazzite.md`.
@@ -378,6 +380,31 @@ packages, kernel 6.18.49 → 6.18.55).
 - **Updates:** `auto-unlock-pacman` (`pacman-fix-keys`) runs at every boot
   and deletes `db.lck` whoever holds it, so in-guest.sh waits for it and
   for `big-first-boot`.
+
+## What BL4 found
+
+HoltTest1 `bl4-2` on Chopin, 2026-11-14: **PASS** (576 s; RAM-disk peak
+14.2 GiB), with `prep/biglinux-timeshift.sh` giving the source three
+Timeshift snapshots.
+
+- **The default_subvol flag:** `big-btrfs-fix-to-timeshift`'s no-op
+  `set-default 5` still sets the superblock's incompat flag
+  `default_subvol`, which only set-default sets. load now runs
+  `set-default` of the top level when the source's default is 5 and it
+  has the flag (`default_subvol_flag_kept`).
+- **Timeshift:** the plan's note names the 3 snapshots; the restored
+  machine has no `timeshift-btrfs`, `timeshift --list` finds none, and
+  grub-mkconfig writes no grub-btrfs.cfg. judge.py's `timeshift_left_out()`
+  drops from the source's dump only the unmounted subvolumes under
+  `timeshift-btrfs/snapshots/NAME/@*` (and their level-0 qgroups); one
+  made anyway is a DIFF.
+- **Swap:** the backup holds `/swapfile/1`; systemd-swap remakes both
+  files at boot, NOCOW, and they are active. No change needed.
+- **/boot:** after the restore `compsize -x` shows `/boot` and
+  `/usr/share/grub` entirely uncompressed.
+- **Boot:** `EFI/BigLinux/grubx64.efi` and the fallback are the same
+  bytes; the restored disk boots through the fallback (fresh NVRAM), and
+  through `\EFI\BigLinux\grubx64.efi` when given as BootNext.
 
 ## Pieces to build (ordered, est.)
 

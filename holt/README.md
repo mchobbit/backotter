@@ -29,7 +29,7 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
 
 - Linux: Debian 12 and 13, Devuan 6, Ubuntu 24.04 and 26.04, Linux Mint 22,
   Pop!_OS 24.04, Zorin OS 18, KDE neon 24.04, AnduinOS 2, Arch Linux, CachyOS, Artix Linux, Omarchy,
-  EndeavourOS, Manjaro, Garuda Linux, Alpine Linux 3, AerynOS, Void Linux, Chimera Linux,
+  EndeavourOS, Manjaro, Garuda Linux, BigLinux, Alpine Linux 3, AerynOS, Void Linux, Chimera Linux,
   Gentoo Linux, PikaOS 4, Kali Linux, Fedora 44, Bazzite 44, Rocky Linux 10, openSUSE
   Tumbleweed and NixOS 26.05;
 - ostree (image-mode) systems among them: Bazzite 44, and Fedora's atomic
@@ -57,7 +57,10 @@ Btrfs on LUKS2 booted from the fallback path, in HoltTest1Obscure: `load`
 rebuilds booster's initramfs and keeps rEFInd's files; Kali's is `kali` in HoltTest1Obscure, UEFI GRUB with no shim on ext4, which `load` reinstalls as Debian's; Garuda's is `garuda`,
 beside EndeavourOS and Manjaro, GRUB on btrfs with dracut through
 garuda-dracut-support, whose `dracut-rebuild` `load` runs, and snap-pac's
-snapper snapshots restored as shared ones).  Build it static
+snapper snapshots restored as shared ones; BigLinux's is `biglinux`, beside
+them too, GRUB under its own `EFI/BigLinux` id on btrfs, whose Timeshift
+snapshots at the top level are outside the backup and not made, and whose
+/boot `load` leaves uncompressed, as BigLinux's installer does).  Build it static
 (`RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target
 x86_64-unknown-linux-gnu`) to run it on musl systems such as Alpine and Void
 too; on the other systems, build it there

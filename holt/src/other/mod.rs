@@ -199,10 +199,14 @@ pub fn node_path(sys: &Sys, node: &str) -> String {
 /// What a restored tree has once the restore is done: /etc/fstab, or
 /// Haiku's system directory (Haiku has no fstab), illumos' vfstab, or on
 /// ostree the repository's config (the physical root has no etc), or on
-/// ABRoot the present root's abimage.abr (load/abroot.rs).
+/// ABRoot the present root's abimage.abr (load/abroot.rs), or on Ubuntu
+/// Core ubuntu-data's modeenv (load/snapcore.rs).
 pub fn restored_marker(layout: &Value) -> &'static str {
     if crate::load::ostree::of(layout).is_some() {
         return crate::load::ostree::MARKER;
+    }
+    if crate::load::snapcore::of(layout).is_some() {
+        return crate::load::snapcore::MARKER;
     }
     if crate::load::abroot::of(layout).is_some() {
         return crate::load::abroot::marker(layout);

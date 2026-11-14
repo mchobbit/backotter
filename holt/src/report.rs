@@ -1269,6 +1269,12 @@ pub fn build(sys: &Sys, os: Option<&OsRelease>, generated: &str) -> Value {
 /// everything else (loop devices, md, device-mapper) stays.  An empty `only`
 /// leaves nothing out.
 pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[String]) -> Value {
+    build_with(sys, os, generated, only, &crate::luksheader::Options::default())
+}
+
+/// `build_only`, keeping the LUKS2 headers LUKS asks for (dump's
+/// --keep-luks-header and --luks-header-dir: crate::luksheader).
+pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[String], luks: &crate::luksheader::Options) -> Value {
     if !sys.privileged {
         sys.warn("not running as root: partition tables, superblocks and LVM/ZFS labels were not read; device contents come from udev's database");
     }
@@ -1373,6 +1379,17 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         sources.extend(more);
         sources.sort_by(|a, b| a.path.cmp(&b.path));
     }
+    // Ubuntu Core (crate::snapcore): the backup's tree is the gadget's four
+    // partitions at snap-bootstrap's mount points, nothing else (not the
+    // base snap at `/`, nor its bind mounts); its LUKS2 headers are kept.
+    let mut snapcore = (os.and_then(|o| o.get("ID")) == Some(crate::snapcore::OS_ID)).then(|| crate::snapcore::read(sys, &disks, &dm));
+    if let Some(sc) = &snapcore {
+        sources = sc.sources.clone();
+    }
+    let luks_headers = crate::luksheader::capture(sys, &[&disks, &md, &dm], snapcore.as_ref().map(|sc| sc.luks.as_slice()).unwrap_or(&[]), luks);
+    if let Some(sc) = snapcore.as_mut() {
+        sc.require_headers(sys, &luks_headers, luks.dir.as_deref().unwrap_or(crate::luksheader::DEFAULT_DIR));
+    }
     let physical_root = sources.iter().find(|s| s.path == "/").and_then(|s| s.from.clone());
     if ostree {
         // The backup tree is fstab's only where every mount matched its entry
@@ -1459,7 +1476,8 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         .set("swaps", swaps)
         .set("fstab", fstab)
         .set("crypttab", crypttab)
-        .set("mdadm_conf", mdadm_conf);
+        .set("mdadm_conf", mdadm_conf)
+        .set_some("luks_headers", (!luks_headers.is_empty()).then_some(luks_headers));
     let ostree_json = ostree.then(|| crate::ostree::json(sys, physical_root.as_deref().unwrap_or(crate::ostree::SYSROOT)));
     let proxmox = crate::boot::proxmox_boot_json(sys, &packages, &|spec: &str| ctx.resolve(sys, spec), &esps);
     // TrueNAS (crate::truenas): its BEs and the ESPs of its boot-pool
@@ -1486,6 +1504,7 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     let boot = crate::abroot::add_to_boot(boot, abroot.as_ref());
     let boot = crate::truenas::add_to_boot(boot, truenas.as_ref());
     let boot = crate::transactional::add_to_boot(boot, transactional);
+    let boot = crate::snapcore::add_to_boot(boot, snapcore.as_ref());
 
     let mut out = Obj::new()
         .set("format", FORMAT)

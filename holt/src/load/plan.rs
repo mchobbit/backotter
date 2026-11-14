@@ -286,6 +286,8 @@ pub fn run(layout: &Layout, opts: &Options, sys: &Sys) -> (u8, String, String) {
     } else {
         out.push('\n');
     }
+    // Never a recovery key (crate::redact), whatever the layout held.
+    let out = crate::redact::scrub_recovery_keys(&out).into_owned();
     let code = if p.problems.is_empty() { EXIT_OK } else { EXIT_PLAN_PROBLEMS };
     let err = if p.problems.is_empty() { String::new() } else { format!("bko-holt load: plan found {} problem(s); see above\n", p.problems.len()) };
     (code, out, err)

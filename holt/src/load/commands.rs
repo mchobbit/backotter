@@ -298,6 +298,9 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
     if opts.new_uuids {
         b.problems.push("--new-uuids isn't built yet: it also has to rewrite the restored fstab, crypttab and boot configuration".into());
     }
+    if opts.new_machine && super::snapcore::of(&layout.v).is_none() {
+        b.problems.push("--new-machine is for an encrypted Ubuntu Core; this layout isn't one".into());
+    }
     let partition = b.partition();
     let assemble = b.assemble();
     let format = b.format();
@@ -1181,6 +1184,12 @@ impl Builder<'_> {
             self.problems.push(format!("{name}: {under} doesn't hold a LUKS header in the dump (plain dm-crypt isn't supported)"));
             return;
         }
+        // The dump kept this header (crate::luksheader): written back, not
+        // made anew.
+        if let Some(h) = crate::luksheader::kept(&self.layout.v, &under).cloned() {
+            self.luks_keep_header(&under, &dev, &open_as, &c, &h, out);
+            return;
+        }
         let version = s(&c, "version").unwrap_or("2".into());
         let mut a = vec!["cryptsetup".to_string(), "luksFormat".into(), "--batch-mode".into(), format!("--type=luks{version}")];
         if version == "1" {
@@ -1277,6 +1286,57 @@ impl Builder<'_> {
         o.push(open_as.clone());
         out.push(Cmd { argv: o, ..Cmd::default() });
         self.closers.push(settled(&["cryptsetup", "close", &open_as]));
+    }
+
+    /// keep_header (docs/design/ubuntu-core.md, Decision 2): the LUKS2
+    /// header the dump kept, written back with luksHeaderRestore and opened
+    /// with --key-file (by the container's name, its LUKS label or the
+    /// device): the source's volume key, keyslots and tokens, so whatever
+    /// opened it there (a TPM-sealed key, a recovery key) opens it here.  No
+    /// luksFormat, no luksAddKey, no token change.
+    fn luks_keep_header(&mut self, under: &str, dev: &str, open_as: &str, c: &Value, h: &Value, out: &mut Vec<Cmd>) {
+        let label = s(c, "label");
+        if s(c, "version").as_deref() != Some("2") {
+            self.problems.push(format!("{under}: the dump kept its LUKS header, which is LUKS{}: load keeps LUKS2 headers only", s(c, "version").unwrap_or("?".into())));
+            return;
+        }
+        if self.opts.new_uuids {
+            self.problems.push(format!("{under}: --new-uuids, and the dump kept its LUKS2 header, which carries the source's UUID"));
+        }
+        let file = crate::luksheader::path_at_load(self.opts.luks_header_dir.as_deref(), &self.opts.layout, &s(h, "file").unwrap_or_default());
+        if let Some(e) = crate::luksheader::check_file(&file, h) {
+            self.problems.push(format!("{under}: the LUKS2 header the dump kept: {e} (dump wrote it to {}; give its directory with --luks-header-dir)", s(h, "written_to").unwrap_or_default()));
+        }
+        // The data segment must fit the partition it's restored to.
+        // A segment of a fixed size must fit whole; a `dynamic` one (Ubuntu
+        // Core's) takes what follows its offset, so only that is checked.
+        let seg = c.at(&["segments", "0"]).cloned().unwrap_or(Value::Null);
+        let offset = num(&seg, "offset").unwrap_or(0);
+        if let Some(have) = self.layout.device(under).and_then(|v| num(v, "size_bytes")) {
+            match num(&seg, "size") {
+                Some(size) if have < offset + size => {
+                    self.problems.push(format!("{under}: its kept LUKS2 header's data segment needs {} bytes, and the partition here has {have}", offset + size));
+                }
+                None if have <= offset => {
+                    self.problems.push(format!("{under}: its kept LUKS2 header's data segment starts at {offset} bytes, past the partition here ({have} bytes)"));
+                }
+                _ => {}
+            }
+        }
+        let key = self.opts.key_file(open_as).or_else(|| label.as_deref().and_then(|l| self.opts.key_file(l))).or_else(|| self.opts.key_file(under)).map(str::to_string);
+        let Some(key) = key else {
+            let name = label.clone().unwrap_or_else(|| open_as.to_string());
+            self.problems.push(format!(
+                "{under}: its LUKS2 header is kept, so it opens only with a key it already has: give --key-file {name}=FILE (Ubuntu Core: its recovery key, made into FILE by `bko-holt recovery-key-file FILE`)"
+            ));
+            return;
+        };
+        out.push(Cmd::new(&["cryptsetup", "luksHeaderRestore", "--batch-mode", dev, "--header-backup-file", &file]).why(format!(
+            "LUKS2 on {dev}: the source's header{}, kept byte for byte (its volume key, keyslots and tokens); no luksFormat, no luksAddKey",
+            label.map(|l| format!(" ({l})")).unwrap_or_default()
+        )));
+        out.push(Cmd::new(&["cryptsetup", "open", &format!("--key-file={key}"), dev, open_as]));
+        self.closers.push(settled(&["cryptsetup", "close", open_as]));
     }
 
     fn vg(&mut self, vg: &Value, out: &mut Vec<Cmd>) {
@@ -2666,7 +2726,10 @@ impl Builder<'_> {
         // (mount point in the restored system, command)
         let mut ms: Vec<(String, Cmd)> = Vec::new();
         let mut out_mkdir: Vec<String> = Vec::new();
-        for e in self.layout.arr(&["storage", "fstab"]) {
+        // Ubuntu Core's fstab is the base snap's binds and tmpfs, none of
+        // them the backup's tree (load/snapcore.rs mounts that).
+        let fstab = if super::snapcore::of(&self.layout.v).is_some() { &[][..] } else { self.layout.arr(&["storage", "fstab"]) };
+        for e in fstab {
             let file = s(e, "file").unwrap_or_default();
             let ty = s(e, "type").unwrap_or_default();
             if ty == "swap" || !file.starts_with('/') {
@@ -2776,11 +2839,18 @@ impl Builder<'_> {
             let extra = self.abroot_mounts(&a.clone(), &have);
             ms.extend(extra);
         }
+        // Ubuntu Core (load/snapcore.rs): the four partitions at
+        // snap-bootstrap's mount points; it has no fstab and no `/`.
+        let snapcore = super::snapcore::of(&self.layout.v).cloned();
+        if let Some(sc) = &snapcore {
+            let extra = self.snapcore_mounts(sc);
+            ms.extend(extra);
+        }
         ms.sort_by(|a, b| {
             let depth = |p: &str| if p == "/" { 0 } else { p.matches('/').count() };
             depth(&a.0).cmp(&depth(&b.0)).then(a.0.cmp(&b.0))
         });
-        if !ms.iter().any(|(p, _)| p == "/") {
+        if !ms.iter().any(|(p, _)| p == "/") && snapcore.is_none() {
             self.problems.push("nothing in fstab or the ZFS datasets mounts /".into());
         }
         let mut out = Vec::new();
@@ -2887,7 +2957,7 @@ impl Builder<'_> {
         let mut out = pre;
         out.push(Cmd { argv: a, why, env, ..Cmd::default() });
         self.shared_snapshots(&prefix, &mut out);
-        out.push(Cmd::new(&["sh", "-c", &atimes_cmd(&self.opts.target, "before", &self.ro_shared())]).why("the atimes the restore set, for boot to put back after its reads"));
+        out.push(Cmd::new(&["sh", "-c", &self.atimes(&self.opts.target, "before")]).why("the atimes the restore set, for boot to put back after its reads"));
         out
     }
 
@@ -3063,9 +3133,16 @@ fn snapshot_path(snapshot: &str, path: &str) -> (String, String) {
 /// (testing a symlink with -L first: -e would follow it, and reading a
 /// symlink bumps its atime, perhaps after it was put back).
 pub(crate) fn atimes_cmd(t: &str, what: &str, prune: &[String]) -> String {
+    atimes_cmd_in(t, what, prune, false)
+}
+
+/// atimes_cmd; with RUN_MNT, T/run/mnt is listed, not pruned with the rest
+/// of T/run: Ubuntu Core's whole tree is there (load/snapcore.rs).
+pub(crate) fn atimes_cmd_in(t: &str, what: &str, prune: &[String], run_mnt: bool) -> String {
     let more: String = prune.iter().map(|p| format!(" -o -path {}", shell_quote(p))).collect();
+    let run = if run_mnt { format!("\\( -path '{t}/run/*' ! -path {t}/run/mnt ! -path '{t}/run/mnt/*' \\)") } else { format!("-path {t}/run") };
     let list = format!(
-        "find {t} \\( -path {t}/dev -o -path {t}/proc -o -path {t}/sys -o -path {t}/run{more} \\) -prune -o -printf '%A@\\t%p\\0' | LC_ALL=C sort -z"
+        "find {t} \\( -path {t}/dev -o -path {t}/proc -o -path {t}/sys -o {run}{more} \\) -prune -o -printf '%A@\\t%p\\0' | LC_ALL=C sort -z"
     );
     let b = format!("{RUN_DIR}/atimes.before");
     if what == "before" {
@@ -3103,6 +3180,9 @@ impl Builder<'_> {
         }
         if let Some(a) = super::abroot::of(&self.layout.v) {
             return self.abroot_boot(&a.clone());
+        }
+        if let Some(sc) = super::snapcore::of(&self.layout.v) {
+            return self.snapcore_boot(&sc.clone());
         }
         if let Some(x) = super::transactional::of(&self.layout.v) {
             return self.transactional_boot(&x.clone());
@@ -3414,7 +3494,9 @@ impl Builder<'_> {
             let Some(e) = self.layout.crypttab_entry(&dm_name, dm.at(&["dm", "luks_uuid"]).and_then(Value::as_str)).cloned() else { continue };
             let open_as = s(&e, "name").unwrap_or(dm_name);
             let Some(k) = s(&e, "key_file").filter(|k| !matches!(k.as_str(), "none" | "-" | "")) else { continue };
-            if self.opts.key_file(&open_as).is_some() {
+            // A kept header (luks_keep_header) has the source's keyslots,
+            // its key file's among them: nothing to add.
+            if self.opts.key_file(&open_as).is_some() || self.layout.slaves(&name).first().is_some_and(|u| crate::luksheader::kept(&self.layout.v, u).is_some()) {
                 continue;
             }
             let under = self.layout.slaves(&name).first().and_then(|u| self.names.dev(u)).unwrap_or_default();
@@ -3446,12 +3528,17 @@ impl Builder<'_> {
         Some(Cmd { argv: a, why: Some(why.into()), ..Cmd::default() })
     }
 
+    /// atimes_cmd for this layout (Ubuntu Core's tree is under T/run/mnt).
+    pub(crate) fn atimes(&self, t: &str, what: &str) -> String {
+        atimes_cmd_in(t, what, &self.ro_shared(), super::snapcore::of(&self.layout.v).is_some())
+    }
+
     /// How every Linux boot stage ends (ostree's too, load/ostree.rs): the
     /// atimes put back, then the read-only btrfs subvolumes made so.
     pub(crate) fn boot_tail(&mut self, t: &str) -> Vec<Cmd> {
         let mut out = Vec::new();
         // Last but for read-only flags: nothing may read the tree after this.
-        out.push(Cmd::new(&["bash", "-c", &atimes_cmd(t, "restore", &self.ro_shared())]).why("the atimes this stage's reads changed, put back"));
+        out.push(Cmd::new(&["bash", "-c", &self.atimes(t, "restore")]).why("the atimes this stage's reads changed, put back"));
         // Read-only btrfs subvolumes: set now that the restore filled them,
         // and after the atimes are put back (touch can't on a read-only one).
         for fs in self.layout.arr(&["storage", "btrfs"]).to_vec() {

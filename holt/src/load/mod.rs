@@ -25,6 +25,7 @@ pub mod reformat;
 pub mod release;
 pub mod rewrite;
 pub mod shared;
+pub mod snapcore;
 pub mod status;
 pub mod target;
 pub mod transactional;
@@ -135,6 +136,13 @@ pub struct Options {
     /// planned; the layout's other pools are left untouched
     /// (layout.rs only_pools).  Empty: every pool.
     pub pools: Vec<String>,
+    /// --new-machine: an encrypted Ubuntu Core restored to another TPM (or
+    /// other Secure Boot variables) boots recover mode first
+    /// (load/snapcore.rs).
+    pub new_machine: bool,
+    /// --luks-header-dir DIR: where the LUKS2 headers the dump kept are
+    /// (crate::luksheader); else beside the layout.
+    pub luks_header_dir: Option<String>,
     /// For tests: read the system load runs on from this tree, running no
     /// commands.
     pub sysroot: Option<String>,
@@ -162,6 +170,8 @@ impl Options {
             archiver: DEFAULT_ARCHIVER.to_string(),
             btrfs_copy: false,
             pools: vec![],
+            new_machine: false,
+            luks_header_dir: None,
             sysroot: None,
         }
     }
@@ -187,6 +197,7 @@ pub const USAGE: &str = "Usage: bko-holt load LAYOUT.json [--through STAGE | --o
                      [--target DIR] [--new-uuids] [--key-file NAME=FILE]...
                      [--reformat MOUNT=TYPE]...
                      [--no-nvram] [--removable] [--pools NAME[,NAME]]
+                     [--luks-header-dir DIR] [--new-machine]
                      [--repo REPO [--password-file FILE] [--snapshot ID]
                       [--archiver PROGRAM]] [--btrfs-snapshots shared|copy]
 
@@ -224,7 +235,8 @@ Rebuilds the disks LAYOUT.json (from `bko-holt dump`) describes, in stages:
                     boot rewrites what names it (fstab, kernel command
                     lines).  Linux layouts only; plan says what changes
   --key-file NAME=FILE
-                    a LUKS container's (crypttab name) or ZFS encryption
+                    a LUKS container's (crypttab name; for a kept header its
+                    LUKS label too, ubuntu-data-enc) or ZFS encryption
                     root's (dataset) key or passphrase, instead of a prompt;
                     cryptsetup takes the file's bytes as they are, so a
                     passphrase's file must not end in a newline.  On
@@ -237,6 +249,15 @@ Rebuilds the disks LAYOUT.json (from `bko-holt dump`) describes, in stages:
                     (load adds the final newline bioctl wants, if missing)
   --no-nvram        boot writes no UEFI variables
   --removable       boot also installs the loader to EFI/BOOT/BOOTX64.EFI
+  --luks-header-dir DIR
+                    where the LUKS2 headers the dump kept are (bko-holt dump
+                    --keep-luks-header; Ubuntu Core's always): written back
+                    with luksHeaderRestore and opened with --key-file, no new
+                    volume key.  Default: the layout's own directory
+  --new-machine     Ubuntu Core with FDE onto another machine (another TPM,
+                    or other Secure Boot variables): its first boot is recover
+                    mode, which asks for the recovery key and unlocks the
+                    data; run mode there needs a reinstall
   --pools NAME[,NAME]
                     restore only these ZFS pools (TrueNAS: boot-pool): the
                     layout's other pools and the disks they're on are left
@@ -362,6 +383,8 @@ pub fn parse_args(args: &[String]) -> Result<Parsed, String> {
                     }
                 }
             }
+            "--new-machine" => o.new_machine = true,
+            "--luks-header-dir" => o.luks_header_dir = Some(value(&mut it, a)?),
             "--sysroot" => o.sysroot = Some(value(&mut it, a)?),
             s if s.starts_with('-') => return Err(format!("unknown argument {s:?}")),
             s => {

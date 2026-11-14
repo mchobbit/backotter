@@ -15,6 +15,7 @@ pub mod bytes;
 pub mod efi;
 pub mod json;
 pub mod load;
+pub mod luksheader;
 pub mod mdsb;
 pub mod mounts;
 pub mod osrel;
@@ -26,6 +27,7 @@ pub mod redact;
 pub mod report;
 #[cfg(test)]
 mod scenarios;
+pub mod snapcore;
 pub mod store;
 pub mod sys;
 #[doc(hidden)]
@@ -55,6 +57,12 @@ pub fn dump(sys: &sys::Sys) -> Result<json::Value, String> {
 /// `bko-holt dump --only-disk`: as `dump`, leaving out every whole disk not
 /// in `only` (none left out when it's empty).
 pub fn dump_only(sys: &sys::Sys, only: &[String]) -> Result<json::Value, String> {
+    dump_with(sys, only, &luksheader::Options::default())
+}
+
+/// `bko-holt dump` with --keep-luks-header and --luks-header-dir
+/// (crate::luksheader).
+pub fn dump_with(sys: &sys::Sys, only: &[String], luks: &luksheader::Options) -> Result<json::Value, String> {
     if let Some(fam) = other::Family::current() {
         if !only.is_empty() {
             return Err("--only-disk works on Linux only".to_string());
@@ -63,5 +71,11 @@ pub fn dump_only(sys: &sys::Sys, only: &[String]) -> Result<json::Value, String>
     }
     let os = osrel::read(sys);
     osrel::check_supported(os.as_ref())?;
-    Ok(report::build_only(sys, os.as_ref(), &timestamp(), only))
+    let v = report::build_with(sys, os.as_ref(), &timestamp(), only, luks);
+    // What the report found that a backup can't follow (an Ubuntu Core
+    // not in a state to back up: snapcore::refusal).
+    match snapcore::refusal(&v) {
+        Some(e) => Err(e),
+        None => Ok(v),
+    }
 }

@@ -5436,3 +5436,480 @@ fn truenas_bootfs_and_targets() {
     let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("vda".into(), "sda".into()), ("vdc".into(), "sdc".into())], ..Default::default() });
     assert!(b.problems.iter().any(|p| p == "TrueNAS: vdb holds a boot-pool vdev but has no target, so GRUB can't be installed on it"), "{:?}", b.problems);
 }
+
+// ---- Ubuntu Core 24 -------------------------------------------------------
+
+const UC_DATA_UUID: &str = "0aa850ad-0ffb-41a5-ba7a-9479f0fb1d79";
+const UC_SAVE_UUID: &str = "3472dc89-900a-4d67-8ac4-21ba0e88f040";
+const UC_BOOT_UUID: &str = "179e8e2f-37a3-46c8-aa2d-352e2d4b6f72";
+const UC_LUKS_DATA: &str = "b93c93b3-cf55-40e1-9972-c5b49656a810";
+const UC_LUKS_SAVE: &str = "e1ba50bc-76db-4c8b-8e4d-df5b02ec295d";
+const UC_SEED_PARTUUID: &str = "954a6c14-611b-4b9f-a025-0c0dcd9ac146";
+
+/// An ext4 sample with label L and UUID U.
+fn ext4_with(label: &str, uuid: &str) -> Vec<u8> {
+    let mut img = ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, label);
+    let b: Vec<u8> = (0..16).map(|i| u8::from_str_radix(&uuid.replace('-', "")[2 * i..2 * i + 2], 16).unwrap()).collect();
+    img[1024 + 104..1024 + 120].copy_from_slice(&b);
+    img
+}
+
+/// Ubuntu Core 24 in run mode as the stock image installs it and
+/// make-ubuntu-core.sh refreshes it (the uc24 and uc24-fde guests,
+/// docs/design/ubuntu-core.md, "What U1 found"), shrunk: the pc gadget's
+/// GPT (BIOS Boot with core.img, the MBR's boot.img, ubuntu-seed vfat
+/// ABA0-ACE2, ubuntu-boot, ubuntu-save, ubuntu-data), `/` the core24 snap
+/// on a loop device, the four partitions at snap-bootstrap's mount points
+/// with snapd's bind mounts beside them, two recovery systems (the image's
+/// 20240603 on pc-kernel 1803, and bko-20261114 on 3908), one kernel,
+/// hello at two revisions.  FDE: ubuntu-save and ubuntu-data are LUKS2
+/// (ubuntu-save-enc, ubuntu-data-enc) opened as dm-1 and dm-0.
+fn snapcore_tree(fde: bool) -> Tree {
+    use crate::efi::GLOBAL;
+    let t = Tree::new(if fde { "scn-uc24-fde" } else { "scn-uc24" });
+    let mut img = vec![0u8; 96 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "9c1b5d6e-0000-4000-8000-0000000000c0",
+            parts: vec![
+                (BIOS_BOOT, "2f78214f-e265-4e5f-aeb8-8c9d13caa2ce", 2048, 4095, 0, "BIOS Boot"),
+                (ESP, UC_SEED_PARTUUID, 4096, 77823, 0, "ubuntu-seed"),
+                (LINUX, "5ec61a69-7e69-4f28-b0e6-4ad2ba4d689c", 77824, 86015, 0, "ubuntu-boot"),
+                (LINUX, "fb2212f5-3d65-4656-89ae-18b3bb660bfb", 86016, 126975, 0, "ubuntu-save"),
+                (LINUX, "ca4a89d0-44fa-4fa8-a211-f1ca46ad4f55", 126976, 188415, 0, "ubuntu-data"),
+            ],
+        },
+    );
+    // pc-boot.img in the MBR's code (the GPT's protective entry after it),
+    // pc-core.img in BIOS Boot.
+    img[..440].copy_from_slice(&grub::grub2_boot_img(2048)[..440]);
+    let mut core = grub::grub2_diskboot_img();
+    core.extend(vec![0x5au8; 3 * 512]);
+    put(&mut img, 2048, &core);
+    put(&mut img, 4096, &fat::sample::fat32(73728, 0xaba0_ace2, "ubuntu-seed"));
+    put(&mut img, 77824, &ext4_with("ubuntu-boot", UC_BOOT_UUID));
+    let (save, data) = if fde {
+        (luks::sample::luks2(UC_LUKS_SAVE, "ubuntu-save-enc"), luks::sample::luks2(UC_LUKS_DATA, "ubuntu-data-enc"))
+    } else {
+        (ext4_with("ubuntu-save", UC_SAVE_UUID), ext4_with("ubuntu-data", UC_DATA_UUID))
+    };
+    put(&mut img, 86016, &save);
+    put(&mut img, 126976, &data);
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 2048, &img)
+        .partition("vda", "vda2", "254:2", 2, 4096, 73728, &img)
+        .partition("vda", "vda3", "254:3", 3, 77824, 8192, &img)
+        .partition("vda", "vda4", "254:4", 4, 86016, 40960, &img)
+        .partition("vda", "vda5", "254:5", 5, 126976, 61440, &img)
+        .file("/sys/block/vda/device/model", "")
+        .disk("loop0", "7:0", &[0u8; 4096], 512)
+        .file("/sys/block/loop0/loop/backing_file", "/var/lib/snapd/snaps/pc_196.snap\n")
+        .disk("loop1", "7:1", &[0u8; 4096], 512)
+        .file("/sys/block/loop1/loop/backing_file", "/var/lib/snapd/snaps/core24_2307.snap\n");
+    let (dsrc, ssrc, ddev, sdev) = if fde {
+        let dm = |dev: &str, devno: &str, name: &str, luks_uuid: &str, part: &str, image: Vec<u8>| {
+            t.disk(dev, devno, &image, 512)
+                .file(&format!("/sys/block/{dev}/dm/name"), format!("{name}\n"))
+                .file(&format!("/sys/block/{dev}/dm/uuid"), format!("CRYPT-LUKS2-{}-{name}\n", luks_uuid.replace('-', "")))
+                .file(&format!("/sys/block/{dev}/slaves/{part}"), "")
+                .file(&format!("/sys/block/vda/{part}/holders/{dev}"), "")
+                .symlink(&format!("/dev/mapper/{name}"), &format!("../{dev}"));
+        };
+        // snap-bootstrap's names: a new UUID each boot.
+        dm("dm-0", "253:0", "ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388", UC_LUKS_DATA, "vda5", ext4_with("ubuntu-data", UC_DATA_UUID));
+        dm("dm-1", "253:1", "ubuntu-save-49a0d13a-7664-46aa-8520-97d6f9bc9b51", UC_LUKS_SAVE, "vda4", ext4_with("ubuntu-save", UC_SAVE_UUID));
+        ("/dev/mapper/ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388", "/dev/mapper/ubuntu-save-49a0d13a-7664-46aa-8520-97d6f9bc9b51", "253:0", "253:1")
+    } else {
+        ("/dev/vda5", "/dev/vda4", "254:5", "254:4")
+    };
+    t.file(
+        "/proc/self/mountinfo",
+        format!(
+            "26 1 7:1 / / ro,relatime shared:1 - squashfs /dev/loop1 ro\n\
+             27 26 254:3 / /run/mnt/ubuntu-boot rw,relatime shared:2 - ext4 /dev/vda3 rw\n\
+             28 26 254:2 / /run/mnt/ubuntu-seed rw,relatime shared:3 - vfat /dev/vda2 rw,fmask=0022,dmask=0022\n\
+             29 26 {ddev} / /run/mnt/data rw,relatime shared:4 - ext4 {dsrc} rw\n\
+             30 26 {sdev} / /run/mnt/ubuntu-save rw,relatime shared:5 - ext4 {ssrc} rw\n\
+             31 26 {ddev} / /writable rw,relatime shared:4 - ext4 {dsrc} rw\n\
+             32 26 {ddev} /system-data/var/lib/snapd /var/lib/snapd rw,relatime shared:6 - ext4 {dsrc} rw\n\
+             33 32 254:2 / /var/lib/snapd/seed rw,relatime shared:3 - vfat /dev/vda2 rw,fmask=0022,dmask=0022\n\
+             34 32 {sdev} / /var/lib/snapd/save rw,relatime shared:5 - ext4 {ssrc} rw\n\
+             35 26 7:0 / /run/mnt/gadget ro,relatime shared:7 - squashfs /dev/loop0 ro\n"
+        ),
+    );
+    let d = "/run/mnt/data/system-data/var/lib/snapd";
+    let v_ = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    t.file("/etc/os-release", crate::osrel::tests::UBUNTU_CORE)
+        .file("/usr/lib/os-release", crate::osrel::tests::UBUNTU_CORE)
+        // What the running system's /etc/fstab holds (the real dumps: the
+        // base snap's binds and tmpfs, none on the four partitions).
+        .file("/etc/fstab", "rootfs / rootfs defaults 0 0\nnone /home none bind 0 0\ntmpfs /tmp tmpfs defaults 0 0\nnone /var/lib/snapd none bind 0 0\n")
+        .file("/proc/sys/kernel/osrelease", "6.8.0-149-generic\n")
+        .file("/proc/cmdline", "snapd_recovery_mode=run console=ttyS0,115200n8 console=tty1 panic=-1\n")
+        .file(&format!("{d}/modeenv"), crate::snapcore::tests::MODEENV_TEXT)
+        .file(&format!("{d}/state.json"), r#"{"data": {"snaps": {"core24": {"type": "base", "sequence": {"revisions": [{"snap": {"name": "core24", "revision": 423}}, {"snap": {"name": "core24", "revision": 2307}}]}, "current": 2307}, "hello": {"type": "app", "sequence": {"revisions": [{"snap": {"name": "hello", "revision": 42}}, {"snap": {"name": "hello", "revision": 29}}]}, "current": 29}, "pc": {"sequence": {"revisions": [{"snap": {"name": "pc", "revision": 178}}, {"snap": {"name": "pc", "revision": 196}}]}, "current": 196}, "pc-kernel": {"sequence": {"revisions": [{"snap": {"name": "pc-kernel", "revision": 1803}}, {"snap": {"name": "pc-kernel", "revision": 3908}}]}, "current": 3908}}}}"#);
+    for f in ["core24_423", "core24_2307", "hello_42", "hello_29", "pc_178", "pc_196", "pc-kernel_1803", "pc-kernel_3908"] {
+        t.file(&format!("{d}/snaps/{f}.snap"), "hsqs");
+    }
+    t.file("/run/mnt/data/bko-mark", "data\n")
+        .file("/run/mnt/ubuntu-save/bko-mark", "save\n")
+        .file("/run/mnt/ubuntu-save/device/fde/marker", if fde { "m" } else { "" })
+        .file("/run/mnt/ubuntu-boot/device/model", crate::snapcore::tests::MODEL_TEXT)
+        .file("/run/mnt/ubuntu-boot/EFI/boot/grubx64.efi", vec![2u8; 400])
+        .file("/run/mnt/ubuntu-boot/EFI/ubuntu/grub.cfg", "# Snapd-Boot-Config-Edition: 3\n")
+        .file("/run/mnt/ubuntu-boot/EFI/ubuntu/grubenv", crate::snapcore::tests::grubenv(&["kernel_status=", "snapd_extra_cmdline_args=", "snapd_full_cmdline_args=console=ttyS0,115200n8 console=tty1 panic=-1"]))
+        .file("/run/mnt/ubuntu-boot/EFI/ubuntu/pc-kernel_3908.snap/kernel.efi", vec![9u8; 500])
+        .file("/run/mnt/ubuntu-boot/EFI/ubuntu/pc-kernel_1803.snap/kernel.efi", vec![8u8; 500])
+        .symlink("/run/mnt/ubuntu-boot/EFI/ubuntu/kernel.efi", "pc-kernel_3908.snap/kernel.efi")
+        .file("/run/mnt/ubuntu-seed/EFI/boot/bootx64.efi", vec![1u8; 300])
+        .file("/run/mnt/ubuntu-seed/EFI/boot/fbx64.efi", vec![3u8; 300])
+        .file("/run/mnt/ubuntu-seed/EFI/ubuntu/shimx64.efi", vec![1u8; 300])
+        .file("/run/mnt/ubuntu-seed/EFI/ubuntu/grubx64.efi", vec![2u8; 400])
+        .file("/run/mnt/ubuntu-seed/EFI/ubuntu/bootx64.csv", "shimx64.efi,ubuntu\n")
+        .file("/run/mnt/ubuntu-seed/EFI/ubuntu/grub.cfg", "# Snapd-Boot-Config-Edition: 2\n")
+        .file("/run/mnt/ubuntu-seed/EFI/ubuntu/grubenv", crate::snapcore::tests::grubenv(&["snapd_recovery_mode=run", "snapd_recovery_system=", "snapd_good_recovery_systems=20240603,bko-20261114", "recovery_system_status=", "try_recovery_system="]));
+    for (label, kernel) in [("20240603", "pc-kernel_1803"), ("bko-20261114", "pc-kernel_3908")] {
+        t.file(&format!("/run/mnt/ubuntu-seed/systems/{label}/model"), crate::snapcore::tests::MODEL_TEXT)
+            .file(&format!("/run/mnt/ubuntu-seed/systems/{label}/grubenv"), crate::snapcore::tests::grubenv(&[&format!("snapd_recovery_kernel=/snaps/{kernel}.snap"), "snapd_extra_cmdline_args=", "snapd_full_cmdline_args=console=ttyS0 console=tty1 panic=-1"]))
+            .dir(&format!("/run/mnt/ubuntu-seed/systems/{label}/assertions"));
+    }
+    for f in ["core24_423", "core24_2307", "pc_178", "pc_196", "pc-kernel_1803", "pc-kernel_3908", "snapd_21759", "snapd_28332"] {
+        t.file(&format!("/run/mnt/ubuntu-seed/snaps/{f}.snap"), "hsqs");
+    }
+    if fde {
+        t.file("/run/mnt/ubuntu-boot/device/fde/ubuntu-data.sealed-key", vec![0u8; 64])
+            .file("/run/mnt/ubuntu-seed/device/fde/ubuntu-data.recovery.sealed-key", vec![0u8; 64])
+            .file("/run/mnt/ubuntu-seed/device/fde/ubuntu-save.recovery.sealed-key", vec![0u8; 64]);
+    }
+    // shim's fallback's entry, from the restored seed (U1).
+    t.symlink(&format!("/dev/disk/by-partuuid/{UC_SEED_PARTUUID}"), "../../vda2")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&v_("Boot0007"), efi_load_option("ubuntu", 2, 4096, 73728, UC_SEED_PARTUUID, "\\EFI\\ubuntu\\shimx64.efi"))
+        .file(&v_("BootOrder"), [7u8, 0, 0, 0, 7, 0])
+        .file(&v_("BootCurrent"), [6u8, 0, 0, 0, 7, 0])
+        .file(&v_("SecureBoot"), [6u8, 0, 0, 0, 1]);
+    t
+}
+
+/// The commands a dump of Ubuntu Core runs: the base snap's os-release,
+/// `snap changes`, and `cryptsetup luksHeaderBackup` (which writes the
+/// first bytes of the device, as far as the sample's header reaches).
+struct SnapcoreRunner {
+    inner: FakeRunner,
+    root: std::path::PathBuf,
+}
+
+impl crate::sys::Runner for SnapcoreRunner {
+    fn run(&self, prog: &str, args: &[&str]) -> Option<String> {
+        if prog == "cryptsetup" && args.first() == Some(&"luksHeaderBackup") {
+            let dev = std::fs::read(self.root.join(args[1].trim_start_matches('/'))).ok()?;
+            std::fs::write(self.root.join(args[3].trim_start_matches('/')), &dev[..dev.len().min(2 * 16384 + 16744448)]).ok()?;
+            return Some(String::new());
+        }
+        self.inner.run(prog, args)
+    }
+    fn installed(&self, prog: &str) -> bool {
+        self.inner.installed(prog)
+    }
+}
+
+fn snapcore_sys(t: &Tree, changes: &str) -> Sys {
+    let base = "/run/mnt/data/system-data/var/lib/snapd/snaps/core24_2307.snap";
+    let inner = FakeRunner::default()
+        .with(&format!("unsquashfs -cat {base} usr/lib/os-release"), crate::osrel::tests::UBUNTU_CORE)
+        .with("snap changes", &format!("ID   Status  Spawn               Ready               Summary\n1    Done    today at 12:30 UTC  today at 12:31 UTC  Initialize system state\n{changes}"));
+    Sys::new(t.root(), Box::new(SnapcoreRunner { inner, root: t.root().to_path_buf() }), true)
+}
+
+/// `run`, through SYS (its runner a SnapcoreRunner).
+fn snapcore_run(sys: &Sys) -> Value {
+    let os = crate::osrel::read(sys);
+    crate::osrel::check_supported(os.as_ref()).unwrap();
+    let v = crate::report::build(sys, os.as_ref(), "2026-11-14T00:00:00Z");
+    assert_eq!(crate::json::parse(&v.compact()).unwrap().compact(), v.compact());
+    if let Err(e) = crate::bugreport::check_plan(&v.pretty()) {
+        panic!("redaction: {e}");
+    }
+    v
+}
+
+fn snapcore_plan(v: &Value, extra: &[&str]) -> crate::load::commands::Built {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let l = Layout::from_json(v.clone()).unwrap();
+    let mut a = vec!["/run/x/l.json".to_string()];
+    a.extend(extra.iter().map(|s| s.to_string()));
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&a) else { unreachable!() };
+    commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() })
+}
+
+/// The plain uc24: boot.snapcore (docs/design/ubuntu-core.md, U2) from
+/// modeenv, the model, the seed and ubuntu-boot; os-release from the base
+/// snap; every snap revision; the gadget's boot areas; backup_sources the
+/// four roots in place of the base snap and its binds.  Planned (U3): the
+/// gadget's partitions exactly, every filesystem with its label and UUID
+/// (the seed's volume ID ABA0-ACE2), the four at snap-bootstrap's mount
+/// points, and a boot stage that regenerates nothing: the check, the
+/// boot areas, the log; no grub-install, no efibootmgr.
+#[test]
+fn snapcore_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let t = snapcore_tree(false);
+    let v = snapcore_run(&snapcore_sys(&t, ""));
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+    assert_eq!(s(&v, &["os", "id"]), "ubuntu-core");
+    assert_eq!(crate::snapcore::refusal(&v), None);
+    let sc = v.at(&["boot", "snapcore"]).expect("boot.snapcore");
+    assert_eq!(sc.get("encrypted"), Some(&Value::Bool(false)));
+    let roles: Vec<(&str, &str, &str, &str)> = arr(sc, &["partitions"]).iter().map(|p| (s(p, &["role"]), s(p, &["device"]), s(p, &["fs_label"]), s(p, &["at"]))).collect();
+    assert_eq!(
+        roles,
+        vec![
+            ("seed", "vda2", "ubuntu-seed", "/run/mnt/ubuntu-seed"),
+            ("boot", "vda3", "ubuntu-boot", "/run/mnt/ubuntu-boot"),
+            ("save", "vda4", "ubuntu-save", "/run/mnt/ubuntu-save"),
+            ("data", "vda5", "ubuntu-data", "/run/mnt/data")
+        ]
+    );
+    assert_eq!(s(sc, &["partitions", "0", "fs_uuid"]), "ABA0-ACE2");
+    assert_eq!(s(sc, &["partitions", "0", "partuuid"]), UC_SEED_PARTUUID);
+    assert_eq!(s(sc, &["modeenv", "mode"]), "run");
+    assert_eq!(arr(sc, &["modeenv", "current_recovery_systems"]).len(), 2);
+    assert_eq!(s(sc, &["modeenv", "current_kernels", "0"]), "pc-kernel_3908.snap");
+    assert_eq!((s(sc, &["model", "gadget"]), s(sc, &["model", "grade"]), s(sc, &["model", "base"])), ("pc", "signed", "core24"));
+    assert!(sc.at(&["model", "storage_safety"]).is_some_and(Value::is_null));
+    assert_eq!((s(sc, &["os_release", "id"]), s(sc, &["os_release", "version_id"])), ("ubuntu-core", "24"));
+    assert!(s(sc, &["os_release", "source"]).starts_with("base snap "));
+    assert_eq!(s(sc, &["boot", "run_kernel"]), "pc-kernel_3908.snap/kernel.efi");
+    assert_eq!(arr(sc, &["boot", "kernels"]).len(), 2);
+    assert_eq!(s(sc, &["seed", "snapd_recovery_mode"]), "run");
+    assert_eq!((s(sc, &["seed", "systems", "0", "label"]), s(sc, &["seed", "systems", "0", "kernel"])), ("20240603", "/snaps/pc-kernel_1803.snap"));
+    assert_eq!(s(sc, &["seed", "systems", "1", "kernel"]), "/snaps/pc-kernel_3908.snap");
+    let hello = arr(sc, &["snaps"]).iter().find(|x| x.get("name").and_then(Value::as_str) == Some("hello")).unwrap();
+    assert_eq!((s(hello, &["current"]), arr(hello, &["revisions"]).len(), arr(hello, &["files"]).len()), ("29", 2, 2));
+    assert_eq!(u(sc, &["changes_in_progress"]), 0);
+    assert_eq!((s(sc, &["boot_areas", "disk"]), s(sc, &["boot_areas", "mbr_code_kind"])), ("vda", "grub2"));
+    assert_eq!(u(sc, &["boot_areas", "bios_boot", "image_bytes"]), 2048);
+    assert!(v.at(&["storage", "luks_headers"]).is_none());
+    // backup_sources: the four roots, live, with the mounts an offline
+    // backup makes; not / (the base snap) nor the binds.
+    let bs = arr(&v, &["storage", "backup_sources"]);
+    let paths: Vec<(&str, &str, &str)> = bs.iter().map(|b| (s(b, &["path"]), s(b, &["from"]), s(b, &["mount", "device"]))).collect();
+    assert_eq!(
+        paths,
+        vec![
+            ("/run/mnt/ubuntu-seed", "/run/mnt/ubuntu-seed", "/dev/disk/by-uuid/ABA0-ACE2"),
+            ("/run/mnt/ubuntu-boot", "/run/mnt/ubuntu-boot", "/dev/disk/by-uuid/179e8e2f-37a3-46c8-aa2d-352e2d4b6f72"),
+            ("/run/mnt/ubuntu-save", "/run/mnt/ubuntu-save", "/dev/disk/by-uuid/3472dc89-900a-4d67-8ac4-21ba0e88f040"),
+            ("/run/mnt/data", "/run/mnt/data", "/dev/disk/by-uuid/0aa850ad-0ffb-41a5-ba7a-9479f0fb1d79")
+        ]
+    );
+    assert_eq!(s(&bs[3], &["mount", "options"]), "ro,noload,nodev,nosuid,noexec");
+    assert!(v.at(&["storage", "physical_root"]).is_some_and(Value::is_null));
+
+    let b = snapcore_plan(&v, &[]);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    assert_eq!(crate::other::restored_marker(&v), "run/mnt/data/system-data/var/lib/snapd/modeenv");
+    assert!(b.notes.iter().any(|n| n.starts_with("Ubuntu Core (unencrypted)")), "{:?}", b.notes);
+    assert!(!b.notes.iter().any(|n| n.starts_with("fstab's")), "{:?}", b.notes);
+    let text = |st: Stage| b.stage(st).iter().map(Cmd::shell).collect::<String>();
+    let part = text(Stage::Partition);
+    for l in [
+        "/dev/vdb1 : start=2048, size=2048, type=21686148-6449-6E6F-744E-656564454649, uuid=2F78214F-E265-4E5F-AEB8-8C9D13CAA2CE, name=\"BIOS Boot\"\n",
+        "/dev/vdb2 : start=4096, size=73728, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=954A6C14-611B-4B9F-A025-0C0DCD9AC146, name=\"ubuntu-seed\"\n",
+        "/dev/vdb3 : start=77824, size=8192, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=5EC61A69-7E69-4F28-B0E6-4AD2BA4D689C, name=\"ubuntu-boot\"\n",
+        "/dev/vdb4 : start=86016, size=40960, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=FB2212F5-3D65-4656-89AE-18B3BB660BFB, name=\"ubuntu-save\"\n",
+        "/dev/vdb5 : start=126976, size=61440, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid=CA4A89D0-44FA-4FA8-A211-F1CA46AD4F55, name=\"ubuntu-data\"\n",
+    ] {
+        assert!(part.contains(l), "{l}: {part}");
+    }
+    let fmt = text(Stage::Format);
+    let line = |end: &str| fmt.lines().find(|l| l.starts_with("mk") && l.split_whitespace().any(|w| w == end)).unwrap_or_else(|| panic!("{end}: {fmt}")).to_string();
+    let seed = line("/dev/vdb2");
+    assert!(seed.starts_with("mkfs.fat") && seed.contains("-i ABA0ACE2") && seed.contains("-n ubuntu-seed"), "{seed}");
+    for (end, label, uuid) in [("/dev/vdb3", "ubuntu-boot", UC_BOOT_UUID), ("/dev/vdb4", "ubuntu-save", UC_SAVE_UUID), ("/dev/vdb5", "ubuntu-data", UC_DATA_UUID)] {
+        let l = line(end);
+        assert!(l.contains(&format!("-L {label}")) && l.contains(&format!("-U {uuid}")), "{l}");
+    }
+    let m = text(Stage::Mount);
+    for l in [
+        "mount -t vfat -o defaults /dev/vdb2 /mnt/bko-target/run/mnt/ubuntu-seed\n",
+        "mount -t ext4 -o defaults /dev/vdb3 /mnt/bko-target/run/mnt/ubuntu-boot\n",
+        "mount -t ext4 -o defaults /dev/vdb4 /mnt/bko-target/run/mnt/ubuntu-save\n",
+        "mount -t ext4 -o defaults /dev/vdb5 /mnt/bko-target/run/mnt/data\n",
+    ] {
+        assert!(m.contains(l), "{l}: {m}");
+    }
+    assert!(!m.contains("/mnt/bko-target\n"), "{m}");
+    let bt = text(Stage::Boot);
+    // The atimes of the tree under run/mnt are listed, and put back.
+    for st in [Stage::Restore, Stage::Boot] {
+        let x = text(st);
+        assert!(x.contains("-path '\\''/mnt/bko-target/run/*'\\'' ! -path /mnt/bko-target/run/mnt ! -path '\\''/mnt/bko-target/run/mnt/*'\\''") || x.contains("no --repo"), "{x}");
+    }
+    assert_eq!(bt.matches("! -path /mnt/bko-target/run/mnt ").count(), 2, "{bt}");
+    let run: String = bt.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n");
+    for no in ["chroot", "grub-install", "update-grub", "grub-mkconfig", "efibootmgr", "update-initramfs", "dracut", "--rbind", "grub-editenv"] {
+        assert!(!run.contains(no), "{no}: {bt}");
+    }
+    let pos = |x: &str| bt.find(x).unwrap_or_else(|| panic!("{x}: {bt}"));
+    let check = pos("wk=pc-kernel_3908.snap; ws=");
+    let areas = pos(" snapcore-boot-areas /run/x/l.json vda /dev/vdb");
+    let log = pos("mkdir -p /mnt/bko-target/run/mnt/data/system-data/var/log/bko-holt\n");
+    let back = pos("atimes.after");
+    assert!(check < areas && areas < log && log < back, "{bt}");
+    // --new-machine is for FDE; --new-uuids isn't restored.
+    assert!(snapcore_plan(&v, &["--new-machine"]).problems.iter().any(|p| p.starts_with("--new-machine is for an encrypted Ubuntu Core")));
+    assert!(snapcore_plan(&v, &["--new-uuids"]).problems.iter().any(|p| p.starts_with("Ubuntu Core with --new-uuids isn't restored")));
+    // Not Ubuntu Core: --new-machine is refused.
+    let lv = self::run(&luks_lvm_tree(), true, FakeRunner::default());
+    assert!(snapcore_plan(&lv, &["--new-machine"]).problems.iter().any(|p| p == "--new-machine is for an encrypted Ubuntu Core; this layout isn't one"));
+}
+
+/// uc24-fde: both LUKS2 headers kept (dump writes them beside the layout,
+/// their SHA-256 in storage.luks_headers), written back by
+/// luksHeaderRestore and opened with the recovery key's key file: no
+/// luksFormat, no luksAddKey.  The same-machine promise in the notes;
+/// --new-machine points the restored seed at recover mode of the image's
+/// recovery system.
+#[test]
+fn snapcore_fde_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let t = snapcore_tree(true);
+    let v = snapcore_run(&snapcore_sys(&t, ""));
+    let w = arr(&v, &["warnings"]);
+    assert!(w.len() == 1 && w[0].as_str().unwrap().starts_with("Ubuntu Core: the LUKS2 headers are files in /run/bko-holt/luks-headers (RAM, gone at the next boot): keep them with this dump"), "{w:?}");
+    let sc = v.at(&["boot", "snapcore"]).unwrap();
+    assert_eq!(sc.get("encrypted"), Some(&Value::Bool(true)));
+    let data = arr(sc, &["partitions"])[3].clone();
+    assert_eq!((s(&data, &["luks", "label"]), s(&data, &["luks", "dm_device"]), s(&data, &["fs_label"])), ("ubuntu-data-enc", "dm-0", "ubuntu-data"));
+    assert_eq!(arr(sc, &["save", "fde_files"]).len(), 1);
+    assert_eq!(arr(sc, &["seed", "fde_files"]).len(), 2);
+    let hs = arr(&v, &["storage", "luks_headers"]);
+    let dev: Vec<(&str, &str)> = hs.iter().map(|h| (s(h, &["device"]), s(h, &["file"]))).collect();
+    assert_eq!(dev, vec![("vda4", "luks2-header-e1ba50bc-76db-4c8b-8e4d-df5b02ec295d.img"), ("vda5", "luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img")]);
+    let hdir = t.p("/run/bko-holt/luks-headers").to_string_lossy().into_owned();
+    for h in hs {
+        assert_eq!(crate::luksheader::check_file(&format!("{hdir}/{}", s(h, &["file"])), h), None);
+    }
+    // backup_sources: the opened volumes, the hints by the inner UUIDs.
+    let bs = arr(&v, &["storage", "backup_sources"]);
+    assert_eq!(s(&bs[3], &["source"]), "/dev/mapper/ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388");
+    assert_eq!(s(&bs[3], &["device"]), "dm-0");
+    assert!(s(&bs[3], &["note"]).contains("bko-holt recovery-key-file"));
+
+    let key = "/run/key";
+    let kf = ["--luks-header-dir", &hdir, "--key-file", &format!("ubuntu-data-enc={key}"), "--key-file", &format!("ubuntu-save-enc={key}")];
+    let b = snapcore_plan(&v, &kf);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    assert!(b.notes.iter().any(|n| n.contains("On the same machine (the same TPM and Secure Boot variables, dbx included) it boots unattended only if nothing was resealed since the backup")), "{:?}", b.notes);
+    assert!(b.notes.iter().any(|n| n.contains("must be kept with the dump")), "{:?}", b.notes);
+    // A data segment of a fixed size must fit whole (a dynamic one, only
+    // its offset).
+    let fixed = crate::json::parse(&v.compact().replace("\"size\":\"dynamic\"", "\"size\":\"999999999999\"")).unwrap();
+    let p = snapcore_plan(&fixed, &kf).problems;
+    assert!(p.iter().any(|x| x.starts_with("vda5: its kept LUKS2 header's data segment needs 1000016777215 bytes")), "{p:?}");
+    let text = |b: &crate::load::commands::Built, st: Stage| b.stage(st).iter().map(Cmd::shell).collect::<String>();
+    let asm = text(&b, Stage::Assemble);
+    for l in [
+        format!("cryptsetup luksHeaderRestore --batch-mode /dev/vdb4 --header-backup-file {hdir}/luks2-header-e1ba50bc-76db-4c8b-8e4d-df5b02ec295d.img\n"),
+        format!("cryptsetup open --key-file={key} /dev/vdb4 ubuntu-save-49a0d13a-7664-46aa-8520-97d6f9bc9b51\n"),
+        format!("cryptsetup luksHeaderRestore --batch-mode /dev/vdb5 --header-backup-file {hdir}/luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img\n"),
+        format!("cryptsetup open --key-file={key} /dev/vdb5 ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388\n"),
+    ] {
+        assert!(asm.contains(&l), "{l}: {asm}");
+    }
+    let cmds: String = asm.lines().filter(|l| !l.starts_with('#')).collect::<Vec<_>>().join("\n");
+    for no in ["luksFormat", "luksAddKey", "token"] {
+        assert!(!cmds.contains(no), "{no}: {asm}");
+    }
+    let fmt = text(&b, Stage::Format);
+    assert!(fmt.lines().any(|l| l.starts_with("mke2fs") && l.contains("-L ubuntu-data") && l.contains(UC_DATA_UUID) && l.contains(" /dev/mapper/ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388 ")), "{fmt}");
+    let m = text(&b, Stage::Mount);
+    assert!(m.contains("mount -t ext4 -o defaults /dev/mapper/ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388 /mnt/bko-target/run/mnt/data\n"), "{m}");
+    assert!(text(&b, Stage::Close).contains("cryptsetup close ubuntu-data-c9cf40c5-5578-4f1e-a5ab-f65db95b8388"));
+    let bt = text(&b, Stage::Boot);
+    assert!(!bt.contains("efibootmgr") && !bt.contains("grub-editenv"), "{bt}");
+
+    // --new-machine: recover mode of the image's system, by grub-editenv on
+    // the restored seed, after the check.
+    let b = snapcore_plan(&v, &[&kf[..], &["--new-machine"]].concat());
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt = text(&b, Stage::Boot);
+    let ed = bt.find("grub-editenv /mnt/bko-target/run/mnt/ubuntu-seed/EFI/ubuntu/grubenv set snapd_recovery_mode=recover snapd_recovery_system=20240603\n").unwrap_or_else(|| panic!("{bt}"));
+    assert!(bt.find("wk=pc-kernel_3908.snap").unwrap() < ed);
+    assert!(b.notes.iter().any(|n| n.contains("--new-machine: the restored seed's grubenv boots recover mode of 20240603")), "{:?}", b.notes);
+
+    // Without the key, or the header file: refused, naming what to do.
+    let p = snapcore_plan(&v, &["--luks-header-dir", &hdir]).problems;
+    assert!(p.iter().any(|x| x.contains("vda5: its LUKS2 header is kept, so it opens only with a key it already has: give --key-file ubuntu-data-enc=FILE") && x.contains("bko-holt recovery-key-file FILE")), "{p:?}");
+    let p = snapcore_plan(&v, &kf[2..]).problems;
+    assert!(p.iter().any(|x| x.starts_with("vda5: the LUKS2 header the dump kept: /run/x/luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img")), "{p:?}");
+    std::fs::write(format!("{hdir}/luks2-header-b93c93b3-cf55-40e1-9972-c5b49656a810.img"), b"LUKS").unwrap();
+    let p = snapcore_plan(&v, &kf).problems;
+    assert!(p.iter().any(|x| x.contains("isn't the header the dump kept (its SHA-256 differs)")), "{p:?}");
+    let p = snapcore_plan(&v, &[&kf[..], &["--new-uuids"]].concat()).problems;
+    assert!(p.iter().any(|x| x.contains("--new-uuids, and the dump kept its LUKS2 header")), "{p:?}");
+    // A dump that kept no header (not root, no cryptsetup): refused.
+    let mut w = v.clone();
+    if let Value::Obj(o) = &mut w {
+        for (k, x) in o.iter_mut() {
+            if k == "storage" {
+                if let Value::Obj(so) = x {
+                    so.retain(|(k, _)| k != "luks_headers");
+                }
+            }
+        }
+    }
+    let p = snapcore_plan(&w, &kf).problems;
+    assert!(p.iter().any(|x| x.starts_with("Ubuntu Core: the dump kept no LUKS2 header of ubuntu-data (vda5)")), "{p:?}");
+    assert!(snapcore_plan(&w, &kf).stage(Stage::Assemble).iter().any(|c| c.argv.get(1).is_some_and(|a| a == "luksFormat")), "the generic path, refused by the problem above");
+}
+
+/// What the dump refuses (docs/design/ubuntu-core.md, "dump", v1): not run
+/// mode, a kernel being tried, changes in progress, another gadget, a
+/// locked ubuntu-data; and load's own refusal of a resized seed.
+#[test]
+fn snapcore_refusals() {
+    let t = snapcore_tree(false);
+    let refused = |t: &Tree, changes: &str| -> String {
+        let sys = snapcore_sys(t, changes);
+        let v = crate::report::build(&sys, crate::osrel::read(&sys).as_ref(), "2026-11-14T00:00:00Z");
+        crate::snapcore::refusal(&v).unwrap_or_default()
+    };
+    let r = refused(&t, "7    Doing   today at 13:01 UTC  -                   Auto-refresh snap \"pc-kernel\"\n");
+    assert!(r.contains("`snap changes` shows 1 change(s) in progress (7 Doing)"), "{r}");
+    let d = "/run/mnt/data/system-data/var/lib/snapd/modeenv";
+    t.file(d, crate::snapcore::tests::MODEENV_TEXT.replace("mode=run", "mode=recover"));
+    assert!(refused(&t, "").contains("modeenv says mode=recover: dump runs in run mode"));
+    t.file(d, crate::snapcore::tests::MODEENV_TEXT);
+    t.file("/run/mnt/ubuntu-boot/EFI/ubuntu/grubenv", crate::snapcore::tests::grubenv(&["kernel_status=try"]));
+    assert!(refused(&t, "").contains("a kernel refresh is being tried (the run grubenv's kernel_status=try)"));
+    t.file("/run/mnt/ubuntu-boot/EFI/ubuntu/grubenv", crate::snapcore::tests::grubenv(&["kernel_status="]));
+    t.file("/run/mnt/ubuntu-boot/device/model", crate::snapcore::tests::MODEL_TEXT.replace("name: pc\n", "name: pi\n"));
+    assert!(refused(&t, "").contains("the model's gadget is pi, not pc"));
+    t.file("/run/mnt/ubuntu-boot/device/model", crate::snapcore::tests::MODEL_TEXT);
+    assert_eq!(refused(&t, ""), "");
+    // A locked ubuntu-data (recover mode of a system that didn't unlock it).
+    let t = snapcore_tree(true);
+    std::fs::remove_file(t.p("/sys/block/vda/vda5/holders/dm-0")).unwrap();
+    let r = refused(&t, "");
+    assert!(r.contains("ubuntu-data (vda5, ubuntu-data-enc) is encrypted and not open") && r.contains("bko-holt recovery-key-file KEY"), "{r}");
+    // A header that couldn't be kept (no cryptsetup): refused.
+    let t = snapcore_tree(true);
+    let sys = Sys::new(t.root(), Box::new(FakeRunner::default().without("cryptsetup")), true);
+    let v = crate::report::build(&sys, crate::osrel::read(&sys).as_ref(), "2026-11-14T00:00:00Z");
+    let r = crate::snapcore::refusal(&v).unwrap_or_default();
+    assert!(r.contains("the LUKS2 header of vda4 wasn't kept") && r.contains("the LUKS2 header of vda5 wasn't kept"), "{r}");
+    assert!(crate::dump(&sys).is_err());
+    // A seed of another size (a fit that took the wrong partition).
+    let t = snapcore_tree(false);
+    let v = snapcore_run(&snapcore_sys(&t, ""));
+    let c = v.compact();
+    let at = c.find("\"partlabel\":\"ubuntu-seed\"").unwrap();
+    let from = c[..at].rfind("\"size_bytes\":37748736").unwrap();
+    let v = crate::json::parse(&format!("{}\"size_bytes\":{}{}", &c[..from], 40u64 << 20, &c[from + "\"size_bytes\":37748736".len()..])).unwrap();
+    let p = snapcore_plan(&v, &[]).problems;
+    assert!(p.iter().any(|x| x.starts_with("Ubuntu Core: ubuntu-seed (vda2) would be 40 MiB instead of the gadget's 36 MiB")), "{p:?}");
+}

@@ -136,7 +136,12 @@ pub fn openindiana_release(text: &str) -> Option<OsRelease> {
 /// (Debian sid) runs ABRoot v2 (crate::abroot): two roots on LVM thin LVs
 /// and an init LV with their kernels, all restored as they were, with no
 /// initramfs, grub-install or update-grub (docs/design/vanillaos.md); its
-/// test is `vanilla3` in HoltTest1Obscure.
+/// test is `vanilla3` in HoltTest1Obscure.  Ubuntu Core 24 (all-snap, its
+/// `/` the core24 base snap) is the files on the pc gadget's four
+/// partitions (crate::snapcore), restored as they were with every LUKS2
+/// header kept (crate::luksheader), and nothing regenerated
+/// (docs/design/ubuntu-core.md); its tests are `uc24` and `uc24-fde` in
+/// HoltTest1U.
 pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("debian", "13", "Debian 13"),
     ("linuxmint", "22", "Linux Mint 22"),
@@ -234,6 +239,9 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     // Read off their disks (dump --disk): no VERSION_ID.
     ("redox", "", "Redox"),
     ("sculpt", "", "Sculpt OS"),
+    // The base snap's os-release (core24): VERSION_ID="24".  Not 20 or 22,
+    // whose FDE keys live otherwise, nor 26 until a guest shows it.
+    ("ubuntu-core", "24", "Ubuntu Core 24"),
 ];
 
 /// Whether ID and VERSION_ID name a supported system: the same major version
@@ -281,7 +289,7 @@ pub fn to_json(sys: &Sys, os: Option<&OsRelease>) -> Value {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
     use crate::sys::FakeRunner;
     use crate::testutil::Tree;
@@ -328,7 +336,7 @@ mod tests {
         assert!(check_supported(Some(&parse(neon))).is_ok());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, openSUSE Leap 16, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox or Sculpt OS"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, openSUSE Leap 16, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox, Sculpt OS or Ubuntu Core 24"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -671,6 +679,25 @@ mod tests {
         let e = check_supported(Some(&parse("ID=sunos\nVERSION_ID=\"5.11\"\nPRETTY_NAME=\"SunOS 5.11\"\n"))).unwrap_err();
         assert!(e.contains("this is SunOS 5.11 (ID=sunos, VERSION_ID=5.11)") && e.contains("OmniOS, OpenIndiana,"), "{e}");
         assert!(check_supported(Some(&parse("ID=solaris\nVERSION_ID=\"11.4\"\n"))).is_err());
+    }
+
+    /// The core24 base snap's os-release (docs/design/ubuntu-core.md, "What
+    /// U1 found": core24 423 and 2307 alike).
+    pub(crate) const UBUNTU_CORE: &str = "NAME=\"Ubuntu Core\"\nVERSION=\"24\"\nID=ubuntu-core\nPRETTY_NAME=\"Ubuntu Core 24\"\nVERSION_ID=\"24\"\nHOME_URL=\"https://snapcraft.io/\"\nBUG_REPORT_URL=\"https://bugs.launchpad.net/snappy/\"\n";
+
+    #[test]
+    fn ubuntu_core() {
+        let o = parse(UBUNTU_CORE);
+        assert_eq!((o.get("ID"), o.get("VERSION_ID")), (Some("ubuntu-core"), Some("24")));
+        assert!(check_supported(Some(&o)).is_ok());
+        assert!(supported_names().ends_with(", Sculpt OS or Ubuntu Core 24"));
+        // UC20 and UC22 keep their FDE keys otherwise; UC26 isn't tested.
+        for v in ["20", "22", "26"] {
+            let e = check_supported(Some(&parse(&UBUNTU_CORE.replace("\"24\"", &format!("\"{v}\""))))).unwrap_err();
+            assert!(e.contains(&format!("(ID=ubuntu-core, VERSION_ID={v})")) && e.contains("Ubuntu Core 24"), "{e}");
+        }
+        // Ubuntu's own row is another.
+        assert!(check_supported(Some(&parse("ID=ubuntu\nVERSION_ID=\"24\"\n"))).is_ok());
     }
 
     #[test]

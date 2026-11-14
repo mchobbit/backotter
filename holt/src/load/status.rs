@@ -179,9 +179,10 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     // (lstat only: following /etc/os-release, a symlink, would bump its atime.)
     // On ostree, the physical root has no etc: the repository's config.  On
     // ABRoot, the present root's abimage.abr (its raw etc is the image's).
+    // On Ubuntu Core, ubuntu-data's modeenv (it has no `/` of its own).
     let restored = tree_up
         && match crate::other::Family::of_layout(&layout.v) {
-            None if crate::load::ostree::of(&layout.v).is_none() && crate::load::abroot::of(&layout.v).is_none() => sys.exists(&format!("{t}/etc/fstab")) && sys.exists(&format!("{t}/etc/os-release")),
+            None if crate::load::ostree::of(&layout.v).is_none() && crate::load::abroot::of(&layout.v).is_none() && crate::load::snapcore::of(&layout.v).is_none() => sys.exists(&format!("{t}/etc/fstab")) && sys.exists(&format!("{t}/etc/os-release")),
             _ => sys.exists(&format!("{t}/{}", crate::other::restored_marker(&layout.v))),
         };
     // Not from the tree: a backup of a machine restored before holds that

@@ -161,9 +161,14 @@ holt/README.md and in the plan's notes:
 - **uc24-fde onto the same machine** (same TPM, same Secure Boot
   variables: PK, KEK, db, dbx, SbatLevel):
   restored file-exact, with both LUKS2 headers byte-identical. It boots
-  unattended. Loading needs the recovery key (`--key-file`), as dumping
-  does: the rescue system's boot chain is not the one the key is sealed
-  to, so the TPM never unseals for bko-holt.
+  unattended **only if nothing was resealed since the backup** (U2/U3
+  review): a kernel, gadget or snapd refresh, or a new recovery system,
+  after the backup reseals the keys and advances the TPM's NV policy
+  counter, which revokes the sealed-key objects the backup holds; run mode
+  then boot-loops as on a new machine, and `--new-machine` is the way in.
+  Loading needs the recovery key (`--key-file`): the rescue system's boot
+  chain is not the one the key is sealed to, so the TPM never unseals for
+  bko-holt (dumping, in the running system, needs none: U2).
 - **uc24-fde onto a new machine: the recover-mode limit** (Decision 2b).
   The same restore. Run mode reboots in a loop, so `load --new-machine`
   writes `snapd_recovery_mode=recover` into the restored seed's
@@ -407,6 +412,7 @@ cells:
 | c | `uc24-fde` | **the source's** swtpm state and OVMF vars, copied | Unattended boot: no recovery-key prompt on the serial log, SSH up, cell a's checks, and `snap recovery --show-keys` the source's key |
 | d | `uc24-fde` | a **new** swtpm dir and fresh OVMF vars, loaded with `--new-machine` | The LIMIT: the first boot is recover mode; the key is typed on tty1 through QMP (`qmp.py`) only once the prompt shows in a screen grab; then SSH in recover mode with `degraded.json` naming ubuntu-data unlocked and both marks readable. Then `snap reboot --run` must loop as U1 saw (recorded, not a FAIL) |
 | e | `uc24-fde` | the source's TPM | `vm-update`'s kernel refresh on the **restored** disk, then an unattended boot (snapd's reseal works on a restored system) |
+| f | `uc24-fde` | the source's TPM, copied **after** a reseal | Back up; refresh the kernel on the source (snapd reseals, the TPM's policy counter advances); restore the **old** backup onto a blank disk and boot it on that TPM. Record what happens: expected a run-mode boot loop (the restored sealed keys revoked), then recover mode by `--new-machine` |
 
 judge.py **requires** these to be byte-identical to the source's:
 - everything on ubuntu-seed and ubuntu-boot;
@@ -687,16 +693,115 @@ The *checks*:
 - **The seed has 299 MiB free** with two recovery systems: a third may
   not fit, so the guests keep two.
 
+## What U2/U3 found
+
+2026-11-14, on Copland (copies of both guests, under `cmp-run.sh --reserve
+3 3` in /mnt/bko-ram; results in Copland's and Chopin's
+`/bkoscratch/u3-ubuntu-core/`, not in the repo), with a static bko-holt
+built from this tree.
+
+- **The dump runs in the running system**, as every Linux dump does
+  (HoltTest1, BackShot1): the static bko-holt as root in `/root`, in run
+  mode, where snap-bootstrap has unlocked and mounted all four partitions.
+  core24 has every tool it runs (`cryptsetup`, `unsquashfs`, `blkid`,
+  `sfdisk`, `lsblk`). So dumping needs no recovery key, and no
+  rescue-system dump of Ubuntu Core is built: the spec's "dumping needs
+  the key" and "FDE without the volume opened" apply to that offline dump
+  only. dump still refuses a locked ubuntu-data (recover mode of a system
+  that didn't unlock it), naming `recovery-key-file`; load needs the key
+  (`--key-file ubuntu-data-enc=FILE --key-file ubuntu-save-enc=FILE`; the
+  LUKS label names the volume, since snap-bootstrap's dm names change each
+  boot).
+- **The real dumps** (uc24, uc24-fde booted on copies of their TPM and
+  variables): exit 0, no warnings, no refusals. `boot.snapcore`: the four
+  partitions with names, PARTUUIDs, types and sizes; modeenv (both recovery
+  systems, `pc-kernel_3908.snap`, `core24_2307.snap`, `pc_196.snap`); the
+  model (canonical, signed, no storage-safety, gadget pc, core24); os-release
+  from the base snap by `unsquashfs -cat`; the seed's two systems with their
+  kernels (20240603 on `pc-kernel_1803.snap`, bko-20261114 on
+  `pc-kernel_3908.snap`); every snap and revision from state.json (snapd
+  2.78 keeps the sequence as `{"revisions": [{"snap": ...}]}`) and the
+  `.snap` files alike, hello 42 and 29. backup_sources: the four roots,
+  `from` the run-mode paths, mount hints by filesystem UUID.
+- **The LUKS2 header backup is 6.5 MiB** (6815744 bytes: two 2 MiB
+  metadata areas and the 2.5 MiB keyslots area; the data segment starts at
+  7 MiB). Its SHA-256 equals that of the device's first 6815744 bytes, for
+  both volumes. Both headers have **no tokens**: keyslot 0 (preferred, the
+  TPM key) and 1 (the recovery key).
+- **The converter opens the dumped headers**: `bko-holt recovery-key-file`
+  from the host's key file, then `cryptsetup open --test-passphrase
+  --key-file` on each header file: `Key slot 1 unlocked`. A malformed key
+  is refused without echoing it.
+- **The run-mode kernel is a symlink, not a grubenv variable**: UC24's run
+  grubenv has no `snap_kernel`; `EFI/ubuntu/kernel.efi` on ubuntu-boot links
+  to `pc-kernel_N.snap/kernel.efi`. The check script follows the link (and
+  still checks `snap_kernel` when a grubenv has one).
+- **UC24's pc gadget is UEFI only**: the BIOS Boot partition is all zeros,
+  and the MBR's 440 bytes are a stub that prints "Please boot in EFI mode."
+  The spec's "BIOS through the gadget's core.img" doesn't exist (Decision
+  4's `uc24-bios` is moot). load writes the MBR stub back as it was; an
+  empty BIOS Boot writes nothing; the plan notes UEFI only.
+- **The running /etc/fstab** is the base snap's binds and tmpfs (`rootfs /`,
+  `/home`, `/var/lib/snapd`, ...), none of them the four partitions: load
+  doesn't read fstab on Ubuntu Core (otherwise 28 "not on the layout's
+  disks" notes).
+- **Why `bko-20261114` didn't ask for the key** (`recdbg.sh`: recover mode
+  on a new swtpm and fresh variables, the system's grubenv given
+  `systemd.journald.forward_to_console=1 snapd.debug=1` and ttyS0 as the
+  last console, so snap-bootstrap's log reaches the serial log; no key
+  typed). Recover mode runs the recovery system's own kernel, and its
+  initramfs's snap-bootstrap:
+  - `bko-20261114` (pc-kernel 3908, snapd 2.7x's snap-bootstrap):
+    `Error with keyslot "external:legacy"` and `"external:legacy-fallback"`
+    (TPM_RC_INTEGRITY), then `cannot unlock encrypted ubuntu-data ...:
+    no valid keyslots and / or no more passphrase, PIN or recovery key
+    tries remaining`, the same for ubuntu-save, and it boots on with both
+    locked. No prompt is ever issued.
+  - `20240603` (pc-kernel 1803, snapd 2.63's): `Please enter the recovery
+    key for disk /dev/disk/by-partuuid/...` for ubuntu-data, then
+    ubuntu-save.
+
+  snapd's source (`cmd/snap-bootstrap/cmd_initramfs_mounts.go`, 2.78 and
+  master) does allow the recovery key in recover mode (`AllowRecoveryKey:
+  true` for ubuntu-data and ubuntu-save's fallback). The newer secboot it
+  uses (`ActivateContext`, `WithRecoveryKeyTries(3)`) tries a recovery key
+  only against keyslots its LUKS2 tokens type as recovery keyslots; the
+  headers snapd 2.63 made at install have no tokens, so there is no
+  recovery keyslot for it and no prompt (an inference from the source and
+  the journal; the secboot backend that types keyslots wasn't read).
+  snapd 2.63's snap-bootstrap tries the recovery key against every
+  keyslot.
+
+  **So `--new-machine` names the first good recovery system**, the one the
+  device was installed from: its kernel made the keyslots and opens them.
+  For uc24-fde that is `20240603`. A device installed by a newer snapd
+  (tokens in its headers) would be served by any of its systems; one whose
+  install system was removed, with a tokenless header, would have none
+  that asks (not seen; a risk below).
+- **The plans** (a blank 8 GiB nbd target on Chopin): uc24 and uc24-fde
+  plan with no problems: the gadget's table exact (BIOS Boot, ubuntu-seed
+  with the ESP type, boot, save, data; every PARTUUID and name), `mkfs.fat
+  -i ABA0ACE2 -n ubuntu-seed`, every ext4 with its UUID and label,
+  `luksHeaderRestore` and `cryptsetup open --key-file` for both volumes (no
+  luksFormat), the four mounts under `/mnt/bko-target/run/mnt`, and a boot
+  stage of the check, `snapcore-boot-areas`, the log and the tail; no
+  grub-install, efibootmgr, update-grub or chroot. `--new-machine` adds
+  `grub-editenv .../ubuntu-seed/EFI/ubuntu/grubenv set
+  snapd_recovery_mode=recover snapd_recovery_system=20240603`. Without the
+  key files: two problems naming `recovery-key-file`. A 9 GiB target with
+  `--fit-largest 30`: only ubuntu-data grows (by 1 GiB). No
+  recovery-key-shaped string in any dump or plan.
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Effort |
 |---|---|---|
 | U1 | Fetch the image with the user's OK, verify SHA256SUMS.gpg, then `make-ubuntu-core.sh` by Decision 3's path, both guests on Chopin, copied to the second host (the same sha256), with `rebuild-one.sh` lines. Settle every *check*: the labels, where the keys live, the recovery-key bytes as a LUKS key, re-provisioning onto a **different** swtpm, cloud-init under signed grade, the console-conf skip, `cmdline-append`, the NVRAM entry, the recovery-system API, os-release, room. Write "What U1 found" here. Done when both guests boot alone, SSH works, and `uc24-fde` boots unattended twice. **Fetched 2026-11-14** on Chopin, in `/bkoscratch/rebuild-inputs/ubuntu-core24/`: `ubuntu-core-24-amd64.img.xz` (470,060,012 bytes, SHA-256 `d82b5b9b...71622a0`), `SHA256SUMS` with a good `SHA256SUMS.gpg` signature from key `843938DF228D22F7B3742BC0D94AA3F0EFE21092` (Ubuntu CD Image Automatic Signing Key (2012), kept as `cdimage-keyring.gpg`), and the model assertion (canonical, grade signed, no storage-safety, timestamp 2024-04-19). The image is still the 2024-06-03 build. **Built 2026-11-14 on Chopin** ("What U1 found"): `uc24` and `uc24-fde` in `~/backotter-work/vms/`, each booted alone to SSH, `uc24-fde` unattended twice; `make-ubuntu-core.sh`, `testvm/ubuntu-core/`, the `rebuild-one.sh` lines; every *check* settled: on a new TPM run mode boot-loops with no prompt, recover mode of the image's system takes the key and unlocks the data, and run mode never comes back (no re-provisioning; the user chose the recover-mode limit, Decision 2b); fresh firmware variables break the same TPM too (dbx). **Copied to Cinqcent** 2026-11-14 (guests, `tpm/`, vars, rebuild inputs and the 0600 key file, the same sha256), and `uc24-fde` booted unattended twice there on copies of its own TPM and variables. **Done** | 1.5 d |
-| U2 | dump (High subagent): `osrel` row; `snapcore.rs` (detection, modeenv, model, seed, revisions); `boot.snapcore`; `backup_sources` with mount hints; LUKS2 header capture; `recovery-key-file`; `redact.rs` labels and the key rule; scenario `snapcore_tree(fde)` | 1 d |
-| U3 | load (High): the gadget's partitions exact; `keep_header` (generic, with `--keep-luks-header`); `snapcore_boot` (check script, BIOS Boot, no NVRAM entry, log); `--new-machine` (Decision 2b: the restored seed `grubenv` set to recover mode for a system that asks for the key; *check* why `bko-20261114` didn't ask); v1 refusals; tests | 1.1 d |
+| U2 | dump (High subagent): `osrel` row; `snapcore.rs` (detection, modeenv, model, seed, revisions); `boot.snapcore`; `backup_sources` with mount hints; LUKS2 header capture; `recovery-key-file`; `redact.rs` labels and the key rule; scenario `snapcore_tree(fde)`. **Built 2026-11-14** (uncommitted): `osrel.rs` row `("ubuntu-core", "24", "Ubuntu Core 24")` appended (the names list ends "Sculpt OS or Ubuntu Core 24") and test `ubuntu_core` (20, 22 and 26 refused); `holt/src/snapcore.rs` (`ROLES`, `Env` for modeenv and grubenv, `parse_model`, `state_snaps` (both sequence forms), `changes_in_progress`, `find`, `read`, `add_to_boot`, `refusal`, `recovery_key_bytes` and `recovery_key_main`); `holt/src/luksheader.rs` (generic: `capture` by `cryptsetup luksHeaderBackup` into `--luks-header-dir`, default `/run/bko-holt/luks-headers`, `storage.luks_headers` with file, bytes and SHA-256; `kept`, `path_at_load`, `check_file`); `report.rs` `build_with` (the LUKS options), backup_sources replaced on Ubuntu Core, `luks_headers` only when non-empty, `boot.snapcore`, `refusal` first; `lib.rs` `dump_with`; `main.rs` `dump --keep-luks-header DEV --luks-header-dir DIR`, `recovery-key-file OUT` (stdin, no echo on a terminal, 0600, prints a 12-digit SHA-256 prefix), the dump's output scrubbed; `redact.rs` GENERIC_LABELS 85 (+the six `ubuntu-*`), `scrub_recovery_keys` in every redacted text, and test; the v1 refusals at dump (not run mode, `kernel_status` try/trying, changes in progress, another gadget, architecture or base, an encrypted role not open, a role not at its mount point, two Ubuntu Core disks). Scenarios `snapcore_tree(fde)` with `SnapcoreRunner` (writes the header files), tests `snapcore_guest`, `snapcore_fde_guest`, `snapcore_refusals`; unit tests in snapcore.rs (6) and luksheader.rs (2). The real dumps: "What U2/U3 found" | 1 d |
+| U3 | load (High): the gadget's partitions exact; `keep_header` (generic, with `--keep-luks-header`); `snapcore_boot` (check script, BIOS Boot, no NVRAM entry, log); `--new-machine` (Decision 2b: the restored seed `grubenv` set to recover mode for a system that asks for the key; *check* why `bko-20261114` didn't ask); v1 refusals; tests. **Built 2026-11-14** (uncommitted): `holt/src/load/snapcore.rs` (`of`, `MARKER`, `recover_system`, `check_script`, `Builder::snapcore_mounts`, `snapcore_problems`, `snapcore_boot`, `boot_areas_main` and `boot_area_writes` for the hidden `bko-holt snapcore-boot-areas LAYOUT DISK DEV`); `commands.rs` `luks_keep_header` (generic: luksHeaderRestore --batch-mode, open with `--key-file` by the container's name, its LUKS label or the device; the header file's SHA-256 checked at plan; the data segment must fit; LUKS1 and `--new-uuids` refused; `restored_key_files` adds nothing to a kept header), the mount stage's snapcore mounts with no fstab and no `/`, the boot stage's early return after ABRoot's, `--new-machine` refused on other layouts; `load/mod.rs` `--new-machine`, `--luks-header-dir`; `restored_marker()` and status.rs take `run/mnt/data/system-data/var/lib/snapd/modeenv`; `plan.rs`'s output scrubbed. The table is the generic sfdisk one (names, type GUIDs, PARTUUIDs, attributes, starts and sizes exact); a plan whose seed, boot or save differs in size from boot.snapcore's is refused, so only ubuntu-data changes under `--fit-largest`. No NVRAM entry, no grub-install; the seed's vfat ID kept by `mkfs.fat -i`. `--new-machine` writes recover mode of the first good recovery system (the open question, settled in "What U2/U3 found"). Tests: `check_passes_and_fails` (a real tree, five mismatches, a refresh warned), `recover_system_choice`, `boot_areas` (written to a file; an empty BIOS Boot), and the scenarios above. Warm build on Chopin (`/bkoscratch/holt-warm/ubuntu-core`): 566 lib tests pass; every other target passes but golden_plans, whose only failure is the known `ubuntu24-luks`/`ubuntu24-uefi` "no corpus dump" (no corpus plan changed); clippy has nothing new in these files. **Review fixes the same day** (a High review, no must-fix): an encrypted role whose LUKS2 header dump couldn't keep is a dump refusal (`snapcore::Dump::require_headers`, so `dump` exits 3), and dump warns that the header files (default `/run/bko-holt/luks-headers`, RAM) must be kept with the dump, which the plan's notes say too; the atimes on Ubuntu Core are listed and put back under `T/run/mnt` (`atimes_cmd_in`, `Builder::atimes`: the rest of `T/run` still pruned; restore and boot stages), since the whole tree is there; the same-machine note and the promise above say "unattended only if nothing was resealed since the backup", and cell f records the case; the kept header's fit check takes a fixed segment whole (`have < offset + size`) and a `dynamic` one by its offset only; `recovery-key-file` refuses an OUT that is or holds a recovery key (without echoing it), and reads the key through `sh` with a trap that restores the terminal's echo on every exit, Ctrl-C too; `dump --keep-luks-header`/`--luks-header-dir` with `--disk` is refused. Tests added: `atimes_cover_run_mnt`, `recovery_key_file_refuses_a_key_as_its_name`, and in the scenarios the refusal of an unkept header, the header warning and note, a fixed segment too big, the atimes lines. Suite: 568 lib tests pass, golden_plans only the known miss; both real dumps re-planned (bko-holt `e0490bcf3127`): the same plans, the new notes, the atimes under `run/mnt` | 1.1 d |
 | U4 | Guest tools: vm-mount's snapcore mode (with FDE), vm-update's snap branch, fingerprint/pkgset, `K-snapcore`, compare.py's four-root tree; tests | 0.75 d |
 | U5 | SticTest1 `uc24`, both archivers, two hosts, 0 FAIL | 0.4 d |
-| U6 | HoltTest1 1U: cells a-e in ht1.sh (the TPM copy or new TPM, the recover-mode boot, the prompt typed by `console-boot.py`, the post-restore refresh), judge.py rules, `ram-sizes.tsv`; runs on Chopin and a second host | 1 d |
+| U6 | HoltTest1 1U: cells a-f in ht1.sh (the TPM copy or new TPM, the recover-mode boot, the prompt typed by `console-boot.py`, the post-restore refresh), judge.py rules, `ram-sizes.tsv`; runs on Chopin and a second host | 1 d |
 | U7 | Golden plans and the corpus test; Test2 registration in the batched pass | 0.4 d |
 | U8 | Docs: holt/README.md (list, the three FDE promises), layload.md (`keep_header`, the snapcore boot stage), HoltTest1's 1U row, SticTest1's README, the rescue image's docs for `recovery-key-file`, memory | 0.2 d |
 | U9 | *Optional* (Decision 6): BackShot1 on the Thinkpad with Ubuntu Core and its real TPM | 1 d + the user's reinstall |
@@ -745,6 +850,13 @@ the OKs.
 - **The swtpm state travels with the guest.** If vm-store can't carry a
   directory, the FDE guest's TPM is lost on a copy, and every copy is a
   "new machine". U1 settles it (a tarball sidecar at worst).
+
+- **A tokenless header and no install system.** `--new-machine` relies on
+  the recovery system the device was installed from (U3): a newer
+  snap-bootstrap doesn't try the recovery key on a header snapd 2.63 made.
+  If that system is removed (`snap recovery` can remove systems), recover
+  mode of the rest boots with ubuntu-data locked, and the restored data is
+  reachable only offline (cryptsetup and the converted key).
 
 ## Out of scope
 

@@ -156,7 +156,7 @@ const GENERIC_HOSTS: [&str; 39] = [
 ];
 /// Labels (lower case, trailing digits and '*' dropped) that installers
 /// and partitioners write: kept, because they help and identify no one.
-const GENERIC_LABELS: [&str; 78] = [
+const GENERIC_LABELS: [&str; 84] = [
     "", "efi", "esp", "efi system partition", "efi system", "efi-system", "efiboot", "bios", "biosboot", "bios boot partition",
     // Hybrid ISO images (xorriso: EFISYS, Gap1, Appended2...) and BackOtter's
     // and Haiku's own images.
@@ -175,6 +175,9 @@ const GENERIC_LABELS: [&str; 78] = [
     // elementary OS's installer (distinst): the LUKS mapping its encrypted
     // install opens the PV as (its VG is "data", above).
     "cryptdata",
+    // Ubuntu Core's pc gadget: GPT names and file system labels, and the
+    // LUKS2 labels of its encrypted ones (crate::snapcore).
+    "ubuntu-seed", "ubuntu-boot", "ubuntu-save", "ubuntu-data", "ubuntu-save-enc", "ubuntu-data-enc",
 ];
 /// Ubuntu names the datasets for /home and /root USERDATA/home_ID and
 /// USERDATA/root_ID.
@@ -1063,6 +1066,34 @@ impl Sealer {
     }
 }
 
+/// What a recovery key is replaced by.
+pub const RECOVERY_KEY_MARK: &str = "<recovery-key>";
+
+/// S with every recovery-key-shaped string (Ubuntu Core's: eight groups of
+/// five digits joined by '-', crate::snapcore) replaced by
+/// RECOVERY_KEY_MARK: it never reaches a plan, a dump or a bug report.
+pub fn scrub_recovery_keys(s: &str) -> std::borrow::Cow<'_, str> {
+    const LEN: usize = 8 * 5 + 7;
+    let b = s.as_bytes();
+    let is_key = |w: &[u8]| w.len() == LEN && w.iter().enumerate().all(|(i, c)| if i % 6 == 5 { *c == b'-' } else { c.is_ascii_digit() });
+    if b.len() < LEN || !b.windows(LEN).any(is_key) {
+        return std::borrow::Cow::Borrowed(s);
+    }
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0;
+    while i < b.len() {
+        if i + LEN <= b.len() && is_key(&b[i..i + LEN]) {
+            out.push_str(RECOVERY_KEY_MARK);
+            i += LEN;
+        } else {
+            let c = s[i..].chars().next().unwrap_or(' ');
+            out.push(c);
+            i += c.len_utf8();
+        }
+    }
+    std::borrow::Cow::Owned(out)
+}
+
 fn contains_word(hay: &str, w: &str) -> bool {
     let (h, n) = (hay.as_bytes(), w.as_bytes());
     if n.is_empty() || n.len() > h.len() {
@@ -1137,6 +1168,7 @@ impl Redactor {
     }
 
     fn text_with(&self, s: &str, words: bool) -> String {
+        let s = &scrub_recovery_keys(s);
         let b = s.as_bytes();
         let mut out: Vec<u8> = Vec::with_capacity(b.len());
         let mut i = 0;
@@ -1896,5 +1928,27 @@ mod tests {
             "protective_mbr": {"present": true, "entries": [{"number": 1, "type": "0xee", "uuid": "00000000-01"}]}}}]}}"#).unwrap();
         let (r, _) = redact(&d);
         assert_eq!(r.compact(), d.compact());
+    }
+
+    /// Ubuntu Core's labels are kept; a recovery-key-shaped string never
+    /// gets through, whatever else is redacted (docs/design/ubuntu-core.md).
+    #[test]
+    fn ubuntu_core_labels_and_recovery_keys() {
+        let key = "12345-00001-65535-00256-54321-00000-11111-22222";
+        let d = crate::json::parse(&format!(
+            r#"{{"os": {{"id": "ubuntu-core"}}, "storage": {{"disks": [{{"name": "vda", "partitions": [{{"name": "vda2", "partlabel": "ubuntu-seed", "content": {{"type": "vfat", "label": "ubuntu-seed"}}}}, {{"name": "vda5", "partlabel": "ubuntu-data", "content": {{"type": "crypto_LUKS", "label": "ubuntu-data-enc"}}}}]}}]}}, "note": "typed {key} at the prompt"}}"#
+        ))
+        .unwrap();
+        let (r, _) = redact(&d);
+        let c = r.compact();
+        for l in ["ubuntu-seed", "ubuntu-data-enc"] {
+            assert!(c.contains(l), "{l}: {c}");
+        }
+        assert!(!c.contains(key) && c.contains("typed <recovery-key> at the prompt"), "{c}");
+        assert_eq!(scrub_recovery_keys(&format!("a{key}b {key}")), "a<recovery-key>b <recovery-key>");
+        // Not a key: seven groups, a group of four or six digits, ...
+        for not in ["12345-00001-65535-00256-54321-00000-11111", "12345-0001-65535-00256-54321-00000-11111-22222", "12345 00001 65535 00256 54321 00000 11111 22222", "é"] {
+            assert_eq!(scrub_recovery_keys(not), not);
+        }
     }
 }

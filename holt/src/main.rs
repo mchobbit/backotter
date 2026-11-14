@@ -5,6 +5,7 @@ use std::process::ExitCode;
 const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
        bko-holt load LAYOUT.json [--through STAGE | --only STAGE] [--commit] ...
        bko-holt report-bug [--output FILE] [--stderr FILE]... [-- LOAD-ARGS...]
+       bko-holt recovery-key-file OUT
        bko-holt -h | --help | -V | --version | --license
 
   dump        writes a JSON description of this system's disk layout
@@ -12,6 +13,9 @@ const USAGE: &str = "Usage: bko-holt dump [--compact] [--sysroot DIR]
   load        rebuilds disks from such a description, in stages
   report-bug  gathers what a BackOtter bug report needs (versions, dump,
               the last load run, logs) into one redacted file to attach
+  recovery-key-file
+              turns Ubuntu Core's recovery key (on standard input) into the
+              key file cryptsetup and `load --key-file` take
 
 `bko-holt dump --help`, `bko-holt load --help` and `bko-holt report-bug --help`
 say more.
@@ -26,6 +30,7 @@ Source: https://github.com/mchobbit/backotter
 const LICENSE: &str = include_str!("../LICENSE");
 
 const DUMP_USAGE: &str = "Usage: bko-holt dump [--compact] [--only-disk NAME...] [--sysroot DIR | --disk DEV...]
+                     [--keep-luks-header DEV]... [--luks-header-dir DIR]
 
 Writes a JSON description of this system's disk layout and boot
 setup to standard output: disks and partition tables, boot code, md RAID,
@@ -48,6 +53,14 @@ records and says so under \"warnings\".
   --sysroot DIR   describe the tree under DIR (its own sys/, proc/, dev/,
                   etc/, run/ and boot/) instead of this system, running no
                   commands; for tests
+  --keep-luks-header DEV
+                  save the LUKS2 header on DEV (vda5) byte for byte, for load
+                  to write back instead of making a new one (its volume key,
+                  keyslots and tokens kept); always done for Ubuntu Core's
+                  encrypted partitions
+  --luks-header-dir DIR
+                  where those header files go (default /run/bko-holt/luks-headers);
+                  keep them beside the dump: load looks for them there
   -h, --help      show this help
 
 Exit status: 0 on success, 2 for bad arguments, 3 when the system isn't
@@ -67,7 +80,9 @@ fn main() -> ExitCode {
             ExitCode::from(code)
         }
         Some("report-bug") => bko_holt::bugreport::main(&args[1..]),
+        Some("recovery-key-file") => ExitCode::from(bko_holt::snapcore::recovery_key_main(&args[1..])),
         // Not in the usage: run by load's close, partition and boot stages.
+        Some("snapcore-boot-areas") => ExitCode::from(bko_holt::load::snapcore::boot_areas_main(&args[1..])),
         Some("md-lbs") => ExitCode::from(bko_holt::mdsb::main(&args[1..])),
         Some("efi-dedupe") => ExitCode::from(bko_holt::load::efidedupe::main(&args[1..])),
         Some("write-table") => ExitCode::from(bko_holt::load::writetable::main(&args[1..])),
@@ -108,6 +123,7 @@ fn dump(args: &[String]) -> ExitCode {
     let mut sysroot: Option<String> = None;
     let mut disks: Vec<String> = Vec::new();
     let mut only: Vec<String> = Vec::new();
+    let mut luks = bko_holt::luksheader::Options::default();
     let mut args = args.iter();
     while let Some(a) = args.next() {
         match a.as_str() {
@@ -123,6 +139,20 @@ fn dump(args: &[String]) -> ExitCode {
                 Some(d) => only.push(d.trim_start_matches("/dev/").to_string()),
                 None => {
                     eprintln!("bko-holt dump: --only-disk needs a disk's name\n\n{DUMP_USAGE}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--keep-luks-header" => match args.next() {
+                Some(d) => luks.keep.push(d.clone()),
+                None => {
+                    eprintln!("bko-holt dump: --keep-luks-header needs a device\n\n{DUMP_USAGE}");
+                    return ExitCode::from(2);
+                }
+            },
+            "--luks-header-dir" => match args.next() {
+                Some(d) if d.starts_with('/') => luks.dir = Some(d.clone()),
+                _ => {
+                    eprintln!("bko-holt dump: --luks-header-dir needs an absolute directory\n\n{DUMP_USAGE}");
                     return ExitCode::from(2);
                 }
             },
@@ -161,7 +191,11 @@ fn dump(args: &[String]) -> ExitCode {
         eprintln!("bko-holt dump: --only-disk {n}: no such whole disk here");
         return ExitCode::from(2);
     }
-    let result = if disks.is_empty() { bko_holt::dump_only(&sys, &only) } else { bko_holt::other::offline::report(&sys, &disks, &bko_holt::timestamp()) };
+    if !disks.is_empty() && (!luks.keep.is_empty() || luks.dir.is_some()) {
+        eprintln!("bko-holt dump: --keep-luks-header and --luks-header-dir don't go with --disk\n\n{DUMP_USAGE}");
+        return ExitCode::from(2);
+    }
+    let result = if disks.is_empty() { bko_holt::dump_with(&sys, &only, &luks) } else { bko_holt::other::offline::report(&sys, &disks, &bko_holt::timestamp()) };
     let report = match result {
         Ok(r) => r,
         Err(e) => {
@@ -171,6 +205,8 @@ fn dump(args: &[String]) -> ExitCode {
         }
     };
     let text = if compact { report.compact() + "\n" } else { report.pretty() };
+    // Never a recovery key, whatever a file the dump read held.
+    let text = bko_holt::redact::scrub_recovery_keys(&text);
     let mut out = std::io::stdout().lock();
     if out.write_all(text.as_bytes()).and_then(|_| out.flush()).is_err() {
         return ExitCode::from(1);

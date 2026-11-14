@@ -1,7 +1,7 @@
 {
  "v": 1,
  "family": "guest",
- "about": "What a GuestTest2 cell's key covers (contract 1.4, 2.1). keys.py reads it: entries[GUEST] merges over kinds[its kind], lists adding up. A kind says how the guest is reached: ssh (vm-update --try), probe (no --try: vm-update --probe), redox and sculpt (no SSH: a console probe). checks is what the judge reads, and keyed as a judge input; the rest (ram_gib, cpus, memory, timeout_s, update) is the runner's. S-*, L-*, K-*, B-* and M-* are guest_judge.py's rule codes. Not in guest: keys: update/trim.sh, update/pkgset.sh, update/fingerprint.py, holttest1d/judge.py (contract D2). sculpt2610's lack of SSH lives here, so that no no-ssh file changes its stic and holt keys.",
+ "about": "What a GuestTest2 cell's key covers (contract 1.4, 2.1). keys.py reads it: entries[GUEST] merges over kinds[its kind], lists adding up. A kind says how the guest is reached: ssh (vm-update --try), probe (no --try: vm-update --probe), redox and sculpt (no SSH: a console probe). checks is what the judge reads, and keyed as a judge input; the rest (ram_gib, cpus, memory, timeout_s, update) is the runner's. S-*, L-*, K-*, B-* and M-* are guest_judge.py's rule codes. Not in guest: keys: update/trim.sh, update/pkgset.sh, update/fingerprint.py, holttest1d/judge.py (contract D2). sculpt2610 has no SSH: its no-ssh file (written by make-sculpt.sh) makes vm-update refuse it, and testvm/sculpt-update updates it offline, recording image-state, so its generation keys its cells as any guest's does.",
  "plumbing": [
   "testvm/vm-run",
   "testvm/vm-lib.sh",
@@ -1408,6 +1408,7 @@
    "plat": "sculpt",
    "harness": [
     "testvm/make-sculpt.sh",
+    "testvm/sculpt-update",
     "testvm/test2/guest/probe-sculpt.sh",
     "testvm/sculpt-check.sh",
     "testvm/haiku/drive.py"

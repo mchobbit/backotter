@@ -89,7 +89,11 @@ EXPECTED = [
 # systemd-boot), and the ESP's entries are under that name.  OpenRC's
 # save-keymaps and save-termencoding (Gentoo's boot runlevel) save the
 # console's keymap and encoding in its libexec dir at every boot.
-REMADE = ["etc/machine-id", "usr/share/applications/mimeinfo.cache", "etc/kernel/entry-token", "usr/libexec/rc/console/*"]
+# ld.so.cache: ldconfig.service (ConditionNeedsUpdate=/etc) remakes it at the
+# first boot after anything touched /usr since etc/.updated, as bs1-adopt's
+# package install does (avahi on cachyos-zfs under bs1-qemu): the restored
+# copy's first boot runs it, and it has to come out the same.
+REMADE = ["etc/machine-id", "usr/share/applications/mimeinfo.cache", "etc/kernel/entry-token", "usr/libexec/rc/console/*", "etc/ld.so.cache"]
 
 # Expected only as added: BackShot1's own mountpoint.  The dispatcher's
 # DRIVE mounts the backup drive with "mkdir -p /mnt/bs1-backup" when nothing

@@ -916,6 +916,52 @@ class FsEspAtBoot(unittest.TestCase):
         self.assertNotIn("in an ESP at /boot", out)
 
 
+class FsLimine(unittest.TestCase):
+    """judge.py fs over what load's boot stage does on CachyOS with Limine
+    (czrt2, cachyos-zfs): mkinitcpio -P rebuilds the initramfs and
+    limine-mkinitcpio-hook copies it into /boot/MACHINE-ID/KERNEL/."""
+
+    M = "e464d0233015401f967ec0aedf7f3cda"
+    SRC = {"boot": meta("dir"), f"boot/{M}": meta("dir"), f"boot/{M}/linux-cachyos": meta("dir"),
+           f"boot/{M}/linux-cachyos/initramfs": meta("file"), f"boot/{M}/linux-cachyos/vmlinuz": meta("file"),
+           f"boot/{M}/linux-cachyos-lts": meta("dir"), f"boot/{M}/linux-cachyos-lts/initramfs": meta("file"),
+           "boot/limine.conf": meta("file"), "boot/notamachineid": meta("dir"),
+           "boot/notamachineid/initramfs": meta("file")}
+
+    judge = Fs.judge
+
+    def changed(self, changes):
+        a = copy.deepcopy(self.SRC)
+        for p, kw in changes.items():
+            a[p].update(kw)
+        return self.judge(self.SRC, a)
+
+    def test_the_hooks_copies_are_the_boot_stages(self):
+        rc, out = self.changed({
+            f"boot/{self.M}/linux-cachyos/initramfs": {"sha256": "cd", "mtime": 2},
+            f"boot/{self.M}/linux-cachyos-lts/initramfs": {"sha256": "cd", "mtime": 2},
+            f"boot/{self.M}/linux-cachyos": {"mtime": 2}, f"boot/{self.M}/linux-cachyos-lts": {"mtime": 2},
+            "boot/limine.conf": {"sha256": "cd", "mtime": 2}})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn(f"(CachyOS's Limine)): 4: boot/{self.M}/linux-cachyos-lts/initramfs", out)
+
+    def test_the_kernel_and_other_dirs_still_count(self):
+        rc, out = self.changed({
+            f"boot/{self.M}/linux-cachyos/vmlinuz": {"sha256": "cd"},
+            "boot/notamachineid/initramfs": {"sha256": "cd"}, f"boot/{self.M}": {"mode": 0o700}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF content: 2: boot/{self.M}/linux-cachyos/vmlinuz, boot/notamachineid/initramfs", out)
+        self.assertIn(f"DIFF mode: 1: boot/{self.M}", out)
+
+    def test_a_missing_initramfs_still_counts(self):
+        a = copy.deepcopy(self.SRC)
+        del a[f"boot/{self.M}/linux-cachyos/initramfs"]
+        rc, out = self.judge(self.SRC, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF missing: 1: boot/{self.M}/linux-cachyos/initramfs", out)
+
+
 class FsGentoo(unittest.TestCase):
     """judge.py fs over what load's boot stage does on Gentoo (G5):
     grub-install writes EFI/gentoo/grubx64.efi in an ESP at /efi (gentoo)

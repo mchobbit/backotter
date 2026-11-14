@@ -189,6 +189,11 @@ BOOT_STAGE = [
     # 077); installkernel had left the source's 0644 (gentoo, G5's g5-1).
     (r"^boot/initramfs-[^/]*-gentoo[^/]*\.img$", {"mode"}, "dracut makes Gentoo's initramfs 0600 where installkernel had left it 0644"),
     (r"^boot$", {"mtime (dirs)", "atime (dirs)"}, "update-initramfs replaces the initrds"),
+    # Limine (CachyOS): limine-mkinitcpio-hook copies each initramfs that
+    # mkinitcpio -P rebuilds into /boot/MACHINE-ID/KERNEL/, where
+    # limine.conf boots it.  The kernel beside it stays the source's.
+    (r"^boot/[0-9a-f]{32}/[^/]+/initramfs$", _WRITTEN, "limine-mkinitcpio-hook copies the rebuilt initramfs into /boot/MACHINE-ID/KERNEL/ (CachyOS's Limine)"),
+    (r"^boot/[0-9a-f]{32}/[^/]+$", {"mtime (dirs)", "atime (dirs)"}, "limine-mkinitcpio-hook replaces the initramfs in its directory"),
     (r"^var/log/bko-holt(/|$)", _WRITTEN, "load's own log, copied in by the boot stage"),
     (r"^etc/zfs/zpool\.cache$", _WRITTEN, "the boot stage writes the new pool's zpool.cache"),
     (r"^var/log$", {"mtime (dirs)", "atime (dirs)"}, "var/log/bko-holt made"),

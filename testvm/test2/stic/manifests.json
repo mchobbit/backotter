@@ -596,6 +596,27 @@
    ],
    "notes": "freebsd15-ufs/extras.sh in the extras VM"
   },
+  "kali": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/kali/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/kali/judge.py",
+    "entry:testvm/test2/stic/limits.json#kali"
+   ],
+   "host": [
+    "pkg:dosfstools"
+   ],
+   "notes": "the ESP's FAT32 is made on the host (mkfs.vfat, the guest has no dosfstools) with the geometry read from the guest's ESP"
+  },
   "kinoite44": {
    "os": "linux",
    "bins": [

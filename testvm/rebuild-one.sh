@@ -42,6 +42,10 @@ case $G in
 debian12)   cmd=(asm $T/make-debian.sh 12.0.0 ext4 "$W") ;;
 debian13)   cmd=(asm $T/make-debian.sh 13.0.0 btrfs "$W") ;;
 devuan6)    cmd=(asm $T/make-debian.sh --devuan --init openrc 6.1.1 ext3 "$W") ;;
+# kali: from Kali's netinst ISO, SHA256SUMS(.gpg) and kali-signing-key.gpg in
+# /bkoscratch/rebuild-inputs/kali (linked and copied in below, so nothing is
+# downloaded); kali-rolling's packages as they are at the rebuild.
+kali)       cmd=(asm $T/make-debian.sh --kali 2026.3 ext4 "$W") ;;
 debian13-zfs) cmd=($T/make-debian-zfs.sh "$W" debian13-zfs) ;;
 debian13-stack) cmd=($T/make-debian-stack.sh "$W" debian13-stack) ;;
 ubuntu24)   cmd=(asm $T/make-ubuntu.sh 24.04 "$W") ;;

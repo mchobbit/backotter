@@ -2847,7 +2847,7 @@ impl Builder<'_> {
             Some(l) if !l.is_empty() => format!("LANG={l}.UTF-8"),
             _ => "LANG=C".to_string(),
         };
-        if matches!(self.layout.str_at(&["os", "id"]), Some("debian" | "ubuntu" | "linuxmint" | "zorin" | "neon" | "anduinos")) {
+        if matches!(self.layout.str_at(&["os", "id"]), Some("debian" | "ubuntu" | "linuxmint" | "zorin" | "neon" | "anduinos" | "kali")) {
             return Cmd::new(&["chroot", t, "env", &lang, "update-grub"]);
         }
         let cfg = format!("{}/grub.cfg", self.grub_dir());
@@ -3896,6 +3896,76 @@ mod tests {
         let at = bt.find("--bootloader-id=").expect(&bt) + "--bootloader-id=".len();
         assert_eq!(bt[at..].split_whitespace().next(), Some("neon"), "{bt}");
         assert!(bt.contains("update-grub\n") && !bt.contains("grub-mkconfig"), "{bt}");
+    }
+
+    /// Kali (docs/design/kali.md): Debian's arms as they are, named EFI/kali.
+    /// UEFI without shim (Kali has no shim-signed): grub-install into
+    /// EFI/kali with no NVRAM write, update-grub with os-prober off, the
+    /// update-initramfs step, and the source's boot entry made again.  The
+    /// guest's ESP has the removable copy too (force-efi-extra-removable),
+    /// which comes back with the ESP; grub-install writes it again only
+    /// with --removable.  Through shim (a Kali that had one) the same arm,
+    /// as on Debian; BIOS, Debian's i386-pc arm.
+    #[test]
+    fn kali_boot_tools() {
+        let kali = sample::bios_mbr().replace(r#""id": "debian", "version_id": "13""#, r#""id": "kali", "version_id": "2026.3""#).replace(r#""hostname": "deb13""#, r#""hostname": "kali""#);
+        let id_of = |bt: &str| {
+            let at = bt.find("--bootloader-id=").expect(bt) + "--bootloader-id=".len();
+            bt[at..].split_whitespace().next().unwrap().to_string()
+        };
+        let esp = r#"[{"device": "vda1", "mounted_at": "/boot/efi", "contents": {"files": [{"path": "EFI/BOOT/BOOTX64.EFI"}, {"path": "EFI/BOOT/grubx64.efi"}, {"path": "EFI/kali/grubx64.efi"}, {"path": "EFI/kali/grub.cfg"}]}}]"#;
+        let uefi = |loader: &str, efi: &str| {
+            kali.replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+                .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, &format!(r#""loader": {loader}"#))
+                .replace(r#""efi": null,"#, &format!(r#""efi": {efi}, "esps": {esp},"#))
+        };
+        let plain = r#"{"name": "grub", "firmware": "uefi", "via_shim": false, "package": "grub-efi-amd64"}"#;
+        let install = "chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=kali --no-nvram\n";
+        let cfg = "chroot /mnt/bko-target env LANG=C update-grub\n";
+        let initramfs = "chroot /mnt/bko-target update-initramfs -u -k all\n";
+
+        // The vm-run guest: booted at the fallback path from blank variables,
+        // so no entry at all; the ESP's EFI/kali names it.
+        let b = built_from(&uefi(plain, r#"{"entries": [], "boot_order": []}"#), &[]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let bt = text(b.stage(Stage::Boot));
+        assert_eq!(id_of(&bt), "kali");
+        let (i, g, c) = (bt.find(initramfs).expect(&bt), bt.find(install).expect(&bt), bt.find(cfg).expect(&bt));
+        let off = bt.find("mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
+        assert!(i < g && g < off && off < c, "{bt}");
+        assert_eq!(bt.matches("grub-install").count(), 1, "{bt}");
+        assert!(!bt.contains("grub-mkconfig") && !bt.contains("--removable") && !bt.contains("efibootmgr") && !bt.contains("--target=i386-pc"), "{bt}");
+
+        // A real PC's install: NVRAM's entry for EFI/kali, made again after
+        // update-grub.
+        let entry = r#"{"number": "0001", "description": "kali", "file": "\\EFI\\kali\\grubx64.efi", "partition": {"device": "vda1"}}"#;
+        let efi = format!(r#"{{"entries": [{entry}], "boot_current": "0001", "boot_order": ["0001"]}}"#);
+        let bt = text(built_from(&uefi(plain, &efi), &[]).stage(Stage::Boot));
+        assert_eq!(id_of(&bt), "kali");
+        let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label kali --loader '\\EFI\\kali\\grubx64.efi'\n").expect(&bt);
+        assert!(bt.find(install).expect(&bt) < bt.find(cfg).unwrap() && bt.find(cfg).unwrap() < nvram, "{bt}");
+        // --removable: the fallback copy too; --no-nvram: no entry.
+        let bt = text(built_from(&uefi(plain, &efi), &["--removable"]).stage(Stage::Boot));
+        assert!(bt.contains("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=kali --no-nvram --force-extra-removable\n"), "{bt}");
+        let bt = text(built_from(&uefi(plain, &efi), &["--no-nvram"]).stage(Stage::Boot));
+        assert!(bt.contains(install) && !bt.contains("efibootmgr"), "{bt}");
+
+        // Through shim: Debian's arm still, shim's entry made again.
+        let shim = r#"{"name": "grub", "firmware": "uefi", "via_shim": true, "package": "grub-efi-amd64-signed", "shim_package": "shim-signed"}"#;
+        let entry = r#"{"number": "0001", "description": "kali", "file": "\\EFI\\kali\\shimx64.efi", "partition": {"device": "vda1"}}"#;
+        let b = built_from(&uefi(shim, &format!(r#"{{"entries": [{entry}], "boot_current": "0001", "boot_order": ["0001"]}}"#)), &[]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let bt = text(b.stage(Stage::Boot));
+        assert!(bt.contains(install) && bt.contains(cfg) && bt.contains("--loader '\\EFI\\kali\\shimx64.efi'\n") && !bt.contains("grub-mkconfig"), "{bt}");
+
+        // BIOS: Debian's i386-pc arm, with debconf's note.
+        let b = built_from(&kali, &[]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let bt = text(b.stage(Stage::Boot));
+        let g = bt.find("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n").expect(&bt);
+        assert!(bt.find(initramfs).expect(&bt) < g && g < bt.find(cfg).expect(&bt), "{bt}");
+        assert!(!bt.contains("x86_64-efi") && !bt.contains("grub-mkconfig") && !bt.contains("efibootmgr"), "{bt}");
+        assert!(b.notes.iter().any(|n| n.starts_with("debconf's grub-pc/install_devices still names the source's disks")), "{:?}", b.notes);
     }
 
     /// AnduinOS (docs/design/anduinos.md): Ubuntu's update-grub and the

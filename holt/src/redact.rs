@@ -134,12 +134,14 @@ const WELL_KNOWN: [&str; 7] = [
     "ffffffff-ffff-ffff-ffff-ffffffffffff",
 ];
 /// Hostnames installers give and live systems use: they identify no one.
-const GENERIC_HOSTS: [&str; 31] = [
+const GENERIC_HOSTS: [&str; 32] = [
     "", "(none)", "localhost", "localhost.localdomain", "localdomain", "<system>", "any", "debian", "ubuntu", "ubuntu-server", "fedora",
     "archlinux", "archiso", "alpine", "nixos", "freebsd", "openbsd", "netbsd", "dragonfly", "omnios", "openindiana", "haiku", "void",
     "voidlinux", "mint", "zorin", "pop-os", "rocky", "backotter", "rescue",
     // PikaOS's installer copies the live system's hostname into every install.
     "pikaos",
+    // Kali's installer's default hostname.
+    "kali",
 ];
 /// Labels (lower case, trailing digits and '*' dropped) that installers
 /// and partitioners write: kept, because they help and identify no one.
@@ -181,7 +183,7 @@ pub struct Collector {
 /// A release medium's volume label: a system's name, its version and an
 /// architecture ("Ubuntu-Server 26.04.1 LTS amd64", "Fedora-S-dvd-x86_64-44").
 fn release_label(low: &str) -> bool {
-    const SYSTEMS: [&str; 13] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos", "pikaos"];
+    const SYSTEMS: [&str; 14] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos", "pikaos", "kali"];
     const ARCHES: [&str; 5] = ["amd64", "x86_64", "x86-64", "arm64", "aarch64"];
     let first = low.split(|c: char| !c.is_ascii_alphanumeric()).next().unwrap_or("");
     SYSTEMS.contains(&first) && ARCHES.iter().any(|a| low.contains(a)) && low.bytes().any(|c| c.is_ascii_digit())
@@ -1667,4 +1669,17 @@ mod tests {
         assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
         assert!(release_label("pikaos-nest-gnome-4.0-amd64-v3"));
     }
+
+    /// Kali: its installer's default hostname kept on another system's dump
+    /// too (not only as Kali's own os word), and its ISO's names as release
+    /// labels.
+    #[test]
+    fn kali_host_and_release_are_kept() {
+        let d = parse(r#"{"os": {"id": "debian"}, "host": {"hostname": "kali"}, "storage": {"disks": [{"name": "vda", "serial": "1", "partitions": [{"content": {"type": "iso9660", "label": "Kali-2026.3-amd64"}}]}]}}"#).unwrap();
+        let (r, red) = redact(&d);
+        assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
+        assert!(release_label("kali-linux-2026.3-installer-netinst-amd64"));
+        assert!(!release_label("kali-desktop"));
+    }
+
 }

@@ -195,6 +195,12 @@
   "sujournal": "/.sujournal belongs to the file system (newfs -j); its flags are tested on a copy",
   "zfs-per-file-options": "no ZFS on hardenedbsd15 (UFS root; freebsd15 covers ZFS)"
  },
+ "kali": {
+  "Birth times": "ext4 and vfat keep them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
+  "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
+  "SELinux labels": "not applicable; the guest runs AppArmor (LSMs lockdown,capability,landlock,yama,apparmor,tomoyo,bpf,ipe,ima,evm), which keeps no labels on disk",
+  "Whole-disk needs (GPT, GRUB's NVRAM entry and EFI/kali, the initramfs, the swap partition)": "out of scope: whole-disk (HoltTest1 1Obscure recreates the disk and boots it alone from its NVRAM entry); here the scratch disk is laid out like the guest's and only its file systems' contents are restored"
+ },
  "kinoite44": {
   "[btrfs] birth times (statx btime on btrfs)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
   "[btrfs] ostree hardlinked symlink objects (repository + both deployments)": "both tools relink regular files only (restic-bko's restorer, rustic-bko's hardlink_key), so each of ostree's hardlinked symlink objects comes back as its own symlink with the same target, mode, owner, times and label; accepted (docs/design/bazzite.md): composefs and ostree fsck read a symlink's target and xattrs, not its link count",

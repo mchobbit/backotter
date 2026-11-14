@@ -96,7 +96,10 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
 /// underneath, ID_LIKE=debian) has dracut for its initramfs and its own
 /// GRUB, signed on the machine with a MOK behind shim, which load keeps as
 /// the ESP brings it back (docs/design/anduinos.md); its test is
-/// `anduinos2` in HoltTest1U.
+/// `anduinos2` in HoltTest1U.  Kali Linux (Debian testing with its own
+/// archive) boots as Debian 13 does on UEFI without shim: initramfs-tools,
+/// GRUB in EFI/kali and update-grub (docs/design/kali.md); its test is
+/// `kali` in HoltTest1Obscure.
 pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("debian", "13", "Debian 13"),
     ("linuxmint", "22", "Linux Mint 22"),
@@ -153,6 +156,10 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     // AnduinOS's own MOK-signed GRUB behind shim, kept from the ESP.  Not
     // 1.x: Ubuntu 24.04's casper, initramfs-tools and signed GRUB.
     ("anduinos", "2", "AnduinOS 2"),
+    // Debian testing underneath (ID_LIKE=debian), rolling, with its own
+    // archive: VERSION_ID is the snapshot's year.release (2026.3), as
+    // AerynOS's is, so every snapshot (docs/design/kali.md, decision 2).
+    ("kali", "*", "Kali Linux"),
     // Not Linux (other/): os-release, or uname for those without one.
     ("freebsd", "14", "FreeBSD 14"),
     ("freebsd", "15", "FreeBSD 15"),
@@ -262,7 +269,7 @@ mod tests {
         assert!(check_supported(Some(&parse(neon))).is_ok());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -390,7 +397,7 @@ mod tests {
         assert_eq!(o.get("UBUNTU_CODENAME"), Some("resolute"));
         assert!(check_supported(Some(&o)).is_ok());
         assert!(supported("anduinos", "2.0.0"));
-        assert!(supported_names().contains("PikaOS 4, AnduinOS 2, FreeBSD 14"));
+        assert!(supported_names().contains("PikaOS 4, AnduinOS 2, "));
         // Not 1.x (Ubuntu 24.04's stack), nor a 3 until a guest shows it.
         let e = check_supported(Some(&parse(&ANDUINOS.replace("2.0.5", "1.1.2")))).unwrap_err();
         assert!(e.contains("this is AnduinOS 1.1.2 (ID=anduinos, VERSION_ID=1.1.2)") && e.contains("AnduinOS 2,"), "{e}");
@@ -400,6 +407,37 @@ mod tests {
         let lookalike = ANDUINOS.replace("ID=anduinos", "ID=anduinos-remix").replace("NAME=\"AnduinOS\"", "NAME=\"Remix\"");
         assert!(check_supported(Some(&parse(&lookalike))).is_err());
         assert!(check_supported(Some(&parse("ID=resolute-desktop\nID_LIKE=debian\nVERSION_ID=\"2.0.5\"\nUBUNTU_CODENAME=resolute\n"))).is_err());
+    }
+
+    /// Kali 2026.3's /usr/lib/os-release (base-files 2026.3.1, the kali
+    /// guest's netinst ISO, docs/design/kali.md "What K1 found").
+    const KALI: &str = "PRETTY_NAME=\"Kali GNU/Linux Rolling\"\nNAME=\"Kali GNU/Linux\"\nVERSION_ID=\"2026.3\"\nVERSION=\"2026.3\"\nVERSION_CODENAME=kali-rolling\nID=kali\nID_LIKE=debian\nHOME_URL=\"https://www.kali.org/\"\nSUPPORT_URL=\"https://forums.kali.org/\"\nBUG_REPORT_URL=\"https://bugs.kali.org/\"\nANSI_COLOR=\"1;31\"\n";
+
+    #[test]
+    fn kali() {
+        let o = parse(KALI);
+        assert_eq!(o.get("ID"), Some("kali"));
+        assert_eq!(o.get("ID_LIKE"), Some("debian"));
+        assert_eq!(o.get("VERSION_ID"), Some("2026.3"));
+        assert_eq!(o.get("VERSION_CODENAME"), Some("kali-rolling"));
+        assert_eq!(o.get("PRETTY_NAME"), Some("Kali GNU/Linux Rolling"));
+        assert_eq!(o.get("ANSI_COLOR"), Some("1;31"));
+        assert!(check_supported(Some(&o)).is_ok());
+        assert!(supported_names().contains("AnduinOS 2, Kali Linux, FreeBSD 14"));
+        // Rolling (decision 2): every snapshot, the next year's too, and
+        // one with no VERSION_ID at all.
+        for v in ["2026.4", "2027.1", "2025.4"] {
+            assert!(check_supported(Some(&parse(&KALI.replace("2026.3", v)))).is_ok(), "{v}");
+        }
+        assert!(check_supported(Some(&parse(&KALI.replace("VERSION_ID=\"2026.3\"\n", "")))).is_ok());
+        // Not by its likeness: a remix with its own ID, or a derivative that
+        // names Kali in ID_LIKE and claims its VERSION_ID, isn't Kali.
+        let remix = KALI.replace("ID=kali\n", "ID=kali-remix\n").replace("NAME=\"Kali GNU/Linux\"", "NAME=\"Remix\"");
+        let e = check_supported(Some(&parse(&remix))).unwrap_err();
+        assert!(e.contains("(ID=kali-remix, VERSION_ID=2026.3)") && e.contains("AnduinOS 2, Kali Linux,"), "{e}");
+        assert!(check_supported(Some(&parse("ID=pentestos\nID_LIKE=\"kali debian\"\nVERSION_ID=\"2026.3\"\nVERSION_CODENAME=kali-rolling\n"))).is_err());
+        // Debian testing itself (no VERSION_ID), even on Kali's codename.
+        assert!(check_supported(Some(&parse("ID=debian\nVERSION_CODENAME=kali-rolling\nPRETTY_NAME=\"Debian GNU/Linux forky/sid\"\n"))).is_err());
     }
 
     #[test]

@@ -2337,6 +2337,204 @@ fn anduinos_fallback_boot() {
     assert!(b.notes.iter().any(|n| n.contains("signed with the MOK /var/lib/shim-signed/mok/MOK.der (its fingerprint not in the dump)")), "{:?}", b.notes);
 }
 
+/// Kali's kernel (linux-image-amd64 7.1.5-1kali1).
+const KALI_KV: &str = "7.1.5+kali-amd64";
+/// The ESP's PARTUUID.
+const KALI_ESP: &str = "ca11ca11-0000-4000-8000-000000000001";
+/// Kali 2026.3's /usr/lib/os-release (base-files 2026.3.1).
+const KALI_OS_RELEASE: &str = "PRETTY_NAME=\"Kali GNU/Linux Rolling\"\nNAME=\"Kali GNU/Linux\"\nVERSION_ID=\"2026.3\"\nVERSION=\"2026.3\"\nVERSION_CODENAME=kali-rolling\nID=kali\nID_LIKE=debian\nHOME_URL=\"https://www.kali.org/\"\nSUPPORT_URL=\"https://forums.kali.org/\"\nBUG_REPORT_URL=\"https://bugs.kali.org/\"\nANSI_COLOR=\"1;31\"\n";
+
+/// Kali 2026.3 as d-i's guided "use entire disk" lays it out on UEFI
+/// (docs/design/kali.md, "What K1 found"), in small: GPT with a vfat ESP at
+/// /boot/efi, an ext4 root and a swap partition; initramfs-tools'
+/// /boot/initrd.img-K; GRUB unsigned (grub-efi-amd64, no shim-signed, Secure
+/// Boot off) in EFI/kali and, from force-efi-extra-removable, its copy at
+/// the fallback path; booted from NVRAM's "kali" entry, as a real PC is.
+fn kali() -> Tree {
+    use crate::efi::GLOBAL;
+    const SWAP: &str = "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f";
+    let t = Tree::new("scn-kali");
+    let k = KALI_KV;
+    let mut img = vec![0u8; 100 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "ca11ca11-0000-4000-8000-00000000d15c",
+            parts: vec![
+                (ESP, KALI_ESP, 2048, 73727, 0, ""),
+                (LINUX, "ca11ca11-0000-4000-8000-000000000002", 73728, 196607, 0, ""),
+                (SWAP, "ca11ca11-0000-4000-8000-000000000003", 196608, 204766, 0, ""),
+            ],
+        },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(71680, 0xca11_0001, ""));
+    put(&mut img, 73728, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
+    put(&mut img, 196608, &misc::sample::swap(1024, ""));
+    let (root, swap) = ("10111213-1415-1617-1819-1a1b1c1d1e1f", "c0c1c2c3-c4c5-c6c7-c8c9-cacbcccdcecf");
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    let grub = vec![2u8; 400];
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 122880, &img)
+        .partition("vda", "vda3", "254:3", 3, 196608, 8159, &img)
+        .file("/sys/block/vda/device/model", "")
+        .symlink(&format!("/dev/disk/by-partuuid/{KALI_ESP}"), "../../vda1")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&var("Boot0001"), efi_load_option("kali", 1, 2048, 71680, KALI_ESP, "\\EFI\\kali\\grubx64.efi"))
+        .file(&var("BootOrder"), [7u8, 0, 0, 0, 1, 0])
+        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 1, 0])
+        .file(&var("SecureBoot"), [6u8, 0, 0, 0, 0])
+        .file("/proc/self/mountinfo", "26 1 254:2 / / rw,relatime shared:1 - ext4 /dev/vda2 rw,errors=remount-ro\n27 26 254:1 / /boot/efi rw,relatime shared:2 - vfat /dev/vda1 rw,fmask=0077,dmask=0077\n")
+        .file("/proc/swaps", "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/dev/vda3                               partition\t4076\t\t0\t\t-2\n")
+        .file("/etc/fstab", format!("UUID={root} / ext4 errors=remount-ro 0 1\nUUID=CA11-0001 /boot/efi vfat umask=0077 0 1\nUUID={swap} none swap sw 0 0\n"))
+        .file("/usr/lib/os-release", KALI_OS_RELEASE)
+        .symlink("/etc/os-release", "../usr/lib/os-release")
+        .file("/etc/debian_version", "kali-rolling\n")
+        .symlink("/lib", "usr/lib")
+        .file(&format!("/boot/vmlinuz-{k}"), "k")
+        .file(&format!("/boot/initrd.img-{k}"), "initramfs-tools")
+        .file(&format!("/boot/config-{k}"), "")
+        .file(&format!("/boot/System.map-{k}"), "")
+        .file("/boot/grub/x86_64-efi/normal.mod", "x")
+        .file(
+            "/boot/grub/grub.cfg",
+            format!("insmod part_gpt\ninsmod ext2\nsearch --no-floppy --fs-uuid --set=root {root}\nmenuentry 'Kali GNU/Linux' {{\n\tlinux\t/boot/vmlinuz-{k} root=UUID={root} ro quiet\n\tinitrd\t/boot/initrd.img-{k}\n}}\n"),
+        )
+        .file("/etc/default/grub", "GRUB_DEFAULT=0\nGRUB_TIMEOUT=5\nGRUB_DISTRIBUTOR=`( . /etc/os-release && echo ${NAME} )`\nGRUB_CMDLINE_LINUX_DEFAULT=\"quiet\"\n")
+        .file("/etc/initramfs-tools/initramfs.conf", "MODULES=most\nCOMPRESS=zstd\n")
+        .dir(&format!("/usr/lib/modules/{k}/kernel"))
+        .file("/boot/efi/EFI/kali/grubx64.efi", &grub)
+        .file("/boot/efi/EFI/BOOT/BOOTX64.EFI", &grub)
+        .file("/proc/sys/kernel/osrelease", format!("{k}\n"))
+        .file("/proc/sys/kernel/hostname", "kali\n")
+        .file("/proc/cmdline", format!("BOOT_IMAGE=/boot/vmlinuz-{k} root=UUID={root} ro quiet\n"));
+    let pkgs = [
+        ("grub-efi-amd64", "2.14-2+kali1"),
+        ("grub-efi-amd64-bin", "2.14-2+kali1"),
+        ("grub-efi-amd64-unsigned", "2.14-2+kali1"),
+        ("grub-common", "2.14-2+kali1"),
+        ("grub2-common", "2.14-2+kali1"),
+        ("linux-image-amd64", "7.1.5-1kali1"),
+        ("linux-image-7.1.5+kali-amd64", "7.1.5-1kali1"),
+        ("initramfs-tools", "0.151"),
+        ("efibootmgr", "18-2"),
+        ("os-prober", "1.84"),
+        ("e2fsprogs", "1.47.3-1"),
+        ("dosfstools", "4.2-1.2"),
+    ];
+    let status: String = pkgs.iter().map(|(n, v)| format!("Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n")).collect();
+    t.file("/var/lib/dpkg/status", status);
+    t
+}
+
+/// A plan from a tree, the source disk vda going to vdb.
+fn kali_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let v = run(t, true, FakeRunner::default());
+    let l = Layout::from_json(v.clone()).unwrap();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+    (v, commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() }))
+}
+
+/// Every stage's commands, in order.
+fn plan_text(b: &crate::load::commands::Built) -> String {
+    use crate::load::{commands::Cmd, Stage};
+    Stage::ALL.iter().map(|st| format!("# {st:?}\n{}", b.stage(*st).iter().map(Cmd::shell).collect::<String>())).collect()
+}
+
+/// Kali read back and planned (docs/design/kali.md, K2): supported by its
+/// ID; GRUB unsigned in EFI/kali (no shim) from BootCurrent, the fallback
+/// copy beside it; initramfs-tools as the generator.  load runs
+/// update-initramfs, grub-install into EFI/kali with no NVRAM write,
+/// update-grub (not grub-mkconfig) with os-prober off, and makes the "kali"
+/// entry again.  The plan is the one the same machine gets as Debian 13.
+#[test]
+fn kali_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let k = KALI_KV;
+    let (v, b) = kali_plan(&kali());
+    assert_eq!(s(&v, &["os", "id"]), "kali");
+    assert_eq!(s(&v, &["os", "version_id"]), "2026.3");
+    assert_eq!(s(&v, &["os", "version_codename"]), "kali-rolling");
+    assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
+    assert_eq!(v.at(&["firmware", "secure_boot"]), Some(&Value::Bool(false)));
+    let l = v.at(&["boot", "loader"]).unwrap();
+    assert_eq!(s(l, &["name"]), "grub");
+    assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)));
+    assert_eq!(s(l, &["package"]), "grub-efi-amd64");
+    assert!(l.get("shim_package").is_none_or(Value::is_null), "{}", l.compact());
+    for (p, ver) in [("grub-efi-amd64", "2.14-2+kali1"), ("linux-image-amd64", "7.1.5-1kali1"), ("initramfs-tools", "0.151")] {
+        assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
+    }
+    assert!(v.at(&["boot", "packages", "shim-signed"]).is_none());
+    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "initramfs-tools");
+    let kernels = arr(&v, &["boot", "kernels", "installed"]);
+    assert_eq!(kernels.len(), 1, "{}", v.at(&["boot", "kernels"]).unwrap().compact());
+    assert_eq!(s(&kernels[0], &["version"]), k);
+    let esp = v.at(&["boot", "esps", "0"]).unwrap();
+    assert_eq!(s(esp, &["mounted_at"]), "/boot/efi");
+    let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"]).iter().map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str))).collect();
+    assert!(files.contains(&("EFI/BOOT/BOOTX64.EFI", Some("EFI/kali/grubx64.efi"))), "{files:?}");
+    assert_eq!(files.len(), 2, "{files:?}");
+    let disk = v.at(&["storage", "disks", "0"]).unwrap();
+    assert_eq!(s(disk, &["partition_table", "type"]), "gpt");
+    assert_eq!(s(disk, &["partitions", "0", "type_name"]), "EFI System");
+    assert_eq!(s(disk, &["partitions", "1", "content", "type"]), "ext4");
+    assert_eq!(s(disk, &["partitions", "2", "content", "type"]), "swap");
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
+    assert!(f.contains("mke2fs ") && f.contains("mkswap ") && f.contains("mkfs.fat "), "{f}");
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    let i = bt.find("chroot /mnt/bko-target update-initramfs -u -k all\n").expect(&bt);
+    let g = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=kali --no-nvram\n").expect(&bt);
+    let off = bt.find("[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
+    let cfg = bt.find("chroot /mnt/bko-target env LANG=C update-grub\n").expect(&bt);
+    let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label kali --loader '\\EFI\\kali\\grubx64.efi'\n").expect(&bt);
+    assert!(i < g && g < off && off < cfg && cfg < nvram, "{bt}");
+    assert_eq!(bt.matches("grub-install").count(), 1, "{bt}");
+    assert!(!bt.contains("grub-mkconfig") && !bt.contains("--removable") && !bt.contains("i386-pc") && !bt.contains("dracut"), "{bt}");
+
+    // The same machine as Debian 13: the same plan, word for word (the ESP
+    // still says EFI/kali, so --bootloader-id is kali there too).
+    let t = kali();
+    std::fs::remove_file(t.p("/etc/os-release")).unwrap();
+    std::fs::remove_file(t.p("/usr/lib/os-release")).unwrap();
+    t.debian13();
+    let (dv, db) = kali_plan(&t);
+    assert_eq!(s(&dv, &["os", "id"]), "debian");
+    assert!(db.problems.is_empty(), "{:?}", db.problems);
+    assert_eq!(plan_text(&b), plan_text(&db));
+    assert_eq!(b.notes, db.notes);
+}
+
+/// Kali under vm-run: blank OVMF variables, so the firmware booted the
+/// fallback path, whose BOOTX64.EFI is a copy of EFI/kali's GRUB.  Still
+/// GRUB without shim, still EFI/kali (from the ESP), and the firmware's
+/// own entry made again.
+#[test]
+fn kali_fallback_boot() {
+    use crate::efi::GLOBAL;
+    use crate::load::{commands::Cmd, Stage};
+    let t = kali();
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    std::fs::remove_file(t.p(&var("Boot0001"))).unwrap();
+    t.file(&var("Boot0002"), efi_load_option("UEFI Misc Device", 1, 2048, 71680, KALI_ESP, "\\EFI\\BOOT\\BOOTX64.EFI"))
+        .file(&var("BootOrder"), [7u8, 0, 0, 0, 2, 0])
+        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 2, 0]);
+    let (v, b) = kali_plan(&t);
+    let l = v.at(&["boot", "loader"]).unwrap();
+    assert_eq!(s(l, &["name"]), "grub");
+    assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)));
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(bt.contains("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=kali --no-nvram\n") && bt.contains("env LANG=C update-grub\n"), "{bt}");
+    assert!(bt.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'UEFI Misc Device' --loader '\\EFI\\BOOT\\BOOTX64.EFI'\n"), "{bt}");
+    assert!(!bt.contains("grub-mkconfig"), "{bt}");
+}
+
 /// Every scenario's dump, by name, for tests that must hold over all of
 /// them (load's fit.rs).
 pub fn dumps() -> Vec<(&'static str, Value)> {
@@ -2353,5 +2551,6 @@ pub fn dumps() -> Vec<(&'static str, Value)> {
         ("pikaos", run(&pikaos(), true, FakeRunner::default())),
         ("biglinux", run(&biglinux(), true, biglinux_runner())),
         ("anduinos", run(&anduinos(), true, anduinos_runner())),
+        ("kali", run(&kali(), true, FakeRunner::default())),
     ]
 }

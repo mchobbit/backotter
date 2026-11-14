@@ -32,6 +32,7 @@ ghostbsd26	chopin	r4all	PASS	2026-11-08T02:50:28Z	2026-11-08T02:46:48Z	0.2.4	3a5
 ghostbsd26-zfs	cinqcent	r4all	PASS	2026-11-08T02:50:57Z	2026-11-08T02:46:54Z	0.2.4	f9859fa36daa6ed35e006992ff6a95622338c90c93585ec7234a037bf1a710fb	changed	7	ok:7:70	0	2	178104	same	ok:7	storage.disks.0.partitions.0.boot_code.image_b64=177664/aaaca4d3 storage.disks.0.boot_code.code_b64=440/0d5e38c2
 haiku6	chopin	r4all	PASS	2026-11-08T02:40:14Z	2026-11-08T02:36:25Z	0.2.4	bc28f52db6818f232180e9f62384ce3a1b346eae229ad4497004add0d31c99a2	changed	1	ok:1:39	0	1	440	same	ok:1	storage.disks.0.boot_code.code_b64=440/14ed669c
 hardenedbsd15	cinqcent	r4all	PASS	2026-11-08T02:42:17Z	2026-11-08T02:37:19Z	0.2.4	abe8ce85847f09c92649c293290d38091568eb75b139c3325ac86f1e18071445	same	6	ok:6:37	0	2	62392	same	ok:6	storage.disks.0.partitions.1.boot_code.image_b64=61952/225ac46d storage.disks.0.boot_code.code_b64=440/0d5e38c2
+kali	cinqcent	k3	dump	-	2026-11-14T05:45:51Z	0.2.6	-	same	14	ok:14:107	0	0	0	same	ok:14	-
 kinoite44	chopin	bzb6a	PASS	2026-11-11T14:15:47Z	2026-11-11T14:06:13Z	0.2.4	-	same	20	ok:20:129	0	0	0	same	ok:20	-
 manjaro	cinqcent	eosmj2	PASS	2026-11-09T13:36:54Z	2026-11-09T13:31:42Z	0.2.4	-	same	16	ok:16:98	0	0	0	same	ok:16	-
 mint22	cinqcent	r4all	PASS	2026-11-08T02:23:53Z	2026-11-08T02:17:53Z	0.2.4	2e34eb0b95c4e6d43fada1d955062ce211f17cd15040f20127638f697f0508dc	changed	8	ok:8:85	0	0	0	same	ok:8	-

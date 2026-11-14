@@ -112,7 +112,22 @@ the run recorded.  Its source had snap-pac's snapshots 1-4 from GA1's
 update, so its golden plan makes the four shared snapshots
 `@/.snapshots/1..4/snapshot` in the restore stage (restore `--exact
 --clone-from`), then `dracut-rebuild` and `grub-install
---bootloader-id=Garuda --no-nvram` in the chroot.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
+--bootloader-id=Garuda --no-nvram` in the chroot.
+kali (`make-debian.sh --kali 2026.3 ext4`: Kali Linux 2026.3 by d-i with
+Kali's preseed; UEFI with Secure Boot off, GPT with an 883 MiB ESP at
+/boot/efi, ext4 /, swap; GRUB in EFI/kali and the same file as
+EFI/BOOT/BOOTX64.EFI, no shim on the ESP; initramfs-tools, kernels 7.1.5
+and 7.2.15; docs/design/kali.md), built on 2026-11-14, was added the same
+day from a dump of the live guest on cinqcent (run `k3`, Chopin's queue
+full, the static bko-holt 0.2.6 built from this tree with Kali's osrel.rs
+row and update-grub; its own vm-run-options, so through the fallback path
+on a fresh variable store, the disk under `vm-run --snapshot`, the image's
+sha256 the same before and after).  It is in the corpus before it is one
+of classes.json's HoltTest2 sources, so golden_plans.rs notes it until it
+is.  Its golden plan runs `update-initramfs -u -k all`, `grub-install
+--target=x86_64-efi --bootloader-id=kali --no-nvram` and `update-grub`
+with os-prober off, and makes no NVRAM entry (the source booted the
+fallback path).  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
 collection; `-` for the guests without one) say which, and `image` whether
@@ -235,7 +250,12 @@ the same sha256 from both builds.  So did garuda (2026-11-14), built from
 a private directory on chopin (/bkoscratch, its warm holt build): chopin
 with its 90 strings and the raw dump's identifiers, cinqcent with its 89,
 the Mac with the git e-mail, 0 findings (its plan scanned too), the same
-sha256 from both builds.
+sha256 from both builds.  So did kali
+(2026-11-14), built from a private directory in cinqcent's RAM disk (its
+warm holt build at /bkoscratch/holt-warm/kali): cinqcent with its 92
+strings and the raw dump's identifiers, chopin with its 91, the Mac with
+the git e-mail, 0 findings (its plan scanned too), the same sha256 from
+both builds.
 
 ## The golden plans
 

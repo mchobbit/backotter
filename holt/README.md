@@ -29,7 +29,7 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
 
 - Linux: Debian 12 and 13 (Proxmox VE 9 on it, ZFS root; TrueNAS CE 25.10 on 12, its boot environments), Devuan 6, Ubuntu 24.04 and 26.04, Linux Mint 22,
   Pop!_OS 24.04, Vanilla OS 3, Zorin OS 18, KDE neon 24.04, AnduinOS 2, Arch Linux, CachyOS, Artix Linux, Omarchy,
-  EndeavourOS, Manjaro, Garuda Linux, BigLinux, Alpine Linux 3, AerynOS, Void Linux, Chimera Linux,
+  EndeavourOS, Manjaro, Garuda Linux, BigLinux, Alpine Linux 3, AerynOS, Solus 4, Void Linux, Chimera Linux,
   Gentoo Linux, PikaOS 4, Kali Linux, Fedora 44, Bazzite 44, Rocky Linux 10, openSUSE
   Tumbleweed, NixOS 26.05 and Guix System (no VERSION_ID; its store GRUB-less, docs/design/guix.md);
 - ostree (image-mode) systems among them: Bazzite 44, and Fedora's atomic
@@ -59,7 +59,7 @@ is its test on real hardware; Chimera's are `chimera`, `chimera-uefi` and
 `chimera-zfs` in HoltTest1Obscure, and BackShot1 ran it on the Thinkpad with
 root on ZFS; Gentoo's are `gentoo`, the Thinkpad's OpenRC install in small,
 and `gentoo-systemd`, LVM on LUKS, in HoltTest1G, and BackShot1 is its test
-on the Thinkpad itself; AnduinOS's is `anduinos2` in HoltTest1U, Btrfs
+on the Thinkpad itself; Solus's is `solus49` in HoltTest1Obscure, ext4 under Secure Boot with its ESP at /boot and out of fstab: `dump` refuses until the ESP is mounted (`clr-boot-manager mount-boot`), `load` keeps clr-boot-manager's shim, systemd-boot, kernels and entries from the restored ESP and makes only the NVRAM entry; AnduinOS's is `anduinos2` in HoltTest1U, Btrfs
 under Secure Boot, whose MOK-signed GRUB `load` keeps from the restored ESP;
 PikaOS's are `pikaos4`, XFS with rEFInd's NVRAM entry, and `pikaos4-luks`,
 Btrfs on LUKS2 booted from the fallback path, in HoltTest1Obscure: `load`

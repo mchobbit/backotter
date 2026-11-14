@@ -1096,6 +1096,22 @@ if [[ -n $legacy_root ]]; then
     fi
 fi
 
+# Solus (docs/design/solus.md): the ESP is /boot, but not in fstab
+# (clr-boot-manager mounts it when it needs it), so mount it there as the
+# running system would: the image's one ESP by GPT type.
+if [[ $(. "$mp/usr/lib/os-release" 2>/dev/null; echo "${ID:-}") == solus ]] && ! mountpoint -q "$mp/boot"; then
+    esps=()
+    for q in "${parts[@]}"; do
+        [[ $(lsblk -dno PARTTYPE "$q" 2>/dev/null) == c12a7328-f81f-11d2-ba4b-00a0c93ec93b ]] && esps+=("$q")
+    done
+    if [[ ${#esps[@]} -eq 1 ]]; then
+        mount_fs "${esps[0]}" "$mp/boot" ""
+        echo "vm-mount: Solus: the ESP ${esps[0]} at /boot (not in fstab: clr-boot-manager's)"
+    else
+        echo "vm-mount: Solus: ${#esps[@]} ESPs on the image, so none mounted at /boot" >&2
+    fi
+fi
+
 trap - ERR
 [[ -z $fstab_copy ]] || rm -f "$fstab_copy"
 how=read-write

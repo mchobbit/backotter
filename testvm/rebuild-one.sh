@@ -127,6 +127,10 @@ vanilla3)   cmd=(asm $T/make-vanilla.sh --iso-dir "$SRC" vanilla3 "$W") ;;
 # anduinos2: from AnduinOS's live ISO in /bkoscratch/rebuild-inputs/anduinos2 (or
 # the guest's own dir), its SHA-256 pinned in the builder; the ISO's packages only.
 anduinos2)  cmd=(asm $T/make-anduinos.sh "$SRC/AnduinOS-2.0.5-amd64.iso" "$W" anduinos2) ;;
+# solus49: from Solus's Xfce live ISO in /bkoscratch/rebuild-inputs/solus49 (or
+# the guest's own dir), its SHA-256 pinned in the builder (.sha256sum.sign
+# checked on download); eopkg up from the Polaris repository at the rebuild.
+solus49)    cmd=(asm $T/make-solus.sh "$SRC/Solus-Xfce-Release-2026-04-18.iso" "$W" solus49) ;;
 # guix15, guix15-bios: from Guix's 1.5.0 installation ISO in
 # /bkoscratch/rebuild-inputs/guix15 (its SHA-256 pinned in the builder, its
 # .sig checked on download), with 1.5.0's substitutes at the rebuild.
@@ -186,7 +190,7 @@ IMG=$G; case $G in freebsd15-ufs|freebsd15-geli) IMG=freebsd15 ;; ghostbsd26-zfs
 # Never two VMs on one port: compare.py's boot uses 2230 + COMPARE_SLOT.
 if ss -ltnH "sport = :$((2230 + SLOT))" | grep -q .; then echo "port $((2230 + SLOT)) is taken" >&2; exit 2; fi
 # The ISO: the recipe's .iso argument, wherever options put it.
-case $G in mx25|mint22|pop24|zorin18|neon24|elementary8|elementary8-luks|anduinos2)
+case $G in mx25|mint22|pop24|zorin18|neon24|elementary8|elementary8-luks|anduinos2|solus49)
     ISO=""; for a in "${cmd[@]}"; do case $a in *.iso) ISO=$a ;; esac; done
     [ -f "$ISO" ] || { echo "no ISO $ISO" >&2; exit 2; } ;;
 proxmox9|proxmox9-mirror)

@@ -804,6 +804,111 @@ class NewestKernel(unittest.TestCase):
         self.assertEqual(a, b)   # standing is by line
 
 
+class Solus(unittest.TestCase):
+    """Solus (solus.md, GuestTest2's new rules): S-eopkg, L-cbm and K-cbm.  solus49-before.out is
+    the before hook (check-image.sh, boot-state.sh, check-after.sh with RULES="S-eopkg L-cbm K-cbm
+    B-lin M-lin") run on solus49 on Chopin, 2026-11-14 (a --snapshot boot); the failures are that
+    output edited."""
+    CHECKS = {"pm": "eopkg", "fw": "uefi", "established": True,
+              "rules": {"source": "S-eopkg", "loader": "L-cbm", "kernel": "K-cbm", "boot": "B-lin", "mounts": "M-lin"}}
+    K_OLD, K_NEW = "com.solus-project.current.6.18.21-333", "com.solus-project.current.7.3.4-373"
+
+    def setUp(self):
+        self.text = fx("solus49-before.out")
+
+    def image(self, text=None):
+        return J.judge_image(J.parse_sections(self.text if text is None else text), self.CHECKS, POLICY, updates=1)
+
+    def edit(self, old, new, count=1):
+        self.assertEqual(self.text.count(old), count, old)
+        return self.text.replace(old, new)
+
+    def test_the_real_guest_passes(self):
+        s = J.parse_sections(self.text)
+        self.assertEqual(J.check_hook(s, J.required_image(self.CHECKS) + J.required_after(self.CHECKS)), (True, None))
+        img = self.image()
+        self.assertEqual({n: v.v for n, v in img.items()},
+                         {"image:sources": "PASS", "image:loader": "PASS", "image:free": "PASS", "image:kernels": "PASS"})
+        self.assertEqual(img["image:kernels"].why, "2 kernels")
+        after = J.judge_after(s, s, self.CHECKS)
+        self.assertEqual({n: v.v for n, v in after.items()},
+                         {"after:boot-state": "PASS", "after:failed-units": "PASS", "after:fstab": "PASS",
+                          "after:shadow": "PASS", "after:newest-kernel": "PASS"})
+
+    def test_eopkg_polaris_active(self):
+        def lines(text):
+            return J.s_eopkg(J.parse_sections(text))
+        self.assertEqual(lines(self.text), [])
+        # `eopkg dr Solus` on the guest, then lr -N (and lr in colour, as a tty gets it)
+        self.assertEqual(lines(self.edit("Solus [active]", "Solus [inactive]")), [J.EOPKG_POLARIS_OFF])
+        self.assertEqual(lines(self.edit("Solus [active]", "\x1b[32mSolus [active]\x1b[0m")), [])
+        self.assertEqual(lines(self.edit("/repo/polaris/", "/repo/unstable/")), [J.EOPKG_NO_POLARIS])
+        self.assertEqual(lines(self.edit("Solus [active]\n   https://cdn.getsol.us/repo/polaris/eopkg-index.xml.xz\n", "")),
+                         [J.EOPKG_NO_REPO])
+        # a second, inactive copy doesn't hide an active Polaris
+        two = self.edit("=== cmd cbm-esp", "Old [inactive]\n   https://cdn.getsol.us/repo/polaris/eopkg-index.xml.xz\n=== cmd cbm-esp")
+        self.assertEqual(lines(two), [])
+        self.assertEqual(self.image(self.edit("/repo/polaris/", "/repo/unstable/"))["image:sources"].v, "FAIL")
+
+    def test_cbm_esp(self):
+        def lines(text):
+            return J.l_cbm(J.parse_sections(text))
+        self.assertEqual(lines(self.text), [])
+        # the fallback a stale shim (image mode overwrites it with plain systemd-boot: not shim)
+        self.assertEqual(lines(self.edit("351e131d3c4a636704e9cae7d1296baf8a05beca9922cfebbfa48933c9bf1ad3 EFI/BOOT/BOOTX64.EFI",
+                                         "0000000000000000000000000000000000000000000000000000000000000000 EFI/BOOT/BOOTX64.EFI")),
+                         [J.CBM_FALLBACK_DIFFERS])
+        self.assertEqual(lines(self.edit("kind EFI/BOOT/BOOTX64.EFI shim", "kind EFI/BOOT/BOOTX64.EFI systemd-boot")),
+                         [J.CBM_NO_FALLBACK])
+        self.assertEqual(lines(self.edit("kind EFI/com.solus-project/bootloaderx64.efi shim",
+                                         "kind EFI/com.solus-project/bootloaderx64.efi other")), [J.CBM_NO_SHIM])
+        self.assertEqual(lines(self.edit("kind EFI/com.solus-project/grubx64.efi systemd-boot",
+                                         "kind EFI/com.solus-project/grubx64.efi other")), [J.CBM_NO_SDBOOT])
+        # a kept kernel whose entry CBM didn't write
+        gone = self.edit("file loader/entries/Solus-current-6.18.21-333.conf\n", "")
+        gone = gone.replace("entry Solus-current-6.18.21-333 linux /EFI/com.solus-project/kernel-com.solus-project.current.6.18.21-333\n", "")
+        gone = gone.replace("entry Solus-current-6.18.21-333 initrd /EFI/com.solus-project/initrd-com.solus-project.current.6.18.21-333\n", "")
+        self.assertEqual(lines(gone), [J.CBM_NO_ENTRY])
+        self.assertEqual(lines(self.edit(f"file EFI/com.solus-project/kernel-{self.K_NEW}\n", "")), [J.CBM_NO_LINUX])
+        self.assertEqual(lines(self.edit(f"file EFI/com.solus-project/initrd-{self.K_OLD}\n", "")), [J.CBM_NO_ENTRY_INITRD])
+        self.assertEqual(lines(self.edit("default Solus-current-7.3.4-373.conf", "default Solus-lts-*")), [J.CBM_DEFAULT])
+        # FAT keeps no case: a lower-case removable path is the same file
+        self.assertEqual(lines(self.text.replace("EFI/BOOT/BOOTX64.EFI", "EFI/Boot/bootx64.efi")), [])
+        none = "\n".join(x for x in self.text.splitlines() if not x.startswith(("entry ", "file loader/entries/")))
+        self.assertEqual(lines(none), [J.CBM_NO_ENTRIES, J.CBM_NO_ENTRY, J.CBM_DEFAULT])
+        self.assertEqual(lines("=== cmd cbm-esp\nkernel x\nesp unreadable\n=== end\n"), [J.CBM_NO_ESP])
+        self.assertEqual(lines("=== cmd x\n=== end\n"), [J.CBM_NO_ESP])
+
+    def test_cbm_names(self):
+        self.assertEqual(J.cbm_uname(self.K_NEW), "7.3.4-373.current")
+        self.assertEqual(J.cbm_entry(self.K_NEW), "Solus-current-7.3.4-373")
+        self.assertEqual(J.cbm_uname("com.solus-project.lts.6.18.63-322"), "6.18.63-322.lts")
+        self.assertIsNone(J.cbm_uname("initrd-" + self.K_NEW))
+
+    def test_cbm_kernels(self):
+        k = self.image(self.edit(f"/usr/lib64/kernel/{self.K_OLD}\n", f"/usr/lib64/kernel/{self.K_OLD} no-initrd\n"))["image:kernels"]
+        self.assertEqual((k.v, k.lines), ("FAIL", [J.CBM_NO_INITRD]))
+        three = self.edit(f"/usr/lib64/kernel/{self.K_NEW}\n",
+                          f"/usr/lib64/kernel/{self.K_NEW}\n/usr/lib64/kernel/com.solus-project.lts.6.18.63-322\n")
+        self.assertEqual(self.image(three)["image:kernels"].v, "PASS")
+        four = three.replace(f"/usr/lib64/kernel/{self.K_NEW}\n",
+                             f"/usr/lib64/kernel/{self.K_NEW}\n/usr/lib64/kernel/com.solus-project.current.7.3.5-374\n")
+        self.assertEqual(self.image(four)["image:kernels"].lines, ["more kernels than the updater keeps"])
+
+    def test_cbm_running_is_the_newest(self):
+        def lines(body):
+            return J.newest_kernel_lines(body.splitlines(), "K-cbm")
+        real = J.parse_sections(self.text).cmd("kernel")
+        self.assertEqual(J.newest_kernel_lines(real, "K-cbm"), [])
+        # the reboot came up on the ISO's kernel
+        self.assertEqual(lines(f"running 6.18.21-333.current\ninstalled {self.K_OLD}\ninstalled {self.K_NEW}"), [J.NOT_NEWEST])
+        self.assertEqual(lines(f"running 7.3.4-374.current\ninstalled {self.K_OLD}\ninstalled {self.K_NEW}"),
+                         [J.CBM_NOT_INSTALLED])
+        # CBM boots the newest of the running kernel's type: an lts beside a newer current is fine
+        self.assertEqual(lines(f"running 6.18.63-322.lts\ninstalled com.solus-project.lts.6.18.63-322\ninstalled {self.K_NEW}"), [])
+        self.assertEqual(lines("running 7.3.4-373.current"), ["kernel unverified: no running or installed kernel listed"])
+
+
 class Shadow(unittest.TestCase):
     def test_the_corpus_has_one_hit(self):
         hits = {}

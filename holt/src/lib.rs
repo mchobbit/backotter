@@ -72,9 +72,9 @@ pub fn dump_with(sys: &sys::Sys, only: &[String], luks: &luksheader::Options) ->
     let os = osrel::read(sys);
     osrel::check_supported(os.as_ref())?;
     let v = report::build_with(sys, os.as_ref(), &timestamp(), only, luks);
-    // What the report found that a backup can't follow (an Ubuntu Core
-    // not in a state to back up: snapcore::refusal).
-    match snapcore::refusal(&v) {
+    // What the report found that a backup can't follow (Solus's ESP, not
+    // mounted: report::refusal).
+    match snapcore::refusal(&v).or_else(|| report::refusal(&v)) {
         Some(e) => Err(e),
         None => Ok(v),
     }

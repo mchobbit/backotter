@@ -119,6 +119,51 @@ pub fn parse_xbps_pkgdb(text: &str) -> Vec<(String, String, String)> {
     out
 }
 
+/// eopkg's database (Solus): a directory a package.
+pub const EOPKG_PACKAGES: &str = "/var/lib/eopkg/package";
+
+/// An eopkg database directory's name, NAME-VERSION-RELEASE, split into the
+/// name (which may hold dashes) and VERSION-RELEASE (VERSION holds none,
+/// RELEASE is digits), as testvm/update/pkgset.sh lists it:
+/// clr-boot-manager-3.6.0-39 is (clr-boot-manager, 3.6.0-39).
+pub fn split_eopkg(dir: &str) -> Option<(&str, &str)> {
+    let r = dir.rfind('-')?;
+    let v = dir[..r].rfind('-')?;
+    let (name, ver, rel) = (&dir[..v], &dir[v + 1..r], &dir[r + 1..]);
+    (!name.is_empty() && !ver.is_empty() && !rel.is_empty() && rel.bytes().all(|c| c.is_ascii_digit())).then(|| (name, &dir[v + 1..]))
+}
+
+/// The text of `<tag>` in `xml`'s first `<tag>...</tag>` after `after`
+/// (the whole text when `after` is empty), entities left as they are.
+fn xml_text<'a>(xml: &'a str, after: &str, tag: &str) -> Option<&'a str> {
+    let from = if after.is_empty() { 0 } else { xml.find(after)? + after.len() };
+    let open = format!("<{tag}>");
+    let i = from + xml[from..].find(&open)? + open.len();
+    let j = i + xml[i..].find(&format!("</{tag}>"))?;
+    Some(xml[i..j].trim())
+}
+
+/// Installed packages from eopkg's database (Solus): each
+/// /var/lib/eopkg/package/NAME-VERSION-RELEASE holds metadata.xml (and
+/// files.xml).  The name is metadata.xml's <Package><Name> (its first
+/// <Name> is the <Source>'s, which a subpackage doesn't share) when the
+/// directory's name starts with it, the version the rest of the directory's
+/// name (split_eopkg, as vm-update lists it), the arch <Architecture>.
+pub fn eopkg_packages(sys: &Sys) -> Vec<(String, String, String)> {
+    let mut out = Vec::new();
+    for d in sys.list(EOPKG_PACKAGES) {
+        if d.starts_with('.') {
+            continue;
+        }
+        let meta = sys.read(&format!("{EOPKG_PACKAGES}/{d}/metadata.xml")).unwrap_or_default();
+        let by_meta = xml_text(&meta, "<Package>", "Name").and_then(|n| d.strip_prefix(n)?.strip_prefix('-').filter(|v| split_eopkg(&format!("x-{v}")).is_some()).map(|v| (n, v)));
+        let Some((n, v)) = by_meta.or_else(|| split_eopkg(&d)) else { continue };
+        out.push((n.to_string(), v.to_string(), xml_text(&meta, "<Package>", "Architecture").unwrap_or("").to_string()));
+    }
+    out.sort();
+    out
+}
+
 /// Whether this is Gentoo: baselayout's /etc/gentoo-release.
 pub fn is_gentoo(sys: &Sys) -> bool {
     sys.exists("/etc/gentoo-release")
@@ -204,6 +249,9 @@ pub fn installed_packages(sys: &Sys) -> Vec<(String, String, String)> {
             return parse_xbps_pkgdb(&t);
         }
     }
+    if sys.is_dir(EOPKG_PACKAGES) {
+        return eopkg_packages(sys);
+    }
     // Guix System has no database: the current generation's profile
     // manifest lists its packages (last: Guix on another system is that
     // system's packages).
@@ -274,6 +322,12 @@ pub const PACKAGES: &[&str] = &[
     // (generate-zbm's images; the release EFI has none), and Void's
     // mainline kernel series (docs/design/zfsbootmenu.md).
     "zfsbootmenu", "linux-mainline",
+    // Solus's ("linux-lts", "shim-signed", "dracut" and "efibootmgr" are
+    // above): clr-boot-manager, which writes shim, systemd-boot and the
+    // kernels to the ESP, its kernel, and usysconf, which runs it after
+    // each eopkg transaction (docs/design/solus.md).  systemd-boot is
+    // systemd's own file there, and "systemd" every guest has.
+    "clr-boot-manager", "linux-current", "usysconf",
 ];
 
 /// debconf answers from /var/cache/debconf/config.dat whose names start with
@@ -941,7 +995,13 @@ fn initramfs_json(sys: &Sys, packages: &[(String, String, String)], ostree: bool
     // *.initrd), which blsforme copies to the ESP; nothing is generated.
     // ostree: the image's own, in /boot/ostree (its directory is named after
     // the kernel's and initramfs's checksum), though dracut is installed.
-    let prebuilt = ostree || sys.list("/usr/lib/kernel").iter().any(|f| f.ends_with(".initrd"));
+    // Solus: each kernel package ships its dracut initrd, built when the
+    // package was (/usr/lib64/kernel/initrd-com.solus-project.FLAVOUR.V-R,
+    // with /usr/lib a link to lib64), which clr-boot-manager copies to the
+    // ESP; dracut is installed, but nothing on the machine runs it.
+    let prebuilt = ostree
+        || sys.list("/usr/lib/kernel").iter().any(|f| f.ends_with(".initrd"))
+        || ["/usr/lib64/kernel", "/usr/lib/kernel"].iter().any(|d| sys.list(d).iter().any(|f| f.starts_with(SOLUS_INITRD)));
     let generator = if let Some(g) = gentoo_generator.as_deref() {
         Some(g)
     } else if prebuilt {
@@ -1068,6 +1128,12 @@ pub fn detect_loader(e: &Evidence) -> Value {
                 // whose name says nothing a loader's would.
                 name = Some("zfsbootmenu");
                 why.push(format!("that is a ZFSBootMenu image ({p})"));
+            } else if has(CBM) && u.trim_start_matches('\\').eq_ignore_ascii_case(&CBM_SHIM.replace('/', "\\")) {
+                // clr-boot-manager's names (Solus): shim as bootloaderx64.efi,
+                // and systemd-boot as the grubx64.efi it loads.
+                shim = true;
+                name = Some("systemd-boot");
+                why.push(format!("that is clr-boot-manager's shim ({CBM_SHIM}), which loads systemd-boot as {CBM_SD_BOOT}"));
             } else if u.contains("SHIM") {
                 shim = true;
                 name = Some("grub");
@@ -1087,6 +1153,11 @@ pub fn detect_loader(e: &Evidence) -> Value {
                 if let Some(of) = e.fallback_copy_of.as_deref().filter(|p| p.to_ascii_lowercase().ends_with("/shimx64.efi")) {
                     shim = true;
                     why.push(format!("EFI/BOOT/BOOTX64.EFI is a copy of {of}"));
+                } else if let Some(of) = e.fallback_copy_of.as_deref().filter(|p| has(CBM) && p.eq_ignore_ascii_case(CBM_SHIM)) {
+                    // clr-boot-manager copies its shim there too (Solus).
+                    shim = true;
+                    name = Some("systemd-boot");
+                    why.push(format!("EFI/BOOT/BOOTX64.EFI is a copy of {of}, clr-boot-manager's shim, which loads systemd-boot as {CBM_SD_BOOT}"));
                 }
             }
         }
@@ -1112,6 +1183,14 @@ pub fn detect_loader(e: &Evidence) -> Value {
             if let Some(p) = e.zbm_images.first() {
                 name = Some("zfsbootmenu");
                 why.push(format!("an ESP holds a ZFSBootMenu image ({p})"));
+            } else if has(CBM) && lc.iter().any(|f| f.eq_ignore_ascii_case(CBM_SD_BOOT)) {
+                // Before grubx64.efi's rule: clr-boot-manager's is systemd-boot.
+                name = Some("systemd-boot");
+                why.push(format!("an ESP holds clr-boot-manager's {CBM_SD_BOOT}, which is systemd-boot"));
+                if lc.iter().any(|f| f.eq_ignore_ascii_case(CBM_SHIM)) {
+                    shim = true;
+                    why.push(format!("and its shim, {CBM_SHIM}"));
+                }
             } else if lc.iter().any(|f| f.ends_with("/grubx64.efi")) {
                 name = Some("grub");
                 why.push("an ESP holds grubx64.efi".into());
@@ -1183,7 +1262,81 @@ pub fn detect_loader(e: &Evidence) -> Value {
         .set("via_shim", e.uefi && shim)
         .set("package", package);
     o.put_some("shim_package", shim_package);
+    // What writes the loader and the kernels to the ESP, when it isn't the
+    // loader's own tool: clr-boot-manager (Solus), on either firmware.
+    o.put_some("manager", has(CBM).then_some(CBM));
     o.set("evidence", why).build()
+}
+
+/// clr-boot-manager's package (Solus, docs/design/solus.md).
+pub const CBM: &str = "clr-boot-manager";
+/// clr-boot-manager's shim on the ESP (shim-signed's shimx64.efi, renamed).
+pub const CBM_SHIM: &str = "EFI/com.solus-project/bootloaderx64.efi";
+/// The systemd-boot it copies beside its shim, by the name shim loads.
+pub const CBM_SD_BOOT: &str = "EFI/com.solus-project/grubx64.efi";
+/// The NVRAM entry clr-boot-manager makes for its shim.
+pub const CBM_ENTRY: &str = "Solus Linux Bootloader";
+/// The start of a Solus kernel package's prebuilt initrd's name.
+pub const SOLUS_INITRD: &str = "initrd-com.solus-project.";
+/// The start of a Solus kernel's name in its package's directory.
+pub const SOLUS_KERNEL: &str = "com.solus-project.";
+
+/// A Solus kernel's file name, com.solus-project.FLAVOUR.VER-REL, as
+/// `uname -r` says it: VER-REL.FLAVOUR (com.solus-project.current.7.3.4-373
+/// is 7.3.4-373.current).
+pub fn solus_kernel_version(file: &str) -> Option<String> {
+    let (flavour, vr) = file.strip_prefix(SOLUS_KERNEL)?.split_once('.')?;
+    let (ver, rel) = vr.rsplit_once('-')?;
+    (!flavour.is_empty() && !ver.is_empty() && !rel.is_empty() && rel.bytes().all(|c| c.is_ascii_digit())).then(|| format!("{vr}.{flavour}"))
+}
+
+/// Solus's kernels (clr-boot-manager's sources, which it copies to the
+/// ESP): each package's com.solus-project.FLAVOUR.VER-REL in
+/// /usr/lib64/kernel (or /usr/lib/kernel, the same directory), with its
+/// initrd-com.solus-project.FLAVOUR.VER-REL and config-VER-REL.FLAVOUR
+/// beside it, `dir` saying where; and the default-FLAVOUR links (the
+/// kernel each flavour boots by default), as (link, target).
+pub fn solus_kernels(sys: &Sys, running: Option<&str>) -> (Vec<Value>, Vec<(String, String)>) {
+    let Some(dir) = ["/usr/lib64/kernel", "/usr/lib/kernel"].into_iter().find(|d| sys.is_dir(d)) else { return (Vec::new(), Vec::new()) };
+    let files = sys.list(dir);
+    let mut kernels: Vec<(String, &String)> = files.iter().filter_map(|f| solus_kernel_version(f).map(|v| (v, f))).collect();
+    kernels.sort_by(|a, b| crate::sys::natural_cmp(&a.0, &b.0));
+    let list = kernels
+        .iter()
+        .map(|(v, f)| {
+            Obj::new()
+                .set("version", v.as_str())
+                .set("dir", dir)
+                .set("vmlinuz_bytes", sys.file_size(&format!("{dir}/{f}")))
+                .set("initrd_bytes", sys.file_size(&format!("{dir}/initrd-{f}")))
+                .set("config", sys.is_file(&format!("{dir}/config-{v}")))
+                .set("running", running == Some(v.as_str()))
+                .set("modules_installed", sys.is_dir(&format!("/lib/modules/{v}")) || sys.is_dir(&format!("/usr/lib/modules/{v}")))
+                .build()
+        })
+        .collect();
+    let links = files.iter().filter(|f| f.starts_with("default-")).filter_map(|f| sys.readlink(&format!("{dir}/{f}")).map(|t| (format!("{dir}/{f}"), t))).collect();
+    (list, links)
+}
+
+/// boot.kernels with Solus's kernels (solus_kernels) added, when
+/// clr-boot-manager is installed: /boot is the ESP there, with no
+/// vmlinuz-V of its own.
+fn with_solus_kernels(mut kernels: Value, sys: &Sys, packages: &[(String, String, String)], running: Option<&str>) -> Value {
+    if !packages.iter().any(|(n, _, _)| n == CBM) {
+        return kernels;
+    }
+    let (list, links) = solus_kernels(sys, running);
+    if let Value::Obj(o) = &mut kernels {
+        for (k, v) in o.iter_mut() {
+            match (k.as_str(), v) {
+                ("installed", Value::Arr(a)) => a.extend(list.iter().cloned()),
+                ("symlinks", Value::Obj(l)) => l.extend(links.iter().map(|(p, t)| (p.clone(), Value::from(t.as_str())))),
+                _ => {}
+            }
+        }
+    }
+    kernels
 }
 
 /// Everything in this module, for the report's "boot" section.  `esps` are
@@ -1277,7 +1430,7 @@ pub fn boot_json(
         .set("esps", esp_list)
         .set("grub", grub_json(sys))
         .set("systemd_boot", sd_boot)
-        .set("kernels", kernels_json(sys, running.as_deref()))
+        .set("kernels", with_solus_kernels(kernels_json(sys, running.as_deref()), sys, packages, running.as_deref()))
         .set("cmdline", sys.read("/proc/cmdline").map(|c| cmdline_json(&c)))
         .set("kernel_cmdline_file", sys.read_trim("/etc/kernel/cmdline"))
         .set("initramfs", initramfs_json(sys, packages, is_ostree))
@@ -1981,5 +2134,140 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert!(mok_json(&s, &pk(&["grub-efi-amd64-signed", "shim-signed", "mokutil"])).is_none());
         let none = Tree::new("mok-none");
         assert!(mok_json(&Sys::new(none.root(), Box::new(FakeRunner::default()), false), &p).is_none());
+    }
+
+    /// Names from the Solus 4.9 ISO's eopkg database (eopkg 4.4.2): the
+    /// name may hold dashes and digits, the version none, the release is
+    /// digits.
+    #[test]
+    fn eopkg_names() {
+        for (d, n, v) in [
+            ("clr-boot-manager-3.6.0-39", "clr-boot-manager", "3.6.0-39"),
+            ("linux-current-6.18.21-333", "linux-current", "6.18.21-333"),
+            ("shim-signed-15.8-7", "shim-signed", "15.8-7"),
+            ("openssh-10.3_p1-64", "openssh", "10.3_p1-64"),
+            ("grub2-2.14-41", "grub2", "2.14-41"),
+            ("efibootmgr-18-3", "efibootmgr", "18-3"),
+            ("eopkg-4.4.2-35", "eopkg", "4.4.2-35"),
+            ("usysconf-0.5.13-49", "usysconf", "0.5.13-49"),
+            ("usysconf-epoch-1.0.0-26", "usysconf-epoch", "1.0.0-26"),
+            ("aalib-1.4.0_5-9", "aalib", "1.4.0_5-9"),
+            ("linux-firmware-amdgpu-20260309-103", "linux-firmware-amdgpu", "20260309-103"),
+        ] {
+            assert_eq!(split_eopkg(d), Some((n, v)), "{d}");
+        }
+        for d in ["eopkg", "eopkg-4.4.2", "eopkg-4.4.2-r35", "-1.0-1", "x--1"] {
+            assert_eq!(split_eopkg(d), None, "{d}");
+        }
+    }
+
+    /// eopkg's database as the ISO has it: metadata.xml's first <Name> is
+    /// the source's (linux-firmware for linux-firmware-amdgpu), its
+    /// <Package><Name> the package's.
+    #[test]
+    fn eopkg_database() {
+        let t = Tree::new("eopkg-db");
+        let meta = |src: &str, n: &str, v: &str, r: &str| {
+            format!("<PISI>\n    <Source>\n        <Name>{src}</Name>\n        <Packager>\n            <Name>Someone</Name>\n        </Packager>\n    </Source>\n    <Package>\n        <Name>{n}</Name>\n        <History>\n            <Update release=\"{r}\">\n                <Version>{v}</Version>\n                <Name>Someone</Name>\n            </Update>\n        </History>\n        <Architecture>x86_64</Architecture>\n    </Package>\n</PISI>")
+        };
+        for (src, n, v, r) in [("clr-boot-manager", "clr-boot-manager", "3.6.0", "39"), ("linux-firmware", "linux-firmware-amdgpu", "20260309", "103"), ("shim-signed", "shim-signed", "15.8", "7")] {
+            let d = format!("{EOPKG_PACKAGES}/{n}-{v}-{r}");
+            t.file(&format!("{d}/metadata.xml"), meta(src, n, v, r)).file(&format!("{d}/files.xml"), "<Files>\n</Files>");
+        }
+        // No metadata.xml: the directory's name alone.
+        t.dir(&format!("{EOPKG_PACKAGES}/usysconf-epoch-1.0.0-26"));
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        let x = |n: &str, v: &str, a: &str| (n.to_string(), v.to_string(), a.to_string());
+        let want = vec![x("clr-boot-manager", "3.6.0-39", "x86_64"), x("linux-firmware-amdgpu", "20260309-103", "x86_64"), x("shim-signed", "15.8-7", "x86_64"), x("usysconf-epoch", "1.0.0-26", "")];
+        assert_eq!(eopkg_packages(&s), want);
+        assert_eq!(installed_packages(&s), want);
+    }
+
+    /// Solus's initrds ship in the kernel package (/usr/lib64/kernel, which
+    /// /usr/lib/kernel is the same directory as): prebuilt, though dracut
+    /// is installed.  The kernel alone isn't.
+    #[test]
+    fn solus_initrd_prebuilt() {
+        let t = Tree::new("solus-kernels");
+        t.file("/usr/lib64/kernel/com.solus-project.current.6.18.21-333", "k").file("/usr/lib64/kernel/cmdline-6.18.21-333.current", "");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        assert_eq!(initramfs_json(&s, &pk(&["dracut"]), false).get("generator").and_then(Value::as_str), Some("dracut"));
+        t.file("/usr/lib64/kernel/initrd-com.solus-project.current.6.18.21-333", "i");
+        assert_eq!(initramfs_json(&s, &pk(&["dracut"]), false).get("generator").and_then(Value::as_str), Some("prebuilt"));
+        let u = Tree::new("solus-kernels-usr-lib");
+        u.file("/usr/lib/kernel/initrd-com.solus-project.lts.6.12.80-300", "i");
+        let s = Sys::new(u.root(), Box::new(FakeRunner::default()), false);
+        assert_eq!(initramfs_json(&s, &pk(&["dracut"]), false).get("generator").and_then(Value::as_str), Some("prebuilt"));
+    }
+
+    /// Solus's kernels from /usr/lib64/kernel, named as uname -r names
+    /// them (the solus49 guest's two), the default-current link beside
+    /// them; only with clr-boot-manager installed.
+    #[test]
+    fn solus_kernel_list() {
+        assert_eq!(solus_kernel_version("com.solus-project.current.7.3.4-373").as_deref(), Some("7.3.4-373.current"));
+        assert_eq!(solus_kernel_version("com.solus-project.lts.6.18.63-322").as_deref(), Some("6.18.63-322.lts"));
+        for f in ["initrd-com.solus-project.current.7.3.4-373", "com.solus-project.current", "com.solus-project.current.7.3.4", "com.solus-project.current.7.3.4-r1", "cmdline-7.3.4-373.current"] {
+            assert_eq!(solus_kernel_version(f), None, "{f}");
+        }
+        let t = Tree::new("solus-kernel-list");
+        for v in ["6.18.21-333", "7.3.4-373"] {
+            t.file(&format!("/usr/lib64/kernel/com.solus-project.current.{v}"), vec![0u8; 10])
+                .file(&format!("/usr/lib64/kernel/initrd-com.solus-project.current.{v}"), vec![0u8; 20])
+                .file(&format!("/usr/lib64/kernel/config-{v}.current"), "")
+                .file(&format!("/usr/lib64/kernel/System.map-{v}.current"), "");
+        }
+        t.symlink("/usr/lib64/kernel/default-current", "com.solus-project.current.7.3.4-373")
+            .symlink("/usr/lib64/kernel/current-initrd", "initrd-com.solus-project.current.7.3.4-373")
+            .dir("/usr/lib64/kernel/cmdline.d")
+            .dir("/usr/lib/modules/7.3.4-373.current/kernel");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        let (list, links) = solus_kernels(&s, Some("7.3.4-373.current"));
+        let got: Vec<(&str, bool, bool, Option<u64>)> = list.iter().map(|k| (k.get("version").and_then(Value::as_str).unwrap(), k.get("running") == Some(&Value::Bool(true)), k.get("modules_installed") == Some(&Value::Bool(true)), k.get("initrd_bytes").and_then(Value::as_u64))).collect();
+        assert_eq!(got, vec![("6.18.21-333.current", false, false, Some(20)), ("7.3.4-373.current", true, true, Some(20))]);
+        assert!(list.iter().all(|k| k.get("config") == Some(&Value::Bool(true)) && k.get("dir").and_then(Value::as_str) == Some("/usr/lib64/kernel")));
+        assert_eq!(links, vec![("/usr/lib64/kernel/default-current".to_string(), "com.solus-project.current.7.3.4-373".to_string())]);
+        let empty = kernels_json(&s, Some("7.3.4-373.current"));
+        let with = with_solus_kernels(empty.clone(), &s, &pk(&["clr-boot-manager"]), Some("7.3.4-373.current"));
+        assert_eq!(with.get("installed").and_then(Value::as_array).map(Vec::len), Some(2));
+        assert_eq!(with.at(&["symlinks", "/usr/lib64/kernel/default-current"]).and_then(Value::as_str), Some("com.solus-project.current.7.3.4-373"));
+        assert_eq!(with_solus_kernels(empty.clone(), &s, &pk(&["dracut"]), None).compact(), empty.compact());
+    }
+
+    /// clr-boot-manager's shim and systemd-boot by their fixed names
+    /// (Solus): from NVRAM's entry, from the fallback copy of the shim,
+    /// from LoaderInfo, or from the ESP's files alone; not without
+    /// clr-boot-manager installed.
+    #[test]
+    fn loader_clr_boot_manager() {
+        fn base(p: &[(String, String, String)]) -> Evidence<'_> {
+            let esp = ["EFI/BOOT/BOOTX64.EFI", "EFI/BOOT/fbx64.efi", "EFI/com.solus-project/bootloaderx64.efi", "EFI/com.solus-project/grubx64.efi", "EFI/com.solus-project/mmx64.efi", "loader/loader.conf"];
+            Evidence { uefi: true, current_file: None, loader_info: None, shim_variables: false, mbr_codes: vec![], packages: p, esp_files: esp.iter().map(|f| f.to_string()).collect(), fallback_copy_of: None, zbm_images: vec![] }
+        }
+        let p = &pk(&["clr-boot-manager", "shim-signed", "dracut"]);
+        let check = |e: &Evidence, why: &str| {
+            let v = detect_loader(e);
+            assert_eq!(v.get("name").and_then(Value::as_str), Some("systemd-boot"), "{}", v.compact());
+            assert_eq!(v.get("via_shim"), Some(&Value::Bool(true)), "{}", v.compact());
+            assert_eq!(v.get("manager").and_then(Value::as_str), Some("clr-boot-manager"));
+            assert_eq!(v.get("shim_package").and_then(Value::as_str), Some("shim-signed"));
+            assert!(v.get("evidence").unwrap().compact().contains(why), "{}", v.compact());
+        };
+        let mut e = base(p);
+        e.current_file = Some("\\EFI\\com.solus-project\\bootloaderx64.efi".into());
+        check(&e, "that is clr-boot-manager's shim (EFI/com.solus-project/bootloaderx64.efi), which loads systemd-boot as EFI/com.solus-project/grubx64.efi");
+        // A fresh OVMF store: the removable path, a copy of the shim.
+        let mut e = base(p);
+        e.current_file = Some("\\EFI\\BOOT\\BOOTX64.EFI".into());
+        e.fallback_copy_of = Some("EFI/com.solus-project/bootloaderx64.efi".into());
+        check(&e, "EFI/BOOT/BOOTX64.EFI is a copy of EFI/com.solus-project/bootloaderx64.efi, clr-boot-manager's shim");
+        e.loader_info = Some("systemd-boot 257.10".into());
+        check(&e, "LoaderInfo says \\\"systemd-boot 257.10\\\"");
+        // No BootCurrent: the ESP's files.
+        check(&base(p), "an ESP holds clr-boot-manager's EFI/com.solus-project/grubx64.efi, which is systemd-boot");
+        // Without clr-boot-manager, grubx64.efi is GRUB's, and no manager.
+        let v = detect_loader(&base(&pk(&["shim-signed"])));
+        assert_eq!(v.get("name").and_then(Value::as_str), Some("grub"));
+        assert!(v.get("manager").is_none());
     }
 }

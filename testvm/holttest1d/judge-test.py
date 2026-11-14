@@ -1402,6 +1402,136 @@ class FsAnduinos(unittest.TestCase):
             self.assertNotIn("AnduinOS", out)
 
 
+SOLUS_V = ("current.7.3.4-373", "lts.6.18.63-322")
+SOLUS_CBM = "boot/EFI/com.solus-project"
+
+
+class FsSolus(unittest.TestCase):
+    """judge.py fs over a Solus 4.9 restore (S5, docs/design/solus.md): the
+    ESP is /boot itself (out of fstab), and load's boot stage makes only the
+    NVRAM entry, so every file of it must be the source's bytes: shim
+    (bootloaderx64.efi and EFI/BOOT/BOOTX64.EFI), systemd-boot (grubx64.efi),
+    MokManager, the kernels and initrds, loader/ and solus-enroll-me.cer.
+    Neither Chimera's boot/EFI rules nor Fedora's boot/loader one excuse
+    them."""
+
+    V, CBM = SOLUS_V, SOLUS_CBM
+    SRC = {"boot": meta("dir"), "boot/EFI": meta("dir"), SOLUS_CBM: meta("dir"),
+           **{f"{SOLUS_CBM}/{f}": meta("file") for f in ("bootloaderx64.efi", "grubx64.efi", "mmx64.efi", "BOOTX64.CSV")},
+           **{f"{SOLUS_CBM}/{k}-com.solus-project.{v}": meta("file") for k in ("kernel", "initrd") for v in SOLUS_V},
+           "boot/EFI/BOOT": meta("dir"), "boot/EFI/BOOT/BOOTX64.EFI": meta("file"), "boot/EFI/BOOT/fbx64.efi": meta("file"),
+           "boot/loader": meta("dir"), "boot/loader/loader.conf": meta("file"), "boot/loader/entries": meta("dir"),
+           **{f"boot/loader/entries/Solus-{v.replace('.', '-', 1)}.conf": meta("file") for v in SOLUS_V},
+           "boot/solus-enroll-me.cer": meta("file"),
+           "usr/lib64/kernel": meta("dir"), **{f"usr/lib64/kernel/com.solus-project.{v}": meta("file") for v in SOLUS_V},
+           "var/log": meta("dir")}
+    ESP = sorted(p for p in SRC if p.startswith("boot/"))
+
+    judge = Fs.judge
+
+    def changed(self, src, changes):
+        a = copy.deepcopy(src)
+        for p, kw in changes.items():
+            a[p].update(kw)
+        return self.judge(src, a)
+
+    def test_an_untouched_esp_passes_and_is_held(self):
+        a = copy.deepcopy(self.SRC)
+        a["var/log/bko-holt"] = meta("dir")
+        a["var/log/bko-holt/load.log"] = meta("file")
+        a["var/log"]["mtime"] = 2
+        a["boot"]["mtime"] = 2
+        rc, out = self.judge(self.SRC, a)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn(f"Solus's ESP at /boot kept: {len(self.ESP)} paths of EFI/com.solus-project, EFI/BOOT, loader/ and solus-enroll-me.cer held to the source's bytes", out)
+
+    def test_every_esp_file_must_be_the_sources(self):
+        """bootctl install, clr-boot-manager update, a rebuilt initrd or an
+        unsigned loader on any of them: no boot-stage rule excuses it."""
+        for p in self.ESP:
+            if self.SRC[p]["type"] != "file":
+                continue
+            rc, out = self.changed(self.SRC, {p: {"sha256": "cd", "mtime": 2}})
+            self.assertEqual(rc, 1, f"{p}: {out}")
+            self.assertIn(f"DIFF content: 1: {p}", out)
+            self.assertIn(f"DIFF mtime: 1: {p}", out)
+            self.assertIn(" 0 from the boot stage", out)
+
+    def test_the_esp_at_boot_rules_of_others_dont_excuse_it(self):
+        """What Chimera's bootctl rules (boot/EFI/BOOT, boot/EFI/systemd,
+        boot/loader/random-seed) and Fedora's BLS rule (boot/loader/entries)
+        would pass is a DIFF on a Solus ESP."""
+        src = dict(self.SRC, **{"boot/loader/random-seed": meta("file")})
+        a = copy.deepcopy(src)
+        a["boot/EFI/BOOT"]["mtime"] = 2
+        a["boot/loader/entries"]["mtime"] = 2
+        a["boot/loader/random-seed"].update(sha256="cd")
+        a["boot/EFI/systemd"] = meta("dir")
+        a["boot/EFI/systemd/systemd-bootx64.efi"] = meta("file")
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF mtime (dirs): 2: boot/EFI/BOOT, boot/loader/entries", out)
+        self.assertIn("DIFF content: 1: boot/loader/random-seed", out)
+        self.assertIn("DIFF extra: 2: boot/EFI/systemd, boot/EFI/systemd/systemd-bootx64.efi", out)
+        self.assertIn(" 0 from the boot stage", out)
+
+    def test_the_aerynos_and_grub_esp_rules_dont_match_boot_EFI(self):
+        """The ESP rules written for an ESP at /efi or /boot/efi (AerynOS's
+        bootctl rule, grub-install's) are lower-case efi/: none of them
+        reaches a path of an ESP at /boot."""
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("judge_under_test", JUDGE)
+        judge = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(judge)
+        aeryn = [r for r, _, w in judge.BOOT_STAGE if "(AerynOS)" in w]
+        self.assertEqual(aeryn, [r"^(boot/)?efi/EFI(/(BOOT|Boot|systemd|Linux)(/.*)?)?$"])
+        lower = [r for r, _, _ in judge.BOOT_STAGE if re.match(r"\^(\(boot/\)\?|boot/)efi", r)]
+        self.assertTrue(len(lower) >= 4, lower)
+        for p in self.ESP:
+            for r in lower:
+                self.assertIsNone(re.search(r, p), f"{r} matches {p}")
+        self.assertTrue(re.search(aeryn[0], "efi/EFI/BOOT/BOOTX64.EFI"))
+        for p in self.ESP:
+            self.assertTrue(p == "boot" or re.search(judge.SOLUS_KEPT, p), p)
+
+    def test_a_missing_esp_file_counts(self):
+        a = copy.deepcopy(self.SRC)
+        del a["boot/EFI/BOOT/fbx64.efi"], a[f"{self.CBM}/initrd-com.solus-project.{self.V[1]}"]
+        rc, out = self.judge(self.SRC, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF missing: 2: boot/EFI/BOOT/fbx64.efi, {self.CBM}/initrd-com.solus-project.{self.V[1]}", out)
+
+    def test_the_source_must_have_its_loaders_and_an_entry(self):
+        src = {p: m for p, m in self.SRC.items() if p != f"{self.CBM}/grubx64.efi" and not p.startswith("boot/loader/entries/")}
+        rc, out = self.judge(src, copy.deepcopy(src))
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF not in the source's record (Solus's ESP at /boot): 2: {self.CBM}/grubx64.efi, boot/loader/entries/Solus-*.conf", out)
+
+    def test_a_source_whose_esp_wasnt_mounted(self):
+        """vm-mount put no ESP at /boot (or the backup's tree lacks it): a
+        Solus kernel in /usr/lib64/kernel still marks the source, and every
+        ESP file it should have is missing from its record."""
+        src = {p: m for p, m in self.SRC.items() if not p.startswith("boot/")}
+        rc, out = self.judge(src, copy.deepcopy(src))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF not in the source's record (Solus's ESP at /boot): 9: boot/EFI/com.solus-project/bootloaderx64.efi", out)
+
+    def test_the_kernels_in_usr_still_count(self):
+        rc, out = self.changed(self.SRC, {f"usr/lib64/kernel/com.solus-project.{self.V[0]}": {"sha256": "cd"}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF content: 1: usr/lib64/kernel/com.solus-project.{self.V[0]}", out)
+
+    def test_other_esps_at_boot_keep_their_rules(self):
+        """No Solus shim nor kernel (Chimera's ESP at /boot): bootctl install
+        may still rewrite EFI/BOOT and the random seed."""
+        src = {"boot": meta("dir"), "boot/EFI": meta("dir"), "boot/EFI/BOOT": meta("dir"),
+               "boot/EFI/BOOT/BOOTX64.EFI": meta("file"), "boot/loader": meta("dir"), "boot/loader/random-seed": meta("file")}
+        rc, out = self.changed(src, {"boot/EFI/BOOT/BOOTX64.EFI": {"sha256": "cd", "mtime": 2}, "boot/loader/random-seed": {"sha256": "cd"}})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("Solus", out)
+
+
 VANILLA_K = "7.3.3+deb14-amd64"
 
 

@@ -280,6 +280,25 @@ ANDUINOS_REQUIRED = ("boot/efi/EFI/AnduinOS/shimx64.efi", "boot/efi/EFI/AnduinOS
 ABROOT_SOURCE = r"^boot/init/[^/]+/abroot\.cfg$"
 ABROOT_KEPT = r"^boot/(grub/grub\.cfg(\.future)?|init/[^/]+/(abroot\.cfg|(vmlinuz|initrd\.img|config|System\.map)-[^/]+)|efi/EFI/(vanilla|BOOT)(/[^/]+)?)$"
 ABROOT_REQUIRED = ("boot/grub/grub.cfg", "boot/efi/EFI/vanilla/shimx64.efi", "boot/efi/EFI/vanilla/grubx64.efi")
+# A Solus source (4.9, clr-boot-manager; docs/design/solus.md, S5): the ESP
+# is /boot itself (out of fstab: vm-mount mounts it there, ht1.sh runs
+# `clr-boot-manager mount-boot` for the dumps), and load's boot stage makes
+# only the NVRAM entry: no bootctl, no clr-boot-manager, no initramfs.  So
+# the whole ESP must be byte for byte the source's: shim (bootloaderx64.efi
+# and the EFI/BOOT fallback), systemd-boot (grubx64.efi), MokManager, the
+# kernels and initrds, loader/ and Solus's MOK certificate.  None of the
+# Chimera (boot/EFI/BOOT, boot/loader/random-seed) or Fedora (boot/loader)
+# rules may excuse them.  A source is one with CBM's shim on the ESP or a
+# Solus kernel in /usr/lib64/kernel; SOLUS_REQUIRED and a kernel, an initrd
+# and an entry must be in its record.
+SOLUS_SOURCE = r"^(boot/EFI/com\.solus-project/bootloaderx64\.efi|usr/lib64/kernel/com\.solus-project\.[^/]+)$"
+SOLUS_KEPT = r"^boot/((EFI|loader)(/.*)?|solus-enroll-me\.cer)$"
+SOLUS_REQUIRED = ("boot/EFI/com.solus-project/bootloaderx64.efi", "boot/EFI/com.solus-project/grubx64.efi",
+                  "boot/EFI/com.solus-project/mmx64.efi", "boot/EFI/BOOT/BOOTX64.EFI", "boot/loader/loader.conf",
+                  "boot/solus-enroll-me.cer")
+SOLUS_GLOBS = ((r"^boot/EFI/com\.solus-project/kernel-com\.solus-project\.[^/]+$", "boot/EFI/com.solus-project/kernel-com.solus-project.*"),
+               (r"^boot/EFI/com\.solus-project/initrd-com\.solus-project\.[^/]+$", "boot/EFI/com.solus-project/initrd-com.solus-project.*"),
+               (r"^boot/loader/entries/Solus-[^/]+\.conf$", "boot/loader/entries/Solus-*.conf"))
 
 
 # A transactional-update source (openSUSE MicroOS; docs/design/aeon.md, the
@@ -310,6 +329,14 @@ def abroot_missing(before):
         for kind in ("vmlinuz", "initrd.img"):
             if not any(p.startswith(f"{d}/{kind}-") and before[p].get("type") == "file" for p in before):
                 out.append(f"{d}/{kind}-*")
+    return out
+
+
+def solus_missing(before):
+    """What a Solus source's record lacks of SOLUS_REQUIRED, and of a kernel,
+    an initrd and a loader entry on the ESP (SOLUS_GLOBS)."""
+    out = [p for p in SOLUS_REQUIRED if before.get(p, {}).get("type") != "file"]
+    out += [name for r, name in SOLUS_GLOBS if not any(re.search(r, p) and m.get("type") == "file" for p, m in before.items())]
     return out
 
 
@@ -685,6 +712,7 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     refind = any(re.search(REFIND_SOURCE, p) for p in before)
     anduin = any(re.search(ANDUINOS_SOURCE, p) for p in before)
     abroot = any(re.search(ABROOT_SOURCE, p) for p in before)
+    solus = any(re.search(SOLUS_SOURCE, p) for p in before)
     tu = any(re.search(TU_SOURCE, p) for p in before)
     real, allowed = {}, {}
     # A transactional source's slot at / (the booted one) is in the backup
@@ -708,9 +736,13 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     if abroot:
         for p in abroot_missing(before):
             real.setdefault("not in the source's record (ABRoot's boot files)", []).append(p)
+    if solus:
+        for p in solus_missing(before):
+            real.setdefault("not in the source's record (Solus's ESP at /boot)", []).append(p)
     for kind, paths in diff.items():
         for p in paths:
-            kept = (refind and re.search(REFIND_KEPT, p)) or (anduin and re.search(ANDUINOS_KEPT, p)) or (abroot and re.search(ABROOT_KEPT, p))
+            kept = (refind and re.search(REFIND_KEPT, p)) or (anduin and re.search(ANDUINOS_KEPT, p)) or (abroot and re.search(ABROOT_KEPT, p)) \
+                or (solus and re.search(SOLUS_KEPT, p))
             why = None if kept else \
                 next((w for r, kinds, w in (TU_STAGE if tu else BOOT_STAGE) if kind in kinds and re.search(r, p)), None)
             if not why and kind == "missing" and before.get(p, {}).get("type") == "socket":
@@ -754,6 +786,9 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     if abroot:
         held = [p for p in before if re.search(ABROOT_KEPT, p)]
         print(f"ABRoot kept: {len(held)} paths of the master grub.cfg, init's abroot.cfgs, kernels and initramfs, and EFI/vanilla and EFI/BOOT held to the source's")
+    if solus:
+        held = [p for p in before if re.search(SOLUS_KEPT, p)]
+        print(f"Solus's ESP at /boot kept: {len(held)} paths of EFI/com.solus-project, EFI/BOOT, loader/ and solus-enroll-me.cer held to the source's bytes")
     if tu:
         held = [p for p in before if re.search(TU_HELD, p)]
         print(f"transactional-update: no boot-stage excuse but load's log and health-check.state: {len(held)} paths of the ESP and every slot's /boot and /usr held to the source's")

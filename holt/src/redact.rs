@@ -134,7 +134,7 @@ const WELL_KNOWN: [&str; 7] = [
     "ffffffff-ffff-ffff-ffff-ffffffffffff",
 ];
 /// Hostnames installers give and live systems use: they identify no one.
-const GENERIC_HOSTS: [&str; 39] = [
+const GENERIC_HOSTS: [&str; 41] = [
     "", "(none)", "localhost", "localhost.localdomain", "localdomain", "<system>", "any", "debian", "ubuntu", "ubuntu-server", "fedora",
     "archlinux", "archiso", "alpine", "nixos", "freebsd", "openbsd", "netbsd", "dragonfly", "omnios", "openindiana", "haiku", "void",
     "voidlinux", "mint", "zorin", "pop-os", "rocky", "backotter", "rescue",
@@ -153,10 +153,13 @@ const GENERIC_HOSTS: [&str; 39] = [
     "truenas",
     // The ZFSBootMenu Void guests' hostnames (testvm/make-void-zfs.sh).
     "void-zbm", "void-zbm-enc",
+    // Solus: its live system's hostname, and the solus49 guest's
+    // (testvm/make-solus.sh names it after the guest).
+    "solus", "solus49",
 ];
 /// Labels (lower case, trailing digits and '*' dropped) that installers
 /// and partitioners write: kept, because they help and identify no one.
-const GENERIC_LABELS: [&str; 84] = [
+const GENERIC_LABELS: [&str; 85] = [
     "", "efi", "esp", "efi system partition", "efi system", "efi-system", "efiboot", "bios", "biosboot", "bios boot partition",
     // Hybrid ISO images (xorriso: EFISYS, Gap1, Appended2...) and BackOtter's
     // and Haiku's own images.
@@ -175,6 +178,9 @@ const GENERIC_LABELS: [&str; 84] = [
     // elementary OS's installer (distinst): the LUKS mapping its encrypted
     // install opens the PV as (its VG is "data", above).
     "cryptdata",
+    // Solus's live ISO (its volume label names no architecture, so
+    // release_label doesn't take it).
+    "soluslivexfce",
     // Ubuntu Core's pc gadget: GPT names and file system labels, and the
     // LUKS2 labels of its encrypted ones (crate::snapcore).
     "ubuntu-seed", "ubuntu-boot", "ubuntu-save", "ubuntu-data", "ubuntu-save-enc", "ubuntu-data-enc",
@@ -204,7 +210,7 @@ pub struct Collector {
 /// A release medium's volume label: a system's name, its version and an
 /// architecture ("Ubuntu-Server 26.04.1 LTS amd64", "Fedora-S-dvd-x86_64-44").
 fn release_label(low: &str) -> bool {
-    const SYSTEMS: [&str; 19] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos", "pikaos", "kali", "proxmox", "guix", "truenas", "elementary", "elementaryos"];
+    const SYSTEMS: [&str; 20] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos", "pikaos", "kali", "proxmox", "guix", "truenas", "elementary", "elementaryos", "solus"];
     const ARCHES: [&str; 5] = ["amd64", "x86_64", "x86-64", "arm64", "aarch64"];
     let first = low.split(|c: char| !c.is_ascii_alphanumeric()).next().unwrap_or("");
     SYSTEMS.contains(&first) && ARCHES.iter().any(|a| low.contains(a)) && low.bytes().any(|c| c.is_ascii_digit())
@@ -1799,6 +1805,20 @@ mod tests {
         assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
         assert!(release_label("kali-linux-2026.3-installer-netinst-amd64"));
         assert!(!release_label("kali-desktop"));
+    }
+
+    /// Solus: the live system's and the solus49 guest's hostnames kept on
+    /// another system's dump too, the live ISO's volume label kept, and a
+    /// release label that names an architecture.
+    #[test]
+    fn solus_host_and_release_are_kept() {
+        for h in ["solus", "solus49"] {
+            let d = parse(&format!(r#"{{"os": {{"id": "debian"}}, "host": {{"hostname": "{h}"}}, "storage": {{"disks": [{{"name": "vda", "serial": "1", "partitions": [{{"content": {{"type": "iso9660", "label": "SolusLiveXfce"}}}}]}}]}}}}"#)).unwrap();
+            let (r, red) = redact(&d);
+            assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
+        }
+        assert!(release_label("solus-4.9-xfce-x86_64"));
+        assert!(!release_label("solus-desktop"));
     }
 
     /// Proxmox VE: its installer's default hostname kept (os-release says

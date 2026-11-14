@@ -142,7 +142,7 @@ class TestInGuest(unittest.TestCase):
     TEXT = (TESTVM / "update" / "in-guest.sh").read_text()
     NAMES = {"prologue", "NixOS", "Guix", "Linux.portage", "Linux.abroot", "Linux.common", "Linux.apt", "Linux.ostree", "Linux.dnf", "Linux.pacman",
              "Linux.tukit", "Linux.zypper",
-             "Linux.xbps", "Linux.apk", "Linux.moss", "FreeBSD", "DragonFly", "OpenBSD", "NetBSD", "SunOS",
+             "Linux.xbps", "Linux.apk", "Linux.eopkg", "Linux.moss", "FreeBSD", "DragonFly", "OpenBSD", "NetBSD", "SunOS",
              "Haiku", "Redox"}
 
     def sections(self):
@@ -170,6 +170,7 @@ class TestInGuest(unittest.TestCase):
                              ("Linux.ostree", "rpm-ostree cleanup -b -m"),
                              ("Linux.zypper", "history"), ("Linux.zypper", "install DVD"), ("Linux.zypper", "has zypper"),
                              ("Linux.moss", "unstable stream"), ("Linux.moss", "has moss"),
+                             ("Linux.eopkg", "has eopkg"), ("Linux.eopkg", "eopkg up -y"), ("Linux.eopkg", "eopkg dc"),
                              ("Linux.xbps", "has xbps-install"), ("Linux.apk", "apk upgrade"),
                              ("Linux.portage", "/etc/gentoo-release"), ("Linux.portage", "emerge --sync"),
                              ("Linux.portage", "emerge -puDN"), ("Linux.portage", "emerge -uDNg"),
@@ -282,7 +283,7 @@ class TestPkgset(TempDir):
         script = (TESTVM / "update" / "pkgset.sh").read_text()
         script = re.sub(r"^PATH=.*$", "", script, count=1, flags=re.M)
         for p in ("/etc/NIXOS", "/etc/gentoo-release", "/var/db/", "/boot/system/packages", "/usr/share/abroot/", "/var/lib/dpkg/",
-                  "/abimage.abr"):
+                  "/var/lib/eopkg/", "/abimage.abr"):
             script = script.replace(p, str(root) + p)
         tools = self.tmp / "tools"                      # only these: a host's own apt-get would be found first
         tools.mkdir(exist_ok=True)
@@ -396,6 +397,21 @@ class TestPkgset(TempDir):
             out = self.run_script("Linux", self.moss(self.MOSS + extra))
             self.assertEqual(out, f"unknown moss pkg list --installed printed: {extra.strip()[:60]}\n")
             self.assertIsNone(VU.listing_lines(out))
+
+    # eopkg's database directories, as the Solus 4.9 ISO has them (NAME-VERSION-RELEASE).
+    def eopkg_dirs(self, *names):
+        return [(f"/var/lib/eopkg/package/{n}/metadata.xml", "<PISI/>") for n in names]
+
+    def test_eopkg(self):
+        out = self.run_script("Linux", {"eopkg": "true"}, self.eopkg_dirs(
+            "clr-boot-manager-3.6.0-39", "linux-current-6.18.21-333", "openssh-10.3_p1-64", "usysconf-epoch-1.0.0-26"))
+        self.check(out, ["base pm eopkg", "pkg clr-boot-manager 3.6.0-39", "pkg linux-current 6.18.21-333",
+                         "pkg openssh 10.3_p1-64", "pkg usysconf-epoch 1.0.0-26"])
+        self.assertEqual(len(out.splitlines()), 5, out)
+
+    def test_eopkg_another_name_is_unknown_alone(self):
+        out = self.run_script("Linux", {"eopkg": "true"}, self.eopkg_dirs("linux-current-6.18.21-333", "stray"))
+        self.assertEqual(out, "unknown eopkg package directory: stray\n")
 
     def test_moss_listing_nothing_is_unknown(self):
         self.assertEqual(self.run_script("Linux", self.moss("")), "unknown moss pkg list --installed listed nothing\n")

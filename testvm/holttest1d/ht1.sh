@@ -574,6 +574,48 @@ mok_check() {  # MNT: the restored tree, mounted: every grubx64.efi on its vfat 
         ok "MOK signature: $n restored grubx64.efi verify with sbverify --cert ${MOKCERT##*/} ($(sha256sum < "$MOKCERT" | cut -c1-16)...): $(grep '^== ' "$R/logs/restored-sbverify.txt" | cut -c4- | tr '\n' ' ')"
     fi
 }
+# Solus (solus49; docs/design/solus.md, S5): the ESP is /boot, but not in
+# fstab (clr-boot-manager mounts it when it needs it), so nothing mounts it
+# at boot and `bko-holt dump` refuses until something has.  Before each
+# dump, the source's and the restored system's, SOLUS_BOOT mounts it as the
+# user would: `clr-boot-manager mount-boot`, else the one partition of the
+# ESP's GPT type.  (The backup and fsmeta's records are of vm-mount's tree,
+# which mounts the ESP at /boot itself.)  The restored disk boots alone
+# under the guest's vm-run-options (--uefi --mok: sb_check wants
+# "SecureBoot enabled", mok_check systemd-boot's grubx64.efi signed by
+# solus-enroll-me.cer), and SOLUS_LOADER must say systemd-boot booted it
+# (LoaderInfo, bootctl status), as on the source.
+solus=0; case $G in solus*) solus=1 ;; esac
+SOLUS_BOOT='if mountpoint -q /boot; then how=already
+elif clr-boot-manager mount-boot >/dev/null 2>&1 && mountpoint -q /boot; then how="clr-boot-manager mount-boot"
+else
+    p=$(lsblk -rnpo NAME,PARTTYPE | awk "tolower(\$2) == \"c12a7328-f81f-11d2-ba4b-00a0c93ec93b\" {print \$1}")
+    if [ "$(printf "%s\n" "$p" | grep -c .)" = 1 ] && mount "$p" /boot; then how="mount $p, the ESP by GPT type (clr-boot-manager mount-boot failed)"
+    else echo "no ESP at /boot: clr-boot-manager mount-boot failed; ESPs by GPT type: ${p:-none}"; exit 1; fi
+fi
+echo "$how: $(findmnt -no SOURCE,FSTYPE,OPTIONS /boot)"
+ls -d /boot/EFI/com.solus-project/bootloaderx64.efi /boot/loader/loader.conf'
+SOLUS_LOADER='f=/sys/firmware/efi/efivars/LoaderInfo-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
+if [ -r "$f" ]; then echo "LoaderInfo $(tail -c +5 "$f" | tr -d "\000")"; else echo "LoaderInfo none"; fi
+bootctl status 2>/dev/null | sed -n "s/^ *Product: */Product /p" | head -1; true'
+solus_mount_boot() {  # WHO KEY: the ESP at /boot before WHO's dump (source, restored)
+    ((solus)) || return 0
+    if sshk "$2" "$SOLUS_BOOT" > "$R/logs/$1-solus-boot.txt" 2>&1; then
+        ok "solus: the ESP at /boot for the $1 system's dump: $(head -1 "$R/logs/$1-solus-boot.txt")"
+    else
+        bad "solus: the ESP at /boot on the $1 system: $(tr '\n' ' ' < "$R/logs/$1-solus-boot.txt")"; return 1
+    fi
+}
+solus_loader_check() {  # KEY: the restored guest booted through systemd-boot, under Secure Boot
+    ((solus)) || return 0
+    ((mok)) || bad "solus: the guest's vm-run-options have no --mok, so its boots aren't under Secure Boot (sb_check skipped)"
+    sshk "$1" "$SOLUS_LOADER" > "$R/logs/restored-loader.txt" 2>&1
+    if grep -Eq '^(LoaderInfo|Product) systemd-boot' "$R/logs/restored-loader.txt"; then
+        ok "solus: the restored disk booted through systemd-boot: $(tr '\n' ' ' < "$R/logs/restored-loader.txt")"
+    else
+        bad "solus: the restored disk's boot loader: $(tr '\n' ' ' < "$R/logs/restored-loader.txt") (the source's: $(tr '\n' ' ' < "$R/logs/source-loader.txt" 2>/dev/null))"
+    fi
+}
 # btrfs read-only snapshots (AnduinOS's baselines under @snapshots,
 # snapper's): one SNAP line per read-only subvolume, its path from the top
 # level, its ro property and `btrfs filesystem du` total, exclusive and set
@@ -1283,9 +1325,11 @@ phase_source() {
     bootstate "$gkey" > "$R/logs/source-bootstate.txt"
     sshk "$gkey" "$LVMID" > "$R/logs/source-lvmid.txt" 2>&1
     ((mok)) && sshk "$gkey" "$SBSTATE" > "$R/logs/source-sbstate.txt" 2>&1
+    ((solus)) && sshk "$gkey" "$SOLUS_LOADER" > "$R/logs/source-loader.txt" 2>&1
     TMO=1800 sshk "$gkey" "$SNAPS" > "$R/logs/source-snaps.txt" 2>&1
     snapmgr_record source "$gkey"
     sshk "$gkey" "$HEALTH" 2>&1 | grep -v 'bko-holt/load.log' > "$R/logs/source-health.txt"
+    solus_mount_boot source "$gkey" || { vm_down "$gkey"; return; }
     scpk "$gkey" "$S/bko-holt" root@127.0.0.1:/root/bko-holt
     if sshk "$gkey" /root/bko-holt dump > "$R/dumps/src.json" 2> "$R/logs/source-dump.err"; then
         ok "dump on the live source"
@@ -1700,6 +1744,7 @@ phase_verify() {
     fi
     lvmid_check "$gkey"
     sb_check "$gkey"
+    solus_loader_check "$gkey"
     snaps_check "$gkey"
     snapmgr_record restored "$gkey"
     [[ $VARIANT != bs2 ]] || bs2_restored_probe "$gkey"
@@ -1713,6 +1758,7 @@ phase_verify() {
         bad "health: $(echo "$worse" | tr '\n' ' ')"
     fi
     scpk "$gkey" "$S/bko-holt" root@127.0.0.1:/root/bko-holt
+    solus_mount_boot restored "$gkey"
     sshk "$gkey" '/root/bko-holt dump; rm -f /root/bko-holt' > "$R/dumps/dst.json" 2> "$R/logs/restored-dump.err" || bad "dump of the restored system"
     # An ostree source's baseline (its source phase): the rollback boots too,
     # after the dump, which is of the default boot as the source's was.

@@ -343,6 +343,12 @@
   "restore over existing immutable/append-only files": "not applicable: Genode's ext2 driver sets no inode flags (none on the guest's disk)",
   "rustic-bko runs natively": "not applicable: no Rust target for Genode (would need a custom target spec on Genode's libc + -Zbuild-std, and a Goa package)"
  },
+ "solus49": {
+  "Birth times": "ext4 and vfat keep them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
+  "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
+  "SELinux labels": "not applicable; the guest has no SELinux (LSMs capability,landlock,lockdown,yama,bpf,apparmor): no labels on disk",
+  "Whole-disk needs (GPT, the BIOS boot partition, shim's NVRAM entry, Secure Boot and the MOK, clr-boot-manager's kernel sync)": "out of scope: whole-disk (HoltTest1 1Obscure recreates the disk, boots it alone under Secure Boot with the guest's vm-run-options); here the scratch disk is laid out like the guest's and only its file systems' contents are restored"
+ },
  "tumbleweed": {
   "[btrfs] an inode without security.selinux (a new btrfs subvolume's root": "btrfs labels none): ['up1/up2/tree/subvol']: every restore labels it (the kernel labels each new inode under SELinux; removing security.selinux is refused, EACCES); judged under 'exit 0 without war...",
   "[btrfs] birth times (statx btime on btrfs and ext4)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",

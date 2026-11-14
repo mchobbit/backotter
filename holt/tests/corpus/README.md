@@ -355,7 +355,27 @@ pseudonym without its dash (the hex pseudonym now avoids the dump's digits
 whatever their separators).  golden_plans.rs's backup_sources check now
 takes a btrfs source nested in another source's subvolume at the same path
 (the slot's `/etc`, bind-mounted onto itself) as reached through that
-source's mount.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
+source's mount.  solus49 (`make-solus.sh`: Solus 4.9 Xfce from its live
+ISO as its Calamares installs, replayed by `solus/install.sh`, then `eopkg
+up`; UEFI with Secure Boot on and Solus's MOK in shim's MokList, GPT with a
+2 GiB ESP (GPT name `EFI`), an 8 MiB BIOS boot partition and ext4 /, the ESP
+out of fstab; clr-boot-manager's shim and systemd-boot in
+EFI/com.solus-project, kernels 6.18.21 and 7.3.4 with prebuilt initrds;
+docs/design/solus.md), built on 2026-11-14, was added the same day from a
+dump of the live guest on chopin (run `s3`, the static bko-holt 0.2.6 built
+from this tree with S2's Solus code, `e4a471b4...`; its own vm-run-options,
+so under Secure Boot through the fallback path on a fresh variable store,
+the disk under `vm-run --snapshot`, the image's sha256 the same before and
+after; its provenance.tsv written by hand).  It was dumped after
+`clr-boot-manager mount-boot`: without it, dump refuses, the ESP being out
+of fstab and unmounted.  It is in the corpus before it is one of
+classes.json's HoltTest2 sources, so golden_plans.rs notes it until it is.
+Its dump is the first with `boot.loader.manager` (`clr-boot-manager`) and an
+ESP with `in_fstab: false`.  Its golden plan mounts the ESP at /boot for the
+restore, keeps the BIOS boot partition, and at boot installs no loader,
+rebuilds no initramfs and runs no clr-boot-manager (notes say why): it makes
+only the "Solus Linux Bootloader" NVRAM entry for
+`\EFI\com.solus-project\bootloaderx64.efi`, as the source had.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
 collection; `-` for the guests without one) say which, and `image` whether
@@ -540,7 +560,12 @@ its 106, the Mac with the git e-mail, 0 findings (its plan scanned too),
 the same sha256 from both builds (src.json `6d605e1f...`, plan.txt
 `a8e87cb3...`).  Its first builds had one finding in (b), the protective
 MBR's signature (above); they never left chopin, and the builds after the
-fix had none.
+fix had none.  So did solus49 (2026-11-14), built from a private directory
+on chopin (/bkoscratch, its warm holt build at /bkoscratch/holt-warm/solus):
+chopin with 101 of its 106 strings and the raw dump's identifiers, cinqcent
+with 106 of its 112, the Mac with the git e-mail, 0 findings (its plan
+scanned too), the same sha256 from both builds (src.json `89c50dd1...`,
+the row `9022931f...`).
 
 ## The golden plans
 

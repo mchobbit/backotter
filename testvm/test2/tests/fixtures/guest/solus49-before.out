@@ -1,0 +1,106 @@
+=== cmd image-rules
+S-eopkg L-cbm K-cbm B-lin M-lin
+=== file /etc/os-release
+NAME="Solus"
+VERSION="4.9"
+ID="solus"
+VERSION_CODENAME=serenity
+VERSION_ID="4.9"
+PRETTY_NAME="Solus 4.9 Serenity"
+ANSI_COLOR="1;34"
+HOME_URL="https://getsol.us"
+SUPPORT_URL="https://help.getsol.us/docs/user/contributing/getting-involved"
+BUG_REPORT_URL="https://issues.getsol.us/"
+LOGO="distributor-logo-solus"
+
+=== cmd eopkg-lr
+Solus [active]
+   https://cdn.getsol.us/repo/polaris/eopkg-index.xml.xz
+=== cmd cbm-esp
+kernel com.solus-project.current.6.18.21-333
+kernel com.solus-project.current.7.3.4-373
+file EFI/BOOT/BOOTX64.EFI
+sha256 351e131d3c4a636704e9cae7d1296baf8a05beca9922cfebbfa48933c9bf1ad3 EFI/BOOT/BOOTX64.EFI
+kind EFI/BOOT/BOOTX64.EFI shim
+file EFI/BOOT/fbx64.efi
+sha256 73c123a0ae3b91d8e9410e0c194bf25dbcc71dbd44a97ee2b169a90b2f7dc6df EFI/BOOT/fbx64.efi
+kind EFI/BOOT/fbx64.efi other
+file EFI/com.solus-project/BOOTX64.CSV
+file EFI/com.solus-project/bootloaderx64.efi
+sha256 351e131d3c4a636704e9cae7d1296baf8a05beca9922cfebbfa48933c9bf1ad3 EFI/com.solus-project/bootloaderx64.efi
+kind EFI/com.solus-project/bootloaderx64.efi shim
+file EFI/com.solus-project/grubx64.efi
+sha256 38e4ad41744048f5230d9b8546cf643b4f019dbbc210b808ab2db1c0b1ebd54e EFI/com.solus-project/grubx64.efi
+kind EFI/com.solus-project/grubx64.efi systemd-boot
+file EFI/com.solus-project/initrd-com.solus-project.current.6.18.21-333
+file EFI/com.solus-project/initrd-com.solus-project.current.7.3.4-373
+file EFI/com.solus-project/kernel-com.solus-project.current.6.18.21-333
+file EFI/com.solus-project/kernel-com.solus-project.current.7.3.4-373
+file EFI/com.solus-project/mmx64.efi
+sha256 ed4442fa88cccba3a9e6a32d21a8f4c56bf5aab184f1fb9aadde8d3a9d04dc27 EFI/com.solus-project/mmx64.efi
+kind EFI/com.solus-project/mmx64.efi other
+file loader/entries/Solus-current-6.18.21-333.conf
+file loader/entries/Solus-current-7.3.4-373.conf
+file loader/loader.conf
+file loader/random-seed
+file solus-enroll-me.cer
+entry Solus-current-6.18.21-333 linux /EFI/com.solus-project/kernel-com.solus-project.current.6.18.21-333
+entry Solus-current-6.18.21-333 initrd /EFI/com.solus-project/initrd-com.solus-project.current.6.18.21-333
+entry Solus-current-7.3.4-373 linux /EFI/com.solus-project/kernel-com.solus-project.current.7.3.4-373
+entry Solus-current-7.3.4-373 initrd /EFI/com.solus-project/initrd-com.solus-project.current.7.3.4-373
+default Solus-current-7.3.4-373.conf
+=== cmd df
+Filesystem     1024-blocks    Used Available Capacity Mounted on
+/dev/vda3         18391740 9233576   8198576      53% /
+devtmpfs              4096       0      4096       0% /dev
+tmpfs               960692       0    960692       0% /dev/shm
+efivarfs               256      16       236       7% /sys/firmware/efi/efivars
+tmpfs               384280     948    383332       1% /run
+none                  1024       0      1024       0% /run/credentials/systemd-journald.service
+none                  1024       0      1024       0% /run/credentials/systemd-resolved.service
+tmpfs               960696       0    960696       0% /tmp
+none                  1024       0      1024       0% /run/credentials/getty@tty1.service
+none                  1024       0      1024       0% /run/credentials/serial-getty@ttyS0.service
+tmpfs               192136      56    192080       1% /run/user/0
+=== cmd kernels
+/usr/lib64/kernel/com.solus-project.current.6.18.21-333
+/usr/lib64/kernel/com.solus-project.current.7.3.4-373
+=== cmd after-rules
+S-eopkg L-cbm K-cbm B-lin M-lin
+=== cmd boot-state
+init systemd
+state running
+=== cmd fstab-check
+ok 1 fstab mounts mounted
+=== cmd mounts
+format mountinfo
+44 1 254:3 / / rw,noatime shared:1 - ext4 /dev/vda3 rw
+41 44 0:9 / /dev rw,nosuid shared:2 - devtmpfs devtmpfs rw,size=4096k,nr_inodes=224307,mode=755,inode64
+43 41 0:28 / /dev/shm rw,nosuid,nodev shared:3 - tmpfs tmpfs rw,inode64,usrquota
+45 41 0:29 / /dev/pts rw,nosuid,noexec,relatime shared:4 - devpts devpts rw,gid=5,mode=600,ptmxmode=000
+46 44 0:27 / /sys rw,nosuid,nodev,noexec,relatime shared:5 - sysfs sysfs rw
+47 46 0:10 / /sys/kernel/security rw,nosuid,nodev,noexec,relatime shared:6 - securityfs securityfs rw
+48 46 0:31 / /sys/fs/cgroup rw,nosuid,nodev,noexec,relatime shared:7 - cgroup2 cgroup2 rw,nsdelegate,memory_recursiveprot,memory_hugetlb_accounting
+49 46 0:32 / /sys/fs/pstore rw,nosuid,nodev,noexec,relatime shared:8 - pstore none rw
+50 46 0:33 / /sys/firmware/efi/efivars rw,nosuid,nodev,noexec,relatime shared:9 - efivarfs efivarfs rw
+51 46 0:34 / /sys/fs/bpf rw,nosuid,nodev,noexec,relatime shared:10 - bpf bpf rw,mode=700
+52 46 0:23 / /sys/kernel/config rw,nosuid,nodev,noexec,relatime shared:11 - configfs configfs rw
+53 44 0:26 / /proc rw,nosuid,nodev,noexec,relatime shared:12 - proc proc rw
+54 44 0:30 / /run rw,nosuid,nodev shared:13 - tmpfs tmpfs rw,size=384280k,nr_inodes=819200,mode=755,inode64
+29 53 0:35 / /proc/sys/fs/binfmt_misc rw,relatime shared:14 - autofs systemd-1 rw,fd=32,pgrp=1,timeout=0,minproto=5,maxproto=5,direct,pipe_ino=7995
+30 41 0:36 / /dev/hugepages rw,nosuid,nodev,relatime shared:15 - hugetlbfs hugetlbfs rw,pagesize=2M
+32 46 0:11 / /sys/kernel/debug rw,nosuid,nodev,noexec,relatime shared:16 - debugfs debugfs rw
+33 41 0:25 / /dev/mqueue rw,nosuid,nodev,noexec,relatime shared:17 - mqueue mqueue rw
+36 46 0:16 / /sys/kernel/tracing rw,nosuid,nodev,noexec,relatime shared:18 - tracefs tracefs rw
+37 46 0:37 / /sys/fs/fuse/connections rw,nosuid,nodev,noexec,relatime shared:19 - fusectl fusectl rw
+39 54 0:39 / /run/credentials/systemd-journald.service rw,nosuid,nodev,noexec,relatime,nosymfollow shared:21 - tmpfs none ro,size=1024k,nr_inodes=1024,mode=700,inode64,noswap
+55 54 0:42 / /run/credentials/systemd-resolved.service rw,nosuid,nodev,noexec,relatime,nosymfollow shared:100 - tmpfs none ro,size=1024k,nr_inodes=1024,mode=700,inode64,noswap
+61 44 0:51 / /tmp rw,nosuid,nodev shared:184 - tmpfs tmpfs rw,size=960696k,nr_inodes=1048576,inode64,usrquota
+31 54 0:68 / /run/credentials/getty@tty1.service rw,nosuid,nodev,noexec,relatime,nosymfollow shared:548 - tmpfs none ro,size=1024k,nr_inodes=1024,mode=700,inode64,noswap
+190 54 0:69 / /run/credentials/serial-getty@ttyS0.service rw,nosuid,nodev,noexec,relatime,nosymfollow shared:565 - tmpfs none ro,size=1024k,nr_inodes=1024,mode=700,inode64,noswap
+101 54 0:62 / /run/user/0 rw,nosuid,nodev,relatime shared:390 - tmpfs tmpfs rw,size=192136k,nr_inodes=48034,mode=700,inode64
+=== cmd kernel
+running 7.3.4-373.current
+installed com.solus-project.current.6.18.21-333
+installed com.solus-project.current.7.3.4-373
+=== end

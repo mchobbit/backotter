@@ -26,7 +26,7 @@ AFTER_NEEDS = ("after:boot-state", "after:failed-units", "after:fstab", "after:s
 NEW_NEEDS = ("new:firmware", "new:ssh", "new:restic", "new:rustic", "new:smoke")
 KERNELS_MAX = {"K-deb": 3, "K-fed": 5, "K-ostree": 2, "K-pac": 2, "K-apk": 3, "K-void": 2, "K-moss": 3, "K-nix": 3, "K-fbsd": 3,
                "K-nbsd": 3, "K-obsd": 4, "K-dfly": 3, "K-ill": 4, "K-haiku": 2, "K-alpbsd": 3,
-               "K-gentoo": 3, "K-anduinos": 3, "K-pve": 3, "K-pika": 3}
+               "K-gentoo": 3, "K-anduinos": 3, "K-pve": 3, "K-pika": 3, "K-cbm": 3}
 NO_RULE = "no rule for it"
 # K-pve (Proxmox VE, proxmox.md): Debian's /boot/vmlinuz-K, every one Proxmox's own (K-pve).
 NOT_PVE = "a kernel that isn't Proxmox's (vmlinuz-K-pve)"
@@ -44,6 +44,12 @@ NO_INITRD = "a kernel without its dracut image /boot/initrd.img-K"
 # /boot/booster.img-K; check-image.sh marks one without it.  The update keeps the newest two.
 NO_BOOSTER_MARK = "no-booster"
 NO_BOOSTER = "a kernel without its booster image /boot/booster.img-K"
+# K-cbm (Solus, solus.md): clr-boot-manager keeps the running, the newest and the last-booted
+# kernel, /usr/lib64/kernel/com.solus-project.TYPE.VER-REL, each with the initrd-NAME its package
+# ships; check-image.sh marks one without it (no-initrd).  uname -r gives it as VER-REL.TYPE.
+CBM_KERNEL = re.compile(r"com\.solus-project\.([^.]+)\.(.+)\Z")
+CBM_NO_INITRD = "a kernel without its initrd /usr/lib64/kernel/initrd-com.solus-project.K"
+CBM_NOT_INSTALLED = "the running kernel isn't in /usr/lib64/kernel"
 U0 = "not updated yet (u0): frozen by its builder"
 
 
@@ -428,10 +434,41 @@ def s_haiku(sec):
     return [] if _active(sec.cmd("pkgman-repos")) else ["pkgman lists no repository"]
 
 
+# S-eopkg (Solus, solus.md): `eopkg lr -N` prints "NAME [active]" (or [inactive]), then the
+# repository's URL indented.  The one Solus ships is Polaris, its stable repository.
+POLARIS = "cdn.getsol.us/repo/polaris"
+EOPKG_NO_REPO = "eopkg lists no repository"
+EOPKG_NO_POLARIS = "no eopkg repository is Polaris (cdn.getsol.us/repo/polaris)"
+EOPKG_POLARIS_OFF = "eopkg's Polaris repository isn't active"
+
+
+def _eopkg_repos(lines):
+    """[(name, active, url)] of `eopkg lr` (colour codes or not)."""
+    out = []
+    for raw in lines or ():
+        x = re.sub(r"\x1b\[[0-9;]*m", "", raw).rstrip()
+        m = re.match(r"(\S.*?)\s+\[(active|inactive)\]\Z", x)
+        if m:
+            out.append([m.group(1), m.group(2) == "active", None])
+        elif out and x.strip() and x[:1].isspace() and out[-1][2] is None:
+            out[-1][2] = x.strip()
+    return [tuple(r) for r in out]
+
+
+def s_eopkg(sec):
+    repos = _eopkg_repos(sec.cmd("eopkg-lr"))
+    if not repos:
+        return [EOPKG_NO_REPO]
+    polaris = [r for r in repos if r[2] and POLARIS in r[2]]
+    if not polaris:
+        return [EOPKG_NO_POLARIS]
+    return [] if any(r[1] for r in polaris) else [EOPKG_POLARIS_OFF]
+
+
 SOURCE_RULES = {"S-apt": s_apt, "S-dnf": s_dnf, "S-pac": s_pac, "S-zyp": s_zyp, "S-moss": s_moss, "S-apk": s_apk,
                 "S-xbps": s_xbps, "S-nix": s_nix, "S-fbsd": s_fbsd, "S-gbsd": s_gbsd, "S-hbsd": s_hbsd,
                 "S-nbsd": s_nbsd, "S-obsd": s_obsd, "S-dfly": s_dfly, "S-ips": s_ips, "S-haiku": s_haiku,
-                "S-portage": s_portage}
+                "S-portage": s_portage, "S-eopkg": s_eopkg}
 
 
 # --- L-*: the loader's default entry (#18) -------------------------------------------------------
@@ -659,8 +696,95 @@ def l_pve(sec):
     return out
 
 
+# L-cbm (Solus, solus.md): clr-boot-manager's ESP, which nothing mounts at boot; check-image.sh's
+# cbm-esp reads it (file, sha256, kind, entry, default and kernel lines).  Shim boots from
+# EFI/com.solus-project/bootloaderx64.efi and, byte-equal, the removable path; systemd-boot is
+# shim's grubx64.efi; each kernel CBM keeps has its Solus-TYPE-VER-REL entry, whose files are there.
+CBM_DIR = "efi/com.solus-project/"
+CBM_SHIM = CBM_DIR + "bootloaderx64.efi"
+CBM_FALLBACK = "efi/boot/bootx64.efi"
+CBM_SDBOOT = CBM_DIR + "grubx64.efi"
+CBM_NO_ESP = "the ESP can't be found or mounted read-only"
+CBM_NO_SHIM = "EFI/com.solus-project/bootloaderx64.efi isn't shim"
+CBM_NO_FALLBACK = "the fallback EFI/BOOT/BOOTX64.EFI isn't shim"
+CBM_FALLBACK_DIFFERS = "EFI/BOOT/BOOTX64.EFI isn't byte-equal to EFI/com.solus-project/bootloaderx64.efi"
+CBM_NO_SDBOOT = "EFI/com.solus-project/grubx64.efi isn't systemd-boot"
+CBM_NO_ENTRIES = "no loader/entries/Solus-*.conf on the ESP"
+CBM_NO_ENTRY = "a kernel CBM keeps has no loader/entries/Solus-*.conf"
+CBM_NO_LINUX = "a loader entry's kernel isn't on the ESP"
+CBM_NO_ENTRY_INITRD = "a loader entry's initrd isn't on the ESP"
+CBM_DEFAULT = "loader.conf's default matches no entry"
+
+
+def cbm_entry(name):
+    """com.solus-project.TYPE.VER-REL -> the entry CBM writes for it, Solus-TYPE-VER-REL (or None)."""
+    m = CBM_KERNEL.match(name)
+    return f"Solus-{m.group(1)}-{m.group(2)}" if m else None
+
+
+def cbm_uname(name):
+    """com.solus-project.TYPE.VER-REL -> uname -r's VER-REL.TYPE (or None)."""
+    m = CBM_KERNEL.match(name)
+    return f"{m.group(2)}.{m.group(1)}" if m else None
+
+
+def l_cbm(sec):
+    files, sha, kind, entries, dflt, kernels, bad = set(), {}, {}, {}, None, [], False
+    for x in sec.cmd("cbm-esp") or ():
+        f = x.split(None, 1)
+        if len(f) < 2:
+            continue
+        key, rest = f[0], f[1].strip()
+        if key == "esp":
+            bad = True
+        elif key == "file":
+            files.add(rest.lower())
+        elif key == "sha256" and len(rest.split(None, 1)) == 2:
+            h, p = rest.split(None, 1)
+            sha[p.lower()] = h
+        elif key == "kind" and len(rest.rsplit(None, 1)) == 2:
+            p, k = rest.rsplit(None, 1)
+            kind[p.lower()] = k
+        elif key == "entry" and len(rest.split(None, 2)) == 3:
+            n, what, p = rest.split(None, 2)
+            entries.setdefault(n, {}).setdefault(what, []).append(p.lstrip("/").lower())
+        elif key == "default":
+            dflt = rest
+        elif key == "kernel":
+            kernels.append(rest)
+    if bad or not files:
+        return [CBM_NO_ESP]
+    out = []
+    if kind.get(CBM_SHIM) != "shim":
+        out.append(CBM_NO_SHIM)
+    if kind.get(CBM_FALLBACK) != "shim":
+        out.append(CBM_NO_FALLBACK)
+    elif CBM_SHIM in sha and sha.get(CBM_FALLBACK) != sha[CBM_SHIM]:
+        out.append(CBM_FALLBACK_DIFFERS)
+    if kind.get(CBM_SDBOOT) != "systemd-boot":
+        out.append(CBM_NO_SDBOOT)
+    solus = {n: e for n, e in entries.items() if fnmatch.fnmatchcase(n, "Solus-*")}
+    have = {p[len("loader/entries/"):-len(".conf")] for p in files
+            if p.startswith("loader/entries/solus-") and p.endswith(".conf")}
+    if not solus and not have:
+        out.append(CBM_NO_ENTRIES)
+    names = {n.lower() for n in solus} | have
+    if any((cbm_entry(k) or k).lower() not in names for k in kernels):
+        out.append(CBM_NO_ENTRY)
+    if any(not e.get("linux") or any(p not in files for p in e["linux"]) for e in solus.values()):
+        out.append(CBM_NO_LINUX)
+    if any(p not in files for e in solus.values() for p in e.get("initrd", ())):
+        out.append(CBM_NO_ENTRY_INITRD)
+    if dflt is not None:
+        d = dflt[:-5] if dflt.endswith(".conf") else dflt
+        if not any(fnmatch.fnmatchcase(n, d) for n in entries):
+            out.append(CBM_DEFAULT)
+    return out
+
+
 LOADER_RULES = {"L-grub": l_grub, "L-bls": l_bls, "L-sd": l_sd, "L-limine": l_limine, "L-fbsd": l_fbsd,
-                "L-nbsd": l_nbsd, "L-obsd": l_obsd, "L-dfly": l_dfly, "L-ill": l_ill, "L-pve": l_pve}
+                "L-nbsd": l_nbsd, "L-obsd": l_obsd, "L-dfly": l_dfly, "L-ill": l_ill, "L-pve": l_pve,
+                "L-cbm": l_cbm}
 
 
 # --- the other image checks --------------------------------------------------------------------
@@ -739,6 +863,8 @@ def judge_kernels(sec, checks):
         return Need("FAIL", None, [NO_INITRD])
     if rule == "K-pika" and any(x.endswith(" " + NO_BOOSTER_MARK) for x in ks):
         return Need("FAIL", None, [NO_BOOSTER])
+    if rule == "K-cbm" and any(x.endswith(" " + NO_INITRD_MARK) for x in ks):
+        return Need("FAIL", None, [CBM_NO_INITRD])
     return Need("PASS", f"{len(ks)} kernel{'s' if len(ks) != 1 else ''}")
 
 
@@ -945,6 +1071,8 @@ def newest_kernel_lines(lines, rule, sec=None, steps=None):
             kv[f[0]] = f[1].strip()
     if "unverified" in kv:
         return [f"kernel unverified: {kv['unverified']}"]
+    if rule == "K-cbm":
+        return _cbm_kernel_lines(kv.get("running"), installed)
     if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree", "K-gentoo", "K-anduinos", "K-abroot", "K-pve", "K-pika"):
         run = kv.get("running")
         if not run or not installed:
@@ -977,6 +1105,19 @@ def newest_kernel_lines(lines, rule, sec=None, steps=None):
     if m == "no":
         return [NOT_NEWEST]
     return ["kernel unverified: no match line"]
+
+
+def _cbm_kernel_lines(run, installed):
+    """K-cbm: the running kernel is in /usr/lib64/kernel and the newest of its type there (CBM's
+    default is the newest kernel of the running one's type: current and lts don't compete)."""
+    names = [u for u in (cbm_uname(x) for x in installed) if u]
+    if not run or not names:
+        return ["kernel unverified: no running or installed kernel listed"]
+    if run not in names:
+        return [CBM_NOT_INSTALLED]
+    typ = run.rsplit(".", 1)[-1]
+    same = [u for u in names if u.rsplit(".", 1)[-1] == typ]
+    return [] if version_key(run) == version_key(newest(same)) else [NOT_NEWEST]
 
 
 SKIP_WHY = {"boot-state": "this OS's service state is one list: after:boot-state", "haiku": "no stacked mounts on Haiku"}

@@ -7,3 +7,5 @@ The log sweep's tests (RealLogLines) use package-manager lines taken from the ho
 vms/G/update.log files, read in place on 2026-11-10 and copied by hand with generic package names only.
 
 hook-*.out here are complete hook outputs for one PASSing debian12 run (test_guest.py).
+solus49-before.out is the before hook (RULES="S-eopkg L-cbm K-cbm B-lin M-lin") run on solus49
+on Chopin, 2026-11-14, from a --snapshot boot (test_guest_judge.py's Solus class).

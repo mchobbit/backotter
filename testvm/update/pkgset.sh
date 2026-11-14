@@ -154,6 +154,15 @@ listing() {
         elif has apk; then
             echo "base pm apk"
             pkg_apk
+        elif has eopkg; then
+            echo "base pm eopkg"
+            # Solus: eopkg's database has a directory a package,
+            # NAME-VERSION-RELEASE (NAME may hold dashes, VERSION none);
+            # eopkg li prints names and summaries only.
+            x=$(ls /var/lib/eopkg/package) || fail "no /var/lib/eopkg/package"
+            lines "$x" | awk '/^.+-[^-]+-[0-9]+$/ { n = split($0, f, "-"); v = f[n - 1] "-" f[n]; print "pkg", substr($0, 1, length($0) - length(v) - 1), v; c++; next }
+                              { print "unknown eopkg package directory:", substr($0, 1, 60); exit 1 }
+                              END { if (!c) { print "unknown eopkg database lists no packages"; exit 1 } }'
         elif has moss; then
             echo "base pm moss"
             # moss lists under `pkg`: v0.26.10 (64070b2 and 05bd904) has no

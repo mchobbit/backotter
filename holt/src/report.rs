@@ -202,6 +202,16 @@ impl Ctx<'_> {
         }
         d.b.udev.get("ID_PART_ENTRY_UUID").map(str::to_string)
     }
+    /// Whether `d` is a partition of the ESP's type (GPT's, or MBR's 0xef).
+    fn is_esp_partition(&self, d: &Dev) -> bool {
+        d.b.parent.as_ref().and_then(|p| self.dev(p)).and_then(|p| p.table.as_ref()).is_some_and(|t| {
+            let n = d.b.partition_number.unwrap_or(0);
+            match t {
+                Table::Gpt { gpt, .. } => gpt.parts.iter().any(|p| p.number == n && p.type_guid == parttable::ESP),
+                Table::Mbr(mb) => mb.parts.iter().any(|p| p.number == n && p.ptype == 0xef),
+            }
+        }) || d.b.udev.get("ID_PART_ENTRY_TYPE").is_some_and(|t| t == parttable::ESP || t == "0xef")
+    }
     fn partition_label(&self, d: &Dev) -> Option<String> {
         if let (Some(parent), Some(n)) = (&d.b.parent, d.b.partition_number) {
             if let Some(Table::Gpt { gpt, .. }) = self.dev(parent).and_then(|p| p.table.as_ref()) {
@@ -1261,6 +1271,71 @@ pub fn unknown_disk(sys: &Sys, only: &[String]) -> Option<String> {
     only.iter().find(|n| !found.iter().any(|b| is_whole_disk(b) && b.name == **n)).cloned()
 }
 
+/// Solus's ESP (docs/design/solus.md, decision 3): clr-boot-manager mounts
+/// it at /boot only for as long as an update takes, and the installer
+/// leaves it out of fstab.  With clr-boot-manager installed, each of
+/// boot.esps says whether fstab mounts it (in_fstab), and with nothing
+/// mounted at /boot, boot.cbm_esp_unmounted names the partition
+/// clr-boot-manager would mount, found as it finds it: by
+/// LoaderDevicePartUUID, then by the partition name ESP, then by the ESP
+/// type on the root file system's disk (device null if none is).  dump
+/// refuses such a report (refusal): the backup would have none of the
+/// kernels, the loader or its entries.
+fn cbm_esps(mut boot: Value, ctx: &Ctx, sys: &Sys, packages: &[(String, String, String)], fstab: &[(&mounts::FstabEntry, Option<String>)]) -> Value {
+    if !packages.iter().any(|(n, _, _)| n == crate::boot::CBM) {
+        return boot;
+    }
+    let unmounted = (!ctx.mounts.iter().any(|m| m.target == "/boot")).then(|| {
+        let partuuid = boot.at(&["efi", "loader_interface", "loader_device_partuuid"]).and_then(Value::as_str).map(str::to_string);
+        let by_uuid = partuuid.and_then(|u| ctx.resolve(sys, &format!("PARTUUID={u}")).map(|d| (d, format!("LoaderDevicePartUUID ({u})"))));
+        let by_label = || ctx.resolve(sys, "PARTLABEL=ESP").map(|d| (d, "its partition name, ESP".to_string()));
+        let by_type = || {
+            let root = ctx.mounts.iter().rev().find(|m| m.target == "/")?;
+            let disk = ctx.by_devno(&root.devno)?.b.parent.clone()?;
+            let d = ctx.devs.iter().find(|d| d.b.parent.as_deref() == Some(disk.as_str()) && ctx.is_esp_partition(d))?;
+            Some((d.b.name.clone(), format!("the ESP type, on the root file system's disk {disk}")))
+        };
+        by_uuid.or_else(by_label).or_else(by_type)
+    });
+    let in_fstab: Vec<bool> = boot
+        .get("esps")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|e| {
+            let (dev, at) = (e.get("device").and_then(Value::as_str), e.get("mounted_at").and_then(Value::as_str));
+            fstab.iter().any(|(f, r)| f.vfstype != "swap" && (dev.is_some() && r.as_deref() == dev || at == Some(f.file.as_str())))
+        })
+        .collect();
+    if let Value::Obj(o) = &mut boot {
+        for (k, v) in o.iter_mut() {
+            if let (true, Value::Arr(esps)) = (k == "esps", v) {
+                for (e, f) in esps.iter_mut().zip(&in_fstab) {
+                    if let Value::Obj(eo) = e {
+                        eo.push(("in_fstab".into(), Value::Bool(*f)));
+                    }
+                }
+            }
+        }
+        if let Some(found) = unmounted {
+            let (dev, how) = found.map_or((None, None), |(d, h)| (Some(d), Some(h)));
+            o.push(("cbm_esp_unmounted".into(), Obj::new().set("device", dev).set("found_by", how).build()));
+        }
+    }
+    boot
+}
+
+/// Why `bko-holt dump` refuses this report, if it does: Solus's ESP, which
+/// nothing has mounted at /boot (cbm_esps).
+pub fn refusal(v: &Value) -> Option<String> {
+    let u = v.at(&["boot", "cbm_esp_unmounted"])?;
+    let mount = match u.get("device").and_then(Value::as_str) {
+        Some(d) => format!("`mount /dev/{d} /boot`"),
+        None => "mount the ESP at /boot".to_string(),
+    };
+    Some(format!("Solus keeps its ESP out of fstab, and nothing is mounted at /boot: run `clr-boot-manager mount-boot` (or {mount}) and dump again"))
+}
+
 pub fn build(sys: &Sys, os: Option<&OsRelease>, generated: &str) -> Value {
     build_only(sys, os, generated, &[])
 }
@@ -1442,14 +1517,7 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         .filter_map(|m| {
             let name = ctx.by_devno(&m.devno).map(|d| d.b.name.clone())?;
             let d = ctx.dev(&name)?;
-            let is_esp_type = d.b.parent.as_ref().and_then(|p| ctx.dev(p)).and_then(|p| p.table.as_ref()).is_some_and(|t| {
-                let n = d.b.partition_number.unwrap_or(0);
-                match t {
-                    Table::Gpt { gpt, .. } => gpt.parts.iter().any(|p| p.number == n && p.type_guid == parttable::ESP),
-                    Table::Mbr(mb) => mb.parts.iter().any(|p| p.number == n && p.ptype == 0xef),
-                }
-            }) || d.b.udev.get("ID_PART_ENTRY_TYPE").is_some_and(|t| t == parttable::ESP || t == "0xef");
-            (is_esp_type || matches!(m.target.as_str(), "/boot/efi" | "/efi")).then(|| (name, m.target.clone()))
+            (ctx.is_esp_partition(d) || matches!(m.target.as_str(), "/boot/efi" | "/efi")).then(|| (name, m.target.clone()))
         })
         .collect();
     let mbr_codes: Vec<(String, String)> =
@@ -1505,6 +1573,7 @@ pub fn build_with(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     let boot = crate::truenas::add_to_boot(boot, truenas.as_ref());
     let boot = crate::transactional::add_to_boot(boot, transactional);
     let boot = crate::snapcore::add_to_boot(boot, snapcore.as_ref());
+    let boot = cbm_esps(boot, &ctx, sys, &packages, &fstab_resolved);
 
     let mut out = Obj::new()
         .set("format", FORMAT)

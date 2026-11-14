@@ -630,6 +630,16 @@ print(d[0]["checksum"] if d else "")' "$1"
         if grep -qs '^ID=alpine$' /etc/os-release && ! apk info -e findmnt >/dev/null 2>&1; then
             apk add findmnt || exit 1
         fi
+    # t2-section: Linux.eopkg
+    elif has eopkg; then
+        # Solus: a curated rolling release, upgraded whole (it takes no
+        # partial upgrade).  eopkg's triggers run usysconf, whose
+        # clr-boot-manager step mounts the ESP at /boot itself (it isn't in
+        # fstab), copies the new kernel and initrd there and makes its
+        # systemd-boot entry, and drops kernels but the newest and the
+        # running one.  Then the package cache, which eopkg keeps.
+        eopkg up -y || exit 1
+        eopkg dc || exit 1
     # t2-section: Linux.moss
     elif has moss; then
         # AerynOS: each sync makes a new state and keeps the ones before it

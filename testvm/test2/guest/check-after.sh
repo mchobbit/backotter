@@ -119,6 +119,11 @@ if ! has_rule K-none && ! has_rule K-haiku; then
             d=${d%/}
             echo "installed ${d##*/}"
         done | sort -u
+    elif has_rule K-cbm; then
+        # Solus (solus.md): clr-boot-manager's kernels by their file names in /usr/lib64/kernel
+        # (com.solus-project.TYPE.VER-REL, which uname -r gives as VER-REL.TYPE).
+        echo "running $r"
+        for k in /usr/lib64/kernel/com.solus-project.*; do [ -e "$k" ] && echo "installed ${k##*/}"; done
     elif has_rule K-ostree; then
         # ostree: /usr/lib/modules is the booted deployment's alone, so what tells is which
         # deployment booted.  booted and default as CHECKSUM.SERIAL (the default is the first

@@ -2846,6 +2846,12 @@ impl Builder<'_> {
             let extra = self.snapcore_mounts(sc);
             ms.extend(extra);
         }
+        // Solus: the ESP at /boot, which fstab leaves out
+        // (docs/design/solus.md): the restore puts its files back on it.
+        if self.solus_cbm() && !ms.iter().any(|(p, _)| p == "/boot") {
+            let extra = self.solus_esp_mount();
+            ms.extend(extra);
+        }
         ms.sort_by(|a, b| {
             let depth = |p: &str| if p == "/" { 0 } else { p.matches('/').count() };
             depth(&a.0).cmp(&depth(&b.0)).then(a.0.cmp(&b.0))
@@ -3227,6 +3233,7 @@ impl Builder<'_> {
         // NixOS and Guix System (crate::store): their notes and paths.
         let store = crate::store::system(self.layout.str_at(&["os", "id"]));
         let gentoo = self.layout.str_at(&["os", "id"]) == Some("gentoo");
+        let solus = self.solus_cbm();
         let truenas = self.truenas().is_some();
         if truenas {
             // Each boot environment's initrd came back with it (the truenas
@@ -3234,6 +3241,11 @@ impl Builder<'_> {
         } else if gentoo {
             let cmds = self.gentoo_initramfs(&t);
             out.extend(cmds);
+        } else if solus {
+            // Solus: each kernel package ships its initrd, and
+            // clr-boot-manager's copies came back with the ESP; one rebuilt
+            // here would be host-only, and CBM would never copy it.
+            self.notes.push("Solus: each kernel's initrd came prebuilt in its package (/usr/lib64/kernel/initrd-com.solus-project.*), and clr-boot-manager's copies of them came back with the ESP; nothing to rebuild".into());
         } else {
             match self.initramfs(&t) {
                 _ if store.is_some() && self.layout.uefi() => self.notes.push(store.map_or("", |s| s.initramfs_uefi).into()),
@@ -3268,6 +3280,26 @@ impl Builder<'_> {
             }
             // Gentoo through shim: grub-install would put an unsigned GRUB
             // where the signed one is.
+            // Solus (docs/design/solus.md, decision 4): clr-boot-manager's
+            // shim (bootloaderx64.efi), MokManager, systemd-boot (as
+            // grubx64.efi), every kernel and initrd it copied, and the
+            // entries came back with the ESP, at /boot; they hold no machine
+            // identity beyond the UUIDs format keeps.  No bootctl install
+            // (an unsigned systemd-boot over the shim), no clr-boot-manager:
+            // only the boot entry is made (efi_entries, solus_entry).
+            ("systemd-boot", true) if solus => {
+                self.notes.push("Solus: clr-boot-manager's shim, MokManager, systemd-boot, kernels, initrds and loader entries are the restored ESP's; only the boot entry is made".into());
+                self.notes.push("Solus: clr-boot-manager isn't run: in the rescue system LoaderDevicePartUUID names the rescue stick's ESP, and with --path it runs in image mode, which writes a plain systemd-boot over the shim at EFI/BOOT/BOOTX64.EFI; the restored system's next `eopkg up` runs `clr-boot-manager update` itself".into());
+                self.notes.push("Solus: on other hardware with Secure Boot on, Solus's key must be enrolled again: solus-enroll-me.cer, at the ESP's root, from MokManager on the first boot".into());
+            }
+            (other, true) if solus => {
+                self.problems.push(format!("Solus with clr-boot-manager: the dump found boot loader {other}, not its systemd-boot, so bko-holt load can't tell what to keep"));
+            }
+            // BIOS: clr-boot-manager's GRUB2 backend (docs/design/solus.md,
+            // decision 2), which nothing here covers.
+            (_, false) if solus => {
+                self.problems.push("Solus on BIOS (clr-boot-manager's GRUB2 backend) isn't supported by bko-holt load; only UEFI Solus is".into());
+            }
             (_, true) if gentoo && via_shim => {
                 self.problems.push(format!("Gentoo through shim (Secure Boot, {loader}): bko-holt load would write an unsigned boot loader over the signed one, and doesn't support it"));
             }
@@ -3454,6 +3486,9 @@ impl Builder<'_> {
         }
         if uefi && !self.opts.no_nvram {
             out.extend(self.efi_entries());
+            if solus {
+                out.extend(self.solus_entry());
+            }
         }
         out.extend(self.rewrite_cmd(true));
         out.push(Cmd::new(&["mkdir", "-p", &format!("{t}/var/log/bko-holt")]));
@@ -3607,6 +3642,64 @@ impl Builder<'_> {
     /// AnduinOS with its own GRUB on the ESP, signed with the machine's MOK:
     /// the dump found the MOK beside anduinos-grub (boot.loader.mok), or the
     /// firmware booted shim and anduinos-grub is installed.
+    /// Solus's ESP mounted at /boot in the target, as it was when the dump
+    /// was made (boot.esps' mounted_at /boot, in_fstab false), with its
+    /// mount's options; fstab has no line for it.
+    fn solus_esp_mount(&mut self) -> Vec<(String, Cmd)> {
+        let target = self.opts.target.clone();
+        let esp = self.layout.arr(&["boot", "esps"]).iter().find(|e| s(e, "mounted_at").as_deref() == Some("/boot")).and_then(|e| s(e, "device"));
+        let Some(src) = esp else {
+            self.problems.push("Solus: no ESP was mounted at /boot when the dump was made, so the restore has nowhere to put the kernels and the loader".into());
+            return Vec::new();
+        };
+        let Some(dev) = self.names.dev(&src) else {
+            self.problems.push(format!("Solus: its ESP {src} (at /boot) isn't restored"));
+            return Vec::new();
+        };
+        let opts = self.layout.arr(&["storage", "mounts"]).iter().find(|m| s(m, "target").as_deref() == Some("/boot")).and_then(|m| s(m, "options")).map(|o| mount_options(&o)).unwrap_or_else(|| "defaults".into());
+        self.notes.push(format!("Solus: its ESP {src} is mounted at /boot for the restore, though fstab has no line for it (clr-boot-manager mounts it when it needs it)"));
+        vec![("/boot".into(), Cmd::new(&["mount", "-t", "vfat", "-o", &opts, &dev, &format!("{target}/boot")]))]
+    }
+
+    fn solus_cbm(&self) -> bool {
+        self.layout.str_at(&["os", "id"]) == Some("solus") && self.layout.str_at(&["boot", "loader", "manager"]) == Some(crate::boot::CBM)
+    }
+
+    /// Solus's boot entry, as clr-boot-manager makes it ("Solus Linux
+    /// Bootloader", its shim \EFI\com.solus-project\bootloaderx64.efi on
+    /// the ESP that holds it), when efi_entries made none for that shim: a
+    /// source booted from the fallback path (blank NVRAM) has none.  Last,
+    /// so that it comes first in BootOrder.
+    fn solus_entry(&mut self) -> Vec<Cmd> {
+        let shim = crate::boot::CBM_SHIM;
+        let loader = format!("\\{}", shim.replace('/', "\\"));
+        let order: Vec<String> = self.layout.v.at(&["boot", "efi", "boot_order"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)).collect();
+        let on_layout = |part: &str| self.layout.disks.iter().any(|d| d.parts.iter().any(|p| p.name == part));
+        let made = self.layout.arr(&["boot", "efi", "entries"]).iter().any(|e| {
+            s(e, "number").is_some_and(|n| order.contains(&n))
+                && s(e, "file").is_some_and(|f| f.replace('/', "\\").trim_start_matches('\\').eq_ignore_ascii_case(&loader[1..]))
+                && e.at(&["partition", "device"]).and_then(Value::as_str).is_some_and(on_layout)
+        });
+        if made {
+            return Vec::new();
+        }
+        let holds = |esp: &Value| esp.at(&["contents", "files"]).and_then(Value::as_array).is_some_and(|f| f.iter().any(|f| f.get("path").and_then(Value::as_str).is_some_and(|p| p.eq_ignore_ascii_case(shim))));
+        let Some(part) = self.layout.arr(&["boot", "esps"]).iter().find(|e| holds(e)).and_then(|e| s(e, "device")) else {
+            self.problems.push(format!("Solus: no ESP in the dump holds clr-boot-manager's shim, {shim}, so there's nothing to boot"));
+            return Vec::new();
+        };
+        let Some((disk, num)) = self.layout.disks.iter().find_map(|d| d.parts.iter().find(|p| p.name == part).map(|p| (d.name.clone(), p.number))) else {
+            self.notes.push(format!("Solus: its ESP {part} isn't on the layout's disks; no boot entry made"));
+            return Vec::new();
+        };
+        let Some(tgt) = self.names.mapping.target_of(&disk) else { return Vec::new() };
+        vec![
+            efi_dedupe(&format!("/dev/{tgt}"), num, &loader),
+            Cmd::new(&["efibootmgr", "--quiet", "--create", "--disk", &format!("/dev/{tgt}"), "--part", &num.to_string(), "--label", crate::boot::CBM_ENTRY, "--loader", &loader])
+                .why("Solus: the boot entry clr-boot-manager makes (the source's NVRAM had none for its shim)"),
+        ]
+    }
+
     fn anduinos_signed_grub(&self, via_shim: bool) -> bool {
         self.layout.str_at(&["os", "id"]) == Some("anduinos")
             && (self.layout.v.at(&["boot", "loader", "mok"]).is_some_and(|m| !m.is_null()) || (via_shim && self.layout.str_at(&["boot", "packages", "anduinos-grub"]).is_some()))

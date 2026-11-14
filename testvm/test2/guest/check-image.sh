@@ -35,6 +35,8 @@ has_rule S-nbsd && emit /usr/pkg/etc/pkgin/repositories.conf /usr/pkg/etc/sysupg
 has_rule S-obsd && emit /etc/installurl
 if has_rule S-ips; then cmd pkg-publisher; pkg publisher -H 2>&1 | qt; fi
 if has_rule S-haiku; then cmd pkgman-repos; pkgman list-repos 2>&1 | qt; fi
+# Solus (solus.md): "NAME [active|inactive]", then the URL indented; -N: no colour codes.
+if has_rule S-eopkg; then cmd eopkg-lr; eopkg lr -N 2>&1 | qt; fi
 # --- the loader's default entry
 if has_rule L-grub; then
     emit /boot/grub/grub.cfg /boot/grub2/grub.cfg /grub/grub.cfg /boot/grub/grubenv /boot/grub2/grubenv /etc/default/grub
@@ -83,6 +85,52 @@ if has_rule L-pve; then
         if [ -n "$d" ]; then umount "$d" 2>/dev/null; rmdir "$d"; fi
     done
 fi
+# Solus (solus.md): clr-boot-manager's ESP, which nothing mounts at boot (fstab leaves /boot
+# out): read where it is mounted on /boot, or through a read-only mount of its own here (the
+# partition systemd-boot's LoaderDevicePartUUID names, else the disk's ESP type), not CBM's
+# read-write mount-boot.  "file REL" for each file, "sha256 HASH REL" and "kind REL
+# shim|systemd-boot|other" for each .efi, "entry NAME linux|initrd PATH" for each
+# loader/entries/NAME.conf, "default PATTERN" from loader.conf, "kernel NAME" for each
+# /usr/lib64/kernel/com.solus-project.* (what CBM keeps); "esp unreadable" with no ESP.
+if has_rule L-cbm; then
+    cmd cbm-esp
+    for k in /usr/lib64/kernel/com.solus-project.*; do [ -e "$k" ] && echo "kernel ${k##*/}"; done
+    m= d=
+    [ "$(findmnt -n -o FSTYPE /boot 2>/dev/null)" = vfat ] && m=/boot
+    if [ -z "$m" ]; then
+        v=/sys/firmware/efi/efivars/LoaderDevicePartUUID-4a67b082-0a4c-41cf-b6c7-440b29bb8c4f
+        u=$(tail -c +5 "$v" 2>/dev/null | tr -d '\000' | tr 'A-F' 'a-f')
+        dev=
+        [ -n "$u" ] && [ -e "/dev/disk/by-partuuid/$u" ] && dev=/dev/disk/by-partuuid/$u
+        [ -n "$dev" ] || dev=$(lsblk -nrpo PATH,PARTTYPE 2>/dev/null |
+            awk 'tolower($2) == "c12a7328-f81f-11d2-ba4b-00a0c93ec93b" { print $1; exit }')
+        if [ -n "$dev" ] && d=$(mktemp -d) &&
+            mount -t vfat -o ro,nodev,nosuid,noexec "$dev" "$d" 2>/dev/null; then m=$d; fi
+    fi
+    if [ -z "$m" ]; then
+        echo "esp unreadable"
+    else
+        (cd "$m" && find . -type f | sed 's|^\./||' | LC_ALL=C sort) | while read -r f; do
+            echo "file $f"
+            case $f in
+            *.efi | *.EFI)
+                echo "sha256 $(sha256sum "$m/$f" | awk '{ print $1 }') $f"
+                if grep -aq 'LoaderInfo: systemd-boot' "$m/$f"; then echo "kind $f systemd-boot"
+                elif grep -aq 'UEFI SHIM' "$m/$f"; then echo "kind $f shim"
+                else echo "kind $f other"; fi ;;
+            esac
+        done
+        for f in "$m"/loader/entries/*.conf; do
+            [ -e "$f" ] || continue
+            n=${f##*/}
+            sed -n -e 's/^[[:space:]]*linux[[:space:]][[:space:]]*\([^[:space:]]*\).*/linux \1/p' \
+                -e 's/^[[:space:]]*initrd[[:space:]][[:space:]]*\([^[:space:]]*\).*/initrd \1/p' "$f" |
+                sed "s|^|entry ${n%.conf} |"
+        done
+        sed -n 's/^[[:space:]]*default[[:space:]][[:space:]]*\([^[:space:]]*\).*/default \1/p' "$m/loader/loader.conf" 2>/dev/null
+    fi
+    if [ -n "$d" ]; then umount "$d" 2>/dev/null; rmdir "$d"; fi
+fi
 if has_rule L-fbsd; then
     emit /boot/loader.conf
     cmd zfs-boot
@@ -128,6 +176,14 @@ if ! has_rule K-none; then
         for k in /boot/vmlinuz-*; do
             case $k in *.old | *.bak | *.dpkg-bak | '/boot/vmlinuz-*') continue ;; esac
             if [ -e "/boot/booster.img-${k#/boot/vmlinuz-}" ]; then echo "$k"; else echo "$k no-booster"; fi
+        done
+    fi
+    # Solus (solus.md): clr-boot-manager's kernels in /usr/lib64/kernel, each with the
+    # initrd-NAME its package ships (names only, by test -e).
+    if has_rule K-cbm; then
+        for k in /usr/lib64/kernel/com.solus-project.*; do
+            [ -e "$k" ] || continue
+            if [ -e "/usr/lib64/kernel/initrd-${k##*/}" ]; then echo "$k"; else echo "$k no-initrd"; fi
         done
     fi
     if has_rule K-fed || has_rule K-ostree; then ls -1 /boot/loader/entries/*.conf 2>/dev/null | grep -v rescue; fi

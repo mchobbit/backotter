@@ -23,7 +23,7 @@ GUEST, vm-update
      itself is only read, once this host has memory to spare for the VM;
   3. lists its packages (update/pkgset.sh), then runs update/in-guest.sh in
      it over SSH: the guest's own package manager (apt, dnf, pacman, zypper,
-     xbps, apk, moss, emerge on Gentoo, building from source only what an
+     xbps, apk, eopkg, moss, emerge on Gentoo, building from source only what an
      allowlist names, abroot upgrade on Vanilla OS (into the other root,
      which the reboot below boots), transactional-update dup on MicroOS
      (into a new snapshot, which the reboot below must boot), nixos-rebuild,

@@ -5437,6 +5437,297 @@ fn truenas_bootfs_and_targets() {
     assert!(b.problems.iter().any(|p| p == "TrueNAS: vdb holds a boot-pool vdev but has no target, so GRUB can't be installed on it"), "{:?}", b.problems);
 }
 
+/// The two kernels the solus49 guest keeps after its first update: the
+/// ISO's and the newest, both linux-current (VER-REL; uname -r adds
+/// .current).
+const SOLUS_KVS: [&str; 2] = ["6.18.21-333", "7.3.4-373"];
+/// The ESP's PARTUUID (LoaderDevicePartUUID names it).
+const SOLUS_ESP: &str = "50105050-0000-4000-8000-000000000001";
+/// The root's PARTUUID, which the loader entries' root= names.
+const SOLUS_ROOT_PART: &str = "50105050-0000-4000-8000-000000000003";
+/// The ext4 root (ext::sample::image's UUID).
+const SOLUS_ROOT: &str = "10111213-1415-1617-1819-1a1b1c1d1e1f";
+/// Solus 4.9's /usr/lib/os-release (the ISO's root).
+const SOLUS_OS_RELEASE: &str = "NAME=\"Solus\"\nVERSION=\"4.9\"\nID=\"solus\"\nVERSION_CODENAME=serenity\nVERSION_ID=\"4.9\"\nPRETTY_NAME=\"Solus 4.9 Serenity\"\nANSI_COLOR=\"1;34\"\nHOME_URL=\"https://getsol.us\"\nSUPPORT_URL=\"https://help.getsol.us/docs/user/contributing/getting-involved\"\nBUG_REPORT_URL=\"https://issues.getsol.us/\"\nLOGO=\"distributor-logo-solus\"\n";
+
+/// Solus 4.9 as the solus49 guest has it after its first update
+/// (docs/design/solus.md, S1's facts), in small: GPT with the vfat ESP
+/// first (GPT name `esp_name`, "EFI" there; no FAT label), mounted at
+/// /boot and left out of fstab (`mounted` false: nothing mounted there,
+/// as between clr-boot-manager runs), then the hybrid layout's BIOS boot
+/// partition, then the ext4 root; fstab's / only; eopkg's database; both
+/// kernels and their prebuilt initrds in /usr/lib64/kernel (/usr/lib a
+/// link to lib64), default-current naming the newest; on the ESP,
+/// clr-boot-manager's shim as EFI/com.solus-project/bootloaderx64.efi
+/// (and its copy at the fallback path, with shim's fbx64.efi and no
+/// grubx64.efi there), systemd-boot as grubx64.efi beside it, MokManager,
+/// both kernels and initrds, and an entry for each, root= by PARTUUID;
+/// booted from NVRAM's "Solus Linux Bootloader" entry (Boot0001) with
+/// Secure Boot on, LoaderInfo systemd-boot's.
+fn solus(mounted: bool, esp_name: &str) -> Tree {
+    use crate::efi::{GLOBAL, LOADER};
+    let t = Tree::new(&format!("scn-solus-{mounted}-{esp_name}"));
+    let k = SOLUS_KVS[1];
+    let mut img = vec![0u8; 96 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "50105050-0000-4000-8000-00000000d15c",
+            parts: vec![
+                (ESP, SOLUS_ESP, 4096, 75775, 0, esp_name),
+                (BIOS_BOOT, "50105050-0000-4000-8000-000000000002", 75776, 79871, 0, ""),
+                (LINUX, SOLUS_ROOT_PART, 79872, 196574, 0, ""),
+            ],
+        },
+    );
+    put(&mut img, 4096, &fat::sample::fat32(71680, 0x2949_1e0b, ""));
+    put(&mut img, 79872, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
+    let utf16 = |s: &str| -> Vec<u8> {
+        let mut v = vec![6u8, 0, 0, 0];
+        v.extend(s.encode_utf16().chain([0]).flat_map(u16::to_le_bytes));
+        v
+    };
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    let mut mountinfo = "26 1 254:3 / / rw,noatime shared:1 - ext4 /dev/vda3 rw\n".to_string();
+    if mounted {
+        mountinfo.push_str("40 26 254:1 / /boot rw,relatime shared:9 - vfat /dev/vda1 rw,fmask=0022,dmask=0022\n");
+    }
+    let (shim, sd, mm, fb) = (vec![1u8; 300], vec![2u8; 400], vec![3u8; 200], vec![4u8; 100]);
+    let opts = format!("root=PARTUUID={SOLUS_ROOT_PART} rd.vconsole.keymap=us rd.vconsole.font=ter-v32b rw plymouth.use-simpledrm console=tty0 console=ttyS0,115200n8");
+    let ver = |n: &str, v: &str, r: &str| (format!("/var/lib/eopkg/package/{n}-{v}-{r}/metadata.xml"), format!("<PISI>\n    <Source>\n        <Name>{n}</Name>\n    </Source>\n    <Package>\n        <Name>{n}</Name>\n        <Architecture>x86_64</Architecture>\n    </Package>\n</PISI>\n"));
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 4096, 71680, &img)
+        .partition("vda", "vda2", "254:2", 2, 75776, 4096, &img)
+        .partition("vda", "vda3", "254:3", 3, 79872, 116703, &img)
+        .file("/sys/block/vda/device/model", "")
+        .symlink(&format!("/dev/disk/by-partuuid/{SOLUS_ESP}"), "../../vda1")
+        .symlink(&format!("/dev/disk/by-partuuid/{SOLUS_ROOT_PART}"), "../../vda3")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&var("Boot0001"), efi_load_option("Solus Linux Bootloader", 1, 4096, 71680, SOLUS_ESP, "\\EFI\\com.solus-project\\bootloaderx64.efi"))
+        .file(&var("BootOrder"), [7u8, 0, 0, 0, 1, 0])
+        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 1, 0])
+        .file(&var("SecureBoot"), [6u8, 0, 0, 0, 1])
+        .file(&format!("/sys/firmware/efi/efivars/LoaderInfo-{LOADER}"), utf16("systemd-boot 257.10"))
+        .file(&format!("/sys/firmware/efi/efivars/LoaderDevicePartUUID-{LOADER}"), utf16(&SOLUS_ESP.to_uppercase()))
+        .file("/proc/self/mountinfo", mountinfo)
+        .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n/dev/zram0 partition 3984380 0 100\n")
+        .file("/etc/fstab", format!("# /etc/fstab: static file system information.\nUUID={SOLUS_ROOT} / ext4 defaults,noatime 0 1\n"))
+        .file("/usr/lib64/os-release", SOLUS_OS_RELEASE)
+        .symlink("/usr/lib", "lib64")
+        .symlink("/lib", "usr/lib64")
+        .symlink("/etc/os-release", "../usr/lib/os-release")
+        .dir("/usr/lib64/kernel/cmdline.d")
+        .symlink("/usr/lib64/kernel/default-current", &format!("com.solus-project.current.{k}"))
+        .symlink("/usr/lib64/kernel/current-vmlinux", &format!("com.solus-project.current.{k}"))
+        .symlink("/usr/lib64/kernel/current-initrd", &format!("initrd-com.solus-project.current.{k}"))
+        .file("/usr/bin/clr-boot-manager", "")
+        .file("/usr/lib64/systemd/boot/efi/systemd-bootx64.efi", &sd)
+        .file("/usr/lib64/shim/shimx64.efi", &shim)
+        .file("/proc/sys/kernel/osrelease", format!("{k}.current\n"))
+        .file("/proc/sys/kernel/hostname", "solus49\n")
+        .file("/proc/cmdline", format!("initrd=\\EFI\\com.solus-project\\initrd-com.solus-project.current.{k} {opts}\n"));
+    for (i, v) in SOLUS_KVS.iter().enumerate() {
+        let kernel = format!("com.solus-project.current.{v}");
+        t.file(&format!("/usr/lib64/kernel/{kernel}"), vec![b'k'; 10 + i])
+            .file(&format!("/usr/lib64/kernel/initrd-{kernel}"), vec![b'i'; 20 + i])
+            .file(&format!("/usr/lib64/kernel/cmdline-{v}.current"), "quiet splash\n")
+            .file(&format!("/usr/lib64/kernel/config-{v}.current"), "")
+            .file(&format!("/usr/lib64/kernel/System.map-{v}.current"), "")
+            .dir(&format!("/usr/lib64/modules/{v}.current/kernel"));
+    }
+    // The ESP's files, at /boot when it's mounted there; otherwise the
+    // directory is empty, as on a booted Solus between updates.
+    if mounted {
+        t.file("/boot/EFI/com.solus-project/bootloaderx64.efi", &shim)
+            .file("/boot/EFI/com.solus-project/grubx64.efi", &sd)
+            .file("/boot/EFI/com.solus-project/mmx64.efi", &mm)
+            .file("/boot/EFI/com.solus-project/BOOTX64.CSV", "bootloaderx64.efi,Solus Linux Bootloader,,This is the boot entry for Solus\n")
+            .file("/boot/EFI/BOOT/BOOTX64.EFI", &shim)
+            .file("/boot/EFI/BOOT/fbx64.efi", &fb)
+            .file("/boot/loader/loader.conf", format!("default Solus-current-{k}.conf\n"))
+            .file("/boot/solus-enroll-me.cer", "cert");
+        for v in SOLUS_KVS {
+            let kernel = format!("com.solus-project.current.{v}");
+            t.file(&format!("/boot/EFI/com.solus-project/kernel-{kernel}"), "k")
+                .file(&format!("/boot/EFI/com.solus-project/initrd-{kernel}"), "initrd")
+                .file(
+                    &format!("/boot/loader/entries/Solus-current-{v}.conf"),
+                    format!("title Solus 4.9 Serenity\nlinux /EFI/com.solus-project/kernel-{kernel}\ninitrd /EFI/com.solus-project/initrd-{kernel}\noptions {opts}\n"),
+                );
+        }
+    } else {
+        t.dir("/boot");
+    }
+    for (n, v, r) in [("clr-boot-manager", "3.6.0", "39"), ("shim-signed", "15.8", "7"), ("systemd", "257.10", "186"), ("linux-current", "7.3.4", "373"), ("dracut", "108", "44"), ("usysconf", "0.5.13", "49"), ("efibootmgr", "18", "3"), ("e2fsprogs", "1.47.3", "40"), ("dosfstools", "4.2", "9")] {
+        let (p, m) = ver(n, v, r);
+        t.file(&p, m);
+    }
+    t
+}
+
+/// Solus's plan from a tree, the source disk vda going to vdb.
+fn solus_plan(v: &Value) -> crate::load::commands::Built {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let l = Layout::from_json(v.clone()).unwrap();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+    commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() })
+}
+
+/// Solus read back and planned (docs/design/solus.md): supported by its
+/// ID; its eopkg packages; the ESP at /boot, out of fstab (in_fstab false)
+/// with no unmounted-ESP warning; systemd-boot through clr-boot-manager's
+/// shim from NVRAM's entry; the initrd prebuilt.  load keeps the restored
+/// ESP whole: no bootctl, no initramfs rebuilt, no clr-boot-manager, only
+/// the source's boot entry, and the three notes.
+#[test]
+fn solus_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let v = run(&solus(true, "EFI"), true, FakeRunner::default());
+    assert_eq!((s(&v, &["os", "id"]), s(&v, &["os", "version_id"])), ("solus", "4.9"));
+    assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
+    for (p, ver) in [("clr-boot-manager", "3.6.0-39"), ("shim-signed", "15.8-7"), ("linux-current", "7.3.4-373"), ("dracut", "108-44"), ("usysconf", "0.5.13-49"), ("efibootmgr", "18-3")] {
+        assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
+    }
+    assert!(v.at(&["boot", "packages", "systemd"]).is_none());
+    let l = v.at(&["boot", "loader"]).unwrap();
+    assert_eq!(s(l, &["name"]), "systemd-boot");
+    assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
+    assert_eq!(s(l, &["manager"]), "clr-boot-manager");
+    assert_eq!(s(l, &["shim_package"]), "shim-signed");
+    assert!(l.get("evidence").unwrap().compact().contains("that is clr-boot-manager's shim"), "{}", l.compact());
+    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "prebuilt");
+    let esps = arr(&v, &["boot", "esps"]);
+    assert_eq!(esps.len(), 1);
+    assert_eq!((s(&esps[0], &["device"]), s(&esps[0], &["mounted_at"])), ("vda1", "/boot"));
+    assert_eq!(esps[0].get("in_fstab"), Some(&Value::Bool(false)));
+    let files: Vec<(&str, Option<&str>)> = arr(&esps[0], &["contents", "files"]).iter().map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str))).collect();
+    assert!(files.contains(&("EFI/BOOT/BOOTX64.EFI", Some("EFI/com.solus-project/bootloaderx64.efi"))), "{files:?}");
+    // The guest's fallback path: shim's copy and its fbx64.efi, no grubx64.efi.
+    assert!(files.contains(&("EFI/BOOT/fbx64.efi", None)) && !files.iter().any(|(p, _)| *p == "EFI/BOOT/grubx64.efi"), "{files:?}");
+    assert_eq!(arr(&v, &["boot", "systemd_boot", "entries"]).len(), 2);
+    assert_eq!(s(&v, &["boot", "systemd_boot", "loader_conf", "default"]), "Solus-current-7.3.4-373.conf");
+    // Both kernels clr-boot-manager keeps, from /usr/lib64/kernel, as
+    // uname -r names them; default-current the newest.
+    let kernels: Vec<(&str, bool, u64)> = arr(&v, &["boot", "kernels", "installed"]).iter().map(|x| (s(x, &["version"]), x.get("running") == Some(&Value::Bool(true)), u(x, &["initrd_bytes"]))).collect();
+    assert_eq!(kernels, vec![("6.18.21-333.current", false, 20), ("7.3.4-373.current", true, 21)]);
+    assert!(arr(&v, &["boot", "kernels", "installed"]).iter().all(|x| x.get("modules_installed") == Some(&Value::Bool(true)) && s(x, &["dir"]) == "/usr/lib64/kernel"));
+    assert_eq!(s(&v, &["boot", "kernels", "symlinks", "/usr/lib64/kernel/default-current"]), "com.solus-project.current.7.3.4-373");
+    assert!(v.at(&["boot", "cbm_esp_unmounted"]).is_none());
+    assert!(crate::report::refusal(&v).is_none());
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+    // /boot is a backup source, though fstab has no line for it.
+    assert!(arr(&v, &["storage", "backup_sources"]).iter().any(|b| s(b, &["path"]) == "/boot"));
+    // The BIOS boot partition is a partition like any other.
+    assert_eq!(s(&v, &["storage", "disks", "0", "partitions", "1", "type_name"]), "BIOS boot");
+
+    let b = solus_plan(&v);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let p: String = b.stage(Stage::Partition).iter().map(Cmd::shell).collect();
+    assert!(p.contains("/dev/vdb1 : start=4096, size=71680, type=C12A7328-F81F-11D2-BA4B-00A0C93EC93B, uuid=50105050-0000-4000-8000-000000000001, name=\"EFI\""), "{p}");
+    assert!(p.contains("/dev/vdb2 : start=75776, size=4096, type=21686148-6449-6E6F-744E-656564454649"), "{p}");
+    // root=PARTUUID= in the entries: the root's partition GUID is kept.
+    assert!(p.contains(&format!("/dev/vdb3 : start=79872, size=116703, type=0FC63DAF-8483-4772-8E79-3D69D8477DE4, uuid={SOLUS_ROOT_PART}")), "{p}");
+    let m: String = b.stage(Stage::Mount).iter().map(Cmd::shell).collect();
+    // fstab has no /boot: the ESP is mounted there from the dump's mount,
+    // after /.
+    let root = m.find("/dev/vdb3 /mnt/bko-target\n").expect(&m);
+    let esp = m.find("mount -t vfat -o rw,relatime /dev/vdb1 /mnt/bko-target/boot\n").expect(&m);
+    assert!(root < esp, "{m}");
+    assert!(b.notes.iter().any(|n| n.starts_with("Solus: its ESP vda1 is mounted at /boot for the restore")), "{:?}", b.notes);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(!bt.contains("bootctl") && !bt.contains("dracut") && !bt.contains("update-initramfs") && !bt.contains("clr-boot-manager") && !bt.contains("grub-install"), "{bt}");
+    assert!(bt.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'Solus Linux Bootloader' --loader '\\EFI\\com.solus-project\\bootloaderx64.efi'\n"), "{bt}");
+    assert_eq!(bt.matches("efibootmgr --quiet --create").count(), 1, "{bt}");
+    for n in ["Solus: clr-boot-manager's shim, MokManager, systemd-boot, kernels, initrds and loader entries are the restored ESP's", "Solus: clr-boot-manager isn't run: in the rescue system LoaderDevicePartUUID names the rescue stick's ESP", "Solus: on other hardware with Secure Boot on, Solus's key must be enrolled again: solus-enroll-me.cer", "Solus: each kernel's initrd came prebuilt in its package"] {
+        assert!(b.notes.iter().any(|x| x.starts_with(n)), "{n}: {:?}", b.notes);
+    }
+}
+
+/// Solus booted at the fallback path with no NVRAM entry for its shim and
+/// no LoaderInfo (on the guest, shim's fbx64.efi makes the entry from
+/// BOOTX64.CSV on a fresh store and boots it, so this is firmware where
+/// that didn't happen): EFI/BOOT/BOOTX64.EFI is a copy of
+/// clr-boot-manager's shim, so it's systemd-boot through shim still, and
+/// load makes clr-boot-manager's entry itself, after the source's own.
+#[test]
+fn solus_fallback_boot() {
+    use crate::efi::{GLOBAL, LOADER};
+    use crate::load::{commands::Cmd, Stage};
+    let t = solus(true, "EFI");
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    std::fs::remove_file(t.p(&var("Boot0001"))).unwrap();
+    std::fs::remove_file(t.p(&format!("/sys/firmware/efi/efivars/LoaderInfo-{LOADER}"))).unwrap();
+    t.file(&var("Boot0002"), efi_load_option("UEFI Misc Device", 1, 4096, 71680, SOLUS_ESP, "\\EFI\\BOOT\\BOOTX64.EFI")).file(&var("BootOrder"), [7u8, 0, 0, 0, 2, 0]).file(&var("BootCurrent"), [6u8, 0, 0, 0, 2, 0]);
+    let v = run(&t, true, FakeRunner::default());
+    let l = v.at(&["boot", "loader"]).unwrap();
+    assert_eq!(s(l, &["name"]), "systemd-boot");
+    assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
+    assert_eq!(s(l, &["manager"]), "clr-boot-manager");
+    assert!(l.get("evidence").unwrap().compact().contains("EFI/BOOT/BOOTX64.EFI is a copy of EFI/com.solus-project/bootloaderx64.efi, clr-boot-manager's shim"), "{}", l.compact());
+    let b = solus_plan(&v);
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(!bt.contains("bootctl") && !bt.contains("dracut"), "{bt}");
+    let misc = bt.find("--label 'UEFI Misc Device' --loader '\\EFI\\BOOT\\BOOTX64.EFI'\n").expect(&bt);
+    let solus = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'Solus Linux Bootloader' --loader '\\EFI\\com.solus-project\\bootloaderx64.efi'\n").expect(&bt);
+    assert!(misc < solus, "{bt}");
+    // --no-nvram: no entry at all.
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string(), "--no-nvram".into()]) else { unreachable!() };
+    let nb = commands::build(&Layout::from_json(v).unwrap(), &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+    assert!(!nb.stage(Stage::Boot).iter().map(Cmd::shell).collect::<String>().contains("efibootmgr --quiet --create"));
+}
+
+/// Solus with nothing mounted at /boot (between clr-boot-manager runs):
+/// the ESP is found as clr-boot-manager finds it, and dump refuses,
+/// saying how to mount it.  The fstab-keyed warning stays quiet: fstab has
+/// no ESP line.
+#[test]
+fn solus_unmounted_esp_refuses() {
+    use crate::efi::LOADER;
+    let msg = "Solus keeps its ESP out of fstab, and nothing is mounted at /boot: run `clr-boot-manager mount-boot` (or `mount /dev/vda1 /boot`) and dump again";
+    // By LoaderDevicePartUUID.
+    let t = solus(false, "EFI");
+    let v = run(&t, true, FakeRunner::default());
+    assert!(arr(&v, &["boot", "esps"]).is_empty());
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+    assert_eq!(s(&v, &["boot", "cbm_esp_unmounted", "device"]), "vda1");
+    assert_eq!(s(&v, &["boot", "cbm_esp_unmounted", "found_by"]), format!("LoaderDevicePartUUID ({SOLUS_ESP})"));
+    assert_eq!(crate::report::refusal(&v).as_deref(), Some(msg));
+    let sys = Sys::new(t.root(), Box::new(FakeRunner::default()), true);
+    assert_eq!(crate::dump(&sys).unwrap_err(), msg);
+    // Without the variable: by the partition name ESP, else by the ESP type
+    // on the root's disk.
+    for name in ["ESP", "EFI"] {
+        let t = solus(false, name);
+        std::fs::remove_file(t.p(&format!("/sys/firmware/efi/efivars/LoaderDevicePartUUID-{LOADER}"))).unwrap();
+        let v = run(&t, true, FakeRunner::default());
+        let how = if name == "ESP" { "its partition name, ESP" } else { "the ESP type, on the root file system's disk vda" };
+        assert_eq!(s(&v, &["boot", "cbm_esp_unmounted", "found_by"]), how);
+        assert_eq!(crate::report::refusal(&v).as_deref(), Some(msg));
+    }
+    // Mounted: no refusal (solus_guest); without clr-boot-manager, no
+    // finding at all.
+    let t = solus(false, "EFI");
+    std::fs::remove_dir_all(t.p("/var/lib/eopkg/package/clr-boot-manager-3.6.0-39")).unwrap();
+    let v = run(&t, true, FakeRunner::default());
+    assert!(v.at(&["boot", "cbm_esp_unmounted"]).is_none() && v.at(&["boot", "loader", "manager"]).is_none());
+    assert!(crate::dump(&Sys::new(t.root(), Box::new(FakeRunner::default()), true)).is_ok());
+}
+
+/// A Solus dump from BIOS firmware (clr-boot-manager's GRUB2 backend) is
+/// refused by load, by the firmware, whatever the partitions.
+#[test]
+fn solus_bios_refused() {
+    let mut v = run(&solus(true, "EFI"), true, FakeRunner::default());
+    set_at(&mut v, &["firmware", "mode"], Value::from("bios"));
+    set_at(&mut v, &["boot", "loader", "firmware"], Value::from("bios"));
+    set_at(&mut v, &["boot", "loader", "name"], Value::from("grub"));
+    let b = solus_plan(&v);
+    assert!(b.problems.iter().any(|p| p.starts_with("Solus on BIOS (clr-boot-manager's GRUB2 backend) isn't supported by bko-holt load")), "{:?}", b.problems);
+}
+
 // ---- Ubuntu Core 24 -------------------------------------------------------
 
 const UC_DATA_UUID: &str = "0aa850ad-0ffb-41a5-ba7a-9479f0fb1d79";

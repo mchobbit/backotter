@@ -160,6 +160,11 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("artix", "", "Artix Linux"),
     // Rolling: VERSION_ID is the snapshot's year and month (2026.11).
     ("aerynos", "*", "AerynOS"),
+    // Solus (no ID_LIKE): eopkg, clr-boot-manager with shim and systemd-boot,
+    // the ESP at /boot out of fstab (docs/design/solus.md).  A curated
+    // rolling release whose VERSION_ID changes only with an ISO (4.9): by
+    // the major, so a 5 is checked before it's claimed.
+    ("solus", "4", "Solus 4"),
     ("debian", "12", "Debian 12"),
     ("devuan", "6", "Devuan 6"),
     ("pop", "24", "Pop!_OS 24.04"),
@@ -336,7 +341,7 @@ pub(crate) mod tests {
         assert!(check_supported(Some(&parse(neon))).is_ok());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, openSUSE Leap 16, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox, Sculpt OS or Ubuntu Core 24"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Solus 4, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, openSUSE Leap 16, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox, Sculpt OS or Ubuntu Core 24"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -625,6 +630,29 @@ pub(crate) mod tests {
         assert!(check_supported(Some(&tw)).is_ok());
         assert!(!supported("opensuse-leap", "20261101"));
         assert!(check_supported(Some(&parse("ID=opensuse-leap-micro\nID_LIKE=\"suse opensuse\"\nVERSION_ID=\"16.1\"\n"))).is_err());
+    }
+
+    /// Solus 4.9's /usr/lib/os-release (the Solus-Xfce-Release-2026-04-18
+    /// ISO's root, docs/design/solus.md).
+    const SOLUS: &str = "NAME=\"Solus\"\nVERSION=\"4.9\"\nID=\"solus\"\nVERSION_CODENAME=serenity\nVERSION_ID=\"4.9\"\nPRETTY_NAME=\"Solus 4.9 Serenity\"\nANSI_COLOR=\"1;34\"\nHOME_URL=\"https://getsol.us\"\nSUPPORT_URL=\"https://help.getsol.us/docs/user/contributing/getting-involved\"\nBUG_REPORT_URL=\"https://issues.getsol.us/\"\nLOGO=\"distributor-logo-solus\"\n";
+
+    #[test]
+    fn solus() {
+        let o = parse(SOLUS);
+        assert_eq!((o.get("ID"), o.get("VERSION_ID"), o.get("ID_LIKE")), (Some("solus"), Some("4.9"), None));
+        assert_eq!(o.get("PRETTY_NAME"), Some("Solus 4.9 Serenity"));
+        assert!(check_supported(Some(&o)).is_ok());
+        // Every 4.x ISO; not a 5 until a guest shows it, nor the 3.x before.
+        assert!(supported("solus", "4.10"));
+        assert!(supported_names().contains("AerynOS, Solus 4, Debian 12"));
+        for v in ["5.0", "3.9999"] {
+            let e = check_supported(Some(&parse(&SOLUS.replace("\"4.9\"", &format!("\"{v}\""))))).unwrap_err();
+            assert!(e.contains(&format!("(ID=solus, VERSION_ID={v})")) && e.contains("Solus 4,"), "{e}");
+        }
+        // Not by its likeness: a remix with its own ID claiming 4.9 isn't Solus.
+        let remix = SOLUS.replace("ID=\"solus\"", "ID=\"solus-remix\"").replace("NAME=\"Solus\"", "NAME=\"Remix\"");
+        assert!(check_supported(Some(&parse(&remix))).is_err());
+        assert!(check_supported(Some(&parse("ID=solusos\nVERSION_ID=\"4.9\"\n"))).is_err());
     }
 
     #[test]

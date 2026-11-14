@@ -290,7 +290,8 @@ efivarfs bound in):
      /boot/booster.img-K` for each kernel that had one, host-only as the
      source's were, without Pika's `update-initramfs` wrapper; the
      `.dpkg-bak` and `.bak` copies come back as they were;
-   - nothing where the image is prebuilt with the kernel (AerynOS), comes
+   - nothing where the image is prebuilt with the kernel (AerynOS; Solus,
+     whose `initrd-com.solus-project.*` come built in the kernel's package), comes
      with the image (ostree) or is in the store (NixOS, Guix System: each
      generation's kernel and initrd are store items, named by grub.cfg).
 4. The boot loader, as `boot.loader` recorded it:
@@ -324,6 +325,20 @@ efivarfs bound in):
      `grub-install --target=i386-pc` on each disk whose BIOS boot partition
      held GRUB's core in the dump, before `update-grub`.
    - systemd-boot: `bootctl install`.
+   - clr-boot-manager (Solus, docs/design/solus.md; `os.id` solus and
+     `boot.loader.manager` clr-boot-manager, before the systemd-boot arm):
+     nothing runs in the chroot.  The restored ESP (mounted at `/boot`
+     from the dump, as it isn't in fstab) holds shim as
+     `EFI/com.solus-project/bootloaderx64.efi` and the fallback,
+     systemd-boot as `grubx64.efi`, MokManager, every kernel and initrd CBM
+     copied and the loader entries (`root=PARTUUID=`, which format keeps);
+     `bootctl install` would replace the signed chain and CBM in the rescue
+     chroot would see the stick's ESP (`LoaderDevicePartUUID`) or, with
+     `--path`, write a plain systemd-boot over the fallback.  Only the NVRAM
+     entry "Solus Linux Bootloader" is made, when the dump had none for it;
+     notes say Solus's key must be enrolled again on other hardware with
+     Secure Boot on (`solus-enroll-me.cer`) and the next `eopkg up` runs
+     CBM itself.  A Solus dump from BIOS is refused.
    - proxmox-boot-tool (Proxmox VE, docs/design/proxmox.md;
      `boot.proxmox_boot`, before any loader arm): the ESPs listed in
      `/etc/kernel/proxmox-boot-uuids` aren't mounted or backed up; format

@@ -177,7 +177,10 @@ fi
 cp -L /etc/resolv.conf $T/etc/resolv.conf
 printf '#!/bin/sh\nexit 101\n' >$T/usr/sbin/policy-rc.d
 chmod 755 $T/usr/sbin/policy-rc.d
-in_root() { chroot $T env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 "$@"; }
+# GRUB_DISABLE_OS_PROBER: update-grub and the GRUB and kernel postinsts
+# would otherwise run os-prober over this machine's other disks (the stick,
+# mybig512) and list them in the new grub.cfg; /etc/default/grub is untouched.
+in_root() { chroot $T env DEBIAN_FRONTEND=noninteractive NEEDRESTART_SUSPEND=1 GRUB_DISABLE_OS_PROBER=true "$@"; }
 
 step "removing the live session's packages"
 # neon's remove list, from its Calamares: the packages module's (packages.conf:
@@ -318,6 +321,8 @@ step "GRUB through shim, with its NVRAM entry"
 in_root grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=$EFI_ID --uefi-secure-boot
 in_root update-grub 2>/dev/null
 grep -q '^[[:space:]]*linux[[:space:]]' $T/boot/grub/grub.cfg || die "/boot/grub/grub.cfg boots no kernel"
+! grep -q '^[[:space:]]*menuentry .*(on /dev/' $T/boot/grub/grub.cfg ||
+    die "/boot/grub/grub.cfg lists another disk's system (os-prober ran)"
 efi=$T/boot/efi/EFI
 for f in shimx64.efi grubx64.efi grub.cfg; do
     [[ -s $efi/$EFI_ID/$f ]] || die "grub-install put no EFI/$EFI_ID/$f on the EFI system partition"

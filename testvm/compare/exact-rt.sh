@@ -1,6 +1,7 @@
 #!/bin/bash
-# exact-rt.sh: rustic-bko's restore --exact and --clone-from on btrfs, the
-# way bko-holt load restores shared snapshots (docs/design/btrfs-snapshots.md).
+# exact-rt.sh: rustic-bko's or restic-bko's restore --exact and --clone-from
+# on btrfs, the way bko-holt load restores shared snapshots
+# (docs/design/btrfs-snapshots.md).
 #
 # Builds an openSUSE-shaped btrfs in RAM: @/.snapshots/1/snapshot is the live
 # root, mounted at the source's /, with @/.snapshots at /.snapshots, and the
@@ -33,12 +34,17 @@
 #   - a file whose contents are elsewhere in @ (renamed there since) is
 #     cloned from there.
 #
-# Usage (root, on a test host): exact-rt.sh RUSTIC_BKO
+# Usage (root, on a test host): exact-rt.sh RUSTIC_BKO|RESTIC_BKO
 #   WORK      default /mnt/bko-ram/exact-rt-$$ (deleted on a pass)
 #   SLACK_MIB default 8
+# The tool is told by its version: restic-bko ("restic X+backotter.N") takes
+# RESTIC_PASSWORD, `backup --with-atime .` run in the source (restic has no
+# --as-path), `restore SNAP --target DIR` and --exclude-file patterns
+# (/DIR/*) where rustic-bko takes RUSTIC_PASSWORD, --set-atime yes
+# --as-path /, `restore SNAP DIR` and --glob-file globs (!/DIR/**).
 set -euo pipefail
 
-R=${1:?usage: exact-rt.sh RUSTIC_BKO}
+R=${1:?usage: exact-rt.sh RUSTIC_BKO|RESTIC_BKO}
 WORK=${WORK:-/mnt/bko-ram/exact-rt-$$}
 SLACK_MIB=${SLACK_MIB:-8}
 here=$(cd "$(dirname "$0")" && pwd)
@@ -47,6 +53,41 @@ SRC_IMG=$WORK/src.img DST_IMG=$WORK/dst.img REPO=$WORK/repo
 S=$WORK/s T=$WORK/t ST=$WORK/stop DT=$WORK/dtop
 C_IMG=$WORK/c.img CD_IMG=$WORK/cd.img C_REPO=$WORK/crepo CT=$WORK/ctop CDT=$WORK/cdtop
 export RUSTIC_PASSWORD=exact-rt RUSTIC_NO_PROGRESS=true RUSTIC_NO_CACHE=true
+export RESTIC_PASSWORD=exact-rt
+if "$R" version 2>/dev/null | grep -q '^restic '; then TOOL=restic; else TOOL=rustic; fi
+echo "tool: $TOOL ($("$R" version 2>/dev/null | head -1 || "$R" --version | head -1))"
+# r REPO ARGS...: the tool on the repository REPO.
+r() {
+    local repo=$1
+    shift
+    if [ $TOOL = restic ]; then "$R" --no-cache -r "$repo" "$@"; else "$R" -r "$repo" "$@"; fi
+}
+# backup REPO DIR: DIR backed up as /, with real atimes.
+backup() {
+    if [ $TOOL = restic ]; then (cd "$2" && r "$1" backup --with-atime .); else r "$1" backup --set-atime yes --as-path / "$2"; fi
+}
+# restore REPO SNAP TARGET [--exclude-dirs FILE] ARGS...: SNAP restored at
+# TARGET with ARGS, owners by their IDs; FILE lists directories (/X) whose
+# contents are left out (rustic-bko's !/X/** globs, restic-bko's /X/*).
+restore() {
+    local repo=$1 snap=$2 target=$3 filter=()
+    shift 3
+    if [ "${1:-}" = --exclude-dirs ]; then
+        if [ $TOOL = restic ]; then
+            sed 's|$|/*|' "$2" >"$2.restic"
+            filter=(--exclude-file "$2.restic")
+        else
+            sed 's|^|!|; s|$|/**|' "$2" >"$2.rustic"
+            filter=(--glob-file "$2.rustic")
+        fi
+        shift 2
+    fi
+    if [ $TOOL = restic ]; then
+        r "$repo" restore "$@" "${filter[@]}" "$snap" --target "$target"
+    else
+        RUSTIC_STRICT_EXIT=true r "$repo" restore --numeric-id "$@" "${filter[@]}" "$snap" "$target"
+    fi
+}
 fail=0
 bad() { echo "FAIL: $*"; fail=1; }
 cleanup() {
@@ -108,8 +149,8 @@ mount -o noatime,subvol=@/.snapshots/1/snapshot "$SRC_LOOP" "$S"
 mount -o noatime,subvol=@/.snapshots "$SRC_LOOP" "$S/.snapshots"
 
 # ---- backup ----
-"$R" -r "$REPO" init >/dev/null 2>&1
-"$R" -r "$REPO" backup --set-atime yes --as-path / "$S" >"$WORK/backup.log" 2>&1 || { cat "$WORK/backup.log"; exit 1; }
+r "$REPO" init >/dev/null 2>&1
+backup "$REPO" "$S" >"$WORK/backup.log" 2>&1 || { cat "$WORK/backup.log"; exit 1; }
 SNAP=latest
 
 # ---- the restore, as bko-holt's plan does it ----
@@ -124,8 +165,8 @@ umount "$DT"
 mount -o subvol=@/.snapshots/1/snapshot "$DST_LOOP" "$T"
 mkdir -p "$T/.snapshots"
 mount -o subvol=@/.snapshots "$DST_LOOP" "$T/.snapshots"
-printf '%s\n' '!/.snapshots/1/snapshot/**' '!/.snapshots/2/snapshot/**' '!/.snapshots/3/snapshot/**' >"$WORK/globs"
-RUSTIC_STRICT_EXIT=true "$R" -r "$REPO" restore --numeric-id --target-metadata --glob-file "$WORK/globs" "$SNAP" "$T" >"$WORK/restore-main.log" 2>&1 ||
+printf '%s\n' /.snapshots/1/snapshot /.snapshots/2/snapshot /.snapshots/3/snapshot >"$WORK/globs"
+restore "$REPO" "$SNAP" "$T" --exclude-dirs "$WORK/globs" --target-metadata >"$WORK/restore-main.log" 2>&1 ||
     { cat "$WORK/restore-main.log"; bad "the main restore failed"; }
 mount -o subvolid=5,noatime "$DST_LOOP" "$DT"
 base=@/.snapshots/1/snapshot
@@ -135,8 +176,8 @@ for n in 2 3; do
     touch -r "${d%/*}" "$WORK/times.ref"
     rmdir "$d"
     btrfs -q subvolume snapshot "$DT/$base" "$d"
-    RUSTIC_STRICT_EXIT=true "$R" -r "$REPO" restore --numeric-id --exact --clone-from "/=$DT/@/.snapshots/1/snapshot" \
-        "$SNAP:/.snapshots/$n/snapshot" "$d" >"$WORK/restore-$n.log" 2>&1 || { cat "$WORK/restore-$n.log"; bad "snapshot $n's restore failed"; }
+    restore "$REPO" "$SNAP:/.snapshots/$n/snapshot" "$d" --exact --clone-from "/=$DT/@/.snapshots/1/snapshot" \
+        >"$WORK/restore-$n.log" 2>&1 || { cat "$WORK/restore-$n.log"; bad "snapshot $n's restore failed"; }
     touch -r "$WORK/times.ref" "${d%/*}"
     base=@/.snapshots/$n/snapshot
 done
@@ -161,7 +202,7 @@ phys() { filefrag -v "$1" | awk '$1 == "0:" { print $4; exit }'; }
     bad "pkg-v2.bin in snapshot 3 isn't the live tree's (not cloned)"
 # Again over itself: nothing changes.
 find "$DT/@/.snapshots/3/snapshot" -printf '%C@ %i %p\n' | sort >"$WORK/ctime-before"
-RUSTIC_STRICT_EXIT=true "$R" -r "$REPO" restore --numeric-id --exact "$SNAP:/.snapshots/3/snapshot" "$DT/@/.snapshots/3/snapshot" >"$WORK/restore-again.log" 2>&1 ||
+restore "$REPO" "$SNAP:/.snapshots/3/snapshot" "$DT/@/.snapshots/3/snapshot" --exact >"$WORK/restore-again.log" 2>&1 ||
     { cat "$WORK/restore-again.log"; bad "the restore again failed"; }
 find "$DT/@/.snapshots/3/snapshot" -printf '%C@ %i %p\n' | sort >"$WORK/ctime-after"
 diff "$WORK/ctime-before" "$WORK/ctime-after" >"$WORK/ctime-diff" || { head "$WORK/ctime-diff"; bad "an --exact restore over a matching tree changed $(grep -c '^>' "$WORK/ctime-diff") entries"; }
@@ -182,7 +223,7 @@ for p in "2 $s2 $d2" "3 $s3 $d3"; do
     set -- $p
     [ "$3" -le $(($2 + (SLACK_MIB << 20))) ] || bad "snapshot $1 has $3 bytes exclusive here, $2 on the source"
 done
-echo "sizes: $(grep -h 'cloning\|total restore size\|using' "$WORK"/restore-[23].log | tr '\n' ' ')"
+echo "sizes: $(grep -h 'cloning\|cloned\|total restore size\|using' "$WORK"/restore-[23].log | tr '\n' ' ')"
 
 # ---- the CachyOS/Fedora layout: the snapshot inside the subvolume cloned from ----
 C_LOOP=$(mkfs "$C_IMG")
@@ -207,22 +248,22 @@ mv "$C/usr/lib/moved.bin" "$C/usr/lib/renamed.bin"
 rnd "$C/usr/lib/moved.bin" $((1 << 20))
 touch -d '2026-11-13 16:16:16' "$C/etc/passwd-" "$C/usr/lib/tool" "$C/usr/lib/moved.bin"
 sync
-"$R" -r "$C_REPO" init >/dev/null 2>&1
-"$R" -r "$C_REPO" backup --set-atime yes --as-path / "$C" >"$WORK/cbackup.log" 2>&1 || { cat "$WORK/cbackup.log"; exit 1; }
+r "$C_REPO" init >/dev/null 2>&1
+backup "$C_REPO" "$C" >"$WORK/cbackup.log" 2>&1 || { cat "$WORK/cbackup.log"; exit 1; }
 CD_LOOP=$(mkfs "$CD_IMG")
 mkdir -p "$CDT"
 mount -o noatime "$CD_LOOP" "$CDT"
 btrfs -q subvolume create "$CDT/@"
-echo '!/.snapshots/1/snapshot/**' >"$WORK/cglobs"
-RUSTIC_STRICT_EXIT=true "$R" -r "$C_REPO" restore --numeric-id --glob-file "$WORK/cglobs" latest "$CDT/@" >"$WORK/crestore-main.log" 2>&1 ||
+echo /.snapshots/1/snapshot >"$WORK/cglobs"
+restore "$C_REPO" latest "$CDT/@" --exclude-dirs "$WORK/cglobs" >"$WORK/crestore-main.log" 2>&1 ||
     { cat "$WORK/crestore-main.log"; bad "CachyOS layout: the main restore failed"; }
 d=$CDT/@/.snapshots/1/snapshot
 [ -d "$d" ] && [ -z "$(ls -A "$d")" ] || bad "CachyOS layout: the main restore didn't leave 1/snapshot empty"
 touch -r "${d%/*}" "$WORK/times.ref"
 rmdir "$d"
 btrfs -q subvolume snapshot "$CDT/@" "$d"
-RUSTIC_STRICT_EXIT=true "$R" -r "$C_REPO" restore --numeric-id --exact --clone-from "/=$CDT/@" \
-    "latest:/.snapshots/1/snapshot" "$d" >"$WORK/crestore-1.log" 2>&1 || { cat "$WORK/crestore-1.log"; bad "CachyOS layout: snapshot 1's restore failed"; }
+restore "$C_REPO" "latest:/.snapshots/1/snapshot" "$d" --exact --clone-from "/=$CDT/@" \
+    >"$WORK/crestore-1.log" 2>&1 || { cat "$WORK/crestore-1.log"; bad "CachyOS layout: snapshot 1's restore failed"; }
 touch -r "$WORK/times.ref" "${d%/*}"
 btrfs property set -ts "$d" ro true
 manifest "$C" >"$WORK/csrc.m"

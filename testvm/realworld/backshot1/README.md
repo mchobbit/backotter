@@ -440,7 +440,10 @@ guest.  On 2026-11-13, unlocking from the drive, on Cinqcent: `ubuntu26-luks`
 Plymouth), `chimera-uefi` (D, Chimera's port of initramfs-tools) and
 `gentoo-systemd` (S, `rd.luks.uuid` on the command line), the last two with
 `--strip-embedded-key`, and `alpine324-luks` (`own`: left alone).  Debian's
-own initramfs-tools has no LUKS guest yet.
+own initramfs-tools has no LUKS guest yet.  On 2026-11-14, Garuda (`garuda`,
+GRUB on btrfs with snapper's 4 snapshots restored as shared ones, dracut
+through `dracut-rebuild`, the source booted by the firmware's own entry for
+its fallback loader; on both hosts).
 
 Every rehearsal also runs the preflight, and checks that the snapshot is named
 `/mnt/bs1-src` and keeps a file's real access time.  On an ostree guest

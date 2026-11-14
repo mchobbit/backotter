@@ -404,6 +404,35 @@ Cinqcent. The LIMITs, classed in `limits.json#garuda`, are:
   match);
 - the placeholders' times.
 
+## What GA7 found
+
+2026-11-14, `bs1-qemu.py --virtio` on `garuda`, from a HEAD export
+(`~/backotter-work/ga7` on each host), with bko-holt b7b3a2ce9bbf (HEAD
+8c38082, static, Rust 1.94.1) and rel8's rustic-bko 0.11.4+backotter.13.
+
+**Two failures, neither Garuda's own:**
+
+- **The restored disk didn't boot (first try, Cinqcent).** The guest has no
+  `uefi-vars.fd`, so the source boots from blank variables by OVMF's own
+  entry for the disk's fallback loader, and the layout has no NVRAM entry
+  for load to make again. The harness of 14:22 then gave the restored boot
+  no disk first, and OVMF fell to its shell. b6ca9fd (another session's,
+  14:45) boots such a source's disk first; the reruns use it.
+- **`boot/vmlinuz-linux-garuda` changed (second tries, both hosts:
+  `garuda-20261114-154448` and `-154812`).** The restore's `dracut-rebuild`
+  copies each kernel to /boot again with dd: the same size and sha256, a new
+  mtime. It's the same thing HoltTest1's judge allows (GA4). `bs1-manifest`
+  now has `boot/vmlinuz-*` in REMADE (all but the mtime still compared),
+  8ce7eae; that run's own manifests then gave 407 changed, 0 unexpected.
+
+**The reruns PASS** on both hosts: `garuda-20261114-173915` (Chopin) and
+`garuda-20261114-173916` (Cinqcent), 35 checks each. 1,516,172 files
+compared: 12 missing, 12 added and 407 changed, all expected, no xattr
+changes. The snapper snapshots came back as shared ones (aliases compared
+once). The restored system booted from the disk's removable-media loader, as
+the source did. Neither host needed `HT_ROUND`, and BackShot1 needed no
+other fix.
+
 ## SticTest1 / SticTest2
 
 The archivers are static binaries, and EndeavourOS and Manjaro have no
@@ -478,7 +507,9 @@ them, or is merged with them by line, never by overwriting the file.
 The Thinkpad runs CachyOS now.
 
 - **Rehearsal:** `bs1-qemu.py --virtio` on the `garuda` guest, on both
-  hosts. It needs no fix that the table shows:
+  hosts. It passes on both since 2026-11-14 (What GA7 found), with one fix
+  the table didn't show: `bs1-manifest` takes `boot/vmlinuz-*` as remade.
+  What the table showed held:
   - `bs1-adopt` installs with pacman, as for any Arch system;
   - `bs1-manifest` knows `.snapshots/N`, and already expects
     `boot/initramfs-*`, `boot/grub/*` and `efi/*`;
@@ -501,7 +532,7 @@ The Thinkpad runs CachyOS now.
 | GA5 | SticTest1 `garuda` (Decision 6) with both archivers on both hosts. Done at 0 FAIL, the LIMITs classed **Done 2026-11-14** ("What GA5 found"). | 0.35 d |
 | GA6 | Docs: holt/README.md's list and tested-by, `osrel.rs`'s comment, the HoltTest1, SticTest1 and Test2 READMEs, `layload.md`'s boot stage (the `dracut-rebuild` condition), memory **Done 2026-11-14**, memory included. | 0.1 d |
 | | *≈ 2.3 d in all* | |
-| GA7 | Optional: BackShot1 rehearsals on `garuda` on both hosts (0.25 d); a Thinkpad run if the user installs Garuda there (+0.5 d) | (0.75 d) |
+| GA7 | Optional: BackShot1 rehearsals on `garuda` on both hosts (0.25 d); a Thinkpad run if the user installs Garuda there (+0.5 d). **Rehearsals done 2026-11-14:** PASS on both hosts after the `bs1-manifest` fix 8ce7eae (What GA7 found); the Thinkpad run is the user's call | (0.75 d) |
 
 Every source change is made by a High-effort subagent. Commits go on main,
 only when the user asks, and hold only this work's files.

@@ -1,14 +1,14 @@
 #!/usr/bin/env bash
 # compare.py over a queue of guests, up to SLOTS at once, BackOtter's four
 # directions each, in RAM: compare.py works in /mnt/bko-ram by itself and
-# leaves its results, diffs and logs in ~/backotter-work/compare/GUEST
-# (GUEST.stick-mkfs with :STICK). Every job gets the archivers in
+# leaves its results, diffs and logs in ~/backotter-work/compare/GUEST.
+# Every job gets the archivers in
 # ~/backotter-work/cmp-bin (RESTIC_BKO, RUSTIC_BKO), not compare.py's newest
 # build.
 #
 # Usage (on a KVM test host; it works in ~/backotter-work, where
 # sync-hosts.sh puts testvm/, and ~/backotter-work/cmp-run.sh links here):
-#   cmp-run.sh TAG SLOTS GUEST[:STICK][@GROW_GIB][!][=DISK_GIB][%MEM_GIB] ...
+#   cmp-run.sh TAG SLOTS GUEST[@GROW_GIB][!][=DISK_GIB][%MEM_GIB] ...
 #       writes the queue cmp-logs/TAG/queue on this host and works on it;
 #   QUEUE_HOST=chopin.local cmp-run.sh TAG SLOTS
 #       works on that host's queue (over ssh), so both hosts share one;
@@ -228,14 +228,16 @@ hot() {  # [HOT_C]: true while the CPU or an NVMe is too hot to start more
     return 1
 }
 fits() { awk -v a="$1" -v b="$2" -v c="$3" -v e="$4" 'BEGIN { exit !(b + 0 <= a + 0 && e + 0 <= c + 0) }'; }
-parse() {  # LINE -> globals g stick grow ondisk d m (suffixes only at the end, in order)
+parse() {  # LINE -> globals g grow ondisk d m (suffixes only at the end, in order); rc 1: a ':' in g
     local s=$1
     m=5 d=8 grow=0 ondisk=""
     [[ $s =~ %([0-9.]+)$ ]] && { m=${BASH_REMATCH[1]}; s=${s%"%$m"}; }
     [[ $s =~ =([0-9.]+)$ ]] && { d=${BASH_REMATCH[1]}; s=${s%"=$d"}; }
     [[ $s == *! ]] && { ondisk=1; s=${s%!}; }
     [[ $s =~ @([0-9]+)$ ]] && { grow=${BASH_REMATCH[1]}; s=${s%"@$grow"}; }
-    g=${s%%:*} stick=""; [ "$g" != "$s" ] && stick=${s#*:}
+    g=$s
+    # A ':' in it (a retired queue suffix) is refused by the callers.
+    [[ $g != *:* ]]
 }
 ceiling() {  # -> "DISK MEM": the most one job could ever get on this host
     local arc_max arc_size base=${BASE_GIB:-}
@@ -294,7 +296,7 @@ if [ $# -gt 0 ]; then
     read -r cd cm < <(ceiling)
     seen=" "
     for line; do
-        parse "$line"
+        parse "$line" || { echo "$line: no ':' in a guest name" >&2; exit 1; }
         fits "$cd" "$d" "$cm" "$m" || { echo "$line can never fit (at most =$cd %$cm)" >&2; exit 1; }
         [ -z "$ondisk" ] || [ -d "$DISKS_DIR" ] || { echo "$line: no $DISKS_DIR" >&2; exit 1; }
         case $seen in *" $g "*) echo "$g is queued twice" >&2; exit 1 ;; esac
@@ -342,7 +344,7 @@ nodisk_wait() {  # "! N K" (cmp-pop.sh nodisk, only "!" lines left) -> rc 1: giv
 }
 
 worker() {  # SLOT
-    local slot=$1 line rc g stick grow ondisk d m lk maxd maxm ahead hotc jp scope args why hi dd wt waiting="" me=$BASHPID
+    local slot=$1 line rc g bad grow ondisk d m lk maxd maxm ahead hotc jp scope args why hi dd wt waiting="" me=$BASHPID
     local bangs=0 bangn="" gaveup=""
     while :; do
         if [ -e cmp-logs/$tag/stop ]; then
@@ -377,7 +379,7 @@ worker() {  # SLOT
             fi
         fi
         if [ $rc = 0 ] && [ -n "$line" ]; then
-            parse "$line"
+            bad=""; parse "$line" || bad=1
             scope=bko-$tag-$slot-$(date +%s).scope
             add $LEDGER "$me $d $m $scope $tag $line"
             leave_line $me
@@ -392,7 +394,11 @@ worker() {  # SLOT
         fi
         waiting=""
 
-        args=(); [ -n "$stick" ] && args=(--mkfs-from "$stick")
+        if [ -n "$bad" ]; then   # an older cmp-run.sh's queue line (QUEUE_HOST)
+            log "$g: no ':' in a guest name, not run"; echo "$g 99 $H" >>cmp-logs/$tag/done
+            if lock; then prune $me; unlock; fi; continue
+        fi
+        args=()
         dd=""
         if [ -n "$ondisk" ]; then
             if [ ! -d "$DISKS_DIR" ]; then   # never fall back to RAM: it wasn't reserved
@@ -405,7 +411,7 @@ worker() {  # SLOT
         hi=$(awk -v d="$d" -v m="$m" 'BEGIN { printf "%d", (d + m) * 1024 }')
         # The job's wear tag (and WEAR_LOG, when set): sudo resets the
         # environment, so env sets them.
-        wt=${WEAR_TAG:-cmp:$tag}:$g${stick:++$stick}
+        wt=${WEAR_TAG:-cmp:$tag}:$g
         # CMP_CMD: a command run in compare.py's place, the same way, with
         # GUEST DISK MEM SLOT [ARGS] (rebuild-one.sh, or a stand-in for tests).
         if [ -n "${CMP_CMD:-}" ]; then

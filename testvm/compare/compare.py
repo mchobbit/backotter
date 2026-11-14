@@ -2,10 +2,10 @@
 """Back up a test guest with several archivers, restore each backup onto
 blank disks, and check what survived.
 
-Usage: sudo compare.py [--mkfs-from STICK_IMG] GUEST [TOOL ...]
+Usage: sudo compare.py GUEST [TOOL ...]
                                     tools: restic borg dar bsdtar (default), restic-bko,
                                     rustic-bko, restic-to-rustic and rustic-to-restic
-       sudo compare.py --boot-only [--mkfs-from STICK_IMG] GUEST [TOOL ...]
+       sudo compare.py --boot-only GUEST [TOOL ...]
                                     boot an earlier run's restores again
 
 restic-bko is BackOtter's patched restic (branch "backotter" of
@@ -41,9 +41,9 @@ fresh-install state, and any other disks its vm-run-options name with
      and striped LVs) and filesystems recreated with the same UUIDs and
      labels, by
      the guest's own mkfs tools (so the guest's GRUB and kernel can read
-     them), btrfs subvolumes, ZFS pools (mirrors too, with the original's
+     them), btrfs subvolumes and ZFS pools (mirrors too, with the original's
      feature flags as far as this host's OpenZFS has them, and its
-     encryption, with the same key) and bcachefs's on-disk version included.
+     encryption, with the same key) included.
      A LUKS volume gets the key in vms/GUEST/console-passphrase,
      zfs-passphrase, luks-passphrase or luks-keyfile (the first there is),
      and the original's header geometry: data offset, metadata and keyslots
@@ -69,15 +69,8 @@ keyboard (Omarchy's Plymouth), with vms/GUEST/luks-passphrase.  With
 vms/GUEST/luks-keyfile (make-bootstrap.sh's LUKS guests) nothing is typed:
 the initramfs unlocks / with its own copy of that key, restored with it.
 
---mkfs-from STICK_IMG makes the filesystems with the mkfs tools of BackOtter's
-rescue stick (STICK_IMG, from stick/make-img.sh) instead of the guest's own,
-as a restore from the stick would: newer tools turn on features an older
-guest's kernel or GRUB may not read.  ZFS pools are still made by the host's
-zpool, with the original's feature flags, as BackOtter must make them.  The
-results go to ~/backotter-work/compare/GUEST.stick-mkfs/.  A guest with
-bcachefs needs it: the kernel mounts no two bcachefs file systems with one
-UUID, so src is unmounted (after the backups) before the restores, and the
-guest's own mkfs can't be run from it.
+A guest with bcachefs is refused (src must stay mounted for its own mkfs,
+and the kernel mounts no two bcachefs with one UUID): bko-holt's HoltTest covers it.
 
 The restores boot with the vm-run options the guest's builder left in
 vms/GUEST/vm-run-options (e.g. --uefi, with Secure Boot), its --disk ones
@@ -91,7 +84,7 @@ once on one host.  Runs of several sessions on one host, even of the same
 guest, keep apart with:
   COMPARE_NAME=NAME  (a letter, then up to 15 letters, digits or _) the
                      prefix of everything the run names: mount points
-                     /mnt/NAME-src, -dst, -stick, -stick-parts, -btrfs-top
+                     /mnt/NAME-src, -dst, -btrfs-top
                      and -dst-keystore, the restored pool's temporary name
                      and its md arrays and LUKS volumes (NAME-dst...), and
                      the work directory, ~/backotter-work/compare/NAME/GUEST/
@@ -158,7 +151,6 @@ PREFIX = NAME or "cmp"
 SUFFIX = "" if NAME or SLOT == "0" else f"-{SLOT}"
 SRC_MP = Path(f"/mnt/{PREFIX}-src{SUFFIX}")
 DST_MP = Path(f"/mnt/{PREFIX}-dst{SUFFIX}")
-STICK_MP = Path(f"/mnt/{PREFIX}-stick{SUFFIX}")   # --mkfs-from: the stick's root
 SSH_PORT = os.environ.get("COMPARE_PORT") or str(2230 + int(SLOT))
 if not re.fullmatch(r"[0-9]{4,5}", SSH_PORT) or not 1024 <= int(SSH_PORT) <= 65535:
     raise SystemExit("COMPARE_PORT must be a port number from 1024 to 65535")
@@ -773,45 +765,6 @@ class src_api:
             run(["umount", str(self.root / d)], check=False, quiet=True)
 
 
-class stick_root:
-    """The rescue stick's root filesystem at STICK_MP, read-only: the stick
-    image's two squashfs layers (the slimmed Ubuntu base and BackOtter's layer
-    on top) under an overlay, as its live system mounts them."""
-
-    PARTS = Path(f"/mnt/{PREFIX}-stick-parts{SUFFIX}")
-
-    def __init__(self, img: Path):
-        self.img = img
-        self.mounted: list[Path] = []
-
-    def mount(self, args: list[str], mp: Path) -> None:
-        mp.mkdir(parents=True, exist_ok=True)
-        run(["mount"] + args + [str(mp)])
-        self.mounted.append(mp)
-
-    def __enter__(self) -> Path:
-        iso, base, layer = self.PARTS / "iso", self.PARTS / "base", self.PARTS / "layer"
-        try:
-            self.mount(["-o", "loop,ro", str(self.img)], iso)
-            casper = iso / "casper"
-            layers = sorted(casper.glob("*.backotter.squashfs"))
-            if not layers:
-                raise SystemExit(f"{self.img} is not a BackOtter stick: no casper/*.backotter.squashfs")
-            self.mount(["-o", "loop,ro", str(casper / layers[0].name.replace(".backotter", ""))], base)
-            self.mount(["-o", "loop,ro", str(layers[0])], layer)
-            # No upperdir: a read-only overlay.
-            self.mount(["-t", "overlay", "-o", f"lowerdir={layer}:{base}", "overlay"], STICK_MP)
-        except BaseException:
-            self.__exit__()           # with doesn't, when __enter__ fails
-            raise
-        return STICK_MP
-
-    def __exit__(self, *exc):
-        for mp in reversed(self.mounted):
-            run(["umount", str(mp)], check=False, quiet=True)
-        self.mounted = []
-
-
 class Dst:
     """The restored disks, attached, and what recreate() set up on them, for
     unmount_dst() to undo: src's block devices -> theirs, and the LUKS
@@ -922,10 +875,9 @@ def luks_format(luks: dict, dev: str, passphrase: bytes) -> None:
     run(cmd + [dev], input=passphrase.decode())
 
 
-def recreate(layout: Layout, dst: Dst, cfg: GuestConfig, tools: Path = SRC_MP) -> None:
+def recreate(layout: Layout, dst: Dst, cfg: GuestConfig) -> None:
     """Lay out dst's disks like src's and mount them at DST_MP.  The
-    filesystems are made by the mkfs tools of the system at tools: src's
-    own, or the stick's."""
+    filesystems are made by src's own mkfs tools."""
     for src_disk, dst_disk in zip(layout.disks, dst.disks):
         run(f"dd if={src_disk} of={dst_disk} bs=1M count=1 status=none conv=fsync")
         if out(["blkid", "-p", "-o", "value", "-s", "PTTYPE", src_disk], check=False) == "gpt":
@@ -991,11 +943,11 @@ def recreate(layout: Layout, dst: Dst, cfg: GuestConfig, tools: Path = SRC_MP) -
             wait_for(path)
             dst.dev[src] = os.path.realpath(path)
     run(["udevadm", "settle"], quiet=True)
-    with src_api(tools):
+    with src_api():
         def mkfs(cmd: list[str]) -> None:
-            if run(["chroot", str(tools_root(tools)), "sh", "-c", f"command -v {cmd[0]}"], check=False, quiet=True).returncode:
-                raise SystemExit(f"no {cmd[0]} in {tools}" + (" (the stick)" if tools != SRC_MP else ""))
-            in_src(cmd, tools)
+            if run(["chroot", str(tools_root(SRC_MP)), "sh", "-c", f"command -v {cmd[0]}"], check=False, quiet=True).returncode:
+                raise SystemExit(f"no {cmd[0]} in {SRC_MP}")
+            in_src(cmd)
         for src, f in layout.fields.items():
             fs, dev = f.get("TYPE"), dst.dev[src]
             if fs in (None, "linux_raid_member", "crypto_LUKS", "LVM2_member", "zfs_member"):
@@ -1578,8 +1530,8 @@ def skip_aliases(layout: Layout) -> list[str]:
     return [a for p in layout.aliases for a in ("--skip", os.path.relpath(p, SRC_MP))]
 
 
-def work_dir(guest: str, stick_img: Path | None, parent: Path = COMPARE_DIR) -> Path:
-    return parent / (guest + (".stick-mkfs" if stick_img else ""))
+def work_dir(guest: str, parent: Path = COMPARE_DIR) -> Path:
+    return parent / guest
 
 
 def restored_stem(work: Path, tool: str) -> Path:
@@ -1587,10 +1539,10 @@ def restored_stem(work: Path, tool: str) -> Path:
     return (DISKS_DIR / work.name if DISKS_DIR else work) / f"restored-{tool}"
 
 
-def save_from_ram(guest: str, stick_img: Path | None) -> None:
+def save_from_ram(guest: str) -> None:
     """A run in RAM_DIR: its results, diffs and logs to COMPARE_DIR, whatever
     the run's outcome, and the rest (disks, repositories) dropped."""
-    ram, disk = work_dir(guest, stick_img, RUN_DIR), work_dir(guest, stick_img)
+    ram, disk = work_dir(guest, RUN_DIR), work_dir(guest)
     if not IN_RAM or not ram.is_dir():
         return
     disk.mkdir(parents=True, exist_ok=True)
@@ -1605,10 +1557,10 @@ def save_from_ram(guest: str, stick_img: Path | None) -> None:
             pass
 
 
-def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -> dict:
+def compare_guest(guest: str, tools: list[str]) -> dict:
     cfg = GuestConfig(VMS / guest)
     bases = [cfg.base] + cfg.disks
-    work = work_dir(guest, stick_img, RUN_DIR)
+    work = work_dir(guest, RUN_DIR)
     if IN_RAM:
         shutil.rmtree(work, ignore_errors=True)    # a dead run's
         if DISKS_DIR:
@@ -1617,7 +1569,7 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
     if DISKS_DIR:
         (DISKS_DIR / work.name).mkdir(parents=True, exist_ok=True)
     fsmeta = [sys.executable, "-I", str(HERE / "fsmeta.py")]
-    results = {"guest": guest, "mkfs": str(stick_img) if stick_img else "guest", "tools": {},
+    results = {"guest": guest, "tools": {},
                "started": time.strftime("%Y-%m-%d %H:%M:%S"),
                # Which disks this run tested: an earlier run's results are
                # kept below only if it tested the same ones.
@@ -1659,9 +1611,10 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
     state = vm_mount(srcs, SRC_MP, ro=True, key=cfg.key)
     try:
         layout = Layout(state, cfg.key, work)
-        bcachefs = any(f.get("TYPE") == "bcachefs" for f in layout.fields.values())
-        if bcachefs and not stick_img:
-            raise SystemExit("a guest with bcachefs needs --mkfs-from: src can't stay mounted for its own mkfs")
+        if any(f.get("TYPE") == "bcachefs" for f in layout.fields.values()):
+            raise SystemExit(f"{guest} has bcachefs, which compare.py can't recreate: src must stay "
+                             "mounted for its own mkfs, and the kernel mounts no two bcachefs with "
+                             "one UUID; bko-holt's HoltTest covers it")
         results["layout"] = {p: f.get("TYPE") for p, f in layout.fields.items()}
         if layout.aliases:
             results["not_backed_up"] = [os.path.relpath(a, SRC_MP) for a in layout.aliases]
@@ -1698,11 +1651,7 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
                 run(["qemu-img", "create", "-q", "-f", "qcow2", str(d), str(vsize)])
             dst = Dst(dsts)
             try:
-                if stick_img:
-                    with stick_root(stick_img) as stick:
-                        recreate(layout, dst, cfg, stick)
-                else:
-                    recreate(layout, dst, cfg)
+                recreate(layout, dst, cfg)
                 # Restoring into a DST_MP that isn't the new disk would write
                 # onto the host's own filesystem.
                 if run(["mountpoint", "-q", str(DST_MP)], check=False, quiet=True).returncode != 0:
@@ -1738,29 +1687,19 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
             if DISCARD:
                 for d in dsts:
                     d.unlink(missing_ok=True)
-        if bcachefs:
-            for tool in tools:
-                backup_one(tool)
-            # The kernel mounts no two bcachefs file systems with the same
-            # UUID, so src goes before dst is mounted; its disk stays
-            # attached for recreate(), which then needs only its first MiB.
-            run(["umount", "-R", str(SRC_MP)])
-            for tool in tools:
-                restore_and_boot(tool)
-        else:
-            # One direction at a time, backed up, restored and booted: one
-            # repository at once (and, with COMPARE_DISCARD, one restored
-            # disk), where all four backups first would hold four.
-            for tool in tools:
-                backup_one(tool)
-                restore_and_boot(tool)
+        # One direction at a time, backed up, restored and booted: one
+        # repository at once (and, with COMPARE_DISCARD, one restored
+        # disk), where all four backups first would hold four.
+        for tool in tools:
+            backup_one(tool)
+            restore_and_boot(tool)
         results["coverage"] = json.loads((work / f"diff-{tools[0]}.json").read_text())["coverage"]
     finally:
         vm_umount(SRC_MP)
     # Keep an earlier run's results for the tools this run left out, so one
     # tool can be rerun alone (torture.sh makes the same files each time) --
     # if that run tested the same disks: a rebuilt guest's are another test.
-    old = work_dir(guest, stick_img) / "results.json"
+    old = work_dir(guest) / "results.json"
     if old.exists():
         prev = json.loads(old.read_text())
         earlier = {t: v for t, v in prev.get("tools", {}).items() if t not in tools}
@@ -1775,11 +1714,11 @@ def compare_guest(guest: str, tools: list[str], stick_img: Path | None = None) -
     return results
 
 
-def boot_only(guest: str, tools: list[str], stick_img: Path | None) -> dict:
+def boot_only(guest: str, tools: list[str]) -> dict:
     """Boot the disks a previous run restored, and update its results; the
     original too, if that run didn't (or src is all that is asked for)."""
     cfg = GuestConfig(VMS / guest)
-    work = work_dir(guest, stick_img)
+    work = work_dir(guest)
     r = json.loads((work / "results.json").read_text())
     n = 1 + len(cfg.disks)
     hardware = cfg.hardware(r["layout"])
@@ -1805,8 +1744,7 @@ def boot_only(guest: str, tools: list[str], stick_img: Path | None) -> dict:
 def remove_mount_points() -> None:
     """COMPARE_NAME's mount points, where nothing is mounted on them any
     more (rmdir removes only empty directories)."""
-    parts = stick_root.PARTS
-    for d in (parts / "iso", parts / "base", parts / "layer", parts, SRC_MP, DST_MP, STICK_MP,
+    for d in (SRC_MP, DST_MP,
               Path(f"/mnt/{PREFIX}-btrfs-top{SUFFIX}"), Path(f"/mnt/{DST_NAME}-keystore")):
         if d.is_dir() and not os.path.ismount(d):
             try:
@@ -1819,26 +1757,22 @@ def main() -> int:
     if os.geteuid() != 0:
         raise SystemExit("must run as root")
     args = sys.argv[1:]
-    only_boot, stick_img = False, None
+    only_boot = False
     while args and args[0].startswith("--"):
         if args[0] == "--boot-only":
             only_boot, args = True, args[1:]
-        elif args[0] == "--mkfs-from" and len(args) > 1:
-            stick_img, args = Path(args[1]).resolve(), args[2:]
-            if not stick_img.is_file():
-                raise SystemExit(f"no such image: {stick_img}")
         else:
             raise SystemExit(__doc__)
     if not args:
         raise SystemExit(__doc__)
     guest, tools = args[0], args[1:] or ([] if only_boot else ["restic", "borg", "dar", "bsdtar"])
-    for m in (SRC_MP, DST_MP, STICK_MP):
+    for m in (SRC_MP, DST_MP):
         m.mkdir(parents=True, exist_ok=True)
     try:
-        r = boot_only(guest, tools, stick_img) if only_boot else compare_guest(guest, tools, stick_img)
+        r = boot_only(guest, tools) if only_boot else compare_guest(guest, tools)
     finally:
         if not only_boot:
-            save_from_ram(guest, stick_img)
+            save_from_ram(guest)
         if NAME:
             remove_mount_points()
     o = r.get("original_boot", {})

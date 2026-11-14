@@ -108,7 +108,9 @@
 # BKO_REUSE, BKO_RUST_TOOLCHAIN, BKO_GUEST_LANES, BKO_DFLY_PORT (2701), BKO_GUEST_PORTS ("2901
 # 2902 2903 2904": freebsd netbsd openbsd illumos), BKO_HAIKU_PORT (2905), BKO_GUEST_MAX,
 # BKO_GUEST_RANGE, DFLY_CACHE, BKO_WORK (~/backotter-work: vms/, as for the
-# build scripts).  On a host by hand: RESTIC_COMMIT, RUSTIC_COMMIT,
+# build scripts), BKO_HAIKU_TIMEOUT (9000 s, build_haiku's backstop) and
+# haiku/build-rustic.sh's BKO_HAIKU_BUILD_TIMEOUT, BKO_HAIKU_POLL,
+# BKO_HAIKU_STALL, BKO_HAIKU_STALL_PCT.  On a host by hand: RESTIC_COMMIT, RUSTIC_COMMIT,
 # RUSTIC_CORE_COMMIT and RESTIC_DIGEST, RESTIC_TREE_DIGEST, RUSTIC_DIGEST,
 # RUSTIC_CORE_DIGEST as the Mac part gives them (BKO_UNVERIFIED=1 builds
 # without the digests, and the table says so); BKO_GO (go on PATH, else the
@@ -280,7 +282,8 @@ if [[ $mode == mac ]]; then
         out+=" RESTIC_DIGEST=$RESTIC_DIGEST RESTIC_TREE_DIGEST=$RESTIC_TREE_DIGEST RUSTIC_DIGEST=$RUSTIC_DIGEST RUSTIC_CORE_DIGEST=$RUSTIC_CORE_DIGEST"
         out+=" BKO_ROUNDS=$rrounds SRC=$rsrc"
         for v in BKO_BUILD_CACHE BKO_PROFILE BKO_GUEST_PROFILE BKO_REUSE BKO_RUST_TOOLCHAIN BKO_DFLY_PORT BKO_GUEST_PORTS BKO_HAIKU_PORT BKO_GUEST_LANES \
-            BKO_GUEST_MAX BKO_GUEST_RANGE DFLY_CACHE BKO_WORK; do
+            BKO_GUEST_MAX BKO_GUEST_RANGE DFLY_CACHE BKO_WORK BKO_HAIKU_TIMEOUT BKO_HAIKU_BUILD_TIMEOUT \
+            BKO_HAIKU_POLL BKO_HAIKU_STALL BKO_HAIKU_STALL_PCT; do
             [[ -n ${!v:-} ]] && out+=" $v='${!v}'"
         done
         echo "$out"
@@ -661,11 +664,22 @@ build_haiku() {  # natively in a throwaway haiku6, on a guest slot
     slot_take "${BKO_GUEST_MAX:-3}" "${BKO_GUEST_RANGE:-2900-2999}"
     log "rustic-bko haiku: building (haiku/build-rustic.sh $port, $gprofile; guest slot $BKO_GUEST_SLOT)"
     # The script has its own watchdog; this is the backstop, and it saves
-    # its logs in $LOGS/haiku-build.
-    timeout --kill-after=120 "${BKO_HAIKU_TIMEOUT:-9000}" \
-        env BKO_LOG_DIR="$LOGS" SRC="$PREPPED" BKO_BIN="$BIN" BKO_WORK="$WORK" FAST=$fast "$here/haiku/build-rustic.sh" "$port" \
-        >"$LOGS/build-rustic-haiku.log" 2>&1
-    s=$?
+    # its logs in $LOGS/haiku-build.  A guest kernel panic gets one rerun.
+    local try
+    for try in 1 2; do
+        timeout --kill-after=120 "${BKO_HAIKU_TIMEOUT:-9000}" \
+            env BKO_LOG_DIR="$LOGS" SRC="$PREPPED" BKO_BIN="$BIN" BKO_WORK="$WORK" FAST=$fast "$here/haiku/build-rustic.sh" "$port" \
+            >"$LOGS/build-rustic-haiku.log" 2>&1
+        s=$?
+        if [[ $s == 0 || $try == 2 ]] ||
+            ! grep -q "the haiku6 guest's kernel panicked" "$LOGS/build-rustic-haiku.log"; then
+            break
+        fi
+        log "rustic-bko haiku: the haiku6 guest's kernel panicked; trying once more on a fresh guest"
+        mv -f "$LOGS/build-rustic-haiku.log" "$LOGS/build-rustic-haiku.1.log"
+        rm -rf "$LOGS/haiku-build.1"
+        [[ ! -e $LOGS/haiku-build ]] || mv "$LOGS/haiku-build" "$LOGS/haiku-build.1"
+    done
     slot_give
     if [[ $s != 0 ]]; then
         tail -n 30 "$LOGS/build-rustic-haiku.log"

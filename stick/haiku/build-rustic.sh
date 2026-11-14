@@ -46,7 +46,11 @@
 # nothing for minutes, but burn CPU), when the guest stops answering, or past BKO_HAIKU_BUILD_TIMEOUT s
 # (5400).  A vanish, or cargo failing to spawn a process (Haiku's
 # B_BAD_VALUE, "(never executed)"), gets one retry between them,
-# incrementally, with -j 4; a second failure of any kind is final.  Logs go in
+# incrementally, with -j 4; a second failure of any kind is final.  The
+# crates are fetched first (cargo fetch, one retry), and the build runs
+# --offline.  A kernel panic (KDL in QEMU's serial log) fails at once, while
+# booting or building, with "the haiku6 guest's kernel panicked", which
+# build-round.sh retries on a fresh guest.  Logs go in
 # BKO_LOG_DIR/haiku-build if set (build-round.sh sets it), else in
 # BKO_WORK/logs/haiku-build-DATE: always the watch log and cargo's log; on a
 # failure also the guest's ps, syslog, memory and target/release listing and
@@ -63,7 +67,21 @@ port=${1:-2430}
 REPO=https://github.com/mchobbit/rustic
 # haiku_devel: crti.o and the like.  zstd_devel: see the build below.
 PACKAGES="rust_bin gcc binutils haiku_devel zstd_devel cmake make perl pkgconfig"
-die() { echo "build-rustic: $*" >&2; exit 1; }
+kdl() {  # the PANIC: line, if the guest's serial log shows Haiku's kernel debugger
+    local f=${work:-/nonexistent}/serial.log p
+    grep -q 'Welcome to Kernel Debugging Land' "$f" 2>/dev/null || return 1
+    p=$(tr -d '\r' <"$f" | sed -n '/PANIC:/h; /Welcome to Kernel Debugging Land/{x;p;q;}') || true
+    p=$(printf '%s\n' "$p" | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | cut -c 1-300)
+    echo "${p:-unknown panic}"
+}
+die() {  # build-round.sh greps for "the haiku6 guest's kernel panicked"
+    local p
+    if [[ $* != "the haiku6 guest's kernel panicked"* ]] && p=$(kdl); then
+        set -- "the haiku6 guest's kernel panicked (KDL): $p (then: $*)"
+    fi
+    echo "build-rustic: $*" >&2
+    exit 1
+}
 logdir=${BKO_LOG_DIR:+$BKO_LOG_DIR/haiku-build}
 logdir=${logdir:-$WORK/logs/haiku-build-$(date +%Y%m%d-%H%M%S)}
 
@@ -107,6 +125,8 @@ cleanup() {
         for _ in $(seq 60); do pgrep -f "^qemu-system.*:$port-:22" >/dev/null || break; sleep 2; done
     fi
     pkill -f "^qemu-system.*:$port-:22" 2>/dev/null || true
+    # Gone before we exit, so a rerun (build-round.sh's, after a panic) finds the port free.
+    for _ in $(seq 10); do pgrep -f "^qemu-system.*:$port-:22" >/dev/null || break; sleep 1; done
     rm -rf "$work"
 }
 trap cleanup EXIT
@@ -164,8 +184,9 @@ SSH_PORT=$port setsid -f "$here/../../testvm/vm-run" $(<"$vm/vm-run-options") --
 for _ in $(seq 30); do pgrep -f "^qemu-system.*:$port-:22" >/dev/null && break; sleep 1; done
 # Until the guest answers on SSH and $1 succeeds there.
 wait_guest() {
-    local deadline=$((SECONDS + 600))
+    local deadline=$((SECONDS + 600)) p
     until T=15 ssh_g "$1" 2>/dev/null; do
+        if p=$(kdl); then die "the haiku6 guest's kernel panicked (KDL): $p"; fi
         [[ $SECONDS -lt $deadline ]] || die "the guest's sshd didn't come up"
         pgrep -f "^qemu-system.*:$port-:22" >/dev/null || { cat "$work/vm-run.log" >&2; die "QEMU exited"; }
         sleep 5
@@ -196,6 +217,28 @@ if [[ ${FAST:-} == 1 ]]; then
     fast="CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16"
     fast_note=" (FAST: no LTO, 16 codegen units)"
 fi
+# Fetch first, then build --offline: the long-lived build then holds no TCP
+# sockets (cargo keeps crates.io's open), and Haiku's TCP teardown has
+# panicked during team deletion ("bound endpoint ... not in hash!", in
+# vfs_put_io_context), and may hang there, as cargo once seemed to.
+echo "Fetching the crates"
+mkdir -p "$logdir"
+: >"$logdir/fetch.log"
+fetched=no
+for try in 1 2; do
+    if T=1800 ssh_g "cd ~/build/rustic && env -u PROJECT_VERSION ZSTD_SYS_USE_PKG_CONFIG=1 cargo fetch $locked" \
+        >>"$logdir/fetch.log" 2>&1 </dev/null; then
+        fetched=yes
+        break
+    fi
+    if p=$(kdl); then die "the haiku6 guest's kernel panicked (KDL) during cargo fetch: $p"; fi
+    if [[ $try == 1 ]]; then echo "cargo fetch failed; trying again in 30 s"; sleep 30; fi
+done
+if [[ $fetched == no ]]; then
+    tail -n 20 "$logdir/fetch.log" >&2
+    die "cargo fetch failed (log: $logdir/fetch.log)"
+fi
+echo "Fetched (log: $logdir/fetch.log)"
 echo "Building$fast_note"
 mkdir -p "$logdir"
 watch=$logdir/watch.log
@@ -261,6 +304,11 @@ diag() {  # TAG: what can be known about the build, into $logdir/TAG; never fail
     local d=$logdir/$1 e n s
     mkdir -p "$d" || return 0
     cp -f "$work/serial.log" "$work/vm-run.log" "$d/" 2>/dev/null || true
+    # A guest in the kernel debugger answers no ssh.
+    if kdl >/dev/null; then
+        echo "(the guest is in KDL; see serial.log)" >"$d/guest-skipped"
+        return 0
+    fi
     for e in "cargo.log|cat ~/build/cargo-$attempt.log" "ps|ps" "ps-a|ps -a | head -n 3000" \
         "syslog|tail -n 200 /boot/system/var/log/syslog" "sysinfo|sysinfo -mem; sysinfo" \
         "target|ls -la ~/build/rustic/target/release; ls -lt ~/build/rustic/target/release/deps | head -n 60" \
@@ -275,14 +323,17 @@ diag() {  # TAG: what can be known about the build, into $logdir/TAG; never fail
     return 0
 }
 fail() {  # TAG MESSAGE: save diagnostics (in TAG, TAG-2 on the retry), and die
-    local tag=$1
+    local tag=$1 msg=$2 p
+    if [[ $tag != kernel-panic ]] && p=$(kdl); then
+        tag=kernel-panic msg="the haiku6 guest's kernel panicked (KDL) $((SECONDS - ${start:-$SECONDS})) s into the build: $p (then: $msg)"
+    fi
     [[ ${attempt:-1} == 1 ]] || tag+=-2
     diag "$tag"
     {   echo "build-rustic: diagnostics in $logdir/$tag, the watch log in $watch"
         echo "build-rustic: the end of cargo's log:"
         tail -n 30 "$logdir/$tag/cargo.log" 2>/dev/null || true
     } >&2
-    die "$2${first:+ (on the retry, after: $first)}"
+    die "$msg${first:+ (on the retry, after: $first)}"
 }
 retry() {  # TAG MESSAGE: save diagnostics in TAG, and start attempt 2 with -j 4
     watch_line "$2; retrying once with -j 4"
@@ -298,12 +349,12 @@ start_cargo() {  # attempt $attempt, with $jobs
     t_att=$SECONDS gone=0 misses=0
     prev_t=0 prev_c=$(qemu_ticks) || fail qemu-exited "QEMU exited before the build"
     hist_t=(0) hist_c=("$prev_c")
-    watch_line "attempt $attempt: cargo build --release $locked $jobs"
+    watch_line "attempt $attempt: cargo build --release --offline $locked $jobs"
     # Default features, not "release" (which adds self-update); see the fork's
     # build-backotter.sh.  zstd from the system: iana-time-zone links Haiku's
     # libbe, which uses libzstd.so, and the zstd crate's own copy has hidden
     # symbols, which ld refuses to an executable whose libraries need them.
-    T=60 ssh_g "bash ~/build/bko-build.sh start $attempt env -u PROJECT_VERSION ZSTD_SYS_USE_PKG_CONFIG=1 $fast cargo build --release $locked $jobs" </dev/null ||
+    T=60 ssh_g "bash ~/build/bko-build.sh start $attempt env -u PROJECT_VERSION ZSTD_SYS_USE_PKG_CONFIG=1 $fast cargo build --release --offline $locked $jobs" </dev/null ||
         fail start "couldn't start cargo in the guest"
     sleep 5
     if poll_guest && [[ $g_rc == - && $g_teams == 0 ]]; then
@@ -320,6 +371,7 @@ while :; do
     if poll_guest; then
         misses=0
     else
+        if p=$(kdl); then fail kernel-panic "the haiku6 guest's kernel panicked (KDL) $total s into the build: $p"; fi
         misses=$((misses + 1))
         g_rc=- g_log='?' g_teams='?' g_mem="(no answer from the guest, $misses in a row)"
     fi

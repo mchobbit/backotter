@@ -689,9 +689,6 @@ phase_source() {
     CONSOLE_KEY=$ckey vm_up "${src[0]}" "$R/logs/source-serial.log" "${fw[@]}" "${svfw[@]}" "${extra_src[@]}"
     vm_wait "$gkey" || { bad "source boots (no SSH)"; vm_down "$gkey"; return; }
     ok "source boots${detached:+, with ${detached##*/} detached}"
-    if [[ -n $detached ]]; then
-        sshk "$gkey" "$MDSTAT" > "$R/logs/source-mdstat.txt"
-        if grep -q '_' "$R/logs/source-mdstat.txt"; then
     if [[ -n $GVARS ]]; then
         sshk "$gkey" "$NVBOOT" > "$R/logs/source-nvram-boot.txt" 2>&1
         if grep -q 'HD(' "$R/logs/source-nvram-boot.txt"; then
@@ -702,6 +699,9 @@ phase_source() {
             say "note: source: on a copy of uefi-vars.fd, with no entry on a disk: $(head -1 "$R/logs/source-nvram-boot.txt")"
         fi
     fi
+    if [[ -n $detached ]]; then
+        sshk "$gkey" "$MDSTAT" > "$R/logs/source-mdstat.txt"
+        if grep -q '_' "$R/logs/source-mdstat.txt"; then
             ok "source's arrays degraded: $(grep '_' "$R/logs/source-mdstat.txt" | tr '\n' ';' | sed 's/;$//; s/;/; /g')"
         else
             bad "no array of the source is degraded with ${detached##*/} detached (logs/source-mdstat.txt)"
@@ -1108,10 +1108,6 @@ phase_verify() {
     CONSOLE_KEY=$ckey vm_up "${dst[0]}" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${dvfw[@]}" "${BS2_VFW[@]}" "${extra_dst[@]}"
     if ! vm_wait "$gkey"; then bad "the restored disk boots by itself (no SSH; logs/restored-serial.log)"; vm_down "$gkey"; return; fi
     ok "the restored disk boots by itself, SSH with the guest's key"
-    if [[ -n $detached ]]; then
-        sshk "$gkey" "$MDSTAT" > "$R/logs/restored-mdstat.txt"
-        if cmp -s "$R/logs/source-mdstat.txt" "$R/logs/restored-mdstat.txt"; then
-            ok "restored arrays degraded as the source's: $(grep '_' "$R/logs/restored-mdstat.txt" | tr '\n' ';' | sed 's/;$//; s/;/; /g')"
     if grep -qs 'HD(' "$R/logs/source-nvram-boot.txt" && [[ -n $GVARS ]]; then
         sshk "$gkey" "$NVBOOT" > "$R/logs/restored-nvram-boot.txt" 2>&1
         if cmp -s "$R/logs/source-nvram-boot.txt" "$R/logs/restored-nvram-boot.txt"; then
@@ -1120,6 +1116,10 @@ phase_verify() {
             bad "the restored disk booted through $(head -1 "$R/logs/restored-nvram-boot.txt"), the source through $(head -1 "$R/logs/source-nvram-boot.txt")"
         fi
     fi
+    if [[ -n $detached ]]; then
+        sshk "$gkey" "$MDSTAT" > "$R/logs/restored-mdstat.txt"
+        if cmp -s "$R/logs/source-mdstat.txt" "$R/logs/restored-mdstat.txt"; then
+            ok "restored arrays degraded as the source's: $(grep '_' "$R/logs/restored-mdstat.txt" | tr '\n' ';' | sed 's/;$//; s/;/; /g')"
         else
             bad "restored arrays: $(tr '\n' ' ' < "$R/logs/restored-mdstat.txt"), source's $(tr '\n' ' ' < "$R/logs/source-mdstat.txt")"
         fi

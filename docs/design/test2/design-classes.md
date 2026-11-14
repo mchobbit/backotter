@@ -51,7 +51,7 @@ Rules:
 | B3: FreeBSD 15.1, UFS | freebsd15-ufs 6.5, hardenedbsd15 6.8, ghostbsd26 6.5 | ~ (same 21 needs). HBSD's kernel and ghostbsd26's unjournaled md keep them rotating. |
 | B4: NetBSD 11.1 | netbsd11 5.4, alpinebsd 6.7 | ~ since alpinebsd got the 11.1 kernel (11-07). |
 | ≠ look-alikes | ubuntu24 vs A2: same check and 52 needs, but kernel 6.8 and OpenZFS 2.2.2 (#6). mint22 vs zorin18: same kernel and template, but f2fs vs nilfs2 | separate singletons |
-| Singletons | debian12 1.9, ubuntu24 15.9 (OpenZFS 2.2.2), mint22 13.6, zorin18 9.8, ubuntu26-uefi 6.2, alpine324 2.6, void-musl 1.9, nixos2605 3.9 (bcachefs 512 B), omarchy 5.0, pop24 10.2, aerynos 2.2, tumbleweed 3.1, sculpt2610 0.8, freebsd14 11.9, openbsd8 5.7, dragonfly6 7.4, omnios58 6.2, haiku6 0.9 | Dumps: pop24 and omarchy run 7.2.15, aerynos 7.2.14 (stic.md is stale). |
+| Singletons | debian12 1.9, ubuntu24 15.9 (OpenZFS 2.2.2), mint22 13.6, zorin18 9.8, ubuntu26-uefi 6.2, alpine324 2.6, void-musl 1.9, nixos2605 3.9 (bcachefs 512 B), omarchy 5.0, pop24 10.2, aerynos 2.2, tumbleweed 3.1, sculpt2610 0.8, freebsd14 11.9, openbsd8 5.7 (openbsd8-crypt ≡: softraid CRYPTO sits below the FFS), dragonfly6 7.4, omnios58 6.2, haiku6 0.9 | Dumps: pop24 and omarchy run 7.2.15, aerynos 7.2.14 (stic.md is stale). |
 
 One representative per class means 28 runs instead of 41:
 - Linux: 9.7 (A1's mean) + 16.4 + 2.0 + 4.2 + 2.8 + 4.9 + 4.5 + 77.1 = 121.6 gm.
@@ -70,7 +70,7 @@ One representative per class means 28 runs instead of 41:
 | C6: FreeBSD, ZFS | freebsd15 247, ghostbsd26-zfs 265 | ~ until plan signatures check glabels |
 | C7: UFS2 | ghostbsd26 239, hardenedbsd15 329 | ~ on the same condition |
 | ≠ despite holt.md's duplicate list | freebsd14 (boot-environment clone), omnios58-mirror (legacy bootfs, #16), freebsd15-mirror | singletons |
-| Singletons | debian13, devuan6, mint22 548/13.9, zorin18 373/11.6, alpine324, void-musl, nixos2605, tumbleweed, rocky10-lvm, rocky10-raid5, fedora44-raid, ubuntu26-raid, debian13-stack, ubuntu26-zfs, ubuntu26-zfsmirror 307/11.8, ubuntu26-uefi 338/8.5, fedora44-uefi, aerynos, pop24 550/16.3, omarchy 561/15.4, netbsd11, alpinebsd, openbsd8, dragonfly6 923, omnios58, haiku6, redox, sculpt2610 | |
+| Singletons | debian13, devuan6, mint22 548/13.9, zorin18 373/11.6, alpine324, void-musl, nixos2605, tumbleweed, rocky10-lvm, rocky10-raid5, fedora44-raid, ubuntu26-raid, debian13-stack, ubuntu26-zfs, ubuntu26-zfsmirror 307/11.8, ubuntu26-uefi 338/8.5, fedora44-uefi, aerynos, pop24 550/16.3, omarchy 561/15.4, netbsd11, alpinebsd, openbsd8, openbsd8-crypt (its own: load makes the volume again), dragonfly6 923, omnios58, haiku6, redox, sculpt2610 | |
 
 That gives 38 representatives for 45 sources (freebsd15-ufs is a rescuer; freebsd15-geli waits on GELI). The layouts were built to be distinct, so HoltTest2 saves mainly through scope, caching, deletion and RAM.
 

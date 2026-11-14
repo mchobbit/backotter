@@ -208,4 +208,17 @@ where they differ:
   detaches it. No test may detach a restored volume before its first boot:
   ht1-bsd.sh's verify rescuer runs on `--snapshot`.
 - **bioctl `-p`**: the file must be root's, mode exactly 0600, and end in a
-  newline (it reads one line with fgets).
+  newline (it reads one line with fgets). Load makes a fresh 0600 copy of
+  `--key-file` in its run dir and adds the newline if it's missing.
+- **Close's unmount, "Device busy":** on every crypt run, umount of the
+  target failed with fstat listing nothing open (cause unknown; not load or
+  the harness, and not reproduced on demand). On layouts with softraid
+  volumes only, close runs `umount -f` when umount fails and fstat lists no
+  open file, and says so; an open file still stops close. fsck found the
+  filesystem clean after it, and verify passed.
+- **Boot state:** sshd starts before rc's local daemons, and rc.firsttime's
+  fw_update holds rc up on an image's first boot, so ht1-bsd.sh's boot-state
+  check waits for `sh /etc/rc autoboot` to exit (up to 300 s), on every
+  OpenBSD guest. openbsd8-crypt's image has never had its first boot.
+- **O4 result:** HoltTest1BSD PASS on chopin 2026-11-14, run obc3 (judge: 0
+  of 151 fields differ), and plain openbsd8 still PASS (obp3).

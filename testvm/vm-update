@@ -472,8 +472,12 @@ def free_port() -> int:
 
 ANSI = re.compile(rb"\x1b\[[0-9;?]*[A-Za-z]")
 # A passphrase prompt on the serial console: Ubuntu's ZFS keystore's,
-# cryptsetup-initramfs's (debian13-stack) or FreeBSD's loader's (GELI).
-PROMPT = re.compile(rb"(?i)(enter passphrase[^\n]*|please unlock disk [^\n]*:\s*|geli passphrase for \S+\s*)$")
+# cryptsetup-initramfs's (debian13-stack), FreeBSD's loader's (GELI) or
+# OpenBSD's boot loader's "Passphrase:" at the start of a line (softraid
+# CRYPTO), as console-boot.py's.
+PROMPT = re.compile(rb"(?i)(enter passphrase[^\n]*|please unlock disk [^\n]*:\s*|geli passphrase for \S+\s*|(?:^|\n)passphrase:\s*)$")
+# Typed with no console output at all for this long: one Enter more.
+NUDGE_S = 30
 KEPT = re.compile(r"vm-run: kept this run's writes to (\S+) in (\S+) \(")
 # Root's PATH over SSH lacks /sbin on some guests (NetBSD).
 SBIN = "PATH=/sbin:/usr/sbin:/bin:/usr/bin:$PATH; export PATH\n"
@@ -785,23 +789,57 @@ class VM:
                 self.signal()
                 return
 
+    def _send(self, data: bytes, gap: float) -> bool:
+        """Type DATA on the serial console one key at a time, GAP s apart:
+        OpenBSD's /boot and FreeBSD's BIOS loader read the BIOS keyboard
+        buffer, which holds only 15 keys (all at once, keys were lost)."""
+        try:
+            with self.type_lock:
+                for b in data:
+                    self.proc.stdin.write(bytes([b]))
+                    self.proc.stdin.flush()
+                    if gap:
+                        time.sleep(gap)
+        except (OSError, ValueError):
+            return False
+        return True
+
+    def _nudge(self) -> None:
+        """Keys typed into a BIOS loader can still be lost (a host too busy
+        to run the guest hands it a burst): when the passphrase got no output
+        at all for NUDGE_S, one Enter more, so that a loader still at the
+        prompt takes what it has, finds it wrong and asks again (at most 3)."""
+        while not self.watch_end.wait(1) and self.proc.poll() is None:
+            at = self.typed["at"]
+            if at is not None and time.monotonic() - at > NUDGE_S and self.typed["nudges"] < 3:
+                self.typed.update(at=None, last=0.0, nudges=self.typed["nudges"] + 1)
+                self.g.note("console: no output since the passphrase, one Enter more")
+                if not self._send(b"\r", 0):
+                    return
+
     def _console(self) -> None:
-        buf, last = b"", 0.0
+        buf = b""
+        # at: when the passphrase was last typed with no output since; last:
+        # when it was last typed at all (a prompt within 5 s of that is the
+        # same one, still on its way out), forgotten by a nudge.
+        self.typed = {"at": None, "last": 0.0, "nudges": 0}
+        self.type_lock = threading.Lock()
+        if self.passphrase:
+            threading.Thread(target=self._nudge, daemon=True).start()
         while chunk := self.proc.stdout.read1(4096):
+            self.typed["at"] = None
             try:
                 self.serial.write(chunk)
                 self.serial.flush()
             except ValueError:                 # closed: the run is over
                 pass
             buf = (buf + ANSI.sub(b"", chunk))[-4096:]
-            if self.passphrase and PROMPT.search(buf) and time.monotonic() - last > 5:
+            if self.passphrase and PROMPT.search(buf) and time.monotonic() - self.typed["last"] > 5:
                 time.sleep(1)
-                try:
-                    self.proc.stdin.write(self.passphrase + b"\r")
-                    self.proc.stdin.flush()
-                except OSError:
+                if not self._send(self.passphrase + b"\r", 0.05):
                     return
-                buf, last = b"", time.monotonic()
+                buf = b""
+                self.typed["at"] = self.typed["last"] = time.monotonic()
 
     def _stderr(self) -> None:
         for line in self.proc.stderr:

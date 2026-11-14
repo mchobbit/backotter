@@ -65,7 +65,7 @@ testvm/HOSTS.md has every host and what stays on the big ones):
 | Host | Guests |
 |---|---|
 | Chopin | anduinos2, nixos2605, chimera, garuda, gentoo, pikaos4, dragonfly6, ghostbsd26, ghostbsd26-zfs, hardenedbsd15, kinoite44, ubuntu26-zfs, ubuntu26-uefi, ubuntu26-zfsmirror, ubuntu24, ubuntu24-uefi, debian12, devuan6, zorin18, mint22, debian13, pop24, mx25, sculpt2610 |
-| Cinqcent | aerynos, alpine324, alpinebsd, freebsd14, freebsd15-geli, arch, artix-dinit, artix-s6, cachyos, chimera-uefi, chimera-zfs, debian13-stack, debian13-zfs, fedora44, fedora44-uefi, freebsd15, freebsd15-ufs, garuda, gentoo-systemd, haiku6, netbsd11, omarchy, omnios58, openbsd8, pikaos4-luks, rocky10, rocky10-lvm, tumbleweed, void-musl |
+| Cinqcent | aerynos, alpine324, alpinebsd, freebsd14, freebsd15-geli, arch, artix-dinit, artix-s6, cachyos, chimera-uefi, chimera-zfs, debian13-stack, debian13-zfs, fedora44, fedora44-uefi, freebsd15, freebsd15-ufs, garuda, gentoo-systemd, haiku6, netbsd11, omarchy, omnios58, openbsd8, openbsd8-crypt, pikaos4-luks, rocky10, rocky10-lvm, tumbleweed, void-musl |
 
 ## Running one
 

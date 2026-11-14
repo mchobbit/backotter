@@ -78,11 +78,13 @@ case $G in
         MTREE_KEYS=type,uid,gid,mode,nlink,size,link,time,sha256digest ;;
     openbsd*)
         PLAT=openbsd RG=openbsd8 DISK=sd RAWSFX=c
-        # (After /etc/rc is done: sshd starts before rc's local daemons,
-        # cron among them, so a check as soon as SSH answers can find cron
-        # not started yet, on a fast boot: openbsd8-crypt's source, run
-        # obc1.  reorder_kernel, which rc leaves running, is its own ksh.)
-        BOOTSTATE='i=0; while pgrep -f "^/bin/sh /etc/rc( |\$)" >/dev/null && [ $i -lt 90 ]; do sleep 2; i=$((i + 1)); done; rcctl ls failed | sed "s/^/down /" | sort'
+        # (After /etc/rc is done, "sh /etc/rc autoboot" as init starts it:
+        # sshd starts before rc's local daemons, cron among them, so a check
+        # as soon as SSH answers can find cron not started yet.  So it did
+        # on openbsd8-crypt's source, whose image hadn't booted since its
+        # install: rc.firsttime's fw_update held rc up, runs obc1, obc2.
+        # reorder_kernel, which rc leaves running, is its own ksh.)
+        BOOTSTATE='i=0; while pgrep -f "^(/bin/)?sh /etc/rc( |\$)" >/dev/null && [ $i -lt 150 ]; do sleep 2; i=$((i + 1)); done; rcctl ls failed | sed "s/^/down /" | sort'
         # installboot -r puts the rescue system's /boot (the same release's).
         EXTRA_BOOT_RE='^(extra: |missing: )?(\./)?boot( |:|$)' ;;
     omnios*)

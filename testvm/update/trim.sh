@@ -27,6 +27,22 @@ zero_fill() {
     sync; rm -rf "$z"; sync
     say "$1: $mb MiB of its free room zeroed"
 }
+# Whether DEV, the device of a mounted file system, is an encrypted volume
+# (OpenBSD's softraid CRYPTO, FreeBSD's GELI, NetBSD's cgd): zeros written
+# through it reach the disk as ciphertext, so zero_fill would allocate the
+# whole free room instead of freeing it (openbsd8-crypt: an 11.8 GiB overlay
+# of a 16 GiB disk).  Its free room stays as it is.
+encrypted() {
+    case $(uname):$1 in
+        FreeBSD:*.eli|NetBSD:/dev/cgd*) true ;;
+        OpenBSD:/dev/sd*) d=${1#/dev/}; bioctl "${d%[a-p]}" 2>/dev/null | grep -qw CRYPTO ;;
+        # A DUID (fstab's "739d98841b65e745.a"): its disk by hw.disknames.
+        OpenBSD:*.[a-p])
+            d=$(sysctl -n hw.disknames | tr , '\n' | awk -F: -v u="${1%.?}" '$2 == u { print $1 }')
+            [ -n "$d" ] && bioctl "$d" 2>/dev/null | grep -qw CRYPTO ;;
+        *) false ;;
+    esac
+}
 # Whether ZFS is there to trim: zpool alone, where the base system has it
 # (FreeBSD, NetBSD), would load ZFS's kernel module just to find no pool.
 zfs_here() {
@@ -62,11 +78,16 @@ fi
 case $(uname) in
     # UFS and FFS: no TRIM unless the file system's TRIM flag was set
     # (FreeBSD's tunefs -t, unmounted) or the disk takes it, so zeros.
-    FreeBSD) zmounts=$(mount -t ufs | awk '!/read-only/ { print $3 }') ;;
-    NetBSD|OpenBSD) zmounts=$(mount | awk '$5 == "ffs" && !/read-only/ { print $3 }') ;;
+    FreeBSD) zmounts=$(mount -t ufs | awk '!/read-only/ { print $1 ":" $3 }') ;;
+    NetBSD|OpenBSD) zmounts=$(mount | awk '$5 == "ffs" && !/read-only/ { print $1 ":" $3 }') ;;
     *) zmounts= ;;
 esac
-for mp in $zmounts; do
+for m in $zmounts; do
+    dev=${m%%:*} mp=${m#*:}
+    if encrypted "$dev"; then
+        say "$mp: on an encrypted volume ($dev), not zeroed"
+        continue
+    fi
     zero_fill "$mp" 16
 done
 if command -v zpool >/dev/null && zfs_here; then       # Linux, FreeBSD and OmniOS pools

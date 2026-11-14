@@ -163,7 +163,11 @@ encryption) is made again on its chunk's new partition: `bioctl -c C` with
 the source's KDF rounds and a new passphrase (asked for twice, or
 `--key-file`), the volume's own MBR (`fdisk -iy`) and the source's
 disklabel and DUID; its partitions are named by that DUID, and installboot
-runs on the volume.  Other softraid levels and key-disk volumes are dumped,
+runs on the volume.  `--key-file NAME=FILE` (NAME: the dump's device, e.g.
+sd1, or its DUID) is copied with mode 0600 and a final newline, as bioctl
+wants.  Close leaves the volume attached (`bioctl -d` would clear the
+bootable flag installboot set) and, if the target stays busy with no file
+open, unmounts it with `umount -f`.  Other softraid levels and key-disk volumes are dumped,
 and refused by `load` (`docs/design/openbsd-crypto.md`).
 
 Each target disk must be at least as big as its source, with the same

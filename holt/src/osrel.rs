@@ -164,6 +164,11 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("guix", "", "Guix System"),
     // Rolling: VERSION_ID is the snapshot's date.
     ("opensuse-tumbleweed", "*", "openSUSE Tumbleweed"),
+    // Leap 16 (Agama's installer): Tumbleweed's tools (zypper, dracut,
+    // grub2, snapper on Btrfs, SELinux), released by point (16.0, 16.1), so
+    // by the major; not 15.x, whose installer and tools differ
+    // (docs/design/leap16.md, decision 2).
+    ("opensuse-leap", "16", "openSUSE Leap 16"),
     ("rocky", "10", "Rocky Linux 10"),
     // Arch-based, rolling.
     ("omarchy", "*", "Omarchy"),
@@ -312,7 +317,7 @@ mod tests {
         assert!(check_supported(Some(&parse(neon))).is_ok());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox or Sculpt OS"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE Leap 16, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox or Sculpt OS"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -524,6 +529,33 @@ mod tests {
         }
         // Not by its likeness: ID_LIKE=debian alone isn't Debian 13.
         assert!(check_supported(Some(&parse("ID=vanillish\nID_LIKE=debian\nVERSION_ID=\"3.0\"\n"))).is_err());
+    }
+
+    /// Leap 16.1's /etc/os-release (the Leap-16.1 offline ISO, Build60.2:
+    /// docs/design/leap16.md).
+    const LEAP16: &str = "NAME=\"openSUSE Leap\"\nVERSION=\"16.1\"\nID=\"opensuse-leap\"\nID_LIKE=\"suse opensuse\"\nVERSION_ID=\"16.1\"\nPRETTY_NAME=\"openSUSE Leap 16.1\"\n";
+
+    #[test]
+    fn leap16() {
+        let o = parse(LEAP16);
+        assert_eq!((o.get("ID"), o.get("VERSION_ID")), (Some("opensuse-leap"), Some("16.1")));
+        assert!(check_supported(Some(&o)).is_ok());
+        // Every 16.x point release, 16.0 too.
+        assert!(check_supported(Some(&parse(&LEAP16.replace("16.1", "16.0")))).is_ok());
+        assert!(supported("opensuse-leap", "16.2"));
+        assert!(supported_names().contains("openSUSE Tumbleweed, openSUSE Leap 16, Rocky Linux 10"));
+        // Not Leap 15.x (YaST, its older tools), nor a 17 until a guest shows it.
+        for v in ["15.6", "17.0"] {
+            let e = check_supported(Some(&parse(&LEAP16.replace("16.1", v)))).unwrap_err();
+            assert!(e.contains(&format!("this is openSUSE Leap {v} (ID=opensuse-leap, VERSION_ID={v})")) && e.contains("openSUSE Leap 16,"), "{e}");
+        }
+        // Tumbleweed stays Tumbleweed (its own row, any snapshot), and
+        // neither is the other by ID_LIKE.
+        let tw = parse("NAME=\"openSUSE Tumbleweed\"\nID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\nVERSION_ID=\"20261101\"\nPRETTY_NAME=\"openSUSE Tumbleweed\"\n");
+        assert_eq!(tw.get("ID"), Some("opensuse-tumbleweed"));
+        assert!(check_supported(Some(&tw)).is_ok());
+        assert!(!supported("opensuse-leap", "20261101"));
+        assert!(check_supported(Some(&parse("ID=opensuse-leap-micro\nID_LIKE=\"suse opensuse\"\nVERSION_ID=\"16.1\"\n"))).is_err());
     }
 
     #[test]

@@ -6,7 +6,7 @@
 #   vdb (16 GiB) -> /dev/sdr
 #
 # Notes:
-#   - UEFI GRUB on Fedora: the ESP's shim and GRUB are the restored ones; only grub.cfg is remade
+#   - UEFI GRUB 2 through shim (Fedora, Rocky, openSUSE): the ESP's shim and GRUB are the restored ones; only grub.cfg is remade
 
 # ---- partition ----
 # vda -> /dev/sdq: clear the old table and signatures

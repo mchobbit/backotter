@@ -563,10 +563,13 @@ print(d[0]["checksum"] if d else "")' "$1"
     elif has zypper; then
         # 103: zypper updated itself and wants to run again.  100-102: done,
         # with something to say (a reboot is needed, for one).
+        # Leap is a release, updated within it by `zypper up` (a dup would
+        # also switch vendors and downgrade); Tumbleweed is rolling: dup.
+        how=$( . /etc/os-release 2>/dev/null; [ "${ID:-}" = opensuse-leap ] && echo up || echo dup)
         for i in 1 2 3; do
             # --no-recommends: as the install (autoinst.xml), which leaves
             # them out; otherwise a dup brings some 1 GB of firmware.
-            zypper -n --gpg-auto-import-keys dup --auto-agree-with-licenses --no-recommends; rc=$?
+            zypper -n --gpg-auto-import-keys $how --auto-agree-with-licenses --no-recommends; rc=$?
             [ $rc -eq 103 ] || break
         done
         [ $rc -eq 0 ] || [ $rc -ge 100 -a $rc -le 102 ] || exit 1

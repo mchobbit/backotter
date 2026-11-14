@@ -3110,9 +3110,12 @@ impl Builder<'_> {
                 self.remake_grub_cfg(&t, &mut out);
             }
             ("grub", true) if self.grub_dir() == "/boot/grub2" => {
-                // Fedora: grub2-install refuses EFI (it can't keep Secure
-                // Boot); shim and the signed GRUB come back with the ESP.
-                self.notes.push("UEFI GRUB on Fedora: the ESP's shim and GRUB are the restored ones; only grub.cfg is remade".into());
+                // GRUB 2 through shim (Fedora, Rocky, openSUSE Tumbleweed
+                // and Leap): grub2-install refuses EFI on Fedora (it can't
+                // keep Secure Boot), and openSUSE's shim-install would
+                // rewrite the signed files; shim, the signed GRUB and
+                // MokManager come back with the ESP.
+                self.notes.push("UEFI GRUB 2 through shim (Fedora, Rocky, openSUSE): the ESP's shim and GRUB are the restored ones; only grub.cfg is remade".into());
                 self.remake_grub_cfg(&t, &mut out);
             }
             // NixOS and Guix System on UEFI: nothing runs in the chroot.
@@ -4569,6 +4572,77 @@ mod tests {
         let at = bt.find("--bootloader-id=").expect(&bt) + "--bootloader-id=".len();
         assert_eq!(bt[at..].split_whitespace().next(), Some("neon"), "{bt}");
         assert!(bt.contains("update-grub\n") && !bt.contains("grub-mkconfig"), "{bt}");
+    }
+
+    /// openSUSE Leap 16 on UEFI (docs/design/leap16.md, L2): GRUB 2
+    /// through shim in EFI/opensuse, as Fedora's and Tumbleweed's: no
+    /// grub2-install or shim-install over the signed files the ESP brings
+    /// back, grub2-mkconfig, dracut, and the source's boot entry made again.
+    #[test]
+    fn leap16_uefi_grub_through_shim() {
+        let entry = r#"{"number": "0001", "description": "opensuse-secureboot", "file": "\\EFI\\opensuse\\shim.efi", "partition": {"device": "vda1"}}"#;
+        let j = sample::bios_mbr()
+            .replace(r#""id": "debian", "version_id": "13""#, r#""id": "opensuse-leap", "version_id": "16.1""#)
+            .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+            .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, r#""loader": {"name": "grub", "firmware": "uefi", "via_shim": true}"#)
+            .replace(r#""efi": null,"#, &format!(r#""efi": {{"entries": [{entry}], "boot_current": "0001", "boot_order": ["0001"]}}, "esps": [],"#))
+            .replace(r#""grub": {"debconf": {"grub-pc/install_devices": "/dev/disk/by-id/virtio-x"}}"#, r#""grub": {"dir": "/boot/grub2"}, "initramfs": {"generator": "dracut"}"#);
+        assert!(j.contains("opensuse-leap") && j.contains("/boot/grub2") && j.contains("shim.efi") && j.contains(r#""via_shim": true"#));
+        let b = built_from(&j, &[]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let bt = text(b.stage(Stage::Boot));
+        for no in ["grub2-install", "grub-install", "shim-install", "update-grub", "grub-mkconfig"] {
+            assert!(!bt.contains(no), "{no}: {bt}");
+        }
+        let cfg = "chroot /mnt/bko-target env LANG=C grub2-mkconfig -o /boot/grub2/grub.cfg\n";
+        let nvram = "efibootmgr --quiet --create --disk /dev/vdb --part 1 --label opensuse-secureboot --loader '\\EFI\\opensuse\\shim.efi'\n";
+        let (d, c, e) = (bt.find("dracut --force").expect(&bt), bt.find(cfg).expect(&bt), bt.find(nvram).expect(&bt));
+        assert!(d < c && c < e, "{bt}");
+        assert!(bt.contains("mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober"), "{bt}");
+        assert!(b.notes.iter().any(|n| n.starts_with("UEFI GRUB 2 through shim (Fedora, Rocky, openSUSE)")), "{:?}", b.notes);
+        // The loader's directory is the entry's, EFI/opensuse.
+        let l = Layout::from_json(crate::json::parse(&j).unwrap()).unwrap();
+        let o = match crate::load::parse_args(&["l.json".to_string()]).unwrap() {
+            crate::load::Parsed::Run(o) => o,
+            _ => unreachable!(),
+        };
+        let m = Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() };
+        let b = Builder {
+            layout: &l,
+            opts: &o,
+            names: Names { layout: &l, mapping: &m, made: BTreeMap::new() },
+            problems: vec![],
+            notes: vec![],
+            closers: vec![],
+            pools: vec![],
+            filesystems: vec![],
+            datasets: vec![],
+            mount_points: vec![],
+            fam: None,
+            btrfs: BTreeMap::new(),
+            timeshift: BTreeMap::new(),
+        };
+        assert_eq!(b.bootloader_id(), "opensuse");
+        assert_eq!((b.grub_tool("install"), b.grub_tool("mkconfig")), ("grub2-install", "grub2-mkconfig"));
+    }
+
+    /// openSUSE Leap 16 on BIOS (no guest: docs/design/leap16.md):
+    /// Tumbleweed's arm, grub2-install --target=i386-pc and grub2-mkconfig.
+    /// The tumbleweed guest's dump, named Leap 16.1, plans the same boot
+    /// stage.
+    #[test]
+    fn leap16_bios_is_tumbleweeds() {
+        let tw = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/tumbleweed/src.json")).unwrap();
+        let leap = tw
+            .replace("\"id\": \"opensuse-tumbleweed\",\n    \"version_id\": \"20261103\"", "\"id\": \"opensuse-leap\",\n    \"version_id\": \"16.1\"")
+            .replace(r#""pretty_name": "openSUSE Tumbleweed""#, r#""pretty_name": "openSUSE Leap 16.1""#);
+        assert!(leap.contains(r#""id": "opensuse-leap""#) && !leap.contains(r#""id": "opensuse-tumbleweed""#));
+        let (a, b) = (built_from(&tw, &[]), built_from(&leap, &[]));
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let bt = text(b.stage(Stage::Boot));
+        assert_eq!(bt, text(a.stage(Stage::Boot)));
+        assert!(bt.contains("grub2-install --target=i386-pc /dev/vdb\n") && bt.contains("grub2-mkconfig -o /boot/grub2/grub.cfg\n"), "{bt}");
+        assert!(bt.contains("dracut --force") && !bt.contains("grub-install") && !bt.contains("update-grub"), "{bt}");
     }
 
     /// Kali (docs/design/kali.md): Debian's arms as they are, named EFI/kali.

@@ -1,0 +1,20 @@
+{
+  "product": { "id": "openSUSE_Leap", "mode": "standard" },
+  "hostname": { "static": "@HOSTNAME@" },
+  "root": {
+    "hashedPassword": true,
+    "password": "@ROOT_PASSWORD_HASH@",
+    "sshPublicKey": "@AUTHORIZED_KEY@"
+  },
+  "l10n": { "locale": "en_US.UTF-8", "keymap": "us", "timezone": "America/New_York" },
+  "software": {
+    "packages": ["openssh-server", "snapper", "grub2-snapper-plugin", "mokutil", "firewalld"]
+  },
+  "bootloader": { "timeout": 2, "extraKernelParams": "console=tty0 console=ttyS0,115200n8" },
+  "scripts": {
+    "post": [
+      { "name": "backotter-guest", "chroot": true, "content": "@SCRIPT:leap-post-chroot.sh@" },
+      { "name": "backotter-facts", "chroot": false, "content": "@SCRIPT:leap-post-live.sh@" }
+    ]
+  }
+}

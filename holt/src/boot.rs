@@ -842,6 +842,11 @@ pub fn detect_loader(e: &Evidence) -> Value {
                 name = name.or(Some("grub"));
             } else if info.starts_with("systemd-boot") {
                 name = Some("systemd-boot");
+            } else if info.starts_with("Limine") {
+                // Limine sets LoaderInfo ("Limine 12.9.6") too: the only word
+                // left when the firmware booted its copy at the fallback
+                // path, as with no NVRAM entry (cachyos-zfs under vm-run).
+                name = Some("limine");
             }
         }
         if e.shim_variables {
@@ -856,9 +861,10 @@ pub fn detect_loader(e: &Evidence) -> Value {
             } else if lc.iter().any(|f| f.ends_with("/systemd-bootx64.efi")) {
                 name = Some("systemd-boot");
                 why.push("an ESP holds systemd-bootx64.efi".into());
-            } else if lc.iter().any(|f| f.ends_with("/limine.conf") || f.contains("/efi/limine/")) {
+            } else if lc.iter().any(|f| f == "limine.conf" || f.ends_with("/limine.conf") || f.starts_with("efi/limine/")) {
+                // esp_inventory's paths are relative to the ESP: EFI/limine/.
                 name = Some("limine");
-                why.push("an ESP holds Limine's limine.conf".into());
+                why.push("an ESP holds Limine's EFI/limine/ or limine.conf".into());
             }
         }
     } else {
@@ -1191,6 +1197,26 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(v.get("name").and_then(Value::as_str), Some("grub"));
         assert!(v.get("evidence").unwrap().compact().contains("fallback"));
         assert_eq!(v.get("via_shim"), Some(&Value::Bool(false)));
+        // Limine booted at the fallback path (no NVRAM entry): LoaderInfo
+        // names it, and so do the ESP's files without it (cachyos-zfs).
+        let mut e = base(true);
+        e.current_file = Some("\\EFI\\BOOT\\BOOTX64.EFI".into());
+        e.loader_info = Some("Limine 12.9.6".into());
+        e.esp_files = vec!["EFI/BOOT/BOOTX64.EFI".into(), "EFI/limine/limine_x64.efi".into()];
+        let p = pk(&["limine"]);
+        e.packages = &p;
+        let v = detect_loader(&e);
+        assert_eq!(v.get("name").and_then(Value::as_str), Some("limine"));
+        assert_eq!(v.get("package").and_then(Value::as_str), Some("limine"));
+        assert!(v.get("evidence").unwrap().compact().contains("Limine 12.9.6"));
+        e.loader_info = None;
+        let v = detect_loader(&e);
+        assert_eq!(v.get("name").and_then(Value::as_str), Some("limine"));
+        assert!(v.get("evidence").unwrap().compact().contains("an ESP holds Limine's"));
+        // Through its own NVRAM entry, the path decides.
+        let mut e = base(true);
+        e.current_file = Some("\\EFI\\limine\\limine_x64.efi".into());
+        assert_eq!(detect_loader(&e).get("name").and_then(Value::as_str), Some("limine"));
         let mut e = base(true);
         e.current_file = Some("\\EFI\\refind\\refind_x64.efi".into());
         assert_eq!(detect_loader(&e).get("name").and_then(Value::as_str), Some("refind"));

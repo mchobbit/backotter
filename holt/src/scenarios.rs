@@ -351,6 +351,82 @@ fn chimera_uefi_guest() {
     assert!(!bt.contains("grub"), "{bt}");
 }
 
+/// CachyOS's Limine with the ESP as /boot, booted the way a machine with
+/// no NVRAM entry for it boots (vm-run's fresh UEFI variables): through
+/// Limine's copy at EFI/BOOT/BOOTX64.EFI, so no boot entry names Limine
+/// and, with `loader_info` false, no LoaderInfo either.
+fn limine_fallback(loader_info: bool) -> Tree {
+    use crate::efi::{GLOBAL, LOADER};
+    let t = Tree::new(if loader_info { "scn-limine-fallback" } else { "scn-limine-fallback-noinfo" });
+    let v = "7.3.4-2-cachyos";
+    let mut img = vec![0u8; 64 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "6f1c2c3d-0000-4000-8000-00000000cccc",
+            parts: vec![(ESP, "1b5f04ed-e731-4ac6-933e-83ff25657722", 2048, 73727, 0, ""), (LINUX, "21112222-3333-4444-5555-666677778888", 73728, 131038, 0, "")],
+        },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(71680, 0x1234_abce, ""));
+    put(&mut img, 73728, &ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, ""));
+    let pkg = |n: &str, ver: &str| (format!("/var/lib/pacman/local/{n}-{ver}/desc"), format!("%NAME%\n{n}\n\n%VERSION%\n{ver}\n\n%ARCH%\nx86_64\n"));
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 57311, &img)
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&format!("/sys/firmware/efi/efivars/SecureBoot-{GLOBAL}"), [6u8, 0, 0, 0, 0])
+        .symlink("/dev/disk/by-partuuid/1b5f04ed-e731-4ac6-933e-83ff25657722", "../../vda1")
+        .symlink("/dev/disk/by-partuuid/21112222-3333-4444-5555-666677778888", "../../vda2")
+        .file("/proc/self/mountinfo", "26 1 254:2 / / rw,relatime shared:1 - ext4 /dev/vda2 rw\n27 26 254:1 / /boot rw,relatime shared:2 - vfat /dev/vda1 rw,fmask=0077\n")
+        .file("/etc/fstab", "UUID=10111213-1415-1617-1819-1a1b1c1d1e1f / ext4 defaults 0 1\nPARTUUID=1b5f04ed-e731-4ac6-933e-83ff25657722 /boot vfat umask=0077 0 2\n")
+        .file("/etc/os-release", "NAME=\"CachyOS Linux\"\nID=cachyos\nID_LIKE=arch\nPRETTY_NAME=\"CachyOS\"\n")
+        .file("/boot/EFI/limine/limine_x64.efi", vec![2u8; 300])
+        .file("/boot/EFI/BOOT/BOOTX64.EFI", vec![2u8; 300])
+        .file("/boot/limine.conf", "timeout: 5\n/CachyOS\n")
+        .file(&format!("/boot/{}/linux-cachyos/vmlinuz", "e464d0233015401f967ec0aedf7f3cda"), "k")
+        .file(&format!("/boot/{}/linux-cachyos/initramfs", "e464d0233015401f967ec0aedf7f3cda"), "i")
+        .dir(&format!("/usr/lib/modules/{v}/kernel"))
+        .file("/etc/mkinitcpio.conf", "HOOKS=(base udev autodetect microcode modconf block keyboard keymap consolefont filesystems fsck)\n")
+        .file("/proc/sys/kernel/osrelease", format!("{v}\n"))
+        .file("/proc/sys/kernel/hostname", "cachyos\n")
+        .file("/proc/cmdline", "quiet nowatchdog rw root=PARTUUID=21112222-3333-4444-5555-666677778888\n");
+    for (n, ver) in [("limine", "12.9.6-1"), ("limine-mkinitcpio-hook", "1.20.0-1"), ("mkinitcpio", "40-3"), ("linux-cachyos", "7.3.4-2"), ("efibootmgr", "18-3")] {
+        let (path, desc) = pkg(n, ver);
+        t.file(&path, desc);
+    }
+    if loader_info {
+        let mut info = vec![6u8, 0, 0, 0];
+        for c in "Limine 12.9.6".encode_utf16().chain([0]) {
+            info.extend(c.to_le_bytes());
+        }
+        t.file(&format!("/sys/firmware/efi/efivars/LoaderInfo-{LOADER}"), info);
+    }
+    t
+}
+
+#[test]
+fn limine_booted_at_the_fallback_path() {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    for loader_info in [true, false] {
+        let v = run(&limine_fallback(loader_info), true, FakeRunner::default());
+        assert_eq!(s(&v, &["os", "id"]), "cachyos");
+        assert_eq!(s(&v, &["boot", "loader", "name"]), "limine", "{}", v.at(&["boot", "loader"]).unwrap().compact());
+        assert_eq!(s(&v, &["boot", "loader", "package"]), "limine");
+        // load doesn't refuse it: the ESP brings Limine back, mkinitcpio
+        // remakes the initramfs (its hook copies it into the machine-id
+        // directory limine.conf boots).
+        let l = Layout::from_json(v).unwrap();
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+        let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+        assert!(b.problems.is_empty(), "{loader_info}: {:?}", b.problems);
+        let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
+        assert!(bt.contains("chroot /mnt/bko-target mkinitcpio -P\n"), "{bt}");
+        assert!(!bt.contains("grub"), "{bt}");
+        assert!(b.notes.iter().any(|n| n.starts_with("Limine: ")), "{:?}", b.notes);
+    }
+}
+
 #[test]
 fn unprivileged_falls_back_to_udev() {
     let t = bios_btrfs();

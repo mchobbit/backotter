@@ -30,6 +30,7 @@ import json
 import os
 import re
 import stat
+import struct
 import sys
 
 FS_IOC_GETFLAGS = 0x80086601
@@ -173,19 +174,78 @@ def hole_blocks(fd: int, size: int, seek_hole: bool, blocks: int) -> int:
     return n
 
 
+FS_IOC_FIEMAP = 0xC020660B
+FIEMAP_FLAG_SYNC = 0x1
+FIEMAP_EXTENT_LAST = 0x1
+FIEMAP_BATCH = 256
+
+
+def mapped(fd: int, size: int) -> list[tuple[int, int]] | None:
+    """The byte ranges of the file open as fd that blocks are allocated to
+    (FS_IOC_FIEMAP), preallocated (unwritten) extents and inline data
+    included, in order; None where the file system has no FIEMAP (tmpfs,
+    ZFS)."""
+    out: list[tuple[int, int]] = []
+    start = 0
+    while start < size:
+        buf = bytearray(struct.pack("=QQIIII", start, size - start, FIEMAP_FLAG_SYNC, 0, FIEMAP_BATCH, 0)
+                        + bytes(56 * FIEMAP_BATCH))
+        try:
+            fcntl.ioctl(fd, FS_IOC_FIEMAP, buf)
+        except OSError:
+            return None
+        count = struct.unpack_from("=I", buf, 20)[0]
+        last = count == 0
+        for k in range(count):
+            logical, _, length, _, _, flags = struct.unpack_from("=QQQQQI", buf, 32 + 56 * k)
+            out.append((logical, logical + length))
+            last = bool(flags & FIEMAP_EXTENT_LAST)
+        if last:
+            break
+        start = out[-1][1]
+    return out
+
+
+def fiemap_holes(ranges: list[tuple[int, int]], size: int) -> tuple[bool, int]:
+    """Whether the file of SIZE bytes whose allocated ranges are RANGES has
+    holes, and how many HOLE_BLOCK-sized, aligned blocks they cover wholly
+    (the last may reach past the size, as hole_blocks())."""
+    end = -(-size // HOLE_BLOCK) * HOLE_BLOCK
+    holes, n, off = False, 0, 0
+    for lo, hi in [*ranges, (size, size)]:
+        if lo > off and off < size:
+            holes = True
+            gap_end = end if lo >= size else lo
+            n += max(0, gap_end // HOLE_BLOCK - -(-off // HOLE_BLOCK))
+        off = max(off, hi)
+    return holes, n
+
+
 def content(path: str, st: os.stat_result, seek_hole: bool = True) -> tuple[str, bool, int]:
     """SHA-256 of the file, whether it has holes, and how many aligned
-    HOLE_BLOCKs its holes cover (hole_blocks).  A preallocated file's
-    unwritten extents look like holes to SEEK_HOLE, but count in st_blocks;
-    without seek_hole (a file system whose SEEK_HOLE finds none), st_blocks
-    alone tells."""
+    HOLE_BLOCKs its holes cover (hole_blocks).  Holes are the ranges no
+    block is allocated to, as FIEMAP maps the file: a preallocated file's
+    unwritten extents are allocated (SEEK_HOLE takes them for holes), and
+    st_blocks can't tell either, since it counts the file system's own
+    blocks for the file too (ext4's extent-tree block, once a file has
+    more than 4 extents: a fragmented restore of a file with one 4 KiB hole
+    has as many blocks as a whole one).  FIEMAP is asked only when SEEK_HOLE
+    finds a hole (its holes include FIEMAP's).  Where there is no FIEMAP:
+    SEEK_HOLE, and only when st_blocks leaves room for holes; without
+    seek_hole (a file system whose SEEK_HOLE finds none), st_blocks alone."""
     h = hashlib.sha256()
     size = st.st_size
     with open(path, "rb", buffering=0) as f:
         try:
-            holes = (size > 0 and st.st_blocks * 512 < size
-                     and (not seek_hole or os.lseek(f.fileno(), 0, SEEK_HOLE) < size))
-            nblocks = hole_blocks(f.fileno(), size, seek_hole, st.st_blocks) if holes else 0
+            ranges = None
+            if seek_hole and size > 0 and os.lseek(f.fileno(), 0, SEEK_HOLE) < size:
+                ranges = mapped(f.fileno(), size)
+            if ranges is not None:
+                holes, nblocks = fiemap_holes(ranges, size)
+            else:
+                holes = (size > 0 and st.st_blocks * 512 < size
+                         and (not seek_hole or os.lseek(f.fileno(), 0, SEEK_HOLE) < size))
+                nblocks = hole_blocks(f.fileno(), size, seek_hole, st.st_blocks) if holes else 0
         except OSError:
             holes, nblocks = False, 0
         os.lseek(f.fileno(), 0, os.SEEK_SET)

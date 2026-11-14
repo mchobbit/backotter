@@ -105,6 +105,69 @@ Verified 2026-11-14:
 - Not run: zfsguests, dragonfly, illumos, freebsd15-ufs, alpinebsd, nonroot
   (affected.sh names them all; for the next full round).
 
-Follow-up: bko-holt `load` (`holt/src/load/commands.rs`, the `--btrfs-snapshots
-shared` check) can accept restic-bko 0.19.1+backotter.7, mapping
-`--clone-from`/`--exact`/`--target-metadata` into restic's command line.
+## Hardening, .8 to .12 (2026-11-14, after .7 was pushed)
+
+Independent reviews of each version found defects that the fixes in the next
+version closed. The user stopped the rounds after .12 ("Stop there").
+
+| Version | Commit | What it fixed | Tested |
+|---|---|---|---|
+| .8 | 9b01666df | High: the fixed temp name `.bko-exact-NAME` could overwrite a snapshot entry of that name (silent corruption); a failed link break carried on with a shared inode; holes were lost after a failed clone; flags weren't cleared on a kept special file (BSD); a label that couldn't be removed was only a warning; matching hard-link groups were re-linked every run; the clone source was opened without O_NONBLOCK | unit (Linux, BSD), exact-rt, linux ext4/btrfs, freebsd15 rt 4/4 |
+| .9 | e20ac9e7f | BSD: birth time compared as a restore sets it (kept groups' ctime moved); flags cleared only where a change is made; a symlink in the way of a file is replaced on FreeBSD, NetBSD and DragonFly (EMLINK/EFTYPE); a failed break puts flags back; one summary error for SELinux EACCES | unit on freebsd15, freebsd15-ufs, netbsd11, dragonfly6; linux ext4/btrfs; rt freebsd15, freebsd15-ufs, netbsd11, dragonfly6; exact-rt |
+| .10 | 8203d8ead | A replaced file's other names keep their restricting flags (fd held on the old inode); a directory's flags are cleared only when an entry in it changes; only EACCES is folded into the SELinux summary | unit (Linux, freebsd15-ufs, netbsd11), exact-rt |
+| .11 | f1c29b3ea | `--delete` removes the other names of a file the restore replaced, continues past an entry it can't remove, and still gives the directory its metadata and flags (.10 regression); BSD put-back ENOENT not an error | **full targeted farm round, all PASS** (below) |
+| .12 | 12a275f62 | `--delete` sees every file the second pass replaces, whatever the order it walks the tree in; one name held open at a time; BSD by-path put-back reports flags possibly lost; a partial `RemoveAll` reports what it deleted | unit as user and root (Linux), freebsd15-ufs and netbsd11 guests; exact-rt PASS; **no farm round** |
+
+.11's farm round (Cage, Copland, Cinqcent; rustic-bko .12; OLD_BIN .7):
+- `run-all.sh` linux on ext4, btrfs and xfs: 15 rows.
+- sparse on ext4, with the identity check against .7.
+- nonroot linux on ZFS and ext4, and nonroot on freebsd15.
+- rt 4/4 on freebsd15, freebsd15-ufs, netbsd11, alpinebsd, openbsd8 and dragonfly6, and 8/8 on omnios58.
+- zfs-ubuntu24: 11 rows.
+- exact-rt.sh.
+- compare.py debian13, all four directions: every restore boots; the only difference is the torture socket.
+
+Every one of these passed. Cage and Copland rebooted for the kernel 7.2.12 upgrade during the round, so the runs that were cut off were rerun on the new kernel.
+
+State: the fork's `backotter` branch is at .12, 14 commits ahead of origin
+(still .7, aa72d65cc). Nothing after .7 is pushed. .11 is the newest version with
+a full farm round; .12's changes are narrow (`--delete` of a replaced file's other
+names) and passed unit and guest unit tests and exact-rt only.
+
+## Open follow-ups
+
+Low severity, deferred (documented in the fork's BACKOTTER.md, known limits):
+- An interrupt or a fatal error after restricting flags were cleared doesn't put
+  them back; a re-run repairs it.
+- On Linux, a failure between `FS_IOC_FSSETXATTR` and the second GETFLAGS or
+  SETFLAGS reports nothing cleared, so the put back is a no-op.
+- On BSD UFS/FFS mounted with atimes, `--exact` moves ctimes, because the restore's own
+  reads move atimes; mount such a target `noatime`. Those ctime tests compare inodes
+  only there.
+- On the BSDs, a hard-linked symlink is put back by path, not through an fd.
+- Clone sources are trusted on their size and path; a bind mount of the same
+  subvolume, or DIR inside the destination, isn't detected.
+- A kept special file with more than one link is changed in place.
+- bcachefs writable snapshots may share device and inode numbers with their origin,
+  so an unexpected name there could count as a replaced file's other name.
+- On a Linux file system without reflinks, each `--clone-from` attempt makes and
+  removes a temp file, which moves the directory's mtime.
+- Differences from rustic-bko that remain: `--clone-from` PATH must be a directory,
+  `--exact` means `--overwrite always`, and owners are compared only as root.
+
+Not done:
+- **rustic-bko has the same defects** (rustic_core `commands/restore/exact.rs`):
+  - the fixed `.bko-exact-NAME` temp name, the one serious data-safety hole left between the two tools;
+  - it continues after a failed link break;
+  - `clone_file` truncates dst before cloning;
+  - matching hard-link groups are always broken;
+  - the clone source follows symlinks and has no O_NONBLOCK;
+  - `--delete` keeps flagged siblings of replaced files.
+
+  Changing rustic needs the user's go-ahead.
+- **bko-holt** `load` (`holt/src/load/commands.rs`, the `--btrfs-snapshots shared`
+  check) still names only rustic-bko. It could accept restic-bko .11 or newer, mapping
+  `--exact`/`--clone-from`/`--target-metadata`. Waiting: another session has large
+  uncommitted edits to `restore()` and `shared_snapshots()` there.
+- **Pushes:** the restic fork past .7, and this repo's commits.
+- **Harness:** `cmp-run.sh --free` fails with "$2: unbound variable" on all four hosts.

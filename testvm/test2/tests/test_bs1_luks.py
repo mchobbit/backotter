@@ -1,8 +1,10 @@
 """BackShot1's unattended LUKS unlock (docs/design/bs1-luks-unattended.md):
 bs1-luks's crypttab edits, bs1-unlock-key's fallbacks and bs1-common's
-evidence of how a boot opened each volume, on fake inputs.  No VM, no root,
-no initramfs: fake mount, askpass, cryptsetup, journalctl and lsblk."""
+evidence of how a boot opened each volume and its layout_keys, on fake
+inputs and the corpus's dumps.  No VM, no root, no initramfs: fake mount,
+askpass, cryptsetup, journalctl and lsblk."""
 
+import json
 import os
 import re
 import shutil
@@ -284,6 +286,86 @@ class Evidence(Tmp):
     def test_mode_volume_missing_from_record(self):
         self.record("S", volumes="other:abc:S")
         self.assertIn("root isn't in", self.call("unlock_mode nvme0n1"))
+
+
+CORPUS = TESTS.parent.parent.parent / "holt" / "tests" / "corpus"
+
+
+class LayoutKeys(Tmp):
+    """layout_keys: load's --key-file values from a layout dump, over the
+    corpus's live dumps and edits of them.  Any bash runs it (a python3
+    heredoc)."""
+
+    def keys(self, layout):
+        if isinstance(layout, dict):
+            path = self.t / "layout.json"
+            path.write_text(json.dumps(layout))
+        else:
+            path = CORPUS / layout / "src.json"
+        lib = functions(BS1 / "bs1-common", "layout_keys")
+        r = subprocess.run([BASH or "bash", "-c", f'{lib}\nlayout_keys "$1" FILE', "x", str(path)], capture_output=True, text=True)
+        self.assertEqual(r.returncode, 0, r.stderr)
+        return r.stdout.splitlines()
+
+    def geli(self):
+        """The freebsd15-geli dump and its provider's partition (vtbd0p3)."""
+        d = json.loads((CORPUS / "freebsd15-geli" / "src.json").read_text())
+        p3 = next(p for p in d["storage"]["disks"][0]["partitions"] if p["name"] == "vtbd0p3")
+        return d, p3
+
+    def test_geli_corpus_names_the_partition(self):
+        self.assertEqual(self.keys("freebsd15-geli"), ["vtbd0p3=FILE"])
+
+    def test_geli_onetime_is_skipped(self):
+        d, p3 = self.geli()
+        p3["geli"]["onetime"] = True
+        self.assertEqual(self.keys(d), [])
+
+    def test_geli_keyfile_only_is_skipped(self):
+        d, p3 = self.geli()
+        p3["geli"].update(keyed_by="keyfile", keyfiles=["/boot/keys/root.key"])
+        self.assertEqual(self.keys(d), [])
+
+    def test_geli_keyfile_and_passphrase_is_listed(self):
+        d, p3 = self.geli()
+        p3["geli"].update(keyed_by="both", keyfiles=["/boot/keys/root.key"])
+        self.assertEqual(self.keys(d), ["vtbd0p3=FILE"])
+
+    def test_geli_slot_1_adds_no_line(self):
+        d, p3 = self.geli()
+        p3["geli"]["keys"] = [0, 1]
+        self.assertEqual(self.keys(d), ["vtbd0p3=FILE"])
+
+    def test_geli_content_without_a_record_is_listed(self):
+        d, p3 = self.geli()
+        del p3["geli"]
+        self.assertEqual(p3["content"]["type"], "geli")
+        self.assertEqual(self.keys(d), ["vtbd0p3=FILE"])
+
+    def test_geli_whole_disk_is_listed(self):
+        d, p3 = self.geli()
+        rec = dict(p3["geli"], provider="vtbd1.eli")
+        d["storage"]["disks"].append({"name": "vtbd1", "content": dict(p3["content"]), "geli": rec, "partitions": []})
+        self.assertEqual(self.keys(d), ["vtbd0p3=FILE", "vtbd1=FILE"])
+
+    def test_luks_corpus_unchanged(self):
+        for name, want in [("ubuntu26-luks", "dm_crypt-0"), ("pikaos4-luks", "crypt_root"), ("chimera-uefi", "cryptroot"),
+                           ("debian13-stack", "md1_crypt"), ("gentoo-systemd", "cryptroot"), ("omarchy", "root")]:
+            with self.subTest(name):
+                self.assertEqual(self.keys(name), [f"{want}=FILE"])
+
+    def test_zfs_encryption_corpus_unchanged(self):
+        # rpool's key is raw (from the LUKS keystore): only the keystore asks.
+        self.assertEqual(self.keys("ubuntu26-zfsmirror"), ["keystore-rpool=FILE"])
+
+    def test_zfs_passphrase_root_is_listed(self):
+        d = json.loads((CORPUS / "ubuntu26-zfsmirror" / "src.json").read_text())
+        for ds in d["storage"]["zfs"]["tools"]["datasets"]:
+            if ds["name"] == "rpool":
+                ds.update(keyformat="passphrase", keylocation="prompt")
+            elif ds.get("encryptionroot") == "rpool":
+                ds["keyformat"] = "passphrase"
+        self.assertEqual(self.keys(d), ["keystore-rpool=FILE", "rpool=FILE"])
 
 
 if __name__ == "__main__":

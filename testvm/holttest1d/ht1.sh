@@ -389,14 +389,17 @@ vm_down() { local key=$1
     kill -9 $(ht_qemus "$R") 2>/dev/null; sleep 1
 }
 # The restored machine's health (README step 4): one line per check, FAIL
-# lines for those that fail, exit 1 if any did.
-HEALTH='f=0; no() { echo "FAIL $*"; f=1; }
-findmnt --verify >/dev/null 2>&1 && echo "fstab verifies" || no "findmnt --verify: $(findmnt --verify 2>&1 | grep -iE "error|warn" | head -2 | tr "\n" " ")"
-m=0; for t in $(awk "\$1 !~ /^#/ && \$2 ~ /^\// && \$4 !~ /noauto/ {print \$2}" /etc/fstab); do mountpoint -q "$t" && m=$((m + 1)) || no "fstab mount $t not mounted"; done; echo "$m fstab mounts mounted"
+# lines for those that fail, exit 1 if any did.  A check whose tool is
+# missing never ran: "MISSING-TOOL name", which the source can't excuse.
+HEALTH='f=0; no() { echo "FAIL $*"; f=1; }; gone() { echo "MISSING-TOOL $1"; f=1; }
+if command -v findmnt >/dev/null; then findmnt --verify >/dev/null 2>&1 && echo "fstab verifies" || no "findmnt --verify: $(findmnt --verify 2>&1 | grep -iE "error|warn" | head -2 | tr "\n" " ")"; else gone findmnt; fi
+if command -v mountpoint >/dev/null; then m=0; for t in $(awk "\$1 !~ /^#/ && \$2 ~ /^\// && \$4 !~ /noauto/ {print \$2}" /etc/fstab); do mountpoint -q "$t" && m=$((m + 1)) || no "fstab mount $t not mounted"; done; echo "$m fstab mounts mounted"; else gone mountpoint; fi
 [ "$(grep -c . /proc/swaps)" -gt 1 ] && echo "swap on" || no "no swap"
-if command -v zpool >/dev/null && [ -n "$(zpool list -H -o name 2>/dev/null)" ]; then zpool status -x | grep -q "all pools are healthy" && echo "zpool healthy" || no "zpool status -x: $(zpool status -x | head -3 | tr "\n" " ")"; fi
-[ -r /proc/mdstat ] && for a in $(awk "/^md/ {print \$1}" /proc/mdstat); do st=$(mdadm --detail /dev/$a | sed -n "s/^ *State : *//p" | sed "s/ *$//"); case $st in clean|active|"active, resyncing"|"clean, resyncing") echo "$a $st" ;; "clean, degraded"|"active, degraded") [ "${DEGRADED:-0}" = 1 ] && echo "$a $st" || no "$a: $st" ;; *) no "$a: $st" ;; esac; done
-[ -f /etc/crypttab ] && for c in $(awk "\$1 !~ /^#/ && NF {print \$1}" /etc/crypttab); do cryptsetup status "$c" 2>/dev/null | grep -q "is active" && echo "$c open" || no "LUKS $c not open"; done
+if command -v zpool >/dev/null && [ -n "$(zpool list -H -o name 2>/dev/null)" ]; then zpool status -x | grep -q "all pools are healthy" && echo "zpool healthy" || no "zpool status -x: $(zpool status -x | head -3 | tr "\n" " ")"; elif awk "\$3 == \"zfs\"" /proc/mounts | grep -q .; then command -v zpool >/dev/null && no "ZFS mounted, zpool lists no pool" || gone zpool; fi
+[ -r /proc/mdstat ] && grep -q "^md" /proc/mdstat && ! command -v mdadm >/dev/null && gone mdadm
+[ -r /proc/mdstat ] && command -v mdadm >/dev/null && for a in $(awk "/^md/ {print \$1}" /proc/mdstat); do st=$(mdadm --detail /dev/$a | sed -n "s/^ *State : *//p" | sed "s/ *$//"); case $st in clean|active|"active, resyncing"|"clean, resyncing") echo "$a $st" ;; "clean, degraded"|"active, degraded") [ "${DEGRADED:-0}" = 1 ] && echo "$a $st" || no "$a: $st" ;; *) no "$a: $st" ;; esac; done
+[ -f /etc/crypttab ] && awk "\$1 !~ /^#/ && NF" /etc/crypttab | grep -q . && ! command -v cryptsetup >/dev/null && gone cryptsetup
+[ -f /etc/crypttab ] && command -v cryptsetup >/dev/null && for c in $(awk "\$1 !~ /^#/ && NF {print \$1}" /etc/crypttab); do cryptsetup status "$c" 2>/dev/null | grep -q "is active" && echo "$c open" || no "LUKS $c not open"; done
 ls /var/log/bko-holt/load.log >/dev/null 2>&1 && echo "load log kept" || no "/var/log/bko-holt/load.log missing"
 exit $f'
 # Boot state: line 1 systemd's overall state (or the init system's name),
@@ -1335,7 +1338,8 @@ PY
     fi
     if [[ ${HT_QUICK:-} != 1 ]]; then
     load_step 0 dry-partition "${map[@]}" "${flags[@]}" --only partition
-    if sshk "$rkey" 'test -z "$(wipefs -n /dev/vdb)"'; then ok "nothing written without --commit"; else bad "vdb was written without --commit"; fi
+    if ! sshk "$rkey" 'command -v wipefs >/dev/null'; then bad "no wipefs on the rescuer (or ssh failed): can't check vdb was left unwritten without --commit"
+    elif sshk "$rkey" 'o=$(wipefs -n /dev/vdb) && test -z "$o"'; then ok "nothing written without --commit"; else bad "vdb was written without --commit (or wipefs -n failed)"; fi
     sshk "$rkey" "$edges" > "$R/logs/edges-after.txt" 2>&1
     if [[ -s $R/logs/edges-before.txt ]] && cmp -s "$R/logs/edges-before.txt" "$R/logs/edges-after.txt"; then
         ok "the refusals and the dry run left every target's and the decoy's first and last MiB as they were"
@@ -1461,7 +1465,8 @@ phase_verify() {
     [[ $VARIANT != bs2 ]] || bs2_restored_probe "$gkey"
     # A check that failed on the source too isn't the restore's doing.
     sshk "$gkey" "$HEALTH" > "$R/logs/restored-health.txt" 2>&1
-    local worse; worse=$(comm -13 <(grep '^FAIL' "$R/logs/source-health.txt" 2>/dev/null | sort) <(grep '^FAIL' "$R/logs/restored-health.txt" | sort))
+    # MISSING-TOOL: a check that never ran, a FAIL whatever the source said.
+    local worse; worse=$(comm -13 <(grep '^FAIL' "$R/logs/source-health.txt" 2>/dev/null | sort) <(grep '^FAIL' "$R/logs/restored-health.txt" | sort); grep '^MISSING-TOOL' "$R/logs/restored-health.txt")
     if [[ -z $worse ]] && grep -q 'load log kept' "$R/logs/restored-health.txt"; then
         ok "health: $(grep -v '^FAIL' "$R/logs/restored-health.txt" | tr '\n' ',' | sed 's/,$//; s/,/, /g')$(grep -q '^FAIL' "$R/logs/restored-health.txt" && echo "; as on the source: $(grep '^FAIL' "$R/logs/restored-health.txt" | tr '\n' ' ')")"
     else

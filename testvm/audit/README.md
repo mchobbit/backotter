@@ -19,6 +19,34 @@ themselves (never into `~/backotter-work/testvm` or `stick`, which belong to
 | `audited-heads` | The last audited commit of each fork, its date and what audit |
 | `stock-baseline.txt` | The baseline's summary: versions, commits, toolchains, step times, counts, stock's own failures by name |
 
+## Guest tools audit
+
+`guest-tools.sh` lists the tools on each test guest and says what changed
+since the last run: a check that a test's tools (`findmnt`, `wipefs`,
+`getfacl`, `zpool`...) are still there, re-runnable after `vm-update` or a
+rebuild.  It runs on Chopin, from `~/backotter-work/testvm/audit/`:
+
+```
+guest-tools.sh [-j JOBS] [-n] [GUEST ...]     # default: every guest, 3 at once
+guest-tools.sh --diff OLD.txt NEW.txt         # two listings' +/- tools
+```
+
+- Each guest boots as a throwaway copy (`compare/guest-run.sh`, `--ram`)
+  under `cmp-run.sh --reserve 1 5` (`RESERVE="D M"` changes it),
+  `WEAR_TAG=audit:gt-YYYYMMDD:GUEST`, and runs `probe.sh`, which prints an
+  `exe DIR NAME` line per executable on the usual bin dirs, `os` lines and
+  `end`.  Ports 2700-2779 only, one set per job slot.
+- omarchy and ubuntu26-zfsmirror (a `luks-passphrase` or `zfs-passphrase`
+  file) are read instead: `sudo vm-mount --ro --key FILE`, `probe.sh` under
+  `chroot`, `vm-umount`.
+- Never probed: sculpt2610, redox, freebsd15-builder, haiku6*, iso, old.
+- Out: `~/backotter-work/audit/guest-tools/YYYYMMDD/GUEST.txt` (the
+  listing) and `GUEST.log`; a listing that doesn't end with `end` (or has no
+  `exe` line) is a failed probe, kept as `GUEST.failed.txt` and never
+  compared.  The report gives each guest's tool count and the `+`/`-` tools
+  against its newest listing in an earlier dated dir; exit 1 if any probe
+  failed.
+
 ## What runs where
 
 restic (Go) runs on Chopin; rustic_core, then rustic, on Cinqcent; the two

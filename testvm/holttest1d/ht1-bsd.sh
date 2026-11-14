@@ -471,20 +471,22 @@ vm_down() { local key=$1
     kill -9 $(ht_qemus "$R") 2>/dev/null; sleep 1
 }
 
-HEALTH='f=0; no() { echo "FAIL $*"; f=1; }
+# A check whose tool is missing never ran: "MISSING-TOOL name", which the
+# source can't excuse.
+HEALTH='f=0; no() { echo "FAIL $*"; f=1; }; gone() { echo "MISSING-TOOL $1"; f=1; }
 m=0; for t in $(awk "\$1 !~ /^#/ && \$2 ~ /^\// && \$3 != \"swap\" && \$4 !~ /noauto/ {print \$2}" /etc/fstab); do mount | sed -e "s/ type [^ ]* (.*//" -e "s/ (.*//" -e "s/^.* on //" | grep -qx "$t" && m=$((m + 1)) || no "fstab mount $t not mounted"; done; echo "$m fstab mounts mounted"
 if grep -qE "^[^#].*[[:space:]]swap[[:space:]]" /etc/fstab; then [ "$(swapctl -l | grep -c /dev/)" -gt 0 ] && echo "swap on" || no "no swap"; fi
-if command -v zpool >/dev/null && [ -n "$(zpool list -H -o name 2>/dev/null)" ]; then zpool status -x | grep -q "all pools are healthy" && echo "zpool healthy" || no "zpool status -x: $(zpool status -x | head -3 | tr "\n" " ")"; fi
+if command -v zpool >/dev/null && [ -n "$(zpool list -H -o name 2>/dev/null)" ]; then zpool status -x | grep -q "all pools are healthy" && echo "zpool healthy" || no "zpool status -x: $(zpool status -x | head -3 | tr "\n" " ")"; elif mount | grep -qE "\\(zfs[,)]| type zfs "; then command -v zpool >/dev/null && no "ZFS mounted, zpool lists no pool" || gone zpool; fi
 ls /var/log/bko-holt/load.log >/dev/null 2>&1 && echo "load log kept" || no "/var/log/bko-holt/load.log missing"
 exit $f'
 
 # illumos has /etc/vfstab, not fstab: mount point $3, type $4, mount at boot
 # $6; `mount -p` lists what's mounted in that format.
 if [[ $PLAT == illumos ]]; then
-    HEALTH='f=0; no() { echo "FAIL $*"; f=1; }
+    HEALTH='f=0; no() { echo "FAIL $*"; f=1; }; gone() { echo "MISSING-TOOL $1"; f=1; }
 m=0; for t in $(awk "\$1 !~ /^#/ && \$3 ~ /^\// && \$4 != \"swap\" && \$6 == \"yes\" {print \$3}" /etc/vfstab); do mount -p | awk "{print \$3}" | grep -qx "$t" && m=$((m + 1)) || no "vfstab mount $t not mounted"; done; echo "$m vfstab mounts mounted"
 if awk "\$1 !~ /^#/ && \$4 == \"swap\"" /etc/vfstab | grep -q .; then [ "$(swap -l 2>/dev/null | grep -c /dev/)" -gt 0 ] && echo "swap on" || no "no swap"; fi
-if command -v zpool >/dev/null && [ -n "$(zpool list -H -o name 2>/dev/null)" ]; then zpool status -x | grep -q "all pools are healthy" && echo "zpool healthy" || no "zpool status -x: $(zpool status -x | head -3 | tr "\n" " ")"; fi
+if command -v zpool >/dev/null && [ -n "$(zpool list -H -o name 2>/dev/null)" ]; then zpool status -x | grep -q "all pools are healthy" && echo "zpool healthy" || no "zpool status -x: $(zpool status -x | head -3 | tr "\n" " ")"; elif mount -p | awk "\$4 == \"zfs\"" | grep -q .; then command -v zpool >/dev/null && no "ZFS mounted, zpool lists no pool" || gone zpool; fi
 ls /var/log/bko-holt/load.log >/dev/null 2>&1 && echo "load log kept" || no "/var/log/bko-holt/load.log missing"
 exit $f'
 fi
@@ -1121,7 +1123,8 @@ phase_verify() {
         bad "boot state: source $(tr '\n' ' ' < "$R/logs/source-bootstate.txt"), restored $(tr '\n' ' ' < "$R/logs/restored-bootstate.txt")"
     fi
     sshk "$gkey" "$HEALTH" > "$R/logs/restored-health.txt" 2>&1
-    local newfails; newfails=$(grep '^FAIL' "$R/logs/restored-health.txt" | grep -vxFf <(grep '^FAIL' "$R/logs/source-health.txt" 2>/dev/null) || true)
+    # MISSING-TOOL: a check that never ran, a FAIL whatever the source said.
+    local newfails; newfails=$({ grep '^FAIL' "$R/logs/restored-health.txt" | grep -vxFf <(grep '^FAIL' "$R/logs/source-health.txt" 2>/dev/null); grep '^MISSING-TOOL' "$R/logs/restored-health.txt"; } || true)
     if [[ -z $newfails ]]; then ok "health: $(grep -v '^FAIL' "$R/logs/restored-health.txt" | tr '\n' ',' | sed 's/,$//; s/,/, /g')"; else bad "health: $(tr '\n' ' ' <<<"$newfails")"; fi
     put "$gkey" "$HOLT" /tmp/bko-holt
     sshk "$gkey" /tmp/bko-holt dump > "$R/dumps/restored.json" 2> "$R/logs/restored-dump.err" || bad "dump of the restored system: $(tail -1 "$R/logs/restored-dump.err")"

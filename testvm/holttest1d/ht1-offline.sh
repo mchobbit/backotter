@@ -302,7 +302,8 @@ phase_rebuild() {
         return
     fi
     load_step 0 dry-partition --map vdb=vdb --only partition
-    if sshk 'test -z "$(wipefs -n /dev/vdb)"'; then ok "nothing written without --commit"; else bad "vdb was written without --commit"; fi
+    if ! sshk 'command -v wipefs >/dev/null'; then bad "no wipefs on the rescuer (or ssh failed): can't check vdb was left unwritten without --commit"
+    elif sshk 'o=$(wipefs -n /dev/vdb) && test -z "$o"'; then ok "nothing written without --commit"; else bad "vdb was written without --commit (or wipefs -n failed)"; fi
     sshk "$edges" > "$R/logs/edges-after.txt" 2>&1
     if [[ -s $R/logs/edges-before.txt ]] && cmp -s "$R/logs/edges-before.txt" "$R/logs/edges-after.txt"; then
         ok "the refusals and the dry run left every target's and the decoy's first and last MiB as they were"

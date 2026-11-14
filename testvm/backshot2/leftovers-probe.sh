@@ -78,11 +78,18 @@ probe|restored)
     echo "SUMMARY ${s:- nothing active, nothing importable}" ;;
 
 after)
+    # Without wipefs no STALE line could show: a WRONG line, not a clean run.
+    if ! has wipefs; then
+        echo "WRONG ${disk#/dev/}: no wipefs here, the old signatures can't be read"
+        echo "leftovers-probe: after needs wipefs" >&2
+        exit 2
+    fi
     for want in "$@"; do
         n=${want%%:*} t=${want#*:}
         p=$disk$n
         [ -e "$p" ] || { echo "WRONG ${p#/dev/}: no such partition (the layout's $t)"; continue; }
-        sigs=$(wipefs --noheadings -O TYPE "$p" 2>/dev/null | sort -u | tr '\n' ' ')
+        raw=$(wipefs --noheadings -O TYPE "$p" 2>&1) || { echo "WRONG ${p#/dev/}: wipefs failed: $(echo "$raw" | head -1)"; continue; }
+        sigs=$(echo "$raw" | sort -u | tr '\n' ' ')
         echo "== $p: wipefs: $sigs"
         wipefs "$p" 2>&1
         for s in $sigs; do

@@ -16,6 +16,10 @@ bs1-ostree space TREE            each btrfs filesystem's bytes in use
 bs1-ostree boot-check BASELINE   which of the baseline's deployments booted,
                                  checked against its record; exit 1 if wrong
 
+A tool these read (lsattr, getenforce, ostree, rpm-ostree, findmnt,
+grub2-editenv; not bootupctl) not installed: exit 2, naming it, rather than
+a "-" that would match the other side's.
+
 TREE is BackShot1's fstab tree (bs1-common's make_tree): the physical root,
 with /boot, /home and /var as fstab mounts them.  BASELINE is a run's
 baseline/deployments.txt.  The record's keys:
@@ -55,10 +59,23 @@ import ostree_paths  # noqa: E402
 SYSROOT = "/sysroot"
 
 
+# Tools a record may lack: "-" is its documented value then.
+OPTIONAL_TOOLS = {"bootupctl"}
+
+
+class MissingTool(Exception):
+    """A tool the records need isn't installed: its "-" on both sides would match."""
+
+
 def out(cmd):
-    """CMD's output, or None if it can't run or fails."""
+    """CMD's output, or None if it fails.  A CMD not installed raises
+    MissingTool, but for OPTIONAL_TOOLS (None)."""
     try:
         r = subprocess.run(cmd, capture_output=True, text=True, errors="replace")
+    except FileNotFoundError:
+        if cmd[0] in OPTIONAL_TOOLS:
+            return None
+        raise MissingTool(f"{cmd[0]} is not installed: bs1-ostree needs it ({' '.join(cmd)})")
     except OSError:
         return None
     return r.stdout if r.returncode == 0 else None
@@ -309,6 +326,14 @@ def main(argv):
         for p in problems:
             print(p)
         return 1 if problems else 0
+    try:
+        return run(argv)
+    except MissingTool as e:
+        print(f"bs1-ostree {argv[0] if argv else ''}: {e}", file=sys.stderr)
+        return 2
+
+
+def run(argv):
     if len(argv) == 2 and argv[0] in ("record", "links", "space"):
         for line in {"record": record, "links": links, "space": space}[argv[0]](argv[1]):
             print(line)

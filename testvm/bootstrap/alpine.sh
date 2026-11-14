@@ -42,7 +42,7 @@ fi
 [[ -z $VG ]] || boot_packages+=(lvm2)
 [[ -z $LUKS_PART ]] || boot_packages+=(cryptsetup)
 in_alpine apk add --no-progress alpine-base linux-lts linux-firmware-none mkinitfs \
-    grub "${boot_packages[@]}" openssh e2fsprogs xfsprogs chrony
+    grub "${boot_packages[@]}" openssh e2fsprogs xfsprogs chrony findmnt
 check_root_module "$(echo /mnt/lib/modules/*)"
 
 genfstab -U /mnt | grep -v '^#' >/mnt/etc/fstab

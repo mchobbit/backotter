@@ -584,6 +584,12 @@ print(d[0]["checksum"] if d else "")' "$1"
     # t2-section: Linux.apk
     elif has apk; then
         apk upgrade -U || exit 1
+        # Alpine: findmnt (util-linux's), which busybox lacks and HoltTest's
+        # health check runs.  Installed only when missing (pkgset.sh's
+        # listing shows the change).
+        if grep -qs '^ID=alpine$' /etc/os-release && ! apk info -e findmnt >/dev/null 2>&1; then
+            apk add findmnt || exit 1
+        fi
     # t2-section: Linux.moss
     elif has moss; then
         # AerynOS: each sync makes a new state and keeps the ones before it

@@ -69,10 +69,12 @@
 #   rt_dot DIR
 #             DIR's own metadata, one line each: its flags (but on
 #             illumos), mode and owner; its atime; its mtime (to the
-#             nanosecond); its ACL and default ACL (getfacl -n, where there
-#             is one; ls -dV on illumos), its system attributes (illumos:
-#             ls -d/v) and its extended attributes (name and MD5 of the
-#             value: lsextattr in both namespaces, runat on illumos).  The
+#             nanosecond); its ACL and default ACL (getfacl -n; ls -dV on
+#             illumos), its system attributes (illumos: ls -d/v) and its
+#             extended attributes (name and MD5 of the value: lsextattr in
+#             both namespaces, runat on illumos); neither on OpenBSD or
+#             DragonFly, elsewhere a "missing-tool NAME" line (and status
+#             1) for a tool not there.  The
 #             stat(1) lines come first, and stat reads nothing; reading the
 #             ACLs and extended attributes may move the atime where atimes
 #             are on, so an exact check needs DIR's file system noatime.  BSD
@@ -407,10 +409,17 @@ rt_dot() {  # DIR
     stat -f 'flags %Xf mode %Mp%Lp owner %u:%g' "$1"
     stat -f 'atime %Fa' "$1"
     stat -f 'mtime %Fm' "$1"
+    # OpenBSD and DragonFly have no ACLs or extended attributes (nor the
+    # tools): nothing to read, so no lines.  Elsewhere (FreeBSD, NetBSD) a
+    # missing tool is a "missing-tool" line, which rt_dot_check fails.
+    case $(uname -s) in OpenBSD|DragonFly) rt_noea=1 ;; *) rt_noea="" ;; esac
+    rt_st=0
     # Where there are none, the same message both times.
     if command -v getfacl >/dev/null 2>&1; then
         getfacl -n "$1" 2>&1 | sed 's/^/acl /'
         getfacl -n -d "$1" 2>&1 | sed 's/^/default acl /'
+    elif [ -z "$rt_noea" ]; then
+        echo "missing-tool getfacl"; echo "rt_dot: no getfacl on $(uname -s)" >&2; rt_st=1
     fi
     if command -v lsextattr >/dev/null 2>&1; then
         for rt_ns in user system; do
@@ -418,8 +427,10 @@ rt_dot() {  # DIR
                 echo "xattr $rt_ns $rt_x $(getextattr -q -x $rt_ns "$rt_x" "$1" | md5)"
             done
         done
+    elif [ -z "$rt_noea" ]; then
+        echo "missing-tool lsextattr"; echo "rt_dot: no lsextattr on $(uname -s)" >&2; rt_st=1
     fi
-    return 0
+    return $rt_st
 }
 
 rt_dot_check() {  # BEFORE AFTER [forward|forward-mtime]
@@ -432,6 +443,10 @@ rt_dot_check() {  # BEFORE AFTER [forward|forward-mtime]
         grep -E -q '^(flags [0-9a-fA-F]+ )?mode [0-7]+ owner [0-9]+:[0-9]+$' "$rt_f" ||
             { echo "  no flags, mode and owner recorded in $rt_f"; rt_s=1; }
     done
+    # A tool rt_dot needed and lacked: the same nothing on both sides isn't a match.
+    if grep -q '^missing-tool ' "$1" "$2"; then
+        echo "  $(grep -h '^missing-tool ' "$1" "$2" | sort -u | tr '\n' ' ')(ACLs or extended attributes not read)"; rt_s=1
+    fi
     grep -v -e '^atime ' -e '^mtime ' "$1" >$rt_tmp/bko-rt.dot.1
     grep -v -e '^atime ' -e '^mtime ' "$2" >$rt_tmp/bko-rt.dot.2
     diff $rt_tmp/bko-rt.dot.1 $rt_tmp/bko-rt.dot.2 || rt_s=1

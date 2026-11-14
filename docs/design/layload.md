@@ -856,17 +856,24 @@ Per platform:
   features, last changed 2025-01-13), and OpenIndiana Hipster builds from
   gate master, so an OpenIndiana pool's features are all the image's.  The
   illumos loader's `features_for_read` covers all 27, so a pool load makes
-  boots on OpenIndiana too.  OpenIndiana is a supported source since
-  2026-11-14 (docs/design/openindiana.md), with this image as its rescuer.
+  boots on OpenIndiana too.  The OpenIndiana guests' dumps bear it out:
+  oi2610's rpool has the same 27 features, and oi2610-bios's (from OI's
+  cloud image) has all 27 disabled.  OpenIndiana is a supported source
+  since 2026-11-14 (docs/design/openindiana.md), with this image as its
+  rescuer.
   One difference shows at the boot stage: OmniOS's `bootadm
   update-archive` remakes `etc/versions/build` from `build.*` fragments
-  and deletes it when there are none, as on OpenIndiana, so load gives it
-  a fragment of itself for the run (its mtime kept).  When illumos gets a feature the image lacks, the plan check says
-  so and the image moves to the OmniOS release that has it.
+  and deletes it when there are none, as on OpenIndiana, so load gives
+  it a fragment of itself for the run (its mtime kept).  When
+  illumos gets a feature the image lacks, the plan check says so and the
+  image moves to the OmniOS release that has it.
 - **FreeBSD**: 15.1-RELEASE (OpenZFS 2.4).  FreeBSD 14 is older; FreeBSD
   15.1 and GhostBSD 26.2 are on 15.1-RELEASE.  HardenedBSD 15 follows
-  15-STABLE, which could take a newer OpenZFS than 15.1-RELEASE: then the
-  plan check refuses, and the image moves to the next FreeBSD release.
+  15-STABLE, whose `zfeature_common.c` is still 15.1's (47 features), so
+  its pools fit too.  FreeBSD 16-CURRENT already has two more (`anyraid`,
+  `draid_failure_domains`): a pool from it, or from a later 15-STABLE that
+  takes them, gets the plan check's problem, and the image moves to the
+  FreeBSD release that has them.
 - NetBSD, OpenBSD and DragonFly have no ZFS root to restore (DragonFly's is
   HAMMER2; NetBSD's ZFS isn't a root in any guest).
 
@@ -875,8 +882,13 @@ images (gen 20261112, bko-holt 0.2.4), on Chopin and on Cinqcent:
 ubuntu24, freebsd14 and omnios58 each PASS on both, the restored disk
 booting by itself, its dump agreeing with the source's, and each pool's
 enabled-and-active feature set the source's exactly (rpool 39, zroot 39,
-rpool 27), none newly active.  The plan check is unit-tested in
-`load/plan.rs` and reaches the images with their next build.
+rpool 27), none newly active; ghostbsd26-zfs too (zroot's 47 feature
+states identical).  The plan check is unit-tested in `load/plan.rs`; given
+a ubuntu24 dump with two invented features and `compatibility=grub2,` plus
+a file no system has, a bko-holt from main names all three, and the
+unedited dump gets none.  Round trips with that bko-holt in the standard
+rescuers PASS too (ubuntu24 on both hosts, omnios58 on Cinqcent), and the images get the check with their next build
+(ImgTest2's panel has a ZFS root on each platform).
 
 ## Encryption
 

@@ -3,8 +3,9 @@ kept off an image-cache host (hosts.json: not a fleet host) whose vms/ lacks a g
 boots, off a host with no OpenZFS for a source vm-mount reads on ZFS (classes.json
 holt.needs_host_zfs), and off a host without HoltTest's rescuer or debs (facts' caps).  A cell no
 host can run says why.  The identity step compares only the hosts that hold a guest: a cache
-that lacks it neither vouches for nor condemns it.  Old facts (no caps) check nothing of it, and
-a fleet host that lacks a guest keeps the cell as before.  No host needed."""
+that lacks it, or holds it at another generation than the fleet's (tests/test_identity_stale.py),
+neither vouches for nor condemns it.  Old facts (no caps) check nothing of it, and a fleet host
+that lacks a guest keeps the cell as before.  No host needed."""
 
 import json
 import os
@@ -292,9 +293,16 @@ class Identity(unittest.TestCase):
                                    optional={"copland", "cage"})
         self.assertEqual((r["ok"], r["why"]), (False, "copland: no such guest (its vms/ link dangles); cage: no such guest"))
 
-    def test_compare_still_fails_differing_generations(self):
+    def test_compare_leaves_out_a_cache_at_another_generation(self):
+        """A cache whose vms/ link is to an older vm-store version is left out like one that
+        lacks the guest, with "stale:" and the generation it holds; a non-optional host that
+        disagrees still condemns the guest (tests/test_identity_stale.py has the rest)."""
         per = {"chopin": self.info("a"), "copland": self.info("b"), "cage": {"missing": True}}
         r = guest.identity_compare(per, optional={"copland", "cage"})
+        self.assertTrue(r["ok"], r.get("why"))
+        self.assertEqual(r["dropped"], {"cage": "gone", "copland": "stale:b"})
+        per = {"chopin": self.info("a"), "cinqcent": self.info("b"), "copland": self.info("a")}
+        r = guest.identity_compare(per, optional={"copland"})      # cinqcent as a fleet host
         self.assertIs(r["ok"], False)
         self.assertIn("generations differ", r["why"])
 
@@ -324,7 +332,8 @@ class Identity(unittest.TestCase):
         lines = []
         r = guest.identity_check(c, ["g1"], io=io, log=lines.append)
         why = "its vms/ link dangles, gone since facts"
-        self.assertEqual(r, {"g1": {"ok": True, "why": None, "lacking": {"copland": why}}})
+        self.assertEqual(r, {"g1": {"ok": True, "why": None, "dropped": {"copland": "dangles"},
+                                    "lacking": {"copland": why}}})
         self.assertEqual(io.rows, [])                          # no FAIL row
         self.assertEqual(sorted(c.facts["copland"]["guests"]), ["g2"])
         self.assertEqual(c.facts["copland"]["guests_gone"], {"g1": why})
@@ -332,13 +341,16 @@ class Identity(unittest.TestCase):
         self.assertIn(f"guest:g1: copland: no g1 in its vms/ ({why}): its stic and holt cells stay off copland", lines)
 
     def test_check_cache_with_no_guests_part_lacking_it(self):
-        """Old facts (no guests part): asked without knowing; the cache is left out, facts untouched."""
+        """Old facts (no guests part): asked without knowing; the cache is left out, facts untouched.
+        The result still names it dropped, since a later apply_drops on facts of the same shape
+        has nothing to take out either."""
         io = TG.FakeIO()
         real = io.identity
         io.identity = lambda host, g, args: {"missing": True} if host == "copland" else real(host, g, args)
         c = self.ctx(("chopin", "copland"), {"chopin": ["g1"]})
         c.facts["copland"] = {}
-        self.assertEqual(guest.identity_check(c, ["g1"], io=io), {"g1": {"ok": True, "why": None}})
+        self.assertEqual(guest.identity_check(c, ["g1"], io=io),
+                         {"g1": {"ok": True, "why": None, "dropped": {"copland": "gone"}}})
         self.assertEqual(c.facts["copland"], {})
 
     def test_check_no_holder_at_all_fails(self):

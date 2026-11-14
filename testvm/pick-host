@@ -1,0 +1,550 @@
+#!/usr/bin/env python3
+"""Which KVM test host has room for a job right now.
+
+Usage: pick-host [OPTIONS]
+
+The four amd64 hosts (testvm/hosts.json) are not interchangeable and not
+equally busy: the big ones queue for hours while the small ones idle, and
+nothing tells a session where to put its next run.  pick-host asks every
+candidate host, over one ssh each, in parallel, what room it has
+(`cmp-run.sh --free`, which writes nothing there), what it could ever hold
+(`--ceiling`), how loaded it is, which guests it has, and which HoltTest
+inputs; then it prints the host to use.  Nothing is started: the answer goes
+in your own command.
+
+    cd ~/git/backotter
+    H=$(testvm/pick-host --reserve 8 5 --guest debian13 --needs debs) &&
+      ssh "$H" 'cd ~/backotter-work && ...'
+
+The figures are a moment old, and only a `cmp-run.sh --reserve` of its own
+holds any room: another session may take it first.  pick-host is advice, not
+a lock.
+
+Candidates are the table's default, enabled hosts of the guests'
+architecture (hosts.py guest_arch: a guest named *-arm64 is arm64, every
+other amd64, and a run of amd64 guests never considers Bigfoot), unless
+--hosts names rows itself, when a non-default row is taken as given too.  A
+reserved row (enabled false) is no host to name, and the architecture is
+worked out from --guest whatever --hosts says: a named host of the other
+architecture is dropped with its reason, not probed.  A candidate is
+dropped, with a reason, when it
+
+  - doesn't answer (ssh failed, timed out, or the probe didn't finish);
+  - is of another architecture than the guests, or its `uname -m` disagrees
+    with its row;
+  - can hold no job at all: its `cmp-run.sh --ceiling` failed, and the
+    reason is what it said (no tmpfs at /mnt/bko-ram, say, which is not the
+    same as having no room right now);
+  - lacks one of --needs (zfs, rescuer, rescuer-uefi, debs: the caps
+    t2lib/facts_host.py records, and the checks ht1-queue.sh makes);
+  - lacks one of --guest (no ~/backotter-work/vms/GUEST/*.qcow2: a small
+    host's cache holds the published guests only);
+  - has a ceiling under --reserve, so the job can never fit there, however
+    long one waits (cmp-run.sh refuses such a --reserve at once).
+
+The rest are ranked: the hosts where --reserve fits in their free room now
+come first, so a job that can start starts; then by capacity (how many times
+over the reserve fits, min(free disk / D, free memory / M)), then by the
+lowest load per core.  A host with the fleet or store-mirror role (Chopin) is
+ranked as if its load were LOAD_PENALTY higher: it holds the fleet, talks to
+Bigfoot and the store, every session reaches for it by habit, and its cooler
+is the weakest of the four.  A host that answers but whose cmp-run.sh is too
+old to know --free (the probe looks for the option in the script before it
+asks, since an old one would take --free for a queue TAG and make the
+ledger's files) has no free room to rank by: it keeps its place as a
+candidate, last, with a note to sync testvm/ there.
+
+Exit 0 when a host is printed.  That is the best candidate, which is not
+always one the job fits in right now: when nothing fits, the roomiest host
+that could ever hold it is printed anyway, and the job waits its turn in that
+host's cmp-run.sh line (--json says which, in fits_now).  Exit 1 when every
+candidate was dropped, or there was no candidate at all (each reason on
+stderr), 2 on bad usage.
+
+Options:
+  --reserve D M   the job's cmp-run.sh --reserve figures, GiB of RAM disk and
+                  of memory (default none: hosts are ranked by the room they
+                  have, and only a host with no room at all counts as full)
+  --guest G       a guest the job boots; repeatable, comma-separated.  Its
+                  image must be on the host, and its name sets the
+                  architecture of the candidates
+  --needs N       zfs, rescuer, rescuer-uefi or debs; repeatable,
+                  comma-separated
+  --class C       only hosts of class C (big, small)
+  --hosts H,H     these hosts instead of the table's default ones
+  --exclude H,H   not these hosts
+  --count N       the N best hosts, one a line, best first
+  --all           every candidate that was not dropped, best first
+  --json          the whole probe, the ranking and every dropped host's
+                  reasons, as JSON (on stdout, whatever the exit status, the
+                  same keys even when there is no candidate or the table is
+                  bad: "error" then says why.  Only argparse's own usage
+                  errors, which come before --json is known, are plain text)
+  --field F       what to print: ssh (the row's USER@HOST, the default) or
+                  name (the table's short name, for --hosts of other tools)
+  --timeout S     seconds for one host's whole probe (default 20): the budget
+                  covers both the row's ssh destination and its ip fallback
+                  together, and a destination that runs it out ends that
+                  host's probe
+
+Needs python3 3.9 or newer, stdlib only; it runs under `python3 -I -B`.  The
+probe and the ranking are separate (probe_hosts() and rank(), which takes the
+parsed probes as plain dicts), so tests check the ranking without a host:
+testvm/test2/tests/test_pick_host.py.
+"""
+
+import argparse
+import concurrent.futures
+import importlib.util
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+import time
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+# A host with one of these roles is the busy, shared one (Chopin: the fleet, the
+# store mirror and the Bigfoot link), so its load counts as LOAD_PENALTY higher.
+SHARED_ROLES = ("fleet", "store-mirror")
+LOAD_PENALTY = 4.0
+NEEDS = {"zfs": "zfs", "rescuer": "rescuer", "rescuer-uefi": "rescuer-uefi", "debs": "debs"}
+FIELDS = ("ssh", "name")
+# The reserve the capacity score uses when there is none to go by: a host's score is
+# then the smaller of its free GiB, so the roomiest host wins.
+SCORE_FLOOR = 1.0
+
+
+def _host_table():
+    """testvm/test2/t2lib/hosts.py, the loader of the host table testvm/hosts.json, by its
+    path (as drive.py, vm-update and bs2 load it: nothing here imports t2lib)."""
+    p = os.path.join(HERE, "test2", "t2lib", "hosts.py")
+    if not os.path.isfile(p):
+        raise ImportError(f"pick-host: no host table loader {p} (testvm/hosts.json's)")
+    spec = importlib.util.spec_from_file_location("pick_hosts_table", p)
+    m = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(m)
+    return m
+
+
+# The probe: one sh per host, over ssh, reading only.  It prints "KEY VALUE" lines and
+# "end" last, so a probe cut short (a dropped connection) is told from a host that
+# answered.  cmp-run.sh --free and --ceiling write nothing at all, not even the ledger's
+# files; everything else here is a read of /proc, /bkoscratch or vms/.
+PROBE_SH = r'''
+set -u
+W=$HOME/backotter-work
+L=/bkoscratch/holttest1d
+echo "host $(hostname -s)"
+echo "machine $(uname -m)"
+if [ -x "$W/testvm/compare/cmp-run.sh" ]; then
+    # Both calls report their exit status, and a failing one the line it died
+    # on: cmp-run.sh exits 1 with "no tmpfs at /mnt/bko-ram" before it reads
+    # either option, and a host that can hold no job at all must be told from
+    # one that is merely out of room.  stderr is folded into stdout because
+    # nothing here may write a file (not even /dev/null's neighbours), so the
+    # figures are picked out by shape, from whichever line has them: a login
+    # shell that writes to stderr of its own (the ssh client forwarding LC_*
+    # to a host without the locale, say) must not be read as the answer, nor
+    # make pick-host drop a host that is in fact fine.  A failing call's
+    # reason is its last line, for the same reason: cmp-run.sh says it last.
+    out=$(cd "$W" && testvm/compare/cmp-run.sh --ceiling 2>&1); rc=$?
+    echo "ceiling_rc $rc"
+    if [ "$rc" = 0 ]; then
+        printf '%s\n' "$out" | while read -r a b; do
+            case $a in [0-9]*) echo "ceiling $a $b" ;; esac
+        done
+    else
+        echo "ceiling_err $(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -n 1)"
+    fi
+    # An older cmp-run.sh has no --free at all: it would take "--free" for a
+    # queue TAG and make the ledger's files before dying, so it is asked only
+    # when the script itself knows the option.  Then no "free" line, and
+    # pick-host says to sync testvm/ there.
+    if grep -q -- --free "$W/testvm/compare/cmp-run.sh"; then
+        out=$(cd "$W" && testvm/compare/cmp-run.sh --free 2>&1); rc=$?
+        echo "free_rc $rc"
+        if [ "$rc" = 0 ]; then
+            printf '%s\n' "$out" | while read -r a b; do
+                case $a in
+                waiting) echo "waiting $b" ;;
+                [0-9]*) echo "free $a $b" ;;
+                esac
+            done
+        else
+            echo "free_err $(printf '%s\n' "$out" | grep -v '^[[:space:]]*$' | tail -n 1)"
+        fi
+    fi
+else
+    echo "no-cmp-run $W/testvm/compare/cmp-run.sh"
+fi
+echo "nproc $(nproc 2>/dev/null || echo 1)"
+echo "load $(cut -d' ' -f1 /proc/loadavg 2>/dev/null)"
+echo "memavail_kib $(awk '$1 == "MemAvailable:" { print $2 }' /proc/meminfo 2>/dev/null)"
+# zpool where root's PATH has it, as ht1-queue.sh and facts_host.py look for it (the
+# module alone is not enough: vm-mount needs the binary).
+for p in /usr/sbin/zpool /sbin/zpool /usr/local/sbin/zpool /usr/bin/zpool /bin/zpool; do
+    [ -f "$p" ] && [ -x "$p" ] && { echo "cap zfs"; break; }
+done
+[ -f "$L/rescuer/rescuer.qcow2" ] && echo "cap rescuer"
+[ -f "$L/rescuer/rescuer-uefi.qcow2" ] && echo "cap rescuer-uefi"
+if ls "$L"/bin/f2fs-tools_*.deb >/dev/null 2>&1 && ls "$L"/bin/jfsutils_*.deb >/dev/null 2>&1; then
+    echo "cap debs"
+fi
+# The guests whose image is here (vms/GUEST/*.qcow2, a link into the LRU cache on a
+# small host, followed), as the drivers take it.
+for g; do
+    for q in "$W/vms/$g/"*.qcow2; do [ -f "$q" ] && { echo "vm $g"; break; }; done
+done
+echo end
+'''
+
+
+def parse_probe(text):
+    """The probe's output -> its facts, whatever is missing left out:
+        {"host", "machine", "free": (D, M), "ceiling": (D, M), "waiting": N, "nproc": N,
+         "load": F, "memavail_gib": F, "caps": [...], "vms": [...], "ok": bool,
+         "ceiling_rc": N, "ceiling_err": "...", "free_rc": N, "free_err": "..."}
+    The _rc of each cmp-run.sh call and, when it failed, the line it died on: a host
+    whose --ceiling failed can hold no job at all (no tmpfs at /mnt/bko-ram, say), which
+    is not the same as having no room.  An older probe sends neither, and then the ceiling
+    and the free room are simply missing, as before.
+    ok is False unless the probe finished (its "end" line).  A line that doesn't parse is
+    ignored: an older probe's extra output never makes a host look capable."""
+    out = {"caps": [], "vms": [], "ok": False}
+    for line in str(text or "").splitlines():
+        w = line.split()
+        if not w:
+            continue
+        k, rest = w[0], w[1:]
+        try:
+            if k == "end":
+                out["ok"] = True
+            elif k in ("host", "machine") and len(rest) == 1:
+                out[k] = rest[0]
+            elif k in ("free", "ceiling") and len(rest) == 2:
+                out[k] = (float(rest[0]), float(rest[1]))
+            elif k in ("waiting", "nproc", "ceiling_rc", "free_rc") and len(rest) == 1:
+                out[k] = int(rest[0])
+            elif k in ("ceiling_err", "free_err") and rest:
+                out[k] = " ".join(rest)[:160]
+            elif k == "load" and len(rest) == 1:
+                out["load"] = float(rest[0])
+            elif k == "memavail_kib" and len(rest) == 1:
+                out["memavail_gib"] = round(int(rest[0]) / 1048576.0, 1)
+            elif k == "cap" and len(rest) == 1 and rest[0] in NEEDS:
+                out["caps"].append(rest[0])
+            elif k == "vm" and len(rest) == 1:
+                out["vms"].append(rest[0])
+            elif k == "no-cmp-run" and rest:
+                out["no_cmp_run"] = rest[0]
+        except ValueError:
+            continue
+    return out
+
+
+def ssh_argv(table, host, timeout):
+    """The ssh arguments that reach HOST: its row's ssh destination, or, when the row has
+    an ip, that too, so a host whose mDNS name fails is still probed (drive.py's
+    fallback, decided there by what ssh says; here both are simply tried in turn)."""
+    base = ["ssh", "-T", "-o", "BatchMode=yes", "-o", f"ConnectTimeout={min(6, timeout)}",
+            "-o", "ControlMaster=no", "-o", "ControlPath=none"]
+    dests = [[table.ssh(host)]]
+    alt = table.ssh_fallback(host)
+    if alt:
+        dests.append(alt)
+    return base, dests
+
+
+def probe_one(table, host, guests, timeout):
+    """One host's probe over ssh, read only: its facts (parse_probe), with "error" when it
+    didn't answer.  Never raises.
+
+    TIMEOUT is the whole budget for this host, both its destinations together, so that the
+    ip fallback can't double what --timeout promised: a destination gets what is left of
+    it, and a destination that ran the budget out ends the probe (waiting as long again on
+    the other name would only hold up the hosts that did answer)."""
+    base, dests = ssh_argv(table, host, timeout)
+    cmd = "sh -s -- " + " ".join(shlex.quote(g) for g in guests)
+    last = "no answer"
+    deadline = time.monotonic() + timeout
+    for dest in dests:
+        left = deadline - time.monotonic()
+        if left <= 0:
+            break
+        try:
+            r = subprocess.run(base + dest + [cmd], input=PROBE_SH, capture_output=True,
+                               text=True, timeout=left)
+        except subprocess.TimeoutExpired:
+            last = f"timed out after {timeout}s"
+            break
+        except OSError as e:
+            last = f"ssh: {e}"
+            continue
+        got = parse_probe(r.stdout)
+        if got["ok"]:
+            return got
+        err = (r.stderr or "").strip().splitlines()
+        last = (err[-1][:120] if err else f"the probe did not finish (exit {r.returncode})")
+    return {"ok": False, "caps": [], "vms": [], "error": last}
+
+
+def probe_hosts(table, hosts, guests, timeout=20):
+    """Every host of HOSTS probed at once, one ssh each: {host: facts}."""
+    if not hosts:
+        return {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=len(hosts)) as pool:
+        futures = {h: pool.submit(probe_one, table, h, guests, timeout) for h in hosts}
+        return {h: f.result() for h, f in futures.items()}
+
+
+def num(x):
+    """A GiB figure as cmp-run.sh writes it: 13.0 -> "13", 9.5 -> "9.5"."""
+    return f"{float(x):g}"
+
+
+def fits(room, reserve):
+    """Whether a --reserve (D, M) fits in ROOM (D, M), as cmp-run.sh's fits() does."""
+    return room is not None and room[0] >= reserve[0] and room[1] >= reserve[1]
+
+
+def score_of(free, reserve):
+    """How many times over RESERVE fits in FREE: min(free D / D, free M / M), the capacity
+    to rank roomy hosts by.  A reserve figure of 0 doesn't bind (nothing of that is asked
+    for), and no free room at all scores 0."""
+    if free is None:
+        return 0.0
+    parts = [free[i] / reserve[i] for i in (0, 1) if reserve[i] > 0]
+    return min(parts) if parts else 0.0
+
+
+def rank(probes, reserve=None, guests=(), needs=(), rows=None):
+    """Rank the probed hosts: (ranked, dropped).
+
+    PROBES is {host: parse_probe()'s facts}; ROWS {host: its table row} gives each host's
+    roles and arch (left out: no role counts, and the architecture is not checked).
+    RESERVE is the job's (D, M) or None.  RANKED is a list of {host, fits_now, score,
+    load_per_core, free, ceiling, waiting, load, nproc, note} best first (note_of: what is
+    to be said about a host with no free room to rank by); DROPPED is {host: [reasons]}.
+    This is the whole decision, and it touches nothing: tests call it with plain dicts."""
+    rows = rows or {}
+    res = tuple(reserve) if reserve else (SCORE_FLOOR, SCORE_FLOOR)
+    ranked, dropped = [], {}
+    for host in sorted(probes):
+        p = probes[host] or {}
+        why = []
+        if not p.get("ok"):
+            why.append(p.get("error") or "no answer")
+        else:
+            row = rows.get(host) or {}
+            want_arch = row.get("_want_arch")
+            arch = row.get("arch") or "amd64"
+            machine = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}.get(
+                str(p.get("machine", "")).lower())
+            if want_arch and arch != want_arch:
+                why.append(f"an {arch} host, and the guests are {want_arch}")
+            elif machine and machine != arch:
+                why.append(f"says it is {p.get('machine')} ({machine}), and its row is {arch}")
+            for n in needs:
+                if n not in (p.get("caps") or ()):
+                    why.append({"zfs": "no host OpenZFS (no zpool)",
+                                "rescuer": "no rescuer.qcow2",
+                                "rescuer-uefi": "no rescuer-uefi.qcow2",
+                                "debs": "no f2fs-tools and jfsutils debs"}[n])
+            for g in guests:
+                if g not in (p.get("vms") or ()):
+                    why.append(f"no vms/{g} image")
+            # cmp-run.sh --ceiling failed: it can run no job here at all (it exits 1
+            # with "no tmpfs at /mnt/bko-ram" before it reads the option), so the host
+            # is dropped with what it said, and never printed as the one to use.
+            crc = p.get("ceiling_rc")
+            if crc is not None and crc != 0:
+                why.append(p.get("ceiling_err") or f"cmp-run.sh --ceiling failed (exit {crc})")
+            elif crc is not None and not p.get("ceiling"):
+                why.append("cmp-run.sh --ceiling said no figures")
+            if reserve and p.get("ceiling") and not fits(p["ceiling"], reserve):
+                c = p["ceiling"]
+                why.append(f"--reserve {num(reserve[0])} {num(reserve[1])} is over its "
+                           f"ceiling {num(c[0])} {num(c[1])}")
+            if p.get("no_cmp_run"):
+                why.append(f"no {p['no_cmp_run']}")
+        if why:
+            dropped[host] = why
+            continue
+        free = p.get("free")
+        ranked.append({"host": host, "free": free, "ceiling": p.get("ceiling"),
+                       "waiting": p.get("waiting"), "load": p.get("load"), "nproc": p.get("nproc"),
+                       "fits_now": fits(free, res), "score": round(score_of(free, res), 2),
+                       "load_per_core": round(load_per_core(p, rows.get(host) or {}), 2),
+                       "note": note_of(p)})
+    ranked.sort(key=lambda x: (not x["fits_now"], -x["score"], x["load_per_core"], x["host"]))
+    return ranked, dropped
+
+
+def note_of(p):
+    """A kept host's note, or None: what is to be said about one that answered but has no
+    free room to rank by.  Its ceiling worked (one whose didn't is dropped), so this is
+    either a cmp-run.sh too old to know --free (sync testvm/ there) or a --free that
+    failed, which is said in its own words."""
+    if p.get("free"):
+        return None
+    if p.get("free_err"):
+        return f"its cmp-run.sh --free failed: {p['free_err']}"
+    if p.get("free_rc"):
+        return f"its cmp-run.sh --free failed (exit {p['free_rc']})"
+    return "its cmp-run.sh has no --free (sync testvm/ there)"
+
+
+def load_per_core(probe, row):
+    """A host's load a core, by which equally roomy hosts are ranked: its 1-minute
+    loadavg over its cores, and LOAD_PENALTY more load on the shared host (SHARED_ROLES:
+    Chopin holds the fleet, the store mirror and the Bigfoot link, every session reaches
+    for it first, and its cooler is the weakest), so an idle small host wins a tie."""
+    load = probe.get("load")
+    cores = probe.get("nproc") or 1
+    if load is None:
+        return float("inf")
+    if set(row.get("roles") or ()) & set(SHARED_ROLES):
+        load += LOAD_PENALTY
+    return load / max(1, cores)
+
+
+def split_list(words):
+    """--guest a,b --guest c -> ["a", "b", "c"], each once, in order."""
+    out = []
+    for w in words or ():
+        for item in (x.strip() for x in str(w).split(",")):
+            if item and item not in out:
+                out.append(item)
+    return out
+
+
+def candidates(table, args, guests):
+    """The hosts to probe, in the table's order, the architecture they must be of, and the
+    hosts dropped before any probe: (hosts, arch, dropped).
+
+    --hosts as given (each an enabled row: table.known() has the enabled ones only, so a
+    reserved row is "no such host"), else the default hosts of the guests' architecture.
+    The architecture is worked out from --guest either way, and a candidate of the other
+    one is dropped here, with a reason, rather than probed: --hosts is a choice among the
+    hosts, not a way past the check that a host can run the guests at all (Bigfoot is
+    arm64, and an amd64 run has no business asking it anything).  A ValueError says what
+    is wrong with --hosts or --guest."""
+    arches = {table.guest_arch(g) for g in guests} or {"amd64"}
+    if len(arches) > 1:
+        raise ValueError("--guest names guests of both architectures: "
+                         f"{', '.join(sorted(arches))} (one host can run only one)")
+    arch = next(iter(arches))
+    named = split_list(args.hosts)
+    if named:
+        known = table.known()
+        bad = [h for h in named if h not in known]
+        if bad:
+            raise ValueError(f"no such host {', '.join(bad)} (known: {', '.join(known)})")
+        hosts = [h for h in table.names() if h in named]
+    else:
+        hosts = list(table.names(default=True, arch=arch))
+    if args.cls:
+        hosts = [h for h in hosts if table.host_class(h) == args.cls]
+    hosts = [h for h in hosts if h not in split_list(args.exclude)]
+    dropped = {}
+    for h in list(hosts):          # a no-op without --hosts: those are of ARCH already
+        if table.host_arch(h) != arch:
+            dropped[h] = [f"an {table.host_arch(h)} host, and the guests are {arch}"]
+            hosts.remove(h)
+    return hosts, arch, dropped
+
+
+def parse_args(argv):
+    p = argparse.ArgumentParser(prog="pick-host", add_help=True,
+                                description="which KVM test host has room for a job now "
+                                            "(testvm/pick-host's header says more)")
+    p.add_argument("--reserve", nargs=2, metavar=("D", "M"), type=float)
+    p.add_argument("--guest", action="append", default=[], metavar="G")
+    p.add_argument("--needs", action="append", default=[], metavar="N")
+    p.add_argument("--class", dest="cls", choices=("big", "small"))
+    p.add_argument("--hosts", action="append", default=[], metavar="H,H")
+    p.add_argument("--exclude", action="append", default=[], metavar="H,H")
+    p.add_argument("--count", type=int, metavar="N")
+    p.add_argument("--all", action="store_true")
+    p.add_argument("--json", action="store_true")
+    p.add_argument("--field", choices=FIELDS, default="ssh")
+    p.add_argument("--timeout", type=float, default=20.0)
+    a = p.parse_args(argv)
+    if a.reserve and (a.reserve[0] < 0 or a.reserve[1] < 0):
+        p.error("--reserve D M: GiB, neither under 0")
+    if a.count is not None and a.count < 1:
+        p.error("--count N: at least 1")
+    if a.timeout <= 0:
+        p.error("--timeout S: seconds, over 0")
+    needs = split_list(a.needs)
+    bad = [n for n in needs if n not in NEEDS]
+    if bad:
+        p.error(f"--needs {', '.join(bad)}: one of {', '.join(NEEDS)}")
+    guests = split_list(a.guest)
+    bad = [g for g in guests if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.+-]*", g)]
+    if bad:
+        p.error(f"--guest {', '.join(bad)}: a guest name (a letter or digit first)")
+    return a, guests, needs
+
+
+def main(argv=None):
+    args, guests, needs = parse_args(sys.argv[1:] if argv is None else list(argv))
+
+    def as_json(rc, **kw):
+        """--json on stdout, whatever the exit status: the keys are always the same ones,
+        so a caller may read them without knowing how far pick-host got.  (Only argparse's
+        own usage errors, which happen before --json is known, are plain text.)"""
+        if args.json:
+            out = {"reserve": args.reserve, "guests": guests, "needs": needs, "error": None,
+                   "candidates": [], "probes": {}, "ranked": [], "dropped": {}}
+            out.update(kw)
+            print(json.dumps(out, indent=1, sort_keys=True, default=str))
+        return rc
+
+    try:
+        table = _host_table()
+    except ImportError as e:
+        print(e, file=sys.stderr)
+        return as_json(2, error=str(e))
+    try:
+        hosts, arch, dropped_early = candidates(table, args, guests)
+    except (ValueError, table.HostsError) as e:
+        print(f"pick-host: {e}", file=sys.stderr)
+        return as_json(2, error=str(e))
+    if not hosts and not dropped_early:
+        what = ["--hosts" if split_list(args.hosts) else f"the default {arch} hosts"]
+        if args.cls:
+            what.append(f"--class {args.cls}")
+        if split_list(args.exclude):
+            what.append("--exclude")
+        why = f"no candidate host at all ({' with '.join(what)} leave none)"
+        print(f"pick-host: {why}", file=sys.stderr)
+        return as_json(1, error=why)
+    probes = probe_hosts(table, hosts, guests, args.timeout)
+    rows = {}
+    for h in hosts:
+        r = dict(table.row(h))
+        r["arch"] = table.host_arch(h)
+        r["_want_arch"] = arch
+        rows[h] = r
+    ranked, dropped = rank(probes, args.reserve, guests, needs, rows)
+    dropped.update(dropped_early)        # the wrong-arch hosts, dropped before the probe
+    considered = hosts + [h for h in dropped_early if h not in hosts]
+    if args.json:
+        return as_json(0 if ranked else 1, candidates=considered, probes=probes,
+                       ranked=ranked, dropped=dropped)
+    if not ranked:
+        print("pick-host: no host can take this job now or ever:", file=sys.stderr)
+        for h in considered:
+            print(f"  {h}: {'; '.join(dropped.get(h) or ['dropped'])}", file=sys.stderr)
+        return 1
+    want = len(ranked) if args.all else (args.count or 1)
+    for x in ranked[:want]:
+        print(table.ssh(x["host"]) if args.field == "ssh" else x["host"])
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())

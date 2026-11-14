@@ -23,7 +23,9 @@ from t2lib import bko, report, stic, words   # noqa: E402
 from t2lib import plan as planmod             # noqa: E402
 from t2lib import run as runmod               # noqa: E402
 
-HOSTS = ["chopin", "cinqcent"]
+# The hosts of a run without --hosts (the four amd64 ones since 2026-11-14): a
+# SweepTest2 is complete only when it ran on every one of them.
+HOSTS = list(planmod.DEFAULT_HOSTS)
 H64 = lambda c: c * 64   # noqa: E731
 with open(os.path.join(REPO, "testvm", "test2", "classes.json")) as _f:
     CLASSES = json.load(_f)
@@ -811,10 +813,12 @@ class TestSweep(Base):
         self.assertEqual([r for r in self.w.rows if r["cell"] == "guest:debian12" and r["run"].startswith("t2w-")], [])
 
     def test_incomplete_on_a_hosts_subset(self):
-        """`t2 SweepTest2 rel4 --hosts chopin`: every due cell may get its row, yet nothing ran on cinqcent."""
+        """`t2 SweepTest2 rel4 --hosts chopin`: every due cell may get its row, yet nothing ran
+        on the other default hosts."""
         ex = self.conduct("SweepTest2 rel4", env=FakeEnv(self.w, hosts=["chopin"]))
         self.assertEqual(ex, 1)
-        sw = self.check_incomplete("ran on chopin only: cinqcent not swept (--hosts)")
+        rest = ", ".join(h for h in HOSTS if h != "chopin")
+        sw = self.check_incomplete(f"ran on chopin only: {rest} not swept (--hosts)")
         self.assertEqual((sw["hosts"], sw["hosts_with_facts"]), (["chopin"], ["chopin"]))
         text = slurp(os.path.join(self.w.mac, "runs", sw["run"], "report.txt"))
         self.assertIn("sweep: INCOMPLETE", text)
@@ -830,7 +834,7 @@ class TestSweep(Base):
         env.make_ctx = no_cinqcent
         self.conduct("SweepTest2 rel4", env=env)
         sw = self.check_incomplete("no facts from cinqcent: not swept")
-        self.assertEqual(sw["hosts_with_facts"], ["chopin"])
+        self.assertEqual(sw["hosts_with_facts"], [h for h in HOSTS if h != "cinqcent"])
 
     def test_cells_a_host_kept_from_running(self):
         self.w.status = {"holt:debian12": "not-runnable", "guest:redox": "not-runnable"}
@@ -928,8 +932,9 @@ class TestRealPlans(unittest.TestCase):
         out = "\n".join(self.said)
         for w_ in ("GateTest2 plan:", "SticTest2 plan:", "HoltTest2 plan:", "GuestTest2 plan:", "ImgTest2: nothing due"):
             self.assertIn(w_, out)
-        # the golden's 219 cells; its gm summed the cells' raw figures, this the plans' printed ones
-        self.assertTrue(self.said[-2].startswith("combined: 219 due, 999.8 gm, "), self.said[-2])
+        # the golden's 222 cells (four default hosts: two gate loop cells each); its gm summed
+        # the cells' raw figures, this the plans' printed ones
+        self.assertTrue(self.said[-2].startswith("combined: 222 due, 1020.0 gm, "), self.said[-2])
         self.assertTrue(self.said[-1].startswith("sweep: SweepTest2 "), self.said[-1])
         self.assertEqual(out.count("sweep: SweepTest2"), 1)
         self.assertEqual(env.kids, [])

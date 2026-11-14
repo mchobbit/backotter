@@ -291,6 +291,54 @@
    "via": null
   },
   {
+   "cell": "gate:loop:linux@copland",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 5.0,
+    "src": "default",
+    "wall_s": 300
+   },
+   "host": "copland",
+   "key": null,
+   "keys": {},
+   "klass": null,
+   "last_pass": null,
+   "part": "slow",
+   "reasons": [
+    "copland is not in --hosts"
+   ],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "not-runnable",
+   "via": null
+  },
+  {
+   "cell": "gate:loop:linux@cage",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 5.0,
+    "src": "default",
+    "wall_s": 300
+   },
+   "host": "cage",
+   "key": null,
+   "keys": {},
+   "klass": null,
+   "last_pass": null,
+   "part": "slow",
+   "reasons": [
+    "cage is not in --hosts"
+   ],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "not-runnable",
+   "via": null
+  },
+  {
    "cell": "gate:loop:sparse@chopin",
    "differ": [],
    "est": {
@@ -346,6 +394,54 @@
    "rule": null,
    "running": null,
    "status": "current",
+   "via": null
+  },
+  {
+   "cell": "gate:loop:sparse@copland",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 5.0,
+    "src": "default",
+    "wall_s": 300
+   },
+   "host": "copland",
+   "key": null,
+   "keys": {},
+   "klass": null,
+   "last_pass": null,
+   "part": "slow",
+   "reasons": [
+    "copland is not in --hosts"
+   ],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "not-runnable",
+   "via": null
+  },
+  {
+   "cell": "gate:loop:sparse@cage",
+   "differ": [],
+   "est": {
+    "gb": 0.0,
+    "gm": 5.0,
+    "src": "default",
+    "wall_s": 300
+   },
+   "host": "cage",
+   "key": null,
+   "keys": {},
+   "klass": null,
+   "last_pass": null,
+   "part": "slow",
+   "reasons": [
+    "cage is not in --hosts"
+   ],
+   "rep": null,
+   "rule": null,
+   "running": null,
+   "status": "not-runnable",
    "via": null
   },
   {
@@ -405,7 +501,7 @@
   "round": "rel4"
  },
  "totals": {
-  "cells": 13,
+  "cells": 17,
   "counts": {
    "awaiting-canaries": 0,
    "canary-verified": 0,
@@ -413,7 +509,7 @@
    "class-pending": 0,
    "current": 13,
    "due": 0,
-   "not-runnable": 0,
+   "not-runnable": 4,
    "soft-stale": 0,
    "to-class": 0
   },

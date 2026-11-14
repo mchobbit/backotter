@@ -37,9 +37,12 @@ BEFORE_DRIVE = {   # drive.py's HOSTS before the table
 }
 BIGFOOT_DRIVE = dict(ssh="m@bigfoot.local", slot_range="3200-3299", ports=(3280, 3299))
 KNOWN = ("chopin", "cinqcent", "copland", "cage", "bigfoot")
-BEFORE_GATE_FALLBACK = ("holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic", "bin:abi",
-                        "bin:static", "bin:version", "loop:linux@chopin", "loop:linux@cinqcent", "loop:sparse@chopin",
-                        "loop:sparse@cinqcent", "selftest")
+# The default hosts: every amd64 host since 2026-11-14, when copland and cage joined
+# (bigfoot waits for HostTest2, docs/design/arm64.md A6).
+DEFAULTS = ("chopin", "cinqcent", "copland", "cage")
+BEFORE_GATE_FALLBACK = (("holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic", "bin:abi",
+                         "bin:static", "bin:version")
+                        + tuple(f"loop:{n}@{h}" for n in ("linux", "sparse") for h in DEFAULTS) + ("selftest",))
 
 
 def load(name, path, env=None):
@@ -98,7 +101,7 @@ class Table(unittest.TestCase):
     def test_names_and_order(self):
         self.assertEqual(H.names(all_=True), ("chopin", "cinqcent", "copland", "cage", "czerny", "bigfoot"))
         self.assertEqual(H.known(), KNOWN)
-        self.assertEqual(H.defaults(), ("chopin", "cinqcent"))
+        self.assertEqual(H.defaults(), DEFAULTS)
         self.assertEqual(H.names(cls="small"), ("copland", "cage", "bigfoot"))
         self.assertEqual(H.names(arch="amd64"), ("chopin", "cinqcent", "copland", "cage"))
         self.assertEqual(H.names(arch="arm64"), ("bigfoot",))
@@ -199,7 +202,7 @@ class Table(unittest.TestCase):
             r = subprocess.run([sys.executable, "-I", "-B", py] + list(args), capture_output=True, text=True, env=e)
             return r.returncode, r.stdout, r.stderr
         self.assertEqual(run("names"), (0, "chopin\ncinqcent\ncopland\ncage\nbigfoot\n", ""))
-        self.assertEqual(run("names", "--default"), (0, "chopin\ncinqcent\n", ""))
+        self.assertEqual(run("names", "--default"), (0, "".join(h + "\n" for h in DEFAULTS), ""))
         self.assertEqual(run("names", "--all")[1].split(), ["chopin", "cinqcent", "copland", "cage", "czerny", "bigfoot"])
         self.assertEqual(run("names", "--role", "fleet", "--field", "ssh"), (0, "m@chopin.local\n", ""))
         self.assertEqual(run("names", "--class", "small", "--field", "slot_range"),
@@ -227,8 +230,8 @@ class DerivedEqualsBefore(unittest.TestCase):
 
     def test_t2lib(self):
         self.assertEqual(t2lib.KNOWN_HOSTS, KNOWN)
-        self.assertEqual(t2lib.DEFAULT_HOSTS, ("chopin", "cinqcent"))
-        self.assertEqual(t2lib.gate_hosts(), ("chopin", "cinqcent"))
+        self.assertEqual(t2lib.DEFAULT_HOSTS, DEFAULTS)
+        self.assertEqual(t2lib.gate_hosts(), DEFAULTS)
         self.assertEqual(t2lib.host_class("cage"), "small")
 
     def test_plan_gate_fallback(self):
@@ -238,7 +241,7 @@ class DerivedEqualsBefore(unittest.TestCase):
         drive = load("ht_drive", os.path.join(TESTVM, "stictest1", "drive.py"), {H.ENV: TABLE})
         self.assertEqual(drive.HOSTS, dict(BEFORE_DRIVE, bigfoot=BIGFOOT_DRIVE))
         self.assertEqual(list(drive.HOSTS), list(KNOWN))
-        self.assertEqual(drive.DEFAULT_HOSTS, ("chopin", "cinqcent"))
+        self.assertEqual(drive.DEFAULT_HOSTS, DEFAULTS)
 
     def test_vm_update(self):
         vmu = load("ht_vm_update", os.path.join(TESTVM, "vm-update"), {H.ENV: TABLE})
@@ -369,7 +372,7 @@ class FollowsTheTable(unittest.TestCase):
     def test_python_consumers(self):
         drive = load("ht_drive_alt", os.path.join(TESTVM, "stictest1", "drive.py"), self.alt.env())
         self.assertEqual(drive.HOSTS["czerny"], dict(ssh="m@czerny.local", slot_range="3100-3199", ports=(3180, 3199)))
-        self.assertEqual(drive.DEFAULT_HOSTS, ("chopin", "cinqcent"))
+        self.assertEqual(drive.DEFAULT_HOSTS, DEFAULTS)   # czerny is enabled there, not default
         self.assertEqual(H.known(H.load(self.alt.path)), ("chopin", "cinqcent", "copland", "cage", "czerny", "bigfoot"))
         with mock.patch.dict(os.environ, self.alt.env()):
             self.assertEqual(H.host_class("czerny"), "small")

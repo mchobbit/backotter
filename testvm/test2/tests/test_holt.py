@@ -22,7 +22,14 @@ T2 = os.path.dirname(HERE)
 WT = os.path.dirname(os.path.dirname(T2))
 sys.path.insert(0, T2)
 
+import t2lib  # noqa: E402
 from t2lib import holt, keys, rows_holt  # noqa: E402
+
+# The hosts FakeRemote knows: the run's two, and the other default hosts, where
+# holt.all_hosts() also looks for a bko-holt build and ships one (plan.DEFAULT_HOSTS;
+# the small hosts joined them 2026-11-14).  A run of two hosts is still a run of two.
+RUN_HOSTS = ("chopin", "cinqcent")
+FAKE_HOSTS = RUN_HOSTS + tuple(h for h in t2lib.DEFAULT_HOSTS if h not in RUN_HOSTS)
 
 try:
     from t2lib import ledger
@@ -747,11 +754,12 @@ class FakeRS:
 
 
 class FakeRemote:
-    """Two hosts' files and processes, as holt.run sees them.  Builds end on the next look;
+    """The hosts' files and processes, as holt.run sees them (FAKE_HOSTS: the run's two and
+    the other default hosts, which hold no build of their own).  Builds end on the next look;
     a queue runner runs one todo line per look (its outcome from OUTCOMES), then ends."""
 
     def __init__(self, outcomes):
-        self.files = {h: {} for h in ("chopin", "cinqcent")}
+        self.files = {h: {} for h in FAKE_HOSTS}
         self.procs = {}          # (host, pid) -> {kind, ...}
         self.pid = 1000
         self.calls = []

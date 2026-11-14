@@ -104,6 +104,25 @@ class Leads(unittest.TestCase):
         self.assertEqual(B.leads({"alpine324": ["copland", "cage"], "alpine324-lvm": ["copland"]}),
                          {"alpine324": "copland", "alpine324-lvm": "copland"})
 
+    def test_no_big_default_host_refuses_the_run(self):
+        """The leads hold every source: a table with no default amd64 host of the first class is
+        a table to mend, not a run to deal to the small hosts (their caches hold alpine324 at
+        most, so every case of another source would die on its host)."""
+        with open(TABLE) as f:
+            t = json.load(f)
+        for r in t["hosts"]:
+            if r["name"] in ("chopin", "cinqcent"):
+                r["default"] = False
+        with tempfile.TemporaryDirectory() as d:
+            p = os.path.join(d, "hosts.json")
+            with open(p, "w") as f:
+                json.dump(t, f)
+            r = subprocess.run([sys.executable, os.path.join(BS2_DIR, "bs2"), "ls"], capture_output=True, text=True,
+                               env=dict(os.environ, BKO_HOSTS_JSON=p))
+        self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
+        self.assertIn("no default amd64 host of class big", r.stderr)
+        self.assertNotIn("copland", r.stdout)
+
     def test_holders_refuses_a_source_nobody_has(self):
         with self.assertRaises(SystemExit):
             B.holders(["alpine324-uefi"], {"cage": {"alpine324"}}, ["cage"])

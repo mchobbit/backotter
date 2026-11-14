@@ -18,6 +18,21 @@
 #       prints "DISK MEM", the most one job could ever get on this host
 #       (ceiling(): a --reserve or a queue line over it is refused at once),
 #       and writes nothing: not even the ledger's files.
+#   cmp-run.sh --free
+#       prints "DISK MEM", the room a new --reserve could get here now
+#       (free_now(): the smaller of the ceiling and budget()'s room for each,
+#       which is just what admission tests a --reserve against, so its live
+#       MemAvailable and tmpfs checks and the ledger's rows all count),
+#       floored at 0; then "waiting N", how many jobs are in line (the WAITS
+#       file).  It writes nothing either, not even the ledger's files, so
+#       anyone may ask a host where there is room (testvm/pick-host does,
+#       over ssh).  The figures are what the host had a moment ago: a job
+#       that starts meanwhile takes its room, and only a --reserve of its own
+#       holds any.  It also reads the ledger and the line without the lock
+#       (taking it would make the lock file), and a row being written is a
+#       truncate and a write (put's dd, no notrunc), so a reader can catch a
+#       torn file and count a row short.  The figures are advice, never a
+#       decision: the --reserve itself is what holds room, under the lock.
 # WEAR_TAG names the work in the wear log (FAMILY:RUN[:CELL], e.g.
 # ht1:r4all:pop24): a --reserve's CMD is logged with it as it is, a queue's
 # jobs with :GUEST added (default cmp:TAG:GUEST). Give it to the cmp-run.sh
@@ -114,7 +129,12 @@ rewrite() {  # FILE CMD...: FILE's content becomes CMD's output (CMD reads FILE)
     c=$("$@"; rc=$?; echo .; exit $rc) || return; put "$f" "${c%.}"
 }
 add() { printf '%s\n' "$2" | dd of="$1" conv=nocreat,notrunc oflag=append status=none; }   # FILE LINE
-[ "${1:-}" = --ceiling ] || { ledger_files; chmod 666 $LEDGER $LEDGER.lock $WAITS 2>/dev/null; }
+# --ceiling and --free write nothing at all, so that anyone (pick-host over
+# ssh) may ask a host what room it has without touching its ledger.
+case ${1:-} in
+--ceiling|--free) ;;
+*) ledger_files; chmod 666 $LEDGER $LEDGER.lock $WAITS 2>/dev/null ;;
+esac
 H=$(hostname -s)
 # BASE_GIB once for the script (ceiling() and budget() look it up themselves
 # when it is unset: facts_host.py and drive.py run them alone, by sed).
@@ -140,15 +160,31 @@ tree_anon() {  # PID ... -> "PID BYTES" lines: the anon memory (RssAnon) of each
             for (x in sum) print x, sum[x]
         }'
 }
-budget() {  # -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked)
-    local arc_max arc_size unused=0 pid d m scope rest anon trees base=${BASE_GIB:-}
+live_rows() {  # [FILE] -> the rows of FILE (default the ledger) whose holder is still
+    # there, in order, one a line; nothing is written, and a file that isn't there has no
+    # rows (--ceiling and --free don't make the ledger's files).  Once prune has run under
+    # the lock the ledger holds exactly these, so budget() reads the same rows as before;
+    # free_now(), which may not write, gets them without pruning.
+    local f=${1:-$LEDGER} pid rest out=""
+    [ -e "$f" ] || return 0
+    while read -r pid rest; do
+        # (A row that isn't PID first is junk: "." would pass as /proc/.)
+        [[ $pid =~ ^[0-9]+$ ]] && [ -d /proc/$pid ] && out+="$pid $rest"$'\n'
+    done <"$f"
+    printf '%s' "$out"
+}
+budget() {  # [ROWS] -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked; ROWS
+    # default the ledger's live rows, which is all it holds once prune has run)
+    local arc_max arc_size unused=0 pid d m scope rest anon trees base=${BASE_GIB:-} rows size avail
+    rows=${1-$(live_rows)}
     [ -n "$base" ] || base=$(python3 -I -B "${BKO_HOSTS_PY:-$HOME/backotter-work/testvm/test2/t2lib/hosts.py}" \
                                 limit "$(hostname -s)" base_gib 2>/dev/null)
     [[ $base =~ ^[0-9]+([.][0-9]+)?$ ]] || base=6
     arc_max=$(awk '$1 == "c_max" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
     arc_size=$(awk '$1 == "size" { print $3 }' /proc/spl/kstat/zfs/arcstats 2>/dev/null)
+    read -r size avail < <(df -Pk $RAM | awk 'NR == 2 { print $2, $4 }')
     # shellcheck disable=SC2046  # the PIDs are meant to split
-    trees=$(tree_anon $(awk '$4 == "-" && $1 ~ /^[0-9]+$/ { print $1 }' $LEDGER))
+    trees=$(tree_anon $(awk '$4 == "-" && $1 ~ /^[0-9]+$/ { print $1 }' <<<"$rows"))
     while read -r pid d m scope rest; do
         [ -n "$pid" ] || continue
         anon=0
@@ -159,13 +195,14 @@ budget() {  # -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked)
         fi
         unused=$(awk -v u="$unused" -v m="$m" -v a="${anon:-0}" \
             'BEGIN { x = m - a / 1073741824; if (x < 0) x = 0; print u + x }')
-    done <$LEDGER
-    df -Pk $RAM | awk -v arc_max="${arc_max:-0}" -v arc_size="${arc_size:-0}" -v base="$base" \
-                      -v arc_room="${ARC_ROOM_GIB:-1}" -v unused="$unused" -v ledger=$LEDGER '
+    done <<<"$rows"
+    awk -v size_k="${size:-0}" -v avail_k="${avail:-0}" -v arc_max="${arc_max:-0}" -v arc_size="${arc_size:-0}" \
+        -v base="$base" -v arc_room="${ARC_ROOM_GIB:-1}" -v unused="$unused" '
         function fl(x) { return int(x * 10 + (x < 0 ? -1 : 0)) / 10 }   # round down
-        NR == 2 { size = $2 / 1048576; avail = $4 / 1048576 }
+        { rd += $2; rm += $3 }   # the rows of the ledger, on stdin
         END {
             G = 1073741824
+            size = size_k / 1048576; avail = avail_k / 1048576
             while ((getline l < "/proc/meminfo") > 0) {
                 split(l, f, /[: ]+/)
                 if (f[1] == "MemTotal") total = f[2] / 1048576
@@ -174,7 +211,6 @@ budget() {  # -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked)
                 if (f[1] == "SwapFree") swf = f[2] / 1048576
             }
             if (total == 0 || size == 0) exit 1
-            while ((getline l < ledger) > 0) { split(l, f, " "); rd += f[2]; rm += f[3] }
             # The ARC: its size plus arc_room, within its cap; arcroom is its room to grow.
             arcroom = (arc_max - arc_size) / G; if (arcroom < 0) arcroom = 0
             if (arcroom > arc_room) arcroom = arc_room
@@ -184,7 +220,7 @@ budget() {  # -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked)
             live = memavail - avail - arcroom - (swt - swf) - 2 - unused
             if (live < mem) mem = live
             printf "%.1f %.1f\n", fl(disk), fl(mem)
-        }'
+        }' <<<"$rows"
 }
 prune() {  # [PID]: drop rows (ledger and line) whose holder is gone, or PID's (ledger locked)
     local f pid rest keep
@@ -260,9 +296,40 @@ ceiling() {  # -> "DISK MEM": the most one job could ever get on this host
               while ((getline l < "/proc/meminfo") > 0) { split(l, f, /[: ]+/); if (f[1] == "MemTotal") t = f[2] / 1048576 }
               printf "%.1f %.1f\n", size - 1, t - size - arc - base - 2 }'
 }
+free_now() {  # -> "DISK MEM": the room a new --reserve could get on this host now, floored
+    # at 0, nothing written.  It is exactly what admission would let in: a --reserve D M
+    # starts at once when fits() passes against the ceiling (D <= its DISK, M <= its MEM)
+    # and against budget() (the same, with budget()'s figures), so the room for each is
+    # the smaller of the two, min(ceiling, budget).  The ledger's live rows are already
+    # off budget()'s own figures (its disk = size - 1 - rd, its mem = total - size - arc
+    # - base - rm), which also bring the live checks (MemAvailable, the tmpfs's free
+    # space, the ARC, what reservations haven't touched yet); the ceiling is the most one
+    # job could ever get and is tested against the bare --reserve, as here.  So the rows
+    # count once, in the same place as in admission.  (Taking them off the ceiling as
+    # well, as this did until now, under-reported the memory by up to the 2 GiB of
+    # headroom that ceiling() holds back and budget() doesn't: a --reserve this said was
+    # too big for the host was admitted at once.)  It doesn't count who is in line
+    # (after_line): the waiters are reported beside it, since room is offered to them
+    # first.
+    local cd cm bd bm
+    read -r cd cm < <(ceiling) && [ -n "$cm" ] || return 1
+    read -r bd bm < <(budget "$(live_rows)") && [ -n "$bm" ] || return 1
+    awk -v cd="$cd" -v cm="$cm" -v bd="$bd" -v bm="$bm" '
+        function fl(x) { x = int(x * 10 + (x < 0 ? -1 : 0)) / 10; return x < 0 ? 0 : x }   # down, then 0
+        BEGIN { d = cd + 0; if (bd + 0 < d) d = bd + 0
+                m = cm + 0; if (bm + 0 < m) m = bm + 0
+                printf "%.1f %.1f\n", fl(d), fl(m) }'
+}
+waiting_now() { live_rows $WAITS | awk 'END { print NR + 0 }'; }   # jobs in line (the WAITS file)
 if [ "${1:-}" = --ceiling ]; then
     [ $# -eq 1 ] || { echo "usage: cmp-run.sh --ceiling" >&2; exit 2; }
     ceiling; exit
+fi
+if [ "${1:-}" = --free ]; then
+    [ $# -eq 1 ] || { echo "usage: cmp-run.sh --free" >&2; exit 2; }
+    free_now || { echo "cmp-run.sh --free: can't tell what room there is here" >&2; exit 1; }
+    echo "waiting $(waiting_now)"
+    exit 0
 fi
 
 if [ "${1:-}" = --reserve ]; then

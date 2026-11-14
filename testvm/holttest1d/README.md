@@ -102,6 +102,14 @@ source's cipher, key derivation and offset, opens it as `dm_crypt-0` (the
 crypttab name), restores the group with `vgcfgrestore`, and the restored
 disk boots with the passphrase typed.
 
+**The 24.04 guests** (2026-11-14, run `u24c` on Chopin and `u24d` on
+Cinqcent, in RAM): `ubuntu24-uefi` (`make-ubuntu.sh --uefi`, 24.04.5) is the
+installer's default, GPT with an ESP and one ext4 /, under Secure Boot;
+`ubuntu24-luks` (`--uefi --luks`) is the same guided LVM on LUKS as
+`ubuntu26-luks`, on 24.04's initramfs-tools (the prompt "Please unlock disk
+dm_crypt-0:", which console-boot.py answers).  Both pass on the 6.8 GA
+kernel.  `ubuntu24` stays the ZFS-root guest.
+
 **The ostree guest** (2026-11-11, run `bzb6a` on both hosts, in RAM,
 B6's static bko-holt from main, `HT_HOLT`): `kinoite44`
 (`make-fedora.sh --ostree`; docs/design/bazzite.md) is Fedora Kinoite 44,
@@ -195,7 +203,10 @@ source and on the restored disk, each boot alone:
   27.0 GiB on /bkoscratch (`HT_RAM=0` under `cmp-run.sh --reserve 0 5`),
   in rebuild, so ram-sizes.tsv's D is 30, over every host's RAM-disk
   ceiling: ht1-queue.sh runs it on /bkoscratch with `DISK_OVER=1` and
-  leaves it queued without.  By hand:
+  leaves it queued without.  By hand, on the host `testvm/pick-host
+  --reserve 0 5 --guest vanilla3 --class big` prints (a disk-mode run: only
+  the big hosts have `holt_disk_mode`) (testvm/HOSTS.md, "Placing work by
+  hand"):
 
       cd ~/backotter-work && WEAR_TAG=ht1:RUN:vanilla3 HT_PORT=2690 HT_RAM=0 setsid -f ./cmp-run.sh --reserve 0 5 \
         sudo -E testvm/holttest1d/ht1.sh vanilla3 RUN >/bkoscratch/holttest1d/RUN-vanilla3.log 2>&1 </dev/null
@@ -409,6 +420,12 @@ Other tools these runs need:
   (`omarchy/type-luks-passphrase.py`), as compare.py does.
 
 ## Running it today: ht1.sh
+
+**Which host.** Don't pick one by habit. `testvm/pick-host --reserve D M
+--guest GUEST --needs rescuer --needs debs` (D and M from `ram-size.sh` or
+`ram-sizes.tsv`) prints the default host with the most room now that can run
+it, over all four amd64 hosts. For a set of guests, `ht1-farm.sh` (below,
+"Queues") spreads one queue over every default host instead.
 
 `ht1.sh GUEST RUN [PHASE...]`, run as root on a test host under a
 reservation of the RAM disk in cmp-run.sh's ledger (as `m`, which owns the
@@ -1000,6 +1017,21 @@ MAXJOBS at once on this host, each under its own reservation:
 Any other host of testvm/hosts.json runs a runner the same way, with the
 queue host's name (`chopin.local` here) as QHOST; it takes only the lines it
 can run ("What a host can't run", below).
+
+`ht1-farm.sh` does all of that in one command, from the checkout on the Mac
+(after `testvm/sync-hosts.sh`), over every default host of the table:
+
+    testvm/holttest1d/ht1-farm.sh r4all GUEST[+VARIANT][=D][%M] ...
+    testvm/holttest1d/ht1-farm.sh --dry-run r4all GUEST...   # print, write nothing
+
+It writes the todo on the first default host (`--order`, biggest first) and
+starts a runner on each, with that host's `holt_jobs` as MAXJOBS and its
+`holt_disk_mode` as `DISK_OVER` (the host table's limits), leaving a guest
+pinned in `classes.json` (`holt.pins`) to its own host (`ONLY_ELSEWHERE`);
+then it prints how to watch and stop them. `--hosts a,b` names other hosts of
+the table. It refuses a RUN whose todo, `stop` or `abort` is already there,
+since a todo written again would rerun the lines a runner has taken. Which
+host has room for a run of your own: `testvm/pick-host` (testvm/HOSTS.md).
 
 A runner started before its todo exists finds nothing to do and ends
 (`queue done`).  One that refuses to start (exit 2: an `HT_` setting, run

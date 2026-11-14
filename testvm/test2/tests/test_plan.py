@@ -18,6 +18,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(HERE, "fixtures", "p2"))
 
+import t2lib  # noqa: E402
 from t2lib import estimates, keys, ledger, plan, run   # noqa: E402
 import world                                     # noqa: E402
 
@@ -291,14 +292,23 @@ class Scenarios(WorldCase):
         self.assertTrue(all(c.rule == "holt:guest-update" for c in p.due()))
 
     def test_gate_unchanged_and_changed(self):
+        """The p2 world has facts for world.HOSTS only, so the loop cells of the other
+        default hosts (copland and cage since 2026-11-14) are not runnable here, as a
+        default host left out of --hosts always is."""
+        off = [h for h in t2lib.DEFAULT_HOSTS if h not in world.HOSTS]
         p = self.w.plan("GateTest2 plan", self.r_gate)
         self.assertEqual(p.totals["due"], 0)
-        self.assertEqual(p.render().strip(), "GateTest2: nothing due (13 current); round rel4, base " + self.base[:7]
-                         + "\nsweep: SweepTest2 never ran, due now")
+        self.assertEqual(
+            p.render().strip(),
+            f"GateTest2: nothing due (13 current, {2 * len(off)} not-runnable); round rel4, base "
+            + self.base[:7]
+            + "".join(f"\nnot runnable: gate:loop:linux@{h}, gate:loop:sparse@{h} ({h} is not in --hosts)"
+                      for h in off)
+            + "\nsweep: SweepTest2 never ran, due now")
         self.w.edit("testvm/test2/gate/loop.sh", "# changed\n")
         p = self.w.plan("GateTest2 plan", self.r_gate)
-        self.assertEqual({c.cell for c in p.due()}, {"gate:loop:linux@chopin", "gate:loop:linux@cinqcent",
-                                                     "gate:loop:sparse@chopin", "gate:loop:sparse@cinqcent"})
+        self.assertEqual({c.cell for c in p.due()},
+                         {f"gate:loop:{n}@{h}" for n in ("linux", "sparse") for h in world.HOSTS})
 
 
 class Holt(WorldCase):

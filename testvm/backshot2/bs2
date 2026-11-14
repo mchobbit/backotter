@@ -60,9 +60,10 @@ import time
 
 HERE = os.path.dirname(os.path.realpath(__file__))
 REPO = os.path.dirname(os.path.dirname(HERE))
-# Each source's lead (draws its cases, runs its tier 0) when it is in the run
-# (split-chopin-cinqcent: two each); replay, shrink and the corpus run there.
-HOME = {"alpine324": "chopin", "alpine324-uefi": "chopin", "alpine324-lvm": "cinqcent", "alpine324-luks": "cinqcent"}
+# BackShot2's Linux sources (B11 will add the rest).  Each one's lead draws its cases,
+# runs its tier 0, and is where replay, shrink and the corpus run; HOME deals them in
+# even turns over the lead hosts, two each today.
+SOURCES = ("alpine324", "alpine324-uefi", "alpine324-lvm", "alpine324-luks")
 
 
 def _host_table():
@@ -78,6 +79,26 @@ HOSTS_TABLE = _host_table()
 # The hosts of this command: every enabled amd64 one (BackShot2's sources, its rescuer and
 # bko-holt are amd64: an arm64 host such as bigfoot is never one), or --hosts' (use_hosts()).
 RUN_HOSTS = {h: HOSTS_TABLE.ssh(h) for h in HOSTS_TABLE.names(arch="amd64")}
+# The lead hosts, from the host table: its default amd64 hosts of the first class (the big
+# ones).  Only they hold every source: BackShot2's sources are not published to the store,
+# so a small host's cache has at most alpine324 (bs2 ls says which host has what), and a
+# source is placed on a host that lacks it by no path here.  A table with none of them is a
+# table to mend, not a run to deal to the small hosts: they would take sources whose cases
+# they can't hold, and every case would then die on its host.
+LEAD_HOSTS = [h for h in HOSTS_TABLE.names(default=True, arch="amd64") if HOSTS_TABLE.class_rank(h) == 0]
+if not LEAD_HOSTS:
+    sys.exit(f"bs2: testvm/hosts.json names no default amd64 host of class {list(HOSTS_TABLE.load()['classes'])[0]}: "
+             "BackShot2's leads hold every source, and a small host's cache holds at most alpine324")
+
+
+def deal(sources, hosts):
+    """{source: host}: SOURCES in even turns over HOSTS, in order (4 sources over 2 hosts:
+    the first two to the first host).  The share is how assign() shares them out too."""
+    share = max(1, -(-len(sources) // max(1, len(hosts))))
+    return {s: hosts[min(i // share, len(hosts) - 1)] for i, s in enumerate(sources)}
+
+
+HOME = deal(SOURCES, LEAD_HOSTS)
 CHOSEN = False   # --hosts given: replay and the corpus go only where vms/SOURCE is
 ALPINE = list(HOME)
 ROOT = "/bkoscratch/backshot2"
@@ -499,9 +520,9 @@ def assign(sources, hosts=None, have=None):
     the host with the fewest sources so far (hosts' order on a tie); HAVE ({host: sources
     there}, None: all) limits each source to the hosts that have it, and the sources on the
     fewest hosts are placed first.  A source no host has: sys.exit.  Without --hosts (and
-    no HOSTS given): HOME's host, chopin for a source it doesn't name."""
+    no HOSTS given): HOME's host, the first lead host for a source it doesn't name."""
     if hosts is None and not CHOSEN:
-        return {s: HOME.get(s, "chopin") for s in sources}
+        return {s: HOME.get(s, LEAD_HOSTS[0]) for s in sources}
     hosts = list(hosts or RUN_HOSTS)
     share = -(-len(sources) // len(hosts))
     load, out = {h: 0 for h in hosts}, {}
@@ -565,7 +586,7 @@ def main():
         print("then: bs2 BackShot2 corpus (once the queues finish; bs2 status RUN shows them)")
     elif w == "leftovers":
         name = a[1] if len(a) > 1 else "leftovers"
-        h = next(iter(RUN_HOSTS)) if CHOSEN else "chopin"
+        h = next(iter(RUN_HOSTS)) if CHOSEN else LEAD_HOSTS[0]
         sync([h])
         run = time.strftime("lo-%Y%m%d-%H%M")
         if plan:

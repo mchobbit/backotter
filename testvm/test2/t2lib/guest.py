@@ -36,7 +36,31 @@ UPDATE_MIN_D = 6
 RUN_DEFAULTS = {"try_days": 7, "ram_gib_first": 8, "ram_gib_max": 16, "big_gib": 13, "failed_overlay_mib": 1024,
                 "failed_keep_days": 14}
 FAILING = ("FAIL", "FLAKY-FAIL", "HARNESS", "LOST")
-FIRST_HOST = "chopin"
+
+
+def first_host():
+    """The host a guest update and vm-update's fleet lock run on: the first with the fleet
+    role in the host table (Chopin since 2026-11-13; vm-update's own ALL_HOSTS[0] is the
+    same row), else the first default host when the table names no fleet host.  Not a name
+    here: a run's --hosts may hold hosts that have no fleet.  A table that can't be read or
+    doesn't check raises hosts.HostsError rather than quietly moving the update and the fleet
+    lock to the first default host (t2lib's own import reads the table too, so this is the
+    same refusal, not a new one).  Read at call time, never frozen at import: a test that
+    repoints BKO_HOSTS_JSON gets the table it set."""
+    from . import hosts as hosts_table
+    fleet = hosts_table.with_role("fleet")
+    return fleet[0] if fleet else DEFAULT_HOSTS[0]
+
+
+def __getattr__(name):
+    """guest.FIRST_HOST, the name this module had for first_host()'s answer while it was a
+    constant (bko.py still reads it that way): the attribute hook (PEP 562) asks the table
+    now.  A use inside this module calls first_host(), which the hook never sees."""
+    if name == "FIRST_HOST":
+        return first_host()
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 KIND_MODE = {"ssh": "try", "probe": "probe", "redox": "console", "sculpt": "console"}
 
 
@@ -132,13 +156,24 @@ def may_lack_guests(host):
     return r is not None and "fleet" not in (r.get("roles") or ())
 
 
+STALE = "stale:"       # identity_compare's dropped reason for a cache at another generation
+
+
+def is_stale(how):
+    """True when HOW, a dropped reason of identity_compare, is a stale cache's."""
+    return str(how or "").startswith(STALE)
+
+
 def identity_compare(per_host, hashed=False, optional=()):
     """Step 1 on what the hosts answered ({host: tool_guest.identity_of's dict}).
     {"ok": True|False|None, "why", "rehash": [hosts]}; ok None: hash on the hosts in rehash first.
     A host marked no_answer vouches for nothing and condemns nothing: ok False, harness True.
     A host in OPTIONAL (may_lack_guests: an image cache) that has no such guest is left out
     while another host has it: only the hosts that hold the guest are compared, and the result's
-    "dropped" ({host: "dangles"|"gone"}) names the hosts left out so.
+    "dropped" ({host: "dangles"|"gone"|"stale:GENERATION"}) names the hosts left out so.  An
+    optional host at another image-state generation than the fleet's is left out the same way
+    (_stale_caches), with "stale:" and the generation it has (nothing after "stale:" when it has
+    no image-state of its own, which differs from the fleet's generation just the same).
     A disk with a backing file fails, but for a world's thin disk over the fleet's same disk
     (contract 4), whose backing disk passes the fleet's checks, at one generation on every host."""
     dropped = {}
@@ -147,10 +182,43 @@ def identity_compare(per_host, hashed=False, optional=()):
         if lacks and any(i and not i.get("missing") for h, i in per_host.items() if h not in lacks):
             dropped = {h: "dangles" if (per_host[h] or {}).get("dangling") else "gone" for h in sorted(lacks)}
             per_host = {h: i for h, i in per_host.items() if h not in lacks}
+        stale = _stale_caches(per_host, optional)
+        if stale:
+            dropped.update({h: STALE + (str(gen) if gen else "") for h, gen in sorted(stale.items())})
+            per_host = {h: i for h, i in per_host.items() if h not in stale}
     res = _identity_compare(per_host, hashed)
     if dropped:
         res["dropped"] = dropped
     return res
+
+
+def _stale_caches(per_host, optional):
+    """{host: generation} for each host of OPTIONAL (may_lack_guests: an image cache) whose
+    guest is at another image-state generation than the one the hosts outside OPTIONAL hold: its
+    vms/GUEST is linked to an older vm-store version (Cage's void-musl was, 2026-11-14) while
+    the fleet hosts agree, which is that cache's link to mend, not a fault of the guest's
+    disks.  Such a host is dropped like one that lacks the guest, and the guest's cells run on
+    the hosts that remain, rather than every host's cells failing on "the hosts' generations
+    differ".  Nothing is dropped, and that failure stands, unless the hosts that hold the guest
+    and are not optional (the fleet hosts) all hold one generation, and it is a generation: a
+    fleet that disagrees with itself, a guest no fleet host of the run holds, and a fleet host
+    with no image-state at all are each a fault to answer for, not a cache to mend.  A cache
+    with no image-state of its own differs from the fleet's generation as plainly as one at an
+    older version, and the same `vm-store link` mends it, so it is dropped too, with no
+    generation to name after "stale:".  A host that didn't answer or lacks the guest is
+    _identity_compare's business, so none is dropped here while one of those is in hand."""
+    if any(not i or i.get("missing") or i.get("no_answer") for i in per_host.values()):
+        return {}
+    gens = {h: (i.get("image_state") or {}).get("generation") for h, i in per_host.items()}
+    if len(set(gens.values())) < 2:
+        return {}
+    fleet = {g for h, g in gens.items() if h not in optional}
+    if len(fleet) != 1:
+        return {}
+    want = fleet.pop()
+    if not want:
+        return {}
+    return {h: g for h, g in sorted(gens.items()) if h in optional and g != want}
 
 
 def _identity_compare(per_host, hashed):
@@ -295,8 +363,15 @@ def append_row(ctx, io, host, row, log=None):
 
 def identity_check(ctx, guests, sha256=False, run=None, io=None, log=None):
     """Step 1 for GUESTS: {G: {ok, why}} (a guest whose disks can't be vouched for has ok false, and
-    its FAIL row is written, under RUN; RUN None: a new t2v- id).  sha256: always hash.  A host
-    that didn't answer, twice, isn't a guest's fault: ok false, harness true, and no FAIL row."""
+    its FAIL row is written, under RUN; RUN None: a new t2v- id).  A guest that passes on the hosts
+    that hold it, while an image cache was left out (identity_compare's dropped: its entry gone, or
+    at another generation than the fleet's), also has "lacking" {host: why} and "dropped" {host:
+    identity_compare's reason}, and G leaves that host's facts so its cells go elsewhere
+    (_gone_since_facts).  The caller keeps "dropped" for as long as it plans with these facts:
+    a facts refresh after this step answers with the guest again (a stale cache's vms/GUEST is
+    there, only linked to an older version), and apply_drops puts the drop back.  sha256: always
+    hash.  A host that didn't answer, twice, isn't a guest's fault: ok false, harness true, and
+    no FAIL row."""
     from . import run as runmod
     io = io or hostjob.HostIO()
     log = log or (lambda t: None)
@@ -372,32 +447,76 @@ def identity_check(ctx, guests, sha256=False, run=None, io=None, log=None):
             out[g] = {"ok": False, "why": why, "row": row_id, "host": hosts[0]}
             continue
         out[g] = {"ok": True, "why": res.get("why")}
+        if dropped:
+            out[g]["dropped"] = dict(dropped)
         gone = _gone_since_facts(ctx, g, dropped)
         if gone:
             out[g]["lacking"] = gone
             for h, w in sorted(gone.items()):
-                log(f"guest:{g}: {h}: no {g} in its vms/ ({w}): its stic and holt cells stay off {h}")
+                what = w if is_stale(dropped.get(h)) else f"no {g} in its vms/ ({w})"
+                log(f"guest:{g}: {h}: {what}: its stic and holt cells stay off {h}")
     return out
 
 
 GONE_WORDS = {"dangles": "its vms/ link dangles, gone since facts", "gone": "gone since facts"}
 
 
+def dropped_why(g, how):
+    """The phrase a DROPPED host's facts carry for G: why G's cells stay off that image cache.
+    A stale cache's names the generation it has and what mends it, since the entry is there and
+    only its link is old; one with no image-state of its own has no version to name, and the
+    same `vm-store link` mends it."""
+    if is_stale(how):
+        gen = str(how)[len(STALE):]
+        what = f"stale generation {gen[:12]}" if gen else "no image-state of its own"
+        return f"{what} (run vm-store link {g} there)"
+    return GONE_WORDS.get(how, GONE_WORDS["gone"])
+
+
+def drop_in_facts(facts, g, host, how):
+    """G out of HOST's facts' guests, with HOW's why (identity_compare's dropped reason): the
+    why, or None when there is nothing to drop (no facts of HOST, no guests part -- that cache
+    was asked without knowing -- or G already out of them).  Placement, Planner's
+    fit_capabilities, reads a cache's guests, so this is what keeps G's stic and holt cells off
+    the host, as the host's own next facts would; "guests_gone" says why, and a stale cache's
+    "guests_stale" holds it too, since that one is the whole reason a plan's "kept off HOST"
+    needs ("stale generation G (run vm-store link G there)"), where a gone cache's reads "no G
+    in its vms/ (WHY)"."""
+    f = (facts or {}).get(host)
+    gs = (f or {}).get("guests")
+    if not isinstance(gs, dict) or g not in gs:
+        return None
+    gs.pop(g, None)
+    why = dropped_why(g, how)
+    f.setdefault("guests_gone", {})[g] = why
+    if is_stale(how):
+        f.setdefault("guests_stale", {})[g] = why
+    return why
+
+
+def apply_drops(facts, drops):
+    """DROPS, {guest: {host: identity_compare's dropped reason}} as identity_check's results
+    carry them, into FACTS again: {guest: {host: why}} for what this call took out.  The step
+    itself drops the guest when it runs, but a facts refresh after it (one backfilled stat
+    record makes the conductor probe again) answers for each host wholesale, and a stale cache
+    still holds its vms/GUEST -- only linked to an older vm-store version -- so the fresh facts
+    put the guest back and the cells would run there against the stale image.  Every caller that
+    plans with refreshed facts calls this on them, bko.Conductor at each refresh and for each
+    child's ctx, so the drop outlives the probe.  Idempotent: a host whose facts already lack
+    the guest is left as it is, so calling it twice says nothing twice."""
+    out = {}
+    for g, per in sorted((drops or {}).items()):
+        for h, how in sorted((per or {}).items()):
+            why = drop_in_facts(facts, g, h, how)
+            if why:
+                out.setdefault(g, {})[h] = why
+    return out
+
+
 def _gone_since_facts(ctx, g, dropped):
-    """{host: why} for each image cache DROPPED (identity_compare) whose facts said it held G: G
-    leaves that host's facts' guests (so placement, Planner.fit_capabilities, keeps G's cells off
-    it, as the host's next facts would) and its facts' "guests_gone" says why.  A cache whose
-    facts have no guests part was asked without knowing: nothing to correct."""
-    gone = {}
-    for h, how in sorted((dropped or {}).items()):
-        f = (ctx.facts or {}).get(h)
-        gs = (f or {}).get("guests")
-        if not isinstance(gs, dict) or g not in gs:
-            continue
-        gs.pop(g, None)
-        gone[h] = GONE_WORDS.get(how, GONE_WORDS["gone"])
-        f.setdefault("guests_gone", {})[g] = gone[h]
-    return gone
+    """{host: why} for each image cache DROPPED (identity_compare) whose facts said it held G,
+    out of ctx.facts (drop_in_facts)."""
+    return (apply_drops(ctx.facts, {g: dropped})).get(g) or {}
 
 
 def _patch_stat(ctx, host, guest, stat):
@@ -436,7 +555,9 @@ def _word_guests(ctx, word, sf):
 def pre_plan(ctx, word, out=print, io=None):
     """Before the plan, once: the image sums the keys need for guests with no image-state, and the
     identity of every guest whose disks differ from its image-stat.json at the same generation
-    (hash, then backfill, or a FAIL row).  ctx.facts get what changed."""
+    (hash, then backfill, or a FAIL row).  ctx.facts get what changed.  The identity results of
+    the guests it checked, {G: identity_check's answer}, so that the caller keeps their "dropped"
+    image caches across its own facts refresh (apply_drops); {} when it checked none."""
     io = io or hostjob.HostIO()
     sf = rows_guest.load_spec(ctx.checkout)
     names = _word_guests(ctx, word, sf)
@@ -463,11 +584,13 @@ def pre_plan(ctx, word, out=print, io=None):
             if sums and all(sums.values()):
                 gs[n]["imgsum"] = facts_host.combine(sums)
     moved = sorted({n for h in hosts for n in names if _disk_differs((ctx.facts[h].get("guests") or {}).get(n) or {})})
-    if moved:
-        out("disks differ from their merge records: " + ", ".join(moved))
-        res = identity_check(ctx, moved, io=io, log=out)
-        for g, r in sorted(res.items()):
-            out(f"guest:{g}: identity {'ok' if r['ok'] else ('unknown: ' if r.get('harness') else 'FAIL: ') + str(r['why'])}")
+    if not moved:
+        return {}
+    out("disks differ from their merge records: " + ", ".join(moved))
+    res = identity_check(ctx, moved, io=io, log=out)
+    for g, r in sorted(res.items()):
+        out(f"guest:{g}: identity {'ok' if r['ok'] else ('unknown: ' if r.get('harness') else 'FAIL: ') + str(r['why'])}")
+    return res
 
 
 def preflight(ctx, out=print, io=None):
@@ -670,7 +793,8 @@ class Runner:
         g = pc.cell.split(":", 1)[1]
         e = self.sf.entry(g)
         d, m = reserve_for(self.ctx.ledger, pc.cell, e, self.policy, self.update)
-        allowed = [FIRST_HOST if FIRST_HOST in self.hosts else self.hosts[0]] if self.update else self.allowed_hosts(pc)
+        fh = first_host()
+        allowed = [fh if fh in self.hosts else self.hosts[0]] if self.update else self.allowed_hosts(pc)
         return Item(g, pc, e, d, m, allowed)
 
     def pm_of(self, it):
@@ -1021,7 +1145,8 @@ class Runner:
         return first, [it for it in items if it not in first]
 
     def run_update(self, items):
-        host = FIRST_HOST if FIRST_HOST in self.hosts else self.hosts[0]
+        fh = first_host()
+        host = fh if fh in self.hosts else self.hosts[0]
         bad = self.tree_matches(host)
         if bad:
             self.notes.append("GuestTest2 update refused: " + bad)
@@ -1447,7 +1572,7 @@ def cmd_fingerprints(argv, out=print, io=None):
     reproject = "--reproject" in args
     args = [a for a in args if a != "--reproject"]
     io = io or hostjob.HostIO()
-    host = FIRST_HOST
+    host = first_host()
     f = factsmod.probe(host, {}, save=False)
     if not f.get("ok"):
         out(f"{host}: no facts: {f.get('error')}")

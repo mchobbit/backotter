@@ -21,6 +21,7 @@ HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 sys.path.insert(0, os.path.join(HERE, "fixtures", "p2"))
 
+import t2lib  # noqa: E402
 from t2lib import estimates, ledger, plan, report, run   # noqa: E402
 import world                                 # noqa: E402
 
@@ -133,7 +134,11 @@ class Golden(unittest.TestCase):
         g0 = self.w.plan("GateTest2 plan")
         p = self.w.plan("GateTest2 plan", self.w.seed(g0))
         self.golden("gate-nothing-due", p)
-        self.assertEqual(p.render().count("\n"), 2)   # one line, and the sweep line
+        # One line, the sweep line, and a "not runnable" line per default host the p2 world
+        # has no facts for (world.HOSTS is two of the four since 2026-11-14), as a default
+        # host left out of --hosts always gets.
+        off = [h for h in t2lib.DEFAULT_HOSTS if h not in world.HOSTS]
+        self.assertEqual(p.render().count("\n"), 2 + len(off))
 
 
 class Report(unittest.TestCase):
@@ -1121,7 +1126,7 @@ class Derived(unittest.TestCase):
         spec = importlib.util.spec_from_loader("t2cli", importlib.machinery.SourceFileLoader("t2cli", path))
         t2 = importlib.util.module_from_spec(spec)
         spec.loader.exec_module(t2)
-        self.assertEqual(t2.hosts_opt({}), ["chopin", "cinqcent"])
+        self.assertEqual(t2.hosts_opt({}), list(t2lib.DEFAULT_HOSTS))   # every amd64 host since 2026-11-14
         self.assertEqual(t2.hosts_opt({"--hosts": "chopin,chopin, cinqcent"}), ["chopin", "cinqcent"])
         with self.assertRaises(t2.Usage):
             t2.hosts_opt({"--hosts": ""})

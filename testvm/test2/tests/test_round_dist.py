@@ -614,13 +614,17 @@ class HoltBuildHosts(unittest.TestCase):
             self.assertEqual(r.files["copland"][f"{self.HB}/{p}"], r.files["chopin"][f"{self.HB}/{p}"])
         self.assertEqual(r.files["copland"][self.HB + "/SHA256SUMS"], r.files["chopin"][self.HB + "/SHA256SUMS"])
 
-    def test_the_default_hosts_build_as_ever(self):
+    def test_the_builds_stay_on_the_build_hosts_and_reach_the_others(self):
+        """The build hosts build, as ever; the binaries reach every other default host,
+        the small ones among them since they joined the defaults (2026-11-14)."""
         r = Remote4({})
         res = self.go({}, r)
         self.assertEqual(res["exit"], 0, res)
         self.assertEqual(self.builds(r), [("chopin", "linux"), ("cinqcent", "freebsd"), ("chopin", "openbsd")])
-        self.assertEqual(r.files["copland"], {})   # nothing shipped to the small hosts by default
-        self.assertEqual(r.files["cage"], {})
+        for h in ("copland", "cage"):
+            self.assertEqual(r.files[h][self.HB + "/SHA256SUMS"], r.files["chopin"][self.HB + "/SHA256SUMS"], h)
+            for plat in ("bko-holt", "freebsd/bko-holt", "openbsd/bko-holt"):
+                self.assertEqual(r.files[h][f"{self.HB}/{plat}"], r.files["chopin"][f"{self.HB}/{plat}"], h)
 
     def test_holt_ship_known_ships_to_every_known_host(self):
         self.ctx.options["holt_ship"] = "known"

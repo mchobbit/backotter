@@ -19,6 +19,9 @@ t2v-S, t2g-S, t2i-S under t2b-S or t2w-S), one copy, one set of locks and one Ru
      guest.identity_check (no hash unless a record differs) for the guests of due stic and holt
      cells and of BkoTest2's carried canaries.  A guest that fails gets its guest:G FAIL row (rule guest:identity,
      under this run's id) and options.identity_bad: its stic and holt cells are not-runnable.
+     An image cache the step left out (its entry gone, or at an older vm-store version than the
+     fleet's) is kept in identity_drops and put back into the facts after every probe below
+     (apply_identity_drops): that guest's cells run on the hosts that remain.
      Facts again when anything was backfilled.
   5. Final plans (the provisional ones when nothing they read changed).  BkoTest2 feeds the
      carried canaries of the img plan to the stic and holt children (options.extra_due), only
@@ -44,8 +47,8 @@ SticTest check, those in no spec, what wasn't runnable, and (SweepTest2) the sof
 and the age of each image's panel.
 
 MAC_ROOT/runs/t2b-S/bko.json (t2w-S/bko.json) holds the phases, the children, identity_bad,
-extra_due, the guards (saved whenever they change, with each family's share of the harness
-count) and the copy, for `t2 resume`: children done are skipped; one whose report.txt is there
+identity_drops, extra_due, the guards (saved whenever they change, with each family's share of
+the harness count) and the copy, for `t2 resume`: children done are skipped; one whose report.txt is there
 takes its stops and plan.json's due cells, and its exit is judged from its rows (never 0 by
 default); those that began go through run.resume(..., shared=) (SticTest2's share of the
 harness count is taken off first: its resume counts its rows again), or, for a family with no
@@ -683,7 +686,10 @@ class Conductor:
         return [f for f in PLAN_ORDER[self.fam] if self.universe is None or self.universe.get(f)]
 
     def child_ctx(self, fam, plan_cells=None):
-        """A copy of the run's ctx for FAM: its own options, facts and rows."""
+        """A copy of the run's ctx for FAM: its own options, facts and rows.  The identity step's
+        dropped image caches are put back into the facts first (apply_identity_drops): a resume
+        probes afresh and never runs the step again, so this is where its drops reach its plans."""
+        self.apply_identity_drops()
         c = copymod.copy(self.ctx)
         c.options = dict(self.ctx.options)
         c.facts = dict(self.ctx.facts)
@@ -868,7 +874,8 @@ class Conductor:
             self.doc = {"v": 1, "run": self.run, "stamp": self.stamp, "family": self.fam, "word": self.word.to_json(),
                         "text": self.word.text, "hosts": self.hosts, "universe": getattr(self.word, "universe", None),
                         "phase": "start", "phases": {"start": utc_now()}, "children": {}, "identity_bad": {},
-                        "extra_due": {}, "copy": None, "notes": [], "start": utc_now(), "t0": self.env.now()}
+                        "identity_drops": {}, "extra_due": {}, "copy": None, "notes": [], "start": utc_now(),
+                        "t0": self.env.now()}
         else:
             self.doc = saved
         why = self.start_guard_rails(own)
@@ -987,6 +994,32 @@ class Conductor:
                 self.notes.append(text)
                 self.doc.setdefault("notes", []).append(text)
 
+    def keep_identity_drops(self, res):
+        """The image caches the identity step left out, out of its results RES ({guest: its
+        answer}, guest.identity_check's or guest.pre_plan's), into bko.json's "identity_drops"
+        ({guest: {host: the dropped reason}}).  The step takes such a guest out of that host's
+        facts itself, but the facts are probed again below (and again before the gate child, and
+        afresh by a resume), and a cache that only holds the guest at an older vm-store version
+        answers with it again: the drops are kept here so that apply_identity_drops can put them
+        back on whatever facts the plans are made from."""
+        drops = {g: dict(r["dropped"]) for g, r in sorted((res or {}).items()) if (r or {}).get("dropped")}
+        if drops:
+            with self.mu:
+                self.doc["identity_drops"] = dict(self.doc.get("identity_drops") or {}, **drops)
+            self.apply_identity_drops()     # (the step itself did, but a runner needn't have)
+
+    def apply_identity_drops(self, facts=None):
+        """bko.json's "identity_drops" into FACTS (the run's own by default) again, so that
+        placement keeps a dropped cache's stic and holt cells off it however often the facts are
+        probed.  Idempotent (guest.apply_drops): a host whose facts already lack the guest is
+        left as it is.  Under the run's lock, since child_ctx calls it and the children's threads
+        each make their own ctx (by then the drops are in the facts and it changes nothing)."""
+        from . import guest as guestmod
+        drops = self.doc.get("identity_drops") or {}
+        if drops:
+            with self.mu:
+                guestmod.apply_drops(self.ctx.facts if facts is None else facts, drops)
+
     def plans_and_identity(self):
         """Steps 3-5.  None to go on, else an exit."""
         self.phase("plans")
@@ -1016,7 +1049,7 @@ class Conductor:
                 self.say(text)
 
             try:
-                g.pre_plan(pctx, self.word, heard)
+                self.keep_identity_drops(g.pre_plan(pctx, self.word, heard))
             except Exception as e:   # noqa: BLE001 - the plans say what isn't known
                 self.note(f"guest pre_plan: {type(e).__name__}: {cut(e, 160)}")
             wrote = bool(failed)     # (its FAIL rows: the rows again, so that the final plans see them)
@@ -1039,6 +1072,7 @@ class Conductor:
             ictx = copymod.copy(self.ctx)
             ictx.run = _IdentityRun(self.word, self.doc.get("copy") or {})
             res = self.env.identity(ictx, due_guests, self.run, self.say) or {}
+            self.keep_identity_drops(res)
             for gname, r in sorted(res.items()):
                 if not r.get("ok"):
                     bad[gname] = ("identity unknown: " if r.get("harness") else "") + str(r.get("why") or "identity failed")
@@ -1048,6 +1082,7 @@ class Conductor:
             self.log(f"guest:{gname}: identity: {why}: its stic and holt cells don't run")
         if due_guests and facts_digest(self.ctx.facts) != mid:     # identity backfilled a stat record
             self.ctx.facts = self.env.refresh_facts(self.ctx, log=self.say)
+            self.apply_identity_drops()     # the probe answers with a stale cache's guest again
         if wrote:
             self.ctx.ledger = list(self.env.pull())
         # 5: final plans, with BkoTest2's carried canaries
@@ -1262,6 +1297,7 @@ class Conductor:
             return
         self.ctx.ledger = list(self.env.pull())
         self.ctx.facts = self.env.refresh_facts(self.ctx, log=self.say)
+        self.apply_identity_drops()
 
     def gate_step(self):
         """Step 7: the gate child for what is still due, less what this stamp ran."""

@@ -16,7 +16,7 @@ from unittest import mock
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
-from t2lib import guest, guest_judge as J, hostjob, rows_guest, tool_guest  # noqa: E402
+from t2lib import guest, guest_judge as J, hostjob, hosts as hosts_table, rows_guest, tool_guest  # noqa: E402
 from t2lib import run as runmod  # noqa: E402
 
 REPO = os.path.dirname(os.path.dirname(os.path.dirname(HERE)))
@@ -2274,6 +2274,58 @@ class GateNotStarted(unittest.TestCase):
         from t2lib import gate
         with open(gate.__file__, encoding="utf-8") as f:
             self.assertIn('"ok": not stops and not unran', f.read())
+
+
+class FirstHost(unittest.TestCase):
+    """guest.first_host(), the host a guest update and vm-update's fleet lock run on: the table's
+    at the moment it is asked, and a table that doesn't check is a HostsError, never a quiet move
+    of the update to the first default host."""
+
+    def alt(self, change):
+        """BKO_HOSTS_JSON pointing at a copy of the table CHANGE has had its way with (None: a
+        file that isn't a table at all)."""
+        d = tempfile.mkdtemp(dir=_tmp)
+        p = os.path.join(d, "hosts.json")
+        if change is None:
+            with open(p, "w", encoding="utf-8") as f:
+                f.write("not a table\n")
+        else:
+            with open(hosts_table.TABLE, encoding="utf-8") as f:
+                t = json.load(f)
+            change(t)
+            with open(p, "w", encoding="utf-8") as f:
+                json.dump(t, f)
+        return mock.patch.dict(os.environ, {hosts_table.ENV: p})
+
+    def test_the_fleet_host_of_the_table(self):
+        self.assertEqual(guest.first_host(), "chopin")
+        self.assertEqual(guest.FIRST_HOST, "chopin")       # the name bko.py reads
+
+    def test_no_fleet_role_takes_the_first_default_host(self):
+        def no_fleet(t):
+            for r in t["hosts"]:
+                r["roles"] = [x for x in r["roles"] if x != "fleet"]
+        with self.alt(no_fleet):
+            self.assertEqual(guest.first_host(), guest.DEFAULT_HOSTS[0])
+
+    def test_another_fleet_host_is_followed_at_call_time(self):
+        def cinqcent_only(t):
+            for r in t["hosts"]:
+                r["roles"] = [x for x in r["roles"] if x != "fleet"] + (["fleet"] if r["name"] == "cinqcent" else [])
+        with self.alt(cinqcent_only):
+            self.assertEqual(guest.first_host(), "cinqcent")
+            self.assertEqual(guest.FIRST_HOST, "cinqcent")
+        self.assertEqual(guest.first_host(), "chopin")
+
+    def test_a_table_that_doesnt_check_raises(self):
+        with self.alt(None):
+            self.assertRaises(hosts_table.HostsError, guest.first_host)
+            with self.assertRaises(hosts_table.HostsError):
+                guest.FIRST_HOST
+
+    def test_another_attribute_is_still_an_attribute_error(self):
+        with self.assertRaises(AttributeError):
+            guest.NO_SUCH_NAME
 
 
 if __name__ == "__main__":

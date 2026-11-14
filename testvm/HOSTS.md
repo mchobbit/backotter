@@ -12,8 +12,8 @@ describes that table, what each class of host runs, and how a new host joins.
 |---|---|---|---|---|---|
 | chopin | big | 2700-2799 | 2780-2799 | build, fleet, store-mirror, bigfoot-link | yes |
 | cinqcent | big | 2900-2999 | 2980-2999 | build, cache | yes |
-| copland | small | 2800-2899 | 2880-2899 | cache | no |
-| cage | small | 3000-3099 | 3080-3099 | cache | no |
+| copland | small | 2800-2899 | 2880-2899 | cache | yes |
+| cage | small | 3000-3099 | 3080-3099 | cache | yes |
 | czerny | small | 3100-3199 | 3180-3199 | cache | no (row reserved: `enabled: false`) |
 | bigfoot | small, arm64 | 3200-3299 | 3280-3299 | none | no |
 
@@ -123,12 +123,43 @@ does it), then `vm-store link sculpt2610` on each cache host whose
 on any host, whether a newer image or release is out.
 
 **Small hosts** (Copland, Cage, and Czerny later): 27 GiB of memory and a 10G
-RAM disk. Their ceiling is 9.0 9.2. They have no host ZFS. Their `vms/` is a set
+RAM disk. Their ceiling is 9.0 11.2 (9.0 9.2 before their `base_gib` became 4), and
+9.0 10.2 while the ZFS module is loaded there, as it is on Cage (the module alone costs
+the ARC's GiB of headroom; neither host has the `zpool` binary, so neither has host ZFS
+for placement). Ask the host: `cmp-run.sh --ceiling`.
+They have no host ZFS. Their `vms/` is a set
 of links into the vm-store cache, which holds only the published guests (21
-guests are not published yet).
+guests are not published yet). They are default hosts since 2026-11-14: the big
+hosts queued for hours while these two idled, and what only a big host can run
+is kept there by each cell's ceiling and capabilities, never by a host's name.
 
 The ceiling is the most that one `cmp-run.sh --reserve` can ever get on a host.
 `cmp-run.sh --ceiling` prints it as `DISK MEM` and writes nothing.
+`cmp-run.sh --free` prints, as `DISK MEM` and then `waiting N`, what a new
+`--reserve` could get there now (the smaller of the ceiling and budget()'s
+room, which is just what admission tests a `--reserve` against, so the
+ledger's rows and the live memory check count once each) and how many jobs
+are in line; it writes nothing either, so anyone may ask. It reads the ledger
+unlocked, so its figure is advice: only a `--reserve` holds room. `testvm/pick-host` asks every default host at once, over
+ssh, and prints the one to use for a job of your own:
+
+    H=$(testvm/pick-host --reserve 8 5 --guest debian13 --needs debs) &&
+      ssh "$H" 'cd ~/backotter-work && ...'
+
+It drops the hosts that can never take the job (its `--reserve` over their
+ceiling, a guest or a capability missing) and ranks the rest by the room they
+have now, then by load; `--json` shows the whole probe and why each host was
+dropped. `testvm/holttest1d/ht1-farm.sh RUN GUEST...` starts one HoltTest1
+queue over every default host in one command (README "Queues").
+
+**Placing work by hand: always ask, never name two hosts.** Every session that
+starts its own job (`ht1.sh`, `make-*.sh`, a guest boot, a compare run) asks
+`testvm/pick-host` for the host, with the job's `--reserve` and guest, and runs
+it there. "Both hosts" (Chopin and Cinqcent) is not the default, and a PASS on
+"both hosts" is not the done criterion: a job passes on the host pick-host
+gave it. A sync names all four amd64 hosts (`testvm/sync-hosts.sh
+m@chopin.local m@cinqcent.local m@cage.local m@copland.local`), never two. Why:
+docs/design/four-host-split.md.
 
 Placement works from capabilities, not host names. t2's facts probe
 (`t2lib/facts_host.py`, sent over ssh from the Mac's checkout, read only)
@@ -177,20 +208,22 @@ The runners check the same things on the host before starting a job:
 - **ht1.sh** refuses to start (exit 2) without the rescuer or the debs. It no
   longer falls back to `vms/debian13` without saying so.
 
-**What stays on the big hosts**, also after the small hosts become default
-hosts:
+**What stays on the big hosts**. The small hosts are default hosts now, so
+each of these is decided per cell, from the host's facts, not from its name:
 
 - guests that are not published to the store;
 - the host-ZFS holt sources;
 - round, bko-holt and image builds (the build role);
-- cells over 9.0 9.2: for example stic debian13-zfs (`--reserve 13 5`) and
+- cells over a small host's ceiling (about 9.0 11): for example stic debian13-zfs
+  (`--reserve 13 5`) and
   ubuntu26-zfsmirror (23 GiB). The gate's per-host loop cells are the
   exception: they run on a small host too, with that class's smaller
   `host_reserve` (`loop:linux` 8.5 4, `loop:sparse` 6 4);
 - the holt pins in `classes.json`: openbsd8 on Chopin, and dragonfly6 and redox
   on Cinqcent. The redox tools are also on Cage and Copland, but not on Chopin.
-- UEFI holt sources, which run only where `rescuer-uefi.qcow2` exists
-  (Cinqcent);
+- UEFI holt sources, which run only where `rescuer-uefi.qcow2` exists (all
+  four amd64 hosts have it, checked 2026-11-14; placement still goes by the
+  host's facts);
 - the fork gates (`fork:*` pinned in `gate/layers.json`);
 - run-all.sh's guest platforms. On a small host run-all.sh runs only linux and
   sparse.
@@ -264,9 +297,8 @@ other sessions' runs.
    - Chopin and Cinqcent to the new host, for build-round.sh `--dist-hosts` and
      promote-bins.sh. Both copy host to host, and go through the Mac when they
      can't.
-   - Between the small hosts too, if they are to reach each other. Cage and
-     Copland can't today: cage's key isn't in copland's authorized_keys, and
-     copland fails cage's host key.
+   - Between the small hosts too, and each host to itself (`m@NAME.local`).
+     Cage and Copland reach each other and themselves since 2026-11-14.
    - Every host's known_hosts must have the new host's current key and address.
      Three hosts still pin `copland.local` to an old IP, 192.168.68.52.
    - Fill in `ip` and `host_key_alias` if mDNS is unreliable there. Only
@@ -298,7 +330,7 @@ other sessions' runs.
    run `stick/build-round.sh --dist-only --dist-hosts NAME ROUND`. A
    SticTest2 run refuses a ROUND that a host in use lacks.
 8. **Facts.** Run `testvm/test2/t2 SticTest2All plan --hosts
-   chopin,cinqcent,NAME`, and the same for `HoltTest2All` and `GateTest2`.
+   chopin,cinqcent,copland,cage,NAME`, and the same for `HoltTest2All` and `GateTest2`.
    Each plan probes the new host's facts (guests, ceiling, caps) and writes
    nothing. Its reasons show which cells it keeps off the new host and why
    (`kept off NAME: ...`). On the host, check that
@@ -306,11 +338,15 @@ other sessions' runs.
 9. **Trial runs.** Run GateTest2 (the HostTest2 layers) and one representative
    per family with `--hosts` naming the new host. For a small host, these are
    the cells that fit it.
-10. **Join the defaults.** Set `"default": true` in hosts.json, then update the
-    tests that pin today's two default hosts: `tests/test_hosts.py`,
-    `tests/test_gate_hosts.py` and drive.py's self-test. This is a code change.
-    Only then do t2, drive.py and SweepTest2's completeness check include
-    the host without `--hosts`. vm-update's fleet stays the
+10. **Join the defaults.** Set `"default": true` in hosts.json, then update
+    what counts the default hosts: `tests/test_hosts.py`,
+    `tests/test_gate_hosts.py`, `tests/test_host_table.py`,
+    `tests/test_gate.py`'s universe, `tests/test_bko.py`'s sweep,
+    `tests/test_holt.py`'s fake hosts, t2's usage, drive.py's self-test, and
+    the `fixtures/p2/golden` files (`T2_GOLDEN=bless` in a whole
+    `python3 -m unittest discover -s tests` run rewrites them). This is a code
+    change. Only then do t2, drive.py and SweepTest2's completeness check
+    include the host without `--hosts`. vm-update's fleet stays the
     hosts with the fleet role.
 
 The join rule is in `docs/design/test2/design-classes.md` §2.6.

@@ -22,7 +22,9 @@ sys.path.insert(0, TEST2)
 sys.path.insert(0, HERE)
 sys.path.insert(0, os.path.join(HERE, "fixtures", "p2"))
 
+import t2lib  # noqa: E402
 from t2lib import facts, gate, holt, report, stic  # noqa: E402
+from t2lib import hosts as hosts_table  # noqa: E402
 import test_stic as TS  # noqa: E402
 import world  # noqa: E402
 
@@ -164,6 +166,34 @@ class Placement(unittest.TestCase):
         self.assertEqual((m.status, m.reasons), ("not-runnable", ["over copland's ceiling 9.0 9.2: needs 17 4"]))
         self.assertEqual((d.status, sorted(d.keys)), ("due", ["copland"]))
         self.assertEqual([c.cell for c in p.due()], ["holt:debian13"])   # nothing of mint22's is queued
+
+    def test_a_default_run_holds_the_small_hosts_and_keeps_the_big_work_big(self):
+        """All four amd64 hosts are default hosts since 2026-11-14, so a run without --hosts
+        has the small ones too.  What they cannot run is still kept off them, by their
+        ceiling and their caps, never by their names: a stic check whose reservation is over
+        9.0 9.2, and a holt source vm-mount reads on the host's ZFS."""
+        hosts = list(t2lib.DEFAULT_HOSTS)
+        big = [h for h in hosts if hosts_table.host_class(h) == "big"]        # the table's order
+        small = [h for h in hosts if hosts_table.host_class(h) == "small"]
+        self.assertTrue(big and small, hosts)
+        fx = self.facts(hosts, {h: (BIG if h in big else SMALL) for h in hosts})
+        for h in hosts:
+            zfs = h in big
+            fx[h]["caps"] = {"zfs": zfs, "zpool": "/usr/sbin/zpool" if zfs else None,
+                             "zfs_module": zfs, "holt_rescuer": True, "holt_debs": True}
+        p = self.w.plan("SticTest2 rel4 ubuntu24 debian13 plan", facts=fx, hosts=hosts)
+        self.assertEqual(sorted(p.cell("stic:ubuntu24").keys), sorted(big))      # --reserve 13 6
+        self.assertEqual(sorted(p.cell("stic:debian13").keys), sorted(hosts))
+        self.assertIn(f"too big for {', '.join(small)} (ceilings 9.0 9.2, 9.0 9.2): needs 13 6",
+                      "; ".join(p.cell("stic:ubuntu24").reasons))
+        q = self.w.plan("HoltTest2 ubuntu24 debian13 plan", facts=fx, hosts=hosts)
+        self.assertEqual(sorted(q.cell("holt:ubuntu24").keys), sorted(big))   # needs_host_zfs, and 13 6
+        self.assertRegex("; ".join(q.cell("holt:ubuntu24").reasons), r"kept off \w+: no host OpenZFS")
+        self.assertEqual(sorted(q.cell("holt:debian13").keys), sorted(hosts))
+        # Every small host is named in what its runner must leave to the others.
+        oe = holt.only_elsewhere(q.due(), hosts, {})
+        self.assertEqual({h: oe[h] for h in big}, {h: [] for h in big})
+        self.assertEqual({h: oe[h] for h in small}, {h: ["ubuntu24"] for h in small})
 
     def test_holt_only_elsewhere_from_ceilings(self):
         p = self.plan("HoltTest2 mint22 debian13 plan", ["chopin", "copland"], {"chopin": BIG, "copland": SMALL})

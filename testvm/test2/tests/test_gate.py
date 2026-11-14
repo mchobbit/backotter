@@ -22,6 +22,7 @@ import unittest
 HERE = os.path.dirname(os.path.abspath(__file__))
 sys.path.insert(0, os.path.dirname(HERE))
 
+import t2lib  # noqa: E402
 from t2lib import canonical, gate, keys  # noqa: E402
 
 FX = os.path.join(HERE, "fixtures", "p3")
@@ -121,13 +122,15 @@ class LayersJson(unittest.TestCase):
     def setUp(self):
         self.layers = gate.load_layers(REPO)
 
-    def test_universe_is_thirteen_cells(self):
+    def test_universe_is_the_layers_and_a_loop_per_default_host(self):
+        """Nine layers of one cell, and the two per-host loops once per default host (four
+        amd64 hosts since 2026-11-14): 17 cells."""
         u = gate.universe(self.layers)
-        self.assertEqual(len(u), 13, u)
+        loops = [f"gate:loop:{n}@{h}" for n in ("linux", "sparse") for h in t2lib.DEFAULT_HOSTS]
+        self.assertEqual(len(u), 9 + len(loops), u)
         self.assertEqual(u, ["gate:holt", "gate:fork:restic", "gate:fork:rustic_core", "gate:fork:rustic",
-                             "gate:fork-root:restic", "gate:bin:abi", "gate:bin:static", "gate:bin:version",
-                             "gate:loop:linux@chopin", "gate:loop:linux@cinqcent", "gate:loop:sparse@chopin",
-                             "gate:loop:sparse@cinqcent", "gate:selftest"])
+                             "gate:fork-root:restic", "gate:bin:abi", "gate:bin:static", "gate:bin:version"]
+                         + loops + ["gate:selftest"])
 
     def test_family_layers(self):
         self.assertEqual(gate.family_layers("stic", self.layers),

@@ -1,9 +1,11 @@
-"""The KVM test hosts: copland, cage and bigfoot (the arm64 host) are known, selectable hosts
-everywhere hosts are named or checked, and no default host list holds them yet (a new host
-joins the defaults only after HostTest2 and one representative per family pass
-on it, docs/design/test2/design-classes.md; both are small hosts, joining among
-the cells that fit them).  sync-hosts.sh, which only copies code, is the
-exception."""
+"""The KVM test hosts: all four amd64 hosts (chopin, cinqcent, copland and cage) are
+default hosts since 2026-11-14, so every run without --hosts uses the small hosts too, and
+bigfoot (the arm64 host) is a known, selectable host that no default list holds yet (a host
+joins the defaults only after HostTest2 and one representative per family pass on it,
+docs/design/test2/design-classes.md).  What only a big host can run stays there by each
+cell's ceiling and caps, never by a host's name (test_small_hosts.py, test_host_caps.py):
+the checks here are that nothing names the hosts itself.  sync-hosts.sh, which only copies
+code, has bigfoot too."""
 
 import contextlib
 import importlib.machinery
@@ -43,13 +45,15 @@ def read(*parts):
 class Hosts(unittest.TestCase):
     def test_known_and_default(self):
         self.assertEqual(t2lib.KNOWN_HOSTS, ("chopin", "cinqcent", "copland", "cage", "bigfoot"))
-        self.assertEqual(t2lib.DEFAULT_HOSTS, ("chopin", "cinqcent"))
+        self.assertEqual(t2lib.DEFAULT_HOSTS, ("chopin", "cinqcent", "copland", "cage"))
         self.assertTrue(set(t2lib.DEFAULT_HOSTS) < set(t2lib.KNOWN_HOSTS))
+        # Bigfoot is the one enabled host that is not a default one (docs/design/arm64.md A6).
+        self.assertEqual([h for h in t2lib.KNOWN_HOSTS if h not in t2lib.DEFAULT_HOSTS], ["bigfoot"])
 
     def test_t2_hosts_option(self):
         with contextlib.redirect_stderr(io.StringIO()):
             t2 = load("t2cli_hosts", os.path.join(T2, "t2"))
-        self.assertEqual(t2.hosts_opt({}), ["chopin", "cinqcent"])
+        self.assertEqual(t2.hosts_opt({}), ["chopin", "cinqcent", "copland", "cage"])
         self.assertEqual(t2.hosts_opt({"--hosts": "copland"}), ["copland"])
         self.assertEqual(t2.hosts_opt({"--hosts": "chopin,copland,cinqcent"}), ["chopin", "copland", "cinqcent"])
         self.assertEqual(t2.hosts_opt({"--hosts": "cage,copland"}), ["cage", "copland"])
@@ -60,13 +64,16 @@ class Hosts(unittest.TestCase):
     def test_plan_gate_and_guest_defaults(self):
         self.assertEqual(plan.Ctx.__init__.__defaults__[1], t2lib.DEFAULT_HOSTS)
         cells = gate.universe()
-        self.assertTrue(any(c.endswith("@chopin") for c in cells) and any(c.endswith("@cinqcent") for c in cells))
-        self.assertFalse([c for c in cells if c.endswith(("@copland", "@cage"))])   # per-host gate cells: the default hosts
-        self.assertTrue(any(c.endswith("@copland") for c in gate.universe(hosts=["copland"])))
-        self.assertEqual([c for c in gate.universe(hosts=["cage"]) if c.endswith("@cage")],
-                         ["gate:loop:linux@cage", "gate:loop:sparse@cage"])
+        # A per-host gate cell on every default host, the small ones too (they run the
+        # loops with their class's smaller host_reserve, gate/layers.json).
+        self.assertEqual([c for c in cells if "@" in c],
+                         [f"gate:loop:{n}@{h}" for n in ("linux", "sparse") for h in t2lib.DEFAULT_HOSTS])
+        self.assertEqual(gate.universe(hosts=["cage"]), cells)   # already a default host
+        self.assertEqual([c for c in gate.universe(hosts=["bigfoot"]) if c.endswith("@bigfoot")],
+                         ["gate:loop:linux@bigfoot", "gate:loop:sparse@bigfoot"])
         self.assertEqual(guest.hostjob_hosts(), t2lib.DEFAULT_HOSTS)
-        self.assertFalse(any("copland" in n or "cage" in n for n in plan.GATE_FALLBACK))
+        self.assertEqual([n for n in plan.GATE_FALLBACK if "@" in n],
+                         [f"loop:{n}@{h}" for n in ("linux", "sparse") for h in t2lib.DEFAULT_HOSTS])
 
     def test_leakscan_knows_every_host(self):
         self.assertEqual(leakscan.HOSTS, t2lib.KNOWN_HOSTS)
@@ -83,7 +90,7 @@ class Hosts(unittest.TestCase):
         self.assertEqual(drive.HOSTS["copland"],
                          dict(ssh="m@copland.local", slot_range="2800-2899", ports=(2880, 2899)))
         self.assertEqual(drive.HOSTS["cage"], dict(ssh="m@cage.local", slot_range="3000-3099", ports=(3080, 3099)))
-        self.assertEqual(drive.DEFAULT_HOSTS, ("chopin", "cinqcent"))
+        self.assertEqual(drive.DEFAULT_HOSTS, ("chopin", "cinqcent", "copland", "cage"))
         err = io.StringIO()
         with mock.patch.object(sys, "argv", ["drive.py", "r1", "--hosts", "cage,czerny"]), \
                 contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:

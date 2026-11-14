@@ -16,7 +16,7 @@ runs at once).  A host of a bigger class (testvm/hosts.json's classes: big
 before small) takes first, in that order, the guests no smaller host of
 --hosts could run (their binaries, image or --reserve within its ceiling), so
 they don't wait behind ones the small hosts could drain; with hosts of one
-class only (chopin,cinqcent) that changes nothing.  Hosts are offered places
+class only that changes nothing.  Hosts are offered places
 by how long their running checks still take, over their --slots.  The moment
 a place frees, a host starts the first guest that fits there now:
   - fewer than --slots checks of ours run there (freebsd15-ufs counts 3, its
@@ -70,8 +70,9 @@ Options:
   --exclude G,G   leave these guests out (repeatable)
   --first G,G     start these before the rest (a recheck's failed guests)
   --hosts H,H     of testvm/hosts.json's: chopin, cinqcent, copland, cage
-                  (default its default hosts, chopin,cinqcent: copland and
-                  cage are known, not yet default hosts)
+                  (default its default hosts, all four amd64 ones since
+                  2026-11-14; a guest that doesn't fit a small host is placed
+                  on the big ones by itself, below)
   --slots N|H=N   checks of ours at once: N on every host, H=N on H
                   (repeatable, comma-separated, later ones win; default
                   each host's stic_slots in testvm/hosts.json, else 3)
@@ -164,10 +165,11 @@ HOSTS_TABLE = _host_table()
 # range there, our ports (stic_ports).
 HOSTS = {r["name"]: dict(ssh=r["ssh"], slot_range=r["slot_range"], ports=tuple(r["stic_ports"]))
          for r in HOSTS_TABLE.rows()}
-# --hosts' default, the table's default hosts: copland and cage are known
-# (selectable) but join the defaults only after HostTest2 and a representative
-# per family pass there, among the guests that fit them (design-classes.md:
-# small hosts).
+# --hosts' default, the table's default hosts: the four amd64 hosts since
+# 2026-11-14 (copland and cage joined once HostTest2 and a representative per
+# family had passed there, design-classes.md: small hosts).  A guest a small
+# host can't run is kept off it by its ceiling, image and binaries, never by
+# its name (too_big, novm, prefer).
 DEFAULT_HOSTS = HOSTS_TABLE.defaults()
 GUEST_SLOTS = 3          # every check.sh's slot_take 3
 
@@ -1600,8 +1602,9 @@ def self_test():
           f"HOSTS' slot ranges are guest-slot.sh's slot_range_here ({here_ranges})")
     check(all(int(HOSTS[h]["slot_range"].split("-")[0]) <= HOSTS[h]["ports"][0] <= HOSTS[h]["ports"][1]
               <= int(HOSTS[h]["slot_range"].split("-")[1]) for h in HOSTS), "every host's ports are in its slot range")
-    check(set(DEFAULT_HOSTS) <= set(HOSTS) and {"copland", "cage"} <= set(HOSTS)
-          and not {"copland", "cage"} & set(DEFAULT_HOSTS), "copland and cage are known hosts, not default ones")
+    check(set(DEFAULT_HOSTS) <= set(HOSTS) and {"copland", "cage"} <= set(DEFAULT_HOSTS)
+          and all(HOSTS_TABLE.host_arch(h) == "amd64" for h in DEFAULT_HOSTS),
+          "every default host is an amd64 host of HOSTS, copland and cage among them")
     check(HOSTS["cage"] == dict(ssh="m@cage.local", slot_range="3000-3099", ports=(3080, 3099)),
           "cage: m@cage.local, slots 3000-3099, ports 3080-3099")
     rd = readme_estimates()

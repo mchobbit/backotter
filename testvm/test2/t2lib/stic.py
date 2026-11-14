@@ -661,6 +661,9 @@ class SticRun:
         dist = [h for h in self.info["hosts"] if h not in builders]
         self.builder_copies(builders)
         argv = ["bash", os.path.join(self.ctx.checkout, "stick", "build-round.sh")]
+        # build-round.sh's own default is its two-way split over both build hosts, which it
+        # names itself (--hosts both: restic on one, rustic on the other, stick/build-round.sh);
+        # --hosts is given only when the table's build role is elsewhere than that pair.
         if builders != ["chopin", "cinqcent"]:
             argv += ["--hosts", ",".join(builders)]
         if dist:

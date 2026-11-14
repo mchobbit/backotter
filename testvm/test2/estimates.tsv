@@ -54,6 +54,7 @@ stic	stic:sculpt2610	0.83	50	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:tumbleweed	3.13	188	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:ubuntu24	15.95	957	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
 stic	stic:ubuntu26-uefi	6.23	374	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:ubuntu24-uefi	6.23	374	0.00	-	as stic:ubuntu26-uefi (same check), until measured
 stic	stic:ubuntu26-zfs	16.38	982	0.00	-	st1_marks.tsv: median of 4 exit-0 runs
 stic	stic:ubuntu26-zfsmirror	10.35	621	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
 stic	stic:void-musl	1.87	112	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
@@ -94,16 +95,19 @@ holt	holt:sculpt2610	2.92	175	0.00	0.18	ht_rows.json r3all cinqcent PASS; r3all_
 holt	holt:tumbleweed	3.23	194	0.00	4.72	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 3.73 GiB
 holt	holt:ubuntu24	3.82	229	0.00	5.69	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 4.49 GiB
 holt	holt:ubuntu26-uefi	5.63	338	0.00	10.81	ht_rows.json r3all chopin PASS; r3all_files.tsv left 8.53 GiB
+holt	holt:ubuntu24-uefi	5.63	338	0.00	10.81	as holt:ubuntu26-uefi, until measured
 holt	holt:ubuntu26-zfs	7.73	464	0.00	7.13	ht_rows.json r3all chopin PASS; r3all_files.tsv left 5.63 GiB
 holt	holt:ubuntu26-zfsmirror	5.12	307	0.00	14.97	ht_rows.json r3all cinqcent PASS; r3all_files.tsv left 11.81 GiB
 holt	holt:void-musl	2.72	163	0.00	4.98	ht_rows.json r3all chopin PASS; r3all_files.tsv left 3.93 GiB
 holt	holt:zorin18	6.22	373	0.00	14.75	ht_rows.json r3all chopin PASS; r3all_files.tsv left 11.64 GiB
 holt	holt:fedora44-raid	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
 holt	holt:freebsd15-mirror	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
+holt	holt:freebsd15-geli	5.60	336	0.00	-	chopin geli3 PASS 2026-11-14, 04:17:10Z to 04:22:46Z (ht1-bsd.sh, passphrase typed through console-boot.py)
 holt	holt:omnios58-mirror	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
 holt	holt:rocky10-raid5	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
 holt	holt:ubuntu26-raid	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
 holt	holt:ubuntu26-luks	4.38	263	0.00	-	cinqcent lk1 PASS 2026-11-10, 14:00:45 to 14:05:08 (ht1.sh, in RAM)
+holt	holt:ubuntu24-luks	4.38	263	0.00	-	as holt:ubuntu26-luks, until measured
 holt	holt:chimera	2.30	138	0.00	-	chopin chim2 PASS 2026-11-11, 07:42:37 to 07:44:55 (ht1.sh, in RAM)
 holt	holt:kinoite44	10.75	645	0.00	-	chopin bzb6a PASS 2026-11-11, 15:05:02 to 15:15:47 (ht1.sh, in RAM; cinqcent bzb6a the same)
 holt	holt:chimera-uefi	3.82	229	0.00	-	chopin chim4 PASS 2026-11-11, 16:49:05 to 16:52:54 (ht1.sh, in RAM)
@@ -111,6 +115,8 @@ holt	holt:chimera-zfs	3.50	210	0.00	-	cinqcent chim3 PASS 2026-11-11, 16:37:57 t
 holt	holt:gentoo	4.00	240	0.00	-	gentoo.md G2b: chimera-uefi's chim4 (3.82 gm, UEFI, LVM) rounded up, until G5's first run (est.)
 holt	holt:cachyos-zfs	3.50	210	0.00	-	as holt:chimera-zfs (cinqcent chim3: UEFI, root on ZFS), until cachyos-zfs's first run (est.)
 holt	holt:gentoo-systemd	4.00	240	0.00	-	gentoo.md G3: as holt:gentoo (chimera-uefi's chim4, UEFI, LVM on LUKS, rounded up), until G5's first run (est.)
+holt	holt:anduinos2	5.63	338	0.00	-	anduinos.md A3: as holt:ubuntu26-uefi (r3all chopin: UEFI, Secure Boot), until A5's first run (est.)
+holt	holt:neon24	6.32	379	0.00	-	chopin ht1u PASS 2026-11-14, 02:07:09Z to 02:13:28Z (ht1.sh, in RAM; cinqcent's ht1u PASS in 436 s)
 holt	holt:debian13-stack+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
 holt	holt:aerynos+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
 holt	holt:mint22+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
@@ -136,6 +142,7 @@ gate	gate:selftest	0.00	60	0.00	-	t2 self-test and drive.py --self-test: about a
 guest	guest:aerynos	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:alpine324	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:alpinebsd	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:anduinos2	9.00	540	0.00	-	anduinos.md A3: A1's vm-update --try, ~7 min, + 0.5 for checks + 1.5 for a new guest's smoke backup (est.)
 guest	guest:arch	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:artix-dinit	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:artix-s6	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
@@ -168,8 +175,10 @@ guest	guest:haiku6	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for che
 guest	guest:hardenedbsd15	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:kinoite44	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:manjaro	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:garuda	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:mint22	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:mx25	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:neon24	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:netbsd11	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:nixos2605	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:omarchy	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
@@ -186,6 +195,8 @@ guest	guest:tumbleweed	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for
 guest	guest:ubuntu24	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ubuntu26-raid	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:ubuntu26-luks	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:ubuntu24-uefi	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:ubuntu24-luks	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:ubuntu26-uefi	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ubuntu26-zfs	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:ubuntu26-zfsmirror	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
@@ -213,3 +224,4 @@ holt	holt:haiku6+img	3.35	201	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:endeavouros	4.00	240	0.00	-	contract: about one Linux source, 11-09
 holt	holt:endeavouros-grub	4.00	240	0.00	-	contract: about one Linux source, 11-09
 holt	holt:manjaro	4.00	240	0.00	-	contract: about one Linux source, 11-09
+holt	holt:garuda	4.00	240	0.00	-	contract: about one Linux source, 11-14

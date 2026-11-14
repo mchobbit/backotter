@@ -1,8 +1,8 @@
 """A synthetic world for P2's tests (U2.2-U2.6): a fixture checkout (git), BKO_GIT's three
 forks, both hosts' facts and a seeded ledger.  Nothing here touches a host or a default root.
 
-    w = World(tmpdir)            the checkout: 47 SticTest checks, 56 HoltTest sources and 9
-                                 variants, 13 gate cells, 58 guests, 7 images, with the real classes.json,
+    w = World(tmpdir)            the checkout: 47 SticTest checks, 59 HoltTest sources and 9
+                                 variants, 13 gate cells, 61 guests, 7 images, with the real classes.json,
                                  estimates.tsv, drive.py, affected.sh and ram-sizes.tsv
     w.facts()                    {host: facts}, as facts_host.py gives them
     w.ctx(rows, facts=..., **options)   a plan.Ctx
@@ -39,17 +39,17 @@ GUESTS = ("aerynos alpine324 alpinebsd arch artix-dinit artix-s6 cachyos debian1
           "netbsd11 nixos2605 omarchy omnios58 omnios58-mirror openbsd8 pop24 redox rocky10 rocky10-lvm "
           "rocky10-raid5 sculpt2610 tumbleweed ubuntu24 ubuntu26-raid ubuntu26-uefi ubuntu26-zfs ubuntu26-zfsmirror "
           "void-musl zorin18 endeavouros endeavouros-grub manjaro ubuntu26-luks chimera kinoite44 chimera-uefi "
-          "chimera-zfs gentoo gentoo-systemd cachyos-zfs").split()
+          "chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda").split()
 UEFI = set("aerynos alpinebsd debian13-stack fedora44-raid fedora44-uefi freebsd15-geli omarchy pop24 ubuntu26-raid "
            "ubuntu26-uefi ubuntu26-zfs endeavouros endeavouros-grub manjaro ubuntu26-luks kinoite44 chimera-uefi "
-           "chimera-zfs gentoo gentoo-systemd cachyos-zfs".split())
+           "chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda".split())
 PLATS = words.PLATS
 NEW_GUESTS = set("endeavouros endeavouros-grub manjaro ubuntu26-luks chimera kinoite44 fedora44-raid ubuntu26-raid rocky10-raid5 freebsd15-mirror "
-                 "omnios58-mirror chimera-uefi chimera-zfs gentoo gentoo-systemd cachyos-zfs".split())
+                 "omnios58-mirror chimera-uefi chimera-zfs gentoo gentoo-systemd cachyos-zfs anduinos2 neon24 garuda".split())
 PM = {"apt": "debian12 debian13 debian13-stack debian13-zfs devuan6 mint22 mx25 pop24 ubuntu24 ubuntu26-raid ubuntu26-uefi "
-             "ubuntu26-zfs ubuntu26-zfsmirror zorin18 ubuntu26-luks",
+             "ubuntu26-zfs ubuntu26-zfsmirror zorin18 ubuntu26-luks anduinos2 neon24",
       "dnf": "fedora44 fedora44-raid fedora44-uefi rocky10 rocky10-lvm rocky10-raid5", "rpm-ostree": "kinoite44",
-      "pacman": "arch artix-dinit artix-s6 cachyos omarchy endeavouros endeavouros-grub manjaro cachyos-zfs",
+      "pacman": "arch artix-dinit artix-s6 cachyos omarchy endeavouros endeavouros-grub manjaro cachyos-zfs garuda",
       "zypper": "tumbleweed", "xbps": "void-musl", "apk": "alpine324 chimera chimera-uefi chimera-zfs", "moss": "aerynos",
       "NixOS": "nixos2605", "portage": "gentoo gentoo-systemd",
       "FreeBSD": "freebsd14 freebsd15 freebsd15-geli freebsd15-mirror freebsd15-ufs ghostbsd26 ghostbsd26-zfs hardenedbsd15",
@@ -58,11 +58,11 @@ PM = {"apt": "debian12 debian13 debian13-stack debian13-zfs devuan6 mint22 mx25 
 PM_OF = {g: pm for pm, gs in PM.items() for g in gs.split()}
 LINUX_PMS = ("apt", "dnf", "pacman", "zypper", "xbps", "apk", "moss", "rpm-ostree", "portage")
 SECTION = {"rpm-ostree": "ostree"}          # in-guest.sh's Linux.NAME, where it isn't the pm's
-BSD_PLAT = {"freebsd15": "freebsd", "freebsd15-mirror": "freebsd", "freebsd14": "freebsd", "ghostbsd26": "freebsd",
+BSD_PLAT = {"freebsd15": "freebsd", "freebsd15-mirror": "freebsd", "freebsd15-geli": "freebsd", "freebsd14": "freebsd", "ghostbsd26": "freebsd",
             "ghostbsd26-zfs": "freebsd", "hardenedbsd15": "freebsd", "netbsd11": "netbsd", "alpinebsd": "netbsd",
             "openbsd8": "openbsd", "dragonfly6": "dragonfly", "omnios58": "illumos", "omnios58-mirror": "illumos",
             "haiku6": "haiku"}
-BSD_RESCUER = {"freebsd15": "freebsd15-ufs", "freebsd15-mirror": "freebsd15-ufs", "freebsd14": "freebsd15-ufs",
+BSD_RESCUER = {"freebsd15": "freebsd15-ufs", "freebsd15-mirror": "freebsd15-ufs", "freebsd15-geli": "freebsd15-ufs", "freebsd14": "freebsd15-ufs",
                "ghostbsd26": "freebsd15-ufs", "ghostbsd26-zfs": "freebsd15-ufs", "hardenedbsd15": "freebsd15-ufs",
                "netbsd11": "netbsd11", "alpinebsd": "netbsd11", "openbsd8": "openbsd8-newduid.qcow2",
                "dragonfly6": "dragonfly6-newfsid.qcow2", "omnios58": "omnios58-reguid.qcow2",
@@ -290,7 +290,7 @@ class World:
                              "judge": ["testvm/holttest1d/judge.py"], "rescuer": ["rescuer.qcow2"]}}
         entries = {}
         for g in GUESTS:
-            if g in ("freebsd15-builder", "freebsd15-ufs", "freebsd15-geli"):
+            if g in ("freebsd15-builder", "freebsd15-ufs"):
                 continue
             k = holt_kind(g)
             e = {"kind": k}

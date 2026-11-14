@@ -1665,6 +1665,204 @@ fn gentoo_generator_without_installkernel() {
     assert_eq!(ev[0], "/etc/kernel/install.conf says initrd_generator=ugrd");
 }
 
+const PIKA_KV: &str = "7.3.3-pikaos";
+const PIKA_ESP: &str = "5a6b7c8d-1111-4222-8333-944455556666";
+/// The root's XFS (xfs::sample::image's UUID).
+const PIKA_ROOT: &str = "a0a1a2a3-a4a5-a6a7-a8a9-aaabacadaeaf";
+
+/// PikaOS 4 as its installer (pikainstall) lays it out, in small (the ESP
+/// is 512 MiB there, /boot 1 GiB): GPT with a vfat ESP "EFI" at /boot/efi,
+/// an ext4 /boot "PikaBoot" on an XBOOTLDR partition with no loader
+/// entries, / XFS "PikaRoot"; rEFInd in EFI/refind and at the fallback
+/// path with its theme and ext4 driver, refind_linux.conf in /boot;
+/// booster's images (and a dpkg backup) beside kernel-pika's kernel,
+/// initramfs-tools installed too; rEFInd booted from its NVRAM entry.
+fn pikaos() -> Tree {
+    use crate::efi::GLOBAL;
+    use crate::parttable::XBOOTLDR;
+    let t = Tree::new("scn-pikaos");
+    let k = PIKA_KV;
+    let mut img = vec![0u8; 48 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "7a1c2c3d-0000-4000-8000-00000000eeee",
+            parts: vec![(ESP, PIKA_ESP, 2048, 34815, 0, "ESP"), (XBOOTLDR, "5a6b7c8d-1111-4222-8333-944455557777", 34816, 67583, 0, "boot"), (LINUX, "5a6b7c8d-1111-4222-8333-944455558888", 67584, 96255, 0, "root")],
+        },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(32768, 0x1234_abcd, "EFI"));
+    put(&mut img, 34816, &ext::sample::image(0x4 | 0x8 | 0x10 | 0x20, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x2 | 0x400, "PikaBoot"));
+    put(&mut img, 67584, &crate::probe::xfs::sample::image("PikaRoot"));
+    let boot_uuid = "10111213-1415-1617-1819-1a1b1c1d1e1f";
+    let v_ = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    let refind = vec![3u8; 300];
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 32768, &img)
+        .partition("vda", "vda2", "254:2", 2, 34816, 32768, &img)
+        .partition("vda", "vda3", "254:3", 3, 67584, 28672, &img)
+        .file("/sys/block/vda/device/model", "")
+        .symlink(&format!("/dev/disk/by-partuuid/{PIKA_ESP}"), "../../vda1")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&v_("Boot0001"), efi_load_option("rEFInd Boot Manager", 1, 2048, 32768, PIKA_ESP, "\\EFI\\refind\\refind_x64.efi"))
+        .file(&v_("BootOrder"), [7u8, 0, 0, 0, 1, 0])
+        .file(&v_("BootCurrent"), [6u8, 0, 0, 0, 1, 0])
+        .file(&v_("SecureBoot"), [6u8, 0, 0, 0, 0])
+        .file(
+            "/proc/self/mountinfo",
+            "26 1 254:3 / / rw,relatime shared:1 - xfs /dev/vda3 rw,attr2,inode64\n27 26 254:2 / /boot rw,relatime shared:2 - ext4 /dev/vda2 rw\n28 27 254:1 / /boot/efi rw,relatime shared:3 - vfat /dev/vda1 rw,fmask=0077,dmask=0077\n",
+        )
+        .file("/proc/swaps", "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/dev/zram0                              partition\t4096\t\t0\t\t100\n")
+        .file("/etc/fstab", format!("UUID={PIKA_ROOT} / xfs defaults 0 1\nUUID={boot_uuid} /boot ext4 defaults 0 2\nUUID=1234-ABCD /boot/efi vfat umask=0077 0 2\n"))
+        .file("/etc/os-release", "PRETTY_NAME=\"PikaOS 4\"\nNAME=\"PikaOS\"\nVERSION_ID=\"4\"\nVERSION=\"4\"\nVERSION_CODENAME=nest\nID=pika\nID_LIKE=debian\nDEBIAN_CODENAME=sid\n")
+        .file("/etc/debian_version", "forky/sid\n")
+        .symlink("/lib", "usr/lib")
+        .file("/etc/booster.yaml", "# written by pikainstall\nvconsole: true\nextra_files: busybox\nenable_lvm: true\nmodules: usbhid,hid_generic\nmodules_force_load: usbhid,hid_generic\ncompression: lz4\nstrip: true\nenable_plymouth: true\n")
+        .file(&format!("/boot/vmlinuz-{k}"), "k")
+        .file(&format!("/boot/booster.img-{k}"), "bi")
+        .file(&format!("/boot/booster.img-{k}.dpkg-bak"), "old")
+        .file(&format!("/boot/config-{k}"), "")
+        .file(&format!("/boot/System.map-{k}"), "")
+        .file(
+            "/boot/refind_linux.conf",
+            format!("\"Boot with standard options\"  \"nowatchdog rootflags=rw,relatime root=UUID={PIKA_ROOT} quiet splash ---\"\n\"Boot with logging\"          \"nowatchdog rootflags=rw,relatime root=UUID={PIKA_ROOT} ---\"\n\"Boot with safe graphics\"    \"nowatchdog rootflags=rw,relatime root=UUID={PIKA_ROOT} nomodeset ---\"\n"),
+        )
+        .dir(&format!("/usr/lib/modules/{k}/kernel"))
+        .file("/boot/efi/EFI/refind/refind_x64.efi", &refind)
+        .file("/boot/efi/EFI/refind/refind.conf", "timeout 5\ninclude refind-dark/refind-dark.conf\n")
+        .file("/boot/efi/EFI/refind/drivers_x64/ext4_x64.efi", vec![4u8; 100])
+        .file("/boot/efi/EFI/refind/refind-dark/refind-dark.conf", "banner refind-dark/background.png\n")
+        .file("/boot/efi/EFI/BOOT/bootx64.efi", &refind)
+        .file("/boot/efi/EFI/BOOT/refind.conf", "timeout 5\ninclude refind-dark/refind-dark.conf\n")
+        .file("/boot/efi/EFI/BOOT/drivers_x64/ext4_x64.efi", vec![4u8; 100])
+        .file("/proc/sys/kernel/osrelease", format!("{k}\n"))
+        .file("/proc/sys/kernel/hostname", "pika-pc\n")
+        .file("/proc/cmdline", format!("initrd=\\booster.img-{k} nowatchdog rootflags=rw,relatime root=UUID={PIKA_ROOT} quiet splash ---\n"));
+    let pkgs = [
+        ("booster", "0.12.1-100pika1"),
+        ("kernel-pika", "7.3.3-101pika1"),
+        ("kernel-pika-runtime", "7.3.3-101pika1"),
+        ("linux-image-7.3.3-pikaos", "7.3.3-101pika1"),
+        ("linux-headers-7.3.3-pikaos", "7.3.3-101pika1"),
+        ("refind", "0.14.2-100pika2"),
+        ("pika-refind-theme", "1.0-100pika1"),
+        ("refind-btrfs", "0.6.0-100pika1"),
+        ("zram-tools", "0.3.5-1"),
+        ("initramfs-tools", "0.148.3"),
+        ("efibootmgr", "18-2"),
+        ("xfsprogs", "6.17.0-1"),
+        ("e2fsprogs", "1.47.3-1"),
+        ("dosfstools", "4.2-1.2"),
+    ];
+    let status: String = pkgs.iter().map(|(n, v)| format!("Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n")).collect();
+    t.file("/var/lib/dpkg/status", status);
+    t
+}
+
+/// PikaOS's plan from a tree, the source disk vda going to vdb.
+fn pikaos_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let v = run(t, true, FakeRunner::default());
+    let l = Layout::from_json(v.clone()).unwrap();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+    (v, commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() }))
+}
+
+/// PikaOS read back and planned (docs/design/pikaos.md): booster over
+/// initramfs-tools, with booster.yaml's keys; booster.img-K as K's image
+/// and its .dpkg-bak apart; rEFInd from BootCurrent, and the XBOOTLDR /boot
+/// not taken for systemd-boot's; refind_linux.conf recorded.  load remakes
+/// booster's image for each kernel, installs no loader and runs neither
+/// refind-install nor update-initramfs, and makes rEFInd's boot entry.
+#[test]
+fn pikaos_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let k = PIKA_KV;
+    let (v, b) = pikaos_plan(&pikaos());
+    assert_eq!(s(&v, &["os", "id"]), "pika");
+    assert_eq!(s(&v, &["os", "pretty_name"]), "PikaOS 4");
+    assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
+    for (p, ver) in [("booster", "0.12.1-100pika1"), ("kernel-pika", "7.3.3-101pika1"), ("kernel-pika-runtime", "7.3.3-101pika1"), ("pika-refind-theme", "1.0-100pika1"), ("refind-btrfs", "0.6.0-100pika1"), ("zram-tools", "0.3.5-1"), ("refind", "0.14.2-100pika2")] {
+        assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
+    }
+    assert!(v.at(&["boot", "packages", "linux-image-7.3.3-pikaos"]).is_none());
+    let i = v.at(&["boot", "initramfs"]).unwrap();
+    assert_eq!(s(i, &["generator"]), "booster");
+    assert_eq!(
+        i.get("booster").unwrap().compact(),
+        r#"{"conf":"/etc/booster.yaml","universal":null,"enable_lvm":true,"modules":"usbhid,hid_generic","modules_force_load":"usbhid,hid_generic","compression":"lz4"}"#
+    );
+    let kernels = arr(&v, &["boot", "kernels", "installed"]);
+    assert_eq!(kernels.len(), 1, "{}", v.at(&["boot", "kernels"]).unwrap().compact());
+    assert_eq!(s(&kernels[0], &["version"]), k);
+    assert_eq!(u(&kernels[0], &["initrd_bytes"]), 2);
+    assert_eq!(kernels[0].get("modules_installed"), Some(&Value::Bool(true)));
+    let old: Vec<&str> = arr(&v, &["boot", "kernels", "old_copies"]).iter().filter_map(Value::as_str).collect();
+    assert_eq!(old, vec![format!("booster.img-{k}.dpkg-bak")]);
+    let l = v.at(&["boot", "loader"]).unwrap();
+    assert_eq!(s(l, &["name"]), "refind");
+    assert_eq!(s(l, &["package"]), "refind");
+    assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)));
+    assert!(v.at(&["boot", "systemd_boot"]).unwrap().is_null(), "{}", v.at(&["boot", "systemd_boot"]).unwrap().compact());
+    assert_eq!(s(&v, &["boot", "esps", "0", "mounted_at"]), "/boot/efi");
+    let rc = v.at(&["boot", "refind", "linux_conf"]).unwrap();
+    assert_eq!(s(rc, &["path"]), "/boot/refind_linux.conf");
+    let lines = arr(rc, &["lines"]);
+    assert_eq!(lines.len(), 3);
+    assert_eq!(s(&lines[0], &["title"]), "Boot with standard options");
+    assert_eq!(s(&lines[0], &["options"]), format!("nowatchdog rootflags=rw,relatime root=UUID={PIKA_ROOT} quiet splash ---"));
+    assert_eq!(s(&lines[2], &["title"]), "Boot with safe graphics");
+    let labels: Vec<&str> = arr(&v, &["storage", "disks", "0", "partitions"]).iter().map(|p| s(p, &["content", "label"])).collect();
+    assert_eq!(labels, vec!["EFI", "PikaBoot", "PikaRoot"]);
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    let booster: Vec<&str> = bt.lines().filter(|l| l.contains("booster build")).collect();
+    assert_eq!(
+        booster,
+        vec![r#"chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d "$k/kernel" ] || continue; k=${k##*/}; booster build --force --kernel-version "$k" "/boot/booster.img-$k" || exit; n=$((n + 1)); done; [ "$n" -gt 0 ]'"#],
+        "{bt}"
+    );
+    assert!(!bt.contains("update-initramfs") && !bt.contains("refind-install") && !bt.contains("grub") && !bt.contains("bootctl"), "{bt}");
+    let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'rEFInd Boot Manager' --loader '\\EFI\\refind\\refind_x64.efi'\n").expect(&bt);
+    assert!(bt.find("booster build").unwrap() < nvram, "{bt}");
+    assert!(b.notes.iter().any(|n| n == "rEFInd: its EFI files, drivers, theme and refind.conf came back with the ESP, and refind_linux.conf with /boot; nothing to install"), "{:?}", b.notes);
+    let mnt: String = b.stage(Stage::Mount).iter().map(Cmd::shell).collect();
+    assert!(mnt.find("/mnt/bko-target/boot\n").unwrap() < mnt.find("/mnt/bko-target/boot/efi\n").unwrap(), "{mnt}");
+}
+
+/// PikaOS in "BOOTX64 mode" (or OVMF with blank variables): the firmware
+/// booted the fallback path, which names no loader; the ESP's rEFInd files
+/// say it's rEFInd.  The firmware's own entry is the one recreated.
+#[test]
+fn pikaos_fallback_boot() {
+    use crate::efi::GLOBAL;
+    use crate::load::{commands::Cmd, Stage};
+    let t = pikaos();
+    let v_ = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    std::fs::remove_file(t.p(&v_("Boot0001"))).unwrap();
+    t.file(&v_("Boot0002"), efi_load_option("UEFI Misc Device", 1, 2048, 32768, PIKA_ESP, "\\EFI\\BOOT\\BOOTX64.EFI"))
+        .file(&v_("BootOrder"), [7u8, 0, 0, 0, 2, 0])
+        .file(&v_("BootCurrent"), [6u8, 0, 0, 0, 2, 0]);
+    let (v, b) = pikaos_plan(&t);
+    let l = v.at(&["boot", "loader"]).unwrap();
+    assert_eq!(s(l, &["name"]), "refind");
+    let ev = l.get("evidence").unwrap().compact();
+    assert!(ev.contains("that is the removable-media fallback path") && ev.contains("an ESP holds rEFInd's refind_x64.efi or refind.conf"), "{ev}");
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(!bt.contains("refind-install") && !bt.contains("refind_x64.efi"), "{bt}");
+    assert!(bt.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'UEFI Misc Device' --loader '\\EFI\\BOOT\\BOOTX64.EFI'\n"), "{bt}");
+    assert!(b.notes.iter().any(|n| n.starts_with("rEFInd: its EFI files")), "{:?}", b.notes);
+    // Only the fallback copy (refind.conf beside bootx64.efi) is enough.
+    for f in ["refind_x64.efi", "refind.conf", "drivers_x64/ext4_x64.efi", "refind-dark/refind-dark.conf"] {
+        std::fs::remove_file(t.p(&format!("/boot/efi/EFI/refind/{f}"))).unwrap();
+    }
+    let (v, _) = pikaos_plan(&t);
+    assert_eq!(s(&v, &["boot", "loader", "name"]), "refind");
+}
+
 /// fstab mounts the ESP at /efi, but this boot didn't: said, since the dump
 /// then has no ESP and a backup none of its files.
 #[test]
@@ -1685,6 +1883,460 @@ fn unmounted_esp_warns() {
     assert!(arr(&run(&t, true, FakeRunner::default()), &["warnings"]).is_empty());
 }
 
+const BIGLINUX_ESP: &str = "b16b16b1-0000-4000-8000-000000000001";
+
+/// BigLinux as its Calamares installs it (docs/design/biglinux.md): UEFI,
+/// GPT with a 35 MiB ESP at /boot/efi and a btrfs whose @ and @home are /
+/// and /home, mounted noatime,compress-force=zstd; GRUB as `BigLinux` from
+/// NVRAM (EFI/BigLinux/grubx64.efi, the fallback EFI/boot/bootx64.efi);
+/// mkinitcpio with faster-mkinitcpio's one preset; Timeshift with two
+/// snapshots of @ in the top level's timeshift-btrfs/snapshots.
+fn biglinux() -> Tree {
+    use crate::efi::GLOBAL;
+    let t = Tree::new("scn-biglinux");
+    let mut img = vec![0u8; 96 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "6f1c2c3d-0000-4000-8000-00000000b16b",
+            parts: vec![(ESP, BIGLINUX_ESP, 2048, 73727, 0, ""), (LINUX, "b16b16b1-0000-4000-8000-000000000002", 73728, 196574, 0, "")],
+        },
+    );
+    put(&mut img, 2048, &fat::sample::fat32(71680, 0x0b16_0b16, ""));
+    put(&mut img, 73728, &btrfs::sample::image("", 0x1 | 0x20 | 0x40 | 0x100 | 0x200));
+    let root_uuid = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
+    let opts = "rw,noatime,compress-force=zstd:3,discard=async,space_cache=v2";
+    let pkg = |n: &str, ver: &str| (format!("/var/lib/pacman/local/{n}-{ver}/desc"), format!("%NAME%\n{n}\n\n%VERSION%\n{ver}\n\n%ARCH%\nx86_64\n"));
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
+        .partition("vda", "vda2", "254:2", 2, 73728, 122847, &img)
+        .symlink(&format!("/dev/disk/by-partuuid/{BIGLINUX_ESP}"), "../../vda1")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&var("Boot0001"), efi_load_option("BigLinux", 1, 2048, 71680, BIGLINUX_ESP, "\\EFI\\BigLinux\\grubx64.efi"))
+        .file(&var("BootOrder"), [7u8, 0, 0, 0, 1, 0])
+        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 1, 0])
+        .file(&var("SecureBoot"), [6u8, 0, 0, 0, 0])
+        .file(
+            "/proc/self/mountinfo",
+            format!("26 1 0:25 /@ / {opts} shared:1 - btrfs /dev/vda2 rw,subvolid=256,subvol=/@\n27 26 0:25 /@home /home {opts} shared:2 - btrfs /dev/vda2 rw,subvolid=257,subvol=/@home\n28 26 254:1 / /boot/efi rw,relatime shared:3 - vfat /dev/vda1 rw,fmask=0077,dmask=0077\n"),
+        )
+        .file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n/dev/zram0 partition 3984380 0 100\n")
+        .file(
+            "/etc/fstab",
+            format!("UUID={root_uuid} / btrfs subvol=/@,defaults,noatime,compress-force=zstd,discard=async 0 0\nUUID={root_uuid} /home btrfs subvol=/@home,defaults,noatime,compress-force=zstd,discard=async 0 0\nUUID=0B16-0B16 /boot/efi vfat defaults,umask=0077 0 2\n"),
+        )
+        .file("/etc/os-release", "NAME=\"BigLinux based on Manjaro Linux\"\nPRETTY_NAME=\"BigLinux based on Manjaro Linux\"\nID=\"biglinux\"\nID_LIKE=arch\nBUILD_ID=rolling\n")
+        .file("/etc/mkinitcpio.conf", "HOOKS=\"base systemd autodetect kms modconf plymouth block filesystems fsck\"\nCOMPRESSION=\"zstd\"\n")
+        .file("/etc/mkinitcpio.d/linux618.preset", "ALL_kver=\"/boot/vmlinuz-6.18-x86_64\"\nPRESETS=('default')\ndefault_image=\"/boot/initramfs-6.18-x86_64.img\"\n")
+        .file("/etc/default/grub", "GRUB_DISTRIBUTOR=\"BigLinux\"\nGRUB_DEFAULT=saved\nGRUB_DISABLE_OS_PROBER=false\n")
+        .file("/etc/timeshift/timeshift.json", "{\"btrfs_mode\": \"true\", \"schedule_daily\": \"true\", \"btrfs_use_qgroup\": \"false\"}\n")
+        .file("/boot/vmlinuz-6.18-x86_64", "k")
+        .file("/boot/initramfs-6.18-x86_64.img", "i")
+        .file("/boot/grub/x86_64-efi/normal.mod", "x")
+        .file("/boot/grub/grub.cfg", format!("insmod part_gpt\ninsmod btrfs\nmenuentry 'BigLinux' {{\n\tlinux\t/@/boot/vmlinuz-6.18-x86_64 root=UUID={root_uuid} rw rootflags=subvol=@\n\tinitrd\t/@/boot/initramfs-6.18-x86_64.img\n}}\n"))
+        .file("/boot/efi/EFI/BigLinux/grubx64.efi", vec![2u8; 400])
+        .file("/boot/efi/EFI/boot/bootx64.efi", vec![2u8; 400])
+        .dir("/usr/share/grub/themes/biglinux")
+        .dir("/usr/lib/modules/6.18.49-1-MANJARO/kernel")
+        .file("/proc/sys/kernel/osrelease", "6.18.49-1-MANJARO\n")
+        .file("/proc/sys/kernel/hostname", "bigpc\n")
+        .file("/proc/cmdline", format!("BOOT_IMAGE=/@/boot/vmlinuz-6.18-x86_64 root=UUID={root_uuid} rw rootflags=subvol=@ quiet splash\n"));
+    for (n, ver) in [
+        ("grub", "2:2.14-1"),
+        ("install-grub", "2.14-1"),
+        ("update-grub", "2:2.14-1"),
+        ("grub-btrfs", "4.14-1"),
+        ("timeshift", "25.12-1"),
+        ("grub-btrfs-timeshift", "1.0-1"),
+        ("mkinitcpio", "41-1"),
+        ("faster-mkinitcpio", "1.0-1"),
+        ("plymouth", "24.004.60-12"),
+        ("linux618", "6.18.49-1"),
+        ("btrfs-progs", "6.17-1"),
+        ("dosfstools", "4.2-5"),
+        ("efibootmgr", "18-3"),
+        ("biglinux-keyring", "2026.10-1"),
+    ] {
+        let (path, desc) = pkg(n, ver);
+        t.file(&path, desc);
+    }
+    t
+}
+
+/// What btrfs answers on BigLinux: @ and @home, and two Timeshift snapshots
+/// of @ (parent @), mounted nowhere.
+fn biglinux_runner() -> FakeRunner {
+    let u = |n: u32| format!("6c8a1b2c-0000-4000-8000-000000000{n}");
+    FakeRunner::default()
+        .with(
+            "btrfs subvolume list -a -p -u -q /",
+            &format!(
+                "ID 256 gen 900 parent 5 top level 5 parent_uuid - uuid {} path <FS_TREE>/@\nID 257 gen 880 parent 5 top level 5 parent_uuid - uuid {} path <FS_TREE>/@home\nID 258 gen 610 parent 5 top level 5 parent_uuid {} uuid {} path <FS_TREE>/timeshift-btrfs/snapshots/2026-11-14_10-00-01/@\nID 259 gen 870 parent 5 top level 5 parent_uuid {} uuid {} path <FS_TREE>/timeshift-btrfs/snapshots/2026-11-15_10-00-01/@\n",
+                u(256),
+                u(257),
+                u(256),
+                u(258),
+                u(256),
+                u(259)
+            ),
+        )
+        .with("btrfs subvolume get-default /", "ID 5 (FS_TREE)\n")
+        .with("btrfs subvolume list -a -r /", "")
+        .with("btrfs property get -t s /", "ro=false\n")
+        .with("btrfs property get -t i /", "")
+        .with("btrfs property get -t s /home", "ro=false\n")
+        .with("btrfs property get -t i /home", "")
+}
+
+/// BigLinux read back and planned: supported by its ID, its pacman
+/// packages, GRUB as `BigLinux` (the source's spelling), mkinitcpio, the
+/// Timeshift snapshots listed in the dump but left out by load with a note,
+/// and /boot and /usr/share/grub defragmented uncompressed at the end.
+#[test]
+fn biglinux_guest() {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed, Stage};
+    let v = run(&biglinux(), true, biglinux_runner());
+    assert_eq!(s(&v, &["os", "id"]), "biglinux");
+    assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
+    assert_eq!(s(&v, &["boot", "loader", "name"]), "grub");
+    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "mkinitcpio");
+    for (n, ver) in [("grub-btrfs", "4.14-1"), ("grub-btrfs-timeshift", "1.0-1"), ("faster-mkinitcpio", "1.0-1")] {
+        assert_eq!(s(&v, &["boot", "packages", n]), ver);
+    }
+    // Names other guests have too stay out, so their fingerprints don't change.
+    for n in ["biglinux-keyring", "timeshift", "plymouth", "install-grub", "update-grub"] {
+        assert!(v.at(&["boot", "packages", n]).is_none(), "{n}");
+    }
+    assert_eq!(s(&v, &["boot", "esps", "0", "mounted_at"]), "/boot/efi");
+    let subs: Vec<&str> = arr(&v, &["storage", "btrfs", "0", "subvolumes"]).iter().map(|x| s(x, &["path"])).collect();
+    assert_eq!(subs, vec!["<FS_TREE>/@", "<FS_TREE>/@home", "<FS_TREE>/timeshift-btrfs/snapshots/2026-11-14_10-00-01/@", "<FS_TREE>/timeshift-btrfs/snapshots/2026-11-15_10-00-01/@"]);
+
+    let l = Layout::from_json(v).unwrap();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string(), "--repo".into(), "/srv/repo".into(), "--password-file".into(), "/run/pw".into()]) else { unreachable!() };
+    let b = commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let all: String = [Stage::Partition, Stage::Assemble, Stage::Format, Stage::Mount, Stage::Restore, Stage::Boot, Stage::Close].iter().flat_map(|st| b.stage(*st)).map(commands::Cmd::shell).collect();
+    let f: String = b.stage(Stage::Format).iter().map(commands::Cmd::shell).collect();
+    let top = format!("/run/bko-holt/btrfs/{}", "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf");
+    assert!(f.contains(&format!("btrfs subvolume create {top}/@\n")) && f.contains(&format!("btrfs subvolume create {top}/@home\n")), "{f}");
+    assert!(!all.contains("timeshift-btrfs"), "{all}");
+    assert!(!all.lines().any(|l| l.contains("subvolume snapshot")), "{all}");
+    assert!(b.notes.iter().any(|n| n == "btrfs b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf: 2 Timeshift snapshots (2026-11-14_10-00-01, 2026-11-15_10-00-01) are not in the backup; not made"), "{:?}", b.notes);
+    let m: String = b.stage(Stage::Mount).iter().map(commands::Cmd::shell).collect();
+    assert!(m.contains("compress-force=zstd") && m.contains("/mnt/bko-target/boot/efi\n"), "{m}");
+    let bt: String = b.stage(Stage::Boot).iter().map(commands::Cmd::shell).collect();
+    let mk = bt.find("chroot /mnt/bko-target mkinitcpio -P\n").expect(&bt);
+    let install = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=BigLinux --no-nvram\n").expect(&bt);
+    let cfg = bt.find("chroot /mnt/bko-target env LANG=C grub-mkconfig -o /boot/grub/grub.cfg\n").expect(&bt);
+    let d1 = bt.find("btrfs filesystem defragment --nocomp -r /mnt/bko-target/boot\n").expect(&bt);
+    let d2 = bt.find("btrfs filesystem defragment --nocomp -r /mnt/bko-target/usr/share/grub\n").expect(&bt);
+    let nvram = bt.find("--label BigLinux --loader '\\EFI\\BigLinux\\grubx64.efi'\n").expect(&bt);
+    assert!(mk < install && install < cfg && cfg < d1 && d1 < d2 && d2 < nvram, "{bt}");
+}
+
+const ANDUINOS_KV: &str = "7.0.0-38-generic";
+const ANDUINOS_ESP: &str = "a2d00105-0000-4000-8000-000000000001";
+/// The btrfs (btrfs::sample::image's UUID).
+const ANDUINOS_ROOT: &str = "b0b1b2b3-b4b5-b6b7-b8b9-babbbcbdbebf";
+/// The six subvolumes the installer makes, and where fstab mounts them.
+const ANDUINOS_SUBVOLS: [(&str, &str); 6] = [("@root", "/"), ("@home", "/home"), ("@log", "/var/log"), ("@snapshots", "/.snapshots"), ("@containers", "/var/lib/containers"), ("@libvirt", "/var/lib/libvirt/images")];
+/// The Disk Snapshots Manager's two read-only "New OS" baselines, in its own
+/// tree in @snapshots (anduinos2's layout): System's of @root, Home's of
+/// @home, each under a directory named by its record's id.
+const ANDUINOS_BASELINES: [(&str, &str, u32); 2] = [
+    ("@snapshots/anduinos-btrfs-snapshots-manager/deployments/a2d0d3b1-0000-4000-8000-000000000001/root", "@root", 256),
+    ("@snapshots/anduinos-btrfs-snapshots-manager/personal/snapshots/a2d0d3b1-0000-4000-8000-000000000002/home", "@home", 257),
+];
+
+/// AnduinOS 2.0.5 as its installer lays it out for "erase disk"
+/// (docs/design/anduinos.md, "What A1 found"), in small (the ESP is 1 GiB
+/// there): GPT with a 2 MiB BIOS boot partition holding GRUB's i386-pc core
+/// (boot.img in the protective MBR: the installer runs grub-install
+/// --target=i386-pc too), a vfat ESP at /boot/efi, a swap partition and one
+/// btrfs whose six subvolumes are mounted defaults,subvol=@X,compress=zstd:3,
+/// noatime, with the Disk Snapshots Manager's read-only baselines of @root
+/// and @home in @snapshots; dracut's /boot/initrd.img-K (Debian's dracut.conf.d
+/// names it so); AnduinOS's GRUB, signed with the machine's MOK, behind
+/// shim in EFI/AnduinOS and at the fallback path (shim, GRUB and
+/// MokManager); booted from NVRAM's shim entry with Secure Boot on.
+fn anduinos() -> Tree {
+    use crate::efi::GLOBAL;
+    const SWAP: &str = "0657fd6d-a4ab-43c4-84e5-0933c84b4f4f";
+    let t = Tree::new("scn-anduinos");
+    let k = ANDUINOS_KV;
+    let mut img = vec![0u8; 100 * MIB];
+    write_gpt(
+        &mut img,
+        512,
+        &GptSpec {
+            disk_guid: "a2d00105-0000-4000-8000-00000000d15c",
+            parts: vec![
+                (BIOS_BOOT, "a2d00105-0000-4000-8000-000000000004", 2048, 6143, 0, "bios-boot"),
+                (ESP, ANDUINOS_ESP, 6144, 77823, 0, "efi-system"),
+                (SWAP, "a2d00105-0000-4000-8000-000000000002", 77824, 86015, 0, "swap"),
+                (LINUX, "a2d00105-0000-4000-8000-000000000003", 86016, 204766, 0, "root"),
+            ],
+        },
+    );
+    // grub-install --target=i386-pc: boot.img's code in the protective MBR,
+    // core.img in the BIOS boot partition.
+    img[..440].copy_from_slice(&grub::grub2_boot_img(2048)[..440]);
+    put(&mut img, 2048, &grub::grub2_diskboot_img());
+    put(&mut img, 6144, &fat::sample::fat32(71680, 0xa2d0_0105, ""));
+    put(&mut img, 77824, &misc::sample::swap(1024, ""));
+    put(&mut img, 86016, &btrfs::sample::image("", 0x1 | 0x20 | 0x40 | 0x100 | 0x200));
+    let swap_uuid = "c0c1c2c3-c4c5-c6c7-c8c9-cacbcccdcecf";
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    let mut mountinfo = String::new();
+    let mut fstab = String::new();
+    for (i, (sv, at)) in ANDUINOS_SUBVOLS.iter().enumerate() {
+        let parent = if *at == "/" { 1 } else { 26 };
+        mountinfo.push_str(&format!("{} {parent} 0:25 /{sv} {at} rw,noatime shared:{} - btrfs /dev/vda4 rw,compress=zstd:3,space_cache=v2,subvolid={},subvol=/{sv}\n", 26 + i, i + 1, 256 + i));
+        fstab.push_str(&format!("UUID={ANDUINOS_ROOT} {at} btrfs defaults,subvol={sv},compress=zstd:3,noatime 0 {}\n", if *at == "/" { 1 } else { 2 }));
+    }
+    mountinfo.push_str("40 26 254:2 / /boot/efi rw,relatime shared:9 - vfat /dev/vda2 rw,fmask=0077,dmask=0077\n");
+    fstab.push_str(&format!("UUID=A2D0-0105 /boot/efi vfat umask=0077 0 1\nUUID={swap_uuid} none swap sw 0 0\n"));
+    let (shim, grub, mm) = (vec![1u8; 300], vec![2u8; 400], vec![3u8; 200]);
+    let stub = format!("search.fs_uuid {ANDUINOS_ROOT} root \nset prefix=($root)'/@root/boot/grub'\nconfigfile $prefix/grub.cfg\n");
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 4096, &img)
+        .partition("vda", "vda2", "254:2", 2, 6144, 71680, &img)
+        .partition("vda", "vda3", "254:3", 3, 77824, 8192, &img)
+        .partition("vda", "vda4", "254:4", 4, 86016, 118751, &img)
+        .file("/sys/block/vda/device/model", "")
+        .symlink(&format!("/dev/disk/by-partuuid/{ANDUINOS_ESP}"), "../../vda2")
+        .file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&var("Boot0001"), efi_load_option("AnduinOS", 2, 6144, 71680, ANDUINOS_ESP, "\\EFI\\AnduinOS\\shimx64.efi"))
+        .file(&var("BootOrder"), [7u8, 0, 0, 0, 1, 0])
+        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 1, 0])
+        .file(&var("SecureBoot"), [6u8, 0, 0, 0, 1])
+        .file("/proc/self/mountinfo", mountinfo)
+        .file("/proc/swaps", "Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/dev/vda3                               partition\t4096\t\t0\t\t-2\n/dev/zram0                              partition\t2048\t\t0\t\t100\n")
+        .file("/etc/fstab", fstab)
+        .file("/usr/lib/os-release", "PRETTY_NAME=\"AnduinOS 2.0.5\"\nNAME=\"AnduinOS\"\nVERSION_ID=\"2.0.5\"\nVERSION=\"2.0.5 (Resolute Ringtail)\"\nVERSION_CODENAME=resolute\nID=anduinos\nID_LIKE=debian\nUBUNTU_CODENAME=resolute\n")
+        .symlink("/etc/os-release", "../usr/lib/os-release")
+        .file("/etc/debian_version", "forky/sid\n")
+        .symlink("/lib", "usr/lib")
+        .file("/etc/dracut.conf.d/01-debian.conf", "initrdname=\"initrd.img-${kernel}\"\n")
+        .file(&format!("/boot/vmlinuz-{k}"), "k")
+        .file(&format!("/boot/initrd.img-{k}"), "dracut")
+        .file(&format!("/boot/config-{k}"), "")
+        .file(&format!("/boot/System.map-{k}"), "")
+        .symlink("/boot/vmlinuz", &format!("vmlinuz-{k}"))
+        .symlink("/boot/initrd.img", &format!("initrd.img-{k}"))
+        .file("/boot/grub/x86_64-efi/normal.mod", "x")
+        .file("/boot/grub/i386-pc/normal.mod", "x")
+        .file("/boot/grub/i386-pc/core.img", "x")
+        .file(
+            "/boot/grub/grub.cfg",
+            format!("insmod part_gpt\ninsmod btrfs\nsearch --no-floppy --fs-uuid --set=root {ANDUINOS_ROOT}\nmenuentry 'AnduinOS' {{\n\tlinux\t/@root/boot/vmlinuz-{k} root=UUID={ANDUINOS_ROOT} ro rootflags=subvol=@root quiet splash\n\tinitrd\t/@root/boot/initrd.img-{k}\n}}\n"),
+        )
+        .file("/etc/default/grub", "GRUB_DEFAULT=0\nGRUB_DISTRIBUTOR=`( . /etc/os-release; echo ${NAME:-AnduinOS} ) 2>/dev/null || echo AnduinOS`\nGRUB_CMDLINE_LINUX_DEFAULT=\"quiet splash\"\n")
+        .dir(&format!("/usr/lib/modules/{k}/kernel"))
+        .file("/boot/efi/EFI/AnduinOS/shimx64.efi", &shim)
+        .file("/boot/efi/EFI/AnduinOS/grubx64.efi", &grub)
+        .file("/boot/efi/EFI/AnduinOS/mmx64.efi", &mm)
+        .file("/boot/efi/EFI/AnduinOS/grub.cfg", &stub)
+        .file("/boot/efi/EFI/BOOT/BOOTX64.EFI", &shim)
+        .file("/boot/efi/EFI/BOOT/grubx64.efi", &grub)
+        .file("/boot/efi/EFI/BOOT/mmx64.efi", &mm)
+        .file("/var/lib/shim-signed/mok/MOK.der", b"0\x82\x03\x1fAnduinOS Secure Boot MOK (test)")
+        .file("/var/lib/shim-signed/mok/MOK.priv", "not for the dump")
+        .dir("/var/lib/anduinos-btrfs-snapshots-manager")
+        .file("/proc/sys/kernel/osrelease", format!("{k}\n"))
+        .file("/proc/sys/kernel/hostname", "anduinos-pc\n")
+        .file("/proc/cmdline", format!("BOOT_IMAGE=/@root/boot/vmlinuz-{k} root=UUID={ANDUINOS_ROOT} ro rootflags=subvol=@root quiet splash\n"));
+    let pkgs = [
+        ("anduinos-grub", "2.0.5+repack1-2"),
+        ("anduinos-shim-signed", "1.61+15.8-0ubuntu1+anduinos1"),
+        ("anduinos-secureboot-toolkit", "2.0.5-4"),
+        ("anduinos-btrfs-snapshots-manager", "2.0.5-3"),
+        ("mokutil", "0.7.2-1"),
+        ("sbsigntool", "0.9.4-3.2"),
+        ("dracut", "110-11ubuntu0.1"),
+        ("linux-generic-hwe-26.04", "7.0.0-38.38"),
+        ("linux-image-7.0.0-38-generic", "7.0.0-38.38"),
+        ("efibootmgr", "18-2"),
+        ("btrfs-progs", "6.17.1-1"),
+        ("dosfstools", "4.2-1.2"),
+        ("e2fsprogs", "1.47.3-1"),
+    ];
+    let status: String = pkgs.iter().map(|(n, v)| format!("Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n")).collect();
+    t.file("/var/lib/dpkg/status", status);
+    t
+}
+
+/// What btrfs answers on AnduinOS: the six subvolumes, and the snapshot
+/// manager's two read-only "New OS" baselines (of @root and @home) in its
+/// tree in @snapshots.
+fn anduinos_runner() -> FakeRunner {
+    let u = |n: u32| format!("a2d0b7f5-0000-4000-8000-000000000{n}");
+    let mut list = String::new();
+    for (i, (sv, _)) in ANDUINOS_SUBVOLS.iter().enumerate() {
+        let id = 256 + i as u32;
+        list.push_str(&format!("ID {id} gen 900 parent 5 top level 5 parent_uuid - uuid {} path <FS_TREE>/{sv}\n", u(id)));
+    }
+    let mut ro = String::new();
+    for (i, (path, _, parent)) in ANDUINOS_BASELINES.iter().enumerate() {
+        let id = 262 + i as u32;
+        list.push_str(&format!("ID {id} gen 640 parent 259 top level 259 parent_uuid {} uuid {} path <FS_TREE>/{path}\n", u(*parent), u(id)));
+        ro.push_str(&format!("ID {id} gen 640 top level 259 path <FS_TREE>/{path}\n"));
+    }
+    let mut r = FakeRunner::default()
+        .with("btrfs subvolume list -a -p -u -q /", &list)
+        .with("btrfs subvolume get-default /", "ID 5 (FS_TREE)\n")
+        .with("btrfs subvolume list -a -r /", &ro);
+    for (path, _, _) in ANDUINOS_BASELINES {
+        let at = format!("/.snapshots{}", &path["@snapshots".len()..]);
+        r = r.with(&format!("btrfs property get -t s {at}"), "ro=true\n").with(&format!("btrfs property get -t i {at}"), "");
+    }
+    for (_, at) in ANDUINOS_SUBVOLS {
+        r = r.with(&format!("btrfs property get -t s {at}"), "ro=false\n").with(&format!("btrfs property get -t i {at}"), "");
+    }
+    r
+}
+
+/// AnduinOS's plan from a tree, the source disk vda going to vdb.
+fn anduinos_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let v = run(t, true, anduinos_runner());
+    let l = Layout::from_json(v.clone()).unwrap();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+    (v, commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() }))
+}
+
+/// AnduinOS read back and planned (docs/design/anduinos.md): supported by
+/// its ID; GRUB through shim from BootCurrent, the ESP directory's case
+/// kept; boot.loader.mok with the certificate's SHA-256; dracut as the
+/// generator; the six subvolumes and the read-only snapshot.  load runs
+/// dracut's loop, no grub-install (the MOK-signed GRUB is the restored
+/// ESP's), update-grub with os-prober off, makes shim's boot entry, and
+/// notes the MOK and the snapshot manager's records.
+#[test]
+fn anduinos_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let k = ANDUINOS_KV;
+    let (v, b) = anduinos_plan(&anduinos());
+    assert_eq!(s(&v, &["os", "id"]), "anduinos");
+    assert_eq!(s(&v, &["os", "version_id"]), "2.0.5");
+    assert_eq!(s(&v, &["os", "pretty_name"]), "AnduinOS 2.0.5");
+    assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
+    assert_eq!(v.at(&["firmware", "secure_boot"]), Some(&Value::Bool(true)));
+    for (p, ver) in [("anduinos-grub", "2.0.5+repack1-2"), ("anduinos-shim-signed", "1.61+15.8-0ubuntu1+anduinos1"), ("anduinos-secureboot-toolkit", "2.0.5-4"), ("anduinos-btrfs-snapshots-manager", "2.0.5-3"), ("mokutil", "0.7.2-1"), ("dracut", "110-11ubuntu0.1")] {
+        assert_eq!(s(&v, &["boot", "packages", p]), ver, "{p}");
+    }
+    let l = v.at(&["boot", "loader"]).unwrap();
+    assert_eq!(s(l, &["name"]), "grub");
+    assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
+    assert_eq!(s(l, &["package"]), "anduinos-grub");
+    assert_eq!(s(l, &["shim_package"]), "anduinos-shim-signed");
+    assert_eq!(s(l, &["mok", "cert"]), "/var/lib/shim-signed/mok/MOK.der");
+    let fp = crate::bytes::sha256_hex(b"0\x82\x03\x1fAnduinOS Secure Boot MOK (test)");
+    assert_eq!(s(l, &["mok", "sha256"]), fp);
+    assert!(!v.compact().contains("not for the dump"));
+    assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "dracut");
+    let kernels = arr(&v, &["boot", "kernels", "installed"]);
+    assert_eq!(kernels.len(), 1, "{}", v.at(&["boot", "kernels"]).unwrap().compact());
+    assert_eq!(s(&kernels[0], &["version"]), k);
+    assert_eq!(u(&kernels[0], &["initrd_bytes"]), 6);
+    let esp = v.at(&["boot", "esps", "0"]).unwrap();
+    assert_eq!(s(esp, &["mounted_at"]), "/boot/efi");
+    let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"]).iter().map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str))).collect();
+    assert!(files.contains(&("EFI/BOOT/BOOTX64.EFI", Some("EFI/AnduinOS/shimx64.efi"))), "{files:?}");
+    assert_eq!(files.len(), 7, "{files:?}");
+    let subs: Vec<(String, bool)> = arr(&v, &["storage", "btrfs", "0", "subvolumes"]).iter().map(|x| (s(x, &["path"]).to_string(), x.get("readonly") == Some(&Value::Bool(true)))).collect();
+    let mut want: Vec<(String, bool)> = ANDUINOS_SUBVOLS.iter().map(|(sv, _)| (format!("<FS_TREE>/{sv}"), false)).collect();
+    want.extend(ANDUINOS_BASELINES.iter().map(|(p, _, _)| (format!("<FS_TREE>/{p}"), true)));
+    assert_eq!(subs, want);
+    // The BIOS boot partition and GRUB's i386-pc core in it: the installer's
+    // BIOS install beside the UEFI one.
+    let disk = v.at(&["storage", "disks", "0"]).unwrap();
+    assert_eq!(s(disk, &["partitions", "0", "type_name"]), "BIOS boot");
+    assert_eq!(s(disk, &["boot_code", "kind"]), "grub2");
+    assert_eq!(disk.at(&["boot_code", "grub_core_present"]), Some(&Value::Bool(true)));
+    assert_eq!(s(disk, &["boot_code", "grub_core_in"]), "partition");
+    assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
+    let top = format!("/run/bko-holt/btrfs/{ANDUINOS_ROOT}");
+    for (sv, _) in ANDUINOS_SUBVOLS {
+        assert!(f.contains(&format!("btrfs subvolume create {top}/{sv}\n")), "{sv}: {f}");
+    }
+    let p: String = b.stage(Stage::Partition).iter().map(Cmd::shell).collect();
+    assert!(p.contains("/dev/vdb1 : start=2048, size=4096, type=21686148-6449-6E6F-744E-656564454649"), "{p}");
+    let m: String = b.stage(Stage::Mount).iter().map(Cmd::shell).collect();
+    assert!(m.contains("subvol=@libvirt,compress=zstd:3,noatime") && m.contains("/mnt/bko-target/var/lib/libvirt/images\n") && m.contains("/mnt/bko-target/boot/efi\n"), "{m}");
+    // Both baselines come back as snapshots of their parents, made exact
+    // from the backup (extents shared), then read-only again.
+    let r: String = {
+        use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+        let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string(), "--repo".into(), "/srv/repo".into(), "--password-file".into(), "/run/pw".into()]) else { unreachable!() };
+        let rb = commands::build(&Layout::from_json(v.clone()).unwrap(), &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() });
+        assert!(rb.problems.is_empty(), "{:?}", rb.problems);
+        rb.stage(Stage::Restore).iter().map(Cmd::shell).collect()
+    };
+    for (path, parent, _) in ANDUINOS_BASELINES {
+        let at = &path["@snapshots".len()..];
+        let from = if parent == "@root" { "/" } else { "/home" };
+        assert!(r.contains(&format!("btrfs subvolume snapshot {top}/{parent} \"$d\"")), "{parent}: {r}");
+        assert!(r.contains(&format!("--exact --clone-from {from}={top}/{parent} latest:/.snapshots{at} {top}/{path}")), "{path}: {r}");
+        assert!(r.contains(&format!("btrfs property set -ts {top}/{path} ro true\n")), "{path}: {r}");
+    }
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    let dracut = bt.find("chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; dracut --force --kver \"${k##*/}\" || exit; n=$((n + 1)); done; [ \"$n\" -gt 0 ]'\n").expect(&bt);
+    let off = bt.find("[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
+    let cfg = bt.find("chroot /mnt/bko-target env LANG=C update-grub\n").expect(&bt);
+    let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 2 --label AnduinOS --loader '\\EFI\\AnduinOS\\shimx64.efi'\n").expect(&bt);
+    // The BIOS install made again (only the MBR, the BIOS boot partition
+    // and /boot/grub/i386-pc), before update-grub; no EFI grub-install.
+    let bios = bt.find("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n").expect(&bt);
+    assert!(dracut < off && off < cfg && cfg < nvram && dracut < bios && bios < cfg, "{bt}");
+    assert_eq!(bt.matches("grub-install").count(), 1, "{bt}");
+    assert!(!bt.contains("--target=x86_64-efi") && !bt.contains("update-initramfs") && !bt.contains("grub-mkconfig") && !bt.contains("mokutil") && !bt.contains("anduinos-grub-update"), "{bt}");
+    assert!(
+        b.notes.iter().any(|n| n.starts_with(&format!("AnduinOS: shim, MokManager and AnduinOS's GRUB, signed with the MOK /var/lib/shim-signed/mok/MOK.der (SHA-256 {fp}), are the restored ESP's; grub-install --target=x86_64-efi isn't run"))
+            && n.ends_with("enroll it again (`mokutil --import /var/lib/shim-signed/mok/MOK.der`, then confirm it at MokManager on the next boot) or turn Secure Boot off")),
+        "{:?}",
+        b.notes
+    );
+    assert!(b.notes.iter().any(|n| n.starts_with("AnduinOS: the Disk Snapshots Manager's records name each snapshot by its Btrfs subvolume UUID")), "{:?}", b.notes);
+}
+
+/// AnduinOS booted at the fallback path (no NVRAM entry, OVMF with blank
+/// variables), Secure Boot off and no MOK variables: EFI/BOOT/BOOTX64.EFI
+/// is a copy of shim, so it's through shim still; and without the MOK in
+/// the dump, shim and anduinos-grub alone keep the ESP as restored.
+#[test]
+fn anduinos_fallback_boot() {
+    use crate::efi::GLOBAL;
+    use crate::load::{commands::Cmd, Stage};
+    let t = anduinos();
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    std::fs::remove_file(t.p(&var("Boot0001"))).unwrap();
+    t.file(&var("Boot0002"), efi_load_option("UEFI Misc Device", 2, 6144, 71680, ANDUINOS_ESP, "\\EFI\\BOOT\\BOOTX64.EFI"))
+        .file(&var("BootOrder"), [7u8, 0, 0, 0, 2, 0])
+        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 2, 0])
+        .file(&var("SecureBoot"), [6u8, 0, 0, 0, 0]);
+    let (v, b) = anduinos_plan(&t);
+    let l = v.at(&["boot", "loader"]).unwrap();
+    assert_eq!(s(l, &["name"]), "grub");
+    assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
+    assert!(l.get("evidence").unwrap().compact().contains("EFI/BOOT/BOOTX64.EFI is a copy of EFI/AnduinOS/shimx64.efi"), "{}", l.compact());
+    assert!(b.problems.is_empty(), "{:?}", b.problems);
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(!bt.contains("--target=x86_64-efi") && bt.contains("grub-install --target=i386-pc /dev/vdb\n") && bt.contains("update-grub\n"), "{bt}");
+    assert!(bt.contains("efibootmgr --quiet --create --disk /dev/vdb --part 2 --label 'UEFI Misc Device' --loader '\\EFI\\BOOT\\BOOTX64.EFI'\n"), "{bt}");
+    std::fs::remove_file(t.p("/var/lib/shim-signed/mok/MOK.der")).unwrap();
+    let (v, b) = anduinos_plan(&t);
+    assert!(v.at(&["boot", "loader", "mok"]).is_none());
+    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+    assert!(!bt.contains("--target=x86_64-efi") && bt.contains("grub-install --target=i386-pc /dev/vdb\n"), "{bt}");
+    assert!(b.notes.iter().any(|n| n.contains("signed with the MOK /var/lib/shim-signed/mok/MOK.der (its fingerprint not in the dump)")), "{:?}", b.notes);
+}
+
 /// Every scenario's dump, by name, for tests that must hold over all of
 /// them (load's fit.rs).
 pub fn dumps() -> Vec<(&'static str, Value)> {
@@ -1698,5 +2350,8 @@ pub fn dumps() -> Vec<(&'static str, Value)> {
         ("whole_disk_fs", run(&misc_tree(), true, FakeRunner::default())),
         ("kinoite_ostree", run(&kinoite_ostree(), true, kinoite_runner())),
         ("gentoo_thinkpad", run(&gentoo_thinkpad(), true, FakeRunner::default())),
+        ("pikaos", run(&pikaos(), true, FakeRunner::default())),
+        ("biglinux", run(&biglinux(), true, biglinux_runner())),
+        ("anduinos", run(&anduinos(), true, anduinos_runner())),
     ]
 }

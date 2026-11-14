@@ -80,6 +80,26 @@
    ],
    "notes": "NetBSD's tools: ~/backotter-work/netbsd-tools, fetched from a throwaway netbsd11 when a tool is missing"
   },
+  "anduinos2": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/anduinos2/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh",
+    "testvm/stictest1/tumbleweed/bkoshim.py"
+   ],
+   "judge": [
+    "testvm/stictest1/anduinos2/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#anduinos2"
+   ]
+  },
   "arch": {
    "os": "linux",
    "bins": [
@@ -433,6 +453,25 @@
     "entry:testvm/test2/stic/limits.json#freebsd15-ufs"
    ]
   },
+  "garuda": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/garuda/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/garuda/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#garuda"
+   ]
+  },
   "gentoo": {
    "os": "linux",
    "bins": [
@@ -684,6 +723,44 @@
     "entry:testvm/test2/stic/limits.json#openbsd8"
    ]
   },
+  "pikaos4": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/pikaos4/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/pikaos4/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#pikaos4"
+   ]
+  },
+  "pikaos4-luks": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/pikaos4-luks/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/pikaos4-luks/judge.py",
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#pikaos4-luks"
+   ]
+  },
   "pop24": {
    "os": "linux",
    "bins": [
@@ -798,6 +875,23 @@
     "testvm/compare/verdict.py",
     "testvm/compare/expected-coverage.json",
     "entry:testvm/test2/stic/limits.json#ubuntu24"
+   ]
+  },
+  "ubuntu24-uefi": {
+   "os": "linux",
+   "bins": [
+    "linux/restic-bko",
+    "linux/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/ubuntu24-uefi/**",
+    "testvm/compare/fsmeta.py",
+    "testvm/compare/rt-common.sh",
+    "testvm/compare/torture.sh"
+   ],
+   "judge": [
+    "testvm/stictest1/ubuntu24-uefi/judge.py",
+    "entry:testvm/test2/stic/limits.json#ubuntu24-uefi"
    ]
   },
   "ubuntu26-uefi": {

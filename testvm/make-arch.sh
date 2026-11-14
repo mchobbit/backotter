@@ -3,7 +3,7 @@
 # install from an official Arch ISO into a qcow2 disk image, under QEMU with KVM.
 #
 # Usage: ./make-arch.sh [--cachyos] [--root-fs ext4|jfs] RELEASE WORK_DIR
-#        ./make-arch.sh --live endeavouros|endeavouros-grub|manjaro LIVE_ISO RELEASE WORK_DIR
+#        ./make-arch.sh --live endeavouros|endeavouros-grub|manjaro|garuda|biglinux LIVE_ISO RELEASE WORK_DIR
 #   e.g. ./make-arch.sh 2026.10.01 vms/arch
 #        ./make-arch.sh --cachyos --root-fs jfs 2026.10.01 vms/cachyos
 #        ./make-arch.sh --live manjaro manjaro-xfce-26.1.1-minimal-260825-linux71.iso 2026.10.01 vms/manjaro
@@ -27,7 +27,9 @@
 # initramfs is built on the guest's own (virtual) hardware.  The guest is UEFI
 # (vm-run-options: its loader isn't signed), 24 GiB, with the distribution's
 # default partitions; WORK_DIR's other results are as below, NAME being the
-# distribution's.
+# distribution's.  Garuda's guest is 32 GiB, and its ISO is checked here
+# against the SHA-256 pinned below, as Garuda signs nothing.  So is BigLinux's
+# (biglinux_2026-10-03_k618.iso): BigLinux publishes only an MD5 beside it.
 #
 # Results, in WORK_DIR (NAME is arch or cachyos):
 #   NAME.qcow2            the guest's 16 GiB disk (sparse), with a qcow2
@@ -53,6 +55,14 @@ MEMORY=2048
 # https://archlinux.org/download/
 RELEASE_KEY=3E80CA1A8B89F69CBA57D98A76A5EF9054449A5C
 INSTALL_TIMEOUT=1800
+# garuda-dr460nized-linux-garuda-260819.iso's SHA-256, as read on 2026-11-14.
+# Garuda publishes no signature, only a .sha256 on the same host as the ISO,
+# so this pin is what --live garuda checks.
+GARUDA_ISO_SHA256=3dac6b04225fe9577ea0143a1c712e13316dff26985c2c4417f8c5e4af77f7f7
+# biglinux_2026-10-03_k618.iso's SHA-256, read on 2026-11-14 from two copies
+# downloaded apart (Chopin's and Cinqcent's), both matching the .md5 that
+# iso.biglinux.com.br serves beside it; BigLinux signs no ISO.
+BIGLINUX_ISO_SHA256=1d12186abab0a2cb33ee9f0edd30140cd8ed842aa081e90ad4f0e3d050e6ae90
 
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-arch: $*" >&2; exit 1; }
@@ -63,7 +73,8 @@ while [[ $# -gt 0 ]]; do
         --cachyos) flavor=cachyos; shift ;;
         --root-fs) root_fs=$2; shift 2 ;;
         --live)
-            [[ $2 == endeavouros || $2 == endeavouros-grub || $2 == manjaro ]] || die "--live takes endeavouros, endeavouros-grub or manjaro"
+            [[ $2 == endeavouros || $2 == endeavouros-grub || $2 == manjaro || $2 == garuda || $2 == biglinux ]] ||
+                die "--live takes endeavouros, endeavouros-grub, manjaro, garuda or biglinux"
             flavor=$2 live_iso=$(realpath "$3"); shift 3 ;;
         -*) die "unknown option $1" ;;
         *) break ;;
@@ -77,6 +88,20 @@ if [[ -n $live_iso ]]; then
     DISK_SIZE=24G MEMORY=4096 install_script=install-live.sh
     # Second CD: /dev/sr1 in the live system.
     live_drive=(-drive "file=$live_iso,media=cdrom,readonly=on")
+    if [[ $flavor == garuda ]]; then
+        # Garuda's Calamares checks for 29.9 GB of disk; the qcow2 is sparse.
+        # 8 GB of layers to copy and two dracut runs (host-only and fallback)
+        # take longer than the others' installs.
+        DISK_SIZE=32G INSTALL_TIMEOUT=3600
+        [[ $(sha256sum <"$live_iso" | cut -d' ' -f1) == "$GARUDA_ISO_SHA256" ]] ||
+            die "$live_iso's SHA-256 isn't the pinned $GARUDA_ISO_SHA256"
+    elif [[ $flavor == biglinux ]]; then
+        # 3.4 GB of squashed layers (KDE in full), written through
+        # compress-force=zstd on 2 CPUs.
+        INSTALL_TIMEOUT=3600
+        [[ $(sha256sum <"$live_iso" | cut -d' ' -f1) == "$BIGLINUX_ISO_SHA256" ]] ||
+            die "$live_iso's SHA-256 isn't the pinned $BIGLINUX_ISO_SHA256"
+    fi
 fi
 GUEST_NAME=$flavor
 DISK=$flavor.qcow2

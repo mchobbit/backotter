@@ -26,8 +26,12 @@ AFTER_NEEDS = ("after:boot-state", "after:failed-units", "after:fstab", "after:s
 NEW_NEEDS = ("new:firmware", "new:ssh", "new:restic", "new:rustic", "new:smoke")
 KERNELS_MAX = {"K-deb": 3, "K-fed": 5, "K-ostree": 2, "K-pac": 2, "K-apk": 3, "K-void": 2, "K-moss": 3, "K-nix": 3, "K-fbsd": 3,
                "K-nbsd": 3, "K-obsd": 4, "K-dfly": 3, "K-ill": 4, "K-haiku": 2, "K-alpbsd": 3,
-               "K-gentoo": 3}
+               "K-gentoo": 3, "K-anduinos": 3}
 NO_RULE = "no rule for it"
+# K-anduinos: check-image.sh marks a /boot/vmlinuz-K without dracut's /boot/initrd.img-K (the
+# name Debian's dracut.conf.d gives it, which GRUB's 10_linux looks for).
+NO_INITRD_MARK = "no-initrd"
+NO_INITRD = "a kernel without its dracut image /boot/initrd.img-K"
 U0 = "not updated yet (u0): frozen by its builder"
 
 
@@ -260,6 +264,8 @@ def s_pac(sec):
         out.append("no Server in /etc/pacman.d/endeavouros-mirrorlist")
     if ident == "cachyos" and not _servers(sec, "/etc/pacman.d/cachyos-mirrorlist"):
         out.append("no Server in /etc/pacman.d/cachyos-mirrorlist")
+    if ident == "garuda" and not _servers(sec, "/etc/pacman.d/chaotic-mirrorlist"):
+        out.append("no Server in /etc/pacman.d/chaotic-mirrorlist")
     return out
 
 
@@ -649,6 +655,8 @@ def judge_kernels(sec, checks):
         return Need("FAIL", None, ["no kernel found"])
     if limit and len(ks) > int(limit):
         return Need("FAIL", None, ["more kernels than the updater keeps"])
+    if rule == "K-anduinos" and any(x.endswith(" " + NO_INITRD_MARK) for x in ks):
+        return Need("FAIL", None, [NO_INITRD])
     return Need("PASS", f"{len(ks)} kernel{'s' if len(ks) != 1 else ''}")
 
 
@@ -839,7 +847,7 @@ def newest_kernel_lines(lines, rule, sec=None, steps=None):
             kv[f[0]] = f[1].strip()
     if "unverified" in kv:
         return [f"kernel unverified: {kv['unverified']}"]
-    if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree", "K-gentoo"):
+    if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree", "K-gentoo", "K-anduinos"):
         run = kv.get("running")
         if not run or not installed:
             return ["kernel unverified: no running or installed kernel listed"]

@@ -60,6 +60,14 @@ fn uuid_at(sys: &Sys, node: &str) -> Option<String> {
     crate::probe::probe_all(&src).into_iter().find_map(|c| c.uuid).map(|u| u.to_ascii_lowercase())
 }
 
+/// Whether a pool's vdev device DEV is one of TARGETS or a partition of
+/// one, or FreeBSD's GELI provider (DEV.eli) on one: assemble attaches the
+/// provider on the target partition and makes the pool on that.
+fn on_target_disks(disks: &[target::TargetDisk], targets: &[&str], dev: &str) -> bool {
+    let dev = dev.strip_suffix(".eli").unwrap_or(dev);
+    disks.iter().any(|d| targets.contains(&d.b.name.as_str()) && (d.b.name == dev || d.parts.iter().any(|p| p.name == dev)))
+}
+
 pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, String)>, Vec<String>) {
     // The disks hold what --fit-largest made of the layout, so that's the
     // one every row is read against (target::prepare, fit.rs).
@@ -103,9 +111,9 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     // A pool counts when it's imported from the target disks; the system
     // load runs on may have one of the same name of its own.
     let targets: Vec<&str> = mapping.pairs.iter().map(|(_, t)| t.as_str()).collect();
-    let on_targets = |dev: &str| system.disks.iter().any(|d| targets.contains(&d.b.name.as_str()) && (d.b.name == dev || d.parts.iter().any(|p| p.name == dev)));
+    let on_targets = |dev: &str| on_target_disks(&system.disks, &targets, dev);
     let imported: Vec<String> = system.pools.iter().filter(|p| !p.devices.is_empty() && p.devices.iter().all(|d| on_targets(d))).map(|p| p.name.clone()).collect();
-    let mut missing: Vec<String> = built.made.iter().filter(|(_, node)| !sys.exists(node)).map(|(_, n)| n.clone()).collect();
+    let mut missing: Vec<String> = built.made.iter().filter(|(_, node)| !sys.exists(&crate::other::node_path(sys, node))).map(|(_, n)| n.clone()).collect();
     missing.extend(built.pools.iter().filter(|p| !imported.contains(p)).map(|p| format!("pool {p}")));
     let total = built.made.len() + built.pools.len();
     out.push((Stage::Assemble, tally(total - missing.len(), total), if missing.is_empty() { String::new() } else { format!("missing: {}", missing.join(", ")) }));
@@ -167,7 +175,11 @@ pub fn rows(layout: &Layout, opts: &Options, sys: &Sys) -> (Vec<(Stage, State, S
     // Closed, pools and volumes can't be looked into: what was made shows as
     // each partition's signature (filesystem, md, LUKS, LVM or ZFS label)
     // carrying the source's UUID.
-    let open = unmounted.len() < total || built.made.iter().any(|(_, n)| sys.exists(n)) || built.pools.iter().any(|p| imported.contains(p));
+    // (An OpenBSD softraid volume stays attached after close, as
+    // other/softraid.rs says: its partitions don't count as open.)
+    let open = unmounted.len() < total
+        || built.made.iter().any(|(_, n)| !crate::other::softraid::is_volume_node(n) && sys.exists(&crate::other::node_path(sys, n)))
+        || built.pools.iter().any(|p| imported.contains(p));
     let mut unsigned = vec![];
     for (src, tgt) in &mapping.pairs {
         let Some(d) = layout.disk(src) else { continue };
@@ -372,6 +384,29 @@ mod tests {
         assert_eq!(boot(), State::NotDone);
         t.file(&boot_marker(), "");
         assert_eq!(boot(), State::Done);
+    }
+
+    #[test]
+    fn a_pool_on_a_geli_provider_is_on_its_target() {
+        // freebsd15-geli's restore: zroot's vdev is vtbd1p3.eli, the GELI
+        // provider assemble attached on the target's vtbd1p3.
+        use crate::blockdev::{BlockDev, Kind};
+        let part = |n: &str| BlockDev { name: n.into(), kind: Kind::Partition, parent: Some("vtbd1".into()), ..BlockDev::default() };
+        let disk = |n: &str, parts| target::TargetDisk {
+            b: BlockDev { name: n.into(), kind: Kind::Disk, ..BlockDev::default() },
+            parts,
+            table: None,
+            signatures: vec![],
+            uuids: vec![],
+            in_use: vec![],
+            hard_use: vec![],
+            boot_medium: false,
+            holds_root: false,
+        };
+        let disks = vec![disk("vtbd0", vec![]), disk("vtbd1", vec![part("vtbd1p1"), part("vtbd1p3")])];
+        for (dev, want) in [("vtbd1p3.eli", true), ("vtbd1p3", true), ("vtbd1", true), ("vtbd1p2.eli", false), ("vtbd0p3.eli", false), ("vtbd0", false)] {
+            assert_eq!(on_target_disks(&disks, &["vtbd1"], dev), want, "{dev}");
+        }
     }
 
     #[test]

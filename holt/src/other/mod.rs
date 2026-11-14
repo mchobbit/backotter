@@ -14,11 +14,13 @@
 pub mod bsdlabel;
 pub mod dfly;
 pub mod freebsd;
+pub mod geli;
 pub mod haiku;
 pub mod illumos;
 pub mod labelled;
 pub mod load;
 pub mod offline;
+pub mod softraid;
 
 use crate::bytes::{ByteSource, FileSource, OffsetSource};
 use crate::json::{Obj, Value};
@@ -177,8 +179,12 @@ pub fn dev_size(sys: &Sys, path: &str) -> Option<u64> {
 }
 
 /// A node load names as NAME=WEDGE (NetBSD's GPT partitions) as the device
-/// that is that wedge now (/dev/dkN); any other as it is.
+/// that is that wedge now (/dev/dkN), or by DUID (OpenBSD's softraid
+/// volumes' partitions) as the disk with that DUID now; any other as it is.
 pub fn node_path(sys: &Sys, node: &str) -> String {
+    if let Some(p) = softraid::duid_path(sys, node) {
+        return p;
+    }
     let Some(name) = node.strip_prefix("NAME=") else { return node.to_string() };
     for (d, _) in labelled::disk_names(Family::NetBsd, &sys.run("sysctl", &["-n", "hw.disknames"]).unwrap_or_default()) {
         for (dk, n, _) in labelled::parse_wedges(&sys.run("dkctl", &[&d, "listwedges"]).unwrap_or_default()) {

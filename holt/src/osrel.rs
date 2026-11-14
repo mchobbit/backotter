@@ -68,11 +68,14 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
 /// VERSION_ID ("*": any, for a rolling release that numbers its snapshots),
 /// with how people name them.  Each has a whole-machine test in HoltTest1All
 /// (testvm/holttest1d/README.md says which guests pass).  The Ubuntu-based ones use Debian's
-/// boot tools (update-initramfs, update-grub); Arch and Artix have mkinitcpio
-/// and grub-mkconfig, Alpine mkinitfs and grub-mkconfig, Fedora dracut and
-/// grub2-mkconfig; AerynOS's initramfs comes prebuilt with its kernel, and
-/// systemd-boot boots it.  Chimera Linux (musl, dinit, apk, FreeBSD's
-/// userland) has Debian's initramfs-tools (update-initramfs) but no debconf,
+/// boot tools (update-initramfs, update-grub).  KDE neon (Ubuntu 24.04 with
+/// KDE's rolling Plasma) uses Ubuntu's; its test is `neon24` (UEFI, GRUB
+/// through shim in EFI/neon) in HoltTest1U, docs/design/kde-neon.md.  Arch
+/// and Artix have mkinitcpio and grub-mkconfig, Alpine mkinitfs and
+/// grub-mkconfig, Fedora dracut and grub2-mkconfig; AerynOS's initramfs
+/// comes prebuilt with its kernel, and systemd-boot boots it.  Chimera
+/// Linux (musl, dinit, apk, FreeBSD's userland) has Debian's
+/// initramfs-tools (update-initramfs) but no debconf,
 /// and grub-mkconfig, or systemd-boot with gen-systemd-boot; its tests are
 /// `chimera`, `chimera-uefi` and `chimera-zfs` in HoltTest1Obscure, and
 /// BackShot1 on the Thinkpad (root on ZFS, the ESP as /boot).  Bazzite, and
@@ -86,13 +89,21 @@ pub fn read(sys: &Sys) -> Option<OsRelease> {
 /// and only dracut's (or none) is supported, with GRUB and grub-mkconfig;
 /// its tests are `gentoo` (OpenRC, the Thinkpad's setup in small) and
 /// `gentoo-systemd` (LVM on LUKS) in HoltTest1G, and BackShot1 on the
-/// Thinkpad itself (docs/design/gentoo.md).
+/// Thinkpad itself (docs/design/gentoo.md).  PikaOS 4 (Debian sid with its
+/// own kernel) boots by rEFInd, whose files are kept as restored, with
+/// booster's initramfs (docs/design/pikaos.md); its tests are `pikaos4` and
+/// `pikaos4-luks` in HoltTest1Obscure.  AnduinOS 2 (Ubuntu 26.04
+/// underneath, ID_LIKE=debian) has dracut for its initramfs and its own
+/// GRUB, signed on the machine with a MOK behind shim, which load keeps as
+/// the ESP brings it back (docs/design/anduinos.md); its test is
+/// `anduinos2` in HoltTest1U.
 pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("debian", "13", "Debian 13"),
     ("linuxmint", "22", "Linux Mint 22"),
     ("ubuntu", "24", "Ubuntu 24.04"),
     ("ubuntu", "26", "Ubuntu 26.04"),
     ("zorin", "18", "Zorin OS 18"),
+    ("neon", "24", "KDE neon"),
     // Rolling: Arch's os-release has no VERSION_ID.
     ("arch", "", "Arch Linux"),
     ("fedora", "44", "Fedora 44"),
@@ -113,10 +124,16 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("rocky", "10", "Rocky Linux 10"),
     // Arch-based, rolling.
     ("omarchy", "*", "Omarchy"),
-    // Arch-based, rolling; neither has a VERSION_ID.  EndeavourOS boots by
-    // systemd-boot with dracut, Manjaro by GRUB with mkinitcpio.
+    // Arch-based, rolling; none has a VERSION_ID.  EndeavourOS boots by
+    // systemd-boot with dracut, Manjaro by GRUB with mkinitcpio.  BigLinux
+    // is Manjaro underneath (biglinux-name rewrites its os-release): GRUB,
+    // mkinitcpio, btrfs with Timeshift.
     ("endeavouros", "", "EndeavourOS"),
     ("manjaro", "", "Manjaro"),
+    ("biglinux", "", "BigLinux"),
+    // Arch-based, rolling, no VERSION_ID: GRUB on btrfs, with dracut through
+    // garuda-dracut-support, and snapper's snapshots nested in @.
+    ("garuda", "", "Garuda Linux"),
     // Rolling: Chimera's os-release has no VERSION_ID at all (only its image
     // names carry the snapshot's date).  "*" rather than "", as for
     // AerynOS: a snapshot that starts writing one is still Chimera.
@@ -129,6 +146,13 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     // fedora 44, so the Fedora row takes them; ostree is told by its own
     // markers (crate::ostree::detect).
     ("bazzite", "44", "Bazzite 44"),
+    // Debian sid underneath (ID_LIKE=debian), rolling, but VERSION_ID is
+    // its release ("4", Nest): a PikaOS 5 is checked before it's claimed.
+    ("pika", "4", "PikaOS 4"),
+    // Ubuntu 26.04 underneath (ID_LIKE=debian only), with dracut, and
+    // AnduinOS's own MOK-signed GRUB behind shim, kept from the ESP.  Not
+    // 1.x: Ubuntu 24.04's casper, initramfs-tools and signed GRUB.
+    ("anduinos", "2", "AnduinOS 2"),
     // Not Linux (other/): os-release, or uname for those without one.
     ("freebsd", "14", "FreeBSD 14"),
     ("freebsd", "15", "FreeBSD 15"),
@@ -232,7 +256,13 @@ mod tests {
         let ubuntu22 = parse("ID=ubuntu\nID_LIKE=debian\nVERSION_ID=\"22.04\"\n");
         assert!(check_supported(Some(&ubuntu22)).unwrap_err().contains("ubuntu 22.04"));
         assert!(check_supported(Some(&parse("ID=zorin\nID_LIKE=\"ubuntu debian\"\nVERSION_ID=\"18\"\n"))).is_ok());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, Chimera Linux, Gentoo Linux, Bazzite 44, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
+        // KDE neon User Edition's /etc/os-release (neon's base-files); not
+        // the neon that was on Ubuntu 22.04, nor one on 26.04 yet.
+        let neon = "PRETTY_NAME=\"KDE neon User Edition\"\nNAME=\"KDE neon\"\nVERSION_ID=\"24.04\"\nVERSION=\"User Edition\"\nVERSION_CODENAME=noble\nID=neon\nID_LIKE=\"ubuntu debian\"\nUBUNTU_CODENAME=noble\nLOGO=start-here-kde-neon\n";
+        assert!(check_supported(Some(&parse(neon))).is_ok());
+        assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
+        assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, CachyOS, Void Linux, NixOS 26.05, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -240,6 +270,10 @@ mod tests {
         assert!(check_supported(Some(&parse("ID=artix\nNAME=\"Artix Linux\"\n"))).is_ok());
         assert!(check_supported(Some(&parse("NAME=\"EndeavourOS\"\nID=\"endeavouros\"\nID_LIKE=\"arch\"\nBUILD_ID=rolling\n"))).is_ok());
         assert!(check_supported(Some(&parse("NAME=\"Manjaro Linux\"\nID=manjaro\nID_LIKE=arch\nBUILD_ID=rolling\n"))).is_ok());
+        // Garuda's real os-release (read 2026-11-14 from its ISO).
+        assert!(check_supported(Some(&parse("NAME=\"Garuda Linux\"\nPRETTY_NAME=\"Garuda Linux\"\nID=garuda\nID_LIKE=arch\nBUILD_ID=rolling\nANSI_COLOR=\"38;2;23;147;209\"\nHOME_URL=\"https://garudalinux.org/\"\nLOGO=garudalinux\n"))).is_ok());
+        // BigLinux's real os-release, as biglinux-name writes it.
+        assert!(check_supported(Some(&parse("NAME=\"BigLinux based on Manjaro Linux\"\nPRETTY_NAME=\"BigLinux based on Manjaro Linux\"\nID=\"biglinux\"\nID_LIKE=arch\nBUILD_ID=rolling\n"))).is_ok());
         assert!(check_supported(Some(&parse("ID=\"aerynos\"\nVERSION_ID=\"2026.11\"\nID_LIKE=\"linux\"\n"))).is_ok());
         assert!(check_supported(Some(&parse("ID=\"aerynos\"\nVERSION_ID=\"2027.01\"\n"))).is_ok());
         // Linux Mint 22.x; not 21, and not Mint's Debian edition (LMDE).
@@ -319,6 +353,53 @@ mod tests {
         assert!(check_supported(Some(&parse("ID=bluefin\nID_LIKE=fedora\nVERSION_ID=44\n"))).is_err());
         let k = parse("NAME=\"Fedora Linux\"\nVERSION=\"44.20261111.0 (Kinoite)\"\nID=fedora\nVERSION_ID=44\nVARIANT_ID=kinoite\nOSTREE_VERSION='44.20261111.0'\n");
         assert!(check_supported(Some(&k)).is_ok());
+    }
+
+    /// PikaOS 4's /etc/os-release (its base-files' source).
+    const PIKA: &str = "PRETTY_NAME=\"PikaOS 4\"\nNAME=\"PikaOS\"\nVERSION_ID=\"4\"\nVERSION=\"4\"\nVERSION_CODENAME=nest\nID=pika\nID_LIKE=debian\nDEBIAN_CODENAME=sid\n";
+
+    #[test]
+    fn pikaos() {
+        let o = parse(PIKA);
+        assert_eq!(o.get("ID"), Some("pika"));
+        assert_eq!(o.get("ID_LIKE"), Some("debian"));
+        assert_eq!(o.get("VERSION_CODENAME"), Some("nest"));
+        assert_eq!(o.get("DEBIAN_CODENAME"), Some("sid"));
+        assert!(check_supported(Some(&o)).is_ok());
+        assert!(supported_names().contains("Bazzite 44, PikaOS 4"));
+        // Not PikaOS 5 until a guest shows it, nor PikaOS 3 (Ubuntu-based).
+        let e = check_supported(Some(&parse(&PIKA.replace("\"4\"", "\"5\"")))).unwrap_err();
+        assert!(e.contains("(ID=pika, VERSION_ID=5)") && e.contains("Bazzite 44, PikaOS 4,"), "{e}");
+        assert!(check_supported(Some(&parse(&PIKA.replace("\"4\"", "\"3\"")))).is_err());
+        // Another ID_LIKE=debian system on sid isn't PikaOS, nor is a
+        // derivative that claims its VERSION_ID.
+        assert!(check_supported(Some(&parse("PRETTY_NAME=\"Siduction\"\nID=siduction\nID_LIKE=debian\nVERSION_ID=\"4\"\n"))).is_err());
+        assert!(check_supported(Some(&parse("ID=pika-ish\nID_LIKE=\"pika debian\"\nVERSION_ID=\"4\"\n"))).is_err());
+    }
+
+    /// AnduinOS 2.0.5's /usr/lib/os-release (the anduinos2 guest's ISO,
+    /// docs/design/anduinos.md).
+    const ANDUINOS: &str = "PRETTY_NAME=\"AnduinOS 2.0.5\"\nNAME=\"AnduinOS\"\nVERSION_ID=\"2.0.5\"\nVERSION=\"2.0.5 (Resolute Ringtail)\"\nVERSION_CODENAME=resolute\nID=anduinos\nID_LIKE=debian\nUBUNTU_CODENAME=resolute\n";
+
+    #[test]
+    fn anduinos() {
+        let o = parse(ANDUINOS);
+        assert_eq!(o.get("ID"), Some("anduinos"));
+        assert_eq!(o.get("ID_LIKE"), Some("debian"));
+        assert_eq!(o.get("VERSION_ID"), Some("2.0.5"));
+        assert_eq!(o.get("UBUNTU_CODENAME"), Some("resolute"));
+        assert!(check_supported(Some(&o)).is_ok());
+        assert!(supported("anduinos", "2.0.0"));
+        assert!(supported_names().contains("PikaOS 4, AnduinOS 2, FreeBSD 14"));
+        // Not 1.x (Ubuntu 24.04's stack), nor a 3 until a guest shows it.
+        let e = check_supported(Some(&parse(&ANDUINOS.replace("2.0.5", "1.1.2")))).unwrap_err();
+        assert!(e.contains("this is AnduinOS 1.1.2 (ID=anduinos, VERSION_ID=1.1.2)") && e.contains("AnduinOS 2,"), "{e}");
+        assert!(check_supported(Some(&parse(&ANDUINOS.replace("\"2.0.5\"", "\"3.0\"")))).is_err());
+        // Not by its likeness: another ID_LIKE=debian system on resolute,
+        // claiming AnduinOS's VERSION_ID, isn't AnduinOS.
+        let lookalike = ANDUINOS.replace("ID=anduinos", "ID=anduinos-remix").replace("NAME=\"AnduinOS\"", "NAME=\"Remix\"");
+        assert!(check_supported(Some(&parse(&lookalike))).is_err());
+        assert!(check_supported(Some(&parse("ID=resolute-desktop\nID_LIKE=debian\nVERSION_ID=\"2.0.5\"\nUBUNTU_CODENAME=resolute\n"))).is_err());
     }
 
     #[test]

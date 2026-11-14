@@ -442,6 +442,7 @@ impl Builder<'_> {
     pub(crate) fn other_boot(&mut self, fam: Family) -> Vec<Cmd> {
         let t = self.opts.target.clone();
         let mut out = vec![Cmd::note("the boot code (MBR, freebsd-boot) was written with the partition table".to_string())];
+        out.extend(self.geli_boot());
         // newfs -U makes /.snap (for UFS snapshots); a source without it
         // gets none.
         for e in self.layout.arr(&["storage", "fstab"]).to_vec() {
@@ -538,6 +539,13 @@ impl Builder<'_> {
             let ffs = if self.layout.content(&root).and_then(|c| s(c, "version")).as_deref() == Some("1") { "ffsv1" } else { "ffsv2" };
             let raw = rdev.replacen("/dev/", "/dev/r", 1);
             out.push(Cmd::new(&["installboot", "-v", &raw, &format!("/usr/mdec/bootxx_{ffs}")]).why("NetBSD's primary bootstrap, in the root partition"));
+        } else if let Some(find) = self.softraid_of(&root) {
+            // / in a softraid volume: installboot on the volume writes
+            // biosboot to its chunk's disk and /boot to the chunk's boot area.
+            out.push(
+                Cmd::new(&["sh", "-c", &format!("{find}installboot -v -r {t} \"$v\" /usr/mdec/biosboot /usr/mdec/boot")])
+                    .why("OpenBSD's biosboot, and /boot it loads, through the softraid volume / is in (onto its chunk)"),
+            );
         } else {
             let disk = rdev.trim_start_matches("/dev/").trim_end_matches(|c: char| c.is_ascii_lowercase()).to_string();
             out.push(Cmd::new(&["installboot", "-v", "-r", &t, &disk, "/usr/mdec/biosboot", "/usr/mdec/boot"]).why("OpenBSD's biosboot, and /boot it loads"));
@@ -565,7 +573,14 @@ impl Builder<'_> {
             Family::NetBsd | Family::OpenBsd => "mount | sed -n 's/^.* on \\(.*\\) type .*/\\1/p'".to_string(),
             _ => "mount -p | awk '{ print $2 }'".to_string(),
         };
-        out.push(Cmd::new(&["sh", "-c", &format!("{list} | awk '$0 == \"{t}\" || index($0, \"{t}/\") == 1' | sort -r | while read -r m; do umount \"$m\" || exit; done")]).why("everything under the target, deepest first"));
+        // On a softraid volume (OpenBSD), umount can find the restored
+        // tree busy with no file open on it, fstat showing nothing: a
+        // reference the kernel holds, seen twice in HoltTest1's
+        // openbsd8-crypt runs and not reproduced on demand.  Then, and only
+        // then, it unmounts with -f, which still writes everything out.
+        let softraid = _fam == Family::OpenBsd && !self.layout.arr(&["storage", "softraid_volumes"]).is_empty();
+        let umount = if softraid { super::softraid::UMOUNT_BUSY } else { "umount \"$m\" || exit" };
+        out.push(Cmd::new(&["sh", "-c", &format!("{list} | awk '$0 == \"{t}\" || index($0, \"{t}/\") == 1' | sort -r | while read -r m; do {umount}; done")]).why("everything under the target, deepest first"));
         let _ = mps;
         out.extend(self.closers.iter().rev().cloned());
         out

@@ -31,18 +31,18 @@ guests.  A guest passes only when every check passes.  Status is as of
 |---|---|---|---|
 | 1D | Debian 13 | `debian13`, `debian13-zfs`, `debian13-stack` | passes |
 | 1M | Linux Mint | `mint22` | passes |
-| 1U | Ubuntu | `ubuntu24`, `ubuntu26-uefi`, `ubuntu26-zfsmirror`, `ubuntu26-raid` (and `degraded`), `ubuntu26-luks` | passes |
+| 1U | Ubuntu, KDE neon, AnduinOS | `ubuntu24`, `ubuntu24-uefi`, `ubuntu24-luks`, `ubuntu26-uefi`, `ubuntu26-zfsmirror`, `ubuntu26-raid` (and `degraded`), `ubuntu26-luks`, `neon24`, `anduinos2` | passes (`neon24`: run `ht1u` on both hosts, 2026-11-14; `anduinos2`: runs `a5-3` Chopin and `a5-4` Cinqcent, 2026-11-14, under Secure Boot with its MOK-signed GRUB kept) |
 | 1Z | Zorin OS | `zorin18` | passes |
 | 1F | Fedora, Rocky Linux, Fedora Kinoite (ostree, Bazzite's base) | `fedora44`, `fedora44-uefi`, `fedora44-raid`, `rocky10`, `rocky10-lvm`, `rocky10-raid5`, `kinoite44` | passes (`fedora44-raid` and `rocky10-raid5`: run `raid022`; `kinoite44`: run `bzb6a`; both below) |
 | 1A | Arch, Alpine, AerynOS, Artix (dinit, s6) | `arch`, `alpine324`, `aerynos`, `artix-dinit`, `artix-s6` | passes |
 | 1C | CachyOS, MX Linux | `cachyos`, `mx25`, `cachyos-zfs` | `cachyos` and `mx25` pass; `cachyos-zfs` (UEFI, Limine, / on ZFS; `make-cachyos-zfs.sh`, 2026-11-13) not run yet: it needs a host with OpenZFS (`needs_host_zfs`) |
-| (1All only) | EndeavourOS, Manjaro | `endeavouros`, `endeavouros-grub`, `manjaro` (`make-arch.sh --live`: each one's own live ISO, with its installer's defaults) | passes on both hosts (runs `eosmj1` to `eosmj5`) |
+| (1All only) | EndeavourOS, Manjaro, Garuda Linux | `endeavouros`, `endeavouros-grub`, `manjaro`, `garuda` (`make-arch.sh --live`: each one's own live ISO, with its installer's defaults) | passes on both hosts (runs `eosmj1` to `eosmj5`; `garuda`: `ga4-4` Chopin and `ga4-5` Cinqcent, 2026-11-14, with snap-pac's 4 snapshots restored as shared ones; it needs rustic-bko 0.11.4+backotter.11 or later, since rel6's .9 restores the first shared snapshot wrong: `HT_ROUND=t2r-58a6955-3bb01f1-99b9b56` until a shipped set has it) |
 | 1V | Void Linux (musl) | `void-musl` | passes |
 | 1G | Gentoo Linux | `gentoo`, `gentoo-systemd` | passes on both hosts (2026-11-12, bko-holt 7760c9e7c497 and rel6's rustic-bko: `gentoo` runs `g5-3` Cinqcent and `g5-4` Chopin, with GRUB's embedded lvmid that of the restored vg0/root; `gentoo-systemd` `g5-2` Cinqcent and `g5-5` Chopin) |
-| 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12, Chimera Linux | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12`, `chimera`, `chimera-uefi`, `chimera-zfs` | passes (the Chimera guests on both hosts, 2026-11-12: `chimera` runs `c5-1` Cinqcent and `c5-2` Chopin, `chimera-uefi` `c5-3` Cinqcent and `c5-4` Chopin, `chimera-zfs` `c5-5` Chopin and `c5-6` Cinqcent) |
+| 1Obscure | Pop!_OS, NixOS, Omarchy, Sculpt OS, Redox, openSUSE Tumbleweed, Debian 12, Chimera Linux, PikaOS | `pop24`, `nixos2605`, `omarchy`, `sculpt2610`, `redox`, `tumbleweed`, `debian12`, `chimera`, `chimera-uefi`, `chimera-zfs`, `pikaos4`, `pikaos4-luks` | passes (the Chimera guests on both hosts, 2026-11-12: `chimera` runs `c5-1` Cinqcent and `c5-2` Chopin, `chimera-uefi` `c5-3` Cinqcent and `c5-4` Chopin, `chimera-zfs` `c5-5` Chopin and `c5-6` Cinqcent; the PikaOS guests on both hosts, 2026-11-14: `pikaos4` runs `p6-4` Chopin and `p6-5` Cinqcent, `pikaos4-luks` `p6-6` Chopin and `p6-7` Cinqcent, booted alone from the EFI/BOOT fallback, `pikaos4-luks` with its passphrase typed by `console-boot.py`; rEFInd's ESP files and `refind_linux.conf` byte-identical, docs/design/pikaos.md) |
 | 1H | Haiku | `haiku6` | passes (run `haiku024`, rustic-bko 0.11.4+backotter.7, which restores the volume root's metadata: Tracker's empty `trash` had made a new BFS volume look used) |
 | 1I | illumos | `omnios58`, `omnios58-mirror` | both pass (`omnios58-mirror`: run `raid6`, the restored `rpool` ONLINE on both disks) |
-| 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `freebsd15-mirror`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6`, `alpinebsd` | passes |
+| 1BSD | FreeBSD, OpenBSD, NetBSD, GhostBSD, HardenedBSD, DragonFly BSD, AlpineBSD | `freebsd15`, `freebsd15-ufs`, `freebsd15-mirror`, `freebsd15-geli`, `openbsd8`, `netbsd11`, `ghostbsd26`, `hardenedbsd15`, `dragonfly6`, `alpinebsd` | passes; `freebsd15-geli` (root pool on GELI, docs/design/geli.md) not run yet: it waits for bko-holt's GELI support (G2, G3) |
 
 **Cinqcent's old runs.** On 2026-11-13 every run dir and run log in
 Cinqcent's `/bkoscratch/holttest1d` moved to
@@ -154,7 +154,10 @@ Cinqcent), each with `ht1.sh`.  It is the union of the tests above plus the
 guests no other test names yet: `devuan6`, `ubuntu26-zfs` and `freebsd14`.
 A guest added since joins it with its group: among them 1G's `gentoo` and
 `gentoo-systemd` (2026-11-12, docs/design/gentoo.md), 1Obscure's three
-Chimera guests, 1F's `kinoite44` and 1C's `cachyos-zfs`.
+Chimera guests, 1F's `kinoite44`, 1C's `cachyos-zfs` and 1U's `neon24` and
+`anduinos2` (docs/design/anduinos.md), and 1Obscure's `pikaos4` and
+`pikaos4-luks` (2026-11-14, docs/design/pikaos.md), and `garuda` beside
+EndeavourOS and Manjaro (2026-11-14, docs/design/garuda.md).
 Run `r1all` (2026-11-05): 16 pass, the 15 above plus `mx25` (MX 25 reports
 `ID=debian`, `VERSION_ID=13`).  The rest fail where expected: dump's OS gate
 (cachyos, devuan6, void-musl, nixos2605, tumbleweed, rocky10, rocky10-lvm,
@@ -227,6 +230,30 @@ The multi-disk guests are `freebsd15-mirror` (`make-freebsd.sh --zfs-mirror`:
 partition) and `omnios58-mirror` (`make-omnios.sh --rpool-mirror`: `rpool`
 attached to a second whole disk, the loader on both); either disk of each
 boots alone.
+
+`freebsd15-geli` (docs/design/geli.md) has its root pool `zroot` on the GELI
+provider `vtbd0p3.eli`, made with `-b -g` and a passphrase, which the loader
+asks for on the serial console.  When the guest's directory has
+`console-passphrase`, its source and restored disks boot through
+`testvm/console-boot.py`, which logs the console where `--serial-log` would
+and types the passphrase at each prompt.  The rescuer's loader may ask too (it
+probes every disk's partitions; not yet seen), so the backup's and the
+verify's rescuers boot the same way when the layout has a GELI provider; the
+rebuild's targets are blank.
+In the rescuer the passphrase is `/tmp/ht1-geli/passphrase`, mode 600 and
+without its final newline, in a tmpfs mounted there for it (a default
+install's `/tmp` is on its disk), removed before the rescuer goes down.  The mount
+script attaches each provider read-only first (`geli attach -r -j`; one
+already attached is left as it is), and the unmount script detaches it after
+the pool's export.  `load` gets `--key-file vtbd0p3=/tmp/ht1-geli/passphrase`,
+so the restored provider has the source's passphrase, and the restored boot
+answering SSH means the loader took it.  mtree may see `/var/backups/*.eli`
+(and `/var/backups` itself) change on such a guest only: load writes the
+metadata backup again for the new provider (the design's D5).  judge.py
+compares every field of the `geli` record, judges the probe inside it as a
+partition's content, and lets `provsize` differ only where it is the
+partition's size on both sides.  ht1-bsd.sh's `geli_provs` and judge.py's
+`geli_records` are the two readers of the dump's GELI records.
 
 On illumos a root mirror finds its other half by the physical path (the PCI
 slot) in its label before the device id, so the disks keep their slots
@@ -352,7 +379,7 @@ runs on the guests whose arrays survive the loss of their last disk:
 `debian13-stack` and `ubuntu26-raid`.  A full HoltTest1D is six runs:
 `debian13`, `debian13-zfs` and `debian13-stack`, `debian13-stack` with
 `bigger`, and `debian13` with `oneshot` on each host.  Guests whose
-volume groups share a name (`ubuntu26-raid` and `ubuntu26-luks`, both
+volume groups share a name (`ubuntu26-raid`, `ubuntu26-luks` and `ubuntu24-luks`, all
 `ubuntu-vg` as Ubuntu's installer names it) may run on one host at once:
 `vm-mount` sets their logical volumes up under names of its own, not LVM's
 host-wide ones (run `vg2`, 2026-11-10: both PASS side by side).  Don't run
@@ -386,6 +413,26 @@ Each run also checks, as the plan asks:
   that holds /boot/grub, by `lvs -o vg_uuid,lv_uuid`; the report says
   whether those are the source's UUIDs too.  A machine with no such
   binary has no line (`logs/restored-lvmid.txt`, `source-lvmid.txt`).
+- a guest whose `vm-run-options` enroll a MOK (`--mok`: `anduinos2`, whose
+  GRUB is signed on the machine with its own key) boots, source and
+  restored disk alike, under Secure Boot with that MOK in shim's MokList.
+  Every `grubx64.efi` on the restored disk's vfat file systems must verify
+  with `sbverify --cert` against the source's `vms/GUEST/GUEST-mok.der`
+  (`logs/restored-sbverify.txt`), and `mokutil --sb-state` in the booted
+  restored guest must say `SecureBoot enabled` (`logs/restored-sbstate.txt`,
+  the source's beside it).  `judge.py fs` holds AnduinOS's shim, MokManager
+  and GRUB in `EFI/AnduinOS` and `EFI/BOOT` to the source's bytes.
+- btrfs read-only snapshots (AnduinOS's baselines, snapper's): each of the
+  source's (`btrfs subvolume list -r`, reached through a mount) must come
+  back read-only, its `btrfs filesystem du` exclusive bytes at most twice
+  the source's plus 64 MiB, not counting its own initramfs images, whose
+  copies in the origin the boot stage rebuilt (`logs/source-snaps.txt`,
+  `restored-snaps.txt`, `snaps-judge.txt`).
+- AnduinOS's Disk Snapshots Manager: `status --json` and `list --json`
+  with the subvolumes' UUIDs, on the source and the restored guest
+  (`logs/source-snapmgr.txt`, `restored-snapmgr.txt`), and a `note:` line
+  saying how many of the UUIDs its records name are on the restored file
+  system.  Recorded, never judged.
 
 It differs from the plan above in these ways:
 

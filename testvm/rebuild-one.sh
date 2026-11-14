@@ -30,6 +30,9 @@ export COMPARE_SLOT=$SLOT SUDO_USER=m
 # Inputs: a host without the ISOs gets copies in /bkoscratch/rebuild-inputs.
 SRC=$HOME_M/backotter-work/vms/$G
 [ -d /bkoscratch/rebuild-inputs/$G ] && SRC=/bkoscratch/rebuild-inputs/$G
+# elementary8-luks is built from elementary8's ISO.
+[ $G = elementary8-luks ] && [ ! -d /bkoscratch/rebuild-inputs/$G ] && [ -d /bkoscratch/rebuild-inputs/elementary8 ] &&
+    SRC=/bkoscratch/rebuild-inputs/elementary8
 [ -d $T ] || { echo "no $T" >&2; exit 2; }
 [ -d "$SRC" ] || { echo "no $SRC" >&2; exit 2; }
 asm() { runuser -u m -- env TMPDIR="$RAMTMP" PATH="$PATH:/usr/sbin:/sbin" "$@"; }
@@ -42,6 +45,8 @@ devuan6)    cmd=(asm $T/make-debian.sh --devuan --init openrc 6.1.1 ext3 "$W") ;
 debian13-zfs) cmd=($T/make-debian-zfs.sh "$W" debian13-zfs) ;;
 debian13-stack) cmd=($T/make-debian-stack.sh "$W" debian13-stack) ;;
 ubuntu24)   cmd=(asm $T/make-ubuntu.sh 24.04 "$W") ;;
+ubuntu24-uefi) cmd=(asm $T/make-ubuntu.sh --uefi --name ubuntu24-uefi 24.04.5 "$W") ;;
+ubuntu24-luks) cmd=(asm $T/make-ubuntu.sh --uefi --luks --name ubuntu24-luks 24.04.5 "$W") ;;
 ubuntu26-uefi) cmd=(asm $T/make-ubuntu.sh --uefi --name ubuntu26-uefi 26.04.1 "$W") ;;
 ubuntu26-zfs) cmd=(asm $T/make-ubuntu.sh --uefi --zfs-guided --name ubuntu26-zfs 26.04.1 "$W") ;;
 ubuntu26-zfsmirror) cmd=(asm $T/make-ubuntu.sh --zfs-mirror --name ubuntu26-zfsmirror 26.04.1 "$W") ;;
@@ -75,13 +80,33 @@ cachyos)    cmd=(asm $T/make-arch.sh --cachyos --root-fs jfs 2026.10.01 "$W") ;;
 # cachyos-zfs: from CachyOS's live ISO in /bkoscratch/rebuild-inputs/cachyos-zfs
 # (or the guest's own dir); CachyOS's and Arch's packages as they are at the rebuild.
 cachyos-zfs) cmd=(asm $T/make-cachyos-zfs.sh --iso-dir "$SRC" 260809 "$W") ;;
+# pikaos4: from PikaOS's live ISO in /bkoscratch/rebuild-inputs/pikaos4 (or the
+# guest's own dir), its SHA-256 pinned in the builder; the ISO's packages only.
+pikaos4)    cmd=(asm $T/make-pikaos.sh --iso-dir "$SRC" pikaos4 "$W") ;;
+# pikaos4-luks: from pikaos4's ISO (Btrfs on LUKS2, BOOTX64 mode); a new
+# console-passphrase each build.
+pikaos4-luks) cmd=(asm $T/make-pikaos.sh --iso-dir /bkoscratch/rebuild-inputs/pikaos4 pikaos4-luks "$W") ;;
+# anduinos2: from AnduinOS's live ISO in /bkoscratch/rebuild-inputs/anduinos2 (or
+# the guest's own dir), its SHA-256 pinned in the builder; the ISO's packages only.
+anduinos2)  cmd=(asm $T/make-anduinos.sh "$SRC/AnduinOS-2.0.5-amd64.iso" "$W" anduinos2) ;;
 endeavouros) cmd=(asm $T/make-arch.sh --live endeavouros "$SRC/EndeavourOS_Titan-Nova-2026.08.15.iso" 2026.10.01 "$W") ;;
 endeavouros-grub) cmd=(asm $T/make-arch.sh --live endeavouros-grub /bkoscratch/rebuild-inputs/endeavouros/EndeavourOS_Titan-Nova-2026.08.15.iso 2026.10.01 "$W") ;;
 manjaro)    cmd=(asm $T/make-arch.sh --live manjaro "$SRC/manjaro-xfce-26.1.1-minimal-260825-linux71.iso" 2026.10.01 "$W") ;;
+# garuda: from Garuda's dr460nized live ISO in /bkoscratch/rebuild-inputs/garuda,
+# its SHA-256 pinned in make-arch.sh; Garuda's, chaotic-aur's and Arch's packages
+# as on the ISO.
+garuda)     cmd=(asm $T/make-arch.sh --live garuda "$SRC/garuda-dr460nized-linux-garuda-260819.iso" 2026.10.01 "$W") ;;
+# biglinux: from BigLinux's k618 live ISO in /bkoscratch/rebuild-inputs/biglinux,
+# SHA-256 1d12186abab0a2cb33ee9f0edd30140cd8ed842aa081e90ad4f0e3d050e6ae90, pinned
+# in make-arch.sh (BigLinux signs no ISO); its rootfs and desktopfs as on the ISO.
+biglinux)   cmd=(asm $T/make-arch.sh --live biglinux "$SRC/biglinux_2026-10-03_k618.iso" 2026.10.01 "$W") ;;
 mx25)       cmd=($T/make-from-live.sh mx ext2 "$SRC/MX-25.3_Xfce_x64.iso" "$W" mx25) ;;
 mint22)     cmd=($T/make-from-live.sh mint f2fs "$SRC/linuxmint-22.3-xfce-64bit.iso" "$W" mint22) ;;
 pop24)      cmd=($T/make-from-live.sh pop ext4 "$SRC/pop-os_24.04_amd64_intel_20.iso" "$W" pop24) ;;
 zorin18)    cmd=($T/make-from-live.sh zorin nilfs2 "$SRC/Zorin-OS-18.1-Core-64-bit.iso" "$W" zorin18) ;;
+neon24)     cmd=($T/make-from-live.sh neon ext4 "$SRC/neon-user-desk-20261025-1825.iso" "$W" neon24) ;;
+elementary8) cmd=($T/make-from-live.sh elementary ext4 "$SRC/elementaryos-8.1-stable-amd64.20260219.iso" "$W" elementary8) ;;
+elementary8-luks) cmd=($T/make-from-live.sh --luks elementary ext4 "$SRC/elementaryos-8.1-stable-amd64.20260219.iso" "$W" elementary8-luks) ;;
 omarchy)    cmd=(asm $T/make-omarchy.sh 4.0.6 "$W") ;;
 freebsd15)  cmd=(asm $T/make-freebsd.sh 15.1 zfs "$W") ;;
 freebsd15-ufs) cmd=(asm $T/make-freebsd.sh 15.1 ufs "$W") ;;
@@ -105,11 +130,17 @@ esac
 IMG=$G; case $G in freebsd15-ufs|freebsd15-geli) IMG=freebsd15 ;; ghostbsd26-zfs) IMG=ghostbsd26 ;; esac
 # Never two VMs on one port: compare.py's boot uses 2230 + COMPARE_SLOT.
 if ss -ltnH "sport = :$((2230 + SLOT))" | grep -q .; then echo "port $((2230 + SLOT)) is taken" >&2; exit 2; fi
-case $G in mx25|mint22|pop24|zorin18) [ -f "${cmd[3]}" ] || { echo "no ISO ${cmd[3]}" >&2; exit 2; } ;; esac
-leftovers() {  # what a failed root builder may leave: this build's loop devices; mounts, pools, arrays and LUKS volumes of any build on the host
+# The ISO: the recipe's .iso argument, wherever options put it.
+case $G in mx25|mint22|pop24|zorin18|neon24|elementary8|elementary8-luks|anduinos2)
+    ISO=""; for a in "${cmd[@]}"; do case $a in *.iso) ISO=$a ;; esac; done
+    [ -f "$ISO" ] || { echo "no ISO $ISO" >&2; exit 2; } ;;
+esac
+leftovers() {  # what a failed root builder may leave: this build's loop devices; mounts, pools, arrays, VGs and LUKS volumes of any build on the host
     { losetup -a | grep -F "$W"; findmnt -rno TARGET | grep -E '^/mnt/(bko-debian-zfs|bko-debian-stack|bko-chimera-zfs|live-)'
       zpool list -H -o name 2>/dev/null | grep -E '^bko(dz|cz)'
-      ls /dev/md 2>/dev/null | grep '^bkos'; dmsetup ls 2>/dev/null | grep -o '^bkos[^[:space:]]*'; } | tr '\n' ' '
+      # make-from-live.sh --layout distinst: VG "data" on a loop device (or in cryptdata), LUKS volume "cryptdata".
+      pvs --devicesfile "" --noheadings -o vg_name,pv_name 2>/dev/null | awk '$1 == "data" && $2 ~ /^\/dev\/(loop|mapper\/cryptdata$)/ { print "vg-data:" $2 }'
+      ls /dev/md 2>/dev/null | grep '^bkos'; dmsetup ls 2>/dev/null | awk '$1 ~ /^bkos/ || $1 == "cryptdata" { print $1 }'; } | tr '\n' ' '
 }
 
 mkdir -p $R/vms && chown m:m $R $R/vms

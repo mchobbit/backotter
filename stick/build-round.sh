@@ -86,12 +86,24 @@
 #                      (FAST=1, as the rounds have built them), release for
 #                      binaries that ship in images.
 #
+# Rust.  The host-side cargo, prep-rustic-src.sh's on both hosts and Linux
+# rustic-bko's on Chopin, is rustup's BKO_RUST_TOOLCHAIN (default 1.94.1),
+# named in RUSTUP_TOOLCHAIN, never the host's rustup default: a reinstall
+# reset Chopin's default to 1.85.1, which rustic's dependencies are too new
+# for (sysinfo, time and zip need 1.88).  The Linux build also needs its
+# x86_64-unknown-linux-musl target.  Either missing, the host part says
+# which rustup command adds it, and installs nothing itself.  The Linux
+# digest records rustc -vV and cargo -V, so the same release named or taken
+# by default is the same digest.  DragonFly's cross build takes its own
+# nightly (dragonfly/build-rustic.sh, RUST_TOOLCHAIN on the host); the
+# native builds take the guest's Rust.
+#
 # Mac environment: BKO_GIT (~/git), CHOPIN and CINQCENT (their ssh in
 # testvm/hosts.json, m@chopin.local and m@cinqcent.local; each must have the
 # role build there), BKO_REMOTE_DIR (the hosts' directory with stick/ and
 # testvm/, relative to home: backotter-work).  Passed to the hosts: BKO_ROUNDS,
 # SRC (default ROUNDDIR/src), BKO_BUILD_CACHE, BKO_PROFILE, BKO_GUEST_PROFILE,
-# BKO_REUSE, BKO_GUEST_LANES, BKO_DFLY_PORT (2701), BKO_GUEST_PORTS ("2901
+# BKO_REUSE, BKO_RUST_TOOLCHAIN, BKO_GUEST_LANES, BKO_DFLY_PORT (2701), BKO_GUEST_PORTS ("2901
 # 2902 2903 2904": freebsd netbsd openbsd illumos), BKO_HAIKU_PORT (2905), BKO_GUEST_MAX,
 # BKO_GUEST_RANGE, DFLY_CACHE, BKO_WORK (~/backotter-work: vms/, as for the
 # build scripts).  On a host by hand: RESTIC_COMMIT, RUSTIC_COMMIT,
@@ -101,7 +113,8 @@
 # newest ~/sdk/go*/bin/go).
 #
 # Needs: on the Mac git, rsync, ssh; on the hosts what the build scripts
-# need (Go on Chopin, ~/.cargo/bin on both), flock, sha256sum.
+# need (Go on Chopin; on both rustup in ~/.cargo/bin with BKO_RUST_TOOLCHAIN,
+# and on Chopin its x86_64-unknown-linux-musl), flock, sha256sum.
 
 set -uo pipefail
 
@@ -262,7 +275,7 @@ if [[ $mode == mac ]]; then
         local v out="RESTIC_COMMIT=$RESTIC_COMMIT RUSTIC_COMMIT=$RUSTIC_COMMIT RUSTIC_CORE_COMMIT=$RUSTIC_CORE_COMMIT"
         out+=" RESTIC_DIGEST=$RESTIC_DIGEST RESTIC_TREE_DIGEST=$RESTIC_TREE_DIGEST RUSTIC_DIGEST=$RUSTIC_DIGEST RUSTIC_CORE_DIGEST=$RUSTIC_CORE_DIGEST"
         out+=" BKO_ROUNDS=$rrounds SRC=$rsrc"
-        for v in BKO_BUILD_CACHE BKO_PROFILE BKO_GUEST_PROFILE BKO_REUSE BKO_DFLY_PORT BKO_GUEST_PORTS BKO_HAIKU_PORT BKO_GUEST_LANES \
+        for v in BKO_BUILD_CACHE BKO_PROFILE BKO_GUEST_PROFILE BKO_REUSE BKO_RUST_TOOLCHAIN BKO_DFLY_PORT BKO_GUEST_PORTS BKO_HAIKU_PORT BKO_GUEST_LANES \
             BKO_GUEST_MAX BKO_GUEST_RANGE DFLY_CACHE BKO_WORK; do
             [[ -n ${!v:-} ]] && out+=" $v='${!v}'"
         done
@@ -351,6 +364,21 @@ fi
 SRC=$(cd "${SRC:-$rdir/src}" && pwd) || die "no SRC"
 for d in restic rustic rustic_core; do [[ -d $SRC/$d ]] || die "no $SRC/$d"; done
 export PATH=$HOME/.cargo/bin:$PATH
+# Rust for every cargo and rustc run here ("Rust" above): rustup's proxies
+# take RUSTUP_TOOLCHAIN over the default, and with RUSTUP_AUTO_INSTALL=0 fail
+# rather than install a missing one.  DragonFly's build names its nightly to
+# rustup run, which takes that over these.
+rust_tc=${BKO_RUST_TOOLCHAIN:-1.94.1}
+export RUSTUP_TOOLCHAIN=$rust_tc RUSTUP_AUTO_INSTALL=0
+# rust_check [TARGET]: rust_tc installed (and TARGET's std for it), or why not.
+rust_check() {
+    command -v rustup >/dev/null 2>&1 ||
+        { echo "no rustup in ~/.cargo/bin (https://rustup.rs) for Rust $rust_tc"; return 1; }
+    rustup run "$rust_tc" rustc -V >/dev/null 2>&1 ||
+        { echo "no Rust $rust_tc (BKO_RUST_TOOLCHAIN): rustup toolchain install $rust_tc --profile minimal${1:+ --target $1}"; return 1; }
+    [[ -z ${1:-} ]] || rustup target list --installed --toolchain "$rust_tc" 2>/dev/null | grep -qxF -- "$1" ||
+        { echo "Rust $rust_tc has no $1 target: rustup target add --toolchain $rust_tc $1"; return 1; }
+}
 # Nothing from the caller's environment changes how cargo builds.
 for v in $(env | sed -n 's/^\(CARGO_PROFILE_[A-Z0-9_]*\|CARGO_BUILD_[A-Z0-9_]*\|RUSTFLAGS\|CARGO_ENCODED_RUSTFLAGS\|CARGO_TARGET_DIR\|RUSTC_WRAPPER\|CARGO_INCREMENTAL\)=.*/\1/p'); do
     unset "$v"
@@ -463,7 +491,8 @@ hash_files() {
 # reach): kept in CACHE/prep under their digest, and used again for the same
 # manifests.  PREP_DIGEST: the prepared trees' digest.
 prepare() {
-    local p=$rdir/prepped key k
+    local p=$rdir/prepped key k why
+    why=$(rust_check) || die "$why"
     rm -rf "$p" && mkdir -p "$p" && cp -a "$SRC/rustic" "$SRC/rustic_core" "$p/" &&
         rm -rf "$p/rustic/target" "$p/rustic/dist" || die "couldn't copy $SRC to $p"
     key=$( { cd "$p" && find rustic/Cargo.toml rustic/Cargo.lock rustic_core -name target -prune -o \
@@ -543,7 +572,12 @@ omnios_copies() {  # NAME: bin/omnios/NAME (and commit, digest) = bin/illumos's
 }
 build_linux() {
     local t=x86_64-unknown-linux-musl t0=$SECONDS d out inputs=$LOGS/rustic-linux.inputs pe
-    local tree=$CACHE/cargo/$t
+    local tree=$CACHE/cargo/$t why
+    if ! why=$(rust_check "$t"); then
+        log "rustic-bko linux: $why"
+        [[ $dry == yes ]] || row rustic-bko linux FAILED 0
+        return 1
+    fi
     pe=$(profile_env "$profile")
     { echo "rustic-bko $t, build-backotter.sh in a fixed tree"; echo "sources $PREP_DIGEST"; echo "profile $profile $pe"
       rustc -vV; cargo -V; echo "cc $(cc --version | head -n 1)"; cargo_env_inputs; } >"$inputs"

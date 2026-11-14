@@ -140,6 +140,33 @@
     "established": true
    }
   },
+  "anduinos2": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-anduinos.sh",
+    "testvm/anduinos/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-anduinos",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": false
+   }
+  },
   "arch": {
    "kind": "ssh",
    "plat": "linux",
@@ -762,6 +789,33 @@
     "established": true
    }
   },
+  "garuda": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-arch.sh",
+    "testvm/arch/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.pacman",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#pacman"
+   ],
+   "checks": {
+    "pm": "pacman",
+    "rules": {
+     "source": "S-pac",
+     "loader": "L-grub",
+     "kernel": "K-pac",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi",
+    "established": false
+   }
+  },
   "gentoo": {
    "kind": "ssh",
    "plat": "linux",
@@ -1015,6 +1069,32 @@
     },
     "fw": "bios",
     "established": true
+   }
+  },
+  "neon24": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-from-live.sh",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": false
    }
   },
   "netbsd11": {
@@ -1371,6 +1451,60 @@
     },
     "fw": "bios",
     "established": true
+   }
+  },
+  "ubuntu24-uefi": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-ubuntu.sh",
+    "testvm/ubuntu/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": false
+   }
+  },
+  "ubuntu24-luks": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-ubuntu.sh",
+    "testvm/ubuntu/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": false
    }
   },
   "ubuntu26-luks": {

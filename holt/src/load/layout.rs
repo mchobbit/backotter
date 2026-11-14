@@ -231,9 +231,10 @@ impl Layout {
     }
 
     /// Every block device's entry by its kernel name on the source: disks,
-    /// their partitions, md arrays and device-mapper devices.
+    /// their partitions, md arrays, device-mapper devices and OpenBSD's
+    /// softraid volumes.
     pub fn device(&self, name: &str) -> Option<&Value> {
-        for sect in ["disks", "md_arrays", "dm_devices"] {
+        for sect in ["disks", "md_arrays", "dm_devices", "softraid_volumes"] {
             for d in self.arr(&["storage", sect]) {
                 if d.get("name").and_then(Value::as_str) == Some(name) {
                     return Some(d);
@@ -244,6 +245,13 @@ impl Layout {
                         if p.get("name").and_then(Value::as_str) == Some(name) {
                             return Some(p);
                         }
+                    }
+                }
+                // A GELI provider (FreeBSD's vtbd0p3.eli): its record, whose
+                // content is what's inside it.
+                for p in std::iter::once(d).chain(d.get("partitions").and_then(Value::as_array).into_iter().flatten()) {
+                    if p.at(&["geli", "provider"]).and_then(Value::as_str) == Some(name) {
+                        return p.get("geli");
                     }
                 }
             }

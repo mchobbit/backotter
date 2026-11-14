@@ -1,0 +1,7 @@
+3:627-	R gpio0 gpio1 gpio2 bktr0 vnd0 vnd1 vnd2 vnd3 sd0 sd1 sd2 sd3
+4:628-	R sd4 sd5 sd6 sd7 sd8 sd9 cd0 cd1 rd0 tap0 tap1 tap2 tap3 tun0
+17:641-wd*|sd*)
+20:644-	sd*) dodisk sd $U 4 13 $U 0;;
+37:#	sd*	SCSI disks, including flopticals
+641:wd*|sd*)
+644:	sd*) dodisk sd $U 4 13 $U 0;;

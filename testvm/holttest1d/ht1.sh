@@ -401,6 +401,154 @@ lvmid_check() {  # the restored guest's: every embedded lvmid is /boot/grub's LV
         bad "GRUB's embedded lvmid: /boot/grub's LV is ${want:--}, embedded $(echo "$got" | tr '\n' ' ')(logs/restored-lvmid.txt)"
     fi
 }
+# A guest whose vm-run-options enroll a MOK (--mok: AnduinOS's GRUB, signed
+# on the machine with its own key) boots with Secure Boot on, the source and
+# the restored disk alike (both take the guest's options).  Its MOK
+# certificate is vms/GUEST/GUEST-mok.der (the source's MOK.der).
+mok=0; [[ " ${fw[*]} " == *" --mok "* ]] && mok=1
+MOKCERT=$W/vms/$G/$G-mok.der
+SBSTATE='mokutil --sb-state 2>&1; [ -f /var/lib/shim-signed/mok/MOK.der ] && mokutil --test-key /var/lib/shim-signed/mok/MOK.der 2>&1; true'
+sb_check() {  # the restored guest's Secure Boot state, against the source's
+    ((mok)) || return 0
+    sshk "$1" "$SBSTATE" > "$R/logs/restored-sbstate.txt" 2>&1
+    if grep -q '^SecureBoot enabled' "$R/logs/restored-sbstate.txt"; then
+        ok "the restored disk booted under Secure Boot with the MOK enrolled by vm-run --mok: $(tr '\n' ' ' < "$R/logs/restored-sbstate.txt")"
+    else
+        bad "mokutil --sb-state on the restored guest: $(tr '\n' ' ' < "$R/logs/restored-sbstate.txt") (the source's: $(tr '\n' ' ' < "$R/logs/source-sbstate.txt" 2>/dev/null))"
+    fi
+}
+mok_check() {  # MNT: the restored tree, mounted: every grubx64.efi on its vfat file systems is signed by the source's MOK
+    ((mok)) || return 0
+    local m=$1 f n=0 bad_=() pem=$R/tmp/mok.pem
+    mkdir -p "$R/tmp"
+    [[ -f $MOKCERT ]] || { bad "MOK signature: no $MOKCERT (the source's MOK.der)"; return; }
+    openssl x509 -inform DER -in "$MOKCERT" -out "$pem" 2>/dev/null || cp "$MOKCERT" "$pem"
+    : > "$R/logs/restored-sbverify.txt"
+    while read -r f; do
+        n=$((n + 1))
+        { echo "== ${f#"$m"/}"; sbverify --cert "$pem" "$f" 2>&1; } >> "$R/logs/restored-sbverify.txt" || bad_+=("${f#"$m"/}")
+    done < <(findmnt -rn -t vfat -o TARGET | awk -v m="$m" 'index($0, m "/") == 1' | while read -r v; do find "$v" -xdev -type f -iname grubx64.efi; done | sort)
+    if ((n == 0)); then
+        bad "MOK signature: no grubx64.efi on the restored disk's ESPs"
+    elif ((${#bad_[@]})); then
+        bad "MOK signature: sbverify --cert ${MOKCERT##*/} fails on ${bad_[*]} (logs/restored-sbverify.txt)"
+    else
+        ok "MOK signature: $n restored grubx64.efi verify with sbverify --cert ${MOKCERT##*/} ($(sha256sum < "$MOKCERT" | cut -c1-16)...): $(grep '^== ' "$R/logs/restored-sbverify.txt" | cut -c4- | tr '\n' ' ')"
+    fi
+}
+# btrfs read-only snapshots (AnduinOS's baselines under @snapshots,
+# snapper's): one SNAP line per read-only subvolume, its path from the top
+# level, its ro property and `btrfs filesystem du` total, exclusive and set
+# shared bytes where a mount reaches it ("unmounted" where none does).  load
+# makes each a snapshot of its origin and restores it with --clone-from, so
+# its extents stay shared (docs/design/btrfs-snapshots.md).
+SNAPS='command -v btrfs >/dev/null || exit 0
+M=$(findmnt -rn -t btrfs -o UUID,TARGET,FSROOT | sort -u)
+for u in $(echo "$M" | cut -d" " -f1 | sort -u); do
+    m=$(echo "$M" | awk -v u="$u" "\$1 == u {print \$2; exit}")
+    btrfs subvolume list -r "$m" 2>/dev/null | sed "s/.* path //" | while read -r p; do
+        best= bl=-1
+        while read -r uu t r; do
+            [ "$uu" = "$u" ] || continue
+            [ "$r" = / ] && r=
+            case "/$p/" in
+            "$r"/*) if [ ${#r} -gt $bl ]; then
+                    bl=${#r}
+                    if [ -z "$r" ]; then best="${t%/}/$p"; else best="${t%/}${p#"${r#/}"}"; fi
+                fi ;;
+            esac
+        done <<EOF
+$M
+EOF
+        if [ -n "$best" ] && [ -d "$best" ]; then
+            ro=$(btrfs property get -ts "$best" ro 2>/dev/null | sed "s/^ro=//")
+            # (bootx: the exclusive bytes of its initramfs images, which the
+            # boot stage rebuilds in the origin, so that the copies in the
+            # snapshot share nothing with it any more.)
+            bx=$(btrfs filesystem du -s --raw "$best"/boot/initrd.img-* "$best"/boot/initramfs-* "$best"/boot/initrd-* 2>/dev/null | awk "NR > 1 && \$2 ~ /^[0-9]+\$/ {s += \$2} END {print s + 0}")
+            echo "SNAP $p ro=${ro:-?} $(btrfs filesystem du -s --raw "$best" 2>/dev/null | awk "NR == 2 {print \"total=\" \$1, \"excl=\" \$2, \"shared=\" \$3}") bootx=$bx"
+        else
+            echo "SNAP $p unmounted"
+        fi
+    done
+done'
+# The restored read-only snapshots against the source's: each still there and
+# read-only, its exclusive bytes at most twice the source's plus 64 MiB (a
+# snapshot restored in full would have nearly all of its total exclusive),
+# not counting its initramfs images: the boot stage rebuilds the origin's, so
+# the snapshot's own copies are its alone (anduinos2's 87 MiB, run a5-1).
+snaps_check() {
+    grep -q '^SNAP ' "$R/logs/source-snaps.txt" 2>/dev/null || return 0
+    TMO=1800 sshk "$1" "$SNAPS" > "$R/logs/restored-snaps.txt" 2>&1
+    local out rc=0
+    out=$(awk 'NR == FNR { if ($1 == "SNAP") src[$2] = $0; next }
+        $1 == "SNAP" { dst[$2] = $0 }
+        function f(l, k,   n, i, a, kv) { n = split(l, a, " "); for (i = 3; i <= n; i++) { split(a[i], kv, "="); if (kv[1] == k) return kv[2] } return "" }
+        END {
+            bad = 0
+            for (p in src) {
+                if (src[p] ~ / unmounted$/) { print "skip " p " (no mount reaches it on the source)"; continue }
+                if (!(p in dst)) { print "FAIL " p " missing"; bad = 1; continue }
+                if (f(src[p], "ro") == "true" && f(dst[p], "ro") != "true") { print "FAIL " p " not read-only (" dst[p] ")"; bad = 1; continue }
+                se = f(src[p], "excl"); de = f(dst[p], "excl")
+                if (se == "" || de == "") { print "FAIL " p " no exclusive size (source " src[p] ", restored " dst[p] ")"; bad = 1; continue }
+                bx = f(dst[p], "bootx") + 0
+                if (de - bx > 2 * se + 64 * 1048576) { bad = 1; w = "FAIL" } else w = "ok"
+                printf "%s %s ro=%s excl %.1f MiB (source %.1f MiB; %.1f MiB of it the initramfs the boot stage rebuilt in its origin) of %.1f MiB\n", w, p, f(dst[p], "ro"), de / 1048576, se / 1048576, bx / 1048576, f(dst[p], "total") / 1048576
+            }
+            exit bad
+        }' "$R/logs/source-snaps.txt" "$R/logs/restored-snaps.txt") || rc=$?
+    printf '%s\n' "$out" > "$R/logs/snaps-judge.txt"
+    if ((rc == 0)); then
+        ok "btrfs read-only snapshots kept read-only, extents shared: $(tr '\n' ';' <<<"$out" | sed 's/;$//; s/;/; /g; s/^ok //; s/; ok /; /g')"
+    else
+        bad "btrfs read-only snapshots: $(grep '^FAIL' <<<"$out" | tr '\n' ' ')(logs/snaps-judge.txt)"
+    fi
+}
+# AnduinOS's Disk Snapshots Manager keys its records by subvolume UUID
+# (Decision 6 of docs/design/anduinos.md): what its CLI says after the
+# restore, with the file system's subvolume UUIDs beside it.  Recorded,
+# never judged.
+SNAPMGR='c=anduinos-btrfs-snapshots-manager-cli; command -v $c >/dev/null || exit 0
+echo "== status --json"; timeout 120 $c status --json 2>&1; echo "== exit $?"
+echo "== list --json"; timeout 120 $c list --json 2>&1; echo "== exit $?"
+echo "== btrfs subvolume list -u -q /"; btrfs subvolume list -u -q / 2>&1'
+snapmgr_summary() {  # FILE: one line of what the CLI's JSON says, and which UUIDs it names
+    python3 -I - "$1" <<'PY' 2>&1 | head -c 600
+import json, re, sys
+t = open(sys.argv[1]).read()
+parts = dict(re.findall(r"^== (.+?)\n(.*?)(?=^== |\Z)", t, re.S | re.M))
+uuids = set(re.findall(r"\buuid ([0-9a-f-]{36})", parts.get("btrfs subvolume list -u -q /", "")))
+out = []
+for name in ("status --json", "list --json"):
+    try:
+        d = json.loads(parts.get(name, ""))
+    except ValueError:
+        out.append(f"{name.split()[0]}: not JSON: {parts.get(name, '').strip()[:80]!r}")
+        continue
+    named = set()
+    def walk(v, k=""):
+        if isinstance(v, dict):
+            for kk, x in v.items():
+                walk(x, kk)
+        elif isinstance(v, list):
+            for x in v:
+                walk(x, k)
+        elif isinstance(v, str) and k in ("snapshot_uuid", "snapshot_parent_uuid") and re.fullmatch(r"[0-9a-f-]{36}", v):
+            named.add(v)
+    walk(d)
+    head = {k: d[k] for k in ("available", "state", "issues") if isinstance(d, dict) and k in d}
+    out.append(f"{name.split()[0]}: {json.dumps(head)[:160]}, {len(named)} snapshot UUIDs named, {len(named & uuids)} of them on this file system")
+print("; ".join(out))
+PY
+}
+snapmgr_record() {  # WHO KEY
+    sshk "$2" "$SNAPMGR" > "$R/logs/$1-snapmgr.txt" 2>&1
+    [[ -s $R/logs/$1-snapmgr.txt ]] || { rm -f "$R/logs/$1-snapmgr.txt"; return 0; }
+    [[ $1 == restored ]] || return 0
+    local sum; sum=$(snapmgr_summary "$R/logs/restored-snapmgr.txt")
+    say "note: the snapshot manager after the restore (recorded, not judged; logs/restored-snapmgr.txt, source-snapmgr.txt): $sum"
+}
 # The degraded variant: the arrays may be degraded (and must be, see below).
 [[ $VARIANT == degraded ]] && HEALTH="DEGRADED=1; $HEALTH"
 # nearfull's fill, run in the source guest: random files under /var/tmp until
@@ -572,6 +720,9 @@ phase_source() {
     esac
     bootstate "$gkey" > "$R/logs/source-bootstate.txt"
     sshk "$gkey" "$LVMID" > "$R/logs/source-lvmid.txt" 2>&1
+    ((mok)) && sshk "$gkey" "$SBSTATE" > "$R/logs/source-sbstate.txt" 2>&1
+    TMO=1800 sshk "$gkey" "$SNAPS" > "$R/logs/source-snaps.txt" 2>&1
+    snapmgr_record source "$gkey"
     sshk "$gkey" "$HEALTH" 2>&1 | grep -v 'bko-holt/load.log' > "$R/logs/source-health.txt"
     scpk "$gkey" "$S/bko-holt" root@127.0.0.1:/root/bko-holt
     if sshk "$gkey" /root/bko-holt dump > "$R/dumps/src.json" 2> "$R/logs/source-dump.err"; then
@@ -914,6 +1065,7 @@ phase_verify() {
         HT_MOUNTED=$DST_MP
         python3 "$T/compare/fsmeta.py" record "$DST_MP" "$R/dst-meta.json" "${BS2_FSMETA[@]}" > "$R/logs/fsmeta-dst.log" 2>&1
         [[ $VARIANT != bs2 ]] || bs2_after_dst_record
+        mok_check "$DST_MP"
         (trap '' TERM INT HUP; exec "$T/vm-umount" "$DST_MP") >> "$R/logs/verify-mount.log" 2>&1; HT_MOUNTED=
         python3 "$T/compare/fsmeta.py" compare "$R/src-meta.json" "$R/dst-meta.json" > "$R/logs/fsmeta-compare.txt" 2>&1
         if python3 "$HERE/judge.py" fs "$T/compare/fsmeta.py" "$R/src-meta.json" "$R/dst-meta.json" "${BS2_FSJUDGE[@]}" > "$R/logs/fsjudge.txt" 2>&1; then
@@ -943,6 +1095,9 @@ phase_verify() {
         bad "boot state: source $(tr '\n' ' ' < "$R/logs/source-bootstate.txt"), restored $(tr '\n' ' ' < "$R/logs/restored-bootstate.txt")"
     fi
     lvmid_check "$gkey"
+    sb_check "$gkey"
+    snaps_check "$gkey"
+    snapmgr_record restored "$gkey"
     [[ $VARIANT != bs2 ]] || bs2_restored_probe "$gkey"
     # A check that failed on the source too isn't the restore's doing.
     sshk "$gkey" "$HEALTH" > "$R/logs/restored-health.txt" 2>&1

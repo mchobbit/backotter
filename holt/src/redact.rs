@@ -134,14 +134,16 @@ const WELL_KNOWN: [&str; 7] = [
     "ffffffff-ffff-ffff-ffff-ffffffffffff",
 ];
 /// Hostnames installers give and live systems use: they identify no one.
-const GENERIC_HOSTS: [&str; 30] = [
+const GENERIC_HOSTS: [&str; 31] = [
     "", "(none)", "localhost", "localhost.localdomain", "localdomain", "<system>", "any", "debian", "ubuntu", "ubuntu-server", "fedora",
     "archlinux", "archiso", "alpine", "nixos", "freebsd", "openbsd", "netbsd", "dragonfly", "omnios", "openindiana", "haiku", "void",
     "voidlinux", "mint", "zorin", "pop-os", "rocky", "backotter", "rescue",
+    // PikaOS's installer copies the live system's hostname into every install.
+    "pikaos",
 ];
 /// Labels (lower case, trailing digits and '*' dropped) that installers
 /// and partitioners write: kept, because they help and identify no one.
-const GENERIC_LABELS: [&str; 62] = [
+const GENERIC_LABELS: [&str; 70] = [
     "", "efi", "esp", "efi system partition", "efi system", "efi-system", "efiboot", "bios", "biosboot", "bios boot partition",
     // Hybrid ISO images (xorriso: EFISYS, Gap1, Appended2...) and BackOtter's
     // and Haiku's own images.
@@ -150,6 +152,9 @@ const GENERIC_LABELS: [&str; 62] = [
     "zfs", "zroot", "rpool", "bpool", "gptboot", "gptzfs", "gptswap", "freebsd", "freebsd-boot", "freebsd-zfs", "freebsd-swap",
     "freebsd-ufs", "haiku", "redox", "genode", "noname", "no name", "linux", "linux filesystem", "linux swap", "primary", "logical",
     "microsoft reserved partition", "basic data partition", "keystore-rpool", "nixboot", "nixos", "backotter", "zram",
+    // PikaOS's installers: GPT names, and pikainstall's file system labels
+    // (the 2.0.5 GTK installer's auto_xfs labels /boot's ext4 "PikaOS").
+    "linux-efi", "linux-boot", "linux-root", "linux-home", "pikaboot", "pikaroot", "pikahome", "pikaos",
 ];
 /// Ubuntu names the datasets for /home and /root USERDATA/home_ID and
 /// USERDATA/root_ID.
@@ -176,7 +181,7 @@ pub struct Collector {
 /// A release medium's volume label: a system's name, its version and an
 /// architecture ("Ubuntu-Server 26.04.1 LTS amd64", "Fedora-S-dvd-x86_64-44").
 fn release_label(low: &str) -> bool {
-    const SYSTEMS: [&str; 12] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos"];
+    const SYSTEMS: [&str; 13] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos", "pikaos"];
     const ARCHES: [&str; 5] = ["amd64", "x86_64", "x86-64", "arm64", "aarch64"];
     let first = low.split(|c: char| !c.is_ascii_alphanumeric()).next().unwrap_or("");
     SYSTEMS.contains(&first) && ARCHES.iter().any(|a| low.contains(a)) && low.bytes().any(|c| c.is_ascii_digit())
@@ -413,7 +418,7 @@ impl Collector {
                 }
             }
             self.add(Ident::Name(Kind::Label, s.to_string()));
-        } else if ["key_file", "keyfile", "key"].contains(&key) {
+        } else if ["key_file", "keyfile", "key", "keyfiles"].contains(&key) {
             self.key_path(t);
         } else if key == "keylocation" || (key == "value" && parent == "keylocation") {
             if let Some(p) = t.strip_prefix("file://") {
@@ -1643,5 +1648,23 @@ mod tests {
         let d = parse(r#"{"os": {"id": "debian"}, "x": "/home/alice/notes", "y": "HOME=/home/alice"}"#).unwrap();
         let (r, _) = redact(&d);
         assert!(!r.pretty().contains("alice"), "{}", r.pretty());
+    }
+
+    /// PikaOS's installers: the GTK one's GPT names, pikainstall's file
+    /// system labels (the 2.0.5 GTK installer's "PikaOS" on /boot too), and
+    /// its ISO's volume label, all kept.
+    #[test]
+    fn pikaos_labels_are_kept() {
+        let d = parse(
+            r#"{"os": {"id": "pika"}, "storage": {"disks": [{"name": "vda", "serial": "1", "partitions": [
+                {"partlabel": "linux-efi", "content": {"type": "vfat", "label": "EFI"}}, {"partlabel": "linux-boot", "content": {"type": "ext4", "label": "PikaBoot"}},
+                {"partlabel": "linux-root", "content": {"type": "xfs", "label": "PikaRoot"}}, {"partlabel": "linux-home", "content": {"type": "xfs", "label": "PikaHome"}},
+                {"partlabel": "linux-boot", "content": {"type": "ext4", "label": "PikaOS"}},
+                {"content": {"type": "iso9660", "label": "PikaOS-4-amd64-v3"}}]}]}}"#,
+        )
+        .unwrap();
+        let (r, red) = redact(&d);
+        assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
+        assert!(release_label("pikaos-nest-gnome-4.0-amd64-v3"));
     }
 }

@@ -1,0 +1,7 @@
+sd0 at scsibus2 targ 0 lun 0: <VirtIO, Block Device, >
+sd0: 16384MB, 512 bytes/sector, 33554432 sectors
+softraid0 at root
+scsibus4 at softraid0: 256 targets
+sd1 at scsibus4 targ 1 lun 0: <OPENBSD, SR CRYPTO, 006>
+sd1: 16383MB, 512 bytes/sector, 33553840 sectors
+root on sd1a (739d98841b65e745.a) swap on sd1b dump on sd1b

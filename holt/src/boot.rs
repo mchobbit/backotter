@@ -224,6 +224,13 @@ pub const PACKAGES: &[&str] = &[
     "grub-bios", "grub-efi", "mkinitfs", "linux-virt",
     // EndeavourOS's and Manjaro's.
     "kernel-install-for-dracut", "eos-dracut", "mhwd",
+    // BigLinux's: grub-btrfs's snapshot menu (with Timeshift's hook) and the
+    // one-preset mkinitcpio; only names no other guest has, so no other
+    // fingerprint changes.
+    "grub-btrfs", "grub-btrfs-timeshift", "faster-mkinitcpio",
+    // Garuda's ("grub-btrfs", "snapper" and "dracut" are above): the dracut
+    // hook load keys on, its kernel, and how snapshots reach the boot menu.
+    "garuda-dracut-support", "linux-garuda", "snap-pac", "snapper-support",
     // Omarchy's, openSUSE's and Void's.
     "limine", "limine-mkinitcpio-hook", "limine-snapper-sync", "grub2", "grub2-i386-pc", "grub2-x86_64-efi", "kernel-default", "snapper", "linux-base",
     "multipath-tools", "dmraid", "nvme-cli", "open-iscsi",
@@ -236,6 +243,14 @@ pub const PACKAGES: &[&str] = &[
     // name): its kernels, installkernel and the initramfs generators it
     // can call, systemd-utils (udev, and systemd-boot without systemd).
     "gentoo-kernel-bin", "gentoo-kernel", "gentoo-sources", "installkernel", "genkernel", "ugrd", "systemd-utils", "zfs-kmod",
+    // PikaOS's: booster, its kernel by metapackage (linux-image-K-pikaos is
+    // versioned, as Debian's linux-image-K are, and boot.kernels lists K),
+    // rEFInd's theme and btrfs snapshot menu, zram swap.
+    "booster", "kernel-pika", "kernel-pika-runtime", "pika-refind-theme", "refind-btrfs", "zram-tools",
+    // AnduinOS's: its own GRUB (signed on the machine with a MOK), Ubuntu's
+    // shim repackaged, the toolkit that signs and deploys them, and its
+    // Btrfs snapshot manager; names no other guest has.
+    "anduinos-grub", "anduinos-shim-signed", "anduinos-secureboot-toolkit", "anduinos-btrfs-snapshots-manager",
 ];
 
 /// debconf answers from /var/cache/debconf/config.dat whose names start with
@@ -606,17 +621,21 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
     // vmlinuz-V.old, initramfs-V.img.old, config-V.old and
     // System.map-V.old: no kernel of their own, listed apart.  Under
     // systemd's kernel-install, its plugin (90-compat.install, layout grub)
-    // names the kernel kernel-V.
+    // names the kernel kernel-V.  PikaOS's booster keeps the image it
+    // replaced as booster.img-V.dpkg-bak or .bak: set aside the same way.
     let mut old_copies: Vec<&str> = Vec::new();
     for f in &files {
-        if f.ends_with(".old") && ["vmlinuz-", "kernel-", "initrd.img-", "config-", "System.map-", "initramfs-"].iter().any(|p| f.starts_with(p)) {
+        if (f.ends_with(".old") && ["vmlinuz-", "kernel-", "initrd.img-", "config-", "System.map-", "initramfs-"].iter().any(|p| f.starts_with(p)))
+            || (f.starts_with("booster.img-") && (f.ends_with(".dpkg-bak") || f.ends_with(".bak")))
+        {
             old_copies.push(f);
             continue;
         }
         // Debian's initrd.img-V, Arch's and Fedora's initramfs-V.img.
-        // Alpine's are vmlinuz-FLAVOR and initramfs-FLAVOR, with no .img.
+        // Alpine's are vmlinuz-FLAVOR and initramfs-FLAVOR, with no .img;
+        // booster's (PikaOS) booster.img-V.
         let initramfs = f.strip_prefix("initramfs-").map(|v| v.strip_suffix(".img").unwrap_or(v)).filter(|v| !v.ends_with("-fallback") && !v.ends_with("kdump"));
-        for p in ["vmlinuz-", "kernel-", "initrd.img-", "config-", "System.map-", "initramfs-"] {
+        for p in ["vmlinuz-", "kernel-", "initrd.img-", "config-", "System.map-", "initramfs-", "booster.img-"] {
             let v = if p == "initramfs-" { initramfs } else { f.strip_prefix(p) };
             if let Some(v) = v {
                 if !versions.iter().any(|x| x == v) {
@@ -636,7 +655,8 @@ pub fn kernels_json(sys: &Sys, running: Option<&str>) -> Value {
                     "initrd_bytes",
                     sys.file_size(&format!("/boot/initrd.img-{v}"))
                         .or_else(|| sys.file_size(&format!("/boot/initramfs-{v}.img")))
-                        .or_else(|| sys.file_size(&format!("/boot/initramfs-{v}"))),
+                        .or_else(|| sys.file_size(&format!("/boot/initramfs-{v}")))
+                        .or_else(|| sys.file_size(&format!("/boot/booster.img-{v}"))),
                 )
                 .set("config", sys.is_file(&format!("/boot/config-{v}")))
                 .set("running", running == Some(v.as_str()))
@@ -769,6 +789,10 @@ fn initramfs_json(sys: &Sys, packages: &[(String, String, String)], ostree: bool
         Some("prebuilt")
     } else if has("mkinitcpio") {
         Some("mkinitcpio")
+    } else if has("booster") {
+        // PikaOS: booster's package puts its own update-initramfs over
+        // Debian's, and initramfs-tools or dracut may be installed beside it.
+        Some("booster")
     } else if has("dracut") {
         Some("dracut")
     } else if has("initramfs-tools") {
@@ -794,7 +818,59 @@ fn initramfs_json(sys: &Sys, packages: &[(String, String, String)], ostree: bool
     for (k, v) in gentoo {
         o.put(k, v);
     }
+    if generator == Some("booster") {
+        o.put("booster", booster_json(sys));
+    }
     o.build()
+}
+
+/// booster's configuration file.
+pub const BOOSTER_YAML: &str = "/etc/booster.yaml";
+
+/// The keys of /etc/booster.yaml that decide what booster puts in an image,
+/// each null when the file (or the key) is absent: universal (all modules,
+/// or only this machine's) and enable_lvm as booleans, the module lists and
+/// the compression as written.
+fn booster_json(sys: &Sys) -> Value {
+    let text = sys.read(BOOSTER_YAML);
+    let keys = text.as_deref().map(parse_flat_yaml).unwrap_or_default();
+    let key = |k: &str| keys.iter().find(|(key, _)| key == k).map(|(_, v)| v.clone());
+    let flag = |k: &str| {
+        key(k).map(|v| match v.to_ascii_lowercase().as_str() {
+            "true" | "yes" | "on" => Value::from(true),
+            "false" | "no" | "off" => Value::from(false),
+            _ => Value::from(v),
+        })
+    };
+    Obj::new()
+        .set("conf", text.is_some().then_some(BOOSTER_YAML))
+        .set("universal", flag("universal"))
+        .set("enable_lvm", flag("enable_lvm"))
+        .set("modules", key("modules"))
+        .set("modules_force_load", key("modules_force_load"))
+        .set("compression", key("compression"))
+        .build()
+}
+
+/// A YAML file's top-level `key: value` lines (booster.yaml's are flat):
+/// indented lines, list items and comments skipped, a trailing ` #`
+/// comment dropped, a quoted value unquoted.  A key with no value on its
+/// line (a nested map) is left out.
+pub fn parse_flat_yaml(text: &str) -> Vec<(String, String)> {
+    let mut out = Vec::new();
+    for line in text.lines() {
+        if line.starts_with([' ', '\t', '#', '-']) {
+            continue;
+        }
+        let Some((k, v)) = line.split_once(':') else { continue };
+        let v = v.split(" #").next().unwrap_or("").trim();
+        if k.is_empty() || v.is_empty() {
+            continue;
+        }
+        let v = if v.len() >= 2 && ((v.starts_with('"') && v.ends_with('"')) || (v.starts_with('\'') && v.ends_with('\''))) { &v[1..v.len() - 1] } else { v };
+        out.push((k.trim().to_string(), v.to_string()));
+    }
+    out
 }
 
 // --- Which loader ------------------------------------------------------------------
@@ -810,6 +886,9 @@ pub struct Evidence<'a> {
     pub mbr_codes: Vec<(String, String)>,
     pub packages: &'a [(String, String, String)],
     pub esp_files: Vec<String>,
+    /// The ESP file EFI/BOOT/BOOTX64.EFI is a byte copy of, if any
+    /// (esp_inventory's same_as): shim's, when the fallback path is shim.
+    pub fallback_copy_of: Option<String>,
 }
 
 pub fn detect_loader(e: &Evidence) -> Value {
@@ -834,6 +913,13 @@ pub fn detect_loader(e: &Evidence) -> Value {
                 name = Some("limine");
             } else if u.ends_with("\\EFI\\BOOT\\BOOTX64.EFI") {
                 why.push("that is the removable-media fallback path".into());
+                // AnduinOS's installer copies shim there, with GRUB and
+                // MokManager beside it; with Secure Boot off, shim may set no
+                // MOK variables to tell by.
+                if let Some(of) = e.fallback_copy_of.as_deref().filter(|p| p.to_ascii_lowercase().ends_with("/shimx64.efi")) {
+                    shim = true;
+                    why.push(format!("EFI/BOOT/BOOTX64.EFI is a copy of {of}"));
+                }
             }
         }
         if let Some(info) = &e.loader_info {
@@ -865,6 +951,12 @@ pub fn detect_loader(e: &Evidence) -> Value {
                 // esp_inventory's paths are relative to the ESP: EFI/limine/.
                 name = Some("limine");
                 why.push("an ESP holds Limine's EFI/limine/ or limine.conf".into());
+            } else if lc.iter().any(|f| f.ends_with("/refind_x64.efi") || f.ends_with("/refind.conf")) {
+                // PikaOS's installer copies rEFInd to EFI/BOOT too, and its
+                // "BOOTX64 mode" makes no boot entry: the firmware boots the
+                // fallback path, which names no loader.
+                name = Some("refind");
+                why.push("an ESP holds rEFInd's refind_x64.efi or refind.conf".into());
             }
         }
     } else {
@@ -889,7 +981,9 @@ pub fn detect_loader(e: &Evidence) -> Value {
     let package = match (name, e.uefi) {
         // Chimera's (and Void's) GRUB for each platform is grub-PLATFORM;
         // Fedora's (and its atomic desktops') is grub2-efi-x64.
-        (Some("grub"), true) => ["grub-efi-amd64-signed", "grub-efi-amd64", "grub-efi-ia32", "grub-efi-arm64", "grub-x86_64-efi", "grub2-efi-x64"].into_iter().find(|p| has(p)),
+        // AnduinOS's own GRUB, first: when it's installed, it's the one on
+        // the ESP.
+        (Some("grub"), true) => ["anduinos-grub", "grub-efi-amd64-signed", "grub-efi-amd64", "grub-efi-ia32", "grub-efi-arm64", "grub-x86_64-efi", "grub2-efi-x64"].into_iter().find(|p| has(p)),
         (Some("grub"), false) => ["grub-pc", "grub-i386-pc"].into_iter().find(|p| has(p)),
         (Some("systemd-boot"), _) => ["systemd-boot"].into_iter().find(|p| has(p)),
         (Some("refind"), _) => ["refind"].into_iter().find(|p| has(p)),
@@ -909,8 +1003,8 @@ pub fn detect_loader(e: &Evidence) -> Value {
             }
         }
     }
-    // Debian's signed shim, Fedora's.
-    let shim_package = (e.uefi && shim).then(|| ["shim-signed", "shim-x64"].into_iter().find(|p| has(p))).flatten();
+    // Debian's signed shim, Fedora's, AnduinOS's.
+    let shim_package = (e.uefi && shim).then(|| ["shim-signed", "shim-x64", "anduinos-shim-signed"].into_iter().find(|p| has(p))).flatten();
     let mut o = Obj::new()
         .set("name", name.unwrap_or("unknown"))
         .set("firmware", if e.uefi { "uefi" } else { "bios" })
@@ -927,11 +1021,15 @@ pub fn boot_json(sys: &Sys, packages: &[(String, String, String)], esps: &[(Stri
     let running = sys.read_trim("/proc/sys/kernel/osrelease");
     let mut esp_list = Vec::new();
     let mut esp_files = Vec::new();
+    let mut fallback_copy_of = None;
     let mut sd_boot = None;
     for (dev, mnt) in esps {
         let inv = esp_inventory(sys, mnt);
         if let Some(files) = inv.get("files").and_then(Value::as_array) {
             esp_files.extend(files.iter().filter_map(|f| f.get("path").and_then(Value::as_str)).map(str::to_string));
+            fallback_copy_of = fallback_copy_of.or_else(|| {
+                files.iter().find(|f| f.get("path").and_then(Value::as_str).is_some_and(|p| p.eq_ignore_ascii_case("EFI/BOOT/BOOTX64.EFI"))).and_then(|f| f.get("same_as")).and_then(Value::as_str).map(str::to_string)
+            });
         }
         if sd_boot.is_none() {
             sd_boot = systemd_boot_json(sys, mnt);
@@ -960,7 +1058,12 @@ pub fn boot_json(sys: &Sys, packages: &[(String, String, String)], esps: &[(Stri
         mbr_codes,
         packages,
         esp_files,
+        fallback_copy_of,
     };
+    let mut loader = detect_loader(&ev);
+    if let (Some(m), Value::Obj(o)) = (mok_json(sys, packages), &mut loader) {
+        o.push(("mok".into(), m));
+    }
     let mut pk = Obj::new();
     for p in PACKAGES {
         if let Some((_, v, _)) = packages.iter().find(|(n, _, _)| n == p) {
@@ -969,7 +1072,7 @@ pub fn boot_json(sys: &Sys, packages: &[(String, String, String)], esps: &[(Stri
     }
     let is_ostree = ostree.is_some();
     let mut o = Obj::new()
-        .set("loader", detect_loader(&ev))
+        .set("loader", loader)
         .set("efi", efi_boot)
         .set("esps", esp_list)
         .set("grub", grub_json(sys))
@@ -980,7 +1083,47 @@ pub fn boot_json(sys: &Sys, packages: &[(String, String, String)], esps: &[(Stri
         .set("initramfs", initramfs_json(sys, packages, is_ostree))
         .set("packages", pk);
     o.put_some("ostree", ostree);
+    o.put_some("refind", refind_json(sys));
     o.build()
+}
+
+/// AnduinOS's Machine Owner Key: anduinos-secureboot-toolkit makes it at
+/// install and signs AnduinOS's GRUB with it (MOK.priv beside it stays
+/// root's alone).
+pub const ANDUINOS_MOK: &str = "/var/lib/shim-signed/mok/MOK.der";
+
+/// boot.loader.mok: on AnduinOS's own GRUB (anduinos-grub installed and
+/// its MOK certificate there), the certificate and its SHA-256 fingerprint
+/// (of the DER file, as `openssl x509 -fingerprint -sha256` prints it), so
+/// a restore can say which key the firmware must hold.  None otherwise.
+pub fn mok_json(sys: &Sys, packages: &[(String, String, String)]) -> Option<Value> {
+    if !packages.iter().any(|(n, _, _)| n == "anduinos-grub") {
+        return None;
+    }
+    let der = sys.read_bytes(ANDUINOS_MOK)?;
+    Some(Obj::new().set("cert", ANDUINOS_MOK).set("sha256", crate::bytes::sha256_hex(&der)).build())
+}
+
+/// rEFInd's kernel options file, which it reads beside the kernels it
+/// finds (/boot here): each line a quoted title and the quoted options.
+pub const REFIND_LINUX_CONF: &str = "/boot/refind_linux.conf";
+
+/// boot.refind: refind_linux.conf's path and its lines, each {title,
+/// options}; None when there is no such file.
+pub fn refind_json(sys: &Sys) -> Option<Value> {
+    let text = sys.read(REFIND_LINUX_CONF)?;
+    let lines: Vec<Value> = text
+        .lines()
+        .map(str::trim)
+        .filter(|l| !l.is_empty() && !l.starts_with('#'))
+        .map(|l| {
+            let mut w = shell_words(l).into_iter();
+            let title = w.next().unwrap_or_default();
+            let options = w.collect::<Vec<_>>().join(" ");
+            Obj::new().set("title", title).set("options", options).build()
+        })
+        .collect();
+    Some(Obj::new().set("linux_conf", Obj::new().set("path", REFIND_LINUX_CONF).set("lines", lines)).build())
 }
 
 #[cfg(test)]
@@ -1171,6 +1314,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             mbr_codes: vec![],
             packages: &p,
             esp_files: vec![],
+            fallback_copy_of: None,
         });
         assert_eq!(v.get("name").and_then(Value::as_str), Some("grub"));
         assert_eq!(v.get("via_shim"), Some(&Value::Bool(true)));
@@ -1181,7 +1325,7 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
     #[test]
     fn loader_other_cases() {
         let none: Vec<(String, String, String)> = vec![];
-        let base = |uefi: bool| Evidence { uefi, current_file: None, loader_info: None, shim_variables: false, mbr_codes: vec![], packages: &none, esp_files: vec![] };
+        let base = |uefi: bool| Evidence { uefi, current_file: None, loader_info: None, shim_variables: false, mbr_codes: vec![], packages: &none, esp_files: vec![], fallback_copy_of: None };
         // systemd-boot by its path, then by LoaderInfo.
         let mut e = base(true);
         e.current_file = Some("\\EFI\\systemd\\systemd-bootx64.efi".into());
@@ -1243,6 +1387,67 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
         assert_eq!(v.get("name").and_then(Value::as_str), Some("grub"));
         assert!(v.get("evidence").unwrap().compact().contains("only evidence"));
         assert_eq!(detect_loader(&base(false)).get("name").and_then(Value::as_str), Some("unknown"));
+    }
+
+    /// PikaOS's rEFInd booted at the fallback path: the ESP's files name it,
+    /// in EFI/refind or only beside EFI/BOOT/bootx64.efi.
+    #[test]
+    fn refind_from_the_esp() {
+        let p = pk(&["refind"]);
+        let e = |files: &[&str]| Evidence {
+            uefi: true,
+            current_file: Some("\\EFI\\BOOT\\BOOTX64.EFI".into()),
+            loader_info: None,
+            shim_variables: false,
+            mbr_codes: vec![],
+            packages: &p,
+            esp_files: files.iter().map(|f| f.to_string()).collect(),
+            fallback_copy_of: None,
+        };
+        let v = detect_loader(&e(&["EFI/BOOT/bootx64.efi", "EFI/refind/refind_x64.efi", "EFI/refind/drivers_x64/ext4_x64.efi"]));
+        assert_eq!(v.get("name").and_then(Value::as_str), Some("refind"));
+        assert_eq!(v.get("package").and_then(Value::as_str), Some("refind"));
+        assert!(v.get("evidence").unwrap().compact().contains("an ESP holds rEFInd's"), "{}", v.compact());
+        assert_eq!(detect_loader(&e(&["EFI/BOOT/bootx64.efi", "EFI/BOOT/refind.conf"])).get("name").and_then(Value::as_str), Some("refind"));
+        assert_eq!(detect_loader(&e(&["EFI/BOOT/bootx64.efi"])).get("name").and_then(Value::as_str), Some("unknown"));
+    }
+
+    /// booster's images and configuration (PikaOS): booster.img-K is K's
+    /// initramfs, its .dpkg-bak and .bak copies are set aside; booster wins
+    /// over initramfs-tools; booster.yaml's keys, null when absent; and
+    /// refind_linux.conf's lines.
+    #[test]
+    fn booster_and_refind_linux_conf() {
+        let t = Tree::new("boot-booster");
+        let k = "7.3.3-pikaos";
+        t.file(&format!("/boot/vmlinuz-{k}"), "kk")
+            .file(&format!("/boot/booster.img-{k}"), "iii")
+            .file(&format!("/boot/booster.img-{k}.dpkg-bak"), "o")
+            .file(&format!("/boot/booster.img-{k}.bak"), "o")
+            .dir(&format!("/lib/modules/{k}/kernel"));
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        let v = kernels_json(&s, Some(k));
+        let inst = v.get("installed").and_then(Value::as_array).unwrap();
+        assert_eq!(inst.len(), 1, "{}", v.compact());
+        assert_eq!(inst[0].get("initrd_bytes").and_then(Value::as_u64), Some(3));
+        assert_eq!(v.get("old_copies").unwrap().compact(), format!(r#"["booster.img-{k}.bak","booster.img-{k}.dpkg-bak"]"#));
+        let p = pk(&["booster", "initramfs-tools", "dracut"]);
+        let i = initramfs_json(&s, &p, false);
+        assert_eq!(i.get("generator").and_then(Value::as_str), Some("booster"));
+        assert_eq!(i.get("booster").unwrap().compact(), r#"{"conf":null,"universal":null,"enable_lvm":null,"modules":null,"modules_force_load":null,"compression":null}"#);
+        t.file("/etc/booster.yaml", "universal: true  # all modules\nenable_lvm: false\nmodules: 'usbhid,hid_generic'\nnetwork:\n  dhcp: on\n- stray\ncompression: \"zstd\"\n");
+        let i = initramfs_json(&s, &p, false);
+        assert_eq!(i.get("booster").unwrap().compact(), r#"{"conf":"/etc/booster.yaml","universal":true,"enable_lvm":false,"modules":"usbhid,hid_generic","modules_force_load":null,"compression":"zstd"}"#);
+        // Without booster, no booster object.
+        let i = initramfs_json(&s, &pk(&["initramfs-tools"]), false);
+        assert_eq!(i.get("generator").and_then(Value::as_str), Some("initramfs-tools"));
+        assert!(i.get("booster").is_none());
+        assert!(refind_json(&s).is_none());
+        t.file("/boot/refind_linux.conf", "# rEFInd\n\"Boot with standard options\"  \"rd.luks.name=1111aaaa-2222-4333-8444-555566667777=crypt_root rd.luks.options=discard nowatchdog root=UUID=a0a1 quiet splash ---\"\n\n\"Boot with logging\" \"root=UUID=a0a1 ---\"\n");
+        assert_eq!(
+            refind_json(&s).unwrap().compact(),
+            r#"{"linux_conf":{"path":"/boot/refind_linux.conf","lines":[{"title":"Boot with standard options","options":"rd.luks.name=1111aaaa-2222-4333-8444-555566667777=crypt_root rd.luks.options=discard nowatchdog root=UUID=a0a1 quiet splash ---"},{"title":"Boot with logging","options":"root=UUID=a0a1 ---"}]}}"#
+        );
     }
 
     #[test]
@@ -1356,13 +1561,14 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             mbr_codes: vec![],
             packages: &p,
             esp_files: vec![],
+            fallback_copy_of: None,
         });
         assert_eq!(l.get("name").and_then(Value::as_str), Some("grub"));
         assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
         assert_eq!(l.get("package").and_then(Value::as_str), Some("grub2-efi-x64"));
         assert_eq!(l.get("shim_package").and_then(Value::as_str), Some("shim-x64"));
         // No shim, no shim_package.
-        let l = detect_loader(&Evidence { uefi: true, current_file: Some("\\EFI\\fedora\\grubx64.efi".into()), loader_info: None, shim_variables: false, mbr_codes: vec![], packages: &p, esp_files: vec![] });
+        let l = detect_loader(&Evidence { uefi: true, current_file: Some("\\EFI\\fedora\\grubx64.efi".into()), loader_info: None, shim_variables: false, mbr_codes: vec![], packages: &p, esp_files: vec![], fallback_copy_of: None });
         assert!(l.get("shim_package").is_none());
         let v = "7.3.3-200.fc44.x86_64";
         let d = "/boot/ostree/default-1cc099369334fad8952283b3221e6d78fd79263e6dedc35ce40302458681d413";
@@ -1510,9 +1716,60 @@ search --fs-uuid --set=boot --hint hd0,gpt2 1111-2222
             mbr_codes: vec![],
             packages: &p,
             esp_files: vec!["EFI/chimera/grubx64.efi".into()],
+            fallback_copy_of: None,
         });
         assert_eq!(l.get("name").and_then(Value::as_str), Some("grub"));
         assert_eq!(l.get("package").and_then(Value::as_str), Some("grub-x86_64-efi"));
         assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)));
+    }
+
+    /// AnduinOS (docs/design/anduinos.md): shim from BootCurrent in
+    /// EFI/AnduinOS, or from the fallback path when BOOTX64.EFI is a copy of
+    /// shim; anduinos-grub and anduinos-shim-signed as the packages; and
+    /// boot.loader.mok from MOK.der, only beside anduinos-grub.
+    #[test]
+    fn anduinos_loader_and_mok() {
+        let p = pk(&["anduinos-grub", "anduinos-shim-signed", "mokutil", "dracut"]);
+        let files = || vec!["EFI/AnduinOS/grubx64.efi".to_string(), "EFI/AnduinOS/mmx64.efi".into(), "EFI/AnduinOS/shimx64.efi".into(), "EFI/BOOT/BOOTX64.EFI".into(), "EFI/BOOT/grubx64.efi".into()];
+        let ev = |current: &str, copy: Option<&str>| Evidence {
+            uefi: true,
+            current_file: Some(current.into()),
+            loader_info: None,
+            shim_variables: false,
+            mbr_codes: vec![],
+            packages: &p,
+            esp_files: files(),
+            fallback_copy_of: copy.map(str::to_string),
+        };
+        let l = detect_loader(&ev("\\EFI\\AnduinOS\\shimx64.efi", None));
+        assert_eq!(l.get("name").and_then(Value::as_str), Some("grub"));
+        assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
+        assert_eq!(l.get("package").and_then(Value::as_str), Some("anduinos-grub"));
+        assert_eq!(l.get("shim_package").and_then(Value::as_str), Some("anduinos-shim-signed"));
+        // The fallback path, a copy of shim: through shim, said why.
+        let l = detect_loader(&ev("\\EFI\\BOOT\\BOOTX64.EFI", Some("EFI/AnduinOS/shimx64.efi")));
+        assert_eq!(l.get("name").and_then(Value::as_str), Some("grub"));
+        assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
+        assert!(l.get("evidence").unwrap().compact().contains("EFI/BOOT/BOOTX64.EFI is a copy of EFI/AnduinOS/shimx64.efi"), "{}", l.compact());
+        // A fallback that's a copy of GRUB itself, or of nothing: not shim.
+        for copy in [Some("EFI/AnduinOS/grubx64.efi"), None] {
+            let l = detect_loader(&ev("\\EFI\\BOOT\\BOOTX64.EFI", copy));
+            assert_eq!(l.get("via_shim"), Some(&Value::Bool(false)), "{copy:?}");
+            assert!(l.get("shim_package").is_none(), "{copy:?}");
+        }
+
+        // The MOK: its certificate's SHA-256, read through Sys.
+        let t = Tree::new("mok");
+        let der = b"0\x82\x03\x1fnot really DER";
+        t.file(ANDUINOS_MOK, &der[..]).file("/var/lib/shim-signed/mok/MOK.priv", "secret");
+        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
+        let m = mok_json(&s, &p).unwrap();
+        assert_eq!(m.compact(), format!(r#"{{"cert":"/var/lib/shim-signed/mok/MOK.der","sha256":"{}"}}"#, crate::bytes::sha256_hex(der)));
+        assert_eq!(m.get("sha256").and_then(Value::as_str).map(str::len), Some(64));
+        // Not without anduinos-grub (a MOK of DKMS's, Ubuntu's signed GRUB),
+        // nor without the certificate.
+        assert!(mok_json(&s, &pk(&["grub-efi-amd64-signed", "shim-signed", "mokutil"])).is_none());
+        let none = Tree::new("mok-none");
+        assert!(mok_json(&Sys::new(none.root(), Box::new(FakeRunner::default()), false), &p).is_none());
     }
 }

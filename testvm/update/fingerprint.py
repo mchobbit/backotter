@@ -59,12 +59,16 @@ PACKAGES = (
     "zfs-utils", "selinux-policy-targeted",
     "grub-bios", "grub-efi", "mkinitfs", "linux-virt",
     "kernel-install-for-dracut", "eos-dracut", "mhwd",
+    "grub-btrfs", "grub-btrfs-timeshift", "faster-mkinitcpio",
+    "garuda-dracut-support", "linux-garuda", "snap-pac", "snapper-support",
     "limine", "limine-mkinitcpio-hook", "limine-snapper-sync", "grub2", "grub2-i386-pc", "grub2-x86_64-efi",
     "kernel-default", "snapper", "linux-base",
     "multipath-tools", "dmraid", "nvme-cli", "open-iscsi",
     "grub-i386-pc", "grub-x86_64-efi", "linux-stable", "linux-lts-zfs-bin", "linux-stable-zfs-bin", "zfs", "zfs-ckms", "ckms",
     "cryptsetup-scripts",
     "gentoo-kernel-bin", "gentoo-kernel", "gentoo-sources", "installkernel", "genkernel", "ugrd", "systemd-utils", "zfs-kmod",
+    "booster", "kernel-pika", "kernel-pika-runtime", "pika-refind-theme", "refind-btrfs", "zram-tools",
+    "anduinos-grub", "anduinos-shim-signed", "anduinos-secureboot-toolkit", "anduinos-btrfs-snapshots-manager",
 )
 # Of those, what handles storage; the rest is boot.
 STORAGE = frozenset((
@@ -73,6 +77,7 @@ STORAGE = frozenset((
     "btrfs-progs", "xfsprogs", "e2fsprogs", "dosfstools", "exfatprogs", "ntfs-3g", "jfsutils", "f2fs-tools",
     "nilfs-tools", "bcachefs-tools", "snapper", "multipath-tools", "dmraid", "nvme-cli", "open-iscsi",
     "zfs", "zfs-ckms", "linux-lts-zfs-bin", "linux-stable-zfs-bin", "cryptsetup-scripts", "zfs-kmod",
+    "anduinos-btrfs-snapshots-manager",
 ))
 FIXTURE = ("e2fsprogs", "xfsprogs", "btrfs-progs", "f2fs-tools", "jfsutils", "nilfs-tools", "dosfstools", "attr", "acl")
 # Another distribution's name for a fixture tool.

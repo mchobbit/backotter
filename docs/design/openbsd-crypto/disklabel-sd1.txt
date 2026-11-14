@@ -1,0 +1,20 @@
+# /dev/rsd1c:
+type: SCSI
+disk: SCSI disk
+label: SR CRYPTO
+duid: 739d98841b65e745
+flags:
+bytes/sector: 512
+sectors/track: 63
+tracks/cylinder: 255
+sectors/cylinder: 16065
+cylinders: 2088
+total sectors: 33553840
+boundstart: 64
+boundend: 33553840
+
+16 partitions:
+#                size           offset  fstype [fsize bsize   cpg]
+  a:         29359456               64  4.2BSD   2048 16384 12960 # /
+  b:          4194304         29359520    swap                    # none
+  c:         33553840                0  unused                    

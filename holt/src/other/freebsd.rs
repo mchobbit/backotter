@@ -132,6 +132,10 @@ pub fn bsdlabel_parts(slice: &dyn ByteSource) -> Vec<(char, u64, u64)> {
 /// holds its GEOM labels (FreeBSD) or its slices' disklabel64 names
 /// (DragonFly), as (partition, name).
 pub fn resolve(spec: &str, disks: &[(RawDisk, Vec<Found>, Vec<(String, String)>)]) -> Option<String> {
+    // A GELI provider (/dev/X.eli, onetime swap's too): X's partition.
+    if let Some(x) = spec.strip_suffix(".eli") {
+        return resolve(x, disks);
+    }
     let s = spec.strip_prefix("/dev/")?;
     let parts = || disks.iter().flat_map(|(_, f, g)| f.iter().map(move |p| (p, g)));
     let pj = |p: &Found, k: &str| p.json.0.iter().find(|(key, _)| key == k).and_then(|(_, v)| v.as_str().map(str::to_string));
@@ -239,6 +243,8 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
                     extra.put("tunefs", o.build());
                 }
             }
+            let gl = labels.iter().find(|(n, _)| *n == f.name).map(|(_, l)| l.as_str());
+            members.extend(super::geli::dump_partition(sys, f, gl, &seen, &mount_list, &mut extra));
             for c in &f.contents {
                 members.push((f.name.clone(), c.clone()));
             }
@@ -274,10 +280,10 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
     }
     let mounts_json: Vec<Value> = mount_list
         .iter()
-        .map(|m| Obj::new().set("target", m.file.as_str()).set("source", m.spec.as_str()).set("fstype", m.vfstype.as_str()).set("options", m.options.as_str()).set("device", resolve(&m.spec, &seen)).build())
+        .map(|m| super::geli::mark(Obj::new().set("target", m.file.as_str()).set("source", m.spec.as_str()).set("fstype", m.vfstype.as_str()).set("options", m.options.as_str()).set("device", resolve(&m.spec, &seen)).build(), &m.spec))
         .collect();
     let fstab = match sys.read("/etc/fstab") {
-        Some(t) => Value::Arr(mounts::parse_fstab(&t).iter().map(|e| e.to_json(resolve(&e.spec, &seen).as_deref())).collect()),
+        Some(t) => Value::Arr(mounts::parse_fstab(&t).iter().map(|e| super::geli::mark(e.to_json(resolve(&e.spec, &seen).as_deref()), &e.spec)).collect()),
         None => Value::Null,
     };
     let swaps: Vec<Value> = sys
@@ -288,7 +294,7 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         .filter_map(|l| {
             let f: Vec<&str> = l.split_whitespace().collect();
             let kib: u64 = f.get(1)?.parse().ok()?;
-            Some(Obj::new().set("file", f[0]).set("size_bytes", kib * 1024).set("device", resolve(f[0], &seen)).build())
+            Some(super::geli::mark_swap(Obj::new().set("file", f[0]).set("size_bytes", kib * 1024).set("device", resolve(f[0], &seen)).build(), f[0], &seen))
         })
         .collect();
     let member_refs: Vec<(String, &Content)> = members.iter().map(|(n, c)| (n.clone(), c)).collect();

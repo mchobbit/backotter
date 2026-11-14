@@ -188,6 +188,14 @@ BOOT_STAGE = [
     # Gentoo: load runs dracut itself, whose images are 0600 (its umask
     # 077); installkernel had left the source's 0644 (gentoo, G5's g5-1).
     (r"^boot/initramfs-[^/]*-gentoo[^/]*\.img$", {"mode"}, "dracut makes Gentoo's initramfs 0600 where installkernel had left it 0644"),
+    # Garuda: load runs dracut-rebuild, whose dracut-install-garuda does
+    # rm -f, dd and chmod 0644 on /boot/vmlinuz-PKGBASE before the images
+    # (garuda, GA4's ga4-2): the same bytes in a new file, so only its times
+    # move.  Content, mode and owner still count.
+    (r"^boot/vmlinuz-[^/]+$", {"mtime", "atime"}, "Garuda's dracut-rebuild (garuda-dracut-support) copies each kernel to /boot again with dd before building its images"),
+    # PikaOS: load runs `booster build` per kernel; its .dpkg-bak and .bak
+    # copies it leaves alone.
+    (r"^boot/booster\.img-(?![^/]*\.(dpkg-)?bak$)[^/]+$", _WRITTEN, "booster build rebuilds each kernel's booster.img (PikaOS)"),
     (r"^boot$", {"mtime (dirs)", "atime (dirs)"}, "update-initramfs replaces the initrds"),
     # Limine (CachyOS): limine-mkinitcpio-hook copies each initramfs that
     # mkinitcpio -P rebuilds into /boot/MACHINE-ID/KERNEL/, where
@@ -199,6 +207,9 @@ BOOT_STAGE = [
     (r"^var/log$", {"mtime (dirs)", "atime (dirs)"}, "var/log/bko-holt made"),
     (r"^var/lib/initramfs-tools(/|$)", _WRITTEN, "update-initramfs records the kernels it built for"),
     (r"^var/lib/dracut(/|$)", _WRITTEN, "dracut's console-setup module, run by the boot stage's initramfs rebuild"),
+    # AnduinOS (a5-1, a5-2): the source's own dracut run left the module's
+    # mktemp file behind; the boot stage's run makes the directory afresh.
+    (r"^var/lib/dracut/console-setup-dir/etc/console-setup/tmpkbd\.[A-Za-z0-9]+$", {"missing", "extra"}, "dracut's console-setup module leaves its temporary tmpkbd.XXXXXX behind, and its run in the boot stage remakes the directory"),
     (r"^boot/efi[^/]*/EFI(/|$)", _WRITTEN, "grub-install writes the ESPs' loaders (a second ESP by the distribution's hook)"),
     (r"^(boot/)?efi/EFI(/(BOOT|Boot|systemd|Linux)(/.*)?)?$", _WRITTEN, "bootctl install rewrites systemd-boot and makes EFI/Linux in an ESP at /efi (AerynOS)"),
     (r"^(boot/)?efi/loader(/(random-seed|keys))?$", _WRITTEN, "bootctl install writes a new random seed and makes loader/keys"),
@@ -221,6 +232,20 @@ BOOT_STAGE = [
     (r"^boot(/EFI/Linux(/[^/]+\.efi)?|/limine\.conf(\.old)?)$", _WRITTEN, "Omarchy's mkinitcpio hook rebuilds the unified kernel image and Limine's entries"),
     (r"^boot(/|$)", {"selinux"}, "the boot stage relabels /boot (setfiles): the policy's labels, where the source's can be stale (tumbleweed's update left its new kernel's files modules_object_t)"),
 ]
+# A rEFInd source (PikaOS: EFI/refind, or "BOOTX64 mode"'s EFI/BOOT alone),
+# and what load must leave as the restore made it there.
+REFIND_SOURCE = r"(?i)^boot/(refind_linux\.conf|efi/EFI/[^/]+/refind(_x64\.efi|\.conf))$"
+REFIND_KEPT = r"(?i)^boot/(refind_linux\.conf|efi/EFI/(refind|BOOT)(/.*)?)$"
+# An AnduinOS source (2.0.5's anduinos-grub: GRUB signed on the machine with
+# its own MOK, behind Ubuntu's shim; docs/design/anduinos.md): load keeps the
+# restored ESP and runs no x86_64-efi grub-install, so shim, MokManager and
+# the MOK-signed GRUB, in EFI/AnduinOS and in the fallback EFI/BOOT, must be
+# byte for byte the source's.  EFI/AnduinOS's three must be in the source's
+# record; EFI/BOOT's are held to it where the source has them (an install
+# that wasn't "erase disk" has no fallback copies).
+ANDUINOS_SOURCE = r"^boot/efi/EFI/AnduinOS/shimx64\.efi$"
+ANDUINOS_KEPT = r"^boot/efi/EFI/(AnduinOS/(shimx64|grubx64|mmx64)\.efi|BOOT/(BOOTX64\.EFI|grubx64\.efi|mmx64\.efi))$"
+ANDUINOS_REQUIRED = ("boot/efi/EFI/AnduinOS/shimx64.efi", "boot/efi/EFI/AnduinOS/grubx64.efi", "boot/efi/EFI/AnduinOS/mmx64.efi")
 
 
 def illumos_normalise(d):
@@ -329,6 +354,35 @@ def md_by_name(d):
     return d
 
 
+def geli_records(d):
+    """GELI providers (docs/design/geli.md) in dump D: (holder, record), the
+    flattened paths of the disk or partition that holds one and of its geli
+    record: a geli object on it or in its content, or a content of type geli.
+    The same reading as ht1-bsd.sh's geli_provs, where the shape may move."""
+    out = []
+    for i, disk in enumerate((d.get("storage") or {}).get("disks") or []):
+        for at, x in [(f"storage.disks.{i}", disk)] + [(f"storage.disks.{i}.partitions.{j}", p) for j, p in enumerate(disk.get("partitions") or [])]:
+            c = x.get("content") if isinstance(x.get("content"), dict) else {}
+            if isinstance(x.get("geli"), dict):
+                out.append((at, at + ".geli"))
+            elif isinstance(c.get("geli"), dict):
+                out.append((at, at + ".content.geli"))
+            elif c.get("type") == "geli":
+                out.append((at, at + ".content"))
+    return out
+
+
+def geli_key(k, records):
+    """K, a field inside a GELI provider's own probe (its zfs_member, its
+    UFS), as the same field of a partition's content, so IGNORED's rules for
+    those apply there too; else K."""
+    for holder, rec in records:
+        m = re.match(re.escape(rec) + r"\.content\.(?:\d+\.)?(.+)$", k)
+        if m:
+            return f"{holder}.content.{m.group(1)}"
+    return k
+
+
 def flatten(v, path, out):
     if isinstance(v, dict) and isinstance(v.get("links"), list) and isinstance(v.get("content"), dict):
         # A by-uuid link that isn't the content's own UUID names a member
@@ -370,10 +424,20 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False):
     before = load_json(src_path)
     after = load_json(dst_path)
     diff = fsmeta.differences(before, after)
+    # rEFInd (PikaOS) is kept, not reinstalled: on a source that has it, its
+    # ESP files and refind_linux.conf get no boot-stage excuse.
+    refind = any(re.search(REFIND_SOURCE, p) for p in before)
+    anduin = any(re.search(ANDUINOS_SOURCE, p) for p in before)
     real, allowed = {}, {}
+    if anduin:
+        for p in ANDUINOS_REQUIRED:
+            if before.get(p, {}).get("type") != "file":
+                real.setdefault("not in the source's record (AnduinOS's MOK-signed loaders)", []).append(p)
     for kind, paths in diff.items():
         for p in paths:
-            why = next((w for r, kinds, w in BOOT_STAGE if kind in kinds and re.search(r, p)), None)
+            kept = (refind and re.search(REFIND_KEPT, p)) or (anduin and re.search(ANDUINOS_KEPT, p))
+            why = None if kept else \
+                next((w for r, kinds, w in BOOT_STAGE if kind in kinds and re.search(r, p)), None)
             if not why and kind == "missing" and before.get(p, {}).get("type") == "socket":
                 why = "a socket is made by whatever listens on it; no archiver restores one"
             if not why and new_uuids and any(re.search(r, p) for r in NEW_UUIDS_FILES) and kind in _WRITTEN:
@@ -401,6 +465,11 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False):
         print(f"DIFF {kind}: {len(paths)}: {', '.join(paths[:5])}{' ...' if len(paths) > 5 else ''}")
     for why, paths in allowed.items():
         print(f"boot stage ({why}): {len(paths)}: {', '.join(paths[:4])}{' ...' if len(paths) > 4 else ''}")
+    if refind:
+        print(f"rEFInd kept: {sum(1 for p in before if re.search(REFIND_KEPT, p))} paths of refind_linux.conf, EFI/refind and EFI/BOOT held to the source's")
+    if anduin:
+        held = sorted(p for p in before if re.search(ANDUINOS_KEPT, p))
+        print(f"AnduinOS's MOK-signed loaders kept: {len(held)} paths held to the source's bytes: {', '.join(p.removeprefix('boot/efi/EFI/') for p in held)}")
     n = sum(len(v) for v in real.values())
     print(f"{n} differences, {sum(len(v) for v in allowed.values())} from the boot stage")
     sys.exit(1 if n else 0)
@@ -927,10 +996,17 @@ def main():
             if k.endswith(".md.array_state") and v in ("active", "clean", "active-idle"):
                 m[k] = "clean (or active)"
     real, ignored = [], {}
+    geli = geli_records(src)
     for k in sorted(set(a) | set(b)):
         if a.get(k, "<absent>") == b.get(k, "<absent>"):
             continue
-        why = next((w for p, w in IGNORED + (EXPECT_IGNORED if "--expect" in flags else []) if re.search(p, k)), None)
+        kk = geli_key(k, geli)
+        why = next((w for p, w in IGNORED + (EXPECT_IGNORED if "--expect" in flags else []) if re.search(p, kk)), None)
+        # GELI's provsize is its consumer's size: it may differ where the
+        # partition's own size does, which is compared (or allowed) itself.
+        gh = next((h for h, r in geli if k in (r + ".provsize", r + ".provsize_bytes")), None)
+        if not why and gh and a.get(k) == a.get(gh + ".size_bytes") and b.get(k) == b.get(gh + ".size_bytes"):
+            why = "a GELI provider's provsize, its partition's size (compared on its own)"
         if not why and k.endswith(".content.device.uuid") and (a.get(k[: -len("device.uuid")] + "num_devices") or 1) > 1:
             why = "a multi-device btrfs member's own device UUID: mkfs.btrfs --device-uuid sets it for a single device only"
         va, vb = a.get(k), b.get(k)
@@ -954,7 +1030,10 @@ def main():
         m = re.match(r"^(storage\.other_devices\.\d+)\.", k)
         if not why and m and a.get(m.group(1) + ".kind") == "zram":
             why = "zram is made anew at each boot"
-        if not why and k not in a and any(re.search(r, k) for r in NEW_FIELDS):
+        m = re.match(r"^(storage\.swaps\.\d+)\.size_bytes$", k)
+        if not why and m and str(a.get(m.group(1) + ".device") or "").startswith("zram"):
+            why = "a swap on zram is made anew at each boot, sized from MemTotal (zram-tools' PERCENT), which moves with the initramfs's size (pikaos4)"
+        if not why and k not in a and any(re.search(r, kk) for r in NEW_FIELDS):
             why = "a field bko-holt began recording after the source's dump was made"
         if not why and re.match(r"^storage\.zfs\.tools\.datasets\.\d+\.origin$", k) and va and vb is None:
             why = "a ZFS clone (a boot environment) comes back as a plain dataset: its origin snapshot isn't in the backup"

@@ -1,6 +1,6 @@
 # H1: the dump corpus and its golden plans
 
-One redacted `bko-holt dump` of each of HoltTest2's 56 sources, and the plan
+One redacted `bko-holt dump` of each of HoltTest2's 60 sources, and the plan
 `bko-holt load` makes of each (docs/design/test2.md, "Shared pieces to
 build", H1).  `holt/tests/golden_plans.rs` plans every dump again and fails
 when a plan changes or breaks an invariant, so a change to load shows here
@@ -65,7 +65,54 @@ zpcachyos with ROOT/cos/{root,home,varcache,varlog}), built on 2026-11-13,
 was added the same way from a dump of the live guest on copland (run `cz1`,
 bko-holt 0.2.5 built from this tree; the guest booted on a plain q35 with
 its install's UEFI variables, so through Limine's NVRAM entry, under a
-throwaway overlay, the image's sha256 the same before and after).  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
+throwaway overlay, the image's sha256 the same before and after).
+pikaos4 (`make-pikaos.sh pikaos4`: PikaOS 4 from its GNOME ISO by its own
+pikainstall; UEFI, an ESP at /boot/efi, an ext4 /boot, / on XFS, booster,
+rEFInd; docs/design/pikaos.md), built on 2026-11-14, was added the same way
+from a dump of the live guest on cinqcent (run `pk3`, Chopin's queue full,
+bko-holt 0.2.6 built from this tree; on a plain q35 with a copy of its
+install's UEFI variables, so through rEFInd's NVRAM entry, the disk under
+QEMU's `snapshot=on`, the image's sha256 the same before and after).  It is
+in the corpus before it is one of classes.json's HoltTest2 sources, so
+golden_plans.rs notes it until it is.  pikaos4-luks (`make-pikaos.sh
+pikaos4-luks`: the same, but `crypt_root` LUKS2 holding Btrfs `@` and
+`@home`, rEFInd only as the fallback EFI/BOOT/BOOTX64.EFI, no NVRAM
+entry), built on 2026-11-14, was added the same way (run `pk4`, cinqcent),
+booted through console-boot.py, which typed its console-passphrase at
+booster's prompt; the image's sha256 the same before and after.
+anduinos2 (`make-anduinos.sh`: AnduinOS 2.0.5 by its own installer's
+executor, unattended; UEFI with Secure Boot on and its MOK in shim's
+MokList, a 2 MiB BIOS boot partition, a 1 GiB ESP at /boot/efi, swap, one
+btrfs with six subvolumes and the Disk Snapshots Manager's two read-only
+baselines; docs/design/anduinos.md), built on 2026-11-14, was added the
+same way from a dump of the live guest on cinqcent (run `a3`, Chopin's
+queue full, bko-holt 0.2.6 built from this tree; its own vm-run-options,
+so under Secure Boot through the fallback path, the disk under
+`vm-run --snapshot`, the image's sha256 the same before and after).
+neon24 (`make-from-live.sh neon ext4 ... neon24`: KDE neon 24.04 User
+Edition from its live ISO by Calamares; UEFI with Secure Boot, a 300 MiB
+ESP at /boot/efi, ext4 /, a /swapfile, GRUB through shim in EFI/neon;
+docs/design/kde-neon.md), built on 2026-11-14, was added the same day from
+its HoltTest1 run `ht1u` on chopin, PASS (cinqcent's `ht1u` passed too, an
+hour earlier), dumped by the static bko-holt 0.2.6 built from this tree
+for that run (with neon's osrel.rs row and update-grub), the image the
+same as the run recorded.  Its golden plan has what that run's boot stage
+ran: `update-initramfs -u -k all`, `grub-install --bootloader-id=neon
+--no-nvram`, `update-grub`, then the NVRAM entry for `\EFI\neon\shimx64.efi`
+(the run itself was `--no-nvram`).
+garuda (`make-arch.sh --live garuda`: Garuda Linux dr460nized 260819 from
+its live ISO as its Calamares installs offline; UEFI, a 300 MiB ESP at
+/boot/efi, one btrfs with `@`, `@home`, `@root`, `@srv`, `@cache`, `@log`
+and `@tmp`, `.snapshots` nested in `@`, dracut through
+garuda-dracut-support, GRUB in EFI/Garuda; docs/design/garuda.md), built on
+2026-11-14, was added the same day from its HoltTest1 run `ga4-4` on
+chopin, PASS, dumped by the bko-holt 0.2.6 built from this tree for that
+run (with Garuda's osrel.rs row and dracut-rebuild), the image the same as
+the run recorded.  Its source had snap-pac's snapshots 1-4 from GA1's
+update, so its golden plan makes the four shared snapshots
+`@/.snapshots/1..4/snapshot` in the restore stage (restore `--exact
+--clone-from`), then `dracut-rebuild` and `grub-install
+--bootloader-id=Garuda --no-nvram` in the chroot.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
 collection; `-` for the guests without one) say which, and `image` whether
@@ -110,13 +157,13 @@ raw dumps are), for each dump:
    blobs, 7.7 MB decoded, in 15 dumps).  EFI load options (`load_option_hex`) and
    `first_bytes` stay: they are data, and redact.rs has redacted them.
 5. The filled dump is planned against the unfilled one (`fill_plan`:
-   `same` for all 56) and passes check_plan itself (`check_plan`).
+   `same` for all 60) and passes check_plan itself (`check_plan`).
 
 Two builds of the same raw dumps give the same bytes.
 
 ### A raw dump that fails step 1
 
-All 56 raw dumps pass check_plan.  A dump that one day fails it is still put
+All 60 raw dumps pass check_plan.  A dump that one day fails it is still put
 in the corpus (step 2's leak checks, step 5 and leakscan below still apply);
 corpus_build then fails at its end, and so does `redact_dumps` over the raw
 dumps.  Nothing would show that dump's golden plan is its guest's own, so
@@ -168,6 +215,26 @@ the Mac, 0 findings, the same sha256 from both builds.  So did cachyos-zfs
 (2026-11-13), built from a private directory in copland's RAM disk (Chopin
 was down): copland with its 76 strings and the raw dump's identifiers,
 cinqcent with its 77, the Mac with the git e-mail, 0 findings, the same
+sha256 from both builds.  So did pikaos4 (2026-11-14), built from a private
+directory in cinqcent's RAM disk: cinqcent with its 81 strings and the raw
+dump's identifiers, chopin with its 80, the Mac with the git e-mail, 0
+findings (its plan scanned too), the same sha256 from both builds.  So did
+pikaos4-luks (2026-11-14, the same way, its two builds run outside the
+ledger, which a queue of HoltTest1 runs held): cinqcent with its 89
+strings (its console-passphrase among them) and the raw dump's identifiers,
+chopin with its 90, the Mac with the git e-mail, 0 findings, its plan
+scanned too, the same sha256 from both builds.  So did
+anduinos2 (2026-11-14), built from a private directory in cinqcent's RAM
+disk: cinqcent with its 81 strings and the raw dump's identifiers, chopin
+with its 80, the Mac with the git e-mail, 0 findings (its plan scanned
+too), the same sha256 from both builds.  So did neon24 (2026-11-14), built
+from a private directory on chopin (/bkoscratch, its warm holt build):
+chopin with its 80 strings and the raw dump's identifiers, cinqcent with
+its 81, the Mac with the git e-mail, 0 findings (its plan scanned too),
+the same sha256 from both builds.  So did garuda (2026-11-14), built from
+a private directory on chopin (/bkoscratch, its warm holt build): chopin
+with its 90 strings and the raw dump's identifiers, cinqcent with its 89,
+the Mac with the git e-mail, 0 findings (its plan scanned too), the same
 sha256 from both builds.
 
 ## The golden plans
@@ -180,7 +247,7 @@ BackOtter's, every tool the plan asks for installed.  Unlike check_plan it
 maps no RAM disk or ZFS volume (alpine324's 16 RAM disks would each be a
 Problem), installs load's own binary where it runs from, and names it
 `bko-holt` in the plan, which would otherwise hold the test binary's path.
-All 59 plans exit 0, without Problems.  They are Linux's plans (load's
+All 63 plans exit 0, without Problems.  They are Linux's plans (load's
 run directory is /run/bko-holt there, /var/run/bko-holt elsewhere): run
 golden_plans.rs on a Linux host.
 
@@ -213,8 +280,8 @@ BKO_HOLT_GOLDEN=bless cargo test --test golden_plans -- --nocapture
                                                                    # rewrite the plans that differ, unless an invariant fails
 ```
 
-diff.json is `{"v":1, "corpus":56, "plans":59, "planned":[NAME...],
-"sources":56, "differ":{NAME:{"stages":[...], "lines_changed":N[, "new":true]
+diff.json is `{"v":1, "corpus":60, "plans":63, "planned":[NAME...],
+"sources":61, "differ":{NAME:{"stages":[...], "lines_changed":N[, "new":true]
 [, "unplanned":WHY][, "unverified":CHECK_PLAN_RAW]}}, "invariants":{NAME:[...]},
 "invariants_skipped":{NAME:[...]}}`; `stages` are the plan's sections that
 changed (header, partition, assemble, format, mount, restore, boot, close,
@@ -259,8 +326,8 @@ the Mac, outside the repository, and scan it there first:
 Only then copy them into holt/tests/corpus (corpus_build refuses an OUT
 that holds dumps it doesn't make, so build into an empty one), and bless
 the plans.  A corpus dump never enters the working tree with a finding, and
-a plan is never blessed with a broken invariant.  The corpus is 12.2 MB (56
-dumps of 3 KB to 3.3 MB, the 59 plans 0.4 MB); 15 MB is its budget.
+a plan is never blessed with a broken invariant.  The corpus is 12.5 MB (60
+dumps of 3 KB to 3.3 MB, the 63 plans 0.5 MB); 15 MB is its budget.
 
 ### Adding a source
 

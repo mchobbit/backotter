@@ -29,8 +29,7 @@
   "holt": {
     "excluded": {
       "freebsd15-builder": "a build helper, not a source",
-      "freebsd15-ufs": "the FreeBSD rescuer (holt.md (b)); never a HoltTest source",
-      "freebsd15-geli": "holt has no GELI, and nothing types its passphrase (holt.md (b))"
+      "freebsd15-ufs": "the FreeBSD rescuer (holt.md (b)); never a HoltTest source"
     },
     "families": {
       "D": ["debian13", "debian13-zfs", "debian13-stack"],
@@ -38,15 +37,15 @@
       "Z": ["zorin18"],
       "V": ["void-musl"],
       "H": ["haiku6"],
-      "U": ["ubuntu24", "ubuntu26-uefi", "ubuntu26-zfsmirror", "ubuntu26-raid", "ubuntu26-zfs", "ubuntu26-luks"],
+      "U": ["ubuntu24", "ubuntu24-uefi", "ubuntu24-luks", "ubuntu26-uefi", "ubuntu26-zfsmirror", "ubuntu26-raid", "ubuntu26-zfs", "ubuntu26-luks", "anduinos2", "neon24"],
       "F": ["fedora44", "fedora44-uefi", "fedora44-raid", "rocky10", "rocky10-lvm", "rocky10-raid5", "kinoite44"],
-      "A": ["arch", "alpine324", "aerynos", "artix-dinit", "artix-s6", "endeavouros", "endeavouros-grub", "manjaro"],
+      "A": ["arch", "alpine324", "aerynos", "artix-dinit", "artix-s6", "endeavouros", "endeavouros-grub", "manjaro", "garuda"],
       "C": ["cachyos", "mx25", "cachyos-zfs"],
       "I": ["omnios58", "omnios58-mirror"],
       "G": ["gentoo", "gentoo-systemd"],
       "Obscure": ["pop24", "nixos2605", "omarchy", "sculpt2610", "redox", "tumbleweed", "debian12", "chimera",
                   "chimera-uefi", "chimera-zfs"],
-      "BSD": ["freebsd15", "freebsd15-mirror", "freebsd14", "ghostbsd26", "ghostbsd26-zfs", "hardenedbsd15",
+      "BSD": ["freebsd15", "freebsd15-mirror", "freebsd15-geli", "freebsd14", "ghostbsd26", "ghostbsd26-zfs", "hardenedbsd15",
               "netbsd11", "alpinebsd", "openbsd8", "dragonfly6"]
     },
     "no_family": ["devuan6"],
@@ -62,8 +61,8 @@
     "variant_stages": ["partition", "assemble", "close"],
     "pins": {"openbsd8": "chopin", "dragonfly6": "cinqcent", "redox": "cinqcent"},
     "pins_why": "README Queues ONLY_ELSEWHERE: openbsd8's one-time rescuer is on Chopin, dragonfly6's on Cinqcent; redox's tools are on Cinqcent only (ht1-queue.sh:169)",
-    "uefi": ["aerynos", "cachyos-zfs", "chimera-uefi", "chimera-zfs", "debian13-stack", "endeavouros", "endeavouros-grub", "fedora44-raid",
-             "fedora44-uefi", "gentoo", "gentoo-systemd", "kinoite44", "manjaro", "omarchy", "pop24", "ubuntu26-luks", "ubuntu26-raid",
+    "uefi": ["aerynos", "anduinos2", "cachyos-zfs", "chimera-uefi", "chimera-zfs", "debian13-stack", "endeavouros", "endeavouros-grub", "fedora44-raid",
+             "fedora44-uefi", "garuda", "gentoo", "gentoo-systemd", "kinoite44", "manjaro", "neon24", "omarchy", "pop24", "ubuntu24-luks", "ubuntu24-uefi", "ubuntu26-luks", "ubuntu26-raid",
              "ubuntu26-uefi", "ubuntu26-zfs"],
     "uefi_why": "the Linux sources with --uefi in vm-run-options (both hosts, 2026-11-08); ht1.sh rebuilds them from rescuer-uefi.qcow2 when the host has it (ht1.sh:138-139, R17). alpinebsd is UEFI too, but netbsd11 rescues it",
     "canaries": ["debian13", "ubuntu26-uefi", "freebsd15", "redox"],

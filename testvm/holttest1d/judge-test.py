@@ -794,6 +794,103 @@ def meta(kind, **kw):
     return e
 
 
+def geli_guest(where="content"):
+    """freebsd15-geli's layout (docs/design/geli.md): an ESP, swap, and zroot's
+    member inside a GELI provider on p3, the geli record WHERE the dump may
+    put it ("content": in the partition's content; "partition": on the
+    partition; "flat": the content itself)."""
+    p3 = 28823552
+    zm = {"type": "zfs_member", "usage": "filesystem", "uuid": "1000000000000000001", "label": "zroot",
+          "version": "5000", "pool_name": "zroot", "pool_guid": "1000000000000000001",
+          "vdev_guid": "1000000000000000002", "top_guid": "1000000000000000002", "txg": 388, "hostname": "host1"}
+    rec = {"version": 7, "flags": ["BOOT", "GELIBOOT", "AUTORESIZE"], "ealgo": "AES-XTS", "keylen": 256,
+           "aalgo": None, "provsize": p3 * 512, "sectorsize": 4096, "keys": [0], "iterations": 3031038,
+           "provider": "vtbd0p3.eli", "attached": True, "content": [zm], "keyed_by": "passphrase", "keyfiles": []}
+    extra = {}
+    if where == "content":
+        content = {"type": "geli", "usage": "crypto", "geli": rec}
+    elif where == "partition":
+        content, extra = {"type": "geli", "usage": "crypto"}, {"geli": rec}
+    else:
+        content = dict(rec, type="geli", usage="crypto")
+    d = dump([disk("vtbd0", 16 * GIB, [
+        part("vtbd0p1", 1, 40, 532480, {"type": "vfat"}, gpt=True),
+        part("vtbd0p2", 2, 532520, 4194304, swap(4194304 * 512), gpt=True),
+        part("vtbd0p3", 3, 4726824, p3, content, gpt=True, **extra),
+    ], gpt=True)])
+    d["os"] = {"family": "freebsd", "pretty_name": "FreeBSD 15.1-RELEASE-p6"}
+    return d
+
+
+def geli_rec(d, where="content"):
+    p = d["storage"]["disks"][0]["partitions"][2]
+    return {"content": lambda: p["content"]["geli"], "partition": lambda: p["geli"], "flat": lambda: p["content"]}[where]()
+
+
+class Geli(unittest.TestCase):
+    """judge.py over GELI's record: every field compared, the probe inside it
+    judged as a partition's content, provsize allowed to follow its partition."""
+
+    def judge(self, src, dst):
+        with tempfile.TemporaryDirectory() as tmp:
+            s, t = os.path.join(tmp, "src.json"), os.path.join(tmp, "dst.json")
+            for path, d in ((s, src), (t, dst)):
+                with open(path, "w") as f:
+                    json.dump(d, f)
+            r = subprocess.run([sys.executable, "-I", JUDGE, s, t], capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    def test_inner_probe_as_a_partitions(self):
+        for where in ("content", "partition", "flat"):
+            src = geli_guest(where)
+            dst = copy.deepcopy(src)
+            zm = geli_rec(dst, where)["content"][0]
+            zm.update(hostname="localhost", txg=12)
+            rc, out = self.judge(src, dst)
+            self.assertEqual(rc, 0, f"{where}: {out}")
+            self.assertIn("a ZFS label names the host", out)
+
+    def test_geli_fields_compared(self):
+        for field, value in (("iterations", 0), ("flags", ["BOOT"]), ("ealgo", "AES-CBC"), ("keys", [0, 1]), ("sectorsize", 512)):
+            for where in ("content", "partition", "flat"):
+                src = geli_guest(where)
+                dst = copy.deepcopy(src)
+                geli_rec(dst, where)[field] = value
+                rc, out = self.judge(src, dst)
+                self.assertEqual(rc, 1, f"{where} {field}: {out}")
+                self.assertIn(f".{field}", out)
+
+    def test_inner_pool_compared(self):
+        src = geli_guest()
+        dst = copy.deepcopy(src)
+        geli_rec(dst)["content"][0]["pool_name"] = "zroot2"
+        rc, out = self.judge(src, dst)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF storage.disks.0.partitions.2.content.geli.content.0.pool_name", out)
+
+    def test_provsize_follows_its_partition(self):
+        src = geli_guest()
+        dst = copy.deepcopy(src)
+        p = dst["storage"]["disks"][0]["partitions"][2]
+        p["sectors"] += 2048
+        p["size_bytes"] += 2048 * 512
+        p["end_lba"] += 2048
+        geli_rec(dst)["provsize"] = p["size_bytes"]
+        rc, out = self.judge(src, dst)
+        self.assertEqual(rc, 1, out)   # the partition's own size is a DIFF ...
+        self.assertIn("DIFF storage.disks.0.partitions.2.size_bytes", out)
+        self.assertNotIn("DIFF storage.disks.0.partitions.2.content.geli.provsize", out)   # ... its provider's, not
+        self.assertIn("a GELI provider's provsize", out)
+
+    def test_provsize_alone_is_a_difference(self):
+        src = geli_guest()
+        dst = copy.deepcopy(src)
+        geli_rec(dst)["provsize"] -= 4096
+        rc, out = self.judge(src, dst)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF storage.disks.0.partitions.2.content.geli.provsize", out)
+
+
 class Fs(unittest.TestCase):
     """judge.py fs over an ostree repository's links (kinoite44, B6)."""
 
@@ -1052,6 +1149,257 @@ class FsGentoo(unittest.TestCase):
         self.assertEqual(rc, 1, out)
         self.assertIn("DIFF content: 1: efi/EFI/gentoo-old/x", out)
         self.assertNotIn("(Gentoo", out)
+
+
+class FsGaruda(unittest.TestCase):
+    """judge.py fs over what load's boot stage does on Garuda (ga4-2):
+    dracut-rebuild dd-copies the kernel to /boot again, the same bytes in a
+    new file, and rebuilds both images."""
+
+    SRC = {"boot": meta("dir"), "boot/vmlinuz-linux-garuda": meta("file", atime=1),
+           "boot/initramfs-linux-garuda.img": meta("file"), "boot/initramfs-linux-garuda-fallback.img": meta("file")}
+
+    judge = Fs.judge
+    changed = FsLimine.changed
+
+    def test_the_kernels_new_times_are_the_boot_stages(self):
+        rc, out = self.changed({
+            "boot/vmlinuz-linux-garuda": {"mtime": 2, "atime": 2},
+            "boot/initramfs-linux-garuda.img": {"sha256": "cd", "mtime": 2},
+            "boot/initramfs-linux-garuda-fallback.img": {"sha256": "cd", "mtime": 2}, "boot": {"mtime": 2}})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn("copies each kernel to /boot again with dd before building its images): 2: boot/vmlinuz-linux-garuda, boot/vmlinuz-linux-garuda", out)
+
+    def test_the_kernels_content_mode_and_owner_still_count(self):
+        rc, out = self.changed({"boot/vmlinuz-linux-garuda": {"sha256": "cd", "mtime": 2, "mode": 0o600, "uid": 1}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF content: 1: boot/vmlinuz-linux-garuda", out)
+        self.assertIn("DIFF mode: 1: boot/vmlinuz-linux-garuda", out)
+        self.assertIn("DIFF owner: 1: boot/vmlinuz-linux-garuda", out)
+
+
+class SwapOnZram(unittest.TestCase):
+    """pikaos4 (p6-3): zram-tools sizes its swap from MemTotal, which moved
+    4 KiB with the rebuilt booster.img's size; a partition's swap still counts."""
+
+    judge = Geli.judge
+
+    def swaps(self, device, size):
+        return dump([disk("vda", 16 * GIB, [part("vda1", 1, 2048, 2097152, ext4(1 * GIB), gpt=True)], gpt=True)],
+                    swaps=[{"file": f"/dev/{device}", "type": "partition", "size_bytes": size, "used_bytes": 0, "priority": 100, "device": device}])
+
+    def test_a_zram_swaps_size_may_move(self):
+        rc, out = self.judge(self.swaps("zram0", 2044968960), self.swaps("zram0", 2044964864))
+        self.assertEqual(rc, 0, out)
+        self.assertIn("a swap on zram is made anew at each boot", out)
+
+    def test_a_partitions_swap_size_still_counts(self):
+        rc, out = self.judge(self.swaps("vda2", 2044968960), self.swaps("vda2", 2044964864))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF storage.swaps.0.size_bytes", out)
+
+
+class FsRefind(unittest.TestCase):
+    """judge.py fs over what load's boot stage does on PikaOS (P6): booster
+    rebuilds /boot/booster.img-K, and rEFInd is kept, not reinstalled: its
+    ESP files and refind_linux.conf must be the source's."""
+
+    K = "7.1.8-pikaos"
+    SRC = {"boot": meta("dir"), f"boot/booster.img-{K}": meta("file"), f"boot/booster.img-{K}.dpkg-bak": meta("file"),
+           f"boot/vmlinuz-{K}": meta("file"), "boot/refind_linux.conf": meta("file"),
+           "boot/efi": meta("dir"), "boot/efi/EFI": meta("dir"), "boot/efi/EFI/refind": meta("dir"),
+           "boot/efi/EFI/refind/refind_x64.efi": meta("file"), "boot/efi/EFI/refind/refind.conf": meta("file"),
+           "boot/efi/EFI/refind/drivers_x64": meta("dir"), "boot/efi/EFI/refind/drivers_x64/ext4_x64.efi": meta("file"),
+           "boot/efi/EFI/BOOT": meta("dir"), "boot/efi/EFI/BOOT/bootx64.efi": meta("file"),
+           "boot/efi/EFI/BOOT/refind.conf": meta("file"), "boot/efi/EFI/other": meta("dir"),
+           "boot/efi/EFI/other/x.efi": meta("file")}
+    # pikaos4-luks's "BOOTX64 mode": rEFInd in the fallback path only.
+    FALLBACK = {p: m for p, m in SRC.items() if not p.startswith("boot/efi/EFI/refind")}
+
+    judge = Fs.judge
+
+    def changed(self, src, changes):
+        a = copy.deepcopy(src)
+        for p, kw in changes.items():
+            a[p].update(kw)
+        return self.judge(src, a)
+
+    def test_booster_is_the_boot_stages(self):
+        rc, out = self.changed(self.SRC, {f"boot/booster.img-{self.K}": {"sha256": "cd", "mtime": 2}, "boot": {"mtime": 2}})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn(f"booster build rebuilds each kernel's booster.img (PikaOS)): 2: boot/booster.img-{self.K}", out)
+        self.assertIn("rEFInd kept: 9 paths", out)
+
+    def test_booster_backups_and_the_kernel_still_count(self):
+        rc, out = self.changed(self.SRC, {f"boot/booster.img-{self.K}.dpkg-bak": {"sha256": "cd"}, f"boot/vmlinuz-{self.K}": {"sha256": "cd"}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF content: 2: boot/booster.img-{self.K}.dpkg-bak, boot/vmlinuz-{self.K}", out)
+
+    def test_refind_must_be_kept(self):
+        """Every file and directory of EFI/refind and EFI/BOOT, and
+        refind_linux.conf: no ESP rule excuses them on a rEFInd source."""
+        for src in (self.SRC, self.FALLBACK):
+            kept = [p for p in src if p.startswith(("boot/efi/EFI/refind", "boot/efi/EFI/BOOT")) or p == "boot/refind_linux.conf"]
+            rc, out = self.changed(src, {p: {"sha256": "cd", "mtime": 2} for p in kept})
+            files = [p for p in kept if src[p]["type"] == "file"]
+            self.assertEqual(rc, 1, out)
+            self.assertIn(f"DIFF content: {len(files)}:", out)
+            self.assertIn(f"DIFF mtime (dirs): {len(kept) - len(files)}:", out)
+            self.assertIn(f"rEFInd kept: {len(kept)} paths", out)
+            self.assertIn(" 0 from the boot stage", out)
+
+    def test_refind_extra_or_missing_files_count(self):
+        a = copy.deepcopy(self.SRC)
+        del a["boot/efi/EFI/BOOT/refind.conf"]
+        a["boot/efi/EFI/refind/refind.conf-sample"] = meta("file")
+        a["boot/efi/EFI/BOOT/grubx64.efi"] = meta("file")
+        rc, out = self.judge(self.SRC, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF missing: 1: boot/efi/EFI/BOOT/refind.conf", out)
+        self.assertIn("DIFF extra: 2:", out)
+
+    def test_other_loaders_on_a_refind_esp_keep_their_rule(self):
+        rc, out = self.changed(self.SRC, {"boot/efi/EFI/other/x.efi": {"sha256": "cd"}})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("grub-install writes the ESPs' loaders", out)
+
+    def test_other_systems_esp_rules_are_unchanged(self):
+        """No rEFInd: EFI/BOOT is grub-install's or bootctl's to rewrite, as before."""
+        src = {"boot/efi/EFI": meta("dir"), "boot/efi/EFI/BOOT": meta("dir"), "boot/efi/EFI/BOOT/BOOTX64.EFI": meta("file"),
+               "boot/efi/EFI/debian": meta("dir"), "boot/efi/EFI/debian/grubx64.efi": meta("file")}
+        a = copy.deepcopy(src)
+        for p in a:
+            a[p].update(sha256="cd", mtime=2)
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("rEFInd", out)
+
+
+class FsAnduinos(unittest.TestCase):
+    """judge.py fs over what load's boot stage does on AnduinOS 2.0.5 (A5):
+    update-grub and the i386-pc grub-install rewrite /boot/grub, dracut
+    rebuilds /boot/initrd.img-K (0600 on the source and after), and the ESP
+    is kept: shim, MokManager and the MOK-signed GRUB in EFI/AnduinOS and
+    EFI/BOOT must be the source's bytes."""
+
+    K = "7.0.0-38-generic"
+    LOADERS = ["boot/efi/EFI/AnduinOS/shimx64.efi", "boot/efi/EFI/AnduinOS/grubx64.efi", "boot/efi/EFI/AnduinOS/mmx64.efi",
+               "boot/efi/EFI/BOOT/BOOTX64.EFI", "boot/efi/EFI/BOOT/grubx64.efi", "boot/efi/EFI/BOOT/mmx64.efi"]
+    SRC = {"boot": meta("dir"), f"boot/initrd.img-{K}": meta("file", mode=0o600), f"boot/vmlinuz-{K}": meta("file", mode=0o600),
+           f"boot/System.map-{K}": meta("file", mode=0o600), f"boot/config-{K}": meta("file"),
+           "boot/grub": meta("dir"), "boot/grub/grub.cfg": meta("file"), "boot/grub/grubenv": meta("file"),
+           "boot/grub/i386-pc": meta("dir"), "boot/grub/i386-pc/core.img": meta("file"),
+           "boot/grub/x86_64-efi": meta("dir"), "boot/grub/x86_64-efi/normal.mod": meta("file"),
+           "boot/efi": meta("dir"), "boot/efi/EFI": meta("dir"), "boot/efi/EFI/AnduinOS": meta("dir"),
+           "boot/efi/EFI/AnduinOS/grub.cfg": meta("file"), "boot/efi/EFI/AnduinOS/BOOTX64.CSV": meta("file"),
+           "boot/efi/EFI/BOOT": meta("dir"), "boot/efi/EFI/BOOT/grub.cfg": meta("file"),
+           **{p: meta("file", mode=0o755) for p in LOADERS}}
+    # A disk where the installer didn't write the fallback path.
+    NO_FALLBACK = {p: m for p, m in SRC.items() if not p.startswith("boot/efi/EFI/BOOT")}
+
+    judge = Fs.judge
+
+    def changed(self, src, changes):
+        a = copy.deepcopy(src)
+        for p, kw in changes.items():
+            a[p].update(kw)
+        return self.judge(src, a)
+
+    def test_the_boot_stage_and_the_kept_loaders(self):
+        rc, out = self.changed(self.SRC, {
+            f"boot/initrd.img-{self.K}": {"sha256": "cd", "mtime": 2}, "boot": {"mtime": 2},
+            "boot/grub/grub.cfg": {"sha256": "cd", "mtime": 2}, "boot/grub/i386-pc/core.img": {"sha256": "cd"},
+            "boot/grub/i386-pc": {"mtime": 2}})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn(f"2: boot/initrd.img-{self.K}, boot/initrd.img-{self.K}", out)
+        self.assertIn("AnduinOS's MOK-signed loaders kept: 6 paths held to the source's bytes: AnduinOS/grubx64.efi, AnduinOS/mmx64.efi, AnduinOS/shimx64.efi, BOOT/BOOTX64.EFI, BOOT/grubx64.efi, BOOT/mmx64.efi", out)
+
+    def test_the_mok_signed_loaders_must_be_the_sources(self):
+        """grub-install --target=x86_64-efi (an unsigned GRUB), or shim from
+        another package, on any of the six: no ESP rule excuses it here."""
+        for p in self.LOADERS:
+            rc, out = self.changed(self.SRC, {p: {"sha256": "cd", "mtime": 2}})
+            self.assertEqual(rc, 1, f"{p}: {out}")
+            self.assertIn(f"DIFF content: 1: {p}", out)
+            self.assertIn(f"DIFF mtime: 1: {p}", out)
+            self.assertIn(" 0 from the boot stage", out)
+
+    def test_a_missing_or_extra_loader_counts(self):
+        a = copy.deepcopy(self.SRC)
+        del a["boot/efi/EFI/BOOT/mmx64.efi"]
+        rc, out = self.judge(self.SRC, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF missing: 1: boot/efi/EFI/BOOT/mmx64.efi", out)
+        a = copy.deepcopy(self.NO_FALLBACK)
+        a["boot/efi/EFI/BOOT/BOOTX64.EFI"] = meta("file")
+        rc, out = self.judge(self.NO_FALLBACK, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF extra: 1: boot/efi/EFI/BOOT/BOOTX64.EFI", out)
+
+    def test_the_esp_dirs_and_stub_keep_their_rule(self):
+        """EFI/AnduinOS's grub.cfg stub, BOOTX64.CSV and the directories
+        keep the ESP rule (load writes none of them, but nothing of the MOK
+        is in them)."""
+        rc, out = self.changed(self.SRC, {"boot/efi/EFI/AnduinOS/grub.cfg": {"sha256": "cd"}, "boot/efi/EFI/AnduinOS": {"mtime": 2},
+                                          "boot/efi/EFI/BOOT/grub.cfg": {"mtime": 2}})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("grub-install writes the ESPs' loaders", out)
+
+    def test_the_fallback_copies_are_held_where_the_source_has_them(self):
+        rc, out = self.changed(self.NO_FALLBACK, {f"boot/initrd.img-{self.K}": {"sha256": "cd"}})
+        self.assertEqual(rc, 0, out)
+        self.assertIn("AnduinOS's MOK-signed loaders kept: 3 paths", out)
+
+    def test_efi_anduinos_loaders_must_be_in_the_sources_record(self):
+        """shim there but not GRUB or MokManager: the check would have
+        nothing to hold them to."""
+        src = {p: m for p, m in self.SRC.items() if p not in ("boot/efi/EFI/AnduinOS/grubx64.efi", "boot/efi/EFI/AnduinOS/mmx64.efi")}
+        rc, out = self.judge(src, copy.deepcopy(src))
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF not in the source's record (AnduinOS's MOK-signed loaders): 2: boot/efi/EFI/AnduinOS/grubx64.efi, boot/efi/EFI/AnduinOS/mmx64.efi", out)
+
+    def test_dracuts_initrd_mode_and_the_kernels_still_count(self):
+        """The rebuilt initrd stays 0600 as on the source: a mode change of
+        it, the kernel or System.map is the restore's."""
+        rc, out = self.changed(self.SRC, {f"boot/initrd.img-{self.K}": {"mode": 0o644}, f"boot/vmlinuz-{self.K}": {"mode": 0o644},
+                                          f"boot/System.map-{self.K}": {"sha256": "cd"}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF mode: 2: boot/initrd.img-{self.K}, boot/vmlinuz-{self.K}", out)
+        self.assertIn(f"DIFF content: 1: boot/System.map-{self.K}", out)
+
+    def test_dracuts_console_setup_temp_file(self):
+        """a5-1: the source's dracut left console-setup's tmpkbd.XXXXXX;
+        the boot stage's dracut remade the directory without it.  Other
+        files there still have to come back."""
+        d = "var/lib/dracut/console-setup-dir/etc/console-setup"
+        src = dict(self.SRC, **{d: meta("dir"), f"{d}/tmpkbd.Ggc8Lu": meta("file"), f"{d}/cached_UTF-8_del.kmap": meta("file")})
+        a = copy.deepcopy(src)
+        del a[f"{d}/tmpkbd.Ggc8Lu"]
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 0, out)
+        self.assertIn(f"leaves its temporary tmpkbd.XXXXXX behind, and its run in the boot stage remakes the directory): 1: {d}/tmpkbd.Ggc8Lu", out)
+        del a[f"{d}/cached_UTF-8_del.kmap"]
+        a[f"{d}/tmpkbd.Q1w2E3"] = meta("file")
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn(f"DIFF missing: 1: {d}/cached_UTF-8_del.kmap", out)
+        self.assertNotIn("DIFF extra", out)
+
+    def test_other_systems_esp_rules_are_unchanged(self):
+        """No AnduinOS shim on the source (Ubuntu's EFI/ubuntu, or a lower-case
+        anduinos directory): grub-install may rewrite EFI/BOOT as before."""
+        for d in ("ubuntu", "anduinos"):
+            src = {"boot/efi/EFI": meta("dir"), "boot/efi/EFI/BOOT": meta("dir"), "boot/efi/EFI/BOOT/BOOTX64.EFI": meta("file"),
+                   f"boot/efi/EFI/{d}": meta("dir"), f"boot/efi/EFI/{d}/shimx64.efi": meta("file"), f"boot/efi/EFI/{d}/grubx64.efi": meta("file")}
+            a = copy.deepcopy(src)
+            for p in a:
+                a[p].update(sha256="cd", mtime=2)
+            rc, out = self.judge(src, a)
+            self.assertEqual(rc, 0, f"{d}: {out}")
+            self.assertNotIn("AnduinOS", out)
 
 
 if __name__ == "__main__":

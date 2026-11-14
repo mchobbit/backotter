@@ -12,12 +12,12 @@ KNOWN = {
     "stic": ["debian12", "debian13", "freebsd15", "freebsd15-geli", "ghostbsd26-zfs", "netbsd11", "alpinebsd",
              "haiku6", "sculpt2610"],
     "holt": {"sources": ["debian13", "debian13-zfs", "debian13-stack", "mint22", "arch", "alpine324", "aerynos",
-                         "ubuntu26-raid", "freebsd15", "netbsd11"],
+                         "ubuntu26-raid", "freebsd15", "freebsd15-geli", "netbsd11"],
              "variants": {"bigger": ["debian13-stack", "aerynos", "mint22"],
                           "oneshot": ["debian13", "mint22", "arch", "alpine324"],
                           "degraded": ["debian13-stack", "ubuntu26-raid"]},
              "families": {"D": ["debian13", "debian13-zfs", "debian13-stack"], "M": ["mint22"]},
-             "refused": {"freebsd15-ufs": "the FreeBSD rescuer", "freebsd15-geli": "holt has no GELI"}},
+             "refused": {"freebsd15-ufs": "the FreeBSD rescuer"}},
     "gate": ["holt", "fork:restic", "fork:rustic_core", "fork:rustic", "fork-root:restic", "bin:abi", "bin:static",
              "bin:version", "loop:linux@chopin", "loop:linux@cinqcent", "loop:sparse@chopin", "loop:sparse@cinqcent",
              "selftest"],
@@ -201,10 +201,9 @@ class Refusals(unittest.TestCase):
         self.refused("HoltTest2 +close", "H3")
         self.refused("HoltTest2 debian13+close", "H3")
 
-    def test_rescuer_and_geli(self):
+    def test_rescuer_refused_geli_a_source(self):
         self.refused("HoltTest2 freebsd15-ufs", "rescuer")
-        self.refused("HoltTest2 freebsd15-geli", "GELI")
-        self.refused("HoltTest2 freebsd15-geli+bigger", "GELI")
+        self.assertEqual(P("HoltTest2 freebsd15-geli").names, ["holt:freebsd15-geli"])   # a source since GELI's G6
 
     def test_unknown_names(self):
         self.refused("HoltTest2 nosuchguest", "no HoltTest2 source")

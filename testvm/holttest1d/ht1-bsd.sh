@@ -78,7 +78,11 @@ case $G in
         MTREE_KEYS=type,uid,gid,mode,nlink,size,link,time,sha256digest ;;
     openbsd*)
         PLAT=openbsd RG=openbsd8 DISK=sd RAWSFX=c
-        BOOTSTATE='rcctl ls failed | sed "s/^/down /" | sort'
+        # (After /etc/rc is done: sshd starts before rc's local daemons,
+        # cron among them, so a check as soon as SSH answers can find cron
+        # not started yet, on a fast boot: openbsd8-crypt's source, run
+        # obc1.  reorder_kernel, which rc leaves running, is its own ksh.)
+        BOOTSTATE='i=0; while pgrep -f "^/bin/sh /etc/rc( |\$)" >/dev/null && [ $i -lt 90 ]; do sleep 2; i=$((i + 1)); done; rcctl ls failed | sed "s/^/down /" | sort'
         # installboot -r puts the rescue system's /boot (the same release's).
         EXTRA_BOOT_RE='^(extra: |missing: )?(\./)?boot( |:|$)' ;;
     omnios*)
@@ -203,6 +207,13 @@ HOLT=${HT_HOLT:-${HT_HOLT_BIN:-$BIN}/$PLAT/bko-holt}
 [[ -n ${HT_HOLT:-} || -z ${HT_HOLT_BIN:-} || -f $HOLT ]] || { echo "ht1-bsd: no $HOLT (HT_HOLT_BIN=$HT_HOLT_BIN)" >&2; exit 2; }
 gdir=$W/vms/$G gkey=$gdir/id_ed25519
 rdir=$W/vms/$RG rkey=$rdir/id_ed25519
+# GELI (docs/design/geli.md, freebsd15-geli): the loader asks for the
+# passphrase in console-passphrase, so the source and the restored disks boot
+# through console-boot.py.  In the rescuer it is GELI_KEY, in a tmpfs of its
+# own (GELI_DIR: a default install's /tmp is on its disk),
+# for geli attach -j and load --key-file.
+gpass=""; [[ -f $gdir/console-passphrase ]] && gpass=$gdir/console-passphrase
+GELI_DIR=/tmp/ht1-geli GELI_KEY=/tmp/ht1-geli/passphrase
 # The guest's other disks (vm-run-options' --disk, named relative to its
 # directory) and its other options (firmware) for the source and restored
 # boots; its image is $G.qcow2, else the one *.qcow2 that isn't a --disk.
@@ -431,6 +442,14 @@ vm_up() { local image=$1 log=$2; shift 2
             "$T/vm-run" "$@" "$image" </dev/null >"$log.vm-run" 2>&1 {HT_FD1}>&- {HT_FD2}>&-
         return
     fi
+    if [[ -n ${CONSOLE_KEY:-} ]]; then
+        # A loader that asks for the GELI passphrase on the serial console:
+        # console-boot.py logs the console at LOG (as --serial-log would) and
+        # types the passphrase at each prompt, as ht1.sh's vm_up.
+        setsid -f python3 "$T/console-boot.py" "$log" "$CONSOLE_KEY" -- \
+            "$T/vm-run" "$@" "$image" </dev/null >"$log.vm-run" 2>&1 {HT_FD1}>&- {HT_FD2}>&-
+        return
+    fi
     setsid -f "$T/vm-run" --serial-log "$log" "$@" "$image" </dev/null >"$log.vm-run" 2>&1 {HT_FD1}>&- {HT_FD2}>&-
 }
 vm_wait() { local key=$1
@@ -475,14 +494,90 @@ ls /boot/system/var/log/bko-holt/load.log >/dev/null 2>&1 && echo "load log kept
 exit $f'
 fi
 
+# The layout's GELI providers, one line each: the partition (or disk) that
+# holds one, the source's provider name less .eli (load's --key-file NAME)
+# and how it is keyed.  The one reader of the dump's GELI records, where
+# their shape may still move: a content of type geli, or a geli object on
+# the partition or in its content; the provider from geli.provider, else
+# PARTITION.eli; keyed_by passphrase when it says nothing.
+geli_provs() { # LAYOUT
+    python3 - "$1" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+def geli_of(x):
+    c = x.get("content") if isinstance(x.get("content"), dict) else {}
+    for g in (x.get("geli"), c.get("geli")):
+        if isinstance(g, dict):
+            return g
+    return c if c.get("type") == "geli" else None
+for disk in (d.get("storage") or {}).get("disks") or []:
+    for x in [disk] + (disk.get("partitions") or []):
+        g = geli_of(x)
+        if g is None:
+            continue
+        prov = str(g.get("provider") or x["name"] + ".eli").removeprefix("/dev/")
+        print(x["name"], prov.removesuffix(".eli"), g.get("keyed_by") or "passphrase")
+PY
+}
+# OpenBSD's softraid volumes (docs/design/openbsd-crypto.md, openbsd8-crypt),
+# one line each: the volume's name in the dump (sd1: load's --key-file NAME),
+# its chunks (sd0a, comma-separated), its DUID, its level and what unlocks a
+# CRYPTO one.  The one reader of the dump's softraid_volumes here.
+sr_vols() { # LAYOUT
+    python3 - "$1" <<'PY'
+import json, sys
+d = json.load(open(sys.argv[1]))
+for v in (d.get("storage") or {}).get("softraid_volumes") or []:
+    sr = v.get("softraid") or {}
+    print(v.get("name") or "-", ",".join(sr.get("chunks") or []) or "-", v.get("duid") or "-", sr.get("level") or "-", sr.get("key") or "-")
+PY
+}
+# The passphrase into the rescuer (KEY, its ssh key) at GELI_KEY, mode 600,
+# without its final newline (as console-boot.py types it), and out again.
+# The same for a softraid CRYPTO volume's (bioctl -p, load --key-file; bioctl
+# reads the file's first line, so a final newline would do as well), in an
+# mfs: OpenBSD has no tmpfs.
+geli_key_put() { # KEY
+    [[ -n $gpass ]] || { echo "ht1-bsd: the layout has GELI providers or softraid CRYPTO volumes, and $gdir has no console-passphrase" >&2; return 1; }
+    if [[ $PLAT == openbsd ]]; then
+        shk "$1" <<EOF || return 1
+mkdir -p $GELI_DIR || exit 1
+mount | grep -q " on $GELI_DIR type mfs " || mount_mfs -s 8192 -o nodev,nosuid,noexec swap $GELI_DIR || exit 1
+chmod 700 $GELI_DIR || exit 1
+EOF
+    else
+        shk "$1" <<EOF || return 1
+mkdir -p $GELI_DIR && chmod 700 $GELI_DIR || exit 1
+[ "\$(mount -p | awk '\$2 == "$GELI_DIR" { print \$3 }')" = tmpfs ] || mount -t tmpfs -o mode=0700,size=1m tmpfs $GELI_DIR || exit 1
+EOF
+    fi
+    python3 -c 'import sys; sys.stdout.buffer.write(open(sys.argv[1], "rb").read().rstrip(b"\n"))' "$gpass" |
+        timeout 60 ssh -q -i "$1" -p "$PORT" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null "$GUSER@127.0.0.1" "umask 077; cat > $GELI_KEY" || return 1
+    # (OpenBSD: and GELI_KEY.nl, with the newline bioctl -p wants, for the
+    # mount script's attach; load gets GELI_KEY and adds it itself.)
+    if [[ $PLAT == openbsd ]]; then
+        sshk "$1" "umask 077; { cat $GELI_KEY; echo; } > $GELI_KEY.nl && chmod 600 $GELI_KEY.nl" || return 1
+    fi
+    sshk "$1" "[ -s $GELI_KEY ] && [ \"\$(stat -f %Lp $GELI_KEY)\" = 600 ]"
+}
+geli_key_rm() { sshk "$1" "rm -f $GELI_KEY $GELI_KEY.nl; umount $GELI_DIR 2>/dev/null; rmdir $GELI_DIR 2>/dev/null; true" >/dev/null 2>&1; }   # KEY
+
 # Mounts the layout's filesystems read-only at MP, its first disk being
 # the rescuer's Nth (and so on): a shell script for the rescuer.
 mount_script() { # LAYOUT FIRST MP
-    python3 - "$1" "$2" "$3" "$PLAT" "${RN[@]}" <<'PY'
-import json, re, sys
+    local geli sr; geli=$(geli_provs "$1") && sr=$(sr_vols "$1") || return 1
+    HT_GELI=$geli HT_SR=$sr HT_GELI_KEY=$GELI_KEY HT_GELI_DIR=$GELI_DIR python3 - "$1" "$2" "$3" "$PLAT" "${RN[@]}" <<'PY'
+import json, os, re, sys
 d = json.load(open(sys.argv[1])); first = int(sys.argv[2]); mp = sys.argv[3]; plat = sys.argv[4]; rn = sys.argv[5:]
+geli = [l.split() for l in os.environ.get("HT_GELI", "").splitlines() if l.strip()]
+sr = [l.split() for l in os.environ.get("HT_SR", "").splitlines() if l.strip()]
 disks = [x["name"] for x in d["storage"]["disks"]]
 def node(part):
+    # A softraid volume's partition (sd1a): on the device that has the
+    # volume's DUID in the rescuer, $ht1srI, which the attach below sets.
+    for i, (vn, *_) in enumerate(sr):
+        if part.startswith(vn) and len(part) == len(vn) + 1:
+            return f"/dev/${{ht1sr{i}}}{part[-1]}"
     for i, dn in enumerate(disks):
         if part.startswith(dn):
             n = rn[first + i] + part[len(dn):]
@@ -497,6 +592,37 @@ def node(part):
                 return "NAME=" + p["wedge_name"]
     return None
 out = ["set -e", f"mkdir -p {mp}"]
+# GELI providers first, read-only with the passphrase, so that the pool's
+# member (or the UFS) is NODE.eli, as on the source; one already attached
+# (the kernel, with the rescuer's loader's key) is left so.  Each goes in
+# GELI_DIR's list, for umount_script's detach.
+for part, _, keyed in geli:
+    n = node(part)
+    if keyed != "passphrase":
+        out.append(f"echo 'GELI on {part} is keyed by {keyed}: the run has only the passphrase'; exit 1")
+        continue
+    out.append(f"[ -c {n}.eli ] || geli attach -r -j {os.environ['HT_GELI_KEY']} {n}")
+    out.append(f"[ -c {n}.eli ] || {{ echo 'geli attach {n}: no {n}.eli'; exit 1; }}")
+    out.append(f"echo {n}.eli >> {os.environ['HT_GELI_DIR']}/attached")
+# softraid CRYPTO volumes (OpenBSD): attached on their chunk with the
+# passphrase (bioctl -c C on a chunk with softraid metadata attaches it; on
+# one without, it would make a new volume, so the metadata is checked
+# first), unless a volume with that DUID is already there.  Each attached
+# DUID goes in GELI_DIR's list, for umount_script's bioctl -d.
+for i, (vn, chunks, duid, level, key) in enumerate(sr):
+    if level != "CRYPTO" or key != "passphrase" or "," in chunks:
+        out.append(f"echo 'softraid volume {vn}: {level} on {chunks}, unlocked by {key}: the run attaches passphrase CRYPTO volumes only'; exit 1")
+        continue
+    c = node(chunks)
+    find = f"sysctl -n hw.disknames | tr , '\\n' | awk -F: '$2 == \"{duid}\" {{ print $1 }}'"
+    out.append(f"if [ -z \"$({find})\" ]; then")
+    out.append(f"  dd if={c.replace('/dev/', '/dev/r', 1)} bs=512 skip=16 count=1 2>/dev/null | grep -q marcCRAM || {{ echo 'no softraid metadata on {c}'; exit 1; }}")
+    out.append(f"  bioctl -c C -l {c} -p {os.environ['HT_GELI_KEY']}.nl softraid0")
+    out.append(f"  echo {duid} >> {os.environ['HT_GELI_DIR']}/attached-sr")
+    out.append("fi")
+    out.append(f"ht1sr{i}=$({find})")
+    out.append(f"[ -n \"$ht1sr{i}\" ] || {{ echo 'softraid volume {vn} ({duid}): not attached'; exit 1; }}")
+    out.append(f"echo \"HT1-SR {vn} {duid} on $ht1sr{i}: $(bioctl $ht1sr{i} | tr -s ' \\n' ' ')\"")
 zfs = (d["storage"].get("zfs") or {}).get("tools") or {}
 for p in zfs.get("imported_pools") or []:
     # illumos' rescuer has its own rpool: the source's (or target's) goes by
@@ -551,6 +677,8 @@ for e in fs:
     t = {"ufs": "ufs", "msdosfs": "msdosfs"}.get(e["type"], e["type"])
     target = mp + ("" if e["file"] == "/" else e["file"])
     n = node(e["resolves_to"])
+    if (e.get("eli") or e["spec"].endswith(".eli")) and not n.endswith(".eli"):
+        n += ".eli"   # a UFS on GELI (resolve() gives the partition, eli: true)
     if e["type"] == "hammer2" and "@" in e["spec"]:
         n += "@" + e["spec"].split("@", 1)[1]   # the same PFS (DragonFly)
     if plat == "haiku":
@@ -564,8 +692,9 @@ PY
 }
 umount_script() { # LAYOUT MP
     if [[ $PLAT == haiku ]]; then echo "unmount $2"; return; fi
-    python3 - "$1" "$2" "$PLAT" <<'PY'
-import json, sys
+    local geli sr; geli=$(geli_provs "$1") && sr=$(sr_vols "$1") || return 1
+    HT_GELI=$geli HT_SR=$sr HT_GELI_DIR=$GELI_DIR python3 - "$1" "$2" "$PLAT" <<'PY'
+import json, os, sys
 d = json.load(open(sys.argv[1])); mp = sys.argv[2]; plat = sys.argv[3]
 if plat == "illumos":
     print(f"awk '{{ print $2 }}' /etc/mnttab | awk '$0 == \"{mp}\" || index($0, \"{mp}/\") == 1' | sort -r | while read -r m; do umount -f \"$m\" 2>/dev/null; done")
@@ -575,6 +704,14 @@ for p in ((d["storage"].get("zfs") or {}).get("tools") or {}).get("imported_pool
     if plat == "illumos":
         print("[ ! -f /tmp/ht1-mountpoint-set ] || { zfs inherit mountpoint ht1src; rm -f /tmp/ht1-mountpoint-set; }")
     print(f"zpool export -f {'ht1src' if plat == 'illumos' else p['name']} 2>/dev/null || true")
+if os.environ.get("HT_GELI", "").strip():
+    # The providers mount_script attached (or found attached), after the export.
+    a = os.environ["HT_GELI_DIR"] + "/attached"
+    print(f"[ ! -f {a} ] || {{ while read -r e; do geli detach $e || echo \"geli detach $e failed\"; done < {a}; rm -f {a}; }}")
+if os.environ.get("HT_SR", "").strip():
+    # The softraid volumes mount_script attached (by DUID), after the unmounts.
+    a = os.environ["HT_GELI_DIR"] + "/attached-sr"
+    print(f"[ ! -f {a} ] || {{ while read -r u; do v=$(sysctl -n hw.disknames | tr , '\\n' | awk -F: -v u=$u '$2 == u {{ print $1 }}'); [ -z \"$v\" ] || bioctl -d $v || echo \"bioctl -d $v ($u) failed\"; done < {a}; rm -f {a}; }}")
 PY
 }
 # The tree at DIR listed, for comparing a restore with its source: mtree's
@@ -594,7 +731,7 @@ phase_source() {
     for ((i = 0; i < n; i++)); do
         rm -f "${src[i]}"; qemu-img create -q -f qcow2 -b "${imgs[i]}" -F qcow2 "${src[i]}"
     done
-    vm_up "$SRC" "$R/logs/source-serial.log" "${fw[@]}" "${s_guest[@]}" "${src_more[@]}"
+    CONSOLE_KEY=$gpass vm_up "$SRC" "$R/logs/source-serial.log" "${fw[@]}" "${s_guest[@]}" "${src_more[@]}"
     vm_wait "$gkey" || { bad "source boots (no SSH)"; vm_down "$gkey"; return; }
     ok "source boots"
     sshk "$gkey" "$BOOTSTATE" > "$R/logs/source-bootstate.txt" 2>&1
@@ -613,9 +750,22 @@ phase_backup() {
     say "== backup"
     rm -f "$RESC"; qemu-img create -q -f qcow2 -b "$rimg" -F qcow2 "$RESC"
     qemu-img resize -q "$RESC" +8G 2>/dev/null || true
-    vm_up "$RESC" "$R/logs/backup-serial.log" "${rfw[@]}" --memory 3072 "${s_resc[@]}" "${all_src[@]}"
+    # GELI: the rescuer's loader probes every disk's partitions for a pool,
+    # and may ask for a GELIBOOT provider's passphrase too (not yet seen), so
+    # it boots through console-boot.py when the source has one.
+    # So too for a softraid CRYPTO volume (OpenBSD's /boot probes every
+    # disk's softraid metadata), and the mount script attaches it with the
+    # passphrase.
+    local geli sr ck=""
+    geli=$(geli_provs "$R/dumps/src.json" 2>/dev/null) || geli=""   # (no layout: the mount script says so)
+    sr=$(sr_vols "$R/dumps/src.json" 2>/dev/null) || sr=""
+    [[ -n $geli$sr ]] && ck=$gpass
+    CONSOLE_KEY=$ck vm_up "$RESC" "$R/logs/backup-serial.log" "${rfw[@]}" --memory 3072 "${s_resc[@]}" "${all_src[@]}"
     vm_wait "$rkey" || { bad "rescuer boots"; vm_down "$rkey"; return; }
     rescuer_ready $((1 + n))
+    if [[ -n $geli$sr ]]; then
+        geli_key_put "$rkey" || { bad "the GELI or softraid passphrase into the rescuer's tmpfs $GELI_DIR"; vm_down "$rkey"; return; }
+    fi
     put "$rkey" "$RUSTIC" $RH/rustic-bko
     head -c 24 /dev/urandom | base64 > "$R/repo-password"
     put "$rkey" "$R/repo-password" $RH/repo-password
@@ -624,6 +774,7 @@ phase_backup() {
     if shk "$rkey" < "$R/logs/backup-mount.sh" > "$R/logs/backup-mount.log" 2>&1; then
         ok "the source mounted read-only in the rescuer"
         grep '^HT1-POOL ' "$R/logs/backup-mount.log" | while read -r _ pn rest; do ok "the source's pool $pn imported from all its disks ($rest)"; done
+        grep '^HT1-SR ' "$R/logs/backup-mount.log" | while read -r _ vn rest; do ok "the source's softraid volume $vn attached with the passphrase ($rest)"; done
     else
         bad "mount the source read-only (logs/backup-mount.log)"; vm_down "$rkey"; return
     fi
@@ -635,6 +786,7 @@ phase_backup() {
     # Sockets aren't backed up (neither archiver keeps them).
     TMO=3600 sshk "$rkey" "$(list_tree /mnt/src)" > "$R/src.listing" 2> "$R/logs/fsmeta-src.log" || bad "the listing of the source's files"
     umount_script "$R/dumps/src.json" /mnt/src | shk "$rkey" >> "$R/logs/backup-mount.log" 2>&1
+    [[ -z $geli$sr ]] || geli_key_rm "$rkey"
     vm_down "$rkey"
 }
 
@@ -765,6 +917,19 @@ phase_rebuild() {
            isdecoy="dd if=$(rraw $D) bs=512 count=1 2>/dev/null | strings | grep -q HT1DECOY" ;;
     esac
     sshk "$rkey" "$mkdecoy" > "$R/logs/rescuer-setup.log" 2>&1 || { bad "rescuer setup (the decoy's filesystem)"; vm_down "$rkey"; return; }
+    # GELI: each provider made again with the source's passphrase, load's
+    # --key-file NAME=FILE (the source's provider name), on every load below.
+    # A softraid CRYPTO volume (OpenBSD) the same: its passphrase the
+    # source's, --key-file NAME=FILE by the volume's name in the dump (sd1).
+    local geli sr kf=() gname
+    geli=$(geli_provs "$R/dumps/src.json" 2>/dev/null) || geli=""   # (no layout: the disk count below says so)
+    sr=$(sr_vols "$R/dumps/src.json" 2>/dev/null) || sr=""
+    if [[ -n $geli$sr ]]; then
+        geli_key_put "$rkey" || { bad "rescuer setup (the GELI or softraid passphrase into its tmpfs $GELI_DIR)"; vm_down "$rkey"; return; }
+        [[ -z $geli ]] || while read -r _ gname _; do kf+=(--key-file "$gname=$GELI_KEY"); done <<<"$geli"
+        [[ -z $sr ]] || while read -r gname _; do kf+=(--key-file "$gname=$GELI_KEY"); done <<<"$sr"
+        how+="; ${geli:+GELI}${sr:+softraid}: ${kf[*]}"
+    fi
     ok "rescuer up$how"
     # The source's disks, by the layout's names, in the order they were
     # attached (the dump lists them so).
@@ -781,9 +946,9 @@ phase_rebuild() {
     local quick=${HT_QUICK:-}
     [[ $quick == 1 ]] || {
     sshk "$rkey" "$edges" > "$R/logs/edges-before.txt" 2>&1
-    load_step 4 refuse-nomap
-    load_step 4 refuse-root "--map ${srcn[0]}=${RN[0]} --erase ${RN[0]}" "${others[@]}"
-    load_step 4 refuse-decoy "--map ${srcn[0]}=${RN[D]}" "${others[@]}" \
+    load_step 4 refuse-nomap "${kf[@]}"
+    load_step 4 refuse-root "--map ${srcn[0]}=${RN[0]} --erase ${RN[0]}" "${others[@]}" "${kf[@]}"
+    load_step 4 refuse-decoy "--map ${srcn[0]}=${RN[D]}" "${others[@]}" "${kf[@]}" \
         && { cat "$R/logs/rebuild-refuse-decoy".{out,err} | grep -q "isn't blank" || bad "load refuse-decoy: refused, but not for the decoy's filesystem"; }
     }
     local map=() erase=() written=()
@@ -791,6 +956,7 @@ phase_rebuild() {
         map+=(--map "${srcn[i]}=${RN[i + 1]}")
         erase+=(--erase "$([[ $PLAT == haiku || $PLAT == illumos ]] && echo "${RN[i + 1]}" || rdev $((i + 1)))")
     done
+    map+=("${kf[@]}")
     [[ $quick == 1 ]] || {
     load_step 0 dry-partition "${map[@]}" --only partition
     for ((i = 1; i <= n; i++)); do
@@ -818,7 +984,7 @@ phase_rebuild() {
         [[ $s == oneshot ]] && how=(--through close)
         TMO=7200 load_step 0 "$s" "${map[@]}" "${extra[@]}" "${how[@]}" --commit || {
             sshk "$rkey" "cat /var/run/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
-            sshk "$rkey" "set -x; mount; df; gpart show; disklabel ${RN[1]}; dkctl ${RN[1]} listwedges; zpool status; zpool list -v; zfs list -o name,mounted,mountpoint,canmount; glabel status; swapctl -l" > "$R/logs/rebuild-failed-state.txt" 2>&1
+            sshk "$rkey" "set -x; mount; df; fstat -f /mnt/bko-target; gpart show; disklabel ${RN[1]}; dkctl ${RN[1]} listwedges; zpool status; zpool list -v; zfs list -o name,mounted,mountpoint,canmount; glabel status; swapctl -l" > "$R/logs/rebuild-failed-state.txt" 2>&1
             kept_or_down; return; }
         [[ $PLAT == haiku ]] && sshk "$rkey" "echo $s \$(stat -c %Y.%y /mnt/bko-target 2>&1)" >> "$R/logs/haiku-root-mtime.txt" 2>&1
         # Haiku publishes a new table's partitions only at boot.
@@ -853,6 +1019,7 @@ phase_rebuild() {
     fi
     sshk "$rkey" "cat /var/run/bko-holt/log/load.log" > "$R/logs/rebuild-load.log"
     [[ ${HT_KEEP:-} == 1 ]] && { kept_or_down; return; }
+    [[ -z $geli$sr ]] || geli_key_rm "$rkey"
     vm_down "$rkey"
     rm -f "$try" "$R/img.qcow2" "$R/img-key" "$R/img-key.pub"
 }
@@ -872,14 +1039,35 @@ phase_verify() {
     # A rescuer HT_KEEP left up has the targets open.
     [[ -z $(ht_qemus "$R") ]] || vm_down "$rkey"
     say "== verify"
+    # GELI, as the backup's: the rescuer boots through console-boot.py and
+    # attaches the restored providers with the passphrase load gave them.
+    # load rewrites /var/backups/PROVIDER.eli for the new provider and
+    # removes a stale one (the design's D5): mtree may see those change.
+    local geli sr ck="" boot_re=$EXTRA_BOOT_RE
+    geli=$(geli_provs "$R/dumps/src.json" 2>/dev/null) || geli=""   # (no layout: the mount script says so)
+    sr=$(sr_vols "$R/dumps/src.json" 2>/dev/null) || sr=""
+    if [[ -n $geli ]]; then
+        ck=$gpass
+        boot_re+='|^(extra: |missing: )?(\./)?var/backups(/[^/ ]+\.eli)?( |:|$)'
+    fi
+    # softraid: the rescuer's attach and detach (bioctl -d rewrites the
+    # volume's flags, clearing the bootable one installboot set) would leave
+    # the restored disk unbootable, so its rescuer runs on --snapshot.
+    local vsnap=("${v_snap[@]}")
+    [[ -n $sr ]] && { ck=$gpass; vsnap=(--snapshot); }
     if [[ -f $RESC ]]; then
-        vm_up "$RESC" "$R/logs/verify-rescuer-serial.log" "${v_snap[@]}" "${rfw[@]}" --memory 3072 "${s_resc[@]}" "${all_dst[@]}"
+        CONSOLE_KEY=$ck vm_up "$RESC" "$R/logs/verify-rescuer-serial.log" "${vsnap[@]}" "${rfw[@]}" --memory 3072 "${s_resc[@]}" "${all_dst[@]}"
         if vm_wait "$rkey"; then
             rescuer_ready $((1 + n))
-            mount_script "$R/dumps/src.json" 1 /mnt/dst > "$R/logs/verify-mount.sh" 2> "$R/logs/verify-mount.log" ||
+            if [[ -n $geli$sr ]] && ! geli_key_put "$rkey"; then
+                bad "the GELI or softraid passphrase into the rescuer's tmpfs $GELI_DIR"
                 echo exit 1 > "$R/logs/verify-mount.sh"
+            elif ! mount_script "$R/dumps/src.json" 1 /mnt/dst > "$R/logs/verify-mount.sh" 2> "$R/logs/verify-mount.log"; then
+                echo exit 1 > "$R/logs/verify-mount.sh"
+            fi
             if shk "$rkey" < "$R/logs/verify-mount.sh" > "$R/logs/verify-mount.log" 2>&1; then
                 grep '^HT1-POOL ' "$R/logs/verify-mount.log" | while read -r _ pn rest; do ok "the restored pool $pn imported from all its disks ($rest)"; done
+                grep '^HT1-SR ' "$R/logs/verify-mount.log" | while read -r _ vn rest; do ok "the restored softraid volume $vn attached with the passphrase load gave it ($rest)"; done
                 if [[ $PLAT == haiku || $PLAT == illumos ]]; then
                     TMO=3600 sshk "$rkey" "$(list_tree /mnt/dst)" > "$R/dst.listing" 2>/dev/null
                     diff "$R/src.listing" "$R/dst.listing" | sed -n 's/^< /missing: /p; s/^> /extra: /p' > "$R/logs/fsmeta-compare.txt"
@@ -887,25 +1075,43 @@ phase_verify() {
                     put "$rkey" "$R/src.listing" $RH/src.mtree
                     TMO=3600 sshk "$rkey" "cd /mnt/dst && mtree -f $RH/src.mtree -p /mnt/dst" > "$R/logs/fsmeta-compare.txt" 2>&1
                 fi
-                local diffs; diffs=$(grep -vE "$BOOT_STAGE_RE" "$R/logs/fsmeta-compare.txt" | grep -vE "$EXTRA_BOOT_RE" | grep -vE "$KNOWN_RE" | grep -vE '^[[:space:]]' | grep -c .)
+                local diffs; diffs=$(grep -vE "$BOOT_STAGE_RE" "$R/logs/fsmeta-compare.txt" | grep -vE "$boot_re" | grep -vE "$KNOWN_RE" | grep -vE '^[[:space:]]' | grep -c .)
                 local known; known=$(grep -cE "$KNOWN_RE" "$R/logs/fsmeta-compare.txt")
                 if [[ $diffs == 0 ]]; then
                     ok "mtree: the files agree but for the boot stage's ($(grep -c . "$R/logs/fsmeta-compare.txt") lines of it)$([[ $known -gt 0 ]] && echo "; known archiver limit: the volume root's mtime ($known lines)")"
                 else
-                    bad "mtree: $diffs differences: $(grep -vE "$BOOT_STAGE_RE" "$R/logs/fsmeta-compare.txt" | grep -vE "$EXTRA_BOOT_RE" | grep -vE "$KNOWN_RE" | grep -vE '^[[:space:]]' | head -5 | tr '\n' ' ')"
+                    bad "mtree: $diffs differences: $(grep -vE "$BOOT_STAGE_RE" "$R/logs/fsmeta-compare.txt" | grep -vE "$boot_re" | grep -vE "$KNOWN_RE" | grep -vE '^[[:space:]]' | head -5 | tr '\n' ' ')"
                 fi
             else
                 bad "mount the restored disk in the rescuer (logs/verify-mount.log)"
             fi
             umount_script "$R/dumps/src.json" /mnt/dst | shk "$rkey" >> "$R/logs/verify-mount.log" 2>&1
+            [[ -z $geli$sr ]] || geli_key_rm "$rkey"
         else
             bad "rescuer boots for the mtree comparison"
         fi
         vm_down "$rkey"
     fi
-    vm_up "$DST" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${s_guest[@]}" "${dst_more[@]}"
+    # (GELI: SSH answering means the loader took the passphrase load gave
+    # the restored provider, and the kernel mounted the pool inside it.)
+    CONSOLE_KEY=$gpass vm_up "$DST" "$R/logs/restored-serial.log" --snapshot "${fw[@]}" "${s_guest[@]}" "${dst_more[@]}"
     if ! vm_wait "$gkey"; then bad "the restored disk boots by itself (no SSH; logs/restored-serial.log)"; vm_down "$gkey"; return; fi
     ok "the restored disk boots by itself, SSH with the guest's key"
+    # (softraid: SSH answering means /boot took the passphrase load gave the
+    # volume.)  Each volume as the source had it: its device, CRYPTO, on its
+    # chunk, by bioctl in the restored system.
+    if [[ -n $sr ]]; then
+        local vn chunks _r
+        while read -r vn chunks _r; do
+            sshk "$gkey" "bioctl $vn" > "$R/logs/restored-bioctl-$vn.txt" 2>&1
+            if awk -v v="$vn" '$0 ~ ("^softraid0 ") && $(NF-1) == v && $NF == "CRYPTO" { f = 1 } END { exit !f }' "$R/logs/restored-bioctl-$vn.txt" &&
+                grep -qF "<$chunks>" "$R/logs/restored-bioctl-$vn.txt"; then
+                ok "bioctl $vn: CRYPTO on $chunks, as the source's"
+            else
+                bad "bioctl $vn: not CRYPTO on $chunks (logs/restored-bioctl-$vn.txt: $(tr -s ' \n' ' ' < "$R/logs/restored-bioctl-$vn.txt"))"
+            fi
+        done <<<"$sr"
+    fi
     sshk "$gkey" "$BOOTSTATE" > "$R/logs/restored-bootstate.txt" 2>&1
     if diff -q "$R/logs/source-bootstate.txt" "$R/logs/restored-bootstate.txt" >/dev/null; then
         ok "boot state as the source's ($(grep -c . "$R/logs/restored-bootstate.txt") services down on both)"

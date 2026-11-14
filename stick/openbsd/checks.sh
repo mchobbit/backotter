@@ -11,6 +11,7 @@ check no-relink 'test ! -e /usr/share/relink && ! grep -q reorder_kernel /etc/rc
 check network 'i=0; until a=$(ifconfig -a | awk "\$1 == \"inet\" && \$2 != \"127.0.0.1\" { print \$2 }") && test -n "$a"; do i=$((i + 1)); test $i -lt 30 || exit 1; sleep 1; done; echo $a'
 check console-screen 'grep "^ttyC0" /etc/ttys | grep -q backotter/autologin && ps -t C0 -o command= | grep -x "/bin/sh /usr/local/lib/backotter/console"'
 check console-serial 'grep "^tty00" /etc/ttys | grep -q backotter/autologin && ps -t 00 -o command= | grep -x "/bin/sh /usr/local/lib/backotter/console"'
+check softraid 'dmesg | grep -q "^softraid0 at root" && echo present'
 check tools 'for c in fdisk disklabel newfs newfs_msdos fsck_ffs fsck_msdos mount_msdos bioctl vnconfig installboot growfs dump restore ssh sshd; do command -v $c >/dev/null || { echo missing $c; exit 1; }; done; echo all present'
 check sshd-off-at-boot '! pgrep -x sshd >/dev/null && ! ls /etc/ssh/ssh_host_*_key >/dev/null 2>&1 && echo off, no host keys'
 check remote-access '/usr/local/lib/backotter/remote-access >/tmp/ra.out 2>&1 || { tail -n 3 /tmp/ra.out; exit 1; }; pw=$(sed -n "s/^Password: \([^ ]*\).*/\1/p" /var/run/backotter/remote-access); printf "#!/bin/sh\necho %s\n" "$pw" >/tmp/askpass; chmod 700 /tmp/askpass; who=$(SSH_ASKPASS=/tmp/askpass SSH_ASKPASS_REQUIRE=force ssh -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null backotter@127.0.0.1 whoami </dev/null 2>/tmp/ssh.err); if test "$who" = backotter; then echo "password login over SSH works"; else tail -n 3 /tmp/ssh.err; exit 1; fi'

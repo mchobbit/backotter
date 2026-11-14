@@ -125,6 +125,13 @@ class Sources(unittest.TestCase):
         self.assertEqual(src("S-pac", eos2).v, "PASS")
         c = sec(("file /etc/os-release", 'ID=cachyos'), ("file /etc/pacman.d/mirrorlist", "Server = https://x"))
         self.assertIn("cachyos-mirrorlist", src("S-pac", c).lines[0])
+        # Garuda (garuda.md GA3): chaotic-aur's mirrorlist, on by default, needs a Server too
+        ga = sec(("file /etc/os-release", 'ID=garuda'), ("file /etc/pacman.d/mirrorlist", "Server = https://x"),
+                 ("file /etc/pacman.d/chaotic-mirrorlist", "#Server = https://y"))
+        self.assertEqual(src("S-pac", ga).lines, ["no Server in /etc/pacman.d/chaotic-mirrorlist"])
+        ga2 = sec(("file /etc/os-release", 'ID=garuda'), ("file /etc/pacman.d/mirrorlist", "Server = https://x"),
+                  ("file /etc/pacman.d/chaotic-mirrorlist", "Server = https://y"))
+        self.assertEqual(src("S-pac", ga2).v, "PASS")
 
     def test_zypper(self):
         ok = sec(("file /etc/zypp/repos.d/o.repo", "[o]\nenabled=1\nbaseurl=http://download.opensuse.org/tumbleweed/repo/oss/"))
@@ -360,6 +367,15 @@ class Kernels(unittest.TestCase):
 
     def test_an_entry_overrides(self):
         self.assertEqual(self.k("K-pac", "a\nb\nc", kernels_max=3).v, "PASS")
+
+    def test_anduinos_needs_each_kernels_dracut_image(self):
+        """AnduinOS (anduinos.md A3): check-image.sh marks a vmlinuz-K without dracut's initrd.img-K."""
+        two = "/boot/vmlinuz-7.0.0-38-generic\n/boot/vmlinuz-7.0.0-43-generic"
+        self.assertEqual(self.k("K-anduinos", two).v, "PASS")
+        bad = self.k("K-anduinos", "/boot/vmlinuz-7.0.0-38-generic\n/boot/vmlinuz-7.0.0-43-generic no-initrd")
+        self.assertEqual((bad.v, bad.lines), ("FAIL", [J.NO_INITRD]))
+        # the mark is K-anduinos's alone
+        self.assertEqual(self.k("K-deb", "/boot/vmlinuz-7.0.0-43-generic no-initrd").v, "PASS")
 
 
 class ZfsCache(unittest.TestCase):
@@ -609,6 +625,12 @@ class NewestKernel(unittest.TestCase):
         self.assertEqual(self.k("K-gentoo", "running 6.18.63-gentoo-dist-bin\ninstalled 6.18.63-gentoo-dist-bin\ninstalled 6.18.64-gentoo-dist-bin"),
                          [J.NOT_NEWEST])
         self.assertEqual(self.k("K-gentoo", "running 6.18.63-gentoo-dist-bin\ninstalled 6.18.64-gentoo-dist-bin"), [J.NO_MODULES])
+
+    def test_anduinos_is_debians_rule(self):
+        self.assertEqual(self.k("K-anduinos", "running 7.0.0-43-generic\ninstalled 7.0.0-38-generic\ninstalled 7.0.0-43-generic"), [])
+        self.assertEqual(self.k("K-anduinos", "running 7.0.0-38-generic\ninstalled 7.0.0-38-generic\ninstalled 7.0.0-43-generic"),
+                         [J.NOT_NEWEST])
+        self.assertEqual(self.k("K-anduinos", "running 7.0.0-38-generic\ninstalled 7.0.0-43-generic"), [J.NO_MODULES])
 
     def test_version_sort(self):
         self.assertEqual(self.k("K-deb", RUN), [])

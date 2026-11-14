@@ -9,9 +9,10 @@
 #                                     in cmp-run.sh's ledger until `done`;
 #                                     then dump the source and back it up
 #   ht1-debug.sh GUEST build [SRC]    build bko-holt from SRC (default
-#                                     ~/backotter-work/holt-src): on the
-#                                     host for Linux, in a build guest kept
-#                                     up between builds otherwise
+#                                     ~/backotter-work/holt-src) with
+#                                     build-holt.sh: on the host for Linux
+#                                     (its Rust, 1.85.1), in a build guest
+#                                     kept up between builds otherwise
 #   ht1-debug.sh GUEST again [STAGE]  a rebuild without the safety checks,
 #                                     through STAGE (default: close), the
 #                                     rescuer left up as it ended
@@ -131,14 +132,9 @@ build)
     src=${1:-$W/holt-src}
     [[ -f $src/Cargo.toml ]] || { echo "ht1-debug: no $src/Cargo.toml" >&2; exit 1; }
     sudo install -d -o "$(id -u)" -g "$(id -g)" "$ST" "$ST/tmp"
-    if [[ $PLAT == linux ]]; then
-        # target/ in RAM, kept between builds.
-        ( cd "$src" && PATH=$HOME/.cargo/bin:$PATH CARGO_TARGET_DIR=$ST/target RUSTFLAGS="-C target-feature=+crt-static" \
-            cargo build --release --target x86_64-unknown-linux-gnu ) || exit 1
-        cp "$ST/target/x86_64-unknown-linux-gnu/release/bko-holt" "$ST/bko-holt.new" && mv "$ST/bko-holt.new" "$ST/bko-holt"
-    else
-        HOLT_SRC=$src HOLT_OUT=$ST TMPDIR=$ST/tmp "$HERE/build-holt.sh" --keep "$PLAT" "$BPORT" || exit 1
-    fi
+    # Linux: cargo's target/ in ST/tmp, in RAM, kept between builds (--keep
+    # and the port are for the build guest of the others).
+    HOLT_SRC=$src HOLT_OUT=$ST TMPDIR=$ST/tmp "$HERE/build-holt.sh" --keep "$PLAT" "$BPORT" || exit 1
     echo "bko-holt for the next try: $ST/bko-holt ($(sha256sum "$ST/bko-holt" | cut -c1-12))"
     ;;
 again)

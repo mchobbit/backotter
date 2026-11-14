@@ -1,7 +1,8 @@
 //! NetBSD's and OpenBSD's report: disks from hw.disknames, MBR or GPT read
 //! off the raw disk, the BSD disklabel inside (disklabel(8)'s text, kept for
 //! load's disklabel -R), NetBSD's wedges for a GPT's partitions, OpenBSD's
-//! disklabel UIDs, FFS with the parameters dumpfs prints, and the boot code.
+//! disklabel UIDs and softraid volumes (softraid.rs), FFS with the
+//! parameters dumpfs prints, and the boot code.
 
 use super::bsdlabel::{self, Label};
 use super::{found_json, open, read_disk, Family, Found, RawDisk};
@@ -186,6 +187,10 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         }
     };
     let names = disk_names(fam, &sys.run("sysctl", &["-n", "hw.disknames"]).unwrap_or_default());
+    // OpenBSD's softraid volumes (softraid.rs): each is a disk in
+    // hw.disknames, read as one, and reported as a virtual disk on its
+    // chunks, not a disk of its own.
+    let volumes = if fam == Family::OpenBsd { super::softraid::parse_bioctl(&sys.run("bioctl", &["softraid0"]).unwrap_or_default()) } else { Vec::new() };
     let mut seen: Vec<DiskSeen> = Vec::new();
     for (name, duid) in names {
         let text = sys.run_any("disklabel", &[&name]).unwrap_or_default();
@@ -253,7 +258,17 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         }
         x
     };
+    // A CRYPTO volume's KDF hint, from its chunk's softraid metadata.
+    let hint = |v: &super::softraid::Volume| -> Option<super::softraid::KdfHint> {
+        let [chunk] = v.chunks.as_slice() else { return None };
+        let s = seen.iter().find(|s| s.lparts.iter().any(|(n, _, _)| n == chunk))?;
+        let (_, p, _) = s.lparts.iter().find(|(n, _, _)| n == chunk)?;
+        let src = open(sys, &s.d)?;
+        let meta = OffsetSource { inner: &src, start: p.offset * s.d.sector + super::softraid::META_OFFSET, len: super::softraid::META_LEN as u64 };
+        super::softraid::kdf_hint(&crate::bytes::ByteSource::read_at(&meta, 0, super::softraid::META_LEN))
+    };
     let mut disks_json = Vec::new();
+    let mut volumes_json = Vec::new();
     let mut members: Vec<(String, Content)> = Vec::new();
     for s in &seen {
         let mut parts = Vec::new();
@@ -287,14 +302,19 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
                 for (k, v) in ffs_extra(n, c).0 {
                     o.put(&k, v);
                 }
+                if let Some(v) = volumes.iter().find(|v| v.chunks.contains(n) || v.key_disk.as_ref() == Some(n)) {
+                    o.put("softraid_volume", v.device.as_str());
+                }
                 o.put("mounted_at", mounted_at(n));
                 o.build()
             })
             .collect();
+        let vol = volumes.iter().find(|v| v.device == s.d.name);
         let mut o = Obj::new()
             .set("name", s.d.name.as_str())
             .set("path", s.d.path.as_str())
-            .set("kind", "disk")
+            .set("kind", if vol.is_some() { "softraid" } else { "disk" })
+            .set_some("softraid", vol.map(|v| super::softraid::volume_json(v, hint(v))))
             .set("size_bytes", s.d.size)
             .set("size", crate::report::human(s.d.size))
             .set("logical_sector_size", s.d.sector)
@@ -315,7 +335,11 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         }
         o.put("content", probe::content_json(&s.whole));
         o.put("mounted_at", mounted_at(&s.d.name));
-        disks_json.push(o.build());
+        if vol.is_some() {
+            volumes_json.push(o.build());
+        } else {
+            disks_json.push(o.build());
+        }
     }
     let mounts_json: Vec<Value> = mounted
         .iter()
@@ -337,8 +361,11 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         })
         .collect();
     let member_refs: Vec<(String, &Content)> = members.iter().map(|(n, c)| (n.clone(), c)).collect();
-    let storage = Obj::new()
-        .set("disks", disks_json)
+    let mut storage = Obj::new().set("disks", disks_json);
+    if !volumes_json.is_empty() {
+        storage.put("softraid_volumes", volumes_json);
+    }
+    let storage = storage
         .set("mounts", mounts_json)
         .set("swaps", swaps)
         .set("fstab", fstab)

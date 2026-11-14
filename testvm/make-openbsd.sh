@@ -2,8 +2,9 @@
 # Build an OpenBSD test guest for BackOtter: an unattended autoinstall(8)
 # from an official ISO into a qcow2 disk image, under QEMU with KVM.
 #
-# Usage: ./make-openbsd.sh VERSION WORK_DIR
+# Usage: ./make-openbsd.sh VERSION WORK_DIR [--crypto]
 #   e.g. ./make-openbsd.sh 8.0 vms/openbsd8
+#        ./make-openbsd.sh 8.0 vms/openbsd8-crypt --crypto
 #
 # VERSION is a release in https://cdn.openbsd.org/pub/OpenBSD/, installed
 # from its installNN.iso, which carries the install sets.  The ISO and its
@@ -15,11 +16,21 @@
 #   root-password         root's password (mode 600)
 #   id_ed25519, .pub      SSH key that logs in as root
 #   install-serial.log    the installer's serial console
+#   console-passphrase    with --crypto: the softraid volume's passphrase
+#                         (mode 600, 14 characters), which the boot loader
+#                         asks for on the console at boot
 #
 # The guest, host name obsdN: BIOS + MBR, OpenBSD's automatic FFS layout over
 # the whole disk, every set but X and games, console on the serial port,
 # 2 GB RAM; see openbsd/install.conf.  Run it with vm-run.  vm-mount can't
 # open it: Linux can't mount OpenBSD's disklabel partitions read-write.
+#
+# --crypto: the root disk encrypted, by the installer's own question
+# ("Encrypt the root disk with a (p)assphrase or (k)eydisk?"): sd0's
+# OpenBSD slot is one disklabel partition, sd0a of fstype RAID, the chunk of
+# a softraid CRYPTO volume, sd1, which holds the same layout (/ and swap).
+# The boot loader asks for the passphrase on the console, and vm-lib and
+# vm-update type it from console-passphrase.  Host name obsdN-crypt.
 #
 # Needs: qemu-system-x86_64 with KVM, qemu-img, xorriso, signify (Debian
 # package "signify-openbsd"), openssl, python3, wget.  Runs as an ordinary
@@ -39,7 +50,16 @@ INSTALL_TIMEOUT=3600
 here=$(dirname "$(realpath "$0")")
 die() { echo "make-openbsd: $*" >&2; exit 1; }
 
-[[ $# -eq 2 ]] || die "usage: $0 VERSION WORK_DIR"
+crypto=no args=()
+for a in "$@"; do
+    case $a in
+    --crypto) crypto=yes ;;
+    --*) die "unknown option $a" ;;
+    *) args+=("$a") ;;
+    esac
+done
+set -- "${args[@]}"
+[[ $# -eq 2 ]] || die "usage: $0 VERSION WORK_DIR [--crypto]"
 version=$1
 [[ $version =~ ^[0-9]+\.[0-9]$ ]] || die "VERSION looks like 8.0, not '$version'"
 key=${BASE_KEYS[$version]:-}
@@ -50,6 +70,7 @@ signify=$(command -v signify-openbsd || command -v signify) || die "signify is m
 ISO=install${version/./}.iso
 url=https://cdn.openbsd.org/pub/OpenBSD/$version/amd64
 guest_name=obsd$major
+[[ $crypto == yes ]] && guest_name=obsd$major-crypt
 DISK=openbsd$major.qcow2
 mkdir -p "$2"
 cd "$2"
@@ -91,6 +112,15 @@ umask 077
 password=$(openssl rand -base64 18)
 printf '%s\n' "$password" >root-password
 [[ -e id_ed25519 ]] || ssh-keygen -q -t ed25519 -N '' -C "root@$guest_name test guest" -f id_ed25519
+if [[ $crypto == yes ]]; then
+    # 14 characters: the boot loader reads the console through the BIOS
+    # keyboard buffer, which holds 15 keys, and console-boot.py types the
+    # passphrase and Enter in one write; a 16th key is lost (measured on
+    # 8.0's boot 3.68 under SeaBIOS).
+    k=$(openssl rand -base64 24 | tr -dc 'A-Za-z0-9')
+    [[ ${#k} -ge 14 ]] || die "could not make a passphrase"
+    printf '%s' "${k:0:14}" >console-passphrase
+fi
 umask 022
 
 # Serve install.conf and the disklabel template to the guest only: QEMU's
@@ -106,6 +136,14 @@ sed -e "s|@HOSTNAME@|$guest_name|" -e "s|@ROOT_PASSWORD@|$password|" \
     -e "s|@AUTHORIZED_KEY@|$(cat id_ed25519.pub)|" -e "s|@DISKLABEL_URL@|$www/disklabel|" \
     "$here/openbsd/install.conf" >"$work/www/install.conf"
 if grep -n '@[A-Z_]\+@' "$work/www/install.conf"; then die "install.conf placeholders left unfilled"; fi
+if [[ $crypto == yes ]]; then
+    # The installer pipes the answer to bioctl -s, which makes the volume on
+    # the root disk's OpenBSD slot; the passphrase not on a command line,
+    # where every process on the host sees it.
+    python3 -c 'k = open("console-passphrase").read().strip()
+print("Encrypt the root disk with a (p)assphrase or (k)eydisk = p")
+print("New passphrase = " + k)' >>"$work/www/install.conf"
+fi
 python3 -m http.server --bind 127.0.0.1 --directory "$work/www" "$port" >"$work/http.log" 2>&1 &
 server=$!
 

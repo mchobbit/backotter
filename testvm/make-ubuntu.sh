@@ -12,6 +12,8 @@
 #        ./make-ubuntu.sh --uefi --zfs-guided --name ubuntu26-zfs 26.04.1 vms/ubuntu26-zfs
 #        ./make-ubuntu.sh --uefi --raid --name ubuntu26-raid 26.04.1 vms/ubuntu26-raid
 #        ./make-ubuntu.sh --uefi --luks --name ubuntu26-luks 26.04.1 vms/ubuntu26-luks
+#        ./make-ubuntu.sh --uefi --name ubuntu24-uefi 24.04.5 vms/ubuntu24-uefi
+#        ./make-ubuntu.sh --uefi --luks --name ubuntu24-luks 24.04.5 vms/ubuntu24-luks
 #
 # VERSION is an Ubuntu release or point release (24.04, 24.04.1, ...).
 # ubuntu-VERSION-live-server-amd64.iso with its SHA256SUMS and SHA256SUMS.gpg

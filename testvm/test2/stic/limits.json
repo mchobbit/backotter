@@ -18,6 +18,14 @@
  "alpinebsd": {
   "linux/selinux/capabilities/zfs/btrfs/bcachefs attributes": "not on AlpineBSD (NetBSD kernel, FFS and tmpfs only; no MAC labels, no capabilities; secmodel securelevel -1)"
  },
+ "anduinos2": {
+  "a nested subvolume's place in a read-only snapshot (Btrfs's empty stub directory) has no times of its own": "Btrfs gives the stub (inode 2) the time it reads it in, so its mtime/ctime change between stats and between the two backups' nodes: not a tool's doing; judged without its times, restored as an empty directory",
+  "birth times (statx btime on Btrfs and vfat)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "project IDs (and P inheritance)": "not applicable: the guest's file systems are Btrfs and vfat, neither of which has project IDs (chattr -p is refused)",
+  "read-only snapshots' subvolume, read-only flag and shared extents": "not the archivers': each snapshot comes back as a directory with its own extents (contents and metadata checked); bko-holt's load recreates the subvolumes, the flag and the sharing (HoltTest1 1U, A5)",
+  "SELinux labels": "not applicable: the guest runs AppArmor (LSMs lockdown,capability,landlock,yama,apparmor,ima,evm), which keeps no labels on disk",
+  "whole-disk needs (GPT, BIOS boot, the ESP's signed loaders booting under Secure Boot, the MOK, GRUB)": "out of scope: whole-disk (HoltTest1 1U recreates the disk and checks shim, the MOK-signed GRUB and MokManager byte for byte); here the scratch disk is laid out like the guest's and only its file systems' contents are restored"
+ },
  "arch": {
   "BSD/FreeBSD file flags": "not on Linux; Linux inode flags checked instead",
   "NFSv4 ACLs": "Linux ext4 has none (POSIX ACLs only)",
@@ -137,6 +145,13 @@
   "sujournal": "/.sujournal belongs to the file system (newfs -j); its flags are tested on a copy",
   "zfs-per-file-options": "no ZFS on freebsd15-ufs (freebsd15 covers it)"
  },
+ "garuda": {
+  "birth times (statx btime on btrfs and vfat)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "data stored compressed as the source's (FIEMAP encoded extents) on the compress=zstd targets": "nocompress (m) restored compressed: the late flag pass (S7, both BACKOTTER.md) sets m after the data is written, and the target is mounted compress=zstd as Garuda's; its contents and its flag m are the source's (any other file stored otherwise than the source's is a FAIL)",
+  "project IDs": "btrfs and FAT take no project ID (chattr -p refused)",
+  "times of btrfs's placeholder directories in a snapshot (where a nested subvolume sits)": "btrfs stores nothing for the place of a nested subvolume inside a snapshot: new_simple_dir() makes that directory in memory (inode 2, BTRFS_EMPTY_SUBVOL_DIR_OBJECTID) with the current time, so its mtime, atime and ctime are when it was looked up and change between reads and evictions; no archiver can keep them. Only those paths' times are left out (found by inner.sh, btrfsx.py placeholders); their existence, type, mode and owner, and everything else in the snapshot, are judged",
+  "whole-disk needs (GPT, the ESP's loaders, btrfs subvolumes and snapshots as such, GRUB)": "out of scope: whole-disk (HoltTest1 recreates the GPT, the file systems, the subvolumes and snapper's read-only snapshots as such, and GRUB); here the scratch disk is made like the guest's and only its file systems' contents are restored"
+ },
  "gentoo": {
   "backups on relatime (the kernel's default, the guest's ESP's) leave the source's atimes alone": "only symlinks' atimes move: readlink(2) has no O_NOATIME (both BACKOTTER.md)",
   "birth times (statx btime on ext4 and XFS)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
@@ -225,6 +240,17 @@
   "Birth times": "OpenBSD/FFS2 keeps none (stat %B 0)",
   "Restore over existing schg/sappnd files": "securelevel 1: system flags can't be cleared (BACKOTTER.md)"
  },
+ "pikaos4": {
+  "backups on relatime (the guest's /, /boot and ESP) leave the source's atimes alone": "only symlinks' atimes move: readlink(2) has no O_NOATIME (both BACKOTTER.md)",
+  "birth times (statx btime on XFS and ext4)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "whole-disk needs (GPT, the ESP's rEFInd and its NVRAM entry, booster's initramfs)": "out of scope: whole-disk (HoltTest1 recreates the disk, keeps rEFInd from the ESP with its NVRAM entry and rebuilds booster's initramfs); here the scratch disk is made like the guest's and only its file systems' contents are restored"
+ },
+ "pikaos4-luks": {
+  "backups on relatime (the guest's /, /boot and ESP) leave the source's atimes alone": "only symlinks' atimes move: readlink(2) has no O_NOATIME (both BACKOTTER.md)",
+  "birth times (statx btime on Btrfs and ext4)": "Linux can't set a birth time: neither tool keeps one on Linux (restic BACKOTTER.md, unix.birthtime)",
+  "project IDs (and P inheritance)": "Btrfs has no project IDs and the guest's /boot ext4 has no project feature: none is made (as tumbleweed's)",
+  "whole-disk needs (GPT, LUKS2, the ESP's rEFInd (the fallback loader), booster's initramfs)": "out of scope: whole-disk (HoltTest1 recreates the disk, LUKS2 and the Btrfs subvolumes, keeps rEFInd from the ESP and rebuilds booster's initramfs); here the scratch disk is made like the guest's and only its file systems' contents are restored"
+ },
  "pop24": {
   "backup leaves the source unchanged (atimes)": "ext4: readlink(2) moves a symlink's atime (no O_NOATIME for it): atime (symlinks) 5 e.g. 'atime-symlink', 'symlink', 'symlink-abs' ; ext4+: readlink(2) moves a symlink's atime (no O_NOATIME for it)...",
   "birth times": "ext4 (/, 256-byte inodes) keeps one, Linux can't set it (BACKOTTER.md unix.birthtime: not on Linux)",
@@ -256,6 +282,11 @@
   "SELinux labels, NFSv4 ACLs, BSD file flags, system.* other than ACLs": "not on Ubuntu 24.04 with ZFS acltype=posix (AppArmor has no on-disk labels)",
   "birth times": "ZFS crtime and ext4 btime can't be set on Linux (BACKOTTER.md)",
   "whole-disk needs (boot, zpool.cache, bootloader)": "out of scope: whole-disk"
+ },
+ "ubuntu24-uefi": {
+  "Birth times": "ext4 keeps them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",
+  "NFSv4 ACLs": "Linux has them only over NFS (system.nfs4_acl); not on a local file system",
+  "SELinux labels": "not applicable; the guest runs AppArmor (186 profiles, 110 enforcing), which keeps no labels on disk"
  },
  "ubuntu26-uefi": {
   "Birth times": "ext4 keeps them, Linux can't set them (restic BACKOTTER.md unix.birthtime: not on Linux)",

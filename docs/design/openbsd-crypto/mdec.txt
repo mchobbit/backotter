@@ -1,0 +1,18 @@
+ls: /boot: No such file or directory
+-rwx------  2 root  wheel  33452836 Nov 14 01:06 /bsd
+-rwx------  2 root  wheel  33452836 Nov 14 01:06 /bsd.booted
+-rw-------  1 root  wheel   4897648 Nov 14 01:02 /bsd.rd
+-rw-------  1 root  wheel  33274491 Nov 14 01:02 /bsd.sp
+
+/usr/mdec:
+total 5712
+-r-xr-xr-x  1 root  bin   134656 Oct  7 04:42 BOOTIA32.EFI
+-r-xr-xr-x  1 root  bin   153088 Oct  7 04:42 BOOTX64.EFI
+-r-xr-xr-x  1 root  bin     5244 Oct  7 04:42 biosboot
+-r-xr-xr-x  1 root  bin    89072 Oct  7 04:42 boot
+-rw-r--r--  1 root  bin    90264 Oct  7 04:42 cdboot
+-rw-r--r--  1 root  bin     2048 Oct  7 04:42 cdbr
+-r-xr-xr-x  1 root  bin    47652 Oct  7 04:42 fdboot
+-r-xr-xr-x  1 root  bin      512 Oct  7 04:42 mbr
+-rw-r--r--  1 root  bin    99704 Oct  7 04:42 pxeboot
+-r--r--r--  1 root  bin  3973396 Oct  7 04:42 vmboot

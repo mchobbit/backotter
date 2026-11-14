@@ -242,9 +242,10 @@ efivarfs bound in):
    `boot.initramfs.generator` names it (the restore changed identifiers the
    image embeds: crypttab, mdadm.conf, the zpool cache, LVM and md UUIDs):
    - Debian's family (and Chimera): `update-initramfs -u -k all`;
-   - dracut (Fedora, Rocky, Void, EndeavourOS, openSUSE): `dracut --force
-     --kver K` for each kernel in `/lib/modules` (EndeavourOS with GRUB:
-     `dracut-rebuild`);
+   - dracut (Fedora, Rocky, Void, EndeavourOS, Garuda, openSUSE): `dracut
+     --force --kver K` for each kernel in `/lib/modules` (EndeavourOS with
+     GRUB, by eos-dracut, and Garuda, by garuda-dracut-support, name each
+     image after its kernel's package: their own `dracut-rebuild`);
    - mkinitcpio (Arch and its family): `mkinitcpio -P`; mkinitfs (Alpine):
      `mkinitfs K` for each kernel;
    - Gentoo (docs/design/gentoo.md): installkernel's `install.conf` names
@@ -254,6 +255,11 @@ efivarfs bound in):
      image, an installkernel layout other than `grub` or `compat`, and an
      image at `/lib/modules/K/initrd` are refused by name.
      installkernel's `.old` copies come back as they were, with a note;
+   - booster (PikaOS, docs/design/pikaos.md; `booster.yaml`'s keys under
+     `boot.initramfs.booster`): `booster build --force --kernel-version K
+     /boot/booster.img-K` for each kernel that had one, host-only as the
+     source's were, without Pika's `update-initramfs` wrapper; the
+     `.dpkg-bak` and `.bak` copies come back as they were;
    - nothing where the image is prebuilt with the kernel (AerynOS), comes
      with the image (ostree) or is in the store (NixOS).
 4. The boot loader, as `boot.loader` recorded it:
@@ -268,7 +274,22 @@ efivarfs bound in):
      `(lvmid/VG-UUID/LV-UUID)` when /boot/grub is on LVM (Gentoo's
      Thinkpad).  On Gentoo through shim it refuses: it would write an
      unsigned GRUB over the signed one.
+     On AnduinOS (`boot.loader.mok` recorded, or shim and `anduinos-grub`) it runs no
+     `--target=x86_64-efi` install: the restored ESP already holds shim and
+     the GRUB signed by the machine's own MOK, which a fresh `grub-install`
+     would replace with an unsigned one, so it keeps them and runs only
+     `update-grub` and the boot entries, with a note: other hardware with
+     Secure Boot on must enroll the MOK again (`mokutil --import`).
+   - GRUB's core in a BIOS boot partition (AnduinOS installs both): a
+     `grub-install --target=i386-pc` on each disk whose BIOS boot partition
+     held GRUB's core in the dump, before `update-grub`.
    - systemd-boot: `bootctl install`.
+   - rEFInd (PikaOS): nothing installed.  Its binaries, drivers, theme and
+     `refind.conf` (in `EFI/refind` and `EFI/BOOT`) come back with the ESP,
+     and `refind_linux.conf` with /boot; only the NVRAM entry is made, when
+     the source had one (not in "BOOTX64 mode").  The plan refuses rEFInd
+     through shim, and makes it a problem when `refind_linux.conf` names a
+     `root=UUID=` or `rd.luks.name=` UUID the layout doesn't have.
 5. UEFI boot entries (see "UEFI boot entries").
 
 ### UEFI boot entries

@@ -1,0 +1,60 @@
+OpenBSD 8.0 (GENERIC.MP) #84: Tue Oct  6 23:13:49 MDT 2026
+    deraadt@amd64.openbsd.org:/usr/src/sys/arch/amd64/compile/GENERIC.MP
+real mem = 2130563072 (2031MB)
+avail mem = 2044329984 (1949MB)
+random: good seed from bootblocks
+mpath0 at root
+scsibus0 at mpath0: 256 targets
+mainbus0 at root
+bios0 at mainbus0: SMBIOS rev. 2.8 @ 0xf52e0 (9 entries)
+bios0: vendor SeaBIOS version "1.16.3-debian-1.16.3-2" date 04/01/2014
+bios0: QEMU Standard PC (i440FX + PIIX, 1996)
+acpi0 at bios0: ACPI 1.0
+acpi0: sleep states S3 S4 S5
+acpi0: tables DSDT FACP APIC HPET WAET
+acpi0: wakeup devices
+acpitimer0 at acpi0: 3579545 Hz, 24 bits
+acpimadt0 at acpi0 addr 0xfee00000: PC-AT compat
+cpu0 at mainbus0: apid 0 (boot processor)
+cpu0: AMD Ryzen 5 5600H with Radeon Graphics, 3320.08 MHz, 19-50-00
+cpu0: cpuid 1 edx=178bfbff<FPU,VME,DE,PSE,TSC,MSR,PAE,MCE,CX8,APIC,SEP,MTRR,PGE,MCA,CMOV,PAT,PSE36,CFLUSH,MMX,FXSR,SSE,SSE2,HTT> ecx=f7f83203<SSE3,PCLMUL,SSSE3,FMA3,CX16,SSE4.1,SSE4.2,x2APIC,MOVBE,POPCNT,DEADLINE,AES,XSAVE,AVX,F16C,RDRAND,HV>
+cpu0: cpuid 6 eax=4<ARAT>
+cpu0: cpuid 7.0 ebx=219c07ab<FSGSBASE,TSC_ADJUST,BMI1,AVX2,SMEP,BMI2,ERMS,INVPCID,RDSEED,ADX,SMAP,CLFLUSHOPT,CLWB,SHA> ecx=40060c<UMIP,PKU> edx=ac000010<IBRS,IBPB,STIBP,SSBD>
+cpu0: cpuid d.1 eax=f<XSAVEOPT,XSAVEC,XGETBV1,XSAVES>
+cpu0: cpuid 80000001 edx=2fd3fbff<NXE,MMXX,FFXSR,PAGE1GB,RDTSCP,LONG> ecx=8003f7<LAHF,CMPLEG,SVM,AMCR8,ABM,SSE4A,MASSE,3DNOWP,OSVW,CPCTR>
+cpu0: cpuid 80000008 ebx=1302d205<IBPB,IBRS,STIBP,STIBP_ALL,SSBD,VIRTSSBD>
+cpu0: 64KB 64b/line 2-way D-cache, 64KB 64b/line 2-way I-cache
+cpu0: 512KB 64b/line 16-way L2 cache
+cpu0: smt 0, core 0, package 0, type P
+mtrr: Pentium Pro MTRR support, 8 var ranges, 88 fixed ranges
+cpu0: apic clock running at 1000MHz
+cpu1 at mainbus0: apid 1 (application processor)
+cpu1: AMD Ryzen 5 5600H with Radeon Graphics, 3324.10 MHz, 19-50-00
+cpu1: smt 0, core 1, package 0, type P
+ioapic0 at mainbus0: apid 0 pa 0xfec00000, version 11, 24 pins
+acpihpet0 at acpi0: 100000000 Hz
+acpiprt0 at acpi0: bus 0 (PCI0)
+"ACPI0006" at acpi0 not configured
+acpipci0 at acpi0 PCI0
+"PNP0A06" at acpi0 not configured
+"PNP0A06" at acpi0 not configured
+"PNP0A06" at acpi0 not configured
+"QEMU0002" at acpi0 not configured
+"PNP0303" at acpi0 not configured
+"PNP0F13" at acpi0 not configured
+com0 at acpi0 COM1 addr 0x3f8/0x8 irq 4: ns16550a, 16 byte fifo
+com0: console
+acpicmos0 at acpi0
+"ACPI0010" at acpi0 not configured
+acpicpu0 at acpi0: C1(@1 halt!)
+acpicpu1 at acpi0: C1(@1 halt!)
+pvbus0 at mainbus0: KVM
+pvclock0 at pvbus0
+pci0 at mainbus0 bus 0
+pchb0 at pci0 dev 0 function 0 "Intel 82441FX" rev 0x02
+pcib0 at pci0 dev 1 function 0 "Intel 82371SB ISA" rev 0x00
+pciide0 at pci0 dev 1 function 1 "Intel 82371SB IDE" rev 0x00: DMA, channel 0 wired to compatibility, channel 1 wired to compatibility
+pciide0: channel 0 disabled (no drives)
+atapiscsi0 at pciide0 channel 1 drive 0
+scsibus1 at atapiscsi0: 2 targets
+cd0 at scsibus1 targ 0 lun 0: <QEMU, QEMU DVD-ROM, 2.5+> removable

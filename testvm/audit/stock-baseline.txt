@@ -3,37 +3,17 @@
 
 restic 0.19.1  commit 6aa3a516ce654808a1f28f9fa21e9b7c8e6e90bf
   host: chopin
-  date: 2026-11-04 19:24:14 +0100
+  date: 2026-11-14 02:29:12 +0100
   go: go version go1.25.10 linux/amd64
-  seconds: 45
-  step: go mod download exit 0, 0s
-  step: go build exit 0, 0s
-  step: go vet exit 0, 2s
-  step: go test exit 0, 21s
+  seconds: 415
+  step: go mod download exit 0, 18s
+  step: go build exit 0, 21s
+  step: go vet exit 0, 15s
+  step: go test exit 0, 20s
   cross builds: 11, failing: none
   tests: 1701 pass, 0 fail, 33 skip; builds: 13 pass, 0 fail
   stock failures: none
 
-rustic_core 0.13.0  commit 1030be4568e5f83ddf9a1d5354479adc57dce227
-  host: cinqcent
-  date: 2026-11-04 19:17:18 +0100
-  rustc: rustc 1.94.1 (e408947bf 2026-03-25)
-  cargo: cargo 1.94.1 (29ea6fb6a 2026-03-24)
-  seconds: 40
-  step: cargo test exit 0, 34s
-  step: cargo test --doc exit 0, 6s
-  tests: 303 pass, 0 fail, 0 skip; builds: 2 pass, 0 fail
-  stock failures: none
+rustic_core 0.13.0 1030be4568e5f83ddf9a1d5354479adc57dce227: no baseline
 
-rustic 0.11.4  commit 6b96f976ff437a0528a4742358b172b32c3e3932
-  host: cinqcent
-  date: 2026-11-04 19:17:58 +0100
-  rustc: rustc 1.94.1 (e408947bf 2026-03-25)
-  cargo: cargo 1.94.1 (29ea6fb6a 2026-03-24)
-  rustic_core_used: 0.13.0 registry+https://github.com/rust-lang/crates.io-index
-  walkdir_used: 2.5.0 registry+https://github.com/rust-lang/crates.io-index
-  seconds: 12
-  step: cargo test exit 0, 10s
-  step: cargo test --doc exit 0, 1s
-  tests: 69 pass, 0 fail, 6 skip; builds: 2 pass, 0 fail
-  stock failures: none
+rustic 0.11.4 6b96f976ff437a0528a4742358b172b32c3e3932: no baseline

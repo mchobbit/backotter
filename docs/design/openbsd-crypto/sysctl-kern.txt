@@ -1,0 +1,5 @@
+kern.version=OpenBSD 8.0 (GENERIC.MP) #84: Tue Oct  6 23:13:49 MDT 2026
+    deraadt@amd64.openbsd.org:/usr/src/sys/arch/amd64/compile/GENERIC.MP
+
+hw.model=AMD Ryzen 5 5600H with Radeon Graphics
+hw.ncpu=2

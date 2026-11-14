@@ -11,7 +11,7 @@ use super::layout::{Disk, Layout, Part, TableKind};
 use super::target::Mapping;
 use super::{shell_quote, Options, Stage, RUN_DIR};
 use crate::json::Value;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 
 /// A closer for a device just let go of (an LV, a LUKS mapping, an md
 /// array): udev probes a device when the last writer closes it, and while
@@ -242,6 +242,20 @@ impl Names<'_> {
     }
 }
 
+/// A Timeshift snapshot's subvolume (BigLinux's; Mint's or Manjaro's with
+/// Timeshift in btrfs mode): `timeshift-btrfs/snapshots/NAME/@...` in the
+/// top level, mounted nowhere and in no backup path (shared.rs), so the
+/// backup has none of it.  Its NAME (Timeshift's date), or None.  Made, it
+/// would be an empty restore point: restoring it would empty `/`.
+fn timeshift_snapshot<'a>(path: &'a str, mounts: &[crate::load::shared::Mount]) -> Option<&'a str> {
+    let (name, sub) = path.strip_prefix("timeshift-btrfs/snapshots/")?.split_once('/')?;
+    if name.is_empty() || !sub.starts_with('@') || sub.contains('/') {
+        return None;
+    }
+    let mounted = mounts.iter().any(|m| m.subvol == path);
+    (!mounted && crate::load::shared::backup_path(mounts, path).is_none()).then_some(name)
+}
+
 pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
     let mut b = Builder {
         layout,
@@ -256,6 +270,7 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
         mount_points: vec![],
         fam: crate::other::Family::of_layout(&layout.v),
         btrfs: BTreeMap::new(),
+        timeshift: BTreeMap::new(),
     };
     b.btrfs_plans();
     if opts.new_uuids {
@@ -304,6 +319,9 @@ pub(crate) struct Builder<'a> {
     pub(crate) fam: Option<crate::other::Family>,
     /// Each btrfs's shared snapshots and aliases, by UUID (shared.rs).
     pub(crate) btrfs: BTreeMap<String, crate::load::shared::Plan>,
+    /// Each btrfs's Timeshift snapshots (their subvolumes' paths), by UUID:
+    /// not in the backup, so not made (timeshift_snapshot).
+    pub(crate) timeshift: BTreeMap<String, BTreeSet<String>>,
 }
 
 // ---- partition ----------------------------------------------------------
@@ -792,7 +810,10 @@ impl Builder<'_> {
             }
         }
         let mut left: Vec<_> = items.into_iter().collect();
-        let mut out = Vec::new();
+        // GELI providers first: what sits on them is made on their .eli nodes.
+        let mut out = self.geli_assemble(&mut have);
+        // So too OpenBSD's softraid volumes, on their DUIDs.
+        out.extend(self.softraid_assemble());
         while let Some(i) = left.iter().position(|(_, ins, _)| ins.iter().all(|x| have.contains(x))) {
             let (item, _, outs) = left.remove(i);
             for (src, node) in &outs {
@@ -1644,7 +1665,7 @@ pub fn mkswap(dev: &str, c: &Value) -> Vec<String> {
 }
 
 /// Contents assemble makes, not format.
-const MADE_BY_ASSEMBLE: [&str; 5] = ["linux_raid_member", "crypto_LUKS", "LVM2_member", "zfs_member", "xfs_external_log"];
+const MADE_BY_ASSEMBLE: [&str; 6] = ["linux_raid_member", "crypto_LUKS", "LVM2_member", "zfs_member", "xfs_external_log", "geli"];
 
 impl Builder<'_> {
     /// Every source device that holds a filesystem or swap, with its content.
@@ -1656,10 +1677,12 @@ impl Builder<'_> {
             }
             if !d.content.is_null() {
                 out.push((d.name.clone(), d.content.clone()));
+                out.extend(crate::other::geli::inner_leaf(self.layout, &d.name));
             }
             for p in &d.parts {
                 if !p.content.is_null() {
                     out.push((p.name.clone(), p.content.clone()));
+                    out.extend(crate::other::geli::inner_leaf(self.layout, &p.name));
                 }
             }
             for p in self.layout.device(&d.name).and_then(|v| v.get("label_partitions")).and_then(Value::as_array).into_iter().flatten() {
@@ -1675,6 +1698,9 @@ impl Builder<'_> {
                 }
             }
         }
+        // OpenBSD's softraid volumes' disklabel partitions, once assemble
+        // has planned the volume (other/softraid.rs).
+        out.extend(crate::other::softraid::leaves(self.layout).into_iter().filter(|(n, _)| self.names.made.contains_key(n)));
         out
     }
 
@@ -1907,6 +1933,10 @@ impl Builder<'_> {
                 subs = named.into_iter().map(|p| crate::json::Obj::new().set("path", p).build()).collect();
             }
         }
+        // Timeshift's snapshots aren't made, nor their NAME directories
+        // (btrfs_plans noted them).
+        let ts_ids = self.timeshift_ids(fs);
+        subs.retain(|v| !self.is_timeshift(fs, v));
         let quota = fs.get("quota_enabled").and_then(Value::as_bool).unwrap_or(false);
         let default_id = fs.at(&["default_subvolume", "id"]).and_then(Value::as_u64).unwrap_or(5);
         if subs.is_empty() && !quota && default_id == 5 {
@@ -1978,6 +2008,7 @@ impl Builder<'_> {
             match list.iter().find(|(_, v)| v.get("id").and_then(Value::as_u64) == Some(default_id)) {
                 Some((p, _)) if plan.is_shared(p) => {} // set once it's made
                 Some((p, _)) => out.push(Cmd::new(&["btrfs", "subvolume", "set-default", &format!("{top}/{p}")])),
+                None if ts_ids.contains(&default_id) => self.problems.push(format!("btrfs {uuid}: the default subvolume (ID {default_id}) is a Timeshift snapshot, which isn't in the backup")),
                 None => self.problems.push(format!("btrfs {uuid}: the default subvolume (ID {default_id}) isn't in its subvolume list")),
             }
         }
@@ -2003,7 +2034,10 @@ impl Builder<'_> {
         {
             out.push(Cmd::new(&["btrfs", "quota", "enable", &top]));
             out.push(Cmd::new(&["btrfs", "quota", "rescan", "-w", &top]));
-            let qgroups = fs.get("qgroups").and_then(Value::as_array).cloned().unwrap_or_default();
+            let mut qgroups = fs.get("qgroups").and_then(Value::as_array).cloned().unwrap_or_default();
+            // A Timeshift snapshot's level-0 qgroup: its subvolume isn't made.
+            let ts: Vec<String> = self.timeshift_ids(fs).iter().map(|i| format!("0/{i}")).collect();
+            qgroups.retain(|q| !s(q, "qgroupid").is_some_and(|id| ts.contains(&id)));
             // Higher-level qgroups (snapper's 1/0), their members, and limits.
             for q in &qgroups {
                 let Some(id) = s(q, "qgroupid") else { continue };
@@ -2044,7 +2078,7 @@ impl Builder<'_> {
         for fs in self.layout.arr(&["storage", "btrfs"]).to_vec() {
             let Some(uuid) = s(&fs, "uuid") else { continue };
             let strip = |p: &str| p.trim_start_matches("<FS_TREE>/").trim_start_matches('/').to_string();
-            let subs: Vec<Sub> = fs
+            let mut subs: Vec<Sub> = fs
                 .get("subvolumes")
                 .and_then(Value::as_array)
                 .into_iter()
@@ -2080,6 +2114,18 @@ impl Builder<'_> {
                     mounts.push(Mount { target, subvol });
                 }
             }
+            // Timeshift's snapshots: not in the backup, so neither made by
+            // format nor planned as shared snapshots.  Their IDs are burnt
+            // by format's placeholders when a later subvolume needs its own.
+            let ts: Vec<(String, String)> = subs.iter().filter_map(|x| timeshift_snapshot(&x.path, &mounts).map(|n| (x.path.clone(), n.to_string()))).collect();
+            if !ts.is_empty() {
+                let names: BTreeSet<&str> = ts.iter().map(|(_, n)| n.as_str()).collect();
+                let what = if names.len() == 1 { "Timeshift snapshot (NAMES) is" } else { "Timeshift snapshots (NAMES) are" };
+                let what = what.replace("NAMES", &names.iter().copied().collect::<Vec<_>>().join(", "));
+                self.notes.push(format!("btrfs {uuid}: {} {what} not in the backup; not made", names.len()));
+                subs.retain(|x| !ts.iter().any(|(p, _)| *p == x.path));
+                self.timeshift.insert(uuid.clone(), ts.into_iter().map(|(p, _)| p).collect());
+            }
             let mut plan = crate::load::shared::plan(&subs, &mounts);
             if share {
                 self.notes.extend(plan.notes.iter().map(|n| format!("btrfs {uuid}: {n}")));
@@ -2108,6 +2154,18 @@ impl Builder<'_> {
     pub(crate) fn ro_shared(&self) -> Vec<String> {
         let t = &self.opts.target;
         self.btrfs.values().flat_map(|p| p.shared.iter().filter(|x| x.readonly).map(|x| format!("{t}{}", x.backup))).collect()
+    }
+
+    /// `v`, a subvolume of the btrfs `fs`, is one of its Timeshift
+    /// snapshots (btrfs_plans), which aren't made.
+    fn is_timeshift(&self, fs: &Value, v: &Value) -> bool {
+        let Some(ts) = s(fs, "uuid").and_then(|u| self.timeshift.get(&u)) else { return false };
+        s(v, "path").is_some_and(|p| ts.contains(p.trim_start_matches("<FS_TREE>/").trim_start_matches('/')))
+    }
+
+    /// The source's IDs of the btrfs `fs`'s Timeshift snapshots.
+    fn timeshift_ids(&self, fs: &Value) -> Vec<u64> {
+        fs.get("subvolumes").and_then(Value::as_array).into_iter().flatten().filter(|v| self.is_timeshift(fs, v)).filter_map(|v| v.get("id").and_then(Value::as_u64)).collect()
     }
 
     fn datasets(&mut self, out: &mut Vec<Cmd>) {
@@ -2207,6 +2265,7 @@ impl Builder<'_> {
                 self.notes.push(format!("fstab's {file} ({ty}) isn't on the layout's disks; not mounted"));
                 continue;
             };
+            let src = crate::other::geli::fstab_src(self.layout, e, src);
             let Some(dev) = self.names.dev(&src) else {
                 self.notes.push(format!("fstab's {file} is on {src}, which isn't restored"));
                 continue;
@@ -2352,13 +2411,54 @@ impl Builder<'_> {
         let why = Some(format!("snapshot {} of {repo}, with BackOtter's restore flags", self.opts.snapshot));
         if self.fam.is_some() {
             // The boot stage there reads nothing of the restored tree.
-            return vec![Cmd { argv: a, why, env, ..Cmd::default() }];
+            return self.msdosfs_roots_spared(Cmd { argv: a, why, env, ..Cmd::default() });
         }
         let mut out = pre;
         out.push(Cmd { argv: a, why, env, ..Cmd::default() });
         self.shared_snapshots(&prefix, &mut out);
         out.push(Cmd::new(&["sh", "-c", &atimes_cmd(&self.opts.target, "before", &self.ro_shared())]).why("the atimes the restore set, for boot to put back after its reads"));
         out
+    }
+
+    /// The restore on a system whose msdosfs (FreeBSD's FAT: the ESP at
+    /// /boot/efi) is mounted in the tree: msdosfs refuses every change to
+    /// its root directory's owner, mode and times (EINVAL, even to what it
+    /// has), which has no directory entry to keep them in, so the archiver's
+    /// strict exit fails on those three alone.  Such a root shows what its
+    /// mount options give it, the source's as well.  The restore passes when
+    /// its only errors are those, and fails as before otherwise.
+    fn msdosfs_roots_spared(&self, restore: Cmd) -> Vec<Cmd> {
+        let roots: Vec<String> = self
+            .layout
+            .arr(&["storage", "fstab"])
+            .iter()
+            .filter(|e| s(e, "type").as_deref() == Some("msdosfs") && s(e, "resolves_to").is_some())
+            .filter_map(|e| s(e, "file"))
+            .filter(|f| f.starts_with('/') && f != "/")
+            .map(|f| f.trim_matches('/').to_string())
+            .collect();
+        if roots.is_empty() {
+            return vec![restore];
+        }
+        let allowed = format!("{RUN_DIR}/restore.fatroots");
+        let lines: String = roots
+            .iter()
+            .flat_map(|r| ["setting UID/GID failed", "setting User/Group failed", "chmod failed", "setting file times failed"].map(|w| format!("[WARN] restore {r}: {w}.\n")))
+            .collect();
+        let err = format!("{RUN_DIR}/restore.err");
+        let script = format!(
+            "\"$@\" 2>{err}; s=$?; cat {err} >&2; [ $s -eq 1 ] || exit $s; e=$(printf '\\033'); sed -e \"s/$e\\[[0-9;]*m//g\" -e 's/[[:space:]]*$//' {err} > {err}.plain; \
+             n=$(sed -n 's/^error: There were \\([0-9][0-9]*\\) errors.*/\\1/p' {err}.plain); k=$(grep -cxF -f {allowed} {err}.plain); \
+             [ -n \"$n\" ] && [ \"$n\" = \"$k\" ] || exit 1; echo 'bko-holt: the restore set no owner, mode or times on the root of {}: msdosfs keeps none there' >&2",
+            roots.iter().map(|r| format!("/{r}")).collect::<Vec<_>>().join(", ")
+        );
+        let mut argv = vec!["sh".to_string(), "-c".into(), script, "sh".into()];
+        argv.extend(restore.argv);
+        vec![
+            Cmd::new(&["mkdir", "-p", RUN_DIR]),
+            Cmd::write_file(&allowed, lines).why("the restore errors msdosfs's mount roots give, and only those, let pass"),
+            Cmd { argv, ..restore },
+        ]
     }
 
     /// Each btrfs's shared snapshots, once the main restore is done: in the
@@ -2580,6 +2680,24 @@ impl Builder<'_> {
                 self.notes.push("debconf's grub-pc/install_devices still names the source's disks; `dpkg-reconfigure grub-pc` on the restored system fixes it".into());
                 self.remake_grub_cfg(&t, &mut out);
             }
+            // AnduinOS's own GRUB, signed on the machine with its MOK, behind
+            // shim (docs/design/anduinos.md, decision 3): shim, MokManager
+            // and the signed GRUB come back with the ESP.  Its grub-install
+            // is plain GRUB's and would write an unsigned image over the
+            // signed one, so only grub.cfg is remade.  Without shim or a
+            // MOK (BIOS, a GRUB booted directly, Ubuntu's signed GRUB from
+            // before 2.0.5) it's Ubuntu's, below.  Its erase-disk install
+            // is a BIOS install too (a BIOS boot partition, and
+            // grub-install --target=i386-pc): that's made again, since the
+            // i386-pc target writes only the MBR, the BIOS boot partition
+            // and /boot/grub/i386-pc, never the ESP.
+            ("grub", true) if self.anduinos_signed_grub(via_shim) => {
+                self.notes.push(self.anduinos_mok_note());
+                for d in self.grub_core_partition_devices() {
+                    out.push(Cmd::new(&["chroot", &t, "grub-install", "--target=i386-pc", &d]).why("the source's BIOS install beside the UEFI one: GRUB's core in the BIOS boot partition; the ESP isn't touched"));
+                }
+                self.remake_grub_cfg(&t, &mut out);
+            }
             ("grub", true) if self.grub_dir() == "/boot/grub2" => {
                 // Fedora: grub2-install refuses EFI (it can't keep Secure
                 // Boot); shim and the signed GRUB come back with the ESP.
@@ -2631,7 +2749,32 @@ impl Builder<'_> {
             // Limine on UEFI is files on the ESP (its EFI binary,
             // limine.conf), restored with it; only the boot entries are made.
             ("limine", true) => self.notes.push("Limine: its EFI binary and limine.conf came back with the ESP; nothing to install".into()),
+            // rEFInd through shim: PikaOS doesn't, and nothing here keeps
+            // shim's MOK enrolment of rEFInd's key.
+            ("refind", true) if via_shim => {
+                self.problems.push("rEFInd through shim (Secure Boot): bko-holt load keeps only an unsigned rEFInd's files, and doesn't support it".into());
+            }
+            // rEFInd (PikaOS) is files too: its binary, drivers, theme and
+            // refind.conf in EFI/refind and EFI/BOOT, restored with the ESP,
+            // and refind_linux.conf with /boot.  refind-install isn't run: it
+            // would rewrite refind.conf and make its own boot entry.
+            ("refind", true) => {
+                self.notes.push("rEFInd: its EFI files, drivers, theme and refind.conf came back with the ESP, and refind_linux.conf with /boot; nothing to install".into());
+                self.check_refind_uuids();
+            }
             (other, _) => self.problems.push(format!("boot loader {other} ({}) isn't one bko-holt load can install", if uefi { "UEFI" } else { "BIOS" })),
+        }
+        // BigLinux's installer ends with btrfs-fix: /boot and GRUB's files
+        // rewritten uncompressed, which the restore and this stage wrote
+        // through compress-force=zstd.  After the initramfs and grub.cfg.
+        if self.layout.str_at(&["os", "id"]) == Some("biglinux") && self.fstab_type_of("/boot").as_deref() == Some("btrfs") {
+            for d in ["/boot", "/usr/share/grub"].into_iter().filter(|d| self.fstab_type_of(d).as_deref() == Some("btrfs")) {
+                out.push(Cmd::new(&["btrfs", "filesystem", "defragment", "--nocomp", "-r", &format!("{t}{d}")]).why(format!("{d} uncompressed, as BigLinux's installer leaves it (its btrfs-fix)")));
+            }
+        }
+        // AnduinOS's Disk Snapshots Manager (decision 6): a note only.
+        if self.layout.str_at(&["os", "id"]) == Some("anduinos") && self.layout.str_at(&["boot", "packages", "anduinos-btrfs-snapshots-manager"]).is_some() && !self.layout.arr(&["storage", "btrfs"]).is_empty() {
+            self.notes.push("AnduinOS: the Disk Snapshots Manager's records name each snapshot by its Btrfs subvolume UUID, which a restore can't keep (the subvolumes are made anew), so its snapshot list and Factory Reset may need re-pointing at the restored snapshots".into());
         }
         if uefi && !self.opts.no_nvram {
             out.extend(self.efi_entries());
@@ -2678,6 +2821,7 @@ impl Builder<'_> {
                 .into_iter()
                 .flatten()
                 .filter(|v| v.get("readonly").and_then(Value::as_bool) == Some(true))
+                .filter(|v| !self.is_timeshift(&fs, v)) // not made
                 .filter_map(|v| s(v, "path").map(|p| p.trim_start_matches("<FS_TREE>/").to_string()))
                 .filter(|p| !plan.is_shared(p)) // the restore stage did those
                 .collect();
@@ -2703,7 +2847,7 @@ impl Builder<'_> {
             Some(l) if !l.is_empty() => format!("LANG={l}.UTF-8"),
             _ => "LANG=C".to_string(),
         };
-        if matches!(self.layout.str_at(&["os", "id"]), Some("debian" | "ubuntu" | "linuxmint" | "zorin")) {
+        if matches!(self.layout.str_at(&["os", "id"]), Some("debian" | "ubuntu" | "linuxmint" | "zorin" | "neon" | "anduinos")) {
             return Cmd::new(&["chroot", t, "env", &lang, "update-grub"]);
         }
         let cfg = format!("{}/grub.cfg", self.grub_dir());
@@ -2717,6 +2861,39 @@ impl Builder<'_> {
         out.push(Cmd::new(&["sh", "-c", &format!("[ ! -e {p} ] || mount --bind {t}/usr/bin/true {p}")]).why("os-prober off: it would list the rescue system's disks"));
         out.push(self.update_grub(t));
         out.push(Cmd::new(&["sh", "-c", &format!("! grep -q ' {p} ' /proc/self/mountinfo || umount {p}")]));
+    }
+
+    /// The type of the filesystem fstab mounts `dir` (an absolute path) on:
+    /// its deepest mount at or above it.
+    fn fstab_type_of(&self, dir: &str) -> Option<String> {
+        self.layout
+            .arr(&["storage", "fstab"])
+            .iter()
+            .filter_map(|e| Some((s(e, "file")?, s(e, "type")?)))
+            .filter(|(f, ty)| ty != "swap" && (f == "/" || dir == f || dir.starts_with(&format!("{}/", f.trim_end_matches('/')))))
+            .max_by_key(|(f, _)| f.len())
+            .map(|(_, ty)| ty)
+    }
+
+    /// AnduinOS with its own GRUB on the ESP, signed with the machine's MOK:
+    /// the dump found the MOK beside anduinos-grub (boot.loader.mok), or the
+    /// firmware booted shim and anduinos-grub is installed.
+    fn anduinos_signed_grub(&self, via_shim: bool) -> bool {
+        self.layout.str_at(&["os", "id"]) == Some("anduinos")
+            && (self.layout.v.at(&["boot", "loader", "mok"]).is_some_and(|m| !m.is_null()) || (via_shim && self.layout.str_at(&["boot", "packages", "anduinos-grub"]).is_some()))
+    }
+
+    /// What the restored machine's firmware needs to boot AnduinOS's
+    /// MOK-signed GRUB: the same MOK, which only the source's machine has.
+    fn anduinos_mok_note(&self) -> String {
+        let cert = self.layout.str_at(&["boot", "loader", "mok", "cert"]).unwrap_or(crate::boot::ANDUINOS_MOK);
+        let key = match self.layout.str_at(&["boot", "loader", "mok", "sha256"]) {
+            Some(fp) => format!("the MOK {cert} (SHA-256 {fp})"),
+            None => format!("the MOK {cert} (its fingerprint not in the dump)"),
+        };
+        format!(
+            "AnduinOS: shim, MokManager and AnduinOS's GRUB, signed with {key}, are the restored ESP's; grub-install --target=x86_64-efi isn't run (AnduinOS's is plain GRUB and would write an unsigned image), only grub.cfg is remade.  On the same machine its firmware holds the key; on other hardware with Secure Boot on, enroll it again (`mokutil --import {cert}`, then confirm it at MokManager on the next boot) or turn Secure Boot off"
+        )
     }
 
     /// /boot/grub, or Fedora's /boot/grub2.
@@ -2740,15 +2917,22 @@ impl Builder<'_> {
         Some(match self.layout.str_at(&["boot", "initramfs", "generator"]) {
             Some("prebuilt") => return None,
             Some("mkinitcpio") => Cmd::new(&["chroot", t, "mkinitcpio", "-P"]),
-            // EndeavourOS with GRUB: eos-dracut names each initramfs after its
-            // kernel's package (/boot/initramfs-linux.img), which dracut's own
-            // choice of path would miss; its command builds them, with fallbacks.
-            Some("dracut") if self.layout.str_at(&["boot", "packages", "eos-dracut"]).is_some() => Cmd::new(&["chroot", t, "dracut-rebuild"]),
+            // EndeavourOS with GRUB (eos-dracut) and Garuda
+            // (garuda-dracut-support) both name each initramfs after its
+            // kernel's package (/boot/initramfs-linux.img,
+            // initramfs-linux-garuda.img), which dracut's own choice of path
+            // would miss; their dracut-rebuild builds them, with fallbacks.
+            Some("dracut") if ["eos-dracut", "garuda-dracut-support"].iter().any(|p| self.layout.str_at(&["boot", "packages", *p]).is_some()) => Cmd::new(&["chroot", t, "dracut-rebuild"]),
             // Not --regenerate-all: it takes every directory in /lib/modules, and
             // a removed kernel can leave one behind with only depmod's indexes.
             Some("dracut") => Cmd::new(&["chroot", t, "sh", "-c", "n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; dracut --force --kver \"${k##*/}\" || exit; n=$((n + 1)); done; [ \"$n\" -gt 0 ]"]),
             // Alpine: mkinitfs KVER writes /boot/initramfs-FLAVOR.
             Some("mkinitfs") => Cmd::new(&["chroot", t, "sh", "-c", "for k in /lib/modules/*; do mkinitfs \"${k##*/}\" || exit; done"]),
+            // PikaOS: what booster's own update-initramfs runs for each
+            // kernel, without its dpkg-trigger and backup paths; host-only
+            // as booster.yaml says, from the chroot's /sys (this machine's).
+            // The same guard as dracut's loop.
+            Some("booster") => Cmd::new(&["chroot", t, "sh", "-c", "n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; k=${k##*/}; booster build --force --kernel-version \"$k\" \"/boot/booster.img-$k\" || exit; n=$((n + 1)); done; [ \"$n\" -gt 0 ]"]),
             _ => Cmd::new(&["chroot", t, "update-initramfs", "-u", "-k", "all"]),
         })
     }
@@ -2868,6 +3052,30 @@ impl Builder<'_> {
         vec![Cmd::new(&["sh", "-c", &format!("[ -e {dir}/BOOTX64.EFI ] || {{ mkdir -p {dir} && cp {src} {dir}/BOOTX64.EFI; }}")]).why("--removable: the ESP's loader at the fallback path too")]
     }
 
+    /// The target disks whose source has GRUB's BIOS core in its BIOS boot
+    /// partition, as the dump's boot_code found it (a UEFI install that is
+    /// a BIOS install too).  A disk with a BIOS boot partition and no core
+    /// recorded gets a note: it boots by UEFI only.
+    fn grub_core_partition_devices(&mut self) -> Vec<String> {
+        const BIOS_BOOT: &str = "21686148-6449-6e6f-744e-656564454649";
+        let mut out = Vec::new();
+        for d in &self.layout.disks {
+            let Some(t) = self.names.mapping.target_of(&d.name) else { continue };
+            if !d.parts.iter().any(|p| p.ptype.eq_ignore_ascii_case(BIOS_BOOT)) {
+                continue;
+            }
+            let code = self.layout.device(&d.name).and_then(|v| v.get("boot_code"));
+            let at = |k: &str| code.and_then(|c| c.get(k));
+            let core = at("kind").and_then(Value::as_str) == Some("grub2") && at("grub_core_in").and_then(Value::as_str) == Some("partition") && at("grub_core_present").and_then(Value::as_bool) == Some(true);
+            if core {
+                out.push(format!("/dev/{t}"));
+            } else {
+                self.notes.push(format!("{} has a BIOS boot partition, but the dump records no GRUB core in it: no BIOS boot code is written, and /dev/{t} boots by UEFI only", d.name));
+            }
+        }
+        out
+    }
+
     fn grub_bios_devices(&self) -> Vec<String> {
         let mut out = Vec::new();
         if let Some(list) = self.layout.str_at(&["boot", "grub", "debconf", "grub-pc/install_devices"]) {
@@ -2896,7 +3104,9 @@ impl Builder<'_> {
     fn bootloader_id(&self) -> String {
         let dir_of = |f: &str| {
             let parts: Vec<&str> = f.split(['\\', '/']).filter(|p| !p.is_empty()).collect();
-            (parts.len() >= 3 && parts[0].eq_ignore_ascii_case("EFI") && !parts[1].eq_ignore_ascii_case("BOOT")).then(|| parts[1].to_ascii_lowercase())
+            // As the source spells it (BigLinux's EFI/BigLinux): FAT ignores
+            // case, but the plan says what the installer did.
+            (parts.len() >= 3 && parts[0].eq_ignore_ascii_case("EFI") && !parts[1].eq_ignore_ascii_case("BOOT")).then(|| parts[1].to_string())
         };
         let mut wanted: Vec<String> = self.layout.str_at(&["boot", "efi", "boot_current"]).map(str::to_string).into_iter().collect();
         wanted.extend(self.layout.v.at(&["boot", "efi", "boot_order"]).and_then(Value::as_array).into_iter().flatten().filter_map(|x| x.as_str().map(str::to_string)));
@@ -2945,6 +3155,45 @@ impl Builder<'_> {
             out.push(Cmd::new(&["efibootmgr", "--quiet", "--create", "--disk", &format!("/dev/{t}"), "--part", &num.to_string(), "--label", &desc, "--loader", &file]));
         }
         out
+    }
+
+    /// refind_linux.conf (boot.refind.linux_conf) is kept as restored, so
+    /// every root=UUID= and rd.luks.name=UUID=NAME (or rd.luks.uuid=) in it
+    /// must name a filesystem or LUKS container the layout makes with that
+    /// UUID; one that doesn't is a problem now, not a boot that can't find
+    /// its root.
+    fn check_refind_uuids(&mut self) {
+        let mut have: Vec<String> = Vec::new();
+        for sect in ["disks", "md_arrays", "dm_devices"] {
+            for d in self.layout.arr(&["storage", sect]) {
+                let mut all = vec![d];
+                all.extend(d.get("partitions").and_then(Value::as_array).into_iter().flatten());
+                have.extend(all.iter().filter_map(|x| x.at(&["content", "uuid"]).and_then(Value::as_str)).map(str::to_ascii_lowercase));
+            }
+        }
+        let conf = self.layout.str_at(&["boot", "refind", "linux_conf", "path"]).unwrap_or("/boot/refind_linux.conf").to_string();
+        let mut missing: Vec<String> = Vec::new();
+        for l in self.layout.arr(&["boot", "refind", "linux_conf", "lines"]) {
+            for w in s(l, "options").unwrap_or_default().split_whitespace() {
+                let u = if let Some(r) = w.strip_prefix("root=") {
+                    r.strip_prefix("UUID=").or_else(|| r.strip_prefix("/dev/disk/by-uuid/"))
+                } else if let Some(r) = w.strip_prefix("rd.luks.name=") {
+                    // rd.luks.name=UUID=NAME, the UUID bare or with UUID=.
+                    let r = r.strip_prefix("UUID=").unwrap_or(r);
+                    r.split_once('=').map(|(u, _)| u)
+                } else {
+                    w.strip_prefix("rd.luks.uuid=").map(|r| r.strip_prefix("luks-").unwrap_or(r))
+                };
+                let Some(u) = u.filter(|u| !u.is_empty()) else { continue };
+                let what = format!("{}={u}", w.split('=').next().unwrap_or(w));
+                if !have.contains(&u.to_ascii_lowercase()) && !missing.contains(&what) {
+                    missing.push(what);
+                }
+            }
+        }
+        for m in missing {
+            self.problems.push(format!("rEFInd: {conf} has {m}, which no filesystem or LUKS container in the layout has; the restored system couldn't find it at boot"));
+        }
     }
 
     fn close(&mut self) -> Vec<Cmd> {
@@ -3161,6 +3410,12 @@ mod tests {
         let esps = r#"[{"contents": {"files": [{"path": "EFI/BOOT/BOOTX64.EFI"}, {"path": "EFI/ubuntu/shimx64.efi"}]}}]"#;
         assert_eq!(id_of(&format!(r#"{{"entries": [{win}], "boot_order": ["0000"]}}"#), esps), "ubuntu");
         assert_eq!(id_of(&format!(r#"{{"entries": [{win}], "boot_order": ["0000"]}}"#), "[]"), "debian");
+        // The source's spelling, from the entry or the ESP (BigLinux's);
+        // EFI and BOOT still matched without case.
+        let big = r#"{"number": "0004", "description": "BigLinux", "file": "\\EFI\\BigLinux\\grubx64.efi", "partition": {"device": "vda1"}}"#;
+        assert_eq!(id_of(&format!(r#"{{"entries": [{big}], "boot_order": ["0004"]}}"#), "[]"), "BigLinux");
+        let esps = r#"[{"contents": {"files": [{"path": "efi/Boot/bootx64.efi"}, {"path": "efi/BigLinux/grubx64.efi"}]}}]"#;
+        assert_eq!(id_of(&format!(r#"{{"entries": [{win}], "boot_order": ["0000"]}}"#), esps), "BigLinux");
     }
 
     #[test]
@@ -3179,6 +3434,54 @@ mod tests {
         assert!(t.contains("chroot /mnt/bko-target bootctl install --no-variables\n"), "{t}");
         // bootctl writes /etc/kernel/entry-token: relabelled, when it's there.
         assert!(t.contains(r#"[ ! -d /etc/kernel ] || set -- /etc/kernel; setfiles "$f" /boot /var/log/bko-holt "$@";"#), "{t}");
+    }
+
+    /// PikaOS (docs/design/pikaos.md): booster's image remade for each
+    /// kernel; rEFInd kept as restored, with only its boot entry made, and
+    /// refind_linux.conf's UUIDs checked against the layout.
+    #[test]
+    fn pikaos_booster_and_refind() {
+        let plan = |via_shim: bool, options: &str| {
+            let j = sample::bios_mbr()
+                .replace(r#""id": "debian", "version_id": "13""#, r#""id": "pika", "version_id": "4""#)
+                .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+                .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, &format!(r#""loader": {{"name": "refind", "firmware": "uefi", "via_shim": {via_shim}, "package": "refind"}}"#))
+                .replace(
+                    r#""efi": null,"#,
+                    &format!(
+                        r#""efi": {{"boot_current": "0001", "boot_order": ["0001"], "entries": [{{"number": "0001", "description": "rEFInd Boot Manager", "file": "\\EFI\\refind\\refind_x64.efi", "partition": {{"device": "vda1"}}}}]}},
+                           "esps": [{{"device": "vda1", "mounted_at": "/boot/efi", "contents": {{"files": [{{"path": "EFI/refind/refind_x64.efi"}}, {{"path": "EFI/BOOT/bootx64.efi"}}]}}}}],
+                           "initramfs": {{"generator": "booster", "booster": {{"conf": "/etc/booster.yaml", "universal": false}}}}, "packages": {{"booster": "0.12.1", "refind": "0.14.2"}},
+                           "refind": {{"linux_conf": {{"path": "/boot/refind_linux.conf", "lines": [{{"title": "Boot with standard options", "options": "{options}"}}]}}}},"#
+                    ),
+                );
+            let b = built_from(&j, &[]);
+            (text(b.stage(Stage::Boot)), b.notes.join("\n"), b.problems.clone())
+        };
+        let good = "nowatchdog rootflags=rw,relatime root=UUID=b7b7b7b7-0000-4000-8000-000000000003 quiet splash ---";
+        let (t, n, p) = plan(false, good);
+        assert!(p.is_empty(), "{p:?}");
+        assert_eq!(t.matches("booster build").count(), 1, "{t}");
+        assert!(t.contains(r#"chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d "$k/kernel" ] || continue; k=${k##*/}; booster build --force --kernel-version "$k" "/boot/booster.img-$k" || exit; n=$((n + 1)); done; [ "$n" -gt 0 ]'"#), "{t}");
+        assert!(!t.contains("update-initramfs") && !t.contains("refind-install") && !t.contains("grub"), "{t}");
+        assert!(t.contains("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'rEFInd Boot Manager' --loader '\\EFI\\refind\\refind_x64.efi'\n"), "{t}");
+        assert!(n.contains("rEFInd: its EFI files, drivers, theme and refind.conf came back with the ESP, and refind_linux.conf with /boot; nothing to install"), "{n}");
+        // A UUID the layout doesn't make, as root= and as the LUKS one.
+        let (_, _, p) = plan(false, "rd.luks.name=1111aaaa-2222-4333-8444-555566667777=crypt_root rd.luks.options=discard root=UUID=DEADBEEF-0000-4000-8000-000000000009 quiet");
+        assert_eq!(
+            p,
+            vec![
+                "rEFInd: /boot/refind_linux.conf has rd.luks.name=1111aaaa-2222-4333-8444-555566667777, which no filesystem or LUKS container in the layout has; the restored system couldn't find it at boot",
+                "rEFInd: /boot/refind_linux.conf has root=DEADBEEF-0000-4000-8000-000000000009, which no filesystem or LUKS container in the layout has; the restored system couldn't find it at boot",
+            ]
+        );
+        // The same UUID in another case is the same UUID; LUKS's by UUID= too.
+        let (_, _, p) = plan(false, "rd.luks.name=UUID=5E5E5E5E-0000-4000-8000-000000000002=crypt_root root=UUID=B7B7B7B7-0000-4000-8000-000000000003");
+        assert!(p.is_empty(), "{p:?}");
+        // Through shim: refused by name, nothing kept quietly.
+        let (_, n, p) = plan(true, good);
+        assert_eq!(p, vec!["rEFInd through shim (Secure Boot): bko-holt load keeps only an unsigned rEFInd's files, and doesn't support it"]);
+        assert!(!n.contains("rEFInd: its EFI files"), "{n}");
     }
 
     /// NixOS on UEFI (BackShot1's Thinkpad, NixOS 26.05): bootctl and
@@ -3431,6 +3734,114 @@ mod tests {
     }
 
     #[test]
+    fn timeshift_snapshots_are_told_apart() {
+        use crate::load::shared::Mount;
+        let m = |t: &str, s: &str| Mount { target: t.into(), subvol: s.into() };
+        let ms = [m("/", "@"), m("/home", "@home")];
+        assert_eq!(timeshift_snapshot("timeshift-btrfs/snapshots/2026-11-14_10-00-01/@", &ms), Some("2026-11-14_10-00-01"));
+        assert_eq!(timeshift_snapshot("timeshift-btrfs/snapshots/2026-11-14_10-00-01/@home", &ms), Some("2026-11-14_10-00-01"));
+        for p in ["timeshift-btrfs/snapshots/X/home", "timeshift-btrfs/snapshots/X/@/var", "timeshift-btrfs/snapshots//@", "timeshift-btrfs/X/@", "@/timeshift-btrfs/snapshots/X/@", "@snapshots/1/snapshot"] {
+            assert_eq!(timeshift_snapshot(p, &ms), None, "{p}");
+        }
+        // Mounted, or in the backup through a mount of the top level: not left out.
+        let p = "timeshift-btrfs/snapshots/X/@";
+        assert_eq!(timeshift_snapshot(p, &[m("/", "@"), m("/mnt/old", p)]), None);
+        assert_eq!(timeshift_snapshot(p, &[m("/", "@"), m("/mnt/top", "")]), None);
+    }
+
+    /// BigLinux's btrfs with two Timeshift snapshots of / (one read-only,
+    /// with a qgroup), Arch's @snapshots unmounted, another Timeshift-looking
+    /// subvolume mounted at /mnt/old, and @var made after them all.
+    fn timeshift_layout(default_id: u64) -> String {
+        let fs = "b7b7b7b7-0000-4000-8000-000000000003";
+        let sub = |id: u64, p: &str, parent: &str, ro: bool| format!(r#"{{"id": {id}, "gen": {id}, "top_level": 5, "path": "<FS_TREE>/{p}", "uuid": "u{id}", "parent_uuid": {parent}, "readonly": {ro}, "properties": null}}"#);
+        let subs = [
+            sub(256, "@rootfs", "null", false),
+            sub(257, "@snapshots", "null", false),
+            sub(258, "timeshift-btrfs/snapshots/2026-11-14_10-00-01/@rootfs", "\"u256\"", true),
+            sub(260, "timeshift-btrfs/snapshots/2026-11-15_10-00-01/@rootfs", "\"u256\"", false),
+            sub(261, "timeshift-btrfs/snapshots/2026-11-01_00-00-01/@", "null", false),
+            sub(262, "@var", "null", false),
+        ];
+        sample::bios_mbr()
+            .replace(
+                r#""subvolumes": [{"id": 256, "top_level": 5, "path": "<FS_TREE>/@rootfs", "readonly": false, "properties": {"compression": "zstd"}}],"#,
+                &format!(r#""subvolumes": [{}],"#, subs.join(", ")),
+            )
+            .replace(r#""default_subvolume": {"id": 5}, "quota_enabled": false, "qgroups": null"#, &format!(
+                r#""default_subvolume": {{"id": {default_id}}}, "quota_enabled": true, "qgroups": [{{"qgroupid": "0/256", "parents": ["1/0"]}}, {{"qgroupid": "0/258", "parents": ["1/0"], "max_referenced": 1000}}, {{"qgroupid": "1/0", "parents": []}}]"#
+            ))
+            .replace(
+                r#""resolves_to": "vda3"},"#,
+                &format!(
+                    r#""resolves_to": "vda3"}},
+      {{"spec": "UUID={fs}", "file": "/var", "type": "btrfs", "options": "subvol=@var", "freq": 0, "passno": 0, "resolves_to": "vda3"}},
+      {{"spec": "UUID={fs}", "file": "/mnt/old", "type": "btrfs", "options": "subvol=timeshift-btrfs/snapshots/2026-11-01_00-00-01/@", "freq": 0, "passno": 0, "resolves_to": "vda3"}},"#
+                ),
+            )
+    }
+
+    /// Timeshift's snapshots (Decision 3 of docs/design/biglinux.md): not
+    /// in the backup, so neither their subvolumes nor their NAME
+    /// directories are made, nor their qgroups, IDs or read-only flags; one
+    /// note names them.  An unmounted subvolume that isn't one, and a
+    /// mounted one under timeshift-btrfs, are made as before.
+    #[test]
+    fn timeshift_snapshots_are_not_made() {
+        let j = timeshift_layout(5);
+        let b = built_from(&j, &["--repo", "/srv/repo", "--password-file", "/run/pw"]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let f = text(b.stage(Stage::Format));
+        let top = "/run/bko-holt/btrfs/b7b7b7b7-0000-4000-8000-000000000003";
+        for p in ["@rootfs", "@snapshots", "timeshift-btrfs/snapshots/2026-11-01_00-00-01/@", "@var"] {
+            assert!(f.contains(&format!("btrfs subvolume create {top}/{p}\n")), "{p} not made in\n{f}");
+        }
+        assert!(f.contains(&format!("mkdir -p {top}/timeshift-btrfs/snapshots/2026-11-01_00-00-01\n")), "{f}");
+        assert!(!f.contains("2026-11-14") && !f.contains("2026-11-15") && !f.contains("subvolume snapshot"), "{f}");
+        // Their IDs burnt, so that the mounted one and @var keep theirs.
+        for n in 258..=260 {
+            assert!(f.contains(&format!("btrfs subvolume create {top}/.bko-holt-placeholder-{n}\n")), "{n} in\n{f}");
+        }
+        assert!(!f.contains("placeholder-261") && !f.contains("placeholder-262"), "{f}");
+        // Quotas: / 's qgroup in 1/0; the left-out snapshot's not at all.
+        assert!(f.contains(&format!("btrfs qgroup assign --no-rescan 0/256 1/0 {top}\n")) && !f.contains("0/258"), "{f}");
+        let n = b.notes.join("\n");
+        assert!(n.contains("btrfs b7b7b7b7-0000-4000-8000-000000000003: 2 Timeshift snapshots (2026-11-14_10-00-01, 2026-11-15_10-00-01) are not in the backup; not made"), "{n}");
+        assert_eq!(b.notes.iter().filter(|x| x.contains("Timeshift")).count(), 1, "{n}");
+        assert!(!n.contains("snapshot of a subvolume that's gone"), "{n}");
+        // No shared snapshot for them, and no read-only flag.
+        let r = text(b.stage(Stage::Restore));
+        assert!(!r.contains("--exact") && !r.contains("timeshift"), "{r}");
+        let bt = text(b.stage(Stage::Boot));
+        assert!(!bt.contains("timeshift") && !bt.contains("ro true"), "{bt}");
+        // The default subvolume being one of them is a problem.
+        let b = built_from(&timeshift_layout(258), &[]);
+        assert_eq!(b.problems, vec!["btrfs b7b7b7b7-0000-4000-8000-000000000003: the default subvolume (ID 258) is a Timeshift snapshot, which isn't in the backup".to_string()]);
+    }
+
+    /// BigLinux's btrfs-fix: on a btrfs /boot, /boot and /usr/share/grub
+    /// defragmented uncompressed once grub.cfg is written; not with an
+    /// ext4 /boot, nor on another system.
+    #[test]
+    fn biglinux_boot_uncompressed() {
+        let big = sample::bios_mbr().replace(r#""id": "debian", "version_id": "13""#, r#""id": "biglinux""#);
+        let defrag = "btrfs filesystem defragment --nocomp -r /mnt/bko-target";
+        let bt = text(built_from(&big, &[]).stage(Stage::Boot));
+        assert!(!bt.contains("defragment"), "{bt}");
+        let boot_line = r#"{"spec": "UUID=0b0e2c6e-1111-4222-8333-444455556666", "file": "/boot", "type": "ext4", "options": "defaults", "freq": 0, "passno": 2, "resolves_to": "vda1"},"#;
+        assert!(big.contains(boot_line));
+        let b = built_from(&big.replace(boot_line, ""), &[]);
+        let bt = text(b.stage(Stage::Boot));
+        let cfg = bt.find("grub-mkconfig -o /boot/grub/grub.cfg\n").expect(&bt);
+        let boot = bt.find(&format!("{defrag}/boot\n")).expect(&bt);
+        let grub = bt.find(&format!("{defrag}/usr/share/grub\n")).expect(&bt);
+        assert!(cfg < boot && boot < grub, "{bt}");
+        assert!(b.stage(Stage::Boot).iter().any(|c| c.why.as_deref() == Some("/boot uncompressed, as BigLinux's installer leaves it (its btrfs-fix)")));
+        let deb = sample::bios_mbr().replace(boot_line, "");
+        assert!(!text(built_from(&deb, &[]).stage(Stage::Boot)).contains("defragment"));
+    }
+
+    #[test]
     fn mount_restore_boot_close() {
         let b = built(&["--repo", "/srv/repo", "--password-file", "/run/pw"]);
         let m = text(b.stage(Stage::Mount));
@@ -3470,6 +3881,126 @@ mod tests {
         assert!(bt.contains("chroot /mnt/bko-target env LANG=en_US.UTF-8 update-grub\n"), "{bt}");
     }
 
+    /// KDE neon: Ubuntu's update-grub, and its GRUB through shim in EFI/neon.
+    #[test]
+    fn kde_neon_boot_tools() {
+        let neon = sample::bios_mbr().replace(r#""id": "debian", "version_id": "13""#, r#""id": "neon", "version_id": "24.04""#);
+        let bt = text(built_from(&neon, &[]).stage(Stage::Boot));
+        assert!(bt.contains("chroot /mnt/bko-target env LANG=C update-grub\n") && !bt.contains("grub-mkconfig"), "{bt}");
+        let entry = r#"{"number": "0001", "description": "neon", "file": "\\EFI\\neon\\shimx64.efi", "partition": {"device": "vda1"}}"#;
+        let uefi = neon
+            .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+            .replace(r#""firmware": "bios""#, r#""firmware": "uefi""#)
+            .replace(r#""efi": null,"#, &format!(r#""efi": {{"entries": [{entry}], "boot_order": ["0001"]}}, "esps": [],"#));
+        let bt = text(built_from(&uefi, &[]).stage(Stage::Boot));
+        let at = bt.find("--bootloader-id=").expect(&bt) + "--bootloader-id=".len();
+        assert_eq!(bt[at..].split_whitespace().next(), Some("neon"), "{bt}");
+        assert!(bt.contains("update-grub\n") && !bt.contains("grub-mkconfig"), "{bt}");
+    }
+
+    /// AnduinOS (docs/design/anduinos.md): Ubuntu's update-grub and the
+    /// generic dracut loop; through shim (or with the MOK in the dump) no
+    /// grub-install, only grub.cfg and the boot entry, and a note naming the
+    /// MOK; without shim, Ubuntu's arms, with the ESP directory's case kept.
+    #[test]
+    fn anduinos_boot_tools() {
+        const FP: &str = "5d41402abc4b2a76b9719d911017c592aaaabbbbccccddddeeeeffff00001111";
+        let base = sample::bios_mbr()
+            .replace(r#""id": "debian", "version_id": "13""#, r#""id": "anduinos", "version_id": "2.0.5""#)
+            .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"}, "packages": {PKGS},"#);
+        let uefi = |loader: &str, pkgs: &str| {
+            let entry = r#"{"number": "0001", "description": "AnduinOS", "file": "\\EFI\\AnduinOS\\shimx64.efi", "partition": {"device": "vda1"}}"#;
+            base.replace("{PKGS}", pkgs)
+                .replace(r#""firmware": {"mode": "bios"}"#, r#""firmware": {"mode": "uefi"}"#)
+                .replace(r#""loader": {"name": "grub", "firmware": "bios", "via_shim": false}"#, &format!(r#""loader": {loader}"#))
+                .replace(r#""efi": null,"#, &format!(r#""efi": {{"entries": [{entry}], "boot_current": "0001", "boot_order": ["0001"]}}, "esps": [{{"device": "vda1", "mounted_at": "/boot/efi", "contents": {{"files": [{{"path": "EFI/AnduinOS/shimx64.efi"}}, {{"path": "EFI/AnduinOS/grubx64.efi"}}]}}}}],"#))
+        };
+        let ours = r#"{"anduinos-grub": "2.0.5+repack1-2", "anduinos-shim-signed": "15.8-1", "anduinos-btrfs-snapshots-manager": "2.0.5-3", "dracut": "110-11ubuntu0.1"}"#;
+        let mok = format!(r#""mok": {{"cert": "/var/lib/shim-signed/mok/MOK.der", "sha256": "{FP}"}}"#);
+        let shim = format!(r#"{{"name": "grub", "firmware": "uefi", "via_shim": true, "package": "anduinos-grub", {mok}}}"#);
+        let dracut = "chroot /mnt/bko-target sh -c 'n=0; for k in /lib/modules/*; do [ -d \"$k/kernel\" ] || continue; dracut --force --kver \"${k##*/}\" || exit; n=$((n + 1)); done; [ \"$n\" -gt 0 ]'\n";
+        let snap_note = |n: &[String]| n.iter().any(|n| n.starts_with("AnduinOS: the Disk Snapshots Manager's records name each snapshot by its Btrfs subvolume UUID"));
+        let mok_note = |n: &[String]| n.iter().find(|n| n.starts_with("AnduinOS: shim, MokManager and AnduinOS's GRUB")).cloned();
+
+        // Through shim, its MOK in the dump.
+        let b = built_from(&uefi(&shim, ours), &[]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let bt = text(b.stage(Stage::Boot));
+        assert!(!bt.contains("grub-install") && !bt.contains("grub-mkconfig") && !bt.contains("update-initramfs"), "{bt}");
+        let d = bt.find(dracut).expect(&bt);
+        let off = bt.find("mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
+        let cfg = bt.find("chroot /mnt/bko-target env LANG=C update-grub\n").expect(&bt);
+        let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label AnduinOS --loader '\\EFI\\AnduinOS\\shimx64.efi'\n").expect(&bt);
+        assert!(d < off && off < cfg && cfg < nvram, "{bt}");
+        let n = mok_note(&b.notes).expect(&b.notes.join("\n"));
+        assert!(n.contains(&format!("signed with the MOK /var/lib/shim-signed/mok/MOK.der (SHA-256 {FP})")), "{n}");
+        assert!(n.contains("grub-install --target=x86_64-efi isn't run") && n.contains("`mokutil --import /var/lib/shim-signed/mok/MOK.der`, then confirm it at MokManager") && n.contains("or turn Secure Boot off"), "{n}");
+        assert!(snap_note(&b.notes), "{:?}", b.notes);
+        // --no-nvram: still no grub-install, and no entry.
+        let bt = text(built_from(&uefi(&shim, ours), &["--no-nvram"]).stage(Stage::Boot));
+        assert!(!bt.contains("grub-install") && !bt.contains("efibootmgr") && bt.contains("update-grub\n"), "{bt}");
+        // The MOK alone (booted at the fallback path, shim not told), or
+        // shim with anduinos-grub but no MOK in the dump: kept too.
+        for loader in [format!(r#"{{"name": "grub", "firmware": "uefi", "via_shim": false, {mok}}}"#), r#"{"name": "grub", "firmware": "uefi", "via_shim": true, "mok": null}"#.to_string()] {
+            let b = built_from(&uefi(&loader, ours), &[]);
+            let bt = text(b.stage(Stage::Boot));
+            assert!(!bt.contains("grub-install") && bt.contains("update-grub\n"), "{loader}: {bt}");
+            assert!(mok_note(&b.notes).is_some(), "{loader}: {:?}", b.notes);
+        }
+        let b = built_from(&uefi(r#"{"name": "grub", "firmware": "uefi", "via_shim": true}"#, ours), &[]);
+        assert!(mok_note(&b.notes).unwrap().contains("signed with the MOK /var/lib/shim-signed/mok/MOK.der (its fingerprint not in the dump)"), "{:?}", b.notes);
+
+        // UEFI GRUB without shim or a MOK: Ubuntu's arm, as EFI/AnduinOS.
+        let b = built_from(&uefi(r#"{"name": "grub", "firmware": "uefi", "via_shim": false}"#, ours), &[]);
+        let bt = text(b.stage(Stage::Boot));
+        let install = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=AnduinOS --no-nvram\n").expect(&bt);
+        assert!(bt.find(dracut).unwrap() < install && install < bt.find("env LANG=C update-grub\n").unwrap(), "{bt}");
+        assert!(mok_note(&b.notes).is_none(), "{:?}", b.notes);
+        // Before 2.0.5: Ubuntu's signed GRUB through shim, no anduinos-grub.
+        let ubuntu = r#"{"grub-efi-amd64-signed": "1.218+2.14-2ubuntu1", "shim-signed": "1.61+15.8-0ubuntu1", "dracut": "110-11ubuntu0.1"}"#;
+        let b = built_from(&uefi(r#"{"name": "grub", "firmware": "uefi", "via_shim": true, "package": "grub-efi-amd64-signed"}"#, ubuntu), &[]);
+        let bt = text(b.stage(Stage::Boot));
+        assert!(bt.contains("grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=AnduinOS --no-nvram\n") && bt.contains("update-grub\n"), "{bt}");
+        assert!(mok_note(&b.notes).is_none() && !snap_note(&b.notes), "{:?}", b.notes);
+
+        // BIOS: Ubuntu's arm, with dracut's loop; the snapshot note on btrfs.
+        let b = built_from(&base.replace("{PKGS}", ours), &[]);
+        let bt = text(b.stage(Stage::Boot));
+        let d = bt.find(dracut).expect(&bt);
+        let install = bt.find("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n").expect(&bt);
+        assert!(d < install && install < bt.find("env LANG=C update-grub\n").unwrap(), "{bt}");
+        assert!(!bt.contains("update-initramfs") && !bt.contains("grub-mkconfig") && !bt.contains("efibootmgr"), "{bt}");
+        assert!(mok_note(&b.notes).is_none() && snap_note(&b.notes), "{:?}", b.notes);
+        // Not AnduinOS: a MOK in the dump changes nothing on Ubuntu.
+        let u = uefi(&shim, ours).replace(r#""id": "anduinos", "version_id": "2.0.5""#, r#""id": "ubuntu", "version_id": "26.04""#);
+        let b = built_from(&u, &[]);
+        assert!(text(b.stage(Stage::Boot)).contains("grub-install --target=x86_64-efi"), "{:?}", b.notes);
+        assert!(mok_note(&b.notes).is_none() && !snap_note(&b.notes), "{:?}", b.notes);
+    }
+
+    /// AnduinOS's erase-disk UEFI install is a BIOS install too (its
+    /// golden dump): the i386-pc grub-install comes back, before
+    /// update-grub, and still no x86_64-efi one.  A BIOS boot partition
+    /// without GRUB's core recorded: neither, and a note.
+    #[test]
+    fn anduinos_bios_install_too() {
+        let j = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/tests/corpus/anduinos2/src.json")).unwrap();
+        let note = |n: &[String]| n.iter().any(|n| n.starts_with("vda has a BIOS boot partition, but the dump records no GRUB core in it"));
+        let b = built_from(&j, &[]);
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let bt = text(b.stage(Stage::Boot));
+        let bios = bt.find("chroot /mnt/bko-target grub-install --target=i386-pc /dev/vdb\n").expect(&bt);
+        assert!(bios < bt.find("chroot /mnt/bko-target env LANG=C update-grub\n").expect(&bt), "{bt}");
+        assert_eq!(bt.matches("grub-install").count(), 1, "{bt}");
+        assert!(!bt.contains("--target=x86_64-efi") && !note(&b.notes), "{bt}\n{:?}", b.notes);
+        let none = j.replace(r#""grub_core_present": true"#, r#""grub_core_present": false"#);
+        assert_ne!(none, j);
+        let b = built_from(&none, &[]);
+        let bt = text(b.stage(Stage::Boot));
+        assert!(!bt.contains("grub-install") && bt.contains("update-grub\n"), "{bt}");
+        assert!(note(&b.notes), "{:?}", b.notes);
+    }
+
     #[test]
     fn btrfs_device_uuid() {
         let c = crate::json::parse(r#"{"type": "btrfs", "uuid": "b7b7b7b7-0000-4000-8000-000000000003", "device": {"uuid": "94a415d0-e252-4362-aa38-8b6d9bb369c8"}}"#).unwrap();
@@ -3504,6 +4035,11 @@ mod tests {
             .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"}, "packages": {"eos-dracut": "1.7-1"},"#);
         let bt = text(built_from(&eos, &[]).stage(Stage::Boot));
         assert!(bt.contains("chroot /mnt/bko-target dracut-rebuild\n") && !bt.contains("--regenerate-all"), "{bt}");
+        let garuda = sample::bios_mbr()
+            .replace(r#""id": "debian", "version_id": "13""#, r#""id": "garuda""#)
+            .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "dracut"}, "packages": {"garuda-dracut-support": "1.6.0-2"},"#);
+        let bt = text(built_from(&garuda, &[]).stage(Stage::Boot));
+        assert!(bt.contains("chroot /mnt/bko-target dracut-rebuild\n") && !bt.contains("--regenerate-all") && !bt.contains("--kver"), "{bt}");
         let alpine = sample::bios_mbr()
             .replace(r#""id": "debian", "version_id": "13""#, r#""id": "alpine", "version_id": "3.24.3""#)
             .replace(r#""efi": null,"#, r#""efi": null, "initramfs": {"generator": "mkinitfs"},"#);
@@ -3614,6 +4150,7 @@ mod tests {
             mount_points: vec![],
             fam: None,
             btrfs: BTreeMap::new(),
+            timeshift: BTreeMap::new(),
         };
         let props = b.ds_props(&ds, false);
         assert!(props.contains(&("normalization".into(), "formD".into())), "{props:?}");

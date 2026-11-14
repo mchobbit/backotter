@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Boot a BackOtter test VM from its disk image.
 #
-# Usage: vm-run [--uefi [--no-secure-boot] [--uefi-vars FILE] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]]
+# Usage: vm-run [--uefi [--no-secure-boot] [--uefi-vars FILE] [--mok CERT]... | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]]
 #               [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--nic MODEL]
 #               [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga]
 #               IMAGE [-- QEMU_ARGS...]
@@ -24,6 +24,15 @@
 #                 fresh copy per run (made from the template when FILE doesn't
 #                 exist), so boot entries outlive the VM: BackShot2's tier 2
 #                 boots a rescuer and then the restored disk on one NVRAM
+#   --mok CERT    with --uefi: enroll CERT in shim's MokList (virt-fw-vars
+#                 --add-mok, owner shim's GUID) in this run's variable store
+#                 before the boot, as MokManager would, so that a GRUB signed
+#                 with a machine's own key (AnduinOS's MOK) boots under Secure
+#                 Boot with a fresh store; repeatable.  CERT is a DER or PEM
+#                 file, or the DER itself in base64 (PEM's body, no spaces), as
+#                 vm-run-options carries it: that holds wherever the guest's
+#                 disk is booted from.  With --uefi-vars, only into a FILE
+#                 this run makes: a kept one has its MokList already
 #   --q35         SeaBIOS on QEMU's q35 machine (ICH9, PCIe; --uefi has it
 #                 too) instead of its PC machine (i440FX, from 1996), for a
 #                 guest that needs newer hardware but can't boot with OVMF
@@ -120,7 +129,7 @@ in_store() {
     return 1
 }
 
-uefi_vars="" cdrom="" uefi=no q35=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic) vga=()
+uefi_vars="" moks=() cdrom="" uefi=no q35=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic) vga=()
 bus=virtio extra=() serials=() slots=() nic=virtio-net-pci nic_global=() mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -128,6 +137,7 @@ while [[ $# -gt 0 ]]; do
         --uefi) uefi=yes; shift ;;
         --no-secure-boot) secure_boot=no; shift ;;
         --uefi-vars) uefi_vars=$2; shift 2 ;;
+        --mok) moks+=("$2"); shift 2 ;;
         --q35) q35=yes; shift ;;
         --snapshot) snapshot=(-snapshot); shift ;;
         --ram) ram=yes; shift ;;
@@ -150,7 +160,7 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
-[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga] IMAGE [-- QEMU_ARGS...]"
+[[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] [--uefi-vars FILE] [--mok CERT]... | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga] IMAGE [-- QEMU_ARGS...]"
 image=$(realpath "$1")
 shift
 [[ ${1:-} == -- ]] && shift
@@ -158,6 +168,7 @@ shift
 [[ $keep == yes && $ram == no ]] && die "--keep needs --ram"
 [[ $uefi == yes && $q35 == yes ]] && die "--uefi is on q35 already; --q35 is for SeaBIOS"
 [[ $uefi == yes ]] && q35=yes
+[[ ${#moks[@]} -eq 0 || $uefi == yes ]] || die "--mok needs --uefi"
 case $bus in virtio|scsi|nvme|sata) ;; *) die "--disk-bus must be virtio, scsi, nvme or sata" ;; esac
 [[ $cpus =~ ^[1-9][0-9]*$ && $memory =~ ^[1-9][0-9]*$ ]] || die "--cpus and --memory take whole numbers"
 
@@ -263,13 +274,31 @@ if [[ $uefi == yes ]]; then
     else
         code=OVMF_CODE_4M.fd vars=OVMF_VARS_4M.fd
     fi
-    vfile=$tmp/vars.fd
+    vfile=$tmp/vars.fd fresh=yes
     if [[ -n $uefi_vars ]]; then
         vfile=$uefi_vars
-        [[ -f $vfile ]] || cp "/usr/share/OVMF/$vars" "$vfile"
+        if [[ -f $vfile ]]; then fresh=no; else cp "/usr/share/OVMF/$vars" "$vfile"; fi
     else
         cp "/usr/share/OVMF/$vars" "$vfile"
     fi
+    # shim's MokList, as MokManager leaves it once a key is enrolled: in a
+    # store made for this run only (a kept --uefi-vars store has it already).
+    for i in "${!moks[@]}"; do
+        [[ $fresh == yes ]] || break
+        command -v virt-fw-vars >/dev/null || die "--mok needs virt-fw-vars (python3-virt-firmware)"
+        pem=$tmp/mok$i.pem m=${moks[$i]}
+        if [[ -f $m ]]; then
+            openssl x509 -in "$m" -out "$pem" 2>/dev/null || openssl x509 -inform der -in "$m" -out "$pem" 2>/dev/null ||
+                die "--mok $m: not a DER or PEM certificate"
+        elif ! [[ $m =~ ^[A-Za-z0-9+/]+=*$ ]] ||
+            ! { echo "-----BEGIN CERTIFICATE-----"; fold -w 64 <<<"$m"; echo "-----END CERTIFICATE-----"; } |
+                openssl x509 -out "$pem" 2>/dev/null; then
+            die "--mok: no such file, nor a base64 DER certificate: ${m:0:40}"
+        fi
+        # 605dab50-...: shim's own GUID, the owner MokManager gives the keys it enrolls.
+        virt-fw-vars -l error --inplace "$vfile" --add-mok 605dab50-e046-4300-abb6-3dd810dd8b23 "$pem" >/dev/null ||
+            die "--mok: virt-fw-vars could not add the key to $vfile"
+    done
     args+=(-machine q35,smm=on -global driver=cfi.pflash01,property=secure,value=on
         -drive "if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/$code"
         -drive "if=pflash,format=raw,unit=1,file=$vfile")

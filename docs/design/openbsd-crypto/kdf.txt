@@ -1,0 +1,4 @@
+Volume      Status               Size Device  
+softraid0 0 Online        17179566080 sd1     CRYPTO
+          0 Online        17179566080 0:0.0   noencl <sd0a>
+                                                     'unknown serial'

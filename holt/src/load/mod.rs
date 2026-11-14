@@ -106,8 +106,9 @@ pub struct Options {
     /// this many percent (fit.rs).
     pub fit_largest: Option<u64>,
     pub new_uuids: bool,
-    /// --key-file NAME=FILE: a LUKS container (by its crypttab name) or a
-    /// ZFS encryption root (by dataset).
+    /// --key-file NAME=FILE: a LUKS container (by its crypttab name), a
+    /// ZFS encryption root (by dataset) or a GELI provider (by partition or
+    /// GPT label path; NAME:1 for its key slot 1).
     pub key_files: Vec<(String, String)>,
     pub no_nvram: bool,
     pub removable: bool,
@@ -203,7 +204,14 @@ Rebuilds the disks LAYOUT.json (from `bko-holt dump`) describes, in stages:
                     a LUKS container's (crypttab name) or ZFS encryption
                     root's (dataset) key or passphrase, instead of a prompt;
                     cryptsetup takes the file's bytes as they are, so a
-                    passphrase's file must not end in a newline
+                    passphrase's file must not end in a newline.  On
+                    FreeBSD, a GELI provider's passphrase (NAME its
+                    partition, vtbd0p3, or GPT label path, gpt/zfs0;
+                    NAME:1 for key slot 1), or for one a key file alone
+                    unlocks, that key file.  On OpenBSD, a softraid CRYPTO
+                    volume's new passphrase (NAME its device in the dump,
+                    sd1, or its DUID); bioctl takes the file's first line
+                    (load adds the final newline bioctl wants, if missing)
   --no-nvram        boot writes no UEFI variables
   --removable       boot also installs the loader to EFI/BOOT/BOOTX64.EFI
   --repo REPO       restore from this repository (rustic-bko's -r)

@@ -1,0 +1,1 @@
+/dev/sd1a on / type ffs (local, wxallowed)

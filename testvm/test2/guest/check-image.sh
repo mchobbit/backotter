@@ -15,7 +15,7 @@ emit /etc/os-release
 # --- package sources
 has_rule S-apt && emit /etc/apt/sources.list /etc/apt/sources.list.d/*
 has_rule S-dnf && emit /etc/yum.repos.d/fedora-updates.repo /etc/yum.repos.d/rocky*.repo
-has_rule S-pac && emit /etc/pacman.d/mirrorlist /etc/pacman.d/endeavouros-mirrorlist /etc/pacman.d/cachyos-mirrorlist
+has_rule S-pac && emit /etc/pacman.d/mirrorlist /etc/pacman.d/endeavouros-mirrorlist /etc/pacman.d/cachyos-mirrorlist /etc/pacman.d/chaotic-mirrorlist
 has_rule S-zyp && emit /etc/zypp/repos.d/*.repo
 has_rule S-moss && emit /etc/moss/repo.d/*.kdl /etc/moss/system-model.kdl
 has_rule S-apk && emit /etc/apk/repositories
@@ -84,6 +84,14 @@ if ! has_rule K-none; then
     if has_rule K-deb || has_rule K-void; then ls -1 /boot/vmlinuz-* 2>/dev/null | grep -v '\.old$'; fi
     # Gentoo: installkernel's vmlinuz-KV, or kernel-KV under systemd's kernel-install.
     if has_rule K-gentoo; then ls -1 /boot/vmlinuz-* /boot/kernel-* 2>/dev/null | grep -v '\.old$'; fi
+    # AnduinOS: Ubuntu's vmlinuz-K, each with dracut's initrd.img-K (both mode 0600: names
+    # only, by test -e, so no read of them).
+    if has_rule K-anduinos; then
+        for k in /boot/vmlinuz-*; do
+            case $k in *.old | '/boot/vmlinuz-*') continue ;; esac
+            if [ -e "/boot/initrd.img-${k#/boot/vmlinuz-}" ]; then echo "$k"; else echo "$k no-initrd"; fi
+        done
+    fi
     if has_rule K-fed || has_rule K-ostree; then ls -1 /boot/loader/entries/*.conf 2>/dev/null | grep -v rescue; fi
     if has_rule K-pac; then
         for d in /usr/lib/modules/*/; do [ -e "${d}vmlinuz" ] && echo "$d"; done

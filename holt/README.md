@@ -28,10 +28,10 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
 `VERSION_ID`, or uname's where there's no os-release) is:
 
 - Linux: Debian 12 and 13, Devuan 6, Ubuntu 24.04 and 26.04, Linux Mint 22,
-  Pop!_OS 24.04, Zorin OS 18, Arch Linux, CachyOS, Artix Linux, Omarchy,
-  EndeavourOS, Manjaro, Alpine Linux 3, AerynOS, Void Linux, Chimera Linux,
-  Gentoo Linux, Fedora 44, Bazzite 44, Rocky Linux 10, openSUSE Tumbleweed
-  and NixOS 26.05;
+  Pop!_OS 24.04, Zorin OS 18, KDE neon 24.04, AnduinOS 2, Arch Linux, CachyOS, Artix Linux, Omarchy,
+  EndeavourOS, Manjaro, Garuda Linux, Alpine Linux 3, AerynOS, Void Linux, Chimera Linux,
+  Gentoo Linux, PikaOS 4, Fedora 44, Bazzite 44, Rocky Linux 10, openSUSE
+  Tumbleweed and NixOS 26.05;
 - ostree (image-mode) systems among them: Bazzite 44, and Fedora's atomic
   desktops (Silverblue and Kinoite 44, which say `fedora 44`), told apart
   by ostree's own markers (`src/ostree.rs`).  `load` version 1 refuses
@@ -50,7 +50,14 @@ is its test on real hardware; Chimera's are `chimera`, `chimera-uefi` and
 `chimera-zfs` in HoltTest1Obscure, and BackShot1 ran it on the Thinkpad with
 root on ZFS; Gentoo's are `gentoo`, the Thinkpad's OpenRC install in small,
 and `gentoo-systemd`, LVM on LUKS, in HoltTest1G, and BackShot1 is its test
-on the Thinkpad itself).  Build it static
+on the Thinkpad itself; AnduinOS's is `anduinos2` in HoltTest1U, Btrfs
+under Secure Boot, whose MOK-signed GRUB `load` keeps from the restored ESP;
+PikaOS's are `pikaos4`, XFS with rEFInd's NVRAM entry, and `pikaos4-luks`,
+Btrfs on LUKS2 booted from the fallback path, in HoltTest1Obscure: `load`
+rebuilds booster's initramfs and keeps rEFInd's files; Garuda's is `garuda`,
+beside EndeavourOS and Manjaro, GRUB on btrfs with dracut through
+garuda-dracut-support, whose `dracut-rebuild` `load` runs, and snap-pac's
+snapper snapshots restored as shared ones).  Build it static
 (`RUSTFLAGS="-C target-feature=+crt-static" cargo build --release --target
 x86_64-unknown-linux-gnu`) to run it on musl systems such as Alpine and Void
 too; on the other systems, build it there
@@ -98,6 +105,12 @@ hand, then `--only boot`.
   members, ZFS vdevs.
 - `storage.lvm`: each volume group from its PVs' metadata (extents, PVs,
   LVs and their segments), tied to the devices.
+- `storage.softraid_volumes` (OpenBSD): each softraid volume `bioctl
+  softraid0` lists, as a virtual disk with a disk's MBR, disklabel and
+  partitions, and under `softraid` its level, chunks, what unlocks a CRYPTO
+  one (passphrase or key disk) and its KDF rounds, read off the chunk's
+  softraid metadata; its chunk's disklabel partition says
+  `softraid_volume` (`src/other/softraid.rs`).
 - `storage.zfs`: pools from their vdev labels (works for exported pools),
   `/etc/zfs/zpool.cache`, and, for imported pools, properties (and those set
   locally), features, the whole vdev tree (log, cache, spare, special and
@@ -144,6 +157,14 @@ writes its log with /var/log's SELinux label, and puts the atimes back
 (`src/load/ostree.rs`).  Version 1 refuses composefs `verity` or `signed`,
 required fs-verity, BIOS boot, LUKS, LVM, and an fstab without `/` or
 without a separate /boot.
+
+On OpenBSD, a root in a softraid CRYPTO volume (bioctl's full-disk
+encryption) is made again on its chunk's new partition: `bioctl -c C` with
+the source's KDF rounds and a new passphrase (asked for twice, or
+`--key-file`), the volume's own MBR (`fdisk -iy`) and the source's
+disklabel and DUID; its partitions are named by that DUID, and installboot
+runs on the volume.  Other softraid levels and key-disk volumes are dumped,
+and refused by `load` (`docs/design/openbsd-crypto.md`).
 
 Each target disk must be at least as big as its source, with the same
 logical sector size.  `--fit-largest PCT` takes one a little smaller or
@@ -204,6 +225,16 @@ No dependencies; builds offline with Debian 13's own cargo (1.85):
 ```
 cargo build --release      # target/release/bko-holt
 ```
+
+The shipped Linux binary is built on Chopin by
+`testvm/holttest1d/build-holt.sh linux` with rustup's 1.94.1, named in
+`RUSTUP_TOOLCHAIN` (`HOLT_RUST_TOOLCHAIN` changes it), never the host's
+rustup default: that is the Rust the shipped builds have used, so a host
+whose default changes (Chopin's reinstall reset it) still builds the same.
+Holt itself still builds with 1.85 (`rust-version`).  Without that
+toolchain it stops and says how to add it (`rustup toolchain install 1.94.1
+--profile minimal`).  The other systems build with their own packaged Rust,
+1.85 or later.
 
 ## Tests
 

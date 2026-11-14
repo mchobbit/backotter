@@ -1,0 +1,15 @@
+KDF rounds of openbsd8-crypt's CRYPTO volume (sd1 on chunk sd0a), 2026-11-14
+
+bioctl does not show them: `bioctl softraid0`, `bioctl sd1` and `bioctl -v`
+print the same table (bioctl-*.txt, kdf.txt), with no KDF line.
+
+They are in the chunk's softraid metadata, read with
+  dd if=/dev/rsd0a bs=512 skip=16 count=64
+(SR_META_OFFSET 16 blocks; magic "marcCRAM", version 6).  The crypto
+optional metadata's KDF hint is a struct sr_crypto_pbkdf: len 140, type 3
+(SR_CRYPTOKDFT_BCRYPT_PBKDF), rounds, 128-byte salt.  Here it starts at byte
+2412 of that read:
+  len 140, type 3, rounds 242
+242 is what the installer's `bioctl -Cforce -cC -l sd0a -s softraid0`
+(no -r, so -r auto) chose under bsd.rd on this host (Ryzen 5 5600H, KVM).
+The boot loader took about 0.7 s to derive the key with them.

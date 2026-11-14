@@ -162,6 +162,15 @@ target, `build-cache/cargo/TARGET`, whose `target/` stays warm, and
 prep-rustic-src.sh's lock is kept per manifest digest.  `BKO_PROFILE=fast`
 is for fix rounds: the last round of a batch is built release.
 
+The host-side Rust (prep-rustic-src.sh's cargo on both build hosts, the
+Linux rustic-bko on Chopin) is rustup's 1.94.1, named in `RUSTUP_TOOLCHAIN`
+(`BKO_RUST_TOOLCHAIN` changes it), never the host's rustup default, which a
+reinstall can reset (Chopin's went to 1.85.1, too old for rustic's
+dependencies).  A host without it, or Chopin without its
+`x86_64-unknown-linux-musl` target, fails with the `rustup` command that
+adds it.  DragonFly's cross build takes its pinned nightly
+(stick/dragonfly/build-rustic.sh); the native builds take the guests' Rust.
+
 ## On the hosts
 
 The hosts run these scripts from `~/backotter-work` (`BKO_WORK`), with the

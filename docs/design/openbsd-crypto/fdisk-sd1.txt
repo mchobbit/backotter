@@ -1,0 +1,9 @@
+Disk: sd1	geometry: 2088/255/63 [33553840 Sectors]
+Offset: 0	Signature: 0xAA55
+            Starting         Ending         LBA Info:
+ #: id      C   H   S -      C   H   S [       start:        size ]
+-------------------------------------------------------------------------------
+ 0: 00      0   0   0 -      0   0   0 [           0:           0 ] Unused
+ 1: 00      0   0   0 -      0   0   0 [           0:           0 ] Unused
+ 2: 00      0   0   0 -      0   0   0 [           0:           0 ] Unused
+*3: A6      0   1   2 -   2088 160  40 [          64:    33553776 ] OpenBSD

@@ -1,0 +1,19 @@
+# /dev/rsd0c:
+type: SCSI
+disk: SCSI disk
+label: Block Device    
+duid: f036e7e3534d6f8b
+flags:
+bytes/sector: 512
+sectors/track: 63
+tracks/cylinder: 255
+sectors/cylinder: 16065
+cylinders: 2088
+total sectors: 33554432
+boundstart: 64
+boundend: 33554432
+
+16 partitions:
+#                size           offset  fstype [fsize bsize   cpg]
+  a:         33554368               64    RAID                    
+  c:         33554432                0  unused                    

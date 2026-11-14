@@ -8,10 +8,18 @@
 #
 # PLATFORM: freebsd (built on freebsd14, so that it runs on 14 and 15, and on
 # HardenedBSD and GhostBSD), netbsd, openbsd, dragonfly, illumos or haiku;
-# or linux, built here on the host as ht1-debug.sh builds it (static glibc,
+# or linux, built here on the host (ht1-debug.sh's build too: static glibc,
 # +crt-static, so that one binary dumps glibc and musl systems alike), with
 # cargo's target/ in TMPDIR, which must name a directory: one in the RAM
-# disk, under a reservation.  The holt/ tree comes from
+# disk, under a reservation.  Linux builds with rustup's HOLT_RUST_TOOLCHAIN
+# (default 1.94.1: the release holt-bin's shipped builds have used), named in
+# RUSTUP_TOOLCHAIN, never the host's rustup default, which a reinstall can
+# change unseen (Chopin's went from 1.94.1 to 1.85.1), so that every build
+# uses the same Rust.  It needs that toolchain and its
+# x86_64-unknown-linux-gnu std; missing, it says which rustup command adds
+# it and installs nothing.  CARGO names another cargo (Debian's
+# /usr/bin/cargo, say), used as it is.  The guests build with their own
+# packaged Rust.  The holt/ tree comes from
 # ~/backotter-work/holt-src (rsynced there by the caller).  The binary lands
 # in /bkoscratch/holttest1d/bin/PLATFORM/bko-holt (linux: bin/bko-holt); the
 # build's log in /bkoscratch/holttest1d/build-holt-PLATFORM/.  HOLT_SRC,
@@ -178,8 +186,22 @@ print(json.dumps({"platform": p, "sha256": sha, "rustc": rustc, "host": socket.g
 if [[ $PLATFORM == linux ]]; then
     [[ -n ${TMPDIR:-} && -d $TMPDIR ]] ||
         { echo "build-holt: linux: TMPDIR must name a directory for cargo's target/ (one in the RAM disk, under cmp-run.sh --reserve)" >&2; exit 2; }
-    cargo=${CARGO:-$HOME/.cargo/bin/cargo}
-    [[ -x $cargo ]] || { echo "build-holt: no $cargo" >&2; exit 1; }
+    t=x86_64-unknown-linux-gnu
+    if [[ -n ${CARGO:-} ]]; then
+        cargo=$CARGO
+        [[ -x $cargo ]] || { echo "build-holt: no $cargo" >&2; exit 1; }
+    else
+        tc=${HOLT_RUST_TOOLCHAIN:-1.94.1}
+        cargo=$HOME/.cargo/bin/cargo rustup=$HOME/.cargo/bin/rustup
+        [[ -x $cargo && -x $rustup ]] || { echo "build-holt: no rustup in ~/.cargo/bin (https://rustup.rs) for Rust $tc" >&2; exit 1; }
+        # rustup's proxies (cargo, and the rustc it runs) take this over the
+        # default, and with RUSTUP_AUTO_INSTALL=0 fail rather than install it.
+        export RUSTUP_TOOLCHAIN=$tc RUSTUP_AUTO_INSTALL=0
+        "$rustup" run "$tc" rustc -V >/dev/null 2>&1 ||
+            { echo "build-holt: no Rust $tc (HOLT_RUST_TOOLCHAIN): rustup toolchain install $tc --profile minimal" >&2; exit 1; }
+        "$rustup" target list --installed --toolchain "$tc" 2>/dev/null | grep -qxF $t ||
+            { echo "build-holt: Rust $tc has no $t target: rustup target add --toolchain $tc $t" >&2; exit 1; }
+    fi
     # From a copy of the tree, as the guests build: cargo may rewrite Cargo.lock.
     tree=$TMPDIR/holt-src
     rm -rf "$tree"; mkdir -p "$tree"
@@ -187,11 +209,11 @@ if [[ $PLATFORM == linux ]]; then
     rv=$("$(dirname "$cargo")/rustc" --version 2>/dev/null || echo unknown)
     echo "$rv"
     if ! (cd "$tree" && RUSTFLAGS="-C target-feature=+crt-static" CARGO_TARGET_DIR=$TMPDIR/holt-target \
-            "$cargo" build --release --offline --target x86_64-unknown-linux-gnu) >"$LOGS/build.log" 2>&1; then
+            "$cargo" build --release --offline --target $t) >"$LOGS/build.log" 2>&1; then
         grep -E "^(error|warning)" -A 6 "$LOGS/build.log" | head -80 >&2
         exit 1
     fi
-    b=$TMPDIR/holt-target/x86_64-unknown-linux-gnu/release/bko-holt
+    b=$TMPDIR/holt-target/$t/release/bko-holt
     "$b" --version
     cp "$b" "$OUT/bko-holt.part"
     chmod 755 "$OUT/bko-holt.part"
@@ -235,6 +257,20 @@ env="PATH=$GUEST_PATH; export PATH"
 if ! vm_ssh "$env; command -v cargo && command -v cc" >/dev/null 2>&1; then
     echo "Installing Rust"
     vm_ssh "$env; $RUST" >"$LOGS/rust-install.log" 2>&1 || { tail -20 "$LOGS/rust-install.log" >&2; exit 1; }
+    # Haiku: haiku_devel must match the haiku package, so pkgman upgrades
+    # that too when the guest is behind its repository, and none of it takes
+    # effect until the next boot.  The guest reboots in the same QEMU, so on
+    # the same throwaway overlay; /tmp is emptied at boot.
+    if grep -q 'A reboot is necessary' "$LOGS/rust-install.log"; then
+        echo "Rebooting into the upgraded system"
+        T=30 vm_ssh 'touch /tmp/bko-before-reboot && shutdown -r -q' >/dev/null 2>&1 || true
+        deadline=$((SECONDS + 600))
+        until T=15 vm_ssh '[ ! -e /tmp/bko-before-reboot ]' 2>/dev/null; do
+            [[ $SECONDS -lt $deadline ]] || { echo "build-holt: $VM's sshd didn't come back after the reboot (serial console: $LOGS/serial.log)" >&2; exit 1; }
+            [[ -z $VM_PID ]] || kill -0 "$VM_PID" 2>/dev/null || { echo "build-holt: QEMU exited during the reboot; $LOGS/vm-run.log says:" >&2; tail -n 5 "$LOGS/vm-run.log" >&2; exit 1; }
+            sleep 5
+        done
+    fi
 fi
 rv=$(vm_ssh "$env; rustc --version")
 echo "$rv"

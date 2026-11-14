@@ -11,6 +11,7 @@ pub mod nilfs2;
 pub mod redoxfs;
 pub mod ufs;
 pub mod fat;
+pub mod geli;
 pub mod hammer2;
 pub mod luks;
 pub mod lvm;
@@ -60,6 +61,7 @@ type Prober = fn(&dyn ByteSource) -> Option<Content>;
 const PROBERS: &[Prober] = &[
     md::probe,
     luks::probe,
+    geli::probe,
     lvm::probe,
     zfs::probe,
     xfs::probe,
@@ -132,6 +134,7 @@ mod tests {
             ("vfat", fat::sample::fat32(1 << 20, 1, "EFI")),
             ("swap", misc::sample::swap(64, "")),
             ("crypto_LUKS", luks::sample::luks2("u", "")),
+            ("geli", geli::sample::guest(1 << 20)),
             ("LVM2_member", lvm::sample::pv(512, 1 << 20)),
             ("linux_raid_member", md::sample::v1(1 << 20, 4096, "h:0", 1, 0, 0)),
         ];

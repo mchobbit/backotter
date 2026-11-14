@@ -80,11 +80,13 @@ listing() {
         if [ -e /etc/gentoo-release ] && [ -d /var/db/pkg ]; then
             echo "base pm portage"
             pkg_portage
-        elif has apt-get; then
+        elif has apt-get && has dpkg; then
+            # (BigLinux's apt-get and dnf are scripts that only exec pamac;
+            # its rpm is real, with an empty database.)
             echo "base pm dpkg"
             x=$(dpkg-query -W -f '${db:Status-Abbrev} ${Package} ${Version} ${Architecture}\n') || fail "dpkg-query failed"
             lines "$x" | awk '$1 ~ /^.i/ { print "pkg", $2, $3, $4 }'
-        elif has dnf || { ! has pacman && has zypper; }; then
+        elif { has dnf && ! grep -qs '^exec pamac' "$(command -v dnf)"; } || { ! has pacman && has zypper; }; then
             echo "base pm rpm"
             x=$(rpm -qa --qf '%{NAME} %{EPOCHNUM}:%{VERSION}-%{RELEASE}.%{ARCH}\n') || fail "rpm -qa failed"
             lines "$x" | sed 's/^/pkg /'

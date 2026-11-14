@@ -1,0 +1,1911 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.6"
+  },
+  "generated": "2026-11-14T03:35:09Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host-1",
+    "machine_id": "bd000000000040008000000000000001",
+    "dmi": {
+      "sys_vendor": "QEMU",
+      "product_name": "Standard PC (Q35 + ICH9, 2009)",
+      "product_version": "pc-q35-10.0",
+      "board_vendor": null,
+      "board_name": null,
+      "bios_vendor": "Debian distribution of EDK II",
+      "bios_version": "2025.02-8+deb13u1",
+      "bios_date": "11/08/2025",
+      "product_uuid": null,
+      "chassis_type": "1"
+    },
+    "virtualization": "kvm"
+  },
+  "os": {
+    "id": "pika",
+    "version_id": "4",
+    "version_codename": "nest",
+    "pretty_name": "PikaOS 4",
+    "debian_version": "forky/sid",
+    "kernel_release": "7.1.8-pikaos",
+    "kernel_version": "#101pika2 SMP PREEMPT_DYNAMIC Fri Aug 14 11:43:42 UTC 2026",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "uefi",
+    "platform_size": 64,
+    "secure_boot": null,
+    "setup_mode": null,
+    "efivars_readable": true
+  },
+  "storage": {
+    "topology": {
+      "vda (disk, 32 GiB, gpt)": {
+        "vda1 (partition, 499 MiB) vfat on /boot/efi": {},
+        "vda2 (partition, 1000 MiB) ext4 \"PikaOS\" on /boot": {},
+        "vda3 (partition, 30.5 GiB) crypto_LUKS": {
+          "dm-0 (dm, 30.5 GiB, crypt_root) btrfs on /, /home": {}
+        }
+      }
+    },
+    "disks": [
+      {
+        "name": "vda",
+        "path": "/dev/vda",
+        "kind": "disk",
+        "devno": "254:0",
+        "size_bytes": 34359738368,
+        "size": "32 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": "0x1af4",
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": true,
+        "removable": false,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/1",
+          "/dev/disk/by-path/pci-0000:00:03.0",
+          "/dev/disk/by-path/virtio-pci-0000:00:03.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "bc000000-0000-4000-8000-000000000001",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 34,
+          "last_usable_lba": 67108830,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 67108863,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 67108863,
+                "start_bytes": 512,
+                "size_bytes": 34359737856,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vda1",
+            "path": "/dev/vda1",
+            "devno": "254:1",
+            "number": 1,
+            "start_lba": 2048,
+            "end_lba": 1023999,
+            "sectors": 1021952,
+            "start_bytes": 1048576,
+            "size_bytes": 523239424,
+            "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "type_name": "EFI System",
+            "uuid": "bc000000-0000-4000-8000-000000000002",
+            "partlabel": "linux-efi",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-designator/esp",
+              "/dev/disk/by-diskseq/1-part1",
+              "/dev/disk/by-partlabel/linux-efi",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000002",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partlabel/linux-efi",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partnum/1",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partuuid/bc000000-0000-4000-8000-000000000002",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-uuid/BC00-0001",
+              "/dev/disk/by-path/pci-0000:00:03.0-part1",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part1",
+              "/dev/disk/by-uuid/BC00-0001"
+            ],
+            "holders": [],
+            "content": {
+              "type": "vfat",
+              "usage": "filesystem",
+              "uuid": "BC00-0001",
+              "label": null,
+              "version": "FAT32",
+              "fat_bits": 32,
+              "bytes_per_sector": 512,
+              "sectors_per_cluster": 8,
+              "cluster_size": 4096,
+              "reserved_sectors": 32,
+              "fats": 2,
+              "fat_sectors": 1000,
+              "total_sectors": 1021923,
+              "size_bytes": 523224576,
+              "clusters": 127486,
+              "hidden_sectors": 2048,
+              "media": "0xf8",
+              "oem_name": "mkfs.fat",
+              "root_cluster": 2,
+              "fsinfo_sector": 1,
+              "backup_boot_sector": 6,
+              "boot_sector_label": null
+            },
+            "mounted_at": ["/boot/efi"]
+          },
+          {
+            "name": "vda2",
+            "path": "/dev/vda2",
+            "devno": "254:2",
+            "number": 2,
+            "start_lba": 1024000,
+            "end_lba": 3071999,
+            "sectors": 2048000,
+            "start_bytes": 524288000,
+            "size_bytes": 1048576000,
+            "type": "bc13c2ff-59e6-4262-a352-b275fd6f7172",
+            "type_name": "Linux extended boot",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "partlabel": "linux-boot",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-designator/xbootldr",
+              "/dev/disk/by-diskseq/1-part2",
+              "/dev/disk/by-label/PikaOS",
+              "/dev/disk/by-partlabel/linux-boot",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-label/PikaOS",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partlabel/linux-boot",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partnum/2",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partuuid/bc000000-0000-4000-8000-000000000003",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-uuid/bc000000-0000-4000-8000-000000000004",
+              "/dev/disk/by-path/pci-0000:00:03.0-part2",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part2",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000004"
+            ],
+            "holders": [],
+            "content": {
+              "type": "ext4",
+              "usage": "filesystem",
+              "uuid": "bc000000-0000-4000-8000-000000000004",
+              "label": "PikaOS",
+              "version": "1.0",
+              "block_size": 4096,
+              "blocks": 256000,
+              "size_bytes": 1048576000,
+              "free_blocks": 233476,
+              "reserved_blocks": 12800,
+              "inodes": 64000,
+              "free_inodes": 63982,
+              "inode_size": 256,
+              "inodes_per_group": 8000,
+              "blocks_per_group": 32768,
+              "first_data_block": 0,
+              "revision": 1,
+              "features": [
+                "has_journal",
+                "ext_attr",
+                "resize_inode",
+                "dir_index",
+                "orphan_file",
+                "filetype",
+                "needs_recovery",
+                "extent",
+                "64bit",
+                "flex_bg",
+                "metadata_csum_seed",
+                "sparse_super",
+                "large_file",
+                "huge_file",
+                "dir_nlink",
+                "extra_isize",
+                "metadata_csum",
+                "orphan_present"
+              ],
+              "state": "clean",
+              "has_errors": false,
+              "errors_behavior": "continue",
+              "creator_os": "Linux",
+              "reserved_gdt_blocks": 124,
+              "default_hash": "half_md4",
+              "hash_seed": "bc000000-0000-4000-8000-000000000005",
+              "mkfs_time": 1794621001,
+              "last_mounted_on": "/boot",
+              "flex_bg_size": 16,
+              "descriptor_size": 64,
+              "min_extra_isize": 32,
+              "want_extra_isize": 32,
+              "journal_inode": 8
+            },
+            "mounted_at": ["/boot"]
+          },
+          {
+            "name": "vda3",
+            "path": "/dev/vda3",
+            "devno": "254:3",
+            "number": 3,
+            "start_lba": 3072000,
+            "end_lba": 67106815,
+            "sectors": 64034816,
+            "start_bytes": 1572864000,
+            "size_bytes": 32785825792,
+            "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+            "type_name": "Linux filesystem",
+            "uuid": "bc000000-0000-4000-8000-000000000006",
+            "partlabel": "linux-root",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [
+              "/dev/disk/by-diskseq/1-part3",
+              "/dev/disk/by-partlabel/linux-root",
+              "/dev/disk/by-partuuid/bc000000-0000-4000-8000-000000000006",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partlabel/linux-root",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partnum/3",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-partuuid/bc000000-0000-4000-8000-000000000006",
+              "/dev/disk/by-path/pci-0000:00:03.0-part/by-uuid/bc000000-0000-4000-8000-000000000007",
+              "/dev/disk/by-path/pci-0000:00:03.0-part3",
+              "/dev/disk/by-path/virtio-pci-0000:00:03.0-part3",
+              "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000007"
+            ],
+            "holders": ["dm-0"],
+            "content": {
+              "type": "crypto_LUKS",
+              "usage": "crypto",
+              "uuid": "bc000000-0000-4000-8000-000000000007",
+              "label": null,
+              "version": "2",
+              "header_size": 16384,
+              "sequence_id": 3,
+              "checksum_algorithm": "sha256",
+              "segments": [
+                {
+                  "id": "0",
+                  "type": "crypt",
+                  "offset": "16777216",
+                  "size": "dynamic",
+                  "encryption": "aes-xts-plain64",
+                  "sector_size": 512,
+                  "integrity": null,
+                  "flags": []
+                }
+              ],
+              "keyslots": [
+                {
+                  "id": "0",
+                  "type": "luks2",
+                  "key_bits": 512,
+                  "priority": null,
+                  "cipher": "aes-xts-plain64",
+                  "kdf": "argon2id",
+                  "kdf_hash": null,
+                  "kdf_time": 7,
+                  "kdf_memory": 1048576,
+                  "kdf_cpus": 4,
+                  "kdf_iterations": null
+                }
+              ],
+              "tokens": [],
+              "digest_hashes": ["sha256"],
+              "json_size": "12288",
+              "keyslots_size": "16744448",
+              "config_flags": [],
+              "config_requirements": null,
+              "secondary_header": true
+            },
+            "mounted_at": []
+          }
+        ],
+        "boot_code": {
+          "kind": "none",
+          "first_bytes": "00000000000000000000000000000000",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 2
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [
+      {
+        "name": "dm-0",
+        "path": "/dev/dm-0",
+        "kind": "dm",
+        "devno": "253:0",
+        "size_bytes": 32769048576,
+        "size": "30.5 GiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": false,
+        "discard": true,
+        "links": [
+          "/dev/disk/by-diskseq/2",
+          "/dev/disk/by-id/dm-name-crypt_root",
+          "/dev/disk/by-id/dm-uuid-CRYPT-LUKS2-bc000000000040008000000000000007-crypt_root",
+          "/dev/disk/by-uuid/bc000000-0000-4000-8000-000000000008",
+          "/dev/mapper/crypt_root"
+        ],
+        "holders": [],
+        "slaves": ["vda3"],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "btrfs",
+          "usage": "filesystem",
+          "uuid": "bc000000-0000-4000-8000-000000000008",
+          "label": null,
+          "version": null,
+          "total_bytes": 32769048576,
+          "bytes_used": 8337047552,
+          "num_devices": 1,
+          "sector_size": 4096,
+          "node_size": 16384,
+          "stripe_size": 4096,
+          "checksum": "crc32c",
+          "generation": 25,
+          "features": ["mixed_backref", "big_metadata", "extended_iref", "skinny_metadata", "no_holes"],
+          "compat_ro_features": ["free_space_tree", "free_space_tree_valid", "block_group_tree"],
+          "device": {
+            "devid": 1,
+            "uuid": "bc000000-0000-4000-8000-000000000009",
+            "total_bytes": 32769048576,
+            "bytes_used": 10762584064
+          }
+        },
+        "mounted_at": ["/", "/home"],
+        "dm": {
+          "dm_name": "crypt_root",
+          "dm_uuid": "CRYPT-LUKS2-bc000000000040008000000000000007-crypt_root",
+          "mapper_path": "/dev/mapper/crypt_root",
+          "target": "crypt",
+          "crypt_type": "LUKS2",
+          "luks_uuid": "bc000000-0000-4000-8000-000000000007"
+        }
+      }
+    ],
+    "loop_devices": [],
+    "other_devices": [
+      {
+        "name": "sr0",
+        "path": "/dev/sr0",
+        "kind": "rom",
+        "devno": "11:0",
+        "size_bytes": 1073741312,
+        "size": "1024 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "read_only": true,
+        "discard": false,
+        "links": [
+          "/dev/cdrom",
+          "/dev/disk/by-diskseq/4",
+          "/dev/disk/by-id/ata-QEMU_DVD-ROM_SERIAL1",
+          "/dev/disk/by-path/pci-0000:00:1f.2-ata-3",
+          "/dev/disk/by-path/pci-0000:00:1f.2-ata-3.0"
+        ],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": null,
+        "mounted_at": []
+      },
+      {
+        "name": "zram0",
+        "path": "/dev/zram0",
+        "kind": "zram",
+        "devno": "252:0",
+        "size_bytes": 2044973056,
+        "size": "1.9 GiB",
+        "logical_sector_size": 4096,
+        "physical_sector_size": 4096,
+        "read_only": false,
+        "discard": true,
+        "links": ["/dev/disk/by-diskseq/5", "/dev/disk/by-uuid/bc000000-0000-4000-8000-00000000000a"],
+        "holders": [],
+        "slaves": [],
+        "partition_table": null,
+        "partitions": [],
+        "content": {
+          "type": "swap",
+          "usage": "other",
+          "uuid": "bc000000-0000-4000-8000-00000000000a",
+          "label": null,
+          "version": "1",
+          "page_size": 4096,
+          "last_page": 499260,
+          "size_bytes": 2044973056,
+          "bad_pages": 0
+        },
+        "mounted_at": []
+      }
+    ],
+    "lvm": {
+      "volume_groups": []
+    },
+    "zfs": {
+      "pools_from_labels": [],
+      "zpool_cache": null,
+      "tools": null
+    },
+    "btrfs": [
+      {
+        "uuid": "bc000000-0000-4000-8000-000000000008",
+        "label": null,
+        "devices": ["dm-0"],
+        "mounted": true,
+        "features": ["block_group_tree", "extended_iref", "free_space_tree", "no_holes", "skinny_metadata"],
+        "allocation_profiles": {
+          "data": ["single"],
+          "metadata": ["dup"],
+          "system": ["dup"]
+        },
+        "mounted_subvolumes": [
+          {
+            "target": "/",
+            "subvol": "/@"
+          },
+          {
+            "target": "/home",
+            "subvol": "/@home"
+          }
+        ],
+        "subvolumes": [
+          {
+            "id": 256,
+            "gen": 25,
+            "parent": 5,
+            "top_level": 5,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-00000000000b",
+            "path": "<FS_TREE>/@",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          },
+          {
+            "id": 257,
+            "gen": 10,
+            "parent": 5,
+            "top_level": 5,
+            "parent_uuid": null,
+            "uuid": "bc000000-0000-4000-8000-00000000000c",
+            "path": "<FS_TREE>/@home",
+            "readonly": false,
+            "properties": {
+              "ro": "false"
+            }
+          }
+        ],
+        "default_subvolume": {
+          "id": 5
+        },
+        "quota_enabled": false,
+        "qgroups": null
+      }
+    ],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "/dev/dm-0",
+        "fstype": "btrfs",
+        "devno": "0:28",
+        "device": "dm-0",
+        "root": "/@",
+        "options": "rw,relatime",
+        "super_options": "rw,discard=async,space_cache=v2,subvolid=256,subvol=/@",
+        "size_bytes": 32769048576,
+        "used_bytes": 8606973952,
+        "available_bytes": 23592435712
+      },
+      {
+        "target": "/home",
+        "source": "/dev/dm-0",
+        "fstype": "btrfs",
+        "devno": "0:28",
+        "device": "dm-0",
+        "root": "/@home",
+        "options": "rw,relatime",
+        "super_options": "rw,discard=async,space_cache=v2,subvolid=257,subvol=/@home",
+        "size_bytes": 32769048576,
+        "used_bytes": 8606973952,
+        "available_bytes": 23592435712
+      },
+      {
+        "target": "/boot",
+        "source": "/dev/vda2",
+        "fstype": "ext4",
+        "devno": "254:2",
+        "device": "vda2",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw",
+        "size_bytes": 1012768768,
+        "used_bytes": 56451072,
+        "available_bytes": 887111680
+      },
+      {
+        "target": "/boot/efi",
+        "source": "/dev/vda1",
+        "fstype": "vfat",
+        "devno": "254:1",
+        "device": "vda1",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,fmask=0022,dmask=0022,codepage=437,iocharset=ascii,shortname=mixed,utf8,errors=remount-ro",
+        "size_bytes": 522182656,
+        "used_bytes": 3563520,
+        "available_bytes": 518619136
+      }
+    ],
+    "physical_root": "/",
+    "backup_sources": [
+      {
+        "path": "/",
+        "from": "/",
+        "device": "dm-0",
+        "fstype": "btrfs",
+        "source": "/dev/dm-0",
+        "subvol": "/@"
+      },
+      {
+        "path": "/boot",
+        "from": "/boot",
+        "device": "vda2",
+        "fstype": "ext4",
+        "source": "/dev/vda2",
+        "subvol": null
+      },
+      {
+        "path": "/boot/efi",
+        "from": "/boot/efi",
+        "device": "vda1",
+        "fstype": "vfat",
+        "source": "/dev/vda1",
+        "subvol": null
+      },
+      {
+        "path": "/home",
+        "from": "/home",
+        "device": "dm-0",
+        "fstype": "btrfs",
+        "source": "/dev/dm-0",
+        "subvol": "/@home"
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/zram0",
+        "type": "partition",
+        "size_bytes": 2044968960,
+        "used_bytes": 0,
+        "priority": 100,
+        "device": "zram0"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000008",
+        "file": "/",
+        "type": "btrfs",
+        "options": "rw,relatime,space_cache=v2,subvol=/@",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "dm-0"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000008",
+        "file": "/home",
+        "type": "btrfs",
+        "options": "rw,relatime,space_cache=v2,subvol=/@home",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "dm-0"
+      },
+      {
+        "spec": "UUID=bc000000-0000-4000-8000-000000000004",
+        "file": "/boot",
+        "type": "ext4",
+        "options": "rw,relatime",
+        "freq": 0,
+        "passno": 2,
+        "resolves_to": "vda2"
+      },
+      {
+        "spec": "UUID=BC00-0001",
+        "file": "/boot/efi",
+        "type": "vfat",
+        "options": "rw,relatime,fmask=0022,dmask=0022,codepage=437,iocharset=ascii,shortname=mixed,utf8,errors=remount-ro",
+        "freq": 0,
+        "passno": 2,
+        "resolves_to": "vda1"
+      }
+    ],
+    "crypttab": [
+      {
+        "name": "crypt_root",
+        "device": "UUID=bc000000-0000-4000-8000-000000000007",
+        "key_file": null,
+        "options": ["luks", "discard"],
+        "resolves_to": "vda3"
+      }
+    ],
+    "mdadm_conf": {
+      "arrays": [],
+      "settings": {
+        "homehost": "<system>",
+        "mailaddr": "root"
+      }
+    }
+  },
+  "boot": {
+    "loader": {
+      "name": "refind",
+      "firmware": "uefi",
+      "via_shim": false,
+      "package": "refind",
+      "evidence": ["an ESP holds rEFInd's refind_x64.efi or refind.conf", "package refind is installed"]
+    },
+    "efi": {
+      "boot_current": "0001",
+      "boot_next": null,
+      "boot_order": ["0000", "0001", "0002", "0003", "0004", "0005", "0006"],
+      "timeout_seconds": 0,
+      "entries": [
+        {
+          "number": "0000",
+          "load_option_hex": "090100002c0055006900410070007000000004071400000000bc00000040800000000000000d04061400000000bc00000040800000000000000e7fff0400",
+          "description": "UiApp",
+          "active": true,
+          "hidden": true,
+          "category": "app",
+          "in_boot_order": 0,
+          "device_path": ["Fv(bc000000-0000-4000-8000-00000000000d)/FvFile(bc000000-0000-4000-8000-00000000000e)"],
+          "file": null,
+          "optional_data_bytes": 0
+        },
+        {
+          "number": "0001",
+          "load_option_hex": "010000001600550045004600490020004d006900730063002000440065007600690063006500000002010c00d041030a000000000101060000037fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI Misc Device",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 1,
+          "device_path": ["PciRoot(0x0)/Pci(0x3,0x0)"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0002",
+          "load_option_hex": "0100000056005500450046004900200050005800450076003400200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030c1b0000000000000000000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv4 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 2,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0003",
+          "load_option_hex": "0100000077005500450046004900200050005800450076003600200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030d3c0000000000000000000000000000000000000000000000000000000000000000000000000000000040000000000000000000000000000000007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI PXEv6 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 3,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0004",
+          "load_option_hex": "010000005a0055004500460049002000480054005400500076003400200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030c1b000000000000000000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv4 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 4,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv4()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0005",
+          "load_option_hex": "010000007b0055004500460049002000480054005400500076003600200028004d00410043003a006200630030003000300030003000300030003000300032002900000002010c00d041030a00000000010106000002030b2500bc0000000002000000000000000000000000000000000000000000000000000001030d3c000000000000000000000000000000000000000000000000000000000000000000000000000000004000000000000000000000000000000000031804007fff04004eac0881119f594d850ee21a522c59b2",
+          "description": "UEFI HTTPv6 (MAC:bc0000000002)",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 5,
+          "device_path": ["PciRoot(0x0)/Pci(0x2,0x0)/MAC()/IPv6()/Uri()"],
+          "file": null,
+          "optional_data_bytes": 16
+        },
+        {
+          "number": "0006",
+          "load_option_hex": "010000002c00450046004900200049006e007400650072006e0061006c0020005300680065006c006c00000004071400000000bc00000040800000000000000d04061400000000bc00000040800000000000000f7fff0400",
+          "description": "EFI Internal Shell",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 6,
+          "device_path": ["Fv(bc000000-0000-4000-8000-00000000000d)/FvFile(bc000000-0000-4000-8000-00000000000f)"],
+          "file": null,
+          "optional_data_bytes": 0
+        }
+      ],
+      "loader_interface": {
+        "loader_info": null,
+        "loader_device_partuuid": null,
+        "loader_image_identifier": null,
+        "loader_entry_selected": null,
+        "loader_entry_default": null,
+        "stub_info": null
+      },
+      "shim_variables": []
+    },
+    "esps": [
+      {
+        "device": "vda1",
+        "mounted_at": "/boot/efi",
+        "contents": {
+          "files": [
+            {
+              "path": "EFI/BOOT/BOOT.CSV",
+              "size": 134
+            },
+            {
+              "path": "EFI/BOOT/bootx64.efi",
+              "size": 315392
+            },
+            {
+              "path": "EFI/BOOT/drivers_x64/ext4_x64.efi",
+              "size": 61440
+            },
+            {
+              "path": "EFI/BOOT/icons/README",
+              "size": 6738
+            },
+            {
+              "path": "EFI/BOOT/icons/arrow_left.png",
+              "size": 1392
+            },
+            {
+              "path": "EFI/BOOT/icons/arrow_right.png",
+              "size": 1346
+            },
+            {
+              "path": "EFI/BOOT/icons/boot_linux.png",
+              "size": 9077
+            },
+            {
+              "path": "EFI/BOOT/icons/boot_win.png",
+              "size": 3766
+            },
+            {
+              "path": "EFI/BOOT/icons/func_about.png",
+              "size": 2479
+            },
+            {
+              "path": "EFI/BOOT/icons/func_bootorder.png",
+              "size": 6930
+            },
+            {
+              "path": "EFI/BOOT/icons/func_csr_rotate.png",
+              "size": 1761
+            },
+            {
+              "path": "EFI/BOOT/icons/func_exit.png",
+              "size": 2208
+            },
+            {
+              "path": "EFI/BOOT/icons/func_firmware.png",
+              "size": 3772
+            },
+            {
+              "path": "EFI/BOOT/icons/func_hidden.png",
+              "size": 7161
+            },
+            {
+              "path": "EFI/BOOT/icons/func_install.png",
+              "size": 4398
+            },
+            {
+              "path": "EFI/BOOT/icons/func_reset.png",
+              "size": 2602
+            },
+            {
+              "path": "EFI/BOOT/icons/func_shutdown.png",
+              "size": 2760
+            },
+            {
+              "path": "EFI/BOOT/icons/mouse.png",
+              "size": 4846
+            },
+            {
+              "path": "EFI/BOOT/icons/os_arch.png",
+              "size": 5555
+            },
+            {
+              "path": "EFI/BOOT/icons/os_artful.png",
+              "size": 6192
+            },
+            {
+              "path": "EFI/BOOT/icons/os_bionic.png",
+              "size": 6958
+            },
+            {
+              "path": "EFI/BOOT/icons/os_centos.png",
+              "size": 15008
+            },
+            {
+              "path": "EFI/BOOT/icons/os_chakra.png",
+              "size": 13776
+            },
+            {
+              "path": "EFI/BOOT/icons/os_chrome.png",
+              "size": 10391
+            },
+            {
+              "path": "EFI/BOOT/icons/os_clover.png",
+              "size": 7229
+            },
+            {
+              "path": "EFI/BOOT/icons/os_crunchbang.png",
+              "size": 8480
+            },
+            {
+              "path": "EFI/BOOT/icons/os_debian.png",
+              "size": 9377
+            },
+            {
+              "path": "EFI/BOOT/icons/os_devuan.png",
+              "size": 5072
+            },
+            {
+              "path": "EFI/BOOT/icons/os_elementary.png",
+              "size": 16482
+            },
+            {
+              "path": "EFI/BOOT/icons/os_endeavouros.png",
+              "size": 17079
+            },
+            {
+              "path": "EFI/BOOT/icons/os_fedora.png",
+              "size": 8763
+            },
+            {
+              "path": "EFI/BOOT/icons/os_freebsd.png",
+              "size": 5980
+            },
+            {
+              "path": "EFI/BOOT/icons/os_frugalware.png",
+              "size": 11658
+            },
+            {
+              "path": "EFI/BOOT/icons/os_gentoo.png",
+              "size": 7549
+            },
+            {
+              "path": "EFI/BOOT/icons/os_gummiboot.png",
+              "size": 7668
+            },
+            {
+              "path": "EFI/BOOT/icons/os_haiku.png",
+              "size": 7079
+            },
+            {
+              "path": "EFI/BOOT/icons/os_hwtest.png",
+              "size": 14399
+            },
+            {
+              "path": "EFI/BOOT/icons/os_kubuntu.png",
+              "size": 12873
+            },
+            {
+              "path": "EFI/BOOT/icons/os_legacy.png",
+              "size": 5620
+            },
+            {
+              "path": "EFI/BOOT/icons/os_linux.png",
+              "size": 10097
+            },
+            {
+              "path": "EFI/BOOT/icons/os_linuxmint.png",
+              "size": 6246
+            },
+            {
+              "path": "EFI/BOOT/icons/os_lubuntu.png",
+              "size": 11232
+            },
+            {
+              "path": "EFI/BOOT/icons/os_mac.png",
+              "size": 10574
+            },
+            {
+              "path": "EFI/BOOT/icons/os_mageia.png",
+              "size": 7783
+            },
+            {
+              "path": "EFI/BOOT/icons/os_mandriva.png",
+              "size": 12854
+            },
+            {
+              "path": "EFI/BOOT/icons/os_manjaro.png",
+              "size": 1890
+            },
+            {
+              "path": "EFI/BOOT/icons/os_netbsd.png",
+              "size": 12379
+            },
+            {
+              "path": "EFI/BOOT/icons/os_network.png",
+              "size": 14836
+            },
+            {
+              "path": "EFI/BOOT/icons/os_opensuse.png",
+              "size": 6572
+            },
+            {
+              "path": "EFI/BOOT/icons/os_redhat.png",
+              "size": 10041
+            },
+            {
+              "path": "EFI/BOOT/icons/os_refind.png",
+              "size": 7231
+            },
+            {
+              "path": "EFI/BOOT/icons/os_refit.png",
+              "size": 8484
+            },
+            {
+              "path": "EFI/BOOT/icons/os_slackware.png",
+              "size": 9202
+            },
+            {
+              "path": "EFI/BOOT/icons/os_suse.png",
+              "size": 6572
+            },
+            {
+              "path": "EFI/BOOT/icons/os_systemd.png",
+              "size": 7668
+            },
+            {
+              "path": "EFI/BOOT/icons/os_trusty.png",
+              "size": 14608
+            },
+            {
+              "path": "EFI/BOOT/icons/os_ubuntu.png",
+              "size": 17993
+            },
+            {
+              "path": "EFI/BOOT/icons/os_uefi.png",
+              "size": 13342
+            },
+            {
+              "path": "EFI/BOOT/icons/os_unknown.png",
+              "size": 11686
+            },
+            {
+              "path": "EFI/BOOT/icons/os_void.png",
+              "size": 9754
+            },
+            {
+              "path": "EFI/BOOT/icons/os_win.png",
+              "size": 6565
+            },
+            {
+              "path": "EFI/BOOT/icons/os_win8.png",
+              "size": 3872
+            },
+            {
+              "path": "EFI/BOOT/icons/os_xenial.png",
+              "size": 9025
+            },
+            {
+              "path": "EFI/BOOT/icons/os_xubuntu.png",
+              "size": 10547
+            },
+            {
+              "path": "EFI/BOOT/icons/os_zesty.png",
+              "size": 5371
+            },
+            {
+              "path": "EFI/BOOT/icons/tool_apple_rescue.png",
+              "size": 4507
+            },
+            {
+              "path": "EFI/BOOT/icons/tool_fwupdate.png",
+              "size": 5177
+            },
+            {
+              "path": "EFI/BOOT/icons/tool_memtest.png",
+              "size": 3018
+            },
+            {
+              "path": "EFI/BOOT/icons/tool_mok_tool.png",
+              "size": 1974
+            },
+            {
+              "path": "EFI/BOOT/icons/tool_netboot.png",
+              "size": 3785
+            },
+            {
+              "path": "EFI/BOOT/icons/tool_part.png",
+              "size": 3446
+            },
+            {
+              "path": "EFI/BOOT/icons/tool_rescue.png",
+              "size": 13817
+            },
+            {
+              "path": "EFI/BOOT/icons/tool_shell.png",
+              "size": 2010
+            },
+            {
+              "path": "EFI/BOOT/icons/tool_windows_rescue.png",
+              "size": 4313
+            },
+            {
+              "path": "EFI/BOOT/icons/transparent.png",
+              "size": 213
+            },
+            {
+              "path": "EFI/BOOT/icons/vol_efi.png",
+              "size": 11777
+            },
+            {
+              "path": "EFI/BOOT/icons/vol_external.png",
+              "size": 1344
+            },
+            {
+              "path": "EFI/BOOT/icons/vol_internal.png",
+              "size": 1418
+            },
+            {
+              "path": "EFI/BOOT/icons/vol_net.png",
+              "size": 1892
+            },
+            {
+              "path": "EFI/BOOT/icons/vol_optical.png",
+              "size": 2423
+            },
+            {
+              "path": "EFI/BOOT/keys/SLES-UEFI-CA-Certificate.cer",
+              "size": 1257
+            },
+            {
+              "path": "EFI/BOOT/keys/altlinux.cer",
+              "size": 767
+            },
+            {
+              "path": "EFI/BOOT/keys/canonical-uefi-ca.cer",
+              "size": 1080
+            },
+            {
+              "path": "EFI/BOOT/keys/centossecureboot201.cer",
+              "size": 914
+            },
+            {
+              "path": "EFI/BOOT/keys/centossecurebootca2.cer",
+              "size": 870
+            },
+            {
+              "path": "EFI/BOOT/keys/debian.cer",
+              "size": 930
+            },
+            {
+              "path": "EFI/BOOT/keys/fedora-ca.cer",
+              "size": 876
+            },
+            {
+              "path": "EFI/BOOT/keys/microsoft-kekca-public.cer",
+              "size": 1516
+            },
+            {
+              "path": "EFI/BOOT/keys/microsoft-pca-public.cer",
+              "size": 1499
+            },
+            {
+              "path": "EFI/BOOT/keys/microsoft-uefica-public.cer",
+              "size": 1556
+            },
+            {
+              "path": "EFI/BOOT/keys/openSUSE-UEFI-CA-Certificate-4096.cer",
+              "size": 1656
+            },
+            {
+              "path": "EFI/BOOT/keys/openSUSE-UEFI-CA-Certificate.cer",
+              "size": 1144
+            },
+            {
+              "path": "EFI/BOOT/keys/redhatsecureboot003.cer",
+              "size": 829
+            },
+            {
+              "path": "EFI/BOOT/keys/redhatsecureboot401.cer",
+              "size": 978
+            },
+            {
+              "path": "EFI/BOOT/keys/redhatsecurebootca2.cer",
+              "size": 872
+            },
+            {
+              "path": "EFI/BOOT/keys/redhatsecurebootca4.cer",
+              "size": 934
+            },
+            {
+              "path": "EFI/BOOT/keys/refind.cer",
+              "size": 831
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/banners/refind.png",
+              "size": 3664
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/arrow_left.png",
+              "size": 1654
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/arrow_right.png",
+              "size": 1516
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/func_about.png",
+              "size": 5126
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/func_bootorder.png",
+              "size": 2048
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/func_csr_rotate.png",
+              "size": 5181
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/func_exit.png",
+              "size": 1954
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/func_firmware.png",
+              "size": 9597
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/func_hidden.png",
+              "size": 4038
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/func_install.png",
+              "size": 1486
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/func_reset.png",
+              "size": 4630
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/func_shutdown.png",
+              "size": 4755
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_absolute.png",
+              "size": 2809
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_academix.png",
+              "size": 8812
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_aix.png",
+              "size": 12012
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_alpine.png",
+              "size": 6560
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_alt.png",
+              "size": 7330
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_altlinux.png",
+              "size": 20267
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_android-x86.png",
+              "size": 4712
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_android.png",
+              "size": 7518
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_antergos.png",
+              "size": 15002
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_antix.png",
+              "size": 9714
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_apricity.png",
+              "size": 16984
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_arch.png",
+              "size": 9945
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_arcolinux.png",
+              "size": 8511
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_aryalinux.png",
+              "size": 2729
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_backbox.png",
+              "size": 3456
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_blackarch.png",
+              "size": 69017
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_bodhi.png",
+              "size": 10718
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_bunsenlabs.png",
+              "size": 7013
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_calculate.png",
+              "size": 8797
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_cent.png",
+              "size": 4630
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_centos.png",
+              "size": 6431
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_chakra.png",
+              "size": 26215
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_chrome.png",
+              "size": 15156
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_chromium.png",
+              "size": 8857
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_clover.png",
+              "size": 4166
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_condres.png",
+              "size": 4141
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_core.png",
+              "size": 13628
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_crunchbang.png",
+              "size": 4089
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_debian.png",
+              "size": 8443
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_deepin.png",
+              "size": 20073
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_devuan.png",
+              "size": 8067
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_elementary.png",
+              "size": 23136
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_elilo.png",
+              "size": 6671
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_endeavour.png",
+              "size": 14638
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_fatdog.png",
+              "size": 20337
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_fedora.png",
+              "size": 13194
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_freebsd.png",
+              "size": 21190
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_freedos.png",
+              "size": 6709
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_frugalware.png",
+              "size": 4306
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_gentoo.png",
+              "size": 15782
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_ghostbsd.png",
+              "size": 16741
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_goofiboot.png",
+              "size": 19024
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_grub.png",
+              "size": 7243
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_grubfm.png",
+              "size": 2576
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_gummiboot.png",
+              "size": 4166
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_haiku.png",
+              "size": 10759
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_hwtest.png",
+              "size": 4166
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_kali.png",
+              "size": 7268
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_kaos.png",
+              "size": 6905
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_knoppix.png",
+              "size": 9963
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_korora.png",
+              "size": 6726
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_kubuntu.png",
+              "size": 16329
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_legacy.png",
+              "size": 3572
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_linux.png",
+              "size": 20648
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_linuxmint.png",
+              "size": 13471
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_lubuntu.png",
+              "size": 15513
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_mac.png",
+              "size": 17627
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_mac_alt.png",
+              "size": 4923
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_mageia.png",
+              "size": 12460
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_mandriva.png",
+              "size": 13522
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_manjaro.png",
+              "size": 725
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_msdos.png",
+              "size": 9966
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_mx.png",
+              "size": 4349
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_neon.png",
+              "size": 38710
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_netbsd.png",
+              "size": 10385
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_netrunner.png",
+              "size": 12582
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_network.png",
+              "size": 4166
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_nixos-alt.png",
+              "size": 15135
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_nixos.png",
+              "size": 10251
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_oc.png",
+              "size": 132129
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_openbsd.png",
+              "size": 39419
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_openmandriva.png",
+              "size": 8233
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_opensuse.png",
+              "size": 16085
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_parabola.png",
+              "size": 5758
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_parrot.png",
+              "size": 14363
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_pcbsd.png",
+              "size": 23483
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_pclinuxos.png",
+              "size": 17588
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_phoenixos.png",
+              "size": 10411
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_pika.png",
+              "size": 93756
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_pikaos.png",
+              "size": 93756
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_pop.png",
+              "size": 14098
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_popos.png",
+              "size": 8791
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_puppy.png",
+              "size": 21154
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_pureos.png",
+              "size": 4884
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_q4os.png",
+              "size": 7299
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_raspbian.png",
+              "size": 13783
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_redhat.png",
+              "size": 16541
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_refind.png",
+              "size": 5898
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_refit.png",
+              "size": 2195
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_remixos.png",
+              "size": 16268
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_rhel.png",
+              "size": 6624
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_rosa.png",
+              "size": 24133
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_sabayon.png",
+              "size": 18193
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_salentos.png",
+              "size": 5850
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_slackware.png",
+              "size": 8528
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_smartos.png",
+              "size": 2378
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_solus.png",
+              "size": 19024
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_steam.png",
+              "size": 17052
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_steamos.png",
+              "size": 8251
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_suse.png",
+              "size": 8456
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_syslinux.png",
+              "size": 7212
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_systemd-boot.png",
+              "size": 4166
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_systemd.png",
+              "size": 7991
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_tails.png",
+              "size": 10691
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_ubuntu.png",
+              "size": 16565
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_ubuntubudgie.png",
+              "size": 15537
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_ubuntudde.png",
+              "size": 14764
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_ubuntugnome.png",
+              "size": 11445
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_ubuntugnome_alt.png",
+              "size": 13505
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_ubuntumate.png",
+              "size": 19664
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_ubuntustudio.png",
+              "size": 18720
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_ultimateedition.png",
+              "size": 9946
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_unknown.png",
+              "size": 4166
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_void.png",
+              "size": 11931
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_voyager.png",
+              "size": 1128
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_win.png",
+              "size": 6087
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_win8.png",
+              "size": 33331
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_win11.png",
+              "size": 33331
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_windows.png",
+              "size": 33185
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_xubuntu.png",
+              "size": 13577
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/os_zorin.png",
+              "size": 3849
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/selection-big.png",
+              "size": 47798
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/selection-small.png",
+              "size": 17054
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/tool_apple_rescue.png",
+              "size": 2256
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/tool_fwupdate.png",
+              "size": 971
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/tool_memtest.png",
+              "size": 412
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/tool_mok_tool.png",
+              "size": 1159
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/tool_netboot.png",
+              "size": 609
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/tool_part.png",
+              "size": 345
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/tool_rescue.png",
+              "size": 2256
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/tool_shell.png",
+              "size": 787
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/tool_windows_rescue.png",
+              "size": 2256
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/transparent.png",
+              "size": 213
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/vol_external.png",
+              "size": 1474
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/vol_internal.png",
+              "size": 167
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/vol_net.png",
+              "size": 3456
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/icons/vol_optical.png",
+              "size": 1917
+            },
+            {
+              "path": "EFI/BOOT/refind-dark/refind-dark.conf",
+              "size": 500
+            },
+            {
+              "path": "EFI/BOOT/refind.conf",
+              "size": 36397
+            },
+            {
+              "path": "EFI/BOOT/refind.conf-sample",
+              "size": 36351
+            },
+            {
+              "path": "EFI/BOOT/vars/PreviousBoot",
+              "size": 78
+            }
+          ],
+          "debian_grub_stub": null
+        }
+      }
+    ],
+    "grub": {
+      "dir": "/boot/grub",
+      "installed_platforms": [],
+      "grub_cfg": null,
+      "grubenv": null,
+      "default_grub": {},
+      "debconf": {}
+    },
+    "systemd_boot": null,
+    "kernels": {
+      "installed": [
+        {
+          "version": "7.1.8-pikaos",
+          "vmlinuz_bytes": 18313216,
+          "initrd_bytes": 26434205,
+          "config": true,
+          "running": true,
+          "modules_installed": true
+        }
+      ],
+      "symlinks": {}
+    },
+    "cmdline": {
+      "raw": "rd.luks.name=bc000000-0000-4000-8000-000000000007=crypt_root rd.luks.options=discard nowatchdog nvidia-drm.modeset=1 rootflags=rw,relatime,space_cache=v2,subvol=/@ root=/dev/mapper/crypt_root quiet splash console=tty0 console=ttyS0,115200n8 --- initrd=\\booster.img-7.1.8-pikaos",
+      "words": [
+        "rd.luks.name=bc000000-0000-4000-8000-000000000007=crypt_root",
+        "rd.luks.options=discard",
+        "nowatchdog",
+        "nvidia-drm.modeset=1",
+        "rootflags=rw,relatime,space_cache=v2,subvol=/@",
+        "root=/dev/mapper/crypt_root",
+        "quiet",
+        "splash",
+        "console=tty0",
+        "console=ttyS0,115200n8",
+        "---",
+        "initrd=booster.img-7.1.8-pikaos\n"
+      ],
+      "storage": {
+        "rd.luks.name": "bc000000-0000-4000-8000-000000000007=crypt_root",
+        "rootflags": "rw,relatime,space_cache=v2,subvol=/@",
+        "root": "/dev/mapper/crypt_root"
+      }
+    },
+    "kernel_cmdline_file": null,
+    "initramfs": {
+      "generator": "booster",
+      "modules": "most",
+      "compress": "zstd",
+      "resume": null,
+      "crypttab_in_initramfs": true,
+      "booster": {
+        "conf": "/etc/booster.yaml",
+        "universal": null,
+        "enable_lvm": true,
+        "modules": "usbhid,hid_generic",
+        "modules_force_load": "usbhid,hid_generic",
+        "compression": "lz4"
+      }
+    },
+    "packages": {
+      "mokutil": "0.7.2-2",
+      "efibootmgr": "18-4.1",
+      "refind": "0.14.2-101pika3",
+      "initramfs-tools": "0.151",
+      "mdadm": "4.6-3",
+      "lvm2": "2.03.31-2+b2",
+      "cryptsetup": "2:2.8.7-1",
+      "cryptsetup-bin": "2:2.8.7-1",
+      "systemd-cryptsetup": "261.2-101pika5+b9",
+      "btrfs-progs": "7.1-1",
+      "xfsprogs": "6.19.0-1",
+      "e2fsprogs": "1.47.4-1",
+      "dosfstools": "4.2-1.2",
+      "exfatprogs": "1.4.2-2",
+      "ntfs-3g": "1:2026.7.7-2",
+      "f2fs-tools": "1.16.0-2+b2",
+      "linux-base": "4.15",
+      "booster": "0.12.1.ferreogit1-101pika1+b2",
+      "kernel-pika": "7.1.8-101pika1",
+      "pika-refind-theme": "1.6-101pika5+b1",
+      "zram-tools": "0.3.7-1"
+    },
+    "refind": {
+      "linux_conf": {
+        "path": "/boot/refind_linux.conf",
+        "lines": [
+          {
+            "title": "Boot with standard options",
+            "options": "rd.luks.name=bc000000-0000-4000-8000-000000000007=crypt_root rd.luks.options=discard nowatchdog nvidia-drm.modeset=1 rootflags=rw,relatime,space_cache=v2,subvol=/@ root=/dev/mapper/crypt_root quiet splash console=tty0 console=ttyS0,115200n8 ---"
+          },
+          {
+            "title": "Boot with logging",
+            "options": "rd.luks.name=bc000000-0000-4000-8000-000000000007=crypt_root rd.luks.options=discard nowatchdog nvidia-drm.modeset=1 rootflags=rw,relatime,space_cache=v2,subvol=/@ root=/dev/mapper/crypt_root console=tty0 console=ttyS0,115200n8 ---"
+          },
+          {
+            "title": "Boot with safe graphics",
+            "options": "rd.luks.name=bc000000-0000-4000-8000-000000000007=crypt_root rd.luks.options=discard amd_pstate=active nowatchdog amd_prefcore=enable rootflags=rw,relatime,space_cache=v2,subvol=/@ root=/dev/mapper/crypt_root nomodeset console=tty0 console=ttyS0,115200n8 ---"
+          }
+        ]
+      }
+    }
+  },
+  "warnings": []
+}

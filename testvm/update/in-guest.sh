@@ -184,7 +184,9 @@ fi
 # cleaner at once (no protection period) and waits for it.  But only while
 # nothing else writes: the cleaner running beside a big apt run broke the
 # file system (a bad DAT b-tree node, then read-only).  In between, it's
-# suspended.
+# suspended.  update-initramfs's "/sbin/fsck.nilfs2 doesn't exist" is
+# harmless: nilfs-tools has no fsck (NILFS2 recovers from its log at mount),
+# and fstab's pass for / is 0.
 nilfs=
 reclaim() { :; }
 # t2-section: Linux.apt
@@ -262,7 +264,8 @@ case $(uname) in
 # t2-section: Linux.common
 Linux)
     # t2-section: Linux.apt
-    if has apt-get; then
+    # With dpkg: BigLinux's apt-get (and apt) only point the user at pamac.
+    if has apt-get && has dpkg; then
         export DEBIAN_FRONTEND=noninteractive
         # The guest's own apt jobs (apt-daily, unattended-upgrades, PackageKit)
         # often start at boot, and would take apt's locks between our steps:
@@ -295,10 +298,20 @@ Linux)
         # guest's apt.conf.d less that hook (in /run, gone at the reboot).
         # Only APT_CONFIG's file is read before the parts directory, so
         # that's where it is named (-o comes too late).
-        if [ -f /etc/apt/apt.conf.d/20packagekit ]; then
+        # AnduinOS's snapshot manager takes a Btrfs snapshot before every dpkg
+        # run (its Pre-Invoke hook, above a 40 GiB free-space floor): the
+        # image keeps the installer's baselines only (docs/design/anduinos.md,
+        # Decision 5), so its hook goes from that copy too, its
+        # NeverAutoRemove line kept.
+        sm=90-anduinos-btrfs-snapshots-manager
+        if [ -f /etc/apt/apt.conf.d/20packagekit ] || [ -f /etc/apt/apt.conf.d/$sm ]; then
             rm -rf /run/bko-apt.conf.d && cp -a /etc/apt/apt.conf.d /run/bko-apt.conf.d &&
-                rm /run/bko-apt.conf.d/20packagekit &&
+                rm -f /run/bko-apt.conf.d/20packagekit &&
                 echo 'Dir::Etc::parts "/run/bko-apt.conf.d";' >/run/bko-apt.conf || exit 1
+            if [ -f /run/bko-apt.conf.d/$sm ]; then
+                grep -v 'Invoke' /etc/apt/apt.conf.d/$sm >/run/bko-apt.conf.d/$sm || exit 1
+                say "apt runs without the snapshot manager's pre- and post-dpkg hooks"
+            fi
             export APT_CONFIG=/run/bko-apt.conf
         fi
         tries=0
@@ -309,13 +322,56 @@ Linux)
         # 16 GB disk hasn't room for all of a big update's packages at once
         # beside their unpacked files.  dist-upgrade does the rest (packages
         # that replace others).
-        # snapd's postinst sets file capabilities, which NILFS2 can't store
-        # (make-from-live.sh unpacked the system without them), and fails
-        # (2.77.1's still does, unconditionally): there it stays as built.
-        if [ -n "$nilfs" ] && dpkg -s snapd >/dev/null 2>&1 && ! apt-mark showhold | grep -qx snapd; then
-            apt-mark hold snapd >/dev/null || exit 1
-            step "snapd held: its postinst fails on NILFS2"
+        # snapd's postinst runs setcap on snap-confine unconditionally, which
+        # fails on NILFS2: no xattrs, so no file capabilities.  Its
+        # snap-confine stays without them, as make-from-live.sh built it, and
+        # no snaps are installed.  So dpkg finds a setcap first that lets a
+        # failure on NILFS2 pass, and snapd takes its security updates (older
+        # images held it instead).  apt runs dpkg with PATH set to DPkg::Path
+        # (default /usr/sbin:/usr/bin:/sbin:/bin), so that's where it goes;
+        # dpkg passes PATH on to the maintainer scripts.
+        bkobin=
+        apt0=$apt
+        if [ -n "$nilfs" ] && dpkg -s snapd >/dev/null 2>&1; then
+            if apt-mark showhold | grep -qx snapd; then
+                apt-mark unhold snapd >/dev/null || exit 1
+                step "snapd unheld: setcap's failure on NILFS2 passes instead"
+            fi
+            real=
+            for f in /usr/sbin/setcap /sbin/setcap; do [ -x $f ] && { real=$f; break; }; done
+            if [ -n "$real" ]; then
+                dp= && eval "$(apt-config shell dp DPkg::Path)"
+                bkobin=$(mktemp -d) || exit 1
+                trap '[ -z "$bkobin" ] || rm -rf "$bkobin"' EXIT
+                trap 'exit 1' HUP INT TERM
+                # setcap [-q] [-v] [-n ROOTID] then CAPS FILE pairs (CAPS may
+                # be - for stdin, or -r): a failure passes only when every
+                # FILE is on NILFS2.
+                { echo '#!/bin/sh'; echo "real=$real"; cat <<'EOF'
+"$real" "$@" && exit 0
+s=$? files=
+while [ $# -gt 0 ]; do
+    case $1 in
+    -q | -v) shift ;;
+    -n) [ $# -ge 2 ] || exit $s; shift 2 ;;
+    *)
+        [ $# -ge 2 ] && [ -e "$2" ] && [ "$(findmnt -no FSTYPE -T "$2" 2>/dev/null)" = nilfs2 ] || exit $s
+        files="$files $2"; shift 2 ;;
+    esac
+done
+[ -n "$files" ] || exit $s
+echo "bko: setcap skipped on NILFS2 (no xattrs):$files" >&2
+EOF
+                } >"$bkobin/setcap" && chmod 755 "$bkobin/setcap" || exit 1
+                apt="$apt -o DPkg::Path=$bkobin:${dp:-$PATH}"
+            fi
         fi
+        # KDE neon pins its own ubuntu-release-upgrader and base-files to its
+        # archive (Pin-Priority 1100, /etc/apt/preferences.d/*neon*), so where
+        # the image holds Ubuntu's newer build apt's candidate is neon's, an
+        # upgrade that is a downgrade, as neon means it.  apt=$apt0 below
+        # drops the option again.
+        if grep -qs '^ID=neon$' /etc/os-release; then apt="$apt --allow-downgrades"; fi
         apt-mark showhold >/run/bko-held || exit 1
         set -- $(apt list --upgradable 2>/dev/null | sed -n 's|/.*||p' | grep -vxF -f /run/bko-held)
         while [ $# -gt 0 ]; do
@@ -325,6 +381,11 @@ Linux)
             reclaim
         done
         $apt dist-upgrade && $apt autoremove --purge && $apt clean || exit 1
+        apt=$apt0
+        if [ -n "$bkobin" ]; then
+            rm -rf "$bkobin" || exit 1
+            bkobin=; trap - EXIT HUP INT TERM
+        fi
         # Linux Mint (make-from-live.sh): the live session's casper outlived
         # the live packages' removal, and runs at every shutdown.  Purged if
         # nothing else goes with it.
@@ -332,6 +393,16 @@ Linux)
             [ "$($apt -s purge casper 2>/dev/null | grep -c '^Purg ')" = 1 ]; then
             step "purging casper"
             $apt purge casper || exit 1
+        fi
+        # Pop!_OS and Zorin OS (make-from-live.sh): fdisk and ethtool, which
+        # the live system's removal list takes and a real install keeps.
+        # Installed only when missing (pkgset.sh's listing shows the change).
+        if grep -qsE '^ID=(pop|zorin)$' /etc/os-release; then
+            miss=
+            for p in fdisk ethtool; do
+                [ "$(dpkg-query -W -f '${db:Status-Status}' $p 2>/dev/null)" = installed ] || miss="$miss $p"
+            done
+            [ -z "$miss" ] || { $apt install $miss && $apt clean || exit 1; }
         fi
     # t2-section: Linux.ostree
     elif [ -e /run/ostree-booted ] && has rpm-ostree; then
@@ -372,7 +443,8 @@ print(d[0]["checksum"] if d else "")' "$1"
         fi
         rpm-ostree cleanup -b -m || exit 1
     # t2-section: Linux.dnf
-    elif has dnf; then
+    # Not BigLinux's dnf (and yum), a script that only execs pamac.
+    elif has dnf && ! grep -qs '^exec pamac' "$(command -v dnf)"; then
         # Fedora's server install has mcelog, which decodes Intel machine
         # checks only: on the hosts' AMD CPUs it fails at every boot, and the
         # guest comes up "degraded".  make-fedora.sh's kickstart now leaves
@@ -390,6 +462,22 @@ print(d[0]["checksum"] if d else "")' "$1"
         dnf -y upgrade --refresh && dnf clean all || exit 1
     # t2-section: Linux.pacman
     elif has pacman; then
+        # BigLinux: big-first-boot runs once, at the first boot (Timeshift's
+        # first snapshot, pacman -R of the VM tools it doesn't need, then of
+        # itself), and auto-unlock-pacman at every boot after it, which holds
+        # db.lck while it populates the keyrings and then deletes db.lck,
+        # whoever holds it.  So pacman waits until neither runs or waits to.
+        for u in big-first-boot.service auto-unlock-pacman.service; do
+            [ "$(systemctl show -p LoadState --value $u 2>/dev/null)" = loaded ] || continue
+            waited=0
+            while s=$(systemctl is-active $u 2>/dev/null); [ "$s" = activating ] || [ "$s" = deactivating ] ||
+                systemctl list-jobs --no-legend 2>/dev/null | awk -v u=$u '$2 == u { f = 1 } END { exit !f }'; do
+                [ $waited -lt 600 ] || { say "$u is still $s after 600 s: pacman would fight it for db.lck"; exit 1; }
+                [ $waited -gt 0 ] || say "waiting for $u ($s) to finish before pacman runs"
+                sleep 5; waited=$((waited + 5))
+            done
+            [ $waited -eq 0 ] || say "$u done after ${waited} s ($s)"
+        done
         # The keyrings first: packages signed by keys newer than the guest's
         # keyring would fail to verify.  Omarchy's pacman hook stops a plain
         # pacman upgrade (for "omarchy update", which is interactive) unless
@@ -400,7 +488,7 @@ print(d[0]["checksum"] if d else "")' "$1"
         if grep -qs '^ID="*endeavouros' /etc/os-release && pacman -Qq plasma-x11-session >/dev/null 2>&1; then
             pacman -Rdd --noconfirm plasma-x11-session || exit 1
         fi
-        keyrings=$(pacman -Qq archlinux-keyring artix-keyring cachyos-keyring endeavouros-keyring manjaro-keyring omarchy-keyring 2>/dev/null)
+        keyrings=$(pacman -Qq archlinux-keyring artix-keyring biglinux-keyring cachyos-keyring chaotic-keyring endeavouros-keyring manjaro-keyring omarchy-keyring 2>/dev/null)
         pacman -Sy --noconfirm --needed $keyrings && pacman -Su --noconfirm || exit 1
         yes | pacman -Scc >/dev/null
     # t2-section: Linux.zypper

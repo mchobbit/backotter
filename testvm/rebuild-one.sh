@@ -33,6 +33,9 @@ SRC=$HOME_M/backotter-work/vms/$G
 # elementary8-luks is built from elementary8's ISO.
 [ $G = elementary8-luks ] && [ ! -d /bkoscratch/rebuild-inputs/$G ] && [ -d /bkoscratch/rebuild-inputs/elementary8 ] &&
     SRC=/bkoscratch/rebuild-inputs/elementary8
+# void-zbm-enc is built from void-zbm's inputs.
+[ $G = void-zbm-enc ] && [ ! -d /bkoscratch/rebuild-inputs/$G ] && [ -d /bkoscratch/rebuild-inputs/void-zbm ] &&
+    SRC=/bkoscratch/rebuild-inputs/void-zbm
 [ -d $T ] || { echo "no $T" >&2; exit 2; }
 [ -d "$SRC" ] || { echo "no $SRC" >&2; exit 2; }
 asm() { runuser -u m -- env TMPDIR="$RAMTMP" PATH="$PATH:/usr/sbin:/sbin" "$@"; }
@@ -72,6 +75,13 @@ tumbleweed) cmd=(asm $T/make-opensuse.sh 20261030 "$W") ;;
 microos)    cmd=(asm $T/make-opensuse.sh microos 20261111 "$W") ;;
 alpine324)  cmd=(asm $T/make-bootstrap.sh alpine "$W") ;;
 void-musl)  cmd=(asm $T/make-bootstrap.sh void "$W") ;;
+# void-zbm: glibc Void on ZFS, booted by ZFSBootMenu; a root builder, its inputs
+# (Void's ROOTFS, ZBM's release EFI, zbm-kcl, all pinned in the builder) from
+# /bkoscratch/rebuild-inputs/void-zbm, copied into W; xbps's packages at the rebuild.
+void-zbm)   cmd=($T/make-void-zfs.sh "$W" void-zbm) ;;
+# void-zbm-enc: the same with the guide's native encryption; void-zbm's inputs;
+# a new zfs-passphrase each build (typed at ZFSBootMenu's prompt by console-boot.py).
+void-zbm-enc) cmd=($T/make-void-zfs.sh "$W" void-zbm-enc --encrypt) ;;
 chimera)    cmd=(asm $T/make-bootstrap.sh chimera "$W") ;;
 chimera-uefi) cmd=(asm $T/make-bootstrap.sh chimera-uefi "$W") ;;
 chimera-zfs) cmd=($T/make-chimera-zfs.sh "$W" chimera-zfs) ;;

@@ -178,8 +178,16 @@ pub fn duid_path(sys: &Sys, node: &str) -> Option<String> {
 
 /// close's unmount of $m where the tree is on a softraid volume: umount,
 /// and if that fails while fstat lists no file open on $m (a reference the
-/// kernel holds, not a process's), umount -f, saying so; else stop.
-pub const UMOUNT_BUSY: &str = "umount \"$m\" || { ! fstat -f \"$m\" | sed 1d | grep -q . && echo \"bko-holt: $m is busy with no file open on it: umount -f\" >&2 && umount -f \"$m\"; } || exit";
+/// kernel holds, not a process's), umount -f, saying so; else stop, as
+/// when fstat itself fails.  A file is on $m when fstat's MOUNT column (the
+/// fifth field, or a later one should a command name have a space) is $m.
+/// Not `fstat -f $m`, which matches by device number: in the rescue image
+/// (OpenBSD 8.0), with $m on sd4 (device 0x10400 and up; the volume is sd4
+/// there), it listed the program files of processes running from the
+/// image's root, sd0a, so close stopped on a tree with nothing open, and
+/// it missed a process whose working directory was $m, which a forced
+/// unmount would have pulled from under it.
+pub const UMOUNT_BUSY: &str = "umount \"$m\" || { o=$(fstat) && ! printf '%s\\n' \"$o\" | awk -v m=\"$m\" '{ for (i = 5; i <= NF; i++) if ($i == m) f = 1 } END { exit !f }' && echo \"bko-holt: $m is busy with no file open on it: umount -f\" >&2 && umount -f \"$m\"; } || exit";
 
 /// A node named by DUID (739d98841b65e745.a): its DUID and letter.  load
 /// names a softraid volume's partitions so, and nothing else.
@@ -750,14 +758,21 @@ mod tests {
             t.file(&format!("/bin/{name}"), format!("#!/bin/sh\n{body}\n"));
             std::process::Command::new("chmod").arg("755").arg(bin.join(name)).status().unwrap();
         };
-        let run = |busy: bool, open: bool| {
+        // Every fstat lists files on other trees: the root, a tree under
+        // $m, one whose name starts with $m's.  The rescue image's fstat -f
+        // listed the root's, as if they were $m's (UMOUNT_BUSY).
+        let others = "echo 'USER     CMD          PID   FD MOUNT        INUM  MODE          R/W    SZ|DV'; echo 'root     ksh        45238 text /           69803  -r-xr-xr-x      r   809840'; echo 'root     sh         81563   wd /mnt/t/boot      2  drwx------      r      512'; echo 'root     sh         81563    1 /mnt/tt     102914  -rw-r--r--     wp    10291'; echo 'root     sh         81563   11 pipe 0xffffef00a8ccbd98 state: '";
+        let fstat_open = format!("{others}; echo 'root     ksh           1   wd /mnt/t            2  drwxr-xr-x      r      512'");
+        let fstat_spaced = format!("{others}; echo 'root     my cmd        7    3 /mnt/t         4711  -rw-r--r--      r        9'");
+        let run_with = |busy: bool, fstat: &str| {
             let _ = std::fs::remove_file(&log);
             fake("umount", &format!("echo \"umount $*\" >> {l}; [ \"$1\" = -f ] && exit 0; exit {}", if busy { 1 } else { 0 }, l = log.display()));
-            fake("fstat", if open { "echo 'USER CMD PID FD MOUNT'; echo 'root ksh 1 wd /mnt/t'" } else { "echo 'USER CMD PID FD MOUNT'" });
+            fake("fstat", fstat);
             let path = format!("{}:{}", bin.display(), std::env::var("PATH").unwrap_or_default());
             let st = std::process::Command::new("sh").arg("-c").arg(format!("echo /mnt/t | while read -r m; do {UMOUNT_BUSY}; done")).env("PATH", &path).output().unwrap();
             (st.status.success(), std::fs::read_to_string(&log).unwrap_or_default(), String::from_utf8_lossy(&st.stderr).to_string())
         };
+        let run = |busy: bool, open: bool| run_with(busy, if open { &fstat_open } else { others });
         let (ok, calls, err) = run(true, false);
         assert!(ok, "{calls} {err}");
         assert_eq!(calls, "umount /mnt/t\numount -f /mnt/t\n");
@@ -767,6 +782,14 @@ mod tests {
         assert_eq!(calls, "umount /mnt/t\n");
         let (ok, calls, err) = run(false, false);
         assert!(ok && err.is_empty());
+        assert_eq!(calls, "umount /mnt/t\n");
+        // A command name with a space puts MOUNT later on its line: still $m's.
+        let (ok, calls, _) = run_with(true, &fstat_spaced);
+        assert!(!ok);
+        assert_eq!(calls, "umount /mnt/t\n");
+        // No fstat to ask (it fails): close stops, nothing forced.
+        let (ok, calls, _) = run_with(true, "echo 'fstat: kvm_openfiles: no such file' >&2; exit 1");
+        assert!(!ok);
         assert_eq!(calls, "umount /mnt/t\n");
     }
 

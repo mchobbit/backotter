@@ -220,5 +220,12 @@ where they differ:
   fw_update holds rc up on an image's first boot, so ht1-bsd.sh's boot-state
   check waits for `sh /etc/rc autoboot` to exit (up to 300 s), on every
   OpenBSD guest. openbsd8-crypt's image has never had its first boot.
+- **O6 (the rescue image, 2026-11-14):** close's busy check first used
+  `fstat -f $m`, which matches by device number and goes wrong for sd4 and
+  up (the image's volume is sd4): it listed the image root's files, so close
+  stopped, and it missed a process whose working directory was on $m. Close
+  now reads plain fstat's MOUNT column. With that, openbsd8-crypt+img PASS
+  (copland, run o6c; judge 0 of 151 differ), openbsd8+img PASS, no OOM with
+  rel8's rustic-bko; checks.sh's softraid line passes.
 - **O4 result:** HoltTest1BSD PASS on chopin 2026-11-14, run obc3 (judge: 0
   of 151 fields differ), and plain openbsd8 still PASS (obp3).

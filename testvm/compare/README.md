@@ -133,21 +133,45 @@ runs on the Mac, where the forks' histories are:
 
 `stick/build-round.sh ROUND`, run on the Mac, builds a whole round with no
 agent: it checks that `~/git/restic`, `rustic_core` and `rustic` are clean,
-takes their HEADs and source digests, syncs them to `roundROUND/src` on the
-two build hosts (testvm/hosts.json's build role) and runs both shares below
-at once (Chopin: restic-bko for the six
-OSes, rustic-bko for Linux, DragonFly and Haiku; Cinqcent: the four native
-builds, two guests at a time).  A host builds nothing from a copy whose digests
-aren't the Mac's.  Both build hosts end with the whole `roundROUND/bin` (illumos'
-also as `omnios`) and the same `SHA256SUMS`; it ends with a table, per
+takes their HEADs and source digests, syncs them to `roundROUND/src` on every
+build host (testvm/hosts.json's build role: chopin, cinqcent, copland, cage)
+and runs their parts at once.  A round is a fixed set of **build units** --
+restic (one Go run for every OS), linux, dragonfly, haiku, freebsd, netbsd,
+openbsd, illumos, and with `--arch arm64` restic-arm64, restic-arm64-check and
+linux-arm64-check -- each with what it needs of a host and about how long it
+takes.  `stick/deal-units.py` holds that table and deals the units: the Mac
+asks each build host in one read-only ssh what it has (Go, the rustup
+toolchain and its targets, DragonFly's nightly and sysroot, haiku6, a build
+image per guest, zig), then deals them longest first, each to the host whose
+estimated wall time ends up smallest, and never a check to the host that
+builds what it checks.  A host's class says how many it runs at once: a big
+host three, two of them native guest builds; a small host two and one.  The
+deal is printed before the builds start.  A host builds nothing from a copy
+whose digests aren't the Mac's.  Every builder's files are then gathered to
+one collector (Chopin, else the first build host given), which makes the
+round's `SHA256SUMS`, and the distribution gives every build host the whole
+`roundROUND/bin` (illumos' also as `omnios`) with that same `SHA256SUMS`; it
+ends with a table, per
 binary: built, reused or FAILED, seconds, SHA-256 (logs in
 `roundROUND/logs/`).  It lives in `stick/` with the build scripts it drives;
 `--only`, `--hosts`, `--dry-run` and the variables are in its header.
+Whatever `--hosts` names is dealt over, one host or four: `--hosts chopin`
+gives Chopin the whole round, `--hosts both` deals it over Chopin and
+Cinqcent.  `--split legacy` is the fixed two-way split the rounds used before
+2026-11-14 instead (Chopin: restic, linux, dragonfly, haiku; Cinqcent: the
+four native builds), so an older round can be built again as it was, bit for
+bit; it takes chopin and cinqcent alone, and without `--hosts` it builds on
+both of them.  The collector also writes `build-hosts`, one builder a line,
+and t2 calls a round complete only once every builder in it has finished
+*and* the round holds every platform's binaries, so a round built with
+`--only`, or over hosts that couldn't take every unit, is never taken for a
+whole one (t2lib/facts_host.py's `round_complete`; it names the platforms
+that are short).
 `--dist-hosts H,H|all` also copies the built round, whole, to hosts that
-build nothing (copland, cage; `all`: every enabled amd64 host `--hosts`
+build nothing (`all`: every enabled amd64 host `--hosts`
 doesn't name; an arm64 host named gets only `bin/linux-arm64/`), checked there with `sha256sum -c` and against the source's
 `SHA256SUMS`; `--dist-only` copies a round built before.  The default is
-none.  The shared sets (bko-bin, cmp-bin, holt-bin) go to the hosts with
+none (the other build hosts get the round either way).  The shared sets (bko-bin, cmp-bin, holt-bin) go to the hosts with
 `testvm/promote-bins.sh` (testvm/HOSTS.md).
 
     stick/build-round.sh 10                    # host builds release, guest builds FAST
@@ -162,13 +186,13 @@ target, `build-cache/cargo/TARGET`, whose `target/` stays warm, and
 prep-rustic-src.sh's lock is kept per manifest digest.  `BKO_PROFILE=fast`
 is for fix rounds: the last round of a batch is built release.
 
-The host-side Rust (prep-rustic-src.sh's cargo on both build hosts, the
-Linux rustic-bko on Chopin) is rustup's 1.94.1, named in `RUSTUP_TOOLCHAIN`
+The host-side Rust (prep-rustic-src.sh's cargo on every builder, and the
+Linux rustic-bko where that unit lands) is rustup's 1.94.1, named in `RUSTUP_TOOLCHAIN`
 (`BKO_RUST_TOOLCHAIN` changes it), never the host's rustup default, which a
 reinstall can reset (Chopin's went to 1.85.1, too old for rustic's
-dependencies).  A host without it, or Chopin without its
-`x86_64-unknown-linux-musl` target, fails with the `rustup` command that
-adds it.  DragonFly's cross build takes its pinned nightly
+dependencies).  The deal keeps the Linux unit off a host whose Rust has no
+`x86_64-unknown-linux-musl` target, and a host without the toolchain at all
+fails with the `rustup` command that adds it.  DragonFly's cross build takes its pinned nightly
 (stick/dragonfly/build-rustic.sh); the native builds take the guests' Rust.
 
 `--arch arm64` (or `all`, with amd64) adds Linux's ARM64 binaries
@@ -177,8 +201,8 @@ adds it.  DragonFly's cross build takes its pinned nightly
 
 | binary | built | checked by |
 |---|---|---|
-| restic-bko `linux-arm64` | Chopin, Go's cross build (`linux/arm64`) | Cinqcent, the same Go (1.25.10 in `~/sdk`) |
-| rustic-bko `linux-arm64` | Bigfoot (the `build-arm64` role), natively, in `bko.slice`, `aarch64-unknown-linux-musl` | Chopin, a cross build |
+| restic-bko `linux-arm64` | a build host with Go, Go's cross build (`linux/arm64`): the restic-arm64 unit | another build host, the same Go (1.25.10 in `~/sdk`): restic-arm64-check |
+| rustic-bko `linux-arm64` | Bigfoot (the `build-arm64` role), natively, in `bko.slice`, `aarch64-unknown-linux-musl` | a build host with zig, a cross build: linux-arm64-check |
 
 Both rustic builds go through cargo-zigbuild, zig the C compiler and
 linker: Bigfoot has no musl C compiler, and installing one would change its
@@ -196,7 +220,8 @@ and fails nothing: cargo hashes the host's `rustc -vV` into build scripts
 and proc-macros, and so into the crate hash of every crate that uses one,
 which reorders the binary (docs/design/arm64.md, "What A2 built": every C
 object, and the other crates' object code, is the same bytes on both).
-Bigfoot's builds reach Chopin and Cinqcent through the Mac (tar), and
+Bigfoot's builds reach the collector through the Mac (tar) and the other
+build hosts with the distribution, and
 `bin/linux-arm64/` goes back to Bigfoot alone, checked there.  An arm64
 host in `--dist-hosts` gets only the arm64 directories.
 
@@ -255,14 +280,17 @@ linux and sparse only, above):
 | `fs_roundtrip.py` on zfs, zfs onto ext4, bcachefs, xfs, btrfs; `nonroot-rt.sh linux`; `sparse-rt.sh` on xfs, btrfs (as root) | `fs_roundtrip.py` on ext4, f2fs, tmpfs, jfs; `sparse-rt.sh` on zfs, zfs-nocomp, ext4 (as root) |
 | round trips and `nonroot-rt.sh` on dragonfly6; `zfs-guest-rt.sh`; `compare.py` | `sparse-rt.sh` in freebsd15, freebsd15-ufs, netbsd11's build image, omnios58 |
 
-`stick/build-round.sh` leaves the whole set of binaries on both build hosts
+`stick/build-round.sh` leaves the whole set of binaries on every build host
 (and on `--dist-hosts`).
 Bring the logs back to one place for the audit.  Every
 host is shared with other work: give every guest a port of its own, and
 keep off the ports others use (2400 is the long-lived freebsd15-builder's;
 the image builds use 24xx).  The scripts' default ports are 2710-2713 for
-the round trips (Chopin's share; 2713 is `zfs-guest-rt.sh`'s) and 2901-2904 for the native builds
-(Cinqcent's), 2905 for Haiku's (Chopin's); `netbsd/build-rustic.sh` keeps 2412 and
+the round trips (Chopin's share; 2713 is `zfs-guest-rt.sh`'s); a round's native
+builds and Haiku's take theirs from the slot_range of whichever build host the
+deal gives the unit to, one port each above its first (2901-2905 on Cinqcent,
+2701-2705 on Chopin, and so on), and a guest slot on that same range;
+`netbsd/build-rustic.sh` keeps 2412 and
 `dragonfly/build-rustic.sh` 2421, the image builds' own.  Cinqcent takes at
 most three guests of ours at a time.
 

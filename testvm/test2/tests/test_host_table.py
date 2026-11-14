@@ -106,7 +106,8 @@ class Table(unittest.TestCase):
         self.assertEqual(H.names(arch="amd64"), ("chopin", "cinqcent", "copland", "cage"))
         self.assertEqual(H.names(arch="arm64"), ("bigfoot",))
         self.assertEqual(H.names(cls="big"), ("chopin", "cinqcent"))
-        self.assertEqual(H.with_role("build"), ("chopin", "cinqcent"))
+        # all four amd64 hosts build a round's units since 2026-11-14
+        self.assertEqual(H.with_role("build"), ("chopin", "cinqcent", "copland", "cage"))
         self.assertEqual(H.with_role("fleet"), ("chopin",))
         self.assertEqual(H.with_role("store-mirror"), ("chopin",))
         self.assertEqual(H.with_role("bigfoot-link"), ("chopin",))
@@ -424,11 +425,15 @@ class FollowsTheTable(unittest.TestCase):
         r = run("both", {})
         self.assertEqual(r.returncode, 2)
         self.assertIn("no checkout", r.stderr)   # past the host checks, before anything is synced
-        alt = AltTable(lambda t: row_of(t, "cinqcent")["roles"].remove("build"))
+        def no_build(t):
+            for n in ("cinqcent", "copland", "cage"):
+                row_of(t, n)["roles"].remove("build")
+        alt = AltTable(no_build)
         try:
             r = run("both", alt.env())
             self.assertEqual(r.returncode, 2)
-            self.assertIn("cinqcent is not a build host in testvm/hosts.json (build hosts: chopin)", r.stderr)
+            self.assertIn("--hosts: all, both, or build hosts of testvm/hosts.json (chopin), not cinqcent",
+                          r.stderr)
             r = run("chopin", alt.env())
             self.assertIn("no checkout", r.stderr)
         finally:

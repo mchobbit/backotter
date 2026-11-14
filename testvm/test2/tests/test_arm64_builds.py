@@ -159,8 +159,9 @@ class ZigTools(unittest.TestCase):
 
 @unittest.skipUnless(RD.REAL_RSYNC, "no rsync here")
 class RoundSums(unittest.TestCase):
-    """--sums and --pull (the host part): the round's SHA256SUMS lists every file, an arm64
-    directory's too, and each arm64 directory has its own; --pull copies both to the peer."""
+    """--sums (the host part, run on the collector once the Mac has gathered every builder's
+    files): the round's SHA256SUMS lists every file, an arm64 directory's too, and each arm64
+    directory has its own."""
 
     def setUp(self):
         self.w = RD.World()
@@ -197,28 +198,33 @@ class RoundSums(unittest.TestCase):
                                cwd=os.path.join(self.w.home("chopin"), d), env=dict(os.environ, PATH=self.w.bin + os.pathsep + os.environ["PATH"]))
             self.assertEqual(c.returncode, 0, d)
 
-    def test_pull_copies_every_sums(self):
+    def test_the_gathered_files_are_summed_once(self):
+        """What the Mac gathers from the other builders is in the collector's SHA256SUMS: --sums
+        reads the directory, whoever built what is in it."""
         self.put_round("chopin")
-        self.w.put("chopin", f"{self.b}/build-chopin.files", "linux-arm64/restic-bko\n")
-        self.w.put("cinqcent", f"{self.b}/freebsd/rustic-bko", "rustic freebsd\n", 0o755)
-        self.w.put("cinqcent", f"{self.b}/build-cinqcent.files", "freebsd/rustic-bko\n")
-        self.w.put("cinqcent", f"{self.b}/build-cinqcent.tsv", "y\n")
-        for f in ("linux/restic-bko", "linux-arm64/restic-bko", "linux-arm64/restic-commit", "linux-arm64/rustic-bko"):
-            self.w.put("cinqcent", f"{self.b}/{f}", self.w.read("chopin", f"{self.b}/{f}"))
-        r = self.host_part("chopin", "--pull", "r1", env={"BKO_PEER": f"m@cinqcent.local:{self.b}"})
+        self.w.put("chopin", f"{self.b}/freebsd/rustic-bko", "rustic freebsd\n", 0o755)
+        self.w.put("chopin", f"{self.b}/build-cinqcent.files", "freebsd/rustic-bko\n")
+        self.w.put("chopin", f"{self.b}/build-cinqcent.tsv", "y\n")
+        self.w.put("chopin", f"{self.b}/build-hosts", "chopin\ncinqcent\n")
+        r = self.host_part("chopin", "--sums", "r1")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        for f in ("SHA256SUMS", "linux-arm64/SHA256SUMS"):
-            self.assertIsNotNone(self.w.read("chopin", f"{self.b}/{f}"), f)
-            self.assertEqual(self.w.read("cinqcent", f"{self.b}/{f}"), self.w.read("chopin", f"{self.b}/{f}"), f)
-        self.assertIn("./freebsd/rustic-bko", self.w.read("chopin", f"{self.b}/SHA256SUMS"))
+        top = self.w.read("chopin", f"{self.b}/SHA256SUMS")
+        self.assertIn("./freebsd/rustic-bko", top)
+        self.assertIn("./linux-arm64/rustic-bko", top)
+        for n in ("build-hosts", "build-cinqcent.files", "build-chopin.tsv"):   # build-* are never summed
+            self.assertNotIn(n, top)
+        self.assertIsNotNone(self.w.read("chopin", f"{self.b}/linux-arm64/SHA256SUMS"))
 
     def test_an_unknown_host_part_is_refused(self):
         os.makedirs(os.path.join(self.w.home("chopin"), W))
-        r = self.host_part("chopin", "--host", "cage", "r1")
+        r = self.host_part("chopin", "--host", "nohost", "--units", "linux", "r1")
         self.assertEqual(r.returncode, 2)
-        self.assertIn("--host: chopin, cinqcent or a host with the build-arm64 role in testvm/hosts.json, not cage",
+        self.assertIn("--host: a host with the build or build-arm64 role in testvm/hosts.json, not nohost",
                       r.stderr)
-        r = self.host_part("chopin", "--host", "bigfoot", "--arch", "arm64", "r1")
+        r = self.host_part("chopin", "--host", "chopin", "r1")
+        self.assertEqual(r.returncode, 2)
+        self.assertIn("--host chopin: --units LIST says what to build here", r.stderr)
+        r = self.host_part("chopin", "--host", "bigfoot", "--units", "linux-arm64", "--arch", "arm64", "r1")
         self.assertEqual(r.returncode, 2)   # this Mac isn't an aarch64 Linux
         self.assertIn("--host bigfoot: this is a", r.stderr)
         r = self.host_part("chopin", "--arch", "sparc", "--sums", "r1")
@@ -233,7 +239,7 @@ FAKE_PART = r'''#!/usr/bin/env bash
 a=amd64 mode=""
 args=("$@")
 while [[ $# -gt 1 ]]; do
-    case $1 in --host) mode=$2; shift ;; --pull) mode=pull ;; --sums) mode=sums ;; --arch) a=$2; shift ;; esac
+    case $1 in --host) mode=$2; shift ;; --sums) mode=sums ;; --arch) a=$2; shift ;; --units) shift ;; esac
     shift
 done
 echo "$FAKE_ON ${args[*]} sliced=${FAKE_SLICED:-no}" >> "$FAKE_ROOT/parts"
@@ -260,9 +266,7 @@ case $mode in
         "${FAKE_RUSTIC_CHECK:-bbbb}" >> "$b/build-chopin.tsv"
     echo linux-arm64/restic-bko >> "$b/build-chopin.files"
     sums
-    if [[ -n ${BKO_PEER:-} ]]; then
-        rsync -rlp --files-from="$b/build-chopin.files" "$b/" "$BKO_PEER/" && rsync -rlp "$b/build-chopin.files" "$b/build-chopin.tsv" "$BKO_PEER/"
-    fi ;;
+    ;;
   cinqcent)
     printf 'cinqcent\trestic-bko\tlinux-arm64\tcheck-built\t1\t%s\td1\n' "${FAKE_RESTIC_CHECK:-aaaa}" > "$b/build-cinqcent.tsv"
     : > "$b/build-cinqcent.files"; sums ;;
@@ -270,9 +274,6 @@ case $mode in
     mkdir -p "$b/linux-arm64" && echo "rustic-bko arm64" > "$b/linux-arm64/rustic-bko" && echo c > "$b/linux-arm64/rustic-commit"
     printf 'bigfoot\trustic-bko\tlinux-arm64\tbuilt\t9\tbbbb\td3\n' > "$b/build-bigfoot.tsv"
     printf 'linux-arm64/rustic-bko\nlinux-arm64/rustic-commit\n' > "$b/build-bigfoot.files" ;;
-  pull)
-    sums
-    rsync -rlp "$b/SHA256SUMS" "$BKO_PEER/" && rsync -rlp "$b/linux-arm64/SHA256SUMS" "$BKO_PEER/linux-arm64/" ;;
   sums) sums ;;
 esac
 '''
@@ -311,7 +312,11 @@ class BuildRoundArm64(unittest.TestCase):
         self.b = f"{W}/roundr2/bin"
 
     def br(self, *args, env=None):
-        return self.w.run([BUILD_ROUND] + list(args), dict(self.env, **(env or {})))
+        """The Mac part with --hosts both --split legacy: the fixed two-way split, which is
+        what FAKE_PART stands in for (the dealing over the build hosts, which is what any
+        --hosts does without --split legacy, is tests/test_round_deal.py's)."""
+        return self.w.run([BUILD_ROUND, "--hosts", "both", "--split", "legacy"] + list(args),
+                          dict(self.env, **(env or {})))
 
     def parts(self):
         try:
@@ -324,10 +329,10 @@ class BuildRoundArm64(unittest.TestCase):
         r = self.br("--arch", "arm64", "r2")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         p = self.parts()
-        self.assertIn("bigfoot --host bigfoot --arch arm64 r2 sliced=yes", p)   # in its job_slice
-        self.assertIn("chopin --host chopin --arch arm64 r2 sliced=no", p)
-        self.assertIn("cinqcent --host cinqcent --arch arm64 r2 sliced=no", p)
-        self.assertIn("chopin --pull r2 sliced=no", p)
+        self.assertIn("bigfoot --host bigfoot --units linux-arm64 --arch arm64 r2 sliced=yes", p)   # in its job_slice
+        self.assertIn("chopin --host chopin --units restic-arm64,linux-arm64-check --arch arm64 r2 sliced=no", p)
+        self.assertIn("cinqcent --host cinqcent --units restic-arm64-check --arch arm64 r2 sliced=no", p)
+        self.assertIn("chopin --sums r2 sliced=no", p)
         # The arm64 host's builds are the build hosts' too; the sums are the same everywhere.
         for h in ("chopin", "cinqcent"):
             self.assertEqual(self.w.read(h, f"{self.b}/linux-arm64/rustic-bko"), "rustic-bko arm64\n", h)
@@ -353,7 +358,8 @@ class BuildRoundArm64(unittest.TestCase):
     def test_both_archs_and_bigfoot_never_gets_amd64(self):
         r = self.br("--arch", "all", "--dist-hosts", "cage", "r2")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("chopin --host chopin --arch amd64,arm64 r2 sliced=no", self.parts())
+        self.assertIn("chopin --host chopin --units restic,linux,dragonfly,haiku,restic-arm64,linux-arm64-check "
+                      "--arch amd64,arm64 r2 sliced=no", self.parts())
         self.assertEqual(self.w.read("chopin", f"{self.b}/linux/restic-bko"), "restic-bko amd64\n")
         self.assertFalse(os.path.exists(os.path.join(self.w.home("bigfoot"), self.b, "linux")))
         self.assertEqual(self.w.files("cage", self.b), self.w.files("chopin", self.b))   # an amd64 host: whole
@@ -363,7 +369,7 @@ class BuildRoundArm64(unittest.TestCase):
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
         self.assertIn("restic-bko linux-arm64: DIFFERS: chopin's aaaa, cinqcent's check cccc", r.stdout)
         self.assertIn("roundr2's arm64 directories not copied back to bigfoot (the build failed)", r.stdout)
-        self.assertIn("roundr2 not copied to cage (the build failed)", r.stdout)
+        self.assertIn("roundr2 not copied to cinqcent cage (the build failed)", r.stdout)
         self.assertFalse(os.path.exists(os.path.join(self.w.home("bigfoot"), self.b, "linux-arm64", "restic-bko")))
         self.assertFalse(os.path.exists(self.w.home("cage")))
 
@@ -378,19 +384,21 @@ class BuildRoundArm64(unittest.TestCase):
         self.assertTrue(os.path.exists(os.path.join(self.w.home("bigfoot"), self.b, "linux-arm64", "restic-bko")))
 
     def test_one_build_host(self):
-        r = self.br("--hosts", "chopin", "--arch", "arm64", "r2")
+        r = self.w.run([BUILD_ROUND, "--hosts", "chopin", "--split", "legacy", "--arch", "arm64", "r2"],
+                       dict(self.env))
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         p = self.parts()
         self.assertFalse(any(x.startswith("cinqcent ") for x in p), p)
         self.assertIn("chopin --sums r2 sliced=no", p)   # the arm64 host's builds counted in
         self.assertIn("./linux-arm64/rustic-bko", self.w.read("chopin", f"{self.b}/SHA256SUMS"))
-        self.assertIn("restic-bko linux-arm64: chopin's aaaa, not cross-checked: no check build this round (--hosts chopin)",
-                      r.stdout)
+        self.assertIn("restic-bko linux-arm64: chopin's aaaa, not cross-checked: no check build this round "
+                      "(--hosts chopin)", r.stdout)
 
     def test_dry_run(self):
         r = self.br("--dry-run", "--arch", "arm64", "r2")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
-        self.assertIn("bigfoot --host bigfoot --dry-run --arch arm64 r2 sliced=yes", self.parts())
+        self.assertIn("bigfoot --host bigfoot --units linux-arm64 --dry-run --arch arm64 r2 sliced=yes",
+                      self.parts())
         self.assertNotIn("Cross-checks", r.stdout)
         self.assertFalse(os.path.exists(os.path.join(self.w.home("chopin"), self.b, "linux-arm64")))
 
@@ -398,16 +406,18 @@ class BuildRoundArm64(unittest.TestCase):
         r = self.br("r2")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertFalse(any(x.startswith("bigfoot ") for x in self.parts()))
-        self.assertIn("chopin --host chopin r2 sliced=no", self.parts())   # no --arch: as before A2
+        self.assertIn("chopin --host chopin --units restic,linux,dragonfly,haiku r2 sliced=no",
+                      self.parts())   # no --arch: as before A2
         self.assertNotIn("Cross-checks", r.stdout)
         self.assertFalse(os.path.exists(self.w.home("bigfoot") + "/" + W))
 
     def test_refusals(self):
-        for args, msg in ((["--arch", "arm64", "--hosts", "cinqcent", "r2"], "--arch arm64 needs chopin in --hosts"),
+        for args, msg in ((["--arch", "arm64", "--hosts", "cinqcent", "--split", "legacy", "r2"],
+                           "--arch arm64: no host of --hosts cinqcent builds restic-bko linux-arm64"),
                           (["--arch", "x86", "r2"], "--arch: amd64, arm64, amd64,arm64 or all, not x86"),
                           (["--arch", "arm64", "--dist-hosts", "bigfoot", "r2"],
                            "--dist-hosts: bigfoot builds this round's arm64 rustic-bko (--arch arm64)")):
-            r = self.br(*args)
+            r = self.w.run([BUILD_ROUND] + list(args), dict(self.env))
             self.assertEqual(r.returncode, 2, (args, r.stdout, r.stderr))
             self.assertIn(msg, r.stderr, args)
         self.assertEqual(self.parts(), [])

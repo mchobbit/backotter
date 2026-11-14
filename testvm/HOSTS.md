@@ -12,8 +12,8 @@ describes that table, what each class of host runs, and how a new host joins.
 |---|---|---|---|---|---|
 | chopin | big | 2700-2799 | 2780-2799 | build, fleet, store-mirror, bigfoot-link | yes |
 | cinqcent | big | 2900-2999 | 2980-2999 | build, cache | yes |
-| copland | small | 2800-2899 | 2880-2899 | cache | yes |
-| cage | small | 3000-3099 | 3080-3099 | cache | yes |
+| copland | small | 2800-2899 | 2880-2899 | build, cache | yes |
+| cage | small | 3000-3099 | 3080-3099 | build, cache | yes |
 | czerny | small | 3100-3199 | 3180-3199 | cache | no (row reserved: `enabled: false`) |
 | bigfoot | small, arm64 | 3200-3299 | 3280-3299 | build-arm64 | no |
 
@@ -30,7 +30,7 @@ host with the fleet role (Chopin) holds vm-update's fleet lock.
 | `slot_range` | `LO-HI`, the host's guest-slot range (`slot_range_here` in guest-slot.sh). run-all.sh's `PORT_BASE` is LO and its `GUEST_PORTS` is the whole range. Ranges must not overlap. |
 | `stic_ports` | `[LO, HI]`, drive.py's ports for the checks. They must lie inside `slot_range`. |
 | `class` | `big` or `small` (see below). The gate's `host_reserve` in `gate/layers.json` and run-all.sh's profile are chosen by class. |
-| `roles` | `build`: builds round binaries (stick/build-round.sh) and bko-holt. `build-arm64`: builds a round's arm64 rustic-bko natively (`build-round.sh --arch arm64`) and arm64 bko-holt (`build-holt.sh linux-arm64`); only an arm64 host has it, and it is not `build`, so every amd64 build loop leaves the host out. `fleet`: holds every guest in a full `vms/`, kept alike by vm-update. `store-mirror`: vm-store's mirror, the only publisher. `bigfoot-link`: the one host that talks to Bigfoot. `cache`: has a vm-store cache. |
+| `roles` | `build`: builds a round's binaries (stick/build-round.sh deals its build units over every host with the role, all four amd64 hosts since 2026-11-14) and bko-holt (holt.py builds those on the big build hosts only: a small host has no room for one beside the run's cells; promote-bins.sh's source is a big one too). `build-arm64`: builds a round's arm64 rustic-bko natively (`build-round.sh --arch arm64`) and arm64 bko-holt (`build-holt.sh linux-arm64`); only an arm64 host has it, and it is not `build`, so every amd64 build loop leaves the host out. `fleet`: holds every guest in a full `vms/`, kept alike by vm-update. `store-mirror`: vm-store's mirror, the only publisher. `bigfoot-link`: the one host that talks to Bigfoot. `cache`: has a vm-store cache. |
 | `default` | a host of every run without `--hosts` (t2, drive.py). A default host must be enabled. |
 | `enabled` | `false` marks a reserved row: the name and ranges are taken, but no script treats it as a host. |
 | `arch` | optional: `amd64` or `arm64`, the architecture of the host's guests and binaries. A row without it is `amd64`, as every host was before 2026-11-14. A guest has one too, by its name: `arm64` for a guest named `*-arm64`, else `amd64` (hosts.py `guest_arch`). A guest runs only on a host of its own architecture (see below). |
@@ -73,7 +73,11 @@ architectures, each takes only the hosts it can use:
 - the default host list in sync-hosts.sh: every enabled host, bigfoot
   included, since it copies code only. A bare table name (`sync-hosts.sh
   bigfoot`) means that row's ssh.
-- build-round.sh's ssh targets and its build-role check. `--dist-hosts all`
+- build-round.sh's ssh targets and its build-role check (`--hosts all`, the
+  default, is every enabled amd64 host with the role, and the units are dealt
+  over whatever hosts it names, by class and capability:
+  stick/deal-units.py. `--split legacy` is the old fixed chopin/cinqcent
+  split, and takes those two alone). `--dist-hosts all`
   means every amd64 host. An arm64 host named in `--dist-hosts` gets only the
   round's arm64 directories (`bin/linux-arm64/`, with its own SHA256SUMS),
   never an amd64 binary. `--arch arm64` adds the first host with the
@@ -108,7 +112,8 @@ Two hosts.json changes re-key things:
 
 **Big hosts** (Chopin, Cinqcent): 62 GiB of memory and a 30G RAM disk. Their
 cmp-run.sh ceiling is about 29.0 23. They have host OpenZFS, and both have the
-build role. Only Chopin has the fleet role (since 2026-11-13). Cinqcent is a
+build role; so do the small hosts since 2026-11-14, but only a big one builds
+bko-holt or is promote-bins.sh's source. Only Chopin has the fleet role (since 2026-11-13). Cinqcent is a
 cache host with every guest: most of its `vms/` entries are links into its
 vm-store cache (cap 150G, floor 50G), and the rest are full folders: the
 guests whose disks back kept qcow2 overlays outside `vms/`, the 21 versions
@@ -219,7 +224,7 @@ each of these is decided per cell, from the host's facts, not from its name:
 
 - guests that are not published to the store;
 - the host-ZFS holt sources;
-- round, bko-holt and image builds (the build role);
+- bko-holt and image builds (the big build hosts; a round's build units are dealt over all four since 2026-11-14);
 - cells over a small host's ceiling (about 9.0 11): for example stic debian13-zfs
   (`--reserve 13 5`) and
   ubuntu26-zfsmirror (23 GiB). The gate's per-host loop cells are the

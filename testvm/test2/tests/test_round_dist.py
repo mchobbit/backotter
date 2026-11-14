@@ -9,6 +9,7 @@ The shell scripts run against fake hosts: ssh runs the command here, in a direct
 is the host's home; rsync maps HOST:PATH there and runs this Mac's rsync; flock refuses
 while the world's lock-held file exists."""
 
+import contextlib
 import hashlib
 import json
 import os
@@ -85,6 +86,68 @@ os.execv(os.environ["FAKE_REAL_RSYNC"], ["rsync"] + out)
 '''
 
 FAKE_FLOCK = '#!/bin/sh\n[ -e "$FAKE_ROOT/lock-held" ] && exit 1\nexit 0\n'
+
+# BKO_CAPS for build-round.sh's deal: what each build host has, instead of the
+# read-only ssh probe (no Go, Rust or guest image exists under a fake host's home).
+ALL_CAPS = "go,musl,arm64-musl,dragonfly,haiku,zig,vm-freebsd,vm-netbsd,vm-openbsd,vm-illumos"
+
+
+@contextlib.contextmanager
+def no_build_role(*names):
+    """The host table with the build role taken off NAMES, in a temporary file
+    (BKO_HOSTS_JSON): what a run whose --hosts holds no build host sees."""
+    from unittest import mock
+    with open(H.path(), encoding="utf-8") as f:
+        t = json.load(f)
+    for r in t["hosts"]:
+        if r["name"] in names and "build" in r["roles"]:
+            r["roles"] = [x for x in r["roles"] if x != "build"]
+    with tempfile.TemporaryDirectory() as d:
+        p = os.path.join(d, "hosts.json")
+        with open(p, "w", encoding="utf-8") as f:
+            json.dump(t, f)
+        with mock.patch.dict(os.environ, {H.ENV: p}):
+            yield
+
+
+def caps(**per_host):
+    """BKO_CAPS: every build host fully capable, less what a keyword takes away
+    (caps(cinqcent="go,musl") gives cinqcent those two alone)."""
+    return " ".join(f"{h}={per_host.get(h, ALL_CAPS)}" for h in ("chopin", "cinqcent", "copland", "cage"))
+
+
+# A stand-in for a host's part of build-round.sh: it "builds" whatever --units
+# names (one file a unit), writes the build-HOST.files and .tsv the gather
+# takes, and makes its own SHA256SUMS, as the real part does.
+FAKE_PART = r'''#!/usr/bin/env bash
+mode="" units="" dry=no
+while [[ $# -gt 1 ]]; do
+    case $1 in --host) mode=$2; shift ;; --units) units=$2; shift ;; --sums) mode=sums ;;
+               --dry-run) dry=yes ;; esac
+    shift
+done
+b=$BKO_ROUNDS/round${@: -1}/bin
+mkdir -p "$b"
+sums() {
+    (cd "$b" && find . -type f ! -name 'SHA256SUMS*' ! -name 'build-*' | LC_ALL=C sort |
+        xargs sha256sum > SHA256SUMS)
+}
+[[ $mode == sums ]] && { sums; exit 0; }
+[[ $dry == yes ]] && exit 0
+: > "$b/build-$mode.files"
+: > "$b/build-$mode.tsv"
+for u in ${units//,/ }; do
+    case $u in
+      restic) n=restic-bko d=linux ;;
+      *) n=rustic-bko d=$u ;;
+    esac
+    mkdir -p "$b/$d"
+    echo "$n $d" > "$b/$d/$n"
+    printf '%s\t%s\t%s\tbuilt\t1\tx\ty\n' "$mode" "$n" "$d" >> "$b/build-$mode.tsv"
+    echo "$d/$n" >> "$b/build-$mode.files"
+done
+sums
+'''
 
 
 def sha(text):
@@ -169,7 +232,7 @@ class World:
 
     def run(self, argv, env=None):
         e = dict(os.environ)
-        for k in (H.ENV, "CHOPIN", "CINQCENT", "BKO_ROUNDS", "BKO_REMOTE_DIR", "BKO_WORK_REMOTE"):
+        for k in (H.ENV, "CHOPIN", "CINQCENT", "BKO_ROUNDS", "BKO_REMOTE_DIR", "BKO_WORK_REMOTE", "BKO_CAPS"):
             e.pop(k, None)
         e.update(PATH=self.bin + os.pathsep + e["PATH"], FAKE_ROOT=self.root, FAKE_REAL_RSYNC=REAL_RSYNC,
                  TMPDIR=self.tmp, **(env or {}))
@@ -230,11 +293,14 @@ class BuildRoundDist(unittest.TestCase):
         r = self.br("--dist-only", "--dry-run", "--dist-hosts", "all", "r1")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         named = [x.split()[1].rstrip(":") for x in r.stdout.splitlines() if "would copy" in x]
-        self.assertEqual(named, ["copland", "cage"])   # the table's order; czerny reserved; nothing written
-        self.assertFalse(os.path.exists(self.w.home("cage")))
-        r = self.br("--dist-only", "--dry-run", "--hosts", "chopin", "--dist-hosts", "all", "r1")
-        named = [x.split()[1].rstrip(":") for x in r.stdout.splitlines() if "would copy" in x]
+        # every enabled amd64 host but the one the copies come from (chopin, the
+        # table's first build host, which --dist-only takes by default); czerny
+        # is a reserved row, bigfoot an arm64 one; nothing is written
         self.assertEqual(named, ["cinqcent", "copland", "cage"])
+        self.assertFalse(os.path.exists(self.w.home("cage")))
+        r = self.br("--dist-only", "--dry-run", "--hosts", "cinqcent", "--dist-hosts", "all", "r1")
+        named = [x.split()[1].rstrip(":") for x in r.stdout.splitlines() if "would copy" in x]
+        self.assertEqual(named, ["chopin", "copland", "cage"])
 
     def test_a_source_that_doesnt_check_is_copied_nowhere(self):
         b = round_bin(self.w)
@@ -276,9 +342,12 @@ class BuildRoundDist(unittest.TestCase):
         no(["--dist-only", "r1"], "--dist-only needs --dist-hosts")
         no(["--dist-only", "--dist-hosts", "czerny", "r1"], "czerny isn't an enabled host of testvm/hosts.json")
         no(["--dist-only", "--dist-hosts", "bigfoot2", "r1"], "bigfoot2 isn't an enabled host of testvm/hosts.json")
-        no(["--dist-only", "--dist-hosts", "chopin", "r1"], "--dist-hosts: chopin builds this round")
-        no(["--hosts", "cage", "--dist-only", "--dist-hosts", "copland", "r1"],
-           "--hosts: both, chopin, cinqcent or chopin,cinqcent")
+        no(["--dist-only", "--dist-hosts", "chopin", "r1"],
+           "--dist-hosts: chopin is where the copies come from")
+        no(["--hosts", "czerny", "--dist-only", "--dist-hosts", "copland", "r1"],
+           "--hosts: all, both, or build hosts of testvm/hosts.json (chopin cinqcent copland cage), not czerny")
+        no(["--hosts", "chopin,cage", "--dist-only", "--dist-hosts", "copland", "r1"],
+           "--dist-only takes one --hosts")
         no(["--host", "chopin", "--dist-hosts", "cage", "r1"], "--dist-hosts and --dist-only are the Mac part's")
         self.assertEqual(self.w.log(), [])
 
@@ -298,48 +367,36 @@ class BuildRoundDist(unittest.TestCase):
             for cmd in (["init", "-q"], ["add", "-A"],
                         ["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "x"]):
                 subprocess.run(["git", "-C", d] + cmd, check=True, capture_output=True)
-        # The hosts' build-round.sh (BKO_REMOTE_DIR=w): a stand-in that "builds" its part.
-        fake = r'''#!/usr/bin/env bash
-mode=$2; [[ $1 == --pull ]] && mode=pull
-b=$BKO_ROUNDS/round${@: -1}/bin
-mkdir -p "$b"
-case $mode in
-  chopin) mkdir -p "$b/linux" && echo "restic-bko linux" > "$b/linux/restic-bko"
-          printf 'chopin\trestic-bko\tlinux\tbuilt\t1\tx\ty\n' > "$b/build-chopin.tsv" ;;
-  cinqcent) mkdir -p "$b/freebsd" && echo "rustic-bko freebsd" > "$b/freebsd/rustic-bko"
-          printf 'cinqcent\trustic-bko\tfreebsd\tbuilt\t1\tx\ty\n' > "$b/build-cinqcent.tsv" ;;
-  pull) ;;
-esac
-(cd "$b" && find . -type f ! -name 'SHA256SUMS*' ! -name 'build-*' | LC_ALL=C sort | xargs sha256sum > SHA256SUMS)
-'''
-        for h in ("chopin", "cinqcent"):
-            self.w.put(h, "w/stick/build-round.sh", fake, 0o755)
-        return {"BKO_GIT": g, "BKO_REMOTE_DIR": "w"}
+        for h in ("chopin", "cinqcent", "copland", "cage"):
+            self.w.put(h, "w/stick/build-round.sh", FAKE_PART, 0o755)
+        return {"BKO_GIT": g, "BKO_REMOTE_DIR": "w", "BKO_CAPS": caps()}
 
     def test_a_build_then_dist(self):
         env = self.git_trees()
-        r = self.br("--dist-hosts", "cage", "r2", env=env)
+        r = self.br("--hosts", "chopin,cinqcent", "--dist-hosts", "cage", "r2", env=env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         b = "backotter-work/roundr2/bin"
-        self.assertEqual(self.w.files("cage", b), self.w.files("chopin", b))
-        self.assertIn("cage: " + b + " copied from chopin", r.stdout)
+        # the collector holds the whole round, and so does every host copied to
+        for h in ("cage", "cinqcent"):
+            self.assertEqual(self.w.files(h, b), self.w.files("chopin", b), h)
+            self.assertIn(f"{h}: {b} copied from chopin", r.stdout)
         self.assertLess(r.stdout.index("HOST\tBINARY"), r.stdout.index("cage: " + b))   # after the table
         self.assertIn("EXPECT_RESTIC_COMMIT=", r.stdout)
 
     def test_a_build_without_dist_hosts_touches_no_other_host(self):
         env = self.git_trees()
-        r = self.br("r2", env=env)
+        r = self.br("--hosts", "chopin,cinqcent", "r2", env=env)
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         self.assertEqual(sorted({x.split()[1] for x in self.w.log() if x.startswith("ssh ")}), ["chopin", "cinqcent"])
-        self.assertNotIn("copied from", r.stdout)
+        self.assertNotIn("copland", r.stdout)
 
     def test_a_failed_build_is_not_distributed(self):
         env = self.git_trees()
         self.w.put("cinqcent", "w/stick/build-round.sh", "#!/bin/sh\nexit 1\n", 0o755)
-        r = self.br("--dist-hosts", "cage", "r2", env=env)
+        r = self.br("--hosts", "chopin,cinqcent", "--dist-hosts", "cage", "r2", env=env)
         self.assertEqual(r.returncode, 1, r.stdout + r.stderr)
-        self.assertIn("roundr2 not copied to cage (the build failed)", r.stdout)
-        self.assertFalse(os.path.exists(self.w.home("cage")))
+        self.assertIn("roundr2 not copied to cinqcent cage (the build failed)", r.stdout)
+        self.assertFalse(os.path.exists(os.path.join(self.w.home("cage"), "backotter-work")))
 
 
 @unittest.skipUnless(REAL_RSYNC, "no rsync here")
@@ -432,7 +489,7 @@ class PromoteBins(unittest.TestCase):
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         hosts = sorted({x.split()[1] for x in r.stdout.splitlines() if " bko-bin: " in x})
         self.assertEqual(hosts, ["cage", "cinqcent", "copland"])   # not bigfoot: an arm64 host
-        for args, msg in ((["--from", "cage", "chopin"], "--from cage: not a build host"),
+        for args, msg in ((["--from", "cage", "chopin"], "--from cage: not a big build host"),
                           (["chopin"], "chopin is the source"),
                           (["czerny"], "no such enabled host czerny"),
                           (["--sets", "images", "cage"], "--sets: of bko-bin cmp-bin holt-bin"),
@@ -445,7 +502,8 @@ class PromoteBins(unittest.TestCase):
 # --- stic.py: round_step -------------------------------------------------------------------------
 
 class SticRoundStep(unittest.TestCase):
-    """A pending round is built on the table's build hosts whatever --hosts names, then its bin
+    """A pending round is built on the table's build hosts whatever --hosts names (the four
+    together have the capabilities every unit needs), its units dealt over them, then its bin
     copied to the --hosts hosts that build nothing; a built round is left as it is (run.py
     refuses one that a --hosts host lacks)."""
 
@@ -481,39 +539,53 @@ class SticRoundStep(unittest.TestCase):
     def argv(self):
         return [a for a in self.built[0][0][2:]]
 
-    def test_default_hosts_build_as_ever(self):
+    def test_the_tables_build_hosts_are_named(self):
+        """A run on two of them: the units are still dealt over all four (only the four
+        together can take every unit), and the two outside --hosts build from the run's copy."""
         self.step(["chopin", "cinqcent"], dict(self.PENDING))
-        self.assertEqual(self.argv(), ["t2r-x"])   # build-round.sh ROUND: no --hosts, no --dist-hosts
-        self.assertEqual(self.copied, [])
+        self.assertEqual(self.argv(), ["--hosts", "chopin,cinqcent,copland,cage", "t2r-x"])
+        self.assertEqual(self.copied, [["copland", "cage"]])
         e = self.built[0][1]
         self.assertEqual((e["BKO_PROFILE"], e["BKO_GUEST_PROFILE"], e["BKO_REMOTE_DIR"]),
                          ("release", "release", self.copy))
         self.assertEqual(self.probed, [(["chopin", "cinqcent"], ["roundt2r-x"])])
 
-    def test_small_hosts_get_the_round_copied(self):
+    def test_every_build_host_of_the_run_builds_and_none_is_copied_to(self):
+        """All four amd64 hosts have the build role since 2026-11-14: a run on all four deals
+        the units over all four, and there is nothing left to copy."""
         self.step(["chopin", "cinqcent", "copland", "cage"], dict(self.PENDING))
-        self.assertEqual(self.argv(), ["--dist-hosts", "copland,cage", "t2r-x"])
+        self.assertEqual(self.argv(), ["--hosts", "chopin,cinqcent,copland,cage", "t2r-x"])
         self.assertEqual(self.copied, [])
         self.assertEqual(self.probed[0][0], ["chopin", "cinqcent", "copland", "cage"])   # facts of every --hosts host
 
     def test_hosts_without_build_hosts_still_build_there(self):
-        _, env = self.step(["cage"], dict(self.PENDING))
-        self.assertEqual(self.copied, [["chopin", "cinqcent"]])   # the copy on both build hosts first
-        self.assertEqual(self.argv(), ["--dist-hosts", "cage", "t2r-x"])
-        self.assertTrue(any("building round t2r-x on chopin and cinqcent" in m and "then its bin to cage" in m
-                            for m in env.logs), env.logs)
+        """A run whose --hosts has no build host at all (a table where cage hasn't the role):
+        every build host of the table builds it, from a copy made there first, and its bin is
+        then copied to --hosts."""
+        with no_build_role("cage", "copland"):
+            _, env = self.step(["cage"], dict(self.PENDING))
+            self.assertEqual(self.copied, [["chopin", "cinqcent"]])   # the copy on both build hosts first
+            self.assertEqual(self.argv(), ["--hosts", "chopin,cinqcent", "--dist-hosts", "cage", "t2r-x"])
+            self.assertTrue(any("building round t2r-x on chopin and cinqcent" in m and "then its bin to cage" in m
+                                for m in env.logs), env.logs)
 
-    def test_one_build_host_named(self):
-        self.step(["chopin", "copland"], dict(self.PENDING))
-        self.assertEqual(self.copied, [["cinqcent"]])
-        self.assertEqual(self.argv(), ["--dist-hosts", "copland", "t2r-x"])
+    def test_one_build_host_in_the_table(self):
+        """A table where only chopin has the role: it is dealt the whole round, and the
+        --hosts host that builds nothing is copied to."""
+        with no_build_role("cage", "copland", "cinqcent"):
+            self.step(["chopin", "copland"], dict(self.PENDING))
+            self.assertEqual(self.copied, [])   # chopin is in --hosts: it builds the whole round
+            self.assertEqual(self.argv(), ["--hosts", "chopin", "--dist-hosts", "copland", "t2r-x"])
 
     def test_a_copy_elsewhere_refuses(self):
-        with self.assertRaisesRegex(stic.SticError, "the copy on cinqcent is at /elsewhere, not "):
-            self.step(["chopin"], dict(self.PENDING), copies={"cinqcent": "/elsewhere"})
-        self.assertEqual(self.built, [])
-        with self.assertRaisesRegex(stic.SticError, "no private copy on cinqcent"):
-            self.step(["chopin"], dict(self.PENDING), copies=False)
+        """A builder outside --hosts builds from a private copy there, at the same path as the
+        --hosts hosts' (build-round.sh takes one BKO_REMOTE_DIR)."""
+        with no_build_role("copland"):
+            with self.assertRaisesRegex(stic.SticError, "the copy on chopin is at /elsewhere, not "):
+                self.step(["copland"], dict(self.PENDING), copies={"chopin": "/elsewhere"})
+            self.assertEqual(self.built, [])
+            with self.assertRaisesRegex(stic.SticError, "no private copy on chopin, cinqcent, cage"):
+                self.step(["copland"], dict(self.PENDING), copies=False)
 
     def test_a_failed_build_refuses(self):
         with self.assertRaisesRegex(stic.SticError, r"build-round.sh t2r-x failed \(exit 1\)"):
@@ -639,7 +711,7 @@ class HoltBuildHosts(unittest.TestCase):
         res = self.go({}, r)
         self.assertEqual(res["exit"], 1, res)
         self.assertEqual(self.builds(r), [])
-        self.assertTrue(any("no build host (role build in testvm/hosts.json) in --hosts cage" in s
+        self.assertTrue(any("no big build host (role build, class big in testvm/hosts.json) in --hosts cage" in s
                             for s in res["stops"]), res["stops"])
 
     def test_a_build_host_holding_the_copy_builds_for_small_hosts(self):

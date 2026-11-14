@@ -613,11 +613,17 @@ class SticRun:
                  f"{len(dropped)} no longer ({', '.join(dropped) or 'none'})")
 
     def build_hosts(self):
-        """The host table's build hosts (role build, in its order: chopin, cinqcent), the
-        two stick/build-round.sh splits a round's builds between."""
+        """The build hosts a round's units are dealt over: every amd64 host of the table with
+        the build role (chopin, cinqcent, copland, cage), in its order, whatever --hosts
+        names.  Not the build hosts of --hosts alone: the units need capabilities only the
+        four together have (Cinqcent has no DragonFly nightly, the small hosts no haiku6 at
+        times), a subset that can't take a unit would refuse the whole round, and the round
+        is distributed to every build host in any case.  A builder outside --hosts builds
+        from the run's private copy there (builder_copies)."""
         from . import hosts as hosts_table
         try:
-            return list(hosts_table.with_role("build"))
+            return [h for h in hosts_table.with_role("build")
+                    if hosts_table.host_arch(h) == "amd64"]
         except hosts_table.HostsError as e:
             raise SticError(f"no build hosts: {e}")
 
@@ -643,14 +649,15 @@ class SticRun:
         self.log(f"the copy on {', '.join(missing)} too, to build the round from: {want}")
 
     def round_step(self):
-        """Step 1: the round.  A pending set is built on the host table's build hosts
-        (chopin and cinqcent), whatever --hosts names (their copy made first when it
-        doesn't name them), and its bin is then copied to the --hosts hosts that build
+        """Step 1: the round.  A pending set is built on the table's build hosts
+        (build_hosts: every amd64 build-role host, whatever --hosts names; the copy of
+        ones outside --hosts made first), its units dealt over them by
+        build-round.sh, and its bin is then copied to the --hosts hosts that build
         nothing, checked there by sha256 (build-round.sh --dist-hosts).  Then every key
-        again from the facts of --hosts (R1 5a).  With --hosts chopin,cinqcent:
-        build-round.sh ROUND, as ever.  A built round is left as it is: one that a --hosts
-        host lacks never reaches here (run.py refuses the plan's missing_on first), and
-        build-round.sh --dist-only --dist-hosts H ROUND copies it there by hand."""
+        again from the facts of --hosts (R1 5a).  A built round is left as it is: one that
+        a --hosts host lacks never reaches here (run.py refuses the plan's missing_on
+        first), and build-round.sh --dist-only --dist-hosts H ROUND copies it there by
+        hand."""
         st = self.plan.set or {}
         if not st.get("pending"):
             return
@@ -661,15 +668,14 @@ class SticRun:
         dist = [h for h in self.info["hosts"] if h not in builders]
         self.builder_copies(builders)
         argv = ["bash", os.path.join(self.ctx.checkout, "stick", "build-round.sh")]
-        # build-round.sh's own default is its two-way split over both build hosts, which it
-        # names itself (--hosts both: restic on one, rustic on the other, stick/build-round.sh);
-        # --hosts is given only when the table's build role is elsewhere than that pair.
-        if builders != ["chopin", "cinqcent"]:
-            argv += ["--hosts", ",".join(builders)]
+        # Named, never left to build-round.sh's own default (the same hosts today): the
+        # builders are this run's business, and its log says which built the round.
+        argv += ["--hosts", ",".join(builders)]
         if dist:
             argv += ["--dist-hosts", ",".join(dist)]
         argv.append(name)
-        self.log(f"building round {name} on {' and '.join(builders)} (stick/build-round.sh from the copy, "
+        on = ", ".join(builders[:-1]) + " and " + builders[-1] if len(builders) > 1 else builders[0]
+        self.log(f"building round {name} on {on} (stick/build-round.sh from the copy, "
                  f"release profiles){', then its bin to ' + ', '.join(dist) if dist else ''}")
         rel = self.info["copy"]["path"]
         rel = rel[2:] if rel.startswith("~/") else rel

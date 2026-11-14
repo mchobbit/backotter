@@ -876,14 +876,16 @@ class TestSticRun(unittest.TestCase):
             c = ledger.complete({k: v for k, v in m.items() if k != "id"}, host="mac")
             self.assertEqual(ledger.validate(c), [], m["origin"])
 
-    def test_a_pending_round_needs_a_copy_on_both_build_hosts(self):
-        """--hosts chopin: the round is still built on both build hosts (tests/test_round_dist.py
-        has the rest); without a copy on cinqcent nothing is built."""
+    def test_a_pending_round_needs_a_copy_on_every_build_host(self):
+        """--hosts chopin: the round's units are still dealt over every build host of the table
+        (tests/test_round_dist.py has the rest), so the three outside --hosts need the run's
+        copy; without it nothing is built."""
         old = Plan([PC("stic:debian12", "due", "changed:bin", key=H64("1"))])
         old.set = {"name": "roundt2r-x", "round": "t2r-x", "dir": "~/backotter-work/roundt2r-x/bin", "pending": "restic=x"}
         env = FakeEnv({MARK: []})
         env.run = lambda *a, **k: self.fail("build-round.sh started")
-        with self.assertRaisesRegex(stic.SticError, "no private copy on cinqcent to build the round from"):
+        with self.assertRaisesRegex(stic.SticError,
+                                    "no private copy on cinqcent, copland, cage to build the round from"):
             stic.SticRun(self.ctx, old, env).go()
 
     def test_pending_round_is_built_then_rekeyed(self):
@@ -903,12 +905,17 @@ class TestSticRun(unittest.TestCase):
         env = FakeEnv({MARK: [(1, row(g, "PASS", n=i)) for i, g in enumerate(("debian12", "mint22", "pop24"), 1)]})
         self.ctx.options["run"]["hosts"] = ["chopin", "cinqcent"]
         built = []
+        copy = self.ctx.options["run"]["copy"]["path"]
+        env.make_copy = lambda checkout, hs: {h: copy for h in hs}   # the builders outside --hosts
         env.run = lambda argv, env=None, timeout=None: (built.append((argv, env)), argparse.Namespace(returncode=0))[1]
         env.refresh_facts = lambda ctx, sets: {"chopin": {"sets": {s: {} for s in sets}}}
         env.replan = lambda word, ctx: new
         res = stic.SticRun(self.ctx, old, env).go()
         argv, benv = built[0]
-        self.assertTrue(argv[1].endswith("stick/build-round.sh") and argv[2] == "t2r-5253b20-96596bb-6ccec58")
+        self.assertTrue(argv[1].endswith("stick/build-round.sh"), argv)
+        # every build host of the table is named, whatever --hosts says: they deal the units
+        self.assertEqual(argv[2:], ["--hosts", "chopin,cinqcent,copland,cage",
+                                    "t2r-5253b20-96596bb-6ccec58"])
         self.assertEqual((benv["BKO_PROFILE"], benv["BKO_GUEST_PROFILE"], benv["BKO_REMOTE_DIR"]),
                          ("release", "release", "/home/m/backotter-work/t2core-p4/copy/6fff54b"))
         cells = env.files[("chopin", "/home/m/backotter-work/t2core-p4/state/runs/" + MARK + "/cells.json")]["cells"]

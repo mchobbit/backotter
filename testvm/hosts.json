@@ -60,7 +60,7 @@
    "slot_range": "2800-2899",
    "stic_ports": [2880, 2899],
    "class": "small",
-   "roles": ["cache"],
+   "roles": ["build", "cache"],
    "default": true,
    "enabled": true
   },
@@ -72,7 +72,7 @@
    "slot_range": "3000-3099",
    "stic_ports": [3080, 3099],
    "class": "small",
-   "roles": ["cache"],
+   "roles": ["build", "cache"],
    "default": true,
    "enabled": true
   },

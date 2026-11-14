@@ -1,19 +1,46 @@
 #!/usr/bin/env bash
 # Build a whole test round's binaries unattended: restic-bko for every OS but
-# Haiku (which has no restic) and rustic-bko for Linux, DragonFly and Haiku on
-# Chopin, the other native rustic-bko builds on Cinqcent
-# (testvm/compare/README.md, "Builds"), then a table of what was
-# built, reused or failed.  Here in stick/ beside the build scripts it drives;
-# the same file runs on the Mac and on the hosts.
+# Haiku (which has no restic) and rustic-bko for Linux, DragonFly, Haiku and
+# the four native guest systems, dealt over every build host of
+# testvm/hosts.json (testvm/compare/README.md, "Builds"), then a table of what
+# was built, reused or failed.  Here in stick/ beside the build scripts it
+# drives; the same file runs on the Mac and on the hosts.
 #
 # Usage, on the Mac (no Go or Rust needed):
-#   build-round.sh [--dry-run] [--hosts both|chopin|cinqcent|chopin,cinqcent] [--only LIST]
+#   build-round.sh [--dry-run] [--hosts all|both|H,H...] [--split deal|legacy] [--only LIST]
 #                  [--arch amd64|arm64|amd64,arm64|all] [--dist-hosts H,H|all] ROUND
-#   build-round.sh --dist-only [--dry-run] [--hosts chopin|cinqcent] --dist-hosts H,H|all ROUND
+#   build-round.sh --dist-only [--dry-run] [--hosts H] --dist-hosts H,H|all ROUND
 # On a host (the Mac part runs these over ssh):
-#   build-round.sh --host chopin|cinqcent|ARM64HOST [--dry-run] [--only LIST] [--arch LIST] ROUND
-#   build-round.sh --pull ROUND      (Chopin: fetch Cinqcent's binaries, SHA256SUMS on both)
+#   build-round.sh --host HOST --units LIST [--dry-run] [--arch LIST] ROUND
 #   build-round.sh --sums ROUND      (a build host: the round's SHA256SUMS made again)
+#
+# The units, and who builds them.  A round is a fixed set of build units, each
+# with what it needs of a host and about how long it takes
+# (stick/deal-units.py, which holds the table and does the dealing):
+# restic (one Go run, every OS at once), linux, dragonfly, haiku, freebsd,
+# netbsd, openbsd and illumos, and with --arch arm64 restic-arm64,
+# restic-arm64-check and linux-arm64-check.  The Mac asks each build host what
+# it has ("Capabilities" below), deals the units over them longest first, each to the
+# host whose estimated wall time ends up smallest, and never a check to the
+# host that builds what it checks; then it runs each host's part with
+# --units LIST.  A host's class says how many units it runs at once: a big
+# host three, two of them native guest builds; a small host two, one of them a
+# native guest build.  The deal is printed before the builds start.
+#
+# --hosts.  all (the default) is every enabled amd64 host with the build role,
+# in the table's order: chopin, cinqcent, copland, cage.  A comma list names
+# any of them, and both is chopin,cinqcent.  Whatever it names, the units are
+# dealt over the hosts it names: --hosts chopin deals the whole round to
+# Chopin, --hosts chopin,cinqcent deals it over those two.
+#
+# --split.  deal (the default) deals the units as above.  legacy is the fixed
+# two-way split the rounds used before 2026-11-14 (Chopin: restic, linux,
+# dragonfly, haiku, and with arm64 restic-arm64 and linux-arm64-check;
+# Cinqcent: the four native builds and restic-arm64-check), so that a round
+# built then can be built again as it was, bit for bit.  It takes chopin and
+# cinqcent alone: without --hosts it builds on both of them, and --hosts
+# chopin --split legacy builds Chopin's old share and says what Cinqcent's
+# would have been (as --hosts chopin did then).
 #
 # The Mac part checks that ~/git/restic, rustic_core and rustic (BKO_GIT) are
 # clean, takes their HEADs and source digests (restic's own
@@ -24,17 +51,27 @@
 # there in parallel with the commits and digests: a host builds nothing from
 # a copy whose digests differ (round 7 shipped a build from a stale copy).
 # It ends with the table and the EXPECT_* line for run-all.sh.  Binaries go to $BKO_ROUNDS/roundROUND/bin/OS/ on the host
-# (BKO_ROUNDS: ~/backotter-work), logs to roundROUND/logs/.  Chopin then
-# pushes what it built to Cinqcent, and --pull brings Cinqcent's back, so
-# both hosts end with the whole set and the same SHA256SUMS.
+# (BKO_ROUNDS: ~/backotter-work), logs to roundROUND/logs/.
+#
+# The gather.  Each host writes what it built as build-HOST.files (the paths)
+# and build-HOST.tsv (its table rows).  Once the builds pass, the Mac gathers
+# every other builder's files to one collector -- Chopin, else the first build
+# host given -- host to host, through the Mac when they can't reach each
+# other, and has the collector make the round's SHA256SUMS (--sums).  Then the
+# distribution below copies the whole bin from the collector to every other
+# build host as well, each checked there with sha256sum -c, so every build
+# host ends with the whole round and the same SHA256SUMS, as the two hosts
+# always have.  The collector also holds build-hosts, one builder a line
+# (facts_host.py reads it to tell a round still being built from a finished
+# one).
 #
 # Distribution.  --dist-hosts names hosts of testvm/hosts.json that build
-# nothing this round (copland, cage; all: every enabled amd64 host --hosts
-# doesn't name) to get the round too.  An arm64 host (hosts.json's arch:
+# nothing this round (all: every enabled amd64 host --hosts doesn't name) to
+# get the round too.  An arm64 host (hosts.json's arch:
 # bigfoot) is refused: a round's binaries are amd64 ones (docs/design/arm64.md
 # A2 adds its own).  Once the builds pass, the Mac copies
-# roundROUND/bin whole (both build-*.files and build-*.tsv, SHA256SUMS,
-# restic-commit) from Chopin, or from the one build host --hosts names, to
+# roundROUND/bin whole (both build-*.files and build-*.tsv, build-hosts,
+# SHA256SUMS, restic-commit) from the collector to
 # each: host to host by rsync, else through the Mac when the source can't
 # reach it.  Then it checks the copy there with sha256sum -c and its
 # SHA256SUMS against the source's (which is checked first, on the source).
@@ -50,11 +87,13 @@
 # arm64 is Linux's (docs/design/arm64.md, A2), in bin/linux-arm64/ beside the
 # unchanged bin/linux/, with a SHA256SUMS of its own (the round's SHA256SUMS
 # lists its files too), and its rows' OS is linux-arm64:
-#   restic-bko   cross-built by Go on Chopin (linux/arm64); Cinqcent builds
-#                it again, as the check.
+#   restic-bko   cross-built by Go (the restic-arm64 unit, linux/arm64);
+#                another build host builds it again, as the check
+#                (restic-arm64-check).
 #   rustic-bko   aarch64-unknown-linux-musl, built natively on the host with
-#                testvm/hosts.json's build-arm64 role (bigfoot); Chopin
-#                cross-builds it again, as the check.  Both go through
+#                testvm/hosts.json's build-arm64 role (bigfoot); a build host
+#                with zig cross-builds it again, as the check
+#                (linux-arm64-check).  Both go through
 #                cargo-zigbuild, zig the C compiler and linker
 #                (stick/zig-tools.sh pins and installs both; Bigfoot has no
 #                musl C compiler, and installing one would be a system
@@ -66,36 +105,41 @@
 # is check-built or check-reused, and the Mac compares its SHA-256 with the
 # shipped build's after the builds ("Cross-checks").  A check that differs
 # fails the round, as a FAILED build does, and so it is copied nowhere; one
-# not made (cinqcent not in --hosts) is said.  But rustic-bko's two can't be
+# not made (only one host could build it) is said.  But rustic-bko's two can't be
 # the same bytes, and their difference is said and fails nothing: cargo
 # hashes the host's rustc -vV (its host: line) into every build script and
 # proc-macro, and from there into the crate hash of each crate that depends
 # on one (286 of the 478 rlibs), which moves code and data in the binary;
 # docs/design/arm64.md, "What A2 built".  Every C object, and the object
 # code of the other 192, is the same bytes on both.  Two arm64 hosts'
-# builds would be the same.  arm64 needs chopin in
-# --hosts.  The arm64 host's part runs in its job_slice (hosts.json:
+# builds would be the same.  arm64 needs a build host with Go (for
+# restic-arm64) and one with zig (for linux-arm64-check).  The arm64 host's
+# part runs in its job_slice (hosts.json:
 # bko.slice, through hosts.sh's hosts_job_prefix), with RUSTUP_HOME and
 # CARGO_HOME from its row (rustup_home, cargo_home: hosts_rust_env).  The
-# Mac brings what it built (build-HOST.files) to the build hosts, which then
-# hold the whole round, and sends bin/linux-arm64/ back to it from Chopin,
-# checked there by its SHA256SUMS; the arm64 host's round has no other
-# directory and no top SHA256SUMS.
+# Mac brings what it built (build-HOST.files) to the collector, which the
+# distribution then spreads to every build host, and sends bin/linux-arm64/
+# back to it from the collector, checked there by its SHA256SUMS; the arm64
+# host's round has no other directory and no top SHA256SUMS.
 #
-# LIST (comma-separated): restic linux dragonfly haiku (Chopin's), freebsd
-# netbsd openbsd illumos (Cinqcent's).  With --arch arm64, restic is
-# restic-bko linux-arm64 (and Cinqcent's check of it), linux rustic-bko
-# linux-arm64 (the arm64 host's, and Chopin's check).  Chopin builds Linux,
-# DragonFly and Haiku at once, Haiku natively in a throwaway haiku6 (haiku/build-rustic.sh,
-# on BKO_HAIKU_PORT, 2905).  Cinqcent builds in two lanes, freebsd then
-# netbsd and openbsd then illumos (BKO_GUEST_LANES=1: one).  Each guest of a
-# native build first takes one of its host's slots that run-all.sh's guests
-# take too (testvm/compare/guest-slot.sh: BKO_GUEST_MAX, 3, on
-# BKO_GUEST_RANGE, 2900-2999, counting QEMU of ours there started without
-# one), so builds and tests together never run more than three.
+# LIST (comma-separated), for --only: restic linux dragonfly haiku freebsd
+# netbsd openbsd illumos.  It names components, not hosts: with --arch arm64,
+# restic is restic-bko linux-arm64 and its check, linux rustic-bko
+# linux-arm64 (the arm64 host's, and the cross-built check), so a LIST without
+# linux starts no part on the arm64 host at all (it still gets the round's
+# arm64 directories back).  Haiku is built
+# natively in a throwaway haiku6 (haiku/build-rustic.sh), the other four in
+# their guests.  Each guest of a native build first takes one of its host's
+# slots that run-all.sh's guests take too (testvm/compare/guest-slot.sh:
+# BKO_GUEST_MAX, 3, on BKO_GUEST_RANGE, the host's own slot_range in
+# testvm/hosts.json, counting QEMU of ours there started without one), so
+# builds and tests together never run more than three.  The ports come from
+# that range too, one each above its first: dragonfly, freebsd, netbsd,
+# openbsd, illumos, haiku (BKO_DFLY_PORT, BKO_GUEST_PORTS and BKO_HAIKU_PORT
+# name them instead).
 # illumos' binaries also go to bin/omnios (the harness takes either).
-# --dry-run syncs and checks the sources and prints what would be built or
-# reused, but builds and boots nothing.
+# --dry-run prints the deal, syncs and checks the sources and says what would
+# be built or reused, but builds and boots nothing.
 #
 # Speed.  Each built binary goes into a store, $BKO_BUILD_CACHE/store/
 # (default ~/backotter-work/build-cache), under the digest of everything that
@@ -130,25 +174,39 @@
 #                      (FAST=1, as the rounds have built them), release for
 #                      binaries that ship in images.
 #
-# Rust.  The host-side cargo, prep-rustic-src.sh's on both hosts and Linux
-# rustic-bko's on Chopin, is rustup's BKO_RUST_TOOLCHAIN (default 1.94.1),
+# Rust.  The host-side cargo, prep-rustic-src.sh's on every builder and
+# Linux rustic-bko's where that unit is dealt, is rustup's BKO_RUST_TOOLCHAIN (default 1.94.1),
 # named in RUSTUP_TOOLCHAIN, never the host's rustup default: a reinstall
 # reset Chopin's default to 1.85.1, which rustic's dependencies are too new
 # for (sysinfo, time and zip need 1.88).  The Linux build also needs its
-# x86_64-unknown-linux-musl target.  Either missing, the host part says
-# which rustup command adds it, and installs nothing itself.  The Linux
+# x86_64-unknown-linux-musl target.  Either missing, the deal keeps the unit
+# off that host (the capability probe below asks rustup), and the host part
+# says which rustup command adds it, and installs nothing itself.  The Linux
 # digest records rustc -vV and cargo -V, so the same release named or taken
 # by default is the same digest.  DragonFly's cross build takes its own
 # nightly (dragonfly/build-rustic.sh, RUST_TOOLCHAIN on the host); the
 # native builds take the guest's Rust.
 #
+# Capabilities.  Before dealing, the Mac asks each build host what it has, in
+# one read-only ssh each (nothing is built, booted or written): Go, the rustup
+# toolchain and its x86_64-unknown-linux-musl and aarch64-unknown-linux-musl
+# targets, DragonFly's pinned nightly with its sysroot image, haiku6, a build
+# image for each native guest (vms-bko-build/VM-rust.qcow2, else the guest's
+# own), and zig-tools.sh's zig and cargo-zigbuild.  BKO_CAPS gives them
+# instead, for a dry run without the hosts and for the tests:
+# "HOST=cap,cap HOST=cap,cap" (caps: go musl arm64-musl dragonfly haiku zig
+# vm-freebsd vm-netbsd vm-openbsd vm-illumos).
+#
 # Mac environment: BKO_GIT (~/git), CHOPIN and CINQCENT (their ssh in
-# testvm/hosts.json, m@chopin.local and m@cinqcent.local; each must have the
-# role build there), BKO_REMOTE_DIR (the hosts' directory with stick/ and
+# testvm/hosts.json, m@chopin.local and m@cinqcent.local; every host --hosts
+# names must have the role build there), BKO_REMOTE_DIR (the hosts' directory
+# with stick/ and
 # testvm/, relative to home: backotter-work).  Passed to the hosts: BKO_ROUNDS,
 # SRC (default ROUNDDIR/src), BKO_BUILD_CACHE, BKO_PROFILE, BKO_GUEST_PROFILE,
-# BKO_REUSE, BKO_RUST_TOOLCHAIN, BKO_GUEST_LANES, BKO_DFLY_PORT (2701), BKO_GUEST_PORTS ("2901
-# 2902 2903 2904": freebsd netbsd openbsd illumos), BKO_HAIKU_PORT (2905), BKO_GUEST_MAX,
+# BKO_REUSE, BKO_RUST_TOOLCHAIN, BKO_GUEST_LANES (the native guest builds at
+# once, by default the host's class: big 2, small 1), BKO_CPU_LANES (the same
+# for the rustic builds that need no guest: big 3, small 2), BKO_DFLY_PORT,
+# BKO_GUEST_PORTS (four: freebsd netbsd openbsd illumos), BKO_HAIKU_PORT, BKO_GUEST_MAX,
 # BKO_GUEST_RANGE, DFLY_CACHE, BKO_WORK (~/backotter-work: vms/, as for the
 # build scripts), BKO_HAIKU_TIMEOUT (9000 s, build_haiku's backstop) and
 # haiku/build-rustic.sh's BKO_HAIKU_BUILD_TIMEOUT, BKO_HAIKU_POLL,
@@ -158,13 +216,14 @@
 # without the digests, and the table says so); BKO_GO (go on PATH, else the
 # newest ~/sdk/go*/bin/go).
 #
-# Needs: on the Mac git, rsync, ssh, tar; on the hosts what the build scripts
-# need (Go on Chopin; on both rustup in ~/.cargo/bin with BKO_RUST_TOOLCHAIN,
-# and on Chopin its x86_64-unknown-linux-musl), flock, sha256sum, python3
-# (testvm/hosts.sh).  --arch arm64 adds: Go on Cinqcent too, the same
-# release as Chopin's (the check must build with the same Go), zig-tools.sh's
-# zig and cargo-zigbuild on Chopin and the arm64 host, and there
-# BKO_RUST_TOOLCHAIN with its aarch64-unknown-linux-musl target.
+# Needs: on the Mac git, rsync, ssh, tar, python3 (testvm/hosts.sh and
+# deal-units.py); on the hosts what the build scripts need (Go for restic;
+# rustup in ~/.cargo/bin with BKO_RUST_TOOLCHAIN and its
+# x86_64-unknown-linux-musl for linux), flock, sha256sum, python3.  --arch
+# arm64 adds: Go on two build hosts, the same release on both (the check must
+# build with the same Go), zig-tools.sh's zig and cargo-zigbuild on one build
+# host and on the arm64 host, and there BKO_RUST_TOOLCHAIN with its
+# aarch64-unknown-linux-musl target.
 
 set -uo pipefail
 
@@ -190,28 +249,36 @@ tree_digest() {
     } | $SHA | cut -d' ' -f1)
 }
 
-dry=no hosts=both only="" mode=mac dist="" distonly=no arch=amd64
+dry=no hosts=all only="" mode=mac dist="" distonly=no arch=amd64 units=""
+split=deal hosts_given=no
 while [[ $# -gt 0 ]]; do
     case $1 in
         --dry-run) dry=yes ;;
         --arch) arch=${2:-}; shift ;;
         --sums) mode=sums ;;
-        --hosts) hosts=${2:-}; shift ;;
+        --hosts) hosts=${2:-}; hosts_given=yes; shift ;;
+        --split) split=${2:-}; shift ;;
         --dist-hosts) dist=${2:-}; shift ;;
         --dist-only) distonly=yes ;;
         --only) only=${2:-}; shift ;;
+        --units) units=${2:-}; shift ;;
         --host) mode=${2:-}; shift ;;
-        --pull) mode=pull ;;
         -*) die "unknown option $1" ;;
         *) break ;;
     esac
     shift
 done
-[[ $# -eq 1 ]] || { sed -n '9,16p' "$me" >&2; exit 2; }
+[[ $# -eq 1 ]] || { sed -n '9,15p' "$me" >&2; exit 2; }
 round=$1
 [[ $round =~ ^[A-Za-z0-9._-]+$ ]] || die "bad ROUND $round"
 [[ $mode == mac || ( -z $dist && $distonly == no ) ]] || die "--dist-hosts and --dist-only are the Mac part's"
-want() { [[ -z $only || ",$only," == *",$1,"* ]]; }
+[[ $mode != mac || -z $units ]] || die "--units is the host part's (the Mac deals them: --hosts, --only)"
+[[ $mode == mac || -z $only ]] || die "--only is the Mac part's: it deals the units and names them with --units"
+[[ $split == deal || $split == legacy ]] || die "--split: deal or legacy, not $split"
+[[ $mode == mac || $split == deal ]] || die "--split is the Mac part's: it deals the units and names them with --units"
+[[ $distonly == no || $split == deal ]] || die "--dist-only builds nothing: --split is the build's"
+deal=$here/deal-units.py
+[[ -f $deal ]] || die "no $deal"
 # --arch: amd64, arm64, both (amd64,arm64 or all), normalized to that order.
 [[ $arch == all ]] && arch=amd64,arm64
 archs=""
@@ -222,6 +289,13 @@ for a in amd64 arm64; do [[ ",$arch," == *",$a,"* ]] && archs+=",$a"; done
 arch=${archs#,}
 [[ -n $arch ]] || die "--arch: amd64, arm64, amd64,arm64 or all"
 want_arch() { [[ ",$arch," == *",$1,"* ]]; }
+# Whether --only asks for a component (deal-units.py's --only names components,
+# and checks them): the Mac part's own units come from the deal, but the arm64
+# host's one unit doesn't, and neither does what the round must hold.
+want_comp() { [[ -z $only || ",$only," == *",$1,"* ]]; }
+# The host-side Rust, for the builds and for the Mac's capability probe ("Rust"
+# above): rustup's, never the host's default.
+rust_tc=${BKO_RUST_TOOLCHAIN:-1.94.1}
 
 # --- The Mac -------------------------------------------------------------------------
 if [[ $mode == mac ]]; then
@@ -233,29 +307,45 @@ if [[ $mode == mac ]]; then
     rdir=${BKO_REMOTE_DIR:-backotter-work}
     rrounds=${BKO_ROUNDS:-backotter-work}
     rsrc=${SRC:-$rrounds/round$round/src}
-    # --hosts: both, or chopin and/or cinqcent (comma-separated): the build split
-    # knows those two.  hl: the build hosts, in that order.
-    [[ $hosts == both ]] && hosts=chopin,cinqcent
-    hl=""
+    # --hosts: all (the default) or a comma list of the table's amd64 build
+    # hosts (both: chopin,cinqcent).  The units are dealt over the hosts it
+    # names, whichever they are; --split legacy is the old fixed two-way split
+    # of chopin and cinqcent instead.  hl: the build hosts, in the table's order.
+    builders=$(hosts_names --role build --arch amd64 | tr '\n' ' ') ||
+        die "no build hosts from testvm/hosts.json"
+    builders=${builders% }
+    [[ -n $builders ]] || die "no enabled amd64 host has the build role in testvm/hosts.json"
+    # --dist-only builds nothing: --hosts names the one host the copies come
+    # from, the collector, and by default that is the table's first build host.
+    [[ $distonly == yes && $hosts == all ]] && hosts=${builders%% *}
+    # --split legacy without --hosts: the pair it splits between, as it was.
+    [[ $split == legacy && $hosts_given == no ]] && hosts=chopin,cinqcent
+    case $hosts in
+        both) hosts=chopin,cinqcent ;;
+        all) hosts=$(echo "$builders" | tr ' ' ',') ;;
+    esac
     for h in $(echo "$hosts" | tr ',' ' '); do
-        [[ $h == chopin || $h == cinqcent ]] || die "--hosts: both, chopin, cinqcent or chopin,cinqcent"
+        [[ " $builders " == *" $h "* ]] ||
+            die "--hosts: all, both, or build hosts of testvm/hosts.json ($builders), not $h"
     done
-    for h in chopin cinqcent; do [[ ",$hosts," == *",$h,"* ]] && hl+=" $h"; done
+    hl=""
+    for h in $builders; do [[ ",$hosts," == *",$h,"* ]] && hl+=" $h"; done
     hl=${hl# }
-    [[ -n $hl ]] || die "--hosts: both, chopin, cinqcent or chopin,cinqcent"
-    pair=no; [[ $hl == "chopin cinqcent" ]] && pair=yes
-    builders=" $(hosts_names --role build | tr '\n' ' ')" || die "no build hosts from testvm/hosts.json"
-    for h in $hl; do
-        [[ $builders == *" $h "* ]] || die "$h is not a build host in testvm/hosts.json (build hosts:${builders% })"
-    done
+    [[ -n $hl ]] || die "--hosts: all, both, or build hosts of testvm/hosts.json ($builders)"
+    if [[ $split == legacy ]]; then
+        for h in $hl; do
+            [[ $h == chopin || $h == cinqcent ]] || die "--split legacy is the old split of chopin and" \
+                "cinqcent alone, not $h (--split deal deals the units over any build hosts)"
+        done
+    fi
+    [[ $distonly == no || $hl != *" "* ]] ||
+        die "--dist-only takes one --hosts: the host the copies come from, not $hosts"
     hostof() {  # NAME: its ssh destination (CHOPIN and CINQCENT win for those two)
         case $1 in chopin) echo "$chopin" ;; cinqcent) echo "$cinq" ;; *) hosts_get "$1" ssh ;; esac
     }
     # --arch arm64: a64, the host with the build-arm64 role (its native rustic-bko).
     a64="" a64_ssh=""
     if want_arch arm64; then
-        [[ " $hl " == *" chopin "* ]] ||
-            die "--arch arm64 needs chopin in --hosts: it builds restic-bko linux-arm64 and the check of rustic-bko's"
         a64=$(hosts_names --role build-arm64 | head -n 1) && [[ -n $a64 ]] ||
             die "--arch arm64: no enabled host has the build-arm64 role in testvm/hosts.json"
         [[ $(hosts_arch "$a64") == arm64 ]] ||
@@ -273,6 +363,7 @@ if [[ $mode == mac ]]; then
         for d in $dnames; do
             if [[ " $hl " == *" $d "* ]]; then
                 [[ $dist == all ]] && continue
+                [[ $distonly == yes ]] && die "--dist-hosts: $d is where the copies come from (--hosts $hosts)"
                 die "--dist-hosts: $d builds this round (--hosts $hosts)"
             fi
             [[ $d == "$a64" && $distonly == no ]] && die "--dist-hosts: $d builds this round's arm64 rustic-bko (--arch $arch)"
@@ -283,11 +374,22 @@ if [[ $mode == mac ]]; then
             [[ " $dl " == *" $d="* ]] || dl+=" $d=$ds"
         done
         dl=${dl# }
-        [[ -n $dl ]] || die "--dist-hosts $dist: no host to copy to"
+        # --dist-hosts all with nothing left is no mistake: every amd64 host
+        # builds this round, and each gets it from the collector anyway.
+        [[ -n $dl || ( $dist == all && $distonly == no ) ]] || die "--dist-hosts $dist: no host to copy to"
     fi
     [[ $distonly == no || -n $dl ]] || die "--dist-only needs --dist-hosts"
-    src_name=${hl%% *}   # the source of the copies: Chopin, else the one build host
+    # The collector: where every builder's files are gathered and the round's
+    # SHA256SUMS made, and so the source of every copy.  Chopin, else the first
+    # build host given.
+    src_name=chopin
+    [[ " $hl " == *" chopin "* ]] || src_name=${hl%% *}
     src_ssh=$(hostof "$src_name")
+    # bdl: the other build hosts, NAME=SSH, which the distribution copies the
+    # whole round to as well, so that each ends with it and the same
+    # SHA256SUMS.  Filled once the builds have passed; --dist-only leaves it
+    # empty (the build hosts hold that round already).
+    bdl=""
     rbin=$rrounds/round$round/bin
     dssh="ssh -o BatchMode=yes -o ConnectTimeout=8"
     # NAME SSH WANT: roundROUND/bin from the source to NAME, then checked there
@@ -351,10 +453,10 @@ if [[ $mode == mac ]]; then
         done
         log "$n: $rbin/{$(echo $dirs | tr ' ' ',')} copied from $src_name (its arm64 binaries only), $sums sums checked there"
     }
-    dist_all() {  # every --dist-hosts host; status 1 when one failed
+    dist_all() {  # every other build host and --dist-hosts host; status 1 when one failed
         local p want r=0
         if [[ $dry == yes ]]; then
-            for p in $dl; do
+            for p in $bdl $dl; do
                 if [[ $(hosts_arch "${p%%=*}") == arm64 ]]; then
                     log "${p%%=*}: would copy $rbin's arm64 directories from $src_name and check them there by their SHA256SUMS"
                 else
@@ -364,7 +466,7 @@ if [[ $mode == mac ]]; then
             return 0
         fi
         local amd="" arm=""
-        for p in $dl; do
+        for p in $bdl $dl; do
             if [[ $(hosts_arch "${p%%=*}") == arm64 ]]; then arm+=" $p"; else amd+=" $p"; fi
         done
         if [[ -n $amd ]]; then
@@ -396,29 +498,115 @@ if [[ $mode == mac ]]; then
     log "restic $RESTIC_COMMIT digest $RESTIC_DIGEST, tree $RESTIC_TREE_DIGEST"
     log "rustic_core $RUSTIC_CORE_COMMIT digest $RUSTIC_CORE_DIGEST"
     log "rustic $RUSTIC_COMMIT digest $RUSTIC_DIGEST"
-    hostof() { case $1 in chopin) echo "$chopin" ;; cinqcent) echo "$cinq" ;; *) echo "$a64_ssh" ;; esac; }
     vars() {  # the host part's environment, as a command line
         local v out="RESTIC_COMMIT=$RESTIC_COMMIT RUSTIC_COMMIT=$RUSTIC_COMMIT RUSTIC_CORE_COMMIT=$RUSTIC_CORE_COMMIT"
         out+=" RESTIC_DIGEST=$RESTIC_DIGEST RESTIC_TREE_DIGEST=$RESTIC_TREE_DIGEST RUSTIC_DIGEST=$RUSTIC_DIGEST RUSTIC_CORE_DIGEST=$RUSTIC_CORE_DIGEST"
         out+=" BKO_ROUNDS=$rrounds SRC=$rsrc"
         for v in BKO_BUILD_CACHE BKO_PROFILE BKO_GUEST_PROFILE BKO_REUSE BKO_RUST_TOOLCHAIN BKO_DFLY_PORT BKO_GUEST_PORTS BKO_HAIKU_PORT BKO_GUEST_LANES \
-            BKO_GUEST_MAX BKO_GUEST_RANGE DFLY_CACHE BKO_WORK BKO_HAIKU_TIMEOUT BKO_HAIKU_BUILD_TIMEOUT \
+            BKO_CPU_LANES BKO_GUEST_MAX BKO_GUEST_RANGE DFLY_CACHE BKO_WORK BKO_HAIKU_TIMEOUT BKO_HAIKU_BUILD_TIMEOUT \
             BKO_HAIKU_POLL BKO_HAIKU_STALL BKO_HAIKU_STALL_PCT; do
             [[ -n ${!v:-} ]] && out+=" $v='${!v}'"
         done
         echo "$out"
     }
-    peer=""
-    [[ $pair == yes ]] && peer="BKO_PEER=$cinq:$rrounds/round$round/bin"
+    # --- The deal ----------------------------------------------------------------------
+    # What each build host has, in one read-only ssh each: BKO_CAPS says it
+    # instead (a dry run without the hosts, and the tests).  caps_probe runs
+    # there and prints the capability words deal-units.py knows.
+    caps_probe='
+WORK=${WORK:-$HOME/backotter-work}
+. "$RDIR/testvm/hosts.sh" 2>/dev/null && hosts_rust_env 2>/dev/null
+out=""
+have() { out="$out $1"; }
+go=${BKO_GO:-}
+[ -n "$go" ] || go=$(command -v go 2>/dev/null) ||
+    go=$(ls -d "$HOME"/sdk/go*/bin/go 2>/dev/null | sort -V | tail -n 1)
+[ -x "$go" ] && have go
+export PATH=$HOME/.cargo/bin:$PATH
+if command -v rustup >/dev/null 2>&1; then
+    if rustup run "$TC" rustc -V >/dev/null 2>&1; then
+        t=$(rustup target list --installed --toolchain "$TC" 2>/dev/null)
+        case $t in *x86_64-unknown-linux-musl*) have musl ;; esac
+        case $t in *aarch64-unknown-linux-musl*) have arm64-musl ;; esac
+    fi
+    rustup run "$DFLY" rustc -V >/dev/null 2>&1 &&
+        [ -f "$WORK/vms/dragonfly6/dragonfly6.qcow2" ] && have dragonfly
+fi
+[ -f "$WORK/vms/haiku6/haiku6.qcow2" ] && have haiku
+for pair in freebsd:freebsd14 netbsd:netbsd11 openbsd:openbsd8 illumos:omnios58; do
+    vm=${pair#*:}
+    { [ -f "$WORK/vms-bko-build/$vm-rust.qcow2" ] || ls "$WORK/vms/$vm"/*.qcow2 >/dev/null 2>&1; } &&
+        have "vm-${pair%%:*}"
+done
+bash "$RDIR/stick/zig-tools.sh" --check >/dev/null 2>&1 && have zig
+echo "${out# }"
+'
+    # DragonFly's pinned nightly, as its own build script names it: the probe
+    # asks rustup for the toolchain the build would use, not for a copy of it here.
+    dfly_tc=$(sed -n 's/^TOOLCHAIN=${RUST_TOOLCHAIN:-\([^}]*\)}.*/\1/p' "$here/dragonfly/build-rustic.sh" | head -n 1)
+    [[ -n $dfly_tc ]] || die "no TOOLCHAIN in $here/dragonfly/build-rustic.sh: can't ask a host for DragonFly's nightly"
+    caps_of() {  # NAME: its capability words, space-separated
+        local n=$1 c
+        if [[ -n ${BKO_CAPS:-} ]]; then
+            for c in $BKO_CAPS; do
+                [[ ${c%%=*} == "$n" ]] && { echo "${c#*=}" | tr ',' ' '; return 0; }
+            done
+            echo ""
+            return 0
+        fi
+        # shellcheck disable=SC2029  # the variables are meant to expand here
+        ssh -o BatchMode=yes -o ConnectTimeout=20 "$(hostof "$n")" \
+            "env TC='$rust_tc' DFLY='$dfly_tc' WORK='${BKO_WORK:-}' RDIR='$rdir' bash -s" <<<"$caps_probe"
+    }
+    dargs="" dflag=""
+    [[ $split == legacy ]] && dflag=--legacy
+    for h in $hl; do
+        cls=$(hosts_get "$h" class) && [[ -n $cls ]] || die "no class for $h in testvm/hosts.json"
+        caps=$(caps_of "$h") || die "$h: can't ask it what it has (ssh), so the round can't be dealt"
+        dargs+=" $h=$cls=$(echo "$caps" | tr -s ' ' ',' | sed 's/^,//;s/,$//')"
+    done
+    # shellcheck disable=SC2086  # dargs: one word a host
+    deal_lines=$(python3 -I -B "$deal" deal --arch "$arch" ${only:+--only "$only"} $dflag $dargs) || exit 2
+    # shellcheck disable=SC2086
+    python3 -I -B "$deal" table --arch "$arch" ${only:+--only "$only"} $dflag $dargs
+    units_of() { awk -F'\t' -v h="$1" '$1 == h { print $2 }' <<<"$deal_lines"; }
+    # Whether UNIT was dealt to some host (a skipped one was not).
+    dealt_unit() {
+        awk -F'\t' -v u="$1" '$1 != "skipped" { n = split($2, a, ",")
+            for (i = 1; i <= n; i++) if (a[i] == u) f = 1 } END { exit !f }' <<<"$deal_lines"
+    }
+    hb=""   # the hosts that build something this round, in the table's order
+    for h in $hl; do [[ -n $(units_of "$h") ]] && hb+=" $h"; done
+    hb=${hb# }
+    [[ -n $hb ]] || die "the deal left every host of --hosts $hosts without a unit"
+    # The arm64 host's rustic-bko is cross-checked against a build host's, and
+    # its restic-bko comes from a build host: with neither, there is no round.
+    # (--only restic doesn't ask for restic-bko linux-arm64 at all: then it is
+    # no host's to build, and the round is the arm64 rustic-bko alone.)
+    if want_arch arm64 && want_comp restic && ! dealt_unit restic-arm64; then
+        die "--arch arm64: no host of --hosts $hosts builds restic-bko linux-arm64 (the restic-arm64 unit)"
+    fi
+    # The arm64 host builds linux-arm64, its own native rustic-bko, which is the
+    # linux component: --only without it leaves the host idle, as the deal leaves
+    # a build host idle (it still gets the round's arm64 directories back below).
+    a64b=""
+    if [[ -n $a64 ]] && want_comp linux; then a64b=$a64; fi
     flags=""
     [[ $dry == yes ]] && flags+=" --dry-run"
-    [[ -n $only ]] && flags+=" --only $only"
     [[ $arch == amd64 ]] || flags+=" --arch $arch"
     # The arm64 host's part runs in its job_slice: the words before the command.
     jp=""
     [[ -z $a64 ]] || jp=$(hosts_job_prefix "$a64" | tr '\n' ' ') || die "no job prefix for $a64"
+    if [[ $dry == no ]]; then
+        # Who builds this round, written before the builds: until each of them
+        # has its build-HOST.files in the SHA256SUMS the gather makes, the round
+        # is still being built (facts_host.py's round_complete).
+        # shellcheck disable=SC2029
+        ssh -o BatchMode=yes "$src_ssh" "mkdir -p $rbin && printf '%s\n'$(for h in $hb $a64b; do printf " %s" "$h"; done) >$rbin/build-hosts" ||
+            die "can't write $src_name:$rbin/build-hosts"
+    fi
     pids="" rc=0
-    for h in $hl $a64; do
+    for h in $hb $a64b; do
         (
             ssh_h=$(hostof "$h")
             log "$h: syncing the trees to $ssh_h:$rsrc"
@@ -426,32 +614,47 @@ if [[ $mode == mac ]]; then
                 rsync -rlp --checksum --delete --exclude target --exclude .git \
                     "$git_dir/restic" "$git_dir/rustic" "$git_dir/rustic_core" "$ssh_h:$rsrc/" ||
                 { echo "build-round: $h: sync failed" >&2; exit 1; }
-            p=""; [[ $h == chopin ]] && p=$peer
-            j=""; [[ $h == "$a64" ]] && j=$jp
+            j=""; u=$(units_of "$h")
+            [[ $h == "$a64" ]] && { j=$jp; u=linux-arm64; }
             ssh -o BatchMode=yes -o ServerAliveInterval=60 "$ssh_h" \
-                "cd && ${j}env $(vars) $p bash $rdir/stick/build-round.sh --host $h$flags $round" 2>&1 |
+                "cd && ${j}env $(vars) bash $rdir/stick/build-round.sh --host $h --units $u$flags $round" 2>&1 |
                 sed -u "s/^/[$h] /"
             exit "${PIPESTATUS[0]}"
         ) &
         pids+=" $!"
     done
     for p in $pids; do wait "$p" || rc=1; done
-    rbuilt=$rrounds/round$round/bin
-    if [[ -n $a64 && $dry == no ]]; then
-        # What the arm64 host built (its build-HOST.files), to every build host.
-        log "bringing $a64's binaries to $(echo "$hl" | sed 's/ / and /')"
-        for h in $hl; do
-            tar_copy "$a64_ssh" "$(hostof "$h")" -T "build-$a64.files" "build-$a64.files" "build-$a64.tsv" ||
-                { log "FAILED to copy $a64's build-$a64.files from $a64_ssh:$rbuilt to $h"; rc=1; }
+    # NAME: what builder NAME built (its build-NAME.files) to the collector,
+    # host to host, else through this Mac (the small hosts can't all reach each
+    # other, and the arm64 host reaches no build host).
+    gather_one() {
+        local n=$1 s
+        s=$(hostof "$n")
+        # shellcheck disable=SC2029  # the paths are meant to expand here
+        if ssh -o BatchMode=yes -o ServerAliveInterval=60 "$src_ssh" \
+            "cd && mkdir -p $rbin && rsync -rlp --checksum -e '$dssh' $s:$rbin/build-$n.files $s:$rbin/build-$n.tsv $rbin/ &&
+             rsync -rlp --checksum -e '$dssh' --files-from=$rbin/build-$n.files $s:$rbin/ $rbin/"; then
+            log "$n: what it built is on $src_name"
+            return 0
+        fi
+        log "$n: $src_name can't copy from $s: through the Mac"
+        tar_copy "$s" "$src_ssh" -T "build-$n.files" "build-$n.files" "build-$n.tsv" ||
+            { log "FAILED to bring $n's build-$n.files to $src_name"; return 1; }
+        log "$n: what it built is on $src_name"
+    }
+    if [[ $dry == no && $rc == 0 ]]; then
+        for h in $hb $a64b; do
+            [[ $h == "$src_name" ]] && continue
+            gather_one "$h" || rc=1
         done
+        ssh -o BatchMode=yes "$src_ssh" \
+            "cd && env BKO_ROUNDS=$rrounds bash $rdir/stick/build-round.sh --sums $round" || rc=1
+    elif [[ $dry == no ]]; then
+        # A host that failed has no build-HOST.files to gather: each host keeps
+        # what it built (the table below says what), and nothing is summed or copied.
+        log "round$round not gathered to $src_name (a build failed)"
     fi
-    if [[ $pair == yes && $dry == no ]]; then
-        log "bringing Cinqcent's binaries to Chopin"
-        ssh -o BatchMode=yes "$chopin" "cd && env BKO_ROUNDS=$rrounds BKO_PEER=$cinq:$rrounds/round$round/bin bash $rdir/stick/build-round.sh --pull $round" || rc=1
-    elif [[ -n $a64 && $dry == no ]]; then
-        ssh -o BatchMode=yes "$chopin" "cd && env BKO_ROUNDS=$rrounds bash $rdir/stick/build-round.sh --sums $round" || rc=1
-    fi
-    table=$(for h in $hl $a64; do
+    table=$(for h in $hb $a64b; do
         ssh -o BatchMode=yes "$(hostof "$h")" "cat $rrounds/round$round/bin/build-$h.tsv 2>/dev/null" || true
     done | LC_ALL=C sort -t "$(printf '\t')" -k3,3 -k2,2 -k1,1)
     echo
@@ -502,16 +705,23 @@ if [[ $mode == mac ]]; then
             log "round$round's arm64 directories not copied back to $a64 (the build failed)"
         fi
     fi
-    if [[ -n $dl ]]; then
+    # The whole round from the collector to every other build host (so that each
+    # holds it with the same SHA256SUMS) and to every --dist-hosts host.
+    for h in $hl; do
+        [[ $h == "$src_name" ]] && continue
+        bdl+=" $h=$(hostof "$h")"
+    done
+    bdl=${bdl# }
+    if [[ -n $bdl$dl ]]; then
         echo
         if [[ $rc == 0 ]]; then
             dist_all || rc=1
         else
-            log "round$round not copied to $(for p in $dl; do printf '%s ' "${p%%=*}"; done)(the build failed)"
+            log "round$round not copied to $(for p in $bdl $dl; do printf '%s ' "${p%%=*}"; done)(the build failed)"
         fi
     fi
     echo
-    echo "For run-all.sh on both hosts (OLD_BIN: the round before's bin):"
+    echo "For run-all.sh on the build hosts (OLD_BIN: the round before's bin):"
     echo "EXPECT_RESTIC_COMMIT=$RESTIC_COMMIT EXPECT_RESTIC_DIGEST=$RESTIC_DIGEST" \
         "EXPECT_RUSTIC_COMMIT=$RUSTIC_COMMIT EXPECT_RUSTIC_CORE_COMMIT=$RUSTIC_CORE_COMMIT"
     exit $rc
@@ -536,11 +746,14 @@ host=$(uname -n)
 # The arm64 host's part (--host NAME of the build-arm64 role) holds only the
 # arm64 directories: no top SHA256SUMS.
 armhost=no
-if [[ $mode != chopin && $mode != cinqcent && $mode != pull && $mode != sums ]]; then
-    [[ " $(hosts_names --role build-arm64 2>/dev/null | tr '\n' ' ') " == *" $mode "* ]] ||
-        die "--host: chopin, cinqcent or a host with the build-arm64 role in testvm/hosts.json, not $mode"
-    [[ $(uname -m) == aarch64 ]] || die "--host $mode: this is a $(uname -m) machine, not aarch64"
-    armhost=yes
+if [[ $mode != sums ]]; then
+    [[ -n $units ]] || die "--host $mode: --units LIST says what to build here (the Mac deals them)"
+    if [[ " $(hosts_names --role build --arch amd64 2>/dev/null | tr '\n' ' ') " != *" $mode "* ]]; then
+        [[ " $(hosts_names --role build-arm64 2>/dev/null | tr '\n' ' ') " == *" $mode "* ]] ||
+            die "--host: a host with the build or build-arm64 role in testvm/hosts.json, not $mode"
+        [[ $(uname -m) == aarch64 ]] || die "--host $mode: this is a $(uname -m) machine, not aarch64"
+        armhost=yes
+    fi
 fi
 
 # SHA256SUMS of BIN: binaries, commit and digest files (every file but the
@@ -563,21 +776,7 @@ shasums() {
     done
 }
 
-if [[ $mode == pull ]]; then
-    [[ -n ${BKO_PEER:-} ]] || die "--pull needs BKO_PEER (user@host:ROUNDDIR/bin)"
-    rsync -rlp --checksum "$BKO_PEER/build-cinqcent.files" "$BKO_PEER/build-cinqcent.tsv" "$BIN/" ||
-        die "no build-cinqcent.files at $BKO_PEER"
-    rsync -rlp --checksum --files-from="$BIN/build-cinqcent.files" "$BKO_PEER/" "$BIN/" || die "pull failed"
-    shasums || die "no SHA256SUMS in $BIN"
-    rsync -rlp --checksum "$BIN/SHA256SUMS" "$BIN/build-chopin.tsv" "$BIN/build-chopin.files" "$BKO_PEER/" 2>/dev/null ||
-        rsync -rlp --checksum "$BIN/SHA256SUMS" "$BKO_PEER/" || die "couldn't copy SHA256SUMS to $BKO_PEER"
-    for f in $ARM_SUMS; do
-        rsync -rlp --checksum "$BIN/$f" "$BKO_PEER/$f" || die "couldn't copy $f to $BKO_PEER"
-    done
-    log "pulled $(wc -l <"$BIN/build-cinqcent.files") files; SHA256SUMS on both"
-    exit 0
-fi
-if [[ $mode == sums ]]; then   # (the Mac part, after it brought the arm64 host's builds)
+if [[ $mode == sums ]]; then   # (the collector, after the Mac gathered every builder's files)
     [[ -d $BIN ]] || die "no $BIN"
     shasums || die "no SHA256SUMS in $BIN"
     log "SHA256SUMS of $BIN made again$([[ -n $ARM_SUMS ]] && echo ", and$ARM_SUMS")"
@@ -593,10 +792,9 @@ hosts_rust_env "$mode" || die "testvm/hosts.json: no rust_env for $mode"
 # A check build's output (--arch arm64: "Architectures" above), never BIN.
 CHK=$rdir/check
 # Rust for every cargo and rustc run here ("Rust" above): rustup's proxies
-# take RUSTUP_TOOLCHAIN over the default, and with RUSTUP_AUTO_INSTALL=0 fail
-# rather than install a missing one.  DragonFly's build names its nightly to
-# rustup run, which takes that over these.
-rust_tc=${BKO_RUST_TOOLCHAIN:-1.94.1}
+# take RUSTUP_TOOLCHAIN over the default (rust_tc, above), and with
+# RUSTUP_AUTO_INSTALL=0 fail rather than install a missing one.  DragonFly's
+# build names its nightly to rustup run, which takes that over these.
 export RUSTUP_TOOLCHAIN=$rust_tc RUSTUP_AUTO_INSTALL=0
 # rust_check [TARGET]: rust_tc installed (and TARGET's std for it), or why not.
 rust_check() {
@@ -618,11 +816,52 @@ profile_env() {  # PROFILE: the cargo environment for it
     [[ $1 == fast ]] && echo "CARGO_PROFILE_RELEASE_LTO=false CARGO_PROFILE_RELEASE_CODEGEN_UNITS=16"
     true
 }
+# --units: what the Mac dealt this host, in the unit table's order; and the
+# lanes it runs them in, from its class unless the caller says otherwise (a
+# big host three rustic builds at once, two of them in guests; a small host
+# two and one, so that it never boots two build guests together).
+#   restic, restic-arm64, restic-arm64-check   Go, before the rest
+#   linux, dragonfly, linux-arm64-check, linux-arm64   rustic-bko, no guest
+#   haiku, freebsd, netbsd, openbsd, illumos   rustic-bko in a build guest
+KNOWN_UNITS="restic restic-arm64 restic-arm64-check linux dragonfly linux-arm64-check linux-arm64 haiku freebsd netbsd openbsd illumos"
+ul=""
+for u in $(echo "$units" | tr ',' ' '); do
+    [[ " $KNOWN_UNITS " == *" $u "* ]] || die "--units: no such unit $u (of: $KNOWN_UNITS)"
+    [[ " $ul " == *" $u "* ]] || ul+=" $u"
+done
+ul=${ul# }
+[[ -n $ul ]] || die "--units: at least one unit"
+has_unit() { [[ " $ul " == *" $1 "* ]]; }
+case $(hosts_get "$mode" class 2>/dev/null) in
+    big) cpu_lanes=3 guest_lanes=2 ;;
+    *) cpu_lanes=2 guest_lanes=1 ;;
+esac
+cpu_lanes=${BKO_CPU_LANES:-$cpu_lanes} guest_lanes=${BKO_GUEST_LANES:-$guest_lanes}
+[[ $cpu_lanes -ge 1 && $guest_lanes -ge 1 ]] || die "BKO_CPU_LANES and BKO_GUEST_LANES: 1 or more"
+# The guests' port range and ports: this host's own slot_range in
+# testvm/hosts.json, one port each above its first, in the unit table's order
+# (BKO_GUEST_RANGE, BKO_DFLY_PORT, BKO_GUEST_PORTS and BKO_HAIKU_PORT win).
+grange=${BKO_GUEST_RANGE:-$(hosts_get "$mode" slot_range)}
+[[ $grange =~ ^[0-9]+-[0-9]+$ ]] || die "no guest port range for $mode (testvm/hosts.json's slot_range)"
+glo=${grange%-*}
+gports=(${BKO_GUEST_PORTS:-$((glo + 2)) $((glo + 3)) $((glo + 4)) $((glo + 5))})
+[[ ${#gports[@]} -eq 4 ]] || die "BKO_GUEST_PORTS: four ports (freebsd netbsd openbsd illumos)"
+port_of() {   # UNIT: the port its guest listens on
+    case $1 in
+        dragonfly) echo "${BKO_DFLY_PORT:-$((glo + 1))}" ;;
+        freebsd) echo "${gports[0]}" ;;
+        netbsd) echo "${gports[1]}" ;;
+        openbsd) echo "${gports[2]}" ;;
+        illumos) echo "${gports[3]}" ;;
+        haiku) echo "${BKO_HAIKU_PORT:-$((glo + 6))}" ;;
+        *) die "no port for the unit $1" ;;
+    esac
+}
 mkdir -p "$BIN" "$LOGS"
 rows=$LOGS/rows-$mode
 rm -rf "$rows" && mkdir -p "$rows"
 exec > >(tee -a "$LOGS/build-round-$mode.log") 2>&1
-log "build-round $round on $host ($mode): SRC=$SRC BIN=$BIN profile=$profile guests=$gprofile arch=$arch${only:+ only=$only}$([[ $dry == yes ]] && echo " (dry run)")"
+log "build-round $round on $host ($mode): SRC=$SRC BIN=$BIN profile=$profile guests=$gprofile arch=$arch units=$(echo "$ul" | tr ' ' ',') lanes=$cpu_lanes/$guest_lanes ports=$grange$([[ $dry == yes ]] && echo " (dry run)")"
 
 # The copy must be the commits the Mac part named.
 verified=yes
@@ -747,7 +986,8 @@ prepare() {
     log "prepared $p (sources $PREP_DIGEST)"
 }
 
-# --- Chopin's builds ---------------------------------------------------------------------
+# --- The builds: restic-bko, and rustic-bko for Linux, DragonFly and Haiku ---------------
+# oses: the bin directories restic-bko ships for (the restic unit).
 oses="linux freebsd openbsd netbsd dragonfly illumos"
 # A bin directory's Go target: OS is OS/amd64, linux-arm64 linux/arm64.
 go_target() { case $1 in *-arm64) echo "${1%-arm64}/arm64" ;; *) echo "$1/amd64" ;; esac; }
@@ -895,8 +1135,8 @@ build_linux() {
     row rustic-bko "$os" built $((SECONDS - t0)) "$d"
     log "rustic-bko $os built in $((SECONDS - t0)) s"
 }
-build_dragonfly() {
-    local t0=$SECONDS d inputs=$LOGS/rustic-dragonfly.inputs pe port=${BKO_DFLY_PORT:-2701} img
+build_dragonfly() {  # PORT
+    local t0=$SECONDS d inputs=$LOGS/rustic-dragonfly.inputs pe port=$1 img
     local vm=$WORK/vms/dragonfly6/dragonfly6.qcow2
     pe=$(profile_env "$profile")
     img=$(stat -L -c '%s %Y' "$vm" 2>/dev/null) || { log "no $vm"; row rustic-bko dragonfly FAILED 0; return 1; }
@@ -924,8 +1164,8 @@ build_dragonfly() {
     row rustic-bko dragonfly built $((SECONDS - t0)) "$d"
     log "rustic-bko dragonfly built in $((SECONDS - t0)) s"
 }
-build_haiku() {  # natively in a throwaway haiku6, on a guest slot
-    local t0=$SECONDS d inputs=$LOGS/rustic-haiku.inputs port=${BKO_HAIKU_PORT:-2905} img fast="" s
+build_haiku() {  # PORT: natively in a throwaway haiku6, on a guest slot
+    local t0=$SECONDS d inputs=$LOGS/rustic-haiku.inputs port=$1 img fast="" s
     img=$WORK/vms/haiku6/haiku6.qcow2
     [[ -f $img ]] || { log "no $img"; row rustic-bko haiku FAILED 0; return 1; }
     [[ $gprofile == fast ]] && fast=1
@@ -938,7 +1178,7 @@ build_haiku() {  # natively in a throwaway haiku6, on a guest slot
         return 0
     fi
     if [[ $dry == yes ]]; then log "rustic-bko haiku: would build (haiku/build-rustic.sh $port, $gprofile)"; return 0; fi
-    slot_take "${BKO_GUEST_MAX:-3}" "${BKO_GUEST_RANGE:-2900-2999}"
+    slot_take "${BKO_GUEST_MAX:-3}" "$grange"
     log "rustic-bko haiku: building (haiku/build-rustic.sh $port, $gprofile; guest slot $BKO_GUEST_SLOT)"
     # The script has its own watchdog; this is the backstop, and it saves
     # its logs in $LOGS/haiku-build.  A guest kernel panic gets one rerun.
@@ -970,7 +1210,7 @@ build_haiku() {  # natively in a throwaway haiku6, on a guest slot
     log "rustic-bko haiku built in $((SECONDS - t0)) s"
 }
 
-# --- Cinqcent's builds ---------------------------------------------------------------------
+# --- The builds: rustic-bko natively, in a build guest of the system -----------------------
 vm_of() { case $1 in freebsd) echo freebsd14 ;; openbsd) echo openbsd8 ;; netbsd) echo netbsd11 ;; illumos) echo omnios58 ;; esac; }
 build_native() {  # OS PORT
     local os=$1 port=$2 t0=$SECONDS d inputs=$LOGS/rustic-$1.inputs vm img f fast="" s
@@ -992,7 +1232,7 @@ build_native() {  # OS PORT
         return 0
     fi
     if [[ $dry == yes ]]; then log "rustic-bko $os: would build ($os/build-rustic.sh $port, $vm, $gprofile)"; return 0; fi
-    slot_take "${BKO_GUEST_MAX:-3}" "${BKO_GUEST_RANGE:-2900-2999}"
+    slot_take "${BKO_GUEST_MAX:-3}" "$grange"
     log "rustic-bko $os: building ($os/build-rustic.sh $port, $vm, $gprofile; guest slot $BKO_GUEST_SLOT)"
     env SRC="$PREPPED" BKO_BIN="$BIN" BKO_WORK="$WORK" FAST=$fast "$here/$os/build-rustic.sh" "$port" \
         >"$LOGS/build-rustic-$os.log" 2>&1
@@ -1009,61 +1249,79 @@ build_native() {  # OS PORT
 }
 
 # --- Run -------------------------------------------------------------------------------------
+# build_one UNIT: the one build it names.  A check unit's output goes to CHK,
+# never BIN (the Mac compares the two sums afterwards).
+build_one() {
+    case $1 in
+        linux) build_linux ;;
+        linux-arm64) build_linux linux-arm64 ;;            # the arm64 host's own, shipped
+        linux-arm64-check) ( BIN=$CHK; build_linux linux-arm64 ) ;;
+        dragonfly) build_dragonfly "$(port_of dragonfly)" ;;
+        haiku) build_haiku "$(port_of haiku)" ;;
+        freebsd|netbsd|openbsd|illumos) build_native "$1" "$(port_of "$1")" ;;
+        *) die "no build for the unit $1" ;;
+    esac
+}
+# LANES UNIT...: the units in LANES lanes, each lane its units one after
+# another and the lanes side by side, so that a host runs no more at once than
+# its class allows.  The units go into the lanes in order, in slices, which
+# keeps the pairing the rounds have used (freebsd then netbsd beside openbsd
+# then illumos).
+run_lanes() {
+    local lanes=$1 n per i j pids="" p
+    shift
+    # lane_units: this call's units.  Each call runs in a background subshell of
+    # its own (the cpu units beside the guest ones), so the two never share it.
+    lane_units=("$@")
+    n=${#lane_units[@]}
+    [[ $n -gt 0 ]] || return 0
+    [[ $lanes -lt $n ]] || lanes=$n
+    per=$(( (n + lanes - 1) / lanes ))
+    for ((i = 0; i < n; i += per)); do
+        ( for ((j = i; j < i + per && j < n; j++)); do build_one "${lane_units[j]}"; done; true ) &
+        pids+=" $!"
+    done
+    for p in $pids; do wait "$p"; done
+}
 t_all=$SECONDS
-if [[ $mode == chopin ]]; then
-    rd=""
-    want_arch amd64 && rd+=" $oses"
-    want_arch arm64 && rd+=" linux-arm64"
-    # shellcheck disable=SC2086  # bin directories: no spaces
-    want restic && build_restic $rd
-    if { want_arch amd64 && { want linux || want dragonfly || want haiku; }; } || { want_arch arm64 && want linux; }; then
-        prepare
-        pids=""
-        if want_arch amd64; then
-            if want linux; then build_linux & pids+=" $!"; fi
-            if want dragonfly; then build_dragonfly & pids+=" $!"; fi
-            if want haiku; then
-                # shellcheck source=../testvm/compare/guest-slot.sh
-                . "$here/../testvm/compare/guest-slot.sh" || die "no $here/../testvm/compare/guest-slot.sh"
-                build_haiku & pids+=" $!"
-            fi
-        fi
-        # The check of the arm64 host's rustic-bko: a cross build here.
-        if want_arch arm64 && want linux; then ( BIN=$CHK; build_linux linux-arm64 ) & pids+=" $!"; fi
-        for p in $pids; do wait "$p"; done
-    fi
-    [[ $dry == yes ]] || omnios_copies restic-bko
-    [[ $dry == no && -f $BIN/linux/restic-commit ]] && cp "$BIN/linux/restic-commit" "$BIN/restic-commit"
-elif [[ $mode == cinqcent ]]; then
-    # The check of Chopin's restic-bko linux-arm64 (Go cross-builds it here too).
-    if want_arch arm64 && want restic; then ( BIN=$CHK; build_restic linux-arm64 ); fi
-    if want_arch amd64; then
-        ports=(${BKO_GUEST_PORTS:-2901 2902 2903 2904})
+# restic-bko first, as the rounds have built it: one Go run for every
+# directory this host ships, and one more for the check when it has that unit.
+rd=""
+has_unit restic && rd+=" $oses"
+has_unit restic-arm64 && rd+=" linux-arm64"
+# shellcheck disable=SC2086  # bin directories: no spaces
+[[ -z $rd ]] || build_restic $rd
+has_unit restic-arm64-check && ( BIN=$CHK; build_restic linux-arm64 )
+# Then every rustic-bko unit, in lanes: the ones that boot a guest take a
+# guest slot of their own (guest-slot.sh), so builds and the host's tests
+# together never run more than BKO_GUEST_MAX guests.
+cpu_units=() guest_units=()
+for u in $ul; do
+    case $u in
+        linux|linux-arm64|linux-arm64-check|dragonfly) cpu_units+=("$u") ;;
+        haiku|freebsd|netbsd|openbsd|illumos) guest_units+=("$u") ;;
+        *) ;;   # the Go units, done above
+    esac
+done
+if [[ ${#cpu_units[@]} -gt 0 || ${#guest_units[@]} -gt 0 ]]; then
+    prepare
+    if [[ ${#guest_units[@]} -gt 0 ]]; then
         # shellcheck source=../testvm/compare/guest-slot.sh
         . "$here/../testvm/compare/guest-slot.sh" || die "no $here/../testvm/compare/guest-slot.sh"
-        [[ ${#ports[@]} -eq 4 ]] || die "BKO_GUEST_PORTS: four ports (freebsd netbsd openbsd illumos)"
-        if want freebsd || want netbsd || want openbsd || want illumos; then
-            prepare
-            # Two lanes, one guest each when a slot is free (BKO_GUEST_LANES=1: one lane).
-            ( want freebsd && build_native freebsd "${ports[0]}"; want netbsd && build_native netbsd "${ports[1]}"; true ) &
-            a=$!
-            [[ ${BKO_GUEST_LANES:-2} == 1 ]] && wait $a
-            ( want openbsd && build_native openbsd "${ports[2]}"; want illumos && build_native illumos "${ports[3]}"; true ) &
-            b=$!
-            wait $a; wait $b
-            [[ $dry == yes ]] || omnios_copies rustic-bko
-        fi
     fi
-else
-    # The arm64 host (its whole part in its job_slice: the Mac starts it so).
-    if want linux; then
-        prepare
-        build_linux linux-arm64
-    fi
+    pids=""
+    [[ ${#cpu_units[@]} -eq 0 ]] || { run_lanes "$cpu_lanes" "${cpu_units[@]}" & pids+=" $!"; }
+    [[ ${#guest_units[@]} -eq 0 ]] || { run_lanes "$guest_lanes" "${guest_units[@]}" & pids+=" $!"; }
+    for p in $pids; do wait "$p"; done
+fi
+if [[ $dry == no ]]; then
+    has_unit restic && omnios_copies restic-bko
+    has_unit illumos && omnios_copies rustic-bko
+    [[ -f $BIN/linux/restic-commit ]] && cp "$BIN/linux/restic-commit" "$BIN/restic-commit"
 fi
 [[ $dry == yes ]] && { log "dry run done in $((SECONDS - t_all)) s"; exit 0; }
 cat "$rows"/*.files 2>/dev/null | LC_ALL=C sort -u >"$BIN/build-$mode.files"
-[[ -f $BIN/restic-commit && $mode == chopin ]] && echo restic-commit >>"$BIN/build-$mode.files"
+[[ -f $BIN/restic-commit ]] && echo restic-commit >>"$BIN/build-$mode.files"
 for f in "$rows"/*-omnios.files; do  # the omnios copies' rows
     [[ -f $f ]] || continue
     n=$(basename "$f" -omnios.files)
@@ -1071,13 +1329,6 @@ for f in "$rows"/*-omnios.files; do  # the omnios copies' rows
 done
 cat $(ls "$rows"/* 2>/dev/null | grep -v '\.files$') >"$BIN/build-$mode.tsv" 2>/dev/null
 shasums
-if [[ $mode == chopin && -n ${BKO_PEER:-} ]]; then
-    log "copying Chopin's binaries to $BKO_PEER"
-    ssh -o BatchMode=yes "${BKO_PEER%%:*}" "mkdir -p ${BKO_PEER#*:}" &&
-        rsync -rlp --checksum --files-from="$BIN/build-$mode.files" "$BIN/" "$BKO_PEER/" &&
-        rsync -rlp --checksum "$BIN/build-$mode.files" "$BIN/build-$mode.tsv" "$BKO_PEER/" ||
-        log "FAILED to copy to $BKO_PEER"
-fi
 log "done in $((SECONDS - t_all)) s"
 cat "$BIN/build-$mode.tsv"
 ! grep -q FAILED "$BIN/build-$mode.tsv"

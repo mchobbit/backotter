@@ -13,8 +13,11 @@
 # each with its own SHA256SUMS), never an amd64 binary; a set with none
 # (cmp-bin) is left alone there, and said.  An amd64 host gets each set
 # whole, as ever.
-# --from: the source, a host with the build role there (default chopin, the
-# table's first).  --sets: comma-separated, of bko-bin cmp-bin holt-bin
+# --from: the source, a host with the build role and the big class there
+# (default chopin, the table's first: the shared sets are assembled where the
+# images are built, and a small build host holds only copies of them, even
+# though it builds a round's units since 2026-11-14).
+# --sets: comma-separated, of bko-bin cmp-bin holt-bin
 # (default all three).
 #
 # For each set: on the source, every SHA256SUMS in the set must check
@@ -69,9 +72,14 @@ done
 for s in $sets; do [[ " $ALL_SETS " == *" $s "* ]] || die "--sets: of $ALL_SETS, not '$s'"; done
 [[ -n ${sets// /} ]] || die "--sets: of $ALL_SETS"
 
-builders=" $(hosts_names --role build | tr '\n' ' ')" || die "no build hosts from testvm/hosts.json"
+# The source is a big build host: the shared sets are assembled where the
+# images are built (img-one.sh), and a small host holds only copies of them.
+builders=" $(hosts_names --role build --class big | tr '\n' ' ')" ||
+    die "no big build hosts from testvm/hosts.json"
+[[ -n ${builders// /} ]] || die "no enabled host has the build role and the big class in testvm/hosts.json"
 [[ -n $from ]] || from=$(echo $builders | cut -d' ' -f1)
-[[ $builders == *" $from "* ]] || die "--from $from: not a build host in testvm/hosts.json (build hosts:${builders% })"
+[[ $builders == *" $from "* ]] ||
+    die "--from $from: not a big build host in testvm/hosts.json (big build hosts:${builders% })"
 src=$(hosts_get "$from" ssh) || die "--from $from: no ssh in testvm/hosts.json"
 
 targets=""

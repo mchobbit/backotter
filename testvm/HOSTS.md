@@ -246,6 +246,15 @@ other sessions' runs.
    - `/mnt/bko-ram`, a 10G RAM disk on a small host.
    - `/bkoscratch` owned `m:m`, mode 755, with at least 80 GB free.
    - python3 3.9 or newer, rsync, flock, sha256sum, QEMU and OVMF.
+   - The storage tools every host has (all four alike since 2026-11-14), for
+     vm-mount, the bs2 dry runs and the tier 0 chroots: `sudo apt-get install
+     --no-install-recommends cryptsetup-bin lvm2 thin-provisioning-tools
+     dmsetup mdadm xfsprogs xfsdump jfsutils btrfs-progs e2fsprogs f2fs-tools
+     nilfs-tools dosfstools exfatprogs ntfs-3g udftools hfsprogs reiserfsprogs
+     squashfs-tools erofs-utils gdisk parted fdisk kpartx qemu-utils mtools
+     zfs-dkms zfsutils-linux` (ZFS from trixie contrib, built by DKMS against
+     the running kernel's headers; check `modprobe zfs`). bcachefs-tools and
+     ufsutils aren't packaged for trixie.
    - jq isn't needed.
    - `hostname -s` must print the row's name.
 2. **SSH.**

@@ -195,7 +195,7 @@ class StoreTest(unittest.TestCase):
         self.env = {"BKO_WORK": str(self.work), "VM_STORE_ROOT": str(self.mirror),
                     "VM_STORE_SOURCES": f"chopin={self.mirror}", "VM_STORE_BIGFOOT": str(self.bf_root),
                     "VM_STORE_BIGFOOT_STAGE": str(self.bf_stage), "VM_STORE_BIGFOOT_HOST": "",
-                    "VM_STORE_SCAN": str(self.scan), "VM_STORE_FLOOR": "0", "VM_STORE_MIN_AGE": "24h",
+                    "VM_STORE_SCAN": str(self.scan), "VM_STORE_SCAN_SKIP": "", "VM_STORE_FLOOR": "0", "VM_STORE_MIN_AGE": "24h",
                     "PATH": f"{self.bin}{os.pathsep}{os.environ['PATH']}", "FAKE_RSYNC_LOG": str(self.log),
                     "FAKE_RSYNC_BYTES": str(self.bytes_log)}
         for k in ("VM_STORE_CAP", "VM_STORE_WINDOW", "VM_STORE_COPY", "VM_STORE_FLOOR_REFLINK",
@@ -1206,6 +1206,52 @@ class TestGc(StoreTest):
         self.assertEqual(self.left(), {two_days})
         why, blind = vs.in_use(vs.Config(), self.store)
         self.assertEqual((why[two_days], blind), (f"overlay {ov}", []))
+
+    @unittest.skipIf(IS_ROOT, "root reads every directory")
+    def test_scan_skip_tree_is_not_walked(self):
+        two_days, ten_days = self.obj(48), self.obj(240)
+        tools = self.scan / "tools"
+        blind = tools / "arch-root" / "root"           # the gate's chroot, root's 0700 home
+        blind.mkdir(parents=True)
+        blind.chmod(0)
+        rc, plan, err = self.gc(0)
+        self.assertEqual(rc, 4)                             # not skipped: blind, 7-day age
+        self.assertEqual(self.left(), {two_days})
+        with mock.patch.dict(os.environ, {"VM_STORE_SCAN_SKIP": f"/nowhere {tools}"}):
+            rc, plan, err = self.gc(0)
+        self.assertEqual(rc, 0, err)
+        self.assertNotIn("can't read", err)
+        self.assertEqual(self.left(), set())
+
+    @unittest.skipIf(IS_ROOT, "root reads every directory")
+    def test_unreadable_dir_in_os_tree_is_not_blind(self):
+        two_days, three_days, four_days = self.obj(48), self.obj(72), self.obj(96)
+        root = self.scan / "rebuild" / "chroot"              # an OS tree, not in VM_STORE_SCAN_SKIP
+        for d in ("usr/bin", "etc", "tmp", "root", "etc/polkit-1/rules.d"):
+            (root / d).mkdir(parents=True)
+        (root / "usr/lib").mkdir()
+        (root / "usr/lib/os-release").write_text("ID=arch\n")
+        (root / "etc/os-release").symlink_to("../usr/lib/os-release")
+        ov = root / "tmp" / "kept.qcow2"                     # a readable overlay in it still counts
+        make_qcow2(ov, backing=str(self.cache / "objects" / three_days))
+        for d in ("root", "etc/polkit-1/rules.d"):
+            (root / d).chmod(0)
+        rc, plan, err = self.gc(0)
+        self.assertEqual(rc, 4, err)
+        self.assertEqual(self.left(), {three_days})
+        self.assertNotIn("objects stamped in the last 7 days", err)
+        self.assertIn("2 dirs inside OS trees", err)
+        bad = root / "tmp" / "vm-run.x.qcow2"                 # an unreadable overlay is blind there too
+        make_qcow2(bad, backing=str(self.cache / "objects" / three_days))
+        bad.chmod(0)
+        self.addCleanup(bad.chmod, 0o644)
+        _, blind = vs.in_use(vs.Config(), self.store)
+        self.assertEqual(blind, [str(bad)])
+        # Outside an OS tree, an unreadable dir is still blind (rule d).
+        (root / "etc/os-release").unlink()
+        (root / "usr/lib/os-release").unlink()
+        _, blind = vs.in_use(vs.Config(), self.store)
+        self.assertEqual(sorted(blind), sorted([str(bad), str(root / "root"), str(root / "etc/polkit-1/rules.d")]))
 
     def test_version_kept_whole(self):
         a, b, c = self.obj(1), self.obj(100, kind="file"), self.obj(100)

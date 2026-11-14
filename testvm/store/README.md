@@ -195,7 +195,10 @@ linked guests are never evicted however long ago they were ensured, and
 once `link` moves `vms/G` on, the old version ages out like any other.
 A dir under `vms/` gc can't read (a sudo `compare.py`'s 0700 one) may hide
 a link: gc says "can't read" and keeps what was ensured in the last 7 days,
-as for an unreadable overlay scan dir.  Size a cache's cap for every linked guest plus room for one new version.
+as for an unreadable overlay scan dir.  The overlay scan doesn't walk
+`VM_STORE_SCAN_SKIP`'s trees.  It doesn't count a dir it can't read inside an OS
+tree (a chroot: `usr/` plus `etc/os-release`) as blind either; it reports how many
+in one line.  An unreadable `*.qcow2` stays blind wherever it is.  Size a cache's cap for every linked guest plus room for one new version.
 
 This is an interim step of M3 (`docs/design/image-store.md` section 3): the
 per-job pins (`VM_STORE_PIN`, `vm_store_dir`) are not built.
@@ -217,6 +220,7 @@ per-job pins (`VM_STORE_PIN`, `vm_store_dir`) are not built.
 | `VM_STORE_COPY` | `auto` (reflink, else a sparse copy); `plain` |
 | `VM_STORE_FLOOR_REFLINK` | `0` (publish counts every copy's allocated size against the floor); `1` counts a reflinked copy as no new space |
 | `VM_STORE_SCAN` | `/mnt/bko-ram /dev/shm /bkoscratch` (gc's search for overlays) |
+| `VM_STORE_SCAN_SKIP` | `/bkoscratch/tools` (trees that search never walks: tool trees and chroots with no overlays) |
 | `VM_STORE_MIN_AGE` | `24h` (gc keeps what was ensured more recently) |
 | `VM_STORE_CAP`, `VM_STORE_FLOOR` | the root's `store.json` |
 | `BKO_WORK` | `~/backotter-work` (`vms/` is under it: link's links, gc's rule f) |

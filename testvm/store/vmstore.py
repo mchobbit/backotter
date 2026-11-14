@@ -59,6 +59,9 @@ DEFAULT_BF_STAGE = "/media/DantePool/bt/.bko-staging"
 DEFAULT_BF_HOST = "m@bigfoot.local"
 DEFAULT_CHOPIN = "m@chopin.local"
 DEFAULT_SCAN = "/mnt/bko-ram /dev/shm /bkoscratch"
+# Trees gc's overlay scan never walks: tool trees and chroots that hold no overlay of a
+# store object (the Test2 gate's Arch chroot, /bkoscratch/tools/arch-root, root's 0700 dirs).
+DEFAULT_SCAN_SKIP = "/bkoscratch/tools"
 FLEET_LOCK = ".vm-update.fleet.lock"                       # vm-update's, in vms/
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=15"]
 SSH_E = "ssh " + " ".join(SSH_OPTS)
@@ -614,6 +617,8 @@ class Config:
             raise Usage(f"VM_STORE_FLOOR_REFLINK is 0 or 1, not {fr!r}")
         self.floor_reflink = fr == "1"
         self.scan = (env.get("VM_STORE_SCAN") if env.get("VM_STORE_SCAN") is not None else DEFAULT_SCAN).split()
+        self.scan_skip = (env.get("VM_STORE_SCAN_SKIP") if env.get("VM_STORE_SCAN_SKIP") is not None
+                          else DEFAULT_SCAN_SKIP).split()
         self.min_age = parse_age(env.get("VM_STORE_MIN_AGE") or "24h")
         # D2: only Chopin talks to Bigfoot, so a cache's default source is Chopin alone, and
         # with Chopin down ensure uses what is cached (as --offline).  On Chopin, where the
@@ -2171,16 +2176,43 @@ def cmd_link(cfg: Config, a) -> int:
 
 # --- gc ------------------------------------------------------------------------------
 
-def scan_overlays(cfg: Config, store: Store) -> tuple[dict[str, str], list[str]]:
+def os_tree(d: str) -> bool:
+    """D is the root of an installed OS tree (a chroot, an unpacked image): etc/os-release
+    (or usr/lib/os-release) and a usr/ dir."""
+    return os.path.isdir(os.path.join(d, "usr")) and any(
+        os.path.lexists(os.path.join(d, r)) for r in ("etc/os-release", "usr/lib/os-release"))
+
+
+def scan_overlays(cfg: Config, store: Store, os_dirs: list[str] | None = None) -> tuple[dict[str, str], list[str]]:
     """Rule b: {object: an overlay that has it in its backing chain}, and the dirs and
-    images the scan couldn't read (rule d)."""
+    images the scan couldn't read (rule d).  VM_STORE_SCAN_SKIP's trees are not walked.  A
+    dir it can't read inside an OS tree (os_tree: a chroot's root-owned 0700 dirs) is the
+    OS's own, not a place an overlay is made, so it is not blind: it goes to OS_DIRS
+    instead.  An unreadable *.qcow2 is blind wherever it is."""
     objects_real = os.path.realpath(store.objects)
+    skip = {os.path.realpath(d) for d in cfg.scan_skip}
     refs: dict[str, str] = {}
     blind: list[str] = []
+    roots: list[str] = []                      # the OS trees met so far (walk is top-down)
+
+    def in_os_tree(p: str) -> bool:
+        return any(p.startswith(r + os.sep) for r in roots)
+
+    def unreadable(e: OSError) -> None:
+        if in_os_tree(e.filename):
+            if os_dirs is not None:
+                os_dirs.append(e.filename)
+        else:
+            blind.append(e.filename)
+
     for top in cfg.scan:
-        if not os.path.isdir(top):
+        if not os.path.isdir(top) or os.path.realpath(top) in skip:
             continue
-        for dp, dns, fns in os.walk(top, onerror=lambda e: blind.append(e.filename)):
+        for dp, dns, fns in os.walk(top, onerror=unreadable):
+            if skip:
+                dns[:] = [d for d in dns if os.path.realpath(os.path.join(dp, d)) not in skip]
+            if not in_os_tree(dp) and os_tree(dp):
+                roots.append(dp)
             # Not the store roots' own objects/ (any root: they hold no overlays of ours).
             if os.path.isfile(os.path.join(dp, "store.json")) and "objects" in dns:
                 dns.remove("objects")
@@ -2276,15 +2308,16 @@ def version_objects(store: Store, guest: str, vid: str) -> list[str]:
     return [os.path.basename(os.readlink(p)) for p in leaf.glob("**/*") if p.is_symlink()]
 
 
-def in_use(cfg: Config, store: Store, protect: set[str] = frozenset()) -> tuple[dict[str, str], list[str]]:
+def in_use(cfg: Config, store: Store, protect: set[str] = frozenset(),
+           os_dirs: list[str] | None = None) -> tuple[dict[str, str], list[str]]:
     """{object: why it is kept} by rules a-f, and what the overlay scan or the vms/ walk
-    couldn't read (rule d)."""
+    couldn't read (rule d).  OS_DIRS gets the scan's unreadable dirs inside OS trees."""
     names = store.object_names()
     why: dict[str, str] = {}
     for n in names:
         if qemu_holds(store.obj(n)):
             why[n] = "qemu lock"
-    refs, blind = scan_overlays(cfg, store)
+    refs, blind = scan_overlays(cfg, store, os_dirs)
     for n, p in refs.items():
         why.setdefault(n, f"overlay {p}")
     present = set(names)
@@ -2326,9 +2359,13 @@ def gc(cfg: Config, store: Store, need: int = 0, protect: set[str] = frozenset()
     and free-NEED >= floor.  NoRoom if that can't be reached."""
     if store.role != "cache":
         raise StoreError(f"gc runs on caches only in this version; {store.root} is a {store.role}")
-    why, blind = in_use(cfg, store, protect)
+    os_dirs: list[str] = []
+    why, blind = in_use(cfg, store, protect, os_dirs)
     for d in blind:
         say(f"gc: can't read {d}: objects stamped in the last 7 days are kept")
+    if os_dirs:
+        say(f"gc: can't read {len(os_dirs)} dirs inside OS trees (as {os_dirs[0]}): "
+            "an OS's own, not counted as blind")
     cap = store.cap if store.cap is not None else float("inf")
     use, free = store.use(), store.free()
     plan = {"use": use, "free": free, "cap": store.cap, "floor": store.floor, "need": need, "kept": why,

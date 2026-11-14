@@ -183,6 +183,7 @@ The environment overrides `store.json`, which overrides the defaults.
 | `VM_STORE_COPY` | `auto` (try `--reflink=always`, else plain); `plain` forces a copy |
 | `VM_STORE_FLOOR_REFLINK` | `0`; `1` lets publish count a reflinked copy as no new space against the floor (§2.4) |
 | `VM_STORE_SCAN` | `/mnt/bko-ram /dev/shm /bkoscratch` |
+| `VM_STORE_SCAN_SKIP` | `/bkoscratch/tools` (trees the scan never walks: tool trees and chroots, such as the Test2 gate's `/bkoscratch/tools/arch-root`, that hold no overlay of an object) |
 | `VM_STORE_MIN_AGE` | `24h` |
 | `BKO_WORK` | `~/backotter-work` (`vms/` = `$BKO_WORK/vms`) |
 
@@ -302,13 +303,15 @@ On the mirror role, step 4 never fetches: a missing object is an error.
 It runs under `lock` EX, both from ensure and by hand. An object is **in use**, and kept, if any of these hold:
 
 - **(a) A QEMU process has it open.** An OFD `F_WRLCK` GETLK on bytes 100-299 of the object conflicts with a holder.
-- **(b) A qcow2 file references it.** gc walks `VM_STORE_SCAN` (skipping the store roots' `objects/`) and, for every `*.qcow2` it finds, reads the header and follows the chain:
+- **(b) A qcow2 file references it.** gc walks `VM_STORE_SCAN` (skipping the store roots' `objects/` and the trees `VM_STORE_SCAN_SKIP` names) and, for every `*.qcow2` it finds, reads the header and follows the chain:
   - magic `QFI\xfb`;
   - backing offset is a u64 at byte 8, length a u32 at byte 16;
   - a relative name resolves against the file's dir, then **realpath**s to an object.
   This covers idle kept overlays (ht1 R dirs, compare work, backshot2, t2), which can last for days.
 - **(c) Its `used/` stamp is younger than `VM_STORE_MIN_AGE`** (24h). This covers the gap between ensure and QEMU opening the file, and `--snapshot` temp files that aren't named `*.qcow2`.
 - **(d) Blind scan.** If the scan met a directory or a `*.qcow2` (or a link of its backing chain) it can't read (root's mktemp dirs, a root vm-run's 0600 `--ram` overlay), or rule (f)'s walk of `$BKO_WORK/vms/` met a directory it can't read (a sudo `compare.py`'s 0700 one, which may hold a link), the age in (c) rises to 7 days for this run, and those paths are reported.
+  - Not blind: a directory it can't read inside an OS tree (a walked dir with `usr/` and `etc/os-release` or `usr/lib/os-release`: a chroot, an unpacked image). Its root-owned 0700 dirs (`root/`, polkit's, private state) are the OS's own, and no overlay is made there (root's mktemp dirs and `--ram` overlays are in `/tmp`, `/mnt/bko-ram`, `/dev/shm`). gc reports how many it met, in one line. The rest of the tree is still walked, and an unreadable `*.qcow2` inside it is still blind.
+  - A permanent unreadable tree outside any OS tree would make every gc blind; such a tree goes in `VM_STORE_SCAN_SKIP` once it is known to hold no overlay.
 - **(e) The rest of its version.** Every object of a version that has any in-use object is in use too, along with all chain ancestors. This uses the cached manifests.
 - **(f) What `$BKO_WORK/vms/` links to (§3.0).** Every object of a version that a `vms/G` link resolves into (`live/G/VID`, dangling or not), and each object a link inside a real `vms/G` resolves to (that one before rule e, as an overlay's). The version rule applies after rule e, so a sidecar object shared with older versions keeps none of them. gc_live never removes a `live/G/VID` a link points into.
 
@@ -497,6 +500,7 @@ Cases:
    - LRU order;
    - kept: a fresh stamp, a QEMU-style lock, an overlay found by scan (both relative and absolute backing, and a backing through a `live/` symlink, realpathed);
    - an unreadable scan dir raises the age to 7 days;
+   - one in a `VM_STORE_SCAN_SKIP` tree, or inside an OS tree, does not (an unreadable `*.qcow2` in an OS tree still does), and a readable overlay inside an OS tree still keeps its object;
    - all objects of a version are protected together;
    - the floor counts;
    - refuses on mirror and master roles;

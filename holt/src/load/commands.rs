@@ -343,6 +343,13 @@ pub(crate) struct Builder<'a> {
 // ---- partition ----------------------------------------------------------
 
 /// GPT attribute bits as sfdisk names them.
+/// The disk signature of a GPT disk's protective MBR (the dump's first
+/// entry's uuid, blkid's SIGNATURE-01), when it isn't zero.
+pub fn pmbr_signature(disk: Option<&Value>) -> Option<u32> {
+    let u = disk?.at(&["partition_table", "protective_mbr", "entries", "0", "uuid"])?.as_str()?;
+    u32::from_str_radix(u.split('-').next()?, 16).ok().filter(|&n| n != 0)
+}
+
 pub fn gpt_attrs(a: u64) -> Result<String, u32> {
     let mut out = Vec::new();
     for bit in 0..64u32 {
@@ -561,6 +568,12 @@ impl Builder<'_> {
             let pmbr_active = self.layout.device(&src).and_then(|v| v.at(&["partition_table", "protective_mbr", "entries", "0", "bootable"])).and_then(Value::as_bool) == Some(true);
             if pmbr_active {
                 out.push(Cmd::new(&["sh", "-c", &format!("printf '\\200' | dd of={dev} bs=1 seek=446 count=1 conv=notrunc status=none")]).why("the protective MBR's entry active, as the source's"));
+            }
+            // A protective MBR with a disk signature (KIWI's images, MicroOS's:
+            // bytes 440-443); sfdisk writes a GPT's as zero.
+            if let Some(sig) = pmbr_signature(self.layout.device(&src)) {
+                let oct: String = sig.to_le_bytes().iter().map(|b| format!("\\{b:03o}")).collect();
+                out.push(Cmd::new(&["sh", "-c", &format!("printf '{oct}' | dd of={dev} bs=1 seek=440 count=4 conv=notrunc status=none")]).why(format!("the protective MBR's disk signature, {sig:08x}, as the source's")));
             }
             if d.parts.iter().any(|p| p.extended) {
                 self.notes.push(format!("{src}: the extended partition and its EBRs are made by sfdisk; logical partitions keep their starts"));
@@ -2289,6 +2302,9 @@ impl Builder<'_> {
         let mut next = 256u64;
         let mut placeholders = Vec::new();
         let mut made: Vec<(String, String)> = Vec::new();
+        // (path, its origin) of each made as a snapshot, and every path made.
+        let mut snapped: Vec<(String, String)> = Vec::new();
+        let mut made_paths: Vec<String> = Vec::new();
         let plan = self.btrfs.get(uuid).cloned().unwrap_or_default();
         for (path, v) in &list {
             // A shared snapshot is made after the restore (restore stage).
@@ -2308,9 +2324,23 @@ impl Builder<'_> {
             if let Some((parent, _)) = path.rsplit_once('/') {
                 out.push(Cmd::new(&["mkdir", "-p", &format!("{top}/{parent}")]));
             }
+            // Inside a subvolume made as a snapshot of one that has a
+            // subvolume here too (transactional-update's /etc in each slot):
+            // the snapshot has an empty directory in its place, which goes.
+            let holder = made_paths.iter().filter(|m| path.starts_with(&format!("{m}/"))).max_by_key(|m| m.len());
+            if let Some((h, o)) = holder.and_then(|h| snapped.iter().find(|(p, _)| p == h)) {
+                let theirs = format!("{o}/{}", &path[h.len() + 1..]);
+                if made_paths.contains(&theirs) {
+                    out.push(Cmd::new(&["rmdir", &full]).why(format!("{h}, a snapshot of {o}, has an empty directory where {theirs} is nested: {path} is made in its place")));
+                }
+            }
             // A snapshot is made as one of its origin (still empty: the
             // restore fills both), so that it stays a snapshot.
             let origin = v.get("parent_uuid").and_then(Value::as_str).and_then(|pu| made.iter().find(|(u, _)| u == pu)).map(|(_, p)| p.clone());
+            if let Some(o) = &origin {
+                snapped.push((path.clone(), o.clone()));
+            }
+            made_paths.push(path.clone());
             match &origin {
                 Some(o) => out.push(Cmd::new(&["btrfs", "subvolume", "snapshot", &format!("{top}/{o}"), &full]).why(format!("a snapshot of {o}, as on the source"))),
                 None => out.push(Cmd::new(&["btrfs", "subvolume", "create", &full])),
@@ -2365,8 +2395,8 @@ impl Builder<'_> {
         let here = |id: &str| -> String {
             id.strip_prefix("0/")
                 .and_then(|n| n.parse::<u64>().ok())
-                .and_then(|n| plan.shared.iter().find(|x| x.id == Some(n)))
-                .map_or_else(|| id.to_string(), |x| format!("0/{}", x.new_id))
+                .and_then(|n| plan.new_id_of(n))
+                .map_or_else(|| id.to_string(), |n| format!("0/{n}"))
         };
         {
             out.push(Cmd::new(&["btrfs", "quota", "enable", &top]));
@@ -2445,7 +2475,12 @@ impl Builder<'_> {
                 let subvol = match (opt("subvol="), opt("subvolid=").and_then(|i| i.parse().ok())) {
                     (Some(p), _) => Some(strip(&p)),
                     (None, Some(id)) => by_id(id),
-                    (None, None) => by_id(default),
+                    // transactional-update's /: the booted slot, which the
+                    // mount stage mounts (a pending update's default isn't).
+                    (None, None) => match super::transactional::booted_root(&self.layout.v).filter(|_| target == "/") {
+                        Some(b) => Some(strip(&b)),
+                        None => by_id(default),
+                    },
                 };
                 if let Some(subvol) = subvol {
                     mounts.push(Mount { target, subvol });
@@ -2490,7 +2525,15 @@ impl Builder<'_> {
     /// read-only in the restore stage, which nothing reads after.
     pub(crate) fn ro_shared(&self) -> Vec<String> {
         let t = &self.opts.target;
-        self.btrfs.values().flat_map(|p| p.shared.iter().filter(|x| x.readonly).map(|x| format!("{t}{}", x.backup))).collect()
+        self.btrfs
+            .values()
+            .flat_map(|p| p.shared.iter())
+            .flat_map(|x| {
+                let me = x.readonly.then(|| format!("{t}{}", x.backup));
+                let kids = x.children.iter().filter(|c| c.readonly && !x.readonly).map(move |c| format!("{t}{}/{}", x.backup, c.rest));
+                me.into_iter().chain(kids)
+            })
+            .collect()
     }
 
     /// `v`, a subvolume of the btrfs `fs`, is one of its Timeshift
@@ -2582,6 +2625,8 @@ fn mount_options(o: &str) -> String {
         .split(',')
         .filter(|x| !x.is_empty())
         .filter(|x| !matches!(*x, "defaults" | "noauto" | "auto" | "nofail" | "_netdev" | "user" | "users" | "owner" | "sw" | "ro"))
+        // util-linux's ro=vfs (or ro=fs): read-only too (MicroOS's /).
+        .filter(|x| !x.starts_with("ro="))
         .filter(|x| !x.starts_with("x-") && !x.starts_with("comment="))
         .collect();
     if keep.is_empty() { "defaults".to_string() } else { keep.join(",") }
@@ -2608,7 +2653,15 @@ impl Builder<'_> {
                 self.notes.push(format!("fstab's {file} is on {src}, which isn't restored"));
                 continue;
             };
-            let opts = mount_options(&s(e, "options").unwrap_or_default());
+            let mut opts = mount_options(&s(e, "options").unwrap_or_default());
+            // A transactional-update root names no subvolume: the default,
+            // which during a pending update isn't the slot the backup's /
+            // holds (load/transactional.rs).
+            if let Some(b) = (file == "/" && ty == "btrfs").then(|| super::transactional::booted_root(&self.layout.v)).flatten() {
+                if !opts.split(',').any(|o| o.starts_with("subvol=") || o.starts_with("subvolid=")) {
+                    opts = if opts == "defaults" { format!("subvol={b}") } else { format!("{opts},subvol={b}") };
+                }
+            }
             // A HAMMER2 PFS (DragonFly's vbd0s1d@ROOT): the same PFS here.
             let dev = match s(e, "spec").and_then(|sp| sp.split_once('@').map(|(_, l)| l.to_string())) {
                 Some(l) if ty == "hammer2" => format!("{dev}@{l}"),
@@ -2854,20 +2907,51 @@ impl Builder<'_> {
                 let r = r.iter().map(|w| shell_quote(w)).collect::<Vec<_>>().join(" ");
                 let (qd, qb, qp, qpath) = (shell_quote(&d), shell_quote(&format!("{top}/{}", x.base)), shell_quote(&parent), x.path.replace('"', ""));
                 let id = x.new_id;
+                // Its children (each slot's /etc on transactional-update):
+                // made in it once it's made, where its snapshot has an empty
+                // directory (or the base's plain one), before its restore,
+                // which fills them too; their placeholders just before each.
+                let (mut kids_snap, mut kids_empty, mut kids_ids) = (String::new(), String::new(), String::new());
+                for c in &x.children {
+                    let mut ph = String::new();
+                    for n in &c.placeholders {
+                        let p = format!("{top}/.bko-holt-placeholder-{n}");
+                        ph += &format!("btrfs subvolume create {} && ", shell_quote(&p));
+                        placeholders.push(p);
+                    }
+                    let qc = format!("\"$d\"/{}", shell_quote(&c.rest));
+                    let make = match &c.base {
+                        Some(b) => format!("btrfs subvolume snapshot {} {qc}", shell_quote(&format!("{top}/{b}"))),
+                        None => format!("btrfs subvolume create {qc}"),
+                    };
+                    kids_snap += &format!("{ph}rm -rf -- {qc} && mkdir -p \"$(dirname {qc})\" && {make} && ");
+                    kids_empty += &format!("{ph}mkdir -p \"$(dirname {qc})\" && btrfs subvolume create {qc} && ");
+                    let (cp, cid) = (c.path.replace('"', ""), c.new_id);
+                    kids_ids += &format!("; cid=$(btrfs inspect-internal rootid {qc}) && [ \"$cid\" = {cid} ] || echo \"{cp}: ID $cid here, {cid} in the plan\"");
+                }
                 // The directory it's in keeps its times (snapper's N/, with
                 // info.xml), which rmdir and the snapshot would change.
                 let script = format!(
                     "d={qd}; p={qp}; mkdir -p \"$p\" && touch -r \"$p\" {RUN_DIR}/times.ref || exit; \
-                     if [ -d \"$d\" ] && [ \"$(stat -c %i \"$d\")\" != 256 ] && [ -z \"$(ls -A \"$d\")\" ]; then rmdir \"$d\" && btrfs subvolume snapshot {qb} \"$d\" && RUSTIC_STRICT_EXIT=true {r}; \
-                     else btrfs subvolume create \"$d\" && echo \"{qpath}: not in the backup; made empty\"; fi || exit; \
+                     if [ -d \"$d\" ] && [ \"$(stat -c %i \"$d\")\" != 256 ] && [ -z \"$(ls -A \"$d\")\" ]; then rmdir \"$d\" && btrfs subvolume snapshot {qb} \"$d\" && {kids_snap}RUSTIC_STRICT_EXIT=true {r}; \
+                     else btrfs subvolume create \"$d\" && {kids_empty}echo \"{qpath}: not in the backup; made empty\"; fi || exit; \
                      touch -r {RUN_DIR}/times.ref \"$p\" || exit; \
-                     id=$(btrfs inspect-internal rootid \"$d\") && [ \"$id\" = {id} ] || echo \"{qpath}: ID $id here, {id} in the plan\""
+                     id=$(btrfs inspect-internal rootid \"$d\") && [ \"$id\" = {id} ] || echo \"{qpath}: ID $id here, {id} in the plan\"{kids_ids}"
                 );
-                let why = match x.id {
+                let mut why = match x.id {
                     Some(src) if src == id => format!("{}: a snapshot of {}, then made exact from the backup's {} (ID {id}, as on the source)", x.path, x.base, x.backup),
                     Some(src) => format!("{}: a snapshot of {}, then made exact from the backup's {} (ID {id}; {src} on the source)", x.path, x.base, x.backup),
                     None => format!("{}: a snapshot of {}, then made exact from the backup's {}", x.path, x.base, x.backup),
                 };
+                for c in &x.children {
+                    let from = c.base.as_ref().map_or_else(|| "made empty".to_string(), |b| format!("a snapshot of {b}"));
+                    let ids = match c.id {
+                        Some(src) if src == c.new_id => format!("ID {}, as on the source", c.new_id),
+                        Some(src) => format!("ID {}; {src} on the source", c.new_id),
+                        None => format!("ID {}", c.new_id),
+                    };
+                    why += &format!("; {} nested in it before the restore ({from}, {ids})", c.rest);
+                }
                 out.push(Cmd::new(&["sh", "-c", &script]).why(why));
             }
             if !placeholders.is_empty() {
@@ -2876,8 +2960,16 @@ impl Builder<'_> {
                 out.push(Cmd { argv: a, ..Cmd::default() });
                 out.push(Cmd::new(&["btrfs", "subvolume", "sync", &top]).why("the placeholders gone before quotas are on (no qgroups for them)"));
             }
-            for x in plan.shared.iter().filter(|x| x.readonly) {
-                out.push(Cmd::new(&["btrfs", "property", "set", "-ts", &format!("{top}/{}", x.path), "ro", "true"]));
+            // Read-only last: a child (a slot's /etc) is made and filled in
+            // its slot first, and a child that is read-only itself comes
+            // before its slot.
+            for x in &plan.shared {
+                for c in x.children.iter().rev().filter(|c| c.readonly) {
+                    out.push(Cmd::new(&["btrfs", "property", "set", "-ts", &format!("{top}/{}", c.path), "ro", "true"]));
+                }
+                if x.readonly {
+                    out.push(Cmd::new(&["btrfs", "property", "set", "-ts", &format!("{top}/{}", x.path), "ro", "true"]));
+                }
             }
             let default_id = fs.at(&["default_subvolume", "id"]).and_then(Value::as_u64).unwrap_or(5);
             if let Some(x) = plan.shared.iter().find(|x| x.id == Some(default_id)) {
@@ -2944,27 +3036,13 @@ impl Builder<'_> {
         if let Some(a) = super::abroot::of(&self.layout.v) {
             return self.abroot_boot(&a.clone());
         }
+        if let Some(x) = super::transactional::of(&self.layout.v) {
+            return self.transactional_boot(&x.clone());
+        }
         let t = self.opts.target.clone();
         let mut out = Vec::new();
         out.push(Cmd::note(format!("refuses to start unless {t}/etc/fstab is the restored system's (its / matches the layout's)")));
-        // Keys: the restored key files replace the temporary ones.
-        for dm in self.layout.arr(&["storage", "dm_devices"]).to_vec() {
-            if dm.at(&["dm", "target"]).and_then(Value::as_str) != Some("crypt") {
-                continue;
-            }
-            let name = s(&dm, "name").unwrap_or_default();
-            let dm_name = dm.at(&["dm", "dm_name"]).and_then(Value::as_str).unwrap_or(&name).to_string();
-            let Some(e) = self.layout.crypttab_entry(&dm_name, dm.at(&["dm", "luks_uuid"]).and_then(Value::as_str)).cloned() else { continue };
-            let open_as = s(&e, "name").unwrap_or(dm_name);
-            let Some(k) = s(&e, "key_file").filter(|k| !matches!(k.as_str(), "none" | "-" | "")) else { continue };
-            if self.opts.key_file(&open_as).is_some() {
-                continue;
-            }
-            let under = self.layout.slaves(&name).first().and_then(|u| self.names.dev(u)).unwrap_or_default();
-            let tmp = format!("{RUN_DIR}/keys/{open_as}");
-            out.push(Cmd::new(&["cryptsetup", "luksAddKey", &format!("--key-file={tmp}"), &under, &format!("{t}{k}")]).why(format!("{open_as}: the restored key file {k}")));
-            out.push(Cmd::new(&["cryptsetup", "luksRemoveKey", &under, &tmp]));
-        }
+        out.extend(self.restored_key_files(&t));
         for ds in self.layout.v.at(&["storage", "zfs", "tools", "datasets"]).and_then(Value::as_array).cloned().unwrap_or_default() {
             let name = s(&ds, "name").unwrap_or_default();
             if s(&ds, "encryptionroot").as_deref() != Some(name.as_str()) {
@@ -3235,6 +3313,30 @@ impl Builder<'_> {
         out
     }
 
+    /// Keys: the restored key files (crypttab's) replace the temporary ones
+    /// LUKS was made with.
+    pub(crate) fn restored_key_files(&mut self, t: &str) -> Vec<Cmd> {
+        let mut out = Vec::new();
+        for dm in self.layout.arr(&["storage", "dm_devices"]).to_vec() {
+            if dm.at(&["dm", "target"]).and_then(Value::as_str) != Some("crypt") {
+                continue;
+            }
+            let name = s(&dm, "name").unwrap_or_default();
+            let dm_name = dm.at(&["dm", "dm_name"]).and_then(Value::as_str).unwrap_or(&name).to_string();
+            let Some(e) = self.layout.crypttab_entry(&dm_name, dm.at(&["dm", "luks_uuid"]).and_then(Value::as_str)).cloned() else { continue };
+            let open_as = s(&e, "name").unwrap_or(dm_name);
+            let Some(k) = s(&e, "key_file").filter(|k| !matches!(k.as_str(), "none" | "-" | "")) else { continue };
+            if self.opts.key_file(&open_as).is_some() {
+                continue;
+            }
+            let under = self.layout.slaves(&name).first().and_then(|u| self.names.dev(u)).unwrap_or_default();
+            let tmp = format!("{RUN_DIR}/keys/{open_as}");
+            out.push(Cmd::new(&["cryptsetup", "luksAddKey", &format!("--key-file={tmp}"), &under, &format!("{t}{k}")]).why(format!("{open_as}: the restored key file {k}")));
+            out.push(Cmd::new(&["cryptsetup", "luksRemoveKey", &under, &tmp]));
+        }
+        out
+    }
+
     /// `bko-holt rewrite` for --reformat (rewrite.rs): first the restored
     /// files that name the old filesystems, before the initramfs and the
     /// loader are made from them; with CHECK, at the end, the initramfs read
@@ -3349,7 +3451,7 @@ impl Builder<'_> {
     }
 
     /// /boot/grub, or Fedora's /boot/grub2.
-    fn grub_dir(&self) -> &str {
+    pub(crate) fn grub_dir(&self) -> &str {
         self.layout.str_at(&["boot", "grub", "dir"]).unwrap_or("/boot/grub")
     }
 
@@ -3605,7 +3707,7 @@ impl Builder<'_> {
     /// partition, as the dump's boot_code found it (a UEFI install that is
     /// a BIOS install too).  A disk with a BIOS boot partition and no core
     /// recorded gets a note: it boots by UEFI only.
-    fn grub_core_partition_devices(&mut self) -> Vec<String> {
+    pub(crate) fn grub_core_partition_devices(&mut self) -> Vec<String> {
         const BIOS_BOOT: &str = "21686148-6449-6e6f-744e-656564454649";
         let mut out = Vec::new();
         for d in &self.layout.disks {

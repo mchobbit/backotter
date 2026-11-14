@@ -30,6 +30,7 @@ pub mod store;
 pub mod sys;
 #[doc(hidden)]
 pub mod testutil;
+pub mod transactional;
 
 use std::time::{SystemTime, UNIX_EPOCH};
 

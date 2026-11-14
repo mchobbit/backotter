@@ -931,6 +931,17 @@ for p in "${parts[@]}"; do
     break
 done
 [[ -n $root ]] || { undo; die "no partition holds /etc/fstab${mount_err:+ (the last mount that failed: $mount_err)}"; }
+# VM_MOUNT_BTRFS_ROOT=PATH: / is that btrfs subvolume (its path from the top
+# level), not the default subvolume or fstab's: a transactional-update
+# guest's booted slot, while its default is an update not booted yet, so
+# that the tree is the one the running system had (holttest1d/ht1-tu.sh).
+if [[ -n ${VM_MOUNT_BTRFS_ROOT:-} ]]; then
+    [[ $(blkid -s TYPE -o value "$root" || true) == btrfs ]] || { undo; die "VM_MOUNT_BTRFS_ROOT=$VM_MOUNT_BTRFS_ROOT: / isn't on btrfs"; }
+    umount "$mp"
+    mount_fs "$root" "$mp" "subvol=$VM_MOUNT_BTRFS_ROOT" && [[ -f $mp/etc/fstab ]] ||
+        { undo; die "VM_MOUNT_BTRFS_ROOT=$VM_MOUNT_BTRFS_ROOT: no such subvolume with an etc/fstab"; }
+    echo "vm-mount: / is the btrfs subvolume $VM_MOUNT_BTRFS_ROOT (VM_MOUNT_BTRFS_ROOT)"
+fi
 
 # The guest's other ZFS pools (Ubuntu's bpool, /boot): those with a dataset
 # that mounts somewhere ZFS itself mounts it, not through fstab.  A

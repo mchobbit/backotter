@@ -47,6 +47,31 @@ pub struct Shared {
     /// What its restore may clone from: the backup path of a mounted
     /// subvolume of its family and that subvolume's path.
     pub clone_from: Option<(String, String)>,
+    /// The subvolumes nested in it, a snapper slot's (transactional-update's
+    /// `/etc`, one per slot: docs/design/aeon.md): made right after it,
+    /// parents first, and filled by its restore.
+    pub children: Vec<Child>,
+}
+
+/// A subvolume nested in a shared snapshot that is a snapper slot.  Its
+/// slot's snapshot of the base has an empty directory where it is (btrfs
+/// snapshots don't take nested subvolumes): that goes, and it is made in
+/// its place, before the slot's restore fills both.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Child {
+    pub path: String,
+    /// Its path below the slot (`etc`).
+    pub rest: String,
+    /// The source's ID.
+    pub id: Option<u64>,
+    /// The ID it gets here.
+    pub new_id: u64,
+    /// Placeholders made just before it, so that it gets the source's ID.
+    pub placeholders: Vec<u64>,
+    /// The base's own subvolume at `rest`, restored before it: it is made
+    /// as a snapshot of that, sharing its extents, or else made empty.
+    pub base: Option<String>,
+    pub readonly: bool,
 }
 
 #[derive(Debug, Default, Clone, PartialEq)]
@@ -60,8 +85,21 @@ pub struct Plan {
 }
 
 impl Plan {
+    /// PATH is made after the main restore: a shared snapshot, or a
+    /// subvolume nested in one (Shared::children).
     pub fn is_shared(&self, path: &str) -> bool {
-        self.shared.iter().any(|s| s.path == path)
+        self.shared.iter().any(|s| s.path == path || s.children.iter().any(|c| c.path == path))
+    }
+
+    /// The ID a subvolume made after the main restore gets here, by the
+    /// source's ID.
+    pub fn new_id_of(&self, src: u64) -> Option<u64> {
+        self.shared.iter().find_map(|s| if s.id == Some(src) { Some(s.new_id) } else { s.children.iter().find(|c| c.id == Some(src)).map(|c| c.new_id) })
+    }
+
+    /// The ID PATH gets here, when it is made after the main restore.
+    pub fn new_id_of_path(&self, path: &str) -> Option<u64> {
+        self.shared.iter().find_map(|s| if s.path == path { Some(s.new_id) } else { s.children.iter().find(|c| c.path == path).map(|c| c.new_id) })
     }
 
     pub fn get(&self, path: &str) -> Option<&Shared> {
@@ -147,6 +185,20 @@ pub(crate) fn snapper_slot(path: &str) -> Option<(&str, u64)> {
     (dir == ".snapshots" || dir.ends_with("/.snapshots")).then_some((dir, n))
 }
 
+/// A subvolume nested in a snapper slot: `(X/.snapshots/N/snapshot, REST)`
+/// for `X/.snapshots/N/snapshot/REST` (transactional-update's `/etc`).
+pub(crate) fn slot_child(path: &str) -> Option<(&str, &str)> {
+    let mut at = 0;
+    while let Some(i) = path[at..].find("/snapshot/") {
+        let end = at + i + "/snapshot".len();
+        if snapper_slot(&path[..end]).is_some() {
+            return Some((&path[..end], &path[end + 1..])).filter(|(_, r)| !r.is_empty());
+        }
+        at = end;
+    }
+    None
+}
+
 /// The shared snapshots of a filesystem with these subvolumes and mounts,
 /// and the IDs everything gets.
 pub fn plan(subs: &[Sub], mounts: &[Mount]) -> Plan {
@@ -157,16 +209,24 @@ pub fn plan(subs: &[Sub], mounts: &[Mount]) -> Plan {
         .iter()
         .filter(|s| !mounted.contains(s.path.as_str()))
         .filter(|s| s.parent_uuid.as_deref().is_some_and(|p| by_uuid.contains_key(p)) || snapper_slot(&s.path).is_some())
+        // A slot's own nested subvolume goes with its slot: made after it,
+        // as one of its children if the slot is shared, else by format.
+        .filter(|s| slot_child(&s.path).is_none())
         .collect();
     // In the order their contents were last written: a chain from one to
     // the next changes least.  It is the ID order but after a rollback,
     // where snapper's old root (1) was written last of all.
     cands.sort_by_key(|s| (s.gen.unwrap_or(u64::MAX), s.id.unwrap_or(u64::MAX), s.path.clone()));
+    let cand_paths: BTreeSet<String> = cands.iter().map(|s| s.path.clone()).collect();
     let mut accepted: Vec<(String, Shared)> = Vec::new(); // (family, shared)
     for s in cands {
         let Some(backup) = backup_path(mounts, &s.path) else { continue };
-        if let Some(inner) = subs.iter().find(|o| o.path != s.path && under(&o.path, &s.path)) {
-            plan.notes.push(format!("{}: {} is nested in it, so it is restored as a full copy, not as a snapshot sharing its extents", s.path, inner.path));
+        // Subvolumes nested in it: a snapper slot's are its children (each
+        // slot's /etc, on transactional-update), unless one is mounted;
+        // any other snapshot with one is restored in full.
+        let inner: Vec<&Sub> = subs.iter().filter(|o| o.path != s.path && under(&o.path, &s.path)).collect();
+        if let Some(i) = inner.iter().find(|i| snapper_slot(&s.path).is_none() || mounted.contains(i.path.as_str())) {
+            plan.notes.push(format!("{}: {} is nested in it, so it is restored as a full copy, not as a snapshot sharing its extents", s.path, i.path));
             continue;
         }
         let family = match snapper_slot(&s.path) {
@@ -189,30 +249,52 @@ pub fn plan(subs: &[Sub], mounts: &[Mount]) -> Plan {
             plan.notes.push(format!("{}: nothing restored before it to make it from, so it is restored as a full copy", s.path));
             continue;
         };
+        // Its children, parents first: each a snapshot of the base's own
+        // subvolume at the same place, if the base has one made before it
+        // (mounted, so made by format, or a child of an earlier shared one).
+        let mut kids = inner.clone();
+        kids.sort_by_key(|k| (k.path.matches('/').count(), k.id.unwrap_or(u64::MAX), k.path.clone()));
+        let children = kids
+            .iter()
+            .map(|k| {
+                let rest = rest_of(&k.path, &s.path).to_string();
+                let cand = format!("{base}/{rest}");
+                let made = subs.iter().any(|o| o.path == cand)
+                    && (mounted.contains(base.as_str()) && !cand_paths.contains(&cand) || accepted.iter().any(|(_, a)| a.children.iter().any(|c| c.path == cand)));
+                Child { path: k.path.clone(), rest, id: k.id, new_id: 0, placeholders: vec![], base: made.then_some(cand), readonly: k.readonly }
+            })
+            .collect();
         accepted.push((
             family,
-            Shared { path: s.path.clone(), id: s.id, new_id: 0, placeholders: vec![], backup, base, readonly: s.readonly, clone_from: anchor },
+            Shared { path: s.path.clone(), id: s.id, new_id: 0, placeholders: vec![], backup, base, readonly: s.readonly, clone_from: anchor, children },
         ));
     }
-    // IDs: format makes the rest in ID order; these come after, in theirs.
-    let shared: BTreeSet<String> = accepted.iter().map(|(_, a)| a.path.clone()).collect();
+    // IDs: format makes the rest in ID order; these come after, in theirs,
+    // each shared snapshot's children right after it.
+    let shared: BTreeSet<String> = accepted.iter().flat_map(|(_, a)| std::iter::once(a.path.clone()).chain(a.children.iter().map(|c| c.path.clone()))).collect();
     let mut next = subs.iter().filter(|s| !shared.contains(&s.path)).filter_map(|s| s.id).max().map_or(256, |m| m + 1).max(256);
-    for (_, mut a) in accepted {
-        match a.id {
+    let mut assign = |path: &str, id: Option<u64>, notes: &mut Vec<String>| -> (u64, Vec<u64>) {
+        match id {
             Some(id) if id >= next && id - next <= 4096 => {
-                a.placeholders = (next..id).collect();
-                a.new_id = id;
+                let ph = (next..id).collect();
                 next = id + 1;
+                (id, ph)
             }
             Some(id) => {
-                plan.notes.push(format!("{}: ID {id} on the source, {next} here (a subvolume made after it on the source is made first here)", a.path));
-                a.new_id = next;
+                notes.push(format!("{path}: ID {id} on the source, {next} here (a subvolume made after it on the source is made first here)"));
                 next += 1;
+                (next - 1, vec![])
             }
             None => {
-                a.new_id = next;
                 next += 1;
+                (next - 1, vec![])
             }
+        }
+    };
+    for (_, mut a) in accepted {
+        (a.new_id, a.placeholders) = assign(&a.path, a.id, &mut plan.notes);
+        for c in a.children.iter_mut() {
+            (c.new_id, c.placeholders) = assign(&c.path, c.id, &mut plan.notes);
         }
         plan.shared.push(a);
     }
@@ -366,6 +448,123 @@ mod tests {
         assert!(aliases(&[m("/", "@"), m("/var", "@/var")]).is_empty());
         assert_eq!(backup_path(&[m("/", "@"), m("/var", "@/var")], "@/var/lib/x"), Some("/var/lib/x".into()));
         assert_eq!(backup_path(&[m("/", "@"), m("/var", "@/var")], "@other"), None);
+    }
+
+    /// The microos guest's (docs/design/aeon.md, "What M1 found"): / is
+    /// slot 2, the default; each slot has its /etc nested in it, 2's a
+    /// snapshot of 1's, made after @/var's and the other subvolumes.
+    fn microos(extra: &[Sub]) -> Vec<Sub> {
+        let mut v = vec![
+            sub("@", 256, "u256", None, false),
+            sub("@/.snapshots", 257, "u257", None, false),
+            sub("@/.snapshots/1/snapshot", 258, "u258", None, true),
+            sub("@/home", 259, "u259", None, false),
+            sub("@/var", 263, "u263", None, false),
+            sub("@/boot/writable", 264, "u264", None, false),
+            sub("@/.snapshots/1/snapshot/etc", 268, "u268", None, false),
+            sub("@/.snapshots/2/snapshot", 269, "u269", Some("u258"), true),
+            sub("@/.snapshots/2/snapshot/etc", 270, "u270", Some("u268"), false),
+            sub("@/var/lib/machines", 272, "u272", None, false),
+        ];
+        // gen as on the guest: 1 written last at 29, its /etc at 45, 2 at 47,
+        // 2's /etc (the live one) after everything.
+        for (id, gen) in [(258, 29), (268, 45), (269, 47), (270, 87)] {
+            v.iter_mut().find(|s| s.id == Some(id)).unwrap().gen = Some(gen);
+        }
+        v.extend_from_slice(extra);
+        v
+    }
+
+    fn microos_mounts(root: &str) -> Vec<Mount> {
+        vec![m("/", root), m("/.snapshots", "@/.snapshots"), m("/home", "@/home"), m("/var", "@/var"), m("/boot/writable", "@/boot/writable")]
+    }
+
+    #[test]
+    fn slot_children() {
+        assert_eq!(slot_child("@/.snapshots/1/snapshot/etc"), Some(("@/.snapshots/1/snapshot", "etc")));
+        assert_eq!(slot_child("@/.snapshots/12/snapshot/var/lib/x"), Some(("@/.snapshots/12/snapshot", "var/lib/x")));
+        assert_eq!(slot_child("@/home/.snapshots/3/snapshot/etc"), Some(("@/home/.snapshots/3/snapshot", "etc")));
+        for p in ["@/.snapshots/1/snapshot", "@/.snapshots/x/snapshot/etc", "@/snapshot/etc", "@/var/lib/machines", "@/.snapshots/1/snapshots/etc"] {
+            assert_eq!(slot_child(p), None, "{p}");
+        }
+    }
+
+    /// Slot 1 is shared, made from the live root (2) with its /etc as a
+    /// child, a snapshot of the live /etc; 2's /etc is made by format.
+    /// Both get new IDs: @/var/lib/machines (272) is made first.
+    #[test]
+    fn microos_nested_etc() {
+        let p = plan(&microos(&[]), &microos_mounts("@/.snapshots/2/snapshot"));
+        assert_eq!(p.aliases, vec!["/.snapshots/2/snapshot".to_string()]);
+        assert_eq!(p.shared.len(), 1, "{p:?}");
+        let s = &p.shared[0];
+        assert_eq!((s.path.as_str(), s.backup.as_str(), s.base.as_str(), s.new_id, s.readonly), ("@/.snapshots/1/snapshot", "/.snapshots/1/snapshot", "@/.snapshots/2/snapshot", 273, true));
+        assert_eq!(s.clone_from, Some(("/".into(), "@/.snapshots/2/snapshot".into())));
+        assert_eq!(
+            s.children,
+            vec![Child {
+                path: "@/.snapshots/1/snapshot/etc".into(),
+                rest: "etc".into(),
+                id: Some(268),
+                new_id: 274,
+                placeholders: vec![],
+                base: Some("@/.snapshots/2/snapshot/etc".into()),
+                readonly: false
+            }]
+        );
+        assert!(p.is_shared("@/.snapshots/1/snapshot/etc") && !p.is_shared("@/.snapshots/2/snapshot/etc") && !p.is_shared("@/.snapshots/2/snapshot"));
+        assert_eq!((p.new_id_of(258), p.new_id_of(268), p.new_id_of(269)), (Some(273), Some(274), None));
+        assert_eq!(p.new_id_of_path("@/.snapshots/1/snapshot/etc"), Some(274));
+        // The child's contents are the slot's backup path's: one glob.
+        assert_eq!(p.globs(), vec!["!/.snapshots/2/snapshot/**".to_string(), "!/.snapshots/1/snapshot/**".into()]);
+        assert_eq!(p.notes.len(), 2, "{:?}", p.notes);
+        assert!(p.notes[0].starts_with("@/.snapshots/1/snapshot: ID 258 on the source, 273 here"), "{:?}", p.notes);
+        assert!(p.notes[1].starts_with("@/.snapshots/1/snapshot/etc: ID 268 on the source, 274 here"), "{:?}", p.notes);
+    }
+
+    /// A pending update: slot 3 is the default, not booted (load mounts the
+    /// booted slot, 2, at / to restore the backup's /).  3 is shared, made
+    /// from 1 (its family's earlier member), its /etc from 1's /etc, the
+    /// child made just before; and a slot whose /etc is mounted elsewhere
+    /// falls back to a full copy.
+    #[test]
+    fn microos_pending_update() {
+        let three = [sub("@/.snapshots/3/snapshot", 275, "u275", Some("u269"), true), sub("@/.snapshots/3/snapshot/etc", 276, "u276", Some("u270"), false)];
+        let p = plan(&microos(&three), &microos_mounts("@/.snapshots/2/snapshot"));
+        let got: Vec<(&str, &str, u64, Vec<(&str, Option<&str>, u64)>)> =
+            p.shared.iter().map(|s| (s.path.as_str(), s.base.as_str(), s.new_id, s.children.iter().map(|c| (c.path.as_str(), c.base.as_deref(), c.new_id)).collect())).collect();
+        assert_eq!(
+            got,
+            vec![
+                ("@/.snapshots/1/snapshot", "@/.snapshots/2/snapshot", 273, vec![("@/.snapshots/1/snapshot/etc", Some("@/.snapshots/2/snapshot/etc"), 274)]),
+                ("@/.snapshots/3/snapshot", "@/.snapshots/1/snapshot", 275, vec![("@/.snapshots/3/snapshot/etc", Some("@/.snapshots/1/snapshot/etc"), 276)]),
+            ]
+        );
+        assert!(p.shared[1].placeholders.is_empty() && p.shared[1].children[0].placeholders.is_empty());
+        // 3's /etc mounted somewhere: 3 is restored in full.
+        let mut ms = microos_mounts("@/.snapshots/2/snapshot");
+        ms.push(m("/mnt/etc3", "@/.snapshots/3/snapshot/etc"));
+        let p = plan(&microos(&three), &ms);
+        assert!(p.get("@/.snapshots/3/snapshot").is_none() && p.get("@/.snapshots/1/snapshot").is_some());
+        assert!(p.notes.iter().any(|n| n == "@/.snapshots/3/snapshot: @/.snapshots/3/snapshot/etc is nested in it, so it is restored as a full copy, not as a snapshot sharing its extents"), "{:?}", p.notes);
+    }
+
+    /// A child keeps the source's ID where the IDs below it are free: its
+    /// placeholders burn the gap between it and its slot.
+    #[test]
+    fn a_child_keeps_its_id() {
+        let subs = vec![
+            sub("@", 256, "a", None, false),
+            sub("@/.snapshots", 257, "b", None, false),
+            sub("@/.snapshots/1/snapshot", 258, "c", None, false),
+            sub("@/.snapshots/2/snapshot", 260, "d", Some("c"), true),
+            sub("@/.snapshots/2/snapshot/etc", 263, "e", None, false),
+        ];
+        let p = plan(&subs, &[m("/", "@/.snapshots/1/snapshot"), m("/.snapshots", "@/.snapshots")]);
+        let s = p.get("@/.snapshots/2/snapshot").unwrap();
+        assert_eq!((s.new_id, s.placeholders.clone()), (260, vec![259]));
+        assert_eq!((s.children[0].new_id, s.children[0].placeholders.clone(), s.children[0].base.clone()), (263, vec![261, 262], None));
+        assert!(p.notes.is_empty(), "{:?}", p.notes);
     }
 
     #[test]

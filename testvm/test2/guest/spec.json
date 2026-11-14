@@ -1049,6 +1049,33 @@
     "kernels_max": 3
    }
   },
+  "microos": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-opensuse.sh",
+    "testvm/opensuse/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.tukit",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#tukit"
+   ],
+   "checks": {
+    "pm": "tukit",
+    "rules": {
+     "source": "S-zyp",
+     "loader": "L-grub",
+     "kernel": "K-deb",
+     "boot": "B-lin",
+     "mounts": "M-lin"
+    },
+    "fw": "uefi-sb",
+    "established": false
+   }
+  },
   "mint22": {
    "kind": "ssh",
    "plat": "linux",

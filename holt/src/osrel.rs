@@ -171,6 +171,10 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("guix", "", "Guix System"),
     // Rolling: VERSION_ID is the snapshot's date.
     ("opensuse-tumbleweed", "*", "openSUSE Tumbleweed"),
+    // Tumbleweed's packages on a read-only root that changes only through
+    // transactional-update (crate::transactional): VERSION_ID is the
+    // snapshot's date, as Tumbleweed's is (docs/design/aeon.md).
+    ("opensuse-microos", "*", "openSUSE MicroOS"),
     // Leap 16 (Agama's installer): Tumbleweed's tools (zypper, dracut,
     // grub2, snapper on Btrfs, SELinux), released by point (16.0, 16.1), so
     // by the major; not 15.x, whose installer and tools differ
@@ -324,7 +328,7 @@ mod tests {
         assert!(check_supported(Some(&parse(neon))).is_ok());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE Leap 16, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox or Sculpt OS"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE MicroOS, openSUSE Leap 16, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox or Sculpt OS"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -565,6 +569,29 @@ mod tests {
         assert!(check_supported(Some(&parse("ID=vanillish\nID_LIKE=debian\nVERSION_ID=\"3.0\"\n"))).is_err());
     }
 
+    /// The microos guest's /usr/lib/os-release (openSUSE's
+    /// kvm-and-xen image of Snapshot20261111: docs/design/aeon.md, "What M1
+    /// found").
+    pub(crate) const MICROOS: &str = "NAME=\"openSUSE MicroOS\"\n# VERSION=\"20261111\"\nID=\"opensuse-microos\"\nID_LIKE=\"suse opensuse opensuse-tumbleweed microos sl-micro\"\nVERSION_ID=\"20261111\"\nPRETTY_NAME=\"openSUSE MicroOS\"\nSYSEXT_LEVEL=\"glibc-2.44\"\nANSI_COLOR=\"0;32\"\nCPE_NAME=\"cpe:/o:opensuse:microos:20261111\"\nBUG_REPORT_URL=\"https://bugzilla.opensuse.org\"\nSUPPORT_URL=\"https://bugs.opensuse.org\"\nHOME_URL=\"https://www.opensuse.org/\"\nDOCUMENTATION_URL=\"https://en.opensuse.org/Portal:MicroOS\"\nLOGO=\"distributor-logo-MicroOS\"\n";
+
+    #[test]
+    fn microos() {
+        let o = parse(MICROOS);
+        assert_eq!((o.get("ID"), o.get("VERSION_ID")), (Some("opensuse-microos"), Some("20261111")));
+        assert!(check_supported(Some(&o)).is_ok());
+        // Rolling: any snapshot.
+        assert!(supported("opensuse-microos", "20270101"));
+        // Tumbleweed stays Tumbleweed: its own row, not MicroOS's by
+        // ID_LIKE; and MicroOS isn't Tumbleweed by its ID_LIKE either.
+        assert!(check_supported(Some(&parse("ID=\"opensuse-tumbleweed\"\nID_LIKE=\"opensuse suse\"\nVERSION_ID=\"20261101\"\n"))).is_ok());
+        assert!(supported_names().contains("openSUSE Tumbleweed, openSUSE MicroOS, "));
+        // Aeon (and SL Micro, Leap Micro) aren't claimed by MicroOS's row.
+        for id in ["opensuse-aeon", "sl-micro", "opensuse-leap-micro"] {
+            let e = check_supported(Some(&parse(&MICROOS.replace("\"opensuse-microos\"", &format!("\"{id}\""))))).unwrap_err();
+            assert!(e.contains(&format!("(ID={id}, VERSION_ID=20261111)")), "{e}");
+        }
+    }
+
     /// Leap 16.1's /etc/os-release (the Leap-16.1 offline ISO, Build60.2:
     /// docs/design/leap16.md).
     const LEAP16: &str = "NAME=\"openSUSE Leap\"\nVERSION=\"16.1\"\nID=\"opensuse-leap\"\nID_LIKE=\"suse opensuse\"\nVERSION_ID=\"16.1\"\nPRETTY_NAME=\"openSUSE Leap 16.1\"\n";
@@ -577,7 +604,7 @@ mod tests {
         // Every 16.x point release, 16.0 too.
         assert!(check_supported(Some(&parse(&LEAP16.replace("16.1", "16.0")))).is_ok());
         assert!(supported("opensuse-leap", "16.2"));
-        assert!(supported_names().contains("openSUSE Tumbleweed, openSUSE Leap 16, Rocky Linux 10"));
+        assert!(supported_names().contains("openSUSE MicroOS, openSUSE Leap 16, Rocky Linux 10"));
         // Not Leap 15.x (YaST, its older tools), nor a 17 until a guest shows it.
         for v in ["15.6", "17.0"] {
             let e = check_supported(Some(&parse(&LEAP16.replace("16.1", v)))).unwrap_err();

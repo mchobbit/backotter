@@ -261,7 +261,36 @@ after).  It is in the corpus before it is one of classes.json's HoltTest2
 sources, so golden_plans.rs notes it until it is.  Its golden plan keeps
 the restored shim and GRUB, runs dracut and `grub2-mkconfig` with os-prober
 off, makes the `opensuse-secureboot` entry for `\EFI\opensuse\shim.efi`
-and relabels what the boot stage wrote with `setfiles`.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
+and relabels what the boot stage wrote with `setfiles`.  microos
+(`make-opensuse.sh microos`: openSUSE MicroOS 20261111 from its KVM image
+and combustion; UEFI with Secure Boot on, hybrid GPT with a BIOS boot
+partition, a 20 MiB ESP, one btrfs read-only root in snapper's slots with
+each slot's `/etc` a nested subvolume, health-checker, transactional-update,
+SELinux enforcing; docs/design/aeon.md), built on 2026-11-14, was added the
+same day from its HoltTest1 run `aeon2c` on cinqcent, PASS, dumped after
+`prep/microos-tu.sh` (slots 1-7, slot 3 booted after a rollback, slot 7 the
+pending default) by the static bko-holt 0.2.6 built from this tree for that
+run (`8f5e153b...`, with M2's transactional arm), the image the same as the
+run recorded (collected with `--hosts cinqcent`: chopin's `aeon1` report is
+newer, but its dump predates M5's fixes).  Its dump is the first with
+`boot.transactional` and the first whose protective MBR has a disk
+signature (KIWI's): its golden plan makes every slot and its nested `/etc`
+(and `etc.syncpoint`) with the source's IDs noted, restores the slots
+`--clone-from` the booted one, writes the signature back with `dd` after
+sfdisk, and at boot regenerates nothing (the transactional arm's checks,
+health-check.state's ID, GRUB's BIOS boot code from the restored slot).
+Building it found two redaction bugs, fixed in redact.rs before it entered
+the tree: a GPT dump's protective-MBR signature was never learned (it is
+only in the entry's PARTUUID, and redact.rs left MBR PARTUUIDs to a
+`disk_signature` key a GPT dump hasn't), so it stayed in src.json and
+would have in the plan, also as load's octal `printf` bytes, which redact.rs
+now maps too; and the redacted dump redacted again by check_plan gave the
+signature a hex pseudonym whose digits were the ESP's FAT volume ID's
+pseudonym without its dash (the hex pseudonym now avoids the dump's digits
+whatever their separators).  golden_plans.rs's backup_sources check now
+takes a btrfs source nested in another source's subvolume at the same path
+(the slot's `/etc`, bind-mounted onto itself) as reached through that
+source's mount.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
 collection; `-` for the guests without one) say which, and `image` whether
@@ -425,7 +454,15 @@ with the git e-mail, 0 findings (its plan scanned too), the same sha256
 from both builds (src.json `23a09f8e...`).  Its first build stopped at check_plan's leak
 check, which isn't a leak: the warm build's directory was named after the
 guest, whose host name is `leap16`, and check_plan's plan holds the test
-binary's path (golden_plans.rs names it `bko-holt`; check_plan doesn't).
+binary's path (golden_plans.rs names it `bko-holt`; check_plan doesn't).  So did
+microos (2026-11-14), built from a private directory on chopin
+(/bkoscratch/m3, its warm holt build at /bkoscratch/holt-warm/m3-microos):
+chopin with its 101 strings and the raw dump's identifiers, cinqcent with
+its 106, the Mac with the git e-mail, 0 findings (its plan scanned too),
+the same sha256 from both builds (src.json `6d605e1f...`, plan.txt
+`a8e87cb3...`).  Its first builds had one finding in (b), the protective
+MBR's signature (above); they never left chopin, and the builds after the
+fix had none.
 
 ## The golden plans
 

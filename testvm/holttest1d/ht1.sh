@@ -62,7 +62,12 @@
 # HT_FAIL_AT=PHASE adds a FAIL line
 # after that phase (a test hook).  HT_SOURCE_PREP=FILE is a script run as
 # root in the source before its dump (its overlay only), rebooted after it
-# when its last line is REBOOT: prep/tumbleweed-snapper.sh.
+# when its last line is REBOOT: prep/tumbleweed-snapper.sh; or, when its last
+# line is AGAIN, rebooted, waited for until a boot settles (running or
+# degraded, and no reboot of its own), and run again, up to 10 rounds: a
+# prep of several boots, which keeps its own place (prep/microos-tu.sh,
+# the default for microos* and aeon*; HT_SOURCE_PREP= runs none).  A
+# transactional-update source (/ read-only, tukit) is checked by ht1-tu.sh.
 # HT_REFORMAT="MOUNT=TYPE ..." gives every load call from the dry run on a
 # --reformat MOUNT=TYPE for each (docs/design/reformat.md), and judge.py's
 # fs and dump forms the same --reformats, which hold the restored disk to
@@ -312,6 +317,10 @@ HT_ZIP=(src-meta.json dst-meta.json)
 # Settings that change what a run checks, or its rescuer: its report names them.
 dbg=""; for v in HT_QUICK HT_THROUGH HT_KEEP HT_FAIL_AT HT_RESCUER HT_RESCUER_IMG HT_SOURCE_PREP HT_BOOT_EACH_DISK HT_NVRAM HT_REFORMAT; do [[ -z ${!v:-} ]] || dbg+=" $v=${!v}"; done
 [[ -z $dbg ]] || ht_note "set for debugging or tests:$dbg"
+# A transactional-update guest's own history of slots (docs/design/aeon.md, M5).
+case $G in microos*|aeon*) [[ -n ${HT_SOURCE_PREP+set} ]] || HT_SOURCE_PREP=$HERE/prep/microos-tu.sh ;; esac
+# shellcheck source=ht1-tu.sh
+. "$HERE/ht1-tu.sh"
 ht_require
 # A rerun from a later phase goes on from K's state (a failure's): all of it
 # but what the rerun makes again and the disks only a rebuild uses, so the
@@ -357,6 +366,13 @@ vm_up() { # IMAGE LOG [vm-run options...] [-- QEMU_ARGS...]
         # no passphrase.
         setsid -f python3 "$T/vanilla/console-keys.py" "$log" "$GRUB_PICK" "$GRUB_KEYS" -- \
             "$T/vm-run" "${opts[@]}" "$image" "${qargs[@]}" </dev/null 2>"$log.vm-run" {HT_FD1}>&- {HT_FD2}>&-
+    elif [[ -n ${GRUB_MENU:-} ]]; then
+        # GRUB's serial menu walked by grub-menu.py, its steps GRUB_MENU's
+        # lines (a transactional guest's older slots: ht1-tu.sh).
+        local steps=(); mapfile -t steps <<<"$GRUB_MENU"
+        # (Its stdout nowhere: a caller's $(...) would wait for it.)
+        setsid -f python3 "$HERE/grub-menu.py" "$log" "${steps[@]}" -- \
+            "$T/vm-run" "${opts[@]}" "$image" "${qargs[@]}" </dev/null >/dev/null 2>"$log.vm-run" {HT_FD1}>&- {HT_FD2}>&-
     elif [[ -n ${CONSOLE_KEY:-} ]]; then
         # The guest asks for its disk passphrase on the serial console:
         # console-boot.py logs the console and types it at each prompt.
@@ -523,19 +539,22 @@ M=$(findmnt -rn -t btrfs -o UUID,TARGET,FSROOT | sort -u)
 for u in $(echo "$M" | cut -d" " -f1 | sort -u); do
     m=$(echo "$M" | awk -v u="$u" "\$1 == u {print \$2; exit}")
     btrfs subvolume list -r "$m" 2>/dev/null | sed "s/.* path //" | while read -r p; do
-        best= bl=-1
+        best= bl=-1 root=
         while read -r uu t r; do
             [ "$uu" = "$u" ] || continue
             [ "$r" = / ] && r=
             case "/$p/" in
-            "$r"/*) if [ ${#r} -gt $bl ]; then
-                    bl=${#r}
-                    if [ -z "$r" ]; then best="${t%/}/$p"; else best="${t%/}${p#"${r#/}"}"; fi
-                fi ;;
+            "$r"/*) if [ -z "$r" ]; then c="${t%/}/$p"; else c="${t%/}${p#"${r#/}"}"; fi
+                # (The subvolume mounted at / itself, a transactional root:
+                # through another mount (/.snapshots) if one reaches it, as
+                # btrfs filesystem du of / would walk the other file systems.)
+                if [ -z "$c" ]; then root=/
+                elif [ ${#r} -gt $bl ]; then bl=${#r}; best=$c; fi ;;
             esac
         done <<EOF
 $M
 EOF
+        [ -n "$best" ] || best=$root
         if [ -n "$best" ] && [ -d "$best" ]; then
             ro=$(btrfs property get -ts "$best" ro 2>/dev/null | sed "s/^ro=//")
             # (bootx: the exclusive bytes of its initramfs images, which the
@@ -1048,13 +1067,28 @@ phase_source() {
         # A script of the test's, run as root in the source (its throwaway
         # overlay) before the dump: e.g. snapper snapshots and a rollback.
         # A last line REBOOT has the source rebooted after it.
-        scpk "$gkey" "$HT_SOURCE_PREP" root@127.0.0.1:/root/ht-source-prep
-        if TMO=1800 sshk "$gkey" 'sh /root/ht-source-prep; r=$?; rm -f /root/ht-source-prep; exit $r' > "$R/logs/source-prep.txt" 2>&1; then
-            ok "source prepared by ${HT_SOURCE_PREP##*/}"
-        else
-            bad "preparing the source with ${HT_SOURCE_PREP##*/} (logs/source-prep.txt): $(tail -1 "$R/logs/source-prep.txt")"
-            vm_down "$gkey"; return
-        fi
+        # A last line AGAIN has it rebooted and run again once a boot
+        # settles (a prep of several boots: prep/microos-tu.sh).
+        local round=1 rout=$R/logs/source-prep-round.txt
+        : > "$R/logs/source-prep.txt"
+        while :; do
+            scpk "$gkey" "$HT_SOURCE_PREP" root@127.0.0.1:/root/ht-source-prep
+            TMO=1800 sshk "$gkey" 'sh /root/ht-source-prep; r=$?; rm -f /root/ht-source-prep; exit $r' > "$rout" 2>&1
+            local prc=$?
+            { ((round == 1)) || echo "== round $round"; cat "$rout"; } >> "$R/logs/source-prep.txt"
+            if ((prc != 0)); then
+                bad "preparing the source with ${HT_SOURCE_PREP##*/}$( ((round > 1)) && echo ", round $round") (logs/source-prep.txt): $(tail -1 "$rout")"
+                vm_down "$gkey"; return
+            fi
+            [[ $(tail -1 "$rout") == AGAIN ]] || break
+            if ((round >= 10)); then bad "${HT_SOURCE_PREP##*/} still says AGAIN after 10 rounds"; vm_down "$gkey"; return; fi
+            if ! vm_reboot "$gkey" || ! vm_settle "$gkey"; then
+                bad "source boots and settles again after ${HT_SOURCE_PREP##*/}'s round $round (logs/source-serial.log)"; vm_down "$gkey"; return
+            fi
+            round=$((round + 1))
+        done
+        rm -f "$rout"
+        ok "source prepared by ${HT_SOURCE_PREP##*/}$( ((round > 1)) && echo " ($round rounds, rebooted between them)")"
         if [[ $(tail -1 "$R/logs/source-prep.txt") == REBOOT ]]; then
             vm_down "$gkey"
             CONSOLE_KEY=$gpass vm_up "${src[0]}" "$R/logs/source-serial-2.log" "${fw[@]}" "${svfw[@]}" "${extra_src[@]}"
@@ -1069,10 +1103,13 @@ phase_source() {
     rm -f "$R/logs/source-abroot"*.txt "$R/logs/source-other-bootstate.txt"
     # So does a Guix System source its previous generation, then its current one.
     rm -f "$R/logs/source-guix"*.txt "$R/logs/source-prev-bootstate.txt"
-    case $(sshk "$gkey" 'if [ -e /run/ostree-booted ]; then echo ostree; elif [ -f /usr/share/abroot/abroot.json ] && command -v abroot >/dev/null; then echo abroot; elif [ -d /var/guix/profiles ] && command -v guix >/dev/null; then echo guix; else echo plain; fi') in
+    # And a transactional-update source records its slots (ht1-tu.sh).
+    rm -f "$R/logs/source-tu"*.txt "$R/logs/source-hcstate.txt"
+    case $(sshk "$gkey" 'if [ -e /run/ostree-booted ]; then echo ostree; elif [ -f /usr/share/abroot/abroot.json ] && command -v abroot >/dev/null; then echo abroot; elif [ -d /var/guix/profiles ] && command -v guix >/dev/null; then echo guix; elif command -v tukit >/dev/null && findmnt -no OPTIONS / | tr , "\n" | grep -qx ro; then echo tu; else echo plain; fi') in
         ostree) ostree_source || { vm_down "$gkey"; return; } ;;
         abroot) abroot_source || { vm_down "$gkey"; return; } ;;
         guix) guix_source || { vm_down "$gkey"; return; } ;;
+        tu) tu_source || { vm_down "$gkey"; return; } ;;
         plain) ;;
         *) bad "source: no answer over SSH to whether it is ostree"; vm_down "$gkey"; return ;;
     esac
@@ -1100,6 +1137,8 @@ phase_backup() {
     rm -rf "$S/repo"; head -c 24 /dev/urandom | base64 > "$S/repo-password"
     mkdir -p "$SRC_MP"
     local key=(); [[ -n $gpass ]] && key=(--key "$gpass")
+    # (A transactional source with an update pending: / is its booted slot, as the live system's: ht1-tu.sh.)
+    local -x VM_MOUNT_BTRFS_ROOT; VM_MOUNT_BTRFS_ROOT=$(tu_mount_root)
     # vm-mount and vm-umount ignore TERM, INT and HUP (a ^C, an abort): one
     # cut short leaves the host's devices half done.  The driver's own trap
     # runs once it returns.
@@ -1422,6 +1461,7 @@ phase_verify() {
     [[ -z $(ht_qemus "$R") ]] || vm_down "$rkey"
     mkdir -p "$DST_MP"
     local key=(); [[ -n $gpass ]] && key=(--key "$gpass")
+    local -x VM_MOUNT_BTRFS_ROOT; VM_MOUNT_BTRFS_ROOT=$(tu_mount_root)   # (as in backup)
     # (As in backup: vm-mount and vm-umount ignore TERM, INT and HUP.)
     if (trap '' TERM INT HUP; exec "$T/vm-mount" --ro "${extra_dst[@]}" "${key[@]}" "${dst[0]}" "$DST_MP") > "$R/logs/verify-mount.log" 2>&1; then
         HT_MOUNTED=$DST_MP
@@ -1429,6 +1469,7 @@ phase_verify() {
         [[ $VARIANT != bs2 ]] || bs2_after_dst_record
         esp_record "$DST_MP" dst >> "$R/logs/esp-record.log" 2>&1 || bad "record the restored proxmox-boot-tool ESPs (logs/esp-record.log)"
         mok_check "$DST_MP"
+        tu_record_dst "$DST_MP"
         (trap '' TERM INT HUP; exec "$T/vm-umount" "$DST_MP") >> "$R/logs/verify-mount.log" 2>&1; HT_MOUNTED=
         python3 "$T/compare/fsmeta.py" compare "$R/src-meta.json" "$R/dst-meta.json" > "$R/logs/fsmeta-compare.txt" 2>&1
         if python3 "$HERE/judge.py" fs "$T/compare/fsmeta.py" "$R/src-meta.json" "$R/dst-meta.json" "${BS2_FSJUDGE[@]}" "${REFORMAT[@]}" > "$R/logs/fsjudge.txt" 2>&1; then
@@ -1496,6 +1537,8 @@ phase_verify() {
     [[ ! -f $R/logs/source-abroot-other.txt ]] || abroot_verify
     # So does a Guix System source's previous generation.
     [[ ! -f $R/logs/source-guix-gens.txt ]] || guix_verify
+    # And a transactional-update source's slots and health-checker (ht1-tu.sh).
+    [[ ! -f $R/logs/source-tu.txt ]] || tu_verify
     if [[ $VARIANT == bs2 ]]; then bs2_restored_down; else vm_down "$gkey"; fi
     # Each disk alone (the spec's --boot-each-disk): a source with an ESP on each disk, or asked for.
     case ${HT_BOOT_EACH_DISK:-auto} in

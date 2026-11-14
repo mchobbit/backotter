@@ -27,6 +27,7 @@ pub mod rewrite;
 pub mod shared;
 pub mod status;
 pub mod target;
+pub mod transactional;
 pub mod writetable;
 
 use crate::sys::{FakeRunner, Sys};

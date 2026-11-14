@@ -40,6 +40,7 @@ kali	cinqcent	k3	dump	-	2026-11-14T05:45:51Z	0.2.6	-	same	14	ok:14:107	0	0	0	sam
 kinoite44	chopin	bzb6a	PASS	2026-11-11T14:15:47Z	2026-11-11T14:06:13Z	0.2.4	-	same	20	ok:20:129	0	0	0	same	ok:20	-
 leap16	chopin	l3	dump	-	2026-11-14T17:21:35Z	0.2.6	-	same	25	ok:25:164	0	0	0	same	ok:25	-
 manjaro	cinqcent	eosmj2	PASS	2026-11-09T13:36:54Z	2026-11-09T13:31:42Z	0.2.4	-	same	16	ok:16:98	0	0	0	same	ok:16	-
+microos	cinqcent	aeon2c	PASS	2026-11-14T16:49:56Z	2026-11-14T16:41:10Z	0.2.6	-	same	44	ok:44:329	0	0	0	same	ok:44	-
 mint22	cinqcent	r4all	PASS	2026-11-08T02:23:53Z	2026-11-08T02:17:53Z	0.2.4	2e34eb0b95c4e6d43fada1d955062ce211f17cd15040f20127638f697f0508dc	changed	8	ok:8:85	0	0	0	same	ok:8	-
 mx25	chopin	r4all	PASS	2026-11-08T02:30:13Z	2026-11-08T02:24:59Z	0.2.4	9c6a5a6622e8a3f6e7f64e2bf33372c869186839853b2b062f68c86afb3c5919	changed	9	ok:9:86	0	0	0	same	ok:9	-
 neon24	chopin	ht1u	PASS	2026-11-14T02:13:27Z	2026-11-14T02:07:23Z	0.2.6	5de424b6f70437e0a1111e552998d4776853544cd9342f5d1788063740a2be2e	same	12	ok:12:97	0	0	0	same	ok:12	-

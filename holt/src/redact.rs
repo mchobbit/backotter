@@ -351,6 +351,18 @@ impl Collector {
     fn walk(&mut self, v: &Value, key: &str, parent: &str) {
         match v {
             Value::Obj(kv) => {
+                // A GPT disk's protective MBR: its disk signature is only in
+                // its entry's PARTUUID (SIGNATURE-01, which string() leaves
+                // for a disk_signature key that a GPT dump hasn't), and load
+                // writes it back (load::commands::pmbr_signature).  KIWI's
+                // images have one (microos, docs/design/aeon.md M3).
+                if key == "protective_mbr" {
+                    if let Some(u) = v.at(&["entries", "0", "uuid"]).and_then(Value::as_str) {
+                        if is_mbr_partuuid(u.trim()) {
+                            self.hex(&u.trim()[..8], Kind::Id);
+                        }
+                    }
+                }
                 if v.get("type").and_then(Value::as_str) == Some("zfs_member") {
                     if let Some(l) = v.get("label").and_then(Value::as_str) {
                         self.pool_labels.insert(l.to_string());
@@ -618,6 +630,9 @@ pub fn is_b64_key(key: &str) -> bool {
 struct Sealer {
     c: Collector,
     corpus_lc: String,
+    /// corpus_lc without '-' and ':': the digits of hex identifiers
+    /// whatever their separators.
+    corpus_hex: String,
     r: Redactor,
     counters: HashMap<&'static str, u64>,
 }
@@ -625,18 +640,28 @@ struct Sealer {
 impl Sealer {
     fn new(c: Collector) -> Sealer {
         let corpus_lc = c.corpus.to_ascii_lowercase();
-        Sealer { c, corpus_lc, r: Redactor::default(), counters: HashMap::new() }
+        let corpus_hex = corpus_lc.replace(['-', ':'], "");
+        Sealer { c, corpus_lc, corpus_hex, r: Redactor::default(), counters: HashMap::new() }
     }
 
     /// The next free number for pseudonyms made by `f`: one that appears
     /// nowhere in the input, so `unredact` can't mistake input for a
-    /// pseudonym.
+    /// pseudonym.  A hex pseudonym's digits mustn't appear with separators
+    /// either: they would be another hex identifier's digits (a redacted
+    /// dump redacted again, check_plan on a corpus dump: microos's FAT
+    /// volume ID BC00-0002 and its protective MBR's bc000001-01, which took
+    /// bc000002 and so came out as the volume ID's original; M3,
+    /// docs/design/aeon.md).
     fn next(&mut self, tag: &'static str, f: impl Fn(u64) -> Vec<String>) -> Vec<String> {
         loop {
             let n = self.counters.entry(tag).or_insert(0);
             *n += 1;
             let forms = f(*n);
-            if forms.iter().all(|x| x.len() < 3 || !self.corpus_lc.contains(&x.to_ascii_lowercase())) {
+            let taken = |x: &String| {
+                let l = x.to_ascii_lowercase();
+                self.corpus_lc.contains(&l) || (tag == "hex" && self.corpus_hex.contains(&l))
+            };
+            if forms.iter().all(|x| x.len() < 3 || !taken(x)) {
                 return forms;
             }
         }
@@ -973,6 +998,14 @@ impl Sealer {
             self.sub(f.to_ascii_uppercase(), t.to_ascii_uppercase(), Edge::Hex);
             self.ascii_bin(&f, &t);
             self.ascii_bin(&f.to_ascii_uppercase(), &t.to_ascii_uppercase());
+        }
+        // A 4-byte ID as printf's octal escapes, little-endian: how load's
+        // plan writes a protective MBR's disk signature (`printf '\330...'
+        // | dd ... seek=440`, load::commands), which neither the hex subs
+        // nor unredact would map (microos, M3, docs/design/aeon.md).
+        if digits.len() == 8 && kind == Kind::Id {
+            let oct = |d: &str| hex_bytes(d).iter().rev().map(|b| format!("\\{b:03o}")).collect::<String>();
+            self.sub(oct(digits), oct(&pd), Edge::Any);
         }
         // Up to 8 bytes only in EFI load options: in boot code, a run of
         // zeros and one byte matches by chance.
@@ -1788,5 +1821,53 @@ mod tests {
         assert!(!t.contains(id) && !t.contains(&id.replace('-', "")), "{t}");
         assert!(r.at(&["storage", "lvm", "volume_groups", "0", "logical_volumes", "0", "id"]).and_then(Value::as_str).unwrap().starts_with("bkoLVM-"));
         assert!(red.leaks(&t).is_empty(), "{:?}", red.leaks(&t));
+    }
+
+    /// microos's shape (M3, docs/design/aeon.md): a GPT disk whose
+    /// protective MBR has a disk signature, then an ESP with a FAT volume
+    /// ID.  Redacted once, the signature is gone, maps back and is what
+    /// load reads; redacted again (check_plan on a corpus dump), nothing is
+    /// left: the signature's second pseudonym isn't the volume ID's
+    /// first one, BC00-0002, without its dash.
+    #[test]
+    fn protective_mbr_signature_redacted_twice() {
+        let d = parse(r#"{"os": {"id": "opensuse-microos"}, "storage": {"disks": [{"name": "vda",
+            "partition_table": {"type": "gpt", "disk_guid": "50882134-bc7c-4191-bae4-a7f9a6207c3d",
+              "protective_mbr": {"present": true, "entries": [{"number": 1, "type": "0xee", "uuid": "922b9cd8-01"}]}},
+            "partitions": [{"name": "vda2", "uuid": "56ae978f-0d70-49eb-9dd1-19b174f48d8b", "content": {"type": "vfat", "uuid": "3051-B739"}}]}]}}"#).unwrap();
+        let (r, red) = redact(&d);
+        let t = r.pretty();
+        assert!(!t.contains("922b9cd8") && !t.contains("922B9CD8"), "{t}");
+        assert!(red.leaks(&t).is_empty(), "{:?}\n{t}", red.leaks(&t));
+        assert_eq!(red.unredact_value(&r).compact(), d.compact());
+        let disk = |v: &Value| v.at(&["storage", "disks", "0"]).cloned();
+        let raw_sig = crate::load::commands::pmbr_signature(disk(&d).as_ref());
+        let red_sig = crate::load::commands::pmbr_signature(disk(&r).as_ref());
+        assert_eq!(raw_sig, Some(0x922b9cd8));
+        let u = r.at(&["storage", "disks", "0", "partition_table", "protective_mbr", "entries", "0", "uuid"]).and_then(Value::as_str).unwrap();
+        assert!(is_mbr_partuuid(u) && u.ends_with("-01"), "{u}");
+        assert_eq!(red_sig, Some(u32::from_str_radix(&u[..8], 16).unwrap()));
+        assert_ne!(red_sig, raw_sig);
+        // load's plan line for it: the octal bytes map both ways, and leaks sees them.
+        let oct = |n: u32| n.to_le_bytes().iter().map(|b| format!("\\{b:03o}")).collect::<String>();
+        let line = |n: u32| format!("sh -c 'printf '\\''{}'\\'' | dd of=/dev/sdq bs=1 seek=440 count=4 conv=notrunc status=none'", oct(n));
+        let (raw_line, red_line) = (line(raw_sig.unwrap()), line(red_sig.unwrap()));
+        assert_eq!(red.text(&raw_line), red_line);
+        assert_eq!(red.unredact(&red_line), raw_line);
+        assert!(!red.leaks(&raw_line).is_empty());
+        let (r2, red2) = redact(&r);
+        let t2 = r2.pretty();
+        assert!(red2.leaks(&t2).is_empty(), "{:?}\n{t2}", red2.leaks(&t2));
+        assert_eq!(red2.unredact_value(&r2).compact(), r.compact());
+    }
+
+    /// A protective MBR without a signature (sfdisk's, 00000000-01) has
+    /// nothing to redact.
+    #[test]
+    fn protective_mbr_zero_signature_kept() {
+        let d = parse(r#"{"os": {"id": "debian"}, "storage": {"disks": [{"name": "vda", "partition_table": {"type": "gpt",
+            "protective_mbr": {"present": true, "entries": [{"number": 1, "type": "0xee", "uuid": "00000000-01"}]}}}]}}"#).unwrap();
+        let (r, _) = redact(&d);
+        assert_eq!(r.compact(), d.compact());
     }
 }

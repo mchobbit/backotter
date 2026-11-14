@@ -281,6 +281,25 @@ ABROOT_KEPT = r"^boot/(grub/grub\.cfg(\.future)?|init/[^/]+/(abroot\.cfg|(vmlinu
 ABROOT_REQUIRED = ("boot/grub/grub.cfg", "boot/efi/EFI/vanilla/shimx64.efi", "boot/efi/EFI/vanilla/grubx64.efi")
 
 
+# A transactional-update source (openSUSE MicroOS; docs/design/aeon.md, the
+# transactional arm): load regenerates nothing in a snapshot (no
+# grub2-mkconfig, grub2-install, shim-install, dracut, sdbootutil or relabel
+# of the root), so no boot-stage rule excuses anything there: the ESP, every
+# slot's /boot and /usr, grub.cfg and the initrds must be byte for byte the
+# source's.  What load writes is its own log and health-check.state's
+# LAST_WORKING_BTRFS_ID, rewritten to the restored ID of its
+# LAST_WORKING_SNAPSHOT (ht1-tu.sh holds the rest of the file to the
+# source's, and the ID to the restored subvolume's).
+TU_SOURCE = r"^usr/sbin/tukit$"
+TU_STAGE = [
+    (r"^var/log/bko-holt(/|$)", _WRITTEN, "load's own log, copied in by the boot stage"),
+    (r"^var/log$", {"mtime (dirs)", "atime (dirs)"}, "var/log/bko-holt made"),
+    (r"^var/lib/misc/health-check\.state$", _WRITTEN, "the boot stage rewrites health-checker's LAST_WORKING_BTRFS_ID to the restored ID of its LAST_WORKING_SNAPSHOT (ht1-tu.sh checks the file)"),
+    (r"^var/lib/misc$", {"mtime (dirs)", "atime (dirs)"}, "health-check.state rewritten"),
+]
+TU_HELD = r"^(boot|usr)(/|$)|^\.snapshots/\d+/snapshot/(boot|usr)(/|$)"
+
+
 def abroot_missing(before):
     """What an ABRoot source's record lacks of ABROOT_REQUIRED, and of a
     kernel and an initramfs in each init/LABEL/ that has an abroot.cfg."""
@@ -291,6 +310,92 @@ def abroot_missing(before):
             if not any(p.startswith(f"{d}/{kind}-") and before[p].get("type") == "file" for p in before):
                 out.append(f"{d}/{kind}-*")
     return out
+
+
+def transactional_judge(src, dst):
+    """A transactional-update source (docs/design/aeon.md): boot.transactional
+    taken off both dumps and judged here.  The restored machine must boot
+    the source's default (its pending update, when one was pending), as its
+    default, with nothing pending: a health-checker rollback on its first
+    boot would boot another slot and still look like a working machine.
+    health-checker's state (GRUB's) must then name that slot by its
+    restored ID.  The slots' IDs are new (btrfs_by_path compares them by
+    path), and transactional-update's own state moves as the machine boots.
+    -> (problems, notes)."""
+    ts = (src.get("boot") or {}).pop("transactional", None)
+    td = (dst.get("boot") or {}).pop("transactional", None)
+    if ts is None:
+        return ([] if td is None else ["the restored system is transactional, the source wasn't"]), []
+    if td is None:
+        return ["the source is transactional (boot.transactional), the restored system isn't"], []
+    bad, notes = [], []
+    for k in ("filesystem", "fstab_root_options", "tools", "etc", "loader_mode"):
+        if ts.get(k) != td.get(k):
+            bad.append(f"{k}: {json.dumps(ts.get(k))} -> {json.dumps(td.get(k))}")
+    path = lambda t, k: ((t.get(k) or {}).get("path"))
+    want = path(ts, "default")
+    if not want:
+        bad.append("the source's dump has no default slot")
+    if path(td, "booted") != want:
+        bad.append(f"booted {path(td, 'booted')}, not the source's default {want}"
+                   + (f" (the source booted {path(ts, 'booted')})" if path(ts, "booted") != want else ""))
+    if path(td, "default") != want:
+        bad.append(f"the default is {path(td, 'default')}, not the source's {want}")
+    if td.get("pending_update"):
+        bad.append("an update is pending on the restored system")
+    hs, hd = ts.get("health_check_state"), td.get("health_check_state")
+    if ts.get("loader_mode") == "grub" and hs:
+        if not hd:
+            bad.append("no health-check.state on the restored system")
+        elif hd.get("last_working_snapshot") != want or hd.get("last_working_btrfs_id") != (td.get("default") or {}).get("id"):
+            bad.append(f"health-check.state names {hd.get('last_working_snapshot')} ID {hd.get('last_working_btrfs_id')}, "
+                       f"not the booted {want} ID {(td.get('default') or {}).get('id')}")
+    # The source's next boot would have had its default at / (and its /etc
+    # at /etc): the mounts, the subvolumes mounted and the backup's sources
+    # say the restored machine's booted slot where the source's said its own.
+    b = path(ts, "booted")
+    if b and want and b != want and path(td, "booted") == want:
+        old, new = "/" + b.strip("/"), "/" + want.strip("/")
+        moved = 0
+        st = src.get("storage") or {}
+        rows = [(m, ("root", "super_options", "options")) for m in st.get("mounts") or []]
+        rows += [(m, ("subvol",)) for m in st.get("backup_sources") or []]
+        rows += [(m, ("subvol",)) for fs in st.get("btrfs") or [] for m in fs.get("mounted_subvolumes") or []]
+        for m, keys in rows:
+            for k in keys:
+                v = m.get(k)
+                if isinstance(v, str) and re.search(re.escape(old) + r"(/|,|$)", v):
+                    m[k] = re.sub(re.escape(old) + r"(?=/|,|$)", new, v)
+                    moved += 1
+        if moved:
+            notes.append(f"transactional-update: {moved} fields of the source's mounts, mounted subvolumes and backup sources read with its default {want} at / for its booted {b}, as its next boot would have had them")
+    # transactional-update-sync-etc-state, at the first boot of a slot,
+    # syncs its /etc from the slot before and deletes its etc.syncpoint
+    # (the snapshot of that /etc it compares with): booted on the restored
+    # machine, the pending slot's is gone, as it would be on the source.
+    if want and path(td, "booted") == want:
+        sp = want.strip("/") + "/etc/etc.syncpoint"
+        for fs in (src.get("storage") or {}).get("btrfs") or []:
+            have = lambda d: any(str(v.get("path") or "") == sp for f in (d.get("storage") or {}).get("btrfs") or [] for v in f.get("subvolumes") or [])
+            if any(str(v.get("path") or "") == sp for v in fs.get("subvolumes") or []) and not have(dst):
+                fs["subvolumes"] = [v for v in fs["subvolumes"] if str(v.get("path") or "") != sp]
+                if isinstance(fs.get("qgroups"), list):
+                    fs["qgroups"] = [q for q in fs["qgroups"] if str(q.get("path") or "") != sp]
+                notes.append(f"transactional-update: {sp} consumed by the restored first boot's /etc sync (transactional-update-sync-etc-state deletes a slot's etc.syncpoint when it first boots), as the source's next boot would have")
+    # A slot's subvolume ID in a mount's options follows the slots'.
+    for d in (src, dst):
+        for m in (d.get("storage") or {}).get("mounts") or []:
+            for k in ("super_options", "options"):
+                if isinstance(m.get(k), str) and re.search(r"/\.snapshots/\d+/snapshot", m[k]):
+                    m[k] = re.sub(r"(^|,)subvolid=\d+", r"\1subvolid=<a slot's>", m[k])
+    if not bad:
+        notes.append(f"transactional-update: booted = default = the source's default {want}"
+                     + (f" (pending there; the source booted {path(ts, 'booted')})" if ts.get("pending_update") else "")
+                     + (f", health-checker's last good it (ID {hd.get('last_working_btrfs_id')}; the source's {hs.get('last_working_snapshot')} ID {hs.get('last_working_btrfs_id')})" if hs and hd else ""))
+    if ts.get("transactional_update_state") != td.get("transactional_update_state"):
+        notes.append("transactional-update's state moved as the restored machine booted (not compared): "
+                     f"{json.dumps(ts.get('transactional_update_state'))[:160]} -> {json.dumps(td.get('transactional_update_state'))[:160]}")
+    return bad, notes
 
 
 def illumos_normalise(d):
@@ -340,6 +445,11 @@ def illumos_normalise(d):
 
 
 SNAPPER_SLOT = re.compile(r"(^|/)\.snapshots/\d+/snapshot$")
+# A subvolume nested in a snapper slot (a transactional-update slot's /etc,
+# and the etc.syncpoint in it): made with its slot, as a snapshot of the
+# slot before's (docs/design/aeon.md), so its ID, its parent's and whether
+# it has an origin follow the slots'.
+IN_SLOT = re.compile(r"(^|/)\.snapshots/\d+/snapshot/.")
 
 
 def btrfs_by_path(d):
@@ -355,14 +465,26 @@ def btrfs_by_path(d):
         subs = fs.get("subvolumes") or []
         for v in subs:
             path = str(v.get("path") or "").removeprefix("<FS_TREE>/")
+            # (btrfs subvolume list -a writes <FS_TREE>/ before the paths
+            # outside the subvolume mounted at /: which those are moves with
+            # the root, a transactional system's booted slot.)
+            if "path" in v:
+                v["path"] = path
             if SNAPPER_SLOT.search(path):
                 v["id"] = "<a snapper snapshot's>"
                 v["parent_uuid"] = "<a snapper snapshot's>"
+            elif IN_SLOT.search(path):
+                for k in ("id", "parent", "top_level", "parent_uuid"):
+                    if k in v:
+                        v[k] = "<in a snapper snapshot>"
         subs.sort(key=lambda v: str(v.get("path") or ""))
+        ds = fs.get("default_subvolume")
+        if isinstance(ds, dict) and SNAPPER_SLOT.search(str(ds.get("path") or "")):
+            ds["id"] = "<a snapper snapshot's>"
         qs = fs.get("qgroups") or []
         for q in qs:
             path = str(q.get("path") or "")
-            if str(q.get("qgroupid") or "").startswith("0/") and SNAPPER_SLOT.search(path):
+            if str(q.get("qgroupid") or "").startswith("0/") and (SNAPPER_SLOT.search(path) or IN_SLOT.search(path)):
                 q["qgroupid"] = f"0/<{path}>"
         qs.sort(key=lambda q: (str(q.get("qgroupid") or "")[:2], str(q.get("path") or ""), str(q.get("qgroupid") or "")))
     return d
@@ -562,7 +684,22 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     refind = any(re.search(REFIND_SOURCE, p) for p in before)
     anduin = any(re.search(ANDUINOS_SOURCE, p) for p in before)
     abroot = any(re.search(ABROOT_SOURCE, p) for p in before)
+    tu = any(re.search(TU_SOURCE, p) for p in before)
     real, allowed = {}, {}
+    # A transactional source's slot at / (the booted one) is in the backup
+    # through / only, where @/var and the other subvolumes fstab mounts hide
+    # its own directories under them (transactional-update writes into a new
+    # snapshot's /var, which @/var then shadows): the source's record reaches
+    # them through /.snapshots/N/snapshot, which load leaves out as that
+    # slot's alias.  Such a directory comes back an empty mount point.
+    hidden = set()
+    if tu:
+        filled = {k.rsplit("/", 1)[0] for k in after if "/" in k}
+        for k in before:
+            m = re.match(r"^(\.snapshots/\d+/snapshot/[^/]+)/", k)
+            if m and m.group(1) not in filled and after.get(m.group(1), {}).get("type") == "dir" \
+                    and before.get(m.group(1).split("/snapshot/", 1)[1], {}).get("type") == "dir" and not m.group(1).endswith("/etc"):
+                hidden.add(m.group(1))
     if anduin:
         for p in ANDUINOS_REQUIRED:
             if before.get(p, {}).get("type") != "file":
@@ -574,7 +711,7 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
         for p in paths:
             kept = (refind and re.search(REFIND_KEPT, p)) or (anduin and re.search(ANDUINOS_KEPT, p)) or (abroot and re.search(ABROOT_KEPT, p))
             why = None if kept else \
-                next((w for r, kinds, w in BOOT_STAGE if kind in kinds and re.search(r, p)), None)
+                next((w for r, kinds, w in (TU_STAGE if tu else BOOT_STAGE) if kind in kinds and re.search(r, p)), None)
             if not why and kind == "missing" and before.get(p, {}).get("type") == "socket":
                 why = "a socket is made by whatever listens on it; no archiver restores one"
             if not why and new_uuids and any(re.search(r, p) for r in NEW_UUIDS_FILES) and kind in _WRITTEN:
@@ -585,6 +722,10 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
                     and before.get(p, {}).get("type") == "dir" and not any(k.startswith(p + "/") for k in before):
                 why = ("a mount point hidden under its mount in a btrfs subvolume mounted elsewhere too (openSUSE's root, again at .snapshots/N/snapshot): "
                        "the backup holds it only through that alias, which load leaves out (docs/design/btrfs-snapshots.md)")
+            if not why and hidden and kind in ("missing", "mtime (dirs)", "atime (dirs)", "selinux", "other-xattr") \
+                    and any(p == h or p.startswith(h + "/") for h in hidden):
+                why = ("a directory of the booted slot hidden under a subvolume fstab mounts on it (MicroOS's /var: transactional-update "
+                       "wrote into the snapshot's own /var, which @/var shadows): the running system, and so its backup, can't reach it")
             if not why and kind == "hard links" and before.get(p, {}).get("type") == "symlink" and not after.get(p, {}).get("links"):
                 # rustic-bko (and restic-bko) relink regular files only: an
                 # ostree repository's symlink objects, hardlinked into each
@@ -612,6 +753,9 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, ref
     if abroot:
         held = [p for p in before if re.search(ABROOT_KEPT, p)]
         print(f"ABRoot kept: {len(held)} paths of the master grub.cfg, init's abroot.cfgs, kernels and initramfs, and EFI/vanilla and EFI/BOOT held to the source's")
+    if tu:
+        held = [p for p in before if re.search(TU_HELD, p)]
+        print(f"transactional-update: no boot-stage excuse but load's log and health-check.state: {len(held)} paths of the ESP and every slot's /boot and /usr held to the source's")
     n = sum(len(v) for v in real.values())
     print(f"{n} differences, {sum(len(v) for v in allowed.values())} from the boot stage")
     sys.exit(1 if n else 0)
@@ -1438,6 +1582,7 @@ def main():
     if ns != nd and sorted(ns.values()) == sorted(nd.values()):
         src, dst = dm_by_name(src), dm_by_name(dst)
         print(f"device-mapper devices compared by name: their dm-N differ ({', '.join(f'{v} {k}' for k, v in sorted(ns.items()) if nd.get(k) != v)} on the source)")
+    tu_bad, tu_notes = transactional_judge(src, dst)
     rf_bad, rf_notes = reformat_expect(src, dst, reforms) if reforms else ([], [])
     made_src, made_uuid_src = lvcreate_made(src)
     made_dst, made_uuid_dst = lvcreate_made(dst)
@@ -1545,6 +1690,11 @@ def main():
         else:
             real.append(k)
             print(f"DIFF {k}: {json.dumps(a.get(k, '<absent>'))[:200]} -> {json.dumps(b.get(k, '<absent>'))[:200]}")
+    for x in tu_bad:
+        real.append("transactional")
+        print(f"DIFF transactional: {x}")
+    for x in tu_notes:
+        print(x)
     for x in rf_bad:
         real.append("reformat")
         print(f"DIFF reformat: {x}")

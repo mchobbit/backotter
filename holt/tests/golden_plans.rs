@@ -932,7 +932,21 @@ fn backup_sources_differences(dump: &Value, p: &Planned) -> Option<Vec<String>> 
         bad.push("backup_sources names a path twice".to_string());
     }
     let planned = planned_mount_points(dump, p);
-    for x in paths.iter().filter(|x| !planned.contains(x)) {
+    // A btrfs subvolume nested in another source's at the same relative
+    // path (microos's /etc, @/.snapshots/N/snapshot/etc, bind-mounted onto
+    // itself in the read-only root): reached through that source's mount,
+    // where load makes it as a nested subvolume, so it needs none of its own.
+    let nested = |x: &str| {
+        let me = src.iter().find(|e| str_at(e, "path").map(|s| s.trim_end_matches('/')) == Some(x));
+        let Some(sv) = me.filter(|e| str_at(e, "fstype") == Some("btrfs")).and_then(|e| str_at(e, "subvol")) else { return false };
+        src.iter().any(|o| {
+            let (Some(op), Some(osv)) = (str_at(o, "path"), str_at(o, "subvol")) else { return false };
+            let op = if op == "/" { "" } else { op.trim_end_matches('/') };
+            let rel = match x.strip_prefix(op) { Some(r) if r.starts_with('/') && planned.iter().any(|m| m == if op.is_empty() { "/" } else { op }) => r, _ => return false };
+            str_at(o, "fstype") == Some("btrfs") && str_at(o, "device") == me.and_then(|e| str_at(e, "device")) && sv == format!("{}{rel}", osv.trim_end_matches('/'))
+        })
+    };
+    for x in paths.iter().filter(|x| !planned.contains(x) && !nested(x)) {
         bad.push(format!("backup_sources' {x} is mounted at no {TARGET}{} by the mount stage", if x == "/" { "" } else { x }));
     }
     for x in planned.iter().filter(|x| !paths.contains(x)) {
@@ -989,6 +1003,12 @@ fn golden_backup_sources_check() {
     let dump = json::parse(r#"{"storage": {"zfs": {"tools": {"datasets": [{"name": "rpool/ROOT/debian", "mountpoint": "/"}, {"name": "rpool/home", "mountpoint": "/home"}]}}, "backup_sources": [{"path": "/"}, {"path": "/home"}]}}"#).unwrap();
     let z = Planned { code: 0, out: "# ---- mount ----\nzfs mount rpool/ROOT/debian\nzfs mount rpool/home\n".to_string(), err: String::new(), maps: vec![] };
     assert_eq!(backup_sources_differences(&dump, &z), Some(vec![]));
+    // A btrfs subvolume nested in /'s at the same path (microos's /etc) needs
+    // no mount of its own; one elsewhere (@/etc) does.
+    let tu = |etc: &str| json::parse(&format!(r#"{{"storage": {{"backup_sources": [{{"path": "/", "device": "vda3", "fstype": "btrfs", "subvol": "/@/.snapshots/3/snapshot"}}, {{"path": "/etc", "device": "vda3", "fstype": "btrfs", "subvol": "{etc}"}}]}}}}"#)).unwrap();
+    let m = Planned { code: 0, out: format!("# ---- mount ----\nmount -o subvol=@/.snapshots/3/snapshot /dev/sdq3 {TARGET}\n"), err: String::new(), maps: vec![] };
+    assert_eq!(backup_sources_differences(&tu("/@/.snapshots/3/snapshot/etc"), &m), Some(vec![]));
+    assert_eq!(backup_sources_differences(&tu("/@/etc"), &m), Some(vec![format!("backup_sources' /etc is mounted at no {TARGET}/etc by the mount stage")]));
 }
 
 #[test]

@@ -764,7 +764,7 @@ Cinqcent's `vms/` on /bkoscratch/fast by rsync).
   RAM-disk peak 2.7 GiB (in rebuild), anon peak 2.7 GiB; rustic-bko of the
   shipped set then (`afb5593e...`). Chopin: `aeon1`, the run's
   `verify` again after the fixes (its `backup` and `rebuild` with them
-  already), PASS; RUNS_CHOPIN_FULL. 0 file differences (34 excused: load's
+  already), PASS (RAM-disk peak 2.1 GiB for that verify; the whole first attempt's 2.8 GiB). A whole run from `source` on Chopin (`aeon2`) waited in Chopin's line and was ended unstarted by the host's reboot for its kernel and ZFS upgrade, 2026-11-14 ~18:13: to run again. 0 file differences (34 excused: load's
   log, the slot-3 alias's mount points, the 11 hidden `/var` paths), 0
   dump differences. `ram-sizes.tsv`'s row: D 4, MEM 3. The source dump of
   the pass, for M3's golden plan:
@@ -779,6 +779,52 @@ Cinqcent's `vms/` on /bkoscratch/fast by rsync).
   without sshd, the unlabelled mount points, a rerun's stale console log;
   and one harness stop, ht1.sh changed under a running run by another
   session's sync (`syntax error near unexpected token`, Chopin).
+
+## What M3 found
+
+The corpus entry `holt/tests/corpus/microos` and its Test2 registrations
+(2026-11-14):
+
+- **The dump:** `collect-dumps.sh --sources` (microos only, `--hosts
+  cinqcent`: Chopin's `aeon1` report is newer than `aeon2c`'s, but its dump
+  was made by the bko-holt from before M5's fixes) took
+  `cinqcent:aeon2c/microos/dumps/src.json` (PASS, bko-holt 0.2.6, image
+  same) into a private directory on Chopin, deleted after the build. The
+  host name `microos` is kept, as tumbleweed's is (an os-release word).
+- **Two redaction bugs, fixed in redact.rs** (with unit tests) before the
+  dump entered the tree. (1) leakscan (b) found the raw dump's
+  protective-MBR disk signature at
+  `storage.disks[0].partition_table.protective_mbr.entries[0].uuid`
+  (`SIGNATURE-01`): redact.rs left MBR PARTUUIDs to a `disk_signature` key,
+  which a GPT dump hasn't. It now learns the signature from the protective
+  MBR's entry, and maps the octal `printf` bytes load's plan writes it with
+  (`load::commands::pmbr_signature`), which check_plan otherwise couldn't map
+  back. (2) The redacted dump redacted again (check_plan on the corpus dump)
+  left `bc000002`: the signature's second pseudonym was the digits of the
+  ESP's FAT volume ID pseudonym `BC00-0002` without its dash, so the two
+  collided. A hex pseudonym now avoids the dump's digits whatever their
+  separators, as vanilla3's LVM pseudonym avoids its dashed form. All 74
+  other corpus dumps redact again byte for byte as before, with check_plan
+  ok, and no other golden plan changed.
+- **golden_plans.rs:** the backup_sources check failed on microos's `/etc`
+  (`@/.snapshots/3/snapshot/etc`, bind-mounted onto itself in the read-only
+  root, which load makes as a nested subvolume and doesn't mount). The check
+  now counts a btrfs source nested in another source's subvolume at the same
+  path as reached through that source's mount (and has a synthetic case).
+- **Result:** 44 identifiers, a 344-line plan.txt (check_plan `ok:44:329`), two
+  builds the same (src.json `6d605e1f...`, plan.txt `a8e87cb3...`), leak
+  scans 0 on Chopin, Cinqcent and the Mac (the plan too). The plan makes
+  every slot and its nested `/etc` and `etc.syncpoint`, restores them
+  `--clone-from` the booted slot, writes the protective MBR's signature back,
+  and at boot regenerates nothing: the transactional arm's checks,
+  health-check.state's ID, the mount points' labels, GRUB's BIOS boot code.
+- **Test2:** HoltTest2's 71st source (Obscure, `uefi`); holt/spec.json's
+  entry names prep/microos-tu.sh and grub-menu.py (also in per_guest), and
+  the linux kind's harness has ht1-tu.sh, which ht1.sh sources and runs
+  (`tu_mount_root`) for every guest. GuestTest2's 72nd guest: pm `tukit`
+  (in-guest.sh's `Linux.tukit`; known-lines.json has no section yet), S-zyp,
+  L-grub, K-deb, `uefi-sb`, none of them run on the guest yet. estimates.tsv:
+  holt 714 s (aeon2c), stic 230 s (M4), guest 4.48 gm (est.).
 
 ## Pieces to build (ordered, est.)
 

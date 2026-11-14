@@ -27,7 +27,7 @@
       "variants_run": ["bigger", "oneshot", "degraded", "img"],
       "plat": "linux",
       "bins": ["PLAT/bko-holt", "PLAT/rustic-bko"],
-      "harness": ["testvm/holttest1d/ht1.sh", "testvm/vm-mount", "testvm/vm-umount", "testvm/ostree_paths.py", "testvm/compare/fsmeta.py"],
+      "harness": ["testvm/holttest1d/ht1.sh", "testvm/holttest1d/ht1-tu.sh", "testvm/vm-mount", "testvm/vm-umount", "testvm/ostree_paths.py", "testvm/compare/fsmeta.py"],
       "judge": ["testvm/holttest1d/judge.py"],
       "rescuer": ["@firmware", "bin/*.deb", "bin/bcachefs"],
       "variants": {
@@ -39,6 +39,8 @@
         "testvm/console-boot.py": "guests whose first passphrase file is console-passphrase or zfs-passphrase",
         "testvm/omarchy/type-luks-passphrase.py": "guests whose first passphrase file is luks-passphrase",
         "testvm/vanilla/console-keys.py": "guests whose restored disk boots a second GRUB entry, picked on the serial menu (vm_up's GRUB_PICK: vanilla3's other root)",
+        "testvm/holttest1d/prep/microos-tu.sh": "ht1.sh's default HT_SOURCE_PREP for microos* and aeon* (a transactional-update source's slots, rollbacks and pending update)",
+        "testvm/holttest1d/grub-menu.py": "guests whose older slots ht1-tu.sh boots through GRUB's serial snapshot submenu (vm_up's GRUB_MENU: microos)",
         "testvm/holttest1d/nvboot-efivars.sh": "the UEFI guests (firmware uefi, classes.json holt.uefi): ht1.sh inlines it in NVBOOT, which runs only with a GVARS store (ht1.sh: uefi and --no-secure-boot) and reads the booted entry from efivarfs where efibootmgr is missing (Guix System)"
       }
     },
@@ -125,6 +127,8 @@
     "pikaos4": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/holttest1d/nvboot-efivars.sh"]},
     "pikaos4-luks": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/holttest1d/nvboot-efivars.sh", "testvm/console-boot.py"],
                      "notes": "LUKS2 root (Btrfs) in BOOTX64 mode: booster asks for the passphrase on ttyS0 and console-boot.py types vms/pikaos4-luks/console-passphrase (docs/design/pikaos.md P4)"},
+    "microos": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/holttest1d/nvboot-efivars.sh", "testvm/holttest1d/prep/microos-tu.sh", "testvm/holttest1d/grub-menu.py"],
+                "notes": "openSUSE MicroOS, transactional-update: prep/microos-tu.sh (ht1.sh's default HT_SOURCE_PREP) leaves slots 1-7 with a rollback and an update pending; ht1-tu.sh checks the restored first boot, boots older slots from GRUB's snapshot submenu by grub-menu.py and forces a health-checker rollback (docs/design/aeon.md M5)"},
     "freebsd15": {"kind": "bsd", "plat": "freebsd", "rescuer": ["freebsd15-ufs"]},
     "freebsd15-mirror": {"kind": "bsd", "plat": "freebsd", "rescuer": ["freebsd15-ufs"]},
     "freebsd15-geli": {"kind": "bsd", "plat": "freebsd", "firmware": "uefi", "rescuer": ["freebsd15-ufs"], "harness": ["testvm/console-boot.py"],

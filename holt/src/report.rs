@@ -1367,6 +1367,10 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
     let mbr_codes: Vec<(String, String)> =
         devs.iter().filter_map(|d| d.boot_code.as_ref().map(|bc| (d.b.name.clone(), bc.kind.to_string()))).collect();
 
+    let btrfs = btrfs_json(sys, &ctx, abroot.as_ref().map(|a| a.btrfs_profiles.as_slice()).unwrap_or(&[]));
+    // transactional-update (crate::transactional): from fstab's / and the
+    // btrfs it's on.
+    let transactional = crate::transactional::read(sys, &fstab, &btrfs);
     let storage = Obj::new()
         .set("topology", topology(&ctx, sys))
         .set("disks", disks)
@@ -1376,7 +1380,7 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         .set("other_devices", other)
         .set("lvm", lvm_json(&ctx))
         .set("zfs", zfs_json(sys, &ctx))
-        .set("btrfs", btrfs_json(sys, &ctx, abroot.as_ref().map(|a| a.btrfs_profiles.as_slice()).unwrap_or(&[])))
+        .set("btrfs", btrfs)
         .set("xfs_external_logs", xfs_external_logs(sys, &ctx))
         .set("mounts", mounts_json)
         .set("physical_root", physical_root.clone())
@@ -1393,6 +1397,7 @@ pub fn build_only(sys: &Sys, os: Option<&OsRelease>, generated: &str, only: &[St
         o.push(("product".into(), Value::from(p)));
     }
     let boot = crate::abroot::add_to_boot(boot, abroot.as_ref());
+    let boot = crate::transactional::add_to_boot(boot, transactional);
 
     let mut out = Obj::new()
         .set("format", FORMAT)

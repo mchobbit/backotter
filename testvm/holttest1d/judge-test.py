@@ -2025,5 +2025,202 @@ class ThinPoolMade(unittest.TestCase):
             self.assertEqual(out.count("DIFF "), 1, out)
 
 
+class FsTransactional(unittest.TestCase):
+    """judge.py fs over a MicroOS restore (docs/design/aeon.md, M5): load's
+    transactional arm regenerates nothing in a snapshot, so the ESP, every
+    slot's /boot and /usr, grub.cfg and the initrds get no boot-stage
+    excuse; load's log and health-check.state's rewritten ID do."""
+
+    HELD = ["boot/efi/EFI/BOOT/bootx64.efi", "boot/efi/EFI/BOOT/grub.efi", "boot/efi/EFI/BOOT/grub.cfg",
+            "boot/grub2/grub.cfg", "boot/initrd-7.3.3-1-default", "boot/vmlinuz-7.3.3-1-default",
+            "usr/sbin/tukit", "usr/share/bko-tu/base.bin",
+            ".snapshots/3/snapshot/boot/grub2/grub.cfg", ".snapshots/3/snapshot/boot/initrd-7.3.3-1-default",
+            ".snapshots/3/snapshot/usr/share/bko-tu/base.bin"]
+    SRC = {"boot": meta("dir"), "boot/efi": meta("dir"), "boot/efi/EFI": meta("dir"), "boot/efi/EFI/BOOT": meta("dir"),
+           "boot/grub2": meta("dir"), "var": meta("dir"), "var/log": meta("dir"), "var/lib": meta("dir"),
+           "var/lib/misc": meta("dir"), "var/lib/misc/health-check.state": meta("file"),
+           **{p: meta("file") for p in HELD}}
+
+    judge = Fs.judge
+
+    def changed(self, src, changes):
+        a = copy.deepcopy(src)
+        for p, kw in changes.items():
+            a[p].update(kw)
+        return self.judge(src, a)
+
+    def test_loads_log_and_health_check_state_only(self):
+        a = copy.deepcopy(self.SRC)
+        a["var/log/bko-holt"] = meta("dir")
+        a["var/log/bko-holt/load.log"] = meta("file")
+        a["var/log"]["mtime"] = 2
+        a["var/lib/misc"]["mtime"] = 2
+        a["var/lib/misc/health-check.state"].update(sha256="cd", mtime=2)
+        rc, out = self.judge(self.SRC, a)
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("DIFF", out)
+        self.assertIn("rewrites health-checker's LAST_WORKING_BTRFS_ID", out)
+        held = [p for p in self.SRC if re.search(r"^(boot|usr)(/|$)|^\.snapshots/\d+/snapshot/(boot|usr)(/|$)", p)]
+        self.assertIn(f": {len(held)} paths of the ESP and every slot's /boot and /usr held to the source's", out)
+
+    def test_nothing_in_a_snapshot_or_the_esp_may_change(self):
+        """grub2-mkconfig, grub2-install, shim-install or dracut on any of
+        them: the rules that excuse them on other systems don't apply."""
+        for p in self.HELD:
+            rc, out = self.changed(self.SRC, {p: {"sha256": "cd", "mtime": 2}})
+            self.assertEqual(rc, 1, f"{p}: {out}")
+            self.assertIn(f"DIFF content: 1: {p}", out)
+            self.assertIn(" 0 from the boot stage", out)
+        rc, out = self.changed(self.SRC, {"boot/initrd-7.3.3-1-default": {"xattrs": {"security.selinux": "00"}}})
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF selinux: 1:", out)
+
+    def test_the_booted_slots_dirs_under_a_mount(self):
+        """Slot 3, at / on the source, has files in its own var/ that @/var
+        hides: the record reaches them through .snapshots/3/snapshot, the
+        restore can't, and its var/ comes back an empty mount point.  The
+        same files missing where nothing hides them (slot 4's var/, which
+        is in the backup) still count."""
+        src = copy.deepcopy(self.SRC)
+        src.update({"var/lib/misc/x": meta("file"), ".snapshots/3/snapshot/var": meta("dir"), ".snapshots/3/snapshot/var/lib": meta("dir"),
+                    ".snapshots/3/snapshot/var/lib/zypp": meta("file"), ".snapshots/4/snapshot/var": meta("dir"),
+                    ".snapshots/4/snapshot/var/lib": meta("dir"), ".snapshots/4/snapshot/var/lib/zypp": meta("file")})
+        a = {p: m for p, m in src.items() if not p.startswith(".snapshots/3/snapshot/var/")}
+        a[".snapshots/3/snapshot/var"] = meta("dir", mtime=2)
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 0, out)
+        self.assertIn("hidden under a subvolume fstab mounts on it", out)
+        del a[".snapshots/4/snapshot/var/lib/zypp"]
+        rc, out = self.judge(src, a)
+        self.assertEqual(rc, 1, out)
+        self.assertIn("DIFF missing: 1: .snapshots/4/snapshot/var/lib/zypp", out)
+
+    def test_other_systems_keep_their_rules(self):
+        src = {p: m for p, m in self.SRC.items() if p != "usr/sbin/tukit"}
+        rc, out = self.changed(src, {"boot/grub2/grub.cfg": {"sha256": "cd"}, "boot/initrd-7.3.3-1-default": {"sha256": "cd"}})
+        self.assertEqual(rc, 0, out)
+        self.assertNotIn("transactional", out)
+
+
+class Transactional(unittest.TestCase):
+    """judge.py's boot.transactional (M5): the restored machine boots the
+    source's default, its pending update, as its default, and
+    health-checker's state names it by its restored ID.  A health-checker
+    rollback on the restored first boot (another slot booted, the default
+    set back) must be a DIFF, as must the source's booted slot booted."""
+
+    judge = Fit.judge
+
+    @staticmethod
+    def tu(booted, default, hc=None, pending=None, tu_state=None):
+        slot = lambda n, i: {"path": f"@/.snapshots/{n}/snapshot", "id": i, "snapshot": n}
+        t = {"filesystem": "bc000000-0000-4000-8000-000000000005", "fstab_root_options": "ro=vfs",
+             "tools": ["/usr/sbin/tukit", "/usr/sbin/transactional-update"], "booted": slot(*booted),
+             "default": slot(*default), "pending_update": booted[0] != default[0] if pending is None else pending,
+             "etc": "subvolume", "loader_mode": "grub",
+             "transactional_update_state": tu_state or {"LAST_BOOTED": str(booted[0])},
+             "health_check_state": None if hc is None else {"last_working_btrfs_id": hc[1], "last_working_btrfs_id_raw": str(hc[1]),
+                                                            "last_working_snapshot": f"@/.snapshots/{hc[0]}/snapshot"}}
+        d = dump([disk("vda", 16 * GIB, [])])
+        d["boot"] = {"transactional": t}
+        return d
+
+    def src(self):
+        return self.tu((3, 273), (7, 284), hc=(3, 273))
+
+    def test_the_pending_update_booted(self):
+        out = Fit.good(self, self.src(), self.tu((7, 280), (7, 280), hc=(7, 280)))
+        self.assertIn("booted = default = the source's default @/.snapshots/7/snapshot (pending there; the source booted @/.snapshots/3/snapshot)", out)
+        self.assertIn("transactional-update's state moved", out)
+
+    def test_a_silent_health_checker_rollback_is_a_difference(self):
+        """The first boot failed, health-checker set the default back to the
+        last good slot and booted it: a running machine, the wrong slot."""
+        out = Fit.bad(self, self.src(), self.tu((3, 270), (3, 270), hc=(3, 270)))
+        self.assertIn("DIFF transactional: booted @/.snapshots/3/snapshot, not the source's default @/.snapshots/7/snapshot", out)
+        self.assertIn("DIFF transactional: the default is @/.snapshots/3/snapshot", out)
+
+    def test_the_sources_booted_slot_with_its_default_kept(self):
+        out = Fit.bad(self, self.src(), self.tu((3, 270), (7, 280), hc=(3, 270)))
+        self.assertIn("DIFF transactional: booted @/.snapshots/3/snapshot", out)
+        self.assertIn("an update is pending", out)
+
+    def test_health_check_state_must_name_the_restored_id(self):
+        out = Fit.bad(self, self.src(), self.tu((7, 280), (7, 280), hc=(7, 284)))
+        self.assertIn("DIFF transactional: health-check.state names @/.snapshots/7/snapshot ID 284, not the booted @/.snapshots/7/snapshot ID 280", out)
+        out = Fit.bad(self, self.src(), self.tu((7, 280), (7, 280), hc=(3, 280)))
+        self.assertIn("health-check.state names @/.snapshots/3/snapshot", out)
+        out = Fit.bad(self, self.src(), self.tu((7, 280), (7, 280)))
+        self.assertIn("DIFF transactional: no health-check.state on the restored system", out)
+
+    def test_the_rest_must_match(self):
+        dst = self.tu((7, 280), (7, 280), hc=(7, 280))
+        dst["boot"]["transactional"]["etc"] = "overlay"
+        out = Fit.bad(self, self.src(), dst)
+        self.assertIn('DIFF transactional: etc: "subvolume" -> "overlay"', out)
+        dst = self.tu((7, 280), (7, 280), hc=(7, 280))
+        del dst["boot"]["transactional"]
+        out = Fit.bad(self, self.src(), dst)
+        self.assertIn("the source is transactional (boot.transactional), the restored system isn't", out)
+
+    @staticmethod
+    def with_btrfs(d, root, ids, syncpoint=False):
+        """D with the btrfs and mounts of a MicroOS guest booted from slot
+        ROOT: slots 3 and 7 and their /etc, IDS their IDs; 7's etc.syncpoint
+        while 7 hasn't booted (SYNCPOINT)."""
+        sub = lambda path, i, parent, ro: {"id": i, "parent": parent, "top_level": parent, "parent_uuid": True, "readonly": ro,
+                                          "path": path if path.startswith(f"@/.snapshots/{root}/snapshot/") else f"<FS_TREE>/{path}"}
+        subs = [sub("@/.snapshots", 257, 256, False)]
+        for n, i in zip((3, 7), ids):
+            subs += [sub(f"@/.snapshots/{n}/snapshot", i, 257, True), sub(f"@/.snapshots/{n}/snapshot/etc", i + 1, i, False)]
+        if syncpoint:
+            subs.append(sub("@/.snapshots/7/snapshot/etc/etc.syncpoint", ids[1] + 2, ids[1] + 1, False))
+        rid = ids[(3, 7).index(root)]
+        d["storage"]["btrfs"] = [{"uuid": "bc000000-0000-4000-8000-000000000005", "subvolumes": subs,
+                                  "default_subvolume": {"id": ids[1], "path": "@/.snapshots/7/snapshot"},
+                                  "mounted_subvolumes": [{"target": "/", "subvol": f"/@/.snapshots/{root}/snapshot"},
+                                                         {"target": "/etc", "subvol": f"/@/.snapshots/{root}/snapshot/etc"}],
+                                  "qgroups": [{"qgroupid": f"0/{s['id']}", "path": s["path"].removeprefix("<FS_TREE>/")} for s in subs]}]
+        d["storage"]["mounts"] = [{"target": "/", "root": f"/@/.snapshots/{root}/snapshot",
+                                   "super_options": f"rw,seclabel,subvolid={rid},subvol=/@/.snapshots/{root}/snapshot"},
+                                  {"target": "/etc", "root": f"/@/.snapshots/{root}/snapshot/etc",
+                                   "super_options": f"rw,seclabel,subvolid={rid + 1},subvol=/@/.snapshots/{root}/snapshot/etc"}]
+        d["storage"]["backup_sources"] = [{"target": "/", "subvol": f"/@/.snapshots/{root}/snapshot"}]
+        return d
+
+    def test_the_restored_boot_moves_the_root(self):
+        """The source booted 3 with 7 pending; the restored machine boots 7,
+        whose IDs are new, and whose etc.syncpoint its /etc sync consumed:
+        the mounts at / and /etc, the listing's <FS_TREE>/ and the nested
+        subvolumes' IDs follow, nothing else."""
+        src = self.with_btrfs(self.src(), 3, (273, 284), syncpoint=True)
+        dst = self.with_btrfs(self.tu((7, 290), (7, 290), hc=(7, 290)), 7, (275, 290))
+        out = Fit.good(self, src, dst)
+        self.assertIn("7 fields of the source's mounts, mounted subvolumes and backup sources read with its default @/.snapshots/7/snapshot at / for its booted @/.snapshots/3/snapshot", out)
+        self.assertIn("@/.snapshots/7/snapshot/etc/etc.syncpoint consumed by the restored first boot's /etc sync", out)
+
+    def test_the_root_moved_elsewhere_or_a_syncpoint_kept(self):
+        src = self.with_btrfs(self.src(), 3, (273, 284), syncpoint=True)
+        # Booted 3 again (a health-checker rollback): its mounts don't move.
+        dst = self.with_btrfs(self.tu((3, 273), (3, 273), hc=(3, 273)), 3, (273, 290))
+        out = Fit.bad(self, src, dst)
+        self.assertIn("DIFF transactional: booted @/.snapshots/3/snapshot", out)
+        self.assertNotIn("read with its default", out)
+        # 7 booted, its etc.syncpoint still there: the source's is compared as it was.
+        dst = self.with_btrfs(self.tu((7, 290), (7, 290), hc=(7, 290)), 7, (275, 290), syncpoint=True)
+        out = Fit.good(self, src, dst)
+        self.assertNotIn("consumed", out)
+        # A slot that lost its /etc.
+        dst = self.with_btrfs(self.tu((7, 290), (7, 290), hc=(7, 290)), 7, (275, 290))
+        dst["storage"]["btrfs"][0]["subvolumes"] = [v for v in dst["storage"]["btrfs"][0]["subvolumes"] if v["path"] != "<FS_TREE>/@/.snapshots/3/snapshot/etc"]
+        out = Fit.bad(self, src, dst)
+        self.assertIn('"@/.snapshots/3/snapshot/etc"', out)
+
+    def test_no_update_pending(self):
+        src = self.tu((5, 279), (5, 279), hc=(5, 279))
+        out = Fit.good(self, src, self.tu((5, 281), (5, 281), hc=(5, 281)))
+        self.assertIn("booted = default = the source's default @/.snapshots/5/snapshot, health-checker's", out)
+
+
 if __name__ == "__main__":
     unittest.main(verbosity=2)

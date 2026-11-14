@@ -41,6 +41,7 @@ stic	stic:ghostbsd26-zfs	12.48	749	0.00	-	st1_marks.tsv: median of 3 exit-0 runs
 stic	stic:haiku6	0.86	52	0.00	-	st1_marks.tsv: median of 2 exit-0 runs
 stic	stic:hardenedbsd15	6.77	406	0.00	-	st1_marks.tsv: median of 3 exit-0 runs
 stic	stic:mint22	13.57	814	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
+stic	stic:microos	3.83	230	0.00	-	aeon.md M4: SticTest1 microos, 223 s on chopin (st1-m4a) and 233 s on cinqcent (st1-m4b), the reservation's wait not counted
 stic	stic:mx25	11.90	714	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:netbsd11	5.40	324	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:nixos2605	3.92	235	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
@@ -123,6 +124,7 @@ holt	holt:neon24	6.32	379	0.00	-	chopin ht1u PASS 2026-11-14, 02:07:09Z to 02:13
 holt	holt:vanilla3	27.13	1628	28.94	28.94	chopin v7-1 PASS 2026-11-14, its passing phases 1628 s (source 313, backup 169, rebuild 618, verify 528; cinqcent's v7-2 1276 s), ht1.sh on /bkoscratch only (HT_RAM=0, D 30 over every RAM-disk ceiling): gb and gb_disk its disk peak, 28,259,052 KiB (vanillaos.md V7)
 holt	holt:pikaos4	6.18	371	0.00	-	chopin p6-4 PASS 2026-11-14, its phases 371 s (source 53, backup 56, rebuild 165, verify 97; cinqcent's p6-5 390 s), ht1.sh in RAM (pikaos.md P6)
 holt	holt:pikaos4-luks	6.27	376	0.00	-	chopin p6-6 PASS 2026-11-14, its phases 376 s (source 47, backup 57, rebuild 177, verify 95; cinqcent's p6-7 341 s), ht1.sh in RAM (pikaos.md P6)
+holt	holt:microos	11.90	714	0.00	-	cinqcent aeon2c PASS 2026-11-14, a whole run from source 714 s (source 191 with the prep, backup 53, rebuild 142, verify 327), ht1.sh in RAM, RAM-disk peak 2.7 GiB (aeon.md M5)
 holt	holt:debian13-stack+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
 holt	holt:aerynos+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
 holt	holt:mint22+bigger	3.05	183	0.00	-	test2.md HoltTest2All: rebuild x 3.05 (r3all's rebuild + verify, 122 min / 40)
@@ -181,6 +183,7 @@ guest	guest:haiku6	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for che
 guest	guest:hardenedbsd15	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:kinoite44	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:manjaro	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:microos	4.48	269	0.00	-	aeon.md M1: vm-update --try 149 s on chopin (2.48) + 0.5 for checks + 1.5 for a new guest's smoke backup (est.)
 guest	guest:garuda	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:biglinux	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:mint22	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks

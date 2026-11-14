@@ -3,9 +3,9 @@
 copy's after it booted.  Prints one DIFF line per field that differs, and
 exits 1 if any field outside IGNORED differs.
 
-Usage: judge.py [--expect] [--new-uuids] [--removable] [--nvram-kept]
+Usage: judge.py [--expect] [--new-uuids] [--removable] [--nvram-kept] [--reformat MOUNT=TYPE]...
                 [--grow BYTES | --fit BYTES [--fit-pct PCT] | --degraded] SRC.json DST.json
-       judge.py fs FSMETA.py SRC-META.json DST-META.json [--no-atime] [--new-uuids]
+       judge.py fs FSMETA.py SRC-META.json DST-META.json [--no-atime] [--new-uuids] [--reformat MOUNT=TYPE]...
        judge.py esp DIR
        judge.py --fit-plan BYTES [--fit-pct PCT] LAYOUT.json
 
@@ -45,6 +45,15 @@ BackShot2's option sweep (B9) adds what each of load's flags changes on purpose:
                that name them
 --removable    load also installed the ESP's removable-media loader: EFI/BOOT/
                files on the ESP may be new or rewritten
+--reformat MOUNT=TYPE
+               load's --reformat (docs/design/reformat.md): the filesystem at
+               MOUNT is TYPE now, with its UUID and label; its geometry, its
+               btrfs record and the subvolume mounts folded into MOUNT are
+               the change's, and fstab, the mounts and the root's kernel
+               command lines must be as load rewrites them (reformat_expect).
+               The fs form allows the files the rewrite edits, mke2fs's
+               lost+found, btrfs's inode flags gone, the snapshots left out,
+               and XFS's copies of the ACLs (reformat_why)
 --nvram-kept   tier 2's boots shared one NVRAM with the rescuer: the firmware's
                own boot entries (no HD() path: its disks, network, shell), the
                entries on a disk the machine doesn't have (the rescuer's own:
@@ -540,7 +549,7 @@ def flatten(v, path, out):
         out[path] = v
 
 
-def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False):
+def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False, reforms=()):
     import importlib.util
     spec = importlib.util.spec_from_file_location("fsmeta", fsmeta_py)
     fsmeta = importlib.util.module_from_spec(spec)
@@ -588,6 +597,8 @@ def judge_fs(fsmeta_py, src_path, dst_path, no_atime=False, new_uuids=False):
                 af, bf = before.get(p, {}).get("flags"), after.get(p, {}).get("flags")
                 if isinstance(af, int) and isinstance(bf, int) and (af ^ bf) & ~0x1400 == 0:
                     why = "btrfs's own no-compress flag, which its compression heuristic sets as data is written"
+            if not why and reforms:
+                why = reformat_why(kind, p, before, after, reforms)
             (allowed.setdefault(why, []) if why else real.setdefault(kind, [])).append(p)
     for kind, paths in sorted(real.items()):
         print(f"DIFF {kind}: {len(paths)}: {', '.join(paths[:5])}{' ...' if len(paths) > 5 else ''}")
@@ -1158,18 +1169,251 @@ def judge_esp(esp_dir):
     sys.exit(1 if n else 0)
 
 
+# --reformat MOUNT=TYPE (docs/design/reformat.md): load made the filesystem
+# mounted at MOUNT anew as TYPE, with the old one's UUID and label, and its
+# boot stage rewrote what named the old type.  The dump form holds the
+# restored dump to what that change predicts from the source's (as load's
+# reformat::work_out and rewrite.rs work it out), and the rest to the
+# source's as ever: reformat_expect edits the source's dump into that.
+REFORMAT_TYPES = ("ext4", "xfs", "btrfs")
+# reformat.rs's GENERIC_OPTIONS: what an fstab entry and rootflags= keep.
+REFORMAT_GENERIC = {"defaults", "ro", "rw", "noatime", "relatime", "strictatime", "lazytime", "nolazytime", "nodiratime", "diratime",
+                    "nodev", "dev", "nosuid", "suid", "noexec", "exec", "nofail", "noauto", "auto", "sync"}
+
+
+def reformat_args(args):
+    """[(MOUNT, TYPE)] from ARGS' --reformat MOUNT=TYPE pairs; exits on a bad one."""
+    out = []
+    for i, x in enumerate(args):
+        if x != "--reformat":
+            continue
+        v = args[i + 1] if i + 1 < len(args) else ""
+        m, _, t = v.partition("=")
+        if not m.startswith("/") or t not in REFORMAT_TYPES:
+            sys.exit(f"judge.py: --reformat MOUNT=TYPE (TYPE {', '.join(REFORMAT_TYPES)}), not {v!r}")
+        out.append((m.rstrip("/") or "/", t))
+    return out
+
+
+def generic_options(o):
+    keep = [x for x in str(o or "").split(",") if x and (x in REFORMAT_GENERIC or x.startswith("x-") or x.startswith("comment="))]
+    return ",".join(keep) or "defaults"
+
+
+def reformat_cmdline(line, frm, to):
+    """rewrite.rs's cmdline(), line by line: rootflags= cut to its generic
+    options (gone when none are left), rootfstype=FROM set to TO."""
+    def word(w):
+        if w.startswith("rootflags="):
+            keep = [x for x in w[len("rootflags="):].split(",") if x and x != "defaults" and generic_options(x) != "defaults"]
+            return f"rootflags={','.join(keep)}" if keep else None
+        return f"rootfstype={to}" if w == f"rootfstype={frm}" else w
+    out = []
+    for ln in line.split("\n"):
+        words = ln.split()
+        new = [x for x in map(word, words) if x is not None]
+        if new == words:
+            out.append(ln)
+            continue
+        lead, trail = ln[: len(ln) - len(ln.lstrip())], ln[len(ln.rstrip()):]
+        out.append(lead + " ".join(new) + trail)
+    return "\n".join(out)
+
+
+def _dicts(v):
+    if isinstance(v, dict):
+        yield v
+        for x in v.values():
+            yield from _dicts(x)
+    elif isinstance(v, list):
+        for x in v:
+            yield from _dicts(x)
+
+
+def _under(p, m):
+    return m == "/" or p == m or p.startswith(m + "/")
+
+
+def reformat_expect(src, dst, reforms):
+    """SRC's dump edited into what each --reformat (MOUNT, TYPE) of REFORMS
+    predicts, and the fields it can't predict taken out of both: problems
+    (each a DIFF) and notes."""
+    bad, notes = [], []
+    ss, ds = src.setdefault("storage", {}), dst.setdefault("storage", {})
+    for mount, to in reforms:
+        entry = next((e for e in ss.get("fstab") or [] if e.get("file") == mount), None)
+        if not entry or not entry.get("resolves_to"):
+            bad.append(f"--reformat {mount}={to}: the source's fstab doesn't mount {mount}")
+            continue
+        dev, frm = entry["resolves_to"], entry.get("type")
+        # The filesystem's record: the dump's content of the device fstab names.
+        holder = next((d for d in _dicts(ss) if d.get("name") == dev and isinstance(d.get("content"), dict)), None)
+        uuid = (holder or {}).get("content", {}).get("uuid")
+        if not uuid:
+            bad.append(f"--reformat {mount}={to}: no filesystem record of {dev} in the source's dump")
+            continue
+        # Every other fstab mount of the filesystem is folded into MOUNT's.
+        folded = [e.get("file") for e in ss.get("fstab") or [] if e.get("resolves_to") == dev and e.get("type") != "swap" and e.get("file") != mount]
+        for f in folded:
+            if not _under(f, mount):
+                bad.append(f"--reformat {mount}={to}: {dev} is mounted at {f} too, outside {mount}")
+        sides = {"source": (ss, src), "restored": (ds, dst)}
+        found = {}
+        for who, (st, _) in sides.items():
+            for d in _dicts(st):
+                c = d.get("content")
+                if isinstance(c, dict) and c.get("uuid") == uuid and c.get("type") in REFORMAT_TYPES + ("ext2", "ext3"):
+                    found.setdefault(who, []).append(d)
+        rec = found.get("restored") or []
+        if not rec:
+            bad.append(f"--reformat {mount}={to}: the restored dump has no filesystem with the source's UUID {uuid}")
+        for d in rec:
+            if d["content"].get("type") != to:
+                bad.append(f"--reformat {mount}={to}: {d.get('name')}'s filesystem {uuid} is {d['content'].get('type')}, not {to}")
+        # Its record is the new type's: only what load keeps is compared
+        # (the type, UUID, usage and label; XFS's label cut to 12 bytes).
+        for who, ds_ in found.items():
+            for d in ds_:
+                c = d["content"]
+                label = c.get("label")
+                if who == "source":
+                    c = dict(c, type=to)
+                    if to == "xfs" and isinstance(label, str) and len(label.encode()) > 12:
+                        label = label.encode()[:12].decode(errors="ignore")
+                d["content"] = {"type": c.get("type"), "uuid": uuid, "usage": c.get("usage"), "label": label}
+                if who == "source" and isinstance(d.get("mounted_at"), list):
+                    d["mounted_at"] = [m for m in d["mounted_at"] if m not in folded]
+        notes.append(f"--reformat {mount}={to}: {dev} ({frm}, {uuid}) compared by type, UUID and label only; "
+                     f"folded into {mount}: {', '.join(folded) or 'none'}")
+        # btrfs's own record: the old one's is gone; a new btrfs is one with no subvolumes.
+        for st in (ss, ds):
+            if isinstance(st.get("btrfs"), list):
+                st["btrfs"] = [f for f in st["btrfs"] if f.get("uuid") != uuid]
+        # fstab: MOUNT's entry with the new type, generic options and pass; the folded ones gone.
+        if isinstance(ss.get("fstab"), list):
+            ss["fstab"] = [e for e in ss["fstab"] if not (e.get("resolves_to") == dev and e.get("file") in folded)]
+            entry.update(type=to, options=generic_options(entry.get("options")),
+                         passno=(1 if mount == "/" else 2) if to == "ext4" else 0)
+        # The running mounts and what a backup of the restored system would take.
+        for key, field in (("mounts", "target"), ("backup_sources", "path")):
+            if isinstance(ss.get(key), list):
+                ss[key] = [m for m in ss[key] if not (m.get("device") == dev and m.get(field) in folded)]
+            for st in (ss, ds):
+                for m in st.get(key) or []:
+                    if m.get("device") != dev:
+                        continue
+                    m["fstype"] = to if st is ss else m.get("fstype")
+                    if key == "mounts":
+                        m.pop("super_options", None)
+                        if st is ss:
+                            m["root"] = "/"
+                    elif st is ss:
+                        m["subvol"] = None
+        if mount != "/":
+            continue
+        # The root's kernel command lines, wherever the dump found one.
+        def walk(v):
+            if isinstance(v, str):
+                return reformat_cmdline(v, frm, to) if ("rootflags=" in v or "rootfstype=" in v) else v
+            if isinstance(v, list):
+                return [x for x in (walk(x) for x in v) if x is not None]
+            if isinstance(v, dict):
+                return {k: walk(x) for k, x in v.items()}
+            return v
+        boot = src.get("boot") or {}
+        for d in _dicts(boot):
+            if isinstance(d.get("words"), list):
+                # One word each: a word rewrite.rs drops comes out empty.
+                d["words"] = [w for w in (reformat_cmdline(x, frm, to) if isinstance(x, str) else x for x in d["words"])
+                              if not (isinstance(w, str) and not w.strip())]
+            st = d.get("storage")
+            if isinstance(st, dict) and "rootflags" in st:
+                v = reformat_cmdline(f"rootflags={st['rootflags']}", frm, to)
+                if v:
+                    st["rootflags"] = v[len("rootflags="):]
+                else:
+                    st.pop("rootflags")
+            if isinstance(st, dict) and st.get("rootfstype") == frm:
+                st["rootfstype"] = to
+        src["boot"] = walk(boot)
+        # GRUB: snapper's snapshot entries (openSUSE's 80_suse_btrfs_snapshot,
+        # grub-btrfs) are made for a btrfs root only.  The dump's default is
+        # its first entry's, which on the source was snapper's help entry.
+        g = ((src.get("boot") or {}).get("grub") or {}).get("grub_cfg")
+        h = ((dst.get("boot") or {}).get("grub") or {}).get("grub_cfg")
+        if frm == "btrfs" and to != "btrfs" and isinstance(g, dict) and isinstance(g.get("entries"), list):
+            snap = [e for e in g["entries"] if re.search(r"(?i)snapshot", str(e))]
+            if snap:
+                first = g["entries"][0] in snap
+                g["entries"] = [e for e in g["entries"] if e not in snap]
+                notes.append(f"--reformat {mount}={to}: GRUB's btrfs snapshot entries left out: {'; '.join(map(str, snap))}")
+                if first and g.get("default_linux") is None and isinstance(h, dict):
+                    g["default_linux"], g["default_initrd"] = h.get("default_linux"), h.get("default_initrd")
+                    notes.append(f"--reformat {mount}={to}: the source's first GRUB entry was a snapshot entry, with no kernel: the restored default isn't compared")
+    return bad, notes
+
+
+# The fs form's --reformat: what load's rewrite of the restored system
+# writes (rewrite.rs's files), whatever the type.
+REFORMAT_FILES = (r"^etc/(fstab|kernel/cmdline|cmdline\.d/[^/]+|default/grub|default/limine|mkinitcpio\.conf|mkinitcpio\.conf\.d/[^/]+|systemd/system/[^/]+\.mount)$",
+                  r"^(boot/|efi/|boot/efi/)?(loader/entries/[^/]+\.conf|limine\.conf|EFI/[^/]+/limine\.conf|refind_linux\.conf|EFI/[^/]+/refind\.conf)$")
+# btrfs's inode flags no other type keeps: no-copy-on-write (C), compress (c), no-compress.
+BTRFS_ONLY_FLAGS = 0x00800000 | 0x4 | 0x400
+# A snapper snapshot (and the root's own alias among them): left out of a
+# restore onto another type, its .snapshots/N directory kept, empty.
+LEFT_OUT_SNAPSHOT = re.compile(r"(^|/)\.snapshots/\d+/snapshot(/|$)")
+# XFS keeps each POSIX ACL under its own trusted.SGI_ACL_* name as well.
+XFS_ACL_COPY = {"trusted.SGI_ACL_FILE": "system.posix_acl_access", "trusted.SGI_ACL_DEFAULT": "system.posix_acl_default"}
+
+
+def reformat_why(kind, p, before, after, reforms):
+    """Why the difference KIND at path P is a --reformat's, or None."""
+    for mount, to in reforms:
+        rel = mount.strip("/")
+        inside = not rel or p == rel or p.startswith(rel + "/")
+        if kind in _WRITTEN and any(re.search(r, p) for r in REFORMAT_FILES):
+            return "--reformat: load's boot stage rewrites what names the old type (rewrite.rs)"
+        if not inside:
+            continue
+        if kind == "extra" and to == "ext4" and p == (rel + "/" if rel else "") + "lost+found":
+            return "--reformat onto ext4: mke2fs's lost+found"
+        if kind == "missing" and LEFT_OUT_SNAPSHOT.search(p):
+            return "--reformat: a btrfs snapshot (snapper's, or the root's alias at .snapshots/N/snapshot) isn't restored onto another type (docs/design/reformat.md)"
+        if kind == "hard links":
+            def kept(links):
+                left = [x for x in links or [] if not LEFT_OUT_SNAPSHOT.search(x)]
+                return left if len(left) > 1 else None
+            if before.get(p, {}).get("links") and kept(before[p]["links"]) == (after.get(p, {}).get("links") or None):
+                return "--reformat: a hard-link group without its left-out snapshots' paths"
+        if kind == "inode flags":
+            af, bf = before.get(p, {}).get("flags"), after.get(p, {}).get("flags")
+            # (Less ext4's hashed-directory index, which fsmeta.py doesn't compare.)
+            if isinstance(af, int) and isinstance(bf, int) and not (bf & ~af & ~0x1000) and not ((af ^ bf) & ~(BTRFS_ONLY_FLAGS | 0x1000)):
+                return "--reformat off btrfs: its no-copy-on-write and compression flags, which no other type keeps"
+        if kind == "trusted-xattr" and to == "xfs":
+            bx, ax = before.get(p, {}).get("xattrs") or {}, after.get(p, {}).get("xattrs") or {}
+            names = {n for n in set(bx) | set(ax) if n.startswith("trusted.") and bx.get(n) != ax.get(n)}
+            if names and all(n in XFS_ACL_COPY and n not in bx and XFS_ACL_COPY[n] in ax for n in names):
+                return "--reformat onto XFS: XFS lists each POSIX ACL again as trusted.SGI_ACL_* (the system.posix_acl_* are compared)"
+    return None
+
+
 def main():
     if sys.argv[1] == "esp":
         judge_esp(sys.argv[2])
     if sys.argv[1] == "fs":
-        judge_fs(*sys.argv[2:5], no_atime="--no-atime" in sys.argv[5:], new_uuids="--new-uuids" in sys.argv[5:])
+        judge_fs(*sys.argv[2:5], no_atime="--no-atime" in sys.argv[5:], new_uuids="--new-uuids" in sys.argv[5:],
+                 reforms=reformat_args(sys.argv[5:]))
     grow, fit, pct, plan_only = 0, None, None, None
     flags = set()
-    while sys.argv[1] in ("--expect", "--new-uuids", "--removable", "--nvram-kept", "--grow", "--fit", "--fit-pct", "--fit-plan"):
+    reforms = []
+    while sys.argv[1] in ("--expect", "--new-uuids", "--removable", "--nvram-kept", "--grow", "--fit", "--fit-pct", "--fit-plan", "--reformat"):
         if sys.argv[1] in ("--expect", "--new-uuids", "--removable", "--nvram-kept"):
             flags.add(sys.argv.pop(1))
             continue
-        if sys.argv[1] == "--grow":
+        if sys.argv[1] == "--reformat":
+            reforms += reformat_args(sys.argv[1:3])
+        elif sys.argv[1] == "--grow":
             grow = int(sys.argv[2])
         elif sys.argv[1] == "--fit":
             fit = int(sys.argv[2])
@@ -1194,6 +1438,7 @@ def main():
     if ns != nd and sorted(ns.values()) == sorted(nd.values()):
         src, dst = dm_by_name(src), dm_by_name(dst)
         print(f"device-mapper devices compared by name: their dm-N differ ({', '.join(f'{v} {k}' for k, v in sorted(ns.items()) if nd.get(k) != v)} on the source)")
+    rf_bad, rf_notes = reformat_expect(src, dst, reforms) if reforms else ([], [])
     made_src, made_uuid_src = lvcreate_made(src)
     made_dst, made_uuid_dst = lvcreate_made(dst)
     timeshift = timeshift_left_out(src)
@@ -1300,6 +1545,11 @@ def main():
         else:
             real.append(k)
             print(f"DIFF {k}: {json.dumps(a.get(k, '<absent>'))[:200]} -> {json.dumps(b.get(k, '<absent>'))[:200]}")
+    for x in rf_bad:
+        real.append("reformat")
+        print(f"DIFF reformat: {x}")
+    for x in rf_notes:
+        print(x)
     for x in idbad:
         real.append("new-uuids")
         print(f"DIFF new-uuids: {x}")

@@ -297,6 +297,18 @@ def expected(rel, store, ostree=None, added=False):
 SNAPSHOT = re.compile(r"(.*?)\.snapshots/([0-9]+)(?:/|$)")
 
 
+def relabeled_boot(rel, a, b):
+    """Whether REL's extended attributes differ only in its SELinux label, under
+    /boot: load's boot stage runs setfiles on /boot, which gives each file the
+    policy's label where the source's can be stale (an openSUSE update left
+    its new kernel's files modules_object_t and usr_t); judge.py's
+    BOOT_STAGE excuses it as well."""
+    if not (rel == "boot" or rel.startswith("boot/")):
+        return False
+    x, y = parse_xattrs(a[6]), parse_xattrs(b[6])
+    return {k for k in set(x) | set(y) if x.get(k) != y.get(k)} == {"security.selinux"}
+
+
 def snapshots(rows):
     """snapper's snapshots, as (where its .snapshots is, number)."""
     return {m.groups() for rel in rows if (m := SNAPSHOT.fullmatch(rel + "/"))}
@@ -347,7 +359,8 @@ def compare(old_path, new_path, reformatted=False):
     bad = []
     for label, paths in (("missing", missing), ("added", added), ("changed", changed), ("xattrs", relabeled)):
         unexpected = [p for p in paths if not expected(p, store, mapping[label], label == "added") and p not in snapper
-                      and not (reformatted and any(fnmatch.fnmatch(p, pat) for pat in REFORMAT_EXPECTED))]
+                      and not (reformatted and any(fnmatch.fnmatch(p, pat) for pat in REFORMAT_EXPECTED))
+                      and not (label == "xattrs" and relabeled_boot(p, old[p], new[p]))]
         print(f"{label}: {len(paths)}, of which unexpected: {len(unexpected)}")
         bad += [f"{label}: {p}" + (f" ({xattr_diff(old[p], new[p])})" if label == "xattrs" else "") for p in unexpected]
     linked = sum(1 for p in set(old) & set(new) if len(old[p]) > 8 and len(new[p]) > 8)

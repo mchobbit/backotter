@@ -372,10 +372,9 @@ fitted to main's load.  What had to change, and why:
   (`boot/efi/*`, `efi/*`), as judge.py's `BOOT_STAGE` excuses it
   (`^boot/efi[^/]*/EFI`).
 
-Not done in the port: judge.py's layout and fs forms taught the type change
-and the rewritten files, as `--new-uuids` is (ht1.sh's `HT_REFORMAT` runs
-the round trips, below, but judges them by hand); the space check; `status`
-showing the leftovers; and a Thinkpad run of the ported code.
+Not done in the port: the space check; `status` showing the leftovers; and
+a Thinkpad run of the ported code.  (judge.py's dump and fs forms were
+taught the type change afterwards: "Judged by judge.py", below.)
 
 ### Port test results (2026-11-14, on cinqcent)
 
@@ -454,3 +453,55 @@ BackShot1 in QEMU (bs1-qemu.py, the 20261112 `--test` image, on Copland):
   of its own: the source boots from OVMF's automatic NVMe entry, which is
   gone once the rescue boot is over, and the restore has no entry to make.
   A harness matter, not this feature's.
+
+### Judged by judge.py (2026-11-14)
+
+The round trips above ended "RESULT: FAIL" only because judge.py didn't know
+the change; and two of the BackShot1 rehearsals failed on the harness, not
+the restore.  Fixed:
+
+- **judge.py `--reformat MOUNT=TYPE`**, both forms, which ht1.sh passes from
+  `HT_REFORMAT`.  The dump form (`reformat_expect`) edits the source's dump
+  into what load predicts, as reformat.rs and rewrite.rs work it out: the
+  filesystem's record compared by type, UUID, usage and label only (XFS's
+  label cut to 12 bytes); its btrfs record gone; every other fstab mount of
+  it folded (fstab, mounts, `mounted_at`, backup sources); MOUNT's fstab entry
+  with the new type, the generic options and the pass (1 for an ext4 `/`, 2
+  for another ext4, else 0); its mounts' root `/`; and for `/`, every kernel
+  command line in the dump through rewrite.rs's `cmdline` (`rootflags=` cut to
+  its generic options, `rootfstype=`), and GRUB's btrfs snapshot entries left
+  out (openSUSE's first entry is snapper's, with no kernel, so the dump's
+  default isn't compared there).  Everything else is compared as ever, and a
+  wrong type, a new UUID, a kept `subvol=`, a mount not folded or a wrong pass
+  is a DIFF (judge-test.py's Reformat and FsReformat, each case with a twin).
+  The fs form (`reformat_why`) allows rewrite.rs's files, mke2fs's
+  `lost+found` at MOUNT onto ext4, the snapper snapshots left out (and the
+  hard-link groups without their paths), btrfs's NOCOW and compression flags
+  gone (nothing gained), and onto XFS its `trusted.SGI_ACL_*` copies beside
+  the same POSIX ACLs.
+- **ht1.sh's btrfs read-only snapshot check** takes a snapshot missing after
+  the restore as left out under `HT_REFORMAT`.
+- **bs1-manifest** allows a file under `/boot` whose extended attributes differ
+  in its SELinux label only: the boot stage's `setfiles` (judge.py's
+  BOOT_STAGE already did).  Tumbleweed's one failing bs1-verify check.
+- **bs1-qemu.py**: a source that booted through the firmware's own entry for
+  the disk (BootCurrent with no `HD()` node: Manjaro, with no NVRAM of its
+  own) has nothing for load to recreate, and its restored boot now gets the
+  disk first as the source's did (`bootindex`), so OVMF takes the ESP's
+  removable-media loader, which load renews.  Before, the rescue boot's
+  `bootindex` on the stick had dropped the disk's automatic entry, and
+  OVMF's shell came ahead of the one it made anew.  Real firmware boots the
+  removable path by itself (bs1-restore: "the firmware will choose").
+
+Reruns with main's bko-holt (dcd04db, holt/ as 5744ff0; static musl, Rust
+1.94.1, sha256 25a4812b…) and the same rustic-bko, run `rfmt2`:
+
+| Run | Host | Result |
+|---|---|---|
+| HoltTest1 `debian13` `/=ext4` | Cinqcent | PASS (0 differences, 16 ignored; fsmeta 0, 353 from the boot stage) |
+| HoltTest1 `fedora44` `/=xfs` | Copland | PASS (0 differences, 16 ignored) |
+| HoltTest1 `tumbleweed` `/=ext4`, `prep/tumbleweed-snapper.sh` | Cage | PASS (six snapshots left out; 0 differences, 10 ignored) |
+| HoltTest1 `endeavouros` `/=xfs` | Cinqcent | PASS (0 differences, 6 ignored; fsmeta 0, 27 from the boot stage) |
+| bs1-qemu.py Tumbleweed `/=ext4` `--bios --virtio` | Cage | PASS (bs1-verify: 6 `/boot` relabels, none unexpected) |
+| bs1-qemu.py Manjaro `/=ext4` | Copland | PASS (the restored disk booted its removable-media loader) |
+| bs1-qemu.py Manjaro, no `--reformat` | Copland | PASS (the same way) |

@@ -64,8 +64,10 @@
 # root in the source before its dump (its overlay only), rebooted after it
 # when its last line is REBOOT: prep/tumbleweed-snapper.sh.
 # HT_REFORMAT="MOUNT=TYPE ..." gives every load call from the dry run on a
-# --reformat MOUNT=TYPE for each (docs/design/reformat.md); judge.py isn't
-# taught the change, so its fs, health and dump checks list it as DIFFs.
+# --reformat MOUNT=TYPE for each (docs/design/reformat.md), and judge.py's
+# fs and dump forms the same --reformats, which hold the restored disk to
+# what the change predicts; the source's btrfs read-only snapshots are then
+# left out by design, so one missing after the restore isn't a FAIL.
 #
 # HT_HOLT_BIN=DIR takes bko-holt from DIR/bko-holt (DIR/PLATFORM/bko-holt in
 # ht1-bsd.sh) instead of bin/'s: a set laid out as bin/ is, HoltTest2's
@@ -555,13 +557,16 @@ snaps_check() {
     grep -q '^SNAP ' "$R/logs/source-snaps.txt" 2>/dev/null || return 0
     TMO=1800 sshk "$1" "$SNAPS" > "$R/logs/restored-snaps.txt" 2>&1
     local out rc=0
-    out=$(awk 'NR == FNR { if ($1 == "SNAP") src[$2] = $0; next }
+    # HT_REFORMAT: a snapshot of a btrfs made another type isn't restored
+    # (docs/design/reformat.md); one that is still there is judged as ever.
+    out=$(awk -v reformat="${HT_REFORMAT:-}" 'NR == FNR { if ($1 == "SNAP") src[$2] = $0; next }
         $1 == "SNAP" { dst[$2] = $0 }
         function f(l, k,   n, i, a, kv) { n = split(l, a, " "); for (i = 3; i <= n; i++) { split(a[i], kv, "="); if (kv[1] == k) return kv[2] } return "" }
         END {
             bad = 0
             for (p in src) {
                 if (src[p] ~ / unmounted$/) { print "skip " p " (no mount reaches it on the source)"; continue }
+                if (!(p in dst) && reformat != "") { print "ok " p " left out (HT_REFORMAT=" reformat ")"; continue }
                 if (!(p in dst)) { print "FAIL " p " missing"; bad = 1; continue }
                 if (f(src[p], "ro") == "true" && f(dst[p], "ro") != "true") { print "FAIL " p " not read-only (" dst[p] ")"; bad = 1; continue }
                 se = f(src[p], "excl"); de = f(dst[p], "excl")
@@ -1426,7 +1431,7 @@ phase_verify() {
         mok_check "$DST_MP"
         (trap '' TERM INT HUP; exec "$T/vm-umount" "$DST_MP") >> "$R/logs/verify-mount.log" 2>&1; HT_MOUNTED=
         python3 "$T/compare/fsmeta.py" compare "$R/src-meta.json" "$R/dst-meta.json" > "$R/logs/fsmeta-compare.txt" 2>&1
-        if python3 "$HERE/judge.py" fs "$T/compare/fsmeta.py" "$R/src-meta.json" "$R/dst-meta.json" "${BS2_FSJUDGE[@]}" > "$R/logs/fsjudge.txt" 2>&1; then
+        if python3 "$HERE/judge.py" fs "$T/compare/fsmeta.py" "$R/src-meta.json" "$R/dst-meta.json" "${BS2_FSJUDGE[@]}" "${REFORMAT[@]}" > "$R/logs/fsjudge.txt" 2>&1; then
             ok "fsmeta: the files agree but for the boot stage's ($(tail -1 "$R/logs/fsjudge.txt"))"
         else
             bad "fsmeta: $(grep '^DIFF' "$R/logs/fsjudge.txt" | head -5 | tr '\n' ' ')"
@@ -1505,7 +1510,8 @@ phase_verify() {
     # bs2: the restored dump against the drifted layout the case asked for.
     local jsrc=$R/dumps/src.json
     [[ $VARIANT != bs2 ]] || { how=("${BS2_JUDGE[@]}"); jsrc=$R/dumps/drifted.json; }
-    if python3 "$HERE/judge.py" "${how[@]}" "$jsrc" "$R/dumps/dst.json" > "$R/logs/judge.txt" 2>&1; then
+    # (--reformat first: --degraded has to come right before the dumps.)
+    if python3 "$HERE/judge.py" "${REFORMAT[@]}" "${how[@]}" "$jsrc" "$R/dumps/dst.json" > "$R/logs/judge.txt" 2>&1; then
         ok "the dumps agree ($(tail -1 "$R/logs/judge.txt"))"
     else
         bad "the dumps differ: $(grep -c '^DIFF' "$R/logs/judge.txt") fields (logs/judge.txt)"

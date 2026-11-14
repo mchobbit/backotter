@@ -17,7 +17,13 @@ The three share one NVRAM, as a laptop's: WORK_DIR/vars.fd, a fresh store, or a
 copy of GUEST_DIR/uefi-vars.fd when the guest has one and boots with Secure Boot
 off (its install's: cachyos-zfs's has Limine's entry).  The source then boots
 through its boot loader's own entry, as the Thinkpad does, and bs1-restore's
-load recreates that entry for the restored boot.
+load recreates that entry for the restored boot.  A source that booted
+through the firmware's own entry for the disk instead (a fresh store, and
+no entry of its own on a partition: manjaro) has none to recreate, so its
+restored boot is given the disk first as the source's was (bootindex): it
+then goes through the ESP's removable-media loader, which load renews.
+Without that, OVMF's shell, ahead of the disk's entry it makes anew at
+that boot, would take the boot.
 
 The internal disk is the guest's own size.  The backup is checked to be named
 /mnt/bs1-src (the tree is mounted elsewhere: --as-path) and to keep a file's
@@ -56,6 +62,7 @@ Exits 0 if all of that held.  Nothing outside WORK_DIR is written.
 """
 
 import argparse
+import base64
 import datetime
 import glob
 import json
@@ -93,6 +100,8 @@ done
 grub2-editenv /boot/grub2/grubenv set default="$id" && echo "$id"'''
 SSH = rw1a.SSH + ["-o", "ServerAliveInterval=30"]
 CONSOLE_BOOT = os.path.join(HERE, "..", "..", "console-boot.py")
+# The entry the firmware booted through, from efivarfs (no efibootmgr needed).
+NVBOOT = os.path.join(HERE, "..", "..", "holttest1d", "nvboot-efivars.sh")
 TYPE_LUKS = os.path.join(HERE, "..", "..", "omarchy", "type-luks-passphrase.py")
 # --strip-embedded-key: crypttab's key files become none, and leave the
 # initramfs (dracut's install_items, cryptsetup-initramfs's KEYFILE_PATTERN)
@@ -489,6 +498,16 @@ def main():
     check(mdns_up(), "avahi-daemon is running")
     if fails:
         return failed(vm)
+    # Whether the source booted through an entry of its own (one on a
+    # partition: HD()), which the restore recreates, or the firmware's.
+    by_firmware = False
+    if not a.bios:
+        with open(NVBOOT, "rb") as f:
+            script = base64.b64encode(f.read()).decode()
+        _, nv = root.run(f"echo {script} | base64 -d | sh", 60)
+        nv = nv.strip().splitlines()[-1] if nv.strip() else ""
+        by_firmware = nv.startswith("Boot") and "HD(" not in nv
+        print(f"the source booted through {nv or '(unknown)'}" + ("; the firmware's own entry, so the restored boot gets the disk first too" if by_firmware else ""), flush=True)
     if a.earlier_restore:
         root.run("mkdir -p /var/log/bko-holt; echo '==== stage boot done' >/var/log/bko-holt/load.log")
     _, ostree = root.run("test -e /run/ostree-booted && echo ostree-booted", 30)
@@ -594,13 +613,13 @@ def main():
             print("FAILED: " + "; ".join(fails), flush=True)
             return 1
 
-        print(f"== restored {attempt}: the internal disk, by the NVRAM the run left", flush=True)
-        # BIOS has no NVRAM to go by.
-        vm = boot(f"restored{attempt}", [internal_disk(internal, a.bios), usb_drive], typed_restore)
+        print(f"== restored {attempt}: the internal disk, " + ("first (BIOS)" if a.bios else "first, as the source booted it" if by_firmware else "by the NVRAM the run left"), flush=True)
+        # BIOS has no NVRAM to go by; nor had a source the firmware booted by its own entry.
+        vm = boot(f"restored{attempt}", [internal_disk(internal, a.bios or by_firmware), usb_drive], typed_restore)
         # A ZFS root is a dataset, which lsblk can't follow; bs1-verify checks its
         # pool.  On ostree / is a composefs overlay, and the disk is /sysroot's.
         up = root.up(vm.proc, f"r=/; [ -e /run/ostree-booted ] && r=/sysroot; findmnt -no FSTYPE $r | grep -qx zfs || lsblk -snlo NAME \"$(findmnt -n -o SOURCE $r | sed 's/\\[.*//')\" | grep -qx {dev}")
-        check(up, "the restored system boots from NVRAM and answers")
+        check(up, "the restored system boots " + ("by itself" if a.bios else "from the disk's removable-media loader, as the source did," if by_firmware else "from NVRAM") + " and answers")
         if up:
             check(host_key_is_pinned(), "the restored system presents the fixed host key")
             # Started by its boot this time, so it's enabled, not just running.
@@ -628,7 +647,7 @@ def main():
             break
         if mode == "drive" and attempt == a.restores:
             print("== LUKS (f): the restored system without the drive asks, after the wait", flush=True)
-            vm = boot(f"restored{attempt}-nodrive", [internal_disk(internal, a.bios)], True, (75, 105, 135))
+            vm = boot(f"restored{attempt}-nodrive", [internal_disk(internal, a.bios or by_firmware)], True, (75, 105, 135))
             up = root.up(vm.proc, timeout=600)
             check(up, "the restored system boots without the drive, its passphrase typed at the prompt")
             if up:

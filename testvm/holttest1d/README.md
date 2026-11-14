@@ -419,10 +419,16 @@ cinqcent, 2026-11-10: PASS).
 
 `HT_REFORMAT="MOUNT=TYPE ..."` restores onto another filesystem type: every
 load call from the dry run on gets `--reformat MOUNT=TYPE` for each
-(docs/design/reformat.md).  judge.py isn't taught the type change yet, so
-fsmeta, health and the dump comparison list it, the rewritten files and the
-folded subvolume mounts as DIFFs, and the RESULT is FAIL; the boot, boot
-state and every other check hold as for any run.
+(docs/design/reformat.md), and judge.py's fs and dump forms get the same
+`--reformat`s.  The dump form holds the restored dump to what the change
+predicts: the filesystem the new type with its UUID and label, its btrfs
+record and folded subvolume mounts gone, fstab's entry with the generic
+options and the new pass, and the root's kernel command lines without
+`rootflags=subvol=`.  The fs form allows the files load rewrites, mke2fs's
+`lost+found`, btrfs's inode flags and snapshots left out, and XFS's own
+copies of the ACLs.  The btrfs read-only snapshot check takes a snapshot
+missing after the restore as left out.  The boot, boot state and every
+other check hold as for any run.
 
 The plan's variants are chosen with `HT_VARIANT`, each in a directory of
 its own (`RUN/GUEST-VARIANT`): `oneshot` runs the rebuild as one

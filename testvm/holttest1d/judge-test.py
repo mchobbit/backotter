@@ -1483,6 +1483,265 @@ class FsAbroot(unittest.TestCase):
         self.assertIn("grub-install writes the ESPs' loaders", out)
 
 
+def btrfs_root_guest():
+    """/boot, swap, and a btrfs root with @ on / and @home on /home (Fedora's
+    layout), booted with rootflags=subvol=@: the source of a --reformat."""
+    root = 27260928
+    fs = btrfs(root * 512, "dddddddd-dddd-4ddd-8ddd-dddddddddddd")
+    fs["label"] = "fedora"
+    d = dump([disk("vda", 16 * GIB, [
+        part("vda1", 1, 2048, 2097152, ext4(1 * GIB, "77777777-7777-4777-8777-777777777777"), mounted_at=["/boot"]),
+        part("vda2", 2, 2099200, 4194304, swap(2 * GIB)),
+        part("vda3", 3, 6293504, root, fs, mounted_at=["/", "/home"]),
+    ])])
+    u = "UUID=dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    d["storage"]["fstab"] = [
+        {"spec": u, "file": "/", "type": "btrfs", "options": "subvol=@,compress=zstd:1,noatime", "freq": 0, "passno": 0, "resolves_to": "vda3"},
+        {"spec": "UUID=77777777-7777-4777-8777-777777777777", "file": "/boot", "type": "ext4", "options": "defaults", "freq": 1, "passno": 2, "resolves_to": "vda1"},
+        {"spec": u, "file": "/home", "type": "btrfs", "options": "subvol=@home,compress=zstd:1", "freq": 0, "passno": 0, "resolves_to": "vda3"},
+        {"spec": "UUID=55555555-5555-4555-8555-555555555555", "file": "none", "type": "swap", "options": "defaults", "freq": 0, "passno": 0, "resolves_to": "vda2"},
+    ]
+    d["storage"]["mounts"] = [
+        {"target": "/", "source": "/dev/vda3", "fstype": "btrfs", "device": "vda3", "root": "/@", "options": "rw,noatime",
+         "super_options": "rw,compress=zstd:1,space_cache=v2,subvolid=256,subvol=/@"},
+        {"target": "/boot", "source": "/dev/vda1", "fstype": "ext4", "device": "vda1", "root": "/", "options": "rw,relatime", "super_options": "rw"},
+        {"target": "/home", "source": "/dev/vda3", "fstype": "btrfs", "device": "vda3", "root": "/@home", "options": "rw,relatime",
+         "super_options": "rw,compress=zstd:1,space_cache=v2,subvolid=257,subvol=/@home"},
+    ]
+    d["storage"]["backup_sources"] = [
+        {"path": "/", "from": "/", "device": "vda3", "fstype": "btrfs", "source": "/dev/vda3", "subvol": "/@"},
+        {"path": "/boot", "from": "/boot", "device": "vda1", "fstype": "ext4", "source": "/dev/vda1", "subvol": None},
+        {"path": "/home", "from": "/home", "device": "vda3", "fstype": "btrfs", "source": "/dev/vda3", "subvol": "/@home"},
+    ]
+    d["storage"]["btrfs"] = [{"uuid": "dddddddd-dddd-4ddd-8ddd-dddddddddddd", "label": "fedora", "devices": ["vda3"],
+                              "mounted_subvolumes": [{"target": "/", "subvol": "/@"}, {"target": "/home", "subvol": "/@home"}],
+                              "subvolumes": [{"id": 256, "path": "<FS_TREE>/@", "parent_uuid": None, "readonly": False},
+                                             {"id": 257, "path": "<FS_TREE>/@home", "parent_uuid": None, "readonly": False}]}]
+    line = f"root={u} ro rootflags=subvol=@ console=ttyS0"
+    d["boot"] = {"cmdline": {"raw": f"BOOT_IMAGE=/vmlinuz-7 {line}", "words": ["BOOT_IMAGE=/vmlinuz-7", *line.split()[:-1], "console=ttyS0\n"],
+                             "storage": {"BOOT_IMAGE": "/vmlinuz-7", "root": u, "rootflags": "subvol=@"}},
+                 "kernel_cmdline_file": line,
+                 "grub": {"grub_cfg": {"entries": ["Fedora Linux"], "default_linux": f"/vmlinuz-7 {line}", "default_initrd": "/initramfs-7.img"}},
+                 "systemd_boot": {"entries": [{"file": "x-7.conf", "options": line}]}}
+    return d
+
+
+def reformatted(src, to="ext4"):
+    """SRC's btrfs root as load --reformat /=TO leaves it, booted."""
+    d = copy.deepcopy(src)
+    st = d["storage"]
+    p = st["disks"][0]["partitions"][2]
+    size = p["size_bytes"]
+    p["content"] = dict((ext4 if to == "ext4" else xfs)(size, "dddddddd-dddd-4ddd-8ddd-dddddddddddd"), label="fedora")
+    p["mounted_at"] = ["/"]
+    st["fstab"] = [e for e in st["fstab"] if e["file"] != "/home"]
+    st["fstab"][0].update(type=to, options="noatime", passno=1 if to == "ext4" else 0)
+    st["mounts"] = [m for m in st["mounts"] if m["target"] != "/home"]
+    st["mounts"][0].update(fstype=to, root="/", super_options="rw")
+    st["backup_sources"] = [b for b in st["backup_sources"] if b["path"] != "/home"]
+    st["backup_sources"][0].update(fstype=to, subvol=None)
+    st["btrfs"] = []
+    u = "UUID=dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+    line = f"root={u} ro console=ttyS0"
+    b = d["boot"]
+    b["cmdline"] = {"raw": f"BOOT_IMAGE=/vmlinuz-7 {line}", "words": ["BOOT_IMAGE=/vmlinuz-7", *line.split()[:-1], "console=ttyS0\n"],
+                    "storage": {"BOOT_IMAGE": "/vmlinuz-7", "root": u}}
+    b["kernel_cmdline_file"] = line
+    b["grub"]["grub_cfg"]["default_linux"] = f"/vmlinuz-7 {line}"
+    b["systemd_boot"]["entries"][0]["options"] = line
+    return d
+
+
+class Reformat(unittest.TestCase):
+    """judge.py --reformat MOUNT=TYPE over a btrfs root made ext4 or XFS
+    (docs/design/reformat.md), and its twins: what load wouldn't have done."""
+
+    judge = Fit.judge
+
+    def good(self, src, dst, *args):
+        rc, out = self.judge(src, dst, *args)
+        self.assertEqual(rc, 0, out)
+        return out
+
+    def bad(self, src, dst, *args):
+        rc, out = self.judge(src, dst, *args)
+        self.assertEqual(rc, 1, out)
+        return out
+
+    def test_onto_ext4(self):
+        src = btrfs_root_guest()
+        out = self.good(src, reformatted(src), "--reformat", "/=ext4")
+        self.assertIn("folded into /: /home", out)
+
+    def test_onto_xfs(self):
+        src = btrfs_root_guest()
+        self.good(src, reformatted(src, "xfs"), "--reformat", "/=xfs")
+
+    def test_without_the_flag_it_differs(self):
+        src = btrfs_root_guest()
+        self.bad(src, reformatted(src))
+
+    def test_wrong_type(self):
+        src = btrfs_root_guest()
+        out = self.bad(src, reformatted(src, "xfs"), "--reformat", "/=ext4")
+        self.assertIn("DIFF reformat: --reformat /=ext4: vda3's filesystem dddddddd-dddd-4ddd-8ddd-dddddddddddd is xfs, not ext4", out)
+
+    def test_new_uuid(self):
+        src = btrfs_root_guest()
+        dst = reformatted(src)
+        dst["storage"]["disks"][0]["partitions"][2]["content"]["uuid"] = "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee"
+        self.assertIn("no filesystem with the source's UUID", self.bad(src, dst, "--reformat", "/=ext4"))
+
+    def test_label_lost(self):
+        src = btrfs_root_guest()
+        dst = reformatted(src)
+        dst["storage"]["disks"][0]["partitions"][2]["content"]["label"] = None
+        self.assertIn("DIFF storage.disks.0.partitions.2.content.label", self.bad(src, dst, "--reformat", "/=ext4"))
+
+    def test_fstab_options_kept_the_subvolume(self):
+        src = btrfs_root_guest()
+        dst = reformatted(src)
+        dst["storage"]["fstab"][0]["options"] = "subvol=@,noatime"
+        self.assertIn("DIFF storage.fstab.0.options", self.bad(src, dst, "--reformat", "/=ext4"))
+
+    def test_fstab_wrong_pass(self):
+        src = btrfs_root_guest()
+        dst = reformatted(src)
+        dst["storage"]["fstab"][0]["passno"] = 0
+        self.assertIn("DIFF storage.fstab.0.passno", self.bad(src, dst, "--reformat", "/=ext4"))
+
+    def test_home_not_folded(self):
+        src = btrfs_root_guest()
+        dst = reformatted(src)
+        dst["storage"]["fstab"].insert(2, copy.deepcopy(src["storage"]["fstab"][2]))
+        self.bad(src, dst, "--reformat", "/=ext4")
+
+    def test_rootflags_left_on_a_loader_entry(self):
+        src = btrfs_root_guest()
+        dst = reformatted(src)
+        dst["boot"]["systemd_boot"]["entries"][0]["options"] = src["boot"]["systemd_boot"]["entries"][0]["options"]
+        self.assertIn("DIFF boot.systemd_boot.entries.0.options", self.bad(src, dst, "--reformat", "/=ext4"))
+
+    def test_another_filesystem_still_compared(self):
+        src = btrfs_root_guest()
+        dst = reformatted(src)
+        dst["storage"]["disks"][0]["partitions"][0]["content"]["inode_size"] = 128
+        self.assertIn("DIFF storage.disks.0.partitions.0.content.inode_size", self.bad(src, dst, "--reformat", "/=ext4"))
+
+    def test_mount_not_in_fstab(self):
+        src = btrfs_root_guest()
+        self.assertIn("doesn't mount /srv", self.bad(src, reformatted(src), "--reformat", "/=ext4", "--reformat", "/srv=xfs"))
+
+    def test_bad_argument(self):
+        src = btrfs_root_guest()
+        rc, out = self.judge(src, reformatted(src), "--reformat", "/=vfat")
+        self.assertEqual(rc, 1, out)
+        self.assertIn("--reformat MOUNT=TYPE", out)
+
+    def test_grub_snapshot_entries(self):
+        """openSUSE's snapper entries come first on btrfs, and with no kernel."""
+        src = btrfs_root_guest()
+        dst = reformatted(src)
+        g = src["boot"]["grub"]["grub_cfg"]
+        g["entries"].insert(0, "Help on bootable snapshot #$snapshot_num")
+        g["default_linux"] = g["default_initrd"] = None
+        self.assertIn("GRUB's btrfs snapshot entries left out", self.good(src, dst, "--reformat", "/=ext4"))
+        dst["boot"]["grub"]["grub_cfg"]["entries"].append("Advanced options")
+        self.bad(src, dst, "--reformat", "/=ext4")
+
+
+class FsReformat(unittest.TestCase):
+    """judge.py fs --reformat: the restored files after a btrfs root became ext4 or XFS."""
+
+    judge_plain = Fs.judge
+
+    def judge(self, before, after, *args):
+        with tempfile.TemporaryDirectory() as tmp:
+            s, t = os.path.join(tmp, "src-meta.json"), os.path.join(tmp, "dst-meta.json")
+            for path, d in ((s, before), (t, after)):
+                with open(path, "w") as f:
+                    json.dump(d, f)
+            r = subprocess.run([sys.executable, "-I", JUDGE, "fs", FSMETA, s, t, *args], capture_output=True, text=True)
+        return r.returncode, r.stdout + r.stderr
+
+    def base(self):
+        return {"etc": meta("dir"), "etc/fstab": meta("file"), "etc/passwd": meta("file"),
+                "var": meta("dir", flags=0x00800000), "var/log": meta("dir", flags=0x00800000 | 0x10),
+                ".snapshots": meta("dir"), ".snapshots/1": meta("dir"), ".snapshots/1/snapshot": meta("dir"),
+                ".snapshots/1/snapshot/usr/bin/perl": meta("file", links=[".snapshots/1/snapshot/usr/bin/perl", "usr/bin/perl", "usr/bin/perl5"]),
+                "usr/bin/perl": meta("file", links=[".snapshots/1/snapshot/usr/bin/perl", "usr/bin/perl", "usr/bin/perl5"]),
+                "usr/bin/perl5": meta("file", links=[".snapshots/1/snapshot/usr/bin/perl", "usr/bin/perl", "usr/bin/perl5"]),
+                "var/lib/k": meta("dir", xattrs={"system.posix_acl_default": "02"})}
+
+    def restored(self, to):
+        before = self.base()
+        after = copy.deepcopy(before)
+        for p in [p for p in after if p.startswith(".snapshots/1/snapshot")]:
+            del after[p]
+        after["etc/fstab"].update(sha256="cd", mtime=2)
+        after["var"]["flags"] = 0x1000 if to == "ext4" else 0
+        after["var/log"]["flags"] = 0x10
+        for p in ("usr/bin/perl", "usr/bin/perl5"):
+            after[p]["links"] = ["usr/bin/perl", "usr/bin/perl5"]
+        if to == "ext4":
+            after["lost+found"] = meta("dir")
+        else:
+            after["var/lib/k"]["xattrs"]["trusted.SGI_ACL_DEFAULT"] = "03"
+        return before, after
+
+    def test_onto_ext4(self):
+        before, after = self.restored("ext4")
+        rc, out = self.judge(before, after, "--reformat", "/=ext4")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("mke2fs's lost+found", out)
+        self.assertEqual(self.judge(before, after)[0], 1)
+
+    def test_onto_xfs(self):
+        before, after = self.restored("xfs")
+        rc, out = self.judge(before, after, "--reformat", "/=xfs")
+        self.assertEqual(rc, 0, out)
+        self.assertIn("trusted.SGI_ACL_*", out)
+
+    def test_lost_found_only_onto_ext4(self):
+        before, after = self.restored("xfs")
+        after["lost+found"] = meta("dir")
+        self.assertIn("DIFF extra: 1: lost+found", self.judge(before, after, "--reformat", "/=xfs")[1])
+
+    def test_sgi_acl_only_onto_xfs_and_beside_an_acl(self):
+        before, after = self.restored("ext4")
+        after["var/lib/k"]["xattrs"]["trusted.SGI_ACL_DEFAULT"] = "03"
+        self.assertIn("DIFF trusted-xattr", self.judge(before, after, "--reformat", "/=ext4")[1])
+        before, after = self.restored("xfs")
+        after["etc"]["xattrs"]["trusted.SGI_ACL_FILE"] = "03"
+        self.assertIn("DIFF trusted-xattr: 1: etc", self.judge(before, after, "--reformat", "/=xfs")[1])
+
+    def test_other_flags_still_count(self):
+        before, after = self.restored("ext4")
+        after["var/log"]["flags"] = 0
+        self.assertIn("DIFF inode flags: 1: var/log", self.judge(before, after, "--reformat", "/=ext4")[1])
+
+    def test_other_files_still_count(self):
+        before, after = self.restored("ext4")
+        after["etc/passwd"]["sha256"] = "ef"
+        del after["etc"]
+        out = self.judge(before, after, "--reformat", "/=ext4")[1]
+        self.assertIn("DIFF content: 1: etc/passwd", out)
+        self.assertIn("DIFF missing: 1: etc", out)
+
+    def test_links_broken_otherwise_still_count(self):
+        before, after = self.restored("ext4")
+        after["usr/bin/perl"]["links"] = after["usr/bin/perl5"]["links"] = None
+        self.assertIn("DIFF hard links: 2", self.judge(before, after, "--reformat", "/=ext4")[1])
+
+    def test_a_mount_elsewhere(self):
+        """--reformat /home=ext4: lost+found is /home's, not /'s."""
+        before, after = self.restored("ext4")
+        out = self.judge(before, after, "--reformat", "/home=ext4")[1]
+        self.assertIn("DIFF extra: 1: lost+found", out)
+        self.assertIn("DIFF inode flags", out)
+
+
+
 class TimeshiftLeftOut(unittest.TestCase):
     """biglinux (bl4-1): Timeshift's snapshots under the top level's
     timeshift-btrfs/snapshots/ aren't in the backup, and load doesn't make

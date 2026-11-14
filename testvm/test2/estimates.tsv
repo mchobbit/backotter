@@ -46,6 +46,7 @@ stic	stic:netbsd11	5.40	324	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:nixos2605	3.92	235	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
 stic	stic:omarchy	5.03	302	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
 stic	stic:omnios58	6.17	370	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
+stic	stic:oi2610	8.21	493	0.00	-	openindiana.md O4: SticTest1 oi2610 2026-11-14 (oi4-*), one run on each host (cinqcent 465 s, chopin 520 s), their mean
 stic	stic:openbsd8	5.67	340	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
 stic	stic:pop24	10.18	610	0.00	-	st1_marks.tsv: median of 6 exit-0 runs
 stic	stic:rocky10	1.83	110	0.00	-	st1_marks.tsv: median of 5 exit-0 runs
@@ -104,6 +105,8 @@ holt	holt:fedora44-raid	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror 
 holt	holt:freebsd15-mirror	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
 holt	holt:freebsd15-geli	5.60	336	0.00	-	chopin geli3 PASS 2026-11-14, 04:17:10Z to 04:22:46Z (ht1-bsd.sh, passphrase typed through console-boot.py)
 holt	holt:omnios58-mirror	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
+holt	holt:oi2610	5.63	338	0.00	-	openindiana.md: as holt:omnios58 (r3all chopin PASS), until measured (est.)
+holt	holt:oi2610-bios	5.63	338	0.00	-	openindiana.md: as holt:omnios58 (r3all chopin PASS), until measured (est.)
 holt	holt:rocky10-raid5	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
 holt	holt:ubuntu26-raid	6.00	360	0.00	-	test2.md HoltTest2 Cost: RAID or mirror guest ~6 gm (the raid runs: no whole PASS timed for most)
 holt	holt:ubuntu26-luks	4.38	263	0.00	-	cinqcent lk1 PASS 2026-11-10, 14:00:45 to 14:05:08 (ht1.sh, in RAM)
@@ -185,6 +188,8 @@ guest	guest:nixos2605	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for 
 guest	guest:omarchy	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:omnios58	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:omnios58-mirror	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:oi2610	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:oi2610-bios	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:openbsd8	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:pop24	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:redox	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
@@ -222,6 +227,7 @@ holt	holt:netbsd11+img	4.18	250	0.00	-	test2.md ImgTest2 Cost: the panel's figur
 holt	holt:openbsd8+img	6.33	379	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:dragonfly6+img	15.38	922	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:omnios58+img	5.62	337	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:oi2610+img	5.63	338	0.00	-	openindiana.md: as holt:omnios58+img (the panel's figure), until measured (est.)
 holt	holt:haiku6+img	3.35	201	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:endeavouros	4.00	240	0.00	-	contract: about one Linux source, 11-09
 holt	holt:endeavouros-grub	4.00	240	0.00	-	contract: about one Linux source, 11-09

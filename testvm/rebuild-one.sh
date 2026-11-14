@@ -139,6 +139,12 @@ netbsd11)   cmd=(asm $T/make-netbsd.sh 11.1 "$W") ;;
 alpinebsd)  cmd=(asm $T/make-netbsd.sh --alpinebsd 11.0 "$W") ;;
 dragonfly6) cmd=(asm $T/make-dragonfly.sh 6.4.2 "$W") ;;
 omnios58)   cmd=(asm $T/make-omnios.sh r151058 "$W") ;;
+# oi2610: OpenIndiana's text ISO and its installer, driven over the console;
+# oi2610-bios: OpenIndiana's supplemental cloud image. Both in
+# /bkoscratch/rebuild-inputs/GUEST, their SHA-256s pinned in make-openindiana.sh
+# (OpenIndiana signs neither); the packages as on the media (no pkg update).
+oi2610)     cmd=(asm $T/make-openindiana.sh oi2610 "$SRC/OI-hipster-text-20261030.iso" "$W") ;;
+oi2610-bios) cmd=(asm $T/make-openindiana.sh --cloud oi2610-bios "$SRC/OI-hipster-cloudimage-20261107.img.zst" "$W") ;;
 sculpt2610) cmd=(asm $T/make-sculpt.sh 26.10 "$W") ;;
 *) echo "no recipe for $G" >&2; exit 2 ;;
 esac

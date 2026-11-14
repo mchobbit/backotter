@@ -78,7 +78,8 @@
 #             stat(1) lines come first, and stat reads nothing; reading the
 #             ACLs and extended attributes may move the atime where atimes
 #             are on, so an exact check needs DIR's file system noatime.  BSD
-#             stat(1) but on illumos (/usr/gnu/bin/stat there)
+#             stat(1) but on illumos (GNU stat there: /usr/gnu/bin's, else
+#             /usr/bin's, OpenIndiana's)
 #   rt_dot_check BEFORE AFTER [forward|forward-mtime]
 #             whether two rt_dot records of a restore target are the same,
 #             for a restore over a target that isn't fresh (A3: its "." is
@@ -397,9 +398,12 @@ rt_over_check() {
 
 rt_dot() {  # DIR
     if [ "$(uname -s)" = SunOS ]; then
-        /usr/gnu/bin/stat -c 'mode %a owner %u:%g' "$1"
-        /usr/gnu/bin/stat -c 'atime %.9X' "$1"
-        /usr/gnu/bin/stat -c 'mtime %.9Y' "$1"
+        # GNU stat: /usr/gnu/bin's on OmniOS, /usr/bin's on OpenIndiana
+        # (its gnu-coreutils puts stat there, illumos having none).
+        rt_st=/usr/gnu/bin/stat; [ -x $rt_st ] || rt_st=/usr/bin/stat
+        $rt_st -c 'mode %a owner %u:%g' "$1"
+        $rt_st -c 'atime %.9X' "$1"
+        $rt_st -c 'mtime %.9Y' "$1"
         /usr/bin/ls -dV "$1" | tail -n +2 | sed 's/^ */acl /'
         /usr/bin/ls -d/v "$1" | tail -n +2 | sed 's/^ */attrs /'
         # runat(1) runs its arguments as one shell command line.

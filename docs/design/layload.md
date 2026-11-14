@@ -856,10 +856,12 @@ Per platform:
   features, last changed 2025-01-13), and OpenIndiana Hipster builds from
   gate master, so an OpenIndiana pool's features are all the image's.  The
   illumos loader's `features_for_read` covers all 27, so a pool load makes
-  boots on OpenIndiana too.  OpenIndiana isn't a supported source yet
-  (`osrel.rs`): that's distro support (its installer's layout, boot
-  environments, `bootadm`), which an OpenIndiana guest would test, not an
-  image.  When illumos gets a feature the image lacks, the plan check says
+  boots on OpenIndiana too.  OpenIndiana is a supported source since
+  2026-11-14 (docs/design/openindiana.md), with this image as its rescuer.
+  One difference shows at the boot stage: OmniOS's `bootadm
+  update-archive` remakes `etc/versions/build` from `build.*` fragments
+  and deletes it when there are none, as on OpenIndiana, so load gives it
+  a fragment of itself for the run (its mtime kept).  When illumos gets a feature the image lacks, the plan check says
   so and the image moves to the OmniOS release that has it.
 - **FreeBSD**: 15.1-RELEASE (OpenZFS 2.4).  FreeBSD 14 is older; FreeBSD
   15.1 and GhostBSD 26.2 are on 15.1-RELEASE.  HardenedBSD 15 follows

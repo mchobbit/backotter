@@ -728,6 +728,25 @@
     "entry:testvm/test2/stic/limits.json#nixos2605"
    ]
   },
+  "oi2610": {
+   "os": "omnios",
+   "bins": [
+    "omnios/restic-bko",
+    "omnios/rustic-bko"
+   ],
+   "harness": [
+    "testvm/stictest1/oi2610/**",
+    "testvm/compare/illumos/roundtrip.sh",
+    "testvm/compare/nonroot-inner.sh",
+    "testvm/compare/rt-common.sh"
+   ],
+   "judge": [
+    "testvm/compare/verdict.py",
+    "testvm/compare/expected-coverage.json",
+    "entry:testvm/test2/stic/limits.json#oi2610"
+   ],
+   "notes": "a copy of omnios58's check; the illumos binaries (built on omnios58) run on OpenIndiana as they are (docs/design/openindiana.md Decision 4)"
+  },
   "omarchy": {
    "os": "linux",
    "bins": [

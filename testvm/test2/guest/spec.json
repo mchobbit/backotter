@@ -1200,6 +1200,56 @@
     "established": true
    }
   },
+  "oi2610": {
+   "kind": "ssh",
+   "plat": "illumos",
+   "harness": [
+    "testvm/make-openindiana.sh",
+    "testvm/openindiana/**",
+    "testvm/update/in-guest.sh#SunOS",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#ips"
+   ],
+   "checks": {
+    "pm": "ips",
+    "rules": {
+     "source": "S-ips",
+     "loader": "L-ill",
+     "kernel": "K-ill",
+     "boot": "B-ill",
+     "mounts": "M-ill"
+    },
+    "fw": "uefi",
+    "established": false
+   }
+  },
+  "oi2610-bios": {
+   "kind": "ssh",
+   "plat": "illumos",
+   "harness": [
+    "testvm/make-openindiana.sh",
+    "testvm/openindiana/**",
+    "testvm/update/in-guest.sh#SunOS",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#ips"
+   ],
+   "checks": {
+    "pm": "ips",
+    "rules": {
+     "source": "S-ips",
+     "loader": "L-ill",
+     "kernel": "K-ill",
+     "boot": "B-ill",
+     "mounts": "M-ill"
+    },
+    "fw": "bios",
+    "established": false
+   }
+  },
   "omnios58": {
    "kind": "ssh",
    "plat": "illumos",

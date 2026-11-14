@@ -6,7 +6,9 @@ an OmniOS r151058 system that runs from RAM, built in a throwaway
 OmniOS's own tools for its install media (kayak).  Write it raw to a USB
 stick.  It boots with BIOS or UEFI, but not with Secure Boot on: illumos'
 loader isn't signed.  `platform` is `illumos`, the family of systems it
-restores; OmniOS is its base, as Ubuntu is the Linux image's.
+restores (OmniOS and OpenIndiana: their ZFS feature tables are the
+same, docs/design/openindiana.md); OmniOS is its base, as Ubuntu is the
+Linux image's.
 
 ```
 ./make-img-bsd.sh [--test] illumos [OUT_IMG]

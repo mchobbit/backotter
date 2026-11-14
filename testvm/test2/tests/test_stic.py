@@ -201,14 +201,14 @@ class TestLint(unittest.TestCase):
     def test_tree_clean(self):
         self.assertEqual(CM.lint(), [])
 
-    def test_61_files_take_bko_testvm(self):
+    def test_62_files_take_bko_testvm(self):
         n = 0
         base = os.path.join(REPO, "testvm", "stictest1")
         for g in os.listdir(base):
             for fn in (os.listdir(os.path.join(base, g)) if os.path.isdir(os.path.join(base, g)) else []):
                 with open(os.path.join(base, g, fn), errors="replace") as f:
                     n += "${BKO_TESTVM:-" in f.read()
-        self.assertEqual(n, 61)
+        self.assertEqual(n, 62)
 
     def test_planted_references(self):
         lines = ['. "$WORK/testvm/vm-lib.sh"', "C=$W/testvm/compare", 'source ~/backotter-work/testvm/compare/x.sh',

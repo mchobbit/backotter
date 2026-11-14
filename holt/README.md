@@ -47,8 +47,9 @@ refuses a layout from one.  The list (`src/osrel.rs`, by os-release's `ID` and
   (docs/design/vanillaos.md);
 - FreeBSD 14 and 15, HardenedBSD 15, GhostBSD 26 (`src/other/freebsd.rs`),
   NetBSD 11, AlpineBSD 1 and OpenBSD 8 (`labelled.rs`), DragonFly 6
-  (`dfly.rs`), OmniOS (illumos, `illumos.rs`) and Haiku (`haiku.rs`): built
-  for and run on each system itself;
+  (`dfly.rs`), OmniOS and OpenIndiana Hipster (illumos, `illumos.rs`;
+  OpenIndiana has no os-release, so its `/etc/release` stands in) and Haiku
+  (`haiku.rs`): built for and run on each system itself;
 - Redox and Sculpt OS (`offline.rs`), which can't run it: `dump --disk DEV`
   reads them off their disks from Linux, and `load` rebuilds them from Linux.
 

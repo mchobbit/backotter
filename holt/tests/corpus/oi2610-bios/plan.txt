@@ -1,0 +1,77 @@
+# bko-holt load plan for layout.json
+# Source: host-1, OpenIndiana Hipster 2026.10, BIOS boot with illumos, dumped 2026-11-14T07:14:51Z
+#
+# Disks:
+#   c3t0d0 (16 GiB, Virtio Block Device) -> /dev/sdq
+#
+# Notes:
+#   - ZFS pool rpool: illumos can't set a pool's GUID; it gets a new one
+#   - c3t0d0s0: the ESP, written as the source's with the partition table
+#   - ZFS volume rpool/swap: made empty; archivers back up files, not zvols
+
+# ---- partition ----
+# c3t0d0 -> /dev/sdq: the source's table, GUIDs and boot code exactly
+sh -c 'bko-holt write-table layout.json c3t0d0 /dev/rdsk/sdqp0 auto'
+
+# ---- assemble ----
+# ZFS pool rpool, with the source's feature flags only
+zpool create -f -d -o cachefile=none -o ashift=12 -O compression=on -R /mnt/bko-target rpool /dev/dsk/sdqs1
+# mount mounts every dataset in order
+sh -c '[ "$(zfs get -H -o value mounted rpool)" != yes ] || zfs unmount rpool'
+
+# ---- format ----
+zfs create -o mountpoint=legacy -o canmount=off rpool/ROOT
+sh -c '[ "$(zfs get -H -o value mounted rpool/ROOT)" != yes ] || zfs unmount rpool/ROOT'
+zfs create -o mountpoint=legacy -o canmount=noauto -o org.opensolaris.libbe:policy=static -o org.opensolaris.libbe:uuid=bc000000-0000-4000-8000-000000000005 rpool/ROOT/b5afac2a
+sh -c '[ "$(zfs get -H -o value mounted rpool/ROOT/b5afac2a)" != yes ] || zfs unmount rpool/ROOT/b5afac2a'
+zfs create -o mountpoint=/export rpool/export
+sh -c '[ "$(zfs get -H -o value mounted rpool/export)" != yes ] || zfs unmount rpool/export'
+zfs create -o mountpoint=/export/home rpool/export/home
+sh -c '[ "$(zfs get -H -o value mounted rpool/export/home)" != yes ] || zfs unmount rpool/export/home'
+zfs create -V 3224371200 -o refreservation=3327393792 -o volblocksize=8192 rpool/swap
+zpool set bootfs=rpool/ROOT/b5afac2a rpool
+
+# ---- mount ----
+mkdir -p /mnt/bko-target
+mount -F zfs rpool/ROOT/b5afac2a /mnt/bko-target
+zfs mount -O rpool/export
+zfs mount -O rpool
+zfs mount -O rpool/export/home
+
+# ---- restore ----
+# snapshot latest of /srv/bko-repo, with BackOtter's restore flags
+RUSTIC_STRICT_EXIT=true rustic-bko --repository /srv/bko-repo --no-progress restore --numeric-id latest /mnt/bko-target
+
+# ---- boot ----
+# the boot code (MBR, freebsd-boot) was written with the partition table
+# the restored system's zpool.cache names the new pool
+sh -c 'for c in /etc/zfs/zpool.cache /boot/zfs/zpool.cache; do [ -f /mnt/bko-target$c ] && zpool set cachefile=/mnt/bko-target$c rpool; done; true'
+# etc/versions/build as a fragment of itself, so OmniOS' bootadm remakes it rather than deleting it
+sh -c '[ -f /mnt/bko-target/etc/versions/build ] && [ ! -h /mnt/bko-target/etc/versions/build ] || exit 0; for f in /mnt/bko-target/etc/versions/build.*; do if [ -e "$f" ] || [ -h "$f" ]; then exit 0; fi; done; touch -r /mnt/bko-target/etc/versions /run/bko-holt/versref && cp -p /mnt/bko-target/etc/versions/build /mnt/bko-target/etc/versions/build.bko-holt && s=$(/usr/gnu/bin/stat -c %.9Y /mnt/bko-target/etc/versions/build) && case $s in *.000000000) /usr/gnu/bin/touch -m -d @${s%.*}.000000001 /mnt/bko-target/etc/versions/build;; esac'
+# the boot archive, with the new pool's zpool.cache
+bootadm update-archive -R /mnt/bko-target
+# etc/versions/build's fragment gone again, and its mtime back
+sh -c '[ ! -f /run/bko-holt/versref ] || { /usr/gnu/bin/touch -m -r /mnt/bko-target/etc/versions/build.bko-holt /mnt/bko-target/etc/versions/build && rm -f /mnt/bko-target/etc/versions/build.bko-holt && touch -r /run/bko-holt/versref /mnt/bko-target/etc/versions && rm -f /run/bko-holt/versref; }'
+# illumos' gptzfsboot, in the pool's boot area
+installboot -f -b /mnt/bko-target/boot /dev/rdsk/sdqs1
+mkdir -p /mnt/bko-target/var/log/bko-holt
+# this restore's log, on the restored system
+cp -Rp /run/bko-holt/log/. /mnt/bko-target/var/log/bko-holt/
+
+# ---- close ----
+# everything under the target, deepest first
+sh -c 'awk '\''{ print $2 }'\'' /etc/mnttab | awk '\''$0 == "/mnt/bko-target" || index($0, "/mnt/bko-target/") == 1'\'' | sort -r | while read -r m; do umount "$m" || exit; done'
+zpool export rpool
+
+# Nothing was written.  To run it: bko-holt load layout.json ... --through close --commit
+# golden_plans.rs: status pool rpool
+# golden_plans.rs: status dataset rpool/ROOT
+# golden_plans.rs: status dataset rpool/ROOT/b5afac2a
+# golden_plans.rs: status dataset rpool/export
+# golden_plans.rs: status dataset rpool/export/home
+# golden_plans.rs: status dataset rpool/swap
+# golden_plans.rs: status mount /mnt/bko-target
+# golden_plans.rs: status mount /mnt/bko-target/export
+# golden_plans.rs: status mount /mnt/bko-target/rpool
+# golden_plans.rs: status mount /mnt/bko-target/export/home
+# golden_plans.rs: exit 0, nothing on stderr

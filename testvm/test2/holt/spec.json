@@ -131,6 +131,8 @@
                    "notes": "its one-time rescuer is on Cinqcent only (classes.json holt.pins)"},
     "omnios58": {"kind": "bsd", "plat": "illumos", "rescuer": ["omnios58-reguid.qcow2"]},
     "omnios58-mirror": {"kind": "bsd", "plat": "illumos", "rescuer": ["omnios58-reguid.qcow2"]},
+    "oi2610": {"kind": "bsd", "plat": "illumos", "firmware": "uefi", "rescuer": ["omnios58-reguid.qcow2"]},
+    "oi2610-bios": {"kind": "bsd", "plat": "illumos", "rescuer": ["omnios58-reguid.qcow2"]},
     "haiku6": {"kind": "bsd", "plat": "haiku", "rescuer": ["haiku6"]},
     "redox": {"kind": "offline", "harness": ["testvm/redox/console.py"],
               "host_inputs": [{"path": "~/backotter-work/tools/redox/bin", "group": "rescuer"}],

@@ -7,10 +7,10 @@
       "B3": ["freebsd15-ufs", "hardenedbsd15", "ghostbsd26"],
       "B4": ["netbsd11", "alpinebsd"]
     },
-    "alone": ["freebsd14", "openbsd8", "dragonfly6", "omnios58", "haiku6"],
+    "alone": ["freebsd14", "openbsd8", "dragonfly6", "omnios58", "oi2610", "haiku6"],
     "linux": "every Linux guest and sculpt2610 run alone (decision 1): 33 checks plus sculpt2610",
     "non_linux": ["freebsd15", "freebsd15-geli", "ghostbsd26-zfs", "freebsd15-ufs", "hardenedbsd15", "ghostbsd26",
-                  "netbsd11", "alpinebsd", "freebsd14", "openbsd8", "dragonfly6", "omnios58", "haiku6"],
+                  "netbsd11", "alpinebsd", "freebsd14", "openbsd8", "dragonfly6", "omnios58", "oi2610", "haiku6"],
     "canaries": {
       "debian12": "RAM-disk overlay",
       "zorin18": "guest tmpfs",
@@ -41,7 +41,7 @@
       "F": ["fedora44", "fedora44-uefi", "fedora44-raid", "rocky10", "rocky10-lvm", "rocky10-raid5", "kinoite44"],
       "A": ["arch", "alpine324", "aerynos", "artix-dinit", "artix-s6", "endeavouros", "endeavouros-grub", "manjaro", "garuda", "biglinux"],
       "C": ["cachyos", "mx25", "cachyos-zfs"],
-      "I": ["omnios58", "omnios58-mirror"],
+      "I": ["omnios58", "omnios58-mirror", "oi2610", "oi2610-bios"],
       "G": ["gentoo", "gentoo-systemd"],
       "Obscure": ["pop24", "nixos2605", "omarchy", "sculpt2610", "redox", "tumbleweed", "debian12", "chimera",
                   "chimera-uefi", "chimera-zfs"],
@@ -80,7 +80,7 @@
       "haiku6": {"match": ["haiku6"], "guests": ["haiku6"]},
       "openbsd8-newduid": {"match": ["openbsd8-newduid"], "guests": ["openbsd8"]},
       "dragonfly6-newfsid": {"match": ["dragonfly6-newfsid"], "guests": ["dragonfly6"]},
-      "omnios58-reguid": {"match": ["omnios58-reguid"], "guests": ["omnios58", "omnios58-mirror"]}
+      "omnios58-reguid": {"match": ["omnios58-reguid"], "guests": ["omnios58", "omnios58-mirror", "oi2610", "oi2610-bios"]}
     },
     "rustic_panel": {
       "linux": ["omarchy", "nixos2605"],
@@ -98,7 +98,7 @@
       "netbsd": {"guests": ["netbsd11"]},
       "openbsd": {"guests": ["openbsd8"], "blocked": "rustic-bko's restore is killed out of memory in the 3 GiB rescue image with no swap (UVM: killed: out of swap at ~1.7 GB RSS); needs a bounded-memory restore in the rustic_core fork"},
       "dragonfly": {"guests": ["dragonfly6"]},
-      "illumos": {"guests": ["omnios58"]},
+      "illumos": {"guests": ["omnios58", "oi2610"]},
       "haiku": {"guests": ["haiku6"]}
     }
   },

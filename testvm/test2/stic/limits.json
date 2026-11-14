@@ -249,6 +249,10 @@
   "SELinux labels": "NixOS 26.05 here has no SELinux or AppArmor labels on disk",
   "Whole-system restore (BIOS GRUB, ext4 /boot, bcachefs /)": "out of scope: whole-disk"
  },
+ "oi2610": {
+  "Both tools alike over immutable files": "over-alike: restic exits 1 over immutable files, rustic 0 with warnings (accepted: S10, verdict.py's header; BACKOTTER.md: illumos' immutable/appendonly/nounlink not cleared yet)",
+  "Restore over existing immutable/appendonly/nounlink files": "over-restic-restic: exit 1, 4 messages name the immutable/appendonly/nounlink files or EPERM, 0 others; tree still identical (BACKOTTER.md: not cleared yet on illumos) over-rustic-restic: exit 1, 4..."
+ },
  "omarchy": {
   "birth_times": "btrfs keeps birth times, but Linux can't set one; unix.birthtime isn't stored on Linux (restic BACKOTTER.md) (inner.log:34) (+1 more)",
   "project_ids": "btrfs has no project IDs (chattr -p refused) (inner.log:35)"

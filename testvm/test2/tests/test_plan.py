@@ -343,10 +343,10 @@ class Holt(WorldCase):
         g = self.w.plan("GateTest2 plan", self.r_gate)
         self.assertEqual(st(g, "gate:holt"), ("due", "changed:harness"))
 
-    def test_code_no_plan_shows_all_61(self):
+    def test_code_no_plan_shows_all_63(self):
         self.w.edit("holt/src/load/exec.rs", "// runs the plan, changed\n", commit=True)
         p = self.w.plan("HoltTest2 plan", self.r_holt)
-        self.assertEqual(sum(1 for c in p.cells if c.rule == "holt:code"), 61)
+        self.assertEqual(sum(1 for c in p.cells if c.rule == "holt:code"), 63)
         self.assertEqual(st(p, "holt:debian13+oneshot")[0] in ("soft-stale", "due"), True)
         self.assertNotEqual(st(p, "holt:debian13+oneshot")[1], "holt:variants")
         # the variants of a guest whose golden plan changed in partition, assemble or close run
@@ -362,7 +362,7 @@ class Holt(WorldCase):
     def test_commands_rs_with_and_without_the_gate_row(self):
         self.w.edit("holt/src/load/commands.rs", "// prints the plan, changed\n", commit=True)
         p = self.w.plan("HoltTest2 plan", self.r_holt + self.r_gate)
-        self.assertEqual(sum(1 for c in p.cells if c.rule == "holt:code"), 61)
+        self.assertEqual(sum(1 for c in p.cells if c.rule == "holt:code"), 63)
         self.assertIn("plan diff not known", "; ".join(p.cell("holt:arch").reasons))
         g = self.w.plan("GateTest2 plan", self.r_gate)
         gh = self.w.row(g.cell("gate:holt"), "chopin", plan_=g, extra={"plan_diff": {
@@ -375,7 +375,7 @@ class Holt(WorldCase):
                                "holt:mint22+bigger": "holt:variants", "holt:mint22+oneshot": "holt:variants",
                                "holt:debian13-stack+degraded": "holt:variants",
                                "holt:ubuntu26-raid+degraded": "holt:variants"})
-        self.assertEqual(by(p)[("carried", "carry:plan-diff")], 64)
+        self.assertEqual(by(p)[("carried", "carry:plan-diff")], 66)
 
     def test_rustic_only_change_panel_and_carried(self):
         f = self.w.facts(rustic_tag="bko2")
@@ -383,7 +383,7 @@ class Holt(WorldCase):
         self.assertEqual({c.cell for c in p.due()},
                          {f"holt:{g}" for g in ("omarchy", "nixos2605", "freebsd15", "netbsd11", "openbsd8",
                                                 "dragonfly6", "omnios58", "haiku6")})
-        self.assertEqual(by(p)[("carried", "carry:rustic-panel")], 62)
+        self.assertEqual(by(p)[("carried", "carry:rustic-panel")], 64)
 
     def test_rescuer_panel_and_soft_stale(self):
         f = self.w.facts(rescuer="r2")
@@ -514,7 +514,7 @@ class Classes(WorldCase):
         self.assertTrue(any("the panel didn't pass (holt:omarchy)" in n for n in notes), notes)
         rows["holt:omarchy"] = w.row(om, next(iter(om.res)), plan_=p)
         got, _ = derive(rows)
-        self.assertEqual(len(got), 62)
+        self.assertEqual(len(got), 64)
 
     def test_shared_helper_one_representative(self):
         self.w.edit("testvm/stictest1/freebsd15/extra.sh", "# shared, changed\n")
@@ -633,6 +633,7 @@ class Estimates(unittest.TestCase):
                                                    "holt:ubuntu26-luks", "holt:chimera", "holt:kinoite44",
                                                    "holt:chimera-uefi", "holt:chimera-zfs", "holt:gentoo", "holt:gentoo-systemd",
                                                    "holt:cachyos-zfs", "holt:anduinos2", "holt:neon24", "holt:garuda", "holt:biglinux",
+                                                   "holt:oi2610", "holt:oi2610-bios", "stic:oi2610",
                                                    "holt:freebsd15-geli"):
                 fam[c.split(":")[0]] += e["gm"]     # (test2.md's figures are of the 45 sources)
         self.assertAlmostEqual(fam["stic"], 281.9, delta=0.1)     # test2.md: SticTest2All 282 gm
@@ -741,15 +742,15 @@ class Guests(GuestCase):
         return out + self.w.seed(_only(self.p_guest, cell), age={cell: (days - 1) * 24}, extra={"try_ran": True},
                                  needs={"identity": "PASS"})
 
-    def test_new_guests_sixty_two_cells(self):
-        self.assertEqual(self.p_guest.totals["cells"], 62)
-        self.assertEqual(by(self.p_guest), {("due", "new"): 62})
+    def test_new_guests_sixty_four_cells(self):
+        self.assertEqual(self.p_guest.totals["cells"], 64)
+        self.assertEqual(by(self.p_guest), {("due", "new"): 64})
         self.assertNotIn("freebsd15-builder", {c.cell[6:] for c in self.p_guest.cells})
 
     def test_nothing_due_after_a_pass(self):
         p = self.plan()
         self.assertEqual(p.totals["due"], 0)
-        self.assertEqual(p.totals["counts"]["current"], 62)
+        self.assertEqual(p.totals["counts"]["current"], 64)
 
     def test_not_in_any_spec(self):
         f = self.w.facts()
@@ -804,7 +805,7 @@ class Guests(GuestCase):
         pc = p.cell("guest:debian13")
         self.assertEqual((pc.status, pc.rule), ("due", "changed:host"))
         self.assertEqual(pc.host, "chopin")
-        self.assertEqual(p.totals["due"], 62)
+        self.assertEqual(p.totals["due"], 64)
 
     def test_one_section_selects_only_its_guests(self):
         text = self.w.read("testvm/update/in-guest.sh").replace("update with moss", "update with moss, changed")
@@ -927,14 +928,14 @@ class Guests(GuestCase):
         self.assertEqual(st(p, "guest:arch"), ("due", "fresh:names"))
         self.assertEqual(len(p.cells), 1)
         p = self.plan(text="GuestTest2All plan")
-        self.assertEqual(by(p), {("due", "fresh:All"): 62})
+        self.assertEqual(by(p), {("due", "fresh:All"): 64})
 
     def test_sweep_child(self):
         ctx = self.w.ctx(self.r_guest)
         w = self.w.word("GuestTest2All plan", ctx)
         w.sweep = True
         p = plan.make(w, ctx)
-        self.assertEqual(by(p), {("due", "fresh:Sweep"): 62})
+        self.assertEqual(by(p), {("due", "fresh:Sweep"): 64})
 
     def test_a_disk_changed_behind_its_generation(self):
         f = self.w.facts()
@@ -1392,7 +1393,7 @@ class ImgCells(WorldCase):
         self.assertEqual([c.cell for c in p.cells], ["holt:debian12+img"])
         self.assertEqual(st(p, "holt:debian12+img"), ("due", "fresh:names"))
         p = self.w.plan("HoltTest2 +img plan")
-        self.assertEqual(len(p.cells), 13)     # freebsd15-geli joined the FreeBSD panel 2026-11-14 (geli.md D6)
+        self.assertEqual(len(p.cells), 14)     # freebsd15-geli joined the FreeBSD panel 2026-11-14 (geli.md D6), oi2610 the illumos one (openindiana.md)
         p = self.w.plan("HoltTest2 plan", universe=["holt:debian12+img"])
         self.assertEqual(st(p, "holt:debian12+img"), ("due", "img:panel"))
 

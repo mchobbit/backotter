@@ -86,6 +86,10 @@ pikaos4)    cmd=(asm $T/make-pikaos.sh --iso-dir "$SRC" pikaos4 "$W") ;;
 # pikaos4-luks: from pikaos4's ISO (Btrfs on LUKS2, BOOTX64 mode); a new
 # console-passphrase each build.
 pikaos4-luks) cmd=(asm $T/make-pikaos.sh --iso-dir /bkoscratch/rebuild-inputs/pikaos4 pikaos4-luks "$W") ;;
+# proxmox9, proxmox9-mirror: Proxmox's automated installer, from the ISO, its
+# .asc, the release key and the assistant's .deb in /bkoscratch/rebuild-inputs/proxmox9
+# (all pinned in the builder; the prepared ISO is made there per first-boot.sh).
+proxmox9|proxmox9-mirror) cmd=(asm $T/make-proxmox.sh --iso-dir /bkoscratch/rebuild-inputs/proxmox9 $G "$W") ;;
 # anduinos2: from AnduinOS's live ISO in /bkoscratch/rebuild-inputs/anduinos2 (or
 # the guest's own dir), its SHA-256 pinned in the builder; the ISO's packages only.
 anduinos2)  cmd=(asm $T/make-anduinos.sh "$SRC/AnduinOS-2.0.5-amd64.iso" "$W" anduinos2) ;;
@@ -133,6 +137,9 @@ if ss -ltnH "sport = :$((2230 + SLOT))" | grep -q .; then echo "port $((2230 + S
 # The ISO: the recipe's .iso argument, wherever options put it.
 case $G in mx25|mint22|pop24|zorin18|neon24|elementary8|elementary8-luks|anduinos2)
     ISO=""; for a in "${cmd[@]}"; do case $a in *.iso) ISO=$a ;; esac; done
+    [ -f "$ISO" ] || { echo "no ISO $ISO" >&2; exit 2; } ;;
+proxmox9|proxmox9-mirror)
+    ISO=/bkoscratch/rebuild-inputs/proxmox9/proxmox-ve_9.2-1.iso
     [ -f "$ISO" ] || { echo "no ISO $ISO" >&2; exit 2; } ;;
 esac
 leftovers() {  # what a failed root builder may leave: this build's loop devices; mounts, pools, arrays, VGs and LUKS volumes of any build on the host

@@ -272,6 +272,15 @@ pub fn build(layout: &Layout, opts: &Options, mapping: &Mapping) -> Built {
         btrfs: BTreeMap::new(),
         timeshift: BTreeMap::new(),
     };
+    // What the dump couldn't find out because a tool it runs was missing or
+    // failed (report::zfs_tools_json, other::firmware_unknown): it would
+    // have been a wrong answer, so it is said and refused instead.
+    if let Some(e) = layout.str_at(&["storage", "zfs", "tools", "error"]) {
+        b.problems.push(format!("ZFS: {e}"));
+    }
+    if [&["firmware", "mode"][..], &["boot", "loader", "firmware"][..]].iter().any(|p| layout.str_at(p) == Some("unknown")) {
+        b.problems.push("the dump couldn't tell UEFI from BIOS (its firmware mode is unknown; its warnings say why), so load can't choose the boot code to install: dump again once that tool works".into());
+    }
     b.btrfs_plans();
     // --reformat's findings (reformat.rs), carried in the edited layout.
     for (k, list) in [("problems", &mut b.problems), ("notes", &mut b.notes)] {
@@ -2631,14 +2640,6 @@ impl Builder<'_> {
             // A root dataset is canmount=noauto, mounted by the initramfs
             // (root=ZFS=...); it was mounted when the dump was made.
             let was_mounted = s(&ds, "mounted").as_deref() == Some("yes");
-            // An illumos boot environment (POOL/ROOT/NAME, beadm's) that
-            // isn't the pool's bootfs and wasn't mounted: not in the backup,
-            // so made but not filled (docs/design/openindiana.md, decision 3).
-            if self.fam == Some(crate::other::Family::Illumos) && !bootfs.contains(&name) && !was_mounted && s(&ds, "type").as_deref() != Some("volume") {
-                if let [_, "ROOT", be] = name.split('/').collect::<Vec<_>>()[..] {
-                    self.notes.push(format!("boot environment {be} ({name}) isn't the booted one: it comes back as an empty plain dataset (only the booted BE is restored)"));
-                }
-            }
             if !mp.starts_with('/') || canmount == "off" || (canmount == "noauto" && !bootfs.contains(&name) && !was_mounted) {
                 continue;
             }

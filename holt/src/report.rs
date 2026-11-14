@@ -469,9 +469,22 @@ fn lvm_json(ctx: &Ctx) -> Value {
     Obj::new().set("volume_groups", out).build()
 }
 
-/// Imported pools' properties and datasets, from the zfs tools.
-pub fn zfs_tools_json(sys: &Sys) -> Value {
-    let Some(list) = sys.run("zpool", &["list", "-H", "-o", "name"]) else { return Value::Null };
+/// Imported pools' properties and datasets, from the zfs tools.  A zpool
+/// that can't be run is no ZFS (null) only while no ZFS file system is
+/// mounted (ZFS_MOUNTED, from the mount table); with one mounted, or with
+/// pools and a zfs that can't list their datasets, the section says why in
+/// its "error" (and the dump warns), and load refuses the dump
+/// (commands::build): no pools or no datasets would be a wrong answer.
+pub fn zfs_tools_json(sys: &Sys, zfs_mounted: bool) -> Value {
+    let tool_error = |prog: &str, what: &str, lacks: &str| -> String {
+        let why = if sys.installed(prog) { format!("`{prog} list` failed") } else { format!("{prog} isn't installed") };
+        let e = format!("{what}, but {why}, so the dump records {lacks}; bko-holt load refuses this dump: make {prog} work and dump again");
+        sys.warn(e.clone());
+        e
+    };
+    let Some(list) = sys.run("zpool", &["list", "-H", "-o", "name"]) else {
+        return if zfs_mounted { Obj::new().set("error", tool_error("zpool", "ZFS file systems are mounted", "no pools or datasets")).build() } else { Value::Null };
+    };
     let mut pools = Vec::new();
     for name in list.lines().map(str::trim).filter(|l| !l.is_empty()) {
         let mut props = Obj::new();
@@ -522,8 +535,9 @@ pub fn zfs_tools_json(sys: &Sys) -> Value {
         }
     };
     let cols = cols.as_str();
-    let datasets: Vec<Value> = sys
-        .run("zfs", &["list", "-H", "-p", "-t", "filesystem,volume", "-o", cols])
+    let listed = sys.run("zfs", &["list", "-H", "-p", "-t", "filesystem,volume", "-o", cols]);
+    let error = (listed.is_none() && !pools.is_empty()).then(|| tool_error("zfs", "ZFS pools are imported", "none of their datasets"));
+    let datasets: Vec<Value> = listed
         .map(|out| {
             let names: Vec<&str> = cols.split(',').collect();
             out.lines()
@@ -557,7 +571,7 @@ pub fn zfs_tools_json(sys: &Sys) -> Value {
             d
         })
         .collect();
-    Obj::new().set("imported_pools", pools).set("datasets", datasets).build()
+    Obj::new().set("imported_pools", pools).set("datasets", datasets).set_some("error", error).build()
 }
 
 /// `zfs get -H -o name,property,value,source` lines.
@@ -702,13 +716,14 @@ pub fn parse_zpool_status_text(text: &str, pool: &str) -> Option<Value> {
 
 fn zfs_json(sys: &Sys, ctx: &Ctx) -> Value {
     let members: Vec<(String, &Content)> = ctx.devs.iter().flat_map(|d| d.contents.iter().map(move |c| (d.b.name.clone(), c))).collect();
-    zfs_section(sys, &members, &["/etc/zfs/zpool.cache"])
+    zfs_section(sys, &members, &["/etc/zfs/zpool.cache"], ctx.mounts.iter().any(|m| m.fstype == "zfs"))
 }
 
 /// The report's zfs section from the devices' signatures (name, content):
 /// pools from their vdev labels, the first zpool.cache of `caches` there
-/// is, and what zpool and zfs say of the imported pools.
-pub fn zfs_section(sys: &Sys, members: &[(String, &Content)], caches: &[&str]) -> Value {
+/// is, and what zpool and zfs say of the imported pools (ZFS_MOUNTED: the
+/// mount table has a file system of type zfs; see zfs_tools_json).
+pub fn zfs_section(sys: &Sys, members: &[(String, &Content)], caches: &[&str], zfs_mounted: bool) -> Value {
     // Pools from the labels of their vdevs: each label has the pool's
     // config with its own top-level vdev; merge top-level vdevs by id.
     // pool GUID -> (first label's config, top-level vdevs by id, member devices)
@@ -747,7 +762,7 @@ pub fn zfs_section(sys: &Sys, members: &[(String, &Content)], caches: &[&str]) -
         Ok(v) => v,
         Err(e) => Obj::new().set("error", e).build(),
     });
-    Obj::new().set("pools_from_labels", label_pools).set("zpool_cache", cache).set("tools", zfs_tools_json(sys)).build()
+    Obj::new().set("pools_from_labels", label_pools).set("zpool_cache", cache).set("tools", zfs_tools_json(sys, zfs_mounted)).build()
 }
 
 /// A btrfs's allocation profiles ({"data": [...], "metadata": [...],

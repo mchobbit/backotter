@@ -789,6 +789,27 @@ mod tests {
         assert_eq!(mark(Obj::new().build(), "/dev/vtbd0p3").get("eli"), None);
     }
 
+    /// machdep.bootmethod says UEFI or BIOS; without its answer (no such
+    /// sysctl, or no sysctl) the firmware is unknown, with a warning, never
+    /// bios (other::firmware_unknown).
+    #[test]
+    fn firmware_unknown_without_bootmethod() {
+        let mode = |r: crate::sys::FakeRunner| {
+            let (t, _) = freebsd_ufs_on_geli();
+            let v = freebsd::report(&Sys::new(t.root(), Box::new(r), true), super::super::Family::FreeBsd, None, "x");
+            let w: Vec<String> = v.get("warnings").and_then(Value::as_array).unwrap().iter().filter_map(Value::as_str).filter(|w| w.contains("firmware")).map(str::to_string).collect();
+            (v.at(&["firmware", "mode"]).and_then(Value::as_str).unwrap().to_string(), v.at(&["boot", "loader", "firmware"]).and_then(Value::as_str).unwrap().to_string(), w)
+        };
+        assert_eq!(mode(freebsd_ufs_on_geli().1), ("uefi".into(), "uefi".into(), vec![]));
+        assert_eq!(mode(freebsd_ufs_on_geli().1.with("sysctl -n machdep.bootmethod", "BIOS\n")), ("bios".into(), "bios".into(), vec![]));
+        let mut r = freebsd_ufs_on_geli().1;
+        r.answers.remove("sysctl -n machdep.bootmethod");
+        let unknown = |why: &str| ("unknown".to_string(), "unknown".to_string(), vec![format!("the firmware mode (UEFI or BIOS) can't be told: {why}; the dump says unknown, and bko-holt load refuses it")]);
+        assert_eq!(mode(r), unknown("`sysctl -n machdep.bootmethod` failed"));
+        assert_eq!(mode(freebsd_ufs_on_geli().1.without("sysctl")), unknown("sysctl isn't installed"));
+        assert_eq!(mode(freebsd_ufs_on_geli().1.with("sysctl -n machdep.bootmethod", "OpenFirmware\n")), unknown("`sysctl -n machdep.bootmethod` says \"openfirmware\""));
+    }
+
     // ---- load: plans of FreeBSD layouts on GELI --------------------------
 
     fn at_mut<'a>(v: &'a mut Value, path: &[&str]) -> &'a mut Value {

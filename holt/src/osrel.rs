@@ -59,33 +59,9 @@ pub fn unquote(v: &str) -> String {
     }
 }
 
-/// /etc/os-release, else /usr/lib/os-release; else, on OpenIndiana, which
-/// has neither, one made from /etc/release.
+/// /etc/os-release, else /usr/lib/os-release.
 pub fn read(sys: &Sys) -> Option<OsRelease> {
-    sys.read("/etc/os-release")
-        .or_else(|| sys.read("/usr/lib/os-release"))
-        .map(|t| parse(&t))
-        .or_else(|| sys.read("/etc/release").and_then(|t| openindiana_release(&t)))
-}
-
-/// OpenIndiana Hipster's /etc/release, whose first line (indented) is
-/// "OpenIndiana Hipster 2026.10 (powered by illumos)": ID=openindiana,
-/// VERSION_ID the snapshot.  Another system's /etc/release (Oracle
-/// Solaris', OpenIndiana's before Hipster) makes none.
-pub fn openindiana_release(text: &str) -> Option<OsRelease> {
-    let line = text.lines().map(str::trim).find(|l| !l.is_empty())?;
-    let mut w = line.split_whitespace();
-    if (w.next(), w.next()) != (Some("OpenIndiana"), Some("Hipster")) {
-        return None;
-    }
-    let ver = w.next().filter(|v| v.starts_with(|c: char| c.is_ascii_digit()));
-    let pretty = ver.map_or_else(|| "OpenIndiana Hipster".to_string(), |v| format!("OpenIndiana Hipster {v}"));
-    let mut out = vec![("ID".to_string(), "openindiana".to_string()), ("NAME".into(), "OpenIndiana Hipster".into())];
-    if let Some(v) = ver {
-        out.push(("VERSION_ID".into(), v.to_string()));
-    }
-    out.push(("PRETTY_NAME".into(), pretty));
-    Some(OsRelease(out))
+    sys.read("/etc/os-release").or_else(|| sys.read("/usr/lib/os-release")).map(|t| parse(&t))
 }
 
 /// The systems bko-holt supports, as os-release's ID and the major part of
@@ -212,9 +188,6 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("haiku", "*", "Haiku"),
     // illumos: VERSION_ID is the release, r151058y.
     ("omnios", "*", "OmniOS"),
-    // Rolling (Hipster): VERSION_ID is the snapshot (2026.10), from
-    // /etc/release, as it has no os-release (openindiana_release).
-    ("openindiana", "*", "OpenIndiana"),
     // Read off their disks (dump --disk): no VERSION_ID.
     ("redox", "", "Redox"),
     ("sculpt", "", "Sculpt OS"),
@@ -312,7 +285,7 @@ mod tests {
         assert!(check_supported(Some(&parse(neon))).is_ok());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox or Sculpt OS"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, Redox or Sculpt OS"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -537,47 +510,6 @@ mod tests {
         let empty = Tree::new("osrel-none");
         let s = Sys::new(empty.root(), Box::new(FakeRunner::default()), false);
         assert!(read(&s).is_none());
-    }
-
-    /// The oi2610 guest's /etc/release (OpenIndiana 2026.10, which has no
-    /// os-release anywhere).
-    const OI_RELEASE: &str = "             OpenIndiana Hipster 2026.10 (powered by illumos)\n        OpenIndiana Project, part of The Illumos Foundation (C) 2010-2026\n                        Use is subject to license terms.\n                           Assembled 30 October 2026\n";
-
-    #[test]
-    fn openindiana_from_etc_release() {
-        let t = Tree::new("osrel-oi");
-        t.file("/etc/release", OI_RELEASE);
-        let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
-        let o = read(&s).unwrap();
-        assert_eq!(o.get("ID"), Some("openindiana"));
-        assert_eq!(o.get("NAME"), Some("OpenIndiana Hipster"));
-        assert_eq!(o.get("VERSION_ID"), Some("2026.10"));
-        assert_eq!(o.get("PRETTY_NAME"), Some("OpenIndiana Hipster 2026.10"));
-        assert!(check_supported(Some(&o)).is_ok());
-        assert!(supported("openindiana", "2027.04"));
-        // A leading blank line, and no snapshot after Hipster.
-        let o = openindiana_release("\n\n  OpenIndiana Hipster\n").unwrap();
-        assert_eq!((o.get("VERSION_ID"), o.get("PRETTY_NAME")), (None, Some("OpenIndiana Hipster")));
-        assert!(check_supported(Some(&o)).is_ok());
-        // os-release wins where there is one (OmniOS has both).
-        t.file("/etc/os-release", "ID=omnios\nVERSION_ID=r151058y\n");
-        assert_eq!(read(&s).unwrap().get("ID"), Some("omnios"));
-    }
-
-    #[test]
-    fn other_etc_release_isnt_openindiana() {
-        for rel in ["                             Oracle Solaris 11.4 X86\n  Copyright (c) 1983, 2024, Oracle and/or its affiliates.\n", "             OpenIndiana Development oi_151a X86\n", "OpenIndianaX Hipster 2026.10\n", ""] {
-            assert!(openindiana_release(rel).is_none(), "{rel}");
-            let t = Tree::new("osrel-sunos");
-            t.file("/etc/release", rel);
-            let s = Sys::new(t.root(), Box::new(FakeRunner::default()), false);
-            assert!(read(&s).is_none(), "{rel}");
-        }
-        // Without an os-release, other::os_release makes one from uname
-        // (ID=sunos), which is refused.
-        let e = check_supported(Some(&parse("ID=sunos\nVERSION_ID=\"5.11\"\nPRETTY_NAME=\"SunOS 5.11\"\n"))).unwrap_err();
-        assert!(e.contains("this is SunOS 5.11 (ID=sunos, VERSION_ID=5.11)") && e.contains("OmniOS, OpenIndiana,"), "{e}");
-        assert!(check_supported(Some(&parse("ID=solaris\nVERSION_ID=\"11.4\"\n"))).is_err());
     }
 
     #[test]

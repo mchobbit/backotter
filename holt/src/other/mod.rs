@@ -336,6 +336,21 @@ pub fn dump(sys: &Sys, fam: Family, generated: &str) -> Result<Value, String> {
     }
 }
 
+/// The firmware mode when the dump can't tell UEFI from BIOS: "unknown",
+/// with a warning saying why (WHAT, PROG's command, said ANSWER; None: PROG
+/// isn't installed or failed).  Never "bios" for want of an answer: load
+/// takes anything but "uefi" for BIOS (Layout::uefi), so it refuses
+/// "unknown" (commands::build) rather than install the wrong boot code.
+pub fn firmware_unknown(sys: &Sys, prog: &str, what: &str, answer: Option<&str>) -> &'static str {
+    let why = match answer {
+        Some(a) => format!("{what} says {a:?}"),
+        None if !sys.installed(prog) => format!("{prog} isn't installed"),
+        None => format!("{what} failed"),
+    };
+    sys.warn(format!("the firmware mode (UEFI or BIOS) can't be told: {why}; the dump says unknown, and bko-holt load refuses it"));
+    "unknown"
+}
+
 /// The report's frame around a family's sections.
 pub fn frame(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, generated: &str, hostname: Option<String>, firmware: &str, storage: Obj, boot: Obj) -> Value {
     let mut out = Obj::new()

@@ -61,7 +61,7 @@ case $G in
     netbsd*|alpinebsd*) PLAT=netbsd ;;
     openbsd*) PLAT=openbsd ;;
     dragonfly*) PLAT=dragonfly ;;
-    omnios*|oi*) PLAT=illumos ;;
+    omnios*) PLAT=illumos ;;
     haiku*) PLAT=haiku ;;
     redox|sculpt*) echo "ht1-debug: $G is checked offline (ht1-offline.sh), with no rebuild to loop over" >&2; exit 2 ;;
     *) PLAT=linux ;;

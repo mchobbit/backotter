@@ -845,18 +845,6 @@ EOF
 SunOS)
     # A new boot environment when the update needs one; the reboot after
     # this activates it.  4: nothing to update.
-    # Boot environments: each update that makes one leaves the last behind,
-    # so only the newest two are kept (the running one and the one before),
-    # never one marked N (running) or R (next boot).  beadm list -H:
-    # name;uuid;flags;mountpoint;space;policy;created (seconds).
-    beadm list -H 2>/dev/null | awk -F';' '{ print $7, $3, $1 }' | sort -rn | awk 'NR > 2 && $2 !~ /[NR]/ { print $3 }' |
-    while read -r be; do
-        say "removing the old boot environment $be"
-        beadm destroy -Ffs "$be" || exit 1
-    done || exit 1
-    # Downloads not kept once installed: OpenIndiana's image doesn't flush
-    # them (a first update there is ~5 GiB of cache in the overlay).
-    pkg set-property flush-content-cache-on-success True || exit 1
     pkg update -v; rc=$?
     [ $rc -eq 0 ] || [ $rc -eq 4 ] || exit 1 ;;
 # t2-section: Haiku

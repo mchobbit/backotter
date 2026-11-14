@@ -171,7 +171,8 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
     let hostname = sys.run("sysctl", &["-n", "kern.hostname"]).map(|s| s.trim().to_string());
     let firmware = match sys.run("sysctl", &["-n", "machdep.bootmethod"]).map(|s| s.trim().to_ascii_lowercase()) {
         Some(m) if m == "uefi" => "uefi",
-        _ => "bios",
+        Some(m) if m == "bios" => "bios",
+        m => super::firmware_unknown(sys, "sysctl", "`sysctl -n machdep.bootmethod`", m.as_deref()),
     };
     // Each disk with its partitions and their GEOM labels.
     let mut seen: Vec<(RawDisk, Vec<Found>, Vec<(String, String)>)> = Vec::new();
@@ -298,7 +299,7 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         })
         .collect();
     let member_refs: Vec<(String, &Content)> = members.iter().map(|(n, c)| (n.clone(), c)).collect();
-    let zfs = crate::report::zfs_section(sys, &member_refs, &["/etc/zfs/zpool.cache", "/boot/zfs/zpool.cache"]);
+    let zfs = crate::report::zfs_section(sys, &member_refs, &["/etc/zfs/zpool.cache", "/boot/zfs/zpool.cache"], mount_list.iter().any(|m| m.vfstype == "zfs"));
     let storage = Obj::new()
         .set("disks", disks_json)
         .set("mounts", mounts_json)

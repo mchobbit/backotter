@@ -101,7 +101,7 @@ G=$1 RUN=$2; shift 2
 # Systems other than Linux have their own driver (their rescuer is of their
 # own system, and Linux can't read their filesystems).
 case $G in
-    freebsd*|hardenedbsd*|ghostbsd*|netbsd*|alpinebsd*|openbsd*|dragonfly*|omnios*|oi*|haiku*)
+    freebsd*|hardenedbsd*|ghostbsd*|netbsd*|alpinebsd*|openbsd*|dragonfly*|omnios*|haiku*)
         exec "$(dirname "$(realpath "$0")")/ht1-bsd.sh" "$G" "$RUN" "$@" ;;
     # Systems that can't run bko-holt: read off their disks from Linux.
     redox|sculpt*)

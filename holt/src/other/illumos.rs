@@ -1,7 +1,7 @@
-//! illumos' report (OmniOS, OpenIndiana): disks from diskinfo, the EFI
-//! label (GPT) or MBR read off each disk's p0 node, slices named cXtYdZsN,
-//! ZFS (the root pool and its boot environments), the mounts from
-//! /etc/mnttab and the boot setup.
+//! illumos' report (OmniOS): disks from diskinfo, the EFI label (GPT) or
+//! MBR read off each disk's p0 node, slices named cXtYdZsN, ZFS (the root
+//! pool and its boot environments), the mounts from /etc/mnttab and the
+//! boot setup.
 
 use super::{found_json, open, read_disk, Family, Found, RawDisk};
 use crate::json::{Obj, Value};
@@ -56,7 +56,11 @@ pub fn slice_name(disk: &str, n: u32) -> String {
 
 pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, generated: &str) -> Value {
     let hostname = sys.run("hostname", &[]).map(|s| s.trim().to_string());
-    let firmware = if sys.run("prtconf", &["-v"]).is_some_and(|t| t.contains("efi-systab")) { "uefi" } else { "bios" };
+    let firmware = match sys.run("prtconf", &["-v"]) {
+        Some(t) if t.contains("efi-systab") => "uefi",
+        Some(_) => "bios",
+        None => super::firmware_unknown(sys, "prtconf", "`prtconf -v`", None),
+    };
     let mnttab = parse_mnttab(&sys.read("/etc/mnttab").unwrap_or_default());
     let resolve = |spec: &str| -> Option<String> { spec.strip_prefix("/dev/dsk/").map(str::to_string) };
     let mounted_at = |name: &str| -> Vec<String> {
@@ -119,7 +123,7 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         // pool's datasets): load mounts the pool's.
         .set("fstab", Vec::<Value>::new())
         .set("vfstab", sys.read("/etc/vfstab"))
-        .set("zfs", crate::report::zfs_section(sys, &member_refs, &["/etc/zfs/zpool.cache"]));
+        .set("zfs", crate::report::zfs_section(sys, &member_refs, &["/etc/zfs/zpool.cache"], mnttab.iter().any(|m| m.2 == "zfs")));
     let boot = Obj::new()
         .set("loader", Obj::new().set("name", "illumos").set("firmware", firmware).set("evidence", vec!["illumos' loader (installboot)".to_string()]))
         .set("boot_environments", sys.run("beadm", &["list", "-H"]))
@@ -137,5 +141,26 @@ mod tests {
         let m = parse_mnttab("rpool/ROOT/omnios-r151058y\t/\tzfs\tdev=4310002\t0\n/devices\t/devices\tdevfs\tdev=8980000\t1793913084\n");
         assert_eq!(m[0], ("rpool/ROOT/omnios-r151058y".into(), "/".into(), "zfs".into(), "dev=4310002".into()));
         assert_eq!(slice_name("c3t0d0", 2), "c3t0d0s1");
+    }
+
+    /// No prtconf: the firmware is unknown, not bios, with a warning (load
+    /// refuses it); the root pool mounted (mnttab) and no zpool: the zfs
+    /// section says so.  A prtconf without efi-systab: bios, nothing said.
+    #[test]
+    fn missing_tools_are_said() {
+        use crate::sys::FakeRunner;
+        let t = crate::testutil::Tree::new("illumos-notools");
+        t.file("/etc/mnttab", "rpool/ROOT/omnios\t/\tzfs\tdev=4310002\t0\n");
+        let v = report(&Sys::new(t.root(), Box::new(FakeRunner::default().without("prtconf").without("zpool")), true), Family::Illumos, None, "x");
+        assert_eq!((v.at(&["firmware", "mode"]).and_then(Value::as_str), v.at(&["boot", "loader", "firmware"]).and_then(Value::as_str)), (Some("unknown"), Some("unknown")));
+        let e = v.at(&["storage", "zfs", "tools", "error"]).and_then(Value::as_str).unwrap();
+        assert!(e.starts_with("ZFS file systems are mounted, but zpool isn't installed, "), "{e}");
+        let w = v.get("warnings").and_then(Value::as_array).unwrap();
+        assert!(w.contains(&Value::from("the firmware mode (UEFI or BIOS) can't be told: prtconf isn't installed; the dump says unknown, and bko-holt load refuses it")), "{w:?}");
+        let r = FakeRunner::default().with("prtconf -v", "System Configuration:  illumos  i86pc\n").with("zpool list -H -o name", "");
+        let v = report(&Sys::new(t.root(), Box::new(r), true), Family::Illumos, None, "x");
+        assert_eq!(v.at(&["firmware", "mode"]).and_then(Value::as_str), Some("bios"));
+        assert_eq!(v.at(&["storage", "zfs", "tools", "error"]), None);
+        assert!(v.get("warnings").and_then(Value::as_array).unwrap().iter().filter_map(Value::as_str).all(|w| !w.contains("firmware") && !w.contains("zpool")));
     }
 }

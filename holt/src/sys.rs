@@ -28,6 +28,14 @@ pub trait Runner {
     fn run_any(&self, prog: &str, args: &[&str]) -> Option<String> {
         self.run(prog, args)
     }
+
+    /// Whether PROG is installed where `run` looks for it: `run` says None
+    /// both for a tool that isn't there and for one that ran and failed,
+    /// and a caller whose answer differs (no zpool on a system with ZFS
+    /// mounted) asks this.  True unless the runner knows otherwise.
+    fn installed(&self, _prog: &str) -> bool {
+        true
+    }
 }
 
 /// Runs real commands, from the system directories only (NixOS's
@@ -68,6 +76,10 @@ impl Runner for RealRunner {
         }
         let exe = SYSTEM_PATH.split(':').map(|d| Path::new(d).join(prog)).find(|p| p.is_file())?;
         self.exec_status(&exe, args).map(|(out, _)| out)
+    }
+
+    fn installed(&self, prog: &str) -> bool {
+        !prog.contains('/') && SYSTEM_PATH.split(':').any(|d| Path::new(d).join(prog).is_file())
     }
 }
 
@@ -117,16 +129,24 @@ impl RealRunner {
     }
 }
 
-/// Answers from a table, for tests: key "prog arg1 arg2".
+/// Answers from a table, for tests: key "prog arg1 arg2".  A command it
+/// has no answer for fails; a program named by `without` isn't installed.
 #[derive(Default)]
 pub struct FakeRunner {
     pub answers: HashMap<String, String>,
     pub calls: RefCell<Vec<String>>,
+    pub missing: Vec<String>,
 }
 
 impl FakeRunner {
     pub fn with(mut self, cmd: &str, out: &str) -> FakeRunner {
         self.answers.insert(cmd.to_string(), out.to_string());
+        self
+    }
+
+    /// PROG isn't installed: every run of it fails, and `installed` says so.
+    pub fn without(mut self, prog: &str) -> FakeRunner {
+        self.missing.push(prog.to_string());
         self
     }
 }
@@ -135,7 +155,14 @@ impl Runner for FakeRunner {
     fn run(&self, prog: &str, args: &[&str]) -> Option<String> {
         let key = std::iter::once(prog).chain(args.iter().copied()).collect::<Vec<_>>().join(" ");
         self.calls.borrow_mut().push(key.clone());
+        if !self.installed(prog) {
+            return None;
+        }
         self.answers.get(&key).cloned()
+    }
+
+    fn installed(&self, prog: &str) -> bool {
+        !self.missing.iter().any(|m| m == prog)
     }
 }
 
@@ -252,6 +279,12 @@ impl Sys {
     /// Runs the program at an absolute path; see `Runner::run_file`.
     pub fn run_file(&self, path: &str, args: &[&str]) -> Option<String> {
         self.runner.run_file(path, args)
+    }
+
+    /// Whether a system tool `run` would run is installed; see
+    /// `Runner::installed`.
+    pub fn installed(&self, prog: &str) -> bool {
+        self.runner.installed(prog)
     }
 
     pub fn warn(&self, msg: impl Into<String>) {
@@ -426,6 +459,10 @@ mod tests {
         assert_eq!(r.run("zpool", &["list", "-H"]).as_deref(), Some("rpool\n"));
         assert_eq!(r.run("zpool", &["status"]), None);
         assert_eq!(*r.calls.borrow(), vec!["zpool list -H", "zpool status"]);
+        assert!(r.installed("zpool"));
+        let r = FakeRunner::default().with("zpool list -H", "rpool\n").without("zpool");
+        assert_eq!(r.run("zpool", &["list", "-H"]), None);
+        assert!(!r.installed("zpool") && r.installed("zfs"));
     }
 
     #[test]
@@ -434,6 +471,8 @@ mod tests {
         assert_eq!(r.run("echo", &["a", "b"]).as_deref(), Some("a b\n"));
         assert_eq!(r.run("false", &[]), None);
         assert_eq!(r.run("bko-no-such-program", &[]), None);
+        // A tool that ran and failed is installed; one that isn't there isn't.
+        assert!(r.installed("false") && !r.installed("bko-no-such-program") && !r.installed("/bin/echo"));
         // Only the system directories are searched.
         assert_eq!(r.run("../bin/echo", &["x"]), None);
         assert_eq!(r.run("/bin/echo", &["x"]), None);

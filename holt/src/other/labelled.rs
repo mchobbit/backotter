@@ -176,15 +176,14 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
     let firmware = match fam {
         Family::NetBsd => match sys.run("sysctl", &["-n", "machdep.bootmethod"]).map(|s| s.trim().to_ascii_lowercase()) {
             Some(m) if m == "uefi" => "uefi",
-            _ => "bios",
+            Some(m) if m == "bios" => "bios",
+            m => super::firmware_unknown(sys, "sysctl", "`sysctl -n machdep.bootmethod`", m.as_deref()),
         },
-        _ => {
-            if sys.run("dmesg", &[]).is_some_and(|t| t.contains("efi0 at ")) {
-                "uefi"
-            } else {
-                "bios"
-            }
-        }
+        _ => match sys.run("dmesg", &[]) {
+            Some(t) if t.contains("efi0 at ") => "uefi",
+            Some(_) => "bios",
+            None => super::firmware_unknown(sys, "dmesg", "`dmesg`", None),
+        },
     };
     let names = disk_names(fam, &sys.run("sysctl", &["-n", "hw.disknames"]).unwrap_or_default());
     // OpenBSD's softraid volumes (softraid.rs): each is a disk in
@@ -369,7 +368,7 @@ pub fn report(sys: &Sys, fam: Family, os: Option<&crate::osrel::OsRelease>, gene
         .set("mounts", mounts_json)
         .set("swaps", swaps)
         .set("fstab", fstab)
-        .set("zfs", crate::report::zfs_section(sys, &member_refs, &["/etc/zfs/zpool.cache"]));
+        .set("zfs", crate::report::zfs_section(sys, &member_refs, &["/etc/zfs/zpool.cache"], mounted.iter().any(|m| m.2 == "zfs")));
     let loader = if fam == Family::NetBsd { "netbsd" } else { "openbsd" };
     let boot = Obj::new()
         .set("loader", Obj::new().set("name", loader).set("firmware", firmware).set("evidence", vec![format!("{loader}'s own boot blocks ({firmware})")]))

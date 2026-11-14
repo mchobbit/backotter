@@ -1636,6 +1636,63 @@ fn no_zfs_tools_no_section() {
     assert_eq!(s(&v, &["boot", "loader", "name"]), "unknown");
 }
 
+/// The debian13-zfs guest's dump onto vdb.
+fn zfs_root_plan(v: Value) -> crate::load::commands::Built {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let l = Layout::from_json(v).unwrap();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+    commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() })
+}
+
+/// / on ZFS and no zpool installed: no pools would be a wrong answer, so
+/// the dump says why (and warns) and load refuses it.  The same for a zpool
+/// that's there and fails, and for pools whose datasets a missing zfs
+/// can't list.
+#[test]
+fn zfs_mounted_without_zpool_is_refused() {
+    let (t, runner) = zfs_root_tree();
+    let v = run(&t, true, runner.without("zpool"));
+    let e = s(&v, &["storage", "zfs", "tools", "error"]).to_string();
+    assert_eq!(e, "ZFS file systems are mounted, but zpool isn't installed, so the dump records no pools or datasets; bko-holt load refuses this dump: make zpool work and dump again");
+    assert!(arr(&v, &["warnings"]).iter().any(|w| w.as_str() == Some(e.as_str())), "{:?}", v.get("warnings"));
+    let b = zfs_root_plan(v);
+    assert!(b.problems.contains(&format!("ZFS: {e}")), "{:?}", b.problems);
+
+    let (t, mut runner) = zfs_root_tree();
+    runner.answers.remove("zpool list -H -o name");
+    let v = run(&t, true, runner);
+    let e = s(&v, &["storage", "zfs", "tools", "error"]);
+    assert!(e.starts_with("ZFS file systems are mounted, but `zpool list` failed, so the dump records no pools or datasets; "), "{e}");
+    assert!(zfs_root_plan(v.clone()).problems.iter().any(|p| p.starts_with("ZFS: ZFS file systems are mounted, but `zpool list` failed")));
+
+    let (t, runner) = zfs_root_tree();
+    let v = run(&t, true, runner.without("zfs"));
+    assert_eq!(s(&v, &["storage", "zfs", "tools", "imported_pools", "0", "name"]), "rpool");
+    assert!(arr(&v, &["storage", "zfs", "tools", "datasets"]).is_empty());
+    let e = s(&v, &["storage", "zfs", "tools", "error"]);
+    assert_eq!(e, "ZFS pools are imported, but zfs isn't installed, so the dump records none of their datasets; bko-holt load refuses this dump: make zfs work and dump again");
+    assert!(zfs_root_plan(v.clone()).problems.contains(&format!("ZFS: {e}")));
+
+    // With both there, none of it.
+    let (t, runner) = zfs_root_tree();
+    let v = run(&t, true, runner);
+    assert_eq!(v.at(&["storage", "zfs", "tools", "error"]), None);
+    assert!(!zfs_root_plan(v).problems.iter().any(|p| p.starts_with("ZFS: ")));
+}
+
+/// No ZFS mounted, and neither zpool nor zfs installed (most Linux
+/// systems): no ZFS, as before, and nothing said of it.
+#[test]
+fn no_zfs_mounted_without_zpool_is_fine() {
+    let t = Tree::new("scn-nozpool");
+    t.debian13();
+    t.file("/proc/self/mountinfo", "26 1 254:6 / / rw,relatime shared:1 - ext4 /dev/vda6 rw\n");
+    let v = run(&t, true, FakeRunner::default().without("zpool").without("zfs"));
+    assert!(v.at(&["storage", "zfs", "tools"]).unwrap().is_null());
+    let w = arr(&v, &["warnings"]);
+    assert!(!w.iter().filter_map(Value::as_str).any(|w| w.contains("zpool") || w.contains("ZFS")), "{w:?}");
+}
+
 /// A disk with a filesystem straight on it (no table), a loop device, a
 /// zram swap device and an empty CD drive.
 fn misc_tree() -> Tree {
@@ -3925,206 +3982,3 @@ pub fn dumps() -> Vec<(&'static str, Value)> {
         ("guix_bios", run(&guix_bios(), true, guix_bios_runner())),
     ]
 }
-
-// ---- illumos: OpenIndiana -------------------------------------------------
-
-/// OpenIndiana Hipster 2026.10 as its text installer leaves it (the oi2610
-/// guest, docs/design/openindiana.md), a `pkg update` later: the whole disk
-/// from `zpool create -B` (slice 0 the ESP, unmounted; slice 1 rpool; slice
-/// 8 reserved), two boot environments (openindiana, the installer's, and
-/// openindiana-1, the booted bootfs, each with a /var child at
-/// canmount=noauto), the swap and dump zvols, rpool/export/home/tester;
-/// no os-release, only /etc/release.  `uefi` says whether prtconf shows
-/// efi-systab.  illumos' own report reads it (crate::other::illumos), not
-/// Linux's: a FakeRunner answers diskinfo, prtconf, zpool, zfs, beadm and
-/// bootadm.
-fn openindiana(uefi: bool) -> (Tree, FakeRunner) {
-    const SOLARIS_ZFS: &str = "6a898cc3-1dd2-11b2-99a6-080020736631";
-    const SOLARIS_RESERVED: &str = "6a945a3b-1dd2-11b2-99a6-080020736631";
-    const NONE: &str = "00000000-0000-0000-0000-000000000000";
-    let t = Tree::new("scn-openindiana");
-    let mut img = vec![0u8; 64 * MIB];
-    let (esp, pool, resv) = ((256u64, 16639u64), (16640u64, 114654u64), (114655u64, 131038u64));
-    let mut parts = vec![(ESP, "01d1a000-0000-4000-8000-000000000002", esp.0, esp.1, 0, "loader"), (SOLARIS_ZFS, "01d1a000-0000-4000-8000-000000000003", pool.0, pool.1, 0, "zfs")];
-    parts.extend((3..9).map(|_| (NONE, NONE, 0, 0, 0, "")));
-    parts.push((SOLARIS_RESERVED, "01d1a000-0000-4000-8000-000000000004", resv.0, resv.1, 0, ""));
-    write_gpt(&mut img, 512, &GptSpec { disk_guid: "01d1a000-0000-4000-8000-000000000001", parts });
-    put(&mut img, esp.0 as usize, &fat::sample::fat32((esp.1 - esp.0 + 1) as u32, 0, ""));
-    let cfg = crate::json::parse(
-        r#"{"version": 5000, "name": "rpool", "state": 0, "txg": 4, "pool_guid": 4242, "hostname": "", "top_guid": 2, "guid": 2,
-            "vdev_children": 1, "vdev_tree": {"type": "disk", "id": 0, "guid": 2, "path": "/dev/dsk/c3t0d0s1", "whole_disk": 1, "ashift": 12},
-            "features_for_read": {"com.delphix:hole_birth": true, "com.delphix:embedded_data": true}}"#,
-    )
-    .unwrap();
-    put(&mut img, pool.0 as usize, &zfs::pack::vdev(((pool.1 - pool.0 + 1) * 512) as usize, &cfg));
-    t.file("/dev/rdsk/c3t0d0p0", &img)
-        .file("/etc/release", "             OpenIndiana Hipster 2026.10 (powered by illumos)\n        OpenIndiana Project, part of The Illumos Foundation (C) 2010-2026\n                        Use is subject to license terms.\n                           Assembled 30 October 2026\n")
-        .file("/etc/vfstab", "#device\t\tdevice\t\tmount\t\tFS\tfsck\tmount\tmount\n/devices\t-\t\t/devices\tdevfs\t-\tno\t-\n/proc\t\t-\t\t/proc\t\tproc\t-\tno\t-\n/dev/zvol/dsk/rpool/swap\t-\t-\tswap\t-\tno\t-\n")
-        .file(
-            "/etc/mnttab",
-            "rpool/ROOT/openindiana-1\t/\tzfs\tdev=4010002\t0\n/devices\t/devices\tdevfs\tdev=8900000\t0\n\
-             rpool/ROOT/openindiana-1/var\t/var\tzfs\trw,devices,setuid,nonbmand,exec,xattr,atime,dev=4010003\t0\n\
-             swap\t/tmp\ttmpfs\txattr,dev=8b40002\t0\n\
-             rpool/export\t/export\tzfs\trw,devices,setuid,nonbmand,exec,xattr,atime,dev=4010004\t0\n\
-             rpool/export/home\t/export/home\tzfs\trw,devices,setuid,nonbmand,exec,xattr,atime,dev=4010005\t0\n\
-             rpool/export/home/tester\t/export/home/tester\tzfs\trw,devices,setuid,nonbmand,exec,xattr,atime,dev=4010006\t0\n\
-             rpool\t/rpool\tzfs\trw,devices,setuid,nonbmand,exec,xattr,atime,dev=4010007\t0\n",
-        );
-    // zfs list's columns (report.rs): name, type, used, available,
-    // referenced, mountpoint, canmount, mounted, the encryption five,
-    // origin, compression, recordsize, volsize, volblocksize, and ten more.
-    let row = |name: &str, ty: &str, mp: &str, canmount: &str, mounted: &str, origin: &str, volsize: &str, vbs: &str| {
-        let rs = if ty == "volume" { "-" } else { "131072" };
-        format!("{name}\t{ty}\t1000\t2000\t96\t{mp}\t{canmount}\t{mounted}\toff\t-\tnone\tnone\t-\t{origin}\ton\t{rs}\t{volsize}\t{vbs}\t-\ton\t-\tnone\toff\tsensitive\ton\t-\t1\t-\n")
-    };
-    let fs = |name: &str, mp: &str, canmount: &str, mounted: &str| row(name, "filesystem", mp, canmount, mounted, "-", "-", "-");
-    let list = [
-        fs("rpool", "/rpool", "on", "yes"),
-        fs("rpool/ROOT", "legacy", "off", "no"),
-        fs("rpool/ROOT/openindiana", "/", "noauto", "no"),
-        fs("rpool/ROOT/openindiana/var", "/var", "noauto", "no"),
-        row("rpool/ROOT/openindiana-1", "filesystem", "/", "noauto", "yes", "rpool/ROOT/openindiana@2026-11-14-10:00:00", "-", "-"),
-        row("rpool/ROOT/openindiana-1/var", "filesystem", "/var", "noauto", "yes", "rpool/ROOT/openindiana/var@2026-11-14-10:00:00", "-", "-"),
-        row("rpool/dump", "volume", "-", "-", "-", "-", "1610612736", "131072"),
-        fs("rpool/export", "/export", "on", "yes"),
-        fs("rpool/export/home", "/export/home", "on", "yes"),
-        fs("rpool/export/home/tester", "/export/home/tester", "on", "yes"),
-        row("rpool/swap", "volume", "-", "-", "-", "-", "1073741824", "4096"),
-    ]
-    .concat();
-    let local = "rpool/ROOT\tmountpoint\tlegacy\tlocal\nrpool/ROOT\tcanmount\toff\tlocal\n\
-                 rpool/ROOT/openindiana\tmountpoint\t/\tlocal\nrpool/ROOT/openindiana\tcanmount\tnoauto\tlocal\nrpool/ROOT/openindiana\torg.opensolaris.libbe:uuid\t01d1a000-0000-4000-8000-000000000005\tlocal\n\
-                 rpool/ROOT/openindiana/var\tcanmount\tnoauto\tlocal\n\
-                 rpool/ROOT/openindiana-1\tmountpoint\t/\tlocal\nrpool/ROOT/openindiana-1\tcanmount\tnoauto\tlocal\nrpool/ROOT/openindiana-1\torg.opensolaris.libbe:uuid\t01d1a000-0000-4000-8000-000000000006\tlocal\n\
-                 rpool/ROOT/openindiana-1/var\tcanmount\tnoauto\tlocal\n\
-                 rpool/dump\tvolsize\t1610612736\tlocal\nrpool/dump\tchecksum\toff\tlocal\nrpool/dump\tcompression\toff\tlocal\nrpool/dump\trefreservation\t1610612736\tlocal\n\
-                 rpool/export\tmountpoint\t/export\tlocal\n\
-                 rpool/swap\tvolsize\t1073741824\tlocal\nrpool/swap\trefreservation\t1107427328\tlocal\n";
-    let prtconf = if uefi { "System Configuration:  illumos  i86pc\n    name='efi-systab' type=int64 items=1\n        value=000000007f9ee018\n" } else { "System Configuration:  illumos  i86pc\n    name='bios-boot-device' type=string items=1\n        value='80'\n" };
-    let runner = FakeRunner::default()
-        .with("hostname", "oi2610\n")
-        .with("prtconf -v", prtconf)
-        .with("uname -s", "SunOS\n")
-        .with("uname -r", "5.11\n")
-        .with("uname -v", "illumos-2b8e1b2a1c\n")
-        .with("diskinfo -Hp", &format!("-\tc3t0d0\tVirtio\tBlock Device\t{}\tno\tno\n", 64 * MIB))
-        .with("zpool list -H -o name", "rpool\n")
-        .with(
-            "zpool get -H -p -o property,value,source all rpool",
-            "size\t47781511168\t-\nbootfs\trpool/ROOT/openindiana-1\tlocal\nbootsize\t8388608\tlocal\nashift\t12\tlocal\nfeature@async_destroy\tenabled\tlocal\nfeature@lz4_compress\tactive\tlocal\nfeature@multi_vdev_crash_dump\tactive\tlocal\n",
-        )
-        .with(
-            "zfs list -H -p -t filesystem,volume -o name,type,used,available,referenced,mountpoint,canmount,mounted,encryption,encryptionroot,keyformat,keylocation,keystatus,origin,compression,recordsize,volsize,volblocksize,acltype,xattr,dnodesize,normalization,utf8only,casesensitivity,atime,relatime,copies,com.sun:auto-snapshot",
-            &list,
-        )
-        .with("zfs get -H -p -t filesystem,volume -s local,received -o name,property,value,source all", local)
-        .with("zpool status -P rpool", "  pool: rpool\n state: ONLINE\n  scan: none requested\nconfig:\n\n\tNAME                 STATE     READ WRITE CKSUM\n\trpool                ONLINE       0     0     0\n\t  c3t0d0s1           ONLINE       0     0     0\n\nerrors: No known data errors\n")
-        .with("beadm list -H", "openindiana;01d1a000-0000-4000-8000-000000000005;;;8910848;static;1793001600\nopenindiana-1;01d1a000-0000-4000-8000-000000000006;NR;/;2147483648;static;1794650400\n")
-        .with("bootadm list-menu", "the location for the active menu is: /rpool/boot/menu.lst\nIndex\tDefault\tDataset\tMenu\n0\t-\trpool/ROOT/openindiana\topenindiana\n1\t*\trpool/ROOT/openindiana-1\topenindiana-1\n");
-    (t, runner)
-}
-
-/// OpenIndiana's dump (illumos' report on the fake tree), and its plan onto
-/// c4t0d0.
-fn openindiana_plan(uefi: bool) -> (Value, crate::load::commands::Built) {
-    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
-    let (t, runner) = openindiana(uefi);
-    let sys = Sys::new(t.root(), Box::new(runner), true);
-    let os = crate::other::os_release(&sys);
-    crate::osrel::check_supported(os.as_ref()).unwrap();
-    let v = crate::other::illumos::report(&sys, crate::other::Family::Illumos, os.as_ref(), "2026-11-14T00:00:00Z");
-    assert_eq!(crate::json::parse(&v.pretty()).unwrap().compact(), v.compact());
-    if let Err(e) = crate::bugreport::check_plan(&v.pretty()) {
-        panic!("redaction: {e}");
-    }
-    let l = Layout::from_json(v.clone()).unwrap();
-    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
-    (v, commands::build(&l, &o, &Mapping { pairs: vec![("c3t0d0".into(), "c4t0d0".into())], ..Mapping::default() }))
-}
-
-/// OpenIndiana read back and planned (docs/design/openindiana.md, O2):
-/// supported by its /etc/release; UEFI from prtconf's efi-systab; the
-/// unmounted ESP kept byte for byte.  load makes the dump zvol as a volume
-/// of its size and writes nothing into it, mounts only the booted BE and its
-/// /var (after /), notes that the inactive BE comes back empty, and on UEFI
-/// runs `bootadm update-archive` and no installboot (the firmware boots
-/// EFI/BOOT/BOOTX64.EFI off the restored ESP, with no NVRAM entry).
-#[test]
-fn openindiana_guest() {
-    use crate::load::{commands::Cmd, Stage};
-    let (v, b) = openindiana_plan(true);
-    assert_eq!(s(&v, &["os", "family"]), "illumos");
-    assert_eq!(s(&v, &["os", "id"]), "openindiana");
-    assert_eq!(s(&v, &["os", "version_id"]), "2026.10");
-    assert_eq!(s(&v, &["os", "pretty_name"]), "OpenIndiana Hipster 2026.10");
-    assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
-    assert_eq!(s(&v, &["host", "hostname"]), "oi2610");
-    let p0 = v.at(&["storage", "disks", "0", "partitions", "0"]).unwrap();
-    assert_eq!(s(p0, &["name"]), "c3t0d0s0");
-    assert_eq!(s(p0, &["content", "type"]), "vfat");
-    assert!(!arr(p0, &["esp_image"]).is_empty());
-    let p1 = v.at(&["storage", "disks", "0", "partitions", "1"]).unwrap();
-    assert_eq!((s(p1, &["name"]), s(p1, &["content", "type"])), ("c3t0d0s1", "zfs_member"));
-    assert_eq!(s(v.at(&["storage", "disks", "0", "partitions", "2"]).unwrap(), &["name"]), "c3t0d0s8");
-    assert!(b.problems.is_empty(), "{:?}", b.problems);
-    let all = plan_text(&b);
-    let st = |x: Stage| b.stage(x).iter().map(Cmd::shell).collect::<String>();
-    // The ESP comes back with the table.
-    assert!(b.notes.contains(&"c3t0d0s0: the ESP, written as the source's with the partition table".to_string()), "{:?}", b.notes);
-    // The dump zvol: a volume of its size, its properties, and nothing in it.
-    let f = st(Stage::Format);
-    assert!(f.contains("zfs create -V 1610612736 -o checksum=off -o compression=off -o refreservation=1610612736 -o volblocksize=131072 rpool/dump\n"), "{f}");
-    assert!(b.notes.contains(&"ZFS volume rpool/dump: made empty; archivers back up files, not zvols".to_string()), "{:?}", b.notes);
-    assert_eq!(all.matches("rpool/dump").count(), 1, "{all}");
-    assert!(!all.contains("dumpadm") && !all.contains("/dev/zvol"), "{all}");
-    // Both BEs are made; only the booted one and its /var are mounted.
-    for ds in ["rpool/ROOT/openindiana", "rpool/ROOT/openindiana/var", "rpool/ROOT/openindiana-1", "rpool/ROOT/openindiana-1/var"] {
-        assert!(f.contains(&format!(" {ds}\n")), "{ds} in {f}");
-    }
-    let m = st(Stage::Mount);
-    let root = m.find("zfs mount -O rpool/ROOT/openindiana-1\n").expect(&m);
-    let var = m.find("zfs mount -O rpool/ROOT/openindiana-1/var\n").expect(&m);
-    assert!(root < var, "{m}");
-    assert!(!m.contains("rpool/ROOT/openindiana\n") && !m.contains("rpool/ROOT/openindiana/var\n") && !m.contains("mount -F"), "{m}");
-    for ds in ["rpool/export", "rpool/export/home", "rpool/export/home/tester", "rpool"] {
-        assert!(m.contains(&format!("zfs mount -O {ds}\n")), "{ds} in {m}");
-    }
-    let be = b.notes.iter().filter(|n| n.starts_with("boot environment ")).collect::<Vec<_>>();
-    assert_eq!(be, ["boot environment openindiana (rpool/ROOT/openindiana) isn't the booted one: it comes back as an empty plain dataset (only the booted BE is restored)"], "{:?}", b.notes);
-    assert!(st(Stage::Format).contains("zpool set bootfs=rpool/ROOT/openindiana-1 rpool\n"));
-    // UEFI: the boot archive, and no installboot.
-    let bt = st(Stage::Boot);
-    assert!(bt.contains("bootadm update-archive -R /mnt/bko-target\n"), "{bt}");
-    assert!(!all.contains("installboot") && !all.contains("efibootmgr"), "{all}");
-    // OmniOS' bootadm remakes etc/versions/build from its build.* fragments
-    // and deletes it with none: a fragment for the run, gone after.
-    // A build whose mtime has 0 ns (which assemble_files wouldn't put
-    // back) gets 1 ns for the run, after the fragment took the exact one,
-    // and the fragment's back before it goes.
-    let frag = bt.find("cp -p /mnt/bko-target/etc/versions/build /mnt/bko-target/etc/versions/build.bko-holt && ").expect(&bt);
-    let ns = bt.find("case $s in *.000000000) /usr/gnu/bin/touch -m -d @${s%.*}.000000001 /mnt/bko-target/etc/versions/build;; esac'\n").expect(&bt);
-    let archive = bt.find("bootadm update-archive -R /mnt/bko-target\n").expect(&bt);
-    let back = bt.find("/usr/gnu/bin/touch -m -r /mnt/bko-target/etc/versions/build.bko-holt /mnt/bko-target/etc/versions/build && ").expect(&bt);
-    let gone = bt.find("rm -f /mnt/bko-target/etc/versions/build.bko-holt").expect(&bt);
-    let log = bt.find("cp -Rp ").expect(&bt);
-    assert!(frag < ns && ns < archive && archive < back && back < gone && gone < log, "{bt}");
-    assert!(bt.contains("for f in /mnt/bko-target/etc/versions/build.*; do if [ -e \"$f\" ] || [ -h \"$f\" ]; then exit 0; fi; done;"), "{bt}");
-}
-
-/// The same machine booted by BIOS (as oi2610-bios is): installboot puts
-/// the restored system's gptzfsboot in rpool's slice, after the archive.
-#[test]
-fn openindiana_bios() {
-    use crate::load::{commands::Cmd, Stage};
-    let (v, b) = openindiana_plan(false);
-    assert_eq!(s(&v, &["firmware", "mode"]), "bios");
-    assert!(b.problems.is_empty(), "{:?}", b.problems);
-    let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
-    let frag = bt.find("/etc/versions/build.bko-holt && ").expect(&bt);
-    let archive = bt.find("bootadm update-archive -R /mnt/bko-target\n").expect(&bt);
-    let gone = bt.find("rm -f /mnt/bko-target/etc/versions/build.bko-holt").expect(&bt);
-    let ib = bt.find("installboot -f -b /mnt/bko-target/boot /dev/rdsk/c4t0d0s1\n").expect(&bt);
-    assert!(frag < archive && archive < gone && archive < ib, "{bt}");
-    assert_eq!(bt.matches("installboot").count(), 1, "{bt}");
-}
-

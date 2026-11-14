@@ -527,6 +527,8 @@ mod tests {
         let ob = "magic\t19540119 (FFS2)\ttime\tSat Nov 14 01:06:00 2026\nncg\t71\tsize\t7339864\tblocks\t7108647\nbsize\t16384\tshift\t14\tmask\t0xffffc000\nfsize\t2048\tshift\t11\tmask\t0xfffff800\nminfree\t5%\toptim\ttime\tsymlinklen 120\nbpg\t12960\tfpg\t103680\tipg\t25920\n";
         let r = FakeRunner::default()
             .with("hostname", "obsd8-crypt\n")
+            // BIOS: no efi0 (labelled::report; without dmesg it's unknown).
+            .with("dmesg", "OpenBSD 8.0 (GENERIC.MP)\nmainbus0 at root\nbios0 at mainbus0\n")
             .with("sysctl -n hw.disknames", DISKNAMES)
             .with("disklabel sd0", LABEL_SD0)
             .with("disklabel sd1", LABEL_SD1)
@@ -600,6 +602,27 @@ mod tests {
         let r = r.with("bioctl softraid0", "").with("sysctl -n hw.disknames", "sd0:f036e7e3534d6f8b");
         let v = super::super::labelled::report(&Sys::new(t.root(), Box::new(r), true), Family::OpenBsd, Some(&os), "x");
         assert_eq!(v.at(&["storage", "softraid_volumes"]), None);
+    }
+
+    /// OpenBSD's firmware is from dmesg (efi0 at ...): without dmesg it's
+    /// unknown, with a warning, never bios, and load refuses the dump.
+    #[test]
+    fn firmware_unknown_without_dmesg() {
+        let os = crate::osrel::parse("ID=openbsd\nVERSION_ID=\"8.0\"\n");
+        let report = |r: FakeRunner| {
+            let (t, _) = guest();
+            super::super::labelled::report(&Sys::new(t.root(), Box::new(r), true), Family::OpenBsd, Some(&os), "x")
+        };
+        assert_eq!(str_at(&dump(), &["firmware", "mode"]), Some("bios"));
+        assert_eq!(str_at(&report(guest().1.with("dmesg", "efi0 at bios0: UEFI 2.7\n")), &["firmware", "mode"]), Some("uefi"));
+        let v = report(guest().1.without("dmesg"));
+        assert_eq!((str_at(&v, &["firmware", "mode"]), str_at(&v, &["boot", "loader", "firmware"])), (Some("unknown"), Some("unknown")));
+        let w = v.get("warnings").and_then(Value::as_array).unwrap();
+        assert!(w.contains(&Value::from("the firmware mode (UEFI or BIOS) can't be told: dmesg isn't installed; the dump says unknown, and bko-holt load refuses it")), "{w:?}");
+        let l = crate::load::layout::Layout::from_json(v).unwrap();
+        let Ok(crate::load::Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+        let b = crate::load::commands::build(&l, &o, &crate::load::target::Mapping { pairs: vec![("sd0".into(), "sd0".into())], ..Default::default() });
+        assert!(b.problems.iter().any(|p| p.starts_with("the dump couldn't tell UEFI from BIOS")), "{:?}", b.problems);
     }
 
     // ---- load ---------------------------------------------------------

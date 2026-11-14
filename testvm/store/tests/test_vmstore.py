@@ -187,8 +187,9 @@ class StoreTest(unittest.TestCase):
         self.scan.mkdir()
         self.bin = self.tmp / "bin"
         self.bin.mkdir()
-        (self.bin / "rsync").write_text(FAKE_RSYNC)
-        (self.bin / "rsync").chmod(0o755)
+        for name, text in (("rsync", FAKE_RSYNC), ("zpool", FAKE_ZPOOL), ("sudo", FAKE_SUDO), ("flock", FAKE_FLOCK)):
+            (self.bin / name).write_text(text)          # never this host's zpool, kernel log or flock
+            (self.bin / name).chmod(0o755)
         self.log = self.tmp / "rsync.log"
         self.bytes_log = self.tmp / "rsync.bytes"
         self.env = {"BKO_WORK": str(self.work), "VM_STORE_ROOT": str(self.mirror),
@@ -199,7 +200,7 @@ class StoreTest(unittest.TestCase):
                     "FAKE_RSYNC_BYTES": str(self.bytes_log)}
         for k in ("VM_STORE_CAP", "VM_STORE_WINDOW", "VM_STORE_COPY", "VM_STORE_FLOOR_REFLINK",
                   "VM_STORE_TEST_CRASH", "FAKE_RSYNC_SLEEP",
-                  "FAKE_RSYNC_STOP_ONCE", "FAKE_RSYNC_FAIL", "FAKE_RSYNC_SNOOP"):
+                  "FAKE_RSYNC_STOP_ONCE", "FAKE_RSYNC_FAIL", "FAKE_RSYNC_SNOOP", *FAKE_BF_ENV):
             self.env[k] = ""
         p = mock.patch.dict(os.environ, self.env)
         p.start()
@@ -1572,11 +1573,49 @@ class TestQcow2(StoreTest):
         self.assertEqual(vs.disk_info(top)["backing"], "../base.qcow2")
 
 
+# Bigfoot's tools for the health probe (bigfoot_health), which runs here when
+# VM_STORE_BIGFOOT_HOST is empty (StoreTest puts them on PATH, their knobs cleared):
+# zpool answers FAKE_ZPOOL_HEALTH (ONLINE) and FAKE_ZPOOL_SCAN, or no pool
+# (FAKE_ZPOOL_MISSING), after FAKE_ZPOOL_SLEEP (status: also FAKE_ZPOOL_STATUS_SLEEP);
+# sudo runs only journalctl, which prints the file FAKE_JOURNAL and logs its args to
+# FAKE_JOURNAL_ARGS, or fails as without a password (FAKE_SUDO_FAIL); flock finds the
+# lock free, or busy (FAKE_FLOCK_BUSY).  Never this host's own zpool, log or flock.
+FAKE_ZPOOL = r'''#!/bin/sh
+[ -n "$FAKE_ZPOOL_SLEEP" ] && sleep "$FAKE_ZPOOL_SLEEP"
+case "$1" in
+list)
+    if [ -n "$FAKE_ZPOOL_MISSING" ]; then echo "cannot open '$5': no such pool"; exit 1; fi
+    echo "${FAKE_ZPOOL_HEALTH:-ONLINE}" ;;
+status)
+    [ -n "$FAKE_ZPOOL_STATUS_SLEEP" ] && sleep "$FAKE_ZPOOL_STATUS_SLEEP"
+    printf '  pool: %s\n state: %s\n  scan: %s\nconfig:\n\nerrors: No known data errors\n' "$2" \
+        "${FAKE_ZPOOL_HEALTH:-ONLINE}" "${FAKE_ZPOOL_SCAN:-scrub repaired 0B in 1 days with 0 errors on Sun Nov  9 2026}" ;;
+*) exit 2 ;;
+esac
+'''
+FAKE_SUDO = r'''#!/bin/sh
+if [ -n "$FAKE_SUDO_FAIL" ]; then echo "sudo: a password is required" >&2; exit 1; fi
+[ "$1" = -n ] && shift
+[ "$1" = journalctl ] || { echo "fake sudo: journalctl only" >&2; exit 1; }
+[ -n "$FAKE_JOURNAL_ARGS" ] && echo "$*" > "$FAKE_JOURNAL_ARGS"
+[ -n "$FAKE_JOURNAL" ] && cat "$FAKE_JOURNAL"
+exit 0
+'''
+FAKE_FLOCK = r'''#!/bin/sh
+[ -n "$FAKE_FLOCK_BUSY" ] && exit 99
+exit 0
+'''
+FAKE_BF_ENV = ("FAKE_ZPOOL_HEALTH", "FAKE_ZPOOL_SCAN", "FAKE_ZPOOL_MISSING", "FAKE_ZPOOL_SLEEP",
+               "FAKE_ZPOOL_STATUS_SLEEP", "FAKE_JOURNAL", "FAKE_JOURNAL_ARGS", "FAKE_SUDO_FAIL", "FAKE_FLOCK_BUSY",
+               "VM_STORE_BF_POOL", "VM_STORE_BF_RESET_WINDOW", "VM_STORE_BF_GATE", "VM_STORE_RSYNC_TIMEOUT",
+               "VM_STORE_BWLIMIT_BIGFOOT")
+
+
 # --- 10: push --------------------------------------------------------------------
 
 class TestPush(StoreTest):
     def setUp(self):
-        super().setUp()
+        super().setUp()                                     # a healthy pool (the fake zpool)
         self.bf_stage.mkdir(parents=True)
         rc, _, err = self.run_vs("init", "--bigfoot")
         self.assertEqual(rc, 0, err)
@@ -1595,7 +1634,7 @@ class TestPush(StoreTest):
         self.assertEqual(len(calls), 3)                     # objects, manifests, latest
         for c in calls:
             a = c["argv"]
-            self.assertIn(f"--rsync-path=flock -w 3600 {self.bf_stage}/xfer.lock nice -n19 rsync", a)
+            self.assertIn(f"--rsync-path=flock -w 270 -E 99 {self.bf_stage}/xfer.lock nice -n19 rsync", a)
             for flag in ("--bwlimit=40000", "--compress", "--compress-choice=zstd", "--compress-level=1",
                          "--no-whole-file", "--fsync", "--partial-dir=.partial", "--chmod=Fa-w", "-t"):
                 self.assertIn(flag, a)
@@ -1670,7 +1709,7 @@ class TestPush(StoreTest):
         for c in fetches:
             self.assertIn("--bwlimit=40000", c["argv"])
             self.assertIn("--compress-choice=zstd", c["argv"])
-            self.assertIn(f"--rsync-path=flock -w 3600 {self.bf_stage}/xfer.lock nice -n19 rsync", c["argv"])
+            self.assertIn(f"--rsync-path=flock -w 270 -E 99 {self.bf_stage}/xfer.lock nice -n19 rsync", c["argv"])
 
     def test_defaults_follow_d1_and_d2(self):
         # D1: the root is bt's top level; D2: a cache's default source is Chopin alone.
@@ -1778,6 +1817,426 @@ class TestPush(StoreTest):
         self.assertTrue(any("differs on bigfoot" in x for x in done["skipped"]), done)
         self.assertEqual(o.read_bytes(), before)
         self.assertFalse((inc / objs[0]).exists())
+
+# --- 10b: Bigfoot's health gate --------------------------------------------------
+
+def probe_out(health="ONLINE", scan="scrub repaired 0B in 1 days with 0 errors on Sun Nov  9 2026",
+              journal=None, journal_rc=0, end=True):
+    """BF_HEALTH_SH's output, by hand."""
+    out = f"@@ list\n{health}\n@@ rc 0\n@@ status\n  pool: DantePool\n state: {health}\n  scan: {scan}\n@@ rc 0\n"
+    if journal is not None:
+        out += "@@ journal\n" + "".join(x + "\n" for x in journal) + f"@@ rc {journal_rc}\n"
+    return out + ("@@ end\n" if end else "")
+
+
+RESET = "Nov 14 07:46:25 bigfoot kernel: usb 4-1.4: reset SuperSpeed USB device number 3 using xhci_hcd"
+DROP = "Nov 14 07:46:27 bigfoot kernel: usb 4-1.4.2: USB disconnect, device number 5"
+READ71 = "Nov 14 07:46:29 bigfoot kernel: usb 4-1.4: device descriptor read/64, error -71"
+
+
+class TestBigfootHealth(StoreTest):
+    def setUp(self):
+        super().setUp()
+        self.jargs = self.tmp / "journal.args"
+        os.environ["FAKE_JOURNAL_ARGS"] = str(self.jargs)
+
+    def journal(self, *lines):
+        j = self.tmp / "journal"
+        j.write_text("".join(x + "\n" for x in lines))
+        os.environ["FAKE_JOURNAL"] = str(j)
+
+    def test_parse_online_is_healthy(self):
+        ok, reasons, d = vs.parse_health(probe_out(journal=[]), "DantePool", "6h")
+        self.assertEqual((ok, reasons), (True, []))
+        self.assertEqual((d["health"], d["resets"], d["warnings"]), ("ONLINE", 0, []))
+
+    def test_parse_suspended_and_degraded(self):
+        for h in ("SUSPENDED", "DEGRADED", "FAULTED"):
+            ok, reasons, d = vs.parse_health(probe_out(h, journal=[]), "DantePool", "6h")
+            self.assertFalse(ok)
+            self.assertEqual(reasons, [f"pool DantePool is {h}"])
+            self.assertEqual(d["health"], h)
+            self.assertFalse(vs.parse_health(probe_out(h), "DantePool", None, pool_only=True)[0])
+
+    def test_parse_scrub_and_resilver(self):
+        for kind in ("scrub", "resilver"):
+            out = probe_out(scan=f"{kind} in progress since Fri Nov 14 01:00:00 2026", journal=[])
+            ok, reasons, d = vs.parse_health(out, "DantePool", "6h")
+            self.assertFalse(ok)
+            self.assertEqual(reasons, [f"a {kind} is in progress on DantePool"])
+            self.assertTrue(d["scan"].startswith(f"{kind} in progress"))
+            self.assertEqual(vs.parse_health(out, "DantePool", None, pool_only=True)[:2], (True, []))
+
+    def test_parse_usb_resets_in_the_window(self):
+        noise = "Nov 14 07:40:00 bigfoot kernel: usb 3-1: new high-speed USB device number 2 using xhci_hcd"
+        ok, reasons, d = vs.parse_health(probe_out(journal=[noise, RESET, DROP, READ71]), "DantePool", "6h")
+        self.assertFalse(ok)
+        self.assertEqual(d["resets"], 3)
+        self.assertEqual(d["last_reset"], READ71)
+        self.assertEqual(len(reasons), 1)
+        self.assertIn("3 USB reset/disconnect line(s)", reasons[0])
+        self.assertIn("last 6h", reasons[0])
+        self.assertIn(READ71, reasons[0])
+        self.assertTrue(vs.parse_health(probe_out(journal=[noise]), "DantePool", "6h")[0])
+
+    def test_parse_sudo_unavailable_is_skipped_not_failed(self):
+        out = probe_out(journal=["sudo: a password is required"], journal_rc=1)
+        ok, reasons, d = vs.parse_health(out, "DantePool", "6h")
+        self.assertEqual((ok, reasons, d["resets"]), (True, [], None))
+        self.assertEqual(len(d["warnings"]), 1)
+        self.assertIn("USB resets not checked", d["warnings"][0])
+        self.assertIn("a password is required", d["warnings"][0])
+
+    def test_parse_no_pool_or_truncated(self):
+        ok, reasons, _ = vs.parse_health("@@ list\ncannot open 'DantePool': no such pool\n@@ rc 1\n@@ end\n",
+                                         "DantePool", None)
+        self.assertFalse(ok)
+        self.assertIn("zpool list DantePool failed: cannot open", reasons[0])
+        ok, reasons, d = vs.parse_health(probe_out(end=False), "DantePool", None)
+        self.assertTrue(ok)
+        self.assertIn("the probe didn't finish", d["warnings"])
+        self.assertFalse(vs.parse_health("", "DantePool", None)[0])
+
+    def test_probe_through_the_fakes(self):
+        cfg = vs.Config()
+        self.assertEqual(cfg.bf_pool, "DantePool")          # the tests' stage isn't under /media
+        ok, reasons, d = vs.bigfoot_health(cfg)
+        self.assertEqual((ok, reasons, d["health"], d["resets"]), (True, [], "ONLINE", 0), d)
+        a = self.jargs.read_text().split()
+        self.assertEqual(a[:2], ["journalctl", "_TRANSPORT=kernel"])   # every boot in the window, not -k's last
+        self.assertIn("--since=-21600s", a)
+        self.journal(RESET)
+        os.environ["FAKE_ZPOOL_SCAN"] = "resilver in progress since Fri Nov 14 01:00:00 2026"
+        ok, reasons, d = vs.bigfoot_health(vs.Config())
+        self.assertFalse(ok)
+        self.assertEqual(len(reasons), 2, reasons)
+        self.assertEqual(d["last_reset"], RESET)
+        self.jargs.unlink()
+        self.assertEqual(vs.bigfoot_health(vs.Config(), pool_only=True)[:2], (True, []))
+        self.assertFalse(self.jargs.exists())               # a reader's probe reads no log
+        with mock.patch.dict(os.environ, {"VM_STORE_BF_RESET_WINDOW": "0", "FAKE_ZPOOL_SCAN": ""}):
+            ok, reasons, d = vs.bigfoot_health(vs.Config())
+        self.assertEqual((ok, d["window"]), (True, None))
+        self.assertFalse(self.jargs.exists())
+        with mock.patch.dict(os.environ, {"FAKE_SUDO_FAIL": "1", "FAKE_ZPOOL_SCAN": ""}):
+            ok, reasons, d = vs.bigfoot_health(vs.Config())
+        self.assertEqual((ok, reasons), (True, []))
+        self.assertIn("a password is required", d["warnings"][0])
+        with mock.patch.dict(os.environ, {"FAKE_ZPOOL_HEALTH": "SUSPENDED", "FAKE_ZPOOL_SCAN": ""}):
+            ok, reasons, _ = vs.bigfoot_health(vs.Config(), pool_only=True)
+        self.assertEqual((ok, reasons), (False, ["pool DantePool is SUSPENDED"]))
+
+    def test_no_answer_in_time_is_unhealthy(self):
+        os.environ["FAKE_ZPOOL_SLEEP"] = "20"
+        t0 = time.monotonic()
+        with mock.patch.object(vs, "BF_PROBE_TIMEOUT", 1):
+            ok, reasons, _ = vs.bigfoot_health(vs.Config())
+        self.assertLess(time.monotonic() - t0, 10)
+        self.assertEqual((ok, reasons), (False, ["Bigfoot did not answer within 1s"]))
+        with mock.patch.object(vs.subprocess, "Popen", side_effect=OSError("no ssh")):
+            ok, reasons, _ = vs.bigfoot_health(vs.Config())
+        self.assertFalse(ok)
+        self.assertIn("no ssh", reasons[0])
+
+    def test_ssh_command_line(self):
+        seen = {}
+
+        class Stdin(io.BytesIO):
+            def close(self):
+                seen["script"] = self.getvalue().decode()
+                super().close()
+
+        class P:
+            pid, returncode = 0, 0
+
+            def __init__(self, cmd, **kw):
+                seen["cmd"], seen["kw"] = cmd, kw
+                self.stdin, self.stdout, self.stderr = Stdin(), io.BytesIO(probe_out(journal=[]).encode()), io.BytesIO()
+
+            def wait(self, timeout=None):
+                return 0
+        cfg = vs.Config({"VM_STORE_BIGFOOT_HOST": "m@bf", "VM_STORE_BF_POOL": "Tank"})
+        with mock.patch.object(vs.subprocess, "Popen", P):
+            ok, _, d = vs.bigfoot_health(cfg)
+            self.assertEqual(seen["cmd"][-1].split()[-1], "-")              # no lock check
+            vs.bigfoot_health(cfg, lock=True)
+        self.assertTrue(ok)
+        self.assertEqual(seen["cmd"][:-2], ["ssh", *vs.SSH_OPTS])
+        self.assertEqual(seen["cmd"][-2], "m@bf")
+        self.assertEqual(seen["cmd"][-1].split()[:4], ["sh", "-s", "--", "Tank"])
+        self.assertEqual(seen["cmd"][-1].split()[-1], f"{vs.DEFAULT_BF_STAGE}/xfer.lock")
+        self.assertTrue(seen["kw"].get("start_new_session"))
+        self.assertIn(f"timeout -k 2 {vs.BF_STEP_TIMEOUT}", seen["script"])
+        self.assertIn("flock -n -E 99", seen["script"])
+        # Four steps, each with timeout's 2 s grace, and ssh's connect fit in the whole probe.
+        self.assertLess(4 * (vs.BF_STEP_TIMEOUT + 2) + 5, vs.BF_PROBE_TIMEOUT)
+
+    def test_timeout_keeps_what_the_probe_said(self):
+        # zpool list says SUSPENDED, then zpool status hangs: the verdict names both.
+        with mock.patch.dict(os.environ, {"FAKE_ZPOOL_HEALTH": "SUSPENDED", "FAKE_ZPOOL_STATUS_SLEEP": "20"}), \
+                mock.patch.object(vs, "BF_PROBE_TIMEOUT", 1):
+            ok, reasons, d = vs.bigfoot_health(vs.Config())
+        self.assertFalse(ok)
+        self.assertEqual(reasons, ["Bigfoot did not answer within 1s", "pool DantePool is SUSPENDED"])
+        self.assertEqual((d["health"], d["warnings"]), ("SUSPENDED", []))
+        # A step's own timeout is said as one.
+        ok, reasons, _ = vs.parse_health("@@ list\n@@ rc 124\n@@ end\n", "DantePool", None)
+        self.assertEqual(reasons, ["zpool list DantePool failed: timed out"])
+        out = probe_out().replace("@@ rc 0\n@@ end", "@@ rc 137\n@@ end")
+        self.assertIn("zpool status DantePool: timed out", vs.parse_health(out, "DantePool", None)[2]["warnings"])
+
+    def test_interrupt_kills_the_probe(self):
+        os.environ["FAKE_ZPOOL_SLEEP"] = "20"
+        made = []
+        real_popen, real_join = vs.subprocess.Popen, vs.threading.Thread.join
+
+        def popen(*a, **kw):
+            made.append(real_popen(*a, **kw))
+            return made[-1]
+
+        def join(self, timeout=None):                       # ^C while waiting for the answer
+            if not made[0].poll() and not getattr(join, "hit", False):
+                join.hit = True
+                raise KeyboardInterrupt
+            return real_join(self, timeout)
+        with mock.patch.object(vs.subprocess, "Popen", popen), \
+                mock.patch.object(vs.threading.Thread, "join", join), self.assertRaises(KeyboardInterrupt):
+            vs.bigfoot_health(vs.Config())
+        self.assertIsNotNone(made[0].poll())                # gone, not left behind
+
+    def test_lock_state_after_a_failure(self):
+        self.assertEqual(vs.bigfoot_health(vs.Config(), lock=True)[2]["xfer_lock"], "free")
+        self.assertIsNone(vs.bigfoot_health(vs.Config())[2]["xfer_lock"])
+        with mock.patch.dict(os.environ, {"FAKE_FLOCK_BUSY": "1"}):
+            ok, text, d = vs.bigfoot_verdict(vs.Config(), lock=True)
+        self.assertTrue(ok)
+        self.assertEqual(d["xfer_lock"], "busy")
+        self.assertIn("xfer.lock is still held", text)
+        with mock.patch.dict(os.environ, {"FAKE_FLOCK_BUSY": "1", "FAKE_ZPOOL_HEALTH": "SUSPENDED"}):
+            self.assertIsNone(vs.bigfoot_health(vs.Config(), lock=True)[2]["xfer_lock"])   # not tried
+
+    def test_config(self):
+        self.assertEqual(vs.Config({}).bf_pool, "DantePool")
+        self.assertEqual(vs.Config({"VM_STORE_BIGFOOT_STAGE": "/media/Other/x/.st"}).bf_pool, "Other")
+        self.assertEqual(vs.Config({}).rsync_timeout, "300")
+        for k, v in (("VM_STORE_BF_GATE", "2"), ("VM_STORE_RSYNC_TIMEOUT", "5m"), ("VM_STORE_RSYNC_TIMEOUT", "0"),
+                     ("VM_STORE_BF_RESET_WINDOW", "6 hours"), ("VM_STORE_BF_POOL", "a b")):
+            with self.assertRaises(vs.Usage, msg=(k, v)):
+                vs.Config({k: v})
+
+    def test_bigfoot_health_command(self):
+        rc, out, _ = self.run_vs("bigfoot-health")
+        self.assertEqual(rc, 0, self.last_err)
+        self.assertTrue(out.startswith("healthy: pool DantePool ONLINE"), out)
+        with mock.patch.dict(os.environ, {"FAKE_ZPOOL_HEALTH": "SUSPENDED"}):
+            rc, out, _ = self.run_vs("bigfoot-health")
+            self.assertEqual((rc, out), (1, "unhealthy: pool DantePool is SUSPENDED\n"))
+            rc, out, _ = self.run_vs("bigfoot-health", "--json")
+            self.assertEqual(rc, 1)
+            j = json.loads(out)
+            self.assertEqual((j["ok"], j["health"], j["reasons"]),
+                             (False, "SUSPENDED", ["pool DantePool is SUSPENDED"]))
+        with mock.patch.dict(os.environ, {"FAKE_ZPOOL_SCAN": "scrub in progress since today"}):
+            self.assertEqual(self.run_vs("bigfoot-health")[0], 1)
+            self.assertEqual(self.run_vs("bigfoot-health", "--pool-only")[0], 0)
+        self.assertEqual(self.run_vs("bigfoot-health", "--bogus")[0], 2)
+        self.init_cache()
+        rc, _, err = self.run_vs("bigfoot-health", root=self.cache)
+        self.assertEqual(rc, 2)
+        self.assertIn("runs on the mirror", err)
+        r = self.cli("bigfoot-health")                      # the entry point's exit status
+        self.assertEqual(r.returncode, 0, r.stderr)
+
+
+class TestBigfootGate(StoreTest):
+    def setUp(self):
+        super().setUp()
+        self.bf_stage.mkdir(parents=True)
+        self.assertEqual(self.run_vs("init", "--bigfoot")[0], 0, self.last_err)
+        self.guest("p1")
+        self.assertEqual(self.run_vs("publish", "p1")[0], 0, self.last_err)
+
+    def test_push_refuses_when_unhealthy_and_now_does_not_bypass(self):
+        for env, why in (({"FAKE_ZPOOL_HEALTH": "SUSPENDED"}, "pool DantePool is SUSPENDED"),
+                         ({"FAKE_ZPOOL_SCAN": "scrub in progress since today"}, "a scrub is in progress"),
+                         ({"FAKE_ZPOOL_SLEEP": "20"}, "did not answer within 1s")):
+            with mock.patch.dict(os.environ, env), mock.patch.object(vs, "BF_PROBE_TIMEOUT", 1), \
+                    mock.patch.object(vs, "bigfoot_listing", side_effect=AssertionError("listed")) as bl:
+                rc, _, err = self.run_vs("push", "--now")
+            self.assertEqual(rc, 1, err)
+            bl.assert_not_called()                          # the gate comes before any read of Bigfoot
+            self.assertIn("push: Bigfoot is not healthy: ", err)
+            self.assertIn(why, err)
+            self.assertIn("; not pushing", err)
+            self.assertEqual(self.rsync_calls(), [])
+        self.assertEqual(list((self.bf_root / "objects").iterdir()), [])
+        # Outside the window, the window says no first (exit 3), as before.
+        hour = time.localtime().tm_hour
+        with mock.patch.dict(os.environ, {"FAKE_ZPOOL_HEALTH": "SUSPENDED",
+                                          "VM_STORE_WINDOW": f"{(hour + 2) % 24:02d}:00-{(hour + 3) % 24:02d}:00"}):
+            self.assertEqual(self.run_vs("push")[0], 3)
+        # publish --push: the publish stands, the push fails.
+        with mock.patch.dict(os.environ, {"FAKE_ZPOOL_HEALTH": "SUSPENDED", "VM_STORE_WINDOW": "00:00-23:59"}):
+            self.guest("p2")
+            rc, _, err = self.run_vs("publish", "p2", "--push")
+        self.assertEqual(rc, 1)
+        self.assertIn("push failed (the publish stands", err)
+        self.assertIsNotNone(self.latest(self.mirror, "p2"))
+
+    def test_dry_run_reports_but_does_not_fail(self):
+        # Not ONLINE: the verdict, and no listing (a suspended pool would hang it there).
+        with mock.patch.dict(os.environ, {"FAKE_ZPOOL_HEALTH": "SUSPENDED"}), \
+                mock.patch.object(vs, "bigfoot_listing", side_effect=AssertionError("listed")) as bl:
+            rc, out, err = self.run_vs("push", "--now", "--dry-run")
+        self.assertEqual(rc, 0, err)
+        bl.assert_not_called()
+        self.assertIn("push: Bigfoot is not healthy: pool DantePool is SUSPENDED; a real run would refuse", err)
+        self.assertIn("push: not listing Bigfoot: pool DantePool is SUSPENDED (--dry-run)", err)
+        self.assertEqual(out, "")
+        # ONLINE but scrubbing: the verdict, and what a real run (once healthy) would send.
+        with mock.patch.dict(os.environ, {"FAKE_ZPOOL_SCAN": "scrub in progress since today"}):
+            rc, out, err = self.run_vs("push", "--now", "--dry-run")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("a scrub is in progress on DantePool; a real run would refuse", err)
+        self.assertIn("objects sha256-", out)
+        self.assertEqual(self.rsync_calls(), [])
+        rc, _, err = self.run_vs("push", "--now", "--dry-run")
+        self.assertIn("push: Bigfoot is healthy (pool DantePool ONLINE)", err)
+
+    def test_gate_0_bypasses_loudly(self):
+        with mock.patch.dict(os.environ, {"FAKE_ZPOOL_HEALTH": "SUSPENDED", "VM_STORE_BF_GATE": "0"}):
+            rc, _, err = self.run_vs("push", "--now")
+        self.assertEqual(rc, 0, err)
+        self.assertIn("WARNING: VM_STORE_BF_GATE=0: push without checking Bigfoot's health", err)
+        self.assertEqual(len(self.rsync_calls()), 3)
+
+    def test_timeout_in_every_bigfoot_rsync(self):
+        with mock.patch.dict(os.environ, {"VM_STORE_RSYNC_TIMEOUT": "60"}):
+            self.assertEqual(self.run_vs("push", "--now")[0], 0, self.last_err)
+        calls = self.rsync_calls()
+        self.assertEqual(len(calls), 3)
+        for c in calls:
+            self.assertIn("--timeout=60", c["argv"])
+        self.init_cache()
+        with mock.patch.dict(os.environ, {"VM_STORE_SOURCES": f"bigfoot={self.bf_root}"}):
+            self.assertEqual(self.run_vs("ensure", "p1", root=self.cache)[0], 0, self.last_err)
+        fetches = self.rsync_calls()[3:]
+        self.assertTrue(fetches)
+        for c in fetches:
+            self.assertIn("--timeout=300", c["argv"])
+        # Chopin as a source isn't Bigfoot: no gate, no --timeout.  Bigfoot's host is, by any name.
+        cfg = vs.Config({"VM_STORE_BIGFOOT_HOST": "m@bigfoot.local"})
+        self.assertNotIn("--timeout=300", vs.Source("chopin", "m@c:/s", cfg).rsync_cmd("objects/x", "/d/"))
+        for spec in ("m@bigfoot.local:/media/DantePool/bt", "bigfoot.local:/x"):
+            src = vs.Source("bf", spec, cfg)
+            self.assertTrue(src.bigfoot, spec)
+            self.assertIn("--timeout=300", src.rsync_cmd("objects/x", "/d/"))
+        self.assertFalse(vs.Source("bf", "/local/bt", vs.Config({"VM_STORE_BIGFOOT_HOST": ""})).bigfoot)
+
+    def test_lock_wait_fits_in_the_timeout_and_is_retried(self):
+        self.assertEqual(vs.xfer_rsync_path(vs.Config({"VM_STORE_RSYNC_TIMEOUT": "300"})),
+                         f"--rsync-path=flock -w 270 -E 99 {vs.DEFAULT_BF_STAGE}/xfer.lock nice -n19 rsync")
+        self.assertIn("flock -w 10 ", vs.xfer_rsync_path(vs.Config({"VM_STORE_RSYNC_TIMEOUT": "20"})))
+        self.assertIn("flock -w 1 ", vs.xfer_rsync_path(vs.Config({"VM_STORE_RSYNC_TIMEOUT": "1"})))
+        err = io.StringIO()
+        with mock.patch.object(vs, "run_child", side_effect=[vs.XFER_BUSY, vs.XFER_BUSY, 0]) as rc_, \
+                contextlib.redirect_stderr(err):
+            self.assertEqual(vs.run_xfer(["rsync"]), 0)
+        self.assertEqual(rc_.call_count, 3)
+        self.assertEqual(err.getvalue().count("xfer.lock is busy"), 2)
+        with mock.patch.object(vs, "run_child", return_value=vs.XFER_BUSY) as rc_, \
+                mock.patch.object(vs, "XFER_LOCK_WAIT", 0):
+            self.assertEqual(vs.run_xfer(["rsync"]), vs.XFER_BUSY)     # given up: its caller probes
+        self.assertEqual(rc_.call_count, 1)
+
+    def test_rsync_failure_runs_the_probe(self):
+        def suspend(cfg, src, names, dest):                 # the pool goes as the rsync starts
+            os.environ["FAKE_ZPOOL_HEALTH"] = "SUSPENDED"
+            return 30
+        with mock.patch.dict(os.environ, {}), mock.patch.object(vs, "push_rsync", side_effect=suspend) as pr:
+            rc, _, err = self.run_vs("push", "--now")
+        self.assertEqual(rc, 1)
+        self.assertEqual(pr.call_count, 1)                  # stopped: no manifests, no latest, no accept
+        self.assertIn("push: rsync of the objects failed (exit status 30); Bigfoot is not healthy: "
+                      "pool DantePool is SUSPENDED; stopped", err)
+        self.assertEqual(err.count("rsync of the objects failed"), 1)   # said once
+        # A busy xfer.lock (another transfer past this one's lock wait) is named.
+        with mock.patch.dict(os.environ, {"FAKE_FLOCK_BUSY": "1"}), \
+                mock.patch.object(vs, "push_rsync", return_value=30):
+            rc, _, err = self.run_vs("push", "--now")
+        self.assertEqual(rc, 1)
+        self.assertIn("Bigfoot looks healthy (pool DantePool ONLINE); Bigfoot's xfer.lock is still held", err)
+        # A failure on a healthy pool says so, and goes on as before.
+        with mock.patch.dict(os.environ, {"FAKE_RSYNC_FAIL": "/objects"}):
+            rc, _, err = self.run_vs("push", "--now")
+        self.assertEqual(rc, 1)
+        self.assertIn("rsync of the objects (exit status 23) failed (Bigfoot looks healthy (pool DantePool ONLINE))",
+                      err)
+        self.assertIn("bigfoot skipped", err)
+
+    def test_accept_failure_carries_the_verdict(self):
+        def accept_fails(host, script, args, timeout=vs.REMOTE_TIMEOUT):
+            if script is vs.ACCEPT_PY:
+                os.environ["FAKE_ZPOOL_HEALTH"] = "SUSPENDED"
+                raise vs.Unreachable("bigfoot timed out")
+            return real(host, script, args, timeout)
+        real = vs.remote_py
+        with mock.patch.dict(os.environ, {}), mock.patch.object(vs, "remote_py", side_effect=accept_fails):
+            rc, _, err = self.run_vs("push", "--now")
+        self.assertEqual(rc, 1)
+        self.assertIn("push: bigfoot's accept failed: bigfoot timed out; Bigfoot is not healthy: "
+                      "pool DantePool is SUSPENDED", err)
+
+    def test_init_bigfoot_gates_on_the_pool(self):
+        with mock.patch.dict(os.environ, {"FAKE_ZPOOL_HEALTH": "SUSPENDED"}), \
+                mock.patch.object(vs, "remote_py", side_effect=AssertionError("wrote")) as rp:
+            rc, _, err = self.run_vs("init", "--bigfoot")
+        self.assertNotEqual(rc, 0)
+        rp.assert_not_called()
+        self.assertIn("init --bigfoot: Bigfoot is not healthy: pool DantePool is SUSPENDED; not writing to it", err)
+        with mock.patch.dict(os.environ, {"FAKE_ZPOOL_SCAN": "scrub in progress since today"}):
+            self.assertEqual(self.run_vs("init", "--bigfoot")[0], 0, self.last_err)   # the pool only
+
+    def test_readers_gate_on_the_pool_only(self):
+        self.assertEqual(self.run_vs("push", "--now")[0], 0, self.last_err)
+        self.init_cache()
+        with mock.patch.dict(os.environ, {"FAKE_ZPOOL_SCAN": "scrub in progress since today"}):
+            self.assertEqual(self.run_vs("verify", "--where", "bigfoot")[0], 0, self.last_err)
+        with mock.patch.dict(os.environ, {"FAKE_ZPOOL_HEALTH": "SUSPENDED"}):
+            rc, _, err = self.run_vs("verify", "--where", "bigfoot")
+            self.assertEqual(rc, 1)
+            self.assertIn("verify: Bigfoot is not healthy: pool DantePool is SUSPENDED; not reading from it", err)
+            st = json.loads(self.run_vs("status", "--json")[1])
+            self.assertIsNone(st["unpushed"])
+            self.assertIn("SUSPENDED", st["bigfoot"])
+            n = len(self.rsync_calls())
+            with mock.patch.dict(os.environ, {"VM_STORE_SOURCES": f"bigfoot={self.bf_root}"}):
+                rc, _, err = self.run_vs("ensure", "p1", root=self.cache)
+                self.assertEqual(rc, 1)
+                self.assertIn("source bigfoot: Bigfoot is not healthy: pool DantePool is SUSPENDED", err)
+                self.assertEqual(self.run_vs("list", "--source", "bigfoot")[0], 1)
+            self.assertEqual(len(self.rsync_calls()), n)
+            # With Chopin first, ensure falls back past an unhealthy Bigfoot (here Chopin answers).
+            with mock.patch.dict(os.environ, {"VM_STORE_SOURCES": f"bigfoot={self.bf_root} chopin={self.mirror}"}):
+                rc, _, err = self.run_vs("ensure", "p1", root=self.cache)
+            self.assertEqual(rc, 0, err)
+            self.assertTrue(all(c["src"].startswith(str(self.mirror)) for c in self.rsync_calls()[n:]))
+
+    def test_failed_fetch_from_bigfoot_runs_the_probe(self):
+        self.assertEqual(self.run_vs("push", "--now")[0], 0, self.last_err)
+        self.init_cache()
+        cfg = vs.Config({**os.environ, "VM_STORE_SOURCES": f"bigfoot={self.bf_root}", "VM_STORE_ROOT": str(self.cache)})
+        store = vs.Store(self.cache, cfg)
+        name = sorted(os.listdir(self.bf_root / "objects"))[0]
+        src = cfg.source("bigfoot")
+        self.assertTrue(src.check() is None and src.gated == "")
+        with mock.patch.dict(os.environ, {"FAKE_RSYNC_FAIL": str(self.bf_root), "FAKE_ZPOOL_HEALTH": "SUSPENDED"}):
+            err = io.StringIO()
+            with contextlib.redirect_stderr(err), self.assertRaises(vs.StoreError):
+                vs.fetch_object(store, name, [src])
+        self.assertIn("bigfoot: rsync of", err.getvalue())
+        self.assertIn("Bigfoot is not healthy: pool DantePool is SUSPENDED", err.getvalue())
+        self.assertTrue(src.down)
 
 # --- 11: the write guards --------------------------------------------------------
 

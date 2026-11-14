@@ -46,10 +46,71 @@ vm-store gc [--dry-run]              # caches: make room, least recently ensured
 vm-store list [GUEST] [--source chopin]
 vm-store status
 vm-store verify [--where local|bigfoot]
+vm-store bigfoot-health [--pool-only] [--json]   # Chopin: is Bigfoot fit to write to? exit 0 yes, 1 no
 ```
 
 Exit status: 0 ok, 1 failure, 2 usage, 3 busy (try later), 4 no room.
 Progress goes to stderr; stdout carries only the result.
+
+## Bigfoot's health gate
+
+Since the 2026-11-13 DantePool suspension (a push without an rsync timeout
+hung on the suspended pool for about 8 h), every job that talks to Bigfoot
+first runs a health probe. The probe is one ssh round trip under a local
+45 s timeout, each step on Bigfoot under 5 s. Bigfoot not answering in that
+time counts as unhealthy, and the verdict keeps what the probe said before it
+stopped (a SUSPENDED pool, say, before `zpool status` hung). The probe checks
+three things:
+
+- `zpool list -H -o health` of `VM_STORE_BF_POOL`;
+- whether `zpool status` shows a scrub or resilver in progress;
+- the USB reset and disconnect lines (`error -71` among them) in Bigfoot's
+  kernel log over the last `VM_STORE_BF_RESET_WINDOW`, read by
+  `sudo -n journalctl _TRANSPORT=kernel`, not `-k` (which means this boot
+  only): resets before a reboot count as long as Bigfoot's journal is
+  persistent. Without passwordless sudo this check is skipped with a
+  warning; it does not fail.
+
+- **push** needs all three to pass: the pool `ONLINE`, no scrub or resilver,
+  and no USB reset in the window. Otherwise it exits 1 with `push: Bigfoot is
+  not healthy: ...; not pushing`, before any rsync. `--now` skips only the
+  window, never the gate. `--dry-run` prints the verdict and doesn't fail;
+  with the pool not `ONLINE` (or no answer) it lists nothing either, since a
+  suspended pool would hang the listing there.
+- **Readers** need only an ONLINE pool: `verify --where bigfoot`, `status`,
+  `list --source bigfoot`, `init --bigfoot`, and ensure or fetch from a
+  `bigfoot=` source. A Bigfoot source that fails the check is down for the
+  run, so ensure tries the next source.
+- **rsync:** every rsync to or from Bigfoot passes
+  `--timeout=$VM_STORE_RSYNC_TIMEOUT`. When one fails (exit 30 is the I/O
+  timeout), the probe runs once and its verdict goes into the message (`...;
+  Bigfoot is not healthy: pool DantePool is SUSPENDED`). If Bigfoot is not
+  healthy (and `VM_STORE_BF_GATE=1`), push then stops instead of sending the
+  rest; on a healthy pool it goes on and runs the accept step as before.
+- **xfer.lock:** rsync's `--timeout` also counts the silent wait for
+  Bigfoot's `xfer.lock` (one stream at a time), so each try's `flock` waits
+  30 s less than the timeout (270 s by default) and then exits 99. vm-store
+  tries again while the lock stays busy, up to an hour in all, as the old
+  `flock -w 3600` did. If an rsync fails anyway, the probe also says when
+  the lock is still held (`Bigfoot's xfer.lock is still held`).
+- **Override:** `VM_STORE_BF_GATE=0` skips the gate and prints a loud
+  warning. It is for a pool you know is fine, for example during a scrub you
+  started yourself.
+
+From other scripts on Chopin (the nightly push wrapper, the results and
+attic syncs), gate on the subcommand:
+
+```
+testvm/vm-store bigfoot-health || { echo "bigfoot unhealthy; not syncing" >&2; exit 1; }
+testvm/vm-store bigfoot-health --pool-only     # a reader: only the pool's health counts
+testvm/vm-store bigfoot-health --json          # {"ok", "reasons", "health", "scan", "resets", "last_reset", "warnings", ...}
+```
+
+The subcommand exits 0 when healthy and 1 when not, and prints `healthy: ...`
+or `unhealthy: REASON; ...` on stdout. It exits 2 on a usage error, or when
+it isn't run on the mirror: by D2 only Chopin talks to Bigfoot. It ignores
+`VM_STORE_BF_GATE`. Put a timeout on your own rsyncs to Bigfoot too
+(`--timeout=300`), and keep any lock wait of theirs shorter than it.
 
 ## Versions
 
@@ -147,8 +208,12 @@ per-job pins (`VM_STORE_PIN`, `vm_store_dir`) are not built.
 | `VM_STORE_SOURCES` | `chopin=m@chopin.local:/bkoscratch/bko-store` (in order; a bare path is a local source; on Chopin only, `bigfoot=m@bigfoot.local:/media/DantePool/bt/BkoStore` may be added for a test cache root) |
 | `VM_STORE_BIGFOOT`, `VM_STORE_BIGFOOT_STAGE` | `/media/DantePool/bt/BkoStore`, `/media/DantePool/bt/.bko-staging` |
 | `VM_STORE_BIGFOOT_HOST` | `m@bigfoot.local` (empty: Bigfoot's side runs here on local paths, for tests) |
-| `VM_STORE_BWLIMIT_BIGFOOT` | `40000` (KiB/s) |
+| `VM_STORE_BWLIMIT_BIGFOOT` | `40000` (KiB/s of compressed bytes on the wire, not of the files) |
 | `VM_STORE_WINDOW` | `00:30-07:30` (push only) |
+| `VM_STORE_RSYNC_TIMEOUT` | `300` (seconds; `rsync --timeout` of every rsync to or from Bigfoot; its `xfer.lock` wait is 30 s less) |
+| `VM_STORE_BF_POOL` | the pool `VM_STORE_BIGFOOT_STAGE` is under (`/media/POOL/...`), else `DantePool` |
+| `VM_STORE_BF_RESET_WINDOW` | `6h` (the gate's look-back for USB resets in Bigfoot's kernel log; `0` skips that check) |
+| `VM_STORE_BF_GATE` | `1`; `0` skips Bigfoot's health gate (with a warning) |
 | `VM_STORE_COPY` | `auto` (reflink, else a sparse copy); `plain` |
 | `VM_STORE_FLOOR_REFLINK` | `0` (publish counts every copy's allocated size against the floor); `1` counts a reflinked copy as no new space |
 | `VM_STORE_SCAN` | `/mnt/bko-ram /dev/shm /bkoscratch` (gc's search for overlays) |

@@ -43,6 +43,7 @@ import struct
 import subprocess
 import sys
 import tempfile
+import threading
 import time
 from pathlib import Path
 
@@ -62,6 +63,19 @@ FLEET_LOCK = ".vm-update.fleet.lock"                       # vm-update's, in vms
 SSH_OPTS = ["-o", "BatchMode=yes", "-o", "ConnectTimeout=5", "-o", "ServerAliveInterval=15"]
 SSH_E = "ssh " + " ".join(SSH_OPTS)
 REMOTE_TIMEOUT = 120
+DEFAULT_RSYNC_TIMEOUT = 300                # VM_STORE_RSYNC_TIMEOUT: rsync --timeout to and from Bigfoot
+# Bigfoot's health probe (bigfoot_health): the whole ssh round trip, and each step on
+# Bigfoot (4 steps of STEP + timeout's 2 s grace, plus ssh's connect, fit in the whole).
+# Kernel lines that mean a disk's USB bridge reset or dropped (the 2026-11-13 DantePool
+# suspension: hub resets behind 4-1.4); an ERE, run by grep there and re here.
+BF_PROBE_TIMEOUT = 45
+BF_STEP_TIMEOUT = 5
+# Bigfoot's xfer.lock (one stream at a time): rsync's --timeout also counts the silent
+# wait for the lock, so each try's flock gives up first, with XFER_BUSY (no rsync exit
+# status), and run_xfer tries again until XFER_LOCK_WAIT has gone by.
+XFER_BUSY = 99
+XFER_LOCK_WAIT = 3600
+USB_RESET_ERE = r"usb [0-9]+-[0-9.]+: .*(reset .*USB device|USB disconnect|device descriptor read.*error|error -71)"
 BIG_SIDECAR = 64 << 20
 INCOMING_MAX_AGE = 7 * 86400
 BLIND_AGE = 7 * 86400
@@ -97,6 +111,10 @@ class NoRoom(StoreError):
 
 class Unreachable(StoreError):
     """A source or Bigfoot didn't answer."""
+
+
+class Unhealthy(Unreachable):
+    """Bigfoot answered, but its pool isn't fit to use (bigfoot_gate)."""
 
 
 def say(msg: str) -> None:
@@ -471,16 +489,22 @@ def flocked(path: Path, block: bool = True, busy: str | None = None):
 class Source:
     """Where ensure fetches from: NAME=[USER@]HOST:/PATH, or a bare local /PATH (tests)."""
 
-    def __init__(self, name: str, spec: str, bf_stage: str, bwlimit: str):
+    def __init__(self, name: str, spec: str, cfg: Config):
         self.name, self.spec = name, spec
         m = re.fullmatch(r"([^/:]+):(/.*)", spec)
         self.host, self.path = (m[1], m[2].rstrip("/") or "/") if m else (None, spec.rstrip("/") or "/")
-        self.bf_stage, self.bwlimit = bf_stage, bwlimit
+        self.cfg = cfg                         # Bigfoot's: stage, bwlimit, health gate, rsync timeout
         self.down = False                      # it didn't answer: not tried again in this run
+        self.gated: str | None = None          # Bigfoot's: "" once its pool passed the gate, else why not
+        self.probed = False                    # Bigfoot's: a failed rsync ran the probe once
 
     @property
     def bigfoot(self) -> bool:
-        return self.name == "bigfoot"
+        """Named bigfoot, or on VM_STORE_BIGFOOT_HOST's host (by any name)."""
+        if self.name == "bigfoot":
+            return True
+        bf = self.cfg.bf_host.rpartition("@")[2]
+        return bool(bf and self.host) and self.host.rpartition("@")[2] == bf
 
     def __repr__(self) -> str:
         return f"{self.name}={self.spec}"
@@ -489,8 +513,35 @@ class Source:
         p = f"{self.path}/{rel}"
         return f"{self.host}:{p}" if self.host else p
 
+    def check(self) -> None:
+        """Bigfoot's pool gate, once a run (a suspended pool hangs its readers): Unhealthy,
+        and down, unless the pool is ONLINE.  Other sources pass."""
+        if not self.bigfoot:
+            return
+        if self.gated is None:
+            try:
+                bigfoot_gate(self.cfg, f"source {self.name}", "not reading from it", pool_only=True)
+                self.gated = ""
+            except Unhealthy as e:
+                self.gated = str(e)
+        if self.gated:
+            self.down = True
+            raise Unhealthy(self.gated)
+
+    def after_failure(self) -> str:
+        """After a failed rsync from Bigfoot: the probe's verdict, once a run ("" for other
+        sources); the source is down from then on if its pool isn't ONLINE."""
+        if not self.bigfoot or self.probed:
+            return ""
+        self.probed = True
+        _, text, detail = bigfoot_verdict(self.cfg, lock=True)
+        if detail.get("health") != "ONLINE":
+            self.down = True
+        return text
+
     def read(self, rel: str) -> bytes | None:
         """REL's bytes, or None if the source answered without it; Unreachable if it didn't answer."""
+        self.check()
         if self.host is None:
             if not os.path.isdir(self.path):
                 self.down = True
@@ -515,8 +566,8 @@ class Source:
         if self.host:
             cmd += ["-e", SSH_E]
         if self.bigfoot:
-            cmd += [f"--bwlimit={self.bwlimit}", "--compress", "--compress-choice=zstd", "--compress-level=1",
-                    f"--rsync-path=flock -w 3600 {self.bf_stage}/xfer.lock nice -n19 rsync"]
+            cmd += [f"--bwlimit={self.cfg.bwlimit}", "--compress", "--compress-choice=zstd", "--compress-level=1",
+                    xfer_rsync_path(self.cfg), f"--timeout={self.cfg.rsync_timeout}"]
         return cmd + [self.url(rel), dest]
 
 
@@ -534,6 +585,25 @@ class Config:
         self.bf_host = env.get("VM_STORE_BIGFOOT_HOST", DEFAULT_BF_HOST)
         self.bwlimit = env.get("VM_STORE_BWLIMIT_BIGFOOT") or "40000"
         self.window = env.get("VM_STORE_WINDOW") or "00:30-07:30"
+        # Bigfoot's health gate (bigfoot_gate) and the I/O timeout of every rsync to or from
+        # it: a suspended pool (failmode=wait) hangs a reader or writer there for good.
+        self.rsync_timeout = env.get("VM_STORE_RSYNC_TIMEOUT") or str(DEFAULT_RSYNC_TIMEOUT)
+        if not self.rsync_timeout.isdigit() or int(self.rsync_timeout) == 0:
+            raise Usage(f"VM_STORE_RSYNC_TIMEOUT is seconds (> 0), not {self.rsync_timeout!r}")
+        m = re.fullmatch(r"/media/([^/]+)/.*", self.bf_stage)
+        self.bf_pool = env.get("VM_STORE_BF_POOL") or (m[1] if m else "DantePool")
+        if not re.fullmatch(r"[A-Za-z][A-Za-z0-9_.:-]*", self.bf_pool):
+            raise Usage(f"VM_STORE_BF_POOL is not a pool name: {self.bf_pool!r}")
+        self.bf_reset_window = env.get("VM_STORE_BF_RESET_WINDOW") or "6h"
+        try:
+            self.bf_reset_secs = parse_age(self.bf_reset_window)
+        except Usage:
+            raise Usage(f"VM_STORE_BF_RESET_WINDOW is an age (e.g. 6h; 0: no USB reset check), "
+                        f"not {self.bf_reset_window!r}")
+        gate = env.get("VM_STORE_BF_GATE") or "1"
+        if gate not in ("0", "1"):
+            raise Usage(f"VM_STORE_BF_GATE is 0 or 1, not {gate!r}")
+        self.bf_gate = gate == "1"
         self.copy = env.get("VM_STORE_COPY") or "auto"
         if self.copy not in ("auto", "plain"):
             raise Usage(f"VM_STORE_COPY is auto or plain, not {self.copy!r}")
@@ -552,7 +622,7 @@ class Config:
         self.sources = []
         for i, tok in enumerate(spec.split()):
             name, _, s = tok.partition("=") if "=" in tok.split("/")[0] else (f"src{i}", "", tok)
-            self.sources.append(Source(name, s, self.bf_stage, self.bwlimit))
+            self.sources.append(Source(name, s, self))
 
     def source(self, name: str) -> Source:
         for s in self.sources:
@@ -911,6 +981,7 @@ def cmd_init(cfg: Config, a) -> int:
     if a.bigfoot:
         if a.root or a.role:
             raise Usage("init --bigfoot takes no ROOT or --role")
+        bigfoot_gate(cfg, "init --bigfoot", "not writing to it", pool_only=True)
         out = remote_py(cfg.bf_host, INIT_BF_PY, {"root": cfg.bf_root, "stage": cfg.bf_stage})
         say(f"bigfoot: {out['root']} {'made' if out['made'] else 'was there'} (role master)")
         print(out["root"])
@@ -1331,6 +1402,273 @@ def cmd_publish(cfg: Config, a) -> int:
     return rc
 
 
+# --- Bigfoot's health ----------------------------------------------------------------
+
+# Bigfoot's side of the probe, run by sh with POOL, SINCE (a journalctl --since, or 0:
+# no kernel log check), the reset ERE and LOCK (xfer.lock's path, or -: not checked).
+# Every step runs whatever the one before did, under its own timeout, and its section
+# ends with its exit status:
+#     @@ list / @@ status / @@ journal / @@ lock  ...output...  @@ rc N        then @@ end
+# The kernel log is read by _TRANSPORT=kernel, not -k (which means this boot only), so
+# resets before a reboot count while the journal is persistent.  The lock is tried only
+# on an ONLINE pool (a suspended one hangs the open).
+BF_HEALTH_SH = r"""
+pool=$1 since=$2 re=$3 lock=$4
+t() { if command -v timeout >/dev/null 2>&1; then timeout -k 2 STEP "$@"; else "$@"; fi; }
+echo "@@ list"
+h=$(t zpool list -H -o health "$pool" 2>&1)
+rc=$?
+printf '%s\n' "$h"
+echo "@@ rc $rc"
+echo "@@ status"
+t zpool status "$pool" 2>&1
+echo "@@ rc $?"
+if [ "$since" != 0 ]; then
+    echo "@@ journal"
+    out=$(t sudo -n journalctl _TRANSPORT=kernel --since="$since" --no-pager -q 2>&1)
+    rc=$?
+    if [ "$rc" -eq 0 ]; then
+        printf '%s\n' "$out" | grep -E -e "$re"
+    else
+        printf '%s\n' "$out" | head -n 3
+    fi
+    echo "@@ rc $rc"
+fi
+if [ "$lock" != - ] && [ "$h" = ONLINE ]; then
+    echo "@@ lock"
+    t flock -n -E BUSY "$lock" true 2>&1
+    echo "@@ rc $?"
+fi
+echo "@@ end"
+""".replace("STEP", str(BF_STEP_TIMEOUT)).replace("BUSY", str(XFER_BUSY))
+
+
+def step_status(rc: int | None) -> str:
+    """A probe step's exit status in words: 124/137 are timeout's (the step's own limit)."""
+    return "timed out" if rc in (124, 137) else f"exit status {rc}"
+
+
+def parse_health(text: str, pool: str, window: str | None, pool_only: bool = False,
+                 cut: bool = False) -> tuple[bool, list[str], dict]:
+    """BF_HEALTH_SH's output read: (ok, reasons, detail).  Not ok if the pool isn't
+    ONLINE; unless POOL_ONLY, also while a scrub or resilver runs, or with a USB reset
+    line in the kernel log of the last WINDOW (None: not checked).  A kernel log sudo
+    can't read is a warning in detail, not a reason.  CUT: the output stops where the
+    probe ran out of time; a step it didn't finish gives no reason (the caller names the
+    timeout), what came before still counts."""
+    sections: dict[str, dict] = {}
+    cur = None
+    for line in text.splitlines():
+        if line.startswith("@@ "):
+            word = line[3:].split()
+            if word and word[0] == "rc" and cur:
+                sections[cur]["rc"] = int(word[1]) if len(word) > 1 and word[1].isdigit() else None
+                sections[cur]["done"] = True
+                cur = None
+            elif word:
+                cur = word[0]
+                sections[cur] = {"lines": [], "rc": None, "done": False}
+            continue
+        if cur:
+            sections[cur]["lines"].append(line)
+    reasons: list[str] = []
+    detail: dict = {"pool": pool, "health": None, "scan": None, "resets": None, "last_reset": None,
+                    "window": window, "xfer_lock": None, "warnings": []}
+    lst = sections.get("list")
+    words = [w for w in lst["lines"] if w.strip()] if lst else []
+    if lst and lst["rc"] == 0 and len(words) == 1 and re.fullmatch(r"[A-Z]+", words[0].strip()):
+        detail["health"] = words[0].strip()
+        if detail["health"] != "ONLINE":
+            reasons.append(f"pool {pool} is {detail['health']}")
+    elif not cut or (lst and lst["done"]):
+        why = (words[0].strip() if words else "") or ("no answer" if not lst else step_status(lst["rc"]))
+        reasons.append(f"zpool list {pool} failed: {why}")
+    st = sections.get("status")
+    if st:
+        status = "\n".join(st["lines"])
+        m = re.search(r"\b(scrub|resilver) in progress", status)
+        scan = re.search(r"^\s*scan:\s*(.*)$", status, re.M)
+        detail["scan"] = scan[1].strip() if scan else None
+        if m and not pool_only:
+            reasons.append(f"a {m[1]} is in progress on {pool}")
+        if st["done"] and st["rc"] != 0:
+            detail["warnings"].append(f"zpool status {pool}: {step_status(st['rc'])}")
+    if window is not None:
+        jr = sections.get("journal")
+        if not jr or not jr["done"]:
+            if not cut:
+                detail["warnings"].append("the kernel log was not checked (the probe stopped before it)")
+        elif jr["rc"] != 0:
+            first = next((x.strip() for x in jr["lines"] if x.strip()), step_status(jr["rc"]))
+            detail["warnings"].append(f"USB resets not checked: sudo -n journalctl failed: {first}")
+        else:
+            hits = [x.strip() for x in jr["lines"] if re.search(USB_RESET_ERE, x)]
+            detail["resets"] = len(hits)
+            detail["last_reset"] = hits[-1] if hits else None
+            if hits and not pool_only:
+                reasons.append(f"{len(hits)} USB reset/disconnect line(s) in Bigfoot's kernel log in the last "
+                               f"{window}; last: {hits[-1]}")
+    lk = sections.get("lock")
+    if lk and lk["done"]:
+        detail["xfer_lock"] = {0: "free", XFER_BUSY: "busy"}.get(lk["rc"])
+    if "end" not in sections and not cut:
+        detail["warnings"].append("the probe didn't finish")
+    return not reasons, reasons, detail
+
+
+def drain(f, buf: list[bytes]) -> None:
+    """F's lines into BUF until EOF (a reader thread's body); a closed F ends it."""
+    with contextlib.suppress(OSError, ValueError):
+        for line in iter(f.readline, b""):
+            buf.append(line)
+
+
+def bigfoot_health(cfg: Config, pool_only: bool = False, lock: bool = False) -> tuple[bool, list[str], dict]:
+    """Bigfoot's health, in one ssh round trip under BF_PROBE_TIMEOUT: (ok, reasons,
+    detail) by parse_health.  No answer in time is unhealthy, with whatever the probe
+    said before it (a SUSPENDED pool, say, before zpool status hung).  POOL_ONLY: only
+    the pool's health counts (readers), and the kernel log isn't read.  LOCK: also
+    whether xfer.lock is free (detail's xfer_lock: free, busy, or None: not known)."""
+    window = None if pool_only or not cfg.bf_reset_secs else cfg.bf_reset_window
+    args = [cfg.bf_pool, f"-{cfg.bf_reset_secs}s" if window else "0", USB_RESET_ERE,
+            f"{cfg.bf_stage}/xfer.lock" if lock else "-"]
+    cmd = (["ssh", *SSH_OPTS, cfg.bf_host, "sh -s -- " + " ".join(map(shlex.quote, args))] if cfg.bf_host
+           else ["sh", "-s", "--", *args])
+    host = cfg.bf_host or "here"
+    detail = {"host": host, "pool": cfg.bf_pool, "health": None, "window": window, "warnings": []}
+    try:
+        p = subprocess.Popen(cmd, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                             start_new_session=True)
+    except OSError as e:
+        return False, [f"can't run {cmd[0]}: {e}"], detail
+    out: list[bytes] = []
+    err: list[bytes] = []
+    readers = [threading.Thread(target=drain, args=(f, b), daemon=True) for f, b in ((p.stdout, out), (p.stderr, err))]
+    timed_out = False
+    try:
+        for r in readers:
+            r.start()
+        with contextlib.suppress(OSError):  # it ended before reading it all
+            p.stdin.write(BF_HEALTH_SH.encode())
+            p.stdin.close()
+        deadline = time.monotonic() + BF_PROBE_TIMEOUT
+        for r in readers:
+            r.join(max(0.0, deadline - time.monotonic()))
+        timed_out = any(r.is_alive() for r in readers)
+        if not timed_out:
+            p.wait(max(1.0, deadline - time.monotonic()))
+    except subprocess.TimeoutExpired:
+        timed_out = True
+    except BaseException:                     # a signal, ^C: never leave the ssh behind
+        stop_probe(p, readers)
+        raise
+    if timed_out:
+        stop_probe(p, readers)
+        text = b"".join(out).decode(errors="replace")
+        _, reasons, d = parse_health(text, cfg.bf_pool, window, pool_only, cut=True)
+        d["host"] = host
+        return False, [f"Bigfoot did not answer within {BF_PROBE_TIMEOUT}s", *reasons], d
+    for f in (p.stdout, p.stderr):              # its readers saw EOF
+        with contextlib.suppress(OSError):
+            f.close()
+    text = b"".join(out).decode(errors="replace")
+    if "@@ " not in text:
+        e = b"".join(err).decode(errors="replace").strip()
+        why = e.splitlines()[-1] if e else f"exit status {p.returncode}"
+        return False, [f"{host}: no answer from the probe: {why}"], detail
+    ok, reasons, d = parse_health(text, cfg.bf_pool, window, pool_only)
+    d["host"] = host
+    return ok, reasons, d
+
+
+def stop_probe(p: subprocess.Popen, readers: list[threading.Thread]) -> None:
+    """Kill the probe's process group (a step may still hold its pipes) and let its readers end."""
+    with contextlib.suppress(OSError):
+        os.killpg(p.pid, signal.SIGKILL)
+    with contextlib.suppress(subprocess.TimeoutExpired):
+        p.wait(5)
+    for r in readers:
+        r.join(2)
+    if not any(r.is_alive() for r in readers):  # closing a pipe a reader is in could block
+        for f in (p.stdin, p.stdout, p.stderr):
+            with contextlib.suppress(OSError):
+                f.close()
+
+
+def bigfoot_verdict(cfg: Config, lock: bool = False) -> tuple[bool, str, dict]:
+    """The full probe as one phrase for an error message: (ok, text, detail).  LOCK
+    (after a failed rsync): also say if xfer.lock is busy, another transfer holding it
+    past this one's lock wait."""
+    ok, reasons, detail = bigfoot_health(cfg, lock=lock)
+    busy = "; Bigfoot's xfer.lock is still held (another transfer, or a stuck one)" if detail.get("xfer_lock") == "busy" else ""
+    if ok:
+        return ok, f"Bigfoot looks healthy (pool {cfg.bf_pool} {detail.get('health')}){busy}", detail
+    return ok, f"Bigfoot is not healthy: {'; '.join(reasons)}{busy}", detail
+
+
+def bigfoot_gate(cfg: Config, what: str, refuse: str, pool_only: bool = False, dry: bool = False) -> dict | None:
+    """Unhealthy("WHAT: Bigfoot is not healthy: ...; REFUSE") unless the probe passes
+    (POOL_ONLY: the pool is ONLINE; readers).  DRY: say the verdict, never refuse.
+    The probe's detail, or None if VM_STORE_BF_GATE=0 skipped it (loudly)."""
+    if not cfg.bf_gate:
+        say(f"WARNING: VM_STORE_BF_GATE=0: {what} without checking Bigfoot's health")
+        return None
+    ok, reasons, detail = bigfoot_health(cfg, pool_only=pool_only)
+    for w in detail.get("warnings", []):
+        say(f"{what}: bigfoot: warning: {w}")
+    if ok:
+        if dry:
+            say(f"{what}: Bigfoot is healthy (pool {cfg.bf_pool} {detail.get('health')})")
+        return detail
+    msg = f"{what}: Bigfoot is not healthy: {'; '.join(reasons)}"
+    if dry:
+        say(f"{msg}; a real run would refuse (--dry-run)")
+        return detail
+    raise Unhealthy(f"{msg}; {refuse}")
+
+
+def xfer_rsync_path(cfg: Config) -> str:
+    """The --rsync-path of an rsync with Bigfoot: under its xfer.lock, waited for less
+    long than the rsync's --timeout (which counts that silent wait), then XFER_BUSY."""
+    t = int(cfg.rsync_timeout)
+    return (f"--rsync-path=flock -w {max(1, t - min(30, t // 2))} -E {XFER_BUSY} {cfg.bf_stage}/xfer.lock "
+            "nice -n19 rsync")
+
+
+def run_xfer(cmd: list[str]) -> int:
+    """run_child an rsync with Bigfoot, again while its xfer.lock stays busy (XFER_BUSY),
+    up to XFER_LOCK_WAIT in all: the queue of one stream at a time."""
+    t0 = time.monotonic()
+    while True:
+        rc = run_child(cmd)
+        if rc != XFER_BUSY or time.monotonic() - t0 >= XFER_LOCK_WAIT:
+            return rc
+        say("bigfoot: xfer.lock is busy (another transfer); waiting for it again")
+
+
+def cmd_bigfoot_health(cfg: Config, a) -> int:
+    try:
+        store = Store(cfg.root, cfg)
+    except StoreError as e:
+        raise Usage(f"bigfoot-health runs on the mirror (Chopin), the only host that talks to Bigfoot: {e}")
+    if store.role != "mirror":
+        raise Usage(f"bigfoot-health runs on the mirror (Chopin), the only host that talks to Bigfoot; "
+                    f"{store.root} is a {store.role}")
+    ok, reasons, detail = bigfoot_health(cfg, pool_only=a.pool_only)
+    if a.json:
+        print(json.dumps({"ok": ok, "reasons": reasons, **detail}, indent=1))
+    else:
+        for w in detail.get("warnings", []):
+            say(f"bigfoot: warning: {w}")
+        if ok:
+            resets = (f", no USB resets in {detail['window']}" if detail.get("resets") == 0 else
+                      ", USB resets not checked" if not a.pool_only else "")
+            print(f"healthy: pool {cfg.bf_pool} {detail.get('health')}" + resets)
+        else:
+            print("unhealthy: " + "; ".join(reasons))
+    return 0 if ok else 1
+
+
 # --- push ----------------------------------------------------------------------------
 
 def bigfoot_listing(cfg: Config, full: bool = False) -> dict:
@@ -1416,11 +1754,11 @@ def push_rsync(cfg: Config, src_dir: Path, names: list[str], dest: str) -> int:
     try:
         cmd = ["nice", "-n19", "rsync", "-t", "--chmod=Fa-w", "--fsync", "--no-whole-file", "--partial-dir=.partial",
                f"--bwlimit={cfg.bwlimit}", "--compress", "--compress-choice=zstd", "--compress-level=1",
-               f"--rsync-path=flock -w 3600 {cfg.bf_stage}/xfer.lock nice -n19 rsync"]
+               xfer_rsync_path(cfg), f"--timeout={cfg.rsync_timeout}"]
         if cfg.bf_host:
             cmd += ["-e", SSH_E]
         target = f"{cfg.bf_host}:{cfg.bf_stage}/incoming/{dest}" if cfg.bf_host else f"{cfg.bf_stage}/incoming/{dest}"
-        return run_child(cmd + [f"--files-from={listing}", f"{src_dir}/", target])
+        return run_xfer(cmd + [f"--files-from={listing}", f"{src_dir}/", target])
     finally:
         os.unlink(listing)
 
@@ -1431,6 +1769,12 @@ def push(cfg: Config, store: Store, now: bool, dry: bool) -> dict:
     with flocked(store.root / ".push.lock", block=False, busy="another push is running"):
         if not now and not in_window(cfg.window):
             raise Busy(f"outside VM_STORE_WINDOW ({cfg.window}); --now pushes anyway")
+        detail = bigfoot_gate(cfg, "push", "not pushing", dry=dry)   # --now skips the window, never this
+        if dry and detail is not None and detail.get("health") != "ONLINE":
+            h = detail.get("health")            # a suspended pool would hang the listing there
+            why = f"pool {cfg.bf_pool} is {h}" if h else f"no health for pool {cfg.bf_pool}"
+            say(f"push: not listing Bigfoot: {why} (--dry-run)")
+            return {"objects": [], "meta": [], "latest": []}
         there = bigfoot_listing(cfg)
         here = local_listing(store)
         todo = unpushed(here, there)
@@ -1451,21 +1795,34 @@ def push(cfg: Config, store: Store, now: bool, dry: bool) -> dict:
             if bad:
                 raise StoreError(f"push: {len(bad)} file(s) differ on bigfoot; fix them there by hand")
             return todo
-        failed = []
-        if todo["objects"] and push_rsync(cfg, store.objects, todo["objects"], "") != 0:
-            failed.append("objects")
-        if todo["meta"] and push_rsync(cfg, store.guests, todo["meta"], "meta/") != 0:
-            failed.append("manifests")
-        if todo["latest"] and push_rsync(cfg, store.guests, [f"{g}/latest" for g in todo["latest"]], "latest/") != 0:
-            failed.append("latest")
-        done = remote_py(cfg.bf_host, ACCEPT_PY, {"root": cfg.bf_root, "stage": cfg.bf_stage, "objects": todo["objects"],
-                                                  "meta": todo["meta"], "latest": todo["latest"]})
+        failed, verdict = [], None
+        for what, src, names, dest in (("objects", store.objects, todo["objects"], ""),
+                                       ("manifests", store.guests, todo["meta"], "meta/"),
+                                       ("latest", store.guests, [f"{g}/latest" for g in todo["latest"]], "latest/")):
+            if not names:
+                continue
+            rc = push_rsync(cfg, src, names, dest)
+            if rc == 0:
+                continue
+            failed.append(f"{what} (exit status {rc})")
+            if verdict is None:                # once: 30 is rsync's I/O timeout, 12/35/255 a dropped link
+                ok, verdict, _ = bigfoot_verdict(cfg, lock=True)
+                msg = f"push: rsync of the {what} failed (exit status {rc}); {verdict}"
+                if not ok and cfg.bf_gate:
+                    raise StoreError(f"{msg}; stopped (push again once it is healthy)")
+                say(msg)
+        try:
+            done = remote_py(cfg.bf_host, ACCEPT_PY, {"root": cfg.bf_root, "stage": cfg.bf_stage,
+                                                      "objects": todo["objects"], "meta": todo["meta"],
+                                                      "latest": todo["latest"]})
+        except StoreError as e:
+            raise StoreError(f"push: bigfoot's accept failed: {e}; {verdict or bigfoot_verdict(cfg)[1]}")
         for s in done["skipped"]:
             say(f"push: bigfoot skipped {s}")
         say(f"push: bigfoot took {len(done['objects'])} object(s), {len(done['meta'])} manifest file(s), "
             f"{len(done['latest'])} latest")
         if failed:
-            raise StoreError(f"push: rsync of the {', '.join(failed)} failed; run push again to resume")
+            raise StoreError(f"push: rsync of the {', '.join(failed)} failed ({verdict}); run push again to resume")
         if bad:
             raise StoreError(f"push: {len(bad)} file(s) differ on bigfoot; fix them there by hand")
         if done["skipped"]:
@@ -1546,10 +1903,16 @@ def fetch_object(store: Store, name: str, srcs: list[Source]) -> None:
     for s in srcs:
         if s.down:
             continue
+        try:
+            s.check()
+        except Unreachable as e:
+            say(f"{e}")
+            continue
         say(f"fetching {name[:19]}… from {s.name}")
-        rc = run_child(s.rsync_cmd(f"objects/{name}", f"{store.incoming}/"))
+        rc = (run_xfer if s.bigfoot else run_child)(s.rsync_cmd(f"objects/{name}", f"{store.incoming}/"))
         if rc != 0 or not got.is_file():
-            say(f"{s.name}: rsync of {name} failed (exit status {rc})")
+            verdict = s.after_failure() if rc != 0 else ""
+            say(f"{s.name}: rsync of {name} failed (exit status {rc})" + (f"; {verdict}" if verdict else ""))
             continue
         if sha256_file(got) != hexd:
             say(f"{s.name}: {name} arrived with other bytes; trying the next source")
@@ -2064,6 +2427,7 @@ def cmd_gc(cfg: Config, a) -> int:
 def cmd_list(cfg: Config, a) -> int:
     if a.source:
         s = cfg.source(a.source)
+        s.check()
         lst = remote_py(s.host, LIST_PY, {"root": s.path, "full": True})
     else:
         store = Store(cfg.root, cfg)
@@ -2110,6 +2474,7 @@ def cmd_status(cfg: Config, a) -> int:
         st["in_use"], st["blind"] = why, blind
     if store.role == "mirror":
         try:
+            bigfoot_gate(cfg, "status", "not reading from it", pool_only=True)
             here, there = local_listing(store), bigfoot_listing(cfg)
             st["unpushed"] = unpushed(here, there)
             st["differs"] = differs(here, there)
@@ -2247,6 +2612,7 @@ def verify_bigfoot(cfg: Config, store: Store, only: list[str]) -> dict:
     its .json there (not only its .sha256 text), and each latest."""
     if store.role != "mirror":                 # D2: only Chopin talks to Bigfoot
         raise StoreError(f"verify --where bigfoot runs on the mirror (Chopin); {store.root} is a {store.role}")
+    bigfoot_gate(cfg, "verify", "not reading from it", pool_only=True)
     there = bigfoot_listing(cfg)
     here = local_listing(store)
     keep = (lambda rel: rel.split("/")[0] in only) if only else (lambda rel: True)
@@ -2273,10 +2639,13 @@ def verify_bigfoot(cfg: Config, store: Store, only: list[str]) -> dict:
             problems.append(f"objects/{n}: on bigfoot, not here")
     pool = None
     if cfg.bf_host:
-        r = subprocess.run(["ssh", *SSH_OPTS, cfg.bf_host, "zpool status -x DantePool"], capture_output=True, text=True,
-                           timeout=REMOTE_TIMEOUT)
-        pool = (r.stdout + r.stderr).strip()
-        say(f"bigfoot: zpool status -x DantePool: {pool}")
+        try:
+            r = subprocess.run(["ssh", *SSH_OPTS, cfg.bf_host, "zpool status -x " + shlex.quote(cfg.bf_pool)],
+                               capture_output=True, text=True, timeout=BF_PROBE_TIMEOUT, stdin=subprocess.DEVNULL)
+            pool = (r.stdout + r.stderr).strip()
+        except subprocess.TimeoutExpired:
+            pool = f"no answer within {BF_PROBE_TIMEOUT}s"
+        say(f"bigfoot: zpool status -x {cfg.bf_pool}: {pool}")
     return {"where": "bigfoot", "root": cfg.bf_root, "problems": problems, "unpushed": unpushed_, "zpool": pool}
 
 
@@ -2343,11 +2712,15 @@ def parser() -> argparse.ArgumentParser:
     s.add_argument("--where", choices=["local", "bigfoot"], default="local")
     s.add_argument("guests", nargs="*")
     s.add_argument("--json", action="store_true")
+    s = sub.add_parser("bigfoot-health", help="whether Bigfoot is fit to write to (Chopin): exit 0 yes, 1 no")
+    s.add_argument("--pool-only", action="store_true", help="only the pool's health (what a reader needs)")
+    s.add_argument("--json", action="store_true")
     return p
 
 
 COMMANDS = {"init": cmd_init, "publish": cmd_publish, "push": cmd_push, "ensure": cmd_ensure, "fetch": cmd_fetch,
-            "link": cmd_link, "gc": cmd_gc, "list": cmd_list, "status": cmd_status, "verify": cmd_verify}
+            "link": cmd_link, "gc": cmd_gc, "list": cmd_list, "status": cmd_status, "verify": cmd_verify,
+            "bigfoot-health": cmd_bigfoot_health}
 
 
 def main(argv: list[str] | None = None) -> int:

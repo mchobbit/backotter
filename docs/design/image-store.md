@@ -28,7 +28,7 @@ Labels used below:
    - qemu-img 10.0.13 is on the hosts only.
    - python 3.13 is everywhere.
    - b3sum is on no host, so hashing uses sha256.
-6. **`ionice -c3` does nothing useful here.** Chopin's NVMe scheduler is `none`, and on Bigfoot ZFS issues the disk I/O from its own threads. The only real throttles are `--bwlimit`, one stream at a time, and a time window. `nice -n19` stays, for CPU (zstd, sha).
+6. **`ionice -c3` does nothing useful here.** Chopin's NVMe scheduler is `none`, and on Bigfoot ZFS issues the disk I/O from its own threads. The only real throttles are `--bwlimit`, one stream at a time, and a time window. `--bwlimit` caps rsync's wire bytes, which are zstd-compressed, not the logical or the on-disk write rate: in the 2026-11-13 push the logical rate reached 130 MB/s while the allocated on-disk rate happened to stay at 41-52 MB/s, near the design's 40 MB/s. `nice -n19` stays, for CPU (zstd, sha).
 7. **vm-update locks** (vm-update:404-406, 1817-1890):
    - It takes `vms/G/.vm-update.lock` `LOCK_EX|LOCK_NB` and holds it for the life of the process.
    - It takes the fleet lock `vms/.vm-update.fleet.lock` on Chopin `LOCK_NB`: EX for a by-hand run, SH for a round's job. `--hold-fleet-lock` takes EX and then turns it to SH.
@@ -176,6 +176,10 @@ The environment overrides `store.json`, which overrides the defaults.
 | `VM_STORE_BIGFOOT` / `VM_STORE_BIGFOOT_STAGE` | `$BF_ROOT` / `$BF_STAGE` |
 | `VM_STORE_BWLIMIT_BIGFOOT` | `40000` (KiB/s) |
 | `VM_STORE_WINDOW` | `00:30-07:30` (push only; `--now` overrides) |
+| `VM_STORE_RSYNC_TIMEOUT` | `300` (seconds: `rsync --timeout` of every rsync to or from Bigfoot, §2.10) |
+| `VM_STORE_BF_POOL` | the first path component under `/media/` of `$BF_STAGE` (`DantePool`), else `DantePool` |
+| `VM_STORE_BF_RESET_WINDOW` | `6h` (how far back the gate looks for USB resets; `0` skips that check) |
+| `VM_STORE_BF_GATE` | `1`; `0` skips the health gate, with a warning (§2.10) |
 | `VM_STORE_COPY` | `auto` (try `--reflink=always`, else plain); `plain` forces a copy |
 | `VM_STORE_FLOOR_REFLINK` | `0`; `1` lets publish count a reflinked copy as no new space against the floor (§2.4) |
 | `VM_STORE_SCAN` | `/mnt/bko-ram /dev/shm /bkoscratch` |
@@ -185,6 +189,7 @@ The environment overrides `store.json`, which overrides the defaults.
 **Remote and progress rules:**
 - Every ssh and rsync-over-ssh uses `-o BatchMode=yes -o ConnectTimeout=5 -o ServerAliveInterval=15`, so nothing waits on a password.
 - Every rsync passes `--no-whole-file` (local paths would otherwise skip partials) and `--fsync`.
+- Every rsync to or from Bigfoot also passes `--timeout=$VM_STORE_RSYNC_TIMEOUT`, and every ssh to it runs under a local timeout (§2.10).
 - All progress output goes to stderr. stdout carries only the result.
 
 ### 2.3 CLI and exit codes
@@ -200,6 +205,7 @@ vm-store gc [--dry-run] [--json]              # caches only in M1
 vm-store list [GUEST] [--source NAME] [--json]
 vm-store status [--json]                      # role, use/cap/free/floor, in-use objects and why, unpushed (Chopin)
 vm-store verify [--where local|bigfoot] [GUEST...] [--json]
+vm-store bigfoot-health [--pool-only] [--json]  # Chopin: exit 0 healthy, 1 not (§2.10)
 ```
 
 | Exit | Meaning |
@@ -246,14 +252,15 @@ It works on one guest at a time. `--changed` means every `vms/G` with an `image-
 
 ### 2.5 `push`, Chopin to Bigfoot
 
-It runs under `flock /bkoscratch/bko-store/.push.lock` and inside `VM_STORE_WINDOW`, unless `--now`.
+It runs under `flock /bkoscratch/bko-store/.push.lock` and inside `VM_STORE_WINDOW`, unless `--now`. Then, before it lists or sends anything, it must pass the health gate (§2.10); `--now` never skips that.
 
 1. **List Bigfoot.** `ssh bigfoot find $BF_ROOT/objects $BF_ROOT/guests -type f -printf '%P %s\n'`.
 2. **Send missing objects.** For objects that are missing, run one rsync with `--files-from`. An object Bigfoot has with another size is never sent again or replaced: push reports it and exits 1, and `verify --where bigfoot` lists it:
    ```
    rsync -t --chmod=Fa-w --fsync --no-whole-file --partial-dir=.partial \
      --bwlimit=$VM_STORE_BWLIMIT_BIGFOOT --compress --compress-choice=zstd --compress-level=1 \
-     --rsync-path="flock -w 3600 $BF_STAGE/xfer.lock nice -n19 rsync" \
+     --rsync-path="flock -w $((VM_STORE_RSYNC_TIMEOUT - 30)) -E 99 $BF_STAGE/xfer.lock nice -n19 rsync" \
+     --timeout=$VM_STORE_RSYNC_TIMEOUT \
      -e "ssh -o BatchMode=yes -o ConnectTimeout=5" \
      --files-from=LIST /bkoscratch/bko-store/objects/ m@bigfoot.local:$BF_STAGE/incoming/
    ```
@@ -323,7 +330,7 @@ It runs under `lock` EX, both from ensure and by hand. An object is **in use**, 
 - **`--where bigfoot`:** no re-hash, so no 166+ GiB of HDD reads on the user's daily machine.
   - Remote `find -printf` names and sizes are compared with Chopin's.
   - Remote `cat` of every `*.json.sha256` and `latest` is compared with Chopin's, and Bigfoot hashes each `*.json` (they are small): it must equal Chopin's and its own `.sha256`.
-  - Bit rot on Bigfoot is ZFS raidz2's job (`zpool scrub`). verify prints `zpool status -x DantePool`.
+  - Bit rot on Bigfoot is ZFS raidz2's job (`zpool scrub`). verify prints `zpool status -x $VM_STORE_BF_POOL`, and it reads nothing from Bigfoot unless the pool is ONLINE (§2.10).
 - Output is JSON plus one text line per problem.
 
 ### 2.9 The write guard: vm-run, vm-mount, qcow2-punch.py
@@ -342,6 +349,24 @@ in_store() { local d; d=$(dirname "$(realpath -- "$1")")
 - **`qcow2-punch.py`:** the same check in python, before `os.open(O_WRONLY)` (:144).
 - Nothing in today's `vms/` is affected.
 - The network-filesystem check is dropped. No network mount exists, store sources are rsync URLs only, and vm-store has no boot command.
+
+### 2.10 Bigfoot's health gate and timeouts
+
+Added after 2026-11-13. That night 4 of DantePool's 6 raidz2 disks dropped behind a flaky USB hub, and the pool suspended (`failmode=wait`). A push without `--timeout` then hung in rsync for about 8 h, and a retry pushed onto the still-flaky pool.
+
+- **The probe** (`bigfoot_health`, also `vm-store bigfoot-health`) is one ssh round trip under a local 45 s timeout. No answer in time counts as unhealthy; the output read so far still counts, so a SUSPENDED pool is named even when `zpool status` hangs after it. A `sh` script there runs each step under `timeout -k 2 5` (four such steps and ssh's connect fit in the 45 s) and keeps going after a step fails:
+  - `zpool list -H -o health $VM_STORE_BF_POOL`;
+  - `zpool status` (for a scrub or resilver in progress);
+  - `sudo -n journalctl _TRANSPORT=kernel --since=-$VM_STORE_BF_RESET_WINDOW`, filtered to USB reset, disconnect, descriptor-read and `error -71` lines. Not `-k`, which implies `-b`: resets before a reboot inside the window count, as long as Bigfoot's journal is persistent;
+  - after a failed rsync only, and only on an ONLINE pool: `flock -n` on `xfer.lock`, to say whether another transfer still holds it.
+
+  If sudo can't run journalctl without a password, that check is skipped with a warning; it does not fail. The probe's ssh runs in a process group of its own, which is killed on the timeout and on any signal to vm-store.
+- **Writers** (push, and later the results and attic syncs) need all three: health `ONLINE`, no scrub or resilver, and no USB reset line in the window. Otherwise push exits 1 (`push: Bigfoot is not healthy: …; not pushing`) before any rsync. `--dry-run` reports the verdict without failing; with the pool not ONLINE (or no answer) it doesn't list Bigfoot either. `--now` skips only the window.
+- **Readers** need only an ONLINE pool, since a suspended pool hangs anything that reads it. These are `verify --where bigfoot`, `status` on the mirror, `list --source bigfoot`, `init --bigfoot`, and ensure or fetch from a Bigfoot source (named `bigfoot`, or any source on `VM_STORE_BIGFOOT_HOST`'s host). An unhealthy Bigfoot source counts as down for the rest of the run, so ensure goes on to the next source.
+- **Timeouts:** every rsync to or from Bigfoot passes `--timeout=$VM_STORE_RSYNC_TIMEOUT` (300 s). Its ssh calls run under 120 s (listing, accept) or 45 s (probe, `zpool status -x`). When a Bigfoot rsync exits non-zero (30 = I/O timeout; 12, 35 and 255 = a dropped link), the probe runs once and its verdict goes into the message. If the pool is not healthy, push stops there, without sending the rest or running the accept step.
+- **xfer.lock:** the client's `--timeout` also counts the silent wait while the remote `flock` queues for `xfer.lock`, so a plain `flock -w 3600` would die at 300 s with exit 30, looking like a network fault. Each try's `flock` therefore waits `VM_STORE_RSYNC_TIMEOUT - 30` s (270 s) and then exits 99 (`-E 99`, no rsync status). vm-store tries again on 99, up to 3600 s in all, which keeps the one-stream queue. rsync passes the remote shell's status on only when it sees it in time; when a lock wait ends as 12 or 30 instead, the probe after the failure says the lock is still held.
+- **Escape hatch:** `VM_STORE_BF_GATE=0` skips the gate, with a loud warning. The probe after a failed rsync still reports.
+- **Not built yet** (see the postmortem): a watchdog during long pushes, a "bigfoot unhealthy" marker for later jobs, routing the results and attic syncs through the flock, bwlimit, window and gate (they can call `vm-store bigfoot-health`), and re-hashing recent objects after a suspension.
 
 ## 3. Using the store (consumer wiring): M3, when the first M900 is racked
 
@@ -419,7 +444,7 @@ The M900s (cage, copland) run the test scripts unchanged on a `vms/` of links: `
   - Nothing touches `/mnt/bko-ram/.reserve*` or the cmp-run slots.
   - No pkill; vm-store kills only its own children.
   - vm-update is not changed.
-- **No guest runs from Bigfoot or over the network.** vm-store has no boot command and sources are rsync URLs. Bigfoot gets one inbound or outbound stream at a time (`xfer.lock`), 40 MB/s, CPU nice 19, and pushes only in the window.
+- **No guest runs from Bigfoot or over the network.** vm-store has no boot command and sources are rsync URLs. Bigfoot gets one inbound or outbound stream at a time (`xfer.lock`), 40000 KiB/s of compressed wire bytes (`--bwlimit`; the logical write rate can be several times that), CPU nice 19, and pushes only in the window and only past the health gate (§2.10).
 - **Integrity:**
   - An object is visible only after verification: a sha256 check on hosts, and on Bigfoot rsync's whole-file checksum of an already-verified object.
   - Every rsync uses `--fsync`, and directories are fsynced after renames.
@@ -479,6 +504,7 @@ Cases:
 8. Concurrency: two ensures of one object call rsync once. An ensure needing gc never evicts its own version.
 9. `qcow2_backing()` on hand-built v2 and v3 headers.
 10. Push command lines: `--rsync-path` flock, bwlimit, zstd, `--no-whole-file`, `--fsync`; nothing is ever written under `$BF_ROOT` except by `mv`.
+    - The health gate (§2.10), with a fake `zpool` and `sudo` on PATH: probe parsing (ONLINE, SUSPENDED, DEGRADED, scrub, resilver, USB resets in the window, sudo unavailable is a warning, no answer in time is unhealthy); push refuses when unhealthy, `--now` doesn't bypass it, `--dry-run` doesn't fail and `VM_STORE_BF_GATE=0` bypasses it; readers gate only on the pool; `--timeout` in every Bigfoot rsync; a failed rsync's message carries the probe's verdict; `bigfoot-health`'s exit codes; a probe that times out keeps what it read, and a signal kills its ssh; the `xfer.lock` wait fits in `--timeout` and is retried on 99; a busy lock is named after a failed rsync.
 11. `tests/vm-run-guard.sh` with fake `qemu-img` and `qemu-system-x86_64` on PATH:
     - a store object without `--ram`/`--snapshot` is refused, including when run as root (`in_store` doesn't use `-w`);
     - `--ram` is allowed;
@@ -496,7 +522,7 @@ Common to all steps:
 |---|---|
 | H1 | On Chopin, `publish alpine324` into the test root. Check: `vms/alpine324` size, mtime, ctime and sha unchanged; the fleet lock and fence held for seconds; `cp --reflink=always` worked (A1). If reflink changes the source's ctime (t2's imgsum cache keys on ctime), set `VM_STORE_COPY=plain` |
 | H2 | Check the fence for real: with a `vm-run --ram` reader on alpine324, publish works. With a writable `vm-run` of a *synthetic* test-root guest, publish exits 3. While publish holds the fence on the synthetic guest, a writable `vm-run` of it fails to start |
-| H3 | `push --now` to the Bigfoot test root. Check sizes; ~40 MB/s; `flock`, `nice` and `rsync` visible in Bigfoot's `ps`; nothing left in `incoming/` |
+| H3 | `push --now` to the Bigfoot test root. Check sizes; ~40 MB/s on the wire, and the write rate measured on Bigfoot's side (`zpool iostat`), which `--bwlimit` does not cap; `flock`, `nice` and `rsync` visible in Bigfoot's `ps`; nothing left in `incoming/` |
 | H4 | On Cinqcent, `ensure alpine324` from the Chopin test root, then under `WEAR_TAG=store:h4 cmp-run.sh --reserve 2 2` boot it once on a free port (checked with `ss -ltn`, outside 2400 and 2600-2699) with `vm_boot … --ram`, run `vm_ssh true`, halt. `qemu-img info` of the overlay names the object, and the object's sha is unchanged |
 | H5 | Resume: fetch a 1-2 GiB synthetic disk, SIGTERM rsync's process group partway (our pid only, never pkill), re-run; it resumes and verifies |
 | H6 | Bigfoot fallback, on Chopin with a second test cache root: point the chopin source at a missing path, and the fetch comes from the Bigfoot test root at the bwlimit. (Chopin only: by D2 no other host talks to Bigfoot) |

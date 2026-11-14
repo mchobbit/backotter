@@ -893,6 +893,8 @@ class Normalizer(unittest.TestCase):
         "2026-11-08T05:00:00.123Z error at 0xdeadbeef in 4f2a9c",
         "uuid 12345678-90ab-cdef-1234-567890abcdef and 42 bottles",
         "/mnt/bko-ram/vm-update.debian12/.vm-update-run.abc123/vm-run.x.qcow2 kept",
+        "update: Mounted RUN (/dev/nbd0, read-only) at /tmp/vm-update-mount.fedora44-raid.avunmtza:",
+        "\u2502 \u2514\u2500/tmp/vm-update-mount.fedora44-raid.avunmtza/boot/efi /dev/loop1 vfat",
     ]
 
     def test_stable(self):
@@ -908,6 +910,34 @@ class Normalizer(unittest.TestCase):
         self.assertEqual(J.normalize("sum 0123abcd9f"), "sum HEX")
         self.assertEqual(J.normalize("got 12 of 345"), "got N of N")
         self.assertEqual(J.normalize("a /mnt/bko-ram/vm-update.x/.vm-update-run.q/f b"), "a RUN b")
+
+    MOUNT_A = "/tmp/vm-update-mount.fedora44-raid.avunmtza"
+    MOUNT_B = "/var/folders/xy/T/vm-update-mount.fedora44-raid.k_3q9zp1"
+
+    def test_host_mount_point_goes(self):
+        for tmpl in ("update: {m} /dev/nbd0p3[/root] btrfs",
+                     "update: Mounted RUN (/dev/nbd0, read-only) at {m}:",
+                     "update: 14:02:11 host mount: ok, 4 file system(s): {m} /dev/nbd0p3[/root] btrfs; "
+                     "{m}/boot /dev/loop0 xfs; {m}/boot/efi /dev/loop1 vfat",
+                     "update: \u2502 \u2514\u2500{m}/boot/efi /dev/loop1 vfat"):
+            a, b = J.normalize(tmpl.format(m=self.MOUNT_A)), J.normalize(tmpl.format(m=self.MOUNT_B))
+            self.assertEqual(a, b, tmpl)
+            self.assertNotIn("vm-update-mount", a)
+            self.assertEqual(J.normalize(a), a)
+
+    def test_host_mount_point_keeps_what_follows(self):
+        m = self.MOUNT_A
+        self.assertEqual(J.normalize(f"update: \u2502 \u2514\u2500{m}/boot/efi /dev/loop1 vfat"),
+                         "update: \u2502 \u2514\u2500RUN/boot/efi /dev/loopN vfat")
+        self.assertEqual(J.normalize(f"update: \u251c\u2500{m}/boot /dev/loop0 xfs"),
+                         "update: \u251c\u2500RUN/boot /dev/loopN xfs")
+        self.assertEqual(J.normalize(f"update: Mounted RUN (/dev/nbd0, read-only) at {m}:"),
+                         "update: Mounted RUN (/dev/nbdN, read-only) at RUN:")
+        self.assertEqual(J.normalize(f"{m} /dev/nbd0p3[/root] btrfs"), "RUN /dev/nbdNpN[/root] btrfs")
+        self.assertNotEqual(J.normalize(f"{m}/boot x"), J.normalize(f"{m}/boot/efi x"))
+        # under a RAM run dir as TMPDIR, still only up to the mount point's own name
+        self.assertEqual(J.normalize("/mnt/bko-ram/vm-update.g/vm-update-mount.g.abc12345/boot/efi x"),
+                         "RUN/boot/efi x")
 
     def test_two_runs_of_a_line_agree(self):
         a = "[    3.111] systemd[1]: run 2026-11-08 05:00:00 took 12ms abcdef0123"

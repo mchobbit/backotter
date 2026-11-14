@@ -1392,7 +1392,7 @@ class ImgCells(WorldCase):
         self.assertEqual([c.cell for c in p.cells], ["holt:debian12+img"])
         self.assertEqual(st(p, "holt:debian12+img"), ("due", "fresh:names"))
         p = self.w.plan("HoltTest2 +img plan")
-        self.assertEqual(len(p.cells), 12)
+        self.assertEqual(len(p.cells), 13)     # freebsd15-geli joined the FreeBSD panel 2026-11-14 (geli.md D6)
         p = self.w.plan("HoltTest2 plan", universe=["holt:debian12+img"])
         self.assertEqual(st(p, "holt:debian12+img"), ("due", "img:panel"))
 

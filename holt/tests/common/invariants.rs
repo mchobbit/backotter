@@ -105,13 +105,64 @@ pub const LEADERS: [&str; 18] = ["if", "then", "else", "elif", "fi", "do", "done
 /// trimmed and redirections (`>FILE`, `2>&1`, `> FILE`) left out: the line
 /// itself, or, for `sh -c 'SCRIPT'`, each command of SCRIPT.  Commands are
 /// split at ;, &&, ||, | and newlines, and lose a leading if, do, {, done and
-/// the like, and VAR=value assignments.
+/// the like, and VAR=value assignments.  A `[VAR=value...] sh -c 'SCRIPT'
+/// NAME ARG...` whose SCRIPT runs `"$@"` (load's wrapper of a command, as
+/// the restore's on FreeBSD's msdosfs ESP) runs ARG... as a command too.
 pub fn commands(line: &str) -> Vec<Vec<String>> {
     let t = line.trim();
+    let mut bare = t;
+    while let Some((w, rest)) = bare.split_once(' ') {
+        if !is_assignment(w) || w.contains('\'') {
+            break;
+        }
+        bare = rest.trim_start();
+    }
+    if let Some((script, args)) = bare.strip_prefix("sh -c '").and_then(quoted_script) {
+        let mut out = script_commands(&script);
+        if script.contains("\"$@\"") {
+            let mut w: Vec<String> = args.split_whitespace().skip(1).map(|x| x.trim_matches(|c| c == '\'' || c == '"').to_string()).filter(|x| !x.is_empty()).collect();
+            while w.first().is_some_and(|x| LEADERS.contains(&x.as_str()) || is_assignment(x)) {
+                w.remove(0);
+            }
+            if !w.is_empty() {
+                out.push(w);
+            }
+        }
+        return out;
+    }
     let script = match t.strip_prefix("sh -c ") {
         Some(rest) => rest.trim().replace("'\\''", "'"),
         None => t.to_string(),
     };
+    script_commands(&script)
+}
+
+fn is_assignment(x: &str) -> bool {
+    x.contains('=') && !x.starts_with('-') && !x.starts_with('/')
+}
+
+/// SCRIPT (unescaped) and what follows it, of the text after `sh -c '`:
+/// up to the closing quote, `'\''` being a quote inside.  None when the
+/// quote never closes.
+fn quoted_script(q: &str) -> Option<(String, &str)> {
+    let mut script = String::new();
+    let mut i = 0;
+    while i < q.len() {
+        if q[i..].starts_with("'\\''") {
+            script.push('\'');
+            i += 4;
+        } else if q[i..].starts_with('\'') {
+            return Some((script, &q[i + 1..]));
+        } else {
+            let c = q[i..].chars().next()?;
+            script.push(c);
+            i += c.len_utf8();
+        }
+    }
+    None
+}
+
+fn script_commands(script: &str) -> Vec<Vec<String>> {
     let script = script.replace("&&", ";").replace("||", ";");
     let mut out = Vec::new();
     for piece in script.split([';', '|', '\n']) {
@@ -133,7 +184,7 @@ pub fn commands(line: &str) -> Vec<Vec<String>> {
             }
             w.push(x.to_string());
         }
-        while w.first().is_some_and(|x| LEADERS.contains(&x.as_str()) || (x.contains('=') && !x.starts_with('-') && !x.starts_with('/'))) {
+        while w.first().is_some_and(|x| LEADERS.contains(&x.as_str()) || is_assignment(x)) {
             w.remove(0);
         }
         if !w.is_empty() {

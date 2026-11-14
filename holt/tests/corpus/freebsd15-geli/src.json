@@ -1,0 +1,1089 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.6"
+  },
+  "generated": "2026-11-14T04:17:36Z",
+  "privileged": true,
+  "host": {
+    "hostname": "host-1"
+  },
+  "os": {
+    "family": "freebsd",
+    "id": "freebsd",
+    "version_id": "15.1",
+    "pretty_name": "FreeBSD 15.1-RELEASE-p6",
+    "kernel_name": "FreeBSD",
+    "kernel_release": "15.1-RELEASE-p6",
+    "kernel_version": "FreeBSD 15.1-RELEASE-p6 releng/15.1-n283643-95719d8a895b GENERIC",
+    "architecture": "x86_64"
+  },
+  "firmware": {
+    "mode": "uefi"
+  },
+  "storage": {
+    "disks": [
+      {
+        "name": "vtbd0",
+        "path": "/dev/vtbd0",
+        "kind": "disk",
+        "size_bytes": 17179869184,
+        "size": "16 GiB",
+        "logical_sector_size": 512,
+        "model": null,
+        "serial": null,
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "bc000000-0000-4000-8000-000000000001",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 40,
+          "last_usable_lba": 33554391,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 33554431,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 33554431,
+                "start_bytes": 512,
+                "size_bytes": 17179868672,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vtbd0p1",
+            "number": 1,
+            "start_lba": 40,
+            "end_lba": 532519,
+            "sectors": 532480,
+            "start_bytes": 20480,
+            "size_bytes": 272629760,
+            "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "type_name": "EFI System",
+            "uuid": "bc000000-0000-4000-8000-000000000002",
+            "partlabel": "efiboot0",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "content": {
+              "type": "vfat",
+              "usage": "filesystem",
+              "uuid": "BC00-0001",
+              "label": null,
+              "version": "FAT32",
+              "fat_bits": 32,
+              "bytes_per_sector": 512,
+              "sectors_per_cluster": 1,
+              "cluster_size": 512,
+              "reserved_sectors": 32,
+              "fats": 2,
+              "fat_sectors": 4096,
+              "total_sectors": 532480,
+              "size_bytes": 272629760,
+              "clusters": 524256,
+              "hidden_sectors": 0,
+              "media": "0xf0",
+              "oem_name": "BSD4.4",
+              "root_cluster": 2,
+              "fsinfo_sector": 1,
+              "backup_boot_sector": 2,
+              "boot_sector_label": null
+            },
+            "mounted_at": ["/boot/efi"]
+          },
+          {
+            "name": "vtbd0p2",
+            "number": 2,
+            "start_lba": 534528,
+            "end_lba": 4728831,
+            "sectors": 4194304,
+            "start_bytes": 273678336,
+            "size_bytes": 2147483648,
+            "type": "516e7cb5-6ecf-11d6-8ff8-00022d09712b",
+            "type_name": "FreeBSD swap",
+            "uuid": "bc000000-0000-4000-8000-000000000003",
+            "partlabel": "swap0",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "content": null,
+            "mounted_at": []
+          },
+          {
+            "name": "vtbd0p3",
+            "number": 3,
+            "start_lba": 4728832,
+            "end_lba": 33552383,
+            "sectors": 28823552,
+            "start_bytes": 2421161984,
+            "size_bytes": 14757658624,
+            "type": "516e7cba-6ecf-11d6-8ff8-00022d09712b",
+            "type_name": "FreeBSD ZFS",
+            "uuid": "bc000000-0000-4000-8000-000000000004",
+            "partlabel": "zfs0",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "content": {
+              "type": "geli",
+              "usage": "crypto",
+              "uuid": null,
+              "label": null,
+              "version": "7",
+              "flags": ["BOOT", "GELIBOOT", "AUTORESIZE"],
+              "flags_raw": "0x282",
+              "ealgo": "AES-XTS",
+              "ealgo_id": 22,
+              "keylen": 256,
+              "aalgo": null,
+              "aalgo_id": 0,
+              "provsize": 14757658624,
+              "sectorsize": 4096,
+              "keys": [0],
+              "iterations": 3031038
+            },
+            "geli": {
+              "version": 7,
+              "flags": ["BOOT", "GELIBOOT", "AUTORESIZE"],
+              "flags_raw": "0x282",
+              "ealgo": "AES-XTS",
+              "ealgo_id": 22,
+              "keylen": 256,
+              "aalgo": null,
+              "aalgo_id": 0,
+              "provsize": 14757658624,
+              "sectorsize": 4096,
+              "keys": [0],
+              "iterations": 3031038,
+              "provider": "vtbd0p3.eli",
+              "attached": true,
+              "onetime": false,
+              "content": {
+                "type": "zfs_member",
+                "usage": "filesystem",
+                "uuid": "1000000000000000001",
+                "label": "zroot",
+                "version": "5000",
+                "labels_valid": 4,
+                "pool_name": "zroot",
+                "pool_guid": "1000000000000000001",
+                "vdev_guid": "1000000000000000002",
+                "top_guid": "1000000000000000002",
+                "pool_state": "active",
+                "txg": 231,
+                "spa_version": 5000,
+                "hostname": "host-1",
+                "hostid": null
+              },
+              "keyed_by": "passphrase",
+              "keyfiles": []
+            },
+            "mounted_at": []
+          }
+        ],
+        "boot_code": {
+          "kind": "none",
+          "first_bytes": "00000000000000000000000000000000",
+          "code_b64": null
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "zroot/ROOT/default",
+        "fstype": "zfs",
+        "options": "rw,noatime,nfsv4acls",
+        "device": null
+      },
+      {
+        "target": "/dev",
+        "source": "devfs",
+        "fstype": "devfs",
+        "options": "rw",
+        "device": null
+      },
+      {
+        "target": "/boot/efi",
+        "source": "/dev/gpt/efiboot0",
+        "fstype": "msdosfs",
+        "options": "rw",
+        "device": "vtbd0p1"
+      },
+      {
+        "target": "/tmp",
+        "source": "zroot/tmp",
+        "fstype": "zfs",
+        "options": "rw,nosuid,noatime,nfsv4acls",
+        "device": null
+      },
+      {
+        "target": "/home",
+        "source": "zroot/home",
+        "fstype": "zfs",
+        "options": "rw,noatime,nfsv4acls",
+        "device": null
+      },
+      {
+        "target": "/var/log",
+        "source": "zroot/var/log",
+        "fstype": "zfs",
+        "options": "rw,noexec,nosuid,noatime,nfsv4acls",
+        "device": null
+      },
+      {
+        "target": "/zroot",
+        "source": "zroot",
+        "fstype": "zfs",
+        "options": "rw,noatime,nfsv4acls",
+        "device": null
+      },
+      {
+        "target": "/var/audit",
+        "source": "zroot/var/audit",
+        "fstype": "zfs",
+        "options": "rw,noexec,nosuid,noatime,nfsv4acls",
+        "device": null
+      },
+      {
+        "target": "/var/mail",
+        "source": "zroot/var/mail",
+        "fstype": "zfs",
+        "options": "rw,nfsv4acls",
+        "device": null
+      },
+      {
+        "target": "/var/tmp",
+        "source": "zroot/var/tmp",
+        "fstype": "zfs",
+        "options": "rw,nosuid,noatime,nfsv4acls",
+        "device": null
+      },
+      {
+        "target": "/usr/src",
+        "source": "zroot/usr/src",
+        "fstype": "zfs",
+        "options": "rw,noatime,nfsv4acls",
+        "device": null
+      },
+      {
+        "target": "/usr/ports",
+        "source": "zroot/usr/ports",
+        "fstype": "zfs",
+        "options": "rw,nosuid,noatime,nfsv4acls",
+        "device": null
+      },
+      {
+        "target": "/var/crash",
+        "source": "zroot/var/crash",
+        "fstype": "zfs",
+        "options": "rw,noexec,nosuid,noatime,nfsv4acls",
+        "device": null
+      }
+    ],
+    "swaps": [
+      {
+        "file": "/dev/vtbd0p2",
+        "size_bytes": 2147483648,
+        "device": "vtbd0p2"
+      }
+    ],
+    "fstab": [
+      {
+        "spec": "/dev/gpt/efiboot0",
+        "file": "/boot/efi",
+        "type": "msdosfs",
+        "options": "rw",
+        "freq": 2,
+        "passno": 2,
+        "resolves_to": "vtbd0p1"
+      },
+      {
+        "spec": "/dev/vtbd0p2",
+        "file": "none",
+        "type": "swap",
+        "options": "sw",
+        "freq": 0,
+        "passno": 0,
+        "resolves_to": "vtbd0p2"
+      }
+    ],
+    "zfs": {
+      "pools_from_labels": [
+        {
+          "name": "zroot",
+          "pool_guid": "1000000000000000001",
+          "state": 0,
+          "txg": 231,
+          "version": 5000,
+          "hostname": "host-1",
+          "hostid": null,
+          "vdev_children": 1,
+          "top_level_vdevs": [
+            {
+              "type": "disk",
+              "id": 0,
+              "guid": 1000000000000000002,
+              "path": "/dev/vtbd0p3.eli",
+              "whole_disk": 1,
+              "metaslab_array": 65,
+              "metaslab_shift": 29,
+              "ashift": 12,
+              "asize": 14752677888,
+              "min_alloc": 4096,
+              "is_log": 0,
+              "create_txg": 4
+            }
+          ],
+          "features_for_read": {
+            "com.delphix:hole_birth": true,
+            "com.delphix:embedded_data": true,
+            "com.klarasystems:vdev_zaps_v2": true
+          },
+          "member_devices": ["vtbd0p3.eli"]
+        }
+      ],
+      "zpool_cache": {
+        "zroot": {
+          "version": 5000,
+          "name": "zroot",
+          "state": 0,
+          "txg": 4,
+          "pool_guid": 1000000000000000001,
+          "errata": 0,
+          "min_alloc": 4096,
+          "max_alloc": 4096,
+          "hostname": "",
+          "com.delphix:has_per_vdev_zaps": true,
+          "vdev_children": 1,
+          "vdev_tree": {
+            "type": "root",
+            "id": 0,
+            "guid": 1000000000000000001,
+            "create_txg": 4,
+            "com.klarasystems:vdev_zap_root": 62,
+            "children": [
+              {
+                "type": "disk",
+                "id": 0,
+                "guid": 1000000000000000002,
+                "path": "/dev/vtbd0p3.eli",
+                "whole_disk": 1,
+                "metaslab_array": 65,
+                "metaslab_shift": 29,
+                "ashift": 12,
+                "asize": 14752677888,
+                "min_alloc": 4096,
+                "is_log": 0,
+                "create_txg": 4,
+                "com.delphix:vdev_zap_leaf": 63,
+                "com.delphix:vdev_zap_top": 64
+              }
+            ]
+          },
+          "features_for_read": {
+            "com.delphix:hole_birth": true,
+            "com.delphix:embedded_data": true,
+            "com.klarasystems:vdev_zaps_v2": true
+          }
+        }
+      },
+      "tools": {
+        "imported_pools": [
+          {
+            "name": "zroot",
+            "properties": {
+              "size": "14495514624",
+              "altroot": "-",
+              "health": "ONLINE",
+              "guid": "1000000000000000001",
+              "version": "-",
+              "bootfs": "zroot/ROOT/default",
+              "delegation": "on",
+              "autoreplace": "off",
+              "cachefile": "-",
+              "failmode": "wait",
+              "listsnapshots": "off",
+              "autoexpand": "off",
+              "readonly": "off",
+              "ashift": "0",
+              "comment": "-",
+              "multihost": "off",
+              "autotrim": "off",
+              "compatibility": "off",
+              "dedup_table_quota": "auto",
+              "last_scrubbed_txg": "0"
+            },
+            "local_properties": {
+              "bootfs": "zroot/ROOT/default"
+            },
+            "features": {
+              "async_destroy": "enabled",
+              "empty_bpobj": "active",
+              "lz4_compress": "active",
+              "multi_vdev_crash_dump": "enabled",
+              "spacemap_histogram": "active",
+              "enabled_txg": "active",
+              "hole_birth": "active",
+              "extensible_dataset": "active",
+              "embedded_data": "active",
+              "bookmarks": "enabled",
+              "filesystem_limits": "enabled",
+              "large_blocks": "enabled",
+              "large_dnode": "enabled",
+              "sha512": "enabled",
+              "skein": "enabled",
+              "edonr": "enabled",
+              "userobj_accounting": "active",
+              "encryption": "enabled",
+              "project_quota": "active",
+              "device_removal": "enabled",
+              "obsolete_counts": "enabled",
+              "zpool_checkpoint": "enabled",
+              "spacemap_v2": "active",
+              "allocation_classes": "enabled",
+              "resilver_defer": "enabled",
+              "bookmark_v2": "enabled",
+              "redaction_bookmarks": "enabled",
+              "redacted_datasets": "enabled",
+              "bookmark_written": "enabled",
+              "log_spacemap": "active",
+              "livelist": "enabled",
+              "device_rebuild": "enabled",
+              "zstd_compress": "enabled",
+              "draid": "enabled",
+              "zilsaxattr": "active",
+              "head_errlog": "active",
+              "blake3": "enabled",
+              "block_cloning": "active",
+              "vdev_zaps_v2": "active",
+              "redaction_list_spill": "enabled",
+              "raidz_expansion": "enabled",
+              "fast_dedup": "enabled",
+              "longname": "enabled",
+              "large_microzap": "enabled",
+              "dynamic_gang_header": "enabled",
+              "block_cloning_endian": "active",
+              "physical_rewrite": "enabled"
+            },
+            "vdevs": {
+              "vdevs": {
+                "zroot": {
+                  "name": "zroot",
+                  "vdev_type": "root",
+                  "guid": 1000000000000000001,
+                  "class": "normal",
+                  "state": "ONLINE",
+                  "alloc_space": 577851392,
+                  "total_space": 14495514624,
+                  "def_space": 14495514624,
+                  "read_errors": 0,
+                  "write_errors": 0,
+                  "checksum_errors": 0,
+                  "vdevs": {
+                    "/dev/vtbd0p3.eli": {
+                      "name": "/dev/vtbd0p3.eli",
+                      "vdev_type": "disk",
+                      "guid": 1000000000000000002,
+                      "path": "/dev/vtbd0p3.eli",
+                      "class": "normal",
+                      "state": "ONLINE",
+                      "alloc_space": 577851392,
+                      "total_space": 14495514624,
+                      "def_space": 14495514624,
+                      "rep_dev_size": 14500233216,
+                      "phys_space": 14757396480,
+                      "read_errors": 0,
+                      "write_errors": 0,
+                      "checksum_errors": 0,
+                      "slow_ios": 0
+                    }
+                  }
+                }
+              },
+              "logs": null,
+              "l2cache": null,
+              "spares": null,
+              "special": null,
+              "dedup": null
+            }
+          }
+        ],
+        "datasets": [
+          {
+            "name": "zroot",
+            "type": "filesystem",
+            "used": 576905216,
+            "available": 13465628672,
+            "referenced": 98304,
+            "mountpoint": "/zroot",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "nfsv4",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/zroot",
+                "source": "local"
+              },
+              "compression": {
+                "value": "on",
+                "source": "local"
+              },
+              "atime": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/ROOT",
+            "type": "filesystem",
+            "used": 572813312,
+            "available": 13465628672,
+            "referenced": 98304,
+            "mountpoint": "none",
+            "canmount": "on",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "nfsv4",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "none",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/ROOT/default",
+            "type": "filesystem",
+            "used": 572715008,
+            "available": 13465628672,
+            "referenced": 572715008,
+            "mountpoint": "/",
+            "canmount": "noauto",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "nfsv4",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "noauto",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/home",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 13465628672,
+            "referenced": 98304,
+            "mountpoint": "/home",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "nfsv4",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/home",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/tmp",
+            "type": "filesystem",
+            "used": 1847296,
+            "available": 13465628672,
+            "referenced": 1847296,
+            "mountpoint": "/tmp",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "nfsv4",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/tmp",
+                "source": "local"
+              },
+              "exec": {
+                "value": "on",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/usr",
+            "type": "filesystem",
+            "used": 294912,
+            "available": 13465628672,
+            "referenced": 98304,
+            "mountpoint": "/usr",
+            "canmount": "off",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "nfsv4",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/usr",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/usr/ports",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 13465628672,
+            "referenced": 98304,
+            "mountpoint": "/usr/ports",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "nfsv4",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/usr/src",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 13465628672,
+            "referenced": 98304,
+            "mountpoint": "/usr/src",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "nfsv4",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {}
+          },
+          {
+            "name": "zroot/var",
+            "type": "filesystem",
+            "used": 634880,
+            "available": 13465628672,
+            "referenced": 98304,
+            "mountpoint": "/var",
+            "canmount": "off",
+            "mounted": "no",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "nfsv4",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "mountpoint": {
+                "value": "/var",
+                "source": "local"
+              },
+              "canmount": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/var/audit",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 13465628672,
+            "referenced": 98304,
+            "mountpoint": "/var/audit",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "nfsv4",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/var/crash",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 13465628672,
+            "referenced": 98304,
+            "mountpoint": "/var/crash",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "nfsv4",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/var/log",
+            "type": "filesystem",
+            "used": 143360,
+            "available": 13465628672,
+            "referenced": 143360,
+            "mountpoint": "/var/log",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "nfsv4",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "exec": {
+                "value": "off",
+                "source": "local"
+              },
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/var/mail",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 13465628672,
+            "referenced": 98304,
+            "mountpoint": "/var/mail",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "nfsv4",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "on",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "atime": {
+                "value": "on",
+                "source": "local"
+              }
+            }
+          },
+          {
+            "name": "zroot/var/tmp",
+            "type": "filesystem",
+            "used": 98304,
+            "available": 13465628672,
+            "referenced": 98304,
+            "mountpoint": "/var/tmp",
+            "canmount": "on",
+            "mounted": "yes",
+            "encryption": "off",
+            "encryptionroot": null,
+            "keyformat": "none",
+            "keylocation": "none",
+            "keystatus": null,
+            "origin": null,
+            "compression": "on",
+            "recordsize": 131072,
+            "volsize": null,
+            "volblocksize": null,
+            "acltype": "nfsv4",
+            "xattr": "sa",
+            "dnodesize": "legacy",
+            "normalization": "none",
+            "utf8only": "off",
+            "casesensitivity": "sensitive",
+            "atime": "off",
+            "relatime": "on",
+            "copies": 1,
+            "com.sun:auto-snapshot": null,
+            "properties": {
+              "setuid": {
+                "value": "off",
+                "source": "local"
+              }
+            }
+          }
+        ]
+      }
+    },
+    "glabels": []
+  },
+  "boot": {
+    "loader": {
+      "name": "freebsd",
+      "firmware": "uefi",
+      "evidence": ["machdep.bootmethod says UEFI"]
+    },
+    "boot_partitions": [],
+    "loader_conf": "aesni_load=\"YES\"\ngeom_eli_load=\"YES\"\nkern.geom.label.disk_ident.enable=\"0\"\nkern.geom.label.gptid.enable=\"0\"\nzfs_load=\"YES\"\nboot_multicons=\"YES\"\nconsole=\"comconsole,vidconsole\"\nautoboot_delay=\"3\"\n",
+    "efibootmgr": "Boot to FW : false\nBootCurrent: 0001\nTimeout    : 0 seconds\nBootOrder  : 0000, 0001, 0002, 0003, 0004, 0005, 0006\n Boot0000* UiApp Fv(bc000000-0000-4000-8000-000000000005)/FvFile(bc000000-0000-4000-8000-000000000006)\n+Boot0001* UEFI Misc Device PciRoot(0x0)/Pci(0x3,0x0)\n Boot0002* UEFI PXEv4 (MAC:bc0000000002) PciRoot(0x0)/Pci(0x2,0x0)/MAC(bc0000000002,0x1)/IPv4(0.0.0.0,0x0,DHCP,0.0.0.0,0.0.0.0,0.0.0.0)\n Boot0003* UEFI PXEv6 (MAC:bc0000000002) PciRoot(0x0)/Pci(0x2,0x0)/MAC(bc0000000002,0x1)/IPv6(0000:0000:0000:0000:0000:0000:0000:0000,0x0,Static,0000:0000:0000:0000:0000:0000:0000:0000,0x40,0000:0000:0000:0000:0000:0000:0000:0000)\n Boot0004* UEFI HTTPv4 (MAC:bc0000000002) PciRoot(0x0)/Pci(0x2,0x0)/MAC(bc0000000002,0x1)/IPv4(0.0.0.0,0x0,DHCP,0.0.0.0,0.0.0.0,0.0.0.0)/Uri()\n Boot0005* UEFI HTTPv6 (MAC:bc0000000002) PciRoot(0x0)/Pci(0x2,0x0)/MAC(bc0000000002,0x1)/IPv6(0000:0000:0000:0000:0000:0000:0000:0000,0x0,Static,0000:0000:0000:0000:0000:0000:0000:0000,0x40,0000:0000:0000:0000:0000:0000:0000:0000)/Uri()\n Boot0006* EFI Internal Shell Fv(bc000000-0000-4000-8000-000000000005)/FvFile(bc000000-0000-4000-8000-000000000007)\n\n\nUnreferenced Variables:\n",
+    "kernel": "/boot/kernel/kernel"
+  },
+  "warnings": []
+}

@@ -217,6 +217,7 @@ holt	holt:nixos2605+img	3.20	192	0.00	-	test2.md ImgTest2 Cost: the panel's figu
 holt	holt:debian13-stack+img	3.40	204	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:aerynos+img	6.00	360	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:freebsd14+img	4.75	285	0.00	-	test2.md ImgTest2 Cost: the panel's figure
+holt	holt:freebsd15-geli+img	5.60	336	0.00	-	geli.md G7/D6: holt:freebsd15-geli's figure (no +img run yet)
 holt	holt:netbsd11+img	4.18	250	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:openbsd8+img	6.33	379	0.00	-	test2.md ImgTest2 Cost: the panel's figure
 holt	holt:dragonfly6+img	15.38	922	0.00	-	test2.md ImgTest2 Cost: the panel's figure

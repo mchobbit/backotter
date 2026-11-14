@@ -717,6 +717,16 @@ fn golden_invariant_archiver_found() {
         let bad = edit(&p, &format!("{restore}\n"), &format!("{near}\n"));
         assert!(has(&invariants(&v, &bad), "the archiver found: the restore stage runs no"), "{near}: {:?}", invariants(&v, &bad));
     }
+    // Load's wrapper of the restore (FreeBSD's msdosfs ESP): `sh -c '... "$@" ...' sh rustic-bko ...`.
+    let (env, argv) = restore.split_once(" rustic-bko ").map(|(e, a)| (e.to_string(), format!("rustic-bko {a}"))).unwrap();
+    let wrap = |script: &str, argv: &str| format!("{env} sh -c '{script}' sh {argv}\n");
+    let script = r#""$@" 2>/run/bko-holt/restore.err; s=$?; [ $s -eq 1 ] || exit $s; e=$(printf '\''\033'\''); echo '\''bko-holt: spared'\'' >&2"#;
+    let wrapped = edit(&p, &format!("{restore}\n"), &wrap(script, &argv));
+    assert!(!has(&invariants(&v, &wrapped), "the archiver found"), "{:?}", invariants(&v, &wrapped));
+    for bad in [wrap(script, &argv.replace(TARGET, "/tmp/elsewhere")), wrap(&script.replace("\"$@\"", "true"), &argv)] {
+        let bad = edit(&p, &format!("{restore}\n"), &bad);
+        assert!(has(&invariants(&v, &bad), "the archiver found: the restore stage runs no"), "{:?}", invariants(&v, &bad));
+    }
     let problem = Planned {
         out: p.out.replacen("#\n# Disks:", "#\n# Problems (1): nothing can be written until they're fixed\n#   - rustic-bko isn't BackOtter's rustic (rustic 0.11.4); restore needs rustic-bko\n#\n# Disks:", 1),
         code: 4,

@@ -263,7 +263,12 @@ failed_units() {
 }
 
 # layout_keys LAYOUT PASSPHRASE_FILE: load's --key-file values, one a line: every
-# LUKS volume and every ZFS encryption root that asks for a passphrase.
+# LUKS volume, every ZFS encryption root that asks for a passphrase, and every
+# GELI provider that does (docs/design/geli.md), by its partition's name
+# (vtbd0p3; load also takes gpt/LABEL or the provider less .eli).  A GELI
+# provider unlocked by key files alone ("keyfile") isn't listed: load makes it
+# from the source's key files, not this passphrase.  Key slot 1 isn't either
+# (NAME:1): load says so in the plan when the source used it.
 layout_keys() {
     python3 - "$1" "$2" <<'PY'
 import json, sys
@@ -276,6 +281,16 @@ for dm in s.get("dm_devices") or []:
 for ds in ((s.get("zfs") or {}).get("tools") or {}).get("datasets") or []:
     if ds.get("encryptionroot") == ds.get("name") and ds.get("keyformat") == "passphrase":
         names.add(ds["name"])
+for disk in s.get("disks") or []:
+    for x in [disk] + (disk.get("partitions") or []):
+        c = x.get("content") if isinstance(x.get("content"), dict) else {}
+        g = x.get("geli") if isinstance(x.get("geli"), dict) else None
+        if g is None and c.get("type") != "geli":
+            continue
+        g = g or c
+        if g.get("onetime") or (g.get("keyed_by") or "passphrase") == "keyfile":
+            continue
+        names.add(x["name"])
 for n in sorted(names):
     print(f"{n}={sys.argv[2]}")
 PY

@@ -94,7 +94,7 @@
     "plan_visible": ["holt/src/load/commands.rs"],
     "img_panel": {
       "linux": {"guests": ["debian12", "ubuntu24", "rocky10-raid5", "nixos2605", "debian13-stack", "aerynos"]},
-      "freebsd": {"guests": ["freebsd14"]},
+      "freebsd": {"guests": ["freebsd14", "freebsd15-geli"]},
       "netbsd": {"guests": ["netbsd11"]},
       "openbsd": {"guests": ["openbsd8"], "blocked": "rustic-bko's restore is killed out of memory in the 3 GiB rescue image with no swap (UVM: killed: out of swap at ~1.7 GB RSS); needs a bounded-memory restore in the rustic_core fork"},
       "dragonfly": {"guests": ["dragonfly6"]},

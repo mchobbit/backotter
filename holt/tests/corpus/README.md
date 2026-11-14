@@ -126,6 +126,20 @@ so its golden plan notes them as not made, runs `set-default` of the top
 level for the superblock's default_subvol flag, and after `grub-install
 --bootloader-id=BigLinux --no-nvram` defragments /boot and /usr/share/grub
 `--nocomp`.
+freebsd15-geli (bsdinstall's zfsboot with "Encrypt Disks": UEFI, GPT with
+an ESP at /boot/efi, plain swap, and the pool zroot on a GELI provider,
+AES-XTS 256, 4K sectors, GELIBOOT; docs/design/geli.md), a HoltTest2
+source since GELI's G6 (2026-11-14), was added the same day from its
+HoltTest1 run `geli3` on chopin, PASS, its source dumped live by the
+bko-holt 0.2.6 built from this tree for that run, the guest booted through
+console-boot.py (its loader's passphrase prompt), the image the same as
+the run recorded.  Its dump has the provider's `geli` record (version,
+flags, algorithms, sector size, iterations, key slots; never a key or its
+salt), and its golden plan makes the provider again with `geli init -b -g
+... -i 3031038 -J`, attaches it, builds zroot on `/dev/sdqp3.eli`, writes
+`/var/backups`' metadata backup again, and restores through load's
+msdosfs wrapper (`sh -c '..."$@"...' sh rustic-bko ... restore`), which
+invariants.rs's `commands` now reads through.
 kali (`make-debian.sh --kali 2026.3 ext4`: Kali Linux 2026.3 by d-i with
 Kali's preseed; UEFI with Secure Boot off, GPT with an 883 MiB ESP at
 /boot/efi, ext4 /, swap; GRUB in EFI/kali and the same file as
@@ -267,7 +281,13 @@ sha256 from both builds.  So did biglinux (2026-11-14), built from a
 private directory on cinqcent (/bkoscratch/holt-warm/bl3, deleted after):
 chopin with 91 of its 96 strings, cinqcent with 93 of its 97 and the raw
 dump's identifiers, the Mac with the git e-mail, 0 findings (its plan
-scanned too), the same sha256 from both builds.  So did kali
+scanned too), the same sha256 from both builds.  So did freebsd15-geli (2026-11-14),
+built from a private directory in chopin's RAM disk (its warm holt build
+at /bkoscratch/holt-warm/geli): chopin with its 90 strings (its
+console-passphrase among them) and the raw dump's identifiers, cinqcent
+with its 89, the Mac with the git e-mail, 0 findings, and a check of the
+src.json, index row and plan for the passphrase's bytes (as is and as
+UTF-16LE): none; the same sha256 from both builds.  So did kali
 (2026-11-14), built from a private directory in cinqcent's RAM disk (its
 warm holt build at /bkoscratch/holt-warm/kali): cinqcent with its 92
 strings and the raw dump's identifiers, chopin with its 91, the Mac with

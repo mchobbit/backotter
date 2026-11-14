@@ -3299,7 +3299,7 @@ impl Builder<'_> {
             Some(l) if !l.is_empty() => format!("LANG={l}.UTF-8"),
             _ => "LANG=C".to_string(),
         };
-        if matches!(self.layout.str_at(&["os", "id"]), Some("debian" | "ubuntu" | "linuxmint" | "zorin" | "neon" | "anduinos" | "kali")) {
+        if matches!(self.layout.str_at(&["os", "id"]), Some("debian" | "ubuntu" | "linuxmint" | "zorin" | "neon" | "elementary" | "anduinos" | "kali")) {
             return Cmd::new(&["chroot", t, "env", &lang, "update-grub"]);
         }
         let cfg = format!("{}/grub.cfg", self.grub_dir());
@@ -4069,6 +4069,11 @@ mod tests {
         assert_eq!(id_of(&format!(r#"{{"entries": [{big}], "boot_order": ["0004"]}}"#), "[]"), "BigLinux");
         let esps = r#"[{"contents": {"files": [{"path": "efi/Boot/bootx64.efi"}, {"path": "efi/BigLinux/grubx64.efi"}]}}]"#;
         assert_eq!(id_of(&format!(r#"{{"entries": [{win}], "boot_order": ["0000"]}}"#), esps), "BigLinux");
+        // elementary OS (docs/design/elementary.md): distinst maps "elementary
+        // OS" to ubuntu, so the entry it labels "elementary OS 8" is shim in
+        // EFI/ubuntu.
+        let elementary = r#"{"number": "0001", "description": "elementary OS 8", "file": "\\EFI\\ubuntu\\shimx64.efi", "partition": {"device": "vda1"}}"#;
+        assert_eq!(id_of(&format!(r#"{{"entries": [{win}, {elementary}], "boot_current": "0001", "boot_order": ["0000", "0001"]}}"#), "[]"), "ubuntu");
     }
 
     #[test]
@@ -4643,6 +4648,15 @@ mod tests {
         assert_eq!(bt, text(a.stage(Stage::Boot)));
         assert!(bt.contains("grub2-install --target=i386-pc /dev/vdb\n") && bt.contains("grub2-mkconfig -o /boot/grub2/grub.cfg\n"), "{bt}");
         assert!(bt.contains("dracut --force") && !bt.contains("grub-install") && !bt.contains("update-grub"), "{bt}");
+    }
+
+    /// elementary OS (docs/design/elementary.md, decision 5): Ubuntu's
+    /// update-grub by its ID, not grub-mkconfig.
+    #[test]
+    fn elementary_boot_tools() {
+        let e = sample::bios_mbr().replace(r#""id": "debian", "version_id": "13""#, r#""id": "elementary", "version_id": "8""#);
+        let bt = text(built_from(&e, &[]).stage(Stage::Boot));
+        assert!(bt.contains("chroot /mnt/bko-target env LANG=C update-grub\n") && !bt.contains("grub-mkconfig"), "{bt}");
     }
 
     /// Kali (docs/design/kali.md): Debian's arms as they are, named EFI/kali.

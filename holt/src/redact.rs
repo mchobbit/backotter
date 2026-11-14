@@ -152,7 +152,7 @@ const GENERIC_HOSTS: [&str; 36] = [
 ];
 /// Labels (lower case, trailing digits and '*' dropped) that installers
 /// and partitioners write: kept, because they help and identify no one.
-const GENERIC_LABELS: [&str; 77] = [
+const GENERIC_LABELS: [&str; 78] = [
     "", "efi", "esp", "efi system partition", "efi system", "efi-system", "efiboot", "bios", "biosboot", "bios boot partition",
     // Hybrid ISO images (xorriso: EFISYS, Gap1, Appended2...) and BackOtter's
     // and Haiku's own images.
@@ -168,6 +168,9 @@ const GENERIC_LABELS: [&str; 77] = [
     // to the file system labels, the VG names, and the roots' and init
     // LV's labels, the same on every install (crate::abroot).
     "vos-a", "vos-b", "vos-var", "vos-boot", "vos-init", "vos-efi", "vos-root",
+    // elementary OS's installer (distinst): the LUKS mapping its encrypted
+    // install opens the PV as (its VG is "data", above).
+    "cryptdata",
 ];
 /// Ubuntu names the datasets for /home and /root USERDATA/home_ID and
 /// USERDATA/root_ID.
@@ -194,7 +197,7 @@ pub struct Collector {
 /// A release medium's volume label: a system's name, its version and an
 /// architecture ("Ubuntu-Server 26.04.1 LTS amd64", "Fedora-S-dvd-x86_64-44").
 fn release_label(low: &str) -> bool {
-    const SYSTEMS: [&str; 16] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos", "pikaos", "kali", "proxmox", "guix"];
+    const SYSTEMS: [&str; 18] = ["ubuntu", "debian", "fedora", "rocky", "alma", "arch", "linuxmint", "mint", "pop", "zorin", "opensuse", "nixos", "pikaos", "kali", "proxmox", "guix", "elementary", "elementaryos"];
     const ARCHES: [&str; 5] = ["amd64", "x86_64", "x86-64", "arm64", "aarch64"];
     let first = low.split(|c: char| !c.is_ascii_alphanumeric()).next().unwrap_or("");
     SYSTEMS.contains(&first) && ARCHES.iter().any(|a| low.contains(a)) && low.bytes().any(|c| c.is_ascii_digit())
@@ -1730,6 +1733,22 @@ mod tests {
         }
         assert!(release_label("guix-system-install-1.5.0.x86_64-linux"));
         assert!(!release_label("guix-home"));
+    }
+
+    /// elementary OS: distinst's VG and LUKS mapping names kept on another
+    /// system's dump too, its own os words (ID, NAME, VERSION_CODENAME)
+    /// on its own, and its ISO's names as release labels.
+    #[test]
+    fn elementary_names_are_kept() {
+        let d = parse(r#"{"os": {"id": "ubuntu"}, "storage": {"disks": [{"name": "vda", "serial": "1", "partitions": [{"content": {"type": "crypto_LUKS", "label": "cryptdata"}}, {"content": {"type": "iso9660", "label": "elementaryos-8.1-stable-amd64"}}]}], "lvm": {"volume_groups": [{"name": "data"}]}}}"#).unwrap();
+        let (r, red) = redact(&d);
+        assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
+        let d = parse(r#"{"os": {"id": "elementary", "name": "elementary OS", "version_codename": "circe"}, "storage": {"disks": [{"name": "vda", "serial": "1", "partitions": [{"content": {"type": "ext4", "label": "elementary"}}, {"content": {"type": "ext4", "label": "circe"}}]}]}}"#).unwrap();
+        let (r, red) = redact(&d);
+        assert_eq!(r.pretty(), d.pretty(), "{}", red.summary(true));
+        assert!(release_label("elementaryos-8.1-stable-amd64.20260219"));
+        assert!(release_label("elementary os 8.1 amd64"));
+        assert!(!release_label("elementary-tweaks"));
     }
 
     /// Vanilla OS: ABRoot's fixed labels, partition names and VG names,

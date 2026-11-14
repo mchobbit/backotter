@@ -198,6 +198,55 @@ line. Also, **the working tree has uncommitted Test2 changes** (`classes.json`,
 `plan.py`, goldens, the corpus index; another session's cachyos-zfs work).
 E4 waits until they are committed, then re-blesses on top.
 
+## What E1 found
+
+Settled on `elementary8` (built 2026-11-14 on Chopin, 180 s) and
+`elementary8-luks`, by a read-only vm-mount and their first boots:
+
+- **os-release:** `ID=elementary`, `ID_LIKE="ubuntu debian"`,
+  `VERSION_ID="8"` (not 8.1; `VERSION="8.1"`), `VERSION_CODENAME=circe`,
+  `UBUNTU_CODENAME=noble` (written twice). The `SUPPORTED` row's "8" fits.
+- **The EFI id is `ubuntu`:** distinst maps "elementary OS" to `ubuntu`.
+  distinst puts GRUB's real config **on the ESP**:
+  `grub-install --boot-directory=/boot/efi/EFI/ubuntu` and
+  `grub-mkconfig -o /boot/efi/EFI/ubuntu/grub/grub.cfg`. The stub
+  `EFI/ubuntu/grub.cfg` searches the ESP's UUID and sets its prefix to
+  `/EFI/ubuntu/grub`. /boot/grub (written by update-grub) exists too but
+  isn't what boots. The build reproduces both.
+  - load's generic UEFI GRUB arm runs grub-install without
+    `--boot-directory`. In signed mode that rewrites the stub to point at
+    /boot/grub, which update-grub regenerates. distinst's ESP copy stays
+    on the ESP, stale but unused. E6 confirms this on a real restore.
+- **The ESP:** `EFI/ubuntu/{shimx64,grubx64,mmx64}.efi`, `BOOTX64.CSV`,
+  and `EFI/BOOT/{BOOTX64.EFI (shim),fbx64.efi,mmx64.efi}`. The NVRAM entry
+  is made by shim's fallback from BOOTX64.CSV, labelled `ubuntu`. distinst
+  labels its entry with the PRETTY_NAME on real hardware; the loader path
+  is the same.
+- **Packages:** the live image has `grub-pc` (elementary's patched
+  `2.12-1ubuntu7.3+elementary13~ubuntu8.1`) and no EFI GRUB or shim. The
+  build installs Ubuntu's `grub-efi-amd64{,-bin,-signed}` 2.12-1ubuntu7.3
+  and `shim-signed` 1.58, as distinst does from the ISO's pool. `grub-pc`
+  ends up `rc`, and `grub-common` stays elementary's build. `dpkg --audit`
+  is clean. The remove list: casper, distinst, io.elementary.installer
+  (and -session), mokutil. The build keeps mokutil, since distinst
+  reinstalls it on UEFI.
+- **fstab:** `/dev/mapper/data-root / ext4 defaults 0 1`,
+  `UUID=… /boot/efi vfat umask=0077 0 2`,
+  `/dev/mapper/data-swap none swap sw 0 0`. On the LUKS guest, crypttab is
+  `cryptdata UUID=… none luks`.
+- **Secure Boot under OVMF works:** both guests boot `uefi+secure-boot`
+  first try, with no failed units. `elementary8-luks` stops at
+  cryptsetup-initramfs's "Please unlock disk cryptdata:" and unlocks from
+  the typed `console-passphrase`.
+- **Sources:** `elementary.list` (ppa elementary-os/stable),
+  `patches.list` (ppa elementary-os/os-patches), and Ubuntu's noble,
+  -updates and -security.
+- **Kernel:** 6.17 from the ISO. `vm-update --try` passes: 543 packages,
+  rebooted into Linux 7.0.0-43-generic (24.04's newer HWE kernel), and the
+  PPAs answer.
+- **The image:** 8.3 GiB (`elementary8`) and 8.6 GiB (`-luks`) on disk.
+  Cinqcent's copies have the same SHA-256 (`elementary8` d0754dad…).
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Effort |

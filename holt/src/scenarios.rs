@@ -3276,6 +3276,265 @@ fn kali_fallback_boot() {
     assert!(!bt.contains("grub-mkconfig"), "{bt}");
 }
 
+const ELEMENTARY_KV: &str = "6.14.0-37-generic";
+/// The ESP's PARTUUID, and its vfat volume ID.
+const ELEMENTARY_ESP: &str = "e1e0e1e0-0000-4000-8000-000000000001";
+const ELEMENTARY_ESP_ID: &str = "E1E0-0008";
+/// elementary OS 8.1's /etc/os-release (the elementary8 guest, docs/design/elementary.md).
+const ELEMENTARY_OS_RELEASE: &str = "PRETTY_NAME=\"elementary OS 8\"\nNAME=\"elementary OS\"\nVERSION_ID=\"8\"\nVERSION=\"8.1\"\nVERSION_CODENAME=circe\nID=elementary\nID_LIKE=\"ubuntu debian\"\nUBUNTU_CODENAME=noble\nUBUNTU_VERSION_ID=\"24.04\"\nUBUNTU_CODENAME=noble\n";
+/// The VG UUID of the `data` group (lvm::sample::METADATA's), as
+/// device-mapper writes it.
+const ELEMENTARY_VG: &str = "Yb3kFa0Pz1AbCdEfGhIjKlMnOpQrStUv";
+
+/// elementary OS 8.1 as distinst lays out the default UEFI install
+/// (docs/design/elementary.md), in small (the ESP is 278 MiB there): GPT
+/// with a vfat ESP at /boot/efi and one LVM PV, VG `data` with LVs `root`
+/// (ext4, /) and `swap`, both named by /dev/mapper in fstab.  Encrypted
+/// (LUKS): an ext4 /boot partition between them, and the PV inside LUKS2
+/// opened as `cryptdata` (crypttab `cryptdata UUID=… none luks`).
+/// initramfs-tools' /boot/initrd.img-K; Ubuntu's shim and signed GRUB in
+/// EFI/ubuntu (distinst maps "elementary OS" to ubuntu) and shim at the
+/// fallback path.  distinst ran grub-install with
+/// --boot-directory=/boot/efi/EFI/ubuntu, so the stub EFI/ubuntu/grub.cfg
+/// points at EFI/ubuntu/grub/grub.cfg on the ESP, with the modules beside
+/// it; /boot/grub/grub.cfg is update-grub's.  Booted from NVRAM's shim
+/// entry with Secure Boot on.
+fn elementary(luks: bool) -> Tree {
+    use crate::efi::GLOBAL;
+    let t = Tree::new(if luks { "scn-elementary-luks" } else { "scn-elementary" });
+    let k = ELEMENTARY_KV;
+    let luks_uuid = "e1e01005-6b0a-4d6c-9a2e-8f7e1d2c3b4a";
+    let mut img = vec![0u8; 100 * MIB];
+    let mut parts = vec![(ESP, ELEMENTARY_ESP, 2048, 73727, 0, "")];
+    if luks {
+        parts.push((LINUX, "e1e0e1e0-0000-4000-8000-000000000002", 73728, 90111, 0, ""));
+    }
+    let pv_start: u64 = if luks { 90112 } else { 73728 };
+    parts.push((LINUX, if luks { "e1e0e1e0-0000-4000-8000-000000000003" } else { "e1e0e1e0-0000-4000-8000-000000000002" }, pv_start, 204766, 0, ""));
+    write_gpt(&mut img, 512, &GptSpec { disk_guid: "e1e0e1e0-0000-4000-8000-00000000d15c", parts });
+    put(&mut img, 2048, &fat::sample::fat32(71680, 0xe1e0_0008, ""));
+    // The root's UUID is ext::sample's (10111213-...); /boot's differs.
+    let root = "10111213-1415-1617-1819-1a1b1c1d1e1f";
+    let boot = "b0111213-1415-1617-1819-1a1b1c1d1e1f";
+    let mut boot_fs = ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, "");
+    boot_fs[1024 + 104] = 0xb0;
+    if luks {
+        put(&mut img, 73728, &boot_fs);
+    }
+    let metadata = lvm::sample::METADATA.replacen("vg0 {", "data {", 1).replace("swap_1 {", "swap {").replace("/dev/vda5", if luks { "/dev/mapper/cryptdata" } else { "/dev/vda2" });
+    let pv = lvm::sample::pv_with(512, 1 << 20, &metadata);
+    let pv_part = if luks { "vda3" } else { "vda2" };
+    if !luks {
+        put(&mut img, pv_start as usize, &pv);
+    } else {
+        put(&mut img, pv_start as usize, &luks::sample::luks2(luks_uuid, ""));
+    }
+    let var = |n: &str| format!("/sys/firmware/efi/efivars/{n}-{GLOBAL}");
+    t.disk("vda", "254:0", &img, 512)
+        .partition("vda", "vda1", "254:1", 1, 2048, 71680, &img)
+        .file("/sys/block/vda/device/model", "")
+        .symlink(&format!("/dev/disk/by-partuuid/{ELEMENTARY_ESP}"), "../../vda1");
+    if luks {
+        t.partition("vda", "vda2", "254:2", 2, 73728, 16384, &img).partition("vda", "vda3", "254:3", 3, pv_start, 204767 - pv_start, &img);
+    } else {
+        t.partition("vda", "vda2", "254:2", 2, pv_start, 204767 - pv_start, &img);
+    }
+    // The LVs (and, encrypted, the LUKS mapping under them) as dm devices.
+    let lv = |id: &str| format!("LVM-{ELEMENTARY_VG}{id}aaaabbbbccccddddeeeeffffff");
+    let root_fs = ext::sample::image(0x4 | 0x1000, 0x2 | 0x40 | 0x80 | 0x200, 0x1 | 0x400, "");
+    let swap_fs = misc::sample::swap(1024, "");
+    let (lv_parent, first_lv) = if luks { ("dm-0", 1) } else { (pv_part, 0) };
+    if luks {
+        let hex = luks_uuid.replace('-', "");
+        t.disk("dm-0", "253:0", &pv, 512)
+            .file("/sys/block/dm-0/dm/name", "cryptdata\n")
+            .file("/sys/block/dm-0/dm/uuid", format!("CRYPT-LUKS2-{hex}-cryptdata\n"))
+            .file("/sys/block/dm-0/slaves/vda3", "")
+            .file("/sys/block/vda/vda3/holders/dm-0", "")
+            .symlink("/dev/mapper/cryptdata", "../dm-0");
+    }
+    for (i, (name, id, image)) in [("data-root", "r00t00", &root_fs), ("data-swap", "sw4p00", &swap_fs)].into_iter().enumerate() {
+        let dm = format!("dm-{}", first_lv + i);
+        t.disk(&dm, &format!("253:{}", first_lv + i), image, 512)
+            .file(&format!("/sys/block/{dm}/dm/name"), format!("{name}\n"))
+            .file(&format!("/sys/block/{dm}/dm/uuid"), format!("{}\n", lv(id)))
+            .file(&format!("/sys/block/{dm}/slaves/{lv_parent}"), "")
+            .symlink(&format!("/dev/mapper/{name}"), &format!("../{dm}"));
+        if luks {
+            t.file(&format!("/sys/block/dm-0/holders/{dm}"), "");
+        } else {
+            t.file(&format!("/sys/block/vda/{pv_part}/holders/{dm}"), "");
+        }
+    }
+    let (root_dm, swap_dm) = if luks { ("253:1", "dm-2") } else { ("253:0", "dm-1") };
+    let mut mountinfo = format!("26 1 {root_dm} / / rw,noatime shared:1 - ext4 /dev/mapper/data-root rw,errors=remount-ro\n");
+    let mut fstab = format!("UUID={ELEMENTARY_ESP_ID}  /boot/efi  vfat  umask=0077  0  0\n");
+    if luks {
+        mountinfo.push_str("27 26 254:2 / /boot rw,relatime shared:2 - ext4 /dev/vda2 rw\n28 27 254:1 / /boot/efi rw,relatime shared:3 - vfat /dev/vda1 rw,fmask=0077,dmask=0077\n");
+        fstab.push_str(&format!("UUID={boot}  /boot  ext4  noatime,errors=remount-ro  0  0\n"));
+        t.file("/etc/crypttab", format!("cryptdata UUID={luks_uuid} none luks\n"));
+    } else {
+        mountinfo.push_str("27 26 254:1 / /boot/efi rw,relatime shared:2 - vfat /dev/vda1 rw,fmask=0077,dmask=0077\n");
+    }
+    fstab.push_str("/dev/mapper/data-root  /  ext4  noatime,errors=remount-ro  0  0\n/dev/mapper/data-swap  none  swap  defaults  0  0\n");
+    // Where GRUB finds the kernels: / on the root LV, or /boot's own file system.
+    let (search, kdir) = if luks { (boot, "") } else { (root, "/boot") };
+    let (shim, grub, mm) = (vec![1u8; 300], vec![2u8; 400], vec![3u8; 200]);
+    let full_cfg = format!(
+        "insmod part_gpt\ninsmod ext2\nsearch --no-floppy --fs-uuid --set=root {search}\nmenuentry 'elementary OS 8' {{\n\tlinux\t{kdir}/vmlinuz-{k} root=/dev/mapper/data-root ro quiet splash\n\tinitrd\t{kdir}/initrd.img-{k}\n}}\n"
+    );
+    t.file("/sys/firmware/efi/fw_platform_size", "64\n")
+        .file(&var("Boot0001"), efi_load_option("elementary OS 8", 1, 2048, 71680, ELEMENTARY_ESP, "\\EFI\\ubuntu\\shimx64.efi"))
+        .file(&var("BootOrder"), [7u8, 0, 0, 0, 1, 0])
+        .file(&var("BootCurrent"), [6u8, 0, 0, 0, 1, 0])
+        .file(&var("SecureBoot"), [6u8, 0, 0, 0, 1])
+        .file("/proc/self/mountinfo", mountinfo)
+        .file("/proc/swaps", format!("Filename\t\t\t\tType\t\tSize\t\tUsed\t\tPriority\n/dev/{swap_dm}                               partition\t4194300\t\t0\t\t-2\n"))
+        .file("/etc/fstab", fstab)
+        .file("/usr/lib/os-release", ELEMENTARY_OS_RELEASE)
+        .symlink("/etc/os-release", "../usr/lib/os-release")
+        .file("/etc/debian_version", "trixie/sid\n")
+        .symlink("/lib", "usr/lib")
+        .file(&format!("/boot/vmlinuz-{k}"), "k")
+        .file(&format!("/boot/initrd.img-{k}"), "initramfs-tools")
+        .file(&format!("/boot/config-{k}"), "")
+        .file(&format!("/boot/System.map-{k}"), "")
+        .symlink("/boot/vmlinuz", &format!("vmlinuz-{k}"))
+        .symlink("/boot/initrd.img", &format!("initrd.img-{k}"))
+        .file("/boot/grub/grub.cfg", &full_cfg)
+        .file("/etc/default/grub", "GRUB_DEFAULT=0\nGRUB_TIMEOUT_STYLE=hidden\nGRUB_TIMEOUT=0\nGRUB_DISTRIBUTOR=`( . /etc/os-release; echo ${NAME:-Ubuntu} ) 2>/dev/null || echo Ubuntu`\nGRUB_CMDLINE_LINUX_DEFAULT=\"quiet splash\"\nGRUB_ENABLE_CRYPTODISK=y\n")
+        .file("/etc/initramfs-tools/initramfs.conf", "MODULES=most\nCOMPRESS=zstd\n")
+        .dir(&format!("/usr/lib/modules/{k}/kernel"))
+        .file("/boot/efi/EFI/ubuntu/shimx64.efi", &shim)
+        .file("/boot/efi/EFI/ubuntu/grubx64.efi", &grub)
+        .file("/boot/efi/EFI/ubuntu/mmx64.efi", &mm)
+        .file("/boot/efi/EFI/ubuntu/BOOTX64.CSV", "shimx64.efi,ubuntu,,This is the boot entry for ubuntu\n")
+        .file("/boot/efi/EFI/ubuntu/grub.cfg", format!("search.fs_uuid {ELEMENTARY_ESP_ID} root \nset prefix=($root)'/EFI/ubuntu/grub'\nconfigfile $prefix/grub.cfg\n"))
+        .file("/boot/efi/EFI/ubuntu/grub/grub.cfg", &full_cfg)
+        .file("/boot/efi/EFI/ubuntu/grub/x86_64-efi/normal.mod", "x")
+        .file("/boot/efi/EFI/BOOT/BOOTX64.EFI", &shim)
+        .file("/boot/efi/EFI/BOOT/fbx64.efi", vec![4u8; 100])
+        .file("/boot/efi/EFI/BOOT/mmx64.efi", &mm)
+        .file("/proc/sys/kernel/osrelease", format!("{k}\n"))
+        .file("/proc/sys/kernel/hostname", "elementary-pc\n")
+        .file("/proc/cmdline", format!("BOOT_IMAGE={kdir}/vmlinuz-{k} root=/dev/mapper/data-root ro quiet splash\n"));
+    let mut pkgs = vec![
+        ("shim-signed", "1.58+15.8-0ubuntu1"),
+        ("grub-efi-amd64-signed", "1.202.5+2.12-1ubuntu7.3"),
+        ("grub-efi-amd64", "2.12-1ubuntu7.3"),
+        ("grub-efi-amd64-bin", "2.12-1ubuntu7.3"),
+        ("grub-common", "2.12-1ubuntu7.3"),
+        ("grub2-common", "2.12-1ubuntu7.3"),
+        ("mokutil", "0.6.0-2build3"),
+        ("linux-generic-hwe-24.04", "6.14.0-37.37~24.04.1"),
+        ("linux-image-6.14.0-37-generic", "6.14.0-37.37~24.04.1"),
+        ("initramfs-tools", "0.142ubuntu25.5"),
+        ("lvm2", "2.03.16-3ubuntu3.2"),
+        ("efibootmgr", "18-1build2"),
+        ("os-prober", "1.81ubuntu4"),
+        ("e2fsprogs", "1.47.0-2.4~exp1ubuntu4.1"),
+        ("dosfstools", "4.2-1.1build1"),
+    ];
+    if luks {
+        pkgs.extend([("cryptsetup", "2:2.7.0-1ubuntu4.2"), ("cryptsetup-initramfs", "2:2.7.0-1ubuntu4.2")]);
+    }
+    let status: String = pkgs.iter().map(|(n, v)| format!("Package: {n}\nStatus: install ok installed\nArchitecture: amd64\nVersion: {v}\n\n")).collect();
+    t.file("/var/lib/dpkg/status", status);
+    t
+}
+
+/// elementary OS's plan from a tree, the source disk vda going to vdb.
+fn elementary_plan(t: &Tree) -> (Value, crate::load::commands::Built) {
+    use crate::load::{commands, layout::Layout, target::Mapping, Parsed};
+    let v = run(t, true, FakeRunner::default());
+    let l = Layout::from_json(v.clone()).unwrap();
+    let Ok(Parsed::Run(o)) = crate::load::parse_args(&["l.json".to_string()]) else { unreachable!() };
+    (v, commands::build(&l, &o, &Mapping { pairs: vec![("vda".into(), "vdb".into())], ..Mapping::default() }))
+}
+
+/// elementary OS 8 read back and planned (docs/design/elementary.md, E2):
+/// supported by its ID; GRUB through shim in EFI/ubuntu from BootCurrent;
+/// the ESP's distinst layout (the stub, its grub/ directory, the fallback
+/// shim); the `data` VG on the PV, `root` on /.  load makes the PV and the
+/// group again with their UUIDs, runs update-initramfs, Ubuntu's
+/// grub-install into EFI/ubuntu with no NVRAM write (shim and the signed
+/// GRUB again, and a stub that points at /boot/grub), update-grub (not
+/// grub-mkconfig) with os-prober off, and makes the shim entry again.
+#[test]
+fn elementary_guest() {
+    use crate::load::{commands::Cmd, Stage};
+    let k = ELEMENTARY_KV;
+    for luks in [false, true] {
+        let (v, b) = elementary_plan(&elementary(luks));
+        assert_eq!(s(&v, &["os", "id"]), "elementary");
+        assert_eq!(s(&v, &["os", "version_id"]), "8");
+        assert_eq!(s(&v, &["os", "version_codename"]), "circe");
+        assert_eq!(s(&v, &["firmware", "mode"]), "uefi");
+        assert_eq!(v.at(&["firmware", "secure_boot"]), Some(&Value::Bool(true)));
+        let l = v.at(&["boot", "loader"]).unwrap();
+        assert_eq!(s(l, &["name"]), "grub");
+        assert_eq!(l.get("via_shim"), Some(&Value::Bool(true)));
+        assert_eq!(s(l, &["package"]), "grub-efi-amd64-signed");
+        assert_eq!(s(l, &["shim_package"]), "shim-signed");
+        assert_eq!(s(&v, &["boot", "grub", "dir"]), "/boot/grub");
+        assert_eq!(s(&v, &["boot", "initramfs", "generator"]), "initramfs-tools");
+        let kernels = arr(&v, &["boot", "kernels", "installed"]);
+        assert_eq!(kernels.len(), 1, "{}", v.at(&["boot", "kernels"]).unwrap().compact());
+        assert_eq!(s(&kernels[0], &["version"]), k);
+        let esp = v.at(&["boot", "esps", "0"]).unwrap();
+        assert_eq!(s(esp, &["mounted_at"]), "/boot/efi");
+        let files: Vec<(&str, Option<&str>)> = arr(esp, &["contents", "files"]).iter().map(|f| (s(f, &["path"]), f.get("same_as").and_then(Value::as_str))).collect();
+        assert!(files.contains(&("EFI/BOOT/BOOTX64.EFI", Some("EFI/ubuntu/shimx64.efi"))), "{files:?}");
+        for f in ["EFI/ubuntu/grub.cfg", "EFI/ubuntu/grub/grub.cfg", "EFI/ubuntu/BOOTX64.CSV", "EFI/BOOT/fbx64.efi"] {
+            assert!(files.iter().any(|(p, _)| *p == f), "{f}: {files:?}");
+        }
+        let vg = v.at(&["storage", "lvm", "volume_groups", "0"]).unwrap();
+        assert_eq!(s(vg, &["name"]), "data");
+        assert_eq!(s(vg, &["physical_volumes", "0", "device"]), if luks { "dm-0" } else { "vda2" });
+        assert_eq!(s(vg, &["logical_volumes", "0", "name"]), "root");
+        assert_eq!(s(vg, &["logical_volumes", "1", "name"]), "swap");
+        let fstab = arr(&v, &["storage", "fstab"]);
+        let root = fstab.iter().find(|e| s(e, &["file"]) == "/").unwrap();
+        assert_eq!(s(root, &["spec"]), "/dev/mapper/data-root");
+        assert_eq!(s(root, &["resolves_to"]), if luks { "dm-1" } else { "dm-0" });
+        if luks {
+            assert_eq!(s(&v, &["storage", "crypttab", "0", "name"]), "cryptdata");
+            assert_eq!(s(&v, &["storage", "crypttab", "0", "resolves_to"]), "vda3");
+        }
+        assert!(arr(&v, &["warnings"]).is_empty(), "{:?}", v.get("warnings"));
+
+        assert!(b.problems.is_empty(), "{:?}", b.problems);
+        let asm: String = b.stage(Stage::Assemble).iter().map(Cmd::shell).collect();
+        let pv = if luks { "/dev/mapper/cryptdata" } else { "/dev/vdb2" };
+        let lvm = |rest: &str| format!("--devicesfile '' --devices {pv} {rest}\n");
+        let lines = [
+            format!("pvcreate {}", lvm(&format!("--uuid Hc7n2m-aaaa-bbbb-cccc-dddd-eeee-ffffff --restorefile /run/bko-holt/lvm/data.vg {pv}"))),
+            format!("vgcfgrestore {}", lvm("--file /run/bko-holt/lvm/data.vg data")),
+            format!("vgchange {}", lvm("--activate y data")),
+        ];
+        let mut at = 0;
+        for l in &lines {
+            let i = asm[at..].find(l.as_str()).unwrap_or_else(|| panic!("{l} not after {at}: {asm}")) + at;
+            at = i + l.len();
+        }
+        if luks {
+            let open = asm.find("cryptsetup open /dev/vdb3 cryptdata\n").expect(&asm);
+            assert!(asm.contains("cryptsetup luksFormat ") && asm.contains(" --uuid=e1e01005-6b0a-4d6c-9a2e-8f7e1d2c3b4a /dev/vdb3\n") && open < asm.find("pvcreate ").unwrap(), "{asm}");
+        }
+        let f: String = b.stage(Stage::Format).iter().map(Cmd::shell).collect();
+        assert!(f.contains("/dev/mapper/data-root\n") && f.contains("mkswap ") && f.contains("mkfs.fat "), "{f}");
+        let bt: String = b.stage(Stage::Boot).iter().map(Cmd::shell).collect();
+        let i = bt.find("chroot /mnt/bko-target update-initramfs -u -k all\n").expect(&bt);
+        let g = bt.find("chroot /mnt/bko-target grub-install --target=x86_64-efi --efi-directory=/boot/efi --bootloader-id=ubuntu --no-nvram\n").expect(&bt);
+        let off = bt.find("[ ! -e /mnt/bko-target/usr/bin/os-prober ] || mount --bind /mnt/bko-target/usr/bin/true /mnt/bko-target/usr/bin/os-prober").expect(&bt);
+        let cfg = bt.find("chroot /mnt/bko-target env LANG=C update-grub\n").expect(&bt);
+        let nvram = bt.find("efibootmgr --quiet --create --disk /dev/vdb --part 1 --label 'elementary OS 8' --loader '\\EFI\\ubuntu\\shimx64.efi'\n").expect(&bt);
+        assert!(i < g && g < off && off < cfg && cfg < nvram, "{bt}");
+        assert_eq!(bt.matches("grub-install").count(), 1, "{bt}");
+        assert!(!bt.contains("grub-mkconfig") && !bt.contains("--removable") && !bt.contains("i386-pc") && !bt.contains("dracut"), "{bt}");
+    }
+}
+
 const PVE_KV: &str = "7.0.4-1-pve";
 /// Each disk's ESP: its PARTUUID and its vfat volume ID (as a serial).
 const PVE_ESPS: [(&str, u32, &str); 2] = [("e5e5e5e5-0000-4000-8000-000000000001", 0x1234_abcd, "1234-ABCD"), ("e5e5e5e5-0000-4000-8000-000000000002", 0x5678_ef01, "5678-EF01")];
@@ -3976,6 +4235,8 @@ pub fn dumps() -> Vec<(&'static str, Value)> {
         ("biglinux", run(&biglinux(), true, biglinux_runner())),
         ("anduinos", run(&anduinos(), true, anduinos_runner())),
         ("kali", run(&kali(), true, FakeRunner::default())),
+        ("elementary", run(&elementary(false), true, FakeRunner::default())),
+        ("elementary_luks", run(&elementary(true), true, FakeRunner::default())),
         ("proxmox", { let (t, r) = proxmox(false); run(&t, true, r) }),
         ("proxmox_mirror", { let (t, r) = proxmox(true); run(&t, true, r) }),
         ("guix_uefi", run(&guix_uefi(), true, FakeRunner::default())),

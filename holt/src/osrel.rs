@@ -94,7 +94,11 @@ pub fn openindiana_release(text: &str) -> Option<OsRelease> {
 /// (testvm/holttest1d/README.md says which guests pass).  The Ubuntu-based ones use Debian's
 /// boot tools (update-initramfs, update-grub).  KDE neon (Ubuntu 24.04 with
 /// KDE's rolling Plasma) uses Ubuntu's; its test is `neon24` (UEFI, GRUB
-/// through shim in EFI/neon) in HoltTest1U, docs/design/kde-neon.md.  Arch
+/// through shim in EFI/neon) in HoltTest1U, docs/design/kde-neon.md.
+/// elementary OS 8 (Ubuntu 24.04 underneath, distinst's installer) does too:
+/// LVM VG `data` (LUKS `cryptdata` when encrypted), GRUB through shim in
+/// EFI/ubuntu with its grub.cfg on the ESP; its tests are `elementary8` and
+/// `elementary8-luks` in HoltTest1U, docs/design/elementary.md.  Arch
 /// and Artix have mkinitcpio and grub-mkconfig, Alpine mkinitfs and
 /// grub-mkconfig, Fedora dracut and grub2-mkconfig; AerynOS's initramfs
 /// comes prebuilt with its kernel, and systemd-boot boots it.  Chimera
@@ -140,6 +144,9 @@ pub const SUPPORTED: &[(&str, &str, &str)] = &[
     ("ubuntu", "26", "Ubuntu 26.04"),
     ("zorin", "18", "Zorin OS 18"),
     ("neon", "24", "KDE neon"),
+    // Ubuntu 24.04 underneath (ID_LIKE="ubuntu debian"): VERSION_ID is "8"
+    // (VERSION="8.1"), so every 8.x point release; OS 9 when a guest shows it.
+    ("elementary", "8", "elementary OS 8"),
     // Rolling: Arch's os-release has no VERSION_ID.
     ("arch", "", "Arch Linux"),
     ("fedora", "44", "Fedora 44"),
@@ -317,7 +324,7 @@ mod tests {
         assert!(check_supported(Some(&parse(neon))).is_ok());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "22.04")))).is_err());
         assert!(check_supported(Some(&parse(&neon.replace("24.04", "26.04")))).is_err());
-        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE Leap 16, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox or Sculpt OS"), "{e}");
+        assert!(e.contains("Debian 13, Linux Mint 22, Ubuntu 24.04, Ubuntu 26.04, Zorin OS 18, KDE neon, elementary OS 8, Arch Linux, Fedora 44, Alpine Linux 3, Artix Linux, AerynOS, Debian 12, Devuan 6, Pop!_OS 24.04, Vanilla OS 3, CachyOS, Void Linux, NixOS 26.05, Guix System, openSUSE Tumbleweed, openSUSE Leap 16, Rocky Linux 10, Omarchy, EndeavourOS, Manjaro, BigLinux, Garuda Linux, Chimera Linux, Gentoo Linux, Bazzite 44, PikaOS 4, AnduinOS 2, Kali Linux, FreeBSD 14, FreeBSD 15, HardenedBSD 15, GhostBSD 26, NetBSD 11, AlpineBSD 1, OpenBSD 8, DragonFly 6, Haiku, OmniOS, OpenIndiana, Redox or Sculpt OS"), "{e}");
         for t in ["ID=devuan\nVERSION_ID=6\n", "ID=pop\nVERSION_ID=\"24.04\"\n", "ID=cachyos\nBUILD_ID=rolling\n", "ID=void\n", "ID=nixos\nVERSION_ID=\"26.05\"\n", "ID=\"opensuse-tumbleweed\"\nVERSION_ID=\"20261101\"\n", "ID=rocky\nVERSION_ID=\"10.2\"\n"] {
             assert!(check_supported(Some(&parse(t))).is_ok(), "{t}");
         }
@@ -430,6 +437,33 @@ mod tests {
         // derivative that claims its VERSION_ID.
         assert!(check_supported(Some(&parse("PRETTY_NAME=\"Siduction\"\nID=siduction\nID_LIKE=debian\nVERSION_ID=\"4\"\n"))).is_err());
         assert!(check_supported(Some(&parse("ID=pika-ish\nID_LIKE=\"pika debian\"\nVERSION_ID=\"4\"\n"))).is_err());
+    }
+
+    /// elementary OS 8.1's /etc/os-release (the elementary8 guest, built from
+    /// elementaryos-8.1-stable-amd64.20260219.iso; UBUNTU_CODENAME is there
+    /// twice).
+    const ELEMENTARY: &str = "PRETTY_NAME=\"elementary OS 8\"\nNAME=\"elementary OS\"\nVERSION_ID=\"8\"\nVERSION=\"8.1\"\nVERSION_CODENAME=circe\nID=elementary\nID_LIKE=\"ubuntu debian\"\nUBUNTU_CODENAME=noble\nUBUNTU_VERSION_ID=\"24.04\"\nUBUNTU_CODENAME=noble\n";
+
+    #[test]
+    fn elementary() {
+        let o = parse(ELEMENTARY);
+        assert_eq!(o.get("ID"), Some("elementary"));
+        assert_eq!(o.get("ID_LIKE"), Some("ubuntu debian"));
+        assert_eq!(o.get("VERSION_ID"), Some("8"));
+        assert_eq!(o.get("VERSION"), Some("8.1"));
+        assert_eq!(o.get("VERSION_CODENAME"), Some("circe"));
+        assert_eq!(o.get("UBUNTU_CODENAME"), Some("noble"));
+        assert_eq!(o.get("PRETTY_NAME"), Some("elementary OS 8"));
+        assert!(check_supported(Some(&o)).is_ok());
+        assert!(supported("elementary", "8.1"));
+        assert!(supported_names().contains("KDE neon, elementary OS 8, Arch Linux"));
+        // Not 7 (Ubuntu 22.04's stack), nor a 9 until a guest shows it.
+        let e = check_supported(Some(&parse(&ELEMENTARY.replace("VERSION_ID=\"8\"", "VERSION_ID=\"7\"").replace("elementary OS 8\"", "elementary OS 7\"")))).unwrap_err();
+        assert!(e.contains("this is elementary OS 7 (ID=elementary, VERSION_ID=7)") && e.contains("elementary OS 8,"), "{e}");
+        assert!(check_supported(Some(&parse(&ELEMENTARY.replace("VERSION_ID=\"8\"", "VERSION_ID=\"9\"")))).is_err());
+        // Not by its likeness: Ubuntu 24.04 is supported as ubuntu, but
+        // another ID_LIKE="ubuntu debian" system claiming VERSION_ID 8 isn't.
+        assert!(check_supported(Some(&parse("ID=elementary-remix\nID_LIKE=\"elementary ubuntu debian\"\nVERSION_ID=\"8\"\nUBUNTU_CODENAME=noble\n"))).is_err());
     }
 
     /// AnduinOS 2.0.5's /usr/lib/os-release (the anduinos2 guest's ISO,

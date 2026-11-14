@@ -417,6 +417,19 @@ class U51RowsHolt(RecordsMixin, unittest.TestCase):
         self.assertNotIn("phases", self.build(os.path.dirname(rep), "debian13-nearfull")["note"] or "")
         self.assertEqual(rows_holt.cell_of("debian13-nearfull"), "holt:debian13+nearfull")
 
+    def test_nvram_and_boot_each_disk(self):
+        """HT_NVRAM=1 loads without --no-nvram (proxmox.md P6's pve6-6..9): debug.  HT_BOOT_EACH_DISK=0
+        drops a check, so it is too; =1 only adds one, so that row counts."""
+        self.assertTrue(self.build(self.k("linux-pass"), "debian13")["valid"])
+        row = self.build(self.k("linux-pass", env={"HT_NVRAM": "1"}), "debian13")
+        self.assertFalse(row["valid"])
+        self.assertIn("set for debugging or tests: HT_NVRAM=1", row["note"])
+        row = self.build(self.k("linux-pass", env={"HT_BOOT_EACH_DISK": "0"}), "debian13")
+        self.assertFalse(row["valid"])
+        self.assertIn("HT_BOOT_EACH_DISK=0", row["note"])
+        row = self.build(self.k("linux-pass", env={"HT_BOOT_EACH_DISK": "1"}), "debian13")
+        self.assertTrue(row["valid"], row["note"])
+
     def test_code_dir_and_variant(self):
         code = "c" * 64
         hb = os.path.join(self.tmp, "holt-bin", code)
@@ -616,7 +629,7 @@ class SpecJson(unittest.TestCase):
 
     def test_entries_and_kinds(self):
         names = self.sf.names()
-        self.assertEqual(len(names), 68)
+        self.assertEqual(len(names), 70)
         text = rd(os.path.join(WT, "testvm", "holttest1d", "ht1.sh"))
         m = re.search(r'case \$G in\n(.*?)\nesac', text, re.S)
         bsd = re.search(r"^\s*(\S+)\)\s*\n\s*exec .*ht1-bsd\.sh", m.group(1), re.M).group(1).split("|")

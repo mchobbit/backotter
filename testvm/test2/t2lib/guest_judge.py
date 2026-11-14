@@ -26,8 +26,10 @@ AFTER_NEEDS = ("after:boot-state", "after:failed-units", "after:fstab", "after:s
 NEW_NEEDS = ("new:firmware", "new:ssh", "new:restic", "new:rustic", "new:smoke")
 KERNELS_MAX = {"K-deb": 3, "K-fed": 5, "K-ostree": 2, "K-pac": 2, "K-apk": 3, "K-void": 2, "K-moss": 3, "K-nix": 3, "K-fbsd": 3,
                "K-nbsd": 3, "K-obsd": 4, "K-dfly": 3, "K-ill": 4, "K-haiku": 2, "K-alpbsd": 3,
-               "K-gentoo": 3, "K-anduinos": 3, "K-pika": 3}
+               "K-gentoo": 3, "K-anduinos": 3, "K-pve": 3, "K-pika": 3}
 NO_RULE = "no rule for it"
+# K-pve (Proxmox VE, proxmox.md): Debian's /boot/vmlinuz-K, every one Proxmox's own (K-pve).
+NOT_PVE = "a kernel that isn't Proxmox's (vmlinuz-K-pve)"
 # K-abroot (Vanilla OS, vanillaos.md V5): check-image.sh lists "LABEL vmlinuz-K" for each kernel
 # in the init LV's LABEL/ (one directory a root), "LABEL none" for a root with none.  Both roots
 # boot, so each needs one; an upgrade writes the other root's afresh, so a root holds a few at most.
@@ -593,8 +595,72 @@ def l_ill(sec):
     return [] if "R" in top[1] else ["the newest boot environment isn't the one to boot next"]
 
 
+# L-pve (Proxmox VE, proxmox.md): proxmox-boot-tool copies /boot's kernels and systemd-boot's
+# entries onto every ESP in /etc/kernel/proxmox-boot-uuids (refresh, its kernel hook); none is
+# mounted, so check-image.sh's pve-esps lists what each holds.  Every ESP holds the same.
+PVE_UUIDS = "/etc/kernel/proxmox-boot-uuids"
+PVE_NO_ESP = "proxmox-boot-uuids lists no ESP"
+PVE_MISSING = "an ESP in proxmox-boot-uuids has no device"
+PVE_UNREADABLE = "an ESP in proxmox-boot-uuids can't be mounted read-only"
+PVE_KERNELS = "the ESPs hold different kernels"
+PVE_ENTRIES = "the ESPs hold different loader entries"
+PVE_NEWEST = "the newest /boot kernel isn't on every ESP"
+PVE_NEWEST_ENTRY = "the newest /boot kernel has no loader entry on every ESP"
+PVE_NO_INITRD = "a kernel on an ESP without its initrd.img"
+PVE_DEFAULT = "an ESP's loader.conf default matches no entry"
+
+
+def l_pve(sec):
+    if sec.file(PVE_UUIDS) is None:
+        return [f"no {PVE_UUIDS}"]
+    if not _active(sec.file(PVE_UUIDS)):
+        return [PVE_NO_ESP]
+    boot, esps, bad = [], {}, []
+    for x in sec.cmd("pve-esps") or ():
+        f = x.split()
+        if len(f) == 2 and f[0] == "boot":
+            boot.append(f[1])
+        elif len(f) == 2 and f[1] in ("missing", "unreadable"):
+            bad.append(PVE_MISSING if f[1] == "missing" else PVE_UNREADABLE)
+        elif len(f) >= 3:
+            e = esps.setdefault(f[0], {"mode": None, "kernels": set(), "entries": set(), "defaults": [], "noinitrd": False})
+            if f[1] == "mode":
+                e["mode"] = f[2]
+            elif f[1] == "kernel":
+                e["kernels"].add(f[2])
+                e["noinitrd"] |= f[3:] == [NO_INITRD_MARK]
+            elif f[1] == "entry":
+                e["entries"].add(f[2])
+            elif f[1] == "default":
+                e["defaults"].append(f[2])
+    out = sorted(set(bad))
+    if not esps:
+        return out or [PVE_NO_ESP]
+    if len({frozenset(e["kernels"]) for e in esps.values()}) > 1:
+        out.append(PVE_KERNELS)
+    sd = [e for e in esps.values() if e["mode"] == "systemd-boot"]
+    if len({frozenset(e["entries"]) for e in sd}) > 1:
+        out.append(PVE_ENTRIES)
+    if any(e["noinitrd"] for e in esps.values()):
+        out.append(PVE_NO_INITRD)
+    if boot:
+        top = newest(boot)
+        if any(top not in e["kernels"] for e in esps.values()):
+            out.append(PVE_NEWEST)
+        if any(f"proxmox-{top}" not in e["entries"] for e in sd):
+            out.append(PVE_NEWEST_ENTRY)
+    for e in sd:
+        dflt = e["defaults"][-1] if e["defaults"] else None
+        if dflt is not None:
+            dflt = dflt[:-5] if dflt.endswith(".conf") else dflt
+            if not any(fnmatch.fnmatchcase(n, dflt) for n in e["entries"]):
+                out.append(PVE_DEFAULT)
+                break
+    return out
+
+
 LOADER_RULES = {"L-grub": l_grub, "L-bls": l_bls, "L-sd": l_sd, "L-limine": l_limine, "L-fbsd": l_fbsd,
-                "L-nbsd": l_nbsd, "L-obsd": l_obsd, "L-dfly": l_dfly, "L-ill": l_ill}
+                "L-nbsd": l_nbsd, "L-obsd": l_obsd, "L-dfly": l_dfly, "L-ill": l_ill, "L-pve": l_pve}
 
 
 # --- the other image checks --------------------------------------------------------------------
@@ -667,6 +733,8 @@ def judge_kernels(sec, checks):
         return _abroot_kernels(ks, (checks or {}).get("kernels_max") or ABROOT_KERNELS_PER_ROOT)
     if limit and len(ks) > int(limit):
         return Need("FAIL", None, ["more kernels than the updater keeps"])
+    if rule == "K-pve" and any(not x.endswith("-pve") for x in ks):
+        return Need("FAIL", None, [NOT_PVE])
     if rule == "K-anduinos" and any(x.endswith(" " + NO_INITRD_MARK) for x in ks):
         return Need("FAIL", None, [NO_INITRD])
     if rule == "K-pika" and any(x.endswith(" " + NO_BOOSTER_MARK) for x in ks):
@@ -877,7 +945,7 @@ def newest_kernel_lines(lines, rule, sec=None, steps=None):
             kv[f[0]] = f[1].strip()
     if "unverified" in kv:
         return [f"kernel unverified: {kv['unverified']}"]
-    if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree", "K-gentoo", "K-anduinos", "K-abroot", "K-pika"):
+    if rule in ("K-deb", "K-fed", "K-void", "K-moss", "K-ostree", "K-gentoo", "K-anduinos", "K-abroot", "K-pve", "K-pika"):
         run = kv.get("running")
         if not run or not installed:
             return ["kernel unverified: no running or installed kernel listed"]

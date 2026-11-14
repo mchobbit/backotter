@@ -112,7 +112,7 @@ if ! has_rule K-none && ! has_rule K-haiku; then
     cmd kernel
     r=$(uname -r)
     if has_rule K-deb || has_rule K-fed || has_rule K-void || has_rule K-moss || has_rule K-gentoo || has_rule K-anduinos ||
-        has_rule K-pika; then
+        has_rule K-pve || has_rule K-pika; then
         echo "running $r"
         for d in /lib/modules/*/ /usr/lib/modules/*/; do
             [ -e "${d}kernel" ] || [ -e "${d}vmlinuz" ] || [ -e "${d}modules.dep" ] || continue

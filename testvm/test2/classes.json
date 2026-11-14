@@ -32,7 +32,7 @@
       "freebsd15-ufs": "the FreeBSD rescuer (holt.md (b)); never a HoltTest source"
     },
     "families": {
-      "D": ["debian13", "debian13-zfs", "debian13-stack"],
+      "D": ["debian13", "debian13-zfs", "debian13-stack", "proxmox9", "proxmox9-mirror"],
       "M": ["mint22"],
       "Z": ["zorin18"],
       "V": ["void-musl"],
@@ -62,11 +62,11 @@
     "pins": {"openbsd8": "chopin", "dragonfly6": "cinqcent", "redox": "cinqcent"},
     "pins_why": "README Queues ONLY_ELSEWHERE: openbsd8's one-time rescuer is on Chopin, dragonfly6's on Cinqcent; redox's tools are on Cinqcent only (ht1-queue.sh:169)",
     "uefi": ["aerynos", "anduinos2", "biglinux", "cachyos-zfs", "chimera-uefi", "chimera-zfs", "debian13-stack", "endeavouros", "endeavouros-grub", "fedora44-raid",
-             "fedora44-uefi", "garuda", "gentoo", "gentoo-systemd", "kinoite44", "manjaro", "neon24", "omarchy", "pikaos4", "pikaos4-luks", "pop24", "ubuntu24-luks", "ubuntu24-uefi", "ubuntu26-luks", "ubuntu26-raid",
+             "fedora44-uefi", "garuda", "gentoo", "gentoo-systemd", "kinoite44", "manjaro", "neon24", "omarchy", "pikaos4", "pikaos4-luks", "pop24", "proxmox9", "proxmox9-mirror", "ubuntu24-luks", "ubuntu24-uefi", "ubuntu26-luks", "ubuntu26-raid",
              "ubuntu26-uefi", "ubuntu26-zfs", "vanilla3"],
     "uefi_why": "the Linux sources with --uefi in vm-run-options (both hosts, 2026-11-08); ht1.sh rebuilds them from rescuer-uefi.qcow2 when the host has it (ht1.sh:138-139, R17). alpinebsd is UEFI too, but netbsd11 rescues it",
     "canaries": ["debian13", "ubuntu26-uefi", "freebsd15", "redox"],
-    "needs_host_zfs": ["cachyos-zfs", "chimera-zfs", "debian13-zfs", "ubuntu24", "ubuntu26-zfs", "ubuntu26-zfsmirror"],
+    "needs_host_zfs": ["cachyos-zfs", "chimera-zfs", "debian13-zfs", "proxmox9", "proxmox9-mirror", "ubuntu24", "ubuntu26-zfs", "ubuntu26-zfsmirror"],
     "needs_host_zfs_why": "the Linux sources with a ZFS pool on their disks: ht1.sh mounts the source (and the rebuilt copy) on the host with vm-mount --ro (ht1.sh:565, :846), and vm-mount's mount_zfs_root needs the host's zpool (vm-mount:562, 'this host has no OpenZFS'). plan.place keeps their cells, every variant, off a host whose facts' caps.zfs is false (copland and cage have no OpenZFS). The BSD and illumos ZFS sources (freebsd15, ghostbsd26-zfs, omnios58...) are read inside their own rescuers, not on the host",
     "rescuer_panel": {
       "bios": {"match": ["rescuer.qcow2"], "guests": ["debian12", "ubuntu24", "rocky10-raid5", "nixos2605"]},

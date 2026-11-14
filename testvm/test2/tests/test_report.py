@@ -508,7 +508,7 @@ class Runs(unittest.TestCase):
         rs.copy = {"chopin": {"id": "abc1234", "path": "/c/abc1234", "commit": "a" * 40, "dirty": {}}}
         doc = rs.cells_doc(p, "chopin")
         self.assertEqual(sorted(doc["cells"]), ["debian13", "debian13-oneshot", "debian13-stack",
-                                                "debian13-stack-bigger", "debian13-zfs"])
+                                                "debian13-stack-bigger", "debian13-zfs", "proxmox9", "proxmox9-mirror"])
         e = doc["cells"]["debian13-stack-bigger"]
         self.assertEqual((e["cell"], e["attempt"], e["planned_key"], e["rule"]),
                          ("holt:debian13-stack+bigger", 1, p.cell("holt:debian13-stack+bigger").keys["chopin"],
@@ -767,7 +767,7 @@ class Derived(unittest.TestCase):
         self.assertEqual(run.lifecycle(self.w.word("GuestTest2 update", ctx), ctx, mac_root=self.mac, out=out.append), 2)
         text = "\n".join(out)
         self.assertIn("refused: guest:arch: no --try PASS within 7 days: run t2 GuestTest2 arch first", text)
-        self.assertEqual(text.count("refused: guest:"), 64)
+        self.assertEqual(text.count("refused: guest:"), 66)
 
     def test_a_refused_image_exits_2_after_the_due_ones_finish(self):
         import types

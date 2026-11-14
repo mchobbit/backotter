@@ -72,6 +72,9 @@
   "entries": {
     "debian13": {"kind": "linux"},
     "debian13-zfs": {"kind": "linux"},
+    "proxmox9": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/holttest1d/nvboot-efivars.sh"]},
+    "proxmox9-mirror": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/holttest1d/nvboot-efivars.sh"],
+                        "notes": "two disks (vm-run-options --disk proxmox9-mirror-b.qcow2), an ESP on each: ht1.sh boots each restored disk alone too (boot_each_disk, rpool DEGRADED) and judge.py esp compares both ESPs (docs/design/proxmox.md P6)"},
     "debian13-stack": {"kind": "linux", "firmware": "uefi", "harness": ["testvm/holttest1d/nvboot-efivars.sh", "testvm/console-boot.py"]},
     "debian12": {"kind": "linux"},
     "devuan6": {"kind": "linux"},

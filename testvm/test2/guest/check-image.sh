@@ -53,6 +53,36 @@ if has_rule L-sd; then
     done
 fi
 has_rule L-limine && emit /boot/limine.conf
+# Proxmox VE (proxmox.md): proxmox-boot-tool's ESPs, the IDs in /etc/kernel/proxmox-boot-uuids,
+# which nothing mounts: each read through a read-only mount of its own here (or where it is
+# mounted).  "boot K" for each /boot/vmlinuz-K-pve; per ESP "ID mode systemd-boot|grub",
+# "ID kernel K" for each EFI/proxmox/K/vmlinuz-K ("ID kernel K no-initrd" without its
+# initrd.img-K), "ID entry NAME" for each loader/entries/NAME.conf, "ID default PATTERN" from
+# loader/loader.conf; "ID missing" (no such device) or "ID unreadable" (no read-only mount).
+if has_rule L-pve; then
+    emit /etc/kernel/proxmox-boot-uuids
+    cmd pve-esps
+    for k in /boot/vmlinuz-*-pve; do [ -e "$k" ] && echo "boot ${k#/boot/vmlinuz-}"; done
+    grep -v '^[[:space:]]*#' /etc/kernel/proxmox-boot-uuids 2>/dev/null | while read -r u _; do
+        [ -n "$u" ] || continue
+        dev=/dev/disk/by-uuid/$u
+        if [ ! -e "$dev" ]; then echo "$u missing"; continue; fi
+        m=$(findmnt -n -o TARGET -S "UUID=$u" 2>/dev/null | head -n 1) d=
+        if [ -z "$m" ] && d=$(mktemp -d) &&
+            mount -t vfat -o ro,nodev,nosuid,noexec "$dev" "$d" 2>/dev/null; then m=$d; fi
+        if [ -z "$m" ]; then echo "$u unreadable"; [ -z "$d" ] || rmdir "$d"; continue; fi
+        if [ -e "$m/EFI/systemd/systemd-bootx64.efi" ]; then echo "$u mode systemd-boot"; else echo "$u mode grub"; fi
+        for f in "$m"/EFI/proxmox/*/vmlinuz-*; do
+            [ -e "$f" ] || continue
+            k=${f##*/vmlinuz-}
+            if [ -e "${f%/*}/initrd.img-$k" ]; then echo "$u kernel $k"; else echo "$u kernel $k no-initrd"; fi
+        done
+        for f in "$m"/loader/entries/*.conf; do [ -e "$f" ] && { n=${f##*/}; echo "$u entry ${n%.conf}"; }; done
+        sed -n 's/^[[:space:]]*default[[:space:]][[:space:]]*\([^[:space:]]*\).*/\1/p' "$m/loader/loader.conf" 2>/dev/null |
+            sed "s|^|$u default |"
+        if [ -n "$d" ]; then umount "$d" 2>/dev/null; rmdir "$d"; fi
+    done
+fi
 if has_rule L-fbsd; then
     emit /boot/loader.conf
     cmd zfs-boot
@@ -81,7 +111,7 @@ if has_rule K-haiku; then df 2>&1 | qt; else df -Pk 2>&1 | qt; fi
 # --- installed kernels, one line each
 if ! has_rule K-none; then
     cmd kernels
-    if has_rule K-deb || has_rule K-void; then ls -1 /boot/vmlinuz-* 2>/dev/null | grep -v '\.old$'; fi
+    if has_rule K-deb || has_rule K-void || has_rule K-pve; then ls -1 /boot/vmlinuz-* 2>/dev/null | grep -v '\.old$'; fi
     # Gentoo: installkernel's vmlinuz-KV, or kernel-KV under systemd's kernel-install.
     if has_rule K-gentoo; then ls -1 /boot/vmlinuz-* /boot/kernel-* 2>/dev/null | grep -v '\.old$'; fi
     # AnduinOS: Ubuntu's vmlinuz-K, each with dracut's initrd.img-K (both mode 0600: names

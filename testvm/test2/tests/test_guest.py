@@ -54,8 +54,8 @@ class Spec(unittest.TestCase):
     def setUp(self):
         self.sf = rows_guest.load_spec(REPO)
 
-    def test_sixty_nine_guests_and_the_exclusion(self):
-        self.assertEqual(len(self.sf.names()), 69)
+    def test_seventy_one_guests_and_the_exclusion(self):
+        self.assertEqual(len(self.sf.names()), 71)
         self.assertNotIn("freebsd15-builder", self.sf.names())
         self.assertEqual(self.sf.data["excluded"], {"freebsd15-builder": "a build helper"})
 
@@ -77,7 +77,7 @@ class Spec(unittest.TestCase):
         self.assertEqual(new, sorted(["endeavouros", "endeavouros-grub", "manjaro", "fedora44-raid", "ubuntu26-raid", "rocky10-raid5",
                                       "freebsd15-mirror", "omnios58-mirror", "ubuntu26-luks", "chimera", "kinoite44",
                                       "chimera-uefi", "chimera-zfs", "gentoo", "gentoo-systemd", "cachyos-zfs", "anduinos2", "neon24", "garuda", "biglinux",
-                                      "oi2610", "oi2610-bios", "vanilla3", "pikaos4", "pikaos4-luks"]))
+                                      "oi2610", "oi2610-bios", "vanilla3", "pikaos4", "pikaos4-luks", "proxmox9", "proxmox9-mirror"]))
         for n in new:
             self.assertIn("testvm/test2/guest/new-guest.sh", self.sf.entry(n)["harness"], n)
 

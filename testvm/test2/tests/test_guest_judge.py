@@ -285,6 +285,52 @@ class Loader(unittest.TestCase):
         self.assertEqual(ld("L-limine", sec(("file /boot/limine.conf", ok))).v, "PASS")
         self.assertEqual(ld("L-limine", sec(("file /boot/limine.conf", "default_entry: 3\n/One\n"))).v, "FAIL")
 
+    PVE_IDS = "DC2E-D3A8\nDC2E-F00D"
+
+    def pve(self, esps, boot=("7.0.14-28-pve",), ids=PVE_IDS):
+        """check-image.sh's L-pve sections: ESPS {ID: (kernels, entries, default)} or "missing"."""
+        lines = [f"boot {k}" for k in boot]
+        for u, e in esps.items():
+            if isinstance(e, str):
+                lines.append(f"{u} {e}")
+                continue
+            lines.append(f"{u} mode systemd-boot")
+            lines += [f"{u} kernel {k}" for k in e[0]] + [f"{u} entry {n}" for n in e[1]]
+            lines += [f"{u} default {e[2]}"] if e[2] else []
+        parts = [("cmd pve-esps", "\n".join(lines))]
+        if ids is not None:
+            parts.insert(0, ("file /etc/kernel/proxmox-boot-uuids", ids))
+        return ld("L-pve", sec(*parts))
+
+    def test_pve_esps_in_sync(self):
+        """Proxmox VE (proxmox.md): every ESP in proxmox-boot-uuids holds the same kernels and
+        entries, the newest /boot kernel among them, and loader.conf's default matches one."""
+        k = ["7.0.14-28-pve"]
+        e = ["proxmox-7.0.14-28-pve", "memtest86+x64.efi"]
+        one = {"DC2E-D3A8": (k, e, "proxmox-*")}
+        self.assertEqual(self.pve(one, ids="DC2E-D3A8").v, "PASS")
+        two = dict(one, **{"DC2E-F00D": (k, e, "proxmox-*")})
+        self.assertEqual(self.pve(two).v, "PASS")
+        # an old kernel kept on both, the newest still everywhere
+        old = {u: (k + ["7.0.2-6-pve"], e + ["proxmox-7.0.2-6-pve"], "proxmox-*") for u in two}
+        self.assertEqual(self.pve(old, boot=("7.0.2-6-pve", "7.0.14-28-pve")).v, "PASS")
+        # the second disk's ESP missed a refresh
+        stale = dict(one, **{"DC2E-F00D": (["7.0.2-6-pve"], ["proxmox-7.0.2-6-pve", "memtest86+x64.efi"], "proxmox-*")})
+        self.assertEqual(self.pve(stale).lines, [J.PVE_KERNELS, J.PVE_ENTRIES, J.PVE_NEWEST, J.PVE_NEWEST_ENTRY])
+        # /boot has a kernel no ESP got
+        self.assertEqual(self.pve(two, boot=("7.0.14-28-pve", "7.0.15-1-pve")).lines, [J.PVE_NEWEST, J.PVE_NEWEST_ENTRY])
+        # one entry lost on one ESP
+        self.assertEqual(self.pve(dict(one, **{"DC2E-F00D": (k, e[:1], "proxmox-*")})).lines, [J.PVE_ENTRIES])
+        self.assertEqual(self.pve(dict(one, **{"DC2E-F00D": "missing"})).lines, [J.PVE_MISSING])
+        self.assertEqual(self.pve(dict(one, **{"DC2E-F00D": "unreadable"})).lines, [J.PVE_UNREADABLE])
+        self.assertEqual(self.pve({u: (k, e, "nothing*") for u in two}).lines, [J.PVE_DEFAULT])
+        s = sec(("file /etc/kernel/proxmox-boot-uuids", "DC2E-D3A8"),
+                ("cmd pve-esps", "boot 7.0.14-28-pve\nDC2E-D3A8 mode systemd-boot\nDC2E-D3A8 kernel 7.0.14-28-pve no-initrd\n"
+                                 "DC2E-D3A8 entry proxmox-7.0.14-28-pve"))
+        self.assertEqual(ld("L-pve", s).lines, [J.PVE_NO_INITRD])
+        self.assertEqual(self.pve(one, ids=None).lines, ["no /etc/kernel/proxmox-boot-uuids"])
+        self.assertEqual(self.pve({}, ids="# nothing").lines, [J.PVE_NO_ESP])
+
     def test_fbsd(self):
         self.assertEqual(ld("L-fbsd", sec(("file /boot/loader.conf", 'zfs_load="YES"'), ("cmd zfs-boot", "root zroot/ROOT/default\nbootfs zroot/ROOT/default"))).v, "PASS")
         self.assertEqual(ld("L-fbsd", sec(("file /boot/loader.conf", 'kernel="kernel.old"'))).v, "FAIL")
@@ -359,8 +405,9 @@ class Kernels(unittest.TestCase):
 
     def test_each_rules_limit(self):
         for rule, limit in J.KERNELS_MAX.items():
-            self.assertEqual(self.k(rule, "\n".join(f"k{i}" for i in range(limit))).v, "PASS", rule)
-            self.assertEqual(self.k(rule, "\n".join(f"k{i}" for i in range(limit + 1))).v, "FAIL", rule)
+            end = "-pve" if rule == "K-pve" else ""   # (K-pve's names are a rule of their own)
+            self.assertEqual(self.k(rule, "\n".join(f"k{i}{end}" for i in range(limit))).v, "PASS", rule)
+            self.assertEqual(self.k(rule, "\n".join(f"k{i}{end}" for i in range(limit + 1))).v, "FAIL", rule)
 
     def test_no_kernel(self):
         self.assertEqual(self.k("K-deb", "").v, "FAIL")
@@ -397,6 +444,14 @@ class Kernels(unittest.TestCase):
         self.assertEqual(self.k("K-abroot", many).lines, ["more kernels than the updater keeps"])
         self.assertEqual(self.k("K-abroot", many, kernels_max=3).v, "PASS")
         self.assertEqual(self.k("K-abroot", "").v, "FAIL")
+
+    def test_pve_kernels_are_proxmoxs(self):
+        """Proxmox VE (proxmox.md): /boot/vmlinuz-K, every K Proxmox's own (-pve)."""
+        two = "/boot/vmlinuz-7.0.2-6-pve\n/boot/vmlinuz-7.0.14-28-pve"
+        self.assertEqual(self.k("K-pve", two).v, "PASS")
+        bad = self.k("K-pve", two + "\n/boot/vmlinuz-6.12.57+deb13-amd64")
+        self.assertEqual((bad.v, bad.lines), ("FAIL", [J.NOT_PVE]))
+        self.assertEqual(self.k("K-deb", "/boot/vmlinuz-6.12.57+deb13-amd64").v, "PASS")
 
 
 class ZfsCache(unittest.TestCase):
@@ -666,6 +721,11 @@ class NewestKernel(unittest.TestCase):
         self.assertEqual(self.k("K-abroot", body.replace("installed 7.3.3", "installed 7.3.4")), [J.NO_MODULES])
         self.assertEqual(self.k("K-abroot", body.replace("\ndefault vos-b", "")),
                          ["kernel unverified: no present or default root"])
+
+    def test_pve_is_debians_rule(self):
+        self.assertEqual(self.k("K-pve", "running 7.0.14-28-pve\ninstalled 7.0.14-28-pve\ninstalled 7.0.2-6-pve"), [])
+        self.assertEqual(self.k("K-pve", "running 7.0.2-6-pve\ninstalled 7.0.14-28-pve\ninstalled 7.0.2-6-pve"),
+                         [J.NOT_NEWEST])
 
     def test_version_sort(self):
         self.assertEqual(self.k("K-deb", RUN), [])

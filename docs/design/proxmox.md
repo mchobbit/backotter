@@ -27,7 +27,8 @@ Nothing has been downloaded or installed yet. Code references are to local
   bko-holt support (8c344b6, plus load's `--no-nvram` fix, uncommitted),
   golden plans, SticTest1 32/6/0 and HoltTest1 1D PASS on both hosts. The
   Test2 registrations (classes.json and the rest, `rows_holt.py`'s
-  `HT_NVRAM`, GuestTest2's ESP-sync check) wait for the batched Test2 pass.
+  `HT_NVRAM`, GuestTest2's ESP-sync check) are **done** (2026-11-14, on
+  their own: no batched pass ran; "Test2" under Tests).
 - It **is** Debian 13 to `osrel.rs`: Proxmox ships Debian's `base-files`, so
   `/etc/os-release` says `ID=debian`, `VERSION_ID="13"` (*check*). dump
   already accepts it. What it isn't is Debian's boot stack: its own kernel
@@ -321,6 +322,35 @@ PikaOS's): `classes.json` (the D family, `uefi`, `needs_host_zfs`),
 counts, `tests/fixtures/p2/world.py`, re-blessed goldens. Done when two
 corpus builds have the same sha256, leak scans are 0 on both hosts and the
 Mac, no other plan changes, and Test2's own tests pass.
+**Done 2026-11-14**, registered on their own (no batched pass ran; Vanilla
+OS and PikaOS registered theirs alone too): both guests in `classes.json`'s
+D family, `uefi` and `needs_host_zfs` (so plan.place and ht1-queue.sh keep
+them off Cage and Copland; HOSTS.md's list names them), `holt/spec.json`
+(UEFI; the mirror's two disks noted), `guest/spec.json` (`apt`, `S-apt
+L-pve K-pve B-lin M-zfs`, `uefi`, a new guest), `estimates.tsv` (holt from
+`pve6-10`/`pve6-11`: 5.82 and 7.13 gm; guest 3.30 gm), the counts (+2
+sources, +2 guests) in plan.py, the README, world.py and the tests, the p2
+goldens re-blessed. The mirror's second image needs nothing of its own:
+Test2's `facts_host.guest_disks`, `image-state`/`image-stat.json` and
+vm-store's `guest_disks` all take every `--disk` in `vm-run-options`, as
+for `ubuntu26-zfsmirror`. `rows_holt.py`: `HT_NVRAM` is in `DEBUG_ENV`,
+and `HT_BOOT_EACH_DISK=0` (it drops a check; `=1` only adds one) in
+`DEBUG_ENV_VALUES`. GuestTest2: `L-pve` (`check-image.sh`'s `pve-esps`:
+each ESP in `proxmox-boot-uuids` mounted read-only; `guest_judge.l_pve`:
+the same kernels `EFI/proxmox/K/` and entries on every ESP, each kernel
+with its initrd, the newest `/boot/vmlinuz-K-pve` and its
+`proxmox-K.conf` on every ESP, `loader.conf`'s default matching an entry)
+and `K-pve` (`KERNELS_MAX` 3, every kernel `-pve`; the running kernel the
+newest, as `K-deb`). Read on the real guests on Chopin (each booted with
+`vm-run --ram`, its images only read: SHA-256 `a4a48e98...`, `81717f0e...`,
+`70dcfe9c...` the same after): `proxmox9`'s ESP `06D4-31B8` and the
+mirror's `2D89-C7E2` and `2D8B-1862` each hold `7.0.14-28-pve` and
+`7.0.2-6-pve` with their initrds, the entries `proxmox-7.0.14-28-pve`,
+`proxmox-7.0.2-6-pve` and `memtest86+x64.efi`, default `proxmox-*`:
+`image:loader` (`L-pve`), `image:kernels` (`K-pve`) and the rest PASS,
+`after:newest-kernel` clean. holt's `golden_plans` (Chopin) names both as
+HoltTest2 sources (66) with no "not one of HoltTest2's sources" note; its
+one failure, ubuntu24-luks/-uefi without dumps, is as before.
 
 **BackShot1:** not proposed. The Thinkpad as a Proxmox host is plausible
 but has one disk, so it would only repeat `proxmox9`; later, through
@@ -539,7 +569,12 @@ same after.
 - **For the batched Test2 pass:** `t2lib/rows_holt.py`'s `DEBUG_ENV` lacks
   `HT_NVRAM` (P6's diagnostic runs `pve6-6`..`pve6-9` wrote rows that look
   valid); `classes.json`'s `needs_host_zfs` must name both guests so
-  ht1-queue.sh keeps them off Cage and Copland.
+  ht1-queue.sh keeps them off Cage and Copland. **Done 2026-11-14** (Test2
+  above). The four rows were already `valid: false` in the ledgers (no
+  `holt/spec.json` entry then); the ledger is append-only, so they stay as
+  written, and a re-read of their records with the new `rows_holt.build`
+  adds "set for debugging or tests: HT_NVRAM=1" to each (`pve6-10` and
+  `pve6-12`, plain runs, don't get it).
 
 ## Pieces to build (ordered, est.)
 
@@ -547,11 +582,11 @@ same after.
 |---|---|---|
 | P1 | Fetch `proxmox-ve_9.2-1.iso` (or the newest 9.x then) into rebuild-inputs on Chopin (the user's OK first), check and pin its SHA-256; the assistant in a throwaway chroot, the prepared ISO pinned. `make-proxmox.sh proxmox9` by Decision 1, `rebuild-one.sh`, copy to Cinqcent (the same SHA-256), `vm-update --try`, `vm-mount --ro`. Settle every *check* (os-release, kernel names, partition sizes, datasets, NVRAM entries, pmxcfs's mount line, `init`'s UUID handling) and write "What P1 found" here. Done when it boots alone on both hosts, SSH works, `proxmox-boot-tool status` is clean and `vm-update --try` is ok. **Done 2026-11-14:** `testvm/make-proxmox.sh`, `testvm/proxmox/first-boot.sh`, both guests on both hosts, `vm-update` merged ("What P1 found") | 1.25 d (+0.5 d on path 2) |
 | P2 | bko-holt (High-effort subagent): `boot.proxmox_boot` (the UUID list, the read-only ESP mounts, modes, contents, cmdline), the ESPs in `boot.esps` with `mounted_at: null`, `os.product`, `PACKAGES` and `fingerprint.py`, pmxcfs skipped with its note; load's proxmox arm (format with volume IDs, `init` per ESP by mode, `refresh`, the UUID file, the NVRAM de-duplication), the PVE-9 gate, the GRUB/Secure Boot refusal, the zvol note; `redact.rs`'s words; a Proxmox fake tree (one and two ESPs) in `holt/src/scenarios.rs`. Done when `cargo test` passes and the scenario's plan has one `mkfs.fat -i` and one `proxmox-boot-tool init` per ESP, one `refresh`, no `bootctl install --no-variables`. **Done 2026-11-14** (uncommitted): `boot.rs` `proxmox_boot_json` (ESPs read by a private ro mount through `Sys`, modes, contents, `os.product`), `mounts.rs` `is_pmxcfs`, `commands.rs` `proxmox_boot_cmds` as the first loader arm (init per ESP, refresh, the UUID file written back, the refusals, `--no-nvram` through a private mount namespace, `efi_entries` skipping bootctl's own entry), `layout.rs` names the product, `redact.rs` words, `scenarios.rs` `proxmox(mirror)` and three tests; holt's tests pass but `golden_plans`' one pre-existing miss (ubuntu24-luks/-uefi cells without dumps) | 1 d |
-| P3 | `proxmox9`'s golden plan (`holt/tests/corpus/proxmox9`, its `index.tsv` row); Test2 registrations to the batched pass. **Done 2026-11-14** (uncommitted; "What P3 found") | 0.3 d |
+| P3 | `proxmox9`'s golden plan (`holt/tests/corpus/proxmox9`, its `index.tsv` row); Test2 registrations: **done** 2026-11-14, on their own ("Test2" under Tests). **Done 2026-11-14** (uncommitted; "What P3 found") | 0.3 d |
 | P4 | `proxmox9-mirror`: the build (`raid1`, two disks), its golden plan and `index.tsv` row, `rebuild-one.sh`. Done as P1 and P3. **Done 2026-11-14** ("What P1 found", "What P3 found") | 0.4 d |
 | P5 | SticTest1 entries and runs, both guests, both archivers, both hosts, 0 FAIL. **Done 2026-11-14** (uncommitted): 32/6/0 each, `px5a` ("What P5 found") | 0.35 d |
 | P6 | HoltTest1 runs (1D) on Chopin and Cinqcent with the judge rules above, ht1.sh's `--boot-each-disk`, the boot alone and per disk; RAM peaks in `ram-sizes.tsv`. Done when all four runs PASS with 0 fsmeta and 0 dump differences. **Done 2026-11-14** (uncommitted): `pve6-10`..`pve6-13` PASS, after load's `--no-nvram` fix ("What P6 found") | 0.5 d |
-| P7 | Docs: holt/README.md's supported list ("Debian 13, and Proxmox VE 9 on it") and its tests, `layload.md`'s boot stage (the proxmox-boot-tool arm), HoltTest1's 1D row and HoltTest1All, SticTest1's README, GuestTest's ESP-sync check; memory (holttest1d index, a proxmox-support note). **Done 2026-11-14** (uncommitted): holt/README.md, layload.md, HoltTest1's 1D row and HoltTest1All, SticTest1's README (P5's), memory; the GuestTest2 ESP-sync check and Test2's READMEs wait for the batched Test2 pass | 0.1 d |
+| P7 | Docs: holt/README.md's supported list ("Debian 13, and Proxmox VE 9 on it") and its tests, `layload.md`'s boot stage (the proxmox-boot-tool arm), HoltTest1's 1D row and HoltTest1All, SticTest1's README, GuestTest's ESP-sync check; memory (holttest1d index, a proxmox-support note). **Done 2026-11-14** (uncommitted): holt/README.md, layload.md, HoltTest1's 1D row and HoltTest1All, SticTest1's README (P5's), memory; the GuestTest2 ESP-sync check and Test2's READMEs: **done** 2026-11-14 (Test2 under Tests) | 0.1 d |
 | | *≈ 3.9 d* | |
 
 P2 can start beside P1 from the facts above, but its golden plan (P3) waits

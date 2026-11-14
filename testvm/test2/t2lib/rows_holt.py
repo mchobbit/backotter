@@ -57,7 +57,10 @@ REFUSALS = ("nearfull", "refuse")
 ALL_PHASES = ["source", "backup", "rebuild", "verify"]
 # Settings that change what a run checks or with what: such a run's row never counts (R7).
 DEBUG_ENV = ("HT_QUICK", "HT_THROUGH", "HT_KEEP", "HT_FAIL_AT", "HT_RESCUER", "HT_RESCUER_IMG",
-             "HT_LIMIT_KIB", "HT_FREE_KIB")
+             "HT_LIMIT_KIB", "HT_FREE_KIB", "HT_NVRAM")
+# The same for one value only: HT_BOOT_EACH_DISK=0 turns the boot of each disk alone off (=1
+# only adds it, on a source of one ESP: a plain run's checks and more).
+DEBUG_ENV_VALUES = {"HT_BOOT_EACH_DISK": ("0",)}
 GUEST_FILES = ("vm-run-options", "ssh-user", "console-passphrase", "luks-passphrase", "zfs-passphrase", "no-ssh")
 MAX_FAILS, MAX_LEN = 20, 200
 
@@ -821,7 +824,7 @@ def build(argv, hostctx=None):
         invalid.append("changed during the run: " + ", ".join(sorted(set(changed))[:5]))
     if unmeasured:
         invalid.append("not measured: " + ", ".join(unmeasured[:5]))
-    dbg = [k for k in DEBUG_ENV if env.get(k)]
+    dbg = [k for k in DEBUG_ENV if env.get(k)] + [k for k, vs in DEBUG_ENV_VALUES.items() if env.get(k) in vs]
     if dbg:
         invalid.append("set for debugging or tests: " + " ".join(f"{k}={env[k]}" for k in dbg))
     if man["seeded"]:

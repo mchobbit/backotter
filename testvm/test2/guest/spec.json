@@ -1405,6 +1405,60 @@
    },
    "ram_gib": 12
   },
+  "proxmox9": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-proxmox.sh",
+    "testvm/proxmox/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-pve",
+     "kernel": "K-pve",
+     "boot": "B-lin",
+     "mounts": "M-zfs"
+    },
+    "fw": "uefi",
+    "established": false
+   }
+  },
+  "proxmox9-mirror": {
+   "kind": "ssh",
+   "plat": "linux",
+   "harness": [
+    "testvm/make-proxmox.sh",
+    "testvm/proxmox/**",
+    "testvm/update/in-guest.sh#Linux.common",
+    "testvm/update/in-guest.sh#Linux.apt",
+    "testvm/compare/boot-state.sh",
+    "testvm/test2/guest/new-guest.sh"
+   ],
+   "judge": [
+    "entry:testvm/test2/guest/known-lines.json#apt"
+   ],
+   "checks": {
+    "pm": "apt",
+    "rules": {
+     "source": "S-apt",
+     "loader": "L-pve",
+     "kernel": "K-pve",
+     "boot": "B-lin",
+     "mounts": "M-zfs"
+    },
+    "fw": "uefi",
+    "established": false
+   }
+  },
   "redox": {
    "kind": "redox",
    "plat": "redox",

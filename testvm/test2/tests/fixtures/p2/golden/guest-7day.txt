@@ -1,7 +1,7 @@
-GuestTest2 plan: base BASE, ledger 67 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
-due: 1 of 67 guests, est. 1.0 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
+GuestTest2 plan: base BASE, ledger 69 rows (not pulled), facts chopin 05:00Z cinqcent 05:00Z
+due: 1 of 69 guests, est. 1.0 gm, ~N wall, 0.0 GB (chopin 0.0, cinqcent 0.0)
   guest:arch  any      guest:7day  its last --try is older than 7 days (2026-10-30)  1.0 gm  history:1
-current: 66
-note: not in any spec: guix15, guix15-bios, kali, openbsd8-crypt, proxmox9, proxmox9-mirror, ubuntu24-uefi
+current: 68
+note: not in any spec: guix15, guix15-bios, kali, openbsd8-crypt, ubuntu24-uefi
 sweep: SweepTest2 never ran, due now
 plan only: nothing started, nothing written

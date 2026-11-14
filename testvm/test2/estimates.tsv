@@ -195,6 +195,8 @@ guest	guest:oi2610	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke ba
 guest	guest:oi2610-bios	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:openbsd8	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:pop24	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
+guest	guest:proxmox9	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
+guest	guest:proxmox9-mirror	3.30	198	0.00	-	test2.md 1.8 + 1.5 for a new guest's smoke backup
 guest	guest:redox	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:rocky10	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
 guest	guest:rocky10-lvm	1.80	108	0.00	-	test2.md GuestTest2 Cost: 1.26 + ~0.5 for checks
@@ -240,3 +242,5 @@ holt	holt:endeavouros-grub	4.00	240	0.00	-	contract: about one Linux source, 11-
 holt	holt:manjaro	4.00	240	0.00	-	contract: about one Linux source, 11-09
 holt	holt:garuda	4.00	240	0.00	-	contract: about one Linux source, 11-14
 holt	holt:biglinux	4.00	240	0.00	-	contract: about one Linux source, 11-14
+holt	holt:proxmox9	5.82	349	0.00	-	chopin pve6-10 PASS 2026-11-14, 08:39:14 to 08:45:03 (ht1.sh, in RAM; cinqcent pve6-12 314 s)
+holt	holt:proxmox9-mirror	7.13	428	0.00	-	chopin pve6-11 PASS 2026-11-14, 08:37:43 to 08:44:51 (ht1.sh, in RAM, both disks booted alone too; cinqcent pve6-13 368 s)

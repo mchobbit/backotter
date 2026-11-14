@@ -54,34 +54,6 @@ round gives it its own directory.  AlpineBSD runs the NetBSD binary.
 has no /sbin), QEMU stopped by PID, `timeout` around ssh (QEMU's user network
 accepts before the guest is up), and the legacy virtio-net OmniOS needs.
 
-### compare.py's encrypted guests
-
-`compare.py` unlocks a guest's disks with the first of these in
-`vms/GUEST/` (holttest1d/ht1.sh's and vm-update's order), and its boots are
-given the key as the guest asks for it:
-
-| File | Guests | At boot |
-|---|---|---|
-| `console-passphrase` | debian13-stack, ubuntu26-luks | typed at the initramfs's prompt on the serial console |
-| `zfs-passphrase` | ubuntu26-zfsmirror | typed on the serial console, for the LUKS keystore that holds the pool's key |
-| `luks-passphrase` | omarchy | typed at Plymouth's prompt on the keyboard, through QEMU's monitor (`omarchy/type-luks-passphrase.py`) |
-| `luks-keyfile` | alpine324-luks, chimera-uefi, gentoo-systemd (`make-bootstrap.sh`) | nothing typed: the restored initramfs unlocks / with its own copy of the key (`/crypto_keyfile.bin`, `/etc/cryptsetup-keys.d/cryptroot.key`) |
-
-A restore's LUKS2 volume is made as `bko-holt load` makes one, from the
-original's header: its UUID, label, cipher, key size, sector size, data
-offset, metadata and keyslots area sizes, subsystem, and the first
-keyslot's KDF and cost (with the digest's hash), in one keyslot holding the
-same key.  Its volume key and salts are new, and other keyslots, tokens and
-persistent flags (allow-discards) are not copied; load copies none of them
-either.
-
-omarchy's four directions, 2026-11-14 on Chopin and Cinqcent: every
-restore boots, with "missing 7" (gpg-agent's sockets, which no archiver
-keeps) and "inode flags" on about 34,100 files, every one 0 to 0x400
-(`FS_NOCOMP_FL`): btrfs marks those itself, as the restore is written
-under fstab's `compress=zstd:3` (as on kinoite44, docs/design/bazzite.md
-B5; stictest1/omarchy/check.sh doesn't count it either).
-
 ### A round, scripted
 
 On each host, with the round's binaries in place (`BIN_DIR/OS/`, with their

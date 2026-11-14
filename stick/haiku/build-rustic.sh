@@ -37,6 +37,21 @@
 # $TMPDIR if set, else in BKO_SCRATCH/tmp (default /bkoscratch, Chopin's
 # spare NVMe, where it exists), else where vm-run puts it.
 #
+# cargo runs detached in the guest, into ~/build/cargo-N.log, not through a
+# pipe held by an ssh (once it vanished mid-build and the script hung on the
+# pipe for most of an hour).  A watchdog polls it every BKO_HAIKU_POLL s (30)
+# and fails, with diagnostics, when cargo and rustc vanish without an exit
+# status, when QEMU uses under BKO_HAIKU_STALL_PCT % (10; an idle haiku6
+# takes 2) of one CPU for BKO_HAIKU_STALL s (900; fat-LTO links print
+# nothing for minutes, but burn CPU), when the guest stops answering, or past BKO_HAIKU_BUILD_TIMEOUT s
+# (5400).  A vanish, or cargo failing to spawn a process (Haiku's
+# B_BAD_VALUE, "(never executed)"), gets one retry between them,
+# incrementally, with -j 4; a second failure of any kind is final.  Logs go in
+# BKO_LOG_DIR/haiku-build if set (build-round.sh sets it), else in
+# BKO_WORK/logs/haiku-build-DATE: always the watch log and cargo's log; on a
+# failure also the guest's ps, syslog, memory and target/release listing and
+# QEMU's serial.log and vm-run.log, in a directory named for the failure.
+#
 # Needs: qemu-system-x86_64 with KVM, git, rsync, ssh, and testvm/vm-run.
 
 set -euo pipefail
@@ -49,6 +64,8 @@ REPO=https://github.com/mchobbit/rustic
 # haiku_devel: crti.o and the like.  zstd_devel: see the build below.
 PACKAGES="rust_bin gcc binutils haiku_devel zstd_devel cmake make perl pkgconfig"
 die() { echo "build-rustic: $*" >&2; exit 1; }
+logdir=${BKO_LOG_DIR:+$BKO_LOG_DIR/haiku-build}
+logdir=${logdir:-$WORK/logs/haiku-build-$(date +%Y%m%d-%H%M%S)}
 
 vm=$WORK/vms/haiku6
 [[ -f $vm/haiku6.qcow2 && -f $vm/id_ed25519 && -f $vm/vm-run-options ]] || die "no VM in $vm"
@@ -70,19 +87,32 @@ fi
 work=$(mktemp -d)
 # Haiku's only user is "user" (uid 0); its shell is bash.
 ssh_g() {
-    timeout "${T:-7200}" ssh -q -i "$vm/id_ed25519" -p "$port" -o BatchMode=yes \
+    # --foreground: in our process group, so an outer timeout's TERM reaches
+    # it, and the traps below run before its KILL.
+    timeout --foreground "${T:-7200}" ssh -q -i "$vm/id_ed25519" -p "$port" -o BatchMode=yes \
         -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o ServerAliveInterval=30 \
         user@127.0.0.1 "$@"
 }
+signalled=no
 cleanup() {
+    local s=$?
+    if [[ $s != 0 && -f $work/serial.log ]]; then
+        { mkdir -p "$logdir" && cp -f "$work/serial.log" "$work/vm-run.log" "$logdir/"; } 2>/dev/null || true
+    fi
     # A clean shutdown, though the disk is a throwaway: QEMU killed early
-    # would be the same.
-    T=30 ssh_g 'shutdown -q' >/dev/null 2>&1 || true
-    for _ in $(seq 60); do pgrep -f "^qemu-system.*:$port-:22" >/dev/null || break; sleep 2; done
+    # would be the same, and is what a signal gets (an outer timeout's KILL
+    # follows soon; its TERM may reach a child first, which set -e exits on).
+    if [[ $signalled == no && $s -lt 128 ]]; then
+        T=30 ssh_g 'shutdown -q' >/dev/null 2>&1 || true
+        for _ in $(seq 60); do pgrep -f "^qemu-system.*:$port-:22" >/dev/null || break; sleep 2; done
+    fi
     pkill -f "^qemu-system.*:$port-:22" 2>/dev/null || true
     rm -rf "$work"
 }
 trap cleanup EXIT
+trap 'signalled=yes; exit 129' HUP
+trap 'signalled=yes; exit 130' INT
+trap 'signalled=yes; exit 143' TERM
 
 # The trees go to the guest as ~/build/rustic (and ~/build/rustic_core).
 mkdir "$work/build"
@@ -167,15 +197,184 @@ if [[ ${FAST:-} == 1 ]]; then
     fast_note=" (FAST: no LTO, 16 codegen units)"
 fi
 echo "Building$fast_note"
-start=$SECONDS
-# Default features, not "release" (which adds self-update); see the fork's
-# build-backotter.sh.  zstd from the system: iana-time-zone links Haiku's
-# libbe, which uses libzstd.so, and the zstd crate's own copy has hidden
-# symbols, which ld refuses to an executable whose libraries need them.
-ssh_g "cd ~/build/rustic && env -u PROJECT_VERSION ZSTD_SYS_USE_PKG_CONFIG=1 $fast cargo build --release $locked 2>&1 |
-    grep -v '^ *\(Compiling\|Downloaded\|Downloading\|Locking\|Adding\|Updating\)'; exit \${PIPESTATUS[0]}" ||
-    die "the build failed"
-echo "Built in $((SECONDS - start)) s"
+mkdir -p "$logdir"
+watch=$logdir/watch.log
+: >"$watch"
+echo "Watching the build every ${BKO_HAIKU_POLL:-30} s; logs in $logdir"
+# The guest's half.  "start N CMD...": CMD detached, into cargo-N.log, its
+# status into cargo-N.rc.  "poll N": one line, rc= (- while it runs), log=
+# (cargo-N.log's size), teams= (cargo and rustc teams, by the path ps
+# prints first; ? if ps failed) and mem= (sysinfo's first line).
+T=60 ssh_g 'cat >~/build/bko-build.sh' <<'EOF'
+b=~/build
+case $1 in
+start)
+    n=$2; shift 2
+    rm -f "$b/cargo-$n.rc" "$b/cargo-$n.rc.part"
+    # A wrapper left from a vanished attempt mustn't write an rc later.
+    for f in "$b"/cargo-*.pid; do [ -f "$f" ] && kill "$(cat "$f")" 2>/dev/null; done
+    cd "$b/rustic" || exit 1
+    nh=; command -v nohup >/dev/null 2>&1 && nh=nohup
+    $nh bash "$0" run "$n" "$@" </dev/null >/dev/null 2>&1 &
+    echo $! >"$b/cargo-$n.pid"
+    ;;
+run)
+    n=$2; shift 2
+    trap '' HUP
+    "$@" >"$b/cargo-$n.log" 2>&1
+    echo $? >"$b/cargo-$n.rc.part" && mv -f "$b/cargo-$n.rc.part" "$b/cargo-$n.rc"
+    ;;
+poll)
+    n=$2 t='?' rc=-
+    if p=$(ps 2>/dev/null) && [ -n "$p" ]; then
+        t=$(printf '%s\n' "$p" | awk '{c = $1; sub(/.*\//, "", c)} c == "cargo" || c == "rustc" {k++} END {print k + 0}')
+    fi
+    [ -f "$b/cargo-$n.rc" ] && rc=$(cat "$b/cargo-$n.rc")
+    sz=$(wc -c <"$b/cargo-$n.log" 2>/dev/null) || sz=0
+    m=$(sysinfo -mem 2>/dev/null | head -n 1 | sed 's/  */ /g; s/^ //')
+    echo "rc=${rc:-?} log=$((sz + 0)) teams=${t:-?} mem=$m"
+    ;;
+esac
+EOF
+
+poll=${BKO_HAIKU_POLL:-30} stall=${BKO_HAIKU_STALL:-900} stall_pct=${BKO_HAIKU_STALL_PCT:-10}
+limit=${BKO_HAIKU_BUILD_TIMEOUT:-5400}
+clk=$(getconf CLK_TCK 2>/dev/null) || clk=100
+qpid=$(pgrep -f "^qemu-system.*:$port-:22" | head -n 1) || true
+[[ -n $qpid ]] || die "QEMU isn't running"
+qemu_ticks() {  # QEMU's user+system CPU time, in clock ticks
+    local s f
+    s=$(cat "/proc/$qpid/stat" 2>/dev/null) || return 1
+    s=${s##*) }   # past the command name, so state is f[0]
+    read -r -a f <<<"$s"
+    echo $((f[11] + f[12]))
+}
+poll_guest() {  # g_rc, g_log, g_teams, g_mem for attempt $attempt; 1 if no answer
+    local out a b c
+    out=$(T=60 ssh_g "bash ~/build/bko-build.sh poll $attempt" 2>/dev/null </dev/null) || return 1
+    out=${out%%$'\n'*}
+    [[ $out == rc=* ]] || return 1
+    read -r a b c g_mem <<<"$out"
+    g_rc=${a#rc=} g_log=${b#log=} g_teams=${c#teams=} g_mem=${g_mem#mem=}
+}
+diag() {  # TAG: what can be known about the build, into $logdir/TAG; never fails
+    local d=$logdir/$1 e n s
+    mkdir -p "$d" || return 0
+    cp -f "$work/serial.log" "$work/vm-run.log" "$d/" 2>/dev/null || true
+    for e in "cargo.log|cat ~/build/cargo-$attempt.log" "ps|ps" "ps-a|ps -a | head -n 3000" \
+        "syslog|tail -n 200 /boot/system/var/log/syslog" "sysinfo|sysinfo -mem; sysinfo" \
+        "target|ls -la ~/build/rustic/target/release; ls -lt ~/build/rustic/target/release/deps | head -n 60" \
+        "desktop|ls -la ~/Desktop; for f in ~/Desktop/*.report; do [ -f \"\$f\" ] && echo \"== \$f\" && tail -n 300 \"\$f\"; done"; do
+        n=${e%%|*} s=0
+        T=30 ssh_g "${e#*|}" >"$d/$n" 2>&1 </dev/null || s=$?
+        if [[ $s == 124 || $s == 255 ]]; then
+            echo "(the guest didn't answer: $s)" >>"$d/$n"
+            break
+        fi
+    done
+    return 0
+}
+fail() {  # TAG MESSAGE: save diagnostics (in TAG, TAG-2 on the retry), and die
+    local tag=$1
+    [[ ${attempt:-1} == 1 ]] || tag+=-2
+    diag "$tag"
+    {   echo "build-rustic: diagnostics in $logdir/$tag, the watch log in $watch"
+        echo "build-rustic: the end of cargo's log:"
+        tail -n 30 "$logdir/$tag/cargo.log" 2>/dev/null || true
+    } >&2
+    die "$2${first:+ (on the retry, after: $first)}"
+}
+retry() {  # TAG MESSAGE: save diagnostics in TAG, and start attempt 2 with -j 4
+    watch_line "$2; retrying once with -j 4"
+    diag "$1"
+    echo "build-rustic: $2; diagnostics in $logdir/$1; retrying once with -j 4" >&2
+    first=$2 attempt=2 jobs="-j 4"
+    start_cargo
+}
+watch_line() {  # MESSAGE
+    printf '%s %s\n' "$(date +%T)" "$*" >>"$watch"
+}
+start_cargo() {  # attempt $attempt, with $jobs
+    t_att=$SECONDS gone=0 misses=0
+    prev_t=0 prev_c=$(qemu_ticks) || fail qemu-exited "QEMU exited before the build"
+    hist_t=(0) hist_c=("$prev_c")
+    watch_line "attempt $attempt: cargo build --release $locked $jobs"
+    # Default features, not "release" (which adds self-update); see the fork's
+    # build-backotter.sh.  zstd from the system: iana-time-zone links Haiku's
+    # libbe, which uses libzstd.so, and the zstd crate's own copy has hidden
+    # symbols, which ld refuses to an executable whose libraries need them.
+    T=60 ssh_g "bash ~/build/bko-build.sh start $attempt env -u PROJECT_VERSION ZSTD_SYS_USE_PKG_CONFIG=1 $fast cargo build --release $locked $jobs" </dev/null ||
+        fail start "couldn't start cargo in the guest"
+    sleep 5
+    if poll_guest && [[ $g_rc == - && $g_teams == 0 ]]; then
+        fail start "no cargo or rustc team in the guest 5 s after starting the build (it didn't outlive the ssh that started it, or ps doesn't show it)"
+    fi
+}
+
+start=$SECONDS attempt=1 jobs="" first="" spawn=no
+start_cargo
+while :; do
+    sleep "$poll"
+    now=$((SECONDS - t_att)) total=$((SECONDS - start))
+    ticks=$(qemu_ticks) || fail qemu-exited "QEMU exited, $total s into the build"
+    if poll_guest; then
+        misses=0
+    else
+        misses=$((misses + 1))
+        g_rc=- g_log='?' g_teams='?' g_mem="(no answer from the guest, $misses in a row)"
+    fi
+    pct=0
+    if [[ $now -gt $prev_t ]]; then pct=$((100 * (ticks - prev_c) / clk / (now - prev_t))); fi
+    watch_line "$(printf 'attempt %d %5d s  log %9s B  cargo/rustc %s  qemu cpu %d s, %d%% of a CPU  %s' \
+        "$attempt" "$now" "$g_log" "$g_teams" $((ticks / clk)) "$pct" "$g_mem")"
+    prev_t=$now prev_c=$ticks
+    hist_t+=("$now") hist_c+=("$ticks")
+    if [[ $g_rc != - ]]; then
+        T=300 ssh_g "cat ~/build/cargo-$attempt.log" >"$logdir/cargo.log" 2>/dev/null </dev/null || true
+        # Haiku sometimes fails a spawn that works the next time.
+        if [[ $g_rc != 0 ]] && grep -q 'could not execute process.*(never executed)' "$logdir/cargo.log" &&
+            grep -q 'os error -21474836' "$logdir/cargo.log"; then
+            spawn=yes
+            if [[ $attempt == 1 ]]; then
+                err=$(grep -o 'os error -[0-9]*' "$logdir/cargo.log" | head -n 1) || true
+                retry spawn-failed-1 "cargo couldn't start a process in the haiku6 guest (Haiku spawn error, $err)"
+                continue
+            fi
+        fi
+        break
+    fi
+    [[ $misses -lt 4 ]] || fail unreachable "the guest stopped answering on SSH, $total s into the build"
+    if [[ $g_teams == 0 ]]; then
+        gone=$((gone + 1))
+    elif [[ $g_teams != '?' ]]; then
+        gone=0
+    fi
+    if [[ $gone -ge 2 ]]; then
+        msg="cargo vanished in the haiku6 guest after $now s without an exit status"
+        [[ $attempt == 1 ]] || fail vanished "$msg"
+        retry vanished-1 "$msg"
+        continue
+    fi
+    # The newest sample at least $stall s old: did QEMU use any CPU since?
+    i=-1
+    for j in "${!hist_t[@]}"; do
+        if [[ ${hist_t[j]} -le $((now - stall)) ]]; then i=$j; fi
+    done
+    if [[ $i -ge 0 ]]; then
+        w=$((now - hist_t[i])) d=$((ticks - hist_c[i]))
+        if [[ $((d * 100)) -lt $((w * clk * stall_pct)) ]]; then
+            fail stalled "the build stalled: no CPU in the guest for $w s (QEMU used $((d / clk)) s of CPU)"
+        fi
+    fi
+    [[ $total -lt $limit ]] || fail timeout "the build ran over $limit s"
+done
+grep -v '^ *\(Compiling\|Downloaded\|Downloading\|Locking\|Adding\|Updating\)' "$logdir/cargo.log" || true
+if [[ $g_rc != 0 ]]; then
+    [[ $spawn == no ]] || fail spawn-failed "the build failed: cargo couldn't start a process (Haiku spawn error), exit $g_rc"
+    fail failed "the build failed (cargo exited $g_rc)"
+fi
+watch_line "done: cargo exited 0"
+echo "Built in $((SECONDS - start)) s${jobs:+ (the second attempt, with $jobs)}"
 bin='~/build/rustic/target/release/rustic'   # the guest's ~
 version=$(ssh_g "$bin --version") || die "the binary doesn't run in the guest"
 echo "$version"

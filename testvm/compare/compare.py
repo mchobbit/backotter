@@ -44,10 +44,8 @@ fresh-install state, and any other disks its vm-run-options name with
      them), btrfs subvolumes, ZFS pools (mirrors too, with the original's
      feature flags as far as this host's OpenZFS has them, and its
      encryption, with the same key) and bcachefs's on-disk version included.
-     A LUKS volume gets the key in vms/GUEST/console-passphrase,
-     zfs-passphrase, luks-passphrase or luks-keyfile (the first there is),
-     and the original's header geometry: data offset, metadata and keyslots
-     area sizes, subsystem (luks_format()); a ZFS volume (zvol, such as
+     A LUKS volume gets the passphrase in vms/GUEST/luks-passphrase,
+     console-passphrase or zfs-passphrase; a ZFS volume (zvol, such as
      Ubuntu's LUKS keystore) is copied as it is, since the archivers back
      up files only.
   5. fsmeta.py compares every file's metadata before and after, and the
@@ -65,9 +63,7 @@ from a recorded description, as BackOtter must, is not tested here.
 A boot types the guest's disk passphrase where it asks for one: on the
 serial console, with vms/GUEST/zfs-passphrase (Ubuntu's ZFS keystore) or
 console-passphrase (a LUKS root's initramfs: debian13-stack), or on its
-keyboard (Omarchy's Plymouth), with vms/GUEST/luks-passphrase.  With
-vms/GUEST/luks-keyfile (make-bootstrap.sh's LUKS guests) nothing is typed:
-the initramfs unlocks / with its own copy of that key, restored with it.
+keyboard (Omarchy's Plymouth), with vms/GUEST/luks-passphrase.
 
 --mkfs-from STICK_IMG makes the filesystems with the mkfs tools of BackOtter's
 rescue stick (STICK_IMG, from stick/make-img.sh) instead of the guest's own,
@@ -233,9 +229,8 @@ class GuestConfig:
     """What vms/GUEST says of how to boot the guest: vm-run's options for its
     hardware (vm-run-options without its --disk ones, or None without that
     file), its other disks (those --disk ones), and the file holding its
-    disks' key, with how a boot is given it ("luks": typed on the keyboard,
-    "zfs" or "console": typed on the serial console, "keyfile": not at all,
-    as the guest's initramfs unlocks / with its own copy of it)."""
+    disks' passphrase, with how it is asked for ("luks": on the keyboard,
+    "zfs" or "console": on the serial console)."""
 
     def __init__(self, guest_dir: Path):
         self.dir = guest_dir
@@ -256,18 +251,14 @@ class GuestConfig:
                 self.disks.append(guest_dir / opts.pop(0))
             else:
                 self.options.append(o)
-        # In holttest1d/ht1.sh's and vm-update's order, should there be more
-        # than one.  A luks-keyfile (make-bootstrap.sh's LUKS guests) has no
-        # newline.
         self.key = self.key_kind = None
-        for name, kind in (("console-passphrase", "console"), ("zfs-passphrase", "zfs"),
-                           ("luks-passphrase", "luks"), ("luks-keyfile", "keyfile")):
-            if (guest_dir / name).exists():
-                self.key, self.key_kind = guest_dir / name, kind
+        for kind in ("luks", "zfs", "console"):
+            if (guest_dir / f"{kind}-passphrase").exists():
+                self.key, self.key_kind = guest_dir / f"{kind}-passphrase", kind
                 break
 
     def passphrase(self) -> bytes:
-        """The key without the file's final newline, as typed at boot."""
+        """The passphrase without the file's final newline, as typed at boot."""
         return self.key.read_bytes().rstrip(b"\n")
 
     def hardware(self, layout: dict) -> list[str]:
@@ -537,15 +528,8 @@ class Layout:
                 dev = os.path.realpath(f"/dev/mapper/{what}")
                 on = os.path.realpath("/dev/" + what.split("-", 3)[3])     # vm-mount-PID-DEVICE
                 dump = json.loads(out(["cryptsetup", "luksDump", "--dump-json-metadata", on]))
-                # The binary header, which the JSON leaves out: its size (the
-                # metadata area's, JSON included) and subsystem, as
-                # bko-holt's probe reads them.
-                with open(on, "rb") as f:
-                    hdr = f.read(4096)
                 self.luks[dev] = {"on": on, "dump": dump, "uuid": blkid(on).get("UUID"),
-                                  "label": blkid(on).get("LABEL"),
-                                  "header_size": int.from_bytes(hdr[8:16], "big"),
-                                  "subsystem": hdr[208:256].split(b"\0")[0].decode().rstrip(" ")}
+                                  "label": blkid(on).get("LABEL")}
                 self.fields[dev] = blkid(dev)
             elif kind in ("vg", "lvm"):
                 # "lvm": vm-mount set the LVs up by hand, under names of its
@@ -679,8 +663,7 @@ class Layout:
         file inside Ubuntu's LUKS keystore volume, POOL/keystore, if there is
         one (as vm-mount loads it), else the passphrase."""
         formats = {i["keyformat"] for i in info.values() if i["encryption"] != "off"}
-        # (A luks-keyfile is a LUKS key only.)
-        if not key or key.name == "luks-keyfile":
+        if not key:
             raise SystemExit(f"{temp} is encrypted: the guest needs a zfs-passphrase file")
         if f"{temp}/keystore" not in info:
             if formats != {"passphrase"}:
@@ -885,12 +868,9 @@ def lvm_metadata_as(text: str, vg: str, name: str) -> str:
 
 
 def luks_format(luks: dict, dev: str, passphrase: bytes) -> None:
-    """A LUKS2 volume on dev like the original, as bko-holt load makes one:
-    its UUID, label, cipher, key size, sector size, data offset, metadata
-    and keyslots area sizes, subsystem, and key derivation (its memory cost
-    matters: the guest's initramfs must afford it at boot), in one keyslot
-    with the first one's.  Persistent flags (allow-discards) are left out,
-    as load leaves them."""
+    """A LUKS2 volume on dev like the original: its UUID, label, cipher, key
+    size, sector size and key derivation (its memory cost matters: the
+    guest's initramfs must afford it at boot)."""
     dump = luks["dump"]
     segment = dump["segments"]["0"]
     slot = dump["keyslots"][min(dump["keyslots"], key=int)]
@@ -898,16 +878,6 @@ def luks_format(luks: dict, dev: str, passphrase: bytes) -> None:
     cmd = ["cryptsetup", "luksFormat", "--batch-mode", "--type", "luks2", "--uuid", luks["uuid"],
            "--cipher", segment["encryption"], "--key-size", str(slot["key_size"] * 8),
            "--sector-size", str(segment["sector_size"]), "--pbkdf", kdf["type"], "--key-file", "-"]
-    # The data's offset (bytes, in 512-byte sectors), the metadata area's
-    # size (the binary header's 4 KiB and the JSON area) and the keyslots
-    # area's, so the data starts where the original's did.
-    cmd += ["--offset", str(int(segment["offset"]) // 512)]
-    if luks.get("header_size"):
-        cmd += ["--luks2-metadata-size", str(luks["header_size"])]
-    if dump.get("config", {}).get("keyslots_size"):
-        cmd += ["--luks2-keyslots-size", str(dump["config"]["keyslots_size"])]
-    if luks.get("subsystem"):
-        cmd += ["--subsystem", luks["subsystem"]]
     if luks["label"]:
         cmd += ["--label", luks["label"]]
     if kdf["type"] == "pbkdf2":
@@ -915,10 +885,6 @@ def luks_format(luks: dict, dev: str, passphrase: bytes) -> None:
     else:
         cmd += ["--pbkdf-memory", str(kdf["memory"]), "--pbkdf-parallel", str(kdf["cpus"]),
                 "--pbkdf-force-iterations", str(kdf["time"])]
-        # Argon2 has no hash of its own: --hash sets the volume key digest's.
-        digests = dump.get("digests", {})
-        if digests:
-            cmd += ["--hash", digests[min(digests, key=int)]["hash"]]
     run(cmd + [dev], input=passphrase.decode())
 
 
@@ -1384,7 +1350,6 @@ class VM:
                 if run(["qemu-img", "info", str(image)], check=False, quiet=True).returncode == 0:
                     break
                 time.sleep(1)
-        # A "keyfile" guest boots as an unencrypted one would: nothing to type.
         cmd, console = list(self.cmd), self.cfg.key_kind in ("zfs", "console")
         if not console:
             cmd += ["--serial-log", str(self.log)]

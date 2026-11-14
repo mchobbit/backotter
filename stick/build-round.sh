@@ -622,12 +622,17 @@ build_haiku() {  # natively in a throwaway haiku6, on a guest slot
     if [[ $dry == yes ]]; then log "rustic-bko haiku: would build (haiku/build-rustic.sh $port, $gprofile)"; return 0; fi
     slot_take "${BKO_GUEST_MAX:-3}" "${BKO_GUEST_RANGE:-2900-2999}"
     log "rustic-bko haiku: building (haiku/build-rustic.sh $port, $gprofile; guest slot $BKO_GUEST_SLOT)"
-    env SRC="$PREPPED" BKO_BIN="$BIN" BKO_WORK="$WORK" FAST=$fast "$here/haiku/build-rustic.sh" "$port" \
+    # The script has its own watchdog; this is the backstop, and it saves
+    # its logs in $LOGS/haiku-build.
+    timeout --kill-after=120 "${BKO_HAIKU_TIMEOUT:-9000}" \
+        env BKO_LOG_DIR="$LOGS" SRC="$PREPPED" BKO_BIN="$BIN" BKO_WORK="$WORK" FAST=$fast "$here/haiku/build-rustic.sh" "$port" \
         >"$LOGS/build-rustic-haiku.log" 2>&1
     s=$?
     slot_give
     if [[ $s != 0 ]]; then
         tail -n 30 "$LOGS/build-rustic-haiku.log"
+        [[ $s == 124 || $s == 137 ]] &&
+            log "rustic-bko haiku: build-rustic.sh ran over ${BKO_HAIKU_TIMEOUT:-9000} s, killed; see $LOGS/haiku-build/"
         row rustic-bko haiku FAILED $((SECONDS - t0))
         return 1
     fi

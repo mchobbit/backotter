@@ -895,7 +895,74 @@ class Normalizer(unittest.TestCase):
         "/mnt/bko-ram/vm-update.debian12/.vm-update-run.abc123/vm-run.x.qcow2 kept",
         "update: Mounted RUN (/dev/nbd0, read-only) at /tmp/vm-update-mount.fedora44-raid.avunmtza:",
         "\u2502 \u2514\u2500/tmp/vm-update-mount.fedora44-raid.avunmtza/boot/efi /dev/loop1 vfat",
+        "serial: BIOS-e820: [mem 0x0000000000100000-0x000000007ffdbfff] usable",
+        "serial: efi: SMBIOS=0x7f9b4000 ACPI=0x7fbbe000 ACPI 2.0=0x7fbbe014 MEMATTR=0x7e2a1018",
+        "serial: last_pfn = 0x7ffdc max_arch_pfn = 0x400000000",
+        "serial: clocksource: tsc: mask: 0xffffffffffffffff max_cycles: 0x2b3e459bf4c, max_idle_ns: 440795289890 ns",
+        "screen 1920x1080, 0x, 0X1F, x0x12, 0x10ms, Nexus max_idle_ns",
+        "serial: BIOS-eN: [mem NxNaaN-NxNcNfff] device reserved",
     ]
+
+    # two boots' (or hosts') memory layouts, raw, and what the old normalizer made of the first
+    LAYOUT_A = [
+        "serial: BIOS-e820: [mem 0x000000009aa00000-0x000000009c0cffff] device reserved",
+        "serial: efi: SMBIOS=0x9b0d0000 ACPI=0x9bb7e000 ACPI 2.0=0x9bb7e014 MEMATTR=0x9a0f1018 "
+        "MOKvar=0x9b1b0000 RNG=0x9bb70018",
+        "serial: last_pfn = 0x9bf00 max_arch_pfn = 0x400000000",
+        "serial: node 0: [mem 0x0000000000100000-0x000000007ffdbfff]",
+        "serial: PM: hibernation: Registered nosave memory: [mem 0x000a0000-0x000fffff]",
+        "serial: e820: register RAM buffer resource [mem 0x7ffdc000-0x7fffffff]",
+        "serial: ACPI: Reserving FACP table memory at [mem 0x7ffe23b5-0x7ffe24a8]",
+        "serial: clocksource: tsc: mask: 0xffffffffffffffff max_cycles: 0x2b3e459bf4c, max_idle_ns: 440795289890 ns",
+    ]
+    LAYOUT_B = [
+        "serial: BIOS-e820: [mem 0x000000009bd00000-0x000000009dbfffff] device reserved",
+        "serial: efi: SMBIOS=0x9c2d0000 ACPI=0x9cc7e000 ACPI 2.0=0x9cc7e014 MEMATTR=0x9b3a7018 "
+        "MOKvar=0x9c4b0000 RNG=0x9cc71018",
+        "serial: last_pfn = 0x9cf12 max_arch_pfn = 0x400000000",
+        "serial: node 0: [mem 0x0000000000100000-0x00000000bffdbfff]",
+        "serial: PM: hibernation: Registered nosave memory: [mem 0x0009f000-0x000fffff]",
+        "serial: e820: register RAM buffer resource [mem 0xbffdc000-0xbfffffff]",
+        "serial: ACPI: Reserving FACP table memory at [mem 0xbffe1f8a-0xbffe207d]",
+        "serial: clocksource: tsc: mask: 0xffffffffffffffff max_cycles: 0x2e2a1b9c4d1, max_idle_ns: 440795301012 ns",
+    ]
+    LEGACY_A = [
+        "serial: BIOS-eN: [mem NxNaaN-NxNcNcffff] device reserved",
+        "serial: efi: SMBIOS=NxNbNdN ACPI=NxNbbNeN ACPI N.N=NxNbbNeN MEMATTR=NxNaNfN MOKvar=NxNbNbN RNG=NxNbbN",
+        "serial: last_pfn = NxNbfN max_arch_pfn = NxN",
+        "serial: node N: [mem NxN-NxNffdbfff]",
+        "serial: PM: hibernation: Registered nosave memory: [mem NxNaN-NxNfffff]",
+        "serial: eN: register RAM buffer resource [mem NxNffdcN-NxNfffffff]",
+        "serial: ACPI: Reserving FACP table memory at [mem NxNffeNbN-NxNffeNaN]",
+        "serial: clocksource: tsc: mask: Nxffffffffffffffff max_cycles: NxNbNeNbfNc, max_idle_ns: HEX ns",
+    ]
+
+    def test_hex_0x_numbers_go(self):
+        for a, b in zip(self.LAYOUT_A, self.LAYOUT_B):
+            na = J.normalize(a)
+            self.assertEqual(na, J.normalize(b), a)
+            self.assertNotIn("Nx", na)
+            self.assertEqual(J.normalize(na), na)
+        self.assertEqual(J.normalize(self.LAYOUT_A[0]), "serial: BIOS-eN: [mem HEX-HEX] device reserved")
+        self.assertEqual(J.normalize(self.LAYOUT_A[2]), "serial: last_pfn = HEX max_arch_pfn = HEX")
+        self.assertEqual(J.normalize("efi: SMBIOS=0x7f9b4000 ACPI 2.0=0x7fbbe014"), "efi: SMBIOS=HEX ACPI N.N=HEX")
+
+    def test_legacy_normalized_lines_migrate(self):
+        """What the normalizer made of 0x numbers before (old baselines) comes out as the raw now."""
+        for old, raw in zip(self.LEGACY_A, self.LAYOUT_A):
+            self.assertEqual(J.normalize(old), J.normalize(raw), old)
+        self.assertEqual(J.normalize("serial: BIOS-eN: [mem NxNbdN-NxNdbfff] device reserved"),
+                         J.normalize("serial: BIOS-e820: [mem 0x000000009bd00000-0x000000009dbfffff] device reserved"))
+
+    def test_hex_0x_leaves_words_alone(self):
+        for s in ("Nexus max_idle_ns: N ns", "Nxyz box", "NxNms", "fooNxN", "x0x12 Nx", "Nx", "0x"):
+            n = J.normalize(s)
+            self.assertNotIn("HEX", n, s)
+            self.assertEqual(J.normalize(n), n, s)
+        self.assertEqual(J.normalize("Nexus 0x"), "Nexus Nx")
+        self.assertEqual(J.normalize("ran 0x10ms"), "ran NxNms")
+        self.assertEqual(J.normalize("ACPI N.N=HEX"), "ACPI N.N=HEX")
+        self.assertEqual(J.normalize("mode 1920x1080 0X1F"), "mode HEX HEX")
 
     def test_stable(self):
         for s in self.SAMPLES:

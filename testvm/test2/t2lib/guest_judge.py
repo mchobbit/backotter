@@ -1077,16 +1077,23 @@ _UUID = re.compile(r"\b[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{
 # end of its own name, so what follows (/boot/efi) and a trailing ":" stay: mount points differ.
 _RUNDIR = re.compile(r"(?:/[^\s/]+)*/vm-update-mount\.[\w.-]*\w"
                      r"|(?:/mnt/bko-ram/vm-update\.[^\s/]+|\S*/\.vm-update-run\.[^\s/]+|\S*/runs/t2v-[^\s/]+)\S*")
+# 0x9aa000 has no word boundary after its x, so _HEX alone never sees it and _NUM made "NxNaaN"
+# of it: every guest memory layout (e820, [mem 0x...], efi: SMBIOS=0x...) was new each boot.
+_HEX0X = re.compile(r"\b0[xX][0-9a-fA-F]+\b")
 _HEX = re.compile(r"\b(?=[0-9a-fA-F]*\d)[0-9a-fA-F]{6,}\b")
 _NUM = re.compile(r"\d+")
+# What _NUM leaves of such a number (and of what was normalized before _HEX0X: old baselines):
+# "Nx" then hex or N, whole.  After _NUM, so normalize stays stable (a 1920x1080 is HEX too).
+_HEXNX = re.compile(r"\bN[xX][0-9a-fA-FN]+\b")
 LINE_MAX = 300
 LINES_MAX = 20000
 
 
 def normalize(line, run_dirs=()):
     """A log line with what differs from boot to boot taken out, or "" for a line with nothing
-    left (ANSI and OSC sequences, timestamps, [ 12.345], UUIDs, hex of 6 or more, numbers, the
-    run's directories).  Stable: normalize(normalize(x)) == normalize(x)."""
+    left (ANSI and OSC sequences, timestamps, [ 12.345], UUIDs, 0x numbers, hex of 6 or more,
+    numbers, the run's directories).  Stable: normalize(normalize(x)) == normalize(x), and a line
+    normalized before 0x numbers were HEX ("NxNaaN") comes out as the raw line does now."""
     s = _ANSI.sub("", line)
     s = _CTRL.sub("", s)
     for d in run_dirs or ():
@@ -1098,8 +1105,10 @@ def normalize(line, run_dirs=()):
     s = _SYSLOG.sub("TIME", s)
     s = _CLOCK.sub("TIME", s)
     s = _UUID.sub("UUID", s)
+    s = _HEX0X.sub("HEX", s)
     s = _HEX.sub("HEX", s)
     s = _NUM.sub("N", s)
+    s = _HEXNX.sub("HEX", s)
     return " ".join(s.split())[:LINE_MAX]
 
 

@@ -155,6 +155,74 @@ Each family can also run under `BackShot2 SOURCE...` as soon as it's built.
 **Re-estimate after A0 and A1:** their measured time sets the rate for the
 rest (recent specs of this size ran well under their estimates).
 
+### A0 and A1, measured (2026-11-14)
+
+**A1** (be13648) took about 1 h of agent time against its 3 d estimate
+(53 min wall clock, ~25 of it queued for a host). Its tier 0 smoke: 100 of
+100 PASS on each of 45 Linux corpus guests.
+
+**A0** took about 11 h of wall clock against its 0.5 d. Most of that went on
+two harness bugs the first real run found, plus host contention:
+- **False PASSes (022f00e).** A resumed rescuer read its targets' sizes from
+  images QEMU had locked, so ht1.sh's phase loop died partway and still
+  printed `RESULT: PASS`. The first run (bs2a-20261114-0655) was void. A PASS
+  now needs every phase in both the report and `phases.tsv`.
+- **Tier 2 never booted the restored disk (d5e8686).** OVMF matched its boot
+  option by device path and rank, which moved between the two boots.
+  `vm-run --disk-ports` puts each disk behind its own root port in both.
+- **Generations moved mid-run.** Chopin's Alpine guests were updated at
+  06:06, and Copland, Cage and Chopin moved to the vm-store's images at 12:00.
+  A run must keep to hosts at one generation (`--hosts`). The tier 2 cases
+  were therefore drawn again at the new generation, on Cage and Copland.
+- **Contention.** Other sessions' reservations held Cinqcent to 2 of its 5
+  slots most of the day, and it was off 10:00-11:20 for an NVMe swap.
+
+Phase 1 results (run bs2a-20261114-0827, tier 2 in bs2a-20261114-t2n):
+
+| | Result |
+|---|---|
+| tier 0 | 4,000 of 4,000 PASS (1,000 a source), with dry runs, ~0.28 s a case |
+| tier 1 | alpine324 200/200, -lvm 200/200, -uefi 198/200 + 1 vm-mount flake (PASS on replay) + 1 HARNESS (another session's QEMU held a port), -luks 190/200 at 18:00 (the last 10 still queued on contended Cinqcent, none failed) |
+| tier 2 | 30 of 30 PASS (10 each, uefi, lvm, luks) |
+| tier 3 | not run: needs B10 (A8) |
+| corpus | the five open findings (fail-001 to fail-005) still fail at their own checks, at tiers 0 and 1 |
+
+No FAIL was a bko-holt finding, so nothing new was shrunk into `cases/`.
+
+Seconds per tier 1 case (mean `wall_s` of PASSes):
+
+| Source | Free host (Cage, Copland), reuse on | Reuse off | Cinqcent, contended |
+|---|---|---|---|
+| alpine324 | 40.3 | 73.5 (25 cases) | |
+| alpine324-uefi | 56.4 | | 85.7 |
+| alpine324-lvm | 59.8 | | 113.5 |
+| alpine324-luks | 84.0 | | 140.5 |
+
+- **Reuse on** saves about 45% (alpine324: 0.2/4.6/22.9/11.6 s for
+  source/backup/rebuild/verify, against 12.5/5.1/40.1/15.0 off), with
+  identical verdicts on the same 25 cases.
+- **Tier 2:** 52-71 s for uefi and lvm, 74-98 s for luks.
+- **Contention:** a contended big host runs a case 1.5-1.7 times slower than
+  a free small one. Plan by the contended figure.
+
+**Re-estimate.** Code ran at about a twentieth of its estimate; first real
+runs ran at about twice theirs, because they find harness bugs and wait for
+hosts. Each lane is therefore about 2-4 h of agent work plus one first real
+run and its fix cycle, which is half a day to a day of wall clock.
+
+| Lane | Was | Now (agent / wall clock) |
+|---|---|---|
+| A2+A7 (+A9) | 2.5 d | ~4 h / 1 d: the most sources, first tier 1 for 45 guests |
+| A3 | 2 d | ~3 h / 1 d: big multi-disk guests, wear budgets |
+| A4 | 4 d | ~4 h / 1-1.5 d: tier 0 in a booted guest is new code |
+| A5 | 1.5 d | ~2 h / 0.5 d, after A3's zfs trait |
+| A6 | 1.5 d | ~2 h / 0.5 d |
+| A8 | 0.75 d | ~2 h / 0.5 d, plus the user's go-ahead to wipe the Thinkpad |
+
+All six in parallel: about 1.5 days of wall clock to the first full
+`BackShot2All`, bounded by host time, not code. The full run's own length
+(about 15-16 h above) stands, at the contended rate.
+
 ## The family interface (A1)
 
 Fixed by A1, 2026-11-14. Each later lane is briefed from this section: a

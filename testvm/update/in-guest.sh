@@ -380,6 +380,13 @@ print(d[0]["checksum"] if d else "")' "$1"
         if [ -e /etc/fedora-release ] && rpm -q mcelog >/dev/null 2>&1; then
             dnf -y remove mcelog || exit 1
         fi
+        # tpm2-tools: only dracut's weak dependency, and not on the Server
+        # DVD the kickstart installs from offline, so a fresh guest lacks it
+        # until an online dnf pulls it in.  Installed by name, so a Fedora
+        # guest has it like rocky10 does.
+        if [ -e /etc/fedora-release ] && ! rpm -q tpm2-tools >/dev/null 2>&1; then
+            dnf -y install --refresh tpm2-tools || exit 1
+        fi
         dnf -y upgrade --refresh && dnf clean all || exit 1
     # t2-section: Linux.pacman
     elif has pacman; then

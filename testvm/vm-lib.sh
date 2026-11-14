@@ -39,7 +39,13 @@
 #             the same port) has booted there since.  vm_boot likewise only
 #             takes an answer from its own QEMU.
 #
-# Needs: qemu-system-x86_64 with KVM, testvm/vm-run, ssh, timeout, ss.
+# Needs: qemu-system-x86_64 (qemu-system-aarch64 and AAVMF on an aarch64
+# host) with KVM, testvm/vm-run, ssh, timeout, ss.
+#
+# On a host whose hosts.json row has a job_slice (Bigfoot), vm-run starts
+# itself again in it, under sudo: VM_PID is then that sudo, QEMU one or two
+# processes further down (vm_owns_port and vm_halt look up to 4 deep), and
+# a TERM to VM_PID reaches vm-run through sudo.
 # shellcheck shell=bash
 
 VM_PID="" VM_GUEST="" VM_PORT="" VM_KEY=""
@@ -113,14 +119,33 @@ vm_owns_port() {
     [[ -n $line ]] || return 1
     pids=$(grep -o 'pid=[0-9]*' <<<"$line" | cut -d= -f2)
     [[ -n $pids ]] || return 0
+    local n
     for p in $pids; do
-        [[ $p == "$VM_PID" ]] && return 0
-        p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
-        [[ $p == "$VM_PID" ]] && return 0
-        # Under console-boot.py, vm-run (QEMU's parent) is VM_PID's child.
-        [[ -n $p && $(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ') == "$VM_PID" ]] && return 0
+        # QEMU itself, vm-run's child, or (under console-boot.py, and under
+        # vm-run's job_slice sudo) a process a few further down from VM_PID.
+        for n in 0 1 2 3 4; do
+            [[ $p == "$VM_PID" ]] && return 0
+            p=$(ps -o ppid= -p "$p" 2>/dev/null | tr -d ' ')
+            [[ -n $p && $p != 0 && $p != 1 ]] || break
+        done
     done
     return 1
+}
+
+# The qemu-system-* processes up to 4 below PID (vm-run's QEMU; under
+# console-boot.py or a job_slice's sudo, further down), one PID a line.
+vm_qemu_below() {
+    local level=$1 next p c d
+    for d in 1 2 3 4; do
+        next=""
+        for p in $level; do
+            for c in $(pgrep -P "$p" 2>/dev/null); do
+                if [[ $(ps -o comm= -p "$c" 2>/dev/null) == qemu-system-* ]]; then echo "$c"; else next+=" $c"; fi
+            done
+        done
+        level=$next
+        [[ -n $level ]] || break
+    done
 }
 
 vm_ssh() {
@@ -161,11 +186,9 @@ vm_halt() {
     fi
     if kill -0 "$pid" 2>/dev/null; then
         # QEMU by its PID (vm-run's child; under console-boot.py, its
-        # grandchild): vm-run then cleans up and exits.
-        for c in $(pgrep -P "$pid" 2>/dev/null); do
-            for q in $(pgrep -P "$c" -f qemu-system 2>/dev/null); do kill -KILL "$q" 2>/dev/null || true; done
-            [[ $(ps -o comm= -p "$c" 2>/dev/null) == qemu-system-* ]] && kill -KILL "$c" 2>/dev/null || true
-        done
+        # grandchild; under a job_slice's sudo, further down): vm-run then
+        # cleans up and exits.
+        for q in $(vm_qemu_below "$pid"); do kill -KILL "$q" 2>/dev/null || true; done
         for _ in $(seq 10); do kill -0 "$pid" 2>/dev/null || break; sleep 1; done
         # Only if vm-run itself hangs; a --ram overlay may then stay in /dev/shm.
         kill -KILL "$pid" 2>/dev/null || true

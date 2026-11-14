@@ -275,7 +275,9 @@ class BuildRoundDist(unittest.TestCase):
             self.assertIn(msg, r.stderr, args)
         no(["--dist-only", "r1"], "--dist-only needs --dist-hosts")
         no(["--dist-only", "--dist-hosts", "czerny", "r1"], "czerny isn't an enabled host of testvm/hosts.json")
-        no(["--dist-only", "--dist-hosts", "bigfoot", "r1"], "bigfoot isn't an enabled host of testvm/hosts.json")
+        no(["--dist-only", "--dist-hosts", "bigfoot2", "r1"], "bigfoot2 isn't an enabled host of testvm/hosts.json")
+        no(["--dist-only", "--dist-hosts", "bigfoot", "r1"],
+           "--dist-hosts: bigfoot is an arm64 host (testvm/hosts.json's arch), and a round's binaries are amd64")
         no(["--dist-only", "--dist-hosts", "chopin", "r1"], "--dist-hosts: chopin builds this round")
         no(["--hosts", "cage", "--dist-only", "--dist-hosts", "copland", "r1"],
            "--hosts: both, chopin, cinqcent or chopin,cinqcent")
@@ -431,8 +433,9 @@ class PromoteBins(unittest.TestCase):
         r = self.pb("--dry-run", "all")
         self.assertEqual(r.returncode, 0, r.stdout + r.stderr)
         hosts = sorted({x.split()[1] for x in r.stdout.splitlines() if " bko-bin: " in x})
-        self.assertEqual(hosts, ["cage", "cinqcent", "copland"])
+        self.assertEqual(hosts, ["cage", "cinqcent", "copland"])   # not bigfoot: an arm64 host
         for args, msg in ((["--from", "cage", "chopin"], "--from cage: not a build host"),
+                          (["bigfoot"], "bigfoot is an arm64 host (testvm/hosts.json's arch): the sets are amd64"),
                           (["chopin"], "chopin is the source"),
                           (["czerny"], "no such enabled host czerny"),
                           (["--sets", "images", "cage"], "--sets: of bko-bin cmp-bin holt-bin"),

@@ -118,7 +118,7 @@ class CmpRunCeiling(unittest.TestCase):
 class QueueCantWhy(unittest.TestCase):
     """ht1-queue.sh's cant_why: why this host can never run a todo line (bash 3.2 does)."""
 
-    FUNCS = ("has_image", "needs_zfs", "has_debs", "ceil_now", "over_ceil", "fits_ceil", "cant_why")
+    FUNCS = ("guest_arch", "has_image", "needs_zfs", "has_debs", "ceil_now", "over_ceil", "fits_ceil", "cant_why")
 
     def setUp(self):
         self.t = tempfile.mkdtemp(prefix="t2-cantwhy-")
@@ -149,10 +149,10 @@ class QueueCantWhy(unittest.TestCase):
             elif os.path.exists(p):
                 os.remove(p)
 
-    def why(self, nm, d="6", m="4", over=None, ceil="9.0 9.2", zfs=0, rimg=""):
+    def why(self, nm, d="6", m="4", over=None, ceil="9.0 9.2", zfs=0, rimg="", arch="amd64"):
         g = re.sub(r"[+=%].*", "", nm)
         v = nm.split("+", 1)[1] if "+" in nm else ""
-        script = (f"W={self.w} L={self.l} CEIL='{ceil}' HOSTZFS={zfs}; zfs_list=(debian13-zfs ubuntu24)\n"
+        script = (f"W={self.w} L={self.l} CEIL='{ceil}' HOSTZFS={zfs} HOSTARCH={arch}; zfs_list=(debian13-zfs ubuntu24)\n"
                   + (f"HT_RESCUER_IMG={rimg}\n" if rimg else "unset HT_RESCUER_IMG\n")
                   + shell_funcs(QUEUE, *self.FUNCS)
                   + f"cant_why {nm} {g} '{v}' '{d}' '{m}' {over if over is not None else ''}; echo \"rc=$? $WHYNOT\"\n")
@@ -164,6 +164,18 @@ class QueueCantWhy(unittest.TestCase):
     def test_runnable(self):
         for nm in ("debian13", "freebsd15", "freebsd14", "freebsd14+img", "redox", "mint22+bigger", "kinoite44"):
             self.assertIsNone(self.why(nm), nm)
+
+    def test_arch(self):
+        """A guest of another architecture than the host's (uname -m) is never run there: an -arm64
+        guest on an amd64 host, any other on an arm64 one (hosts.py's guest_arch), before its image."""
+        wr(os.path.join(self.w, "vms", "debian13-arm64", "debian13-arm64.qcow2"), "")
+        self.assertEqual(self.why("debian13-arm64"), "an arm64 guest, and this host is amd64")
+        self.assertEqual(self.why("debian13-arm64+img"), "an arm64 guest, and this host is amd64")
+        self.assertIsNone(self.why("debian13-arm64", arch="arm64"))
+        self.assertEqual(self.why("debian13", arch="arm64"), "an amd64 guest, and this host is arm64")
+        self.assertEqual(self.why("chimera", arch="arm64"), "an amd64 guest, and this host is arm64")   # no image either
+        q = rd(QUEUE)
+        self.assertIn('HOSTARCH=amd64; [[ $(uname -m) == aarch64 ]] && HOSTARCH=arm64', q)
 
     def test_no_rescuer_guest(self):
         """A BSD, illumos or Haiku line needs its rescuer guest's image too (ht1-bsd.sh's RG, from

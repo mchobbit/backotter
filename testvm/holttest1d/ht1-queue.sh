@@ -30,7 +30,9 @@
 # swept to /bkoscratch (ht1-lib.sh --sweep) at the start and every loop.
 # Guests in ONLY_ELSEWHERE (space-separated), and redox on a host without
 # ~/backotter-work/tools/redox, are skipped here and left queued.  So is,
-# read again before each take, every line this host can never run: its D or
+# read again before each take, every line this host can never run: a guest
+# of another architecture (*-arm64 on an amd64 host, any other on an aarch64
+# one: hosts.py's guest_arch and uname -m); its D or
 # M over this host's ceiling (cmp-run.sh --ceiling; with DISK_OVER=1 its M
 # only, a D over it working on /bkoscratch, but not +img's); its guest's image
 # missing here (~/backotter-work/vms/GUEST/*.qcow2, as the drivers take it:
@@ -239,6 +241,10 @@ HOSTZFS=0   # zpool where root's PATH has it (facts_host.py's caps.zfs)
 for p in /usr/sbin/zpool /sbin/zpool /usr/local/sbin/zpool /usr/bin/zpool /bin/zpool; do [[ -f $p && -x $p ]] && HOSTZFS=1; done
 ((HOSTZFS)) || ! command -v zpool >/dev/null 2>&1 || HOSTZFS=1
 CANT=() REFUSED=() CANTWHY="" CANTSAID="" CEIL="" WHYNOT=""
+# This host's architecture and a guest's (hosts.py's guest_arch: *-arm64 is
+# arm64, every other amd64): a line of another architecture's guest is never run here.
+HOSTARCH=amd64; [[ $(uname -m) == aarch64 ]] && HOSTARCH=arm64
+guest_arch() { if [[ $1 == *-arm64 ]]; then echo arm64; else echo amd64; fi; }   # GUEST
 has_image() { local f; for f in "$W/vms/$1/"*.qcow2; do [[ -f $f ]] && return 0; done; return 1; }   # GUEST
 needs_zfs() { local z; for z in "${zfs_list[@]}"; do [[ $z == "$1" ]] && return 0; done; return 1; }   # GUEST
 has_debs() { compgen -G "$L/bin/f2fs-tools_*.deb" >/dev/null && compgen -G "$L/bin/jfsutils_*.deb" >/dev/null; }
@@ -266,7 +272,8 @@ cant_why() {  # NM GUEST VARIANT D M [OVER]
     esac
     ri=${HT_RESCUER_IMG:-$L/rescuer/rescuer.qcow2}   # ht1.sh's and ht1-offline.sh's rescuer
     WHYNOT=""
-    if ! has_image "$g"; then WHYNOT="no $W/vms/$g/*.qcow2 here"
+    if [[ $(guest_arch "$g") != "$HOSTARCH" ]]; then WHYNOT="an $(guest_arch "$g") guest, and this host is $HOSTARCH"
+    elif ! has_image "$g"; then WHYNOT="no $W/vms/$g/*.qcow2 here"
     elif [[ -n $rg ]] && ! has_image "$rg"; then WHYNOT="no $W/vms/$rg/*.qcow2 here (rescuer of $g)"
     elif [[ $drv == offline || ($drv == linux && $v != img) ]] && [[ ! -f $ri ]]; then
         WHYNOT="no rescuer $ri here"

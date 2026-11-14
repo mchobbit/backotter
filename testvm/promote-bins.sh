@@ -7,7 +7,9 @@
 #
 # Usage: promote-bins.sh [--dry-run] [--delete] [--from HOST] [--sets LIST] HOST... | all
 #
-# HOST: a host of testvm/hosts.json (all: every enabled host but the source).
+# HOST: a host of testvm/hosts.json (all: every enabled amd64 host but the
+# source).  An arm64 host (hosts.json's arch: bigfoot) is refused: the sets'
+# binaries are amd64 ones.
 # --from: the source, a host with the build role there (default chopin, the
 # table's first).  --sets: comma-separated, of bko-bin cmp-bin holt-bin
 # (default all three).
@@ -71,11 +73,12 @@ src=$(hosts_get "$from" ssh) || die "--from $from: no ssh in testvm/hosts.json"
 
 targets=""
 if [[ $# -eq 1 && $1 == all ]]; then
-    for h in $(hosts_names); do [[ $h == "$from" ]] || targets+=" $h"; done
+    for h in $(hosts_names --arch amd64); do [[ $h == "$from" ]] || targets+=" $h"; done
 else
     for h; do
         [[ $h == "$from" ]] && die "$h is the source (--from)"
         hosts_get "$h" ssh >/dev/null || die "no such enabled host $h ($(hosts_phrase))"
+        a=$(hosts_arch "$h") && [[ $a == amd64 ]] || die "$h is an ${a:-unknown} host (testvm/hosts.json's arch): the sets are amd64"
         [[ " $targets " == *" $h "* ]] || targets+=" $h"
     done
 fi

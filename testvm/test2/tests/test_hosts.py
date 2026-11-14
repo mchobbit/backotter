@@ -1,5 +1,5 @@
-"""The KVM test hosts: copland and cage are known, selectable hosts everywhere
-hosts are named or checked, and no default host list holds them yet (a new host
+"""The KVM test hosts: copland, cage and bigfoot (the arm64 host) are known, selectable hosts
+everywhere hosts are named or checked, and no default host list holds them yet (a new host
 joins the defaults only after HostTest2 and one representative per family pass
 on it, docs/design/test2/design-classes.md; both are small hosts, joining among
 the cells that fit them).  sync-hosts.sh, which only copies code, is the
@@ -42,7 +42,7 @@ def read(*parts):
 
 class Hosts(unittest.TestCase):
     def test_known_and_default(self):
-        self.assertEqual(t2lib.KNOWN_HOSTS, ("chopin", "cinqcent", "copland", "cage"))
+        self.assertEqual(t2lib.KNOWN_HOSTS, ("chopin", "cinqcent", "copland", "cage", "bigfoot"))
         self.assertEqual(t2lib.DEFAULT_HOSTS, ("chopin", "cinqcent"))
         self.assertTrue(set(t2lib.DEFAULT_HOSTS) < set(t2lib.KNOWN_HOSTS))
 
@@ -53,7 +53,8 @@ class Hosts(unittest.TestCase):
         self.assertEqual(t2.hosts_opt({"--hosts": "copland"}), ["copland"])
         self.assertEqual(t2.hosts_opt({"--hosts": "chopin,copland,cinqcent"}), ["chopin", "copland", "cinqcent"])
         self.assertEqual(t2.hosts_opt({"--hosts": "cage,copland"}), ["cage", "copland"])
-        with self.assertRaisesRegex(t2.Usage, r"no such host czerny \(known: chopin, cinqcent, copland, cage\)"):
+        self.assertEqual(t2.hosts_opt({"--hosts": "bigfoot"}), ["bigfoot"])
+        with self.assertRaisesRegex(t2.Usage, r"no such host czerny \(known: chopin, cinqcent, copland, cage, bigfoot\)"):
             t2.hosts_opt({"--hosts": "chopin,czerny"})
 
     def test_plan_gate_and_guest_defaults(self):
@@ -73,6 +74,8 @@ class Hosts(unittest.TestCase):
                          ["host", "host"])
         self.assertEqual(leakscan.pattern_findings("made on copland", True), [])
         self.assertEqual([c for c, _ in leakscan.pattern_findings("made on Cage, copied to cage.local")], ["host", "host"])
+        self.assertEqual([c for c, _ in leakscan.pattern_findings("made on Bigfoot, copied to bigfoot.local")],
+                         ["host", "host"])
         self.assertEqual(leakscan.pattern_findings("cages, encaged, a birdcage"), [])   # cage counts as a word only
 
     def test_drive_hosts(self):
@@ -86,7 +89,7 @@ class Hosts(unittest.TestCase):
                 contextlib.redirect_stderr(err), self.assertRaises(SystemExit) as cm:
             drive.main()
         self.assertEqual(cm.exception.code, 2)
-        self.assertIn("unknown host czerny (known: chopin, cinqcent, copland, cage)", err.getvalue())
+        self.assertIn("unknown host czerny (known: chopin, cinqcent, copland, cage, bigfoot)", err.getvalue())
 
     def test_guest_slot_ranges(self):
         gs = os.path.join(TESTVM, "compare", "guest-slot.sh")
@@ -132,12 +135,12 @@ class Hosts(unittest.TestCase):
         r = subprocess.run(["bash", os.path.join(TESTVM, "compare", "run-all.sh"), "--host", "czerny", "--dry-run",
                             REPO, "x"], capture_output=True, text=True, timeout=60)
         self.assertEqual(r.returncode, 2)
-        self.assertIn("--host chopin, cinqcent, copland or cage", r.stderr)
+        self.assertIn("--host chopin, cinqcent, copland, cage or bigfoot", r.stderr)
 
     def test_sync_hosts_and_vm_update(self):
         sync = read("testvm", "sync-hosts.sh")   # its default: every enabled host of testvm/hosts.json
         self.assertIn("list=$(hosts_names --field ssh)", sync)
-        self.assertEqual(t2lib.hosts_table.names(), ("chopin", "cinqcent", "copland", "cage"))   # test_host_table runs it
+        self.assertEqual(t2lib.hosts_table.names(), ("chopin", "cinqcent", "copland", "cage", "bigfoot"))   # test_host_table runs it
         vmu = load("vm_update_hosts", os.path.join(TESTVM, "vm-update"))
         self.assertEqual(vmu.ALL_HOSTS, ["chopin.local"])   # cinqcent, copland and cage are caches (2026-11-13)
 

@@ -17,7 +17,7 @@ ARGS: --want JSON ({"sets": [...], "plumbing": ["shared:PATH"...], "host_inputs"
 from --work).  T2_FACTS_ROOT=DIR reads every system path (/proc, /sys, /etc,
 /var/lib/dpkg, /bkoscratch, /mnt/bko-ram) under DIR instead: a fake root for tests.
 
-Fields: host, t, versions, preflight, sets, rounds, holt_bins, guests,
+Fields: host, machine, t, versions, preflight, sets, rounds, holt_bins, guests,
 rescuers, caps, plumbing, host_inputs, synced, copies, errors, took_s, and images when asked.
 preflight.ram.ceiling is [DISK, MEM] GiB, the most one cmp-run.sh --reserve can ever get
 here (WORK/cmp-run.sh's ceiling(), run as it is), or null: placement leaves a cell off a
@@ -25,7 +25,9 @@ host whose ceiling its reservation exceeds (facts.ceiling reads it).  caps is wh
 placement checks (plan.Planner.fit_capabilities): zfs, OpenZFS's zpool is installed
 (vm-mount mounts a ZFS source with it); holt_rescuer, HoltTest's rescuer/rescuer.qcow2 is
 there; holt_debs, its bin/ has the debs ht1.sh copies into the rescuer.  Old facts have no
-caps: nothing of it is checked.
+caps: nothing of it is checked.  machine is uname -m's (x86_64, aarch64; /proc/sys/kernel/arch
+under a fake root): placement keeps a cell off a host whose machine isn't the arch hosts.json
+gives it (plan.Planner.arch_why); versions.qemu is that machine's qemu-system-MACHINE's.
 """
 
 import glob
@@ -133,12 +135,19 @@ def dpkg_versions(names):
     return out
 
 
+def machine():
+    """uname -m's machine (x86_64, aarch64): /proc/sys/kernel/arch's, else os.uname()'s (not
+    under a fake root: None there without the file)."""
+    return first_line(R("/proc/sys/kernel/arch")) or (os.uname().machine if not ROOT else None)
+
+
 def versions(home):
     v = {}
     k = first_line(R("/proc/sys/kernel/osrelease"))
     v["kernel"] = k or (os.uname().release if not ROOT else None)
     v["zfs"] = first_line(R("/sys/module/zfs/version"))
-    q = R("/usr/bin/qemu-system-x86_64") if ROOT else shutil.which("qemu-system-x86_64")
+    qb = "qemu-system-" + (machine() if machine() == "aarch64" else "x86_64")
+    q = R("/usr/bin/" + qb) if ROOT else shutil.which(qb)
     v["qemu"] = run_first_line([q, "--version"]) if q and os.path.exists(q) else None
     pk = dpkg_versions(PKGS + ("ovmf",))
     v["ovmf"] = pk.pop("ovmf", None)
@@ -698,6 +707,7 @@ def collect(want=None, work=None, host_root=None, copy_root=None, user=None, hom
             f[name] = None
             f["errors"].append(f"{name}: {type(e).__name__}: {e}")
 
+    part("machine", machine)
     part("versions", versions, home)
     part("preflight", preflight, user, work)
     part("sets", lambda: {n: one_set(work, n) for n in (want.get("sets") or ["bko-bin"])})

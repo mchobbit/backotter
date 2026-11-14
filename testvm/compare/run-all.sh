@@ -98,7 +98,8 @@
 #   KEEP_WORK=1  keep fs_roundtrip.py's repositories
 #   ANY_HOST=1   run another host's platforms here too
 #   SPLIT        H,H,... (testvm/hosts.json's names) or all (every enabled
-#                host): a round those hosts share, each step run by one of
+#                amd64 host; an arm64 one, bigfoot, is refused): a
+#                round those hosts share, each step run by one of
 #                them only, in place of the profiles' shares (which overlap
 #                once copland or cage join chopin and cinqcent).  Every host
 #                deals the same: bcachefs stays on chopin and netbsd on
@@ -166,6 +167,9 @@ host=${host%%.*}
 . "$here/../hosts.sh"
 hclass=$(hosts_get "$host" class) && grange=$(hosts_get "$host" slot_range) ||
     die "no such host: $host (--host $(hosts_phrase))"
+# Its guests and binaries are amd64 ones: never on an arm64 host (Bigfoot).
+harch=$(hosts_arch "$host") && [[ $harch == amd64 ]] ||
+    die "$host is an ${harch:-unknown} host (testvm/hosts.json's arch): run-all.sh's guests and binaries are amd64"
 [[ $hclass == small ]] && prof=small || prof=$host
 case $prof in
     chopin) all="linux sparse zfsguests dragonfly"
@@ -198,8 +202,12 @@ H = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(H)
 want, me = sys.argv[2], sys.argv[3]
 try:
-    known = H.known()
+    known = H.names(arch="amd64")   # run-all.sh's guests and binaries are amd64 ones
     ns = list(known) if want == "all" else [H.short(x) for x in want.replace(",", " ").split()]
+    other = [n for n in ns if n in H.known() and n not in known]
+    if other:
+        sys.exit(f"SPLIT: {' '.join(other)}: not an amd64 host (testvm/hosts.json's arch), and run-all.sh's "
+                 f"guests and binaries are amd64 (of {H.phrase(known)}, or all)")
     bad = [n for n in ns if n not in known]
     if bad or not ns:
         sys.exit(f"SPLIT: no such host: {' '.join(bad) or '(none named)'} (of {H.phrase(known)}, or all)")

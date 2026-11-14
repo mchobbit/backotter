@@ -578,8 +578,9 @@ class Runner:
 
     def all_hosts(self):
         """--hosts first, then the other default test hosts (plan.DEFAULT_HOSTS); with
-        ctx.options holt_ship (or T2_HOLT_SHIP) "known", every known host (KNOWN_HOSTS: the
-        small ones too) instead: the hosts a build is looked for on and shipped to."""
+        ctx.options holt_ship (or T2_HOLT_SHIP) "known", every known amd64 host (KNOWN_HOSTS:
+        the small ones too, not an arm64 one such as bigfoot: these bko-holt builds are amd64)
+        instead: the hosts a build is looked for on and shipped to."""
         try:
             from . import plan as planmod
             every = list(getattr(planmod, "DEFAULT_HOSTS", ()) or ())
@@ -587,7 +588,8 @@ class Runner:
             every = []
         if (self.opts.get("holt_ship") or os.environ.get("T2_HOLT_SHIP")) == "known":
             from . import KNOWN_HOSTS
-            every += [h for h in KNOWN_HOSTS if h not in every]
+            from . import hosts as hosts_table
+            every += [h for h in KNOWN_HOSTS if h not in every and hosts_table.host_arch(h) == "amd64"]
         return self.hosts + [h for h in every if h not in self.hosts]
 
     def build_hosts(self):

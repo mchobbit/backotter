@@ -360,6 +360,11 @@ class View:
         self.plan_stages = None
 
 
+# The gate's layers run amd64 binaries and guests (cmp-bin, run-all.sh's guests, the forks'
+# x86 builds): their cells stay off an arm64 host until its own layers are (docs/design/arm64.md A6).
+GATE_ARCH = "amd64"
+
+
 class Planner:
     def __init__(self, word, ctx):
         self.w, self.ctx = word, ctx
@@ -718,9 +723,12 @@ class Planner:
                     v.why_not = f"{pin} is unreachable"
                 else:
                     v.hosts = [pin]
-                    self.fit_ceilings(v, self.gate_need(v))
+                    self.fit_arch(v, GATE_ARCH)
+                    if v.hosts:
+                        self.fit_ceilings(v, self.gate_need(v))
                 return
             v.hosts = reach
+            self.fit_arch(v, GATE_ARCH)
             self.fit_ceilings(v, self.gate_need(v))
         elif v.family == "holt":
             pin = self.cls["holt"].get("pins", {}).get(v.name)
@@ -775,6 +783,8 @@ class Planner:
     def place_guest(self, v, reach):
         e = self.guest_entry(v.name)
         have = [h for h in reach if v.name in ((self.ctx.facts[h].get("guests")) or {})]
+        # A guest of one architecture is never updated on a host of another (hosts.json's arch).
+        have = [h for h in have if not self.arch_why(h, hosts_table.guest_arch(v.name))]
         pin = e.get("pin")
         if self.w.update and e.get("update", True) is False:
             v.why_not = "vm-update can't update it (guest/spec.json: update false)"
@@ -838,9 +848,39 @@ class Planner:
             out.append(("holt_debs", "no debs in /bkoscratch/holttest1d/bin"))
         return out
 
+    def arch_why(self, h, want):
+        """Why host H can't run work of architecture WANT (amd64, arm64), or None: it can.  H's
+        arch is its row's in hosts.json (amd64 when none); facts that say another machine
+        (facts_host's machine: uname -m) keep it off too, as a table that is wrong about it."""
+        have = hosts_table.host_arch(h)
+        if have != want:
+            return f"an {have} host, not {want} (hosts.json's arch)"
+        m = (self.ctx.facts.get(h) or {}).get("machine")
+        if m and hosts_table.machine_arch(m) != want:
+            return f"its facts say machine {m}, not {want} (hosts.json's arch is wrong?)"
+        return None
+
+    def fit_arch(self, v, want):
+        """Keep cell V off each host whose architecture isn't WANT (arch_why); with no host
+        left, V is not runnable and says why, else its reasons name the hosts it is kept off."""
+        if not v.hosts:
+            return
+        off = {h: w for h in v.hosts for w in [self.arch_why(h, want)] if w}
+        if not off:
+            return
+        v.hosts = [h for h in v.hosts if h not in off]
+        each = "; ".join(f"{h}: {w}" for h, w in off.items())
+        if v.hosts:
+            v.pc.reasons_extra = list(getattr(v.pc, "reasons_extra", None) or []) + [f"kept off {each}"]
+            if len(v.hosts) == 1 and v.pc.host == "any":
+                v.pc.host = v.hosts[0]
+        else:
+            v.why_not = f"no host of the run can run it: {each}"
+
     def fit_capabilities(self, v):
         """Keep stic or holt cell V off each host that can't run it, by the host's facts: a host
-        that isn't a fleet host (hosts.json: an image cache) whose vms/ lacks a guest the cell
+        whose architecture isn't its guests' (arch_why: hosts.json's arch, a guest's by its name,
+        hosts.guest_arch; facts or none); a host that isn't a fleet host (hosts.json: an image cache) whose vms/ lacks a guest the cell
         boots; a host whose caps say it has no OpenZFS, for a needs_host_zfs source; a host
         whose caps lack HoltTest's rescuer or debs, for a holt cell that needs them.  With no
         host left, V is not runnable and says why ("copland: no ubuntu26-zfs in its vms/", with
@@ -852,11 +892,12 @@ class Planner:
             return
         from . import guest as guestmod
         gs, zfs = self.cell_guests(v), self.needs_host_zfs(v)
+        arches = sorted({hosts_table.guest_arch(g) for g in gs})
         lack = self.__dict__.setdefault("_may_lack", {})
         off = {}
         for h in v.hosts:
             f = self.ctx.facts.get(h) or {}
-            why = []
+            why = [w for a in arches for w in [self.arch_why(h, a)] if w]
             have = f.get("guests")
             if h not in lack:
                 lack[h] = guestmod.may_lack_guests(h)

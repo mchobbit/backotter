@@ -75,8 +75,9 @@ def _host_table():
 
 
 HOSTS_TABLE = _host_table()
-# The hosts of this command: every enabled one, or --hosts' (use_hosts()).
-RUN_HOSTS = {h: HOSTS_TABLE.ssh(h) for h in HOSTS_TABLE.known()}
+# The hosts of this command: every enabled amd64 one (BackShot2's sources, its rescuer and
+# bko-holt are amd64: an arm64 host such as bigfoot is never one), or --hosts' (use_hosts()).
+RUN_HOSTS = {h: HOSTS_TABLE.ssh(h) for h in HOSTS_TABLE.names(arch="amd64")}
 CHOSEN = False   # --hosts given: replay and the corpus go only where vms/SOURCE is
 ALPINE = list(HOME)
 ROOT = "/bkoscratch/backshot2"
@@ -99,8 +100,12 @@ TIER2 = 30        # tier 2 cases in all, shared by the UEFI sources
 def use_hosts(arg):
     """--hosts H,H|all: RUN_HOSTS becomes those hosts (testvm/hosts.json's, in its order)."""
     global RUN_HOSTS, CHOSEN
-    known = HOSTS_TABLE.known()
+    known = HOSTS_TABLE.names(arch="amd64")
     ns = list(known) if arg == "all" else [HOSTS_TABLE.short(x) for x in arg.replace(",", " ").split()]
+    other = [n for n in ns if n in HOSTS_TABLE.known() and n not in known]
+    if other:
+        sys.exit(f"bs2: --hosts: {' '.join(other)}: not an amd64 host (testvm/hosts.json's arch), and BackShot2's "
+                 f"sources are amd64 (of {HOSTS_TABLE.phrase(known)}, or all)")
     bad = [n for n in ns if n not in known]
     if bad or not ns:
         sys.exit(f"bs2: --hosts: no such host {' '.join(bad) or '(none named)'} (of {HOSTS_TABLE.phrase(known)}, or all)")

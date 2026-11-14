@@ -123,9 +123,36 @@
 # QEMU locks IMAGE while it runs, so vm-mount can't attach it meanwhile.
 # A vm-store object (testvm/vm-store) is never written: it boots only with
 # --ram or --snapshot.
+#
+# On an aarch64 host (uname -m; Bigfoot, docs/design/arm64.md) the VM is
+# qemu-system-aarch64's virt machine (-M virt,gic-version=host, -cpu host,
+# KVM), and UEFI is always on, with AAVMF from /usr/share/AAVMF:
+#   no --uefi      Secure Boot off: AAVMF_CODE.no-secboot.fd, AAVMF_VARS.fd
+#   --uefi         Secure Boot on, Microsoft's keys enrolled: AAVMF_CODE.ms.fd,
+#                  AAVMF_VARS.ms.fd (--no-secure-boot: as without --uefi)
+#   --uefi-vars and --mok as above, on that variable store.  --bios and
+#   --q35 are refused: virt has neither SeaBIOS nor a PC chipset.  --cdrom is
+#   a virtio-scsi CD (bootindex 0), sata an added ich9-ahci, the TPM
+#   tpm-tis-device, --no-vga a no-op (virt has no VGA), and the network card
+#   gets romfile= (no boot ROM: the guests never network-boot, and
+#   ipxe-qemu's efi-*.rom isn't installed).  On a host whose cores are of
+#   more than one kind (MIDR part numbers, as Bigfoot's Cortex-A720s and
+#   A520s), QEMU is pinned (taskset) to the cores of the most numerous kind
+#   among those it may use, unless they are of one kind already (as in
+#   bko.slice): -cpu host must not see its CPU change under it.
+#
+# A host whose row in testvm/hosts.json has a job_slice (Bigfoot's
+# bko.slice) runs vm-run in that slice: outside it, vm-run starts itself
+# again through hosts.py job-prefix (sudo -n systemd-run --scope
+# --slice=SLICE -- setpriv ... --), as the same user, with the same
+# environment and working directory.
 
 set -euo pipefail
 
+orig_args=("$@")
+self=$(realpath "$0")
+aarch64=no
+[[ $(uname -m) == aarch64 ]] && aarch64=yes
 RAM_DIR=${RAM_DIR:-/dev/shm}
 if [[ -z ${TMPDIR:-} && ${RT_RAM:-1} != 0 ]] && mountpoint -q /mnt/bko-ram 2>/dev/null &&
        (( $(df -Pk /mnt/bko-ram | awk 'NR == 2 { print $4 }') >= 8 << 20 )); then
@@ -148,7 +175,7 @@ in_store() {
     return 1
 }
 
-uefi_vars="" moks=() cdrom="" uefi=no q35=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic) vga=()
+uefi_vars="" moks=() cdrom="" uefi=no q35=no bios=no secure_boot=yes snapshot=() ram=no keep=no discard="" console=(-nographic) vga=()
 bus=virtio extra=() serials=() slots=() ports=() nic=virtio-net-pci nic_global=() mac="" tpm="" cpus=2 memory=${MEMORY:-2048}
 while [[ $# -gt 0 ]]; do
     case $1 in
@@ -158,6 +185,7 @@ while [[ $# -gt 0 ]]; do
         --uefi-vars) uefi_vars=$2; shift 2 ;;
         --mok) moks+=("$2"); shift 2 ;;
         --q35) q35=yes; shift ;;
+        --bios) bios=yes; shift ;;
         --snapshot) snapshot=(-snapshot); shift ;;
         --ram) ram=yes; shift ;;
         --keep) keep=yes; shift ;;
@@ -180,6 +208,15 @@ while [[ $# -gt 0 ]]; do
         *) break ;;
     esac
 done
+if [[ $aarch64 == yes ]]; then
+    [[ $bios == no ]] || die "--bios: an aarch64 host's VMs boot with UEFI (AAVMF) only: virt has no SeaBIOS"
+    [[ $q35 == no ]] || die "--q35: an aarch64 host's VMs are QEMU's virt machine (UEFI), never q35"
+    # UEFI always; Secure Boot only when asked for with --uefi.
+    [[ $uefi == yes ]] || secure_boot=no
+    uefi=yes
+else
+    [[ $bios == no ]] || die "unknown option --bios"
+fi
 [[ $# -ge 1 ]] || die "usage: $0 [--uefi [--no-secure-boot] [--uefi-vars FILE] [--mok CERT]... | --q35] [--cdrom ISO] [--snapshot | --ram [--keep]] [--discard] [--disk-bus BUS] [--disk IMAGE]... [--disk-serials LIST] [--disk-slots LIST] [--disk-ports LIST] [--nic MODEL] [--legacy-virtio-net] [--mac ADDR] [--tpm DIR] [--cpus N] [--memory MB] [--serial-log FILE] [--no-vga] IMAGE [-- QEMU_ARGS...]"
 image=$(realpath "$1")
 shift
@@ -187,13 +224,65 @@ shift
 [[ $ram == yes && ${#snapshot[@]} -gt 0 ]] && die "--ram and --snapshot don't combine"
 [[ $keep == yes && $ram == no ]] && die "--keep needs --ram"
 [[ $uefi == yes && $q35 == yes ]] && die "--uefi is on q35 already; --q35 is for SeaBIOS"
-[[ $uefi == yes ]] && q35=yes
+[[ $uefi == yes && $aarch64 == no ]] && q35=yes
 [[ ${#moks[@]} -eq 0 || $uefi == yes ]] || die "--mok needs --uefi"
 case $bus in virtio|scsi|nvme|sata) ;; *) die "--disk-bus must be virtio, scsi, nvme or sata" ;; esac
 [[ $cpus =~ ^[1-9][0-9]*$ && $memory =~ ^[1-9][0-9]*$ ]] || die "--cpus and --memory take whole numbers"
 if [[ ${#ports[@]} -gt 0 ]]; then
-    [[ $q35 == yes && $bus == virtio && ${#slots[@]} -eq 0 ]] || die "--disk-ports needs --uefi or --q35 and virtio disks, without --disk-slots"
+    if [[ $aarch64 == yes ]]; then   # virt is PCIe (pcie.0) too
+        [[ $bus == virtio && ${#slots[@]} -eq 0 ]] || die "--disk-ports needs virtio disks, without --disk-slots"
+    else
+        [[ $q35 == yes && $bus == virtio && ${#slots[@]} -eq 0 ]] || die "--disk-ports needs --uefi or --q35 and virtio disks, without --disk-slots"
+    fi
     for p in "${ports[@]}"; do [[ $p == - || ( $p =~ ^[1-9][0-9]?$ && $p -ge 3 && $p -le 30 ) ]] || die "--disk-ports: '$p' is not - or a slot from 3 to 30"; done
+fi
+
+# The host's job_slice (hosts.json: Bigfoot's bko.slice): outside it, start
+# again inside it, as this user, with this environment (setpriv --reset-env
+# clears it) and working directory.  BKO_VM_RUN_SLICED stops a loop should
+# the scope not land in the slice.  No table, or no row for this host: none.
+hosts_py=${self%/*}/test2/t2lib/hosts.py
+if [[ -f $hosts_py ]]; then
+    prefix=()
+    while IFS= read -r w; do prefix+=("$w"); done < <(python3 -I -B "$hosts_py" job-prefix "$(hostname -s)" "$(id -un)" 2>/dev/null || true)
+    if [[ ${#prefix[@]} -gt 0 ]]; then
+        slice=""
+        for w in "${prefix[@]}"; do [[ $w == --slice=* ]] && slice=${w#--slice=}; done
+        if ! grep -q -e "/$slice/" -e "/$slice\$" /proc/self/cgroup 2>/dev/null; then
+            [[ -z ${BKO_VM_RUN_SLICED:-} ]] || die "started again in $slice, but /proc/self/cgroup says $(tail -n 1 /proc/self/cgroup)"
+            envs=()
+            while IFS= read -r -d '' kv; do envs+=("$kv"); done < <(env -0)
+            exec "${prefix[@]}" env -i "${envs[@]}" BKO_VM_RUN_SLICED=1 "$self" ${orig_args[@]+"${orig_args[@]}"}
+        fi
+    fi
+fi
+
+# On aarch64, the cores QEMU may run on: those of the most numerous kind (MIDR
+# part, bits 15:4 of midr_el1) among the ones this process may use, when they
+# are of more than one kind; none (no pinning) when they are of one.
+pin=()
+if [[ $aarch64 == yes ]]; then
+    allowed=$(awk '$1 == "Cpus_allowed_list:" { print $2 }' /proc/self/status)
+    declare -A cores_of=()
+    for r in ${allowed//,/ }; do
+        lo=${r%-*} hi=${r#*-}
+        for ((c = lo; c <= hi; c++)); do
+            f=/sys/devices/system/cpu/cpu$c/regs/identification/midr_el1
+            [[ -r $f ]] || continue
+            part=$(printf '0x%03x' $(( ($(<"$f") >> 4) & 0xfff )))
+            cores_of[$part]+="${cores_of[$part]:+,}$c"
+        done
+    done
+    if [[ ${#cores_of[@]} -gt 1 ]]; then
+        best="" bestn=0
+        for part in "${!cores_of[@]}"; do
+            n=$(tr ',' '\n' <<<"${cores_of[$part]}" | wc -l)
+            (( n > bestn )) && best=$part bestn=$n
+        done
+        pin=(taskset -c "${cores_of[$best]}")
+        kinds="${!cores_of[*]}"
+        echo "vm-run: cores of ${#cores_of[@]} kinds (MIDR parts ${kinds// /, }): QEMU pinned to part $best's, CPUs ${cores_of[$best]}" >&2
+    fi
 fi
 
 tmp=$(mktemp -d)
@@ -238,7 +327,7 @@ for i in "${!ports[@]}"; do
 done
 case $bus in
     scsi) disk_args+=(-device virtio-scsi-pci,id=scsi0) ;;
-    # q35 has an AHCI controller of its own; the PC machine needs one added.
+    # q35 has an AHCI controller of its own; the PC machine (and virt) needs one added.
     sata) [[ $q35 == yes ]] || disk_args+=(-device ich9-ahci,id=ahci0) ;;
 esac
 for i in "${!images[@]}"; do
@@ -272,13 +361,22 @@ for i in "${!images[@]}"; do
     esac
 done
 
+if [[ $aarch64 == yes ]]; then
+    # romfile=: no boot ROM (efi-virtio.rom, ipxe-qemu's, isn't on the host;
+    # the guests never network-boot).
+    nic_args=(-netdev "user,id=net0,ipv6=off,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22"
+        -device "$nic,netdev=net0,romfile=$mac")
+    vga=()   # virt has no VGA to leave out
+else
+    nic_args=(-nic "user,ipv6=off,model=$nic$mac,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22")
+fi
 args=(
     -enable-kvm -cpu host -smp "$cpus" -m "$memory"
     "${disk_args[@]}"
     # IPv4 only: the hosts have no IPv6 route out (a ULA prefix alone), so
     # the IPv6 address QEMU's user network would hand out leads nowhere, and
     # a guest that tries IPv6 first (NetBSD's libfetch, pkgin) stalls on it.
-    -nic "user,ipv6=off,model=$nic$mac,hostfwd=tcp:127.0.0.1:${SSH_PORT:-2222}-:22"
+    "${nic_args[@]}"
     "${nic_global[@]}"
     "${console[@]}"
     "${vga[@]}"
@@ -290,15 +388,30 @@ if [[ -n $tpm ]]; then
     swtpm socket --tpm2 --tpmstate "dir=$tpm" --ctrl "type=unixio,path=$tmp/swtpm.sock" \
         --terminate --daemon --pid "file=$tmp/swtpm.pid" || die "swtpm didn't start"
     swtpm_pid=$(<"$tmp/swtpm.pid")
+    # virt's TPM is the sysbus tpm-tis-device (tpm-tis is an ISA device).
+    tpmdev=tpm-tis; [[ $aarch64 == no ]] || tpmdev=tpm-tis-device
     args+=(-chardev "socket,id=chrtpm,path=$tmp/swtpm.sock" -tpmdev emulator,id=tpm0,chardev=chrtpm
-        -device tpm-tis,tpmdev=tpm0)
+        -device "$tpmdev,tpmdev=tpm0")
 fi
-if [[ -n $cdrom ]]; then
+if [[ -n $cdrom && $aarch64 == yes ]]; then
+    # virt has no IDE: a SCSI CD, booted first (bootindex; AAVMF's boot order).
+    args+=(-drive "if=none,id=cd0,file=$cdrom,media=cdrom,readonly=on" -device virtio-scsi-pci,id=scsicd
+        -device scsi-cd,drive=cd0,bus=scsicd.0,bootindex=0)
+elif [[ -n $cdrom ]]; then
     args+=(-drive "file=$cdrom,media=cdrom,readonly=on" -boot order=dc)
 fi
 if [[ $uefi == yes ]]; then
     # A fresh copy of OVMF's variable store per run: no leftover boot entries.
-    if [[ $secure_boot == yes ]]; then
+    fw=/usr/share/OVMF
+    if [[ $aarch64 == yes ]]; then
+        fw=/usr/share/AAVMF
+        if [[ $secure_boot == yes ]]; then
+            code=AAVMF_CODE.ms.fd vars=AAVMF_VARS.ms.fd
+        else
+            code=AAVMF_CODE.no-secboot.fd vars=AAVMF_VARS.fd
+        fi
+        [[ -f $fw/$code && -f $fw/$vars ]] || die "no $fw/$code or $fw/$vars (qemu-efi-aarch64)"
+    elif [[ $secure_boot == yes ]]; then
         code=OVMF_CODE_4M.secboot.fd vars=OVMF_VARS_4M.ms.fd
     else
         code=OVMF_CODE_4M.fd vars=OVMF_VARS_4M.fd
@@ -306,9 +419,9 @@ if [[ $uefi == yes ]]; then
     vfile=$tmp/vars.fd fresh=yes
     if [[ -n $uefi_vars ]]; then
         vfile=$uefi_vars
-        if [[ -f $vfile ]]; then fresh=no; else cp "/usr/share/OVMF/$vars" "$vfile"; fi
+        if [[ -f $vfile ]]; then fresh=no; else cp "$fw/$vars" "$vfile"; fi
     else
-        cp "/usr/share/OVMF/$vars" "$vfile"
+        cp "$fw/$vars" "$vfile"
     fi
     # shim's MokList, as MokManager leaves it once a key is enrolled: in a
     # store made for this run only (a kept --uefi-vars store has it already).
@@ -330,12 +443,15 @@ if [[ $uefi == yes ]]; then
     done
     # SMM, and flash only SMM may write, for Secure Boot's firmware alone:
     # OVMF_CODE_4M.fd has no SMM, so it couldn't use a secure flash at all.
-    if [[ $secure_boot == yes ]]; then
+    # AAVMF needs neither (virt has no SMM): its variables are in plain flash.
+    if [[ $aarch64 == yes ]]; then
+        args+=(-machine virt,gic-version=host)
+    elif [[ $secure_boot == yes ]]; then
         args+=(-machine q35,smm=on -global driver=cfi.pflash01,property=secure,value=on)
     else
         args+=(-machine q35)
     fi
-    args+=(-drive "if=pflash,format=raw,unit=0,readonly=on,file=/usr/share/OVMF/$code"
+    args+=(-drive "if=pflash,format=raw,unit=0,readonly=on,file=$fw/$code"
         -drive "if=pflash,format=raw,unit=1,file=$vfile")
 elif [[ $q35 == yes ]]; then
     args+=(-machine q35)
@@ -347,7 +463,9 @@ fi
 # background so that stopping vm-run (TERM, INT, HUP) stops QEMU too instead
 # of orphaning it; <&0 keeps the terminal as its input, which a background
 # command would otherwise lose.
-qemu-system-x86_64 "${args[@]}" "$@" <&0 &
+qemu=qemu-system-x86_64
+[[ $aarch64 == no ]] || qemu=qemu-system-aarch64
+${pin[@]+"${pin[@]}"} "$qemu" "${args[@]}" "$@" <&0 &
 qemu=$! started=yes
 trap 'kill -TERM "$qemu" 2>/dev/null' TERM INT HUP
 status=0

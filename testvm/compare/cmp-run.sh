@@ -64,6 +64,10 @@
 # Every job, a --reserve's CMD too, runs under iolog.sh, which logs what it
 # wrote to disk in /bkoscratch/wear/jobs.log, with WEAR_TAG (wear-report.py
 # sums it up).
+# On a host whose row in the host table has a job_slice (Bigfoot's
+# bko.slice; hosts.py job_prefix), every job's scope, a --reserve's too, is in
+# that slice (systemd-run --slice), and a WEAR_LOG=off --reserve's CMD runs
+# under hosts.py job-prefix's words.
 # Reservations live in /mnt/bko-ram/.reserve, shared by every cmp-run.sh on
 # the host. Nothing new starts while the CPU is over HOT_C (default 95) or an
 # NVMe over NVME_C (default 75).
@@ -117,6 +121,8 @@ H=$(hostname -s)
 BKO_HOSTS_PY=${BKO_HOSTS_PY:-$HERE/../test2/t2lib/hosts.py}
 [ -n "${BASE_GIB:-}" ] || BASE_GIB=$(python3 -I -B "$BKO_HOSTS_PY" limit "$H" base_gib 2>/dev/null)
 [[ $BASE_GIB =~ ^[0-9]+([.][0-9]+)?$ ]] || BASE_GIB=6
+# The host's job_slice (bko.slice on Bigfoot), or none: every job's scope goes in it.
+JOB_SLICE=$(python3 -I -B "$BKO_HOSTS_PY" get "$H" job_slice 2>/dev/null) || JOB_SLICE=""
 DISKS_DIR=${DISKS_DIR:-/bkoscratch/compare-disks}
 
 # Ledger rows: PID DISK MEM SCOPE WHAT...   (SCOPE "-" when there is none)
@@ -147,7 +153,7 @@ budget() {  # -> "MAXDISK MAXMEM" in GiB for one more job (ledger locked)
         [ -n "$pid" ] || continue
         anon=0
         if [ "$scope" != - ]; then
-            anon=$(awk '$1 == "anon" { print $2 }' /sys/fs/cgroup/system.slice/$scope/memory.stat 2>/dev/null)
+            anon=$(awk '$1 == "anon" { print $2 }' /sys/fs/cgroup/${JOB_SLICE:-system.slice}/$scope/memory.stat 2>/dev/null)
         else   # a --reserve: what its CMD's tree uses
             anon=$(awk -v p="$pid" '$1 == p { print $2 }' <<<"$trees")
         fi
@@ -278,8 +284,16 @@ if [ "${1:-}" = --reserve ]; then
     # reservation lasts as long as CMD.  setpriv --init-groups, not
     # systemd-run --uid/--gid: a scope's --uid keeps root's groups and drops
     # m's own, kvm among them (every VM a reservation ran failed so).
-    [ "${WEAR_LOG:-}" = off ] && exec "$@"
-    exec sudo -E systemd-run --quiet --scope --collect -p IOAccounting=yes \
+    if [ "${WEAR_LOG:-}" = off ]; then
+        [ -n "$JOB_SLICE" ] || exec "$@"
+        # In the slice, as this user, with this environment (setpriv --reset-env clears it).
+        pre=() envs=()
+        while IFS= read -r w; do pre+=("$w"); done < <(python3 -I -B "$BKO_HOSTS_PY" job-prefix "$H" "$(id -un)")
+        while IFS= read -r -d '' kv; do envs+=("$kv"); done < <(env -0)
+        [ ${#pre[@]} -gt 0 ] || { echo "no job-prefix for $H's job_slice $JOB_SLICE" >&2; exit 1; }
+        exec "${pre[@]}" env -i "${envs[@]}" "$@"
+    fi
+    exec sudo -E systemd-run --quiet --scope --collect ${JOB_SLICE:+--slice="$JOB_SLICE"} -p IOAccounting=yes \
         setpriv --reuid="$(id -u)" --regid="$(id -g)" --init-groups \
         env PATH="$PATH" WEAR_TAG="${WEAR_TAG:-}" "$IOLOG" "reserve $*" -- "$@"
 fi
@@ -415,11 +429,11 @@ worker() {  # SLOT
         # CMP_CMD: a command run in compare.py's place, the same way, with
         # GUEST DISK MEM SLOT [ARGS] (rebuild-one.sh, or a stand-in for tests).
         if [ -n "${CMP_CMD:-}" ]; then
-            sudo systemd-run --quiet --scope --unit=${scope%.scope} -p MemoryHigh=${hi}M -p IOAccounting=yes \
+            sudo systemd-run --quiet --scope --unit=${scope%.scope} ${JOB_SLICE:+--slice="$JOB_SLICE"} -p MemoryHigh=${hi}M -p IOAccounting=yes \
                 env WEAR_TAG="$wt" ${WEAR_LOG:+WEAR_LOG="$WEAR_LOG"} "$IOLOG" "$tag $g" -- env COMPARE_SLOT=$slot COMPARE_GROW_GIB=$grow $dd $E $CMP_CMD "$g" "$d" "$m" "$slot" "${args[@]}" \
                 >cmp-logs/$tag/$g.log 2>&1 &
         else
-            sudo systemd-run --quiet --scope --unit=${scope%.scope} -p MemoryHigh=${hi}M -p IOAccounting=yes \
+            sudo systemd-run --quiet --scope --unit=${scope%.scope} ${JOB_SLICE:+--slice="$JOB_SLICE"} -p MemoryHigh=${hi}M -p IOAccounting=yes \
                 env WEAR_TAG="$wt" ${WEAR_LOG:+WEAR_LOG="$WEAR_LOG"} "$IOLOG" "$tag $g" -- env COMPARE_SLOT=$slot COMPARE_GROW_GIB=$grow $dd $E python3 testvm/compare/compare.py "${args[@]}" "$g" \
                 restic-bko rustic-bko restic-to-rustic rustic-to-restic >cmp-logs/$tag/$g.log 2>&1 &
         fi

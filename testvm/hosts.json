@@ -1,6 +1,6 @@
 {
  "v": 1,
- "notes": "BackOtter's KVM test hosts, one row each: the one table the test scripts take their host names, ssh targets, slot and port ranges, classes, roles and defaults from (testvm/test2/t2lib/hosts.py reads it; testvm/hosts.sh is the shell's reader; the scripts find it relative to themselves, here on the Mac and in ~/backotter-work/testvm on the hosts). Order matters: lists keep it, and the first fleet host holds vm-update's fleet lock. enabled false: a row reserved for a host that does not exist yet (its name and ranges are taken), which no script treats as a host. default true: a host of every run without --hosts (t2, drive.py); a host joins the defaults only after HostTest2 and one representative per family pass on it (docs/design/test2/design-classes.md). slot_range: the host's guest-slot range (guest-slot.sh's slot_range_here; run-all.sh's PORT_BASE is its first port, GUEST_PORTS the range); stic_ports: drive.py's check ports, inside it. ip: an address for when mDNS fails, with host_key_alias the name known_hosts pins it under (null: none known). A host's limits (limits: what each is, and its default) are its row's fields of those names, else class_limits' for its class, else the defaults, the values every host had before; the small class sets stic_slots 2, holt_jobs 1 and base_gib 4 (the user's choice, 2026-11-13); the big hosts keep the defaults but bs2_slots, 5 (small 2).",
+ "notes": "BackOtter's KVM test hosts, one row each: the one table the test scripts take their host names, ssh targets, slot and port ranges, classes, roles and defaults from (testvm/test2/t2lib/hosts.py reads it; testvm/hosts.sh is the shell's reader; the scripts find it relative to themselves, here on the Mac and in ~/backotter-work/testvm on the hosts). Order matters: lists keep it, and the first fleet host holds vm-update's fleet lock. enabled false: a row reserved for a host that does not exist yet (its name and ranges are taken), which no script treats as a host. default true: a host of every run without --hosts (t2, drive.py); a host joins the defaults only after HostTest2 and one representative per family pass on it (docs/design/test2/design-classes.md). slot_range: the host's guest-slot range (guest-slot.sh's slot_range_here; run-all.sh's PORT_BASE is its first port, GUEST_PORTS the range); stic_ports: drive.py's check ports, inside it. ip: an address for when mDNS fails, with host_key_alias the name known_hosts pins it under (null: none known). A host's limits (limits: what each is, and its default) are its row's fields of those names, else class_limits' for its class, else the defaults, the values every host had before; the small class sets stic_slots 2, holt_jobs 1 and base_gib 4 (the user's choice, 2026-11-13); the big hosts keep the defaults but bs2_slots, 5 (small 2). arch: the host's architecture, amd64 or arm64, amd64 when absent (every host before 2026-11-14): a guest runs only on a host of its own (a guest named *-arm64 is arm64, every other amd64; hosts.py guest_arch), and the x86-only loops (bs2, bko-holt shipping, build-round.sh's and promote-bins.sh's default hosts) take only amd64 hosts. job_slice: a systemd slice every heavy job on the host runs in (a guest's QEMU, cmp-run.sh's work), started by hosts.py job_prefix's sudo -n systemd-run --scope --quiet --slice=SLICE -- setpriv --reuid=USER --regid=USER --init-groups --reset-env -- CMD; vm-run and cmp-run.sh do it themselves; absent or null: none. bigfoot: the ARM64 host (docs/design/arm64.md), the user's daily machine, in bko.slice; it has no build, fleet, cache or store-mirror role, and it is also vm-store's master, which only Chopin (bigfoot-link) talks to, by its own name in vm-store (not this row).",
  "classes": {
   "big": "62 GiB, a 30G RAM disk (cmp-run.sh ceiling about 23 GiB), host ZFS; build hosts",
   "small": "27 GiB, a 10G RAM disk (cmp-run.sh ceiling 9.0 9.2), no host ZFS; guests from the image cache"
@@ -84,6 +84,20 @@
    "roles": ["cache"],
    "default": false,
    "enabled": false
+  },
+  {
+   "name": "bigfoot",
+   "ssh": "m@bigfoot.local",
+   "ip": "192.168.68.197",
+   "host_key_alias": "bigfoot.local",
+   "slot_range": "3200-3299",
+   "stic_ports": [3280, 3299],
+   "class": "small",
+   "roles": [],
+   "default": false,
+   "enabled": true,
+   "arch": "arm64",
+   "job_slice": "bko.slice"
   }
  ]
 }

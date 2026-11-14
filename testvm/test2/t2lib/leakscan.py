@@ -75,7 +75,7 @@ import re
 import subprocess
 import sys
 
-HOSTS = ("chopin", "cinqcent", "copland", "cage")   # t2lib.KNOWN_HOSTS (this runs on its own too)
+HOSTS = ("chopin", "cinqcent", "copland", "cage", "bigfoot")   # t2lib.KNOWN_HOSTS (this runs on its own too)
 # Files that may name the hosts (R6.3): the corpus's index and README.
 HOST_NAMES_OK = ("index.tsv", "README.md")
 SKIP_DIRS = ("__pycache__",)

@@ -1,8 +1,10 @@
 # The KVM test hosts
 
-The test scripts run guests on four KVM hosts. Two are big, Chopin and
+The test scripts run guests on four amd64 KVM hosts. Two are big, Chopin and
 Cinqcent, and two are small, Copland and Cage (the M900s). A fifth small host,
 Czerny, is due at the end of November 2026 and has a reserved row already.
+Bigfoot, the user's ARM64 machine, is the one arm64 host (since 2026-11-14,
+docs/design/arm64.md): it runs only arm64 guests, in a systemd slice.
 Every script takes the hosts from one table, `testvm/hosts.json`. This page
 describes that table, what each class of host runs, and how a new host joins.
 
@@ -13,6 +15,7 @@ describes that table, what each class of host runs, and how a new host joins.
 | copland | small | 2800-2899 | 2880-2899 | cache | no |
 | cage | small | 3000-3099 | 3080-3099 | cache | no |
 | czerny | small | 3100-3199 | 3180-3199 | cache | no (row reserved: `enabled: false`) |
+| bigfoot | small, arm64 | 3200-3299 | 3280-3299 | none | no |
 
 ## The table: testvm/hosts.json
 
@@ -30,14 +33,19 @@ host with the fleet role (Chopin) holds vm-update's fleet lock.
 | `roles` | `build`: builds round binaries (stick/build-round.sh) and bko-holt. `fleet`: holds every guest in a full `vms/`, kept alike by vm-update. `store-mirror`: vm-store's mirror, the only publisher. `bigfoot-link`: the one host that talks to Bigfoot. `cache`: has a vm-store cache. |
 | `default` | a host of every run without `--hosts` (t2, drive.py). A default host must be enabled. |
 | `enabled` | `false` marks a reserved row: the name and ranges are taken, but no script treats it as a host. |
+| `arch` | optional: `amd64` or `arm64`, the architecture of the host's guests and binaries. A row without it is `amd64`, as every host was before 2026-11-14. A guest has one too, by its name: `arm64` for a guest named `*-arm64`, else `amd64` (hosts.py `guest_arch`). A guest runs only on a host of its own architecture (see below). |
+| `job_slice` | optional: a systemd slice (`bko.slice`) that every heavy job on the host runs in, or null for none. hosts.py `job_prefix` builds the words that start one: `sudo -n systemd-run --scope --quiet --slice=SLICE -- setpriv --reuid=USER --regid=USER --init-groups --reset-env -- CMD`. vm-run starts itself again that way when it isn't in the slice, with its own environment and working directory. cmp-run.sh puts each job's scope in the slice (`systemd-run --slice`). |
 
 Readers:
 
 - Python: `testvm/test2/t2lib/hosts.py`. It is stdlib only and imports nothing
   from t2lib. drive.py, vm-update and bs2 load it by its path, and t2lib
-  imports it. Its command line is `hosts.py names|get|phrase|check`.
+  imports it. Its command line is `hosts.py
+  names|get|limit|phrase|arch|guest-arch|job-prefix|check`, and `names`
+  takes `--arch A`. `get` prints `amd64` for a row without `arch`.
 - Shell: `testvm/hosts.sh`, sourced by bash (3.2 is enough). It provides
-  `hosts_names`, `hosts_get` and `hosts_phrase`, which call hosts.py with
+  `hosts_names`, `hosts_get`, `hosts_phrase`, `hosts_limit`, `hosts_arch`,
+  `hosts_guest_arch` and `hosts_job_prefix`, which call hosts.py with
   `python3 -I -B`.
 
 Both readers find the table relative to themselves: the checkout's `testvm/`
@@ -49,16 +57,37 @@ checks stops every script that reads it. Nothing falls back to built-in host
 names. Check it by hand with `python3 testvm/test2/t2lib/hosts.py check`.
 Run the command from the repo root.
 
-These scripts take their hosts from the table:
+These scripts take their hosts from the table. Where a list would mix
+architectures, each takes only the hosts it can use:
 
-- t2's `KNOWN_HOSTS` (the enabled hosts) and `DEFAULT_HOSTS`;
-- the gate's per-host loop cells;
-- drive.py's `HOSTS` and the default for `--hosts`;
-- the ranges in guest-slot.sh and run-all.sh;
-- the default host list in sync-hosts.sh (every enabled host);
-- build-round.sh's ssh targets and its build-role check;
-- vm-update's fleet (`ALL_HOSTS`, the hosts with the fleet role);
-- bs2's ssh targets.
+- t2's `KNOWN_HOSTS` (the enabled hosts, bigfoot too) and `DEFAULT_HOSTS`.
+  Placement keeps each cell to hosts of its guests' architecture (below).
+- the gate's per-host loop cells. The gate's layers run amd64 binaries, so a
+  gate cell on bigfoot is not runnable until its own layers exist (A6).
+- drive.py's `HOSTS` and the default for `--hosts`. On each host it leaves out
+  the images of another architecture's guests, and it refuses a guest whose
+  architecture no host of `--hosts` has.
+- the ranges in guest-slot.sh and run-all.sh. run-all.sh refuses an arm64
+  host, and its `SPLIT=all` means every enabled amd64 host.
+- the default host list in sync-hosts.sh: every enabled host, bigfoot
+  included, since it copies code only. A bare table name (`sync-hosts.sh
+  bigfoot`) means that row's ssh.
+- build-round.sh's ssh targets and its build-role check. `--dist-hosts all`
+  means every amd64 host, and naming an arm64 host is refused: a round's
+  binaries are amd64. promote-bins.sh is the same.
+- vm-update's fleet (`ALL_HOSTS`, the hosts with the fleet role). A guest's
+  copies are merged only on hosts of its architecture.
+- bs2's ssh targets: the amd64 hosts. `--hosts bigfoot` is refused, because
+  BackShot2's sources are amd64.
+- t2 holt's bko-holt shipping with `holt_ship known`: the amd64 hosts.
+- ht1-queue.sh: on each host it skips the lines of another architecture's
+  guests (`uname -m`).
+
+vm-store doesn't read the table. Bigfoot is vm-store's master, which only
+Chopin talks to (the `bigfoot-link` role), by its own configuration
+(`VM_STORE_BIGFOOT_HOST`, default `m@bigfoot.local`). Bigfoot's row has no
+store role, and `/bkoscratch` there holds no `store.json`, so no cache or
+mirror logic treats it as one.
 
 Two hosts.json changes re-key things:
 
@@ -115,6 +144,10 @@ why. The plan's reasons then include, for example, "kept off copland: no host
 OpenZFS". A cell that no host of the run can take is not runnable, and the
 plan says so. A cell is kept off a host for any of these reasons:
 
+- **Another architecture.** The host's `arch` is not the architecture of
+  the cell's guests: an `-arm64` guest's cells never go to an amd64 host,
+  and no other guest's cells go to bigfoot. Facts whose `machine` disagrees
+  with the table keep the host off too. This needs no facts.
 - **The guest is missing.** A host without the fleet role lacks a guest the
   cell boots. A fleet host is assumed to hold every guest.
 - **No host ZFS.** The cell's source is in `classes.json` `holt.needs_host_zfs`:
@@ -128,7 +161,8 @@ plan says so. A cell is kept off a host for any of these reasons:
   (the BSDs, OmniOS, Haiku) need neither.
 - **Over the ceiling.** The cell's reservation is over the host's ceiling.
 
-Old facts without `caps` skip the caps checks. The identity check asks each
+Old facts without `caps` skip the caps checks. The facts also record
+`machine`, from `uname -m`. The identity check asks each
 host only about the guests it should hold, so a cache host that lacks a guest
 doesn't fail that guest everywhere.
 
@@ -161,6 +195,30 @@ hosts:
 - run-all.sh's guest platforms. On a small host run-all.sh runs only linux and
   sparse.
 - vm-update's fleet, the store mirror and the Bigfoot link (all Chopin).
+
+## Bigfoot, the arm64 host
+
+Bigfoot (`m@bigfoot.local`, 192.168.68.197 as its `ip`) is the user's daily
+machine: a desktop session, Plex and deluge run there. Its row is small class,
+`arch: arm64`, `job_slice: bko.slice`, with no roles and `default: false`. It
+stays out of default runs until HostTest2 passes on it
+(docs/design/arm64.md, A6).
+
+- **Staging.** Everything bko keeps there is under `/home/m/bko-arm64`.
+  `~/backotter-work` and `/bkoscratch` are symlinks into that folder.
+  DantePool, `/bt` and the vm-store master are never touched.
+- **The slice.** Every guest and cmp-run.sh job runs in `bko.slice`, a
+  system slice limited to the Cortex-A720 cores (CPUs 0-1 and 6-11),
+  CPUQuota 600%, MemoryMax 24G and IOWeight 20. vm-run and cmp-run.sh put
+  their jobs in the slice themselves. Run as the user, vm-run starts itself
+  again under `sudo -n systemd-run --scope --slice=bko.slice -- setpriv ...`.
+- **vm-run** on an aarch64 host boots QEMU's `virt` machine with AAVMF, and
+  UEFI is always on. Without `--uefi`, Secure Boot is off; `--uefi` turns it
+  on with Microsoft's keys. `--bios` and `--q35` are refused. Outside the
+  slice, on cores of more than one kind, vm-run pins QEMU to the most
+  numerous kind (see the vm-run header).
+- **Sync.** `testvm/sync-hosts.sh bigfoot` copies testvm/ and stick/ there,
+  and the default run includes it.
 
 ## Adding a host
 

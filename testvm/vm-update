@@ -2304,7 +2304,15 @@ def run_guest(name: str, args, hosts: list[str | None], res: dict, out: Path, ho
             remove_empty_ram_dir(g)
 
 
+def arch_hosts(name: str, hosts: list[str | None]) -> list[str | None]:
+    """HOSTS without the other hosts whose architecture isn't guest NAME's (hosts.json's arch; a
+    guest's by its name, hosts.guest_arch): an arm64 guest's copies are never merged on Chopin,
+    nor an amd64 one's on Bigfoot.  None (this host) stays."""
+    return [h for h in hosts if h is None or HOSTS_TABLE.runs_on(name, h)]
+
+
 def update(name: str, args, hosts: list[str | None]) -> str:
+    hosts = arch_hosts(name, hosts)
     if args.status or args.finish or args.reproject:
         g = Guest(name)
         what = "--status" if args.status else "--finish" if args.finish else "--reproject"

@@ -28,8 +28,10 @@
 # both hosts end with the whole set and the same SHA256SUMS.
 #
 # Distribution.  --dist-hosts names hosts of testvm/hosts.json that build
-# nothing this round (copland, cage; all: every enabled host --hosts doesn't
-# name) to get the round too.  Once the builds pass, the Mac copies
+# nothing this round (copland, cage; all: every enabled amd64 host --hosts
+# doesn't name) to get the round too.  An arm64 host (hosts.json's arch:
+# bigfoot) is refused: a round's binaries are amd64 ones (docs/design/arm64.md
+# A2 adds its own).  Once the builds pass, the Mac copies
 # roundROUND/bin whole (both build-*.files and build-*.tsv, SHA256SUMS,
 # restic-commit) from Chopin, or from the one build host --hosts names, to
 # each: host to host by rsync, else through the Mac when the source can't
@@ -193,7 +195,7 @@ if [[ $mode == mac ]]; then
     dl=""
     if [[ -n $dist ]]; then
         if [[ $dist == all ]]; then
-            dnames=$(hosts_names) || die "no hosts from testvm/hosts.json"
+            dnames=$(hosts_names --arch amd64) || die "no hosts from testvm/hosts.json"
         else
             dnames=$(echo "$dist" | tr ',' ' ')
         fi
@@ -204,6 +206,8 @@ if [[ $mode == mac ]]; then
             fi
             ds=$(hosts_get "$d" ssh) && [[ -n $ds ]] ||
                 die "--dist-hosts: $d isn't an enabled host of testvm/hosts.json ($(hosts_phrase))"
+            da=$(hosts_arch "$d") && [[ $da == amd64 ]] ||
+                die "--dist-hosts: $d is an ${da:-unknown} host (testvm/hosts.json's arch), and a round's binaries are amd64"
             [[ " $dl " == *" $d="* ]] || dl+=" $d=$ds"
         done
         dl=${dl# }

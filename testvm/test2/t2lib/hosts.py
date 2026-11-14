@@ -25,6 +25,16 @@ A row (hosts.json's notes say more):
     default          a host of a run without --hosts
     enabled          false: a reserved row (a host to come); no list or lookup has it
                      unless asked for every row (all_=True, --all)
+    arch             optional, one of ARCHES (amd64, arm64; absent: amd64, as every host
+                     was before the field): the host's guests' and binaries' architecture.
+                     A guest runs only on a host of its own (guest_arch: a guest named
+                     *-arm64 is arm64, every other amd64), and the x86 loops (bs2, holt's
+                     bko-holt shipping, build-round.sh's and promote-bins.sh's defaults)
+                     take only amd64 hosts
+    job_slice        optional, a systemd slice (bko.slice) or null: every heavy job there
+                     (a guest's QEMU, cmp-run.sh's work) runs in it, started by job_prefix()'s
+                     sudo -n systemd-run --scope --slice=SLICE -- setpriv ... -- CMD (vm-run
+                     and cmp-run.sh do it themselves)
 
 A host's limits (LIMITS: each optional, in its row, else the table's class_limits for its
 class, else the default; limits() and limit() resolve them, and a name not in the table
@@ -45,12 +55,17 @@ gets the defaults):
 The defaults are what every host had before the table had limits.
 
 Command line (what hosts.sh wraps; exit 0 ok, 1 no such host, 2 usage or a bad table):
-    hosts.py names [--all] [--default] [--role R] [--class C] [--field F]
+    hosts.py names [--all] [--default] [--role R] [--class C] [--arch A] [--field F]
                    the names, one a line, in the table's order (--field: that field instead)
     hosts.py get NAME FIELD [--all]
                    one field of NAME's row (NAME may be HOST.DOMAIN; a list: its
                    items, space-separated; null: an empty line)
     hosts.py phrase [--all]   the known names as "a, b, c or d", for messages
+    hosts.py arch NAME        NAME's arch (amd64 when its row has none; a name in no row: amd64)
+    hosts.py guest-arch GUEST  GUEST's arch (guest_arch)
+    hosts.py job-prefix NAME [USER]
+                              NAME's job_prefix, one word a line (nothing: no job_slice, or
+                              a name in no row); USER default the row's ssh user
     hosts.py limit NAME FIELD  NAME's limit FIELD (limits above; a name not in the table: the
                               default), for cmp-run.sh's BASE_GIB
     hosts.py check            the table checks: prints its path
@@ -65,12 +80,21 @@ ENV = "BKO_HOSTS_JSON"
 TESTVM = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 TABLE = os.path.join(TESTVM, "hosts.json")
 FIELDS = ("name", "ssh", "ip", "host_key_alias", "slot_range", "stic_ports", "class", "roles", "default",
-          "enabled")
+          "enabled", "arch", "job_slice")
 REQUIRED = ("name", "ssh", "slot_range", "stic_ports", "class", "roles", "default", "enabled")
 # A host's limits and their defaults (the docstring): optional row fields, and the fields of
 # the table's class_limits {CLASS: {FIELD: VALUE}}.
 LIMITS = {"stic_slots": 3, "guest_slots": 3, "holt_jobs": 3, "base_gib": 6, "holt_disk_mode": False, "bs2_slots": 3}
 FIELDS += tuple(LIMITS)
+# A host's architecture (its row's arch, else DEFAULT_ARCH), Debian's names; MACHINES maps
+# uname -m's to them.  A guest's is in its name (guest_arch): GUEST_ARCH_SUFFIXES.
+ARCHES = ("amd64", "arm64")
+DEFAULT_ARCH = "amd64"
+MACHINES = {"x86_64": "amd64", "amd64": "amd64", "aarch64": "arm64", "arm64": "arm64"}
+GUEST_ARCH_SUFFIXES = {"-arm64": "arm64"}
+# Optional fields' values when a row leaves them out (get, names --field).
+FIELD_DEFAULTS = {"arch": DEFAULT_ARCH}
+SLICE_RE = re.compile(r"[A-Za-z0-9_.:-]+\.slice\Z")
 NAME_RE = re.compile(r"[a-z][a-z0-9-]*\Z")
 SSH_RE = re.compile(r"[A-Za-z0-9._-]+@[A-Za-z0-9._-]+\Z")
 RANGE_RE = re.compile(r"(\d+)-(\d+)\Z")
@@ -194,6 +218,10 @@ def check_table(t):
         for k in ("default", "enabled"):
             if k in r and type(r[k]) is not bool:
                 errs.append(f"{at}: {k}: true or false")
+        if "arch" in r and r["arch"] not in ARCHES:
+            errs.append(f"{at}: arch {r['arch']!r}: one of {', '.join(ARCHES)}")
+        if r.get("job_slice") is not None and not (isinstance(r["job_slice"], str) and SLICE_RE.match(r["job_slice"])):
+            errs.append(f"{at}: job_slice {r['job_slice']!r}: a systemd slice's name (NAME.slice) or null")
         for k in LIMITS:
             if k in r and limit_error(k, r[k]):
                 errs.append(f"{at}: {k} {r[k]!r}: {limit_error(k, r[k])}")
@@ -229,12 +257,12 @@ def rows(all_=False, table=None):
     return [r for r in t["hosts"] if all_ or r["enabled"]]
 
 
-def names(all_=False, default=None, role=None, cls=None, table=None):
+def names(all_=False, default=None, role=None, cls=None, table=None, arch=None):
     """Names, in the table's order: enabled (all_: every row), default (None: either),
-    with ROLE, of class CLS."""
+    with ROLE, of class CLS, of architecture ARCH (row_arch)."""
     return tuple(r["name"] for r in rows(all_, table)
                  if (default is None or r["default"] is default) and (role is None or role in r["roles"])
-                 and (cls is None or r["class"] == cls))
+                 and (cls is None or r["class"] == cls) and (arch is None or row_arch(r) == arch))
 
 
 def known(table=None):
@@ -314,6 +342,61 @@ def class_rank(name, table=None):
     return list(t["classes"]).index(r["class"]) if r else 0
 
 
+def row_arch(r):
+    """A row's architecture: its arch, else DEFAULT_ARCH."""
+    return r.get("arch") or DEFAULT_ARCH
+
+
+def host_arch(name, table=None):
+    """NAME's architecture (amd64, arm64): its row's (a reserved row's too), DEFAULT_ARCH when
+    the row has none or NAME is in no row (every host was amd64 before the field)."""
+    r = find(name, True, table)
+    return row_arch(r) if r else DEFAULT_ARCH
+
+
+def machine_arch(machine):
+    """uname -m's machine (x86_64, aarch64) as an arch (amd64, arm64); None: not one of ARCHES."""
+    return MACHINES.get(str(machine or "").strip().lower())
+
+
+def guest_arch(guest):
+    """A guest's architecture, by its name: arm64 for debian13-arm64 (GUEST_ARCH_SUFFIXES),
+    DEFAULT_ARCH for every other.  A cell's or a queue line's variant (pop24+img,
+    debian13-arm64+img) and a vms/ path's last part count as the guest's."""
+    g = str(guest or "").rstrip("/").rsplit("/", 1)[-1].split("+", 1)[0]
+    for suffix, a in GUEST_ARCH_SUFFIXES.items():
+        if g.endswith(suffix):
+            return a
+    return DEFAULT_ARCH
+
+
+def runs_on(guest, name, table=None):
+    """Whether GUEST may run on host NAME: their architectures are the same."""
+    return guest_arch(guest) == host_arch(name, table)
+
+
+def job_slice(name, table=None):
+    """NAME's job_slice (bko.slice), or None: none, or NAME in no enabled row."""
+    r = find(name, table=table)
+    return (r or {}).get("job_slice") or None
+
+
+def job_prefix(name, user=None, table=None):
+    """The words that start a heavy job (a guest's QEMU, cmp-run.sh's work) on NAME in its
+    job_slice, as USER (default the row's ssh user) with that user's own groups (kvm among
+    them: systemd-run's --uid keeps sudo's root group instead):
+        sudo -n systemd-run --scope --quiet --slice=SLICE -- setpriv --reuid=USER
+            --regid=USER --init-groups --reset-env --
+    [] when NAME has no job_slice.  --reset-env clears the environment: a caller that needs
+    its own puts env NAME=VALUE... after the prefix (vm-run does)."""
+    s = job_slice(name, table)
+    if not s:
+        return []
+    u = user or row(name, table=table)["ssh"].split("@", 1)[0]
+    return ["sudo", "-n", "systemd-run", "--scope", "--quiet", f"--slice={s}", "--",
+            "setpriv", f"--reuid={u}", f"--regid={u}", "--init-groups", "--reset-env", "--"]
+
+
 def ssh(name, table=None):
     return row(name, table=table)["ssh"]
 
@@ -357,8 +440,9 @@ def _value(v):
 
 def main(argv=None):
     argv = list(sys.argv[1:] if argv is None else argv)
-    usage = ("usage: hosts.py names [--all] [--default] [--role R] [--class C] [--field F] | "
-             "get NAME FIELD [--all] | limit NAME FIELD | phrase [--all] | check")
+    usage = ("usage: hosts.py names [--all] [--default] [--role R] [--class C] [--arch A] [--field F] | "
+             "get NAME FIELD [--all] | limit NAME FIELD | phrase [--all] | arch NAME | guest-arch GUEST | "
+             "job-prefix NAME [USER] | check")
     if not argv:
         print(usage, file=sys.stderr)
         return 2
@@ -369,7 +453,7 @@ def main(argv=None):
         a = rest[i]
         if a in ("--all", "--default"):
             opts[a] = True
-        elif a in ("--role", "--class", "--field"):
+        elif a in ("--role", "--class", "--field", "--arch"):
             if i + 1 >= len(rest):
                 print(f"hosts.py: {a} needs a value", file=sys.stderr)
                 return 2
@@ -388,15 +472,28 @@ def main(argv=None):
             if f not in FIELDS:
                 print(f"hosts.py: no such field {f} (fields: {', '.join(FIELDS)})", file=sys.stderr)
                 return 2
+            if opts.get("--arch") is not None and opts["--arch"] not in ARCHES:
+                print(f"hosts.py: no such arch {opts['--arch']} (arches: {', '.join(ARCHES)})", file=sys.stderr)
+                return 2
             for n in names(opts.get("--all", False), True if opts.get("--default") else None,
-                           opts.get("--role"), opts.get("--class"), table=t):
-                print(_value(row(n, True, t).get(f)))
+                           opts.get("--role"), opts.get("--class"), table=t, arch=opts.get("--arch")):
+                print(_value(row(n, True, t).get(f, FIELD_DEFAULTS.get(f))))
             return 0
         if word == "get" and len(pos) == 2 and not set(opts) - {"--all"}:
             if pos[1] not in FIELDS:
                 print(f"hosts.py: no such field {pos[1]} (fields: {', '.join(FIELDS)})", file=sys.stderr)
                 return 2
-            print(_value(row(pos[0], opts.get("--all", False), t).get(pos[1])))
+            print(_value(row(pos[0], opts.get("--all", False), t).get(pos[1], FIELD_DEFAULTS.get(pos[1]))))
+            return 0
+        if word == "arch" and len(pos) == 1 and not opts:
+            print(host_arch(pos[0], t))
+            return 0
+        if word == "guest-arch" and len(pos) == 1 and not opts:
+            print(guest_arch(pos[0]))
+            return 0
+        if word == "job-prefix" and len(pos) in (1, 2) and not opts:
+            for w in job_prefix(pos[0], pos[1] if len(pos) == 2 else None, t):
+                print(w)
             return 0
         if word == "limit" and len(pos) == 2 and not opts:
             if pos[1] not in LIMITS:

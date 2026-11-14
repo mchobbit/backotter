@@ -850,7 +850,25 @@ def probe(host, bin_dir, wt, hist, guests):
     rc, out, err = run_script(host, PROBE_SH, bin_dir, wt, hist, *guests, t=120)
     if rc != 0 or "END" not in out:
         return None
-    return parse_probe(out)
+    return arch_only(host, parse_probe(out))
+
+
+def arch_only(host, p):
+    """Probe P of host with the images of guests of another architecture left out (the host
+    table's arch; a guest's by its name, hosts.guest_arch): such a guest is never started there,
+    as a guest without its image isn't (has_vm)."""
+    if p is not None and p.get("vms") is not None:
+        a = HOSTS_TABLE.host_arch(host)
+        p["vms"] = {g for g in p["vms"] if HOSTS_TABLE.guest_arch(g) == a}
+    return p
+
+
+def no_arch_host(guests, hosts):
+    """{guest: why} of the guests no host of hosts has the architecture of."""
+    have = {HOSTS_TABLE.host_arch(h) for h in hosts}
+    return {g: f"an {HOSTS_TABLE.guest_arch(g)} guest, and no {HOSTS_TABLE.guest_arch(g)} host in --hosts "
+               f"({', '.join(hosts)}: hosts.json's arch)"
+            for g in guests if HOSTS_TABLE.guest_arch(g) not in have}
 
 
 def parse_probe(out):
@@ -1725,6 +1743,15 @@ def self_test():
     check(out["vms"] == {"short"} and out["have"] == {"linux/restic-bko"}, f"probe: VM lines ({out['vms']})")
     check(parse_probe("BIN linux/restic-bko\nVM short\nEND\n")["vms"] is None,
           "probe: no VMS line, no images known (a VM line alone counts for nothing)")
+    both = "VMS\nVM debian13\nVM debian13-arm64\nEND\n"
+    check(arch_only("chopin", parse_probe(both))["vms"] == {"debian13"}
+          and arch_only("bigfoot", parse_probe(both))["vms"] == {"debian13-arm64"}
+          and arch_only("bigfoot", parse_probe("END\n"))["vms"] is None,
+          "probe: a host's images of another arch's guests are left out (hosts.json's arch)")
+    check(no_arch_host(["debian13", "debian13-arm64"], ["chopin", "cinqcent"]).keys() == {"debian13-arm64"}
+          and no_arch_host(["debian13", "debian13-arm64"], ["bigfoot"]).keys() == {"debian13"}
+          and no_arch_host(["debian13", "debian13-arm64"], ["copland", "bigfoot"]) == {},
+          "an arm64 guest needs an arm64 host in --hosts, an amd64 one an amd64 host")
     if shutil.which("bash"):
         with tempfile.TemporaryDirectory(prefix="drive-probe-") as home:
             vd = os.path.join(home, "backotter-work", "vms")
@@ -2047,6 +2074,7 @@ def main():
     est, src = estimates(set(guests), [x for p in probes.values() for x in p["hist"]], readme_estimates())
     unrunnable = {g: f"no host has {spec[g].os}/rustic-bko and {RESTIC_FROM.get(spec[g].os, spec[g].os)}/restic-bko in {a.bin}"
                   for g in guests if not any(has_bins(spec[g], probes[h]["have"]) for h in a.hosts)}
+    unrunnable.update(no_arch_host(guests, a.hosts))
     if a.dry_run:
         print(f"drive.py --dry-run: round {a.round}, mark {a.logs_mark}, binaries {a.bin}, checks from {disp(wt)}, "
               f"{len(guests)} guests" + (f" (excluded: {', '.join(sorted(excl))})" if excl else ""))

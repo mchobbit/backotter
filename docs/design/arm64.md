@@ -410,6 +410,183 @@ rustic-bko a byte-for-byte check.
 - drive.py's self-test covers its new checks.
 - test_arch.py and test_round_dist.py were updated.
 
+## What A3 built (2026-11-14)
+
+- **The table.** `holt/src/arch.rs` has one row of names for each
+  architecture, `arch::X86_64` and `arch::AARCH64` (struct `Names`):
+
+  | field | x86_64 | aarch64 |
+  |---|---|---|
+  | `machine`, `debian`, `efi` | `x86_64`, `amd64`, `x64` | `aarch64`, `arm64`, `aa64` |
+  | `fallback` | `EFI/BOOT/BOOTX64.EFI` | `EFI/BOOT/BOOTAA64.EFI` |
+  | `grub`, `shim` | `grubx64.efi`, `shimx64.efi` | `grubaa64.efi`, `shimaa64.efi` |
+  | `systemd_boot`, `refind` | `systemd-bootx64.efi`, `refind_x64.efi` | `systemd-bootaa64.efi`, `refind_aa64.efi` |
+  | `grub_efi_target`, `grub_bios_target` | `x86_64-efi`, `i386-pc` | `arm64-efi`, none |
+  | `grub_efi_packages` | the old list, unchanged | `grub-efi-arm64-signed`, `grub-efi-arm64`, `grub-arm64-efi`, `grub2-efi-aa64` |
+  | `grub_bios_packages` | `grub-pc`, `grub-i386-pc` | none |
+  | `shim_packages` | `shim-signed`, `shim-x64`, `anduinos-shim-signed` | `shim-signed`, `shim-aa64` |
+  | `last_resort_packages` | the old list | `grub-efi-arm64`, `systemd-boot` |
+
+  - x86_64's row holds exactly the names bko-holt used before. Limine's
+    binary has the fallback path's name. MokManager and shim's fallback
+    (`mmaa64.efi`, `fbaa64.efi`) come back with the ESP, and no code names
+    them, on either architecture.
+  - **Readers.** On the dump side, `boot::detect_loader_on` takes a row:
+    the fallback path, a fallback that is a copy of shim, the ESP's GRUB,
+    systemd-boot and rEFInd files, and every package list. `detect_loader`
+    is x86_64's. `boot_json` passes `arch::names_of(sys)`, the machine's
+    row. `grub_json` (the `*-efi-signed` directory) and `proxmox_mode` read
+    the row too.
+  - On the load side, `commands.rs`'s `boot_names()` returns the dump's row
+    (`arch::names_of_dump`). These read it: `grub-install --target`, the
+    fallback path and its GRUB-copy check under `--reformat`, the store
+    systems' images and `store_removable`, `bootloader_id`'s ESP scan, the
+    AnduinOS note, Proxmox's systemd-boot entry, and ELILO's `--removable`.
+    `zfsbootmenu.rs` reads its notes' fallback path from the row too.
+  - `boot::PACKAGES` gained the ARM64 names (`grub-efi-arm64-bin`,
+    `shim-helpers-arm64-signed`, `linux-image-arm64`,
+    `linux-image-cloud-arm64`, `grub2-efi-aa64`, `shim-aa64`,
+    `grub-arm64-efi`). No amd64 system has them, so no fingerprint changes.
+    `testvm/update/fingerprint.py`'s PACKAGES, which test_vm_update holds
+    to boot.rs's, gained the same names.
+  - fingerprint.py's `LAYOUT_DROP` drops `firmware.efi_arch`, as Bazzite's
+    B2 did for its new keys (`os.machine` is under `os.`, already dropped).
+    Without that, the first vm-update dump with the A3 bko-holt would move
+    every UEFI guest's layout digest and lose its carry. Checked on the
+    corpus: all 38 UEFI x86 dumps keep their digest with both keys added.
+  - **Left x86-only, by name.** These distros ship no ARM64 build that
+    bko-holt supports:
+    - TrueNAS (`load/truenas.rs`).
+    - Solus's `bootloaderx64.efi`.
+    - Ubuntu Core, whose load already refuses every model but amd64 `pc`.
+    - LILO and ELILO's detection.
+  - Every `i386-pc` path is BIOS, and load never reaches one for an ARM64
+    dump (below). `bko-holt load --help` still says `BOOTX64.EFI`, so that
+    x86_64's output stays the same.
+- **dump records the architecture.**
+  - `os.machine` is the kernel's name for the machine (`uname -m`):
+    `/proc/sys/kernel/arch`, or else `uname -m`.
+  - A tree other than `/` (`--sysroot`, the tests' fake systems) that says
+    neither is `x86_64`, so the tests give the same results on any host.
+  - `/` with neither is the binary's own architecture.
+  - `os.architecture` is unchanged: the dumping binary's own
+    (`std::env::consts::ARCH`).
+  - On UEFI, `firmware.efi_arch` is UEFI's name for the firmware:
+    - `x64`, or `ia32` when an x86_64 kernel runs on 32-bit firmware
+      (`fw_platform_size` 32)
+    - `aa64` on ARM64
+  - A dump made before A3 has no `os.machine`. It counts as
+    `os.architecture`'s machine, which is `x86_64` in every such dump, or
+    as `x86_64` without either (`arch::dump_machine`).
+  - `Arch::parse` also takes the BSDs' `amd64` and `arm64` and illumos's
+    `i86pc` (64-bit only). Without that, a FreeBSD or OmniOS rescuer, whose
+    `uname -m` it reads, would have been refused.
+- **load refuses another architecture early.** `arch::check_load` runs in
+  `load::run`, right after the layout is parsed, before any stage. Plan,
+  status and a `--commit` run alike stop there with exit 3
+  (`EXIT_UNSUPPORTED`). By then load has scanned no disk, run no command
+  and written nothing: the target scan, mapping and every command come
+  after it. It compares the dump's machine with the rescue system's and
+  names both, for example: "the dump is of an ARM64 system (aarch64), and
+  this rescue system is x86_64 (x86_64): load restores a system only from
+  a rescue system of its own architecture; boot BackOtter's arm64 image
+  (backotter-live-linux-VERSION-arm64.img) on the target machine".
+  - It also refuses an architecture it doesn't know, on either side.
+  - It refuses an ARM64 dump whose firmware mode isn't `uefi`: ARM64 has no
+    BIOS path, and U-Boot and devicetree boot are out of scope.
+- **The fake rescue systems** that plan a dump take the dump's own
+  architecture (`/proc/sys/kernel/arch`): `bugreport::check_plan`, and
+  golden_plans.rs's `common::plan_onto`. Without that, an ARM64 dump's
+  check_plan and golden plan would be refusals.
+- **Fixtures.** No ARM64 guest exists yet (A5), so the corpus has two
+  fixtures, its first that aren't guests' dumps:
+  `holt/tests/corpus/arm64-grub-shim` and `arm64-systemd-boot`, each with
+  `src.json`, `plan.txt` and an index.tsv row (`fixture`, run `a3`). Each
+  is the dump of a fake Debian 13 arm64 tree in arch.rs's tests:
+  - **GRUB through shim.** Debian's arm64 shim, GRUB and MokManager in
+    EFI/debian, shim as `BOOTAA64.EFI` with `fbaa64.efi`,
+    `/boot/grub/arm64-efi`, grub-efi-arm64-signed, the ESP at /boot/efi, and
+    shim's NVRAM entry booted. Its golden plan runs `grub-install
+    --target=arm64-efi --efi-directory=/boot/efi --bootloader-id=debian
+    --no-nvram` and `update-grub`, then makes the entry for
+    `\EFI\debian\shimaa64.efi`.
+  - **systemd-boot.** The ESP as /boot (the Arch and Fedora layout),
+    `EFI/systemd/systemd-bootaa64.efi` and its copy at the fallback path,
+    and its NVRAM entry booted. Its golden plan runs `bootctl install
+    --no-variables`, then makes the entry for
+    `\EFI\systemd\systemd-bootaa64.efi`.
+
+  `arm64_corpus_fixtures_are_these_dumps` holds each src.json to its tree's
+  dump, apart from three things: the tool's version, `os.architecture`
+  (written as the aarch64 binary's), and the mounts' statvfs figures (the
+  test host's, so they are left out). `BKO_HOLT_GOLDEN=bless` rewrites them.
+  The corpus README says the same.
+- **Tests.** arch.rs has 10 tests:
+  - each row's names keep UEFI's pattern, and ARM64 has no BIOS
+  - the machine: the kernel's, then `uname -m`, then the fake system's
+    default
+  - `efi_arch`
+  - pre-A3 dumps: `x86_64`, loaded on an x86_64 rescuer and refused on an
+    ARM64 one
+  - the refusal both ways, and of unknown architectures and non-UEFI
+    ARM64
+  - both fixtures' dump and boot stage, with no x86 name in either
+  - detection from the fallback path, from a copy of shim, from the ESP's
+    files alone (GRUB, systemd-boot, rEFInd, Limine at EFI/BOOT or in
+    EFI/limine) and from packages alone. The same files on x86_64 find
+    nothing.
+  - the refusal before any disk: plan, status and `--through close --commit
+    --erase`, each direction, with a runner that records every command.
+    Nothing ran, and the target disk's bytes are unchanged.
+  - the corpus fixtures
+
+  efi.rs's test checks `efi_arch` `x64`.
+
+### Test results
+
+On cinqcent, from `~/backotter-work/a3-scratch` (a copy of main d23c9ab
+plus A3 only), `cargo test --offline --no-fail-fast`:
+
+| suite | HEAD d23c9ab | HEAD + A3 |
+|---|---|---|
+| lib | 568 passed | 578 passed |
+| golden_plans | 86 plans of 76 dumps, 2 differ | 88 plans of 78 dumps, 2 differ |
+| other test binaries | all pass | the same |
+
+- The 2 that differ in both columns are `ubuntu24-luks` and
+  `ubuntu24-uefi`. classes.json has them as HoltTest2 sources, and the
+  corpus has no dump of either, which was already so at HEAD.
+- Every other plan matches its plan.txt byte for byte, so every x86_64
+  golden plan is unchanged.
+- On Chopin with Rust 1.94.1, `cargo check --all-targets --target
+  aarch64-unknown-linux-musl` is clean. clippy shows no warning in A3's
+  code.
+- testvm/test2's unit tests (all 37 modules, on the Mac): 1803 run, and
+  the same 37 failures and 2 errors as at HEAD d23c9ab, none of them A3's
+  (test_vm_update's `test_packages_are_boot_rs` failed until
+  fingerprint.py's PACKAGES had the ARM64 names).
+- An x86_64 release build on cinqcent loaded `arm64-grub-shim/src.json`.
+  It exited 3 with the refusal above, before anything else. debian13's
+  dump got past the check. Its `dump` of cinqcent records `machine`
+  `x86_64` and `efi_arch` `x64`.
+
+### Not done: the Bigfoot build
+
+Bigfoot was off the network (no ARP reply) from 02:10 to at least 02:45 on
+2026-11-15, and again at 02:55 and 03:18 (ssh timed out), so these still
+need doing:
+- bko-holt `linux-arm64` built natively there from A3's source
+  (build-holt.sh, with `HOLT_SRC`, `HOLT_OUT`, `HOLT_LOGS` and `HOLT_INFO`
+  set to a scratch directory, never `holt-bin`).
+- Its `--version`, and its dump of the A0 Debian arm64 cloud guest: it
+  should record `aarch64` and `aa64`, GRUB through shim and
+  grub-efi-arm64-signed.
+- In that guest, the plan of its own dump, and the refusal of an amd64
+  dump.
+- The test suite run natively on aarch64.
+
+Nothing is promoted into bko-bin or holt-bin.
+
 ## Pieces to build (ordered, est.)
 
 | # | Piece | Est. |

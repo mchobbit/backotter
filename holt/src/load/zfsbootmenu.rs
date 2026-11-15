@@ -126,11 +126,13 @@ impl Builder<'_> {
         }
         // Without NVRAM entries (decision 7: nothing is written beyond what
         // the ESP holds).
-        let fallback = images.iter().any(|i| s(i, "path").is_some_and(|p| p.eq_ignore_ascii_case("EFI/BOOT/BOOTX64.EFI")));
+        // The fallback path is the source machine's (crate::arch).
+        let fb = crate::arch::names_of_dump(&self.layout.v).fallback;
+        let fallback = images.iter().any(|i| s(i, "path").is_some_and(|p| p.eq_ignore_ascii_case(fb)));
         if (self.opts.no_nvram || self.opts.removable) && !fallback {
-            let what = if self.opts.no_nvram { "--no-nvram: no NVRAM entry is made" } else { "--removable: nothing is copied to EFI/BOOT/BOOTX64.EFI" };
+            let what = if self.opts.no_nvram { "--no-nvram: no NVRAM entry is made".to_string() } else { format!("--removable: nothing is copied to {fb}") };
             self.notes.push(format!(
-                "ZFSBootMenu: {what}, and the ESP has no ZFSBootMenu image at EFI/BOOT/BOOTX64.EFI (the source had none), so firmware without the source's NVRAM entries won't boot the copy by itself; add an entry for its image (efibootmgr --create --loader) or copy it to that path"
+                "ZFSBootMenu: {what}, and the ESP has no ZFSBootMenu image at {fb} (the source had none), so firmware without the source's NVRAM entries won't boot the copy by itself; add an entry for its image (efibootmgr --create --loader) or copy it to that path"
             ));
         }
         Vec::new()

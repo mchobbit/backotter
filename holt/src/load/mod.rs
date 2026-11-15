@@ -459,6 +459,12 @@ pub fn run(opts: &Options, layout_text: &str, sys: &Sys) -> (u8, String, String)
         Ok(l) => l,
         Err(e) => return (EXIT_UNSUPPORTED, String::new(), format!("bko-holt load: {}: {e}\n", opts.layout)),
     };
+    // A dump of another architecture than this rescue system's is refused
+    // here, before any stage (plan and status too) reads or writes a disk
+    // (crate::arch).
+    if let Err(e) = crate::arch::check_load(&layout.v, sys) {
+        return (EXIT_UNSUPPORTED, String::new(), format!("bko-holt load: {}: {e}\n", opts.layout));
+    }
     let stages = opts.stages();
     match stages.as_slice() {
         [Stage::Plan] => plan::run(&layout, opts, sys),

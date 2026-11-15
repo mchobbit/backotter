@@ -1,0 +1,475 @@
+{
+  "format": "bko-holt",
+  "schema": 1,
+  "tool": {
+    "name": "bko-holt",
+    "version": "0.2.6"
+  },
+  "generated": "2026-11-14T00:00:00Z",
+  "privileged": true,
+  "host": {
+    "hostname": null,
+    "machine_id": null,
+    "dmi": {
+      "sys_vendor": null,
+      "product_name": null,
+      "product_version": null,
+      "board_vendor": null,
+      "board_name": null,
+      "bios_vendor": null,
+      "bios_version": null,
+      "bios_date": null,
+      "product_uuid": null,
+      "chassis_type": null
+    },
+    "virtualization": null
+  },
+  "os": {
+    "id": "debian",
+    "version_id": "13",
+    "version_codename": "trixie",
+    "pretty_name": "Debian GNU/Linux 13 (trixie)",
+    "debian_version": "13.1",
+    "kernel_release": "6.12.57+deb13-arm64",
+    "kernel_version": null,
+    "architecture": "aarch64",
+    "machine": "aarch64"
+  },
+  "firmware": {
+    "mode": "uefi",
+    "platform_size": 64,
+    "efi_arch": "aa64",
+    "secure_boot": false,
+    "setup_mode": null,
+    "efivars_readable": true
+  },
+  "storage": {
+    "topology": {
+      "vda (disk, 64 MiB, gpt)": {
+        "vda1 (partition, 35 MiB) vfat on /boot/efi": {},
+        "vda2 (partition, 28 MiB) ext4 on /": {}
+      }
+    },
+    "disks": [
+      {
+        "name": "vda",
+        "path": "/dev/vda",
+        "kind": "disk",
+        "devno": "254:0",
+        "size_bytes": 67108864,
+        "size": "64 MiB",
+        "logical_sector_size": 512,
+        "physical_sector_size": 512,
+        "model": null,
+        "vendor": null,
+        "serial": null,
+        "wwid": null,
+        "firmware_revision": null,
+        "transport": "virtio",
+        "rotational": false,
+        "removable": false,
+        "read_only": false,
+        "discard": null,
+        "links": [],
+        "holders": [],
+        "slaves": [],
+        "partition_table": {
+          "type": "gpt",
+          "sector_size": 512,
+          "disk_guid": "6f1c2c3d-0000-4000-8000-0000000aa064",
+          "revision": "1.0",
+          "header_size": 92,
+          "first_usable_lba": 34,
+          "last_usable_lba": 131038,
+          "entries_lba": 2,
+          "entry_count": 128,
+          "entry_size": 128,
+          "primary_header_ok": true,
+          "backup_header": "ok",
+          "backup_lba": 131071,
+          "backup_at_end": true,
+          "protective_mbr": {
+            "present": true,
+            "hybrid": false,
+            "entries": [
+              {
+                "number": 1,
+                "start_lba": 1,
+                "sectors": 131071,
+                "start_bytes": 512,
+                "size_bytes": 67108352,
+                "type": "0xee",
+                "type_name": "GPT",
+                "bootable": false,
+                "logical": false,
+                "extended": false,
+                "uuid": "00000000-01"
+              }
+            ]
+          },
+          "problems": []
+        },
+        "partitions": [
+          {
+            "name": "vda1",
+            "path": "/dev/vda1",
+            "devno": "254:1",
+            "number": 1,
+            "start_lba": 2048,
+            "end_lba": 73727,
+            "sectors": 71680,
+            "start_bytes": 1048576,
+            "size_bytes": 36700160,
+            "type": "c12a7328-f81f-11d2-ba4b-00a0c93ec93b",
+            "type_name": "EFI System",
+            "uuid": "0b5f04ed-e731-4ac6-933e-83ff25657722",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [],
+            "holders": [],
+            "content": {
+              "type": "vfat",
+              "usage": "filesystem",
+              "uuid": "1234-ABCD",
+              "label": null,
+              "version": "FAT32",
+              "fat_bits": 32,
+              "bytes_per_sector": 512,
+              "sectors_per_cluster": 1,
+              "cluster_size": 512,
+              "reserved_sectors": 32,
+              "fats": 2,
+              "fat_sectors": 561,
+              "total_sectors": 71680,
+              "size_bytes": 36700160,
+              "clusters": 70526,
+              "hidden_sectors": 2048,
+              "media": "0xf8",
+              "oem_name": "mkfs.fat",
+              "root_cluster": 2,
+              "fsinfo_sector": 1,
+              "backup_boot_sector": 6,
+              "boot_sector_label": null
+            },
+            "mounted_at": ["/boot/efi"]
+          },
+          {
+            "name": "vda2",
+            "path": "/dev/vda2",
+            "devno": "254:2",
+            "number": 2,
+            "start_lba": 73728,
+            "end_lba": 131038,
+            "sectors": 57311,
+            "start_bytes": 37748736,
+            "size_bytes": 29343232,
+            "type": "0fc63daf-8483-4772-8e79-3d69d8477de4",
+            "type_name": "Linux filesystem",
+            "uuid": "11112222-3333-4444-5555-666677778888",
+            "partlabel": "",
+            "attributes": "0x0000000000000000",
+            "attribute_flags": [],
+            "matches_kernel": true,
+            "links": [],
+            "holders": [],
+            "content": {
+              "type": "ext4",
+              "usage": "filesystem",
+              "uuid": "10111213-1415-1617-1819-1a1b1c1d1e1f",
+              "label": null,
+              "version": "1.0",
+              "block_size": 4096,
+              "blocks": 16384,
+              "size_bytes": 67108864,
+              "free_blocks": 0,
+              "reserved_blocks": 0,
+              "inodes": 8192,
+              "free_inodes": 0,
+              "inode_size": 256,
+              "inodes_per_group": 8192,
+              "blocks_per_group": 32768,
+              "first_data_block": 0,
+              "revision": 1,
+              "features": [
+                "has_journal",
+                "orphan_file",
+                "filetype",
+                "extent",
+                "64bit",
+                "flex_bg",
+                "sparse_super",
+                "metadata_csum"
+              ],
+              "state": "clean",
+              "has_errors": false,
+              "errors_behavior": "continue",
+              "creator_os": "Linux",
+              "reserved_gdt_blocks": 0,
+              "default_hash": "legacy",
+              "hash_seed": "00000000-0000-0000-0000-000000000000",
+              "mkfs_time": 0,
+              "last_mounted_on": "/",
+              "flex_bg_size": 1,
+              "descriptor_size": 0,
+              "journal_inode": 0
+            },
+            "mounted_at": ["/"]
+          }
+        ],
+        "boot_code": {
+          "kind": "none",
+          "first_bytes": "00000000000000000000000000000000",
+          "post_mbr_gap": {
+            "sectors": 2047,
+            "nonzero_sectors_in_first_mib": 2
+          }
+        },
+        "content": null,
+        "mounted_at": []
+      }
+    ],
+    "md_arrays": [],
+    "dm_devices": [],
+    "loop_devices": [],
+    "other_devices": [],
+    "lvm": {
+      "volume_groups": []
+    },
+    "zfs": {
+      "pools_from_labels": [],
+      "zpool_cache": null,
+      "tools": null
+    },
+    "btrfs": [],
+    "xfs_external_logs": [],
+    "mounts": [
+      {
+        "target": "/",
+        "source": "/dev/vda2",
+        "fstype": "ext4",
+        "devno": "254:2",
+        "device": "vda2",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,errors=remount-ro"
+      },
+      {
+        "target": "/boot/efi",
+        "source": "/dev/vda1",
+        "fstype": "vfat",
+        "devno": "254:1",
+        "device": "vda1",
+        "root": "/",
+        "options": "rw,relatime",
+        "super_options": "rw,fmask=0077"
+      }
+    ],
+    "physical_root": "/",
+    "backup_sources": [
+      {
+        "path": "/",
+        "from": "/",
+        "device": "vda2",
+        "fstype": "ext4",
+        "source": "/dev/vda2",
+        "subvol": null
+      },
+      {
+        "path": "/boot/efi",
+        "from": "/boot/efi",
+        "device": "vda1",
+        "fstype": "vfat",
+        "source": "/dev/vda1",
+        "subvol": null
+      }
+    ],
+    "swaps": [],
+    "fstab": [
+      {
+        "spec": "UUID=10111213-1415-1617-1819-1a1b1c1d1e1f",
+        "file": "/",
+        "type": "ext4",
+        "options": "errors=remount-ro",
+        "freq": 0,
+        "passno": 1,
+        "resolves_to": "vda2"
+      },
+      {
+        "spec": "PARTUUID=0b5f04ed-e731-4ac6-933e-83ff25657722",
+        "file": "/boot/efi",
+        "type": "vfat",
+        "options": "umask=0077",
+        "freq": 0,
+        "passno": 1,
+        "resolves_to": "vda1"
+      }
+    ],
+    "crypttab": null,
+    "mdadm_conf": null
+  },
+  "boot": {
+    "loader": {
+      "name": "grub",
+      "firmware": "uefi",
+      "via_shim": true,
+      "package": "grub-efi-arm64-signed",
+      "shim_package": "shim-signed",
+      "evidence": [
+        "firmware booted \\EFI\\debian\\shimaa64.efi",
+        "LoaderInfo says \"GRUB 2.12-9\"",
+        "shim's MOK variables are set",
+        "package grub-efi-arm64-signed is installed"
+      ]
+    },
+    "efi": {
+      "boot_current": "0001",
+      "boot_next": null,
+      "boot_order": ["0001"],
+      "timeout_seconds": null,
+      "entries": [
+        {
+          "number": "0001",
+          "load_option_hex": "010000006400640065006200690061006e00000004012a000100000000080000000000000018010000000000ed045f0b31e7c64a933e83ff256577220202040436005c004500460049005c00640065006200690061006e005c007300680069006d0061006100360034002e0065006600690000007fff0400",
+          "description": "debian",
+          "active": true,
+          "hidden": false,
+          "category": "boot",
+          "in_boot_order": 0,
+          "device_path": [
+            "HD(1,GPT,0b5f04ed-e731-4ac6-933e-83ff25657722,0x800,0x11800)/File(\\EFI\\debian\\shimaa64.efi)"
+          ],
+          "partition": {
+            "number": 1,
+            "table": "gpt",
+            "uuid": "0b5f04ed-e731-4ac6-933e-83ff25657722",
+            "start_lba": 2048,
+            "sectors": 71680,
+            "device": "vda1"
+          },
+          "file": "\\EFI\\debian\\shimaa64.efi",
+          "optional_data_bytes": 0
+        }
+      ],
+      "loader_interface": {
+        "loader_info": "GRUB 2.12-9",
+        "loader_device_partuuid": null,
+        "loader_image_identifier": null,
+        "loader_entry_selected": null,
+        "loader_entry_default": null,
+        "stub_info": null
+      },
+      "shim_variables": ["MokListRT"]
+    },
+    "esps": [
+      {
+        "device": "vda1",
+        "mounted_at": "/boot/efi",
+        "contents": {
+          "files": [
+            {
+              "path": "EFI/BOOT/BOOTAA64.EFI",
+              "size": 300,
+              "same_as": "EFI/debian/shimaa64.efi"
+            },
+            {
+              "path": "EFI/BOOT/fbaa64.efi",
+              "size": 100
+            },
+            {
+              "path": "EFI/BOOT/mmaa64.efi",
+              "size": 200,
+              "same_as": "EFI/debian/mmaa64.efi"
+            },
+            {
+              "path": "EFI/debian/BOOTAA64.CSV",
+              "size": 55
+            },
+            {
+              "path": "EFI/debian/grub.cfg",
+              "size": 117
+            },
+            {
+              "path": "EFI/debian/grubaa64.efi",
+              "size": 400
+            },
+            {
+              "path": "EFI/debian/mmaa64.efi",
+              "size": 200,
+              "same_as": "EFI/BOOT/mmaa64.efi"
+            },
+            {
+              "path": "EFI/debian/shimaa64.efi",
+              "size": 300,
+              "same_as": "EFI/BOOT/BOOTAA64.EFI"
+            }
+          ],
+          "debian_grub_stub": {
+            "search_uuids": ["10111213-1415-1617-1819-1a1b1c1d1e1f"],
+            "prefix": "($root)/boot/grub",
+            "configfile": "$prefix/grub.cfg"
+          }
+        }
+      }
+    ],
+    "grub": {
+      "dir": "/boot/grub",
+      "installed_platforms": ["arm64-efi"],
+      "grub_cfg": {
+        "entries": ["Debian GNU/Linux"],
+        "search_uuids": [],
+        "modules": [],
+        "default_linux": "/boot/vmlinuz-6.12.57+deb13-arm64 root=UUID=10111213-1415-1617-1819-1a1b1c1d1e1f ro",
+        "default_initrd": null,
+        "lang": null
+      },
+      "grubenv": null,
+      "default_grub": {},
+      "debconf": null
+    },
+    "systemd_boot": null,
+    "kernels": {
+      "installed": [
+        {
+          "version": "6.12.57+deb13-arm64",
+          "vmlinuz_bytes": 1,
+          "initrd_bytes": 1,
+          "config": false,
+          "running": true,
+          "modules_installed": true
+        }
+      ],
+      "symlinks": {}
+    },
+    "cmdline": {
+      "raw": "BOOT_IMAGE=/boot/vmlinuz-6.12.57+deb13-arm64 root=UUID=10111213-1415-1617-1819-1a1b1c1d1e1f ro",
+      "words": [
+        "BOOT_IMAGE=/boot/vmlinuz-6.12.57+deb13-arm64",
+        "root=UUID=10111213-1415-1617-1819-1a1b1c1d1e1f",
+        "ro\n"
+      ],
+      "storage": {
+        "BOOT_IMAGE": "/boot/vmlinuz-6.12.57+deb13-arm64",
+        "root": "UUID=10111213-1415-1617-1819-1a1b1c1d1e1f"
+      }
+    },
+    "kernel_cmdline_file": null,
+    "initramfs": {
+      "generator": "initramfs-tools",
+      "modules": null,
+      "compress": null,
+      "resume": null,
+      "crypttab_in_initramfs": false
+    },
+    "packages": {
+      "grub-efi-arm64": "2.12-9+deb13u2",
+      "grub-efi-arm64-signed": "1+2.12+9+deb13u2",
+      "shim-signed": "1.47+15.8-1",
+      "initramfs-tools": "0.148.3",
+      "grub-efi-arm64-bin": "2.12-9+deb13u2",
+      "linux-image-arm64": "6.12.57-1"
+    }
+  },
+  "warnings": []
+}

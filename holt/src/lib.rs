@@ -7,6 +7,7 @@
 
 
 pub mod abroot;
+pub mod arch;
 pub mod blockdev;
 pub mod boot;
 pub mod bootcode;

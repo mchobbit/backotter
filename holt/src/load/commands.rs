@@ -3415,14 +3415,16 @@ impl Builder<'_> {
             ("grub", true) if store.is_some() => {
                 let st = store.expect("a store system");
                 self.notes.push(st.uefi_grub.into());
-                let img = self.esp_file("/grubx64.efi").unwrap_or_else(|| format!("EFI/{}/grubx64.efi", self.bootloader_id()));
+                let g = self.boot_names().grub;
+                let img = self.esp_file(&format!("/{g}")).unwrap_or_else(|| format!("EFI/{}/{g}", self.bootloader_id()));
                 out.extend(self.store_removable(&img));
                 self.check_store_grub_cfg(st);
             }
             ("grub", true) => {
                 let esp = self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).unwrap_or("/boot/efi").to_string();
                 let id = self.bootloader_id();
-                let mut a = vec!["chroot".to_string(), t.clone(), "grub-install".into(), "--target=x86_64-efi".into(), format!("--efi-directory={esp}"), format!("--bootloader-id={id}"), "--no-nvram".into()];
+                let n = self.boot_names();
+                let mut a = vec!["chroot".to_string(), t.clone(), "grub-install".into(), format!("--target={}", n.grub_efi_target), format!("--efi-directory={esp}"), format!("--bootloader-id={id}"), "--no-nvram".into()];
                 if self.opts.removable {
                     a.push("--force-extra-removable".into());
                 }
@@ -3430,7 +3432,7 @@ impl Builder<'_> {
                 // (Calamares's installEFIFallback) reads only the old type,
                 // so firmware that falls back to it would stop in grub rescue.
                 // It's renewed with GRUB.  (FAT finds EFI/BOOT in any case.)
-                let (fallback, loader) = (format!("{t}{esp}/EFI/BOOT/BOOTX64.EFI"), format!("{t}{esp}/EFI/{id}/grubx64.efi"));
+                let (fallback, loader) = (format!("{t}{esp}/{}", n.fallback), format!("{t}{esp}/EFI/{id}/{}", n.grub));
                 let renew = !self.opts.reformats.is_empty() && !self.opts.removable;
                 if renew {
                     out.push(Cmd::new(&["sh", "-c", &format!("rm -f {RUN_DIR}/fallback-is-grub; [ ! -f {fallback} ] || ! cmp -s {fallback} {loader} || touch {RUN_DIR}/fallback-is-grub")]).why("--reformat: is the fallback loader a copy of GRUB?"));
@@ -3450,7 +3452,8 @@ impl Builder<'_> {
             }
             ("systemd-boot", true) if store.is_some_and(|s| s.systemd_boot.is_some()) => {
                 self.notes.push(store.and_then(|s| s.systemd_boot).unwrap_or_default().into());
-                let img = self.esp_file("/systemd-bootx64.efi").unwrap_or_else(|| "EFI/systemd/systemd-bootx64.efi".into());
+                let sd = self.boot_names().systemd_boot;
+                let img = self.esp_file(&format!("/{sd}")).unwrap_or_else(|| format!("EFI/systemd/{sd}"));
                 out.extend(self.store_removable(&img));
             }
             ("systemd-boot", true) => {
@@ -3738,8 +3741,9 @@ impl Builder<'_> {
             Some(fp) => format!("the MOK {cert} (SHA-256 {fp})"),
             None => format!("the MOK {cert} (its fingerprint not in the dump)"),
         };
+        let target = self.boot_names().grub_efi_target;
         format!(
-            "AnduinOS: shim, MokManager and AnduinOS's GRUB, signed with {key}, are the restored ESP's; grub-install --target=x86_64-efi isn't run (AnduinOS's is plain GRUB and would write an unsigned image), only grub.cfg is remade.  On the same machine its firmware holds the key; on other hardware with Secure Boot on, enroll it again (`mokutil --import {cert}`, then confirm it at MokManager on the next boot) or turn Secure Boot off"
+            "AnduinOS: shim, MokManager and AnduinOS's GRUB, signed with {key}, are the restored ESP's; grub-install --target={target} isn't run (AnduinOS's is plain GRUB and would write an unsigned image), only grub.cfg is remade.  On the same machine its firmware holds the key; on other hardware with Secure Boot on, enroll it again (`mokutil --import {cert}`, then confirm it at MokManager on the next boot) or turn Secure Boot off"
         )
     }
 
@@ -3973,6 +3977,12 @@ impl Builder<'_> {
         )
     }
 
+    /// The source machine's boot names (crate::arch): grubx64.efi or
+    /// grubaa64.efi, x86_64-efi or arm64-efi, BOOTX64.EFI or BOOTAA64.EFI.
+    pub(crate) fn boot_names(&self) -> &'static crate::arch::Names {
+        crate::arch::names_of_dump(&self.layout.v)
+    }
+
     /// The path on the first ESP, as the dump listed it, of the file whose
     /// name ends in `suffix` (any case), outside EFI/BOOT.
     fn esp_file(&self, suffix: &str) -> Option<String> {
@@ -3984,16 +3994,18 @@ impl Builder<'_> {
     }
 
     /// A store system (NixOS, Guix System) with --removable: the ESP's
-    /// loader image `img` (a path on the ESP) is copied to
-    /// EFI/BOOT/BOOTX64.EFI, unless the restored ESP has one (bootctl
-    /// install, which NixOS runs, writes it).  Nothing runs in the chroot.
+    /// loader image `img` (a path on the ESP) is copied to the fallback
+    /// path, EFI/BOOT/BOOTX64.EFI (BOOTAA64.EFI on ARM64), unless the
+    /// restored ESP has one (bootctl install, which NixOS runs, writes it).
+    /// Nothing runs in the chroot.
     fn store_removable(&self, img: &str) -> Vec<Cmd> {
         if !self.opts.removable {
             return Vec::new();
         }
         let esp = format!("{}{}", self.opts.target, self.layout.str_at(&["boot", "esps", "0", "mounted_at"]).unwrap_or("/boot").trim_end_matches('/'));
         let (src, dir) = (shell_quote(&format!("{esp}/{img}")), shell_quote(&format!("{esp}/EFI/BOOT")));
-        vec![Cmd::new(&["sh", "-c", &format!("[ -e {dir}/BOOTX64.EFI ] || {{ mkdir -p {dir} && cp {src} {dir}/BOOTX64.EFI; }}")]).why("--removable: the ESP's loader at the fallback path too")]
+        let f = self.boot_names().fallback_file;
+        vec![Cmd::new(&["sh", "-c", &format!("[ -e {dir}/{f} ] || {{ mkdir -p {dir} && cp {src} {dir}/{f}; }}")]).why("--removable: the ESP's loader at the fallback path too")]
     }
 
     /// The target disks whose source has GRUB's BIOS core in its BIOS boot
@@ -4061,11 +4073,13 @@ impl Builder<'_> {
         if let Some(id) = entries.iter().find_map(|e| e.get("file").and_then(Value::as_str).and_then(dir_of)) {
             return id;
         }
+        let n = self.boot_names();
+        let (shim, grub) = (format!("/{}", n.shim), format!("/{}", n.grub));
         for esp in self.layout.arr(&["boot", "esps"]) {
             let files = esp.at(&["contents", "files"]).and_then(Value::as_array).into_iter().flatten();
             for path in files.filter_map(|f| f.get("path").and_then(Value::as_str)) {
                 let low = path.to_ascii_lowercase();
-                if low.ends_with("/shimx64.efi") || low.ends_with("/grubx64.efi") {
+                if low.ends_with(&shim) || low.ends_with(&grub) {
                     if let Some(id) = dir_of(path) {
                         return id;
                     }
@@ -4098,7 +4112,7 @@ impl Builder<'_> {
             let (Some(file), Some(part)) = (s(e, "file"), e.at(&["partition", "device"]).and_then(Value::as_str)) else { continue };
             // proxmox-boot-tool init's bootctl install makes this one (the
             // same partition and file) itself: not made twice.
-            if proxmox_sd.iter().any(|d| d == part) && file.replace('/', "\\").trim_start_matches('\\').eq_ignore_ascii_case("EFI\\systemd\\systemd-bootx64.efi") {
+            if proxmox_sd.iter().any(|d| d == part) && file.replace('/', "\\").trim_start_matches('\\').eq_ignore_ascii_case(&format!("EFI\\systemd\\{}", self.boot_names().systemd_boot)) {
                 self.notes.push(format!("UEFI entry {desc:?} ({part}, {file}): proxmox-boot-tool init's bootctl install makes it again; not recreated"));
                 continue;
             }
@@ -4744,9 +4758,10 @@ impl Builder<'_> {
                     let loader = s(c, "loader").unwrap_or_default();
                     let name = loader.rsplit('/').next().unwrap_or("elilo.efi").to_string();
                     let (from, to) = (shell_quote(&format!("{esp}/{dir}")), shell_quote(&format!("{esp}/EFI/BOOT")));
+                    let fb = self.boot_names().fallback_file;
                     out.push(
-                        Cmd::new(&["sh", "-c", &format!("[ -e {to}/BOOTX64.EFI ] || {{ mkdir -p {to} && cp -r {from}/. {to}/ && mv {to}/{} {to}/BOOTX64.EFI; }}", shell_quote(&name))])
-                            .why(format!("--removable: {dir} at the fallback path too, {name} as BOOTX64.EFI (ELILO reads the elilo.conf beside itself)")),
+                        Cmd::new(&["sh", "-c", &format!("[ -e {to}/{fb} ] || {{ mkdir -p {to} && cp -r {from}/. {to}/ && mv {to}/{} {to}/{fb}; }}", shell_quote(&name))])
+                            .why(format!("--removable: {dir} at the fallback path too, {name} as {fb} (ELILO reads the elilo.conf beside itself)")),
                     );
                 }
                 None => self.notes.push("--removable: ELILO is at the fallback path (EFI/BOOT) only already".into()),

@@ -530,6 +530,9 @@ pub fn check_plan(layout_text: &str) -> Result<(usize, usize), String> {
     }
     let t = crate::testutil::Tree::new("redact-plan");
     t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+    // A rescue system of the dump's own architecture (crate::arch), which
+    // load holds it to.
+    t.file("/proc/sys/kernel/arch", format!("{}\n", crate::arch::dump_machine(&v)));
     let mut args = vec!["layout.json".to_string()];
     let disks = v.at(&["storage", "disks"]).and_then(Value::as_array).cloned().unwrap_or_default();
     for (i, d) in disks.iter().enumerate() {

@@ -306,6 +306,9 @@ pub fn to_json(sys: &Sys, os: Option<&OsRelease>) -> Value {
         .set("kernel_release", sys.read_trim("/proc/sys/kernel/osrelease"))
         .set("kernel_version", sys.read_trim("/proc/sys/kernel/version"))
         .set("architecture", std::env::consts::ARCH)
+        // The machine's, as `uname -m` says (crate::arch): what load holds
+        // the dump to.  "architecture" is the dumping binary's own.
+        .set("machine", crate::arch::machine(sys))
         .build()
 }
 

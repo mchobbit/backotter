@@ -57,6 +57,8 @@ PACKAGES = (
     "bcachefs-tools",
     "grub", "grub2-pc", "grub2-efi-x64", "grub2-tools", "shim-x64", "mkinitcpio", "linux", "linux-lts", "kernel-core",
     "zfs-utils", "selinux-policy-targeted",
+    "grub-efi-arm64-bin", "shim-helpers-arm64-signed", "linux-image-arm64", "linux-image-cloud-arm64", "grub2-efi-aa64",
+    "shim-aa64", "grub-arm64-efi",
     "grub-bios", "grub-efi", "mkinitfs", "linux-virt",
     "kernel-install-for-dracut", "eos-dracut", "mhwd",
     "grub-btrfs", "grub-btrfs-timeshift", "faster-mkinitcpio",
@@ -317,8 +319,11 @@ def read_facts(dump, ls):
 # worked out from the mounts and fstab, which the layout already has
 # (docs/design/bazzite.md, B2): a dump that first carries them is the same
 # layout.
+# firmware.efi_arch (docs/design/arm64.md, A3) follows from firmware.mode
+# and the machine: an x86 UEFI dump that first carries it is the same layout.
 LAYOUT_DROP = re.compile(r"^(generated|format|schema|privileged|warnings|host\.|tool\.|os\.|_illumos\."
-                         r"|storage\.backup_sources\.|storage\.physical_root$|storage\.mounts\.\d+\.alias_of$)")
+                         r"|storage\.backup_sources\.|storage\.physical_root$|storage\.mounts\.\d+\.alias_of$"
+                         r"|firmware\.efi_arch$)")
 LAYOUT_BOOT_KEEP = re.compile(r"^boot\.loader\.(name|firmware)$")
 
 

@@ -315,6 +315,9 @@ pub const PACKAGES: &[&str] = &[
     // Arch's and Fedora's names for the same.
     "grub", "grub2-pc", "grub2-efi-x64", "grub2-tools", "shim-x64", "mkinitcpio", "linux", "linux-lts", "kernel-core",
     "zfs-utils", "selinux-policy-targeted",
+    // ARM64's (crate::arch): Debian's and Ubuntu's, Fedora's, Chimera's;
+    // names no amd64 system has, so no fingerprint changes.
+    "grub-efi-arm64-bin", "shim-helpers-arm64-signed", "linux-image-arm64", "linux-image-cloud-arm64", "grub2-efi-aa64", "shim-aa64", "grub-arm64-efi",
     // Alpine's.
     "grub-bios", "grub-efi", "mkinitfs", "linux-virt",
     // EndeavourOS's and Manjaro's.
@@ -599,10 +602,12 @@ fn grub_json(sys: &Sys) -> Value {
     // Fedora's GRUB lives in /boot/grub2.
     let dir = if !sys.is_dir("/boot/grub") && sys.is_dir("/boot/grub2") { "/boot/grub2" } else { "/boot/grub" };
     o.put("dir", dir);
+    // Ubuntu's signed images' directory (x86_64-efi-signed), not a platform.
+    let signed = format!("{}-signed", crate::arch::names_of(sys).grub_efi_target);
     let platforms: Vec<String> = sys
         .list(dir)
         .into_iter()
-        .filter(|d| sys.is_dir(&format!("{dir}/{d}")) && d.contains('-') && d != "x86_64-efi-signed")
+        .filter(|d| sys.is_dir(&format!("{dir}/{d}")) && d.contains('-') && *d != signed)
         .filter(|d| sys.is_file(&format!("{dir}/{d}/normal.mod")) || sys.is_file(&format!("{dir}/{d}/core.img")) || sys.is_file(&format!("{dir}/{d}/core.efi")))
         .collect();
     o.put("installed_platforms", platforms);
@@ -771,9 +776,11 @@ pub fn proxmox_product(packages: &[(String, String, String)]) -> Option<String> 
 /// GRUB's EFI image as proxmox-boot-tool names it, or GRUB's BIOS modules.
 fn proxmox_mode(sys: &Sys, mount: &str, contents: &Value) -> Option<&'static str> {
     let has = |want: &str| contents.get("files").and_then(Value::as_array).into_iter().flatten().any(|f| f.get("path").and_then(Value::as_str).is_some_and(|p| p.eq_ignore_ascii_case(want)));
-    if has("EFI/systemd/systemd-bootx64.efi") {
+    // The machine's names (crate::arch): systemd-bootx64.efi, grubx64.efi.
+    let n = crate::arch::names_of(sys);
+    if has(&format!("EFI/systemd/{}", n.systemd_boot)) {
         Some("systemd-boot")
-    } else if has("EFI/proxmox/grubx64.efi") {
+    } else if has(&format!("EFI/proxmox/{}", n.grub)) {
         Some("grub-efi")
     } else if sys.is_dir(&format!("{mount}/grub/i386-pc")) {
         Some("grub-bios")
@@ -1166,7 +1173,8 @@ pub struct Evidence<'a> {
     pub mbr_codes: Vec<(String, String)>,
     pub packages: &'a [(String, String, String)],
     pub esp_files: Vec<String>,
-    /// The ESP file EFI/BOOT/BOOTX64.EFI is a byte copy of, if any
+    /// The ESP file the fallback path (EFI/BOOT/BOOTX64.EFI, or ARM64's
+    /// BOOTAA64.EFI) is a byte copy of, if any
     /// (esp_inventory's same_as): shim's, when the fallback path is shim.
     pub fallback_copy_of: Option<String>,
     /// The ESP paths of the ZFSBootMenu images on mounted ESPs
@@ -1174,7 +1182,14 @@ pub struct Evidence<'a> {
     pub zbm_images: Vec<String>,
 }
 
+/// The loader on x86_64 (crate::arch::X86_64's names).
 pub fn detect_loader(e: &Evidence) -> Value {
+    detect_loader_on(e, &crate::arch::X86_64)
+}
+
+/// The loader, from E, on a machine whose boot files have N's names
+/// (crate::arch: grubx64.efi or grubaa64.efi, and so on).
+pub fn detect_loader_on(e: &Evidence, n: &crate::arch::Names) -> Value {
     let has = |p: &str| e.packages.iter().any(|(n, _, _)| n == p);
     let mut why: Vec<String> = Vec::new();
     let mut name: Option<&str> = None;
@@ -1209,19 +1224,19 @@ pub fn detect_loader(e: &Evidence) -> Value {
             } else if u.ends_with("\\ELILO.EFI") {
                 // Slackware's eliloconfig: \EFI\Slackware\elilo.efi.
                 name = Some("elilo");
-            } else if u.ends_with("\\EFI\\BOOT\\BOOTX64.EFI") {
+            } else if u.ends_with(&n.fallback_dp()) {
                 why.push("that is the removable-media fallback path".into());
                 // AnduinOS's installer copies shim there, with GRUB and
                 // MokManager beside it; with Secure Boot off, shim may set no
                 // MOK variables to tell by.
-                if let Some(of) = e.fallback_copy_of.as_deref().filter(|p| p.to_ascii_lowercase().ends_with("/shimx64.efi")) {
+                if let Some(of) = e.fallback_copy_of.as_deref().filter(|p| p.to_ascii_lowercase().ends_with(&format!("/{}", n.shim))) {
                     shim = true;
-                    why.push(format!("EFI/BOOT/BOOTX64.EFI is a copy of {of}"));
+                    why.push(format!("{} is a copy of {of}", n.fallback));
                 } else if let Some(of) = e.fallback_copy_of.as_deref().filter(|p| has(CBM) && p.eq_ignore_ascii_case(CBM_SHIM)) {
                     // clr-boot-manager copies its shim there too (Solus).
                     shim = true;
                     name = Some("systemd-boot");
-                    why.push(format!("EFI/BOOT/BOOTX64.EFI is a copy of {of}, clr-boot-manager's shim, which loads systemd-boot as {CBM_SD_BOOT}"));
+                    why.push(format!("{} is a copy of {of}, clr-boot-manager's shim, which loads systemd-boot as {CBM_SD_BOOT}", n.fallback));
                 }
             }
         }
@@ -1255,22 +1270,22 @@ pub fn detect_loader(e: &Evidence) -> Value {
                     shim = true;
                     why.push(format!("and its shim, {CBM_SHIM}"));
                 }
-            } else if lc.iter().any(|f| f.ends_with("/grubx64.efi")) {
+            } else if lc.iter().any(|f| f.ends_with(&format!("/{}", n.grub))) {
                 name = Some("grub");
-                why.push("an ESP holds grubx64.efi".into());
-            } else if lc.iter().any(|f| f.ends_with("/systemd-bootx64.efi")) {
+                why.push(format!("an ESP holds {}", n.grub));
+            } else if lc.iter().any(|f| f.ends_with(&format!("/{}", n.systemd_boot))) {
                 name = Some("systemd-boot");
-                why.push("an ESP holds systemd-bootx64.efi".into());
+                why.push(format!("an ESP holds {}", n.systemd_boot));
             } else if lc.iter().any(|f| f == "limine.conf" || f.ends_with("/limine.conf") || f.starts_with("efi/limine/")) {
                 // esp_inventory's paths are relative to the ESP: EFI/limine/.
                 name = Some("limine");
                 why.push("an ESP holds Limine's EFI/limine/ or limine.conf".into());
-            } else if lc.iter().any(|f| f.ends_with("/refind_x64.efi") || f.ends_with("/refind.conf")) {
+            } else if lc.iter().any(|f| f.ends_with(&format!("/{}", n.refind)) || f.ends_with("/refind.conf")) {
                 // PikaOS's installer copies rEFInd to EFI/BOOT too, and its
                 // "BOOTX64 mode" makes no boot entry: the firmware boots the
                 // fallback path, which names no loader.
                 name = Some("refind");
-                why.push("an ESP holds rEFInd's refind_x64.efi or refind.conf".into());
+                why.push(format!("an ESP holds rEFInd's {} or refind.conf", n.refind));
             } else if lc.iter().any(|f| f.ends_with("/elilo.efi") || f.ends_with("/elilo.conf") || f.ends_with("/elilo-x86_64.conf")) {
                 // Slackware's test guests boot ELILO's copy at the fallback
                 // path (EFI/BOOT, with its elilo.conf) under blank NVRAM.
@@ -1306,8 +1321,9 @@ pub fn detect_loader(e: &Evidence) -> Value {
         // Fedora's (and its atomic desktops') is grub2-efi-x64.
         // AnduinOS's own GRUB, first: when it's installed, it's the one on
         // the ESP.
-        (Some("grub"), true) => ["anduinos-grub", "grub-efi-amd64-signed", "grub-efi-amd64", "grub-efi-ia32", "grub-efi-arm64", "grub-x86_64-efi", "grub2-efi-x64"].into_iter().find(|p| has(p)),
-        (Some("grub"), false) => ["grub-pc", "grub-i386-pc"].into_iter().find(|p| has(p)),
+        // The names are crate::arch's, the machine's own.
+        (Some("grub"), true) => n.grub_efi_packages.iter().copied().find(|p| has(p)),
+        (Some("grub"), false) => n.grub_bios_packages.iter().copied().find(|p| has(p)),
         (Some("systemd-boot"), _) => ["systemd-boot"].into_iter().find(|p| has(p)),
         (Some("refind"), _) => ["refind"].into_iter().find(|p| has(p)),
         (Some("limine"), _) => ["limine"].into_iter().find(|p| has(p)),
@@ -1321,16 +1337,16 @@ pub fn detect_loader(e: &Evidence) -> Value {
         why.push(format!("package {p} is installed"));
     } else if name.is_none() {
         // Last resort: what's installed.
-        for (p, n) in [("grub-efi-amd64", "grub"), ("grub-pc", "grub"), ("systemd-boot", "systemd-boot"), ("extlinux", "syslinux")] {
+        for &(p, l) in n.last_resort_packages {
             if has(p) {
-                name = Some(n);
+                name = Some(l);
                 why.push(format!("only evidence: package {p} is installed"));
                 break;
             }
         }
     }
     // Debian's signed shim, Fedora's, AnduinOS's.
-    let shim_package = (e.uefi && shim).then(|| ["shim-signed", "shim-x64", "anduinos-shim-signed"].into_iter().find(|p| has(p))).flatten();
+    let shim_package = (e.uefi && shim).then(|| n.shim_packages.iter().copied().find(|p| has(p))).flatten();
     let mut o = Obj::new()
         .set("name", name.unwrap_or("unknown"))
         .set("firmware", if e.uefi { "uefi" } else { "bios" })
@@ -1439,6 +1455,8 @@ pub fn boot_json(
     let mut esp_list = Vec::new();
     let mut esp_files = Vec::new();
     let mut fallback_copy_of = None;
+    // The machine's boot names (crate::arch): BOOTX64.EFI or BOOTAA64.EFI.
+    let names = crate::arch::names_of(sys);
     let mut sd_boot = None;
     // (device, mount point, contents, systemd-boot's files)
     let mut read: Vec<(String, Option<String>, Value, Option<Value>)> = esps.iter().map(|(dev, mnt)| (dev.clone(), Some(mnt.clone()), esp_inventory(sys, mnt), systemd_boot_json(sys, mnt))).collect();
@@ -1455,7 +1473,7 @@ pub fn boot_json(
         if let Some(files) = inv.get("files").and_then(Value::as_array) {
             esp_files.extend(files.iter().filter_map(|f| f.get("path").and_then(Value::as_str)).map(str::to_string));
             fallback_copy_of = fallback_copy_of.or_else(|| {
-                files.iter().find(|f| f.get("path").and_then(Value::as_str).is_some_and(|p| p.eq_ignore_ascii_case("EFI/BOOT/BOOTX64.EFI"))).and_then(|f| f.get("same_as")).and_then(Value::as_str).map(str::to_string)
+                files.iter().find(|f| f.get("path").and_then(Value::as_str).is_some_and(|p| p.eq_ignore_ascii_case(names.fallback))).and_then(|f| f.get("same_as")).and_then(Value::as_str).map(str::to_string)
             });
         }
         if sd_boot.is_none() {
@@ -1488,7 +1506,7 @@ pub fn boot_json(
         fallback_copy_of,
         zbm_images: zbm_images.iter().map(|i| i.path.clone()).collect(),
     };
-    let mut loader = detect_loader(&ev);
+    let mut loader = detect_loader_on(&ev, names);
     if let (Some(m), Value::Obj(o)) = (mok_json(sys, packages), &mut loader) {
         o.push(("mok".into(), m));
     }

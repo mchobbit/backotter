@@ -375,7 +375,31 @@ ESP with `in_fstab: false`.  Its golden plan mounts the ESP at /boot for the
 restore, keeps the BIOS boot partition, and at boot installs no loader,
 rebuilds no initramfs and runs no clr-boot-manager (notes say why): it makes
 only the "Solus Linux Bootloader" NVRAM entry for
-`\EFI\com.solus-project\bootloaderx64.efi`, as the source had.  The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
+`\EFI\com.solus-project\bootloaderx64.efi`, as the source had.
+arm64-grub-shim and arm64-systemd-boot (docs/design/arm64.md, A3), added
+on 2026-11-14, are the corpus's only fixtures: no guest's.  ARM64 has no
+guests yet (A5), so each is `bko-holt dump` of a fake ARM64 Debian 13 tree
+in holt/src/arch.rs's tests (`arm64_grub_shim`, `arm64_systemd_boot`):
+`/proc/sys/kernel/arch` aarch64, UEFI, GPT with an ESP and ext4 /.
+arm64-grub-shim has Debian's arm64 shim and GRUB (`EFI/debian/shimaa64.efi`,
+`grubaa64.efi`, `mmaa64.efi`, shim as `EFI/BOOT/BOOTAA64.EFI` with
+`fbaa64.efi`, `/boot/grub/arm64-efi`, grub-efi-arm64-signed), the ESP at
+/boot/efi and the firmware booted shim's NVRAM entry; arm64-systemd-boot
+has the ESP as /boot (the Arch and Fedora layout) holding
+`EFI/systemd/systemd-bootaa64.efi` and its copy at the fallback path, the
+firmware booted its NVRAM entry.  Their identifiers are made up, so they
+were never redacted, and corpus_build doesn't make them:
+`arm64_corpus_fixtures_are_these_dumps` holds each src.json to its tree's
+dump (the tool's version aside; `os.architecture`, the dumping binary's
+own, written as the aarch64 bko-holt's), and `BKO_HOLT_GOLDEN=bless`
+rewrites them.  index.tsv's rows say `fixture`, run `a3`, no host; their
+check_plan values are that test's.  Their golden plans run `grub-install
+--target=arm64-efi --bootloader-id=debian --no-nvram` and `update-grub`,
+then the entry for `\EFI\debian\shimaa64.efi`; and `bootctl install
+--no-variables`, then the entry for `\EFI\systemd\systemd-bootaa64.efi`.
+Load plans them only as an ARM64 rescue system: common/mod.rs gives the
+fake rescue system each dump's own architecture, as check_plan does.
+The others weren't collected again ("Adding a source", below).  index.tsv's `host`, `run`, `result`,
 `report_time` (report.txt's mtime), `generated` (the dump's own time),
 `tool_version` and `generation` (the guest's image-state generation at
 collection; `-` for the guests without one) say which, and `image` whether

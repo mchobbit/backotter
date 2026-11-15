@@ -76,6 +76,11 @@ pub fn plan_onto(layout_text: &str, size_of: &dyn Fn(&str, u64) -> u64, extra: &
     let v = json::parse(layout_text).map_err(|e| format!("not JSON: {}", e.message))?;
     let t = Tree::new("golden-plan");
     t.file("/proc/self/mountinfo", "").file("/proc/swaps", "Filename\tType\tSize\tUsed\tPriority\n");
+    // A rescue system of the dump's own architecture, which load holds it
+    // to (docs/design/arm64.md, A3): the kernel's name, as os.machine (or,
+    // before A3, os.architecture) gives it; x86_64 for a dump with neither.
+    let machine = ["machine", "architecture"].iter().find_map(|k| v.at(&["os", k]).and_then(Value::as_str)).unwrap_or("x86_64");
+    t.file("/proc/sys/kernel/arch", format!("{machine}\n"));
     let mut args = vec![LAYOUT.to_string()];
     let mut maps = Vec::new();
     for (i, (name, size, ss)) in dumped_disks(&v).into_iter().enumerate() {

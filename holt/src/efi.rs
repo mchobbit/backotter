@@ -207,6 +207,9 @@ pub fn firmware_json(sys: &Sys) -> Value {
     Obj::new()
         .set("mode", "uefi")
         .set("platform_size", sys.read_u64("/sys/firmware/efi/fw_platform_size"))
+        // UEFI's name for the firmware's architecture (x64, aa64): its
+        // files' names (BOOTAA64.EFI), crate::arch.
+        .set("efi_arch", crate::arch::efi_arch(&crate::arch::machine(sys), sys.read_u64("/sys/firmware/efi/fw_platform_size")))
         .set("secure_boot", var_u8(sys, "SecureBoot").map(|b| b == 1))
         .set("setup_mode", var_u8(sys, "SetupMode").map(|b| b == 1))
         .set("efivars_readable", vars)
@@ -442,6 +445,8 @@ mod tests {
         assert_eq!(fw.get("secure_boot"), Some(&Value::Bool(true)));
         assert_eq!(fw.get("setup_mode"), Some(&Value::Bool(false)));
         assert_eq!(fw.get("platform_size").and_then(Value::as_u64), Some(64));
+        // A fake system that says no machine is x86_64 (crate::arch).
+        assert_eq!(fw.get("efi_arch").and_then(Value::as_str), Some("x64"));
         let lookup = |u: &str| (u == "0b5f04ed-e731-4ac6-933e-83ff25657722").then(|| "nvme1n1p1".to_string());
         let b = boot_json(&s, &lookup);
         assert_eq!(b.get("boot_current").and_then(Value::as_str), Some("0001"));

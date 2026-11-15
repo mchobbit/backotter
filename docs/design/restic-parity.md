@@ -155,19 +155,46 @@ Low severity, deferred (documented in the fork's BACKOTTER.md, known limits):
 - Differences from rustic-bko that remain: `--clone-from` PATH must be a directory,
   `--exact` means `--overwrite always`, and owners are compared only as root.
 
-Not done:
-- **rustic-bko has the same defects** (rustic_core `commands/restore/exact.rs`):
-  - the fixed `.bko-exact-NAME` temp name, the one serious data-safety hole left between the two tools;
-  - it continues after a failed link break;
-  - `clone_file` truncates dst before cloning;
-  - matching hard-link groups are always broken;
-  - the clone source follows symlinks and has no O_NONBLOCK;
-  - `--delete` keeps flagged siblings of replaced files.
+## rustic-bko brought to restic-bko .12 (2026-11-15, the user's go-ahead)
 
-  Changing rustic needs the user's go-ahead.
+The audit found 11 of the defects in rustic_core (D1-D9, D11, and two of its own, E1 and E2):
+- D1 (high): the fixed `.bko-exact-NAME` temp name, which also followed a symlink of that name.
+- D2-D9: a failed link break, clones truncating the target, link groups re-linked every run, the clone source's opens, other names losing their flags, an order-dependent `--delete`, flags cleared eagerly, and comparisons that never matched on the BSDs.
+- D11: SELinux label refusals reported per file.
+- E1: one failed hard link aborted the restore before the flags went back.
+- E2: a failed clone left a silent temp file.
+
+D10 and D12 weren't present.
+
+| rustic_core | rustic | What |
+|---|---|---|
+| b660a71, ba93d6e (0.13.0+backotter.13) | c517a69 (0.11.4+backotter.14) | D1-D9, D11, E1, E2 |
+| ad51297 (.14) | 7625a3c (.15) | review fixes: `--delete` leaves a case variant of a planned entry (high, casefold directories); a kept group's later names in the way (medium); no panic when a planned file is gone |
+| e66975f | a1f210b (Cargo.lock) | `test_restore_sparse` on btrfs/bcachefs/ZFS: files written over holes keep the holes that zero blobs matched, as documented (a test that has never passed on btrfs; restic-bko leaves the same holes there) |
+
+Both forks are pushed (rustic_core e66975f, rustic a1f210b).
+
+Tests:
+- `testvm/compare/rustic-exact-round.sh`, run 065657, round `rr15-20261115-065657`:
+  - step 1: `cargo test -p rustic_core` as user; restore tests as root on tmpfs and btrfs; exact-rt.sh.
+  - step 4, 15 jobs: linux on ext4, btrfs and xfs; nonroot linux; sparse on ext4; zfs-ubuntu24; exact-rt.sh with both tools; rt on freebsd15, freebsd15-ufs, netbsd11, openbsd8, omnios58 and dragonfly6.
+  - All PASS. compare.py on debian13: all four directions boot; the one difference is the torture socket, as always.
+- Earlier, on c517a69/ba93d6e: the same set, plus nonroot-freebsd15; all PASS.
+
+Low review items left as known limits (rustic_core BACKOTTER.md):
+- Directories in the way are removed during the walk.
+- `remove_tree` works by path.
+- A kept group's clone splits the group without holding its flags.
+- The flag tests pass without testing anything when not run as root.
+
+Open:
+- **NetBSD `--exact` ctime:** a second `--exact` run moves every regular file's ctime (nanoseconds only) on NetBSD FFS (`test_restore_exact_twice_changes_nothing`; FreeBSD passes). It is not atimes moved by reads. The main suspect is that NetBSD doesn't lower a birth time when an earlier mtime is set, so `same_birth_time` never matches. ktrace and stat evidence are in the Mac log dir `bko-rustic-round-20261115-054848/step2/`; not fixed.
+- **Script:** rustic-exact-round.sh step 3's `cargo update` re-resolved `windows-sys`/`getrandom` (probably a stale private index). The guard refused it, and the lock was edited by hand and checked with `cargo metadata --locked` instead.
+
+Not done:
 - **bko-holt** `load` (`holt/src/load/commands.rs`, the `--btrfs-snapshots shared`
   check) still names only rustic-bko. It could accept restic-bko .11 or newer, mapping
   `--exact`/`--clone-from`/`--target-metadata`. Waiting: another session has large
   uncommitted edits to `restore()` and `shared_snapshots()` there.
-- **Pushes:** this repo's commits (the fork is pushed at .12).
+- **Pushes:** none left (restic .12, rustic_core e66975f, rustic a1f210b and main are pushed).
 - **Harness:** `cmp-run.sh --free` fails with "$2: unbound variable" on all four hosts.

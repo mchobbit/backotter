@@ -1,0 +1,8 @@
+# BackShot2Alpine: seeded layout drift on the Alpine sources, restored by
+# bko-holt in tiers 0-2 (the user's suite; auto-memory "BackShot2 /
+# BackShot2Alpine", testvm/backshot2/README.md).  Tier 3 is the ThinkPad's
+# cases: a manual line, never an entry (docs/design/batch.md §4.4).
+set hosts chopin,cinqcent,copland,cage
+
+bs2     BackShot2Alpine 200     why="200 new cases a source, tiers 0-2, then the corpus"
+manual  tier 3: BackShot2Alpine's ThinkPad cases (docs/design/bs2-all.md), by hand

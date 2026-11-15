@@ -11,6 +11,12 @@
 #   testvm/holttest1d/ht1-farm.sh RUN --hosts chopin,cage GUEST ...
 #   testvm/holttest1d/ht1-farm.sh RUN --queue-host cinqcent GUEST ...
 #   testvm/holttest1d/ht1-farm.sh --dry-run RUN GUEST ...
+#   testvm/holttest1d/ht1-farm.sh RUN --join --queue-host Q --hosts H,H
+#
+# --join (t2 batch, docs/design/batch.md §4.5): more runners for a queue that
+# exists: no todo is written (no guests are given), Q (required, and it may be
+# outside --hosts) must have queue/RUN/todo, and a host of --hosts where a
+# runner of RUN still runs is left as it is.  The pins come from Q's todo.
 #
 # RUN names the queue, as ht1-queue.sh takes it (a letter or digit, then
 # letters, digits, . _ -); the guests are todo lines, exactly as the todo
@@ -94,24 +100,30 @@ rq() { printf '%q' "$1"; }   # one word for the remote shell
 # shellcheck source=../hosts.sh
 . "$TESTVM/hosts.sh" || die "no $TESTVM/hosts.sh"
 
-dry=no named="" qnamed="" RUN="" lines=()
+dry=no named="" qnamed="" RUN="" lines=() join=no
 while [[ $# -gt 0 ]]; do
     case $1 in
     --dry-run) dry=yes; shift ;;
+    --join) join=yes; shift ;;   # t2 batch: runners for an existing queue (above)
     --hosts) [[ $# -ge 2 ]] || die "--hosts needs a list"; named=$2; shift 2 ;;
     --hosts=*) named=${1#--hosts=}; shift ;;
     --queue-host) [[ $# -ge 2 && -n $2 ]] || die "--queue-host needs a host"; qnamed=$2; shift 2 ;;
     --queue-host=*) qnamed=${1#--queue-host=}; [[ -n $qnamed ]] || die "--queue-host needs a host"; shift ;;
     -h|--help) usage ;;
-    -*) die "no such option $1 (--hosts H,H, --queue-host H, --dry-run)" ;;
+    -*) die "no such option $1 (--hosts H,H, --queue-host H, --dry-run, --join)" ;;
     *) if [[ -z $RUN ]]; then RUN=$1; else lines+=("$1"); fi; shift ;;
     esac
 done
 [[ -n $RUN ]] || usage
+if [[ $join == yes ]]; then   # --join: the todo is Q's already
+    ((${#lines[@]} == 0)) || die "--join takes no guests: the queue's todo has them"
+    [[ -n $qnamed && -n $named ]] || die "--join needs --queue-host Q and --hosts H,H"
+else
 ((${#lines[@]})) || die "no guests: ht1-farm.sh RUN GUEST[+VARIANT]..."
+fi
 [[ $RUN =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]] || die "RUN: a letter or digit, then letters, digits, . _ -"
 [[ $RUN != debug && $RUN != debug-state ]] || die "RUN $RUN is ht1-debug.sh's"
-for l in "${lines[@]}"; do
+for l in ${lines[@]+"${lines[@]}"}; do   # (--join: none, and bash 3.2's set -u)
     [[ $l =~ $LINE_RE ]] || die "not GUEST[+VARIANT][=D][%M]: $l"
 done
 
@@ -134,7 +146,10 @@ else
 fi
 ((${#hosts[@]})) || die "no host to run on"
 QHOST=${hosts[0]}
-if [[ -n $qnamed ]]; then
+if [[ -n $qnamed && $join == yes ]]; then   # --join: Q may be outside --hosts
+    grep -qx "$qnamed" <<<"$(hosts_names)" || die "no such host $qnamed (known: $(hosts_phrase))"
+    QHOST=$qnamed
+elif [[ -n $qnamed ]]; then
     grep -qx "$qnamed" <<<"$(printf '%s\n' "${hosts[@]}")" ||
         die "--queue-host $qnamed is not one of the hosts run on ($(printf '%s ' "${hosts[@]}" | sed 's/ $//'))"
     QHOST=$qnamed
@@ -175,6 +190,12 @@ sshin() { ssh -o BatchMode=yes -o ConnectTimeout=15 "$@"; }
 
 Q=$L/queue/$RUN
 echo "== queue $RUN on $QHOST ($(printf '%s ' "${hosts[@]}" | sed 's/ $//'))"
+if [[ $join == yes ]]; then   # --join: Q's todo is the run; its lines give the pins
+    jt=$(sshq "$QSSH" "cat $(rq "$Q/todo")") || die "--join: $QHOST has no $Q/todo (or doesn't answer)"
+    while IFS= read -r l; do [[ -n $l ]] && lines+=("$l"); done <<<"$jt"
+    echo "-- --join: $QHOST's todo has ${#lines[@]} lines"
+    ((${#lines[@]})) || { echo "-- --join: the todo is empty: no runner to start"; exit 0; }
+fi
 # Each host's ssh destination once (every one is needed below, twice).  A host
 # the table gives none for can be reached by nothing here, so it is left out
 # and named at the end; the queue host, whose todo is the run, is not.
@@ -201,12 +222,20 @@ up=() updest=() i=0
 for h in "${hosts[@]}"; do
     d=${dests[$i]}; i=$((i + 1))
     what="stop abort"
-    [[ $h != "$QHOST" ]] || what="todo stop abort"
-    if ! left=$(sshq "$d" "for f in $what; do [ -e $(rq "$Q")/\$f ] && echo \$f; done; exit 0"); then
+    [[ $h != "$QHOST" || $join == yes ]] || what="todo stop abort"
+    # --join: a runner of RUN still running there is left as it is (no second one).
+    jr=""; [[ $join == no ]] || jr="pgrep -f '[h]t1-queue\\.sh ${RUN//./\\.} $BASEPORT' >/dev/null && echo running; "
+    if ! left=$(sshq "$d" "${jr}for f in $what; do [ -e $(rq "$Q")/\$f ] && echo \$f; done; exit 0"); then
         [[ $h != "$QHOST" ]] ||
             die "can't reach the queue host $QHOST ($d): its $Q/todo is the whole run"
         echo "ht1-farm: can't reach $h ($d): left out of the farm" >&2
         failed+=("$h")
+        continue
+    fi
+    if [[ $join == yes && $left == running* ]]; then
+        echo "-- --join: $h's runner of $RUN still runs: left as it is"
+        left=${left#running}; left=${left#$'\n'}
+        [[ -z $left ]] || die "$h has $Q/$(tr '\n' ' ' <<<"$left" | sed 's/ $//'): see README \"Stop and abort\""
         continue
     fi
     if [[ -n $left ]]; then
@@ -215,6 +244,12 @@ for h in "${hosts[@]}"; do
     fi
     up+=("$h"); updest+=("$d")
 done
+
+if [[ $join == yes ]] && ((${#up[@]} == 0)); then   # --join: every host runs one already
+    echo "-- --join: no runner to start"
+    ((${#failed[@]} == 0)) || { echo "ht1-farm: no runner on ${failed[*]}" >&2; exit 1; }
+    exit 0
+fi
 
 # The bko-holt each runner's jobs would test (ht1-queue.sh --holt: SHA12 PATH,
 # Linux's; by default the promoted holt-bin's, which its SHA256SUMS must vouch
@@ -238,7 +273,10 @@ done
 up=("${hup[@]}") updest=("${hupdest[@]}")
 
 # The todo, biggest guest first (ht1-queue.sh --order, on the queue host, where
-# ram-size.sh knows that host's sizes).
+# ram-size.sh knows that host's sizes).  --join writes none: it is there.
+if [[ $join == yes ]]; then
+    : # (--join: no todo written)
+else
 order_cmd="cd ~/$REMOTE && testvm/holttest1d/ht1-queue.sh --order"
 for l in "${lines[@]}"; do order_cmd+=" $(rq "$l")"; done
 todo=$(sshq "$QSSH" "$order_cmd") && [[ -n $todo ]] || die "ht1-queue.sh --order failed on $QHOST"
@@ -257,6 +295,7 @@ else
         die "$Q/todo on $QHOST has $got of the $want lines sent: remove it and run this again"
     echo "-- $QHOST: $Q/todo, $want lines"
 fi
+fi   # (--join)
 
 # A runner on every host, each with its own MAXJOBS, under setsid: it lives on
 # after this ssh ends.

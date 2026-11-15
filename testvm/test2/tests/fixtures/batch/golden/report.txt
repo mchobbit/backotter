@@ -1,0 +1,45 @@
+batch bt-20261115T0312-9ab1  file /x/carpetbeater.batch  hosts chopin cage
+started 2026-11-15T03:12Z  ended 2026-11-15T12:17Z  wall 9:05  exit 1  prev bt-20261101T0300-0001
+entry                                    status     exit   wall  cells
+002-t2-gate                              PASS          0   0:10  PASS 1
+003-t2-sweeptest2-rel6                   FAIL          1   6:06  FAIL 12
+verdicts  PASS 1  FAIL 12
+classes   pass 1  fail 6  harness 6
+diff vs bt-20261101T0300-0001: new 6, fixed 1, still failing (known) 6
+failing groups: 4 (by class and the first 60 characters of the reason)
+  fail        3 new        group 1: what broke
+           cells holt:g1c0, holt:g1c1, holt:g1c2; hosts chopin,cage; rows r10,r11
+  fail        3 known      group 2: what broke
+           cells holt:g2c0, holt:g2c1, holt:g2c2; hosts chopin,cage; rows r20,r21
+  harness     3 new        group 3: what broke
+           cells holt:g3c0, holt:g3c1, holt:g3c2; hosts chopin,cage; rows r30,r31
+  harness     3 known      group 0: what broke
+           cells holt:g0c0, holt:g0c1, holt:g0c2; hosts chopin,cage; rows r00,r01
+manual (not run): step 1: refresh
+
+----
+# Analysing batch bt-20261115T0312-9ab1
+
+Read this file first; then `t2 batch report bt-20261115T0312-9ab1` (one screen).  The procedure is below, and these are this batch's own numbers.
+
+- file `/x/carpetbeater.batch`, hosts chopin cage, exit 1, wall 9:05, baseline bt-20261101T0300-0001
+- verdicts: PASS 1  FAIL 12
+- classes: pass 1  fail 6  harness 6
+- diff: new 6, fixed 1, known 6
+- failing groups: 4; new `fail` groups: 1; farm (`harness`, `lost`) groups: 2
+
+## The logs to read (step 2)
+
+- `t2 batch log bt-20261115T0312-9ab1 003-t2-sweeptest2-rel6:holt:g1c0 --tail 200`: 3 cell(s), group 1: what broke
+- (farm, 3 cells share it) `t2 batch log bt-20261115T0312-9ab1 003-t2-sweeptest2-rel6:holt:g3c0 --tail 200`: group 3: what broke
+- (farm, 3 cells share it) `t2 batch log bt-20261115T0312-9ab1 003-t2-sweeptest2-rel6:holt:g0c0 --tail 200`: group 0: what broke
+
+## Manual steps the batch printed and did not run
+
+- step 1: refresh
+
+---
+
+## Analysing a batch
+
+1. `t2 batch report bt-20261115T0312-9ab1`.

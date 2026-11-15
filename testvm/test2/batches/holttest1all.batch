@@ -1,0 +1,25 @@
+# HoltTest1All (the user's definition, 2026-11-05: HoltTest1D "except that
+# HoltTest1All targets every single guest OS we have"): the guests of
+# testvm/holttest1d/README.md's test table, one ht1 entry per family, the
+# biggest families first.  Each entry is its own queue (RUN-XXXX, the batch's
+# own), spread over the hosts the batch gives it and grown onto holt pools as
+# they free.  Guests the README marks as not run yet (qubes43, freebsd15-geli,
+# hardenedbsd15-zfs, slackware15*, leap16, elementary8*) are in, as the
+# definition says: their FAILs are the README's open rows.
+set hosts chopin,cinqcent,copland,cage
+set retry 1
+
+ht1 h1obscure pop24 nixos2605 guix15 guix15-bios omarchy sculpt2610 redox tumbleweed microos aeon leap16 debian12 chimera chimera-uefi chimera-zfs pikaos4 pikaos4-luks kali vanilla3 solus49 slackware15 slackware15-uefi qubes43
+ht1 h1u ubuntu24 ubuntu24-uefi ubuntu24-luks ubuntu26-uefi ubuntu26-zfsmirror ubuntu26-raid ubuntu26-luks neon24 anduinos2 elementary8 elementary8-luks
+ht1 h1bsd freebsd15 freebsd15-ufs freebsd15-mirror freebsd15-geli openbsd8 netbsd11 ghostbsd26 hardenedbsd15 hardenedbsd15-zfs dragonfly6 alpinebsd
+ht1 h1d debian13 debian13-zfs debian13-stack proxmox9 proxmox9-mirror truenas25 truenas25-mirror
+ht1 h1f fedora44 fedora44-uefi fedora44-raid rocky10 rocky10-lvm rocky10-raid5 kinoite44
+ht1 h1a arch alpine324 aerynos artix-dinit artix-s6
+ht1 h1all endeavouros endeavouros-grub manjaro garuda biglinux
+ht1 h1i omnios58 omnios58-mirror oi2610 oi2610-bios
+ht1 h1c cachyos mx25 cachyos-zfs
+ht1 h1g gentoo gentoo-systemd
+ht1 h1m mint22
+ht1 h1z zorin18
+ht1 h1v void-musl
+ht1 h1h haiku6

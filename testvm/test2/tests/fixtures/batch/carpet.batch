@@ -1,0 +1,11 @@
+# A fixture in the shape of CarpetBeater (docs/design/batch.md §3.3).
+set round rel6
+set hosts chopin,cinqcent,copland,cage
+set retry 1
+
+manual  step 1: vm-update round, then rebuild the rescue images
+t2      GateTest2All rel6       why="step 2" est=65m
+t2      SweepTest2 rel6         why="step 3, part 1" est=6h10m
+t2      ImgTest2All release     why="step 3, part 2" est=2h10m
+bs2     BackShot2Alpine 200     why="step 4" est=2h55m
+manual  step 5: the ThinkPad block, BackShot1 then BackShot2Alpine's cases

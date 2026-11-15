@@ -681,7 +681,8 @@ def cmd_self_test(argv):
 
 COMMANDS = {"pull": cmd_pull, "ledger": cmd_ledger, "explain": cmd_explain, "copy": cmd_copy,
             "resume": cmd_resume, "self-test": cmd_self_test,
-            "guest-lines": guest_tool("cmd_lines"), "guest-fingerprints": guest_tool("cmd_fingerprints")}
+            "guest-lines": guest_tool("cmd_lines"), "guest-fingerprints": guest_tool("cmd_fingerprints"),
+            "batch": lambda argv: importlib.import_module("t2lib.batch").main(argv, CHECKOUT)}   # docs/design/batch.md
 
 
 def main(argv):

@@ -8,6 +8,7 @@ BkoTest2 and SweepTest2, the ledger, the planner, the runners and their specs.
 
 Everything runs from the Mac: `testvm/test2/t2`.  The hosts run the cells, from a
 private copy of this checkout (never from the synced `~/backotter-work/testvm`).
+Check `t2 batch status` before starting heavy work: a running batch holds whole pools on its hosts (`BATCH.md`: unattended batches, and how a session analyses one).
 
 ## The words
 

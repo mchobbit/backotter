@@ -1,0 +1,8 @@
+# BkoTest2All: every Test2 family fresh, SweepTest2 then ImgTest2All (the
+# user's suite; auto-memory "BkoTest2All / BkoTest1All", docs/design/batch.md §3.4).
+set round rel6
+set hosts chopin,cinqcent,copland,cage
+set retry 1
+
+t2      SweepTest2 rel6         why="BkoTest2All, part 1: stic, holt, guest, gate fresh"
+t2      ImgTest2All release     why="BkoTest2All, part 2: every current image"

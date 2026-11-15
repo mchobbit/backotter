@@ -1,0 +1,11 @@
+# The batch runner's own smoke test (docs/design/batch.md §11.4): every
+# mechanism on the two small hosts in under an hour, at least two entries at
+# once.  Done when it passes twice, its summary.tsv matches the runs' own
+# reports, and each entry ran on the hosts `plan` predicted.
+set round rel6
+set hosts copland,cage
+
+t2      GateTest2 selftest hosts=cage
+t2      HoltTest2 alpine324
+stic1   rel6 alpine324
+cmd     true -- true

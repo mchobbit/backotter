@@ -1,0 +1,22 @@
+#!/usr/bin/env bash
+# A stand-in for ssh (T2_SSH, and ssh in PATH) for the batch tests: it never reaches a host.
+# Options are dropped, the destination logged (FAKE_SSH_LOG: DEST TAB COMMAND) and the command run
+# here by /bin/sh, stdin passed through (-n: /dev/null).  FAKE_SSH_DOWN: that destination answers
+# nothing (exit 255), as a rebooting host doesn't.
+set -u
+args=() nostdin=0
+while [[ $# -gt 0 ]]; do
+    case $1 in
+    -n) nostdin=1; shift ;;
+    -T|-tt|-t) shift ;;
+    -o) shift 2 ;;
+    -o*) shift ;;
+    *) args+=("$1"); shift ;;
+    esac
+done
+((nostdin == 0)) || exec </dev/null
+dest=${args[0]:-}
+cmd=${args[1]:-}
+[[ -z ${FAKE_SSH_LOG:-} ]] || printf '%s\t%s\n' "$dest" "${cmd:0:300}" >>"$FAKE_SSH_LOG"
+[[ -z ${FAKE_SSH_DOWN:-} || ",$FAKE_SSH_DOWN," != *",$dest,"* ]] || exit 255
+exec /bin/sh -c "$cmd"

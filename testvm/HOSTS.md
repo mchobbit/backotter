@@ -7,6 +7,7 @@ Bigfoot, the user's ARM64 machine, is the one arm64 host (since 2026-11-14,
 docs/design/arm64.md): it runs only arm64 guests, in a systemd slice.
 Every script takes the hosts from one table, `testvm/hosts.json`. This page
 describes that table, what each class of host runs, and how a new host joins.
+Before starting heavy work by hand, check `testvm/test2/t2 batch status`: a running `t2 batch` holds whole pools on its hosts (testvm/test2/BATCH.md).
 
 | host | class | slot range | drive.py ports | roles | default |
 |---|---|---|---|---|---|

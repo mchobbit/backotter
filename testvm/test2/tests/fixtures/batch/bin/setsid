@@ -1,0 +1,5 @@
+#!/usr/bin/env bash
+# A stand-in for Linux's setsid -f (the Mac has none), for the batch tests' fake hosts: the
+# command in the background, in its own session where python3 can make one.
+[[ ${1:-} == -f ]] && shift
+nohup "$@" </dev/null >/dev/null 2>&1 &

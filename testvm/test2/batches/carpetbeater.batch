@@ -1,0 +1,14 @@
+# CarpetBeater's unattended part, twice a month: refresh, the code tests,
+# BkoTest2All, BackShot1, BackShot2Alpine (the suite is the user's; auto-memory
+# "CarpetBeater", docs/design/batch.md §3.3).  Step 1 (the refresh) and the
+# ThinkPad block (step 5) stay manual: decisions 8 and 9.
+set round rel6
+set hosts chopin,cinqcent,copland,cage
+set retry 1
+
+manual  step 1: vm-update round (t2 GuestTest2 update, lid open), then rebuild the rescue images
+t2      GateTest2All rel6       why="step 2: code tests, the fork suites"
+t2      SweepTest2 rel6         why="step 3: BkoTest2All, part 1"
+t2      ImgTest2All release     why="step 3: BkoTest2All, part 2"
+bs2     BackShot2Alpine 200     why="step 4"
+manual  step 5: the ThinkPad block, BackShot1 then BackShot2Alpine's tier 3 cases

@@ -64,6 +64,7 @@ class HostIO:
     def __init__(self):
         from . import hostrun
         self.h = hostrun
+        self.unknown_max = None   # T2_UNKNOWN_MAX's patience for this IO (unknown_max()); None: the env's
 
     def sh(self, host, cmd, timeout=60, input=None):
         r = self.h.ssh(host, cmd, timeout=timeout, input=input)
@@ -183,6 +184,19 @@ class JobFailure(str):
 UNKNOWN_MAX = 20   # polls in a row with no answer from the host before host_job gives up
 
 
+def unknown_max(io=None):
+    """The polls in a row with no answer before a job is given up on: IO's unknown_max, else
+    T2_UNKNOWN_MAX (t2 batch sets it from its patience, docs/design/batch.md §6.4), else
+    UNKNOWN_MAX; never fewer than UNKNOWN_MAX, so a session's default doesn't change."""
+    v = getattr(io, "unknown_max", None)
+    if v is None:
+        v = os.environ.get("T2_UNKNOWN_MAX")
+    try:
+        return max(UNKNOWN_MAX, int(v)) if v not in (None, "") else UNKNOWN_MAX
+    except (TypeError, ValueError):
+        return UNKNOWN_MAX
+
+
 def job_poll_cmd(out):
     """host_job's poll: .exit, a blank line, .began.  Exit 0 whether or not they are there yet
     (exit 1 only when the job's directory is gone): a job waiting in cmp-run.sh's line has
@@ -278,7 +292,7 @@ def host_job(env, host, name, attempt, script_cmd, reserve=None, wear_tag=None, 
             state = None
         unknown = unknown + 1 if state is None else 0
         now = time.time()
-        if unknown >= UNKNOWN_MAX:
+        if unknown >= unknown_max(env.io):   # (T2_UNKNOWN_MAX: a batch's patience)
             return give_up(f"no answer from {host} in {unknown} polls")
         if began is None and now - t0 > wait_s:
             return give_up(f"no room for it on {host} after {wait_s} s")
@@ -356,7 +370,7 @@ def reattach_job(env, host, name, attempt, timeout_s=3600, wait_s=4 * 3600, subd
                     return None, out, {}, JobFailure(f"attempt {attempt}'s job on {host} ended with no exit status (resume)", gone=True)
                 state = None
         unknown = unknown + 1 if state is None else 0
-        if unknown >= UNKNOWN_MAX:
+        if unknown >= unknown_max(env.io):   # (T2_UNKNOWN_MAX, on a resume too)
             began_now()
             return None, out, {}, JobFailure(f"no answer from {host} in {unknown} polls (resume)", still_running=True)
         if time.time() - t0 > timeout_s + wait_s:

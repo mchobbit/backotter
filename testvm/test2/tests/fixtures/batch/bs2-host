@@ -1,0 +1,17 @@
+#!/usr/bin/env bash
+# A stand-in for bs2-host's queue (tests): queue RUN --slots N.  It "runs" queue.txt's cases from
+# queue.next, FAKE_CASE_S each, and writes a tier1.jsonl row per case (FAKE_BS2_FAIL: that
+# many FAILs first).  Roots: T2_BATCH_BS2_ROOT.
+set -u
+RUN=$2
+R=$T2_BATCH_BS2_ROOT/runs/$RUN
+n=$(cat "$R/queue.next" 2>/dev/null || echo 0)
+total=$(grep -c . "$R/queue.txt")
+fails=${FAKE_BS2_FAIL:-0}
+while ((n < total)); do
+    [[ -e $R/stop ]] && break
+    sleep "${FAKE_CASE_S:-0.2}"
+    v=PASS; ((n < fails)) && v=FAIL
+    printf '{"source": "alpine324", "tier": 1, "verdict": "%s", "case": %d}\n' "$v" "$n" >>"$R/tier1.jsonl"
+    n=$((n + 1)); echo "$n" >"$R/queue.next"
+done

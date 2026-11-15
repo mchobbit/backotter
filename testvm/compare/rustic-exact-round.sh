@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # rustic-exact-round.sh: the paused rustic-bko round, driven from the Mac.
-# The Mac's ~/git/rustic_core (0.13.0+backotter.14 over ba93d6e) and
-# ~/git/rustic (0.11.4+backotter.15 over c517a69) hold the fixes: restore
+# The Mac's ~/git/rustic_core (0.13.0+backotter.15 over ba93d6e) and
+# ~/git/rustic (0.11.4+backotter.16 over c517a69) hold the fixes: restore
 # --delete leaves a case variant of a planned entry, a kept hard-link group's
 # later names are in the way, and restore_contents doesn't panic when a
 # planned file is gone.  Either uncommitted (rustic_core at ba93d6e, rustic at
@@ -170,8 +170,10 @@ CORE=$GIT/rustic_core RUSTIC=$GIT/rustic RESTIC=$GIT/restic
 CORE_BASE=ba93d6e6cb2604f65bbc6106691698a078583306
 RUSTIC_BASE=c517a69c338144a6683045bb781b56957ced444d
 RESTIC_HEAD=12a275f6218210b9957e5dad809ab7dd321691d0
-CORE_VER_OLD=0.13.0+backotter.13 CORE_VER=0.13.0+backotter.14
-RUSTIC_VER_OLD=0.11.4+backotter.14 RUSTIC_VER=0.11.4+backotter.15
+# The versions the HEADs have now: rustic_core e21b85b (.15, NetBSD's
+# atimes put back alone) and rustic ea4ee26 (.16) over the .14/.15 commits.
+CORE_VER_OLD=0.13.0+backotter.13 CORE_VER=0.13.0+backotter.15
+RUSTIC_VER_OLD=0.11.4+backotter.14 RUSTIC_VER=0.11.4+backotter.16
 RESTIC_VER=0.19.1+backotter.12
 CORE_URL=https://github.com/mchobbit/rustic_core.git
 CORE_CODE=(crates/core/src/commands/restore.rs crates/core/src/commands/restore/files_writer.rs
